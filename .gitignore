@@ -1,0 +1,11 @@
+projects/*/ghidra_proj/
+projects/*/out/
+**/.DS_Store
+**/__pycache__/
+*.pyc
+projects/*/recreate/.venv/
+projects/*/recreate/build/
+*.so
+*.o
+projects/*/recreate/oracle/musashi/
+projects/*/recreate/oracle/build/

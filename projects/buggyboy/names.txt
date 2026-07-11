@@ -1,0 +1,196 @@
+# Buggy Boy (Atari ST) — recovered names. Ghidra addresses (image base 0x10000).
+# Coded by Martin W. Ward.
+#
+# Confidence convention: a trailing "# ctx" on an fn/var line marks a name inferred
+# from call-context / family (not confirmed by reading the full body) — refinable.
+# Untagged names were verified from the decompiled body. ApplyNames strips the tag.
+
+# ==== boot / init ====
+fn 0x10000 _start
+fn 0x100dc gem_aes
+fn 0x100ea gem_vdi
+fn 0x10100 main
+fn 0x12124 install_handlers
+fn 0x12166 load_graphics
+fn 0x10620 unpack_graphics
+fn 0x1078c build_sprite_shifts
+fn 0x107f2 build_sprite_shifts_msk
+fn 0x1047a init_scoretable
+fn 0x104b8 init_leg
+fn 0x12af6 init_playfield          # ctx
+fn 0x12d38 init_leg_dash
+fn 0x12d88 draw_leg_labels
+
+# ==== main loop / frame ====
+fn 0x1110e game_update
+fn 0x12e22 draw_frame
+fn 0x102ee wait_vbl_set_offset
+fn 0x10300 set_screen_offset
+fn 0x121f8 flip_screen
+fn 0x120f8 set_rez
+
+# ==== input ====
+fn 0x120b0 read_input
+fn 0x12110 read_joystick
+
+# ==== road / world render ====
+fn 0x11f4c build_road_geometry
+fn 0x19144 render_road
+fn 0x10326 blit_road_scroll
+fn 0x10ff2 draw_ground
+fn 0x110a4 probe_collision
+
+# ==== objects / sprites ====
+fn 0x12ef6 draw_game_objects
+fn 0x1306e draw_object_list
+fn 0x1087e draw_object
+fn 0x10bdc blit_obj_Ln
+fn 0x10c5a blit_obj_Rn
+fn 0x10cd8 blit_obj_Ln2             # ctx
+fn 0x10d66 blit_obj_Rn2             # ctx
+fn 0x10df4 blit_obj_Lf              # ctx
+fn 0x10e64 blit_obj_Rf              # ctx
+fn 0x10ece blit_obj_Lf2             # ctx
+fn 0x10f60 blit_obj_Rf2             # ctx
+fn 0x152ac draw_buggy
+fn 0x151f6 draw_buggy_wheels        # ctx
+fn 0x153fa draw_buggy_lo            # ctx
+fn 0x154c6 draw_buggy_hi            # ctx
+fn 0x1518a draw_fg_sprite           # ctx
+fn 0x1442c draw_checkpoint_anim     # ctx
+
+# ==== HUD / text / fills ====
+fn 0x1555e draw_hud
+fn 0x150a4 draw_dashboard
+fn 0x159fa draw_text
+fn 0x159fc draw_text_row
+fn 0x15a08 draw_hud_gauge0          # ctx
+fn 0x15a24 draw_hud_bar             # ctx
+fn 0x15a84 draw_num_thunk           # ctx
+fn 0x15a86 draw_num                 # ctx
+fn 0x15872 draw_crash_fx            # ctx
+fn 0x12e38 clear_screen
+fn 0x12e56 fill_screen
+fn 0x12e5a fill_words
+fn 0x12e5c fill_span
+fn 0x12e80 fill_rect
+
+# ==== course-event script (jump table @ 0x11aa2) ====
+fn 0x1580a add_score
+fn 0x11c7a play_event_tune
+fn 0x11ba4 evt_flag_gate
+fn 0x11c2c evt_collision
+fn 0x11c5a evt_score_msg
+fn 0x11cb2 handle_marker            # ctx
+
+# ==== results / high-score / intermission ====
+fn 0x1238e update_highscore
+fn 0x1225a draw_results_screen
+fn 0x125f2 draw_leg_results
+fn 0x126e6 draw_divider
+fn 0x1271c draw_panel5
+fn 0x12758 draw_panel3
+fn 0x12780 draw_panel2
+fn 0x15016 draw_result_row
+fn 0x1506c draw_result_col
+fn 0x127a0 intermission
+fn 0x128ea check_abort
+fn 0x12914 intermission_poll        # ctx
+fn 0x129a0 fade_step                # ctx
+fn 0x129ba draw_intermission        # ctx
+
+# ==== OS wrappers ====
+fn 0x12226 xbios_setscreen
+fn 0x12eb0 xbios_setpalette
+fn 0x12ec4 stop_music
+fn 0x12ebc stop_music_chk
+
+# ==== sound engine ====
+fn 0x1b2e8 snd_voice_a
+fn 0x1b2ec snd_voice_b
+fn 0x1b3be snd_cmd_handler
+fn 0x1b3ba snd_stub                 # ctx
+
+# ==== data / tables ====
+var 0x176a8 FONT_GLYPHS
+var 0x15afa color_pairs
+var 0x13144 obj_type_jumptable
+var 0x1b394 snd_cmd_table
+var 0x18266 highscore_table
+
+# ==== hardware / system ====
+var 0xffff8200 VIDEO_BASE_HI
+var 0xfffffc00 IKBD_STATUS
+var 0xfffffc02 IKBD_DATA
+
+# ==== GEM (AES/VDI) init state ====
+var 0x19a40 aes_pblk
+var 0x19a58 aesvdi_contrl
+var 0x19a8c vdi_intin
+var 0x19c8c vdi_ws_handle
+var 0x1a0a0 vdi_handle
+
+# ==== screen / double-buffer ====
+var 0x18bfc mem_base
+var 0x18bf8 buf_aux
+var 0x18c00 buf_a
+var 0x18c04 buf_b
+var 0x18c08 buf_c
+var 0x18bf2 flip_idx
+var 0x18bf4 physbase_tbl
+var 0x18c0c vbl_sound_vec
+
+# ==== road / perspective ====
+var 0x18f24 road_width_tbl
+var 0x190ac road_scanline_tbl
+var 0x18efc road_curve_tbl
+var 0x1905e horizon
+var 0x18c6a road_curve
+var 0x18cb8 hscroll_pos
+var 0x18c56 view_flags
+
+# ==== gameplay state ====
+var 0x18c44 input_state
+var 0x18c8c engine_rpm
+var 0x18cf8 speed_raw
+var 0x18cf6 speed
+var 0x18cae steer_delta
+var 0x18cb4 scroll_speed
+var 0x18cc0 wheel_pos
+var 0x18cc2 lean_state
+var 0x18d0c anim_frame
+var 0x18c68 crash_disp
+var 0x18caa spin_state
+var 0x18cfc time_left
+var 0x18cfe time_subctr
+var 0x18c34 game_over_flag
+var 0x1905c road_edge_flags
+var 0x18d1c road_seg_data
+var 0x18c50 course_read_pos
+var 0x18c38 leg_index
+var 0x18c36 leg_select
+
+# ==== score / event state ====
+var 0x1824c score_bcd
+var 0x18230 score_str
+var 0x18cfa cur_tune_id
+var 0x18c48 flag_seq_count
+var 0x18d08 bonus_timer
+
+# ==== HUD / misc ====
+var 0x1823c hud_speed_txt
+var 0x18d7a sprite_list
+var 0x18c46 last_key
+var 0x18c4e abort_flag
+var 0x18c7c dsp_toggle
+var 0x1b040 trace_pc
+
+# ==== comments ====
+cmt 0x10100 Game driver: init (Malloc buffers, install REFRESH as VBL) then attract/gameplay loops. Never returns.
+cmt 0x1110e game_update: input, integrate throttle->speed, steering->road_curve, off-road/collision, stream course, run event script, checkpoints/score.
+cmt 0x11aa2 Course-event jump table: 129 word-offset entries; handler = 0x11aa2 + entry.
+cmt 0x13144 Object-type sprite dispatch jump table (indexed by object type 0..63).
+cmt 0x10620 RLE graphics unpacker: 0x1234=zero-run, 0x5678=ff-run, 0x1234^3=end; then 4-plane interleave.
+cmt 0x1087e draw_object: scale+position a roadside object from road_width_tbl, dispatch to 8 blit variants.
+cmt 0x152ac draw_buggy: player car body + wheel/shadow sub-sprites, offset by crash/skid state.
+cmt 0x1b394 Sound-command jump table (note-stream commands >= 0x80).
