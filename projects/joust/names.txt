@@ -132,3 +132,21 @@ cmt 0x14ada spawn_wave: enemy/egg spawn scheduler; ramps difficulty by halving s
 cmt 0x1783c wave_manager: game-phase/round transitions; spawns wave-announcement messages; next-wave setup.
 cmt 0x13842 collision_check: broad-phase box test each object vs platforms/objects (test_overlap), then pixel_collision.
 cmt 0x14172 add_score_p1: BCD add to player 1 score with carry; awards bonus_life at thresholds; redraws score.
+
+# ==== blit helpers: semantic param names + register maps ====
+# stack-arg blits: commit a signature with explicit stack storage -> named params
+proto 0x1042a dst@4:4 src@8:4 cols@12:2 rows@14:2
+proto 0x10456 dst@4:4 src@8:4 cols@12:2 rows@14:2
+proto 0x10482 dst@4:4 src@8:4 cols@12:2 rows@14:2
+# register/struct-glue blits: role map kept in a comment (params passed in regs/globals)
+cmt 0x1042a blit_copy(dst@4, src@8, cols@12.w, rows@14.w): rect blit src->dst, dst advances 0xa0/row.
+cmt 0x10456 blit_or(dst@4, src@8, cols@12.w, rows@14.w): OR src onto dst, dst advances 0xa0/row.
+cmt 0x10482 blit_andnot(dst@4, src@8, cols@12.w, rows@14.w): AND-NOT (mask) src onto dst, dst advances 0xa0/row.
+cmt 0x17752 blit_sprite_mask: a5->{src=[0], dst_off=[1], shift=[2].w&0x3f, plane=[10].b}, d7=rows; AND-mask pass, dst=screen_base+dst_off, row stride 0x50 words.
+cmt 0x177a2 blit_sprite: a5->{src=[0], dst_off=[1], shift=[2].w&0x3f, plane=[10].b}, d7=rows; AND mask + OR data, row stride 0x50 words.
+cmt 0x136e8 draw_object_data(a0=object): src=DAT_df0, dst=DAT_de8, shift=DAT_df4, rows=DAT_df6, half-select=DAT_dc2; OR data, 4 words/row, stride 0x4d.
+cmt 0x137bc draw_object_mask(a0=object): dst=[a0+0x14], src=[a0+0x18], rows=[a0+0x1c], shift=[a0+0x1d]; AND-NOT mask pass, stride 0x4d.
+cmt 0x1369c blit_masked_rows(dst=a3, rowsel=d2, row0/1/2=d5/d6/d7): OR where bit set else AND-NOT; 3 rows at strides 0 / 0xa0 / 0x140.
+cmt 0x15098 blit_mask_wide(a0->{src=[6]+0x120, dst_base=[2], dst_off=[0x16], shift=[10].w&0x3f, rows=[0x18]}): AND-mask, 8 words/row, stride 0x50.
+cmt 0x1510c blit_sprite_planes: src=DAT_df0, dst_off=DAT_df8, shift=DAT_df4, rows=DAT_df6; plane enables DAT_d0f/d0e/d10; OR data, stride 0x50.
+cmt 0x12914 draw_sprite_at: src=DAT_df0, dst=DAT_de8, x/y=DAT_dec/dee, shift=DAT_df4, rows=DAT_df6; sets regs then calls draw_object_mask/data.
