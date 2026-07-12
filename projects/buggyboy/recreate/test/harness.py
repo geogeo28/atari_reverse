@@ -75,6 +75,17 @@ def differential(entry, regs, glue):
     diffs = [(a, o_final[a], c_final[a])
              for a in range(IMAGE_SIZE)
              if a < emu.STACK_GUARD_LO and o_final[a] != c_final[a]]
+
+    # Write-set completeness: the guard cutoff above is only sound if the oracle used that
+    # region purely as stack. A write in [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program
+    # output the diff would silently hide — fail loudly so it can't pass as verified.
+    stray = sorted(a for a in o_writes
+                   if emu.STACK_GUARD_LO <= a < emu.STACK_TOP - emu.STACK_SCRATCH)
+    if stray:
+        raise AssertionError(
+            f"oracle wrote {len(stray)} byte(s) in the reserved stack-guard band "
+            f"(e.g. {label(stray[0])} @ 0x{stray[0]:x}) — real output masked by the guard cutoff")
+
     return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
 
 

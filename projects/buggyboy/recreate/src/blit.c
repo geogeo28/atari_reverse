@@ -21,6 +21,10 @@
 static uint32_t load32(const uint8_t *image, uint32_t addr) { return be32(image + addr); }
 static void     store32(uint8_t *image, uint32_t addr, uint32_t value) { wr32(image + addr, value); }
 
+/* Byte-aligned draw column from a screen x: x/2 with the low 3 bits cleared (8-byte cell). */
+#define COL_ALIGN 0xfff8
+static uint16_t aligned_col(uint16_t x) { return (uint16_t)((int16_t)x >> 1) & COL_ALIGN; }
+
 /* Solid full-width row: 10 two-longword colour cells. */
 static void full_row(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi) {
     for (int cell = 0; cell < OBJ_FULL_CELLS; cell++, dst += 16) {
@@ -33,7 +37,7 @@ static void full_row(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fi
  * chains on: the column off-left, or (edge-width) when full, or 0xffff/mask when masked. */
 static uint32_t row_left(uint8_t *image, uint32_t dst, uint16_t x, int16_t width, uint32_t fill_lo, uint32_t fill_hi) {
     uint16_t half_x   = (uint16_t)((int16_t)x >> 1);
-    uint16_t edge_col = half_x & 0xfff8;
+    uint16_t edge_col = half_x & COL_ALIGN;
 
     if ((int16_t)edge_col < 0) return edge_col;            /* off the left edge: no draw */
     if ((int16_t)(edge_col - (uint16_t)width) >= 0) {      /* fully inside: solid fill */
@@ -41,8 +45,8 @@ static uint32_t row_left(uint8_t *image, uint32_t dst, uint16_t x, int16_t width
         return (uint32_t)(uint16_t)(edge_col - (uint16_t)width);
     }
     /* straddling the edge: masked edge cell + solid interior to its left */
-    uint32_t edge_mask = load32(image, A_blit_mask_L + (uint32_t)(int32_t)(int16_t)((x & 0xf) << 2));
-    uint32_t edge_ptr = dst + (uint32_t)(int32_t)(int16_t)edge_col;
+    uint32_t edge_mask = load32(image, A_blit_mask_L + sign_ext16((x & 0xf) << 2));
+    uint32_t edge_ptr = dst + sign_ext16(edge_col);
     store32(image, edge_ptr,     (load32(image, edge_ptr)     & edge_mask) | (fill_lo & ~edge_mask));
     store32(image, edge_ptr + 4, (load32(image, edge_ptr + 4) & edge_mask) | (fill_hi & ~edge_mask));
 
@@ -58,13 +62,13 @@ static uint32_t row_left(uint8_t *image, uint32_t dst, uint16_t x, int16_t width
 /* One right-anchored row. Off-right fills the whole row; inside the width it draws a masked
  * edge cell plus a solid interior extending rightward. No meaningful return (callers void). */
 static void row_right(uint8_t *image, uint32_t dst, uint16_t x, int16_t width, uint32_t fill_lo, uint32_t fill_hi) {
-    uint16_t col = (uint16_t)((int16_t)x >> 1) & 0xfff8;
+    uint16_t col = aligned_col(x);
 
     if ((int16_t)col < 0) { full_row(image, dst, fill_lo, fill_hi); return; }  /* off the right edge */
     if ((int16_t)(col - (uint16_t)width) >= 0) return;                         /* past the width */
 
-    uint32_t edge_mask = load32(image, A_blit_mask_R + (uint32_t)(int32_t)(int16_t)((x & 0xf) << 2));
-    uint32_t edge_ptr = dst + (uint32_t)(int32_t)(int16_t)col;
+    uint32_t edge_mask = load32(image, A_blit_mask_R + sign_ext16((x & 0xf) << 2));
+    uint32_t edge_ptr = dst + sign_ext16(col);
     store32(image, edge_ptr,     (load32(image, edge_ptr)     & edge_mask) | (fill_lo & ~edge_mask));
     store32(image, edge_ptr + 4, (load32(image, edge_ptr + 4) & edge_mask) | (fill_hi & ~edge_mask));
 
@@ -82,10 +86,10 @@ uint32_t g_blit_obj_Ln(uint8_t *image, uint32_t buf_base, uint32_t width, uint32
                        uint32_t x, uint32_t fill_lo, uint32_t fill_hi, uint32_t rows_minus1) {
     int16_t obj_width = (int16_t)width;
     uint16_t screen_x = (uint16_t)x;
-    uint32_t dst = buf_base + (uint32_t)(int32_t)(int16_t)row_offset;
+    uint32_t dst = buf_base + sign_ext16(row_offset);
     int rows = (int16_t)rows_minus1 + 1;
 
-    uint16_t edge_col = (uint16_t)((int16_t)screen_x >> 1) & 0xfff8;
+    uint16_t edge_col = aligned_col(screen_x);
     if ((int16_t)edge_col < 0) return edge_col;
     int full = (int16_t)(edge_col - (uint16_t)obj_width) >= 0;
     int32_t stride = full ? -(int32_t)obj_width : -(int32_t)OBJ_ROW_UP;
@@ -100,10 +104,10 @@ void g_blit_obj_Rn(uint8_t *image, uint32_t buf_base, uint32_t width, uint32_t r
                    uint32_t x, uint32_t fill_lo, uint32_t fill_hi, uint32_t rows_minus1) {
     int16_t obj_width = (int16_t)width;
     uint16_t screen_x = (uint16_t)x;
-    uint32_t dst = buf_base + (uint32_t)(int32_t)(int16_t)row_offset;
+    uint32_t dst = buf_base + sign_ext16(row_offset);
     int rows = (int16_t)rows_minus1 + 1;
 
-    uint16_t col = (uint16_t)((int16_t)screen_x >> 1) & 0xfff8;
+    uint16_t col = aligned_col(screen_x);
     int32_t stride = ((int16_t)col < 0) ? -(int32_t)obj_width : -(int32_t)OBJ_ROW_UP;
     for (int row = 0; row < rows; row++, dst = (uint32_t)((int32_t)dst + stride))
         row_right(image, dst, screen_x, obj_width, fill_lo, fill_hi);
@@ -115,7 +119,7 @@ uint32_t g_blit_obj_Lf(uint8_t *image, uint32_t buf_base, uint32_t width, uint32
                        uint32_t x, uint32_t fill_lo, uint32_t fill_hi, uint32_t rows_minus1) {
     int16_t obj_width = (int16_t)width;
     uint16_t cur_x = (uint16_t)x;
-    uint32_t dst = buf_base + (uint32_t)(int32_t)(int16_t)row_offset;
+    uint32_t dst = buf_base + sign_ext16(row_offset);
     int rows = (int16_t)rows_minus1 + 1;
 
     uint32_t status = 0;
@@ -128,7 +132,7 @@ void g_blit_obj_Rf(uint8_t *image, uint32_t buf_base, uint32_t width, uint32_t r
                    uint32_t x, uint32_t fill_lo, uint32_t fill_hi, uint32_t rows_minus1) {
     int16_t obj_width = (int16_t)width;
     uint16_t cur_x = (uint16_t)x;
-    uint32_t dst = buf_base + (uint32_t)(int32_t)(int16_t)row_offset;
+    uint32_t dst = buf_base + sign_ext16(row_offset);
     int rows = (int16_t)rows_minus1 + 1;
 
     for (int row = 0; row < rows; row++, dst = (uint32_t)((int32_t)dst - obj_width), cur_x = (uint16_t)(cur_x + 1))

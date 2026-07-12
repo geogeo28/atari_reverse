@@ -66,9 +66,9 @@ def test_fuzz_fill_words():
 def test_fuzz_fill_span():
     rng = random.Random(13)
     for _ in range(500):
-        d0 = rng.randint(0, 0x2000)                 # byte offset into the buffer
+        d0 = rng.randint(-0x1000, 0x2000)           # signed byte offset (exercise negative sign-extend)
         d1 = rng.randint(0, 31)
-        d2 = rng.randint(0, 1500)                    # cells-1; d0 + (d2+1)*8 stays in [BUF,0x10000)
+        d2 = rng.randint(0, 1500)                    # cells-1; buf(0x2000) + d0 + (d2+1)*8 stays in image
         regs = {"d0": d0, "d1": d1, "d2": d2, "_pokes": _pokes(0)}
         _run(ENTRY["fill_span"], regs,
              lambda lib, buf, d0=d0, d1=d1, d2=d2: lib.g_fill_span(buf, d0, d1, d2),
@@ -78,7 +78,7 @@ def test_fuzz_fill_span():
 def test_fuzz_fill_rect():
     rng = random.Random(14)
     for _ in range(500):
-        d0 = rng.randint(0, 0x800)
+        d0 = rng.randint(-0x800, 0x800)              # signed byte offset
         d1 = rng.randint(0, 31)
         d3 = rng.randint(0, 19)                      # cells per row - 1
         d4 = rng.randint(0, 40)                      # rows - 1

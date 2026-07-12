@@ -12,6 +12,8 @@ from loader import IMAGE_SIZE
 
 STACK_TOP = 0x1FF00       # A7 start; stack grows down into the guard region below
 STACK_GUARD_LO = 0x1F000  # [STACK_GUARD_LO, IMAGE_SIZE): stack scratch, excluded from the diff
+STACK_SCRATCH = 0x400     # bytes below STACK_TOP a call frame may legitimately use; a write in
+                          # [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program output, not stack
 SENTINEL = 0x00000002     # even, mapped, never real code (code >= 0x10000): rts lands here
 
 _DREG_NAMES = ("d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7")
@@ -42,8 +44,11 @@ def run(image, entry, regs=None, max_insns=200_000):
     aregs = (ctypes.c_uint32 * 8)(*[regs.get(n, 0) & 0xFFFFFFFF for n in _AREG_NAMES])
     out = (ctypes.c_uint32 * 4)()
 
-    _LIB.osh_run(buf, IMAGE_SIZE, entry & 0xFFFFFFFF, dregs, aregs,
-                 STACK_TOP, SENTINEL, max_insns, out)
+    reached = _LIB.osh_run(buf, IMAGE_SIZE, entry & 0xFFFFFFFF, dregs, aregs,
+                           STACK_TOP, SENTINEL, max_insns, out)
+    if not reached:
+        raise RuntimeError(f"function @ {entry:#x} did not return within {max_insns} "
+                           f"instructions; final memory is mid-execution, not trustworthy")
 
     n = _LIB.osh_num_writes()
     waddr = _LIB.osh_write_addrs()

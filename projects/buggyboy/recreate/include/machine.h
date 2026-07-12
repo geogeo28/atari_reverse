@@ -19,4 +19,7 @@ static inline void wr32(uint8_t *ptr, uint32_t value) {
     ptr[2] = (uint8_t)(value >> 8);  ptr[3] = (uint8_t)value;
 }
 
+/* Sign-extend a 16-bit register word to a 32-bit address delta (68k adda.w / word EA). */
+static inline uint32_t sign_ext16(uint32_t value) { return (uint32_t)(int32_t)(int16_t)value; }
+
 #endif /* BB_MACHINE_H */

@@ -41,7 +41,9 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
 }
 
 /* Run `entry` to its rts. dregs/aregs are D0..D7 / A0..A7 inputs (aregs[7] overridden by sp).
- * Returns the instruction count executed; out_regs receives {D0, D1, A0, A1}. */
+ * Returns 1 if the function returned to the sentinel (reached its rts), 0 if it hit the
+ * instruction cap first (a truncated run whose memory must NOT be trusted as final).
+ * out_regs receives {D0, D1, A0, A1}. */
 int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
             const uint32_t *dregs, const uint32_t *aregs,
             uint32_t sp, uint32_t sentinel, uint32_t max_insns, uint32_t *out_regs) {
@@ -68,7 +70,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     out_regs[1] = m68k_get_reg(0, M68K_REG_D1);
     out_regs[2] = m68k_get_reg(0, M68K_REG_A0);
     out_regs[3] = m68k_get_reg(0, M68K_REG_A1);
-    return (int)n;
+    return m68k_get_reg(0, M68K_REG_PC) == sentinel;   /* reached rts? */
 }
 
 uint32_t        osh_num_writes(void)  { return g_wn; }

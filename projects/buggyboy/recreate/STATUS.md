@@ -114,3 +114,16 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x1b3be` | `snd_cmd_handler` | 244 |  |  |
 | `0x1b560` | `INITFX` | 60 |  |  |
 | `0x1b59c` | `INITTUNE` | 86 |  |  |
+
+## Verification notes (known gaps)
+
+Surfaced by the high-effort code review; the harness itself was hardened (truncation now
+raises; a stray write in the guard band fails loudly). Remaining, low-severity, deferred:
+
+- **Blit return register (D0)** — only `Ln` verifies its status word. `Lf`/`Rf` and the four
+  `*2` road-walk variants check pixels only; their D0 is settled when `draw_object` is ported.
+- **Road-walk regime coverage** — the `*2` fuzz keeps x in the straddling-edge regime; the
+  off-edge / full-fill / past-width branches of `row_left`/`row_right` are covered via the
+  non-walk variants, not through the road walk itself.
+- **fill_span/fill_rect flip slot** — fuzz pins `flip_idx=0`; the slot-4 buffer pointer is
+  exercised by `clear_screen`/`fill_screen` but not by span/rect.

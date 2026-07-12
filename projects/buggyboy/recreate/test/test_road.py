@@ -23,7 +23,8 @@ def _w32(v):
 
 def _pokes(rng):
     p = {}
-    p[0x18d1c] = b"".join(_w16(rng.randint(-256, 256)) for _ in range(13))     # road_seg_data[0..12]
+    p[0x18d1c] = b"".join(_w16(rng.randint(-0x4000, 0x4000)) for _ in range(13))  # road_seg_data[0..12]
+    # wide range so the 16-bit slope accumulator overflows past 0xffff and must wrap
     p[0x18c56] = _w16(rng.choice(VIEW_FLAGS))                                   # view_flags
     p[0x18c6a] = _w16(rng.randint(-3000, 3000))                                 # road_curve
     p[0x1905e] = _w16(rng.randint(-600, 600))                                   # horizon

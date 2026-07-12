@@ -27,17 +27,17 @@ for name, (_entry, _ret) in VARIANTS.items():
     fn.restype = ctypes.c_uint32
 
 
-def _run(name, x, width, rows_m1, lo, hi, seed):
+def _run(name, x, width, rows_m1, lo, hi, seed, row_offset=0):
     entry, ret = VARIANTS[name]
     rng = random.Random(seed)
-    noise = bytes(rng.randrange(256) for _ in range(0x2000))    # 0x6800..0x8800: every touched byte
-    pokes = {0x6800: noise}
-    args = (BUF, width & 0xffff, 0, x & 0xffff, lo, hi, rows_m1 & 0xffff)
+    noise = bytes(rng.randrange(256) for _ in range(0x3000))    # 0x6000..0x9000: every touched byte
+    pokes = {0x6000: noise}
+    args = (BUF, width & 0xffff, row_offset & 0xffff, x & 0xffff, lo, hi, rows_m1 & 0xffff)
     regs = {"a6": args[0], "d2": args[1], "d3": args[2], "d4": args[3],
             "d5": args[4], "d6": args[5], "d7": args[6], "_pokes": pokes}
     gfn = getattr(harness._lib, "g_blit_obj_" + name)
     diffs, info = differential(entry, regs, lambda lib, buf: gfn(buf, *args))
-    label = f"{name} x={x} width={width} rows={rows_m1 + 1}"
+    label = f"{name} x={x} width={width} rows={rows_m1 + 1} off={row_offset}"
     assert not diffs, f"{label}\n{report(diffs[:12])}"
     if ret:
         assert (info["ret"] & 0xffff) == (info["regs"]["d0"] & 0xffff), \
@@ -59,7 +59,9 @@ def test_fuzz():
             x = rng.randint(-512, 1400)
             width = rng.randint(8, 320)
             rows_m1 = rng.randint(0, 15)
-            _run(name, x, width, rows_m1, rng.getrandbits(32), rng.getrandbits(32), i)
+            row_offset = rng.randint(-512, 512)     # exercise sign-extended nonzero/negative D3
+            _run(name, x, width, rows_m1, rng.getrandbits(32), rng.getrandbits(32), i,
+                 row_offset=row_offset)
 
 
 # ---- road-walk variants (blit_obj_*2): x per scanline from road_width_tbl ----
