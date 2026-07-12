@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 25/91.**
+**Verified: 26/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -26,7 +26,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x10000` | `_start` | 220 | ✅ verified | checkpoint @0x100d4 (GEM init; before `bsr main`) |
 | `0x100dc` | `gem_aes` | 14 | ✅ verified | trap #2 AES (appl_init + graf_handle) |
 | `0x100ea` | `gem_vdi` | 12 | ✅ verified | trap #2 VDI (v_opnvwk) |
-| `0x10100` | `main` | 494 |  |  |
+| `0x10100` | `main` | 494 | ✅ verified | checkpoint @0x10144 (Malloc + the five buffer pointers) |
 | `0x102ee` | `wait_vbl_set_offset` | 18 |  |  |
 | `0x10300` | `set_screen_offset` | 38 |  |  |
 | `0x10326` | `blit_road_scroll` | 340 |  |  |
@@ -135,9 +135,10 @@ raises; a stray write in the guard band fails loudly). Remaining, low-severity, 
 A function that never returns can't be run to `rts`, so the harness can also stop at a
 **checkpoint PC** and diff the image there (`emu.run(..., stop_pc=)`, `differential(..., stop_pc=,
 exclude=)`). `_start` is verified this way at `0x100d4` (the `bsr main`); its GEM init is fully
-diffed while `main` — the infinite game loop — is never entered. `load_graphics` is verified at
-`0x121f2` (before `bsr unpack_graphics`), diffing both file reads without the decompressor.
-`exclude` drops a function's relocated-stack band from the diff (`_start` moves A7
+diffed while `main` — the infinite game loop — is never entered. `main` itself is verified at
+`0x10144` (its Malloc + the five buffer pointers, before the Supexec-wrapped init). `load_graphics`
+is verified at `0x121f2` (before `bsr unpack_graphics`), diffing both file reads without the
+decompressor. `exclude` drops a function's relocated-stack band from the diff (`_start` moves A7
 to `0x1b044`; the reconstruction is pure C with no machine stack). Data-heavy functions raise
 `differential(..., max_insns=)` (the unpacker needs a few million).
 
@@ -146,8 +147,8 @@ to `0x1b044`; the reconstruction is pure C with no machine stack). Data-heavy fu
 OS-bound functions now run under the oracle: `trap #1/#13/#14/#2` are serviced by a
 deterministic model (`include/os.h`, dispatched in `oracle/shim.c`). Calls that only touch
 hardware/files (Setpalette/Setcolor/Setscreen, sound, console, Ikbdws) have no image effect;
-Physbase/Logbase → OS_SCREEN_BASE, Malloc bump-allocates; XBIOS Supexec runs the passed routine
-in place. **GEM trap #2** models the three AES/VDI calls BuggyBoy issues — AES
+Physbase/Logbase → OS_SCREEN_BASE, Malloc hands out a real in-image block from OS_HEAP_BASE
+(sized for main's 0x5ee08-byte allocation); XBIOS Supexec runs the passed routine in place. **GEM trap #2** models the three AES/VDI calls BuggyBoy issues — AES
 `appl_init`/`graf_handle`, VDI `v_opnvwk` — via `os_gem_trap()` (shared by the shim and the
 reconstructed `gem_aes`/`gem_vdi`); realistic low-res values into the param block's `intout`.
 **GEMDOS Fopen/Fread/Fclose** are modeled by `os_fopen`/`os_fread`/`os_fclose` over an in-image
@@ -156,6 +157,7 @@ is 1 MiB to hold them + the load buffers). Anything still not faithfully modeled
 **Super**, an **unmodeled GEM/VDI opcode**, an **unstaged file**, unknown fn) is counted and
 `emu.run` **raises** — a function that hits one cannot be falsely "verified".
 
-Unlocked next: a checkpoint verification of `main`'s init, which needs `Malloc` pointed at a
-real large in-image block (it currently bump-allocates small blocks). Beyond that, the remaining
-unverified functions are the gameplay/draw/event/sound families (see the table above).
+Unlocked next: the whole startup path (`_start` → `main` init → `load_graphics` → `unpack_graphics`)
+is now verified. Extending `main`'s checkpoint past its Supexec-wrapped init would pull in that
+routine's callee chain (`install_handlers`, sound-vector setup, …). The remaining unverified
+functions are the gameplay/draw/event/sound families (see the table above).

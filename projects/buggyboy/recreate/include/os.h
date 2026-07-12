@@ -15,9 +15,8 @@
  * by construction. Only the three opcodes BuggyBoy actually uses are modeled.
  *
  * DEFERRED (serviced as return 0, effect NOT modeled): GEMDOS Super. A function that depends
- * on it cannot be verified until the model is extended — see recreate/README.md.
- * OS_HEAP_BASE/OS_SCREEN_BASE are provisional low-memory arenas that only fit small blocks;
- * functions that Malloc large screen buffers need Malloc pointed at a real in-image block.
+ * on it cannot be verified until the model is extended — see recreate/README.md. OS_SCREEN_BASE
+ * is a provisional low-memory arena; OS_HEAP_BASE is main's Malloc block (see below).
  */
 #ifndef BB_OS_H
 #define BB_OS_H
@@ -26,7 +25,8 @@
 #include "machine.h"
 
 #define OS_SCREEN_BASE 0x8000u   /* Physbase/Logbase result (in-image screen region) */
-#define OS_HEAP_BASE   0x1000u   /* Malloc bump arena start (small blocks only) */
+#define OS_HEAP_BASE   0x20000u  /* Malloc block base: a real in-image region above the program,
+                                  * sized for main's 0x5ee08-byte work block (ends ~0x7ee08) */
 
 /* ---- GEM trap #2 (AES / VDI) --------------------------------------------------------
  * A trap #2 selects the subsystem by D0 and points D1 at a parameter block of array

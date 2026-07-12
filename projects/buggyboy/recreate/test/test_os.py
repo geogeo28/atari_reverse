@@ -22,6 +22,8 @@ harness._lib.g_gem_vdi.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_gem_vdi.restype = None
 harness._lib.g_start.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_start.restype = None
+harness._lib.g_main.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_main.restype = None
 harness._lib.g_load_graphics.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_load_graphics.restype = None
 
@@ -94,6 +96,22 @@ def test_gem_vdi_v_opnvwk():
     mem, _, _ = emu.run(harness.make_image(pokes), 0x100ea)
     assert int.from_bytes(mem[INTOUT:INTOUT + 2], "big") == 319, "work_out[0] should be max x 319"
     assert int.from_bytes(mem[INTOUT + 2:INTOUT + 4], "big") == 199, "work_out[1] should be max y 199"
+
+
+MAIN_MALLOC_CKPT = 0x10144        # after Malloc + the five buffer pointers, before Supexec
+OS_HEAP_BASE = 0x20000            # mirror of os.h; the modeled Malloc returns this block base
+
+
+def test_main_malloc_init():
+    # main Mallocs its 0x5ee08 work block, rounds it to mem_base, and lays out five buffer
+    # pointers. Verified at the checkpoint before Supexec (main never returns).
+    diffs, _ = differential(0x10100, {}, lambda lib, buf: lib.g_main(buf), stop_pc=MAIN_MALLOC_CKPT)
+    assert not diffs, report(diffs[:12])
+    mem, _, _ = emu.run(harness.make_image(), 0x10100, stop_pc=MAIN_MALLOC_CKPT)
+    mem_base = (OS_HEAP_BASE + 0x100) & ~0xff
+    assert int.from_bytes(mem[0x18bfc:0x18c00], "big") == mem_base, "mem_base"
+    assert int.from_bytes(mem[0x18bf8:0x18bfc], "big") == mem_base + 0x57000, "buf_aux"
+    assert int.from_bytes(mem[0x18c08:0x18c0c], "big") == mem_base + 0x1c660, "buf_c"
 
 
 def test_start_gem_init():
