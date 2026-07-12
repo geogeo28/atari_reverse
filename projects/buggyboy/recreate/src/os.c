@@ -16,3 +16,9 @@ void g_xbios_setscreen(uint8_t *image) { (void)image; }
 
 /* xbios_setpalette @ 0x12eb0 — Setpalette(A0 = 16-word palette) -> hardware palette regs. */
 void g_xbios_setpalette(uint8_t *image, uint32_t palette_ptr) { (void)image; (void)palette_ptr; }
+
+/* set_rez @ 0x120f8 — store the low byte of D0 to a config global, then XBIOS 0x19 reads it
+ * to set hardware (no image effect). Only the byte write is observable. */
+void g_set_rez(uint8_t *image, uint32_t mode) {
+    image[A_setrez_mode] = (uint8_t)mode;
+}

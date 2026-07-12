@@ -73,6 +73,15 @@ static void handle_trap(int vec) {
     uint32_t d0 = 0;                                  /* default: success / no image effect */
     int modeled = 1;
 
+    if (vec == 14 && fn == 0x26) {                    /* XBIOS Supexec: run the routine nested */
+        uint32_t routine = m68k_read_memory_32(arg1); /* pea'd routine address */
+        m68k_write_memory_32(caller - 4, retpc);      /* routine's rts returns to the caller */
+        m68k_set_reg(M68K_REG_SR, sr);                /* restore SR first (may reselect SSP) */
+        m68k_set_reg(M68K_REG_A7, caller - 4);
+        m68k_set_reg(M68K_REG_PC, routine);           /* D0 (Supexec's result) is set by the routine */
+        return;
+    }
+
     if (vec == 1) {                                   /* GEMDOS */
         switch (fn) {
         case 0x48:                                    /* Malloc: bump-allocate a block */
@@ -87,8 +96,9 @@ static void handle_trap(int vec) {
         case 0x02: case 0x03: d0 = OS_SCREEN_BASE; break;   /* Physbase / Logbase */
         case 0x04:                                    /* Getrez -> low-res */
         case 0x05: case 0x06: case 0x07:              /* Setscreen / Setpalette / Setcolor */
+        case 0x19:                                    /* Ikbdws: serial write to the IKBD, no image effect */
         case 0x25: case 0x28: case 0x2a: break;       /* Vsync / Xbtimer / Dosound -> no effect */
-        default: modeled = 0; break;                  /* Supexec, unknown */
+        default: modeled = 0; break;                  /* unknown */
         }
     } else {                                          /* BIOS(13) and GEM(2): not modeled */
         modeled = 0;

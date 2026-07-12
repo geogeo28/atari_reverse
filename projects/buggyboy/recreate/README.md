@@ -65,15 +65,17 @@ OS-bound code enters TOS via `trap #N`, which the oracle can't route to real TOS
 frame + the GEMDOS/BIOS/XBIOS function number and services the call **deterministically** —
 the semantics both the oracle and any reconstructed wrapper must share live in
 [`include/os.h`](include/os.h). Calls that only touch hardware or files (Setpalette/Setcolor/
-Setscreen, sound, console) have no image effect and return 0; Physbase/Logbase return
-`OS_SCREEN_BASE`; Malloc bump-allocates from `OS_HEAP_BASE`; Fopen returns a fixed handle.
+Setscreen, sound, console, Ikbdws) have no image effect and return 0; Physbase/Logbase return
+`OS_SCREEN_BASE`; Malloc bump-allocates from `OS_HEAP_BASE`; Fopen returns a fixed handle;
+XBIOS `Supexec` runs the passed routine in place (its `rts` returns to the caller, its D0 is
+the result).
 
-Anything **not faithfully modeled** — GEMDOS `Fread`, XBIOS `Supexec`, all GEM/AES/VDI via
+Anything **not faithfully modeled** — GEMDOS `Fread`, `Super`, all GEM/AES/VDI via
 `trap #2`, or an unknown function number — is counted, and `emu.run` **raises** rather than
 diff a fabricated result. So an OS-bound function can only be marked verified once every OS
-call it makes is genuinely modeled. Extending the model (a file model for `Fread`, nested
-execution for `Supexec`, AES/VDI for `trap #2`, a larger `IMAGE_SIZE` for large `Malloc`s)
-is what unlocks the loaders and `_start`/`main`.
+call it makes is genuinely modeled. Extending the model (a file model for `Fread`, AES/VDI
+for `trap #2`, a larger `IMAGE_SIZE` for large `Malloc`s) is what unlocks the loaders and
+`_start`/`main`.
 
 ## Oracle note
 

@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 17/91.**
+**Verified: 18/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -54,7 +54,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x11cb2` | `handle_marker` | 42 |  |  |
 | `0x11f4c` | `build_road_geometry` | 356 | ✅ verified | 300-seed fuzz (whole-image) |
 | `0x120b0` | `read_input` | 70 |  |  |
-| `0x120f8` | `set_rez` | 24 |  |  |
+| `0x120f8` | `set_rez` | 24 | ✅ verified | trap layer (Ikbdws); D0.b -> config byte |
 | `0x12110` | `read_joystick` | 20 |  |  |
 | `0x12124` | `install_handlers` | 50 |  |  |
 | `0x12166` | `load_graphics` | 146 |  |  |
@@ -132,11 +132,12 @@ raises; a stray write in the guard band fails loudly). Remaining, low-severity, 
 
 OS-bound functions now run under the oracle: `trap #1/#13/#14/#2` are serviced by a
 deterministic model (`include/os.h`, dispatched in `oracle/shim.c`). Calls that only touch
-hardware/files (Setpalette/Setcolor/Setscreen, sound, console) have no image effect;
-Physbase/Logbase → OS_SCREEN_BASE, Malloc bump-allocates, Fopen → a fixed handle. Anything
-not faithfully modeled (**Fread**, **Supexec**, all **GEM/AES/VDI via trap #2**, unknown fn)
-is counted and `emu.run` **raises** — a function that hits one cannot be falsely "verified".
+hardware/files (Setpalette/Setcolor/Setscreen, sound, console, Ikbdws) have no image effect;
+Physbase/Logbase → OS_SCREEN_BASE, Malloc bump-allocates, Fopen → a fixed handle; XBIOS
+Supexec runs the passed routine in place. Anything not faithfully modeled (**Fread**,
+GEMDOS **Super**, all **GEM/AES/VDI via trap #2**, unknown fn) is counted and `emu.run`
+**raises** — a function that hits one cannot be falsely "verified".
 
-Unlocked next (need model extensions): Fread → a file model; Supexec → nested execution;
-GEM trap #2 → AES/VDI param-block modeling (required for `_start`/`main`). Functions that
-Malloc large screen buffers also need a larger `IMAGE_SIZE`.
+Unlocked next (need model extensions): Fread → a file model; GEM trap #2 → AES/VDI
+param-block modeling (required for `_start`/`main`). Functions that Malloc large screen
+buffers also need a larger `IMAGE_SIZE`.
