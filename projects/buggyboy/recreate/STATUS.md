@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 18/91.**
+**Verified: 20/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -24,8 +24,8 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
 | `0x10000` | `_start` | 220 |  |  |
-| `0x100dc` | `gem_aes` | 14 |  |  |
-| `0x100ea` | `gem_vdi` | 12 |  |  |
+| `0x100dc` | `gem_aes` | 14 | ✅ verified | trap #2 AES (appl_init + graf_handle) |
+| `0x100ea` | `gem_vdi` | 12 | ✅ verified | trap #2 VDI (v_opnvwk) |
 | `0x10100` | `main` | 494 |  |  |
 | `0x102ee` | `wait_vbl_set_offset` | 18 |  |  |
 | `0x10300` | `set_screen_offset` | 38 |  |  |
@@ -134,10 +134,14 @@ OS-bound functions now run under the oracle: `trap #1/#13/#14/#2` are serviced b
 deterministic model (`include/os.h`, dispatched in `oracle/shim.c`). Calls that only touch
 hardware/files (Setpalette/Setcolor/Setscreen, sound, console, Ikbdws) have no image effect;
 Physbase/Logbase → OS_SCREEN_BASE, Malloc bump-allocates, Fopen → a fixed handle; XBIOS
-Supexec runs the passed routine in place. Anything not faithfully modeled (**Fread**,
-GEMDOS **Super**, all **GEM/AES/VDI via trap #2**, unknown fn) is counted and `emu.run`
-**raises** — a function that hits one cannot be falsely "verified".
+Supexec runs the passed routine in place. **GEM trap #2** now models the three AES/VDI calls
+BuggyBoy issues — AES `appl_init`/`graf_handle`, VDI `v_opnvwk` — via `os_gem_trap()` (shared by
+the shim and the reconstructed `gem_aes`/`gem_vdi`); realistic low-res values, results written
+into the param block's `intout`. Anything still not faithfully modeled (**Fread**, GEMDOS
+**Super**, an **unmodeled GEM/VDI opcode**, unknown fn) is counted and `emu.run` **raises** — a
+function that hits one cannot be falsely "verified".
 
-Unlocked next (need model extensions): Fread → a file model; GEM trap #2 → AES/VDI
-param-block modeling (required for `_start`/`main`). Functions that Malloc large screen
-buffers also need a larger `IMAGE_SIZE`.
+Unlocked next (need model extensions): Fread → a file model (unlocks the real graphics/course
+loaders). `_start`/`main` cannot be run to `rts` (`main` is the infinite game loop), so they
+need a **run-to-checkpoint** harness mode (diff the image at a target PC) rather than run-to-rts.
+Functions that Malloc large screen buffers also need a larger `IMAGE_SIZE`.

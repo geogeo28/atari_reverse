@@ -9,6 +9,7 @@
 #include "machine.h"
 #include "addrs.h"
 #include "buggyboy.h"
+#include "os.h"
 
 /* xbios_setscreen @ 0x12226 — Setscreen(logbase = physbase = physbase_tbl[0], rez = -1).
  * Screen base + resolution are shifter/TOS state, not our image: no observable effect. */
@@ -22,3 +23,10 @@ void g_xbios_setpalette(uint8_t *image, uint32_t palette_ptr) { (void)image; (vo
 void g_set_rez(uint8_t *image, uint32_t mode) {
     image[A_setrez_mode] = (uint8_t)mode;
 }
+
+/* gem_aes @ 0x100dc — D1 = &aes_pblk, D0 = 0xC8, trap #2. The AES call's outputs land in the
+ * param block's intout array; os_gem_trap models them (see os.h). */
+void g_gem_aes(uint8_t *image) { os_gem_trap(image, GEM_AES, A_aes_pblk); }
+
+/* gem_vdi @ 0x100ea — D1 = &vdi_pblk, D0 = 0x73, trap #2. */
+void g_gem_vdi(uint8_t *image) { os_gem_trap(image, GEM_VDI, A_vdi_pblk); }

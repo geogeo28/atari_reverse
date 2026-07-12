@@ -48,7 +48,7 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
  * set D0, pop the frame, and resume at the caller. Vectors are installed transiently and
  * restored after the run, so the final image matches a reconstruction that never traps. */
 #define TRAP_VEC_GEMDOS 0x84    /* trap #1  */
-#define TRAP_VEC_GEM    0x88    /* trap #2  (AES/VDI — not modeled) */
+#define TRAP_VEC_GEM    0x88    /* trap #2  (AES/VDI — modeled via os_gem_trap) */
 #define TRAP_VEC_BIOS   0xb4    /* trap #13 */
 #define TRAP_VEC_XBIOS  0xb8    /* trap #14 */
 #define MAGIC_GEMDOS 0x120      /* unused vector-page slots, even, never real code (>= 0x10000) */
@@ -61,8 +61,9 @@ static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT mo
 
 /* Service the trap the CPU jumped to (vec = 1/2/13/14). Reads the exception frame at A7,
  * services the OS call, and returns control to the caller with D0 set. Calls we faithfully
- * model set `modeled`; anything else (Fread, Supexec, GEM, BIOS, unknown fn) is counted in
- * g_unmodeled so the run can be rejected rather than trusted against a fabricated result. */
+ * model set `modeled`; anything else (Fread, Super, BIOS, an unmodeled GEM opcode, unknown fn)
+ * is counted in g_unmodeled so the run can be rejected rather than trusted against a
+ * fabricated result. */
 static void handle_trap(int vec) {
     uint32_t sp     = m68k_get_reg(0, M68K_REG_A7);
     uint32_t sr     = m68k_read_memory_16(sp);       /* pushed status register */
@@ -100,7 +101,11 @@ static void handle_trap(int vec) {
         case 0x25: case 0x28: case 0x2a: break;       /* Vsync / Xbtimer / Dosound -> no effect */
         default: modeled = 0; break;                  /* unknown */
         }
-    } else {                                          /* BIOS(13) and GEM(2): not modeled */
+    } else if (vec == 2) {                            /* GEM: AES/VDI parameter-block calls */
+        uint32_t reg_d0 = m68k_get_reg(0, M68K_REG_D0);   /* subsystem: AES 0xc8 / VDI 0x73 */
+        uint32_t reg_d1 = m68k_get_reg(0, M68K_REG_D1);   /* -> parameter block */
+        modeled = os_gem_trap(g_mem, reg_d0, reg_d1);     /* results land in the param block */
+    } else {                                          /* BIOS(13): not modeled */
         modeled = 0;
     }
     if (!modeled) g_unmodeled++;

@@ -128,6 +128,7 @@ var 0x19a40 aes_pblk
 var 0x19a58 aesvdi_contrl
 var 0x19a8c vdi_intin
 var 0x19c8c vdi_ws_handle
+var 0x1a08c vdi_pblk
 var 0x1a0a0 vdi_handle
 
 # ==== screen / double-buffer ====

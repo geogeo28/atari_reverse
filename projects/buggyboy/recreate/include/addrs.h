@@ -19,6 +19,10 @@
 #define A_flip_idx        0x18bf2   /* word: 0 or 4, selects the draw buffer in physbase_tbl */
 #define A_physbase_tbl    0x18bf4   /* table of screen-buffer pointers, indexed by flip_idx */
 
+/* ---- GEM (AES/VDI) init (gem_aes @ 0x100dc, gem_vdi @ 0x100ea) ---- */
+#define A_aes_pblk        0x19a40   /* AES pblk: {contrl,global,intin,intout,addrin,addrout} */
+#define A_vdi_pblk        0x1a08c   /* VDI pblk: {contrl,intin,ptsin,intout,ptsout} */
+
 /* ---- fill patterns ---- */
 #define A_color_pairs     0x15afa   /* 8-byte (4-plane) solid-fill pattern per colour index */
 
