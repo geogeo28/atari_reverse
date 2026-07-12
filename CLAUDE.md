@@ -49,6 +49,11 @@ reverse/
   - `fn 0x<addr> <name>` — name/define a function
   - `var 0x<addr> <name>` — label a data address (renames Ghidra `DAT_*`)
   - `cmt 0x<addr> <text>` — plate comment
+  - `param 0x<addr> <ordinal> <name>` — rename a recovered function parameter (safe; no
+    storage/convention change). For register-glue functions, put the register→role map in a `cmt`.
+  - `proto 0x<addr> <name@loc> …` — commit a signature with explicit storage when Ghidra
+    never recovered params. `loc` = stack `off:size` (e.g. `dst@4:4`) or a register (e.g. `n@D0`).
+    Verify the storage against the asm first — wrong storage breaks the decompile.
   - Addresses are **Ghidra addresses** = image offset + load base (default `0x10000`).
   - **Confidence tag**: a trailing `# ctx` on an `fn`/`var` line marks a name inferred
     from call-context, not a confirmed body read (refinable). `ApplyNames` strips it.
@@ -70,3 +75,63 @@ reverse/
 - **Load base `0x10000`** keeps the image clear of the 68k vector page; it's arbitrary
   (PRGs are position-independent via their reloc table). Override: `run.sh` arg / PrgLoader arg 2.
 - **`run.sh` re-imports and wipes names** — only for first bootstrap. Iterate with `reapply.sh`.
+
+## Working conventions (code + commit hygiene)
+
+Adapted from `research_ops/CLAUDE.md`. Same bar; the docs gate points at this workspace's
+surfaces (`names.txt` / `STATUS.md` / `docs/`) instead of a handbook.
+
+### Branch workflow
+- **`main`** — canonical history.
+- **`ganneheim/dev`** — daily WIP; all work happens here. Merge into `main` (fast-forward
+  when possible) to promote. Local-only repo today; push once a remote is added.
+
+### Commit cadence
+Default to smaller commits. **Propose a commit at every logical boundary without being
+asked** — one verified function, a naming sweep, a docs pass, ~10 meaningful edits. One
+giant end-of-session commit is a smell; split it retroactively before promoting.
+
+### Pre-commit code-review gate
+Review the change for quality *before* the docs. Audit the diff against the bar of *code a
+human or agent can read and safely extend months from now*, then fix what you find (or
+justify leaving it):
+- **Correctness** — re-check edge cases and every call site the diff touches. A reconstructed
+  function must be **green under `make test`** (differential vs the Musashi oracle) before it
+  is committed — that is the success criterion, not "looks right".
+- **Test coupling** — a reconstructed function and its differential test
+  (`recreate/test/test_*.py`) move together in the *same* commit; a new function ships with
+  its test. A behaviour change with no matching test movement is the smell.
+- **Low complexity / no duplication / readability** — simplest form that works; logic that
+  appears twice collapses into one named helper; intention-revealing names; comment the
+  *why*. No raw register names (`a1`, `d0`–`d7`) or terse locals (`m`, `p`, `rd`) — use
+  semantic names with the register map in a one-line comment (see `recreate/README.md`).
+- `/code-review` automates the diff sweep — run it at the change's scale, fix the real
+  findings, and **keep out-of-scope findings out of the commit** (note them, don't fold them in).
+
+### Pre-commit docs gate
+Docs are part of the change, not a follow-up. Before staging, update every surface that
+applies, in the *same* commit:
+- **`names.txt`** — the name map is the source of truth; new/renamed functions or globals land here.
+- **`recreate/STATUS.md`** — per-function progress (verified count + row) when a function is ported.
+- **`docs/<area>.md`** — when a mechanism, binary format, or gotcha is discovered.
+- **README** (`projects/<name>/README.md`, `recreate/README.md`) — when the approach or layout moves.
+
+### Commit message style
+- **No `Co-Authored-By: Claude` footer.** The researcher commits as themselves.
+- Title ≤70 chars.
+- Body grouped by category where useful (Reconstruction / Harness / Docs / Deferred).
+
+### Git safety rails
+- Never `--no-verify`, `--force`, or `--amend` a shared/merged commit — create new commits.
+- **Prefer `git add <paths>` over `git add -A`** — this workspace has concurrent work in
+  other projects (`projects/joust/`, `tools/`); `-A` sweeps their changes into your commit.
+  Verify `git diff --cached --stat` before committing.
+- Confirm before destructive ops (`reset --hard`, `checkout --`, `clean -f`).
+
+### Edit / topic-switch hygiene
+- Extend `old_string` through the closing brace / end-of-block, so a mismatch fails loudly
+  rather than silently corrupting mid-function.
+- Verify every tool / command / symbol exists before using it — grep the repo, read the
+  disassembly; don't invent names.
+- Announce "switching from X to Y"; offer to commit the previous topic first. Don't let
+  unrelated changes pile up in one working tree.
