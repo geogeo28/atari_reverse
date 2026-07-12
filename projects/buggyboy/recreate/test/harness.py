@@ -45,6 +45,37 @@ def label(addr):
     return NAME_MAP[best] + (f"+{off}" if off else "")
 
 
+# ---- GEMDOS file staging (mirror of os.h; the open/read round-trip test pins the two) ----
+OS_FS_TABLE = 0xBF000        # staged-file table base
+OS_FS_STAGING = 0xC0000      # raw file bytes grow upward from here
+OS_FS_ENTRY = 32             # per-entry: name[16] | staging u32 | size u32 | cursor u32 | open u32
+OS_FS_NAME = 16
+OS_FS_FIRST_HANDLE = 6
+
+
+def stage_files(files):
+    """Lay staged files into FS-table + staging pokes so os_fopen/os_fread can serve them.
+
+    ``files`` = [(name, data), ...] in slot order. Returns (pokes, handles), where
+    handles[name] is the handle os_fopen(name) will return. Merge ``pokes`` into a test's
+    poke dict. If these constants drift from os.h the open/read test fails (the cross-language
+    pin), since os_fopen would look at the wrong table address.
+    """
+    pokes, handles, off = {}, {}, OS_FS_STAGING
+    for slot, (name, data) in enumerate(files):
+        nb = name.encode("ascii")
+        assert len(nb) < OS_FS_NAME, f"{name!r} too long for the {OS_FS_NAME}-byte name field"
+        entry = (nb.ljust(OS_FS_NAME, b"\0")
+                 + off.to_bytes(4, "big") + len(data).to_bytes(4, "big")
+                 + b"\0" * 8)                          # cursor = 0, open = 0
+        pokes[OS_FS_TABLE + slot * OS_FS_ENTRY] = entry
+        pokes[off] = bytes(data)
+        handles[name] = OS_FS_FIRST_HANDLE + slot
+        off += len(data)
+        assert off <= emu.STACK_GUARD_LO, "staged files overflowed the stack guard"
+    return pokes, handles
+
+
 def make_image(pokes=None):
     """Fresh copy of the loaded image with {addr: bytes} written in."""
     img = bytearray(BASE_IMAGE)

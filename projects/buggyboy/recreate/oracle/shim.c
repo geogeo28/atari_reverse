@@ -61,9 +61,9 @@ static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT mo
 
 /* Service the trap the CPU jumped to (vec = 1/2/13/14). Reads the exception frame at A7,
  * services the OS call, and returns control to the caller with D0 set. Calls we faithfully
- * model set `modeled`; anything else (Fread, Super, BIOS, an unmodeled GEM opcode, unknown fn)
- * is counted in g_unmodeled so the run can be rejected rather than trusted against a
- * fabricated result. */
+ * model set `modeled`; anything else (Super, BIOS, an unmodeled GEM opcode, an unstaged file,
+ * unknown fn) is counted in g_unmodeled so the run can be rejected rather than trusted against
+ * a fabricated result. */
 static void handle_trap(int vec) {
     uint32_t sp     = m68k_get_reg(0, M68K_REG_A7);
     uint32_t sr     = m68k_read_memory_16(sp);       /* pushed status register */
@@ -87,10 +87,24 @@ static void handle_trap(int vec) {
         switch (fn) {
         case 0x48:                                    /* Malloc: bump-allocate a block */
             d0 = g_heap; g_heap += (m68k_read_memory_32(arg1) + 1u) & ~1u; break;
-        case 0x3d: d0 = OS_FILE_HANDLE; break;        /* Fopen */
-        case 0x3e: case 0x49: case 0x4a:              /* Fclose / Mfree / Mshrink -> success */
+        case 0x3d: {                                  /* Fopen(fname, mode) -> handle */
+            int32_t h = os_fopen(g_mem, m68k_read_memory_32(caller + 2));
+            if (h < 0) modeled = 0; else d0 = (uint32_t)h;
+            break;
+        }
+        case 0x3f: {                                  /* Fread(handle, count, buf) -> bytes read */
+            int32_t nread = os_fread(g_mem, (uint16_t)m68k_read_memory_16(caller + 2),
+                                     m68k_read_memory_32(caller + 4),
+                                     m68k_read_memory_32(caller + 8));
+            if (nread < 0) modeled = 0; else d0 = (uint32_t)nread;
+            break;
+        }
+        case 0x3e:                                    /* Fclose(handle) */
+            if (os_fclose(g_mem, (uint16_t)m68k_read_memory_16(caller + 2)) < 0) modeled = 0;
+            break;
+        case 0x49: case 0x4a:                         /* Mfree / Mshrink -> success */
         case 0x02: case 0x09: break;                  /* Cconout / Cconws -> no image effect */
-        default: modeled = 0; break;                  /* Fread(0x3f), Super, Pexec, unknown */
+        default: modeled = 0; break;                  /* Super, Pexec, unknown */
         }
     } else if (vec == 14) {                           /* XBIOS */
         switch (fn) {

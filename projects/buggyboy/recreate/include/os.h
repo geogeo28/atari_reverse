@@ -6,27 +6,27 @@
  * Modeled: calls that only touch hardware or files (Setpalette/Setcolor/Setscreen, sound,
  * console I/O, Ikbdws) have NO image effect and return 0. Physbase/Logbase return
  * OS_SCREEN_BASE; Getrez returns 0 (low-res); Malloc bump-allocates from OS_HEAP_BASE;
- * Mshrink/Mfree/Fclose return 0; Fopen returns OS_FILE_HANDLE. XBIOS Supexec runs the
- * passed routine in place (its rts returns to the caller, its D0 becomes the result).
+ * Mshrink/Mfree return 0. GEMDOS Fopen/Fread/Fclose are modeled by os_fopen/os_fread/os_fclose
+ * over a staged-file table (below). XBIOS Supexec runs the passed routine in place (its rts
+ * returns to the caller, its D0 becomes the result).
  *
  * GEM trap #2 (AES/VDI) is modeled by os_gem_trap() below — the same code the oracle's
  * shim and the reconstructed gem_aes/gem_vdi wrappers both run, so their image writes agree
  * by construction. Only the three opcodes BuggyBoy actually uses are modeled.
  *
- * DEFERRED (serviced as return 0, effect NOT modeled): GEMDOS Fread (needs a file model)
- * and GEMDOS Super. A function that depends on these cannot be verified until the model is
- * extended — see recreate/README.md. OS_HEAP_BASE/OS_SCREEN_BASE are provisional low-memory
- * arenas that only fit small blocks; functions that Malloc large screen buffers need a
- * larger IMAGE_SIZE first.
+ * DEFERRED (serviced as return 0, effect NOT modeled): GEMDOS Super. A function that depends
+ * on it cannot be verified until the model is extended — see recreate/README.md.
+ * OS_HEAP_BASE/OS_SCREEN_BASE are provisional low-memory arenas that only fit small blocks;
+ * functions that Malloc large screen buffers need Malloc pointed at a real in-image block.
  */
 #ifndef BB_OS_H
 #define BB_OS_H
 
+#include <string.h>
 #include "machine.h"
 
 #define OS_SCREEN_BASE 0x8000u   /* Physbase/Logbase result (in-image screen region) */
 #define OS_HEAP_BASE   0x1000u   /* Malloc bump arena start (small blocks only) */
-#define OS_FILE_HANDLE 6u        /* Fopen result */
 
 /* ---- GEM trap #2 (AES / VDI) --------------------------------------------------------
  * A trap #2 selects the subsystem by D0 and points D1 at a parameter block of array
@@ -86,6 +86,71 @@ static inline int os_gem_trap(uint8_t *mem, uint32_t d0, uint32_t pblk) {
         }
         return 0;
     }
+    return 0;
+}
+
+/* ---- GEMDOS file I/O (Fopen 0x3d / Fread 0x3f / Fclose 0x3e) -------------------------
+ * The oracle can't touch a real filesystem, so files are *staged* into the image: the harness
+ * writes each file's raw bytes into the staging area and one table entry per file. os_fopen
+ * resolves a filename to a handle, os_fread copies bytes out of staging, os_fclose releases the
+ * slot — all pure image operations shared by the shim and the reconstructed loaders. An
+ * unstaged filename / bad handle returns -1, which the caller treats as unmodeled (rejected),
+ * so a loader reading a file we didn't stage can never be falsely "verified".
+ *
+ * Table entry (OS_FS_ENTRY bytes): name[16] (nul-terminated) | staging addr u32 | size u32 |
+ * cursor u32 | open flag u32. The harness lays out the same layout (see harness.stage_files);
+ * the open/read round-trip test pins the two in agreement. */
+#define OS_FS_TABLE        0xbf000u  /* staged-file table: OS_FS_SLOTS entries of OS_FS_ENTRY bytes */
+#define OS_FS_STAGING      0xc0000u  /* raw file bytes, laid out below the stack by the harness */
+#define OS_FS_SLOTS        8
+#define OS_FS_ENTRY        32
+#define OS_FS_NAME         16        /* name field width; filenames must be < 16 chars */
+#define OS_FS_FIRST_HANDLE 6         /* GEMDOS handles 0..5 are reserved; files start here */
+
+static inline int os_fs_name_eq(const uint8_t *a, const uint8_t *b) {
+    for (int i = 0; i < OS_FS_NAME; i++) {
+        if (a[i] != b[i]) return 0;
+        if (a[i] == 0) return 1;
+    }
+    return 1;                                        /* matched the whole (unterminated) field */
+}
+
+/* Fopen(name): match the staged-file table, reset the cursor, return a handle (>= 6), or -1. */
+static inline int32_t os_fopen(uint8_t *mem, uint32_t name_ptr) {
+    for (int slot = 0; slot < OS_FS_SLOTS; slot++) {
+        uint8_t *e = mem + OS_FS_TABLE + slot * OS_FS_ENTRY;
+        if (e[0] == 0) continue;                     /* empty slot */
+        if (os_fs_name_eq(mem + name_ptr, e)) {
+            wr32(e + 24, 0);                         /* cursor = 0 */
+            wr32(e + 28, 1);                         /* open */
+            return OS_FS_FIRST_HANDLE + slot;
+        }
+    }
+    return -1;
+}
+
+/* Fread(handle, count, buf): copy min(count, remaining) bytes from the cursor into buf, advance
+ * the cursor, return the byte count. -1 if the handle isn't an open staged file. */
+static inline int32_t os_fread(uint8_t *mem, uint16_t handle, uint32_t count, uint32_t buf) {
+    int slot = (int)handle - OS_FS_FIRST_HANDLE;
+    if (slot < 0 || slot >= OS_FS_SLOTS) return -1;
+    uint8_t *e = mem + OS_FS_TABLE + slot * OS_FS_ENTRY;
+    if (e[0] == 0 || be32(e + 28) == 0) return -1;   /* not staged / not open */
+    uint32_t staging = be32(e + 16), size = be32(e + 20), cursor = be32(e + 24);
+    uint32_t n = size - cursor;                      /* remaining; cursor never exceeds size */
+    if (count < n) n = count;
+    memcpy(mem + buf, mem + staging + cursor, n);
+    wr32(e + 24, cursor + n);
+    return (int32_t)n;
+}
+
+/* Fclose(handle): mark the slot closed. -1 on a bad handle. */
+static inline int32_t os_fclose(uint8_t *mem, uint16_t handle) {
+    int slot = (int)handle - OS_FS_FIRST_HANDLE;
+    if (slot < 0 || slot >= OS_FS_SLOTS) return -1;
+    uint8_t *e = mem + OS_FS_TABLE + slot * OS_FS_ENTRY;
+    if (e[0] == 0) return -1;
+    wr32(e + 28, 0);
     return 0;
 }
 

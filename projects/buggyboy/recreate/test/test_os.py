@@ -120,3 +120,38 @@ def test_supexec_nested():
     mem, _, out = emu.run(img, 0x10000)
     assert mem[0xc000:0xc004] == bytes.fromhex("deadbeef"), "Supexec routine did not execute"
     assert out["d0"] & 0xffff == 0x1234, "Supexec did not return the routine's result"
+
+
+def test_fread_file_model():
+    """Fopen/Fread/Fclose over a staged file: the bytes land in the buffer and the handle +
+    (short) byte count come back. Also pins harness.stage_files against os.h's table layout —
+    a mismatch makes os_fopen miss the entry and emu.run raise (unmodeled)."""
+    data = bytes(range(16))
+    stage_pokes, handles = harness.stage_files([("TEST.DAT", data)])
+    assert handles["TEST.DAT"] == 6
+    # Stub @0x10000: Fopen("TEST.DAT",0) -> d6; save handle; Fread(d6, 0x20, 0x30000); save
+    # bytes-read; Fclose(d6); rts. Name at 0x10044 (just past the 0x44-byte stub). Buf @0x30000,
+    # bytes-read word @0x30020, handle word @0x30022 (free region, below the program).
+    stub = bytes.fromhex(
+        "3f3c0000"          # move.w #0,-(a7)          ; mode
+        "2f3c00010044"      # move.l #0x10044,-(a7)    ; &name
+        "3f3c003d"          # move.w #0x3d,-(a7)       ; Fopen
+        "4e41" "508f"       # trap #1 ; addq.l #8,a7
+        "3c00"              # move.w d0,d6             ; save handle
+        "33c600030022"      # move.w d6,(0x30022).l    ; store handle
+        "2f3c00030000"      # move.l #0x30000,-(a7)    ; &buf
+        "2f3c00000020"      # move.l #0x20,-(a7)       ; count 32 (> size 16 -> short read)
+        "3f06"              # move.w d6,-(a7)          ; handle
+        "3f3c003f"          # move.w #0x3f,-(a7)       ; Fread
+        "4e41" "defc000c"   # trap #1 ; adda.w #0xc,a7
+        "33c000030020"      # move.w d0,(0x30020).l    ; store bytes-read
+        "3f06"              # move.w d6,-(a7)          ; handle
+        "3f3c003e"          # move.w #0x3e,-(a7)       ; Fclose
+        "4e41" "588f"       # trap #1 ; addq.l #4,a7
+        "4e75")             # rts
+    pokes = {0x10000: stub, 0x10044: b"TEST.DAT\0", **stage_pokes}
+    mem, _, _ = emu.run(harness.make_image(pokes), 0x10000)
+    assert mem[0x30000:0x30010] == data, "Fread should copy the staged bytes into the buffer"
+    assert mem[0x30010:0x30020] == bytes(16), "Fread must not write past the file's actual size"
+    assert int.from_bytes(mem[0x30020:0x30022], "big") == 16, "Fread should return the byte count"
+    assert int.from_bytes(mem[0x30022:0x30024], "big") == 6, "Fopen should return handle 6"
