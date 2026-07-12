@@ -1,6 +1,58 @@
-# Joust (Atari ST, Williams/Atari port; Gamex release). Depacked from JOUSTS.CTE
-# via tools/depack_gamex.py. Ghidra addresses = image offset + 0x10000.
-# Seed only — bootstrap with run.sh, then read decomp.c and grow this map.
+# Joust (Atari ST, Williams/Atari; Gamex release). Depacked from JOUSTS.CTE via
+# tools/depack_gamex.py. Ghidra addresses = image offset + 0x10000. No DRI symbols.
+# First naming pass: init path, I/O, and the sprite/blit layer. Big game-logic
+# functions in the main loop are still FUN_* (next passes). "# ctx" = inferred.
 
+# ==== entry / init (4 one-time calls in _start) ====
 fn 0x10000 _start
-cmt 0x10000 Entry: init dispatcher (~24 jsr to subsystem setup) then falls into the main loop.
+fn 0x10080 init_system
+fn 0x105f0 init_game
+fn 0x10aae title_screen
+fn 0x104b2 init_video               # ctx
+
+# ==== main-loop subsystems (named so far) ====
+fn 0x1757a scroll_screen_up          # ctx
+fn 0x175de draw_scroller             # ctx
+fn 0x1033e count_objects             # ctx
+fn 0x11d9a wait_vsync                # ctx
+fn 0x1052e anim_sprites              # ctx
+fn 0x10a8a read_key_flag             # ctx
+fn 0x11c24 poll_key                  # ctx
+
+# ==== graphics primitives ====
+fn 0x1042a blit_copy
+fn 0x10456 blit_or
+fn 0x10482 blit_andnot
+fn 0x17752 blit_sprite_mask
+fn 0x177a2 blit_sprite
+fn 0x175ba clear_sprite_mask         # ctx
+fn 0x102e2 fill_screen
+fn 0x10700 draw_string
+
+# ==== palette / colour ====
+fn 0x10c46 xbios_setpalette
+fn 0x144b0 xbios_setcolor
+fn 0x10c56 cycle_palette             # ctx
+fn 0x10a56 set_color_lvl             # ctx
+fn 0x105c2 advance_scroll            # ctx
+fn 0x102fe stub_ret                  # ctx
+
+# ==== variables ====
+var 0x10dde screen_base
+var 0x10d60 screen_back
+var 0x10d66 bytes_per_row
+var 0x117ba screen_right
+var 0x117b8 screen_left
+var 0x00484 conterm
+var 0x10d22 conterm_save
+var 0x10cf2 num_players
+var 0x10f36 object_table
+var 0x10dfc lives_or_timer           # ctx
+
+# ==== comments ====
+cmt 0x10000 Entry: init_system, init_game, title_screen, init_video; then infinite main loop of 17 per-frame subsystems.
+cmt 0x10080 init_system: check resolution (bail to halt if mono), install screen/vbl vectors, save+mask conterm (0x484).
+cmt 0x105f0 init_game: copy state templates into object_table, relocate ptrs by screen_base, clear arrays, set screen geometry + back buffer.
+cmt 0x10aae title_screen: draw title bitmap, cycle palette, read '1'/'2' (num_players) with attract timeout (matches README HW-detect/select).
+cmt 0x10700 draw_string: render a text string (arg = string address) to the screen.
+cmt 0x177a2 blit_sprite: shifted masked sprite draw (AND mask + OR data), 0x50-word row stride.

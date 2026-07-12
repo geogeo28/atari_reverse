@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 6/91.**
+**Verified: 7/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -52,7 +52,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x11c5a` | `evt_score_msg` | 24 |  |  |
 | `0x11c7a` | `play_event_tune` | 56 |  |  |
 | `0x11cb2` | `handle_marker` | 42 |  |  |
-| `0x11f4c` | `build_road_geometry` | 356 |  |  |
+| `0x11f4c` | `build_road_geometry` | 356 | ✅ verified | 300-seed fuzz (whole-image) |
 | `0x120b0` | `read_input` | 70 |  |  |
 | `0x120f8` | `set_rez` | 24 |  |  |
 | `0x12110` | `read_joystick` | 20 |  |  |

@@ -21,4 +21,20 @@
 /* ---- fill patterns ---- */
 #define A_color_pairs     0x15afa   /* 8-byte (4-plane) solid-fill pattern per colour index */
 
+/* ---- road / perspective (build_road_geometry @ 0x11f4c) ---- */
+#define A_road_seg_data       0x18d1c   /* per-leg road segment slopes (shorts): [0] + [1..12] */
+#define A_view_flags          0x18c56   /* leg/view selector (0,2,4,6) */
+#define A_road_curve          0x18c6a   /* signed current road curvature */
+#define A_horizon             0x1905e   /* horizon position input */
+#define A_road_seg_head       0x18cb6   /* cached road_seg_data[0] */
+#define A_road_scanline_tbl   0x190ac   /* per-row cumulative slope (shorts) */
+#define A_road_curve_tbl      0x18efc   /* 106 longwords: per-row curve offset (accumulated) */
+#define A_road_curve_tbl_end  0x190a4   /* one past road_curve_tbl; perspective fill runs downward */
+#define A_road_width_tbl      0x18f24   /* per-row road half-width (shorts, stride 4) */
+#define A_road_width_src      0x18d5a   /* width source values (shorts, stride 0x20) */
+#define A_persp_seg_tbl       0x17156   /* const: signed per-segment run lengths */
+#define A_width_count_tbl     0x1718a   /* const: per-row width run counts, 4 view banks of 16 */
+#define A_horizon_row         0x18c6c   /* output: clamped horizon scanline */
+#define A_horizon_frac        0x18c6e   /* output: horizon sub-row parity */
+
 #endif /* BB_ADDRS_H */

@@ -30,4 +30,7 @@ void g_fill_words(uint8_t *image, uint32_t d1, uint32_t d2);
 void g_fill_span(uint8_t *image, uint32_t d0, uint32_t d1, uint32_t d2);
 void g_fill_rect(uint8_t *image, uint32_t d0, uint32_t d1, uint32_t d3, uint32_t d4);
 
+/* ---- road perspective (build_road_geometry @ 0x11f4c) ---- */
+void g_build_road_geometry(uint8_t *image);
+
 #endif /* BB_BUGGYBOY_H */
