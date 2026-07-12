@@ -76,11 +76,25 @@ Imports the dump raw at `<base>`, seeds `<entry>`, auto-analyzes, annotates trap
 - If the game re-packs/overlays parts at run time, dump at the moment the code you care
   about is resident (e.g. break inside the level you're analyzing).
 
-## Alternative: static depack
+## Alternative: static depack (no emulator)
 
-If the depacker is simple (an LZ loop like `START.TOS`'s at `0x32–0x6c`: literal runs +
-back-references controlled by `bmi`/`beq`), you can reimplement it in Python and inflate
-the stream offline — no emulator. Faster to re-run, but you must nail the exact format and
-locate the packed stream; the Hatari method is more robust and packer-agnostic.
+If the depacker is a simple LZ loop (literal runs + back-references, controlled by
+`bmi`/`beq` — like `START.TOS`'s at `0x32–0x6c`), reimplement it in Python and inflate
+the stream offline. Faster and fully scriptable; you must identify the exact format and
+stream offset, but the output is self-validating (a correct depack of a GEMDOS program
+starts with `60 1a`).
+
+`tools/depack_gamex.py` does exactly this for the **Gamex / "PP" LZSS** cruncher
+(control byte: `0`=end, `0x01–0x7f`=literal run, `0x80–0xff`=match with `&0x3f` length,
+bit6 = short/long offset). It auto-scans for the stream offset that yields a valid PRG:
+
+```bash
+python3 tools/depack_gamex.py projects/<name>/bin/GAME.CTE projects/<name>/bin/GAME.PRG
+```
+
+Worked on Joust: `JOUSTS.CTE` (37 KB, entropy 6.95) → `JOUST.PRG` (114 KB, entropy 4.01,
+1227 relocations) — a standard PRG that then goes straight through the normal pipeline
+(`PrgLoader`, no memory dump needed). Use Hatari when the packer is unknown/complex or
+self-modifying; use a static depacker when you can read the algorithm.
 
 → Detection helper: `prg_dis.py` (entropy line). Loading clean PRGs: [`binary-formats.md`](binary-formats.md).

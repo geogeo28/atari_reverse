@@ -1,0 +1,6 @@
+# Joust (Atari ST, Williams/Atari port; Gamex release). Depacked from JOUSTS.CTE
+# via tools/depack_gamex.py. Ghidra addresses = image offset + 0x10000.
+# Seed only — bootstrap with run.sh, then read decomp.c and grow this map.
+
+fn 0x10000 _start
+cmt 0x10000 Entry: init dispatcher (~24 jsr to subsystem setup) then falls into the main loop.

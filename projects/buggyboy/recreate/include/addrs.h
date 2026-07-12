@@ -14,4 +14,11 @@
 /* ---- gameplay state ---- */
 #define A_game_over_flag  0x18c34   /* tst.w'd at add_score entry */
 
+/* ---- screen / double-buffer ---- */
+#define A_flip_idx        0x18bf2   /* word: 0 or 4, selects the draw buffer in physbase_tbl */
+#define A_physbase_tbl    0x18bf4   /* table of screen-buffer pointers, indexed by flip_idx */
+
+/* ---- fill patterns ---- */
+#define A_color_pairs     0x15afa   /* 8-byte (4-plane) solid-fill pattern per colour index */
+
 #endif /* BB_ADDRS_H */

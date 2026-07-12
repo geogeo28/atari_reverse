@@ -20,16 +20,23 @@ exactly the predicted gap. This project drove the new
 - `GXUT20.PRG` is a ready target for the full naming loop.
 - `START.TOS` matched the documented "custom loader/depacker" pattern; `prg_dis` read it cleanly.
 
-## Where it hit the wall ✗ (→ new capability)
-`JOUSTS.CTE` is crunched, so static tools can't touch the real game. Fix: depack first,
-per `docs/packed-executables.md`.
+## Where it hit the wall ✗ → then closed it ✓
+`JOUSTS.CTE` is crunched (Gamex/"PP" LZSS). **Statically depacked** with
+`tools/depack_gamex.py` (algorithm reverse-engineered from `START.TOS`, validated by
+self-depacking `START.TOS` → a valid PRG):
 
-## Next step (open)
-Depack via Hatari and analyze the dump:
+`JOUSTS.CTE` (37 KB, entropy 6.95) → **`bin/JOUST.PRG`** (114 KB, entropy 4.01,
+text=0x13aae, data=0x7d00, **1227 relocations**) — a standard GEMDOS PRG. First-pass
+confirms the real game: clean init-dispatcher entry, strings `PREPARE TO JOUST` /
+`EGG WAVE` / `PTERODACTYL WAVE` / `COPYRIGHT 1985 … RUGBY CIRCLE`, loads `JOUST.MUR`
+music, GEMDOS file I/O + XBIOS video + BIOS keyboard. No DRI symbols (unlike BuggyBoy).
+
+## Analyze (normal pipeline — no dump needed)
+`JOUST.PRG` is a plain PRG, so it goes straight through `PrgLoader`:
 ```bash
-bash ../../tools/hatari_run.sh bin 'C:\START.TOS'      # run to title, AltGr+Pause, savebin dump.bin 0 0x100000
-bash ../../tools/load_dump.sh ghidra_proj Joust dump.bin 0x<base> 0x<entry>
-# then the usual names.txt + reapply loop
+bash run.sh          # import JOUST.PRG -> analyze -> annotate -> decomp.c
+# read decomp.c, grow names.txt, then:
+bash reapply.sh
 ```
-Prereq: find the depacked base/entry (trace GEMDOS load, or carve the dump). See the doc.
-`GXUT20.PRG` can be bootstrapped directly with `new_project`-style `headless.sh` any time.
+`names.txt` currently seeds `_start` + the init-dispatcher comment. Full naming is a
+project-sized effort like BuggyBoy — the framework is proven to reach it here.

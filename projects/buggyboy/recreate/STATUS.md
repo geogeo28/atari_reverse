@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 1/91.**
+**Verified: 6/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -76,11 +76,11 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12d38` | `init_leg_dash` | 80 |  |  |
 | `0x12d88` | `draw_leg_labels` | 154 |  |  |
 | `0x12e22` | `draw_frame` | 22 |  |  |
-| `0x12e38` | `clear_screen` | 30 |  |  |
-| `0x12e56` | `fill_screen` | 4 |  |  |
-| `0x12e5a` | `fill_words` | 2 |  |  |
-| `0x12e5c` | `fill_span` | 36 |  |  |
-| `0x12e80` | `fill_rect` | 48 |  |  |
+| `0x12e38` | `clear_screen` | 30 | ✅ verified | flip 0/4 |
+| `0x12e56` | `fill_screen` | 4 | ✅ verified | flip 0/4 x colours |
+| `0x12e5a` | `fill_words` | 2 | ✅ verified | 500-seed fuzz |
+| `0x12e5c` | `fill_span` | 36 | ✅ verified | 500-seed fuzz |
+| `0x12e80` | `fill_rect` | 48 | ✅ verified | 500-seed fuzz + stride check |
 | `0x12eb0` | `xbios_setpalette` | 12 |  |  |
 | `0x12ebc` | `stop_music_chk` | 8 |  |  |
 | `0x12ec4` | `stop_music` | 50 |  |  |

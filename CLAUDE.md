@@ -30,8 +30,9 @@ reverse/
 ├── CLAUDE.md                 # this file
 ├── docs/                     # transferable knowledge, one file per expertise domain
 ├── tools/                    # game-agnostic tooling
-│   ├── prg_dis.py            # stdlib GEMDOS .PRG analyzer + 68000 first-pass disassembler
+│   ├── prg_dis.py            # stdlib GEMDOS .PRG analyzer + 68000 first-pass disassembler (prints entropy)
 │   ├── extract_graphics.py   # ST 4-plane / RLE graphics -> PNG
+│   ├── depack_gamex.py       # static depacker for the Gamex/"PP" LZSS cruncher (.CTE -> .PRG)
 │   ├── ghidra_scripts/       # PrgLoader, AtariOsTrapAnnotate, ExportDecompC, ApplyNames, DumpNames, LoadDump
 │   ├── headless.sh           # bootstrap: import->load->analyze->annotate->export
 │   ├── reapply.sh            # fast naming loop: apply names.txt -> re-export
