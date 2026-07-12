@@ -7,6 +7,7 @@
  */
 #include <stdint.h>
 #include "m68k.h"
+#include "os.h"
 
 static uint8_t *g_mem;
 static uint32_t g_size;
@@ -40,6 +41,66 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
     logw(a); logw(a + 1); logw(a + 2); logw(a + 3);
 }
 
+/* --- TOS trap dispatch (GEMDOS #1 / BIOS #13 / XBIOS #14, GEM #2) ------------------
+ * Real code enters the OS via `trap #N`. We point each trap vector at a magic PC the run
+ * loop detects; on a hit we read the 68000 exception frame (SR word + return PC long) plus
+ * the function number/args from the caller's stack, apply a deterministic effect (os.h),
+ * set D0, pop the frame, and resume at the caller. Vectors are installed transiently and
+ * restored after the run, so the final image matches a reconstruction that never traps. */
+#define TRAP_VEC_GEMDOS 0x84    /* trap #1  */
+#define TRAP_VEC_GEM    0x88    /* trap #2  (AES/VDI — not modeled) */
+#define TRAP_VEC_BIOS   0xb4    /* trap #13 */
+#define TRAP_VEC_XBIOS  0xb8    /* trap #14 */
+#define MAGIC_GEMDOS 0x120      /* unused vector-page slots, even, never real code (>= 0x10000) */
+#define MAGIC_GEM    0x124
+#define MAGIC_BIOS   0x128
+#define MAGIC_XBIOS  0x12c
+
+static uint32_t g_heap;         /* Malloc bump pointer */
+static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT model (fabricated D0) */
+
+/* Service the trap the CPU jumped to (vec = 1/2/13/14). Reads the exception frame at A7,
+ * services the OS call, and returns control to the caller with D0 set. Calls we faithfully
+ * model set `modeled`; anything else (Fread, Supexec, GEM, BIOS, unknown fn) is counted in
+ * g_unmodeled so the run can be rejected rather than trusted against a fabricated result. */
+static void handle_trap(int vec) {
+    uint32_t sp     = m68k_get_reg(0, M68K_REG_A7);
+    uint32_t sr     = m68k_read_memory_16(sp);       /* pushed status register */
+    uint32_t retpc  = m68k_read_memory_32(sp + 2);   /* return address (past the trap) */
+    uint32_t caller = sp + 6;                         /* caller's stack: fn word, then args */
+    uint16_t fn     = (uint16_t)m68k_read_memory_16(caller);
+    uint32_t arg1   = caller + 2;
+    uint32_t d0 = 0;                                  /* default: success / no image effect */
+    int modeled = 1;
+
+    if (vec == 1) {                                   /* GEMDOS */
+        switch (fn) {
+        case 0x48:                                    /* Malloc: bump-allocate a block */
+            d0 = g_heap; g_heap += (m68k_read_memory_32(arg1) + 1u) & ~1u; break;
+        case 0x3d: d0 = OS_FILE_HANDLE; break;        /* Fopen */
+        case 0x3e: case 0x49: case 0x4a:              /* Fclose / Mfree / Mshrink -> success */
+        case 0x02: case 0x09: break;                  /* Cconout / Cconws -> no image effect */
+        default: modeled = 0; break;                  /* Fread(0x3f), Super, Pexec, unknown */
+        }
+    } else if (vec == 14) {                           /* XBIOS */
+        switch (fn) {
+        case 0x02: case 0x03: d0 = OS_SCREEN_BASE; break;   /* Physbase / Logbase */
+        case 0x04:                                    /* Getrez -> low-res */
+        case 0x05: case 0x06: case 0x07:              /* Setscreen / Setpalette / Setcolor */
+        case 0x25: case 0x28: case 0x2a: break;       /* Vsync / Xbtimer / Dosound -> no effect */
+        default: modeled = 0; break;                  /* Supexec, unknown */
+        }
+    } else {                                          /* BIOS(13) and GEM(2): not modeled */
+        modeled = 0;
+    }
+    if (!modeled) g_unmodeled++;
+
+    m68k_set_reg(M68K_REG_SR, sr);                    /* restore SR first (may reselect SSP) */
+    m68k_set_reg(M68K_REG_A7, caller);                /* then pop the 6-byte exception frame */
+    m68k_set_reg(M68K_REG_PC, retpc);
+    m68k_set_reg(M68K_REG_D0, d0);
+}
+
 /* Run `entry` to its rts. dregs/aregs are D0..D7 / A0..A7 inputs (aregs[7] overridden by sp).
  * Returns 1 if the function returned to the sentinel (reached its rts), 0 if it hit the
  * instruction cap first (a truncated run whose memory must NOT be trusted as final).
@@ -60,18 +121,41 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     m68k_set_reg(M68K_REG_PC, entry);
     m68k_write_memory_32(sp, sentinel);   /* return address: rts -> sentinel */
 
+    /* Install trap vectors transiently (restored below so the final image is trap-free). */
+    uint32_t save_g = m68k_read_memory_32(TRAP_VEC_GEMDOS), save_x = m68k_read_memory_32(TRAP_VEC_XBIOS);
+    uint32_t save_b = m68k_read_memory_32(TRAP_VEC_BIOS),   save_a = m68k_read_memory_32(TRAP_VEC_GEM);
+    m68k_write_memory_32(TRAP_VEC_GEMDOS, MAGIC_GEMDOS);
+    m68k_write_memory_32(TRAP_VEC_XBIOS, MAGIC_XBIOS);
+    m68k_write_memory_32(TRAP_VEC_BIOS, MAGIC_BIOS);
+    m68k_write_memory_32(TRAP_VEC_GEM, MAGIC_GEM);
+    g_heap = OS_HEAP_BASE;
+    g_unmodeled = 0;
+
     g_wn = 0;                             /* write-set = the function's writes only */
     uint32_t n = 0;
-    while (n < max_insns && m68k_get_reg(0, M68K_REG_PC) != sentinel) {
-        m68k_execute(1);
-        n++;
+    for (; n < max_insns; n++) {
+        uint32_t pc = m68k_get_reg(0, M68K_REG_PC);
+        if (pc == sentinel) break;
+        if      (pc == MAGIC_GEMDOS) handle_trap(1);
+        else if (pc == MAGIC_XBIOS)  handle_trap(14);
+        else if (pc == MAGIC_BIOS)   handle_trap(13);
+        else if (pc == MAGIC_GEM)    handle_trap(2);
+        else                         m68k_execute(1);
     }
     out_regs[0] = m68k_get_reg(0, M68K_REG_D0);
     out_regs[1] = m68k_get_reg(0, M68K_REG_D1);
     out_regs[2] = m68k_get_reg(0, M68K_REG_A0);
     out_regs[3] = m68k_get_reg(0, M68K_REG_A1);
+
+    uint32_t wn = g_wn;                              /* keep the restore writes out of the write-set */
+    m68k_write_memory_32(TRAP_VEC_GEMDOS, save_g);   /* restore vectors */
+    m68k_write_memory_32(TRAP_VEC_XBIOS, save_x);
+    m68k_write_memory_32(TRAP_VEC_BIOS, save_b);
+    m68k_write_memory_32(TRAP_VEC_GEM, save_a);
+    g_wn = wn;
     return m68k_get_reg(0, M68K_REG_PC) == sentinel;   /* reached rts? */
 }
 
 uint32_t        osh_num_writes(void)  { return g_wn; }
 const uint32_t *osh_write_addrs(void) { return g_waddr; }
+uint32_t        osh_unmodeled(void)   { return g_unmodeled; }

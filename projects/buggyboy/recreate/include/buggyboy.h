@@ -55,4 +55,8 @@ void g_blit_obj_Rn2(uint8_t *image, uint32_t buf_base, uint32_t width, uint32_t 
 void g_blit_obj_Lf2(uint8_t *image, uint32_t buf_base, uint32_t width, uint32_t fill_lo, uint32_t fill_hi);
 void g_blit_obj_Rf2(uint8_t *image, uint32_t buf_base, uint32_t width, uint32_t fill_lo, uint32_t fill_hi);
 
+/* ---- OS wrappers (GEMDOS/BIOS/XBIOS glue); see os.h for the shared trap model ---- */
+void g_xbios_setscreen(uint8_t *image);
+void g_xbios_setpalette(uint8_t *image, uint32_t palette_ptr);   /* A0 -> 16-word palette */
+
 #endif /* BB_BUGGYBOY_H */

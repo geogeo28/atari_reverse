@@ -26,6 +26,7 @@ _LIB.osh_run.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes
 _LIB.osh_run.restype = ctypes.c_int
 _LIB.osh_num_writes.restype = ctypes.c_uint32
 _LIB.osh_write_addrs.restype = _u32p
+_LIB.osh_unmodeled.restype = ctypes.c_uint32
 
 
 def run(image, entry, regs=None, max_insns=200_000):
@@ -49,6 +50,9 @@ def run(image, entry, regs=None, max_insns=200_000):
     if not reached:
         raise RuntimeError(f"function @ {entry:#x} did not return within {max_insns} "
                            f"instructions; final memory is mid-execution, not trustworthy")
+    if _LIB.osh_unmodeled():
+        raise RuntimeError(f"function @ {entry:#x} used an unmodeled OS call "
+                           f"(e.g. Fread/Supexec/GEM); its result is fabricated, not trustworthy")
 
     n = _LIB.osh_num_writes()
     waddr = _LIB.osh_write_addrs()

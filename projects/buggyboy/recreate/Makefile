@@ -10,7 +10,7 @@ SRC     := $(wildcard src/*.c)
 MUSASHI := oracle/musashi
 GENDIR  := oracle/build
 ORACLE  := oracle/build/liboracle.so
-OCFLAGS := -O2 -fPIC -I$(MUSASHI) -I$(GENDIR) -I$(MUSASHI)/softfloat
+OCFLAGS := -O2 -fPIC -Iinclude -I$(MUSASHI) -I$(GENDIR) -I$(MUSASHI)/softfloat
 
 $(CAND): $(SRC) $(wildcard include/*.h)
 	@mkdir -p build
@@ -25,7 +25,7 @@ $(GENDIR)/m68kops.c: $(MUSASHI)/m68kmake.c $(MUSASHI)/m68k_in.c
 	$(CC) -O2 -o $(GENDIR)/m68kmake $(MUSASHI)/m68kmake.c
 	cd $(GENDIR) && ./m68kmake . ../musashi/m68k_in.c
 
-$(ORACLE): oracle/shim.c $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c
+$(ORACLE): oracle/shim.c include/os.h $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c
 	$(CC) $(OCFLAGS) -shared \
 	  $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c oracle/shim.c \
 	  -o $(ORACLE)

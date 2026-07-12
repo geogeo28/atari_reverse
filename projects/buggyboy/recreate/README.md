@@ -58,6 +58,23 @@ First build clones + compiles Musashi under `oracle/musashi/`. Requires the venv
 (`python -m venv .venv && .venv/bin/pip install unicorn pytest` — Unicorn is unused by the
 oracle but kept for ad-hoc experiments).
 
+## OS trap model
+
+OS-bound code enters TOS via `trap #N`, which the oracle can't route to real TOS. Instead
+`oracle/shim.c` points each trap vector at a magic PC, and on a hit reads the 68000 exception
+frame + the GEMDOS/BIOS/XBIOS function number and services the call **deterministically** —
+the semantics both the oracle and any reconstructed wrapper must share live in
+[`include/os.h`](include/os.h). Calls that only touch hardware or files (Setpalette/Setcolor/
+Setscreen, sound, console) have no image effect and return 0; Physbase/Logbase return
+`OS_SCREEN_BASE`; Malloc bump-allocates from `OS_HEAP_BASE`; Fopen returns a fixed handle.
+
+Anything **not faithfully modeled** — GEMDOS `Fread`, XBIOS `Supexec`, all GEM/AES/VDI via
+`trap #2`, or an unknown function number — is counted, and `emu.run` **raises** rather than
+diff a fabricated result. So an OS-bound function can only be marked verified once every OS
+call it makes is genuinely modeled. Extending the model (a file model for `Fread`, nested
+execution for `Supexec`, AES/VDI for `trap #2`, a larger `IMAGE_SIZE` for large `Malloc`s)
+is what unlocks the loaders and `_start`/`main`.
+
 ## Oracle note
 
 The oracle is **Musashi** (kstenerud/Musashi, MAME's 68000 core) — faithful to real 68000

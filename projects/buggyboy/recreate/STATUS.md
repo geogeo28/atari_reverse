@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 15/91.**
+**Verified: 17/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -59,7 +59,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12124` | `install_handlers` | 50 |  |  |
 | `0x12166` | `load_graphics` | 146 |  |  |
 | `0x121f8` | `flip_screen` | 46 |  |  |
-| `0x12226` | `xbios_setscreen` | 26 |  |  |
+| `0x12226` | `xbios_setscreen` | 26 | ✅ verified | trap layer; no image effect |
 | `0x1225a` | `draw_results_screen` | 308 |  |  |
 | `0x1238e` | `update_highscore` | 612 |  |  |
 | `0x125f2` | `draw_leg_results` | 244 |  |  |
@@ -81,7 +81,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12e5a` | `fill_words` | 2 | ✅ verified | 500-seed fuzz |
 | `0x12e5c` | `fill_span` | 36 | ✅ verified | 500-seed fuzz |
 | `0x12e80` | `fill_rect` | 48 | ✅ verified | 500-seed fuzz + stride check |
-| `0x12eb0` | `xbios_setpalette` | 12 |  |  |
+| `0x12eb0` | `xbios_setpalette` | 12 | ✅ verified | trap layer; no image effect |
 | `0x12ebc` | `stop_music_chk` | 8 |  |  |
 | `0x12ec4` | `stop_music` | 50 |  |  |
 | `0x12ef6` | `draw_game_objects` | 376 |  |  |
@@ -127,3 +127,16 @@ raises; a stray write in the guard band fails loudly). Remaining, low-severity, 
   non-walk variants, not through the road walk itself.
 - **fill_span/fill_rect flip slot** — fuzz pins `flip_idx=0`; the slot-4 buffer pointer is
   exercised by `clear_screen`/`fill_screen` but not by span/rect.
+
+## OS trap layer
+
+OS-bound functions now run under the oracle: `trap #1/#13/#14/#2` are serviced by a
+deterministic model (`include/os.h`, dispatched in `oracle/shim.c`). Calls that only touch
+hardware/files (Setpalette/Setcolor/Setscreen, sound, console) have no image effect;
+Physbase/Logbase → OS_SCREEN_BASE, Malloc bump-allocates, Fopen → a fixed handle. Anything
+not faithfully modeled (**Fread**, **Supexec**, all **GEM/AES/VDI via trap #2**, unknown fn)
+is counted and `emu.run` **raises** — a function that hits one cannot be falsely "verified".
+
+Unlocked next (need model extensions): Fread → a file model; Supexec → nested execution;
+GEM trap #2 → AES/VDI param-block modeling (required for `_start`/`main`). Functions that
+Malloc large screen buffers also need a larger `IMAGE_SIZE`.
