@@ -64,5 +64,7 @@ void g_gem_vdi(uint8_t *image);                                  /* trap #2 VDI 
 void g_start(uint8_t *image);                                    /* entry: GEM init, verified @ checkpoint 0x100d4 */
 void g_load_graphics(uint8_t *image);                            /* file loader, verified @ checkpoint 0x121f2 */
 void g_unpack_graphics(uint8_t *image);                          /* GRAPHICS.GRA decompressor, verified @ 0x10720 */
+void g_build_sprite_shifts(uint8_t *image, uint32_t count);      /* D5 = sprite count-1 */
+void g_build_sprite_shifts_msk(uint8_t *image, uint32_t dst_off, uint32_t src_off, uint32_t count); /* D0, D1, D5 */
 
 #endif /* BB_BUGGYBOY_H */

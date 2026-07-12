@@ -91,3 +91,63 @@ void g_unpack_graphics(uint8_t *image) {
     memmove(image + buf_c + GFX_TAIL_DST, image + buf_c + GFX_TAIL_SRC, GFX_TAIL_BYTES);
     /* checkpoint @0x10720: the original then builds the sprite-shift tables. */
 }
+
+/* ---- sprite pre-shift tables (build_sprite_shifts @0x1078c, _msk @0x107f2) ------------
+ * Both read a 16-byte source group per sprite (from the stashed header at buf_aux+0x6d60) as
+ * four 32-bit plane accumulators — plane k = word[k] : word[k+4] (high : low) — and emit 16
+ * progressively-shifted copies into buf_b. Each stored shift is 8 words: the four plane words
+ * at +0..6, and the four shifted-out (overflow) words at +8..14. */
+#define SPRITE_SRC_OFF   GFX_HEADER_DST   /* sprite source = the header stash at buf_aux+0x6d60 */
+#define SPRITE_SHIFTS    16               /* pre-shift positions per sprite */
+#define SPRITE_SRC_STEP  16               /* source bytes consumed per sprite */
+#define SPRITE_MSK_STEP  0x200            /* buf_b advance per sprite in the _msk variant */
+
+static void load_planes(const uint8_t *mem, uint32_t src, uint32_t plane[4]) {
+    for (int k = 0; k < 4; k++)
+        plane[k] = ((uint32_t)be16(mem + src + 2 * k) << 16) | be16(mem + src + 8 + 2 * k);
+}
+
+/* Store one shift position at dst: plane word (high half) at +2k, overflow (low half) at +8+2k. */
+static void store_shift(uint8_t *mem, uint32_t dst, const uint32_t plane[4]) {
+    for (int k = 0; k < 4; k++) {
+        wr16(mem + dst + 2 * k, (uint16_t)(plane[k] >> 16));
+        wr16(mem + dst + 8 + 2 * k, (uint16_t)plane[k]);
+    }
+}
+
+/* build_sprite_shifts @0x1078c — D5 = sprite count (minus one). Emits count+1 sprites' shift
+ * tables contiguously into buf_b; each shift step is an arithmetic right shift (asr.l #1). */
+void g_build_sprite_shifts(uint8_t *image, uint32_t count) {
+    uint32_t src = be32(image + A_buf_aux) + SPRITE_SRC_OFF;
+    uint32_t dst = be32(image + A_buf_b);
+    for (uint32_t sprite = 0; sprite <= (count & 0xffff); sprite++) {
+        uint32_t plane[4];
+        load_planes(image, src, plane);
+        for (int shift = 0; shift < SPRITE_SHIFTS; shift++) {
+            store_shift(image, dst, plane);
+            for (int k = 0; k < 4; k++) plane[k] = (uint32_t)((int32_t)plane[k] >> 1);  /* asr.l */
+            dst += 16;
+        }
+        src += SPRITE_SRC_STEP;
+    }
+}
+
+/* build_sprite_shifts_msk @0x107f2 — D0 = buf_b byte offset, D1 = source byte offset (word,
+ * sign-extended), D5 = count-1. Same layout, but the mask shift is left-with-sticky-bit-0
+ * ((p<<1)|(p&1)) and the 16 shifts are written *downward* (dst -= 16), the block base rising
+ * by 0x200 per sprite. */
+void g_build_sprite_shifts_msk(uint8_t *image, uint32_t dst_off, uint32_t src_off, uint32_t count) {
+    uint32_t src = be32(image + A_buf_aux) + SPRITE_SRC_OFF + sign_ext16(src_off);
+    uint32_t dst = be32(image + A_buf_b) + (dst_off & 0xffff);
+    for (uint32_t sprite = 0; sprite <= (count & 0xffff); sprite++) {
+        uint32_t plane[4];
+        load_planes(image, src, plane);
+        for (int shift = 0; shift < SPRITE_SHIFTS; shift++) {
+            store_shift(image, dst, plane);
+            for (int k = 0; k < 4; k++) plane[k] = (plane[k] << 1) | (plane[k] & 1u);
+            dst -= 16;
+        }
+        dst += SPRITE_MSK_STEP;
+        src += SPRITE_SRC_STEP;
+    }
+}

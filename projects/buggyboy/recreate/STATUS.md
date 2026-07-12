@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 23/91.**
+**Verified: 25/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -33,8 +33,8 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x1047a` | `init_scoretable` | 62 |  |  |
 | `0x104b8` | `init_leg` | 360 |  |  |
 | `0x10620` | `unpack_graphics` | 364 | ✅ verified | checkpoint @0x10720 (decode+deinterleave; before sprite-shift builders) |
-| `0x1078c` | `build_sprite_shifts` | 102 |  |  |
-| `0x107f2` | `build_sprite_shifts_msk` | 140 |  |  |
+| `0x1078c` | `build_sprite_shifts` | 102 | ✅ verified | fuzz counts 0/3/0xcf (asr.l shifts) |
+| `0x107f2` | `build_sprite_shifts_msk` | 140 | ✅ verified | fuzz over the 7 real (D0/D1/D5) configs |
 | `0x1087e` | `draw_object` | 862 |  |  |
 | `0x10bdc` | `blit_obj_Ln` | 126 | ✅ verified | 1500-seed fuzz (pixels + D0.w) |
 | `0x10c5a` | `blit_obj_Rn` | 126 | ✅ verified | 1500-fuzz pixels |
@@ -157,7 +157,7 @@ is 1 MiB to hold them + the load buffers). Anything still not faithfully modeled
 **Super**, an **unmodeled GEM/VDI opcode**, an **unstaged file**, unknown fn) is counted and
 `emu.run` **raises** — a function that hits one cannot be falsely "verified".
 
-Unlocked next: `build_sprite_shifts` / `build_sprite_shifts_msk` (the sprite-shift builders
-`unpack_graphics` calls at the end — pure, run to rts), which would also let `unpack_graphics`
-extend to its own rts. A checkpoint verification of `main`'s init additionally needs `Malloc`
-pointed at a real large in-image block (it currently bump-allocates small blocks).
+Unlocked next: `unpack_graphics` can now extend from its checkpoint to its own `rts` (its
+tail-called `build_sprite_shifts`/`_msk` are reconstructed). A checkpoint verification of
+`main`'s init additionally needs `Malloc` pointed at a real large in-image block (it currently
+bump-allocates small blocks).
