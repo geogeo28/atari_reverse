@@ -61,5 +61,6 @@ void g_xbios_setpalette(uint8_t *image, uint32_t palette_ptr);   /* A0 -> 16-wor
 void g_set_rez(uint8_t *image, uint32_t mode);                   /* D0.b -> config, then XBIOS 0x19 */
 void g_gem_aes(uint8_t *image);                                  /* trap #2 AES (D0=0xc8, D1=&aes_pblk) */
 void g_gem_vdi(uint8_t *image);                                  /* trap #2 VDI (D0=0x73, D1=&vdi_pblk) */
+void g_start(uint8_t *image);                                    /* entry: GEM init, verified @ checkpoint 0x100d4 */
 
 #endif /* BB_BUGGYBOY_H */

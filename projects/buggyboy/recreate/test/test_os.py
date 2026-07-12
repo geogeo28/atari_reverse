@@ -20,11 +20,16 @@ harness._lib.g_gem_aes.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_gem_aes.restype = None
 harness._lib.g_gem_vdi.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_gem_vdi.restype = None
+harness._lib.g_start.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_start.restype = None
 
 PALETTE_PTR = 0x1e000             # scratch (below the stack guard) for the 16-word palette
 
 CONTRL = 0x19a58                  # contrl[0]: the AES/VDI opcode (shared block; = aesvdi_contrl)
 INTOUT = 0x19c8c                  # intout[0]: where AES/VDI results land (shared block)
+
+START_MAIN_CALL = 0x100d4         # `bsr main`; _start is verified up to here (main never returns)
+START_STACK_BAND = (0x1b000, 0x1b044)   # _start moves A7 to 0x1b044; its stack lives just below
 
 
 def test_xbios_setpalette():
@@ -87,6 +92,18 @@ def test_gem_vdi_v_opnvwk():
     mem, _, _ = emu.run(harness.make_image(pokes), 0x100ea)
     assert int.from_bytes(mem[INTOUT:INTOUT + 2], "big") == 319, "work_out[0] should be max x 319"
     assert int.from_bytes(mem[INTOUT + 2:INTOUT + 4], "big") == 199, "work_out[1] should be max y 199"
+
+
+def test_start_gem_init():
+    # _start up to `bsr main`: Mshrink (no image effect) + AES appl_init / graf_handle +
+    # VDI v_opnvwk setup. Diffed at the checkpoint because main is the infinite game loop and
+    # never returns; _start's relocated stack band (just below 0x1b044) is excluded.
+    diffs, _ = differential(0x10000, {}, lambda lib, buf: lib.g_start(buf),
+                            stop_pc=START_MAIN_CALL, exclude=[START_STACK_BAND])
+    assert not diffs, report(diffs[:12])
+    # the graf_handle handle must propagate into the VDI handle global.
+    mem, _, _ = emu.run(harness.make_image(), 0x10000, stop_pc=START_MAIN_CALL)
+    assert int.from_bytes(mem[0x1a0a0:0x1a0a2], "big") == 1, "vdi_handle should be phys handle 1"
 
 
 def test_supexec_nested():

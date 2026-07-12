@@ -22,19 +22,22 @@ _AREG_NAMES = ("a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7")
 _LIB = ctypes.CDLL(str(Path(__file__).resolve().parent / "build" / "liboracle.so"))
 _u32p = ctypes.POINTER(ctypes.c_uint32)
 _LIB.osh_run.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32,
-                         _u32p, _u32p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, _u32p]
+                         _u32p, _u32p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+                         ctypes.c_uint32, _u32p]
 _LIB.osh_run.restype = ctypes.c_int
 _LIB.osh_num_writes.restype = ctypes.c_uint32
 _LIB.osh_write_addrs.restype = _u32p
 _LIB.osh_unmodeled.restype = ctypes.c_uint32
 
 
-def run(image, entry, regs=None, max_insns=200_000):
+def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     """Run ``entry`` on a copy of ``image``. Return (final_image, writes, out_regs).
 
     ``regs`` maps register name -> value (e.g. {"a1": 0x1e000}); A7 is forced to STACK_TOP.
-    ``writes`` is {addr: byte} for every byte the code stored (stack writes included).
-    ``out_regs`` holds D0/D1/A0/A1 at return.
+    ``stop_pc`` is an optional checkpoint PC: with it set, the run stops when it reaches that
+    address instead of only at rts — the way to diff a function that never returns (its final
+    memory is trustworthy at the checkpoint). ``writes`` is {addr: byte} for every byte the
+    code stored (stack writes included). ``out_regs`` holds D0/D1/A0/A1 at return.
     """
     regs = regs or {}
     mem = bytearray(image)
@@ -46,9 +49,10 @@ def run(image, entry, regs=None, max_insns=200_000):
     out = (ctypes.c_uint32 * 4)()
 
     reached = _LIB.osh_run(buf, IMAGE_SIZE, entry & 0xFFFFFFFF, dregs, aregs,
-                           STACK_TOP, SENTINEL, max_insns, out)
+                           STACK_TOP, SENTINEL, stop_pc & 0xFFFFFFFF, max_insns, out)
     if not reached:
-        raise RuntimeError(f"function @ {entry:#x} did not return within {max_insns} "
+        where = f"checkpoint {stop_pc:#x}" if stop_pc else "rts"
+        raise RuntimeError(f"function @ {entry:#x} did not reach {where} within {max_insns} "
                            f"instructions; final memory is mid-execution, not trustworthy")
     if _LIB.osh_unmodeled():
         raise RuntimeError(f"function @ {entry:#x} used an unmodeled OS call "

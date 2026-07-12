@@ -116,13 +116,16 @@ static void handle_trap(int vec) {
     m68k_set_reg(M68K_REG_D0, d0);
 }
 
-/* Run `entry` to its rts. dregs/aregs are D0..D7 / A0..A7 inputs (aregs[7] overridden by sp).
- * Returns 1 if the function returned to the sentinel (reached its rts), 0 if it hit the
- * instruction cap first (a truncated run whose memory must NOT be trusted as final).
- * out_regs receives {D0, D1, A0, A1}. */
+/* Run `entry` until it returns to the sentinel (its rts) or reaches `stop_pc` — a checkpoint
+ * PC that lets a never-returning function (e.g. _start, whose call to the game loop never
+ * comes back) be diffed at a chosen point instead of at rts. Pass stop_pc = 0 to disable.
+ * dregs/aregs are D0..D7 / A0..A7 inputs (aregs[7] overridden by sp). Returns 1 if it stopped
+ * at the sentinel or the checkpoint, 0 if it hit the instruction cap first (a truncated run
+ * whose memory must NOT be trusted as final). out_regs receives {D0, D1, A0, A1}. */
 int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
             const uint32_t *dregs, const uint32_t *aregs,
-            uint32_t sp, uint32_t sentinel, uint32_t max_insns, uint32_t *out_regs) {
+            uint32_t sp, uint32_t sentinel, uint32_t stop_pc, uint32_t max_insns,
+            uint32_t *out_regs) {
     g_mem = mem; g_size = size;
 
     m68k_init();
@@ -150,7 +153,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     uint32_t n = 0;
     for (; n < max_insns; n++) {
         uint32_t pc = m68k_get_reg(0, M68K_REG_PC);
-        if (pc == sentinel) break;
+        if (pc == sentinel || (stop_pc && pc == stop_pc)) break;
         if      (pc == MAGIC_GEMDOS) handle_trap(1);
         else if (pc == MAGIC_XBIOS)  handle_trap(14);
         else if (pc == MAGIC_BIOS)   handle_trap(13);
@@ -168,7 +171,8 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     m68k_write_memory_32(TRAP_VEC_BIOS, save_b);
     m68k_write_memory_32(TRAP_VEC_GEM, save_a);
     g_wn = wn;
-    return m68k_get_reg(0, M68K_REG_PC) == sentinel;   /* reached rts? */
+    uint32_t final_pc = m68k_get_reg(0, M68K_REG_PC);  /* reached rts or the checkpoint? */
+    return final_pc == sentinel || (stop_pc && final_pc == stop_pc);
 }
 
 uint32_t        osh_num_writes(void)  { return g_wn; }

@@ -53,7 +53,7 @@ def make_image(pokes=None):
     return img
 
 
-def differential(entry, regs, glue):
+def differential(entry, regs, glue, stop_pc=0, exclude=None):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
@@ -61,20 +61,29 @@ def differential(entry, regs, glue):
     at return, and whatever the candidate glue returned (its D0, or None for void glues).
     ``regs`` are the oracle's input registers; ``glue(lib, buf)`` runs the candidate on a
     mutable ctypes copy of the same image with the matching arguments.
+
+    ``stop_pc`` diffs at a checkpoint PC instead of at rts (for a function that never returns;
+    see emu.run). ``exclude`` is an optional list of (lo, hi) byte bands to drop from the diff
+    in addition to the default stack guard — used when the function relocates its own stack
+    outside [STACK_GUARD_LO, IMAGE_SIZE) (e.g. _start moves A7 to 0x1b044). The candidate is
+    pure C and never writes a machine stack, so excluding the oracle's stack band is sound.
     """
     img = make_image(regs.pop("_pokes", None))
-    o_final, o_writes, o_regs = emu.run(img, entry, regs)
+    o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc)
 
     Buf = ctypes.c_uint8 * IMAGE_SIZE
     buf = Buf.from_buffer(bytearray(img))
     cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
 
+    def excluded(a):
+        return any(lo <= a < hi for lo, hi in (exclude or ()))
+
     # Ignore the stack-guard region: the oracle uses a real machine stack there
     # (return address, saved registers), which the C reconstruction has no analogue for.
     diffs = [(a, o_final[a], c_final[a])
              for a in range(IMAGE_SIZE)
-             if a < emu.STACK_GUARD_LO and o_final[a] != c_final[a]]
+             if a < emu.STACK_GUARD_LO and o_final[a] != c_final[a] and not excluded(a)]
 
     # Write-set completeness: the guard cutoff above is only sound if the oracle used that
     # region purely as stack. A write in [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program

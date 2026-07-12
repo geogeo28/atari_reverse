@@ -22,6 +22,10 @@
 /* ---- GEM (AES/VDI) init (gem_aes @ 0x100dc, gem_vdi @ 0x100ea) ---- */
 #define A_aes_pblk        0x19a40   /* AES pblk: {contrl,global,intin,intout,addrin,addrout} */
 #define A_vdi_pblk        0x1a08c   /* VDI pblk: {contrl,intin,ptsin,intout,ptsout} */
+#define A_aesvdi_contrl   0x19a58   /* contrl array (shared by AES + VDI); contrl[0] = opcode */
+#define A_vdi_intin       0x19a8c   /* intin array (shared); v_opnvwk work_in */
+#define A_vdi_ws_handle   0x19c8c   /* intout[0] (shared); graf_handle's physical handle lands here */
+#define A_vdi_handle      0x1a0a0   /* the workstation handle _start keeps (copy of intout[0]) */
 
 /* ---- fill patterns ---- */
 #define A_color_pairs     0x15afa   /* 8-byte (4-plane) solid-fill pattern per colour index */

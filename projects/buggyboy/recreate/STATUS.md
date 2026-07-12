@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 20/91.**
+**Verified: 21/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -23,7 +23,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
-| `0x10000` | `_start` | 220 |  |  |
+| `0x10000` | `_start` | 220 | ✅ verified | checkpoint @0x100d4 (GEM init; before `bsr main`) |
 | `0x100dc` | `gem_aes` | 14 | ✅ verified | trap #2 AES (appl_init + graf_handle) |
 | `0x100ea` | `gem_vdi` | 12 | ✅ verified | trap #2 VDI (v_opnvwk) |
 | `0x10100` | `main` | 494 |  |  |
@@ -127,6 +127,17 @@ raises; a stray write in the guard band fails loudly). Remaining, low-severity, 
   non-walk variants, not through the road walk itself.
 - **fill_span/fill_rect flip slot** — fuzz pins `flip_idx=0`; the slot-4 buffer pointer is
   exercised by `clear_screen`/`fill_screen` but not by span/rect.
+- **`_start` past `bsr main`** — verified only up to the checkpoint at 0x100d4 (its GEM init).
+  The terminal Pterm and `appl_exit` after main are unreached (main never returns).
+
+## Checkpoint verification
+
+A function that never returns can't be run to `rts`, so the harness can also stop at a
+**checkpoint PC** and diff the image there (`emu.run(..., stop_pc=)`, `differential(..., stop_pc=,
+exclude=)`). `_start` is verified this way at `0x100d4` (the `bsr main`); its GEM init is fully
+diffed while `main` — the infinite game loop — is never entered. `exclude` drops a function's
+relocated-stack band from the diff (`_start` moves A7 to `0x1b044`; the reconstruction is pure C
+with no machine stack). Malloc/Fread-heavy functions still need the extra model work below.
 
 ## OS trap layer
 
@@ -142,6 +153,5 @@ into the param block's `intout`. Anything still not faithfully modeled (**Fread*
 function that hits one cannot be falsely "verified".
 
 Unlocked next (need model extensions): Fread → a file model (unlocks the real graphics/course
-loaders). `_start`/`main` cannot be run to `rts` (`main` is the infinite game loop), so they
-need a **run-to-checkpoint** harness mode (diff the image at a target PC) rather than run-to-rts.
+loaders — `load_graphics`, `unpack_graphics`, and a checkpoint verification of `main`'s init).
 Functions that Malloc large screen buffers also need a larger `IMAGE_SIZE`.

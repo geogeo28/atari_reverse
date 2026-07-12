@@ -36,6 +36,12 @@ addresses (the game's globals sit at their real addresses). Each function has:
 The harness diffs the whole image (minus the stack-guard region), so any byte the real code
 writes that the reconstruction gets wrong — or misses — fails the test.
 
+A function that **never returns** (e.g. `_start`, whose call to the infinite game loop never
+comes back) is verified at a **checkpoint PC** instead of at `rts`: `emu.run(…, stop_pc=)` /
+`differential(…, stop_pc=, exclude=)` run the oracle to that address and diff there. `exclude`
+drops a relocated-stack band from the diff (the reconstruction is pure C, with no machine
+stack). `_start` is verified this way at its `bsr main` (`0x100d4`).
+
 ## Layout
 
 ```
