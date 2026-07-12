@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 8/91.**
+**Verified: 11/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -37,11 +37,11 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x107f2` | `build_sprite_shifts_msk` | 140 |  |  |
 | `0x1087e` | `draw_object` | 862 |  |  |
 | `0x10bdc` | `blit_obj_Ln` | 126 | ✅ verified | 1500-seed fuzz (pixels + D0.w) |
-| `0x10c5a` | `blit_obj_Rn` | 126 |  |  |
+| `0x10c5a` | `blit_obj_Rn` | 126 | ✅ verified | 1500-fuzz pixels |
 | `0x10cd8` | `blit_obj_Ln2` | 142 |  |  |
 | `0x10d66` | `blit_obj_Rn2` | 142 |  |  |
-| `0x10df4` | `blit_obj_Lf` | 112 |  |  |
-| `0x10e64` | `blit_obj_Rf` | 106 |  |  |
+| `0x10df4` | `blit_obj_Lf` | 112 | ✅ verified | 1500-fuzz pixels |
+| `0x10e64` | `blit_obj_Rf` | 106 | ✅ verified | 1500-fuzz pixels |
 | `0x10ece` | `blit_obj_Lf2` | 146 |  |  |
 | `0x10f60` | `blit_obj_Rf2` | 146 |  |  |
 | `0x10ff2` | `draw_ground` | 178 |  |  |

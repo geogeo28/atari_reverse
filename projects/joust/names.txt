@@ -1,19 +1,22 @@
 # Joust (Atari ST, Williams/Atari; Gamex release). Depacked from JOUSTS.CTE via
 # tools/depack_gamex.py. Ghidra addresses = image offset + 0x10000. No DRI symbols.
-# Pass 2: init + I/O + graphics + the core game-logic subsystems. "# ctx" = inferred
-# from behaviour/context (refinable); untagged = confirmed from the body.
+# Full solve: 74/74 functions named. "# ctx" = inferred from behaviour/context
+# (refinable); untagged = confirmed from the body.
 
-# ==== entry / init (one-time, called by _start) ====
+# ==== entry / init ====
 fn 0x10000 _start
 fn 0x10080 init_system
 fn 0x105f0 init_game
 fn 0x10aae title_screen
-fn 0x104b2 init_video               # ctx
+fn 0x104b2 init_video
+fn 0x1096e init_gfx                   # ctx
 
-# ==== main loop: core game logic ====
+# ==== main loop: game logic ====
 fn 0x12014 update_objects
-fn 0x12606 animate_objects           # ctx
+fn 0x12606 animate_objects            # ctx
+fn 0x1285c draw_objects_buf2          # ctx
 fn 0x12caa render_objects
+fn 0x12cb2 render_objects_b           # ctx
 fn 0x12cc2 render_objects_impl        # ctx
 fn 0x13842 collision_check
 fn 0x14ada spawn_wave                 # ctx
@@ -22,20 +25,35 @@ fn 0x146f6 lava_troll                 # ctx
 fn 0x142de draw_messages
 fn 0x1437a check_highscore            # ctx
 fn 0x1033e count_objects              # ctx
+fn 0x11dd6 control_player             # ctx
+fn 0x11f28 player_death               # ctx
 
-# ==== main loop: timing / scroll / input ====
-fn 0x1757a scroll_screen_up           # ctx
-fn 0x175de draw_scroller              # ctx
-fn 0x11d9a wait_vsync                 # ctx
-fn 0x1052e anim_sprites               # ctx
-fn 0x10a8a read_key_flag              # ctx
-fn 0x11c24 poll_key                   # ctx
-
-# ==== object / collision helpers ====
+# ==== player / object mechanics ====
+fn 0x140fe joust_bounce               # ctx
+fn 0x13fe6 pixel_collision            # ctx
 fn 0x13ef2 test_overlap               # ctx
+fn 0x14098 respawn_player             # ctx
+fn 0x13300 check_platform             # ctx
+fn 0x15226 check_platform_y           # ctx
+fn 0x15276 check_proximity            # ctx
 fn 0x129b4 alloc_object               # ctx
-fn 0x137bc draw_object_sprite         # ctx
+fn 0x12a2a advance_anim               # ctx
+fn 0x12914 draw_sprite_at             # ctx
+fn 0x149b8 troll_draw                 # ctx
+fn 0x14a32 troll_grab                 # ctx
+
+# ==== scoring / lives / messages ====
+fn 0x14172 add_score_p1               # ctx
+fn 0x14166 add_score_p2               # ctx
+fn 0x14160 add_score                  # ctx
+fn 0x14246 bonus_life                 # ctx
+fn 0x1424e draw_lives_p1              # ctx
+fn 0x14260 draw_lives_p2              # ctx
 fn 0x1435c check_messages             # ctx
+
+# ==== high-score entry ====
+fn 0x146a6 draw_hiscore_entry         # ctx
+fn 0x14658 draw_hiscore_cursor        # ctx
 
 # ==== graphics primitives ====
 fn 0x1042a blit_copy
@@ -43,17 +61,37 @@ fn 0x10456 blit_or
 fn 0x10482 blit_andnot
 fn 0x17752 blit_sprite_mask
 fn 0x177a2 blit_sprite
+fn 0x136e8 draw_object_data           # ctx
+fn 0x137bc draw_object_mask           # ctx
+fn 0x1369c blit_masked_rows           # ctx
+fn 0x13628 blit_sprite3               # ctx
+fn 0x15098 blit_mask_wide             # ctx
+fn 0x1510c blit_sprite_planes         # ctx
 fn 0x175ba clear_sprite_mask          # ctx
+fn 0x17438 draw_explosions            # ctx
 fn 0x102e2 fill_screen
 fn 0x10700 draw_string
+fn 0x1052e anim_sprites               # ctx
+fn 0x1757a scroll_screen_up           # ctx
+fn 0x175de draw_scroller              # ctx
+fn 0x182a2 pos_to_screen              # ctx
+fn 0x182d6 pos_to_screen2             # ctx
 
-# ==== palette / colour / misc ====
+# ==== palette / colour ====
 fn 0x10c46 xbios_setpalette
 fn 0x144b0 xbios_setcolor
 fn 0x10c56 cycle_palette              # ctx
 fn 0x10a56 set_color_lvl              # ctx
 fn 0x105c2 advance_scroll             # ctx
+
+# ==== input / timing / stubs ====
+fn 0x10a8a read_key_flag              # ctx
+fn 0x11c24 poll_key                   # ctx
+fn 0x144d4 read_key                   # ctx
+fn 0x11d9a wait_vsync                 # ctx
+fn 0x14538 vsync_wait2                # ctx
 fn 0x102fe stub_ret                   # ctx
+fn 0x135f4 stub_ret2                  # ctx
 
 # ==== variables ====
 var 0x10dde screen_base
@@ -68,8 +106,14 @@ var 0x10cf3 wave_num
 var 0x10d08 game_phase
 var 0x10d09 active_players
 var 0x10d12 game_over_flag
+var 0x10dc1 collision_hit
+var 0x10e11 text_flags
+var 0x10df4 cursor_pos                # ctx
 var 0x10f36 object_table
+var 0x10f84 player2                   # ctx
 var 0x113ba spawn_table
+var 0x1137a effect_table
+var 0x117b4 platform_table
 var 0x119d4 collision_table
 var 0x10e16 message_table
 var 0x10dfa spawn_interval
@@ -79,14 +123,12 @@ var 0x10f88 p2_x                      # ctx
 
 # ==== comments ====
 cmt 0x10000 Entry: init_system, init_game, title_screen, init_video; then infinite main loop of per-frame subsystems.
-cmt 0x10080 init_system: check resolution (halt if mono), install screen/vbl vectors, save+mask conterm (0x484).
-cmt 0x105f0 init_game: copy state templates into object_table, relocate ptrs by screen_base, set screen geometry + back buffer.
-cmt 0x10aae title_screen: title bitmap + palette cycle + '1'/'2' player-select with attract timeout (README HW-detect screen).
 cmt 0x12014 update_objects: per-object physics + AI (flap/gravity/direction, home toward players) — the buzzard/enemy movement.
-cmt 0x12606 animate_objects: object lifecycle — egg-hatch/spawn state machine, animation-frame advance, screen-position calc.
-cmt 0x12cc2 render_objects: walk object_table, advance flap-animation frame (0-4), draw each object sprite.
-cmt 0x13842 collision_check: test each object vs platform/object boxes (test_overlap), flag hits (0x4000).
+cmt 0x140fe joust_bounce: the core mechanic — on collision the higher rider wins; flips the loser's velocity/direction.
+cmt 0x11dd6 control_player: apply joystick (flap/left/right) to a player object; from attract, fire starts the game.
+cmt 0x11f28 player_death: decrement death timer, remove player, trigger GAME OVER or respawn message.
+cmt 0x146f6 lava_troll: from wave 4+, the lava hand reaches up to grab objects lingering over the pit.
 cmt 0x14ada spawn_wave: enemy/egg spawn scheduler; ramps difficulty by halving spawn_interval.
 cmt 0x1783c wave_manager: game-phase/round transitions; spawns wave-announcement messages; next-wave setup.
-cmt 0x146f6 lava_troll: from wave 4+, the lava hand reaches up to grab objects over the pit.
-cmt 0x177a2 blit_sprite: shifted masked sprite draw (AND mask + OR data), 0x50-word row stride.
+cmt 0x13842 collision_check: broad-phase box test each object vs platforms/objects (test_overlap), then pixel_collision.
+cmt 0x14172 add_score_p1: BCD add to player 1 score with carry; awards bonus_life at thresholds; redraws score.
