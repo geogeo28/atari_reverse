@@ -34,6 +34,12 @@ project is left in `projects/<name>/ghidra_proj/` — openable in the GUI.
 Why raw import + pre-script (not a custom Ghidra Loader)? A real Loader needs a Gradle
 build against your Ghidra install; the pre-script approach is zero-build and equivalent.
 
+**Processor** defaults to `68000:BE:32:default`. For programs that use 68010/020/030
+instructions (`movec`, `moves`, extended addressing), pass `68000:BE:32:MC68030` as the
+6th arg to `headless.sh` (or `new_project.sh <name> <prg> <base> 68000:BE:32:MC68030`) so
+the decompiler decodes them instead of flagging "unable to resolve constructor". Base
+68000 is right for the vast majority of ST games.
+
 ## The naming loop (the actual work)
 
 ```
