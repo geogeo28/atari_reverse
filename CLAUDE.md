@@ -105,6 +105,12 @@ justify leaving it):
   appears twice collapses into one named helper; intention-revealing names; comment the
   *why*. No raw register names (`a1`, `d0`–`d7`) or terse locals (`m`, `p`, `rd`) — use
   semantic names with the register map in a one-line comment (see `recreate/README.md`).
+- **No magic numbers** — name any non-trivial literal with a `#define`/const: addresses
+  (`0x1bc56`), struct/field offsets (`0xa`, `0x1c`), sizes, table strides, bit masks
+  (`0xff00`). This matters doubly in reconstructed code, where a bare hex offset hides which
+  struct field or address it is. Name it even when the field's *meaning* is only partly known
+  (offset+role, e.g. `SND_VC_ENABLE`). Genuinely self-evident values are fine inline — `0`/`1`,
+  a `<< 3` shift, a loop's `+ 2` step, `& 0xff` on a byte — don't over-name to the point of noise.
 - `/code-review` automates the diff sweep — run it at the change's scale, fix the real
   findings, and **keep out-of-scope findings out of the commit** (note them, don't fold them in).
 
