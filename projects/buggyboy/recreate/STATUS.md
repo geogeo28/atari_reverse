@@ -32,7 +32,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x10326` | `blit_road_scroll` | 340 |  |  |
 | `0x1047a` | `init_scoretable` | 62 |  |  |
 | `0x104b8` | `init_leg` | 360 |  |  |
-| `0x10620` | `unpack_graphics` | 364 | ✅ verified | checkpoint @0x10720 (decode+deinterleave; before sprite-shift builders) |
+| `0x10620` | `unpack_graphics` | 364 | ✅ verified | run-to-rts (decode + deinterleave + sprite tables) |
 | `0x1078c` | `build_sprite_shifts` | 102 | ✅ verified | fuzz counts 0/3/0xcf (asr.l shifts) |
 | `0x107f2` | `build_sprite_shifts_msk` | 140 | ✅ verified | fuzz over the 7 real (D0/D1/D5) configs |
 | `0x1087e` | `draw_object` | 862 |  |  |
@@ -136,9 +136,8 @@ A function that never returns can't be run to `rts`, so the harness can also sto
 **checkpoint PC** and diff the image there (`emu.run(..., stop_pc=)`, `differential(..., stop_pc=,
 exclude=)`). `_start` is verified this way at `0x100d4` (the `bsr main`); its GEM init is fully
 diffed while `main` — the infinite game loop — is never entered. `load_graphics` is verified at
-`0x121f2` (before `bsr unpack_graphics`), diffing both file reads without the decompressor;
-`unpack_graphics` at `0x10720` (before the sprite-shift builders), diffing the whole decode +
-de-interleave. `exclude` drops a function's relocated-stack band from the diff (`_start` moves A7
+`0x121f2` (before `bsr unpack_graphics`), diffing both file reads without the decompressor.
+`exclude` drops a function's relocated-stack band from the diff (`_start` moves A7
 to `0x1b044`; the reconstruction is pure C with no machine stack). Data-heavy functions raise
 `differential(..., max_insns=)` (the unpacker needs a few million).
 
@@ -157,7 +156,6 @@ is 1 MiB to hold them + the load buffers). Anything still not faithfully modeled
 **Super**, an **unmodeled GEM/VDI opcode**, an **unstaged file**, unknown fn) is counted and
 `emu.run` **raises** — a function that hits one cannot be falsely "verified".
 
-Unlocked next: `unpack_graphics` can now extend from its checkpoint to its own `rts` (its
-tail-called `build_sprite_shifts`/`_msk` are reconstructed). A checkpoint verification of
-`main`'s init additionally needs `Malloc` pointed at a real large in-image block (it currently
-bump-allocates small blocks).
+Unlocked next: a checkpoint verification of `main`'s init, which needs `Malloc` pointed at a
+real large in-image block (it currently bump-allocates small blocks). Beyond that, the remaining
+unverified functions are the gameplay/draw/event/sound families (see the table above).

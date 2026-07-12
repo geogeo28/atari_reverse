@@ -1,8 +1,9 @@
-"""Differential test for the GRAPHICS.GRA decompressor (unpack_graphics @ 0x10620).
+"""Differential test for the GRAPHICS.GRA decompressor (unpack_graphics @ 0x10620) and the
+sprite pre-shift builders it tail-calls (build_sprite_shifts / _msk).
 
-Verified at the checkpoint 0x10720 (before the sprite-shift builders, which are separate
-functions). The buffer pointers use the game's own layout (mem_base + offsets) because
-unpack_graphics relies on the relative positions — e.g. buf_b == buf_c - 0xd000.
+unpack_graphics is verified run-to-rts. The buffer pointers use the game's own layout
+(mem_base + offsets) because unpack_graphics relies on the relative positions — e.g.
+buf_b == buf_c - 0xd000.
 """
 import ctypes
 import random
@@ -25,8 +26,7 @@ BUF_B = MEM_BASE + 0xf660
 BUF_C = MEM_BASE + 0x1c660
 GFX_LOAD_OFFSET = 0xc350         # GRAPHICS.GRA sits at buf_c + this (where load_graphics put it)
 A_BUF_AUX, A_BUF_B, A_BUF_C = 0x18bf8, 0x18c04, 0x18c08
-UNPACK_CKPT = 0x10720            # `move.w #0xcf,d5` — right before bsr build_sprite_shifts
-UNPACK_INSNS = 3_000_000         # data-heavy (RLE fills + a 256 KB shift + 8x de-interleave)
+UNPACK_INSNS = 4_000_000         # data-heavy (RLE fills + 256 KB shift + de-interleave + sprite tables)
 
 
 def test_unpack_graphics():
@@ -35,13 +35,13 @@ def test_unpack_graphics():
              A_BUF_B: BUF_B.to_bytes(4, "big"),
              A_BUF_C: BUF_C.to_bytes(4, "big"),
              BUF_C + GFX_LOAD_OFFSET: graphics}
+    # Run to rts: decode + de-interleave + the sprite-shift tables built from the stashed header.
     diffs, _ = differential(0x10620, {"_pokes": pokes},
-                            lambda lib, buf: lib.g_unpack_graphics(buf),
-                            stop_pc=UNPACK_CKPT, max_insns=UNPACK_INSNS)
+                            lambda lib, buf: lib.g_unpack_graphics(buf), max_insns=UNPACK_INSNS)
     assert not diffs, report(diffs[:12])
     # Sanity: the decode produced pixel data at buf_c (guards against a no-op that would also
     # match if both sides did nothing).
-    mem, _, _ = emu.run(harness.make_image(pokes), 0x10620, stop_pc=UNPACK_CKPT, max_insns=UNPACK_INSNS)
+    mem, _, _ = emu.run(harness.make_image(pokes), 0x10620, max_insns=UNPACK_INSNS)
     assert any(mem[BUF_C:BUF_C + 32000]), "decoded screen 0 should not be all-zero"
 
 

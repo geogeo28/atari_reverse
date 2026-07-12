@@ -3,8 +3,7 @@
  * The loaded GRAPHICS.GRA (at buf_c + 0xc350) is: a 3328-byte header, then an RLE pixel stream.
  * unpack_graphics stashes the header, RLE-decodes the stream, shifts the decoded block into
  * place, de-interleaves eight 4-plane screens, compacts a couple of regions, and finally builds
- * the sprite-shift tables. We reconstruct everything up to the `bsr build_sprite_shifts` at
- * 0x10720 (the checkpoint) — the sprite-shift builders are separate, still-unverified functions.
+ * the sprite-shift tables (from the stashed header). Reconstructed end to end, to its rts.
  *
  * All offsets are taken from the disassembly, not the Ghidra decomp (whose undefined4* pointer
  * arithmetic scales every displacement by 4). Buffers keep the game's layout so the baked-in
@@ -76,8 +75,15 @@ static void gfx_compact(uint8_t *mem, uint32_t buf_c) {
         for (int j = 0; j < 2; j++) { wr32(mem + dst, be32(mem + src)); src += 8; dst += 4; }
 }
 
-/* unpack_graphics @ 0x10620 — reconstructed up to the checkpoint at 0x10720 (before the
- * sprite-shift builders). Reads buf_c / buf_b / buf_aux from their globals. */
+/* unpack_graphics @ 0x10620 — reads buf_c / buf_b / buf_aux from their globals. */
+#define GFX_SPRITE_COUNT 0xcf     /* build_sprite_shifts count arg (D5): 208 sprites */
+/* The seven masked builds unpack_graphics issues, as (buf_b offset, source offset, count-1). */
+static const struct { uint16_t dst_off, src_off, count; } GFX_MSK_BUILDS[] = {
+    {0x14f0, 0x140, 0x13}, {0x3cf0, 0x3c0, 0x13}, {0x6cf0, 0x6c0, 0x13},
+    {0x94f0, 0x940, 0x13}, {0x52f0, 0x520, 0x01}, {0x56f0, 0x560, 0x01},
+    {0xbcf0, 0xbc0, 0x13},
+};
+
 void g_unpack_graphics(uint8_t *image) {
     uint32_t buf_c = be32(image + A_buf_c);
     uint32_t buf_b = be32(image + A_buf_b);
@@ -89,7 +95,11 @@ void g_unpack_graphics(uint8_t *image) {
     gfx_deinterleave(image, buf_c, buf_b);
     gfx_compact(image, buf_c);
     memmove(image + buf_c + GFX_TAIL_DST, image + buf_c + GFX_TAIL_SRC, GFX_TAIL_BYTES);
-    /* checkpoint @0x10720: the original then builds the sprite-shift tables. */
+    /* G: build the sprite pre-shift tables from the stashed header (see below). */
+    g_build_sprite_shifts(image, GFX_SPRITE_COUNT);
+    for (unsigned i = 0; i < sizeof GFX_MSK_BUILDS / sizeof GFX_MSK_BUILDS[0]; i++)
+        g_build_sprite_shifts_msk(image, GFX_MSK_BUILDS[i].dst_off,
+                                  GFX_MSK_BUILDS[i].src_off, GFX_MSK_BUILDS[i].count);
 }
 
 /* ---- sprite pre-shift tables (build_sprite_shifts @0x1078c, _msk @0x107f2) ------------
