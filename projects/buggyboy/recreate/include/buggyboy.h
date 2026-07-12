@@ -33,4 +33,12 @@ void g_fill_rect(uint8_t *image, uint32_t d0, uint32_t d1, uint32_t d3, uint32_t
 /* ---- road perspective (build_road_geometry @ 0x11f4c) ---- */
 void g_build_road_geometry(uint8_t *image);
 
+/* ---- object sprite blitters (blit_obj_* @ 0x10bdc..) ---- */
+#define OBJ_FULL_CELLS 10       /* full-width fill: 10 * 16-byte writes = one 160-byte scanline */
+#define OBJ_ROW_UP     0xa0     /* 160 bytes: one scanline up (sprites drawn bottom to top) */
+uint32_t blit_obj_left_near(uint8_t *image, uint32_t dst, int16_t width, uint16_t x,
+                            uint32_t fill_lo, uint32_t fill_hi, int rows);
+uint32_t g_blit_obj_Ln(uint8_t *image, uint32_t a6, uint32_t d2, uint32_t d3,
+                       uint32_t d4, uint32_t d5, uint32_t d6, uint32_t d7);
+
 #endif /* BB_BUGGYBOY_H */

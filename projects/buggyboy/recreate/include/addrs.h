@@ -21,6 +21,10 @@
 /* ---- fill patterns ---- */
 #define A_color_pairs     0x15afa   /* 8-byte (4-plane) solid-fill pattern per colour index */
 
+/* ---- sprite edge masks (blit_obj_* @ 0x10bdc..) ---- */
+#define A_blit_mask_L     0x15bba   /* left-edge blit masks, indexed (x&0xf)<<2 */
+#define A_blit_mask_R     0x15bfa   /* right-edge blit masks */
+
 /* ---- road / perspective (build_road_geometry @ 0x11f4c) ---- */
 #define A_road_seg_data       0x18d1c   /* per-leg road segment slopes (shorts): [0] + [1..12] */
 #define A_view_flags          0x18c56   /* leg/view selector (0,2,4,6) */

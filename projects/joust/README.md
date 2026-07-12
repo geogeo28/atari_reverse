@@ -40,3 +40,13 @@ bash reapply.sh
 ```
 `names.txt` currently seeds `_start` + the init-dispatcher comment. Full naming is a
 project-sized effort like BuggyBoy — the framework is proven to reach it here.
+
+## Naming progress (40/74 functions)
+The whole architecture is mapped. `_start` = `init_system` / `init_game` / `title_screen`
+/ `init_video`, then a per-frame main loop of: `update_objects` (buzzard physics/AI),
+`animate_objects` (egg-hatch/spawn + anim), `render_objects` (flap-frame draw),
+`collision_check`, `spawn_wave`, `wave_manager`, `lava_troll` (wave 4+ pit hand),
+`draw_messages`, `check_highscore`, plus `scroll`/`vsync`/input. Graphics layer named:
+`blit_copy`/`or`/`andnot`, `blit_sprite`(+mask), `draw_string`, `fill_screen`, palette
+cycling. ~34 leaf helpers remain `FUN_*` (next passes). Confidence-tagged (`# ctx`) where
+inferred. Apply + re-read: `bash reapply.sh`.

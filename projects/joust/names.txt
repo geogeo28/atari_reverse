@@ -1,23 +1,41 @@
 # Joust (Atari ST, Williams/Atari; Gamex release). Depacked from JOUSTS.CTE via
 # tools/depack_gamex.py. Ghidra addresses = image offset + 0x10000. No DRI symbols.
-# First naming pass: init path, I/O, and the sprite/blit layer. Big game-logic
-# functions in the main loop are still FUN_* (next passes). "# ctx" = inferred.
+# Pass 2: init + I/O + graphics + the core game-logic subsystems. "# ctx" = inferred
+# from behaviour/context (refinable); untagged = confirmed from the body.
 
-# ==== entry / init (4 one-time calls in _start) ====
+# ==== entry / init (one-time, called by _start) ====
 fn 0x10000 _start
 fn 0x10080 init_system
 fn 0x105f0 init_game
 fn 0x10aae title_screen
 fn 0x104b2 init_video               # ctx
 
-# ==== main-loop subsystems (named so far) ====
-fn 0x1757a scroll_screen_up          # ctx
-fn 0x175de draw_scroller             # ctx
-fn 0x1033e count_objects             # ctx
-fn 0x11d9a wait_vsync                # ctx
-fn 0x1052e anim_sprites              # ctx
-fn 0x10a8a read_key_flag             # ctx
-fn 0x11c24 poll_key                  # ctx
+# ==== main loop: core game logic ====
+fn 0x12014 update_objects
+fn 0x12606 animate_objects           # ctx
+fn 0x12caa render_objects
+fn 0x12cc2 render_objects_impl        # ctx
+fn 0x13842 collision_check
+fn 0x14ada spawn_wave                 # ctx
+fn 0x1783c wave_manager               # ctx
+fn 0x146f6 lava_troll                 # ctx
+fn 0x142de draw_messages
+fn 0x1437a check_highscore            # ctx
+fn 0x1033e count_objects              # ctx
+
+# ==== main loop: timing / scroll / input ====
+fn 0x1757a scroll_screen_up           # ctx
+fn 0x175de draw_scroller              # ctx
+fn 0x11d9a wait_vsync                 # ctx
+fn 0x1052e anim_sprites               # ctx
+fn 0x10a8a read_key_flag              # ctx
+fn 0x11c24 poll_key                   # ctx
+
+# ==== object / collision helpers ====
+fn 0x13ef2 test_overlap               # ctx
+fn 0x129b4 alloc_object               # ctx
+fn 0x137bc draw_object_sprite         # ctx
+fn 0x1435c check_messages             # ctx
 
 # ==== graphics primitives ====
 fn 0x1042a blit_copy
@@ -25,17 +43,17 @@ fn 0x10456 blit_or
 fn 0x10482 blit_andnot
 fn 0x17752 blit_sprite_mask
 fn 0x177a2 blit_sprite
-fn 0x175ba clear_sprite_mask         # ctx
+fn 0x175ba clear_sprite_mask          # ctx
 fn 0x102e2 fill_screen
 fn 0x10700 draw_string
 
-# ==== palette / colour ====
+# ==== palette / colour / misc ====
 fn 0x10c46 xbios_setpalette
 fn 0x144b0 xbios_setcolor
-fn 0x10c56 cycle_palette             # ctx
-fn 0x10a56 set_color_lvl             # ctx
-fn 0x105c2 advance_scroll            # ctx
-fn 0x102fe stub_ret                  # ctx
+fn 0x10c56 cycle_palette              # ctx
+fn 0x10a56 set_color_lvl              # ctx
+fn 0x105c2 advance_scroll             # ctx
+fn 0x102fe stub_ret                   # ctx
 
 # ==== variables ====
 var 0x10dde screen_base
@@ -46,13 +64,29 @@ var 0x117b8 screen_left
 var 0x00484 conterm
 var 0x10d22 conterm_save
 var 0x10cf2 num_players
+var 0x10cf3 wave_num
+var 0x10d08 game_phase
+var 0x10d09 active_players
+var 0x10d12 game_over_flag
 var 0x10f36 object_table
-var 0x10dfc lives_or_timer           # ctx
+var 0x113ba spawn_table
+var 0x119d4 collision_table
+var 0x10e16 message_table
+var 0x10dfa spawn_interval
+var 0x10dfc spawn_timer
+var 0x10f3a p1_x                      # ctx
+var 0x10f88 p2_x                      # ctx
 
 # ==== comments ====
-cmt 0x10000 Entry: init_system, init_game, title_screen, init_video; then infinite main loop of 17 per-frame subsystems.
-cmt 0x10080 init_system: check resolution (bail to halt if mono), install screen/vbl vectors, save+mask conterm (0x484).
-cmt 0x105f0 init_game: copy state templates into object_table, relocate ptrs by screen_base, clear arrays, set screen geometry + back buffer.
-cmt 0x10aae title_screen: draw title bitmap, cycle palette, read '1'/'2' (num_players) with attract timeout (matches README HW-detect/select).
-cmt 0x10700 draw_string: render a text string (arg = string address) to the screen.
+cmt 0x10000 Entry: init_system, init_game, title_screen, init_video; then infinite main loop of per-frame subsystems.
+cmt 0x10080 init_system: check resolution (halt if mono), install screen/vbl vectors, save+mask conterm (0x484).
+cmt 0x105f0 init_game: copy state templates into object_table, relocate ptrs by screen_base, set screen geometry + back buffer.
+cmt 0x10aae title_screen: title bitmap + palette cycle + '1'/'2' player-select with attract timeout (README HW-detect screen).
+cmt 0x12014 update_objects: per-object physics + AI (flap/gravity/direction, home toward players) — the buzzard/enemy movement.
+cmt 0x12606 animate_objects: object lifecycle — egg-hatch/spawn state machine, animation-frame advance, screen-position calc.
+cmt 0x12cc2 render_objects: walk object_table, advance flap-animation frame (0-4), draw each object sprite.
+cmt 0x13842 collision_check: test each object vs platform/object boxes (test_overlap), flag hits (0x4000).
+cmt 0x14ada spawn_wave: enemy/egg spawn scheduler; ramps difficulty by halving spawn_interval.
+cmt 0x1783c wave_manager: game-phase/round transitions; spawns wave-announcement messages; next-wave setup.
+cmt 0x146f6 lava_troll: from wave 4+, the lava hand reaches up to grab objects over the pit.
 cmt 0x177a2 blit_sprite: shifted masked sprite draw (AND mask + OR data), 0x50-word row stride.

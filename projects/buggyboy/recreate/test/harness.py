@@ -54,17 +54,20 @@ def make_image(pokes=None):
 
 
 def differential(entry, regs, glue):
-    """Run oracle + candidate on the same image. Return list of (addr, oracle, cand) diffs.
+    """Run oracle + candidate on the same image. Return (diffs, info).
 
-    ``regs`` are the oracle's input registers; ``glue`` is called as glue(lib, buf) to run
-    the candidate on a mutable ctypes copy of the same image with the matching arguments.
+    ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
+    ``info`` carries {"writes", "regs", "ret"}: the oracle write-set, the oracle's D0/D1/A0/A1
+    at return, and whatever the candidate glue returned (its D0, or None for void glues).
+    ``regs`` are the oracle's input registers; ``glue(lib, buf)`` runs the candidate on a
+    mutable ctypes copy of the same image with the matching arguments.
     """
     img = make_image(regs.pop("_pokes", None))
-    o_final, o_writes, _ = emu.run(img, entry, regs)
+    o_final, o_writes, o_regs = emu.run(img, entry, regs)
 
     Buf = ctypes.c_uint8 * IMAGE_SIZE
     buf = Buf.from_buffer(bytearray(img))
-    glue(_lib, buf)
+    cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
 
     # Ignore the stack-guard region: the oracle uses a real machine stack there
@@ -72,7 +75,7 @@ def differential(entry, regs, glue):
     diffs = [(a, o_final[a], c_final[a])
              for a in range(IMAGE_SIZE)
              if a < emu.STACK_GUARD_LO and o_final[a] != c_final[a]]
-    return diffs, o_writes
+    return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
 
 
 def report(diffs):
