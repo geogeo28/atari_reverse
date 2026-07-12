@@ -17,7 +17,8 @@ sys.path.insert(0, str(_TOOLS))
 import prg_dis  # noqa: E402
 
 LOAD_BASE = 0x10000          # matches PrgLoader / run.sh default (see CLAUDE.md)
-IMAGE_SIZE = 0x20000         # covers code + data + bss for BUGGYBOY.PRG (text ends 0x1bcf8)
+IMAGE_SIZE = 0x100000        # 1 MiB: program (ends 0x1bcf8) + room for file staging + load
+                             # buffers (load_graphics reads ~245 KiB across two files) + stack
 HEADER = 28                  # GEMDOS .PRG header length
 
 

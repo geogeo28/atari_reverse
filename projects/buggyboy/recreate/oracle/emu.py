@@ -10,8 +10,10 @@ from pathlib import Path
 
 from loader import IMAGE_SIZE
 
-STACK_TOP = 0x1FF00       # A7 start; stack grows down into the guard region below
-STACK_GUARD_LO = 0x1F000  # [STACK_GUARD_LO, IMAGE_SIZE): stack scratch, excluded from the diff
+# The stack lives at the top of the image; derived from IMAGE_SIZE so growing the image moves
+# it automatically (keep 0x100 headroom for the sentinel return slot, a 0xF00 guard span).
+STACK_TOP = IMAGE_SIZE - 0x100   # A7 start; stack grows down into the guard region below
+STACK_GUARD_LO = STACK_TOP - 0xF00  # [STACK_GUARD_LO, IMAGE_SIZE): stack scratch, excluded from the diff
 STACK_SCRATCH = 0x400     # bytes below STACK_TOP a call frame may legitimately use; a write in
                           # [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program output, not stack
 SENTINEL = 0x00000002     # even, mapped, never real code (code >= 0x10000): rts lands here

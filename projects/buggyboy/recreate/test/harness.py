@@ -79,11 +79,18 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None):
     def excluded(a):
         return any(lo <= a < hi for lo, hi in (exclude or ()))
 
-    # Ignore the stack-guard region: the oracle uses a real machine stack there
-    # (return address, saved registers), which the C reconstruction has no analogue for.
-    diffs = [(a, o_final[a], c_final[a])
-             for a in range(IMAGE_SIZE)
-             if a < emu.STACK_GUARD_LO and o_final[a] != c_final[a] and not excluded(a)]
+    # Diff only [0, STACK_GUARD_LO): the oracle uses the guard region above as a real machine
+    # stack (return address, saved registers) that the C reconstruction has no analogue for.
+    # Fast path — compare that prefix at C speed; only walk it byte-by-byte when it actually
+    # differs (a failure, or an excluded band like _start's relocated stack). This keeps the
+    # scan cheap as IMAGE_SIZE grows (the prefix is ~1 MiB now).
+    guard_lo = emu.STACK_GUARD_LO
+    if bytes(o_final[:guard_lo]) == bytes(c_final[:guard_lo]):
+        diffs = []
+    else:
+        diffs = [(a, o_final[a], c_final[a])
+                 for a in range(guard_lo)
+                 if o_final[a] != c_final[a] and not excluded(a)]
 
     # Write-set completeness: the guard cutoff above is only sound if the oracle used that
     # region purely as stack. A write in [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program
