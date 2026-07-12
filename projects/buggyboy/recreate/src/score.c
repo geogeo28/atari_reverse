@@ -36,7 +36,7 @@ void score_add(uint8_t *score, char *score_str, const uint8_t *delta, int game_o
 }
 
 /* Glue / I/O contract: A1 -> 6-byte delta; reads game_over_flag; writes score + score_str. */
-void g_add_score(uint8_t *image, uint32_t a1) {
+void g_add_score(uint8_t *image, uint32_t delta_ptr) {
     int game_over = be16(image + A_game_over_flag) != 0;
-    score_add(image + A_score_bcd, (char *)(image + A_score_str), image + a1, game_over);
+    score_add(image + A_score_bcd, (char *)(image + A_score_str), image + delta_ptr, game_over);
 }

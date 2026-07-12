@@ -23,8 +23,8 @@ static uint32_t cur_buf(const uint8_t *image) {
 }
 
 /* 8-byte fill pattern for a colour index (color_pairs entry = FILL_CELL bytes, word offset). */
-static const uint8_t *color_pattern(const uint8_t *image, uint32_t d1) {
-    int16_t off = (int16_t)(uint16_t)((uint16_t)d1 * FILL_CELL);
+static const uint8_t *color_pattern(const uint8_t *image, uint32_t color_index) {
+    int16_t off = (int16_t)(uint16_t)((uint16_t)color_index * FILL_CELL);
     return image + A_color_pairs + off;
 }
 
@@ -42,32 +42,36 @@ void screen_fill_rect(uint8_t *dst, const uint8_t *pattern, unsigned cells, unsi
 }
 
 /* dbf loops (count_word + 1) times. */
-static unsigned dbf_count(uint32_t d) { return (d & 0xFFFF) + 1; }
+static unsigned dbf_count(uint32_t reg) { return (reg & 0xFFFF) + 1; }
 
 /* Byte offset into the draw buffer from the D0 register (adda.w -> sign-extended word). */
-static uint8_t *span_dst(uint8_t *image, uint32_t d0) {
-    return image + cur_buf(image) + (int16_t)(uint16_t)d0;
+static uint8_t *span_dst(uint8_t *image, uint32_t dst_offset) {
+    return image + cur_buf(image) + (int16_t)(uint16_t)dst_offset;
 }
 
 void g_clear_screen(uint8_t *image) {
     screen_clear(image + cur_buf(image));
 }
 
-void g_fill_span(uint8_t *image, uint32_t d0, uint32_t d1, uint32_t d2) {
-    screen_fill_span(span_dst(image, d0), color_pattern(image, d1), dbf_count(d2));
+/* D0 dst_offset, D1 color_index, D2 cell_count-1. */
+void g_fill_span(uint8_t *image, uint32_t dst_offset, uint32_t color_index, uint32_t cell_count_m1) {
+    screen_fill_span(span_dst(image, dst_offset), color_pattern(image, color_index),
+                     dbf_count(cell_count_m1));
 }
 
 /* fill_words enters with D0 forced to 0. */
-void g_fill_words(uint8_t *image, uint32_t d1, uint32_t d2) {
-    g_fill_span(image, 0, d1, d2);
+void g_fill_words(uint8_t *image, uint32_t color_index, uint32_t cell_count_m1) {
+    g_fill_span(image, 0, color_index, cell_count_m1);
 }
 
 /* fill_screen enters with D0=0 and D2 = whole screen minus one cell (the dbf count). */
-void g_fill_screen(uint8_t *image, uint32_t d1) {
-    g_fill_words(image, d1, SCREEN_CELLS - 1);
+void g_fill_screen(uint8_t *image, uint32_t color_index) {
+    g_fill_words(image, color_index, SCREEN_CELLS - 1);
 }
 
-void g_fill_rect(uint8_t *image, uint32_t d0, uint32_t d1, uint32_t d3, uint32_t d4) {
-    screen_fill_rect(span_dst(image, d0), color_pattern(image, d1),
-                     dbf_count(d3), dbf_count(d4));
+/* D0 dst_offset, D1 color_index, D3 cells_per_row-1, D4 rows-1. */
+void g_fill_rect(uint8_t *image, uint32_t dst_offset, uint32_t color_index,
+                 uint32_t cells_m1, uint32_t rows_m1) {
+    screen_fill_rect(span_dst(image, dst_offset), color_pattern(image, color_index),
+                     dbf_count(cells_m1), dbf_count(rows_m1));
 }

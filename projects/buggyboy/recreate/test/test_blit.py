@@ -60,3 +60,50 @@ def test_fuzz():
             width = rng.randint(8, 320)
             rows_m1 = rng.randint(0, 15)
             _run(name, x, width, rows_m1, rng.getrandbits(32), rng.getrandbits(32), i)
+
+
+# ---- road-walk variants (blit_obj_*2): x per scanline from road_width_tbl ----
+
+ROAD_VARIANTS = {"Ln2": 0x10cd8, "Rn2": 0x10d66, "Lf2": 0x10ece, "Rf2": 0x10f60}
+ROAD_A6 = 0x4000                  # dst starts A6+0x3480 = 0x7480, steps down by width per row
+ROAD_WIDTH_TBL = 0x18f24
+
+for name in ROAD_VARIANTS:
+    fn = getattr(harness._lib, "g_blit_obj_" + name)
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8)] + [ctypes.c_uint32] * 4
+    fn.restype = None
+
+
+def _road_table(rng, lead, active):
+    """85 flag/x-offset pairs: `lead` inactive (flag>=0), `active` active (flag<0), then end."""
+    pairs = []
+    for _ in range(lead):
+        pairs.append((rng.randint(0, 0x7fff), rng.randint(-300, 500)))
+    for _ in range(active):
+        pairs.append((-1, rng.randint(-300, 500)))
+    while len(pairs) < 85:
+        pairs.append((rng.randint(0, 0x7fff), rng.randint(-300, 500)))
+    out = bytearray()
+    for flag, off in pairs:
+        out += (flag & 0xffff).to_bytes(2, "big") + (off & 0xffff).to_bytes(2, "big")
+    return bytes(out)
+
+
+def _run_road(name, width, seed):
+    rng = random.Random(seed)
+    pokes = {
+        0x5c00: bytes(rng.randrange(256) for _ in range(0x2000)),   # draw-buffer noise
+        ROAD_WIDTH_TBL: _road_table(rng, rng.randint(0, 6), rng.randint(1, 25)),
+    }
+    args = (ROAD_A6, width & 0xffff, 0xaaaaaaaa, 0x55555555)
+    regs = {"a6": args[0], "d2": args[1], "d5": args[2], "d6": args[3], "_pokes": pokes}
+    gfn = getattr(harness._lib, "g_blit_obj_" + name)
+    diffs, _ = differential(ROAD_VARIANTS[name], regs, lambda lib, buf: gfn(buf, *args))
+    assert not diffs, f"{name} width={width}\n{report(diffs[:12])}"
+
+
+def test_road_walk_fuzz():
+    rng = random.Random(21)
+    for i in range(300):
+        for name in ROAD_VARIANTS:
+            _run_road(name, rng.randint(8, 160), i)

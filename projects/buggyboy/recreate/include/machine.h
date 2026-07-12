@@ -9,14 +9,14 @@
 
 #include <stdint.h>
 
-static inline uint16_t be16(const uint8_t *p) { return (uint16_t)((p[0] << 8) | p[1]); }
-static inline uint32_t be32(const uint8_t *p) {
-    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+static inline uint16_t be16(const uint8_t *ptr) { return (uint16_t)((ptr[0] << 8) | ptr[1]); }
+static inline uint32_t be32(const uint8_t *ptr) {
+    return ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) | ((uint32_t)ptr[2] << 8) | ptr[3];
 }
-static inline void wr16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
-static inline void wr32(uint8_t *p, uint32_t v) {
-    p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
-    p[2] = (uint8_t)(v >> 8);  p[3] = (uint8_t)v;
+static inline void wr16(uint8_t *ptr, uint16_t value) { ptr[0] = (uint8_t)(value >> 8); ptr[1] = (uint8_t)value; }
+static inline void wr32(uint8_t *ptr, uint32_t value) {
+    ptr[0] = (uint8_t)(value >> 24); ptr[1] = (uint8_t)(value >> 16);
+    ptr[2] = (uint8_t)(value >> 8);  ptr[3] = (uint8_t)value;
 }
 
 #endif /* BB_MACHINE_H */
