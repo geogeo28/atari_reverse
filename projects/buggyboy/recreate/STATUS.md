@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 26/91.**
+**Verified: 34/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -47,11 +47,11 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x10ff2` | `draw_ground` | 178 |  |  |
 | `0x110a4` | `probe_collision` | 106 |  |  |
 | `0x1110e` | `game_update` | 2452 |  |  |
-| `0x11ba4` | `evt_flag_gate` | 104 |  |  |
-| `0x11c2c` | `evt_collision` | 46 |  |  |
-| `0x11c5a` | `evt_score_msg` | 24 |  |  |
-| `0x11c7a` | `play_event_tune` | 56 |  |  |
-| `0x11cb2` | `handle_marker` | 42 |  |  |
+| `0x11ba4` | `evt_flag_gate` | 104 | ✅ verified | fuzz: 5 entries x seq/bonus/slot (add_score + play_event_tune) |
+| `0x11c2c` | `evt_collision` | 46 | ✅ verified | fuzz lock x rpm (rpm floor + speed) |
+| `0x11c5a` | `evt_score_msg` | 24 | ✅ verified | fuzz d6/d7 (add_score + play_event_tune) |
+| `0x11c7a` | `play_event_tune` | 56 | ✅ verified | fuzz over/cur/MZFLAG/tune (-> INITTUNE) |
+| `0x11cb2` | `handle_marker` | 42 | ✅ verified | fuzz over/cur/MZFLAG/fx (-> TURNOFF/INITFX) |
 | `0x11f4c` | `build_road_geometry` | 356 | ✅ verified | 300-seed fuzz (whole-image) |
 | `0x120b0` | `read_input` | 70 |  |  |
 | `0x120f8` | `set_rez` | 24 | ✅ verified | trap layer (Ikbdws); D0.b -> config byte |
@@ -107,13 +107,13 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x15af6` | `render_road` | 4 |  |  |
 | `0x19144` | `render_road` | 2256 |  |  |
 | `0x1b252` | `EGOFF` | 16 |  |  |
-| `0x1b268` | `TURNOFF` | 20 |  |  |
+| `0x1b268` | `TURNOFF` | 20 | ✅ verified | run-to-rts |
 | `0x1b2e8` | `snd_voice_a` | 4 |  |  |
 | `0x1b2ec` | `snd_voice_b` | 160 |  |  |
 | `0x1b3ba` | `snd_stub` | 4 |  |  |
 | `0x1b3be` | `snd_cmd_handler` | 244 |  |  |
-| `0x1b560` | `INITFX` | 60 |  |  |
-| `0x1b59c` | `INITTUNE` | 86 |  |  |
+| `0x1b560` | `INITFX` | 60 | ✅ verified | fuzz fx id |
+| `0x1b59c` | `INITTUNE` | 86 | ✅ verified | fuzz tune id |
 
 ## Verification notes (known gaps)
 
@@ -157,7 +157,8 @@ is 1 MiB to hold them + the load buffers). Anything still not faithfully modeled
 **Super**, an **unmodeled GEM/VDI opcode**, an **unstaged file**, unknown fn) is counted and
 `emu.run` **raises** — a function that hits one cannot be falsely "verified".
 
-Unlocked next: the whole startup path (`_start` → `main` init → `load_graphics` → `unpack_graphics`)
-is now verified. Extending `main`'s checkpoint past its Supexec-wrapped init would pull in that
-routine's callee chain (`install_handlers`, sound-vector setup, …). The remaining unverified
-functions are the gameplay/draw/event/sound families (see the table above).
+Unlocked next: the startup path (`_start` → `main` init → `load_graphics` → `unpack_graphics`)
+and the course-event engine (`evt_*` / `handle_marker`) are verified; the sound driver is started
+(`TURNOFF`/`INITFX`/`INITTUNE`). The rest of the **sound driver** (`snd_voice_a/b`,
+`snd_cmd_handler`, `EGOFF`, the VBL `REFRESH`) is the natural next cluster. Remaining beyond that:
+the gameplay/draw/HUD families and the big orchestrators (`game_update`, `render_road`, `draw_hud`).

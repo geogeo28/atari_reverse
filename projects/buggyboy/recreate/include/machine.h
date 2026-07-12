@@ -22,4 +22,10 @@ static inline void wr32(uint8_t *ptr, uint32_t value) {
 /* Sign-extend a 16-bit register word to a 32-bit address delta (68k adda.w / word EA). */
 static inline uint32_t sign_ext16(uint32_t value) { return (uint32_t)(int32_t)(int16_t)value; }
 
+/* 68k `.b` op on a word register: the result byte replaces the low byte, and the high byte is
+ * left untouched (byte ops don't carry into it) — e.g. addq.b / asl.b applied to a data reg. */
+static inline uint16_t set_low_byte(uint16_t word, uint8_t byte) {
+    return (uint16_t)((word & 0xFF00u) | byte);
+}
+
 #endif /* BB_MACHINE_H */

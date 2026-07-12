@@ -182,6 +182,16 @@ var 0x18230 score_str
 var 0x18cfa cur_tune_id
 var 0x18c48 flag_seq_count
 var 0x18d08 bonus_timer
+var 0x18c40 flag_seq_off
+var 0x17e3a flag_seq_table
+var 0x18c84 collision_lock
+var 0x18eb4 obj_active
+var 0x17388 score_delta_bonus
+var 0x17370 score_delta_gate
+var 0x17376 score_delta_msg
+var 0x1b07a MZFLAG
+var 0x1b07b FXFLAG
+fn 0x1b086 REFRESH
 
 # ==== HUD / misc ====
 var 0x1823c hud_speed_txt

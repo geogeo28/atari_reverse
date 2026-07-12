@@ -38,6 +38,26 @@
 #define A_fname_graphics  0x17e2a   /* "GRAPHICS.GRA" string in the image */
 #define GFX_LOAD_OFFSET   0xc350    /* GRAPHICS.GRA loads at buf_c + this */
 
+/* ---- course-event engine (evt_* @ 0x11ba4.., handle_marker @ 0x11cb2) ---- */
+#define A_flag_seq_count    0x18c48   /* current matched-in-a-row count */
+#define A_flag_seq_off      0x18c40   /* word: byte offset into the expected-sequence table */
+#define A_flag_seq_table    0x17e3a   /* const: expected roadside-object type sequence */
+#define A_bonus_timer       0x18d08   /* frames left on the flag-gate bonus window */
+#define A_collision_lock    0x18c84   /* nonzero suppresses the collision penalty */
+#define A_engine_rpm        0x18c8c
+#define A_speed             0x18cf6
+#define A_obj_active        0x18eb4   /* per-object active flags; evt clears [d5+1] */
+#define A_score_delta_bonus 0x17388   /* const BCD deltas passed to add_score */
+#define A_score_delta_gate  0x17370
+#define A_score_delta_msg   0x17376
+
+/* ---- sound driver (play_event_tune @ 0x11c7a; INITTUNE/INITFX/TURNOFF) ---- */
+#define A_vbl_sound_vec   0x18c0c   /* VBL sound handler vector; set to REFRESH */
+#define A_cur_tune_id     0x18cfa
+#define A_refresh         0x1b086   /* REFRESH VBL handler address (stored into vbl_sound_vec) */
+#define A_mzflag          0x1b07a   /* music-active flag */
+#define A_fxflag          0x1b07b   /* effect-active flag */
+
 /* ---- fill patterns ---- */
 #define A_color_pairs     0x15afa   /* 8-byte (4-plane) solid-fill pattern per colour index */
 

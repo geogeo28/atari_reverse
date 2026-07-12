@@ -68,4 +68,16 @@ void g_unpack_graphics(uint8_t *image);                          /* GRAPHICS.GRA
 void g_build_sprite_shifts(uint8_t *image, uint32_t count);      /* D5 = sprite count-1 */
 void g_build_sprite_shifts_msk(uint8_t *image, uint32_t dst_off, uint32_t src_off, uint32_t count); /* D0, D1, D5 */
 
+/* ---- sound-driver leaves (sound.c) ---- */
+void g_TURNOFF(uint8_t *image);
+void g_INITFX(uint8_t *image, uint32_t fx_id);                   /* D0 = effect id */
+void g_INITTUNE(uint8_t *image, uint32_t tune_id);               /* D0 = tune id */
+
+/* ---- course-event engine (events.c) ---- */
+void g_evt_collision(uint8_t *image);
+void g_play_event_tune(uint8_t *image, uint32_t tune);           /* D0 = tune id */
+void g_evt_flag_gate(uint8_t *image, uint32_t slot, uint32_t obj_type);   /* D5, D6 */
+void g_evt_score_msg(uint8_t *image, uint32_t d6, uint32_t d7);
+void g_handle_marker(uint8_t *image, uint32_t fx_id);            /* D0 = effect id */
+
 #endif /* BB_BUGGYBOY_H */
