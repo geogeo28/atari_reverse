@@ -63,5 +63,6 @@ void g_gem_aes(uint8_t *image);                                  /* trap #2 AES 
 void g_gem_vdi(uint8_t *image);                                  /* trap #2 VDI (D0=0x73, D1=&vdi_pblk) */
 void g_start(uint8_t *image);                                    /* entry: GEM init, verified @ checkpoint 0x100d4 */
 void g_load_graphics(uint8_t *image);                            /* file loader, verified @ checkpoint 0x121f2 */
+void g_unpack_graphics(uint8_t *image);                          /* GRAPHICS.GRA decompressor, verified @ 0x10720 */
 
 #endif /* BB_BUGGYBOY_H */

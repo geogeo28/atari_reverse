@@ -30,6 +30,8 @@
 /* ---- file loader (load_graphics @ 0x12166) ---- */
 #define A_gfx_file_handle 0x18bea   /* GEMDOS handle temp (word), reused across the two opens */
 #define A_mem_base        0x18bfc   /* COURSES.DAT read target (pointer into the big Malloc block) */
+#define A_buf_aux         0x18bf8   /* aux buffer (mem_base+0x57000); unpack_graphics header stash */
+#define A_buf_b           0x18c04   /* buffer b (mem_base+0xf660 == buf_c-0xd000); deinterleave scratch */
 #define A_buf_c           0x18c08   /* GRAPHICS.GRA read target base; the file lands at +0xc350 */
 #define A_fname_courses   0x17e1a   /* "COURSES.DAT" string in the image */
 #define A_fname_graphics  0x17e2a   /* "GRAPHICS.GRA" string in the image */

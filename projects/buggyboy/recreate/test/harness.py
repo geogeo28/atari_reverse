@@ -84,7 +84,7 @@ def make_image(pokes=None):
     return img
 
 
-def differential(entry, regs, glue, stop_pc=0, exclude=None):
+def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
@@ -98,9 +98,10 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None):
     in addition to the default stack guard — used when the function relocates its own stack
     outside [STACK_GUARD_LO, IMAGE_SIZE) (e.g. _start moves A7 to 0x1b044). The candidate is
     pure C and never writes a machine stack, so excluding the oracle's stack band is sound.
+    ``max_insns`` caps the oracle run (raise it for data-heavy functions like the unpacker).
     """
     img = make_image(regs.pop("_pokes", None))
-    o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc)
+    o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc, max_insns=max_insns)
 
     Buf = ctypes.c_uint8 * IMAGE_SIZE
     buf = Buf.from_buffer(bytearray(img))
