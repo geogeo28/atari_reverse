@@ -22,6 +22,8 @@ harness._lib.g_gem_vdi.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_gem_vdi.restype = None
 harness._lib.g_start.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_start.restype = None
+harness._lib.g_load_graphics.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_load_graphics.restype = None
 
 PALETTE_PTR = 0x1e000             # scratch (below the stack guard) for the 16-word palette
 
@@ -155,3 +157,30 @@ def test_fread_file_model():
     assert mem[0x30010:0x30020] == bytes(16), "Fread must not write past the file's actual size"
     assert int.from_bytes(mem[0x30020:0x30022], "big") == 16, "Fread should return the byte count"
     assert int.from_bytes(mem[0x30022:0x30024], "big") == 6, "Fopen should return handle 6"
+
+
+# load_graphics globals (see names.txt / addrs.h) and the checkpoint before bsr unpack_graphics.
+A_MEM_BASE, A_BUF_C = 0x18bfc, 0x18c08
+GFX_LOAD_OFFSET = 0xc350
+LOAD_GRAPHICS_CKPT = 0x121f2
+COURSES_DEST, GRAPHICS_BASE = 0x20000, 0x40000   # in-image scratch dests (below the FS regions)
+
+
+def test_load_graphics():
+    """load_graphics reads COURSES.DAT + GRAPHICS.GRA into their buffers. Stage the real files,
+    point mem_base/buf_c at scratch buffers, and diff at the checkpoint before unpack_graphics."""
+    bin_dir = harness.PRG.parent
+    courses = (bin_dir / "COURSES.DAT").read_bytes()
+    graphics = (bin_dir / "GRAPHICS.GRA").read_bytes()
+    stage_pokes, _ = harness.stage_files([("COURSES.DAT", courses), ("GRAPHICS.GRA", graphics)])
+    pokes = {A_MEM_BASE: COURSES_DEST.to_bytes(4, "big"),
+             A_BUF_C: GRAPHICS_BASE.to_bytes(4, "big"),
+             **stage_pokes}
+    diffs, _ = differential(0x12166, {"_pokes": pokes},
+                            lambda lib, buf: lib.g_load_graphics(buf), stop_pc=LOAD_GRAPHICS_CKPT)
+    assert not diffs, report(diffs[:12])
+    # both files must have landed byte-exact at their targets.
+    mem, _, _ = emu.run(harness.make_image(pokes), 0x12166, stop_pc=LOAD_GRAPHICS_CKPT)
+    assert mem[COURSES_DEST:COURSES_DEST + len(courses)] == courses, "COURSES.DAT mis-loaded"
+    gfx = GRAPHICS_BASE + GFX_LOAD_OFFSET
+    assert mem[gfx:gfx + len(graphics)] == graphics, "GRAPHICS.GRA mis-loaded"

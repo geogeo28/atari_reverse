@@ -27,6 +27,14 @@
 #define A_vdi_ws_handle   0x19c8c   /* intout[0] (shared); graf_handle's physical handle lands here */
 #define A_vdi_handle      0x1a0a0   /* the workstation handle _start keeps (copy of intout[0]) */
 
+/* ---- file loader (load_graphics @ 0x12166) ---- */
+#define A_gfx_file_handle 0x18bea   /* GEMDOS handle temp (word), reused across the two opens */
+#define A_mem_base        0x18bfc   /* COURSES.DAT read target (pointer into the big Malloc block) */
+#define A_buf_c           0x18c08   /* GRAPHICS.GRA read target base; the file lands at +0xc350 */
+#define A_fname_courses   0x17e1a   /* "COURSES.DAT" string in the image */
+#define A_fname_graphics  0x17e2a   /* "GRAPHICS.GRA" string in the image */
+#define GFX_LOAD_OFFSET   0xc350    /* GRAPHICS.GRA loads at buf_c + this */
+
 /* ---- fill patterns ---- */
 #define A_color_pairs     0x15afa   /* 8-byte (4-plane) solid-fill pattern per colour index */
 

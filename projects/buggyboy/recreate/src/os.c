@@ -65,3 +65,27 @@ void g_start(uint8_t *image) {
     wr16(image + A_vdi_intin + 20, 2);
     os_gem_trap(image, GEM_VDI, A_vdi_pblk);
 }
+
+/* load_graphics @ 0x12166 — read COURSES.DAT into mem_base, then GRAPHICS.GRA into buf_c+0xc350,
+ * then decompress the graphics. Reconstructed up to the `bsr unpack_graphics` at 0x121f2 (the
+ * checkpoint): this verifies both file reads land byte-exact; the decompressor is a separate
+ * function. Each Fopen bails to rts on a negative handle, exactly as the original does; Fread
+ * uses the just-returned handle and Fclose reads it back from the handle global. */
+#define COURSES_READ_MAX  0xf660u    /* COURSES.DAT read count (equals its file size) */
+#define GRAPHICS_READ_MAX 0x3f500u   /* GRAPHICS.GRA read count (>= file size -> whole file) */
+
+void g_load_graphics(uint8_t *image) {
+    int32_t handle = os_fopen(image, A_fname_courses);
+    if (handle < 0) return;
+    wr16(image + A_gfx_file_handle, (uint16_t)handle);
+    os_fread(image, (uint16_t)handle, COURSES_READ_MAX, be32(image + A_mem_base));
+    os_fclose(image, be16(image + A_gfx_file_handle));
+
+    handle = os_fopen(image, A_fname_graphics);
+    if (handle < 0) return;
+    wr16(image + A_gfx_file_handle, (uint16_t)handle);
+    os_fread(image, (uint16_t)handle, GRAPHICS_READ_MAX,
+             be32(image + A_buf_c) + GFX_LOAD_OFFSET);
+    os_fclose(image, be16(image + A_gfx_file_handle));
+    /* checkpoint here; the original falls through to unpack_graphics (0x620). */
+}

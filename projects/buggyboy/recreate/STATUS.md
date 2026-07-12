@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 21/91.**
+**Verified: 22/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -57,7 +57,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x120f8` | `set_rez` | 24 | ✅ verified | trap layer (Ikbdws); D0.b -> config byte |
 | `0x12110` | `read_joystick` | 20 |  |  |
 | `0x12124` | `install_handlers` | 50 |  |  |
-| `0x12166` | `load_graphics` | 146 |  |  |
+| `0x12166` | `load_graphics` | 146 | ✅ verified | checkpoint @0x121f2 (both Freads; before unpack) |
 | `0x121f8` | `flip_screen` | 46 |  |  |
 | `0x12226` | `xbios_setscreen` | 26 | ✅ verified | trap layer; no image effect |
 | `0x1225a` | `draw_results_screen` | 308 |  |  |
@@ -135,23 +135,26 @@ raises; a stray write in the guard band fails loudly). Remaining, low-severity, 
 A function that never returns can't be run to `rts`, so the harness can also stop at a
 **checkpoint PC** and diff the image there (`emu.run(..., stop_pc=)`, `differential(..., stop_pc=,
 exclude=)`). `_start` is verified this way at `0x100d4` (the `bsr main`); its GEM init is fully
-diffed while `main` — the infinite game loop — is never entered. `exclude` drops a function's
-relocated-stack band from the diff (`_start` moves A7 to `0x1b044`; the reconstruction is pure C
-with no machine stack). Malloc/Fread-heavy functions still need the extra model work below.
+diffed while `main` — the infinite game loop — is never entered. `load_graphics` is verified at
+`0x121f2` (before `bsr unpack_graphics`), diffing both file reads without the decompressor.
+`exclude` drops a function's relocated-stack band from the diff (`_start` moves A7 to `0x1b044`;
+the reconstruction is pure C with no machine stack).
 
 ## OS trap layer
 
 OS-bound functions now run under the oracle: `trap #1/#13/#14/#2` are serviced by a
 deterministic model (`include/os.h`, dispatched in `oracle/shim.c`). Calls that only touch
 hardware/files (Setpalette/Setcolor/Setscreen, sound, console, Ikbdws) have no image effect;
-Physbase/Logbase → OS_SCREEN_BASE, Malloc bump-allocates, Fopen → a fixed handle; XBIOS
-Supexec runs the passed routine in place. **GEM trap #2** now models the three AES/VDI calls
-BuggyBoy issues — AES `appl_init`/`graf_handle`, VDI `v_opnvwk` — via `os_gem_trap()` (shared by
-the shim and the reconstructed `gem_aes`/`gem_vdi`); realistic low-res values, results written
-into the param block's `intout`. Anything still not faithfully modeled (**Fread**, GEMDOS
-**Super**, an **unmodeled GEM/VDI opcode**, unknown fn) is counted and `emu.run` **raises** — a
-function that hits one cannot be falsely "verified".
+Physbase/Logbase → OS_SCREEN_BASE, Malloc bump-allocates; XBIOS Supexec runs the passed routine
+in place. **GEM trap #2** models the three AES/VDI calls BuggyBoy issues — AES
+`appl_init`/`graf_handle`, VDI `v_opnvwk` — via `os_gem_trap()` (shared by the shim and the
+reconstructed `gem_aes`/`gem_vdi`); realistic low-res values into the param block's `intout`.
+**GEMDOS Fopen/Fread/Fclose** are modeled by `os_fopen`/`os_fread`/`os_fclose` over an in-image
+staged-file table (the harness stages the real `COURSES.DAT`/`GRAPHICS.GRA` bytes; `IMAGE_SIZE`
+is 1 MiB to hold them + the load buffers). Anything still not faithfully modeled (GEMDOS
+**Super**, an **unmodeled GEM/VDI opcode**, an **unstaged file**, unknown fn) is counted and
+`emu.run` **raises** — a function that hits one cannot be falsely "verified".
 
-Unlocked next (need model extensions): Fread → a file model (unlocks the real graphics/course
-loaders — `load_graphics`, `unpack_graphics`, and a checkpoint verification of `main`'s init).
-Functions that Malloc large screen buffers also need a larger `IMAGE_SIZE`.
+Unlocked next: `unpack_graphics` (the GRAPHICS decompressor, pure — poke its input from the
+staged file, run to rts) and a checkpoint verification of `main`'s init, which additionally
+needs `Malloc` pointed at a real large in-image block (it currently bump-allocates small blocks).

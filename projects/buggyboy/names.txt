@@ -141,6 +141,11 @@ var 0x18bf2 flip_idx
 var 0x18bf4 physbase_tbl
 var 0x18c0c vbl_sound_vec
 
+# ==== file loader (load_graphics @ 0x12166) ====
+var 0x18bea gfx_file_handle
+var 0x17e1a fname_courses
+var 0x17e2a fname_graphics
+
 # ==== road / perspective ====
 var 0x18f24 road_width_tbl
 var 0x190ac road_scanline_tbl

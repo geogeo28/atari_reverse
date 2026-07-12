@@ -72,16 +72,18 @@ frame + the GEMDOS/BIOS/XBIOS function number and services the call **determinis
 the semantics both the oracle and any reconstructed wrapper must share live in
 [`include/os.h`](include/os.h). Calls that only touch hardware or files (Setpalette/Setcolor/
 Setscreen, sound, console, Ikbdws) have no image effect and return 0; Physbase/Logbase return
-`OS_SCREEN_BASE`; Malloc bump-allocates from `OS_HEAP_BASE`; Fopen returns a fixed handle;
-XBIOS `Supexec` runs the passed routine in place (its `rts` returns to the caller, its D0 is
-the result).
+`OS_SCREEN_BASE`; Malloc bump-allocates from `OS_HEAP_BASE`; XBIOS `Supexec` runs the passed
+routine in place (its `rts` returns to the caller, its D0 is the result). GEM `trap #2` models
+the AES/VDI calls used at start-up (`os_gem_trap`), and GEMDOS `Fopen`/`Fread`/`Fclose` are
+modeled by `os_fopen`/`os_fread`/`os_fclose` over an in-image *staged-file* table — the harness
+writes the real file bytes into a staging region and one table entry per file, so both sides
+serve identical bytes (see `harness.stage_files`).
 
-Anything **not faithfully modeled** — GEMDOS `Fread`, `Super`, all GEM/AES/VDI via
-`trap #2`, or an unknown function number — is counted, and `emu.run` **raises** rather than
-diff a fabricated result. So an OS-bound function can only be marked verified once every OS
-call it makes is genuinely modeled. Extending the model (a file model for `Fread`, AES/VDI
-for `trap #2`, a larger `IMAGE_SIZE` for large `Malloc`s) is what unlocks the loaders and
-`_start`/`main`.
+Anything **not faithfully modeled** — GEMDOS `Super`, an unmodeled GEM/VDI opcode, a file that
+wasn't staged, or an unknown function number — is counted, and `emu.run` **raises** rather than
+diff a fabricated result. So an OS-bound function can only be marked verified once every OS call
+it makes is genuinely modeled. The remaining gap is `Malloc`: it bump-allocates small blocks, so
+`main`'s large screen-buffer allocation needs it pointed at a real in-image block first.
 
 ## Oracle note
 
