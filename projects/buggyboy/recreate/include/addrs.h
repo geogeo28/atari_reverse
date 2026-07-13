@@ -63,6 +63,7 @@
 
 /* ---- font / text (draw_text @ 0x159fa) ---- */
 #define A_font_glyphs     0x176a8   /* 16-byte 1bpp glyphs, indexed char << 4 */
+#define A_num_glyph_tbl   0x17c5e   /* per-digit word byte-offset into the pre-rendered num sprites */
 
 /* ---- sprite edge masks (blit_obj_* @ 0x10bdc..) ---- */
 #define A_blit_mask_L     0x15bba   /* left-edge blit masks, indexed (x&0xf)<<2 */

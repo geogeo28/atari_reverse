@@ -1,6 +1,6 @@
-/* text.c — text glyph blitters (shared body @ 0x5a2c).
+/* text.c — glyph blitters: text (shared body @ 0x5a2c) and numbers (@ 0x5ab6).
  *
- * Four entry points draw a run of characters into the draw buffer, one 8-byte (16-pixel,
+ * The text entries draw a run of characters into the draw buffer, one 8-byte (16-pixel,
  * 4-plane) cell per character:
  *   draw_text        @ 0x159fa -> draw_text_row with the cell count preset to 0x13
  *   draw_text_row    @ 0x159fc   dst = buffer + D0.w, colour from D1, count from D5
@@ -10,7 +10,8 @@
  * FONT_GLYPHS entries into a single cell — char1's row word splits hi-byte -> AND mask,
  * lo-byte -> ink; char2's two row bytes do the same for the other pixel byte. Ink is masked
  * by the two colour planes (fill_lo/fill_hi) and OR'd in. A 0 first byte ends the string; a
- * 0 second byte substitutes glyph 0x2f and draws that one last cell.
+ * 0 second byte substitutes glyph 0x2f and draws that one last cell. The number entries
+ * (draw_num/_thunk) blit pre-rendered digit sprites from buf_c instead — see num_body below.
  */
 #include "machine.h"
 #include "addrs.h"
@@ -64,33 +65,76 @@ static uint32_t buffer_dst(const uint8_t *image, uint32_t dst_off) {
     return be32(image + A_physbase_tbl + flip_idx) + sign_ext16(dst_off);
 }
 
-/* fill_lo/fill_hi for a colour index: color_pairs[(idx & 0xf) << 3] and its +4 half. */
-static void color_fill(const uint8_t *image, uint32_t color_idx, uint32_t *fill_lo, uint32_t *fill_hi) {
-    uint16_t off = (uint16_t)((color_idx & 0xf) << 3);
-    *fill_lo = be32(image + A_color_pairs + off);
-    *fill_hi = be32(image + A_color_pairs + off + 4);
+/* fill_lo/fill_hi for a colour index: color_pairs[(idx & idx_mask) << 3] and its +4 half.
+ * The text path masks the index to 0xf; the number path uses the full word (idx_mask 0xffff). */
+static void color_fill(const uint8_t *image, uint32_t color_idx, uint16_t idx_mask,
+                       uint32_t *fill_lo, uint32_t *fill_hi) {
+    int16_t off = (int16_t)(uint16_t)((color_idx & idx_mask) << 3);
+    *fill_lo = be32(image + A_color_pairs + (int32_t)off);
+    *fill_hi = be32(image + A_color_pairs + (int32_t)off + 4);
 }
 
 void g_draw_text(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr) {
     uint32_t fill_lo, fill_hi;
-    color_fill(image, color_idx, &fill_lo, &fill_hi);
+    color_fill(image, color_idx, 0xf, &fill_lo, &fill_hi);
     text_body(image, buffer_dst(image, dst_off), fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1);
 }
 
 void g_draw_text_row(uint8_t *image, uint32_t dst_off, uint32_t color_idx,
                      uint32_t cells_m1, uint32_t str_ptr) {
     uint32_t fill_lo, fill_hi;
-    color_fill(image, color_idx, &fill_lo, &fill_hi);
+    color_fill(image, color_idx, 0xf, &fill_lo, &fill_hi);
     text_body(image, buffer_dst(image, dst_off), fill_lo, fill_hi, str_ptr, (uint16_t)cells_m1);
 }
 
 void g_draw_hud_gauge0(uint8_t *image, uint32_t dst, uint32_t color_idx,
                        uint32_t cells_m1, uint32_t str_ptr) {
     uint32_t fill_lo, fill_hi;
-    color_fill(image, color_idx, &fill_lo, &fill_hi);
+    color_fill(image, color_idx, 0xf, &fill_lo, &fill_hi);
     text_body(image, dst, fill_lo, fill_hi, str_ptr, (uint16_t)cells_m1);
 }
 
 void g_draw_hud_bar(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi, uint32_t str_ptr) {
     text_body(image, dst, fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1);
+}
+
+/* --- number blitter (draw_num @ 0x15a86, draw_num_thunk @ 0x15a84) ---
+ * Unlike the text body, digits are single string bytes and their sprites are pre-rendered
+ * (by unpack_graphics) into buf_c at NUM_GLYPH_BUF_OFF, one 15-row sprite per digit laid out
+ * at the screen row stride; num_glyph_tbl gives each digit's byte offset there. The per-row
+ * blit is identical (word0 -> AND mask, word1 -> ink, two colour planes). */
+#define NUM_CELL_ROWS      15      /* rows blitted per digit (dbf #$e) */
+#define NUM_GLYPH_BUF_OFF  0xbb80  /* digit sprite buffer at buf_c + this (48000) */
+#define NUM_MAX_CELLS_M1   0x13    /* draw_num_thunk preset cell count-1 */
+
+static void num_body(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi,
+                     uint32_t str_ptr, uint16_t cells_m1) {
+    uint16_t remaining = cells_m1;
+    uint32_t glyph_base = be32(image + A_buf_c) + NUM_GLYPH_BUF_OFF;
+    do {
+        uint8_t digit = image[str_ptr++];
+        if (digit == 0) return;
+        uint32_t src = glyph_base + be16(image + A_num_glyph_tbl + digit * 2);
+        uint32_t cell = dst;
+        for (int row = 0; row < NUM_CELL_ROWS; row++, cell += ROW_STRIDE, src += ROW_STRIDE) {
+            uint32_t mask = dup16(be16(image + src));
+            uint32_t ink  = dup16(be16(image + src + 2));
+            blit_row(image, cell, mask, ink, fill_lo, fill_hi);
+        }
+        dst += CELL_WIDTH;
+        remaining = (uint16_t)(remaining - 1);
+    } while (remaining != 0xffff);
+}
+
+/* D0 dst offset, D1 colour (not masked, unlike text), D5 cell count-1, A3 digit string. */
+void g_draw_num(uint8_t *image, uint32_t dst_off, uint32_t color_idx,
+                uint32_t cells_m1, uint32_t str_ptr) {
+    uint32_t fill_lo, fill_hi;
+    color_fill(image, color_idx, 0xffff, &fill_lo, &fill_hi);
+    num_body(image, buffer_dst(image, dst_off), fill_lo, fill_hi, str_ptr, (uint16_t)cells_m1);
+}
+
+/* draw_num_thunk: draw_num with the cell count preset to 0x13. */
+void g_draw_num_thunk(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr) {
+    g_draw_num(image, dst_off, color_idx, NUM_MAX_CELLS_M1, str_ptr);
 }

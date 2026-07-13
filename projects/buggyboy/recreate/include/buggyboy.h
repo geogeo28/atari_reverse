@@ -48,6 +48,13 @@ void g_draw_hud_gauge0(uint8_t *image, uint32_t dst, uint32_t color_idx,
                        uint32_t cells_m1, uint32_t str_ptr);
 void g_draw_hud_bar(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi, uint32_t str_ptr);
 
+/* ---- number blitter (draw_num @ 0x15a86) ---- Digits are single string bytes (0 ends it);
+ * each digit's 15-row sprite is pre-rendered into buf_c and indexed by num_glyph_tbl. Colour
+ * is NOT masked to 0xf (unlike text). draw_num_thunk presets the cell count to 0x13. */
+void g_draw_num(uint8_t *image, uint32_t dst_off, uint32_t color_idx,
+                uint32_t cells_m1, uint32_t str_ptr);       /* D0, D1, D5, A3 */
+void g_draw_num_thunk(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr);
+
 /* ---- road perspective (build_road_geometry @ 0x11f4c) ---- */
 void g_build_road_geometry(uint8_t *image);
 

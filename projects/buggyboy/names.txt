@@ -66,8 +66,8 @@ fn 0x159fa draw_text
 fn 0x159fc draw_text_row
 fn 0x15a08 draw_hud_gauge0          # ctx
 fn 0x15a24 draw_hud_bar             # ctx
-fn 0x15a84 draw_num_thunk           # ctx
-fn 0x15a86 draw_num                 # ctx
+fn 0x15a84 draw_num_thunk
+fn 0x15a86 draw_num
 fn 0x15872 draw_crash_fx            # ctx
 fn 0x12e38 clear_screen
 fn 0x12e56 fill_screen
