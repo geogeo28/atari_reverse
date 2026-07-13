@@ -35,9 +35,33 @@ def test_edge_cases():
     _case(ascii_digits("555555"), [0, 0, 0, 0, 0, 7], True)       # game over -> no change
 
 
+# Bytes straddling the decisions add_score makes: the per-digit carry is a *signed* `cmp.b`/`bpl`
+# against '9' (0x39) — verified: no BCD/decimal-adjust op is used — so the sign bit of (0x39 - digit)
+# must be modelled for every byte, not just 0x30..0x39. These land on both sides of that flip
+# (0x39/0x3a), the int8 sign boundary (0x7f/0x80), the blank-walk char (0x30), and the extremes.
+_BOUNDARY_BYTES = (0x00, 0x2f, 0x30, 0x38, 0x39, 0x3a, 0x7f, 0x80, 0x81, 0x99, 0xff)
+
+
+def test_boundary_bytes():
+    # Each boundary byte at each digit position, isolated with a zero delta, pins the signed
+    # carry decision (cmp.b/bpl) at that byte — the edge the 0..9 fuzz never reaches.
+    for b in _BOUNDARY_BYTES:
+        for pos in range(6):
+            score = [0x30] * 6
+            score[pos] = b
+            _case(score, [0] * 6, False)
+    # add.l / add.w wraparound and a maxed carry cascade.
+    _case([0xff] * 6, [0xff] * 6, False)          # both adds overflow their field
+    _case([0x39] * 6, [0, 0, 0, 0, 0, 0xff], False)   # cascade from a large low-word delta
+    _case([0x30] * 6, [0xff] * 6, False)
+
+
 def test_fuzz():
+    # Full-range bytes (not just ASCII digits): the port must match the asm's signed cmp.b/bpl
+    # carry and its add.l/.w wraparound for every input — score/delta sit in fixed 6-byte
+    # buffers, so any byte value is memory-safe.
     rng = random.Random(12)               # fixed seed (dataset seed convention)
-    for _ in range(2000):
-        score = [ord("0") + rng.randint(0, 9) for _ in range(6)]
-        delta = [rng.randint(0, 9) for _ in range(6)]
+    for _ in range(3000):
+        score = [rng.randint(0, 255) for _ in range(6)]
+        delta = [rng.randint(0, 255) for _ in range(6)]
         _case(score, delta, rng.random() < 0.1)
