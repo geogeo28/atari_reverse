@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 34/91.**
+**Verified: 39/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -106,12 +106,12 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x15a86` | `draw_num` | 112 |  |  |
 | `0x15af6` | `render_road` | 4 |  |  |
 | `0x19144` | `render_road` | 2256 |  |  |
-| `0x1b252` | `EGOFF` | 16 |  |  |
+| `0x1b252` | `EGOFF` | 16 | ✅ verified | run-to-rts (clear EGFLAG + music byte) |
 | `0x1b268` | `TURNOFF` | 20 | ✅ verified | run-to-rts |
-| `0x1b2e8` | `snd_voice_a` | 4 |  |  |
-| `0x1b2ec` | `snd_voice_b` | 160 |  |  |
-| `0x1b3ba` | `snd_stub` | 4 |  |  |
-| `0x1b3be` | `snd_cmd_handler` | 244 |  |  |
+| `0x1b2e8` | `snd_voice_a` | 4 | ✅ verified | +0x18 entry alias of `snd_voice_b` |
+| `0x1b2ec` | `snd_voice_b` | 160 | ✅ verified | fuzz glide/note/pitch + 13-cmd table (0x88 excluded) |
+| `0x1b3ba` | `snd_stub` | 4 | ✅ verified | +0x18 entry alias of `snd_cmd_handler` |
+| `0x1b3be` | `snd_cmd_handler` | 244 | ✅ verified | 400-seed fuzz (image + returned D1 period) |
 | `0x1b560` | `INITFX` | 60 | ✅ verified | fuzz fx id |
 | `0x1b59c` | `INITTUNE` | 86 | ✅ verified | fuzz tune id |
 
@@ -129,6 +129,12 @@ raises; a stray write in the guard band fails loudly). Remaining, low-severity, 
   exercised by `clear_screen`/`fill_screen` but not by span/rect.
 - **`_start` past `bsr main`** — verified only up to the checkpoint at 0x100d4 (its GEM init).
   The terminal Pterm and `appl_exit` after main are unreached (main never returns).
+- **snd_voice command 0x88 ("end tune")** — this command rewrites the return address on the stack
+  to re-enter REFRESH (`0x1b0f0`) after a TURNOFF, so it cannot be verified by a run-to-rts diff.
+  Its memory effect (the TURNOFF) is reconstructed, but the fuzz excludes it (streams are built
+  from the 12 other commands + notes). The remaining 12 commands and all pitch/note/glide paths
+  are covered. The stepper also assumes D0's high byte is 0 (a design invariant: it indexes a
+  256-entry byte table and a 13-entry jump table — a nonzero high byte runs off both).
 
 ## Checkpoint verification
 
@@ -158,7 +164,11 @@ is 1 MiB to hold them + the load buffers). Anything still not faithfully modeled
 `emu.run` **raises** — a function that hits one cannot be falsely "verified".
 
 Unlocked next: the startup path (`_start` → `main` init → `load_graphics` → `unpack_graphics`)
-and the course-event engine (`evt_*` / `handle_marker`) are verified; the sound driver is started
-(`TURNOFF`/`INITFX`/`INITTUNE`). The rest of the **sound driver** (`snd_voice_a/b`,
-`snd_cmd_handler`, `EGOFF`, the VBL `REFRESH`) is the natural next cluster. Remaining beyond that:
-the gameplay/draw/HUD families and the big orchestrators (`game_update`, `render_road`, `draw_hud`).
+and the course-event engine (`evt_*` / `handle_marker`) are verified, and the **sound driver** is
+now fully reconstructed at the leaf level — the tune/effect setup (`TURNOFF`/`EGOFF`/`INITFX`/
+`INITTUNE`), the per-voice note-stream stepper (`snd_voice_a/b`), and the per-frame voice DSP
+(`snd_cmd_handler`/`snd_stub`). The only sound code left is the VBL orchestrator **`REFRESH`**
+(`0x1b086`, not one of the 91 tracked functions): it drives the three voices then writes the
+YM2149 PSG at `$ffff8800/8802`, which is outside the image, so verifying it needs a PSG-write
+model in the harness (like the OS trap layer). Remaining beyond that: the gameplay/draw/HUD
+families and the big orchestrators (`game_update`, `render_road`, `draw_hud`).

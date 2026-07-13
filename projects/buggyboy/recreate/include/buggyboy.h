@@ -70,8 +70,17 @@ void g_build_sprite_shifts_msk(uint8_t *image, uint32_t dst_off, uint32_t src_of
 
 /* ---- sound-driver leaves (sound.c) ---- */
 void g_TURNOFF(uint8_t *image);
+void g_EGOFF(uint8_t *image);
 void g_INITFX(uint8_t *image, uint32_t fx_id);                   /* D0 = effect id */
 void g_INITTUNE(uint8_t *image, uint32_t tune_id);               /* D0 = tune id */
+/* per-frame note-stream steppers: A0 = voice record, A3 = SND_STATE (D0 is scratch, hi=0).
+ * snd_voice_a is the +1-voice-stride entry alias that falls into the snd_voice_b body. */
+void g_snd_voice_b(uint8_t *image, uint32_t rec);
+void g_snd_voice_a(uint8_t *image, uint32_t rec);
+/* per-frame voice DSP: A0 = voice record, A1 = mod-table base, A2 = volume-out cursor,
+ * A3 = SND_STATE; returns the tone period (D1). snd_stub is the +1-voice-stride entry alias. */
+uint32_t g_snd_cmd_handler(uint8_t *image, uint32_t rec, uint32_t mod_tab, uint32_t out);
+uint32_t g_snd_stub(uint8_t *image, uint32_t rec, uint32_t mod_tab, uint32_t out);
 
 /* ---- course-event engine (events.c) ---- */
 void g_evt_collision(uint8_t *image);
