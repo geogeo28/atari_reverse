@@ -62,3 +62,30 @@ void g_draw_result_row(uint8_t *image, uint32_t dst_off, uint32_t src_off) {
                             dst + (block * RESULT_ROW_ROWS + row) * ROW_STRIDE,
                             src + row * ROW_STRIDE);
 }
+
+/* --- draw_dashboard @ 0x150a4 --- Masked blit of the fixed dashboard graphic from buf_c
+ * (D0 = dst offset). 40 rows, each 8 groups of 4 dest words. Per group the four source words
+ * are (mask, a, b, c): every dest word keeps the background where mask is set, and the group's
+ * four dest words take ink a, b, b, c (the middle word is written twice — a longword op in the
+ * original draws two screen words from one source word). Source and dest step one scanline. */
+#define DASH_SRC_OFF   0x11c20     /* dashboard graphic at buf_c + this */
+#define DASH_ROWS      40          /* dbf #$27 */
+#define DASH_GROUPS    8           /* 8 groups of 4 dest words = 32 words (0x40 bytes) per row */
+
+void g_draw_dashboard(uint8_t *image, uint32_t dst_off) {
+    uint32_t src = buf_c_src(image, DASH_SRC_OFF);
+    uint32_t dst = buffer_dst(image, dst_off);
+    for (int row = 0; row < DASH_ROWS; row++, dst += ROW_STRIDE, src += ROW_STRIDE) {
+        uint32_t d = dst, s = src;
+        for (int g = 0; g < DASH_GROUPS; g++, d += 8, s += 8) {
+            uint16_t mask = be16(image + s);
+            uint16_t ink_a = be16(image + s + 2);
+            uint16_t ink_b = be16(image + s + 4);
+            uint16_t ink_c = be16(image + s + 6);
+            wr16(image + d,     (uint16_t)((be16(image + d)     & mask) | ink_a));
+            wr16(image + d + 2, (uint16_t)((be16(image + d + 2) & mask) | ink_b));
+            wr16(image + d + 4, (uint16_t)((be16(image + d + 4) & mask) | ink_b));
+            wr16(image + d + 6, (uint16_t)((be16(image + d + 6) & mask) | ink_c));
+        }
+    }
+}

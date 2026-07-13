@@ -17,12 +17,15 @@ DST_LO, DST_HI = 0x1000, 0x6800            # every dest byte the blit can touch 
 A_FLIP_IDX, A_PHYSBASE, A_BUF_C = 0x18bf2, 0x18bf4, 0x18c08
 
 BUF_C = 0x30000                # buf_c source arena base (clear of the program and the dest noise)
-SRC_SPAN = 0x8000              # covers A1 up to 0x5000 + a row block's 0x1400 reach
+SRC_SPAN = 0x15000             # covers the result blitters (A1<=0x5000 + 0x1400) and the dashboard
+                               # graphic (buf_c + 0x11c20 + 40 rows * 0xa0)
 
 for name in ENTRY:
     fn = getattr(harness._lib, "g_" + name)
     fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32]
     fn.restype = None
+harness._lib.g_draw_dashboard.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+harness._lib.g_draw_dashboard.restype = None
 
 
 def _pokes(seed, flip=0):
@@ -63,3 +66,12 @@ def test_fuzz_result_row():
     for i in range(300):
         _check("draw_result_row", rng.randint(-0x400, 0x400), rng.randint(0x1000, 0x5000),
                rng.choice((0, 4)), i)
+
+
+def test_fuzz_dashboard():
+    rng = random.Random(32)
+    for i in range(200):
+        d0, flip = rng.randint(-0x400, 0x400) & 0xffff, rng.choice((0, 4))
+        regs = {"d0": d0, "_pokes": _pokes(i, flip)}
+        diffs, _ = differential(0x150a4, regs, lambda l, b, d0=d0: l.g_draw_dashboard(b, d0))
+        assert not diffs, f"draw_dashboard d0={d0} flip={flip}\n{report(diffs[:12])}"

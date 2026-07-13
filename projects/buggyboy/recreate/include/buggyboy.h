@@ -61,6 +61,7 @@ void g_draw_num_thunk(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint
  * 3x down (mask = D & ~(A|B|C) from the four source words). */
 void g_draw_result_row(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /* D0, A1 */
 void g_draw_result_col(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /* D0, A1 */
+void g_draw_dashboard(uint8_t *image, uint32_t dst_off);                      /* D0; src = buf_c fixed */
 
 /* ---- divider + text panels (draw_divider @ 0x126e6, draw_panel2/3/5 @ 0x1271c..) ----
  * draw_divider = filled rect + two vertical lines. Each panel draws the divider then a fixed
