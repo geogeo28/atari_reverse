@@ -55,6 +55,13 @@ void g_draw_num(uint8_t *image, uint32_t dst_off, uint32_t color_idx,
                 uint32_t cells_m1, uint32_t str_ptr);       /* D0, D1, D5, A3 */
 void g_draw_num_thunk(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr);
 
+/* ---- results-screen block blitters (draw_result_row/col @ 0x15016..) ----
+ * Both copy a source block from buf_c (A1 offset) to buffer[flip_idx] + D0; no colour index.
+ * col tiles a 7-row 16-byte column 5x across; row stacks a 32-row 4-word transparency blit
+ * 3x down (mask = D & ~(A|B|C) from the four source words). */
+void g_draw_result_row(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /* D0, A1 */
+void g_draw_result_col(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /* D0, A1 */
+
 /* ---- road perspective (build_road_geometry @ 0x11f4c) ---- */
 void g_build_road_geometry(uint8_t *image);
 
