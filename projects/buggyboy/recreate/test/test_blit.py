@@ -7,7 +7,7 @@ import ctypes
 import random
 
 import harness
-from harness import differential, report
+from harness import differential, report, hi_garbage
 
 BUF = 0x8000                      # draw-buffer base in low memory (clear of the program)
 
@@ -27,12 +27,15 @@ for name, (_entry, _ret) in VARIANTS.items():
     fn.restype = ctypes.c_uint32
 
 
-def _run(name, x, width, rows_m1, lo, hi, seed, row_offset=0):
+def _run(name, x, width, rows_m1, lo, hi, seed, row_offset=0, garbage=None):
     entry, ret = VARIANTS[name]
     rng = random.Random(seed)
     noise = bytes(rng.randrange(256) for _ in range(0x3000))    # 0x6000..0x9000: every touched byte
     pokes = {0x6000: noise}
-    args = (BUF, width & 0xffff, row_offset & 0xffff, x & 0xffff, lo, hi, rows_m1 & 0xffff)
+    # width/row_offset/x/rows are word registers (int16/uint16 in the glue); when `garbage` is a
+    # rng, splat random high bits so both sides must ignore them (a6/fills stay full 32-bit).
+    word = (lambda v: hi_garbage(garbage, v)) if garbage is not None else (lambda v: v & 0xffff)
+    args = (BUF, word(width), word(row_offset), word(x), lo, hi, word(rows_m1))
     regs = {"a6": args[0], "d2": args[1], "d3": args[2], "d4": args[3],
             "d5": args[4], "d6": args[5], "d7": args[6], "_pokes": pokes}
     gfn = getattr(harness._lib, "g_blit_obj_" + name)
@@ -60,8 +63,9 @@ def test_fuzz():
             width = rng.randint(8, 320)
             rows_m1 = rng.randint(0, 15)
             row_offset = rng.randint(-512, 512)     # exercise sign-extended nonzero/negative D3
+            # garbage=rng: the four word registers carry random high bits the blit must ignore.
             _run(name, x, width, rows_m1, rng.getrandbits(32), rng.getrandbits(32), i,
-                 row_offset=row_offset)
+                 row_offset=row_offset, garbage=rng)
 
 
 # ---- road-walk variants (blit_obj_*2): x per scanline from road_width_tbl ----
@@ -97,7 +101,8 @@ def _run_road(name, width, seed):
         0x5c00: bytes(rng.randrange(256) for _ in range(0x2000)),   # draw-buffer noise
         ROAD_WIDTH_TBL: _road_table(rng, rng.randint(0, 6), rng.randint(1, 25)),
     }
-    args = (ROAD_A6, width & 0xffff, 0xaaaaaaaa, 0x55555555)
+    # D2 (width) is a word register; splat high garbage it must ignore. A6/fills stay full 32-bit.
+    args = (ROAD_A6, hi_garbage(rng, width), 0xaaaaaaaa, 0x55555555)
     regs = {"a6": args[0], "d2": args[1], "d5": args[2], "d6": args[3], "_pokes": pokes}
     gfn = getattr(harness._lib, "g_blit_obj_" + name)
     diffs, _ = differential(ROAD_VARIANTS[name], regs, lambda lib, buf: gfn(buf, *args))

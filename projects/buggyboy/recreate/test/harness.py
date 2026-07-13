@@ -84,6 +84,14 @@ def make_image(pokes=None):
     return img
 
 
+def hi_garbage(rng, low_word):
+    """A 32-bit value with low_word in the low 16 bits and random garbage in the high 16. For a
+    register the code uses only as a word (.w ops: dbf / lsl.w / adda.w), feeding this proves the
+    high bits are ignored — the reconstruction's (u)int16 casts must drop them as the 68k does.
+    """
+    return (rng.randint(0, 0xffff) << 16) | (low_word & 0xffff)
+
+
 def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
