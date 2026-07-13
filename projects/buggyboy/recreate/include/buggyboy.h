@@ -62,6 +62,14 @@ void g_draw_num_thunk(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint
 void g_draw_result_row(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /* D0, A1 */
 void g_draw_result_col(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /* D0, A1 */
 
+/* ---- divider + text panels (draw_divider @ 0x126e6, draw_panel2/3/5 @ 0x1271c..) ----
+ * draw_divider = filled rect + two vertical lines. Each panel draws the divider then a fixed
+ * set of labels from one concatenated ASCII buffer (draw_text chains A3). No args. */
+void g_draw_divider(uint8_t *image);
+void g_draw_panel2(uint8_t *image);
+void g_draw_panel3(uint8_t *image);
+void g_draw_panel5(uint8_t *image);
+
 /* ---- road perspective (build_road_geometry @ 0x11f4c) ---- */
 void g_build_road_geometry(uint8_t *image);
 

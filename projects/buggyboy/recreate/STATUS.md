@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 47/91.**
+**Verified: 51/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -63,10 +63,10 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x1225a` | `draw_results_screen` | 308 |  |  |
 | `0x1238e` | `update_highscore` | 612 |  |  |
 | `0x125f2` | `draw_leg_results` | 244 |  |  |
-| `0x126e6` | `draw_divider` | 54 |  |  |
-| `0x1271c` | `draw_panel5` | 60 |  |  |
-| `0x12758` | `draw_panel3` | 40 |  |  |
-| `0x12780` | `draw_panel2` | 32 |  |  |
+| `0x126e6` | `draw_divider` | 54 | ✅ verified | flip 0/4 (fill_rect + two vertical lines) |
+| `0x1271c` | `draw_panel5` | 60 | ✅ verified | flip 0/4 (divider + 5 chained labels) |
+| `0x12758` | `draw_panel3` | 40 | ✅ verified | flip 0/4 (divider + 3 chained labels) |
+| `0x12780` | `draw_panel2` | 32 | ✅ verified | flip 0/4 (divider + 2 chained labels) |
 | `0x127a0` | `intermission` | 330 |  |  |
 | `0x128ea` | `check_abort` | 42 |  |  |
 | `0x12914` | `intermission_poll` | 86 |  |  |
@@ -115,20 +115,24 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x1b560` | `INITFX` | 60 | ✅ verified | fuzz fx id |
 | `0x1b59c` | `INITTUNE` | 86 | ✅ verified | fuzz tune id |
 
-## Verification notes (known gaps)
+## Verification notes
 
-Surfaced by the high-effort code review; the harness itself was hardened (truncation now
-raises; a stray write in the guard band fails loudly). Remaining, low-severity, deferred:
+Surfaced by the high-effort code review; the harness itself was hardened (truncation raises; a
+stray write in the guard band fails loudly; exclude bands are vetted against the stack extent;
+leaf tests can run an attribution/poison pass; the ISA is cross-validated against a real 68000).
+Two coverage gaps from the original list are now **closed**: `fill_span`/`fill_rect` fuzz both
+`flip_idx` slots (not just 0), and the road-walk (`*2`) fuzz spans a wider x-offset range
+(−800..1200) so the walk itself drives all of `row_left`/`row_right`'s edge regimes (off-edge,
+fully-inside, straddling), not just the straddle. Remaining, low-severity:
 
-- **Blit return register (D0)** — only `Ln` verifies its status word. `Lf`/`Rf` and the four
-  `*2` road-walk variants check pixels only; their D0 is settled when `draw_object` is ported.
-- **Road-walk regime coverage** — the `*2` fuzz keeps x in the straddling-edge regime; the
-  off-edge / full-fill / past-width branches of `row_left`/`row_right` are covered via the
-  non-walk variants, not through the road walk itself.
-- **fill_span/fill_rect flip slot** — fuzz pins `flip_idx=0`; the slot-4 buffer pointer is
-  exercised by `clear_screen`/`fill_screen` but not by span/rect.
-- **`_start` past `bsr main`** — verified only up to the checkpoint at 0x100d4 (its GEM init).
-  The terminal Pterm and `appl_exit` after main are unreached (main never returns).
+- **Blit return register (D0)** — *blocked on `draw_object`, not just deferred.* Only `Ln`'s status
+  word is a clean, standalone-verifiable return. `Lf`/`Rf` and the `*2` variants leave a D0 that is
+  an internal leftover meaningful only to the caller — an `Lf`-vs-oracle spot-check mismatches ~15%
+  of the time — so it can be pinned only once `draw_object` (the caller) is reconstructed. Pixels
+  are fully diffed for every variant; only the returned register is unverified.
+- **`_start` past `bsr main`** — *inherent (unreachable).* The terminal Pterm / `appl_exit` after
+  `main` never execute (`main` is the infinite game loop), so they can't be verified by execution —
+  only by reading. Everything up to the `0x100d4` checkpoint is diffed.
 - **snd_voice command 0x88 ("end tune")** — this command rewrites the return address on the stack
   to re-enter REFRESH (`0x1b0f0`) after a TURNOFF, so it cannot be verified by a bare run-to-rts
   diff of `snd_voice_step` alone (the leaf fuzz builds streams from the 12 other commands + notes).
