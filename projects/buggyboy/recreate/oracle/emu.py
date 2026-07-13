@@ -30,6 +30,7 @@ _LIB.osh_run.restype = ctypes.c_int
 _LIB.osh_num_writes.restype = ctypes.c_uint32
 _LIB.osh_write_addrs.restype = _u32p
 _LIB.osh_unmodeled.restype = ctypes.c_uint32
+_LIB.osh_min_a7.restype = ctypes.c_uint32
 _u8p = ctypes.POINTER(ctypes.c_uint8)
 _LIB.osh_psg_count.restype = ctypes.c_uint32
 _LIB.osh_psg_regs.restype = _u8p
@@ -79,4 +80,5 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     waddr = _LIB.osh_write_addrs()
     writes = {waddr[i]: mem[waddr[i]] for i in range(n)}
     out_regs = {"d0": out[0], "d1": out[1], "a0": out[2], "a1": out[3]}
+    out_regs["min_a7"] = _LIB.osh_min_a7()   # deepest stack pointer; used to vet diff exclude bands
     return mem, writes, out_regs

@@ -92,6 +92,31 @@ def hi_garbage(rng, low_word):
     return (rng.randint(0, 0xffff) << 16) | (low_word & 0xffff)
 
 
+def _vet_exclude_bands(exclude, min_a7):
+    """Guard every diff `exclude` band before it silently drops bytes from the comparison.
+
+    An exclude band suspends the byte-for-byte guarantee for its range, so it must be provably
+    stack scratch — not program output. Two cheap checks against the deepest stack pointer the
+    oracle reached (min_a7 — stack grows down, so live stack is [min_a7, base)):
+      (A) the band must extend past min_a7 — a band lying entirely below where A7 ever descended
+          cannot be stack, so excluding it could hide real writes;
+      (D) it must cover no *named* global (names.txt var/fn) that sits below min_a7 — such a global
+          is provably not stack, so dropping it from the diff could mask a divergence. A named
+          global at/above min_a7 is fine: it is legitimately reused as scratch while the stack
+          sits over it (e.g. _start relocates its stack across trace_pc).
+    A conservatively-wide band (untouched bytes below the used stack, none of them named) passes.
+    """
+    for lo, hi in (exclude or ()):
+        assert hi > min_a7, (
+            f"exclude band [{lo:#x},{hi:#x}) lies entirely below the deepest stack pointer "
+            f"{min_a7:#x}; those bytes were never stack, so excluding them could hide real output")
+        named_below = sorted(a for a in NAME_MAP if lo <= a < min(hi, min_a7))
+        assert not named_below, (
+            f"exclude band [{lo:#x},{hi:#x}) covers named global(s) below the stack: "
+            + ", ".join(f"{NAME_MAP[a]}@{a:#x}" for a in named_below)
+            + " — refusing to drop a known global from the diff")
+
+
 def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
@@ -110,6 +135,8 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000):
     """
     img = make_image(regs.pop("_pokes", None))
     o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc, max_insns=max_insns)
+
+    _vet_exclude_bands(exclude, o_regs["min_a7"])
 
     Buf = ctypes.c_uint8 * IMAGE_SIZE
     buf = Buf.from_buffer(bytearray(img))

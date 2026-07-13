@@ -81,6 +81,7 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
 
 static uint32_t g_heap;         /* Malloc bump pointer */
 static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT model (fabricated D0) */
+static uint32_t g_min_a7;       /* lowest A7 (deepest stack pointer) reached this run */
 
 /* Service the trap the CPU jumped to (vec = 1/2/13/14). Reads the exception frame at A7,
  * services the OS call, and returns control to the caller with D0 set. Calls we faithfully
@@ -188,10 +189,13 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
 
     g_wn = 0;                             /* write-set = the function's writes only */
     g_psgn = 0;                           /* PSG capture = this run's register writes only */
+    g_min_a7 = sp;                        /* deepest stack pointer (for exclude-band sanity checks) */
     uint32_t n = 0;
     for (; n < max_insns; n++) {
         uint32_t pc = m68k_get_reg(0, M68K_REG_PC);
         if (pc == sentinel || (stop_pc && pc == stop_pc)) break;
+        uint32_t cur_a7 = m68k_get_reg(0, M68K_REG_A7);
+        if (cur_a7 < g_min_a7) g_min_a7 = cur_a7;
         if      (pc == MAGIC_GEMDOS) handle_trap(1);
         else if (pc == MAGIC_XBIOS)  handle_trap(14);
         else if (pc == MAGIC_BIOS)   handle_trap(13);
@@ -216,6 +220,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
 uint32_t        osh_num_writes(void)  { return g_wn; }
 const uint32_t *osh_write_addrs(void) { return g_waddr; }
 uint32_t        osh_unmodeled(void)   { return g_unmodeled; }
+uint32_t        osh_min_a7(void)      { return g_min_a7; }
 uint32_t        osh_psg_count(void)   { return g_psgn; }
 const uint8_t  *osh_psg_regs(void)    { return g_psg_reg; }
 const uint8_t  *osh_psg_vals(void)    { return g_psg_val; }

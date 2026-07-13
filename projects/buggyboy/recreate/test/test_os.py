@@ -128,6 +128,18 @@ def test_start_gem_init():
     assert int.from_bytes(mem[0x1a0a0:0x1a0a2], "big") == 1, "vdi_handle should be phys handle 1"
 
 
+def test_exclude_band_guards():
+    """A diff exclude band must be provably stack scratch. The harness refuses a band that lies
+    entirely below the deepest stack pointer (A) or covers a named global below the stack (D), but
+    allows a named global reused as scratch while the stack sits over it (trace_pc during _start)."""
+    STACK = 0x1b032                                          # a representative deepest-A7 for _start
+    with pytest.raises(AssertionError, match="deepest stack pointer"):
+        harness._vet_exclude_bands([(0x400, 0x440)], STACK)  # low vector page, never stack
+    with pytest.raises(AssertionError, match="named global"):
+        harness._vet_exclude_bands([(0x18c34, 0x1b044)], STACK)  # spans game_over_flag (below stack)
+    harness._vet_exclude_bands([(0x1b000, 0x1b044)], STACK)  # trace_pc@0x1b040 is stack-reused: allowed
+
+
 def test_supexec_nested():
     """Supexec must run the passed routine in place and return its D0 to the caller."""
     stub = bytes.fromhex("487900010020"  # pea 0x10020 (routine)

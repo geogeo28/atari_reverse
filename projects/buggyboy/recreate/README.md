@@ -40,7 +40,11 @@ A function that **never returns** (e.g. `_start`, whose call to the infinite gam
 comes back) is verified at a **checkpoint PC** instead of at `rts`: `emu.run(…, stop_pc=)` /
 `differential(…, stop_pc=, exclude=)` run the oracle to that address and diff there. `exclude`
 drops a relocated-stack band from the diff (the reconstruction is pure C, with no machine
-stack). `_start` is verified this way at its `bsr main` (`0x100d4`).
+stack). `_start` is verified this way at its `bsr main` (`0x100d4`). Each `exclude` band is
+**vetted** (`_vet_exclude_bands`, against the oracle's deepest stack pointer): it must reach into
+the region A7 actually used, and must not drop a named global that sits *below* the stack — so a
+band can't silently hide a real divergence. (A named global the relocated stack sits *over*, like
+`trace_pc` during `_start`, is legitimately reused as scratch and allowed.)
 
 ## Layout
 
