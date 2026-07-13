@@ -173,20 +173,19 @@ def available():
     return bool(find_hatari() and find_tos_rom())
 
 
-def capture(timeout=45):
-    """Run the capture program under real TOS and return the parsed record.
-
-    Returns {"ptr1", "ptr2", "rez", "counts": (…), "read": bytes}. Raises RuntimeError if the
-    program never produced OUT.BIN (a Hatari/boot failure), so a broken run can't pass silently.
-    """
+def run_tos_program(tos_bytes, out_min, extra_files=None, timeout=45):
+    """Auto-run a GEMDOS program on a headless Hatari GEMDOS drive and return the bytes it wrote
+    to C:\\OUT.BIN. `extra_files` = {name: bytes} are staged on the drive too. Raises if the
+    program never produced an OUT.BIN of at least `out_min` bytes (a Hatari/boot failure)."""
     hatari, rom = find_hatari(), find_tos_rom()
     if not (hatari and rom):
         raise RuntimeError("Hatari or TOS ROM not available")
 
     with tempfile.TemporaryDirectory() as d:
         drive = Path(d)
-        (drive / "PROBE.TOS").write_bytes(build_capture_tos())
-        (drive / "IN.DAT").write_bytes(PROBE_INPUT)
+        (drive / "PROBE.TOS").write_bytes(tos_bytes)
+        for name, data in (extra_files or {}).items():
+            (drive / name).write_bytes(data)
         out = drive / "OUT.BIN"
         env = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}
         args = [hatari, "--sound", "off", "--fast-forward", "on", "--confirm-quit", "off",
@@ -196,7 +195,7 @@ def capture(timeout=45):
         try:
             deadline = time.time() + timeout
             while time.time() < deadline:
-                if out.exists() and out.stat().st_size >= _REC_LEN:
+                if out.exists() and out.stat().st_size >= out_min:
                     time.sleep(0.3)                     # let the write flush
                     break
                 if proc.poll() is not None:
@@ -208,10 +207,19 @@ def capture(timeout=45):
                 proc.wait(timeout=5)
             except Exception:
                 pass
+        if not (out.exists() and out.stat().st_size >= out_min):
+            raise RuntimeError("program did not produce OUT.BIN (Hatari/boot failure)")
+        return out.read_bytes()
 
-        if not (out.exists() and out.stat().st_size >= _REC_LEN):
-            raise RuntimeError("capture program did not produce OUT.BIN (Hatari/boot failure)")
-        rec = out.read_bytes()
+
+def capture(timeout=45):
+    """Run the capture program under real TOS and return the parsed record.
+
+    Returns {"ptr1", "ptr2", "rez", "counts": (…), "read": bytes}. Raises RuntimeError if the
+    program never produced OUT.BIN (a Hatari/boot failure), so a broken run can't pass silently.
+    """
+    rec = run_tos_program(build_capture_tos(), _REC_LEN,
+                          extra_files={"IN.DAT": PROBE_INPUT}, timeout=timeout)
 
     u32 = lambda o: struct.unpack_from(">I", rec, o)[0]
     u16 = lambda o: struct.unpack_from(">H", rec, o)[0]
