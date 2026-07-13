@@ -117,7 +117,34 @@ def _vet_exclude_bands(exclude, min_a7):
             + " — refusing to drop a known global from the diff")
 
 
-def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000):
+def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
+                       stop_pc, max_insns):
+    """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
+    never actually writing some byte the oracle wrote — because that byte already held the oracle's
+    value (an output landing in a zeroed/base region). Re-run both cores on a copy of the input in
+    which every oracle-written byte is poisoned with a canary (its normal final value, inverted). A
+    byte the candidate fails to write now stays canary instead of matching, so the omission shows.
+    Only meaningful once the normal pass is clean; opt-in (poison=True) since poisoning an output
+    that also steers control flow could perturb a complex function's run."""
+    poisoned = bytearray(img)
+    for a in o_writes:
+        if a < guard_lo:                     # only the diffed region matters; stack canaries are moot
+            poisoned[a] = o_final[a] ^ 0xff
+    po_final, _, _ = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns)
+    buf = (ctypes.c_uint8 * IMAGE_SIZE).from_buffer(bytearray(poisoned))
+    glue(_lib, buf)
+    pc_final = bytes(buf)
+    bad = [a for a in range(guard_lo) if po_final[a] != pc_final[a] and not excluded(a)]
+    if bad:
+        a = bad[0]
+        raise AssertionError(
+            f"attribution (poison) check: candidate diverges on a poisoned-output image at "
+            f"{label(a)} @ 0x{a:x} (oracle={po_final[a]:#04x} cand={pc_final[a]:#04x}, {len(bad)} "
+            f"bytes) — it likely never wrote a byte the oracle wrote, passing the plain diff by "
+            f"coincidence")
+
+
+def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, poison=False):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
@@ -132,6 +159,9 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000):
     outside [STACK_GUARD_LO, IMAGE_SIZE) (e.g. _start moves A7 to 0x1b044). The candidate is
     pure C and never writes a machine stack, so excluding the oracle's stack band is sound.
     ``max_insns`` caps the oracle run (raise it for data-heavy functions like the unpacker).
+    ``poison`` runs an extra attribution pass (``_attribution_check``): re-run both cores on an
+    image whose oracle-written bytes are pre-poisoned, catching a candidate that matches by
+    coincidence without actually writing a byte the oracle wrote. Opt-in (safe for leaf functions).
     """
     img = make_image(regs.pop("_pokes", None))
     o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc, max_insns=max_insns)
@@ -168,6 +198,10 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000):
         raise AssertionError(
             f"oracle wrote {len(stray)} byte(s) in the reserved stack-guard band "
             f"(e.g. {label(stray[0])} @ 0x{stray[0]:x}) — real output masked by the guard cutoff")
+
+    if poison and not diffs:
+        _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
+                           stop_pc, max_insns)
 
     return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
 

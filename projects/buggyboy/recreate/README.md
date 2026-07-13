@@ -34,7 +34,10 @@ addresses (the game's globals sit at their real addresses). Each function has:
   addresses, calls the core, lets it write back. The glue *is* the function's I/O contract.
 
 The harness diffs the whole image (minus the stack-guard region), so any byte the real code
-writes that the reconstruction gets wrong — or misses — fails the test.
+writes that the reconstruction gets wrong — or misses — fails the test. Leaf tests can opt into
+an **attribution pass** (`differential(..., poison=True)`): it re-runs both cores on an image
+whose oracle-written bytes are pre-poisoned, so a candidate that *coincidentally* matches (an
+output landing in a zeroed region it never actually wrote) is caught rather than passing.
 
 A function that **never returns** (e.g. `_start`, whose call to the infinite game loop never
 comes back) is verified at a **checkpoint PC** instead of at `rts`: `emu.run(…, stop_pc=)` /

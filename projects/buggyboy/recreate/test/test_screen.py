@@ -37,15 +37,15 @@ def _pokes(flip, buf=BUF):
 _COLOR_EDGES = (0x0000, 0x0001, 0x001f, 0x0fff, 0x1000, 0x8000, 0xffff, 0x12340000, 0xffff001f)
 
 
-def _run(entry, regs, glue, label):
-    diffs, _ = differential(entry, regs, glue)
+def _run(entry, regs, glue, label, poison=False):
+    diffs, _ = differential(entry, regs, glue, poison=poison)
     assert not diffs, f"{label}\n{report(diffs)}"
 
 
 def test_clear_screen():
     for flip in (0, 4):
         _run(ENTRY["clear_screen"], {"_pokes": _pokes(flip)},
-             lambda lib, buf: lib.g_clear_screen(buf), f"clear_screen flip={flip}")
+             lambda lib, buf: lib.g_clear_screen(buf), f"clear_screen flip={flip}", poison=True)
 
 
 def test_fill_screen():
@@ -54,18 +54,20 @@ def test_fill_screen():
             regs = {"d1": d1, "_pokes": _pokes(flip)}
             _run(ENTRY["fill_screen"], regs,
                  lambda lib, buf, d1=d1: lib.g_fill_screen(buf, d1),
-                 f"fill_screen flip={flip} color={d1:#x}")
+                 f"fill_screen flip={flip} color={d1:#x}", poison=True)
 
 
 def test_register_masking():
     # Only the low word of colour/count/offset is used, and the colour offset is sign-extended.
     # Explicit values pin lsl.w / dbf / adda.w against the asm — the edge the small-value fuzz misses.
+    # poison=True also confirms the fill actually writes every cell the oracle writes (the buffer is
+    # zeroed, so a short-count bug could otherwise match by coincidence).
     for color in _COLOR_EDGES:
         for count in (0x00000000, 0x00000007, 0x00030005, 0xffff0000):   # high word must be ignored
             regs = {"d1": color, "d2": count, "_pokes": _pokes(0)}
             _run(ENTRY["fill_words"], regs,
                  lambda lib, buf, c=color, n=count: lib.g_fill_words(buf, c, n),
-                 f"fill_words color={color:#x} count={count:#x}")
+                 f"fill_words color={color:#x} count={count:#x}", poison=True)
 
 
 def test_fuzz_fill_words():

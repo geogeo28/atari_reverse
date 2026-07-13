@@ -140,6 +140,20 @@ def test_exclude_band_guards():
     harness._vet_exclude_bands([(0x1b000, 0x1b044)], STACK)  # trace_pc@0x1b040 is stack-reused: allowed
 
 
+def test_poison_catches_coincidental_write():
+    """The attribution (poison) pass must catch a candidate that matches the oracle's image without
+    actually writing an oracle-written byte. Stub: `move.b #0,(0x30000).l; rts` — the oracle writes
+    0x00 where the (bss) base is already 0x00, so a do-nothing candidate passes the plain diff by
+    coincidence. With poison=True the byte is pre-inverted, so the omission is caught."""
+    stub = bytes.fromhex("13fc0000" "00030000" "4e75")   # move.b #0,(0x30000).l ; rts
+    # sanity: without poison, the coincidence passes (no diffs)
+    diffs, _ = differential(0x10000, {"_pokes": {0x10000: stub}}, lambda lib, buf: None)
+    assert not diffs, "do-nothing candidate should match by coincidence here (0x00 over 0x00)"
+    # with poison, the missed write is exposed
+    with pytest.raises(AssertionError, match="attribution"):
+        differential(0x10000, {"_pokes": {0x10000: stub}}, lambda lib, buf: None, poison=True)
+
+
 def test_supexec_nested():
     """Supexec must run the passed routine in place and return its D0 to the caller."""
     stub = bytes.fromhex("487900010020"  # pea 0x10020 (routine)
