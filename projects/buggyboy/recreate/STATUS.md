@@ -177,3 +177,17 @@ registers, verified per frame on **both** the memory image and the emitted PSG (
 driver; the EG block is driven directly. That leaves the sound driver **complete**. Remaining
 overall: the gameplay/draw/HUD families and the big orchestrators (`game_update`, `render_road`,
 `draw_hud`).
+
+## Oracle cross-validation
+
+The differential suite trusts Musashi as ground truth; `oracle/isa_conformance.py` certifies that
+trust against an **independent** 68000 — Hatari's WinUAE-derived core — so a Musashi quirk can't
+masquerade as "verified". It runs **277** self-contained, position-independent instruction snippets
+(inputs as immediates, flags captured with `move sr` right after the tested op, result saved via
+`(a5)+`) on both cores and compares the 32-bit result + the *defined* CCR bits. Classes, chosen from
+BuggyBoy's opcode mix: byte/word/long **memory RMW** (`addq/subq/neg/not/add` — the class that made
+us reject Unicorn), `asr/lsr/lsl/rox/ro`, `ext`/`movea.w`, `muls/mulu/divs/divu`, `add/sub/addx/subx`,
+`cmp.b`+`Scc`, `swap/neg`. **All 277 match.** The one divergence surfaced — N/Z after a `DIVS/DIVU`
+overflow (Musashi 0, WinUAE 1) — is *undefined* per the 68000 PRM, so it is excluded from the CCR
+comparison (the result and the defined V flag still agree). `test/test_isa_vs_tos.py` runs it,
+skipping when Hatari or a TOS ROM is absent (the ROM isn't redistributable).

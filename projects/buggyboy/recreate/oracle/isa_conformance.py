@@ -225,9 +225,18 @@ def compare():
     return mismatches, n
 
 
+def coverage():
+    """Case count per instruction class (mnemonic base) — for the coverage record."""
+    from collections import Counter
+    return Counter(c.name.split(".")[0].split()[0] for c in CATALOG)
+
+
 if __name__ == "__main__":
+    cov = coverage()
+    print(f"catalog: {len(CATALOG)} cases across {len(cov)} classes")
+    print("  " + "  ".join(f"{k}:{v}" for k, v in sorted(cov.items())))
     if not tos_probe.available():
-        print("Hatari/TOS not available")
+        print("Hatari/TOS not available — cannot cross-check")
         sys.exit(0)
     bad, total = compare()
     for name, mc, hc in bad:
