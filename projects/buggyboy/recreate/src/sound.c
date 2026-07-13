@@ -91,6 +91,50 @@
 #define SND_ENV_STEP     0x10    /* envelope level lives in the high nibble; decays by this/frame */
 #define SND_ENV_MAX      0xf0    /* envelope level >= this is inactive (no decay / silent) */
 
+/* REFRESH (@0x1b086) — the 50 Hz VBL orchestrator. SND_STATE fields it drives beyond the voice
+ * records; roles are partly reversed (named by offset+role). SND_STATE[0x00..0x0c] double as the
+ * PSG register-staging bytes the frame ends by dumping to the chip. */
+#define SND_PERIOD_A     0x00    /* word: channel A tone period (regs 1 coarse, 0 fine) */
+#define SND_PERIOD_B     0x02    /* word: channel B tone period (regs 3, 2) */
+#define SND_PERIOD_C     0x04    /* word: channel C tone period (regs 5, 4) */
+#define SND_VOL_A        0x07    /* reg 8 volume A staging (aliases SND_MUSIC_BYTE) */
+#define SND_VOL_C        0x09    /* reg 0xa volume C staging */
+#define SND_ENV_SHAPE    0x0c    /* reg 0xd envelope shape: written only when nonzero, then cleared */
+#define SND_FX_CTR       0x0d    /* effect total-duration countdown */
+#define SND_FX_FREQ_ADD  0x0e    /* word: per-frame FX frequency increment */
+#define SND_FX_FREQ_SET  0x10    /* word: FX frequency reset value */
+#define SND_FX_SWEEP     0x12    /* long: pitch-sweep delta (its two halves swap per rotate state) */
+#define SND_FX_FREQ      0x16    /* word: running FX frequency -> channel C period */
+#define SND_FX_NOISE     0x17    /* noise value written to reg 6 when the noise gate fires */
+#define SND_FX_NZ_RELOAD 0x18    /* noise-phase reload */
+#define SND_FX_SWEEP_GATE 0x19   /* nonzero enables the pitch sweep */
+#define SND_FX_SWEEP_ROT 0x1a    /* sweep-direction rotate state */
+#define SND_FX_NZ_ROT    0x1b    /* noise-gate rotate state */
+#define SND_FX_NZ_TMR    0x1c    /* noise-phase countdown */
+#define SND_FX_SWEEP_TMR 0x1d    /* sweep-tick countdown */
+#define SND_MUSIC_ON     0x1e    /* music master enable */
+#define SND_EG_P1        0x21    /* EG pitch parameter */
+#define SND_EG_VOL       0x22    /* EG volume -> volume A */
+#define SND_EG_PHASE     0x23    /* EG phase counter (decremented by SND_EG_PHASE_DEC/frame) */
+#define SND_TEMPO_DIV    0x24    /* tempo prescaler countdown (reload SND_TEMPO_RELOAD) */
+#define SND_TEMPO_ACC    0x26    /* tempo accumulator; a carry advances the note stream */
+/* SND_TUNE_PARAM (0x25) doubles as the per-frame tempo increment added to SND_TEMPO_ACC. */
+
+#define SND_TEMPO_RELOAD 6       /* SND_TEMPO_DIV reload value */
+#define SND_EG_PHASE_DEC 0x0d    /* EG phase decrement per frame */
+#define SND_EG_PERIOD_HI 0x0100  /* high byte of the EG period seed (0x120's low byte is overwritten) */
+#define SND_VOL_ENV_MODE 0x10    /* volume byte value that selects the envelope generator */
+#define SND_MOD_TABLE    0x1b77f /* A1 modulation-table base passed to the DSP */
+
+/* PSG register dump. SND_STATE staging byte per register, in the driver's write order; reg 7 is
+ * the computed mixer (PSG_SRC_MIXER), and reg 0xd (shape) is emitted separately, only if nonzero. */
+#define PSG_SRC_MIXER    0xff
+#define SND_REG_ENV_SHAPE 0x0d   /* PSG envelope-shape register */
+#define SND_MIXER_BASE   0xf8    /* reg 7 base: all tone + noise disabled */
+#define SND_MIXER_A      0x09    /* per-voice tone+noise enable masks, EOR'd in when the voice's */
+#define SND_MIXER_B      0x12    /* ENV_FLG bit0 is set */
+#define SND_MIXER_C      0x24
+
 /* Stop music: clear the music-active byte/word and MZFLAG. Shared by TURNOFF and the stream's
  * end-tune command (0x88), which reaches the same three writes by falling into TURNOFF's body. */
 static void snd_music_off(uint8_t *image) {
@@ -163,10 +207,10 @@ void g_INITTUNE(uint8_t *image, uint32_t tune_id) {
  * Each frame the note-duration timer counts down; while it is still running only glide steps the
  * note. On expiry the stream is read: bytes >= 0xb0 set pitch/param fields, 0x80..0x8c are
  * commands (a 13-entry jump table), and a byte < 0x80 is the next note (which finalises the frame
- * and reloads the timer). Command 0x88 ("end tune") rewrites the return address to re-enter
- * REFRESH; its memory effect (a TURNOFF) is reproduced here but that tail cannot be verified by a
- * run-to-rts diff, so it is excluded from the fuzz (see STATUS.md). */
-static void snd_voice_step(uint8_t *image, uint32_t rec) {
+ * and reloads the timer). Returns 1 iff the stream hit command 0x88 ("end tune"): on the real 68k
+ * that command rewrites the caller's return address to re-enter REFRESH past its whole music block,
+ * so REFRESH must abort the remaining voices + DSP for the frame — the caller acts on the flag. */
+static int snd_voice_step(uint8_t *image, uint32_t rec) {
     uint8_t timer = (uint8_t)(image[rec + SND_VC_TIMER] - 1);
     image[rec + SND_VC_TIMER] = timer;
     if (timer != 0) {                           /* note still sounding: only glide runs */
@@ -176,7 +220,7 @@ static void snd_voice_step(uint8_t *image, uint32_t rec) {
             else
                 image[rec + SND_VC_NOTE]++;
         }
-        return;
+        return 0;
     }
 
     image[rec + SND_VC_FLAGS] &= VC_F_RETRIG_KEEP;                  /* re-trigger */
@@ -223,9 +267,9 @@ static void snd_voice_step(uint8_t *image, uint32_t rec) {
                 continue;
             }
             case 0x87: image[rec + SND_VC_FLAGS] |= VC_F_BIT1; continue;
-            case 0x88:                          /* end tune: TURNOFF (return-address rewrite unmodeled) */
+            case 0x88:                          /* end tune: TURNOFF, then signal REFRESH to abort */
                 snd_music_off(image);
-                return;
+                return 1;
             case 0x89: image[rec + SND_VC_F13] = image[stream++]; continue;
             case 0x8a:
                 image[rec + SND_VC_FLAGS] |= (VC_F_BIT1 | VC_F_BIT2);
@@ -254,16 +298,16 @@ static void snd_voice_step(uint8_t *image, uint32_t rec) {
     note_tail:
         image[rec + SND_VC_TIMER] = image[rec + SND_VC_DUR];
         wr16(image + rec + SND_VC_STREAM, (uint16_t)(stream - SND_STATE));
-        return;
+        return 0;
     }
 }
 
 void g_snd_voice_b(uint8_t *image, uint32_t rec) {
-    snd_voice_step(image, rec);
+    (void)snd_voice_step(image, rec);
 }
 
 void g_snd_voice_a(uint8_t *image, uint32_t rec) {
-    snd_voice_step(image, rec + SND_VOICE_STRIDE);
+    (void)snd_voice_step(image, rec + SND_VOICE_STRIDE);
 }
 
 /* --- snd_cmd_handler: per-frame voice DSP (snd_cmd_handler @0x1b3be; snd_stub @0x1b3ba) ---
@@ -358,4 +402,121 @@ uint32_t g_snd_cmd_handler(uint8_t *image, uint32_t rec, uint32_t mod_tab, uint3
 
 uint32_t g_snd_stub(uint8_t *image, uint32_t rec, uint32_t mod_tab, uint32_t out) {
     return snd_cmd_step(image, rec + SND_VOICE_STRIDE, mod_tab, out);
+}
+
+/* --- REFRESH @0x1b086 — the 50 Hz VBL sound driver, run once per frame ---
+ *
+ * Not one of the 91 tracked functions (it's the untracked VBL orchestrator). It updates the three
+ * voices' music/envelope/effect state, then emits the frame's YM2149 register writes. The chip
+ * ports ($ffff8800/8802) live outside the image, so instead of writing them this reconstruction
+ * appends each (reg, value) to the caller's buffers (mirroring the oracle's shim capture) and
+ * returns the count; the memory image carries all the intermediate state. The video-sync register
+ * `btst #1,$ffff820a` reads 0 in the oracle (address above the image), so its branch is modelled
+ * as always taking the tempo-prescaler path. Reuses the verified snd_voice_step / snd_cmd_step. */
+uint32_t g_REFRESH(uint8_t *image, uint8_t *psg_reg, uint8_t *psg_val, uint32_t cap) {
+    const uint32_t v0 = SND_VOICE_CTRL;                       /* voice 0 record; +stride per voice */
+    const uint32_t env0 = SND_VOICE_CTRL + SND_VC_ENV_FLG;
+
+    /* --- music: prescale the tempo, step the note stream on a carry, then run the DSP --- */
+    if (image[SND_STATE + SND_MUSIC_ON]) {
+        if (--image[SND_STATE + SND_TEMPO_DIV] == 0) {
+            image[SND_STATE + SND_TEMPO_DIV] = SND_TEMPO_RELOAD;
+        } else {
+            uint16_t acc = image[SND_STATE + SND_TEMPO_ACC] + image[SND_STATE + SND_TUNE_PARAM];
+            image[SND_STATE + SND_TEMPO_ACC] = (uint8_t)acc;
+            int ended = 0;
+            if (acc & 0x100) {                               /* carry: advance the three voices */
+                ended = snd_voice_step(image, v0)
+                     || snd_voice_step(image, v0 + SND_VOICE_STRIDE)
+                     || snd_voice_step(image, v0 + 2 * SND_VOICE_STRIDE);
+            }
+            /* An "end tune" (cmd 0x88) rewrites the return so REFRESH skips straight to the EG
+             * block, dropping the rest of the voices' steps and the whole DSP pass this frame. */
+            if (!ended) {
+                image[SND_STATE + SND_STATE_R6] = image[SND_STATE + SND_STATE_NOTE];
+                wr16(image + SND_STATE + SND_PERIOD_A,
+                     snd_cmd_step(image, v0, SND_MOD_TABLE, SND_STATE + SND_VOL_A));
+                wr16(image + SND_STATE + SND_PERIOD_B,
+                     snd_cmd_step(image, v0 + SND_VOICE_STRIDE, SND_MOD_TABLE, SND_STATE + SND_VOL_A + 1));
+                wr16(image + SND_STATE + SND_PERIOD_C,
+                     snd_cmd_step(image, v0 + 2 * SND_VOICE_STRIDE, SND_MOD_TABLE, SND_STATE + SND_VOL_A + 2));
+            }
+        }
+    }
+
+    /* --- envelope generator: synthesize channel A's period from the EG parameters --- */
+    if (image[SND_STATE + SND_EG_FLAG]) {
+        image[SND_STATE + SND_VOL_A] = image[SND_STATE + SND_EG_VOL];
+        uint16_t d0 = (uint16_t)(SND_EG_PERIOD_HI | (uint8_t)~image[SND_STATE + SND_EG_P1]);
+        uint16_t d1 = (uint8_t)~image[SND_STATE + SND_EG_P1];
+        d0 = (uint16_t)(d0 + d0); d0 = (uint16_t)(d0 + d1);   /* d0 = 4*d0_init + 3*d1 */
+        d0 = (uint16_t)(d0 + d0); d0 = (uint16_t)(d0 + d1);
+        uint8_t phase = image[SND_STATE + SND_EG_PHASE];
+        d0 = (uint16_t)(d0 + (phase & 0x1f));
+        image[SND_STATE + SND_EG_PHASE] = (uint8_t)(phase - SND_EG_PHASE_DEC);
+        if (image[SND_STATE + SND_EG_PHASE] & 1) d0 = (uint16_t)(d0 + 0x100);
+        wr16(image + SND_STATE + SND_PERIOD_A, d0);
+        image[env0] &= (uint8_t)~VC_F_BIT0;
+    }
+
+    /* --- effects: sweep the frequency / gate the noise, drive channel C --- */
+    if (image[A_fxflag]) {
+        if (--image[SND_STATE + SND_FX_CTR] == 0) {          /* effect elapsed: silence C, stop */
+            image[SND_STATE + SND_VOL_C] = 0;
+            image[A_fxflag] = 0;
+        } else {
+            if (image[SND_STATE + SND_FX_SWEEP_GATE] && --image[SND_STATE + SND_FX_SWEEP_TMR] == 0) {
+                image[SND_STATE + SND_FX_SWEEP_TMR] = image[SND_STATE + SND_FX_SWEEP_GATE];
+                uint32_t sweep = be32(image + SND_STATE + SND_FX_SWEEP);
+                uint8_t rot = image[SND_STATE + SND_FX_SWEEP_ROT];
+                int bit0 = rot & 1;
+                image[SND_STATE + SND_FX_SWEEP_ROT] = (uint8_t)((rot >> 1) | (rot << 7));   /* ror.b #1 */
+                if (!bit0) sweep = (sweep >> 16) | (sweep << 16);                            /* swap */
+                wr16(image + SND_STATE + SND_FX_FREQ,
+                     (uint16_t)(be16(image + SND_STATE + SND_FX_FREQ) + (uint16_t)sweep));
+            }
+            wr16(image + SND_STATE + SND_FX_FREQ,
+                 (uint16_t)(be16(image + SND_STATE + SND_FX_FREQ) + be16(image + SND_STATE + SND_FX_FREQ_ADD)));
+            if (image[SND_STATE + SND_FX_NZ_RELOAD] && --image[SND_STATE + SND_FX_NZ_TMR] == 0) {
+                image[SND_STATE + SND_FX_NZ_TMR] = image[SND_STATE + SND_FX_NZ_RELOAD];
+                wr16(image + SND_STATE + SND_FX_FREQ, be16(image + SND_STATE + SND_FX_FREQ_SET));
+            }
+            image[SND_STATE + SND_VOL_C] = SND_VOL_ENV_MODE;
+            wr16(image + SND_STATE + SND_PERIOD_C, be16(image + SND_STATE + SND_FX_FREQ));
+            uint32_t env2 = SND_VOICE_CTRL + 2 * SND_VOICE_STRIDE + SND_VC_ENV_FLG;
+            image[env2] &= (uint8_t)~VC_F_BIT0;
+            uint8_t rot = image[SND_STATE + SND_FX_NZ_ROT];
+            int bit0 = rot & 1;
+            image[SND_STATE + SND_FX_NZ_ROT] = (uint8_t)((rot >> 1) | (rot << 7));           /* ror.b #1 */
+            if (bit0) {                                      /* noise gate fires this frame */
+                image[env2]++;
+                image[SND_STATE + SND_STATE_R6] = image[SND_STATE + SND_FX_NOISE];
+            }
+        }
+    }
+
+    /* --- mixer byte: enable tone+noise per voice whose control bit is set --- */
+    static const uint8_t mixer_mask[SND_VOICES] = {SND_MIXER_A, SND_MIXER_B, SND_MIXER_C};
+    uint8_t mixer = SND_MIXER_BASE;
+    for (int v = 0; v < SND_VOICES; v++)
+        if (image[SND_VOICE_CTRL + v * SND_VOICE_STRIDE + SND_VC_ENV_FLG] & VC_F_BIT0)
+            mixer ^= mixer_mask[v];
+
+    /* --- dump the PSG registers (reg, value) in the driver's fixed order --- */
+    static const uint8_t psg_regs[] = {1, 0, 3, 2, 5, 4, 6, 7, 8, 9, 0xa, 0xc, 0xb};
+    static const uint8_t psg_src[]  = {0, 1, 2, 3, 4, 5, 6, PSG_SRC_MIXER, 7, 8, 9, 0xa, 0xb};
+    uint32_t n = 0;
+    for (unsigned i = 0; i < sizeof(psg_regs) && n < cap; i++) {
+        psg_reg[n] = psg_regs[i];
+        psg_val[n] = (psg_src[i] == PSG_SRC_MIXER) ? mixer : image[SND_STATE + psg_src[i]];
+        n++;
+    }
+    uint8_t shape = image[SND_STATE + SND_ENV_SHAPE];         /* reg 0xd: only when nonzero, then clear */
+    if (shape != 0 && n < cap) {
+        psg_reg[n] = SND_REG_ENV_SHAPE;
+        psg_val[n] = shape;
+        n++;
+        image[SND_STATE + SND_ENV_SHAPE] = 0;
+    }
+    return n;
 }

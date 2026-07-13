@@ -130,11 +130,13 @@ raises; a stray write in the guard band fails loudly). Remaining, low-severity, 
 - **`_start` past `bsr main`** — verified only up to the checkpoint at 0x100d4 (its GEM init).
   The terminal Pterm and `appl_exit` after main are unreached (main never returns).
 - **snd_voice command 0x88 ("end tune")** — this command rewrites the return address on the stack
-  to re-enter REFRESH (`0x1b0f0`) after a TURNOFF, so it cannot be verified by a run-to-rts diff.
-  Its memory effect (the TURNOFF) is reconstructed, but the fuzz excludes it (streams are built
-  from the 12 other commands + notes). The remaining 12 commands and all pitch/note/glide paths
-  are covered. The stepper also assumes D0's high byte is 0 (a design invariant: it indexes a
-  256-entry byte table and a 13-entry jump table — a nonzero high byte runs off both).
+  to re-enter REFRESH (`0x1b0f0`) after a TURNOFF, so it cannot be verified by a bare run-to-rts
+  diff of `snd_voice_step` alone (the leaf fuzz builds streams from the 12 other commands + notes).
+  Its full behaviour is instead verified through **REFRESH**: `snd_voice_step` returns an "ended"
+  flag, REFRESH aborts the rest of the frame on it, and `test_refresh_music` (tune 8) exercises the
+  path. Residual: only a voice-0 end is seen there; a bug specific to a voice-1/2 end (the `||`
+  short-circuit order) is not independently covered. The stepper also assumes D0's high byte is 0
+  (a design invariant: it indexes a 256-entry byte table and a 13-entry jump table).
 
 ## Checkpoint verification
 
@@ -167,8 +169,11 @@ Unlocked next: the startup path (`_start` → `main` init → `load_graphics` �
 and the course-event engine (`evt_*` / `handle_marker`) are verified, and the **sound driver** is
 now fully reconstructed at the leaf level — the tune/effect setup (`TURNOFF`/`EGOFF`/`INITFX`/
 `INITTUNE`), the per-voice note-stream stepper (`snd_voice_a/b`), and the per-frame voice DSP
-(`snd_cmd_handler`/`snd_stub`). The only sound code left is the VBL orchestrator **`REFRESH`**
-(`0x1b086`, not one of the 91 tracked functions): it drives the three voices then writes the
-YM2149 PSG at `$ffff8800/8802`, which is outside the image, so verifying it needs a PSG-write
-model in the harness (like the OS trap layer). Remaining beyond that: the gameplay/draw/HUD
-families and the big orchestrators (`game_update`, `render_road`, `draw_hud`).
+(`snd_cmd_handler`/`snd_stub`). The VBL orchestrator **`REFRESH`** (`0x1b086`, not one of the 91
+tracked functions) is now reconstructed too: it drives the three voices then dumps the YM2149
+registers, verified per frame on **both** the memory image and the emitted PSG (reg,val) stream
+(the oracle's shim taps the `$ffff8800/8802` writes; the reconstruction appends them to a buffer).
+`test_refresh_music`/`_fx`/`_music_eg` seed real tracks/effects via INITTUNE/INITFX and step the
+driver; the EG block is driven directly. That leaves the sound driver **complete**. Remaining
+overall: the gameplay/draw/HUD families and the big orchestrators (`game_update`, `render_road`,
+`draw_hud`).

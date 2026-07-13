@@ -81,6 +81,9 @@ void g_snd_voice_a(uint8_t *image, uint32_t rec);
  * A3 = SND_STATE; returns the tone period (D1). snd_stub is the +1-voice-stride entry alias. */
 uint32_t g_snd_cmd_handler(uint8_t *image, uint32_t rec, uint32_t mod_tab, uint32_t out);
 uint32_t g_snd_stub(uint8_t *image, uint32_t rec, uint32_t mod_tab, uint32_t out);
+/* REFRESH @0x1b086 — 50 Hz VBL driver. Updates voice/EG/FX state in the image and appends the
+ * frame's PSG (reg,val) writes to psg_reg/psg_val (up to cap); returns the write count. */
+uint32_t g_REFRESH(uint8_t *image, uint8_t *psg_reg, uint8_t *psg_val, uint32_t cap);
 
 /* ---- course-event engine (events.c) ---- */
 void g_evt_collision(uint8_t *image);
