@@ -86,6 +86,16 @@ diff a fabricated result. So an OS-bound function can only be marked verified on
 it makes is genuinely modeled. The remaining gap is `Malloc`: it bump-allocates small blocks, so
 `main`'s large screen-buffer allocation needs it pointed at a real in-image block first.
 
+Two layers of tests guard this model. `test/test_os.py` drives tiny hand-assembled 68k stubs
+through the oracle to pin the shim's semantics at the edges — Malloc bump/rounding, the Fread
+cursor/EOF, and rejection of a closed/unstaged handle. `test/test_os_vs_tos.py` then anchors those
+semantics to **real hardware**: `oracle/tos_probe.py` assembles a GEMDOS program that runs the same
+calls, auto-runs it on a headless Hatari (real TOS ROM, SDL dummy video) with a GEMDOS drive, and
+reads the results back from a file. Exact-value calls (Getrez, Fread bytes + counts) must match the
+shim to the byte; machine-dependent ones (Malloc's address) are checked as the *invariant* the shim
+also honors (even-aligned, non-overlapping, odd size rounded up to even). It skips when Hatari or a
+TOS ROM isn't installed.
+
 ## Oracle note
 
 The oracle is **Musashi** (kstenerud/Musashi, MAME's 68000 core) — faithful to real 68000

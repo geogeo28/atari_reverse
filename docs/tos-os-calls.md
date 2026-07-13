@@ -48,4 +48,22 @@ Games wrap common calls in helpers: `move.w #sel,-(sp); trap #1; addq; rts`. Nam
 wrappers; multi-purpose ones you name by hand. Then callers read as `Fread(...)`,
 `Setpalette(pal)` and the data flow becomes obvious.
 
+## Validating a trap model against real TOS (headless)
+
+If you model traps deterministically (e.g. to run code in an emulator without real TOS), you can
+pin that model to a genuine ROM without a GUI. Hand-assemble a tiny GEMDOS program that runs the
+calls and writes its results to a file, then auto-run it on a headless Hatari over a GEMDOS drive
+and read the file back on the host — no debugger, breakpoint, or load address needed:
+
+```bash
+SDL_VIDEODRIVER=dummy hatari --sound off --fast-forward on --tos-res low \
+  --tos <tos.img> --run-vbls 4000 --harddrive <dir> --auto 'C:\PROBE.TOS'
+```
+
+Gotchas: a freshly-run program owns the whole TPA, so **`Mshrink` first** or `Malloc` returns
+nothing; `--monitor rgb` (not mono) keeps `Getrez` in low-res. Machine-dependent results (Malloc
+base, Physbase) won't equal a fixed model — assert the *invariant* (even-aligned, non-overlapping,
+size rounded up), and reserve byte-equality for machine-independent calls (Getrez, `Fread` data +
+cursor/EOF counts). Worked example: `projects/buggyboy/recreate/oracle/tos_probe.py`.
+
 → Direct hardware access (the other 90% of a game): [`hardware-map.md`](hardware-map.md).
