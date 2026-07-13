@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 39/91.**
+**Verified: 43/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -98,10 +98,10 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x1555e` | `draw_hud` | 684 |  |  |
 | `0x1580a` | `add_score` | 104 | ✅ verified | 2000-seed fuzz + edge cases |
 | `0x15872` | `draw_crash_fx` | 392 |  |  |
-| `0x159fa` | `draw_text` | 2 |  |  |
-| `0x159fc` | `draw_text_row` | 12 |  |  |
-| `0x15a08` | `draw_hud_gauge0` | 28 |  |  |
-| `0x15a24` | `draw_hud_bar` | 96 |  |  |
+| `0x159fa` | `draw_text` | 2 | ✅ verified | count-preset entry alias of `draw_text_row` |
+| `0x159fc` | `draw_text_row` | 12 | ✅ verified | fuzz char pairs x colour x flip (shared body) |
+| `0x15a08` | `draw_hud_gauge0` | 28 | ✅ verified | fuzz: absolute-A0 entry (skips D0->buffer) |
+| `0x15a24` | `draw_hud_bar` | 96 | ✅ verified | fuzz: A0 + preset D2/D3 fill entry |
 | `0x15a84` | `draw_num_thunk` | 2 |  |  |
 | `0x15a86` | `draw_num` | 112 |  |  |
 | `0x15af6` | `render_road` | 4 |  |  |

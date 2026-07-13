@@ -31,6 +31,23 @@ void g_fill_span(uint8_t *image, uint32_t dst_offset, uint32_t color_index, uint
 void g_fill_rect(uint8_t *image, uint32_t dst_offset, uint32_t color_index,
                  uint32_t cells_m1, uint32_t rows_m1);           /* D0, D1, D3, D4 */
 
+/* ---- text glyph blitters (shared body @ 0x5a2c; draw_text/_row, draw_hud_gauge0/_bar) ----
+ * The string is character *pairs*; each pair packs two 1bpp FONT_GLYPHS entries into one
+ * 8-byte, 4-plane cell (char1's word: hi->mask, lo->ink; char2's two row bytes likewise).
+ * A 0 first byte ends the string; a 0 second byte draws one final cell then stops. The four
+ * entries differ only in which inputs are preset:
+ *   draw_text       D0 dst offset (+buffer), D1 colour, A3 string; count preset to 0x13
+ *   draw_text_row   as draw_text but D5 supplies the cell count-1
+ *   draw_hud_gauge0 A0 absolute dst, D1 colour, D5 count-1, A3 string
+ *   draw_hud_bar    A0 absolute dst, D2/D3 fill preset, A3 string; count preset to 0x13 */
+#define TEXT_CELL_ROWS  8       /* rows blitted per character cell */
+void g_draw_text(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr);
+void g_draw_text_row(uint8_t *image, uint32_t dst_off, uint32_t color_idx,
+                     uint32_t cells_m1, uint32_t str_ptr);
+void g_draw_hud_gauge0(uint8_t *image, uint32_t dst, uint32_t color_idx,
+                       uint32_t cells_m1, uint32_t str_ptr);
+void g_draw_hud_bar(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi, uint32_t str_ptr);
+
 /* ---- road perspective (build_road_geometry @ 0x11f4c) ---- */
 void g_build_road_geometry(uint8_t *image);
 

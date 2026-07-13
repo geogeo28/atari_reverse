@@ -61,6 +61,9 @@
 /* ---- fill patterns ---- */
 #define A_color_pairs     0x15afa   /* 8-byte (4-plane) solid-fill pattern per colour index */
 
+/* ---- font / text (draw_text @ 0x159fa) ---- */
+#define A_font_glyphs     0x176a8   /* 16-byte 1bpp glyphs, indexed char << 4 */
+
 /* ---- sprite edge masks (blit_obj_* @ 0x10bdc..) ---- */
 #define A_blit_mask_L     0x15bba   /* left-edge blit masks, indexed (x&0xf)<<2 */
 #define A_blit_mask_R     0x15bfa   /* right-edge blit masks */
