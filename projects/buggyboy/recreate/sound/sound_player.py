@@ -11,6 +11,7 @@ turns that per-frame register stream into audio.
     python sound/sound_player.py                 # render all tunes + effects to out/sound/
     python sound/sound_player.py --loop-seconds 30   # cap long / non-terminating tracks at 30s
     python sound/sound_player.py --tunes 0,6 --fx 2
+    python sound/sound_player.py --synth sid --tunes 3   # C64 SID transcode -> *_sid.wav
 
 Effect ids feed INITFX; tune ids feed INITTUNE. Silent results (an id with no real data) are
 skipped automatically.
@@ -27,6 +28,7 @@ sys.path.insert(0, str(HERE.parent / "oracle"))
 from loader import load_image  # noqa: E402
 import emu                      # noqa: E402
 import ym2149                   # noqa: E402
+import sid                      # noqa: E402  # C64 SID transcode of the same YM stream
 
 PRG = HERE.parents[1] / "bin" / "BUGGYBOY.PRG"
 OUT_DIR = HERE.parents[1] / "out" / "sound"
@@ -102,13 +104,16 @@ def write_wav(path, samples, rate):
         w.writeframes(pcm.tobytes())
 
 
-def render_one(kind, starter, sound_id, flag_addr, max_frames, base_image):
-    """Capture + render one sound to its natural length. Return (path, seconds, tag) or None."""
+def render_one(kind, starter, sound_id, flag_addr, max_frames, base_image, synth):
+    """Capture + render one sound to its natural length. Return (path, seconds, tag) or None.
+
+    ``synth`` is the renderer module (``ym2149`` or ``sid``); both expose ``render`` and ``RATE``.
+    """
     captured = capture(starter, sound_id, flag_addr, max_frames, base_image)
     if captured is None:
         return None
     snapshots, retriggers, end = captured
-    samples = ym2149.render(snapshots, retriggers)
+    samples = synth.render(snapshots, retriggers)
     if np.abs(samples).max() < 1e-3:                   # normalised silence -> nothing to hear
         return None
     seconds = len(snapshots) / ym2149.FPS
@@ -118,8 +123,9 @@ def render_one(kind, starter, sound_id, flag_addr, max_frames, base_image):
         tag = "still evolving at cap"
     else:
         tag = ""                                       # "flag"/"stop": a plain finite one-shot
-    path = OUT_DIR / f"{kind}_{sound_id:02d}.wav"
-    write_wav(path, samples, ym2149.RATE)
+    suffix = "_sid" if synth is sid else ""            # keep SID renders beside the YM refs
+    path = OUT_DIR / f"{kind}_{sound_id:02d}{suffix}.wav"
+    write_wav(path, samples, synth.RATE)
     return path, seconds, tag
 
 
@@ -133,8 +139,11 @@ def main():
                     help="cap for a sound that neither self-terminates nor loops (default 120)")
     ap.add_argument("--tunes", help="comma-separated INITTUNE ids (default 0-9)")
     ap.add_argument("--fx", help="comma-separated INITFX ids (default 0-8)")
+    ap.add_argument("--synth", choices=("ym", "sid"), default="ym",
+                    help="chip to render on: ym = Atari ST YM2149 (default), sid = C64 SID transcode")
     args = ap.parse_args()
 
+    synth = sid if args.synth == "sid" else ym2149
     max_frames = int(round(args.loop_seconds * ym2149.FPS))
     base = load_image(PRG)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -144,7 +153,7 @@ def main():
 
     written = 0
     for kind, starter, flag_addr, sound_id in jobs:
-        result = render_one(kind, starter, sound_id, flag_addr, max_frames, base)
+        result = render_one(kind, starter, sound_id, flag_addr, max_frames, base, synth)
         if result:
             path, seconds, tag = result
             suffix = f"  ({tag})" if tag else ""

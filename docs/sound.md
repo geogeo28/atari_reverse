@@ -62,6 +62,17 @@ lives in `projects/buggyboy/recreate/sound/`:
 Timing is authentic (real driver, real 2 MHz clock, exact 50 Hz frames); only the YM DAC
 curve and envelope edge-cases are approximated. Cross-check against Hatari's audio if in doubt.
 
+**Playing it on a C64 SID.** The same captured register stream can be *transcoded* to the
+Commodore 64's SID (`sound/sid.py`, via reSID-fp / `pyresidfp`): run
+`python sound/sound_player.py --synth sid` to write `out/sound/*_sid.wav` beside the YM refs.
+The chips differ, so it's a mapping, not a copy — YM square → SID 50% pulse, YM noise → SID
+noise (driven by the YM *noise* rate, since SID clocks its LFSR from the voice frequency),
+and per-channel YM volume/envelope → per-voice software amplitude scaling (SID has no
+per-voice volume, and this also stands in for YM's hardware-envelope "buzz", which SID lacks).
+The output is AC-coupled (DC-block) and faded in to mimic the real C64 and drop reSID's reset
+transient. It keeps BuggyBoy's exact arrangement and 50 Hz timing, rendered in SID timbre; it
+is *not* a re-scored native C64 tune (no filter/PWM/ring-mod craft).
+
 **Exact durations.** Each frame is 1/50 s, and the driver defines a sound's end: it clears
 `mzflag` (music) or `fxflag` (effects), or its state freezes. `sound_player.py` steps until
 then, so every WAV is the sound's natural length; a driver-RAM state *revisit* (period > 1)
