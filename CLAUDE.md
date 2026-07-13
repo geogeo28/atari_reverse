@@ -105,6 +105,8 @@ justify leaving it):
   appears twice collapses into one named helper; intention-revealing names; comment the
   *why*. No raw register names (`a1`, `d0`–`d7`) or terse locals (`m`, `p`, `rd`) — use
   semantic names with the register map in a one-line comment (see `recreate/README.md`).
+- **Line length ≤160 chars** — wrap past that (one arg per line / idiomatic multi-line);
+  don't split a clean 161-char line awkwardly, and follow any project autoformatter over this.
 - **No magic numbers** — name any non-trivial literal with a `#define`/const: addresses
   (`0x1bc56`), struct/field offsets (`0xa`, `0x1c`), sizes, table strides, bit masks
   (`0xff00`). This matters doubly in reconstructed code, where a bare hex offset hides which
