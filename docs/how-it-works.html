@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reverse-Engineering an Atari ST Game — How It Works</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161a22; --panel2:#1d2230; --ink:#e7ecf3; --mut:#9aa6b8;
+    --acc:#5db0ff; --acc2:#7ee0a2; --warn:#ffcf6b; --line:#2a3140; --code:#0b0d12;
+    --kw:#c586c0; --str:#ce9178; --num:#b5cea8; --cmt:#6a9955; --fn:#dcdcaa;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.65;font-size:16px}
+  a{color:var(--acc);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  .wrap{display:grid;grid-template-columns:270px minmax(0,1fr);gap:0;max-width:1280px;margin:0 auto}
+  nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;padding:28px 20px;border-right:1px solid var(--line)}
+  nav h1{font-size:15px;letter-spacing:.02em;margin:0 0 4px}
+  nav .sub{color:var(--mut);font-size:12.5px;margin-bottom:20px}
+  nav ol{list-style:none;padding:0;margin:0;counter-reset:s}
+  nav ol li{counter-increment:s;margin:2px 0}
+  nav ol li a{display:block;padding:6px 10px;border-radius:7px;color:var(--mut);font-size:13.5px}
+  nav ol li a::before{content:counter(s) ".";color:var(--acc);margin-right:8px;font-variant-numeric:tabular-nums}
+  nav ol li a:hover{background:var(--panel);color:var(--ink);text-decoration:none}
+
+  main{padding:48px 56px 120px;min-width:0}
+  header.hero{margin-bottom:44px}
+  .tag{display:inline-block;font-family:var(--mono);font-size:12px;color:var(--acc2);
+       border:1px solid var(--line);border-radius:999px;padding:3px 12px;margin-bottom:16px;background:var(--panel)}
+  h1.title{font-size:34px;line-height:1.15;margin:0 0 12px;letter-spacing:-.01em}
+  .lede{color:var(--mut);font-size:17.5px;max-width:64ch}
+
+  section{margin:0 0 56px;scroll-margin-top:24px}
+  h2{font-size:24px;margin:0 0 8px;letter-spacing:-.01em;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h2 .n{color:var(--acc);font-family:var(--mono);font-size:18px;margin-right:10px}
+  h3{font-size:17px;margin:28px 0 8px;color:var(--acc2)}
+  p{max-width:74ch}
+  .mut{color:var(--mut)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:900px){.wrap{grid-template-columns:1fr}nav{display:none}main{padding:28px 20px}.grid2{grid-template-columns:1fr}}
+
+  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;
+      font-family:var(--mono);font-size:13px;line-height:1.6;margin:14px 0}
+  code{font-family:var(--mono);font-size:.9em;background:var(--panel2);padding:1.5px 6px;border-radius:5px;color:#e9d7a7}
+  pre code{background:none;padding:0;color:var(--ink)}
+  .kw{color:var(--kw)}.str{color:var(--str)}.num{color:var(--num)}.cmt{color:var(--cmt)}.fn{color:var(--fn)}.mut2{color:var(--mut)}
+
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--acc2);font-weight:600;border-bottom:1px solid var(--acc2)}
+  td code{font-size:.85em}
+  tbody tr:hover{background:var(--panel)}
+
+  .steps{counter-reset:st;list-style:none;padding:0;margin:16px 0}
+  .steps>li{counter-increment:st;position:relative;padding:14px 0 14px 52px;border-bottom:1px solid var(--line)}
+  .steps>li::before{content:counter(st);position:absolute;left:0;top:12px;width:34px;height:34px;border-radius:9px;
+      background:var(--panel2);border:1px solid var(--line);color:var(--acc);display:grid;place-items:center;
+      font-family:var(--mono);font-weight:700}
+  .steps>li b{color:var(--ink)}
+
+  .pipe{font-family:var(--mono);font-size:12.5px;line-height:1.5;color:var(--mut);white-space:pre;overflow-x:auto;
+        background:var(--code);border:1px solid var(--line);border-radius:10px;padding:18px}
+  .pipe b{color:var(--acc2)}
+
+  .note{border-left:3px solid var(--acc);background:var(--panel);padding:12px 16px;border-radius:0 10px 10px 0;margin:16px 0}
+  .warn{border-left:3px solid var(--warn);background:var(--panel)}
+  .note b{color:var(--acc)} .warn b{color:var(--warn)}
+
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin:16px 0}
+  .kpi div{flex:1;min-width:150px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .big{font-size:26px;font-weight:700;color:var(--acc2);font-family:var(--mono)}
+  .kpi .lbl{color:var(--mut);font-size:12.5px}
+
+  footer{color:var(--mut);font-size:13px;border-top:1px solid var(--line);padding-top:20px;margin-top:40px}
+  .pill{font-family:var(--mono);font-size:11.5px;color:var(--warn);border:1px solid var(--line);padding:1px 8px;border-radius:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <h1>Atari ST · Reverse Engineering</h1>
+  <div class="sub">Binary → readable, verified C</div>
+  <ol>
+    <li><a href="#intro">What this is</a></li>
+    <li><a href="#platform">The Atari ST platform</a></li>
+    <li><a href="#format">The .PRG binary format</a></li>
+    <li><a href="#pipeline">The RE pipeline</a></li>
+    <li><a href="#anchors">Anchors → outward</a></li>
+    <li><a href="#os">OS traps &amp; hardware</a></li>
+    <li><a href="#reconstruct">Reconstructing C</a></li>
+    <li><a href="#differential">Proving it correct</a></li>
+    <li><a href="#buggyboy">BuggyBoy end-to-end</a></li>
+    <li><a href="#glossary">Glossary</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <span class="tag">docs/how-it-works.html</span>
+  <h1 class="title">Turning a 1980s Atari ST game binary back into readable, provably-correct C</h1>
+  <p class="lede">This workspace recovers lost source from an Atari ST program: it parses the executable,
+  disassembles the 68000 code, drives Ghidra to decompile it, iteratively <b>names</b> everything until
+  it reads like source — then <b>reconstructs</b> clean C and <b>proves</b> each function still matches the
+  original machine code, byte for byte. <span class="mut">Buggy Boy is the fully-worked reference example.</span></p>
+</header>
+
+<!-- 1 -->
+<section id="intro">
+  <h2><span class="n">01</span>What this is</h2>
+  <p>There is no source code for these old games. They shipped as compiled binaries — and in Buggy Boy's
+  case, hand-written 68000 assembly. The goal is <b>reverse engineering</b>: recover human-readable,
+  named, decompiled code from nothing but the shipped bytes, and be able to <em>trust</em> that recovery.</p>
+
+  <p>The project has three parts that stay reusable across <em>any</em> GEMDOS <code>.PRG</code>:</p>
+  <table>
+    <thead><tr><th>Part</th><th>What it holds</th></tr></thead>
+    <tbody>
+      <tr><td><b>tools/</b></td><td>Game-agnostic tooling: a stdlib <code>.PRG</code> parser + 68000 disassembler, Ghidra loader/annotator scripts (Java), depackers, a graphics/sprite extractor, and the shell scripts that drive the naming loop.</td></tr>
+      <tr><td><b>docs/</b></td><td>Transferable knowledge, one file per domain (binary formats, 68k asm, Ghidra, OS calls, hardware, graphics, sound, methodology). Grounded in Buggy Boy but written as general procedure.</td></tr>
+      <tr><td><b>projects/</b></td><td>Per-game work: <code>buggyboy/</code> (solved reference) and <code>joust/</code>. Each has its binary, name map, decompiled C, and Ghidra project.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note"><b>Two truths that shape everything.</b> (1) <b>The relocation table is gold</b> — honor it
+  on load and every absolute pointer resolves to a real, navigable address, which is what lets Ghidra discover
+  functions. (2) <b>Games bypass the OS</b> — expect file I/O through GEMDOS and <em>everything else</em> through
+  direct hardware, Line-A, and XBIOS. The GUI (GEM) usually shows up only during start-up.</div>
+</section>
+
+<!-- 2 -->
+<section id="platform">
+  <h2><span class="n">02</span>The Atari ST platform — what makes it specific</h2>
+  <p>The Atari ST (1985) is a <b>Motorola 68000</b> machine: a 16/32-bit CPU, <b>big-endian</b>, with a flat
+  address space and memory-mapped I/O. Its OS is <b>TOS</b>, and its GUI layer is <b>GEM</b>. Three platform
+  facts drive almost every RE decision:</p>
+
+  <div class="grid2">
+    <div class="card"><h3 style="margin-top:0">Everything is memory-mapped</h3>
+      <p class="mut" style="margin:0">There are no I/O ports. The video shifter, the sound chip, timers and the
+      keyboard controller all live at fixed addresses in the <code>$FFFF8xxx</code>/<code>$FFFFFxxx</code> range.
+      A routine that writes <code>$FFFF8240</code> <em>is</em> a palette routine — no ambiguity.</p></div>
+    <div class="card"><h3 style="margin-top:0">The OS is reached by trap, not by call</h3>
+      <p class="mut" style="margin:0">TOS/GEM have no linked entry points to rename. Code enters the OS with a
+      <code>trap #N</code> instruction and a function selector; the selector picks the specific call. So you
+      identify <em>call sites</em>, not symbols.</p></div>
+    <div class="card"><h3 style="margin-top:0">Frame-driven by the VBL</h3>
+      <p class="mut" style="margin:0">A 50/60&nbsp;Hz <b>vertical-blank</b> interrupt drives per-frame work.
+      Games chain a handler onto the VBL queue (low memory <code>0x456</code>); whoever installs it owns the
+      tick — often the sound/music driver.</p></div>
+    <div class="card"><h3 style="margin-top:0">Planar graphics + double buffering</h3>
+      <p class="mut" style="margin:0">Low-res is 320×200, 16 colours, stored as <b>4 word-interleaved
+      bitplanes</b> (32000 bytes). Smooth motion = two screen buffers, flip the base address each frame.</p></div>
+  </div>
+
+  <h3>The I/O map (the parts games actually touch)</h3>
+  <table>
+    <thead><tr><th>Range</th><th>Chip / role</th><th>Notable registers</th></tr></thead>
+    <tbody>
+      <tr><td><code>$FFFF8200–8260</code></td><td>Video / Shifter</td><td>video base hi/mid, sync mode, <code>8240–825E</code> = 16 palette words, resolution</td></tr>
+      <tr><td><code>$FFFF8800/8802</code></td><td>YM2149 PSG (sound)</td><td>write reg # then value; also reads joystick/keyboard via ports A/B</td></tr>
+      <tr><td><code>$FFFFFA00–FA2F</code></td><td>MFP 68901</td><td>timers A–D, interrupt enable/mask, GPIP</td></tr>
+      <tr><td><code>$FFFFFC00/FC02</code></td><td>IKBD ACIA</td><td>keyboard / mouse / joystick controller</td></tr>
+    </tbody>
+  </table>
+  <p class="mut">Palette words are ST <code>0x0RGB</code> (3 bits/channel). Supervisor mode (via GEMDOS
+  <code>Super</code> or XBIOS <code>Supexec</code>) is needed to touch most of this hardware. There is also
+  <b>Line-A</b>: opcodes <code>$A000–$A00F</code> that trap into fast built-in graphics primitives
+  (put pixel, draw sprite, copy raster) — treat an <code>$A0xx</code> word as a call, not data.</p>
+</section>
+
+<!-- 3 -->
+<section id="format">
+  <h2><span class="n">03</span>The GEMDOS <code>.PRG</code> binary format</h2>
+  <p>Before you can disassemble anything, you parse the executable. An ST program (<code>.PRG</code>,
+  <code>.TOS</code>, <code>.TTP</code>) opens with a 28-byte big-endian header. The magic word is
+  <code>0x601A</code> — literally a <code>bra.s +26</code> instruction.</p>
+
+  <table>
+    <thead><tr><th>Off</th><th>Size</th><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>0x00</code></td><td>2</td><td>magic</td><td><code>0x601A</code></td></tr>
+      <tr><td><code>0x02</code></td><td>4</td><td>text length</td><td>code segment</td></tr>
+      <tr><td><code>0x06</code></td><td>4</td><td>data length</td><td>initialized data (often merged into text)</td></tr>
+      <tr><td><code>0x0A</code></td><td>4</td><td>bss length</td><td>zero-init region (not stored in file)</td></tr>
+      <tr><td><code>0x0E</code></td><td>4</td><td>symbol table length</td><td>0, or a DRI symbol table</td></tr>
+      <tr><td><code>0x1A</code></td><td>2</td><td>absflag</td><td>if non-zero, <b>no relocation</b></td></tr>
+    </tbody>
+  </table>
+
+  <p>File layout: <code>header(28) | TEXT | DATA | SYMBOLS | RELOC-TABLE</code>. The code is
+  <b>position-independent</b>: it can load anywhere, and the <b>relocation table</b> lists the offsets of every
+  32-bit longword that must have the load base added.</p>
+
+  <div class="note"><b>Why the reloc table is the single biggest lever.</b> Load a <code>.PRG</code> as a flat
+  blob and every absolute pointer (<code>lea $xxxx.l</code>, jump tables) is wrong, so Ghidra's analysis finds
+  almost nothing. Apply the relocations — <code>*(u32*)(image+off) += load_base</code> for each fixup — and the
+  whole call graph resolves.</div>
+
+  <p>A quick first look with the workspace's own parser:</p>
+  <pre><code class="mut2"><span class="cmt"># prints header sizes, reloc count, embedded strings, first-pass disassembly</span>
+python3 tools/prg_dis.py projects/buggyboy/bin/BUGGYBOY.PRG | head -60</code></pre>
+  <p class="mut">Strings alone are worth a lot: Buggy Boy's binary reveals the loaded files
+  (<code>"COURSES.DAT"</code>, <code>"GRAPHICS.GRA"</code>) and the author credit
+  (<code>"coded by Martin W.Ward"</code>). It also kept 11 DRI symbols — a sound driver's exports
+  (<code>INITTUNE</code>, <code>EGVOL</code>, <code>REFRESH</code>…) that name a whole subsystem for free.</p>
+  <div class="note warn"><b>Watch for packing.</b> If the entry point disassembles to garbage and the text
+  entropy is high (&gt; ~6.7, which <code>prg_dis.py</code> prints), the executable is <em>crunched</em> — you
+  depack it (statically, or by running it in the Hatari emulator and dumping memory) before analysis. Joust's
+  <code>.CTE</code> is exactly this case.</div>
+</section>
+
+<!-- 4 -->
+<section id="pipeline">
+  <h2><span class="n">04</span>The reverse-engineering pipeline</h2>
+  <div class="pipe">.PRG binary
+  │  parse header / symbols / relocs
+  ▼
+<b>raw import into Ghidra</b>  (68000 : big-endian : 32-bit)
+  │  PrgLoader rebuilds TEXT at the load base, applies relocations,
+  │  imports DRI symbols, sets the entry point
+  ▼
+<b>auto-analysis + OS-trap annotation</b>
+  │  AtariOsTrapAnnotate labels every trap #1/#13/#14/#2 call site
+  │  ExportDecompC  →  decomp.c
+  ▼
+<b>THE NAMING LOOP</b>  (the bulk of the work)
+  read decomp.c → anchor on traps / hardware / strings / symbols
+  → add fn/var/cmt lines to names.txt → reapply.sh → re-read
+  ▼
+<b>RECONSTRUCTION</b>  (optional, highest-fidelity)
+  rewrite each function as clean C  →  prove it byte-for-byte
+  equivalent to the original via a differential test</div>
+
+  <p>Concretely, per project:</p>
+  <pre><code class="mut2">bash tools/new_project.sh mygame path/to/MYGAME.PRG
+bash projects/mygame/run.sh          <span class="cmt"># bootstrap: analyzed DB + decomp.c</span>
+<span class="cmt"># … read decomp.c, add lines to names.txt …</span>
+bash projects/mygame/reapply.sh      <span class="cmt"># apply names + re-export; repeat</span></code></pre>
+
+  <div class="note warn"><b>Ghidra 12 gotcha.</b> Ghidra 12 dropped Jython, so all loader/annotator scripts
+  are written in <b>Java</b> (<code>tools/ghidra_scripts/*.java</code>) and run headless out of the box. The
+  load base defaults to <code>0x10000</code> to keep the image clear of the 68000 vector page — arbitrary, since
+  <code>.PRG</code>s are position-independent.</div>
+
+  <h3>The name map (<code>names.txt</code>) is the source of truth</h3>
+  <p>One directive per line. Addresses are Ghidra addresses = image offset + load base.</p>
+  <table>
+    <thead><tr><th>Directive</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>fn 0x&lt;addr&gt; &lt;name&gt;</code></td><td>name / define a function</td></tr>
+      <tr><td><code>var 0x&lt;addr&gt; &lt;name&gt;</code></td><td>label a data address (renames Ghidra's <code>DAT_*</code>)</td></tr>
+      <tr><td><code>cmt 0x&lt;addr&gt; &lt;text&gt;</code></td><td>plate comment</td></tr>
+      <tr><td><code>param / proto</code></td><td>rename a recovered parameter, or commit a full signature with explicit storage</td></tr>
+    </tbody>
+  </table>
+  <p class="mut">A trailing <code># ctx</code> tags a name inferred from call-context rather than a confirmed body
+  read — honest bookkeeping so a guess is never presented as fact.</p>
+</section>
+
+<!-- 5 -->
+<section id="anchors">
+  <h2><span class="n">05</span>The craft: anchors → outward</h2>
+  <p>You never read a 48&nbsp;KB binary top to bottom. You anchor on <b>ground truth</b> and propagate along the
+  call graph. Sources of ground truth, strongest first:</p>
+  <ol class="steps">
+    <li><b>OS traps</b> — already annotated: "this function <code>Fopen</code>s a file / sets the palette."</li>
+    <li><b>Hardware register access</b> — <code>$FFFF8240</code> = palette, <code>$FFFF8800</code> = sound. Unambiguous.</li>
+    <li><b>Imported symbols</b> — any DRI symbols name whole subsystems for free.</li>
+    <li><b>Strings</b> — filenames, menu text, author credit, score labels. They pin down loaders, menus, HUD, high-score code.</li>
+    <li><b>Interrupt installs</b> — whoever writes the VBL vector (<code>0x456</code>) owns the per-frame tick.</li>
+    <li><b>Call graph</b> — name leaf utilities first (a <code>dbf</code> copy loop = <code>memcpy</code>, a masked blit = <code>draw_sprite</code>), then the callers that compose them.</li>
+  </ol>
+
+  <div class="note warn"><b>Verify before you name.</b> Position and size are hints, not evidence. In Buggy Boy a
+  function assumed to be <code>read_input</code> turned out to be <code>flip_screen</code> (it wrote the video
+  base); one guessed as <code>show_message</code> was actually <code>add_score</code> (BCD score with carries).
+  A wrong sticky name is worse than <code>FUN_</code>. Read the decompiled body and confirm what it touches.</div>
+
+  <p>Each pass makes the next easier: naming a leaf helper makes its callers legible, which unlocks the layer
+  above. <b>"Done"</b> looks like this — <code>main</code> and the frame loop read as pseudocode, every function
+  has a meaningful name, key globals (state, buffers, tables) are labelled, and jump tables and asset formats are
+  documented. For Buggy Boy that's <b>91/91 functions</b>.</p>
+</section>
+
+<!-- 6 -->
+<section id="os">
+  <h2><span class="n">06</span>Reading OS traps and hardware access</h2>
+  <p>Since the OS is reached by trap, you learn to recognize the four vectors and their selectors:</p>
+  <table>
+    <thead><tr><th>Instruction</th><th>Layer</th><th>How the specific call is chosen</th></tr></thead>
+    <tbody>
+      <tr><td><code>trap #1</code></td><td>GEMDOS (files, memory, process)</td><td>function # pushed as a word: <code>move.w #sel,-(sp)</code></td></tr>
+      <tr><td><code>trap #13</code></td><td>BIOS (devices)</td><td>selector on the stack</td></tr>
+      <tr><td><code>trap #14</code></td><td>XBIOS (hardware)</td><td>selector on the stack</td></tr>
+      <tr><td><code>trap #2</code></td><td>GEM (GUI)</td><td><code>d0=200</code> → AES, <code>d0=115</code> → VDI; params via a pointer block</td></tr>
+    </tbody>
+  </table>
+  <p>Common selectors you meet constantly: GEMDOS <code>0x3D</code> Fopen, <code>0x3F</code> Fread,
+  <code>0x48</code> Malloc, <code>0x4B</code> Pexec; XBIOS <code>0x05</code> Setscreen, <code>0x06</code>
+  Setpalette, <code>0x1F</code> Vsync, <code>0x26</code> Supexec. Games wrap these in thin helpers
+  (<code>move.w #sel,-(sp); trap #1; addq; rts</code>) which the annotator auto-renames, so callers start to
+  read as <code>Fread(...)</code>, <code>Setpalette(pal)</code>.</p>
+
+  <p>A recognizable start-up shape appears in almost every game: an <b>Mshrink prologue</b> (free RAM above the
+  program), then <b>GEM init and bail to hardware</b> — <code>appl_init → graf_handle → v_opnvwk</code> to grab a
+  screen handle, after which the game bangs the hardware directly. Buggy Boy does exactly this.</p>
+</section>
+
+<!-- 7 -->
+<section id="reconstruct">
+  <h2><span class="n">07</span>Reconstructing readable C</h2>
+  <p>Naming makes the Ghidra output <em>legible</em>, but it's still full of <code>DAT_*</code>,
+  <code>undefined</code>, <code>CONCAT</code> and register artifacts. The reconstruction step rewrites each
+  function as clean, idiomatic C. The design that makes this safe:</p>
+
+  <div class="grid2">
+    <div class="card"><h3 style="margin-top:0">A shared, flat memory image</h3>
+      <p class="mut" style="margin:0">Both the original code and the reconstruction operate on the <b>same
+      big-endian byte image</b>, indexed by real Ghidra addresses — so the game's globals sit at their true
+      addresses. Accessors (<code>be16</code>, <code>be32</code>) read/write it.</p></div>
+    <div class="card"><h3 style="margin-top:0">Core + glue</h3>
+      <p class="mut" style="margin:0">Each function has a <b>core</b> (the readable logic, idiomatic C types) and
+      a <b>glue</b> <code>g_&lt;name&gt;(image, regs…)</code> that unpacks the core's inputs from the image at
+      their real addresses and writes results back. The glue <em>is</em> the function's I/O contract.</p></div>
+  </div>
+
+  <h3>Example: <code>add_score</code> — from BCD carry asm to readable C</h3>
+  <p class="mut">The original adds a six-digit ASCII score with decimal carry, refreshes the HUD copy, and blanks
+  leading zeros. The reconstruction (<code>src/score.c</code>) reads as prose, with the register→memory contract
+  isolated in the glue:</p>
+  <pre><code><span class="cmt">/* Add v to the n-byte big-endian integer at p (binary carry, as 68k add.l/.w). */</span>
+<span class="kw">static void</span> <span class="fn">add_be</span>(uint8_t *p, <span class="kw">int</span> n, uint32_t v) {
+    uint32_t acc = <span class="num">0</span>;
+    <span class="kw">for</span> (<span class="kw">int</span> i = <span class="num">0</span>; i &lt; n; i++) acc = (acc &lt;&lt; <span class="num">8</span>) | p[i];
+    acc += v;
+    <span class="kw">for</span> (<span class="kw">int</span> i = n - <span class="num">1</span>; i &gt;= <span class="num">0</span>; i--) { p[i] = (uint8_t)acc; acc &gt;&gt;= <span class="num">8</span>; }
+}
+
+<span class="kw">void</span> <span class="fn">score_add</span>(uint8_t *score, <span class="kw">char</span> *score_str, <span class="kw">const</span> uint8_t *delta, <span class="kw">int</span> game_over) {
+    <span class="kw">if</span> (game_over) <span class="kw">return</span>;
+    <span class="cmt">/* 68k adds the top four digits as one long and the low two as a word. */</span>
+    <span class="fn">add_be</span>(score,     <span class="num">4</span>, <span class="fn">be32</span>(delta));
+    <span class="fn">add_be</span>(score + <span class="num">4</span>, <span class="num">2</span>, <span class="fn">be16</span>(delta + <span class="num">4</span>));
+    <span class="cmt">/* Decimal carry, least-significant digit upward. */</span>
+    <span class="kw">for</span> (<span class="kw">int</span> i = SCORE_DIGITS - <span class="num">1</span>; i &gt;= <span class="num">1</span>; i--)
+        <span class="kw">if</span> ((int8_t)(<span class="str">'9'</span> - score[i]) &lt; <span class="num">0</span>) { score[i] -= <span class="num">10</span>; score[i - <span class="num">1</span>] += <span class="num">1</span>; }
+    <span class="cmt">/* Refresh the on-screen digits, then blank leading zeros ('0' -> '/'). */</span>
+    <span class="fn">memcpy</span>(score_str + <span class="num">4</span>, score, SCORE_DIGITS);
+    <span class="kw">for</span> (<span class="kw">char</span> *p = score_str + <span class="num">4</span>; *p == <span class="str">'0'</span>; p++) *p -= <span class="num">1</span>;
+}
+
+<span class="cmt">/* Glue / I/O contract: A1 -> 6-byte delta; reads game_over_flag; writes score + score_str. */</span>
+<span class="kw">void</span> <span class="fn">g_add_score</span>(uint8_t *image, uint32_t delta_ptr) {
+    <span class="kw">int</span> game_over = <span class="fn">be16</span>(image + A_game_over_flag) != <span class="num">0</span>;
+    <span class="fn">score_add</span>(image + A_score_bcd, (<span class="kw">char</span> *)(image + A_score_str), image + delta_ptr, game_over);
+}</code></pre>
+  <p class="mut">Note the conventions the code-review gate enforces: <b>no magic numbers</b>
+  (<code>SCORE_DIGITS</code>, named addresses like <code>A_score_bcd</code>), <b>no raw register names</b> in the
+  core, and a one-line comment mapping the register contract in the glue.</p>
+</section>
+
+<!-- 8 -->
+<section id="differential">
+  <h2><span class="n">08</span>Proving it correct — differential testing</h2>
+  <p>Because Buggy Boy was hand-written assembly, there is <em>no</em> original C to recompile and byte-match
+  against. So correctness is proven a different way: <b>behavioral equivalence</b>. Run the real machine code
+  and the reconstruction on identical starting state, then diff the resulting memory. The emulator is ground
+  truth, so correctness never rests on a human reading being right.</p>
+
+  <div class="pipe">          initial memory image + registers
+                     │
+        ┌────────────┴─────────────┐
+        ▼                          ▼
+  <b>ORACLE</b> (real 68k)          <b>CANDIDATE</b> (our C)
+  Musashi via liboracle.so   libbuggyboy.so via ctypes
+        │                          │
+        ▼                          ▼
+  final memory + write-set   final memory
+        └──────────► diff ◄────────┘   <b>green = byte-for-byte identical</b></div>
+
+  <p>The oracle is <b>Musashi</b> (MAME's 68000 core), chosen because it is faithful to real 68000 behavior.
+  (Unicorn/QEMU's m68k core was tried first and rejected — its ColdFire-derived core raises spurious illegal-
+  instruction faults on byte read-modify-write to memory, which this code does constantly.) The harness diffs
+  the <em>whole image</em> minus a stack-guard band, so any byte the real code writes that the reconstruction
+  gets wrong — or misses — fails the test.</p>
+
+  <h3>A test looks like this</h3>
+  <pre><code><span class="cmt"># Differential tests for add_score @ 0x1580a</span>
+<span class="kw">def</span> <span class="fn">_case</span>(score, delta, game_over):
+    pokes = {
+        <span class="num">0x1824c</span>: <span class="fn">bytes</span>(score),                 <span class="cmt"># score_bcd + counter</span>
+        <span class="num">0x18c34</span>: (<span class="num">1</span> <span class="kw">if</span> game_over <span class="kw">else</span> <span class="num">0</span>).to_bytes(<span class="num">2</span>, <span class="str">"big"</span>),  <span class="cmt"># game_over_flag</span>
+        DELTA_PTR: <span class="fn">bytes</span>(delta),
+    }
+    regs = {<span class="str">"a1"</span>: DELTA_PTR, <span class="str">"_pokes"</span>: pokes}
+    diffs, _ = <span class="fn">differential</span>(ENTRY_ADD_SCORE, regs,
+                          <span class="kw">lambda</span> lib, buf: lib.<span class="fn">g_add_score</span>(buf, DELTA_PTR))
+    <span class="kw">assert</span> <span class="kw">not</span> diffs, <span class="fn">report</span>(diffs)
+
+<span class="kw">def</span> <span class="fn">test_fuzz</span>():
+    rng = random.<span class="fn">Random</span>(<span class="num">12</span>)                 <span class="cmt"># fixed seed (reproducible)</span>
+    <span class="kw">for</span> _ <span class="kw">in</span> <span class="fn">range</span>(<span class="num">3000</span>):                    <span class="cmt"># full byte range, not just ASCII digits</span>
+        score = [rng.<span class="fn">randint</span>(<span class="num">0</span>, <span class="num">255</span>) <span class="kw">for</span> _ <span class="kw">in</span> <span class="fn">range</span>(<span class="num">6</span>)]
+        <span class="fn">_case</span>(score, [rng.<span class="fn">randint</span>(<span class="num">0</span>, <span class="num">255</span>) <span class="kw">for</span> _ <span class="kw">in</span> <span class="fn">range</span>(<span class="num">6</span>)], rng.<span class="fn">random</span>() &lt; <span class="num">0.1</span>)</code></pre>
+  <p class="mut">Both edge cases (full carry cascade, leading-zero blanking, game-over no-op) and thousands of
+  fuzz cases run through the same oracle-vs-candidate diff. The fuzz domain is deliberately widened to the
+  <b>full byte range</b> — not just the ASCII digits the game ever feeds it — because the disassembly showed a
+  signed <code>cmp.b</code>/<code>bpl</code> carry (and <em>no</em> BCD instruction), so the reconstruction must
+  match the real 68000's sign-extension for every input, not only the reachable ones.</p>
+
+  <div class="note"><b>Handling the OS in the oracle.</b> The emulator can't route a <code>trap</code> to real
+  TOS, so <code>oracle/shim.c</code> points each trap vector at a magic PC and services the call
+  <b>deterministically</b>: <code>Malloc</code> bump-allocates, <code>Physbase</code> returns a fixed screen
+  base, <code>Supexec</code> runs the passed routine in place, and <code>Fopen</code>/<code>Fread</code> serve
+  bytes from an in-image <em>staged-file</em> table the harness fills with the real file. Anything <em>not</em>
+  faithfully modeled is counted and <b>raises</b> rather than diff a fabricated result — so a function is only
+  ever marked verified once every OS call it makes is genuinely modeled.</div>
+
+  <div class="note"><b>Functions that never return</b> (like <code>_start</code>, whose call into the infinite
+  game loop never comes back) are verified at a <b>checkpoint PC</b> instead of at <code>rts</code>: run the
+  oracle to that address and diff there, excluding the relocated machine-stack band.</div>
+
+  <h3>Trusting the oracle: validating the validator</h3>
+  <p>The whole method rests on one assumption — <em>the oracle is a faithful 68000, and a green diff really
+  means equivalence</em>. A diff can lie in two ways: the reconstruction might pass by <b>coincidence</b>, or the
+  oracle might be <b>wrong</b> about the hardware. Several layers close those gaps, so a bug can't slip through:</p>
+  <table>
+    <thead><tr><th>Guard</th><th>The loophole it closes</th></tr></thead>
+    <tbody>
+      <tr><td><b>Attribution (poison) pass</b></td><td>A candidate can match the final image without ever
+        <em>writing</em> a byte the oracle wrote — if that byte already held the oracle's value (an output
+        landing in a zeroed region). The harness re-runs on an image whose oracle-written bytes are pre-poisoned
+        with a canary, so a missed write stays canary instead of coincidentally matching.</td></tr>
+      <tr><td><b>Stack-guard write check</b></td><td>The diff skips the machine-stack band (the pure-C
+        reconstruction has no stack). If the oracle actually wrote <em>program output</em> into that band, the diff
+        would hide it — so any such write fails loudly instead.</td></tr>
+      <tr><td><b>Exclude-band vetting</b></td><td>Checkpoint verification excludes a relocated-stack band. The
+        harness proves that band really is stack — it reaches the deepest stack pointer the oracle used and covers
+        no named global sitting <em>below</em> the stack — so it can't silently drop a real divergence.</td></tr>
+      <tr><td><b>Two-layer OS model</b></td><td>The deterministic trap shim is (1) pinned at its edges by tiny
+        hand-assembled stub tests, and (2) cross-checked against a <em>real TOS ROM</em> running headless in
+        Hatari. So "Malloc rounds up to even / Fread advances the cursor / Getrez is 0 in low-res" is a checked
+        fact, not a hopeful assumption.</td></tr>
+      <tr><td><b>ISA cross-validation</b></td><td>Musashi itself is validated against a <em>second, independent</em>
+        68000 — Hatari's WinUAE-derived core: 277 self-contained instruction snippets (byte/word memory RMW,
+        <code>asr/lsl/rox</code>, <code>ext</code>, <code>muls/divs</code>, <code>addx</code>, <code>cmp.b</code>+<code>Scc</code>)
+        run on both cores and their results + flags compared.</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><b>All 277 instruction cases agree.</b> The only divergence the cross-check ever found was
+  <code>N</code>/<code>Z</code> after a <code>DIVS/DIVU</code> overflow — which the 68000 manual declares
+  <em>undefined</em>, so two faithful cores may legitimately differ (it's excluded from the comparison; the result
+  and the defined overflow flag still match). Two independent, hardware-validated cores agreeing is the strongest
+  practical evidence short of real silicon — so <b>"verified against Musashi" is, for Buggy Boy's instruction mix,
+  "verified against a real 68000."</b></div>
+</section>
+
+<!-- 9 -->
+<section id="buggyboy">
+  <h2><span class="n">09</span>Buggy Boy, end to end</h2>
+  <p>Buggy Boy (a 1985 arcade racer, ported to the ST by Martin W. Ward) is the fully-solved reference.
+  It exercises every part of the pipeline:</p>
+
+  <div class="kpi">
+    <div><div class="big">91</div><div class="lbl">functions named &amp; documented</div></div>
+    <div><div class="big">39<span style="color:var(--mut);font-size:16px">/91</span></div><div class="lbl">reconstructed &amp; byte-verified <span class="pill">in progress</span></div></div>
+    <div><div class="big">11</div><div class="lbl">DRI sound-driver symbols recovered</div></div>
+    <div><div class="big">0x601A</div><div class="lbl">the .PRG magic word</div></div>
+  </div>
+
+  <ul class="steps">
+    <li><b>Loader.</b> Buggy Boy's <code>START.PRG</code> is a tiny launcher — it <code>Fopen</code>/<code>Fread</code>s the payload, applies the relocation table by hand, and jumps into it (instead of <code>Pexec</code>) so it can show a title screen first.</li>
+    <li><b>Start-up.</b> <code>_start</code> does the Mshrink prologue, then GEM init (<code>appl_init → graf_handle → v_opnvwk</code>) and bails to hardware. Verified at a checkpoint just before <code>bsr main</code>.</li>
+    <li><b>Assets.</b> Strings point at <code>GRAPHICS.GRA</code> and <code>COURSES.DAT</code>; <code>load_graphics</code> / <code>unpack_graphics</code> decode 4-plane sprites, and a jump table drives the course-event engine (collision, gates, flags).</li>
+    <li><b>Screen.</b> <code>flip_screen</code> toggles a buffer index and writes the video base to <code>$FFFF8200</code>, then Vsyncs — classic double buffering.</li>
+    <li><b>Score.</b> <code>add_score</code> — the six-digit BCD adder shown above, verified against 2000+ fuzz cases.</li>
+    <li><b>Sound.</b> The driver's exported symbols (<code>INITTUNE</code>, <code>EGVOL</code>, <code>REFRESH</code>…) name a tune + envelope-generator + effects driver, installed on the VBL queue. Because the real <code>REFRESH</code> runs faithfully in the oracle, you can <em>listen</em>: tap the YM2149 register writes per frame and render them to WAV — revealing that music ids 0–6 are real self-terminating tracks, and effect id ≥ 9 reads zeroed BSS past a 9-record table (so it's silent).</li>
+  </ul>
+
+  <div class="note"><b>Why the sound story is a good illustration.</b> It shows the whole method compounding:
+  a recovered <em>symbol</em> anchors the subsystem, the <em>hardware map</em> (YM2149 at <code>$FFFF8800</code>)
+  says what each write means, the <em>VBL install</em> says when it runs, and the faithful <em>oracle</em> lets
+  you observe real behavior — down to knowing exactly which effect ids are real versus reading past the table.</div>
+</section>
+
+<!-- 10 -->
+<section id="glossary">
+  <h2><span class="n">10</span>Glossary</h2>
+  <table>
+    <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><b>68000</b></td><td>Motorola CPU in the ST — 16/32-bit, big-endian, flat address space.</td></tr>
+      <tr><td><b>TOS / GEM</b></td><td>The ST operating system / its GUI layer, both reached via <code>trap</code>.</td></tr>
+      <tr><td><b>GEMDOS / BIOS / XBIOS</b></td><td>OS layers: files &amp; memory / devices / hardware, selected by <code>trap #1 / #13 / #14</code>.</td></tr>
+      <tr><td><b>Relocation table</b></td><td>List of longwords needing the load base added; applying it makes pointers resolve.</td></tr>
+      <tr><td><b>VBL</b></td><td>Vertical-blank interrupt (50/60 Hz) that drives per-frame work; handlers chain via low-memory <code>0x456</code>.</td></tr>
+      <tr><td><b>YM2149 (PSG)</b></td><td>The ST sound chip at <code>$FFFF8800/8802</code>; also reads joystick/keyboard.</td></tr>
+      <tr><td><b>Line-A</b></td><td>Built-in low-level graphics primitives invoked by <code>$A000–$A00F</code> opcodes.</td></tr>
+      <tr><td><b>Ghidra</b></td><td>The disassembler/decompiler driven headless; here scripted in Java.</td></tr>
+      <tr><td><b>Musashi</b></td><td>MAME's faithful 68000 core, used as the oracle for differential tests.</td></tr>
+      <tr><td><b>Oracle / candidate</b></td><td>The real machine code (ground truth) vs. the reconstructed C, diffed on identical state.</td></tr>
+      <tr><td><b>Core / glue</b></td><td>The readable reconstruction / the wrapper that maps registers &amp; memory to it (the I/O contract).</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  Generated for the Atari ST reverse-engineering workspace · content grounded in <code>docs/</code>,
+  <code>projects/buggyboy/recreate/</code>, and <code>CLAUDE.md</code>. Standalone — no external assets.
+</footer>
+</main>
+</div>
+</body>
+</html>
