@@ -45,4 +45,35 @@ Anchor on the VBL-installed refresh routine and any exported symbols, then name 
 `play_tune`/`play_sfx` (the event hooks), `stop_music`. Treat the PSG register writes as
 the definition of what each routine does.
 
+## Hearing it (BuggyBoy)
+
+Once the driver is located you can *listen* without reimplementing it: run the original
+`REFRESH` in the Musashi oracle and render the register writes it makes. For BuggyBoy this
+lives in `projects/buggyboy/recreate/sound/`:
+
+- `oracle/shim.c` taps writes to `$ff8800`/`$ff8802` into an ordered `(reg,val)` log
+  (`osh_psg_*`), read back per frame via `emu.psg_writes()`.
+- `sound_player.py` seeds a track with `INITTUNE` (music) or `INITFX` (effects), then calls
+  `REFRESH` once per 50 Hz VBL — feeding the image forward so driver state persists — and
+  captures the per-frame register stream.
+- `ym2149.py` renders that stream (3 tones + noise + envelope, mixer, ~3 dB/step volume DAC)
+  to a WAV in `out/sound/`. Run `python sound/sound_player.py` (needs numpy).
+
+Timing is authentic (real driver, real 2 MHz clock, exact 50 Hz frames); only the YM DAC
+curve and envelope edge-cases are approximated. Cross-check against Hatari's audio if in doubt.
+
+**Exact durations.** Each frame is 1/50 s, and the driver defines a sound's end: it clears
+`mzflag` (music) or `fxflag` (effects), or its state freezes. `sound_player.py` steps until
+then, so every WAV is the sound's natural length; a driver-RAM state *revisit* (period > 1)
+would flag a true loop. What this surfaces for BuggyBoy:
+
+- **Music: ids 0–6 are real, self-terminating tracks** (2.8 s–47 s). `tune 3` is a ~102 s
+  through-composed piece — *not* a loop (no state ever recurs; it ends by freezing to silence).
+  Tunes 7–9 are short stubs past the real set.
+- **Effects: the table is 9 records at `0x1bc56` (`0x12` each), ending at the text end
+  `0x1bcf8`.** So ids 0–8 are real; **id ≥ 9 reads zeroed BSS past the table** → an empty
+  effect (tone period 0, an envelope that is never triggered) → silent. That is why `fx 9`
+  produces nothing. An envelope-mode channel whose reg 13 is never written must read as a
+  *completed* (silent) envelope, not a fresh one — the synth models this.
+
 → Naming everything else: [`methodology.md`](methodology.md).

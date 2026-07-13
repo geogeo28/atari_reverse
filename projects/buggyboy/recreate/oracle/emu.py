@@ -30,6 +30,21 @@ _LIB.osh_run.restype = ctypes.c_int
 _LIB.osh_num_writes.restype = ctypes.c_uint32
 _LIB.osh_write_addrs.restype = _u32p
 _LIB.osh_unmodeled.restype = ctypes.c_uint32
+_u8p = ctypes.POINTER(ctypes.c_uint8)
+_LIB.osh_psg_count.restype = ctypes.c_uint32
+_LIB.osh_psg_regs.restype = _u8p
+_LIB.osh_psg_vals.restype = _u8p
+
+
+def psg_writes():
+    """(reg, val) YM2149 writes captured during the most recent ``run()``, in order.
+
+    ``run()`` resets the capture each call, so this is exactly that call's PSG traffic —
+    one VBL frame's worth when ``run()`` drove the sound driver's ``REFRESH``.
+    """
+    n = _LIB.osh_psg_count()
+    regs, vals = _LIB.osh_psg_regs(), _LIB.osh_psg_vals()
+    return [(regs[i], vals[i]) for i in range(n)]
 
 
 def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):

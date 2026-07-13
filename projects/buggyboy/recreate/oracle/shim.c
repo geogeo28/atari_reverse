@@ -28,7 +28,30 @@ unsigned int m68k_read_memory_32(unsigned int a) {
 
 static void logw(uint32_t a) { if (g_wn < MAX_WRITES) g_waddr[g_wn++] = a; }
 
+/* --- PSG (YM2149) capture -----------------------------------------------------------
+ * The sound driver talks to the PSG by writing a register number to $ff8800 (select
+ * latch) then the value to $ff8802 (data). Those addresses sit above the 1 MiB image, so
+ * the writes would otherwise vanish. Tap them here into an ordered (reg,val) log the sound
+ * tools read after each REFRESH run — the register stream that drives a Python YM2149. */
+#define PSG_SELECT 0xff8800   /* register-select latch (68000's 24-bit bus aliases $ffff8800) */
+#define PSG_DATA   0xff8802   /* data port */
+#define MAX_PSG    4096
+static uint8_t  g_psg_reg[MAX_PSG];
+static uint8_t  g_psg_val[MAX_PSG];
+static uint32_t g_psgn;        /* captured (reg,val) writes this run */
+static uint8_t  g_psg_latch;   /* register selected by the last $ff8800 write */
+
 void m68k_write_memory_8(unsigned int a, unsigned int v) {
+    switch (a & 0xffffff) {                        /* mask to the 68000's 24-bit address bus */
+        case PSG_SELECT: g_psg_latch = (uint8_t)v & 0x0f; return;
+        case PSG_DATA:
+            if (g_psgn < MAX_PSG) {
+                g_psg_reg[g_psgn] = g_psg_latch;
+                g_psg_val[g_psgn] = (uint8_t)v;
+                g_psgn++;
+            }
+            return;
+    }
     if (a < g_size) { g_mem[a] = (uint8_t)v; logw(a); }
 }
 void m68k_write_memory_16(unsigned int a, unsigned int v) {
@@ -164,6 +187,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     g_unmodeled = 0;
 
     g_wn = 0;                             /* write-set = the function's writes only */
+    g_psgn = 0;                           /* PSG capture = this run's register writes only */
     uint32_t n = 0;
     for (; n < max_insns; n++) {
         uint32_t pc = m68k_get_reg(0, M68K_REG_PC);
@@ -192,3 +216,6 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
 uint32_t        osh_num_writes(void)  { return g_wn; }
 const uint32_t *osh_write_addrs(void) { return g_waddr; }
 uint32_t        osh_unmodeled(void)   { return g_unmodeled; }
+uint32_t        osh_psg_count(void)   { return g_psgn; }
+const uint8_t  *osh_psg_regs(void)    { return g_psg_reg; }
+const uint8_t  *osh_psg_vals(void)    { return g_psg_val; }
