@@ -22,12 +22,14 @@ Mapping (per 50 Hz frame, per channel -> SID voice 1/2/3):
 
 The faithful transcode leaves the SID's own character off (filter, ring-mod, sync, PWM,
 ADSR): it is a port of the ST sound, not a re-scored native C64 tune. Passing ``c64=True`` to
-``render`` re-engages the three signatures that make a SID sound unmistakably "C64" — a slow
-pulse-width sweep, a resonant low-pass filter, and a per-note ADSR pluck — layered on top of the
-same YM arrangement and dynamics (see ``_render_voice_c64``). Output is mono float in [-1, 1].
+``render`` instead plays it like a native C64 playroutine — the SID's own ADSR shapes each note
+(gated on note events recovered from the register stream), through a resonant low-pass with a
+swept pulse width, with one constant velocity gain per note rather than the ST's per-frame
+software volume (see ``_render_voice_c64``). Output is mono float in [-1, 1].
 """
 import datetime
 import math
+from functools import partial
 
 import numpy as np
 from pyresidfp import (SoundInterfaceDevice as SID, WritableRegister as W, ControlBits as C,
@@ -44,17 +46,20 @@ PULSE_HALF = 0x800                    # 12-bit pulse width, 50% duty == a square
 MASTER_VOL_FULL = 0x0F                # Mode/Vol low nibble: master output volume at maximum
 FRAME_DT = datetime.timedelta(seconds=1.0 / FPS)
 
-# --- C64-flavor knobs (only used when render(c64=True)) ---------------------------------------
-# The faithful path renders flat 50%-duty pulses, no filter, and pure software volume. These
-# re-introduce the three signatures that make a SID sound unmistakably "C64". They are aesthetic
-# values chosen by ear, not measured from hardware.
+# --- C64-native knobs (only used when render(c64=True)) ---------------------------------------
+# Unlike the faithful path (flat 50%-duty pulse, no filter, per-frame software volume), the C64
+# path plays like a real C64 playroutine: the SID's own ADSR shapes each note, gated on note
+# events recovered from the register stream, and the only software gain is one constant per note
+# (its velocity) -- no per-sample volume, so the ADSR contour is never fought or crushed. These
+# are aesthetic values chosen by ear, not measured from hardware.
 PWM_MIN, PWM_MAX = 0x100, 0x900       # 12-bit duty sweep bounds (~6%..56%): a moving duty is the
 PWM_HZ = 0.8                          # signature buzzy/hollow C64 lead. Slow LFO, offset per voice.
-FILTER_RES = 0x0B                     # resonance nibble (0..15): high -> squelchy/analog character
-FC_MIN, FC_MAX = 500, 1600            # 11-bit filter-cutoff sweep bounds: a slow "wah" over the tune
+FILTER_RES = 0x08                     # resonance nibble (0..15): some analog character, not squelchy
+FC_MIN, FC_MAX = 800, 2000            # 11-bit filter-cutoff sweep bounds: bright, with a slow "wah"
 FC_HZ = 0.15
-C64_ATTACK, C64_DECAY = 0x0, 0x6      # instant attack + snappy decay == the percussive pluck
-C64_SUSTAIN, C64_RELEASE = 0x7, 0x9   # drop hard to ~half the peak for punch, then ring off
+C64_ATTACK, C64_DECAY = 0x0, 0x8      # instant attack + moderate decay: a defined note edge...
+C64_SUSTAIN, C64_RELEASE = 0x06, 0x0A # ...to a plucky held body, ringing off on note release
+LEVEL_EPS = 1e-3                      # YM amplitude at/under this == the channel is silent this frame
 RETRIG_GAP_MS = 1.5                   # gate-low gap that forces reSID's ADSR to restart mid-note:
                                       # an attack retriggers only on a gate 0->1 edge, so a new note
                                       # on an already-gated voice needs this brief drop first
@@ -185,73 +190,96 @@ def _set_cutoff(sid, fc):
     sid.write_register(W.Filter_Fc_Hi, (fc >> 3) & 0xFF)
 
 
-def _note_onsets(fn, wave):
-    """Frames where a new C64 note should be plucked: a channel becoming audible, or (on a tone
-    voice) a pitch move of at least PITCH_ONSET_RATIO while it stays audible."""
+def _note_velocity(vol_byte):
+    """One constant per-note gain in [0, 1] from a YM volume byte -- the SID has no per-voice
+    volume register, so relative note loudness is applied in software (once per note, not per
+    sample). Envelope-mode ("buzzer") channels have no fixed level, so they play as full-scale."""
+    if vol_byte & 0x10:                                # bit 4: hardware-envelope mode
+        return 1.0
+    return float(ym2149._VOL[vol_byte & 0x0f])         # fixed 4-bit level -> linear amplitude
+
+
+def _note_events(fn, wave, vol, retriggers):
+    """Recover per-frame note ON/OFF gates + a velocity for each frame from the register stream.
+
+    A channel is *audible* when the mixer routes it (wave != 0) and its YM level is above silence.
+    A note starts (ON) when a channel becomes audible, when a tone voice's pitch jumps at least
+    PITCH_ONSET_RATIO, or on a reg-13 retrigger; it ends (OFF) when the channel stops being audible.
+    """
     n = len(wave)
-    onsets = np.zeros(n, dtype=bool)
+    vel = np.array([_note_velocity(int(v)) for v in vol])
+    audible = (wave != 0) & (vel > LEVEL_EPS)
+    note_on = np.zeros(n, dtype=bool)
+    note_off = np.zeros(n, dtype=bool)
     for fi in range(n):
-        if not wave[fi]:                               # silent frame: nothing to gate
-            continue
-        if fi == 0 or not wave[fi - 1]:                # silence -> sound: the note starts
-            onsets[fi] = True
-        elif wave[fi] == int(C.PULSE) and fn[fi] > 0 and fn[fi - 1] > 0:
-            ratio = max(fn[fi] / fn[fi - 1], fn[fi - 1] / fn[fi])
-            onsets[fi] = ratio >= PITCH_ONSET_RATIO
-    return onsets
+        if audible[fi]:
+            start = fi == 0 or not audible[fi - 1]
+            pitch = (wave[fi] == int(C.PULSE) and fi > 0 and fn[fi] > 0 and fn[fi - 1] > 0
+                     and max(fn[fi] / fn[fi - 1], fn[fi - 1] / fn[fi]) >= PITCH_ONSET_RATIO)
+            retrig = bool(retriggers[fi]) if retriggers is not None else False
+            note_on[fi] = start or pitch or retrig
+        else:
+            note_off[fi] = fi > 0 and audible[fi - 1]
+    return note_on, note_off, vel
 
 
-def _render_voice_c64(frames, fn, wave, vol, env_f, shape, retriggers, model, voice_idx):
-    """Render one voice with C64-native PWM + resonant filter + ADSR, scaled by YM amplitude.
+def _render_voice_c64(frames, fn, wave, vol, env_f, shape, retriggers, model, voice_idx,
+                      c64_sustain=C64_SUSTAIN):
+    """Render one voice like a native C64 playroutine: SID ADSR + PWM + resonant filter per note.
 
-    Where ``_render_voice`` plays a flat 50%-duty pulse with the gate held high and lets software
-    volume do everything, this gates the SID ADSR per detected note (so each note gets a percussive
-    attack), sweeps the pulse width and filter cutoff for the moving SID timbre, and still
-    multiplies by the exact YM per-frame amplitude so the ST dynamics ride on top of the ADSR
-    contour. To retrigger the attack on a note change while the gate is already high, the frame is
-    split: a brief gate-low ``gap`` forces the release edge, then the body re-gates for a new attack.
+    The SID's hardware ADSR owns each note's dynamics, gated on the note events from
+    ``_note_events``; the only software gain is one constant per note (its velocity). There is no
+    per-sample volume envelope, so nothing fights or crushes the ADSR contour (that double-envelope
+    was why the earlier transcode-with-ADSR sounded broken). ``env_f``/``shape`` are unused here:
+    native mode replaces the YM envelope generator with the SID's own. ``c64_sustain`` (0..15) is
+    the ADSR sustain level -- higher holds the note body fuller, lower makes it more percussive. A
+    note change on an already-gated voice splits the frame -- a brief gate-low ``gap`` forces
+    reSID's attack edge -- and a note-off drops the gate but keeps the waveform so the release rings.
     """
     f_lo, f_hi, pw_lo, pw_hi, ad, sr, ctrl = _V1
     sid = _new_sid(model, c64=True)
     sid.write_register(ad, (C64_ATTACK << 4) | C64_DECAY)
-    sid.write_register(sr, (C64_SUSTAIN << 4) | C64_RELEASE)
+    sid.write_register(sr, ((c64_sustain & 0x0f) << 4) | C64_RELEASE)
     sid.write_register(ctrl, int(C.TEST))              # hold the oscillator at phase 0 until note 1
 
-    onsets = _note_onsets(fn, wave)
+    note_on, note_off, vel = _note_events(fn, wave, vol, retriggers)
     gap = datetime.timedelta(seconds=RETRIG_GAP_MS / 1000.0)
     body = FRAME_DT - gap
 
     chunks = []
-    env_pos = 16.0                                     # matches ym2149: an untriggered env reads done
+    velocity = 0.0                                     # held per-note gain (0 -> pre-note silence)
+    last_wave = int(C.PULSE)                            # waveform kept selected during the release tail
     gate_high = False
     for fi in range(len(frames)):
-        if retriggers and retriggers[fi]:
-            env_pos = 0.0                              # a reg-13 write restarts the envelope generator
         w = int(wave[fi])
+        active_wave = w or last_wave                   # follow the live waveform; hold the last while ringing
         sid.write_register(f_lo, int(fn[fi]) & 0xFF)
         sid.write_register(f_hi, (int(fn[fi]) >> 8) & 0xFF)
-        pw = _pulse_width(fi, voice_idx) if w == int(C.PULSE) else PULSE_HALF
-        sid.write_register(pw_lo, pw & 0xFF)
-        sid.write_register(pw_hi, (pw >> 8) & 0xFF)
+        if active_wave == int(C.PULSE):                # sweep the duty of a live or ringing pulse
+            pw = _pulse_width(fi, voice_idx)
+            sid.write_register(pw_lo, pw & 0xFF)
+            sid.write_register(pw_hi, (pw >> 8) & 0xFF)
         _set_cutoff(sid, _cutoff(fi))
 
-        if not w:                                      # muted by the YM mixer this frame
-            sid.write_register(ctrl, 0)                # gate low -> ADSR release (output zeroed below)
+        if note_on[fi]:
+            velocity = float(vel[fi])
+            if gate_high:                              # retrigger a still-sounding voice
+                sid.write_register(ctrl, active_wave)  # drop gate (keep waveform) for the release edge
+                pre = np.asarray(sid.clock(gap), dtype=np.float64)
+                sid.write_register(ctrl, active_wave | int(C.GATE))  # re-gate: the 0->1 edge fires an attack
+                rest = np.asarray(sid.clock(body), dtype=np.float64)
+                samples = np.concatenate([pre, rest])
+            else:                                      # first attack from a released/idle voice
+                sid.write_register(ctrl, active_wave | int(C.GATE))
+                samples = np.asarray(sid.clock(FRAME_DT), dtype=np.float64)
+            gate_high = True
+        else:
+            if note_off[fi]:
+                gate_high = False                      # note ended: enter release, keep it ringing
+            sid.write_register(ctrl, active_wave | (int(C.GATE) if gate_high else 0))
             samples = np.asarray(sid.clock(FRAME_DT), dtype=np.float64)
-            samples[:] = 0.0
-        elif onsets[fi] and gate_high:
-            sid.write_register(ctrl, w)                # drop gate (keep waveform) for the release edge
-            pre = np.asarray(sid.clock(gap), dtype=np.float64)
-            sid.write_register(ctrl, w | int(C.GATE))  # re-gate: the 0->1 edge fires a fresh attack
-            rest = np.asarray(sid.clock(body), dtype=np.float64)
-            samples = np.concatenate([pre, rest])
-        else:                                          # first attack, or a sustained note continuing
-            sid.write_register(ctrl, w | int(C.GATE))
-            samples = np.asarray(sid.clock(FRAME_DT), dtype=np.float64)
-        if w:
-            samples *= _frame_amp(samples.size, int(vol[fi]), env_pos, env_f[fi], int(shape[fi]))
-        gate_high = bool(w)
-        env_pos += samples.size * (env_f[fi] / RATE)
+        samples *= velocity                            # one constant gain for the whole note
+        last_wave = active_wave
         chunks.append(samples)
     return np.concatenate(chunks) if chunks else np.zeros(0)
 
@@ -282,16 +310,17 @@ def _dc_block(x):
     return x - ma
 
 
-def render(frames, retriggers=None, model=ChipModel.MOS8580, c64=False):
+def render(frames, retriggers=None, model=ChipModel.MOS8580, c64=False, c64_sustain=C64_SUSTAIN):
     """Render captured YM ``frames`` (list of 16-int snapshots) on a SID to mono float PCM.
 
-    ``c64=True`` engages the SID-native flavor (PWM + resonant filter + per-note ADSR) instead of
-    the clinical transcode; see ``_render_voice_c64``.
+    ``c64=True`` plays it as a native C64 playroutine (SID ADSR + PWM + resonant filter) instead of
+    the clinical transcode; ``c64_sustain`` (0..15) sets that mode's ADSR sustain level. See
+    ``_render_voice_c64``.
     """
     if not frames:
         return np.zeros(0)
     fn, wave, vol, env_f, shape = _channel_plan(frames)
-    render_voice = _render_voice_c64 if c64 else _render_voice
+    render_voice = partial(_render_voice_c64, c64_sustain=c64_sustain) if c64 else _render_voice
     voices = [render_voice(frames, fn[:, c], wave[:, c], vol[:, c],
                            env_f, shape, retriggers, model, c) for c in range(3)]
 

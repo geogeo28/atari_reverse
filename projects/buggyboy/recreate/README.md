@@ -81,13 +81,19 @@ directory):
 ```bash
 python sound/sound_player.py                          # every tune + effect, YM2149 -> *.wav
 python sound/sound_player.py --synth sid --tunes 3    # faithful C64 SID transcode -> *_sid.wav
-python sound/sound_player.py --c64 --fx 2             # C64-flavored SID -> *_c64.wav
+python sound/sound_player.py --c64 --fx 2             # native-C64 SID -> *_c64.wav
+python sound/sound_player.py --c64-sustain 10 --tunes 3 --fx ""   # A/B a flavor -> tune_03_c64s10.wav
 ```
 
 `ym2149.py` reproduces the ST PSG. `sid.py` replays the same register stream on a C64 SID (via
-`pyresidfp`): `--synth sid` is a clinical port (SID oscillators, software volume, no filter),
-while `--c64` re-engages the SID's own character — a pulse-width sweep, a resonant low-pass, and a
-per-note ADSR pluck. These renders are listening tools, not part of the differential contract.
+`pyresidfp`) in one of two modes. `--synth sid` is a clinical port — SID oscillators driven by the
+exact per-frame YM volume, no filter. `--c64` instead plays it like a native C64 playroutine: the
+SID's own ADSR shapes each note (gated on note events recovered from the register stream), through
+a resonant low-pass with a swept pulse width, with one constant velocity gain per note rather than
+the ST's per-frame volume. `--c64-sustain N` (0-15, default 6, implies `--c64`) sets that ADSR's
+sustain — higher holds the note body fuller, lower is more percussive — and tags each flavor
+`*_c64s<N>.wav` so they sit side by side. These renders are listening tools, not part of the
+differential contract.
 
 ## OS trap model
 
@@ -127,3 +133,11 @@ behavior. Unicorn/QEMU's m68k core was tried first and rejected: its ColdFire-de
 raises spurious illegal-instruction exceptions on byte memory read-modify-write (`addq.b`,
 `subq.b`, … to memory), which pervade this code. `emu.py` is the only file that would change
 to swap oracles.
+
+Musashi is **cross-validated against a second, independent 68000** — Hatari's WinUAE-derived
+core — by `oracle/isa_conformance.py` (run in `test/test_isa_vs_tos.py`). It executes 277
+self-contained instruction snippets on both cores and compares the result + defined CCR bits,
+covering the classes this code leans on (byte/word/long memory RMW, `asr/lsl/rox`, `ext`,
+`muls/divs`, `addx`, `cmp.b`+`Scc`). All 277 agree; the only divergence found was N/Z after a
+`DIVS/DIVU` overflow, which the 68000 PRM leaves *undefined* (excluded from the comparison). So
+"verified against Musashi" is, for BuggyBoy's instruction mix, "verified against a real 68000".

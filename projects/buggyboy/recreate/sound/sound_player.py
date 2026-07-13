@@ -13,6 +13,7 @@ turns that per-frame register stream into audio.
     python sound/sound_player.py --tunes 0,6 --fx 2
     python sound/sound_player.py --synth sid --tunes 3   # C64 SID transcode -> *_sid.wav
     python sound/sound_player.py --c64 --tunes 3         # C64-flavored SID (PWM+filter+ADSR) -> *_c64.wav
+    python sound/sound_player.py --c64-sustain 6 --tunes 3 --fx ""  # A/B a flavor -> tune_03_c64s06.wav
 
 Effect ids feed INITFX; tune ids feed INITTUNE. Silent results (an id with no real data) are
 skipped automatically.
@@ -105,17 +106,22 @@ def write_wav(path, samples, rate):
         w.writeframes(pcm.tobytes())
 
 
-def render_one(kind, starter, sound_id, flag_addr, max_frames, base_image, synth, c64=False):
+def render_one(kind, starter, sound_id, flag_addr, max_frames, base_image, synth, c64=False,
+               c64_sustain=None):
     """Capture + render one sound to its natural length. Return (path, seconds, tag) or None.
 
     ``synth`` is the renderer module (``ym2149`` or ``sid``); both expose ``render`` and ``RATE``.
-    ``c64`` (SID only) engages the C64-native flavor and tags the file ``_c64`` instead of ``_sid``.
+    ``c64`` (SID only) engages the C64-native flavor and tags the file ``_c64`` instead of ``_sid``;
+    an explicit ``c64_sustain`` (0..15) overrides the ADSR sustain and tags the file ``_c64s<N>``.
     """
     captured = capture(starter, sound_id, flag_addr, max_frames, base_image)
     if captured is None:
         return None
     snapshots, retriggers, end = captured
-    samples = synth.render(snapshots, retriggers, c64=True) if c64 else synth.render(snapshots, retriggers)
+    kwargs = {"c64": True} if c64 else {}
+    if c64 and c64_sustain is not None:
+        kwargs["c64_sustain"] = c64_sustain
+    samples = synth.render(snapshots, retriggers, **kwargs)
     if np.abs(samples).max() < 1e-3:                   # normalised silence -> nothing to hear
         return None
     seconds = len(snapshots) / ym2149.FPS
@@ -125,7 +131,10 @@ def render_one(kind, starter, sound_id, flag_addr, max_frames, base_image, synth
         tag = "still evolving at cap"
     else:
         tag = ""                                       # "flag"/"stop": a plain finite one-shot
-    suffix = "_c64" if c64 else ("_sid" if synth is sid else "")   # keep the three renders side by side
+    if c64:                                            # keep sustain-flavor renders side by side
+        suffix = "_c64" if c64_sustain is None else f"_c64s{c64_sustain:02d}"
+    else:
+        suffix = "_sid" if synth is sid else ""
     path = OUT_DIR / f"{kind}_{sound_id:02d}{suffix}.wav"
     write_wav(path, samples, synth.RATE)
     return path, seconds, tag
@@ -146,8 +155,15 @@ def main():
     ap.add_argument("--c64", action="store_true",
                     help="SID only: engage the C64-native flavor (PWM + resonant filter + ADSR "
                          "pluck) instead of the clinical transcode; implies --synth sid, tags *_c64.wav")
+    ap.add_argument("--c64-sustain", type=int, default=None, metavar="0-15",
+                    help="C64 ADSR sustain level (0-15, default 6); implies --c64. Higher holds the "
+                         "note body fuller, lower is more percussive. Tags *_c64s<N>.wav for A/B-ing")
     args = ap.parse_args()
 
+    if args.c64_sustain is not None:
+        if not 0 <= args.c64_sustain <= 15:
+            ap.error("--c64-sustain must be in 0..15")
+        args.c64 = True                          # a sustain override only means anything in C64 mode
     if args.c64:
         args.synth = "sid"                       # the C64 flavor is a SID rendering mode
     synth = sid if args.synth == "sid" else ym2149
@@ -160,7 +176,8 @@ def main():
 
     written = 0
     for kind, starter, flag_addr, sound_id in jobs:
-        result = render_one(kind, starter, sound_id, flag_addr, max_frames, base, synth, args.c64)
+        result = render_one(kind, starter, sound_id, flag_addr, max_frames, base, synth,
+                            args.c64, args.c64_sustain)
         if result:
             path, seconds, tag = result
             suffix = f"  ({tag})" if tag else ""
