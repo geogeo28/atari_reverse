@@ -84,11 +84,11 @@ def _road_table(rng, lead, active):
     """85 flag/x-offset pairs: `lead` inactive (flag>=0), `active` active (flag<0), then end."""
     pairs = []
     for _ in range(lead):
-        pairs.append((rng.randint(0, 0x7fff), rng.randint(-300, 500)))
+        pairs.append((rng.randint(0, 0x7fff), rng.randint(-800, 1200)))
     for _ in range(active):
-        pairs.append((-1, rng.randint(-300, 500)))
+        pairs.append((-1, rng.randint(-800, 1200)))
     while len(pairs) < 85:
-        pairs.append((rng.randint(0, 0x7fff), rng.randint(-300, 500)))
+        pairs.append((rng.randint(0, 0x7fff), rng.randint(-800, 1200)))
     out = bytearray()
     for flag, off in pairs:
         out += (flag & 0xffff).to_bytes(2, "big") + (off & 0xffff).to_bytes(2, "big")

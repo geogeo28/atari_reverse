@@ -87,7 +87,7 @@ def test_fuzz_fill_span():
         d0 = hi_garbage(rng, rng.randint(-0x1000, 0x2000))   # sign-extended low-word offset (adda.w)
         d1 = hi_garbage(rng, rng.randint(0, 0xffff))
         d2 = hi_garbage(rng, rng.randint(0, 1500))            # cells-1; buf + off + (d2+1)*8 stays in image
-        regs = {"d0": d0, "d1": d1, "d2": d2, "_pokes": _pokes(0)}
+        regs = {"d0": d0, "d1": d1, "d2": d2, "_pokes": _pokes(rng.choice((0, 4)))}  # both flip slots
         _run(ENTRY["fill_span"], regs,
              lambda lib, buf, d0=d0, d1=d1, d2=d2: lib.g_fill_span(buf, d0, d1, d2),
              f"fill_span off={d0:#x} color={d1:#x} count={d2:#x}")
@@ -100,7 +100,7 @@ def test_fuzz_fill_rect():
         d1 = hi_garbage(rng, rng.randint(0, 0xffff))
         d3 = hi_garbage(rng, rng.randint(0, 19))              # cells per row - 1 (low word, dbf)
         d4 = hi_garbage(rng, rng.randint(0, 40))              # rows - 1 (low word, dbf)
-        regs = {"d0": d0, "d1": d1, "d3": d3, "d4": d4, "_pokes": _pokes(0)}
+        regs = {"d0": d0, "d1": d1, "d3": d3, "d4": d4, "_pokes": _pokes(rng.choice((0, 4)))}  # both slots
         _run(ENTRY["fill_rect"], regs,
              lambda lib, buf, d0=d0, d1=d1, d3=d3, d4=d4: lib.g_fill_rect(buf, d0, d1, d3, d4),
              f"fill_rect off={d0:#x} color={d1:#x} cells={(d3 & 0xffff) + 1} rows={(d4 & 0xffff) + 1}")
