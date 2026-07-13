@@ -12,6 +12,7 @@ turns that per-frame register stream into audio.
     python sound/sound_player.py --loop-seconds 30   # cap long / non-terminating tracks at 30s
     python sound/sound_player.py --tunes 0,6 --fx 2
     python sound/sound_player.py --synth sid --tunes 3   # C64 SID transcode -> *_sid.wav
+    python sound/sound_player.py --c64 --tunes 3         # C64-flavored SID (PWM+filter+ADSR) -> *_c64.wav
 
 Effect ids feed INITFX; tune ids feed INITTUNE. Silent results (an id with no real data) are
 skipped automatically.
@@ -104,16 +105,17 @@ def write_wav(path, samples, rate):
         w.writeframes(pcm.tobytes())
 
 
-def render_one(kind, starter, sound_id, flag_addr, max_frames, base_image, synth):
+def render_one(kind, starter, sound_id, flag_addr, max_frames, base_image, synth, c64=False):
     """Capture + render one sound to its natural length. Return (path, seconds, tag) or None.
 
     ``synth`` is the renderer module (``ym2149`` or ``sid``); both expose ``render`` and ``RATE``.
+    ``c64`` (SID only) engages the C64-native flavor and tags the file ``_c64`` instead of ``_sid``.
     """
     captured = capture(starter, sound_id, flag_addr, max_frames, base_image)
     if captured is None:
         return None
     snapshots, retriggers, end = captured
-    samples = synth.render(snapshots, retriggers)
+    samples = synth.render(snapshots, retriggers, c64=True) if c64 else synth.render(snapshots, retriggers)
     if np.abs(samples).max() < 1e-3:                   # normalised silence -> nothing to hear
         return None
     seconds = len(snapshots) / ym2149.FPS
@@ -123,7 +125,7 @@ def render_one(kind, starter, sound_id, flag_addr, max_frames, base_image, synth
         tag = "still evolving at cap"
     else:
         tag = ""                                       # "flag"/"stop": a plain finite one-shot
-    suffix = "_sid" if synth is sid else ""            # keep SID renders beside the YM refs
+    suffix = "_c64" if c64 else ("_sid" if synth is sid else "")   # keep the three renders side by side
     path = OUT_DIR / f"{kind}_{sound_id:02d}{suffix}.wav"
     write_wav(path, samples, synth.RATE)
     return path, seconds, tag
@@ -141,8 +143,13 @@ def main():
     ap.add_argument("--fx", help="comma-separated INITFX ids (default 0-8)")
     ap.add_argument("--synth", choices=("ym", "sid"), default="ym",
                     help="chip to render on: ym = Atari ST YM2149 (default), sid = C64 SID transcode")
+    ap.add_argument("--c64", action="store_true",
+                    help="SID only: engage the C64-native flavor (PWM + resonant filter + ADSR "
+                         "pluck) instead of the clinical transcode; implies --synth sid, tags *_c64.wav")
     args = ap.parse_args()
 
+    if args.c64:
+        args.synth = "sid"                       # the C64 flavor is a SID rendering mode
     synth = sid if args.synth == "sid" else ym2149
     max_frames = int(round(args.loop_seconds * ym2149.FPS))
     base = load_image(PRG)
@@ -153,7 +160,7 @@ def main():
 
     written = 0
     for kind, starter, flag_addr, sound_id in jobs:
-        result = render_one(kind, starter, sound_id, flag_addr, max_frames, base, synth)
+        result = render_one(kind, starter, sound_id, flag_addr, max_frames, base, synth, args.c64)
         if result:
             path, seconds, tag = result
             suffix = f"  ({tag})" if tag else ""
