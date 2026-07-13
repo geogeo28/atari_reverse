@@ -53,8 +53,8 @@ PWM_HZ = 0.8                          # signature buzzy/hollow C64 lead. Slow LF
 FILTER_RES = 0x0B                     # resonance nibble (0..15): high -> squelchy/analog character
 FC_MIN, FC_MAX = 500, 1600            # 11-bit filter-cutoff sweep bounds: a slow "wah" over the tune
 FC_HZ = 0.15
-C64_ATTACK, C64_DECAY = 0x0, 0x8      # fast attack + moderate decay == the percussive pluck
-C64_SUSTAIN, C64_RELEASE = 0xA, 0x9   # hold the note body at ~2/3, then ring it off on note release
+C64_ATTACK, C64_DECAY = 0x0, 0x6      # instant attack + snappy decay == the percussive pluck
+C64_SUSTAIN, C64_RELEASE = 0x7, 0x9   # drop hard to ~half the peak for punch, then ring off
 RETRIG_GAP_MS = 1.5                   # gate-low gap that forces reSID's ADSR to restart mid-note:
                                       # an attack retriggers only on a gate 0->1 edge, so a new note
                                       # on an already-gated voice needs this brief drop first

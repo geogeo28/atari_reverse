@@ -50,6 +50,7 @@ src/       <subsystem>.c — cores + glue (score.c, …)
 oracle/    loader.py (load+relocate PRG)  emu.py (Musashi runner)  shim.c (Musashi callbacks)
            musashi/ (vendored MAME 68000 core — gitignored, refetched on build)
 test/      harness.py (differential driver)  test_<subsystem>.py
+sound/     sound_player.py (steps REFRESH in the oracle -> WAV)  ym2149.py / sid.py (chip renderers)
 Makefile   builds both libs + runs pytest;  STATUS.md tracks per-function progress
 ```
 
@@ -64,6 +65,25 @@ First build clones + compiles Musashi under `oracle/musashi/`. Requires the venv
 — run `make venv` (or `python -m venv .venv && .venv/bin/pip install -r requirements.txt`) to
 create it and install the pinned Python deps (numpy, pyresidfp, pytest). `pip install unicorn`
 too if you want it for ad-hoc experiments — the oracle itself doesn't use it.
+
+## Sound rendering
+
+The game's 50 Hz sound driver (`REFRESH` @0x1b086) is verified in the differential suite like any
+other function; `sound/sound_player.py` then *listens* to it. It seeds a track (`INITTUNE`) or
+effect (`INITFX`), steps `REFRESH` in the oracle one frame at a time capturing the per-frame
+YM2149 register writes, and renders that stream to WAV under `../out/sound/` (a gitignored artifact
+directory):
+
+```bash
+python sound/sound_player.py                          # every tune + effect, YM2149 -> *.wav
+python sound/sound_player.py --synth sid --tunes 3    # faithful C64 SID transcode -> *_sid.wav
+python sound/sound_player.py --c64 --fx 2             # C64-flavored SID -> *_c64.wav
+```
+
+`ym2149.py` reproduces the ST PSG. `sid.py` replays the same register stream on a C64 SID (via
+`pyresidfp`): `--synth sid` is a clinical port (SID oscillators, software volume, no filter),
+while `--c64` re-engages the SID's own character — a pulse-width sweep, a resonant low-pass, and a
+per-note ADSR pluck. These renders are listening tools, not part of the differential contract.
 
 ## OS trap model
 
