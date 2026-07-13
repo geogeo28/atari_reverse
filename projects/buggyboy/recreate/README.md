@@ -61,8 +61,9 @@ make oracle/build/liboracle.so   # (re)build just the Musashi oracle
 ```
 
 First build clones + compiles Musashi under `oracle/musashi/`. Requires the venv at `.venv/`
-(`python -m venv .venv && .venv/bin/pip install unicorn pytest` — Unicorn is unused by the
-oracle but kept for ad-hoc experiments).
+— run `make venv` (or `python -m venv .venv && .venv/bin/pip install -r requirements.txt`) to
+create it and install the pinned Python deps (numpy, pyresidfp, pytest). `pip install unicorn`
+too if you want it for ad-hoc experiments — the oracle itself doesn't use it.
 
 ## OS trap model
 

@@ -30,7 +30,12 @@ $(ORACLE): oracle/shim.c include/os.h $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $
 	  $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c oracle/shim.c \
 	  -o $(ORACLE)
 
-.PHONY: test clean
+.PHONY: test clean venv
+# Create the project venv and install the pinned Python deps (numpy, pyresidfp, pytest).
+venv:
+	python -m venv .venv
+	$(PY) -m pip install -r requirements.txt
+
 test: $(CAND) $(ORACLE)
 	$(PY) -m pytest -q test
 

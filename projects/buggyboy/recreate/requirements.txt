@@ -1,0 +1,6 @@
+# Python dependencies for the BuggyBoy reconstruction harness + sound tools.
+# Install into the project venv:  python -m venv .venv && .venv/bin/pip install -r requirements.txt
+numpy>=2.0            # oracle image handling + the YM2149 / SID sound renderers
+pyresidfp==0.17.0     # reSID-fp SID emulation for the C64 sound transcode (sound/sid.py); pinned
+                      # because the emulated chip version affects the rendered audio
+pytest>=8.0           # differential test suite (make test)
