@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 78/91.**
+**Verified: 79/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -71,7 +71,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x128ea` | `check_abort` | 42 | ✅ verified | return-value fuzz (abort code vs swap(Crawio)); GEMDOS 6 modeled |
 | `0x12914` | `intermission_poll` | 86 | ✅ verified | 25-seed fuzz x flip (9-entry table-driven block blit; not input) |
 | `0x129a0` | `fade_step` | 26 |  |  |
-| `0x129ba` | `draw_intermission` | 316 |  |  |
+| `0x129ba` | `draw_intermission` | 316 | ✅ verified | scroll fuzz x flip (3 scrolling sections: hi-score text / leg-time nums / credits; clip+draw) |
 | `0x12af6` | `init_playfield` | 578 |  |  |
 | `0x12d38` | `init_leg_dash` | 80 | ✅ verified | leg 0-4 x 6-seed fuzz (marker seed + pixel-doubled dashboard build) |
 | `0x12d88` | `draw_leg_labels` | 154 | ✅ verified | leg 0-4 fuzz + empty-label edge (glyph AND/OR blit + 4-row clear -> probe_collision) |

@@ -112,6 +112,7 @@ layout, calls the verified `g_unpack_graphics` to decode the graphic tables into
 python render/render_screen.py --leg 0              # leg-results screen -> out/render/leg_results_0.png
 python render/render_screen.py --screen results     # race-end results screen -> out/render/results_screen_0.png
 python render/render_screen.py --screen highscore   # populated high-score table -> out/render/highscore_screen_0.png
+python render/render_screen.py --screen intermission # scrolling between-legs screen -> out/render/intermission_screen.png
 ```
 
 Colours and text are authentic: the game's results-screen palette (16 ST words at `0x17fc2`) is

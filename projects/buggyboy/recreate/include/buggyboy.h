@@ -58,6 +58,7 @@ void g_draw_num(uint8_t *image, uint32_t dst_off, uint32_t color_idx,
                 uint32_t cells_m1, uint32_t str_ptr);       /* D0, D1, D5, A3 */
 void g_draw_num_thunk(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr);
 
+
 /* ---- results-screen block blitters (draw_result_row/col @ 0x15016..) ----
  * Both copy a source block from buf_c (A1 offset) to buffer[flip_idx] + D0; no colour index.
  * col tiles a 7-row 16-byte column 5x across; row stacks a 32-row 4-word transparency blit
@@ -74,6 +75,7 @@ void g_draw_leg_results(uint8_t *image);                                      /*
  * Table-driven plain block copy of 9 rectangles from buf_c to the draw buffer (no input, despite
  * the name); the misclassification is noted in HARNESS.md. */
 void g_intermission_poll(uint8_t *image);
+void g_draw_intermission(uint8_t *image);   /* scrolling between-legs screen (hi-score/times/credits) */
 
 /* ---- masked buggy / foreground sprites (draw_fg_sprite .. draw_buggy @ 0x1518a..) ----
  * draw_buggy_wheels is the shared blit body: A0 dst, A1 src (into buf_c), D4 rows-1; each row

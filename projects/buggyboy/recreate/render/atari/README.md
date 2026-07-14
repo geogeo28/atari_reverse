@@ -6,9 +6,10 @@ with a real TOS ROM. A headless run then proves the on-target framebuffer is **b
 to the host render — so the reconstructed C is correct not just against the Musashi oracle, but
 compiled and executed on an independent 68000.
 
-Three screens are wired up (selected at build time): `leg` → `g_draw_leg_results`, `results` →
-`g_draw_results_screen`, and `highscore` → `g_update_highscore` (populate the table) then
-`g_draw_results_screen` (the race-end high-score table with entries).
+Four screens are wired up (selected at build time): `leg` → `g_draw_leg_results`, `results` →
+`g_draw_results_screen`, `highscore` → `g_update_highscore` (populate the table) then
+`g_draw_results_screen`, and `intermission` → `g_init_scoretable` + `g_draw_intermission` (the
+scrolling between-legs credits/table/times screen).
 
 ## Why this works with unmodified cores
 

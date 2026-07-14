@@ -30,6 +30,7 @@
 #define PALETTE_ADDR 0x17fc2        /* the game's results-screen palette (16 ST words), in STATIC.BIN */
 #define HISCORE_LO  0x1824c         /* HISCORE.BIN = the 12-byte demo player record -> score_bcd */
 #define HISCORE_LEN 0xc
+#define INT_SCROLL_ADDR 0x18ca8     /* draw_intermission's scroll offset */
 
 static uint8_t image[IMAGE_SIZE];   /* BSS: TOS zeroes it at load */
 
@@ -83,7 +84,12 @@ void main(void) {
     wr16(image + A_leg_index, 0);
 
     g_unpack_graphics(image);       /* decode GRAPHICS.GRA -> buf_c tables (verified) */
-#if defined(DEMO_HIGHSCORE)
+#if defined(DEMO_INTERMISSION)
+    /* Scrolling between-legs screen: default high-score table (for section 1) + the scroller. */
+    g_init_scoretable(image);
+    wr16(image + INT_SCROLL_ADDR, 0);   /* scroll offset 0 -> credits centred */
+    g_draw_intermission(image);
+#elif defined(DEMO_HIGHSCORE)
     /* Authentic high-score screen: g_init_scoretable writes the game's default table, then the
      * verified g_update_highscore ranks the demo player record (HISCORE.BIN) into it. */
     load_file("HISCORE.BIN", HISCORE_LO, HISCORE_LEN);

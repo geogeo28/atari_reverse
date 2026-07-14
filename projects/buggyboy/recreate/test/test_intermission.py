@@ -44,3 +44,44 @@ def test_intermission_poll():
             diffs, _ = differential(ENTRY, regs,
                                     lambda l, b: l.g_intermission_poll(b), poison=True)
             assert not diffs, f"seed={seed} flip={flip}\n{report(diffs[:12])}"
+
+
+# --- draw_intermission @ 0x129ba: the scrolling between-legs screen (hi-score/times/credits) ---
+# Three sections (text rows, digit sprites, credits) all scroll by the signed offset at 0x18ca8.
+# The layout tables (0x1858c/0x18622) and credit strings (0x180f4) are real image data; the test
+# stages the string arenas (highscore_table, buf_a) + num sprites (buf_c) + screen with noise and
+# fuzzes the scroll offset (and flip slot) to exercise the on-screen / clipped / off-top branches.
+DI_ENTRY = 0x129ba
+DI_NOISE_LO, DI_NOISE_HI = 0x2000, 0xc000      # screen band the sections draw into
+A_BUF_A, A_SCROLL = 0x18c00, 0x18ca8
+DI_BUF_C, DI_BUF_C_SPAN = 0x30000, 0x1c000     # num sprites (draw_num reads buf_c)
+DI_BUF_A = 0x50000
+A_HSCORE_LO, A_HSCORE_HI = 0x18266, 0x1858c    # section-1 strings; stop before the layout table
+
+harness._lib.g_draw_intermission.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_draw_intermission.restype = None
+
+
+def _di_pokes(seed, scroll, flip):
+    rng = random.Random(seed)
+    return {
+        DI_NOISE_LO: bytes(rng.randrange(256) for _ in range(DI_NOISE_HI - DI_NOISE_LO)),
+        A_HSCORE_LO: bytes(rng.randrange(256) for _ in range(A_HSCORE_HI - A_HSCORE_LO)),
+        A_FLIP_IDX: flip.to_bytes(2, "big"),
+        A_PHYSBASE + flip: BUF.to_bytes(4, "big"),
+        A_BUF_C: DI_BUF_C.to_bytes(4, "big"),
+        DI_BUF_C: bytes(rng.randrange(256) for _ in range(DI_BUF_C_SPAN)),
+        A_BUF_A: DI_BUF_A.to_bytes(4, "big"),
+        DI_BUF_A + 0x880: bytes(rng.randrange(256) for _ in range(0x60)),   # section-2 number strings
+        A_SCROLL: (scroll & 0xffff).to_bytes(2, "big"),
+    }
+
+
+def test_draw_intermission():
+    seed = 0
+    for scroll in (0, 0x20, -0x20, 0x40, -0x40, 8, -8):    # on-screen / clipped / off-top branches
+        for flip in (0, 4):
+            regs = {"_pokes": _di_pokes(seed, scroll, flip)}
+            diffs, _ = differential(DI_ENTRY, regs, lambda l, b: l.g_draw_intermission(b))
+            assert not diffs, f"scroll={scroll} flip={flip}\n{report(diffs[:12])}"
+            seed += 1

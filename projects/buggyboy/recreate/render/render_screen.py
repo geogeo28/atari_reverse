@@ -18,7 +18,7 @@ builds the game's default high-score table with the verified `g_init_scoretable`
 player record into it with `g_update_highscore`, then draws — so the SCORE/NAME columns fill in
 with authentic data (only the single 12-byte player record is demo data).
 
-Usage: python render/render_screen.py [--screen leg|results|highscore] [--leg N] [--out DIR]
+Usage: python render/render_screen.py [--screen leg|results|highscore|intermission] [--leg N] [--out DIR]
 """
 import ctypes
 import struct
@@ -161,6 +161,25 @@ def render_highscore_screen(leg=0):
     return image
 
 
+A_SCROLL = 0x18ca8                            # draw_intermission's signed vertical scroll offset
+
+
+def render_intermission(scroll=0):
+    """Build the scrolling between-legs screen: g_init_scoretable fills the high-score table, then
+    g_draw_intermission draws the credits/table/times scroller at the given offset (0 centres the
+    credits). Returns the framebuffer image."""
+    image, buf = _prepared_image({
+        A_LEG_INDEX: (0).to_bytes(2, "big"),
+        A_SCROLL: (scroll & 0xffff).to_bytes(2, "big"),
+    })
+    for name in ("g_init_scoretable", "g_draw_intermission"):
+        getattr(harness._lib, name).argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+        getattr(harness._lib, name).restype = None
+    harness._lib.g_init_scoretable(buf)       # default high-score table (section 1 strings)
+    harness._lib.g_draw_intermission(buf)
+    return image
+
+
 def main():
     argv = sys.argv[1:]
     screen = argv[argv.index("--screen") + 1] if "--screen" in argv else "leg"
@@ -171,6 +190,9 @@ def main():
     if screen == "highscore":
         image = render_highscore_screen(leg)
         name = f"highscore_screen_{leg}.png"
+    elif screen == "intermission":
+        image = render_intermission()
+        name = "intermission_screen.png"
     elif screen == "results":
         image = render_results_screen(leg)
         name = f"results_screen_{leg}.png"
