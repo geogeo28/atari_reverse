@@ -1,6 +1,7 @@
 projects/*/ghidra_proj/
 projects/*/out/
 projects/*/bin/
+projects/*/decomp.c
 **/.DS_Store
 **/__pycache__/
 *.pyc
