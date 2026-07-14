@@ -32,8 +32,9 @@ RUN_VBLS = "4000"                                      # ~80s of emulated time a
 
 # screen -> (PRG on disk, host render fn, output PNG stem)
 SCREENS = {
-    "leg":     ("DEMO.PRG",    render_screen.render_leg_results,   "leg_results_0"),
-    "results": ("RESULTS.PRG", render_screen.render_results_screen, "results_screen_0"),
+    "leg":       ("DEMO.PRG",      render_screen.render_leg_results,     "leg_results_0"),
+    "results":   ("RESULTS.PRG",   render_screen.render_results_screen,  "results_screen_0"),
+    "highscore": ("HIGHSCORE.PRG", render_screen.render_highscore_screen, "highscore_screen_0"),
 }
 
 
@@ -44,7 +45,10 @@ def run(prg, timeout=60):
 
     with tempfile.TemporaryDirectory() as d:
         drive = Path(d)
-        for name in (prg, "STATIC.BIN", "GRAPHICS.GRA", "COURSES.DAT"):
+        files = [prg, "STATIC.BIN", "GRAPHICS.GRA", "COURSES.DAT"]
+        if prg == "HIGHSCORE.PRG":
+            files.append("HISCORE.BIN")
+        for name in files:
             (drive / name).write_bytes((DISK / name).read_bytes())
         out = drive / "SCREEN.BIN"
         env = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}

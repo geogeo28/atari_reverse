@@ -1,16 +1,19 @@
 #!/bin/bash
 # Build a demo .PRG with the m68k-elf toolchain and stage a drive for Hatari.
-#   build.sh [leg|results]   (default: leg)
-#     leg     -> disk/DEMO.PRG     runs g_draw_leg_results
-#     results -> disk/RESULTS.PRG  runs g_draw_results_screen
-# Both stage disk/{STATIC.BIN,GRAPHICS.GRA}. build/ and disk/ are gitignored.
+#   build.sh [leg|results|highscore]   (default: leg)
+#     leg       -> disk/DEMO.PRG       runs g_draw_leg_results
+#     results   -> disk/RESULTS.PRG    runs g_draw_results_screen
+#     highscore -> disk/HIGHSCORE.PRG  g_update_highscore (populate table) then g_draw_results_screen
+# All stage disk/{STATIC.BIN,GRAPHICS.GRA,COURSES.DAT}; highscore also stages HISCORE.BIN.
+# build/ and disk/ are gitignored.
 set -euo pipefail
 
 SCREEN="${1:-leg}"
 case "$SCREEN" in
-  leg)     DEF="";              PRG="DEMO.PRG" ;;
-  results) DEF="-DDEMO_RESULTS"; PRG="RESULTS.PRG" ;;
-  *) echo "usage: build.sh [leg|results]"; exit 2 ;;
+  leg)       DEF="";                PRG="DEMO.PRG" ;;
+  results)   DEF="-DDEMO_RESULTS";  PRG="RESULTS.PRG" ;;
+  highscore) DEF="-DDEMO_HIGHSCORE"; PRG="HIGHSCORE.PRG" ;;
+  *) echo "usage: build.sh [leg|results|highscore]"; exit 2 ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -22,7 +25,9 @@ mkdir -p "$BUILD" "$DISK"
 CC=m68k-elf-gcc
 CFLAGS="-m68000 -Os -ffreestanding -fno-jump-tables -fomit-frame-pointer -nostdlib \
         -I$REC/include -I$HERE/shim_include -Wall"
-CORES="$REC/src/results.c $REC/src/screen.c $REC/src/text.c $REC/src/graphics.c"
+# highscore pulls in g_update_highscore (highscore.c) and, via it, g_EGOFF (sound.c).
+CORES="$REC/src/results.c $REC/src/screen.c $REC/src/text.c $REC/src/graphics.c \
+       $REC/src/highscore.c $REC/src/sound.c"
 
 echo ">> compile + link $SCREEN (base 0, keep relocs)"
 $CC $CFLAGS $DEF -T "$HERE/tos.ld" -Wl,--emit-relocs \
@@ -44,4 +49,5 @@ cp "$BUILD/$PRG" "$DISK/$PRG"
 "$PY" "$HERE/gen_static.py" "$BIN/BUGGYBOY.PRG" "$DISK/STATIC.BIN"
 cp "$BIN/GRAPHICS.GRA" "$DISK/GRAPHICS.GRA"
 cp "$BIN/COURSES.DAT" "$DISK/COURSES.DAT"
+[ "$SCREEN" = highscore ] && "$PY" "$HERE/gen_hiscore.py" "$BIN/BUGGYBOY.PRG" "$DISK/HISCORE.BIN"
 ls -l "$DISK"
