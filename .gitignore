@@ -3,6 +3,7 @@ projects/*/out/
 **/.DS_Store
 **/__pycache__/
 *.pyc
+.idea/
 projects/*/recreate/.venv/
 projects/*/recreate/build/
 projects/*/recreate/render/atari/build/
