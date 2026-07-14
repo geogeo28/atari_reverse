@@ -15,12 +15,7 @@
 #include "machine.h"
 #include "addrs.h"
 #include "buggyboy.h"
-
-/* Current draw buffer pointer: physbase_tbl indexed by the (word) flip_idx. */
-static uint32_t cur_buf(const uint8_t *image) {
-    int16_t fidx = (int16_t)be16(image + A_flip_idx);          /* adda.w sign-extends */
-    return be32(image + A_physbase_tbl + fidx);
-}
+#include "draw.h"
 
 /* 8-byte fill pattern for a colour index (color_pairs entry = FILL_CELL bytes, word offset). */
 static const uint8_t *color_pattern(const uint8_t *image, uint32_t color_index) {
@@ -44,18 +39,13 @@ void screen_fill_rect(uint8_t *dst, const uint8_t *pattern, unsigned cells, unsi
 /* dbf loops (count_word + 1) times. */
 static unsigned dbf_count(uint32_t reg) { return (reg & 0xFFFF) + 1; }
 
-/* Byte offset into the draw buffer from the D0 register (adda.w -> sign-extended word). */
-static uint8_t *span_dst(uint8_t *image, uint32_t dst_offset) {
-    return image + cur_buf(image) + (int16_t)(uint16_t)dst_offset;
-}
-
 void g_clear_screen(uint8_t *image) {
-    screen_clear(image + cur_buf(image));
+    screen_clear(image + draw_buffer(image));
 }
 
 /* D0 dst_offset, D1 color_index, D2 cell_count-1. */
 void g_fill_span(uint8_t *image, uint32_t dst_offset, uint32_t color_index, uint32_t cell_count_m1) {
-    screen_fill_span(span_dst(image, dst_offset), color_pattern(image, color_index),
+    screen_fill_span(image + draw_dst(image, dst_offset), color_pattern(image, color_index),
                      dbf_count(cell_count_m1));
 }
 
@@ -72,6 +62,6 @@ void g_fill_screen(uint8_t *image, uint32_t color_index) {
 /* D0 dst_offset, D1 color_index, D3 cells_per_row-1, D4 rows-1. */
 void g_fill_rect(uint8_t *image, uint32_t dst_offset, uint32_t color_index,
                  uint32_t cells_m1, uint32_t rows_m1) {
-    screen_fill_rect(span_dst(image, dst_offset), color_pattern(image, color_index),
+    screen_fill_rect(image + draw_dst(image, dst_offset), color_pattern(image, color_index),
                      dbf_count(cells_m1), dbf_count(rows_m1));
 }

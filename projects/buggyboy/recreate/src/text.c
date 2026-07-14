@@ -17,6 +17,7 @@
 #include "machine.h"
 #include "addrs.h"
 #include "buggyboy.h"
+#include "draw.h"
 
 #define GLYPH_BYTES        16      /* FONT_GLYPHS stride per character (char << 4) */
 #define CELL_WIDTH         8       /* bytes to the next character column */
@@ -69,12 +70,6 @@ static uint32_t text_body(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32
     return text_body_ex(image, dst, fill_lo, fill_hi, str_ptr, cells_m1, 0);
 }
 
-/* Draw buffer (physbase_tbl[flip_idx]) plus a sign-extended word offset (adda.w). */
-static uint32_t buffer_dst(const uint8_t *image, uint32_t dst_off) {
-    int16_t flip_idx = (int16_t)be16(image + A_flip_idx);
-    return be32(image + A_physbase_tbl + flip_idx) + sign_ext16(dst_off);
-}
-
 /* fill_lo/fill_hi for a colour index: color_pairs[(idx & idx_mask) << 3] and its +4 half.
  * The text path masks the index to 0xf; the number path uses the full word (idx_mask 0xffff). */
 static void color_fill(const uint8_t *image, uint32_t color_idx, uint16_t idx_mask, uint32_t *fill_lo, uint32_t *fill_hi) {
@@ -88,7 +83,7 @@ static void color_fill(const uint8_t *image, uint32_t color_idx, uint16_t idx_ma
 uint32_t draw_text_chain(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr) {
     uint32_t fill_lo, fill_hi;
     color_fill(image, color_idx, 0xf, &fill_lo, &fill_hi);
-    return text_body(image, buffer_dst(image, dst_off), fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1);
+    return text_body(image, draw_dst(image, dst_off), fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1);
 }
 
 void g_draw_text(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr) {
@@ -98,7 +93,7 @@ void g_draw_text(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t 
 void g_draw_text_row(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t cells_m1, uint32_t str_ptr) {
     uint32_t fill_lo, fill_hi;
     color_fill(image, color_idx, 0xf, &fill_lo, &fill_hi);
-    text_body(image, buffer_dst(image, dst_off), fill_lo, fill_hi, str_ptr, (uint16_t)cells_m1);
+    text_body(image, draw_dst(image, dst_off), fill_lo, fill_hi, str_ptr, (uint16_t)cells_m1);
 }
 
 void g_draw_hud_gauge0(uint8_t *image, uint32_t dst, uint32_t color_idx, uint32_t cells_m1, uint32_t str_ptr) {
@@ -142,7 +137,7 @@ static void num_body(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fi
 void g_draw_num(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t cells_m1, uint32_t str_ptr) {
     uint32_t fill_lo, fill_hi;
     color_fill(image, color_idx, 0xffff, &fill_lo, &fill_hi);
-    num_body(image, buffer_dst(image, dst_off), fill_lo, fill_hi, str_ptr, (uint16_t)cells_m1);
+    num_body(image, draw_dst(image, dst_off), fill_lo, fill_hi, str_ptr, (uint16_t)cells_m1);
 }
 
 /* draw_num_thunk: draw_num with the cell count preset to 0x13. */
@@ -168,7 +163,7 @@ void g_draw_num_thunk(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint
 
 void g_draw_divider(uint8_t *image) {
     g_fill_rect(image, DIVIDER_FILL_DST, DIVIDER_FILL_COLOR, DIVIDER_FILL_CELLS_M1, DIVIDER_FILL_ROWS_M1);
-    uint32_t line = buffer_dst(image, DIVIDER_LINE_DST);
+    uint32_t line = draw_dst(image, DIVIDER_LINE_DST);
     for (int row = 0; row < DIVIDER_LINE_ROWS; row++, line += ROW_STRIDE) {
         wr16(image + line, DIVIDER_LINE_LEFT);
         wr16(image + line + DIVIDER_LINE_COL2, DIVIDER_LINE_RIGHT);
@@ -182,7 +177,7 @@ static void draw_panel(uint8_t *image, uint32_t str_base, const uint16_t *label_
     color_fill(image, PANEL_TEXT_COLOR, 0xf, &fill_lo, &fill_hi);
     uint32_t str_ptr = str_base;
     for (int i = 0; i < count; i++)
-        str_ptr = text_body(image, buffer_dst(image, label_dst[i]), fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1);
+        str_ptr = text_body(image, draw_dst(image, label_dst[i]), fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1);
 }
 
 /* Label string bases (Ghidra addrs) and per-label dst offsets, baked into each panel. */
@@ -245,7 +240,7 @@ void g_draw_results_screen(uint8_t *image) {
     for (int16_t c = (int16_t)(RESULTS_MAX_ROWS - mode), i = 0; c != -1; c--, i++, dst += RESULTS_ROW_STEP) {
         uint32_t fill_lo, fill_hi, label_end;
         color_fill(image, image[pal_b + i], 0xf, &fill_lo, &fill_hi);
-        str = text_body_ex(image, buffer_dst(image, dst), fill_lo, fill_hi, str, TEXT_MAX_CELLS_M1, &label_end);
+        str = text_body_ex(image, draw_dst(image, dst), fill_lo, fill_hi, str, TEXT_MAX_CELLS_M1, &label_end);
         str = text_body(image, label_end + RESULTS_BAR_GAP, fill_lo, fill_hi, str, TEXT_MAX_CELLS_M1);
         str += 1;
     }

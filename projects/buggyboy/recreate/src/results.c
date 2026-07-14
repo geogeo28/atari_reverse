@@ -13,6 +13,7 @@
 #include "machine.h"
 #include "addrs.h"
 #include "buggyboy.h"
+#include "draw.h"
 
 #define RESULT_ROW_BLOCKS  3       /* stacked copies of the source block (outer d5=2) */
 #define RESULT_ROW_ROWS    32      /* rows per block (inner d4=0x1f) */
@@ -25,15 +26,9 @@ static uint32_t buf_c_src(const uint8_t *image, uint32_t src_off) {
     return be32(image + A_buf_c) + src_off;
 }
 
-/* Draw buffer (physbase_tbl[flip_idx]) plus a sign-extended word offset (adda.w). */
-static uint32_t buffer_dst(const uint8_t *image, uint32_t dst_off) {
-    int16_t flip_idx = (int16_t)be16(image + A_flip_idx);
-    return be32(image + A_physbase_tbl + flip_idx) + sign_ext16(dst_off);
-}
-
 void g_draw_result_col(uint8_t *image, uint32_t dst_off, uint32_t src_off) {
     uint32_t src = buf_c_src(image, src_off);
-    uint32_t dst = buffer_dst(image, dst_off);
+    uint32_t dst = draw_dst(image, dst_off);
     for (int col = 0; col < RESULT_COL_COLS; col++)
         for (int row = 0; row < RESULT_COL_ROWS; row++)
             memcpy(image + dst + col * RESULT_COL_BYTES + row * ROW_STRIDE,
@@ -55,7 +50,7 @@ static void blit_result_row(uint8_t *image, uint32_t dst, uint32_t src) {
 
 void g_draw_result_row(uint8_t *image, uint32_t dst_off, uint32_t src_off) {
     uint32_t src = buf_c_src(image, src_off);
-    uint32_t dst = buffer_dst(image, dst_off);
+    uint32_t dst = draw_dst(image, dst_off);
     for (int block = 0; block < RESULT_ROW_BLOCKS; block++)
         for (int row = 0; row < RESULT_ROW_ROWS; row++)
             blit_result_row(image,
@@ -74,7 +69,7 @@ void g_draw_result_row(uint8_t *image, uint32_t dst_off, uint32_t src_off) {
 
 void g_draw_dashboard(uint8_t *image, uint32_t dst_off) {
     uint32_t src = buf_c_src(image, DASH_SRC_OFF);
-    uint32_t dst = buffer_dst(image, dst_off);
+    uint32_t dst = draw_dst(image, dst_off);
     for (int row = 0; row < DASH_ROWS; row++, dst += ROW_STRIDE, src += ROW_STRIDE) {
         uint32_t d = dst, s = src;
         for (int g = 0; g < DASH_GROUPS; g++, d += 8, s += 8) {
