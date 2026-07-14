@@ -114,6 +114,7 @@ fn 0x1b3ba snd_stub
 
 # ==== data / tables ====
 var 0x176a8 FONT_GLYPHS
+var 0x17e7a probe_deltas
 var 0x15afa color_pairs
 var 0x13144 obj_type_jumptable
 var 0x1b394 snd_cmd_table

@@ -109,6 +109,49 @@ void g_init_leg_dash(uint8_t *image) {
     }
 }
 
+/* --- probe_collision @ 0x110a4 --- Advances the dashboard progress-marker (dash_marker) one step
+ * along the track drawn in the dashboard bitmap. First it erases the marker's current dot, then it
+ * probes the eight neighbour cells (A_probe_deltas: {delta_bit, delta_x} per direction). A neighbour
+ * "hits" the track when the AND of two source words at that cell has the probed bit set; on the
+ * first hit the marker record is updated to that cell and the scan stops. No hit leaves the marker
+ * position unchanged (only the old dot erased). The marker is {y: byte, bit: byte(low nibble),
+ * x: word}; when a probed bit crosses a cell's 16-bit span the y offset steps one cell (PROBE_Y_STEP).
+ * Called at the end of draw_leg_labels and from game_update. */
+#define DASH_PROBE_ORIGIN  (DASH_SRC_OFF + 2)  /* marker coordinates are relative to buf_c + this */
+#define PROBE_DIRS         8                    /* neighbour cells probed (table entries) */
+#define PROBE_CELL_BITS    0x10                 /* bits spanned per cell before y steps a row */
+#define PROBE_Y_STEP       8                    /* y-offset delta when the bit crosses a cell */
+
+void g_probe_collision(uint8_t *image) {
+    uint32_t base = buf_c_src(image, DASH_PROBE_ORIGIN);
+    uint8_t  y0   = image[A_dash_marker];            /* d4: byte y offset */
+    uint8_t  bit0 = image[A_dash_marker + 1] & 0xf;  /* d5: bit index 0..15 */
+    uint16_t x0   = be16(image + A_dash_marker + 2); /* d6: word x offset */
+
+    /* Erase the marker's current dot (clear its bit in the dashboard bitmap). */
+    uint32_t cur = base + y0 + sign_ext16(x0);
+    wr16(image + cur, (uint16_t)(be16(image + cur) & ~(1u << bit0)));
+
+    uint32_t tbl = A_probe_deltas;
+    for (int dir = 0; dir < PROBE_DIRS; dir++, tbl += 4) {
+        int16_t y   = (int16_t)(uint16_t)y0;
+        int16_t bit = (int16_t)bit0 + (int16_t)be16(image + tbl);
+        if (bit < 0)                    y += PROBE_Y_STEP;   /* underflowed the cell -> step down */
+        else if (bit >= PROBE_CELL_BITS) y -= PROBE_Y_STEP;  /* overflowed the cell -> step up */
+        bit &= 0xf;
+        int16_t x = (int16_t)x0 + (int16_t)be16(image + tbl + 2);
+
+        uint32_t a = base + sign_ext16((uint16_t)y) + sign_ext16((uint16_t)x);
+        uint16_t probe = (uint16_t)(be16(image + a) & be16(image + a + 4));
+        if (probe & (1u << bit)) {                            /* neighbour on the track -> move here */
+            wr16(image + A_dash_marker + 2, (uint16_t)x);
+            image[A_dash_marker + 1] = (uint8_t)bit;
+            image[A_dash_marker]     = (uint8_t)y;
+            return;
+        }
+    }
+}
+
 /* --- draw_leg_results @ 0x125f2 --- Paints the per-leg results screen: background fills, the
  * four result panels (row/col blitters), two rows of labels, the leg time digits, and the
  * dashboard. No register arguments; layout coordinates and colours are baked into the code.

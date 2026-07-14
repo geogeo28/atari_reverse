@@ -65,6 +65,7 @@ void g_draw_result_row(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /*
 void g_draw_result_col(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /* D0, A1 */
 void g_draw_dashboard(uint8_t *image, uint32_t dst_off);                      /* D0; src = buf_c fixed */
 void g_init_leg_dash(uint8_t *image);                                         /* builds per-leg dashboard graphic; no args */
+void g_probe_collision(uint8_t *image);                                       /* advances the dashboard marker one track step; no args */
 void g_draw_leg_results(uint8_t *image);                                      /* leg-results screen; no args */
 
 /* ---- intermission-screen block blitter (intermission_poll @ 0x12914) ----
