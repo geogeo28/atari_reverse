@@ -11,3 +11,7 @@ projects/*/recreate/render/atari/disk/
 *.o
 projects/*/recreate/oracle/musashi/
 projects/*/recreate/oracle/build/
+
+# TOS ROM images — not redistributable (Atari copyright); supply your own locally
+tools/hatari/*.img
+**/TOS*.img
