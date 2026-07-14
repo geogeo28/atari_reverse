@@ -82,6 +82,7 @@ void g_draw_buggy_wheels(uint8_t *image, uint32_t dst, uint32_t src, uint32_t ro
 void g_draw_fg_sprite(uint8_t *image);   /* foreground buggy sprite; spin/curve gate + anim table */
 void g_draw_buggy_lo(uint8_t *image, uint32_t buffer);   /* A6 = draw buffer; lower body, 2 sub-sprites */
 void g_draw_buggy_hi(uint8_t *image, uint32_t dst_base); /* A2 = dst base; lean overlay (OR-blit) */
+void g_draw_buggy(uint8_t *image);                       /* player car: body + hi overlay + lo body; no args */
 void g_draw_checkpoint_anim(uint8_t *image);             /* checkpoint-banner scroll within buf_c; no args */
 
 /* ---- divider + text panels (draw_divider @ 0x126e6, draw_panel2/3/5 @ 0x1271c..) ----

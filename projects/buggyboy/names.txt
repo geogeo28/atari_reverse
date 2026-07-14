@@ -190,6 +190,10 @@ var 0x18cec obj_c_off
 var 0x18cee obj_c_rows
 var 0x18c5e obj_shade
 var 0x18cc2 lean_state
+var 0x18cc4 buggy_lean_x10
+var 0x18cbe buggy_pitch_off
+var 0x18cbc buggy_skid_off
+var 0x177b8 buggy_body_tbl
 var 0x18d0c anim_frame
 var 0x18c68 crash_disp
 var 0x18caa spin_state

@@ -190,3 +190,43 @@ void g_draw_checkpoint_anim(uint8_t *image) {
         wr32(image + dst + 8, be32(image + src + 8));
     }
 }
+
+/* draw_buggy @0x152ac — draw the player car. Position it from the lean/crash/skid/pitch state, pick
+ * the body sprite for the current lean from BUGGY_BODY_TBL, blit the body (draw_buggy_wheels for
+ * the upright frames whose flag is 0, else an inline 5-cell transparency blit for the leaning
+ * frames), then draw the lean overlay (draw_buggy_hi, A2 = the body dst) and the lower body /
+ * shadow (draw_buggy_lo, A6 = draw buffer). No args (the draw buffer comes from flip_idx). */
+#define BUGGY_BODY_TBL   0x177b8   /* per-lean body sprite: {src_off long, flag, rows-1, pos_off word} */
+#define BUGGY_BASE_POS   0x71c0    /* base screen position before the crash/skid/pitch offsets */
+#define BUGGY_DST_BIAS   0x40      /* dst = buffer + this + position */
+#define BUGGY_BODY_CELLS 5         /* transparency cells per body row */
+
+void g_draw_buggy(uint8_t *image) {
+    uint32_t buffer = draw_buffer(image);
+    uint32_t buf_c = be32(image + A_buf_c);
+
+    int16_t pos = (int16_t)(BUGGY_BASE_POS - be16(image + A_crash_disp)
+                            - be16(image + A_buggy_pitch_off) + be16(image + A_buggy_skid_off));
+
+    uint16_t lean = be16(image + A_lean_state);
+    wr16(image + A_buggy_lean_x10, (uint16_t)(lean * 10));
+    wr16(image + A_buggy_variant, (uint16_t)(lean * 8));      /* read back by draw_buggy_hi */
+
+    uint32_t piece = BUGGY_BODY_TBL + sign_ext16((uint16_t)(lean * 8));
+    uint32_t src = buf_c + be32(image + piece);
+    uint8_t flag = image[piece + 4];
+    int rows = image[piece + 5];                              /* rows-1 (dbf count) */
+    pos = (int16_t)(pos + (int16_t)be16(image + piece + 6));
+    uint32_t dst = buffer + BUGGY_DST_BIAS + sign_ext16((uint16_t)pos);
+
+    if (flag == 0) {
+        g_draw_buggy_wheels(image, dst, src, (uint32_t)rows);
+    } else {
+        uint32_t d = dst, s = src;                           /* inline 5-cell transparency blit, walks up */
+        for (int r = 0; r <= rows; r++, d -= OBJ_ROW_UP, s -= OBJ_ROW_UP)
+            for (int cell = 0; cell < BUGGY_BODY_CELLS; cell++)
+                blit_transp_cell(image, d + cell * CELL_BYTES, s + cell * CELL_BYTES);
+    }
+    g_draw_buggy_hi(image, dst);                              /* A2 = the (original) body dst */
+    g_draw_buggy_lo(image, buffer);                          /* A6 = draw buffer (fall-through) */
+}
