@@ -98,6 +98,27 @@ sustain — higher holds the note body fuller, lower is more percussive — and 
 `*_c64s<N>.wav` so they sit side by side. These renders are listening tools, not part of the
 differential contract.
 
+## Screen rendering
+
+Same idea for the picture: `render/render_screen.py` *looks at* a reconstructed screen by running
+the candidate `.so` end to end. It loads + relocates the PRG (so fonts, label strings and fill
+patterns sit at their real addresses), stages the real `GRAPHICS.GRA` in the game's own buffer
+layout, calls the verified `g_unpack_graphics` to decode the graphic tables into `buf_c`, points
+`physbase_tbl[0]` at a free screen region, calls the screen function under test (default
+`g_draw_leg_results`), then de-interleaves the 32000-byte ST low-res framebuffer to a PNG under
+`../out/render/` (a gitignored artifact directory):
+
+```bash
+python render/render_screen.py --leg 0          # leg-results screen -> out/render/leg_results_0.png
+```
+
+Two things are placeholders, by construction: the 16-colour **palette** RGB is invented (the real
+one is set via a `Setpalette` call we haven't reconstructed — pixel *indices* are correct, colours
+are not), and `buf_a`-sourced text (per-leg labels + leg-time digits) renders blank because the
+functions that fill it (`draw_results_screen`/`update_highscore`) aren't reconstructed yet. The
+fills, panels, static labels and dashboard are structurally real. Like the sound renders, this is a
+listening tool, not part of the differential contract.
+
 ## OS trap model
 
 OS-bound code enters TOS via `trap #N`, which the oracle can't route to real TOS. Instead
