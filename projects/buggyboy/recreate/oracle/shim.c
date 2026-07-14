@@ -150,7 +150,8 @@ static void handle_trap(int vec) {
         case 0x04:                                    /* Getrez -> low-res */
         case 0x05: case 0x06: case 0x07:              /* Setscreen / Setpalette / Setcolor */
         case 0x19:                                    /* Ikbdws: serial write to the IKBD, no image effect */
-        case 0x25: case 0x28: case 0x2a: break;       /* Vsync / Xbtimer / Dosound -> no effect */
+        case 0x20:                                    /* Dosound: writes the YM2149, no image effect */
+        case 0x25: case 0x28: case 0x2a: break;       /* Vsync / other no-image-effect XBIOS calls */
         default: modeled = 0; break;                  /* unknown */
         }
     } else if (vec == 2) {                            /* GEM: AES/VDI parameter-block calls */

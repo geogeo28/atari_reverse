@@ -4,7 +4,8 @@
  * SND_STATE and the voice-control records at SND_VOICE_CTRL) from const parameter tables. The
  * block's individual field *meanings* are only partly reversed, so its fields are named by
  * offset+role; the differential test against the oracle is what guarantees the reconstruction is
- * exact. These routines are pure (no OS traps, no further calls) — the driver runs from the VBL.
+ * exact. The driver leaves are pure (they run from the VBL); stop_music/_chk additionally issue a
+ * no-effect XBIOS Dosound and clear the higher-level music-control globals.
  */
 #include "machine.h"
 #include "addrs.h"
@@ -152,6 +153,27 @@ void g_TURNOFF(uint8_t *image) {
 void g_EGOFF(uint8_t *image) {
     image[SND_STATE + SND_EG_FLAG] = 0;
     image[SND_STATE + SND_MUSIC_BYTE] = 0;
+}
+
+/* stop_music @0x12ec4 — silence the driver unless a game-over is latched: TURNOFF the music state,
+ * clear the effect flag and current tune, park the VBL sound vector at a bare rts (disabling the
+ * refresh handler), then issue XBIOS Dosound. Dosound(A0) writes the YM2149 in hardware, not our
+ * image, so it has no observable effect (like the other XBIOS wrappers in os.c). */
+#define VBL_SOUND_RTS  0x12ef4    /* bare rts vbl_sound_vec is parked at (0x2ef4 + load base) */
+
+void g_stop_music(uint8_t *image) {
+    if (be16(image + A_game_over_flag) != 0) return;
+    g_TURNOFF(image);
+    image[A_fxflag] = 0;
+    wr16(image + A_cur_tune_id, 0);
+    wr32(image + A_vbl_sound_vec, VBL_SOUND_RTS);
+    /* XBIOS Dosound(A0): hardware-only, no image effect. */
+}
+
+/* stop_music_chk @0x12ebc — stop_music, but only when no music is playing (MZFLAG == 0). */
+void g_stop_music_chk(uint8_t *image) {
+    if (image[A_mzflag] != 0) return;
+    g_stop_music(image);
 }
 
 /* INITFX @0x1b560 — load effect D0's parameter record into the effect voice state. */

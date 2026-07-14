@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 66/91.**
+**Verified: 68/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -82,8 +82,8 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12e5c` | `fill_span` | 36 | ✅ verified | 500-seed fuzz |
 | `0x12e80` | `fill_rect` | 48 | ✅ verified | 500-seed fuzz + stride check |
 | `0x12eb0` | `xbios_setpalette` | 12 | ✅ verified | trap layer; no image effect |
-| `0x12ebc` | `stop_music_chk` | 8 |  |  |
-| `0x12ec4` | `stop_music` | 50 |  |  |
+| `0x12ebc` | `stop_music_chk` | 8 | ✅ verified | guard fuzz (MZFLAG gate + game_over); falls into stop_music |
+| `0x12ec4` | `stop_music` | 50 | ✅ verified | guard fuzz (game_over); TURNOFF + clear fx/tune/vec + XBIOS Dosound (0x20) |
 | `0x12ef6` | `draw_game_objects` | 376 |  |  |
 | `0x1306e` | `draw_object_list` | 214 |  |  |
 | `0x1442c` | `draw_checkpoint_anim` | 118 |  |  |
