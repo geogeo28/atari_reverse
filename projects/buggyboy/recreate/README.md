@@ -119,8 +119,9 @@ read straight from the image, and the per-leg labels/digits are the real strings
 **COURSES.DAT** (staged at `mem_base`, where `buf_a = mem_base + 0x1900` points). The results
 screen's SCORE/NAME rows come from the *runtime* `highscore_table` (`0x18266`, ships all-zero),
 which `update_highscore` fills — so `--screen results` shows them blank, while `--screen highscore`
-seeds a demo table and runs the verified `g_update_highscore` to rank a player record into it before
-drawing (the table is demo data; the ranking/insert is real reconstructed code). Everything else is
+builds the game's default table with the verified `g_init_scoretable` and ranks a demo player record
+into it with `g_update_highscore` before drawing (only the single player record is demo data — the
+table is the game's own). Everything else is
 drawn from static data or the two data files. Like the sound renders, this is a listening tool, not
 part of the differential contract.
 

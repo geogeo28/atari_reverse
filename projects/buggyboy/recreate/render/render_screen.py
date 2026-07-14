@@ -14,9 +14,9 @@ contract. It exercises the candidate `libbuggyboy.so` end to end on a real input
   5. de-interleave that 32000-byte Atari low-res framebuffer and write it as a PNG.
 
 Everything drawn from static data or the two data files is real. `--screen highscore` additionally
-seeds a demo high-score table and runs the verified `g_update_highscore` to rank a player record
-into it before drawing — so the results screen's SCORE/NAME columns fill in (the table itself is
-invented demo data; the ranking/insert is the real reconstructed code).
+builds the game's default high-score table with the verified `g_init_scoretable`, ranks a demo
+player record into it with `g_update_highscore`, then draws — so the SCORE/NAME columns fill in
+with authentic data (only the single 12-byte player record is demo data).
 
 Usage: python render/render_screen.py [--screen leg|results|highscore] [--leg N] [--out DIR]
 """
@@ -145,18 +145,18 @@ def render_results_screen(leg=RESULTS_LEG, mode=RESULTS_MODE, pos=RESULTS_POS):
 
 
 def render_highscore_screen(leg=0):
-    """Populate the leg's high-score table with the *verified* g_update_highscore (it ranks a
-    player record into a seeded demo table), then draw the results screen — so the SCORE/NAME
-    columns fill in. Returns the framebuffer image."""
+    """Build the authentic high-score screen: the verified g_init_scoretable writes the game's
+    default table, g_update_highscore ranks a demo player record into it, then g_draw_results_screen
+    draws it — so the SCORE/NAME columns fill in with real data. Returns the framebuffer image."""
     image, buf = _prepared_image({
         A_LEG_INDEX: leg.to_bytes(2, "big"),
-        hiscore_demo.A_HIGHSCORE_TABLE + leg * 0x80: hiscore_demo.table(),
         hiscore_demo.A_SCORE_BCD: hiscore_demo.PLAYER,
     })
-    for name in ("g_update_highscore", "g_draw_results_screen"):
+    for name in ("g_init_scoretable", "g_update_highscore", "g_draw_results_screen"):
         getattr(harness._lib, name).argtypes = [ctypes.POINTER(ctypes.c_uint8)]
         getattr(harness._lib, name).restype = None
-    harness._lib.g_update_highscore(buf)      # rank + insert the player -> populates highscore_table
+    harness._lib.g_init_scoretable(buf)       # game's default table (scores 40000..10000)
+    harness._lib.g_update_highscore(buf)      # rank + insert the player into it
     harness._lib.g_draw_results_screen(buf)
     return image
 

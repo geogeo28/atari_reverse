@@ -23,12 +23,12 @@ compiler/`libgcc` emit for their *own* code and data.
 
 | file | role |
 |------|------|
-| `main.c`        | Atari shim: build the image in BSS, load `STATIC.BIN` + `COURSES.DAT` + `GRAPHICS.GRA`, set the buffer pointers, call `g_unpack_graphics` then the selected screen (leg / `-DDEMO_RESULTS` / `-DDEMO_HIGHSCORE`, the last loading `HISCORE.BIN` and calling `g_update_highscore` first), dump the framebuffer to `C:\SCREEN.BIN`, blit to `Physbase()`, wait for a key. Also the freestanding `memcpy/memmove/memset`. |
+| `main.c`        | Atari shim: build the image in BSS, load `STATIC.BIN` + `COURSES.DAT` + `GRAPHICS.GRA`, set the buffer pointers, call `g_unpack_graphics` then the selected screen (leg / `-DDEMO_RESULTS` / `-DDEMO_HIGHSCORE`, the last loading the `HISCORE.BIN` player record and calling `g_init_scoretable` + `g_update_highscore` first), dump the framebuffer to `C:\SCREEN.BIN`, blit to `Physbase()`, wait for a key. Also the freestanding `memcpy/memmove/memset`. |
 | `os.s`          | `_start` + GEMDOS/XBIOS trap wrappers (Fopen/Fread/Fclose/Fcreate/Fwrite, Cconin, Physbase, Setpalette). |
 | `tos.ld`        | link at base 0 as one tight text+data blob; the 1 MiB image is `.bss` (TOS zeroes it). |
 | `mkprg.py`      | wrap the linked ELF into a GEMDOS `.PRG` — header + flat binary + a relocation table built from the ELF's `R_68K_32` fixups (`ld --emit-relocs`). |
 | `gen_static.py` | dump the relocated PRG static-data region (`[0x10000,0x1c000)`: fonts, label strings, fill patterns) via the harness loader, so the on-target data matches the host exactly. |
-| `gen_hiscore.py`| build `HISCORE.BIN` (the `highscore` demo table + player record) from `../hiscore_demo.py` — the same data the host render pokes, so the two agree byte-for-byte. |
+| `gen_hiscore.py`| write `HISCORE.BIN` (the 12-byte `highscore` player record) from `../hiscore_demo.py` — the same bytes the host render pokes, so the two agree byte-for-byte. |
 | `shim_include/` | a minimal freestanding `<string.h>` (this bare-metal GCC ships no libc). |
 | `build.sh`      | compile + link + wrap + stage the drive (`disk/`). |
 | `run_hatari.py` | headless: auto-run the PRG, read back `C:\SCREEN.BIN`, de-interleave to PNG, diff against the host render. |
@@ -52,6 +52,6 @@ Colours and text are the game's own: `main.c` points `Setpalette` at the results
 in `STATIC.BIN` (`0x17fc2`), and stages `COURSES.DAT` at `mem_base` so the per-leg labels/digits
 (`buf_a = mem_base + 0x1900`) are the real course names. The results screen's SCORE/NAME rows come
 from the runtime `highscore_table` (`0x18266`, ships all-zero): `results` shows them blank, while
-`highscore` loads a demo table (`HISCORE.BIN`) and runs the verified `g_update_highscore` to rank a
-player record into it first (the table is demo data; the ranking/insert is real). Everything else
-is from static data or the data files.
+`highscore` builds the game's default table on-target with the verified `g_init_scoretable` and
+ranks a demo player record (`HISCORE.BIN`, 12 bytes) into it with `g_update_highscore` first (only
+the player record is demo data). Everything else is from static data or the data files.

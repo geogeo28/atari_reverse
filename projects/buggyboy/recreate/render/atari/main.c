@@ -28,8 +28,8 @@
 #define STATIC_LEN  0xc000
 #define SCREEN_BYTES 32000
 #define PALETTE_ADDR 0x17fc2        /* the game's results-screen palette (16 ST words), in STATIC.BIN */
-#define HISCORE_LO  0x1824c         /* HISCORE.BIN demo data: score_bcd record + leg-0 highscore_table */
-#define HISCORE_LEN 0x98            /* [0x1824c, 0x182e4): through the end of the leg-0 table */
+#define HISCORE_LO  0x1824c         /* HISCORE.BIN = the 12-byte demo player record -> score_bcd */
+#define HISCORE_LEN 0xc
 
 static uint8_t image[IMAGE_SIZE];   /* BSS: TOS zeroes it at load */
 
@@ -84,10 +84,11 @@ void main(void) {
 
     g_unpack_graphics(image);       /* decode GRAPHICS.GRA -> buf_c tables (verified) */
 #if defined(DEMO_HIGHSCORE)
-    /* Populate the leg-0 table with the verified g_update_highscore, then draw the results screen.
-     * HISCORE.BIN (built from render_screen.py's demo data) seeds the table + player score record. */
+    /* Authentic high-score screen: g_init_scoretable writes the game's default table, then the
+     * verified g_update_highscore ranks the demo player record (HISCORE.BIN) into it. */
     load_file("HISCORE.BIN", HISCORE_LO, HISCORE_LEN);
-    g_update_highscore(image);      /* rank + insert the player -> populates highscore_table */
+    g_init_scoretable(image);       /* default table (scores 40000..10000) */
+    g_update_highscore(image);      /* rank + insert the player */
     g_draw_results_screen(image);
 #elif defined(DEMO_RESULTS)
     /* Demo state for the results screen (must match render_screen.py RESULTS_MODE/RESULTS_POS). */
