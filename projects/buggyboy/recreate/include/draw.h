@@ -24,6 +24,17 @@ static inline uint32_t draw_dst(const uint8_t *image, uint32_t off) {
 /* Duplicate a 16-bit pattern into both halves of a longword (68k swap + move.w idiom). */
 static inline uint32_t dup16(uint16_t word) { return ((uint32_t)word << 16) | word; }
 
+/* FONT_GLYPHS is 16 bytes per character (8 rows x 2 bytes); character columns are 8 bytes apart. */
+#define GLYPH_BYTES  16
+#define CELL_WIDTH   8
+
+/* Pack two 1bpp glyph row words into a masked cell's (mask, ink) 16-bit words: char1's row word
+ * gives the high byte of each, char2's the low byte. Shared by the text and leg-label blitters. */
+static inline void glyph_pair(uint16_t g1, uint16_t g2, uint16_t *mask, uint16_t *ink) {
+    *mask = (uint16_t)((g1 & 0xff00) | (g2 >> 8));
+    *ink  = (uint16_t)(((g1 & 0x00ff) << 8) | (g2 & 0x00ff));
+}
+
 /* One 8-byte (16-pixel, 4-plane) transparency-blit cell from four source words A,B,C,D at src:
  * mask = ~(A|B|C) & D shows the background through where the sprite is transparent; planes 0-2
  * take A/B/C, plane 3 takes D's leftover (non-A/B/C) bits. The shared masked-sprite primitive

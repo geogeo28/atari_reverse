@@ -152,6 +152,56 @@ void g_probe_collision(uint8_t *image) {
     }
 }
 
+/* --- draw_leg_labels @ 0x12d88 --- Draws the per-leg text labels onto the dashboard graphic, then
+ * masks the marker's start region and hands off to probe_collision. Two per-leg records in buf_a:
+ *   labels (buf_a + LABEL_DESC_TBL + leg*LABEL_DESC_STRIDE): a word dst offset then a run of glyph
+ *     byte-pairs (char1, char2) terminated by a 0 byte. Each pair blits an 8-row cell into the
+ *     dashboard graphic (buf_c + DASH_SRC_OFF + dst): AND the glyph mask word into +0, OR the ink
+ *     word into +4, stepping one scanline per row; the next pair lands CELL_WIDTH bytes right.
+ *   clear (buf_a + LABEL_CLEAR_TBL + leg*LABEL_CLEAR_STRIDE): a word dst offset then two AND masks
+ *     m1,m2 that clear a LABEL_CLEAR_ROWS-row region (word at +0 &= m1, word at +8 &= m2) relative
+ *     to buf_c + DASH_PROBE_ORIGIN, erasing the marker's start cells before probe_collision runs. */
+#define LABEL_DESC_TBL     0x8c0     /* buf_a offset of the per-leg label descriptors */
+#define LABEL_DESC_STRIDE  0x10      /* bytes per leg descriptor */
+#define LABEL_CLEAR_TBL    0x7d0     /* buf_a offset of the per-leg clear records */
+#define LABEL_CLEAR_STRIDE 8         /* bytes per leg clear record */
+#define LABEL_CLEAR_ROWS   4         /* rows the clear masks cover */
+
+void g_draw_leg_labels(uint8_t *image) {
+    uint32_t buf_a = be32(image + A_buf_a);
+    uint32_t buf_c = be32(image + A_buf_c);
+    int16_t leg = (int16_t)be16(image + A_leg_index);
+
+    uint32_t desc = buf_a + LABEL_DESC_TBL + leg * LABEL_DESC_STRIDE;
+    uint32_t cell = buf_c + DASH_SRC_OFF + sign_ext16(be16(image + desc));
+    desc += 2;
+    for (;;) {
+        uint8_t char1 = image[desc++];
+        if (char1 == 0) break;
+        uint8_t char2 = image[desc++];
+        uint32_t glyph1 = A_font_glyphs + char1 * GLYPH_BYTES;
+        uint32_t glyph2 = A_font_glyphs + char2 * GLYPH_BYTES;
+        uint32_t p = cell;
+        for (int row = 0; row < TEXT_CELL_ROWS; row++, p += ROW_STRIDE, glyph1 += 2, glyph2 += 2) {
+            uint16_t mask, ink;
+            glyph_pair(be16(image + glyph1), be16(image + glyph2), &mask, &ink);
+            wr16(image + p,     (uint16_t)(be16(image + p)     & mask));
+            wr16(image + p + 4, (uint16_t)(be16(image + p + 4) | ink));
+        }
+        cell += CELL_WIDTH;
+    }
+
+    uint32_t rec = buf_a + LABEL_CLEAR_TBL + leg * LABEL_CLEAR_STRIDE;
+    uint32_t p = buf_c + DASH_PROBE_ORIGIN + sign_ext16(be16(image + rec));
+    uint16_t m1 = be16(image + rec + 2);
+    uint16_t m2 = be16(image + rec + 4);
+    for (int row = 0; row < LABEL_CLEAR_ROWS; row++, p += ROW_STRIDE) {
+        wr16(image + p,     (uint16_t)(be16(image + p)     & m1));
+        wr16(image + p + 8, (uint16_t)(be16(image + p + 8) & m2));
+    }
+    g_probe_collision(image);
+}
+
 /* --- draw_leg_results @ 0x125f2 --- Paints the per-leg results screen: background fills, the
  * four result panels (row/col blitters), two rows of labels, the leg time digits, and the
  * dashboard. No register arguments; layout coordinates and colours are baked into the code.

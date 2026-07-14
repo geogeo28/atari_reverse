@@ -19,8 +19,6 @@
 #include "buggyboy.h"
 #include "draw.h"
 
-#define GLYPH_BYTES        16      /* FONT_GLYPHS stride per character (char << 4) */
-#define CELL_WIDTH         8       /* bytes to the next character column */
 #define TEXT_MAX_CELLS_M1  0x13    /* draw_text / draw_hud_bar preset cell count-1 */
 #define LAST_HALF_GLYPH    0x2f    /* char2 substitute when the second byte is 0 */
 
@@ -50,9 +48,9 @@ static uint32_t text_body_ex(uint8_t *image, uint32_t dst, uint32_t fill_lo, uin
         for (int row = 0; row < TEXT_CELL_ROWS; row++, cell += ROW_STRIDE, glyph1 += 2, glyph2 += 2) {
             uint16_t g1 = be16(image + glyph1);
             uint16_t g2 = be16(image + glyph2);
-            uint32_t mask = dup16((uint16_t)((g1 & 0xff00) | (g2 >> 8)));
-            uint32_t ink  = dup16((uint16_t)(((g1 & 0x00ff) << 8) | (g2 & 0x00ff)));
-            blit_row(image, cell, mask, ink, fill_lo, fill_hi);
+            uint16_t mask16, ink16;
+            glyph_pair(g1, g2, &mask16, &ink16);
+            blit_row(image, cell, dup16(mask16), dup16(ink16), fill_lo, fill_hi);
         }
         dst += CELL_WIDTH;
         remaining = (uint16_t)(remaining - 1);
