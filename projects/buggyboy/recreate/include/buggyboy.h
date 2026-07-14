@@ -30,6 +30,7 @@ void g_fill_words(uint8_t *image, uint32_t color_index, uint32_t cell_count_m1);
 void g_fill_span(uint8_t *image, uint32_t dst_offset, uint32_t color_index, uint32_t cell_count_m1);
 void g_fill_rect(uint8_t *image, uint32_t dst_offset, uint32_t color_index,
                  uint32_t cells_m1, uint32_t rows_m1);           /* D0, D1, D3, D4 */
+void g_flip_screen(uint8_t *image);      /* page-flip: video base + Vsync (hardware); toggles flip_idx */
 
 /* ---- text glyph blitters (shared body @ 0x5a2c; draw_text/_row, draw_hud_gauge0/_bar) ----
  * The string is character *pairs*; each pair packs two 1bpp FONT_GLYPHS entries into one

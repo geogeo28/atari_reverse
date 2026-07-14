@@ -65,3 +65,11 @@ void g_fill_rect(uint8_t *image, uint32_t dst_offset, uint32_t color_index,
     screen_fill_rect(image + draw_dst(image, dst_offset), color_pattern(image, color_index),
                      dbf_count(cells_m1), dbf_count(rows_m1));
 }
+/* flip_screen @ 0x121f8 — page-flip the double buffer. Point the ST video-base registers
+ * ($ffff8200, interrupts masked around the write) at the current physbase_tbl[flip_idx], toggle
+ * flip_idx between 0 and 4, and Vsync (XBIOS 0x25). The video-base write and Vsync are hardware
+ * only; the sole observable image effect is the flip_idx toggle. */
+void g_flip_screen(uint8_t *image) {
+    uint16_t flip_idx = be16(image + A_flip_idx);
+    wr16(image + A_flip_idx, (uint16_t)((flip_idx + 4) & 4));
+}
