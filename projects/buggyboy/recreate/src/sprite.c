@@ -56,3 +56,37 @@ void g_draw_fg_sprite(uint8_t *image) {
     uint32_t src = be32(image + frame + 4) + be32(image + A_buf_c);
     g_draw_buggy_wheels(image, dst, src, rows_m1);
 }
+
+/* draw_buggy_lo @ 0x153fa — the lower buggy body (drawn behind the wheels/foreground). A6 is
+ * the draw buffer (set by draw_buggy). Behind a 5-way gate it draws two sub-sprites from a
+ * piece list selected by wheel_pos and shifted by spin_counter: [rows0, rows1, then a
+ * (src,dst) word pair per sub-sprite]. Each sub-sprite is LO_CELLS transparency cells wide and
+ * walks one scanline up per row; src is buf_c + LO_SRC_OFF + offset, dst is A6 + offset. */
+#define LO_SRC_OFF       0x27100   /* buggy-body sprite source: buf_c + this (160000) */
+#define LO_PIECE_TBL     0x17746   /* piece lists; entry = piece_idx_tbl[wheel_pos] + spin_counter */
+#define LO_PIECE_IDX_TBL 0x1773c   /* per-wheel_pos word offset into LO_PIECE_TBL */
+#define LO_CELLS         2         /* transparency cells per sub-sprite row (32 px) */
+#define LO_SUBSPRITES    2
+
+void g_draw_buggy_lo(uint8_t *image, uint32_t buffer) {
+    if (be16(image + A_buggy_draw_flag) == 0) return;
+    if ((image[A_buggy_gate] | image[A_fg_gate]) & 0x80) return;
+    if ((be16(image + A_sprite_suppress) | be16(image + A_collision_lock)) != 0) return;
+    if (be32(image + A_spin_reset) != 0) return;
+
+    uint32_t src_base = be32(image + A_buf_c) + LO_SRC_OFF;
+    uint16_t wheel_pos = be16(image + A_wheel_pos);
+    uint32_t piece = LO_PIECE_TBL
+                   + sign_ext16(be16(image + LO_PIECE_IDX_TBL + wheel_pos * 2))
+                   + sign_ext16(be16(image + A_spin_counter));
+    uint8_t rows[LO_SUBSPRITES] = { image[piece], image[piece + 1] };
+    uint32_t cur = piece + 2;
+    for (int sub = 0; sub < LO_SUBSPRITES; sub++, cur += 4) {
+        uint32_t src = src_base + sign_ext16(be16(image + cur));
+        uint32_t dst = buffer   + sign_ext16(be16(image + cur + 2));
+        int nrows = rows[sub] + 1;
+        for (int r = 0; r < nrows; r++, dst -= OBJ_ROW_UP, src -= OBJ_ROW_UP)
+            for (int cell = 0; cell < LO_CELLS; cell++)
+                blit_transp_cell(image, dst + cell * CELL_BYTES, src + cell * CELL_BYTES);
+    }
+}

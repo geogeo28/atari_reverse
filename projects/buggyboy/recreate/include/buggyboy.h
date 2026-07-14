@@ -71,6 +71,7 @@ void g_draw_leg_results(uint8_t *image);                                      /*
  * is 4 transparency cells, dst/src stepping one scanline up per row. */
 void g_draw_buggy_wheels(uint8_t *image, uint32_t dst, uint32_t src, uint32_t rows_m1);
 void g_draw_fg_sprite(uint8_t *image);   /* foreground buggy sprite; spin/curve gate + anim table */
+void g_draw_buggy_lo(uint8_t *image, uint32_t buffer);   /* A6 = draw buffer; lower body, 2 sub-sprites */
 
 /* ---- divider + text panels (draw_divider @ 0x126e6, draw_panel2/3/5 @ 0x1271c..) ----
  * draw_divider = filled rect + two vertical lines. Each panel draws the divider then a fixed

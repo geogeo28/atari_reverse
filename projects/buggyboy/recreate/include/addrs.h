@@ -16,6 +16,9 @@
 #define A_leg_index       0x18c38   /* current leg (0-4); indexes result strings + palette */
 #define A_spin_state      0x18caa   /* buggy spin state; <0 while spinning after a crash */
 #define A_anim_frame      0x18d0c   /* word byte-offset into fg_anim_tbl for the current frame */
+#define A_wheel_pos       0x18cc0   /* buggy wheel/steer position; selects the body piece list */
+#define A_buggy_draw_flag 0x18d0e   /* nonzero enables the buggy-body draw # ctx */
+#define A_buggy_gate      0x18eba   /* byte OR'd with fg_gate (0x18ebb); bit7 suppresses the body # ctx */
 #define A_hiscore_pos     0x18c9c   /* 1-based rank the new score reaches in the leg's high-score table */
 #define A_results_mode    0x18c9e   /* 0 = score made the table (name entry), 2 = did not; results layout */
 #define A_setrez_mode     0x18be6   /* byte set_rez sends to the IKBD via XBIOS Ikbdws (0x19) */

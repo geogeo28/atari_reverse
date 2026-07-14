@@ -99,3 +99,57 @@ def test_fg_sprite():
     _fg_run("suppressed (word)", 5, spin_state=0, suppress=1)
     _fg_run("suppressed (gate)", 6, spin_state=0, gate=0x80)
 
+
+# ---- draw_buggy_lo @ 0x153fa: gated 2-sub-sprite lower body; A6 = draw buffer ----
+
+ENTRY_LO = 0x153fa
+LO_BUFFER = 0x8000             # A6 draw buffer base
+LO_BUF_C = 0x30000
+LO_SRC_OFF = 0x27100
+A_BUGGY_DRAW_FLAG, A_BUGGY_GATE = 0x18d0e, 0x18eba
+A_COLLISION_LOCK, A_WHEEL_POS = 0x18c84, 0x18cc0
+A_SPIN_COUNTER, A_SPIN_RESET = 0x18d0a, 0x18cc8
+LO_PIECE_TBL, LO_PIECE_IDX_TBL = 0x17746, 0x1773c
+
+harness._lib.g_draw_buggy_lo.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+harness._lib.g_draw_buggy_lo.restype = None
+
+
+def _lo_pokes(seed, draw_flag=1, gate=0, fg_gate=0, suppress=0, lock=0, spin_reset=0, spin_counter=0):
+    rng = random.Random(seed)
+    # piece entry: rows0, rows1, then (src,dst) word pair per sub-sprite
+    entry = bytes([8, 8]) + b"".join(
+        off.to_bytes(2, "big") for off in (0x00, 0x400, 0x10, 0x420))
+    return {
+        0x7000: bytes(rng.randrange(256) for _ in range(0x1600)),          # dst noise
+        LO_BUF_C: bytes(rng.randrange(256) for _ in range(0x28000)),       # buf_c incl. +0x27100 src
+        A_BUF_C: LO_BUF_C.to_bytes(4, "big"),
+        A_WHEEL_POS: (0).to_bytes(2, "big"),
+        LO_PIECE_IDX_TBL: (0).to_bytes(2, "big"),                          # idx_tbl[0] = 0
+        LO_PIECE_TBL: entry,
+        A_BUGGY_DRAW_FLAG: (draw_flag & 0xffff).to_bytes(2, "big"),
+        A_BUGGY_GATE: bytes([gate & 0xff]),
+        A_FG_GATE: bytes([fg_gate & 0xff]),
+        A_SPRITE_SUPPRESS: (suppress & 0xffff).to_bytes(2, "big"),
+        A_COLLISION_LOCK: (lock & 0xffff).to_bytes(2, "big"),
+        A_SPIN_RESET: (spin_reset & 0xffffffff).to_bytes(4, "big"),
+        A_SPIN_COUNTER: (spin_counter & 0xffff).to_bytes(2, "big"),
+    }
+
+
+def _lo_run(label, seed, **kw):
+    regs = {"a6": LO_BUFFER, "_pokes": _lo_pokes(seed, **kw)}
+    diffs, _ = differential(ENTRY_LO, regs, lambda l, b: l.g_draw_buggy_lo(b, LO_BUFFER))
+    assert not diffs, f"{label}\n{report(diffs[:12])}"
+
+
+def test_buggy_lo():
+    _lo_run("draw", 1)
+    _lo_run("gated: draw_flag=0", 2, draw_flag=0)
+    _lo_run("gated: buggy_gate bit7", 3, gate=0x80)
+    _lo_run("gated: fg_gate bit7", 4, fg_gate=0x80)
+    _lo_run("gated: suppress", 5, suppress=1)
+    _lo_run("gated: collision_lock", 6, lock=1)
+    _lo_run("gated: spin_reset", 7, spin_reset=1)
+
+
