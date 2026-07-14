@@ -142,3 +142,24 @@ void g_build_road_geometry(uint8_t *image) {
     build_width_table(image);
     set_horizon(image);
 }
+/* set_screen_offset @0x10300 — pick this frame's road-scroll offset into buf_c. The scroll frame
+ * (0-15) indexes the leg's 16-byte scroll table at buf_a + leg_index*SCROLL_TABLE_STRIDE; the
+ * selected byte times SCROLL_BAND_BYTES (one 40-scanline band) is the buf_c offset that
+ * blit_road_scroll reads from screen_offset. */
+#define SCROLL_TABLE_STRIDE  0x10     /* per-leg scroll table stride in buf_a (leg_index << 4) */
+#define SCROLL_BAND_BYTES    0x1900   /* one scroll step = 40 scanlines; table byte * this */
+
+void g_set_screen_offset(uint8_t *image) {
+    uint32_t buf_a = be32(image + A_buf_a);
+    uint16_t leg = be16(image + A_leg_index);
+    uint16_t frame = be16(image + A_scroll_frame);
+    uint32_t entry = buf_a + sign_ext16((uint16_t)(leg << 4)) + sign_ext16(frame);   /* adda.w x2 */
+    uint8_t step = image[entry];
+    wr16(image + A_screen_offset, (uint16_t)(step * SCROLL_BAND_BYTES));
+}
+
+/* wait_vbl_set_offset @0x102ee — wait 51 vblanks (XBIOS Vsync, hardware only) then fall into
+ * set_screen_offset. The Vsync loop has no image effect. */
+void g_wait_vbl_set_offset(uint8_t *image) {
+    g_set_screen_offset(image);
+}

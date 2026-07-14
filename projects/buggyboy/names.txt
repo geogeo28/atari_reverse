@@ -179,6 +179,8 @@ var 0x18cfe time_subctr
 var 0x18c34 game_over_flag
 var 0x1905c road_edge_flags
 var 0x18d1c road_seg_data
+var 0x18cb2 scroll_frame
+var 0x18d18 screen_offset
 var 0x18c50 course_read_pos
 var 0x18c38 leg_index
 var 0x18c3a dash_marker

@@ -95,6 +95,8 @@ void g_update_highscore(uint8_t *image);      /* rank/shift/insert the new score
 
 /* ---- road perspective (build_road_geometry @ 0x11f4c) ---- */
 void g_build_road_geometry(uint8_t *image);
+void g_set_screen_offset(uint8_t *image);      /* set the buf_c road-scroll offset from the leg's scroll table */
+void g_wait_vbl_set_offset(uint8_t *image);    /* 51x Vsync then set_screen_offset */
 
 /* ---- object sprite blitters (blit_obj_* @ 0x10bdc..) ---- */
 #define OBJ_FULL_CELLS 10       /* full-width fill: 10 * 16-byte writes = one 160-byte scanline */
