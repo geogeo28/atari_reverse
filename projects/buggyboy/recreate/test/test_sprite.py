@@ -153,3 +153,49 @@ def test_buggy_lo():
     _lo_run("gated: spin_reset", 7, spin_reset=1)
 
 
+# ---- draw_buggy_hi @ 0x154c6: lean overlay (OR-blit) with a speed-driven anim counter; A2 dst ----
+
+ENTRY_HI = 0x154c6
+HI_A2 = 0x9000                 # A2 dst base
+HI_BUF_C = 0x30000
+A_LEAN_STATE, A_SPEED_RAW, A_BUGGY_VARIANT = 0x18cc2, 0x18cf8, 0x18cc6
+A_LEAN_ACCUM, A_LEAN_FRAME, A_HI_TBL = 0x18d10, 0x18d12, 0x17554
+
+harness._lib.g_draw_buggy_hi.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+harness._lib.g_draw_buggy_hi.restype = None
+
+
+def _hi_pokes(seed, lean_state=0, speed_raw=0, accum=0, frame=8, variant=0):
+    rng = random.Random(seed)
+    tbl = bytearray(rng.randrange(256) for _ in range(0x20))
+    tbl[0] = 0                                    # rate for speed_raw>>5 == 0
+    tbl[1] = 8                                    # rate for speed_raw>>5 == 1 (accum-step case)
+    tbl[8:16] = bytes([0x00, 0x00, 0x04, 0x06,    # sub0: src=0, dst_byte=4, rows-1=6
+                       0x00, 0x10, 0x06, 0x06])   # sub1: src=0x10, dst_byte=6, rows-1=6
+    return {
+        0x8000: bytes(rng.randrange(256) for _ in range(0x1100)),        # dst noise
+        HI_BUF_C: bytes(rng.randrange(256) for _ in range(0x24000)),     # buf_c incl. +0x23280
+        A_BUF_C: HI_BUF_C.to_bytes(4, "big"),
+        A_HI_TBL: bytes(tbl),
+        A_LEAN_STATE: (lean_state & 0xffff).to_bytes(2, "big"),
+        A_SPEED_RAW: (speed_raw & 0xffff).to_bytes(2, "big"),
+        A_LEAN_ACCUM: (accum & 0xffff).to_bytes(2, "big"),
+        A_LEAN_FRAME: (frame & 0xffff).to_bytes(2, "big"),
+        A_BUGGY_VARIANT: (variant & 0xffff).to_bytes(2, "big"),
+    }
+
+
+def _hi_run(label, seed, **kw):
+    regs = {"a2": HI_A2, "_pokes": _hi_pokes(seed, **kw)}
+    diffs, _ = differential(ENTRY_HI, regs, lambda l, b: l.g_draw_buggy_hi(b, HI_A2))
+    assert not diffs, f"{label}\n{report(diffs[:12])}"
+
+
+def test_buggy_hi():
+    _hi_run("blit (frame preset)", 1)
+    _hi_run("gated: leaning hard", 2, lean_state=0x1e)
+    _hi_run("frame stays 0 -> return", 3, frame=0)
+    _hi_run("accum steps frame 0->8", 4, frame=0, accum=4, speed_raw=0x20)
+
+
+

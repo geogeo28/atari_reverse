@@ -17,6 +17,11 @@
 #define A_spin_state      0x18caa   /* buggy spin state; <0 while spinning after a crash */
 #define A_anim_frame      0x18d0c   /* word byte-offset into fg_anim_tbl for the current frame */
 #define A_wheel_pos       0x18cc0   /* buggy wheel/steer position; selects the body piece list */
+#define A_buggy_variant   0x18cc6   /* buggy-hi lean piece-list variant index # ctx */
+#define A_lean_state      0x18cc2   /* buggy lean state; >= 0x1e skips the hi overlay */
+#define A_speed_raw       0x18cf8   /* raw speed; drives the lean-animation rate */
+#define A_lean_accum      0x18d10   /* lean-anim rate accumulator (advances lean_frame at 8) # ctx */
+#define A_lean_frame      0x18d12   /* lean-anim frame offset into the hi piece table (0,8,0x10) # ctx */
 #define A_buggy_draw_flag 0x18d0e   /* nonzero enables the buggy-body draw # ctx */
 #define A_buggy_gate      0x18eba   /* byte OR'd with fg_gate (0x18ebb); bit7 suppresses the body # ctx */
 #define A_hiscore_pos     0x18c9c   /* 1-based rank the new score reaches in the leg's high-score table */

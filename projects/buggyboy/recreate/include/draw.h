@@ -21,6 +21,9 @@ static inline uint32_t draw_dst(const uint8_t *image, uint32_t off) {
     return draw_buffer(image) + sign_ext16(off);
 }
 
+/* Duplicate a 16-bit pattern into both halves of a longword (68k swap + move.w idiom). */
+static inline uint32_t dup16(uint16_t word) { return ((uint32_t)word << 16) | word; }
+
 /* One 8-byte (16-pixel, 4-plane) transparency-blit cell from four source words A,B,C,D at src:
  * mask = ~(A|B|C) & D shows the background through where the sprite is transparent; planes 0-2
  * take A/B/C, plane 3 takes D's leftover (non-A/B/C) bits. The shared masked-sprite primitive

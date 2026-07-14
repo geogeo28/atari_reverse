@@ -24,9 +24,6 @@
 #define TEXT_MAX_CELLS_M1  0x13    /* draw_text / draw_hud_bar preset cell count-1 */
 #define LAST_HALF_GLYPH    0x2f    /* char2 substitute when the second byte is 0 */
 
-/* Duplicate a 16-bit pattern into both halves of a longword (68k swap + move.w idiom). */
-static uint32_t dup16(uint16_t word) { return ((uint32_t)word << 16) | word; }
-
 /* Blit one character cell's row: (dst & mask) | (ink & plane) for each of the two planes. */
 static void blit_row(uint8_t *image, uint32_t cell, uint32_t mask, uint32_t ink, uint32_t fill_lo, uint32_t fill_hi) {
     wr32(image + cell,     (be32(image + cell)     & mask) | (ink & fill_lo));

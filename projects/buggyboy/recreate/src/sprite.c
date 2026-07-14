@@ -90,3 +90,53 @@ void g_draw_buggy_lo(uint8_t *image, uint32_t buffer) {
                 blit_transp_cell(image, dst + cell * CELL_BYTES, src + cell * CELL_BYTES);
     }
 }
+
+/* draw_buggy_hi @ 0x154c6 — the buggy lean overlay (drawn on top). A2 is the dst base (set by
+ * draw_buggy). Skipped while leaning hard (lean_state >= LEAN_MAX). It advances a lean frame
+ * by accumulating a speed-derived rate: lean_accum += (speed_raw>>13)<<8 | rate_tbl[speed_raw>>5];
+ * at LEAN_ACCUM_STEP it resets and steps lean_frame (wrapping at LEAN_FRAME_WRAP). With a
+ * nonzero frame it OR-blits two sub-sprites from a piece list [src_word, dst_byte, rows_byte];
+ * unlike the body this is additive (no transparency mask) and each source word fills two dest
+ * words. dst = A2 - (dst_byte << 5); src = buf_c + HI_SRC_OFF + src_word; both walk up per row. */
+#define HI_SRC_OFF       0x23280   /* lean-overlay sprite source: buf_c + this */
+#define HI_TBL           0x17554   /* rate bytes at [speed_raw>>5], then lean piece lists */
+#define LEAN_MAX         0x1e      /* lean_state at/above which the overlay is skipped */
+#define LEAN_ACCUM_STEP  8         /* accumulator level that advances the lean frame */
+#define LEAN_FRAME_STEP  8
+#define LEAN_FRAME_WRAP  0x18
+#define HI_SUBSPRITES    2
+#define HI_DST_SHIFT     5         /* dst_byte << 5 subtracted from A2 */
+
+void g_draw_buggy_hi(uint8_t *image, uint32_t dst_base) {
+    if ((int16_t)be16(image + A_lean_state) >= LEAN_MAX) return;
+
+    uint16_t speed_raw = be16(image + A_speed_raw);
+    uint8_t rate = image[HI_TBL + (speed_raw >> 5)];
+    uint16_t accum = (uint16_t)(be16(image + A_lean_accum) + (((speed_raw >> 13) << 8) | rate));
+    uint16_t frame = be16(image + A_lean_frame);
+    if ((int16_t)accum >= LEAN_ACCUM_STEP) {
+        accum = 0;
+        frame = (uint16_t)(frame + LEAN_FRAME_STEP);
+        if ((int16_t)frame >= LEAN_FRAME_WRAP) frame = 0;
+    }
+    wr16(image + A_lean_accum, accum);
+    wr16(image + A_lean_frame, frame);
+    if (frame == 0) return;
+
+    uint32_t src_base = be32(image + A_buf_c) + HI_SRC_OFF;
+    uint32_t piece = HI_TBL + frame + be16(image + A_buggy_variant) * 2;
+    for (int sub = 0; sub < HI_SUBSPRITES; sub++, dst_base += 0x10) {
+        uint32_t src = src_base + sign_ext16(be16(image + piece));
+        uint32_t dst = dst_base - sign_ext16((uint16_t)(image[piece + 2] << HI_DST_SHIFT));
+        int nrows = image[piece + 3] + 1;
+        piece += 4;
+        for (int r = 0; r < nrows; r++, dst -= OBJ_ROW_UP, src -= OBJ_ROW_UP) {
+            uint32_t dup0 = dup16(be16(image + src));
+            wr32(image + dst,     be32(image + dst)     | dup0);
+            wr32(image + dst + 4, be32(image + dst + 4) | dup0);
+            uint32_t dup4 = dup16(be16(image + src + 8));
+            wr32(image + dst + 8,  be32(image + dst + 8)  | dup4);
+            wr32(image + dst + 12, be32(image + dst + 12) | dup4);
+        }
+    }
+}
