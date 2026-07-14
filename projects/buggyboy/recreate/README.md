@@ -119,6 +119,10 @@ functions that fill it (`draw_results_screen`/`update_highscore`) aren't reconst
 fills, panels, static labels and dashboard are structurally real. Like the sound renders, this is a
 listening tool, not part of the differential contract.
 
+`render/atari/` takes this one step further: it **cross-compiles the same cores to 68000** and runs
+them as a GEMDOS `.PRG` under Hatari (real TOS ROM), then checks the on-target framebuffer is
+byte-identical to this host render — see [`render/atari/README.md`](render/atari/README.md).
+
 ## OS trap model
 
 OS-bound code enters TOS via `trap #N`, which the oracle can't route to real TOS. Instead

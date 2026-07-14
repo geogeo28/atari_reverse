@@ -5,6 +5,8 @@ projects/*/out/
 *.pyc
 projects/*/recreate/.venv/
 projects/*/recreate/build/
+projects/*/recreate/render/atari/build/
+projects/*/recreate/render/atari/disk/
 *.so
 *.o
 projects/*/recreate/oracle/musashi/
