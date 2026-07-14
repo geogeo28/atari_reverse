@@ -27,16 +27,9 @@
 #define STATIC_LO   0x10000         /* where STATIC.BIN (relocated PRG data) lands in the image */
 #define STATIC_LEN  0xc000
 #define SCREEN_BYTES 32000
+#define PALETTE_ADDR 0x17fc2        /* the game's results-screen palette (16 ST words), in STATIC.BIN */
 
 static uint8_t image[IMAGE_SIZE];   /* BSS: TOS zeroes it at load */
-
-/* Placeholder 16-colour palette (ST 0x0RGB, 3 bits/channel). RGB is not the game's — the real
- * palette is set by a Setpalette call we haven't reconstructed — but the pixel indices are, so
- * distinct legible hues make the screen's structure readable. Mirrors render_screen.py's PALETTE. */
-static const uint16_t PALETTE[16] = {
-    0x000, 0x777, 0x700, 0x070, 0x007, 0x077, 0x707, 0x770,
-    0x555, 0x740, 0x744, 0x474, 0x447, 0x030, 0x300, 0x333,
-};
 
 extern long Fopen(const char *name, short mode);
 extern long Fread(short handle, long count, void *buf);
@@ -103,7 +96,7 @@ void main(void) {
         Fclose((short)h);
     }
 
-    Setpalette(PALETTE);
+    Setpalette(image + PALETTE_ADDR);   /* the game's own results-screen palette */
     memcpy((void *)Physbase(), image + SCREEN_BASE, SCREEN_BYTES);
     Cconin();                       /* hold the screen until a key is pressed */
 }

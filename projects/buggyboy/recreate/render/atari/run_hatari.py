@@ -23,7 +23,7 @@ sys.path.insert(0, str(REC / "render"))
 
 import tos_probe                                      # noqa: E402  (Hatari + TOS ROM discovery)
 import render_screen                                  # noqa: E402
-from render_screen import _decode_interleaved, SCREEN_BASE, W, H, PALETTE  # noqa: E402
+from render_screen import _decode_interleaved, read_palette, SCREEN_BASE, W, H  # noqa: E402
 from extract_graphics import write_png                # noqa: E402
 
 DISK = HERE / "disk"
@@ -78,17 +78,18 @@ def main():
     prg, host_render, stem = SCREENS[screen]
 
     fb = run(prg)
+    host = host_render()                               # host render: palette source + match check
+
     # The dump is the framebuffer itself; de-interleave from offset 0 (not SCREEN_BASE).
     image = bytearray(SCREEN_BASE) + fb                # pad so SCREEN_BASE indexing works
     rows = _decode_interleaved(image, SCREEN_BASE)
     outdir = REC.parent / "out" / "render"
     outdir.mkdir(parents=True, exist_ok=True)
     png = outdir / f"{stem}_hatari.png"
-    write_png(str(png), W, H, rows, PALETTE)
+    write_png(str(png), W, H, rows, read_palette(host))
     print(f"wrote {png} ({len(fb)} bytes from Hatari)")
 
     # Compare against the host render's framebuffer for an exact-match check.
-    host = host_render()
     host_fb = bytes(host[SCREEN_BASE:SCREEN_BASE + SCREEN_BYTES])
     if host_fb == bytes(fb):
         print("MATCH: on-target framebuffer is byte-identical to the host render")

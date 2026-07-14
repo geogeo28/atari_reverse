@@ -113,12 +113,12 @@ python render/render_screen.py --leg 0              # leg-results screen -> out/
 python render/render_screen.py --screen results     # race-end results screen -> out/render/results_screen_0.png
 ```
 
-Two things are placeholders, by construction: the 16-colour **palette** RGB is invented (the real
-one is set via a `Setpalette` call we haven't reconstructed — pixel *indices* are correct, colours
-are not), and `buf_a`-sourced text (per-leg labels + leg-time digits) renders blank because the
-functions that fill it (`draw_results_screen`/`update_highscore`) aren't reconstructed yet. The
-fills, panels, static labels and dashboard are structurally real. Like the sound renders, this is a
-listening tool, not part of the differential contract.
+Colours are authentic: the game's results-screen palette (16 ST words at `0x17fc2`, the pointer
+`update_highscore` passes to `xbios_setpalette`) is read straight from the image. The one
+remaining gap is `buf_a`-sourced text (a couple of per-leg labels + leg-time digits), which
+renders blank because the functions that fill it (`update_highscore`/`init_leg`) aren't
+reconstructed yet. The fills, panels, labels and dashboard are real. Like the sound renders, this
+is a listening tool, not part of the differential contract.
 
 `render/atari/` takes this one step further: it **cross-compiles the same cores to 68000** and runs
 them as a GEMDOS `.PRG` under Hatari (real TOS ROM), then checks the on-target framebuffer is

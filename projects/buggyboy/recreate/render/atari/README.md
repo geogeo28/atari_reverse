@@ -44,9 +44,10 @@ bash render/atari/run.sh results       # watch it in the Hatari GUI (press a key
 Hatari needs a 4 MiB machine here (`--memsize 4`) because the 1 MiB game image lives in the
 program's BSS. `build/` and `disk/` are gitignored build artifacts.
 
-## Fidelity (same caveats as the host render)
+## Fidelity
 
-The palette RGB is a legible placeholder (the real one is set by a `Setpalette` call not yet
-reconstructed; pixel *indices* are correct), and `buf_a`-sourced text (per-leg labels + leg-time
-digits) renders blank because the functions that fill it aren't reconstructed yet. The fills,
-panels, static labels and dashboard are structurally real.
+Colours are the game's own: `main.c` points `Setpalette` at the results-screen palette already
+present in `STATIC.BIN` (16 ST words at `0x17fc2`, the pointer `update_highscore` passes to
+`xbios_setpalette`). The one remaining gap is `buf_a`-sourced text (a couple of per-leg labels +
+leg-time digits), which renders blank because the functions that fill it aren't reconstructed yet.
+The fills, panels, labels and dashboard are real.

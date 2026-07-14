@@ -57,15 +57,20 @@ PLANES, PLANE_BITS = 4, 16                            # ST low-res: 4 planes int
 ROW_STRIDE = 160                                      # bytes per scanline (must match buggyboy.h)
 W, H = 320, 200
 
-# Placeholder 16-colour palette: the real one is set at runtime via a Setpalette call we haven't
-# reconstructed, so RGB is not authentic — but the pixel *indices* are. Legible, distinct hues so
-# the screen's structure (fills / panels / dashboard) reads clearly.
-PALETTE = [
-    (0, 0, 0), (255, 255, 255), (204, 0, 0), (0, 170, 0),
-    (0, 0, 204), (0, 204, 204), (204, 0, 204), (204, 204, 0),
-    (128, 128, 128), (255, 128, 0), (255, 128, 128), (128, 255, 128),
-    (128, 128, 255), (0, 96, 0), (96, 0, 0), (48, 48, 48),
-]
+# The game's real results-screen palette: 16 ST words (0x0RGB, 3 bits/channel) at this address,
+# passed to xbios_setpalette (A0) by update_highscore. It sits inside the STATIC.BIN region, so
+# the Atari shim points Setpalette straight at it. read_palette() converts it to RGB for the PNG.
+PALETTE_ADDR = 0x17fc2
+
+
+def read_palette(image, addr=PALETTE_ADDR):
+    """16 ST palette words at `addr` -> list of (r,g,b) 0..255 (3-bit channels scaled to 8)."""
+    pal = []
+    for i in range(16):
+        w = struct.unpack_from(">H", image, addr + i * 2)[0]
+        r, g, b = (w >> 8) & 7, (w >> 4) & 7, w & 7
+        pal.append((r * 255 // 7, g * 255 // 7, b * 255 // 7))
+    return pal
 
 
 def _decode_interleaved(image, base):
@@ -150,7 +155,7 @@ def main():
         name = f"leg_results_{leg}.png"
     rows = _decode_interleaved(image, SCREEN_BASE)
     path = outdir / name
-    write_png(str(path), W, H, rows, PALETTE)
+    write_png(str(path), W, H, rows, read_palette(image))
     print(f"wrote {path}")
 
 
