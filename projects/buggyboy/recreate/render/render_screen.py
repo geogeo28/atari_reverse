@@ -13,11 +13,12 @@ contract. It exercises the candidate `libbuggyboy.so` end to end on a real input
      function under test (`g_draw_leg_results`, or `g_draw_results_screen` for --screen results);
   5. de-interleave that 32000-byte Atari low-res framebuffer and write it as a PNG.
 
-Everything drawn from static data or the two data files is real. The one blank is the results
-screen's SCORE/NAME rows: the runtime highscore_table (0x18266) is filled only by the deferred,
-interactive `update_highscore`. See STATUS.md.
+Everything drawn from static data or the two data files is real. `--screen highscore` additionally
+seeds a demo high-score table and runs the verified `g_update_highscore` to rank a player record
+into it before drawing — so the results screen's SCORE/NAME columns fill in (the table itself is
+invented demo data; the ranking/insert is the real reconstructed code).
 
-Usage: python render/render_screen.py [--screen leg|results] [--leg N] [--out DIR]
+Usage: python render/render_screen.py [--screen leg|results|highscore] [--leg N] [--out DIR]
 """
 import ctypes
 import struct
@@ -46,10 +47,28 @@ A_FLIP_IDX, A_PHYSBASE_TBL = 0x18bf2, 0x18bf4
 A_BUF_AUX, A_BUF_A, A_BUF_B, A_BUF_C = 0x18bf8, 0x18c00, 0x18c04, 0x18c08
 A_LEG_INDEX = 0x18c38
 A_HISCORE_POS, A_RESULTS_MODE = 0x18c9c, 0x18c9e
+A_SCORE_BCD, A_HIGHSCORE_TABLE = 0x1824c, 0x18266   # player score record; per-leg table (stride 0x80)
 
 # Demo state for the race-end results screen (must match render/atari/main.c). mode gates the row
 # count + extra block; pos gates the score line; leg selects the per-leg row-2 labels.
 RESULTS_LEG, RESULTS_MODE, RESULTS_POS = 0, 0, 5
+
+# Demo high-score data for the `highscore` screen. The table is invented demo data (the real game
+# builds it over plays); the ranking + insert of the player record is done by the *verified*
+# g_update_highscore. A row is "score\0\0NNN\0" — 6 score digits then a 3-char name (the results
+# screen draws it as two strings, the second starting two bytes past the first's terminator, which
+# fixes the name at 3 chars). HS_ROW = 0xe bytes per row.
+HS_ROW = 0xe
+_HS_NAMES = ("WRD", "SMT", "JON", "CLK", "KHN", "ROS", "NOV", "ABE", "FAL")
+HS_PLAYER = (b"625000\0\0YOU\0").ljust(12, b"\0")[:12]   # 12-byte score+name record at score_bcd
+
+
+def _hs_row(score, name):
+    return (f"{score:06d}".encode() + b"\0\0" + name.encode() + b"\0").ljust(HS_ROW, b"\0")[:HS_ROW]
+
+
+def _demo_hiscore_table():
+    return b"".join(_hs_row((9 - i) * 100000 + 50000, _HS_NAMES[i]) for i in range(9))
 
 SCREEN_BASE = 0x2000                                  # free zeroed region below LOAD_BASE (0x10000)
 PLANES, PLANE_BITS = 4, 16                            # ST low-res: 4 planes interleaved word-by-word
@@ -141,6 +160,23 @@ def render_results_screen(leg=RESULTS_LEG, mode=RESULTS_MODE, pos=RESULTS_POS):
     return image
 
 
+def render_highscore_screen(leg=0):
+    """Populate the leg's high-score table with the *verified* g_update_highscore (it ranks a
+    player record into a seeded demo table), then draw the results screen — so the SCORE/NAME
+    columns fill in. Returns the framebuffer image."""
+    image, buf = _prepared_image({
+        A_LEG_INDEX: leg.to_bytes(2, "big"),
+        A_HIGHSCORE_TABLE + leg * 0x80: _demo_hiscore_table(),
+        A_SCORE_BCD: HS_PLAYER,
+    })
+    for name in ("g_update_highscore", "g_draw_results_screen"):
+        getattr(harness._lib, name).argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+        getattr(harness._lib, name).restype = None
+    harness._lib.g_update_highscore(buf)      # rank + insert the player -> populates highscore_table
+    harness._lib.g_draw_results_screen(buf)
+    return image
+
+
 def main():
     argv = sys.argv[1:]
     screen = argv[argv.index("--screen") + 1] if "--screen" in argv else "leg"
@@ -148,7 +184,10 @@ def main():
     outdir = Path(argv[argv.index("--out") + 1]) if "--out" in argv else ROOT.parent / "out" / "render"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    if screen == "results":
+    if screen == "highscore":
+        image = render_highscore_screen(leg)
+        name = f"highscore_screen_{leg}.png"
+    elif screen == "results":
         image = render_results_screen(leg)
         name = f"results_screen_{leg}.png"
     else:
