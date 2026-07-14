@@ -29,8 +29,9 @@ run.sh      bootstrap (re-import — wipes names) ; reapply.sh  apply names.txt 
   space) → `input_state`. Physics: input → `engine_rpm` → `speed`; steering → `road_curve`.
 - **COURSES.DAT** — *not* a script: road-slice **bitmap** data, streamed 8 bytes at a time
   through a `0x2000` circular buffer and shifted to draw the curving road. → `graphics.md`.
-- **GRAPHICS.GRA** — RLE-compressed (`0x1234`/`0x5678` runs) → 8× 320×200 4-plane screens
-  (logo, buggies, scenery, HUD, font). Extracted to `out/gfx/` with palette `0x7f9e`. →
+- **GRAPHICS.GRA** — a 0xd00-byte sprite table + RLE-compressed (`0x1234`/`0x5678` runs) →
+  8× 320×200 4-plane sprite atlases (logo, buggies, scenery, HUD, font). Extracted to
+  `out/gfx/` with palette `0x7f9e` (skip `0xd00` to clear the leading table). →
   `graphics.md`.
 - **Course-event engine** — an offset **jump table at `0x11aa2`** (129 entries) dispatches
   course-script opcodes → `evt_flag_gate` / `evt_collision` / `evt_score_msg` → `add_score`
@@ -44,7 +45,7 @@ run.sh      bootstrap (re-import — wipes names) ; reapply.sh  apply names.txt 
 bash reapply.sh    # names.txt -> ghidra_proj + decomp.c (fast)
 bash run.sh        # full re-import + analysis (only if starting over; wipes names)
 python3 ../../tools/extract_graphics.py bin/GRAPHICS.GRA out/gfx \
-        --pal-file bin/BUGGYBOY.PRG --pal-off 0x7f9e     # colour sprites
+        --pal-file bin/BUGGYBOY.PRG --pal-off 0x7f9e --skip 0xd00   # colour sprites
 ```
 
 ## Open threads (optional)

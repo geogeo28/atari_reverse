@@ -13,7 +13,10 @@ A 16-colour ST palette (16 words, 0x0RGB, 3 bits/channel) can be supplied via
 --pal-file/--pal-off (offset into e.g. BUGGYBOY.PRG); without it, colour index
 0..15 maps to greyscale.
 
-Usage: python3 extract_graphics.py GRAPHICS.GRA OUTDIR [--pal-file F --pal-off 0xNNNN]
+Some files prefix the RLE stream with a raw header/sprite table; --skip 0xNNNN
+drops that many leading bytes before decoding (BuggyBoy: 0xd00 = a 3328-byte sprite table).
+
+Usage: python3 extract_graphics.py GRAPHICS.GRA OUTDIR [--pal-file F --pal-off 0xNNNN] [--skip 0xNNNN]
 """
 import struct
 import sys
@@ -110,11 +113,15 @@ def main():
         po = int(sys.argv[sys.argv.index("--pal-off") + 1], 0)
         pal = load_palette(pf, po)
         print("palette from %s @ 0x%x" % (pf, po))
+    skip = int(sys.argv[sys.argv.index("--skip") + 1], 0) if "--skip" in sys.argv else 0
     d = open(src, "rb").read()
-    dec = rle_decode(d)
+    dec = bytearray(rle_decode(d[skip:]))       # --skip drops a leading header/sprite table
+    tail = len(dec) % SCREEN_BYTES
+    print("compressed %d -> decompressed %d bytes = %d full screens (+%d B); skip=0x%x"
+          % (len(d), len(dec), len(dec) // SCREEN_BYTES, tail, skip))
+    if tail:
+        dec += b"\x00" * (SCREEN_BYTES - tail)   # pad a final partial screen so it renders
     nscreens = len(dec) // SCREEN_BYTES
-    print("compressed %d -> decompressed %d bytes = %d full screens (+%d B)"
-          % (len(d), len(dec), nscreens, len(dec) % SCREEN_BYTES))
     import os
     os.makedirs(outdir, exist_ok=True)
     montage = []

@@ -31,8 +31,13 @@ lets you extract a game's art to PNG. Reference tool: `tools/extract_graphics.py
 
 ```bash
 python3 tools/extract_graphics.py bin/GRAPHICS.GRA out/gfx \
-  --pal-file bin/GAME.PRG --pal-off 0x<palette-file-offset>
+  --pal-file bin/GAME.PRG --pal-off 0x<palette-file-offset> [--skip 0x<header-bytes>]
 ```
+
+`--skip` drops a raw header/sprite table that some files carry *before* the RLE stream —
+read the unpacker to find it (see below). Decoding without the skip prepends that table as
+literals and shifts every screen; the tell-tale is a decompressed size that isn't a clean
+multiple of the screen size.
 
 ## Compression (RLE is common)
 
@@ -44,7 +49,13 @@ code (it reads a stream, writes runs) and mirror its rules. BuggyBoy's `GRAPHICS
 - `0x1234 0x1234 0x1234` → end of stream; anything else → literal word
 
 That decompressed 182 KB → **8× 320×200 screens** (logo, sprites, scenery, HUD, font).
-Tables of small `0x1234`-delimited records = individual sprites/tiles.
+The file opens with a **0xd00-byte (3328) raw sprite table** before the RLE stream — the
+unpacker (`unpack_graphics` @ `0x10620`) pre-copies it (416 records × 8 B) into a work
+buffer, then decompresses the stream that follows. Pass `--skip 0xd00` to line up on it.
+These 8 screens are **sprite/tile atlases** (dense source art the game composites and
+scales at runtime), not finished framebuffers — expect e.g. the intro "LEG"/digit text at
+several zoom sizes packed into one atlas. Tables of small `0x1234`-delimited records =
+individual sprites/tiles.
 
 ## Masked sprites
 
