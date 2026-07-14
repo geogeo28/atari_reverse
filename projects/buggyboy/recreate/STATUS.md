@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 73/91.**
+**Verified: 74/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -30,7 +30,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x102ee` | `wait_vbl_set_offset` | 18 | ✅ verified | 51x Vsync (hardware) then set_screen_offset body |
 | `0x10300` | `set_screen_offset` | 38 | ✅ verified | leg 0-4 x frame 0-15 (scroll-table byte * 0x1900 -> screen_offset) |
 | `0x10326` | `blit_road_scroll` | 340 | ✅ verified | hscroll sweep (shift/coarse/edge) + delta fuzz; rol.l fine-scroll + wrap seam + top fill |
-| `0x1047a` | `init_scoretable` | 62 |  |  |
+| `0x1047a` | `init_scoretable` | 62 | ✅ verified | 6-seed noise + poison (5 legs x 9 default rows from A_default_scores) |
 | `0x104b8` | `init_leg` | 360 |  |  |
 | `0x10620` | `unpack_graphics` | 364 | ✅ verified | run-to-rts (decode + deinterleave + sprite tables) |
 | `0x1078c` | `build_sprite_shifts` | 102 | ✅ verified | fuzz counts 0/3/0xcf (asr.l shifts) |

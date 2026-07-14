@@ -92,6 +92,7 @@ void g_draw_panel3(uint8_t *image);
 void g_draw_panel5(uint8_t *image);
 void g_draw_results_screen(uint8_t *image);   /* race-end results screen orchestrator; no args */
 void g_update_highscore(uint8_t *image);      /* rank/shift/insert the new score; checkpoint-verified */
+void g_init_scoretable(uint8_t *image);       /* write the default high-score table (5 legs x 9 rows) */
 
 /* ---- road perspective (build_road_geometry @ 0x11f4c) ---- */
 void g_build_road_geometry(uint8_t *image);

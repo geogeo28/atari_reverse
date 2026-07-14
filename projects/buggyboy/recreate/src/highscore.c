@@ -1,4 +1,5 @@
-/* highscore.c — high-score table update (update_highscore @ 0x1238e).
+/* highscore.c — high-score table: default init (init_scoretable @ 0x1047a) + update
+ * (update_highscore @ 0x1238e).
  *
  * Verified to a CHECKPOINT: this reconstructs the deterministic prefix — the ranking, the row
  * shift, and the score/name insert (the part that populates highscore_table, so the results
@@ -80,4 +81,33 @@ void g_update_highscore(uint8_t *image) {
     wr16(image + A_countdown_sub, 0);
     shift_rows_down(image, table, 8 - rank0);          /* 0 iters when inserting at the last row */
     memcpy(image + row, image + A_score_bcd, RECORD_BYTES);
+}
+
+/* init_scoretable @0x1047a — write the default high-score table (5 legs x 9 rows). Each 0xe-byte
+ * row is "/" + two default score digits (from A_default_scores) + "000\0\0" + "...\0" + a rank
+ * character ('1'..'9') + \0, giving scores 40000..10000 with a "..." placeholder name; a 2-byte
+ * separator follows each leg's 9 rows (HIGHSCORE_LEG_STRIDE = 9*0xe + 2). No args. */
+#define SCORETABLE_LEGS  5         /* d4 = 4 */
+#define SCORE_PAD00      0x3030    /* the "00" that follows the '0' after the two default digits */
+#define NAME_PLACEHOLDER 0x2e2e2e00u   /* "...\0" default name */
+#define RANK_CHAR_FIRST  '1'
+
+void g_init_scoretable(uint8_t *image) {
+    uint32_t dst = A_highscore_table;
+    for (int leg = 0; leg < SCORETABLE_LEGS; leg++) {
+        uint32_t digits = A_default_scores;
+        uint8_t rank = RANK_CHAR_FIRST;
+        for (int row = 0; row < HIGHSCORE_ROWS; row++) {
+            image[dst++] = '/';
+            image[dst++] = image[digits++];        /* two default score digits */
+            image[dst++] = image[digits++];
+            image[dst++] = '0';
+            wr16(image + dst, SCORE_PAD00); dst += 2;
+            wr16(image + dst, 0);           dst += 2;
+            wr32(image + dst, NAME_PLACEHOLDER); dst += 4;
+            image[dst++] = rank++;
+            image[dst++] = 0;
+        }
+        wr16(image + dst, 0); dst += 2;            /* per-leg separator */
+    }
 }

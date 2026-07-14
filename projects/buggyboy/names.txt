@@ -124,6 +124,7 @@ var 0x1b446 snd_period_table
 var 0x1b77f snd_mod_table
 var 0x1b07c EGFLAG
 var 0x18266 highscore_table
+var 0x184e6 default_scores
 
 # ==== hardware / system ====
 var 0xffff8200 VIDEO_BASE_HI

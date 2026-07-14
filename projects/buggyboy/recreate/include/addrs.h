@@ -18,6 +18,7 @@
 #define HIGHSCORE_ROWS    9         /* rows per leg table */
 #define HIGHSCORE_ROW     0xe       /* bytes per row */
 #define HIGHSCORE_LEG_STRIDE 0x80   /* bytes per leg's table (leg_index << 7) */
+#define A_default_scores  0x184e6   /* 9 x 2-digit default high scores "403938353025201510" */
 
 /* ---- gameplay state ---- */
 #define A_game_over_flag  0x18c34   /* tst.w'd at add_score entry */
