@@ -87,7 +87,14 @@ void main(void) {
     wr16(image + A_leg_index, 0);
 
     g_unpack_graphics(image);       /* decode GRAPHICS.GRA -> buf_c tables (verified) */
+#ifdef DEMO_RESULTS
+    /* Demo state for the results screen (must match render_screen.py RESULTS_MODE/RESULTS_POS). */
+    wr16(image + A_results_mode, 0);
+    wr16(image + A_hiscore_pos, 5);
+    g_draw_results_screen(image);   /* paint the race-end results screen (verified) */
+#else
     g_draw_leg_results(image);      /* paint the leg-results screen (verified) */
+#endif
 
     /* Dump the painted framebuffer to the drive so a headless run can be verified off-target. */
     long h = Fcreate("SCREEN.BIN", 0);

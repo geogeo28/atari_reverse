@@ -1,7 +1,17 @@
 #!/bin/bash
-# Build the leg-results demo .PRG with the m68k-elf toolchain and stage a drive for Hatari.
-#   build.sh        -> render/atari/build/DEMO.PRG + render/atari/disk/{DEMO.PRG,STATIC.BIN,GRAPHICS.GRA}
+# Build a demo .PRG with the m68k-elf toolchain and stage a drive for Hatari.
+#   build.sh [leg|results]   (default: leg)
+#     leg     -> disk/DEMO.PRG     runs g_draw_leg_results
+#     results -> disk/RESULTS.PRG  runs g_draw_results_screen
+# Both stage disk/{STATIC.BIN,GRAPHICS.GRA}. build/ and disk/ are gitignored.
 set -euo pipefail
+
+SCREEN="${1:-leg}"
+case "$SCREEN" in
+  leg)     DEF="";              PRG="DEMO.PRG" ;;
+  results) DEF="-DDEMO_RESULTS"; PRG="RESULTS.PRG" ;;
+  *) echo "usage: build.sh [leg|results]"; exit 2 ;;
+esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REC="$(cd "$HERE/../.." && pwd)"          # recreate/
@@ -14,8 +24,8 @@ CFLAGS="-m68000 -Os -ffreestanding -fno-jump-tables -fomit-frame-pointer -nostdl
         -I$REC/include -I$HERE/shim_include -Wall"
 CORES="$REC/src/results.c $REC/src/screen.c $REC/src/text.c $REC/src/graphics.c"
 
-echo ">> compile + link (base 0, keep relocs)"
-$CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
+echo ">> compile + link $SCREEN (base 0, keep relocs)"
+$CC $CFLAGS $DEF -T "$HERE/tos.ld" -Wl,--emit-relocs \
     "$HERE/os.s" "$HERE/main.c" $CORES -lgcc -o "$BUILD/demo.elf"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).
@@ -26,11 +36,11 @@ echo ">> objcopy -> flat binary"
 m68k-elf-objcopy -O binary "$BUILD/demo.elf" "$BUILD/demo.bin"
 
 echo ">> wrap -> GEMDOS .PRG"
-python3 "$HERE/mkprg.py" "$BUILD/demo.elf" "$BUILD/demo.bin" "$BUILD/DEMO.PRG"
+python3 "$HERE/mkprg.py" "$BUILD/demo.elf" "$BUILD/demo.bin" "$BUILD/$PRG"
 
 echo ">> stage drive"
 PY="$REC/.venv/bin/python"; [ -x "$PY" ] || PY=python3
-cp "$BUILD/DEMO.PRG" "$DISK/DEMO.PRG"
+cp "$BUILD/$PRG" "$DISK/$PRG"
 "$PY" "$HERE/gen_static.py" "$BIN/BUGGYBOY.PRG" "$DISK/STATIC.BIN"
 cp "$BIN/GRAPHICS.GRA" "$DISK/GRAPHICS.GRA"
 ls -l "$DISK"

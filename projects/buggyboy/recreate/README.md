@@ -109,7 +109,8 @@ layout, calls the verified `g_unpack_graphics` to decode the graphic tables into
 `../out/render/` (a gitignored artifact directory):
 
 ```bash
-python render/render_screen.py --leg 0          # leg-results screen -> out/render/leg_results_0.png
+python render/render_screen.py --leg 0              # leg-results screen -> out/render/leg_results_0.png
+python render/render_screen.py --screen results     # race-end results screen -> out/render/results_screen_0.png
 ```
 
 Two things are placeholders, by construction: the 16-colour **palette** RGB is invented (the real

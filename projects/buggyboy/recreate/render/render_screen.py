@@ -46,6 +46,11 @@ GFX_LOAD_OFFSET = 0xc350                              # GRAPHICS.GRA lands at bu
 A_FLIP_IDX, A_PHYSBASE_TBL = 0x18bf2, 0x18bf4
 A_BUF_AUX, A_BUF_A, A_BUF_B, A_BUF_C = 0x18bf8, 0x18c00, 0x18c04, 0x18c08
 A_LEG_INDEX = 0x18c38
+A_HISCORE_POS, A_RESULTS_MODE = 0x18c9c, 0x18c9e
+
+# Demo state for the race-end results screen (must match render/atari/main.c). mode gates the row
+# count + extra block; pos gates the score line; leg selects the per-leg row-2 labels.
+RESULTS_LEG, RESULTS_MODE, RESULTS_POS = 0, 0, 5
 
 SCREEN_BASE = 0x2000                                  # free zeroed region below LOAD_BASE (0x10000)
 PLANES, PLANE_BITS = 4, 16                            # ST low-res: 4 planes interleaved word-by-word
@@ -86,8 +91,9 @@ def _decode_interleaved(image, base):
     return rows
 
 
-def render_leg_results(leg):
-    """Build the input image, run unpack + draw_leg_results, return the framebuffer image."""
+def _prepared_image(state):
+    """Fresh image with the buffer layout + graphics staged, unpack_graphics run, and `state`
+    (extra {addr: bytes} — leg_index / mode / pos) applied. Returns (image, ctypes buf)."""
     graphics = (harness.PRG.parent / "GRAPHICS.GRA").read_bytes()
     pokes = {
         A_BUF_AUX: BUF_AUX.to_bytes(4, "big"),
@@ -97,30 +103,53 @@ def render_leg_results(leg):
         BUF_C + GFX_LOAD_OFFSET: graphics,
         A_FLIP_IDX: (0).to_bytes(2, "big"),
         A_PHYSBASE_TBL: SCREEN_BASE.to_bytes(4, "big"),
-        A_LEG_INDEX: leg.to_bytes(2, "big"),
+        **state,
     }
     image = harness.make_image(pokes)
     buf = (ctypes.c_uint8 * harness.IMAGE_SIZE).from_buffer(image)
-
     harness._lib.g_unpack_graphics.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
     harness._lib.g_unpack_graphics.restype = None
+    harness._lib.g_unpack_graphics(buf)               # decode GRAPHICS.GRA -> buf_c tables
+    return image, buf
+
+
+def render_leg_results(leg=0):
+    """Build the input image, run unpack + draw_leg_results, return the framebuffer image."""
+    image, buf = _prepared_image({A_LEG_INDEX: leg.to_bytes(2, "big")})
     harness._lib.g_draw_leg_results.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
     harness._lib.g_draw_leg_results.restype = None
+    harness._lib.g_draw_leg_results(buf)
+    return image
 
-    harness._lib.g_unpack_graphics(buf)               # decode GRAPHICS.GRA -> buf_c tables
-    harness._lib.g_draw_leg_results(buf)              # paint the leg-results screen
+
+def render_results_screen(leg=RESULTS_LEG, mode=RESULTS_MODE, pos=RESULTS_POS):
+    """Build the input image, run unpack + draw_results_screen, return the framebuffer image."""
+    image, buf = _prepared_image({
+        A_LEG_INDEX: leg.to_bytes(2, "big"),
+        A_HISCORE_POS: pos.to_bytes(2, "big"),
+        A_RESULTS_MODE: mode.to_bytes(2, "big"),
+    })
+    harness._lib.g_draw_results_screen.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+    harness._lib.g_draw_results_screen.restype = None
+    harness._lib.g_draw_results_screen(buf)
     return image
 
 
 def main():
     argv = sys.argv[1:]
+    screen = argv[argv.index("--screen") + 1] if "--screen" in argv else "leg"
     leg = int(argv[argv.index("--leg") + 1]) if "--leg" in argv else 0
     outdir = Path(argv[argv.index("--out") + 1]) if "--out" in argv else ROOT.parent / "out" / "render"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    image = render_leg_results(leg)
+    if screen == "results":
+        image = render_results_screen(leg)
+        name = f"results_screen_{leg}.png"
+    else:
+        image = render_leg_results(leg)
+        name = f"leg_results_{leg}.png"
     rows = _decode_interleaved(image, SCREEN_BASE)
-    path = outdir / f"leg_results_{leg}.png"
+    path = outdir / name
     write_png(str(path), W, H, rows, PALETTE)
     print(f"wrote {path}")
 

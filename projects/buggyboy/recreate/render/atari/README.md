@@ -6,6 +6,9 @@ with a real TOS ROM. A headless run then proves the on-target framebuffer is **b
 to the host render — so the reconstructed C is correct not just against the Musashi oracle, but
 compiled and executed on an independent 68000.
 
+Two screens are wired up (selected at build time): `leg` → `g_draw_leg_results`, `results` →
+`g_draw_results_screen` (the race-end high-score table).
+
 ## Why this works with unmodified cores
 
 The cores take the flat game image as a pointer argument and only ever compute `image + offset`
@@ -19,7 +22,7 @@ compiler/`libgcc` emit for their *own* code and data.
 
 | file | role |
 |------|------|
-| `main.c`        | Atari shim: build the image in BSS, load `STATIC.BIN` + `GRAPHICS.GRA`, set the buffer pointers, call `g_unpack_graphics` then `g_draw_leg_results`, dump the framebuffer to `C:\SCREEN.BIN`, blit to `Physbase()`, wait for a key. Also the freestanding `memcpy/memmove/memset`. |
+| `main.c`        | Atari shim: build the image in BSS, load `STATIC.BIN` + `GRAPHICS.GRA`, set the buffer pointers, call `g_unpack_graphics` then the selected screen (`g_draw_leg_results`, or `g_draw_results_screen` under `-DDEMO_RESULTS`), dump the framebuffer to `C:\SCREEN.BIN`, blit to `Physbase()`, wait for a key. Also the freestanding `memcpy/memmove/memset`. |
 | `os.s`          | `_start` + GEMDOS/XBIOS trap wrappers (Fopen/Fread/Fclose/Fcreate/Fwrite, Cconin, Physbase, Setpalette). |
 | `tos.ld`        | link at base 0 as one tight text+data blob; the 1 MiB image is `.bss` (TOS zeroes it). |
 | `mkprg.py`      | wrap the linked ELF into a GEMDOS `.PRG` — header + flat binary + a relocation table built from the ELF's `R_68K_32` fixups (`ld --emit-relocs`). |
@@ -32,10 +35,10 @@ compiler/`libgcc` emit for their *own* code and data.
 ## Use
 
 ```bash
-brew install m68k-elf-gcc          # one-time: the cross toolchain (+ binutils)
-bash render/atari/build.sh         # -> render/atari/{build/DEMO.PRG, disk/}
-python render/atari/run_hatari.py  # headless verify: prints MATCH + writes *_hatari.png
-bash render/atari/run.sh           # watch it in the Hatari GUI (press a key to exit)
+brew install m68k-elf-gcc              # one-time: the cross toolchain (+ binutils)
+bash render/atari/build.sh results     # -> build/RESULTS.PRG + disk/  (or: build.sh leg)
+python render/atari/run_hatari.py results   # headless verify: prints MATCH + writes *_hatari.png
+bash render/atari/run.sh results       # watch it in the Hatari GUI (press a key to exit)
 ```
 
 Hatari needs a 4 MiB machine here (`--memsize 4`) because the 1 MiB game image lives in the
