@@ -242,10 +242,17 @@ fn 0x1b086 REFRESH
 
 # ==== HUD / misc ====
 var 0x1823c hud_speed_txt
+var 0x18246 hud_time_txt
 var 0x18d7a sprite_list
 var 0x18c46 last_key
 var 0x18c4e abort_flag
 var 0x18c7c dsp_toggle
+var 0x18c7e dsp_variant_idx
+var 0x18d06 dsp_color_scroll
+var 0x18d02 gauge_blink
+var 0x18d04 gauge_blink_on
+var 0x18c4c hud_crash_timer
+var 0x1854c hud_dsp_tbl
 var 0x1b040 trace_pc
 
 # ==== comments ====

@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 81/91.**
+**Verified: 82/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -95,7 +95,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x152ac` | `draw_buggy` | 334 | ✅ verified | lean/crash/skid position -> body (wheels or inline 5-cell blit) + hi/lo overlays |
 | `0x153fa` | `draw_buggy_lo` | 204 | ✅ verified | A6=buffer; gated 2-sub-sprite piece-list body |
 | `0x154c6` | `draw_buggy_hi` | 152 | ✅ verified | A2=dst; lean overlay OR-blit + speed-anim counter |
-| `0x1555e` | `draw_hud` | 684 |  |  |
+| `0x1555e` | `draw_hud` | 684 | ✅ verified | 8 phases: speed/time digits, dsp sprite, flag bars, colour bars, fuel/small gauge, main gauge cluster (chained A0/A3), crash timer |
 | `0x1580a` | `add_score` | 104 | ✅ verified | 2000-seed fuzz + edge cases |
 | `0x15872` | `draw_crash_fx` | 392 | ✅ verified | timer/score/rollover/abort branches x bars 0-5; add_score + num + chained hud bars |
 | `0x159fa` | `draw_text` | 2 | ✅ verified | count-preset entry alias of `draw_text_row` |

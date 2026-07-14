@@ -49,6 +49,13 @@ void g_draw_hud_gauge0(uint8_t *image, uint32_t dst, uint32_t color_idx,
                        uint32_t cells_m1, uint32_t str_ptr);
 void g_draw_hud_bar(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi, uint32_t str_ptr);
 uint32_t draw_hud_bar_chain(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi, uint32_t str_ptr);
+/* Chain variants used by draw_hud: report the advanced dst (A0) via *end_dst and return the
+ * advanced string cursor (A3), so consecutive gauge0/bar draws thread both registers. */
+uint32_t draw_hud_gauge0_chain(uint8_t *image, uint32_t dst, uint32_t color_idx, uint32_t cells_m1,
+                               uint32_t str_ptr, uint32_t *end_dst);
+uint32_t draw_hud_bar_chain_dst(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi,
+                                uint32_t str_ptr, uint32_t *end_dst);
+void g_draw_hud(uint8_t *image);   /* full HUD: speed/time digits, dashboard sprite, gauges, crash fx */
 /* draw_text returning the advanced A3 (past the 0-pair terminator), for callers chaining labels. */
 uint32_t draw_text_chain(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr);
 

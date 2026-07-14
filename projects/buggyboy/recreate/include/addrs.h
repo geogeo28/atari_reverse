@@ -20,6 +20,16 @@
 #define A_crash_bars      0x18d00   /* number of gauge bars to draw (0-5) # ctx */
 #define A_crash_bar_yoff  0x18c76   /* gauge-bar vertical offset (0 active, 0x18 idle) # ctx */
 
+/* ---- HUD renderer (draw_hud @ 0x1555e) ---- */
+#define A_hud_speed_txt    0x1823c  /* HUD speedometer string: prefix word ("/N") + 2 digits */
+#define A_hud_time_txt     0x18246  /* HUD time string; leading-blank 2 digits at +1, +2 */
+#define A_dsp_toggle       0x18c7c  /* nonzero suppresses the dashboard-variant sprite blit */
+#define A_dsp_variant_idx  0x18c7e  /* byte offset into the dashboard-variant sprite record table */
+#define A_dsp_color_scroll 0x18d06  /* offset added to the colour-bar colour-index cursor */
+#define A_gauge_blink      0x18d02  /* small-gauge blink phase (decrements; bit1 gates the draw) */
+#define A_gauge_blink_on   0x18d04  /* nonzero enables the small-gauge bar under the blink */
+#define A_hud_crash_timer  0x18c4c  /* crash-fx arm timer: <0 runs draw_crash_fx, >0 decays by 2 */
+
 /* ---- high-score / results screen (update_highscore @ 0x1238e) ---- */
 #define A_countdown_timer 0x18262   /* name-entry countdown value (starts 30); rendered as "TIME nn" */
 #define A_countdown_sub   0x18264   /* per-frame sub-counter; decrements countdown_timer every 0x11 frames */

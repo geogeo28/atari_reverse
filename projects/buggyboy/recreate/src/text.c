@@ -107,6 +107,23 @@ uint32_t draw_hud_bar_chain(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint
     return text_body_ex(image, dst, fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1, 0);
 }
 
+/* draw_hud chains BOTH the dst (A0) and the string cursor (A3) across its gauge0/bar sub-draws,
+ * exactly as the 68000 leaves those registers at each `rts`. These variants report the advanced
+ * A0 via *end_dst (one cell past the last drawn) and return the advanced A3. draw_hud_gauge0
+ * derives its fill from the colour index and inherits the caller's cell budget (D5); draw_hud_bar
+ * takes the fill directly (D2/D3) and presets the budget to 0x13. */
+uint32_t draw_hud_gauge0_chain(uint8_t *image, uint32_t dst, uint32_t color_idx, uint32_t cells_m1,
+                               uint32_t str_ptr, uint32_t *end_dst) {
+    uint32_t fill_lo, fill_hi;
+    color_fill(image, color_idx, 0xf, &fill_lo, &fill_hi);
+    return text_body_ex(image, dst, fill_lo, fill_hi, str_ptr, (uint16_t)cells_m1, end_dst);
+}
+
+uint32_t draw_hud_bar_chain_dst(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi,
+                                uint32_t str_ptr, uint32_t *end_dst) {
+    return text_body_ex(image, dst, fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1, end_dst);
+}
+
 /* --- number blitter (draw_num @ 0x15a86, draw_num_thunk @ 0x15a84) ---
  * Unlike the text body, digits are single string bytes and their sprites are pre-rendered
  * (by unpack_graphics) into buf_c at NUM_GLYPH_BUF_OFF, one 15-row sprite per digit laid out
