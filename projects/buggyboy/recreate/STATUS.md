@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 79/91.**
+**Verified: 80/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -97,7 +97,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x154c6` | `draw_buggy_hi` | 152 | ✅ verified | A2=dst; lean overlay OR-blit + speed-anim counter |
 | `0x1555e` | `draw_hud` | 684 |  |  |
 | `0x1580a` | `add_score` | 104 | ✅ verified | 2000-seed fuzz + edge cases |
-| `0x15872` | `draw_crash_fx` | 392 |  |  |
+| `0x15872` | `draw_crash_fx` | 392 | ✅ verified | timer/score/rollover/abort branches x bars 0-5; add_score + num + chained hud bars |
 | `0x159fa` | `draw_text` | 2 | ✅ verified | count-preset entry alias of `draw_text_row` |
 | `0x159fc` | `draw_text_row` | 12 | ✅ verified | fuzz char pairs x colour x flip (shared body) |
 | `0x15a08` | `draw_hud_gauge0` | 28 | ✅ verified | fuzz: absolute-A0 entry (skips D0->buffer) |

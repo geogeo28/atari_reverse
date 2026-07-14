@@ -68,7 +68,7 @@ fn 0x15a08 draw_hud_gauge0          # ctx
 fn 0x15a24 draw_hud_bar             # ctx
 fn 0x15a84 draw_num_thunk
 fn 0x15a86 draw_num
-fn 0x15872 draw_crash_fx            # ctx
+fn 0x15872 draw_crash_fx
 fn 0x12e38 clear_screen
 fn 0x12e56 fill_screen
 fn 0x12e5a fill_words
@@ -228,6 +228,14 @@ var 0x18eb4 obj_active
 var 0x17388 score_delta_bonus
 var 0x17370 score_delta_gate
 var 0x17376 score_delta_msg
+var 0x1737c score_delta_time
+var 0x17382 score_delta_roll
+var 0x17f5a crash_color_tbl
+var 0x18c7a crash_active
+var 0x18c78 crash_frame
+var 0x18c4a crash_lap
+var 0x18d00 crash_bars
+var 0x18c76 crash_bar_yoff
 var 0x1b07a MZFLAG
 var 0x1b07b FXFLAG
 fn 0x1b086 REFRESH

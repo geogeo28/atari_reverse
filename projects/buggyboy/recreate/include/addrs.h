@@ -11,6 +11,15 @@
 #define A_score_counter   0x18250   /* last 2 ASCII score digits (contiguous w/ score_bcd) */
 #define A_score_str       0x18230   /* HUD score string; live digits at [4..9] */
 
+/* ---- crash / game-over HUD effect (draw_crash_fx @ 0x15872) ---- */
+#define A_crash_active    0x18c7a   /* gate: 0 -> set abort_flag and bail */
+#define A_abort_flag      0x18c4e   /* game-over abort countdown (0xffff / 0x33, decays by 2) */
+#define A_crash_frame     0x18c78   /* crash-effect frame counter (drives the colour cycle) */
+#define A_time_left       0x18cfc   /* bonus time remaining; drained by the crash effect */
+#define A_crash_lap       0x18c4a   /* remaining bonus units (rendered as a digit) # ctx */
+#define A_crash_bars      0x18d00   /* number of gauge bars to draw (0-5) # ctx */
+#define A_crash_bar_yoff  0x18c76   /* gauge-bar vertical offset (0 active, 0x18 idle) # ctx */
+
 /* ---- high-score / results screen (update_highscore @ 0x1238e) ---- */
 #define A_countdown_timer 0x18262   /* name-entry countdown value (starts 30); rendered as "TIME nn" */
 #define A_countdown_sub   0x18264   /* per-frame sub-counter; decrements countdown_timer every 0x11 frames */

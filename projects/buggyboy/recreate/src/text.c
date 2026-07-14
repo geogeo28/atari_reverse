@@ -101,6 +101,12 @@ void g_draw_hud_bar(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fil
     text_body(image, dst, fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1);
 }
 
+/* draw_hud_bar returning the advanced A3 (past this bar's 0-terminated substring), so a caller
+ * drawing consecutive bars from one string buffer chains them as the 68000 does (a3 persists). */
+uint32_t draw_hud_bar_chain(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi, uint32_t str_ptr) {
+    return text_body_ex(image, dst, fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1, 0);
+}
+
 /* --- number blitter (draw_num @ 0x15a86, draw_num_thunk @ 0x15a84) ---
  * Unlike the text body, digits are single string bytes and their sprites are pre-rendered
  * (by unpack_graphics) into buf_c at NUM_GLYPH_BUF_OFF, one 15-row sprite per digit laid out

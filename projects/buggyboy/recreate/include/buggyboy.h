@@ -48,6 +48,7 @@ void g_draw_text_row(uint8_t *image, uint32_t dst_off, uint32_t color_idx,
 void g_draw_hud_gauge0(uint8_t *image, uint32_t dst, uint32_t color_idx,
                        uint32_t cells_m1, uint32_t str_ptr);
 void g_draw_hud_bar(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi, uint32_t str_ptr);
+uint32_t draw_hud_bar_chain(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi, uint32_t str_ptr);
 /* draw_text returning the advanced A3 (past the 0-pair terminator), for callers chaining labels. */
 uint32_t draw_text_chain(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr);
 
@@ -58,6 +59,8 @@ void g_draw_num(uint8_t *image, uint32_t dst_off, uint32_t color_idx,
                 uint32_t cells_m1, uint32_t str_ptr);       /* D0, D1, D5, A3 */
 void g_draw_num_thunk(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr);
 
+/* ---- crash / game-over HUD effect (hud.c) ---- A6 = draw buffer. */
+void g_draw_crash_fx(uint8_t *image, uint32_t buffer);
 
 /* ---- results-screen block blitters (draw_result_row/col @ 0x15016..) ----
  * Both copy a source block from buf_c (A1 offset) to buffer[flip_idx] + D0; no colour index.
