@@ -44,7 +44,7 @@ def run(prg, timeout=60):
 
     with tempfile.TemporaryDirectory() as d:
         drive = Path(d)
-        for name in (prg, "STATIC.BIN", "GRAPHICS.GRA"):
+        for name in (prg, "STATIC.BIN", "GRAPHICS.GRA", "COURSES.DAT"):
             (drive / name).write_bytes((DISK / name).read_bytes())
         out = drive / "SCREEN.BIN"
         env = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}

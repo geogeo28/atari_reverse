@@ -69,6 +69,7 @@ static long load_file(const char *name, uint32_t dst, long max) {
 
 void main(void) {
     load_file("STATIC.BIN", STATIC_LO, STATIC_LEN);              /* fonts, labels, fill patterns */
+    load_file("COURSES.DAT", MEM_BASE, 0xf660);                  /* buf_a strings at mem_base+0x1900 */
     load_file("GRAPHICS.GRA", BUF_C + GFX_LOAD_OFFSET, 0x40000); /* the packed graphics */
 
     wr32(image + A_buf_aux, BUF_AUX);

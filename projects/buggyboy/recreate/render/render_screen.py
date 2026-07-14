@@ -7,18 +7,17 @@ contract. It exercises the candidate `libbuggyboy.so` end to end on a real input
   1. load + relocate BUGGYBOY.PRG into the flat image (static data: fonts, label
      strings, fill patterns are all present at their real addresses);
   2. lay the game's own buffer layout (mem_base + offsets, as `main` computes it) and
-     stage the real GRAPHICS.GRA bytes where load_graphics would have put them;
+     stage the real COURSES.DAT (buf_a strings) + GRAPHICS.GRA where load_graphics puts them;
   3. call the verified `g_unpack_graphics` to decode the sprite/graphic tables into buf_c;
   4. point the draw buffer (physbase_tbl[0]) at a free screen region and call the screen
-     function under test (default `g_draw_leg_results`);
+     function under test (`g_draw_leg_results`, or `g_draw_results_screen` for --screen results);
   5. de-interleave that 32000-byte Atari low-res framebuffer and write it as a PNG.
 
-buf_a (the per-leg result/label strings + leg-time digits) is filled by functions not yet
-reconstructed (draw_results_screen / update_highscore), so those rows render blank here —
-the fills, panels, static labels and dashboard are structurally real; the buf_a text is a
-known gap. See STATUS.md.
+Everything drawn from static data or the two data files is real. The one blank is the results
+screen's SCORE/NAME rows: the runtime highscore_table (0x18266) is filled only by the deferred,
+interactive `update_highscore`. See STATUS.md.
 
-Usage: python render/render_screen.py [--leg N] [--out DIR]
+Usage: python render/render_screen.py [--screen leg|results] [--leg N] [--out DIR]
 """
 import ctypes
 import struct
@@ -100,11 +99,13 @@ def _prepared_image(state):
     """Fresh image with the buffer layout + graphics staged, unpack_graphics run, and `state`
     (extra {addr: bytes} — leg_index / mode / pos) applied. Returns (image, ctypes buf)."""
     graphics = (harness.PRG.parent / "GRAPHICS.GRA").read_bytes()
+    courses = (harness.PRG.parent / "COURSES.DAT").read_bytes()   # buf_a strings live at mem_base+0x1900
     pokes = {
         A_BUF_AUX: BUF_AUX.to_bytes(4, "big"),
         A_BUF_A:   BUF_A.to_bytes(4, "big"),
         A_BUF_B:   BUF_B.to_bytes(4, "big"),
         A_BUF_C:   BUF_C.to_bytes(4, "big"),
+        MEM_BASE:  courses,
         BUF_C + GFX_LOAD_OFFSET: graphics,
         A_FLIP_IDX: (0).to_bytes(2, "big"),
         A_PHYSBASE_TBL: SCREEN_BASE.to_bytes(4, "big"),

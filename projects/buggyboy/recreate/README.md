@@ -113,12 +113,14 @@ python render/render_screen.py --leg 0              # leg-results screen -> out/
 python render/render_screen.py --screen results     # race-end results screen -> out/render/results_screen_0.png
 ```
 
-Colours are authentic: the game's results-screen palette (16 ST words at `0x17fc2`, the pointer
-`update_highscore` passes to `xbios_setpalette`) is read straight from the image. The one
-remaining gap is `buf_a`-sourced text (a couple of per-leg labels + leg-time digits), which
-renders blank because the functions that fill it (`update_highscore`/`init_leg`) aren't
-reconstructed yet. The fills, panels, labels and dashboard are real. Like the sound renders, this
-is a listening tool, not part of the differential contract.
+Colours and text are authentic: the game's results-screen palette (16 ST words at `0x17fc2`) is
+read straight from the image, and the per-leg labels/digits are the real strings from
+**COURSES.DAT** (staged at `mem_base`, where `buf_a = mem_base + 0x1900` points). The one remaining
+blank is the results screen's SCORE/NAME rows: those come from the *runtime* `highscore_table`
+(`0x18266`, ships all-zero), filled only by `update_highscore` — the interactive name-entry loop
+that busy-polls the IKBD keyboard and so can't be run to `rts` under the current oracle (deferred;
+see STATUS.md). Everything drawn from static data or the two data files is real. Like the sound
+renders, this is a listening tool, not part of the differential contract.
 
 `render/atari/` takes this one step further: it **cross-compiles the same cores to 68000** and runs
 them as a GEMDOS `.PRG` under Hatari (real TOS ROM), then checks the on-target framebuffer is

@@ -43,4 +43,5 @@ PY="$REC/.venv/bin/python"; [ -x "$PY" ] || PY=python3
 cp "$BUILD/$PRG" "$DISK/$PRG"
 "$PY" "$HERE/gen_static.py" "$BIN/BUGGYBOY.PRG" "$DISK/STATIC.BIN"
 cp "$BIN/GRAPHICS.GRA" "$DISK/GRAPHICS.GRA"
+cp "$BIN/COURSES.DAT" "$DISK/COURSES.DAT"
 ls -l "$DISK"

@@ -22,7 +22,7 @@ compiler/`libgcc` emit for their *own* code and data.
 
 | file | role |
 |------|------|
-| `main.c`        | Atari shim: build the image in BSS, load `STATIC.BIN` + `GRAPHICS.GRA`, set the buffer pointers, call `g_unpack_graphics` then the selected screen (`g_draw_leg_results`, or `g_draw_results_screen` under `-DDEMO_RESULTS`), dump the framebuffer to `C:\SCREEN.BIN`, blit to `Physbase()`, wait for a key. Also the freestanding `memcpy/memmove/memset`. |
+| `main.c`        | Atari shim: build the image in BSS, load `STATIC.BIN` + `COURSES.DAT` + `GRAPHICS.GRA`, set the buffer pointers, call `g_unpack_graphics` then the selected screen (`g_draw_leg_results`, or `g_draw_results_screen` under `-DDEMO_RESULTS`), dump the framebuffer to `C:\SCREEN.BIN`, blit to `Physbase()`, wait for a key. Also the freestanding `memcpy/memmove/memset`. |
 | `os.s`          | `_start` + GEMDOS/XBIOS trap wrappers (Fopen/Fread/Fclose/Fcreate/Fwrite, Cconin, Physbase, Setpalette). |
 | `tos.ld`        | link at base 0 as one tight text+data blob; the 1 MiB image is `.bss` (TOS zeroes it). |
 | `mkprg.py`      | wrap the linked ELF into a GEMDOS `.PRG` — header + flat binary + a relocation table built from the ELF's `R_68K_32` fixups (`ld --emit-relocs`). |
@@ -46,8 +46,9 @@ program's BSS. `build/` and `disk/` are gitignored build artifacts.
 
 ## Fidelity
 
-Colours are the game's own: `main.c` points `Setpalette` at the results-screen palette already
-present in `STATIC.BIN` (16 ST words at `0x17fc2`, the pointer `update_highscore` passes to
-`xbios_setpalette`). The one remaining gap is `buf_a`-sourced text (a couple of per-leg labels +
-leg-time digits), which renders blank because the functions that fill it aren't reconstructed yet.
-The fills, panels, labels and dashboard are real.
+Colours and text are the game's own: `main.c` points `Setpalette` at the results-screen palette
+in `STATIC.BIN` (`0x17fc2`), and stages `COURSES.DAT` at `mem_base` so the per-leg labels/digits
+(`buf_a = mem_base + 0x1900`) are the real course names. The one blank left is the results
+screen's SCORE/NAME rows — the runtime `highscore_table` (`0x18266`, ships all-zero), filled only
+by the deferred, interactive `update_highscore`. Everything from static data or the data files is
+real.
