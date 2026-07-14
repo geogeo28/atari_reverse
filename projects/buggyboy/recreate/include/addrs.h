@@ -116,6 +116,9 @@
 #define A_road_seg_head       0x18cb6   /* cached road_seg_data[0] */
 #define A_scroll_frame        0x18cb2   /* road-scroll frame index (0-15); indexes the per-leg scroll table at buf_a + leg*16 */
 #define A_screen_offset       0x18d18   /* road-scroll offset into buf_c (word); = scroll-table byte * 0x1900, read by blit_road_scroll */
+#define A_scroll_speed        0x18cb4   /* horizontal road-scroll speed (signed word) */
+#define A_hscroll_pos         0x18cb8   /* horizontal fine-scroll position, wrapped into [0, 0x280) */
+#define A_hscroll_step2       0x18cac   /* road_seg_head * scroll_speed * 2 (word); per-frame scroll step, doubled # ctx */
 #define A_road_scanline_tbl   0x190ac   /* per-row cumulative slope (shorts) */
 #define A_road_curve_tbl      0x18efc   /* 106 longwords: per-row curve offset (accumulated) */
 #define A_road_curve_tbl_end  0x190a4   /* one past road_curve_tbl; perspective fill runs downward */

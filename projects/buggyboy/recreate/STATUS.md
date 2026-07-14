@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 72/91.**
+**Verified: 73/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -29,7 +29,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x10100` | `main` | 494 | ✅ verified | checkpoint @0x10144 (Malloc + the five buffer pointers) |
 | `0x102ee` | `wait_vbl_set_offset` | 18 | ✅ verified | 51x Vsync (hardware) then set_screen_offset body |
 | `0x10300` | `set_screen_offset` | 38 | ✅ verified | leg 0-4 x frame 0-15 (scroll-table byte * 0x1900 -> screen_offset) |
-| `0x10326` | `blit_road_scroll` | 340 |  |  |
+| `0x10326` | `blit_road_scroll` | 340 | ✅ verified | hscroll sweep (shift/coarse/edge) + delta fuzz; rol.l fine-scroll + wrap seam + top fill |
 | `0x1047a` | `init_scoretable` | 62 |  |  |
 | `0x104b8` | `init_leg` | 360 |  |  |
 | `0x10620` | `unpack_graphics` | 364 | ✅ verified | run-to-rts (decode + deinterleave + sprite tables) |

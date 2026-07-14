@@ -169,6 +169,7 @@ var 0x18cf8 speed_raw
 var 0x18cf6 speed
 var 0x18cae steer_delta
 var 0x18cb4 scroll_speed
+var 0x18cac hscroll_step2
 var 0x18cc0 wheel_pos
 var 0x18cc2 lean_state
 var 0x18d0c anim_frame

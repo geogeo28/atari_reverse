@@ -14,6 +14,7 @@
 #include "machine.h"
 #include "addrs.h"
 #include "buggyboy.h"
+#include "draw.h"
 
 /* Big-endian typed table access at absolute image addresses. */
 static int16_t  rd_i16(const uint8_t *image, uint32_t addr) { return (int16_t)be16(image + addr); }
@@ -162,4 +163,88 @@ void g_set_screen_offset(uint8_t *image) {
  * set_screen_offset. The Vsync loop has no image effect. */
 void g_wait_vbl_set_offset(uint8_t *image) {
     g_set_screen_offset(image);
+}
+
+/* blit_road_scroll @0x10326 — horizontal fine-scroll of the double-wide road playfield (in buf_c)
+ * onto the visible screen's road band. Advance hscroll_pos by road_seg_head*scroll_speed, wrapped
+ * into [0, SCROLL_WRAP); its low nibble is the fine bit shift and the rest a coarse byte offset into
+ * the source row. Each of ROAD_ROWS scanlines blits ROAD_COLS 4-plane 16-pixel columns: every column
+ * pairs its word with the next column's word (8 bytes ahead) and rotates left by the fine shift
+ * (rol.l), so pixels slide smoothly. Once the scroll passes EDGE_THRESH the row's tail wraps back to
+ * the start of the source row — a masked seam column then full wrap columns. Finally the area above
+ * the band (screen[0..OBJ_ROAD_START_OFF)) is filled with the 0xffff0000 plane pattern. */
+#define ROAD_PLANES     4          /* interleaved bitplanes per 16-pixel column */
+#define ROAD_COL_BYTES  8          /* ROAD_PLANES words: one 16-pixel, 4-plane column */
+#define ROAD_ROWS       0x14       /* scanlines blitted (d4 = 0x13) */
+#define ROAD_COLS       0x14       /* columns per scanline (160-byte row) */
+#define SCROLL_WRAP     0x280      /* hscroll_pos wraps modulo this (double screen width) */
+#define SRC_ROW_STRIDE  0x140      /* source row pitch in buf_c (double-wide playfield) */
+#define EDGE_THRESH     0x140      /* hscroll_pos >= this starts wrapping the row tail */
+#define SEAM_MASK_BASE  0xffff     /* seam mask = this << shift (moveq #$ff sign-extends, then lsl.w) */
+#define ROAD_TOP_FILL   0xffff0000u /* plane pattern filling the area above the road band */
+
+/* Rotate a 32-bit value left by s (0..31); s==0 is identity (avoids the >>32 UB). */
+static uint32_t rol32(uint32_t v, unsigned s) {
+    return s ? ((v << s) | (v >> (32 - s))) : v;
+}
+
+/* Fine-shift one 4-plane, 16-pixel column: each plane word is paired with the next column's word
+ * (ROAD_COL_BYTES ahead) and rotated left by shift; the low word is written to dst. */
+static void scroll_column(uint8_t *image, uint32_t dst, uint32_t src, unsigned shift) {
+    for (int p = 0; p < ROAD_PLANES; p++) {
+        uint32_t pair = ((uint32_t)be16(image + src + ROAD_COL_BYTES + p * 2) << 16)
+                        | be16(image + src + p * 2);
+        wr16(image + dst + p * 2, (uint16_t)rol32(pair, shift));
+    }
+}
+
+void g_blit_road_scroll(uint8_t *image) {
+    uint32_t screen = draw_buffer(image);
+
+    uint16_t delta = (uint16_t)((int16_t)be16(image + A_road_seg_head)
+                                * (int16_t)be16(image + A_scroll_speed));   /* muls.w, low word */
+    wr16(image + A_hscroll_step2, (uint16_t)(delta * 2));
+
+    uint16_t h = (uint16_t)(be16(image + A_hscroll_pos) + delta);
+    if ((int16_t)h < 0) h += SCROLL_WRAP;
+    else if ((int16_t)(h - SCROLL_WRAP) >= 0) h -= SCROLL_WRAP;
+    wr16(image + A_hscroll_pos, h);
+
+    unsigned shift = h & 0xf;
+    uint16_t coarse = (uint16_t)(((int16_t)h >> 1) & 0xfff8);               /* asr.w #1, andi.w */
+    uint32_t wrap_base = be32(image + A_buf_c) + sign_ext16(be16(image + A_screen_offset));
+    uint32_t src_base = wrap_base + sign_ext16(coarse);
+    uint32_t dst_base = screen + OBJ_ROAD_START_OFF;
+
+    /* When the scroll passes EDGE_THRESH, the last `edge` columns wrap to the source row start. */
+    int edge = -1;
+    unsigned main_cols = ROAD_COLS;
+    if ((int16_t)(h - EDGE_THRESH) >= 0) {
+        edge = (uint16_t)(h - EDGE_THRESH) >> 4;
+        main_cols = ROAD_COLS - edge;
+    }
+
+    for (unsigned row = 0; row < ROAD_ROWS; row++) {
+        uint32_t src = src_base + row * SRC_ROW_STRIDE;
+        uint32_t wrap = wrap_base + row * SRC_ROW_STRIDE;
+        uint32_t dst = dst_base + row * ROW_STRIDE;
+
+        for (unsigned c = 0; c < main_cols; c++)
+            scroll_column(image, dst + c * ROAD_COL_BYTES, src + c * ROAD_COL_BYTES, shift);
+
+        if (edge >= 0) {
+            /* Seam: mask the last main column, then OR in the wrap column's fractional pixels. */
+            uint32_t seam = dst + (main_cols - 1) * ROAD_COL_BYTES;
+            uint16_t mask = (uint16_t)(SEAM_MASK_BASE << shift);
+            for (int p = 0; p < ROAD_PLANES; p++) {
+                uint16_t frac = (uint16_t)rol32((uint32_t)be16(image + wrap + p * 2) << 16, shift);
+                wr16(image + seam + p * 2, (uint16_t)((be16(image + seam + p * 2) & mask) | frac));
+            }
+            for (int c = 0; c < edge; c++)
+                scroll_column(image, dst + (main_cols + c) * ROAD_COL_BYTES, wrap + c * ROAD_COL_BYTES, shift);
+        }
+    }
+
+    for (uint32_t off = 0; off < OBJ_ROAD_START_OFF; off += 4)
+        wr32(image + screen + off, ROAD_TOP_FILL);
 }
