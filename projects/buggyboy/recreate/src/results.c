@@ -89,3 +89,45 @@ void g_draw_dashboard(uint8_t *image, uint32_t dst_off) {
         }
     }
 }
+
+/* --- draw_leg_results @ 0x125f2 --- Paints the per-leg results screen: background fills, the
+ * four result panels (row/col blitters), two rows of labels, the leg time digits, and the
+ * dashboard. No register arguments; layout coordinates and colours are baked into the code.
+ * The first label row chains A3 through one concatenated string; the second draws five rows
+ * from buf_a (stride LEG_ROW_STR_STRIDE) with a per-row colour from a palette string indexed
+ * by leg_index. All screen/fill/blit primitives are the already-verified g_* leaves. */
+#define LEG_TITLE_STR       0x18028   /* concatenated label strings for the first row */
+#define LEG_ROW_PALETTE     0x17e9f   /* per-row colour bytes, indexed downward by leg_index */
+#define LEG_LABEL_ROWS      5
+#define LEG_ROW_DST_STEP    0xa00     /* screen dst step between label rows */
+#define LEG_ROW_STR_OFF     0x848     /* buf_a offset of the second row's label strings */
+#define LEG_ROW_STR_STRIDE  0xc       /* bytes between those per-row strings */
+#define LEG_DIGITS_OFF      0x884     /* buf_a offset of the leg time/score digit string */
+
+void g_draw_leg_results(uint8_t *image) {
+    g_fill_words(image, 1, 0x76b);                 /* clear the screen to colour 1 */
+    g_fill_rect(image, 0x9a8, 6, 8, 0x48);         /* results panel background */
+    g_draw_result_row(image, 0x540, 0x12430);
+    g_draw_result_row(image, 0x588, 0x12438);
+    g_draw_result_col(image, 0x548, 0x11a30);
+    g_draw_result_col(image, 0x3748, 0x11f30);
+    g_fill_rect(image, 0x590, 1, 0, 0x57);         /* left divider column */
+    g_fill_span(image, 0x3b60, 1, 0x833);          /* bottom band */
+
+    /* Row 1: five labels from one concatenated buffer, colour 8; A3 chains across the calls. */
+    uint32_t str = LEG_TITLE_STR;
+    uint32_t dst = 0xa10;
+    for (int i = 0; i < LEG_LABEL_ROWS; i++, dst += LEG_ROW_DST_STEP)
+        str = draw_text_chain(image, dst, 8, str);
+
+    /* Row 2: five per-leg label strings from buf_a, each with its own palette colour. */
+    uint32_t row_str = be32(image + A_buf_a) + LEG_ROW_STR_OFF;
+    uint32_t palette = LEG_ROW_PALETTE - sign_ext16(be16(image + A_leg_index));   /* suba.w */
+    dst = 0xa18;
+    for (int i = 0; i < LEG_LABEL_ROWS; i++, dst += LEG_ROW_DST_STEP)
+        g_draw_text(image, dst, image[palette + i], row_str + i * LEG_ROW_STR_STRIDE);
+
+    uint16_t leg = be16(image + A_leg_index);
+    g_draw_num_thunk(image, 0xa48, 4, be32(image + A_buf_a) + LEG_DIGITS_OFF + leg * LEG_ROW_STR_STRIDE);
+    g_draw_dashboard(image, 0x1948);
+}

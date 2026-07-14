@@ -47,6 +47,8 @@ void g_draw_text_row(uint8_t *image, uint32_t dst_off, uint32_t color_idx,
 void g_draw_hud_gauge0(uint8_t *image, uint32_t dst, uint32_t color_idx,
                        uint32_t cells_m1, uint32_t str_ptr);
 void g_draw_hud_bar(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi, uint32_t str_ptr);
+/* draw_text returning the advanced A3 (past the 0-pair terminator), for callers chaining labels. */
+uint32_t draw_text_chain(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr);
 
 /* ---- number blitter (draw_num @ 0x15a86) ---- Digits are single string bytes (0 ends it);
  * each digit's 15-row sprite is pre-rendered into buf_c and indexed by num_glyph_tbl. Colour
@@ -62,6 +64,7 @@ void g_draw_num_thunk(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint
 void g_draw_result_row(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /* D0, A1 */
 void g_draw_result_col(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /* D0, A1 */
 void g_draw_dashboard(uint8_t *image, uint32_t dst_off);                      /* D0; src = buf_c fixed */
+void g_draw_leg_results(uint8_t *image);                                      /* leg-results screen; no args */
 
 /* ---- divider + text panels (draw_divider @ 0x126e6, draw_panel2/3/5 @ 0x1271c..) ----
  * draw_divider = filled rect + two vertical lines. Each panel draws the divider then a fixed

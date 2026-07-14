@@ -13,6 +13,7 @@
 
 /* ---- gameplay state ---- */
 #define A_game_over_flag  0x18c34   /* tst.w'd at add_score entry */
+#define A_leg_index       0x18c38   /* current leg (0-4); indexes result strings + palette */
 #define A_setrez_mode     0x18be6   /* byte set_rez sends to the IKBD via XBIOS Ikbdws (0x19) */
 
 /* ---- screen / double-buffer ---- */

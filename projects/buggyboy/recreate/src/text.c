@@ -74,10 +74,16 @@ static void color_fill(const uint8_t *image, uint32_t color_idx, uint16_t idx_ma
     *fill_hi = be32(image + A_color_pairs + (int32_t)off + 4);
 }
 
-void g_draw_text(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr) {
+/* draw_text (D0 dst, D1 colour, A3 string) returning the advanced A3 — orchestrators that
+ * lay out several labels from one concatenated buffer chain calls through this. */
+uint32_t draw_text_chain(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr) {
     uint32_t fill_lo, fill_hi;
     color_fill(image, color_idx, 0xf, &fill_lo, &fill_hi);
-    text_body(image, buffer_dst(image, dst_off), fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1);
+    return text_body(image, buffer_dst(image, dst_off), fill_lo, fill_hi, str_ptr, TEXT_MAX_CELLS_M1);
+}
+
+void g_draw_text(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t str_ptr) {
+    draw_text_chain(image, dst_off, color_idx, str_ptr);
 }
 
 void g_draw_text_row(uint8_t *image, uint32_t dst_off, uint32_t color_idx, uint32_t cells_m1, uint32_t str_ptr) {
