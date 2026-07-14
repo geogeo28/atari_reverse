@@ -79,6 +79,7 @@ void g_draw_leg_results(uint8_t *image);                                      /*
  * the name); the misclassification is noted in HARNESS.md. */
 void g_intermission_poll(uint8_t *image);
 void g_draw_intermission(uint8_t *image);   /* scrolling between-legs screen (hi-score/times/credits) */
+void g_fade_step(uint8_t *image);           /* one intermission step: backdrop + header, falls into draw_intermission */
 
 /* ---- masked buggy / foreground sprites (draw_fg_sprite .. draw_buggy @ 0x1518a..) ----
  * draw_buggy_wheels is the shared blit body: A0 dst, A1 src (into buf_c), D4 rows-1; each row

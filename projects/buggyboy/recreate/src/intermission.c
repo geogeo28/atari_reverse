@@ -141,3 +141,20 @@ void g_draw_intermission(uint8_t *image) {
     }
 }
 
+/* --- fade_step @ 0x129a0 --- One animation step of the between-legs screen. It repaints the
+ * backdrop (fill_screen colour 6), re-copies the static block layout (intermission_poll), stamps
+ * the fixed Elite Systems header line (draw_text), then falls straight through into
+ * draw_intermission to render the three scrolling sections. No register arguments; a prologue in
+ * front of draw_intermission (no rts of its own — it shares draw_intermission's). */
+#define FADE_FILL_COLOR  6
+#define FADE_HEADER_DST  0x7448    /* draw buffer offset for the copyright header line */
+#define FADE_HEADER_COLOR 0xf
+#define FADE_HEADER_STR  0x18002   /* "/@/ELITE/SYSTEMS/INTERNATIONAL/1988/" (const image data) */
+
+void g_fade_step(uint8_t *image) {
+    g_fill_screen(image, FADE_FILL_COLOR);
+    g_intermission_poll(image);
+    g_draw_text(image, FADE_HEADER_DST, FADE_HEADER_COLOR, FADE_HEADER_STR);
+    g_draw_intermission(image);
+}
+

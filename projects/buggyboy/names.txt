@@ -96,7 +96,7 @@ fn 0x1506c draw_result_col
 fn 0x127a0 intermission
 fn 0x128ea check_abort
 fn 0x12914 intermission_poll        # ctx
-fn 0x129a0 fade_step                # ctx
+fn 0x129a0 fade_step
 fn 0x129ba draw_intermission        # ctx
 
 # ==== OS wrappers ====

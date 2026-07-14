@@ -85,3 +85,43 @@ def test_draw_intermission():
             diffs, _ = differential(DI_ENTRY, regs, lambda l, b: l.g_draw_intermission(b))
             assert not diffs, f"scroll={scroll} flip={flip}\n{report(diffs[:12])}"
             seed += 1
+
+
+# --- fade_step @ 0x129a0: one intermission animation step -------------------------------------
+# A prologue that repaints the backdrop (fill_screen colour 6), re-lays the static blocks
+# (intermission_poll), stamps the fixed Elite Systems header (draw_text, const image string at
+# 0x18002), then falls through into draw_intermission. The test stages the union of what
+# intermission_poll (buf_c block source) and draw_intermission (hi-score/num strings, num sprites)
+# read; the header string and layout tables are real image data. fill_screen repaints the whole
+# buffer first, so the screen band needs no pre-noise.
+FS_ENTRY = 0x129a0
+FS_BUF_C = 0x40000                              # shared buf_c: num sprites (+0xbb80) + block src (+0x32c80)
+FS_BUF_C_LO, FS_BUF_C_HI = FS_BUF_C + 0xb000, FS_BUF_C + 0x3b000
+FS_BUF_A = 0x90000                              # clear of the buf_c arena above
+
+harness._lib.g_fade_step.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_fade_step.restype = None
+
+
+def _fs_pokes(seed, scroll, flip):
+    rng = random.Random(seed)
+    return {
+        A_HSCORE_LO: bytes(rng.randrange(256) for _ in range(A_HSCORE_HI - A_HSCORE_LO)),
+        A_FLIP_IDX: flip.to_bytes(2, "big"),
+        A_PHYSBASE + flip: BUF.to_bytes(4, "big"),
+        A_BUF_C: FS_BUF_C.to_bytes(4, "big"),
+        FS_BUF_C_LO: bytes(rng.randrange(256) for _ in range(FS_BUF_C_HI - FS_BUF_C_LO)),
+        A_BUF_A: FS_BUF_A.to_bytes(4, "big"),
+        FS_BUF_A + 0x880: bytes(rng.randrange(256) for _ in range(0x60)),
+        A_SCROLL: (scroll & 0xffff).to_bytes(2, "big"),
+    }
+
+
+def test_fade_step():
+    seed = 0
+    for scroll in (0, 0x20, -0x20, 0x40, -0x40, 8, -8):
+        for flip in (0, 4):
+            regs = {"_pokes": _fs_pokes(seed, scroll, flip)}
+            diffs, _ = differential(FS_ENTRY, regs, lambda l, b: l.g_fade_step(b))
+            assert not diffs, f"scroll={scroll} flip={flip}\n{report(diffs[:12])}"
+            seed += 1
