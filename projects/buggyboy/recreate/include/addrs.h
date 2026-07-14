@@ -83,6 +83,25 @@
 #define A_score_delta_gate  0x17370
 #define A_score_delta_msg   0x17376
 
+/* ---- roadside-object blitter state (draw_object @ 0x1087e) ---- computed from road_width_tbl,
+ * then fed (as registers) to the blit_obj_* variants. lx/rx = left/right edge x; *_off = scanline
+ * dst offset; *_rows = rows-1. The _c_* set is the second (near-object) pass. */
+#define A_obj_desc        0x18cd2   /* found road_width_tbl entry (long): flag bits + width */
+#define A_obj_base_off    0x18cd6   /* base scanline dst offset ((0x59 - i/2) * 0xa0) */
+#define A_obj_clear_w     0x18cd8   /* clear-fill longword count-1 for the scale2 top clear */
+#define A_obj_center_rows 0x18cda   /* center-band fill rows-1 (-1 = no center band) */
+#define A_obj_lx          0x18cdc   /* left edge x (max over the object's rows) */
+#define A_obj_l_off       0x18cde   /* left blit scanline dst offset */
+#define A_obj_l_rows      0x18ce0   /* left blit rows-1 */
+#define A_obj_rx          0x18ce2   /* right edge x (min) */
+#define A_obj_r_off       0x18ce4   /* right blit scanline dst offset */
+#define A_obj_r_rows      0x18ce6   /* right blit rows-1 */
+#define A_obj_c_lx        0x18ce8   /* near-pass left edge x */
+#define A_obj_c_rx        0x18cea   /* near-pass right edge x */
+#define A_obj_c_off       0x18cec   /* near-pass scanline dst offset */
+#define A_obj_c_rows      0x18cee   /* near-pass rows-1 */
+#define A_obj_shade       0x18c5e   /* sign selects the center-band / near fill pattern # ctx */
+
 /* ---- sound driver (play_event_tune @ 0x11c7a; INITTUNE/INITFX/TURNOFF) ---- */
 #define A_vbl_sound_vec   0x18c0c   /* VBL sound handler vector; set to REFRESH */
 #define A_cur_tune_id     0x18cfa

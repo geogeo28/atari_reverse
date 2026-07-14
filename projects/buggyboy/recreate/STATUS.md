@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 75/91.**
+**Verified: 76/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -35,7 +35,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x10620` | `unpack_graphics` | 364 | ✅ verified | run-to-rts (decode + deinterleave + sprite tables) |
 | `0x1078c` | `build_sprite_shifts` | 102 | ✅ verified | fuzz counts 0/3/0xcf (asr.l shifts) |
 | `0x107f2` | `build_sprite_shifts_msk` | 140 | ✅ verified | fuzz over the 7 real (D0/D1/D5) configs |
-| `0x1087e` | `draw_object` | 862 |  |  |
+| `0x1087e` | `draw_object` | 862 | ✅ verified | A6=buffer; near/far x L/R x scale2 x shade x multirow + extreme-width fuzz (edges -> 8 blit variants) |
 | `0x10bdc` | `blit_obj_Ln` | 126 | ✅ verified | 1500-seed fuzz (pixels + D0.w) |
 | `0x10c5a` | `blit_obj_Rn` | 126 | ✅ verified | 1500-fuzz pixels |
 | `0x10cd8` | `blit_obj_Ln2` | 142 | ✅ verified | 300-fuzz pixels (road walk) |
