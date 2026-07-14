@@ -63,7 +63,13 @@ candidate side and cannot be differentially verified. Therefore:
   no in-loop trap modeling, and no input timeline. The name-entry loop stays read-only. See
   src/highscore.c + test_highscore.py.**
 - **Phase 4 — `install_handlers` (optional).** Needs XBIOS `Kbdvbase` (34) modeled to return an
-  in-image KBDVBASE struct. *Verify:* run-to-rts diffing the saved/installed vectors.
+  in-image KBDVBASE struct. *Verify:* run-to-rts diffing the saved/installed vectors. **← done: shim
+  returns `OS_KBDVBASE`; g_install_handlers saves the old mousevec/joyvec + installs the handlers,
+  verified run-to-rts (test_input.py).**
+
+**Status: the plan is complete — Phases 0–4 all done.** The input-driven family (`read_joystick`,
+`read_input`, `check_abort`, `install_handlers`) is fully verified, and `update_highscore` is
+verified to its deterministic checkpoints.
 
 ## Risks / unknowns
 

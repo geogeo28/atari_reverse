@@ -53,6 +53,11 @@
 #define A_vdi_ws_handle   0x19c8c   /* intout[0] (shared); graf_handle's physical handle lands here */
 #define A_vdi_handle      0x1a0a0   /* the workstation handle _start keeps (copy of intout[0]) */
 
+/* ---- IKBD vector install (install_handlers @ 0x12124) ---- */
+#define A_kbdvbase        0x18bda   /* saved KBDVBASE pointer (Kbdvbase result), for the restore on exit */
+#define A_mousevec_old    0x18bde   /* saved old KBDVBASE+0x10 (mousevec) vector */
+#define A_joyvec_old      0x18be2   /* saved old KBDVBASE+0x18 (joyvec) vector */
+
 /* ---- file loader (load_graphics @ 0x12166) ---- */
 #define A_gfx_file_handle 0x18bea   /* GEMDOS handle temp (word), reused across the two opens */
 #define A_mem_base        0x18bfc   /* COURSES.DAT read target (pointer into the big Malloc block) */

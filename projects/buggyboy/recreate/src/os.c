@@ -31,6 +31,25 @@ void g_set_rez(uint8_t *image, uint32_t mode) {
  * (shim.c) so the real code's wait loop terminates. */
 void g_read_joystick(uint8_t *image) { (void)image; }
 
+/* install_handlers @ 0x12124 — Kbdvbase() returns the KBDVBASE vector table; save its pointer and
+ * the old mousevec (+0x10) / joyvec (+0x18) vectors (for the restore on exit), then install this
+ * game's handlers (the joyvec handler is what read_joystick's reply drives). The oracle returns a
+ * fixed in-image KBDVBASE (OS_KBDVBASE) so the reads/writes hit the image. */
+#define KBDVBASE_MOUSEVEC 0x10       /* KBDVBASE offset patched with MOUSEVEC_HANDLER */
+#define KBDVBASE_JOYVEC   0x18       /* KBDVBASE offset patched with JOYVEC_HANDLER */
+#define MOUSEVEC_HANDLER  0x12164    /* installed at KBDVBASE+0x10 */
+#define JOYVEC_HANDLER    0x12156    /* installed at KBDVBASE+0x18 */
+
+void g_install_handlers(uint8_t *image) {
+    uint32_t kbdvbase = OS_KBDVBASE;                 /* Kbdvbase() result (shared with the shim) */
+    wr32(image + A_kbdvbase, kbdvbase);
+    wr32(image + A_mousevec_old, be32(image + kbdvbase + KBDVBASE_MOUSEVEC));
+    wr32(image + kbdvbase + KBDVBASE_MOUSEVEC, MOUSEVEC_HANDLER);
+    wr32(image + A_joyvec_old, be32(image + kbdvbase + KBDVBASE_JOYVEC));
+    wr32(image + kbdvbase + KBDVBASE_JOYVEC, JOYVEC_HANDLER);
+}
+
+
 
 /* gem_aes @ 0x100dc — D1 = &aes_pblk, D0 = 0xC8, trap #2. The AES call's outputs land in the
  * param block's intout array; os_gem_trap models them (see os.h). */

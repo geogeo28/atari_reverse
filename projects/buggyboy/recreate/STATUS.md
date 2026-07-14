@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 68/91.**
+**Verified: 69/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -56,7 +56,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x120b0` | `read_input` | 70 | ✅ verified | fuzz input_state x last_key (joystick keep vs keyboard-scancode map) |
 | `0x120f8` | `set_rez` | 24 | ✅ verified | trap layer (Ikbdws); D0.b -> config byte |
 | `0x12110` | `read_joystick` | 20 | ✅ verified | run-to-rts (IKBD status modeled TDRE-ready; no image effect) |
-| `0x12124` | `install_handlers` | 50 |  |  |
+| `0x12124` | `install_handlers` | 50 | ✅ verified | run-to-rts; Kbdvbase modeled, saves + patches mousevec/joyvec vectors |
 | `0x12166` | `load_graphics` | 146 | ✅ verified | checkpoint @0x121f2 (both Freads; before unpack) |
 | `0x121f8` | `flip_screen` | 46 |  |  |
 | `0x12226` | `xbios_setscreen` | 26 | ✅ verified | trap layer; no image effect |

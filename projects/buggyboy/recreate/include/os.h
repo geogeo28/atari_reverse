@@ -29,6 +29,9 @@
                                   * sized for main's 0x5ee08-byte work block (ends ~0x7ee08) */
 #define OS_CRAWIO_RESULT 0u      /* GEMDOS Crawio(0xff) raw non-blocking read: no key pending in the
                                   * deterministic model. Shared by shim.c and check_abort so they agree. */
+#define OS_KBDVBASE    0x500u    /* XBIOS Kbdvbase() result: a fixed in-image KBDVBASE struct (free low
+                                  * region, clear of the vector page and the program). install_handlers
+                                  * patches its mousevec (+0x10) / joyvec (+0x18). Shared with the shim. */
 
 /* ---- GEM trap #2 (AES / VDI) --------------------------------------------------------
  * A trap #2 selects the subsystem by D0 and points D1 at a parameter block of array

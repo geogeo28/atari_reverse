@@ -147,6 +147,7 @@ static void handle_trap(int vec) {
     } else if (vec == 14) {                           /* XBIOS */
         switch (fn) {
         case 0x02: case 0x03: d0 = OS_SCREEN_BASE; break;   /* Physbase / Logbase */
+        case 0x22: d0 = OS_KBDVBASE; break;           /* Kbdvbase -> fixed in-image KBDVBASE struct */
         case 0x04:                                    /* Getrez -> low-res */
         case 0x05: case 0x06: case 0x07:              /* Setscreen / Setpalette / Setcolor */
         case 0x19:                                    /* Ikbdws: serial write to the IKBD, no image effect */

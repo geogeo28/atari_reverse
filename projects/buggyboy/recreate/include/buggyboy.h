@@ -123,6 +123,7 @@ void g_set_rez(uint8_t *image, uint32_t mode);                   /* D0.b -> conf
 void g_read_joystick(uint8_t *image);                            /* IKBD poll: send 0x16; no image effect */
 void g_read_input(uint8_t *image);                               /* joystick + keyboard-fallback -> input_state */
 uint32_t g_check_abort(uint8_t *image);                          /* returns d0: 0x0d abort, else swap(Crawio) */
+void g_install_handlers(uint8_t *image);                         /* Kbdvbase: save + patch mousevec/joyvec */
 void g_gem_aes(uint8_t *image);                                  /* trap #2 AES (D0=0xc8, D1=&aes_pblk) */
 void g_gem_vdi(uint8_t *image);                                  /* trap #2 VDI (D0=0x73, D1=&vdi_pblk) */
 void g_start(uint8_t *image);                                    /* entry: GEM init, verified @ checkpoint 0x100d4 */

@@ -24,6 +24,12 @@ harness._lib.g_read_input.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_read_input.restype = None
 harness._lib.g_check_abort.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_check_abort.restype = ctypes.c_uint32
+harness._lib.g_install_handlers.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_install_handlers.restype = None
+
+KBDVBASE = 0x500               # must match OS_KBDVBASE in os.h (shim returns it for Kbdvbase)
+A_KBDVBASE_PTR = 0x18bda       # saved vectors written by install_handlers
+KBDV_MOUSEVEC, KBDV_JOYVEC = 0x10, 0x18
 
 
 def test_read_joystick():
@@ -31,6 +37,20 @@ def test_read_joystick():
     # read_joystick writes nothing to the image, matching the no-op glue.
     diffs, _ = differential(0x12110, {}, lambda l, b: l.g_read_joystick(b))
     assert not diffs, report(diffs[:12])
+
+
+def test_install_handlers():
+    # Kbdvbase() -> OS_KBDVBASE (modeled by the shim); install_handlers saves the old mousevec/joyvec
+    # vectors and installs the game's handlers. Stage distinct old vectors so the save+patch shows.
+    for seed in range(8):
+        rng = random.Random(seed)
+        pokes = {
+            KBDVBASE + KBDV_MOUSEVEC: rng.randint(0, 0xffffffff).to_bytes(4, "big"),
+            KBDVBASE + KBDV_JOYVEC: rng.randint(0, 0xffffffff).to_bytes(4, "big"),
+        }
+        diffs, _ = differential(0x12124, {"_pokes": pokes},
+                                lambda l, b: l.g_install_handlers(b))
+        assert not diffs, f"seed={seed}\n{report(diffs[:12])}"
 
 
 # The scancodes read_input maps, plus a few that map to nothing (0 result) and a joystick-present case.
