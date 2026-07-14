@@ -66,6 +66,11 @@ void g_draw_result_col(uint8_t *image, uint32_t dst_off, uint32_t src_off);   /*
 void g_draw_dashboard(uint8_t *image, uint32_t dst_off);                      /* D0; src = buf_c fixed */
 void g_draw_leg_results(uint8_t *image);                                      /* leg-results screen; no args */
 
+/* ---- intermission-screen block blitter (intermission_poll @ 0x12914) ----
+ * Table-driven plain block copy of 9 rectangles from buf_c to the draw buffer (no input, despite
+ * the name); the misclassification is noted in HARNESS.md. */
+void g_intermission_poll(uint8_t *image);
+
 /* ---- masked buggy / foreground sprites (draw_fg_sprite .. draw_buggy @ 0x1518a..) ----
  * draw_buggy_wheels is the shared blit body: A0 dst, A1 src (into buf_c), D4 rows-1; each row
  * is 4 transparency cells, dst/src stepping one scanline up per row. */

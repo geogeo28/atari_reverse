@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 58/91.**
+**Verified: 59/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -69,7 +69,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12780` | `draw_panel2` | 32 | ✅ verified | flip 0/4 (divider + 2 chained labels) |
 | `0x127a0` | `intermission` | 330 |  |  |
 | `0x128ea` | `check_abort` | 42 |  |  |
-| `0x12914` | `intermission_poll` | 86 |  |  |
+| `0x12914` | `intermission_poll` | 86 | ✅ verified | 25-seed fuzz x flip (9-entry table-driven block blit; not input) |
 | `0x129a0` | `fade_step` | 26 |  |  |
 | `0x129ba` | `draw_intermission` | 316 |  |  |
 | `0x12af6` | `init_playfield` | 578 |  |  |
@@ -161,10 +161,12 @@ driven by **live input or hardware** the oracle doesn't model. `update_highscore
 is the first hit: it is the high-score name-entry screen and busy-polls the **IKBD ACIA at
 `$FFFFFC00`** via `read_joystick`, loops on `input_state` (set by a keyboard interrupt, not by
 any traced function), waits on `MZFLAG` (music), and Vsyncs between frames. Verifying it (or
-`read_joystick`/`read_input`/`intermission_poll`/`check_abort`) byte-for-byte needs an oracle
-extension: model the IKBD registers, script an `input_state` sequence, and pin `MZFLAG`. Until
-that harness exists these stay unported to keep the "every reconstructed function is green"
-invariant. What was learnable by **reading** `update_highscore` is captured in `names.txt`:
+`read_joystick`/`read_input`/`check_abort`) byte-for-byte needs an oracle extension: model the IKBD
+registers, script `input_state`, and pin `MZFLAG`. That extension is scoped in
+[`HARNESS.md`](HARNESS.md). Until it exists these stay unported to keep the "every reconstructed
+function is green" invariant. (`intermission_poll` (`0x12914`) was on this list by a wrong `# ctx`
+guess — it reads no input; it's a table-driven block blit and is now verified.) What was learnable
+by **reading** `update_highscore` is captured in `names.txt`:
 `hiscore_pos` = the new score's 1-based rank in the leg table; `results_mode` = 0 if it made
 the table (name entry) else 2; and `highscore_table` (`0x18266`) is the row-2 source the
 results screen draws from.
