@@ -125,6 +125,8 @@
 #define A_road_curve_tbl_end  0x190a4   /* one past road_curve_tbl; perspective fill runs downward */
 #define A_road_width_tbl      0x18f24   /* per-row road half-width (shorts, stride 4) */
 #define A_road_width_src      0x18d5a   /* width source values (shorts, stride 0x20) */
+#define A_ground_scan_tbl     0x18d48   /* 13 ground/horizon scanline descriptors (stride 0x20); draw_ground reads the marker at +3 */
+#define A_ground_view_off     0x18c58   /* view_flags * 0xdd; column index into the ground offset table */
 #define A_persp_seg_tbl       0x17156   /* const: signed per-segment run lengths */
 #define A_width_count_tbl     0x1718a   /* const: per-row width run counts, 4 view banks of 16 */
 #define A_horizon_row         0x18c6c   /* output: clamped horizon scanline */

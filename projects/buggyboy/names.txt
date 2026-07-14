@@ -181,6 +181,10 @@ var 0x18cfe time_subctr
 var 0x18c34 game_over_flag
 var 0x1905c road_edge_flags
 var 0x18d1c road_seg_data
+var 0x18d48 ground_scan_tbl
+var 0x18c58 ground_view_off
+var 0x16a6e ground_col_offsets
+var 0x172ea ground_band_records
 var 0x18cb2 scroll_frame
 var 0x18d18 screen_offset
 var 0x18c50 course_read_pos

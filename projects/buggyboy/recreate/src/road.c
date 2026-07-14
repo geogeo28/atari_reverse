@@ -248,3 +248,74 @@ void g_blit_road_scroll(uint8_t *image) {
     for (uint32_t off = 0; off < OBJ_ROAD_START_OFF; off += 4)
         wr32(image + screen + off, ROAD_TOP_FILL);
 }
+
+/* draw_ground @0x10ff2 — fill the ground/horizon band below the road. Scans up to
+ * GROUND_SCAN_ENTRIES scanline descriptors (A_ground_scan_tbl, stride GROUND_SCAN_STRIDE) for a
+ * marker byte at +3: 0x1a draws a horizon colour gradient (a band record picks 1-3 solid-colour
+ * scanlines), 0x1c a solid ground fill (1 scanline, or 2 for the nearest entry); any other byte
+ * advances. The band's screen offset comes from GROUND_COL_OFFSETS indexed by the entry and the
+ * view column (ground_view_off). A6 = draw buffer. */
+#define GROUND_SCAN_ENTRIES   13
+#define GROUND_SCAN_STRIDE     0x20
+#define GROUND_MARK_GRADIENT   0x1a
+#define GROUND_MARK_SOLID      0x1c
+#define GROUND_COL_OFFSETS     0x16a6e   /* per-entry buffer offset words, stride GROUND_COL_STRIDE, + view col */
+#define GROUND_COL_STRIDE      0x22
+#define GROUND_BAND_RECORDS    0x172ea   /* 0x1a records: [bands-1, backup, colours...], stride 8 */
+#define GROUND_BAND_STRIDE     8
+#define GROUND_ROW_LONGS       10        /* 10 * 16 bytes = one 160-byte scanline (dbf #9) */
+#define GROUND_SOLID_ROWS_M1     9       /* solid fill: 1 scanline */
+#define GROUND_SOLID_ROWS_M1_TOP 0x13    /* nearest entry (d4==0): 2 scanlines */
+#define GROUND_LIT_PLANES      0xffffffffu  /* lit ground row (d4>=9); moveq #$ff sign-extends */
+
+/* Base of the band in the draw buffer: buffer + the entry's offset word, indexed by the view col. */
+static uint32_t ground_dst(const uint8_t *image, uint32_t buffer, uint32_t col, uint16_t view) {
+    return buffer + sign_ext16(be16(image + col + sign_ext16(view)));
+}
+
+/* Write one 160-byte scanline as the longword pattern (lo, hi, lo, hi) x GROUND_ROW_LONGS. */
+static uint32_t ground_row(uint8_t *image, uint32_t dst, uint32_t lo, uint32_t hi) {
+    for (int j = 0; j < GROUND_ROW_LONGS; j++) {
+        wr32(image + dst, lo);     wr32(image + dst + 4, hi);
+        wr32(image + dst + 8, lo); wr32(image + dst + 12, hi);
+        dst += 16;
+    }
+    return dst;
+}
+
+/* 0x1a: a colour gradient of (bands+1) scanlines, colours from the band record. */
+static void ground_gradient(uint8_t *image, uint32_t buffer, uint32_t col, uint16_t view, int d4) {
+    if (d4 >= 9) d4 = 6;
+    else if (d4 >= 5) d4 = 5;                 /* else keep d4 */
+    uint32_t rec = GROUND_BAND_RECORDS + (6 - d4) * GROUND_BAND_STRIDE;
+    uint32_t dst = ground_dst(image, buffer, col, view);
+    int bands = image[rec++];                 /* dbf count */
+    dst -= 2 * image[rec++];                  /* suba.w d2 twice */
+    for (int b = bands; b >= 0; b--) {
+        uint32_t pattern = A_color_pairs + image[rec++];   /* colour byte -> color_pairs offset */
+        dst = ground_row(image, dst, be32(image + pattern), be32(image + pattern + 4));
+    }
+}
+
+/* 0x1c: a solid fill; lit (planes set) when the entry is distant, else black. */
+static void ground_solid(uint8_t *image, uint32_t buffer, uint32_t col, uint16_t view, int d4) {
+    uint32_t dst = ground_dst(image, buffer, col, view);
+    uint32_t lo = (d4 >= 9) ? GROUND_LIT_PLANES : 0;
+    int rows_m1 = (d4 == 0) ? GROUND_SOLID_ROWS_M1_TOP : GROUND_SOLID_ROWS_M1;
+    for (int r = 0; r <= rows_m1; r++) {
+        wr32(image + dst, lo);     wr32(image + dst + 4, 0);
+        wr32(image + dst + 8, lo); wr32(image + dst + 12, 0);
+        dst += 16;
+    }
+}
+
+void g_draw_ground(uint8_t *image, uint32_t buffer) {
+    uint32_t scan = A_ground_scan_tbl + 2;          /* a3: the descriptor's marker word */
+    uint32_t col = GROUND_COL_OFFSETS;              /* a5 */
+    uint16_t view = be16(image + A_ground_view_off);
+    for (int d4 = GROUND_SCAN_ENTRIES - 1; d4 >= 0; d4--, scan += GROUND_SCAN_STRIDE, col += GROUND_COL_STRIDE) {
+        uint8_t marker = (uint8_t)be16(image + scan);
+        if (marker == GROUND_MARK_GRADIENT) { ground_gradient(image, buffer, col, view, d4); return; }
+        if (marker == GROUND_MARK_SOLID)    { ground_solid(image, buffer, col, view, d4); return; }
+    }
+}
