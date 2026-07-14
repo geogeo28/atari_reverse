@@ -14,6 +14,8 @@
 /* ---- gameplay state ---- */
 #define A_game_over_flag  0x18c34   /* tst.w'd at add_score entry */
 #define A_leg_index       0x18c38   /* current leg (0-4); indexes result strings + palette */
+#define A_spin_state      0x18caa   /* buggy spin state; <0 while spinning after a crash */
+#define A_anim_frame      0x18d0c   /* word byte-offset into fg_anim_tbl for the current frame */
 #define A_hiscore_pos     0x18c9c   /* 1-based rank the new score reaches in the leg's high-score table */
 #define A_results_mode    0x18c9e   /* 0 = score made the table (name entry), 2 = did not; results layout */
 #define A_setrez_mode     0x18be6   /* byte set_rez sends to the IKBD via XBIOS Ikbdws (0x19) */
@@ -67,6 +69,13 @@
 /* ---- font / text (draw_text @ 0x159fa) ---- */
 #define A_font_glyphs     0x176a8   /* 16-byte 1bpp glyphs, indexed char << 4 */
 #define A_num_glyph_tbl   0x17c5e   /* per-digit word byte-offset into the pre-rendered num sprites */
+
+/* ---- foreground / buggy sprites (draw_fg_sprite @ 0x1518a) ---- */
+#define A_fg_anim_tbl     0x177a0   /* anim frames: [rows-1, dst_off, src_off(long, +buf_c)] x8 bytes */
+#define A_spin_counter    0x18d0a   /* frames the buggy spins after a hard-curve crash */
+#define A_spin_reset      0x18cc8   /* longword cleared when a spin starts # ctx */
+#define A_sprite_suppress 0x18cd0   /* nonzero suppresses the foreground sprite draw # ctx */
+#define A_fg_gate         0x18ebb   /* byte; bit7 set suppresses the foreground sprite draw # ctx */
 
 /* ---- sprite edge masks (blit_obj_* @ 0x10bdc..) ---- */
 #define A_blit_mask_L     0x15bba   /* left-edge blit masks, indexed (x&0xf)<<2 */

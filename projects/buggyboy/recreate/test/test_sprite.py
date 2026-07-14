@@ -50,3 +50,52 @@ def test_fuzz_wheels():
         dst = DST - rng.randint(0, 0x100)
         src = SRC - rng.randint(0, 0x100)
         _run(dst, src, rows_m1, i)
+
+
+# ---- draw_fg_sprite @ 0x1518a: spin/curve gate + anim-table lookup, falls into the blit ----
+
+ENTRY_FG = 0x1518a
+FG_BUF = 0x8000                # dst base (physbase slot); frame dst offset lands the sprite here
+FG_BUF_C = 0x30000             # buf_c base; frame src offset indexes a sprite here
+A_FLIP_IDX, A_PHYSBASE, A_BUF_C = 0x18bf2, 0x18bf4, 0x18c08
+A_SPIN_STATE, A_ROAD_CURVE, A_ANIM_FRAME = 0x18caa, 0x18c6a, 0x18d0c
+A_SPRITE_SUPPRESS, A_FG_GATE, A_FG_ANIM_TBL = 0x18cd0, 0x18ebb, 0x177a0
+FRAME_ROWS_M1, FRAME_DST_OFF, FRAME_SRC_OFF = 8, 0x400, 0x2000
+
+harness._lib.g_draw_fg_sprite.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_draw_fg_sprite.restype = None
+
+
+def _fg_pokes(seed, spin_state, curve, suppress, gate):
+    rng = random.Random(seed)
+    entry = (FRAME_ROWS_M1.to_bytes(2, "big") + FRAME_DST_OFF.to_bytes(2, "big")
+             + FRAME_SRC_OFF.to_bytes(4, "big"))
+    return {
+        0x7000: bytes(rng.randrange(256) for _ in range(0x1600)),        # dst noise [0x7000,0x8600)
+        FG_BUF_C: bytes(rng.randrange(256) for _ in range(0x3000)),      # src noise
+        A_FLIP_IDX: (0).to_bytes(2, "big"),
+        A_PHYSBASE: FG_BUF.to_bytes(4, "big"),
+        A_BUF_C: FG_BUF_C.to_bytes(4, "big"),
+        A_FG_ANIM_TBL: entry,
+        A_ANIM_FRAME: (0).to_bytes(2, "big"),
+        A_SPIN_STATE: bytes([spin_state & 0xff]),
+        A_ROAD_CURVE: (curve & 0xffff).to_bytes(2, "big"),
+        A_SPRITE_SUPPRESS: (suppress & 0xffff).to_bytes(2, "big"),
+        A_FG_GATE: bytes([gate & 0xff]),
+    }
+
+
+def _fg_run(label, seed, spin_state=0, curve=0, suppress=0, gate=0):
+    regs = {"_pokes": _fg_pokes(seed, spin_state, curve, suppress, gate)}
+    diffs, _ = differential(ENTRY_FG, regs, lambda l, b: l.g_draw_fg_sprite(b))
+    assert not diffs, f"{label}\n{report(diffs[:12])}"
+
+
+def test_fg_sprite():
+    _fg_run("blit (not spinning)", 1, spin_state=0)
+    _fg_run("blit (spinning, gentle curve)", 2, spin_state=0xff, curve=0x50)
+    _fg_run("spin abort right", 3, spin_state=0xff, curve=0x200)      # sets spin_counter 0x1e
+    _fg_run("spin abort left", 4, spin_state=0x80, curve=-0x200)      # sets spin_counter 0x3c
+    _fg_run("suppressed (word)", 5, spin_state=0, suppress=1)
+    _fg_run("suppressed (gate)", 6, spin_state=0, gate=0x80)
+
