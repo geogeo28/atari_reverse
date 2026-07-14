@@ -34,8 +34,11 @@ static void blit_row(uint8_t *image, uint32_t cell, uint32_t mask, uint32_t ink,
 
 /* Shared body: draw character pairs from str_ptr into dst until the string ends (a 0 first
  * byte) or the cell budget (cells_m1 + 1) is exhausted. Returns the advanced string pointer
- * (68k A3 at rts, past the 0-pair terminator) so panel layouts can chain calls. */
-static uint32_t text_body(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi, uint32_t str_ptr, uint16_t cells_m1) {
+ * (68k A3 at rts, past the 0-pair terminator); if end_dst is non-NULL it also reports the dst
+ * left in A0 (one cell past the last drawn) so a following draw on the same registers (e.g.
+ * draw_hud_bar after draw_text) can chain. */
+static uint32_t text_body_ex(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi,
+                             uint32_t str_ptr, uint16_t cells_m1, uint32_t *end_dst) {
     uint16_t remaining = cells_m1;
     for (;;) {
         uint8_t char1 = image[str_ptr++];
@@ -57,7 +60,13 @@ static uint32_t text_body(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32
         remaining = (uint16_t)(remaining - 1);
         if (remaining == 0xffff) break;
     }
+    if (end_dst) *end_dst = dst;
     return str_ptr + 1;                 /* addq.l #1,a3 on both exit paths (@0x5a80) */
+}
+
+static uint32_t text_body(uint8_t *image, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi,
+                          uint32_t str_ptr, uint16_t cells_m1) {
+    return text_body_ex(image, dst, fill_lo, fill_hi, str_ptr, cells_m1, 0);
 }
 
 /* Draw buffer (physbase_tbl[flip_idx]) plus a sign-extended word offset (adda.w). */
@@ -194,4 +203,67 @@ void g_draw_panel3(uint8_t *image) {
 void g_draw_panel2(uint8_t *image) {
     static const uint16_t dst[] = {0x5030, 0x5a38};
     draw_panel(image, PANEL2_STR, dst, 2);
+}
+
+/* --- draw_results_screen @ 0x1225a --- The race-end results screen. No register arguments;
+ * it drives the fill/text/num/dashboard leaves, threading the 68k A3 (string cursor) across
+ * chained draws. Two runtime state words shape it: results_mode (0/2) sets the label-row
+ * count (9 - mode) and gates an extra block; hiscore_pos offsets the per-row colour palettes
+ * and gates the score line. The second row pairs each label with a bar gauge drawn from the
+ * label's leftover A0/fill (draw_hud_bar reuses the glyph body on the same registers). */
+#define RESULTS_TITLE_STR    0x184f8   /* title; the buffer continues into the row-1 labels */
+#define RESULTS_ROW2_STR     0x18266   /* per-leg row-2 label block; + leg*0x80 + mode*0xe */
+#define RESULTS_SCORE_STR    0x18258   /* score line (drawn when hiscore_pos != 0) */
+#define RESULTS_MODE_STR     0x18538   /* extra block (drawn when results_mode != 0) */
+#define RESULTS_MODE_STR2    0x18234
+#define RESULTS_PALETTE_A    0x17ead   /* row-1 per-row colour bytes, indexed down by hiscore_pos */
+#define RESULTS_PALETTE_B    0x17ebf   /* row-2 palette */
+#define RESULTS_ROW_STEP     0x8c0     /* screen dst step between rows */
+#define RESULTS_BAR_GAP      0x18      /* A0 advance from the label end to its bar gauge */
+#define RESULTS_MAX_ROWS     8         /* row count = RESULTS_MAX_ROWS - mode + 1 (dbf #(8-mode)) */
+
+void g_draw_results_screen(uint8_t *image) {
+    g_fill_screen(image, 1);
+    uint32_t str = draw_text_chain(image, 0x518, 0xc, RESULTS_TITLE_STR);   /* title */
+
+    uint16_t mode = be16(image + A_results_mode);
+    uint16_t pos  = be16(image + A_hiscore_pos);
+    uint16_t leg  = be16(image + A_leg_index);
+
+    /* Row 1: (9 - mode) chained labels, colour from palette A; A3 resumes past the title. */
+    uint32_t pal_a = RESULTS_PALETTE_A - sign_ext16(pos);
+    str += sign_ext16((uint16_t)(mode << 2));
+    uint32_t dst = 0xde0;
+    for (int16_t c = (int16_t)(RESULTS_MAX_ROWS - mode), i = 0; c != -1; c--, i++, dst += RESULTS_ROW_STEP)
+        str = draw_text_chain(image, dst, image[pal_a + i], str);
+
+    /* Row 2: (9 - mode) label+bar pairs; A3 starts fresh, colour from palette B. Each bar reuses
+     * the label's leftover dst (+RESULTS_BAR_GAP) and fill; A3 then chains label->bar->+1. */
+    uint32_t pal_b = RESULTS_PALETTE_B - sign_ext16(pos);
+    str = RESULTS_ROW2_STR + (uint16_t)(leg << 7) + (uint16_t)(mode * 0xe);
+    dst = 0xe00;
+    for (int16_t c = (int16_t)(RESULTS_MAX_ROWS - mode), i = 0; c != -1; c--, i++, dst += RESULTS_ROW_STEP) {
+        uint32_t fill_lo, fill_hi, label_end;
+        color_fill(image, image[pal_b + i], 0xf, &fill_lo, &fill_hi);
+        str = text_body_ex(image, buffer_dst(image, dst), fill_lo, fill_hi, str, TEXT_MAX_CELLS_M1, &label_end);
+        str = text_body(image, label_end + RESULTS_BAR_GAP, fill_lo, fill_hi, str, TEXT_MAX_CELLS_M1);
+        str += 1;
+    }
+
+    draw_text_chain(image, 0x62c8, 0xd, be32(image + A_buf_a) + 0x80c + leg * 0xc);
+
+    if (pos != 0) {                                    /* score line */
+        str = draw_text_chain(image, 0x6340, 0xf, RESULTS_SCORE_STR);
+        g_draw_num_thunk(image, 0x6980, 0xf, str);
+    }
+    if (mode != 0) {                                   /* extra label block */
+        str = draw_text_chain(image, 0x4ed8, 0xe, RESULTS_MODE_STR);
+        draw_text_chain(image, 0x53e0, 0xe, str);
+        draw_text_chain(image, 0x5400, 0xe, RESULTS_MODE_STR2);
+    }
+    g_draw_dashboard(image, 0x6070);
+
+    /* Final label: its screen dst is the first word of the string; A3 continues past it. */
+    uint32_t fin = be32(image + A_buf_a) + 0x910 + leg * 0x10;
+    draw_text_chain(image, be16(image + fin), 1, fin + 2);
 }

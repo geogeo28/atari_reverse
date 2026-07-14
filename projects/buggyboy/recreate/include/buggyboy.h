@@ -73,6 +73,7 @@ void g_draw_divider(uint8_t *image);
 void g_draw_panel2(uint8_t *image);
 void g_draw_panel3(uint8_t *image);
 void g_draw_panel5(uint8_t *image);
+void g_draw_results_screen(uint8_t *image);   /* race-end results screen orchestrator; no args */
 
 /* ---- road perspective (build_road_geometry @ 0x11f4c) ---- */
 void g_build_road_geometry(uint8_t *image);
