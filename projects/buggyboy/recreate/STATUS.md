@@ -154,6 +154,21 @@ decompressor. `exclude` drops a function's relocated-stack band from the diff (`
 to `0x1b044`; the reconstruction is pure C with no machine stack). Data-heavy functions raise
 `differential(..., max_insns=)` (the unpacker needs a few million).
 
+## Deferred: interactive (input/hardware-driven) functions
+
+Some functions can't be run to `rts` under the current harness because their control flow is
+driven by **live input or hardware** the oracle doesn't model. `update_highscore` (`0x1238e`)
+is the first hit: it is the high-score name-entry screen and busy-polls the **IKBD ACIA at
+`$FFFFFC00`** via `read_joystick`, loops on `input_state` (set by a keyboard interrupt, not by
+any traced function), waits on `MZFLAG` (music), and Vsyncs between frames. Verifying it (or
+`read_joystick`/`read_input`/`intermission_poll`/`check_abort`) byte-for-byte needs an oracle
+extension: model the IKBD registers, script an `input_state` sequence, and pin `MZFLAG`. Until
+that harness exists these stay unported to keep the "every reconstructed function is green"
+invariant. What was learnable by **reading** `update_highscore` is captured in `names.txt`:
+`hiscore_pos` = the new score's 1-based rank in the leg table; `results_mode` = 0 if it made
+the table (name entry) else 2; and `highscore_table` (`0x18266`) is the row-2 source the
+results screen draws from.
+
 ## OS trap layer
 
 OS-bound functions now run under the oracle: `trap #1/#13/#14/#2` are serviced by a

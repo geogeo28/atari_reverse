@@ -14,8 +14,8 @@
 /* ---- gameplay state ---- */
 #define A_game_over_flag  0x18c34   /* tst.w'd at add_score entry */
 #define A_leg_index       0x18c38   /* current leg (0-4); indexes result strings + palette */
-#define A_hiscore_pos     0x18c9c   /* results screen: high-score entry counter; gates the score line # ctx */
-#define A_results_mode    0x18c9e   /* results screen: 0 or 2; sets label-row count (8-N) + an extra block # ctx */
+#define A_hiscore_pos     0x18c9c   /* 1-based rank the new score reaches in the leg's high-score table */
+#define A_results_mode    0x18c9e   /* 0 = score made the table (name entry), 2 = did not; results layout */
 #define A_setrez_mode     0x18be6   /* byte set_rez sends to the IKBD via XBIOS Ikbdws (0x19) */
 
 /* ---- screen / double-buffer ---- */

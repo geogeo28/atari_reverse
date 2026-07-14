@@ -181,8 +181,8 @@ var 0x18d1c road_seg_data
 var 0x18c50 course_read_pos
 var 0x18c38 leg_index
 var 0x18c36 leg_select
-var 0x18c9c hiscore_pos             # ctx
-var 0x18c9e results_mode            # ctx
+var 0x18c9c hiscore_pos
+var 0x18c9e results_mode
 
 # ==== score / event state ====
 var 0x1824c score_bcd

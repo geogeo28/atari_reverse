@@ -207,7 +207,7 @@ void g_draw_panel2(uint8_t *image) {
  * and gates the score line. The second row pairs each label with a bar gauge drawn from the
  * label's leftover A0/fill (draw_hud_bar reuses the glyph body on the same registers). */
 #define RESULTS_TITLE_STR    0x184f8   /* title; the buffer continues into the row-1 labels */
-#define RESULTS_ROW2_STR     0x18266   /* per-leg row-2 label block; + leg*0x80 + mode*0xe */
+#define RESULTS_ROW2_STR     0x18266   /* = highscore_table; row 2 shows entry leg*0x80 + mode*0xe */
 #define RESULTS_SCORE_STR    0x18258   /* score line (drawn when hiscore_pos != 0) */
 #define RESULTS_MODE_STR     0x18538   /* extra block (drawn when results_mode != 0) */
 #define RESULTS_MODE_STR2    0x18234
