@@ -125,11 +125,13 @@ Two coverage gaps from the original list are now **closed**: `fill_span`/`fill_r
 (−800..1200) so the walk itself drives all of `row_left`/`row_right`'s edge regimes (off-edge,
 fully-inside, straddling), not just the straddle. Remaining, low-severity:
 
-- **Blit return register (D0)** — *blocked on `draw_object`, not just deferred.* Only `Ln`'s status
-  word is a clean, standalone-verifiable return. `Lf`/`Rf` and the `*2` variants leave a D0 that is
-  an internal leftover meaningful only to the caller — an `Lf`-vs-oracle spot-check mismatches ~15%
-  of the time — so it can be pinned only once `draw_object` (the caller) is reconstructed. Pixels
-  are fully diffed for every variant; only the returned register is unverified.
+- **Blit return register (D0)** — *resolved: no consumer.* `draw_object` (now verified byte-for-byte,
+  incl. the attribution/poison pass) is the sole caller of the blit variants, and it **ignores their
+  return** — it recomputes the screen edges itself and passes explicit offsets into each blit. So the
+  blit D0 has no verified consumer and its value is immaterial: the pixel output of every variant is
+  fully diffed, both standalone and through `draw_object`. The residual moves up one level — a
+  `draw_object` return would matter only if its callers `draw_game_objects`/`draw_object_list`
+  (still unverified) read it; `g_draw_object` is `void`, so that's tracked when they're ported.
 - **`_start` past `bsr main`** — *inherent (unreachable).* The terminal Pterm / `appl_exit` after
   `main` never execute (`main` is the infinite game loop), so they can't be verified by execution —
   only by reading. Everything up to the `0x100d4` checkpoint is diffed.
