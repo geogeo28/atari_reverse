@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 59/91.**
+**Verified: 60/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -55,7 +55,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x11f4c` | `build_road_geometry` | 356 | ✅ verified | 300-seed fuzz (whole-image) |
 | `0x120b0` | `read_input` | 70 |  |  |
 | `0x120f8` | `set_rez` | 24 | ✅ verified | trap layer (Ikbdws); D0.b -> config byte |
-| `0x12110` | `read_joystick` | 20 |  |  |
+| `0x12110` | `read_joystick` | 20 | ✅ verified | run-to-rts (IKBD status modeled TDRE-ready; no image effect) |
 | `0x12124` | `install_handlers` | 50 |  |  |
 | `0x12166` | `load_graphics` | 146 | ✅ verified | checkpoint @0x121f2 (both Freads; before unpack) |
 | `0x121f8` | `flip_screen` | 46 |  |  |

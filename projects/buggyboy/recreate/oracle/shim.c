@@ -16,8 +16,21 @@ static uint32_t g_size;
 static uint32_t g_waddr[MAX_WRITES];
 static uint32_t g_wn;
 
+/* --- IKBD 6850 ACIA (keyboard/joystick), $fffffc00/02 -> 24-bit bus alias $fffc00/02 -----
+ * read_joystick busy-waits on the status TDRE bit then sends a command; the joystick reply
+ * arrives via an interrupt we don't run (input state is instead scripted as an image global —
+ * see HARNESS.md). We model only what the traced code touches: the status reads back as "ready
+ * to send" so the wait loop terminates. The command byte written to IKBD_DATA lands above the
+ * image and is dropped by the bounds check like any other hardware write. */
+#define IKBD_STATUS 0xfffc00
+#define IKBD_TX_RDY 0x02        /* TDRE: transmit register empty */
+
 /* --- memory callbacks: big-endian, bounds-checked to the image --- */
-unsigned int m68k_read_memory_8(unsigned int a)  { return a < g_size ? g_mem[a] : 0; }
+unsigned int m68k_read_memory_8(unsigned int a) {
+    if (a < g_size) return g_mem[a];
+    if ((a & 0xffffff) == IKBD_STATUS) return IKBD_TX_RDY;
+    return 0;
+}
 unsigned int m68k_read_memory_16(unsigned int a) {
     return a + 1 < g_size ? (unsigned)(g_mem[a] << 8 | g_mem[a + 1]) : 0;
 }

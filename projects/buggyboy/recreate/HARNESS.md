@@ -43,9 +43,11 @@ candidate side and cannot be differentially verified. Therefore:
 ## Phases (each gated on `make test` green)
 
 - **Phase 0 — reclassify `intermission_poll`.** It's a data-driven block blit, not input. Reconstruct
-  + fuzz like `draw_dashboard`; no extension involved. **← in progress / done, see STATUS.md.**
+  + fuzz like `draw_dashboard`; no extension involved. **← done (verified, STATUS.md).**
 - **Phase 1 — IKBD memory model.** Add `IKBD_STATUS`/`IKBD_DATA` cases to `shim.c` (mirror PSG).
-  *Verify:* `read_joystick` runs to `rts` with a clean whole-image diff.
+  *Verify:* `read_joystick` runs to `rts` with a clean whole-image diff. **← done: `shim.c` models
+  `IKBD_STATUS` ($fffc00) as TDRE-ready so the busy-wait terminates; the command write to
+  `IKBD_DATA` lands above the image and is dropped. `read_joystick` verified (test_input.py).**
 - **Phase 2 — leaf input fns.** Reconstruct `read_input` + `check_abort`; tests sweep poked
   `input_state`/`last_key`/`0x18c42`. *Verify:* run-to-rts, all-branch fuzz.
 - **Phase 3 — `update_highscore`.** (a) audit remaining traps — XBIOS `Vsync` (0x25) is already a

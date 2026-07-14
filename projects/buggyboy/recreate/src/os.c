@@ -24,6 +24,14 @@ void g_set_rez(uint8_t *image, uint32_t mode) {
     image[A_setrez_mode] = (uint8_t)mode;
 }
 
+/* read_joystick @ 0x12110 — busy-wait the IKBD ACIA's TDRE (transmit-ready) bit, then send the
+ * 0x16 joystick-interrogate command. The joystick reply arrives via an interrupt we don't run
+ * (input is scripted as an image global instead — see HARNESS.md), and the command write lands
+ * on hardware, so there is no image effect. The oracle models the ACIA status as always-ready
+ * (shim.c) so the real code's wait loop terminates. */
+void g_read_joystick(uint8_t *image) { (void)image; }
+
+
 /* gem_aes @ 0x100dc — D1 = &aes_pblk, D0 = 0xC8, trap #2. The AES call's outputs land in the
  * param block's intout array; os_gem_trap models them (see os.h). */
 void g_gem_aes(uint8_t *image) { os_gem_trap(image, GEM_AES, A_aes_pblk); }
