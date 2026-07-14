@@ -150,5 +150,6 @@
 #define A_width_count_tbl     0x1718a   /* const: per-row width run counts, 4 view banks of 16 */
 #define A_horizon_row         0x18c6c   /* output: clamped horizon scanline */
 #define A_horizon_frac        0x18c6e   /* output: horizon sub-row parity */
+#define A_ckpt_scroll         0x18c72   /* checkpoint-banner scroll position (word); += 4/frame, wraps */
 
 #endif /* BB_ADDRS_H */

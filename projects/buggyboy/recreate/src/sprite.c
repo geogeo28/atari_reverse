@@ -1,4 +1,5 @@
-/* sprite.c — masked buggy / foreground sprites (draw_fg_sprite .. draw_buggy @ 0x1518a..).
+/* sprite.c — masked buggy / foreground sprites (draw_fg_sprite .. draw_buggy @ 0x1518a..) plus the
+ * checkpoint-banner scroll (draw_checkpoint_anim @ 0x1442c).
  *
  * These blit a 4-plane sprite into the draw buffer using the shared transparency cell
  * (blit_transp_cell), bottom row first and walking one scanline up (OBJ_ROW_UP) per row.
@@ -138,5 +139,54 @@ void g_draw_buggy_hi(uint8_t *image, uint32_t dst_base) {
             wr32(image + dst + 8,  be32(image + dst + 8)  | dup4);
             wr32(image + dst + 12, be32(image + dst + 12) | dup4);
         }
+    }
+}
+
+/* draw_checkpoint_anim @0x1442c — scroll the checkpoint banner within buf_c. Copies columns from an
+ * X-shifted source (buf_c + CKPT_BASE_OFF + k*ckpt_scroll) to a fixed dest (buf_c + CKPT_BASE_OFF)
+ * in three table-driven blocks of increasing width and shift: 7 groups of 1-longword columns
+ * (shift 1x), 4 groups of 2 (shift 2x), then one group of 3 (shift 3x). Each group reads a row
+ * count and src/dst offsets from CKPT_ANIM_TBL; every row steps src/dst by CKPT_STRIDE (the copied
+ * longwords + a fixed skip). No args. */
+#define CKPT_BASE_OFF   0x9c40   /* checkpoint banner region: buf_c + this (40000) */
+#define CKPT_ANIM_TBL   0x17324  /* control words per group: {rows-1, src_off, dst_off} */
+#define CKPT_STRIDE     0x50     /* per-row src/dst step (copied longs + skip = 80 bytes) */
+#define CKPT_B1_GROUPS  7
+#define CKPT_B2_GROUPS  4
+#define CKPT_B3_ROWS_M1 0x1c     /* block 3's single group has a preset row count-1 */
+
+void g_draw_checkpoint_anim(uint8_t *image) {
+    uint32_t dst_base = be32(image + A_buf_c) + CKPT_BASE_OFF;   /* a2 */
+    uint16_t scroll = be16(image + A_ckpt_scroll);              /* d3 */
+    uint32_t src_base = dst_base;                               /* a3 */
+    uint32_t tbl = CKPT_ANIM_TBL;                               /* a4 */
+
+    src_base += sign_ext16(scroll);                            /* block 1: 1-longword columns */
+    for (int g = 0; g < CKPT_B1_GROUPS; g++) {
+        int rows = (int16_t)be16(image + tbl);
+        uint32_t src = src_base + sign_ext16(be16(image + tbl + 2));
+        uint32_t dst = dst_base + sign_ext16(be16(image + tbl + 4));
+        tbl += 6;
+        for (int r = 0; r <= rows; r++, src += CKPT_STRIDE, dst += CKPT_STRIDE)
+            wr32(image + dst, be32(image + src));
+    }
+    src_base += sign_ext16(scroll);                            /* block 2: 2-longword columns */
+    for (int g = 0; g < CKPT_B2_GROUPS; g++) {
+        int rows = (int16_t)be16(image + tbl);
+        uint32_t src = src_base + sign_ext16(be16(image + tbl + 2));
+        uint32_t dst = dst_base + sign_ext16(be16(image + tbl + 4));
+        tbl += 6;
+        for (int r = 0; r <= rows; r++, src += CKPT_STRIDE, dst += CKPT_STRIDE) {
+            wr32(image + dst,     be32(image + src));
+            wr32(image + dst + 4, be32(image + src + 4));
+        }
+    }
+    src_base += sign_ext16(scroll);                            /* block 3: one 3-longword group */
+    uint32_t src = src_base + sign_ext16(be16(image + tbl));
+    uint32_t dst = dst_base + sign_ext16(be16(image + tbl + 2));
+    for (int r = 0; r <= CKPT_B3_ROWS_M1; r++, src += CKPT_STRIDE, dst += CKPT_STRIDE) {
+        wr32(image + dst,     be32(image + src));
+        wr32(image + dst + 4, be32(image + src + 4));
+        wr32(image + dst + 8, be32(image + src + 8));
     }
 }
