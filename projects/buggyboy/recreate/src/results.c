@@ -77,6 +77,38 @@ void g_draw_dashboard(uint8_t *image, uint32_t dst_off) {
     }
 }
 
+/* --- init_leg_dash @ 0x12d38 --- Builds the per-leg dashboard graphic that g_draw_dashboard
+ * later blits. Two steps, both keyed by leg_index:
+ *   1. Seed the dashboard progress-marker record (dash_marker, a long) from the per-leg table at
+ *      buf_a + DASH_MARKER_TBL. game_update then walks this marker along the dashboard map.
+ *   2. Expand the raw per-leg block (mem_base + leg*DASH_LEG_STRIDE) into buf_c + DASH_SRC_OFF,
+ *      doubling it horizontally: each unit reads two source words W0,W1 (4 bytes) and writes four
+ *      dest words W0,W1,W1,W1 (8 bytes) — a 68k move.l re-emits W1 twice. DASH_ROWS rows of
+ *      DASH_GROUPS units; the source is packed contiguously (stride DASH_SRC_STRIDE) while the
+ *      dest steps a full scanline (ROW_STRIDE = 0x40 written + 0x60 skip). */
+#define DASH_MARKER_TBL   0x7f8      /* per-leg marker-seed longs at buf_a + this */
+#define DASH_LEG_STRIDE   0x500      /* raw per-leg dashboard block = DASH_ROWS * DASH_SRC_STRIDE */
+#define DASH_SRC_STRIDE   0x20       /* raw source bytes per row (DASH_GROUPS units x 4 bytes) */
+
+void g_init_leg_dash(uint8_t *image) {
+    int16_t leg = (int16_t)be16(image + A_leg_index);
+    wr32(image + A_dash_marker, be32(image + be32(image + A_buf_a) + DASH_MARKER_TBL + leg * 4));
+
+    uint32_t src = be32(image + A_mem_base) + sign_ext16(leg * DASH_LEG_STRIDE);
+    uint32_t dst = buf_c_src(image, DASH_SRC_OFF);
+    for (int row = 0; row < DASH_ROWS; row++, dst += ROW_STRIDE, src += DASH_SRC_STRIDE) {
+        uint32_t d = dst, s = src;
+        for (int unit = 0; unit < DASH_GROUPS; unit++, d += 8, s += 4) {
+            uint16_t w0 = be16(image + s);
+            uint16_t w1 = be16(image + s + 2);
+            wr16(image + d,     w0);
+            wr16(image + d + 2, w1);
+            wr16(image + d + 4, w1);
+            wr16(image + d + 6, w1);
+        }
+    }
+}
+
 /* --- draw_leg_results @ 0x125f2 --- Paints the per-leg results screen: background fills, the
  * four result panels (row/col blitters), two rows of labels, the leg time digits, and the
  * dashboard. No register arguments; layout coordinates and colours are baked into the code.

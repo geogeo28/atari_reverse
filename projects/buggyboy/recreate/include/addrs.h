@@ -14,6 +14,7 @@
 /* ---- gameplay state ---- */
 #define A_game_over_flag  0x18c34   /* tst.w'd at add_score entry */
 #define A_leg_index       0x18c38   /* current leg (0-4); indexes result strings + palette */
+#define A_dash_marker     0x18c3a   /* dashboard progress-marker record (long); seeded per-leg by init_leg_dash, walked by game_update */
 #define A_spin_state      0x18caa   /* buggy spin state; <0 while spinning after a crash */
 #define A_anim_frame      0x18d0c   /* word byte-offset into fg_anim_tbl for the current frame */
 #define A_wheel_pos       0x18cc0   /* buggy wheel/steer position; selects the body piece list */
