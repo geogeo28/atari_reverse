@@ -37,15 +37,7 @@ void g_draw_result_col(uint8_t *image, uint32_t dst_off, uint32_t src_off) {
 
 /* One 8-byte (4-plane, 16-pixel) masked row: keep the dest where the source is transparent. */
 static void blit_result_row(uint8_t *image, uint32_t dst, uint32_t src) {
-    uint16_t a = be16(image + src);
-    uint16_t b = be16(image + src + 2);
-    uint16_t c = be16(image + src + 4);
-    uint16_t d = be16(image + src + 6);
-    uint16_t mask = (uint16_t)(~(a | b | c) & d);
-    wr16(image + dst,     (uint16_t)((be16(image + dst)     & mask) | a));
-    wr16(image + dst + 2, (uint16_t)((be16(image + dst + 2) & mask) | b));
-    wr16(image + dst + 4, (uint16_t)((be16(image + dst + 4) & mask) | c));
-    wr16(image + dst + 6, (uint16_t)((be16(image + dst + 6) & mask) | (uint16_t)(d & ~mask)));
+    blit_transp_cell(image, dst, src);
 }
 
 void g_draw_result_row(uint8_t *image, uint32_t dst_off, uint32_t src_off) {

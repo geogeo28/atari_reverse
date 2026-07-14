@@ -21,4 +21,20 @@ static inline uint32_t draw_dst(const uint8_t *image, uint32_t off) {
     return draw_buffer(image) + sign_ext16(off);
 }
 
+/* One 8-byte (16-pixel, 4-plane) transparency-blit cell from four source words A,B,C,D at src:
+ * mask = ~(A|B|C) & D shows the background through where the sprite is transparent; planes 0-2
+ * take A/B/C, plane 3 takes D's leftover (non-A/B/C) bits. The shared masked-sprite primitive
+ * (results row blitter, buggy/foreground sprites). */
+static inline void blit_transp_cell(uint8_t *image, uint32_t dst, uint32_t src) {
+    uint16_t a = be16(image + src);
+    uint16_t b = be16(image + src + 2);
+    uint16_t c = be16(image + src + 4);
+    uint16_t d = be16(image + src + 6);
+    uint16_t mask = (uint16_t)(~(a | b | c) & d);
+    wr16(image + dst,     (uint16_t)((be16(image + dst)     & mask) | a));
+    wr16(image + dst + 2, (uint16_t)((be16(image + dst + 2) & mask) | b));
+    wr16(image + dst + 4, (uint16_t)((be16(image + dst + 4) & mask) | c));
+    wr16(image + dst + 6, (uint16_t)((be16(image + dst + 6) & mask) | (uint16_t)(d & ~mask)));
+}
+
 #endif /* BB_DRAW_H */
