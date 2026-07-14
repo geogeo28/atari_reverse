@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 61/91.**
+**Verified: 63/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -53,7 +53,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x11c7a` | `play_event_tune` | 56 | ✅ verified | fuzz over/cur/MZFLAG/tune (-> INITTUNE) |
 | `0x11cb2` | `handle_marker` | 42 | ✅ verified | fuzz over/cur/MZFLAG/fx (-> TURNOFF/INITFX) |
 | `0x11f4c` | `build_road_geometry` | 356 | ✅ verified | 300-seed fuzz (whole-image) |
-| `0x120b0` | `read_input` | 70 |  |  |
+| `0x120b0` | `read_input` | 70 | ✅ verified | fuzz input_state x last_key (joystick keep vs keyboard-scancode map) |
 | `0x120f8` | `set_rez` | 24 | ✅ verified | trap layer (Ikbdws); D0.b -> config byte |
 | `0x12110` | `read_joystick` | 20 | ✅ verified | run-to-rts (IKBD status modeled TDRE-ready; no image effect) |
 | `0x12124` | `install_handlers` | 50 |  |  |
@@ -68,7 +68,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12758` | `draw_panel3` | 40 | ✅ verified | flip 0/4 (divider + 3 chained labels) |
 | `0x12780` | `draw_panel2` | 32 | ✅ verified | flip 0/4 (divider + 2 chained labels) |
 | `0x127a0` | `intermission` | 330 |  |  |
-| `0x128ea` | `check_abort` | 42 |  |  |
+| `0x128ea` | `check_abort` | 42 | ✅ verified | return-value fuzz (abort code vs swap(Crawio)); GEMDOS 6 modeled |
 | `0x12914` | `intermission_poll` | 86 | ✅ verified | 25-seed fuzz x flip (9-entry table-driven block blit; not input) |
 | `0x129a0` | `fade_step` | 26 |  |  |
 | `0x129ba` | `draw_intermission` | 316 |  |  |
@@ -157,13 +157,13 @@ to `0x1b044`; the reconstruction is pure C with no machine stack). Data-heavy fu
 ## Deferred: interactive (input/hardware-driven) functions
 
 Some functions can't be run to `rts` under the current harness because their control flow is
-driven by **live input or hardware** the oracle doesn't model. `update_highscore` (`0x1238e`)
-is the first hit: it is the high-score name-entry screen and busy-polls the **IKBD ACIA at
-`$FFFFFC00`** via `read_joystick`, loops on `input_state` (set by a keyboard interrupt, not by
-any traced function), waits on `MZFLAG` (music), and Vsyncs between frames. Verifying it (or
-`read_joystick`/`read_input`/`check_abort`) byte-for-byte needs an oracle extension: model the IKBD
-registers, script `input_state`, and pin `MZFLAG`. That extension is scoped in
-[`HARNESS.md`](HARNESS.md). Until it exists these stay unported to keep the "every reconstructed
+driven by **live input or hardware** the oracle doesn't model. The leaf input functions are now
+verified via the IKBD memory model + scripted input globals (Phases 1-2 in
+[`HARNESS.md`](HARNESS.md)): `read_joystick` (`0x12110`), `read_input` (`0x120b0`), `check_abort`
+(`0x128ea`). What remains is `update_highscore` (`0x1238e`): the high-score name-entry screen
+loops on `input_state` (set by a keyboard interrupt, not by any traced function), waits on
+`MZFLAG` (music), and Vsyncs between frames — Phase 3 verifies it with a pinned `MZFLAG` and
+fixed-input scenarios (`HARNESS.md`). Until then it stays unported to keep the "every reconstructed
 function is green" invariant. (`intermission_poll` (`0x12914`) was on this list by a wrong `# ctx`
 guess — it reads no input; it's a table-driven block blit and is now verified.) What was learnable
 by **reading** `update_highscore` is captured in `names.txt`:

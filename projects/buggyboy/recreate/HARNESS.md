@@ -49,7 +49,9 @@ candidate side and cannot be differentially verified. Therefore:
   `IKBD_STATUS` ($fffc00) as TDRE-ready so the busy-wait terminates; the command write to
   `IKBD_DATA` lands above the image and is dropped. `read_joystick` verified (test_input.py).**
 - **Phase 2 — leaf input fns.** Reconstruct `read_input` + `check_abort`; tests sweep poked
-  `input_state`/`last_key`/`0x18c42`. *Verify:* run-to-rts, all-branch fuzz.
+  `input_state`/`last_key`/`0x18c42`. *Verify:* run-to-rts, all-branch fuzz. **← done: `read_input`
+  (image-diff fuzz over joystick/keyboard branches) and `check_abort` (return-value fuzz; GEMDOS
+  Crawio fn 6 modeled as no-key in shim.c + os.h) verified in test_input.py.**
 - **Phase 3 — `update_highscore`.** (a) audit remaining traps — XBIOS `Vsync` (0x25) is already a
   no-op; still to identify the GEMDOS `trap #1` in the two tune-wait loops. (b) add a knob to pin
   `MZFLAG`=0. (c) reconstruct ranking + row-shift/insert (**this populates `highscore_table` → the

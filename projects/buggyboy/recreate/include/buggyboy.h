@@ -118,6 +118,8 @@ void g_xbios_setscreen(uint8_t *image);
 void g_xbios_setpalette(uint8_t *image, uint32_t palette_ptr);   /* A0 -> 16-word palette */
 void g_set_rez(uint8_t *image, uint32_t mode);                   /* D0.b -> config, then XBIOS 0x19 */
 void g_read_joystick(uint8_t *image);                            /* IKBD poll: send 0x16; no image effect */
+void g_read_input(uint8_t *image);                               /* joystick + keyboard-fallback -> input_state */
+uint32_t g_check_abort(uint8_t *image);                          /* returns d0: 0x0d abort, else swap(Crawio) */
 void g_gem_aes(uint8_t *image);                                  /* trap #2 AES (D0=0xc8, D1=&aes_pblk) */
 void g_gem_vdi(uint8_t *image);                                  /* trap #2 VDI (D0=0x73, D1=&vdi_pblk) */
 void g_start(uint8_t *image);                                    /* entry: GEM init, verified @ checkpoint 0x100d4 */

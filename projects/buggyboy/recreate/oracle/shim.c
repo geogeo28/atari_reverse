@@ -141,6 +141,7 @@ static void handle_trap(int vec) {
             break;
         case 0x49: case 0x4a:                         /* Mfree / Mshrink -> success */
         case 0x02: case 0x09: break;                  /* Cconout / Cconws -> no image effect */
+        case 0x06: d0 = OS_CRAWIO_RESULT; break;      /* Crawio: raw non-blocking console I/O */
         default: modeled = 0; break;                  /* Super, Pexec, unknown */
         }
     } else if (vec == 14) {                           /* XBIOS */

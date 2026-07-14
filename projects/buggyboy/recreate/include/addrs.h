@@ -14,6 +14,10 @@
 /* ---- gameplay state ---- */
 #define A_game_over_flag  0x18c34   /* tst.w'd at add_score entry */
 #define A_leg_index       0x18c38   /* current leg (0-4); indexes result strings + palette */
+/* ---- input (read_input @ 0x120b0, check_abort @ 0x128ea) ---- */
+#define A_input_prev      0x18c42   /* baseline input snapshot; check_abort aborts on a differing live input # ctx */
+#define A_input_state     0x18c44   /* current input bits: fire 0x80, up 1, down 2, left 4, right 8 */
+#define A_last_key        0x18c46   /* last keyboard scancode (read_input's fallback source) */
 #define A_dash_marker     0x18c3a   /* dashboard progress-marker record (long); seeded per-leg by init_leg_dash, walked by game_update */
 #define A_spin_state      0x18caa   /* buggy spin state; <0 while spinning after a crash */
 #define A_anim_frame      0x18d0c   /* word byte-offset into fg_anim_tbl for the current frame */
