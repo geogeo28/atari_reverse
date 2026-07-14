@@ -11,6 +11,14 @@
 #define A_score_counter   0x18250   /* last 2 ASCII score digits (contiguous w/ score_bcd) */
 #define A_score_str       0x18230   /* HUD score string; live digits at [4..9] */
 
+/* ---- high-score / results screen (update_highscore @ 0x1238e) ---- */
+#define A_countdown_timer 0x18262   /* name-entry countdown value (starts 30); rendered as "TIME nn" */
+#define A_countdown_sub   0x18264   /* per-frame sub-counter; decrements countdown_timer every 0x11 frames */
+#define A_highscore_table 0x18266   /* per-leg high-score rows: 9 x 0xe bytes (6 score digits + name), stride 0x80 by leg */
+#define HIGHSCORE_ROWS    9         /* rows per leg table */
+#define HIGHSCORE_ROW     0xe       /* bytes per row */
+#define HIGHSCORE_LEG_STRIDE 0x80   /* bytes per leg's table (leg_index << 7) */
+
 /* ---- gameplay state ---- */
 #define A_game_over_flag  0x18c34   /* tst.w'd at add_score entry */
 #define A_leg_index       0x18c38   /* current leg (0-4); indexes result strings + palette */

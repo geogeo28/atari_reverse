@@ -57,7 +57,11 @@ candidate side and cannot be differentially verified. Therefore:
   `MZFLAG`=0. (c) reconstruct ranking + row-shift/insert (**this populates `highscore_table` → the
   results screen's SCORE/NAME columns render**) + draw calls + loop. *Verify:* checkpoint-first
   (after ranking+insert+first `draw_results_screen`), then full run-to-rts under fixed-input
-  scenarios (`input_state ∈ {0, 0x80, 1, 8}`) with raised `max_insns`.
+  scenarios (`input_state ∈ {0, 0x80, 1, 8}`) with raised `max_insns`. **← done, and simpler than
+  planned: checkpointing at the two prefix exits (`0x12450` made / `0x123e6` missed) — before the
+  interactive loop — verifies the ranking/shift/insert (the SCORE/NAME payoff) with no MZFLAG pin,
+  no in-loop trap modeling, and no input timeline. The name-entry loop stays read-only. See
+  src/highscore.c + test_highscore.py.**
 - **Phase 4 — `install_handlers` (optional).** Needs XBIOS `Kbdvbase` (34) modeled to return an
   in-image KBDVBASE struct. *Verify:* run-to-rts diffing the saved/installed vectors.
 

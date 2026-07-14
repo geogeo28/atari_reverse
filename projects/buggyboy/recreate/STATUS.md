@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 65/91.**
+**Verified: 66/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -61,7 +61,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x121f8` | `flip_screen` | 46 |  |  |
 | `0x12226` | `xbios_setscreen` | 26 | ✅ verified | trap layer; no image effect |
 | `0x1225a` | `draw_results_screen` | 308 | ✅ verified | orchestrator; mode/pos/leg x flip (A3 + A0/fill chaining) |
-| `0x1238e` | `update_highscore` | 612 |  |  |
+| `0x1238e` | `update_highscore` | 612 | ✅ verified | checkpoints 0x12450 (made) / 0x123e6 (miss): EGOFF + rank + shift + insert; name-entry loop read-only |
 | `0x125f2` | `draw_leg_results` | 244 | ✅ verified | orchestrator; leg 0/1/2/4 x flip (fills + panels + labels + dashboard) |
 | `0x126e6` | `draw_divider` | 54 | ✅ verified | flip 0/4 (fill_rect + two vertical lines) |
 | `0x1271c` | `draw_panel5` | 60 | ✅ verified | flip 0/4 (divider + 5 chained labels) |
@@ -157,19 +157,18 @@ to `0x1b044`; the reconstruction is pure C with no machine stack). Data-heavy fu
 ## Deferred: interactive (input/hardware-driven) functions
 
 Some functions can't be run to `rts` under the current harness because their control flow is
-driven by **live input or hardware** the oracle doesn't model. The leaf input functions are now
-verified via the IKBD memory model + scripted input globals (Phases 1-2 in
-[`HARNESS.md`](HARNESS.md)): `read_joystick` (`0x12110`), `read_input` (`0x120b0`), `check_abort`
-(`0x128ea`). What remains is `update_highscore` (`0x1238e`): the high-score name-entry screen
-loops on `input_state` (set by a keyboard interrupt, not by any traced function), waits on
-`MZFLAG` (music), and Vsyncs between frames — Phase 3 verifies it with a pinned `MZFLAG` and
-fixed-input scenarios (`HARNESS.md`). Until then it stays unported to keep the "every reconstructed
-function is green" invariant. (`intermission_poll` (`0x12914`) was on this list by a wrong `# ctx`
-guess — it reads no input; it's a table-driven block blit and is now verified.) What was learnable
-by **reading** `update_highscore` is captured in `names.txt`:
-`hiscore_pos` = the new score's 1-based rank in the leg table; `results_mode` = 0 if it made
-the table (name entry) else 2; and `highscore_table` (`0x18266`) is the row-2 source the
-results screen draws from.
+driven by **live input or hardware** the oracle doesn't model. The input-driven family is now
+handled by the IKBD memory model + scripted input globals (`HARNESS.md`): the leaves
+`read_joystick` (`0x12110`), `read_input` (`0x120b0`) and `check_abort` (`0x128ea`) run to `rts`,
+and `update_highscore` (`0x1238e`) is verified to a **checkpoint** — its deterministic prefix
+(EGOFF + the score ranking, row shift and insert that populate `highscore_table`) is diffed at the
+two exits (`0x12450` made / `0x123e6` missed), and the tail — the interactive name-entry loop that
+busy-polls the IKBD, Vsyncs and waits on `MZFLAG` — is verified by reading, not execution (it can't
+be run to `rts`). (`intermission_poll` (`0x12914`) was on this list by a wrong `# ctx` guess — it
+reads no input; it's a table-driven block blit and is verified.) What was learnable by **reading**
+`update_highscore`'s name-entry loop is captured in `names.txt`: `hiscore_pos` = the new score's
+1-based rank; `results_mode` = 0 if it made the table (name entry) else 2; and `highscore_table`
+(`0x18266`) is the row-2 source the results screen draws from.
 
 ## OS trap layer
 
