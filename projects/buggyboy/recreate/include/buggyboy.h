@@ -115,6 +115,7 @@ void g_set_screen_offset(uint8_t *image);      /* set the buf_c road-scroll offs
 void g_wait_vbl_set_offset(uint8_t *image);    /* 51x Vsync then set_screen_offset */
 void g_blit_road_scroll(uint8_t *image);       /* horizontal fine-scroll of the road playfield to the screen */
 void g_draw_ground(uint8_t *image, uint32_t buffer);  /* A6 = draw buffer; fill the ground/horizon band */
+void g_render_road(uint8_t *image);   /* pseudo-3D road rasterizer @0x19144 (thunk 0x15af6 is an alias) */
 
 /* ---- object sprite blitters (blit_obj_* @ 0x10bdc..) ---- */
 #define OBJ_FULL_CELLS 10       /* full-width fill: 10 * 16-byte writes = one 160-byte scanline */

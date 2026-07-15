@@ -36,6 +36,7 @@ fn 0x12110 read_joystick
 # ==== road / world render ====
 fn 0x11f4c build_road_geometry
 fn 0x19144 render_road
+fn 0x15af6 render_road_thunk       # bra.w 0x19144 alias
 fn 0x10326 blit_road_scroll
 fn 0x10ff2 draw_ground
 fn 0x110a4 probe_collision
@@ -158,6 +159,7 @@ var 0x17e2a fname_graphics
 var 0x18f24 road_width_tbl
 var 0x190ac road_scanline_tbl
 var 0x18efc road_curve_tbl
+var 0x18c5a road_edge_sel       # signed word added to render_road's a6 edge-table base (0x15c3a)
 var 0x1905e horizon
 var 0x18c6a road_curve
 var 0x18cb8 hscroll_pos
