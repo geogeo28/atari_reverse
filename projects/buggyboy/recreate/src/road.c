@@ -342,7 +342,7 @@ void g_draw_ground(uint8_t *image, uint32_t buffer) {
 #define RR_DST_ROAD_OFF   0x4100     /* a2 = draw_buffer + this: top of the on-screen road band */
 #define RR_PARAM_TBL      0x1623a    /* a4: per-scanline perspective-offset param stream */
 #define RR_EDGE_TBL_BASE  0x15c3a    /* a6 base: per-scanline edge/run table */
-#define A_road_edge_sel   0x18c5a    /* word added to RR_EDGE_TBL_BASE to pick a6's start */
+/* A_road_edge_sel (0x18c5a) is shared with init_leg — defined in addrs.h. */
 #define RR_WIDTH_TBL      0x18f24    /* a5 = road_width_tbl (reset at each band group) */
 
 /* ---- inter-band group step (0x93ac / 0x956e / 0x9868) ---- */
@@ -395,6 +395,31 @@ static inline uint32_t rr_clrw(uint32_t r){ return r & 0xffff0000u; }           
 static inline uint32_t rr_swap(uint32_t r){ return (r << 16) | (r >> 16); }                  /* swap */
 /* dbf dN,label: decrement dN's low word; loop while the result != -1 (0xffff). Returns true to loop. */
 static inline int rr_dbf(uint32_t *r) { uint16_t w = (uint16_t)(*r) - 1; *r = rr_wset(*r, w); return w != 0xffff; }
+
+/* ---- blit primitives shared by every band (the 68k blit tails are hand-inlined copies of these).
+ * a0 = dst cursor, a1 = src cursor; both are post-incremented like the 68k `(an)+` addressing. ---- */
+
+/* move.l (a1)+,(a0)+ : copy one long (half a 4-plane, 16-pixel column) src->dst, advance both. */
+static inline void rr_copy_long(uint8_t *img, uint32_t *a0, uint32_t *a1) {
+    wr32(img + *a0, be32(img + *a1)); *a1 += 4; *a0 += 4;
+}
+/* move.l (a1)+,(a0); and.l d3,(a0)+ : copy one long masked by the full-long edge mask d3 (A/C/E). */
+static inline void rr_copy_long_masked(uint8_t *img, uint32_t *a0, uint32_t *a1, uint32_t d3) {
+    wr32(img + *a0, be32(img + *a1) & d3); *a1 += 4; *a0 += 4;
+}
+/* move.l d5,(a0)+; move.l d6,(a0)+ : write one forward shoulder-fill pair (interior/edge planes). */
+static inline void rr_fill_pair(uint8_t *img, uint32_t *a0, uint32_t d5, uint32_t d6) {
+    wr32(img + *a0, d5); *a0 += 4; wr32(img + *a0, d6); *a0 += 4;
+}
+/* move.l d6,-(a0); move.l d5,-(a0) : write one backward shoulder-fill pair (tail fill, predecrement). */
+static inline void rr_fill_pair_rev(uint8_t *img, uint32_t *a0, uint32_t d5, uint32_t d6) {
+    *a0 -= 4; wr32(img + *a0, d6); *a0 -= 4; wr32(img + *a0, d5);
+}
+/* Fill one full 160-byte road row forward through a2 (the 68k `moveq #9,d1; dbf` loop of ten
+ * (d5,d6,d5,d6) writes). d1 is left dead by the original at every call site, so we don't model it. */
+static inline void rr_fill_full_row(uint8_t *img, uint32_t *a2, uint32_t d5, uint32_t d6) {
+    for (int i = 0; i < 10; i++) { rr_fill_pair(img, a2, d5, d6); rr_fill_pair(img, a2, d5, d6); }
+}
 
 #define RR_ROW_STRIDE_D2  0x00a0     /* d2 = ROW_STRIDE (160 bytes / scanline) at band entry */
 
@@ -451,8 +476,8 @@ L9172:
     d1 = 0x13; d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) < 0) goto L91e6;
     d1 = 0x12; a1 += 8;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
 L91e6:
     do { wr32(img + a0, d6); a0 += 4; wr32(img + a0, d6); a0 += 4; }
     while (rr_dbf(&d1));                         /* dbf d1 */
@@ -464,16 +489,16 @@ L91f8:
     if (rr_ws(d0) >= 0) goto L928c;
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L921a;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L928c;
     goto L9224;
 L921a:
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L928c;
 L9224:
@@ -487,10 +512,10 @@ L9230:
     d1 = 0x13; d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) < 0) goto L924a;
     d1 = 0x12; a1 += 8;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;            /* move.l (a1)+,(a0)+ */
-    wr32(img + a0, be32(img + a1) & d3); a1 += 4; a0 += 4;       /* move.l (a1)+,(a0); and.l d3,(a0)+ */
+    rr_copy_long(img, &a0, &a1);            /* move.l (a1)+,(a0)+ */
+    rr_copy_long_masked(img, &a0, &a1, d3);       /* move.l (a1)+,(a0); and.l d3,(a0)+ */
 L924a:
-    do { wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4; }
+    do { rr_fill_pair(img, &a0, d5, d6); }
     while (rr_dbf(&d1));
     goto L91ee;
 L925c:
@@ -500,20 +525,20 @@ L925c:
     if (rr_ws(d0) >= 0) goto L928c;
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L927c;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1) & d3); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long_masked(img, &a0, &a1, d3);
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L928c;
     goto L9284;
 L927c:
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L928c;
 L9284:
-    do { wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4;
+    do { rr_fill_pair(img, &a0, d5, d6);
          d0 = rr_wset(d0, (uint16_t)(d0 + 8)); } while (rr_ws(d0) < 0);
 L928c:
     d5 = rr_notw(0);                                              /* moveq #0,d5; not.w -> 0xffff */
@@ -555,13 +580,13 @@ L92f6:
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     goto L930e;
 L930a:
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
 L930e:
     d0 = rr_wset(d0, (uint16_t)(rr_ws(d0) >> 3));                /* asr.w #3 */
     d1 = rr_wset(d1, (uint16_t)(d1 + d0));                       /* add.w d0,d1 */
     if (rr_ws(d1) < 0) goto L931c;
-    do { wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4; }
+    do { rr_fill_pair(img, &a0, d5, d6); }
     while (rr_dbf(&d1));                        /* dbf d1 */
 L931c:
     a2 += RR_ROW_STRIDE_D2;                                      /* adda.w #a0,a2 */
@@ -573,19 +598,19 @@ L9328:
     if (rr_ws(d0) >= 0) goto L9352;
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L934e;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
 L9340:                                                          /* combined d0/d1 shoulder-fill loop */
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L9352;
-    wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4;
+    rr_fill_pair(img, &a0, d5, d6);
     if (rr_dbf(&d1)) goto L9340;                                /* dbf d1,$9340 */
     goto L9352;
 L934e:
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
 L9352:
     d5 = rr_notw(0); d6 = d5;                                    /* moveq #0; not.w; move.l d5,d6 */
     if (!(d0 & RR_F_SRC_CONST)) goto L936a;
@@ -608,8 +633,7 @@ L938e:
     d0 = rr_wset(d0, (uint16_t)(d0 - 8));                      /* subq.w #8,d0 */
     if (rr_ws(d0) < 0) goto L93a6;                             /* bmi */
     if (rr_ws(d0) - (int16_t)d2 >= 0) goto L93a0;             /* cmp.w d2,d0; bpl */
-    a0 -= 4; wr32(img + a0, d6);                              /* move.l d6,-(a0) */
-    a0 -= 4; wr32(img + a0, d5);                              /* move.l d5,-(a0) */
+    rr_fill_pair_rev(img, &a0, d5, d6);              /* move.l d6,-(a0); move.l d5,-(a0) */
     if (rr_dbf(&d1)) goto L938e;            /* dbf d1,$938e */
     goto L93a6;
 L93a0:
@@ -701,23 +725,19 @@ Ltail:
     a0 += sign_ext16((uint16_t)d0);                          /* adda.w d0,a0 */
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L946c;
-    d1 = 9;                                                  /* moveq #9,d1: full-width fill of a2 */
-    do {
-        wr32(img + r->a2, d5); r->a2 += 4; wr32(img + r->a2, d6); r->a2 += 4;
-        wr32(img + r->a2, d5); r->a2 += 4; wr32(img + r->a2, d6); r->a2 += 4;
-    } while (rr_dbf(&d1));                                   /* dbf d1,$945a */
+    rr_fill_full_row(img, &r->a2, d5, d6);                /* moveq #9,d1; dbf: full-width fill of a2 */
     if (rr_dbf(&d4)) goto L93c2;
     return;
 L946c:
     d0 = rr_wset(d0, (uint16_t)(d0 - r->d2));               /* sub.w d2,d0 */
     if (rr_ws(d0) >= 0) goto L9484;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;       /* move.l (a1)+,(a0)+ */
+    rr_copy_long(img, &a0, &a1);       /* move.l (a1)+,(a0)+ */
     rr_andw(img, a0 - 4, d3);                               /* and.w d3,-4(a0) */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L9484;
     do {
-        wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4;
+        rr_fill_pair(img, &a0, d5, d6);
         d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     } while (rr_ws(d0) < 0);
 L9484:
@@ -735,11 +755,11 @@ L9514:
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
     if (rr_ws(d0) < 0) goto L952c;                           /* bmi */
     d1 = 0x12; a1 += 8;                                      /* moveq #$12,d1; addq.l #8,a1 */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;        /* move.l (a1)+,(a0)+ */
+    rr_copy_long(img, &a0, &a1);        /* move.l (a1)+,(a0)+ */
     rr_andw(img, a0 - 4, d3);                                /* and.w d3,-4(a0) */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
 L952c:
-    do { wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4; }
+    do { rr_fill_pair(img, &a0, d5, d6); }
     while (rr_dbf(&d1));                                     /* dbf d1,$952c */
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L93c2;
     return;
@@ -749,22 +769,22 @@ L953c:
     if (rr_ws(d0) >= 0) goto L9568;                          /* bpl -> row done */
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
     if (rr_ws(d0) >= 0) goto L9558;                          /* bpl */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;        /* move.l (a1)+,(a0)+ x4, 3rd masked */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);        /* move.l (a1)+,(a0)+ x4, 3rd masked */
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     rr_andw(img, a0 - 4, d3);                                /* and.w d3,-4(a0) */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
     if (rr_ws(d0) >= 0) goto L9568;                          /* bpl */
     goto L9560;
 L9558:
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
     if (rr_ws(d0) >= 0) goto L9568;                          /* bpl */
 L9560:
     do {
-        wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4;
+        rr_fill_pair(img, &a0, d5, d6);
         d0 = rr_wset(d0, (uint16_t)(d0 + 8));               /* addq.w #8,d0 */
     } while (rr_ws(d0) < 0);                                /* bmi $9560 */
 L9568:
@@ -808,30 +828,26 @@ L95d2:
     if (be16(img + r->a6 - 2) != 0) a1 += RR_SRC_0A00;
     d0 = rr_wset(d0, (uint16_t)(d0 - r->d2));                /* sub.w d2,d0 */
     if (rr_ws(d0) >= 0) goto L9622;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     goto L9608;
 L95fa:
     a1 += sign_ext16(be16(img + r->a6 - 2));
     d0 = rr_wset(d0, (uint16_t)(d0 - r->d2));
     if (rr_ws(d0) >= 0) goto L9622;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1) & d3); a1 += 4; a0 += 4;   /* move.l(a1)+,(a0); and.l d3,(a0)+ */
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long_masked(img, &a0, &a1, d3);   /* move.l(a1)+,(a0); and.l d3,(a0)+ */
 L9608:
     d1 = rr_wset(d1, (uint16_t)((uint16_t)d1 >> 3));         /* lsr.w #3,d1 */
     d1 = rr_wset(d1, (uint16_t)(d1 - 1));                    /* subq.w #1,d1 */
     if (rr_ws(d1) < 0) goto L9618;
     a0 = r->a2;
-    do { wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4; } while (rr_dbf(&d1));
+    do { rr_fill_pair(img, &a0, d5, d6); } while (rr_dbf(&d1));
 L9618:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L9582;
     return;
 L9622:
-    d1 = 9;
-    do {
-        wr32(img + r->a2, d5); r->a2 += 4; wr32(img + r->a2, d6); r->a2 += 4;
-        wr32(img + r->a2, d5); r->a2 += 4; wr32(img + r->a2, d6); r->a2 += 4;
-    } while (rr_dbf(&d1));
+    rr_fill_full_row(img, &r->a2, d5, d6);                /* moveq #9,d1; dbf: full-width fill of a2 */
     if (rr_dbf(&d4)) goto L9582;
     return;
 L9638:
@@ -860,19 +876,19 @@ L9686:
     if (rr_ws(d0) >= 0) goto L969e;
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) < 0) goto L96b0;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L9582;
     return;
 L969e:
     a0 += sign_ext16((uint16_t)d0);
     d0 = rr_wset(d0, (uint16_t)(d0 - r->d2));
     if (rr_ws(d0) >= 0) goto L96b0;
-    wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4;
+    rr_fill_pair(img, &a0, d5, d6);
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L96b0;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
 L96b0:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L9582;
     (void)a0; (void)a1; (void)d3;
@@ -915,8 +931,8 @@ L96b8:
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
     if (rr_ws(d0) < 0) goto L9724;
     a1 += 8;                                                 /* addq.l #8,a1 */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
 L9724:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L96b8;
     return;
@@ -927,14 +943,14 @@ L972e:
     if (rr_ws(d0) >= 0) goto L97a4;
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
     if (rr_ws(d0) >= 0) goto L9748;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     goto L978a;
 L9748:
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     goto L978a;
 L9750:                                                       /* 0x9750 (bit27 clear) */
     a1 += sign_ext16(be16(img + r->a6 - 2));                 /* adda.w -2(a6),a1 */
@@ -943,8 +959,8 @@ L9750:                                                       /* 0x9750 (bit27 cl
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) < 0) goto L9762;
     a1 += 8;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
 L9762:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L96b8;
     return;
@@ -955,29 +971,25 @@ L976c:
     if (rr_ws(d0) >= 0) goto L97a4;
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));
     if (rr_ws(d0) >= 0) goto L9784;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1) & d3); a1 += 4; a0 += 4;   /* move.l(a1)+,(a0); and.l d3,(a0)+ */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long_masked(img, &a0, &a1, d3);   /* move.l(a1)+,(a0); and.l d3,(a0)+ */
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     goto L978a;
 L9784:
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1) & d3); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long_masked(img, &a0, &a1, d3);
 L978a:
     d1 = rr_wset(d1, (uint16_t)((uint16_t)d1 >> 3));         /* lsr.w #3,d1 */
     d1 = rr_wset(d1, (uint16_t)(d1 - 1));                    /* subq.w #1,d1 */
     if (rr_ws(d1) < 0) goto L979a;
     a0 = r->a2;
-    do { wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4; } while (rr_dbf(&d1));
+    do { rr_fill_pair(img, &a0, d5, d6); } while (rr_dbf(&d1));
 L979a:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L96b8;
     return;
 L97a4:                                                       /* full-width fill */
-    d1 = 9;
-    do {
-        wr32(img + r->a2, d5); r->a2 += 4; wr32(img + r->a2, d6); r->a2 += 4;
-        wr32(img + r->a2, d5); r->a2 += 4; wr32(img + r->a2, d6); r->a2 += 4;
-    } while (rr_dbf(&d1));
+    rr_fill_full_row(img, &r->a2, d5, d6);                /* moveq #9,d1; dbf: full-width fill of a2 */
     if (rr_dbf(&d4)) goto L96b8;
     return;
 L97ba:                                                       /* WIDE src select (identical to near) */
@@ -1007,8 +1019,8 @@ L9808:                                                       /* far merge/blit t
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
     if (rr_ws(d0) < 0) goto L981a;
     a1 += 8;                                                 /* addq.l #8,a1 */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
 L981a:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L96b8;
     return;
@@ -1025,27 +1037,25 @@ L9822:
     if (rr_ws(d1) < 0) goto L9840;                           /* bmi */
     a0 = r->a2;
 L9838:
-    a0 -= 4; wr32(img + a0, d6);                             /* move.l d6,-(a0) */
-    a0 -= 4; wr32(img + a0, d5);                             /* move.l d5,-(a0) */
+    rr_fill_pair_rev(img, &a0, d5, d6);              /* move.l d6,-(a0); move.l d5,-(a0) */
     if (rr_dbf(&d1)) goto L9838;                             /* dbf d1,$9838 */
 L9840:
     if (rr_dbf(&d4)) goto L96b8;
     return;
 L9846:
     d0 = 0;                                                  /* moveq #0,d0 (clears the full register) */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
 L984c:
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
     a0 -= sign_ext16((uint16_t)d0);                          /* suba.w d0,a0 */
 L9856:
     d3 = rr_wset(d3, (uint16_t)(d3 - 8));                    /* subq.w #8,d3 */
     if (rr_ws(d3) < 0) goto L9862;                           /* bmi */
-    a0 -= 4; wr32(img + a0, d6);                             /* move.l d6,-(a0) */
-    a0 -= 4; wr32(img + a0, d5);                             /* move.l d5,-(a0) */
+    rr_fill_pair_rev(img, &a0, d5, d6);              /* move.l d6,-(a0); move.l d5,-(a0) */
     if (rr_dbf(&d1)) goto L9856;                             /* dbf d1,$9856 (re-runs subq/suba) */
 L9862:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L96b8;
@@ -1107,23 +1117,19 @@ L9914:                                                       /* single masked 2-
     d1 = rr_wset(d1, (uint16_t)d0);                          /* move.w d0,d1 */
     d0 = rr_wset(d0, (uint16_t)(d0 - r->d2));                /* sub.w d2,d0 */
     if (rr_ws(d0) >= 0) goto L993c;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
     rr_andw(img, a0 - 4, d3);                                /* and.w d3,-4(a0) */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
     d1 = rr_wset(d1, (uint16_t)((uint16_t)d1 >> 3));         /* lsr.w #3,d1 */
     d1 = rr_wset(d1, (uint16_t)(d1 - 1));                    /* subq.w #1 */
     if (rr_ws(d1) < 0) goto L9934;
     a0 = r->a2;
-    do { wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4; } while (rr_dbf(&d1));
+    do { rr_fill_pair(img, &a0, d5, d6); } while (rr_dbf(&d1));
 L9934:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto Ltop;
     return;
 L993c:
-    d1 = 9;
-    do {
-        wr32(img + r->a2, d5); r->a2 += 4; wr32(img + r->a2, d6); r->a2 += 4;
-        wr32(img + r->a2, d5); r->a2 += 4; wr32(img + r->a2, d6); r->a2 += 4;
-    } while (rr_dbf(&d1));
+    rr_fill_full_row(img, &r->a2, d5, d6);                /* moveq #9,d1; dbf: full-width fill of a2 */
     if (rr_dbf(&d4)) goto Ltop;
     return;
 
@@ -1133,8 +1139,8 @@ D2_tail:
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
     if (rr_ws(d0) < 0) goto L99e8;
     a1 += 8;                                                 /* addq.l #8,a1 */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
 L99e8:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto Ltop;
     return;
@@ -1145,31 +1151,27 @@ L99f0:
     if (rr_ws(d0) >= 0) goto L9a2a;
     d0 = rr_wset(d0, (uint16_t)(d0 + 8));                    /* addq.w #8,d0 */
     if (rr_ws(d0) >= 0) goto L9a0a;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;        /* move.l(a1)+,(a0)+ */
+    rr_copy_long(img, &a0, &a1);        /* move.l(a1)+,(a0)+ */
     rr_andw(img, a0 - 4, d3);                                /* and.w d3,-4(a0) */
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
+    rr_copy_long(img, &a0, &a1);
     goto L9a12;
 L9a0a:
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
     rr_andw(img, a0 - 4, d3);
-    wr32(img + a0, be32(img + a1)); a1 += 4; a0 += 4;
+    rr_copy_long(img, &a0, &a1);
 L9a12:
     d1 = rr_wset(d1, (uint16_t)((uint16_t)d1 >> 3));         /* lsr.w #3,d1 */
     d1 = rr_wset(d1, (uint16_t)(d1 - 1));                    /* subq.w #1 */
     if (rr_ws(d1) < 0) goto L9a22;
     a0 = r->a2;
-    do { wr32(img + a0, d5); a0 += 4; wr32(img + a0, d6); a0 += 4; } while (rr_dbf(&d1));
+    do { rr_fill_pair(img, &a0, d5, d6); } while (rr_dbf(&d1));
 L9a22:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto Ltop;
     return;
 L9a2a:
-    d1 = 9;
-    do {
-        wr32(img + r->a2, d5); r->a2 += 4; wr32(img + r->a2, d6); r->a2 += 4;
-        wr32(img + r->a2, d5); r->a2 += 4; wr32(img + r->a2, d6); r->a2 += 4;
-    } while (rr_dbf(&d1));
+    rr_fill_full_row(img, &r->a2, d5, d6);                /* moveq #9,d1; dbf: full-width fill of a2 */
     if (rr_dbf(&d4)) goto Ltop;
     return;
 }

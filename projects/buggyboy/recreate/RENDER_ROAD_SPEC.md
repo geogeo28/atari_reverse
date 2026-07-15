@@ -337,7 +337,7 @@ row. All three are inside band G; band F never returns (its last `dbf` falls int
 
 ## 8. Files
 
-- Reconstruction: `recreate/src/road.c` (`g_render_road` + `rr_band_B/C/D`). Correct for A/B/C-near/
-  F/G; **band E (far band C) needs a distinct tail — currently the test-failing defect.**
-- Test: `recreate/test/test_render_road.py` (differential vs Musashi; currently FAILS).
+- Reconstruction: `recreate/src/road.c` (`g_render_road` + `rr_band_B/C/D`). All seven bands verified
+  byte-for-byte, including band E (far band C) via its distinct fast-split + merge tail (`rr_band_C_far`).
+- Test: `recreate/test/test_render_road.py` (differential vs Musashi; GREEN).
 - Disassembly: `python3 ../../tools/prg_dis.py bin/BUGGYBOY.PRG --start $((0x9144 + 28)) --len 2256`.
