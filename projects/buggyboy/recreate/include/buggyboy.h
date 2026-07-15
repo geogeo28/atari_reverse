@@ -109,6 +109,9 @@ void g_draw_results_screen(uint8_t *image);   /* race-end results screen orchest
 void g_update_highscore(uint8_t *image);      /* rank/shift/insert the new score; checkpoint-verified */
 void g_init_scoretable(uint8_t *image);       /* write the default high-score table (5 legs x 9 rows) */
 
+/* ---- per-leg / gameplay orchestrators (gameplay.c) ---- */
+void g_init_leg(uint8_t *image);              /* reset all per-leg state at the start of a leg; no args */
+
 /* ---- road perspective (build_road_geometry @ 0x11f4c) ---- */
 void g_build_road_geometry(uint8_t *image);
 void g_set_screen_offset(uint8_t *image);      /* set the buf_c road-scroll offset from the leg's scroll table */
