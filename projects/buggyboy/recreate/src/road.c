@@ -430,8 +430,14 @@ static void rr_band_B(rr_regs *r, uint32_t rows_m1, int second);  /* 0x93c2 (nea
 static void rr_band_C_near(rr_regs *r, uint32_t rows_m1);  /* 0x9582 */
 static void rr_band_C_far(rr_regs *r, uint32_t rows_m1);   /* 0x96b8 (distinct fast-split + merge tail) */
 static void rr_band_D(rr_regs *r, uint32_t rows_m1, int second);  /* 0x987c (near) / 0x9950 (far, ends in rts) */
+static void rr_band_D_l2(rr_regs *r, uint32_t rows_m1, int second);  /* Layer-2 proper-C recreation of band D */
 
-void g_render_road(uint8_t *image) {
+/* Band-D implementation selector: lets the byte-exact model (g_render_road) and the Layer-2
+ * proper-C recreation (g_render_road_l2) share the verified bands A/B/C and differ only in band D.
+ * `rr_band_D` is the 1:1 machine model (trust anchor); `rr_band_D_l2` is the idiomatic version. */
+typedef void (*rr_band_D_fn)(rr_regs *r, uint32_t rows_m1, int second);
+
+static void render_road_impl(uint8_t *image, rr_band_D_fn band_D) {
     uint8_t *img = image;
     /* d0..d7, a0..a6: modelled as the 68000 registers. a0..a6 hold image byte offsets. */
     uint32_t d0, d1, d2, d3, d4, d5, d6, d7, a0, a1;
@@ -664,8 +670,19 @@ L93ac:
     rr_band_C_far(&r, 0x59);  /* 0x96b8 (far copy: distinct fast-split + merge tail) */
     /* 0x9868: inter-group step */
     r.a2 -= RR_DST_BAND_STEP; r.a3 += RR_SRC_BAND_STEP; r.a6 -= RR_EDGE_BAND_STEP; r.a5 = RR_WIDTH_TBL;
-    rr_band_D(&r, 0x05, 0);   /* 0x987c (near copy) */
-    rr_band_D(&r, 0x59, 1);   /* 0x9950 (far copy) -> rts */
+    band_D(&r, 0x05, 0);   /* 0x987c (near copy) */
+    band_D(&r, 0x59, 1);   /* 0x9950 (far copy) -> rts */
+}
+
+/* Layer 1 (trust anchor): the byte-exact 1:1 machine model, all bands. */
+void g_render_road(uint8_t *image) {
+    render_road_impl(image, rr_band_D);
+}
+
+/* Layer 2: the proper-C recreation. Shares the verified bands A/B/C with Layer 1 and swaps in the
+ * idiomatic band-D reconstruction. Verified against the same oracle by the same fuzz battery. */
+void g_render_road_l2(uint8_t *image) {
+    render_road_impl(image, rr_band_D_l2);
 }
 
 /* Word memory RMW: word[addr] &= d3.w  (68k `and.w d3,-4(a0)` masks only the high word of a long). */
@@ -1174,4 +1191,125 @@ L9a2a:
     rr_fill_full_row(img, &r->a2, d5, d6);                /* moveq #9,d1; dbf: full-width fill of a2 */
     if (rr_dbf(&d4)) goto Ltop;
     return;
+}
+
+/* =====================================================================================
+ * Layer 2 — proper-C recreation of band D (byte-for-byte equivalent to rr_band_D above).
+ *
+ * Same contract (the shared rr_regs cursors), but written as the algorithm reads rather than
+ * as the 68000 stepped it. One perspective road band = `rows_m1`+1 scanlines. Each scanline
+ * pulls a control word (road half-width in the low 16 bits, blit-variant flags in the high 16),
+ * picks which texture strip the row samples (flag-driven src select), then paints the row as
+ *     [ left-shoulder solid fill | antialiased edge cell | copied road texture ]
+ * `second` selects the far (nearer-to-camera) copy, whose bottom rows draw a wider texture run
+ * and additionally handle the road sliding off the left edge. Both layers run the same fuzz
+ * battery against the Musashi oracle; rr_band_D stays the trust anchor.
+ *
+ * Word ops wrap mod 2^16 and branch on bit 15 — mirrored with (uint16_t)/(int16_t) casts.
+ * ===================================================================================== */
+#define RR_ROW_LONG_PAIRS 20         /* 160-byte scanline = 20 (fill_lo, fill_hi) long pairs */
+
+/* signed low-word result of a 68k word op (sub.w / add.w) — wraps mod 2^16, then bit-15 sign. */
+static inline int16_t rr_wsub(uint16_t a, uint16_t b) { return (int16_t)(uint16_t)(a - b); }
+static inline int16_t rr_wadd(uint16_t a, uint16_t b) { return (int16_t)(uint16_t)(a + b); }
+
+/* Solid-fill one whole 160-byte scanline with the plane pattern (full-width road / off-screen). */
+static void rr_fill_row(uint8_t *img, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi) {
+    for (int i = 0; i < RR_ROW_LONG_PAIRS; i++, dst += 8) {
+        wr32(img + dst, fill_lo); wr32(img + dst + 4, fill_hi);
+    }
+}
+
+/* Solid-fill the left shoulder [row_start, row_start + col): col is column-aligned, so it covers
+ * whole 8-byte cells right up to the edge cell at row_start + col. */
+static void rr_fill_shoulder(uint8_t *img, uint32_t row_start, int16_t col, uint32_t fill_lo, uint32_t fill_hi) {
+    for (int cell = (int)((uint16_t)col >> 3); cell > 0; cell--, row_start += 8) {
+        wr32(img + row_start, fill_lo); wr32(img + row_start + 4, fill_hi);
+    }
+}
+
+/* Draw the antialiased edge cell (one 16-pixel 4-plane column) at dst: two longs, the first with
+ * its high plane-word masked through edge_mask. Advances src/dst past the two longs. */
+static void rr_draw_edge_cell(uint8_t *img, uint32_t *dst, uint32_t *src, uint32_t edge_mask) {
+    uint32_t edge = *dst;
+    rr_copy_long(img, dst, src);
+    rr_andw(img, edge, edge_mask);
+    rr_copy_long(img, dst, src);
+}
+
+static void rr_band_D_l2(rr_regs *r, uint32_t rows_m1, int second) {
+    uint8_t *img = r->img;
+    const int16_t stride = (int16_t)r->d2;                 /* 0xa0 bytes per scanline */
+    uint32_t remaining = rows_m1;
+
+    for (;;) {
+        uint32_t src = r->a3;                              /* texture base for this scanline */
+
+        /* control long: high word = flags, low word = road half-width (+ perspective offset). */
+        uint32_t ctrl = be32(img + r->a5); r->a5 += 4;
+        uint16_t half_width = (uint16_t)(ctrl + be16(img + r->a4)); r->a4 += 2;
+        ctrl = (ctrl & 0xffff0000u) | half_width;
+
+        /* fine-x: the low nibble picks the sub-column within the 16-pixel texture cell. */
+        src += sign_ext16((uint16_t)((ctrl & 0xf) << 4));
+        int16_t edge_seed = (int16_t)be16(img + r->a4); r->a4 += 2;
+
+        /* fill plane-patterns + edge-cell mask (defaults; MASK_A2 loads a real per-row mask). */
+        uint32_t fill_lo = 0xffff0000u, fill_hi = 0x0000ffffu, edge_mask = 0xffffffffu;
+        if (ctrl & RR_F_MASK_A2) { fill_lo = 0; edge_mask = be32(img + src + RR_MASK_OFF_LO); }
+
+        int16_t edge_off = (int16_t)be16(img + r->a6);     /* used only by the no-split strip */
+        r->a6 += 2;                                        /* a6 advances once per row, always */
+
+        /* ---- source-strip dispatch: which region of the texture this scanline samples ---- */
+        int skip_row = 0;
+        if (!(ctrl & RR_F_SPLIT_D)) {                      /* straight strip (no edge split) */
+            src += sign_ext16((uint16_t)edge_seed) + sign_ext16((uint16_t)edge_off);
+            if (ctrl & RR_F_PLANE_HI) src += RR_SRC_5800;
+        } else if ((ctrl & RR_F_SKIP_D) && (int32_t)ctrl < 0) {
+            skip_row = 1;                                  /* flagged blank scanline */
+        } else if (ctrl & RR_F_WIDE) {                     /* wide/solid-centre strip */
+            fill_lo = 0; fill_hi = 0; src += RR_SRC_3500;
+            if (ctrl & RR_F_SRC_400) {
+                src += RR_SRC_0400;
+                if (!(ctrl & RR_F_SRC_100)) src = RR_CONST_5B7A;
+            } else {
+                fill_lo = rr_notw(fill_lo);                /* 0 -> 0x0000ffff */
+                if (!(ctrl & RR_F_SRC_100)) src = RR_CONST_5B9A;
+            }
+        } else if (ctrl & RR_F_PLANE_HI) {                 /* edge-split strip, high plane */
+            src += RR_SRC_5800;
+        }
+
+        if (!skip_row) {
+            /* column offset = half the width, arithmetic-shifted then aligned to an 8-byte cell. */
+            int16_t col = (int16_t)((uint16_t)((int16_t)half_width >> 1) & RR_D7_WORD_MASK);
+            uint32_t row_start = r->a2;
+            uint32_t dst = row_start;
+
+            if (col >= 0) {
+                if (rr_wsub((uint16_t)col, (uint16_t)stride) >= 0) {
+                    rr_fill_row(img, row_start, fill_lo, fill_hi);        /* road fills the row */
+                } else {
+                    dst += sign_ext16((uint16_t)col);
+                    rr_draw_edge_cell(img, &dst, &src, edge_mask);
+                    /* far copy widens the texture run by two more columns when there is room. */
+                    if (second && rr_wadd((uint16_t)rr_wsub((uint16_t)col, (uint16_t)stride), 8) < 0) {
+                        rr_copy_long(img, &dst, &src);
+                        rr_copy_long(img, &dst, &src);
+                    }
+                    rr_fill_shoulder(img, row_start, col, fill_lo, fill_hi);
+                }
+            } else if (second && rr_wadd((uint16_t)col, 8) >= 0) {
+                /* far copy, road one cell off the left edge: draw two texture longs at row start. */
+                src += 8;
+                rr_copy_long(img, &dst, &src);
+                rr_copy_long(img, &dst, &src);
+            }
+            /* near copy with col < 0: nothing drawn (road entirely off the left edge). */
+        }
+
+        r->a2 += stride;
+        if (!rr_dbf(&remaining)) break;
+    }
 }
