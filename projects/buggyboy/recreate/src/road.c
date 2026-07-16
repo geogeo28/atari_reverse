@@ -436,6 +436,7 @@ static void rr_band_B_l2(rr_regs *r, uint32_t rows_m1, int second);  /* Layer-2 
 static void rr_band_C_near(rr_regs *r, uint32_t rows_m1);  /* 0x9582 */
 static void rr_band_C_near_l2(rr_regs *r, uint32_t rows_m1);  /* Layer-2 proper-C recreation */
 static void rr_band_C_far(rr_regs *r, uint32_t rows_m1);   /* 0x96b8 (distinct fast-split + merge tail) */
+static void rr_band_C_far_l2(rr_regs *r, uint32_t rows_m1);  /* Layer-2 proper-C recreation */
 static void rr_band_D(rr_regs *r, uint32_t rows_m1, int second);  /* 0x987c (near) / 0x9950 (far, ends in rts) */
 static void rr_band_D_l2(rr_regs *r, uint32_t rows_m1, int second);  /* Layer-2 proper-C recreation of band D */
 
@@ -710,7 +711,7 @@ void g_render_road(uint8_t *image) {
 /* Layer 2: the proper-C recreation. Shares the not-yet-recreated bands with Layer 1 and swaps in the
  * idiomatic reconstructions as they are verified. Proven against the same oracle by the same battery. */
 static const rr_bands RR_BANDS_L2 = {
-    rr_band_A, rr_band_B_l2, rr_band_C_near_l2, rr_band_C_far, rr_band_D_l2,
+    rr_band_A, rr_band_B_l2, rr_band_C_near_l2, rr_band_C_far_l2, rr_band_D_l2,
 };
 void g_render_road_l2(uint8_t *image) {
     render_road_impl(image, &RR_BANDS_L2);
@@ -1344,6 +1345,161 @@ L9856:
 L9862:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L96b8;
     (void)a0; (void)a1;
+}
+
+/* =====================================================================================
+ * Layer 2 — proper-C recreation of band C-far (byte-for-byte equivalent to rr_band_C_far).
+ *
+ * The far copy of band C. Preamble + src dispatch match band C-near, but two paths differ:
+ *   - fast edge-split (SPLIT_C & SKIP_D): selects the source strip FIRST and consumes one extra
+ *     param word (a4 += 2), then blits [edge cell | left-shoulder fill]. The plane-hi and masked
+ *     variants each branch on off-screen / 2-long / 4-long width.
+ *   - merge tail: reads yet another param word, then a bidirectional blit — forward 2..4 texture
+ *     longs when the road grows rightward, or a BACKWARD shoulder fill (move.l -(a0)) when it
+ *     recedes, using a separately-tracked width in d3.w.
+ * ===================================================================================== */
+
+static void rr_band_C_far_l2(rr_regs *r, uint32_t rows_m1) {
+    uint8_t *img = r->img;
+    const int16_t stride = (int16_t)r->d2;
+    uint32_t remaining = rows_m1;
+
+    for (;;) {
+        uint32_t src = r->a3;
+        uint32_t dst = r->a2;
+
+        uint32_t ctrl = be32(img + r->a5); r->a5 += 4;
+        uint16_t half_width = (uint16_t)(ctrl + be16(img + r->a4)); r->a4 += 2;
+        ctrl = (ctrl & 0xffff0000u) | half_width;
+        src += sign_ext16((uint16_t)((ctrl & 0xf) << 4));       /* fine-x sub-column */
+        int16_t edge_seed = (int16_t)be16(img + r->a4); r->a4 += 2;
+
+        uint32_t edge_mask = be32(img + src + RR_MASK_OFF_LO);   /* unconditional (band C) */
+        uint32_t fill_lo = 0xffffffffu, fill_hi = 0x0000ffffu;
+        if (ctrl & RR_F_PLANE_HI) fill_hi = 0xffff0000u;
+
+        /* ---- fast edge-split path (its own tail; consumes an extra param word) ---- */
+        if ((ctrl & RR_F_SPLIT_C) && !(ctrl & RR_F_WIDE) && (ctrl & RR_F_SKIP_D)) {
+            r->a6 += 2;
+            src += sign_ext16((uint16_t)edge_seed);
+            r->a4 += 2;                                          /* far-only extra param word */
+            int16_t col;
+            fill_hi = 0;
+            if (ctrl & RR_F_PLANE_HI) {
+                fill_lo = 0; src += RR_SRC_A800;
+                if (be16(img + r->a6 - 2) != 0) src += RR_SRC_0A00;
+            } else {
+                src += sign_ext16(be16(img + r->a6 - 2));
+            }
+            col = (int16_t)((uint16_t)((int16_t)half_width >> 1) & (uint16_t)r->d7);
+            if (col < 0) {                                       /* road near/off the left edge */
+                int16_t e = rr_wadd((uint16_t)col, 8);
+                if (e >= 0) { src += 8; rr_copy_long(img, &dst, &src); rr_copy_long(img, &dst, &src); }
+            } else {
+                dst += sign_ext16((uint16_t)col);
+                int16_t rem = rr_wsub((uint16_t)col, (uint16_t)stride);
+                if (rem >= 0) {
+                    rr_fill_full_row(img, &r->a2, fill_lo, fill_hi);
+                    if (!rr_dbf(&remaining)) break;
+                    continue;
+                }
+                int16_t e = rr_wadd((uint16_t)rem, 8);
+                if (e < 0) {                                     /* 4 longs (masked 2nd on non-hi) */
+                    rr_copy_long(img, &dst, &src);
+                    if (!(ctrl & RR_F_PLANE_HI)) rr_copy_long_masked(img, &dst, &src, edge_mask);
+                    else                         rr_copy_long(img, &dst, &src);
+                    rr_copy_long(img, &dst, &src);
+                    rr_copy_long(img, &dst, &src);
+                } else {                                         /* 2 longs (masked 2nd on non-hi) */
+                    rr_copy_long(img, &dst, &src);
+                    if (!(ctrl & RR_F_PLANE_HI)) rr_copy_long_masked(img, &dst, &src, edge_mask);
+                    else                         rr_copy_long(img, &dst, &src);
+                }
+                /* left shoulder: (col>>3 - 1) forward pairs from the row start */
+                int16_t cells = (int16_t)(((uint16_t)col >> 3) - 1);
+                if (cells >= 0) {
+                    uint32_t sh = r->a2, cnt = (uint16_t)cells;
+                    do { rr_fill_pair(img, &sh, fill_lo, fill_hi); } while (rr_dbf(&cnt));
+                }
+            }
+            r->a2 += stride;
+            if (!rr_dbf(&remaining)) break;
+            continue;
+        }
+
+        /* ---- shared src dispatch (feeds the merge tail) ---- */
+        if (!(ctrl & RR_F_SPLIT_C)) {                            /* no-split: a6-relative strip */
+            src += sign_ext16((uint16_t)edge_seed) + sign_ext16(be16(img + r->a6)); r->a6 += 2;
+            if (ctrl & RR_F_PLANE_HI) src += RR_SRC_5800;
+            else if ((ctrl & RR_F_SRC_CONST) && (int32_t)ctrl >= 0) src = RR_CONST_5BAA;
+        } else if (ctrl & RR_F_WIDE) {                           /* WIDE strip */
+            r->a6 += 2;
+            fill_hi = 0; src += RR_SRC_3E00;
+            if (ctrl & RR_F_SRC_400) {
+                src += RR_SRC_0400;
+                if (!(ctrl & RR_F_SRC_100)) { src += RR_SRC_0100; fill_lo = 0; }
+            } else if (!(ctrl & RR_F_SRC_100)) {
+                src += RR_SRC_0100; fill_lo = 0x0000ffffu;
+            }
+        } else {                                                /* SPLIT_C, !WIDE, !SKIP_D: plane-hi/const */
+            r->a6 += 2;
+            if (ctrl & RR_F_PLANE_HI) src += RR_SRC_5800;
+            else if ((ctrl & RR_F_SRC_CONST) && (int32_t)ctrl >= 0) src = RR_CONST_5BAA;
+        }
+
+        /* ---- merge tail (reads one more param word): a2-relative bidirectional blit ---- */
+        int16_t count = (int16_t)be16(img + r->a4); r->a4 += 2;   /* d1: shoulder-fill count */
+        int16_t col = (int16_t)((uint16_t)((int16_t)half_width >> 1) & (uint16_t)r->d7);
+        if (col < 0) {                                            /* L980a: road off the left edge */
+            if (rr_wadd((uint16_t)col, 8) >= 0) {
+                src += 8; rr_copy_long(img, &dst, &src); rr_copy_long(img, &dst, &src);
+            }
+            r->a2 += stride;
+            if (!rr_dbf(&remaining)) break;
+            continue;
+        }
+
+        /* L9822: place at the column; d3.w (width) tracks the reverse-fill extent. */
+        dst += sign_ext16((uint16_t)col);
+        int16_t width = col;
+        int16_t d0w = rr_wsub((uint16_t)col, (uint16_t)stride);   /* col - stride */
+        if (d0w >= 0 && rr_wsub((uint16_t)d0w, 8) >= 0) {
+            /* road spans the whole row: advance a2, reverse-fill (count - (rem-8)/8) pairs. */
+            d0w = rr_wsub((uint16_t)d0w, 8);
+            r->a2 += stride;
+            int16_t n = rr_wsub((uint16_t)count, (uint16_t)((uint16_t)d0w >> 3));
+            if (n >= 0) {
+                uint32_t a0 = r->a2, cnt = (uint16_t)n;
+                do { rr_fill_pair_rev(img, &a0, fill_lo, fill_hi); } while (rr_dbf(&cnt));
+            }
+            if (!rr_dbf(&remaining)) break;
+            continue;
+        }
+
+        /* Otherwise reach L984c with either: (a) col-stride < 0 -> L9846 clears d0 and copies 2
+         * longs first; or (b) stride <= col < stride+8 -> straight in with d0 = col-stride-8. */
+        if (d0w < 0) {
+            d0w = 0;                                              /* L9846: moveq #0 */
+            rr_copy_long(img, &dst, &src); rr_copy_long(img, &dst, &src);
+        } else {
+            d0w = rr_wsub((uint16_t)d0w, 8);
+        }
+        d0w = rr_wadd((uint16_t)d0w, 8);                          /* L984c */
+        rr_copy_long(img, &dst, &src); rr_copy_long(img, &dst, &src);
+        d0w = rr_wadd((uint16_t)d0w, 8);
+        dst -= sign_ext16((uint16_t)d0w);                        /* suba.w d0,a0 */
+
+        /* L9856: reverse-fill while the width stays >= 0 and the count hasn't underflowed. */
+        uint32_t cnt = (uint16_t)count;
+        for (;;) {
+            width = rr_wsub((uint16_t)width, 8);                 /* subq.w #8,d3 */
+            if (width < 0) break;
+            rr_fill_pair_rev(img, &dst, fill_lo, fill_hi);
+            if (!rr_dbf(&cnt)) break;
+        }
+        r->a2 += stride;
+        if (!rr_dbf(&remaining)) break;
+    }
 }
 
 /* ---- band D (0x987c near copy / 0x9950 far copy; the far copy's last dbf falls through to rts).
