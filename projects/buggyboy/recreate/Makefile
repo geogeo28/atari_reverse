@@ -36,8 +36,11 @@ venv:
 	python -m venv .venv
 	$(PY) -m pip install -r requirements.txt
 
+# Run the differential suite in parallel across cores (pytest-xdist). Override with
+# e.g. `make test PYTEST_ARGS=-n0` for a serial run, or `PYTEST_ARGS='-n4 -k fuzz'`.
+PYTEST_ARGS ?= -n auto
 test: $(CAND) $(ORACLE)
-	$(PY) -m pytest -q test
+	$(PY) -m pytest -q $(PYTEST_ARGS) test
 
 clean:
 	rm -rf build $(GENDIR)/m68kmake $(GENDIR)/m68kops.* $(ORACLE)
