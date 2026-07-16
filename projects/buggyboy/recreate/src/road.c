@@ -431,6 +431,7 @@ static inline void rr_fill_full_row(uint8_t *img, uint32_t *a2, uint32_t d5, uin
 typedef struct { uint8_t *img; uint32_t a2, a3, a4, a5, a6, d2, d7; } rr_regs;
 
 static void rr_band_A(rr_regs *r);                                /* 0x9172 (96 rows, inline) */
+static void rr_band_A_l2(rr_regs *r);                             /* Layer-2 proper-C recreation */
 static void rr_band_B(rr_regs *r, uint32_t rows_m1, int second);  /* 0x93c2 (near) / 0x948c (far) */
 static void rr_band_B_l2(rr_regs *r, uint32_t rows_m1, int second);  /* Layer-2 proper-C recreation */
 static void rr_band_C_near(rr_regs *r, uint32_t rows_m1);  /* 0x9582 */
@@ -711,7 +712,7 @@ void g_render_road(uint8_t *image) {
 /* Layer 2: the proper-C recreation. Shares the not-yet-recreated bands with Layer 1 and swaps in the
  * idiomatic reconstructions as they are verified. Proven against the same oracle by the same battery. */
 static const rr_bands RR_BANDS_L2 = {
-    rr_band_A, rr_band_B_l2, rr_band_C_near_l2, rr_band_C_far_l2, rr_band_D_l2,
+    rr_band_A_l2, rr_band_B_l2, rr_band_C_near_l2, rr_band_C_far_l2, rr_band_D_l2,
 };
 void g_render_road_l2(uint8_t *image) {
     render_road_impl(image, &RR_BANDS_L2);
@@ -1654,6 +1655,202 @@ static void rr_draw_edge_cell(uint8_t *img, uint32_t *dst, uint32_t *src, uint32
     rr_copy_long(img, dst, src);
     rr_andw(img, edge, edge_mask);
     rr_copy_long(img, dst, src);
+}
+
+/* =====================================================================================
+ * Layer 2 — proper-C recreation of band A (byte-for-byte equivalent to rr_band_A).
+ *
+ * Band A is a two-pass renderer, unlike bands B/C/D. Each scanline has a road "edge" column at
+ * dst + col (col = the aligned road half-width). From that edge it:
+ *   - forward pass: copies road-texture longs rightward toward the row end, then gap-fills the
+ *     remainder with the interior plane pattern;
+ *   - backward pass: fills the left shoulder leftward from the edge with a (usually different)
+ *     shoulder plane pattern, skipping any cells that fell past the row.
+ * When the aligned width is negative (road off the left edge) it degenerates to a single forward
+ * fill with no second pass. The flags choose the source texture strip and the two fill patterns;
+ * SPLIT (edge-split) rows mask the joining edge cell, WIDE/centre rows do not.
+ * ===================================================================================== */
+
+/* Shoulder/interior plane pattern select (machine L928c/L9352 + L936a): the backward-fill colours. */
+static void rr_band_A_shoulder_pattern(uint32_t ctrl, int center, uint32_t *lo, uint32_t *hi) {
+    *lo = 0x0000ffffu;
+    *hi = 0x0000ffffu;
+    if (!center) {                                    /* split (L928c) */
+        if ((int32_t)ctrl < 0 && (ctrl & RR_F_PLANE_HI)) { *lo = 0xffffffffu; *hi = 0; }
+    } else {                                          /* centre (L9352) */
+        if ((ctrl & RR_F_SRC_CONST) && (int32_t)ctrl >= 0 && !(ctrl & RR_F_PLANE_HI))
+            *lo = 0xffffffffu;
+    }
+    if (ctrl & RR_F_WIDE) {                            /* L936a */
+        *lo = 0xffffffffu; *hi = 0;
+        if (ctrl & RR_F_SRC_100) {
+            *lo = 0;
+            if (!(ctrl & RR_F_SRC_400)) *lo = 0x0000ffffu;
+        }
+    }
+}
+
+/* Backward left-shoulder fill (machine L9384): from `edge` leftward, writing (lo,hi) cells. `width`
+ * starts at the aligned road width and counts down a cell (8 bytes) at a time; a cell whose position
+ * is still past the row end (>= stride) is skipped, and the walk stops when the position goes
+ * negative or the `count` (edge-table run length) is exhausted. */
+static void rr_band_A_shoulder_fill(uint8_t *img, uint32_t edge, int16_t width, uint32_t count,
+                                    int16_t stride, uint32_t lo, uint32_t hi) {
+    uint32_t a0 = edge;
+    for (;;) {
+        width = rr_wsub((uint16_t)width, 8);
+        if (width < 0) break;
+        if (rr_wsub((uint16_t)width, (uint16_t)stride) >= 0) a0 -= 8;   /* cell past the row: skip */
+        else rr_fill_pair_rev(img, &a0, lo, hi);
+        if (!rr_dbf(&count)) break;
+    }
+}
+
+/* Forward interior for a SPLIT row (machine L91f8 / L925c). Copies 4 texture longs (the last edge-
+ * masked when `masked_edge`) for a wide gap, or 2 longs for a narrow one, then gap-fills to the row
+ * end with the interior pattern. Entered only when pos = col - stride < 0. */
+static void rr_band_A_interior_split(uint8_t *img, uint32_t *dst, uint32_t *src, int16_t pos,
+                                     int masked_edge, uint32_t edge_mask,
+                                     uint32_t gap_lo, uint32_t gap_hi) {
+    if (rr_wadd((uint16_t)pos, 8) >= 0) {             /* narrow gap: 2 longs */
+        rr_copy_long(img, dst, src);
+        rr_copy_long(img, dst, src);
+    } else {                                          /* wide gap: 4 longs (last masked on the C variant) */
+        rr_copy_long(img, dst, src);
+        rr_copy_long(img, dst, src);
+        rr_copy_long(img, dst, src);
+        if (masked_edge) rr_copy_long_masked(img, dst, src, edge_mask);
+        else             rr_copy_long(img, dst, src);
+    }
+    pos = rr_wadd((uint16_t)rr_wadd((uint16_t)pos, 8), 8);
+    while (pos < 0) { rr_fill_pair(img, dst, gap_lo, gap_hi); pos = rr_wadd((uint16_t)pos, 8); }
+}
+
+/* Forward interior for a CENTRE/WIDE row (machine L9328). A narrow gap copies 2 longs and stops; a
+ * wide gap copies 4 longs then gap-fills, bounded by both the row end and the run `count`. */
+static void rr_band_A_interior_center(uint8_t *img, uint32_t *dst, uint32_t *src, int16_t pos,
+                                      uint32_t count, uint32_t gap_lo, uint32_t gap_hi) {
+    if (rr_wadd((uint16_t)pos, 8) >= 0) {             /* narrow gap: 2 longs, no fill */
+        rr_copy_long(img, dst, src);
+        rr_copy_long(img, dst, src);
+        return;
+    }
+    rr_copy_long(img, dst, src);
+    rr_copy_long(img, dst, src);
+    rr_copy_long(img, dst, src);
+    rr_copy_long(img, dst, src);
+    pos = rr_wadd((uint16_t)pos, 8);
+    for (;;) {
+        pos = rr_wadd((uint16_t)pos, 8);
+        if (pos >= 0) break;
+        rr_fill_pair(img, dst, gap_lo, gap_hi);
+        if (!rr_dbf(&count)) break;
+    }
+}
+
+static void rr_band_A_l2(rr_regs *r) {
+    uint8_t *img = r->img;
+    const int16_t stride = (int16_t)r->d2;            /* 0xa0 */
+    uint32_t rows = 0x5f;                             /* 96 scanlines */
+
+    for (;;) {
+        uint32_t src = r->a3;
+        uint32_t row_dst = r->a2;
+
+        uint32_t ctrl = be32(img + r->a5); r->a5 += 4;
+        uint16_t half_width = (uint16_t)(ctrl + be16(img + r->a4)); r->a4 += 2;
+        ctrl = (ctrl & 0xffff0000u) | half_width;
+        src += sign_ext16((uint16_t)((ctrl & 0xf) << 4));           /* fine-x sub-column */
+        uint32_t edge_mask = be32(img + src + RR_MASK_OFF_HI);      /* 0x2808, unconditional */
+        int16_t edge_seed = (int16_t)be16(img + r->a4); r->a4 += 2;
+
+        uint32_t fill_lo = 0xffffffffu, fill_hi = 0x0000ffffu;      /* interior/gap plane pattern */
+        if (ctrl & RR_F_PLANE_HI) fill_hi = 0xffff0000u;
+
+        int is_split = (ctrl & RR_F_SPLIT_A) && !(ctrl & RR_F_WIDE) && (ctrl & RR_F_SKIP_ABC);
+        int plane_hi = (ctrl & RR_F_PLANE_HI) != 0;
+        uint32_t count_long;
+
+        /* ---- source-strip dispatch (sets src, fill pattern, count_long) ---- */
+        if (is_split) {
+            r->a6 += 2;
+            src += sign_ext16((uint16_t)edge_seed);
+            count_long = be32(img + r->a4); r->a4 += 4;             /* move.l (a4)+ */
+            fill_hi = 0;
+            if (plane_hi) {                                        /* L91c0 */
+                fill_lo = 0; src += RR_SRC_A800;
+                if (be16(img + r->a6 - 2) != 0) src += RR_SRC_0A00;
+            } else {                                               /* L9230 */
+                src += sign_ext16(be16(img + r->a6 - 2));
+            }
+        } else {
+            if (!(ctrl & RR_F_SPLIT_A)) {                          /* L92d6 centre-run */
+                src += sign_ext16((uint16_t)edge_seed) + sign_ext16(be16(img + r->a6)); r->a6 += 2;
+                if (ctrl & RR_F_PLANE_HI) src += RR_SRC_5800;
+                else if ((ctrl & RR_F_SRC_CONST) && (int32_t)ctrl >= 0) src = RR_CONST_5BAA;
+            } else if (ctrl & RR_F_WIDE) {                         /* L92a8 wide src select */
+                r->a6 += 2;
+                fill_hi = 0; src += RR_SRC_5000;
+                if (ctrl & RR_F_SRC_400) {
+                    src += RR_SRC_0400;
+                    if (!(ctrl & RR_F_SRC_100)) { src += RR_SRC_0100; fill_lo = 0; }
+                } else if (!(ctrl & RR_F_SRC_100)) {
+                    src += RR_SRC_0100; fill_lo = 0x0000ffffu;
+                }
+            } else {                                               /* L92da hi/const src select */
+                r->a6 += 2;
+                if (ctrl & RR_F_PLANE_HI) src += RR_SRC_5800;
+                else if ((ctrl & RR_F_SRC_CONST) && (int32_t)ctrl >= 0) src = RR_CONST_5BAA;
+            }
+            count_long = be32(img + r->a4); r->a4 += 4;            /* L92f6: move.l (a4)+ */
+        }
+
+        int16_t col = (int16_t)((uint16_t)((int16_t)half_width >> 1) & RR_D7_WORD_MASK);
+
+        if (col < 0) {
+            /* ---- narrow: a single forward fill, no shoulder pass ---- */
+            uint32_t dst = row_dst;
+            if (is_split) {
+                uint32_t count = 0x13;
+                if (rr_wadd((uint16_t)col, 8) >= 0) {              /* copy an edge cell first */
+                    count = 0x12; src += 8;
+                    if (plane_hi) { rr_copy_long(img, &dst, &src); rr_copy_long(img, &dst, &src); }
+                    else          { rr_copy_long(img, &dst, &src);
+                                    rr_copy_long_masked(img, &dst, &src, edge_mask); }
+                }
+                do { rr_fill_pair(img, &dst, fill_lo, fill_hi); } while (rr_dbf(&count));
+            } else {                                               /* L92f6 narrow centre */
+                src += 8;
+                int16_t d0 = rr_wadd((uint16_t)col, 8);
+                if (d0 >= 0) { rr_copy_long(img, &dst, &src); rr_copy_long(img, &dst, &src); }
+                else         { d0 = rr_wadd((uint16_t)d0, 8); }
+                d0 = (int16_t)((int16_t)d0 >> 3);
+                uint32_t count = (uint16_t)((count_long & 0xffff) + (uint16_t)d0);
+                if ((int16_t)count >= 0)
+                    do { rr_fill_pair(img, &dst, fill_lo, fill_hi); } while (rr_dbf(&count));
+            }
+            r->a2 += stride;
+            if (!rr_dbf(&rows)) break;
+            continue;
+        }
+
+        /* ---- wide: forward texture blit from the edge, then a backward shoulder fill ---- */
+        uint32_t edge = row_dst + sign_ext16((uint16_t)col);
+        uint32_t dst = edge;
+        int16_t pos = rr_wsub((uint16_t)col, (uint16_t)stride);
+        if (pos < 0) {
+            if (is_split) rr_band_A_interior_split(img, &dst, &src, pos, !plane_hi, edge_mask,
+                                                   fill_lo, fill_hi);
+            else          rr_band_A_interior_center(img, &dst, &src, pos, count_long & 0xffff,
+                                                    fill_lo, fill_hi);
+        }
+        uint32_t sh_lo, sh_hi;
+        rr_band_A_shoulder_pattern(ctrl, /*center=*/!is_split, &sh_lo, &sh_hi);
+        rr_band_A_shoulder_fill(img, edge, col, count_long >> 16, stride, sh_lo, sh_hi);
+
+        r->a2 += stride;
+        if (!rr_dbf(&rows)) break;
+    }
 }
 
 static void rr_band_D_l2(rr_regs *r, uint32_t rows_m1, int second) {
