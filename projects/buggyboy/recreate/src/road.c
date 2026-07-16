@@ -426,32 +426,21 @@ static inline void rr_fill_full_row(uint8_t *img, uint32_t *a2, uint32_t d5, uin
 /* Threaded 68000 registers that survive band-to-band (bands B/C/D share these across two loops each). */
 typedef struct { uint8_t *img; uint32_t a2, a3, a4, a5, a6, d2, d7; } rr_regs;
 
+static void rr_band_A(rr_regs *r);                                /* 0x9172 (96 rows, inline) */
 static void rr_band_B(rr_regs *r, uint32_t rows_m1, int second);  /* 0x93c2 (near) / 0x948c (far) */
 static void rr_band_C_near(rr_regs *r, uint32_t rows_m1);  /* 0x9582 */
 static void rr_band_C_far(rr_regs *r, uint32_t rows_m1);   /* 0x96b8 (distinct fast-split + merge tail) */
 static void rr_band_D(rr_regs *r, uint32_t rows_m1, int second);  /* 0x987c (near) / 0x9950 (far, ends in rts) */
 static void rr_band_D_l2(rr_regs *r, uint32_t rows_m1, int second);  /* Layer-2 proper-C recreation of band D */
 
-/* Band-D implementation selector: lets the byte-exact model (g_render_road) and the Layer-2
- * proper-C recreation (g_render_road_l2) share the verified bands A/B/C and differ only in band D.
- * `rr_band_D` is the 1:1 machine model (trust anchor); `rr_band_D_l2` is the idiomatic version. */
-typedef void (*rr_band_D_fn)(rr_regs *r, uint32_t rows_m1, int second);
-
-static void render_road_impl(uint8_t *image, rr_band_D_fn band_D) {
-    uint8_t *img = image;
-    /* d0..d7, a0..a6: modelled as the 68000 registers. a0..a6 hold image byte offsets. */
-    uint32_t d0, d1, d2, d3, d4, d5, d6, d7, a0, a1;
-
-    uint32_t a2 = draw_buffer(img) + RR_DST_ROAD_OFF;
-    uint32_t a3 = be32(img + A_buf_b);
-    uint32_t a4 = RR_PARAM_TBL;
-    uint32_t a6 = RR_EDGE_TBL_BASE + sign_ext16(be16(img + A_road_edge_sel));
-    d2 = RR_ROW_STRIDE_D2;
-    uint32_t a5 = RR_WIDTH_TBL;
+/* Band A (0x9172) — 96 rows, the widest branch set. Byte-exact machine model (trust anchor).
+ * Inline in the original; extracted here so the band pipeline can select it like the other bands. */
+static void rr_band_A(rr_regs *r) {
+    uint8_t *img = r->img;
+    uint32_t d0, d1, d3, d5, d6, d7, a0, a1;
+    uint32_t a2 = r->a2, a3 = r->a3, a4 = r->a4, a5 = r->a5, a6 = r->a6, d2 = r->d2;
+    uint32_t d4 = 0x5f;
     d7 = 0;                         /* band A never masks d0 with d7 (d7 = saved-a0 scratch there) */
-
-    /* ============================ BAND A group (0x9172, 0x60 rows) ============================ */
-    d4 = 0x5f;
 L9172:
     a1 = a3; a0 = a2;
     d0 = be32(img + a5); a5 += 4;                                   /* move.l (a5)+,d0 */
@@ -650,39 +639,75 @@ L91ee:                                                        /* fill-path exits
     a2 += d2;                                                 /* adda.w d2,a2 */
 L9320:
     if (rr_dbf(&d4)) goto L9172;
-    goto L93ac;
+    goto done;
 
-L93ac:
-    a2 -= RR_DST_BAND_STEP;
-    a3 += RR_SRC_BAND_STEP;
-    a6 -= RR_EDGE_BAND_STEP;
-    d7 = rr_moveq((int8_t)0xf8);                              /* moveq #$f8,d7 -> 0xfffffff8; d7.w=0xfff8 */
-    a5 = RR_WIDTH_TBL;
-    (void)a0; (void)a1; (void)d3; (void)d5; (void)d6;
+done:
+    (void)a0; (void)a1; (void)d3; (void)d5; (void)d6; (void)d7;
+    r->a2 = a2; r->a3 = a3; r->a4 = a4; r->a5 = a5; r->a6 = a6; r->d2 = d2;
+}
 
-    /* Band group B (0x93c2 d4=4, then 0x948c d4=0x5a), then group C, then group D (ends in rts). */
-    rr_regs r = { img, a2, a3, a4, a5, a6, d2, d7 };
-    rr_band_B(&r, 0x04, 0);   /* 0x93c2 (near copy) */
-    rr_band_B(&r, 0x5a, 1);   /* 0x948c (far copy: distinct wider blit tail) */
-    /* 0x956e: inter-group step */
-    r.a2 -= RR_DST_BAND_STEP; r.a3 += RR_SRC_BAND_STEP; r.a6 -= RR_EDGE_BAND_STEP; r.a5 = RR_WIDTH_TBL;
-    rr_band_C_near(&r, 0x05); /* 0x9582 (near copy) */
-    rr_band_C_far(&r, 0x59);  /* 0x96b8 (far copy: distinct fast-split + merge tail) */
-    /* 0x9868: inter-group step */
-    r.a2 -= RR_DST_BAND_STEP; r.a3 += RR_SRC_BAND_STEP; r.a6 -= RR_EDGE_BAND_STEP; r.a5 = RR_WIDTH_TBL;
-    band_D(&r, 0x05, 0);   /* 0x987c (near copy) */
-    band_D(&r, 0x59, 1);   /* 0x9950 (far copy) -> rts */
+/* Inter-band-group step (0x93ac / 0x956e / 0x9868): rewind dst up the screen, advance the source to
+ * the next texture sub-block and the edge table down, and reset the width-table cursor to its base. */
+static void rr_group_step(rr_regs *r) {
+    r->a2 -= RR_DST_BAND_STEP;
+    r->a3 += RR_SRC_BAND_STEP;
+    r->a6 -= RR_EDGE_BAND_STEP;
+    r->a5 = RR_WIDTH_TBL;
+}
+
+/* One selectable set of band implementations. Layer 1 (rr_band_*) is the byte-exact machine model;
+ * a Layer-2 table swaps in idiomatic recreations band by band as they are verified. */
+typedef struct {
+    void (*band_A)(rr_regs *r);
+    void (*band_B)(rr_regs *r, uint32_t rows_m1, int second);
+    void (*band_C_near)(rr_regs *r, uint32_t rows_m1);
+    void (*band_C_far)(rr_regs *r, uint32_t rows_m1);
+    void (*band_D)(rr_regs *r, uint32_t rows_m1, int second);
+} rr_bands;
+
+/* The seven-band pipeline (0x9172..0x9a3c). a4 streams monotonically across all bands; a5/a6/d7 are
+ * reset at each group step. Band A runs alone; B/C/D each run a near then a far copy per group. */
+static void render_road_impl(uint8_t *image, const rr_bands *b) {
+    rr_regs r = {
+        .img = image,
+        .a2  = draw_buffer(image) + RR_DST_ROAD_OFF,
+        .a3  = be32(image + A_buf_b),
+        .a4  = RR_PARAM_TBL,
+        .a5  = RR_WIDTH_TBL,
+        .a6  = RR_EDGE_TBL_BASE + sign_ext16(be16(image + A_road_edge_sel)),
+        .d2  = RR_ROW_STRIDE_D2,
+        .d7  = 0,                 /* band A never masks d0 with d7 (scratch there) */
+    };
+
+    b->band_A(&r);
+    rr_group_step(&r);
+    r.d7 = rr_moveq((int8_t)0xf8);   /* 0xfffffff8; d7.w=0xfff8 from the first step onward */
+
+    b->band_B(&r, 0x04, 0);   /* 0x93c2 (near copy) */
+    b->band_B(&r, 0x5a, 1);   /* 0x948c (far copy: distinct wider blit tail) */
+    rr_group_step(&r);        /* 0x956e */
+    b->band_C_near(&r, 0x05); /* 0x9582 (near copy) */
+    b->band_C_far(&r, 0x59);  /* 0x96b8 (far copy: distinct fast-split + merge tail) */
+    rr_group_step(&r);        /* 0x9868 */
+    b->band_D(&r, 0x05, 0);   /* 0x987c (near copy) */
+    b->band_D(&r, 0x59, 1);   /* 0x9950 (far copy) -> rts */
 }
 
 /* Layer 1 (trust anchor): the byte-exact 1:1 machine model, all bands. */
+static const rr_bands RR_BANDS_L1 = {
+    rr_band_A, rr_band_B, rr_band_C_near, rr_band_C_far, rr_band_D,
+};
 void g_render_road(uint8_t *image) {
-    render_road_impl(image, rr_band_D);
+    render_road_impl(image, &RR_BANDS_L1);
 }
 
-/* Layer 2: the proper-C recreation. Shares the verified bands A/B/C with Layer 1 and swaps in the
- * idiomatic band-D reconstruction. Verified against the same oracle by the same fuzz battery. */
+/* Layer 2: the proper-C recreation. Shares the not-yet-recreated bands with Layer 1 and swaps in the
+ * idiomatic reconstructions as they are verified. Proven against the same oracle by the same battery. */
+static const rr_bands RR_BANDS_L2 = {
+    rr_band_A, rr_band_B, rr_band_C_near, rr_band_C_far, rr_band_D_l2,
+};
 void g_render_road_l2(uint8_t *image) {
-    render_road_impl(image, rr_band_D_l2);
+    render_road_impl(image, &RR_BANDS_L2);
 }
 
 /* Word memory RMW: word[addr] &= d3.w  (68k `and.w d3,-4(a0)` masks only the high word of a long). */
