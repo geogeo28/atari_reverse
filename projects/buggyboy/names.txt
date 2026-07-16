@@ -54,6 +54,7 @@ fn 0x10e64 blit_obj_Rf              # ctx
 fn 0x10ece blit_obj_Lf2             # ctx
 fn 0x10f60 blit_obj_Rf2             # ctx
 proto 0x14680 blit_objshift x@D0 color@D1 rows_m1@D4 dst@A0 src@A1 stride_ptr@A3
+cmt 0x144ac 0x90 width-family alt-entry into the blit_objshift engine: base ceiling 0x90, 2-cell base; reaches the LEFT-2/RIGHT-2 clip-ladder rungs dead from the 0x14680 entry. Blit core @0x144c8 shares blit_objshift's register ABI; reconstructed as g_blit_objshift_w2. Dispatched by draw_object_list object types 13-15 via mid-entry 0x144b2.
 proto 0x13ed6 blit_objshift2 x@D0 rows_m1@D4 dst@A0 src@A1
 proto 0x14620 draw_obj_sprite_hi x@D0 colour@D1 width@D2 rows_seed@D4 voff@D7 dst@A0 src@A1 rec@A2
 proto 0x1465c draw_obj_handler_dbl x@D0 colour@D1 width@D2 rows_seed@D4 voff@D7 dst@A0 src@A1 rec@A2

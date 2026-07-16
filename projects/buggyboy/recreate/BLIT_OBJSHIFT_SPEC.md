@@ -325,6 +325,17 @@ Since only BASE, LEFT-1 (s=0), and RIGHT-1 (s=0) are reachable from the document
 correct port needs only those three; the `s∈{1,2,3}` parameterization is provided so the same loop
 reproduces the dead bodies byte-exactly if a test enters them directly.
 
+**Update — the deeper bodies are no longer dead.** `draw_object_list`'s object-type jump table has a
+second entry into this same engine at **0x144ac** (mid-entry 0x144b2), the "0x90" width family: base
+ceiling 0x90, a 2-cell BASE body, reaching LEFT-2 (A=−8, edge+1 straddle) / LEFT-1 (A=−16, edge only,
+one skipped column) and RIGHT-2 (A=0x90) / RIGHT-1 (A=0x98). The C collapses both entries into
+`blit_objshift_family(..., base_cells)` (`src/blit.c`): `base_cells==1` = the 0x14680 entry (0x98
+ceiling), `base_cells==2` = the 0x144ac entry (0x90 ceiling, exposed as `g_blit_objshift_w2`). Dispatch
+generalized: `base_ceiling = RIGHT_BOUND − 8*(base_cells−1)`; LEFT `k = −A/8` clipped columns →
+`s = base_cells − k` straddles with `k−1` skipped columns (`a0/a1 += 8` each), `k > base_cells` → rts;
+RIGHT `s = (RIGHT_BOUND − A)/8`, `s < 0` → rts; `rewind = ROW_REWIND + 8*(total_cells−1)`. Verified
+byte-for-byte by `test/test_blit_objshift_w2.py` (all fine-x × every 0x90-family case + 4000-fuzz).
+
 **Note on RIGHT-1's dbf/a2 bookkeeping (0x4bc4):** the loop top is 0x4bc8 (after `movea.l a0,a2;
 addq.l #8,a2`), and inside each row `addq.l #8,a2` (0x4c10) then `suba.w #0xa8,a2` moves a2 by −0xa0,
 matching a0's net −0xa0, so `a2 = a0 + 8` is preserved across rows even though a2 is never written.

@@ -199,7 +199,6 @@ void g_blit_obj_Rf2(uint8_t *image, uint32_t buf_base, uint32_t width, uint32_t 
 #define OBJSH_CELL_BYTES   8        /* one 16-pixel 4-plane cell / one column step */
 #define OBJSH_ROW_REWIND   0xa8     /* base per-row a0/a2 rewind (Δ = this + CELL_BYTES*straddle) */
 #define OBJSH_PLANES       4
-#define OBJSH_LEFT_EDGE_COL (-8)    /* the one reachable LEFT case: aligned_col == -8 */
 
 /* Rotate a 32-bit value left (68k rol.l); count is 1..16 here so no mod-32 subtlety. */
 static uint32_t rotl32(uint32_t v, unsigned count) {
@@ -282,17 +281,8 @@ static void objsh_edge_cell(uint8_t *image, uint32_t *ptr, uint32_t *a1,
     }
 }
 
-/* Which sprite family the aligned column selects (spec §3.4). Only these three are reachable from
- * the documented entry; wider clipped columns rts without drawing. */
+/* Which sprite family the aligned column selects (spec §3). */
 enum objsh_family { OBJSH_CLIP, OBJSH_BASE, OBJSH_LEFT, OBJSH_RIGHT };
-
-static enum objsh_family objsh_dispatch(uint16_t aligned_col) {
-    if ((int16_t)aligned_col < 0)
-        return (int16_t)aligned_col == OBJSH_LEFT_EDGE_COL ? OBJSH_LEFT : OBJSH_CLIP;
-    if ((int16_t)(aligned_col - OBJSH_RIGHT_BOUND) >= 0)
-        return aligned_col == OBJSH_RIGHT_BOUND ? OBJSH_RIGHT : OBJSH_CLIP;
-    return OBJSH_BASE;
-}
 
 /* One row of the sprite. `straddle` = number of two-column S cells; LEFT prepends an a2-only lead
  * edge (then re-syncs a0 by one cell), RIGHT appends an a0-only trail edge. a0/a2/a1 advance across
@@ -312,11 +302,22 @@ static void objsh_row(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1,
     }
 }
 
-/* Glue: map the 68000 register ABI to the row loop. a0/a1/a3 are image offsets read/written like
- * blit.c's other glue. color_pairs is real image data (not staged). Register map: D0 x, D1 colour,
- * D4 rows-1, A0 dst, A1 src, A3 stride_ptr. */
-void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,
-                     uint32_t dst, uint32_t src, uint32_t stride_ptr) {
+/* Parameterized width-family core. `base_cells` = the number of straddle cells a fully-on-screen
+ * (BASE) sprite draws; it selects the width family and its dispatch thresholds:
+ *   base_cells==1 -> the 0x14680 entry (base ceiling 0x98; only LEFT-1/BASE/RIGHT-1 reachable).
+ *   base_cells==2 -> the 0x144ac entry (base ceiling 0x90; 2-cell base, LEFT-2/RIGHT-2 reachable).
+ * The 68000 packs these as separate entry points into ONE unrolled blitter (BLIT_OBJSHIFT_SPEC.md §5),
+ * the wider entries walking further down the shared LEFT/RIGHT clip ladders. Collapsed to one loop:
+ *   LEFT   (aligned_col < 0):        k = clipped leading columns = -A/8; s = base_cells - k straddles
+ *          after an a2-only lead edge, and the k-1 fully-clipped columns are skipped (a0/a1 += 8 each,
+ *          the ladder's addq.l). k > base_cells -> off the left edge, no draw.
+ *   RIGHT  (aligned_col >= ceiling): s = (RIGHT_BOUND - A)/8 straddles before an a0-only trail edge;
+ *          s < 0 -> off the right edge, no draw. (RIGHT_BOUND is the absolute screen bound, 0x98.)
+ *   BASE   (0 <= A < ceiling):       base_cells straddles, no edge.
+ * Per row: Δa0=Δa2 = ROW_REWIND + 8*(total_cells-1), a1 also rewinds by the (a3) stride + 8*(total_cells-1).
+ * a0/a1/a3 are image offsets read/written like blit.c's other glue; color_pairs is real image data. */
+static void blit_objshift_family(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,
+                                 uint32_t dst, uint32_t src, uint32_t stride_ptr, int base_cells) {
     unsigned fine_x = (unsigned)(x & OBJSH_NIBBLE);           /* from the ORIGINAL x, before asr */
     unsigned shl = OBJSH_SUBPX_BITS - fine_x;                 /* d6 = 16 - fine_x */
     unsigned shr = fine_x;                                    /* d7 = fine_x */
@@ -325,31 +326,53 @@ void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m
     uint32_t fill_lo = load32(image, A_color_pairs + col_off);        /* d3: planes 0,1 */
     uint32_t fill_hi = load32(image, A_color_pairs + col_off + 4);    /* d5: planes 2,3 */
 
-    uint16_t col = aligned_col((uint16_t)x);
-    enum objsh_family fam = objsh_dispatch(col);
-    if (fam == OBJSH_CLIP) return;
+    int16_t A = (int16_t)aligned_col((uint16_t)x);
+    int16_t base_ceiling = (int16_t)(OBJSH_RIGHT_BOUND - OBJSH_CELL_BYTES * (base_cells - 1));
 
-    /* Straddle-cell count drawn per row vs. the rewind's `s` term differ for BASE: BASE draws one
-     * S cell but rewinds by only ROW_REWIND (its cell advance is already the whole width). LEFT/RIGHT
-     * draw `s` S cells (0 on the reachable entry path) plus one edge cell, and rewind by 8*s extra.
-     * Only s == 0 is reachable from the documented entry; the deeper unrolled bodies (s = 1..3) are
-     * dead but would parameterize identically here. */
-    int straddle_cells = (fam == OBJSH_BASE) ? 1 : 0;
-    int rewind_cells = (fam == OBJSH_BASE) ? 0 : straddle_cells;
-    uint16_t rewind = (uint16_t)(OBJSH_ROW_REWIND + OBJSH_CELL_BYTES * rewind_cells);
-    uint16_t a1_extra = (uint16_t)(OBJSH_CELL_BYTES * rewind_cells);
+    enum objsh_family fam;
+    int straddle, skips = 0;
+    if (A < 0) {
+        int k = (int)(-A) / OBJSH_CELL_BYTES;                 /* clipped-off leading columns */
+        if (k > base_cells) return;                           /* off the left edge -> rts */
+        fam = OBJSH_LEFT; straddle = base_cells - k; skips = k - 1;
+    } else if ((int16_t)(A - base_ceiling) >= 0) {
+        int s = (OBJSH_RIGHT_BOUND - A) / OBJSH_CELL_BYTES;
+        if (s < 0) return;                                    /* off the right edge -> rts */
+        fam = OBJSH_RIGHT; straddle = s;
+    } else {
+        fam = OBJSH_BASE; straddle = base_cells;
+    }
+
+    /* Rewind's `s` term is total_cells-1 in every body (BASE: base_cells; LEFT/RIGHT: straddle+edge). */
+    int total_cells = straddle + (fam == OBJSH_BASE ? 0 : 1);
+    uint16_t rewind = (uint16_t)(OBJSH_ROW_REWIND + OBJSH_CELL_BYTES * (total_cells - 1));
+    uint16_t a1_extra = (uint16_t)(OBJSH_CELL_BYTES * (total_cells - 1));
     int rows = (int16_t)rows_m1 + 1;
 
-    uint32_t a1 = src;
-    uint32_t a0 = dst + sign_ext16(col);
+    uint32_t a1 = src + (uint32_t)(OBJSH_CELL_BYTES * skips);            /* ladder's addq.l #8,a1 */
+    uint32_t a0 = (dst + sign_ext16((uint16_t)A)) + (uint32_t)(OBJSH_CELL_BYTES * skips);
     uint32_t a2 = a0 + OBJSH_CELL_BYTES;                     /* movea.l a0,a2; addq.l #8,a2 (once) */
     for (int row = 0; row < rows; row++) {
-        objsh_row(image, &a0, &a2, &a1, fam, straddle_cells, shl, shr, fill_lo, fill_hi);
+        objsh_row(image, &a0, &a2, &a1, fam, straddle, shl, shr, fill_lo, fill_hi);
         a0 = (uint32_t)(a0 - sign_ext16(rewind));            /* suba.w #Δ,a0 (a2 tracks a0+8) */
         a2 = (uint32_t)(a2 - sign_ext16(rewind));            /* suba.w #Δ,a2 */
         a1 = (uint32_t)(a1 - sign_ext16(be16(image + stride_ptr)));   /* suba.w (a3),a1 */
         a1 = (uint32_t)(a1 - sign_ext16(a1_extra));                   /* suba.w #extra,a1 */
     }
+}
+
+/* 0x14680 entry — the "0x98" width family (base draws one straddle cell). Register map: D0 x,
+ * D1 colour, D4 rows-1, A0 dst, A1 src, A3 stride_ptr. */
+void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,
+                     uint32_t dst, uint32_t src, uint32_t stride_ptr) {
+    blit_objshift_family(image, x, color, rows_m1, dst, src, stride_ptr, /*base_cells=*/1);
+}
+
+/* 0x144ac entry — the "0x90" width family (base draws two straddle cells). Same register ABI; used
+ * by the wider roadside-object types dispatched through draw_object_list's jump table. */
+void g_blit_objshift_w2(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,
+                        uint32_t dst, uint32_t src, uint32_t stride_ptr) {
+    blit_objshift_family(image, x, color, rows_m1, dst, src, stride_ptr, /*base_cells=*/2);
 }
 
 /* ============================================================================================

@@ -149,6 +149,11 @@ void g_draw_object(uint8_t *image, uint32_t buffer);
 void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,
                      uint32_t dst, uint32_t src, uint32_t stride_ptr);
 
+/* 0x144ac entry — the "0x90" width family of the same engine (base draws two straddle cells; reaches
+ * the LEFT-2/RIGHT-2 ladder rungs dead from the 0x14680 entry). Same register ABI as g_blit_objshift. */
+void g_blit_objshift_w2(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,
+                        uint32_t dst, uint32_t src, uint32_t stride_ptr);
+
 /* blit_objshift2 @0x13ed6 — the SECOND sub-pixel masked sprite blitter (leaf; disassembly-driven).
  * Two-word mask ~(w0|w1), plain shifted-OR copy, no color_pairs. Register map: D0 x, D4 rows-1,
  * A0 dst scanline base, A1 src sprite stream. See BLIT_OBJSHIFT2_SPEC.md. */
