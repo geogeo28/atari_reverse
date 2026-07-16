@@ -169,6 +169,45 @@ void g_draw_obj_handler_dbl(uint8_t *image, uint32_t x, uint32_t colour, uint32_
 void g_draw_obj_handler_lo(uint8_t *image, uint32_t x, uint32_t colour, uint32_t rows_m1,
                            uint32_t src, uint32_t rec_cursor, uint32_t base);
 
+/* Shared object-sprite blit engine @ 0x131f6..0x13df8 (disassembly-driven). One parameterized
+ * fine-x-shifted 4-plane masked blitter (4-word mask ~(w0|w1|w2|~w3), plain shifted-OR copy, no
+ * color_pairs) with ~18 alternate entry points. See OBJ_BLIT_ENGINE_SPEC.md. Register maps in
+ * names.txt (proto lines). The bare prologue heads select the width family:
+ *   t4 @0x131f6 -> 0x80, w88 @0x133b6 -> 0x88, t2 @0x1352c -> 0x90, t1 @0x13642 -> 0x98.
+ * D0 x, D4 rows-1, A0 dst scanline base, A1 src sprite stream. */
+void g_objsprite_t4(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst, uint32_t src);
+void g_objsprite_t2(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst, uint32_t src);
+void g_objsprite_t1(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst, uint32_t src);
+void g_objsprite_w88(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst, uint32_t src);
+/* t53 @0x13204: ALT ENTRY skipping the fine-x calc; caller pre-sets d0=aligned_col, d6=shl, d7=shr. */
+void g_objsprite_t53(uint8_t *image, uint32_t aligned_col, uint32_t shl, uint32_t shr,
+                     uint32_t rows_m1, uint32_t dst, uint32_t src);
+/* a6-relative wrappers (a0 = a6 + word@--a2) then a width prologue: t34->0x88, t33->0x90, t32->0x98. */
+void g_objsprite_t34(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a2, uint32_t src);
+void g_objsprite_t33(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a2, uint32_t src);
+void g_objsprite_t32(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a2, uint32_t src);
+/* view-transform wrappers (helper 0x145fc then a width prologue): t39->0x88, t38->0x90, t37->0x98.
+ * A6 object base, A1 src, A2 rec cursor (predecremented by the transform); reads A_view_flags +
+ * the A_obj_view_xform table. */
+void g_objsprite_t39(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a1, uint32_t a2);
+void g_objsprite_t38(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a1, uint32_t a2);
+void g_objsprite_t37(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a1, uint32_t a2);
+/* scan-table x-build wrappers then a width prologue: t42->0x90, t41->0x98. A6 base, A2 record
+ * cursor, A4/A5 scan-table bases, A1 src; reads A_obj_scan_off. */
+void g_objsprite_t42(uint8_t *image, uint32_t rows_m1, uint32_t a6, uint32_t a2,
+                     uint32_t a4, uint32_t a5, uint32_t src);
+void g_objsprite_t41(uint8_t *image, uint32_t rows_m1, uint32_t a6, uint32_t a2,
+                     uint32_t a4, uint32_t a5, uint32_t src);
+/* bsr draw_obj_sprite_hi (0x14620, verified) then FALL THROUGH into a width prologue (a second
+ * pass on the helper's renamed D3->D0/D5->D4/A0/A1): t3->0x88, t49->0x90, t16(=t17/43/48)->0x98.
+ * Same register contract as draw_obj_sprite_hi. */
+void g_objsprite_t3(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width, uint32_t rows_seed,
+                    uint32_t voff, uint32_t dst, uint32_t src, uint32_t rec_cursor);
+void g_objsprite_t49(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width, uint32_t rows_seed,
+                     uint32_t voff, uint32_t dst, uint32_t src, uint32_t rec_cursor);
+void g_objsprite_t16(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width, uint32_t rows_seed,
+                     uint32_t voff, uint32_t dst, uint32_t src, uint32_t rec_cursor);
+
 /* ---- OS wrappers (GEMDOS/BIOS/XBIOS glue); see os.h for the shared trap model ---- */
 void g_xbios_setscreen(uint8_t *image);
 void g_xbios_setpalette(uint8_t *image, uint32_t palette_ptr);   /* A0 -> 16-word palette */

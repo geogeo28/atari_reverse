@@ -61,6 +61,30 @@ proto 0x14664 draw_obj_handler_lo x@D0 colour@D1 rows_m1@D4 src@A1 rec@A2 base@A
 fn 0x14676 draw_obj_blit_tail
 var 0x18cb0 blit_mode_word
 var 0x18c60 view_parity_flag
+# ---- shared object-sprite blit engine @ 0x131f6..0x13df8 (one parameterized fine-x 4-plane masked
+# blitter, ~18 alternate entry points; disassembly-driven) + view-transform helper 0x145fc ----
+var 0x1722a obj_view_xform_tbl
+proto 0x145fc objsprite_view_transform a6@A6 a1@A1 rows_m1@D4 a2@A2
+cmt 0x145fc pure register/pointer view-transform, NO memory write; verified only through t39/t38/t37
+proto 0x131f6 objsprite_t4 x@D0 rows_m1@D4 dst@A0 src@A1
+proto 0x1352c objsprite_t2 x@D0 rows_m1@D4 dst@A0 src@A1
+proto 0x13642 objsprite_t1 x@D0 rows_m1@D4 dst@A0 src@A1
+proto 0x133b6 objsprite_w88 x@D0 rows_m1@D4 dst@A0 src@A1
+proto 0x13204 objsprite_t53 aligned_col@D0 shl@D6 shr@D7 rows_m1@D4 dst@A0 src@A1
+cmt 0x13204 ALT ENTRY at adda.w d0,a0; the first dispatch bmi reads the caller CCR (N = sign(aligned_col))
+proto 0x133ac objsprite_t34 x@D0 rows_m1@D4 a6@A6 a2@A2 src@A1
+proto 0x1350c objsprite_t33 x@D0 rows_m1@D4 a6@A6 a2@A2 src@A1
+proto 0x13622 objsprite_t32 x@D0 rows_m1@D4 a6@A6 a2@A2 src@A1
+proto 0x133a6 objsprite_t39 x@D0 rows_m1@D4 a6@A6 a1@A1 a2@A2
+proto 0x13506 objsprite_t38 x@D0 rows_m1@D4 a6@A6 a1@A1 a2@A2
+proto 0x1361c objsprite_t37 x@D0 rows_m1@D4 a6@A6 a1@A1 a2@A2
+proto 0x13512 objsprite_t42 rows_m1@D4 a6@A6 a2@A2 a4@A4 a5@A5 src@A1
+proto 0x13628 objsprite_t41 rows_m1@D4 a6@A6 a2@A2 a4@A4 a5@A5 src@A1
+proto 0x133b2 objsprite_t3 x@D0 colour@D1 width@D2 rows_seed@D4 voff@D7 dst@A0 src@A1 rec@A2
+proto 0x13528 objsprite_t49 x@D0 colour@D1 width@D2 rows_seed@D4 voff@D7 dst@A0 src@A1 rec@A2
+proto 0x1363e objsprite_t16 x@D0 colour@D1 width@D2 rows_seed@D4 voff@D7 dst@A0 src@A1 rec@A2
+# mid-body re-entries t60 @0x13444 / t61 @0x13784: require a mid-loop register snapshot from the
+# game's live jump table; not reachable from a clean entry, so left unreconstructed (TODO, see spec).
 fn 0x152ac draw_buggy
 fn 0x151f6 draw_buggy_wheels        # ctx
 fn 0x153fa draw_buggy_lo            # ctx

@@ -139,6 +139,9 @@
 /* ---- fill patterns ---- */
 #define A_color_pairs     0x15afa   /* 8-byte (4-plane) solid-fill pattern per colour index */
 
+/* ---- object-sprite blit engine view transform (helper 0x145fc) ---- */
+#define A_obj_view_xform  0x1722a   /* per-view record table: [src-rewind word, packed a0/row word] */
+
 /* ---- font / text (draw_text @ 0x159fa) ---- */
 #define A_font_glyphs     0x176a8   /* 16-byte 1bpp glyphs, indexed char << 4 */
 #define A_num_glyph_tbl   0x17c5e   /* per-digit word byte-offset into the pre-rendered num sprites */
