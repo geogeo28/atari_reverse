@@ -87,6 +87,9 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12ef6` | `draw_game_objects` | 376 |  |  |
 | `0x1306e` | `draw_object_list` | 214 |  |  |
 | `0x1442c` | `draw_checkpoint_anim` | 118 | ✅ verified | scroll sweep; 3 table-driven copy blocks (1/2/3-long cols) X-shifted within buf_c |
+| `0x14620` | `draw_obj_sprite_hi` | 60 | ✅ verified | object-sprite helper (not one of the 91): record+view_flags geometry, mode-8 blit, D3→D0/D5→D4 rename; views × xoff-sign × rows_byte × fine-x + poison fuzz |
+| `0x1465c` | `draw_obj_handler_dbl` | 8 | ✅ verified | colour-preserving double draw (mode 8 then 0xa8 tail); shares draw_obj_sprite_hi + tail |
+| `0x14664` | `draw_obj_handler_lo` | 18 | ✅ verified | dst = A6+0x3ac0, src += per-parity record word, single 0xa8 tail; parity × rows × x + poison fuzz |
 | `0x14680` | `blit_objshift` | 2454 | ✅ verified | sub-pixel 4-plane masked sprite blitter (leaf); every fine-x x dispatch (left-clip/left-edge/base/right-edge/right-clip) x colour x rows x stride + 4000-fuzz poison |
 | `0x15016` | `draw_result_row` | 86 | ✅ verified | 300-fuzz (buf_c src -> buffer; 4-word transparency blit) |
 | `0x1506c` | `draw_result_col` | 56 | ✅ verified | 300-fuzz (buf_c src -> buffer; 5x tiled copy) |

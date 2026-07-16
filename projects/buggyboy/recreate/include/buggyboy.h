@@ -118,8 +118,8 @@ void g_set_screen_offset(uint8_t *image);      /* set the buf_c road-scroll offs
 void g_wait_vbl_set_offset(uint8_t *image);    /* 51x Vsync then set_screen_offset */
 void g_blit_road_scroll(uint8_t *image);       /* horizontal fine-scroll of the road playfield to the screen */
 void g_draw_ground(uint8_t *image, uint32_t buffer);  /* A6 = draw buffer; fill the ground/horizon band */
-void g_render_road(uint8_t *image);   /* pseudo-3D road rasterizer @0x19144 (thunk 0x15af6 is an alias) */
-void g_render_road_l2(uint8_t *image);/* Layer-2 proper-C recreation of render_road (band D idiomatic) */
+void g_render_road(uint8_t *image);   /* pseudo-3D road rasterizer @0x19144 (idiomatic default; thunk 0x15af6 is an alias) */
+void g_render_road_machine(uint8_t *image); /* byte-exact machine-model anchor (src/machine/road.c) */
 
 /* ---- object sprite blitters (blit_obj_* @ 0x10bdc..) ---- */
 #define OBJ_FULL_CELLS 10       /* full-width fill: 10 * 16-byte writes = one 160-byte scanline */
@@ -148,6 +148,21 @@ void g_draw_object(uint8_t *image, uint32_t buffer);
  * Register map: D0 x, D1 colour index, D4 rows-1, A0 dst scanline base, A1 src stream, A3 -> stride word. */
 void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,
                      uint32_t dst, uint32_t src, uint32_t stride_ptr);
+
+/* roadside-object sprite draw-handler family @ 0x14620 / 0x1465c / 0x14664 (+ tail 0x14676).
+ * These derive blit geometry from a per-object descriptor record (A2 = rec+0xa) + view_flags, set
+ * the per-row stride/mode word at 0x18cb0, and call blit_objshift. See BLIT_OBJSPRITE_SPEC.md.
+ *   hi:  D0 x, D1 colour, D2 width(=0xa0), D4 rows seed, D7 vertical offset, A0 dst, A1 src, A2 rec+0xa.
+ *   dbl: same register contract as hi (draws twice, colour preserved for the tail pass).
+ *   lo:  D0 x, D1 colour, D4 rows-1, A1 src, A2 rec+0xa, A6 draw-buffer base. */
+void g_draw_obj_sprite_hi(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width,
+                          uint32_t rows_seed, uint32_t voff, uint32_t dst, uint32_t src,
+                          uint32_t rec_cursor);
+void g_draw_obj_handler_dbl(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width,
+                            uint32_t rows_seed, uint32_t voff, uint32_t dst, uint32_t src,
+                            uint32_t rec_cursor);
+void g_draw_obj_handler_lo(uint8_t *image, uint32_t x, uint32_t colour, uint32_t rows_m1,
+                           uint32_t src, uint32_t rec_cursor, uint32_t base);
 
 /* ---- OS wrappers (GEMDOS/BIOS/XBIOS glue); see os.h for the shared trap model ---- */
 void g_xbios_setscreen(uint8_t *image);

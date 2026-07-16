@@ -54,6 +54,12 @@ fn 0x10e64 blit_obj_Rf              # ctx
 fn 0x10ece blit_obj_Lf2             # ctx
 fn 0x10f60 blit_obj_Rf2             # ctx
 proto 0x14680 blit_objshift x@D0 color@D1 rows_m1@D4 dst@A0 src@A1 stride_ptr@A3
+proto 0x14620 draw_obj_sprite_hi x@D0 colour@D1 width@D2 rows_seed@D4 voff@D7 dst@A0 src@A1 rec@A2
+proto 0x1465c draw_obj_handler_dbl x@D0 colour@D1 width@D2 rows_seed@D4 voff@D7 dst@A0 src@A1 rec@A2
+proto 0x14664 draw_obj_handler_lo x@D0 colour@D1 rows_m1@D4 src@A1 rec@A2 base@A6
+fn 0x14676 draw_obj_blit_tail
+var 0x18cb0 blit_mode_word
+var 0x18c60 view_parity_flag
 fn 0x152ac draw_buggy
 fn 0x151f6 draw_buggy_wheels        # ctx
 fn 0x153fa draw_buggy_lo            # ctx

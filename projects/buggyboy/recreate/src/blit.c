@@ -351,6 +351,104 @@ void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m
     }
 }
 
+/* ============================================================================================
+ * roadside-object sprite draw-handler family @ 0x14620 / 0x1465c / 0x14664 (+ shared tail 0x14676).
+ *
+ * Mid-level "draw one roadside-object sprite" helpers that sit between draw_object_list (the
+ * dispatcher) and the g_blit_objshift leaf above. They read a per-object DESCRIPTOR record (via A2)
+ * plus view_flags / a parity flag, set up the blit registers and the per-row src stride, and call
+ * g_blit_objshift. Three entry points share the geometry and the final blit:
+ *   0x14620 (draw_obj_sprite_hi)  shared subroutine: derive geometry from the record + view_flags,
+ *                                 first blit (mode 8), rename D3->D0 / D5->D4 across the call.
+ *   0x1465c (draw_obj_handler_dbl) table handler: save colour, run 0x14620, restore colour, tail.
+ *   0x14664 (draw_obj_handler_lo)  table handler: dst = A6 + fixed band, src += per-parity word, tail.
+ *   0x14676 (draw_obj_blit_tail)   shared tail: set mode 0xa8, fall straight into g_blit_objshift.
+ * See BLIT_OBJSPRITE_SPEC.md for the full instruction decode. All 16-bit register arithmetic wraps
+ * mod 2^16, mirrored with explicit int16/uint16.
+ */
+#define A_blit_mode      0x18cb0    /* per-row src-stride/mode word the leaf reads via A3 */
+#define A_view_parity    0x18c60    /* per-view parity flag word (&2 selects the src offset) */
+#define OBJH_MODE_MAIN   0x8        /* mode word for the 0x14620 first pass */
+#define OBJH_MODE_TAIL   0xa8       /* mode word for the 0x14676 tail/second pass */
+#define OBJH_BAND_LO     0x3ac0     /* fixed dst-band offset from A6 (0x14664) */
+#define OBJH_PARITY_MASK 0x2        /* moveq #2; and.w view_parity -> {0,2} */
+#define OBJH_SRC_REWIND  0xa0       /* suba.w #0xa0,a1: rewind src one band (= OBJD_WIDTH) */
+/* Descriptor-record layout (in buf_a, resolved by draw_object_list into these helpers' registers,
+ * so referenced here only for context): word@rec+8 = x screen offset (re-read by move.w -(a2),d3);
+ * rec+0xc = per-view rows-1 byte table (indexed 4(a2,d7), a2=rec+8) and per-parity src-offset base
+ * (indexed 2(a2,d2), a2=rec+0xa). */
+
+/* Shared tail (0x14676): write mode 0xa8, then fall through into g_blit_objshift (one blit). */
+static void draw_obj_blit_tail(uint8_t *image, uint32_t x, uint32_t colour, uint32_t rows_m1,
+                               uint32_t dst, uint32_t src) {
+    wr16(image + A_blit_mode, OBJH_MODE_TAIL);
+    g_blit_objshift(image, x, colour, rows_m1, dst, src, A_blit_mode);
+}
+
+/* Renamed registers 0x14620 leaves for its caller's tail: movem rename D3->D0, D5->D4; A0=sprite
+ * top; A1 rewound one band. */
+struct obj_hi_out { uint16_t d0_x; uint16_t d4_rows; uint32_t a0_dst; uint32_t a1_src; };
+
+/* 0x14620 shared helper. Register map: D0 x accum, D1 colour (passed through), D2 width (=0xa0),
+ * D4 rows seed, D7 caller vertical offset, A0 dst scanline base, A1 src stream, A2 = rec+0xa. */
+static struct obj_hi_out
+draw_obj_sprite_hi(uint8_t *image, uint16_t x, uint16_t colour, uint16_t width,
+                   uint16_t rows_seed, uint16_t voff, uint32_t dst, uint32_t src, uint32_t rec_cursor) {
+    uint16_t rows_copy = rows_seed;                                  /* move.w d4,d5 (survives blit) */
+    uint32_t rec_xoff = rec_cursor - 2;                              /* move.w -(a2),d3 -> a2 = rec+8 */
+    uint16_t xoff = be16(image + rec_xoff);                          /* D3 = word@rec+8 */
+    dst = (uint32_t)(dst - sign_ext16(xoff));                        /* suba.w d3,a0 */
+    dst = (uint32_t)(dst + sign_ext16(voff));                        /* adda.w d7,a0 */
+    uint16_t base_col = (uint16_t)(xoff + x);                        /* add.w d0,d3 (D0 unchanged) */
+
+    uint16_t view = (uint16_t)(be16(image + A_view_flags) >> 1);     /* view index 0..3 */
+    uint8_t rows_byte = image[rec_xoff + 4 + view];                  /* move.b 4(a2,d7.w),d4 (a2=rec+8) */
+    /* move.b writes only D4's low byte; the high byte keeps the rows_seed high byte, and the leaf
+     * reads (int16_t)D4 — so the effective rows-1 is rows_seed's high byte over rows_byte. */
+    uint16_t rows_m1 = set_low_byte(rows_seed, rows_byte);
+
+    uint32_t dst_top = (uint32_t)(dst - sign_ext16(width));          /* movea.l a0,a2; suba.w d2,a2 */
+    uint16_t height = (uint16_t)(width * rows_byte);                 /* mulu.w d4,d2 (low 16 bits used) */
+    dst_top = (uint32_t)(dst_top - sign_ext16(height));             /* suba.w d2,a2 -> sprite top (A2) */
+
+    /* The blit runs with A0 = dst (the -xoff+voff scanline base); A2/dst_top is pushed here and
+     * restored to A0 only AFTER the call — it is the caller's sprite-top, not the blit's dst. */
+    wr16(image + A_blit_mode, OBJH_MODE_MAIN);                       /* mode word = 8 */
+    g_blit_objshift(image, x, colour, rows_m1, dst, src, A_blit_mode);
+
+    struct obj_hi_out out = {                                        /* movem rename D3->D0, D5->D4 */
+        base_col, rows_copy, dst_top,                                /* movea.l (a7)+,a0 -> sprite-top */
+        (uint32_t)(src - sign_ext16(OBJH_SRC_REWIND)),              /* suba.w #0xa0,a1 */
+    };
+    return out;
+}
+
+/* 0x14620 glue. */
+void g_draw_obj_sprite_hi(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width,
+                          uint32_t rows_seed, uint32_t voff, uint32_t dst, uint32_t src,
+                          uint32_t rec_cursor) {
+    draw_obj_sprite_hi(image, (uint16_t)x, (uint16_t)colour, (uint16_t)width, (uint16_t)rows_seed,
+                       (uint16_t)voff, dst, src, rec_cursor);
+}
+
+/* 0x1465c handler: colour-preserving double draw (mode 8 pass, then mode 0xa8 tail). */
+void g_draw_obj_handler_dbl(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width,
+                            uint32_t rows_seed, uint32_t voff, uint32_t dst, uint32_t src,
+                            uint32_t rec_cursor) {
+    struct obj_hi_out r = draw_obj_sprite_hi(image, (uint16_t)x, (uint16_t)colour, (uint16_t)width,
+                                             (uint16_t)rows_seed, (uint16_t)voff, dst, src, rec_cursor);
+    draw_obj_blit_tail(image, r.d0_x, colour, r.d4_rows, r.a0_dst, r.a1_src);   /* colour restored */
+}
+
+/* 0x14664 handler: dst from A6, src adjusted by a per-parity record word, single tail blit. */
+void g_draw_obj_handler_lo(uint8_t *image, uint32_t x, uint32_t colour, uint32_t rows_m1,
+                           uint32_t src, uint32_t rec_cursor, uint32_t base) {
+    uint32_t dst = (uint32_t)(base + sign_ext16(OBJH_BAND_LO));      /* a6 + 0x3ac0 */
+    uint16_t parity = (uint16_t)(OBJH_PARITY_MASK & be16(image + A_view_parity));   /* 0 or 2 */
+    src = (uint32_t)(src + sign_ext16(be16(image + rec_cursor + 2 + parity)));      /* adda.w 2(a2,d2),a1 */
+    draw_obj_blit_tail(image, x, colour, rows_m1, dst, src);
+}
+
 /* --- draw_object @0x1087e --- Scale + position the current roadside object from road_width_tbl,
  * then dispatch to the blit_obj_* variants. Scans road_width_tbl for the first visible row (a
  * negative long), walks the object's consecutive rows computing left/right screen edges (max/min)
