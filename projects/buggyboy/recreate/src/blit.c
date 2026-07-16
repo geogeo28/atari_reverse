@@ -588,7 +588,6 @@ void g_blit_objshift2(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst
  * mod 2^16, mirrored with explicit int16/uint16.
  */
 #define A_blit_mode      0x18cb0    /* per-row src-stride/mode word the leaf reads via A3 */
-#define A_view_parity    0x18c60    /* per-view parity flag word (&2 selects the src offset) */
 #define OBJH_MODE_MAIN   0x8        /* mode word for the 0x14620 first pass */
 #define OBJH_MODE_TAIL   0xa8       /* mode word for the 0x14676 tail/second pass */
 #define OBJH_BAND_LO     0x3ac0     /* fixed dst-band offset from A6 (0x14664) */

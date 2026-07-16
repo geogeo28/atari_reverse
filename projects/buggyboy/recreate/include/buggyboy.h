@@ -149,6 +149,12 @@ void g_draw_object(uint8_t *image, uint32_t buffer);
 void g_draw_object_list(uint8_t *image, uint32_t a5, uint32_t a3, uint32_t a6,
                         uint32_t d4_outer, uint32_t d6, uint32_t d1_in);
 
+/* draw_game_objects @0x12ef6 — per-frame scene/object draw orchestrator; a6 = draw buffer (derived).
+ * Advances marker/anim/bonus state, then draws ground, fg sprite, roadside objects, object, buggy. */
+void g_draw_game_objects(uint8_t *image);
+/* Test-only: the deterministic prefix of draw_game_objects (marker/anim/bonus), for checkpoint diff. */
+void g_draw_game_objects_prefix(uint8_t *image);
+
 /* blit_objshift @0x14680 — sub-pixel (fine-x shifted) 4-plane masked sprite blitter (leaf).
  * Register map: D0 x, D1 colour index, D4 rows-1, A0 dst scanline base, A1 src stream, A3 -> stride word. */
 void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,

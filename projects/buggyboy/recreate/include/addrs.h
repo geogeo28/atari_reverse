@@ -51,6 +51,20 @@
 #define A_road_edge_sel   0x18c5a   /* signed word added to render_road's a6 edge-table base (0x15c3a) */
 #define A_leg_flags_c90   0x18c90   /* per-leg state pair, init 0x00440002 by init_leg # ctx */
 #define A_obj_markers     0x18d3c   /* 14 x 0x20-byte per-object marker records, seeded by init_leg */
+/* ---- draw_game_objects @ 0x12ef6 per-frame state ---- */
+#define A_marker_decay      0x18cf0   /* [0]=active word, [2]=record byte-offset, [4]=countdown word */
+#define A_marker_decay_base 0x18d34   /* base of the 14 records the decay clears (stride 0x20) */
+#define A_anim_counter      0x17f10   /* frame counter (+=2/frame); &0x1e indexes the anim tables */
+#define A_anim_word_tbl     0x17ec8   /* word table indexed by (counter & 0x1e) -> anim_word */
+#define A_anim_word         0x18c74   /* current anim word; mirrored to buf_a+0xd70 and buf_a+0x1250 */
+#define A_anim_coloridx_tbl 0x17ee8   /* word table indexed by (counter & 0x1e); <<3 -> color_pairs offset */
+#define A_anim_color        0x17f08   /* current 8-byte (2-long) colour pair copied from color_pairs */
+#define A_sprite_list_base  0x18d5a   /* sprite-count loop base (== A_road_width_src); stride 0x20 */
+#define A_obj_sprite_flags  0x18d5c   /* a3 base for the sprite-driven draw_object_list calls (list_base+2) */
+#define A_obj_sprite_disp   0x16a90   /* a5 base for the sprite-driven draw_object_list calls */
+#define OBJ_ANIM_IDX_MASK   0x1e      /* counter & this indexes the anim tables */
+#define GOBJ_ANIM_BUF_OFF1  0xd70     /* buf_a + this = anim_word mirror 1 */
+#define GOBJ_ANIM_BUF_OFF2  0x1250    /* buf_a + this = anim_word mirror 2 */
 /* ---- input (read_input @ 0x120b0, check_abort @ 0x128ea) ---- */
 #define A_input_prev      0x18c42   /* baseline input snapshot; check_abort aborts on a differing live input # ctx */
 #define A_input_state     0x18c44   /* current input bits: fire 0x80, up 1, down 2, left 4, right 8 */
@@ -166,6 +180,7 @@
 /* ---- road / perspective (build_road_geometry @ 0x11f4c) ---- */
 #define A_road_seg_data       0x18d1c   /* per-leg road segment slopes (shorts): [0] + [1..12] */
 #define A_view_flags          0x18c56   /* leg/view selector (0,2,4,6) */
+#define A_view_parity         0x18c60   /* per-view parity word (draw_game_objects +=2/frame; handler_lo reads &2) */
 #define A_road_curve          0x18c6a   /* signed current road curvature */
 #define A_horizon             0x1905e   /* horizon position input */
 #define A_road_seg_head       0x18cb6   /* cached road_seg_data[0] */
