@@ -144,6 +144,11 @@ void g_blit_obj_Rf2(uint8_t *image, uint32_t buf_base, uint32_t width, uint32_t 
 /* draw_object @0x1087e — A6 = draw buffer; scans road_width_tbl, computes edges, dispatches the blits. */
 void g_draw_object(uint8_t *image, uint32_t buffer);
 
+/* blit_objshift @0x14680 — sub-pixel (fine-x shifted) 4-plane masked sprite blitter (leaf).
+ * Register map: D0 x, D1 colour index, D4 rows-1, A0 dst scanline base, A1 src stream, A3 -> stride word. */
+void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,
+                     uint32_t dst, uint32_t src, uint32_t stride_ptr);
+
 /* ---- OS wrappers (GEMDOS/BIOS/XBIOS glue); see os.h for the shared trap model ---- */
 void g_xbios_setscreen(uint8_t *image);
 void g_xbios_setpalette(uint8_t *image, uint32_t palette_ptr);   /* A0 -> 16-word palette */

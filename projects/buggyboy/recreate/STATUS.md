@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 85/91.**
+**Verified: 86/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -87,6 +87,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12ef6` | `draw_game_objects` | 376 |  |  |
 | `0x1306e` | `draw_object_list` | 214 |  |  |
 | `0x1442c` | `draw_checkpoint_anim` | 118 | ✅ verified | scroll sweep; 3 table-driven copy blocks (1/2/3-long cols) X-shifted within buf_c |
+| `0x14680` | `blit_objshift` | 2454 | ✅ verified | sub-pixel 4-plane masked sprite blitter (leaf); every fine-x x dispatch (left-clip/left-edge/base/right-edge/right-clip) x colour x rows x stride + 4000-fuzz poison |
 | `0x15016` | `draw_result_row` | 86 | ✅ verified | 300-fuzz (buf_c src -> buffer; 4-word transparency blit) |
 | `0x1506c` | `draw_result_col` | 56 | ✅ verified | 300-fuzz (buf_c src -> buffer; 5x tiled copy) |
 | `0x150a4` | `draw_dashboard` | 230 | ✅ verified | 200-fuzz (buf_c graphic -> buffer; 40x8 masked blit) |

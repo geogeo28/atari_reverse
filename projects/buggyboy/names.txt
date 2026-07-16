@@ -53,6 +53,7 @@ fn 0x10df4 blit_obj_Lf              # ctx
 fn 0x10e64 blit_obj_Rf              # ctx
 fn 0x10ece blit_obj_Lf2             # ctx
 fn 0x10f60 blit_obj_Rf2             # ctx
+proto 0x14680 blit_objshift x@D0 color@D1 rows_m1@D4 dst@A0 src@A1 stride_ptr@A3
 fn 0x152ac draw_buggy
 fn 0x151f6 draw_buggy_wheels        # ctx
 fn 0x153fa draw_buggy_lo            # ctx

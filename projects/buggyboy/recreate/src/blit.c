@@ -180,6 +180,177 @@ void g_blit_obj_Rn2(uint8_t *image, uint32_t buf_base, uint32_t width, uint32_t 
 void g_blit_obj_Rf2(uint8_t *image, uint32_t buf_base, uint32_t width, uint32_t fill_lo, uint32_t fill_hi) {
     road_walk(image, buf_base, (int16_t)width, fill_lo, fill_hi, /*is_left=*/0, /*ramp_mul=*/-3, /*ramp_add=*/0x1ba);
 }
+/* ============================================================================================
+ * blit_objshift @ 0x14680 — sub-pixel (fine-x shifted) 4-plane masked-transparency sprite blitter.
+ *
+ * The innermost sprite engine: the fine-x cousin of blit_transp_cell (draw.h) and the blit_obj_*
+ * family above. Where those blit at cell granularity, this shifts each 16-pixel source column left
+ * by (16 - fine_x) (BASE/LEFT) or right by fine_x (RIGHT clipped edge) so a sprite lands at an
+ * arbitrary pixel x, straddling two 16-pixel destination columns (a0 = col0, a2 = a0 + 8 = col1).
+ *
+ * PURE LEAF. The register contract (see names.txt proto): D0 screen x, D1 colour index, D4 rows-1,
+ * A0 dst scanline base, A1 src sprite stream, A3 -> per-row src-stride word. See BLIT_OBJSHIFT_SPEC.md.
+ */
+#define OBJSH_NIBBLE       0xf      /* fine-x / colour-index low nibble mask */
+#define OBJSH_SUBPX_BITS   16       /* left-shift count d6 = 16 - fine_x */
+#define OBJSH_COLOR_STRIDE 8        /* colour index * 8 = byte offset into color_pairs */
+#define OBJSH_RIGHT_BOUND  0x98     /* aligned_col >= this -> RIGHT/clipped family */
+#define OBJSH_CELL_BYTES   8        /* one 16-pixel 4-plane cell / one column step */
+#define OBJSH_ROW_REWIND   0xa8     /* base per-row a0/a2 rewind (Δ = this + CELL_BYTES*straddle) */
+#define OBJSH_PLANES       4
+#define OBJSH_LEFT_EDGE_COL (-8)    /* the one reachable LEFT case: aligned_col == -8 */
+
+/* Rotate a 32-bit value left (68k rol.l); count is 1..16 here so no mod-32 subtlety. */
+static uint32_t rotl32(uint32_t v, unsigned count) {
+    count &= 31;
+    return count ? ((v << count) | (v >> (32 - count))) : v;
+}
+
+/* Build the cell's 32-bit mask register from the four plane words at *a1. The 68k `moveq #$ff,d2`
+ * sign-extends 0xff to 0xFFFFFFFF, so the mask longword's HIGH word is 0xFFFF (not 0) going into the
+ * rol.l/lsr.l — those set bits shift/rotate into the other 16-pixel column and are load-bearing. The
+ * low word is the SHOW mask ~(A|B|C) & D (identical to blit_transp_cell). */
+#define OBJSH_MASK_HI_FILL 0xffff0000u   /* moveq #$ff sign-extension into the mask's high word */
+static uint32_t objsh_build_mask(const uint8_t *image, uint32_t a1) {
+    uint16_t a = be16(image + a1);
+    uint16_t b = be16(image + a1 + 2);
+    uint16_t c = be16(image + a1 + 4);
+    uint16_t d = be16(image + a1 + 6);
+    return OBJSH_MASK_HI_FILL | (uint16_t)(~(a | b | c) & d);
+}
+
+/* Masked OR-in of one plane word into a destination column (68k `and.w mask,(ptr)` +
+ * `or.w pix,(ptr)` collapsed): keep the background where mask is set, drop in the shifted pixels. */
+static void objsh_plane_write(uint8_t *image, uint32_t ptr, uint16_t mask, uint16_t pix) {
+    wr16(image + ptr, (uint16_t)((be16(image + ptr) & mask) | pix));
+}
+
+/* The colour fill halves consumed per plane, in the fixed swap-toggled order the asm walks:
+ * plane0 = d3 hi, plane1 = d3 lo, plane2 = d5 hi, plane3 = d5 lo. */
+static uint16_t objsh_fill_half(uint32_t fill_lo /*d3*/, uint32_t fill_hi /*d5*/, int plane) {
+    uint32_t reg = (plane < 2) ? fill_lo : fill_hi;
+    return (uint16_t)((plane & 1) ? (reg & 0xffff) : (reg >> OBJSH_SUBPX_BITS));
+}
+
+/* STRADDLE cell (BASE + non-edge): 32-bit left shift straddles both columns (a0 = col0, a2 = col1).
+ * mask32 = rotl32(mask, shl); MASK_HI gates col0, MASK_LO gates col1. Each plane word is shifted
+ * left by shl (32-bit): high half -> col0, low half -> col1, each masked by the plane's fill half.
+ * Every plane keeps the background via (dst & mask); plane 3 (the D leftover) additionally masks its
+ * pixels with ~mask so it lights only the opaque bits — exactly blit_transp_cell's plane-3 rule.
+ * Advances a0/a2/a1 by one cell. */
+static void objsh_straddle_cell(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1,
+                                unsigned shl, uint32_t fill_lo, uint32_t fill_hi) {
+    uint32_t mask32 = rotl32(objsh_build_mask(image, *a1), shl);
+    uint16_t mask_hi = (uint16_t)(mask32 >> OBJSH_SUBPX_BITS);   /* col0 (a0) */
+    uint16_t mask_lo = (uint16_t)mask32;                         /* col1 (a2) */
+    for (int plane = 0; plane < OBJSH_PLANES; plane++) {
+        uint32_t pix32 = (uint32_t)be16(image + *a1) << shl;
+        *a1 += 2;
+        uint16_t fill = objsh_fill_half(fill_lo, fill_hi, plane);
+        uint16_t pix_lo = (uint16_t)((pix32 & 0xffff) & fill);
+        uint16_t pix_hi = (uint16_t)((pix32 >> OBJSH_SUBPX_BITS) & fill);
+        if (plane == OBJSH_PLANES - 1) {                        /* D leftover: pixels &= ~mask */
+            pix_lo &= (uint16_t)~mask_lo;
+            pix_hi &= (uint16_t)~mask_hi;
+        }
+        objsh_plane_write(image, *a2, mask_lo, pix_lo);         /* col1 first */
+        objsh_plane_write(image, *a0, mask_hi, pix_hi);
+        *a0 += 2; *a2 += 2;
+    }
+}
+
+/* EDGE cell (single column): the sprite's leading (LEFT) or trailing (RIGHT) 16px column is clipped
+ * off-screen, so only one on-screen column is drawn. The MASK is built + shifted as the full 32-bit
+ * register (rol.l shl for LEFT, lsr.l shr for RIGHT), then its LOW word gates the column. The PIXELS
+ * shift as WORDs (lsl.w/lsr.w — no straddle spill). LEFT writes (a2) shifted left by shl = 16-fine_x;
+ * RIGHT writes (a0) shifted right by shr = fine_x. Plane 3 (D leftover) uses the inverse mask. */
+static void objsh_edge_cell(uint8_t *image, uint32_t *ptr, uint32_t *a1,
+                            unsigned shift, int is_right, uint32_t fill_lo, uint32_t fill_hi) {
+    uint32_t m32 = objsh_build_mask(image, *a1);
+    uint16_t mask = (uint16_t)(is_right ? (m32 >> shift) : rotl32(m32, shift));
+    for (int plane = 0; plane < OBJSH_PLANES; plane++) {
+        uint16_t word = be16(image + *a1);
+        *a1 += 2;
+        uint16_t pix = is_right ? (uint16_t)(word >> shift)
+                                : (uint16_t)((uint32_t)word << shift);
+        uint16_t fill = objsh_fill_half(fill_lo, fill_hi, plane);
+        pix = (uint16_t)(pix & fill);
+        if (plane == OBJSH_PLANES - 1) pix &= (uint16_t)~mask;   /* D leftover: pixels &= ~mask */
+        objsh_plane_write(image, *ptr, mask, pix);
+        *ptr += 2;
+    }
+}
+
+/* Which sprite family the aligned column selects (spec §3.4). Only these three are reachable from
+ * the documented entry; wider clipped columns rts without drawing. */
+enum objsh_family { OBJSH_CLIP, OBJSH_BASE, OBJSH_LEFT, OBJSH_RIGHT };
+
+static enum objsh_family objsh_dispatch(uint16_t aligned_col) {
+    if ((int16_t)aligned_col < 0)
+        return (int16_t)aligned_col == OBJSH_LEFT_EDGE_COL ? OBJSH_LEFT : OBJSH_CLIP;
+    if ((int16_t)(aligned_col - OBJSH_RIGHT_BOUND) >= 0)
+        return aligned_col == OBJSH_RIGHT_BOUND ? OBJSH_RIGHT : OBJSH_CLIP;
+    return OBJSH_BASE;
+}
+
+/* One row of the sprite. `straddle` = number of two-column S cells; LEFT prepends an a2-only lead
+ * edge (then re-syncs a0 by one cell), RIGHT appends an a0-only trail edge. a0/a2/a1 advance across
+ * the cells; the caller applies the per-row rewind. shl = 16-fine_x, shr = fine_x. */
+static void objsh_row(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1,
+                      enum objsh_family fam, int straddle, unsigned shl, unsigned shr,
+                      uint32_t fill_lo, uint32_t fill_hi) {
+    if (fam == OBJSH_LEFT) {
+        objsh_edge_cell(image, a2, a1, shl, /*is_right=*/0, fill_lo, fill_hi);
+        *a0 += OBJSH_CELL_BYTES;                 /* re-sync a0 to the first visible column */
+    }
+    for (int i = 0; i < straddle; i++)
+        objsh_straddle_cell(image, a0, a2, a1, shl, fill_lo, fill_hi);
+    if (fam == OBJSH_RIGHT) {
+        objsh_edge_cell(image, a0, a1, shr, /*is_right=*/1, fill_lo, fill_hi);
+        *a2 += OBJSH_CELL_BYTES;                 /* keep a2 in step (dead bookkeeping) */
+    }
+}
+
+/* Glue: map the 68000 register ABI to the row loop. a0/a1/a3 are image offsets read/written like
+ * blit.c's other glue. color_pairs is real image data (not staged). Register map: D0 x, D1 colour,
+ * D4 rows-1, A0 dst, A1 src, A3 stride_ptr. */
+void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,
+                     uint32_t dst, uint32_t src, uint32_t stride_ptr) {
+    unsigned fine_x = (unsigned)(x & OBJSH_NIBBLE);           /* from the ORIGINAL x, before asr */
+    unsigned shl = OBJSH_SUBPX_BITS - fine_x;                 /* d6 = 16 - fine_x */
+    unsigned shr = fine_x;                                    /* d7 = fine_x */
+
+    uint16_t col_off = (uint16_t)((color & OBJSH_NIBBLE) << 3);
+    uint32_t fill_lo = load32(image, A_color_pairs + col_off);        /* d3: planes 0,1 */
+    uint32_t fill_hi = load32(image, A_color_pairs + col_off + 4);    /* d5: planes 2,3 */
+
+    uint16_t col = aligned_col((uint16_t)x);
+    enum objsh_family fam = objsh_dispatch(col);
+    if (fam == OBJSH_CLIP) return;
+
+    /* Straddle-cell count drawn per row vs. the rewind's `s` term differ for BASE: BASE draws one
+     * S cell but rewinds by only ROW_REWIND (its cell advance is already the whole width). LEFT/RIGHT
+     * draw `s` S cells (0 on the reachable entry path) plus one edge cell, and rewind by 8*s extra.
+     * Only s == 0 is reachable from the documented entry; the deeper unrolled bodies (s = 1..3) are
+     * dead but would parameterize identically here. */
+    int straddle_cells = (fam == OBJSH_BASE) ? 1 : 0;
+    int rewind_cells = (fam == OBJSH_BASE) ? 0 : straddle_cells;
+    uint16_t rewind = (uint16_t)(OBJSH_ROW_REWIND + OBJSH_CELL_BYTES * rewind_cells);
+    uint16_t a1_extra = (uint16_t)(OBJSH_CELL_BYTES * rewind_cells);
+    int rows = (int16_t)rows_m1 + 1;
+
+    uint32_t a1 = src;
+    uint32_t a0 = dst + sign_ext16(col);
+    uint32_t a2 = a0 + OBJSH_CELL_BYTES;                     /* movea.l a0,a2; addq.l #8,a2 (once) */
+    for (int row = 0; row < rows; row++) {
+        objsh_row(image, &a0, &a2, &a1, fam, straddle_cells, shl, shr, fill_lo, fill_hi);
+        a0 = (uint32_t)(a0 - sign_ext16(rewind));            /* suba.w #Δ,a0 (a2 tracks a0+8) */
+        a2 = (uint32_t)(a2 - sign_ext16(rewind));            /* suba.w #Δ,a2 */
+        a1 = (uint32_t)(a1 - sign_ext16(be16(image + stride_ptr)));   /* suba.w (a3),a1 */
+        a1 = (uint32_t)(a1 - sign_ext16(a1_extra));                   /* suba.w #extra,a1 */
+    }
+}
+
 /* --- draw_object @0x1087e --- Scale + position the current roadside object from road_width_tbl,
  * then dispatch to the blit_obj_* variants. Scans road_width_tbl for the first visible row (a
  * negative long), walks the object's consecutive rows computing left/right screen edges (max/min)
