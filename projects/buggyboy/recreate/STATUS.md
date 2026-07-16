@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 87/91.**
+**Verified: 88/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -85,7 +85,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12ebc` | `stop_music_chk` | 8 | ✅ verified | guard fuzz (MZFLAG gate + game_over); falls into stop_music |
 | `0x12ec4` | `stop_music` | 50 | ✅ verified | guard fuzz (game_over); TURNOFF + clear fx/tune/vec + XBIOS Dosound (0x20) |
 | `0x12ef6` | `draw_game_objects` | 376 |  |  |
-| `0x1306e` | `draw_object_list` | 214 |  |  |
+| `0x1306e` | `draw_object_list` | 214 | ✅ verified | roadside-object display-list dispatcher (register-glue); two nested loops x SPECIAL/NORMAL pass x every jump-table handler (noop/t1/t2/w88/t4/stub/handler_lo 0x98+0x90) x view/parity/bonus-clamp/vertical-offset + 400-seed 15-object fuzz (real d4=0 case) + explicit multi-row (d6-step) cases. Pulls in the new g_blit_objshift_w2 (0x90 family) + the 0x131ac stub + 0x1466a/0x144b2 handler_lo mid-entries |
 | `0x1442c` | `draw_checkpoint_anim` | 118 | ✅ verified | scroll sweep; 3 table-driven copy blocks (1/2/3-long cols) X-shifted within buf_c |
 | `0x14620` | `draw_obj_sprite_hi` | 60 | ✅ verified | object-sprite helper (not one of the 91): record+view_flags geometry, mode-8 blit, D3→D0/D5→D4 rename; views × xoff-sign × rows_byte × fine-x + poison fuzz |
 | `0x1465c` | `draw_obj_handler_dbl` | 8 | ✅ verified | colour-preserving double draw (mode 8 then 0xa8 tail); shares draw_obj_sprite_hi + tail |
@@ -202,9 +202,10 @@ tracked functions) is now reconstructed too: it drives the three voices then dum
 registers, verified per frame on **both** the memory image and the emitted PSG (reg,val) stream
 (the oracle's shim taps the `$ffff8800/8802` writes; the reconstruction appends them to a buffer).
 `test_refresh_music`/`_fx`/`_music_eg` seed real tracks/effects via INITTUNE/INITFX and step the
-driver; the EG block is driven directly. That leaves the sound driver **complete**. Remaining
-overall: the gameplay/draw/HUD families and the big orchestrators (`game_update`, `render_road`,
-`draw_hud`).
+driver; the EG block is driven directly. That leaves the sound driver **complete**. `render_road`,
+`draw_hud` and now `draw_object_list` (the roadside-object dispatcher) are done. Remaining overall:
+the big orchestrators `game_update`, `intermission`, `init_playfield`, and the two draw wrappers
+`draw_frame` + `draw_game_objects` (whose sole remaining dependency is now verified).
 
 ## Oracle cross-validation
 

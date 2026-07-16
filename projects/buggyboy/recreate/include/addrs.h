@@ -43,6 +43,11 @@
 #define A_game_over_flag  0x18c34   /* tst.w'd at add_score entry */
 #define A_leg_index       0x18c38   /* current leg (0-4); indexes result strings + palette */
 #define A_obj_scan_off    0x18c58   /* word paired with view_flags; draw_object_list adds it to a5 */
+/* draw_object_list @0x1306e display-list dispatcher bases (Ghidra addresses). */
+#define A_obj_list_base   0x16c06   /* a5 base: per-row [dst_word, xoff_word] then 15 per-object x words */
+#define A_obj_flags       0x18ebc   /* a3 base: per-object flag word (sign gates the special dispatch; low 6 bits = type) */
+#define A_obj_xoff_tbl    0x18f26   /* a4 base: per-row shared x-offset word */
+#define A_obj_type_jumptable 0x13144 /* word offsets (from this base) to the object-sprite handlers */
 #define A_road_edge_sel   0x18c5a   /* signed word added to render_road's a6 edge-table base (0x15c3a) */
 #define A_leg_flags_c90   0x18c90   /* per-leg state pair, init 0x00440002 by init_leg # ctx */
 #define A_obj_markers     0x18d3c   /* 14 x 0x20-byte per-object marker records, seeded by init_leg */

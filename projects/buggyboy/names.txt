@@ -86,6 +86,10 @@ proto 0x13528 objsprite_t49 x@D0 colour@D1 width@D2 rows_seed@D4 voff@D7 dst@A0 
 proto 0x1363e objsprite_t16 x@D0 colour@D1 width@D2 rows_seed@D4 voff@D7 dst@A0 src@A1 rec@A2
 # mid-body re-entries t60 @0x13444 / t61 @0x13784: require a mid-loop register snapshot from the
 # game's live jump table; not reachable from a clean entry, so left unreconstructed (TODO, see spec).
+# draw_object_list's jump table (below) reaches the base objsprite entries + the blit_objshift 0x90
+# family, but NOT t60/t61, so those remain deferred.
+proto 0x1306e draw_object_list a5@A5 a3@A3 a6@A6 d4_outer@D4 d6@D6 colour@D1
+cmt 0x1306e Per-frame roadside-object display-list dispatcher. Two nested loops walk the object list; each object's flag word (a3) gates a SPECIAL pass (record @buf_a+0x21d0+d6) and a NORMAL pass keyed on the low 6 bits (type -> record @buf_a+0x8a0+type*0xd0+d6). Resolves obj_type_jumptable[type] and calls the handler (objsprite t1/t2/t4/w88, the t4+t1 stub @0x131ac, or the handler_lo blit_objshift 0x98/0x90 families). Real caller passes d4=0 (one outer row). Reconstructed as g_draw_object_list.
 fn 0x152ac draw_buggy
 fn 0x151f6 draw_buggy_wheels        # ctx
 fn 0x153fa draw_buggy_lo            # ctx

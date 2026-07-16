@@ -144,6 +144,11 @@ void g_blit_obj_Rf2(uint8_t *image, uint32_t buf_base, uint32_t width, uint32_t 
 /* draw_object @0x1087e — A6 = draw buffer; scans road_width_tbl, computes edges, dispatches the blits. */
 void g_draw_object(uint8_t *image, uint32_t buffer);
 
+/* draw_object_list @0x1306e — per-frame object display-list dispatcher (register-glue). A5 list
+ * stream, A3 flag stream, A6 draw buffer, D4 outer row count-1, D6 record byte offset, D1 colour. */
+void g_draw_object_list(uint8_t *image, uint32_t a5, uint32_t a3, uint32_t a6,
+                        uint32_t d4_outer, uint32_t d6, uint32_t d1_in);
+
 /* blit_objshift @0x14680 — sub-pixel (fine-x shifted) 4-plane masked sprite blitter (leaf).
  * Register map: D0 x, D1 colour index, D4 rows-1, A0 dst scanline base, A1 src stream, A3 -> stride word. */
 void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,

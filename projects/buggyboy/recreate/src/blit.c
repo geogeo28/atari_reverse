@@ -1209,3 +1209,135 @@ void g_objsprite_t16(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width
     objsprite_hi_wrapper(image, (uint16_t)x, (uint16_t)colour, (uint16_t)width, (uint16_t)rows_seed,
                          (uint16_t)voff, dst, src, rec_cursor, 3);      /* -> width 0x98 (t16/17/43/48) */
 }
+
+/* ============================================================================================
+ * draw_object_list @ 0x1306e — the per-frame roadside-object display-list dispatcher (register-glue).
+ *
+ * Two nested loops walk the object list. Per outer row it reads a dst scanline word and an x-offset
+ * table word from the a5 stream; per object (15 per row) it reads a flag word from a3 and dispatches:
+ *   - a SPECIAL pass first, only when the flag word is negative — its record lives at buf_a+0x21d0+d6;
+ *   - a NORMAL pass, keyed on the flag word's low 6 bits (object type 0..63) — its record lives at
+ *     buf_a + 0x8a0 + type*0xd0 (+d6), and carries colour, a buf_c-relative src long, rows, a vertical
+ *     seed byte, the jump-table index, and per-object x/dst offsets.
+ * Both passes resolve the type's word offset in obj_type_jumptable and jsr the matching handler
+ * (objsprite engine t1/t2/t4/w88, the t4+t1 stub, or the blit_objshift handler_lo families). The
+ * 68000 saves/restores D2/D3/D4/D6/A0/A3 around each jsr, so the per-object dst adjustments (vertical
+ * offset + x offset) are temporary — the row's base a0 and the loop counter survive. See names.txt.
+ *
+ * Register map (kept for the byte-exact port): A5 list stream, A3 flag stream, A6 draw buffer,
+ * D4 outer row count-1, D6 record byte offset (−0x10 per row), D1 colour (threaded; the NORMAL pass
+ * sets it fresh from the record, the SPECIAL pass carries the last value). D2 = 0xa0 width (const). */
+#define OBJ_SPECIAL_BASE 0x21d0     /* buf_a-relative base of the special-object record (+d6) */
+#define OBJ_TYPE_BASE    0x8a0      /* buf_a-relative base of the per-type records */
+#define OBJ_TYPE_STRIDE  0xd0       /* bytes per per-type record (muls.w #0xd0,type) */
+#define OBJ_COLOUR_OFF   0x10       /* colour word at type_base − this (read before +d6) */
+#define OBJ_VSEED_OFF    0xb        /* vertical seed byte at data_base − this */
+#define OBJ_REC_ROWS     0x04       /* record field: rows-1 word */
+#define OBJ_REC_JUMP     0x06       /* record field: obj_type_jumptable index word */
+#define OBJ_REC_DSTADJ   0x08       /* record field: a0 += this word (normal); special record's cursor */
+#define OBJ_REC_XADJ     0x0a       /* record field: x += this word (normal); normal record's cursor */
+#define OBJ_HANDLER_SRCADJ 0x02     /* handler_lo: src += word@(cursor + this + parity) */
+#define OBJ_BONUS_MIN_TYPE 6        /* bonus window clamps object types below this up to it */
+#define OBJ_ROWS_ONLY    0x3f       /* flag word low bits = object type */
+#define OBJ_ROW_OBJECTS  0xe        /* inner loop runs this+1 (=15) objects per row */
+#define OBJ_D6_STEP      0x10       /* d6 decrement per outer row */
+#define OBJ_STUB_X_ADV   0x40       /* the 0x131ac stub: t1's x = t4's x + this */
+#define OBJ_STUB_SRC_ADV 0x20       /* the 0x131ac stub: t1's src = t4's src + this */
+/* Resolved jump-table targets (Ghidra addresses = A_obj_type_jumptable + the stored word offset). */
+#define OBJ_H_NOOP 0x13df8          /* bare rts */
+#define OBJ_H_T1   0x13642
+#define OBJ_H_T2   0x1352c
+#define OBJ_H_W88  0x133b6
+#define OBJ_H_T4   0x131f6
+#define OBJ_H_STUB 0x131ac          /* t4 then t1 with x+=0x40, src+=0x20 */
+#define OBJ_H_LO1  0x1466a          /* handler_lo mid-entry, 0x98 width family */
+#define OBJ_H_LO2  0x144b2          /* handler_lo mid-entry, 0x90 width family */
+
+/* handler_lo mid-entry (0x1466a / 0x144b2): adjust src by a per-view-parity record word, set the
+ * tail mode, and blit the object at the width family selected by base_cells. dst comes from the
+ * dispatcher's a0 (the mid-entries skip the a6+0x3ac0 dst setup of the 0x14664/0x144ac full entries). */
+static void obj_handler_lo(uint8_t *image, uint16_t x, uint16_t colour, uint16_t rows_m1,
+                           uint32_t dst, uint32_t src, uint32_t rec_cursor, int base_cells) {
+    uint16_t parity = (uint16_t)(OBJH_PARITY_MASK & be16(image + A_view_parity));   /* 0 or 2 */
+    src = (uint32_t)(src + sign_ext16(be16(image + rec_cursor + OBJ_HANDLER_SRCADJ + parity)));
+    wr16(image + A_blit_mode, OBJH_MODE_TAIL);                                       /* mode = 0xa8 */
+    blit_objshift_family(image, x, colour, rows_m1, dst, src, A_blit_mode, base_cells);
+}
+
+/* Resolve the object type's word offset in obj_type_jumptable and dispatch to the matching handler.
+ * The objsprite engine handlers and the stub ignore colour/rec_cursor; only handler_lo uses them. */
+static void obj_dispatch(uint8_t *image, uint16_t jumpidx, uint16_t x, uint16_t colour,
+                         uint16_t rows_m1, uint32_t dst, uint32_t src, uint32_t rec_cursor) {
+    int16_t off = (int16_t)be16(image + A_obj_type_jumptable + jumpidx);
+    uint32_t target = (uint32_t)(A_obj_type_jumptable + off);
+    switch (target) {
+        case OBJ_H_NOOP: break;
+        case OBJ_H_T1:  g_objsprite_t1(image, x, rows_m1, dst, src); break;
+        case OBJ_H_T2:  g_objsprite_t2(image, x, rows_m1, dst, src); break;
+        case OBJ_H_W88: g_objsprite_w88(image, x, rows_m1, dst, src); break;
+        case OBJ_H_T4:  g_objsprite_t4(image, x, rows_m1, dst, src); break;
+        case OBJ_H_STUB:
+            g_objsprite_t4(image, x, rows_m1, dst, src);
+            g_objsprite_t1(image, (uint16_t)(x + OBJ_STUB_X_ADV), rows_m1, dst,
+                           src + OBJ_STUB_SRC_ADV);
+            break;
+        case OBJ_H_LO1: obj_handler_lo(image, x, colour, rows_m1, dst, src, rec_cursor, 1); break;
+        case OBJ_H_LO2: obj_handler_lo(image, x, colour, rows_m1, dst, src, rec_cursor, 2); break;
+        default: break;   /* unreachable with valid records */
+    }
+}
+
+/* Glue for draw_object_list. a5/a3 are image offsets (the two input streams); a6 = draw buffer.
+ * d4_outer = outer row count-1, d6 = starting record byte offset, d1_in = incoming colour. */
+void g_draw_object_list(uint8_t *image, uint32_t a5, uint32_t a3, uint32_t a6,
+                        uint32_t d4_outer, uint32_t d6, uint32_t d1_in) {
+    uint32_t buf_a = load32(image, A_buf_a);
+    uint32_t buf_c = load32(image, A_buf_c);
+    uint16_t colour = (uint16_t)d1_in;                 /* d1 threads across objects */
+
+    a5 = (uint32_t)(a5 + sign_ext16(be16(image + A_obj_scan_off)));   /* adda.w 0x18c58,a5 */
+
+    int outer = (int16_t)(uint16_t)d4_outer + 1;
+    for (int oi = 0; oi < outer; oi++) {
+        uint32_t a0 = (uint32_t)(a6 + sign_ext16(be16(image + a5))); a5 += 2;         /* row dst base */
+        uint32_t a4 = (uint32_t)(A_obj_xoff_tbl + sign_ext16(be16(image + a5))); a5 += 2;
+
+        for (int inner = OBJ_ROW_OBJECTS; inner >= 0; inner--) {
+            /* SPECIAL pass: only when the flag word is negative. */
+            if ((int16_t)be16(image + a3) < 0) {
+                uint16_t x = be16(image + a5);                        /* peeked; consumed below */
+                uint32_t a2 = (uint32_t)(buf_a + OBJ_SPECIAL_BASE + sign_ext16((uint16_t)d6));
+                uint32_t src = (uint32_t)(buf_c + load32(image, a2));
+                uint16_t rows = be16(image + a2 + OBJ_REC_ROWS);
+                uint16_t jumpidx = be16(image + a2 + OBJ_REC_JUMP);
+                obj_dispatch(image, jumpidx, x, colour, rows, a0, src, a2 + OBJ_REC_DSTADJ);
+            }
+            /* NORMAL pass. */
+            uint16_t x = be16(image + a5); a5 += 2;
+            uint16_t type = (uint16_t)(be16(image + a3) & OBJ_ROWS_ONLY); a3 += 2;
+            if (type != 0) {
+                if (be16(image + A_bonus_timer) != 0 && (int16_t)(type - OBJ_BONUS_MIN_TYPE) < 0)
+                    type = OBJ_BONUS_MIN_TYPE;                        /* bonus-window clamp */
+                x = (uint16_t)(x + be16(image + a4));                 /* add.w (a4),d0 */
+                uint32_t type_base = (uint32_t)(buf_a + OBJ_TYPE_BASE
+                                                + sign_ext16((uint16_t)(type * OBJ_TYPE_STRIDE)));
+                colour = be16(image + type_base - OBJ_COLOUR_OFF);    /* d1 = colour (before +d6) */
+                uint32_t data_base = (uint32_t)(type_base + sign_ext16((uint16_t)d6));
+                uint32_t src = (uint32_t)(buf_c + load32(image, data_base));
+                uint16_t rows = be16(image + data_base + OBJ_REC_ROWS);
+                /* vertical offset: (vseed − rows).b * view_flags >> 4 * width, subtracted from a0. */
+                uint16_t v = (uint16_t)(uint8_t)(image[data_base - OBJ_VSEED_OFF] - (uint8_t)rows);
+                v = (uint16_t)(v * be16(image + A_view_flags));       /* mulu.w view_flags */
+                v = (uint16_t)(v >> 4);                               /* lsr.w #4 */
+                v = (uint16_t)(v * OBJD_WIDTH);                       /* mulu.w #0xa0 (width) */
+                uint32_t dst = (uint32_t)(a0 - sign_ext16(v));        /* suba.w d7,a0 (temporary) */
+                uint16_t jumpidx = be16(image + data_base + OBJ_REC_JUMP);
+                dst = (uint32_t)(dst + sign_ext16(be16(image + data_base + OBJ_REC_DSTADJ)));
+                x = (uint16_t)(x + be16(image + data_base + OBJ_REC_XADJ));
+                obj_dispatch(image, jumpidx, x, colour, rows, dst, src, data_base + OBJ_REC_XADJ);
+            }
+        }
+        a3 += 2;                                    /* addq.l #2,a3 */
+        d6 = (uint16_t)(d6 - OBJ_D6_STEP);          /* subi.w #0x10,d6 */
+    }
+}
