@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 86/91.**
+**Verified: 87/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -91,6 +91,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x1465c` | `draw_obj_handler_dbl` | 8 | ✅ verified | colour-preserving double draw (mode 8 then 0xa8 tail); shares draw_obj_sprite_hi + tail |
 | `0x14664` | `draw_obj_handler_lo` | 18 | ✅ verified | dst = A6+0x3ac0, src += per-parity record word, single 0xa8 tail; parity × rows × x + poison fuzz |
 | `0x14680` | `blit_objshift` | 2454 | ✅ verified | sub-pixel 4-plane masked sprite blitter (leaf); every fine-x x dispatch (left-clip/left-edge/base/right-edge/right-clip) x colour x rows x stride + 4000-fuzz poison |
+| `0x13ed6` | `blit_objshift2` | 1318 | ✅ verified | SECOND sub-pixel masked blitter (leaf); two-word mask ~(w0\|w1), plain shifted-OR copy, no color_pairs; every fine-x x dispatch (L-clip/L0C/L1C/L2C/base/W2/W1/W0/R-clip) x rows + 4000-fuzz poison |
 | `0x15016` | `draw_result_row` | 86 | ✅ verified | 300-fuzz (buf_c src -> buffer; 4-word transparency blit) |
 | `0x1506c` | `draw_result_col` | 56 | ✅ verified | 300-fuzz (buf_c src -> buffer; 5x tiled copy) |
 | `0x150a4` | `draw_dashboard` | 230 | ✅ verified | 200-fuzz (buf_c graphic -> buffer; 40x8 masked blit) |

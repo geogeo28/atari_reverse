@@ -17,6 +17,7 @@
 #include "machine.h"
 #include "addrs.h"
 #include "buggyboy.h"
+#include "draw.h"     /* dup16 (shared 68k swap+move.w idiom) */
 
 static uint32_t load32(const uint8_t *image, uint32_t addr) { return be32(image + addr); }
 static void     store32(uint8_t *image, uint32_t addr, uint32_t value) { wr32(image + addr, value); }
@@ -348,6 +349,203 @@ void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m
         a2 = (uint32_t)(a2 - sign_ext16(rewind));            /* suba.w #Δ,a2 */
         a1 = (uint32_t)(a1 - sign_ext16(be16(image + stride_ptr)));   /* suba.w (a3),a1 */
         a1 = (uint32_t)(a1 - sign_ext16(a1_extra));                   /* suba.w #extra,a1 */
+    }
+}
+
+/* ============================================================================================
+ * blit_objshift2 @ 0x13ed6 — the SECOND sub-pixel (fine-x shifted) 4-plane masked sprite blitter,
+ * used by the roadside object-type handlers (the 0x13e68 family calls it via the 0x13e8e glue).
+ *
+ * DISTINCT from g_blit_objshift @ 0x14680 above: its transparency "show" mask is built from only
+ * TWO source words (~(w0 | w1)), it never loads color_pairs, and the pixel copy is a plain shifted
+ * OR (no colour indexing / fill). PURE LEAF. See BLIT_OBJSHIFT2_SPEC.md for the full byte decode.
+ *
+ * a0 = col0 (left dst column), a2 = col1 = a0 + 8. Every case is built from three cell primitives
+ * that all mask with ~(w0|w1) of two source words: a STRADDLE cell (both columns, 32-bit lsl/rol by
+ * shl = 16-fine_x), a LEFT-EDGE cell (col1 only, 16-bit lsl by shl), and a RIGHT-EDGE cell (col0
+ * only, 16-bit lsr by shr = fine_x). Width dispatch on the signed aligned column picks the family:
+ *   aligned_col <= -32 or >= 0xa0 -> off-screen, no draw.
+ *   LEFT  (-24/-16/-8): 1 LE-cell + {0,1,2} straddle cells.
+ *   BASE  (0..0x80):    3 straddle cells.
+ *   WIDE  (0x88/0x90/0x98): {2,1,0} straddle cells + 1 RE-cell.
+ * All cases net a0 -= 0xA0 (one scanline up) and a1 -= 0x50 (sprite src stride) per row.
+ * All 16-bit register arithmetic wraps mod 2^16, mirrored with explicit int16/uint16.
+ */
+#define OBJSH2_FINE_MASK      0x000f       /* x & 0xF -> fine_x (the RIGHT-shift count d7)        */
+#define OBJSH2_SHIFT_BASE     16           /* shl = 16 - fine_x (the LEFT-shift count d6)         */
+#define OBJSH2_RIGHT_BOUND    0x88         /* subi.w #$88 dispatch threshold (17 ST columns)      */
+#define OBJSH2_COL_BYTES      8            /* one 4-plane 16-pixel column = 8 bytes (addq #8)     */
+#define OBJSH2_MASK_INIT      0xffffffffu  /* moveq #$ff,d1 sign-extends 0xff -> all ones         */
+#define OBJSH2_LADDER_STEP    8            /* addq/subq #8 step down the LEFT/RIGHT clip ladders   */
+#define OBJSH2_LEFT_OFF_COL   (-32)        /* aligned_col <= this -> off the left edge, no draw    */
+#define OBJSH2_RIGHT_OFF_COL  0xa0         /* aligned_col >= this -> off the right edge, no draw   */
+/* Per-row rewind constants (suba.w #d3,a0/a2; suba.w #d5,a1). Kept as the literal table values
+ * (d3 = 0xA0 + 8*cells, d5 = 0x50 + 4*cells) to stay byte-exact rather than derived. */
+#define OBJSH2_REWIND3_DST    0xb8         /* 3 cells: BASE, L2C, W2                               */
+#define OBJSH2_REWIND3_SRC    0x5c
+#define OBJSH2_REWIND2_DST    0xb0         /* 2 cells: L1C, W1                                    */
+#define OBJSH2_REWIND2_SRC    0x58
+#define OBJSH2_REWIND1_DST    0xa8         /* 1 cell:  L0C, W0                                    */
+#define OBJSH2_REWIND1_SRC    0x54
+
+/* STRADDLE cell (0x13efc): mask = ~(w0|w1) with the high word kept 0xFFFF (moveq #$ff seed), rotated
+ * left 32-bit by shl so it straddles both columns; then two plane words are lsl.l shl'd, low half OR'd
+ * into col1 and high half into col0. Advances a0/a2 by 8 and a1 by 4 (the mask reads at (a1)/(a1+2)
+ * do NOT advance; the two (a1)+ copies do). Mirrors the 68k register moves literally (spec §4a/§6). */
+static void objsh2_straddle_cell(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1, unsigned shl) {
+    uint16_t w0 = be16(image + *a1);
+    uint16_t w1 = be16(image + *a1 + 2);
+    uint32_t d1 = OBJSH2_MASK_INIT;                          /* moveq #$ff,d1                       */
+    d1 = (d1 & 0xffff0000u) | w0;                            /* move.w (a1),d1                      */
+    d1 = (d1 & 0xffff0000u) | (uint16_t)(d1 | w1);           /* or.w 2(a1),d1  (word op)            */
+    d1 = (d1 & 0xffff0000u) | (uint16_t)(~d1);              /* not.w d1  -> hi word stays 0xFFFF   */
+    d1 = rotl32(d1, shl);                                    /* rol.l d6,d1                         */
+    uint32_t d2 = dup16((uint16_t)d1);                       /* move.w;swap;move.w -> col1 AND-mask */
+    uint32_t swapped = (d1 >> 16) | (d1 << 16);              /* move.l d1,d0 ; swap d0              */
+    d1 = (d1 & 0xffff0000u) | (uint16_t)swapped;             /* move.w d0,d1 -> col0 AND-mask       */
+    store32(image, *a0, load32(image, *a0) & d1);            /* and.l d1,(a0)                       */
+    store32(image, *a2, load32(image, *a2) & d2);            /* and.l d2,(a2)                       */
+
+    for (int i = 0; i < 2; i++) {                            /* two plane words, low -> col1, hi -> col0 */
+        uint32_t pix = (uint32_t)be16(image + *a1) << shl;   /* moveq #0,d0; move.w (a1)+,d0; lsl.l d6 */
+        *a1 += 2;
+        wr16(image + *a2, (uint16_t)(be16(image + *a2) | (uint16_t)pix));        /* or.w d0,(a2)+   */
+        wr16(image + *a0, (uint16_t)(be16(image + *a0) | (uint16_t)(pix >> 16)));/* swap; or.w (a0)+ */
+        *a0 += 2; *a2 += 2;
+    }
+    /* trailing "opaque fill outside the show mask" longword for each column: dst = (dst & m) | ~m. */
+    store32(image, *a0, (load32(image, *a0) & d1) | ~d1);    /* and.l d1,(a0); or.l ~d1,(a0)+       */
+    *a0 += 4;
+    store32(image, *a2, (load32(image, *a2) & d2) | ~d2);    /* and.l d2,(a2); or.l ~d2,(a2)+       */
+    *a2 += 4;
+}
+
+/* LEFT-EDGE cell (0x1411c): the clipped-off left column is discarded; only col1 (a2) is drawn. The
+ * mask is (w1|w0) shifted LEFT as a WORD by shl, inverted; pixels shift left as words (no straddle).
+ * Advances a1 by 4, a2 by 8, and bumps a0 by 8 past the discarded column. Mirrors 68k moves (§4b). */
+static void objsh2_left_edge_cell(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1, unsigned shl) {
+    uint32_t both = load32(image, *a1);                      /* move.l (a1),d0 = (w0<<16)|w1        */
+    uint16_t lo = (uint16_t)((uint16_t)both | be16(image + *a1)); /* or.w (a1)+,d0 -> lo = w1|w0    */
+    *a1 += 2;
+    uint16_t mask = (uint16_t)(~(uint16_t)(lo << shl));      /* lsl.w d6,d0 ; not.w d0             */
+    uint32_t d2 = dup16(mask);                               /* dup16 -> col1 AND-mask             */
+    store32(image, *a2, load32(image, *a2) & d2);            /* and.l d2,(a2)                       */
+    uint16_t w0 = (uint16_t)(both >> 16);                    /* swap d0 -> old high half (w0)       */
+    wr16(image + *a2, (uint16_t)(be16(image + *a2) | (uint16_t)(w0 << shl)));    /* lsl.w; or.w (a2)+ */
+    *a2 += 2;
+    uint16_t w1 = be16(image + *a1);                         /* move.w (a1)+,d0                     */
+    *a1 += 2;
+    wr16(image + *a2, (uint16_t)(be16(image + *a2) | (uint16_t)(w1 << shl)));    /* lsl.w; or.w (a2)+ */
+    *a2 += 2;
+    store32(image, *a2, (load32(image, *a2) & d2) | ~d2);    /* and.l d2,(a2); or.l ~d2,(a2)+       */
+    *a2 += 4;
+    *a0 += OBJSH2_COL_BYTES;                                 /* addq.l #8,a0 (skip discarded column)*/
+}
+
+/* RIGHT-EDGE cell (0x142b6): the clipped-off right column is discarded; only col0 (a0) is drawn. The
+ * mask is (w1|w0) shifted RIGHT as a WORD by shr = fine_x, inverted; pixels shift right as words.
+ * Advances a1 by 4, a0 by 8, and bumps a2 by 8 to keep the shared rewind correct. (§4c). */
+static void objsh2_right_edge_cell(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1, unsigned shr) {
+    uint32_t both = load32(image, *a1);                      /* move.l (a1),d0 = (w0<<16)|w1        */
+    uint16_t lo = (uint16_t)((uint16_t)both | be16(image + *a1)); /* or.w (a1)+,d0 -> lo = w1|w0    */
+    *a1 += 2;
+    uint16_t mask = (uint16_t)(~(uint16_t)(lo >> shr));      /* lsr.w d7,d0 ; not.w d0             */
+    uint32_t d1 = dup16(mask);                               /* dup16 -> col0 AND-mask             */
+    store32(image, *a0, load32(image, *a0) & d1);            /* and.l d1,(a0)                       */
+    uint16_t w0 = (uint16_t)(both >> 16);                    /* swap d0 -> old high half (w0)       */
+    wr16(image + *a0, (uint16_t)(be16(image + *a0) | (uint16_t)(w0 >> shr)));    /* lsr.w; or.w (a0)+ */
+    *a0 += 2;
+    uint16_t w1 = be16(image + *a1);                         /* move.w (a1)+,d0                     */
+    *a1 += 2;
+    wr16(image + *a0, (uint16_t)(be16(image + *a0) | (uint16_t)(w1 >> shr)));    /* lsr.w; or.w (a0)+ */
+    *a0 += 2;
+    store32(image, *a0, (load32(image, *a0) & d1) | ~d1);    /* and.l d1,(a0); or.l ~d1,(a0)+       */
+    *a0 += 4;
+    *a2 += OBJSH2_COL_BYTES;                                 /* addq.l #8,a2 (rewind bookkeeping)   */
+}
+
+/* Which family the signed aligned column selects (spec §3). Every listed case is reachable. */
+enum objsh2_edge { OBJSH2_EDGE_NONE, OBJSH2_EDGE_LEFT, OBJSH2_EDGE_RIGHT };
+
+/* Run one row: LEFT prepends a LE-cell, WIDE appends a RE-cell, all around `straddle` S-cells. */
+static void objsh2_row(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1,
+                       enum objsh2_edge edge, int straddle, unsigned shl, unsigned shr) {
+    if (edge == OBJSH2_EDGE_LEFT)
+        objsh2_left_edge_cell(image, a0, a2, a1, shl);
+    for (int i = 0; i < straddle; i++)
+        objsh2_straddle_cell(image, a0, a2, a1, shl);
+    if (edge == OBJSH2_EDGE_RIGHT)
+        objsh2_right_edge_cell(image, a0, a2, a1, shr);
+}
+
+/* Glue: map the 68000 register ABI to the row loop. a0/a1 are image offsets read/written like the
+ * other blit.c glue. Register map: D0 x, D4 rows-1, A0 dst scanline base, A1 src sprite stream.
+ * (d3/d5 are internal rewind constants owned by the leaf, not inputs; the caller's d3 is the glue's
+ * outer column-group counter, external to this leaf.) */
+void g_blit_objshift2(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst, uint32_t src) {
+    unsigned fine_x = (unsigned)(x & OBJSH2_FINE_MASK);      /* d7 = x & 0xF (before the asr)       */
+    unsigned shl = OBJSH2_SHIFT_BASE - fine_x;               /* d6 = 16 - fine_x                    */
+    unsigned shr = fine_x;                                   /* d7 = fine_x                         */
+
+    /* aligned_col = ((int16)x >> 1) & 0xFFF8; the signed value (post-add into a0) drives dispatch. */
+    int16_t col = (int16_t)((int16_t)(uint16_t)x >> 1) & (int16_t)COL_ALIGN;
+    uint32_t a0 = (uint32_t)(dst + sign_ext16((uint16_t)col));
+    uint32_t a1 = src;
+
+    enum objsh2_edge edge;
+    int straddle;
+    uint16_t rewind_dst, rewind_src;
+
+    if (col < 0) {
+        /* LEFT ladder (0x14104): walk forward over fully-clipped columns until the first partial. */
+        int16_t c = col;
+        for (;;) {
+            c = (int16_t)(c + OBJSH2_LADDER_STEP);
+            if (c >= 0) { straddle = 2; break; }             /* aligned_col == -8  -> L2C           */
+            a1 += 4; a0 += OBJSH2_COL_BYTES;                 /* skip one fully-clipped column       */
+            c = (int16_t)(c + OBJSH2_LADDER_STEP);
+            if (c >= 0) { straddle = 1; break; }             /* aligned_col == -16 -> L1C           */
+            a1 += 4; a0 += OBJSH2_COL_BYTES;
+            c = (int16_t)(c + OBJSH2_LADDER_STEP);
+            if (c >= 0) { straddle = 0; break; }             /* aligned_col == -24 -> L0C           */
+            return;                                          /* aligned_col <= -32 -> off left, no draw */
+        }
+        edge = OBJSH2_EDGE_LEFT;
+    } else if ((int16_t)(col - OBJSH2_RIGHT_BOUND) >= 0) {
+        /* RIGHT/WIDE ladder (0x1429c): d0 = aligned_col - 0x88 on entry. */
+        int16_t c = (int16_t)(col - OBJSH2_RIGHT_BOUND);
+        c = (int16_t)(c - OBJSH2_LADDER_STEP);
+        if (c < 0) straddle = 2;                             /* aligned_col == 0x88 -> W2           */
+        else {
+            c = (int16_t)(c - OBJSH2_LADDER_STEP);
+            if (c < 0) straddle = 1;                         /* aligned_col == 0x90 -> W1           */
+            else {
+                c = (int16_t)(c - OBJSH2_LADDER_STEP);
+                if (c < 0) straddle = 0;                     /* aligned_col == 0x98 -> W0           */
+                else return;                                 /* aligned_col >= 0xa0 -> off right     */
+            }
+        }
+        edge = OBJSH2_EDGE_RIGHT;
+    } else {
+        edge = OBJSH2_EDGE_NONE;                             /* BASE: 0 <= aligned_col <= 0x80       */
+        straddle = 3;
+    }
+
+    /* Rewind constants keyed on the number of cells per row (edge cell counts as one column pair). */
+    int cells = straddle + (edge == OBJSH2_EDGE_NONE ? 0 : 1);
+    switch (cells) {
+        case 3: rewind_dst = OBJSH2_REWIND3_DST; rewind_src = OBJSH2_REWIND3_SRC; break;
+        case 2: rewind_dst = OBJSH2_REWIND2_DST; rewind_src = OBJSH2_REWIND2_SRC; break;
+        default: rewind_dst = OBJSH2_REWIND1_DST; rewind_src = OBJSH2_REWIND1_SRC; break;
+    }
+
+    uint32_t a2 = a0 + OBJSH2_COL_BYTES;                     /* movea.l a0,a2; addq.l #8,a2 (once)  */
+    int rows = (int16_t)rows_m1 + 1;                         /* dbf d4 counts d4+1 rows             */
+    for (int row = 0; row < rows; row++) {
+        objsh2_row(image, &a0, &a2, &a1, edge, straddle, shl, shr);
+        a0 = (uint32_t)(a0 - sign_ext16(rewind_dst));        /* suba.w #d3,a0                       */
+        a2 = (uint32_t)(a2 - sign_ext16(rewind_dst));        /* suba.w #d3,a2                       */
+        a1 = (uint32_t)(a1 - sign_ext16(rewind_src));        /* suba.w #d5,a1                       */
     }
 }
 
