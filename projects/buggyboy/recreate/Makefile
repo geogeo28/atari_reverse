@@ -5,7 +5,7 @@ CFLAGS  ?= -std=c11 -O2 -fPIC -Wall -Wextra -Iinclude
 PY      := .venv/bin/python
 
 CAND    := build/libbuggyboy.so
-SRC     := $(wildcard src/*.c)
+SRC     := $(wildcard src/*.c) $(wildcard src/machine/*.c)
 
 MUSASHI := oracle/musashi
 GENDIR  := oracle/build

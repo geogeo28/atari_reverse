@@ -44,8 +44,8 @@ N_ROWS = 0x60
 
 harness._lib.g_render_road.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_render_road.restype = None
-harness._lib.g_render_road_l2.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
-harness._lib.g_render_road_l2.restype = None
+harness._lib.g_render_road_machine.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_render_road_machine.restype = None
 
 
 def _control_long(rng, flag_mask):
@@ -122,32 +122,32 @@ def test_thunk_alias():
     assert not diffs, f"thunk\n{report(diffs[:24])}"
 
 
-# ---- Layer 2: the proper-C recreation (g_render_road_l2) must match the oracle byte-for-byte too.
-# Same oracle entry (0x19144) and same fuzz battery as Layer 1; only the candidate glue differs, so
-# every band-D branch the machine model exercises is driven against the idiomatic reconstruction. ----
-_L2 = lambda l, b: l.g_render_road_l2(b)
+# ---- The byte-exact machine model (g_render_road_machine, the trust anchor) must also match the
+# oracle byte-for-byte. Same oracle entry (0x19144) and same fuzz battery as the idiomatic default
+# above; only the candidate glue differs, so both transcriptions are independently verified. ----
+_MACHINE = lambda l, b: l.g_render_road_machine(b)
 
 
-def test_l2_fuzz_all_flags():
+def test_machine_fuzz_all_flags():
     for seed in range(60):
-        _check(seed, glue=_L2)
+        _check(seed, glue=_MACHINE)
 
 
-def test_l2_split_paths():
+def test_machine_split_paths():
     for seed in range(20):
-        _check(1000 + seed, flag_mask=FLAG_SPLIT | FLAG_SKIP | FLAG_SRC, glue=_L2)
+        _check(1000 + seed, flag_mask=FLAG_SPLIT | FLAG_SKIP | FLAG_SRC, glue=_MACHINE)
 
 
-def test_l2_wide_paths():
+def test_machine_wide_paths():
     for seed in range(20):
-        _check(2000 + seed, flag_mask=FLAG_SPLIT | FLAG_WIDE | FLAG_SRC, glue=_L2)
+        _check(2000 + seed, flag_mask=FLAG_SPLIT | FLAG_WIDE | FLAG_SRC, glue=_MACHINE)
 
 
-def test_l2_mask_and_const_paths():
+def test_machine_mask_and_const_paths():
     for seed in range(20):
-        _check(3000 + seed, flag_mask=FLAG_SPLIT | FLAG_MASK_READ | FLAG_SRC | (1 << (27 - 16)), glue=_L2)
+        _check(3000 + seed, flag_mask=FLAG_SPLIT | FLAG_MASK_READ | FLAG_SRC | (1 << (27 - 16)), glue=_MACHINE)
 
 
-def test_l2_center_run_paths():
+def test_machine_center_run_paths():
     for seed in range(20):
-        _check(4000 + seed, flag_mask=FLAG_SRC | (1 << (27 - 16)) | (1 << (28 - 16)), glue=_L2)
+        _check(4000 + seed, flag_mask=FLAG_SRC | (1 << (27 - 16)) | (1 << (28 - 16)), glue=_MACHINE)

@@ -109,7 +109,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x15a84` | `draw_num_thunk` | 2 | ✅ verified | count-preset entry alias of `draw_num` |
 | `0x15a86` | `draw_num` | 112 | ✅ verified | fuzz digits x colour x flip (buf_c sprite staging) |
 | `0x15af6` | `render_road` | 4 | ✅ verified | `bra.w 0x19144` thunk alias; covered via test_thunk_alias |
-| `0x19144` | `render_road` | 2256 | ✅ verified | pseudo-3D rasterizer; whole-image fuzz (7 bands x flag families) + poison; near/far tail splits (B/C/D) |
+| `0x19144` | `render_road` | 2256 | ✅ verified | pseudo-3D rasterizer; whole-image fuzz (7 bands x flag families) + poison; near/far tail splits (B/C/D). Two verified layers: idiomatic default `g_render_road` (`src/road.c`) + byte-exact machine anchor `g_render_road_machine` (`src/machine/road.c`); shared pipeline in `include/road_bands.h` |
 | `0x1b252` | `EGOFF` | 16 | ✅ verified | run-to-rts (clear EGFLAG + music byte) |
 | `0x1b268` | `TURNOFF` | 20 | ✅ verified | run-to-rts |
 | `0x1b2e8` | `snd_voice_a` | 4 | ✅ verified | +0x18 entry alias of `snd_voice_b` |

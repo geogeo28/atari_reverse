@@ -337,7 +337,15 @@ row. All three are inside band G; band F never returns (its last `dbf` falls int
 
 ## 8. Files
 
-- Reconstruction: `recreate/src/road.c` (`g_render_road` + `rr_band_B/C/D`). All seven bands verified
-  byte-for-byte, including band E (far band C) via its distinct fast-split + merge tail (`rr_band_C_far`).
-- Test: `recreate/test/test_render_road.py` (differential vs Musashi; GREEN).
+render_road exists in two independently-verified forms (see `recreate/README.md`, "Two
+reconstruction layers"):
+
+- **Idiomatic default** — `recreate/src/road.c` (`g_render_road` + `rr_band_*_l2`): proper, readable
+  C, the version the game links. All seven bands recreated (A / B / C-near / C-far / D).
+- **Machine-model anchor** — `recreate/src/machine/road.c` (`g_render_road_machine` + `rr_band_*`):
+  the byte-exact 1:1 register/`goto` transcription this spec describes label-for-label.
+- **Shared** — `recreate/include/road_bands.h`: the band pipeline (`render_road_impl`), the `rr_regs`
+  cursor set, the flag/offset constants, and the 68k word/blit primitives used by both layers.
+- Test: `recreate/test/test_render_road.py` — the same fuzz battery diffs BOTH forms against the
+  Musashi oracle (whole-image, poison on); GREEN byte-for-byte.
 - Disassembly: `python3 ../../tools/prg_dis.py bin/BUGGYBOY.PRG --start $((0x9144 + 28)) --len 2256`.

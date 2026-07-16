@@ -53,13 +53,27 @@ band can't silently hide a real divergence. (A named global the relocated stack 
 
 ```
 include/   machine.h (big-endian accessors)  addrs.h (named addresses)  buggyboy.h (protos)
+           road_bands.h (shared render_road pipeline + 68k primitives, used by both road layers)
 src/       <subsystem>.c — cores + glue (score.c, …)
+src/machine/  byte-exact 1:1 machine-model transcriptions kept as trust anchors (road.c)
 oracle/    loader.py (load+relocate PRG)  emu.py (Musashi runner)  shim.c (Musashi callbacks)
            musashi/ (vendored MAME 68000 core — gitignored, refetched on build)
 test/      harness.py (differential driver)  test_<subsystem>.py
 sound/     sound_player.py (steps REFRESH in the oracle -> WAV)  ym2149.py / sid.py (chip renderers)
 Makefile   builds both libs + runs pytest;  STATUS.md tracks per-function progress
 ```
+
+## Two reconstruction layers
+
+Most functions have a single readable reconstruction in `src/`. A few dense, hand-written 68000
+routines (e.g. `render_road`, the pseudo-3D rasterizer) additionally keep a **byte-exact machine
+model** — a literal register/`goto` transcription — under `src/machine/`, as a second, independently
+verified transcription (the *trust anchor*). The readable idiomatic version in `src/` is the
+**default** the game links (`g_render_road`); the anchor is exposed under a `_machine` suffix
+(`g_render_road_machine`). Both are diffed against the Musashi oracle by the same fuzz battery, so
+they cannot silently drift apart. Shared scaffolding (the band pipeline, the 68k word/blit
+primitives) lives in `include/road_bands.h` so there is one source of truth for the parts that are
+genuinely common.
 
 ## Use
 
