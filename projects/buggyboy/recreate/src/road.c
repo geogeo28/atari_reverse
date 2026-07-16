@@ -432,6 +432,7 @@ typedef struct { uint8_t *img; uint32_t a2, a3, a4, a5, a6, d2, d7; } rr_regs;
 
 static void rr_band_A(rr_regs *r);                                /* 0x9172 (96 rows, inline) */
 static void rr_band_B(rr_regs *r, uint32_t rows_m1, int second);  /* 0x93c2 (near) / 0x948c (far) */
+static void rr_band_B_l2(rr_regs *r, uint32_t rows_m1, int second);  /* Layer-2 proper-C recreation */
 static void rr_band_C_near(rr_regs *r, uint32_t rows_m1);  /* 0x9582 */
 static void rr_band_C_near_l2(rr_regs *r, uint32_t rows_m1);  /* Layer-2 proper-C recreation */
 static void rr_band_C_far(rr_regs *r, uint32_t rows_m1);   /* 0x96b8 (distinct fast-split + merge tail) */
@@ -709,7 +710,7 @@ void g_render_road(uint8_t *image) {
 /* Layer 2: the proper-C recreation. Shares the not-yet-recreated bands with Layer 1 and swaps in the
  * idiomatic reconstructions as they are verified. Proven against the same oracle by the same battery. */
 static const rr_bands RR_BANDS_L2 = {
-    rr_band_A, rr_band_B, rr_band_C_near_l2, rr_band_C_far, rr_band_D_l2,
+    rr_band_A, rr_band_B_l2, rr_band_C_near_l2, rr_band_C_far, rr_band_D_l2,
 };
 void g_render_road_l2(uint8_t *image) {
     render_road_impl(image, &RR_BANDS_L2);
@@ -837,6 +838,129 @@ L9560:
 L9568:
     r->a2 += r->d2; if (rr_dbf(&d4)) goto L93c2;
     (void)a0; (void)a1;
+}
+
+/* =====================================================================================
+ * Layer 2 — proper-C recreation of band B (byte-for-byte equivalent to rr_band_B).
+ *
+ * Band-B specifics vs C/D: the default fill is d5=0xffff0000 / d6=0x0000ffff, the edge mask
+ * (loaded only when MASK_A is set) masks the HIGH WORD of the split long (and.w, via rr_andw),
+ * and the two tails place the road differently:
+ *   - near tail: draw at row_start + 8 + col, with a FORWARD shoulder fill to the right of the
+ *     edge cell (the 68k adds 8 to both dst and src first);
+ *   - far tail: a wider blit — a full-width fill when the road is off-screen, or up to four
+ *     texture longs (third masked) followed by a forward shoulder fill.
+ * A skip flag (SPLIT_B & SKIP_ABC & d0<0) blanks the row.
+ * ===================================================================================== */
+static void rr_band_B_l2(rr_regs *r, uint32_t rows_m1, int second) {
+    uint8_t *img = r->img;
+    const int16_t stride = (int16_t)r->d2;
+    uint32_t remaining = rows_m1;
+
+    for (;;) {
+        uint32_t src = r->a3;
+        uint32_t dst = r->a2;
+
+        uint32_t ctrl = be32(img + r->a5); r->a5 += 4;
+        uint16_t half_width = (uint16_t)(ctrl + be16(img + r->a4)); r->a4 += 2;
+        ctrl = (ctrl & 0xffff0000u) | half_width;
+        src += sign_ext16((uint16_t)((ctrl & 0xf) << 4));       /* fine-x sub-column */
+        int16_t edge_seed = (int16_t)be16(img + r->a4); r->a4 += 2;
+
+        uint32_t fill_lo = 0xffff0000u, fill_hi = 0x0000ffffu, edge_mask = 0xffffffffu;
+        if (ctrl & RR_F_MASK_A) { fill_lo = 0; edge_mask = be32(img + src + RR_MASK_OFF_HI); }
+
+        /* ---- source-strip dispatch ---- */
+        if (!(ctrl & RR_F_SPLIT_B)) {                           /* no-split: a6-relative strip */
+            src += sign_ext16((uint16_t)edge_seed) + sign_ext16(be16(img + r->a6)); r->a6 += 2;
+            if (ctrl & RR_F_PLANE_HI) src += RR_SRC_5800;
+        } else if ((ctrl & RR_F_SKIP_ABC) && (int32_t)ctrl < 0) {
+            r->a6 += 2; r->a2 += stride;                        /* flagged blank scanline */
+            if (!rr_dbf(&remaining)) break;
+            continue;
+        } else {
+            r->a6 += 2;
+            if (ctrl & RR_F_WIDE) {                             /* wide/solid-centre strip */
+                fill_hi = 0; src += RR_SRC_4700;
+                if (ctrl & RR_F_SRC_400) {
+                    src += RR_SRC_0400;
+                    if (!(ctrl & RR_F_SRC_100)) src = RR_CONST_5B7A;
+                } else {
+                    fill_lo = rr_notw(fill_lo);
+                    if (!(ctrl & RR_F_SRC_100)) src = RR_CONST_5B9A;
+                }
+            } else if (ctrl & RR_F_PLANE_HI) {
+                src += RR_SRC_5800;
+            }
+        }
+
+        /* col = half the width, arithmetic-shifted then column-aligned (via d7 = 0xfff8). */
+        int16_t col = (int16_t)((uint16_t)((int16_t)half_width >> 1) & (uint16_t)r->d7);
+
+        if (!second) {
+            /* ---- near tail: edge cell at row_start + 8 + col, forward shoulder fill ---- */
+            dst += 8; src += 8;
+            dst += sign_ext16((uint16_t)col);
+            int16_t e = rr_wadd((uint16_t)col, 8);
+            if (e < 0) {
+                rr_fill_full_row(img, &r->a2, fill_lo, fill_hi);   /* road off-screen: fill row */
+            } else {
+                int16_t rem = rr_wsub((uint16_t)e, (uint16_t)stride);
+                if (rem < 0) {
+                    rr_copy_long(img, &dst, &src);
+                    rr_andw(img, dst - 4, edge_mask);              /* mask high word of the long */
+                    rr_copy_long(img, &dst, &src);
+                    rem = rr_wadd((uint16_t)rem, 8);
+                    while (rem < 0) {                             /* forward shoulder fill */
+                        rr_fill_pair(img, &dst, fill_lo, fill_hi);
+                        rem = rr_wadd((uint16_t)rem, 8);
+                    }
+                }
+                r->a2 += stride;
+            }
+            if (!rr_dbf(&remaining)) break;
+            continue;
+        }
+
+        /* ---- far tail: wider blit ---- */
+        if (col < 0) {                                          /* road off-screen: counted fill */
+            int16_t rem = rr_wadd((uint16_t)col, 8);
+            uint32_t cells = (rem < 0) ? 0x13 : 0x12;
+            if (rem >= 0) {                                     /* one masked edge cell first */
+                src += 8;
+                rr_copy_long(img, &dst, &src);
+                rr_andw(img, dst - 4, edge_mask);
+                rr_copy_long(img, &dst, &src);
+            }
+            do { rr_fill_pair(img, &dst, fill_lo, fill_hi); } while (rr_dbf(&cells));
+            r->a2 += stride;
+            if (!rr_dbf(&remaining)) break;
+            continue;
+        }
+
+        dst += sign_ext16((uint16_t)col);
+        int16_t rem = rr_wsub((uint16_t)col, (uint16_t)stride);
+        if (rem < 0) {
+            rem = rr_wadd((uint16_t)rem, 8);
+            if (rem < 0) {                                      /* 4 longs, third masked */
+                rr_copy_long(img, &dst, &src);
+                rr_copy_long(img, &dst, &src);
+                rr_copy_long(img, &dst, &src);
+                rr_andw(img, dst - 4, edge_mask);
+                rr_copy_long(img, &dst, &src);
+            } else {                                            /* 2 longs */
+                rr_copy_long(img, &dst, &src);
+                rr_copy_long(img, &dst, &src);
+            }
+            rem = rr_wadd((uint16_t)rem, 8);
+            while (rem < 0) {                                   /* forward shoulder fill */
+                rr_fill_pair(img, &dst, fill_lo, fill_hi);
+                rem = rr_wadd((uint16_t)rem, 8);
+            }
+        }
+        r->a2 += stride;
+        if (!rr_dbf(&remaining)) break;
+    }
 }
 
 /* ---- band C near copy (0x9582) ---- */
