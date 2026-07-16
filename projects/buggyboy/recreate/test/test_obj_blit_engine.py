@@ -21,6 +21,8 @@ every reachable body and all three cell kinds are exercised, for each entry-poin
 import ctypes
 import random
 
+import pytest
+
 import harness
 from harness import differential, report
 
@@ -60,6 +62,9 @@ LADDER_SKIP = 0x20           # extra one-time a0/a1 advance the LEFT ladder can 
 
 WIDTHS = {ENTRY_T4: 0x80, ENTRY_T2: 0x90, ENTRY_T1: 0x98, ENTRY_W88: 0x88}
 FINE_X_ALL = range(16)
+
+# Number of xdist shards test_bare_fuzz is split into (round-robin by iteration index).
+FUZZ_CHUNKS = 8
 
 
 def _sign16(v):
@@ -120,14 +125,14 @@ def _all_cols(width):
     return cols
 
 
-def test_bare_widths_every_fine_x():
+@pytest.mark.parametrize("fine_x", FINE_X_ALL)
+def test_bare_widths_every_fine_x(fine_x):
     gfns = {ENTRY_T4: lambda lib: lib.g_objsprite_t4, ENTRY_T2: lambda lib: lib.g_objsprite_t2,
             ENTRY_T1: lambda lib: lib.g_objsprite_t1, ENTRY_W88: lambda lib: lib.g_objsprite_w88}
     for entry, width in WIDTHS.items():
-        for fine_x in FINE_X_ALL:
-            for col in _all_cols(width):
-                _check_bare(entry, gfns[entry], seed=(entry & 0xffff) + fine_x * 0x200 + (col & 0xff),
-                            x=_x_for(col, fine_x), rows_m1=3)
+        for col in _all_cols(width):
+            _check_bare(entry, gfns[entry], seed=(entry & 0xffff) + fine_x * 0x200 + (col & 0xff),
+                        x=_x_for(col, fine_x), rows_m1=3)
 
 
 def test_bare_row_counts():
@@ -140,9 +145,13 @@ def test_bare_row_counts():
                         x=_x_for(width // 2 & ~7, 5), rows_m1=rows_m1)
 
 
-def test_bare_fuzz():
-    gfns = {ENTRY_T4: lambda lib: lib.g_objsprite_t4, ENTRY_T2: lambda lib: lib.g_objsprite_t2,
-            ENTRY_T1: lambda lib: lib.g_objsprite_t1, ENTRY_W88: lambda lib: lib.g_objsprite_w88}
+def _bare_fuzz_cases():
+    """Yield (i, entry, x, rows_m1) from a single seeded RNG stream.
+
+    Split from the check so the fuzz can be sharded across xdist workers without
+    perturbing the stream: every worker replays the full sequence (cheap) and only
+    runs the expensive differential on its assigned iterations. Coverage is identical.
+    """
     rng = random.Random(0xB177)
     for i in range(3000):
         entry = rng.choice(list(WIDTHS))
@@ -156,7 +165,17 @@ def test_bare_fuzz():
             rng.randrange(width + 0x20, width + 0x80) & ~7,              # clipped right
         ])
         rows_m1 = rng.randrange(0, 20)
-        _check_bare(entry, gfns[entry], seed=i, x=_x_for(col, fine_x), rows_m1=rows_m1)
+        yield i, entry, _x_for(col, fine_x), rows_m1
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_bare_fuzz(chunk):
+    gfns = {ENTRY_T4: lambda lib: lib.g_objsprite_t4, ENTRY_T2: lambda lib: lib.g_objsprite_t2,
+            ENTRY_T1: lambda lib: lib.g_objsprite_t1, ENTRY_W88: lambda lib: lib.g_objsprite_w88}
+    for i, entry, x, rows_m1 in _bare_fuzz_cases():
+        if i % FUZZ_CHUNKS != chunk:
+            continue
+        _check_bare(entry, gfns[entry], seed=i, x=x, rows_m1=rows_m1)
 
 
 # ---- alt entry 0x13204 (t53): caller pre-sets d0=aligned_col, d6=shl, d7=shr ----

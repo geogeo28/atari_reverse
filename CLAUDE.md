@@ -100,7 +100,10 @@ justify leaving it):
   is committed — that is the success criterion, not "looks right".
 - **Test coupling** — a reconstructed function and its differential test
   (`recreate/test/test_*.py`) move together in the *same* commit; a new function ships with
-  its test. A behaviour change with no matching test movement is the smell.
+  its test. A behaviour change with no matching test movement is the smell. A big fuzz test
+  (thousands of iterations) should be **shardable across xdist workers** — split case
+  generation from checking and parametrize by `chunk` so `make test` (`-n auto`) stays fast;
+  see the "Writing a fuzz test so it parallelizes" recipe in `recreate/README.md`.
 - **Low complexity / no duplication / readability** — simplest form that works; logic that
   appears twice collapses into one named helper; intention-revealing names; comment the
   *why*. No raw register names (`a1`, `d0`–`d7`) or terse locals (`m`, `p`, `rd`) — use

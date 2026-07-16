@@ -15,10 +15,15 @@ sprite content — so every reachable body and both edge-cell kinds are exercise
 import ctypes
 import random
 
+import pytest
+
 import harness
 from harness import differential, report
 
 ENTRY = 0x13ed6
+
+# Number of xdist shards the fuzz loop is split into (round-robin by iteration index).
+FUZZ_CHUNKS = 8
 
 # Staged low-memory layout (clear of the program, which ends 0x1bcf8, and of the stack guard).
 DST_BASE = 0x60000        # dst scanline base; a0 = dst + aligned_col, then rewinds DOWN per row
@@ -114,7 +119,13 @@ def test_row_counts():
         _check(seed=0x500 + rows_m1, x=_x_for(0x50, 9), rows_m1=rows_m1)
 
 
-def test_fuzz():
+def _fuzz_cases():
+    """Yield (i, x, rows_m1) from a single seeded RNG stream.
+
+    Split from the check so the fuzz can be sharded across xdist workers without
+    perturbing the stream: every worker replays the full sequence (cheap) and only
+    runs the expensive differential on its assigned iterations. Coverage is identical.
+    """
     rng = random.Random(0xB0B2)
     for i in range(4000):
         fine_x = rng.randrange(16)
@@ -129,4 +140,12 @@ def test_fuzz():
         ])
         x = _x_for(col, fine_x)
         rows_m1 = rng.randrange(0, 20)         # bounded so a1 stays inside the staged src arena
+        yield i, x, rows_m1
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_fuzz(chunk):
+    for i, x, rows_m1 in _fuzz_cases():
+        if i % FUZZ_CHUNKS != chunk:
+            continue
         _check(seed=i, x=x, rows_m1=rows_m1)

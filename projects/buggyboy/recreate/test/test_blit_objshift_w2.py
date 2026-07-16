@@ -18,10 +18,15 @@ The 0x90 dispatch (aligned_col A, a signed multiple of 8):
 import ctypes
 import random
 
+import pytest
+
 import harness
 from harness import differential, report
 
 ENTRY = 0x144c8
+
+# Number of xdist shards the fuzz loop is split into (round-robin by iteration index).
+FUZZ_CHUNKS = 8
 
 DST_BASE = 0x60000        # dst scanline base; a0 = dst + aligned_col, then rewinds DOWN per row
 DST_LO = 0x5c000          # start of the staged dst noise region (covers rewinds below DST_BASE)
@@ -133,7 +138,13 @@ def test_row_counts():
         _check(seed=0x800 + rows_m1, x=_x_for(0x50, 9), color=11, rows_m1=rows_m1, stride_word=0x18)
 
 
-def test_fuzz():
+def _fuzz_cases():
+    """Yield (i, x, color, rows_m1, stride) from a single seeded RNG stream.
+
+    Split from the check so the fuzz can be sharded across xdist workers without
+    perturbing the stream: every worker replays the full sequence (cheap) and only
+    runs the expensive differential on its assigned iterations. Coverage is identical.
+    """
     rng = random.Random(0x90FA)
     for i in range(4000):
         fine_x = rng.randrange(16)
@@ -150,4 +161,12 @@ def test_fuzz():
         color = rng.randrange(16)
         rows_m1 = rng.randrange(0, 20)
         stride = rng.randint(-0x400, 0x400) & 0xffff
+        yield i, x, color, rows_m1, stride
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_fuzz(chunk):
+    for i, x, color, rows_m1, stride in _fuzz_cases():
+        if i % FUZZ_CHUNKS != chunk:
+            continue
         _check(seed=i, x=x, color=color, rows_m1=rows_m1, stride_word=stride)

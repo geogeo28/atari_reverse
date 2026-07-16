@@ -84,8 +84,49 @@ make oracle/build/liboracle.so   # (re)build just the Musashi oracle
 
 First build clones + compiles Musashi under `oracle/musashi/`. Requires the venv at `.venv/`
 — run `make venv` (or `python -m venv .venv && .venv/bin/pip install -r requirements.txt`) to
-create it and install the pinned Python deps (numpy, pyresidfp, pytest). `pip install unicorn`
+create it and install the pinned Python deps (numpy, pyresidfp, pytest, pytest-xdist). `pip install unicorn`
 too if you want it for ad-hoc experiments — the oracle itself doesn't use it.
+
+`make test` runs the suite in parallel across cores with `pytest-xdist` (`-n auto`). Each test
+stages its own in-memory image and drives the `.so` via ctypes, so xdist workers (separate
+processes) never collide. Override the parallelism with `PYTEST_ARGS`:
+
+```bash
+make test PYTEST_ARGS=-n0                 # serial (e.g. to read a traceback cleanly)
+make test 'PYTEST_ARGS=-n4 -k objshift'   # 4 workers, one subsystem
+```
+
+### Writing a fuzz test so it parallelizes
+
+A single `test_fuzz` that loops thousands of iterations is **one** test item — xdist can't split
+it across workers, so it becomes the wall-clock floor. Shard it by splitting *case generation* from
+*checking*: a generator yields `(i, params…)` from the one seeded RNG, and a `chunk`-parametrized
+test runs only the iterations where `i % FUZZ_CHUNKS == chunk`. Every worker replays the full RNG
+stream (microseconds) but runs the expensive differential on its slice only — coverage is **byte-identical**
+to the un-sharded loop (the round-robin is an exact partition of the iteration range):
+
+```python
+FUZZ_CHUNKS = 8   # module-level, per test file (matches the per-file constant style)
+
+def _fuzz_cases():
+    rng = random.Random(0xB117)          # seeded ONCE — the shared stream must not be re-seeded per chunk
+    for i in range(4000):
+        ... = rng.randrange(...)         # draw all inputs in the original order
+        yield i, x, color, rows_m1
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_fuzz(chunk):
+    for i, x, color, rows_m1 in _fuzz_cases():
+        if i % FUZZ_CHUNKS != chunk:
+            continue
+        _check(seed=i, x=x, color=color, rows_m1=rows_m1)
+```
+
+Re-seeding per chunk (`Random(seed + chunk)`) would be simpler but **changes the inputs tested** —
+don't. A deterministic nested-loop test (no RNG) shards even more simply: parametrize over the
+outer loop variable (e.g. `@pytest.mark.parametrize("fine_x", FINE_X_ALL)`). Rule of thumb: shard
+any test whose serial time approaches the current slowest item so no single item gates the run.
+
 
 ## Sound rendering
 
