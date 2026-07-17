@@ -29,8 +29,10 @@ mkdir -p "$BUILD" "$DISK"
 CC=m68k-elf-gcc
 # -Wno-array-bounds: the shim dereferences fixed hardware/sysvar addresses (video shifter, YM2149,
 # IKBD ACIA, _vblqueue) as absolute pointers, which GCC flags as out-of-bounds array[0] accesses.
-CFLAGS="-m68000 -Os -ffreestanding -fno-jump-tables -fomit-frame-pointer -nostdlib \
-        -I$REC/include -I$HERE/shim_include -Wall -Wno-array-bounds"
+# -fno-tree-loop-distribute-patterns: at -O2 GCC would otherwise recognise our hand-written
+# memcpy/memset loops and replace them with calls to memcpy/memset itself (infinite recursion).
+CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
+        -fomit-frame-pointer -nostdlib -I$REC/include -I$HERE/shim_include -Wall -Wno-array-bounds"
 # All cores except os.c (the shim supplies its OS/hardware glue).
 CORES="$(ls "$REC"/src/*.c "$REC"/src/machine/*.c | grep -v '/os\.c$')"
 

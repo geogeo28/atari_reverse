@@ -71,9 +71,16 @@ static uint8_t image[IMAGE_SIZE] __attribute__((aligned(256)));   /* BSS: TOS ze
 static void vbl_handler(void);
 void (*vbl_queue[1])(void) = { vbl_handler };
 
-/* freestanding libc the cores need (we link -nostdlib) */
+/* freestanding libc the cores need (we link -nostdlib). Copy/fill in 32-bit words when both ends
+ * are long-aligned (the common case: screen buffers + graphics blocks are all 4-byte aligned), which
+ * is ~4x faster than byte-at-a-time on a 68000; fall back to bytes for the head/tail remainder. */
 void *memcpy(void *d, const void *s, unsigned long n) {
     uint8_t *dp = d; const uint8_t *sp = s;
+    if ((((uintptr_t)dp | (uintptr_t)sp) & 3) == 0) {
+        uint32_t *dw = (uint32_t *)dp; const uint32_t *sw = (const uint32_t *)sp;
+        for (; n >= 4; n -= 4) *dw++ = *sw++;
+        dp = (uint8_t *)dw; sp = (const uint8_t *)sw;
+    }
     while (n--) *dp++ = *sp++;
     return d;
 }
@@ -85,6 +92,13 @@ void *memmove(void *d, const void *s, unsigned long n) {
 }
 void *memset(void *d, int c, unsigned long n) {
     uint8_t *dp = d;
+    if (((uintptr_t)dp & 3) == 0) {
+        uint8_t b = (uint8_t)c;
+        uint32_t w = (uint32_t)b * 0x01010101u;
+        uint32_t *dw = (uint32_t *)dp;
+        for (; n >= 4; n -= 4) *dw++ = w;
+        dp = (uint8_t *)dw;
+    }
     while (n--) *dp++ = (uint8_t)c;
     return d;
 }

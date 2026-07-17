@@ -94,6 +94,21 @@ proven identical to the oracle-verified reconstruction, not just "looks right". 
 marker files (SMOKE-only) drop `B<n>` files on `C:` at each init step so a hang can be pinpointed by
 the highest marker present.
 
+## Performance
+
+The reconstruction runs at close to the original's speed on a stock 8 MHz ST. The one change that
+mattered: the big-endian image accessors in `include/machine.h` (`be16`/`be32`/`wr16`/`wr32`) are
+compiled *natively* on the 68000. They exist to preserve the 68000's byte order on a little-endian
+*host* (the differential-test `.so`), where they must assemble each word byte-by-byte — but the
+m68k target IS big-endian, so there they are just aligned `move.w`/`move.l`. The accessors are now
+`#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__`-guarded to emit the native load/store on-target; the
+host path is untouched, so all differential tests stay byte-identical. This is the hot path — every
+field read in every draw/blit routine — so before the fix GCC emitted an `lsl #8` shuffle on *every*
+access and the whole game (menu included, no `render_road` involved) ran ~4x too slow; after it the
+byte-shuffle code is gone and the PRG is ~40% smaller too. The PRG is also built `-O2` (not `-Os`)
+with a long-word `memcpy`/`memset`; none of this touches the verified cores. If you still want it
+faster than a real ST, `hatari --cpuclock 16` (or `32`) overclocks the emulated CPU.
+
 ## Fidelity
 
 Colours and text are the game's own: `main.c` points `Setpalette` at the results-screen palette

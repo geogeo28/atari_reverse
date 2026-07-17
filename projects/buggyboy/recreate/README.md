@@ -27,7 +27,11 @@ so correctness never rests on a human reading being right.
 ## How a function is modeled
 
 Both sides operate on the **same flat, big-endian memory image** whose indices are Ghidra
-addresses (the game's globals sit at their real addresses). Each function has:
+addresses (the game's globals sit at their real addresses). Multi-byte access goes through the
+`be16`/`be32`/`wr16`/`wr32` accessors in `include/machine.h`, which preserve the 68000's big-endian
+order; on the little-endian test host they assemble each word byte-by-byte, and on a big-endian
+target (the m68k PRG in `render/atari/`) they compile to native aligned loads — see that
+directory's README "Performance" note. Each function has:
 
 - a **core** in `src/` — the readable reconstruction, using idiomatic C types;
 - a **glue** `g_<name>(image, regs…)` — unpacks the core's inputs from the image at their real
