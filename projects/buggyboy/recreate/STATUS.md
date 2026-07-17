@@ -4,7 +4,11 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 90/91.**
+**Verified: 88/91.** (The 91 are the canonical functions in `decomp.c`'s inventory. This table also
+lists 6 reconstruction *helpers* discovered along the way — `draw_obj_sprite_hi`,
+`draw_obj_handler_dbl`, `draw_obj_handler_lo`, `blit_objshift`, `blit_objshift2`, `objsprite` — for
+97 rows total; those are not part of the 91. The 3 canonical functions still unverified are
+`init_playfield`, `game_update`, `intermission`.)
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
