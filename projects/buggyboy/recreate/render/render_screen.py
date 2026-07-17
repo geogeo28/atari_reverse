@@ -18,7 +18,7 @@ builds the game's default high-score table with the verified `g_init_scoretable`
 player record into it with `g_update_highscore`, then draws — so the SCORE/NAME columns fill in
 with authentic data (only the single 12-byte player record is demo data).
 
-Usage: python render/render_screen.py [--screen leg|results|highscore|intermission] [--leg N] [--out DIR]
+Usage: python render/render_screen.py [--screen leg|results|highscore|intermission|buggy|map] [--leg N] [--out DIR]
 """
 import ctypes
 import struct
@@ -180,6 +180,47 @@ def render_intermission(scroll=0):
     return image
 
 
+# ---- gameplay renders (drawn from real sprites / COURSES.DAT, no game_update needed) ----
+GAMEPLAY_PALETTE = 0x17f7e                    # per-leg scenery/car palette (16 ST words)
+A_MEM_BASE = 0x18bfc                          # COURSES.DAT read target (init_leg_dash reads it)
+# buggy pose state (all 0 = resting car, straight ahead); non-game values can index sprite tables
+# out of the staged buffers, so this tool only renders the at-rest pose.
+A_LEAN_STATE, A_CRASH_DISP, A_BUGGY_PITCH, A_BUGGY_SKID = 0x18cc2, 0x18c68, 0x18cbe, 0x18cbc
+DASH_DST_OFF = 0x3ac0                         # track-map blit offset (bottom of the screen)
+
+
+def render_buggy(leg=0):
+    """Draw the player buggy (rear view) at rest via the verified g_draw_buggy (+ _hi / _lo / wheels).
+    The car sprite comes from the real unpacked graphics; only the pose globals are set. Returns the
+    framebuffer image (draw it with the gameplay palette, index 0 forced to black)."""
+    image, buf = _prepared_image({
+        A_LEG_INDEX: leg.to_bytes(2, "big"),
+        A_LEAN_STATE: (0).to_bytes(2, "big"), A_CRASH_DISP: (0).to_bytes(2, "big"),
+        A_BUGGY_PITCH: (0).to_bytes(2, "big"), A_BUGGY_SKID: (0).to_bytes(2, "big"),
+    })
+    harness._lib.g_draw_buggy.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+    harness._lib.g_draw_buggy.restype = None
+    harness._lib.g_draw_buggy(buf)
+    return image
+
+
+def render_legmap(leg=0):
+    """Draw the per-leg track map (the course outline + progress arrow shown on the dashboard): the
+    verified g_init_leg_dash builds the map graphic into buf_c from COURSES.DAT, then g_draw_dashboard
+    blits it to the screen. Each leg has a distinct course shape. Returns the framebuffer image."""
+    image, buf = _prepared_image({
+        A_LEG_INDEX: leg.to_bytes(2, "big"),
+        A_MEM_BASE: MEM_BASE.to_bytes(4, "big"),
+    })
+    harness._lib.g_init_leg_dash.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+    harness._lib.g_init_leg_dash.restype = None
+    harness._lib.g_draw_dashboard.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+    harness._lib.g_draw_dashboard.restype = None
+    harness._lib.g_init_leg_dash(buf)
+    harness._lib.g_draw_dashboard(buf, DASH_DST_OFF)
+    return image
+
+
 def main():
     argv = sys.argv[1:]
     screen = argv[argv.index("--screen") + 1] if "--screen" in argv else "leg"
@@ -187,6 +228,10 @@ def main():
     outdir = Path(argv[argv.index("--out") + 1]) if "--out" in argv else ROOT.parent / "out" / "render"
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # Default screens are drawn with the results palette; the gameplay screens (buggy / track map)
+    # use the per-leg scenery palette, whose index 0 is the road/scenery "empty" colour — forced to
+    # black here so the sprite / map reads on a clean background instead of that fill colour.
+    pal_addr, force_black_bg = PALETTE_ADDR, False
     if screen == "highscore":
         image = render_highscore_screen(leg)
         name = f"highscore_screen_{leg}.png"
@@ -196,12 +241,23 @@ def main():
     elif screen == "results":
         image = render_results_screen(leg)
         name = f"results_screen_{leg}.png"
+    elif screen == "buggy":
+        image = render_buggy(leg)
+        name = "buggy.png"
+        pal_addr, force_black_bg = GAMEPLAY_PALETTE, True
+    elif screen == "map":
+        image = render_legmap(leg)
+        name = f"legmap_{leg}.png"
+        pal_addr, force_black_bg = GAMEPLAY_PALETTE, True
     else:
         image = render_leg_results(leg)
         name = f"leg_results_{leg}.png"
     rows = _decode_interleaved(image, SCREEN_BASE)
+    pal = read_palette(image, pal_addr)
+    if force_black_bg:
+        pal[0] = (0, 0, 0)
     path = outdir / name
-    write_png(str(path), W, H, rows, read_palette(image))
+    write_png(str(path), W, H, rows, pal)
     print(f"wrote {path}")
 
 

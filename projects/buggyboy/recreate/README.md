@@ -168,7 +168,16 @@ python render/render_screen.py --leg 0              # leg-results screen -> out/
 python render/render_screen.py --screen results     # race-end results screen -> out/render/results_screen_0.png
 python render/render_screen.py --screen highscore   # populated high-score table -> out/render/highscore_screen_0.png
 python render/render_screen.py --screen intermission # scrolling between-legs screen -> out/render/intermission_screen.png
+python render/render_screen.py --screen buggy       # player car (rear view, at rest) -> out/render/buggy.png
+python render/render_screen.py --screen map --leg 2 # per-leg track map + progress arrow -> out/render/legmap_2.png
 ```
+
+The `buggy` and `map` screens are drawn from real gameplay data with no `game_update` needed: the
+car sprite (`g_draw_buggy` + `_hi`/`_lo`/wheels) comes from the unpacked graphics, and the track map
+(`g_init_leg_dash` + `g_draw_dashboard`) is built per-leg from **COURSES.DAT** — each leg a distinct
+course outline. They use the per-leg scenery palette (`0x17f7e`) with index 0 (the scenery "empty"
+fill) forced to black so the sprite/map reads on a clean background. Only the at-rest buggy pose is
+rendered (non-game pose values can index the sprite tables outside the staged buffers).
 
 Colours and text are authentic: the game's results-screen palette (16 ST words at `0x17fc2`) is
 read straight from the image, and the per-leg labels/digits are the real strings from
