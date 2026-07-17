@@ -93,7 +93,6 @@ proto 0x1306e draw_object_list a5@A5 a3@A3 a6@A6 d4_outer@D4 d6@D6 colour@D1
 cmt 0x1306e Per-frame roadside-object display-list dispatcher. Two nested loops walk the object list; each object's flag word (a3) gates a SPECIAL pass (record @buf_a+0x21d0+d6) and a NORMAL pass keyed on the low 6 bits (type -> record @buf_a+0x8a0+type*0xd0+d6). Resolves obj_type_jumptable[type] and calls the handler (objsprite t1/t2/t4/w88, the t4+t1 stub @0x131ac, or the handler_lo blit_objshift 0x98/0x90 families). Real caller passes d4=0 (one outer row). Reconstructed as g_draw_object_list.
 fn 0x152ac draw_buggy
 cmt 0x12ef6 Per-frame scene/object draw orchestrator (a6 = draw_buffer). Prefix advances the marker-decay slot (clears 14 records @marker_base+off, decrements @+off+cd), the road-colour animation counters (view_parity/anim_counter += 2; anim_word + colour pair from &0x1e tables), and the bonus-window flag animation. Then draws ground, fg sprite, roadside objects (draw_object_list split into passes around the active-sprite list), the scaled object, and the buggy — the last object pass ordered against the buggy by view&4. Reconstructed as g_draw_game_objects.
-fn 0x12ef6 draw_game_objects
 fn 0x151f6 draw_buggy_wheels        # ctx
 fn 0x153fa draw_buggy_lo            # ctx
 fn 0x154c6 draw_buggy_hi            # ctx
@@ -152,10 +151,13 @@ fn 0x12ebc stop_music_chk
 
 # ==== sound engine ====
 fn 0x1b252 EGOFF
+fn 0x1b268 TURNOFF
 fn 0x1b2e8 snd_voice_a
 fn 0x1b2ec snd_voice_b
 fn 0x1b3be snd_cmd_handler
 fn 0x1b3ba snd_stub
+fn 0x1b560 INITFX
+fn 0x1b59c INITTUNE
 
 # ==== data / tables ====
 var 0x176a8 FONT_GLYPHS
