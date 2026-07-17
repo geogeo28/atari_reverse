@@ -26,6 +26,16 @@ def bss_size(elf):
     return 0
 
 
+def sym_value(elf, name):
+    """Value of a symbol (e.g. _bss_start) from nm, or None."""
+    out = subprocess.check_output(["m68k-elf-nm", elf], text=True)
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[2] == name:
+            return int(parts[0], 16)
+    return None
+
+
 def abs_fixups(elf):
     """Sorted byte offsets of every R_68K_32 fixup (absolute 32-bit address to relocate)."""
     out = subprocess.check_output([READELF, "-r", "-W", elf], text=True)
@@ -59,8 +69,16 @@ def reloc_table(fixups):
 def main():
     elf, binf, out = sys.argv[1], sys.argv[2], sys.argv[3]
     text = open(binf, "rb").read()
-    tlen, dlen, blen = len(text), 0, bss_size(elf)
     fixups = abs_fixups(elf)
+
+    # GEMDOS places BSS at tlen+dlen, so the emitted text+data MUST reach _bss_start. The linker
+    # aligns .bss (e.g. for a 256-aligned image) to a boundary past the end of .data; objcopy does
+    # not emit that trailing gap, so pad it here — otherwise on-target BSS lands at the wrong address.
+    bss_start = sym_value(elf, "_bss_start")
+    if bss_start is not None and bss_start > len(text):
+        text += b"\x00" * (bss_start - len(text))
+
+    tlen, dlen, blen = len(text), 0, bss_size(elf)
 
     header = struct.pack(">H 6I",
                          0x601a,       # magic

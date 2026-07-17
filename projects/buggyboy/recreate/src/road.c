@@ -162,7 +162,7 @@ void g_set_screen_offset(uint8_t *image) {
 
 /* wait_vbl_set_offset @0x102ee — wait 51 vblanks (XBIOS Vsync, hardware only) then fall into
  * set_screen_offset. The Vsync loop has no image effect. */
-void g_wait_vbl_set_offset(uint8_t *image) {
+BB_WEAK void g_wait_vbl_set_offset(uint8_t *image) {
     g_set_screen_offset(image);
 }
 

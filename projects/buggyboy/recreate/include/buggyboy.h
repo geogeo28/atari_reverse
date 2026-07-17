@@ -11,6 +11,12 @@
 
 #include <stdint.h>
 
+/* A few glue functions are pure no-ops in the differential harness (their real effect is hardware
+ * I/O the oracle models elsewhere), but the standalone Atari PRG (render/atari/) must do the real
+ * work. Marking those defs weak lets the PRG link supply strong overrides; the harness .so has a
+ * single definition either way, so its verified behaviour is unchanged. */
+#define BB_WEAK __attribute__((weak))
+
 /* ---- score (add_score @ 0x1580a) ---- */
 #define SCORE_DIGITS 6
 void score_add(uint8_t *score, char *score_str, const uint8_t *delta, int game_over);
