@@ -17,7 +17,7 @@ fn 0x1078c build_sprite_shifts
 fn 0x107f2 build_sprite_shifts_msk
 fn 0x1047a init_scoretable
 fn 0x104b8 init_leg
-fn 0x12af6 init_playfield          # ctx
+fn 0x12af6 init_playfield
 fn 0x12d38 init_leg_dash
 fn 0x12d88 draw_leg_labels
 
@@ -263,6 +263,15 @@ var 0x18c90 leg_flags_c90      # per-leg state pair, init 0x00440002 by init_leg
 var 0x18d3c obj_markers        # 14 x 0x20-byte per-object marker records, seeded by init_leg
 var 0x18c9c hiscore_pos
 var 0x18c9e results_mode
+var 0x18c66 idle_countdown      # init_playfield attract idle timer; reset to 0x15e on input, expiry -> intermission
+var 0x18c62 leg_dec_delay       # leg-select auto-repeat delay: step to the previous leg (up/left)
+var 0x18c64 leg_inc_delay       # leg-select auto-repeat delay: step to the next leg (down/right)
+var 0x17f62 leg_select_palette  # init_playfield leg-select screen palette
+var 0x17f82 leg_start_palette   # palette flashed by the init_playfield leg-start "get ready" animation
+var 0x17f12 leg_flash_tbl_a     # word table, idx (anim_counter & 0xc) >> 1
+var 0x17f1a leg_flash_tbl_b     # word table, idx (anim_counter & 0x1c) >> 1
+var 0x17f2a leg_flash_tbl_c     # word table, idx (anim_counter & 0x1c) >> 1
+var 0x17f3a leg_flash_tbl_d     # long table, idx (anim_counter & 6)
 
 # ==== score / event state ====
 var 0x1824c score_bcd

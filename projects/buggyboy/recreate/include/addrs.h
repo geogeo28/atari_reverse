@@ -88,6 +88,17 @@
 #define A_results_mode    0x18c9e   /* 0 = score made the table (name entry), 2 = did not; results layout */
 #define A_setrez_mode     0x18be6   /* byte set_rez sends to the IKBD via XBIOS Ikbdws (0x19) */
 
+/* ---- init_playfield @ 0x12af6 (leg-select / playfield-init loop) ---- */
+#define A_idle_countdown  0x18c66   /* attract idle timer; reset to 0x15e on any input change, expiry -> intermission */
+#define A_leg_dec_delay   0x18c62   /* leg-select auto-repeat delay: step to the previous leg (up/left) */
+#define A_leg_inc_delay   0x18c64   /* leg-select auto-repeat delay: step to the next leg (down/right) */
+#define A_leg_select_pal  0x17f62   /* leg-select screen palette (xbios_setpalette A0) */
+#define A_leg_start_pal   0x17f82   /* palette flashed by the leg-start "get ready" animation */
+#define A_leg_flash_tbl_a 0x17f12   /* word table, idx (anim_counter & 0xc) >> 1 */
+#define A_leg_flash_tbl_b 0x17f1a   /* word table, idx (anim_counter & 0x1c) >> 1 */
+#define A_leg_flash_tbl_c 0x17f2a   /* word table, idx (anim_counter & 0x1c) >> 1 */
+#define A_leg_flash_tbl_d 0x17f3a   /* long table, idx (anim_counter & 6) */
+
 /* ---- intermission @ 0x127a0 (attract-mode / between-legs loop) ---- */
 #define A_leg_select      0x18c36   /* attract-mode leg selector (0-4); copied to leg_index each cycle */
 #define A_int_frame_hi    0x18ca2   /* Phase-D per-leg dwell counter (word, 0..INT_D_DWELL-1) */

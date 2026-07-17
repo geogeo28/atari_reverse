@@ -312,3 +312,149 @@ void g_intermission(uint8_t *image) {
 }
 
 
+/* --- init_playfield @ 0x12af6 --- The leg-select / playfield-init loop. It shows the leg-results
+ * screen and lets the player pick a leg with the joystick (up/left = previous leg, down/right =
+ * next, each gated by an auto-repeat delay) and start it with fire. Idling past the countdown at
+ * A_idle_countdown runs one intermission (attract-demo) cycle and restarts. The loop returns only
+ * when a leg is started: it announces the start tune, redraws, then runs a 121-frame palette-flash
+ * "get ready" animation and falls through to the caller (which begins the race).
+ *
+ * Function-key debug menu (0x2b24..0x2bfc) — read-verified, UNREACHABLE under the harness: it polls
+ * the GEMDOS console (Crawio, fn 6), which the deterministic OS model reports as no key pending
+ * (OS_CRAWIO_RESULT = 0), so every frame the key is 0 and control always falls to the default
+ * redraw (0x2b9e) and then the joystick tail. The menu the disassembly shows (never entered here):
+ *   scancode 0x44 then RETURN (0xd) -> reload GRAPHICS.GRA + rebuild the score table
+ *                                      (xbios_setscreen, load_graphics, init_leg_dash, init_scoretable);
+ *   F1..F5 (scancodes 0x3b..0x3f)   -> select that leg (leg_index = key - 0x3b) and start it;
+ *   F6 (scancode 0x40)              -> show the race-end results screen (draw_results_screen), then
+ *                                      busy-wait for F6-release and a fresh keypress before redrawing.
+ * See STATUS.md / HARNESS.md for why the console path is verified by reading, not execution. */
+#define IP_IDLE_INIT      0x15e   /* A_idle_countdown reload on input change; expiry -> intermission */
+#define IP_SEL_REPEAT     3       /* auto-repeat delay reloaded after a leg step */
+#define IP_LEG_COUNT      5       /* legs 0..4 */
+#define IP_INPUT_FIRE     0x80    /* input_state fire bit */
+#define IP_DEC_BITS       (1 | 4) /* up | left  -> previous leg */
+#define IP_INC_BITS       (2 | 8) /* down | right -> next leg */
+#define IP_FLASH_FRAMES   0x78    /* dbf count: the flash runs IP_FLASH_FRAMES + 1 = 121 frames */
+/* IP_FLASH_TBL_* index scales (mask, then >>1 for the word tables to keep the index word-aligned;
+ * the long table indexes by the raw masked value). */
+#define IP_FLASH_MASK_A   0x0c
+#define IP_FLASH_MASK_BC  0x1c
+#define IP_FLASH_MASK_D   0x06
+/* Palette-entry byte offsets into A_leg_start_pal the flash animates each frame. */
+#define IP_PAL_OFF_A      0x1c
+#define IP_PAL_OFF_B0     0x08
+#define IP_PAL_OFF_B1     0x1e
+#define IP_PAL_OFF_C      0x0c
+#define IP_PAL_OFF_D0     0x12
+#define IP_PAL_OFF_D1     0x16
+
+/* Leg-select navigation (0x2c1c..0x2c68): tick both auto-repeat delays; when a delay expires (goes
+ * negative) and its direction is held, step leg_index one slot (clamped to 0..IP_LEG_COUNT-1),
+ * reload that direction's delay and clear the other. Both delays are decremented every frame, so a
+ * step that clears the opposite delay lets the opposite direction fire the same frame if held —
+ * mirroring the in-place 68k (subq/addq on the leg word, subq on each delay). */
+static void ip_nav_step(uint8_t *image) {
+    uint16_t input = rdw(image, A_input_state);
+    int16_t leg = (int16_t)rdw(image, A_leg_index);
+
+    int16_t dec_delay = (int16_t)(rdw(image, A_leg_dec_delay) - 1);
+    wrw(image, A_leg_dec_delay, (uint16_t)dec_delay);
+    if (dec_delay < 0 && (input & IP_DEC_BITS) && leg - 1 >= 0) {
+        leg -= 1;
+        wrw(image, A_leg_dec_delay, IP_SEL_REPEAT);
+        wrw(image, A_leg_inc_delay, 0);
+    }
+    int16_t inc_delay = (int16_t)(rdw(image, A_leg_inc_delay) - 1);
+    wrw(image, A_leg_inc_delay, (uint16_t)inc_delay);
+    if (inc_delay < 0 && (input & IP_INC_BITS) && leg + 1 < IP_LEG_COUNT) {
+        leg += 1;
+        wrw(image, A_leg_inc_delay, IP_SEL_REPEAT);
+        wrw(image, A_leg_dec_delay, 0);
+    }
+    wrw(image, A_leg_index, (uint16_t)leg);
+}
+
+/* Fire edge (0x2c6c): start only on a fresh fire press — fire bit clear in the previous snapshot
+ * (A_input_prev) but set in the current input_state. Exposed for the differential harness (the
+ * decision is diffed by entering the oracle at 0x2c6c and checkpointing at the branch target). */
+int g_init_playfield_fire(uint8_t *image) {
+    return !(rdw(image, A_input_prev) & IP_INPUT_FIRE) && (rdw(image, A_input_state) & IP_INPUT_FIRE);
+}
+
+/* Leg-start "get ready" (0x2c96): announce the start tune, redraw the leg screen twice, draw the
+ * dashboard labels, then flash six entries of A_leg_start_pal for IP_FLASH_FRAMES + 1 frames (two
+ * XBIOS Vsyncs per frame -> hardware-only, no image effect). Falls through to the caller to race. */
+static void ip_start_leg(uint8_t *image) {
+    g_play_event_tune(image, 0);
+    g_init_leg_dash(image);
+    g_draw_leg_results(image);
+    g_draw_panel5(image);
+    g_flip_screen(image);
+    g_draw_leg_results(image);
+    g_draw_panel5(image);
+    g_flip_screen(image);
+    g_draw_leg_labels(image);
+
+    for (int n = IP_FLASH_FRAMES; n >= 0; n--) {
+        uint16_t counter = (uint16_t)(rdw(image, A_anim_counter) + 1);
+        wrw(image, A_anim_counter, counter);
+
+        uint16_t ia = (uint16_t)((counter & IP_FLASH_MASK_A) >> 1);
+        uint16_t ibc = (uint16_t)((counter & IP_FLASH_MASK_BC) >> 1);
+        uint16_t id = (uint16_t)(counter & IP_FLASH_MASK_D);
+        wrw(image, A_leg_start_pal + IP_PAL_OFF_A,  rdw(image, A_leg_flash_tbl_a + ia));
+        wrw(image, A_leg_start_pal + IP_PAL_OFF_B0, rdw(image, A_leg_flash_tbl_b + ibc));
+        wrw(image, A_leg_start_pal + IP_PAL_OFF_B1, rdw(image, A_leg_flash_tbl_b + ibc));
+        wrw(image, A_leg_start_pal + IP_PAL_OFF_C,  rdw(image, A_leg_flash_tbl_c + ibc));
+        wr32(image + A_leg_start_pal + IP_PAL_OFF_D0, be32(image + A_leg_flash_tbl_d + id));
+        wr32(image + A_leg_start_pal + IP_PAL_OFF_D1, be32(image + A_leg_flash_tbl_d + 4 + id));
+        g_xbios_setpalette(image, A_leg_start_pal);
+    }
+}
+
+/* Joystick-navigation slice (0x2c00 tail up to the idle-countdown dbf): poll the joystick, reload
+ * the idle countdown on any input change, then run one nav step. Exposed for the differential
+ * harness (the loop never returns except on a leg start, so navigation is diffed by entering the
+ * oracle at 0x2c00 and checkpointing at the dbf). Shared with g_init_playfield below. */
+void g_init_playfield_nav(uint8_t *image) {
+    g_read_joystick(image);
+    if (rdw(image, A_input_state) != rdw(image, A_input_prev))
+        wrw(image, A_idle_countdown, IP_IDLE_INIT);
+    ip_nav_step(image);
+}
+
+void g_init_playfield(uint8_t *image) {
+    for (;;) {                                              /* outer loop (0x2af6) */
+        wrw(image, A_timeout_gate, 0);
+        g_init_leg_dash(image);
+        g_draw_leg_results(image);
+        g_draw_panel5(image);
+        g_xbios_setpalette(image, A_leg_select_pal);
+        g_flip_screen(image);
+
+        uint16_t idle = IP_IDLE_INIT;
+        for (;;) {                                          /* per-frame loop (0x2b1a) */
+            wrw(image, A_idle_countdown, idle);
+            g_init_leg_dash(image);
+
+            /* function-key debug menu here (0x2b24) — unreachable under the no-key model; the key is
+             * always 0, so control always reaches the default redraw. See the header comment. */
+            g_draw_leg_results(image);                      /* default redraw (0x2b9e) */
+            g_draw_panel5(image);
+            g_flip_screen(image);
+
+            g_init_playfield_nav(image);                    /* joystick tail (0x2c00) */
+            if (g_init_playfield_fire(image)) { ip_start_leg(image); return; }
+
+            int16_t next = (int16_t)(rdw(image, A_idle_countdown) - 1);   /* dbf (0x2c78) */
+            if (next == -1) break;                          /* countdown expired (dbf falls through) */
+            idle = (uint16_t)next;
+        }
+        wrw(image, A_game_over_flag, (uint16_t)(rdw(image, A_game_over_flag) + 1));
+        g_intermission(image);
+        wrw(image, A_game_over_flag, 0);
+    }
+}
+
+

@@ -95,6 +95,13 @@ int  g_int_stepA(uint8_t *image);           /* Phase-A body: 0 continue, 1 abort
 void g_int_phaseB_leg(uint8_t *image);      /* Phase-B leg-select advance -> leg_index */
 int  g_int_stepD_counter(uint8_t *image);   /* Phase-D dwell/leg counter: 0 draw, 1 advance, 2 restart */
 
+/* init_playfield @ 0x12af6 — the leg-select / playfield-init loop; returns only when a leg starts.
+ * g_init_playfield_nav is the joystick-navigation slice (0x2c00 tail), exposed so it is diffable by
+ * entering the oracle at its PC (the loop itself never returns except on a leg start). */
+void g_init_playfield(uint8_t *image);
+void g_init_playfield_nav(uint8_t *image);
+int  g_init_playfield_fire(uint8_t *image);   /* fresh-fire edge: 1 = start the selected leg, 0 = keep waiting */
+
 /* ---- masked buggy / foreground sprites (draw_fg_sprite .. draw_buggy @ 0x1518a..) ----
  * draw_buggy_wheels is the shared blit body: A0 dst, A1 src (into buf_c), D4 rows-1; each row
  * is 4 transparency cells, dst/src stepping one scanline up per row. */

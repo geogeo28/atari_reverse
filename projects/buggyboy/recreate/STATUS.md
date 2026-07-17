@@ -4,12 +4,12 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 90/91.** (The 91 are the canonical functions in `decomp.c`'s inventory. This table also
+**Verified: 91/91.** (The 91 are the canonical functions in `decomp.c`'s inventory. This table also
 lists 6 reconstruction *helpers* discovered along the way — `draw_obj_sprite_hi`,
 `draw_obj_handler_dbl`, `draw_obj_handler_lo`, `blit_objshift`, `blit_objshift2`, `objsprite` — for
-97 rows total; those are not part of the 91. The 1 canonical function still unverified is
-`init_playfield` (interactive; `game_update`, its root, is done). `intermission` is verified to
-checkpoints — its unbounded demo-render loops are read-verified, see its row + notes.)
+97 rows total; those are not part of the 91. `intermission` and `init_playfield` are the two
+interactive loops that never return except on player abort / leg start; both are verified piecewise
+(run-to-rts where a return is reachable, plus mid-entry checkpoints), see their rows + notes.)
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -77,7 +77,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12914` | `intermission_poll` | 86 | ✅ verified | 25-seed fuzz x flip (9-entry table-driven block blit; not input) |
 | `0x129a0` | `fade_step` | 26 | ✅ verified | scroll fuzz x flip; prologue (fill_screen 6 + intermission_poll + Elite header) falling into draw_intermission |
 | `0x129ba` | `draw_intermission` | 316 | ✅ verified | scroll fuzz x flip (3 scrolling sections: hi-score text / leg-time nums / credits; clip+draw) |
-| `0x12af6` | `init_playfield` | 578 |  |  |
+| `0x12af6` | `init_playfield` | 578 | ✅ verified | leg-select / playfield-init loop; returns only on a leg start, so verified piecewise like `intermission`. **Run-to-rts** from the real entry with fire staged (input_state=fire, input_prev clear): prologue + one per-frame iteration through the verified draw callees (init_leg_dash/draw_leg_results/draw_panel5/flip) + the fire-start path (play_event_tune + redraws + draw_leg_labels + the 121-frame palette-flash "get ready" animation over `leg_start_palette`), whole-image diff, legs 0/2/4. **Nav slice** (`g_init_playfield_nav`, the 0x2c00 joystick tail) diffed at the idle-countdown dbf checkpoint (0x2c78): fuzz leg_index x both auto-repeat delays x direction bits x input-change refill (every leg-step / clamp / delay branch). **Read-verified** (unreachable under the deterministic no-key OS model — Crawio fn 6 -> 0): the GEMDOS-console function-key debug menu (0x44+RETURN reload, F1-F5 leg select, F6 results screen). Also read-verified (transparent dbf arithmetic over already-verified callees): the idle-timeout branch (countdown expiry -> game_over_flag++ / `intermission` / restart), since the run-to-rts always starts a leg before the countdown expires |
 | `0x12d38` | `init_leg_dash` | 80 | ✅ verified | leg 0-4 x 6-seed fuzz (marker seed + pixel-doubled dashboard build) |
 | `0x12d88` | `draw_leg_labels` | 154 | ✅ verified | leg 0-4 fuzz + empty-label edge (glyph AND/OR blit + 4-row clear -> probe_collision) |
 | `0x12e22` | `draw_frame` | 22 | ✅ verified | whole-frame render wrapper (no logic/args): build_road_geometry → render_road → blit_road_scroll → draw_game_objects → draw_hud. Full-rts diff over a shared draw buffer + distinct buf_a/b/c arenas x 8 seeds; ~32.5 KB rendered per frame, poison-verified |
@@ -212,9 +212,10 @@ driver; the EG block is driven directly. That leaves the sound driver **complete
 `game_update` are done, and the attract/between-legs loop `intermission` is verified to checkpoints
 (prologue + Phase A run-to-rts via a staged abort; the counter arithmetic of Phases A/B/D by
 mid-function entry; the unbounded Phase-B warm-up + Phase-C render loops read-verified over their
-already-verified callees). Remaining: the interactive playfield-init loop `init_playfield` (calls
-the now-verified `game_update`; it busy-polls input, so it needs the same mid-entry + checkpoint
-treatment `intermission` uses).
+already-verified callees). The interactive leg-select loop `init_playfield` is now verified too —
+run-to-rts with fire staged (prologue + a per-frame iteration + the fire-start palette-flash) plus a
+mid-entry checkpoint over the joystick navigation; its GEMDOS-console function-key menu is
+read-verified (unreachable under the no-key OS model). **All 91 canonical functions are verified.**
 
 ## Oracle cross-validation
 
