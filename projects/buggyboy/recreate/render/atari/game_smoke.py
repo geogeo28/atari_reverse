@@ -65,8 +65,47 @@ def run(timeout=90):
         return out.read_bytes()
 
 
+def host_leg_results():
+    """Host g_draw_leg_results(leg=0) framebuffer (32000 bytes) via the candidate .so, using the
+    same buffer layout as the on-target legdump — for a byte-exact draw-vs-host comparison."""
+    import ctypes
+    import struct
+    sys.path.insert(0, str(REC / "oracle"))
+    from loader import load_image
+    lib = ctypes.CDLL(str(REC / "build" / "libbuggyboy.so"))
+    img = bytearray(0x100000)
+    base = load_image(str(REC.parent / "bin" / "BUGGYBOY.PRG"))
+    img[:len(base)] = base
+    MEM = 0x20000
+    def w32(o, v): img[o:o+4] = struct.pack(">I", v)
+    def w16(o, v): img[o:o+2] = struct.pack(">H", v)
+    w32(0x18bf8, MEM + 0x57000); w32(0x18bfc, MEM); w32(0x18c00, MEM + 0x1900)
+    w32(0x18c04, MEM + 0xf660); w32(0x18c08, MEM + 0x1c660)
+    courses = (REC.parent / "bin" / "COURSES.DAT").read_bytes(); img[MEM:MEM+len(courses)] = courses
+    gra = (REC.parent / "bin" / "GRAPHICS.GRA").read_bytes(); bc = MEM + 0x1c660
+    img[bc+0xc350:bc+0xc350+len(gra)] = gra
+    SCR = 0x2100
+    w16(0x18bf2, 0); w32(0x18bf4, SCR); w16(0x18c38, 0)
+    cb = (ctypes.c_uint8 * len(img)).from_buffer(img)
+    lib.g_unpack_graphics(cb); lib.g_init_leg_dash(cb); lib.g_draw_leg_results(cb)
+    return bytes(img[SCR:SCR+SCREEN_BYTES])
+
+
 def main():
+    mode = sys.argv[1] if len(sys.argv) > 1 else "smoke"
     fb = run()
+
+    if mode == "legdump":
+        # Byte-exact: the on-target g_draw_leg_results buffer must equal the host render.
+        host = host_leg_results()
+        if bytes(fb) == host:
+            print(f"MATCH: on-target leg-select buffer is byte-identical to the host ({len(fb)} bytes)")
+        else:
+            ndiff = sum(1 for a, b in zip(fb, host) if a != b)
+            print(f"DIFF: {ndiff}/{SCREEN_BYTES} bytes differ from the host render")
+            sys.exit(1)
+        return
+
     image = bytearray(SCREEN_BASE) + fb
     rows = _decode_interleaved(image, SCREEN_BASE)
     outdir = REC.parent / "out" / "render"

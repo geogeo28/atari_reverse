@@ -13,9 +13,10 @@ set -euo pipefail
 
 SMOKE_FRAMES=120
 case "${1:-}" in
-  smoke) DEF="-DSMOKE=$SMOKE_FRAMES" ;;
-  "")    DEF="" ;;
-  *) echo "usage: game_build.sh [smoke]"; exit 2 ;;
+  smoke)   DEF="-DSMOKE=$SMOKE_FRAMES" ;;
+  legdump) DEF="-DSMOKE=1 -DSMOKE_LEG" ;;   # draw g_draw_leg_results, dump it, terminate (byte check)
+  "")      DEF="" ;;
+  *) echo "usage: game_build.sh [smoke|legdump]"; exit 2 ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

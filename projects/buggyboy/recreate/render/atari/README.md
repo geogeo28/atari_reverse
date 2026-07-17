@@ -73,13 +73,19 @@ bash render/atari/game_run.sh            # play it in the Hatari GUI (arrows ste
 
 bash render/atari/game_build.sh smoke    # -DSMOKE=120: skip leg-select, render 120 race frames, dump C:\SCREEN.BIN
 python render/atari/game_smoke.py        # headless: boot, run, verify the on-target framebuffer is a real rendered scene
+
+bash render/atari/game_build.sh legdump  # -DSMOKE_LEG: draw g_draw_leg_results, dump it, terminate
+python render/atari/game_smoke.py legdump # headless: prove the on-target buffer is BYTE-IDENTICAL to the host render
 ```
 
 The `smoke` build is the headless proof: it forces leg 0, runs the full per-frame pipeline
 (`game_update → render_road → blit_road_scroll → draw_game_objects → draw_hud → flip`) on the real
 68000, dumps the framebuffer and checks it is a non-blank scene (`out/render/game_smoke.png`). The
-`BEACON(n)` marker files (SMOKE-only) drop `B<n>` files on `C:` at each init step so a hang can be
-pinpointed by the highest marker present.
+`legdump` build goes further — it renders the deterministic leg-select screen and byte-compares the
+on-target buffer against the host `g_draw_leg_results` (prints `MATCH`), so the on-target draw is
+proven identical to the oracle-verified reconstruction, not just "looks right". The `BEACON(n)`
+marker files (SMOKE-only) drop `B<n>` files on `C:` at each init step so a hang can be pinpointed by
+the highest marker present.
 
 ## Fidelity
 

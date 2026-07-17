@@ -270,6 +270,19 @@ void game_main(void) {
      * headless Hatari run proves the whole init + render pipeline works on a real 68000. */
     extern long Fwrite(short handle, long count, void *buf);
     wr16(image + A_leg_index, 0);
+
+#ifdef SMOKE_LEG
+    /* Leg-select variant: draw exactly what the host render_leg_results produces (deterministic,
+     * no game state), dump it, and terminate — for a byte-exact draw-vs-host comparison. */
+    g_init_leg_dash(image);
+    g_draw_leg_results(image);
+    {
+        uint32_t buf = be32(image + A_physbase_tbl + be16(image + A_flip_idx));
+        long h = Fcreate("SCREEN.BIN", 0);
+        if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, image + buf); Fclose((short)h); }
+    }
+    return;
+#endif
     g_init_leg(image);
     g_draw_frame(image);
     g_xbios_setpalette(image, A_race_palette);
