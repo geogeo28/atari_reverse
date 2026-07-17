@@ -335,6 +335,12 @@ void g_intermission(uint8_t *image) {
 #define IP_INPUT_FIRE     0x80    /* input_state fire bit */
 #define IP_DEC_BITS       (1 | 4) /* up | left  -> previous leg */
 #define IP_INC_BITS       (2 | 8) /* down | right -> next leg */
+/* Function-key menu (0x2b24..0x2bfc): IKBD scancodes read from the GEMDOS console. */
+#define IP_KEY_F1         0x3b    /* F1..F5 = 0x3b..0x3f: select leg (scancode - F1); F6 = 0x40 */
+#define IP_KEY_F6_INDEX   5       /* (scancode - F1) that means F6 (results-screen preview) */
+#define IP_KEY_F6_SCAN    0x40    /* F6 raw scancode (IP_KEY_F1 + IP_KEY_F6_INDEX) */
+#define IP_KEY_F10        0x44    /* F10: reload GRAPHICS.GRA + rebuild score table (after RETURN) */
+#define IP_KEY_RETURN     0x0d    /* confirms the F10 reload */
 #define IP_FLASH_FRAMES   0x78    /* dbf count: the flash runs IP_FLASH_FRAMES + 1 = 121 frames */
 /* IP_FLASH_TBL_* index scales (mask, then >>1 for the word tables to keep the index word-aligned;
  * the long table indexes by the raw masked value). */
@@ -424,6 +430,64 @@ void g_init_playfield_nav(uint8_t *image) {
     ip_nav_step(image);
 }
 
+/* Function-key debug menu (0x2b24..0x2bfc): poll the GEMDOS console once and act on it. Under the
+ * deterministic no-key OS model (g_console_scancode -> 0) this always falls straight through to the
+ * default redraw, so the differential test is unaffected; on real hardware (the Atari PRG overrides
+ * the console seam) it drives leg-select.
+ *   F10 (0x44) then RETURN -> reload GRAPHICS.GRA + rebuild the score table
+ *   F1..F5 (0x3b..0x3f)    -> select that leg (leg_index = scancode - F1) and start it
+ *   F6 (0x40)              -> preview the results screen until a fresh key, then redraw leg-select */
+typedef enum {
+    IP_MENU_REDRAW,     /* no menu action (or F10-reload/out-of-range) -> default redraw (0x2b9e) */
+    IP_MENU_START,      /* F1..F5 -> caller starts the selected leg (0x2c96) */
+    IP_MENU_NAV,        /* F6 preview did its own redraw -> skip straight to the nav tail (0x2c00) */
+} ip_menu_result;
+
+static ip_menu_result ip_menu(uint8_t *image) {
+    int16_t key = (int16_t)g_console_scancode(image);      /* 0x2b24: Crawio(0xff) scancode, 0 if none */
+
+    if (key == IP_KEY_F10) {                               /* 0x2b36: F10 -> graphics/score reload */
+        g_draw_leg_results(image);
+        g_draw_panel3(image);
+        g_flip_screen(image);
+        key = (int16_t)g_console_wait_char(image);         /* 0x2b48: Crawcin (fn 7), blocking */
+        if (key == IP_KEY_RETURN) {                        /* 0x2b50: confirmed */
+            g_draw_leg_results(image);
+            g_draw_panel2(image);
+            g_flip_screen(image);
+            g_draw_leg_results(image);
+            g_draw_panel2(image);
+            g_xbios_setscreen(image);
+            g_load_graphics(image);
+            g_init_leg_dash(image);
+            g_init_scoretable(image);
+            return IP_MENU_REDRAW;                         /* 0x2b7a -> default redraw */
+        }
+        /* not RETURN: fall through to the F-key test with key = the char just read (0x2b7c) */
+    }
+
+    int16_t sel = (int16_t)(key - IP_KEY_F1);              /* 0x2b7c: scancode relative to F1 */
+    if (sel < 0) return IP_MENU_REDRAW;                    /* 0x2b80: below F1 -> default redraw */
+    if (sel == IP_KEY_F6_INDEX) {                          /* 0x2b86: F6 -> results-screen preview */
+        wrw(image, A_results_mode, 0);                     /* 0x2bac */
+        g_draw_results_screen(image);
+        g_xbios_setpalette(image, A_results_screen_pal);
+        g_flip_screen(image);
+        while (g_console_scancode(image) == IP_KEY_F6_SCAN) { }   /* 0x2bc4: wait for F6 release */
+        while (g_console_scancode(image) == 0) { }         /* 0x2bd8: wait for any fresh key */
+        g_draw_leg_results(image);
+        g_draw_panel5(image);
+        g_xbios_setpalette(image, A_leg_select_pal);
+        g_flip_screen(image);
+        return IP_MENU_NAV;                                /* 0x2bfc -> nav tail (skips default redraw) */
+    }
+    if (sel > IP_KEY_F6_INDEX) return IP_MENU_REDRAW;      /* 0x2b88: above F6 -> default redraw */
+
+    wrw(image, A_leg_index, (uint16_t)sel);               /* 0x2b8a: F1..F5 -> select leg 0..4 */
+    wrw(image, A_timeout_gate, 0);                        /* 0x2b90 */
+    return IP_MENU_START;                                 /* 0x2b9a -> start the leg */
+}
+
 void g_init_playfield(uint8_t *image) {
     for (;;) {                                              /* outer loop (0x2af6) */
         wrw(image, A_timeout_gate, 0);
@@ -438,11 +502,13 @@ void g_init_playfield(uint8_t *image) {
             wrw(image, A_idle_countdown, idle);
             g_init_leg_dash(image);
 
-            /* function-key debug menu here (0x2b24) — unreachable under the no-key model; the key is
-             * always 0, so control always reaches the default redraw. See the header comment. */
-            g_draw_leg_results(image);                      /* default redraw (0x2b9e) */
-            g_draw_panel5(image);
-            g_flip_screen(image);
+            ip_menu_result menu = ip_menu(image);           /* function-key menu (0x2b24) */
+            if (menu == IP_MENU_START) { ip_start_leg(image); return; }
+            if (menu != IP_MENU_NAV) {                       /* F6 preview already redrew (0x2bfc) */
+                g_draw_leg_results(image);                   /* default redraw (0x2b9e) */
+                g_draw_panel5(image);
+                g_flip_screen(image);
+            }
 
             g_init_playfield_nav(image);                    /* joystick tail (0x2c00) */
             if (g_init_playfield_fire(image)) { ip_start_leg(image); return; }

@@ -94,6 +94,7 @@
 #define A_leg_inc_delay   0x18c64   /* leg-select auto-repeat delay: step to the next leg (down/right) */
 #define A_leg_select_pal  0x17f62   /* leg-select screen palette (xbios_setpalette A0) */
 #define A_race_palette    0x17fa2   /* in-race palette loaded before the leg starts (main @0x206) */
+#define A_results_screen_pal 0x17fc2 /* palette for the F6 results-screen preview (init_playfield menu) */
 #define A_leg_start_pal   0x17f82   /* palette flashed by the leg-start "get ready" animation */
 #define A_leg_flash_tbl_a 0x17f12   /* word table, idx (anim_counter & 0xc) >> 1 */
 #define A_leg_flash_tbl_b 0x17f1a   /* word table, idx (anim_counter & 0x1c) >> 1 */

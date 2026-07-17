@@ -67,6 +67,13 @@ in the TOS `_vblqueue`. It loads the data files in user mode (GEMDOS handle allo
 from supervisor — see [`docs/binary-formats.md`](../../../../docs/binary-formats.md)), then
 `Super()`s for the hardware phase.
 
+**Leg-select** is driven by the original's function-key menu (`ip_menu`, ported from `0x2b24`):
+press **F1–F5** to pick and start a leg (F1 = leg 1 … F5 = leg 5), **F6** to preview the results
+screen, **F10** then **RETURN** to reload the graphics. This menu polls the GEMDOS console, which the
+differential harness models as always-empty (so it stays a no-op under test); the real trap lives in
+`game_main.c`'s `g_console_scancode`/`g_console_wait_char` overrides. Once a leg starts, arrows steer,
+space fires/shifts, and ESC quits the leg.
+
 ```bash
 bash render/atari/game_build.sh          # -> build/BUGGY.PRG + disk/
 bash render/atari/game_run.sh            # play it in the Hatari GUI (arrows steer, space fires, ESC quits a leg)

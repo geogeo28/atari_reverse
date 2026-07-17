@@ -51,6 +51,7 @@
 extern long Super(void *stack);
 extern long Malloc(long amount);
 extern long Crawio(short w);
+extern long Crawcin(void);          /* GEMDOS 0x07: blocking raw console input (F10 RETURN confirm) */
 extern long Fopen(const char *name, short mode);
 extern long Fread(short handle, long count, void *buf);
 extern long Fclose(short handle);
@@ -175,6 +176,20 @@ void g_set_rez(uint8_t *img, uint32_t mode) {
 /* read_joystick @0x12110 — interrogate the IKBD joystick; the reply arrives asynchronously and the
  * joyvec handler copies it into input_state (one frame of latency, exactly as the original). */
 void g_read_joystick(uint8_t *img) { (void)img; ikbd_send(IKBD_INTERROGATE); }
+
+/* console_scancode @0x12b24 — GEMDOS Crawio(0xff): non-blocking raw console read. The original
+ * takes the IKBD scancode from bits 16..23 (swap d0, then & 0xff); mirror that trap usage exactly. */
+uint16_t g_console_scancode(uint8_t *img) {
+    (void)img;
+    return (uint16_t)((Crawio((short)0xff) >> 16) & 0xff);
+}
+
+/* console_wait_char @0x12b48 — GEMDOS Crawcin (fn 7): blocking raw read; the original compares the
+ * ASCII byte (low word) to RETURN, so hand back the low 16 bits. */
+uint16_t g_console_wait_char(uint8_t *img) {
+    (void)img;
+    return (uint16_t)(Crawcin() & 0xffff);
+}
 
 /* install_handlers @0x12124 — Kbdvbase() then patch the joystick vector to our handler (and the
  * mouse vector to a harmless rts) so IKBD joystick packets land in input_state. */

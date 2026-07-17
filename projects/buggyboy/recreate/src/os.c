@@ -31,6 +31,16 @@ void g_set_rez(uint8_t *image, uint32_t mode) {
  * (shim.c) so the real code's wait loop terminates. */
 void g_read_joystick(uint8_t *image) { (void)image; }
 
+/* console_scancode @ 0x12b24 (init_playfield function-key menu) — GEMDOS Crawio(0xff): a
+ * non-blocking raw console poll; the game keeps the scancode byte (swap d0, then & 0xff). The
+ * oracle models the console as empty (OS_CRAWIO_RESULT), so no key is ever pending here and the
+ * differential test always takes the no-menu path. The Atari PRG overrides this with the real trap. */
+uint16_t g_console_scancode(uint8_t *image) { (void)image; return (uint16_t)OS_CRAWIO_RESULT; }
+
+/* console_wait_char @ 0x12b48 — GEMDOS Crawcin (fn 7): a blocking raw read, used only to confirm
+ * RETURN after F10. Unreachable under the no-key model (F10 is never seen), so it just returns 0. */
+uint16_t g_console_wait_char(uint8_t *image) { (void)image; return 0; }
+
 /* install_handlers @ 0x12124 — Kbdvbase() returns the KBDVBASE vector table; save its pointer and
  * the old mousevec (+0x10) / joyvec (+0x18) vectors (for the restore on exit), then install this
  * game's handlers (the joyvec handler is what read_joystick's reply drives). The oracle returns a

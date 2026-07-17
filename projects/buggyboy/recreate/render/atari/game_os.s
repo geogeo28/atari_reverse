@@ -139,6 +139,14 @@ Crawio:
     addq.l  #4,%sp
     rts
 
+| long Crawcin(void)            GEMDOS 0x07 (blocking raw console input, no echo)
+    .globl  Crawcin
+Crawcin:
+    move.w  #0x07,-(%sp)
+    trap    #1
+    addq.l  #2,%sp
+    rts
+
 | joy_handler — installed at KBDVBASE joyvec (+0x18). The IKBD interrupt enters here with A0
 | pointing at the 2-byte joystick packet. Save the old input_state to input_prev, then copy the
 | packet's two bytes into input_state (hi = joy0, lo = joy1). Mirrors the game's own 0x12156

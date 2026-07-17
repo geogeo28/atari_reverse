@@ -33,6 +33,8 @@ fn 0x120f8 set_rez
 # ==== input ====
 fn 0x120b0 read_input
 fn 0x12110 read_joystick
+fn 0x12b24 console_scancode   # init_playfield menu: Crawio(0xff) scancode poll (seam; real trap in the PRG)
+fn 0x12b48 console_wait_char  # init_playfield F10 branch: Crawcin (fn 7) blocking read (seam)
 
 # ==== road / world render ====
 fn 0x11f4c build_road_geometry
@@ -270,6 +272,7 @@ var 0x18c62 leg_dec_delay       # leg-select auto-repeat delay: step to the prev
 var 0x18c64 leg_inc_delay       # leg-select auto-repeat delay: step to the next leg (down/right)
 var 0x17f62 leg_select_palette  # init_playfield leg-select screen palette
 var 0x17f82 leg_start_palette   # palette flashed by the init_playfield leg-start "get ready" animation
+var 0x17fc2 results_screen_palette   # palette for the init_playfield F6 results-screen preview
 var 0x17f12 leg_flash_tbl_a     # word table, idx (anim_counter & 0xc) >> 1
 var 0x17f1a leg_flash_tbl_b     # word table, idx (anim_counter & 0x1c) >> 1
 var 0x17f2a leg_flash_tbl_c     # word table, idx (anim_counter & 0x1c) >> 1
