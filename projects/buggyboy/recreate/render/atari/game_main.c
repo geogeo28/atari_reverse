@@ -112,9 +112,16 @@ static void beacon(int n) {
 #define BEACON(n)  ((void)0)
 #endif
 
+/* Set once we enter supervisor mode; gates all direct hardware access (video shifter, YM2149, IKBD
+ * ACIA — all in privileged $ffff8xxx/$fffffcxx). Before that (file load, unpack, SMOKE render) the
+ * hardware pokes are skipped so a user-mode access can't bus-error. */
+static int hw_ready;
+
 /* Send one command byte to the IKBD (busy-wait the ACIA transmit-ready bit, bounded so a hardware
- * quirk can't hang the game forever). */
+ * quirk can't hang the game forever). The ACIA lives in the supervisor-only $fffffcxx region, so
+ * this is a no-op until we are in supervisor (hw_ready) — before that there is no input to poll. */
 static void ikbd_send(uint8_t b) {
+    if (!hw_ready) return;
     for (uint32_t spin = 0; spin < 100000; spin++)
         if (ACIA_STATUS & ACIA_TDRE) break;
     ACIA_DATA = b;
@@ -135,8 +142,6 @@ static void vbl_handler(void) {
  * flip_idx (the sole image effect the harness verified). The video-base poke lives in the
  * supervisor-only $ffff8xxx region, so it is gated on hw_ready (set once we are in supervisor);
  * before that (file load / unpack, and the SMOKE render) only the flip_idx toggle happens. */
-static int hw_ready;
-
 void g_flip_screen(uint8_t *img) {
     uint16_t flip_idx = be16(img + A_flip_idx);
     if (hw_ready) {
@@ -259,9 +264,7 @@ void game_main(void) {
     extern long Fwrite(short handle, long count, void *buf);
     wr16(image + A_leg_index, 0);
     g_init_leg(image);
-    BEACON(5);
     g_draw_frame(image);
-    BEACON(6);
     g_xbios_setpalette(image, A_race_palette);
     g_flip_screen(image);
     for (int f = 0; f < SMOKE; f++) {
@@ -272,7 +275,6 @@ void game_main(void) {
         g_draw_hud(image);
         g_flip_screen(image);
     }
-    BEACON(7);
     {
         uint16_t drawn = be16(image + A_flip_idx);           /* the just-flipped buffer is the OTHER one */
         uint32_t buf = be32(image + A_physbase_tbl + ((drawn + 4) & 4));

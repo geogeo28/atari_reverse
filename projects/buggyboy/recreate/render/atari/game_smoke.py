@@ -27,7 +27,7 @@ from extract_graphics import write_png                # noqa: E402
 
 DISK = HERE / "disk"
 SCREEN_BYTES = W * H * 4 // 8                          # 32000
-RUN_VBLS = "2000"                                     # plenty for init + 120 frames, fast-forwarded
+RUN_VBLS = "8000"                                     # init + unpack + 120 render frames, fast-forwarded
 
 
 def run(timeout=90):

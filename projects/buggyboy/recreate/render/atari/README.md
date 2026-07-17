@@ -11,6 +11,11 @@ Four screens are wired up (selected at build time): `leg` → `g_draw_leg_result
 `g_draw_results_screen`, and `intermission` → `g_init_scoretable` + `g_draw_intermission` (the
 scrolling between-legs credits/table/times screen).
 
+**The whole game** is wired up too (`game_*` files): `game_main.c` mirrors the original `main()`
+— it builds the image, loads + unpacks the graphics, installs the VBL sound driver and IKBD
+joystick handler, and runs the attract → leg-select → race → results loop, all from the verified
+cores. See "Playable game" below.
+
 ## Why this works with unmodified cores
 
 The cores take the flat game image as a pointer argument and only ever compute `image + offset`
@@ -34,6 +39,11 @@ compiler/`libgcc` emit for their *own* code and data.
 | `build.sh`      | compile + link + wrap + stage the drive (`disk/`). |
 | `run_hatari.py` | headless: auto-run the PRG, read back `C:\SCREEN.BIN`, de-interleave to PNG, diff against the host render. |
 | `run.sh`        | interactive: launch Hatari (GUI) so you can watch it. |
+| `game_main.c`   | the whole game: image build, load+unpack, VBL sound, IKBD input, attract/leg-select/race/results loop (mirrors the original `main()`). |
+| `game_os.s`     | GEMDOS/XBIOS trap wrappers + the IKBD joystick-packet interrupt handler for the game build. |
+| `game_build.sh` | build `BUGGY.PRG` (add `smoke` for the headless `-DSMOKE` render test). |
+| `game_run.sh`   | play `BUGGY.PRG` in the Hatari GUI. |
+| `game_smoke.py` | headless: boot the smoke build, verify the on-target framebuffer is a real rendered scene. |
 
 ## Use
 
@@ -46,6 +56,30 @@ bash render/atari/run.sh highscore       # watch it in the Hatari GUI (press a k
 
 Hatari needs a 4 MiB machine here (`--memsize 4`) because the 1 MiB game image lives in the
 program's BSS. `build/` and `disk/` are gitignored build artifacts.
+
+## Playable game
+
+`game_main.c` + `game_os.s` build the entire reconstruction into a runnable game (not just a static
+screen). The cores are the whole game — `game_main` only supplies the hardware boundary the
+differential harness stubbed out: real `Setpalette`, a video-base page-flip in `g_flip_screen`, the
+IKBD joystick command sequence + packet handler for input, and the 50 Hz VBL sound driver installed
+in the TOS `_vblqueue`. It loads the data files in user mode (GEMDOS handle allocation misbehaves
+from supervisor — see [`docs/binary-formats.md`](../../../../docs/binary-formats.md)), then
+`Super()`s for the hardware phase.
+
+```bash
+bash render/atari/game_build.sh          # -> build/BUGGY.PRG + disk/
+bash render/atari/game_run.sh            # play it in the Hatari GUI (arrows steer, space fires, ESC quits a leg)
+
+bash render/atari/game_build.sh smoke    # -DSMOKE=120: skip leg-select, render 120 race frames, dump C:\SCREEN.BIN
+python render/atari/game_smoke.py        # headless: boot, run, verify the on-target framebuffer is a real rendered scene
+```
+
+The `smoke` build is the headless proof: it forces leg 0, runs the full per-frame pipeline
+(`game_update → render_road → blit_road_scroll → draw_game_objects → draw_hud → flip`) on the real
+68000, dumps the framebuffer and checks it is a non-blank scene (`out/render/game_smoke.png`). The
+`BEACON(n)` marker files (SMOKE-only) drop `B<n>` files on `C:` at each init step so a hang can be
+pinpointed by the highest marker present.
 
 ## Fidelity
 
