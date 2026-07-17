@@ -302,10 +302,61 @@ var 0x1b040 trace_pc
 
 # ==== comments ====
 cmt 0x10100 Game driver: init (Malloc buffers, install REFRESH as VBL) then attract/gameplay loops. Never returns.
-cmt 0x1110e game_update: input, integrate throttle->speed, steering->road_curve, off-road/collision, stream course, run event script, checkpoints/score.
+cmt 0x1110e game_update: input, integrate throttle->speed, steering->road_curve, off-road/collision, stream course, run event script, checkpoints/score. Reconstructed as g_game_update (src/game_update.c); verified run-to-rts (no traps). Residuals: sprite-mode 6 object-display palette-swap, the probe_collision D1-return path, and the idx 6/12 evt_flag_gate d7=6 variant.
 cmt 0x11aa2 Course-event jump table: 129 word-offset entries; handler = 0x11aa2 + entry.
 cmt 0x13144 Object-type sprite dispatch jump table (indexed by object type 0..63).
 cmt 0x10620 RLE graphics unpacker: 0x1234=zero-run, 0x5678=ff-run, 0x1234^3=end; then 4-plane interleave.
 cmt 0x1087e draw_object: scale+position a roadside object from road_width_tbl, dispatch to 8 blit variants.
 cmt 0x152ac draw_buggy: player car body + wheel/shadow sub-sprites, offset by crash/skid state.
 cmt 0x1b394 Sound-command jump table (note-stream commands >= 0x80).
+# ---- game_update @ 0x1110e per-frame state (see recreate/include/addrs.h for full roles) ----
+var 0x18d14 marker_pending   # b: gate -> handle_marker()
+var 0x18c86 crash_phase   # w: crash/despawn phase (signed
+var 0x18d12 rev_reload   # w: engine idle/rev-target reload (set to 8)
+var 0x1b07d engfreq   # b: EGFREQ engine-sound frequency (adjacent to EGFLAG 0x1b07c)
+var 0x18c82 event_pending   # w: pending-event id dispatched via A_event_jumptable
+var 0x18c98 fire_hold   # w: fire-hold / dashboard-variant countdown (init 4)
+var 0x18c96 leg_flags_sel   # w: +4&4 toggle
+var 0x18c3e timeout_gate   # w: must be 0 to arm the time-out (hud_crash_timer = 0x5b)
+var 0x18cce lean_phase   # w: +1&0xf lean-table phase (indexes A_lean_anim_tbl)
+var 0x18cca spin_word2   # w: second spin word
+var 0x18c80 turn_flags   # w: auto/view turn flag bits (_DAT_00018c80)
+var 0x18c88 curve_window   # l: curve-window pair [0]/[2] for the road_curve+0x4000 test
+var 0x18d1a curve_clamp_flag   # w: set when road_curve clamped
+var 0x18c94 speed_jitter_ph   # w: +1&0xe high-speed jitter phase (indexes A_speed_jitter_tbl)
+var 0x18c8e scroll_phase   # w: +2&0xe scroll-table phase (indexes A_scroll_speed_tbl)
+var 0x18c9a view_wrap_flag   # w: -1 when view_flags wrapped (gates render vs course-stream tail)
+var 0x18c54 view_bank   # w: +8&8 view-bank toggle on wrap
+var 0x18ccc steer_hold   # w: steer-hold counter
+var 0x18d16 curve_freeze   # w: nonzero freezes road_curve integration (_DAT_00018d16)
+var 0x19094 road_geom_hi   # l: road-geom output
+var 0x18c70 course_flag_bit   # b: course-flag bit cursor (wraps at the course byte value)
+var 0x18edc course_src_ring   # course-geometry source ring feeding road_curve_tbl (stride 0x20/iter)
+var 0x18c52 course_row_ctr   # w: course-record row countdown (-8
+var 0x18d32 marker_slope_src   # w: marker-slope source (+2 copied to +0)
+var 0x18cba palette_cursor   # w: +1&0x1f palette-record cursor (indexes buf_a+0x50)
+var 0x18c5c palette_toggle   # w: palette-swap double-buffer toggle
+var 0x17fb0 palette_scratch   # palette-record staging buffer (from buf_a+0xf2 record)
+var 0x19114 fx_block   # l: block base
+var 0x19118 fx_block_04   # l: +4 (obj_flags[0])
+var 0x1911a fx_block_06   # w: +6
+var 0x1911c fx_block_08   # l: +8
+var 0x1911e fx_block_0a   # +0xa: start of the 0xc-word copy dst
+var 0x19120 fx_block_0c   # l: +0xc
+var 0x19124 fx_block_10   # l: +0x10
+var 0x1912e fx_block_1a   # l: +0x1a (0x3e fill start)
+var 0x19132 fx_block_1e   # l: +0x1e
+var 0x19136 fx_block_22   # l: +0x22
+var 0x1913a fx_block_26   # l: +0x26 (==0x3d triggers the 0x3e fill)
+var 0x1913e fx_block_2a   # l: +0x2a
+var 0x19142 fx_block_2e   # b: +0x2e (end byte)
+var 0x18eca event_type   # w: 0x1a=checkpoint, 0x1d=collision (DAT_00018ec8._2_2_)
+var 0x18215 score_overlay_dig   # b: bonus score-overlay digit char
+var 0x173a4 legflag_tbl   # long records -> leg_flags_c90
+var 0x173ac lean_anim_tbl   # byte lean table
+var 0x17394 speed_jitter_tbl   # word speed-jitter adds
+var 0x1742c scroll_speed_tbl   # word scroll-speed table
+var 0x174ec steer_curve_tbl   # byte steer-curve
+var 0x18640 fx_type_tbl   # spin/collision fx records (0x18-byte)
+var 0x18690 crash_anim_tbl   # crash-anim records
+var 0x11aa2 event_jumptable   # word offsets to the evt_* handlers (from this base)

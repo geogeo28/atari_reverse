@@ -202,4 +202,63 @@
 #define A_horizon_frac        0x18c6e   /* output: horizon sub-row parity */
 #define A_ckpt_scroll         0x18c72   /* checkpoint-banner scroll position (word); += 4/frame, wraps */
 
+/* ---- game_update @ 0x1110e per-frame state (see the reconstruction for roles) ---- */
+#define A_marker_pending    0x18d14   /* b: gate -> handle_marker(); also set from the course stream */
+#define A_crash_phase       0x18c86   /* w: crash/despawn phase (signed; ==3 special) */
+#define A_rev_reload        0x18d12   /* w: engine idle/rev-target reload (set to 8) */
+#define A_engfreq           0x1b07d   /* b: EGFREQ engine-sound frequency (adjacent to EGFLAG 0x1b07c) */
+#define A_event_pending     0x18c82   /* w: pending-event id dispatched via A_event_jumptable */
+#define A_fire_hold         0x18c98   /* w: fire-hold / dashboard-variant countdown (init 4) */
+#define A_dsp_variant_idx   0x18c7e   /* w: +8&0x38 HUD dashboard-variant cursor */
+#define A_leg_flags_sel     0x18c96   /* w: +4&4 toggle; selects the legflag record */
+#define A_timeout_gate      0x18c3e   /* w: must be 0 to arm the time-out (hud_crash_timer = 0x5b) */
+#define A_lean_phase        0x18cce   /* w: +1&0xf lean-table phase (indexes A_lean_anim_tbl) */
+#define A_spin_word2        0x18cca   /* w: second spin word; hi half of the 0x18cc8 spin long */
+#define A_turn_flags        0x18c80   /* w: auto/view turn flag bits (_DAT_00018c80) */
+#define A_curve_window      0x18c88   /* l: curve-window pair [0]/[2] for the road_curve+0x4000 test */
+#define A_curve_clamp_flag  0x18d1a   /* w: set when road_curve clamped; gates the rpm brake */
+#define A_speed_jitter_ph   0x18c94   /* w: +1&0xe high-speed jitter phase (indexes A_speed_jitter_tbl) */
+#define A_scroll_phase      0x18c8e   /* w: +2&0xe scroll-table phase (indexes A_scroll_speed_tbl) */
+#define A_view_wrap_flag    0x18c9a   /* w: -1 when view_flags wrapped (gates render vs course-stream tail) */
+#define A_view_bank         0x18c54   /* w: +8&8 view-bank toggle on wrap */
+#define A_steer_hold        0x18ccc   /* w: steer-hold counter; >=10 gates the spin */
+#define A_curve_freeze      0x18d16   /* w: nonzero freezes road_curve integration (_DAT_00018d16) */
+#define A_road_edge_flags   0x1905c   /* w: road-geom output; sign + bits 0x1000/0x2000/0x4000 gate off-road push */
+#define A_road_geom_hi      0x19094   /* l: road-geom output; hi word < 0 gates the edge-push branch */
+#define A_course_flag_bit   0x18c70   /* b: course-flag bit cursor (wraps at the course byte value) */
+#define A_course_src_ring   0x18edc   /* course-geometry source ring feeding road_curve_tbl (stride 0x20/iter) */
+#define A_course_row_ctr    0x18c52   /* w: course-record row countdown (-8; <0 pulls the next record) */
+#define A_marker_slope_src  0x18d32   /* w: marker-slope source (+2 copied to +0) */
+#define A_palette_cursor    0x18cba   /* w: +1&0x1f palette-record cursor (indexes buf_a+0x50) */
+#define A_palette_toggle    0x18c5c   /* w: palette-swap double-buffer toggle */
+#define A_palette_scratch   0x17fb0   /* palette-record staging buffer (from buf_a+0xf2 record) */
+/* spin/collision effect block @ 0x19114 (0x2e bytes; built each frame, dispatched via jumptable) */
+#define A_fx_block          0x19114   /* l: block base; event bytes dispatched via A_event_jumptable */
+#define A_fx_block_04       0x19118   /* l: +4 (obj_flags[0]) */
+#define A_fx_block_06       0x1911a   /* w: +6; ==0x3d triggers the 0x3d fill */
+#define A_fx_block_08       0x1911c   /* l: +8 */
+#define A_fx_block_0a       0x1911e   /* +0xa: start of the 0xc-word copy dst */
+#define A_fx_block_0c       0x19120   /* l: +0xc */
+#define A_fx_block_10       0x19124   /* l: +0x10 */
+#define A_fx_block_1a       0x1912e   /* l: +0x1a (0x3e fill start) */
+#define A_fx_block_1e       0x19132   /* l: +0x1e */
+#define A_fx_block_22       0x19136   /* l: +0x22 */
+#define A_fx_block_26       0x1913a   /* l: +0x26 (==0x3d triggers the 0x3e fill) */
+#define A_fx_block_2a       0x1913e   /* l: +0x2a */
+#define A_fx_block_2e       0x19142   /* b: +0x2e (end byte) */
+#define A_event_type        0x18eca   /* w: 0x1a=checkpoint, 0x1d=collision (DAT_00018ec8._2_2_) */
+#define A_score_overlay_dig 0x18215   /* b: bonus score-overlay digit char */
+/* const tables (image data) game_update indexes */
+#define A_legflag_tbl       0x173a4   /* long records -> leg_flags_c90; indexed by leg_flags_sel */
+#define A_lean_anim_tbl     0x173ac   /* byte lean table; idx = lean_phase + (rpm&0x70) */
+#define A_speed_jitter_tbl  0x17394   /* word speed-jitter adds; idx = speed_jitter_ph & 0xe */
+#define A_scroll_speed_tbl  0x1742c   /* word scroll-speed table; idx = scroll_phase + (rpm&0x70) */
+#define A_steer_curve_tbl   0x174ec   /* byte steer-curve; idx = (rpm>>4)+(skid<<3)+(wheel<<3) */
+#define A_fx_type_tbl       0x18640   /* spin/collision fx records (0x18-byte); idx from obj flag bits>>5 */
+#define A_crash_anim_tbl    0x18690   /* crash-anim records; indexed by collision_lock */
+#define A_event_jumptable   0x11aa2   /* word offsets to the evt_* handlers (from this base) */
+#define A_time_subctr       0x18cfe   /* w: time-drain sub-counter (+1/frame, fires every 0xc) */
+#define A_steer_delta       0x18cae   /* w: per-frame steering delta added into road_curve */
+#define A_course_read_pos   0x18c50   /* w: byte offset into the packed course stream (+8 & 0x1ff8) */
+
 #endif /* BB_ADDRS_H */

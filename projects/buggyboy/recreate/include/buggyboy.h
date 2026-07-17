@@ -159,6 +159,10 @@ void g_draw_game_objects_prefix(uint8_t *image);
  * draw_game_objects, draw_hud (pure sequential wrapper, no args). */
 void g_draw_frame(uint8_t *image);
 
+/* game_update @0x1110e — the per-frame in-race game-logic driver (root orchestrator). No args;
+ * reads input + game state globals, returns each frame. */
+void g_game_update(uint8_t *image);
+
 /* blit_objshift @0x14680 — sub-pixel (fine-x shifted) 4-plane masked sprite blitter (leaf).
  * Register map: D0 x, D1 colour index, D4 rows-1, A0 dst scanline base, A1 src stream, A3 -> stride word. */
 void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,

@@ -4,11 +4,11 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 88/91.** (The 91 are the canonical functions in `decomp.c`'s inventory. This table also
+**Verified: 89/91.** (The 91 are the canonical functions in `decomp.c`'s inventory. This table also
 lists 6 reconstruction *helpers* discovered along the way — `draw_obj_sprite_hi`,
 `draw_obj_handler_dbl`, `draw_obj_handler_lo`, `blit_objshift`, `blit_objshift2`, `objsprite` — for
-97 rows total; those are not part of the 91. The 3 canonical functions still unverified are
-`init_playfield`, `game_update`, `intermission`.)
+97 rows total; those are not part of the 91. The 2 canonical functions still unverified are
+`init_playfield` and `intermission` (both interactive; `game_update`, their shared root, is done).)
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -50,7 +50,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x10f60` | `blit_obj_Rf2` | 146 | ✅ verified | 300-fuzz pixels (road walk) |
 | `0x10ff2` | `draw_ground` | 178 | ✅ verified | A6=buffer; marker scan x gradient/solid branches x band records (per-entry offset + color_pairs) |
 | `0x110a4` | `probe_collision` | 106 | ✅ verified | fuzz marker (y/bit/x) x random bitmap + zero-bitmap no-hit (8-neighbour dashboard probe) |
-| `0x1110e` | `game_update` | 2452 |  |  |
+| `0x1110e` | `game_update` | 2452 | ✅ verified | per-frame in-race game-logic driver (root of intermission/init_playfield); no traps, returns each frame. Run-to-rts diff: common path (sections 1-11: input/fire/time/lean/steer-script/engine-speed/scroll/wheel/road-curve/edge-crash) 400-fuzz; course-advance (section 12: table shuffles, course-record unpack, sprite-modes 0/2/4, fx-block, checkpoint/collision/score) else+pull+crash+course fuzz; event-jump-table dispatch idx 1-23 (flag_gate, score-message groups, checkpoint counters). Residuals: sprite-mode 6 (object-display palette-swap `recw-0x7db4`), the probe_collision D1-return path, and the idx 6/12 evt_flag_gate d7=6 variant — read-verified |
 | `0x11ba4` | `evt_flag_gate` | 104 | ✅ verified | fuzz: 5 entries x seq/bonus/slot (add_score + play_event_tune) |
 | `0x11c2c` | `evt_collision` | 46 | ✅ verified | fuzz lock x rpm (rpm floor + speed) |
 | `0x11c5a` | `evt_score_msg` | 24 | ✅ verified | fuzz d6/d7 (add_score + play_event_tune) |
@@ -207,8 +207,10 @@ registers, verified per frame on **both** the memory image and the emitted PSG (
 (the oracle's shim taps the `$ffff8800/8802` writes; the reconstruction appends them to a buffer).
 `test_refresh_music`/`_fx`/`_music_eg` seed real tracks/effects via INITTUNE/INITFX and step the
 driver; the EG block is driven directly. That leaves the sound driver **complete**. `render_road`,
-`draw_hud`, `draw_object_list`, `draw_game_objects` and the whole-frame wrapper `draw_frame` are done.
-Remaining overall: just the big orchestrators `game_update`, `intermission`, and `init_playfield`.
+`draw_hud`, `draw_object_list`, `draw_game_objects`, `draw_frame` and now the per-frame root
+`game_update` are done. Remaining: the two interactive menu/attract loops `intermission` and
+`init_playfield` (both call the now-verified `game_update`; they busy-poll input, so they need a
+scripted-keyboard harness + checkpoint verification).
 
 ## Oracle cross-validation
 
