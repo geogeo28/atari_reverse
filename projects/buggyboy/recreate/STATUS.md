@@ -4,7 +4,7 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 89/91.**
+**Verified: 90/91.**
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -75,7 +75,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x12af6` | `init_playfield` | 578 |  |  |
 | `0x12d38` | `init_leg_dash` | 80 | ✅ verified | leg 0-4 x 6-seed fuzz (marker seed + pixel-doubled dashboard build) |
 | `0x12d88` | `draw_leg_labels` | 154 | ✅ verified | leg 0-4 fuzz + empty-label edge (glyph AND/OR blit + 4-row clear -> probe_collision) |
-| `0x12e22` | `draw_frame` | 22 |  |  |
+| `0x12e22` | `draw_frame` | 22 | ✅ verified | whole-frame render wrapper (no logic/args): build_road_geometry → render_road → blit_road_scroll → draw_game_objects → draw_hud. Full-rts diff over a shared draw buffer + distinct buf_a/b/c arenas x 8 seeds; ~32.5 KB rendered per frame, poison-verified |
 | `0x12e38` | `clear_screen` | 30 | ✅ verified | flip 0/4 |
 | `0x12e56` | `fill_screen` | 4 | ✅ verified | flip 0/4 x colours |
 | `0x12e5a` | `fill_words` | 2 | ✅ verified | 500-seed fuzz |
@@ -203,9 +203,8 @@ registers, verified per frame on **both** the memory image and the emitted PSG (
 (the oracle's shim taps the `$ffff8800/8802` writes; the reconstruction appends them to a buffer).
 `test_refresh_music`/`_fx`/`_music_eg` seed real tracks/effects via INITTUNE/INITFX and step the
 driver; the EG block is driven directly. That leaves the sound driver **complete**. `render_road`,
-`draw_hud`, `draw_object_list` and now `draw_game_objects` (the per-frame scene/object orchestrator)
-are done. Remaining overall: the big orchestrators `game_update`, `intermission`, `init_playfield`,
-and the tiny draw wrapper `draw_frame` (all of whose callees are now verified).
+`draw_hud`, `draw_object_list`, `draw_game_objects` and the whole-frame wrapper `draw_frame` are done.
+Remaining overall: just the big orchestrators `game_update`, `intermission`, and `init_playfield`.
 
 ## Oracle cross-validation
 

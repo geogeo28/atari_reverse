@@ -24,6 +24,7 @@ fn 0x12d88 draw_leg_labels
 # ==== main loop / frame ====
 fn 0x1110e game_update
 fn 0x12e22 draw_frame
+cmt 0x12e22 Whole-frame render (pure sequential wrapper, no args): build_road_geometry -> render_road (via the 0x15af6 thunk) -> blit_road_scroll -> draw_game_objects -> draw_hud. Reconstructed as g_draw_frame.
 fn 0x102ee wait_vbl_set_offset
 fn 0x10300 set_screen_offset
 fn 0x121f8 flip_screen

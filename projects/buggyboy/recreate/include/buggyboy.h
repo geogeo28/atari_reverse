@@ -155,6 +155,10 @@ void g_draw_game_objects(uint8_t *image);
 /* Test-only: the deterministic prefix of draw_game_objects (marker/anim/bonus), for checkpoint diff. */
 void g_draw_game_objects_prefix(uint8_t *image);
 
+/* draw_frame @0x12e22 — whole-frame render: build_road_geometry, render_road, blit_road_scroll,
+ * draw_game_objects, draw_hud (pure sequential wrapper, no args). */
+void g_draw_frame(uint8_t *image);
+
 /* blit_objshift @0x14680 — sub-pixel (fine-x shifted) 4-plane masked sprite blitter (leaf).
  * Register map: D0 x, D1 colour index, D4 rows-1, A0 dst scanline base, A1 src stream, A3 -> stride word. */
 void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,

@@ -259,3 +259,15 @@ void g_draw_game_objects(uint8_t *image) {
         g_draw_object_list(image, A_obj_list_base, A_obj_flags, a6, 0, 0, 0);
     }
 }
+
+/* ---- draw_frame @ 0x12e22 --- the whole-frame render: build the road geometry, rasterize the
+ * road, fine-scroll it to the screen, draw the game objects, and draw the HUD. A pure sequential
+ * wrapper (no logic, no args); every callee derives its own buffer. render_road is reached via the
+ * 0x15af6 thunk in the original, an alias of the 0x19144 body (g_render_road). */
+void g_draw_frame(uint8_t *image) {
+    g_build_road_geometry(image);
+    g_render_road(image);
+    g_blit_road_scroll(image);
+    g_draw_game_objects(image);
+    g_draw_hud(image);
+}
