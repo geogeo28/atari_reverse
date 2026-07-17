@@ -204,10 +204,17 @@ void game_main(void) {
     wr32(image + A_buf_b, BUF_B);
     wr32(image + A_buf_c, BUF_C);
 
-    /* Double buffer: two draw buffers in the image; flip_idx selects which the cores draw into. */
+    /* Double buffer: two draw buffers, referenced by physbase_tbl[flip_idx] (flip_idx = 0 or 4).
+     * The ST video shifter can only display from a 256-byte-aligned base (it ignores the low 8
+     * address bits), so the buffers' RUNTIME addresses must be 256-aligned — the load address of
+     * `image` is whatever GEMDOS chose (not 256-aligned), so we can't rely on the array alignment.
+     * Store each entry as an offset whose `image + offset` is rounded up to a 256 boundary. */
     wr16(image + A_flip_idx, 0);
-    wr32(image + A_physbase_tbl + 0, DRAW_BUF_0);
-    wr32(image + A_physbase_tbl + 4, DRAW_BUF_1);
+    uint32_t base = (uint32_t)image;
+    uint32_t buf0 = ((base + DRAW_BUF_0 + 0xff) & ~0xffu) - base;   /* 256-aligned screen buffers */
+    uint32_t buf1 = ((base + DRAW_BUF_1 + 0xff) & ~0xffu) - base;
+    wr32(image + A_physbase_tbl + 0, buf0);
+    wr32(image + A_physbase_tbl + 4, buf1);
 
     load_file("COURSES.DAT", MEM_BASE, COURSES_LEN);
     long gra_n = load_file("GRAPHICS.GRA", BUF_C + GFX_LOAD_OFF, GRAPHICS_LEN);
