@@ -139,6 +139,10 @@ fn 0x128ea check_abort
 fn 0x12914 intermission_poll        # ctx
 fn 0x129a0 fade_step
 fn 0x129ba draw_intermission        # ctx
+var 0x18ca2 int_frame_hi            # intermission Phase-D per-leg dwell counter
+var 0x18ca4 int_frame               # intermission Phase-A scroll dwell / Phase-C demo frame counter
+var 0x18ca6 int_timer               # intermission Phase-A free-running scroll-gate timer
+var 0x18ca8 int_scroll              # draw_intermission vertical scroll position
 
 # ==== OS wrappers ====
 fn 0x12226 xbios_setscreen

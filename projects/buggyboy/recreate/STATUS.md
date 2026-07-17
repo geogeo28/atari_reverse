@@ -4,11 +4,12 @@ Human-readable C reconstruction of all 91 functions, each **verified byte-for-by
 against the original 68000 code** by the differential harness (Musashi oracle vs the
 compiled reconstruction). See [`README.md`](README.md) for how it works.
 
-**Verified: 89/91.** (The 91 are the canonical functions in `decomp.c`'s inventory. This table also
+**Verified: 90/91.** (The 91 are the canonical functions in `decomp.c`'s inventory. This table also
 lists 6 reconstruction *helpers* discovered along the way — `draw_obj_sprite_hi`,
 `draw_obj_handler_dbl`, `draw_obj_handler_lo`, `blit_objshift`, `blit_objshift2`, `objsprite` — for
-97 rows total; those are not part of the 91. The 2 canonical functions still unverified are
-`init_playfield` and `intermission` (both interactive; `game_update`, their shared root, is done).)
+97 rows total; those are not part of the 91. The 1 canonical function still unverified is
+`init_playfield` (interactive; `game_update`, its root, is done). `intermission` is verified to
+checkpoints — its unbounded demo-render loops are read-verified, see its row + notes.)
 
 ## Method per function
 1. Read the target in `../decomp.c` + the real disassembly (`prg_dis.py`) to fix semantics.
@@ -71,7 +72,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x1271c` | `draw_panel5` | 60 | ✅ verified | flip 0/4 (divider + 5 chained labels) |
 | `0x12758` | `draw_panel3` | 40 | ✅ verified | flip 0/4 (divider + 3 chained labels) |
 | `0x12780` | `draw_panel2` | 32 | ✅ verified | flip 0/4 (divider + 2 chained labels) |
-| `0x127a0` | `intermission` | 330 |  |  |
+| `0x127a0` | `intermission` | 330 | ✅ verified (checkpoints) | attract-mode / between-legs loop; never returns except on player abort, so verified piecewise by entering the oracle at each phase PC (mirrors the `g_int_*` phase-slice helpers). Prologue + Phase A (scrolling hi-score/credits screen) diffed **run-to-rts from the real entry** with an abort staged (counter init + 2 fade_step frames + palette + flips + one draw_intermission frame). Phase-A timer/scroll/dwell arithmetic + break-to-B: loop-head entry, each branch. Phase-B leg pick + Phase-D dwell/leg-carousel counters: cheap checkpoints. **Read-verified** (transparent counters over already-verified callees; would need ~50-frame full-game staging): the Phase-B `game_update`×0x33 warm-up + `draw_frame` pair, and the Phase-C per-frame render pipeline (`game_update`→`render_road`→`blit_road_scroll`→`draw_game_objects`→`draw_hud`) with its 0x96-frame counter |
 | `0x128ea` | `check_abort` | 42 | ✅ verified | return-value fuzz (abort code vs swap(Crawio)); GEMDOS 6 modeled |
 | `0x12914` | `intermission_poll` | 86 | ✅ verified | 25-seed fuzz x flip (9-entry table-driven block blit; not input) |
 | `0x129a0` | `fade_step` | 26 | ✅ verified | scroll fuzz x flip; prologue (fill_screen 6 + intermission_poll + Elite header) falling into draw_intermission |
@@ -208,9 +209,12 @@ registers, verified per frame on **both** the memory image and the emitted PSG (
 `test_refresh_music`/`_fx`/`_music_eg` seed real tracks/effects via INITTUNE/INITFX and step the
 driver; the EG block is driven directly. That leaves the sound driver **complete**. `render_road`,
 `draw_hud`, `draw_object_list`, `draw_game_objects`, `draw_frame` and now the per-frame root
-`game_update` are done. Remaining: the two interactive menu/attract loops `intermission` and
-`init_playfield` (both call the now-verified `game_update`; they busy-poll input, so they need a
-scripted-keyboard harness + checkpoint verification).
+`game_update` are done, and the attract/between-legs loop `intermission` is verified to checkpoints
+(prologue + Phase A run-to-rts via a staged abort; the counter arithmetic of Phases A/B/D by
+mid-function entry; the unbounded Phase-B warm-up + Phase-C render loops read-verified over their
+already-verified callees). Remaining: the interactive playfield-init loop `init_playfield` (calls
+the now-verified `game_update`; it busy-polls input, so it needs the same mid-entry + checkpoint
+treatment `intermission` uses).
 
 ## Oracle cross-validation
 

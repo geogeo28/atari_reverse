@@ -88,6 +88,13 @@ void g_intermission_poll(uint8_t *image);
 void g_draw_intermission(uint8_t *image);   /* scrolling between-legs screen (hi-score/times/credits) */
 void g_fade_step(uint8_t *image);           /* one intermission step: backdrop + header, falls into draw_intermission */
 
+/* intermission @ 0x127a0 — the attract-mode loop (never returns except on abort). The phase-slice
+ * helpers are the loop bodies, exposed so each is diffable by entering the oracle at its PC. */
+void g_intermission(uint8_t *image);
+int  g_int_stepA(uint8_t *image);           /* Phase-A body: 0 continue, 1 abort, 2 break-to-B */
+void g_int_phaseB_leg(uint8_t *image);      /* Phase-B leg-select advance -> leg_index */
+int  g_int_stepD_counter(uint8_t *image);   /* Phase-D dwell/leg counter: 0 draw, 1 advance, 2 restart */
+
 /* ---- masked buggy / foreground sprites (draw_fg_sprite .. draw_buggy @ 0x1518a..) ----
  * draw_buggy_wheels is the shared blit body: A0 dst, A1 src (into buf_c), D4 rows-1; each row
  * is 4 transparency cells, dst/src stepping one scanline up per row. */

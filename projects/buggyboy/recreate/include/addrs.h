@@ -88,6 +88,13 @@
 #define A_results_mode    0x18c9e   /* 0 = score made the table (name entry), 2 = did not; results layout */
 #define A_setrez_mode     0x18be6   /* byte set_rez sends to the IKBD via XBIOS Ikbdws (0x19) */
 
+/* ---- intermission @ 0x127a0 (attract-mode / between-legs loop) ---- */
+#define A_leg_select      0x18c36   /* attract-mode leg selector (0-4); copied to leg_index each cycle */
+#define A_int_frame_hi    0x18ca2   /* Phase-D per-leg dwell counter (word, 0..INT_D_DWELL-1) */
+#define A_int_frame       0x18ca4   /* Phase-A scroll dwell counter (init 0x14) / Phase-C demo frame counter */
+#define A_int_timer       0x18ca6   /* free-running Phase-A timer; gates the scroll advance at >= INT_SCROLL_GATE */
+#define A_int_scroll      0x18ca8   /* vertical scroll position consumed by draw_intermission */
+
 /* ---- screen / double-buffer ---- */
 #define A_flip_idx        0x18bf2   /* word: 0 or 4, selects the draw buffer in physbase_tbl */
 #define A_physbase_tbl    0x18bf4   /* table of screen-buffer pointers, indexed by flip_idx */
