@@ -1,11 +1,13 @@
 # Docs — routed by expertise domain
 
-Start with **[`00-overview.md`](00-overview.md)** for the end-to-end workflow. Then
+Start with **[`00-overview.md`](00-overview.md)** for the end-to-end workflow, then read
+**[`agent-playbook.md`](agent-playbook.md)** for how to work fast and prove it. After that,
 jump to the domain you need. Each doc is standalone and grounded in the BuggyBoy
 reference project, but written as general procedure for any Atari ST binary.
 
 | Doc | Read it when you need to… | Expertise |
 |-----|---------------------------|-----------|
+| [agent-playbook](agent-playbook.md) | **go fast and prove it** — the meta-practices + the differential reconstruction/verification loop that ties the rest together | lead / methodology |
 | [00-overview](00-overview.md) | see the whole pipeline + "what is this file?" decision tree | lead / generalist |
 | [binary-formats](binary-formats.md) | parse a `.PRG`/`.TOS`/`.TTP`, its header, symbols, relocations | binary formats |
 | [packed-executables](packed-executables.md) | the entry is garbage / high-entropy — depack via Hatari before analyzing | packing / dynamic |

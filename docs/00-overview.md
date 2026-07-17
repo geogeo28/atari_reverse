@@ -18,7 +18,14 @@ NAMING LOOP  (the bulk of the work)             → docs/methodology.md
   strings/symbols → name fn/var → reapply → repeat
   ▼
 assets on the side: graphics, sound             → docs/graphics.md, docs/sound.md
+  ▼
+(optional) RECONSTRUCT + PROVE                   → docs/agent-playbook.md §3–5
+  turn the named asm into clean C and verify it
+  byte-for-byte against an emulator oracle
 ```
+
+For the operating practices that make all of this fast — anchoring, verifying by execution,
+attack order, and the tight edit→verify loop — read **[`agent-playbook.md`](agent-playbook.md)**.
 
 Concretely, per project:
 
