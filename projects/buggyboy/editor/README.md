@@ -51,6 +51,8 @@ editor/
 ├── roadprofile.py     decode the road elevation profile + object slots from the stream
 ├── roadview.py        draw the road via the VERIFIED render_road (-> PNG/ASCII) + GameSession
 ├── roadwin.py         playable graphical window: drive the game through the verified code
+├── course3d.py        build a 3D course model (track-map path + elevation + objects) for the web UI
+├── web/               Flask + three.js interactive 3D editor (server.py + static/)
 ├── decode_course.py   CLI: dump a leg's stream, scroll table, markers
 ├── tui.py             curses UI: records + live map paint + road profile + PNG render
 ├── test_roundtrip.py  safety: identity round-trip + reversible edits + map decode
@@ -73,13 +75,37 @@ updated in lockstep — a future test could pin them equal by parsing `addrs.h`.
 ## Use
 
 ```bash
+mlenv python web/server.py                            # 3D web editor -> http://127.0.0.1:5000
 cd editor
-python tui.py                                         # interactive: browse records + live map
-python decode_course.py --leg 0 --records 40 --raw   # inspect leg 0 (non-interactive)
-python decode_course.py ../bin/COURSES.DAT --leg 3   # any file / leg
-python mapview.py 2                                   # dump leg 2's track map as ASCII
+python tui.py                                         # terminal editor: records + live map + road
+mlenv python roadwin.py --leg 0                       # playable window (drive the verified game)
+python decode_course.py --leg 0 --records 40 --raw    # inspect leg 0 (non-interactive)
+python roadview.py --leg 0 --seg 40 --ascii           # third-person road (terminal)
 python test_roundtrip.py                              # or: pytest test_roundtrip.py
 ```
+
+### 3D web editor (`web/`, Flask + three.js)
+
+The main interactive editor: a browser 3D view of a leg's course, built from the decoded data
+and editable live.
+
+```bash
+mlenv python web/server.py      # needs flask; open http://127.0.0.1:5000
+```
+
+- **The road** is a 3D ribbon whose horizontal PATH is traced from the leg's dashboard track-map
+  bitmap (largest connected component, longest path via double-BFS), whose HILLS come from the
+  record stream's segment slopes (elevation profile), with roadside-object markers from the
+  stream's object slots.
+- **Orbit** to inspect the whole course, or switch to **drive** (`M`) and follow it: `W`/`S`
+  throttle, `A`/`D` steer the view.
+- **Edit segment slopes** in the side panel — the 3D road re-renders live (POST `/api/edit` →
+  refetch the model). **Save** writes `COURSES.DAT` (a `.bak` first).
+
+Honest scope: the path is authentic to the leg's map and the hills/objects to the stream, but the
+two are aligned by normalized position along the leg (an approximation), the road width is a fixed
+ribbon, and the objects are markers (not the game's sprites). For pixel-authentic rendering use
+`roadwin.py` (the verified rasterizer); this view is a 3D reconstruction of the course *data*.
 
 ### Interactive UI (`tui.py`)
 

@@ -172,6 +172,39 @@ def test_roadwin_surface_if_available():
     assert speed > 0, "game did not advance"
 
 
+def test_course3d_model():
+    """The 3D course model traces a path, maps elevation, and lists objects for every leg."""
+    import course3d
+    data = DAT.read_bytes()
+    for leg in range(cf.LEG_COUNT):
+        c = course3d.build_course(data, leg)
+        assert len(c["path"]) > 50, (leg, len(c["path"]))          # a real traced path
+        assert len(c["elevation"]) == len(c["path"])
+        assert c["objects"] and all("t" in o and "type" in o for o in c["objects"])
+
+
+def test_web_backend_if_flask():
+    """If Flask is installed, the server serves the page + course JSON and applies a slope edit.
+
+    Skips (does not fail) otherwise — the web editor is optional tooling.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "web"))
+    try:
+        import server
+    except Exception as e:  # noqa: BLE001 - flask not present
+        print(f"skip test_web_backend ({type(e).__name__}: {e})")
+        return
+    cl = server.app.test_client()
+    assert cl.get("/").status_code == 200
+    assert cl.get("/static/app.js").status_code == 200
+    j = cl.get("/api/course/1").get_json()
+    assert len(j["path"]) > 50 and len(j["elevation"]) == len(j["path"])
+    end0 = cl.get("/api/course/0").get_json()["elevation"][-1]
+    assert cl.post("/api/edit", json={"leg": 0, "k": 5, "field": "slope", "value": 4}).get_json()["ok"]
+    assert cl.get("/api/course/0").get_json()["elevation"][-1] != end0   # edit changed the hills
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
