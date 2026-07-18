@@ -272,7 +272,7 @@ def _lzw(indices, mcs):
             emit(table[w], size)
             if nxt < 4096:
                 table[wp] = nxt; nxt += 1
-                if nxt == (1 << size) and size < 12:
+                if nxt == (1 << size) + 1 and size < 12:   # GIF early-change: widen one code after the boundary
                     size += 1
             else:
                 emit(clear, size); table = {(i,): i for i in range(clear)}; nxt = clear + 2; size = mcs + 1
@@ -284,17 +284,25 @@ def _lzw(indices, mcs):
     return bytes(out)
 
 
-def write_gif(path, frames, palette, delay_cs=10):
-    """frames: list of row-lists of palette indices (0..15); palette: list of (r,g,b). Loops forever."""
+def write_gif(path, frames, palette, delay_cs=10, transparent=None):
+    """frames: list of row-lists of palette indices (0..15); palette: list of (r,g,b). Loops forever.
+
+    transparent: a palette index to render as transparent. When set, each frame also uses disposal
+    method 2 (restore to background) so the transparent background is cleared between frames instead
+    of the previous frame showing through (which would leave trails)."""
     h = len(frames[0]); w = len(frames[0][0])
     pal = list(palette)[:16] + [(0, 0, 0)] * (16 - len(palette))
     gct = b"".join(bytes(c) for c in pal)              # 16-entry global colour table (size field 3)
+    bg = transparent or 0                              # logical-screen background index
+    # GCE packed field: disposal method (bits 2-4) | transparent-colour flag (bit 0).
+    packed = (2 << 2) | 1 if transparent is not None else 0
+    tidx = transparent if transparent is not None else 0
     buf = bytearray(b"GIF89a")
-    buf += w.to_bytes(2, "little") + h.to_bytes(2, "little") + bytes([0xF3, 0, 0])  # 0xF3: GCT, 16 cols
+    buf += w.to_bytes(2, "little") + h.to_bytes(2, "little") + bytes([0xF3, bg, 0])  # 0xF3: GCT, 16 cols
     buf += gct
     buf += b"\x21\xff\x0bNETSCAPE2.0\x03\x01\x00\x00\x00"   # loop forever
     for fr in frames:
-        buf += bytes([0x21, 0xF9, 0x04, 0x00, delay_cs & 0xFF, (delay_cs >> 8) & 0xFF, 0x00, 0x00])
+        buf += bytes([0x21, 0xF9, 0x04, packed, delay_cs & 0xFF, (delay_cs >> 8) & 0xFF, tidx, 0x00])
         buf += b"\x2c" + (0).to_bytes(2, "little") * 2 + w.to_bytes(2, "little") + h.to_bytes(2, "little") + b"\x00"
         pixels = [px for row in fr for px in row]
         data = _lzw(pixels, 4)
@@ -308,15 +316,31 @@ def write_gif(path, frames, palette, delay_cs=10):
     Path(path).write_bytes(buf)
 
 
-# ---- animations: pose the buggy per frame via the verified g_draw_buggy, assemble a GIF ----
+# ---- animations: pose the buggy per frame via the verified g_draw_* engine, assemble a GIF ----
 A_WHEEL_POS, A_LEAN_STATE, A_SKID = 0x18cc0, 0x18cc2, 0x18cbc
+A_BUGGY_PITCH_OFF, A_ANIM_FRAME = 0x18cbe, 0x18d0c   # crash pose: vertical pitch + fg fireball frame
+CRASH_ANIM_TBL = 0x18690                             # crash script: 8-byte records indexed by collision_lock
+CRASH_REC = 8                                        # bytes per crash_anim_tbl record
+CRASH_FLIP_START = 0x18                              # first record of the flip (roll-over) sub-sequence
+
+# per-animation draw chain: which verified engine entries to blit, in the game's draw order.
+DRAW_BODY = ("g_draw_buggy",)                                  # body only (lean / skid poses)
+DRAW_CRASH = ("g_draw_fg_sprite", "g_draw_buggy")             # fireball under the tumbling body
+
+# The cleared framebuffer background is palette index 0 (never used by the drawn sprite pixels, only
+# by their transparency mask). We mark it transparent in the GIF and recolour it purple, so it blends
+# with the page in browsers yet shows as a purple key in viewers that ignore GIF transparency.
+GIF_BG_INDEX = 0
+GIF_BG_PURPLE = (255, 0, 255)
 
 
-def _buggy_frame(pose):
+def _anim_frame(pose, draw_fns=DRAW_BODY):
     image, buf = rs._prepared_image(pose)
-    harness._lib.g_draw_buggy.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
-    harness._lib.g_draw_buggy.restype = None
-    harness._lib.g_draw_buggy(buf)
+    for name in draw_fns:
+        fn = getattr(harness._lib, name)
+        fn.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+        fn.restype = None
+        fn(buf)
     return rs._decode_interleaved(image, rs.SCREEN_BASE)
 
 
@@ -325,25 +349,46 @@ def render_animations(manifest):
     outdir.mkdir(parents=True, exist_ok=True)
     pal_img, _ = _staged_leg(0)
     pal = _leg_pal(pal_img)                            # leg-0 race palette (buggy colours)
+    pal[GIF_BG_INDEX] = GIF_BG_PURPLE                  # background -> purple, marked transparent below
     base = {rs.A_LEG_INDEX: (0).to_bytes(2, "big")}
 
     def w(v):
         return (v & 0xffff).to_bytes(2, "big")
 
+    # crash/explosion: walk the game's own crash_anim_tbl flip sub-sequence (verified game_update
+    # script) instead of hand-authoring poses. Each 8-byte record sets the tumble body frame
+    # (lean_state), the vertical pitch (buggy_pitch_off), and the foreground fireball frame
+    # (anim_frame, 0x08 at the roll-over peak). The walk advances by the record's own (8 - step)
+    # rule and stops at the terminal sentinel (lean high bit set), exactly as game_update does.
+    tbl_img, _ = rs._prepared_image(base)
+    crash_poses, idx = [], CRASH_FLIP_START
+    while (tbl_img[CRASH_ANIM_TBL + idx + 1] & 0x80) == 0:      # rec[1] < 0 -> terminal
+        rec = CRASH_ANIM_TBL + idx
+        crash_poses.append({
+            **base,
+            A_LEAN_STATE:      w(tbl_img[rec + 1]),                    # tumble body frame
+            A_BUGGY_PITCH_OFF: bytes(tbl_img[rec + 2:rec + 4]),       # vertical pitch (be16, verbatim)
+            A_ANIM_FRAME:      w(tbl_img[rec + 5]),                   # fg fireball frame (0x08 at the peak)
+        })
+        idx += CRASH_REC - tbl_img[rec]                            # game's advance: (8 - step)
+
+    # the buggy-body draw chain (draw_buggy + wheels/lo/hi); the crash adds the fg fireball entry.
+    body_fns = ["0x152ac", "0x151f6", "0x153fa", "0x154c6"]
     anims = [
         ("buggy_lean.gif", "Buggy lean sweep (lean_state, g_draw_buggy)",
-         [{**base, A_LEAN_STATE: w(v)} for v in (0, 6, 12, 0x18, 0x1c, 0x18, 12, 6)]),
+         [{**base, A_LEAN_STATE: w(v)} for v in (0, 6, 12, 0x18, 0x1c, 0x18, 12, 6)], DRAW_BODY, body_fns),
         ("buggy_skid.gif", "Buggy skid (skid_off ±8, g_draw_buggy)",
-         [{**base, A_SKID: w(v & 0xffff)} for v in (0, 4, 8, 4, 0, -4, -8, -4)]),
+         [{**base, A_SKID: w(v & 0xffff)} for v in (0, 4, 8, 4, 0, -4, -8, -4)], DRAW_BODY, body_fns),
+        ("buggy_crash.gif", "Buggy crash flip (crash_anim_tbl: tumbling g_draw_buggy + g_draw_fg_sprite fireball)",
+         crash_poses, DRAW_CRASH, ["0x1518a"] + body_fns),
     ]
-    for name, caption, poses in anims:
-        frames = [_buggy_frame(p) for p in poses]
+    for name, caption, poses, draw_fns, functions in anims:
+        frames = [_anim_frame(p, draw_fns) for p in poses]
         if len({tuple(tuple(r) for r in f) for f in frames}) < 2:
             print("  (skip %s: frames identical)" % name); continue
-        write_gif(str(outdir / name), frames, pal, delay_cs=12)
+        write_gif(str(outdir / name), frames, pal, delay_cs=12, transparent=GIF_BG_INDEX)
         manifest.append({"file": "sprites/%s" % name, "kind": "image", "cat": "sprites",
-                         "caption": caption,
-                         "functions": ["0x152ac", "0x151f6", "0x153fa", "0x154c6"],
+                         "caption": caption, "functions": functions,
                          "assetId": "sprite_banks"})
         print("  wrote", (outdir / name).relative_to(ASSETS))
 
