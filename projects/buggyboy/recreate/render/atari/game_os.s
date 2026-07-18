@@ -131,9 +131,12 @@ Malloc:
     rts
 
 | long Crawio(short w)          GEMDOS 0x06 (w=0xff -> non-blocking raw console input poll)
+| The C ABI passes `short` in a 4-byte slot; on big-endian m68k the value is the LOW word at 6(sp),
+| not 4(sp). Read the longword and push its low word (same idiom as Fcreate/Fopen).
     .globl  Crawio
 Crawio:
-    move.w  4(%sp),-(%sp)
+    move.l  4(%sp),%d0          | w (int); low word is the value
+    move.w  %d0,-(%sp)
     move.w  #0x06,-(%sp)
     trap    #1
     addq.l  #4,%sp
