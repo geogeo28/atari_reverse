@@ -14,6 +14,11 @@ decomp.c    decompiled C for all 91 functions (regenerate: reapply.sh)
 ghidra_proj Ghidra DB (open: ghidraRun → open this dir)
 out/        gfx/ (colour sprite screens) · courses_bitmap.png · dis.txt (first-pass 68k)
 run.sh      bootstrap (re-import — wipes names) ; reapply.sh  apply names.txt + re-export
+docs/       function_graph.html — interactive d3 call-graph explorer (regenerate: gen_graph.py)
+            docs/assets/ — the 8 decoded GRAPHICS.GRA sprite sheets, per-object roadside sprites
+            (one per objsprite_* handler, sliced by driving the real blitter), rendered
+            screens/course/palette PNGs, buggy-pose GIF animations, and tune/fx WAVs — all produced
+            by the C reconstruction (regenerate: gen_assets.py); manifest.json links each to its functions
 ```
 
 ## How it was solved (maps to the docs)
