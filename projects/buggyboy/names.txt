@@ -288,9 +288,11 @@ var 0x18c40 flag_seq_off
 var 0x17e3a flag_seq_table
 var 0x18c84 collision_lock
 var 0x18eb4 obj_active
+var 0x18b68 evt_obj_type_tbl
 var 0x17388 score_delta_bonus
 var 0x17370 score_delta_gate
 var 0x17376 score_delta_msg
+var 0x1738e score_delta_evt
 var 0x1737c score_delta_time
 var 0x17382 score_delta_roll
 var 0x17f5a crash_color_tbl

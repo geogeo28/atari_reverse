@@ -187,6 +187,9 @@ void g_draw_frame(uint8_t *image);
  * reads input + game state globals, returns each frame. */
 void g_game_update(uint8_t *image);
 
+/* Test glue: run one event-jump-table handler in isolation (idx -> target, entered at its PC). */
+void g_gu_dispatch_event(uint8_t *image, uint32_t idx, uint32_t d5, uint32_t d6, uint32_t d7);
+
 /* blit_objshift @0x14680 — sub-pixel (fine-x shifted) 4-plane masked sprite blitter (leaf).
  * Register map: D0 x, D1 colour index, D4 rows-1, A0 dst scanline base, A1 src stream, A3 -> stride word. */
 void g_blit_objshift(uint8_t *image, uint32_t x, uint32_t color, uint32_t rows_m1,

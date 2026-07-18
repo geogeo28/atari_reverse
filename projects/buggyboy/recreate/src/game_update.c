@@ -39,13 +39,22 @@ static void wrw(uint8_t *im, uint32_t a, uint16_t v) { wr16(im + a, v); }  /* wr
 static void game_update_course_advance(uint8_t *image);   /* section 12 (view-wrap frames) */
 static void game_update_fx_and_events(uint8_t *image);     /* sections G/H/I (course-advance tail) */
 
-/* Resolve an A_event_jumptable entry to its evt_* target and invoke it with the frame context.
- * The jump table (idx 0..23) reaches a family of course-event handlers:
+/* Resolve an A_event_jumptable entry to its handler target and invoke it with the frame context.
+ * The table has 65 live entries (idx 0..64) reaching a family of course-event handlers, all in
+ * 0x11ba4..0x11f4c. Grouped by resolved target address `t`:
  *   idx 1-5, 7-11  -> evt_flag_gate alt entries (0x11ba4..0x11bb4): each `moveq #k,d6` (obj_type
  *                     1..5) then the shared flag-sequence body; slot = d5.
  *   idx 13-21      -> score-message events (3 delta groups x {gate d6&&d7 / unconditional / d6&&!d7});
  *                     the fire is add_score(delta) then falls into play_event_tune(8).
- *   idx 22-23      -> checkpoint counter events: crash_lap++ / crash_active++ then play_event_tune(9).
+ *   idx 22-24      -> checkpoint counter events (crash_lap++/crash_active++ + tune 9), gates d6&&d7 /
+ *                     unconditional / d6&&!d7.
+ *   idx 30/60      -> spawn a marker-decay object + score + tune 0xa (0x11d3a).
+ *   idx 32-40      -> spin / rpm-penalty / collision-object spawns gated on collision_lock (0x11d64,
+ *                     0x11d8e, 0x11dcc, 0x11de2).
+ *   idx 25/27/43-59-> the common collision-object spawn (0x11e16).
+ *   idx 61-62      -> finish-line display record + stop_music (0x11e6a body; OR gates).
+ *   idx 41/42/63/64-> bonus-number display record + build_road_geometry + marker fx 8 (0x11ebe body).
+ *   idx 26/28/29/31-> bare-rts no-ops (0x11d38 / 0x11d62).
  *   idx 0          -> a bare rts (unreachable; call sites guard != 0).
  *   idx 6, 12      -> an evt_flag_gate variant entered with d7=6 (RESIDUAL: g_evt_flag_gate models the
  *                     d7=7 entry; the d7=6 sequence-index variant is not separately reconstructed). */
@@ -54,6 +63,24 @@ static void game_update_fx_and_events(uint8_t *image);     /* sections G/H/I (co
 #define GU_SCORE_C 0x17382
 #define GU_SCORE_TUNE 8
 #define GU_CKPT_TUNE  9
+#define GU_EVT_TUNE_A       0xa      /* object-spawn event tune (0x11d3a) */
+#define GU_MARKER_DECAY_ARM 0x1a0    /* marker_decay[4] countdown seed (0x11d3a) */
+#define GU_SPIN_SPEED_MIN   0x1e     /* speed floor to arm a spin (0x11d64) */
+#define GU_SPIN_LO          0xf      /* spin_reset value when d7==0 (0x11d64) */
+#define GU_SPIN_HI          0x19     /* spin_word2 value when d7!=0 (0x11d64) */
+#define GU_RPM_DROP         0x19     /* engine_rpm penalty (0x11de2) */
+#define GU_SPEED_BIG        0x64     /* collision_lock 8 vs 0x18 threshold (0x11e16) */
+#define GU_BONUS_HI_ID      0x32     /* event id >= this keeps the entry display params (0x11ebe) */
+/* opaque display-record payloads: [collision_lock]=type, [crash_phase]=count, [curve_window]=data. */
+#define GU_DISP_FINISH_A    0x90
+#define GU_DISP_FINISH_B    0x1a8
+#define GU_DISP_CW_FINISH   0x3ff6400aUL
+#define GU_DISP_TYPE_L      0x3e8     /* type/entry-d0 for the left/curve<0 bonus variant */
+#define GU_DISP_TYPE_R      0x460     /* type/entry-d0 for the right/curve>=0 bonus variant */
+#define GU_DISP_CW_L        0x3f2e3f42UL
+#define GU_DISP_CW_R        0x40be40d2UL
+#define GU_CURVE_STEP_L     0x3c      /* road_curve delta, left variant */
+#define GU_CURVE_STEP_R     0xffc4    /* road_curve delta, right variant (-0x3c) */
 
 static int gu_gate(int kind, uint16_t d6, uint16_t d7) {   /* 0=always, 1=d6&&d7, 2=d6&&!d7 */
     if (kind == 1) return d7 != 0 && d6 != 0;
@@ -64,6 +91,51 @@ static int gu_gate(int kind, uint16_t d6, uint16_t d7) {   /* 0=always, 1=d6&&d7
 static void gu_score_fire(uint8_t *image, uint32_t delta) {
     g_add_score(image, delta);
     g_play_event_tune(image, GU_SCORE_TUNE);
+}
+
+static void gu_ckpt_counter(uint8_t *image) {              /* 0x11d1a body: bump lap/active + tune 9 */
+    wrw(image, A_crash_lap,    (uint16_t)(rdw(image, A_crash_lap) + 1));
+    wrw(image, A_crash_active, (uint16_t)(rdw(image, A_crash_active) + 1));
+    g_play_event_tune(image, GU_CKPT_TUNE);
+}
+
+/* 0x11e6a body: finish-line display record then silence the music (unless game-over). */
+static void gu_disp_finish(uint8_t *image, uint16_t type) {
+    wr32(image + A_spin_reset, 0);                          /* clr.l -> spin_reset + spin_word2 */
+    wrw(image, A_collision_lock, type);
+    wrw(image, A_crash_phase, 1);
+    wr32(image + A_curve_window, GU_DISP_CW_FINISH);
+    g_stop_music(image);
+}
+
+/* 0x11ebe body: bonus-number display record. `id` (d1) is the event id; (type,curve_step) are the
+ * entry defaults for the id>=0x32 / spun-out cases. When collision_lock is already live it only
+ * refreshes event_pending; otherwise it rebuilds the record, re-picking type/curve by road_curve
+ * sign for low ids, then rebuilds the road and fires marker fx 8. (The fx_block[d2] read the 68k
+ * does before build_road_geometry is dead — that function ignores d0 — so it is omitted.) */
+static void gu_disp_bonus(uint8_t *image, uint16_t type, uint16_t id, uint16_t curve_step) {
+    if (rdw(image, A_collision_lock) != 0) {
+        if ((int16_t)rdw(image, A_crash_phase) < 0) id = 0;
+        wrw(image, A_event_pending, id);
+        return;
+    }
+    wr32(image + A_spin_reset, 0);
+    uint32_t cw = GU_DISP_CW_FINISH;
+    if ((int8_t)image[A_spin_state] != 0x20) {              /* not fully spun-out: pick by curve sign */
+        if ((int16_t)rdw(image, A_road_curve) < 0) {
+            cw = GU_DISP_CW_L;
+            if ((int16_t)id < GU_BONUS_HI_ID) { type = GU_DISP_TYPE_L; curve_step = GU_CURVE_STEP_L; }
+        } else {
+            cw = GU_DISP_CW_R;
+            if ((int16_t)id < GU_BONUS_HI_ID) { type = GU_DISP_TYPE_R; curve_step = GU_CURVE_STEP_R; }
+        }
+    }
+    wrw(image, A_collision_lock, type);
+    wrw(image, A_crash_phase, 0xffff);
+    wr32(image + A_curve_window, cw);
+    wrw(image, A_road_curve, (uint16_t)(rdw(image, A_road_curve) + curve_step));
+    g_build_road_geometry(image);
+    g_handle_marker(image, 8);
 }
 
 static void gu_dispatch_event(uint8_t *image, uint16_t idx, uint16_t d0, uint16_t d5,
@@ -78,23 +150,88 @@ static void gu_dispatch_event(uint8_t *image, uint16_t idx, uint16_t d0, uint16_
     };
     for (unsigned i = 0; i < sizeof score / sizeof score[0]; i++)
         if (t == score[i].addr) { if (gu_gate(score[i].gate, d6, d7)) gu_score_fire(image, score[i].delta); return; }
-    if (t == 0x11d12) {                                   /* idx 22: gated checkpoint counters */
-        if (d7 != 0 && d6 != 0) {
-            wrw(image, A_crash_lap, (uint16_t)(rdw(image, A_crash_lap) + 1));
-            wrw(image, A_crash_active, (uint16_t)(rdw(image, A_crash_active) + 1));
-            g_play_event_tune(image, GU_CKPT_TUNE);
+
+    /* checkpoint-counter group (shared 0x11d1a body, three gates). */
+    if (t == 0x11d12) { if (d7 != 0 && d6 != 0) gu_ckpt_counter(image); return; }   /* idx 22 */
+    if (t == 0x11d1a) { gu_ckpt_counter(image); return; }                           /* idx 23 */
+    if (t == 0x11d2e) { if (d7 == 0 && d6 != 0) gu_ckpt_counter(image); return; }   /* idx 24 */
+
+    if (t == 0x11d38 || t == 0x11d62) return;               /* bare-rts no-ops (idx 26/28/29/31) */
+
+    if (t == 0x11d3a) {                                      /* idx 30/60: spawn marker-decay object */
+        image[A_obj_active + 1 + (uint16_t)d5] = 0;
+        wrw(image, A_marker_decay,     (uint16_t)(rdw(image, A_marker_decay) + 1));
+        wrw(image, A_marker_decay + 2, d5);
+        wrw(image, A_marker_decay + 4, GU_MARKER_DECAY_ARM);
+        g_add_score(image, A_score_delta_evt);
+        g_play_event_tune(image, GU_EVT_TUNE_A);
+        return;
+    }
+    if (t == 0x11d64) {                                     /* idx 32/33: arm a spin if fast + unlocked */
+        if ((int16_t)rdw(image, A_speed) >= GU_SPIN_SPEED_MIN && rdw(image, A_collision_lock) == 0) {
+            if (d7 == 0) wrw(image, A_spin_reset, GU_SPIN_LO);
+            else         wrw(image, A_spin_word2, GU_SPIN_HI);
         }
         return;
     }
-    if (t == 0x11d1a) {                                   /* idx 23: unconditional checkpoint counters */
-        wrw(image, A_crash_lap, (uint16_t)(rdw(image, A_crash_lap) + 1));
-        wrw(image, A_crash_active, (uint16_t)(rdw(image, A_crash_active) + 1));
-        g_play_event_tune(image, GU_CKPT_TUNE);
+    if (t == 0x11d8e) {                                     /* idx 34: spawn collision object by rpm band */
+        if (rdw(image, A_collision_lock) == 0) {
+            wr32(image + A_spin_reset, 0);
+            wrw(image, A_turn_flags, 0);
+            uint16_t band = (uint16_t)((rdw(image, A_engine_rpm) & GU_RPM_BAND) >> 3);
+            wrw(image, A_collision_lock, be16(image + A_evt_obj_type_tbl + band));
+            wrw(image, A_crash_phase, 3);
+            g_handle_marker(image, band >= 6 ? 1 : 0);
+        }
         return;
     }
+    if (t == 0x11dcc) {                                     /* idx 35-37: freeze curve + marker fx 5 */
+        if (rdw(image, A_collision_lock) == 0) {
+            wrw(image, A_curve_freeze, 5);
+            g_handle_marker(image, 5);
+        }
+        return;
+    }
+    if (t == 0x11de2) {                                     /* idx 38-40: rpm penalty -> speed, marker fx 6 */
+        if (rdw(image, A_collision_lock) == 0) {
+            int16_t rpm = (int16_t)(rdw(image, A_engine_rpm) - GU_RPM_DROP);
+            if (rpm < GU_RPM_MIN) rpm = GU_RPM_MIN;
+            wrw(image, A_engine_rpm, (uint16_t)rpm);
+            uint16_t d1 = (uint16_t)(rpm - GU_RPM_MIN);
+            wrw(image, A_speed, (uint16_t)(d1 * 3));         /* speed = d1 + 2*d1 */
+            g_handle_marker(image, 6);
+        }
+        return;
+    }
+    if (t == 0x11e16) {                                     /* idx 25/27/43-59: common collision spawn */
+        if (rdw(image, A_collision_lock) == 0) {
+            wr32(image + A_spin_reset, 0);
+            wrw(image, A_turn_flags, 0x10);
+            wrw(image, A_collision_lock, (int16_t)rdw(image, A_speed) >= GU_SPEED_BIG ? 0x18 : 8);
+            wrw(image, A_crash_phase, 2);
+            g_handle_marker(image, 3);
+        }
+        return;
+    }
+
+    /* finish-line display (0x11e6a body); OR-style gates, two type variants. */
+    if (t == 0x11e4e) { if (d6 != 0 || d7 != 0) gu_disp_finish(image, GU_DISP_FINISH_A); return; }  /* idx 61 */
+    if (t == 0x11e5c) { if (d6 == 0 || d7 == 0) gu_disp_finish(image, GU_DISP_FINISH_B); return; }  /* idx 62 */
+
+    /* bonus-number display (0x11ebe body); OR-style gates, entry (type,id,curve_step) defaults. */
+    if (t == 0x11e8e) { if (d6 != 0 || d7 != 0) gu_disp_bonus(image, GU_DISP_TYPE_L, 0x29, GU_CURVE_STEP_L); return; }  /* idx 41 */
+    if (t == 0x11e96) { if (d6 != 0 || d7 != 0) gu_disp_bonus(image, GU_DISP_TYPE_L, 0x3f, GU_CURVE_STEP_L); return; }  /* idx 63 */
+    if (t == 0x11e92) { if (d6 == 0 || d7 == 0) gu_disp_bonus(image, GU_DISP_TYPE_R, 0x2a, GU_CURVE_STEP_R); return; }  /* idx 42 */
+    if (t == 0x11eaa) { if (d6 == 0 || d7 == 0) gu_disp_bonus(image, GU_DISP_TYPE_R, 0x40, GU_CURVE_STEP_R); return; }  /* idx 64 */
+
     if (t >= 0x11ba4 && t <= 0x11bb4) g_evt_flag_gate(image, d5, (uint16_t)((t - 0x11ba4) / 4 + 1));
     else if (t == 0x11c1a)            g_evt_flag_gate(image, d5, d6);   /* residual: d7=6 variant */
     /* t == 0x11c18 -> bare rts (no-op) */
+}
+
+/* Test glue: resolve+run one jump-table handler in isolation (entered at its own PC by the oracle). */
+void g_gu_dispatch_event(uint8_t *image, uint32_t idx, uint32_t d5, uint32_t d6, uint32_t d7) {
+    gu_dispatch_event(image, (uint16_t)idx, 0, (uint16_t)d5, (uint16_t)d6, (uint16_t)d7);
 }
 
 void g_game_update(uint8_t *image) {

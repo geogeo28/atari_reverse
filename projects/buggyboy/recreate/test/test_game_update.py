@@ -62,13 +62,57 @@ def _check(label, **st):
 harness._lib.g_game_update.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
 harness._lib.g_game_update.restype = None
 
+harness._lib.g_gu_dispatch_event.argtypes = [ctypes.POINTER(ctypes.c_uint8)] + [ctypes.c_uint32] * 4
+harness._lib.g_gu_dispatch_event.restype = None
+
 
 def test_event_pending_dispatch():
-    # event_pending 1..23 (collision_lock 0) fires the section-6 jump-table dispatch: flag_gate
-    # (1-11), score-message events (13-21), and checkpoint counters (22-23). d6=1,d7=0 at the site.
-    for ev in range(1, 24):
+    # event_pending 1..64 (collision_lock 0) fires the section-6 jump-table dispatch (d6=1,d7=0,d5=0):
+    # flag_gate (1-11), score-message events (13-21), checkpoint counters (22-24), and the object/spin/
+    # bonus/finish spawns (25-64). Whole-frame diff vs the oracle for every reachable jump-table index.
+    for ev in range(1, 65):
         diffs, _ = _check(f"ev{ev}", input_state=0, event_pending=ev, collision_lock=0)
         assert not diffs, f"event_pending={ev}\n{report(diffs[:24])}"
+
+
+# ---- per-handler isolation: enter the oracle at the handler PC and run to rts (like the evt_* tests),
+# so every jump-table target 22-64 is verified under all d6/d7 gates and its state preconditions,
+# independent of the surrounding frame. idx -> resolved target (one representative idx per target). ----
+_EVT_TARGETS = {
+    22: 0x11d12, 23: 0x11d1a, 24: 0x11d2e, 26: 0x11d38, 30: 0x11d3a, 31: 0x11d62,
+    32: 0x11d64, 34: 0x11d8e, 35: 0x11dcc, 38: 0x11de2, 25: 0x11e16, 61: 0x11e4e,
+    62: 0x11e5c, 41: 0x11e8e, 63: 0x11e96, 42: 0x11e92, 64: 0x11eaa,
+}
+_HA = dict(collision_lock=0x18c84, speed=0x18cf6, engine_rpm=0x18c8c, spin_state=0x18caa,
+           road_curve=0x18c6a, crash_phase=0x18c86, game_over=0x18c34, cur_tune=0x18cfa)
+A_MZFLAG = 0x1b07a   # gates stop_music / play_event_tune (kept 0 so those callees run)
+
+
+def test_event_handler_isolation():
+    rng = random.Random(0xE7A0)
+    for idx, target in _EVT_TARGETS.items():
+        for _ in range(40):
+            d5 = rng.choice([0, 3, 0x20])
+            d6 = rng.choice([0, 1])
+            d7 = rng.choice([0, 1, 0xff])
+            p = {
+                _HA["collision_lock"]: _w(rng.choice([0, 0, 8, 0x3e8])),
+                _HA["speed"]:          _w(rng.choice([0, 0x1e, 0x64, 0x120])),
+                _HA["engine_rpm"]:     _w(rng.choice([0xf, 0x40, 0x88, 0x1ff])),
+                _HA["road_curve"]:     _w(rng.choice([0, 0x100, -0x100 & 0xffff])),
+                _HA["crash_phase"]:    _w(rng.choice([0, 2, -1 & 0xffff])),
+                _HA["spin_state"]:     bytes([rng.choice([0, 0x20, 0x80])]),
+                _HA["game_over"]:      _w(0),
+                _HA["cur_tune"]:       _w(0),
+                A_MZFLAG:              bytes([0]),
+            }
+            regs = {"d5": d5, "d6": d6, "d7": d7, "_pokes": p}
+            diffs, _ = differential(
+                target, regs,
+                lambda lib, buf, i=idx, a=d5, b=d6, c=d7: lib.g_gu_dispatch_event(buf, i, a, b, c),
+                max_insns=3_000_000)
+            assert not diffs, (f"idx={idx} target={target:#x} d5={d5} d6={d6} d7={d7:#x}\n"
+                               f"{report(diffs[:24])}")
 
 
 

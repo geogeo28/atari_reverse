@@ -151,6 +151,8 @@
 #define A_score_delta_bonus 0x17388   /* const BCD deltas passed to add_score */
 #define A_score_delta_gate  0x17370
 #define A_score_delta_msg   0x17376
+#define A_score_delta_evt   0x1738e   /* 6th BCD delta; awarded by the tune-0xa object event (0x11d3a) */
+#define A_evt_obj_type_tbl  0x18b68   /* word[8]: collision-object type per rpm band, idx (rpm&0x70)>>3 (0x11d8e) */
 
 /* ---- roadside-object blitter state (draw_object @ 0x1087e) ---- computed from road_width_tbl,
  * then fed (as registers) to the blit_obj_* variants. lx/rx = left/right edge x; *_off = scanline
