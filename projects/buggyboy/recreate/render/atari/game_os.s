@@ -95,6 +95,15 @@ Vsync:
     addq.l  #2,%sp
     rts
 
+| void Dosound(const void *ptr)   XBIOS 0x20 (play a YM2149 sound command list; TOS steps it per VBL)
+    .globl  Dosound
+Dosound:
+    move.l  4(%sp),-(%sp)       | ptr -> command list
+    move.w  #0x20,-(%sp)
+    trap    #14
+    lea     6(%sp),%sp
+    rts
+
 | void Setpalette(const void *pal16)    XBIOS 6
     .globl  Setpalette
 Setpalette:

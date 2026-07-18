@@ -112,6 +112,41 @@ fixed-size copy: a per-cell `memcpy` in a fill/blit loop becomes a `jsr` with th
   on-target, byte-order-safe on the host). Keep it expressed through the `machine.h` accessors so
   the diff stays byte-identical.
 
+### 5. Off-image OS services the game *relies on for output* — dropped as no-ops
+
+The oracle models an OS call that has no image effect as a no-op, and the reconstruction faithfully
+drops it. That is correct for calls whose effect really is irrelevant (a `Vsync`, a palette load the
+test checks elsewhere) — but wrong when the call **is** the feature. The trap taxonomy above is about
+*timing/codegen/ABI*; this one is about a whole **behaviour** that never gets reconstructed because
+the harness can't see it. If it produces no image bytes, the differential test passes whether the
+call is there or not — so it silently isn't.
+
+- **Real example:** the leg-start **countdown beeps**. BuggyBoy plays "3-2-1-go" not through its own
+  VBL music driver (`REFRESH`) but by handing `stop_music` (@`0x12ec4`) an XBIOS **`Dosound`** command
+  list (`0x18bba`/`0x18bca`) each of the four race-start settle frames; TOS's per-VBL `Dosound`
+  engine steps the list and drives the YM2149 **hardware envelope** (reg 8=`0x10`, reg 13 shape). All
+  of it is off-image: `Dosound` writes the chip, not RAM. So the differential harness verified
+  `stop_music` *without* its `Dosound`, `game_main` reconstructed the four `stop_music` calls with no
+  list, and — separately — the VBL install replaced TOS's `_vblqueue` with just our handler, dropping
+  the routine that *steps* `Dosound`. Three independent "no image effect" omissions, one silent
+  feature. Engine/effects still worked (those go through the reconstructed `REFRESH`), so only the
+  `Dosound`-based sounds vanished.
+- **Symptom:** a specific sound (or other pure-hardware output) is missing on-target while everything
+  routed through reconstructed code works. Nothing in the diff is wrong.
+- **Diagnosis:** capture the *original* PRG's hardware trace and diff it against ours at the same
+  moment (`hatari --trace psg_write --trace-file`). A register the original writes and we never do
+  (here reg 13, the envelope shape) localises the missing service. Then find the data it consumes
+  (the `Dosound` lists are const bytes in the image: `07 fe 08 10 … 0d 0e … ff`) and the trap that
+  feeds it.
+- **Fix (PRG-only, harness stays byte-identical):** add the real trap wrapper (`Dosound` = XBIOS 32),
+  **preserve** the TOS `_vblqueue` entries the original keeps (so TOS's stepper runs), and issue the
+  call where the original does. The reconstructed core keeps its no-op model; the PRG supplies the
+  real call next to it — the seam pattern, applied to an *action* rather than a value.
+- **Working rule:** when reading a reconstructed function, treat every dropped/no-op OS call as a
+  question — *"is this call's only effect off-image, or is the off-image effect the point?"* A
+  `Dosound`, a `Cconout`, an `Ikbdws`, a palette poke to an unchecked register: each may be carrying
+  behaviour the test is blind to.
+
 ## Diagnostic toolkit
 
 You cannot single-step a `.PRG` the way you diff a function. These techniques turn "it's wrong on

@@ -197,6 +197,9 @@ var 0x18c08 buf_c
 var 0x18bf2 flip_idx
 var 0x18bf4 physbase_tbl
 var 0x18c0c vbl_sound_vec
+var 0x18bba dosound_beep   # XBIOS Dosound command list: one leg-start countdown beep (env-mode tone, shape-0 decay). main @0x1021c hands it to stop_music x3
+var 0x18bca dosound_go     # XBIOS Dosound command list: the final "go" beep (higher pitch); stop_music @0x1024c
+cmt 0x12ec4 stop_music: after parking vbl_sound_vec, issues XBIOS Dosound(A0) with the caller's command list. Off-image -> invisible to the harness (modeled no-op); the on-target PRG (game_main.c) plays the beep lists here.
 
 # ==== file loader (load_graphics @ 0x12166) ====
 var 0x18bea gfx_file_handle

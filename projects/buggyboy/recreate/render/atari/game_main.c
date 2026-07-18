@@ -44,6 +44,8 @@
 #define ACIA_TDRE     0x02
 #define SYS_NVBLS     (*(volatile int16_t *)0x454ul)        /* VBL-queue length */
 #define SYS_VBLQUEUE  (*(volatile uint32_t *)0x456ul)       /* -> array of VBL routine pointers */
+#define SYS_CONTERM   (*(volatile uint8_t *)0x484ul)        /* console flags: bit0 Ctrl-G bell, bit1 key
+                                                             * click, bit2 scancode in Cconin/Crawio */
 #define KBDV_JOYVEC   0x18                                  /* KBDVBASE offset: joystick-packet vector */
 #define KBDV_MOUSEVEC 0x10                                  /* KBDVBASE offset: mouse-packet vector */
 #define IKBD_INTERROGATE 0x16                               /* IKBD "report joystick now" command */
@@ -61,16 +63,29 @@ extern void Setpalette(const void *pal16);
 extern void Setcolor(int colornum, int color);   /* XBIOS 7: set one palette register */
 extern long Kbdvbase(void);
 extern void joy_handler(void);      /* asm joyvec handler: IKBD packet -> input_state */
+extern void Dosound(const void *ptr);   /* XBIOS 32: play a YM2149 command list (TOS steps it per VBL) */
+
+/* Leg-start countdown beeps. The original main() (0x1021c..0x10250) hands stop_music a Dosound
+ * command list per settle frame — three of the "beep" list then the "go" list — so TOS's Dosound
+ * engine plays the 3-2-1-go over the four wait_vbl_set_offset gaps. The differential harness models
+ * Dosound as a no-op (off-image), so the calls were never reconstructed; they live here in the PRG.
+ * The lists are const data in STATIC.BIN at these image offsets. */
+#define A_dosound_beep 0x18bba      /* one countdown beep (envelope-mode tone, shape-0 decay) */
+#define A_dosound_go   0x18bca      /* the final "go" beep (higher pitch) */
 
 /* joy_handler needs the image address of input_state (it is entered off the C ABI). */
 uint8_t *input_state_ptr;
 
 static uint8_t image[IMAGE_SIZE] __attribute__((aligned(256)));   /* BSS: TOS zeroes it at load */
 
-/* Our VBL queue: one entry, the sound driver. A function-pointer initializer in .data becomes an
- * R_68K_32 reloc that mkprg fixes up at load, so this points at the real vbl_handler address. */
+/* Our VBL queue: slot 0 is the sound driver, followed by the TOS VBL routines we displace (see the
+ * install below). The original main() (0x101b8) does exactly this — REFRESH first, then the 8
+ * existing _vblqueue entries — so TOS's own per-VBL work (including stepping XBIOS Dosound command
+ * lists, which the countdown uses) keeps running. A function-pointer initializer in .data becomes an
+ * R_68K_32 reloc that mkprg fixes up at load, so slot 0 points at the real vbl_handler address. */
+#define TOS_VBL_SLOTS 8
 static void vbl_handler(void);
-void (*vbl_queue[1])(void) = { vbl_handler };
+void (*vbl_queue[1 + TOS_VBL_SLOTS])(void) = { vbl_handler };
 
 /* freestanding libc the cores need (we link -nostdlib). Copy/fill in 32-bit words when both ends
  * are long-aligned (the common case: screen buffers + graphics blocks are all 4-byte aligned), which
@@ -298,12 +313,25 @@ void game_main(void) {
     g_read_joystick(image);
     BEACON(2);
 
-    /* Install the VBL sound driver (mirrors main writing REFRESH into _vblqueue). */
+    /* Install the VBL sound driver, preserving TOS's own VBL routines after it (mirrors main
+     * @0x101b8: REFRESH into slot 0, then copy the existing _vblqueue entries). Keeping the TOS
+     * entries lets its per-VBL Dosound stepper run, which plays the leg-start countdown beeps. */
     wr32(image + A_vbl_sound_vec, A_refresh);
-    SYS_NVBLS = 0;
-    SYS_VBLQUEUE = (uint32_t)(uintptr_t)vbl_queue;
-    SYS_NVBLS = 1;
+    {
+        uint32_t *old_q = (uint32_t *)(uintptr_t)SYS_VBLQUEUE;
+        int16_t old_n = SYS_NVBLS;
+        if (old_n > TOS_VBL_SLOTS) old_n = TOS_VBL_SLOTS;
+        for (int i = 0; i < old_n; i++)
+            vbl_queue[1 + i] = (void (*)(void))(uintptr_t)old_q[i];
+        SYS_NVBLS = 0;                                       /* detach while we swap the pointer */
+        SYS_VBLQUEUE = (uint32_t)(uintptr_t)vbl_queue;
+        SYS_NVBLS = (int16_t)(1 + old_n);
+    }
     BEACON(3);
+
+    /* Silence the TOS key-click / bell (original main() clears conterm @0x101dc). With it left set,
+     * TOS pokes the YM2149 on every key-down — an audible click the original doesn't have. */
+    SYS_CONTERM = 0;
 #endif
 
     g_init_scoretable(image);       /* default high-score table */
@@ -359,10 +387,15 @@ void game_main(void) {
         g_draw_frame(image);
         g_flip_screen(image);
 
-        g_stop_music(image); g_wait_vbl_set_offset(image);   /* four settle frames @0x226..0x254 */
-        g_stop_music(image); g_wait_vbl_set_offset(image);
-        g_stop_music(image); g_wait_vbl_set_offset(image);
-        g_stop_music(image); g_wait_vbl_set_offset(image);
+        /* Four settle frames @0x226..0x254. The original hands stop_music a Dosound command list
+         * each frame — the countdown "3-2-1-go": three beeps then the go tone — and stop_music
+         * (after parking the VBL sound vec) issues XBIOS Dosound(list). We reproduce that here: the
+         * reconstructed g_stop_music models Dosound as a no-op (off-image, invisible to the harness),
+         * so the PRG issues the real Dosound right after it, over the same four vblank-paced gaps. */
+        g_stop_music(image); Dosound(image + A_dosound_beep); g_wait_vbl_set_offset(image);
+        g_stop_music(image); Dosound(image + A_dosound_beep); g_wait_vbl_set_offset(image);
+        g_stop_music(image); Dosound(image + A_dosound_beep); g_wait_vbl_set_offset(image);
+        g_stop_music(image); Dosound(image + A_dosound_go);   g_wait_vbl_set_offset(image);
 
         for (;;) {                  /* per-frame race loop @0x254 */
             g_game_update(image);
