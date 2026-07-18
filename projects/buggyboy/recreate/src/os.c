@@ -36,6 +36,11 @@ void g_read_joystick(uint8_t *image) { (void)image; }
  * animations that the original throttles to the vblank (e.g. the leg-start "get ready" flash). */
 void g_vsync(void) { }
 
+/* dosound @ XBIOS 0x20 — hand a YM2149 command list to TOS's per-VBL sound engine (the leg-start
+ * countdown beeps, the engine idle, crash/collision effects). It writes the chip in hardware, not
+ * our image, so it has no image effect: a no-op in the harness, the real XBIOS trap in the PRG. */
+void g_dosound(uint8_t *image, uint32_t list_off) { (void)image; (void)list_off; }
+
 /* wait_music_off @ update_highscore 0x2406 / 0x25ca — spin until the VBL sound driver clears mzflag
  * (i.e. the current tune has played out). The 50 Hz VBL driver advances the tune off-image, so this
  * has no image effect and can never terminate under the oracle; it is a no-op in the harness and a

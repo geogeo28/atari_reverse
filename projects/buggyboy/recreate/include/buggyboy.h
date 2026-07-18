@@ -284,8 +284,11 @@ void g_build_sprite_shifts_msk(uint8_t *image, uint32_t dst_off, uint32_t src_of
 /* ---- sound-driver leaves (sound.c) ---- */
 void g_TURNOFF(uint8_t *image);
 void g_EGOFF(uint8_t *image);
-void g_stop_music(uint8_t *image);       /* silence the driver unless game-over; issues XBIOS Dosound */
-void g_stop_music_chk(uint8_t *image);   /* stop_music, gated on MZFLAG == 0 */
+/* stop_music/_chk take the Dosound command-list image offset the original passes in A0 (one of the
+ * A_dosound_* lists). Off-image: g_dosound is a no-op in the harness, the real XBIOS trap in the PRG. */
+void g_dosound(uint8_t *image, uint32_t list_off);               /* XBIOS 32: play a YM command list */
+void g_stop_music(uint8_t *image, uint32_t list_off);            /* silence the driver unless game-over; Dosound(list) */
+void g_stop_music_chk(uint8_t *image, uint32_t list_off);        /* stop_music, gated on MZFLAG == 0 */
 void g_INITFX(uint8_t *image, uint32_t fx_id);                   /* D0 = effect id */
 void g_INITTUNE(uint8_t *image, uint32_t tune_id);               /* D0 = tune id */
 /* per-frame note-stream steppers: A0 = voice record, A3 = SND_STATE (D0 is scratch, hi=0).

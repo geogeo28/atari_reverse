@@ -65,14 +65,6 @@ extern long Kbdvbase(void);
 extern void joy_handler(void);      /* asm joyvec handler: IKBD packet -> input_state */
 extern void Dosound(const void *ptr);   /* XBIOS 32: play a YM2149 command list (TOS steps it per VBL) */
 
-/* Leg-start countdown beeps. The original main() (0x1021c..0x10250) hands stop_music a Dosound
- * command list per settle frame — three of the "beep" list then the "go" list — so TOS's Dosound
- * engine plays the 3-2-1-go over the four wait_vbl_set_offset gaps. The differential harness models
- * Dosound as a no-op (off-image), so the calls were never reconstructed; they live here in the PRG.
- * The lists are const data in STATIC.BIN at these image offsets. */
-#define A_dosound_beep 0x18bba      /* one countdown beep (envelope-mode tone, shape-0 decay) */
-#define A_dosound_go   0x18bca      /* the final "go" beep (higher pitch) */
-
 /* joy_handler needs the image address of input_state (it is entered off the C ABI). */
 uint8_t *input_state_ptr;
 
@@ -213,6 +205,12 @@ void g_read_joystick(uint8_t *img) { (void)img; ikbd_send(IKBD_INTERROGATE); }
 /* vsync — real XBIOS Vsync (wait one vertical blank), gated on hw_ready like the other hardware
  * pokes. Paces animations the original throttles to the vblank (the leg-start "get ready" flash). */
 void g_vsync(void) { if (hw_ready) Vsync(); }
+
+/* dosound @0x12ec4 seam — hand a YM2149 command list (image + list_off) to TOS's per-VBL Dosound
+ * engine: the leg-start countdown beeps, the engine idle, crash/collision effects. No-op in the
+ * harness (off-image); real XBIOS trap here. Gated on hw_ready so the file-load/SMOKE phase can't
+ * poke the chip before we are in supervisor. TOS's kept _vblqueue entries step the list. */
+void g_dosound(uint8_t *img, uint32_t list_off) { if (hw_ready) Dosound(img + list_off); }
 
 /* wait_music_off — spin until the 50 Hz VBL sound driver has played the current tune out (it clears
  * mzflag from the interrupt when the track ends). The image byte is written by the VBL handler, so
@@ -389,13 +387,12 @@ void game_main(void) {
 
         /* Four settle frames @0x226..0x254. The original hands stop_music a Dosound command list
          * each frame — the countdown "3-2-1-go": three beeps then the go tone — and stop_music
-         * (after parking the VBL sound vec) issues XBIOS Dosound(list). We reproduce that here: the
-         * reconstructed g_stop_music models Dosound as a no-op (off-image, invisible to the harness),
-         * so the PRG issues the real Dosound right after it, over the same four vblank-paced gaps. */
-        g_stop_music(image); Dosound(image + A_dosound_beep); g_wait_vbl_set_offset(image);
-        g_stop_music(image); Dosound(image + A_dosound_beep); g_wait_vbl_set_offset(image);
-        g_stop_music(image); Dosound(image + A_dosound_beep); g_wait_vbl_set_offset(image);
-        g_stop_music(image); Dosound(image + A_dosound_go);   g_wait_vbl_set_offset(image);
+         * (after parking the VBL sound vec) issues XBIOS Dosound(list) over the four vblank-paced
+         * gaps. Our g_stop_music threads that list through the g_dosound seam (a no-op off-target). */
+        g_stop_music(image, A_dosound_beep); g_wait_vbl_set_offset(image);
+        g_stop_music(image, A_dosound_beep); g_wait_vbl_set_offset(image);
+        g_stop_music(image, A_dosound_beep); g_wait_vbl_set_offset(image);
+        g_stop_music(image, A_dosound_go);   g_wait_vbl_set_offset(image);
 
         for (;;) {                  /* per-frame race loop @0x254 */
             g_game_update(image);

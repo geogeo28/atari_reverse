@@ -180,6 +180,15 @@
 #define A_mzflag          0x1b07a   /* music-active flag */
 #define A_fxflag          0x1b07b   /* effect-active flag */
 
+/* XBIOS Dosound command lists (const data in the image) that stop_music/stop_music_chk hand to the
+ * chip in A0. Off-image (Dosound writes the YM2149, not RAM), so invisible to the differential
+ * harness; the on-target PRG plays them via the g_dosound seam. Each is an envelope-mode YM sound. */
+#define A_dosound_beep    0x18bba   /* leg-start countdown beep (shape-0 decay); main @0x1021c x3 */
+#define A_dosound_go      0x18bca   /* leg-start final "go" beep (higher pitch); main @0x10246 */
+#define A_dosound_idle    0x18ba2   /* engine idle (shape-0xe repeating tone); game_update @0x1115e */
+#define A_dosound_collide 0x18b78   /* collision / spin-out sound; gu_disp_finish @0x11e82 */
+#define A_dosound_crash   0x18b92   /* crash sound; draw_crash_fx @0x15914 */
+
 /* ---- fill patterns ---- */
 #define A_color_pairs     0x15afa   /* 8-byte (4-plane) solid-fill pattern per colour index */
 

@@ -105,7 +105,7 @@ static void gu_disp_finish(uint8_t *image, uint16_t type) {
     wrw(image, A_collision_lock, type);
     wrw(image, A_crash_phase, 1);
     wr32(image + A_curve_window, GU_DISP_CW_FINISH);
-    g_stop_music(image);
+    g_stop_music(image, A_dosound_collide);
 }
 
 /* 0x11ebe body: bonus-number display record. `id` (d1) is the event id; (type,curve_step) are the
@@ -242,7 +242,7 @@ void g_game_update(uint8_t *image) {
     }
     if (rdw(image, A_game_over_flag) == 0 && (int16_t)rdw(image, A_crash_phase) >= 0
         && rdw(image, A_crash_phase) != 1 && rdw(image, A_crash_frame) == 0) {
-        if (rdw(image, A_speed) == 0) { wrw(image, A_rev_reload, 8); g_stop_music_chk(image); }
+        if (rdw(image, A_speed) == 0) { wrw(image, A_rev_reload, 8); g_stop_music_chk(image, A_dosound_idle); }
         else { image[EGFLAG_ADDR] = 1; wr32(image + A_vbl_sound_vec, A_refresh); }
     } else {
         g_EGOFF(image);

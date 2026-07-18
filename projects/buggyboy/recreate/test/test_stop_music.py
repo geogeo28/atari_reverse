@@ -25,7 +25,7 @@ SND_MUSIC_WORD = 0x1b064       # SND_STATE + 0x08 -> 0 (word)
 
 for name in ("g_stop_music", "g_stop_music_chk"):
     fn = getattr(harness._lib, name)
-    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]  # (image, dosound list_off)
     fn.restype = None
 
 
@@ -50,7 +50,7 @@ def _check(entry, glue, game_over, mzflag, seed, label):
 
 
 def test_stop_music():
-    glue = lambda l, b: l.g_stop_music(b)
+    glue = lambda l, b: l.g_stop_music(b, 0)   # list_off irrelevant: Dosound is off-image (no-op here)
     for seed in range(12):
         _check(STOP_MUSIC, glue, game_over=0, mzflag=seed & 0xff, seed=seed, label="stop_music/active")
     for seed in range(4):
@@ -58,7 +58,7 @@ def test_stop_music():
 
 
 def test_stop_music_chk():
-    glue = lambda l, b: l.g_stop_music_chk(b)
+    glue = lambda l, b: l.g_stop_music_chk(b, 0)
     for seed in range(12):
         _check(STOP_MUSIC_CHK, glue, game_over=0, mzflag=0, seed=seed, label="chk/run")
     for seed in range(6):

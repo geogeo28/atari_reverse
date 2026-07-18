@@ -157,23 +157,25 @@ void g_EGOFF(uint8_t *image) {
 
 /* stop_music @0x12ec4 — silence the driver unless a game-over is latched: TURNOFF the music state,
  * clear the effect flag and current tune, park the VBL sound vector at a bare rts (disabling the
- * refresh handler), then issue XBIOS Dosound. Dosound(A0) writes the YM2149 in hardware, not our
- * image, so it has no observable effect (like the other XBIOS wrappers in os.c). */
+ * refresh handler), then issue XBIOS Dosound(A0). A0 is the command list the caller passes (one of
+ * the A_dosound_* lists — the leg-start beeps, the engine idle, crash/collision effects). Dosound
+ * writes the YM2149 in hardware, not our image, so it has no observable effect on the differential
+ * diff; g_dosound is a no-op in the harness and the real XBIOS trap in the on-target PRG. */
 #define VBL_SOUND_RTS  0x12ef4    /* bare rts vbl_sound_vec is parked at (0x2ef4 + load base) */
 
-void g_stop_music(uint8_t *image) {
+void g_stop_music(uint8_t *image, uint32_t list_off) {
     if (be16(image + A_game_over_flag) != 0) return;
     g_TURNOFF(image);
     image[A_fxflag] = 0;
     wr16(image + A_cur_tune_id, 0);
     wr32(image + A_vbl_sound_vec, VBL_SOUND_RTS);
-    /* XBIOS Dosound(A0): hardware-only, no image effect. */
+    g_dosound(image, list_off);                        /* XBIOS Dosound(A0): hardware-only */
 }
 
 /* stop_music_chk @0x12ebc — stop_music, but only when no music is playing (MZFLAG == 0). */
-void g_stop_music_chk(uint8_t *image) {
+void g_stop_music_chk(uint8_t *image, uint32_t list_off) {
     if (image[A_mzflag] != 0) return;
-    g_stop_music(image);
+    g_stop_music(image, list_off);
 }
 
 /* INITFX @0x1b560 — load effect D0's parameter record into the effect voice state. */

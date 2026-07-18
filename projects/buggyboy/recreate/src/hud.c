@@ -74,7 +74,7 @@ void g_draw_crash_fx(uint8_t *image, uint32_t buffer) {
         }
         if (do_score) {
             g_add_score(image, delta);
-            g_stop_music_chk(image);
+            g_stop_music_chk(image, A_dosound_crash);
         }
     }
 
