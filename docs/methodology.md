@@ -67,3 +67,34 @@ stays the source of truth.
 `main` and the frame loop read as pseudocode; every function has a meaningful name; the
 key globals (state, buffers, tables) are labelled; jump tables and asset formats are
 documented. See `projects/buggyboy/README.md` for a finished example (91/91 functions).
+
+## "Verified" ≠ "complete": the checkpoint trap (this bit us on sound)
+
+A green differential test proves *our code ≡ the original, up to where the oracle can run it*.
+It says **nothing** about behaviour past that point. Interactive functions that never return under
+the oracle (they wait on the IKBD / a `mzflag` spin / Vsync) are verified only to a **checkpoint**
+PC — the deterministic prefix runs, the tail is read-verified. That is fine, *as long as you track
+what the checkpoint hides*.
+
+We didn't, once. `update_highscore` was checkpoint-verified at `0x12450`/`0x123e6` — one instruction
+*before* its `play_event_tune` calls. The prefix stub returned there and `game_main.c` called it and
+moved on, so the game-over jingle and the name-entry jingle were never reconstructed and never
+reachable in the playable build. Three tune triggers sat on the far side of a "91/91 verified" line.
+The suite stayed 100% green the whole time the game was silent; it took running on hardware and a
+human ear to notice (see [`on-target-execution.md`](on-target-execution.md) — same blind spot, applied
+to a *missing feature* rather than perf).
+
+Lessons, now guardrails:
+
+- **A checkpoint is a suspicious boundary — ask what's on the other side.** If the deferred tail
+  contains sound / palette / trap / I/O pokes, the harness cannot see them *and* they may be silently
+  absent from the PRG. Note it explicitly in `STATUS.md`, don't let "read-only tail" read as "done".
+- **Audit call-graph coverage, not just per-function correctness.** Grep the disassembly for every
+  `play_event_tune` / `INITTUNE` / `INITFX` (and each trap / palette poke) call site and confirm each
+  is both reconstructed *and* reachable in the playable build — or logged as intentionally omitted.
+  That one grep would have caught the silent tunes immediately.
+- **Don't let the headline count flatten the distinction.** "N/N verified" should still say which are
+  checkpoint/piecewise-verified; a deferred tail is a *known gap*, not a finished function.
+- **The playable build is its own verification surface.** A cheap on-target smoke check ("does every
+  subsystem produce output — sound triggers, palette, input?"), e.g. a PSG-write / border-colour probe,
+  catches this class of gap that the differential suite is structurally blind to.
