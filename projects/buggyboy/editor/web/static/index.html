@@ -8,6 +8,7 @@
 </head>
 <body>
   <div id="scene"></div>
+  <canvas id="game" width="320" height="200"></canvas>
 
   <div id="ui">
     <div class="panel">
@@ -15,11 +16,12 @@
       <div class="row" id="legs"></div>
       <div class="row">
         <button id="mode">mode: orbit</button>
+        <button id="play">▶ play (real game)</button>
         <button id="save">save COURSES.DAT</button>
       </div>
       <div class="hint">
-        drive: <b>W/S</b> throttle · <b>A/D</b> steer · <b>M</b> orbit/drive ·
-        drag to look (orbit)
+        <b>3D:</b> W/S throttle · A/D steer · M orbit/drive · drag to look<br>
+        <b>play:</b> arrows / WASD drive · space fire · authentic verified render
       </div>
       <div id="status" class="status"></div>
     </div>

@@ -204,6 +204,15 @@ def test_web_backend_if_flask():
     assert cl.post("/api/edit", json={"leg": 0, "k": 5, "field": "slope", "value": 4}).get_json()["ok"]
     assert cl.get("/api/course/0").get_json()["elevation"][-1] != end0   # edit changed the hills
 
+    # authentic game stream (needs the .so + numpy); skip that leg gracefully if unavailable
+    reset = cl.post("/api/game/reset", json={"leg": 0})
+    if reset.status_code != 200:
+        print(f"skip game stream ({reset.get_json()})")
+        return
+    for _ in range(10):
+        frame = cl.post("/api/game/step", json={"input": 1})
+    assert frame.status_code == 200 and len(frame.get_data()) == 320 * 200 * 4
+
 
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):

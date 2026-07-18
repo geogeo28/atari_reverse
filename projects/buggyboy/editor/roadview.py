@@ -118,15 +118,20 @@ class GameSession:
     and the HUD are all rendered authentically by draw_frame. Input is injected via input_state
     (read_input keeps it when any bit is set). The framebuffer is at rs.SCREEN_BASE.
     """
-    def __init__(self, leg=0):
+    def __init__(self, leg=0, courses=None):
         self._init = _bind("g_init_leg")
         self._update = _bind("g_game_update")
         self._frame = _bind("g_draw_frame")
-        self.reset(leg)
+        self.reset(leg, courses)
 
-    def reset(self, leg=0):
+    def reset(self, leg=0, courses=None):
+        """Stage a fresh leg. If `courses` is given (edited COURSES.DAT bytes) it is staged at
+        MEM_BASE so edits are driven; otherwise render_screen stages the on-disk file."""
         self.leg = leg
-        self.image, self.buf = rs._prepared_image({A_LEG_INDEX: leg.to_bytes(2, "big")})
+        state = {A_LEG_INDEX: leg.to_bytes(2, "big")}
+        if courses is not None:
+            state[rs.MEM_BASE] = bytes(courses)
+        self.image, self.buf = rs._prepared_image(state)
         self._init(self.buf)
         for _ in range(GAME_WARMUP):
             self.step(IN_ACCEL)

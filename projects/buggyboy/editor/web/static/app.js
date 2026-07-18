@@ -115,10 +115,60 @@ function updateDrive(dt) {
 
 function animate() {
   requestAnimationFrame(animate);
+  if (playing) return;                        // play mode drives its own canvas loop
   const dt = Math.min(0.05, clock.getDelta());
   if (mode === "drive" && course) updateDrive(dt);
   else controls.update();
   renderer.render(scene, camera);
+}
+
+// ---- authentic game stream: the verified render_road + object sprites + buggy + HUD ----
+let playing = false, gameCtx = null, gameImage = null;
+
+function gameInput() {
+  let b = 0;
+  if (keys["w"] || keys["arrowup"]) b |= 1;         // accelerate
+  if (keys["s"] || keys["arrowdown"]) b |= 2;       // brake
+  if (keys["a"] || keys["arrowleft"]) b |= 4;       // left
+  if (keys["d"] || keys["arrowright"]) b |= 8;      // right
+  if (keys[" "]) b |= 0x80;                          // fire
+  return b;
+}
+
+async function gameLoop() {
+  if (!playing) return;
+  try {
+    const r = await fetch("/api/game/step", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: gameInput() }) });
+    if (r.ok) {
+      const buf = new Uint8ClampedArray(await r.arrayBuffer());
+      gameImage.data.set(buf);
+      gameCtx.putImageData(gameImage, 0, 0);
+    }
+  } catch (e) { /* transient */ }
+  if (playing) requestAnimationFrame(gameLoop);
+}
+
+async function togglePlay() {
+  playing = !playing;
+  const canvas = $("game");
+  $("play").classList.toggle("active", playing);
+  $("play").textContent = playing ? "■ stop" : "▶ play (real game)";
+  canvas.style.display = playing ? "block" : "none";
+  renderer.domElement.style.display = playing ? "none" : "block";
+  if (!playing) return;
+  if (!gameCtx) { gameCtx = canvas.getContext("2d"); gameImage = gameCtx.createImageData(320, 200); }
+  const r = await fetch("/api/game/reset", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ leg }) });
+  if (!r.ok) {
+    const err = await r.json();
+    status("game unavailable: " + (err.error || r.status) + " — build the .so (cd recreate && make)");
+    return togglePlay();                     // flip back to 3D
+  }
+  status("playing leg " + leg + " — the real verified render (edits included)");
+  gameLoop();
 }
 
 // ---- segment slope editor ----
@@ -180,6 +230,7 @@ function init() {
     const r = await (await fetch("/api/save", { method: "POST" })).json();
     status("saved " + r.path);
   };
+  $("play").onclick = togglePlay;
   addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
   addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
   addEventListener("keypress", e => { if (e.key.toLowerCase() === "m") $("mode").click(); });

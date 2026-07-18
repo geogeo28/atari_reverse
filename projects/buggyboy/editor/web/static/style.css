@@ -3,6 +3,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e13;
   font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #cdd6e0; }
 #scene { position: fixed; inset: 0; }
 #scene canvas { display: block; }
+#game { position: fixed; inset: 0; width: 100vw; height: 100vh; background: #000;
+  image-rendering: pixelated; display: none; z-index: 1; }
+#ui { z-index: 2; }
 
 #ui { position: fixed; top: 12px; left: 12px; display: flex; flex-direction: column;
   gap: 10px; max-height: calc(100vh - 24px); }

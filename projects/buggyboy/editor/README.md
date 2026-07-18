@@ -101,11 +101,14 @@ mlenv python web/server.py      # needs flask; open http://127.0.0.1:5000
   throttle, `A`/`D` steer the view.
 - **Edit segment slopes** in the side panel — the 3D road re-renders live (POST `/api/edit` →
   refetch the model). **Save** writes `COURSES.DAT` (a `.bak` first).
+- **▶ play (real game)** — switches to the **authentic** render: the browser streams the verified
+  `GameSession` framebuffer (verified `game_update` + `draw_frame`), so you drive the actual game
+  — real pseudo-3D road, real object **sprites**, buggy and HUD — with arrows/WASD + space. It
+  stages the current (edited) `COURSES.DAT` bytes, so your edits are driven. Needs the built `.so`.
 
-Honest scope: the path is authentic to the leg's map and the hills/objects to the stream, but the
-two are aligned by normalized position along the leg (an approximation), the road width is a fixed
-ribbon, and the objects are markers (not the game's sprites). For pixel-authentic rendering use
-`roadwin.py` (the verified rasterizer); this view is a 3D reconstruction of the course *data*.
+The 3D scene is a reconstruction of the course *data* (traced path + hills + object markers); the
+**play** mode is the game's own pixels. Two honest views of the same leg — the 3D to see the whole
+course shape and edit it, the play mode to see exactly how it renders.
 
 ### Interactive UI (`tui.py`)
 
