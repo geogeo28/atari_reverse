@@ -64,6 +64,12 @@ static void game_update_fx_and_events(uint8_t *image);     /* sections G/H/I (co
 #define GU_SCORE_TUNE 8
 #define GU_CKPT_TUNE  9
 #define GU_EVT_TUNE_A       0xa      /* object-spawn event tune (0x11d3a) */
+/* checkpoint / collision / score-marker tunes (0x119c8..0x11a9c). play_event_tune has an image
+ * effect only when unguarded, and these branches sit in the fuzz-unreached course-advance paths, so
+ * a wrong id here is invisible to the differential harness — taken straight from the disassembly. */
+#define GU_TUNE_CKPT_PASS   5        /* event_type==0x1a checkpoint reached (0x119c8) */
+#define GU_TUNE_LEG_END     1        /* score digit hit '5' -> leg complete (0x11a82) */
+#define GU_TUNE_COLL_MARK   6        /* collision-marker frame, bonus_timer armed (0x11a92) */
 #define GU_MARKER_DECAY_ARM 0x1a0    /* marker_decay[4] countdown seed (0x11d3a) */
 #define GU_SPIN_SPEED_MIN   0x1e     /* speed floor to arm a spin (0x11d64) */
 #define GU_SPIN_LO          0xf      /* spin_reset value when d7==0 (0x11d64) */
@@ -648,12 +654,12 @@ static void game_update_fx_and_events(uint8_t *image) {
 
     /* I. checkpoint / collision / score markers. */
     if ((int8_t)image[A_event_type] == GU_EVENT_CKPT) {
-        g_play_event_tune(image, 0);
+        g_play_event_tune(image, GU_TUNE_CKPT_PASS);
         uint16_t lap = rdw(image, A_crash_lap);
         wrw(image, A_hud_crash_timer, 0);
         wrw(image, A_crash_bars, (uint16_t)(rdw(image, A_crash_bars) + 1));
         wrw(image, A_crash_active, (uint16_t)(rdw(image, A_crash_active) + 1));
-        if (image[A_score_str + 1] == GU_SCORE_MAX_DIGIT) { wrw(image, A_hud_crash_timer, 0x65); g_play_event_tune(image, 0); return; }
+        if (image[A_score_str + 1] == GU_SCORE_MAX_DIGIT) { wrw(image, A_hud_crash_timer, 0x65); g_play_event_tune(image, GU_TUNE_LEG_END); return; }
         image[A_score_str + 1] = (uint8_t)(image[A_score_str + 1] + 1);
         int8_t c = (int8_t)(image[0x18000 + 0x7 + rdw(image, A_crash_bars)]);   /* "SCORE/"[crash_bars+7] */
         c = (int8_t)(c + (int8_t)rdw(image, A_time_left));
@@ -682,5 +688,5 @@ static void game_update_fx_and_events(uint8_t *image) {
         return;
     }
     wrw(image, A_bonus_timer, GU_BONUS_ARM);
-    g_play_event_tune(image, 0);
+    g_play_event_tune(image, GU_TUNE_COLL_MARK);
 }
