@@ -77,6 +77,7 @@ space fires/shifts, and ESC quits the leg.
 ```bash
 bash render/atari/game_build.sh          # -> build/BUGGY.PRG + disk/
 bash render/atari/game_run.sh            # play it in the Hatari GUI (arrows steer, space fires, ESC quits a leg)
+bash render/atari/game_run.sh original   # run the ORIGINAL binary in the same Hatari setup (side-by-side compare)
 
 bash render/atari/game_build.sh smoke    # -DSMOKE=120: skip leg-select, render 120 race frames, dump C:\SCREEN.BIN
 python render/atari/game_smoke.py        # headless: boot, run, verify the on-target framebuffer is a real rendered scene

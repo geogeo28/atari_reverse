@@ -10,6 +10,7 @@ projects/*/recreate/.venv/
 projects/*/recreate/build/
 projects/*/recreate/render/atari/build/
 projects/*/recreate/render/atari/disk/
+projects/*/recreate/render/atari/disk_orig/
 *.so
 *.o
 projects/*/recreate/oracle/musashi/
