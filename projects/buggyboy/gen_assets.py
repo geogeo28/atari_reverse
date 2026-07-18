@@ -397,7 +397,7 @@ def render_animations(manifest):
         write_gif(str(outdir / name), frames, pal, delay_cs=12, transparent=GIF_BG_INDEX)
         manifest.append({"file": "sprites/%s" % name, "kind": "image", "cat": "sprites",
                          "caption": caption, "functions": functions,
-                         "assetId": "sprite_banks"})
+                         "assetId": "anim_" + name[:-4]})   # -> the "Animations" catalog asset (drop .gif)
         print("  wrote", (outdir / name).relative_to(ASSETS))
 
 

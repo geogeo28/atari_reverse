@@ -129,11 +129,12 @@ def compact_indices(nums):
 # and consumes. `addr` (when set) links the entry to a named global so "referenced by" is derived
 # from the static call graph; extra known producers/consumers are pinned in `refs_extra`. Categories
 # order the sidebar. (id, name, addr|None, size|None, category, format, source, refs_extra[fn addr])
-ASSET_CATS = ["File", "Sprites / graphics", "Course / road", "Palette / colour",
+ASSET_CATS = ["File", "Sprites / graphics", "Animations", "Course / road", "Palette / colour",
               "Dispatch tables", "Score", "Sound", "Render buffers"]
 _LOAD, _UNPACK, _GU, _BRG = 0x12166, 0x10620, 0x1110E, 0x11F4C
 _BSS, _BSSM, _INITLEG, _INITSC = 0x1078C, 0x107F2, 0x104B8, 0x1047A
 _DOBJ, _DOL, _DGO = 0x1087E, 0x1306E, 0x12EF6
+_DBUGGY, _DFG = 0x152AC, 0x1518A          # draw_buggy (body), draw_fg_sprite (foreground/fireball)
 CATALOG = [
     ("graphics_gra", "GRAPHICS.GRA", None, 182428, "File",
      "RLE-packed 4-plane ST bitmaps: 0x1234=zero-run, 0x5678=ff-run, 0x1234^3=end, then 4-plane interleave.",
@@ -155,10 +156,29 @@ CATALOG = [
      "Built from the unpacked sprites by build_sprite_shifts / build_sprite_shifts_msk; read by draw_object.",
      [_BSS, _BSSM, _DOBJ]),
     ("buggy_body_tbl", "buggy_body_tbl", 0x177B8, None, "Sprites / graphics", "buggy body sprite records (lean/skid).", "const in image", []),
+    ("fg_anim_tbl", "fg_anim_tbl", 0x177A0, None, "Sprites / graphics",
+     "foreground-sprite anim frames: 8-byte records {rows-1, dst_off (w), src_off (long, +buf_c)}; frame 1 is the crash fireball / dust cloud.",
+     "const in image; indexed by anim_frame in draw_fg_sprite.", [_DFG]),
+    ("crash_anim_tbl", "crash_anim_tbl", 0x18690, None, "Sprites / graphics",
+     "crash/spin animation script: 8-byte records {step, lean_state, buggy_pitch_off (w), rpm, fg-anim-frame, steer, marker}; flip sub-seq @+0x18 rolls the buggy over (with fireball), spin sub-seq @+0x90 cycles lean 42-44.",
+     "const in image; walked by game_update's crash / auto-steer branch, indexed by collision_lock.", [_GU]),
     ("sprite_list", "sprite_list", 0x18D7A, None, "Sprites / graphics", "per-frame roadside-object display list.", "built each frame from the course markers", []),
     ("hud_dsp_tbl", "hud_dsp_tbl", 0x1854C, None, "Sprites / graphics", "dashboard-variant sprite record table.", "const in image", []),
     ("num_glyph_tbl", "num_glyph_tbl", 0x17C5E, None, "Sprites / graphics", "per-digit byte offset into the pre-rendered number sprites.", "const in image", []),
     ("obj_view_xform_tbl", "obj_view_xform_tbl", 0x1722A, None, "Sprites / graphics", "per-view object transform table.", "const in image", []),
+    # animations (GIFs rendered by gen_assets.py, driven by the verified draw functions)
+    ("anim_buggy_lean", "buggy_lean (animation)", None, None, "Animations",
+     "Buggy steering lean sweep — lean_state selects buggy_body_tbl (@0x177b8) frames.",
+     "GIF rendered by gen_assets.py: g_draw_buggy per lean_state pose.", [_DBUGGY]),
+    ("anim_buggy_skid", "buggy_skid (animation)", None, None, "Animations",
+     "Buggy skid — buggy_skid_off (±8) shifts the body drawn from buggy_body_tbl.",
+     "GIF rendered by gen_assets.py: g_draw_buggy per skid pose.", [_DBUGGY]),
+    ("anim_buggy_crash", "buggy_crash (animation)", None, None, "Animations",
+     "Crash roll-over flip — crash_anim_tbl (@0x18690) flip sub-sequence poses the tumbling body + fg fireball.",
+     "GIF rendered by gen_assets.py: g_draw_fg_sprite + g_draw_buggy per crash_anim_tbl record.", [_DFG, _DBUGGY, _GU]),
+    ("anim_buggy_spin", "buggy_spin (animation)", None, None, "Animations",
+     "Spin-out — crash_anim_tbl (@0x18690) spin sub-sequence cycles lean 42-44.",
+     "GIF rendered by gen_assets.py: g_draw_buggy per crash_anim_tbl record.", [_DBUGGY, _GU]),
     # course / road
     ("road_curve_tbl", "road_curve_tbl", 0x18EFC, None, "Course / road", "106 longwords: per-row accumulated curve offset.", "built each frame by build_road_geometry", []),
     ("road_width_tbl", "road_width_tbl", 0x18F24, None, "Course / road", "per-row road half-width.", "built each frame by build_road_geometry", []),
