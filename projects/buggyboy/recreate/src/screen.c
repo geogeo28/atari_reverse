@@ -23,17 +23,26 @@ static const uint8_t *color_pattern(const uint8_t *image, uint32_t color_index) 
     return image + A_color_pairs + off;
 }
 
+/* Copy one 8-byte (FILL_CELL) colour cell as two longwords. The original fills with `move.l` pairs;
+ * doing the same inline (via the be32/wr32 accessors — native move.l on the 68000, byte-order-safe
+ * on the little-endian test host) avoids a per-cell memcpy call, which dominated the full-screen
+ * fills the leg-select menu issues every frame. */
+static inline void fill_cell(uint8_t *dst, const uint8_t *pattern) {
+    wr32(dst, be32(pattern));
+    wr32(dst + 4, be32(pattern + 4));
+}
+
 void screen_clear(uint8_t *buf) {
     memset(buf, 0, SCREEN_BYTES);
 }
 
 void screen_fill_span(uint8_t *dst, const uint8_t *pattern, unsigned cells) {
-    for (unsigned i = 0; i < cells; i++) memcpy(dst + i * FILL_CELL, pattern, FILL_CELL);
+    for (unsigned i = 0; i < cells; i++) fill_cell(dst + i * FILL_CELL, pattern);
 }
 
 void screen_fill_rect(uint8_t *dst, const uint8_t *pattern, unsigned cells, unsigned rows) {
     for (unsigned r = 0; r < rows; r++, dst += ROW_STRIDE)
-        for (unsigned i = 0; i < cells; i++) memcpy(dst + i * FILL_CELL, pattern, FILL_CELL);
+        for (unsigned i = 0; i < cells; i++) fill_cell(dst + i * FILL_CELL, pattern);
 }
 
 /* dbf loops (count_word + 1) times. */
