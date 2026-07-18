@@ -31,6 +31,11 @@ void g_set_rez(uint8_t *image, uint32_t mode) {
  * (shim.c) so the real code's wait loop terminates. */
 void g_read_joystick(uint8_t *image) { (void)image; }
 
+/* vsync @ XBIOS 0x25 — wait for the next vertical blank (50 Hz). Pure timing, no image effect, so
+ * the oracle models it as a no-op; the Atari PRG overrides it with the real XBIOS trap. Used to pace
+ * animations that the original throttles to the vblank (e.g. the leg-start "get ready" flash). */
+void g_vsync(void) { }
+
 /* console_scancode @ 0x12b24 (init_playfield function-key menu) — GEMDOS Crawio(0xff): a
  * non-blocking raw console poll; the game keeps the scancode byte (swap d0, then & 0xff). The
  * oracle models the console as empty (OS_CRAWIO_RESULT), so no key is ever pending here and the

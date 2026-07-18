@@ -257,6 +257,7 @@ void g_xbios_setscreen(uint8_t *image);
 void g_xbios_setpalette(uint8_t *image, uint32_t palette_ptr);   /* A0 -> 16-word palette */
 void g_set_rez(uint8_t *image, uint32_t mode);                   /* D0.b -> config, then XBIOS 0x19 */
 void g_read_joystick(uint8_t *image);                            /* IKBD poll: send 0x16; no image effect */
+void g_vsync(void);                                              /* XBIOS Vsync: wait one vblank; no image effect */
 uint16_t g_console_scancode(uint8_t *image);                     /* GEMDOS Crawio(0xff): IKBD scancode, 0 if none */
 uint16_t g_console_wait_char(uint8_t *image);                    /* GEMDOS Crawcin (fn 7): blocking raw ASCII read */
 void g_read_input(uint8_t *image);                               /* joystick + keyboard-fallback -> input_state */

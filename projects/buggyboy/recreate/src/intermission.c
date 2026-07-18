@@ -416,6 +416,7 @@ static void ip_start_leg(uint8_t *image) {
         wr32(image + A_leg_start_pal + IP_PAL_OFF_D0, be32(image + A_leg_flash_tbl_d + id));
         wr32(image + A_leg_start_pal + IP_PAL_OFF_D1, be32(image + A_leg_flash_tbl_d + 4 + id));
         g_xbios_setpalette(image, A_leg_start_pal);
+        g_vsync(); g_vsync();                       /* pace to the vblank (two Vsyncs per frame @0x2d20) */
     }
 }
 

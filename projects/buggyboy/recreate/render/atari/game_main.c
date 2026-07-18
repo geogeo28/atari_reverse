@@ -191,6 +191,10 @@ void g_set_rez(uint8_t *img, uint32_t mode) {
  * joyvec handler copies it into input_state (one frame of latency, exactly as the original). */
 void g_read_joystick(uint8_t *img) { (void)img; ikbd_send(IKBD_INTERROGATE); }
 
+/* vsync — real XBIOS Vsync (wait one vertical blank), gated on hw_ready like the other hardware
+ * pokes. Paces animations the original throttles to the vblank (the leg-start "get ready" flash). */
+void g_vsync(void) { if (hw_ready) Vsync(); }
+
 /* console_scancode @0x12b24 — GEMDOS Crawio(0xff): non-blocking raw console read. The original
  * takes the IKBD scancode from bits 16..23 (swap d0, then & 0xff); mirror that trap usage exactly. */
 uint16_t g_console_scancode(uint8_t *img) {
