@@ -501,17 +501,26 @@ static void objsh2_row(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1,
         objsh2_right_edge_cell(image, a0, a2, a1, shr);
 }
 
-/* Glue: map the 68000 register ABI to the row loop. a0/a1 are image offsets read/written like the
- * other blit.c glue. Register map: D0 x, D4 rows-1, A0 dst scanline base, A1 src sprite stream.
- * (d3/d5 are internal rewind constants owned by the leaf, not inputs; the caller's d3 is the glue's
- * outer column-group counter, external to this leaf.) */
-void g_blit_objshift2(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst, uint32_t src) {
+/* Width-parameterized objshift2 engine. The 68000 packs three entry points (0x13ed6, 0x13fd4,
+ * 0x1408e) into one unrolled blitter that differ only by width_idx = (base_ceiling - 0x88)/8:
+ *   width_idx 0 -> 0x13ed6 (base ceiling 0x88, BASE = 3 straddle cells, LEFT ladder rung 0)
+ *   width_idx 1 -> 0x13fd4 (base ceiling 0x90, BASE = 2 straddle cells, LEFT ladder rung 1)
+ *   width_idx 2 -> 0x1408e (base ceiling 0x98, BASE = 1 straddle cell,  LEFT ladder rung 2)
+ * The WIDE ladder (0x1429c) is shared and width-invariant: its outcome depends only on aligned_col
+ * (each engine offsets its subi.w threshold by 8*width_idx AND enters the ladder 8*width_idx down,
+ * cancelling out). The LEFT ladder (0x14104) is entered `width_idx` rungs down: BASE straddle and
+ * the LEFT rung reached both shrink by width_idx as the sprite narrows. Register map: D0 x, D4 rows-1,
+ * A0 dst scanline base, A1 src sprite stream. a0/a1 are image offsets read/written like other glue. */
+#define OBJSH2_BASE_STRADDLE 3        /* BASE straddle cells for width_idx 0 (= 3 - width_idx) */
+static void blit_objshift2_family(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst,
+                                  uint32_t src, int width_idx) {
     unsigned fine_x = (unsigned)(x & OBJSH2_FINE_MASK);      /* d7 = x & 0xF (before the asr)       */
     unsigned shl = OBJSH2_SHIFT_BASE - fine_x;               /* d6 = 16 - fine_x                    */
     unsigned shr = fine_x;                                   /* d7 = fine_x                         */
 
     /* aligned_col = ((int16)x >> 1) & 0xFFF8; the signed value (post-add into a0) drives dispatch. */
     int16_t col = (int16_t)((int16_t)(uint16_t)x >> 1) & (int16_t)COL_ALIGN;
+    int16_t base_ceiling = (int16_t)(OBJSH2_RIGHT_BOUND + OBJSH2_LADDER_STEP * width_idx);
     uint32_t a0 = (uint32_t)(dst + sign_ext16((uint16_t)col));
     uint32_t a1 = src;
 
@@ -520,22 +529,19 @@ void g_blit_objshift2(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst
     uint16_t rewind_dst, rewind_src;
 
     if (col < 0) {
-        /* LEFT ladder (0x14104): walk forward over fully-clipped columns until the first partial. */
+        /* LEFT ladder (0x14104), entered `width_idx` rungs down: each rung tests one 8-byte step
+         * toward 0; rung r (0..2) yields straddle = 2 - r; rungs 0/1 skip a fully-clipped column. */
         int16_t c = col;
-        for (;;) {
+        int rung;
+        edge = OBJSH2_EDGE_LEFT; straddle = -1;
+        for (rung = width_idx; rung <= OBJSH2_BASE_STRADDLE - 1; rung++) {
             c = (int16_t)(c + OBJSH2_LADDER_STEP);
-            if (c >= 0) { straddle = 2; break; }             /* aligned_col == -8  -> L2C           */
-            a1 += 4; a0 += OBJSH2_COL_BYTES;                 /* skip one fully-clipped column       */
-            c = (int16_t)(c + OBJSH2_LADDER_STEP);
-            if (c >= 0) { straddle = 1; break; }             /* aligned_col == -16 -> L1C           */
-            a1 += 4; a0 += OBJSH2_COL_BYTES;
-            c = (int16_t)(c + OBJSH2_LADDER_STEP);
-            if (c >= 0) { straddle = 0; break; }             /* aligned_col == -24 -> L0C           */
-            return;                                          /* aligned_col <= -32 -> off left, no draw */
+            if (c >= 0) { straddle = (OBJSH2_BASE_STRADDLE - 1) - rung; break; }
+            if (rung < OBJSH2_BASE_STRADDLE - 1) { a1 += 4; a0 += OBJSH2_COL_BYTES; }
         }
-        edge = OBJSH2_EDGE_LEFT;
-    } else if ((int16_t)(col - OBJSH2_RIGHT_BOUND) >= 0) {
-        /* RIGHT/WIDE ladder (0x1429c): d0 = aligned_col - 0x88 on entry. */
+        if (straddle < 0) return;                            /* fell past the last rung -> off left */
+    } else if ((int16_t)(col - base_ceiling) >= 0) {
+        /* RIGHT/WIDE ladder (0x1429c): width-invariant; entry value is always aligned_col - 0x88. */
         int16_t c = (int16_t)(col - OBJSH2_RIGHT_BOUND);
         c = (int16_t)(c - OBJSH2_LADDER_STEP);
         if (c < 0) straddle = 2;                             /* aligned_col == 0x88 -> W2           */
@@ -550,8 +556,8 @@ void g_blit_objshift2(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst
         }
         edge = OBJSH2_EDGE_RIGHT;
     } else {
-        edge = OBJSH2_EDGE_NONE;                             /* BASE: 0 <= aligned_col <= 0x80       */
-        straddle = 3;
+        edge = OBJSH2_EDGE_NONE;                             /* BASE: 0 <= aligned_col < base_ceiling */
+        straddle = OBJSH2_BASE_STRADDLE - width_idx;
     }
 
     /* Rewind constants keyed on the number of cells per row (edge cell counts as one column pair). */
@@ -570,6 +576,35 @@ void g_blit_objshift2(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst
         a2 = (uint32_t)(a2 - sign_ext16(rewind_dst));        /* suba.w #d3,a2                       */
         a1 = (uint32_t)(a1 - sign_ext16(rewind_src));        /* suba.w #d5,a1                       */
     }
+}
+
+/* 0x13ed6 entry — width_idx-0 (base ceiling 0x88) leaf. Register map: D0 x, D4 rows-1, A0 dst,
+ * A1 src. The public g_blit_objshift2 keeps its historical signature. */
+void g_blit_objshift2(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst, uint32_t src) {
+    blit_objshift2_family(image, x, rows_m1, dst, src, /*width_idx=*/0);
+}
+
+/* --- objshift2 "P-prefix + glue" handler family (0x13dfa..0x13ed6, jumpidx 0x24..0x3a) ---
+ * These roadside-object types build a scanline-indexed dst from A6 (the P prefix at 0x13e68), then
+ * draw a run of fixed-width (0x30 px / 0xc-byte-src) sub-cells via the glue loop at 0x13e8e, and
+ * usually finish with one wider objshift2 blit. All ignore the dispatcher's dst; they rebuild it. */
+#define OBJSH2P_TABLE     0x171ca   /* 0x13e6a: movea.l #$171ca,a2 (per-scanline dst-offset table)  */
+#define OBJSH2P_SUBCELL_X 0x30      /* 0x13ea0: addi.w #$30,d0 (x advance per glue sub-cell)        */
+#define OBJSH2P_SUBCELL_S 0xc       /* 0x13ea4: adda.w #$c,a1  (src advance per glue sub-cell)      */
+
+/* P prefix (0x13e68): a0 = a6 + sign_ext16(word@(0x171ca + view_flags + rows_m1)). The table is
+ * indexed by the ORIGINAL dispatch rows_m1 (d4) plus the per-view offset word at A_view_flags. */
+static uint32_t objshift2_prefix_dst(const uint8_t *image, uint32_t a6, uint16_t rows_m1) {
+    uint32_t a2 = OBJSH2P_TABLE + sign_ext16(be16(image + A_view_flags));   /* adda.w view_flags,a2 */
+    return (uint32_t)(a6 + sign_ext16(be16(image + a2 + sign_ext16(rows_m1))));  /* adda.w (0,a2,d4),a0 */
+}
+
+/* Glue loop (0x13e8e): draw `groups + 1` BASE (width_idx 0) objshift2 sub-cells, stepping x by 0x30
+ * and src by 0xc each. dst and rows are held constant across the run (the 68k saves/restores them). */
+static void objshift2_glue(uint8_t *image, uint16_t x, uint16_t rows, uint32_t dst, uint32_t src, int groups) {
+    for (int i = 0; i <= groups; i++)
+        blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X * i), rows, dst,
+                              src + OBJSH2P_SUBCELL_S * i, /*width_idx=*/0);
 }
 
 /* ============================================================================================
@@ -1251,6 +1286,46 @@ void g_objsprite_t16(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width
 #define OBJ_H_STUB 0x131ac          /* t4 then t1 with x+=0x40, src+=0x20 */
 #define OBJ_H_LO1  0x1466a          /* handler_lo mid-entry, 0x98 width family */
 #define OBJ_H_LO2  0x144b2          /* handler_lo mid-entry, 0x90 width family */
+/* Additional jump-table targets wired below (Ghidra addresses). */
+#define OBJ_H_T16      0x1363e      /* draw_obj_sprite_hi then width 0x98 (jumpidx 0x20/0x22/0x56/0x60) */
+#define OBJ_H_T49      0x13528      /* draw_obj_sprite_hi then width 0x90 (0x62) */
+#define OBJ_H_T3       0x133b2      /* draw_obj_sprite_hi then width 0x88 (0x64) */
+#define OBJ_H_T41      0x13628      /* scan-wrapper, width 0x98 (0x52) */
+#define OBJ_H_T42      0x13512      /* scan-wrapper, width 0x90 (0x54) */
+#define OBJ_H_T53      0x13204      /* alt-entry width 0x80 (0x6a) — not reached by draw_object_list */
+#define OBJ_H_HI0      0x131f2      /* draw_obj_sprite_hi then width 0x80 (0x66) */
+#define OBJ_H_XF0      0x131ca      /* view-transform then width 0x80 (0x50) */
+#define OBJ_H_A6GATE_T4  0x131d0    /* a6-prefix, view&4 ? stub(T4;T1) : T4 (0x48) */
+#define OBJ_H_A6GATE_W88 0x131e0    /* a6-prefix, view&4 ? T4 : W88 (0x46) */
+#define OBJ_H_PRE_T1_A6    0x13622  /* a6-prefix then width 0x98 = t32 (0x40) */
+#define OBJ_H_PRE_T1_XFORM 0x1361c  /* view-transform then width 0x98 = t37 (0x4a) */
+#define OBJ_H_T42PRE   0x1350c      /* a6-prefix then width 0x90 = t33 (0x42) */
+#define OBJ_H_T4CPRE   0x13506      /* view-transform then width 0x90 = t38 (0x4c) */
+#define OBJ_H_PREW88_44 0x133ac     /* a6-prefix then width 0x88 = t34 (0x44) */
+#define OBJ_H_PREW88_4E 0x133a6     /* view-transform then width 0x88 = t39 (0x4e) */
+#define OBJ_H_DBL      0x1465c      /* draw_obj_handler_dbl (0x3c) */
+#define OBJ_H_LO_FULL  0x14664      /* draw_obj_handler_lo full entry, dst=a6+band (0x58) */
+#define OBJ_H_DBL2     0x144a2      /* dbl sibling, base_cells=2 tail (0x3e) */
+#define OBJ_H_LO_FULL2 0x144ac      /* lo full-entry sibling, base_cells=2 (0x5a/0x5c/0x5e) */
+/* NOOP-cluster (objshift2 P-prefix) targets, jumpidx 0x24..0x3a. */
+#define OBJ_H_P24 0x13dfa
+#define OBJ_H_P26 0x13e48
+#define OBJ_H_P28 0x13e50
+#define OBJ_H_P2A 0x13e5c
+#define OBJ_H_P2C 0x13e7c
+#define OBJ_H_P2E 0x13e88
+#define OBJ_H_P30 0x13eae
+#define OBJ_H_P32 0x13eb4
+#define OBJ_H_P34 0x13ec0
+#define OBJ_H_P36 0x13ec6
+#define OBJ_H_P38 0x13ed2
+
+#define OBJ_XFORM_VIEW_BIT 0x4      /* view_flags mask gating the 0x131d0/0x131e0 branch */
+#define OBJ_P24_FLAG       0x18231  /* 0x13e00: cmpi.b #$31,(0x18231) global-byte branch flag */
+#define OBJ_P24_FLAG_ON    0x31     /* the flag value taking the three-stage path */
+#define OBJ_P24_SRC2_OFF   0xb1f8   /* 0x13e22: adda.l #$b1f8,a1 (stage-2 src = buf_c + this) */
+#define OBJ_P24_X3_OFF     0xd0     /* 0x13e32: addi.w #$d0,d0 (stage-3 x = saved_x + this)   */
+#define OBJ_P24_SRC3_OFF   0x34     /* 0x13e36: adda.w #$34,a1 (stage-3 src = orig src + this) */
 
 /* handler_lo mid-entry (0x1466a / 0x144b2): adjust src by a per-view-parity record word, set the
  * tail mode, and blit the object at the width family selected by base_cells. dst comes from the
@@ -1263,10 +1338,73 @@ static void obj_handler_lo(uint8_t *image, uint16_t x, uint16_t colour, uint16_t
     blit_objshift_family(image, x, colour, rows_m1, dst, src, A_blit_mode, base_cells);
 }
 
+/* handler_lo full entry (0x14664 base_cells=1 / 0x144ac base_cells=2): identical to the mid-entry
+ * except dst is rebuilt from A6 (a6 + 0x3ac0) instead of using the dispatcher's a0. */
+static void obj_handler_lo_full(uint8_t *image, uint16_t x, uint16_t colour, uint16_t rows_m1,
+                                uint32_t a6, uint32_t src, uint32_t rec_cursor, int base_cells) {
+    uint32_t dst = (uint32_t)(a6 + sign_ext16(OBJH_BAND_LO));                         /* a6 + 0x3ac0 */
+    obj_handler_lo(image, x, colour, rows_m1, dst, src, rec_cursor, base_cells);
+}
+
+/* draw_obj_handler_dbl sibling (0x1465c base_cells=1 / 0x144a2 base_cells=2): save colour, run the
+ * mode-8 hi pass, restore colour, then the mode-0xa8 tail blit at the base_cells width family. */
+static void obj_handler_dbl(uint8_t *image, uint16_t x, uint16_t colour, uint16_t voff,
+                            uint32_t dst, uint32_t src, uint32_t rec_cursor, uint16_t rows_seed,
+                            int base_cells) {
+    struct obj_hi_out r = draw_obj_sprite_hi(image, x, colour, OBJD_WIDTH, rows_seed, voff,
+                                             dst, src, rec_cursor);
+    wr16(image + A_blit_mode, OBJH_MODE_TAIL);                                        /* mode = 0xa8 */
+    blit_objshift_family(image, r.d0_x, colour, r.d4_rows, r.a0_dst, r.a1_src, A_blit_mode, base_cells);
+}
+
+/* 0x131d0: a6-prefix dst, then view_flags&4 selects the STUB (T4 then T1) vs a bare T4. */
+static void obj_handler_a6gate_t4(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t a6,
+                                  uint32_t src, uint32_t rec_cursor) {
+    uint32_t a0 = (uint32_t)(a6 + sign_ext16(be16(image + rec_cursor - 2)));
+    g_objsprite_t4(image, x, rows_m1, a0, src);
+    if (be16(image + A_view_flags) & OBJ_XFORM_VIEW_BIT)                              /* bra.s stub */
+        g_objsprite_t1(image, (uint16_t)(x + OBJ_STUB_X_ADV), rows_m1, a0, src + OBJ_STUB_SRC_ADV);
+}
+
+/* 0x131e0: a6-prefix dst, then view_flags&4 selects a bare T4 vs W88. */
+static void obj_handler_a6gate_w88(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t a6,
+                                   uint32_t src, uint32_t rec_cursor) {
+    uint32_t a0 = (uint32_t)(a6 + sign_ext16(be16(image + rec_cursor - 2)));
+    if (be16(image + A_view_flags) & OBJ_XFORM_VIEW_BIT)
+        g_objsprite_t4(image, x, rows_m1, a0, src);
+    else
+        g_objsprite_w88(image, x, rows_m1, a0, src);
+}
+
+/* 0x13dfa (jumpidx 0x24): P-prefix, then a global-byte flag chooses a three-stage blit or glue+final. */
+static void obj_handler_p24(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t a6, uint32_t src) {
+    uint32_t dst_p = objshift2_prefix_dst(image, a6, rows_m1);
+    if (image[OBJ_P24_FLAG] == OBJ_P24_FLAG_ON) {
+        blit_objshift2_family(image, x, /*rows=*/0x2a, dst_p, src, /*width_idx=*/0);        /* stage 1 */
+        uint32_t buf_c = load32(image, A_buf_c);
+        uint16_t x2   = (uint16_t)(OBJSH2P_SUBCELL_X + x);
+        uint32_t src2 = buf_c + OBJ_P24_SRC2_OFF;
+        objshift2_glue(image, x2, /*rows=*/0x26, dst_p, src2, /*groups=*/2);
+        blit_objshift2_family(image, (uint16_t)(x2 + OBJSH2P_SUBCELL_X * (2 + 1)), /*rows=*/0x26,
+                              dst_p, src2 + OBJSH2P_SUBCELL_S * (2 + 1), /*width_idx=*/2);   /* 0x1408e */
+        blit_objshift2_family(image, (uint16_t)(x + OBJ_P24_X3_OFF), /*rows=*/0x2a, dst_p,
+                              src + OBJ_P24_SRC3_OFF, /*width_idx=*/0);                      /* stage 3 */
+    } else {
+        objshift2_glue(image, x, /*rows=*/0x2a, dst_p, src, /*groups=*/4);
+        blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X * (4 + 1)), /*rows=*/0x2a,
+                              dst_p, src + OBJSH2P_SUBCELL_S * (4 + 1), /*width_idx=*/2);    /* 0x1408e */
+    }
+}
+
 /* Resolve the object type's word offset in obj_type_jumptable and dispatch to the matching handler.
- * The objsprite engine handlers and the stub ignore colour/rec_cursor; only handler_lo uses them. */
+ * The objsprite engine handlers and the stub ignore colour/rec_cursor; only handler_lo uses them.
+ * a6 = the raw draw-buffer base (unchanged across the dispatch loop; needed by the a6-prefix, LO
+ * full-entry, scan and objshift2 P-prefix families that rebuild dst from it). voff = the vertical
+ * offset `v` draw_object_list already subtracted from a0 (the hi-pass families add it back). a4/a5 =
+ * the row's xoff-table cursor and list stream (only the scan-wrapper family t41/t42 reads them). */
 static void obj_dispatch(uint8_t *image, uint16_t jumpidx, uint16_t x, uint16_t colour,
-                         uint16_t rows_m1, uint32_t dst, uint32_t src, uint32_t rec_cursor) {
+                         uint16_t rows_m1, uint32_t dst, uint32_t src, uint32_t rec_cursor,
+                         uint32_t a6, uint16_t voff, uint32_t a4, uint32_t a5) {
     int16_t off = (int16_t)be16(image + A_obj_type_jumptable + jumpidx);
     uint32_t target = (uint32_t)(A_obj_type_jumptable + off);
     switch (target) {
@@ -1282,7 +1420,116 @@ static void obj_dispatch(uint8_t *image, uint16_t jumpidx, uint16_t x, uint16_t 
             break;
         case OBJ_H_LO1: obj_handler_lo(image, x, colour, rows_m1, dst, src, rec_cursor, 1); break;
         case OBJ_H_LO2: obj_handler_lo(image, x, colour, rows_m1, dst, src, rec_cursor, 2); break;
-        default: break;   /* unreachable with valid records */
+
+        /* draw_obj_sprite_hi (mode-8) + width prologue family (t3/t49/t16). */
+        case OBJ_H_T3:
+            g_objsprite_t3(image, x, colour, OBJD_WIDTH, rows_m1, voff, dst, src, rec_cursor); break;
+        case OBJ_H_T49:
+            g_objsprite_t49(image, x, colour, OBJD_WIDTH, rows_m1, voff, dst, src, rec_cursor); break;
+        case OBJ_H_T16:
+            g_objsprite_t16(image, x, colour, OBJD_WIDTH, rows_m1, voff, dst, src, rec_cursor); break;
+        case OBJ_H_HI0:   /* 0x131f2: hi pass then width 0x80 (width_idx-0 sibling of t3/t49/t16) */
+            objsprite_hi_wrapper(image, x, colour, OBJD_WIDTH, rows_m1, voff, dst, src, rec_cursor, 0);
+            break;
+
+        /* scan-table x-build + width prologue family (t41/t42). */
+        case OBJ_H_T41: g_objsprite_t41(image, rows_m1, a6, rec_cursor, a4, a5, src); break;
+        case OBJ_H_T42: g_objsprite_t42(image, rows_m1, a6, rec_cursor, a4, a5, src); break;
+
+        /* a6-prefix (a0 = a6 + word@(rec_cursor-2)) then width prologue family (t34/t33/t32). */
+        case OBJ_H_PREW88_44: g_objsprite_t34(image, x, rows_m1, a6, rec_cursor, src); break;
+        case OBJ_H_T42PRE:    g_objsprite_t33(image, x, rows_m1, a6, rec_cursor, src); break;
+        case OBJ_H_PRE_T1_A6: g_objsprite_t32(image, x, rows_m1, a6, rec_cursor, src); break;
+
+        /* view-transform (0x145fc) then width prologue family (t39/t38/t37). */
+        case OBJ_H_PREW88_4E:   g_objsprite_t39(image, x, rows_m1, a6, src, rec_cursor); break;
+        case OBJ_H_T4CPRE:      g_objsprite_t38(image, x, rows_m1, a6, src, rec_cursor); break;
+        case OBJ_H_PRE_T1_XFORM:g_objsprite_t37(image, x, rows_m1, a6, src, rec_cursor); break;
+        case OBJ_H_XF0:   /* 0x131ca: view-transform then width 0x80 (width_idx-0 xform sibling) */
+            objsprite_xform_wrapper(image, x, rows_m1, a6, src, rec_cursor, 0); break;
+
+        /* a6-prefix then view_flags&4-gated width selection. */
+        case OBJ_H_A6GATE_T4:  obj_handler_a6gate_t4(image, x, rows_m1, a6, src, rec_cursor); break;
+        case OBJ_H_A6GATE_W88: obj_handler_a6gate_w88(image, x, rows_m1, a6, src, rec_cursor); break;
+
+        /* LO-area draw_obj_handler_dbl / draw_obj_handler_lo full entries + base_cells=2 siblings. */
+        case OBJ_H_DBL:
+            obj_handler_dbl(image, x, colour, voff, dst, src, rec_cursor, rows_m1, 1); break;
+        case OBJ_H_DBL2:
+            obj_handler_dbl(image, x, colour, voff, dst, src, rec_cursor, rows_m1, 2); break;
+        case OBJ_H_LO_FULL:
+            obj_handler_lo_full(image, x, colour, rows_m1, a6, src, rec_cursor, 1); break;
+        case OBJ_H_LO_FULL2:
+            obj_handler_lo_full(image, x, colour, rows_m1, a6, src, rec_cursor, 2); break;
+
+        /* objshift2 P-prefix "NOOP-cluster" family (jumpidx 0x24..0x3a). dst is rebuilt from a6. */
+        case OBJ_H_P24: obj_handler_p24(image, x, rows_m1, a6, src); break;
+        case OBJ_H_P26: {  /* glue(3), no final engine */
+            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            objshift2_glue(image, x, 0x20, dp, src, 3);
+            break;
+        }
+        case OBJ_H_P28: {  /* glue(2) + final W98 */
+            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            objshift2_glue(image, x, 0x1c, dp, src, 2);
+            blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X * 3), 0x1c, dp,
+                                  src + OBJSH2P_SUBCELL_S * 3, 2);
+            break;
+        }
+        case OBJ_H_P2A: {  /* glue(1) + final W90 */
+            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            objshift2_glue(image, x, 0x17, dp, src, 1);
+            blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X * 2), 0x17, dp,
+                                  src + OBJSH2P_SUBCELL_S * 2, 1);
+            break;
+        }
+        case OBJ_H_P2C: {  /* glue(1) + final W98 */
+            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            objshift2_glue(image, x, 0x12, dp, src, 1);
+            blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X * 2), 0x12, dp,
+                                  src + OBJSH2P_SUBCELL_S * 2, 2);
+            break;
+        }
+        case OBJ_H_P2E: {  /* glue(1), no final engine */
+            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            objshift2_glue(image, x, 0x0e, dp, src, 1);
+            break;
+        }
+        case OBJ_H_P30: {  /* glue(0) + final W90 */
+            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            objshift2_glue(image, x, 0x0c, dp, src, 0);
+            blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X), 0x0c, dp,
+                                  src + OBJSH2P_SUBCELL_S, 1);
+            break;
+        }
+        case OBJ_H_P32: {  /* glue(0) + final W90 */
+            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            objshift2_glue(image, x, 0x0a, dp, src, 0);
+            blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X), 0x0a, dp,
+                                  src + OBJSH2P_SUBCELL_S, 1);
+            break;
+        }
+        case OBJ_H_P34: {  /* glue(0) + final W98 */
+            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            objshift2_glue(image, x, 0x08, dp, src, 0);
+            blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X), 0x08, dp,
+                                  src + OBJSH2P_SUBCELL_S, 2);
+            break;
+        }
+        case OBJ_H_P36: {  /* glue(0) + final W98 */
+            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            objshift2_glue(image, x, 0x06, dp, src, 0);
+            blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X), 0x06, dp,
+                                  src + OBJSH2P_SUBCELL_S, 2);
+            break;
+        }
+        case OBJ_H_P38: {  /* P-prefix + single BASE(width_idx 0) blit, no glue */
+            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            blit_objshift2_family(image, x, 0x04, dp, src, 0);
+            break;
+        }
+
+        default: break;   /* unreachable with valid records (incl. junk targets 0x68/0x6c/0x6e) */
     }
 }
 
@@ -1309,7 +1556,8 @@ void g_draw_object_list(uint8_t *image, uint32_t a5, uint32_t a3, uint32_t a6,
                 uint32_t src = (uint32_t)(buf_c + load32(image, a2));
                 uint16_t rows = be16(image + a2 + OBJ_REC_ROWS);
                 uint16_t jumpidx = be16(image + a2 + OBJ_REC_JUMP);
-                obj_dispatch(image, jumpidx, x, colour, rows, a0, src, a2 + OBJ_REC_DSTADJ);
+                obj_dispatch(image, jumpidx, x, colour, rows, a0, src, a2 + OBJ_REC_DSTADJ,
+                             a6, /*voff=*/0, a4, a5);
             }
             /* NORMAL pass. */
             uint16_t x = be16(image + a5); a5 += 2;
@@ -1333,7 +1581,8 @@ void g_draw_object_list(uint8_t *image, uint32_t a5, uint32_t a3, uint32_t a6,
                 uint16_t jumpidx = be16(image + data_base + OBJ_REC_JUMP);
                 dst = (uint32_t)(dst + sign_ext16(be16(image + data_base + OBJ_REC_DSTADJ)));
                 x = (uint16_t)(x + be16(image + data_base + OBJ_REC_XADJ));
-                obj_dispatch(image, jumpidx, x, colour, rows, dst, src, data_base + OBJ_REC_XADJ);
+                obj_dispatch(image, jumpidx, x, colour, rows, dst, src, data_base + OBJ_REC_XADJ,
+                             a6, /*voff=*/v, a4, a5);
             }
         }
         a3 += 2;                                    /* addq.l #2,a3 */
