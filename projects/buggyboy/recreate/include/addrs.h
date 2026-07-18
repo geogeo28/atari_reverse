@@ -33,6 +33,8 @@
 /* ---- high-score / results screen (update_highscore @ 0x1238e) ---- */
 #define A_countdown_timer 0x18262   /* name-entry countdown value (starts 30); rendered as "TIME nn" */
 #define A_countdown_sub   0x18264   /* per-frame sub-counter; decrements countdown_timer every 0x11 frames */
+#define A_time_digit_hi   0x1825e   /* name-entry "TIME nn" tens digit ('/' when 0) */
+#define A_time_digit_lo   0x1825f   /* name-entry "TIME nn" units digit */
 #define A_highscore_table 0x18266   /* per-leg high-score rows: 9 x 0xe bytes (6 score digits + name), stride 0x80 by leg */
 #define HIGHSCORE_ROWS    9         /* rows per leg table */
 #define HIGHSCORE_ROW     0xe       /* bytes per row */
@@ -100,6 +102,7 @@
 #define A_leg_flash_tbl_b 0x17f1a   /* word table, idx (anim_counter & 0x1c) >> 1 */
 #define A_leg_flash_tbl_c 0x17f2a   /* word table, idx (anim_counter & 0x1c) >> 1 */
 #define A_leg_flash_tbl_d 0x17f3a   /* long table, idx (anim_counter & 6) */
+#define A_name_anim_tbl   0x17f4a   /* word table for the name-entry color-3 flash, idx (anim_counter & 0xe) */
 
 /* ---- intermission @ 0x127a0 (attract-mode / between-legs loop) ---- */
 #define A_leg_select      0x18c36   /* attract-mode leg selector (0-4); copied to leg_index each cycle */

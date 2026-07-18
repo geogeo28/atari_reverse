@@ -58,6 +58,7 @@ extern long Fclose(short handle);
 extern long Physbase(void);
 extern void Vsync(void);
 extern void Setpalette(const void *pal16);
+extern void Setcolor(int colornum, int color);   /* XBIOS 7: set one palette register */
 extern long Kbdvbase(void);
 extern void joy_handler(void);      /* asm joyvec handler: IKBD packet -> input_state */
 
@@ -176,6 +177,9 @@ void g_wait_vbl_set_offset(uint8_t *img) {
 
 /* xbios_setpalette @0x12eb0 — load the 16 colour registers from the image palette. */
 void g_xbios_setpalette(uint8_t *img, uint32_t palette_ptr) { Setpalette(img + palette_ptr); }
+
+/* xbios_setcolor — real XBIOS Setcolor (set one palette register); the name-entry color-3 flash. */
+void g_xbios_setcolor(uint8_t *img, uint32_t index, uint32_t color) { (void)img; Setcolor((int)index, (int)color); }
 
 /* xbios_setscreen @0x12226 — no-op: we manage the video base ourselves in g_flip_screen. */
 void g_xbios_setscreen(uint8_t *img) { (void)img; }
@@ -377,6 +381,8 @@ void game_main(void) {
         g_update_highscore(image);
         if (be16(image + A_results_mode) == 2)         /* missed the table -> game-over jingle (0x2400) */
             g_hiscore_gameover(image);
+        else                                           /* made the table -> name-entry jingle + screen (0x2412) */
+            g_hiscore_name_entry(image);
         wr16(image + A_game_over_flag, (uint16_t)(be16(image + A_game_over_flag) + 1));
         g_intermission(image);      /* between-legs attract screen */
         wr16(image + A_game_over_flag, 0);

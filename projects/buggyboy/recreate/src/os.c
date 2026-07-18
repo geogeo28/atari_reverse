@@ -42,6 +42,11 @@ void g_vsync(void) { }
  * real busy-wait on the Atari PRG (which overrides it). Lets the game-over / results jingles finish. */
 void g_wait_music_off(uint8_t *image) { (void)image; }
 
+/* xbios_setcolor @ name-entry 0x24da — XBIOS Setcolor(index, color): set one hardware palette
+ * register (the name-entry color-3 flash). Hardware-only, no image effect, so a no-op in the harness;
+ * the Atari PRG overrides it with the real trap. */
+void g_xbios_setcolor(uint8_t *image, uint32_t index, uint32_t color) { (void)image; (void)index; (void)color; }
+
 /* console_scancode @ 0x12b24 (init_playfield function-key menu) — GEMDOS Crawio(0xff): a
  * non-blocking raw console poll; the game keeps the scancode byte (swap d0, then & 0xff). The
  * oracle models the console as empty (OS_CRAWIO_RESULT), so no key is ever pending here and the

@@ -104,6 +104,17 @@ Setpalette:
     lea     6(%sp),%sp
     rts
 
+| void Setcolor(int colornum, int color)   XBIOS 7 (set one palette register)
+| args are passed in 4-byte slots; the value is the low word of each (big-endian stack).
+    .globl  Setcolor
+Setcolor:
+    move.w  10(%sp),-(%sp)       | color    (arg2 longword @ 8, low word @ 10)
+    move.w  8(%sp),-(%sp)        | colornum (arg1 low word @ 6; +2 for the push above -> 8)
+    move.w  #7,-(%sp)
+    trap    #14
+    lea     6(%sp),%sp
+    rts
+
 | long Kbdvbase(void)           XBIOS 0x22 (KBDVBASE vector table)
     .globl  Kbdvbase
 Kbdvbase:

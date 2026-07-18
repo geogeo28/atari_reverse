@@ -66,7 +66,7 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x121f8` | `flip_screen` | 46 | ✅ verified | flip_idx fuzz past {0,4}; video base + Vsync hardware-only, toggle observable |
 | `0x12226` | `xbios_setscreen` | 26 | ✅ verified | trap layer; no image effect |
 | `0x1225a` | `draw_results_screen` | 308 | ✅ verified | orchestrator; mode/pos/leg x flip (A3 + A0/fill chaining) |
-| `0x1238e` | `update_highscore` | 612 | ✅ verified | checkpoints 0x12450 (made) / 0x123e6 (miss): EGOFF + rank + shift + insert. Miss-tail (`g_hiscore_gameover`: results redraw + game-over jingle tune 2 + mzflag wait + key drain) reconstructed read-only (on-target psg-traced); made-path name-entry loop still read-only |
+| `0x1238e` | `update_highscore` | 612 | ✅ verified | checkpoints 0x12450 (made) / 0x123e6 (miss): EGOFF + rank + shift + insert. Miss-tail (`g_hiscore_gameover`: game-over jingle tune 2) and made-tail (`g_hiscore_name_entry`: name-entry jingle tune 4/3 + initials screen) reconstructed; the per-frame countdown (`g_hiscore_countdown`) and char-select (`g_hiscore_charstep`) are diffed as slices, the draws/waits read-only. On-target psg-traced (both jingles drive the PSG) |
 | `0x125f2` | `draw_leg_results` | 244 | ✅ verified | orchestrator; leg 0/1/2/4 x flip (fills + panels + labels + dashboard) |
 | `0x126e6` | `draw_divider` | 54 | ✅ verified | flip 0/4 (fill_rect + two vertical lines) |
 | `0x1271c` | `draw_panel5` | 60 | ✅ verified | flip 0/4 (divider + 5 chained labels) |
