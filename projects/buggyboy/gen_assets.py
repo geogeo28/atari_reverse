@@ -322,6 +322,8 @@ A_BUGGY_PITCH_OFF, A_ANIM_FRAME = 0x18cbe, 0x18d0c   # crash pose: vertical pitc
 CRASH_ANIM_TBL = 0x18690                             # crash script: 8-byte records indexed by collision_lock
 CRASH_REC = 8                                        # bytes per crash_anim_tbl record
 CRASH_FLIP_START = 0x18                              # first record of the flip (roll-over) sub-sequence
+CRASH_SPIN_START = 0x90                              # first record of the spin-out sub-sequence
+CRASH_SPIN_FRAMES = 3                                # spin-out is an endless lean 42/43/44 cycle; one loop
 
 # per-animation draw chain: which verified engine entries to blit, in the game's draw order.
 DRAW_BODY = ("g_draw_buggy",)                                  # body only (lean / skid poses)
@@ -355,24 +357,28 @@ def render_animations(manifest):
     def w(v):
         return (v & 0xffff).to_bytes(2, "big")
 
-    # crash/explosion: walk the game's own crash_anim_tbl flip sub-sequence (verified game_update
-    # script) instead of hand-authoring poses. Each 8-byte record sets the tumble body frame
-    # (lean_state), the vertical pitch (buggy_pitch_off), and the foreground fireball frame
-    # (anim_frame, 0x08 at the roll-over peak). The walk advances by the record's own (8 - step)
-    # rule and stops at the terminal sentinel (lean high bit set), exactly as game_update does.
+    # crash: pose the buggy from the game's own crash_anim_tbl (verified game_update script) instead
+    # of hand-authoring. Each 8-byte record sets the tumble body frame (lean_state), the vertical
+    # pitch (buggy_pitch_off), and the foreground fireball frame (anim_frame, 0x08 at the peak).
     tbl_img, _ = rs._prepared_image(base)
-    crash_poses, idx = [], CRASH_FLIP_START
-    while (tbl_img[CRASH_ANIM_TBL + idx + 1] & 0x80) == 0:      # rec[1] < 0 -> terminal
-        rec = CRASH_ANIM_TBL + idx
-        crash_poses.append({
-            **base,
-            A_LEAN_STATE:      w(tbl_img[rec + 1]),                    # tumble body frame
-            A_BUGGY_PITCH_OFF: bytes(tbl_img[rec + 2:rec + 4]),       # vertical pitch (be16, verbatim)
-            A_ANIM_FRAME:      w(tbl_img[rec + 5]),                   # fg fireball frame (0x08 at the peak)
-        })
-        idx += CRASH_REC - tbl_img[rec]                            # game's advance: (8 - step)
 
-    # the buggy-body draw chain (draw_buggy + wheels/lo/hi); the crash adds the fg fireball entry.
+    def crash_pose(idx):
+        rec = CRASH_ANIM_TBL + idx
+        return {**base,
+                A_LEAN_STATE:      w(tbl_img[rec + 1]),               # tumble body frame
+                A_BUGGY_PITCH_OFF: bytes(tbl_img[rec + 2:rec + 4]),   # vertical pitch (be16, verbatim)
+                A_ANIM_FRAME:      w(tbl_img[rec + 5])}               # fg fireball frame
+
+    # flip (roll-over): walk from the start, advancing by each record's own (8 - step) rule, until
+    # the terminal sentinel (lean high bit set), exactly as game_update does.
+    flip_poses, idx = [], CRASH_FLIP_START
+    while (tbl_img[CRASH_ANIM_TBL + idx + 1] & 0x80) == 0:      # rec[1] < 0 -> terminal
+        flip_poses.append(crash_pose(idx))
+        idx += CRASH_REC - tbl_img[CRASH_ANIM_TBL + idx]
+    # spin-out: the game cycles lean 42/43/44 endlessly (no terminal), so take one 3-frame loop.
+    spin_poses = [crash_pose(CRASH_SPIN_START + i * CRASH_REC) for i in range(CRASH_SPIN_FRAMES)]
+
+    # the buggy-body draw chain (draw_buggy + wheels/lo/hi); the flip adds the fg fireball entry.
     body_fns = ["0x152ac", "0x151f6", "0x153fa", "0x154c6"]
     anims = [
         ("buggy_lean.gif", "Buggy lean sweep (lean_state, g_draw_buggy)",
@@ -380,7 +386,9 @@ def render_animations(manifest):
         ("buggy_skid.gif", "Buggy skid (skid_off ±8, g_draw_buggy)",
          [{**base, A_SKID: w(v & 0xffff)} for v in (0, 4, 8, 4, 0, -4, -8, -4)], DRAW_BODY, body_fns),
         ("buggy_crash.gif", "Buggy crash flip (crash_anim_tbl: tumbling g_draw_buggy + g_draw_fg_sprite fireball)",
-         crash_poses, DRAW_CRASH, ["0x1518a"] + body_fns),
+         flip_poses, DRAW_CRASH, ["0x1518a"] + body_fns),
+        ("buggy_spin.gif", "Buggy spin-out (crash_anim_tbl: lean 42-44 cycle, g_draw_buggy)",
+         spin_poses, DRAW_BODY, body_fns),
     ]
     for name, caption, poses, draw_fns, functions in anims:
         frames = [_anim_frame(p, draw_fns) for p in poses]
