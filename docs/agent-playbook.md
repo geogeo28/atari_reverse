@@ -93,6 +93,13 @@ a keyboard read that the model reports as "no key"; the terminal exit after an i
 reconstruct it faithfully from the disassembly and **document it as read-verified** — don't fake a
 test or quietly drop it. State the residual in `STATUS.md`.
 
+**The harness can't see off-image effects.** The differential test proves *image correctness*; it is
+blind to anything the oracle models as a no-op — hardware timing (`Vsync`), endianness/codegen cost,
+and the trap wrappers themselves. A read-verified path can be byte-perfect and still misbehave when
+you compile it to a real `.PRG` (the "no-key" debug menu above actually *does* get keys on hardware).
+That whole bug class, its seam pattern, and the on-hardware diagnostic toolkit live in
+[`on-target-execution.md`](on-target-execution.md) — read it before shipping a playable build.
+
 **Vet every shortcut.** An `exclude` band that drops bytes from the diff must be provably stack
 scratch (not program output). A cap/sample/no-retry in a fuzz must be **logged**, not silent —
 silent truncation reads as "covered everything" when it didn't.
