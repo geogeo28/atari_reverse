@@ -83,6 +83,28 @@ void g_update_highscore(uint8_t *image) {
     memcpy(image + row, image + A_score_bcd, RECORD_BYTES);
 }
 
+/* g_hiscore_gameover — the "missed the table" tail of update_highscore (0x23e6..0x240e, then the
+ * shared key-drain at 0x25de). The prefix (g_update_highscore) sets results_mode = 2 for this path;
+ * game_main calls this next. It redraws the results screen, plays the game-over jingle (tune 2),
+ * waits for it to finish, and drains pending keys.
+ *
+ * Verified by reading, not execution: the two waits (g_wait_music_off spins on mzflag; the key drain
+ * polls Crawio) never terminate under the oracle, so this joins the interactive tail that the
+ * harness cannot run to rts. Every step maps 1:1 to the disassembly and reuses verified callees
+ * (draw_results_screen, xbios_setpalette, flip_screen, play_event_tune) in the original's order. */
+#define TUNE_GAME_OVER 2       /* moveq #2,d0 before the miss-path play_event_tune (0x2400) */
+
+void g_hiscore_gameover(uint8_t *image) {
+    g_draw_results_screen(image);
+    g_xbios_setpalette(image, A_results_screen_pal);   /* a0 = 0x17fc2 */
+    g_flip_screen(image);
+    g_draw_results_screen(image);
+    g_flip_screen(image);
+    g_play_event_tune(image, TUNE_GAME_OVER);          /* game-over jingle */
+    g_wait_music_off(image);                           /* 0x2406: spin until mzflag clears (PRG only) */
+    while (g_console_scancode(image) != 0) { }         /* 0x25de: drain pending keys */
+}
+
 /* init_scoretable @0x1047a — write the default high-score table (5 legs x 9 rows). Each 0xe-byte
  * row is "/" + two default score digits (from A_default_scores) + "000\0\0" + "...\0" + a rank
  * character ('1'..'9') + \0, giving scores 40000..10000 with a "..." placeholder name; a 2-byte

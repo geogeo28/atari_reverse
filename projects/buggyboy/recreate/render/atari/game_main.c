@@ -195,6 +195,14 @@ void g_read_joystick(uint8_t *img) { (void)img; ikbd_send(IKBD_INTERROGATE); }
  * pokes. Paces animations the original throttles to the vblank (the leg-start "get ready" flash). */
 void g_vsync(void) { if (hw_ready) Vsync(); }
 
+/* wait_music_off — spin until the 50 Hz VBL sound driver has played the current tune out (it clears
+ * mzflag from the interrupt when the track ends). The image byte is written by the VBL handler, so
+ * it must be re-read every iteration (volatile). No-op before supervisor, mirroring the other seams. */
+void g_wait_music_off(uint8_t *img) {
+    if (!hw_ready) return;
+    while (((volatile uint8_t *)img)[A_mzflag]) { }
+}
+
 /* console_scancode @0x12b24 — GEMDOS Crawio(0xff): non-blocking raw console read. The original
  * takes the IKBD scancode from bits 16..23 (swap d0, then & 0xff); mirror that trap usage exactly. */
 uint16_t g_console_scancode(uint8_t *img) {
@@ -367,6 +375,8 @@ void game_main(void) {
         }
 
         g_update_highscore(image);
+        if (be16(image + A_results_mode) == 2)         /* missed the table -> game-over jingle (0x2400) */
+            g_hiscore_gameover(image);
         wr16(image + A_game_over_flag, (uint16_t)(be16(image + A_game_over_flag) + 1));
         g_intermission(image);      /* between-legs attract screen */
         wr16(image + A_game_over_flag, 0);

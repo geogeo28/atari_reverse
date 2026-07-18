@@ -36,6 +36,12 @@ void g_read_joystick(uint8_t *image) { (void)image; }
  * animations that the original throttles to the vblank (e.g. the leg-start "get ready" flash). */
 void g_vsync(void) { }
 
+/* wait_music_off @ update_highscore 0x2406 / 0x25ca — spin until the VBL sound driver clears mzflag
+ * (i.e. the current tune has played out). The 50 Hz VBL driver advances the tune off-image, so this
+ * has no image effect and can never terminate under the oracle; it is a no-op in the harness and a
+ * real busy-wait on the Atari PRG (which overrides it). Lets the game-over / results jingles finish. */
+void g_wait_music_off(uint8_t *image) { (void)image; }
+
 /* console_scancode @ 0x12b24 (init_playfield function-key menu) — GEMDOS Crawio(0xff): a
  * non-blocking raw console poll; the game keeps the scancode byte (swap d0, then & 0xff). The
  * oracle models the console as empty (OS_CRAWIO_RESULT), so no key is ever pending here and the

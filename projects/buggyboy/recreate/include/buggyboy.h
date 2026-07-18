@@ -127,6 +127,7 @@ void g_draw_panel3(uint8_t *image);
 void g_draw_panel5(uint8_t *image);
 void g_draw_results_screen(uint8_t *image);   /* race-end results screen orchestrator; no args */
 void g_update_highscore(uint8_t *image);      /* rank/shift/insert the new score; checkpoint-verified */
+void g_hiscore_gameover(uint8_t *image);      /* update_highscore miss tail: results redraw + game-over jingle */
 void g_init_scoretable(uint8_t *image);       /* write the default high-score table (5 legs x 9 rows) */
 
 /* ---- per-leg / gameplay orchestrators (gameplay.c) ---- */
@@ -258,6 +259,7 @@ void g_xbios_setpalette(uint8_t *image, uint32_t palette_ptr);   /* A0 -> 16-wor
 void g_set_rez(uint8_t *image, uint32_t mode);                   /* D0.b -> config, then XBIOS 0x19 */
 void g_read_joystick(uint8_t *image);                            /* IKBD poll: send 0x16; no image effect */
 void g_vsync(void);                                              /* XBIOS Vsync: wait one vblank; no image effect */
+void g_wait_music_off(uint8_t *image);                           /* spin until mzflag clears (tune ended); no image effect */
 uint16_t g_console_scancode(uint8_t *image);                     /* GEMDOS Crawio(0xff): IKBD scancode, 0 if none */
 uint16_t g_console_wait_char(uint8_t *image);                    /* GEMDOS Crawcin (fn 7): blocking raw ASCII read */
 void g_read_input(uint8_t *image);                               /* joystick + keyboard-fallback -> input_state */
