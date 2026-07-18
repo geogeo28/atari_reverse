@@ -42,5 +42,10 @@ PYTEST_ARGS ?= -n auto
 test: $(CAND) $(ORACLE)
 	$(PY) -m pytest -q $(PYTEST_ARGS) test
 
+# Report sink call sites (Dosound/INITTUNE/INITFX/stop_music) that no test executes — off-image or
+# fuzz-unreached sound/OS triggers the differential diff can't see. See tools/coverage_gap.py.
+coverage-gap: $(CAND) $(ORACLE)
+	$(PY) tools/coverage_gap.py
+
 clean:
 	rm -rf build $(GENDIR)/m68kmake $(GENDIR)/m68kops.* $(ORACLE)

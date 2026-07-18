@@ -36,6 +36,32 @@ _u8p = ctypes.POINTER(ctypes.c_uint8)
 _LIB.osh_psg_count.restype = ctypes.c_uint32
 _LIB.osh_psg_regs.restype = _u8p
 _LIB.osh_psg_vals.restype = _u8p
+_LIB.osh_cov_enable.argtypes = [ctypes.c_int]
+_LIB.osh_cov_visited.argtypes = [ctypes.c_uint32]
+_LIB.osh_cov_visited.restype = ctypes.c_int
+_LIB.osh_cov_data.restype = _u8p
+_LIB.osh_cov_bytes.restype = ctypes.c_uint32
+
+
+def cov_enable(on=True):
+    """Turn on executed-PC coverage tracking in the oracle (off by default; adds nothing when off)."""
+    _LIB.osh_cov_enable(1 if on else 0)
+
+
+def cov_reset():
+    """Clear the accumulated coverage bitset (call once before running the corpus to measure)."""
+    _LIB.osh_cov_reset()
+
+
+def cov_visited(addr):
+    """Was the instruction at Ghidra address ``addr`` executed by any ``run()`` since cov_reset()?"""
+    return bool(_LIB.osh_cov_visited(addr & 0xFFFFFFFF))
+
+
+def cov_data():
+    """The raw visited-PC bitset (bit i = address i executed). For dumping/merging across workers."""
+    n = _LIB.osh_cov_bytes()
+    return bytes(ctypes.cast(_LIB.osh_cov_data(), ctypes.POINTER(ctypes.c_uint8 * n)).contents)
 
 
 def psg_writes():

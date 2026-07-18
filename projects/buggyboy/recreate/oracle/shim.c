@@ -16,6 +16,19 @@ static uint32_t g_size;
 static uint32_t g_waddr[MAX_WRITES];
 static uint32_t g_wn;
 
+/* --- optional executed-PC coverage (off by default; osh_cov_enable turns it on) --------------
+ * A bit per image byte address, accumulated ACROSS osh_run calls (reset with osh_cov_reset), so a
+ * whole test session's oracle execution can be queried. tools/coverage_gap.py uses it to flag
+ * side-effecting call sites (Dosound/INITTUNE/INITFX/stop_music/... bsr sites) that no test ever
+ * executes — i.e. sound/OS triggers whose effect is off-image and thus invisible to the diff.
+ * Gated so it adds nothing to a normal `make test`. */
+#define COV_SIZE (1u << 20)                 /* one bit per address in [0, 1 MiB) */
+static uint8_t g_cov[COV_SIZE / 8];
+static int     g_cov_on;
+void osh_cov_enable(int on) { g_cov_on = on; }
+void osh_cov_reset(void)    { for (uint32_t i = 0; i < sizeof g_cov; i++) g_cov[i] = 0; }
+int  osh_cov_visited(uint32_t pc) { return pc < COV_SIZE && ((g_cov[pc >> 3] >> (pc & 7)) & 1); }
+
 /* --- IKBD 6850 ACIA (keyboard/joystick), $fffffc00/02 -> 24-bit bus alias $fffc00/02 -----
  * read_joystick busy-waits on the status TDRE bit then sends a command; the joystick reply
  * arrives via an interrupt we don't run (input state is instead scripted as an image global —
@@ -211,6 +224,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     for (; n < max_insns; n++) {
         uint32_t pc = m68k_get_reg(0, M68K_REG_PC);
         if (pc == sentinel || (stop_pc && pc == stop_pc)) break;
+        if (g_cov_on && pc < COV_SIZE) g_cov[pc >> 3] |= (uint8_t)(1u << (pc & 7));   /* coverage */
         uint32_t cur_a7 = m68k_get_reg(0, M68K_REG_A7);
         if (cur_a7 < g_min_a7) g_min_a7 = cur_a7;
         if      (pc == MAGIC_GEMDOS) handle_trap(1);
@@ -243,3 +257,5 @@ uint32_t        osh_num_insns(void)   { return g_ninsns; }
 uint32_t        osh_psg_count(void)   { return g_psgn; }
 const uint8_t  *osh_psg_regs(void)    { return g_psg_reg; }
 const uint8_t  *osh_psg_vals(void)    { return g_psg_val; }
+const uint8_t  *osh_cov_data(void)    { return g_cov; }          /* the visited-PC bitset (for merge) */
+uint32_t        osh_cov_bytes(void)   { return sizeof g_cov; }

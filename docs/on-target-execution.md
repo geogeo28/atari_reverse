@@ -185,6 +185,16 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   (sound, a render stage) tells you by A/B whether it's the culprit — but prefer the raster bars /
   instruction counter first; they answer "which one" in a single run instead of one rebuild each.
 
+- **Coverage-gap report — find the unverified triggers before they ship.** `make coverage-gap`
+  (`recreate/tools/coverage_gap.py`) runs the differential suite with the oracle's executed-PC
+  tracking on (`osh_cov_*` in `shim.c`, dumped per xdist worker by `test/conftest.py`), then lists
+  every call site to a sound/OS *sink* (`Dosound`/`INITTUNE`/`INITFX`/`play_event_tune`/
+  `handle_marker`/`stop_music`) that **no test executed**. Those are exactly the §5-class triggers —
+  off-image or fuzz-unreached, so the image diff is blind to them. Knowingly read-verified sites go in
+  `tools/coverage_gap_allow.txt` with a reason; the tool exits non-zero on a *new* gap. This is the
+  systematic answer to "the diff is green but a sound is wrong": it would have flagged the leg-start /
+  checkpoint / collision jingles up front instead of via play-testing.
+
 ## Verifying an on-target fix without breaking verification
 
 Every fix above touches PRG-only code or a host/target-conditional, so the invariant is: **the
