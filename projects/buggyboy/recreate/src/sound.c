@@ -196,8 +196,8 @@ void g_INITFX(uint8_t *image, uint32_t fx_id) {
 /* INITTUNE @0x1b59c — start music track D0: seed the music header and the three voice-control
  * records from the per-tune tables, then flag music active. */
 void g_INITTUNE(uint8_t *image, uint32_t tune_id) {
-    uint16_t d0 = (uint16_t)(int16_t)(int8_t)tune_id;        /* ext.w d0 */
-    uint16_t idx = set_low_byte(d0, (uint8_t)(d0 << 3));     /* asl.b #3 (8-byte tune stride) */
+    uint16_t tune_ext = (uint16_t)(int16_t)(int8_t)tune_id;           /* ext.w d0 */
+    uint16_t idx = set_low_byte(tune_ext, (uint8_t)(tune_ext << 3));  /* asl.b #3 (8-byte tune stride) */
 
     image[A_mzflag] = 0;
     image[SND_STATE + SND_TUNE_LEN] = SND_TUNE_LEN_VAL;
@@ -471,15 +471,15 @@ uint32_t g_REFRESH(uint8_t *image, uint8_t *psg_reg, uint8_t *psg_val, uint32_t 
     /* --- envelope generator: synthesize channel A's period from the EG parameters --- */
     if (image[SND_STATE + SND_EG_FLAG]) {
         image[SND_STATE + SND_VOL_A] = image[SND_STATE + SND_EG_VOL];
-        uint16_t d0 = (uint16_t)(SND_EG_PERIOD_HI | (uint8_t)~image[SND_STATE + SND_EG_P1]);
-        uint16_t d1 = (uint8_t)~image[SND_STATE + SND_EG_P1];
-        d0 = (uint16_t)(d0 + d0); d0 = (uint16_t)(d0 + d1);   /* d0 = 4*d0_init + 3*d1 */
-        d0 = (uint16_t)(d0 + d0); d0 = (uint16_t)(d0 + d1);
+        uint16_t eg_period = (uint16_t)(SND_EG_PERIOD_HI | (uint8_t)~image[SND_STATE + SND_EG_P1]);
+        uint16_t pitch_inv = (uint8_t)~image[SND_STATE + SND_EG_P1];   /* d1: inverted EG pitch param */
+        eg_period = (uint16_t)(eg_period + eg_period); eg_period = (uint16_t)(eg_period + pitch_inv);   /* d0 = 4*init + 3*pitch_inv */
+        eg_period = (uint16_t)(eg_period + eg_period); eg_period = (uint16_t)(eg_period + pitch_inv);
         uint8_t phase = image[SND_STATE + SND_EG_PHASE];
-        d0 = (uint16_t)(d0 + (phase & 0x1f));
+        eg_period = (uint16_t)(eg_period + (phase & 0x1f));
         image[SND_STATE + SND_EG_PHASE] = (uint8_t)(phase - SND_EG_PHASE_DEC);
-        if (image[SND_STATE + SND_EG_PHASE] & 1) d0 = (uint16_t)(d0 + 0x100);
-        wr16(image + SND_STATE + SND_PERIOD_A, d0);
+        if (image[SND_STATE + SND_EG_PHASE] & 1) eg_period = (uint16_t)(eg_period + 0x100);
+        wr16(image + SND_STATE + SND_PERIOD_A, eg_period);
         image[env0] &= (uint8_t)~VC_F_BIT0;
     }
 

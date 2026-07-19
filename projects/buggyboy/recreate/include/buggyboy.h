@@ -313,7 +313,7 @@ void g_evt_collision(uint8_t *image);
 void g_play_event_tune(uint8_t *image, uint32_t tune);           /* D0 = tune id */
 void g_evt_flag_gate(uint8_t *image, uint32_t slot, uint32_t obj_type);   /* D5, D6 */
 void g_evt_flag_gate_forced(uint8_t *image, uint32_t slot);              /* d7=6 variant @0x11c1a: gate skipped */
-void g_evt_score_msg(uint8_t *image, uint32_t d6, uint32_t d7);
+void g_evt_score_msg(uint8_t *image, uint32_t obj_flag_a, uint32_t obj_flag_b);
 void g_handle_marker(uint8_t *image, uint32_t fx_id);            /* D0 = effect id */
 
 #endif /* BB_BUGGYBOY_H */

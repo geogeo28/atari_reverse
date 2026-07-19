@@ -117,10 +117,10 @@ void g_init_leg(uint8_t *image) {
     for (int r = 0; r < MARKER_RECORDS; r++, rec_src += MARKER_SRC_STRIDE, rec += MARKER_REC_STRIDE) {
         int16_t type = (int16_t)be16(image + rec_src + 6);
         uint16_t mask = be16(image + rec_src);
-        uint32_t s = rec_src + 3;                 /* mask word (+0,+1) then a skipped byte (+2) */
-        uint32_t d = rec + 1;
-        for (int bit = MARKER_MASK_BITS; bit >= 0; bit--, d += 2) {
-            if (mask & (1u << bit)) image[d] = image[s++];
+        uint32_t src_byte = rec_src + 3;          /* mask word (+0,+1) then a skipped byte (+2) */
+        uint32_t dst_byte = rec + 1;
+        for (int bit = MARKER_MASK_BITS; bit >= 0; bit--, dst_byte += 2) {
+            if (mask & (1u << bit)) image[dst_byte] = image[src_byte++];
         }
         uint32_t flag = rec + MARKER_FLAG_OFF;
         wr16(image + flag, (uint16_t)type);
@@ -130,15 +130,16 @@ void g_init_leg(uint8_t *image) {
 
     /* Phase 11: first object-display record, selected from buf_a by a per-leg index. */
     uint8_t sel = image[buf_a + OBJDISP_SEL_OFF + (uint16_t)(leg << 5)];
-    uint32_t d11 = buf_a + OBJDISP_TBL_OFF + ((uint16_t)sel << 4);
-    wr16(image + OBJDISP_DST,     be16(image + d11));     d11 += 2;
-    wr32(image + OBJDISP_DST + 2, be32(image + d11));     d11 += 4;
-    wr32(image + OBJDISP_DST + 6, be32(image + d11));     d11 += 4;
-    wr16(image + OBJDISP_DST - 4, be16(image + d11));     d11 += 2;   /* move.w (a3)+,0xa(a0), a0 rewound 0x18 */
-    wr16(image + A_obj_shade, (uint16_t)(be16(image + d11) - 2));
+    uint32_t disp_src = buf_a + OBJDISP_TBL_OFF + ((uint16_t)sel << 4);
+    wr16(image + OBJDISP_DST,     be16(image + disp_src));     disp_src += 2;
+    wr32(image + OBJDISP_DST + 2, be32(image + disp_src));     disp_src += 4;
+    wr32(image + OBJDISP_DST + 6, be32(image + disp_src));     disp_src += 4;
+    wr16(image + OBJDISP_DST - 4, be16(image + disp_src));     disp_src += 2;   /* move.w (a3)+,0xa(a0), a0 rewound 0x18 */
+    wr16(image + A_obj_shade, (uint16_t)(be16(image + disp_src) - 2));
 }
 
-/* ---- draw_game_objects @ 0x12ef6 --- per-frame object/scene draw orchestrator (a6 = draw buffer).
+/* ---- draw_game_objects @ 0x12ef6 --- per-frame object/scene draw orchestrator (A6 = draw buffer,
+ * held in `draw_buf`).
  *
  * Advances three pieces of per-frame state — the marker-decay slot, the road-colour animation
  * counters, and the bonus-window flag animation — then draws the ground, the foreground buggy
@@ -176,13 +177,13 @@ static void gobj_prefix(uint8_t *image) {
         uint32_t rec = A_marker_decay_base + sign_ext16(marker_off);
         for (int i = 0; i <= GOBJ_MARKER_RECS; i++, rec += GOBJ_MARKER_STRIDE)
             image[rec] = 0;
-        int16_t cd = (int16_t)(be16(image + A_marker_decay + 4) - GOBJ_MARKER_STRIDE);
-        wr16(image + A_marker_decay + 4, (uint16_t)cd);
-        if (cd < 0) {
+        int16_t countdown = (int16_t)(be16(image + A_marker_decay + 4) - GOBJ_MARKER_STRIDE);
+        wr16(image + A_marker_decay + 4, (uint16_t)countdown);
+        if (countdown < 0) {
             wr32(image + A_marker_decay, 0);          /* clr.l -(a1): 0x18cf0 active + 0x18cf2 offset */
         } else {
-            uint32_t p = A_marker_decay_base + sign_ext16(marker_off) + sign_ext16((uint16_t)cd);
-            image[p] = (uint8_t)(image[p] - 1);
+            uint32_t decay_ptr = A_marker_decay_base + sign_ext16(marker_off) + sign_ext16((uint16_t)countdown);
+            image[decay_ptr] = (uint8_t)(image[decay_ptr] - 1);
         }
     }
 
@@ -194,20 +195,20 @@ static void gobj_prefix(uint8_t *image) {
     wr16(image + A_anim_word, anim_word);
     wr16(image + buf_a + GOBJ_ANIM_BUF_OFF1, anim_word);
     wr16(image + buf_a + GOBJ_ANIM_BUF_OFF2, anim_word);
-    uint16_t coff = (uint16_t)(be16(image + A_anim_coloridx_tbl + idx) << 3);
-    wr32(image + A_anim_color,     be32(image + A_color_pairs + coff));
-    wr32(image + A_anim_color + 4, be32(image + A_color_pairs + coff + 4));
+    uint16_t color_off = (uint16_t)(be16(image + A_anim_coloridx_tbl + idx) << 3);
+    wr32(image + A_anim_color,     be32(image + A_color_pairs + color_off));
+    wr32(image + A_anim_color + 4, be32(image + A_color_pairs + color_off + 4));
 
     /* bonus window: cycle the dsp colour scroll, count down, advance the flag sequence at 0x28. */
     if (be16(image + A_bonus_timer) != 0) {
-        uint16_t dsp = (uint16_t)(be16(image + A_dsp_color_scroll) + 1);
-        if ((int16_t)dsp >= GOBJ_DSP_ANIM_CAP) dsp = 0;
-        wr16(image + A_dsp_color_scroll, dsp);
-        uint16_t bt = (uint16_t)(be16(image + A_bonus_timer) - 1);
-        wr16(image + A_bonus_timer, bt);
-        if (bt == 0) {
+        uint16_t scroll_next = (uint16_t)(be16(image + A_dsp_color_scroll) + 1);
+        if ((int16_t)scroll_next >= GOBJ_DSP_ANIM_CAP) scroll_next = 0;
+        wr16(image + A_dsp_color_scroll, scroll_next);
+        uint16_t bonus_left = (uint16_t)(be16(image + A_bonus_timer) - 1);
+        wr16(image + A_bonus_timer, bonus_left);
+        if (bonus_left == 0) {
             wr16(image + A_dsp_color_scroll, 0);
-        } else if (bt == GOBJ_BONUS_FLAG_FRAME) {
+        } else if (bonus_left == GOBJ_BONUS_FLAG_FRAME) {
             wr16(image + A_flag_seq_off,
                  (uint16_t)((be16(image + A_flag_seq_off) + GOBJ_FLAG_SEQ_STEP) & GOBJ_FLAG_SEQ_MASK));
             if ((int16_t)be16(image + A_flag_seq_count) >= GOBJ_FLAG_SEQ_CAP)
@@ -222,41 +223,41 @@ void g_draw_game_objects_prefix(uint8_t *image) {
 }
 
 void g_draw_game_objects(uint8_t *image) {
-    uint32_t a6 = draw_buffer(image);
+    uint32_t draw_buf = draw_buffer(image);
     gobj_prefix(image);
 
-    g_draw_ground(image, a6);
+    g_draw_ground(image, draw_buf);
     g_draw_fg_sprite(image);
 
     /* count active sprite slots: consecutive non-negative words (stride 0x20) after the base. */
     int count = 0;
     if ((int16_t)be16(image + A_sprite_list_base) >= 0) {
-        uint32_t p = A_sprite_list_base + GOBJ_MARKER_STRIDE;
-        for (int i = 0; i <= GOBJ_SPRITE_SLOTS; i++, p += GOBJ_MARKER_STRIDE) {
-            if ((int16_t)be16(image + p) < 0) break;
+        uint32_t slot_ptr = A_sprite_list_base + GOBJ_MARKER_STRIDE;
+        for (int i = 0; i <= GOBJ_SPRITE_SLOTS; i++, slot_ptr += GOBJ_MARKER_STRIDE) {
+            if ((int16_t)be16(image + slot_ptr) < 0) break;
             count++;
         }
     }
 
     /* first pass: the `count` active sprite rows. */
     if (count - 1 >= 0)
-        g_draw_object_list(image, A_obj_sprite_disp, A_obj_sprite_flags, a6,
+        g_draw_object_list(image, A_obj_sprite_disp, A_obj_sprite_flags, draw_buf,
                            (uint16_t)(count - 1), GOBJ_D6_INIT, (uint16_t)count);
-    g_draw_object(image, a6);
+    g_draw_object(image, draw_buf);
     /* second pass: the remaining rows, with the streams advanced past the counted ones. */
     if (GOBJ_SPRITE_LAST - count >= 0)
         g_draw_object_list(image,
                            A_obj_sprite_disp + (uint16_t)(count * GOBJ_ROW_A5_STRIDE),
-                           A_obj_sprite_flags + (uint16_t)(count * GOBJ_ROW_A3_STRIDE), a6,
+                           A_obj_sprite_flags + (uint16_t)(count * GOBJ_ROW_A3_STRIDE), draw_buf,
                            (uint16_t)(GOBJ_SPRITE_LAST - count),
                            (uint16_t)(GOBJ_D6_INIT - count * GOBJ_D6_ROW_STEP), 0);
     /* third pass (fixed object list) + the player buggy, ordered by the view. */
     if ((be16(image + A_view_flags) & GOBJ_VIEW_REAR) == 0) {
-        g_draw_object_list(image, A_obj_list_base, A_obj_flags, a6, 0, 0, 0);
+        g_draw_object_list(image, A_obj_list_base, A_obj_flags, draw_buf, 0, 0, 0);
         g_draw_buggy(image);
     } else {
         g_draw_buggy(image);
-        g_draw_object_list(image, A_obj_list_base, A_obj_flags, a6, 0, 0, 0);
+        g_draw_object_list(image, A_obj_list_base, A_obj_flags, draw_buf, 0, 0, 0);
     }
 }
 

@@ -83,9 +83,10 @@ void g_evt_flag_gate_forced(uint8_t *image, uint32_t slot) {
 }
 
 /* evt_score_msg @0x11c5a — award a score message when both object-type flags are set, then play
- * its tune (falls straight into play_event_tune with tune 8). D6/D7 = object-type flags. */
-void g_evt_score_msg(uint8_t *image, uint32_t d6, uint32_t d7) {
-    if ((uint16_t)d7 == 0 || (uint16_t)d6 == 0) return;
+ * its tune (falls straight into play_event_tune with tune 8).
+ * Register map: obj_flag_a = D6, obj_flag_b = D7 (the two object-type flags from the event dispatch). */
+void g_evt_score_msg(uint8_t *image, uint32_t obj_flag_a, uint32_t obj_flag_b) {
+    if ((uint16_t)obj_flag_b == 0 || (uint16_t)obj_flag_a == 0) return;
     g_add_score(image, A_score_delta_msg);
     g_play_event_tune(image, TUNE_SCORE_MSG);
 }
