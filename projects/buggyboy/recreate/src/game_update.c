@@ -89,9 +89,9 @@ static void game_update_fx_and_events(uint8_t *image);     /* sections G/H/I (co
 #define GU_CURVE_STEP_L     0x3c      /* road_curve delta, left variant */
 #define GU_CURVE_STEP_R     0xffc4    /* road_curve delta, right variant (-0x3c) */
 
-static int gu_gate(int kind, uint16_t d6, uint16_t d7) {   /* 0=always, 1=d6&&d7, 2=d6&&!d7 */
-    if (kind == 1) return d7 != 0 && d6 != 0;
-    if (kind == 2) return d7 == 0 && d6 != 0;
+static int gu_gate(int kind, uint16_t obj_flag_a, uint16_t obj_flag_b) {   /* gate on the two object-type flags (D6/D7): 0=always, 1=a&&b, 2=a&&!b */
+    if (kind == 1) return obj_flag_b != 0 && obj_flag_a != 0;
+    if (kind == 2) return obj_flag_b == 0 && obj_flag_a != 0;
     return 1;
 }
 
@@ -145,43 +145,43 @@ static void gu_disp_bonus(uint8_t *image, uint16_t type, uint16_t id, uint16_t c
     g_handle_marker(image, 8);
 }
 
-static void gu_dispatch_event(uint8_t *image, uint16_t idx, uint16_t d0, uint16_t d5,
-                              uint16_t d6, uint16_t d7) {
-    (void)d0;
+static void gu_dispatch_event(uint8_t *image, uint16_t idx, uint16_t scratch, uint16_t slot,
+                              uint16_t obj_flag_a, uint16_t obj_flag_b) {
+    (void)scratch;                                          /* D0: unused on this dispatch path */
     int16_t off = (int16_t)be16(image + A_event_jumptable + (uint16_t)(idx * 2));
-    uint32_t t = (uint32_t)(A_event_jumptable + off);
+    uint32_t target = (uint32_t)(A_event_jumptable + off);
     static const struct { uint32_t addr; int gate; uint32_t delta; } score[] = {
         {0x11c5a, 1, GU_SCORE_A}, {0x11c62, 0, GU_SCORE_A}, {0x11c6a, 2, GU_SCORE_A},
         {0x11cdc, 1, GU_SCORE_B}, {0x11ce4, 0, GU_SCORE_B}, {0x11cec, 2, GU_SCORE_B},
         {0x11cf6, 1, GU_SCORE_C}, {0x11cfe, 0, GU_SCORE_C}, {0x11d08, 2, GU_SCORE_C},
     };
     for (unsigned i = 0; i < sizeof score / sizeof score[0]; i++)
-        if (t == score[i].addr) { if (gu_gate(score[i].gate, d6, d7)) gu_score_fire(image, score[i].delta); return; }
+        if (target == score[i].addr) { if (gu_gate(score[i].gate, obj_flag_a, obj_flag_b)) gu_score_fire(image, score[i].delta); return; }
 
     /* checkpoint-counter group (shared 0x11d1a body, three gates). */
-    if (t == 0x11d12) { if (d7 != 0 && d6 != 0) gu_ckpt_counter(image); return; }   /* idx 22 */
-    if (t == 0x11d1a) { gu_ckpt_counter(image); return; }                           /* idx 23 */
-    if (t == 0x11d2e) { if (d7 == 0 && d6 != 0) gu_ckpt_counter(image); return; }   /* idx 24 */
+    if (target == 0x11d12) { if (obj_flag_b != 0 && obj_flag_a != 0) gu_ckpt_counter(image); return; }   /* idx 22 */
+    if (target == 0x11d1a) { gu_ckpt_counter(image); return; }                                           /* idx 23 */
+    if (target == 0x11d2e) { if (obj_flag_b == 0 && obj_flag_a != 0) gu_ckpt_counter(image); return; }   /* idx 24 */
 
-    if (t == 0x11d38 || t == 0x11d62) return;               /* bare-rts no-ops (idx 26/28/29/31) */
+    if (target == 0x11d38 || target == 0x11d62) return;     /* bare-rts no-ops (idx 26/28/29/31) */
 
-    if (t == 0x11d3a) {                                      /* idx 30/60: spawn marker-decay object */
-        image[A_obj_active + 1 + (uint16_t)d5] = 0;
+    if (target == 0x11d3a) {                                /* idx 30/60: spawn marker-decay object */
+        image[A_obj_active + 1 + (uint16_t)slot] = 0;
         wrw(image, A_marker_decay,     (uint16_t)(rdw(image, A_marker_decay) + 1));
-        wrw(image, A_marker_decay + 2, d5);
+        wrw(image, A_marker_decay + 2, slot);
         wrw(image, A_marker_decay + 4, GU_MARKER_DECAY_ARM);
         g_add_score(image, A_score_delta_evt);
         g_play_event_tune(image, GU_EVT_TUNE_A);
         return;
     }
-    if (t == 0x11d64) {                                     /* idx 32/33: arm a spin if fast + unlocked */
+    if (target == 0x11d64) {                                /* idx 32/33: arm a spin if fast + unlocked */
         if ((int16_t)rdw(image, A_speed) >= GU_SPIN_SPEED_MIN && rdw(image, A_collision_lock) == 0) {
-            if (d7 == 0) wrw(image, A_spin_reset, GU_SPIN_LO);
-            else         wrw(image, A_spin_word2, GU_SPIN_HI);
+            if (obj_flag_b == 0) wrw(image, A_spin_reset, GU_SPIN_LO);
+            else                 wrw(image, A_spin_word2, GU_SPIN_HI);
         }
         return;
     }
-    if (t == 0x11d8e) {                                     /* idx 34: spawn collision object by rpm band */
+    if (target == 0x11d8e) {                                /* idx 34: spawn collision object by rpm band */
         if (rdw(image, A_collision_lock) == 0) {
             wr32(image + A_spin_reset, 0);
             wrw(image, A_turn_flags, 0);
@@ -192,25 +192,25 @@ static void gu_dispatch_event(uint8_t *image, uint16_t idx, uint16_t d0, uint16_
         }
         return;
     }
-    if (t == 0x11dcc) {                                     /* idx 35-37: freeze curve + marker fx 5 */
+    if (target == 0x11dcc) {                                /* idx 35-37: freeze curve + marker fx 5 */
         if (rdw(image, A_collision_lock) == 0) {
             wrw(image, A_curve_freeze, 5);
             g_handle_marker(image, 5);
         }
         return;
     }
-    if (t == 0x11de2) {                                     /* idx 38-40: rpm penalty -> speed, marker fx 6 */
+    if (target == 0x11de2) {                                /* idx 38-40: rpm penalty -> speed, marker fx 6 */
         if (rdw(image, A_collision_lock) == 0) {
             int16_t rpm = (int16_t)(rdw(image, A_engine_rpm) - GU_RPM_DROP);
             if (rpm < GU_RPM_MIN) rpm = GU_RPM_MIN;
             wrw(image, A_engine_rpm, (uint16_t)rpm);
-            uint16_t d1 = (uint16_t)(rpm - GU_RPM_MIN);
-            wrw(image, A_speed, (uint16_t)(d1 * 3));         /* speed = d1 + 2*d1 */
+            uint16_t rpm_over_min = (uint16_t)(rpm - GU_RPM_MIN);
+            wrw(image, A_speed, (uint16_t)(rpm_over_min * 3));   /* speed = rpm_over_min + 2*rpm_over_min */
             g_handle_marker(image, 6);
         }
         return;
     }
-    if (t == 0x11e16) {                                     /* idx 25/27/43-59: common collision spawn */
+    if (target == 0x11e16) {                                /* idx 25/27/43-59: common collision spawn */
         if (rdw(image, A_collision_lock) == 0) {
             wr32(image + A_spin_reset, 0);
             wrw(image, A_turn_flags, 0x10);
@@ -222,23 +222,23 @@ static void gu_dispatch_event(uint8_t *image, uint16_t idx, uint16_t d0, uint16_
     }
 
     /* finish-line display (0x11e6a body); OR-style gates, two type variants. */
-    if (t == 0x11e4e) { if (d6 != 0 || d7 != 0) gu_disp_finish(image, GU_DISP_FINISH_A); return; }  /* idx 61 */
-    if (t == 0x11e5c) { if (d6 == 0 || d7 == 0) gu_disp_finish(image, GU_DISP_FINISH_B); return; }  /* idx 62 */
+    if (target == 0x11e4e) { if (obj_flag_a != 0 || obj_flag_b != 0) gu_disp_finish(image, GU_DISP_FINISH_A); return; }  /* idx 61 */
+    if (target == 0x11e5c) { if (obj_flag_a == 0 || obj_flag_b == 0) gu_disp_finish(image, GU_DISP_FINISH_B); return; }  /* idx 62 */
 
     /* bonus-number display (0x11ebe body); OR-style gates, entry (type,id,curve_step) defaults. */
-    if (t == 0x11e8e) { if (d6 != 0 || d7 != 0) gu_disp_bonus(image, GU_DISP_TYPE_L, 0x29, GU_CURVE_STEP_L); return; }  /* idx 41 */
-    if (t == 0x11e96) { if (d6 != 0 || d7 != 0) gu_disp_bonus(image, GU_DISP_TYPE_L, 0x3f, GU_CURVE_STEP_L); return; }  /* idx 63 */
-    if (t == 0x11e92) { if (d6 == 0 || d7 == 0) gu_disp_bonus(image, GU_DISP_TYPE_R, 0x2a, GU_CURVE_STEP_R); return; }  /* idx 42 */
-    if (t == 0x11eaa) { if (d6 == 0 || d7 == 0) gu_disp_bonus(image, GU_DISP_TYPE_R, 0x40, GU_CURVE_STEP_R); return; }  /* idx 64 */
+    if (target == 0x11e8e) { if (obj_flag_a != 0 || obj_flag_b != 0) gu_disp_bonus(image, GU_DISP_TYPE_L, 0x29, GU_CURVE_STEP_L); return; }  /* idx 41 */
+    if (target == 0x11e96) { if (obj_flag_a != 0 || obj_flag_b != 0) gu_disp_bonus(image, GU_DISP_TYPE_L, 0x3f, GU_CURVE_STEP_L); return; }  /* idx 63 */
+    if (target == 0x11e92) { if (obj_flag_a == 0 || obj_flag_b == 0) gu_disp_bonus(image, GU_DISP_TYPE_R, 0x2a, GU_CURVE_STEP_R); return; }  /* idx 42 */
+    if (target == 0x11eaa) { if (obj_flag_a == 0 || obj_flag_b == 0) gu_disp_bonus(image, GU_DISP_TYPE_R, 0x40, GU_CURVE_STEP_R); return; }  /* idx 64 */
 
-    if (t >= 0x11ba4 && t <= 0x11bb4) g_evt_flag_gate(image, d5, (uint16_t)((t - 0x11ba4) / 4 + 1));
-    else if (t == 0x11c1a)            g_evt_flag_gate_forced(image, d5);   /* d7=6 variant: gate skipped */
-    /* t == 0x11c18 -> bare rts (no-op) */
+    if (target >= 0x11ba4 && target <= 0x11bb4) g_evt_flag_gate(image, slot, (uint16_t)((target - 0x11ba4) / 4 + 1));
+    else if (target == 0x11c1a)                 g_evt_flag_gate_forced(image, slot);   /* D7=6 variant: gate skipped */
+    /* target == 0x11c18 -> bare rts (no-op) */
 }
 
 /* Test glue: resolve+run one jump-table handler in isolation (entered at its own PC by the oracle). */
-void g_gu_dispatch_event(uint8_t *image, uint32_t idx, uint32_t d5, uint32_t d6, uint32_t d7) {
-    gu_dispatch_event(image, (uint16_t)idx, 0, (uint16_t)d5, (uint16_t)d6, (uint16_t)d7);
+void g_gu_dispatch_event(uint8_t *image, uint32_t idx, uint32_t slot, uint32_t obj_flag_a, uint32_t obj_flag_b) {
+    gu_dispatch_event(image, (uint16_t)idx, 0, (uint16_t)slot, (uint16_t)obj_flag_a, (uint16_t)obj_flag_b);
 }
 
 void g_game_update(uint8_t *image) {
@@ -300,8 +300,8 @@ void g_game_update(uint8_t *image) {
     uint16_t lean = (uint8_t)lean_byte;
     if (lean_byte < 0) { lean = 0; wrw(image, A_buggy_draw_flag, 0xffff); }
     wrw(image, A_lean_state, lean);
-    uint16_t sp = rdw(image, A_spin_reset);
-    if (sp != 0 || (sp = rdw(image, A_spin_word2)) != 0) wrw(image, A_lean_state, sp);
+    uint16_t spin = rdw(image, A_spin_reset);
+    if (spin != 0 || (spin = rdw(image, A_spin_word2)) != 0) wrw(image, A_lean_state, spin);
 
     /* 6. crash/auto-steer script (collision_lock) vs. live steering (steer_center). */
     wrw(image, A_buggy_pitch_off, 0);
@@ -309,7 +309,7 @@ void g_game_update(uint8_t *image) {
     if (rdw(image, A_collision_lock) != 0 || rdw(image, A_event_pending) != 0) {
         if (rdw(image, A_collision_lock) == 0) {               /* event path -> crash body */
             wrw(image, A_event_pending, 0);
-            gu_dispatch_event(image, event_pending, 0, sp, 1, 0);   /* d5=slot=spin, d6=1, d7=0 */
+            gu_dispatch_event(image, event_pending, 0, spin, 1, 0);   /* slot=spin, obj_flag_a=1, obj_flag_b=0 */
             in = 0;
         }
         in = (uint16_t)(rdw(image, A_turn_flags) | (in & 0xc));
@@ -498,7 +498,7 @@ void g_game_update(uint8_t *image) {
 #define GU_LEG_STRIDE       0x2000
 #define GU_ADD_SCORE_DELTA  0x1736a   /* A1 for add_score at the checkpoint path */
 #define GU_SHUFFLE_P26      0x18d5c   /* puVar26 after the road_curve_tbl shuffle (13 iters) */
-#define GU_SHUFFLE_P12      0x18d3c   /* puVar12 after the shuffle (= p26 - 0x20) */
+#define GU_SHUFFLE_P12      0x18d3c   /* puVar12 after the shuffle (= row_top - 0x20) */
 
 static void game_update_course_advance(uint8_t *image) {
     wrw(image, A_event_pending, 0);
@@ -515,19 +515,19 @@ static void game_update_course_advance(uint8_t *image) {
         g_probe_collision(image);   /* leaves D1 = updated mask; test stages the bit off (see notes) */
 
     /* road_seg_data: shift the 8-long window up by one word. */
-    for (uint32_t p = A_road_seg_data, s = A_road_seg_data + 2, k = 0; k < 4; k++, p += 8, s += 8) {
-        wr32(image + p, be32(image + s));
-        wr32(image + p + 4, be32(image + s + 4));
+    for (uint32_t dst = A_road_seg_data, src = A_road_seg_data + 2, k = 0; k < 4; k++, dst += 8, src += 8) {
+        wr32(image + dst, be32(image + src));
+        wr32(image + dst + 4, be32(image + src + 4));
     }
 
     /* road_curve_tbl: scroll the road-geometry window up by 0x20 bytes/frame, pulling from the ring
-     * below it. Leaves p26 = GU_SHUFFLE_P26, p12 = GU_SHUFFLE_P12 for the unpack below. */
-    uint32_t p22 = A_road_curve_tbl, p12 = A_course_src_ring, p26 = p12;
+     * below it. Leaves row_top = GU_SHUFFLE_P26 (0x18d5c), ring_cur = GU_SHUFFLE_P12 (row_top - 0x20). */
+    uint32_t curve_dst = A_road_curve_tbl, ring_cur = A_course_src_ring, row_top = ring_cur;
     for (int k = 0xc; k >= 0; k--) {
-        p26 = p12;
-        for (int n = 1; n <= 7; n++) wr32(image + p22 - 4 * n, be32(image + p26 - 4 * n));
-        p12 = p26 - 0x20; p22 -= 0x20;
-        wr32(image + p22, be32(image + p12));
+        row_top = ring_cur;
+        for (int n = 1; n <= 7; n++) wr32(image + curve_dst - 4 * n, be32(image + row_top - 4 * n));
+        ring_cur = row_top - 0x20; curve_dst -= 0x20;
+        wr32(image + curve_dst, be32(image + ring_cur));
     }
 
     wrw(image, A_course_row_ctr, (uint16_t)(rdw(image, A_course_row_ctr) - 8));
@@ -538,11 +538,11 @@ static void game_update_course_advance(uint8_t *image) {
         uint16_t marker_w = be16(image + rec + 6);
         uint16_t rec_w0 = be16(image + rec);
         uint8_t rec_ctl = image[rec + 2];
-        /* clear the new row's 16 words at p12. */
-        for (int k = 0; k < 16; k++) wr16(image + p12 + k * 2, 0);
+        /* clear the new row's 16 words at ring_cur. */
+        for (int k = 0; k < 16; k++) wr16(image + ring_cur + k * 2, 0);
         /* unpack 15 entries controlled by the (rec_w0 | coll_mask_hi) select mask, expanding the
          * animation control codes 0x0d/0x10/0x13/0x16 into their 2-word sub-runs. */
-        uint32_t dst = p26 - 0x1f;
+        uint32_t dst = row_top - 0x1f;
         uint32_t src = rec + 3;
         uint32_t sel = ((uint32_t)(uint16_t)(coll_mask >> 16) << 16) | rec_w0;
         for (int bit = 0xe; bit >= 0; bit--, dst += 2) {
@@ -555,18 +555,18 @@ static void game_update_course_advance(uint8_t *image) {
                 if (c == 0x16) { image[dst+1]=0; image[dst+2]=0x17; image[dst+3]=0; image[dst+4]=0x18; }
             }
         }
-        uint32_t mw = p26 - 2;
-        wr16(image + mw, marker_w);
+        uint32_t marker_ptr = row_top - 2;
+        wr16(image + marker_ptr, marker_w);
         if ((int16_t)marker_w < 0) {
-            if ((marker_w & 0xf01e) == 0xf012) image[mw] = (uint8_t)(image[mw] & 0x4f);
-            else if ((marker_w & 0xf01e) == 0xf000) image[mw] = (uint8_t)(image[mw] & 0x6f);
-            else if ((marker_w & 0x6000) == 0) image[mw] = (uint8_t)(image[mw] & 0x7f);
+            if ((marker_w & 0xf01e) == 0xf012) image[marker_ptr] = (uint8_t)(image[marker_ptr] & 0x4f);
+            else if ((marker_w & 0xf01e) == 0xf000) image[marker_ptr] = (uint8_t)(image[marker_ptr] & 0x6f);
+            else if ((marker_w & 0x6000) == 0) image[marker_ptr] = (uint8_t)(image[marker_ptr] & 0x7f);
         } else {
-            image[mw] = 0;
+            image[marker_ptr] = 0;
         }
         wrw(image, A_course_row_ctr, (uint16_t)(rec_ctl & 0xf8));
         wr16(image + A_marker_decay_base, (uint16_t)(int16_t)((rec_ctl & 7) - 3));
-        if (be16(image + p26 - 0x1e) == 0x2e) wr16(image + p26 - 6, 0x2e);
+        if (be16(image + row_top - 0x1e) == 0x2e) wr16(image + row_top - 6, 0x2e);
         g_build_road_geometry(image);
 
         /* record's event: sprite-mode selector (dual-role road_width_src low byte & 6). */
@@ -602,8 +602,8 @@ static void game_update_course_advance(uint8_t *image) {
         }
     } else {
         /* no new record: clear the 15 marker words' low 6 bits, keep the previous slope. */
-        uint32_t p = p12;
-        for (int k = 0xe; k >= 0; k--, p += 2) wr16(image + p, (uint16_t)(be16(image + p) & 0xffc0));
+        uint32_t row_ptr = ring_cur;
+        for (int k = 0xe; k >= 0; k--, row_ptr += 2) wr16(image + row_ptr, (uint16_t)(be16(image + row_ptr) & 0xffc0));
         wr16(image + A_marker_decay_base, rdw(image, A_marker_slope_src));
         g_build_road_geometry(image);
     }
@@ -625,13 +625,13 @@ static void game_update_fx_and_events(uint8_t *image) {
     wr32(image + A_fx_block, 0);   /* clr.l: zeros 0x19114..0x19117 (+2 word too) */
     wr32(image + A_fx_block_04, (uint32_t)be16(image + obj));          /* zext obj_flags[0] */
     wr32(image + A_fx_block_08, be32(image + A_fx_block_08) & 0xffff);
-    uint32_t d = A_fx_block_0a, s = obj + 2;
-    for (int k = 0xc; k >= 0; k--, d += 2, s += 2) wr16(image + d, be16(image + s));
-    /* d/s now point one past the last copied word (d=0x19138, s=0x18ed8). */
-    wr16(image + d, 0);
-    wr16(image + d + 2, be16(image + s));
-    wr32(image + d + 4, 0);
-    wr32(image + d + 8, 0);
+    uint32_t fx_dst = A_fx_block_0a, obj_src = obj + 2;
+    for (int k = 0xc; k >= 0; k--, fx_dst += 2, obj_src += 2) wr16(image + fx_dst, be16(image + obj_src));
+    /* fx_dst/obj_src now point one past the last copied word (fx_dst=0x19138, obj_src=0x18ed8). */
+    wr16(image + fx_dst, 0);
+    wr16(image + fx_dst + 2, be16(image + obj_src));
+    wr32(image + fx_dst + 4, 0);
+    wr32(image + fx_dst + 8, 0);
     wr16(image + A_spin_state, 0);
     /* Spin/fx select reads the two bytes at obj_flags-2 / obj_flags-1 (the original walks a1 to
      * obj_flags+0x1e after the fx-block copy, then `suba #$20` -> obj_flags-2). The earlier obj-0x1c
@@ -663,11 +663,11 @@ static void game_update_fx_and_events(uint8_t *image) {
      * slot (horizon_row, then horizon_row+2) — handlers use it to index obj_active (`clear
      * obj_active[d5+1]`), which for the +2 slot aliases event_type (0x18eca). Passing 0 here left
      * event_type/obj_active flags uncleared, drifting the course/palette state over real play. */
-    uint16_t hr = rdw(image, A_horizon_row);
-    uint8_t ev = image[A_fx_block + hr + 1];
-    if (ev != 0) gu_dispatch_event(image, ev, 0, hr, rdw(image, A_horizon_frac), 0);
-    ev = image[A_fx_block + (uint16_t)(hr + 2) + 1];
-    if (ev != 0) gu_dispatch_event(image, ev, 0, (uint16_t)(hr + 2), rdw(image, A_horizon_frac), 0xff);
+    uint16_t horizon_row = rdw(image, A_horizon_row);
+    uint8_t event = image[A_fx_block + horizon_row + 1];
+    if (event != 0) gu_dispatch_event(image, event, 0, horizon_row, rdw(image, A_horizon_frac), 0);
+    event = image[A_fx_block + (uint16_t)(horizon_row + 2) + 1];
+    if (event != 0) gu_dispatch_event(image, event, 0, (uint16_t)(horizon_row + 2), rdw(image, A_horizon_frac), 0xff);
 
     /* I. checkpoint / collision / score markers. The original loads the event_type WORD and tests
      * its low byte (`move.w (event_type),d1; cmpi.b #$1a,d1`), i.e. image[A_event_type+1] big-endian —

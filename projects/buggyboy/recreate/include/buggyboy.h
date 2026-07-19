@@ -189,7 +189,7 @@ void g_draw_frame(uint8_t *image);
 void g_game_update(uint8_t *image);
 
 /* Test glue: run one event-jump-table handler in isolation (idx -> target, entered at its PC). */
-void g_gu_dispatch_event(uint8_t *image, uint32_t idx, uint32_t d5, uint32_t d6, uint32_t d7);
+void g_gu_dispatch_event(uint8_t *image, uint32_t idx, uint32_t slot, uint32_t obj_flag_a, uint32_t obj_flag_b);
 
 /* Test glue: sections G/H/I of the course-advance tail (@0x118b6), for the directed jingle tests. */
 void g_game_update_fx_and_events(uint8_t *image);
