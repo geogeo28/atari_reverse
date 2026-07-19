@@ -25,4 +25,24 @@ typedef struct {
     uint8_t leg;         /* current leg 0..4 */
 } GameState;
 
+/* ---- HUD (draw_hud, phases 4/5/6a ported so far) ---- */
+
+/* Dynamic per-frame HUD inputs (recreate's scalar globals, named). See src/hud.c. */
+typedef struct {
+    int16_t flag_seq_count;    /* matched-in-a-row flags -> one lit bar each (phase 4) */
+    int16_t flag_seq_off;      /* colour-index cursor offset (phase 5) */
+    int16_t dsp_color_scroll;  /* scrolling colour-index cursor offset (phase 5) */
+    int16_t crash_lap;         /* remaining bonus units -> one fuel column each (phase 6a) */
+} HudState;
+
+/* Static ST-format asset tables the HUD reads (constant data baked into STATIC.BIN). The pointers
+ * reference raw big-endian bytes, read via st.h. color_bar_cidx points at the cursor's zero offset;
+ * the phase-5 code indexes it with the signed flag_seq_off + dsp_color_scroll deltas. */
+typedef struct {
+    const uint8_t *color_pairs;     /* 16 colours x 8-byte (4-plane) solid fill */
+    const uint8_t *color_bar_mask;  /* phase-5 per-row {mask,ink} word stream */
+    const uint8_t *color_bar_cidx;  /* phase-5 per-column colour-index byte cursor (zero offset) */
+    const uint8_t *fuel_mask;       /* phase-6a two mask longs blended into the gauge mid rows */
+} HudAssets;
+
 #endif /* RM_GAME_H */
