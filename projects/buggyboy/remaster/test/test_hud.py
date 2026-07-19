@@ -31,3 +31,6 @@ def test_hud_ported_phases_no_wrong_pixel(cfg, capsys):
     with capsys.disabled():
         print(f"  cfg={cfg}: coverage={coverage:.1%} wrong_bytes={wrong}")
     assert wrong == 0, f"candidate painted {wrong} pixels recreate does not (cfg={cfg})"
+    # phases 1,2,4,5,6a,7 are ported; phase 3 (dsp_toggle) and phase 8 (crash) are gated off in
+    # hud_background, so the candidate must reproduce the ENTIRE remaining footprint.
+    assert coverage == 1.0, f"HUD footprint only {coverage:.1%} covered (cfg={cfg})"

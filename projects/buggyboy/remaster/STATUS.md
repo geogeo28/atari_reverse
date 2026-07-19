@@ -15,7 +15,7 @@ framebuffer → diff). Order follows the in-race draw order.
 | adapter            | flat image → structs      | ✅ HUD scalars + assets | `test/adapter.py` — `HudState`/`HudAssets`/`Framebuffer` |
 | equivalence driver | per-subsystem framebuffer diff | ✅ footprint coverage + no-wrong-pixel | `test/equiv.py` |
 | glyph blitter (`text_body`) | `g_draw_hud_bar` / `g_draw_hud_gauge0` | ✅ verified | `test/test_text.py` — 960 fuzz cases, **byte-exact** (whole framebuffer) |
-| `draw_hud`         | `g_draw_hud`              | 🟡 phases 4/5/6a ported | `test/test_hud.py` — 5 cfgs, **0 wrong pixels**, ~18–48% footprint coverage |
+| `draw_hud`         | `g_draw_hud`              | 🟡 phases 1/2/4/5/6a/7 ported | `test/test_hud.py` — 5 cfgs, **100% footprint, 0 wrong pixels** (phase 3/8 gated off) |
 | `render_road`      | `g_render_road`           | ⬜ not started   | — |
 | `blit_road_scroll` | `g_blit_road_scroll`      | ⬜ not started   | — |
 | `draw_game_objects`| `g_draw_game_objects`     | ⬜ not started   | — |
@@ -28,13 +28,13 @@ invariant (every byte the candidate paints matches recreate). Coverage → 100% 
 
 | Phase | What | Status | Needs |
 |-------|------|--------|-------|
-| 1–2 | speed/time digit strings | n/a for framebuffer | writes text buffers, not the screen (drawn by phase 7) |
-| 3 | dashboard-variant sprite | ⬜ | `buf_c` sprite data |
+| 1–2 | speed/time digit strings | ✅ | feed phase 7's string (the text buffers overlap the gauge string) |
+| 3 | dashboard-variant sprite | ⬜ | `buf_c` sprite data + masked-blit |
 | 4 | flag-sequence bars | ✅ | scalar only |
 | 5 | colour-tinted bars | ✅ | `color_pairs` + mask/ink + cidx tables |
 | 6a | fuel/tacho gauge | ✅ | fuel-mask table |
-| 6b | blinking small gauge | ⬜ | glyph helper ✅ (`rm_glyph_run`) — ready to wire |
-| 7 | main gauge cluster + dashboard | ⬜ | glyph helper ✅; still needs cursor chaining + `draw_dashboard` + `buf_c` |
+| 6b | blinking small gauge | ⬜ | glyph helper ✅ — ready to wire (runs only when `crash_lap` == 0) |
+| 7 | main gauge cluster + dashboard | ✅ | glyph blitter + dashboard masked-blit |
 | 8 | crash fx | ⬜ | `draw_num` + `add_score` + bars |
 
 ## Phase B — gameplay (later)
