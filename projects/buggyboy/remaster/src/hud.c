@@ -152,6 +152,11 @@ static void hud_gauge_cluster(const HudAssets *a, const uint8_t *str, uint8_t *p
     rm_glyph_run(px, end - GAUGE_BAR5_BACK, 0x0000ffff, 0xffffffff, font, str, si, TEXT_MAX_CELLS_M1, 0);
 }
 
+/* Paint one plane word over the background: keep the background where `mask` is set, OR in `ink`. */
+static inline void overlay_word(uint8_t *p, uint16_t mask, uint16_t ink) {
+    wr16(p, (be16(p) & mask) | ink);
+}
+
 /* Phase 7 — the dashboard graphic: a masked blit from buf_c. Per group of four dest words the four
  * source words are (mask, a, b, c); each dest word keeps the background where mask is set and OR-s
  * in ink a, b, b, c (the middle word twice — one source word feeds two screen words). */
@@ -163,10 +168,10 @@ static void hud_dashboard(const HudAssets *a, uint8_t *px) {
         for (int grp = 0; grp < DASH_GROUPS; grp++, d += 8, s += 8) {
             uint16_t mask = be16(g + s);
             uint16_t ink_a = be16(g + s + 2), ink_b = be16(g + s + 4), ink_c = be16(g + s + 6);
-            wr16(px + d,     (uint16_t)((be16(px + d)     & mask) | ink_a));
-            wr16(px + d + 2, (uint16_t)((be16(px + d + 2) & mask) | ink_b));
-            wr16(px + d + 4, (uint16_t)((be16(px + d + 4) & mask) | ink_b));
-            wr16(px + d + 6, (uint16_t)((be16(px + d + 6) & mask) | ink_c));
+            overlay_word(px + d,     mask, ink_a);
+            overlay_word(px + d + 2, mask, ink_b);
+            overlay_word(px + d + 4, mask, ink_b);
+            overlay_word(px + d + 6, mask, ink_c);
         }
     }
 }
