@@ -594,7 +594,11 @@ static void game_update_course_advance(uint8_t *image) {
             wr16(image + A_palette_scratch - 4, be16(image + pr + 0xa));
             wrw(image, A_obj_shade, (uint16_t)(be16(image + pr + 0xc) - 2));
             wrw(image, A_palette_toggle, 0);
-            g_xbios_setpalette(image, A_palette_scratch);   /* no image effect */
+            /* Setpalette loads the RACE palette (0x17fa2), not the scratch base: the original stages
+             * into 0x17fb0.. then `suba #$18,a0` rewinds A0 to 0x17fa2 before the trap. The staging
+             * writes overlap race_palette regs 5/7-11 (a partial in-race fade), so reg0 stays black —
+             * loading 0x17fb0 (the +7 shifted view, reg0=tan) was the tunnel palette corruption. */
+            g_xbios_setpalette(image, A_race_palette);   /* no image effect */
         }
     } else {
         /* no new record: clear the 15 marker words' low 6 bits, keep the previous slope. */
@@ -629,9 +633,12 @@ static void game_update_fx_and_events(uint8_t *image) {
     wr32(image + d + 4, 0);
     wr32(image + d + 8, 0);
     wr16(image + A_spin_state, 0);
-    uint8_t flag_hi = (uint8_t)(image[obj - 0x1c] & 0x60);           /* *(byte*)(puVar20-0xe) low byte area */
-    if ((int8_t)image[obj - 0x1c] >= 0 && ((image[obj - 0x1b] & 0xe0) != 0 || flag_hi != 0)) {
-        uint8_t sel = (uint8_t)((image[obj - 0x1b] | (uint8_t)(flag_hi * 2)) >> 5);
+    /* Spin/fx select reads the two bytes at obj_flags-2 / obj_flags-1 (the original walks a1 to
+     * obj_flags+0x1e after the fx-block copy, then `suba #$20` -> obj_flags-2). The earlier obj-0x1c
+     * form dropped the +0x1e, reading the wrong bytes and mis-selecting the spin fx. */
+    uint8_t flag_hi = (uint8_t)(image[obj - 2] & 0x60);
+    if ((int8_t)image[obj - 2] >= 0 && ((image[obj - 1] & 0xe0) != 0 || flag_hi != 0)) {
+        uint8_t sel = (uint8_t)((image[obj - 1] | (uint8_t)(flag_hi * 2)) >> 5);
         uint8_t fx = image[A_fx_type_tbl + sel];
         wrw(image, A_spin_state, (uint16_t)(fx << 8));
         if (fx != 0 && (int8_t)fx >= 0) {
@@ -648,16 +655,19 @@ static void game_update_fx_and_events(uint8_t *image) {
     if (be16(image + A_fx_block_26) == 0x3d) {
         wr32(image + A_fx_block_1a, 0x3e003e); wr32(image + A_fx_block_1e, 0x3e003e);
         wr32(image + A_fx_block_22, 0x3e003e); wr32(image + A_fx_block_26, 0x3e003e);
-        wr32(image + A_fx_block_2a, 0x3e003e); image[A_fx_block_2e] = 0x3e;
+        wr32(image + A_fx_block_2a, 0x3e003e); wr16(image + A_fx_block_2e, 0x3e);   /* move.w d0.w (=0x003e) */
     }
     wrw(image, A_curve_freeze, 0);
 
-    /* H. two frame-event dispatches keyed off horizon_row. */
+    /* H. two frame-event dispatches keyed off horizon_row. The dispatch passes D5 = the scanline
+     * slot (horizon_row, then horizon_row+2) — handlers use it to index obj_active (`clear
+     * obj_active[d5+1]`), which for the +2 slot aliases event_type (0x18eca). Passing 0 here left
+     * event_type/obj_active flags uncleared, drifting the course/palette state over real play. */
     uint16_t hr = rdw(image, A_horizon_row);
     uint8_t ev = image[A_fx_block + hr + 1];
-    if (ev != 0) gu_dispatch_event(image, ev, 0, 0, rdw(image, A_horizon_frac), 0);
+    if (ev != 0) gu_dispatch_event(image, ev, 0, hr, rdw(image, A_horizon_frac), 0);
     ev = image[A_fx_block + (uint16_t)(hr + 2) + 1];
-    if (ev != 0) gu_dispatch_event(image, ev, 0, 0, rdw(image, A_horizon_frac), 0xff);
+    if (ev != 0) gu_dispatch_event(image, ev, 0, (uint16_t)(hr + 2), rdw(image, A_horizon_frac), 0xff);
 
     /* I. checkpoint / collision / score markers. The original loads the event_type WORD and tests
      * its low byte (`move.w (event_type),d1; cmpi.b #$1a,d1`), i.e. image[A_event_type+1] big-endian —
