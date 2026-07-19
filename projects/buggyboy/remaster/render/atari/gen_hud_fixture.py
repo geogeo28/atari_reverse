@@ -25,7 +25,8 @@ sys.path.insert(0, str(REMASTER / "test"))
 import adapter                                    # noqa: E402  flat-image -> struct extraction
 import equiv                                      # noqa: E402  mid-race staging + recreate pipeline
 
-GAMEPLAY_PALETTE = 0x17f7e                        # per-leg scenery/car palette (16 ST words)
+RACE_PALETTE = 0x17fa2                            # in-race palette (A_race_palette; loaded before the
+                                                  # leg starts, reloaded by sprite-mode 4) — 16 ST words
 PALETTE_BYTES = 32
 # A visually busy mid-race HUD: a few flag bars + fuel columns, a plausible speed/time.
 CONTROLS = {adapter.A_flag_seq_count: 3, adapter.A_crash_lap: 4,
@@ -53,7 +54,7 @@ def main():
     equiv._run_pipeline(ref, ("g_draw_hud",))
     (build / "golden.bin").write_bytes(bytes(ref[sb:sb + nb]))
 
-    palette = bytes(img[GAMEPLAY_PALETTE:GAMEPLAY_PALETTE + PALETTE_BYTES])
+    palette = bytes(img[RACE_PALETTE:RACE_PALETTE + PALETTE_BYTES])
     (build / "palette.bin").write_bytes(palette)
 
     st = adapter.hud_state(img)
