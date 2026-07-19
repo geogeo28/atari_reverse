@@ -238,21 +238,21 @@ void g_objsprite_w88(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst,
 void g_objsprite_t53(uint8_t *image, uint32_t aligned_col, uint32_t shl, uint32_t shr,
                      uint32_t rows_m1, uint32_t dst, uint32_t src);
 /* a6-relative wrappers (a0 = a6 + word@--a2) then a width prologue: t34->0x88, t33->0x90, t32->0x98. */
-void g_objsprite_t34(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a2, uint32_t src);
-void g_objsprite_t33(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a2, uint32_t src);
-void g_objsprite_t32(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a2, uint32_t src);
+void g_objsprite_t34(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor, uint32_t src);
+void g_objsprite_t33(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor, uint32_t src);
+void g_objsprite_t32(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor, uint32_t src);
 /* view-transform wrappers (helper 0x145fc then a width prologue): t39->0x88, t38->0x90, t37->0x98.
  * A6 object base, A1 src, A2 rec cursor (predecremented by the transform); reads A_view_flags +
  * the A_obj_view_xform table. */
-void g_objsprite_t39(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a1, uint32_t a2);
-void g_objsprite_t38(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a1, uint32_t a2);
-void g_objsprite_t37(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a1, uint32_t a2);
+void g_objsprite_t39(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t src, uint32_t rec_cursor);
+void g_objsprite_t38(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t src, uint32_t rec_cursor);
+void g_objsprite_t37(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t src, uint32_t rec_cursor);
 /* scan-table x-build wrappers then a width prologue: t42->0x90, t41->0x98. A6 base, A2 record
  * cursor, A4/A5 scan-table bases, A1 src; reads A_obj_scan_off. */
-void g_objsprite_t42(uint8_t *image, uint32_t rows_m1, uint32_t a6, uint32_t a2,
-                     uint32_t a4, uint32_t a5, uint32_t src);
-void g_objsprite_t41(uint8_t *image, uint32_t rows_m1, uint32_t a6, uint32_t a2,
-                     uint32_t a4, uint32_t a5, uint32_t src);
+void g_objsprite_t42(uint8_t *image, uint32_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor,
+                     uint32_t x_bias_ptr, uint32_t x_scan_tbl, uint32_t src);
+void g_objsprite_t41(uint8_t *image, uint32_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor,
+                     uint32_t x_bias_ptr, uint32_t x_scan_tbl, uint32_t src);
 /* bsr draw_obj_sprite_hi (0x14620, verified) then FALL THROUGH into a width prologue (a second
  * pass on the helper's renamed D3->D0/D5->D4/A0/A1): t3->0x88, t49->0x90, t16(=t17/43/48)->0x98.
  * Same register contract as draw_obj_sprite_hi. */

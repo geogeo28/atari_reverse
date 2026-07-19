@@ -949,8 +949,8 @@ static uint16_t objsprite_aligned_col(uint16_t x) {
  * 0xFFFF; `move.w (a1),d2` then overwrites only the low word with the SHOW mask ~(w0|w1|w2|~w3)
  * = ~w0 & ~w1 & ~w2 & w3. The 0xFFFF high word is load-bearing: it rotates/shifts into the OTHER
  * 16-pixel column. This is the identical seed + formula as objsh_build_mask (0x14680). */
-static uint32_t objsprite_mask_seed(const uint8_t *image, uint32_t a1) {
-    return objsh_build_mask(image, a1);      /* 0xffff0000 | (uint16_t)(~(w0|w1|w2) & w3) */
+static uint32_t objsprite_mask_seed(const uint8_t *image, uint32_t src_ptr) {
+    return objsh_build_mask(image, src_ptr); /* 0xffff0000 | (uint16_t)(~(w0|w1|w2) & w3) */
 }
 
 /* Masked OR-in of one plane word into a destination column word (68k `and.w mask,(ptr)` then
@@ -965,50 +965,50 @@ static void objsprite_plane_write(uint8_t *image, uint32_t ptr, uint16_t mask, u
  * words is 32-bit left-shifted by shl: high half -> col0, low half -> col1, and every output word
  * keeps the background via (dst & mask). Plane 3 (the D leftover) additionally masks its pixels
  * with ~mask so it lights only the opaque bits. Advances a0/a2/a1 by one cell (8 bytes). */
-static void objsprite_straddle_cell(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1, unsigned shl) {
-    uint32_t mask32 = rotl32(objsprite_mask_seed(image, *a1), shl);
+static void objsprite_straddle_cell(uint8_t *image, uint32_t *col0_ptr, uint32_t *col1_ptr, uint32_t *src_ptr, unsigned shl) {
+    uint32_t mask32 = rotl32(objsprite_mask_seed(image, *src_ptr), shl);
     uint16_t col0_mask = (uint16_t)(mask32 >> OBJSPRITE_SHIFT_BASE);   /* swap d1 -> col0 (a0) mask */
     uint16_t col1_mask = (uint16_t)mask32;                            /* d2.w -> col1 (a2) mask    */
     for (int plane = 0; plane < OBJSPRITE_PLANES; plane++) {
-        uint32_t pix32 = (uint32_t)be16(image + *a1) << shl;
-        *a1 += 2;
+        uint32_t pix32 = (uint32_t)be16(image + *src_ptr) << shl;
+        *src_ptr += 2;
         uint16_t col1_pix = (uint16_t)pix32;
         uint16_t col0_pix = (uint16_t)(pix32 >> OBJSPRITE_SHIFT_BASE);
         if (plane == OBJSPRITE_PLANES - 1) {                          /* D leftover: pixels &= ~mask */
             col1_pix = (uint16_t)(col1_pix & (uint16_t)~col1_mask);
             col0_pix = (uint16_t)(col0_pix & (uint16_t)~col0_mask);
         }
-        objsprite_plane_write(image, *a2, col1_mask, col1_pix);       /* col1 first (or.w d0,(a2)+) */
-        objsprite_plane_write(image, *a0, col0_mask, col0_pix);
-        *a0 += 2; *a2 += 2;
+        objsprite_plane_write(image, *col1_ptr, col1_mask, col1_pix);   /* col1 first (or.w d0,(a2)+) */
+        objsprite_plane_write(image, *col0_ptr, col0_mask, col0_pix);
+        *col0_ptr += 2; *col1_ptr += 2;
     }
 }
 
 /* LEFT-EDGE cell (§3c, 0x36fc): the clipped-off col0 is discarded; only col1 (a2) is drawn. The
  * mask is rol.l'd but only its low word (d2.w) is used; pixels shift left as WORDs (lsl.w, no
  * straddle spill). Plane 3 uses the inverse mask. Advances a1/a2 by 8; the caller bumps a0 +8. */
-static void objsprite_left_edge_cell(uint8_t *image, uint32_t *a2, uint32_t *a1, unsigned shl) {
-    uint16_t mask = (uint16_t)rotl32(objsprite_mask_seed(image, *a1), shl);
+static void objsprite_left_edge_cell(uint8_t *image, uint32_t *col1_ptr, uint32_t *src_ptr, unsigned shl) {
+    uint16_t mask = (uint16_t)rotl32(objsprite_mask_seed(image, *src_ptr), shl);
     for (int plane = 0; plane < OBJSPRITE_PLANES; plane++) {
-        uint16_t pix = (uint16_t)((uint32_t)be16(image + *a1) << shl);  /* lsl.w d6,d0 (word shift) */
-        *a1 += 2;
+        uint16_t pix = (uint16_t)((uint32_t)be16(image + *src_ptr) << shl);  /* lsl.w d6,d0 (word shift) */
+        *src_ptr += 2;
         if (plane == OBJSPRITE_PLANES - 1) pix = (uint16_t)(pix & (uint16_t)~mask);
-        objsprite_plane_write(image, *a2, mask, pix);
-        *a2 += 2;
+        objsprite_plane_write(image, *col1_ptr, mask, pix);
+        *col1_ptr += 2;
     }
 }
 
 /* RIGHT-EDGE cell (§3d, 0x3a8a): the clipped-off col1 is discarded; only col0 (a0) is drawn. The
  * mask is lsr.l'd by shr = fine_x (low word used); pixels shift right as WORDs (lsr.w). Plane 3
  * uses the inverse mask. Advances a1/a0 by 8; the caller bumps a2 +8. */
-static void objsprite_right_edge_cell(uint8_t *image, uint32_t *a0, uint32_t *a1, unsigned shr) {
-    uint16_t mask = (uint16_t)(objsprite_mask_seed(image, *a1) >> shr);
+static void objsprite_right_edge_cell(uint8_t *image, uint32_t *col0_ptr, uint32_t *src_ptr, unsigned shr) {
+    uint16_t mask = (uint16_t)(objsprite_mask_seed(image, *src_ptr) >> shr);
     for (int plane = 0; plane < OBJSPRITE_PLANES; plane++) {
-        uint16_t pix = (uint16_t)(be16(image + *a1) >> shr);            /* lsr.w d7,d0 (word shift) */
-        *a1 += 2;
+        uint16_t pix = (uint16_t)(be16(image + *src_ptr) >> shr);       /* lsr.w d7,d0 (word shift) */
+        *src_ptr += 2;
         if (plane == OBJSPRITE_PLANES - 1) pix = (uint16_t)(pix & (uint16_t)~mask);
-        objsprite_plane_write(image, *a0, mask, pix);
-        *a0 += 2;
+        objsprite_plane_write(image, *col0_ptr, mask, pix);
+        *col0_ptr += 2;
     }
 }
 
@@ -1018,17 +1018,17 @@ enum objsprite_family { OBJSPRITE_CLIP, OBJSPRITE_BASE, OBJSPRITE_LEFT, OBJSPRIT
 /* One row: LEFT prepends an a2-only edge cell (then re-syncs a0 by one cell), WIDE appends an
  * a0-only edge cell (then bumps a2 by one cell); `straddle` two-column cells run between/around
  * them (BASE has neither edge). Mirrors §3b/§3c/§3d cell order per family (§4/§5b/§6b). */
-static void objsprite_row(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1,
+static void objsprite_row(uint8_t *image, uint32_t *col0_ptr, uint32_t *col1_ptr, uint32_t *src_ptr,
                           enum objsprite_family fam, int straddle, unsigned shl, unsigned shr) {
     if (fam == OBJSPRITE_LEFT) {
-        objsprite_left_edge_cell(image, a2, a1, shl);
-        *a0 += OBJSPRITE_CELL_BYTES;                 /* addq.l #8,a0: skip the discarded col0 */
+        objsprite_left_edge_cell(image, col1_ptr, src_ptr, shl);
+        *col0_ptr += OBJSPRITE_CELL_BYTES;           /* addq.l #8,a0: skip the discarded col0 */
     }
     for (int i = 0; i < straddle; i++)
-        objsprite_straddle_cell(image, a0, a2, a1, shl);
+        objsprite_straddle_cell(image, col0_ptr, col1_ptr, src_ptr, shl);
     if (fam == OBJSPRITE_WIDE) {
-        objsprite_right_edge_cell(image, a0, a1, shr);
-        *a2 += OBJSPRITE_CELL_BYTES;                 /* addq.l #8,a2: rewind bookkeeping */
+        objsprite_right_edge_cell(image, col0_ptr, src_ptr, shr);
+        *col1_ptr += OBJSPRITE_CELL_BYTES;           /* addq.l #8,a2: rewind bookkeeping */
     }
 }
 
@@ -1039,9 +1039,9 @@ static void objsprite_row(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *
  * modeled as the literal `move.w #d3,d3` each body loads: d3 = 0xC0 - 8*width_idx for BASE, and
  * d3 = 0xC0 - 8*rung for the ladder body that fired (rung = the ladder step that triggered). */
 static void objsprite_core(uint8_t *image, uint16_t aligned_col, unsigned shl, unsigned shr,
-                           uint16_t rows_m1, uint32_t a0_pre, uint32_t a1_init, int width_idx) {
-    uint32_t a0 = a0_pre;
-    uint32_t a1 = a1_init;
+                           uint16_t rows_m1, uint32_t col0_init, uint32_t src_init, int width_idx) {
+    uint32_t col0_ptr = col0_init;
+    uint32_t src_ptr = src_init;
     enum objsprite_family fam;
     int straddle;
     int rung;                            /* ladder step that fired; d3 = 0xC0 - 8*rung */
@@ -1049,20 +1049,20 @@ static void objsprite_core(uint8_t *image, uint16_t aligned_col, unsigned shl, u
     if ((int16_t)aligned_col < 0) {
         /* §5a LEFT ladder: walk toward 0 in 8-byte steps from the width's entry rung; each
          * non-triggering rung discards one fully-clipped column from a1 AND a0. */
-        int16_t d0 = (int16_t)aligned_col;
+        int16_t col_walk = (int16_t)aligned_col;
         fam = OBJSPRITE_CLIP;
         for (rung = width_idx; rung < OBJSPRITE_WIDTHS; rung++) {
-            d0 = (int16_t)(d0 + OBJSPRITE_LADDER_STEP);
-            if (d0 >= 0) { fam = OBJSPRITE_LEFT; break; }
-            a1 += OBJSPRITE_CELL_BYTES;
-            a0 += OBJSPRITE_CELL_BYTES;
+            col_walk = (int16_t)(col_walk + OBJSPRITE_LADDER_STEP);
+            if (col_walk >= 0) { fam = OBJSPRITE_LEFT; break; }
+            src_ptr += OBJSPRITE_CELL_BYTES;
+            col0_ptr += OBJSPRITE_CELL_BYTES;
         }
         if (fam == OBJSPRITE_CLIP) return;           /* fully off-left: draw nothing (rts) */
         straddle = (OBJSPRITE_WIDTHS - 1) - rung;    /* bodies 0x36f4/0x3742/0x37f0/0x38fe = 0/1/2/3 */
     } else {
         int16_t width = (int16_t)(OBJSPRITE_WIDTH_80 + OBJSPRITE_LADDER_STEP * width_idx);
-        int16_t d0 = (int16_t)((int16_t)aligned_col - width);
-        if (d0 < 0) {
+        int16_t col_walk = (int16_t)((int16_t)aligned_col - width);
+        if (col_walk < 0) {
             fam = OBJSPRITE_BASE;
             straddle = OBJSPRITE_BASE_CELLS - width_idx;   /* 4/3/2/1 straddle cells */
             rung = width_idx;                              /* BASE d3 = 0xC0 - 8*width_idx */
@@ -1070,22 +1070,22 @@ static void objsprite_core(uint8_t *image, uint16_t aligned_col, unsigned shl, u
             /* §6a WIDE ladder: subtract 8 per rung from the width's entry rung; no column skip. */
             fam = OBJSPRITE_CLIP;
             for (rung = width_idx; rung < OBJSPRITE_WIDTHS; rung++) {
-                d0 = (int16_t)(d0 - OBJSPRITE_LADDER_STEP);
-                if (d0 < 0) { fam = OBJSPRITE_WIDE; break; }
+                col_walk = (int16_t)(col_walk - OBJSPRITE_LADDER_STEP);
+                if (col_walk < 0) { fam = OBJSPRITE_WIDE; break; }
             }
             if (fam == OBJSPRITE_CLIP) return;             /* fully off-right: draw nothing (rts) */
             straddle = (OBJSPRITE_WIDTHS - 1) - rung;      /* bodies 0x3a82/0x3ad0/0x3b7e/0x3c8c */
         }
     }
 
-    uint16_t d3 = (uint16_t)(OBJSPRITE_REWIND_C0 - OBJSPRITE_LADDER_STEP * rung);   /* move.w #d3,d3 */
-    uint32_t a2 = a0 + OBJSPRITE_CELL_BYTES;             /* movea.l a0,a2; addq.l #8,a2 (once) */
+    uint16_t rewind = (uint16_t)(OBJSPRITE_REWIND_C0 - OBJSPRITE_LADDER_STEP * rung);   /* move.w #d3,d3 */
+    uint32_t col1_ptr = col0_ptr + OBJSPRITE_CELL_BYTES; /* movea.l a0,a2; addq.l #8,a2 (once) */
     int rows = (int16_t)rows_m1 + 1;                     /* dbf d4 draws d4+1 rows */
     for (int row = 0; row < rows; row++) {
-        objsprite_row(image, &a0, &a2, &a1, fam, straddle, shl, shr);
-        a0 = (uint32_t)(a0 - sign_ext16(d3));            /* suba.w d3,a0 */
-        a2 = (uint32_t)(a2 - sign_ext16(d3));            /* suba.w d3,a2 */
-        a1 = (uint32_t)(a1 - sign_ext16(d3));            /* suba.w d3,a1 */
+        objsprite_row(image, &col0_ptr, &col1_ptr, &src_ptr, fam, straddle, shl, shr);
+        col0_ptr = (uint32_t)(col0_ptr - sign_ext16(rewind));            /* suba.w d3,a0 */
+        col1_ptr = (uint32_t)(col1_ptr - sign_ext16(rewind));            /* suba.w d3,a2 */
+        src_ptr = (uint32_t)(src_ptr - sign_ext16(rewind));              /* suba.w d3,a1 */
     }
 }
 
@@ -1098,8 +1098,8 @@ static void objsprite_entry(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32
     unsigned shl = OBJSPRITE_SHIFT_BASE - fine_x;               /* moveq #$10,d6; sub.w d7,d6 */
     unsigned shr = fine_x;
     uint16_t col = objsprite_aligned_col(x);                    /* asr.w #1; andi.w #$fff8 */
-    uint32_t a0_pre = (uint32_t)(dst + sign_ext16(col));        /* adda.w d0,a0 */
-    objsprite_core(image, col, shl, shr, rows_m1, a0_pre, src, width_idx);
+    uint32_t col0_init = (uint32_t)(dst + sign_ext16(col));     /* adda.w d0,a0 */
+    objsprite_core(image, col, shl, shr, rows_m1, col0_init, src, width_idx);
 }
 
 /* Helper 0x145fc — view-transform (reconstruct inline, §8). A pure register/pointer transform
@@ -1108,20 +1108,20 @@ static void objsprite_entry(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32
  * nudge a0 by sign_ext16(word[1] & 0xFFE0), and clip the row count by (word[1] & 0x1F). Returns the
  * a0/a1/rows and the a2 left −2. It cannot be image-verified alone (no writes); verify it only
  * THROUGH a caller (t39/t38/t37) that runs it then blits. */
-struct objsprite_view_xform { uint32_t a0; uint32_t a1; uint16_t rows_m1; uint32_t a2; };
+struct objsprite_view_xform { uint32_t dst; uint32_t src; uint16_t rows_m1; uint32_t rec_cursor; };
 static struct objsprite_view_xform
-objsprite_view_transform(const uint8_t *image, uint32_t a6, uint32_t a1, uint16_t rows_m1, uint32_t a2) {
-    uint32_t rec_word0_ptr = a2 - 2;                            /* adda.w -(a2),a3 : a2 -= 2 */
-    uint32_t a3 = A_obj_view_xform + sign_ext16(be16(image + rec_word0_ptr));
+objsprite_view_transform(const uint8_t *image, uint32_t draw_buf, uint32_t src, uint16_t rows_m1, uint32_t rec_cursor) {
+    uint32_t rec_word0_ptr = rec_cursor - 2;                    /* adda.w -(a2),a3 : a2 -= 2 */
+    uint32_t rec_ptr = A_obj_view_xform + sign_ext16(be16(image + rec_word0_ptr));
     uint16_t view2 = (uint16_t)(be16(image + A_view_flags) * 2);   /* add.w d3,d3 */
-    a3 += sign_ext16(view2);                                    /* adda.w d3,a3 -> per-view record */
-    uint32_t a0 = a6;                                           /* movea.l a6,a0 */
-    a1 = (uint32_t)(a1 - sign_ext16(be16(image + a3)));         /* suba.w (a3)+,a1 */
-    a3 += 2;
-    uint16_t rec1 = be16(image + a3);                           /* word[1] (a3 not advanced again) */
-    a0 = (uint32_t)(a0 + sign_ext16((uint16_t)(rec1 & VIEW_XFORM_OFF_MASK)));  /* adda.w (word[1]&0xFFE0),a0 */
+    rec_ptr += sign_ext16(view2);                               /* adda.w d3,a3 -> per-view record */
+    uint32_t dst = draw_buf;                                    /* movea.l a6,a0 */
+    src = (uint32_t)(src - sign_ext16(be16(image + rec_ptr)));  /* suba.w (a3)+,a1 */
+    rec_ptr += 2;
+    uint16_t rec1 = be16(image + rec_ptr);                      /* word[1] (a3 not advanced again) */
+    dst = (uint32_t)(dst + sign_ext16((uint16_t)(rec1 & VIEW_XFORM_OFF_MASK)));  /* adda.w (word[1]&0xFFE0),a0 */
     uint16_t rows_out = (uint16_t)(rows_m1 - (uint16_t)(rec1 & VIEW_XFORM_ROW_MASK));  /* sub.w d3,d4 */
-    struct objsprite_view_xform out = { a0, a1, rows_out, rec_word0_ptr };
+    struct objsprite_view_xform out = { dst, src, rows_out, rec_word0_ptr };
     return out;
 }
 
@@ -1159,60 +1159,60 @@ void g_objsprite_t53(uint8_t *image, uint32_t aligned_col, uint32_t shl, uint32_
 
 /* Wrapper family 3 — `movea.l a6,a0; adda.w -(a2),a0` then bra to the width prologue (t34/t33/t32):
  * a0 = a6 + sign_ext16(word@--a2), then a fresh fine-x prologue on the caller's D0. */
-static void objsprite_a6_wrapper(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t a6,
-                                 uint32_t a2, uint32_t src, int width_idx) {
-    uint32_t a0 = (uint32_t)(a6 + sign_ext16(be16(image + a2 - 2)));
-    objsprite_entry(image, x, rows_m1, a0, src, width_idx);
+static void objsprite_a6_wrapper(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t draw_buf,
+                                 uint32_t rec_cursor, uint32_t src, int width_idx) {
+    uint32_t dst = (uint32_t)(draw_buf + sign_ext16(be16(image + rec_cursor - 2)));
+    objsprite_entry(image, x, rows_m1, dst, src, width_idx);
 }
-void g_objsprite_t34(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a2, uint32_t src) {
-    objsprite_a6_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, a6, a2, src, 1);   /* -> width 0x88 */
+void g_objsprite_t34(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor, uint32_t src) {
+    objsprite_a6_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, draw_buf, rec_cursor, src, 1);   /* -> width 0x88 */
 }
-void g_objsprite_t33(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a2, uint32_t src) {
-    objsprite_a6_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, a6, a2, src, 2);   /* -> width 0x90 */
+void g_objsprite_t33(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor, uint32_t src) {
+    objsprite_a6_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, draw_buf, rec_cursor, src, 2);   /* -> width 0x90 */
 }
-void g_objsprite_t32(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a2, uint32_t src) {
-    objsprite_a6_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, a6, a2, src, 3);   /* -> width 0x98 */
+void g_objsprite_t32(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor, uint32_t src) {
+    objsprite_a6_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, draw_buf, rec_cursor, src, 3);   /* -> width 0x98 */
 }
 
 /* Wrapper family 1 — `bsr 0x145fc` (view transform) then bra to the width prologue (t39/t38/t37).
  * The transform adjusts a0 (from a6), a1, and rows-1, leaving a2 −2; the prologue then recomputes
  * the fine-x geometry from the caller's D0. */
-static void objsprite_xform_wrapper(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t a6,
-                                    uint32_t a1, uint32_t a2, int width_idx) {
-    struct objsprite_view_xform t = objsprite_view_transform(image, a6, a1, rows_m1, a2);
-    objsprite_entry(image, x, t.rows_m1, t.a0, t.a1, width_idx);
+static void objsprite_xform_wrapper(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t draw_buf,
+                                    uint32_t src, uint32_t rec_cursor, int width_idx) {
+    struct objsprite_view_xform t = objsprite_view_transform(image, draw_buf, src, rows_m1, rec_cursor);
+    objsprite_entry(image, x, t.rows_m1, t.dst, t.src, width_idx);
 }
-void g_objsprite_t39(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a1, uint32_t a2) {
-    objsprite_xform_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, a6, a1, a2, 1);   /* -> width 0x88 */
+void g_objsprite_t39(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t src, uint32_t rec_cursor) {
+    objsprite_xform_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, draw_buf, src, rec_cursor, 1);   /* -> width 0x88 */
 }
-void g_objsprite_t38(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a1, uint32_t a2) {
-    objsprite_xform_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, a6, a1, a2, 2);   /* -> width 0x90 */
+void g_objsprite_t38(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t src, uint32_t rec_cursor) {
+    objsprite_xform_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, draw_buf, src, rec_cursor, 2);   /* -> width 0x90 */
 }
-void g_objsprite_t37(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t a6, uint32_t a1, uint32_t a2) {
-    objsprite_xform_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, a6, a1, a2, 3);   /* -> width 0x98 */
+void g_objsprite_t37(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t draw_buf, uint32_t src, uint32_t rec_cursor) {
+    objsprite_xform_wrapper(image, (uint16_t)x, (uint16_t)rows_m1, draw_buf, src, rec_cursor, 3);   /* -> width 0x98 */
 }
 
 /* Wrapper family 4 — scan-table x-build then bra to the width prologue (t42 @0x13512 -> w0x90,
  * t41 @0x13628 -> w0x98). a0 = a6 + sign_ext16(word@a2) (POST-increment a2); then D0 is rebuilt as
  * word@(a5 + sign_ext16(-scan_off)) + word@a4 + word@a2 and the prologue recomputes fine_x from it.
  * (d7 is set to -scan_off here but the prologue's `moveq #$f,d7; and.w d0,d7` overwrites it.) */
-static void objsprite_scan_wrapper(uint8_t *image, uint16_t rows_m1, uint32_t a6, uint32_t a2,
-                                   uint32_t a4, uint32_t a5, uint32_t src, int width_idx) {
-    uint32_t a0 = (uint32_t)(a6 + sign_ext16(be16(image + a2)));   /* adda.w (a2)+,a0 (post-inc) */
-    uint32_t a2_next = a2 + 2;
+static void objsprite_scan_wrapper(uint8_t *image, uint16_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor,
+                                   uint32_t x_bias_ptr, uint32_t x_scan_tbl, uint32_t src, int width_idx) {
+    uint32_t dst = (uint32_t)(draw_buf + sign_ext16(be16(image + rec_cursor)));   /* adda.w (a2)+,a0 (post-inc) */
+    uint32_t rec_next = rec_cursor + 2;
     int16_t neg_scan = (int16_t)-(int16_t)be16(image + A_obj_scan_off);   /* move.w scan_off,d7; neg.w */
-    uint16_t x = (uint16_t)(be16(image + a5 + sign_ext16((uint16_t)neg_scan))   /* move.w (0,a5,d7.w),d0 */
-                            + be16(image + a4)                                   /* add.w (a4),d0 */
-                            + be16(image + a2_next));                            /* add.w (a2),d0 */
-    objsprite_entry(image, x, rows_m1, a0, src, width_idx);
+    uint16_t x = (uint16_t)(be16(image + x_scan_tbl + sign_ext16((uint16_t)neg_scan))   /* move.w (0,a5,d7.w),d0 */
+                            + be16(image + x_bias_ptr)                                  /* add.w (a4),d0 */
+                            + be16(image + rec_next));                                  /* add.w (a2),d0 */
+    objsprite_entry(image, x, rows_m1, dst, src, width_idx);
 }
-void g_objsprite_t42(uint8_t *image, uint32_t rows_m1, uint32_t a6, uint32_t a2,
-                     uint32_t a4, uint32_t a5, uint32_t src) {
-    objsprite_scan_wrapper(image, (uint16_t)rows_m1, a6, a2, a4, a5, src, 2);   /* -> width 0x90 */
+void g_objsprite_t42(uint8_t *image, uint32_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor,
+                     uint32_t x_bias_ptr, uint32_t x_scan_tbl, uint32_t src) {
+    objsprite_scan_wrapper(image, (uint16_t)rows_m1, draw_buf, rec_cursor, x_bias_ptr, x_scan_tbl, src, 2);   /* -> width 0x90 */
 }
-void g_objsprite_t41(uint8_t *image, uint32_t rows_m1, uint32_t a6, uint32_t a2,
-                     uint32_t a4, uint32_t a5, uint32_t src) {
-    objsprite_scan_wrapper(image, (uint16_t)rows_m1, a6, a2, a4, a5, src, 3);   /* -> width 0x98 */
+void g_objsprite_t41(uint8_t *image, uint32_t rows_m1, uint32_t draw_buf, uint32_t rec_cursor,
+                     uint32_t x_bias_ptr, uint32_t x_scan_tbl, uint32_t src) {
+    objsprite_scan_wrapper(image, (uint16_t)rows_m1, draw_buf, rec_cursor, x_bias_ptr, x_scan_tbl, src, 3);   /* -> width 0x98 */
 }
 
 /* Wrapper family 2 — `bsr 0x14620` (draw_obj_sprite_hi, ALREADY VERIFIED) then FALL THROUGH into
