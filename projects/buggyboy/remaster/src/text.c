@@ -5,6 +5,7 @@
  * The ink is masked by the two colour planes (fill_lo/fill_hi) and OR'd over the background.
  */
 #include "text.h"
+#include "plane.h"
 #include "screen.h"
 #include "st.h"
 
@@ -16,14 +17,6 @@
 static void glyph_pair(uint16_t g1, uint16_t g2, uint16_t *mask, uint16_t *ink) {
     *mask = (uint16_t)((g1 & 0xff00) | (g2 >> 8));
     *ink  = (uint16_t)(((g1 & 0x00ff) << 8) | (g2 & 0x00ff));
-}
-
-/* One cell row: (bg & mask) | (ink & plane) for each of the two 16-px plane pairs. mask/ink are
- * already broadcast into both halves of the long. */
-static void blit_row(uint8_t *px, Offset cell, Plane4 mask, Plane4 ink,
-                     Plane4 fill_lo, Plane4 fill_hi) {
-    wr32(px + cell,     (be32(px + cell)     & mask) | (ink & fill_lo));
-    wr32(px + cell + 4, (be32(px + cell + 4) & mask) | (ink & fill_hi));
 }
 
 Offset rm_glyph_run(Framebuffer *fb, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
@@ -43,7 +36,7 @@ Offset rm_glyph_run(Framebuffer *fb, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
         for (int row = 0; row < TEXT_CELL_ROWS; row++, cell += ROW_STRIDE, glyph1 += 2, glyph2 += 2) {
             uint16_t mask16, ink16;
             glyph_pair(be16(glyph1), be16(glyph2), &mask16, &ink16);
-            blit_row(px, cell, dup16(mask16), dup16(ink16), fill_lo, fill_hi);
+            cell_overlay(px, cell, dup16(mask16), dup16(ink16), fill_lo, fill_hi);
         }
         dst += CELL_WIDTH;
         if (--remaining == 0xffff) break;                            /* budget exhausted */

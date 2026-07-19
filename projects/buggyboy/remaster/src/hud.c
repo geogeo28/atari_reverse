@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "game.h"
+#include "plane.h"
 #include "screen.h"
 #include "st.h"
 #include "text.h"
@@ -77,18 +78,14 @@ static void hud_flag_bars(const HudState *s, Framebuffer *fb) {
     if (s->flag_seq_count < 1) return;
     uint8_t *px = fb->px;
     Offset a = FLAG_BAR_TOP_DST;
-    for (int r = 0; r < FLAG_BAR_TOP_ROWS; r++, a += ROW_STRIDE) {
-        wr32(px + a,     be32(px + a)     & FLAG_BAR_CLEAR_BIT);
-        wr32(px + a + 4, be32(px + a + 4) & FLAG_BAR_CLEAR_BIT);
-    }
+    for (int r = 0; r < FLAG_BAR_TOP_ROWS; r++, a += ROW_STRIDE)
+        cell_and(px, a, FLAG_BAR_CLEAR_BIT);
     a -= FLAG_BAR_TOP_BACK;
     for (int c = 0; c < s->flag_seq_count; c++) {
-        wr32(px + a, 0); wr32(px + a + 4, 0); a += ROW_STRIDE;          /* dark cap */
-        for (int r = 0; r < FLAG_BAR_MID_ROWS; r++, a += ROW_STRIDE) {  /* lit body */
-            wr32(px + a,     FLAG_BAR_CLEAR_BIT);
-            wr32(px + a + 4, FLAG_BAR_CLEAR_BIT);
-        }
-        wr32(px + a, 0); wr32(px + a + 4, 0);                           /* dark cap */
+        cell_fill(px, a, 0, 0); a += ROW_STRIDE;                        /* dark cap */
+        for (int r = 0; r < FLAG_BAR_MID_ROWS; r++, a += ROW_STRIDE)    /* lit body */
+            cell_fill(px, a, FLAG_BAR_CLEAR_BIT, FLAG_BAR_CLEAR_BIT);
+        cell_fill(px, a, 0, 0);                                         /* dark cap */
         a += 8 - FLAG_BAR_COL_BACK;                                     /* net +8 to next bar */
     }
 }
@@ -102,15 +99,12 @@ static void hud_color_bars(const HudState *s, const HudAssets *assets, Framebuff
         int16_t off = (int16_t)(uint16_t)(assets->color_bar_cidx[cidx + col] << 3);
         Plane4 fill_lo = be32(assets->color_pairs + off);
         Plane4 fill_hi = be32(assets->color_pairs + off + 4);
-        wr32(px + a,     be32(px + a)     & COLOR_BAR_PRECLEAR);        /* top cap */
-        wr32(px + a + 4, be32(px + a + 4) & COLOR_BAR_PRECLEAR);
-        a += ROW_STRIDE;
+        cell_and(px, a, COLOR_BAR_PRECLEAR); a += ROW_STRIDE;          /* top cap */
         for (int r = 0; r < COLOR_BAR_ROWS; r++, a += ROW_STRIDE) {
             Plane4 mask = dup16(be16(assets->color_bar_mask + mask_off));
             Plane4 ink  = dup16(be16(assets->color_bar_mask + mask_off + 2));
             mask_off += 4;
-            wr32(px + a,     (be32(px + a)     & mask) | (ink & fill_lo));
-            wr32(px + a + 4, (be32(px + a + 4) & mask) | (ink & fill_hi));
+            cell_overlay(px, a, mask, ink, fill_lo, fill_hi);
         }
         a -= COLOR_BAR_COL_BACK;
     }
@@ -123,14 +117,14 @@ static void hud_fuel_gauge(const HudState *s, const HudAssets *assets, Framebuff
     Plane4 f_hi = (be32(assets->fuel_mask + 4) & FUEL_MASK_KEEP) | FUEL_MID;
     Offset g = FUEL_BASE;
     for (int c = 0; c < s->crash_lap; c++) {
-        wr32(px + g, be32(px + g) & FUEL_EDGE); wr32(px + g + 4, be32(px + g + 4) & FUEL_EDGE); g += ROW_STRIDE;
-        wr32(px + g, FUEL_NEAR_FULL); wr32(px + g + 4, FUEL_NEAR_FULL); g += ROW_STRIDE;
-        wr32(px + g, FUEL_MID); wr32(px + g + 4, FUEL_MID); g += ROW_STRIDE;
-        for (int r = 0; r < 4; r++, g += ROW_STRIDE) { wr32(px + g, f_lo); wr32(px + g + 4, f_hi); }
-        wr32(px + g, FUEL_MID); wr32(px + g + 4, FUEL_MID); g += ROW_STRIDE;
-        for (int r = 0; r < 5; r++, g += ROW_STRIDE) { wr32(px + g, FUEL_LOW); wr32(px + g + 4, FUEL_LOW); }
-        wr32(px + g, FUEL_NEAR_FULL); wr32(px + g + 4, FUEL_NEAR_FULL); g += ROW_STRIDE;
-        wr32(px + g, be32(px + g) & FUEL_EDGE); wr32(px + g + 4, be32(px + g + 4) & FUEL_EDGE);
+        cell_and(px, g, FUEL_EDGE);                        g += ROW_STRIDE;   /* top cap */
+        cell_fill(px, g, FUEL_NEAR_FULL, FUEL_NEAR_FULL);  g += ROW_STRIDE;
+        cell_fill(px, g, FUEL_MID, FUEL_MID);              g += ROW_STRIDE;
+        for (int r = 0; r < 4; r++, g += ROW_STRIDE) cell_fill(px, g, f_lo, f_hi);
+        cell_fill(px, g, FUEL_MID, FUEL_MID);              g += ROW_STRIDE;
+        for (int r = 0; r < 5; r++, g += ROW_STRIDE) cell_fill(px, g, FUEL_LOW, FUEL_LOW);
+        cell_fill(px, g, FUEL_NEAR_FULL, FUEL_NEAR_FULL);  g += ROW_STRIDE;
+        cell_and(px, g, FUEL_EDGE);                                           /* bottom cap */
         g += 8 - FUEL_COL_BACK;                                        /* net +8 to next unit */
     }
 }
