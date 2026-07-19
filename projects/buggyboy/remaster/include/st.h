@@ -20,6 +20,8 @@
 typedef uint32_t Offset;
 typedef uint32_t Plane4;
 
+/* be16/be32 — read a 16/32-bit big-endian value at p; wr16/wr32 — write one. The file header
+ * explains the two builds: native aligned moves on the m68k target, byte-assembly on a host. */
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 static inline uint16_t be16(const uint8_t *p) { return *(const uint16_t *)p; }
 static inline uint32_t be32(const uint8_t *p) { return *(const uint32_t *)p; }

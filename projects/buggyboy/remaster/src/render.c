@@ -11,6 +11,8 @@
 #include "game.h"
 #include "screen.h"
 
+/* Render one whole frame from native game state into fb. Phase-A stub: clears the screen until the
+ * road / objects / HUD subsystems are ported in and called from here (see the file header). */
 void rm_render_frame(const GameState *state, Framebuffer *fb) {
     (void)state;                 /* TODO(phase-A): road, objects, HUD read from state */
     memset(fb->px, 0, SCREEN_BYTES);

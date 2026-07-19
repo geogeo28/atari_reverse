@@ -34,6 +34,8 @@ void *memset(void *d, int c, unsigned long n) {
 
 static Framebuffer fb;              /* BSS: the 32000-byte draw buffer */
 
+/* Stage the baked HUD inputs into native structs, draw the HUD over the captured background, dump
+ * the painted frame for the headless byte-compare, then load the palette, blit, and wait for a key. */
 void main(void) {
     static const HudState state = {
         .flag_seq_count = HUD_FLAG_SEQ_COUNT, .flag_seq_off = HUD_FLAG_SEQ_OFF,
