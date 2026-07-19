@@ -229,6 +229,29 @@ shim to the byte; machine-dependent ones (Malloc's address) are checked as the *
 also honors (even-aligned, non-overlapping, odd size rounded up to even). It skips when Hatari or a
 TOS ROM isn't installed.
 
+## Harness gaps (off-image effects)
+
+The differential is a **whole-image** comparison, so any effect that lands *outside* the image is
+invisible to it. OS/hardware calls with "no image effect" (Setpalette, Setcolor, the direct
+`$ffff82xx` colour-register pokes, Dosound) return 0 and write nothing the diff sees — so the oracle
+verifies *that* they were called, never *which palette/value* was loaded. This is a real blind spot:
+the leg-0 tunnel bug was `game_update`'s sprite-mode-4 loading the `0x17fb0` scratch instead of the
+`0x17fa2` race palette (the original `suba #$18,a0`-rewinds A0 before the trap) — byte-clean under
+`make test`, wrong on hardware. It was only found by diffing Hatari **memory snapshots** (recon vs
+original: identical game state, but the recon's hardware palette held the +7-shifted scratch). See
+the [`buggyboy-off-image-palette-debugging`] memory note and the `game_update` STATUS row.
+
+The durable fix is to give these calls **capture ledgers** like the sound path already has
+(`emu.psg_writes()`, the Dosound arg ledger) and assert on them:
+- Capture XBIOS Setpalette (fn 6) / Setcolor (fn 7) in `oracle/shim.c` — the source pointer + the
+  16 loaded words — into an ordered ledger exposed like `psg_writes()`.
+- Mask `m68k_write_memory_16`/`_32` to the 24-bit bus the way `m68k_write_memory_8` already does
+  (they currently drop `$ffffxxxx` word/long writes instead of aliasing them to `$ffxxxx`), so the
+  mode-6 `$ffff824c` colour poke lands at `$ff824c` and is logged.
+- Have the reconstruction's `g_xbios_setpalette` / `g_poke_color_reg` seams record the same, and
+  add a ledger-diff test over the real course — companion to `test_game_update_real_course.py`,
+  which only guards the *image* side. That closes the bug class whole-image diffing can't see.
+
 ## Oracle note
 
 The oracle is **Musashi** (kstenerud/Musashi, MAME's 68000 core) — faithful to real 68000
