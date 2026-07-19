@@ -16,6 +16,7 @@ framebuffer → diff). Order follows the in-race draw order.
 | equivalence driver | per-subsystem framebuffer diff | ✅ footprint coverage + no-wrong-pixel | `test/equiv.py` |
 | glyph blitter (`text_body`) | `g_draw_hud_bar` / `g_draw_hud_gauge0` | ✅ verified | `test/test_text.py` — 960 fuzz cases, **byte-exact** (whole framebuffer) |
 | `draw_hud`         | `g_draw_hud`              | 🟡 phases 1/2/4/5/6a/7 ported | `test/test_hud.py` — 5 cfgs, **100% footprint, 0 wrong pixels** (phase 3/8 gated off) |
+| on-target (Hatari) | `g_draw_hud` frame        | ✅ byte-identical on 68000 | `render/atari/` — HUD PRG dump MATCHes recreate's golden frame |
 | `render_road`      | `g_render_road`           | ⬜ not started   | — |
 | `blit_road_scroll` | `g_blit_road_scroll`      | ⬜ not started   | — |
 | `draw_game_objects`| `g_draw_game_objects`     | ⬜ not started   | — |
