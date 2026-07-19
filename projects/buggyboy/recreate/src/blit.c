@@ -416,90 +416,90 @@ void g_blit_objshift_w2(uint8_t *image, uint32_t x, uint32_t color, uint32_t row
  * left 32-bit by shl so it straddles both columns; then two plane words are lsl.l shl'd, low half OR'd
  * into col1 and high half into col0. Advances a0/a2 by 8 and a1 by 4 (the mask reads at (a1)/(a1+2)
  * do NOT advance; the two (a1)+ copies do). Mirrors the 68k register moves literally (spec §4a/§6). */
-static void objsh2_straddle_cell(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1, unsigned shl) {
-    uint16_t w0 = be16(image + *a1);
-    uint16_t w1 = be16(image + *a1 + 2);
-    uint32_t d1 = OBJSH2_MASK_INIT;                          /* moveq #$ff,d1                       */
-    d1 = (d1 & 0xffff0000u) | w0;                            /* move.w (a1),d1                      */
-    d1 = (d1 & 0xffff0000u) | (uint16_t)(d1 | w1);           /* or.w 2(a1),d1  (word op)            */
-    d1 = (d1 & 0xffff0000u) | (uint16_t)(~d1);              /* not.w d1  -> hi word stays 0xFFFF   */
-    d1 = rotl32(d1, shl);                                    /* rol.l d6,d1                         */
-    uint32_t d2 = dup16((uint16_t)d1);                       /* move.w;swap;move.w -> col1 AND-mask */
-    uint32_t swapped = (d1 >> 16) | (d1 << 16);              /* move.l d1,d0 ; swap d0              */
-    d1 = (d1 & 0xffff0000u) | (uint16_t)swapped;             /* move.w d0,d1 -> col0 AND-mask       */
-    store32(image, *a0, load32(image, *a0) & d1);            /* and.l d1,(a0)                       */
-    store32(image, *a2, load32(image, *a2) & d2);            /* and.l d2,(a2)                       */
+static void objsh2_straddle_cell(uint8_t *image, uint32_t *col0_ptr, uint32_t *col1_ptr, uint32_t *src_ptr, unsigned shl) {
+    uint16_t w0 = be16(image + *src_ptr);
+    uint16_t w1 = be16(image + *src_ptr + 2);
+    uint32_t mask_col0 = OBJSH2_MASK_INIT;                   /* moveq #$ff,d1                       */
+    mask_col0 = (mask_col0 & 0xffff0000u) | w0;             /* move.w (a1),d1                      */
+    mask_col0 = (mask_col0 & 0xffff0000u) | (uint16_t)(mask_col0 | w1);  /* or.w 2(a1),d1  (word op) */
+    mask_col0 = (mask_col0 & 0xffff0000u) | (uint16_t)(~mask_col0);      /* not.w d1  -> hi word stays 0xFFFF */
+    mask_col0 = rotl32(mask_col0, shl);                      /* rol.l d6,d1                         */
+    uint32_t mask_col1 = dup16((uint16_t)mask_col0);         /* move.w;swap;move.w -> col1 AND-mask */
+    uint32_t swapped = (mask_col0 >> 16) | (mask_col0 << 16);/* move.l d1,d0 ; swap d0              */
+    mask_col0 = (mask_col0 & 0xffff0000u) | (uint16_t)swapped;/* move.w d0,d1 -> col0 AND-mask       */
+    store32(image, *col0_ptr, load32(image, *col0_ptr) & mask_col0);    /* and.l d1,(a0)             */
+    store32(image, *col1_ptr, load32(image, *col1_ptr) & mask_col1);    /* and.l d2,(a2)             */
 
     for (int i = 0; i < 2; i++) {                            /* two plane words, low -> col1, hi -> col0 */
-        uint32_t pix = (uint32_t)be16(image + *a1) << shl;   /* moveq #0,d0; move.w (a1)+,d0; lsl.l d6 */
-        *a1 += 2;
-        wr16(image + *a2, (uint16_t)(be16(image + *a2) | (uint16_t)pix));        /* or.w d0,(a2)+   */
-        wr16(image + *a0, (uint16_t)(be16(image + *a0) | (uint16_t)(pix >> 16)));/* swap; or.w (a0)+ */
-        *a0 += 2; *a2 += 2;
+        uint32_t pix = (uint32_t)be16(image + *src_ptr) << shl;   /* moveq #0,d0; move.w (a1)+,d0; lsl.l d6 */
+        *src_ptr += 2;
+        wr16(image + *col1_ptr, (uint16_t)(be16(image + *col1_ptr) | (uint16_t)pix));        /* or.w d0,(a2)+ */
+        wr16(image + *col0_ptr, (uint16_t)(be16(image + *col0_ptr) | (uint16_t)(pix >> 16)));/* swap; or.w (a0)+ */
+        *col0_ptr += 2; *col1_ptr += 2;
     }
     /* trailing "opaque fill outside the show mask" longword for each column: dst = (dst & m) | ~m. */
-    store32(image, *a0, (load32(image, *a0) & d1) | ~d1);    /* and.l d1,(a0); or.l ~d1,(a0)+       */
-    *a0 += 4;
-    store32(image, *a2, (load32(image, *a2) & d2) | ~d2);    /* and.l d2,(a2); or.l ~d2,(a2)+       */
-    *a2 += 4;
+    store32(image, *col0_ptr, (load32(image, *col0_ptr) & mask_col0) | ~mask_col0);   /* and.l d1,(a0); or.l ~d1,(a0)+ */
+    *col0_ptr += 4;
+    store32(image, *col1_ptr, (load32(image, *col1_ptr) & mask_col1) | ~mask_col1);   /* and.l d2,(a2); or.l ~d2,(a2)+ */
+    *col1_ptr += 4;
 }
 
 /* LEFT-EDGE cell (0x1411c): the clipped-off left column is discarded; only col1 (a2) is drawn. The
  * mask is (w1|w0) shifted LEFT as a WORD by shl, inverted; pixels shift left as words (no straddle).
  * Advances a1 by 4, a2 by 8, and bumps a0 by 8 past the discarded column. Mirrors 68k moves (§4b). */
-static void objsh2_left_edge_cell(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1, unsigned shl) {
-    uint32_t both = load32(image, *a1);                      /* move.l (a1),d0 = (w0<<16)|w1        */
-    uint16_t lo = (uint16_t)((uint16_t)both | be16(image + *a1)); /* or.w (a1)+,d0 -> lo = w1|w0    */
-    *a1 += 2;
+static void objsh2_left_edge_cell(uint8_t *image, uint32_t *col0_ptr, uint32_t *col1_ptr, uint32_t *src_ptr, unsigned shl) {
+    uint32_t both = load32(image, *src_ptr);                 /* move.l (a1),d0 = (w0<<16)|w1        */
+    uint16_t lo = (uint16_t)((uint16_t)both | be16(image + *src_ptr)); /* or.w (a1)+,d0 -> lo = w1|w0 */
+    *src_ptr += 2;
     uint16_t mask = (uint16_t)(~(uint16_t)(lo << shl));      /* lsl.w d6,d0 ; not.w d0             */
-    uint32_t d2 = dup16(mask);                               /* dup16 -> col1 AND-mask             */
-    store32(image, *a2, load32(image, *a2) & d2);            /* and.l d2,(a2)                       */
+    uint32_t mask_col1 = dup16(mask);                        /* dup16 -> col1 AND-mask             */
+    store32(image, *col1_ptr, load32(image, *col1_ptr) & mask_col1);   /* and.l d2,(a2)             */
     uint16_t w0 = (uint16_t)(both >> 16);                    /* swap d0 -> old high half (w0)       */
-    wr16(image + *a2, (uint16_t)(be16(image + *a2) | (uint16_t)(w0 << shl)));    /* lsl.w; or.w (a2)+ */
-    *a2 += 2;
-    uint16_t w1 = be16(image + *a1);                         /* move.w (a1)+,d0                     */
-    *a1 += 2;
-    wr16(image + *a2, (uint16_t)(be16(image + *a2) | (uint16_t)(w1 << shl)));    /* lsl.w; or.w (a2)+ */
-    *a2 += 2;
-    store32(image, *a2, (load32(image, *a2) & d2) | ~d2);    /* and.l d2,(a2); or.l ~d2,(a2)+       */
-    *a2 += 4;
-    *a0 += OBJSH2_COL_BYTES;                                 /* addq.l #8,a0 (skip discarded column)*/
+    wr16(image + *col1_ptr, (uint16_t)(be16(image + *col1_ptr) | (uint16_t)(w0 << shl)));    /* lsl.w; or.w (a2)+ */
+    *col1_ptr += 2;
+    uint16_t w1 = be16(image + *src_ptr);                    /* move.w (a1)+,d0                     */
+    *src_ptr += 2;
+    wr16(image + *col1_ptr, (uint16_t)(be16(image + *col1_ptr) | (uint16_t)(w1 << shl)));    /* lsl.w; or.w (a2)+ */
+    *col1_ptr += 2;
+    store32(image, *col1_ptr, (load32(image, *col1_ptr) & mask_col1) | ~mask_col1);  /* and.l d2,(a2); or.l ~d2,(a2)+ */
+    *col1_ptr += 4;
+    *col0_ptr += OBJSH2_COL_BYTES;                           /* addq.l #8,a0 (skip discarded column)*/
 }
 
 /* RIGHT-EDGE cell (0x142b6): the clipped-off right column is discarded; only col0 (a0) is drawn. The
  * mask is (w1|w0) shifted RIGHT as a WORD by shr = fine_x, inverted; pixels shift right as words.
  * Advances a1 by 4, a0 by 8, and bumps a2 by 8 to keep the shared rewind correct. (§4c). */
-static void objsh2_right_edge_cell(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1, unsigned shr) {
-    uint32_t both = load32(image, *a1);                      /* move.l (a1),d0 = (w0<<16)|w1        */
-    uint16_t lo = (uint16_t)((uint16_t)both | be16(image + *a1)); /* or.w (a1)+,d0 -> lo = w1|w0    */
-    *a1 += 2;
+static void objsh2_right_edge_cell(uint8_t *image, uint32_t *col0_ptr, uint32_t *col1_ptr, uint32_t *src_ptr, unsigned shr) {
+    uint32_t both = load32(image, *src_ptr);                 /* move.l (a1),d0 = (w0<<16)|w1        */
+    uint16_t lo = (uint16_t)((uint16_t)both | be16(image + *src_ptr)); /* or.w (a1)+,d0 -> lo = w1|w0 */
+    *src_ptr += 2;
     uint16_t mask = (uint16_t)(~(uint16_t)(lo >> shr));      /* lsr.w d7,d0 ; not.w d0             */
-    uint32_t d1 = dup16(mask);                               /* dup16 -> col0 AND-mask             */
-    store32(image, *a0, load32(image, *a0) & d1);            /* and.l d1,(a0)                       */
+    uint32_t mask_col0 = dup16(mask);                        /* dup16 -> col0 AND-mask             */
+    store32(image, *col0_ptr, load32(image, *col0_ptr) & mask_col0);   /* and.l d1,(a0)             */
     uint16_t w0 = (uint16_t)(both >> 16);                    /* swap d0 -> old high half (w0)       */
-    wr16(image + *a0, (uint16_t)(be16(image + *a0) | (uint16_t)(w0 >> shr)));    /* lsr.w; or.w (a0)+ */
-    *a0 += 2;
-    uint16_t w1 = be16(image + *a1);                         /* move.w (a1)+,d0                     */
-    *a1 += 2;
-    wr16(image + *a0, (uint16_t)(be16(image + *a0) | (uint16_t)(w1 >> shr)));    /* lsr.w; or.w (a0)+ */
-    *a0 += 2;
-    store32(image, *a0, (load32(image, *a0) & d1) | ~d1);    /* and.l d1,(a0); or.l ~d1,(a0)+       */
-    *a0 += 4;
-    *a2 += OBJSH2_COL_BYTES;                                 /* addq.l #8,a2 (rewind bookkeeping)   */
+    wr16(image + *col0_ptr, (uint16_t)(be16(image + *col0_ptr) | (uint16_t)(w0 >> shr)));    /* lsr.w; or.w (a0)+ */
+    *col0_ptr += 2;
+    uint16_t w1 = be16(image + *src_ptr);                    /* move.w (a1)+,d0                     */
+    *src_ptr += 2;
+    wr16(image + *col0_ptr, (uint16_t)(be16(image + *col0_ptr) | (uint16_t)(w1 >> shr)));    /* lsr.w; or.w (a0)+ */
+    *col0_ptr += 2;
+    store32(image, *col0_ptr, (load32(image, *col0_ptr) & mask_col0) | ~mask_col0);  /* and.l d1,(a0); or.l ~d1,(a0)+ */
+    *col0_ptr += 4;
+    *col1_ptr += OBJSH2_COL_BYTES;                           /* addq.l #8,a2 (rewind bookkeeping)   */
 }
 
 /* Which family the signed aligned column selects (spec §3). Every listed case is reachable. */
 enum objsh2_edge { OBJSH2_EDGE_NONE, OBJSH2_EDGE_LEFT, OBJSH2_EDGE_RIGHT };
 
 /* Run one row: LEFT prepends a LE-cell, WIDE appends a RE-cell, all around `straddle` S-cells. */
-static void objsh2_row(uint8_t *image, uint32_t *a0, uint32_t *a2, uint32_t *a1,
+static void objsh2_row(uint8_t *image, uint32_t *col0_ptr, uint32_t *col1_ptr, uint32_t *src_ptr,
                        enum objsh2_edge edge, int straddle, unsigned shl, unsigned shr) {
     if (edge == OBJSH2_EDGE_LEFT)
-        objsh2_left_edge_cell(image, a0, a2, a1, shl);
+        objsh2_left_edge_cell(image, col0_ptr, col1_ptr, src_ptr, shl);
     for (int i = 0; i < straddle; i++)
-        objsh2_straddle_cell(image, a0, a2, a1, shl);
+        objsh2_straddle_cell(image, col0_ptr, col1_ptr, src_ptr, shl);
     if (edge == OBJSH2_EDGE_RIGHT)
-        objsh2_right_edge_cell(image, a0, a2, a1, shr);
+        objsh2_right_edge_cell(image, col0_ptr, col1_ptr, src_ptr, shr);
 }
 
 /* Width-parameterized objshift2 engine. The 68000 packs three entry points (0x13ed6, 0x13fd4,
@@ -522,8 +522,8 @@ static void blit_objshift2_family(uint8_t *image, uint32_t x, uint32_t rows_m1, 
     /* aligned_col = ((int16)x >> 1) & 0xFFF8; the signed value (post-add into a0) drives dispatch. */
     int16_t col = (int16_t)((int16_t)(uint16_t)x >> 1) & (int16_t)COL_ALIGN;
     int16_t base_ceiling = (int16_t)(OBJSH2_RIGHT_BOUND + OBJSH2_LADDER_STEP * width_idx);
-    uint32_t a0 = (uint32_t)(dst + sign_ext16((uint16_t)col));
-    uint32_t a1 = src;
+    uint32_t col0_ptr = (uint32_t)(dst + sign_ext16((uint16_t)col));
+    uint32_t src_ptr = src;
 
     enum objsh2_edge edge;
     int straddle;
@@ -538,7 +538,7 @@ static void blit_objshift2_family(uint8_t *image, uint32_t x, uint32_t rows_m1, 
         for (rung = width_idx; rung <= OBJSH2_BASE_STRADDLE - 1; rung++) {
             c = (int16_t)(c + OBJSH2_LADDER_STEP);
             if (c >= 0) { straddle = (OBJSH2_BASE_STRADDLE - 1) - rung; break; }
-            if (rung < OBJSH2_BASE_STRADDLE - 1) { a1 += 4; a0 += OBJSH2_COL_BYTES; }
+            if (rung < OBJSH2_BASE_STRADDLE - 1) { src_ptr += 4; col0_ptr += OBJSH2_COL_BYTES; }
         }
         if (straddle < 0) return;                            /* fell past the last rung -> off left */
     } else if ((int16_t)(col - base_ceiling) >= 0) {
@@ -569,13 +569,13 @@ static void blit_objshift2_family(uint8_t *image, uint32_t x, uint32_t rows_m1, 
         default: rewind_dst = OBJSH2_REWIND1_DST; rewind_src = OBJSH2_REWIND1_SRC; break;
     }
 
-    uint32_t a2 = a0 + OBJSH2_COL_BYTES;                     /* movea.l a0,a2; addq.l #8,a2 (once)  */
+    uint32_t col1_ptr = col0_ptr + OBJSH2_COL_BYTES;        /* movea.l a0,a2; addq.l #8,a2 (once)  */
     int rows = (int16_t)rows_m1 + 1;                         /* dbf d4 counts d4+1 rows             */
     for (int row = 0; row < rows; row++) {
-        objsh2_row(image, &a0, &a2, &a1, edge, straddle, shl, shr);
-        a0 = (uint32_t)(a0 - sign_ext16(rewind_dst));        /* suba.w #d3,a0                       */
-        a2 = (uint32_t)(a2 - sign_ext16(rewind_dst));        /* suba.w #d3,a2                       */
-        a1 = (uint32_t)(a1 - sign_ext16(rewind_src));        /* suba.w #d5,a1                       */
+        objsh2_row(image, &col0_ptr, &col1_ptr, &src_ptr, edge, straddle, shl, shr);
+        col0_ptr = (uint32_t)(col0_ptr - sign_ext16(rewind_dst));        /* suba.w #d3,a0               */
+        col1_ptr = (uint32_t)(col1_ptr - sign_ext16(rewind_dst));        /* suba.w #d3,a2               */
+        src_ptr = (uint32_t)(src_ptr - sign_ext16(rewind_src));          /* suba.w #d5,a1               */
     }
 }
 
@@ -595,9 +595,9 @@ void g_blit_objshift2(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst
 
 /* P prefix (0x13e68): a0 = a6 + sign_ext16(word@(0x171ca + view_flags + rows_m1)). The table is
  * indexed by the ORIGINAL dispatch rows_m1 (d4) plus the per-view offset word at A_view_flags. */
-static uint32_t objshift2_prefix_dst(const uint8_t *image, uint32_t a6, uint16_t rows_m1) {
-    uint32_t a2 = OBJSH2P_TABLE + sign_ext16(be16(image + A_view_flags));   /* adda.w view_flags,a2 */
-    return (uint32_t)(a6 + sign_ext16(be16(image + a2 + sign_ext16(rows_m1))));  /* adda.w (0,a2,d4),a0 */
+static uint32_t objshift2_prefix_dst(const uint8_t *image, uint32_t draw_buf, uint16_t rows_m1) {
+    uint32_t table = OBJSH2P_TABLE + sign_ext16(be16(image + A_view_flags));   /* adda.w view_flags,a2 */
+    return (uint32_t)(draw_buf + sign_ext16(be16(image + table + sign_ext16(rows_m1))));  /* adda.w (0,a2,d4),a0 */
 }
 
 /* Glue loop (0x13e8e): draw `groups + 1` BASE (width_idx 0) objshift2 sub-cells, stepping x by 0x30
