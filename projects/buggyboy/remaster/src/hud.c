@@ -176,6 +176,12 @@ static void hud_dashboard(const HudAssets *a, uint8_t *px) {
     }
 }
 
+/* Render a decimal digit as its ASCII char, or `blank` when it is 0 (leading-zero suppression).
+ * Shared by the speedometer and timer, which both draw a blanked tens digit + a units digit. */
+static uint8_t digit_or_blank(uint16_t digit, uint8_t blank) {
+    return digit ? '0' + digit : blank;
+}
+
 /* Phase 1 — format the speedometer digits into the gauge string: a "/N" hundreds prefix then a
  * leading-blank tens digit and a units digit. */
 static void hud_format_speed(uint16_t speed, uint8_t *str) {
@@ -185,17 +191,15 @@ static void hud_format_speed(uint16_t speed, uint8_t *str) {
     if (v >= HUD_SPEED_HUNDREDS)    { prefix = HUD_PREFIX_00 + 3; v -= HUD_SPEED_HUNDREDS; blank = '0'; }
     else if (v >= HUD_SPEED_HUNDRED) { prefix = HUD_PREFIX_00 + 2; v -= HUD_SPEED_HUNDRED;  blank = '0'; }
     wr16(str + HUD_SPEED_TXT_OFF, prefix);
-    uint16_t tens = v / HUD_DIGIT_DIV;
-    str[HUD_SPEED_TXT_OFF + 2] = (uint8_t)tens ? (uint8_t)('0' + tens) : blank;
-    str[HUD_SPEED_TXT_OFF + 3] = (uint8_t)('0' + (v - tens * HUD_DIGIT_DIV));
+    str[HUD_SPEED_TXT_OFF + 2] = digit_or_blank(v / HUD_DIGIT_DIV, blank);
+    str[HUD_SPEED_TXT_OFF + 3] = '0' + v % HUD_DIGIT_DIV;
 }
 
 /* Phase 2 — format the bonus-timer digits (blanked to 0 when the game is over). */
 static void hud_format_time(uint16_t time_left, int16_t game_over, uint8_t *str) {
     uint16_t t = game_over != 0 ? 0 : time_left;
-    uint16_t tens = t / HUD_DIGIT_DIV;
-    str[HUD_TIME_TXT_OFF + 1] = (uint8_t)tens ? (uint8_t)('0' + (uint8_t)tens) : HUD_BLANK;
-    str[HUD_TIME_TXT_OFF + 2] = (uint8_t)('0' + (uint8_t)(t - tens * HUD_DIGIT_DIV));
+    str[HUD_TIME_TXT_OFF + 1] = digit_or_blank(t / HUD_DIGIT_DIV, HUD_BLANK);
+    str[HUD_TIME_TXT_OFF + 2] = '0' + t % HUD_DIGIT_DIV;
 }
 
 /* Overlay the ported HUD phases onto the current frame in fb. */

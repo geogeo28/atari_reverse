@@ -34,3 +34,20 @@ def test_hud_ported_phases_no_wrong_pixel(cfg, capsys):
     # phases 1,2,4,5,6a,7 are ported; phase 3 (dsp_toggle) and phase 8 (crash) are gated off in
     # hud_background, so the candidate must reproduce the ENTIRE remaining footprint.
     assert coverage == 1.0, f"HUD footprint only {coverage:.1%} covered (cfg={cfg})"
+
+
+# (speed, time) — exercise the phase-1/2 digit formatting across the real domain: every speedometer
+# prefix branch (<100 "//", 100-199 "/1", >=200 "/2") and leading-blank vs. leading-zero tens, and
+# the 2-digit timer 0..99. Speed is a byte (0..255); the timer field is 2 digits (0..99).
+SPEED_TIME = [(0, 0), (7, 5), (45, 42), (99, 99), (100, 10), (150, 0), (199, 60), (200, 88), (255, 90)]
+
+
+@pytest.mark.parametrize("speed,time", SPEED_TIME)
+def test_hud_speed_time_digits(speed, time):
+    lib = equiv._lib()
+    controls = {adapter.A_speed: speed, adapter.A_time_left: time,
+                adapter.A_flag_seq_count: 1, adapter.A_crash_lap: 2}
+    image = equiv.hud_background(leg=0, controls=controls)
+    coverage, wrong = equiv.compare_hud(lib, image)
+    assert wrong == 0, f"speed={speed} time={time}: {wrong} wrong pixels"
+    assert coverage == 1.0, f"speed={speed} time={time}: only {coverage:.1%} covered"
