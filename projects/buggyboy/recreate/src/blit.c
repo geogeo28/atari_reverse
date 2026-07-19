@@ -1154,8 +1154,8 @@ void g_objsprite_w88(uint8_t *image, uint32_t x, uint32_t rows_m1, uint32_t dst,
 void g_objsprite_t53(uint8_t *image, uint32_t aligned_col, uint32_t shl, uint32_t shr,
                      uint32_t rows_m1, uint32_t dst, uint32_t src) {
     uint16_t col = (uint16_t)aligned_col;
-    uint32_t a0_pre = (uint32_t)(dst + sign_ext16(col));       /* adda.w d0,a0 */
-    objsprite_core(image, col, (unsigned)shl, (unsigned)shr, (uint16_t)rows_m1, a0_pre, src, 0);
+    uint32_t col0_init = (uint32_t)(dst + sign_ext16(col));    /* adda.w d0,a0 */
+    objsprite_core(image, col, (unsigned)shl, (unsigned)shr, (uint16_t)rows_m1, col0_init, src, 0);
 }
 
 /* Wrapper family 3 — `movea.l a6,a0; adda.w -(a2),a0` then bra to the width prologue (t34/t33/t32):
@@ -1343,8 +1343,8 @@ static void obj_handler_lo(uint8_t *image, uint16_t x, uint16_t colour, uint16_t
 /* handler_lo full entry (0x14664 base_cells=1 / 0x144ac base_cells=2): identical to the mid-entry
  * except dst is rebuilt from A6 (a6 + 0x3ac0) instead of using the dispatcher's a0. */
 static void obj_handler_lo_full(uint8_t *image, uint16_t x, uint16_t colour, uint16_t rows_m1,
-                                uint32_t a6, uint32_t src, uint32_t rec_cursor, int base_cells) {
-    uint32_t dst = (uint32_t)(a6 + sign_ext16(OBJH_BAND_LO));                         /* a6 + 0x3ac0 */
+                                uint32_t draw_buf, uint32_t src, uint32_t rec_cursor, int base_cells) {
+    uint32_t dst = (uint32_t)(draw_buf + sign_ext16(OBJH_BAND_LO));                   /* a6 + 0x3ac0 */
     obj_handler_lo(image, x, colour, rows_m1, dst, src, rec_cursor, base_cells);
 }
 
@@ -1360,27 +1360,27 @@ static void obj_handler_dbl(uint8_t *image, uint16_t x, uint16_t colour, uint16_
 }
 
 /* 0x131d0: a6-prefix dst, then view_flags&4 selects the STUB (T4 then T1) vs a bare T4. */
-static void obj_handler_a6gate_t4(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t a6,
+static void obj_handler_a6gate_t4(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t draw_buf,
                                   uint32_t src, uint32_t rec_cursor) {
-    uint32_t a0 = (uint32_t)(a6 + sign_ext16(be16(image + rec_cursor - 2)));
-    g_objsprite_t4(image, x, rows_m1, a0, src);
+    uint32_t dst = (uint32_t)(draw_buf + sign_ext16(be16(image + rec_cursor - 2)));
+    g_objsprite_t4(image, x, rows_m1, dst, src);
     if (be16(image + A_view_flags) & OBJ_XFORM_VIEW_BIT)                              /* bra.s stub */
-        g_objsprite_t1(image, (uint16_t)(x + OBJ_STUB_X_ADV), rows_m1, a0, src + OBJ_STUB_SRC_ADV);
+        g_objsprite_t1(image, (uint16_t)(x + OBJ_STUB_X_ADV), rows_m1, dst, src + OBJ_STUB_SRC_ADV);
 }
 
 /* 0x131e0: a6-prefix dst, then view_flags&4 selects a bare T4 vs W88. */
-static void obj_handler_a6gate_w88(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t a6,
+static void obj_handler_a6gate_w88(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t draw_buf,
                                    uint32_t src, uint32_t rec_cursor) {
-    uint32_t a0 = (uint32_t)(a6 + sign_ext16(be16(image + rec_cursor - 2)));
+    uint32_t dst = (uint32_t)(draw_buf + sign_ext16(be16(image + rec_cursor - 2)));
     if (be16(image + A_view_flags) & OBJ_XFORM_VIEW_BIT)
-        g_objsprite_t4(image, x, rows_m1, a0, src);
+        g_objsprite_t4(image, x, rows_m1, dst, src);
     else
-        g_objsprite_w88(image, x, rows_m1, a0, src);
+        g_objsprite_w88(image, x, rows_m1, dst, src);
 }
 
 /* 0x13dfa (jumpidx 0x24): P-prefix, then a global-byte flag chooses a three-stage blit or glue+final. */
-static void obj_handler_p24(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t a6, uint32_t src) {
-    uint32_t dst_p = objshift2_prefix_dst(image, a6, rows_m1);
+static void obj_handler_p24(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32_t draw_buf, uint32_t src) {
+    uint32_t dst_p = objshift2_prefix_dst(image, draw_buf, rows_m1);
     if (image[OBJ_P24_FLAG] == OBJ_P24_FLAG_ON) {
         blit_objshift2_family(image, x, /*rows=*/0x2a, dst_p, src, /*width_idx=*/0);        /* stage 1 */
         uint32_t buf_c = load32(image, A_buf_c);
@@ -1402,11 +1402,12 @@ static void obj_handler_p24(uint8_t *image, uint16_t x, uint16_t rows_m1, uint32
  * The objsprite engine handlers and the stub ignore colour/rec_cursor; only handler_lo uses them.
  * a6 = the raw draw-buffer base (unchanged across the dispatch loop; needed by the a6-prefix, LO
  * full-entry, scan and objshift2 P-prefix families that rebuild dst from it). voff = the vertical
- * offset `v` draw_object_list already subtracted from a0 (the hi-pass families add it back). a4/a5 =
- * the row's xoff-table cursor and list stream (only the scan-wrapper family t41/t42 reads them). */
+ * offset `v` draw_object_list already subtracted from a0 (the hi-pass families add it back).
+ * xoff_cursor/list_cursor (A4/A5) = the row's xoff-table cursor and list stream (only the
+ * scan-wrapper family t41/t42 reads them). */
 static void obj_dispatch(uint8_t *image, uint16_t jumpidx, uint16_t x, uint16_t colour,
                          uint16_t rows_m1, uint32_t dst, uint32_t src, uint32_t rec_cursor,
-                         uint32_t a6, uint16_t voff, uint32_t a4, uint32_t a5) {
+                         uint32_t draw_buf, uint16_t voff, uint32_t xoff_cursor, uint32_t list_cursor) {
     int16_t off = (int16_t)be16(image + A_obj_type_jumptable + jumpidx);
     uint32_t target = (uint32_t)(A_obj_type_jumptable + off);
     switch (target) {
@@ -1435,24 +1436,24 @@ static void obj_dispatch(uint8_t *image, uint16_t jumpidx, uint16_t x, uint16_t 
             break;
 
         /* scan-table x-build + width prologue family (t41/t42). */
-        case OBJ_H_T41: g_objsprite_t41(image, rows_m1, a6, rec_cursor, a4, a5, src); break;
-        case OBJ_H_T42: g_objsprite_t42(image, rows_m1, a6, rec_cursor, a4, a5, src); break;
+        case OBJ_H_T41: g_objsprite_t41(image, rows_m1, draw_buf, rec_cursor, xoff_cursor, list_cursor, src); break;
+        case OBJ_H_T42: g_objsprite_t42(image, rows_m1, draw_buf, rec_cursor, xoff_cursor, list_cursor, src); break;
 
         /* a6-prefix (a0 = a6 + word@(rec_cursor-2)) then width prologue family (t34/t33/t32). */
-        case OBJ_H_PREW88_44: g_objsprite_t34(image, x, rows_m1, a6, rec_cursor, src); break;
-        case OBJ_H_T42PRE:    g_objsprite_t33(image, x, rows_m1, a6, rec_cursor, src); break;
-        case OBJ_H_PRE_T1_A6: g_objsprite_t32(image, x, rows_m1, a6, rec_cursor, src); break;
+        case OBJ_H_PREW88_44: g_objsprite_t34(image, x, rows_m1, draw_buf, rec_cursor, src); break;
+        case OBJ_H_T42PRE:    g_objsprite_t33(image, x, rows_m1, draw_buf, rec_cursor, src); break;
+        case OBJ_H_PRE_T1_A6: g_objsprite_t32(image, x, rows_m1, draw_buf, rec_cursor, src); break;
 
         /* view-transform (0x145fc) then width prologue family (t39/t38/t37). */
-        case OBJ_H_PREW88_4E:   g_objsprite_t39(image, x, rows_m1, a6, src, rec_cursor); break;
-        case OBJ_H_T4CPRE:      g_objsprite_t38(image, x, rows_m1, a6, src, rec_cursor); break;
-        case OBJ_H_PRE_T1_XFORM:g_objsprite_t37(image, x, rows_m1, a6, src, rec_cursor); break;
+        case OBJ_H_PREW88_4E:   g_objsprite_t39(image, x, rows_m1, draw_buf, src, rec_cursor); break;
+        case OBJ_H_T4CPRE:      g_objsprite_t38(image, x, rows_m1, draw_buf, src, rec_cursor); break;
+        case OBJ_H_PRE_T1_XFORM:g_objsprite_t37(image, x, rows_m1, draw_buf, src, rec_cursor); break;
         case OBJ_H_XF0:   /* 0x131ca: view-transform then width 0x80 (width_idx-0 xform sibling) */
-            objsprite_xform_wrapper(image, x, rows_m1, a6, src, rec_cursor, 0); break;
+            objsprite_xform_wrapper(image, x, rows_m1, draw_buf, src, rec_cursor, 0); break;
 
         /* a6-prefix then view_flags&4-gated width selection. */
-        case OBJ_H_A6GATE_T4:  obj_handler_a6gate_t4(image, x, rows_m1, a6, src, rec_cursor); break;
-        case OBJ_H_A6GATE_W88: obj_handler_a6gate_w88(image, x, rows_m1, a6, src, rec_cursor); break;
+        case OBJ_H_A6GATE_T4:  obj_handler_a6gate_t4(image, x, rows_m1, draw_buf, src, rec_cursor); break;
+        case OBJ_H_A6GATE_W88: obj_handler_a6gate_w88(image, x, rows_m1, draw_buf, src, rec_cursor); break;
 
         /* LO-area draw_obj_handler_dbl / draw_obj_handler_lo full entries + base_cells=2 siblings. */
         case OBJ_H_DBL:
@@ -1460,73 +1461,73 @@ static void obj_dispatch(uint8_t *image, uint16_t jumpidx, uint16_t x, uint16_t 
         case OBJ_H_DBL2:
             obj_handler_dbl(image, x, colour, voff, dst, src, rec_cursor, rows_m1, 2); break;
         case OBJ_H_LO_FULL:
-            obj_handler_lo_full(image, x, colour, rows_m1, a6, src, rec_cursor, 1); break;
+            obj_handler_lo_full(image, x, colour, rows_m1, draw_buf, src, rec_cursor, 1); break;
         case OBJ_H_LO_FULL2:
-            obj_handler_lo_full(image, x, colour, rows_m1, a6, src, rec_cursor, 2); break;
+            obj_handler_lo_full(image, x, colour, rows_m1, draw_buf, src, rec_cursor, 2); break;
 
         /* objshift2 P-prefix "NOOP-cluster" family (jumpidx 0x24..0x3a). dst is rebuilt from a6. */
-        case OBJ_H_P24: obj_handler_p24(image, x, rows_m1, a6, src); break;
+        case OBJ_H_P24: obj_handler_p24(image, x, rows_m1, draw_buf, src); break;
         case OBJ_H_P26: {  /* glue(3), no final engine */
-            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            uint32_t dp = objshift2_prefix_dst(image, draw_buf, rows_m1);
             objshift2_glue(image, x, 0x20, dp, src, 3);
             break;
         }
         case OBJ_H_P28: {  /* glue(2) + final W98 */
-            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            uint32_t dp = objshift2_prefix_dst(image, draw_buf, rows_m1);
             objshift2_glue(image, x, 0x1c, dp, src, 2);
             blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X * 3), 0x1c, dp,
                                   src + OBJSH2P_SUBCELL_S * 3, 2);
             break;
         }
         case OBJ_H_P2A: {  /* glue(1) + final W90 */
-            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            uint32_t dp = objshift2_prefix_dst(image, draw_buf, rows_m1);
             objshift2_glue(image, x, 0x17, dp, src, 1);
             blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X * 2), 0x17, dp,
                                   src + OBJSH2P_SUBCELL_S * 2, 1);
             break;
         }
         case OBJ_H_P2C: {  /* glue(1) + final W98 */
-            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            uint32_t dp = objshift2_prefix_dst(image, draw_buf, rows_m1);
             objshift2_glue(image, x, 0x12, dp, src, 1);
             blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X * 2), 0x12, dp,
                                   src + OBJSH2P_SUBCELL_S * 2, 2);
             break;
         }
         case OBJ_H_P2E: {  /* glue(1), no final engine */
-            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            uint32_t dp = objshift2_prefix_dst(image, draw_buf, rows_m1);
             objshift2_glue(image, x, 0x0e, dp, src, 1);
             break;
         }
         case OBJ_H_P30: {  /* glue(0) + final W90 */
-            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            uint32_t dp = objshift2_prefix_dst(image, draw_buf, rows_m1);
             objshift2_glue(image, x, 0x0c, dp, src, 0);
             blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X), 0x0c, dp,
                                   src + OBJSH2P_SUBCELL_S, 1);
             break;
         }
         case OBJ_H_P32: {  /* glue(0) + final W90 */
-            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            uint32_t dp = objshift2_prefix_dst(image, draw_buf, rows_m1);
             objshift2_glue(image, x, 0x0a, dp, src, 0);
             blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X), 0x0a, dp,
                                   src + OBJSH2P_SUBCELL_S, 1);
             break;
         }
         case OBJ_H_P34: {  /* glue(0) + final W98 */
-            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            uint32_t dp = objshift2_prefix_dst(image, draw_buf, rows_m1);
             objshift2_glue(image, x, 0x08, dp, src, 0);
             blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X), 0x08, dp,
                                   src + OBJSH2P_SUBCELL_S, 2);
             break;
         }
         case OBJ_H_P36: {  /* glue(0) + final W98 */
-            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            uint32_t dp = objshift2_prefix_dst(image, draw_buf, rows_m1);
             objshift2_glue(image, x, 0x06, dp, src, 0);
             blit_objshift2_family(image, (uint16_t)(x + OBJSH2P_SUBCELL_X), 0x06, dp,
                                   src + OBJSH2P_SUBCELL_S, 2);
             break;
         }
         case OBJ_H_P38: {  /* P-prefix + single BASE(width_idx 0) blit, no glue */
-            uint32_t dp = objshift2_prefix_dst(image, a6, rows_m1);
+            uint32_t dp = objshift2_prefix_dst(image, draw_buf, rows_m1);
             blit_objshift2_family(image, x, 0x04, dp, src, 0);
             break;
         }
@@ -1535,59 +1536,60 @@ static void obj_dispatch(uint8_t *image, uint16_t jumpidx, uint16_t x, uint16_t 
     }
 }
 
-/* Glue for draw_object_list. a5/a3 are image offsets (the two input streams); a6 = draw buffer.
- * d4_outer = outer row count-1, d6 = starting record byte offset, d1_in = incoming colour. */
-void g_draw_object_list(uint8_t *image, uint32_t a5, uint32_t a3, uint32_t a6,
-                        uint32_t d4_outer, uint32_t d6, uint32_t d1_in) {
+/* Glue for draw_object_list. list_cursor/flags_cursor (A5/A3) are image offsets (the two input
+ * streams); draw_buf (A6) = draw buffer. outer_rows_m1 (D4) = outer row count-1, rec_off (D6) =
+ * starting record byte offset, colour_in (D1) = incoming colour. */
+void g_draw_object_list(uint8_t *image, uint32_t list_cursor, uint32_t flags_cursor, uint32_t draw_buf,
+                        uint32_t outer_rows_m1, uint32_t rec_off, uint32_t colour_in) {
     uint32_t buf_a = load32(image, A_buf_a);
     uint32_t buf_c = load32(image, A_buf_c);
-    uint16_t colour = (uint16_t)d1_in;                 /* d1 threads across objects */
+    uint16_t colour = (uint16_t)colour_in;             /* colour threads across objects (D1) */
 
-    a5 = (uint32_t)(a5 + sign_ext16(be16(image + A_obj_scan_off)));   /* adda.w 0x18c58,a5 */
+    list_cursor = (uint32_t)(list_cursor + sign_ext16(be16(image + A_obj_scan_off)));   /* adda.w 0x18c58,a5 */
 
-    int outer = (int16_t)(uint16_t)d4_outer + 1;
+    int outer = (int16_t)(uint16_t)outer_rows_m1 + 1;
     for (int oi = 0; oi < outer; oi++) {
-        uint32_t a0 = (uint32_t)(a6 + sign_ext16(be16(image + a5))); a5 += 2;         /* row dst base */
-        uint32_t a4 = (uint32_t)(A_obj_xoff_tbl + sign_ext16(be16(image + a5))); a5 += 2;
+        uint32_t row_dst = (uint32_t)(draw_buf + sign_ext16(be16(image + list_cursor))); list_cursor += 2;  /* row dst base */
+        uint32_t xoff_cursor = (uint32_t)(A_obj_xoff_tbl + sign_ext16(be16(image + list_cursor))); list_cursor += 2;
 
         for (int inner = OBJ_ROW_OBJECTS; inner >= 0; inner--) {
             /* SPECIAL pass: only when the flag word is negative. */
-            if ((int16_t)be16(image + a3) < 0) {
-                uint16_t x = be16(image + a5);                        /* peeked; consumed below */
-                uint32_t a2 = (uint32_t)(buf_a + OBJ_SPECIAL_BASE + sign_ext16((uint16_t)d6));
-                uint32_t src = (uint32_t)(buf_c + load32(image, a2));
-                uint16_t rows = be16(image + a2 + OBJ_REC_ROWS);
-                uint16_t jumpidx = be16(image + a2 + OBJ_REC_JUMP);
-                obj_dispatch(image, jumpidx, x, colour, rows, a0, src, a2 + OBJ_REC_DSTADJ,
-                             a6, /*voff=*/0, a4, a5);
+            if ((int16_t)be16(image + flags_cursor) < 0) {
+                uint16_t x = be16(image + list_cursor);               /* peeked; consumed below */
+                uint32_t rec_ptr = (uint32_t)(buf_a + OBJ_SPECIAL_BASE + sign_ext16((uint16_t)rec_off));
+                uint32_t src = (uint32_t)(buf_c + load32(image, rec_ptr));
+                uint16_t rows = be16(image + rec_ptr + OBJ_REC_ROWS);
+                uint16_t jumpidx = be16(image + rec_ptr + OBJ_REC_JUMP);
+                obj_dispatch(image, jumpidx, x, colour, rows, row_dst, src, rec_ptr + OBJ_REC_DSTADJ,
+                             draw_buf, /*voff=*/0, xoff_cursor, list_cursor);
             }
             /* NORMAL pass. */
-            uint16_t x = be16(image + a5); a5 += 2;
-            uint16_t type = (uint16_t)(be16(image + a3) & OBJ_ROWS_ONLY); a3 += 2;
+            uint16_t x = be16(image + list_cursor); list_cursor += 2;
+            uint16_t type = (uint16_t)(be16(image + flags_cursor) & OBJ_ROWS_ONLY); flags_cursor += 2;
             if (type != 0) {
                 if (be16(image + A_bonus_timer) != 0 && (int16_t)(type - OBJ_BONUS_MIN_TYPE) < 0)
                     type = OBJ_BONUS_MIN_TYPE;                        /* bonus-window clamp */
-                x = (uint16_t)(x + be16(image + a4));                 /* add.w (a4),d0 */
+                x = (uint16_t)(x + be16(image + xoff_cursor));        /* add.w (a4),d0 */
                 uint32_t type_base = (uint32_t)(buf_a + OBJ_TYPE_BASE
                                                 + sign_ext16((uint16_t)(type * OBJ_TYPE_STRIDE)));
                 colour = be16(image + type_base - OBJ_COLOUR_OFF);    /* d1 = colour (before +d6) */
-                uint32_t data_base = (uint32_t)(type_base + sign_ext16((uint16_t)d6));
+                uint32_t data_base = (uint32_t)(type_base + sign_ext16((uint16_t)rec_off));
                 uint32_t src = (uint32_t)(buf_c + load32(image, data_base));
                 uint16_t rows = be16(image + data_base + OBJ_REC_ROWS);
-                /* vertical offset: (vseed − rows).b * view_flags >> 4 * width, subtracted from a0. */
+                /* vertical offset: (vseed − rows).b * view_flags >> 4 * width, subtracted from row_dst. */
                 uint16_t v = (uint16_t)(uint8_t)(image[data_base - OBJ_VSEED_OFF] - (uint8_t)rows);
                 v = (uint16_t)(v * be16(image + A_view_flags));       /* mulu.w view_flags */
                 v = (uint16_t)(v >> 4);                               /* lsr.w #4 */
                 v = (uint16_t)(v * OBJD_WIDTH);                       /* mulu.w #0xa0 (width) */
-                uint32_t dst = (uint32_t)(a0 - sign_ext16(v));        /* suba.w d7,a0 (temporary) */
+                uint32_t dst = (uint32_t)(row_dst - sign_ext16(v));   /* suba.w d7,a0 (temporary) */
                 uint16_t jumpidx = be16(image + data_base + OBJ_REC_JUMP);
                 dst = (uint32_t)(dst + sign_ext16(be16(image + data_base + OBJ_REC_DSTADJ)));
                 x = (uint16_t)(x + be16(image + data_base + OBJ_REC_XADJ));
                 obj_dispatch(image, jumpidx, x, colour, rows, dst, src, data_base + OBJ_REC_XADJ,
-                             a6, /*voff=*/v, a4, a5);
+                             draw_buf, /*voff=*/v, xoff_cursor, list_cursor);
             }
         }
-        a3 += 2;                                    /* addq.l #2,a3 */
-        d6 = (uint16_t)(d6 - OBJ_D6_STEP);          /* subi.w #0x10,d6 */
+        flags_cursor += 2;                          /* addq.l #2,a3 */
+        rec_off = (uint16_t)(rec_off - OBJ_D6_STEP);/* subi.w #0x10,d6 */
     }
 }

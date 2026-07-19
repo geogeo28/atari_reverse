@@ -171,8 +171,8 @@ void g_draw_object(uint8_t *image, uint32_t buffer);
 
 /* draw_object_list @0x1306e — per-frame object display-list dispatcher (register-glue). A5 list
  * stream, A3 flag stream, A6 draw buffer, D4 outer row count-1, D6 record byte offset, D1 colour. */
-void g_draw_object_list(uint8_t *image, uint32_t a5, uint32_t a3, uint32_t a6,
-                        uint32_t d4_outer, uint32_t d6, uint32_t d1_in);
+void g_draw_object_list(uint8_t *image, uint32_t list_cursor, uint32_t flags_cursor, uint32_t draw_buf,
+                        uint32_t outer_rows_m1, uint32_t rec_off, uint32_t colour_in);
 
 /* draw_game_objects @0x12ef6 — per-frame scene/object draw orchestrator; a6 = draw buffer (derived).
  * Advances marker/anim/bonus state, then draws ground, fg sprite, roadside objects, object, buggy. */
