@@ -282,6 +282,7 @@
 #define A_fx_block_2e       0x19142   /* b: +0x2e (end byte) */
 #define A_event_type        0x18eca   /* w: 0x1a=checkpoint, 0x1d=collision (DAT_00018ec8._2_2_) */
 #define A_score_overlay_dig 0x18215   /* b: bonus score-overlay digit char */
+#define A_score_label       0x18540   /* "SCORE/" HUD header string; checkpoint char = [7+crash_bars] */
 /* const tables (image data) game_update indexes */
 #define A_legflag_tbl       0x173a4   /* long records -> leg_flags_c90; indexed by leg_flags_sel */
 #define A_lean_anim_tbl     0x173ac   /* byte lean table; idx = lean_phase + (rpm&0x70) */

@@ -21,6 +21,8 @@ LIB = ROOT / "build" / "libbuggyboy.so"
 
 BASE_IMAGE = load_image(PRG)             # loaded + relocated once; tests copy & poke it
 _lib = ctypes.CDLL(str(LIB))
+_lib.g_dosound_log_count.restype = ctypes.c_uint32
+_lib.g_dosound_log_args.restype = ctypes.POINTER(ctypes.c_uint32)
 
 
 def _load_name_map():
@@ -170,6 +172,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
 
     Buf = ctypes.c_uint8 * IMAGE_SIZE
     buf = Buf.from_buffer(bytearray(img))
+    _lib.g_dosound_log_reset()           # fresh Dosound ledger for this candidate run (see below)
     cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
 
@@ -198,6 +201,19 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
         raise AssertionError(
             f"oracle wrote {len(stray)} byte(s) in the reserved stack-guard band "
             f"(e.g. {label(stray[0])} @ 0x{stray[0]:x}) — real output masked by the guard cutoff")
+
+    # Side-effect ledger: XBIOS Dosound(A0) writes the YM2149, not RAM, so a wrong/missing command
+    # list is invisible to the image diff. Compare the oracle's ordered Dosound trap stream against
+    # the candidate's g_dosound ledger — both list pointers are Ghidra image addresses — so an
+    # off-image sound trigger with the wrong list fails here even though it touches no memory.
+    o_dosound = o_regs.get("dosound", [])
+    n = _lib.g_dosound_log_count()
+    c_args = _lib.g_dosound_log_args()
+    c_dosound = [c_args[i] for i in range(n)]
+    if o_dosound != c_dosound:
+        raise AssertionError(
+            f"Dosound ledger mismatch: oracle={[hex(x) for x in o_dosound]} "
+            f"cand={[hex(x) for x in c_dosound]} — off-image XBIOS Dosound(A0) diverged")
 
     if poison and not diffs:
         _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,

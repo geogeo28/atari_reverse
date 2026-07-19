@@ -43,6 +43,8 @@ def _pokes(st):
             p[A[k]] = _l(v)
         elif k == "curve_window":
             p[A[k]] = _l(v)
+        elif k == "marker_pending":
+            p[A[k]] = bytes([v & 0xff])          # byte gate: also the fx id handed to handle_marker
         else:
             p[A[k]] = _w(v)
     return p
@@ -73,6 +75,16 @@ def test_event_pending_dispatch():
     for ev in range(1, 65):
         diffs, _ = _check(f"ev{ev}", input_state=0, event_pending=ev, collision_lock=0)
         assert not diffs, f"event_pending={ev}\n{report(diffs[:24])}"
+
+
+def test_entry_marker_fx():
+    # marker_pending != 0 at the frame entry fires handle_marker(marker_pending) -> TURNOFF + INITFX,
+    # arming fxflag + the effect record. The 0x1111a call site the section-12 fuzz never reaches (the
+    # marker byte stays 0). mzflag=0 keeps handle_marker's guard open so INITFX lands in the image, and
+    # the byte value IS the fx id, so a wrong reconstructed source (it used event_type) diverges here.
+    for fx in (1, 2, 5, 9):
+        diffs, _ = _check(f"marker{fx}", input_state=0, marker_pending=fx)
+        assert not diffs, f"marker_pending={fx}\n{report(diffs[:24])}"
 
 
 # ---- per-handler isolation: enter the oracle at the handler PC and run to rts (like the evt_* tests),

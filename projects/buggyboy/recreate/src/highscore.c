@@ -246,6 +246,15 @@ void g_hiscore_name_entry(uint8_t *image) {
     while (g_console_scancode(image) != 0) { }                     /* 0x25de: drain pending keys */
 }
 
+/* Test seam: the name-entry jingle alone (0x12450 — tune 4 for a rank-1 score, else 3). The directed
+ * made-tail coverage test runs update_highscore to the bsr's return (0x12454) and pairs it with this,
+ * verifying the tune id at that call site without entering the interactive initials screen (which the
+ * oracle can't run to rts). Shares g_hiscore_name_entry's rank->tune rule. */
+void g_hiscore_name_entry_jingle(uint8_t *image) {
+    uint16_t rank1 = be16(image + A_hiscore_pos);
+    g_play_event_tune(image, rank1 == 1 ? TUNE_RANK1 : TUNE_OTHER);
+}
+
 /* init_scoretable @0x1047a — write the default high-score table (5 legs x 9 rows). Each 0xe-byte
  * row is "/" + two default score digits (from A_default_scores) + "000\0\0" + "...\0" + a rank
  * character ('1'..'9') + \0, giving scores 40000..10000 with a "..." placeholder name; a 2-byte

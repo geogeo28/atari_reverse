@@ -241,10 +241,12 @@ void g_gu_dispatch_event(uint8_t *image, uint32_t idx, uint32_t d5, uint32_t d6,
 }
 
 void g_game_update(uint8_t *image) {
-    /* 1. pending marker gate + engine-sound enable. */
-    if (image[A_marker_pending] != 0) {
+    /* 1. pending marker gate + engine-sound enable. The gate byte itself is the effect id handed to
+     * handle_marker (`move.b (marker_pending),d0; bsr handle_marker`), captured before it is cleared. */
+    uint8_t marker_fx = image[A_marker_pending];
+    if (marker_fx != 0) {
         image[A_marker_pending] = 0;
-        g_handle_marker(image, rdw(image, A_event_type));
+        g_handle_marker(image, marker_fx);
     }
     if (rdw(image, A_game_over_flag) == 0 && (int16_t)rdw(image, A_crash_phase) >= 0
         && rdw(image, A_crash_phase) != 1 && rdw(image, A_crash_frame) == 0) {
@@ -652,8 +654,11 @@ static void game_update_fx_and_events(uint8_t *image) {
     ev = image[A_fx_block + (uint16_t)(hr + 2) + 1];
     if (ev != 0) gu_dispatch_event(image, ev, 0, 0, rdw(image, A_horizon_frac), 0xff);
 
-    /* I. checkpoint / collision / score markers. */
-    if ((int8_t)image[A_event_type] == GU_EVENT_CKPT) {
+    /* I. checkpoint / collision / score markers. The original loads the event_type WORD and tests
+     * its low byte (`move.w (event_type),d1; cmpi.b #$1a,d1`), i.e. image[A_event_type+1] big-endian —
+     * the marker code (0x1a/0x1d) lives in the low byte, high byte is 0. */
+    uint8_t event_code = image[A_event_type + 1];
+    if (event_code == GU_EVENT_CKPT) {
         g_play_event_tune(image, GU_TUNE_CKPT_PASS);
         uint16_t lap = rdw(image, A_crash_lap);
         wrw(image, A_hud_crash_timer, 0);
@@ -661,7 +666,7 @@ static void game_update_fx_and_events(uint8_t *image) {
         wrw(image, A_crash_active, (uint16_t)(rdw(image, A_crash_active) + 1));
         if (image[A_score_str + 1] == GU_SCORE_MAX_DIGIT) { wrw(image, A_hud_crash_timer, 0x65); g_play_event_tune(image, GU_TUNE_LEG_END); return; }
         image[A_score_str + 1] = (uint8_t)(image[A_score_str + 1] + 1);
-        int8_t c = (int8_t)(image[0x18000 + 0x7 + rdw(image, A_crash_bars)]);   /* "SCORE/"[crash_bars+7] */
+        int8_t c = (int8_t)(image[A_score_label + 0x7 + rdw(image, A_crash_bars)]);   /* "SCORE/"[crash_bars+7] */
         c = (int8_t)(c + (int8_t)rdw(image, A_time_left));
         wrw(image, A_gauge_blink_on, 0);
         if (lap != 0) {
@@ -674,11 +679,13 @@ static void game_update_fx_and_events(uint8_t *image) {
         image[A_time_left + 1] = (uint8_t)c;   /* time_left low byte = checkpoint char (CONCAT) */
         wrw(image, A_gauge_blink, GU_CKPT_BANNER_T);
         if (rdw(image, A_leg_index) == 0) { g_init_leg_dash(image); g_draw_leg_labels(image); }
-    } else if ((int8_t)image[A_event_type] == GU_EVENT_COLLIDE) {
+    } else if (event_code == GU_EVENT_COLLIDE) {
         g_probe_collision(image);
     }
     if (image[A_ground_scan_tbl + 1] != GU_EVENT_COLLIDE) {
-        if (image[A_ground_scan_tbl] == GU_EVENT_CKPT && image[A_score_str + 1] != '1') {
+        /* draw_checkpoint_anim gate reads the marker byte at +3 (`cmpi.b #$1a,(0x18d4b)`), the same
+         * field draw_ground reads — not the +0 scanline byte. */
+        if (image[A_ground_scan_tbl + 3] == GU_EVENT_CKPT && image[A_score_str + 1] != '1') {
             int16_t s = (int16_t)(rdw(image, A_ckpt_scroll) - 0x10);
             wrw(image, A_ckpt_scroll, (uint16_t)(rdw(image, A_ckpt_scroll) + 4));
             if (s >= 0) wrw(image, A_ckpt_scroll, 0);
@@ -690,3 +697,9 @@ static void game_update_fx_and_events(uint8_t *image) {
     wrw(image, A_bonus_timer, GU_BONUS_ARM);
     g_play_event_tune(image, GU_TUNE_COLL_MARK);
 }
+
+/* Test seam @0x118b6 — the sections-G/H/I tail (fx-block rebuild, horizon-event dispatch, and the
+ * checkpoint/leg-end/collision-marker jingles). Entered directly so the directed coverage tests can
+ * stage event_type/score_str/ground_scan and reach the play_event_tune sites (0x119ca/0x11a8c/
+ * 0x11a9c) that the section-12 fuzz never hits — the full frame recomputes event_type upstream. */
+void g_game_update_fx_and_events(uint8_t *image) { game_update_fx_and_events(image); }

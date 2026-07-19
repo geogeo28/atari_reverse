@@ -67,6 +67,18 @@ static uint8_t  g_psg_val[MAX_PSG];
 static uint32_t g_psgn;        /* captured (reg,val) writes this run */
 static uint8_t  g_psg_latch;   /* register selected by the last $ff8800 write */
 
+/* --- XBIOS Dosound (fn 0x20) side-effect ledger -------------------------------------------
+ * Dosound hands the YM2149 a command list via A0; that pointer touches no RAM, so a wrong or
+ * missing list is invisible to the image diff even when the call runs. Record each Dosound's
+ * list pointer (the runtime A0 == a Ghidra image address) in an ordered ledger, reset per run
+ * like the PSG tap. harness.differential compares it against the candidate's g_dosound ledger,
+ * making the off-image A0 argument diff-verifiable (improvement #2). */
+#define MAX_DOSOUND 256
+static uint32_t g_dosound_arg[MAX_DOSOUND];
+static uint32_t g_dosound_n;
+uint32_t        osh_dosound_count(void) { return g_dosound_n; }
+const uint32_t *osh_dosound_args(void)  { return g_dosound_arg; }
+
 void m68k_write_memory_8(unsigned int a, unsigned int v) {
     switch (a & 0xffffff) {                        /* mask to the 68000's 24-bit address bus */
         case PSG_SELECT: g_psg_latch = (uint8_t)v & 0x0f; return;
@@ -165,7 +177,11 @@ static void handle_trap(int vec) {
         case 0x04:                                    /* Getrez -> low-res */
         case 0x05: case 0x06: case 0x07:              /* Setscreen / Setpalette / Setcolor */
         case 0x19:                                    /* Ikbdws: serial write to the IKBD, no image effect */
+            break;
         case 0x20:                                    /* Dosound: writes the YM2149, no image effect */
+            if (g_dosound_n < MAX_DOSOUND)            /* log A0 (the command-list pointer) into the ledger */
+                g_dosound_arg[g_dosound_n++] = m68k_read_memory_32(arg1);
+            break;
         case 0x25: case 0x28: case 0x2a: break;       /* Vsync / other no-image-effect XBIOS calls */
         default: modeled = 0; break;                  /* unknown */
         }
@@ -219,6 +235,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
 
     g_wn = 0;                             /* write-set = the function's writes only */
     g_psgn = 0;                           /* PSG capture = this run's register writes only */
+    g_dosound_n = 0;                      /* Dosound ledger = this run's XBIOS Dosound calls only */
     g_min_a7 = sp;                        /* deepest stack pointer (for exclude-band sanity checks) */
     uint32_t n = 0;
     for (; n < max_insns; n++) {

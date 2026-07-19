@@ -65,3 +65,27 @@ def test_stop_music_chk():
         _check(STOP_MUSIC_CHK, glue, game_over=0, mzflag=1 + seed, seed=seed, label="chk/music-playing")
     for seed in range(4):
         _check(STOP_MUSIC_CHK, glue, game_over=1, mzflag=0, seed=seed, label="chk/game_over")
+
+
+# --- main race-start Dosound (0x10222) + the ledger's sensitivity (improvement #2) ----------------
+# main loads A0 = A_dosound_beep then calls stop_music (0x10222), which Dosounds the leg-start
+# countdown beeps. main isn't run end-to-end, so enter at the a0-load (0x1021c) and stop just after
+# stop_music returns. The image diff can't see the off-image Dosound(A0); the side-effect ledger does,
+# so this both covers the 0x10222 call site and verifies its A0 is A_dosound_beep.
+MAIN_BEEP_ENTRY, MAIN_BEEP_STOP = 0x1021c, 0x10226
+A_DOSOUND_BEEP, A_DOSOUND_GO = 0x18bba, 0x18bca
+
+
+def test_main_racestart_dosound():
+    regs = {"_pokes": {A_GAME_OVER: b"\x00\x00", A_MZFLAG: b"\x00"}}
+    diffs, _ = differential(MAIN_BEEP_ENTRY, regs,
+                            lambda l, b: l.g_stop_music(b, A_DOSOUND_BEEP), stop_pc=MAIN_BEEP_STOP)
+    assert not diffs, report(diffs[:12])
+
+
+def test_dosound_ledger_sensitivity():
+    """A candidate Dosound with the wrong list fails the ledger though the image is byte-identical."""
+    import pytest
+    with pytest.raises(AssertionError, match="Dosound ledger mismatch"):
+        differential(MAIN_BEEP_ENTRY, {"_pokes": {A_GAME_OVER: b"\x00\x00"}},
+                     lambda l, b: l.g_stop_music(b, A_DOSOUND_GO), stop_pc=MAIN_BEEP_STOP)

@@ -129,6 +129,7 @@ void g_draw_results_screen(uint8_t *image);   /* race-end results screen orchest
 void g_update_highscore(uint8_t *image);      /* rank/shift/insert the new score; checkpoint-verified */
 void g_hiscore_gameover(uint8_t *image);      /* update_highscore miss tail: results redraw + game-over jingle */
 void g_hiscore_name_entry(uint8_t *image);    /* update_highscore made tail: name-entry jingle + initials screen */
+void g_hiscore_name_entry_jingle(uint8_t *image);  /* just the 0x12450 name-entry jingle (directed test seam) */
 int  g_hiscore_countdown(uint8_t *image);     /* name-entry countdown tick + "TIME nn" render; 1 if timed out */
 void g_hiscore_charstep(uint8_t *image, uint32_t name_ptr);   /* name-entry per-frame char select (up/down) */
 void g_init_scoretable(uint8_t *image);       /* write the default high-score table (5 legs x 9 rows) */
@@ -189,6 +190,9 @@ void g_game_update(uint8_t *image);
 
 /* Test glue: run one event-jump-table handler in isolation (idx -> target, entered at its PC). */
 void g_gu_dispatch_event(uint8_t *image, uint32_t idx, uint32_t d5, uint32_t d6, uint32_t d7);
+
+/* Test glue: sections G/H/I of the course-advance tail (@0x118b6), for the directed jingle tests. */
+void g_game_update_fx_and_events(uint8_t *image);
 
 /* blit_objshift @0x14680 — sub-pixel (fine-x shifted) 4-plane masked sprite blitter (leaf).
  * Register map: D0 x, D1 colour index, D4 rows-1, A0 dst scanline base, A1 src stream, A3 -> stride word. */

@@ -96,6 +96,72 @@ def test_fuzz():
         _run(score, rows, seed % 5)
 
 
+# --- directed tail coverage: the play_event_tune sites in the interactive tails (improvement #3) -----
+# The tails can't run to rts under the oracle (they wait on mzflag / poll the IKBD), so we enter the
+# FULL update_highscore and stop just after each play_event_tune bsr, pairing g_update_highscore with
+# the tail's jingle. Guard staged open (game_over=0, mzflag=0, cur_tune!=6) so INITTUNE lands and the
+# whole-image diff verifies the tune id. Removes 0x12450 / 0x12402 from coverage_gap_allow.txt.
+
+MADE_STOP = 0x12454        # after the 0x12450 name-entry jingle bsr (before the initials screen)
+MISS_STOP = 0x12406        # after the 0x12402 game-over jingle bsr (before the mzflag wait loop)
+A_GAME_OVER, A_CUR_TUNE, A_MZFLAG = 0x18c34, 0x18cfa, 0x1b07a
+
+harness._lib.g_hiscore_name_entry_jingle.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_hiscore_name_entry_jingle.restype = None
+harness._lib.g_hiscore_gameover.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_hiscore_gameover.restype = None
+
+
+def _guard_open():
+    return {A_GAME_OVER: b"\x00\x00", A_CUR_TUNE: b"\x00\x00", A_MZFLAG: b"\x00",
+            A_EG_FLAG: b"\x20", A_MUSIC_BYTE: b"\x07"}
+
+
+def test_made_tail_jingle():
+    """A score that makes the table -> name-entry jingle (0x12450): tune 4 for rank 1, tune 3 otherwise."""
+    name = bytes(range(6))
+    rows_r1 = (_digits("500000") + b"\0" * 8) * ROWS                             # beaten at row 0 -> rank 1
+    rows_r2 = (_digits("900000") + b"\0" * 8) + (_digits("100000") + b"\0" * 8) * (ROWS - 1)  # row 1 -> rank 2
+    for rows, score, rank in ((rows_r1, "900000", 1), (rows_r2, "500000", 2)):
+        pokes = {A_SCORE: _digits(score) + name, A_TABLE: bytes(rows),
+                 A_LEG_INDEX: (0).to_bytes(2, "big"), **_guard_open()}
+        glue = lambda l, b: (l.g_update_highscore(b), l.g_hiscore_name_entry_jingle(b))
+        diffs, _ = differential(ENTRY, {"_pokes": pokes}, glue, stop_pc=MADE_STOP, max_insns=2_000_000)
+        assert not diffs, f"made rank={rank} score={score}\n{report(diffs[:16])}"
+
+
+# draw_results_screen staging (miss tail redraws the results screen twice, then flips, before the jingle)
+RS_BUF, RS_BUF_C, RS_BUF_A = 0x2000, 0x30000, 0x50000
+A_FLIP_IDX, A_PHYSBASE, A_BUF_A, A_BUF_C = 0x18bf2, 0x18bf4, 0x18c00, 0x18c08
+
+
+def _results_screen_pokes(seed, leg):
+    rng = random.Random(seed)
+    fin = 0x910 + leg * 0x10
+    return {
+        0x2000: bytes(rng.randrange(256) for _ in range(0x9000)),        # screen buffer arena
+        A_FLIP_IDX: (0).to_bytes(2, "big"),
+        A_PHYSBASE: RS_BUF.to_bytes(4, "big") + RS_BUF.to_bytes(4, "big"),  # both flip slots -> same buf
+        A_BUF_C: RS_BUF_C.to_bytes(4, "big"),
+        RS_BUF_C: bytes(rng.randrange(256) for _ in range(0x1c000)),
+        A_BUF_A: RS_BUF_A.to_bytes(4, "big"),
+        RS_BUF_A + 0x800: bytes(rng.randrange(256) for _ in range(0x160)),
+        RS_BUF_A + fin: bytes([0x10, 0x00, 0x41, 0x42, 0x00, 0x00]),
+    }
+
+
+def test_miss_tail_jingle():
+    """A score that beats no row -> results redraw + game-over jingle (0x12402: tune 2)."""
+    name = bytes(range(6))
+    rows = (_digits("500000") + b"\0" * 8) * ROWS
+    for leg in (0, 2):
+        pokes = {A_SCORE: _digits("100000") + name, A_TABLE + leg * LEG_STRIDE: bytes(rows),
+                 A_LEG_INDEX: leg.to_bytes(2, "big"), **_guard_open(), **_results_screen_pokes(leg, leg)}
+        glue = lambda l, b: (l.g_update_highscore(b), l.g_hiscore_gameover(b))
+        diffs, _ = differential(ENTRY, {"_pokes": pokes}, glue, stop_pc=MISS_STOP, max_insns=3_000_000)
+        assert not diffs, f"miss leg={leg}\n{report(diffs[:16])}"
+
+
 # --- name-entry tail slices (made-the-table path) -----------------------------------------------
 # The interactive initials screen never returns under the oracle (it waits on the IKBD / mzflag), so
 # its two deterministic per-frame pieces are diffed as slices, mirroring init_playfield's nav/fire.

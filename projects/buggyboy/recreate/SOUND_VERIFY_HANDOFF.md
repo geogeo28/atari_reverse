@@ -1,5 +1,25 @@
 # Handoff — verifying BuggyBoy's off-image sound/OS triggers (improvements #2 and #3)
 
+> **STATUS: DONE (both #2 and #3).** Every sink call site is now exercised by a directed differential
+> test; `coverage_gap_allow.txt` is empty and `make coverage-gap` reports 0 gaps. The directed tests
+> for the checkpoint path also caught **four latent reconstruction bugs** in `game_update` that the
+> image diff never reached (see below). Tests: `test/test_gu_jingles.py`, `test_game_update.py::
+> test_entry_marker_fx`, `test_highscore.py::test_{made,miss}_tail_jingle`, `test_stop_music.py::
+> test_main_racestart_dosound` + `test_dosound_ledger_sensitivity`.
+>
+> **Bugs found and fixed** (`src/game_update.c`, all on the never-diff-tested course-advance tail):
+> 1. `event_type` checkpoint/collision test read the WORD's high byte (`image[0x18eca]`); the original
+>    does `move.w (event_type),d1; cmpi.b`, i.e. the LOW byte (`image[0x18ecb]`). → checkpoint/collision
+>    events never fired.
+> 2. the `draw_checkpoint_anim` gate read `ground_scan_tbl+0` instead of the `+3` marker byte.
+> 3. the checkpoint char read the `"SCORE/"` string at `0x18000` instead of its real base `0x18540`.
+> 4. the entry marker fx passed `event_type` to `handle_marker`; the original passes the `marker_pending`
+>    byte value (`move.b (marker_pending),d0; bsr handle_marker`).
+>
+> The rest of this file is the original spec, kept for provenance.
+
+---
+
 This is a self-contained spec for two follow-ups to the sound work. Read it with `STATUS.md`,
 `docs/on-target-execution.md` §5 ("off-image OS services"), and the memory note
 `buggyboy-sound-architecture` for background.

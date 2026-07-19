@@ -36,6 +36,8 @@ _u8p = ctypes.POINTER(ctypes.c_uint8)
 _LIB.osh_psg_count.restype = ctypes.c_uint32
 _LIB.osh_psg_regs.restype = _u8p
 _LIB.osh_psg_vals.restype = _u8p
+_LIB.osh_dosound_count.restype = ctypes.c_uint32
+_LIB.osh_dosound_args.restype = _u32p
 _LIB.osh_cov_enable.argtypes = [ctypes.c_int]
 _LIB.osh_cov_visited.argtypes = [ctypes.c_uint32]
 _LIB.osh_cov_visited.restype = ctypes.c_int
@@ -109,4 +111,6 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     out_regs = {"d0": out[0], "d1": out[1], "a0": out[2], "a1": out[3]}
     out_regs["min_a7"] = _LIB.osh_min_a7()   # deepest stack pointer; used to vet diff exclude bands
     out_regs["ninsns"] = _LIB.osh_num_insns()  # instructions executed (perf profiling)
+    dn, dargs = _LIB.osh_dosound_count(), _LIB.osh_dosound_args()
+    out_regs["dosound"] = [dargs[i] for i in range(dn)]  # ordered XBIOS Dosound(A0) list pointers
     return mem, writes, out_regs

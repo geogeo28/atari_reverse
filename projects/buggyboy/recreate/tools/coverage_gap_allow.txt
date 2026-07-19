@@ -1,13 +1,10 @@
 # coverage_gap.py allowlist — sink call sites knowingly verified by reading, not by the diff.
 # Format: 0x<ghidra-addr> <reason>.  A gap NOT listed here fails coverage_gap.py (exit 1).
-# These are all off-image / fuzz-unreached sound triggers whose ids were read from the disassembly
-# and (where applicable) confirmed by an on-target hatari --trace psg_write. See STATUS.md /
-# docs/on-target-execution.md §5. Promote any of these to a directed differential test to remove it.
-
-0x10222  main race-start: stop_music with the countdown-beep Dosound list (game_main.c drives it; main is not run end-to-end by the suite; verified on-target)
-0x1111a  game_update entry: handle_marker with the data-driven event marker fx (fuzz leaves the marker byte 0, so it never fires)
-0x119ca  game_update checkpoint: play_event_tune(5) — read-verified from disasm (0x119c8)
-0x11a8c  game_update leg-end: play_event_tune(1) — read-verified from disasm (0x11a82)
-0x11a9c  game_update collision-marker: play_event_tune(6) — read-verified from disasm (0x11a92)
-0x12402  update_highscore miss-tail: play_event_tune(2) game-over jingle — read-verified (on-target psg-traced)
-0x12450  update_highscore made-tail: play_event_tune(4/3) name-entry jingle — read-verified (on-target psg-traced)
+#
+# EMPTY — every sink call site is now exercised by a directed differential test (improvements #2/#3,
+# SOUND_VERIFY_HANDOFF.md). The seven formerly-read-verified triggers are now diff-verified:
+#   0x119ca/0x11a8c/0x11a9c  game_update checkpoint/leg-end/collision jingles  -> test_gu_jingles.py
+#   0x1111a                  game_update entry marker fx                       -> test_game_update.py::test_entry_marker_fx
+#   0x12450/0x12402          update_highscore made/miss tail jingles           -> test_highscore.py::test_{made,miss}_tail_jingle
+#   0x10222                  main race-start countdown Dosound(A_dosound_beep) -> test_stop_music.py::test_main_racestart_dosound (via the #2 ledger)
+# Add a line here only if a NEW sink call site is found that genuinely cannot be reached by a test.
