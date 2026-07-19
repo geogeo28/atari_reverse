@@ -47,12 +47,8 @@ void g_play_event_tune(uint8_t *image, uint32_t tune) {
 
 /* evt_flag_gate @0x11ba4 — match roadside-object type D6 against the expected sequence; award a
  * bonus for FLAG_SEQ_TARGET in a row, else a normal gate score. D5 = object slot. */
-void g_evt_flag_gate(uint8_t *image, uint32_t slot, uint32_t obj_type) {
+static void flag_gate_advance(uint8_t *image, uint32_t slot, int match) {
     uint16_t seq_count = be16(image + A_flag_seq_count);
-    uint32_t expected = A_flag_seq_table + be16(image + A_flag_seq_off);
-    int match = be16(image + A_bonus_timer) != 0 ||
-                image[expected + seq_count] == (uint8_t)obj_type;
-
     uint32_t delta = A_score_delta_gate;
     uint16_t tune = FLAG_TUNE_NORMAL;
     if (match) {
@@ -69,6 +65,21 @@ void g_evt_flag_gate(uint8_t *image, uint32_t slot, uint32_t obj_type) {
     g_add_score(image, delta);
     image[A_obj_active + (uint16_t)slot + 1] = 0;       /* clear the object's active flag */
     g_play_event_tune(image, tune);
+}
+
+void g_evt_flag_gate(uint8_t *image, uint32_t slot, uint32_t obj_type) {
+    uint16_t seq_count = be16(image + A_flag_seq_count);
+    uint32_t expected = A_flag_seq_table + be16(image + A_flag_seq_off);
+    int match = be16(image + A_bonus_timer) != 0 ||
+                image[expected + seq_count] == (uint8_t)obj_type;
+    flag_gate_advance(image, slot, match);
+}
+
+/* evt_flag_gate d7=6 variant @0x11c1a — event-jumptable idx 6/12 enter here and `bra` into the
+ * shared body *past* the type-match gate (0x11bd6), so the flag sequence advances unconditionally
+ * (match is forced true). D5 = object slot; the object type is not read on this path. */
+void g_evt_flag_gate_forced(uint8_t *image, uint32_t slot) {
+    flag_gate_advance(image, slot, 1);
 }
 
 /* evt_score_msg @0x11c5a — award a score message when both object-type flags are set, then play

@@ -56,8 +56,9 @@ static void game_update_fx_and_events(uint8_t *image);     /* sections G/H/I (co
  *   idx 41/42/63/64-> bonus-number display record + build_road_geometry + marker fx 8 (0x11ebe body).
  *   idx 26/28/29/31-> bare-rts no-ops (0x11d38 / 0x11d62).
  *   idx 0          -> a bare rts (unreachable; call sites guard != 0).
- *   idx 6, 12      -> an evt_flag_gate variant entered with d7=6 (RESIDUAL: g_evt_flag_gate models the
- *                     d7=7 entry; the d7=6 sequence-index variant is not separately reconstructed). */
+ *   idx 6, 12      -> an evt_flag_gate variant entered with d7=6 (@0x11c1a); it `bra`s into the body
+ *                     past the type-match gate, so the flag sequence advances unconditionally
+ *                     (g_evt_flag_gate_forced). */
 #define GU_SCORE_A 0x17376    /* add_score delta pointers, one per score-event group (step +6) */
 #define GU_SCORE_B 0x1737c
 #define GU_SCORE_C 0x17382
@@ -231,7 +232,7 @@ static void gu_dispatch_event(uint8_t *image, uint16_t idx, uint16_t d0, uint16_
     if (t == 0x11eaa) { if (d6 == 0 || d7 == 0) gu_disp_bonus(image, GU_DISP_TYPE_R, 0x40, GU_CURVE_STEP_R); return; }  /* idx 64 */
 
     if (t >= 0x11ba4 && t <= 0x11bb4) g_evt_flag_gate(image, d5, (uint16_t)((t - 0x11ba4) / 4 + 1));
-    else if (t == 0x11c1a)            g_evt_flag_gate(image, d5, d6);   /* residual: d7=6 variant */
+    else if (t == 0x11c1a)            g_evt_flag_gate_forced(image, d5);   /* d7=6 variant: gate skipped */
     /* t == 0x11c18 -> bare rts (no-op) */
 }
 
@@ -571,12 +572,16 @@ static void game_update_course_advance(uint8_t *image) {
         /* record's event: sprite-mode selector (dual-role road_width_src low byte & 6). */
         uint8_t mode = (uint8_t)(image[A_road_width_src] & 6);
         if (mode == 6) {
+            /* tunnel palette swap: alternate one hardware colour register between record[0] and
+             * record[reg_sel] each pass (palette_toggle picks the source), then poke the register
+             * at 0xffff824c + reg_sel. That address is far above the image, so the write is
+             * off-image — see g_poke_color_reg (no-op in the harness, real poke in the PRG). */
             uint32_t r = (uint32_t)(((uint16_t)image[(int16_t)rdw(image, A_palette_cursor) + (int16_t)(leg << 5) + buf_a + 0x50] << 4) + buf_a + 0xf0);
-            uint16_t recw = be16(image + r + 0xe);
-            uint16_t src_w;
-            if (rdw(image, A_palette_toggle) == 0) { src_w = 0; wrw(image, A_palette_toggle, recw); }
-            else { wrw(image, A_palette_toggle, 0); src_w = recw; }
-            wr16(image + (uint16_t)(recw - 0x7db4), be16(image + (uint16_t)(src_w) + r));
+            int16_t reg_sel = (int16_t)be16(image + r + 0xe);
+            uint16_t src_off;
+            if (rdw(image, A_palette_toggle) == 0) { src_off = 0; wrw(image, A_palette_toggle, (uint16_t)reg_sel); }
+            else { wrw(image, A_palette_toggle, 0); src_off = (uint16_t)reg_sel; }
+            g_poke_color_reg(image, reg_sel, be16(image + r + sign_ext16(src_off)));
         } else if (mode == 2) {
             wrw(image, A_scroll_frame, (uint16_t)((rdw(image, A_scroll_frame) + 1) & 0xf));
             g_set_screen_offset(image);

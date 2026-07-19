@@ -267,6 +267,7 @@ void g_objsprite_t16(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width
 void g_xbios_setscreen(uint8_t *image);
 void g_xbios_setpalette(uint8_t *image, uint32_t palette_ptr);   /* A0 -> 16-word palette */
 void g_xbios_setcolor(uint8_t *image, uint32_t index, uint32_t color);   /* XBIOS Setcolor: one reg; no image effect */
+void g_poke_color_reg(uint8_t *image, int16_t reg_sel, uint16_t color);  /* mode-6 tunnel poke: 0xffff824c+reg_sel; no image effect */
 void g_set_rez(uint8_t *image, uint32_t mode);                   /* D0.b -> config, then XBIOS 0x19 */
 void g_read_joystick(uint8_t *image);                            /* IKBD poll: send 0x16; no image effect */
 void g_vsync(void);                                              /* XBIOS Vsync: wait one vblank; no image effect */
@@ -311,6 +312,7 @@ uint32_t g_REFRESH(uint8_t *image, uint8_t *psg_reg, uint8_t *psg_val, uint32_t 
 void g_evt_collision(uint8_t *image);
 void g_play_event_tune(uint8_t *image, uint32_t tune);           /* D0 = tune id */
 void g_evt_flag_gate(uint8_t *image, uint32_t slot, uint32_t obj_type);   /* D5, D6 */
+void g_evt_flag_gate_forced(uint8_t *image, uint32_t slot);              /* d7=6 variant @0x11c1a: gate skipped */
 void g_evt_score_msg(uint8_t *image, uint32_t d6, uint32_t d7);
 void g_handle_marker(uint8_t *image, uint32_t fx_id);            /* D0 = effect id */
 

@@ -328,7 +328,7 @@ var 0x1b040 trace_pc
 
 # ==== comments ====
 cmt 0x10100 Game driver: init (Malloc buffers, install REFRESH as VBL) then attract/gameplay loops. Never returns.
-cmt 0x1110e game_update: input, integrate throttle->speed, steering->road_curve, off-road/collision, stream course, run event script, checkpoints/score. Reconstructed as g_game_update (src/game_update.c); verified run-to-rts (no traps). Residuals: sprite-mode 6 object-display palette-swap, the probe_collision D1-return path, and the idx 6/12 evt_flag_gate d7=6 variant.
+cmt 0x1110e game_update: input, integrate throttle->speed, steering->road_curve, off-road/collision, stream course, run event script, checkpoints/score. Reconstructed as g_game_update (src/game_update.c); verified run-to-rts (no traps). Sprite-mode 6 (tunnel palette swap) pokes a hardware colour register at 0xffff824c+reg_sel via g_poke_color_reg (off-image; diff-verified). The collision-probe path (coll_mask in D1, reloaded after probe_collision — which only word-writes D1, so D1.high stays = coll_mask.high) and the idx 6/12 evt_flag_gate d7=6 variant (gate skipped -> g_evt_flag_gate_forced) are now diff-verified. No known residuals.
 cmt 0x11aa2 Course-event jump table: 129 word-offset entries; handler = 0x11aa2 + entry.
 cmt 0x13144 Object-type sprite dispatch jump table (indexed by object type 0..63).
 cmt 0x10620 RLE graphics unpacker: 0x1234=zero-run, 0x5678=ff-run, 0x1234^3=end; then 4-plane interleave.

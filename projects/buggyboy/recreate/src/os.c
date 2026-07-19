@@ -67,6 +67,12 @@ void g_wait_music_off(uint8_t *image) { (void)image; }
  * the Atari PRG overrides it with the real trap. */
 void g_xbios_setcolor(uint8_t *image, uint32_t index, uint32_t color) { (void)image; (void)index; (void)color; }
 
+/* poke_color_reg @ game_update mode-6 (0x1183e) — the tunnel palette swap writes one word directly
+ * to an ST shifter colour register at 0xffff824c + reg_sel. That address is ~16 MB up (far above the
+ * 1 MiB image), so the 68000's store there is dropped by the oracle's bounds check exactly as our PSG/
+ * IKBD hardware writes are — hence a no-op here; the Atari PRG overrides it with the real poke. */
+void g_poke_color_reg(uint8_t *image, int16_t reg_sel, uint16_t color) { (void)image; (void)reg_sel; (void)color; }
+
 /* console_scancode @ 0x12b24 (init_playfield function-key menu) — GEMDOS Crawio(0xff): a
  * non-blocking raw console poll; the game keeps the scancode byte (swap d0, then & 0xff). The
  * oracle models the console as empty (OS_CRAWIO_RESULT), so no key is ever pending here and the

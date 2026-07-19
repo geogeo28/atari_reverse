@@ -188,6 +188,16 @@ void g_xbios_setpalette(uint8_t *img, uint32_t palette_ptr) { Setpalette(img + p
 /* xbios_setcolor — real XBIOS Setcolor (set one palette register); the name-entry color-3 flash. */
 void g_xbios_setcolor(uint8_t *img, uint32_t index, uint32_t color) { (void)img; Setcolor((int)index, (int)color); }
 
+/* poke_color_reg — the tunnel palette swap (game_update mode 6) pokes one word straight to an ST
+ * shifter colour register at 0xffff824c + reg_sel (base 0xffff8240 + register-6 bias 0xc). Direct
+ * supervisor-only hardware write, so gated on hw_ready like the other $ffff8xxx pokes. */
+#define ST_PALETTE_REGS 0xffff8240ul   /* ST shifter colour registers (16 words) */
+#define MODE6_REG_BIAS  0xc            /* original targets 0xffff824c = base + this */
+void g_poke_color_reg(uint8_t *img, int16_t reg_sel, uint16_t color) {
+    (void)img;
+    if (hw_ready) *(volatile uint16_t *)(ST_PALETTE_REGS + MODE6_REG_BIAS + reg_sel) = color;
+}
+
 /* xbios_setscreen @0x12226 — no-op: we manage the video base ourselves in g_flip_screen. */
 void g_xbios_setscreen(uint8_t *img) { (void)img; }
 

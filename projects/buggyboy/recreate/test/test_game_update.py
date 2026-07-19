@@ -226,8 +226,11 @@ def test_course_pull_branch():
 
 
 def test_course_modes():
-    # sprite-mode dispatch: scroll (marker 0x8200 -> mode 2) and palette (0x8400 -> mode 4).
-    for mw in (0x8200, 0x8400):
+    # sprite-mode dispatch: scroll (marker 0x8200 -> mode 2), palette (0x8400 -> mode 4), and the
+    # tunnel palette swap (0x8600 -> mode 6). Mode 6 pokes one hardware colour register at
+    # 0xffff824c+reg_sel — an off-image write the oracle drops, so the whole-image diff still matches
+    # (g_poke_color_reg is a no-op in the harness); only palette_toggle changes in the image.
+    for mw in (0x8200, 0x8400, 0x8600):
         for seed in range(10):
             diffs, _ = _check_course("mode", seed=0x400 + mw + seed, course_row_ctr=0,
                                      course_read_pos=(seed * 8) & 0x1ff8, marker_w=mw, event_type=0)
@@ -252,6 +255,66 @@ def test_course_crash_and_input():
                                  course_read_pos=rng.randrange(0, 0x2000) & 0x1ff8,
                                  event_type=rng.choice([0, 0x1a, 0x1d]))
         assert not diffs, f"course-crash/input seed={i}\n{report(diffs[:24])}"
+
+
+# ---- collision-probe path: force the per-course collision-flag bit ON so game_update calls
+# probe_collision during the course advance. The original passes coll_mask in D1 and reloads D1
+# afterwards; probe_collision only word-writes D1, so D1.high stays = coll_mask.high — the bits the
+# record-unpack select uses (`sel = (coll_mask >> 16) | rec_w0`). This diff proves our void
+# g_probe_collision + unchanged coll_mask matches the oracle byte-for-byte on the probe-fires path. ----
+GU_COLL_MASK_OFF = 0x5d48    # leg 0 collision-flag long: buf_a + this (crash_bars 0)
+
+
+def test_course_collision_probe():
+    import random as _r
+    for seed in range(20):
+        rng = _r.Random(0x7C0 + seed)
+        buf = bytearray(rng.randrange(256) for _ in range(0x8000))
+        # high byte 0x7f keeps course_flag_bit from resetting; all low bits set -> the probed bit fires.
+        buf[GU_COLL_MASK_OFF:GU_COLL_MASK_OFF + 4] = (0x7fffffff).to_bytes(4, "big")
+        p = {A_BUF_A_PTR: _l(BUF_A), BUF_A: bytes(buf)}
+        p[0x18d1c] = bytes(rng.randrange(256) for _ in range(0x20))     # road_seg_data
+        p[0x18ebc] = bytes(rng.randrange(256) for _ in range(0x220))    # obj_flags + ring + road_curve_tbl
+        st = dict(view_flags=0x10, engine_rpm=0xf, scroll_phase=0xe, leg_flags_c90=0x00500002,
+                  input_state=0, course_row_ctr=0, crash_bars=0, course_flag_bit=0)
+        p.update(_pokes({k: v for k, v in st.items() if k in A}))
+        for k, v in st.items():
+            if k in AC:
+                p[AC[k]] = _w(v)
+        diffs, _ = differential(ENTRY, {"_pokes": p}, lambda lib, buf: lib.g_game_update(buf),
+                                max_insns=2_000_000)
+        assert not diffs, f"collision-probe seed={seed}\n{report(diffs[:24])}"
+
+
+# ---- flag-gate d7=6 variant (event-jumptable idx 6/12 -> 0x11c1a): it bra's into the shared body
+# PAST the type-match gate, so the flag sequence advances unconditionally. Stage the gate-false
+# precondition (bonus_timer 0, an object type that can't be in the sequence table) so a *gated*
+# reconstruction would wrongly NOT advance; enter the oracle at 0x11c1a and diff vs the dispatcher. ----
+A_BONUS_TIMER = 0x18d08
+A_FLAG_SEQ_CNT = 0x18c48
+A_FLAG_SEQ_OFF = 0x18c40
+
+
+def test_evt_flag_gate_forced():
+    rng = random.Random(0xF1A6)
+    for idx in (6, 12):
+        for _ in range(40):
+            d5 = rng.randrange(0, 0x20)
+            d6 = rng.choice([0x40, 0x7f, 0xaa])       # non-sequence type: a gated path would NOT advance
+            p = {
+                A_BONUS_TIMER:  _w(0),
+                A_FLAG_SEQ_CNT: _w(rng.choice([0, 1, 3])),
+                A_FLAG_SEQ_OFF: _w(0),
+                _HA["game_over"]: _w(0),
+                _HA["cur_tune"]:  _w(0),
+                A_MZFLAG:         bytes([0]),
+            }
+            regs = {"d5": d5, "d6": d6, "d7": 6, "_pokes": p}
+            diffs, _ = differential(
+                0x11c1a, regs,
+                lambda lib, buf, i=idx, s=d5, a=d6: lib.g_gu_dispatch_event(buf, i, s, a, 6),
+                max_insns=1_000_000)
+            assert not diffs, f"forced flag-gate idx={idx} d5={d5} d6={d6:#x}\n{report(diffs[:24])}"
 
 
 
