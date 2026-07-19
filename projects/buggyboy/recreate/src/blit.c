@@ -643,7 +643,7 @@ static void draw_obj_blit_tail(uint8_t *image, uint32_t x, uint32_t colour, uint
 
 /* Renamed registers 0x14620 leaves for its caller's tail: movem rename D3->D0, D5->D4; A0=sprite
  * top; A1 rewound one band. */
-struct obj_hi_out { uint16_t d0_x; uint16_t d4_rows; uint32_t a0_dst; uint32_t a1_src; };
+struct obj_hi_out { uint16_t x_out; uint16_t rows_out; uint32_t dst_out; uint32_t src_out; };
 
 /* 0x14620 shared helper. Register map: D0 x accum, D1 colour (passed through), D2 width (=0xa0),
  * D4 rows seed, D7 caller vertical offset, A0 dst scanline base, A1 src stream, A2 = rec+0xa. */
@@ -693,7 +693,7 @@ void g_draw_obj_handler_dbl(uint8_t *image, uint32_t x, uint32_t colour, uint32_
                             uint32_t rec_cursor) {
     struct obj_hi_out r = draw_obj_sprite_hi(image, (uint16_t)x, (uint16_t)colour, (uint16_t)width,
                                              (uint16_t)rows_seed, (uint16_t)voff, dst, src, rec_cursor);
-    draw_obj_blit_tail(image, r.d0_x, colour, r.d4_rows, r.a0_dst, r.a1_src);   /* colour restored */
+    draw_obj_blit_tail(image, r.x_out, colour, r.rows_out, r.dst_out, r.src_out);   /* colour restored */
 }
 
 /* 0x14664 handler: dst from A6, src adjusted by a per-parity record word, single tail blit. */
@@ -744,10 +744,10 @@ static uint16_t objd_vpos(uint16_t row, int scale2) {
     return (uint16_t)(t + OBJD_VPOS_BIAS - row);
 }
 /* Write `longs` predecrement longwords per row for (rows+1) rows, alternating hi/lo (hi first). */
-static uint32_t objd_fill_down(uint8_t *image, uint32_t a0, int rows, int longs, uint32_t hi, uint32_t lo) {
+static uint32_t objd_fill_down(uint8_t *image, uint32_t dst_cur, int rows, int longs, uint32_t hi, uint32_t lo) {
     for (int r = 0; r <= rows; r++)
-        for (int j = 0; j < longs; j++) { a0 -= 4; wr32(image + a0, (j & 1) ? lo : hi); }
-    return a0;
+        for (int j = 0; j < longs; j++) { dst_cur -= 4; wr32(image + dst_cur, (j & 1) ? lo : hi); }
+    return dst_cur;
 }
 
 /* The centre/near fill is a two-longword (4-plane) pattern chosen by the shade sign: neutral when
@@ -759,97 +759,98 @@ static void objd_shade_fill(int16_t shade, uint32_t *first, uint32_t *second) {
 }
 
 void g_draw_object(uint8_t *image, uint32_t buffer) {
-    uint32_t a1 = A_road_width_tbl;
-    int8_t byte0 = (int8_t)image[a1];
+    uint32_t width_cur = A_road_width_tbl;
+    int8_t byte0 = (int8_t)image[width_cur];
     if (byte0 < 0 && (byte0 & 8))                          /* pre-scan clear of the road band */
         objd_fill_down(image, buffer + OBJD_TOP_CLEAR, OBJD_TOP_ROWS, OBJD_TOP_LONGS, 0, 0);
 
-    int d4 = OBJD_SCAN_ROWS;                               /* find the first visible (negative) row */
+    int scan_row = OBJD_SCAN_ROWS;                         /* find the first visible (negative) row */
     for (;;) {
-        int32_t e = (int32_t)be32(image + a1); a1 += 4;
-        if (e < 0) break;
-        if (d4-- == 0) return;                             /* none in 96 rows */
+        int32_t entry = (int32_t)be32(image + width_cur); width_cur += 4;
+        if (entry < 0) break;
+        if (scan_row-- == 0) return;                       /* none in 96 rows */
     }
 
-    uint32_t obj_desc = be32(image + a1 - 4);
+    uint32_t obj_desc = be32(image + width_cur - 4);
     wr32(image + A_obj_desc, obj_desc);
     int scale2 = (obj_desc & OBJD_F_SCALE2) != 0;
-    uint16_t i = (uint16_t)(OBJD_SCAN_ROWS - d4);          /* entry index */
+    uint16_t i = (uint16_t)(OBJD_SCAN_ROWS - scan_row);    /* entry index */
     wr16(image + A_obj_base_off, (uint16_t)((uint16_t)(OBJD_BASE_ROW - (i >> 1)) * OBJD_WIDTH));
 
     /* Walk the object's consecutive visible rows tracking the screen edges. Register map (68k names
-     * kept for the byte-exact port): d5 = running max left edge, d1 = its row; d6 = running min
-     * right edge, d3 = its row; rd4 = current row (counts down); d7 = 2*(extra rows); a1 = live
-     * road_width_tbl cursor; a5/a2 = table entry at the winning left/right edge (far branch). */
-    int16_t d5 = -1000, d6 = 1000;
-    int rd4 = d4, d1 = OBJD_SCAN_ROWS, d3 = OBJD_SCAN_ROWS, d7 = 0;
-    uint32_t a2 = a1, a5 = a1;
+     * kept for the byte-exact port): max_left = running max left edge (d5), left_row = its row (d1);
+     * min_right = running min right edge (d6), right_row = its row (d3); cur_row = current row (rd4,
+     * counts down); extra_x2 = 2*(extra rows) (d7); width_cur = live road_width_tbl cursor (a1);
+     * left_entry/right_entry = table entry at the winning left/right edge (a5/a2, far branch). */
+    int16_t max_left = -1000, min_right = 1000;
+    int cur_row = scan_row, left_row = OBJD_SCAN_ROWS, right_row = OBJD_SCAN_ROWS, extra_x2 = 0;
+    uint32_t right_entry = width_cur, left_entry = width_cur;
     if (obj_desc & OBJD_F_FAR) {
         for (;;) {
-            int16_t w = (int16_t)be16(image + a1 - 2);
-            int16_t le = (int16_t)(OBJD_LE_BIAS + w + 2 * rd4);
-            if ((int16_t)(d5 - le) < 0) { d5 = le; d1 = rd4; a5 = a1; }
-            int16_t re = (int16_t)(OBJD_RE_BIAS + w - 2 * rd4);
-            if ((int16_t)(re - d6) < 0) { d6 = re; d3 = rd4; a2 = a1; }
-            if (rd4-- == 0) break;
-            int32_t e = (int32_t)be32(image + a1); a1 += 4;
-            if (e >= 0) break;
-            d7 += 2;
+            int16_t row_w = (int16_t)be16(image + width_cur - 2);
+            int16_t left_edge = (int16_t)(OBJD_LE_BIAS + row_w + 2 * cur_row);
+            if ((int16_t)(max_left - left_edge) < 0) { max_left = left_edge; left_row = cur_row; left_entry = width_cur; }
+            int16_t right_edge = (int16_t)(OBJD_RE_BIAS + row_w - 2 * cur_row);
+            if ((int16_t)(right_edge - min_right) < 0) { min_right = right_edge; right_row = cur_row; right_entry = width_cur; }
+            if (cur_row-- == 0) break;
+            int32_t entry = (int32_t)be32(image + width_cur); width_cur += 4;
+            if (entry >= 0) break;
+            extra_x2 += 2;
         }
-        d5 = (int16_t)(OBJD_LE_BIAS + d1 + (int16_t)be16(image + a5 - 2));
-        d6 = (int16_t)(OBJD_RE_BIAS - d3 + (int16_t)be16(image + a2 - 2));
+        max_left = (int16_t)(OBJD_LE_BIAS + left_row + (int16_t)be16(image + left_entry - 2));
+        min_right = (int16_t)(OBJD_RE_BIAS - right_row + (int16_t)be16(image + right_entry - 2));
     } else {
         for (;;) {
-            int16_t w = (int16_t)be16(image + a1 - 2);
-            int16_t le = (int16_t)(OBJD_LE_BIAS + rd4 + w);
-            if ((int16_t)(d5 - le) < 0) { d5 = le; d1 = rd4; }
-            int16_t re = (int16_t)(OBJD_RE_BIAS - rd4 + w);
-            if ((int16_t)(re - d6) < 0) { d6 = re; d3 = rd4; }
-            if (rd4-- == 0) break;
-            int32_t e = (int32_t)be32(image + a1); a1 += 4;
-            if (e >= 0) break;
-            d7 += 2;
+            int16_t row_w = (int16_t)be16(image + width_cur - 2);
+            int16_t left_edge = (int16_t)(OBJD_LE_BIAS + cur_row + row_w);
+            if ((int16_t)(max_left - left_edge) < 0) { max_left = left_edge; left_row = cur_row; }
+            int16_t right_edge = (int16_t)(OBJD_RE_BIAS - cur_row + row_w);
+            if ((int16_t)(right_edge - min_right) < 0) { min_right = right_edge; right_row = cur_row; }
+            if (cur_row-- == 0) break;
+            int32_t entry = (int32_t)be32(image + width_cur); width_cur += 4;
+            if (entry >= 0) break;
+            extra_x2 += 2;
         }
     }
 
-    uint16_t uvar2 = (uint16_t)(rd4 + 1);
-    d7 = (int)((uint16_t)(((uint16_t)d7 & 0xfffc) - 1));   /* clear-width count-1 */
-    int16_t cda;                                           /* centre-band rows-1 (-1 = none) */
-    int32_t nexte = (int32_t)be32(image + a1); a1 += 4;
-    if (nexte < 0) {
-        wr16(image + A_obj_clear_w, (uint16_t)(d7 + OBJD_CLEAR_TAIL));
-        cda = -1;
+    uint16_t row_after = (uint16_t)(cur_row + 1);
+    extra_x2 = (int)((uint16_t)(((uint16_t)extra_x2 & 0xfffc) - 1));   /* clear-width count-1 */
+    int16_t center_rows;                                   /* centre-band rows-1 (-1 = none) */
+    int32_t next_entry = (int32_t)be32(image + width_cur); width_cur += 4;
+    if (next_entry < 0) {
+        wr16(image + A_obj_clear_w, (uint16_t)(extra_x2 + OBJD_CLEAR_TAIL));
+        center_rows = -1;
     } else {
-        wr16(image + A_obj_clear_w, (uint16_t)d7);
-        int16_t d0 = (int16_t)((uint16_t)(OBJD_CENTER_SPAN - uvar2) >> 1);
-        int16_t d2b = (int16_t)(OBJD_CENTER_BIAS - (int16_t)((uint16_t)uvar2 >> 1) + d0);
-        if (d2b >= 0) d0 = (int16_t)(d0 - d2b);
-        cda = (int16_t)(d0 * 4 - 1);
+        wr16(image + A_obj_clear_w, (uint16_t)extra_x2);
+        int16_t span = (int16_t)((uint16_t)(OBJD_CENTER_SPAN - row_after) >> 1);
+        int16_t overshoot = (int16_t)(OBJD_CENTER_BIAS - (int16_t)((uint16_t)row_after >> 1) + span);
+        if (overshoot >= 0) span = (int16_t)(span - overshoot);
+        center_rows = (int16_t)(span * 4 - 1);
     }
-    wr16(image + A_obj_center_rows, (uint16_t)cda);
+    wr16(image + A_obj_center_rows, (uint16_t)center_rows);
 
-    if (cda >= 0) {                                        /* near-pass edges (uses row uvar2) */
-        int16_t w6 = (int16_t)be16(image + a1 - 6);        /* width of the first row past the object */
-        wr16(image + A_obj_c_lx,   (uint16_t)(OBJD_LE_BIAS + uvar2 + w6));
-        wr16(image + A_obj_c_rx,   (uint16_t)(OBJD_RE_BIAS - uvar2 + w6));
-        wr16(image + A_obj_c_off,  objd_row_off(uvar2));
-        wr16(image + A_obj_c_rows, objd_vpos(uvar2, scale2));
+    if (center_rows >= 0) {                                /* near-pass edges (uses row row_after) */
+        int16_t w_after = (int16_t)be16(image + width_cur - 6);   /* width of the first row past the object */
+        wr16(image + A_obj_c_lx,   (uint16_t)(OBJD_LE_BIAS + row_after + w_after));
+        wr16(image + A_obj_c_rx,   (uint16_t)(OBJD_RE_BIAS - row_after + w_after));
+        wr16(image + A_obj_c_off,  objd_row_off(row_after));
+        wr16(image + A_obj_c_rows, objd_vpos(row_after, scale2));
     }
-    wr16(image + A_obj_lx,   (uint16_t)d5);
-    wr16(image + A_obj_l_off, objd_row_off((uint16_t)d1));
-    wr16(image + A_obj_l_rows, objd_vpos((uint16_t)d1, scale2));
-    wr16(image + A_obj_rx,   (uint16_t)d6);
-    wr16(image + A_obj_r_off, objd_row_off((uint16_t)d3));
-    wr16(image + A_obj_r_rows, objd_vpos((uint16_t)d3, scale2));
+    wr16(image + A_obj_lx,   (uint16_t)max_left);
+    wr16(image + A_obj_l_off, objd_row_off((uint16_t)left_row));
+    wr16(image + A_obj_l_rows, objd_vpos((uint16_t)left_row, scale2));
+    wr16(image + A_obj_rx,   (uint16_t)min_right);
+    wr16(image + A_obj_r_off, objd_row_off((uint16_t)right_row));
+    wr16(image + A_obj_r_rows, objd_vpos((uint16_t)right_row, scale2));
 
     if (scale2) {                                          /* clear the road band + paint centre */
-        uint32_t a0 = buffer + be16(image + A_obj_base_off);
-        int16_t clw = (int16_t)be16(image + A_obj_clear_w);
-        if (clw >= 0) a0 = objd_fill_down(image, a0, clw, OBJD_BAND_LONGS, 0, 0);
-        if (cda >= 0) {
+        uint32_t fill_cur = buffer + be16(image + A_obj_base_off);
+        int16_t clear_w = (int16_t)be16(image + A_obj_clear_w);
+        if (clear_w >= 0) fill_cur = objd_fill_down(image, fill_cur, clear_w, OBJD_BAND_LONGS, 0, 0);
+        if (center_rows >= 0) {
             uint32_t hi, lo;
             objd_shade_fill((int16_t)be16(image + A_obj_shade), &hi, &lo);
-            objd_fill_down(image, a0, cda, OBJD_BAND_LONGS, lo, hi);   /* d1(lo) written first, then d0(hi) */
+            objd_fill_down(image, fill_cur, center_rows, OBJD_BAND_LONGS, lo, hi);   /* d1(lo) written first, then d0(hi) */
         }
     }
 
@@ -879,7 +880,7 @@ void g_draw_object(uint8_t *image, uint32_t buffer) {
             g_blit_obj_Rf2(image, buffer, OBJD_WIDTH, fill_lo, fill_hi);
         }
     }
-    if (cda < 0) return;
+    if (center_rows < 0) return;
 
     /* --- second (near-object) pass --- shared offset/rows, shade-selected fill. */
     uint32_t f2_lo, f2_hi;
@@ -1227,7 +1228,7 @@ static void objsprite_hi_wrapper(uint8_t *image, uint16_t x, uint16_t colour, ui
                                  uint32_t rec_cursor, int width_idx) {
     struct obj_hi_out r = draw_obj_sprite_hi(image, x, colour, width, rows_seed, voff, dst, src,
                                              rec_cursor);
-    objsprite_entry(image, r.d0_x, r.d4_rows, r.a0_dst, r.a1_src, width_idx);
+    objsprite_entry(image, r.x_out, r.rows_out, r.dst_out, r.src_out, width_idx);
 }
 void g_objsprite_t3(uint8_t *image, uint32_t x, uint32_t colour, uint32_t width, uint32_t rows_seed,
                     uint32_t voff, uint32_t dst, uint32_t src, uint32_t rec_cursor) {
@@ -1355,7 +1356,7 @@ static void obj_handler_dbl(uint8_t *image, uint16_t x, uint16_t colour, uint16_
     struct obj_hi_out r = draw_obj_sprite_hi(image, x, colour, OBJD_WIDTH, rows_seed, voff,
                                              dst, src, rec_cursor);
     wr16(image + A_blit_mode, OBJH_MODE_TAIL);                                        /* mode = 0xa8 */
-    blit_objshift_family(image, r.d0_x, colour, r.d4_rows, r.a0_dst, r.a1_src, A_blit_mode, base_cells);
+    blit_objshift_family(image, r.x_out, colour, r.rows_out, r.dst_out, r.src_out, A_blit_mode, base_cells);
 }
 
 /* 0x131d0: a6-prefix dst, then view_flags&4 selects the STUB (T4 then T1) vs a bare T4. */
