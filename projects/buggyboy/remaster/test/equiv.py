@@ -59,7 +59,7 @@ def hud_background(leg=0, warmup=60, controls=None):
     state = bench_frame.mid_race_state(leg, warmup)
     _run_pipeline(state, PRE_HUD_PIPELINE)
     # Neutralise the phases not yet ported so the reference footprint is (mostly) the ported phases.
-    _w16(state, adapter.A_dsp_toggle, 1)          # skip phase 3 (dashboard-variant buf_c sprite)
+    _w16(state, adapter.A_dsp_toggle, 0)          # phase 3 (dashboard-variant sprite) now ported -> on
     _w16(state, adapter.A_crash_active, 0)        # phase 8 draws nothing
     _w16(state, adapter.A_hud_crash_timer, 0)
     for addr, val in (controls or {}).items():

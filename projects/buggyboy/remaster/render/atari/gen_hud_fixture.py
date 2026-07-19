@@ -2,17 +2,18 @@
 """gen_hud_fixture.py — bake the remaster HUD's inputs into the on-target demo.
 
 remaster only renders the HUD so far, and the HUD reads a set of assets (font, colour-fill table,
-mask/cursor tables, the gauge string, and the dashboard graphic from buf_c) plus a HudState — all of
-which normally come from the recreate loaders. Rather than run those on-target, we capture them once
-on the host (same adapter the equivalence tests use), stage a realistic mid-race background, and emit:
+mask/cursor tables, the gauge string, the dashboard graphic and the variant sprites from buf_c) plus
+a HudState — all of which normally come from the recreate loaders. Rather than run those on-target,
+we capture them once on the host (same adapter the equivalence tests use) and emit:
 
-  build/hud_fixture.h  — C arrays (background + assets + palette) and the HudState values main.c uses
-  build/golden.bin     — recreate's g_draw_hud output on the SAME background/state (the byte-for-byte
-                         reference: remaster's on-target frame must equal this)
-  build/palette.bin    — the 16 ST palette words, for the PNG the headless run writes
+  build/hud_fixture.h  — C arrays (assets + palette) and the HudState values main.c uses
+  build/golden.bin     — recreate's g_draw_hud on a BLANK screen (the byte-for-byte reference:
+                         remaster's on-target frame must equal this)
+  build/palette.bin    — the 16 ST palette words (index 0 forced black), for the PNG
 
-Because remaster's HUD is already pixel-identical to recreate on the host, a byte-match of the
-on-target dump against golden.bin proves the remaster C is correct compiled+run on a real 68000.
+The demo draws only what remaster's C implements — the HUD, over a blank screen (no captured recreate
+game frame). A byte-match of the on-target dump against golden.bin proves the remaster C is correct
+compiled+run on a real 68000. (recreate's HUD is itself verified vs the Musashi oracle.)
 """
 import ctypes
 import sys
@@ -47,14 +48,21 @@ def main():
 
     img = equiv.hud_background(leg=0, controls=CONTROLS)
     sb, nb = adapter.SCREEN_BASE, adapter.SCREEN_BYTES
-    background = bytes(img[sb:sb + nb])
 
-    # recreate's HUD frame on the same staged image = the golden reference.
+    # Render only what remaster's C implements — the HUD, over a BLANK screen (no captured recreate
+    # game frame). Zero the screen so both sides draw the HUD on the same empty background.
+    img[sb:sb + nb] = bytes(nb)
+
+    # recreate's HUD on that blank screen = the golden reference (byte-for-byte target).
     ref = bytearray(img)
     equiv._run_pipeline(ref, ("g_draw_hud",))
     (build / "golden.bin").write_bytes(bytes(ref[sb:sb + nb]))
 
-    palette = bytes(img[RACE_PALETTE:RACE_PALETTE + PALETTE_BYTES])
+    # Palette for the PNG / on-target display; force index 0 to black so "not drawn by the HUD"
+    # reads as black rather than the palette's background colour.
+    palette = bytearray(img[RACE_PALETTE:RACE_PALETTE + PALETTE_BYTES])
+    palette[0:2] = b"\x00\x00"
+    palette = bytes(palette)
     (build / "palette.bin").write_bytes(palette)
 
     st = adapter.hud_state(img)
@@ -64,7 +72,6 @@ def main():
         return bytes(img[addr:addr + n])
 
     arrays = {
-        "fixture_background":     background,
         "fixture_font":           win(adapter.A_font_glyphs, adapter.FONT_BYTES),
         "fixture_color_pairs":    win(adapter.A_color_pairs, adapter.COLOR_PAIRS_BYTES),
         "fixture_color_bar_mask": win(adapter.A_color_bar_mask, adapter.COLOR_BAR_MASK_BYTES),
@@ -82,6 +89,9 @@ def main():
     for name, data in arrays.items():
         out.append(_c_array(name, data))
     out.append(_c_array("fixture_dashboard_src", win(buf_c + adapter.DASH_SRC_OFF, adapter.DASH_SRC_BYTES)))
+    dsp_table, dsp_src = adapter._dsp_table_and_src(img, buf_c)   # phase-3 records (rebased) + sprites
+    out.append(_c_array("fixture_dsp_table", dsp_table))
+    out.append(_c_array("fixture_dsp_src", dsp_src))
     out += ["",
             f"#define CIDX_ZERO_OFF        {adapter.CIDX_ZERO_OFF}",
             f"#define HUD_FLAG_SEQ_COUNT   {st.flag_seq_count}",
@@ -90,11 +100,14 @@ def main():
             f"#define HUD_CRASH_LAP        {st.crash_lap}",
             f"#define HUD_SPEED            {st.speed}",
             f"#define HUD_TIME_LEFT        {st.time_left}",
-            f"#define HUD_GAME_OVER        {st.game_over}",
+            f"#define HUD_GAME_OVER        {int(st.game_over)}",
+            f"#define HUD_DSP_TOGGLE       {int(st.dsp_toggle)}",
+            f"#define HUD_DSP_VARIANT_IDX  {st.dsp_variant_idx}",
             "", "#endif /* RM_HUD_FIXTURE_H */", ""]
     (build / "hud_fixture.h").write_text("\n".join(out))
     print(f"wrote {build/'hud_fixture.h'}, golden.bin, palette.bin "
-          f"(flag={st.flag_seq_count} lap={st.crash_lap} speed={st.speed} time={st.time_left})")
+          f"(flag={st.flag_seq_count} lap={st.crash_lap} speed={st.speed} time={st.time_left} "
+          f"dsp_toggle={st.dsp_toggle} dsp_idx={st.dsp_variant_idx})")
 
 
 if __name__ == "__main__":

@@ -1,12 +1,12 @@
 /* hud.c — remaster of the in-race HUD (recreate's draw_hud @0x1555e).
  *
- * Ported so far — the pure plane-write phases plus the gauge cluster:
+ * Ported so far — the pure plane-write phases plus the gauge cluster and dashboard-variant sprite:
+ *   Phase 3  dashboard-variant sprite  a masked buf_c sprite chosen by dsp_variant_idx
  *   Phase 4  flag-sequence bars   one lit vertical bar per matched-in-a-row flag
  *   Phase 5  colour-tinted bars    five columns tinted from color_pairs via a scrolling cursor
  *   Phase 6a fuel/tacho gauge      one fixed multi-row column per remaining bonus unit
  *   Phase 7  main gauge cluster    gauge0 + five bars (glyph blitter) + the dashboard graphic
- * Still to port: phase 3 (dashboard-variant buf_c sprite), phase 6b (blinking small gauge),
- * phase 8 (crash fx). See STATUS.md.
+ * Still to port: phase 6b (blinking small gauge), phase 8 (crash fx). See STATUS.md.
  *
  * The framebuffer is ST hardware format (see st.h); byte offsets below are relative to the draw
  * buffer origin (fb->px[0]) and each row steps one scanline (SCREEN_ROW_BYTES). The layout matches
@@ -73,6 +73,26 @@
 #define HUD_SPEED_HUNDRED  100          /* prefix "/1" and subtract at this speed */
 #define HUD_BLANK          0x2f         /* '/' renders as a blank glyph (leading-zero suppression) */
 #define HUD_PREFIX_00      0x2f2f       /* speedometer prefix "//" (<100) */
+
+/* Phase 3 — dashboard-variant masked sprite. A record {src_off, dst_off, rows-1} picked by
+ * dsp_variant_idx selects one sprite in buf_c (via dsp_src). Per row the source is a 4-plane cell
+ * {mask, inkA, inkB, inkC}: the first source word is the transparency mask (kept where set); inkA/B
+ * fill the first two plane words, inkC (broadcast) the last two. Skipped while dsp_toggle is set. */
+static void hud_dsp_sprite(const HudState *s, const HudAssets *a, Framebuffer *fb) {
+    if (s->dsp_toggle) return;
+    uint8_t *px = fb->px;
+    const uint8_t *rec = a->dsp_table + s->dsp_variant_idx;
+    const uint8_t *src = a->dsp_src + be32(rec);              /* src_off rebased into dsp_src */
+    Offset dst = (Offset)sx16(be16(rec + 4));                /* buffer-relative dst */
+    int16_t rows = (int16_t)be16(rec + 6);                   /* loop runs rows+1 times */
+    for (int r = 0; r <= rows; r++, dst += ROW_STRIDE, src += ROW_STRIDE) {
+        Plane4 mask = dup16(be16(src));
+        wr32(px + dst, be32(px + dst) & mask);               /* keep background where mask is set */
+        wr16(px + dst,     (uint16_t)(be16(src + 2) | be16(px + dst)));
+        wr16(px + dst + 2, (uint16_t)(be16(src + 4) | be16(px + dst + 2)));
+        wr32(px + dst + 4, (be32(px + dst + 4) & mask) | dup16(be16(src + 6)));
+    }
+}
 
 static void hud_flag_bars(const HudState *s, Framebuffer *fb) {
     if (s->flag_seq_count < 1) return;
@@ -193,8 +213,8 @@ static void hud_format_speed(uint16_t speed, uint8_t *str) {
 }
 
 /* Phase 2 — format the bonus-timer digits (blanked to 0 when the game is over). */
-static void hud_format_time(uint16_t time_left, int16_t game_over, uint8_t *str) {
-    uint16_t t = game_over != 0 ? 0 : time_left;
+static void hud_format_time(uint16_t time_left, bool game_over, uint8_t *str) {
+    uint16_t t = game_over ? 0 : time_left;
     str[HUD_TIME_TXT_OFF + 1] = digit_or_blank(t / HUD_DIGIT_DIV, HUD_BLANK);
     str[HUD_TIME_TXT_OFF + 2] = '0' + t % HUD_DIGIT_DIV;
 }
@@ -208,6 +228,7 @@ void rm_draw_hud(const HudState *s, const HudAssets *assets, Framebuffer *fb) {
     hud_format_speed(s->speed, str);
     hud_format_time(s->time_left, s->game_over, str);
 
+    hud_dsp_sprite(s, assets, fb);
     hud_flag_bars(s, fb);
     hud_color_bars(s, assets, fb);
     hud_fuel_gauge(s, assets, fb);

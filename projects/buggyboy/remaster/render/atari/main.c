@@ -1,9 +1,10 @@
 /* main.c — Atari GEMDOS shim that runs remaster's HUD renderer on a real 68000.
  *
- * remaster renders only the HUD so far, so this stages a captured mid-race background + the HUD
- * assets (baked into hud_fixture.h by gen_hud_fixture.py), calls rm_draw_hud, dumps the painted
- * framebuffer to C:\SCREEN.BIN (a headless run byte-compares it to recreate's golden.bin), then
- * loads the palette and blits to the physical screen and waits for a key. See render/atari/README.md.
+ * remaster renders only the HUD so far, so this draws it over a BLANK screen (rendering only what
+ * remaster's C implements — no captured recreate game frame). The HUD assets are baked into
+ * hud_fixture.h by gen_hud_fixture.py; the shim calls rm_draw_hud, dumps the painted framebuffer to
+ * C:\SCREEN.BIN (a headless run byte-compares it to recreate's g_draw_hud on the same blank screen),
+ * then loads the palette and blits to the physical screen and waits for a key. See README.md.
  */
 #include <stdint.h>
 
@@ -41,6 +42,7 @@ void main(void) {
         .flag_seq_count = HUD_FLAG_SEQ_COUNT, .flag_seq_off = HUD_FLAG_SEQ_OFF,
         .dsp_color_scroll = HUD_DSP_COLOR_SCROLL, .crash_lap = HUD_CRASH_LAP,
         .speed = HUD_SPEED, .time_left = HUD_TIME_LEFT, .game_over = HUD_GAME_OVER,
+        .dsp_toggle = HUD_DSP_TOGGLE, .dsp_variant_idx = HUD_DSP_VARIANT_IDX,
     };
     const HudAssets assets = {
         .color_pairs    = fixture_color_pairs,
@@ -50,9 +52,11 @@ void main(void) {
         .font           = fixture_font,
         .gauge_str      = fixture_gauge_str,
         .dashboard_src  = fixture_dashboard_src,
+        .dsp_table      = fixture_dsp_table,
+        .dsp_src        = fixture_dsp_src,
     };
 
-    memcpy(fb.px, fixture_background, SCREEN_BYTES);
+    memset(fb.px, 0, SCREEN_BYTES);     /* blank screen: render only remaster's own HUD */
     rm_draw_hud(&state, &assets, &fb);
 
     /* Dump the painted framebuffer so a headless run can byte-compare it to recreate's golden.bin. */

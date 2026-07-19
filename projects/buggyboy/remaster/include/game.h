@@ -8,6 +8,7 @@
 #ifndef RM_GAME_H
 #define RM_GAME_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Player buggy pose — what the object/car draw reads. Fields added as the draw path is ported. */
@@ -35,13 +36,15 @@ typedef struct {
     int16_t crash_lap;         /* remaining bonus units -> one fuel column each (phase 6a) */
     uint16_t speed;            /* speedometer value (phase 1 formats its low byte into the string) */
     uint16_t time_left;        /* bonus time remaining (phase 2 formats into the string) */
-    int16_t game_over;         /* nonzero blanks the timer to 0 (phase 2) */
+    bool game_over;            /* blank the timer to 0 when set (phase 2) */
+    bool dsp_toggle;           /* suppress the dashboard-variant sprite when set (phase 3) */
+    uint16_t dsp_variant_idx;  /* byte offset into the dashboard-variant record table (phase 3) */
 } HudState;
 
 /* Static ST-format asset tables the HUD reads (constant data baked into STATIC.BIN, plus the
  * unpacked dashboard graphic in buf_c). The pointers reference raw big-endian bytes, read via st.h.
  * color_bar_cidx points at the cursor's zero offset; the phase-5 code indexes it with the signed
- * flag_seq_off + dsp_color_scroll deltas. */
+ * flag_seq_off + dsp_color_scroll deltas. dsp_table's src offsets are rebased into dsp_src. */
 typedef struct {
     const uint8_t *color_pairs;     /* 16 colours x 8-byte (4-plane) solid fill */
     const uint8_t *color_bar_mask;  /* phase-5 per-row {mask,ink} word stream */
@@ -50,6 +53,8 @@ typedef struct {
     const uint8_t *font;            /* phase-7 1bpp glyph table (glyph N at font + N*16) */
     const uint8_t *gauge_str;       /* phase-7 concatenated gauge-cluster label/bar string */
     const uint8_t *dashboard_src;   /* phase-7 dashboard graphic (buf_c region), masked-blit source */
+    const uint8_t *dsp_table;       /* phase-3 records {src_off:long, dst_off:word, rows-1:word} */
+    const uint8_t *dsp_src;         /* phase-3 sprite pixels (buf_c window; dsp_table src_off is relative) */
 } HudAssets;
 
 #endif /* RM_GAME_H */

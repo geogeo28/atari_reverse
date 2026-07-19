@@ -51,3 +51,25 @@ def test_hud_speed_time_digits(speed, time):
     coverage, wrong = equiv.compare_hud(lib, image)
     assert wrong == 0, f"speed={speed} time={time}: {wrong} wrong pixels"
     assert coverage == 1.0, f"speed={speed} time={time}: only {coverage:.1%} covered"
+
+
+# Phase 3 selects one of 8 dashboard-variant records via dsp_variant_idx (a byte offset, step 8).
+DSP_VARIANTS = [0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38]
+
+
+@pytest.mark.parametrize("idx", DSP_VARIANTS)
+def test_hud_dsp_variant(idx):
+    lib = equiv._lib()
+    # dsp_toggle defaults to 0 (phase 3 on) in hud_background; pick each variant sprite.
+    image = equiv.hud_background(leg=0, controls={adapter.A_dsp_variant_idx: idx})
+    coverage, wrong = equiv.compare_hud(lib, image)
+    assert wrong == 0, f"dsp_variant_idx={idx:#x}: {wrong} wrong pixels"
+    assert coverage == 1.0, f"dsp_variant_idx={idx:#x}: only {coverage:.1%} covered"
+
+
+def test_hud_dsp_toggle_off():
+    """dsp_toggle set -> phase 3 draws nothing on both sides (gate respected)."""
+    lib = equiv._lib()
+    image = equiv.hud_background(leg=0, controls={adapter.A_dsp_toggle: 1})
+    coverage, wrong = equiv.compare_hud(lib, image)
+    assert wrong == 0 and coverage == 1.0

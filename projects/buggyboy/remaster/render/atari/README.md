@@ -5,15 +5,15 @@ a GEMDOS `.PRG` under Hatari — proving the remaster C is correct not just on t
 and executed on an independent 68000.
 
 Because the HUD reads asset tables (font, colour-fill table, mask/cursor tables, the gauge string,
-the dashboard graphic from `buf_c`) that normally come from the recreate loaders, we **capture them
-once on the host** (`gen_hud_fixture.py`, via the same `adapter.py` the equivalence tests use), bake
-them + a realistic mid-race **background** + the `HudState` into `build/hud_fixture.h`, and draw the
-HUD over that background on-target.
+the dashboard graphic and the variant sprites from `buf_c`) that normally come from the recreate
+loaders, we **capture them once on the host** (`gen_hud_fixture.py`, via the same `adapter.py` the
+equivalence tests use), bake them + the `HudState` into `build/hud_fixture.h`, and draw the HUD over
+a **blank screen** on-target — rendering only what remaster's C implements (no captured game frame).
 
 ## The proof
 
-`gen_hud_fixture.py` also writes `build/golden.bin` — recreate's `g_draw_hud` output for the exact
-same inputs. The demo dumps its painted framebuffer to `C:\SCREEN.BIN`; `run_hatari.py` byte-compares
+`gen_hud_fixture.py` also writes `build/golden.bin` — recreate's `g_draw_hud` on the same blank
+screen. The demo dumps its painted framebuffer to `C:\SCREEN.BIN`; `run_hatari.py` byte-compares
 that against `golden.bin`. A **MATCH** proves remaster's HUD, cross-compiled and run on a real 68000,
 is pixel-identical to the verified recreate cores. (recreate's HUD is itself verified byte-for-byte
 against the Musashi oracle, so this closes the loop end to end.)
@@ -44,7 +44,6 @@ Hatari needs a 4 MiB machine (`--memsize 4`); `build/` and `disk/` are gitignore
 
 ## Scope
 
-The background road/buggy/scenery is a **captured** recreate frame; only the HUD strip is remaster's
-own rendering. Phase 3 (the dashboard-variant sprite) and phase 8 (crash fx) are gated off, so their
-regions show the background on both sides. As more of the pipeline is ported (road, objects), this
-harness extends to render whole frames.
+Only the HUD is remaster's own rendering, drawn over a **blank screen** — no captured game frame.
+Phase 8 (crash fx) is gated off. As more of the pipeline is ported (road, objects), this harness
+extends to render whole frames.

@@ -15,8 +15,8 @@ framebuffer → diff). Order follows the in-race draw order.
 | adapter            | flat image → structs      | ✅ HUD scalars + assets | `test/adapter.py` — `HudState`/`HudAssets`/`Framebuffer` |
 | equivalence driver | per-subsystem framebuffer diff | ✅ footprint coverage + no-wrong-pixel | `test/equiv.py` |
 | glyph blitter (`text_body`) | `g_draw_hud_bar` / `g_draw_hud_gauge0` | ✅ verified | `test/test_text.py` — 960 fuzz cases, **byte-exact** (whole framebuffer) |
-| `draw_hud`         | `g_draw_hud`              | 🟡 phases 1/2/4/5/6a/7 ported | `test/test_hud.py` — 5 cfgs, **100% footprint, 0 wrong pixels** (phase 3/8 gated off) |
-| on-target (Hatari) | `g_draw_hud` frame        | ✅ byte-identical on 68000 | `render/atari/` — HUD PRG dump MATCHes recreate's golden frame |
+| `draw_hud`         | `g_draw_hud`              | 🟡 phases 1/2/3/4/5/6a/7 ported | `test/test_hud.py` — **100% footprint, 0 wrong pixels** across configs + all 8 phase-3 variants (phase 8 gated off) |
+| on-target (Hatari) | `g_draw_hud` frame        | ✅ byte-identical on 68000 | `render/atari/` — HUD-only PRG dump MATCHes recreate's g_draw_hud (blank screen) |
 | `render_road`      | `g_render_road`           | ⬜ not started   | — |
 | `blit_road_scroll` | `g_blit_road_scroll`      | ⬜ not started   | — |
 | `draw_game_objects`| `g_draw_game_objects`     | ⬜ not started   | — |
@@ -30,7 +30,7 @@ invariant (every byte the candidate paints matches recreate). Coverage → 100% 
 | Phase | What | Status | Needs |
 |-------|------|--------|-------|
 | 1–2 | speed/time digit strings | ✅ | feed phase 7's string (the text buffers overlap the gauge string) |
-| 3 | dashboard-variant sprite | ⬜ | `buf_c` sprite data + masked-blit |
+| 3 | dashboard-variant sprite | ✅ | `dsp_table` record + `buf_c` sprite (masked word/long blit) |
 | 4 | flag-sequence bars | ✅ | scalar only |
 | 5 | colour-tinted bars | ✅ | `color_pairs` + mask/ink + cidx tables |
 | 6a | fuel/tacho gauge | ✅ | fuel-mask table |
