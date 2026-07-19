@@ -26,9 +26,10 @@ static void blit_row(uint8_t *px, Offset cell, Plane4 mask, Plane4 ink,
     wr32(px + cell + 4, (be32(px + cell + 4) & mask) | (ink & fill_hi));
 }
 
-Offset rm_glyph_run(uint8_t *px, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
+Offset rm_glyph_run(Framebuffer *fb, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
                     const uint8_t *font, const uint8_t *str, Offset si,
                     uint16_t cells_m1, Offset *end_dst) {
+    uint8_t *px = fb->px;
     uint16_t remaining = cells_m1;
     for (;;) {
         uint8_t char1 = str[si++];

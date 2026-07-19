@@ -27,7 +27,8 @@ CHUNKS, CASES = 8, 60
 def _lib():
     lib = ctypes.CDLL(str(equiv_lib_path()))
     p8, p32 = ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint32)
-    lib.rm_glyph_run.argtypes = [p8, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+    lib.rm_glyph_run.argtypes = [ctypes.POINTER(adapter.Framebuffer), ctypes.c_uint32,
+                                 ctypes.c_uint32, ctypes.c_uint32,
                                  p8, p8, ctypes.c_uint32, ctypes.c_uint16, p32]
     lib.rm_glyph_run.restype = ctypes.c_uint32
     return lib
@@ -80,11 +81,11 @@ def _candidate(lib, img, case, fill_lo, fill_hi, cells_m1):
     font = (ctypes.c_uint8 * FONT_LEN)(*img[FONT_ADDR:FONT_ADDR + FONT_LEN])
     s = case["string"]
     strbuf = (ctypes.c_uint8 * len(s))(*s)
-    fb = (ctypes.c_uint8 * SCREEN_BYTES)(*case["bg"])
+    fb = adapter.Framebuffer((ctypes.c_uint8 * SCREEN_BYTES)(*case["bg"]))
     end = ctypes.c_uint32()
-    lib.rm_glyph_run(fb, case["off"], fill_lo, fill_hi, font, strbuf, 0,
+    lib.rm_glyph_run(ctypes.byref(fb), case["off"], fill_lo, fill_hi, font, strbuf, 0,
                      cells_m1, ctypes.byref(end))
-    return bytes(fb)
+    return bytes(fb.px)
 
 
 def _color_fill(img, color):
