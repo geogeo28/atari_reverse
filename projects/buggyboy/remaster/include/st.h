@@ -14,6 +14,12 @@
 
 #include <stdint.h>
 
+/* Semantic aliases for the two roles a 32-bit word plays in the ST render code (both are uint32_t,
+ * which reads ambiguously): a byte offset/cursor into a buffer, and a 4-plane 16-pixel longword
+ * (two plane words packed). Pointers stay uint8_t*, single plane words stay uint16_t. */
+typedef uint32_t Offset;
+typedef uint32_t Plane4;
+
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 static inline uint16_t be16(const uint8_t *p) { return *(const uint16_t *)p; }
 static inline uint32_t be32(const uint8_t *p) { return *(const uint32_t *)p; }
@@ -32,7 +38,7 @@ static inline void wr32(uint8_t *p, uint32_t v) {
 #endif
 
 /* Duplicate a 16-bit plane word into both halves of a long (the 68k mask/ink broadcast). */
-static inline uint32_t dup16(uint16_t w) { return ((uint32_t)w << 16) | w; }
+static inline Plane4 dup16(uint16_t w) { return ((Plane4)w << 16) | w; }
 /* Sign-extend a 16-bit table offset to a signed index (68k adda.w / word displacement). */
 static inline int32_t sx16(uint16_t w) { return (int32_t)(int16_t)w; }
 

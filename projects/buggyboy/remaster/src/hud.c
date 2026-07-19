@@ -55,7 +55,6 @@
 #define GAUGE_BAR1_ADV     0xa90        /* dst deltas applied between the chained sub-draws */
 #define GAUGE_BAR2_ADV     0x4c0
 #define GAUGE_BAR5_BACK    0xae0
-#define COLOR_PAIR_STRIDE  8
 
 /* Phase 7 dashboard — masked blit of the fixed dashboard graphic (recreate's draw_dashboard). */
 #define DASHBOARD_DST      0x280
@@ -76,7 +75,7 @@
 
 static void hud_flag_bars(const HudState *s, uint8_t *px) {
     if (s->flag_seq_count < 1) return;
-    uint32_t a = FLAG_BAR_TOP_DST;
+    Offset a = FLAG_BAR_TOP_DST;
     for (int r = 0; r < FLAG_BAR_TOP_ROWS; r++, a += ROW_STRIDE) {
         wr32(px + a,     be32(px + a)     & FLAG_BAR_CLEAR_BIT);
         wr32(px + a + 4, be32(px + a + 4) & FLAG_BAR_CLEAR_BIT);
@@ -94,19 +93,19 @@ static void hud_flag_bars(const HudState *s, uint8_t *px) {
 }
 
 static void hud_color_bars(const HudState *s, const HudAssets *assets, uint8_t *px) {
-    uint32_t a = COLOR_BAR_DST;
-    uint32_t mask_off = 0;                                             /* into color_bar_mask */
+    Offset a = COLOR_BAR_DST;
+    Offset mask_off = 0;                                               /* into color_bar_mask */
     int32_t cidx = sx16(s->flag_seq_off) + sx16(s->dsp_color_scroll);  /* scrolling cursor */
     for (int col = 0; col < COLOR_BAR_COLS; col++) {
         int16_t off = (int16_t)(uint16_t)(assets->color_bar_cidx[cidx + col] << 3);
-        uint32_t fill_lo = be32(assets->color_pairs + off);
-        uint32_t fill_hi = be32(assets->color_pairs + off + 4);
+        Plane4 fill_lo = be32(assets->color_pairs + off);
+        Plane4 fill_hi = be32(assets->color_pairs + off + 4);
         wr32(px + a,     be32(px + a)     & COLOR_BAR_PRECLEAR);        /* top cap */
         wr32(px + a + 4, be32(px + a + 4) & COLOR_BAR_PRECLEAR);
         a += ROW_STRIDE;
         for (int r = 0; r < COLOR_BAR_ROWS; r++, a += ROW_STRIDE) {
-            uint32_t mask = dup16(be16(assets->color_bar_mask + mask_off));
-            uint32_t ink  = dup16(be16(assets->color_bar_mask + mask_off + 2));
+            Plane4 mask = dup16(be16(assets->color_bar_mask + mask_off));
+            Plane4 ink  = dup16(be16(assets->color_bar_mask + mask_off + 2));
             mask_off += 4;
             wr32(px + a,     (be32(px + a)     & mask) | (ink & fill_lo));
             wr32(px + a + 4, (be32(px + a + 4) & mask) | (ink & fill_hi));
@@ -117,9 +116,9 @@ static void hud_color_bars(const HudState *s, const HudAssets *assets, uint8_t *
 
 static void hud_fuel_gauge(const HudState *s, const HudAssets *assets, uint8_t *px) {
     if (s->crash_lap < 1) return;
-    uint32_t f_lo = (be32(assets->fuel_mask)     & FUEL_MASK_KEEP) | FUEL_MID;
-    uint32_t f_hi = (be32(assets->fuel_mask + 4) & FUEL_MASK_KEEP) | FUEL_MID;
-    uint32_t g = FUEL_BASE;
+    Plane4 f_lo = (be32(assets->fuel_mask)     & FUEL_MASK_KEEP) | FUEL_MID;
+    Plane4 f_hi = (be32(assets->fuel_mask + 4) & FUEL_MASK_KEEP) | FUEL_MID;
+    Offset g = FUEL_BASE;
     for (int c = 0; c < s->crash_lap; c++) {
         wr32(px + g, be32(px + g) & FUEL_EDGE); wr32(px + g + 4, be32(px + g + 4) & FUEL_EDGE); g += ROW_STRIDE;
         wr32(px + g, FUEL_NEAR_FULL); wr32(px + g + 4, FUEL_NEAR_FULL); g += ROW_STRIDE;
@@ -137,13 +136,13 @@ static void hud_fuel_gauge(const HudState *s, const HudAssets *assets, uint8_t *
  * string cursor (A3) threaded across each sub-draw exactly as the 68000 leaves them. `str` is the
  * gauge string with the phase-1/2 speed/time digits already formatted in. */
 static void hud_gauge_cluster(const HudAssets *a, const uint8_t *str, uint8_t *px) {
-    uint32_t g_lo = be32(a->color_pairs + GAUGE_MAIN_COLOR * COLOR_PAIR_STRIDE);
-    uint32_t g_hi = be32(a->color_pairs + GAUGE_MAIN_COLOR * COLOR_PAIR_STRIDE + 4);
+    Plane4 g_lo = be32(a->color_pairs + GAUGE_MAIN_COLOR * COLOR_PAIR_STRIDE);
+    Plane4 g_hi = be32(a->color_pairs + GAUGE_MAIN_COLOR * COLOR_PAIR_STRIDE + 4);
     /* gauge0 derives its fill from the colour index (masked 0xf — here the same as g_lo/g_hi). */
-    uint32_t f_lo = be32(a->color_pairs + (GAUGE_MAIN_COLOR & 0xf) * COLOR_PAIR_STRIDE);
-    uint32_t f_hi = be32(a->color_pairs + (GAUGE_MAIN_COLOR & 0xf) * COLOR_PAIR_STRIDE + 4);
+    Plane4 f_lo = be32(a->color_pairs + (GAUGE_MAIN_COLOR & 0xf) * COLOR_PAIR_STRIDE);
+    Plane4 f_hi = be32(a->color_pairs + (GAUGE_MAIN_COLOR & 0xf) * COLOR_PAIR_STRIDE + 4);
     const uint8_t *font = a->font;
-    uint32_t end, si = 0;
+    Offset end, si = 0;
     si = rm_glyph_run(px, GAUGE_MAIN_DST, f_lo, f_hi, font, str, si, GAUGE_CELLS_M1, &end);
     si = rm_glyph_run(px, end + GAUGE_BAR1_ADV, g_lo, g_hi, font, str, si, TEXT_MAX_CELLS_M1, &end);
     si = rm_glyph_run(px, end + GAUGE_BAR2_ADV, g_lo, g_hi, font, str, si, TEXT_MAX_CELLS_M1, &end);
@@ -161,10 +160,10 @@ static inline void overlay_word(uint8_t *p, uint16_t mask, uint16_t ink) {
  * source words are (mask, a, b, c); each dest word keeps the background where mask is set and OR-s
  * in ink a, b, b, c (the middle word twice — one source word feeds two screen words). */
 static void hud_dashboard(const HudAssets *a, uint8_t *px) {
-    uint32_t dst = DASHBOARD_DST, src = 0;                 /* src 0 = dashboard_src base (buf_c gfx) */
+    Offset dst = DASHBOARD_DST, src = 0;                   /* src 0 = dashboard_src base (buf_c gfx) */
     const uint8_t *g = a->dashboard_src;
     for (int row = 0; row < DASH_ROWS; row++, dst += ROW_STRIDE, src += ROW_STRIDE) {
-        uint32_t d = dst, s = src;
+        Offset d = dst, s = src;
         for (int grp = 0; grp < DASH_GROUPS; grp++, d += 8, s += 8) {
             uint16_t mask = be16(g + s);
             uint16_t ink_a = be16(g + s + 2), ink_b = be16(g + s + 4), ink_c = be16(g + s + 6);

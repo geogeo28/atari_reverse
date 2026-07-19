@@ -20,15 +20,15 @@ static void glyph_pair(uint16_t g1, uint16_t g2, uint16_t *mask, uint16_t *ink) 
 
 /* One cell row: (bg & mask) | (ink & plane) for each of the two 16-px plane pairs. mask/ink are
  * already broadcast into both halves of the long. */
-static void blit_row(uint8_t *px, uint32_t cell, uint32_t mask, uint32_t ink,
-                     uint32_t fill_lo, uint32_t fill_hi) {
+static void blit_row(uint8_t *px, Offset cell, Plane4 mask, Plane4 ink,
+                     Plane4 fill_lo, Plane4 fill_hi) {
     wr32(px + cell,     (be32(px + cell)     & mask) | (ink & fill_lo));
     wr32(px + cell + 4, (be32(px + cell + 4) & mask) | (ink & fill_hi));
 }
 
-uint32_t rm_glyph_run(uint8_t *px, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi,
-                      const uint8_t *font, const uint8_t *str, uint32_t si,
-                      uint16_t cells_m1, uint32_t *end_dst) {
+Offset rm_glyph_run(uint8_t *px, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
+                    const uint8_t *font, const uint8_t *str, Offset si,
+                    uint16_t cells_m1, Offset *end_dst) {
     uint16_t remaining = cells_m1;
     for (;;) {
         uint8_t char1 = str[si++];
@@ -38,7 +38,7 @@ uint32_t rm_glyph_run(uint8_t *px, uint32_t dst, uint32_t fill_lo, uint32_t fill
 
         const uint8_t *glyph1 = font + char1 * GLYPH_BYTES;
         const uint8_t *glyph2 = font + char2 * GLYPH_BYTES;
-        uint32_t cell = dst;
+        Offset cell = dst;
         for (int row = 0; row < TEXT_CELL_ROWS; row++, cell += ROW_STRIDE, glyph1 += 2, glyph2 += 2) {
             uint16_t mask16, ink16;
             glyph_pair(be16(glyph1), be16(glyph2), &mask16, &ink16);

@@ -8,7 +8,7 @@
 #ifndef RM_TEXT_H
 #define RM_TEXT_H
 
-#include <stdint.h>
+#include "st.h"
 
 #define GLYPH_BYTES     16     /* 8 rows x 2 bytes per 1bpp glyph; char N at font + N*16 */
 #define TEXT_CELL_ROWS  8      /* rows blitted per character cell */
@@ -19,8 +19,8 @@
  * ends after that cell. Returns the advanced string index (past the terminator, +1, as the 68k
  * leaves A3); if end_dst is non-NULL, reports the dst one cell past the last drawn so consecutive
  * runs chain on the same cursors. font points at the glyph table base (glyph N at font + N*16). */
-uint32_t rm_glyph_run(uint8_t *px, uint32_t dst, uint32_t fill_lo, uint32_t fill_hi,
-                      const uint8_t *font, const uint8_t *str, uint32_t si,
-                      uint16_t cells_m1, uint32_t *end_dst);
+Offset rm_glyph_run(uint8_t *px, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
+                    const uint8_t *font, const uint8_t *str, Offset si,
+                    uint16_t cells_m1, Offset *end_dst);
 
 #endif /* RM_TEXT_H */
