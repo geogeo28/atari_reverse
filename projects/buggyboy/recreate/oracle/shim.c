@@ -121,6 +121,7 @@ static uint32_t g_heap;         /* Malloc bump pointer */
 static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT model (fabricated D0) */
 static uint32_t g_min_a7;       /* lowest A7 (deepest stack pointer) reached this run */
 static uint32_t g_ninsns;       /* instructions executed in the last osh_run (perf profiling) */
+static uint64_t g_ncycles;      /* 68000 clock cycles executed in the last osh_run (perf profiling) */
 
 /* Service the trap the CPU jumped to (vec = 1/2/13/14). Reads the exception frame at A7,
  * services the OS call, and returns control to the caller with D0 set. Calls we faithfully
@@ -238,6 +239,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     g_dosound_n = 0;                      /* Dosound ledger = this run's XBIOS Dosound calls only */
     g_min_a7 = sp;                        /* deepest stack pointer (for exclude-band sanity checks) */
     uint32_t n = 0;
+    g_ncycles = 0;                                  /* 68000 cycle tally = this run's game code only */
     for (; n < max_insns; n++) {
         uint32_t pc = m68k_get_reg(0, M68K_REG_PC);
         if (pc == sentinel || (stop_pc && pc == stop_pc)) break;
@@ -248,7 +250,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
         else if (pc == MAGIC_XBIOS)  handle_trap(14);
         else if (pc == MAGIC_BIOS)   handle_trap(13);
         else if (pc == MAGIC_GEM)    handle_trap(2);
-        else                         m68k_execute(1);
+        else                         g_ncycles += (uint32_t)m68k_execute(1);   /* one insn; tally its cycles */
     }
     g_ninsns = n;                                   /* instruction count for perf profiling */
     out_regs[0] = m68k_get_reg(0, M68K_REG_D0);
@@ -266,11 +268,45 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     return final_pc == sentinel || (stop_pc && final_pc == stop_pc);
 }
 
+/* Benchmark a cross-compiled C function (our reconstruction, built to m68k and loaded into `mem` at
+ * its link addresses) — for comparing the reconstruction's on-target cycle cost against the original
+ * (osh_run). Unlike osh_run this installs NO OS-trap vectors: the target is pure computation over the
+ * image pointer, and those vectors sit inside the reconstruction's own .text (linked at base 0), so
+ * writing them would corrupt code. `arg0` is the single 32-bit C argument, placed at 4(sp) per the
+ * m68k SysV ABI; `sentinel` is the return address (an even PC outside the loaded code). Reports cycles
+ * + instructions via the shared osh_num_* getters. Returns 1 if it returned to the sentinel. */
+int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
+                  uint32_t sp, uint32_t sentinel, uint32_t max_insns, uint32_t *out_regs) {
+    g_mem = mem; g_size = size;
+    m68k_init();
+    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
+    m68k_pulse_reset();
+    m68k_set_reg(M68K_REG_A7, sp);
+    m68k_set_reg(M68K_REG_PC, entry);
+    m68k_write_memory_32(sp, sentinel);       /* return address: rts -> sentinel */
+    m68k_write_memory_32(sp + 4, arg0);       /* first C argument (the image pointer) */
+    g_min_a7 = sp;
+
+    uint32_t n = 0;
+    g_ncycles = 0;
+    for (; n < max_insns; n++) {
+        uint32_t pc = m68k_get_reg(0, M68K_REG_PC);
+        if (pc == sentinel) break;
+        uint32_t cur_a7 = m68k_get_reg(0, M68K_REG_A7);
+        if (cur_a7 < g_min_a7) g_min_a7 = cur_a7;
+        g_ncycles += (uint32_t)m68k_execute(1);
+    }
+    g_ninsns = n;
+    out_regs[0] = m68k_get_reg(0, M68K_REG_D0);
+    return m68k_get_reg(0, M68K_REG_PC) == sentinel;
+}
+
 uint32_t        osh_num_writes(void)  { return g_wn; }
 const uint32_t *osh_write_addrs(void) { return g_waddr; }
 uint32_t        osh_unmodeled(void)   { return g_unmodeled; }
 uint32_t        osh_min_a7(void)      { return g_min_a7; }
 uint32_t        osh_num_insns(void)   { return g_ninsns; }
+uint64_t        osh_num_cycles(void)  { return g_ncycles; }
 uint32_t        osh_psg_count(void)   { return g_psgn; }
 const uint8_t  *osh_psg_regs(void)    { return g_psg_reg; }
 const uint8_t  *osh_psg_vals(void)    { return g_psg_val; }

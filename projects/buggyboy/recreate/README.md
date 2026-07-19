@@ -100,6 +100,26 @@ make test PYTEST_ARGS=-n0                 # serial (e.g. to read a traceback cle
 make test 'PYTEST_ARGS=-n4 -k objshift'   # 4 workers, one subsystem
 ```
 
+### Benchmarking (why it's slower in Hatari)
+
+`make bench` (`tools/bench_frame.py`) ranks the in-race per-frame pipeline by **68000 cycle cost**,
+measured under Musashi — no Hatari needed. The oracle already steps one instruction at a time, so the
+shim now tallies each instruction's cycles (`osh_num_cycles`). It reports two figures on the same
+realistic mid-race frame: the **original** machine code (via `emu.run`) and our **reconstruction**
+cross-compiled to m68k (`render/atari/build/game.elf`, the exact code in `BUGGY.PRG`, loaded into a
+Musashi buffer and driven via `emu.run_bench`). The ratio is the compiler-efficiency gap per function.
+
+```bash
+bash render/atari/game_build.sh     # build the recon PRG first (else only the original is shown)
+make bench                          # leg 0, 60 warmup frames
+make bench BENCH_ARGS='2 100'       # leg 2, 100 warmup frames
+```
+
+Finding (stable across legs/frames): the reconstruction is **~2.1× slower** than the original —
+`draw_game_objects` and `render_road` dominate the absolute cost, while `blit_road_scroll` has the
+worst efficiency gap (~2.8×, a tight `move.l (a1)+,(a0)+` copy GCC doesn't match). That ~2.1× is why
+it runs slower on a stock ST; `hatari --cpuclock 16` covers it (see `render/atari/README.md`).
+
 ### Writing a fuzz test so it parallelizes
 
 A single `test_fuzz` that loops thousands of iterations is **one** test item — xdist can't split

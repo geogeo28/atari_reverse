@@ -32,6 +32,7 @@ _LIB.osh_write_addrs.restype = _u32p
 _LIB.osh_unmodeled.restype = ctypes.c_uint32
 _LIB.osh_min_a7.restype = ctypes.c_uint32
 _LIB.osh_num_insns.restype = ctypes.c_uint32
+_LIB.osh_num_cycles.restype = ctypes.c_uint64
 _u8p = ctypes.POINTER(ctypes.c_uint8)
 _LIB.osh_psg_count.restype = ctypes.c_uint32
 _LIB.osh_psg_regs.restype = _u8p
@@ -43,6 +44,29 @@ _LIB.osh_cov_visited.argtypes = [ctypes.c_uint32]
 _LIB.osh_cov_visited.restype = ctypes.c_int
 _LIB.osh_cov_data.restype = _u8p
 _LIB.osh_cov_bytes.restype = ctypes.c_uint32
+
+_LIB.osh_run_bench.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32,
+                               ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+                               _u32p]
+_LIB.osh_run_bench.restype = ctypes.c_int
+
+
+def run_bench(mem, entry, arg0, sp, sentinel, max_insns=16_000_000):
+    """Run a cross-compiled reconstruction function (our C built to m68k, loaded into ``mem`` at its
+    link addresses) at ``entry`` with one 32-bit stack argument ``arg0`` (the image pointer). No OS
+    traps are installed (see osh_run_bench). ``mem`` is a mutable bytearray already holding the loaded
+    recon code + data + the game-image state. Returns {reached, d0, ninsns, cycles}. For measuring the
+    reconstruction's own on-target cost, alongside the original's (emu.run)."""
+    size = len(mem)
+    buf = (ctypes.c_uint8 * size).from_buffer(mem)
+    out = (ctypes.c_uint32 * 4)()
+    reached = _LIB.osh_run_bench(buf, size, entry & 0xFFFFFFFF, arg0 & 0xFFFFFFFF,
+                                 sp & 0xFFFFFFFF, sentinel & 0xFFFFFFFF, max_insns, out)
+    if not reached:
+        raise RuntimeError(f"recon fn @ {entry:#x} did not return to the sentinel within "
+                           f"{max_insns} instructions")
+    return {"reached": True, "d0": out[0],
+            "ninsns": _LIB.osh_num_insns(), "cycles": _LIB.osh_num_cycles()}
 
 
 def cov_enable(on=True):
@@ -111,6 +135,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     out_regs = {"d0": out[0], "d1": out[1], "a0": out[2], "a1": out[3]}
     out_regs["min_a7"] = _LIB.osh_min_a7()   # deepest stack pointer; used to vet diff exclude bands
     out_regs["ninsns"] = _LIB.osh_num_insns()  # instructions executed (perf profiling)
+    out_regs["cycles"] = _LIB.osh_num_cycles()  # 68000 clock cycles executed (perf profiling)
     dn, dargs = _LIB.osh_dosound_count(), _LIB.osh_dosound_args()
     out_regs["dosound"] = [dargs[i] for i in range(dn)]  # ordered XBIOS Dosound(A0) list pointers
     return mem, writes, out_regs

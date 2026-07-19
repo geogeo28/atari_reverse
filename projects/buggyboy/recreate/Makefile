@@ -30,7 +30,7 @@ $(ORACLE): oracle/shim.c include/os.h $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $
 	  $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c oracle/shim.c \
 	  -o $(ORACLE)
 
-.PHONY: test clean venv
+.PHONY: test clean venv bench coverage-gap
 # Create the project venv and install the pinned Python deps (numpy, pyresidfp, pytest).
 venv:
 	python -m venv .venv
@@ -46,6 +46,12 @@ test: $(CAND) $(ORACLE)
 # fuzz-unreached sound/OS triggers the differential diff can't see. See tools/coverage_gap.py.
 coverage-gap: $(CAND) $(ORACLE)
 	$(PY) tools/coverage_gap.py
+
+# Rank the per-frame in-race pipeline by its cost on the original 68000 (Musashi cycle count) — which
+# function is the bottleneck. `make bench BENCH_ARGS='2 100'` picks leg/warmup. See tools/bench_frame.py.
+BENCH_ARGS ?=
+bench: $(CAND) $(ORACLE)
+	$(PY) tools/bench_frame.py $(BENCH_ARGS)
 
 clean:
 	rm -rf build $(GENDIR)/m68kmake $(GENDIR)/m68kops.* $(ORACLE)
