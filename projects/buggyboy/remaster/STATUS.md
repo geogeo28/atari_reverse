@@ -14,6 +14,7 @@ framebuffer → diff). Order follows the in-race draw order.
 | reference capture  | render pipeline @ `bench_frame` staging | ✅ deterministic | `test/capture_ref.py` — 4 golden frames, byte-stable |
 | adapter            | flat image → structs      | ✅ HUD scalars + assets | `test/adapter.py` — `HudState`/`HudAssets`/`Framebuffer` |
 | equivalence driver | per-subsystem framebuffer diff | ✅ footprint coverage + no-wrong-pixel | `test/equiv.py` |
+| glyph blitter (`text_body`) | `g_draw_hud_bar` / `g_draw_hud_gauge0` | ✅ verified | `test/test_text.py` — 960 fuzz cases, **byte-exact** (whole framebuffer) |
 | `draw_hud`         | `g_draw_hud`              | 🟡 phases 4/5/6a ported | `test/test_hud.py` — 5 cfgs, **0 wrong pixels**, ~18–48% footprint coverage |
 | `render_road`      | `g_render_road`           | ⬜ not started   | — |
 | `blit_road_scroll` | `g_blit_road_scroll`      | ⬜ not started   | — |
@@ -32,9 +33,9 @@ invariant (every byte the candidate paints matches recreate). Coverage → 100% 
 | 4 | flag-sequence bars | ✅ | scalar only |
 | 5 | colour-tinted bars | ✅ | `color_pairs` + mask/ink + cidx tables |
 | 6a | fuel/tacho gauge | ✅ | fuel-mask table |
-| 6b | blinking small gauge | ⬜ | glyph helpers (`draw_hud_gauge0`/`draw_hud_bar`) |
-| 7 | main gauge cluster + dashboard | ⬜ | glyph helpers + `draw_num` + `draw_dashboard` + `buf_c` |
-| 8 | crash fx | ⬜ | `add_score` + `draw_num` + bars |
+| 6b | blinking small gauge | ⬜ | glyph helper ✅ (`rm_glyph_run`) — ready to wire |
+| 7 | main gauge cluster + dashboard | ⬜ | glyph helper ✅; still needs cursor chaining + `draw_dashboard` + `buf_c` |
+| 8 | crash fx | ⬜ | `draw_num` + `add_score` + bars |
 
 ## Phase B — gameplay (later)
 
