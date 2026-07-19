@@ -266,8 +266,8 @@ void g_blit_road_scroll(uint8_t *image) {
 #define GROUND_BAND_STRIDE     8
 #define GROUND_ROW_LONGS       10        /* 10 * 16 bytes = one 160-byte scanline (dbf #9) */
 #define GROUND_SOLID_ROWS_M1     9       /* solid fill: 1 scanline */
-#define GROUND_SOLID_ROWS_M1_TOP 0x13    /* nearest entry (d4==0): 2 scanlines */
-#define GROUND_LIT_PLANES      0xffffffffu  /* lit ground row (d4>=9); moveq #$ff sign-extends */
+#define GROUND_SOLID_ROWS_M1_TOP 0x13    /* nearest entry (band==0): 2 scanlines */
+#define GROUND_LIT_PLANES      0xffffffffu  /* lit ground row (band>=9); moveq #$ff sign-extends */
 
 /* Base of the band in the draw buffer: buffer + the entry's offset word, indexed by the view col. */
 static uint32_t ground_dst(const uint8_t *image, uint32_t buffer, uint32_t col, uint16_t view) {
@@ -285,10 +285,10 @@ static uint32_t ground_row(uint8_t *image, uint32_t dst, uint32_t lo, uint32_t h
 }
 
 /* 0x1a: a colour gradient of (bands+1) scanlines, colours from the band record. */
-static void ground_gradient(uint8_t *image, uint32_t buffer, uint32_t col, uint16_t view, int d4) {
-    if (d4 >= 9) d4 = 6;
-    else if (d4 >= 5) d4 = 5;                 /* else keep d4 */
-    uint32_t rec = GROUND_BAND_RECORDS + (6 - d4) * GROUND_BAND_STRIDE;
+static void ground_gradient(uint8_t *image, uint32_t buffer, uint32_t col, uint16_t view, int band) {
+    if (band >= 9) band = 6;
+    else if (band >= 5) band = 5;             /* else keep band */
+    uint32_t rec = GROUND_BAND_RECORDS + (6 - band) * GROUND_BAND_STRIDE;
     uint32_t dst = ground_dst(image, buffer, col, view);
     int bands = image[rec++];                 /* dbf count */
     dst -= 2 * image[rec++];                  /* suba.w d2 twice */
@@ -299,10 +299,10 @@ static void ground_gradient(uint8_t *image, uint32_t buffer, uint32_t col, uint1
 }
 
 /* 0x1c: a solid fill; lit (planes set) when the entry is distant, else black. */
-static void ground_solid(uint8_t *image, uint32_t buffer, uint32_t col, uint16_t view, int d4) {
+static void ground_solid(uint8_t *image, uint32_t buffer, uint32_t col, uint16_t view, int band) {
     uint32_t dst = ground_dst(image, buffer, col, view);
-    uint32_t lo = (d4 >= 9) ? GROUND_LIT_PLANES : 0;
-    int rows_m1 = (d4 == 0) ? GROUND_SOLID_ROWS_M1_TOP : GROUND_SOLID_ROWS_M1;
+    uint32_t lo = (band >= 9) ? GROUND_LIT_PLANES : 0;
+    int rows_m1 = (band == 0) ? GROUND_SOLID_ROWS_M1_TOP : GROUND_SOLID_ROWS_M1;
     for (int r = 0; r <= rows_m1; r++) {
         wr32(image + dst, lo);     wr32(image + dst + 4, 0);
         wr32(image + dst + 8, lo); wr32(image + dst + 12, 0);
@@ -314,10 +314,10 @@ void g_draw_ground(uint8_t *image, uint32_t buffer) {
     uint32_t scan = A_ground_scan_tbl + 2;          /* a3: the descriptor's marker word */
     uint32_t col = GROUND_COL_OFFSETS;              /* a5 */
     uint16_t view = be16(image + A_ground_view_off);
-    for (int d4 = GROUND_SCAN_ENTRIES - 1; d4 >= 0; d4--, scan += GROUND_SCAN_STRIDE, col += GROUND_COL_STRIDE) {
+    for (int band = GROUND_SCAN_ENTRIES - 1; band >= 0; band--, scan += GROUND_SCAN_STRIDE, col += GROUND_COL_STRIDE) {
         uint8_t marker = (uint8_t)be16(image + scan);
-        if (marker == GROUND_MARK_GRADIENT) { ground_gradient(image, buffer, col, view, d4); return; }
-        if (marker == GROUND_MARK_SOLID)    { ground_solid(image, buffer, col, view, d4); return; }
+        if (marker == GROUND_MARK_GRADIENT) { ground_gradient(image, buffer, col, view, band); return; }
+        if (marker == GROUND_MARK_SOLID)    { ground_solid(image, buffer, col, view, band); return; }
     }
 }
 
@@ -710,15 +710,15 @@ static void rr_band_C_far_l2(rr_regs *r, uint32_t rows_m1) {
         /* L9822: place at the column; d3.w (width) tracks the reverse-fill extent. */
         dst += sign_ext16((uint16_t)col);
         int16_t width = col;
-        int16_t d0w = rr_wsub((uint16_t)col, (uint16_t)stride);   /* col - stride */
-        if (d0w >= 0 && rr_wsub((uint16_t)d0w, 8) >= 0) {
+        int16_t col_rem = rr_wsub((uint16_t)col, (uint16_t)stride);   /* col - stride */
+        if (col_rem >= 0 && rr_wsub((uint16_t)col_rem, 8) >= 0) {
             /* road spans the whole row: advance a2, reverse-fill (count - (rem-8)/8) pairs. */
-            d0w = rr_wsub((uint16_t)d0w, 8);
+            col_rem = rr_wsub((uint16_t)col_rem, 8);
             r->a2 += stride;
-            int16_t n = rr_wsub((uint16_t)count, (uint16_t)((uint16_t)d0w >> 3));
+            int16_t n = rr_wsub((uint16_t)count, (uint16_t)((uint16_t)col_rem >> 3));
             if (n >= 0) {
-                uint32_t a0 = r->a2, cnt = (uint16_t)n;
-                do { rr_fill_pair_rev(img, &a0, fill_lo, fill_hi); } while (rr_dbf(&cnt));
+                uint32_t shoulder = r->a2, cnt = (uint16_t)n;
+                do { rr_fill_pair_rev(img, &shoulder, fill_lo, fill_hi); } while (rr_dbf(&cnt));
             }
             if (!rr_dbf(&remaining)) break;
             continue;
@@ -726,16 +726,16 @@ static void rr_band_C_far_l2(rr_regs *r, uint32_t rows_m1) {
 
         /* Otherwise reach L984c with either: (a) col-stride < 0 -> L9846 clears d0 and copies 2
          * longs first; or (b) stride <= col < stride+8 -> straight in with d0 = col-stride-8. */
-        if (d0w < 0) {
-            d0w = 0;                                              /* L9846: moveq #0 */
+        if (col_rem < 0) {
+            col_rem = 0;                                         /* L9846: moveq #0 */
             rr_copy_long(img, &dst, &src); rr_copy_long(img, &dst, &src);
         } else {
-            d0w = rr_wsub((uint16_t)d0w, 8);
+            col_rem = rr_wsub((uint16_t)col_rem, 8);
         }
-        d0w = rr_wadd((uint16_t)d0w, 8);                          /* L984c */
+        col_rem = rr_wadd((uint16_t)col_rem, 8);                 /* L984c */
         rr_copy_long(img, &dst, &src); rr_copy_long(img, &dst, &src);
-        d0w = rr_wadd((uint16_t)d0w, 8);
-        dst -= sign_ext16((uint16_t)d0w);                        /* suba.w d0,a0 */
+        col_rem = rr_wadd((uint16_t)col_rem, 8);
+        dst -= sign_ext16((uint16_t)col_rem);                    /* suba.w d0,a0 */
 
         /* L9856: reverse-fill while the width stays >= 0 and the count hasn't underflowed. */
         uint32_t cnt = (uint16_t)count;
@@ -830,12 +830,12 @@ static void rr_band_A_shoulder_pattern(uint32_t ctrl, int center, uint32_t *lo, 
  * negative or the `count` (edge-table run length) is exhausted. */
 static void rr_band_A_shoulder_fill(uint8_t *img, uint32_t edge, int16_t width, uint32_t count,
                                     int16_t stride, uint32_t lo, uint32_t hi) {
-    uint32_t a0 = edge;
+    uint32_t shoulder = edge;
     for (;;) {
         width = rr_wsub((uint16_t)width, 8);
         if (width < 0) break;
-        if (rr_wsub((uint16_t)width, (uint16_t)stride) >= 0) a0 -= 8;   /* cell past the row: skip */
-        else rr_fill_pair_rev(img, &a0, lo, hi);
+        if (rr_wsub((uint16_t)width, (uint16_t)stride) >= 0) shoulder -= 8;   /* cell past the row: skip */
+        else rr_fill_pair_rev(img, &shoulder, lo, hi);
         if (!rr_dbf(&count)) break;
     }
 }
@@ -955,11 +955,11 @@ static void rr_band_A_l2(rr_regs *r) {
                 do { rr_fill_pair(img, &dst, fill_lo, fill_hi); } while (rr_dbf(&count));
             } else {                                               /* L92f6 narrow centre */
                 src += 8;
-                int16_t d0 = rr_wadd((uint16_t)col, 8);
-                if (d0 >= 0) { rr_copy_long(img, &dst, &src); rr_copy_long(img, &dst, &src); }
-                else         { d0 = rr_wadd((uint16_t)d0, 8); }
-                d0 = (int16_t)((int16_t)d0 >> 3);
-                uint32_t count = (uint16_t)((count_long & 0xffff) + (uint16_t)d0);
+                int16_t col_cells = rr_wadd((uint16_t)col, 8);
+                if (col_cells >= 0) { rr_copy_long(img, &dst, &src); rr_copy_long(img, &dst, &src); }
+                else                { col_cells = rr_wadd((uint16_t)col_cells, 8); }
+                col_cells = (int16_t)((int16_t)col_cells >> 3);
+                uint32_t count = (uint16_t)((count_long & 0xffff) + (uint16_t)col_cells);
                 if ((int16_t)count >= 0)
                     do { rr_fill_pair(img, &dst, fill_lo, fill_hi); } while (rr_dbf(&count));
             }
