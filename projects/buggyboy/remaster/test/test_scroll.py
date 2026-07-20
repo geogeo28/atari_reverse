@@ -24,7 +24,7 @@ POKES = [
 ]
 
 
-@pytest.mark.parametrize("leg,warmup", [(0, 60), (2, 90), (4, 60)])
+@pytest.mark.parametrize("leg,warmup", [(0, 60), (1, 60), (2, 90), (3, 75), (4, 60)])
 @pytest.mark.parametrize("pokes", POKES)
 def test_blit_road_scroll_matches(leg, warmup, pokes, capsys):
     lib = equiv._lib()

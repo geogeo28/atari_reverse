@@ -90,6 +90,18 @@ void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb
         }
     }
 
-    for (Offset off = 0; off < OBJ_ROAD_START_OFF; off += 4)
-        wr32(fb->px + off, ROAD_TOP_FILL);
+    /* Fill the area above the road band with the plane pattern. This is the bulk of the blit's cost
+     * (13 KB of a constant), so use a post-increment pointer unrolled 8x rather than an indexed
+     * `fb->px + off` loop (which GCC leaves as address-recompute + store per long). OBJ_ROAD_START_OFF
+     * is a multiple of 32, so no remainder. The asm barrier launders the constant into a register so
+     * the stores are `move.l dN,(a0)` (12 cyc) instead of `move.l #imm,(a0)` (20 cyc, operand refetched
+     * every store); it is a no-op on the host build. wr32 (not a raw store) keeps host byte order. */
+    uint8_t *p = fb->px, *end = fb->px + OBJ_ROAD_START_OFF;
+    Plane4 fill = ROAD_TOP_FILL;
+    __asm__("" : "+r"(fill));
+    while (p < end) {
+        wr32(p, fill);      wr32(p + 4, fill);  wr32(p + 8, fill);  wr32(p + 12, fill);
+        wr32(p + 16, fill); wr32(p + 20, fill); wr32(p + 24, fill); wr32(p + 28, fill);
+        p += 32;
+    }
 }
