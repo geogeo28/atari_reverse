@@ -20,7 +20,7 @@ framebuffer → diff). Order follows the in-race draw order.
 | on-target road+HUD | build_geometry+render_road+draw_hud | ✅ byte-identical on 68000 + interactive | `render/atari/DEMO.PRG` — first frame MATCHes recreate's ported pipeline; arrow keys steer live |
 | `render_road`      | `g_render_road`           | ✅ all 7 bands ported | `test/test_road.py` — **whole-framebuffer byte-exact** across legs 0–4 / warmup depths |
 | `build_road_geometry` | `g_build_road_geometry` | ✅ all 5 stages ported | `test/test_geometry.py` — control table + rendered road byte-exact under arbitrary steering (curve/view/near-slope) |
-| `blit_road_scroll` | `g_blit_road_scroll`      | ⬜ not started   | — |
+| `blit_road_scroll` | `g_blit_road_scroll`      | ✅ ported | `test/test_scroll.py` — whole-framebuffer + scroll-state byte-exact under arbitrary scroll (speed/pos/wrap) |
 | `draw_game_objects`| `g_draw_game_objects`     | ⬜ not started   | — |
 
 ### `draw_hud` phase ledger

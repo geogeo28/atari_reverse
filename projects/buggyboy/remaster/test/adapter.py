@@ -59,6 +59,14 @@ ROAD_PERSP_SEG_BYTES = 0x31                         # persp_seg_tbl length (PERS
 ROAD_WIDTH_SRC_BYTES = 14 * 0x20                    # 14 rows at stride 0x20
 ROAD_WIDTH_COUNT_BYTES = 0x40                       # 4 view banks of 16 run counts
 
+# ---- blit_road_scroll globals (mirror recreate/include/addrs.h) ----
+A_hscroll_step2 = 0x18cac                           # out: seg_head * scroll_speed * 2
+A_scroll_speed = 0x18cb4                            # signed horizontal scroll speed
+A_hscroll_pos = 0x18cb8                             # in/out: fine-scroll position, wrapped [0,0x280)
+A_screen_offset = 0x18d18                           # road-scroll offset into buf_c
+SCROLL_PLAY_BYTES = 0x1b00                          # playfield window from buf_c+screen_offset (>= reads)
+
+
 
 
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
@@ -158,6 +166,11 @@ class RoadSource(ctypes.Structure):
     _fields_ = [("persp_seg", ctypes.POINTER(ctypes.c_int8)),
                 ("width_src", ctypes.POINTER(ctypes.c_uint8)),
                 ("width_count", ctypes.POINTER(ctypes.c_uint8))]
+
+
+class ScrollState(ctypes.Structure):
+    _fields_ = [("seg_head", ctypes.c_int16), ("scroll_speed", ctypes.c_int16),
+                ("hscroll_pos", ctypes.c_uint16), ("hscroll_step2", ctypes.c_uint16)]
 
 
 def _i16(image, addr):
@@ -309,3 +322,20 @@ def road_source(image):
 def _i16b(b):
     """Reinterpret an unsigned byte as a signed int8 (for the persp_seg run-length table)."""
     return b - 0x100 if b & 0x80 else b
+
+
+def scroll_state(image):
+    """The dynamic scroll scalars blit_road_scroll reads, as a native ScrollState (step2 output zeroed)."""
+    def u16(addr):
+        return (image[addr] << 8) | image[addr + 1]
+    return ScrollState(_i16(image, A_road_seg_head), _i16(image, A_scroll_speed),
+                       u16(A_hscroll_pos), 0)
+
+
+def scroll_playfield(image):
+    """The double-wide road playfield window blit_road_scroll samples (buf_c + screen_offset), as a
+    ctypes array. Returns (ptr, keepalive)."""
+    buf_c = int.from_bytes(image[A_buf_c:A_buf_c + 4], "big")
+    off = buf_c + _i16(image, A_screen_offset)
+    play = (ctypes.c_uint8 * SCROLL_PLAY_BYTES)(*image[off:off + SCROLL_PLAY_BYTES])
+    return ctypes.cast(play, ctypes.POINTER(ctypes.c_uint8)), play

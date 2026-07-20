@@ -132,4 +132,21 @@ typedef struct {
  * seg_head / horizon_row / horizon_frac outputs. */
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, uint8_t *ctrl, uint8_t *scanline);
 
+/* ---- blit_road_scroll (the horizontal road fine-scroll @0x10326) ---- */
+
+/* Per-frame scroll state. seg_head (a build_road_geometry output) times scroll_speed advances the
+ * fine-scroll position each frame; hscroll_pos persists across frames (wrapped into [0, 0x280)).
+ * hscroll_step2 is written back (the doubled step other subsystems read). */
+typedef struct {
+    int16_t  seg_head;      /* road_seg_head (build_road_geometry output) */
+    int16_t  scroll_speed;  /* signed horizontal scroll speed */
+    uint16_t hscroll_pos;   /* in/out: fine-scroll position, wrapped into [0, 0x280) */
+    uint16_t hscroll_step2; /* out: seg_head * scroll_speed * 2 */
+} ScrollState;
+
+/* Fine-scroll the double-wide road playfield onto the screen's road band (rows 0..103): advance the
+ * scroll position, blit ROAD_ROWS scanlines of rotated 4-plane columns from `playfield` (which points
+ * at buf_c + screen_offset), then fill the area above the band. Updates the scroll state. */
+void rm_blit_road_scroll(ScrollState *s, const uint8_t *playfield, Framebuffer *fb);
+
 #endif /* RM_GAME_H */

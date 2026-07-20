@@ -41,6 +41,10 @@ def _lib():
                                            ctypes.POINTER(ctypes.c_uint8),
                                            ctypes.POINTER(ctypes.c_uint8)]
     lib.rm_build_road_geometry.restype = None
+    lib.rm_blit_road_scroll.argtypes = [ctypes.POINTER(adapter.ScrollState),
+                                        ctypes.POINTER(ctypes.c_uint8),
+                                        ctypes.POINTER(adapter.Framebuffer)]
+    lib.rm_blit_road_scroll.restype = None
     return lib
 
 
@@ -185,3 +189,30 @@ def compare_road_live(lib, image, pokes=None):
     cand_fb = bytes(fb.px)
 
     return sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
+
+
+def compare_scroll(lib, image, pokes=None):
+    """Poke the scroll scalars (scroll_speed / hscroll_pos), then run recreate's g_blit_road_scroll
+    (reference) and remaster's rm_blit_road_scroll (candidate) on the same background. Returns
+    (diff_bytes, scalars_ok): diff over the whole framebuffer, and whether the updated hscroll_pos /
+    hscroll_step2 match. blit_road_scroll owns rows 0..103 (disjoint from render_road), so a candidate
+    starting from the same background gives a strict whole-framebuffer check."""
+    state = bytearray(image)
+    for addr, val in (pokes or {}).items():
+        _w16(state, addr, val & 0xffff)
+    base = state[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    ref = bytearray(state)
+    _run_pipeline(ref, ("g_blit_road_scroll",))
+    ref_fb = ref[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+    ref_scalars = (_r16(ref, adapter.A_hscroll_pos), _r16(ref, adapter.A_hscroll_step2))
+
+    scroll = adapter.scroll_state(state)
+    playfield, _keep = adapter.scroll_playfield(state)
+    fb = adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)(*base))
+    lib.rm_blit_road_scroll(ctypes.byref(scroll), playfield, ctypes.byref(fb))
+    cand_fb = bytes(fb.px)
+    cand_scalars = (scroll.hscroll_pos & 0xffff, scroll.hscroll_step2 & 0xffff)
+
+    diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
+    return diff, (cand_scalars == ref_scalars)
