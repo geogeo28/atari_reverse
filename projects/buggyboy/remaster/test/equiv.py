@@ -63,6 +63,14 @@ def _lib():
     lib.rm_draw_object.argtypes = [ctypes.POINTER(adapter.ObjectInput),
                                    ctypes.POINTER(adapter.Framebuffer)]
     lib.rm_draw_object.restype = None
+    u8p = ctypes.POINTER(ctypes.c_uint8)
+    lib.rm_blit_objshift.argtypes = [u8p, ctypes.c_uint32, u8p, ctypes.c_uint32,
+                                     ctypes.c_uint16, ctypes.c_uint16, ctypes.c_uint16,
+                                     ctypes.c_int16, u8p, ctypes.c_int]
+    lib.rm_blit_objshift.restype = None
+    lib.rm_blit_objshift2.argtypes = [u8p, ctypes.c_uint32, u8p, ctypes.c_uint32,
+                                      ctypes.c_uint16, ctypes.c_uint16, ctypes.c_int]
+    lib.rm_blit_objshift2.restype = None
     return lib
 
 
@@ -377,3 +385,55 @@ def compare_object(lib, image):
     diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
     footprint = sum(1 for i in range(adapter.SCREEN_BYTES) if ref_fb[i] != base[i])
     return diff, footprint
+
+
+# ---- leaf fine-x blit engines (blit_objshift / blit_objshift2) ----
+# These write raw memory offsets (no framebuffer struct); recreate's fuzz stages a flat image and
+# calls the g_ entry with image addresses. We drive both sides from one flat staged buffer: recreate's
+# g_ engine (image-address ABI) as the reference, then the remaster engine on a fresh copy with the
+# SAME buffer as both dst and src (dst_off/src_off = the staged absolute addresses). A byte diff over
+# the whole buffer proves equivalence including the "draws nothing" clip cases.
+A_color_pairs = adapter.A_color_pairs
+
+
+def _flat_image():
+    return bytearray(bench_frame.IMAGE_SIZE)
+
+
+def _stage_noise(state, rng, spans):
+    for addr, n in spans:
+        state[addr:addr + n] = bytes(rng.randrange(256) for _ in range(n))
+
+
+def compare_objshift(lib, ref_name, remaster_call, regs, spans, seed):
+    """Differential for a leaf fine-x blit engine. `ref_name` is recreate's g_ entry; `regs` the
+    image-address arguments to call it with; `remaster_call(lib, buf_ptr)` invokes the remaster engine
+    on the ctypes buffer. `spans` = [(addr, nbytes)] noise regions to stage identically on both sides.
+    Returns the count of bytes that differ across the whole image."""
+    import random
+    rng = random.Random(seed)
+    base = _flat_image()
+    _stage_noise(base, rng, spans)
+
+    ref = bytearray(base)
+    fn = getattr(bench_frame.harness._lib, ref_name)
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8)] + [ctypes.c_uint32] * len(regs)
+    fn.restype = None
+    fn((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref), *regs)
+
+    cand = bytearray(base)
+    buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(cand)
+    remaster_call(lib, buf)
+
+    return _diff_over_spans(ref, cand, spans)
+
+
+def _diff_over_spans(ref, cand, spans):
+    """Count differing bytes only within the staged regions (the engines write inside the dst noise
+    span; scanning the whole 1 MB image per case is needlessly slow under xdist)."""
+    total = 0
+    for addr, n in spans:
+        for i in range(addr, addr + n):
+            if ref[i] != cand[i]:
+                total += 1
+    return total

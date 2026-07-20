@@ -273,4 +273,22 @@ typedef struct {
 
 void rm_draw_object(const ObjectInput *in, Framebuffer *fb);
 
+/* ---- fine-x (sub-pixel) masked sprite blit engines (the leaf writers under draw_object_list) ----
+ *
+ * Both shift a 16-pixel source column to an arbitrary pixel x so a sprite straddles two dest columns,
+ * walking one scanline up per row. `dst`/`dst_off` name the framebuffer target; `src`/`src_off` the
+ * sprite arena — separate buffers (remaster) where recreate threaded one flat image. */
+
+/* Colour-indexed engine (recreate's blit_objshift @0x14680): SHOW mask ~(A|B|C)&D over four planes,
+ * pixels gated by color_pairs[color]. `stride` is the per-row src-stride word; base_cells 1 / 2
+ * select the width family (0x98 / 0x90). */
+void rm_blit_objshift(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                      uint16_t x, uint16_t color, uint16_t rows_m1, int16_t stride,
+                      const uint8_t *color_pairs, int base_cells);
+
+/* Plain engine (recreate's blit_objshift2 @0x13ed6): SHOW mask ~(w0|w1), pixels copied plain-shifted
+ * and OR'd (no colour). width_idx 0/1/2 = base ceiling 0x88/0x90/0x98. */
+void rm_blit_objshift2(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                       uint16_t x, uint16_t rows_m1, int width_idx);
+
 #endif /* RM_GAME_H */
