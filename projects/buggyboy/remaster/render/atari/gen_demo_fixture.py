@@ -15,6 +15,7 @@ The demo renders remaster's own pipeline on a real 68000: each frame it runs rm_
 
 Only what remaster's C implements is drawn (road + HUD); there is no captured recreate game frame.
 """
+import ctypes
 import sys
 from pathlib import Path
 
@@ -30,6 +31,7 @@ import gen_hud_fixture as hud                      # noqa: E402  reuse the HUD a
 CONTROLS = {adapter.A_flag_seq_count: 3, adapter.A_crash_lap: 4,
             adapter.A_speed: 120, adapter.A_time_left: 45,
             adapter.A_crash_active: 0, adapter.A_hud_crash_timer: 0, adapter.A_dsp_toggle: 0}
+DEMO_START_SEGMENT = 40                            # skip leg 1's uniform-slope opening straight
 
 
 def main():
@@ -44,6 +46,20 @@ def main():
     equiv._w16(img, adapter.A_view_flags, 0)
     for addr, val in CONTROLS.items():
         equiv._w16(img, addr, val & 0xffff)
+
+    # Leg 1 opens with a long uniform-slope straight, so skip ahead (via the verified course advance)
+    # to where the segment profile varies — the road then visibly bends/straightens as you drive from
+    # the very first throttle instead of after several seconds of an unchanging opening.
+    lib = equiv._lib()
+    pose, cs = adapter.road_pose(img), adapter.course_state(img)
+    stream, _k = adapter.course_stream(img)
+    for _ in range(DEMO_START_SEGMENT):
+        lib.rm_road_course_advance(ctypes.byref(pose), ctypes.byref(cs), stream)
+    for i in range(13):
+        equiv._w16(img, adapter.A_road_seg_data + i * 2, pose.seg_data[i] & 0xffff)
+    equiv._w16(img, adapter.A_course_row_ctr, cs.row_ctr)
+    equiv._w16(img, adapter.A_course_read_pos, cs.read_pos)
+
     img[sb:sb + nb] = bytes(nb)                   # blank screen: draw only remaster's own pipeline
 
     # golden = recreate's full ported pipeline on the same pose + blank screen (byte-for-byte target).

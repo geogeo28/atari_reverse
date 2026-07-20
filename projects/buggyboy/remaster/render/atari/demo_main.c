@@ -58,7 +58,7 @@ void *memcpy(void *d, const void *s, unsigned long n) {
  * adds CURVE_STEP per press up to CURVE_MAX and self-centres by CURVE_DECAY each frame. */
 #define SPEED_STEP     2
 #define SPEED_MAX      0x20
-#define DIST_PER_SEG   0x40
+#define DIST_PER_SEG   0x18          /* smaller = the course (road bends) advances faster per speed */
 #define CURVE_STEP     0x60
 #define CURVE_MAX      0x1800
 #define CURVE_DECAY    0x30
