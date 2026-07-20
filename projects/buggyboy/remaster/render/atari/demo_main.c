@@ -2,13 +2,14 @@
  *
  * Each frame runs rm_build_road_geometry (from the current pose) -> rm_render_road ->
  * rm_blit_road_scroll (the scrolling near-road band + sky) -> rm_draw_hud, then blits to the screen.
- * Keys nudge the pose and redraw:
- *   Up           : throttle — advance the course (drive forward through the leg's authored track)
- *   Left / Right : road curvature (steer the road left/right)
+ * The demo auto-runs (paced by the vertical blank) with non-blocking input, so it drives itself:
+ *   Up / Down    : throttle up / brake (speed scrolls the road and advances the leg's course)
+ *   Left / Right : steer (road curvature; self-centres when released)
  *   Space        : cycle the view bank (0, 2, 4, 6)
  *   R            : reset the pose + course position;   Esc / Q : quit
- * The first frame (before any key) is dumped to C:\SCREEN.BIN so a headless run can byte-compare it to
- * recreate's g_build_road_geometry + g_render_road + g_blit_road_scroll + g_draw_hud (build/golden.bin).
+ * The first frame (speed 0, before any input) is dumped to C:\SCREEN.BIN so a headless run can
+ * byte-compare it to recreate's g_build_road_geometry + g_render_road + g_blit_road_scroll +
+ * g_draw_hud (build/golden.bin).
  * All inputs are baked by gen_demo_fixture.py; only what remaster's C implements is drawn. See README.
  */
 #include <stdint.h>
@@ -27,6 +28,8 @@ extern long Fcreate(const char *name, short attr);
 extern long Fwrite(short handle, long count, void *buf);
 extern long Fclose(short handle);
 extern long Cconin(void);
+extern long Cconis(void);        /* non-blocking: -1 if a key is waiting */
+extern void Vsync(void);
 extern long Physbase(void);
 extern void Setpalette(const void *pal16);
 
@@ -44,11 +47,21 @@ void *memcpy(void *d, const void *s, unsigned long n) {
 
 /* Keyboard scancodes (Cconin returns the scancode in bits 16..23, the ASCII char in the low byte). */
 #define SCAN_UP 0x48
+#define SCAN_DOWN 0x50
 #define SCAN_LEFT 0x4b
 #define SCAN_RIGHT 0x4d
 #define KEY_ESC 0x1b
-#define CURVE_STEP 0x0200            /* road_curve nudge per Left/Right press */
 #define VIEW_BANK_WRAP 8             /* view_flags cycles 0,2,4,6 (mod 8) */
+
+/* Driving feel. speed 0..SPEED_MAX; it both scrolls the road band (blit_road_scroll's scroll_speed)
+ * and, via a distance accumulator, advances the course one segment per DIST_PER_SEG units. Steering
+ * adds CURVE_STEP per press up to CURVE_MAX and self-centres by CURVE_DECAY each frame. */
+#define SPEED_STEP     2
+#define SPEED_MAX      0x20
+#define DIST_PER_SEG   0x40
+#define CURVE_STEP     0x60
+#define CURVE_MAX      0x1800
+#define CURVE_DECAY    0x30
 
 static Framebuffer fb __attribute__((aligned(2)));                       /* BSS: the 32000-byte draw buffer */
 static uint8_t ctrl[RM_CTRL_BYTES] __attribute__((aligned(2)));          /* BSS: per-frame control-long table */
@@ -107,27 +120,52 @@ void main(void) {
     Setpalette(fixture_palette);
     draw_frame(&pose, &src, &road, &scroll, fixture_road_play, &hud, &assets);
 
-    /* Dump the first frame so a headless run can byte-compare it to golden.bin. */
+    /* Dump the first frame (speed 0) so a headless run can byte-compare it to golden.bin. */
     long h = Fcreate("SCREEN.BIN", 0);
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, fb.px); Fclose((short)h); }
 
+    int speed = 0;                       /* current throttle */
+    int steering = 0;                    /* -1 / 0 / +1 this frame, from the arrow keys */
+    long dist = 0;                       /* distance accumulator: advances a segment each DIST_PER_SEG */
     for (;;) {
-        long k = Cconin();
-        int scan = (int)((k >> 16) & 0xff), ascii = (int)(k & 0xff);
-        if (ascii == KEY_ESC || ascii == 'q' || ascii == 'Q') break;
-        switch (scan) {
-            case SCAN_LEFT:  pose.curve = (int16_t)(pose.curve - CURVE_STEP); break;
-            case SCAN_RIGHT: pose.curve = (int16_t)(pose.curve + CURVE_STEP); break;
-            case SCAN_UP:    rm_road_course_advance(&pose, &course, stream); break;  /* throttle */
-            default:
-                if (ascii == ' ') pose.view_flags = (uint16_t)((pose.view_flags + 2) % VIEW_BANK_WRAP);
-                else if (ascii == 'r' || ascii == 'R') {
-                    pose.curve = ROAD_CURVE_INIT; pose.view_flags = ROAD_VIEW_FLAGS_INIT;
-                    course.row_ctr = COURSE_ROW_CTR_INIT; course.read_pos = COURSE_READ_POS_INIT;
-                    for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
-                }
-                break;
+        Vsync();                         /* pace to the 50 Hz vertical blank */
+
+        steering = 0;
+        while (Cconis()) {               /* drain all pending keys (non-blocking) */
+            long k = Cconin();
+            int scan = (int)((k >> 16) & 0xff), ascii = (int)(k & 0xff);
+            if (ascii == KEY_ESC || ascii == 'q' || ascii == 'Q') return;
+            switch (scan) {
+                case SCAN_UP:    speed += SPEED_STEP; if (speed > SPEED_MAX) speed = SPEED_MAX; break;
+                case SCAN_DOWN:  speed -= SPEED_STEP; if (speed < 0) speed = 0; break;
+                case SCAN_LEFT:  steering = -1; break;
+                case SCAN_RIGHT: steering = 1; break;
+                default:
+                    if (ascii == ' ')
+                        pose.view_flags = (uint16_t)((pose.view_flags + 2) % VIEW_BANK_WRAP);
+                    else if (ascii == 'r' || ascii == 'R') {
+                        pose.curve = ROAD_CURVE_INIT; pose.view_flags = ROAD_VIEW_FLAGS_INIT;
+                        course.row_ctr = COURSE_ROW_CTR_INIT; course.read_pos = COURSE_READ_POS_INIT;
+                        for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
+                        speed = 0; dist = 0;
+                    }
+                    break;
+            }
         }
+
+        /* steer: add toward the held direction (clamped), else decay back to centre. */
+        int curve = (int16_t)pose.curve;
+        if (steering < 0)      curve = (curve - CURVE_STEP < -CURVE_MAX) ? -CURVE_MAX : curve - CURVE_STEP;
+        else if (steering > 0) curve = (curve + CURVE_STEP >  CURVE_MAX) ?  CURVE_MAX : curve + CURVE_STEP;
+        else if (curve > 0)    curve = (curve < CURVE_DECAY) ? 0 : curve - CURVE_DECAY;
+        else if (curve < 0)    curve = (curve > -CURVE_DECAY) ? 0 : curve + CURVE_DECAY;
+        pose.curve = (int16_t)curve;
+
+        /* throttle: scroll the road band at `speed` and advance the course by the distance covered. */
+        scroll.scroll_speed = (int16_t)speed;
+        dist += speed;
+        while (dist >= DIST_PER_SEG) { rm_road_course_advance(&pose, &course, stream); dist -= DIST_PER_SEG; }
+
         draw_frame(&pose, &src, &road, &scroll, fixture_road_play, &hud, &assets);
     }
 }

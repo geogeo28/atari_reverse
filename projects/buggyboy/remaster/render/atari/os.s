@@ -56,6 +56,22 @@ Cconin:
     addq.l  #2,%sp
     rts
 
+| long Cconis(void)             GEMDOS 0x0b (non-blocking: -1 if a key is waiting, else 0)
+    .globl  Cconis
+Cconis:
+    move.w  #0x0b,-(%sp)
+    trap    #1
+    addq.l  #2,%sp
+    rts
+
+| void Vsync(void)              XBIOS 37 (wait for the next vertical blank)
+    .globl  Vsync
+Vsync:
+    move.w  #37,-(%sp)
+    trap    #14
+    addq.l  #2,%sp
+    rts
+
 | long Physbase(void)           XBIOS 2 (physical screen base)
     .globl  Physbase
 Physbase:
