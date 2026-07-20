@@ -24,4 +24,12 @@ Offset rm_glyph_run(Framebuffer *fb, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
                     const uint8_t *font, const uint8_t *str, Offset si,
                     uint16_t cells_m1, Offset *end_dst);
 
+/* Blit pre-rendered digit sprites (recreate's num_body @0x5ab6). Each string byte is a digit index;
+ * num_glyph_tbl gives its word byte-offset into the digit-sprite block `sprites` (a buf_c region).
+ * 15 rows/digit, one 4-plane cell wide; per row word0 = AND mask, word1 = ink, masked by the colour
+ * fill. Stops on a 0 byte or after cells_m1+1 cells. */
+void rm_num_run(Framebuffer *fb, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
+                const uint8_t *sprites, const uint8_t *num_glyph_tbl,
+                const uint8_t *str, Offset si, uint16_t cells_m1);
+
 #endif /* RM_TEXT_H */

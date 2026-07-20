@@ -12,6 +12,7 @@ import ctypes
 import random
 
 import adapter
+import equiv
 import pytest
 
 harness = adapter.harness
@@ -125,3 +126,39 @@ def test_glyph_run_matches_hud_gauge0(chunk):
         ref_fb = bytes(ref[SCREEN_BASE:SCREEN_BASE + SCREEN_BYTES])
         fill_lo, fill_hi = _color_fill(img, case["color"])
         assert _candidate(lib, img, case, fill_lo, fill_hi, case["cells_m1"]) == ref_fb
+
+
+# --- rm_num_run (digit-sprite blitter) vs recreate's g_draw_num ---
+A_num_glyph_tbl, NUM_GLYPH_BUF_OFF, A_buf_c = 0x17c5e, 0xbb80, 0x18c08
+NUM_TBL_BYTES, NUM_SPRITES_BYTES = 0x80, 0xb000   # window covers every digit sprite incl '/' (blank)
+NUM_STRINGS = [b"123456\x00", b"90\x00", b"/00100\x00", b"5\x00", b"246813\x00"]
+
+
+@pytest.mark.parametrize("digits", NUM_STRINGS)
+def test_num_run_matches_draw_num(digits):
+    lib = equiv._lib()
+    lib.rm_num_run.argtypes = [ctypes.POINTER(adapter.Framebuffer), ctypes.c_uint32,
+                               ctypes.c_uint32, ctypes.c_uint32,
+                               ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8),
+                               ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint16]
+    lib.rm_num_run.restype = None
+    img = equiv.hud_background(leg=0, controls={})          # staged: buf_c has the digit sprites
+    buf_c = int.from_bytes(img[A_buf_c:A_buf_c + 4], "big")
+    off, color, cells = 0x1000, 0xf, 0x13
+    img[STR_ADDR:STR_ADDR + len(digits)] = digits
+    # reference: recreate g_draw_num on a zeroed screen
+    ref = bytearray(img); ref[SCREEN_BASE:SCREEN_BASE + SCREEN_BYTES] = bytes(SCREEN_BYTES)
+    fn = harness._lib.g_draw_num
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8)] + [ctypes.c_uint32] * 4
+    fn.restype = None
+    # g_draw_num takes a buffer-RELATIVE dst (it adds draw_buffer == SCREEN_BASE internally).
+    fn((ctypes.c_uint8 * len(ref)).from_buffer(ref), off, color, cells, STR_ADDR)
+    ref_fb = bytes(ref[SCREEN_BASE:SCREEN_BASE + SCREEN_BYTES])
+    # candidate
+    sprites = (ctypes.c_uint8 * NUM_SPRITES_BYTES)(*img[buf_c + NUM_GLYPH_BUF_OFF:buf_c + NUM_GLYPH_BUF_OFF + NUM_SPRITES_BYTES])
+    tbl = (ctypes.c_uint8 * NUM_TBL_BYTES)(*img[A_num_glyph_tbl:A_num_glyph_tbl + NUM_TBL_BYTES])
+    s = (ctypes.c_uint8 * len(digits))(*digits)
+    fb = adapter.Framebuffer()
+    fl, fh = _color_fill(img, color)
+    lib.rm_num_run(ctypes.byref(fb), off, fl, fh, sprites, tbl, s, 0, cells)
+    assert bytes(fb.px) == ref_fb, f"digits={digits!r}"

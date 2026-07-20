@@ -12,6 +12,7 @@
 #define ROW_STRIDE      SCREEN_ROW_BYTES
 #define CELL_WIDTH      8       /* bytes to the next character cell (16 px, 4 planes) */
 #define LAST_HALF_GLYPH 0x2f    /* char2 substitute when the second byte is 0 ('/' -> blank) */
+#define NUM_CELL_ROWS   15      /* rows blitted per digit sprite */
 
 /* Pack two 1bpp glyph row words into a cell's (mask, ink): char1 -> high byte, char2 -> low byte. */
 static void glyph_pair(uint16_t g1, uint16_t g2, uint16_t *mask, uint16_t *ink) {
@@ -43,4 +44,20 @@ Offset rm_glyph_run(Framebuffer *fb, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
     }
     if (end_dst) *end_dst = dst;
     return si + 1;                                                   /* addq.l #1,a3 on both exits */
+}
+
+void rm_num_run(Framebuffer *fb, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
+                const uint8_t *sprites, const uint8_t *num_glyph_tbl,
+                const uint8_t *str, Offset si, uint16_t cells_m1) {
+    uint8_t *px = fb->px;
+    uint16_t remaining = cells_m1;
+    do {
+        uint8_t digit = str[si++];
+        if (digit == 0) return;
+        const uint8_t *src = sprites + be16(num_glyph_tbl + digit * 2);
+        Offset cell = dst;
+        for (int row = 0; row < NUM_CELL_ROWS; row++, cell += ROW_STRIDE, src += ROW_STRIDE)
+            cell_overlay(px, cell, dup16(be16(src)), dup16(be16(src + 2)), fill_lo, fill_hi);
+        dst += CELL_WIDTH;
+    } while (--remaining != 0xffff);
 }
