@@ -66,6 +66,17 @@ A_hscroll_pos = 0x18cb8                             # in/out: fine-scroll positi
 A_screen_offset = 0x18d18                           # road-scroll offset into buf_c
 SCROLL_PLAY_BYTES = 0x1b00                          # playfield window from buf_c+screen_offset (>= reads)
 
+# ---- course advance (game_update section 12 geometry) globals + stream (mirror addrs.h) ----
+A_buf_a = 0x18c00                                   # pointer: buffer a (holds the packed course streams)
+A_leg_index = 0x18c38                               # current leg (0-4)
+A_course_row_ctr = 0x18c52                          # course-record row countdown
+A_course_read_pos = 0x18c50                         # byte offset into the packed course stream
+COURSE_STREAM_OFF = 0x5ce0                          # leg_base + this: packed course record stream base
+COURSE_LEG_STRIDE = 0x2000                          # per-leg stride in buf_a
+COURSE_STREAM_PAD = 0x2000                          # window reaches this far BELOW the base (records grow down)
+COURSE_STREAM_BYTES = COURSE_STREAM_PAD + 0x10
+
+
 
 
 
@@ -171,6 +182,10 @@ class RoadSource(ctypes.Structure):
 class ScrollState(ctypes.Structure):
     _fields_ = [("seg_head", ctypes.c_int16), ("scroll_speed", ctypes.c_int16),
                 ("hscroll_pos", ctypes.c_uint16), ("hscroll_step2", ctypes.c_uint16)]
+
+
+class CourseState(ctypes.Structure):
+    _fields_ = [("row_ctr", ctypes.c_uint16), ("read_pos", ctypes.c_uint16)]
 
 
 def _i16(image, addr):
@@ -339,3 +354,21 @@ def scroll_playfield(image):
     off = buf_c + _i16(image, A_screen_offset)
     play = (ctypes.c_uint8 * SCROLL_PLAY_BYTES)(*image[off:off + SCROLL_PLAY_BYTES])
     return ctypes.cast(play, ctypes.POINTER(ctypes.c_uint8)), play
+
+
+def course_state(image):
+    """The course-progress scalars (row_ctr / read_pos) as a native CourseState."""
+    def u16(addr):
+        return (image[addr] << 8) | image[addr + 1]
+    return CourseState(u16(A_course_row_ctr), u16(A_course_read_pos))
+
+
+def course_stream(image):
+    """The current leg's packed course-record stream as a cursor-zero window: records live at
+    NEGATIVE offsets from the stream base (rec = base - read_pos), so extract the span below the base
+    and point at the base. Returns (ptr_at_base, keepalive)."""
+    buf_a = int.from_bytes(image[A_buf_a:A_buf_a + 4], "big")
+    leg = (image[A_leg_index] << 8) | image[A_leg_index + 1]
+    base = buf_a + leg * COURSE_LEG_STRIDE + COURSE_STREAM_OFF
+    window = (ctypes.c_uint8 * COURSE_STREAM_BYTES)(*image[base - COURSE_STREAM_PAD:base + 0x10])
+    return ctypes.cast(ctypes.byref(window, COURSE_STREAM_PAD), ctypes.POINTER(ctypes.c_uint8)), window

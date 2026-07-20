@@ -44,7 +44,8 @@ invariant (every byte the candidate paints matches recreate). Coverage → 100% 
 
 | Subsystem     | recreate reference | remaster status | Equivalence |
 |---------------|--------------------|-----------------|-------------|
-| `game_update` | `g_game_update`    | ⬜ not started   | — |
+| course advance (road geometry) | `g_game_update` §12 | ✅ segment scroll + record pull ported | `test/test_course.py` — seg_data / row_ctr / read_pos byte-exact over 40-frame drives, legs 0/1/2/4 |
+| `game_update` (rest) | `g_game_update` | ⬜ objects/events/collision/score not started | — |
 
 ## Perf target
 

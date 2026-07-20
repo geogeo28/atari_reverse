@@ -149,4 +149,20 @@ typedef struct {
  * at buf_c + screen_offset), then fill the area above the band. Updates the scroll state. */
 void rm_blit_road_scroll(ScrollState *s, const uint8_t *playfield, Framebuffer *fb);
 
+/* ---- course advance (the road-geometry part of game_update's section 12 @0x11xxx) ---- */
+
+/* Course-progress state: as the buggy drives forward, the road segment window (RoadPose.seg_data)
+ * scrolls up one slot per step and, when row_ctr underflows, the next packed course record's slope
+ * enters the window's tail — so the road's hills/curves follow the leg's authored track. This is the
+ * render-affecting subset of section 12 (segments only); objects/events/collision are separate. */
+typedef struct {
+    uint16_t row_ctr;    /* course-record row countdown (-8 per step; < 0 pulls the next record) */
+    uint16_t read_pos;   /* byte offset into the packed course stream ((+8) & 0x1ff8) */
+} CourseState;
+
+/* Advance the course one step. `stream` points at the leg's course-stream base; records lie at
+ * NEGATIVE offsets (rec = stream - read_pos). Shifts pose->seg_data up one slot and refills the tail
+ * (a pulled record's slope, or the previous slope), updating cs. Feed pose to rm_build_road_geometry. */
+void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stream);
+
 #endif /* RM_GAME_H */

@@ -45,6 +45,10 @@ def _lib():
                                         ctypes.POINTER(ctypes.c_uint8),
                                         ctypes.POINTER(adapter.Framebuffer)]
     lib.rm_blit_road_scroll.restype = None
+    lib.rm_road_course_advance.argtypes = [ctypes.POINTER(adapter.RoadPose),
+                                           ctypes.POINTER(adapter.CourseState),
+                                           ctypes.POINTER(ctypes.c_uint8)]
+    lib.rm_road_course_advance.restype = None
     return lib
 
 
@@ -216,3 +220,37 @@ def compare_scroll(lib, image, pokes=None):
 
     diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
     return diff, (cand_scalars == ref_scalars)
+
+
+def _seg_data(state):
+    return [_r16(state, adapter.A_road_seg_data + i * 2) for i in range(13)]
+
+
+def compare_course_drive(lib, image, frames=24):
+    """Drive `frames` course-advance steps and check the remaster course-advance tracks recreate's
+    game_update. Each frame: seed a native pose/course-state from the current image, run remaster's
+    rm_road_course_advance, then advance the reference image one frame via recreate's g_game_update
+    (forced into the section-12 course advance), and compare the road segment window + row_ctr /
+    read_pos. A match means the road geometry the renderer consumes evolves identically while driving.
+    Returns the count of mismatching frames (0 = perfect)."""
+    state = bytearray(image)
+    buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
+    bench_frame.harness._lib.g_game_update.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+    bench_frame.harness._lib.g_game_update.restype = None
+
+    mismatches = 0
+    for _ in range(frames):
+        pose = adapter.road_pose(state)
+        cs = adapter.course_state(state)
+        stream, _keep = adapter.course_stream(state)
+        lib.rm_road_course_advance(ctypes.byref(pose), ctypes.byref(cs), stream)
+        cand_seg = [pose.seg_data[i] & 0xffff for i in range(13)]
+        cand = (cand_seg, cs.row_ctr & 0xffff, cs.read_pos & 0xffff)
+
+        bench_frame._force_advance(state)
+        bench_frame.harness._lib.g_game_update(buf)
+        ref = (_seg_data(state), _r16(state, adapter.A_course_row_ctr),
+               _r16(state, adapter.A_course_read_pos))
+        if cand != ref:
+            mismatches += 1
+    return mismatches
