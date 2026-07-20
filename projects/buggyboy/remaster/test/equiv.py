@@ -56,6 +56,10 @@ def _lib():
                        ctypes.POINTER(adapter.SpriteAssets),
                        ctypes.POINTER(adapter.Framebuffer)]
         fn.restype = None
+    lib.rm_draw_ground.argtypes = [ctypes.POINTER(adapter.GroundState),
+                                   ctypes.POINTER(adapter.GroundAssets),
+                                   ctypes.POINTER(adapter.Framebuffer)]
+    lib.rm_draw_ground.restype = None
     return lib
 
 
@@ -296,3 +300,44 @@ def compare_sprite(lib, image, ref_fn, rm_fn, state_fn):
     cand_fb = bytes(fb.px)
 
     return sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
+
+
+def ground_background(leg=0, warmup=60, entry=None, marker=None, view=None):
+    """A mid-race image with the road drawn (the frame draw_ground fills over) and, optionally, a
+    draw marker poked into descriptor `entry` so draw_ground actually fires (the staged frames usually
+    carry none). Returns the image bytearray."""
+    state = bench_frame.mid_race_state(leg, warmup)
+    _run_pipeline(state, ("g_render_road", "g_blit_road_scroll"))
+    if entry is not None and marker is not None:
+        state[adapter.A_ground_scan_tbl + entry * adapter.GROUND_SCAN_STRIDE
+              + adapter.GROUND_MARKER_OFF] = marker
+    if view is not None:
+        _w16(state, adapter.A_ground_view_off, view & 0xffff)
+    return state
+
+
+def compare_ground(lib, image):
+    """Run recreate's g_draw_ground (reference) and remaster's rm_draw_ground (candidate) on the same
+    background and diff the whole framebuffer. Returns (diff_bytes, footprint)."""
+    base = image[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    # g_draw_ground(image, buffer) takes the draw buffer explicitly; derive it from flip_idx/physbase
+    # (== SCREEN_BASE in the staged frames) and bind the two-arg signature.
+    ref = bytearray(image)
+    flip = _r16(ref, adapter.A_flip_idx)
+    buffer = int.from_bytes(ref[adapter.A_physbase_tbl + flip:adapter.A_physbase_tbl + flip + 4], "big")
+    fn = bench_frame.harness._lib.g_draw_ground
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+    fn.restype = None
+    fn((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref), buffer)
+    ref_fb = ref[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    s = adapter.ground_state(image)
+    assets, _keep = adapter.ground_assets(image)
+    fb = adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)(*base))
+    lib.rm_draw_ground(ctypes.byref(s), ctypes.byref(assets), ctypes.byref(fb))
+    cand_fb = bytes(fb.px)
+
+    diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
+    footprint = sum(1 for i in range(adapter.SCREEN_BYTES) if ref_fb[i] != base[i])
+    return diff, footprint

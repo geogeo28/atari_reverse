@@ -230,4 +230,31 @@ void rm_draw_fg_sprite(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
  * Advances s->lean_accum / s->lean_frame and writes s->variant. */
 void rm_draw_buggy(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
 
+/* ---- ground / horizon band (draw_ground @0x10ff2) ---- */
+
+#define GROUND_SCAN_ENTRIES 13    /* scanline descriptors scanned for the first draw marker */
+
+/* Per-frame ground/horizon inputs. draw_ground scans `markers` (recreate reads the marker byte at
+ * +3 of each 0x20-stride descriptor) for the first 0x1a (colour gradient) or 0x1c (solid fill) and
+ * draws that one band; `view` is the column index into the per-entry offset table. Entry i selects
+ * band (GROUND_SCAN_ENTRIES-1 - i), so markers[0] is the farthest band. */
+typedef struct {
+    uint8_t  markers[GROUND_SCAN_ENTRIES];  /* per-entry draw marker (0x1a gradient / 0x1c solid) */
+    int16_t  view;                          /* signed column index into the per-entry offset table */
+} GroundState;
+
+/* Static ground asset tables (STATIC region + colour palette, ST big-endian bytes). col_tbl holds
+ * one signed word draw-buffer offset per entry (stride GROUND_COL_STRIDE), indexed by `view`;
+ * band_records are the 0x1a gradient descriptors [bands-1, backup, colours...]; color_pairs is the
+ * 4-plane solid fill per colour index. */
+typedef struct {
+    const uint8_t *col_tbl;       /* per-entry buffer offset words (stride GROUND_COL_STRIDE) + view */
+    const uint8_t *band_records;  /* gradient records: {bands-1:b, backup:b, colour bytes...} stride 8 */
+    const uint8_t *color_pairs;   /* 4-plane (8-byte) solid fill per colour index */
+} GroundAssets;
+
+/* Fill the first ground/horizon band whose descriptor carries a draw marker (a colour gradient or a
+ * solid fill), into the draw buffer. No-op when no entry carries one. */
+void rm_draw_ground(const GroundState *s, const GroundAssets *a, Framebuffer *fb);
+
 #endif /* RM_GAME_H */

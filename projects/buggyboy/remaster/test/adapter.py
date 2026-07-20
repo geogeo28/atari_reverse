@@ -20,6 +20,10 @@ import render_screen as R                         # noqa: E402  SCREEN_BASE + bu
 SCREEN_BASE = R.SCREEN_BASE
 SCREEN_BYTES = R.ROW_STRIDE * R.H                 # 32000
 
+# draw-buffer selection: physbase_tbl indexed by the (word) flip_idx (mirror recreate/draw.h).
+A_flip_idx = 0x18bf2
+A_physbase_tbl = 0x18bf4
+
 # ---- recreate globals the HUD reads (mirror recreate/include/addrs.h) ----
 A_flag_seq_count, A_flag_seq_off = 0x18c48, 0x18c40
 A_dsp_color_scroll, A_crash_lap = 0x18d06, 0x18c4a
@@ -109,6 +113,19 @@ A_lo_piece_idx = 0x1773c                           # per-wheel_pos word offset i
 SP_TBL_BASE = A_hi_tbl                             # lowest of the four tables
 SP_TBL_BYTES = 0x400                               # covers hi/lo/fg/body tables (0x17554..0x17938)
 SP_GFX_BYTES = 0x3b000                             # buf_c graphics arena span the sprites index into
+
+
+# ---- ground / horizon band globals + const tables (mirror addrs.h + src/road.c) ----
+A_ground_scan_tbl = 0x18d48                         # 13 descriptors, stride 0x20; marker byte at +3
+A_ground_view_off = 0x18c58                         # signed view column into the ground offset table
+A_ground_col_tbl = 0x16a6e                          # per-entry buffer offset words (stride 0x22) + view
+A_ground_band_records = 0x172ea                     # 0x1a gradient records, stride 8
+GROUND_SCAN_ENTRIES = 13
+GROUND_SCAN_STRIDE = 0x20
+GROUND_MARKER_OFF = 3                               # marker byte within each descriptor
+GROUND_COL_TBL_BYTES = 0x800                        # covers 13 entries (stride 0x22) + max view (6*0xdd)
+GROUND_BAND_RECORDS_BYTES = 0x40                   # 7 gradient records; rec6 (bands=7) reads 8 colours,
+#                                                    past its 8-byte slot into the following bytes
 
 
 
@@ -242,6 +259,16 @@ class SpriteAssets(ctypes.Structure):
                 ("hi_tbl", ctypes.POINTER(ctypes.c_uint8)),
                 ("lo_piece_tbl", ctypes.POINTER(ctypes.c_uint8)),
                 ("lo_piece_idx", ctypes.POINTER(ctypes.c_uint8))]
+
+
+class GroundState(ctypes.Structure):
+    _fields_ = [("markers", ctypes.c_uint8 * GROUND_SCAN_ENTRIES), ("view", ctypes.c_int16)]
+
+
+class GroundAssets(ctypes.Structure):
+    _fields_ = [("col_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("band_records", ctypes.POINTER(ctypes.c_uint8)),
+                ("color_pairs", ctypes.POINTER(ctypes.c_uint8))]
 
 
 def _i16(image, addr):
@@ -465,3 +492,26 @@ def sprite_assets(image):
         at(A_fg_anim_tbl), at(A_body_tbl), at(A_hi_tbl),
         at(A_lo_piece_tbl), at(A_lo_piece_idx))
     return assets, (gfx, tbl)
+
+
+def ground_state(image):
+    """The per-frame ground/horizon scalars as a native GroundState: the 13 descriptor markers
+    (recreate reads the marker byte at +3 of each 0x20-stride descriptor) and the view column."""
+    markers = (ctypes.c_uint8 * GROUND_SCAN_ENTRIES)(
+        *(image[A_ground_scan_tbl + i * GROUND_SCAN_STRIDE + GROUND_MARKER_OFF]
+          for i in range(GROUND_SCAN_ENTRIES)))
+    return GroundState(markers, _i16(image, A_ground_view_off))
+
+
+def ground_assets(image):
+    """The static ground asset tables as a native GroundAssets. Returns (assets, keepalive)."""
+    def buf(addr, n):
+        return (ctypes.c_uint8 * n)(*image[addr:addr + n])
+
+    col_tbl = buf(A_ground_col_tbl, GROUND_COL_TBL_BYTES)
+    band_records = buf(A_ground_band_records, GROUND_BAND_RECORDS_BYTES)
+    color_pairs = buf(A_color_pairs, COLOR_PAIRS_BYTES)
+    p = ctypes.POINTER(ctypes.c_uint8)
+    assets = GroundAssets(ctypes.cast(col_tbl, p), ctypes.cast(band_records, p),
+                          ctypes.cast(color_pairs, p))
+    return assets, (col_tbl, band_records, color_pairs)
