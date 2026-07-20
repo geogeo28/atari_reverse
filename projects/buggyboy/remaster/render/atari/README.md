@@ -69,9 +69,12 @@ any key) against it — a **MATCH** proves the whole ported pipeline is pixel-id
 The steering and forward course-advance are validated on the host (`test/test_geometry.py`,
 `test/test_course.py`) for arbitrary state.
 
-Scope note: the throttle advances leg 1's *elevation/segment profile* (`seg_data`) and its authored
-segment slopes; the course's automatic left/right curve events are part of `game_update`'s event
-dispatch (not yet ported), so left/right curvature is driven by manual steering for now.
+Scope note: the throttle scrolls the course's authored **segment slopes** (`seg_data`) through the
+geometry builder, and `build_road_geometry` integrates them into the per-row road offset — so the
+road's **left/right curvature bends on its own** as you drive leg 1 (e.g. its opening left curve
+straightening out further along). Manual steering (`road_curve`) simply adds a player offset on top.
+Not modelled: the discrete `road_curve += ±0x3c` bonus/spin-display events and the collision/object
+machinery in `game_update`'s event dispatch — those are effects, not the road's authored shape.
 
 The alignment gotcha: the cores read the baked tables with `be16`/`be32` (word/long moves), which
 fault on an odd address on the 68000, so the fixture arrays and the BSS scratch are `aligned(2)`.
