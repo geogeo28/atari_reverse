@@ -29,6 +29,8 @@ against the Musashi oracle, so this closes the loop end to end.)
 | `build.sh`           | generate fixture → cross-compile `hud.c`+`text.c`+shim → `.PRG` → stage `disk/` |
 | `run_hatari.py`      | headless: run the `.PRG`, byte-compare `SCREEN.BIN` vs `golden.bin`, write a PNG |
 | `run.sh`             | interactive: watch it in the Hatari GUI |
+| `gen_demo_fixture.py` / `demo_main.c` | the interactive road + HUD demo (below): fixture + TOS shim with the steer loop |
+| `build_demo.sh` / `run_demo.py` | build/verify `DEMO.PRG` (geometry + road + HUD cores) |
 
 ## Use
 
@@ -42,8 +44,31 @@ bash render/atari/run.sh                   # watch it in Hatari (press a key in 
 
 Hatari needs a 4 MiB machine (`--memsize 4`); `build/` and `disk/` are gitignored build artifacts.
 
+## Interactive road + HUD demo (`DEMO.PRG`)
+
+Now that `render_road` and `build_road_geometry` are ported, a second demo drives remaster's **whole
+road + HUD pipeline** on the 68000 and lets you **steer the road live**. Each frame it runs
+`rm_build_road_geometry` (from the current pose) → `rm_render_road` → `rm_draw_hud` and blits.
+
+```bash
+bash render/atari/build_demo.sh            # -> build/DEMO.PRG + disk/DEMO.PRG
+python render/atari/run_demo.py            # headless: prints MATCH, writes out/render/remaster_road_hud_hatari.png
+hatari --memsize 4 --tos-res low --harddrive render/atari/disk --auto 'C:\DEMO.PRG'   # play it
+```
+
+Controls: **←/→** steer (road curvature), **↑/↓** crest/dip the near slope, **Space** cycles the view
+bank, **R** resets, **Esc/Q** quits. `gen_demo_fixture.py` bakes the render_road static tables
+(param/edge/texture), the geometry const sources, the initial pose and the HUD assets into
+`build/demo_fixture.h`, plus `golden.bin` (recreate's `g_build_road_geometry` + `g_render_road` +
+`g_draw_hud` for the same pose). `run_demo.py` byte-compares the demo's first frame (before any key)
+against it — a **MATCH** proves the whole ported pipeline is pixel-identical on a real 68000. The
+steering itself is validated on the host (`test/test_geometry.py`) for arbitrary curve/view/slope.
+
+The alignment gotcha: the cores read the baked tables with `be16`/`be32` (word/long moves), which
+fault on an odd address on the 68000, so the fixture arrays and the BSS scratch are `aligned(2)`.
+
 ## Scope
 
-Only the HUD is remaster's own rendering, drawn over a **blank screen** — no captured game frame.
-Phase 8 (crash fx) is gated off. As more of the pipeline is ported (road, objects), this harness
-extends to render whole frames.
+Only remaster's own rendering is drawn, over a **blank screen** — no captured game frame. The HUD
+demo (`HUD.PRG`) is HUD-only; the road demo (`DEMO.PRG`) adds the road surface and live steering.
+As more of the pipeline is ported (road scroll, objects), this harness extends toward whole frames.
