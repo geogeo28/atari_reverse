@@ -34,22 +34,19 @@ CONTROLS = {adapter.A_flag_seq_count: 3, adapter.A_crash_lap: 4,
 DEMO_START_SEGMENT = 40                            # skip leg 1's uniform-slope opening straight
 
 
-def main():
-    build = HERE / "build"
-    build.mkdir(exist_ok=True)
-    sb, nb = adapter.SCREEN_BASE, adapter.SCREEN_BYTES
-
-    # A real mid-race frame on leg 1: geometry tables built, a plausible pose. Poke the HUD scalars,
-    # and force a valid view bank (mid_race staging leaves view_flags at the section-12 trigger
-    # value 0x10, which is not a real 0/2/4/6 view; build_road_geometry needs a real bank).
+def staged_image():
+    """The demo's starting leg-1 image: geometry built, a valid view bank, HUD scalars poked, and the
+    course advanced past leg 1's uniform-slope opening. Shared by the fixture baking and the perf
+    bench so both measure the SAME frame. Screen is left as staged (caller blanks if needed)."""
+    # mid_race staging leaves view_flags at the section-12 trigger value 0x10, which is not a real
+    # 0/2/4/6 view; build_road_geometry needs a real bank.
     img = equiv.road_background(leg=1, warmup=60)
     equiv._w16(img, adapter.A_view_flags, 0)
     for addr, val in CONTROLS.items():
         equiv._w16(img, addr, val & 0xffff)
 
-    # Leg 1 opens with a long uniform-slope straight, so skip ahead (via the verified course advance)
-    # to where the segment profile varies — the road then visibly bends/straightens as you drive from
-    # the very first throttle instead of after several seconds of an unchanging opening.
+    # Skip ahead (via the verified course advance) to where the segment profile varies, so the road
+    # visibly bends/straightens from the first throttle instead of after an unchanging opening.
     lib = equiv._lib()
     pose, cs = adapter.road_pose(img), adapter.course_state(img)
     stream, _k = adapter.course_stream(img)
@@ -59,7 +56,15 @@ def main():
         equiv._w16(img, adapter.A_road_seg_data + i * 2, pose.seg_data[i] & 0xffff)
     equiv._w16(img, adapter.A_course_row_ctr, cs.row_ctr)
     equiv._w16(img, adapter.A_course_read_pos, cs.read_pos)
+    return img
 
+
+def main():
+    build = HERE / "build"
+    build.mkdir(exist_ok=True)
+    sb, nb = adapter.SCREEN_BASE, adapter.SCREEN_BYTES
+
+    img = staged_image()
     img[sb:sb + nb] = bytes(nb)                   # blank screen: draw only remaster's own pipeline
 
     # golden = recreate's full ported pipeline on the same pose + blank screen (byte-for-byte target).

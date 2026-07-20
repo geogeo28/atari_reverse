@@ -47,8 +47,28 @@ invariant (every byte the candidate paints matches recreate). Coverage → 100% 
 | course advance (road geometry) | `g_game_update` §12 | ✅ segment scroll + record pull ported | `test/test_course.py` — seg_data / row_ctr / read_pos byte-exact over 40-frame drives, legs 0/1/2/4 |
 | `game_update` (rest) | `g_game_update` | ⬜ objects/events/collision/score not started | — |
 
-## Perf target
+## Perf
 
-Baseline gap to close (from `recreate/`'s perf analysis): recon ~2.1× the original on-target, worst
-on the road copy (`blit_road_scroll` ~2.8×, the per-word variable-count `rol`). `tools/bench.py`
-measures remaster vs both original and recon per frame.
+`tools/bench.py` measures each render core's per-frame cost on the cycle-accurate Musashi 68000 —
+remaster (native structs, via the `bench_*` wrappers) vs recreate's recon (flat image) — on the same
+staged leg-1 frame. Build first: `bash render/atari/bench_build.sh`.
+
+Current (8 MHz ST, 160000-cycle frame budget), remaster **0.96× the recon** overall — on par or ahead:
+
+| stage | remaster ms | recon ms | rm/rec |
+|-------|-------------|----------|--------|
+| build_road_geometry | 3.87 | 3.91 | 0.99× |
+| render_road | 49.84 | 54.86 | **0.91×** |
+| blit_road_scroll | 33.47 | 33.55 | 1.00× |
+| draw_hud | 18.53 | 18.27 | 1.01× |
+
+`render_road` also beats the byte-exact **machine model** (`g_render_road_machine`, 56.18 ms → 0.89×):
+GCC optimises the idiomatic/native-pointer C better than the hand-threaded register/goto transcription.
+
+Key gotcha: the cores **must be built `-O2`, not `-Os`** — at `-Os` GCC won't inline the hot blit
+primitives (`rr_copy_long`/`rr_fill_pair`), and the per-column call overhead ~doubles the render cost
+(measured 1.94× the recon before the flag was fixed). The on-target builds now use `-O2`.
+
+The full pipeline is still ~105 ms/frame (~10 fps) — on par with recon but far over the 20 ms vblank;
+this is algorithmic, not codegen. Beating it (vs the original, ~2.1× faster than recon) needs
+precomputed rotates / a road display list. See [[buggyboy-perf-fast-track]].
