@@ -71,6 +71,7 @@ test/      capture_ref.py (golden framebuffers from recreate)  equiv.py (candida
 tools/     bench.py (cycles vs original + vs recreate, extends recreate/tools/bench_frame.py)
 Makefile   build the host lib + run equivalence tests + bench
 STATUS.md  per-subsystem progress vs recreate
+PORTING.md how to continue the port — recipe, conventions, gotchas (read this to pick up the work)
 ```
 
 ## Relationship to `recreate/`
