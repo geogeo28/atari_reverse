@@ -4,8 +4,11 @@ For anyone (human or agent) picking up `remaster/`. Read [`README.md`](README.md
 *contract* (pixel-identical to `recreate/` per frame) and [`STATUS.md`](STATUS.md) for *what's done*.
 This doc is the *how*: the recipe, the conventions, and the traps.
 
-`draw_hud` (all 8 phases) is ported and verified on host + on a real 68000. The next targets are the
-render-pipeline stages listed in STATUS: `render_road`, `blit_road_scroll`, `draw_game_objects`.
+`draw_hud` (all 8 phases) is ported and verified on host + on a real 68000. The render pipeline is now
+complete: `render_road`, `blit_road_scroll`, `build_road_geometry`, and the whole `draw_game_objects`
+tree (`draw_ground`, the buggy/foreground sprites, `draw_object`, the fine-x blit engines, the
+`draw_object_list` dispatcher, and the prefix/orchestrator) are all byte-exact vs `recreate/`. Phase B
+(gameplay: objects/events/collision/score in `game_update`) is the next frontier — see STATUS.
 
 ## Commands
 
