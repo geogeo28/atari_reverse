@@ -17,7 +17,7 @@ framebuffer → diff). Order follows the in-race draw order.
 | glyph blitter (`text_body`) | `g_draw_hud_bar` / `g_draw_hud_gauge0` | ✅ verified | `test/test_text.py` — 960 fuzz cases, **byte-exact** (whole framebuffer) |
 | `draw_hud`         | `g_draw_hud`              | ✅ all 8 phases ported | `test/test_hud.py` — **100% footprint, 0 wrong pixels** across HUD configs, all 8 dsp variants, 6b blink phases, and the crash-fx drain paths |
 | on-target (Hatari) | `g_draw_hud` frame        | ✅ byte-identical on 68000 | `render/atari/` — HUD-only PRG dump MATCHes recreate's g_draw_hud (blank screen) |
-| `render_road`      | `g_render_road`           | ⬜ not started   | — |
+| `render_road`      | `g_render_road`           | ✅ all 7 bands ported | `test/test_road.py` — **whole-framebuffer byte-exact** across legs 0–4 / warmup depths |
 | `blit_road_scroll` | `g_blit_road_scroll`      | ⬜ not started   | — |
 | `draw_game_objects`| `g_draw_game_objects`     | ⬜ not started   | — |
 

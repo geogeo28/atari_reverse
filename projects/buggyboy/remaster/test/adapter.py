@@ -29,6 +29,15 @@ A_dsp_variant_idx = 0x18c7e
 A_gauge_blink, A_gauge_blink_on = 0x18d02, 0x18d04
 A_crash_frame, A_crash_bars = 0x18c78, 0x18d00
 
+# ---- render_road globals + geometry tables (mirror recreate/include/road_bands.h + addrs.h) ----
+A_road_width_tbl = 0x18f24                        # per-scanline control longs (reset per band group)
+A_road_param = 0x1623a                            # monotonic perspective/edge-seed/count word stream
+A_road_edge_base = 0x15c3a                        # edge-run word table base (road_edge_sel added)
+A_road_edge_sel = 0x18c5a                         # signed word added to the edge-table base
+A_road_edge_const = 0x15b7a                       # three const edge-texture strips (STATIC region)
+A_buf_b = 0x18c04                                 # pointer: road-texture (buf_b) base
+
+
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
 A_color_pairs = 0x15afa                           # 16 colours x 8-byte fill
 A_color_bar_mask = 0x17d14                        # phase-5 {mask,ink} stream (5 cols x 12 rows x 4B)
@@ -62,6 +71,17 @@ SCORE_DELTA_BYTES = 6
 CIDX_ZERO_OFF = 0x200                             # window is [-0x200, +0x200) around the cursor base
 CIDX_WINDOW_BYTES = 2 * CIDX_ZERO_OFF
 
+# ---- render_road window sizes (see road_input) ----
+ROAD_WIDTH_TBL_BYTES = 0x200                       # >= the 96 control longs any one band group reads
+ROAD_PARAM_BYTES = 0x2000                          # >= the words the monotonic param cursor consumes
+ROAD_EDGE_PAD = 0x400                              # edge cursor walks +/- this around base+sel
+ROAD_EDGE_WINDOW_BYTES = 2 * ROAD_EDGE_PAD
+ROAD_CONST_BYTES = 0x60                            # covers the three const strips + their longs
+ROAD_TEX_PAD_LO = 0x4000                           # slack below buf_b for negative perspective seeds
+ROAD_TEX_HI = 0x10000                              # above buf_b: group steps + src deltas + edge masks
+ROAD_TEX_WINDOW_BYTES = ROAD_TEX_PAD_LO + ROAD_TEX_HI
+
+
 
 class HudState(ctypes.Structure):
     _fields_ = [("flag_seq_count", ctypes.c_int16), ("flag_seq_off", ctypes.c_int16),
@@ -94,6 +114,14 @@ class HudAssets(ctypes.Structure):
 
 class Framebuffer(ctypes.Structure):
     _fields_ = [("px", ctypes.c_uint8 * SCREEN_BYTES)]
+
+
+class RoadInput(ctypes.Structure):
+    _fields_ = [("width_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("param", ctypes.POINTER(ctypes.c_uint8)),
+                ("edge_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("tex", ctypes.POINTER(ctypes.c_uint8)),
+                ("edge_const", ctypes.POINTER(ctypes.c_uint8))]
 
 
 def _i16(image, addr):
@@ -183,3 +211,39 @@ def hud_assets(image):
 def framebuffer(image):
     """The current draw buffer (SCREEN_BASE..+32000) as a native Framebuffer."""
     return Framebuffer((ctypes.c_uint8 * SCREEN_BYTES)(*image[SCREEN_BASE:SCREEN_BASE + SCREEN_BYTES]))
+
+
+def road_input(image):
+    """The render_road geometry tables + texture as a native RoadInput. Returns (input, keepalive) —
+    the caller must hold `keepalive` for as long as `input` is used (it owns the buffers).
+
+    recreate threads one flat image and reads `image + offset`; here each table is its own buffer:
+      - width_tbl / param   : extracted from their fixed bases (sized to the max the cursors consume);
+      - edge_tbl            : a padded window pointed at base + road_edge_sel (the cursor walks +/-);
+      - tex                 : a padded window around buf_b, pointed AT the buf_b origin (src deltas go
+                              up, negative perspective seeds go into the pad below);
+      - edge_const          : the three const edge-texture strips (STATIC region).
+    """
+    def buf(addr, n):
+        return (ctypes.c_uint8 * n)(*image[addr:addr + n])
+
+    buf_b = int.from_bytes(image[A_buf_b:A_buf_b + 4], "big")
+    edge_sel = _i16(image, A_road_edge_sel)
+
+    width_tbl = buf(A_road_width_tbl, ROAD_WIDTH_TBL_BYTES)
+    param = buf(A_road_param, ROAD_PARAM_BYTES)
+    edge_const = buf(A_road_edge_const, ROAD_CONST_BYTES)
+    # edge cursor starts at base + sel and walks +/-, so window it with padding and point at the start.
+    edge_window = buf(A_road_edge_base + edge_sel - ROAD_EDGE_PAD, ROAD_EDGE_WINDOW_BYTES)
+    # texture: point at buf_b with slack below for negative seeds (cursor-zero window).
+    tex_window = buf(buf_b - ROAD_TEX_PAD_LO, ROAD_TEX_WINDOW_BYTES)
+
+    p = ctypes.POINTER(ctypes.c_uint8)
+    inp = RoadInput(
+        ctypes.cast(width_tbl, p),
+        ctypes.cast(param, p),
+        ctypes.cast(ctypes.byref(edge_window, ROAD_EDGE_PAD), p),
+        ctypes.cast(ctypes.byref(tex_window, ROAD_TEX_PAD_LO), p),
+        ctypes.cast(edge_const, p),
+    )
+    return inp, (width_tbl, param, edge_const, edge_window, tex_window)

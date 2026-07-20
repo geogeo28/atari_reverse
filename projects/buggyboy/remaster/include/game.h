@@ -11,6 +11,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "screen.h"
+
 /* Player buggy pose — what the object/car draw reads. Fields added as the draw path is ported. */
 typedef struct {
     int16_t lean;        /* left/right body lean (A_lean_state) */
@@ -70,5 +72,28 @@ typedef struct {
     const uint8_t *score_delta_time;/* phase-8 6-byte add_score delta while draining time */
     const uint8_t *score_delta_roll;/* phase-8 6-byte add_score delta per bonus unit / rollover */
 } HudAssets;
+
+/* ---- render_road (the pseudo-3D road rasterizer @0x19144) ---- */
+
+/* Per-frame inputs render_road consumes. In the full game these tables are rebuilt each frame by
+ * build_road_geometry from the buggy pose + course curvature; Phase A feeds captured tables straight
+ * through so the rasterizer is validated in isolation. All are ST-format byte buffers (see st.h):
+ *   - width_tbl : per-scanline control long (flags in the high word, road half-width in the low);
+ *                 the cursor resets to the base at each of the four band groups.
+ *   - param     : one monotonic word stream read across every band (perspective offset, edge seed,
+ *                 and per-row fill counts) — never reset.
+ *   - edge_tbl  : per-scanline edge-run word table; the pointer already includes road_edge_sel.
+ *   - tex       : the road texture (buf_b). src cursors and the per-row edge masks index this; it
+ *                 points AT the buf_b origin, with padding below it for negative perspective seeds.
+ *   - edge_const: three constant edge-texture strips (STATIC region) a few scanlines select. */
+typedef struct {
+    const uint8_t *width_tbl;
+    const uint8_t *param;
+    const uint8_t *edge_tbl;
+    const uint8_t *tex;
+    const uint8_t *edge_const;
+} RoadInput;
+
+void rm_render_road(const RoadInput *in, Framebuffer *fb);
 
 #endif /* RM_GAME_H */

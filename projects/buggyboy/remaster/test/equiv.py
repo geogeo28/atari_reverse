@@ -33,6 +33,9 @@ def _lib():
                                 ctypes.POINTER(adapter.HudAssets),
                                 ctypes.POINTER(adapter.Framebuffer)]
     lib.rm_draw_hud.restype = None
+    lib.rm_render_road.argtypes = [ctypes.POINTER(adapter.RoadInput),
+                                   ctypes.POINTER(adapter.Framebuffer)]
+    lib.rm_render_road.restype = None
     return lib
 
 
@@ -89,3 +92,30 @@ def compare_hud(lib, image):
                 if cand_fb[i] != base[i] and cand_fb[i] != ref_fb[i])
     coverage = matched / len(footprint) if footprint else 1.0
     return coverage, wrong
+
+
+def road_background(leg=0, warmup=60):
+    """A mid-race image with real road geometry built (game_update warmup) but render_road not yet
+    applied — the background render_road draws over. Returns the image bytearray."""
+    return bench_frame.mid_race_state(leg, warmup)
+
+
+def compare_road(lib, image):
+    """Run recreate's g_render_road (reference) and remaster's rm_render_road (candidate) on the same
+    background and diff the whole framebuffer. render_road owns the bottom 96 rows and the rest is
+    untouched on both sides, so this is a strict whole-framebuffer exact check. Returns
+    (diff_bytes, footprint) — footprint = bytes render_road changes (for a scale reference)."""
+    base = image[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    ref = bytearray(image)
+    _run_pipeline(ref, ("g_render_road",))
+    ref_fb = ref[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    inp, _keep = adapter.road_input(image)
+    fb = adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)(*base))
+    lib.rm_render_road(ctypes.byref(inp), ctypes.byref(fb))
+    cand_fb = bytes(fb.px)
+
+    diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
+    footprint = sum(1 for i in range(adapter.SCREEN_BYTES) if ref_fb[i] != base[i])
+    return diff, footprint
