@@ -19,7 +19,7 @@ echo ">> generate demo fixture (road tables + pose + HUD assets + golden) from t
 CC=m68k-elf-gcc
 CFLAGS="-m68000 -Os -ffreestanding -fno-jump-tables -fomit-frame-pointer -nostdlib \
         -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra"
-CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/hud.c $REMASTER/src/text.c"
+CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c $REMASTER/src/hud.c $REMASTER/src/text.c"
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \

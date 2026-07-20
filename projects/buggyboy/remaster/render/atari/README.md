@@ -46,9 +46,10 @@ Hatari needs a 4 MiB machine (`--memsize 4`); `build/` and `disk/` are gitignore
 
 ## Interactive road + HUD demo (`DEMO.PRG`)
 
-Now that `render_road` and `build_road_geometry` are ported, a second demo drives remaster's **whole
-road + HUD pipeline** on the 68000 and lets you **steer the road live**. Each frame it runs
-`rm_build_road_geometry` (from the current pose) → `rm_render_road` → `rm_draw_hud` and blits.
+Now that `render_road`, `build_road_geometry` and `blit_road_scroll` are ported, a second demo drives
+remaster's **whole road + HUD pipeline** on the 68000 and lets you **steer the road live**. Each frame
+runs `rm_build_road_geometry` (from the current pose) → `rm_render_road` → `rm_blit_road_scroll` (the
+scrolling near-road band + sky) → `rm_draw_hud` and blits.
 
 ```bash
 bash render/atari/build_demo.sh            # -> build/DEMO.PRG + disk/DEMO.PRG
@@ -60,9 +61,10 @@ Controls: **←/→** steer (road curvature), **↑/↓** crest/dip the near slo
 bank, **R** resets, **Esc/Q** quits. `gen_demo_fixture.py` bakes the render_road static tables
 (param/edge/texture), the geometry const sources, the initial pose and the HUD assets into
 `build/demo_fixture.h`, plus `golden.bin` (recreate's `g_build_road_geometry` + `g_render_road` +
-`g_draw_hud` for the same pose). `run_demo.py` byte-compares the demo's first frame (before any key)
-against it — a **MATCH** proves the whole ported pipeline is pixel-identical on a real 68000. The
-steering itself is validated on the host (`test/test_geometry.py`) for arbitrary curve/view/slope.
+`g_blit_road_scroll` + `g_draw_hud` for the same pose). `run_demo.py` byte-compares the demo's first
+frame (before any key) against it — a **MATCH** proves the whole ported pipeline is pixel-identical on
+a real 68000. The steering itself is validated on the host (`test/test_geometry.py`) for arbitrary
+curve/view/slope.
 
 The alignment gotcha: the cores read the baked tables with `be16`/`be32` (word/long moves), which
 fault on an odd address on the 68000, so the fixture arrays and the BSS scratch are `aligned(2)`.

@@ -1,13 +1,14 @@
 /* demo_main.c — interactive road + HUD demo: remaster's own pipeline on a real 68000, steered live.
  *
- * Each frame runs rm_build_road_geometry (from the current pose) -> rm_render_road -> rm_draw_hud,
- * then blits to the screen. Arrow keys nudge the pose and redraw:
+ * Each frame runs rm_build_road_geometry (from the current pose) -> rm_render_road ->
+ * rm_blit_road_scroll (the scrolling near-road band + sky) -> rm_draw_hud, then blits to the screen.
+ * Arrow keys nudge the pose and redraw:
  *   Left / Right : road curvature (steer the road left/right)
  *   Up / Down    : near-slope (crest / dip the road ahead)
  *   Space        : cycle the view bank (0, 2, 4, 6)
  *   R            : reset the pose;   Esc / Q : quit
- * The first frame (before any key) is dumped to C:\SCREEN.BIN so a headless run can byte-compare it
- * to recreate's g_build_road_geometry + g_render_road + g_draw_hud on the same pose (build/golden.bin).
+ * The first frame (before any key) is dumped to C:\SCREEN.BIN so a headless run can byte-compare it to
+ * recreate's g_build_road_geometry + g_render_road + g_blit_road_scroll + g_draw_hud (build/golden.bin).
  * All inputs are baked by gen_demo_fixture.py; only what remaster's C implements is drawn. See README.
  */
 #include <stdint.h>
@@ -18,6 +19,7 @@
 
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, uint8_t *ctrl, uint8_t *scanline);
 void rm_render_road(const RoadInput *in, Framebuffer *fb);
+void rm_blit_road_scroll(ScrollState *s, const uint8_t *playfield, Framebuffer *fb);
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 
 extern long Fcreate(const char *name, short attr);
@@ -55,13 +57,16 @@ static uint8_t scanline[RM_SCANLINE_BYTES] __attribute__((aligned(2)));  /* BSS:
 
 static const int16_t seg_data_init[13] = ROAD_SEG_DATA_INIT;
 
-/* Build this frame's geometry from `pose`, render road + HUD into fb, and blit to the screen. */
-static void draw_frame(RoadPose *pose, const RoadSource *src, RoadInput *road,
-                       const HudState *hud, const HudAssets *assets) {
+/* Build this frame's geometry from `pose`, render road + scroll band + HUD into fb, and blit. The
+ * scroll advances every frame (hscroll_pos persists in `scroll`), so the road band slides each redraw. */
+static void draw_frame(RoadPose *pose, const RoadSource *src, RoadInput *road, ScrollState *scroll,
+                       const uint8_t *playfield, const HudState *hud, const HudAssets *assets) {
     rm_build_road_geometry(pose, src, ctrl, scanline);
     road->width_tbl = ctrl + RM_CTRL_WIDTH_OFF;
-    memset(fb.px, 0, SCREEN_BYTES);          /* blank frame, then draw only remaster's own pipeline */
+    scroll->seg_head = pose->seg_head;           /* the scroll step follows the near slope */
+    memset(fb.px, 0, SCREEN_BYTES);              /* blank frame, then draw only remaster's own pipeline */
     rm_render_road(road, &fb);
+    rm_blit_road_scroll(scroll, playfield, &fb);
     rm_draw_hud(hud, assets, &fb);
     memcpy((void *)Physbase(), fb.px, SCREEN_BYTES);
 }
@@ -96,9 +101,10 @@ void main(void) {
     };
     RoadPose pose = {.curve = ROAD_CURVE_INIT, .view_flags = ROAD_VIEW_FLAGS_INIT};
     for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
+    ScrollState scroll = {.scroll_speed = SCROLL_SPEED_INIT, .hscroll_pos = HSCROLL_POS_INIT};
 
     Setpalette(fixture_palette);
-    draw_frame(&pose, &src, &road, &hud, &assets);
+    draw_frame(&pose, &src, &road, &scroll, fixture_road_play, &hud, &assets);
 
     /* Dump the first frame so a headless run can byte-compare it to golden.bin. */
     long h = Fcreate("SCREEN.BIN", 0);
@@ -121,6 +127,6 @@ void main(void) {
                 }
                 break;
         }
-        draw_frame(&pose, &src, &road, &hud, &assets);
+        draw_frame(&pose, &src, &road, &scroll, fixture_road_play, &hud, &assets);
     }
 }
