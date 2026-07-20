@@ -21,7 +21,9 @@ framebuffer → diff). Order follows the in-race draw order.
 | `render_road`      | `g_render_road`           | ✅ all 7 bands ported | `test/test_road.py` — **whole-framebuffer byte-exact** across legs 0–4 / warmup depths |
 | `build_road_geometry` | `g_build_road_geometry` | ✅ all 5 stages ported | `test/test_geometry.py` — control table + rendered road byte-exact under arbitrary steering (curve/view/near-slope) |
 | `blit_road_scroll` | `g_blit_road_scroll`      | ✅ ported | `test/test_scroll.py` — whole-framebuffer + scroll-state byte-exact under arbitrary scroll (speed/pos/wrap) |
-| `draw_game_objects`| `g_draw_game_objects`     | ⬜ not started   | — |
+| buggy/fg sprites (`draw_fg_sprite`, `draw_buggy`) | `g_draw_fg_sprite` / `g_draw_buggy` | ✅ ported | `test/test_sprite.py` — whole-framebuffer byte-exact across body/leaning frames, spin aborts, lean overlay, lower body |
+| `draw_game_objects`| `g_draw_game_objects`     | 🚧 sprites done; ground + object list + orchestrator pending | `test/test_sprite.py` (sprite family) |
+
 
 ### `draw_hud` phase ledger
 

@@ -28,9 +28,7 @@ typedef struct {
     uint8_t leg;         /* current leg 0..4 */
 } GameState;
 
-/* ---- HUD (draw_hud, phases 4/5/6a ported so far) ---- */
-
-/* Dynamic per-frame HUD inputs (recreate's scalar globals, named). See src/hud.c. */
+/* ---- HUD (draw_hud, phases 4/5/6a ported so far) ---- *//* Dynamic per-frame HUD inputs (recreate's scalar globals, named). See src/hud.c. */
 typedef struct {
     int16_t flag_seq_count;    /* matched-in-a-row flags -> one lit bar each (phase 4) */
     int16_t flag_seq_off;      /* colour-index cursor offset (phase 5) */
@@ -176,5 +174,60 @@ typedef struct {
  * NEGATIVE offsets (rec = stream - read_pos). Shifts pose->seg_data up one slot and refills the tail
  * (a pulled record's slope, or the previous slope), updating cs. Feed pose to rm_build_road_geometry. */
 void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stream);
+
+/* ---- player buggy + foreground sprites (draw_fg_sprite .. draw_buggy @ 0x1518a..) ---- */
+
+/* Dynamic per-frame state the buggy/foreground sprite draws read (recreate's scalar globals, named).
+ * All the sprites blit bottom row first, walking one scanline up per row, into the draw buffer.
+ * lean_accum / lean_frame are in/out: draw_buggy_hi advances the lean animation and writes them back.
+ * variant is a draw_buggy scratch (lean * 8) read back by draw_buggy_hi. spin_counter is written by
+ * draw_fg_sprite (0, or a spin duration when a hard curve aborts the draw). */
+typedef struct {
+    /* buggy body position + selection */
+    uint16_t lean;            /* body lean; indexes buggy_body_tbl, gates the hi overlay (>= LEAN_MAX
+                               * skips it), and (* 8) is the hi piece-list variant */
+    int16_t  pitch;           /* vertical buggy position offset (road pitch) */
+    int16_t  skid;            /* horizontal buggy skid offset (+/-8) */
+    int16_t  crash_disp;      /* vertical crash displacement (shifts the buggy up) */
+    uint16_t wheel_pos;       /* wheel/steer position; selects the lower-body piece list */
+    uint16_t variant;         /* out/scratch: lean * 8 (draw_buggy_hi reads it back) */
+    /* foreground sprite (draw_fg_sprite) */
+    int8_t   spin_state;      /* <0 while spinning after a crash */
+    int16_t  road_curve;      /* signed road curvature; a hard curve aborts a spin's draw */
+    uint16_t sprite_suppress; /* nonzero suppresses the foreground sprite */
+    int8_t   fg_gate;         /* bit7 set suppresses the foreground sprite */
+    uint16_t anim_frame;      /* word byte-offset into fg_anim_tbl for the current frame */
+    uint16_t spin_counter;    /* out: frames the buggy spins (also indexes the lower-body list) */
+    uint32_t spin_reset;      /* longword; nonzero suppresses the lower body */
+    /* lower body (draw_buggy_lo) gates */
+    uint16_t buggy_draw_flag; /* nonzero enables the lower-body draw */
+    uint8_t  buggy_gate;      /* OR'd with fg_gate; bit7 suppresses the lower body */
+    uint16_t collision_lock;  /* nonzero suppresses the lower body */
+    /* lean overlay (draw_buggy_hi) animation */
+    uint16_t speed_raw;       /* raw speed; drives the lean-animation rate */
+    uint16_t lean_accum;      /* in/out: lean-anim rate accumulator */
+    uint16_t lean_frame;      /* in/out: lean-anim frame offset into the hi piece table */
+} SpriteState;
+
+/* Static ST-format asset tables the buggy/foreground sprites read. `gfx` is the unpacked-graphics
+ * arena (recreate's buf_c): every sprite's pixels live at `gfx + <table src offset>` (the hi/lo
+ * blits add their own sub-arena bias, HI_SRC_OFF / LO_SRC_OFF, on top). The four const piece tables
+ * live in the STATIC region; their `src_off` fields index into `gfx`. All are raw big-endian bytes
+ * (read via st.h). */
+typedef struct {
+    const uint8_t *gfx;           /* unpacked-graphics arena (buf_c); sprite pixels at gfx + src_off */
+    const uint8_t *fg_anim_tbl;   /* foreground frames: {rows-1:w, dst_off:w, src_off:l} x8 */
+    const uint8_t *body_tbl;      /* per-lean body sprite: {src_off:l, flag:b, rows-1:b, pos_off:w} */
+    const uint8_t *hi_tbl;        /* rate bytes at [speed_raw>>5], then lean-overlay piece lists */
+    const uint8_t *lo_piece_tbl;  /* lower-body piece lists: {rows0:b, rows1:b, (src:w, dst:w) x2} */
+    const uint8_t *lo_piece_idx;  /* per-wheel_pos word offset into lo_piece_tbl */
+} SpriteAssets;
+
+/* Draw the foreground buggy sprite (spin/curve/suppress gated). Writes s->spin_counter. */
+void rm_draw_fg_sprite(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
+
+/* Draw the player car: body (upright or leaning frames), the lean overlay, and the lower body.
+ * Advances s->lean_accum / s->lean_frame and writes s->variant. */
+void rm_draw_buggy(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
 
 #endif /* RM_GAME_H */

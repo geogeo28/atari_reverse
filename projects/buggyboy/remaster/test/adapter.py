@@ -79,6 +79,38 @@ COURSE_STREAM_PAD = 0x2000                          # window reaches this far BE
 COURSE_STREAM_BYTES = COURSE_STREAM_PAD + 0x10
 
 
+# ---- player buggy / foreground sprite globals + const piece tables (mirror addrs.h) ----
+A_sp_lean = 0x18cc2                                 # body lean; body_tbl index + hi-overlay gate + variant
+A_sp_pitch = 0x18cbe                               # vertical buggy position offset (road pitch)
+A_sp_skid = 0x18cbc                                # horizontal buggy skid offset (+/-8)
+A_sp_crash_disp = 0x18c68                          # vertical crash displacement
+A_sp_wheel_pos = 0x18cc0                           # wheel/steer position; lower-body list selector
+A_sp_variant = 0x18cc6                             # scratch: lean * 8 (draw_buggy_hi reads it back)
+A_sp_spin_state = 0x18caa                          # <0 while spinning after a crash (byte)
+A_sp_road_curve = 0x18c6a                          # signed road curvature
+A_sp_sprite_suppress = 0x18cd0                     # nonzero suppresses the foreground sprite
+A_sp_fg_gate = 0x18ebb                             # bit7 set suppresses the foreground sprite (byte)
+A_sp_anim_frame = 0x18d0c                          # word byte-offset into fg_anim_tbl
+A_sp_spin_counter = 0x18d0a                        # frames the buggy spins (out; lower-body index)
+A_sp_spin_reset = 0x18cc8                          # longword; nonzero suppresses the lower body
+A_sp_buggy_draw_flag = 0x18d0e                     # nonzero enables the lower-body draw
+A_sp_buggy_gate = 0x18eba                          # OR'd with fg_gate; bit7 suppresses the lower body (byte)
+A_sp_collision_lock = 0x18c84                      # nonzero suppresses the lower body
+A_sp_speed_raw = 0x18cf8                           # raw speed; drives the lean-animation rate
+A_sp_lean_accum = 0x18d10                          # in/out: lean-anim rate accumulator
+A_sp_lean_frame = 0x18d12                          # in/out: lean-anim frame offset into hi piece table
+A_fg_anim_tbl = 0x177a0                            # foreground frames: {rows-1:w, dst:w, src:l} x8
+A_body_tbl = 0x177b8                               # per-lean body sprite: {src:l, flag:b, rows-1:b, pos:w}
+A_hi_tbl = 0x17554                                 # rate bytes at [speed>>5], then lean-overlay pieces
+A_lo_piece_tbl = 0x17746                           # lower-body piece lists
+A_lo_piece_idx = 0x1773c                           # per-wheel_pos word offset into lo_piece_tbl
+# The four const piece tables lie in one contiguous STATIC span; extract it whole so cross-table
+# offsets stay faithful, and index each pointer from its own base.
+SP_TBL_BASE = A_hi_tbl                             # lowest of the four tables
+SP_TBL_BYTES = 0x400                               # covers hi/lo/fg/body tables (0x17554..0x17938)
+SP_GFX_BYTES = 0x3b000                             # buf_c graphics arena span the sprites index into
+
+
 
 
 
@@ -188,6 +220,28 @@ class ScrollState(ctypes.Structure):
 
 class CourseState(ctypes.Structure):
     _fields_ = [("row_ctr", ctypes.c_uint16), ("read_pos", ctypes.c_uint16)]
+
+
+class SpriteState(ctypes.Structure):
+    _fields_ = [("lean", ctypes.c_uint16), ("pitch", ctypes.c_int16),
+                ("skid", ctypes.c_int16), ("crash_disp", ctypes.c_int16),
+                ("wheel_pos", ctypes.c_uint16), ("variant", ctypes.c_uint16),
+                ("spin_state", ctypes.c_int8), ("road_curve", ctypes.c_int16),
+                ("sprite_suppress", ctypes.c_uint16), ("fg_gate", ctypes.c_int8),
+                ("anim_frame", ctypes.c_uint16), ("spin_counter", ctypes.c_uint16),
+                ("spin_reset", ctypes.c_uint32), ("buggy_draw_flag", ctypes.c_uint16),
+                ("buggy_gate", ctypes.c_uint8), ("collision_lock", ctypes.c_uint16),
+                ("speed_raw", ctypes.c_uint16), ("lean_accum", ctypes.c_uint16),
+                ("lean_frame", ctypes.c_uint16)]
+
+
+class SpriteAssets(ctypes.Structure):
+    _fields_ = [("gfx", ctypes.POINTER(ctypes.c_uint8)),
+                ("fg_anim_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("body_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("hi_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("lo_piece_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("lo_piece_idx", ctypes.POINTER(ctypes.c_uint8))]
 
 
 def _i16(image, addr):
@@ -374,3 +428,40 @@ def course_stream(image):
     base = buf_a + leg * COURSE_LEG_STRIDE + COURSE_STREAM_OFF
     window = (ctypes.c_uint8 * COURSE_STREAM_BYTES)(*image[base - COURSE_STREAM_PAD:base + 0x10])
     return ctypes.cast(ctypes.byref(window, COURSE_STREAM_PAD), ctypes.POINTER(ctypes.c_uint8)), window
+
+
+def sprite_state(image):
+    """The dynamic buggy/foreground-sprite scalars as a native SpriteState (variant/spin_counter and
+    the lean-anim accum/frame get overwritten by the draws; seed them from the image regardless)."""
+    def u16(addr):
+        return (image[addr] << 8) | image[addr + 1]
+    def i8(addr):
+        return image[addr] - 0x100 if image[addr] & 0x80 else image[addr]
+    return SpriteState(
+        u16(A_sp_lean), _i16(image, A_sp_pitch), _i16(image, A_sp_skid),
+        _i16(image, A_sp_crash_disp), u16(A_sp_wheel_pos), u16(A_sp_variant),
+        i8(A_sp_spin_state), _i16(image, A_sp_road_curve), u16(A_sp_sprite_suppress),
+        i8(A_sp_fg_gate), u16(A_sp_anim_frame), u16(A_sp_spin_counter),
+        int.from_bytes(image[A_sp_spin_reset:A_sp_spin_reset + 4], "big"),
+        u16(A_sp_buggy_draw_flag), image[A_sp_buggy_gate], u16(A_sp_collision_lock),
+        u16(A_sp_speed_raw), u16(A_sp_lean_accum), u16(A_sp_lean_frame))
+
+
+def sprite_assets(image):
+    """The static buggy/foreground-sprite asset tables as a native SpriteAssets. Returns (assets,
+    keepalive) — the caller must hold `keepalive` while `assets` is used. The four const piece tables
+    are extracted as one contiguous STATIC window and each pointer is offset into it; `gfx` is the
+    buf_c graphics arena the sprites index (src offsets are absolute within it)."""
+    buf_c = int.from_bytes(image[A_buf_c:A_buf_c + 4], "big")
+    gfx = (ctypes.c_uint8 * SP_GFX_BYTES)(*image[buf_c:buf_c + SP_GFX_BYTES])
+    tbl = (ctypes.c_uint8 * SP_TBL_BYTES)(*image[SP_TBL_BASE:SP_TBL_BASE + SP_TBL_BYTES])
+    p = ctypes.POINTER(ctypes.c_uint8)
+
+    def at(addr):
+        return ctypes.cast(ctypes.byref(tbl, addr - SP_TBL_BASE), p)
+
+    assets = SpriteAssets(
+        ctypes.cast(gfx, p),
+        at(A_fg_anim_tbl), at(A_body_tbl), at(A_hi_tbl),
+        at(A_lo_piece_tbl), at(A_lo_piece_idx))
+    return assets, (gfx, tbl)

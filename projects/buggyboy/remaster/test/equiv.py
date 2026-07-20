@@ -51,6 +51,11 @@ def _lib():
                                            ctypes.POINTER(adapter.CourseState),
                                            ctypes.POINTER(ctypes.c_uint8)]
     lib.rm_road_course_advance.restype = None
+    for fn in (lib.rm_draw_fg_sprite, lib.rm_draw_buggy):
+        fn.argtypes = [ctypes.POINTER(adapter.SpriteState),
+                       ctypes.POINTER(adapter.SpriteAssets),
+                       ctypes.POINTER(adapter.Framebuffer)]
+        fn.restype = None
     return lib
 
 
@@ -258,3 +263,36 @@ def compare_course_drive(lib, image, frames=24):
         if cand != ref:
             mismatches += 1
     return mismatches
+
+
+# recreate render pipeline stages that draw the pre-sprite frame (background the buggy/fg overlay).
+PRE_SPRITE_PIPELINE = ("g_render_road", "g_blit_road_scroll", "g_draw_ground")
+
+
+def sprite_background(leg=0, warmup=60, pokes=None):
+    """A mid-race image with the pre-object frame drawn into the framebuffer (road + ground) — the
+    background the buggy/foreground sprites overlay. Returns the image bytearray."""
+    state = bench_frame.mid_race_state(leg, warmup)
+    _run_pipeline(state, PRE_SPRITE_PIPELINE)
+    for addr, val in (pokes or {}).items():
+        _w16(state, addr, val & 0xffff)
+    return state
+
+
+def compare_sprite(lib, image, ref_fn, rm_fn, state_fn):
+    """Run a recreate sprite draw (`ref_fn`, e.g. g_draw_fg_sprite) as the reference and the matching
+    remaster core (`rm_fn`) on the same background, then diff the whole framebuffer. `state_fn` builds
+    the native SpriteState from the image (== adapter.sprite_state). Returns diff_bytes (0 = exact)."""
+    base = image[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    ref = bytearray(image)
+    _run_pipeline(ref, (ref_fn,))
+    ref_fb = ref[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    s = state_fn(image)
+    assets, _keep = adapter.sprite_assets(image)
+    fb = adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)(*base))
+    rm_fn(ctypes.byref(s), ctypes.byref(assets), ctypes.byref(fb))
+    cand_fb = bytes(fb.px)
+
+    return sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])

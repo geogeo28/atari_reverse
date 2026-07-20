@@ -28,4 +28,22 @@ static inline void cell_overlay(uint8_t *px, Offset at, Plane4 mask, Plane4 ink,
     wr32(px + at + 4, (be32(px + at + 4) & mask) | (ink & fill_hi));
 }
 
+/* Transparency-blit one 8-byte cell (16 px, 4 planes) from the four source plane words A,B,C,D at
+ * `src` into `px` at `at`. mask = ~(A|B|C) & D shows the background through where the sprite is
+ * transparent; planes 0-2 take A/B/C, plane 3 takes D's leftover (non-A/B/C) bits. This is the
+ * shared masked-sprite primitive (buggy body / foreground / lower-body sprites). `src` points into
+ * the asset arena; `px` is the framebuffer — the two are distinct buffers (a sprite never composits
+ * into itself), unlike recreate's single-image cousin. */
+static inline void cell_transp(uint8_t *px, Offset at, const uint8_t *src) {
+    uint16_t a = be16(src);
+    uint16_t b = be16(src + 2);
+    uint16_t c = be16(src + 4);
+    uint16_t d = be16(src + 6);
+    uint16_t mask = (uint16_t)(~(a | b | c) & d);
+    wr16(px + at,     (uint16_t)((be16(px + at)     & mask) | a));
+    wr16(px + at + 2, (uint16_t)((be16(px + at + 2) & mask) | b));
+    wr16(px + at + 4, (uint16_t)((be16(px + at + 4) & mask) | c));
+    wr16(px + at + 6, (uint16_t)((be16(px + at + 6) & mask) | (uint16_t)(d & ~mask)));
+}
+
 #endif /* RM_PLANE_H */
