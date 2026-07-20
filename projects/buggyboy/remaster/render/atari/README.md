@@ -57,14 +57,20 @@ python render/atari/run_demo.py            # headless: prints MATCH, writes out/
 hatari --memsize 4 --tos-res low --harddrive render/atari/disk --auto 'C:\DEMO.PRG'   # play it
 ```
 
-Controls: **←/→** steer (road curvature), **↑/↓** crest/dip the near slope, **Space** cycles the view
+Controls: **↑** throttle (drive forward through leg 1's authored track — the road's hills/segments
+advance from the packed course stream), **←/→** steer (road curvature), **Space** cycles the view
 bank, **R** resets, **Esc/Q** quits. `gen_demo_fixture.py` bakes the render_road static tables
-(param/edge/texture), the geometry const sources, the initial pose and the HUD assets into
-`build/demo_fixture.h`, plus `golden.bin` (recreate's `g_build_road_geometry` + `g_render_road` +
-`g_blit_road_scroll` + `g_draw_hud` for the same pose). `run_demo.py` byte-compares the demo's first
-frame (before any key) against it — a **MATCH** proves the whole ported pipeline is pixel-identical on
-a real 68000. The steering itself is validated on the host (`test/test_geometry.py`) for arbitrary
-curve/view/slope.
+(param/edge/texture), the geometry const sources, the scroll playfield, the leg-1 packed course
+stream, the initial pose/scroll/course state and the HUD assets into `build/demo_fixture.h`, plus
+`golden.bin` (recreate's `g_build_road_geometry` + `g_render_road` + `g_blit_road_scroll` +
+`g_draw_hud` for the same pose). `run_demo.py` byte-compares the demo's first frame (before any key)
+against it — a **MATCH** proves the whole ported pipeline is pixel-identical on a real 68000. The
+steering and forward course-advance are validated on the host (`test/test_geometry.py`,
+`test/test_course.py`) for arbitrary state.
+
+Scope note: the throttle advances leg 1's *elevation/segment profile* (`seg_data`) and its authored
+segment slopes; the course's automatic left/right curve events are part of `game_update`'s event
+dispatch (not yet ported), so left/right curvature is driven by manual steering for now.
 
 The alignment gotcha: the cores read the baked tables with `be16`/`be32` (word/long moves), which
 fault on an odd address on the 68000, so the fixture arrays and the BSS scratch are `aligned(2)`.

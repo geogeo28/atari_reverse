@@ -2,11 +2,11 @@
  *
  * Each frame runs rm_build_road_geometry (from the current pose) -> rm_render_road ->
  * rm_blit_road_scroll (the scrolling near-road band + sky) -> rm_draw_hud, then blits to the screen.
- * Arrow keys nudge the pose and redraw:
+ * Keys nudge the pose and redraw:
+ *   Up           : throttle — advance the course (drive forward through the leg's authored track)
  *   Left / Right : road curvature (steer the road left/right)
- *   Up / Down    : near-slope (crest / dip the road ahead)
  *   Space        : cycle the view bank (0, 2, 4, 6)
- *   R            : reset the pose;   Esc / Q : quit
+ *   R            : reset the pose + course position;   Esc / Q : quit
  * The first frame (before any key) is dumped to C:\SCREEN.BIN so a headless run can byte-compare it to
  * recreate's g_build_road_geometry + g_render_road + g_blit_road_scroll + g_draw_hud (build/golden.bin).
  * All inputs are baked by gen_demo_fixture.py; only what remaster's C implements is drawn. See README.
@@ -20,6 +20,7 @@
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, uint8_t *ctrl, uint8_t *scanline);
 void rm_render_road(const RoadInput *in, Framebuffer *fb);
 void rm_blit_road_scroll(ScrollState *s, const uint8_t *playfield, Framebuffer *fb);
+void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stream);
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 
 extern long Fcreate(const char *name, short attr);
@@ -43,12 +44,10 @@ void *memcpy(void *d, const void *s, unsigned long n) {
 
 /* Keyboard scancodes (Cconin returns the scancode in bits 16..23, the ASCII char in the low byte). */
 #define SCAN_UP 0x48
-#define SCAN_DOWN 0x50
 #define SCAN_LEFT 0x4b
 #define SCAN_RIGHT 0x4d
 #define KEY_ESC 0x1b
 #define CURVE_STEP 0x0200            /* road_curve nudge per Left/Right press */
-#define SLOPE_STEP 2                 /* near-slope nudge per Up/Down press */
 #define VIEW_BANK_WRAP 8             /* view_flags cycles 0,2,4,6 (mod 8) */
 
 static Framebuffer fb __attribute__((aligned(2)));                       /* BSS: the 32000-byte draw buffer */
@@ -102,6 +101,8 @@ void main(void) {
     RoadPose pose = {.curve = ROAD_CURVE_INIT, .view_flags = ROAD_VIEW_FLAGS_INIT};
     for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
     ScrollState scroll = {.scroll_speed = SCROLL_SPEED_INIT, .hscroll_pos = HSCROLL_POS_INIT};
+    CourseState course = {.row_ctr = COURSE_ROW_CTR_INIT, .read_pos = COURSE_READ_POS_INIT};
+    const uint8_t *stream = fixture_course_stream + COURSE_STREAM_PAD;   /* records lie below the base */
 
     Setpalette(fixture_palette);
     draw_frame(&pose, &src, &road, &scroll, fixture_road_play, &hud, &assets);
@@ -117,12 +118,12 @@ void main(void) {
         switch (scan) {
             case SCAN_LEFT:  pose.curve = (int16_t)(pose.curve - CURVE_STEP); break;
             case SCAN_RIGHT: pose.curve = (int16_t)(pose.curve + CURVE_STEP); break;
-            case SCAN_UP:    pose.seg_data[0] = (int16_t)(pose.seg_data[0] + SLOPE_STEP); break;
-            case SCAN_DOWN:  pose.seg_data[0] = (int16_t)(pose.seg_data[0] - SLOPE_STEP); break;
+            case SCAN_UP:    rm_road_course_advance(&pose, &course, stream); break;  /* throttle */
             default:
                 if (ascii == ' ') pose.view_flags = (uint16_t)((pose.view_flags + 2) % VIEW_BANK_WRAP);
                 else if (ascii == 'r' || ascii == 'R') {
                     pose.curve = ROAD_CURVE_INIT; pose.view_flags = ROAD_VIEW_FLAGS_INIT;
+                    course.row_ctr = COURSE_ROW_CTR_INIT; course.read_pos = COURSE_READ_POS_INIT;
                     for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
                 }
                 break;
