@@ -37,6 +37,29 @@ A_road_edge_sel = 0x18c5a                         # signed word added to the edg
 A_road_edge_const = 0x15b7a                       # three const edge-texture strips (STATIC region)
 A_buf_b = 0x18c04                                 # pointer: road-texture (buf_b) base
 
+# ---- build_road_geometry globals + const source tables (mirror recreate/include/addrs.h) ----
+A_road_seg_data = 0x18d1c                          # per-leg segment slopes: [0] + [1..12] (13 shorts)
+A_view_flags = 0x18c56                             # view/leg selector (0,2,4,6)
+A_road_curve = 0x18c6a                             # signed road curvature (steering)
+A_horizon = 0x1905e                                # horizon position input
+A_road_seg_head = 0x18cb6                          # out: cached seg_data[0]
+A_horizon_row = 0x18c6c                            # out: clamped horizon scanline
+A_horizon_frac = 0x18c6e                           # out: horizon sub-row parity
+A_persp_seg_tbl = 0x17156                          # const: per-segment run lengths
+A_road_width_src = 0x18d5a                         # const-ish: width source shorts, stride 0x20
+A_width_count_tbl = 0x1718a                        # const: per-row width run counts (4 banks of 16)
+A_road_curve_tbl = 0x18efc                          # builder output region (== render_road width_tbl base)
+
+# render_road control-table geometry (mirror include/game.h RM_CTRL_* — pinned by test_geometry)
+RM_CTRL_LONGS = 106
+RM_CTRL_BYTES = RM_CTRL_LONGS * 4
+RM_CTRL_WIDTH_OFF = 0x28
+RM_SCANLINE_BYTES = 0x80
+ROAD_PERSP_SEG_BYTES = 0x31                         # persp_seg_tbl length (PERSP_SEGMENTS + 1)
+ROAD_WIDTH_SRC_BYTES = 14 * 0x20                    # 14 rows at stride 0x20
+ROAD_WIDTH_COUNT_BYTES = 0x40                       # 4 view banks of 16 run counts
+
+
 
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
 A_color_pairs = 0x15afa                           # 16 colours x 8-byte fill
@@ -122,6 +145,19 @@ class RoadInput(ctypes.Structure):
                 ("edge_tbl", ctypes.POINTER(ctypes.c_uint8)),
                 ("tex", ctypes.POINTER(ctypes.c_uint8)),
                 ("edge_const", ctypes.POINTER(ctypes.c_uint8))]
+
+
+class RoadPose(ctypes.Structure):
+    _fields_ = [("curve", ctypes.c_int16), ("view_flags", ctypes.c_uint16),
+                ("seg_data", ctypes.c_int16 * 13),
+                ("seg_head", ctypes.c_int16), ("horizon_row", ctypes.c_int16),
+                ("horizon_frac", ctypes.c_int16)]
+
+
+class RoadSource(ctypes.Structure):
+    _fields_ = [("persp_seg", ctypes.POINTER(ctypes.c_int8)),
+                ("width_src", ctypes.POINTER(ctypes.c_uint8)),
+                ("width_count", ctypes.POINTER(ctypes.c_uint8))]
 
 
 def _i16(image, addr):
@@ -247,3 +283,29 @@ def road_input(image):
         ctypes.cast(edge_const, p),
     )
     return inp, (width_tbl, param, edge_const, edge_window, tex_window)
+
+
+def road_pose(image):
+    """The dynamic road-geometry inputs the builder integrates, as a native RoadPose (outputs zeroed)."""
+    seg = (ctypes.c_int16 * 13)(*(_i16(image, A_road_seg_data + i * 2) for i in range(13)))
+    return RoadPose(_i16(image, A_road_curve),
+                    (image[A_view_flags] << 8) | image[A_view_flags + 1], seg, 0, 0, 0)
+
+
+def road_source(image):
+    """The const source tables the builder reads, as a native RoadSource. Returns (source, keepalive)."""
+    persp = (ctypes.c_int8 * ROAD_PERSP_SEG_BYTES)(
+        *(_i16b(image[A_persp_seg_tbl + i]) for i in range(ROAD_PERSP_SEG_BYTES)))
+    width_src = (ctypes.c_uint8 * ROAD_WIDTH_SRC_BYTES)(
+        *image[A_road_width_src:A_road_width_src + ROAD_WIDTH_SRC_BYTES])
+    width_count = (ctypes.c_uint8 * ROAD_WIDTH_COUNT_BYTES)(
+        *image[A_width_count_tbl:A_width_count_tbl + ROAD_WIDTH_COUNT_BYTES])
+    source = RoadSource(ctypes.cast(persp, ctypes.POINTER(ctypes.c_int8)),
+                        ctypes.cast(width_src, ctypes.POINTER(ctypes.c_uint8)),
+                        ctypes.cast(width_count, ctypes.POINTER(ctypes.c_uint8)))
+    return source, (persp, width_src, width_count)
+
+
+def _i16b(b):
+    """Reinterpret an unsigned byte as a signed int8 (for the persp_seg run-length table)."""
+    return b - 0x100 if b & 0x80 else b

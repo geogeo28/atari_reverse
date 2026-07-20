@@ -96,4 +96,40 @@ typedef struct {
 
 void rm_render_road(const RoadInput *in, Framebuffer *fb);
 
+/* ---- build_road_geometry (the per-scanline table builder @0x11f4c) ---- */
+
+/* Number of longs in the control table the builder produces (recreate's road_curve_tbl, 106 longs)
+ * and the offset within it of render_road's width_tbl window (road_width_tbl overlaps road_curve_tbl
+ * ten longs in). So a rendered frame is: rm_build_road_geometry -> ctrl, then rm_render_road with
+ * `.width_tbl = ctrl + RM_CTRL_WIDTH_OFF`. */
+#define RM_CTRL_LONGS       106
+#define RM_CTRL_BYTES       (RM_CTRL_LONGS * 4)
+#define RM_CTRL_WIDTH_OFF   0x28
+#define RM_SCANLINE_BYTES   0x80        /* per-row cumulative-slope scratch (road_scanline_tbl) */
+
+/* Dynamic road-geometry inputs the builder integrates each frame (recreate's scalar globals). curve
+ * (steering) and the segment slopes drive the road's bend/tilt; view_flags selects the width bank.
+ * The horizon the builder clamps is not an input — it lands inside the control table (see
+ * geometry.c). seg_head/horizon_row/horizon_frac are written back by the builder. */
+typedef struct {
+    int16_t  curve;         /* road_curve — signed road curvature (the steering input) */
+    uint16_t view_flags;    /* view/leg selector (0, 2, 4, 6) */
+    int16_t  seg_data[13];  /* road_seg_data: [0] near slope + [1..12] segment slopes */
+    int16_t  seg_head;      /* out: cached seg_data[0] */
+    int16_t  horizon_row;   /* out: clamped horizon scanline */
+    int16_t  horizon_frac;  /* out: horizon sub-row parity */
+} RoadPose;
+
+/* Const source tables the builder reads (baked once; STATIC region, ST big-endian bytes). */
+typedef struct {
+    const int8_t  *persp_seg;    /* per-segment run lengths (0x31 signed bytes) */
+    const uint8_t *width_src;    /* width source shorts, stride 0x20 (14 rows) */
+    const uint8_t *width_count;  /* per-row width run counts, 4 view banks of 16 bytes */
+} RoadSource;
+
+/* Rebuild `ctrl` (RM_CTRL_BYTES, ST bytes) — the control-long table render_road consumes — and the
+ * `scanline` scratch (RM_SCANLINE_BYTES), from the pose + const sources. Also writes the pose's
+ * seg_head / horizon_row / horizon_frac outputs. */
+void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, uint8_t *ctrl, uint8_t *scanline);
+
 #endif /* RM_GAME_H */
