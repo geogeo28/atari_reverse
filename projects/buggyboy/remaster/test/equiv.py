@@ -60,6 +60,9 @@ def _lib():
                                    ctypes.POINTER(adapter.GroundAssets),
                                    ctypes.POINTER(adapter.Framebuffer)]
     lib.rm_draw_ground.restype = None
+    lib.rm_draw_object.argtypes = [ctypes.POINTER(adapter.ObjectInput),
+                                   ctypes.POINTER(adapter.Framebuffer)]
+    lib.rm_draw_object.restype = None
     return lib
 
 
@@ -336,6 +339,39 @@ def compare_ground(lib, image):
     assets, _keep = adapter.ground_assets(image)
     fb = adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)(*base))
     lib.rm_draw_ground(ctypes.byref(s), ctypes.byref(assets), ctypes.byref(fb))
+    cand_fb = bytes(fb.px)
+
+    diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
+    footprint = sum(1 for i in range(adapter.SCREEN_BYTES) if ref_fb[i] != base[i])
+    return diff, footprint
+
+
+def object_background(leg=0, warmup=60):
+    """A mid-race image with the pre-object frame drawn (road + ground + foreground sprite) — the
+    background draw_object's one scaled roadside object overlays. Returns the image bytearray."""
+    state = bench_frame.mid_race_state(leg, warmup)
+    _run_pipeline(state, ("g_render_road", "g_blit_road_scroll", "g_draw_ground", "g_draw_fg_sprite"))
+    return state
+
+
+def compare_object(lib, image):
+    """Run recreate's g_draw_object (reference) and remaster's rm_draw_object (candidate) on the same
+    background and diff the whole framebuffer. g_draw_object(image, buffer) takes the draw buffer
+    explicitly (derived from flip_idx/physbase). Returns (diff_bytes, footprint)."""
+    base = image[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    ref = bytearray(image)
+    flip = _r16(ref, adapter.A_flip_idx)
+    buffer = int.from_bytes(ref[adapter.A_physbase_tbl + flip:adapter.A_physbase_tbl + flip + 4], "big")
+    fn = bench_frame.harness._lib.g_draw_object
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+    fn.restype = None
+    fn((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref), buffer)
+    ref_fb = ref[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    inp, _keep = adapter.object_input(image)
+    fb = adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)(*base))
+    lib.rm_draw_object(ctypes.byref(inp), ctypes.byref(fb))
     cand_fb = bytes(fb.px)
 
     diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])

@@ -23,7 +23,8 @@ framebuffer → diff). Order follows the in-race draw order.
 | `blit_road_scroll` | `g_blit_road_scroll`      | ✅ ported | `test/test_scroll.py` — whole-framebuffer + scroll-state byte-exact under arbitrary scroll (speed/pos/wrap) |
 | buggy/fg sprites (`draw_fg_sprite`, `draw_buggy`) | `g_draw_fg_sprite` / `g_draw_buggy` | ✅ ported | `test/test_sprite.py` — whole-framebuffer byte-exact across body/leaning frames, spin aborts, lean overlay, lower body |
 | ground / horizon (`draw_ground`) | `g_draw_ground` | ✅ ported | `test/test_ground.py` — whole-framebuffer byte-exact across gradient (band-clamp buckets) + solid (lit/near) markers |
-| `draw_game_objects`| `g_draw_game_objects`     | 🚧 ground + sprites done; object list + orchestrator pending | `test/test_sprite.py`, `test/test_ground.py` |
+| scaled object (`draw_object`) | `g_draw_object` | ✅ ported | `test/test_object.py` — whole-framebuffer byte-exact across LEFT/RIGHT/FAR/SCALE2 flag combos, all shade signs, pre-scan clear |
+| `draw_game_objects`| `g_draw_game_objects`     | 🚧 ground + sprites + draw_object done; object list (objsprite engine) + orchestrator pending | `test/test_sprite.py`, `test/test_ground.py`, `test/test_object.py` |
 
 
 ### `draw_hud` phase ledger

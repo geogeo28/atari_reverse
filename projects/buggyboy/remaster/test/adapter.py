@@ -128,6 +128,15 @@ GROUND_BAND_RECORDS_BYTES = 0x40                   # 7 gradient records; rec6 (b
 #                                                    past its 8-byte slot into the following bytes
 
 
+# ---- scaled roadside object (draw_object) globals + const edge-mask tables (mirror addrs.h) ----
+A_obj_shade = 0x18c5e                               # sign selects the centre-band / near fill pattern
+A_blit_mask_l = 0x15bba                             # left-edge antialias masks, indexed (x&0xf)<<2
+A_blit_mask_r = 0x15bfa                             # right-edge antialias masks
+OBJ_MASK_BYTES = 0x40                               # 16 entries * 4 bytes (index (x&0xf)<<2 -> 0..0x3c)
+# draw_object reads the road control table from A_road_width_tbl (already defined for render_road) and
+# scans up to ~96 rows of it; ROAD_WIDTH_TBL_BYTES (0x200) already covers that.
+
+
 
 
 
@@ -269,6 +278,13 @@ class GroundAssets(ctypes.Structure):
     _fields_ = [("col_tbl", ctypes.POINTER(ctypes.c_uint8)),
                 ("band_records", ctypes.POINTER(ctypes.c_uint8)),
                 ("color_pairs", ctypes.POINTER(ctypes.c_uint8))]
+
+
+class ObjectInput(ctypes.Structure):
+    _fields_ = [("width_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("blit_mask_l", ctypes.POINTER(ctypes.c_uint8)),
+                ("blit_mask_r", ctypes.POINTER(ctypes.c_uint8)),
+                ("shade", ctypes.c_int16)]
 
 
 def _i16(image, addr):
@@ -515,3 +531,19 @@ def ground_assets(image):
     assets = GroundAssets(ctypes.cast(col_tbl, p), ctypes.cast(band_records, p),
                           ctypes.cast(color_pairs, p))
     return assets, (col_tbl, band_records, color_pairs)
+
+
+def object_input(image):
+    """The scaled-roadside-object inputs as a native ObjectInput. Returns (input, keepalive) — the
+    caller must hold `keepalive` while `input` is used. width_tbl is the road control table (the same
+    table render_road reads); the two edge-mask tables index by (x & 0xf) << 2."""
+    def buf(addr, n):
+        return (ctypes.c_uint8 * n)(*image[addr:addr + n])
+
+    width_tbl = buf(A_road_width_tbl, ROAD_WIDTH_TBL_BYTES)
+    mask_l = buf(A_blit_mask_l, OBJ_MASK_BYTES)
+    mask_r = buf(A_blit_mask_r, OBJ_MASK_BYTES)
+    p = ctypes.POINTER(ctypes.c_uint8)
+    inp = ObjectInput(ctypes.cast(width_tbl, p), ctypes.cast(mask_l, p), ctypes.cast(mask_r, p),
+                      _i16(image, A_obj_shade))
+    return inp, (width_tbl, mask_l, mask_r)

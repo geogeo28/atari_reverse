@@ -257,4 +257,20 @@ typedef struct {
  * solid fill), into the draw buffer. No-op when no entry carries one. */
 void rm_draw_ground(const GroundState *s, const GroundAssets *a, Framebuffer *fb);
 
+/* ---- scaled roadside object (draw_object @0x1087e) ---- */
+
+/* The one scaled roadside object drawn per frame (the near "billboard"): draw_object scans the road
+ * control table for the object's visible rows, derives its screen edges + a centre band, and paints
+ * solid scale-fills with antialiased edge cells. Inputs: `width_tbl` is the per-scanline road control
+ * long table (build_road_geometry's output — same table render_road reads); `shade` sign-selects the
+ * centre/near fill pattern. */
+typedef struct {
+    const uint8_t *width_tbl;     /* per-scanline road control longs (flags high word, half-width low) */
+    const uint8_t *blit_mask_l;   /* left-edge antialias masks, indexed (x & 0xf) << 2 (cursor-zero) */
+    const uint8_t *blit_mask_r;   /* right-edge antialias masks, indexed (x & 0xf) << 2 (cursor-zero) */
+    int16_t        shade;         /* sign selects the centre-band / near fill pattern */
+} ObjectInput;
+
+void rm_draw_object(const ObjectInput *in, Framebuffer *fb);
+
 #endif /* RM_GAME_H */
