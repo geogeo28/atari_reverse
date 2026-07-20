@@ -291,4 +291,13 @@ void rm_blit_objshift(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32
 void rm_blit_objshift2(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
                        uint16_t x, uint16_t rows_m1, int width_idx);
 
+/* objsprite engine (recreate's @0x131f6): the third fine-x blitter — four-word SHOW mask, no colour.
+ * width_idx 0/1/2/3 selects WIDTH 0x80/0x88/0x90/0x98 (the t4/w88/t2/t1 glue). */
+void rm_objsprite(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                  uint16_t x, uint16_t rows_m1, int width_idx);
+
+/* Alt entry (recreate's @0x13204, t53): aligned_col / shl / shr precomputed by the caller. */
+void rm_objsprite_alt(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                      uint16_t aligned_col, unsigned shl, unsigned shr, uint16_t rows_m1);
+
 #endif /* RM_GAME_H */

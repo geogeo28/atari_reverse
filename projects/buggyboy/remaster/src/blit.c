@@ -314,3 +314,151 @@ void rm_blit_objshift2(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_
         sp = (uint32_t)(sp - sx16(rewind_src));
     }
 }
+
+/* ============================================================================================
+ * objsprite engine @0x131f6 — the third fine-x blitter (the sibling of blit_objshift2). Same three-
+ * primitive shell (straddle / left-edge / right-edge) and the same col0/col1 pairing, but its SHOW
+ * mask is built from FOUR source words ~(w0|w1|w2)&w3 (the blit_transp_cell / objsh_build_mask
+ * formula, 0xFFFF high word) and there is NO colour indexing — pixels are copied plain-shifted and
+ * OR'd. Four width families width_idx 0..3 (WIDTH 0x80/0x88/0x90/0x98). PURE LEAF. Used by the
+ * roadside-object dispatcher's t1/t2/t4/w88/t53 handlers.
+ * ============================================================================================ */
+#define OBJSP_WIDTH_80    0x80    /* width_idx 0 base width; WIDTH = this + 8*width_idx */
+#define OBJSP_WIDTHS      4       /* four width families */
+#define OBJSP_LADDER_STEP 8
+#define OBJSP_REWIND_C0   0xc0    /* per-row rewind base (d3 = this - 8*rung) */
+#define OBJSP_BASE_CELLS  4       /* BASE straddle cells for width_idx 0 (4 - width_idx) */
+
+/* STRADDLE cell: like objsh but no colour fill (pixels copied plain). */
+static void objsp_straddle_cell(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1,
+                                uint32_t *sp, unsigned shl) {
+    uint32_t mask32 = rotl32(objsh_build_mask(src, *sp), shl);
+    uint16_t col0_mask = (uint16_t)(mask32 >> OBJSH_SUBPX_BITS);
+    uint16_t col1_mask = (uint16_t)mask32;
+    for (int plane = 0; plane < OBJSH_PLANES; plane++) {
+        uint32_t pix32 = (uint32_t)be16(src + *sp) << shl;
+        *sp += 2;
+        uint16_t col1_pix = (uint16_t)pix32;
+        uint16_t col0_pix = (uint16_t)(pix32 >> OBJSH_SUBPX_BITS);
+        if (plane == OBJSH_PLANES - 1) {
+            col1_pix = (uint16_t)(col1_pix & (uint16_t)~col1_mask);
+            col0_pix = (uint16_t)(col0_pix & (uint16_t)~col0_mask);
+        }
+        plane_write(dst, *col1, col1_mask, col1_pix);   /* col1 first */
+        plane_write(dst, *col0, col0_mask, col0_pix);
+        *col0 += 2; *col1 += 2;
+    }
+}
+
+/* LEFT-EDGE cell: only col1 drawn, mask rol.l'd (low word used), pixels shift left as words. */
+static void objsp_left_edge_cell(uint8_t *dst, const uint8_t *src, Offset *col1, uint32_t *sp,
+                                 unsigned shl) {
+    uint16_t mask = (uint16_t)rotl32(objsh_build_mask(src, *sp), shl);
+    for (int plane = 0; plane < OBJSH_PLANES; plane++) {
+        uint16_t pix = (uint16_t)((uint32_t)be16(src + *sp) << shl);
+        *sp += 2;
+        if (plane == OBJSH_PLANES - 1) pix = (uint16_t)(pix & (uint16_t)~mask);
+        plane_write(dst, *col1, mask, pix);
+        *col1 += 2;
+    }
+}
+
+/* RIGHT-EDGE cell: only col0 drawn, mask lsr.l'd by shr, pixels shift right as words. */
+static void objsp_right_edge_cell(uint8_t *dst, const uint8_t *src, Offset *col0, uint32_t *sp,
+                                  unsigned shr) {
+    uint16_t mask = (uint16_t)(objsh_build_mask(src, *sp) >> shr);
+    for (int plane = 0; plane < OBJSH_PLANES; plane++) {
+        uint16_t pix = (uint16_t)(be16(src + *sp) >> shr);
+        *sp += 2;
+        if (plane == OBJSH_PLANES - 1) pix = (uint16_t)(pix & (uint16_t)~mask);
+        plane_write(dst, *col0, mask, pix);
+        *col0 += 2;
+    }
+}
+
+enum objsp_family { OBJSP_CLIP, OBJSP_BASE, OBJSP_LEFT, OBJSP_WIDE };
+
+static void objsp_row(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1, uint32_t *sp,
+                      enum objsp_family fam, int straddle, unsigned shl, unsigned shr) {
+    if (fam == OBJSP_LEFT) {
+        objsp_left_edge_cell(dst, src, col1, sp, shl);
+        *col0 += OBJSH_CELL_BYTES;
+    }
+    for (int i = 0; i < straddle; i++)
+        objsp_straddle_cell(dst, src, col0, col1, sp, shl);
+    if (fam == OBJSP_WIDE) {
+        objsp_right_edge_cell(dst, src, col0, sp, shr);
+        *col1 += OBJSH_CELL_BYTES;
+    }
+}
+
+/* The shared parameterized objsprite core (@0x13206). width_idx = (WIDTH - 0x80)/8 selects the
+ * width bound + the entry rung of both clip ladders. col0_init = dst_off + aligned_col. */
+static void objsp_core(uint8_t *dst, const uint8_t *src, uint16_t aligned_col, unsigned shl,
+                       unsigned shr, uint16_t rows_m1, Offset col0_init, uint32_t src_init,
+                       int width_idx) {
+    Offset col0 = col0_init;
+    uint32_t sp = src_init;
+    enum objsp_family fam;
+    int straddle, rung;
+
+    if ((int16_t)aligned_col < 0) {
+        int16_t col_walk = (int16_t)aligned_col;
+        fam = OBJSP_CLIP;
+        for (rung = width_idx; rung < OBJSP_WIDTHS; rung++) {
+            col_walk = (int16_t)(col_walk + OBJSP_LADDER_STEP);
+            if (col_walk >= 0) { fam = OBJSP_LEFT; break; }
+            sp += OBJSH_CELL_BYTES;
+            col0 += OBJSH_CELL_BYTES;
+        }
+        if (fam == OBJSP_CLIP) return;                    /* fully off-left */
+        straddle = (OBJSP_WIDTHS - 1) - rung;
+    } else {
+        int16_t width = (int16_t)(OBJSP_WIDTH_80 + OBJSP_LADDER_STEP * width_idx);
+        int16_t col_walk = (int16_t)((int16_t)aligned_col - width);
+        if (col_walk < 0) {
+            fam = OBJSP_BASE;
+            straddle = OBJSP_BASE_CELLS - width_idx;
+            rung = width_idx;
+        } else {
+            fam = OBJSP_CLIP;
+            for (rung = width_idx; rung < OBJSP_WIDTHS; rung++) {
+                col_walk = (int16_t)(col_walk - OBJSP_LADDER_STEP);
+                if (col_walk < 0) { fam = OBJSP_WIDE; break; }
+            }
+            if (fam == OBJSP_CLIP) return;                /* fully off-right */
+            straddle = (OBJSP_WIDTHS - 1) - rung;
+        }
+    }
+
+    uint16_t rewind = (uint16_t)(OBJSP_REWIND_C0 - OBJSP_LADDER_STEP * rung);
+    Offset col1 = col0 + OBJSH_CELL_BYTES;
+    int rows = (int16_t)rows_m1 + 1;
+    for (int row = 0; row < rows; row++) {
+        objsp_row(dst, src, &col0, &col1, &sp, fam, straddle, shl, shr);
+        col0 = (Offset)(col0 - sx16(rewind));
+        col1 = (Offset)(col1 - sx16(rewind));
+        sp = (uint32_t)(sp - sx16(rewind));
+    }
+}
+
+/* Fine-x prologue (@0x131f6): derive fine_x/shl/shr + aligned_col from x, add the aligned column
+ * into the dst, then run the core. `width_idx` folds in the width immediate (t4=0, w88=1, t2=2,
+ * t1=3). */
+void rm_objsprite(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t src_off,
+                  uint16_t x, uint16_t rows_m1, int width_idx) {
+    unsigned fine_x = (unsigned)(x & OBJSH_NIBBLE);
+    unsigned shl = OBJSH_SUBPX_BITS - fine_x;
+    unsigned shr = fine_x;
+    uint16_t col = objsh_aligned_col(x);
+    Offset col0_init = (Offset)(dst_off + sx16(col));
+    objsp_core(dst, src, col, shl, shr, rows_m1, col0_init, src_off, width_idx);
+}
+
+/* Alt entry (@0x13204, t53): the caller pre-computes aligned_col / shl / shr; skips the fine-x calc.
+ * Joins the width-0x80 dispatch. */
+void rm_objsprite_alt(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t src_off,
+                      uint16_t aligned_col, unsigned shl, unsigned shr, uint16_t rows_m1) {
+    Offset col0_init = (Offset)(dst_off + sx16(aligned_col));
+    objsp_core(dst, src, aligned_col, shl, shr, rows_m1, col0_init, src_off, 0);
+}

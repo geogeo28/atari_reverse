@@ -71,6 +71,12 @@ def _lib():
     lib.rm_blit_objshift2.argtypes = [u8p, ctypes.c_uint32, u8p, ctypes.c_uint32,
                                       ctypes.c_uint16, ctypes.c_uint16, ctypes.c_int]
     lib.rm_blit_objshift2.restype = None
+    lib.rm_objsprite.argtypes = [u8p, ctypes.c_uint32, u8p, ctypes.c_uint32,
+                                 ctypes.c_uint16, ctypes.c_uint16, ctypes.c_int]
+    lib.rm_objsprite.restype = None
+    lib.rm_objsprite_alt.argtypes = [u8p, ctypes.c_uint32, u8p, ctypes.c_uint32,
+                                     ctypes.c_uint16, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint16]
+    lib.rm_objsprite_alt.restype = None
     return lib
 
 

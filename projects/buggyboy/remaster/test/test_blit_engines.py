@@ -125,3 +125,45 @@ def test_blit_objshift2_matches(chunk, capsys):
     with capsys.disabled():
         print(f"  objshift2 chunk {chunk}: {len(bad)} mismatches")
     assert not bad, f"blit_objshift2 differs: {bad[:8]}"
+
+
+# ---- objsprite engine (the third fine-x blitter), width_idx 0/1/2/3 = g_objsprite_t4/w88/t2/t1 ----
+
+# g_objsprite_t<N>(image, x, rows_m1, dst, src) — bare width prologue, fixed per-row rewind.
+OBJSPRITE_ENTRY = {0: "g_objsprite_t4", 1: "g_objsprite_w88", 2: "g_objsprite_t2", 3: "g_objsprite_t1"}
+
+
+def _check_objsprite(lib, x, rows_m1, width_idx, seed):
+    ctypes = equiv.ctypes
+    regs = (x & 0xffff, rows_m1 & 0xffff, DST_BASE, SRC_BASE)
+
+    def remaster_call(l, buf):
+        base = ctypes.cast(buf, ctypes.POINTER(ctypes.c_uint8))
+        l.rm_objsprite(base, DST_BASE, base, SRC_BASE, x & 0xffff, rows_m1 & 0xffff, width_idx)
+
+    return equiv.compare_objshift(lib, OBJSPRITE_ENTRY[width_idx], remaster_call, regs, _spans(), seed)
+
+
+OBJSPRITE_CASES = []
+for _wi in (0, 1, 2, 3):
+    for _fx in range(16):
+        # cover the LEFT clip ladder, BASE span, WIDE clip ladder, and off-edge both sides.
+        for _col in (-32, -24, -16, -8, 0x0, 0x40, 0x78, 0x80, 0x88, 0x90, 0x98, 0xa0):
+            OBJSPRITE_CASES.append((_wi, _fx, _col))
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_objsprite_matches(chunk, capsys):
+    lib = equiv._lib()
+    bad = []
+    for idx, (wi, fx, col) in enumerate(OBJSPRITE_CASES):
+        if idx % FUZZ_CHUNKS != chunk:
+            continue
+        for rows_m1 in (0, 4, 0x1f):
+            x = _x_for(col, fx)
+            diff = _check_objsprite(lib, x, rows_m1, wi, seed=idx * 149 + rows_m1)
+            if diff:
+                bad.append((wi, fx, col, rows_m1, diff))
+    with capsys.disabled():
+        print(f"  objsprite chunk {chunk}: {len(bad)} mismatches")
+    assert not bad, f"objsprite differs: {bad[:8]}"
