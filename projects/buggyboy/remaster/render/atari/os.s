@@ -88,3 +88,17 @@ Setpalette:
     trap    #14
     lea     6(%sp),%sp
     rts
+
+| long Setscreen(long logLoc, long physLoc, short rez)   XBIOS 5 (rez/-1 leaves it; latches at vblank)
+    .globl  Setscreen
+Setscreen:
+    move.l  4(%sp),%a0          | logLoc
+    move.l  8(%sp),%a1          | physLoc
+    move.w  14(%sp),%d0         | rez (low word of the int arg)
+    move.w  %d0,-(%sp)
+    move.l  %a1,-(%sp)
+    move.l  %a0,-(%sp)
+    move.w  #5,-(%sp)
+    trap    #14
+    lea     12(%sp),%sp
+    rts

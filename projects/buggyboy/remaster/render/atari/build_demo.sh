@@ -17,8 +17,11 @@ echo ">> generate demo fixture (road tables + pose + HUD assets + golden) from t
 "$PY" "$HERE/gen_demo_fixture.py"
 
 CC=m68k-elf-gcc
-CFLAGS="-m68000 -Os -ffreestanding -fno-jump-tables -fomit-frame-pointer -nostdlib \
-        -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra"
+# -O2 (not -Os): the road blit primitives must inline or the per-column call overhead ~doubles the
+# render cost (see tools/bench.py). -fno-tree-loop-distribute-patterns keeps the hand-written fill
+# loops from being turned into libc calls.
+CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
+        -fomit-frame-pointer -nostdlib -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra"
 CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c"
 
 echo ">> compile + link (base 0, keep relocs)"
