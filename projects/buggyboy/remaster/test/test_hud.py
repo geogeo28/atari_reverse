@@ -73,3 +73,19 @@ def test_hud_dsp_toggle_off():
     image = equiv.hud_background(leg=0, controls={adapter.A_dsp_toggle: 1})
     coverage, wrong = equiv.compare_hud(lib, image)
     assert wrong == 0 and coverage == 1.0
+
+
+# Phase 6b (blinking small gauge) runs when no bonus units remain (crash_lap == 0). It draws only on
+# the lit blink phase: bit1 of (gauge_blink - 1) set. (gauge_blink, gauge_blink_on) per case.
+SMALL_GAUGE = [(3, 1), (3, 0), (7, 1), (1, 1), (0, 1)]   # last two: dark phase / wrapped -> no draw
+
+
+@pytest.mark.parametrize("blink,blink_on", SMALL_GAUGE)
+def test_hud_small_gauge(blink, blink_on):
+    lib = equiv._lib()
+    image = equiv.hud_background(leg=0, controls={adapter.A_crash_lap: 0,
+                                                  adapter.A_gauge_blink: blink,
+                                                  adapter.A_gauge_blink_on: blink_on})
+    coverage, wrong = equiv.compare_hud(lib, image)
+    assert wrong == 0, f"gauge_blink={blink} on={blink_on}: {wrong} wrong pixels"
+    assert coverage == 1.0, f"gauge_blink={blink} on={blink_on}: only {coverage:.1%} covered"

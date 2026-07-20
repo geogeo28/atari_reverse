@@ -43,6 +43,7 @@ void main(void) {
         .dsp_color_scroll = HUD_DSP_COLOR_SCROLL, .crash_lap = HUD_CRASH_LAP,
         .speed = HUD_SPEED, .time_left = HUD_TIME_LEFT, .game_over = HUD_GAME_OVER,
         .dsp_toggle = HUD_DSP_TOGGLE, .dsp_variant_idx = HUD_DSP_VARIANT_IDX,
+        .gauge_blink = HUD_GAUGE_BLINK, .gauge_blink_on = HUD_GAUGE_BLINK_ON,
     };
     const HudAssets assets = {
         .color_pairs    = fixture_color_pairs,
@@ -54,6 +55,7 @@ void main(void) {
         .dashboard_src  = fixture_dashboard_src,
         .dsp_table      = fixture_dsp_table,
         .dsp_src        = fixture_dsp_src,
+        .small_gauge_str = fixture_small_gauge_str,
     };
 
     memset(fb.px, 0, SCREEN_BYTES);     /* blank screen: render only remaster's own HUD */

@@ -79,6 +79,7 @@ def main():
                                       adapter.CIDX_WINDOW_BYTES),
         "fixture_fuel_mask":      win(adapter.A_fuel_mask, adapter.FUEL_MASK_BYTES),
         "fixture_gauge_str":      win(adapter.A_gauge_str, adapter.GAUGE_STR_BYTES),
+        "fixture_small_gauge_str": win(adapter.A_small_gauge_str, adapter.SMALL_GAUGE_STR_BYTES),
         "fixture_palette":        palette,
     }
 
@@ -103,6 +104,8 @@ def main():
             f"#define HUD_GAME_OVER        {int(st.game_over)}",
             f"#define HUD_DSP_TOGGLE       {int(st.dsp_toggle)}",
             f"#define HUD_DSP_VARIANT_IDX  {st.dsp_variant_idx}",
+            f"#define HUD_GAUGE_BLINK      {st.gauge_blink}",
+            f"#define HUD_GAUGE_BLINK_ON   {int(st.gauge_blink_on)}",
             "", "#endif /* RM_HUD_FIXTURE_H */", ""]
     (build / "hud_fixture.h").write_text("\n".join(out))
     print(f"wrote {build/'hud_fixture.h'}, golden.bin, palette.bin "

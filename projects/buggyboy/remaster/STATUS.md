@@ -15,7 +15,7 @@ framebuffer → diff). Order follows the in-race draw order.
 | adapter            | flat image → structs      | ✅ HUD scalars + assets | `test/adapter.py` — `HudState`/`HudAssets`/`Framebuffer` |
 | equivalence driver | per-subsystem framebuffer diff | ✅ footprint coverage + no-wrong-pixel | `test/equiv.py` |
 | glyph blitter (`text_body`) | `g_draw_hud_bar` / `g_draw_hud_gauge0` | ✅ verified | `test/test_text.py` — 960 fuzz cases, **byte-exact** (whole framebuffer) |
-| `draw_hud`         | `g_draw_hud`              | 🟡 phases 1/2/3/4/5/6a/7 ported | `test/test_hud.py` — **100% footprint, 0 wrong pixels** across configs + all 8 phase-3 variants (phase 8 gated off) |
+| `draw_hud`         | `g_draw_hud`              | 🟡 phases 1/2/3/4/5/6a/6b/7 ported | `test/test_hud.py` — **100% footprint, 0 wrong pixels** across configs + all 8 phase-3 variants + 6b blink phases (phase 8 gated off) |
 | on-target (Hatari) | `g_draw_hud` frame        | ✅ byte-identical on 68000 | `render/atari/` — HUD-only PRG dump MATCHes recreate's g_draw_hud (blank screen) |
 | `render_road`      | `g_render_road`           | ⬜ not started   | — |
 | `blit_road_scroll` | `g_blit_road_scroll`      | ⬜ not started   | — |
@@ -34,7 +34,7 @@ invariant (every byte the candidate paints matches recreate). Coverage → 100% 
 | 4 | flag-sequence bars | ✅ | scalar only |
 | 5 | colour-tinted bars | ✅ | `color_pairs` + mask/ink + cidx tables |
 | 6a | fuel/tacho gauge | ✅ | fuel-mask table |
-| 6b | blinking small gauge | ⬜ | glyph helper ✅ — ready to wire (runs only when `crash_lap` == 0) |
+| 6b | blinking small gauge | ✅ | glyph blitter + `small_gauge_str` (runs only when `crash_lap` == 0) |
 | 7 | main gauge cluster + dashboard | ✅ | glyph blitter + dashboard masked-blit |
 | 8 | crash fx | ⬜ | `draw_num` + `add_score` + bars |
 

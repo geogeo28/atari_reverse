@@ -26,6 +26,7 @@ A_dsp_color_scroll, A_crash_lap = 0x18d06, 0x18c4a
 A_dsp_toggle, A_crash_active, A_hud_crash_timer = 0x18c7c, 0x18c7a, 0x18c4c
 A_speed, A_time_left, A_game_over_flag = 0x18cf6, 0x18cfc, 0x18c34
 A_dsp_variant_idx = 0x18c7e
+A_gauge_blink, A_gauge_blink_on = 0x18d02, 0x18d04
 
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
 A_color_pairs = 0x15afa                           # 16 colours x 8-byte fill
@@ -34,6 +35,7 @@ A_color_bar_cidx = 0x17e40                        # phase-5 colour-index cursor 
 A_fuel_mask = 0x17f08                             # phase-6a two mask longs
 A_font_glyphs = 0x176a8                           # phase-7 1bpp glyph table (16 bytes/char)
 A_gauge_str = 0x18218                             # phase-7 gauge-cluster label/bar string
+A_small_gauge_str = 0x18206                       # phase-6b blinking small-gauge string
 A_dsp_table = 0x1854c                             # phase-3 records {src_off:long, dst_off:word, rows-1:word}
 A_buf_c = 0x18c08                                 # pointer: base of the unpacked-graphics buffer
 DASH_SRC_OFF = 0x11c20                            # phase-7 dashboard graphic at buf_c + this
@@ -42,6 +44,7 @@ COLOR_BAR_MASK_BYTES = 5 * 12 * 4
 FUEL_MASK_BYTES = 8
 FONT_BYTES = 0x600                                # glyphs 0..0x5f (all the gauge string uses)
 GAUGE_STR_BYTES = 64                              # covers the 6 phase-7 substrings (indices 0..52)
+SMALL_GAUGE_STR_BYTES = 32                         # phase-6b gauge0 + optional bar substrings
 DASH_SRC_BYTES = 40 * 160                         # 40 rows at the screen stride
 DSP_RECORDS = 8                                   # phase-3 variant records
 DSP_TABLE_BYTES = DSP_RECORDS * 8
@@ -54,7 +57,8 @@ class HudState(ctypes.Structure):
                 ("dsp_color_scroll", ctypes.c_int16), ("crash_lap", ctypes.c_int16),
                 ("speed", ctypes.c_uint16), ("time_left", ctypes.c_uint16),
                 ("game_over", ctypes.c_bool), ("dsp_toggle", ctypes.c_bool),
-                ("dsp_variant_idx", ctypes.c_uint16)]
+                ("dsp_variant_idx", ctypes.c_uint16),
+                ("gauge_blink", ctypes.c_uint16), ("gauge_blink_on", ctypes.c_bool)]
 
 
 class HudAssets(ctypes.Structure):
@@ -66,7 +70,8 @@ class HudAssets(ctypes.Structure):
                 ("gauge_str", ctypes.POINTER(ctypes.c_uint8)),
                 ("dashboard_src", ctypes.POINTER(ctypes.c_uint8)),
                 ("dsp_table", ctypes.POINTER(ctypes.c_uint8)),
-                ("dsp_src", ctypes.POINTER(ctypes.c_uint8))]
+                ("dsp_src", ctypes.POINTER(ctypes.c_uint8)),
+                ("small_gauge_str", ctypes.POINTER(ctypes.c_uint8))]
 
 
 class Framebuffer(ctypes.Structure):
@@ -85,7 +90,8 @@ def hud_state(image):
     return HudState(_i16(image, A_flag_seq_count), _i16(image, A_flag_seq_off),
                     _i16(image, A_dsp_color_scroll), _i16(image, A_crash_lap),
                     u16(A_speed), u16(A_time_left), u16(A_game_over_flag) != 0,
-                    u16(A_dsp_toggle) != 0, u16(A_dsp_variant_idx))
+                    u16(A_dsp_toggle) != 0, u16(A_dsp_variant_idx),
+                    u16(A_gauge_blink), u16(A_gauge_blink_on) != 0)
 
 
 def _dsp_table_and_src(image, buf_c):
@@ -119,6 +125,7 @@ def hud_assets(image):
     fuel_mask = buf(A_fuel_mask, FUEL_MASK_BYTES)
     font = buf(A_font_glyphs, FONT_BYTES)
     gauge_str = buf(A_gauge_str, GAUGE_STR_BYTES)
+    small_gauge_str = buf(A_small_gauge_str, SMALL_GAUGE_STR_BYTES)
     dashboard_src = buf(buf_c + DASH_SRC_OFF, DASH_SRC_BYTES)
     dsp_table_bytes, dsp_src_bytes = _dsp_table_and_src(image, buf_c)
     dsp_table = (ctypes.c_uint8 * len(dsp_table_bytes))(*dsp_table_bytes)
@@ -136,9 +143,10 @@ def hud_assets(image):
         ctypes.cast(dashboard_src, p),
         ctypes.cast(dsp_table, p),
         ctypes.cast(dsp_src, p),
+        ctypes.cast(small_gauge_str, p),
     )
     return assets, (color_pairs, color_bar_mask, fuel_mask, font, gauge_str, dashboard_src,
-                    dsp_table, dsp_src, cidx_window)
+                    dsp_table, dsp_src, small_gauge_str, cidx_window)
 
 
 def framebuffer(image):

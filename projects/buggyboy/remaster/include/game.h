@@ -39,6 +39,8 @@ typedef struct {
     bool game_over;            /* blank the timer to 0 when set (phase 2) */
     bool dsp_toggle;           /* suppress the dashboard-variant sprite when set (phase 3) */
     uint16_t dsp_variant_idx;  /* byte offset into the dashboard-variant record table (phase 3) */
+    uint16_t gauge_blink;      /* small-gauge blink phase; bit1 of (blink-1) gates the draw (phase 6b) */
+    bool gauge_blink_on;       /* enable the extra bar under the blinking small gauge (phase 6b) */
 } HudState;
 
 /* Static ST-format asset tables the HUD reads (constant data baked into STATIC.BIN, plus the
@@ -55,6 +57,7 @@ typedef struct {
     const uint8_t *dashboard_src;   /* phase-7 dashboard graphic (buf_c region), masked-blit source */
     const uint8_t *dsp_table;       /* phase-3 records {src_off:long, dst_off:word, rows-1:word} */
     const uint8_t *dsp_src;         /* phase-3 sprite pixels (buf_c window; dsp_table src_off is relative) */
+    const uint8_t *small_gauge_str; /* phase-6b blinking small-gauge label/bar string */
 } HudAssets;
 
 #endif /* RM_GAME_H */

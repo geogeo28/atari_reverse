@@ -5,8 +5,9 @@
  *   Phase 4  flag-sequence bars   one lit vertical bar per matched-in-a-row flag
  *   Phase 5  colour-tinted bars    five columns tinted from color_pairs via a scrolling cursor
  *   Phase 6a fuel/tacho gauge      one fixed multi-row column per remaining bonus unit
+ *   Phase 6b blinking small gauge  shown instead of 6a when no bonus units remain
  *   Phase 7  main gauge cluster    gauge0 + five bars (glyph blitter) + the dashboard graphic
- * Still to port: phase 6b (blinking small gauge), phase 8 (crash fx). See STATUS.md.
+ * Still to port: phase 8 (crash fx). See STATUS.md.
  *
  * The framebuffer is ST hardware format (see st.h); byte offsets below are relative to the draw
  * buffer origin (fb->px[0]) and each row steps one scanline (SCREEN_ROW_BYTES). The layout matches
@@ -46,6 +47,11 @@
 #define FUEL_LOW           0x5ffa5ffa
 #define FUEL_MASK_KEEP     0x1ff81ff8   /* bits kept from the mask source before OR-ing FUEL_MID */
 #define FUEL_COL_BACK      0x8c0        /* rewind to the next column (net +8 per unit) */
+
+/* Phase 6b — blinking small gauge (drawn instead of 6a when no bonus units remain). */
+#define SMALL_GAUGE_DST    0x2038
+#define SMALL_GAUGE_COLOR  6
+#define GAUGE_BLINK_BIT    2            /* draw only when this bit of (gauge_blink - 1) is set */
 
 /* Phase 7 — main gauge cluster (one gauge0 + five bars, dst/string cursors threaded across) then
  * the dashboard graphic. All inputs are static: colour 0xf, a fixed label/bar string, a fixed
@@ -149,6 +155,22 @@ static void hud_fuel_gauge(const HudState *s, const HudAssets *assets, Framebuff
     }
 }
 
+/* Phase 6b — the blinking small gauge, drawn instead of 6a when no bonus units remain. It shows
+ * only on the lit blink phase: draw when bit1 of (gauge_blink - 1) is set (and the counter hasn't
+ * wrapped negative). A gauge0 label, plus an extra bar underneath when gauge_blink_on. */
+static void hud_small_gauge(const HudState *s, const HudAssets *a, Framebuffer *fb) {
+    if (s->crash_lap >= 1) return;                       /* 6a drew the fuel columns instead */
+    int16_t blink = (int16_t)(s->gauge_blink - 1);
+    if (blink < 0 || !(blink & GAUGE_BLINK_BIT)) return; /* dark blink phase: nothing this frame */
+    Plane4 f_lo = be32(a->color_pairs + SMALL_GAUGE_COLOR * COLOR_PAIR_STRIDE);
+    Plane4 f_hi = be32(a->color_pairs + SMALL_GAUGE_COLOR * COLOR_PAIR_STRIDE + 4);
+    Offset end, si = 0;
+    si = rm_glyph_run(fb, SMALL_GAUGE_DST, f_lo, f_hi, a->font, a->small_gauge_str, si,
+                      GAUGE_CELLS_M1, &end);
+    if (s->gauge_blink_on)
+        rm_glyph_run(fb, end, 0, 0xffffffff, a->font, a->small_gauge_str, si, TEXT_MAX_CELLS_M1, 0);
+}
+
 /* Phase 7 — the main gauge cluster: draw_hud_gauge0 then five draw_hud_bars, with the dst (A0) and
  * string cursor (A3) threaded across each sub-draw exactly as the 68000 leaves them. `str` is the
  * gauge string with the phase-1/2 speed/time digits already formatted in. */
@@ -232,6 +254,7 @@ void rm_draw_hud(const HudState *s, const HudAssets *assets, Framebuffer *fb) {
     hud_flag_bars(s, fb);
     hud_color_bars(s, assets, fb);
     hud_fuel_gauge(s, assets, fb);
+    hud_small_gauge(s, assets, fb);
     hud_gauge_cluster(assets, str, fb);
     hud_dashboard(assets, fb);
 }
