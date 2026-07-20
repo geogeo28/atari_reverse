@@ -7,7 +7,9 @@
  *   Phase 6a fuel/tacho gauge      one fixed multi-row column per remaining bonus unit
  *   Phase 6b blinking small gauge  shown instead of 6a when no bonus units remain
  *   Phase 7  main gauge cluster    gauge0 + five bars (glyph blitter) + the dashboard graphic
- * Still to port: phase 8 (crash fx). See STATUS.md.
+ *   Phase 8  crash / bonus tally   drain time/units/rollovers -> score; draw the number + bars
+ * All eight phases are ported. Off-framebuffer work (add_score arithmetic where it doesn't feed a
+ * drawn buffer, sound, the abort-flag countdown) is deliberately omitted. See STATUS.md.
  *
  * The framebuffer is ST hardware format (see st.h); byte offsets below are relative to the draw
  * buffer origin (fb->px[0]) and each row steps one scanline (SCREEN_ROW_BYTES). The layout matches
@@ -71,7 +73,8 @@
 /* Phases 1-2 — speed/time digit strings. These write into the gauge-cluster string buffer (the
  * speed/time text buffers overlap it), so phase 7's bars render the live speedometer/timer digits.
  * Offsets are into the gauge string (A_hud_speed_txt / A_hud_time_txt minus the string base). */
-#define GAUGE_STR_LEN      64
+#define HUD_TEXT_LEN       0xe6         /* the shared HUD-text region [0x18172, 0x18258) */
+#define GAUGE_OFF          0xa6         /* gauge string 0x18218 within the HUD-text region */
 #define HUD_SPEED_TXT_OFF  0x24         /* A_hud_speed_txt (0x1823c) - gauge string base (0x18218) */
 #define HUD_TIME_TXT_OFF   0x2e         /* A_hud_time_txt  (0x18246) - gauge string base */
 #define HUD_DIGIT_DIV      10           /* tens/units split */
@@ -79,6 +82,34 @@
 #define HUD_SPEED_HUNDRED  100          /* prefix "/1" and subtract at this speed */
 #define HUD_BLANK          0x2f         /* '/' renders as a blank glyph (leading-zero suppression) */
 #define HUD_PREFIX_00      0x2f2f       /* speedometer prefix "//" (<100) */
+
+/* Phase 8 — crash / end-of-race bonus tally (recreate's draw_crash_fx @0x15872). Runs when the
+ * crash-arm timer has gone negative. It drains the bonus time / units / score-digit rollovers into
+ * the score, then redraws the score number (num blitter) and the gauge bars. The score number, the
+ * bar strings and the rollover records overlap in one HUD-text region, so we work on a mutable copy
+ * of it (crash_buf) — offsets below are relative to its base (recreate addr - 0x18172). The score
+ * arithmetic (add_score) and sound are off-framebuffer where they don't feed a drawn buffer. */
+#define CRASH_NUM_STR_OFF  0x00         /* CRASH_STR_NUM  0x18172 */
+#define CRASH_BAR1_OFF     0x08         /* CRASH_STR_BAR1 0x1817a */
+#define CRASH_ROLLOVER_OFF 0x1c         /* rollover records 0x1818e (stride 0xe) */
+#define CRASH_HUD_LAP_OFF  0x68         /* CRASH_HUD_LAP  0x181da ('0' + crash_lap) */
+#define CRASH_BAR2_OFF     0x5a         /* CRASH_STR_BAR2 0x181cc */
+#define CRASH_SCORE_STR_OFF 0xbe        /* score_str 0x18230 (live digits at +4) */
+#define CRASH_SCORE_BCD_OFF 0xda        /* score_bcd 0x1824c (6 ASCII digits) */
+#define CRASH_ROLL_STRIDE  0xe
+#define CRASH_ROLL_TARGET  0x60         /* a record is done when 0x60 - digit[-1] - digit == 0 */
+#define CRASH_ROLL_HI      0x35         /* the tens digit that resets instead of carrying */
+#define CRASH_FRAME_MIN    0xa          /* the drain body runs once crash_frame reaches this */
+#define SCORE_DIGITS       6
+#define CRASH_NUM_DST      0x4770       /* draw_num dst */
+#define CRASH_BAR_FIRST    0x54b8
+#define CRASH_BAR_LOOP     0x5cd0
+#define CRASH_BAR_LOOP_STEP 0x500
+#define CRASH_BAR5_A       0x6ba0
+#define CRASH_BAR5_B       0x73c0
+#define CRASH_BAR_FIN_A    0x5480
+#define CRASH_BAR_FIN_B    0x5ca0
+#define CRASH_YOFF_IDLE    0x18         /* bar y-offset when no active bars */
 
 /* Phase 3 — dashboard-variant masked sprite. A record {src_off, dst_off, rows-1} picked by
  * dsp_variant_idx selects one sprite in buf_c (via dsp_src). Per row the source is a 4-plane cell
@@ -241,20 +272,102 @@ static void hud_format_time(uint16_t time_left, bool game_over, uint8_t *str) {
     str[HUD_TIME_TXT_OFF + 2] = '0' + t % HUD_DIGIT_DIV;
 }
 
+/* Add v to the n-byte big-endian integer at p (binary carry across bytes, as 68k add.l/.w). */
+static void add_be(uint8_t *p, int n, uint32_t v) {
+    uint32_t acc = 0;
+    for (int i = 0; i < n; i++) acc = (acc << 8) | p[i];
+    acc += v;
+    for (int i = n - 1; i >= 0; i--) { p[i] = (uint8_t)acc; acc >>= 8; }
+}
+
+/* Add a 6-byte delta to the score (six ASCII digits: 4 + a 2-byte counter), carry decimal, refresh
+ * the display digits (score_str[4..]) and blank leading zeros ('0' -> '/'). recreate's score_add. */
+static void score_add(uint8_t *score, uint8_t *score_str, const uint8_t *delta, bool game_over) {
+    if (game_over) return;
+    add_be(score,     4, be32(delta));
+    add_be(score + 4, 2, be16(delta + 4));
+    for (int i = SCORE_DIGITS - 1; i >= 1; i--)
+        if ((int8_t)('9' - score[i]) < 0) { score[i] -= 10; score[i - 1] += 1; }
+    for (int i = 0; i < SCORE_DIGITS; i++) score_str[4 + i] = score[i];
+    for (uint8_t *q = score_str + 4; *q == '0'; q++) *q -= 1;
+}
+
+/* Phase 8 — crash / end-of-race bonus tally. Drains time/units/rollovers into the score, then draws
+ * the score number + gauge bars. `text` is the shared HUD-text buffer (crash offsets are relative to
+ * its base, 0x18172); phase 8 is last, so it mutates it in place. Runs only once the crash-arm timer
+ * is negative (else phase 8 just decays the timer — off-frame). */
+static void hud_crash_fx(const HudState *s, const HudAssets *a, uint8_t *text, Framebuffer *fb) {
+    if (!(s->hud_crash_timer < 0)) return;   /* timer >= 0: decay only (no draw this frame) */
+    if (!s->crash_active) return;            /* draw_crash_fx bails (arms abort_flag; off-frame) */
+
+    uint16_t frame = (uint16_t)(s->crash_frame + 1);
+    int16_t crash_lap = s->crash_lap;
+
+    if ((int16_t)frame >= CRASH_FRAME_MIN) {
+        const uint8_t *delta = 0;
+        if (s->time_left != 0) {
+            delta = a->score_delta_time;                 /* time_left-- is off-frame */
+        } else if (crash_lap != 0) {
+            crash_lap -= 1;
+            delta = a->score_delta_roll;
+        } else {
+            for (int i = (int)s->crash_bars - 1, p = CRASH_ROLLOVER_OFF; i >= 0;
+                 i--, p += CRASH_ROLL_STRIDE) {
+                if ((uint8_t)(CRASH_ROLL_TARGET - text[p - 1] - text[p]) != 0) {
+                    if (text[p] == CRASH_ROLL_HI) text[p] -= 5;
+                    else { text[p] += 5; text[p - 1] -= 1; }
+                    delta = a->score_delta_roll;
+                    break;
+                }
+            }                                            /* the abort_flag arm here is off-frame */
+        }
+        if (delta) score_add(text + CRASH_SCORE_BCD_OFF, text + CRASH_SCORE_STR_OFF, delta, s->game_over);
+    }
+
+    text[CRASH_HUD_LAP_OFF] = (uint8_t)('0' + crash_lap);
+
+    uint8_t color = a->crash_color_tbl[frame & 7];
+    Plane4 fill_lo = be32(a->color_pairs + color * COLOR_PAIR_STRIDE);
+    Plane4 fill_hi = be32(a->color_pairs + color * COLOR_PAIR_STRIDE + 4);
+    rm_num_run(fb, CRASH_NUM_DST, fill_lo, fill_hi, a->num_sprites, a->num_glyph_tbl,
+               text, CRASH_NUM_STR_OFF, TEXT_MAX_CELLS_M1);
+
+    uint16_t bars = s->crash_bars;
+    Offset si = CRASH_BAR1_OFF;
+    Offset yoff = CRASH_YOFF_IDLE;
+    if (bars != 0) {
+        si = rm_glyph_run(fb, CRASH_BAR_FIRST, fill_lo, fill_hi, a->font, text, si, TEXT_MAX_CELLS_M1, 0);
+        for (int i = 0; i < bars; i++)
+            si = rm_glyph_run(fb, CRASH_BAR_LOOP + (Offset)i * CRASH_BAR_LOOP_STEP, fill_lo, fill_hi,
+                              a->font, text, si, TEXT_MAX_CELLS_M1, 0);
+        yoff = 0;
+    }
+    si = CRASH_BAR2_OFF;
+    if (bars == 5) {
+        si = rm_glyph_run(fb, CRASH_BAR5_A + yoff, fill_lo, fill_hi, a->font, text, si, TEXT_MAX_CELLS_M1, 0);
+        si = rm_glyph_run(fb, CRASH_BAR5_B + yoff, fill_lo, fill_hi, a->font, text, si, TEXT_MAX_CELLS_M1, 0);
+    }
+    si = rm_glyph_run(fb, CRASH_BAR_FIN_A + yoff, fill_lo, fill_hi, a->font, text, si, TEXT_MAX_CELLS_M1, 0);
+    rm_glyph_run(fb, CRASH_BAR_FIN_B + yoff, fill_lo, fill_hi, a->font, text, si, TEXT_MAX_CELLS_M1, 0);
+    /* the abort_flag decay tail is off-frame */
+}
+
 /* Overlay the ported HUD phases onto the current frame in fb. */
 void rm_draw_hud(const HudState *s, const HudAssets *assets, Framebuffer *fb) {
-    /* Phases 1-2 format the speed/time digits into a mutable copy of the gauge string, which the
-     * phase-7 gauge cluster then renders (the text buffers overlap that string). */
-    uint8_t str[GAUGE_STR_LEN];
-    memcpy(str, assets->gauge_str, GAUGE_STR_LEN);
-    hud_format_speed(s->speed, str);
-    hud_format_time(s->time_left, s->game_over, str);
+    /* One mutable copy of the HUD-text region: phases 1-2 format the speed/time digits into it, the
+     * phase-7 gauge cluster and phase-8 crash tally then render (their buffers overlap it). */
+    uint8_t text[HUD_TEXT_LEN];
+    memcpy(text, assets->hud_text, HUD_TEXT_LEN);
+    uint8_t *gauge_str = text + GAUGE_OFF;
+    hud_format_speed(s->speed, gauge_str);
+    hud_format_time(s->time_left, s->game_over, gauge_str);
 
     hud_dsp_sprite(s, assets, fb);
     hud_flag_bars(s, fb);
     hud_color_bars(s, assets, fb);
     hud_fuel_gauge(s, assets, fb);
     hud_small_gauge(s, assets, fb);
-    hud_gauge_cluster(assets, str, fb);
+    hud_gauge_cluster(assets, gauge_str, fb);
     hud_dashboard(assets, fb);
+    hud_crash_fx(s, assets, text, fb);
 }

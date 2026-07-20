@@ -44,6 +44,8 @@ void main(void) {
         .speed = HUD_SPEED, .time_left = HUD_TIME_LEFT, .game_over = HUD_GAME_OVER,
         .dsp_toggle = HUD_DSP_TOGGLE, .dsp_variant_idx = HUD_DSP_VARIANT_IDX,
         .gauge_blink = HUD_GAUGE_BLINK, .gauge_blink_on = HUD_GAUGE_BLINK_ON,
+        .crash_active = HUD_CRASH_ACTIVE, .crash_frame = HUD_CRASH_FRAME,
+        .crash_bars = HUD_CRASH_BARS, .hud_crash_timer = HUD_CRASH_TIMER,
     };
     const HudAssets assets = {
         .color_pairs    = fixture_color_pairs,
@@ -51,11 +53,16 @@ void main(void) {
         .color_bar_cidx = fixture_color_bar_cidx + CIDX_ZERO_OFF,   /* point at the cursor's zero */
         .fuel_mask      = fixture_fuel_mask,
         .font           = fixture_font,
-        .gauge_str      = fixture_gauge_str,
+        .hud_text       = fixture_hud_text,
         .dashboard_src  = fixture_dashboard_src,
         .dsp_table      = fixture_dsp_table,
         .dsp_src        = fixture_dsp_src,
         .small_gauge_str = fixture_small_gauge_str,
+        .num_sprites    = fixture_num_sprites,
+        .num_glyph_tbl  = fixture_num_glyph_tbl,
+        .crash_color_tbl = fixture_crash_color_tbl,
+        .score_delta_time = fixture_score_delta_time,
+        .score_delta_roll = fixture_score_delta_roll,
     };
 
     memset(fb.px, 0, SCREEN_BYTES);     /* blank screen: render only remaster's own HUD */

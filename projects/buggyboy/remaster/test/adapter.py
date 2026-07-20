@@ -27,6 +27,7 @@ A_dsp_toggle, A_crash_active, A_hud_crash_timer = 0x18c7c, 0x18c7a, 0x18c4c
 A_speed, A_time_left, A_game_over_flag = 0x18cf6, 0x18cfc, 0x18c34
 A_dsp_variant_idx = 0x18c7e
 A_gauge_blink, A_gauge_blink_on = 0x18d02, 0x18d04
+A_crash_frame, A_crash_bars = 0x18c78, 0x18d00
 
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
 A_color_pairs = 0x15afa                           # 16 colours x 8-byte fill
@@ -35,19 +36,29 @@ A_color_bar_cidx = 0x17e40                        # phase-5 colour-index cursor 
 A_fuel_mask = 0x17f08                             # phase-6a two mask longs
 A_font_glyphs = 0x176a8                           # phase-7 1bpp glyph table (16 bytes/char)
 A_gauge_str = 0x18218                             # phase-7 gauge-cluster label/bar string
+A_hud_text = 0x18172                               # base of the shared HUD-text working region
 A_small_gauge_str = 0x18206                       # phase-6b blinking small-gauge string
 A_dsp_table = 0x1854c                             # phase-3 records {src_off:long, dst_off:word, rows-1:word}
 A_buf_c = 0x18c08                                 # pointer: base of the unpacked-graphics buffer
+A_num_glyph_tbl = 0x17c5e                          # phase-8 per-digit word offset into the num sprites
+A_crash_color_tbl = 0x17f5a                        # phase-8 per-frame colour index (indexed frame&7)
+A_score_delta_time, A_score_delta_roll = 0x1737c, 0x17382   # phase-8 6-byte add_score deltas
 DASH_SRC_OFF = 0x11c20                            # phase-7 dashboard graphic at buf_c + this
+NUM_GLYPH_BUF_OFF = 0xbb80                          # phase-8 digit sprites at buf_c + this
 COLOR_PAIRS_BYTES = 16 * 8
 COLOR_BAR_MASK_BYTES = 5 * 12 * 4
 FUEL_MASK_BYTES = 8
 FONT_BYTES = 0x600                                # glyphs 0..0x5f (all the gauge string uses)
 GAUGE_STR_BYTES = 64                              # covers the 6 phase-7 substrings (indices 0..52)
+HUD_TEXT_BYTES = 0xe6                              # shared HUD-text region [0x18172, 0x18258)
 SMALL_GAUGE_STR_BYTES = 32                         # phase-6b gauge0 + optional bar substrings
 DASH_SRC_BYTES = 40 * 160                         # 40 rows at the screen stride
 DSP_RECORDS = 8                                   # phase-3 variant records
 DSP_TABLE_BYTES = DSP_RECORDS * 8
+NUM_TBL_BYTES = 0xc0                               # phase-8 num_glyph_tbl (glyphs up to 0x5f; letters too)
+NUM_SPRITES_BYTES = 0xb300                         # phase-8 num/label sprites (covers digits + "-BONUS-")
+CRASH_COLOR_TBL_BYTES = 8
+SCORE_DELTA_BYTES = 6
 CIDX_ZERO_OFF = 0x200                             # window is [-0x200, +0x200) around the cursor base
 CIDX_WINDOW_BYTES = 2 * CIDX_ZERO_OFF
 
@@ -58,7 +69,9 @@ class HudState(ctypes.Structure):
                 ("speed", ctypes.c_uint16), ("time_left", ctypes.c_uint16),
                 ("game_over", ctypes.c_bool), ("dsp_toggle", ctypes.c_bool),
                 ("dsp_variant_idx", ctypes.c_uint16),
-                ("gauge_blink", ctypes.c_uint16), ("gauge_blink_on", ctypes.c_bool)]
+                ("gauge_blink", ctypes.c_uint16), ("gauge_blink_on", ctypes.c_bool),
+                ("crash_active", ctypes.c_bool), ("crash_frame", ctypes.c_int16),
+                ("crash_bars", ctypes.c_uint16), ("hud_crash_timer", ctypes.c_int16)]
 
 
 class HudAssets(ctypes.Structure):
@@ -67,11 +80,16 @@ class HudAssets(ctypes.Structure):
                 ("color_bar_cidx", ctypes.POINTER(ctypes.c_uint8)),
                 ("fuel_mask", ctypes.POINTER(ctypes.c_uint8)),
                 ("font", ctypes.POINTER(ctypes.c_uint8)),
-                ("gauge_str", ctypes.POINTER(ctypes.c_uint8)),
+                ("hud_text", ctypes.POINTER(ctypes.c_uint8)),
                 ("dashboard_src", ctypes.POINTER(ctypes.c_uint8)),
                 ("dsp_table", ctypes.POINTER(ctypes.c_uint8)),
                 ("dsp_src", ctypes.POINTER(ctypes.c_uint8)),
-                ("small_gauge_str", ctypes.POINTER(ctypes.c_uint8))]
+                ("small_gauge_str", ctypes.POINTER(ctypes.c_uint8)),
+                ("num_sprites", ctypes.POINTER(ctypes.c_uint8)),
+                ("num_glyph_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("crash_color_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("score_delta_time", ctypes.POINTER(ctypes.c_uint8)),
+                ("score_delta_roll", ctypes.POINTER(ctypes.c_uint8))]
 
 
 class Framebuffer(ctypes.Structure):
@@ -91,7 +109,9 @@ def hud_state(image):
                     _i16(image, A_dsp_color_scroll), _i16(image, A_crash_lap),
                     u16(A_speed), u16(A_time_left), u16(A_game_over_flag) != 0,
                     u16(A_dsp_toggle) != 0, u16(A_dsp_variant_idx),
-                    u16(A_gauge_blink), u16(A_gauge_blink_on) != 0)
+                    u16(A_gauge_blink), u16(A_gauge_blink_on) != 0,
+                    u16(A_crash_active) != 0, _i16(image, A_crash_frame),
+                    u16(A_crash_bars), _i16(image, A_hud_crash_timer))
 
 
 def _dsp_table_and_src(image, buf_c):
@@ -124,12 +144,17 @@ def hud_assets(image):
     color_bar_mask = buf(A_color_bar_mask, COLOR_BAR_MASK_BYTES)
     fuel_mask = buf(A_fuel_mask, FUEL_MASK_BYTES)
     font = buf(A_font_glyphs, FONT_BYTES)
-    gauge_str = buf(A_gauge_str, GAUGE_STR_BYTES)
+    hud_text = buf(A_hud_text, HUD_TEXT_BYTES)
     small_gauge_str = buf(A_small_gauge_str, SMALL_GAUGE_STR_BYTES)
     dashboard_src = buf(buf_c + DASH_SRC_OFF, DASH_SRC_BYTES)
     dsp_table_bytes, dsp_src_bytes = _dsp_table_and_src(image, buf_c)
     dsp_table = (ctypes.c_uint8 * len(dsp_table_bytes))(*dsp_table_bytes)
     dsp_src = (ctypes.c_uint8 * len(dsp_src_bytes))(*dsp_src_bytes)
+    num_sprites = buf(buf_c + NUM_GLYPH_BUF_OFF, NUM_SPRITES_BYTES)
+    num_glyph_tbl = buf(A_num_glyph_tbl, NUM_TBL_BYTES)
+    crash_color_tbl = buf(A_crash_color_tbl, CRASH_COLOR_TBL_BYTES)
+    score_delta_time = buf(A_score_delta_time, SCORE_DELTA_BYTES)
+    score_delta_roll = buf(A_score_delta_roll, SCORE_DELTA_BYTES)
     # cidx is indexed by a signed cursor offset, so extract a window and point at its zero offset.
     cidx_window = buf(A_color_bar_cidx - CIDX_ZERO_OFF, CIDX_WINDOW_BYTES)
     p = ctypes.POINTER(ctypes.c_uint8)
@@ -139,14 +164,20 @@ def hud_assets(image):
         ctypes.cast(ctypes.byref(cidx_window, CIDX_ZERO_OFF), p),
         ctypes.cast(fuel_mask, p),
         ctypes.cast(font, p),
-        ctypes.cast(gauge_str, p),
+        ctypes.cast(hud_text, p),
         ctypes.cast(dashboard_src, p),
         ctypes.cast(dsp_table, p),
         ctypes.cast(dsp_src, p),
         ctypes.cast(small_gauge_str, p),
+        ctypes.cast(num_sprites, p),
+        ctypes.cast(num_glyph_tbl, p),
+        ctypes.cast(crash_color_tbl, p),
+        ctypes.cast(score_delta_time, p),
+        ctypes.cast(score_delta_roll, p),
     )
-    return assets, (color_pairs, color_bar_mask, fuel_mask, font, gauge_str, dashboard_src,
-                    dsp_table, dsp_src, small_gauge_str, cidx_window)
+    return assets, (color_pairs, color_bar_mask, fuel_mask, font, hud_text, dashboard_src,
+                    dsp_table, dsp_src, small_gauge_str, num_sprites, num_glyph_tbl,
+                    crash_color_tbl, score_delta_time, score_delta_roll, cidx_window)
 
 
 def framebuffer(image):

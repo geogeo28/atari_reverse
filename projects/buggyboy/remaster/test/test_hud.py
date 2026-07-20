@@ -89,3 +89,27 @@ def test_hud_small_gauge(blink, blink_on):
     coverage, wrong = equiv.compare_hud(lib, image)
     assert wrong == 0, f"gauge_blink={blink} on={blink_on}: {wrong} wrong pixels"
     assert coverage == 1.0, f"gauge_blink={blink} on={blink_on}: only {coverage:.1%} covered"
+
+
+# Phase 8 (crash / bonus tally) runs once the crash-arm timer is negative and crash_active is set.
+# (crash_frame, crash_bars, time_left, crash_lap) drive the drain path + bar count.
+CRASH = [
+    (0x20, 3, 0, 0),    # rollover-drain path (time & lap exhausted), 3 bars
+    (0x20, 5, 0, 0),    # 5 bars (extra bar5 pair)
+    (0x20, 3, 50, 0),   # time-drain path
+    (0x20, 3, 0, 4),    # lap-drain path
+    (0x05, 3, 0, 0),    # frame < 0xa: no drain, just draw
+    (0x20, 0, 0, 0),    # no bars
+]
+
+
+@pytest.mark.parametrize("frame,bars,time,lap", CRASH)
+def test_hud_crash_fx(frame, bars, time, lap):
+    lib = equiv._lib()
+    image = equiv.hud_background(leg=0, controls={
+        adapter.A_crash_active: 1, adapter.A_hud_crash_timer: 0xffff,   # timer < 0 -> draw_crash_fx
+        adapter.A_crash_frame: frame, adapter.A_crash_bars: bars,
+        adapter.A_time_left: time, adapter.A_crash_lap: lap})
+    coverage, wrong = equiv.compare_hud(lib, image)
+    assert wrong == 0, f"crash frame={frame:#x} bars={bars} t={time} lap={lap}: {wrong} wrong pixels"
+    assert coverage == 1.0, f"crash frame={frame:#x} bars={bars}: only {coverage:.1%} covered"

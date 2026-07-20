@@ -41,6 +41,10 @@ typedef struct {
     uint16_t dsp_variant_idx;  /* byte offset into the dashboard-variant record table (phase 3) */
     uint16_t gauge_blink;      /* small-gauge blink phase; bit1 of (blink-1) gates the draw (phase 6b) */
     bool gauge_blink_on;       /* enable the extra bar under the blinking small gauge (phase 6b) */
+    bool crash_active;         /* crash/bonus-tally gate (phase 8) */
+    int16_t crash_frame;       /* crash-effect frame counter; +1 drives the colour cycle (phase 8) */
+    uint16_t crash_bars;       /* number of gauge bars to draw, 0-5 (phase 8) */
+    int16_t hud_crash_timer;   /* crash-arm timer: phase 8 draws only once this is negative */
 } HudState;
 
 /* Static ST-format asset tables the HUD reads (constant data baked into STATIC.BIN, plus the
@@ -53,11 +57,18 @@ typedef struct {
     const uint8_t *color_bar_cidx;  /* phase-5 per-column colour-index byte cursor (zero offset) */
     const uint8_t *fuel_mask;       /* phase-6a two mask longs blended into the gauge mid rows */
     const uint8_t *font;            /* phase-7 1bpp glyph table (glyph N at font + N*16) */
-    const uint8_t *gauge_str;       /* phase-7 concatenated gauge-cluster label/bar string */
+    const uint8_t *hud_text;        /* the HUD-text working region [0x18172,0x18258): gauge string,
+                                     * crash num/bar strings, rollover records, score — phases share
+                                     * it (they overlap in the original), so it's one mutable copy */
     const uint8_t *dashboard_src;   /* phase-7 dashboard graphic (buf_c region), masked-blit source */
     const uint8_t *dsp_table;       /* phase-3 records {src_off:long, dst_off:word, rows-1:word} */
     const uint8_t *dsp_src;         /* phase-3 sprite pixels (buf_c window; dsp_table src_off is relative) */
     const uint8_t *small_gauge_str; /* phase-6b blinking small-gauge label/bar string */
+    const uint8_t *num_sprites;     /* phase-8 pre-rendered digit sprites (buf_c region) */
+    const uint8_t *num_glyph_tbl;   /* phase-8 per-digit word offset into num_sprites */
+    const uint8_t *crash_color_tbl; /* phase-8 per-frame colour index, indexed (frame & 7) */
+    const uint8_t *score_delta_time;/* phase-8 6-byte add_score delta while draining time */
+    const uint8_t *score_delta_roll;/* phase-8 6-byte add_score delta per bonus unit / rollover */
 } HudAssets;
 
 #endif /* RM_GAME_H */
