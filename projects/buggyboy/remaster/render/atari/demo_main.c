@@ -20,7 +20,8 @@
 
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, uint8_t *ctrl, uint8_t *scanline);
 void rm_render_road(const RoadInput *in, Framebuffer *fb);
-void rm_blit_road_scroll(ScrollState *s, const uint8_t *playfield, Framebuffer *fb);
+void rm_scroll_prebuild(const uint8_t *playfield, uint8_t *shifted);
+void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb);
 void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stream);
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 
@@ -65,6 +66,7 @@ void *memcpy(void *d, const void *s, unsigned long n) {
 
 static uint8_t ctrl[RM_CTRL_BYTES] __attribute__((aligned(2)));          /* BSS: per-frame control-long table */
 static uint8_t scanline[RM_SCANLINE_BYTES] __attribute__((aligned(2)));  /* BSS: build_road_geometry scratch */
+static uint8_t shifted[RM_SCROLL_SHIFTS * RM_SCROLL_WINDOW] __attribute__((aligned(2)));  /* pre-rotated scroll copies */
 
 /* Two screen buffers, 256-byte aligned at RUNTIME (the ST video base only uses the high/mid address
  * bytes, so a non-256-aligned base is rounded down → the image shifts). The link-time alignment isn't
@@ -83,16 +85,16 @@ static Framebuffer *screen_buf(int i) {
 static const int16_t seg_data_init[13] = ROAD_SEG_DATA_INIT;
 
 /* Build this frame's geometry from `pose`, then render road + scroll band + HUD into `fb`. The scroll
- * advances every frame (hscroll_pos persists in `scroll`), so the road band slides each redraw. */
+ * advances every frame (hscroll_pos persists in `scroll`) using the pre-rotated copies in `shifted`
+ * (built once), so the road band slides each redraw. */
 static void draw_frame(Framebuffer *fb, RoadPose *pose, const RoadSource *src, RoadInput *road,
-                       ScrollState *scroll, const uint8_t *playfield, const HudState *hud,
-                       const HudAssets *assets) {
+                       ScrollState *scroll, const HudState *hud, const HudAssets *assets) {
     rm_build_road_geometry(pose, src, ctrl, scanline);
     road->width_tbl = ctrl + RM_CTRL_WIDTH_OFF;
     scroll->seg_head = pose->seg_head;           /* the scroll step follows the near slope */
     memset(fb->px, 0, SCREEN_BYTES);             /* blank frame, then draw only remaster's own pipeline */
     rm_render_road(road, fb);
-    rm_blit_road_scroll(scroll, playfield, fb);
+    rm_blit_road_scroll(scroll, shifted, fb);
     rm_draw_hud(hud, assets, fb);
 }
 
@@ -131,8 +133,9 @@ void main(void) {
     const uint8_t *stream = fixture_course_stream + COURSE_STREAM_PAD;   /* records lie below the base */
 
     Setpalette(fixture_palette);
+    rm_scroll_prebuild(fixture_road_play, shifted);   /* pre-rotate the playfield once (screen_offset is fixed) */
     int shown = 0;
-    draw_frame(screen_buf(shown), &pose, &src, &road, &scroll, fixture_road_play, &hud, &assets);
+    draw_frame(screen_buf(shown), &pose, &src, &road, &scroll, &hud, &assets);
     Setscreen(-1L, (long)screen_buf(shown)->px, -1);   /* show the first frame */
     Vsync();
 
@@ -182,7 +185,7 @@ void main(void) {
 
         /* render off-screen, then flip the video base to it at the vblank (no tearing). */
         int back = shown ^ 1;
-        draw_frame(screen_buf(back), &pose, &src, &road, &scroll, fixture_road_play, &hud, &assets);
+        draw_frame(screen_buf(back), &pose, &src, &road, &scroll, &hud, &assets);
         Setscreen(-1L, (long)screen_buf(back)->px, -1);
         Vsync();
         shown = back;

@@ -45,6 +45,8 @@ def _lib():
                                         ctypes.POINTER(ctypes.c_uint8),
                                         ctypes.POINTER(adapter.Framebuffer)]
     lib.rm_blit_road_scroll.restype = None
+    lib.rm_scroll_prebuild.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8)]
+    lib.rm_scroll_prebuild.restype = None
     lib.rm_road_course_advance.argtypes = [ctypes.POINTER(adapter.RoadPose),
                                            ctypes.POINTER(adapter.CourseState),
                                            ctypes.POINTER(ctypes.c_uint8)]
@@ -213,8 +215,10 @@ def compare_scroll(lib, image, pokes=None):
 
     scroll = adapter.scroll_state(state)
     playfield, _keep = adapter.scroll_playfield(state)
+    shifted = (ctypes.c_uint8 * (adapter.RM_SCROLL_SHIFTS * adapter.RM_SCROLL_WINDOW))()
+    lib.rm_scroll_prebuild(playfield, shifted)       # the perf path: pre-rotate once, then copy
     fb = adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)(*base))
-    lib.rm_blit_road_scroll(ctypes.byref(scroll), playfield, ctypes.byref(fb))
+    lib.rm_blit_road_scroll(ctypes.byref(scroll), shifted, ctypes.byref(fb))
     cand_fb = bytes(fb.px)
     cand_scalars = (scroll.hscroll_pos & 0xffff, scroll.hscroll_step2 & 0xffff)
 

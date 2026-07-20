@@ -53,22 +53,27 @@ invariant (every byte the candidate paints matches recreate). Coverage → 100% 
 remaster (native structs, via the `bench_*` wrappers) vs recreate's recon (flat image) — on the same
 staged leg-1 frame. Build first: `bash render/atari/bench_build.sh`.
 
-Current (8 MHz ST, 160000-cycle frame budget), remaster **0.96× the recon** overall — on par or ahead:
+Current (8 MHz ST, 160000-cycle frame budget), remaster **0.83× the recon** overall:
 
 | stage | remaster ms | recon ms | rm/rec |
 |-------|-------------|----------|--------|
 | build_road_geometry | 3.87 | 3.91 | 0.99× |
 | render_road | 49.84 | 54.86 | **0.91×** |
-| blit_road_scroll | 33.47 | 33.55 | 1.00× |
+| blit_road_scroll | **19.33** | 33.55 | **0.58×** |
 | draw_hud | 18.53 | 18.27 | 1.01× |
 
 `render_road` also beats the byte-exact **machine model** (`g_render_road_machine`, 56.18 ms → 0.89×):
 GCC optimises the idiomatic/native-pointer C better than the hand-threaded register/goto transcription.
 
+**Optimization — `blit_road_scroll`** (was the worst C-vs-asm ratio, 2.84× the original): recreate
+rotates every plane-word every frame (1600 variable-count `rol`s). `rm_scroll_prebuild` instead builds,
+once per leg, the 16 fine-shift pre-rotated copies of the playfield; the per-frame blit is then a plain
+column copy from copy[`shift`] — **33.55 → 19.33 ms** (0.58× recon, ~1.64× the original), byte-identical
+to the verified core. Copy 0 is the raw playfield, which the edge seam reuses.
+
 Key gotcha: the cores **must be built `-O2`, not `-Os`** — at `-Os` GCC won't inline the hot blit
 primitives (`rr_copy_long`/`rr_fill_pair`), and the per-column call overhead ~doubles the render cost
 (measured 1.94× the recon before the flag was fixed). The on-target builds now use `-O2`.
 
-The full pipeline is still ~105 ms/frame (~10 fps) — on par with recon but far over the 20 ms vblank;
-this is algorithmic, not codegen. Beating it (vs the original, ~2.1× faster than recon) needs
-precomputed rotates / a road display list. See [[buggyboy-perf-fast-track]].
+The full pipeline is now ~92 ms/frame. Next target is `render_road` (49.8 ms) — a precomputed road
+display list would cut the per-scanline dispatch. See [[buggyboy-perf-fast-track]].

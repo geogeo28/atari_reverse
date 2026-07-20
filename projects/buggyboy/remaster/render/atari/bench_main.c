@@ -12,7 +12,8 @@
 
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, uint8_t *ctrl, uint8_t *scanline);
 void rm_render_road(const RoadInput *in, Framebuffer *fb);
-void rm_blit_road_scroll(ScrollState *s, const uint8_t *playfield, Framebuffer *fb);
+void rm_scroll_prebuild(const uint8_t *playfield, uint8_t *shifted);
+void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb);
 void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stream);
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 
@@ -33,6 +34,7 @@ void *memcpy(void *d, const void *s, unsigned long n) {
 static Framebuffer fb __attribute__((aligned(2)));
 static uint8_t ctrl[RM_CTRL_BYTES] __attribute__((aligned(2)));
 static uint8_t scanline[RM_SCANLINE_BYTES] __attribute__((aligned(2)));
+static uint8_t shifted[RM_SCROLL_SHIFTS * RM_SCROLL_WINDOW] __attribute__((aligned(2)));
 
 static const HudState hud = {
     .flag_seq_count = HUD_FLAG_SEQ_COUNT, .flag_seq_off = HUD_FLAG_SEQ_OFF,
@@ -69,7 +71,8 @@ static CourseState course = {.row_ctr = COURSE_ROW_CTR_INIT, .read_pos = COURSE_
 /* One representative frame's worth of each core (as the demo's draw_frame chains them). */
 void bench_build_geometry(void) { rm_build_road_geometry(&pose, &src, ctrl, scanline); }
 void bench_render_road(void)    { road.width_tbl = ctrl + RM_CTRL_WIDTH_OFF; rm_render_road(&road, &fb); }
-void bench_blit_scroll(void)    { rm_blit_road_scroll(&scroll, fixture_road_play, &fb); }
+void bench_scroll_prebuild(void) { rm_scroll_prebuild(fixture_road_play, shifted); }
+void bench_blit_scroll(void)    { rm_blit_road_scroll(&scroll, shifted, &fb); }
 void bench_draw_hud(void)       { rm_draw_hud(&hud, &assets, &fb); }
 void bench_course_advance(void) { rm_road_course_advance(&pose, &course, fixture_course_stream + COURSE_STREAM_PAD); }
 

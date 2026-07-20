@@ -65,6 +65,8 @@ A_scroll_speed = 0x18cb4                            # signed horizontal scroll s
 A_hscroll_pos = 0x18cb8                             # in/out: fine-scroll position, wrapped [0,0x280)
 A_screen_offset = 0x18d18                           # road-scroll offset into buf_c
 SCROLL_PLAY_BYTES = 0x1b00                          # playfield window from buf_c+screen_offset (>= reads)
+RM_SCROLL_SHIFTS = 16                               # mirror include/game.h
+RM_SCROLL_WINDOW = 0x1a00
 
 # ---- course advance (game_update section 12 geometry) globals + stream (mirror addrs.h) ----
 A_buf_a = 0x18c00                                   # pointer: buffer a (holds the packed course streams)

@@ -80,9 +80,10 @@ def _run(mem_template, entry, arg0, stack_top, sentinel, prep=None):
 def remaster_costs():
     syms = _syms(BENCH_ELF)
     mem, sp, sentinel = _load_flat(BENCH_BIN, syms)
-    # render_road reads the control table geometry writes, so build it first (ctrl is zeroed BSS in a
-    # fresh load) — mirrors the recon's prep so both measure a real road.
-    prep = {"render_road": syms["bench_build_geometry"]}
+    # render_road reads the control table geometry writes; blit_road_scroll reads the pre-rotated
+    # copies rm_scroll_prebuild builds — so run those preps first (they're per-leg, not per-frame),
+    # mirroring the recon's geometry prep, and measure only the per-frame call.
+    prep = {"render_road": syms["bench_build_geometry"], "blit_road_scroll": syms["bench_scroll_prebuild"]}
     return {label: _run(mem, syms[rm], 0, sp, sentinel, prep=prep.get(label))
             for label, _, rm in FUNCS}
 

@@ -144,10 +144,22 @@ typedef struct {
     uint16_t hscroll_step2; /* out: seg_head * scroll_speed * 2 */
 } ScrollState;
 
-/* Fine-scroll the double-wide road playfield onto the screen's road band (rows 0..103): advance the
- * scroll position, blit ROAD_ROWS scanlines of rotated 4-plane columns from `playfield` (which points
- * at buf_c + screen_offset), then fill the area above the band. Updates the scroll state. */
-void rm_blit_road_scroll(ScrollState *s, const uint8_t *playfield, Framebuffer *fb);
+/* Optimized fine-scroll (the perf win over recreate's per-word variable rotate): instead of rotating
+ * every plane-word every frame, precompute — once, when the playfield changes — RM_SCROLL_SHIFTS copies
+ * of the playfield window, copy s being every plane-word fine-scrolled by s with its next-column word.
+ * Then the per-frame blit is a plain column copy from copy[shift]. Copy 0 is the raw playfield (a
+ * rotate by 0 is identity), which the edge seam reads for its masked wrap blend. */
+#define RM_SCROLL_SHIFTS   16          /* fine-shift is hscroll_pos & 0xf */
+#define RM_SCROLL_WINDOW   0x1a00      /* bytes of playfield the blit reads (>= its max offset) per copy */
+
+/* Build the RM_SCROLL_SHIFTS pre-rotated copies from `playfield` into `shifted`
+ * (RM_SCROLL_SHIFTS * RM_SCROLL_WINDOW bytes). Call when the playfield / screen_offset changes. */
+void rm_scroll_prebuild(const uint8_t *playfield, uint8_t *shifted);
+
+/* Fine-scroll the double-wide road playfield onto the screen's road band (rows 0..103) from the
+ * pre-rotated copies in `shifted` (see rm_scroll_prebuild), then fill the area above the band and
+ * advance the scroll state. */
+void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb);
 
 /* ---- course advance (the road-geometry part of game_update's section 12 @0x11xxx) ---- */
 
