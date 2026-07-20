@@ -137,6 +137,42 @@ OBJ_MASK_BYTES = 0x40                               # 16 entries * 4 bytes (inde
 # scans up to ~96 rows of it; ROAD_WIDTH_TBL_BYTES (0x200) already covers that.
 
 
+# ---- roadside-object display-list dispatcher (draw_object_list) globals + tables (mirror addrs.h) ----
+A_obj_list_base = 0x16c06                           # a5 base: fixed-object-list pass display stream
+A_obj_flags = 0x18ebc                               # a3 base: fixed-object-list pass flag stream
+A_obj_sprite_disp = 0x16a90                         # a5 base: sprite-driven passes display stream
+A_obj_sprite_flags = 0x18d5c                        # a3 base: sprite-driven passes flag stream
+A_obj_xoff_tbl = 0x18f26                            # a4 base: per-row shared x-offset word
+A_obj_type_jumptable = 0x13144                      # word offset per jumpidx -> handler label
+A_obj_view_xform = 0x1722a                          # per-view sprite transform records
+A_objsh2p_tbl = 0x171ca                             # per-scanline dst-offset table (objshift2 P-prefix)
+A_view_parity = 0x18c60                             # per-view parity word (handler_lo reads &2)
+A_bonus_timer = 0x18d08                             # nonzero clamps low object types up to the minimum
+A_obj_scan_off = 0x18c58                            # signed word added to the list cursor (== ground_view_off)
+A_sprite_list_base = 0x18d5a                        # sprite-count loop base (== A_road_width_src)
+A_p24_flag = 0x18231                                # global byte gating the P24 three-stage path
+GOBJ_SPRITE_SLOTS = 0xa                             # up to 11 sprite slots counted after the base
+GOBJ_MARKER_STRIDE = 0x20
+GOBJ_SPRITE_LAST = 10
+GOBJ_ROW_A3_STRIDE = 0x20
+GOBJ_ROW_A5_STRIDE = 0x22
+GOBJ_D6_INIT = 0xb0
+GOBJ_D6_ROW_STEP = 0x10
+GOBJ_VIEW_REAR = 4
+
+# ---- gobj_prefix (draw_game_objects prefix) globals + tables (mirror addrs.h) ----
+A_marker_decay = 0x18cf0                            # [0]=active word, [2]=record byte-offset, [4]=countdown
+A_marker_decay_base = 0x18d34                       # base of the 14 decay records (stride 0x20)
+A_anim_counter = 0x17f10                            # frame counter (+=2/frame); &0x1e indexes anim tables
+A_anim_word_tbl = 0x17ec8                           # word table -> anim_word, indexed (counter & 0x1e)
+A_anim_word = 0x18c74                               # current anim word (mirrored into buf_a)
+A_anim_coloridx_tbl = 0x17ee8                       # word table -> color_pairs offset (<<3)
+A_anim_color = 0x17f08                              # current 8-byte (2-long) animated colour pair
+GOBJ_ANIM_BUF_OFF1 = 0xd70                          # buf_a + this = anim_word mirror 1
+GOBJ_ANIM_BUF_OFF2 = 0x1250                         # buf_a + this = anim_word mirror 2
+MARKER_RECS_BYTES = 0x340                           # covers the 14-record decay slot (+ signed offset window)
+
+
 
 
 
@@ -285,6 +321,41 @@ class ObjectInput(ctypes.Structure):
                 ("blit_mask_l", ctypes.POINTER(ctypes.c_uint8)),
                 ("blit_mask_r", ctypes.POINTER(ctypes.c_uint8)),
                 ("shade", ctypes.c_int16)]
+
+
+class ObjListCtx(ctypes.Structure):
+    _fields_ = [("px", ctypes.POINTER(ctypes.c_uint8)),
+                ("draw_buf", ctypes.c_uint32),
+                ("buf_a", ctypes.POINTER(ctypes.c_uint8)),
+                ("buf_c", ctypes.POINTER(ctypes.c_uint8)),
+                ("color_pairs", ctypes.POINTER(ctypes.c_uint8)),
+                ("view_xform", ctypes.POINTER(ctypes.c_uint8)),
+                ("objsh2p_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("jumptable", ctypes.POINTER(ctypes.c_uint8)),
+                ("xoff_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("view_flags", ctypes.c_uint16),
+                ("view_parity", ctypes.c_uint16),
+                ("bonus_timer", ctypes.c_uint16),
+                ("obj_scan_off", ctypes.c_int16),
+                ("p24_flag", ctypes.c_uint8)]
+
+
+class GobjPrefixState(ctypes.Structure):
+    _fields_ = [("marker_active", ctypes.c_uint16), ("marker_off", ctypes.c_int16),
+                ("marker_countdown", ctypes.c_int16), ("view_parity", ctypes.c_uint16),
+                ("anim_counter", ctypes.c_uint16), ("anim_word", ctypes.c_uint16),
+                ("bonus_timer", ctypes.c_uint16), ("dsp_color_scroll", ctypes.c_uint16),
+                ("flag_seq_off", ctypes.c_uint16), ("flag_seq_count", ctypes.c_int16)]
+
+
+class GobjPrefixAssets(ctypes.Structure):
+    _fields_ = [("anim_word_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("anim_coloridx_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("color_pairs", ctypes.POINTER(ctypes.c_uint8)),
+                ("marker_recs", ctypes.POINTER(ctypes.c_uint8)),
+                ("anim_color", ctypes.POINTER(ctypes.c_uint8)),
+                ("anim_mirror1", ctypes.POINTER(ctypes.c_uint8)),
+                ("anim_mirror2", ctypes.POINTER(ctypes.c_uint8))]
 
 
 def _i16(image, addr):

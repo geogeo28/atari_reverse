@@ -300,4 +300,74 @@ void rm_objsprite(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t s
 void rm_objsprite_alt(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
                       uint16_t aligned_col, unsigned shl, unsigned shr, uint16_t rows_m1);
 
+/* ---- roadside-object display-list dispatcher (draw_object_list @0x1306e) ----
+ *
+ * Two nested loops walk the per-frame object list, dispatching each object through obj_type_jumptable
+ * to one of the fine-x blit engines / handler families above. Everything it reads lives in a distinct
+ * arena (below); the only thing it WRITES is the draw target `px` at `draw_buf`-relative offsets — so
+ * the whole dispatcher takes const arena pointers + one mutable draw target, no flat image. */
+typedef struct {
+    uint8_t       *px;           /* draw target base (framebuffer bytes) */
+    uint32_t       draw_buf;     /* draw-buffer offset within px (0 for the real framebuffer) */
+    const uint8_t *buf_a;        /* record arena: per-type + special object records */
+    const uint8_t *buf_c;        /* sprite-pixel arena (record src longs index into it) */
+    const uint8_t *color_pairs;  /* 4-plane fill per colour index (the objshift engine reads it) */
+    const uint8_t *view_xform;   /* per-view sprite transform records (obj_view_xform @0x1722a) */
+    const uint8_t *objsh2p_tbl;  /* per-scanline dst-offset table for the objshift2 P-prefix family */
+    const uint8_t *jumptable;    /* obj_type_jumptable: word offset per jumpidx -> handler */
+    const uint8_t *xoff_tbl;     /* per-row shared x-offset word table (a4) */
+    uint16_t view_flags;         /* leg/view selector (0,2,4,6) */
+    uint16_t view_parity;        /* per-view parity word (handler_lo reads &2) */
+    uint16_t bonus_timer;        /* nonzero clamps low object types up to the bonus minimum */
+    int16_t  obj_scan_off;       /* signed word added to the list cursor + used by the scan wrapper */
+    uint8_t  p24_flag;           /* global byte gating the P24 handler's three-stage path */
+} ObjListCtx;
+
+/* Walk one object list. `list`/`flags` are the two input streams (the per-frame passes feed different
+ * bases); list_off/flags_off are cursors within them. outer_rows_m1 / rec_off / colour thread the
+ * loop state (the real caller passes outer_rows_m1 = 0). */
+void rm_draw_object_list(const ObjListCtx *c, const uint8_t *list, uint32_t list_off,
+                         const uint8_t *flags, uint32_t flags_off,
+                         uint16_t outer_rows_m1, uint16_t rec_off, uint16_t colour);
+
+/* ---- draw_game_objects prefix (gobj_prefix @0x12ef6..0x12fc0) ----
+ *
+ * The deterministic per-frame state advance draw_game_objects runs before any drawing: the
+ * marker-decay slot, the road-colour animation counters, and the bonus-window flag animation. It
+ * writes NO framebuffer pixels — it is off-frame game state (counters, the marker scan-table records,
+ * the animated colour that feeds the palette). Modeled natively so the render loop can advance it; the
+ * fields mirror recreate's scalar globals + the two arenas it mutates. */
+typedef struct {
+    /* marker-decay: a 14-record slot cleared per frame, counted down, retired when exhausted. */
+    uint16_t marker_active;      /* nonzero -> the decay runs this frame */
+    int16_t  marker_off;         /* signed record byte-offset into the marker arena */
+    int16_t  marker_countdown;   /* -0x20/frame; < 0 retires the slot */
+    /* road-colour animation counters. */
+    uint16_t view_parity;        /* += 2/frame (per-view parity the object dispatcher reads) */
+    uint16_t anim_counter;       /* += 2/frame; & 0x1e indexes the anim tables */
+    uint16_t anim_word;          /* out: current anim word (mirrored into buf_a) */
+    /* bonus window. */
+    uint16_t bonus_timer;        /* frames left; 0 = closed */
+    uint16_t dsp_color_scroll;   /* cycles 0..4 while the window is open */
+    uint16_t flag_seq_off;       /* advanced at bonus_timer == 0x28 */
+    int16_t  flag_seq_count;     /* reset to 0 at the cap */
+} GobjPrefixState;
+
+/* Static/arena data gobj_prefix reads + the buffers it mutates. anim_word_tbl / anim_coloridx_tbl are
+ * STATIC word tables; color_pairs is the palette source; marker_recs is the 14-record decay arena;
+ * anim_color (8 bytes) + the two buf_a anim-word mirrors receive the animated colour. */
+typedef struct {
+    const uint8_t *anim_word_tbl;      /* word table -> anim_word, indexed (anim_counter & 0x1e) */
+    const uint8_t *anim_coloridx_tbl;  /* word table -> color_pairs offset (<<3) */
+    const uint8_t *color_pairs;        /* palette source (8 bytes copied to anim_color) */
+    uint8_t       *marker_recs;        /* marker-decay record arena (base; marker_off indexes it) */
+    uint8_t       *anim_color;         /* out: 8-byte animated colour pair */
+    uint8_t       *anim_mirror1;       /* out: buf_a + 0xd70 anim-word mirror */
+    uint8_t       *anim_mirror2;       /* out: buf_a + 0x1250 anim-word mirror */
+} GobjPrefixAssets;
+
+/* Advance the per-frame object state (marker decay, colour animation, bonus flag). No framebuffer
+ * writes. */
+void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
+
 #endif /* RM_GAME_H */

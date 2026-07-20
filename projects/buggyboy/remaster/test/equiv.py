@@ -77,6 +77,13 @@ def _lib():
     lib.rm_objsprite_alt.argtypes = [u8p, ctypes.c_uint32, u8p, ctypes.c_uint32,
                                      ctypes.c_uint16, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint16]
     lib.rm_objsprite_alt.restype = None
+    lib.rm_draw_object_list.argtypes = [ctypes.POINTER(adapter.ObjListCtx),
+                                        u8p, ctypes.c_uint32, u8p, ctypes.c_uint32,
+                                        ctypes.c_uint16, ctypes.c_uint16, ctypes.c_uint16]
+    lib.rm_draw_object_list.restype = None
+    lib.rm_gobj_prefix.argtypes = [ctypes.POINTER(adapter.GobjPrefixState),
+                                   ctypes.POINTER(adapter.GobjPrefixAssets)]
+    lib.rm_gobj_prefix.restype = None
     return lib
 
 
@@ -443,3 +450,234 @@ def _diff_over_spans(ref, cand, spans):
             if ref[i] != cand[i]:
                 total += 1
     return total
+
+
+# ---- roadside-object display-list dispatcher (draw_object_list) ----
+# draw_object_list reads many arenas at absolute image offsets and WRITES only the draw buffer. To
+# validate the pointer-independent remaster port against recreate's flat-image g_draw_object_list, we
+# drive the remaster dispatcher on a ctypes VIEW of the same image: every arena pointer is the image
+# base (so its absolute offsets index identically) and draw_buf is the absolute draw-buffer address.
+# We replicate draw_game_objects' three real passes (the sprite passes split at `count`, then the
+# fixed-object pass) so the exact per-frame streams/records are exercised.
+
+def _objlist_ctx(lib, img_arr, draw_buf):
+    """Build an ObjListCtx that drives the remaster dispatcher on a VIEW of recreate's flat image:
+    each arena pointer is offset so `pointer + <recreate offset>` lands on the same absolute address
+    recreate reads. px is the image base (writes go to draw_buf-relative offsets); buf_a/buf_c are the
+    real arena addresses stored in the image; the STATIC tables sit at their fixed bases."""
+    def at(addr):
+        return ctypes.cast(ctypes.byref(img_arr, addr), ctypes.POINTER(ctypes.c_uint8))
+
+    base = ctypes.cast(img_arr, ctypes.POINTER(ctypes.c_uint8))
+    buf_a = int.from_bytes(bytes(img_arr[adapter.A_buf_a:adapter.A_buf_a + 4]), "big")
+    buf_c = int.from_bytes(bytes(img_arr[adapter.A_buf_c:adapter.A_buf_c + 4]), "big")
+    return adapter.ObjListCtx(
+        base, draw_buf, at(buf_a), at(buf_c), at(adapter.A_color_pairs),
+        at(adapter.A_obj_view_xform), at(adapter.A_objsh2p_tbl), at(adapter.A_obj_type_jumptable),
+        at(adapter.A_obj_xoff_tbl),
+        _r16(img_arr, adapter.A_view_flags), _r16(img_arr, adapter.A_view_parity),
+        _r16(img_arr, adapter.A_bonus_timer), _s16(img_arr, adapter.A_obj_scan_off),
+        img_arr[adapter.A_p24_flag])
+
+
+def _s16(state, addr):
+    v = (state[addr] << 8) | state[addr + 1]
+    return v - 0x10000 if v & 0x8000 else v
+
+
+def _objlist_passes(state):
+    """The three draw_object_list invocations draw_game_objects makes, as positional slots:
+    (pass1, pass2, fixed) — pass1/pass2 are None when their gate is off. pass1 (the `count` active
+    sprite rows) runs BEFORE draw_object; pass2 (the remaining rows) runs AFTER it; the fixed-object
+    pass runs last (ordered against the buggy by the view). Each slot is a
+    (list_off, flags_off, outer_rows_m1, rec_off, colour) tuple."""
+    count = 0
+    if _s16(state, adapter.A_sprite_list_base) >= 0:
+        slot = adapter.A_sprite_list_base + adapter.GOBJ_MARKER_STRIDE
+        for _ in range(adapter.GOBJ_SPRITE_SLOTS + 1):
+            if _s16(state, slot) < 0:
+                break
+            count += 1
+            slot += adapter.GOBJ_MARKER_STRIDE
+    pass1 = None
+    if count - 1 >= 0:
+        pass1 = (adapter.A_obj_sprite_disp, adapter.A_obj_sprite_flags,
+                 (count - 1) & 0xffff, adapter.GOBJ_D6_INIT, count & 0xffff)
+    pass2 = None
+    if adapter.GOBJ_SPRITE_LAST - count >= 0:
+        pass2 = (adapter.A_obj_sprite_disp + ((count * adapter.GOBJ_ROW_A5_STRIDE) & 0xffff),
+                 adapter.A_obj_sprite_flags + ((count * adapter.GOBJ_ROW_A3_STRIDE) & 0xffff),
+                 (adapter.GOBJ_SPRITE_LAST - count) & 0xffff,
+                 (adapter.GOBJ_D6_INIT - count * adapter.GOBJ_D6_ROW_STEP) & 0xffff, 0)
+    fixed = (adapter.A_obj_list_base, adapter.A_obj_flags, 0, 0, 0)
+    return count, (pass1, pass2, fixed)
+
+
+def compare_object_list(lib, image):
+    """Run recreate's g_draw_object_list (reference) and remaster's rm_draw_object_list (candidate) on
+    the same background for each of draw_game_objects' real passes, and diff the whole framebuffer.
+    Returns (diff_bytes, footprint)."""
+    base = image[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+    flip = _r16(image, adapter.A_flip_idx)
+    draw_buf = int.from_bytes(image[adapter.A_physbase_tbl + flip:adapter.A_physbase_tbl + flip + 4], "big")
+    _count, slots = _objlist_passes(image)
+    passes = [p for p in slots if p is not None]
+
+    # reference: recreate's g_ entry, all passes in order on one image.
+    ref = bytearray(image)
+    fn = bench_frame.harness._lib.g_draw_object_list
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8)] + [ctypes.c_uint32] * 6
+    fn.restype = None
+    ref_buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref)
+    for list_off, flags_off, outer, rec_off, colour in passes:
+        fn(ref_buf, list_off, flags_off, draw_buf, outer, rec_off, colour)
+    ref_fb = ref[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    # candidate: remaster's dispatcher on a fresh image view, same passes in order.
+    cand = bytearray(image)
+    cand_buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(cand)
+    ctx = _objlist_ctx(lib, cand_buf, draw_buf)
+    for list_off, flags_off, outer, rec_off, colour in passes:
+        lib.rm_draw_object_list(ctypes.byref(ctx), cand_buf, list_off, cand_buf, flags_off,
+                                outer, rec_off, colour)
+    cand_fb = cand[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
+    footprint = sum(1 for i in range(adapter.SCREEN_BYTES) if ref_fb[i] != base[i])
+    return diff, footprint
+
+
+# ---- gobj_prefix (draw_game_objects state advance, off-frame) ----
+# The prefix writes no pixels; it advances counters + mutates two arenas (the marker-decay records
+# and the buf_a anim-word mirrors) and the animated colour. We drive recreate's g_draw_game_objects_
+# prefix (reference) and the remaster rm_gobj_prefix on the same poked image, then compare every state
+# location each writes: the scalar globals, the animated colour longs, the marker records, and the
+# buf_a mirrors.
+
+def _gobj_prefix_state(image):
+    return adapter.GobjPrefixState(
+        _r16(image, adapter.A_marker_decay), _s16(image, adapter.A_marker_decay + 2),
+        _s16(image, adapter.A_marker_decay + 4), _r16(image, adapter.A_view_parity),
+        _r16(image, adapter.A_anim_counter), _r16(image, adapter.A_anim_word),
+        _r16(image, adapter.A_bonus_timer), _r16(image, adapter.A_dsp_color_scroll),
+        _r16(image, adapter.A_flag_seq_off), _s16(image, adapter.A_flag_seq_count))
+
+
+def compare_gobj_prefix(lib, image):
+    """Run recreate's g_draw_game_objects_prefix and remaster's rm_gobj_prefix on the same image and
+    compare every state location the prefix writes. Returns a list of (name, ref, cand) mismatches."""
+    buf_a = int.from_bytes(image[adapter.A_buf_a:adapter.A_buf_a + 4], "big")
+
+    ref = bytearray(image)
+    fn = bench_frame.harness._lib.g_draw_game_objects_prefix
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+    fn.restype = None
+    fn((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+
+    cand = bytearray(image)
+    cbuf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(cand)
+    s = _gobj_prefix_state(image)
+
+    def at(addr):
+        return ctypes.cast(ctypes.byref(cbuf, addr), ctypes.POINTER(ctypes.c_uint8))
+
+    assets = adapter.GobjPrefixAssets(
+        at(adapter.A_anim_word_tbl), at(adapter.A_anim_coloridx_tbl), at(adapter.A_color_pairs),
+        at(adapter.A_marker_decay_base), at(adapter.A_anim_color),
+        at(buf_a + adapter.GOBJ_ANIM_BUF_OFF1), at(buf_a + adapter.GOBJ_ANIM_BUF_OFF2))
+    lib.rm_gobj_prefix(ctypes.byref(s), ctypes.byref(assets))
+
+    # Write the remaster state scalars back into `cand` so we can compare regions uniformly.
+    _w16(cand, adapter.A_marker_decay, s.marker_active & 0xffff)
+    _w16(cand, adapter.A_marker_decay + 2, s.marker_off & 0xffff)
+    _w16(cand, adapter.A_marker_decay + 4, s.marker_countdown & 0xffff)
+    _w16(cand, adapter.A_view_parity, s.view_parity & 0xffff)
+    _w16(cand, adapter.A_anim_counter, s.anim_counter & 0xffff)
+    _w16(cand, adapter.A_anim_word, s.anim_word & 0xffff)
+    _w16(cand, adapter.A_bonus_timer, s.bonus_timer & 0xffff)
+    _w16(cand, adapter.A_dsp_color_scroll, s.dsp_color_scroll & 0xffff)
+    _w16(cand, adapter.A_flag_seq_off, s.flag_seq_off & 0xffff)
+    _w16(cand, adapter.A_flag_seq_count, s.flag_seq_count & 0xffff)
+
+    checks = {
+        "marker_decay": (adapter.A_marker_decay, 6),
+        "view_parity": (adapter.A_view_parity, 2),
+        "anim_counter": (adapter.A_anim_counter, 2),
+        "anim_word": (adapter.A_anim_word, 2),
+        "anim_color": (adapter.A_anim_color, 8),
+        "bonus_timer": (adapter.A_bonus_timer, 2),
+        "dsp_color_scroll": (adapter.A_dsp_color_scroll, 2),
+        "flag_seq_off": (adapter.A_flag_seq_off, 2),
+        "flag_seq_count": (adapter.A_flag_seq_count, 2),
+        "marker_recs": (adapter.A_marker_decay_base, adapter.MARKER_RECS_BYTES),
+        "anim_mirror1": (buf_a + adapter.GOBJ_ANIM_BUF_OFF1, 2),
+        "anim_mirror2": (buf_a + adapter.GOBJ_ANIM_BUF_OFF2, 2),
+    }
+    bad = []
+    for name, (addr, n) in checks.items():
+        if ref[addr:addr + n] != cand[addr:addr + n]:
+            bad.append((name, bytes(ref[addr:addr + n]), bytes(cand[addr:addr + n])))
+    return bad
+
+
+# ---- draw_game_objects composite (the full per-frame object/scene draw) ----
+# The strongest check: run the remaster sub-draws in draw_game_objects' exact order on one frame and
+# diff the whole framebuffer against recreate's g_draw_game_objects. In the staged frames draw_buf ==
+# SCREEN_BASE, so a Framebuffer overlaid on the image at SCREEN_BASE (the struct-based sprite/ground/
+# object draws) and the dispatcher (writing image + draw_buf) share the SAME bytes.
+
+def compare_game_objects(lib, image):
+    """Sequence the remaster object sub-draws in draw_game_objects' exact order and diff the whole
+    framebuffer vs recreate's g_draw_game_objects. Order: prefix, ground, fg sprite, sprite-pass 1,
+    draw_object, sprite-pass 2, then the fixed-object pass + the buggy ordered by the view. Returns
+    (diff_bytes, footprint)."""
+    base = image[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+    flip = _r16(image, adapter.A_flip_idx)
+    draw_buf = int.from_bytes(image[adapter.A_physbase_tbl + flip:adapter.A_physbase_tbl + flip + 4], "big")
+
+    ref = bytearray(image)
+    _run_pipeline(ref, ("g_draw_game_objects",))
+    ref_fb = ref[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    cand = bytearray(image)
+    cbuf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(cand)
+
+    # The prefix runs first and advances view_parity (read by the dispatcher), so run it before
+    # snapshotting the native states from `cand`. It writes no pixels; drive recreate's prefix on the
+    # candidate image so the downstream reads see the same advanced state as the reference.
+    pf = _bind("g_draw_game_objects_prefix")
+    pf(cbuf)
+
+    fb = adapter.Framebuffer.from_buffer(cand, adapter.SCREEN_BASE)   # overlay -> shares cand bytes
+    sp_state = adapter.sprite_state(cand)
+    sp_assets, _spk = adapter.sprite_assets(cand)
+    gr_state = adapter.ground_state(cand)
+    gr_assets, _grk = adapter.ground_assets(cand)
+    obj_in, _ok = adapter.object_input(cand)
+    ctx = _objlist_ctx(lib, cbuf, draw_buf)
+    _count, (pass1, pass2, fixed) = _objlist_passes(cand)
+    view_rear = (_r16(cand, adapter.A_view_flags) & adapter.GOBJ_VIEW_REAR) != 0
+
+    def objlist(p):
+        if p is None:
+            return
+        lo, fo, outer, rec, col = p
+        lib.rm_draw_object_list(ctypes.byref(ctx), cbuf, lo, cbuf, fo, outer, rec, col)
+
+    lib.rm_draw_ground(ctypes.byref(gr_state), ctypes.byref(gr_assets), ctypes.byref(fb))
+    lib.rm_draw_fg_sprite(ctypes.byref(sp_state), ctypes.byref(sp_assets), ctypes.byref(fb))
+    objlist(pass1)                                    # active sprite rows (before draw_object)
+    lib.rm_draw_object(ctypes.byref(obj_in), ctypes.byref(fb))
+    objlist(pass2)                                    # remaining sprite rows (after draw_object)
+    if not view_rear:
+        objlist(fixed)
+        lib.rm_draw_buggy(ctypes.byref(sp_state), ctypes.byref(sp_assets), ctypes.byref(fb))
+    else:
+        lib.rm_draw_buggy(ctypes.byref(sp_state), ctypes.byref(sp_assets), ctypes.byref(fb))
+        objlist(fixed)
+
+    del fb                                            # drop the overlay before reading cand
+    cand_fb = cand[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+    diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
+    footprint = sum(1 for i in range(adapter.SCREEN_BYTES) if ref_fb[i] != base[i])
+    return diff, footprint
