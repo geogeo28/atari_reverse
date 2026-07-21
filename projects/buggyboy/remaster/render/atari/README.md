@@ -67,12 +67,16 @@ hatari --memsize 4 --tos-res low --harddrive render/atari/disk --auto 'C:\DEMO.P
 
 Controls (**held** keys — see below): **↑/↓** throttle / brake, **←/→** steer, **Space** fire (cycles
 the dashboard variant, as in the original), **R** restarts the leg, **Esc/Q** quits.
-`gen_demo_fixture.py` bakes the render_road static
-tables (param/edge/texture), the geometry const sources, the scroll playfield, the leg-1 packed
-course stream, the initial pose/scroll/course state, the HUD assets, and the object arenas (the `buf_a`
-record arena, the `buf_c` sprite/graphics arena, and the STATIC+bss table blob the object dispatcher
-reads) into `build/demo_fixture.h`, plus `golden.bin` (recreate's `g_build_road_geometry` +
-`g_render_road` + `g_blit_road_scroll` + `g_draw_game_objects` + `g_draw_hud` for the same pose).
+**The demo loads the game's own data files.** `COURSES.DAT` and `GRAPHICS.GRA` ship on the disk
+beside `DEMO.PRG` and are read + unpacked at boot by `src/assets.c` (see `include/assets.h`), so the
+road texture, the scroll playfield, the leg's packed course stream, the object record arena and every
+sprite are the real thing. `gen_demo_fixture.py` therefore bakes only what is *not* file content —
+the original program's own data-segment tables (fonts, colour pairs, road param/edge tables, the
+geometry const sources, the STATIC+bss blob the object dispatcher reads), the initial
+pose/scroll/course state and the palette — into `build/demo_fixture.h`, plus the `ARENA_*` offsets at
+which the arena-resident assets live. It also writes `golden.bin` (recreate's `g_build_road_geometry`
++ `g_render_road` + `g_blit_road_scroll` + `g_draw_game_objects` + `g_draw_hud` for the same pose,
+rendered from a freshly-loaded arena so both sides see identical assets).
 `run_demo.py` byte-compares the demo's first frame — drawn *before* any physics runs — against it; a
 **MATCH** proves the whole ported pipeline is pixel-identical on a real 68000. The physics driving it
 is validated on the host against recreate's `g_game_update` (`test/test_player.py`), as are the

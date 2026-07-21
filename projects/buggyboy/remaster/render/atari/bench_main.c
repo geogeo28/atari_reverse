@@ -6,6 +6,7 @@
  */
 #include <stdint.h>
 
+#include "assets.h"
 #include "game.h"
 #include "screen.h"
 #include "demo_fixture.h"
@@ -30,6 +31,14 @@ void *memcpy(void *d, const void *s, unsigned long n) {
     while (n--) *dp++ = *sp++;
     return d;
 }
+/* Referenced by the graphics unpack. The bench never runs it (bench.py injects an already-unpacked
+ * arena), but assets.c is linked in for rm_arena_init, so the symbol must resolve. */
+void *memmove(void *d, const void *s, unsigned long n) {
+    uint8_t *dp = d; const uint8_t *sp = s;
+    if (dp <= sp) { while (n--) *dp++ = *sp++; }
+    else { dp += n; sp += n; while (n--) *--dp = *--sp; }
+    return d;
+}
 
 static Framebuffer fb __attribute__((aligned(2)));
 static uint8_t ctrl[RM_CTRL_BYTES] __attribute__((aligned(2)));
@@ -45,12 +54,17 @@ static const HudState hud = {
     .crash_active = HUD_CRASH_ACTIVE, .crash_frame = HUD_CRASH_FRAME,
     .crash_bars = HUD_CRASH_BARS, .hud_crash_timer = HUD_CRASH_TIMER,
 };
-static const HudAssets assets = {
+/* The asset arena. There is no filesystem under Musashi, so bench.py writes the already-loaded and
+ * unpacked arena bytes straight into `arena_block` and then calls bench_stage_assets, which is what
+ * binds the arena-resident pointers below. Keeping that out of the wrappers is what lets them stay
+ * zero-work — the staging cost must not land in the measured call. */
+static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));
+
+static HudAssets assets = {
     .color_pairs = fixture_color_pairs, .color_bar_mask = fixture_color_bar_mask,
     .color_bar_cidx = fixture_color_bar_cidx + CIDX_ZERO_OFF, .fuel_mask = fixture_fuel_mask,
-    .font = fixture_font, .hud_text = fixture_hud_text, .dashboard_src = fixture_dashboard_src,
-    .dsp_table = fixture_dsp_table, .dsp_src = fixture_dsp_src,
-    .small_gauge_str = fixture_small_gauge_str, .num_sprites = fixture_num_sprites,
+    .font = fixture_font, .hud_text = fixture_hud_text, .dsp_table = fixture_dsp_table,
+    .small_gauge_str = fixture_small_gauge_str,
     .num_glyph_tbl = fixture_num_glyph_tbl, .crash_color_tbl = fixture_crash_color_tbl,
     .score_delta_time = fixture_score_delta_time, .score_delta_roll = fixture_score_delta_roll,
 };
@@ -60,20 +74,34 @@ static const RoadSource src = {
 };
 static RoadInput road = {
     .width_tbl = ctrl + RM_CTRL_WIDTH_OFF, .param = fixture_road_param,
-    .edge_tbl = fixture_road_edge + ROAD_EDGE_PAD, .tex = fixture_road_tex + ROAD_TEX_PAD_LO,
-    .edge_const = fixture_road_edge_const,
+    .edge_tbl = fixture_road_edge + ROAD_EDGE_PAD, .edge_const = fixture_road_edge_const,
 };
+static const uint8_t *course_stream;
 static RoadPose pose = {.curve = ROAD_CURVE_INIT, .view_flags = ROAD_VIEW_FLAGS_INIT,
                         .seg_data = ROAD_SEG_DATA_INIT};
 static ScrollState scroll = {.scroll_speed = BENCH_SCROLL_SPEED, .hscroll_pos = HSCROLL_POS_INIT};
 static CourseState course = {.row_ctr = COURSE_ROW_CTR_INIT, .read_pos = COURSE_READ_POS_INIT};
 
+/* Bind everything that lives in the loaded asset arena. bench.py runs this before every measured
+ * call, on memory it has already filled with the unpacked arena. */
+static const uint8_t *scroll_playfield;
+void bench_stage_assets(void) {
+    RmArena arena;
+    rm_arena_init(&arena, arena_block);
+    assets.dashboard_src = arena.gfx + ARENA_DASH_SRC_OFF;
+    assets.dsp_src = arena.gfx;              /* dsp_table's offsets are absolute within the arena */
+    assets.num_sprites = arena.gfx + ARENA_NUM_SPRITES_OFF;
+    road.tex = arena.scratch;
+    scroll_playfield = arena.gfx + ARENA_SCROLL_PLAY_OFF;
+    course_stream = arena.tables + ARENA_COURSE_STREAM_OFF;
+}
+
 /* One representative frame's worth of each core (as the demo's draw_frame chains them). */
 void bench_build_geometry(void) { rm_build_road_geometry(&pose, &src, ctrl, scanline); }
 void bench_render_road(void)    { road.width_tbl = ctrl + RM_CTRL_WIDTH_OFF; rm_render_road(&road, &fb); }
-void bench_scroll_prebuild(void) { rm_scroll_prebuild(fixture_road_play, shifted); }
+void bench_scroll_prebuild(void) { rm_scroll_prebuild(scroll_playfield, shifted); }
 void bench_blit_scroll(void)    { rm_blit_road_scroll(&scroll, shifted, &fb); }
 void bench_draw_hud(void)       { rm_draw_hud(&hud, &assets, &fb); }
-void bench_course_advance(void) { rm_road_course_advance(&pose, &course, fixture_course_stream + COURSE_STREAM_PAD); }
+void bench_course_advance(void) { rm_road_course_advance(&pose, &course, course_stream); }
 
 int main(void) { return 0; }        /* unused; present so os.s's `jsr main` links */

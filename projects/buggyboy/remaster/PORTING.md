@@ -115,7 +115,12 @@ parametrize by `chunk` for xdist.
 bytes come from there; the original program's own data-segment tables (fonts, colour pairs, road
 perspective/edge tables, the object jump table) are not file content and still come from the
 adapter/fixture. `rm_assets_unpack` does no I/O — the caller supplies the two files' bytes, so the
-core stays platform-free (GEMDOS `Fread` on the ST, a buffer poke in the tests).
+core stays platform-free (GEMDOS `Fread` in `demo_main.c`, a buffer poke in `test/assets_load.py`,
+and a direct write into emulated memory in `tools/bench.py`, which has no filesystem).
+
+**When you port a function that reads an asset**, point it at an arena region rather than growing the
+fixture. `gen_demo_fixture.py` emits only the *offsets* (`ARENA_*`) for arena-resident assets now; a
+new baked array there is a smell unless it is genuinely program data-segment content.
 
 `include/` types + primitives · `src/` cores · `test/adapter.py` flat-image→struct bridge ·
 `test/equiv.py` differential driver · `test/test_*.py` per-subsystem tests · `render/atari/` on-target

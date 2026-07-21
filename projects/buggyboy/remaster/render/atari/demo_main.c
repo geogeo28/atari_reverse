@@ -19,10 +19,16 @@
  * The first frame is dumped to C:\SCREEN.BIN *before* any physics runs, so a headless run can still
  * byte-compare it to recreate's g_build_road_geometry + g_render_road + g_blit_road_scroll +
  * g_draw_game_objects + g_draw_hud (build/golden.bin).
- * All inputs are baked by gen_demo_fixture.py. See README.
+ *
+ * Assets come from the game's own data files: COURSES.DAT and GRAPHICS.GRA are read off the disk at
+ * boot and unpacked by src/assets.c, so the road texture, the scroll playfield, the course stream,
+ * the object record arena and every sprite are the real thing. Only the original PROGRAM's own
+ * data-segment tables (fonts, colour pairs, perspective/edge tables, the object jump table) are
+ * still baked by gen_demo_fixture.py, because those are code constants, not file content. See README.
  */
 #include <stdint.h>
 
+#include "assets.h"
 #include "game.h"
 #include "screen.h"
 #include "demo_fixture.h"
@@ -44,8 +50,11 @@ void rm_draw_object_list(const ObjListCtx *c, const uint8_t *list, uint32_t list
                          uint16_t outer_rows_m1, uint16_t rec_off, uint16_t colour);
 
 extern long Fcreate(const char *name, short attr);
+extern long Fopen(const char *name, short mode);
+extern long Fread(short handle, long count, void *buf);
 extern long Fwrite(short handle, long count, void *buf);
 extern long Fclose(short handle);
+extern long Cconws(const char *s);
 extern void Vsync(void);
 extern long Setscreen(long logLoc, long physLoc, short rez);   /* flip the video base (latches at vblank) */
 extern void Setpalette(const void *pal16);
@@ -65,6 +74,13 @@ void *memset(void *d, int c, unsigned long n) {
 void *memcpy(void *d, const void *s, unsigned long n) {
     uint8_t *dp = d; const uint8_t *sp = s;
     while (n--) *dp++ = *sp++;
+    return d;
+}
+/* The graphics unpack slides two large blocks within one buffer, in both directions. */
+void *memmove(void *d, const void *s, unsigned long n) {
+    uint8_t *dp = d; const uint8_t *sp = s;
+    if (dp <= sp) { while (n--) *dp++ = *sp++; }
+    else { dp += n; sp += n; while (n--) *--dp = *--sp; }
     return d;
 }
 
@@ -91,7 +107,8 @@ void *memcpy(void *d, const void *s, unsigned long n) {
 static uint8_t ctrl[RM_CTRL_BYTES] __attribute__((aligned(2)));          /* BSS: per-frame control-long table */
 static uint8_t scanline[RM_SCANLINE_BYTES] __attribute__((aligned(2)));  /* BSS: build_road_geometry scratch */
 static uint8_t shifted[RM_SCROLL_SHIFTS * RM_SCROLL_WINDOW] __attribute__((aligned(2)));  /* pre-rotated scroll copies */
-static uint8_t buf_a_ram[sizeof fixture_buf_a] __attribute__((aligned(2)));  /* mutable buf_a (prefix writes mirrors) */
+static uint8_t buf_a_ram[ARENA_BUF_A_BYTES] __attribute__((aligned(2)));  /* mutable buf_a copy (prefix writes mirrors) */
+static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));   /* COURSES.DAT + unpacked GRAPHICS.GRA */
 static uint8_t gobj_scratch[0x400] __attribute__((aligned(2)));          /* BSS: marker recs (inactive) */
 /* The prefix's animated colour aliases the HUD's phase-6a fuel-mask table in the original (both live
  * at 0x17f08): draw_game_objects' prefix writes the animated colour there, and draw_hud then reads it
@@ -282,7 +299,36 @@ static void dump_frame(Framebuffer *fb) {
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, fb->px); Fclose((short)h); }
 }
 
+/* Read a whole file into `dst`, at most `max` bytes. Returns 0 if it could not be opened. */
+#define FOPEN_READ_ONLY 0
+static int read_file(const char *name, uint8_t *dst, long max) {
+    long handle = Fopen(name, FOPEN_READ_ONLY);
+    if (handle < 0) return 0;
+    Fread((short)handle, max, dst);
+    Fclose((short)handle);
+    return 1;
+}
+
+/* Load the game's own data files and unpack the graphics — everything the render pipeline draws
+ * from. Both must sit next to the .PRG. Returns 0 (after saying which one is missing) if not. */
+static int load_assets(RmArena *arena) {
+    rm_arena_init(arena, arena_block);
+    if (!read_file("COURSES.DAT", arena->course, RM_COURSE_FILE_BYTES)) {
+        Cconws("cannot open COURSES.DAT\r\n");
+        return 0;
+    }
+    if (!read_file("GRAPHICS.GRA", arena->gfx + RM_GFX_LOAD_OFF, RM_GFX_FILE_MAX)) {
+        Cconws("cannot open GRAPHICS.GRA\r\n");
+        return 0;
+    }
+    rm_assets_unpack(arena);
+    return 1;
+}
+
 void main(void) {
+    RmArena arena;
+    if (!load_assets(&arena)) return;
+
     HudState hud = {
         .flag_seq_count = HUD_FLAG_SEQ_COUNT, .flag_seq_off = HUD_FLAG_SEQ_OFF,
         .dsp_color_scroll = HUD_DSP_COLOR_SCROLL, .crash_lap = HUD_CRASH_LAP,
@@ -295,9 +341,12 @@ void main(void) {
     const HudAssets assets = {
         .color_pairs = fixture_color_pairs, .color_bar_mask = fixture_color_bar_mask,
         .color_bar_cidx = fixture_color_bar_cidx + CIDX_ZERO_OFF, .fuel_mask = fuel_mask_ram,
-        .font = fixture_font, .hud_text = fixture_hud_text, .dashboard_src = fixture_dashboard_src,
-        .dsp_table = fixture_dsp_table, .dsp_src = fixture_dsp_src,
-        .small_gauge_str = fixture_small_gauge_str, .num_sprites = fixture_num_sprites,
+        .font = fixture_font, .hud_text = fixture_hud_text,
+        .dashboard_src = arena.gfx + ARENA_DASH_SRC_OFF,
+        /* dsp_table's record offsets are absolute within the graphics arena, so dsp_src is its base */
+        .dsp_table = fixture_dsp_table, .dsp_src = arena.gfx,
+        .small_gauge_str = fixture_small_gauge_str,
+        .num_sprites = arena.gfx + ARENA_NUM_SPRITES_OFF,
         .num_glyph_tbl = fixture_num_glyph_tbl, .crash_color_tbl = fixture_crash_color_tbl,
         .score_delta_time = fixture_score_delta_time, .score_delta_roll = fixture_score_delta_roll,
     };
@@ -309,18 +358,20 @@ void main(void) {
         .width_tbl = ctrl + RM_CTRL_WIDTH_OFF,   /* rebound per frame after the build */
         .param = fixture_road_param,
         .edge_tbl = fixture_road_edge + ROAD_EDGE_PAD + PL_ROAD_EDGE_SEL_INIT,   /* rebound per frame */
-        .tex = fixture_road_tex + ROAD_TEX_PAD_LO, .edge_const = fixture_road_edge_const,
+        /* the road texture is the sprite-shift table region; the perspective seeds index below it */
+        .tex = arena.scratch, .edge_const = fixture_road_edge_const,
     };
     RoadPose pose = {.curve = ROAD_CURVE_INIT, .view_flags = ROAD_VIEW_FLAGS_INIT};
     for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
     ScrollState scroll = {.scroll_speed = SCROLL_SPEED_INIT, .hscroll_pos = HSCROLL_POS_INIT};
     CourseState course = {.row_ctr = COURSE_ROW_CTR_INIT, .read_pos = COURSE_READ_POS_INIT};
-    const uint8_t *stream = fixture_course_stream + COURSE_STREAM_PAD;   /* records lie below the base */
+    /* the leg's course records, read backward from this anchor in the loaded COURSES.DAT */
+    const uint8_t *stream = arena.tables + ARENA_COURSE_STREAM_OFF;
 
     /* --- draw_game_objects: a mutable buf_a copy (the prefix writes anim mirrors the draws read),
      * the object dispatcher context (arena pointers into the baked blobs; draw_buf 0 = fb->px base),
      * the ground + scaled-object inputs, the buggy sprite state, and the prefix state. --- */
-    for (unsigned i = 0; i < sizeof buf_a_ram; i++) buf_a_ram[i] = fixture_buf_a[i];
+    for (unsigned i = 0; i < sizeof buf_a_ram; i++) buf_a_ram[i] = arena.tables[i];
     for (unsigned i = 0; i < sizeof fuel_mask_ram; i++) fuel_mask_ram[i] = fixture_fuel_mask[i];
     const uint8_t *low = fixture_obj_low;
 
@@ -348,7 +399,7 @@ void main(void) {
     };
     ObjListCtx objlist = {
         /* px is rebound to the frame's buffer in draw_frame (we alternate two screen buffers). */
-        .px = 0, .draw_buf = 0, .buf_a = buf_a_ram, .buf_c = fixture_buf_c,
+        .px = 0, .draw_buf = 0, .buf_a = buf_a_ram, .buf_c = arena.gfx,
         .color_pairs = low + OBJ_LOW_COLOR_PAIRS, .view_xform = low + OBJ_LOW_VIEW_XFORM,
         .objsh2p_tbl = low + OBJ_LOW_OBJSH2P_TBL, .jumptable = low + OBJ_LOW_JUMPTABLE,
         .xoff_tbl = low + OBJ_LOW_XOFF_TBL, .view_flags = ROAD_VIEW_FLAGS_INIT,
@@ -366,7 +417,7 @@ void main(void) {
         .lean_accum = SP_LEAN_ACCUM_INIT, .lean_frame = SP_LEAN_FRAME_INIT,
     };
     const SpriteAssets sprite_assets = {
-        .gfx = fixture_buf_c, .fg_anim_tbl = low + OBJ_LOW_FG_ANIM_TBL,
+        .gfx = arena.gfx, .fg_anim_tbl = low + OBJ_LOW_FG_ANIM_TBL,
         .body_tbl = low + OBJ_LOW_BODY_TBL, .hi_tbl = low + OBJ_LOW_HI_TBL,
         .lo_piece_tbl = low + OBJ_LOW_LO_PIECE_TBL, .lo_piece_idx = low + OBJ_LOW_LO_PIECE_IDX,
     };
@@ -398,7 +449,7 @@ void main(void) {
     PlayerState player = player_init;
 
     Setpalette(fixture_palette);
-    rm_scroll_prebuild(fixture_road_play, shifted);   /* pre-rotate the playfield once (screen_offset is fixed) */
+    rm_scroll_prebuild(arena.gfx + ARENA_SCROLL_PLAY_OFF, shifted);   /* pre-rotate the playfield once (screen_offset is fixed) */
     int shown = 0;
     draw_frame(screen_buf(shown), &pose, &src, &road, &scroll, &hud, &assets, &pfx, &pfx_assets,
                &ground_mut, &ground_assets, &sprite, &sprite_assets, &object, &objlist, low);

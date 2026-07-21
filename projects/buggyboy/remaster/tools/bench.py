@@ -26,7 +26,9 @@ for p in ("oracle", "tools", "test", "render"):
 
 import emu                                          # noqa: E402  Musashi cycle-accurate runner
 import bench_frame                                  # noqa: E402  recon loader + mid-race staging
+sys.path.insert(0, str(REMASTER / "test"))
 sys.path.insert(0, str(REMASTER / "render" / "atari"))
+import assets_load                                  # noqa: E402  the arena the remaster cores read
 import gen_demo_fixture                             # noqa: E402  shared leg-1 staging (same frame both sides)
 
 CPU_HZ = bench_frame.CPU_HZ                          # 8 MHz ST 68000
@@ -67,11 +69,11 @@ def _load_flat(binpath, syms):
     return mem, stack_top, sentinel
 
 
-def _run(mem_template, entry, arg0, stack_top, sentinel, prep=None):
-    """Run `entry`, optionally after a `prep` entry on the SAME memory (e.g. build the geometry table
-    so render_road reads a valid road). Only the final run's insn/cycle counts are returned."""
+def _run(mem_template, entry, arg0, stack_top, sentinel, preps=()):
+    """Run `entry`, after each `preps` entry on the SAME memory (e.g. bind the asset pointers, build
+    the geometry table so render_road reads a valid road). Only the final run is counted."""
     mem = bytearray(mem_template)
-    if prep is not None:
+    for prep in preps:
         emu.run_bench(mem, prep, arg0=arg0, sp=stack_top, sentinel=sentinel)
     r = emu.run_bench(mem, entry, arg0=arg0, sp=stack_top, sentinel=sentinel)
     return r["ninsns"], r["cycles"]
@@ -80,11 +82,18 @@ def _run(mem_template, entry, arg0, stack_top, sentinel, prep=None):
 def remaster_costs():
     syms = _syms(BENCH_ELF)
     mem, sp, sentinel = _load_flat(BENCH_BIN, syms)
+    # The remaster loads its assets from COURSES.DAT / GRAPHICS.GRA, and there is no filesystem under
+    # Musashi — so drop the already-unpacked arena straight into the .bss block bench_main.c reserved
+    # for it, and let bench_stage_assets bind the pointers into it before every measured call.
+    arena = assets_load.fresh_arena()
+    mem[syms["arena_block"]:syms["arena_block"] + len(arena)] = arena
+
     # render_road reads the control table geometry writes; blit_road_scroll reads the pre-rotated
     # copies rm_scroll_prebuild builds — so run those preps first (they're per-leg, not per-frame),
     # mirroring the recon's geometry prep, and measure only the per-frame call.
     prep = {"render_road": syms["bench_build_geometry"], "blit_road_scroll": syms["bench_scroll_prebuild"]}
-    return {label: _run(mem, syms[rm], 0, sp, sentinel, prep=prep.get(label))
+    return {label: _run(mem, syms[rm], 0, sp, sentinel,
+                        preps=[syms["bench_stage_assets"], *([prep[label]] if label in prep else [])])
             for label, _, rm in FUNCS}
 
 

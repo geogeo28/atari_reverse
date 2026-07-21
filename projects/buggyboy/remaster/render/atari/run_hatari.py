@@ -32,13 +32,17 @@ SCREEN_BYTES = W * H * 4 // 8                             # 32000
 RUN_VBLS = "4000"
 
 
+DATA_FILES = ("COURSES.DAT", "GRAPHICS.GRA")               # the demo loads these itself at boot
+
+
 def run(prg, timeout=60):
     hatari, rom = tos_probe.find_hatari(), tos_probe.find_tos_rom()
     if not (hatari and rom):
         raise RuntimeError("Hatari or TOS ROM not available (brew install hatari)")
     with tempfile.TemporaryDirectory() as d:
         drive = Path(d)
-        (drive / prg).write_bytes((HERE / "disk" / prg).read_bytes())
+        for name in (prg, *DATA_FILES):
+            (drive / name).write_bytes((HERE / "disk" / name).read_bytes())
         out = drive / "SCREEN.BIN"
         env = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}
         args = [hatari, "--sound", "off", "--fast-forward", "on", "--confirm-quit", "off",

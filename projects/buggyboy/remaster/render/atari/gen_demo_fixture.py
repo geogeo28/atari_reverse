@@ -24,7 +24,9 @@ REMASTER = HERE.parents[1]
 sys.path.insert(0, str(REMASTER / "test"))
 
 import adapter                                    # noqa: E402
+import assets_load as al                          # noqa: E402  remaster's own COURSES/GRAPHICS loader
 import equiv                                      # noqa: E402
+import render_screen as R                         # noqa: E402  MEM_BASE (where the arena sits)
 import gen_hud_fixture as hud                      # noqa: E402  reuse the HUD asset/define/palette baking
 
 # A visually busy HUD over the road (same spirit as the HUD demo).
@@ -33,12 +35,11 @@ CONTROLS = {adapter.A_flag_seq_count: 3, adapter.A_crash_lap: 4,
             adapter.A_crash_active: 0, adapter.A_hud_crash_timer: 0, adapter.A_dsp_toggle: 0}
 DEMO_START_SEGMENT = 40                            # skip leg 1's uniform-slope opening straight
 
-# draw_game_objects arena windows (see gen_demo_fixture's object baking). buf_a holds the per-type +
-# special object records; buf_c is the sprite/graphics arena the object + buggy blits index (absolute
-# offsets, so baked from 0); OBJ_LOW is the STATIC+bss table region draw_game_objects reads (jump
-# table, colour/edge tables, object streams, sprite piece tables, ground tables, anim tables).
+# buf_a's record region, copied into demo RAM because the prefix mutates it (anim-word mirrors).
+# OBJ_LOW is the STATIC+bss table region draw_game_objects reads (jump table, colour/edge tables,
+# object streams, sprite piece tables, ground tables, anim tables) — program data, not file content,
+# so it stays baked. Everything that IS file content now comes from the arena the demo loads itself.
 OBJ_BUF_A_BYTES = 0x3400
-OBJ_BUF_C_BYTES = 0x3b000
 OBJ_LOW_BASE = 0x13000
 OBJ_LOW_END = 0x19100
 
@@ -65,6 +66,14 @@ def staged_image():
         equiv._w16(img, adapter.A_road_seg_data + i * 2, pose.seg_data[i] & 0xffff)
     equiv._w16(img, adapter.A_course_row_ctr, cs.row_ctr)
     equiv._w16(img, adapter.A_course_read_pos, cs.read_pos)
+
+    # The demo loads COURSES.DAT + GRAPHICS.GRA off disk at boot, so the reference must render from
+    # a freshly-loaded arena too — otherwise golden carries state the staged run wrote into its own
+    # assets and no on-target frame could ever match it. Of the arena's 388616 bytes exactly 347
+    # differ after 60 staged frames, all in the graphics region, and exactly one of them (the
+    # dashboard graphic's 4th byte, which the running game clears a bit in) reaches the framebuffer.
+    # That bit returns on its own once the systems that write it are ported.
+    img[R.MEM_BASE:R.MEM_BASE + al.RM_ARENA_BYTES] = al.fresh_arena()
     return img
 
 
@@ -86,40 +95,44 @@ def main():
     (build / "palette.bin").write_bytes(palette)
 
     # ---- render_road static tables + the geometry const sources + the initial pose ----
-    buf_b = int.from_bytes(img[adapter.A_buf_b:adapter.A_buf_b + 4], "big")
     buf_c = int.from_bytes(img[adapter.A_buf_c:adapter.A_buf_c + 4], "big")
     buf_a = int.from_bytes(img[adapter.A_buf_a:adapter.A_buf_a + 4], "big")
     leg = (img[adapter.A_leg_index] << 8) | img[adapter.A_leg_index + 1]
-    edge_sel = adapter._i16(img, adapter.A_road_edge_sel)
     play_off = buf_c + adapter._i16(img, adapter.A_screen_offset)
     course_base = buf_a + leg * adapter.COURSE_LEG_STRIDE + adapter.COURSE_STREAM_OFF
 
     def win(addr, n):
         return bytes(img[addr:addr + n])
 
+    # Only the original PROGRAM's own data-segment tables are baked. The road texture, the scroll
+    # playfield, the course stream, the object record arena and the sprite/graphics arena are all
+    # data-file content, so the demo reads them out of the arena it loads at boot (see assets.h).
     road_arrays = [
         ("fixture_road_param", win(adapter.A_road_param, adapter.ROAD_PARAM_BYTES)),
         # every edge bank, not just the staged one: the drive re-picks it from view_flags each frame
         ("fixture_road_edge",  win(adapter.A_road_edge_base - adapter.ROAD_EDGE_PAD,
                                    adapter.ROAD_EDGE_ALL_BANKS_BYTES)),
         ("fixture_road_edge_const", win(adapter.A_road_edge_const, adapter.ROAD_CONST_BYTES)),
-        ("fixture_road_tex",   win(buf_b - adapter.ROAD_TEX_PAD_LO, adapter.ROAD_TEX_WINDOW_BYTES)),
         ("fixture_road_persp_seg", win(adapter.A_persp_seg_tbl, adapter.ROAD_PERSP_SEG_BYTES)),
         ("fixture_road_width_src", win(adapter.A_road_width_src, adapter.ROAD_WIDTH_SRC_BYTES)),
         ("fixture_road_width_count", win(adapter.A_width_count_tbl, adapter.ROAD_WIDTH_COUNT_BYTES)),
-        ("fixture_road_play", win(play_off, adapter.SCROLL_PLAY_BYTES)),   # buf_c + screen_offset window
-        ("fixture_course_stream", win(course_base - adapter.COURSE_STREAM_PAD,
-                                      adapter.COURSE_STREAM_BYTES)),        # records grow downward
     ]
 
-    # ---- draw_game_objects arenas: the record arena (buf_a), the sprite/graphics arena (buf_c), and
-    # the STATIC+bss table region the dispatcher / sub-draws read (jump table, colour/edge tables,
-    # object streams, sprite piece tables, ground tables, anim tables). All indexed at their arena
-    # base, so the demo points the object structs at these blobs with the same offsets recreate uses.
+    # The STATIC+bss table region the dispatcher / sub-draws read (jump table, colour/edge tables,
+    # object streams, sprite piece tables, ground tables, anim tables), indexed at its base so the
+    # demo points the object structs at it with the same offsets recreate uses.
     obj_arrays = [
-        ("fixture_buf_a", win(buf_a, OBJ_BUF_A_BYTES)),
-        ("fixture_buf_c", win(buf_c, OBJ_BUF_C_BYTES)),
         ("fixture_obj_low", win(OBJ_LOW_BASE, OBJ_LOW_END - OBJ_LOW_BASE)),
+    ]
+
+    # Where each arena-resident asset sits, so demo_main.c can point at the loaded arena. All are
+    # offsets from a named region base in include/assets.h, never absolute addresses.
+    arena_defines = [
+        f"#define ARENA_BUF_A_BYTES     {OBJ_BUF_A_BYTES}",         # mutable copy the prefix writes
+        f"#define ARENA_SCROLL_PLAY_OFF {play_off - buf_c}",        # gfx + this: the scroll playfield
+        f"#define ARENA_COURSE_STREAM_OFF {course_base - buf_a}",   # tables + this: the leg's records
+        f"#define ARENA_DASH_SRC_OFF    {adapter.DASH_SRC_OFF}",    # gfx + this: dashboard graphic
+        f"#define ARENA_NUM_SPRITES_OFF {adapter.NUM_GLYPH_BUF_OFF}",  # gfx + this: digit sprites
     ]
 
     sp = adapter.sprite_state(img)
@@ -141,10 +154,12 @@ def main():
     st = adapter.hud_state(img)
     pl = adapter.player_state(img)
     out = ["/* Generated by gen_demo_fixture.py — do not edit. Inputs for the interactive road + HUD",
-           " * demo: HUD assets, render_road static tables, geometry const sources, the initial pose,",
-           " * the HudState scalars, and the palette. */",
+           " * demo that are NOT asset-file content: the original program's own data-segment tables,",
+           " * the geometry const sources, the initial pose/HudState scalars, the palette, and the",
+           " * offsets at which the arena-resident assets live. Everything from COURSES.DAT and",
+           " * GRAPHICS.GRA the demo loads itself at boot (see include/assets.h). */",
            "#ifndef RM_DEMO_FIXTURE_H", "#define RM_DEMO_FIXTURE_H", "#include <stdint.h>", ""]
-    for name, data in hud.hud_asset_arrays(img):
+    for name, data in hud.hud_asset_arrays(img, from_arena=True):
         out.append(hud._c_array(name, data))
     for name, data in road_arrays:
         out.append(hud._c_array(name, data))
@@ -155,16 +170,14 @@ def main():
     out += hud.hud_state_defines(st)
     out += ["",
             f"#define ROAD_EDGE_PAD        {adapter.ROAD_EDGE_PAD}",
-            f"#define ROAD_TEX_PAD_LO      {adapter.ROAD_TEX_PAD_LO}",
             f"#define ROAD_CURVE_INIT      {pose.curve}",
             f"#define ROAD_VIEW_FLAGS_INIT {pose.view_flags}",
             "#define ROAD_SEG_DATA_INIT   { " + seg + " }",
             f"#define SCROLL_SPEED_INIT    {scroll.scroll_speed}",
             f"#define HSCROLL_POS_INIT     {scroll.hscroll_pos}",
-            f"#define COURSE_STREAM_PAD    {adapter.COURSE_STREAM_PAD}",
             f"#define COURSE_ROW_CTR_INIT  {course.row_ctr}",
             f"#define COURSE_READ_POS_INIT {course.read_pos}",
-            ""]
+            ""] + arena_defines + [""]
 
     # ---- draw_game_objects: the table offsets within fixture_obj_low + the object scalar inits.
     out += [
@@ -251,7 +264,7 @@ def main():
     (build / "demo_fixture.h").write_text("\n".join(out))
     print(f"wrote {build/'demo_fixture.h'}, golden.bin, palette.bin "
           f"(leg={leg} curve={pose.curve} view_flags={pose.view_flags} seg0={pose.seg_data[0]} "
-          f"row_ctr=0x{course.row_ctr:x} read_pos=0x{course.read_pos:x} buf_b=0x{buf_b:x})")
+          f"row_ctr=0x{course.row_ctr:x} read_pos=0x{course.read_pos:x})")
 
 
 if __name__ == "__main__":

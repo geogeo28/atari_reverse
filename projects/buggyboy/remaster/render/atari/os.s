@@ -24,6 +24,41 @@ Fcreate:
     lea     8(%sp),%sp
     rts
 
+| long Fopen(const char *name, short mode)     GEMDOS 0x3d  (mode 0 = read-only)
+    .globl  Fopen
+Fopen:
+    move.l  4(%sp),%d1          | name
+    move.l  8(%sp),%d0          | mode (int); low word
+    move.w  %d0,-(%sp)
+    move.l  %d1,-(%sp)
+    move.w  #0x3d,-(%sp)
+    trap    #1
+    lea     8(%sp),%sp
+    rts
+
+| long Fread(short handle, long count, void *buf)    GEMDOS 0x3f
+    .globl  Fread
+Fread:
+    move.l  12(%sp),%a1         | buf
+    move.l  8(%sp),%d1          | count
+    move.l  4(%sp),%d0          | handle (int); low word
+    move.l  %a1,-(%sp)
+    move.l  %d1,-(%sp)
+    move.w  %d0,-(%sp)
+    move.w  #0x3f,-(%sp)
+    trap    #1
+    lea     12(%sp),%sp
+    rts
+
+| long Cconws(const char *s)    GEMDOS 0x09 (write a NUL-terminated string to the console)
+    .globl  Cconws
+Cconws:
+    move.l  4(%sp),-(%sp)
+    move.w  #9,-(%sp)
+    trap    #1
+    lea     6(%sp),%sp
+    rts
+
 | long Fwrite(short handle, long count, void *buf)   GEMDOS 0x40
     .globl  Fwrite
 Fwrite:

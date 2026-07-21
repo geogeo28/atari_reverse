@@ -25,7 +25,7 @@ CC=m68k-elf-gcc
 CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
         ${DEMO_EXTRA_CFLAGS:-}"
-CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c $REMASTER/src/blit.c $REMASTER/src/object_list.c $REMASTER/src/gameplay.c $REMASTER/src/player.c"
+CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c $REMASTER/src/blit.c $REMASTER/src/object_list.c $REMASTER/src/gameplay.c $REMASTER/src/player.c $REMASTER/src/assets.c"
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
@@ -42,4 +42,10 @@ echo ">> wrap -> GEMDOS .PRG"
 "$PY" "$HERE/mkprg.py" "$BUILD/demo.elf" "$BUILD/demo.bin" "$BUILD/DEMO.PRG"
 
 cp "$BUILD/DEMO.PRG" "$DISK/DEMO.PRG"
-ls -l "$DISK/DEMO.PRG"
+
+# The demo reads the game's own data files at boot (see include/assets.h), so they ship on the disk
+# alongside the .PRG instead of being baked into it.
+for data in COURSES.DAT GRAPHICS.GRA; do
+    cp "$REMASTER/../bin/$data" "$DISK/$data"
+done
+ls -l "$DISK/DEMO.PRG" "$DISK/COURSES.DAT" "$DISK/GRAPHICS.GRA"

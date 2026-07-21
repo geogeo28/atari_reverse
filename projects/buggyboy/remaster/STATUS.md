@@ -57,6 +57,17 @@ region. What the loader does *not* own is the original program's data segment (f
 perspective/edge tables, the object jump table) — those are program constants, not file content, and
 are still supplied by the adapter/fixture.
 
+`DEMO.PRG` loads both files over GEMDOS at boot, so **~413 KB of baked asset arrays are gone** from
+the demo (`demo_fixture.h`: 28530 → 2702 lines; the .PRG's text is 68 KB) and the road texture, the
+scroll playfield, the course stream, the object record arena and every sprite are read from the real
+files. The disk ships `DEMO.PRG` + the two data files.
+
+One honest consequence: the demo's golden frame is now rendered from a *freshly loaded* arena
+(`gen_demo_fixture.staged_image` swaps one in), because that is what the demo has at boot. Of the
+arena's 388616 bytes, 347 differ after 60 staged frames — all in the graphics region — and exactly
+one of them reaches the framebuffer: the 4th byte of the dashboard graphic, in which the running
+game clears a bit. That bit returns on its own once the system that writes it is ported.
+
 ## Phase B — gameplay (later)
 
 | Subsystem     | recreate reference | remaster status | Equivalence |

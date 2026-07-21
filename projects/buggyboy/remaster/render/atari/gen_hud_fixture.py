@@ -44,9 +44,15 @@ def _c_array(name, data):
     return "\n".join(lines)
 
 
-def hud_asset_arrays(img):
+def hud_asset_arrays(img, from_arena=False):
     """The HUD's static asset tables (font, fill/mask/cursor tables, gauge strings, dashboard + digit
-    graphics from buf_c) as a list of (name, bytes). Shared by the HUD demo and the road+HUD demo."""
+    graphics from buf_c) as a list of (name, bytes). Shared by the HUD demo and the road+HUD demo.
+
+    `from_arena=True` means the caller loads GRAPHICS.GRA itself at runtime (see include/assets.h),
+    so the three tables that are graphics-file content — the dashboard graphic, the digit sprites and
+    the phase-3 sprite pixels — are dropped, and `fixture_dsp_table` keeps its ORIGINAL src offsets
+    (absolute within the graphics arena) instead of being rebased onto a compact extracted window.
+    """
     buf_c = int.from_bytes(img[adapter.A_buf_c:adapter.A_buf_c + 4], "big")
 
     def win(addr, n):
@@ -65,6 +71,12 @@ def hud_asset_arrays(img):
         ("fixture_crash_color_tbl", win(adapter.A_crash_color_tbl, adapter.CRASH_COLOR_TBL_BYTES)),
         ("fixture_score_delta_time", win(adapter.A_score_delta_time, adapter.SCORE_DELTA_BYTES)),
         ("fixture_score_delta_roll", win(adapter.A_score_delta_roll, adapter.SCORE_DELTA_BYTES)),
+    ]
+    if from_arena:
+        items.append(("fixture_dsp_table", win(adapter.A_dsp_table, adapter.DSP_TABLE_BYTES)))
+        return items
+
+    items += [
         ("fixture_dashboard_src",   win(buf_c + adapter.DASH_SRC_OFF, adapter.DASH_SRC_BYTES)),
         ("fixture_num_sprites",     win(buf_c + adapter.NUM_GLYPH_BUF_OFF, adapter.NUM_SPRITES_BYTES)),
     ]
