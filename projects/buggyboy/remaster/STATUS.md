@@ -51,7 +51,15 @@ invariant (every byte the candidate paints matches recreate). Coverage → 100% 
 | Subsystem     | recreate reference | remaster status | Equivalence |
 |---------------|--------------------|-----------------|-------------|
 | course advance (road geometry) | `g_game_update` §12 | ✅ segment scroll + record pull ported | `test/test_course.py` — seg_data / row_ctr / read_pos byte-exact over 40-frame drives, legs 0/1/2/4 |
-| `game_update` (rest) | `g_game_update` | ⬜ objects/events/collision/score not started | — |
+| player physics (`rm_player_update`) | `g_game_update` §3,4,5,7,8,9,10 | ✅ ported | `test/test_player.py` — every physics scalar identical to recreate frame-for-frame over 8 scripted 240-frame drives × legs 0/1/4 (throttle/brake/slalom/both locks/recentre/fire/time-out) |
+| `game_update` (rest) | `g_game_update` §1,2,6,12-tail | ⬜ sound, crash script, objects/events/collision/score not started | — |
+
+**What the player-physics slice covers** (see `include/game.h` for the state model): the engine
+rpm→speed model with its rev limiter, the road-scroll rate and the view advance whose wrap times the
+course, the wheel position → body lean → road-curvature integrator, and the road-edge clamp plus the
+off-road push. Its documented precondition is *no crash in progress*: the crash / auto-steer script
+(§6) and the object-collision and horizon-event paths that arm it are not ported, so the drives
+exclude and roll back the few frames where recreate's event system engages (1–15 of 240).
 
 ## Perf
 

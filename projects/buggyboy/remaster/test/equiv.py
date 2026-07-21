@@ -84,6 +84,10 @@ def _lib():
     lib.rm_gobj_prefix.argtypes = [ctypes.POINTER(adapter.GobjPrefixState),
                                    ctypes.POINTER(adapter.GobjPrefixAssets)]
     lib.rm_gobj_prefix.restype = None
+    lib.rm_player_update.argtypes = [ctypes.POINTER(adapter.PlayerState),
+                                     ctypes.POINTER(adapter.PlayerAssets),
+                                     ctypes.POINTER(ctypes.c_uint8)]
+    lib.rm_player_update.restype = None
     return lib
 
 
@@ -681,3 +685,135 @@ def compare_game_objects(lib, image):
     diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
     footprint = sum(1 for i in range(adapter.SCREEN_BYTES) if ref_fb[i] != base[i])
     return diff, footprint
+
+
+# The player-physics state rm_player_update owns, paired with the recreate global it must match.
+# (native PlayerState field, image address, signed)
+PLAYER_FIELDS = (
+    ("engine_rpm", adapter.A_engine_rpm, False),
+    ("rpm_cap", adapter.A_leg_flags_c90, False),
+    ("rpm_add", adapter.A_leg_flags_c90 + 2, False),
+    ("speed_raw", adapter.A_speed_raw, False),
+    ("speed", adapter.A_speed, False),
+    ("speed_jitter_ph", adapter.A_speed_jitter_ph, False),
+    ("scroll_phase", adapter.A_scroll_phase, False),
+    ("scroll_speed", adapter.A_scroll_speed, True),
+    ("view_flags", adapter.A_view_flags, False),
+    ("view_bank", adapter.A_view_bank, False),
+    ("ground_view_off", adapter.A_ground_view_off, True),
+    ("road_edge_sel", adapter.A_road_edge_sel, True),
+    ("wheel_pos", adapter.A_wheel_pos, False),
+    ("steer_hold", adapter.A_steer_hold, False),
+    ("lean_phase", adapter.A_lean_phase, False),
+    ("lean", adapter.A_lean_state, False),
+    ("buggy_draw_flag", adapter.A_buggy_draw_flag, False),
+    ("road_curve", adapter.A_road_curve, True),
+    ("skid", adapter.A_buggy_skid_off, True),
+    ("crash_disp", adapter.A_crash_disp, True),
+    ("fire_hold", adapter.A_fire_hold, False),
+    ("dsp_variant_idx", adapter.A_dsp_variant_idx, False),
+    ("leg_flags_sel", adapter.A_leg_flags_sel, False),
+    ("time_subctr", adapter.A_time_subctr, False),
+    ("time_left", adapter.A_time_left, True),
+    ("hud_crash_timer", adapter.A_hud_crash_timer, True),
+)
+
+# The globals that put the original into its crash / auto-steer script — the part of game_update this
+# slice does not port (see game.h's PRECONDITION). Driving far enough always trips one: the horizon
+# events the course dispatches arm a crash after ~40 frames. So the drive CLEARS them after each
+# reference frame, staging every frame back inside the regime the ported slice covers, and counts how
+# often it had to. crash_phase is left alone: the original only tests it for sign, so any
+# non-negative value (a staged image carries 3) leaves the ported path unchanged.
+PLAYER_CRASH_GLOBALS = (adapter.A_collision_lock, adapter.A_event_pending, adapter.A_curve_freeze,
+                        adapter.A_turn_flags, adapter.A_spin_reset, adapter.A_spin_reset + 2)
+
+
+def player_background(leg=0, warmup=60, pokes=None):
+    """A mid-race image ready to drive. Two staging artefacts have to be cleared first or the buggy
+    never moves: view_flags is left at the section-12 trigger value 0x10 (not a real 0/2/4/6 view),
+    and hud_crash_timer is left armed, which pins the throttle off and forces the brake every frame
+    (section 6). `pokes` sets further globals (e.g. a short time_left to reach the time-out)."""
+    state = bench_frame.mid_race_state(leg, warmup)
+    _w16(state, adapter.A_view_flags, 0)
+    _w16(state, adapter.A_hud_crash_timer, 0)
+    for addr, val in (pokes or {}).items():
+        _w16(state, addr, val & 0xffff)
+    return state
+
+
+def compare_player_drive(lib, image, inputs):
+    """Drive one frame per entry of `inputs` (input_state bit masks) and check remaster's player
+    physics tracks recreate's game_update scalar for scalar. Each frame: build a native PlayerState
+    from the current image, run rm_player_update against the image's road control table, then advance
+    the reference image one frame via g_game_update with the same input and compare every field in
+    PLAYER_FIELDS. The candidate is re-seeded from the reference each frame, so a divergence is
+    reported where it happens instead of smearing over the rest of the drive.
+
+    A course-advance frame can dispatch a horizon event, which is the out-of-scope system: it kicks
+    road_curve, drops rpm, arms the crash script. Such a frame is EXCLUDED from the comparison and
+    the physics globals are rolled back to what the ported slice produced, so the drive continues
+    inside the regime instead of ending at the first event.
+
+    Returns (mismatches, stats) — mismatches is a list of (frame, field, candidate, reference); stats
+    counts the frames reaching each branch worth knowing was exercised, so a drive that degenerates
+    (a buggy that never moves, a clamp never hit) is visible instead of silently passing.
+    """
+    state = bytearray(image)
+    buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
+    game_update = _bind("g_game_update")
+
+    mismatches = []
+    stats = dict(frames=len(inputs), wraps=0, events=0, clamp=0, offroad=0, fire=0, timeout=0)
+    for frame, in_bits in enumerate(inputs):
+        p = adapter.player_state(state, in_bits)
+        assets, _keep = adapter.player_assets(state)
+        ctrl, _keep_ctrl = adapter.road_ctrl(state)
+        lib.rm_player_update(ctypes.byref(p), ctypes.byref(assets), ctrl)
+
+        _w16(state, adapter.A_input_state, in_bits)
+        game_update(buf)
+        stats["wraps"] += _r16(state, adapter.A_view_wrap_flag) != 0
+
+        if _event_engaged(state):
+            stats["events"] += 1
+            _restage_player(state, p)
+            continue
+
+        stats["clamp"] += bool(p.curve_clamp)
+        stats["offroad"] += p.skid != 0
+        stats["fire"] += p.fire_hold != 0
+        stats["timeout"] += p.hud_crash_timer != 0
+
+        for name, addr, signed in PLAYER_FIELDS:
+            ref = _i16s(state, addr) if signed else _r16(state, addr)
+            cand = getattr(p, name)
+            if cand != ref:
+                mismatches.append((frame, name, cand, ref))
+        if (_r16(state, adapter.A_view_wrap_flag) != 0) != bool(p.view_wrapped):
+            mismatches.append((frame, "view_wrapped", bool(p.view_wrapped),
+                               _r16(state, adapter.A_view_wrap_flag) != 0))
+    return mismatches, stats
+
+
+def _event_engaged(state):
+    """True if this frame's game_update handed control to the crash / event script (see game.h's
+    PRECONDITION). crash_phase is a signed gate the original only tests for sign — an event drives it
+    negative, a staged image's positive value is inert."""
+    return (any(_r16(state, addr) for addr in PLAYER_CRASH_GLOBALS)
+            or _i16s(state, adapter.A_crash_phase) < 0)
+
+
+def _restage_player(state, p):
+    """Roll the reference image's physics state back to what rm_player_update produced, and disarm the
+    crash script — so the next frame starts inside the ported slice's regime."""
+    for name, addr, _signed in PLAYER_FIELDS:
+        _w16(state, addr, getattr(p, name) & 0xffff)
+    _w16(state, adapter.A_sprite_suppress, p.skid & 0xffff)   # the dual-use skid carrier (see game.h)
+    for addr in PLAYER_CRASH_GLOBALS:
+        _w16(state, addr, 0)
+    _w16(state, adapter.A_crash_phase, 0)
+
+
+def _i16s(state, addr):
+    v = _r16(state, addr)
+    return v - 0x10000 if v & 0x8000 else v

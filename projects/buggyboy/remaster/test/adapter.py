@@ -172,6 +172,32 @@ GOBJ_ANIM_BUF_OFF1 = 0xd70                          # buf_a + this = anim_word m
 GOBJ_ANIM_BUF_OFF2 = 0x1250                         # buf_a + this = anim_word mirror 2
 MARKER_RECS_BYTES = 0x340                           # covers the 14-record decay slot (+ signed offset window)
 
+# ---- player physics (game_update sections 3,4,5,7,8,9,10) globals + tables (mirror addrs.h) ----
+A_input_state, A_input_prev = 0x18c44, 0x18c42
+A_engine_rpm, A_leg_flags_c90 = 0x18c8c, 0x18c90    # rpm; the {rpm_cap, rpm_add} pair
+A_speed_raw, A_speed_jitter_ph = 0x18cf8, 0x18c94
+A_scroll_phase, A_view_bank, A_view_wrap_flag = 0x18c8e, 0x18c54, 0x18c9a
+A_wheel_pos, A_steer_hold, A_lean_phase = 0x18cc0, 0x18ccc, 0x18cce
+A_lean_state, A_buggy_draw_flag = 0x18cc2, 0x18d0e
+A_curve_clamp_flag, A_buggy_skid_off, A_crash_disp = 0x18d1a, 0x18cbc, 0x18c68
+A_sprite_suppress = 0x18cd0                         # holds the PREVIOUS frame's buggy_skid_off
+A_fire_hold, A_leg_flags_sel = 0x18c98, 0x18c96
+A_time_subctr, A_timeout_gate = 0x18cfe, 0x18c3e
+A_collision_lock, A_event_pending = 0x18c84, 0x18c82  # must stay 0: the crash script is out of scope
+A_crash_phase, A_spin_reset, A_curve_freeze = 0x18c86, 0x18cc8, 0x18d16
+A_turn_flags = 0x18c80                              # auto/view turn flag bits (crash script input)
+A_lean_anim_tbl = 0x173ac                           # byte: lean at lean_phase + (rpm & 0x70)
+A_scroll_speed_tbl = 0x1742c                        # word: scroll rate at scroll_phase + (rpm & 0x70)
+A_speed_jitter_tbl = 0x17394                        # word: speedometer jitter at jitter_ph & 0xe
+A_steer_curve_tbl = 0x174ec                         # byte: curvature delta (signed row index)
+A_legflag_tbl = 0x173a4                             # long records {rpm_cap, rpm_add}
+LEAN_ANIM_TBL_BYTES = 0x80                          # lean_phase 0..0xf + rpm band 0..0x70
+SCROLL_SPEED_TBL_BYTES = 0x80                       # same index range, as words
+SPEED_JITTER_TBL_BYTES = 0x10                       # jitter_ph & 0xe
+LEGFLAG_TBL_BYTES = 8                               # the two selectable records
+STEER_CURVE_ZERO_OFF = 0x40                         # (skid + wheel) << 3 reaches -0x40
+STEER_CURVE_WINDOW_BYTES = STEER_CURVE_ZERO_OFF + 0x80   # ...and +0x60 + the rpm column
+
 
 
 
@@ -356,6 +382,35 @@ class GobjPrefixAssets(ctypes.Structure):
                 ("anim_color", ctypes.POINTER(ctypes.c_uint8)),
                 ("anim_mirror1", ctypes.POINTER(ctypes.c_uint8)),
                 ("anim_mirror2", ctypes.POINTER(ctypes.c_uint8))]
+
+
+class PlayerState(ctypes.Structure):
+    _fields_ = [("input", ctypes.c_uint16), ("input_prev", ctypes.c_uint16),
+                ("game_over", ctypes.c_bool), ("hscroll_step2", ctypes.c_int16),
+                ("engine_rpm", ctypes.c_uint16), ("rpm_cap", ctypes.c_uint16),
+                ("rpm_add", ctypes.c_uint16), ("speed_raw", ctypes.c_uint16),
+                ("speed", ctypes.c_uint16), ("speed_jitter_ph", ctypes.c_uint16),
+                ("scroll_phase", ctypes.c_uint16), ("scroll_speed", ctypes.c_int16),
+                ("view_flags", ctypes.c_uint16), ("view_bank", ctypes.c_uint16),
+                ("view_wrapped", ctypes.c_bool), ("ground_view_off", ctypes.c_int16),
+                ("road_edge_sel", ctypes.c_int16),
+                ("wheel_pos", ctypes.c_uint16), ("steer_hold", ctypes.c_uint16),
+                ("lean_phase", ctypes.c_uint16), ("lean", ctypes.c_uint16),
+                ("buggy_draw_flag", ctypes.c_uint16), ("road_curve", ctypes.c_int16),
+                ("curve_clamp", ctypes.c_bool), ("skid", ctypes.c_int16),
+                ("crash_disp", ctypes.c_int16),
+                ("fire_hold", ctypes.c_uint16), ("dsp_variant_idx", ctypes.c_uint16),
+                ("leg_flags_sel", ctypes.c_uint16), ("time_subctr", ctypes.c_uint16),
+                ("time_left", ctypes.c_int16), ("hud_crash_timer", ctypes.c_int16),
+                ("timeout_gate", ctypes.c_bool)]
+
+
+class PlayerAssets(ctypes.Structure):
+    _fields_ = [("lean_anim_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("scroll_speed_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("speed_jitter_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("steer_curve_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("legflag_tbl", ctypes.POINTER(ctypes.c_uint8))]
 
 
 def _i16(image, addr):
@@ -618,3 +673,51 @@ def object_input(image):
     inp = ObjectInput(ctypes.cast(width_tbl, p), ctypes.cast(mask_l, p), ctypes.cast(mask_r, p),
                       _i16(image, A_obj_shade))
     return inp, (width_tbl, mask_l, mask_r)
+
+
+def player_state(image, inputs=0):
+    """The player-physics scalars as a native PlayerState, with `inputs` as this frame's input bits.
+    skid is seeded from sprite_suppress — the original's dual-use global that carries the previous
+    frame's off-road push into the steer-curve row (see game.h)."""
+    def u16(addr):
+        return (image[addr] << 8) | image[addr + 1]
+
+    return PlayerState(
+        inputs, u16(A_input_prev), u16(A_game_over_flag) != 0, _i16(image, A_hscroll_step2),
+        u16(A_engine_rpm), u16(A_leg_flags_c90), u16(A_leg_flags_c90 + 2),
+        u16(A_speed_raw), u16(A_speed), u16(A_speed_jitter_ph),
+        u16(A_scroll_phase), _i16(image, A_scroll_speed),
+        u16(A_view_flags), u16(A_view_bank), u16(A_view_wrap_flag) != 0,
+        _i16(image, A_ground_view_off), _i16(image, A_road_edge_sel),
+        u16(A_wheel_pos), u16(A_steer_hold), u16(A_lean_phase), u16(A_lean_state),
+        u16(A_buggy_draw_flag), _i16(image, A_road_curve), u16(A_curve_clamp_flag) != 0,
+        _i16(image, A_sprite_suppress), _i16(image, A_crash_disp),
+        u16(A_fire_hold), u16(A_dsp_variant_idx), u16(A_leg_flags_sel),
+        u16(A_time_subctr), _i16(image, A_time_left), _i16(image, A_hud_crash_timer),
+        u16(A_timeout_gate) != 0)
+
+
+def player_assets(image):
+    """The static tables the player physics indexes, as a native PlayerAssets. Returns (assets,
+    keepalive). steer_curve_tbl is CURSOR-ZERO: its row index ((skid + wheel_pos) << 3) goes negative
+    while the buggy is being pushed off the right shoulder, so the window extends below the base."""
+    def buf(addr, n):
+        return (ctypes.c_uint8 * n)(*image[addr:addr + n])
+
+    lean_anim = buf(A_lean_anim_tbl, LEAN_ANIM_TBL_BYTES)
+    scroll_speed = buf(A_scroll_speed_tbl, SCROLL_SPEED_TBL_BYTES)
+    speed_jitter = buf(A_speed_jitter_tbl, SPEED_JITTER_TBL_BYTES)
+    steer_curve = buf(A_steer_curve_tbl - STEER_CURVE_ZERO_OFF, STEER_CURVE_WINDOW_BYTES)
+    legflag = buf(A_legflag_tbl, LEGFLAG_TBL_BYTES)
+    p = ctypes.POINTER(ctypes.c_uint8)
+    assets = PlayerAssets(
+        ctypes.cast(lean_anim, p), ctypes.cast(scroll_speed, p), ctypes.cast(speed_jitter, p),
+        ctypes.cast(ctypes.byref(steer_curve, STEER_CURVE_ZERO_OFF), p), ctypes.cast(legflag, p))
+    return assets, (lean_anim, scroll_speed, speed_jitter, steer_curve, legflag)
+
+
+def road_ctrl(image):
+    """The road control table (build_road_geometry's output) as a ctypes buffer — rm_player_update
+    reads its edge-flag rows. Returns (ptr, keepalive)."""
+    ctrl = (ctypes.c_uint8 * RM_CTRL_BYTES)(*image[A_road_curve_tbl:A_road_curve_tbl + RM_CTRL_BYTES])
+    return ctypes.cast(ctrl, ctypes.POINTER(ctypes.c_uint8)), ctrl

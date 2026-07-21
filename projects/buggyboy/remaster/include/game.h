@@ -175,6 +175,96 @@ typedef struct {
  * (a pulled record's slope, or the previous slope), updating cs. Feed pose to rm_build_road_geometry. */
 void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stream);
 
+/* ---- player physics (the driving slice of game_update @0x1110e) ----
+ *
+ * One frame of "what the player's inputs do to the buggy": throttle -> engine rpm -> speed, speed ->
+ * road-scroll rate and the view advance that times the course, steering -> wheel position, body lean
+ * and road curvature, and the road-edge clamp that pushes you back when you run wide. It is pure
+ * scalar state — no framebuffer, no tables rebuilt — and it feeds every render input the demo already
+ * has: RoadPose.curve/view_flags, ScrollState.scroll_speed, SpriteState.lean/wheel_pos/skid, and the
+ * HUD's speed/time.
+ *
+ * PRECONDITION — no crash in progress. This is game_update sections 3,4,5,7,8,9,10; the crash /
+ * auto-steer script (section 6, `collision_lock`) and the object-collision + event paths that arm it
+ * are NOT ported, so the globals only they write are treated as zero: collision_lock, event_pending,
+ * crash_phase, spin_reset/spin_word2, steer_delta, buggy_pitch_off, curve_freeze, turn_flags. Under
+ * that precondition the original's branches on them are unreachable, so they are absent here rather
+ * than modeled dead. Nothing in this slice can leave the precondition (a spin is only armed from the
+ * collision path), which test_player.py asserts frame by frame. */
+
+/* Input bits, as the original's input_state packs them (joystick, or arrow keys mapped by read_input). */
+#define RM_IN_ACCEL 0x01
+#define RM_IN_BRAKE 0x02
+#define RM_IN_LEFT  0x04
+#define RM_IN_RIGHT 0x08
+#define RM_IN_FIRE  0x80
+
+/* Two rows of the road control table are read back as geometry *outputs* (the original aliases them
+ * as the globals road_edge_flags / road_geom_hi, both of which land inside road_curve_tbl): the
+ * shoulder/edge flags at the buggy's row, and the near-row sign that enables the narrow clamp. */
+#define RM_CTRL_EDGE_FLAGS_OFF  0x160   /* control long #88, high word: edge/shoulder flag bits */
+#define RM_CTRL_GEOM_HI_OFF     0x198   /* control long #102, high word: < 0 enables the edge clamp */
+
+typedef struct {
+    /* ---- per-frame input ---- */
+    uint16_t input;            /* this frame's RM_IN_* bits */
+    uint16_t input_prev;       /* previous frame's bits (the fire press is edge-triggered) */
+    bool     game_over;        /* forces full throttle and blanks the clock */
+    int16_t  hscroll_step2;    /* ScrollState.hscroll_step2 from the previous frame; biases the curve */
+
+    /* ---- engine + speed (§7) ---- */
+    uint16_t engine_rpm;
+    uint16_t rpm_cap;          /* per-leg rev limiter, from the legflag record (§3 reloads it) */
+    uint16_t rpm_add;          /* per-leg throttle step, likewise */
+    uint16_t speed_raw;        /* out: (rpm - idle) * 3 — the lean-animation rate */
+    uint16_t speed;            /* out: speed_raw plus high-speed jitter — the speedometer */
+    uint16_t speed_jitter_ph;
+
+    /* ---- view bank + road scroll (§8) ---- */
+    uint16_t scroll_phase;
+    int16_t  scroll_speed;     /* out: road-band scroll rate for this rpm */
+    uint16_t view_flags;       /* out: view/leg selector, 0/2/4/6 */
+    uint16_t view_bank;        /* out: toggles 0/8 on each wrap */
+    bool     view_wrapped;     /* out: view_flags wrapped -> advance the course this frame */
+    int16_t  ground_view_off;  /* out: ground/object scan column (view_flags * 0xdd) */
+    int16_t  road_edge_sel;    /* out: byte offset into the road edge-run table bank */
+
+    /* ---- steering + body pose (§5, §9, §10) ---- */
+    uint16_t wheel_pos;        /* 0..4, centre 2 */
+    uint16_t steer_hold;       /* frames the steering has been held off-centre */
+    uint16_t lean_phase;       /* +1 & 0xf each frame; indexes the lean animation table */
+    uint16_t lean;             /* out: buggy body lean */
+    uint16_t buggy_draw_flag;  /* out: nonzero on the lean-table frames that show the lower body */
+    int16_t  road_curve;       /* in/out: signed road curvature — the steering integrator */
+    bool     curve_clamp;      /* out: the curve hit the edge limit (adds engine drag next frame) */
+    int16_t  skid;             /* in: last frame's push (selects the steer-curve row); out: this frame's
+                                * off-road push, 0 or +/-8. Also suppresses the foreground sprite. */
+    int16_t  crash_disp;       /* out: vertical displacement while ploughing off-road (row offsets) */
+
+    /* ---- HUD-facing counters (§3, §4) ---- */
+    uint16_t fire_hold;        /* frames left in the fire-triggered dashboard animation */
+    uint16_t dsp_variant_idx;  /* out: dashboard-variant record offset the HUD draws */
+    uint16_t leg_flags_sel;    /* which legflag record supplies rpm_cap/rpm_add */
+    uint16_t time_subctr;      /* frame subdivider under the bonus-time clock */
+    int16_t  time_left;        /* out: bonus time remaining */
+    int16_t  hud_crash_timer;  /* out: armed when the clock runs out; freezes the clock, forces braking */
+    bool     timeout_gate;     /* nonzero suppresses arming hud_crash_timer at time-out */
+} PlayerState;
+
+/* Static ST-format tables the physics indexes (STATIC region, big-endian; see st.h). */
+typedef struct {
+    const uint8_t *lean_anim_tbl;    /* byte: lean per frame, at lean_phase + (rpm & 0x70) */
+    const uint8_t *scroll_speed_tbl; /* word: scroll rate, at scroll_phase + (rpm & 0x70) */
+    const uint8_t *speed_jitter_tbl; /* word: speedometer jitter, at speed_jitter_ph & 0xe */
+    const uint8_t *steer_curve_tbl;  /* byte: curvature delta — CURSOR-ZERO, the row index is signed
+                                      * ((skid + wheel_pos) << 3 reaches -0x40) */
+    const uint8_t *legflag_tbl;      /* long records {rpm_cap:w, rpm_add:w}, at leg_flags_sel */
+} PlayerAssets;
+
+/* Advance one frame of player physics from p->input. `ctrl` is this frame's road control table
+ * (rm_build_road_geometry's output), read for the edge flags above. */
+void rm_player_update(PlayerState *p, const PlayerAssets *a, const uint8_t *ctrl);
+
 /* ---- player buggy + foreground sprites (draw_fg_sprite .. draw_buggy @ 0x1518a..) ---- */
 
 /* Dynamic per-frame state the buggy/foreground sprite draws read (recreate's scalar globals, named).
