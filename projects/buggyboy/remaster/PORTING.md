@@ -110,6 +110,13 @@ parametrize by `chunk` for xdist.
 
 ## Where things live
 
+`include/assets.h` + `src/assets.c` load the game's own `COURSES.DAT` / `GRAPHICS.GRA` into one arena
+(`rm_assets_unpack`, pinned byte-exact over the whole arena by `test/test_assets.py`). Asset *file*
+bytes come from there; the original program's own data-segment tables (fonts, colour pairs, road
+perspective/edge tables, the object jump table) are not file content and still come from the
+adapter/fixture. `rm_assets_unpack` does no I/O — the caller supplies the two files' bytes, so the
+core stays platform-free (GEMDOS `Fread` on the ST, a buffer poke in the tests).
+
 `include/` types + primitives · `src/` cores · `test/adapter.py` flat-image→struct bridge ·
 `test/equiv.py` differential driver · `test/test_*.py` per-subsystem tests · `render/atari/` on-target
 demo. Workspace-wide conventions (name map, commit hygiene, the differential-vs-oracle bar) are in the

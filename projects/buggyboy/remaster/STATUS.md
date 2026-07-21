@@ -27,6 +27,7 @@ framebuffer → diff). Order follows the in-race draw order.
 | fine-x blit engines (`blit_objshift`, `blit_objshift2`, objsprite) | `g_blit_objshift` / `_w2` / `g_blit_objshift2` / `g_objsprite_t*` | ✅ ported | `test/test_blit_engines.py` — byte-exact fuzz across every fine-x, dispatch case (clip/edge/base/wide), colours, strides, all width families |
 | object-list dispatcher (`draw_object_list` + obj_dispatch + handlers) | `g_draw_object_list` | ✅ ported | `test/test_object_list_rm.py` — whole-framebuffer byte-exact across the real per-frame passes, legs 0–4 |
 | `draw_game_objects` (prefix + orchestrator) | `g_draw_game_objects` / `g_draw_game_objects_prefix` | ✅ ported | `test/test_game_objects_rm.py` — whole-frame composite byte-exact; `test/test_gobj_prefix.py` — prefix state byte-exact (marker/anim/bonus) |
+| asset loading (`rm_assets_unpack`) | `g_unpack_graphics` | ✅ ported | `test/test_assets.py` — the **whole 0x5ee08 arena** byte-identical, loaded from the unmodified `COURSES.DAT` + `GRAPHICS.GRA` |
 
 
 ### `draw_hud` phase ledger
@@ -45,6 +46,16 @@ invariant (every byte the candidate paints matches recreate). Coverage → 100% 
 | 6b | blinking small gauge | ✅ | glyph blitter + `small_gauge_str` (runs only when `crash_lap` == 0) |
 | 7 | main gauge cluster + dashboard | ✅ | glyph blitter + dashboard masked-blit |
 | 8 | crash fx | ✅ | num blitter + score_add (BCD) + drain/rollover over the shared HUD-text buffer |
+
+### Assets
+
+The remaster reads the game's own `COURSES.DAT` and `GRAPHICS.GRA`, unmodified, at boot —
+`src/assets.c` ports the RLE decode, screen de-interleave, compaction and the two sprite pre-shift
+table builds into one arena (`include/assets.h`). The arena's internal offsets are the data files'
+own address space, not a choice: a course record's sprite pointer is a byte offset into the graphics
+region. What the loader does *not* own is the original program's data segment (fonts, colour pairs,
+perspective/edge tables, the object jump table) — those are program constants, not file content, and
+are still supplied by the adapter/fixture.
 
 ## Phase B — gameplay (later)
 
