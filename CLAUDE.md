@@ -92,9 +92,9 @@ asked** — one verified function, a naming sweep, a docs pass, ~10 meaningful e
 giant end-of-session commit is a smell; split it retroactively before promoting.
 
 ### Pre-commit code-review gate
-Review the change for quality *before* the docs. Audit the diff against the bar of *code a
-human or agent can read and safely extend months from now*, then fix what you find (or
-justify leaving it):
+**Review the change for quality before the docs, not after.** Once the code works, audit the
+diff against the bar of *code an agent or human can read and safely extend months from now* —
+then fix what you find (or justify leaving it) before the docs gate:
 - **Correctness** — re-check edge cases and every call site the diff touches. A reconstructed
   function must be **green under `make test`** (differential vs the Musashi oracle) before it
   is committed — that is the success criterion, not "looks right".
