@@ -4,6 +4,12 @@
 | C ABI (m68k SysV): args on the stack at 4(%sp), 8(%sp), ...; each int/pointer is 4 bytes;
 | integer/pointer results returned in %d0 (so pointer-returning traps are declared `long` in C
 | and cast). Each wrapper cleans only its own trap-frame pushes; the caller cleans the C args.
+|
+| ORDER MATTERS — keep the file-I/O wrappers (Fcreate/Fopen/Fread/Fwrite/Fclose) together and FIRST,
+| immediately after _start. Putting other wrappers ahead of or between them made Hatari's GEMDOS-HD
+| return handle 0 (stdin) from Fopen in a large .PRG instead of a real handle, so Fread then read the
+| keyboard and the graphics unpack spun forever waiting for its end marker. That cost a long debug in
+| recreate's game_os.s, whose layout this mirrors. Add new non-file wrappers BELOW this block.
 
     .text
     .globl  _start
@@ -50,15 +56,6 @@ Fread:
     lea     12(%sp),%sp
     rts
 
-| long Cconws(const char *s)    GEMDOS 0x09 (write a NUL-terminated string to the console)
-    .globl  Cconws
-Cconws:
-    move.l  4(%sp),-(%sp)
-    move.w  #9,-(%sp)
-    trap    #1
-    lea     6(%sp),%sp
-    rts
-
 | long Fwrite(short handle, long count, void *buf)   GEMDOS 0x40
     .globl  Fwrite
 Fwrite:
@@ -81,6 +78,15 @@ Fclose:
     move.w  #0x3e,-(%sp)
     trap    #1
     addq.l  #4,%sp
+    rts
+
+| long Cconws(const char *s)    GEMDOS 0x09 (write a NUL-terminated string to the console)
+    .globl  Cconws
+Cconws:
+    move.l  4(%sp),-(%sp)
+    move.w  #9,-(%sp)
+    trap    #1
+    lea     6(%sp),%sp
     rts
 
 | long Cconin(void)             GEMDOS 0x01 (blocks for a key)
