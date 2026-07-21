@@ -727,6 +727,65 @@ PLAYER_CRASH_GLOBALS = (adapter.A_collision_lock, adapter.A_event_pending, adapt
                         adapter.A_turn_flags, adapter.A_spin_reset, adapter.A_spin_reset + 2)
 
 
+# The crash / auto-steer script's own outputs (game_update §6). The script poses the body and kicks
+# the curve; these are the fields only it writes, so they are what proves the playout tracked.
+PLAYER_SCRIPT_FIELDS = (
+    ("steer_delta", adapter.A_steer_delta, True),
+    ("buggy_pitch_off", adapter.A_buggy_pitch_off, True),
+)
+
+# ...and the two the script writes as single BYTES, which need a byte read rather than a word one.
+# Nothing downstream in the physics reads either, so they are invisible unless compared directly:
+# without this, transposing their two record offsets in player.c leaves the whole suite green while
+# the crash picks the wrong sprite frame and raises the wrong marker effect.
+PLAYER_SCRIPT_BYTE_FIELDS = (
+    ("anim_frame_sel", adapter.A_anim_frame + 1),
+    ("marker_pending", adapter.A_marker_pending),
+)
+
+# The globals the still-unported event system OWNS: section 12's collision probe, the fx block rebuilt
+# from obj_flags, and the horizon-event dispatch are what arm these. The ported crash script reaches
+# them too (it steps collision_lock and clears it on the terminal record), so they are compared like
+# any other field — the leg drive only hands them over on the frame the reference arms from idle.
+PLAYER_EVENT_FIELDS = (
+    ("collision_lock", adapter.A_collision_lock, False),
+    ("crash_phase", adapter.A_crash_phase, True),
+    ("turn_flags", adapter.A_turn_flags, False),
+    ("event_pending", adapter.A_event_pending, False),
+    ("spin_reset", adapter.A_spin_reset, False),
+    ("spin_word2", adapter.A_spin_reset + 2, False),
+    ("curve_window_lo", adapter.A_curve_window, False),
+    ("curve_window_hi", adapter.A_curve_window + 2, False),
+    ("curve_freeze", adapter.A_curve_freeze, False),
+)
+
+COURSE_FIELDS = (("row_ctr", adapter.A_course_row_ctr), ("read_pos", adapter.A_course_read_pos))
+
+# The state a crash is ARMED through — the event system's two shapes are a collision (collision_lock +
+# crash_phase) and a spin override (the spin pair, armed with collision_lock still clear). The
+# candidate only ever carries these because a handover gave them to it, so "candidate clear of all of
+# them while the reference is not" is exactly the moment the unported system fired. turn_flags is
+# excluded on purpose: the script leaves it set after a crash, and only an event clears it again.
+PLAYER_ARMED_FIELDS = ("collision_lock", "crash_phase", "event_pending", "spin_reset", "spin_word2",
+                       "curve_window_lo", "curve_window_hi", "curve_freeze")
+
+
+def _armed_snapshot(state):
+    """The reference's armed state, so a 0 -> nonzero transition can be spotted."""
+    return {name: _r16(state, addr) for name, addr, _signed in PLAYER_EVENT_FIELDS
+            if name in PLAYER_ARMED_FIELDS}
+
+
+def _newly_armed(before, after, player):
+    """The fields the unported event system armed on THIS frame: zero on the reference before it, set
+    after it, and still zero on the candidate — which could not have produced them (it only ever steps
+    collision_lock or clears these). Restricting it to the 0 -> nonzero edge is what keeps a genuine
+    divergence in an ALREADY-armed field — a crash script that walks wrong or quits early — visible
+    instead of being mistaken for an arming and handed over."""
+    return [name for name in PLAYER_ARMED_FIELDS
+            if after[name] != 0 and before[name] == 0 and getattr(player, name) == 0]
+
+
 def player_background(leg=0, warmup=60, pokes=None):
     """A mid-race image ready to drive. Two staging artefacts have to be cleared first or the buggy
     never moves: view_flags is left at the section-12 trigger value 0x10 (not a real 0/2/4/6 view),
@@ -738,6 +797,65 @@ def player_background(leg=0, warmup=60, pokes=None):
     for addr, val in (pokes or {}).items():
         _w16(state, addr, val & 0xffff)
     return state
+
+
+def leg_start_background(leg=0):
+    """The image the player actually starts a leg in: the oracle's init_leg with NO warmup frames. It
+    needs none of player_background's staging fixups — those clear artefacts the warmup drive leaves
+    behind (an armed hud_crash_timer, view_flags parked at the section-12 trigger), and a leg start
+    has neither."""
+    return bench_frame.mid_race_state(leg, 0)
+
+
+def compare_spin_arming(lib, image, pokes, inputs):
+    """Directed comparison of §10's spin arming, which no leg drive can reach.
+
+    The arming needs a spin override held (only the unported event system arms one) AND a steering
+    lock held past STEER_HOLD_SPIN — a combination the leg drives never produce, because the drives
+    that get an override handed to them do not steer and the ones that steer never get an override.
+    So this stages the combination instead: `pokes` is re-applied to the reference image BEFORE every
+    frame, which both arms the override and makes each frame an independent arming decision (the
+    arming consumes the override, so without re-poking only frame 0 would test anything).
+
+    Compares the fields the arming decides — collision_lock, turn_flags and the spin pair — against
+    recreate's, so the direction of the spin (which lock throws you and which one settles you, the
+    one thing the reference's nested branch encodes) is pinned rather than assumed.
+
+    Returns (mismatches, stats); stats counts the two outcomes so a run that decides nothing is
+    visible instead of passing vacuously."""
+    state = bytearray(image)
+    buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
+    game_update = _bind("g_game_update")
+
+    mismatches = []
+    stats = dict(frames=len(inputs), spun=0, settled=0, events=0)
+    for frame, in_bits in enumerate(inputs):
+        for addr, val in pokes.items():
+            _w16(state, addr, val & 0xffff)
+
+        p = adapter.player_state(state, in_bits)
+        assets, _keep = adapter.player_assets(state)
+        ctrl, _keep_ctrl = adapter.road_ctrl(state)
+        lib.rm_player_update(ctypes.byref(p), ctypes.byref(assets), ctrl)
+
+        _w16(state, adapter.A_input_state, in_bits)
+        game_update(buf)
+
+        # A long enough run also trips the unported event system, which arms a collision rather than a
+        # spin. It always stamps crash_phase; §10's spin arming never touches it, so that is an exact
+        # discriminator — skip those frames and count them (the candidate is re-seeded from the
+        # reference every frame, so the run recovers by itself).
+        if _r16(state, adapter.A_crash_phase) != 0:
+            stats["events"] += 1
+            continue
+
+        stats["spun"] += p.collision_lock != 0
+        stats["settled"] += p.collision_lock == 0 and p.spin_reset == 0 and p.spin_word2 == 0
+        for name, addr, signed in PLAYER_EVENT_FIELDS:
+            ref = _i16s(state, addr) if signed else _r16(state, addr)
+            if getattr(p, name) != ref:
+                mismatches.append((frame, name, getattr(p, name), ref))
+    return mismatches, stats
 
 
 def compare_player_drive(lib, image, inputs):
@@ -816,3 +934,136 @@ def _restage_player(state, p):
 def _i16s(state, addr):
     v = _r16(state, addr)
     return v - 0x10000 if v & 0x8000 else v
+
+
+class _Candidate:
+    """The remaster side of a leg drive: the structs a self-driving game loop owns, seeded once from
+    the leg-start image and thereafter advanced only by remaster's own cores."""
+
+    def __init__(self, lib, state):
+        self.lib = lib
+        self.pose = adapter.road_pose(state)
+        self.source, self._k_src = adapter.road_source(state)
+        self.ctrl = (ctypes.c_uint8 * adapter.RM_CTRL_BYTES)()
+        self.scan = (ctypes.c_uint8 * adapter.RM_SCANLINE_BYTES)()
+        self.course = adapter.course_state(state)
+        self.stream, self._k_stream = adapter.course_stream(state)
+        self.scroll = adapter.scroll_state(state)
+        playfield, self._k_play = adapter.scroll_playfield(state)
+        self.shifted = (ctypes.c_uint8 * (adapter.RM_SCROLL_SHIFTS * adapter.RM_SCROLL_WINDOW))()
+        lib.rm_scroll_prebuild(playfield, self.shifted)
+        self.fb = adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)())
+        self.assets, self._k_assets = adapter.player_assets(state)
+        self.player = adapter.player_state(state, 0)
+        self.input_prev = 0
+        self.reseed(state, 0)
+
+    def reseed(self, state, in_bits):
+        """Re-take the whole driving state from the reference image — used at the start and on the one
+        frame per crash where the unported event system arms it."""
+        self.player = adapter.player_state(state, in_bits)
+        self.pose = adapter.road_pose(state)
+        self.course = adapter.course_state(state)
+        self.scroll = adapter.scroll_state(state)
+        # scroll_state zeroes hscroll_step2 as a render OUTPUT, but across frames it is also an input:
+        # section 9 adds it into the curve. Carry the reference's value or the next frame drifts.
+        self.scroll.hscroll_step2 = _r16(state, adapter.A_hscroll_step2)
+        lo, n = adapter.A_road_curve_tbl, adapter.RM_CTRL_BYTES
+        self.ctrl[:] = state[lo:lo + n]
+
+    def step(self, in_bits):
+        """One frame of the game loop: physics, the course advance its view-wrap triggers, then the
+        geometry and scroll whose outputs feed back into next frame's physics."""
+        p = self.player
+        p.input, p.input_prev = in_bits, self.input_prev
+        p.hscroll_step2 = self.scroll.hscroll_step2
+        self.input_prev = in_bits
+        self.lib.rm_player_update(ctypes.byref(p), ctypes.byref(self.assets), self.ctrl)
+
+        self.pose.curve, self.pose.view_flags = p.road_curve, p.view_flags
+        self.scroll.scroll_speed = p.scroll_speed
+        if p.view_wrapped:
+            self.lib.rm_road_course_advance(ctypes.byref(self.pose), ctypes.byref(self.course),
+                                            self.stream)
+        self.lib.rm_build_road_geometry(ctypes.byref(self.pose), ctypes.byref(self.source),
+                                        self.ctrl, self.scan)
+        self.scroll.seg_head = self.pose.seg_head
+        self.lib.rm_blit_road_scroll(ctypes.byref(self.scroll), self.shifted, ctypes.byref(self.fb))
+
+
+def compare_leg_drive(lib, image, inputs):
+    """Drive a leg free-running on both sides and check remaster tracks recreate scalar for scalar.
+
+    Unlike compare_player_drive, the candidate is NOT re-seeded per frame: it is seeded once from the
+    leg-start image and then drives itself — physics, course advance, geometry and scroll — so any
+    drift accumulates and shows up instead of being erased every frame. The reference runs the same
+    two cores recreate's own frame does (g_game_update, which builds its geometry itself, then
+    g_blit_road_scroll, whose hscroll_step2 feeds back into the curve).
+
+    Two things are handed over, both parts of section 12 that are not ported:
+
+    1. The decision to crash. The collision probe and the horizon-event dispatch arm the crash script;
+       on the single frame where the reference arms one the candidate could not have known about, the
+       whole driving state is re-seeded and that frame is excluded and counted. Every frame of the
+       crash PLAYOUT that follows is compared strictly — that is what exercises the ported §6 script.
+    2. The road control table, every frame. rm_road_course_advance ports §12's segment scroll and
+       record pull, but not its ring shuffle and marker-word unpack, which also write into
+       road_curve_tbl — so its marker rows drift from frame ~9. Section 10 reads the shoulder/edge
+       flags out of that table, which makes it an INPUT to the physics under test, so the drive feeds
+       the reference's copy and verifies the physics' response to it. The table's own equivalence is
+       not in scope here and is covered byte-exact by test_geometry / test_road.
+
+    Returns (mismatches, stats): mismatches is a list of (frame, field, candidate, reference); stats
+    counts the frames worth knowing were reached, so a drive that never crashes, never recovers or
+    never moves is visible rather than vacuously green."""
+    state = bytearray(image)
+    buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
+    game_update = _bind("g_game_update")
+    cand = _Candidate(lib, state)
+
+    mismatches = []
+    stats = dict(frames=len(inputs), wraps=0, armed=0, crash_frames=0, handoffs=0, clamp=0,
+                 offroad=0, ctrl_given=0)
+    for frame, in_bits in enumerate(inputs):
+        was_locked = cand.player.collision_lock
+        armed_before = _armed_snapshot(state)
+        cand.step(in_bits)
+
+        _w16(state, adapter.A_input_state, in_bits)
+        game_update(buf)
+        _run_pipeline(state, ("g_blit_road_scroll",))
+
+        stats["wraps"] += _r16(state, adapter.A_view_wrap_flag) != 0
+        stats["crash_frames"] += cand.player.collision_lock != 0
+        stats["handoffs"] += was_locked != 0 and cand.player.collision_lock == 0
+        stats["clamp"] += bool(cand.player.curve_clamp)
+        stats["offroad"] += cand.player.skid != 0
+
+        # The unported event system armed a crash this frame: hand it over, skip only this frame. Every
+        # frame of the playout that follows is compared strictly — that is what exercises the §6 script.
+        if _newly_armed(armed_before, _armed_snapshot(state), cand.player):
+            cand.reseed(state, in_bits)
+            stats["armed"] += 1
+            continue
+
+        # The control table is a reference-supplied INPUT here (see 2. above), not a result.
+        lo, n = adapter.A_road_curve_tbl, adapter.RM_CTRL_BYTES
+        cand.ctrl[:] = state[lo:lo + n]
+        stats["ctrl_given"] += 1
+
+        for name, addr, signed in PLAYER_FIELDS + PLAYER_SCRIPT_FIELDS + PLAYER_EVENT_FIELDS:
+            ref = _i16s(state, addr) if signed else _r16(state, addr)
+            cand_val = getattr(cand.player, name)
+            if cand_val != ref:
+                mismatches.append((frame, name, cand_val, ref))
+        for name, addr in PLAYER_SCRIPT_BYTE_FIELDS:
+            if getattr(cand.player, name) != state[addr]:
+                mismatches.append((frame, name, getattr(cand.player, name), state[addr]))
+        for name, addr in COURSE_FIELDS:
+            ref = _r16(state, addr)
+            if getattr(cand.course, name) != ref:
+                mismatches.append((frame, name, getattr(cand.course, name), ref))
+        if (_r16(state, adapter.A_view_wrap_flag) != 0) != bool(cand.player.view_wrapped):
+            mismatches.append((frame, "view_wrapped", bool(cand.player.view_wrapped),
+                               _r16(state, adapter.A_view_wrap_flag) != 0))
+    return mismatches, stats

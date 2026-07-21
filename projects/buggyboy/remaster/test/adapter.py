@@ -184,9 +184,13 @@ A_curve_clamp_flag, A_buggy_skid_off, A_crash_disp = 0x18d1a, 0x18cbc, 0x18c68
 A_sprite_suppress = 0x18cd0                         # holds the PREVIOUS frame's buggy_skid_off
 A_fire_hold, A_leg_flags_sel = 0x18c98, 0x18c96
 A_time_subctr, A_timeout_gate = 0x18cfe, 0x18c3e
-A_collision_lock, A_event_pending = 0x18c84, 0x18c82  # must stay 0: the crash script is out of scope
+A_collision_lock, A_event_pending = 0x18c84, 0x18c82  # crash-script cursor; event_pending must stay 0
 A_crash_phase, A_spin_reset, A_curve_freeze = 0x18c86, 0x18cc8, 0x18d16
 A_turn_flags = 0x18c80                              # auto/view turn flag bits (crash script input)
+A_curve_window = 0x18c88                            # long: the {lo, hi} road_curve skip window
+A_steer_delta, A_buggy_pitch_off = 0x18cae, 0x18cbe  # crash-script curve kick; body pitch
+A_anim_frame, A_marker_pending = 0x18d0c, 0x18d14   # the script writes anim_frame's SECOND byte
+A_crash_anim_tbl = 0x18690                          # 8-byte crash-script records at collision_lock
 A_lean_anim_tbl = 0x173ac                           # byte: lean at lean_phase + (rpm & 0x70)
 A_scroll_speed_tbl = 0x1742c                        # word: scroll rate at scroll_phase + (rpm & 0x70)
 A_speed_jitter_tbl = 0x17394                        # word: speedometer jitter at jitter_ph & 0xe
@@ -196,6 +200,10 @@ LEAN_ANIM_TBL_BYTES = 0x80                          # lean_phase 0..0xf + rpm ba
 SCROLL_SPEED_TBL_BYTES = 0x80                       # same index range, as words
 SPEED_JITTER_TBL_BYTES = 0x10                       # jitter_ph & 0xe
 LEGFLAG_TBL_BYTES = 8                               # the two selectable records
+# The whole record region, up to the next global (0x18b68). Sizing this to the crash records alone is
+# wrong: the finish/bonus display events also park collision_lock in here, at indices past 0x400, and
+# an undersized window reads zeros — which walks the script forever instead of terminating.
+CRASH_ANIM_TBL_BYTES = 0x4d8
 STEER_CURVE_ZERO_OFF = 0x40                         # (skid + wheel) << 3 reaches -0x40
 STEER_CURVE_WINDOW_BYTES = STEER_CURVE_ZERO_OFF + 0x80   # ...and +0x60 + the rpm column
 
@@ -404,6 +412,13 @@ class PlayerState(ctypes.Structure):
                 ("buggy_draw_flag", ctypes.c_uint16), ("road_curve", ctypes.c_int16),
                 ("curve_clamp", ctypes.c_bool), ("skid", ctypes.c_int16),
                 ("crash_disp", ctypes.c_int16),
+                ("collision_lock", ctypes.c_uint16), ("crash_phase", ctypes.c_int16),
+                ("turn_flags", ctypes.c_uint16), ("event_pending", ctypes.c_uint16),
+                ("spin_reset", ctypes.c_uint16), ("spin_word2", ctypes.c_uint16),
+                ("curve_window_lo", ctypes.c_uint16), ("curve_window_hi", ctypes.c_uint16),
+                ("steer_delta", ctypes.c_int16), ("buggy_pitch_off", ctypes.c_int16),
+                ("curve_freeze", ctypes.c_uint16),
+                ("anim_frame_sel", ctypes.c_uint8), ("marker_pending", ctypes.c_uint8),
                 ("fire_hold", ctypes.c_uint16), ("dsp_variant_idx", ctypes.c_uint16),
                 ("leg_flags_sel", ctypes.c_uint16), ("time_subctr", ctypes.c_uint16),
                 ("time_left", ctypes.c_int16), ("hud_crash_timer", ctypes.c_int16),
@@ -415,7 +430,8 @@ class PlayerAssets(ctypes.Structure):
                 ("scroll_speed_tbl", ctypes.POINTER(ctypes.c_uint8)),
                 ("speed_jitter_tbl", ctypes.POINTER(ctypes.c_uint8)),
                 ("steer_curve_tbl", ctypes.POINTER(ctypes.c_uint8)),
-                ("legflag_tbl", ctypes.POINTER(ctypes.c_uint8))]
+                ("legflag_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("crash_anim_tbl", ctypes.POINTER(ctypes.c_uint8))]
 
 
 def _i16(image, addr):
@@ -697,6 +713,12 @@ def player_state(image, inputs=0):
         u16(A_wheel_pos), u16(A_steer_hold), u16(A_lean_phase), u16(A_lean_state),
         u16(A_buggy_draw_flag), _i16(image, A_road_curve), u16(A_curve_clamp_flag) != 0,
         _i16(image, A_sprite_suppress), _i16(image, A_crash_disp),
+        u16(A_collision_lock), _i16(image, A_crash_phase),
+        u16(A_turn_flags), u16(A_event_pending),
+        u16(A_spin_reset), u16(A_spin_reset + 2),
+        u16(A_curve_window), u16(A_curve_window + 2),
+        _i16(image, A_steer_delta), _i16(image, A_buggy_pitch_off), u16(A_curve_freeze),
+        image[A_anim_frame + 1], image[A_marker_pending],
         u16(A_fire_hold), u16(A_dsp_variant_idx), u16(A_leg_flags_sel),
         u16(A_time_subctr), _i16(image, A_time_left), _i16(image, A_hud_crash_timer),
         u16(A_timeout_gate) != 0)
@@ -714,11 +736,13 @@ def player_assets(image):
     speed_jitter = buf(A_speed_jitter_tbl, SPEED_JITTER_TBL_BYTES)
     steer_curve = buf(A_steer_curve_tbl - STEER_CURVE_ZERO_OFF, STEER_CURVE_WINDOW_BYTES)
     legflag = buf(A_legflag_tbl, LEGFLAG_TBL_BYTES)
+    crash_anim = buf(A_crash_anim_tbl, CRASH_ANIM_TBL_BYTES)
     p = ctypes.POINTER(ctypes.c_uint8)
     assets = PlayerAssets(
         ctypes.cast(lean_anim, p), ctypes.cast(scroll_speed, p), ctypes.cast(speed_jitter, p),
-        ctypes.cast(ctypes.byref(steer_curve, STEER_CURVE_ZERO_OFF), p), ctypes.cast(legflag, p))
-    return assets, (lean_anim, scroll_speed, speed_jitter, steer_curve, legflag)
+        ctypes.cast(ctypes.byref(steer_curve, STEER_CURVE_ZERO_OFF), p), ctypes.cast(legflag, p),
+        ctypes.cast(crash_anim, p))
+    return assets, (lean_anim, scroll_speed, speed_jitter, steer_curve, legflag, crash_anim)
 
 
 def road_ctrl(image):

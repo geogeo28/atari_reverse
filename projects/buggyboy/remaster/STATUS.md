@@ -74,14 +74,26 @@ game clears a bit. That bit returns on its own once the system that writes it is
 |---------------|--------------------|-----------------|-------------|
 | course advance (road geometry) | `g_game_update` §12 | ✅ segment scroll + record pull ported | `test/test_course.py` — seg_data / row_ctr / read_pos byte-exact over 40-frame drives, legs 0/1/2/4 |
 | player physics (`rm_player_update`) | `g_game_update` §3,4,5,7,8,9,10 | ✅ ported | `test/test_player.py` — every physics scalar identical to recreate frame-for-frame over 8 scripted 240-frame drives × legs 0/1/4 (throttle/brake/slalom/both locks/recentre/fire/time-out) |
-| `game_update` (rest) | `g_game_update` §1,2,6,12-tail | ⬜ sound, crash script, objects/events/collision/score not started | — |
+| crash / auto-steer script | `g_game_update` §6 (+ the §5/§7/§9/§10 crash branches) | ✅ ported | `test/test_leg_drive.py` — free-running 600-frame drives × 4 scripts × legs 0/1/4, every crash played out and handed the controls back under strict comparison (up to 204 crash frames / 20 handoffs per drive) |
+| `game_update` (rest) | `g_game_update` §1,2,12-tail | ⬜ sound, collision probe, fx block / event dispatch, objects/score not started | — |
 
 **What the player-physics slice covers** (see `include/game.h` for the state model): the engine
 rpm→speed model with its rev limiter, the road-scroll rate and the view advance whose wrap times the
-course, the wheel position → body lean → road-curvature integrator, and the road-edge clamp plus the
-off-road push. Its documented precondition is *no crash in progress*: the crash / auto-steer script
-(§6) and the object-collision and horizon-event paths that arm it are not ported, so the drives
-exclude and roll back the few frames where recreate's event system engages (1–15 of 240).
+course, the wheel position → body lean → road-curvature integrator, the road-edge clamp plus the
+off-road push, and — since §6 landed — the crash / auto-steer script that takes the controls away
+while a canned crash replays out of `crash_anim_tbl` and then hands them back.
+
+The precondition is now *no event pending*. What is still missing is the system that **decides** to
+crash you: §12's collision probe, the fx block rebuilt from `obj_flags`, and the horizon-event
+dispatch (which also delivers the checkpoint and finish-line events that would end a leg). Two
+consequences, both measured rather than assumed:
+
+- A leg drive still cannot *finish* a leg — nothing signals the end of one.
+- `test/test_leg_drive.py` therefore hands over exactly two things and counts both: the single frame
+  where recreate arms a crash (detected as an event-owned global going 0 → nonzero), and the road
+  control table, whose marker rows stream from §12's unported ring/marker unpack and drift from
+  frame ~9. Everything else — including every frame of every crash playout — is compared strictly
+  with the candidate free-running and never re-seeded.
 
 ## Perf
 

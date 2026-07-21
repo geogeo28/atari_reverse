@@ -184,19 +184,27 @@ void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stre
  * has: RoadPose.curve/view_flags, ScrollState.scroll_speed, SpriteState.lean/wheel_pos/skid, and the
  * HUD's speed/time.
  *
- * PRECONDITION — no crash in progress. This is game_update sections 3,4,5,7,8,9,10; the crash /
- * auto-steer script (section 6, `collision_lock`) and the object-collision + event paths that arm it
- * are NOT ported, so the globals only they write are treated as zero: collision_lock, event_pending,
- * crash_phase, spin_reset/spin_word2, steer_delta, buggy_pitch_off, curve_freeze, turn_flags. Under
- * that precondition the original's branches on them are unreachable, so they are absent here rather
- * than modeled dead. Nothing in this slice can leave the precondition (a spin is only armed from the
- * collision path), which test_player.py asserts frame by frame. */
+ * This is game_update sections 3,4,5,6,7,8,9,10 — including the crash / auto-steer script that takes
+ * the controls away while a crash plays out.
+ *
+ * PRECONDITION — no event pending (`event_pending` == 0). What is still NOT ported is the system that
+ * *decides* to crash you: section 12's collision probe, the fx block rebuilt from `obj_flags`, and the
+ * horizon-event dispatch that arms `collision_lock` / `crash_phase` / `turn_flags` / the spin pair (and
+ * that also delivers the checkpoint and finish-line events which end a leg). Once armed by that
+ * system, the script here plays the crash out and hands the controls back on its own.
+ *
+ * Two writes the original's section 6 makes are deliberately absent, both sound: the `rev_reload`
+ * poke that accompanies an rpm override, and restoring the VBL sound vector on the terminal record.
+ * Sound is off-frame state this slice does not own (see [[buggyboy-sound-architecture]]). */
 
-/* Input bits, as the original's input_state packs them (joystick, or arrow keys mapped by read_input). */
+/* Input bits, as the original's input_state packs them (joystick, or arrow keys mapped by read_input).
+ * COAST is not a joystick bit — IN_MASK strips it from live input; only the crash script raises it
+ * (via turn_flags), and section 7 reads it as "engine coasting down". */
 #define RM_IN_ACCEL 0x01
 #define RM_IN_BRAKE 0x02
 #define RM_IN_LEFT  0x04
 #define RM_IN_RIGHT 0x08
+#define RM_IN_COAST 0x10
 #define RM_IN_FIRE  0x80
 
 /* Two rows of the road control table are read back as geometry *outputs* (the original aliases them
@@ -241,6 +249,23 @@ typedef struct {
                                 * off-road push, 0 or +/-8. Also suppresses the foreground sprite. */
     int16_t  crash_disp;       /* out: vertical displacement while ploughing off-road (row offsets) */
 
+    /* ---- crash / auto-steer script (§6) ---- */
+    uint16_t collision_lock;   /* in/out: crash_anim_tbl cursor. Nonzero = the script has the controls;
+                                * it steps the cursor per frame and clears this on the terminal record. */
+    int16_t  crash_phase;      /* in/out: which crash the script is playing. < 0 suspends the edge
+                                * clamp; == CRASH_PHASE_LEAN leans the body with the wheel. */
+    uint16_t turn_flags;       /* in/out: the input bits the script forces (RM_IN_COAST) */
+    uint16_t event_pending;    /* in: PRECONDITION 0 — see the note above */
+    uint16_t spin_reset;       /* in/out: spin lean override; the pair is cleared together */
+    uint16_t spin_word2;       /* in/out: the second override, used when spin_reset is 0 */
+    uint16_t curve_window_lo;  /* in/out: a road_curve window that skips the script forward one record */
+    uint16_t curve_window_hi;  /*         and disarms itself; zero lo = no window armed */
+    int16_t  steer_delta;      /* out: the script's per-frame kick into the curve integrator */
+    int16_t  buggy_pitch_off;  /* out: body pitch while the script plays (the crash bounce) */
+    uint16_t curve_freeze;     /* in: nonzero freezes the curve integrator for this frame */
+    uint8_t  anim_frame_sel;   /* out: the sprite animation frame the script selects */
+    uint8_t  marker_pending;   /* out: the marker effect id the script raises */
+
     /* ---- HUD-facing counters (§3, §4) ---- */
     uint16_t fire_hold;        /* frames left in the fire-triggered dashboard animation */
     uint16_t dsp_variant_idx;  /* out: dashboard-variant record offset the HUD draws */
@@ -259,6 +284,7 @@ typedef struct {
     const uint8_t *steer_curve_tbl;  /* byte: curvature delta — CURSOR-ZERO, the row index is signed
                                       * ((skid + wheel_pos) << 3 reaches -0x40) */
     const uint8_t *legflag_tbl;      /* long records {rpm_cap:w, rpm_add:w}, at leg_flags_sel */
+    const uint8_t *crash_anim_tbl;   /* 8-byte crash-script records, at collision_lock (see player.c) */
 } PlayerAssets;
 
 /* Advance one frame of player physics from p->input. `ctrl` is this frame's road control table

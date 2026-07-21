@@ -224,6 +224,7 @@ static void apply_player(const PlayerState *p, RoadPose *pose, RoadInput *road, 
     scroll->scroll_speed = p->scroll_speed;
 
     sprite->lean = p->lean;
+    sprite->pitch = p->buggy_pitch_off;      /* the crash script's body bounce */
     sprite->wheel_pos = p->wheel_pos;
     sprite->skid = p->skid;
     sprite->sprite_suppress = (uint16_t)p->skid;
@@ -431,6 +432,9 @@ void main(void) {
         .speed_jitter_tbl = low + OBJ_LOW_SPEED_JITTER_TBL,
         .steer_curve_tbl = low + OBJ_LOW_STEER_CURVE_TBL,   /* cursor-zero: the row index goes negative */
         .legflag_tbl = low + OBJ_LOW_LEGFLAG_TBL,
+        /* The crash script's records. Nothing on-target arms it yet — that is section 12's collision
+         * probe and event dispatch (see game.h) — but the pointer has to be real, not NULL. */
+        .crash_anim_tbl = low + OBJ_LOW_CRASH_ANIM_TBL,
     };
     const PlayerState player_init = {
         .engine_rpm = PL_ENGINE_RPM_INIT, .rpm_cap = PL_RPM_CAP_INIT, .rpm_add = PL_RPM_ADD_INIT,

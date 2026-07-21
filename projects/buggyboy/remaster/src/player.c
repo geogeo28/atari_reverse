@@ -1,5 +1,5 @@
 /* player.c — remaster of game_update's player-physics slice (recreate's g_game_update @0x1110e,
- * sections 3, 4, 5, 7, 8, 9, 10).
+ * sections 3, 4, 5, 6, 7, 8, 9, 10).
  *
  * The chain that turns the joystick into everything the renderer draws:
  *   throttle -> engine rpm -> speed        (§7)  -> the speedometer + the lean-animation rate
@@ -10,10 +10,14 @@
  * Plus the two HUD counters that live in the same function: the fire-triggered dashboard animation
  * (§3) and the bonus-time countdown (§4).
  *
- * See game.h for the state model and the no-crash-in-progress PRECONDITION that lets sections 1, 2
- * and 6 (sound, input polling, the crash/auto-steer script) stay out. The 68000 works in 16-bit
- * registers, so intermediates wrap mod 2^16 — mirrored with explicit uint16_t/int16_t, exactly as in
- * geometry.c. Verified frame-by-frame against recreate's g_game_update (test/test_player.py).
+ * §6 is the exception to "the player drives": while `collision_lock` is armed the crash / auto-steer
+ * script has the controls and replays a canned crash out of `crash_anim_tbl`, one record per frame,
+ * until a terminal record hands them back. Holding a steering lock long enough arms it too (§10).
+ *
+ * See game.h for the state model and the no-event-pending PRECONDITION that keeps sections 1, 2 and
+ * the event dispatch out. The 68000 works in 16-bit registers, so intermediates wrap mod 2^16 —
+ * mirrored with explicit uint16_t/int16_t, exactly as in geometry.c. Verified frame-by-frame against
+ * recreate's g_game_update (test/test_player.py, test/test_leg_drive.py).
  */
 #include "game.h"
 #include "st.h"
@@ -33,10 +37,25 @@
 /* §5 — body-lean animation (the buggy's idle bounce, faster at higher rpm). */
 #define LEAN_PHASE_MASK    0xf
 
+/* §6 — the crash / auto-steer script. One 8-byte crash_anim_tbl record is consumed per frame; the
+ * cursor steps by CRASH_REC_BYTES minus the record's own step byte, so a record can hold the script
+ * in place (step 8) or replay a run. A negative lean byte marks the terminal record. */
+#define CRASH_REC_BYTES    8
+#define CRASH_STEP         0       /* record fields, by byte offset */
+#define CRASH_LEAN         1       /* body lean; < 0 = terminal, hand the controls back */
+#define CRASH_PITCH        2       /* word: body pitch (the crash bounce) */
+#define CRASH_RPM          4       /* rpm override; < 0 = leave the engine alone */
+#define CRASH_ANIM         5       /* sprite animation frame */
+#define CRASH_STEER        6       /* signed kick into the curve integrator */
+#define CRASH_MARKER       7       /* marker effect id to raise */
+#define CRASH_PHASE_LEAN   3       /* the one phase whose body still leans with the wheel */
+#define CURVE_WINDOW_BIAS  0x4000  /* road_curve is compared to the window unsigned-biased by this */
+
 /* §7 — engine. */
 #define RPM_IDLE           0xf     /* rpm floor; speed_raw = (rpm - RPM_IDLE) * SPEED_PER_RPM */
 #define RPM_BAND           0x70    /* the rpm bits that select a table band */
 #define RPM_BRAKE_STEP     2
+#define RPM_COAST_STEP     4       /* the script's coast-down (RM_IN_COAST), steeper than the brake */
 #define RPM_OVERREV_STEP   2       /* bleed-off when above the cap without throttle */
 #define RPM_CLAMP_STEP     4       /* extra drag while the curve clamp is pushing back */
 #define RPM_CLAMP_MIN      0x2d    /* ...only above this rpm */
@@ -59,8 +78,13 @@
 /* §9 — steering. */
 #define WHEEL_CENTRE       2
 #define WHEEL_MAX          4
-#define STEER_ROW_SHIFT    3       /* (skid + wheel_pos) << this = steer-curve table row */
+#define STEER_ROW_SHIFT    3       /* (skid + steer_src) << this = steer-curve table row */
 #define RPM_COL_SHIFT      4       /* rpm >> this = steer-curve table column */
+
+/* §10 — spin-out. Holding a lock this long, against the spin override the event system left armed,
+ * throws the buggy into the canned spin at SPIN_LOCK_START. */
+#define STEER_HOLD_SPIN    10
+#define SPIN_LOCK_START    0x18
 
 /* §10 — road-edge clamp and off-road push. */
 #define CLAMP_WIDE         0x144   /* road_curve limit with no shoulder in sight */
@@ -113,7 +137,8 @@ static void update_bonus_clock(PlayerState *p) {
 }
 
 /* §5 — advance the idle-bounce animation. The table byte is the lean; a negative entry means "this
- * frame the body is lifted", which is also the frame the lower body is drawn on. */
+ * frame the body is lifted", which is also the frame the lower body is drawn on. A spin override left
+ * armed by the event system replaces the animated lean outright. */
 static void update_lean_anim(PlayerState *p, const PlayerAssets *a) {
     p->lean_phase = (uint16_t)((p->lean_phase + 1) & LEAN_PHASE_MASK);
     p->buggy_draw_flag = 0;
@@ -126,11 +151,15 @@ static void update_lean_anim(PlayerState *p, const PlayerAssets *a) {
     } else {
         p->lean = (uint8_t)entry;
     }
+
+    uint16_t spin = p->spin_reset != 0 ? p->spin_reset : p->spin_word2;
+    if (spin != 0) p->lean = spin;
 }
 
-/* §6 (steer-centre path only) — the effective input for the rest of the frame. Game over pins the
- * throttle on; an armed crash timer forces the brake instead. */
-static uint16_t effective_input(const PlayerState *p) {
+/* §6 (live-steering path) — the effective input when nothing has taken the controls away. Game over
+ * pins the throttle on; an armed crash timer forces the brake instead. */
+static uint16_t steer_centre_input(PlayerState *p) {
+    p->steer_delta = 0;
     uint16_t in = (uint16_t)(p->input & IN_MASK);
     if (p->game_over) in = RM_IN_ACCEL;
     if (p->hud_crash_timer != 0) {
@@ -138,6 +167,48 @@ static uint16_t effective_input(const PlayerState *p) {
         if (p->hud_crash_timer < 0) in = RM_IN_BRAKE;
     }
     return in;
+}
+
+/* §6 (script path) — replay one crash_anim_tbl record. The record poses the body, may override the
+ * engine, and kicks the curve; the cursor then steps on. Steering is the only live input that still
+ * gets through, OR'd onto whatever the script forces via turn_flags. Returns the effective input. */
+static uint16_t run_crash_script(PlayerState *p, const PlayerAssets *a, uint16_t in) {
+    const uint8_t *rec = a->crash_anim_tbl + p->collision_lock;
+
+    in = (uint16_t)(p->turn_flags | (in & (RM_IN_LEFT | RM_IN_RIGHT)));
+    p->collision_lock = (uint16_t)((uint8_t)(CRASH_REC_BYTES - rec[CRASH_STEP]) + p->collision_lock);
+
+    if ((int8_t)rec[CRASH_LEAN] < 0) {          /* terminal record: the player drives again */
+        p->crash_phase = 0;
+        p->collision_lock = 0;
+        return steer_centre_input(p);
+    }
+
+    p->lean = rec[CRASH_LEAN];
+    p->buggy_pitch_off = (int16_t)be16(rec + CRASH_PITCH);
+    if ((int8_t)rec[CRASH_RPM] >= 0) p->engine_rpm = rec[CRASH_RPM];
+    p->anim_frame_sel = rec[CRASH_ANIM];
+    p->steer_delta = (int8_t)rec[CRASH_STEER];
+    p->marker_pending = rec[CRASH_MARKER];
+
+    /* An armed window skips the script forward one record the moment the curve enters it — how being
+     * shoved back onto the road cuts a crash short — and disarms itself so it fires once. */
+    uint16_t curve_biased = (uint16_t)(p->road_curve + CURVE_WINDOW_BIAS);
+    if (p->curve_window_lo != 0
+        && (int16_t)(curve_biased - p->curve_window_lo) >= 0
+        && (int16_t)(curve_biased - p->curve_window_hi) < 0) {
+        p->curve_window_lo = 0;
+        p->curve_window_hi = 0;
+        p->collision_lock = (uint16_t)(p->collision_lock + CRASH_REC_BYTES);
+    }
+    return in;
+}
+
+/* §6 — who has the controls this frame. */
+static uint16_t update_controls(PlayerState *p, const PlayerAssets *a, uint16_t frame_input) {
+    p->buggy_pitch_off = 0;
+    if (p->collision_lock == 0) return steer_centre_input(p);
+    return run_crash_script(p, a, frame_input);
 }
 
 /* §7 — engine rpm and the two speeds derived from it: speed_raw (the true rate, which drives the
@@ -150,11 +221,15 @@ static void update_engine(PlayerState *p, const PlayerAssets *a, uint16_t in) {
         if ((int16_t)(p->rpm_cap - rpm) < 0) rpm = (uint16_t)(rpm - p->rpm_add);   /* rev limiter */
     } else if (in & RM_IN_BRAKE) {
         rpm = (uint16_t)(rpm - RPM_BRAKE_STEP);
+    } else if (in & RM_IN_COAST) {
+        rpm = (uint16_t)(rpm - RPM_COAST_STEP);
     }
     if (p->curve_clamp && (int16_t)(rpm - RPM_CLAMP_MIN) >= 0) rpm = (uint16_t)(rpm - RPM_CLAMP_STEP);
 
+    /* The rev limiter is the script's to break: it holds the engine wherever a crash record put it. */
     if ((int16_t)(rpm - RPM_IDLE) < 0) rpm = RPM_IDLE;
-    else if ((int16_t)(p->rpm_cap - rpm) < 0) rpm = (uint16_t)(rpm - RPM_OVERREV_STEP);
+    else if (p->collision_lock == 0 && (int16_t)(p->rpm_cap - rpm) < 0)
+        rpm = (uint16_t)(rpm - RPM_OVERREV_STEP);
     p->engine_rpm = rpm;
 
     uint16_t raw = (uint16_t)((rpm - RPM_IDLE) * SPEED_PER_RPM);
@@ -194,7 +269,9 @@ static void update_view_and_scroll(PlayerState *p, const PlayerAssets *a) {
 
 /* §9 — wheel position (0..4, centre 2): held steering walks it to the lock, releasing walks it back.
  * The wheel then adds to the body lean and picks the row of the steer-curve table that integrates
- * into road_curve. Returns the wheel position §10 leans off. */
+ * into road_curve. While the script is driving, the wheel still moves but the curve is steered from
+ * centre — the crash, not the player, decides where the buggy goes. Returns the steering source §10
+ * leans off. */
 static uint16_t update_steering(PlayerState *p, const PlayerAssets *a, uint16_t in) {
     uint16_t wheel = p->wheel_pos;
     if (in & RM_IN_LEFT) {
@@ -211,21 +288,60 @@ static uint16_t update_steering(PlayerState *p, const PlayerAssets *a, uint16_t 
             wheel = (uint16_t)((int16_t)(wheel - WHEEL_CENTRE) < 0 ? wheel + 1 : wheel - 1);
     }
     p->wheel_pos = wheel;
-    p->lean = (uint16_t)(wheel + p->lean);
 
-    /* The steer-curve row is (last frame's off-road push + the wheel) — being shoved off the road
-     * bends you differently from steering there. The index goes negative, hence the cursor-zero table. */
-    int32_t row = ((int32_t)p->skid + (int32_t)wheel) << STEER_ROW_SHIFT;
+    uint16_t steer_src;
+    if (p->collision_lock == 0) {
+        p->lean = (uint16_t)(wheel + p->lean);
+        steer_src = wheel;
+    } else {
+        if (p->crash_phase == CRASH_PHASE_LEAN)
+            p->lean = (uint16_t)((wheel - WHEEL_CENTRE) + p->lean);
+        steer_src = WHEEL_CENTRE;
+    }
+
+    /* The steer-curve row is (last frame's off-road push + the steering source) — being shoved off the
+     * road bends you differently from steering there. The index goes negative, hence the cursor-zero
+     * table. The script's own kick is added on top, and an armed freeze holds the curve for a frame. */
+    int32_t row = ((int32_t)p->skid + (int32_t)steer_src) << STEER_ROW_SHIFT;
     int16_t curve_delta = (int8_t)a->steer_curve_tbl[row + (p->engine_rpm >> RPM_COL_SHIFT)];
     if (p->skid == 0) curve_delta = (int16_t)(p->hscroll_step2 + curve_delta);
-    p->road_curve = (int16_t)(curve_delta + p->road_curve);
-    return wheel;
+    if (p->curve_freeze == 0)
+        p->road_curve = (int16_t)(p->steer_delta + curve_delta + p->road_curve);
+    return steer_src;
+}
+
+/* §10 — spin-out. Braking always settles the buggy; otherwise, holding a steering lock past
+ * STEER_HOLD_SPIN throws it into a spin, but only in the direction the armed override does not
+ * already cover — locking the other way just settles it. Either outcome consumes the override. */
+static void arm_spin(PlayerState *p, uint16_t in, uint16_t wheel) {
+    bool override_armed = p->spin_reset != 0 || p->spin_word2 != 0;
+    /* Which lock spins you is whichever way the armed override is NOT already leaning the body. */
+    uint16_t spin_lock = p->spin_reset != 0 ? 0 : WHEEL_MAX;
+    uint16_t settle_lock = p->spin_reset != 0 ? WHEEL_MAX : 0;
+    bool consumed = false;
+
+    if (in & RM_IN_BRAKE) {
+        consumed = true;
+    } else if (override_armed && (int16_t)(p->steer_hold - STEER_HOLD_SPIN) >= 0) {
+        if (wheel == spin_lock) {
+            p->turn_flags = RM_IN_COAST;
+            p->collision_lock = SPIN_LOCK_START;
+            consumed = true;
+        } else if (wheel == settle_lock) {
+            consumed = true;
+        }
+    }
+    if (consumed) {
+        p->spin_reset = 0;
+        p->spin_word2 = 0;
+    }
 }
 
 /* §10 — how far off centre the road lets you get. The control row's flags say whether each shoulder
  * is there at all and whether it is open; road_curve is clamped to that, and past OFFROAD_LIMIT on an
- * open shoulder the buggy ploughs: a horizontal shove back (skid) and a vertical displacement. */
-static void update_edge_clamp(PlayerState *p, const uint8_t *ctrl, uint16_t wheel) {
+ * open shoulder the buggy ploughs: a horizontal shove back (skid) and a vertical displacement.
+ * Ploughing outranks a crash in progress — it cancels the script and settles any pending spin. */
+static void update_edge_clamp(PlayerState *p, const uint8_t *ctrl, uint16_t steer_src) {
     uint16_t edge = be16(ctrl + RM_CTRL_EDGE_FLAGS_OFF);
     int16_t geom_hi = (int16_t)be16(ctrl + RM_CTRL_GEOM_HI_OFF);
 
@@ -237,12 +353,18 @@ static void update_edge_clamp(PlayerState *p, const uint8_t *ctrl, uint16_t whee
         if (edge & EDGE_LEFT)  clamp_left = shoulder;
     }
 
+    /* A crash in progress steers itself off the road on purpose, so the clamp stands down for it. */
     p->curve_clamp = false;
-    if (p->road_curve < 0) {
-        if (p->road_curve <= -clamp_left) { p->road_curve = (int16_t)-clamp_left; p->curve_clamp = true; }
-    } else if (p->road_curve >= clamp_right) {
-        p->road_curve = clamp_right;
-        p->curve_clamp = true;
+    if (p->event_pending == 0 && p->crash_phase >= 0) {
+        if (p->road_curve < 0) {
+            if (p->road_curve <= -clamp_left) {
+                p->road_curve = (int16_t)-clamp_left;
+                p->curve_clamp = true;
+            }
+        } else if (p->road_curve >= clamp_right) {
+            p->road_curve = clamp_right;
+            p->curve_clamp = true;
+        }
     }
 
     p->skid = 0;
@@ -253,27 +375,33 @@ static void update_edge_clamp(PlayerState *p, const uint8_t *ctrl, uint16_t whee
     if (p->road_curve < 0) {
         excess = (int16_t)(-OFFROAD_LIMIT - p->road_curve);
         if (!((edge & EDGE_OPEN) && (edge & EDGE_LEFT) && excess >= 0)) return;
-        p->lean = (uint16_t)(wheel + OFFROAD_LEAN_LEFT);
+        p->lean = (uint16_t)(steer_src + OFFROAD_LEAN_LEFT);
         p->skid = SKID_PUSH;
     } else {
         excess = (int16_t)(p->road_curve - OFFROAD_LIMIT);
         if (!((edge & EDGE_OPEN) && (edge & EDGE_RIGHT) && excess >= 0)) return;
-        p->lean = (uint16_t)(wheel + OFFROAD_LEAN_RIGHT);
+        p->lean = (uint16_t)(steer_src + OFFROAD_LEAN_RIGHT);
         p->skid = -SKID_PUSH;
     }
     int16_t push = (int16_t)(excess - (excess >> OFFROAD_PUSH_SHIFT));
     p->crash_disp = (int16_t)(push * ROW_OFFSET);
     p->curve_clamp = false;                   /* ploughing is not a clamp — no engine drag from it */
+    p->spin_reset = 0;
+    p->spin_word2 = 0;
+    p->collision_lock = 0;
 }
 
 void rm_player_update(PlayerState *p, const PlayerAssets *a, const uint8_t *ctrl) {
-    update_dashboard_anim(p, a, p->game_over ? 0 : (uint16_t)(p->input & IN_MASK));
+    uint16_t frame_input = p->game_over ? 0 : (uint16_t)(p->input & IN_MASK);
+
+    update_dashboard_anim(p, a, frame_input);
     update_bonus_clock(p);
     update_lean_anim(p, a);
 
-    uint16_t in = effective_input(p);
+    uint16_t in = update_controls(p, a, frame_input);
     update_engine(p, a, in);
     update_view_and_scroll(p, a);
-    uint16_t wheel = update_steering(p, a, in);
-    update_edge_clamp(p, ctrl, wheel);
+    uint16_t steer_src = update_steering(p, a, in);
+    arm_spin(p, in, p->wheel_pos);
+    update_edge_clamp(p, ctrl, steer_src);
 }

@@ -9,10 +9,13 @@ complete: `render_road`, `blit_road_scroll`, `build_road_geometry`, and the whol
 tree (`draw_ground`, the buggy/foreground sprites, `draw_object`, the fine-x blit engines, the
 `draw_object_list` dispatcher, and the prefix/orchestrator) are all byte-exact vs `recreate/`.
 
-Phase B has started: the **player physics** (`src/player.c`, `game_update` §3,4,5,7,8,9,10) is ported
-and verified frame-for-frame against `g_game_update`, and `render/atari/DEMO.PRG` is a playable buggy
-on the 68000. What remains in `game_update` is the crash / auto-steer script (§6), object collision,
-the horizon-event dispatch, and section 12's object ring — see STATUS.
+Phase B has started: the **player physics** (`src/player.c`, `game_update` §3,4,5,6,7,8,9,10) is
+ported and verified frame-for-frame against `g_game_update`, and `render/atari/DEMO.PRG` is a playable
+buggy on the 68000. That now includes the crash / auto-steer script (§6), which replays a canned crash
+out of `crash_anim_tbl` and hands the controls back. What remains in `game_update` is the system that
+*decides* to crash you — section 12's collision probe, the fx block rebuilt from `obj_flags`, and the
+horizon-event dispatch (which also carries the checkpoint and finish events, so a leg still cannot be
+finished) — plus section 12's object ring — see STATUS.
 
 A note on porting a *gameplay* function rather than a render one: there is no framebuffer to diff, so
 the equivalence surface is the scalar state. `test/equiv.py`'s `compare_player_drive` is the pattern —
@@ -21,6 +24,22 @@ scalar the port owns. Two things made it honest: staging artefacts have to be cl
 degenerates (a mid-race image leaves `hud_crash_timer` armed, which pins the throttle off and the
 buggy never moves), and frames where an *unported* system engages must be excluded and rolled back
 explicitly, with a count reported, rather than silently tolerated.
+
+`compare_leg_drive` is the stronger successor, and worth reaching for once a subsystem is meant to run
+by itself: the candidate is seeded **once** from the leg-start image and then drives itself, so drift
+accumulates instead of being erased every frame. Per-frame re-seeding hides exactly the bugs a
+self-driving game has. Three traps it cost real time to find:
+
+- **A "render output" can be a physics input across frames.** `adapter.scroll_state` zeroes
+  `hscroll_step2` because it is an output of `blit_road_scroll` — but §9 adds it into the curve next
+  frame, so a re-seed that dropped it to 0 put a permanent offset into `road_curve`.
+- **Size an asset window from the whole region, not from the records you happened to trace.** The
+  crash table's *display* records (finish/bonus) sit past `0x400`, well beyond the last crash record;
+  an undersized window reads zeros, and a zero record is neither terminal nor a step, so the script
+  walks forever. Bound it by the next known global instead.
+- **Detect a handover on the 0 → nonzero edge, not on "the candidate looks idle".** Armings are
+  incremental (a spin override can be armed on top of one already held), and an idle test also
+  swallows the real bug you want to see — a script that walks wrong or quits early.
 
 ## Commands
 

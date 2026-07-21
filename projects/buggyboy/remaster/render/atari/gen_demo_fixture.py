@@ -244,6 +244,7 @@ def main():
         f"#define OBJ_LOW_SPEED_JITTER_TBL {low(adapter.A_speed_jitter_tbl)}",
         f"#define OBJ_LOW_STEER_CURVE_TBL {low(adapter.A_steer_curve_tbl)}",
         f"#define OBJ_LOW_LEGFLAG_TBL   {low(adapter.A_legflag_tbl)}",
+        f"#define OBJ_LOW_CRASH_ANIM_TBL {low(adapter.A_crash_anim_tbl)}",
         "",
         f"#define PL_ENGINE_RPM_INIT    {pl.engine_rpm}",
         f"#define PL_RPM_CAP_INIT       {pl.rpm_cap}",
