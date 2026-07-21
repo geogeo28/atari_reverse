@@ -14,8 +14,20 @@ import assets_load as al
 import pytest
 import render_screen as R                          # recreate's staging + arena layout constants
 
+# Named spans for the per-region spot checks, so a failure says which phase broke.
+GFX_SPRITE_ARENA_BYTES = 0x3B000                   # the sprite pixels the object blits index
+SPRITE_SHIFT_TBL_BYTES = 0xD000                    # 208 sprites x 16 shifts x 16 bytes
+COURSE_TABLE_BYTES = 0x2000                        # scroll/object selectors + record descriptors
 
-def _recreate_arena():
+
+@pytest.fixture(scope="module")
+def candidate():
+    """remaster's own loader over the unmodified data files — the candidate arena."""
+    return al.fresh_arena()
+
+
+@pytest.fixture(scope="module")
+def reference():
     """recreate's verified g_unpack_graphics over the same two files — the reference."""
     image, _ = R._prepared_image({})
     return bytes(image[R.MEM_BASE:R.MEM_BASE + al.RM_ARENA_BYTES])
@@ -31,15 +43,13 @@ def test_arena_layout_matches_recreate():
     assert al.RM_GFX_LOAD_OFF == R.GFX_LOAD_OFFSET
 
 
-def test_course_file_loads_verbatim():
+def test_course_file_loads_verbatim(candidate):
     """COURSES.DAT needs no unpacking, and nothing in the graphics unpack may tread on it."""
     courses = (al.DATA_DIR / "COURSES.DAT").read_bytes()
-    assert al.fresh_arena()[:len(courses)] == courses
+    assert candidate[:len(courses)] == courses
 
 
-def test_unpacked_arena_is_byte_identical(capsys):
-    candidate = al.fresh_arena()
-    reference = _recreate_arena()
+def test_unpacked_arena_is_byte_identical(candidate, reference, capsys):
     assert len(candidate) == len(reference) == al.RM_ARENA_BYTES
 
     wrong = sum(1 for a, b in zip(candidate, reference) if a != b)
@@ -52,11 +62,10 @@ def test_unpacked_arena_is_byte_identical(capsys):
 
 
 @pytest.mark.parametrize("region,off,length", [
-    ("graphics", al.RM_GFX_OFF, 0x3B000),            # the sprite arena the object blits index
-    ("sprite shift tables", al.RM_SCRATCH_OFF, 0xD000),   # 208 sprites x 16 shifts x 16 bytes
-    ("course tables", al.RM_TABLES_OFF, 0x2000),     # scroll/object selectors + record descriptors
+    ("graphics", al.RM_GFX_OFF, GFX_SPRITE_ARENA_BYTES),
+    ("sprite shift tables", al.RM_SCRATCH_OFF, SPRITE_SHIFT_TBL_BYTES),
+    ("course tables", al.RM_TABLES_OFF, COURSE_TABLE_BYTES),
 ])
-def test_region_matches_recreate(region, off, length):
+def test_region_matches_recreate(candidate, reference, region, off, length):
     """Spot the named regions individually, so a failure names the phase that broke it."""
-    assert al.fresh_arena()[off:off + length] == _recreate_arena()[off:off + length], \
-        f"{region} region differs"
+    assert candidate[off:off + length] == reference[off:off + length], f"{region} region differs"

@@ -43,6 +43,10 @@
 #define RM_COURSE_FILE_BYTES 0xf660   /* COURSES.DAT is read whole; this is exactly its size */
 #define RM_GFX_LOAD_OFF      0xc350   /* GRAPHICS.GRA is read to gfx + this, ahead of the decode */
 #define RM_GFX_FILE_MAX      0x3f500  /* read count: comfortably >= the file, so it lands whole */
+/* Sanity floor for GRAPHICS.GRA. The decoder trusts its stream to be terminated — a truncated or
+ * wrong file would run the decode off the end of the arena — and the read count cannot be pinned to
+ * an exact size the way COURSES.DAT's can, so callers check at least the header is present. */
+#define RM_GFX_FILE_MIN      0xd00    /* the sprite header the shift-table builds read back */
 
 /* The arena and its named regions. All are raw ST-format bytes (big-endian, plane-interleaved):
  * read them through st.h's accessors, never as native types. */

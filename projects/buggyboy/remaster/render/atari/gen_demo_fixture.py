@@ -45,9 +45,11 @@ OBJ_LOW_END = 0x19100
 
 
 def staged_image():
-    """The demo's starting leg-1 image: geometry built, a valid view bank, HUD scalars poked, and the
-    course advanced past leg 1's uniform-slope opening. Shared by the fixture baking and the perf
-    bench so both measure the SAME frame. Screen is left as staged (caller blanks if needed)."""
+    """The demo's starting leg-1 image: geometry built, a valid view bank, HUD scalars poked, the
+    course advanced past leg 1's uniform-slope opening, and the asset arena replaced by a
+    freshly-loaded one (see the note at the end — the demo loads its assets off disk, so the
+    reference must too). Shared by the fixture baking and the perf bench so both measure the SAME
+    frame. Screen is left as staged (caller blanks if needed)."""
     # mid_race staging leaves view_flags at the section-12 trigger value 0x10, which is not a real
     # 0/2/4/6 view; build_road_geometry needs a real bank.
     img = equiv.road_background(leg=1, warmup=60)

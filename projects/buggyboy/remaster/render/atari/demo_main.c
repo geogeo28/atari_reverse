@@ -27,6 +27,7 @@
  * still baked by gen_demo_fixture.py, because those are code constants, not file content. See README.
  */
 #include <stdint.h>
+#include <string.h>          /* freestanding libc, defined in shim.c */
 
 #include "assets.h"
 #include "game.h"
@@ -64,25 +65,6 @@ extern void Ikbdws(short count_m1, const void *buf);
 /* Held-key state, maintained by the IKBD interrupt handler in os.s (indexed by scancode). */
 extern volatile uint8_t key_down[128];
 extern void kbd_isr(void);
-
-/* freestanding libc the cores need (we link -nostdlib) */
-void *memset(void *d, int c, unsigned long n) {
-    uint8_t *dp = d;
-    while (n--) *dp++ = (uint8_t)c;
-    return d;
-}
-void *memcpy(void *d, const void *s, unsigned long n) {
-    uint8_t *dp = d; const uint8_t *sp = s;
-    while (n--) *dp++ = *sp++;
-    return d;
-}
-/* The graphics unpack slides two large blocks within one buffer, in both directions. */
-void *memmove(void *d, const void *s, unsigned long n) {
-    uint8_t *dp = d; const uint8_t *sp = s;
-    if (dp <= sp) { while (n--) *dp++ = *sp++; }
-    else { dp += n; sp += n; while (n--) *--dp = *--sp; }
-    return d;
-}
 
 /* ST keyboard scancodes. */
 #define SCAN_ESC 0x01
@@ -299,26 +281,32 @@ static void dump_frame(Framebuffer *fb) {
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, fb->px); Fclose((short)h); }
 }
 
-/* Read a whole file into `dst`, at most `max` bytes. Returns 0 if it could not be opened. */
+/* Read a file into `dst`, at most `max` bytes. Returns the byte count, or -1 if it won't open. */
 #define FOPEN_READ_ONLY 0
-static int read_file(const char *name, uint8_t *dst, long max) {
+static long read_file(const char *name, uint8_t *dst, long max) {
     long handle = Fopen(name, FOPEN_READ_ONLY);
-    if (handle < 0) return 0;
-    Fread((short)handle, max, dst);
+    if (handle < 0) return -1;
+    long got = Fread((short)handle, max, dst);
     Fclose((short)handle);
-    return 1;
+    return got;
 }
 
 /* Load the game's own data files and unpack the graphics — everything the render pipeline draws
- * from. Both must sit next to the .PRG. Returns 0 (after saying which one is missing) if not. */
+ * from. Both must sit next to the .PRG.
+ *
+ * The sizes are checked, not assumed: the RLE decoder trusts its stream to be terminated, so a
+ * truncated or wrong GRAPHICS.GRA would walk the decode off the end of the arena. COURSES.DAT is
+ * read with a count equal to its exact size, so any other result is definitive; GRAPHICS.GRA is
+ * read with a count deliberately larger than the file, so it can only be floored. Returns 0 after
+ * naming the file at fault. */
 static int load_assets(RmArena *arena) {
     rm_arena_init(arena, arena_block);
-    if (!read_file("COURSES.DAT", arena->course, RM_COURSE_FILE_BYTES)) {
-        Cconws("cannot open COURSES.DAT\r\n");
+    if (read_file("COURSES.DAT", arena->course, RM_COURSE_FILE_BYTES) != RM_COURSE_FILE_BYTES) {
+        Cconws("COURSES.DAT missing or wrong size\r\n");
         return 0;
     }
-    if (!read_file("GRAPHICS.GRA", arena->gfx + RM_GFX_LOAD_OFF, RM_GFX_FILE_MAX)) {
-        Cconws("cannot open GRAPHICS.GRA\r\n");
+    if (read_file("GRAPHICS.GRA", arena->gfx + RM_GFX_LOAD_OFF, RM_GFX_FILE_MAX) < RM_GFX_FILE_MIN) {
+        Cconws("GRAPHICS.GRA missing or too short\r\n");
         return 0;
     }
     rm_assets_unpack(arena);

@@ -7,6 +7,7 @@
  * then loads the palette and blits to the physical screen and waits for a key. See README.md.
  */
 #include <stdint.h>
+#include <string.h>          /* freestanding libc, defined in shim.c */
 
 #include "game.h"
 #include "screen.h"
@@ -20,18 +21,6 @@ extern long Fclose(short handle);
 extern long Cconin(void);
 extern long Physbase(void);
 extern void Setpalette(const void *pal16);
-
-/* freestanding libc the HUD core needs (we link -nostdlib) */
-void *memcpy(void *d, const void *s, unsigned long n) {
-    uint8_t *dp = d; const uint8_t *sp = s;
-    while (n--) *dp++ = *sp++;
-    return d;
-}
-void *memset(void *d, int c, unsigned long n) {
-    uint8_t *dp = d;
-    while (n--) *dp++ = (uint8_t)c;
-    return d;
-}
 
 static Framebuffer fb;              /* BSS: the 32000-byte draw buffer */
 

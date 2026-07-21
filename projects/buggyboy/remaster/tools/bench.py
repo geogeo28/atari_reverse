@@ -86,7 +86,11 @@ def remaster_costs():
     # Musashi — so drop the already-unpacked arena straight into the .bss block bench_main.c reserved
     # for it, and let bench_stage_assets bind the pointers into it before every measured call.
     arena = assets_load.fresh_arena()
-    mem[syms["arena_block"]:syms["arena_block"] + len(arena)] = arena
+    at = syms["arena_block"]
+    # Slice-assigning past the end would silently GROW the bytearray and shift the stack/sentinel
+    # layout out from under emu.run_bench, so require it to land inside the image.
+    assert at + len(arena) <= len(mem), "arena_block does not fit the Musashi image"
+    mem[at:at + len(arena)] = arena
 
     # render_road reads the control table geometry writes; blit_road_scroll reads the pre-rotated
     # copies rm_scroll_prebuild builds — so run those preps first (they're per-leg, not per-frame),

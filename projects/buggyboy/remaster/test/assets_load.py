@@ -27,19 +27,23 @@ RM_AUX_OFF = 0x57000
 RM_COURSE_FILE_BYTES = 0xF660
 RM_GFX_LOAD_OFF = 0xC350
 
-RM_ARENA_FIELDS = 6                                  # RmArena: base + 5 region pointers
+class RmArena(ctypes.Structure):
+    """Mirror include/assets.h's RmArena exactly — rm_arena_init writes every field, so a missing
+    one here would have it write past this buffer."""
+    _fields_ = [(name, ctypes.POINTER(ctypes.c_uint8))
+                for name in ("base", "course", "tables", "scratch", "gfx", "aux")]
 
 
 def fresh_arena(data_dir: Path = DATA_DIR) -> bytes:
     """Load both data files into a zeroed arena and unpack — exactly what the game does at boot."""
     lib = ctypes.CDLL(str(LIBREMASTER))
-    lib.rm_arena_init.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8)]
+    lib.rm_arena_init.argtypes = [ctypes.POINTER(RmArena), ctypes.POINTER(ctypes.c_uint8)]
     lib.rm_arena_init.restype = None
-    lib.rm_assets_unpack.argtypes = [ctypes.c_void_p]
+    lib.rm_assets_unpack.argtypes = [ctypes.POINTER(RmArena)]
     lib.rm_assets_unpack.restype = None
 
     block = (ctypes.c_uint8 * RM_ARENA_BYTES)()      # zero-filled, as the game's Malloc'd block is
-    arena = (ctypes.c_void_p * RM_ARENA_FIELDS)()
+    arena = RmArena()
     lib.rm_arena_init(ctypes.byref(arena), block)
 
     courses = (data_dir / "COURSES.DAT").read_bytes()

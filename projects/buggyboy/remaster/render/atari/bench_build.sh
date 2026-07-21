@@ -25,7 +25,7 @@ CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
 
 echo ">> compile + link bench.elf (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
-    "$HERE/os.s" "$HERE/bench_main.c" $CORES -lgcc -o "$BUILD/bench.elf"
+    "$HERE/os.s" "$HERE/shim.c" "$HERE/bench_main.c" $CORES -lgcc -o "$BUILD/bench.elf"
 
 echo ">> objcopy -> flat binary (loaded into Musashi at base 0)"
 m68k-elf-objcopy -O binary "$BUILD/bench.elf" "$BUILD/bench.bin"

@@ -23,7 +23,7 @@ CORES="$REMASTER/src/hud.c $REMASTER/src/text.c"
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
-    "$HERE/os.s" "$HERE/main.c" $CORES -lgcc -o "$BUILD/hud.elf"
+    "$HERE/os.s" "$HERE/shim.c" "$HERE/main.c" $CORES -lgcc -o "$BUILD/hud.elf"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).
 ENTRY=$(m68k-elf-nm "$BUILD/hud.elf" | awk '$3=="_start"{print $1}')

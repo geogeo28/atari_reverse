@@ -29,7 +29,7 @@ CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c $REM
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
-    "$HERE/os.s" "$HERE/demo_main.c" $CORES -lgcc -o "$BUILD/demo.elf"
+    "$HERE/os.s" "$HERE/shim.c" "$HERE/demo_main.c" $CORES -lgcc -o "$BUILD/demo.elf"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).
 ENTRY=$(m68k-elf-nm "$BUILD/demo.elf" | awk '$3=="_start"{print $1}')

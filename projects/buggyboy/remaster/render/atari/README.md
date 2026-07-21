@@ -25,7 +25,7 @@ against the Musashi oracle, so this closes the loop end to end.)
 | `gen_hud_fixture.py` | capture background + assets + `HudState` + golden + palette from the host harness |
 | `main.c`             | TOS shim: build the structs from the fixture, `rm_draw_hud`, dump `SCREEN.BIN`, set palette, blit, wait for a key |
 | `os.s` / `tos.ld` / `mkprg.py` | GEMDOS entry + trap wrappers, link script, `.PRG` wrapper (copied from recreate's harness) |
-| `shim_include/string.h` | minimal freestanding `<string.h>` (bare-metal GCC ships no libc) |
+| `shim_include/string.h` / `shim.c` | freestanding `<string.h>` decls + defs, linked by every on-target program (bare-metal GCC has no libc) |
 | `build.sh`           | generate fixture → cross-compile `hud.c`+`text.c`+shim → `.PRG` → stage `disk/` |
 | `run_hatari.py`      | headless: run the `.PRG`, byte-compare `SCREEN.BIN` vs `golden.bin`, write a PNG |
 | `run.sh`             | interactive: watch it in the Hatari GUI |
@@ -68,9 +68,12 @@ hatari --memsize 4 --tos-res low --harddrive render/atari/disk --auto 'C:\DEMO.P
 Controls (**held** keys — see below): **↑/↓** throttle / brake, **←/→** steer, **Space** fire (cycles
 the dashboard variant, as in the original), **R** restarts the leg, **Esc/Q** quits.
 **The demo loads the game's own data files.** `COURSES.DAT` and `GRAPHICS.GRA` ship on the disk
-beside `DEMO.PRG` and are read + unpacked at boot by `src/assets.c` (see `include/assets.h`), so the
-road texture, the scroll playfield, the leg's packed course stream, the object record arena and every
-sprite are the real thing. `gen_demo_fixture.py` therefore bakes only what is *not* file content —
+beside `DEMO.PRG` and are read + unpacked at boot by `src/assets.c` (see `include/assets.h`). Both
+reads are size-checked and the demo exits with a message naming the file if either is missing or
+short — the RLE decoder trusts its stream to be terminated, so a truncated file would otherwise walk
+the decode off the end of the arena. With both present, the road texture, the scroll playfield, the
+leg's packed course stream, the object record arena and every sprite are the real thing.
+`gen_demo_fixture.py` therefore bakes only what is *not* file content —
 the original program's own data-segment tables (fonts, colour pairs, road param/edge tables, the
 geometry const sources, the STATIC+bss blob the object dispatcher reads), the initial
 pose/scroll/course state and the palette — into `build/demo_fixture.h`, plus the `ARENA_*` offsets at

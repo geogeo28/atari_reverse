@@ -5,6 +5,7 @@
  * (no real main loop): main() exists only so os.s links.
  */
 #include <stdint.h>
+#include <string.h>          /* freestanding libc, defined in shim.c */
 
 #include "assets.h"
 #include "game.h"
@@ -19,26 +20,6 @@ void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stre
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 
 #define BENCH_SCROLL_SPEED 0x20     /* a representative racing speed (exercises the scroll edge/wrap tail) */
-
-/* freestanding libc the cores need (we link -nostdlib) */
-void *memset(void *d, int c, unsigned long n) {
-    uint8_t *dp = d;
-    while (n--) *dp++ = (uint8_t)c;
-    return d;
-}
-void *memcpy(void *d, const void *s, unsigned long n) {
-    uint8_t *dp = d; const uint8_t *sp = s;
-    while (n--) *dp++ = *sp++;
-    return d;
-}
-/* Referenced by the graphics unpack. The bench never runs it (bench.py injects an already-unpacked
- * arena), but assets.c is linked in for rm_arena_init, so the symbol must resolve. */
-void *memmove(void *d, const void *s, unsigned long n) {
-    uint8_t *dp = d; const uint8_t *sp = s;
-    if (dp <= sp) { while (n--) *dp++ = *sp++; }
-    else { dp += n; sp += n; while (n--) *--dp = *--sp; }
-    return d;
-}
 
 static Framebuffer fb __attribute__((aligned(2)));
 static uint8_t ctrl[RM_CTRL_BYTES] __attribute__((aligned(2)));
