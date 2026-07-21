@@ -7,8 +7,20 @@ This doc is the *how*: the recipe, the conventions, and the traps.
 `draw_hud` (all 8 phases) is ported and verified on host + on a real 68000. The render pipeline is now
 complete: `render_road`, `blit_road_scroll`, `build_road_geometry`, and the whole `draw_game_objects`
 tree (`draw_ground`, the buggy/foreground sprites, `draw_object`, the fine-x blit engines, the
-`draw_object_list` dispatcher, and the prefix/orchestrator) are all byte-exact vs `recreate/`. Phase B
-(gameplay: objects/events/collision/score in `game_update`) is the next frontier — see STATUS.
+`draw_object_list` dispatcher, and the prefix/orchestrator) are all byte-exact vs `recreate/`.
+
+Phase B has started: the **player physics** (`src/player.c`, `game_update` §3,4,5,7,8,9,10) is ported
+and verified frame-for-frame against `g_game_update`, and `render/atari/DEMO.PRG` is a playable buggy
+on the 68000. What remains in `game_update` is the crash / auto-steer script (§6), object collision,
+the horizon-event dispatch, and section 12's object ring — see STATUS.
+
+A note on porting a *gameplay* function rather than a render one: there is no framebuffer to diff, so
+the equivalence surface is the scalar state. `test/equiv.py`'s `compare_player_drive` is the pattern —
+drive a scripted input, re-seed the candidate from the reference image each frame, and compare every
+scalar the port owns. Two things made it honest: staging artefacts have to be cleared or the drive
+degenerates (a mid-race image leaves `hud_crash_timer` armed, which pins the throttle off and the
+buggy never moves), and frames where an *unported* system engages must be excluded and rolled back
+explicitly, with a count reported, rather than silently tolerated.
 
 ## Commands
 

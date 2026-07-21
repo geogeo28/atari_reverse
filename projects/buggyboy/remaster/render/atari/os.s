@@ -102,3 +102,60 @@ Setscreen:
     trap    #14
     lea     12(%sp),%sp
     rts
+
+| long Setexc(short number, long vector)   BIOS 5 (install an exception vector; returns the old one)
+    .globl  Setexc
+Setexc:
+    move.l  8(%sp),%d1          | vector
+    move.l  4(%sp),%d0          | vector number (int); low word
+    move.l  %d1,-(%sp)
+    move.w  %d0,-(%sp)
+    move.w  #5,-(%sp)
+    trap    #13
+    lea     8(%sp),%sp
+    rts
+
+| void Ikbdws(short count_m1, const void *buf)   XBIOS 25 (send count_m1+1 bytes to the IKBD)
+    .globl  Ikbdws
+Ikbdws:
+    move.l  8(%sp),%a0          | buf
+    move.l  4(%sp),%d0          | byte count - 1 (int); low word
+    move.l  %a0,-(%sp)
+    move.w  %d0,-(%sp)
+    move.w  #25,-(%sp)
+    trap    #14
+    lea     8(%sp),%sp
+    rts
+
+| --- held-key tracking ------------------------------------------------------------------------
+| The GEMDOS console reports key PRESSES; driving needs to know which keys are HELD, and several at
+| once (throttle plus steering). So the demo takes the IKBD ACIA interrupt itself (MFP channel 6,
+| vector 0x46 @ 0x118). With mouse and joystick reporting switched off (kbd_install), the ACIA
+| delivers nothing but keyboard make/break scancodes, so the handler is simply:
+|   bit 7 clear -> that scancode is now down;  bit 7 set -> it is up.
+| C polls key_down[] once a frame. Interrupt handlers run in supervisor mode, so no mode juggling.
+    .globl  kbd_isr
+kbd_isr:
+    movem.l %d0/%a0,-(%sp)
+    btst    #0,0xfffffc00       | IKBD ACIA status: receive buffer full?
+    beq.s   kbd_eoi
+    moveq   #0,%d0
+    move.b  0xfffffc02,%d0      | scancode; bit 7 = break (key released)
+    lea     key_down,%a0
+    btst    #7,%d0
+    bne.s   kbd_break
+    move.b  #1,(%a0,%d0.w)
+    bra.s   kbd_eoi
+kbd_break:
+    andi.w  #0x7f,%d0
+    clr.b   (%a0,%d0.w)
+kbd_eoi:
+    move.b  #0xbf,0xfffffa11    | MFP ISRB: clear the in-service bit for channel 6 (write 0 to it)
+    movem.l (%sp)+,%d0/%a0
+    rte
+
+    .bss
+    .align  2
+    .globl  key_down
+key_down:
+    .space  128                 | one byte per scancode: nonzero while held

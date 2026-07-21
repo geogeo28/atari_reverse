@@ -1,16 +1,22 @@
-/* demo_main.c — interactive road + objects + HUD demo: remaster's own pipeline on a real 68000,
- * steered live.
+/* demo_main.c — playable BuggyBoy on a real 68000: remaster's own render pipeline driven by
+ * remaster's own port of the original's player physics.
  *
- * Each frame runs the full ported render pipeline in draw_frame order: rm_gobj_prefix (off-frame
- * state advance) -> rm_build_road_geometry -> rm_render_road -> rm_blit_road_scroll -> the
- * draw_game_objects tree (ground, foreground sprite, the two roadside object-list passes split around
- * the scaled draw_object, and the player buggy, ordered against the buggy by the view) -> rm_draw_hud,
- * then blits to the screen. The demo auto-runs (paced by the vertical blank) with non-blocking input:
- *   Up / Down    : throttle up / brake (speed scrolls the road and advances the leg's course)
- *   Left / Right : steer (road curvature; self-centres when released)
- *   Space        : cycle the view bank (0, 2, 4, 6)
- *   R            : reset the pose + course position;   Esc / Q : quit
- * The first frame (speed 0, before any input) is dumped to C:\SCREEN.BIN so a headless run can
+ * Each frame is game_update-then-draw, as the original orders it:
+ *   rm_player_update  — the ported driving model (src/player.c): throttle -> engine rpm -> speed,
+ *                       speed -> the road-scroll rate and the view advance whose wrap advances the
+ *                       course, steering -> wheel position -> body lean and road curvature, and the
+ *                       road-edge clamp / off-road push. Its outputs are fanned out to the render
+ *                       structs below, which is all the "wiring" the game loop is.
+ *   draw_frame        — the full ported render pipeline: rm_gobj_prefix (off-frame state advance) ->
+ *                       rm_build_road_geometry -> rm_render_road -> rm_blit_road_scroll -> the
+ *                       draw_game_objects tree (ground, foreground sprite, the two roadside
+ *                       object-list passes split around the scaled draw_object, and the player buggy,
+ *                       ordered against the buggy by the view) -> rm_draw_hud, then flips.
+ * Controls (held keys, read straight from the IKBD — see os.s):
+ *   Up / Down    : throttle / brake      Left / Right : steer
+ *   Space        : fire (cycles the dashboard variant, as in the original)
+ *   R            : restart the leg       Esc / Q : quit
+ * The first frame is dumped to C:\SCREEN.BIN *before* any physics runs, so a headless run can still
  * byte-compare it to recreate's g_build_road_geometry + g_render_road + g_blit_road_scroll +
  * g_draw_game_objects + g_draw_hud (build/golden.bin).
  * All inputs are baked by gen_demo_fixture.py. See README.
@@ -28,6 +34,7 @@ void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb
 void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stream);
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
+void rm_player_update(PlayerState *p, const PlayerAssets *a, const uint8_t *ctrl);
 void rm_draw_ground(const GroundState *s, const GroundAssets *a, Framebuffer *fb);
 void rm_draw_fg_sprite(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
 void rm_draw_buggy(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
@@ -39,11 +46,15 @@ void rm_draw_object_list(const ObjListCtx *c, const uint8_t *list, uint32_t list
 extern long Fcreate(const char *name, short attr);
 extern long Fwrite(short handle, long count, void *buf);
 extern long Fclose(short handle);
-extern long Cconin(void);
-extern long Cconis(void);        /* non-blocking: -1 if a key is waiting */
 extern void Vsync(void);
 extern long Setscreen(long logLoc, long physLoc, short rez);   /* flip the video base (latches at vblank) */
 extern void Setpalette(const void *pal16);
+extern long Setexc(short number, long vector);
+extern void Ikbdws(short count_m1, const void *buf);
+
+/* Held-key state, maintained by the IKBD interrupt handler in os.s (indexed by scancode). */
+extern volatile uint8_t key_down[128];
+extern void kbd_isr(void);
 
 /* freestanding libc the cores need (we link -nostdlib) */
 void *memset(void *d, int c, unsigned long n) {
@@ -57,23 +68,20 @@ void *memcpy(void *d, const void *s, unsigned long n) {
     return d;
 }
 
-/* Keyboard scancodes (Cconin returns the scancode in bits 16..23, the ASCII char in the low byte). */
+/* ST keyboard scancodes. */
+#define SCAN_ESC 0x01
+#define SCAN_Q 0x10
+#define SCAN_R 0x13
+#define SCAN_SPACE 0x39
 #define SCAN_UP 0x48
 #define SCAN_DOWN 0x50
 #define SCAN_LEFT 0x4b
 #define SCAN_RIGHT 0x4d
-#define KEY_ESC 0x1b
-#define VIEW_BANK_WRAP 8             /* view_flags cycles 0,2,4,6 (mod 8) */
 
-/* Driving feel. speed 0..SPEED_MAX; it both scrolls the road band (blit_road_scroll's scroll_speed)
- * and, via a distance accumulator, advances the course one segment per DIST_PER_SEG units. Steering
- * adds CURVE_STEP per press up to CURVE_MAX and self-centres by CURVE_DECAY each frame. */
-#define SPEED_STEP     2
-#define SPEED_MAX      0x20
-#define DIST_PER_SEG   0x18          /* smaller = the course (road bends) advances faster per speed */
-#define CURVE_STEP     0x60
-#define CURVE_MAX      0x1800
-#define CURVE_DECAY    0x30
+#define VEC_IKBD_ACIA 0x46           /* 68000 vector 0x46 (@0x118): MFP channel 6, the IKBD ACIA */
+#define IKBD_MOUSE_OFF 0x12
+#define IKBD_JOYSTICK_OFF 0x1a
+#define IKBD_MOUSE_RELATIVE 0x08     /* the mode TOS leaves the mouse in; restored on exit */
 
 /* The prefix mutates its arenas (marker records, buf_a anim-word mirrors, the animated colour). The
  * anim-word mirrors land inside buf_a's record region (offsets 0xd70/0x1250), which the object
@@ -126,7 +134,6 @@ static const int16_t seg_data_init[13] = ROAD_SEG_DATA_INIT;
 #define GOBJ_D6_INIT        0xb0
 #define GOBJ_D6_ROW_STEP    0x10
 #define GOBJ_VIEW_REAR      4
-#define GROUND_VIEW_COL_MUL 0xdd     /* view_flags * this = the ground/object-scan view column */
 
 static int16_t be16s(const uint8_t *p) { return (int16_t)((p[0] << 8) | p[1]); }
 
@@ -205,8 +212,78 @@ static void draw_frame(Framebuffer *fb, RoadPose *pose, const RoadSource *src, R
     rm_draw_hud(hud, hud_assets, fb);
 }
 
+/* Fan rm_player_update's outputs out to the render structs — the whole of the "game loop" beyond
+ * running the physics and drawing. Each assignment is one of the original's shared globals: the
+ * pose's curve/view come straight from the physics, the sprite reads the body pose (skid doubles as
+ * the foreground-sprite suppressor, exactly as in the original), the ground column and the object
+ * list's scan offset are the same global, and the HUD shows the speed and clock. */
+static void apply_player(const PlayerState *p, RoadPose *pose, RoadInput *road, ScrollState *scroll,
+                         SpriteState *sprite, HudState *hud, GroundState *ground, ObjListCtx *objlist) {
+    pose->curve = p->road_curve;
+    pose->view_flags = p->view_flags;
+    road->edge_tbl = fixture_road_edge + ROAD_EDGE_PAD + p->road_edge_sel;
+    scroll->scroll_speed = p->scroll_speed;
+
+    sprite->lean = p->lean;
+    sprite->wheel_pos = p->wheel_pos;
+    sprite->skid = p->skid;
+    sprite->sprite_suppress = (uint16_t)p->skid;
+    sprite->crash_disp = p->crash_disp;
+    sprite->buggy_draw_flag = p->buggy_draw_flag;
+    sprite->speed_raw = p->speed_raw;
+    sprite->road_curve = p->road_curve;
+
+    ground->view = p->ground_view_off;
+    objlist->view_flags = p->view_flags;
+    objlist->obj_scan_off = p->ground_view_off;
+
+    hud->speed = p->speed;
+    hud->time_left = (uint16_t)p->time_left;
+    hud->dsp_variant_idx = p->dsp_variant_idx;
+    hud->hud_crash_timer = p->hud_crash_timer;
+}
+
+/* Take the IKBD interrupt so held keys are visible (see os.s). Mouse and joystick reporting are
+ * switched off first, which is what leaves the ACIA delivering keyboard scancodes only. */
+static long kbd_install(void) {
+    static const uint8_t quiet[] = {IKBD_MOUSE_OFF, IKBD_JOYSTICK_OFF};
+    Ikbdws(sizeof quiet - 1, quiet);
+    return Setexc(VEC_IKBD_ACIA, (long)kbd_isr);
+}
+
+static void kbd_remove(long old_vector) {
+    static const uint8_t restore[] = {IKBD_MOUSE_RELATIVE};
+    Setexc(VEC_IKBD_ACIA, old_vector);
+    Ikbdws(sizeof restore - 1, restore);
+}
+
+/* DEMO_AUTODRIVE=N (debug builds only): drive a fixed script instead of the keyboard and dump the
+ * frame after N frames, so a headless run can prove the whole loop — physics, course advance, render
+ * — runs on the 68000 and the buggy actually moves. Undefined in normal builds. */
+#ifdef DEMO_AUTODRIVE
+#define AUTODRIVE_STEER_AFTER 60         /* throttle up first, then hold a steering lock */
+static uint16_t autodrive_input(int frame) {
+    return (uint16_t)(RM_IN_ACCEL | (frame < AUTODRIVE_STEER_AFTER ? 0 : RM_IN_LEFT));
+}
+#endif
+
+static uint16_t read_input(void) {
+    uint16_t in = 0;
+    if (key_down[SCAN_UP]) in |= RM_IN_ACCEL;
+    if (key_down[SCAN_DOWN]) in |= RM_IN_BRAKE;
+    if (key_down[SCAN_LEFT]) in |= RM_IN_LEFT;
+    if (key_down[SCAN_RIGHT]) in |= RM_IN_RIGHT;
+    if (key_down[SCAN_SPACE]) in |= RM_IN_FIRE;
+    return in;
+}
+
+static void dump_frame(Framebuffer *fb) {
+    long h = Fcreate("SCREEN.BIN", 0);
+    if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, fb->px); Fclose((short)h); }
+}
+
 void main(void) {
-    static const HudState hud = {
+    HudState hud = {
         .flag_seq_count = HUD_FLAG_SEQ_COUNT, .flag_seq_off = HUD_FLAG_SEQ_OFF,
         .dsp_color_scroll = HUD_DSP_COLOR_SCROLL, .crash_lap = HUD_CRASH_LAP,
         .speed = HUD_SPEED, .time_left = HUD_TIME_LEFT, .game_over = HUD_GAME_OVER,
@@ -230,7 +307,8 @@ void main(void) {
     };
     RoadInput road = {
         .width_tbl = ctrl + RM_CTRL_WIDTH_OFF,   /* rebound per frame after the build */
-        .param = fixture_road_param, .edge_tbl = fixture_road_edge + ROAD_EDGE_PAD,
+        .param = fixture_road_param,
+        .edge_tbl = fixture_road_edge + ROAD_EDGE_PAD + PL_ROAD_EDGE_SEL_INIT,   /* rebound per frame */
         .tex = fixture_road_tex + ROAD_TEX_PAD_LO, .edge_const = fixture_road_edge_const,
     };
     RoadPose pose = {.curve = ROAD_CURVE_INIT, .view_flags = ROAD_VIEW_FLAGS_INIT};
@@ -296,6 +374,29 @@ void main(void) {
     for (int i = 0; i < GROUND_SCAN_ENTRIES; i++)
         ground_mut.markers[i] = low[OBJ_LOW_GROUND_SCAN + i * GOBJ_MARKER_STRIDE + 3];
 
+    /* --- the driving model (src/player.c). Its const tables all live inside the obj-low blob. --- */
+    const PlayerAssets player_assets = {
+        .lean_anim_tbl = low + OBJ_LOW_LEAN_ANIM_TBL,
+        .scroll_speed_tbl = low + OBJ_LOW_SCROLL_SPEED_TBL,
+        .speed_jitter_tbl = low + OBJ_LOW_SPEED_JITTER_TBL,
+        .steer_curve_tbl = low + OBJ_LOW_STEER_CURVE_TBL,   /* cursor-zero: the row index goes negative */
+        .legflag_tbl = low + OBJ_LOW_LEGFLAG_TBL,
+    };
+    const PlayerState player_init = {
+        .engine_rpm = PL_ENGINE_RPM_INIT, .rpm_cap = PL_RPM_CAP_INIT, .rpm_add = PL_RPM_ADD_INIT,
+        .speed_raw = PL_SPEED_RAW_INIT, .speed = PL_SPEED_INIT,
+        .speed_jitter_ph = PL_SPEED_JITTER_PH_INIT, .scroll_phase = PL_SCROLL_PHASE_INIT,
+        .scroll_speed = SCROLL_SPEED_INIT, .view_flags = ROAD_VIEW_FLAGS_INIT,
+        .view_bank = PL_VIEW_BANK_INIT, .ground_view_off = PL_GROUND_VIEW_OFF_INIT,
+        .road_edge_sel = PL_ROAD_EDGE_SEL_INIT, .wheel_pos = PL_WHEEL_POS_INIT,
+        .steer_hold = PL_STEER_HOLD_INIT, .lean_phase = PL_LEAN_PHASE_INIT, .lean = SP_LEAN_INIT,
+        .road_curve = ROAD_CURVE_INIT, .skid = SP_SKID_INIT, .fire_hold = PL_FIRE_HOLD_INIT,
+        .dsp_variant_idx = HUD_DSP_VARIANT_IDX, .leg_flags_sel = PL_LEG_FLAGS_SEL_INIT,
+        .time_subctr = PL_TIME_SUBCTR_INIT, .time_left = HUD_TIME_LEFT,
+        .hud_crash_timer = HUD_CRASH_TIMER, .timeout_gate = PL_TIMEOUT_GATE_INIT,
+    };
+    PlayerState player = player_init;
+
     Setpalette(fixture_palette);
     rm_scroll_prebuild(fixture_road_play, shifted);   /* pre-rotate the playfield once (screen_offset is fixed) */
     int shown = 0;
@@ -304,59 +405,41 @@ void main(void) {
     Setscreen(-1L, (long)screen_buf(shown)->px, -1);   /* show the first frame */
     Vsync();
 
-    /* Dump the first frame (speed 0) so a headless run can byte-compare it to golden.bin. */
-    long h = Fcreate("SCREEN.BIN", 0);
-    if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, screen_buf(shown)->px); Fclose((short)h); }
+    /* Dump the first frame — drawn before any physics runs — so a headless run can byte-compare it
+     * to golden.bin. Only after that do we take the keyboard away from GEMDOS. */
+#ifndef DEMO_AUTODRIVE
+    dump_frame(screen_buf(shown));
+#endif
 
-    int speed = 0;                       /* current throttle */
-    int steering = 0;                    /* -1 / 0 / +1 this frame, from the arrow keys */
-    long dist = 0;                       /* distance accumulator: advances a segment each DIST_PER_SEG */
-    for (;;) {
-        steering = 0;
-        while (Cconis()) {               /* drain all pending keys (non-blocking) */
-            long k = Cconin();
-            int scan = (int)((k >> 16) & 0xff), ascii = (int)(k & 0xff);
-            if (ascii == KEY_ESC || ascii == 'q' || ascii == 'Q') return;
-            switch (scan) {
-                case SCAN_UP:    speed += SPEED_STEP; if (speed > SPEED_MAX) speed = SPEED_MAX; break;
-                case SCAN_DOWN:  speed -= SPEED_STEP; if (speed < 0) speed = 0; break;
-                case SCAN_LEFT:  steering = -1; break;
-                case SCAN_RIGHT: steering = 1; break;
-                default:
-                    if (ascii == ' ')
-                        pose.view_flags = (uint16_t)((pose.view_flags + 2) % VIEW_BANK_WRAP);
-                    else if (ascii == 'r' || ascii == 'R') {
-                        pose.curve = ROAD_CURVE_INIT; pose.view_flags = ROAD_VIEW_FLAGS_INIT;
-                        course.row_ctr = COURSE_ROW_CTR_INIT; course.read_pos = COURSE_READ_POS_INIT;
-                        for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
-                        speed = 0; dist = 0;
-                    }
-                    break;
-            }
+    long old_kbd_vector = kbd_install();
+    uint16_t input_prev = 0;
+    for (int frame = 0; !key_down[SCAN_ESC] && !key_down[SCAN_Q]; frame++) {
+        if (key_down[SCAN_R]) {                       /* restart the leg from the baked start state */
+            player = player_init;
+            course.row_ctr = COURSE_ROW_CTR_INIT;
+            course.read_pos = COURSE_READ_POS_INIT;
+            for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
         }
 
-        /* steer: add toward the held direction (clamped), else decay back to centre. */
-        int curve = (int16_t)pose.curve;
-        if (steering < 0)      curve = (curve - CURVE_STEP < -CURVE_MAX) ? -CURVE_MAX : curve - CURVE_STEP;
-        else if (steering > 0) curve = (curve + CURVE_STEP >  CURVE_MAX) ?  CURVE_MAX : curve + CURVE_STEP;
-        else if (curve > 0)    curve = (curve < CURVE_DECAY) ? 0 : curve - CURVE_DECAY;
-        else if (curve < 0)    curve = (curve > -CURVE_DECAY) ? 0 : curve + CURVE_DECAY;
-        pose.curve = (int16_t)curve;
+        /* One frame of the original's driving model, over the road geometry the last frame built.
+         * hscroll_step2 is blit_road_scroll's output feeding back in — the scroll biases the curve.
+         * input_prev is fed the previous frame's bits, which makes fire a true edge (one dashboard
+         * cycle per press). The original leaves that global as a stale baseline instead, so holding
+         * fire there re-triggers the animation every time it ends — a demo choice, not the core's. */
+        player.input_prev = input_prev;
+#ifdef DEMO_AUTODRIVE
+        player.input = autodrive_input(frame);
+#else
+        player.input = read_input();
+#endif
+        player.hscroll_step2 = (int16_t)scroll.hscroll_step2;
+        input_prev = player.input;
+        rm_player_update(&player, &player_assets, ctrl);
+        apply_player(&player, &pose, &road, &scroll, &sprite, &hud, &ground_mut, &objlist);
 
-        /* throttle: scroll the road band at `speed` and advance the course by the distance covered. */
-        scroll.scroll_speed = (int16_t)speed;
-        dist += speed;
-        while (dist >= DIST_PER_SEG) { rm_road_course_advance(&pose, &course, stream); dist -= DIST_PER_SEG; }
-
-        /* keep the object draws in step with the live pose: the buggy reads the steering curve and the
-         * object dispatcher / ground select on the view bank. The ground's view column and the object
-         * list's scan offset are the SAME global in the original (0x18c58 = view_flags * 0xdd), so both
-         * follow the view bank together. */
-        sprite.road_curve = pose.curve;
-        objlist.view_flags = pose.view_flags;
-        int16_t view_col = (int16_t)(pose.view_flags * GROUND_VIEW_COL_MUL);
-        ground_mut.view = view_col;
-        objlist.obj_scan_off = view_col;
+        /* The view wrapping is what advances the course, so the road's bends arrive at the speed the
+         * buggy is actually travelling (section 11/12 of the original). */
+        if (player.view_wrapped) rm_road_course_advance(&pose, &course, stream);
 
         /* render off-screen, then flip the video base to it at the vblank (no tearing). */
         int back = shown ^ 1;
@@ -365,5 +448,9 @@ void main(void) {
         Setscreen(-1L, (long)screen_buf(back)->px, -1);
         Vsync();
         shown = back;
+#ifdef DEMO_AUTODRIVE
+        if (frame + 1 >= DEMO_AUTODRIVE) { dump_frame(screen_buf(shown)); break; }
+#endif
     }
+    kbd_remove(old_kbd_vector);
 }
