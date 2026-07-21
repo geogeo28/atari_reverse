@@ -20,9 +20,12 @@ CC=m68k-elf-gcc
 # -O2 (not -Os): the road blit primitives must inline or the per-column call overhead ~doubles the
 # render cost (see tools/bench.py). -fno-tree-loop-distribute-patterns keeps the hand-written fill
 # loops from being turned into libc calls.
+# DEMO_EXTRA_CFLAGS lets a debug run add flags (e.g. -DDEMO_DUMP_STAGE=3 to cut the frame short and
+# dump a partial render, for pinpointing an on-target divergence). Empty in normal builds.
 CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
-        -fomit-frame-pointer -nostdlib -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra"
-CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c"
+        -fomit-frame-pointer -nostdlib -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
+        ${DEMO_EXTRA_CFLAGS:-}"
+CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c $REMASTER/src/blit.c $REMASTER/src/object_list.c $REMASTER/src/gameplay.c"
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \

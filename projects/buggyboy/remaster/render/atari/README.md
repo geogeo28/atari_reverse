@@ -44,12 +44,14 @@ bash render/atari/run.sh                   # watch it in Hatari (press a key in 
 
 Hatari needs a 4 MiB machine (`--memsize 4`); `build/` and `disk/` are gitignored build artifacts.
 
-## Interactive road + HUD demo (`DEMO.PRG`)
+## Interactive road + objects + HUD demo (`DEMO.PRG`)
 
-Now that `render_road`, `build_road_geometry` and `blit_road_scroll` are ported, a second demo drives
-remaster's **whole road + HUD pipeline** on the 68000 and lets you **steer the road live**. Each frame
-runs `rm_build_road_geometry` (from the current pose) → `rm_render_road` → `rm_blit_road_scroll` (the
-scrolling near-road band + sky) → `rm_draw_hud` and blits.
+With the whole Phase-A render pipeline ported, this demo drives **all of it** on the 68000 and lets you
+**steer the road live**. Each frame runs `rm_gobj_prefix` (off-frame state) → `rm_build_road_geometry`
+(from the current pose) → `rm_render_road` → `rm_blit_road_scroll` (the scrolling near-road band + sky)
+→ the `draw_game_objects` tree (`rm_draw_ground`, `rm_draw_fg_sprite`, the two roadside
+`rm_draw_object_list` passes split around the scaled `rm_draw_object`, and `rm_draw_buggy` ordered
+against the fixed pass by the view) → `rm_draw_hud`, and blits.
 
 ```bash
 bash render/atari/build_demo.sh            # -> build/DEMO.PRG + disk/DEMO.PRG
@@ -62,12 +64,31 @@ scrolls the road band and advances the leg's course, so the road's hills/segment
 packed course stream), **←/→** steer (road curvature; self-centres when released), **Space** cycles
 the view bank, **R** resets, **Esc/Q** quits. `gen_demo_fixture.py` bakes the render_road static
 tables (param/edge/texture), the geometry const sources, the scroll playfield, the leg-1 packed
-course stream, the initial pose/scroll/course state and the HUD assets into `build/demo_fixture.h`,
-plus `golden.bin` (recreate's `g_build_road_geometry` + `g_render_road` + `g_blit_road_scroll` +
-`g_draw_hud` for the same pose). `run_demo.py` byte-compares the demo's first frame (speed 0, before
-any key) against it — a **MATCH** proves the whole ported pipeline is pixel-identical on a real 68000.
-The steering and forward course-advance are validated on the host (`test/test_geometry.py`,
-`test/test_course.py`) for arbitrary state.
+course stream, the initial pose/scroll/course state, the HUD assets, and the object arenas (the `buf_a`
+record arena, the `buf_c` sprite/graphics arena, and the STATIC+bss table blob the object dispatcher
+reads) into `build/demo_fixture.h`, plus `golden.bin` (recreate's `g_build_road_geometry` +
+`g_render_road` + `g_blit_road_scroll` + `g_draw_game_objects` + `g_draw_hud` for the same pose).
+`run_demo.py` byte-compares the demo's first frame (speed 0, before any key) against it — a **MATCH**
+proves the whole ported pipeline is pixel-identical on a real 68000. The steering and forward
+course-advance are validated on the host (`test/test_geometry.py`, `test/test_course.py`) for
+arbitrary state.
+
+### Aliased globals the demo has to model
+
+recreate threads one flat image, so several logically-separate tables share an address. The demo keeps
+them separate and must reproduce the aliasing explicitly — each of these caused a real on-target diff:
+
+| Alias | Effect |
+|-------|--------|
+| `anim_color` == `fuel_mask` (`0x17f08`) | the prefix's animated colour **is** the HUD's phase-6a fuel mask, so both point at one mutable buffer |
+| `obj_xoff_tbl` == `road_width_tbl + 2` (`0x18f26`) | the object dispatcher's x-offset table is the freshly built control table, so it is rebound to `ctrl` each frame |
+| `ground_view_off` == `obj_scan_off` (`0x18c58`) | the ground's view column and the object list's scan offset are one value (`view_flags * 0xdd`) |
+
+`draw_game_objects` also writes off-screen sprite fragments well past the visible 32000 bytes, so each
+screen buffer carries a `SCREEN_OVERDRAW` tail (in the original the draw buffer is followed by ample
+RAM). Set `DEMO_EXTRA_CFLAGS=-DDEMO_DUMP_STAGE=N` to cut the frame short after stage N (0 road, 1
+ground, 2 foreground, 3 pass 1) — the dump then holds a partial frame, which is how an on-target
+divergence gets bisected to a single stage.
 
 Scope note: the throttle scrolls the course's authored **segment slopes** (`seg_data`) through the
 geometry builder, and `build_road_geometry` integrates them into the per-row road offset — so the
