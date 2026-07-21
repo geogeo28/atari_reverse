@@ -29,6 +29,7 @@
 #ifndef RM_ASSETS_H
 #define RM_ASSETS_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* ---- arena layout (mirrors main @0x10100's Malloc + buffer-base setup) ---------------------- */
@@ -42,10 +43,10 @@
 /* ---- the two files ------------------------------------------------------------------------- */
 #define RM_COURSE_FILE_BYTES 0xf660   /* COURSES.DAT is read whole; this is exactly its size */
 #define RM_GFX_LOAD_OFF      0xc350   /* GRAPHICS.GRA is read to gfx + this, ahead of the decode */
-#define RM_GFX_FILE_MAX      0x3f500  /* read count: comfortably >= the file, so it lands whole */
-/* Sanity floor for GRAPHICS.GRA. The decoder trusts its stream to be terminated — a truncated or
- * wrong file would run the decode off the end of the arena — and the read count cannot be pinned to
- * an exact size the way COURSES.DAT's can, so callers check at least the header is present. */
+/* Largest GRAPHICS.GRA the arena can physically hold — read no more than this, or the read itself
+ * scribbles past the block before anything gets a chance to validate it. The real file is well
+ * under it; a bigger one is refused rather than truncated, because a partial stream is meaningless. */
+#define RM_GFX_READ_MAX      (RM_ARENA_BYTES - RM_GFX_OFF - RM_GFX_LOAD_OFF)
 #define RM_GFX_FILE_MIN      0xd00    /* the sprite header the shift-table builds read back */
 
 /* The arena and its named regions. All are raw ST-format bytes (big-endian, plane-interleaved):
@@ -62,8 +63,15 @@ typedef struct {
 /* Point the region pointers at `block`, which the caller owns and must be RM_ARENA_BYTES long. */
 void rm_arena_init(RmArena *arena, uint8_t *block);
 
-/* Decompress the loaded GRAPHICS.GRA in place: RLE-decode, de-interleave the screens, compact,
- * and build the sprite pre-shift tables. COURSES.DAT needs no unpacking — it is used as loaded. */
-void rm_assets_unpack(RmArena *arena);
+/* Decompress the loaded GRAPHICS.GRA in place: RLE-decode, de-interleave the screens, compact, and
+ * build the sprite pre-shift tables. COURSES.DAT needs no unpacking — it is used as loaded.
+ *
+ * `gfx_bytes` is how much of the file actually arrived. It is not decoration: the RLE stream is
+ * self-terminating, so a truncated or simply-wrong file has no end marker and the decoder would
+ * write until it left the arena. Bounded by both ends, that becomes a clean `false` instead.
+ * A size check at the call site cannot substitute for this — a file can be any length and still
+ * carry an unterminated stream. Returns false without leaving the arena on a stream that ends
+ * early or expands past its output room; the arena's contents are then undefined. */
+bool rm_assets_unpack(RmArena *arena, uint32_t gfx_bytes);
 
 #endif /* RM_ASSETS_H */

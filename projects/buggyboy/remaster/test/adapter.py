@@ -11,6 +11,7 @@ from pathlib import Path
 
 REMASTER = Path(__file__).resolve().parents[1]
 RECREATE = REMASTER.parent / "recreate"
+LIBREMASTER = REMASTER / "build" / "libremaster.so"   # the candidate .so; one definition for all callers
 for p in ("oracle", "test", "render", "tools"):
     sys.path.insert(0, str(RECREATE / p))
 

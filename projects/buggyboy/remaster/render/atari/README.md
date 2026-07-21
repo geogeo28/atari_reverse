@@ -69,9 +69,11 @@ Controls (**held** keys — see below): **↑/↓** throttle / brake, **←/→*
 the dashboard variant, as in the original), **R** restarts the leg, **Esc/Q** quits.
 **The demo loads the game's own data files.** `COURSES.DAT` and `GRAPHICS.GRA` ship on the disk
 beside `DEMO.PRG` and are read + unpacked at boot by `src/assets.c` (see `include/assets.h`). Both
-reads are size-checked and the demo exits with a message naming the file if either is missing or
-short — the RLE decoder trusts its stream to be terminated, so a truncated file would otherwise walk
-the decode off the end of the arena. With both present, the road texture, the scroll playfield, the
+reads are bounded by the arena and the unpack itself is bounded at both ends, so a missing,
+truncated or foreign file is refused rather than walking the decode off the end of the arena. The
+demo then names the file on the ST console and exits — note that under *headless* Hatari that
+console is invisible, so the only symptom a script sees is a missing `SCREEN.BIN`. With both
+present, the road texture, the scroll playfield, the
 leg's packed course stream, the object record arena and every sprite are the real thing.
 `gen_demo_fixture.py` therefore bakes only what is *not* file content —
 the original program's own data-segment tables (fonts, colour pairs, road param/edge tables, the

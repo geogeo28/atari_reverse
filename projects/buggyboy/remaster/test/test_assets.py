@@ -10,14 +10,25 @@ The comparison surface is the whole 0x5ee08-byte arena, not a sampled region, so
 any phase (RLE decode, screen de-interleave, compaction, the tail slide, either sprite pre-shift
 table build) fails it.
 """
+import re
+
 import assets_load as al
 import pytest
 import render_screen as R                          # recreate's staging + arena layout constants
 
-# Named spans for the per-region spot checks, so a failure says which phase broke.
-GFX_SPRITE_ARENA_BYTES = 0x3B000                   # the sprite pixels the object blits index
-SPRITE_SHIFT_TBL_BYTES = 0xD000                    # 208 sprites x 16 shifts x 16 bytes
-COURSE_TABLE_BYTES = 0x2000                        # scroll/object selectors + record descriptors
+# Named arena regions, used to say WHERE a whole-arena mismatch landed. They are diagnostic only —
+# a per-region assert could never fail independently of the whole-arena compare below.
+REGIONS = [
+    ("COURSES.DAT (loaded verbatim)", al.RM_COURSE_OFF, al.RM_TABLES_OFF),
+    ("course tables", al.RM_TABLES_OFF, al.RM_SCRATCH_OFF),
+    ("sprite shift tables (phases G/H)", al.RM_SCRATCH_OFF, al.RM_GFX_OFF),
+    ("unpacked graphics (phases B-F)", al.RM_GFX_OFF, al.RM_AUX_OFF),
+    ("header stash (phase A)", al.RM_AUX_OFF, al.RM_ARENA_BYTES),
+]
+
+
+def _region_of(off):
+    return next((n for n, lo, hi in REGIONS if lo <= off < hi), "outside every named region")
 
 
 @pytest.fixture(scope="module")
@@ -52,20 +63,30 @@ def test_course_file_loads_verbatim(candidate):
 def test_unpacked_arena_is_byte_identical(candidate, reference, capsys):
     assert len(candidate) == len(reference) == al.RM_ARENA_BYTES
 
-    wrong = sum(1 for a, b in zip(candidate, reference) if a != b)
+    diff = [i for i, (a, b) in enumerate(zip(candidate, reference)) if a != b]
     # Guard against a vacuous pass: the unpack must actually fill the arena.
     filled = sum(1 for b in reference if b)
     with capsys.disabled():
-        print(f"  arena {al.RM_ARENA_BYTES} bytes, {filled} non-zero, {wrong} differing")
+        print(f"  arena {al.RM_ARENA_BYTES} bytes, {filled} non-zero, {len(diff)} differing")
     assert filled > al.RM_ARENA_BYTES // 2, "reference arena looks empty — staging is broken"
-    assert wrong == 0, f"remaster's unpack diverges from recreate on {wrong} bytes"
+    if diff:
+        first = diff[0]
+        pytest.fail(f"unpack diverges from recreate on {len(diff)} bytes; first at {first:#x} "
+                    f"in {_region_of(first)} "
+                    f"(candidate {candidate[first]:#04x} vs reference {reference[first]:#04x})")
 
 
-@pytest.mark.parametrize("region,off,length", [
-    ("graphics", al.RM_GFX_OFF, GFX_SPRITE_ARENA_BYTES),
-    ("sprite shift tables", al.RM_SCRATCH_OFF, SPRITE_SHIFT_TBL_BYTES),
-    ("course tables", al.RM_TABLES_OFF, COURSE_TABLE_BYTES),
-])
-def test_region_matches_recreate(candidate, reference, region, off, length):
-    """Spot the named regions individually, so a failure names the phase that broke it."""
-    assert candidate[off:off + length] == reference[off:off + length], f"{region} region differs"
+def test_python_constants_match_assets_h():
+    """assets_load.py mirrors include/assets.h by hand; pin the copies equal (CLAUDE.md §5).
+
+    RM_ARENA_BYTES especially: if the C grows and Python does not, the ctypes block under-allocates
+    and rm_assets_unpack writes past it — heap corruption instead of a failed assert."""
+    header = (al.adapter.REMASTER / "include" / "assets.h").read_text()
+    defines = dict(re.findall(r"^#define\s+(RM_\w+)\s+(0x[0-9a-fA-F]+)\s*(?:/\*.*)?$", header, re.M))
+    assert defines, "no RM_* literal defines found — has assets.h moved?"
+    for name, literal in defines.items():
+        mirrored = getattr(al, name, None)
+        if mirrored is not None:
+            assert mirrored == int(literal, 16), f"{name}: python {mirrored:#x} != assets.h {literal}"
+    # RM_GFX_READ_MAX is computed in both places; check the arithmetic agrees.
+    assert al.RM_GFX_READ_MAX == al.RM_ARENA_BYTES - al.RM_GFX_OFF - al.RM_GFX_LOAD_OFF

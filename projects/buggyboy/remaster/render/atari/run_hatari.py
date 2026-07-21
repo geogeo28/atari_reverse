@@ -32,16 +32,21 @@ SCREEN_BYTES = W * H * 4 // 8                             # 32000
 RUN_VBLS = "4000"
 
 
-DATA_FILES = ("COURSES.DAT", "GRAPHICS.GRA")               # the demo loads these itself at boot
+# .PRGs that load the game's data files themselves at boot, and so need them on the drive. HUD.PRG
+# does not — and build.sh never stages them — so requiring them for every .PRG would break the
+# documented `build.sh && run_hatari.py` flow on a clean checkout (disk/ is gitignored).
+DATA_FILES = ("COURSES.DAT", "GRAPHICS.GRA")
+NEEDS_DATA_FILES = ("DEMO.PRG",)
 
 
 def run(prg, timeout=60):
     hatari, rom = tos_probe.find_hatari(), tos_probe.find_tos_rom()
     if not (hatari and rom):
         raise RuntimeError("Hatari or TOS ROM not available (brew install hatari)")
+    staged = (prg, *DATA_FILES) if prg in NEEDS_DATA_FILES else (prg,)
     with tempfile.TemporaryDirectory() as d:
         drive = Path(d)
-        for name in (prg, *DATA_FILES):
+        for name in staged:
             (drive / name).write_bytes((HERE / "disk" / name).read_bytes())
         out = drive / "SCREEN.BIN"
         env = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}

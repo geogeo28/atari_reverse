@@ -78,21 +78,38 @@ void rm_arena_init(RmArena *arena, uint8_t *block) {
  * itself, which is how those two values appear as literals. Any other word is a literal. The stream
  * ends at a 0x1234 immediately followed by RLE_END.
  *
- * `dst` trails `src` by 0x1a050 bytes and the whole stream expands by less than that, so the write
- * cursor never overtakes the read cursor — which is why the decode can run in place. */
-static void rle_decode(const uint8_t *src, uint8_t *dst) {
+ * `dst` trails `src` by 0x1a050 bytes and a well-formed stream expands by less than that, so the
+ * write cursor never overtakes the read cursor — which is why the decode can run in place.
+ *
+ * Both ends are bounded because the terminator is the ONLY thing that stops this loop: a truncated
+ * or foreign file simply has none, and unbounded that walks straight out of the arena. Returns
+ * false if the stream runs out before terminating, or if it would expand past `dst_end`.
+ *
+ * Of the two, `src_end` is the one that fires in practice. Because the decode is in place with dst
+ * BELOW src, a stream that expands wildly overwrites its own remaining input long before the output
+ * cursor could reach dst_end; the corrupted input then degenerates into literals and runs out. (An
+ * experiment with the output bound removed confirmed this: an all-fill-run stream stopped on src
+ * exhaustion at 211068 of 256000 output bytes.) The dst_end test stays as the guard for the case
+ * that ordering does not cover — a stream that is nearly all literals and tips over the end. */
+static bool rle_decode(const uint8_t *src, const uint8_t *src_end,
+                       uint8_t *dst, const uint8_t *dst_end) {
     for (;;) {
+        if (src + 2 > src_end) return false;
         uint16_t word = be16(src); src += 2;
-        if (word == RLE_ZERO_RUN && be32(src) == RLE_END) return;
+        if (word == RLE_ZERO_RUN && src + 4 <= src_end && be32(src) == RLE_END) return true;
         if (word != RLE_ZERO_RUN && word != RLE_FF_RUN) {
+            if (dst + 2 > dst_end) return false;
             wr16(dst, word); dst += 2;                       /* literal */
             continue;
         }
+        if (src + 2 > src_end) return false;
         uint16_t fill = (word == RLE_FF_RUN) ? 0xffff : 0x0000;
         uint16_t count = be16(src); src += 2;
         if (count == 0) {
+            if (dst + 2 > dst_end) return false;
             wr16(dst, word); dst += 2;                       /* escaped marker-as-literal */
         } else {
+            if (dst + 2 * ((uint32_t)count + 1) > dst_end) return false;
             for (uint32_t i = 0; i <= count; i++) { wr16(dst, fill); dst += 2; }
         }
     }
@@ -178,13 +195,19 @@ static void build_mask_shifts(const uint8_t *header, uint8_t *scratch,
     }
 }
 
-void rm_assets_unpack(RmArena *arena) {
+bool rm_assets_unpack(RmArena *arena, uint32_t gfx_bytes) {
     uint8_t *gfx = arena->gfx;
     uint8_t *scratch = arena->scratch;
     uint8_t *header = arena->aux + GFX_HEADER_STASH_OFF;
 
+    /* The stream starts past the header, and phase C moves GFX_DECODED_BYTES up from `scratch`, so
+     * that is exactly how much output room the decode may use. */
+    if (gfx_bytes < GFX_RLE_SRC_OFF - RM_GFX_LOAD_OFF) return false;
+    const uint8_t *src = gfx + GFX_RLE_SRC_OFF;
+    const uint8_t *src_end = gfx + RM_GFX_LOAD_OFF + gfx_bytes;
+
     memcpy(header, gfx + RM_GFX_LOAD_OFF, GFX_HEADER_BYTES);                        /* A */
-    rle_decode(gfx + GFX_RLE_SRC_OFF, scratch);                                     /* B */
+    if (!rle_decode(src, src_end, scratch, scratch + GFX_DECODED_BYTES)) return false;  /* B */
     memmove(gfx, scratch, GFX_DECODED_BYTES);                                       /* C */
     deinterleave_screens(gfx, scratch);                                             /* D */
     compact_pairs(gfx);                                                             /* E */
@@ -193,4 +216,5 @@ void rm_assets_unpack(RmArena *arena) {
     for (unsigned i = 0; i < GFX_MSK_BUILD_COUNT; i++)                              /* H */
         build_mask_shifts(header, scratch, GFX_MSK_BUILDS[i].dst_off,
                           GFX_MSK_BUILDS[i].src_off, GFX_MSK_BUILDS[i].count_m1);
+    return true;
 }

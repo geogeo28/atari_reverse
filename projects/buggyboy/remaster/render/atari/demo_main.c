@@ -281,11 +281,15 @@ static void dump_frame(Framebuffer *fb) {
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, fb->px); Fclose((short)h); }
 }
 
-/* Read a file into `dst`, at most `max` bytes. Returns the byte count, or -1 if it won't open. */
+/* Read a file into `dst`, at most `max` bytes. Returns the byte count, or -1 if it won't open.
+ *
+ * The handle test is `<= 0`, not `< 0`: GEMDOS reserves 0/1/2 for con/aux/prn and never returns
+ * them from a successful Fopen, and handle 0 is a failure this project has actually hit — see the
+ * ordering note at the top of os.s. Treating it as valid means Fread reads the KEYBOARD. */
 #define FOPEN_READ_ONLY 0
 static long read_file(const char *name, uint8_t *dst, long max) {
     long handle = Fopen(name, FOPEN_READ_ONLY);
-    if (handle < 0) return -1;
+    if (handle <= 0) return -1;
     long got = Fread((short)handle, max, dst);
     Fclose((short)handle);
     return got;
@@ -294,22 +298,29 @@ static long read_file(const char *name, uint8_t *dst, long max) {
 /* Load the game's own data files and unpack the graphics — everything the render pipeline draws
  * from. Both must sit next to the .PRG.
  *
- * The sizes are checked, not assumed: the RLE decoder trusts its stream to be terminated, so a
- * truncated or wrong GRAPHICS.GRA would walk the decode off the end of the arena. COURSES.DAT is
- * read with a count equal to its exact size, so any other result is definitive; GRAPHICS.GRA is
- * read with a count deliberately larger than the file, so it can only be floored. Returns 0 after
- * naming the file at fault. */
+ * COURSES.DAT is read with a count equal to its exact size, so anything else is definitively the
+ * wrong file. GRAPHICS.GRA has no such pin, so it is read with a count the arena can actually hold
+ * (RM_GFX_READ_MAX — a larger count would let the READ itself overrun before any check runs) and
+ * only floored here; the real protection against a truncated or foreign file is that the unpack
+ * is bounded and reports failure, which no size heuristic could do on its own.
+ *
+ * Returns 0 after naming the file at fault. NOTE: Cconws writes to the ST console, so under
+ * headless Hatari the message is invisible and the only symptom is a missing SCREEN.BIN. */
 static int load_assets(RmArena *arena) {
     rm_arena_init(arena, arena_block);
     if (read_file("COURSES.DAT", arena->course, RM_COURSE_FILE_BYTES) != RM_COURSE_FILE_BYTES) {
         Cconws("COURSES.DAT missing or wrong size\r\n");
         return 0;
     }
-    if (read_file("GRAPHICS.GRA", arena->gfx + RM_GFX_LOAD_OFF, RM_GFX_FILE_MAX) < RM_GFX_FILE_MIN) {
+    long gfx_bytes = read_file("GRAPHICS.GRA", arena->gfx + RM_GFX_LOAD_OFF, RM_GFX_READ_MAX);
+    if (gfx_bytes < RM_GFX_FILE_MIN) {
         Cconws("GRAPHICS.GRA missing or too short\r\n");
         return 0;
     }
-    rm_assets_unpack(arena);
+    if (!rm_assets_unpack(arena, (uint32_t)gfx_bytes)) {
+        Cconws("GRAPHICS.GRA is corrupt (unpack failed)\r\n");
+        return 0;
+    }
     return 1;
 }
 

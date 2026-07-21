@@ -25,7 +25,11 @@ CC=m68k-elf-gcc
 CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
         ${DEMO_EXTRA_CFLAGS:-}"
-CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c $REMASTER/src/blit.c $REMASTER/src/object_list.c $REMASTER/src/gameplay.c $REMASTER/src/player.c $REMASTER/src/assets.c"
+CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
+       $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c \
+       $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c \
+       $REMASTER/src/blit.c $REMASTER/src/object_list.c $REMASTER/src/gameplay.c \
+       $REMASTER/src/player.c $REMASTER/src/assets.c"
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \

@@ -14,7 +14,6 @@ from pathlib import Path
 
 import adapter
 
-LIBREMASTER = adapter.REMASTER / "build" / "libremaster.so"
 DATA_DIR = adapter.harness.PRG.parent                # projects/buggyboy/bin — the original files
 
 # Mirror include/assets.h. test_assets.py pins these against recreate's own layout constants.
@@ -26,6 +25,7 @@ RM_GFX_OFF = 0x1C660
 RM_AUX_OFF = 0x57000
 RM_COURSE_FILE_BYTES = 0xF660
 RM_GFX_LOAD_OFF = 0xC350
+RM_GFX_READ_MAX = RM_ARENA_BYTES - RM_GFX_OFF - RM_GFX_LOAD_OFF
 
 class RmArena(ctypes.Structure):
     """Mirror include/assets.h's RmArena exactly — rm_arena_init writes every field, so a missing
@@ -36,11 +36,11 @@ class RmArena(ctypes.Structure):
 
 def fresh_arena(data_dir: Path = DATA_DIR) -> bytes:
     """Load both data files into a zeroed arena and unpack — exactly what the game does at boot."""
-    lib = ctypes.CDLL(str(LIBREMASTER))
+    lib = ctypes.CDLL(str(adapter.LIBREMASTER))
     lib.rm_arena_init.argtypes = [ctypes.POINTER(RmArena), ctypes.POINTER(ctypes.c_uint8)]
     lib.rm_arena_init.restype = None
-    lib.rm_assets_unpack.argtypes = [ctypes.POINTER(RmArena)]
-    lib.rm_assets_unpack.restype = None
+    lib.rm_assets_unpack.argtypes = [ctypes.POINTER(RmArena), ctypes.c_uint32]
+    lib.rm_assets_unpack.restype = ctypes.c_bool
 
     block = (ctypes.c_uint8 * RM_ARENA_BYTES)()      # zero-filled, as the game's Malloc'd block is
     arena = RmArena()
@@ -48,9 +48,12 @@ def fresh_arena(data_dir: Path = DATA_DIR) -> bytes:
 
     courses = (data_dir / "COURSES.DAT").read_bytes()
     graphics = (data_dir / "GRAPHICS.GRA").read_bytes()
+    # Bound both copies: memmove past the ctypes buffer corrupts the CPython heap, which surfaces as
+    # a segfault or a silently wrong golden rather than a failed assertion.
     assert len(courses) == RM_COURSE_FILE_BYTES, "COURSES.DAT is read whole; its size is the count"
+    assert len(graphics) <= RM_GFX_READ_MAX, f"GRAPHICS.GRA is {len(graphics)}B; arena holds {RM_GFX_READ_MAX}B"
     ctypes.memmove(ctypes.byref(block, RM_COURSE_OFF), courses, len(courses))
     ctypes.memmove(ctypes.byref(block, RM_GFX_OFF + RM_GFX_LOAD_OFF), graphics, len(graphics))
 
-    lib.rm_assets_unpack(ctypes.byref(arena))
+    assert lib.rm_assets_unpack(ctypes.byref(arena), len(graphics)), "rm_assets_unpack rejected the stream"
     return bytes(block)

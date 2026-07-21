@@ -21,14 +21,13 @@ import ctypes
 import adapter
 import bench_frame                                # recreate's realistic mid-race staging
 
-LIBREMASTER = adapter.REMASTER / "build" / "libremaster.so"
 
 # recreate render pipeline stages that draw the pre-HUD frame (background the HUD overlays).
 PRE_HUD_PIPELINE = ("g_render_road", "g_blit_road_scroll", "g_draw_game_objects")
 
 
 def _lib():
-    lib = ctypes.CDLL(str(LIBREMASTER))
+    lib = ctypes.CDLL(str(adapter.LIBREMASTER))
     lib.rm_draw_hud.argtypes = [ctypes.POINTER(adapter.HudState),
                                 ctypes.POINTER(adapter.HudAssets),
                                 ctypes.POINTER(adapter.Framebuffer)]

@@ -36,7 +36,7 @@ def _lib():
 
 
 def equiv_lib_path():
-    return adapter.REMASTER / "build" / "libremaster.so"
+    return adapter.LIBREMASTER
 
 
 def _bind_ref():
