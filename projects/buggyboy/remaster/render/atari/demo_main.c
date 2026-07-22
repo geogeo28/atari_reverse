@@ -60,7 +60,9 @@ extern long Fclose(short handle);
 extern long Cconws(const char *s);
 extern void Vsync(void);
 extern long Setscreen(long logLoc, long physLoc, short rez);   /* flip the video base (latches at vblank) */
+extern long Physbase(void);                                    /* current video base (to restore on exit) */
 extern void Setpalette(const void *pal16);
+extern long Setcolor(short idx, short color);                  /* color -1 reads a register without writing */
 extern long Setexc(short number, long vector);
 extern void Ikbdws(short count_m1, const void *buf);
 
@@ -529,11 +531,15 @@ void main(void) {
     };
     PlayerState player = player_init;
 
+    uint16_t tos_palette[16];    /* the desktop's colours — restored on exit alongside its video base */
+    for (int reg = 0; reg < 16; reg++) tos_palette[reg] = (uint16_t)Setcolor((short)reg, -1);
     Setpalette(fixture_palette);
     rm_scroll_prebuild(arena.gfx + ARENA_SCROLL_PLAY_OFF, shifted);   /* pre-rotate the playfield once (screen_offset is fixed) */
     int shown = 0;
     draw_frame(screen_buf(shown), &pose, &src, &ring, &road, &scroll, &hud, &assets, &pfx, &pfx_assets,
                &ground_mut, &ground_assets, &sprite, &sprite_assets, &object, &objlist, low);
+    long tos_screen = Physbase();   /* the desktop's video base — restored on exit or the shifter
+                                     * keeps showing our last frame while GEM redraws into TOS's buffer */
     Setscreen(-1L, (long)screen_buf(shown)->px, -1);   /* show the first frame */
     Vsync();
 
@@ -596,6 +602,9 @@ void main(void) {
 #endif
     }
     kbd_remove(old_kbd_vector);
+    Setscreen(-1L, tos_screen, -1);
+    Setpalette(tos_palette);
+    Vsync();
 #ifdef DEMO_KEYLOG
     keylog_dump(frame_count);
 #endif

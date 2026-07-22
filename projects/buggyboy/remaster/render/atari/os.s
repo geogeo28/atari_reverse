@@ -130,6 +130,18 @@ Setpalette:
     lea     6(%sp),%sp
     rts
 
+| long Setcolor(short idx, short color)   XBIOS 7 (color -1 reads without writing; returns the old value)
+    .globl  Setcolor
+Setcolor:
+    move.w  10(%sp),%d1         | color (low word of the int arg)
+    move.w  6(%sp),%d0          | index (low word of the int arg)
+    move.w  %d1,-(%sp)
+    move.w  %d0,-(%sp)
+    move.w  #7,-(%sp)
+    trap    #14
+    addq.l  #6,%sp
+    rts
+
 | long Setscreen(long logLoc, long physLoc, short rez)   XBIOS 5 (rez/-1 leaves it; latches at vblank)
     .globl  Setscreen
 Setscreen:

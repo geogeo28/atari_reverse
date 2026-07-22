@@ -95,13 +95,9 @@ keep it honest, because no ctrl comparison can see an under-sized pad (they all 
 copies equal, and `test_geometry.test_stamp_spill_stays_within_alloc` poison-pins the pad to the
 stamp's measured write extent per view bank.
 
-### Known, diagnosed, not yet fixed
-
-**Esc freezes the picture instead of returning to the desktop.** The program *has* exited; the demo
-points the video base at its own buffers with `Setscreen` and never restores the original, so the
-shifter still shows the last frame while the desktop redraws into TOS's buffer. Fix: capture
-`Physbase()` before the first `Setscreen` and restore it on exit. `Physbase` is already declared in
-`os.s` and simply unused.
+**Esc returning to a frozen picture** is fixed: the demo captures `Physbase()` and the 16 palette
+registers (`Setcolor(reg, -1)`) before taking the screen, and restores both on exit — base only
+would hand back a desktop drawn in the racing palette.
 
 ### Two dead ends — do not repeat them
 
