@@ -97,6 +97,8 @@ def _lib():
     lib.rm_course_events.restype = None
     lib.rm_course_probe.argtypes = [ectx]
     lib.rm_course_probe.restype = None
+    lib.rm_crash_fx_update.argtypes = [ectx]
+    lib.rm_crash_fx_update.restype = None
     lib.rm_event_classify.argtypes = [ctypes.c_uint16]
     lib.rm_event_classify.restype = ctypes.c_uint32
     return lib
@@ -107,6 +109,13 @@ def _bind(name):
     fn.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
     fn.restype = None
     return fn
+
+
+# g_draw_crash_fx(image, draw buffer): recreate's HUD phase-8 tally, bound once here (it is called per
+# tally frame by _ref_crash_fx / the leg drive, so the signature is not rebound at each call site).
+_g_draw_crash_fx = bench_frame.harness._lib.g_draw_crash_fx
+_g_draw_crash_fx.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+_g_draw_crash_fx.restype = None
 
 
 def _run_pipeline(state, names):
@@ -943,6 +952,23 @@ def _i16s(state, addr):
     return v - 0x10000 if v & 0x8000 else v
 
 
+def _ref_crash_fx(state):
+    """Reference side of HUD phase 8 (recreate hud.c:323-330): once armed, hud_crash_timer decays each
+    frame and — once negative — g_draw_crash_fx runs the leg-end tally (drain -> score, arm abort_flag).
+    The leg-drive harness omits the render, so this drives the crash-fx STATE side explicitly, exactly
+    as draw_hud would after game_update. The candidate's counterpart is rm_crash_fx_update (in step)."""
+    t = _i16s(state, adapter.A_hud_crash_timer)
+    if t == 0:
+        return
+    if t < 0:
+        flip = _r16(state, adapter.A_flip_idx)
+        buffer = int.from_bytes(
+            state[adapter.A_physbase_tbl + flip:adapter.A_physbase_tbl + flip + 4], "big")
+        _g_draw_crash_fx((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state), buffer)
+    else:
+        _w16(state, adapter.A_hud_crash_timer, (t - adapter.RM_HUD_CRASH_DECAY) & 0xffff)
+
+
 RING_ANIM_CODES = frozenset({0x0d, 0x10, 0x13, 0x16})   # each implies its two successors
 RING_ECHOED_CODE = 0x2e          # slot 1 carrying this is echoed into slot 13
 RING_ECHO_FROM, RING_ECHO_TO = 1, 13
@@ -1135,6 +1161,9 @@ class _Candidate:
             self.lib.rm_course_events(ctypes.byref(self.ctx))      # §G/§H/§I: arm crashes + deliver events
         self.scroll.seg_head = self.pose.seg_head
         self.lib.rm_blit_road_scroll(ctypes.byref(self.scroll), self.shifted, ctypes.byref(self.fb))
+        # HUD phase 8 (draw_hud runs after game_update): decay the crash-arm timer, or once negative run
+        # the leg-end tally that arms abort_flag. The persistent state side; the draw is not in this loop.
+        self.lib.rm_crash_fx_update(ctypes.byref(self.ctx))
 
 
 def compare_leg_drive(lib, image, inputs):
@@ -1174,7 +1203,8 @@ def compare_leg_drive(lib, image, inputs):
     cand = _Candidate(lib, state)
 
     stats = dict(frames=len(inputs), wraps=0, armed=0, crash_frames=0, handoffs=0, checkpoints=0,
-                 leg_end=0, clamp=0, offroad=0, ring_checked=0, ring_refills=0, ring_ages=0,
+                 leg_end=0, abort_armed=0, leg_over=0, clamp=0, offroad=0, ring_checked=0,
+                 ring_refills=0, ring_ages=0,
                  ring_anim_visible=0, ring_marker_right=0, ring_echoes=0, ring_edge_bands=0)
     mismatches = []
     for frame, in_bits in enumerate(inputs):
@@ -1188,9 +1218,13 @@ def compare_leg_drive(lib, image, inputs):
         _w16(state, adapter.A_input_state, in_bits)
         game_update(buf)
         _run_pipeline(state, ("g_blit_road_scroll",))
+        _ref_crash_fx(state)                                      # HUD phase 8 (mirrors cand.step's tail)
 
         # Stats reflect what the CANDIDATE (running the real event engine) did, not a handover.
         stats["wraps"] += _r16(state, adapter.A_view_wrap_flag) != 0
+        abort = cand.ev.abort_flag - 0x10000 if cand.ev.abort_flag & 0x8000 else cand.ev.abort_flag
+        stats["abort_armed"] += cand.ev.abort_flag != 0
+        stats["leg_over"] += abort < 0                             # abort_flag negative -> leg ends
         stats["armed"] += was_locked == 0 and cand.player.collision_lock != 0   # candidate armed a crash
         stats["crash_frames"] += cand.player.collision_lock != 0
         stats["handoffs"] += was_locked != 0 and cand.player.collision_lock == 0
@@ -1268,6 +1302,8 @@ EVENT_EV_FIELDS = (
     ("gauge_blink_on", adapter.A_gauge_blink_on, False),
     ("ckpt_scroll", adapter.A_ckpt_scroll, False),
     ("spin_state", adapter.A_spin_state, False),
+    ("crash_frame", adapter.A_crash_frame, False),   # crash-fx tally counter (rm_crash_fx_update)
+    ("abort_flag", adapter.A_abort_flag, False),      # leg/game-over countdown (< 0 ends the leg)
 )
 EVENT_GOBJ_FIELDS = (
     ("flag_seq_count", adapter.A_flag_seq_count, True),
@@ -1399,6 +1435,21 @@ def compare_course_events(lib, image):
     _bind("g_game_update_fx_and_events")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
     b = adapter.event_ctx(image)
     lib.rm_course_events(ctypes.byref(b.ctx))
+    return _event_mismatches(b, ref, check_ctrl=True, check_gfx=True)
+
+
+def compare_crash_fx(lib, image):
+    """Run recreate's HUD phase 8 (decay hud_crash_timer, or once negative g_draw_crash_fx's leg-end
+    tally — see _ref_crash_fx) and remaster's rm_crash_fx_update on the same staged image, then compare
+    every owned location: the crash-fx PlayerState scalars (hud_crash_timer / time_left), the EventState
+    counters (crash_frame / crash_lap / crash_active / crash_bars / abort_flag), and the whole HUD-text
+    window (the rollover records + score digits + the score/lap display lines the tally rewrites). The
+    ring / ctrl / gfx / gobj surfaces are compared too (the tally must not touch them). Returns
+    mismatches."""
+    ref = bytearray(image)
+    _ref_crash_fx(ref)
+    b = adapter.event_ctx(image)
+    lib.rm_crash_fx_update(ctypes.byref(b.ctx))
     return _event_mismatches(b, ref, check_ctrl=True, check_gfx=True)
 
 

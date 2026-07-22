@@ -595,3 +595,84 @@ void rm_course_events(RmEventCtx *c) {
 
     course_markers(c);                                         /* I */
 }
+
+/* ---- crash / end-of-race tally: HUD phase 8 timer + draw_crash_fx's STATE side (@0x15872) ---- */
+
+/* The two add_score deltas the tally drains one per frame both live in the shared score_deltas window
+ * (0x1736a): the time drain uses 0x1737c (== RM_EVT_SCORE_B), the bonus-unit / rollover drain 0x17382
+ * (== RM_EVT_SCORE_C). Named here for their crash-tally role, aliasing the one source of truth. */
+#define CRASH_DELTA_TIME_OFF RM_EVT_SCORE_B
+#define CRASH_DELTA_ROLL_OFF RM_EVT_SCORE_C
+#define CRASH_ABORT_DECAY    2     /* abort_flag drains by 2 each tally frame until it goes negative */
+#define CRASH_SCORE_LINE_OFF 0x7e  /* HUD score line (0x181f0) <- the live score long */
+#define CRASH_SCORE_SRC_OFF  0xd4  /* score long copied into the HUD score line (0x18246) */
+
+/* The rollover walk shared with hud.c's draw (declared in game.h) — one definition, both call sites. */
+bool rm_crash_rollover_step(uint8_t *text, uint16_t crash_bars) {
+    for (int i = (int)crash_bars - 1, off = RM_CRASH_ROLLOVER_OFF; i >= 0;
+         i--, off += RM_CRASH_ROLL_STRIDE) {
+        if ((uint8_t)(RM_CRASH_ROLL_TARGET - text[off - 1] - text[off]) != 0) {
+            if (text[off] == RM_CRASH_ROLL_HI) {
+                text[off] -= RM_CRASH_ROLL_STEP;               /* tens rolled over: reset the ones */
+            } else {
+                text[off] += RM_CRASH_ROLL_STEP;
+                text[off - 1] -= 1;                            /* carry into the tens digit */
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Drain one bonus unit this frame — time_left first, then the bonus-unit count (crash_lap), then the
+ * score-digit rollover records — returning the add_score delta offset, or -1 if nothing was left. The
+ * caller arms abort_flag when this reports nothing to drain. */
+static int crash_drain_one(RmEventCtx *c) {
+    PlayerState *p = c->player;
+    EventState  *ev = c->ev;
+    if (p->time_left != 0) {
+        p->time_left = (int16_t)(p->time_left - 1);
+        return CRASH_DELTA_TIME_OFF;
+    }
+    if (ev->crash_lap != 0) {
+        ev->crash_lap = (uint16_t)(ev->crash_lap - 1);
+        return CRASH_DELTA_ROLL_OFF;
+    }
+    if (rm_crash_rollover_step(c->hud_text, ev->crash_bars)) return CRASH_DELTA_ROLL_OFF;
+    return -1;
+}
+
+void rm_crash_fx_update(RmEventCtx *c) {
+    PlayerState *p = c->player;
+    EventState  *ev = c->ev;
+
+    if (p->hud_crash_timer == 0) return;
+    if (p->hud_crash_timer > 0) {                              /* phase 8: still counting down to the tally */
+        p->hud_crash_timer = (int16_t)(p->hud_crash_timer - RM_HUD_CRASH_DECAY);
+        return;
+    }
+    if (ev->crash_active == 0) {                              /* nothing to tally: straight to game over */
+        ev->abort_flag = RM_ABORT_GAME_OVER;
+        return;
+    }
+
+    ev->crash_frame = (uint16_t)(ev->crash_frame + 1);
+    if ((int16_t)ev->crash_frame >= RM_CRASH_FRAME_MIN) {
+        int delta_off = crash_drain_one(c);
+        if (delta_off >= 0) {
+            rm_score_add(c->hud_text + RM_HUD_SCORE_BCD_OFF, c->hud_text + RM_HUD_SCORE_STR_OFF,
+                         c->assets->score_deltas + delta_off, c->game_over);
+            /* stop_music on the drained unit: off-frame sound, skipped */
+        } else if (ev->abort_flag == 0) {
+            ev->abort_flag = RM_ABORT_BONUS_DONE;             /* bonus exhausted: begin the abort countdown */
+        }
+    }
+
+    /* Persistent HUD-text lines the tally refreshes every frame it runs (draw_crash_fx @0x158fc): the
+     * score-display long and the lap digit. */
+    wr32(c->hud_text + CRASH_SCORE_LINE_OFF, be32(c->hud_text + CRASH_SCORE_SRC_OFF));
+    c->hud_text[RM_CRASH_HUD_LAP_OFF] = (uint8_t)('0' + ev->crash_lap);
+
+    if (ev->abort_flag != 0)
+        ev->abort_flag = (uint16_t)(ev->abort_flag - CRASH_ABORT_DECAY);    /* decays -> negative */
+}

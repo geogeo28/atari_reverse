@@ -152,7 +152,8 @@ def test_python_constants_match_the_c():
     counters silently count the wrong branch, so the hard-to-reach tests above would assert on a
     stale predicate and report coverage that never happened."""
     game_h = _defines("include/game.h",
-                      r"^#define\s+(RM_RING_\w+|EDGE_\w+|RM_CTRL_\w+|RM_SCANLINE_\w+|RM_HUD_TIMER_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+                      r"^#define\s+(RM_RING_\w+|EDGE_\w+|RM_CTRL_\w+|RM_SCANLINE_\w+|RM_HUD_TIMER_\w+"
+                      r"|RM_HUD_CRASH_\w+|RM_CRASH_\w+)\s+(\w+)\s*(?:/\*.*)?$")
     assert {"RM_RING_ROWS", "RM_RING_SLOTS"} <= game_h.keys(), "ring geometry moved out of game.h"
     assert equiv.adapter.RM_RING_ROWS == game_h["RM_RING_ROWS"]
     assert equiv.adapter.RM_RING_SLOTS == game_h["RM_RING_SLOTS"]
@@ -162,6 +163,13 @@ def test_python_constants_match_the_c():
     # The leg-complete sentinel §I stamps into hud_crash_timer, mirrored in adapter.py for the leg
     # drive's leg_end detector (equiv.compare_leg_drive) — pin the Python copy equal to the C.
     assert equiv.adapter.RM_HUD_TIMER_LEG_END == game_h["RM_HUD_TIMER_LEG_END"]
+
+    # The crash-fx tally constants mirrored in adapter.py (RM_HUD_CRASH_DECAY for the leg-drive phase-8
+    # reference, the rollover layout for test_crash_fx's directed cases) — pin each Python copy to the C.
+    assert equiv.adapter.RM_HUD_CRASH_DECAY == game_h["RM_HUD_CRASH_DECAY"]
+    assert equiv.adapter.RM_CRASH_ROLLOVER_OFF == game_h["RM_CRASH_ROLLOVER_OFF"]
+    assert equiv.adapter.RM_CRASH_ROLL_STRIDE == game_h["RM_CRASH_ROLL_STRIDE"]
+    assert equiv.adapter.RM_CRASH_ROLL_TARGET == game_h["RM_CRASH_ROLL_TARGET"]
 
     # The control-table geometry, incl. the ALLOC spill pad: a drifted copy here under-allocates the
     # ctypes ctrl buffer and the C spill corrupts the interpreter heap with the suite still green

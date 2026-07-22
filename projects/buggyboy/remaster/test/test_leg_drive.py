@@ -95,6 +95,69 @@ def test_spin_arming_reaches_both_outcomes(capsys):
     assert totals["settled"] > 0, f"no case ever settled — the settle branch is untested: {totals}"
 
 
+# A leg that idles to the bonus-clock time-out, then ends. The clock is shortened (a leg really starts
+# at 0x46, one unit per 0xb frames — measured, not guessed) so the drive is quick; the input idles (no
+# throttle) so nothing moves and the time-out is the only thing that fires. The slower (bonus-tally)
+# path reaches leg end by ~124 frames (the timeout path by ~71); 140 clears both with a small margin.
+LEG_END_FRAMES = 140
+
+
+@pytest.mark.parametrize("leg", [0, 1])
+def test_leg_ends_on_timeout(leg, capsys):
+    """The first organic leg END: idle until §4 arms hud_crash_timer (0x5b) at the time-out, HUD phase
+    8 decays it, and once negative the crash-fx tally — with no crash active — arms abort_flag = 0xffff,
+    which the frame loop reads as the leg's end. Driven free-running on both sides; the candidate arms
+    abort on the same frame the reference does (abort_flag / crash_frame compared every frame)."""
+    lib = equiv._lib()
+    image = equiv.leg_start_background(leg)
+    equiv._w16(image, adapter.A_time_left, 6)
+    mismatches, stats = equiv.compare_leg_drive(lib, image, [0] * LEG_END_FRAMES)
+    with capsys.disabled():
+        print(f"  leg={leg}: {stats}")
+    assert not mismatches, "leg-end timeout drive diverged from recreate: " + "; ".join(
+        f"frame {f} {name}: candidate {c} != recreate {r}" for f, name, c, r in mismatches[:8])
+    assert stats["abort_armed"] > 0, f"abort_flag never armed — the tally never ran: {stats}"
+    assert stats["leg_over"] > 0, f"the leg never ended (abort_flag never went negative): {stats}"
+
+
+@pytest.mark.parametrize("leg", [0, 1])
+def test_leg_ends_via_bonus_tally(leg, capsys):
+    """The bonus-tally path to leg end: same time-out, but with a crash tally active. Once the timer
+    goes negative the tally drains what little is left, arms the 0x33 abort countdown, and decays it
+    past zero to end the leg — the drain -> 0x33 -> countdown branch, free-running under strict
+    comparison every frame."""
+    lib = equiv._lib()
+    image = equiv.leg_start_background(leg)
+    equiv._w16(image, adapter.A_time_left, 3)
+    equiv._w16(image, adapter.A_crash_active, 1)
+    mismatches, stats = equiv.compare_leg_drive(lib, image, [0] * LEG_END_FRAMES)
+    with capsys.disabled():
+        print(f"  leg={leg}: {stats}")
+    assert not mismatches, "bonus-tally leg-end drive diverged from recreate: " + "; ".join(
+        f"frame {f} {name}: candidate {c} != recreate {r}" for f, name, c, r in mismatches[:8])
+    assert stats["abort_armed"] > 0, f"abort_flag never armed — the tally never ran: {stats}"
+    assert stats["leg_over"] > 0, f"the leg never ended (abort_flag never went negative): {stats}"
+
+
+@pytest.mark.parametrize("leg", [0, 1])
+def test_section1_clears_pending_marker(leg, capsys):
+    """§1's marker gate closes the raise/consume loop: a marker the crash script raised one frame must
+    be CONSUMED (marker_pending cleared) the next. Staged by poking marker_pending nonzero at a leg
+    start and idling (so §6 never re-arms it): recreate's §1 zeroes it, and the candidate must too —
+    without apply_marker_gate the candidate keeps the stale marker while the reference clears it, a
+    mismatch this drive fails on (mutation-verified). The leg drives above never organically hit the
+    raise-then-idle sequence, so this pins the branch they leave dead."""
+    lib = equiv._lib()
+    image = equiv.leg_start_background(leg)
+    assert image[adapter.A_marker_pending] == 0, "expected a clean leg start"
+    image[adapter.A_marker_pending] = 0x05                     # a raised marker awaiting §1's consume
+    mismatches, _stats = equiv.compare_leg_drive(lib, image, [0] * 4)
+    with capsys.disabled():
+        print(f"  leg={leg}: {len(mismatches)} mismatches")
+    assert not mismatches, "the pending-marker gate diverged from recreate: " + "; ".join(
+        f"frame {f} {name}: candidate {c} != recreate {r}" for f, name, c, r in mismatches[:8])
+
+
 @pytest.mark.parametrize("leg", [0, 1, 4])
 def test_crash_script_plays_out_and_returns_control(leg, capsys):
     """The point of §6: a crash the course threw at us must play out frame for frame and then GIVE THE

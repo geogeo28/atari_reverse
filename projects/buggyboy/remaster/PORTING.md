@@ -44,7 +44,7 @@ self-driving game has. Three traps it cost real time to find:
 
 ## State of play — read this first if you are picking the work up
 
-Last verified: 2026-07-22. `make test` = **408 passed, 1 skipped**; `run_demo.py` = **MATCH**. Section 12's **object / marker
+Last verified: 2026-07-22. `make test` = **427 passed**; `run_demo.py` = **MATCH**. Section 12's **object / marker
 ring** is ported (`CourseRing` in `include/game.h`, `rm_road_course_advance` in `src/course.c`) and
 its four aliased consumers are unified onto it (see below). **Slice 2 is done**: the course-event
 engine is wired into `rm_player_update`'s §6 event path and the frame loop (leg drive + demo), the
@@ -66,10 +66,22 @@ fresh) → `rm_course_events` — after clearing `event_pending` (recreate `game
 leg-drive crash handover is gone: the candidate arms its own crashes and every field (all 14 ring
 bands, EventState, the GobjPrefixState counters, the HUD-text score) is compared strictly.
 
-Still unported (documented at each call site, per convention): off-frame sound (INITTUNE/INITFX/
-TURNOFF, the VBL vector); the record-driven mode-2/4/6 palette / screen-offset events in
-`game_update_course_advance`'s tail; and the leg/game flow (`g_game_update` §1,2 + whatever consumes
-`hud_crash_timer == 0x65`) that a finished leg would hand off to — so a leg still does not *end* here.
+The leg/game-flow CORE landed (slice 1, host-side): `g_game_update` §1's marker gate + §2's input
+capture are at the head of `rm_player_update`, and the crash / end-of-race tally (HUD phase 8's
+`hud_crash_timer` decay + `draw_crash_fx`'s STATE side) is `rm_crash_fx_update` in `src/events.c`.
+`hud.c`'s `hud_crash_fx` keeps DRAWING the tally off a throwaway HUD-text copy (pixel-verified by
+`test_hud`); the new UPDATE owns the persistent mutations — `crash_frame`, the bonus drain into the
+score, and `abort_flag` (new `EventState` field) — so a self-running leg advances and, when the bonus
+clock times out, **ends** (`abort_flag` goes negative, which the frame loop reads as the leg end).
+Pinned by `test/test_crash_fx.py` (every branch, mutation-verified) and organically by
+`test/test_leg_drive.py`'s idle-to-time-out drives.
+
+Still unported (documented at each call site, per convention): the DEMO / on-target wiring of the
+tally and the `EventState`→`HudState` view copy (**slice 2**); off-frame sound (INITTUNE/INITFX/
+TURNOFF, the VBL vector; `rev_reload` aliases `lean_frame` and is invisible to every compared
+surface — verified, not assumed); the record-driven mode-2/4/6 palette / screen-offset events in
+`game_update_course_advance`'s tail; and the intermission / `init_leg` flow the frame loop hands off
+to once `abort_flag` goes negative (`game_over_flag++` before the intermission).
 
 ### What the ring port did and did not fix
 

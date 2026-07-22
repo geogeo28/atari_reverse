@@ -78,7 +78,7 @@ game clears a bit. That bit returns on its own once the system that writes it is
 | player physics (`rm_player_update`) | `g_game_update` §3,4,5,7,8,9,10 | ✅ ported | `test/test_player.py` — every physics scalar identical to recreate frame-for-frame over 8 scripted 240-frame drives × legs 0/1/4 (throttle/brake/slalom/both locks/recentre/fire/time-out) |
 | crash / auto-steer script | `g_game_update` §6 (+ the §5/§7/§9/§10 crash branches) | ✅ ported + wired | `test/test_leg_drive.py` — free-running 600-frame drives × 4 scripts × legs 0/1/4; the candidate now runs the real event engine, so it ARMS ITS OWN crashes (no handover — see below) and every crash plays out and hands the controls back under strict comparison (up to 213 crash frames / 20 handoffs per drive) |
 | course-event engine (`rm_event_dispatch` / `rm_course_events` / `rm_course_probe`) | `g_game_update` §12 tail + the event jump table | ✅ ported (`src/events.c`) + wired | `test/test_events.py` — the jump table pinned against the image's own table at 0x11aa2; per-handler dispatch fuzzed over every idx × gate flags × collision_lock × curve sign; the composite §G/§H/§I tail vs `g_game_update_fx_and_events` over legs 0–4 × warmups (incl. the graphics arena); directed §I checkpoint/leg-end/leg-0-dashboard/collision/banner cases; the collision probe vs `g_probe_collision`; directed fx-slot-mapping + run-fill pins. **Wired** into `rm_player_update`'s §6 event path and the leg drive's wrap-frame tail (`test/test_leg_drive.py`), and into the demo (on-target autodrive trace) |
-| `game_update` (integration + sound) | `g_game_update` §1,2 + wiring | 🟨 events core WIRED end-to-end: `rm_player_update`'s §6 event path dispatches through it, the leg drive runs the real probe + fx/horizon tail (handover removed, all 14 ring bands + the event-owned state compared), and the demo calls `rm_course_probe`/`rm_course_events` on wrap frames. What remains: the sound path (INITTUNE/INITFX/TURNOFF, the VBL vector), the record-driven mode-2/4/6 palette / screen-offset events (course_advance's tail), and the leg/game flow that a finished leg hands off to (§1,2) — see below | — |
+| `game_update` (integration + sound) | `g_game_update` §1,2 + wiring | 🟨 events core WIRED end-to-end; the leg/game-flow CORE now landed (slice 1, host-side): §1's marker gate + §2's input capture (`rm_player_update`), and the crash / end-of-race tally — HUD phase 8's timer decay + `draw_crash_fx`'s STATE side — as `rm_crash_fx_update` (`src/events.c`). A leg now **ENDS**: the tally arms `abort_flag` (0xffff game-over / 0x33 bonus-exhausted, decaying negative), which the frame loop reads as the leg end. Differential-pinned by `test/test_crash_fx.py` (every branch) and organically by `test/test_leg_drive.py`'s idle-to-time-out drives. What remains: demo / on-target wiring of the tally + the `EventState`→`HudState` copy (**slice 2**); the sound path (INITTUNE/INITFX/TURNOFF, the VBL vector); the record-driven mode-2/4/6 palette / screen-offset events (course_advance's tail); and the intermission / `init_leg` flow a finished leg hands off to — see below | — |
 
 **What the player-physics slice covers** (see `include/game.h` for the state model): the engine
 rpm→speed model with its rev limiter, the road-scroll rate and the view advance whose wrap times the
@@ -105,13 +105,26 @@ probe + fx/horizon tail on every view-wrap. Consequences, all measured rather th
   HUD-text window. (The leg-2 slalom skip `test_course_ring.py` used to carry — the case the old
   0 → nonzero arming detector could not see, since recreate's rpm-penalty handler arms nothing — is
   now removed: the horizon-event dispatch is ported and the case runs with 0 mismatches.)
-- **A leg still cannot *finish* here.** The finish / checkpoint / bonus records are delivered
-  correctly (host-tested by `test_events`' directed §I cases, and the finish/bonus record's control-
-  table rebuild is reached through `rm_player_update`'s §6 path in the leg drives), but the
-  free-running 600-frame drives do not organically reach a checkpoint marker (`checkpoints` = 0 across
-  all scripts — the near-band `event_type` never becomes `0x1a` within 600 frames of these inputs), so
-  no leg-end fires in them either. Actually ending a leg needs the leg/game flow (`g_game_update`
-  §1,2 + what consumes `hud_crash_timer == 0x65`), which lives outside the ported `game_update` body.
+- **A leg now ENDS (slice 1, host-side).** The leg/game-flow CORE is ported: `g_game_update` §1's
+  marker gate (clearing the marker the crash script raised, closing the raise/consume loop) and §2's
+  input capture sit at the head of `rm_player_update`; the crash / end-of-race tally — HUD phase 8's
+  `hud_crash_timer` decay plus `draw_crash_fx`'s STATE side (`crash_frame++`, the bonus drain into the
+  score, the `abort_flag` countdown) — is `rm_crash_fx_update` in `src/events.c`. `EventState` gained
+  `crash_frame` / `abort_flag`. `hud.c`'s `hud_crash_fx` still DRAWS the tally off a throwaway HUD-text
+  copy (pixel-verified by `test_hud`); this UPDATE owns the persistent mutations so a self-running leg
+  advances. The two leg-end paths both fire and count negative under strict per-frame comparison: the
+  free-running 600-frame drives still reach no checkpoint (`checkpoints` = 0), but a drive that idles
+  until the bonus clock times out now arms `abort_flag` and ends the leg, matching recreate frame for
+  frame (`test/test_leg_drive.py::test_leg_ends_on_timeout` / `test_leg_ends_via_bonus_tally`).
+  What ending a leg still needs from **slice 2**: the on-target/demo wiring of the tally + the
+  `EventState`→`HudState` view copy, and the intermission / `init_leg` flow the frame loop hands off to
+  once `abort_flag` goes negative (`game_over_flag++` before the intermission).
+
+- **`rev_reload` (§1's engine-idle poke) is invisible and skipped, verified not assumed.** §1 writes
+  `rev_reload = 8` (0x18d12) when the buggy is stopped; it aliases `lean_frame`, which no compared
+  surface reads, so it is omitted exactly as §6/§7 omit the same write. The idle time-out drives run at
+  `speed == 0` — the very condition that triggers the reference's `rev_reload` write every frame — and
+  pass with zero mismatches, so the skip is demonstrably invisible rather than merely presumed.
 
 **Ported faithfully but not pinned:** `marker_unpack`'s "both shoulders" fixup
 (`MARKER_KIND_SIDES`) fires for **0 of the 5120** course records across all five legs, so this game's

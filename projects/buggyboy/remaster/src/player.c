@@ -16,7 +16,9 @@
  *
  * §6's event path is now wired in: when an event is pending it dispatches through the course-event
  * engine (rm_event_dispatch, via the RmEventCtx bundle), which is what arms the crashes the script
- * above replays. Still out of this slice are sections 1 and 2 (the sound gates and the raw input read).
+ * above replays. §1's marker gate (clearing the marker the crash script raised, closing the
+ * raise/consume loop) and §2's input capture are modeled too; the rest of §1/§2 is off-frame sound
+ * (handle_marker, the engine-sound enable block) this slice skips.
  * See game.h for the state model. The 68000 works in 16-bit registers, so intermediates wrap mod 2^16 —
  * mirrored with explicit uint16_t/int16_t, exactly as in geometry.c. Verified frame-by-frame against
  * recreate's g_game_update (test/test_player.py, test/test_leg_drive.py).
@@ -100,6 +102,19 @@
 #define OFFROAD_LEAN_RIGHT 0xa
 #define SKID_PUSH          8       /* horizontal shove back toward the road */
 #define ROW_OFFSET         0xa0    /* crash_disp counts rows: push rows * this */
+
+/* §1 — the marker gate. The gate byte is the effect id the crash script raised last frame
+ * (run_crash_script writes marker_pending from CRASH_MARKER); §1 hands it to handle_marker and CLEARS
+ * it, closing the raise/consume loop across frames. Everything §1 does beyond the clear is off-frame
+ * state this slice does not own: handle_marker and the engine-sound enable block (rev_reload / EGFLAG /
+ * the VBL sound vector / EGOFF) are all sound — rev_reload aliases lean_frame (0x18d12), which no
+ * compared surface reads, so it is skipped exactly as §6/§7 skip the same poke (see game.h). */
+static void apply_marker_gate(PlayerState *p) {
+    if (p->marker_pending != 0) {
+        /* g_handle_marker(marker_pending): off-frame sound (stop music + INITFX), skipped */
+        p->marker_pending = 0;
+    }
+}
 
 /* §3 — a fire press starts a 4-frame dashboard-variant animation; when it ends, the leg's engine
  * limits (rev cap + throttle step) are reloaded from the other legflag record. */
@@ -409,7 +424,8 @@ static void update_edge_clamp(PlayerState *p, const uint8_t *ctrl, uint16_t stee
 }
 
 void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEventCtx *ctx) {
-    uint16_t frame_input = p->game_over ? 0 : (uint16_t)(p->input & IN_MASK);
+    apply_marker_gate(p);                                          /* §1 */
+    uint16_t frame_input = p->game_over ? 0 : (uint16_t)(p->input & IN_MASK);   /* §2 input capture */
 
     update_dashboard_anim(p, a, frame_input);
     update_bonus_clock(p);

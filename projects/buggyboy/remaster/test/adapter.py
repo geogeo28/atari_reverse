@@ -230,6 +230,7 @@ A_course_flag_bit = 0x18c70                        # collision-probe bit cursor 
 A_dash_marker = 0x18c3a                            # dashboard progress marker: {y:b, bit:b, x:w}
 A_ckpt_scroll = 0x18c72                            # checkpoint-banner scroll position
 A_spin_state = 0x18caa                             # the fx<<8 word §G writes (word)
+A_abort_flag = 0x18c4e                             # leg/game-over abort countdown (0xffff / 0x33, -2/frame)
 A_event_type = 0x18eca                             # ring row 12 slot 7 word; low byte = the §I event code
 A_score_str = 0x18230                              # HUD score string (live digits at +4)
 A_score_bcd = 0x1824c                              # 6 ASCII score digits
@@ -245,6 +246,10 @@ A_mem_base = 0x18bfc                               # raw per-leg dashboard block
 COURSE_MASK_OFF = 0x5d48                           # leg_base + this: per-course collision-flag longs
 RM_EVENT_TABLE_ENTRIES = 65                        # mirror include/game.h (event idx 0..64)
 RM_HUD_TIMER_LEG_END = 0x65                        # mirror include/game.h: §I's leg-complete sentinel
+RM_HUD_CRASH_DECAY = 2                              # mirror include/game.h: hud_crash_timer step/frame
+RM_CRASH_ROLLOVER_OFF = 0x1c                        # mirror include/game.h: score-digit rollover records
+RM_CRASH_ROLL_STRIDE = 0xe                          # mirror include/game.h
+RM_CRASH_ROLL_TARGET = 0x60                         # mirror include/game.h: record drained when tens+ones==this
 # Asset window sizes. Where the indexed range exceeds the next global, the range wins (correctness
 # over the next-global heuristic) — see the fx_type_tbl note.
 FX_TYPE_TBL_BYTES = 0x100                           # sel 0..7 -> a code fx in 1..0x7f, then read [fx..fx+0x17]
@@ -501,7 +506,8 @@ class EventState(ctypes.Structure):
                 ("crash_bars", ctypes.c_uint16), ("crash_active", ctypes.c_uint16),
                 ("crash_lap", ctypes.c_uint16), ("gauge_blink", ctypes.c_uint16),
                 ("gauge_blink_on", ctypes.c_uint16), ("ckpt_scroll", ctypes.c_uint16),
-                ("spin_state", ctypes.c_uint16)]
+                ("spin_state", ctypes.c_uint16), ("crash_frame", ctypes.c_uint16),
+                ("abort_flag", ctypes.c_uint16)]
 
 
 class EventAssets(ctypes.Structure):
@@ -882,7 +888,7 @@ def event_state(image):
     return EventState(image[A_course_flag_bit], image[A_dash_marker], image[A_dash_marker + 1],
                       u16(A_dash_marker + 2), u16(A_crash_bars), u16(A_crash_active),
                       u16(A_crash_lap), u16(A_gauge_blink), u16(A_gauge_blink_on),
-                      u16(A_ckpt_scroll), u16(A_spin_state))
+                      u16(A_ckpt_scroll), u16(A_spin_state), u16(A_crash_frame), u16(A_abort_flag))
 
 
 def _gobj_state(image):

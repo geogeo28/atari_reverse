@@ -91,13 +91,9 @@
  * arithmetic (add_score) and sound are off-framebuffer where they don't feed a drawn buffer. */
 #define CRASH_NUM_STR_OFF  0x00         /* CRASH_STR_NUM  0x18172 */
 #define CRASH_BAR1_OFF     0x08         /* CRASH_STR_BAR1 0x1817a */
-#define CRASH_ROLLOVER_OFF 0x1c         /* rollover records 0x1818e (stride 0xe) */
-#define CRASH_HUD_LAP_OFF  0x68         /* CRASH_HUD_LAP  0x181da ('0' + crash_lap) */
+#define CRASH_HUD_LAP_OFF  RM_CRASH_HUD_LAP_OFF   /* CRASH_HUD_LAP  0x181da ('0' + crash_lap) */
 #define CRASH_BAR2_OFF     0x5a         /* CRASH_STR_BAR2 0x181cc */
-#define CRASH_ROLL_STRIDE  0xe
-#define CRASH_ROLL_TARGET  0x60         /* a record is done when 0x60 - digit[-1] - digit == 0 */
-#define CRASH_ROLL_HI      0x35         /* the tens digit that resets instead of carrying */
-#define CRASH_FRAME_MIN    0xa          /* the drain body runs once crash_frame reaches this */
+#define CRASH_FRAME_MIN    RM_CRASH_FRAME_MIN     /* the drain body runs once crash_frame reaches this */
 #define CRASH_NUM_DST      0x4770       /* draw_num dst */
 #define CRASH_BAR_FIRST    0x54b8
 #define CRASH_BAR_LOOP     0x5cd0
@@ -287,16 +283,8 @@ static void hud_crash_fx(const HudState *s, const HudAssets *a, uint8_t *text, F
         } else if (crash_lap != 0) {
             crash_lap -= 1;
             delta = a->score_delta_roll;
-        } else {
-            for (int i = (int)s->crash_bars - 1, p = CRASH_ROLLOVER_OFF; i >= 0;
-                 i--, p += CRASH_ROLL_STRIDE) {
-                if ((uint8_t)(CRASH_ROLL_TARGET - text[p - 1] - text[p]) != 0) {
-                    if (text[p] == CRASH_ROLL_HI) text[p] -= 5;
-                    else { text[p] += 5; text[p - 1] -= 1; }
-                    delta = a->score_delta_roll;
-                    break;
-                }
-            }                                            /* the abort_flag arm here is off-frame */
+        } else if (rm_crash_rollover_step(text, s->crash_bars)) {
+            delta = a->score_delta_roll;                 /* the abort_flag arm when none stepped is off-frame */
         }
         if (delta) rm_score_add(text + RM_HUD_SCORE_BCD_OFF, text + RM_HUD_SCORE_STR_OFF, delta, s->game_over);
     }

@@ -622,6 +622,13 @@ void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
 #define RM_HUD_TIMER_LEG_END     0x65
 void rm_score_add(uint8_t *score, uint8_t *score_str, const uint8_t *delta, bool game_over);
 
+/* Step the first not-yet-drained score-digit rollover record over `crash_bars` (in `text`, the shared
+ * HUD-text region): +RM_CRASH_ROLL_STEP into the ones digit, carrying one out of the tens — or reset
+ * the ones when the tens reach RM_CRASH_ROLL_HI (see the RM_CRASH_* layout below). Returns whether a
+ * record was stepped. The crash-fx UPDATE (events.c) and its DRAW (hud.c, on a throwaway HUD-text
+ * copy) share this one definition — one walk, no duplicate (CLAUDE.md §6). */
+bool rm_crash_rollover_step(uint8_t *text, uint16_t crash_bars);
+
 /* ---- course-event engine (game_update §12's tail + the jump-table dispatch) ----
  *
  * The system that decides to crash you and ends a leg. It reads the near course bands (the ring), the
@@ -641,13 +648,14 @@ void rm_score_add(uint8_t *score, uint8_t *score_str, const uint8_t *delta, bool
  * / flag-sequence counters live in GobjPrefixState (bonus_timer, flag_seq_off, flag_seq_count,
  * marker_active/off/countdown). What is left is here.
  *
- * OWNERSHIP — EventState is the sole OWNER of crash_bars, crash_active, crash_lap, gauge_blink and
- * gauge_blink_on: the event engine mutates them (see course_markers in events.c). HudState declares
- * its own copies of the same five, but those are the draw's per-frame VIEW — the game loop refreshes
- * them from here before each rm_draw_hud, exactly as it already does for speed / time_left (see
- * demo_main.c apply_player). The flow is one-directional (EventState -> HudState copy); the HudState
- * types differ deliberately (crash_active / gauge_blink_on are the draw's bool gate, crash_lap its
- * signed count) and the copy narrows into them. Slice 2 wires that copy. */
+ * OWNERSHIP — EventState is the sole OWNER of crash_bars, crash_active, crash_lap, gauge_blink,
+ * gauge_blink_on AND the crash-fx tally's crash_frame / abort_flag: the event engine mutates them (see
+ * course_markers + rm_crash_fx_update in events.c). HudState declares its own copies of the first five
+ * plus crash_frame, but those are the draw's per-frame VIEW — the game loop refreshes them from here
+ * before each rm_draw_hud, exactly as it already does for speed / time_left (see demo_main.c
+ * apply_player). The flow is one-directional (EventState -> HudState copy); the HudState types differ
+ * deliberately (crash_active / gauge_blink_on are the draw's bool gate, crash_lap its signed count)
+ * and the copy narrows into them. Slice 2 wires that copy. */
 typedef struct {
     uint8_t  course_flag_bit;  /* collision-probe bit cursor (0x18c70) */
     uint8_t  dash_y;           /* dash_marker byte y      (0x18c3a) */
@@ -660,6 +668,10 @@ typedef struct {
     uint16_t gauge_blink_on;   /* small-gauge extra bar   (0x18d04) */
     uint16_t ckpt_scroll;      /* checkpoint-banner scroll (0x18c72) */
     uint16_t spin_state;       /* the fx<<8 word §G writes (0x18caa); SpriteState.spin_state = its hi byte */
+    uint16_t crash_frame;      /* crash-fx frame counter  (0x18c78); +1/frame drives the tally + colour */
+    uint16_t abort_flag;       /* leg/game-over abort countdown (0x18c4e): 0xffff (game over) or 0x33
+                                * (bonus exhausted), decays by 2/frame — the frame loop ends the leg
+                                * when this goes negative */
 } EventState;
 
 /* Const asset windows the event engine reads (STATIC region + a couple of arena tables), raw
@@ -724,6 +736,34 @@ void rm_course_events(RmEventCtx *c);
 /* The collision-probe head (game_update §12 lines 509-515): walk the per-course flag bit and, when it
  * fires, step the dashboard progress marker. Runs before rm_road_course_advance on a wrap frame. */
 void rm_course_probe(RmEventCtx *c);
+
+/* ---- crash / end-of-race tally (HUD phase 8 timer + draw_crash_fx's STATE side @0x15872) ----
+ *
+ * The persistent counterpart to hud.c's hud_crash_fx DRAW. draw_hud phase 8 decays hud_crash_timer by
+ * RM_HUD_CRASH_DECAY per frame; once it goes negative draw_crash_fx runs the leg-end tally: drain the
+ * bonus time / units / score-digit rollovers into the score one unit per frame, then arm abort_flag —
+ * 0xffff at once when there was no crash to tally (game over), else 0x33 when the bonus is exhausted.
+ * hud.c's hud_crash_fx renders the same tally each frame off a throwaway HUD-text copy (const state);
+ * THIS function owns the mutations (hud_crash_timer, EventState.crash_frame/crash_lap/abort_flag,
+ * PlayerState.time_left, the rollover records + score in hud_text) so a self-running leg advances.
+ * Runs after the course tail on the caller's frame, as draw_hud phase 8 runs after game_update.
+ *
+ * OFF-FRAME sound (stop_music on each drained unit) is SKIPPED, per the remaster convention. */
+#define RM_HUD_CRASH_DECAY 2        /* hud_crash_timer step per frame while positive */
+#define RM_ABORT_GAME_OVER 0xffff   /* abort_flag armed at once when crash_active == 0 */
+#define RM_ABORT_BONUS_DONE 0x33    /* ...when the bonus tally is exhausted instead */
+
+/* Shared crash-tally layout — the DRAW (hud.c hud_crash_fx) and this UPDATE both walk the same
+ * one-unit-per-frame rollover (rm_crash_rollover_step) and index the same HUD lap digit, so the shared
+ * layout is defined once here. All offsets are relative to the HUD-text base (0x18172). */
+#define RM_CRASH_FRAME_MIN      0xa    /* the tally body runs once crash_frame reaches this */
+#define RM_CRASH_ROLLOVER_OFF   0x1c   /* score-digit rollover records (0x1818e), stride below */
+#define RM_CRASH_ROLL_STRIDE    0xe
+#define RM_CRASH_ROLL_TARGET    0x60   /* a record is done when 0x60 - digit[-1] - digit == 0 */
+#define RM_CRASH_ROLL_HI        0x35   /* the tens digit that resets instead of carrying */
+#define RM_CRASH_ROLL_STEP      5      /* the ones digit steps by this per drained rollover unit */
+#define RM_CRASH_HUD_LAP_OFF    0x68   /* HUD lap digit (0x181da) = '0' + crash_lap */
+void rm_crash_fx_update(RmEventCtx *c);
 
 /* Test seam: classify event `idx` as a packed (kind<<24 | gate<<16 | arg) word, so a test can pin the
  * native jump table against the image's own table at 0x11aa2 (see test_events). */

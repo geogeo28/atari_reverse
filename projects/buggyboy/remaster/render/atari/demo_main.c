@@ -265,13 +265,14 @@ static void apply_player(const PlayerState *p, RoadPose *pose, RoadInput *road, 
     hud->dsp_variant_idx = p->dsp_variant_idx;
     hud->hud_crash_timer = p->hud_crash_timer;
 
-    /* The five HUD scalars EventState OWNS (see game.h ownership contract): the draw's per-frame VIEW,
+    /* The six HUD scalars EventState OWNS (see game.h ownership contract): the draw's per-frame VIEW,
      * refreshed from the event engine each frame exactly as speed/time are from the physics. */
     hud->crash_lap = (int16_t)ev->crash_lap;
     hud->gauge_blink = ev->gauge_blink;
     hud->gauge_blink_on = ev->gauge_blink_on != 0;
     hud->crash_active = ev->crash_active != 0;
     hud->crash_bars = ev->crash_bars;
+    hud->crash_frame = (int16_t)ev->crash_frame;
 }
 
 /* Take the IKBD interrupt so held keys are visible (see os.s). Mouse and joystick reporting are
