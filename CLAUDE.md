@@ -120,6 +120,13 @@ then fix what you find (or justify leaving it) before the docs gate:
   unlike the built-in `/code-review` (user-triggered only) an agent can invoke it itself. Drop to
   a lower level only when the change is genuinely small. Fix the real findings, and **keep
   out-of-scope findings out of the commit** (note them, don't fold them in).
+- **Mutation-test the gate's own coverage** on reconstructed code: flip a constant, delete a
+  branch, off-by-one an index — rebuild and re-run. A mutation the suite does not catch is a
+  coverage hole, and in port work it usually means a branch the game's own data never exercises.
+  Pin such a branch by *seeding real data* that reaches it, never by fabricating a record; if the
+  data cannot reach it at all, say so in `STATUS.md` and leave it honestly unpinned. Beware
+  coverage counters that infer "the branch fired" from the output — the data may produce that
+  output by itself.
 
 ### Pre-commit docs gate
 Docs are part of the change, not a follow-up. Before staging, update every surface that

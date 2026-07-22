@@ -42,6 +42,19 @@ OBJ_LOW_BASE = 0x13000
 OBJ_LOW_END = 0x19100
 
 
+def _c_ring(ring):
+    """The course ring as a brace initializer for game.h's CourseRing — native words, not ST bytes,
+    because the ring is native game state. Emitted as a #define rather than a typed object so the
+    fixture header stays self-contained (stdint only) and each consumer names the type itself."""
+    lines = ["#define COURSE_RING_INIT { {  \\"]
+    for band in range(adapter.RM_RING_ROWS):
+        row = ring.row[band]
+        slots = ", ".join(f"0x{row.slot[s]:04x}" for s in range(adapter.RM_RING_SLOTS))
+        lines.append(f"    {{ {{{slots}}}, 0x{row.marker:04x} }},  \\")
+    lines.append("} }")
+    return "\n".join(lines)
+
+
 def staged_image():
     """The demo's starting image: the START OF LEG 0, exactly as the player meets it — the oracle's
     init_leg with no warmup frames and no course skipping, so the buggy is stationary on the grid with
@@ -61,13 +74,21 @@ def staged_image():
     # takes to start further into the leg again (the perf bench wants a busier frame than segment 0).
     lib = equiv._lib()
     pose, cs = adapter.road_pose(img), adapter.course_state(img)
+    ring = adapter.course_ring(img)
     stream, _k = adapter.course_stream(img)
     for _ in range(DEMO_START_SEGMENT):
-        lib.rm_road_course_advance(ctypes.byref(pose), ctypes.byref(cs), stream)
+        lib.rm_road_course_advance(ctypes.byref(pose), ctypes.byref(cs), ctypes.byref(ring), stream)
     for i in range(13):
         equiv._w16(img, adapter.A_road_seg_data + i * 2, pose.seg_data[i] & 0xffff)
     equiv._w16(img, adapter.A_course_row_ctr, cs.row_ctr)
     equiv._w16(img, adapter.A_course_read_pos, cs.read_pos)
+    # The ring is state the advance owns, so write it back into the image too — otherwise the golden
+    # frame would be rendered from a ring DEMO_START_SEGMENT steps behind the pose.
+    for band in range(adapter.RM_RING_ROWS):
+        row = adapter.A_ring_base + band * adapter.RING_ROW_BYTES
+        for slot in range(adapter.RM_RING_SLOTS):
+            equiv._w16(img, row + slot * 2, ring.row[band].slot[slot])
+        equiv._w16(img, row + adapter.RM_RING_SLOTS * 2, ring.row[band].marker)
 
     # The demo loads COURSES.DAT + GRAPHICS.GRA off disk at boot, so the reference must render from
     # a freshly-loaded arena too — otherwise golden carries state the staged run wrote into its own
@@ -116,7 +137,6 @@ def main():
                                    adapter.ROAD_EDGE_ALL_BANKS_BYTES)),
         ("fixture_road_edge_const", win(adapter.A_road_edge_const, adapter.ROAD_CONST_BYTES)),
         ("fixture_road_persp_seg", win(adapter.A_persp_seg_tbl, adapter.ROAD_PERSP_SEG_BYTES)),
-        ("fixture_road_width_src", win(adapter.A_road_width_src, adapter.ROAD_WIDTH_SRC_BYTES)),
         ("fixture_road_width_count", win(adapter.A_width_count_tbl, adapter.ROAD_WIDTH_COUNT_BYTES)),
     ]
 
@@ -150,6 +170,7 @@ def main():
 
     pose = adapter.road_pose(img)
     seg = ", ".join(str(pose.seg_data[i]) for i in range(13))
+    ring = adapter.course_ring(img)
     scroll = adapter.scroll_state(img)
     course = adapter.course_state(img)
 
@@ -179,6 +200,7 @@ def main():
             f"#define HSCROLL_POS_INIT     {scroll.hscroll_pos}",
             f"#define COURSE_ROW_CTR_INIT  {course.row_ctr}",
             f"#define COURSE_READ_POS_INIT {course.read_pos}",
+            "", _c_ring(ring),
             ""] + arena_defines + [""]
 
     # ---- draw_game_objects: the table offsets within fixture_obj_low + the object scalar inits.

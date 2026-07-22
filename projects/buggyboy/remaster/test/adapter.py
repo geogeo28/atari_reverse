@@ -51,7 +51,6 @@ A_road_seg_head = 0x18cb6                          # out: cached seg_data[0]
 A_horizon_row = 0x18c6c                            # out: clamped horizon scanline
 A_horizon_frac = 0x18c6e                           # out: horizon sub-row parity
 A_persp_seg_tbl = 0x17156                          # const: per-segment run lengths
-A_road_width_src = 0x18d5a                         # const-ish: width source shorts, stride 0x20
 A_width_count_tbl = 0x1718a                        # const: per-row width run counts (4 banks of 16)
 A_road_curve_tbl = 0x18efc                          # builder output region (== render_road width_tbl base)
 
@@ -61,7 +60,6 @@ RM_CTRL_BYTES = RM_CTRL_LONGS * 4
 RM_CTRL_WIDTH_OFF = 0x28
 RM_SCANLINE_BYTES = 0x80
 ROAD_PERSP_SEG_BYTES = 0x31                         # persp_seg_tbl length (PERSP_SEGMENTS + 1)
-ROAD_WIDTH_SRC_BYTES = 14 * 0x20                    # 14 rows at stride 0x20
 ROAD_WIDTH_COUNT_BYTES = 0x40                       # 4 view banks of 16 run counts
 
 # ---- blit_road_scroll globals (mirror recreate/include/addrs.h) ----
@@ -81,7 +79,19 @@ A_course_read_pos = 0x18c50                         # byte offset into the packe
 COURSE_STREAM_OFF = 0x5ce0                          # leg_base + this: packed course record stream base
 COURSE_LEG_STRIDE = 0x2000                          # per-leg stride in buf_a
 COURSE_STREAM_PAD = 0x2000                          # window reaches this far BELOW the base (records grow down)
-COURSE_STREAM_BYTES = COURSE_STREAM_PAD + 0x10
+COURSE_STREAM_BYTES = COURSE_STREAM_PAD + 0x10      # headroom above the base. Structural bound, not a
+                                                    # data survey: a record can select all 15 slots, so
+                                                    # the code run reads rec+3..rec+17, and read_pos >= 8
+                                                    # keeps rec <= base-8 -> last byte < base+0x10.
+
+# The course object/marker ring: RM_RING_ROWS bands of RM_RING_SLOTS type-code words plus a marker
+# word, contiguous in the image below road_curve_tbl. The named globals are columns of this grid —
+# road_width_src/sprite_list_base is row 0's marker, ground_scan_tbl row i's slot 6, obj_flags row
+# 12's slot 0 — and road_seg_data is its row -1. Mirror include/game.h.
+A_ring_base = 0x18d3c
+RM_RING_ROWS = 14
+RM_RING_SLOTS = 15
+RING_ROW_BYTES = (RM_RING_SLOTS + 1) * 2            # 0x20 — one band
 
 
 # ---- player buggy / foreground sprite globals + const piece tables (mirror addrs.h) ----
@@ -150,7 +160,7 @@ A_objsh2p_tbl = 0x171ca                             # per-scanline dst-offset ta
 A_view_parity = 0x18c60                             # per-view parity word (handler_lo reads &2)
 A_bonus_timer = 0x18d08                             # nonzero clamps low object types up to the minimum
 A_obj_scan_off = 0x18c58                            # signed word added to the list cursor (== ground_view_off)
-A_sprite_list_base = 0x18d5a                        # sprite-count loop base (== A_road_width_src)
+A_sprite_list_base = 0x18d5a                        # sprite-count loop base (== ring row 0's marker)
 A_p24_flag = 0x18231                                # global byte gating the P24 three-stage path
 GOBJ_SPRITE_SLOTS = 0xa                             # up to 11 sprite slots counted after the base
 GOBJ_MARKER_STRIDE = 0x20
@@ -310,7 +320,6 @@ class RoadPose(ctypes.Structure):
 
 class RoadSource(ctypes.Structure):
     _fields_ = [("persp_seg", ctypes.POINTER(ctypes.c_int8)),
-                ("width_src", ctypes.POINTER(ctypes.c_uint8)),
                 ("width_count", ctypes.POINTER(ctypes.c_uint8))]
 
 
@@ -321,6 +330,14 @@ class ScrollState(ctypes.Structure):
 
 class CourseState(ctypes.Structure):
     _fields_ = [("row_ctr", ctypes.c_uint16), ("read_pos", ctypes.c_uint16)]
+
+
+class CourseRow(ctypes.Structure):
+    _fields_ = [("slot", ctypes.c_uint16 * RM_RING_SLOTS), ("marker", ctypes.c_uint16)]
+
+
+class CourseRing(ctypes.Structure):
+    _fields_ = [("row", CourseRow * RM_RING_ROWS)]
 
 
 class SpriteState(ctypes.Structure):
@@ -567,17 +584,15 @@ def road_pose(image):
 
 
 def road_source(image):
-    """The const source tables the builder reads, as a native RoadSource. Returns (source, keepalive)."""
+    """The const source tables the builder reads, as a native RoadSource. Returns (source, keepalive).
+    The road WIDTHS are not here — they are the ring's live marker column (see course_ring)."""
     persp = (ctypes.c_int8 * ROAD_PERSP_SEG_BYTES)(
         *(_i16b(image[A_persp_seg_tbl + i]) for i in range(ROAD_PERSP_SEG_BYTES)))
-    width_src = (ctypes.c_uint8 * ROAD_WIDTH_SRC_BYTES)(
-        *image[A_road_width_src:A_road_width_src + ROAD_WIDTH_SRC_BYTES])
     width_count = (ctypes.c_uint8 * ROAD_WIDTH_COUNT_BYTES)(
         *image[A_width_count_tbl:A_width_count_tbl + ROAD_WIDTH_COUNT_BYTES])
     source = RoadSource(ctypes.cast(persp, ctypes.POINTER(ctypes.c_int8)),
-                        ctypes.cast(width_src, ctypes.POINTER(ctypes.c_uint8)),
                         ctypes.cast(width_count, ctypes.POINTER(ctypes.c_uint8)))
-    return source, (persp, width_src, width_count)
+    return source, (persp, width_count)
 
 
 def _i16b(b):
@@ -607,6 +622,17 @@ def course_state(image):
     def u16(addr):
         return (image[addr] << 8) | image[addr + 1]
     return CourseState(u16(A_course_row_ctr), u16(A_course_read_pos))
+
+
+def course_ring(image):
+    """The course object/marker ring as a native CourseRing, read out of the image's row grid."""
+    ring = CourseRing()
+    for band in range(RM_RING_ROWS):
+        row = A_ring_base + band * RING_ROW_BYTES
+        for slot in range(RM_RING_SLOTS):
+            ring.row[band].slot[slot] = (image[row + slot * 2] << 8) | image[row + slot * 2 + 1]
+        ring.row[band].marker = (image[row + RM_RING_SLOTS * 2] << 8) | image[row + RM_RING_SLOTS * 2 + 1]
+    return ring
 
 
 def course_stream(image):

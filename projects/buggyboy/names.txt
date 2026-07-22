@@ -257,8 +257,9 @@ var 0x18cfc time_left
 var 0x18cfe time_subctr
 var 0x18c34 game_over_flag
 var 0x1905c road_edge_flags
-var 0x18d1c road_seg_data
-var 0x18d48 ground_scan_tbl
+var 0x18d1c road_seg_data   # row -1 of the obj_markers course ring (0x18d3c); [11]/[12] are
+                            # marker_slope_src / marker_decay_base
+var 0x18d48 ground_scan_tbl   # obj_markers row +0xc (slot 6); draw_ground reads the marker at +3
 var 0x18c58 ground_view_off
 var 0x16a6e ground_col_offsets
 var 0x172ea ground_band_records
@@ -270,7 +271,20 @@ var 0x18c3a dash_marker
 var 0x18c36 leg_select
 var 0x18c58 obj_scan_off       # word paired with view_flags; draw_object_list adds it to a5
 var 0x18c90 leg_flags_c90      # per-leg state pair, init 0x00440002 by init_leg # ctx
-var 0x18d3c obj_markers        # 14 x 0x20-byte per-object marker records, seeded by init_leg
+var 0x18d3c obj_markers        # 14 x 0x20-byte per-object marker records, seeded by init_leg.
+                               # THE COURSE RING: one row per distance band, row 0 farthest.
+                               # game_update S12 scrolls rows 0..12 into 1..13 each advance and
+                               # refills row 0 from the next packed course record. A row is 15
+                               # type-code words + the band's control word at +0x1e, which
+                               # build_road_geometry stamps into the HIGH (flag) word of
+                               # every control long the band covers -- render_road's
+                               # blit-variant bits plus the shoulder flags section 10
+                               # reads back. NOT the road half-width, despite the
+                               # original's road_width_src name: that is the control
+                               # long's LOW word, built by the perspective integrator.
+                               # road_seg_data (0x18d1c) is this grid's row -1, scrolled with it.
+                               # ground_scan_tbl / road_width_src / obj_flags / course_src_ring
+                               # are all columns or rows of THIS array, not separate tables.
 var 0x18c9c hiscore_pos
 var 0x18c9e results_mode
 var 0x18c66 idle_countdown      # init_playfield attract idle timer; reset to 0x15e on input, expiry -> intermission
@@ -357,9 +371,10 @@ var 0x18ccc steer_hold   # w: steer-hold counter
 var 0x18d16 curve_freeze   # w: nonzero freezes road_curve integration (_DAT_00018d16)
 var 0x19094 road_geom_hi   # l: road-geom output
 var 0x18c70 course_flag_bit   # b: course-flag bit cursor (wraps at the course byte value)
-var 0x18edc course_src_ring   # course-geometry source ring feeding road_curve_tbl (stride 0x20/iter)
+var 0x18edc course_src_ring   # obj_markers row 13, the nearest band: the row the ring scrolls into
+                              # and the last one before road_curve_tbl (stride 0x20/iter)
 var 0x18c52 course_row_ctr   # w: course-record row countdown (-8
-var 0x18d32 marker_slope_src   # w: marker-slope source (+2 copied to +0)
+var 0x18d32 marker_slope_src   # w: marker-slope source (+2 copied to +0) == road_seg_data[11]
 var 0x18cba palette_cursor   # w: +1&0x1f palette-record cursor (indexes buf_a+0x50)
 var 0x18c5c palette_toggle   # w: palette-swap double-buffer toggle
 var 0x17fb0 palette_scratch   # palette-record staging buffer (from buf_a+0xf2 record)

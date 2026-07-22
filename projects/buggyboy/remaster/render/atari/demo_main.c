@@ -34,11 +34,13 @@
 #include "screen.h"
 #include "demo_fixture.h"
 
-void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, uint8_t *ctrl, uint8_t *scanline);
+void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
+                            uint8_t *ctrl, uint8_t *scanline);
 void rm_render_road(const RoadInput *in, Framebuffer *fb);
 void rm_scroll_prebuild(const uint8_t *playfield, uint8_t *shifted);
 void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb);
-void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stream);
+void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring,
+                            const uint8_t *stream);
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
 void rm_player_update(PlayerState *p, const PlayerAssets *a, const uint8_t *ctrl);
@@ -163,7 +165,8 @@ static int sprite_count(const uint8_t *low) {
  * geometry + road + scroll band, then the object tree (ground, foreground sprite, the two sprite
  * object-list passes split around draw_object, and the buggy ordered against the fixed pass by the
  * view), then the HUD. The scroll advances every frame; the prefix advances view_parity/anim. */
-static void draw_frame(Framebuffer *fb, RoadPose *pose, const RoadSource *src, RoadInput *road,
+static void draw_frame(Framebuffer *fb, RoadPose *pose, const RoadSource *src,
+                       const CourseRing *ring, RoadInput *road,
                        ScrollState *scroll, const HudState *hud, const HudAssets *hud_assets,
                        GobjPrefixState *pfx, const GobjPrefixAssets *pfx_assets,
                        const GroundState *ground, const GroundAssets *ground_assets,
@@ -172,7 +175,7 @@ static void draw_frame(Framebuffer *fb, RoadPose *pose, const RoadSource *src, R
     rm_gobj_prefix(pfx, pfx_assets);                 /* off-frame: advance view_parity/anim/marker */
     objlist->view_parity = pfx->view_parity;         /* the dispatcher (handler_lo) reads the advanced parity */
     objlist->px = fb->px;                            /* the dispatcher's draw target: this frame's buffer */
-    rm_build_road_geometry(pose, src, ctrl, scanline);
+    rm_build_road_geometry(pose, src, ring, ctrl, scanline);
     road->width_tbl = ctrl + RM_CTRL_WIDTH_OFF;
     /* The object dispatcher's per-row x-offset table aliases the freshly-built road control table in
      * the original (obj_xoff_tbl == road_width_tbl + 2), so rebind it to this frame's ctrl. */
@@ -424,7 +427,7 @@ void main(void) {
     };
     const RoadSource src = {
         .persp_seg = (const int8_t *)fixture_road_persp_seg,
-        .width_src = fixture_road_width_src, .width_count = fixture_road_width_count,
+        .width_count = fixture_road_width_count,
     };
     RoadInput road = {
         .width_tbl = ctrl + RM_CTRL_WIDTH_OFF,   /* rebound per frame after the build */
@@ -437,6 +440,9 @@ void main(void) {
     for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
     ScrollState scroll = {.scroll_speed = SCROLL_SPEED_INIT, .hscroll_pos = HSCROLL_POS_INIT};
     CourseState course = {.row_ctr = COURSE_ROW_CTR_INIT, .read_pos = COURSE_READ_POS_INIT};
+    /* The course window the advance scrolls. Its marker column is where the road's per-band widths
+     * and shoulder flags come from, so it has to be live state, not a baked table. */
+    CourseRing ring = COURSE_RING_INIT;
     /* the leg's course records, read backward from this anchor in the loaded COURSES.DAT */
     const uint8_t *stream = arena.tables + ARENA_COURSE_STREAM_OFF;
 
@@ -526,7 +532,7 @@ void main(void) {
     Setpalette(fixture_palette);
     rm_scroll_prebuild(arena.gfx + ARENA_SCROLL_PLAY_OFF, shifted);   /* pre-rotate the playfield once (screen_offset is fixed) */
     int shown = 0;
-    draw_frame(screen_buf(shown), &pose, &src, &road, &scroll, &hud, &assets, &pfx, &pfx_assets,
+    draw_frame(screen_buf(shown), &pose, &src, &ring, &road, &scroll, &hud, &assets, &pfx, &pfx_assets,
                &ground_mut, &ground_assets, &sprite, &sprite_assets, &object, &objlist, low);
     Setscreen(-1L, (long)screen_buf(shown)->px, -1);   /* show the first frame */
     Vsync();
@@ -570,14 +576,14 @@ void main(void) {
 
         /* The view wrapping is what advances the course, so the road's bends arrive at the speed the
          * buggy is actually travelling (section 11/12 of the original). */
-        if (player.view_wrapped) rm_road_course_advance(&pose, &course, stream);
+        if (player.view_wrapped) rm_road_course_advance(&pose, &course, &ring, stream);
 #ifdef DEMO_TRACE
         trace_frame(frame, &player, &course);
 #endif
 
         /* render off-screen, then flip the video base to it at the vblank (no tearing). */
         int back = shown ^ 1;
-        draw_frame(screen_buf(back), &pose, &src, &road, &scroll, &hud, &assets, &pfx, &pfx_assets,
+        draw_frame(screen_buf(back), &pose, &src, &ring, &road, &scroll, &hud, &assets, &pfx, &pfx_assets,
                    &ground_mut, &ground_assets, &sprite, &sprite_assets, &object, &objlist, low);
         Setscreen(-1L, (long)screen_buf(back)->px, -1);
         Vsync();

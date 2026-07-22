@@ -12,11 +12,13 @@
 #include "screen.h"
 #include "demo_fixture.h"
 
-void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, uint8_t *ctrl, uint8_t *scanline);
+void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
+                            uint8_t *ctrl, uint8_t *scanline);
 void rm_render_road(const RoadInput *in, Framebuffer *fb);
 void rm_scroll_prebuild(const uint8_t *playfield, uint8_t *shifted);
 void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb);
-void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stream);
+void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring,
+                            const uint8_t *stream);
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 
 #define BENCH_SCROLL_SPEED 0x20     /* a representative racing speed (exercises the scroll edge/wrap tail) */
@@ -51,8 +53,10 @@ static HudAssets assets = {
 };
 static const RoadSource src = {
     .persp_seg = (const int8_t *)fixture_road_persp_seg,
-    .width_src = fixture_road_width_src, .width_count = fixture_road_width_count,
+    .width_count = fixture_road_width_count,
 };
+/* The per-band road widths the builder reads: live course state, advanced by bench_course_advance. */
+static CourseRing ring = COURSE_RING_INIT;
 static RoadInput road = {
     .width_tbl = ctrl + RM_CTRL_WIDTH_OFF, .param = fixture_road_param,
     .edge_tbl = fixture_road_edge + ROAD_EDGE_PAD, .edge_const = fixture_road_edge_const,
@@ -78,11 +82,11 @@ void bench_stage_assets(void) {
 }
 
 /* One representative frame's worth of each core (as the demo's draw_frame chains them). */
-void bench_build_geometry(void) { rm_build_road_geometry(&pose, &src, ctrl, scanline); }
+void bench_build_geometry(void) { rm_build_road_geometry(&pose, &src, &ring, ctrl, scanline); }
 void bench_render_road(void)    { road.width_tbl = ctrl + RM_CTRL_WIDTH_OFF; rm_render_road(&road, &fb); }
 void bench_scroll_prebuild(void) { rm_scroll_prebuild(scroll_playfield, shifted); }
 void bench_blit_scroll(void)    { rm_blit_road_scroll(&scroll, shifted, &fb); }
 void bench_draw_hud(void)       { rm_draw_hud(&hud, &assets, &fb); }
-void bench_course_advance(void) { rm_road_course_advance(&pose, &course, course_stream); }
+void bench_course_advance(void) { rm_road_course_advance(&pose, &course, &ring, course_stream); }
 
 int main(void) { return 0; }        /* unused; present so os.s's `jsr main` links */

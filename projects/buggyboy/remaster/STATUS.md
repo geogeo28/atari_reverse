@@ -73,9 +73,10 @@ game clears a bit. That bit returns on its own once the system that writes it is
 | Subsystem     | recreate reference | remaster status | Equivalence |
 |---------------|--------------------|-----------------|-------------|
 | course advance (road geometry) | `g_game_update` §12 | ✅ segment scroll + record pull ported | `test/test_course.py` — seg_data / row_ctr / read_pos byte-exact over 40-frame drives, legs 0/1/2/4 |
+| course object/marker ring | `g_game_update` §12 (ring shuffle + record unpack) | ✅ ported | `test/test_course_ring.py` — bands 0–11 byte-exact vs recreate over free-running 600-frame drives × 3 scripts × legs 0–4 (bands 12/13: marker only — see below), plus the control table the marker column feeds, plus directed drives for the two branches a leg start cannot reach |
 | player physics (`rm_player_update`) | `g_game_update` §3,4,5,7,8,9,10 | ✅ ported | `test/test_player.py` — every physics scalar identical to recreate frame-for-frame over 8 scripted 240-frame drives × legs 0/1/4 (throttle/brake/slalom/both locks/recentre/fire/time-out) |
 | crash / auto-steer script | `g_game_update` §6 (+ the §5/§7/§9/§10 crash branches) | ✅ ported | `test/test_leg_drive.py` — free-running 600-frame drives × 4 scripts × legs 0/1/4, every crash played out and handed the controls back under strict comparison (up to 204 crash frames / 20 handoffs per drive) |
-| `game_update` (rest) | `g_game_update` §1,2,12-tail | ⬜ sound, collision probe, fx block / event dispatch, objects/score not started | — |
+| `game_update` (rest) | `g_game_update` §1,2,12-tail | ⬜ sound, collision probe, fx block / event dispatch, score not started | — |
 
 **What the player-physics slice covers** (see `include/game.h` for the state model): the engine
 rpm→speed model with its rev limiter, the road-scroll rate and the view advance whose wrap times the
@@ -85,15 +86,24 @@ while a canned crash replays out of `crash_anim_tbl` and then hands them back.
 
 The precondition is now *no event pending*. What is still missing is the system that **decides** to
 crash you: §12's collision probe, the fx block rebuilt from `obj_flags`, and the horizon-event
-dispatch (which also delivers the checkpoint and finish-line events that would end a leg). Two
-consequences, both measured rather than assumed:
+dispatch (which also delivers the checkpoint and finish-line events that would end a leg). Three
+consequences, all measured rather than assumed:
 
 - A leg drive still cannot *finish* a leg — nothing signals the end of one.
-- `test/test_leg_drive.py` therefore hands over exactly two things and counts both: the single frame
-  where recreate arms a crash (detected as an event-owned global going 0 → nonzero), and the road
-  control table, whose marker rows stream from §12's unported ring/marker unpack and drift from
-  frame ~9. Everything else — including every frame of every crash playout — is compared strictly
-  with the candidate free-running and never re-seeded.
+- `test/test_leg_drive.py` now hands over exactly **one** thing and counts it: the single frame where
+  recreate arms a crash (detected as an event-owned global going 0 → nonzero). The road control table
+  used to be handed over too; since the ring landed it is a compared **result**. Everything else —
+  including every frame of every crash playout — is compared strictly, free-running, never re-seeded.
+- Two exclusions remain, both bounded and counted rather than silent: bands 12/13's type codes are
+  exempt from the ring comparison (the dispatch clears bytes that land there — see
+  `equiv.RING_EVENT_OWNED_BANDS` for the derived footprint, which is *not* `obj_flags`), and leg 2's
+  slalom drive is skipped because recreate's rpm-penalty handler arms nothing, so the 0 → nonzero
+  detector cannot see it.
+
+**Ported faithfully but not pinned:** `marker_unpack`'s "both shoulders" fixup
+(`MARKER_KIND_SIDES`) fires for **0 of the 5120** course records across all five legs, so this game's
+data cannot exercise it at all. It is transcribed from the disassembly and left honestly unpinned
+rather than pinned against a fabricated record; a mutation to it survives the whole suite.
 
 ## Perf
 

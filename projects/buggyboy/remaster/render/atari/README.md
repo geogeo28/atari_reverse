@@ -119,10 +119,14 @@ advance → render, on the 68000) gets checked headlessly rather than only frame
 Scope note: the throttle scrolls the course's authored **segment slopes** (`seg_data`) through the
 geometry builder, and `build_road_geometry` integrates them into the per-row road offset — so the
 road's hills and left/right curvature stream from the leg's packed course as you drive, on top of the
-player's own `road_curve`. Not modelled yet, because they live in the unported parts of
-`game_update`: the crash / auto-steer script, object collision, the horizon-event dispatch (including
-its discrete `road_curve += ±0x3c` bonus/spin kicks), and section 12's object ring — so the roadside
-object list does not stream along the course the way the road surface does, and nothing can crash you.
+player's own `road_curve`. Section 12's object / marker ring is ported too, so the road's per-band
+flags now stream with the course; the crash / auto-steer script runs once something arms it.
+
+What the demo still cannot do: nothing arms a crash (object collision, the fx block and the
+horizon-event dispatch with its discrete `road_curve += ±0x3c` kicks are unported), and the roadside
+object list still does **not** stream along the course — the ring feeds `build_road_geometry`, but
+`draw_object_list`, `draw_ground`'s markers and `sprite_count` still read the frozen copy baked into
+`fixture_obj_low`. See PORTING.md's "the demo now holds the ring twice".
 
 The alignment gotcha: the cores read the baked tables with `be16`/`be32` (word/long moves), which
 fault on an odd address on the 68000, so the fixture arrays and the BSS scratch are `aligned(2)`.

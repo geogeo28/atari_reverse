@@ -37,6 +37,7 @@ def _lib():
     lib.rm_render_road.restype = None
     lib.rm_build_road_geometry.argtypes = [ctypes.POINTER(adapter.RoadPose),
                                            ctypes.POINTER(adapter.RoadSource),
+                                           ctypes.POINTER(adapter.CourseRing),
                                            ctypes.POINTER(ctypes.c_uint8),
                                            ctypes.POINTER(ctypes.c_uint8)]
     lib.rm_build_road_geometry.restype = None
@@ -48,6 +49,7 @@ def _lib():
     lib.rm_scroll_prebuild.restype = None
     lib.rm_road_course_advance.argtypes = [ctypes.POINTER(adapter.RoadPose),
                                            ctypes.POINTER(adapter.CourseState),
+                                           ctypes.POINTER(adapter.CourseRing),
                                            ctypes.POINTER(ctypes.c_uint8)]
     lib.rm_road_course_advance.restype = None
     for fn in (lib.rm_draw_fg_sprite, lib.rm_draw_buggy):
@@ -177,12 +179,13 @@ def compare_road(lib, image):
 
 
 def _build_candidate_ctrl(lib, image):
-    """Run remaster's rm_build_road_geometry on `image`'s pose/sources; return (ctrl_bytes, pose)."""
+    """Run remaster's rm_build_road_geometry on `image`'s pose/sources/ring; return (ctrl_bytes, pose)."""
     pose = adapter.road_pose(image)
     source, _keep = adapter.road_source(image)
+    ring = adapter.course_ring(image)
     ctrl = (ctypes.c_uint8 * adapter.RM_CTRL_BYTES)()
     scan = (ctypes.c_uint8 * adapter.RM_SCANLINE_BYTES)()
-    lib.rm_build_road_geometry(ctypes.byref(pose), ctypes.byref(source), ctrl, scan)
+    lib.rm_build_road_geometry(ctypes.byref(pose), ctypes.byref(source), ctypes.byref(ring), ctrl, scan)
     return bytes(ctrl), pose
 
 
@@ -283,7 +286,8 @@ def compare_course_drive(lib, image, frames=24):
         pose = adapter.road_pose(state)
         cs = adapter.course_state(state)
         stream, _keep = adapter.course_stream(state)
-        lib.rm_road_course_advance(ctypes.byref(pose), ctypes.byref(cs), stream)
+        ring = adapter.course_ring(state)
+        lib.rm_road_course_advance(ctypes.byref(pose), ctypes.byref(cs), ctypes.byref(ring), stream)
         cand_seg = [pose.seg_data[i] & 0xffff for i in range(13)]
         cand = (cand_seg, cs.row_ctr & 0xffff, cs.read_pos & 0xffff)
 
@@ -936,6 +940,123 @@ def _i16s(state, addr):
     return v - 0x10000 if v & 0x8000 else v
 
 
+# Bands whose type codes the unported horizon-event dispatch writes. Not obj_flags (band 12 slot 0),
+# which was the original guess and provably never diverges: the writer is
+# `image[A_obj_active + slot + 1] = 0` (recreate game_update.c:169), with A_obj_active = 0x18eb4 =
+# band 11 slot 12 and slot = horizon_row, clamped to 0..44. So the real footprint is odd bytes
+# 0x18eb5..0x18ee3 — band 11 slots 12-14 and its marker, all of band 12, and band 13 slots 0-3.
+#
+# The exemption below is therefore coarser than the footprint in one direction (it drops bands 12/13
+# entirely) and narrower in the other (band 11 stays under strict comparison). It holds for every
+# drive in the suite — observed horizon_row is 6..36 — but it is empirical, not derived: a drive that
+# lands a dispatch on horizon_row >= 34 will fail on ring[11].marker rather than being handed over.
+# The principled fix is to compare all 14 bands and hand over + COUNT a mismatch confined to the
+# derived window, the way the crash arming is already handled. Deferred with the event-dispatch port.
+RING_EVENT_OWNED_BANDS = (12, 13)
+
+
+RING_ANIM_CODES = frozenset({0x0d, 0x10, 0x13, 0x16})   # each implies its two successors
+RING_ECHOED_CODE = 0x2e          # slot 1 carrying this is echoed into slot 13
+RING_ECHO_FROM, RING_ECHO_TO = 1, 13
+EDGE_ANY = 0x1000 | 0x2000 | 0x4000      # EDGE_OPEN | EDGE_LEFT | EDGE_RIGHT (mirror include/game.h)
+
+
+RING_REC_SELECT_OFF, RING_REC_CODES_OFF, RING_REC_MARKER_OFF = 0, 3, 6   # mirror src/course.c
+RING_MARKER_RAW_FLAG = 0x8000
+RING_MARKER_KIND_MASK, RING_MARKER_KIND_RIGHT = 0xf01e, 0xf012
+
+
+def _course_record(state, read_pos):
+    """Address of the packed course record at `read_pos` in the image's current leg."""
+    buf_a = int.from_bytes(state[adapter.A_buf_a:adapter.A_buf_a + 4], "big")
+    leg = _r16(state, adapter.A_leg_index)
+    base = buf_a + leg * adapter.COURSE_LEG_STRIDE + adapter.COURSE_STREAM_OFF
+    return base - read_pos
+
+
+def _anim_expansion_is_visible(state, read_pos):
+    """Would this record's animation expansion leave a mark the comparison can see?
+
+    It usually would not, and that is the whole point of measuring it. In 525 of the 554 animation
+    codes across the five legs, the two slots the expansion writes are re-selected by the very same
+    record and overwritten with exactly the bytes the expansion would have put there — so removing
+    the expansion entirely changes nothing. Only 29 records leave one of those slots unselected.
+    Counting "a successor code appeared in the band" therefore proves nothing: the data supplies
+    those codes itself. This replays the record's slot selection and reports only the case that
+    actually discriminates."""
+    rec = _course_record(state, read_pos)
+    select = (state[rec + RING_REC_SELECT_OFF] << 8) | state[rec + RING_REC_SELECT_OFF + 1]
+
+    code_at, src = {}, rec + RING_REC_CODES_OFF
+    for slot in range(adapter.RM_RING_SLOTS):
+        if select & (1 << (adapter.RM_RING_SLOTS - 1 - slot)):
+            code_at[slot] = state[src]
+            src += 1
+    return any(code in RING_ANIM_CODES and (slot + 1 not in code_at or slot + 2 not in code_at)
+               for slot, code in code_at.items())
+
+
+def _record_selects_slot(state, read_pos, want_slot):
+    """Did this record's select mask supply `want_slot` itself? Used to tell a slot the unpack DERIVED
+    from a slot the data simply provided."""
+    rec = _course_record(state, read_pos)
+    select = (state[rec + RING_REC_SELECT_OFF] << 8) | state[rec + RING_REC_SELECT_OFF + 1]
+    return bool(select & (1 << (adapter.RM_RING_SLOTS - 1 - want_slot)))
+
+
+def _echo_is_visible(state, read_pos):
+    """Would the slot-1 -> slot-13 echo leave a mark the comparison can see? Only if the record does
+    NOT select slot 13 itself — 16 records across the five legs supply that 0x2e directly and just 2
+    actually need the echo, so counting "slot 13 holds 0x2e" credits the branch on records that would
+    look identical with the echo deleted (verified by mutation)."""
+    return (_record_selects_slot(state, read_pos, RING_ECHO_FROM)
+            and not _record_selects_slot(state, read_pos, RING_ECHO_TO))
+
+
+def _marker_is_kind_right(state, read_pos):
+    """Does this record's marker word take the 'right shoulder only' fixup branch? 25 records across
+    the five legs do; none at all take the 'both shoulders' branch, which is why that one is ported
+    faithfully but cannot be pinned from this game's data (see test_course_ring)."""
+    rec = _course_record(state, read_pos)
+    raw = (state[rec + RING_REC_MARKER_OFF] << 8) | state[rec + RING_REC_MARKER_OFF + 1]
+    return bool(raw & RING_MARKER_RAW_FLAG) and (raw & RING_MARKER_KIND_MASK) == RING_MARKER_KIND_RIGHT
+
+
+def _count_ring_branches(state, band, read_pos, stats):
+    """Tally which branches of the far band's refill actually fired, so a green ring test cannot be
+    green merely because the interesting records were never reached."""
+    if _anim_expansion_is_visible(state, read_pos):
+        stats["ring_anim_visible"] += 1
+    if _marker_is_kind_right(state, read_pos):
+        stats["ring_marker_right"] += 1
+    if (_echo_is_visible(state, read_pos)
+            and band.slot[RING_ECHO_FROM] == RING_ECHOED_CODE
+            and band.slot[RING_ECHO_TO] == RING_ECHOED_CODE):
+        stats["ring_echoes"] += 1
+    # An EDGE_* bit reaching a band is an output fact, not a branch: every marker_unpack path can
+    # produce one. It is reported to show the shoulder flags are exercised at all, and no test
+    # asserts a branch was taken from it.
+    if band.marker & EDGE_ANY:
+        stats["ring_edge_bands"] += 1
+
+
+def _ring_mismatches(frame, cand_ring, state):
+    """Compare the candidate's ring against the reference image's row grid, band by band."""
+    out = []
+    for band in range(adapter.RM_RING_ROWS):
+        row = adapter.A_ring_base + band * adapter.RING_ROW_BYTES
+        if band not in RING_EVENT_OWNED_BANDS:
+            for slot in range(adapter.RM_RING_SLOTS):
+                ref = _r16(state, row + slot * 2)
+                if cand_ring.row[band].slot[slot] != ref:
+                    out.append((frame, f"ring[{band}].slot[{slot}]",
+                                cand_ring.row[band].slot[slot], ref))
+        ref_marker = _r16(state, row + adapter.RM_RING_SLOTS * 2)
+        if cand_ring.row[band].marker != ref_marker:
+            out.append((frame, f"ring[{band}].marker", cand_ring.row[band].marker, ref_marker))
+    return out
+
+
 class _Candidate:
     """The remaster side of a leg drive: the structs a self-driving game loop owns, seeded once from
     the leg-start image and thereafter advanced only by remaster's own cores."""
@@ -947,6 +1068,7 @@ class _Candidate:
         self.ctrl = (ctypes.c_uint8 * adapter.RM_CTRL_BYTES)()
         self.scan = (ctypes.c_uint8 * adapter.RM_SCANLINE_BYTES)()
         self.course = adapter.course_state(state)
+        self.ring = adapter.course_ring(state)
         self.stream, self._k_stream = adapter.course_stream(state)
         self.scroll = adapter.scroll_state(state)
         playfield, self._k_play = adapter.scroll_playfield(state)
@@ -964,6 +1086,7 @@ class _Candidate:
         self.player = adapter.player_state(state, in_bits)
         self.pose = adapter.road_pose(state)
         self.course = adapter.course_state(state)
+        self.ring = adapter.course_ring(state)
         self.scroll = adapter.scroll_state(state)
         # scroll_state zeroes hscroll_step2 as a render OUTPUT, but across frames it is also an input:
         # section 9 adds it into the curve. Carry the reference's value or the next frame drifts.
@@ -984,9 +1107,9 @@ class _Candidate:
         self.scroll.scroll_speed = p.scroll_speed
         if p.view_wrapped:
             self.lib.rm_road_course_advance(ctypes.byref(self.pose), ctypes.byref(self.course),
-                                            self.stream)
+                                            ctypes.byref(self.ring), self.stream)
         self.lib.rm_build_road_geometry(ctypes.byref(self.pose), ctypes.byref(self.source),
-                                        self.ctrl, self.scan)
+                                        ctypes.byref(self.ring), self.ctrl, self.scan)
         self.scroll.seg_head = self.pose.seg_head
         self.lib.rm_blit_road_scroll(ctypes.byref(self.scroll), self.shifted, ctypes.byref(self.fb))
 
@@ -1000,18 +1123,19 @@ def compare_leg_drive(lib, image, inputs):
     two cores recreate's own frame does (g_game_update, which builds its geometry itself, then
     g_blit_road_scroll, whose hscroll_step2 feeds back into the curve).
 
-    Two things are handed over, both parts of section 12 that are not ported:
+    ONE thing is handed over: the decision to crash. The collision probe and the horizon-event
+    dispatch arm the crash script; on the single frame where the reference arms one the candidate
+    could not have known about, the whole driving state is re-seeded and that frame is excluded and
+    counted. Every frame of the crash PLAYOUT that follows is compared strictly — that is what
+    exercises the ported §6 script.
 
-    1. The decision to crash. The collision probe and the horizon-event dispatch arm the crash script;
-       on the single frame where the reference arms one the candidate could not have known about, the
-       whole driving state is re-seeded and that frame is excluded and counted. Every frame of the
-       crash PLAYOUT that follows is compared strictly — that is what exercises the ported §6 script.
-    2. The road control table, every frame. rm_road_course_advance ports §12's segment scroll and
-       record pull, but not its ring shuffle and marker-word unpack, which also write into
-       road_curve_tbl — so its marker rows drift from frame ~9. Section 10 reads the shoulder/edge
-       flags out of that table, which makes it an INPUT to the physics under test, so the drive feeds
-       the reference's copy and verifies the physics' response to it. The table's own equivalence is
-       not in scope here and is covered byte-exact by test_geometry / test_road.
+    Everything else is checked, including the two things this drive used to be given:
+
+    - The course object/marker ring, band by band. Bands 0..11 are compared whole; bands 12/13 only
+      by their marker word, because the unported horizon-event dispatch clears bytes that land in
+      them (see RING_EVENT_OWNED_BANDS for the derived footprint — it is NOT obj_flags).
+    - The road control table, which is now a RESULT rather than an input. Its per-band road widths
+      come from the ring's marker column, so a ring that drifts shows up here as well.
 
     Returns (mismatches, stats): mismatches is a list of (frame, field, candidate, reference); stats
     counts the frames worth knowing were reached, so a drive that never crashes, never recovers or
@@ -1023,11 +1147,15 @@ def compare_leg_drive(lib, image, inputs):
 
     mismatches = []
     stats = dict(frames=len(inputs), wraps=0, armed=0, crash_frames=0, handoffs=0, clamp=0,
-                 offroad=0, ctrl_given=0)
+                 offroad=0, ring_checked=0, ring_refills=0, ring_ages=0, ring_anim_visible=0,
+                 ring_marker_right=0, ring_echoes=0, ring_edge_bands=0)
     for frame, in_bits in enumerate(inputs):
         was_locked = cand.player.collision_lock
         armed_before = _armed_snapshot(state)
+        read_pos_before = cand.course.read_pos
         cand.step(in_bits)
+        refilled = cand.player.view_wrapped and cand.course.read_pos != read_pos_before
+        aged = cand.player.view_wrapped and not refilled
 
         _w16(state, adapter.A_input_state, in_bits)
         game_update(buf)
@@ -1046,10 +1174,20 @@ def compare_leg_drive(lib, image, inputs):
             stats["armed"] += 1
             continue
 
-        # The control table is a reference-supplied INPUT here (see 2. above), not a result.
+        # Coverage is tallied only for frames that reach the comparison below. Counting before the
+        # handover above would credit a branch on a frame whose ring is then re-seeded from the
+        # reference and never checked — a coverage claim for output nobody verified.
+        stats["ring_refills"] += refilled
+        stats["ring_ages"] += aged
+        if refilled:
+            _count_ring_branches(state, cand.ring.row[0], cand.course.read_pos, stats)
+
         lo, n = adapter.A_road_curve_tbl, adapter.RM_CTRL_BYTES
-        cand.ctrl[:] = state[lo:lo + n]
-        stats["ctrl_given"] += 1
+        if bytes(cand.ctrl) != bytes(state[lo:lo + n]):
+            first = next(i for i in range(n) if cand.ctrl[i] != state[lo + i])
+            mismatches.append((frame, f"ctrl[{first:#x}]", cand.ctrl[first], state[lo + first]))
+        mismatches.extend(_ring_mismatches(frame, cand.ring, state))
+        stats["ring_checked"] += 1
 
         for name, addr, signed in PLAYER_FIELDS + PLAYER_SCRIPT_FIELDS + PLAYER_EVENT_FIELDS:
             ref = _i16s(state, addr) if signed else _r16(state, addr)

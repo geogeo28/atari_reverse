@@ -90,9 +90,8 @@
 #define CLAMP_WIDE         0x144   /* road_curve limit with no shoulder in sight */
 #define CLAMP_NARROW       0x46    /* ...where the row's shoulder flag is set but the road is closed */
 #define CLAMP_SPEED_BASE   0x5a    /* ...open shoulder: (speed >> 1) + this — faster runs wider */
-#define EDGE_OPEN          0x1000  /* the shoulder at this row can be driven onto */
-#define EDGE_LEFT          0x2000
-#define EDGE_RIGHT         0x4000
+/* EDGE_OPEN / EDGE_LEFT / EDGE_RIGHT come from game.h: the course ring sets them per band and the
+ * geometry builder carries them here through the control table. */
 #define OFFROAD_LIMIT      0x6a    /* |road_curve| past this and the buggy is off the road */
 #define OFFROAD_PUSH_SHIFT 3       /* push = excess - (excess >> 3) */
 #define OFFROAD_LEAN_LEFT  0x14    /* lean = wheel_pos + this while ploughing the left shoulder */

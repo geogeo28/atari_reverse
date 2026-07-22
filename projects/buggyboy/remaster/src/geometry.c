@@ -6,10 +6,11 @@
  *   1. cumulative slope down the near rows + 12 segments of 4 rows        -> scanline scratch
  *   2. perspective integration of that slope table (filled bottom-up)     -> ctrl (as longs)
  *   3. curvature spread by curve/106 with a fractional carry (+= onto it) -> ctrl (as longs)
- *   4. per-row road width overwritten from a source table                 -> ctrl (as shorts)
+ *   4. per-band control word stamped in from the course ring                -> ctrl (as shorts)
  * then a horizon clamp. Stages 3/4 write the SAME ctrl region recreate aliases as road_curve_tbl and
- * road_width_tbl (the width shorts overwrite the high word of every long from RM_CTRL_WIDTH_OFF on),
- * so ctrl ends up exactly the control-long stream render_road reads.
+ * road_width_tbl (stage 4's shorts overwrite the high word of every long from RM_CTRL_WIDTH_OFF on —
+ * the flag half, not the width; see build_width_table), so ctrl ends up exactly the control-long
+ * stream render_road reads.
  *
  * Faithful port of recreate/src/road.c (build_scanline_table / integrate_perspective /
  * spread_curvature / build_width_table / set_horizon), verified byte-for-byte against the Musashi
@@ -24,8 +25,6 @@
 #define ROWS_PER_SEG      4      /* scanline rows emitted per segment */
 #define PERSP_SEGMENTS   0x30    /* perspective integration outer count */
 #define CURVE_ROWS       0x6a    /* ctrl length in longs (106) and curve-spread denominator */
-#define WIDTH_ROWS       0x0e    /* width-table outer rows (14) */
-#define WIDTH_SRC_STRIDE 0x20    /* bytes between width source values */
 #define HORIZON_BIAS    0x210    /* added to horizon before dividing */
 #define HORIZON_DIV      0x16    /* horizon divisor / clamp bound (22) */
 #define HORIZON_OFF     0x162    /* recreate's A_horizon (0x1905e) lies INSIDE ctrl: the low word of
@@ -111,17 +110,20 @@ static void spread_curvature(int16_t curve, uint8_t *ctrl) {
     }
 }
 
-/* Stage 4a: overwrite the per-row road width into ctrl (repeating each source width for a run count).
- * Writes at RM_CTRL_WIDTH_OFF, stride 4 — the high word of each control long. */
-static void build_width_table(uint16_t view_flags, const uint8_t *width_src, const uint8_t *width_count, uint8_t *ctrl) {
-    uint32_t src = 0;
+/* Stage 4a: stamp each ring band's control word across the scanlines it covers (a run count per
+ * band). Writes at RM_CTRL_WIDTH_OFF, stride 4 — the HIGH word of each control long, i.e. the flag
+ * half: render_road's blit-variant bits and the EDGE_* shoulder flags section 10 reads back out.
+ * (The road half-width is the control long's LOW word, from stages 2/3 — despite the "width" in the
+ * original's names for this table. See CourseRow in game.h.) One ring band per row, FARTHEST first:
+ * band 0 is the one the course advance just refilled. */
+static void build_width_table(uint16_t view_flags, const CourseRing *ring, const uint8_t *width_count, uint8_t *ctrl) {
     uint32_t dst = RM_CTRL_WIDTH_OFF;
     uint32_t count = (uint32_t)(int16_t)((view_flags & 6) << 3);
 
-    for (int row = 0; row < WIDTH_ROWS; row++, src += WIDTH_SRC_STRIDE, count += 1) {
+    for (int band = 0; band < RM_RING_ROWS; band++, count += 1) {
         int runs = width_count[count];
-        uint16_t width = be16(width_src + src);
-        for (int run_i = runs; run_i >= 0; run_i--, dst += 4) wr16(ctrl + dst, width);
+        uint16_t control = ring->row[band].marker;
+        for (int run_i = runs; run_i >= 0; run_i--, dst += 4) wr16(ctrl + dst, control);
     }
 }
 
@@ -137,10 +139,11 @@ static void set_horizon(const uint8_t *ctrl, RoadPose *pose) {
     pose->horizon_frac = (int16_t)(uint16_t)((uint16_t)quotient & 1);
 }
 
-void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, uint8_t *ctrl, uint8_t *scanline) {
+void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
+                            uint8_t *ctrl, uint8_t *scanline) {
     build_scanline_table(pose, scanline);
     integrate_perspective(scanline, src->persp_seg, ctrl);
     spread_curvature(pose->curve, ctrl);
-    build_width_table(pose->view_flags, src->width_src, src->width_count, ctrl);
+    build_width_table(pose->view_flags, ring, src->width_count, ctrl);
     set_horizon(ctrl, pose);
 }

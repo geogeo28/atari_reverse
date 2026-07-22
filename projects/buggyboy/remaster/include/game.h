@@ -94,6 +94,40 @@ typedef struct {
 
 void rm_render_road(const RoadInput *in, Framebuffer *fb);
 
+/* ---- the course object/marker ring (the scrolling course window, produced by section 12) ----
+ *
+ * The course window the game scrolls toward you: RM_RING_ROWS distance bands, refilled at the far end
+ * from the leg's packed course records (see rm_road_course_advance below). build_road_geometry reads
+ * each band's marker word; draw_ground and the object-list dispatcher read the type-code slots (both
+ * still through the flat image today — see PORTING.md). */
+#define RM_RING_ROWS   14   /* distance bands: row 0 farthest (just refilled) .. row 13 nearest */
+#define RM_RING_SLOTS  15   /* object/marker type-code slots per band */
+
+/* Shoulder/edge flags. They are born in a band's marker word (below) and reach section 10 through the
+ * control table, because build_road_geometry copies the marker word into each row's control long —
+ * which is what makes the flags a per-band property of the course rather than a global. */
+#define EDGE_OPEN    0x1000   /* the shoulder at this row can be driven onto */
+#define EDGE_LEFT    0x2000
+#define EDGE_RIGHT   0x4000
+
+/* One distance band. `slot` holds the band's object type codes — a code sits in the LOW byte, which
+ * is how the object-list dispatcher indexes its per-type records.
+ *
+ * `marker` is the band's CONTROL word, and the original's name for its column (road_width_src) is a
+ * misnomer worth not inheriting: build_road_geometry copies it into the HIGH word of every control
+ * long the band covers, and the high word is the flag half — render_road's blit-variant bits plus the
+ * EDGE_* shoulder flags section 10 reads back. The road half-width is the control long's LOW word,
+ * which integrate_perspective and spread_curvature produce; the marker never carries it. The column
+ * is DYNAMIC course state, not a baked table — build_road_geometry reads it every frame. */
+typedef struct {
+    uint16_t slot[RM_RING_SLOTS];
+    uint16_t marker;
+} CourseRow;
+
+typedef struct {
+    CourseRow row[RM_RING_ROWS];
+} CourseRing;
+
 /* ---- build_road_geometry (the per-scanline table builder @0x11f4c) ---- */
 
 /* Number of longs in the control table the builder produces (recreate's road_curve_tbl, 106 longs)
@@ -118,17 +152,20 @@ typedef struct {
     int16_t  horizon_frac;  /* out: horizon sub-row parity */
 } RoadPose;
 
-/* Const source tables the builder reads (baked once; STATIC region, ST big-endian bytes). */
+/* Const source tables the builder reads (baked once; STATIC region, ST big-endian bytes). The
+ * per-band control words are deliberately NOT here: they are the ring's live marker column, passed
+ * separately so they cannot be mistaken for a table it is safe to snapshot once (they were exactly
+ * that until the ring was ported, which silently froze the road's flags after the first frame). */
 typedef struct {
     const int8_t  *persp_seg;    /* per-segment run lengths (0x31 signed bytes) */
-    const uint8_t *width_src;    /* width source shorts, stride 0x20 (14 rows) */
     const uint8_t *width_count;  /* per-row width run counts, 4 view banks of 16 bytes */
 } RoadSource;
 
 /* Rebuild `ctrl` (RM_CTRL_BYTES, ST bytes) — the control-long table render_road consumes — and the
- * `scanline` scratch (RM_SCANLINE_BYTES), from the pose + const sources. Also writes the pose's
- * seg_head / horizon_row / horizon_frac outputs. */
-void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, uint8_t *ctrl, uint8_t *scanline);
+ * `scanline` scratch (RM_SCANLINE_BYTES), from the pose, the const sources and the ring's per-band
+ * road widths. Also writes the pose's seg_head / horizon_row / horizon_frac outputs. */
+void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
+                            uint8_t *ctrl, uint8_t *scanline);
 
 /* ---- blit_road_scroll (the horizontal road fine-scroll @0x10326) ---- */
 
@@ -159,21 +196,31 @@ void rm_scroll_prebuild(const uint8_t *playfield, uint8_t *shifted);
  * advance the scroll state. */
 void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb);
 
-/* ---- course advance (the road-geometry part of game_update's section 12 @0x11xxx) ---- */
+/* ---- course advance (game_update's section 12 @0x11xxx) ----
+ *
+ * One step of "the course scrolls toward you". The original keeps the whole course window as a single
+ * grid of 0x20-byte rows, one row per distance band, and each step moves every row one band nearer
+ * and refills the far end from the next packed course record. RoadPose.seg_data is that grid's row
+ * -1 — the road's slope column — and CourseRing below is rows 0..13, the scenery / marker bands.
+ * (In the image the two are contiguous: seg_data[11]/[12] are the row -1 fields the original calls
+ * marker_slope_src / marker_decay_base.) */
 
-/* Course-progress state: as the buggy drives forward, the road segment window (RoadPose.seg_data)
- * scrolls up one slot per step and, when row_ctr underflows, the next packed course record's slope
- * enters the window's tail — so the road's hills/curves follow the leg's authored track. This is the
- * render-affecting subset of section 12 (segments only); objects/events/collision are separate. */
+/* Course-progress state. row_ctr paces the record stream: a record's slopes and objects are held for
+ * several bands before the next one is pulled. */
 typedef struct {
     uint16_t row_ctr;    /* course-record row countdown (-8 per step; < 0 pulls the next record) */
     uint16_t read_pos;   /* byte offset into the packed course stream ((+8) & 0x1ff8) */
 } CourseState;
 
-/* Advance the course one step. `stream` points at the leg's course-stream base; records lie at
- * NEGATIVE offsets (rec = stream - read_pos). Shifts pose->seg_data up one slot and refills the tail
- * (a pulled record's slope, or the previous slope), updating cs. Feed pose to rm_build_road_geometry. */
-void rm_road_course_advance(RoadPose *pose, CourseState *cs, const uint8_t *stream);
+/* Advance the course one step: scroll the slope column and the ring one band nearer, then refill the
+ * far end — from the next packed course record when row_ctr underflows, otherwise by carrying the
+ * previous slope and ageing the far band's codes. `stream` points at the leg's course-stream base;
+ * records lie at NEGATIVE offsets (rec = stream - read_pos). Feed pose AND ring on to
+ * rm_build_road_geometry.
+ *
+ * NOT included from section 12 (they neither read nor write anything here): the collision probe, the
+ * record's palette/screen-offset event, and the fx-block / horizon-event dispatch. */
+void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, const uint8_t *stream);
 
 /* ---- player physics (the driving slice of game_update @0x1110e) ----
  *

@@ -12,10 +12,11 @@ tree (`draw_ground`, the buggy/foreground sprites, `draw_object`, the fine-x bli
 Phase B has started: the **player physics** (`src/player.c`, `game_update` §3,4,5,6,7,8,9,10) is
 ported and verified frame-for-frame against `g_game_update`, and `render/atari/DEMO.PRG` is a playable
 buggy on the 68000. That now includes the crash / auto-steer script (§6), which replays a canned crash
-out of `crash_anim_tbl` and hands the controls back. What remains in `game_update` is the system that
-*decides* to crash you — section 12's collision probe, the fx block rebuilt from `obj_flags`, and the
-horizon-event dispatch (which also carries the checkpoint and finish events, so a leg still cannot be
-finished) — plus section 12's object ring — see STATUS.
+out of `crash_anim_tbl` and hands the controls back, and section 12's object / marker ring — the
+course window that scrolls the scenery and the road's per-band flags toward you. What remains in
+`game_update` is the system that *decides* to crash you: section 12's collision probe, the fx block
+rebuilt from `obj_flags`, and the horizon-event dispatch (which also carries the checkpoint and finish
+events, so a leg still cannot be finished) — see STATUS.
 
 A note on porting a *gameplay* function rather than a render one: there is no framebuffer to diff, so
 the equivalence surface is the scalar state. `test/equiv.py`'s `compare_player_drive` is the pattern —
@@ -43,50 +44,56 @@ self-driving game has. Three traps it cost real time to find:
 
 ## State of play — read this first if you are picking the work up
 
-Last verified: 2026-07-21. `make test` = **320 passed**. Last commit = `2a10896` (the §6 crash script
-+ the free-running leg-drive harness). Everything below that line is **uncommitted working tree**.
+Last verified: 2026-07-21. `make test` = **339 passed, 1 skipped**. Last commit before this work =
+`a530497`. Section 12's **object / marker ring** is now ported (`CourseRing` in `include/game.h`,
+`rm_road_course_advance` in `src/course.c`), which was the chunk the previous revision of this
+section named as next.
 
-### One missing subsystem explains three open symptoms
+### What the ring port did and did not fix
 
-Section 12's **object / marker ring** is not ported. `rm_road_course_advance` ports §12's segment
-scroll and record pull — which is why the *road surface* streams — but not the ring shuffle and the
-15-marker-word unpack that populate the scenery and part of the control table. That single gap is
-behind all three of these, which were chased separately before the connection was spotted:
+The previous revision claimed one missing subsystem explained three symptoms. That was **one for
+three** — worth recording, because the reasoning error is repeatable:
 
-| Symptom | Where you see it |
+| Symptom | Status |
 |---|---|
-| The start pole stays put as you drive, then snaps back to its original position | `DEMO.PRG`, driving |
-| `run_demo.py` reports `DIFF 1110/32000`, confined to the object tree | headless, since the leg-0 start |
-| `compare_leg_drive` has to hand the road control table over every frame | `test/equiv.py` |
+| `compare_leg_drive` hands the road control table over every frame | **fixed** — the table is now a compared result, and the ring is compared band by band |
+| `run_demo.py` reports `DIFF 1110/32000` | **not fixed, and the ring was never a candidate** — the diff is present at frame 0, before any course advance runs, so a static-vs-scrolling ring could not have caused it |
+| The start pole stays put as you drive | **not fixed** — see below |
 
-Evidence, so it does not have to be re-derived:
+The lesson: a symptom that appears on **frame 0** cannot be explained by state that only diverges
+once something has advanced. Check the frame index before attributing a symptom to a scroll.
 
-- `DEMO_DUMP_STAGE=0` (geometry + `render_road` + `blit_road_scroll`) vs the matching partial reference
-  is **diff 0** — the road half is byte-perfect at a cold leg start. The divergence enters with
-  `draw_game_objects`, at the far right of the screen (rows 3–174, cols 153–157).
-- In `compare_leg_drive`, the candidate's control table diverges from the reference's at **frame ~9**,
-  at offsets `0x140–0x15f` — the marker rows. `build_road_geometry` does not write them.
-- The old staging (leg 1, 60 warmup frames, 40 segments in) **hid all three**, because the warmup had
-  already populated that state. Starting cold is what exposed it, not what broke it.
+### The demo now holds the ring twice, and that is the next thing to fix
 
-So: porting §12's object ring is the next real chunk. It should make the scenery stream, clear the
-`DIFF 1110`, and let the leg-drive harness stop handing the control table over.
+`rm_build_road_geometry` reads the live `CourseRing`, but the demo's other course consumers still
+read the *frozen* copy baked into `fixture_obj_low` — they take raw pointers into the flat image:
 
-### Uncommitted changes in the tree
+- `sprite_count()` reads `low + OBJ_LOW_SPRITE_LIST_BASE` (= band 0's marker, stride `0x20`)
+- `GroundState.markers[i]` is copied once from `A_ground_scan_tbl` (= band *i* slot 6)
+- `rm_draw_object_list` takes `low + OBJ_LOW_FLAGS` (= band 12's slot 0) as a flat pointer
 
-- **Key-latch fix** (`render/atari/os.s`, `render/atari/demo_main.c`) — *a real fix, keep it.* The demo
-  polls held keys once per frame at ~12 fps, so a tap shorter than ~84 ms had its make **and** break
-  land between two polls and was silently dropped; Esc typically needed three presses. The interrupt
-  now latches every make into `key_hit[]`, which only the consuming C clears. Momentary keys (Esc / Q /
-  R) read the latch; held keys (arrows, Space) still read `key_down[]`, which is correct for them.
-- **Leg-0 start** (`render/atari/gen_demo_fixture.py`: `DEMO_LEG = 0`, `DEMO_START_SEGMENT = 0`) — the
-  demo now boots where the player does instead of mid-race. Correct, and wanted, but it is what
-  surfaces the `DIFF 1110` above, so `run_demo.py` is **red** while §12's ring is outstanding. Raising
-  `DEMO_START_SEGMENT` is all it takes to start further in again (the perf bench wants a busier frame).
-- **Debug scaffolding** (`-DDEMO_TRACE=N`, `-DDEMO_KEYLOG`, and `os.s`'s `.ifdef KBD_RAWLOG`) — decide
-  whether to keep or strip. It is guarded, so normal builds are unaffected. See "Debugging on-target".
+So the road's per-band flags animate while the scenery keyed off the same array stays at
+fixture-generation values. `GroundState.markers` and `sprite_count` map onto ring fields cleanly
+(`ring.row[i].slot[6]`'s low byte, and `ring.row[i].marker`'s sign); `rm_draw_object_list`'s flat
+pointer is the one that needs real thought.
+
+**Also aliased, and not yet handled:** `A_buggy_gate`/`A_fg_gate` (`0x18eba`/`0x18ebb`) are exactly
+band 11's marker word. recreate gates the buggy/foreground sprite on `(buggy_gate|fg_gate) & 0x80` —
+bit 7 of that marker's high byte, i.e. the `MARKER_RAW_FLAG` that `marker_unpack`'s fall-through
+preserves. Measured on the reference over 600 full-throttle frames: leg 0 suppresses the sprite on 24
+frames, leg 3 on 174. The demo draws the buggy on all of them, because `SpriteState.buggy_gate`
+is still seeded once from the fixture. No host test covers this — the leg drives compare the ring,
+not the sprite gates.
 
 ### Known, diagnosed, not yet fixed
+
+**`build_road_geometry` writes past the end of `ctrl`.** Pre-existing, found while reviewing the ring
+port. The width loop emits `Σ(width_count[bank+band] + 1)` control longs, which reaches `ctrl+0x1a8`
+on view bank 0 and `ctrl+0x1ac` on banks 2/4/6, while `RM_CTRL_BYTES` is `0x1a8` — a 2-byte overrun
+on bank 0 and 6 bytes on the others. In `demo_main.c` and `bench_main.c` `ctrl` is immediately
+followed by `scanline` in BSS, so on-target it clobbers `scanline[0..5]`; harmless only because
+stage 2 has already consumed that scratch by then. In the Python harness it is a plain ctypes heap
+overrun. Fix by sizing the buffer `RM_CTRL_BYTES + 8` or clamping `dst`.
 
 **Esc freezes the picture instead of returning to the desktop.** The program *has* exited; the demo
 points the video base at its own buffers with `Setscreen` and never restores the original, so the
@@ -101,6 +108,22 @@ shifter still shows the last frame while the desktop redraws into TOS's buffer. 
   "packet noise corrupts key state" theory is refuted by evidence.
 - **Seeding the demo's `ctrl` from the leg's control table does nothing.** `draw_frame` rebuilds
   `ctrl` before anything reads the seed; the diff was byte-identical with and without. Reverted.
+
+### Coverage traps this subsystem taught (they generalise)
+
+Porting the ring cost two rounds of the same mistake, both caught by mutation-testing rather than by
+reading:
+
+- **Never infer branch coverage from the output.** A counter that looked for the animation run's
+  successor codes in the resulting band reported the expansion firing — but 525 of the 554 animation
+  codes across the five legs re-select those slots and overwrite them with exactly the bytes the
+  expansion would have written. Deleting the whole expansion left the suite green. The same trap bit
+  the slot-1 → slot-13 echo counter a second time. Derive coverage from the **record consumed**, not
+  from the band produced.
+- **The data may not reach a branch at all.** Of the four `marker_unpack` outcomes, "right shoulder"
+  appears in 25 records — all in leg 3 — and "both shoulders" in **none** of the 5120. Pin what the
+  data can reach by *seeding `read_pos` onto a real record* (`test_ring_hard_to_reach_branches`);
+  say so in `STATUS.md` for what it cannot, and never fabricate a record to manufacture a green tick.
 
 ## Debugging on-target
 
