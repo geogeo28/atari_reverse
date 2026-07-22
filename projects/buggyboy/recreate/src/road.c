@@ -338,6 +338,8 @@ void g_draw_ground(uint8_t *image, uint32_t buffer) {
  *
  * 16-bit-faithful throughout: the control's low word wraps mod 2^16 and a branch after a `.w` op
  * tests the *word* sign. The 4-byte thunk at 0x15af6 (`bra.w 0x19144`) is a plain alias.
+ *
+ * See RENDER_ROAD_SPEC.md for the full per-band instruction decode and the control-flag map.
  * =========================================================================================== */
 
 /* ---- render_road entry: the idiomatic bands are the default; the byte-exact machine model (the

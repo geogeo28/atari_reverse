@@ -66,9 +66,9 @@ IKBD joystick command sequence + packet handler for input, and the 50 Hz VBL sou
 in the TOS `_vblqueue` (keeping TOS's existing entries after it, so its per-VBL XBIOS `Dosound`
 stepper still runs — that plays the leg-start "3-2-1-go" countdown beeps, which the game issues via
 `Dosound` command lists that are off-image and thus invisible to the differential harness; see
-[`docs/on-target-execution.md`](../../../../docs/on-target-execution.md) §5). It loads the data files
+[`docs/on-target-execution.md`](../../../../../docs/on-target-execution.md) §5). It loads the data files
 in user mode (GEMDOS handle allocation misbehaves from supervisor — see
-[`docs/binary-formats.md`](../../../../docs/binary-formats.md)), then `Super()`s for the hardware phase.
+[`docs/binary-formats.md`](../../../../../docs/binary-formats.md)), then `Super()`s for the hardware phase.
 
 **Leg-select** is driven by the original's function-key menu (`ip_menu`, ported from `0x2b24`):
 press **F1–F5** to pick and start a leg (F1 = leg 1 … F5 = leg 5), **F6** to preview the results
