@@ -108,6 +108,10 @@ static uint8_t shifted[RM_SCROLL_SHIFTS * RM_SCROLL_WINDOW] __attribute__((align
 static uint8_t buf_a_ram[ARENA_BUF_A_BYTES] __attribute__((aligned(2)));  /* mutable buf_a copy (prefix writes mirrors) */
 static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));   /* COURSES.DAT + unpacked GRAPHICS.GRA */
 static uint8_t gobj_scratch[0x400] __attribute__((aligned(2)));          /* BSS: marker recs (inactive) */
+/* The live ring serialized back into the original's flat ST-byte row grid — the object-list
+ * dispatcher's two flag streams walk this (rebuilt after every course advance). The other ring
+ * consumers (sprite count, ground markers, sprite gates) read the native CourseRing directly. */
+static uint8_t ring_st[RM_RING_ROWS * RM_RING_ROW_BYTES] __attribute__((aligned(2)));
 /* The prefix's animated colour aliases the HUD's phase-6a fuel-mask table in the original (both live
  * at 0x17f08): draw_game_objects' prefix writes the animated colour there, and draw_hud then reads it
  * as the fuel mask. Model that alias with one mutable buffer the prefix writes and the HUD reads. */
@@ -139,28 +143,25 @@ static Framebuffer *screen_buf(int i) {
 
 static const int16_t seg_data_init[13] = ROAD_SEG_DATA_INIT;
 
-/* draw_game_objects' sprite-slot count: consecutive non-negative words (stride 0x20) after the base
- * of the sprite list, capped at 11. Selects how the two roadside object-list passes split. */
-#define GOBJ_SPRITE_SLOTS   0xa
-#define GOBJ_MARKER_STRIDE  0x20
+/* How the two roadside object-list passes split: rm_ring_sprite_count over the live ring's marker
+ * column (src/course.c) — the flat-image walk this replaces read the fixture's frozen copy. */
 #define GOBJ_SPRITE_LAST    10
 #define GOBJ_ROW_A3_STRIDE  0x20
 #define GOBJ_ROW_A5_STRIDE  0x22
 #define GOBJ_D6_INIT        0xb0
 #define GOBJ_D6_ROW_STEP    0x10
 #define GOBJ_VIEW_REAR      4
+#define GOBJ_SPRITE_PASS_ROW 1       /* the sprite passes' flag stream starts at this ring row */
+#define GOBJ_FIXED_PASS_ROW 12       /* the fixed-object pass's flag stream starts at this ring row */
 
-static int16_t be16s(const uint8_t *p) { return (int16_t)((p[0] << 8) | p[1]); }
-
-static int sprite_count(const uint8_t *low) {
-    const uint8_t *base = low + OBJ_LOW_SPRITE_LIST_BASE;
-    if (be16s(base) < 0) return 0;
-    int count = 0;
-    for (int i = 0; i <= GOBJ_SPRITE_SLOTS; i++) {
-        if (be16s(base + (i + 1) * GOBJ_MARKER_STRIDE) < 0) break;
-        count++;
-    }
-    return count;
+/* Re-derive every ring-owned view — the dispatcher's ST mirror, the ground markers, the sprite
+ * gates — from the live ring. Must run wherever the ring changes: at seed, after every course
+ * advance, and on a leg restart (missing the last one leaves mid-course scenery on a reset road). */
+static void ring_views_refresh(const CourseRing *ring, GroundState *ground, SpriteState *sprite) {
+    rm_ring_store_st(ring, ring_st);
+    rm_ring_ground_markers(ring, ground->markers);
+    sprite->buggy_gate = rm_ring_buggy_gate(ring);
+    sprite->fg_gate = rm_ring_fg_gate(ring);
 }
 
 /* Run the full ported render pipeline into `fb`, in draw_game_objects order: prefix (off-frame state),
@@ -203,9 +204,12 @@ static void draw_frame(Framebuffer *fb, RoadPose *pose, const RoadSource *src,
     return;
 #endif
 
-    int count = sprite_count(low);
+    /* The dispatcher's flag streams and the pass split all come from the LIVE ring: the sprite
+     * passes walk the serialized grid from row 1, the fixed pass from row 12 — the same aliasing
+     * the original gets from pointing into its flat row grid. */
+    int count = rm_ring_sprite_count(ring);
     if (count - 1 >= 0)                               /* pass 1: the active sprite rows */
-        rm_draw_object_list(objlist, low + OBJ_LOW_SPRITE_DISP, 0, low + OBJ_LOW_SPRITE_FLAGS, 0,
+        rm_draw_object_list(objlist, low + OBJ_LOW_SPRITE_DISP, 0, ring_st + GOBJ_SPRITE_PASS_ROW * RM_RING_ROW_BYTES, 0,
                             (uint16_t)(count - 1), GOBJ_D6_INIT, (uint16_t)count);
 #if defined(DEMO_DUMP_STAGE) && DEMO_DUMP_STAGE == 3
     return;
@@ -214,15 +218,17 @@ static void draw_frame(Framebuffer *fb, RoadPose *pose, const RoadSource *src,
     if (GOBJ_SPRITE_LAST - count >= 0)               /* pass 2: the remaining rows */
         rm_draw_object_list(objlist,
                             low + OBJ_LOW_SPRITE_DISP, (uint16_t)(count * GOBJ_ROW_A5_STRIDE),
-                            low + OBJ_LOW_SPRITE_FLAGS, (uint16_t)(count * GOBJ_ROW_A3_STRIDE),
+                            ring_st + GOBJ_SPRITE_PASS_ROW * RM_RING_ROW_BYTES, (uint16_t)(count * GOBJ_ROW_A3_STRIDE),
                             (uint16_t)(GOBJ_SPRITE_LAST - count),
                             (uint16_t)(GOBJ_D6_INIT - count * GOBJ_D6_ROW_STEP), 0);
     if ((objlist->view_flags & GOBJ_VIEW_REAR) == 0) {   /* pass 3 (fixed) + buggy, view-ordered */
-        rm_draw_object_list(objlist, low + OBJ_LOW_LIST_BASE, 0, low + OBJ_LOW_FLAGS, 0, 0, 0, 0);
+        rm_draw_object_list(objlist, low + OBJ_LOW_LIST_BASE, 0,
+                            ring_st + GOBJ_FIXED_PASS_ROW * RM_RING_ROW_BYTES, 0, 0, 0, 0);
         rm_draw_buggy(sprite, sprite_assets, fb);
     } else {
         rm_draw_buggy(sprite, sprite_assets, fb);
-        rm_draw_object_list(objlist, low + OBJ_LOW_LIST_BASE, 0, low + OBJ_LOW_FLAGS, 0, 0, 0, 0);
+        rm_draw_object_list(objlist, low + OBJ_LOW_LIST_BASE, 0,
+                            ring_st + GOBJ_FIXED_PASS_ROW * RM_RING_ROW_BYTES, 0, 0, 0, 0);
     }
 
     rm_draw_hud(hud, hud_assets, fb);
@@ -443,8 +449,10 @@ void main(void) {
     ScrollState scroll = {.scroll_speed = SCROLL_SPEED_INIT, .hscroll_pos = HSCROLL_POS_INIT};
     CourseState course = {.row_ctr = COURSE_ROW_CTR_INIT, .read_pos = COURSE_READ_POS_INIT};
     /* The course window the advance scrolls. Its marker column is where the road's per-band widths
-     * and shoulder flags come from, so it has to be live state, not a baked table. */
-    CourseRing ring = COURSE_RING_INIT;
+     * and shoulder flags come from, so it has to be live state, not a baked table. The const copy
+     * is what the R-restart rewinds to. */
+    static const CourseRing ring_init = COURSE_RING_INIT;
+    CourseRing ring = ring_init;
     /* the leg's course records, read backward from this anchor in the loaded COURSES.DAT */
     const uint8_t *stream = arena.tables + ARENA_COURSE_STREAM_OFF;
 
@@ -490,9 +498,10 @@ void main(void) {
         .lean = SP_LEAN_INIT, .pitch = SP_PITCH_INIT, .skid = SP_SKID_INIT,
         .crash_disp = SP_CRASH_DISP_INIT, .wheel_pos = SP_WHEEL_POS_INIT,
         .spin_state = SP_SPIN_STATE_INIT, .road_curve = ROAD_CURVE_INIT,
-        .sprite_suppress = SP_SPRITE_SUPPRESS_INIT, .fg_gate = SP_FG_GATE_INIT,
+        .sprite_suppress = SP_SPRITE_SUPPRESS_INIT,
         .anim_frame = SP_ANIM_FRAME_INIT, .spin_reset = SP_SPIN_RESET_INIT,
-        .buggy_draw_flag = SP_BUGGY_DRAW_FLAG_INIT, .buggy_gate = SP_BUGGY_GATE_INIT,
+        .buggy_draw_flag = SP_BUGGY_DRAW_FLAG_INIT,
+        /* buggy_gate/fg_gate are ring row 11's marker bytes — seeded from the ring below */
         .collision_lock = SP_COLLISION_LOCK_INIT, .speed_raw = SP_SPEED_RAW_INIT,
         .lean_accum = SP_LEAN_ACCUM_INIT, .lean_frame = SP_LEAN_FRAME_INIT,
     };
@@ -501,9 +510,7 @@ void main(void) {
         .body_tbl = low + OBJ_LOW_BODY_TBL, .hi_tbl = low + OBJ_LOW_HI_TBL,
         .lo_piece_tbl = low + OBJ_LOW_LO_PIECE_TBL, .lo_piece_idx = low + OBJ_LOW_LO_PIECE_IDX,
     };
-    GroundState ground_mut = ground;
-    for (int i = 0; i < GROUND_SCAN_ENTRIES; i++)
-        ground_mut.markers[i] = low[OBJ_LOW_GROUND_SCAN + i * GOBJ_MARKER_STRIDE + 3];
+    GroundState ground_mut = ground;   /* markers seeded from the ring below, refreshed per advance */
 
     /* --- the driving model (src/player.c). Its const tables all live inside the obj-low blob. --- */
     const PlayerAssets player_assets = {
@@ -530,6 +537,8 @@ void main(void) {
         .hud_crash_timer = HUD_CRASH_TIMER, .timeout_gate = PL_TIMEOUT_GATE_INIT,
     };
     PlayerState player = player_init;
+
+    ring_views_refresh(&ring, &ground_mut, &sprite);   /* seed every ring-derived view */
 
     uint16_t tos_palette[16];    /* the desktop's colours — restored on exit alongside its video base */
     for (int reg = 0; reg < 16; reg++) tos_palette[reg] = (uint16_t)Setcolor((short)reg, -1);
@@ -562,6 +571,10 @@ void main(void) {
             course.row_ctr = COURSE_ROW_CTR_INIT;
             course.read_pos = COURSE_READ_POS_INIT;
             for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
+            /* The ring is course state too: without this, a restart renders the reset road under
+             * MID-COURSE scenery, markers and sprite gates (the views are live now, not fixture). */
+            ring = ring_init;
+            ring_views_refresh(&ring, &ground_mut, &sprite);
         }
 
         /* One frame of the original's driving model, over the road geometry the last frame built.
@@ -581,8 +594,12 @@ void main(void) {
         apply_player(&player, &pose, &road, &scroll, &sprite, &hud, &ground_mut, &objlist);
 
         /* The view wrapping is what advances the course, so the road's bends arrive at the speed the
-         * buggy is actually travelling (section 11/12 of the original). */
-        if (player.view_wrapped) rm_road_course_advance(&pose, &course, &ring, stream);
+         * buggy is actually travelling (section 11/12 of the original). Every ring-derived view is
+         * refreshed with it, or the scenery freezes at its seed values while the road animates. */
+        if (player.view_wrapped) {
+            rm_road_course_advance(&pose, &course, &ring, stream);
+            ring_views_refresh(&ring, &ground_mut, &sprite);
+        }
 #ifdef DEMO_TRACE
         trace_frame(frame, &player, &course);
 #endif

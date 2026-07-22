@@ -122,11 +122,15 @@ road's hills and left/right curvature stream from the leg's packed course as you
 player's own `road_curve`. Section 12's object / marker ring is ported too, so the road's per-band
 flags now stream with the course; the crash / auto-steer script runs once something arms it.
 
+The roadside scenery streams along the course too: `draw_object_list`'s flag streams,
+`draw_ground`'s markers, the sprite-slot count and the buggy/foreground sprite gates all derive
+from the live ring (`src/course.c`'s `rm_ring_*` helpers, refreshed after every course advance and
+on a restart) — see PORTING.md's "the ring's consumers are unified".
+
 What the demo still cannot do: nothing arms a crash (object collision, the fx block and the
-horizon-event dispatch with its discrete `road_curve += ±0x3c` kicks are unported), and the roadside
-object list still does **not** stream along the course — the ring feeds `build_road_geometry`, but
-`draw_object_list`, `draw_ground`'s markers and `sprite_count` still read the frozen copy baked into
-`fixture_obj_low`. See PORTING.md's "the demo now holds the ring twice".
+horizon-event dispatch with its discrete `road_curve += ±0x3c` kicks are unported), and the ring's
+bands 12/13 feed the fixed-object pass with slot words the dispatch would normally rewrite, so that
+pass stays dispatch-unfaithful until the event system is ported.
 
 The alignment gotcha: the cores read the baked tables with `be16`/`be32` (word/long moves), which
 fault on an odd address on the 68000, so the fixture arrays and the BSS scratch are `aligned(2)`.

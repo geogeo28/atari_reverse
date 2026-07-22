@@ -115,6 +115,40 @@ static void ring_age(CourseRow *band) {
         band->slot[slot] &= RING_CODE_AGE_MASK;
 }
 
+void rm_ring_store_st(const CourseRing *ring, uint8_t *dst) {
+    for (int band = 0; band < RM_RING_ROWS; band++, dst += RM_RING_ROW_BYTES) {
+        const CourseRow *row = &ring->row[band];
+        for (int slot = 0; slot < RM_RING_SLOTS; slot++)
+            wr16(dst + slot * 2, row->slot[slot]);
+        wr16(dst + RM_RING_SLOTS * 2, row->marker);
+    }
+}
+
+uint16_t rm_ring_sprite_count(const CourseRing *ring) {
+    if ((int16_t)ring->row[0].marker < 0)
+        return 0;
+    uint16_t count = 0;
+    while (count < RM_RING_SPRITE_ROWS && (int16_t)ring->row[count + 1].marker >= 0)
+        count++;
+    return count;
+}
+
+/* draw_ground's marker byte: this slot's low byte (byte 0xf of the serialized row). */
+#define RING_GROUND_MARKER_SLOT 7
+
+void rm_ring_ground_markers(const CourseRing *ring, uint8_t *markers) {
+    for (int band = 0; band < GROUND_SCAN_ENTRIES; band++)
+        markers[band] = (uint8_t)(ring->row[band].slot[RING_GROUND_MARKER_SLOT] & 0xff);
+}
+
+uint8_t rm_ring_buggy_gate(const CourseRing *ring) {
+    return (uint8_t)(ring->row[RM_RING_GATE_ROW].marker >> 8);
+}
+
+int8_t rm_ring_fg_gate(const CourseRing *ring) {
+    return (int8_t)(ring->row[RM_RING_GATE_ROW].marker & 0xff);
+}
+
 void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, const uint8_t *stream) {
     for (int i = 0; i < SEG_SLOTS - 1; i++)          /* scroll the slope column up one slot */
         pose->seg_data[i] = pose->seg_data[i + 1];

@@ -230,6 +230,43 @@ typedef struct {
  * record's palette/screen-offset event, and the fx-block / horizon-event dispatch. */
 void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, const uint8_t *stream);
 
+/* ---- the ring's other consumers ----
+ *
+ * The original holds the ring as a flat grid of RM_RING_ROW_BYTES rows in the image, and FOUR other
+ * subsystems read that same grid through raw pointers: the object-list dispatcher's two flag streams,
+ * draw_game_objects' sprite-slot count, draw_ground's per-band markers, and the buggy/foreground
+ * sprite gates. Everything below is that aliasing made explicit, so a game loop holds ONE live
+ * CourseRing and derives every consumer's view from it (seeding any of them once from a snapshot is
+ * how the demo ended up with scenery frozen at fixture-generation values — see PORTING.md). */
+
+#define RM_RING_ROW_BYTES ((RM_RING_SLOTS + 1) * 2)   /* one serialized band: 15 slot words + marker */
+
+/* Serialize the ring into the original's flat ST-byte row grid (RM_RING_ROWS x RM_RING_ROW_BYTES
+ * big-endian words) for the object-list dispatcher, which walks its flag streams through the grid
+ * exactly as the original walked the image: the sprite passes' stream starts at row 1's slots
+ * (dst + RM_RING_ROW_BYTES), the fixed pass's at row 12's (dst + 12 * RM_RING_ROW_BYTES). Rebuild
+ * after every rm_road_course_advance. */
+void rm_ring_store_st(const CourseRing *ring, uint8_t *dst);
+
+/* draw_game_objects' sprite-slot count — how the two roadside object-list passes split. The original
+ * walks the grid's marker column: 0 if row 0's marker is negative, else the number of consecutive
+ * non-negative markers over rows 1.., capped at RM_RING_SPRITE_ROWS. */
+#define RM_RING_SPRITE_ROWS 11
+uint16_t rm_ring_sprite_count(const CourseRing *ring);
+
+/* draw_ground's per-band draw markers (GROUND_SCAN_ENTRIES bytes): band i's marker is the low byte
+ * of ring row i's slot RING_GROUND_MARKER_SLOT — the byte the original reads at descriptor+3 from
+ * 0x18d48 (= ring row base + 0xc + 3). Refresh before each draw. */
+void rm_ring_ground_markers(const CourseRing *ring, uint8_t *markers);
+
+/* The buggy/foreground sprite gates are ring row RM_RING_GATE_ROW's marker bytes in the original
+ * (0x18eba/0x18ebb): the draws suppress the sprite on bit 7 of either — the MARKER_RAW_FLAG a
+ * signed marker keeps only through marker_unpack's fall-through. Refresh SpriteState's gates from
+ * here after every course advance. */
+#define RM_RING_GATE_ROW 11
+uint8_t rm_ring_buggy_gate(const CourseRing *ring);
+int8_t rm_ring_fg_gate(const CourseRing *ring);
+
 /* ---- player physics (the driving slice of game_update @0x1110e) ----
  *
  * One frame of "what the player's inputs do to the buggy": throttle -> engine rpm -> speed, speed ->

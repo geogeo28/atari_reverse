@@ -44,10 +44,11 @@ self-driving game has. Three traps it cost real time to find:
 
 ## State of play — read this first if you are picking the work up
 
-Last verified: 2026-07-21. `make test` = **343 passed, 1 skipped**. Last commit before this work =
-`a530497`. Section 12's **object / marker ring** is now ported (`CourseRing` in `include/game.h`,
-`rm_road_course_advance` in `src/course.c`), which was the chunk the previous revision of this
-section named as next.
+Last verified: 2026-07-22. `make test` = **361 passed, 1 skipped**. Section 12's **object / marker
+ring** is ported (`CourseRing` in `include/game.h`, `rm_road_course_advance` in `src/course.c`) and
+its four aliased consumers are unified onto it (see below). The next chunk is section 12's tail:
+the collision probe, the fx block, and the horizon-event dispatch — the system that decides to
+crash you and ends a leg.
 
 ### What the ring port did and did not fix
 
@@ -58,32 +59,41 @@ three** — worth recording, because the reasoning error is repeatable:
 |---|---|
 | `compare_leg_drive` hands the road control table over every frame | **fixed** — the table is now a compared result, and the ring is compared band by band |
 | `run_demo.py` reports `DIFF 1110/32000` | **not fixed, and the ring was never a candidate** — the diff is present at frame 0, before any course advance runs, so a static-vs-scrolling ring could not have caused it |
-| The start pole stays put as you drive | **not fixed** — see below |
+| The start pole stays put as you drive | **fixed by the consumer unification below** — a frame-300 autodrive shows the course scenery arriving (tunnel approach), not the leg-start objects |
 
 The lesson: a symptom that appears on **frame 0** cannot be explained by state that only diverges
 once something has advanced. Check the frame index before attributing a symptom to a scroll.
 
-### The demo now holds the ring twice, and that is the next thing to fix
+### The ring's consumers are unified — every view now derives from the live `CourseRing`
 
-`rm_build_road_geometry` reads the live `CourseRing`, but the demo's other course consumers still
-read the *frozen* copy baked into `fixture_obj_low` — they take raw pointers into the flat image:
+The demo used to hold the ring twice: `rm_build_road_geometry` read the live ring while four other
+consumers read the *frozen* copy baked into `fixture_obj_low`, so the road's flags animated while
+the scenery stayed at fixture-generation values. All four now derive from the live ring
+(`src/course.c` helpers, wired in `demo_main.c`, refreshed after every course advance):
 
-- `sprite_count()` reads `low + OBJ_LOW_SPRITE_LIST_BASE` (= band 0's marker, stride `0x20`)
-- `GroundState.markers[i]` is copied once from `A_ground_scan_tbl` (= band *i* slot 6)
-- `rm_draw_object_list` takes `low + OBJ_LOW_FLAGS` (= band 12's slot 0) as a flat pointer
+- the object-list dispatcher's two flag streams walk `rm_ring_store_st`'s serialized ST-byte mirror
+  (row 1 for the sprite passes, row 12 for the fixed pass) — the dispatcher keeps its flat-bytes
+  contract, the mirror is just the ring in the original's own row-grid layout;
+- `rm_ring_sprite_count` replaces the demo's flat-image marker walk;
+- `rm_ring_ground_markers` refreshes `GroundState.markers` (band *i*'s byte is **slot 7's low
+  byte**, row byte `0xf` — an earlier revision of this section said slot 6, which is off by one:
+  the original reads descriptor+3 from `0x18d48` = row base + `0xc` + 3);
+- `rm_ring_buggy_gate`/`rm_ring_fg_gate` feed the sprite gates from band 11's marker bytes
+  (`0x18eba`/`0x18ebb`), so the `(buggy_gate|fg_gate) & 0x80` suppression frames (24 on leg 0, 174
+  on leg 3 over 600 reference frames) now reach the draws instead of a once-seeded fixture value.
 
-So the road's per-band flags animate while the scenery keyed off the same array stays at
-fixture-generation values. `GroundState.markers` and `sprite_count` map onto ring fields cleanly
-(`ring.row[i].slot[6]`'s low byte, and `ring.row[i].marker`'s sign); `rm_draw_object_list`'s flat
-pointer is the one that needs real thought.
+The mapping is pinned by `test/test_ring_consumers.py`: over 5 legs × 3 warmup depths, each helper
+is compared against the raw image bytes at the aliased addresses — including the full serialized
+mirror byte-for-byte — plus directed cases for the sprite-count walk (the captured cases only
+sample counts 0 and 11) and a reachability check that at least one sampled case carries the gate's
+bit-7 suppress flag. The ring's *values* over time were already pinned by the leg drives; these
+tests pin the *address arithmetic*. The demo *wiring* itself has no host test (`make test` never
+runs `demo_main.c`) — it is verified on-target by the golden frame-0 compare and autodrive runs.
 
-**Also aliased, and not yet handled:** `A_buggy_gate`/`A_fg_gate` (`0x18eba`/`0x18ebb`) are exactly
-band 11's marker word. recreate gates the buggy/foreground sprite on `(buggy_gate|fg_gate) & 0x80` —
-bit 7 of that marker's high byte, i.e. the `MARKER_RAW_FLAG` that `marker_unpack`'s fall-through
-preserves. Measured on the reference over 600 full-throttle frames: leg 0 suppresses the sprite on 24
-frames, leg 3 on 174. The demo draws the buggy on all of them, because `SpriteState.buggy_gate`
-is still seeded once from the fixture. No host test covers this — the leg drives compare the ring,
-not the sprite gates.
+**Known limitation, inherent until the event dispatch is ported:** the fixed-object pass and
+`GroundState.markers[12]` consume ring bands 12/13's slot words, which the leg drives verify only
+by marker — the unported horizon-event dispatch clears bytes there in the original, so those
+bands' values are faithful to the ring but not yet to the dispatch.
 
 ### Recently fixed (kept here until the next STATUS pass)
 
