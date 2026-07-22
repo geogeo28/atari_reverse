@@ -116,8 +116,10 @@ then fix what you find (or justify leaving it) before the docs gate:
   struct field or address it is. Name it even when the field's *meaning* is only partly known
   (offset+role, e.g. `SND_VC_ENABLE`). Genuinely self-evident values are fine inline — `0`/`1`,
   a `<< 3` shift, a loop's `+ 2` step, `& 0xff` on a byte — don't over-name to the point of noise.
-- `/code-review` automates the diff sweep — run it at the change's scale, fix the real
-  findings, and **keep out-of-scope findings out of the commit** (note them, don't fold them in).
+- **Run the `my-code-review` skill at `max`** to automate the diff sweep — it is the gate, and
+  unlike the built-in `/code-review` (user-triggered only) an agent can invoke it itself. Drop to
+  a lower level only when the change is genuinely small. Fix the real findings, and **keep
+  out-of-scope findings out of the commit** (note them, don't fold them in).
 
 ### Pre-commit docs gate
 Docs are part of the change, not a follow-up. Before staging, update every surface that
