@@ -39,13 +39,51 @@ A_view_flags = 0x18c56
 A_scroll_speed = 0x18cb4
 BENCH_SCROLL_SPEED = 0x20                            # must match bench_main.c BENCH_SCROLL_SPEED
 
-# (label, recon symbol, remaster bench symbol). Ordered by the in-frame draw sequence.
+# (label, recon symbol or None, remaster bench symbol). Ordered as the demo's game loop + draw_frame
+# run them, so the TOTAL is the demo's frame cost on the staged leg-1 frame. (course_advance and
+# ring_views run only on view-wrap frames in the demo — every few frames — so the TOTAL overstates a
+# non-wrap frame by their ~1.7 ms.) Recon symbols are only given where an image-arg-only recreate
+# entry point has the same scope (g_draw_ground / g_draw_object take a second draw-buffer argument,
+# so their per-stage recon column stays blank; the whole tree is compared via the object_tree row
+# below instead).
 FUNCS = [
+    ("player_update",       None,                    "bench_player_update"),
+    ("course_advance",      None,                    "bench_course_advance"),
+    ("ring_views",          None,                    "bench_ring_views"),
+    ("gobj_prefix",         "g_draw_game_objects_prefix", "bench_gobj_prefix"),
     ("build_road_geometry", "g_build_road_geometry", "bench_build_geometry"),
+    ("frame_clear",         None,                    "bench_frame_clear"),
     ("render_road",         "g_render_road",         "bench_render_road"),
     ("blit_road_scroll",    "g_blit_road_scroll",    "bench_blit_scroll"),
+    ("draw_ground",         None,                    "bench_draw_ground"),
+    ("draw_fg_sprite",      "g_draw_fg_sprite",      "bench_draw_fg_sprite"),
+    ("objlist_pass1",       None,                    "bench_objlist_pass1"),
+    ("draw_object",         None,                    "bench_draw_object"),
+    ("objlist_pass2",       None,                    "bench_objlist_pass2"),
+    ("objlist_fixed",       None,                    "bench_objlist_fixed"),
+    ("draw_buggy",          "g_draw_buggy",          "bench_draw_buggy"),
     ("draw_hud",            "g_draw_hud",            "bench_draw_hud"),
 ]
+
+# Whole-scope comparison rows (not part of the TOTAL — they re-run stages already counted above).
+COMPOSITES = [
+    ("object_tree",         "g_draw_game_objects",   "bench_object_tree"),
+    ("draw_frame",          None,                    "bench_draw_frame"),
+]
+
+# Remaster wrappers that need a built control table (and, for draw_frame, the pre-rotated scroll
+# copies) before the measured call — same reason recon preps geometry for its road readers.
+RM_PREPS = {
+    "player_update":  ["bench_build_geometry"],
+    "objlist_pass1":  ["bench_build_geometry"],
+    "draw_object":    ["bench_build_geometry"],
+    "objlist_pass2":  ["bench_build_geometry"],
+    "objlist_fixed":  ["bench_build_geometry"],
+    "object_tree":    ["bench_build_geometry"],
+    "render_road":    ["bench_build_geometry"],
+    "blit_road_scroll": ["bench_scroll_prebuild"],
+    "draw_frame":     ["bench_scroll_prebuild"],
+}
 
 
 def _syms(elf):
@@ -79,26 +117,39 @@ def _run(mem_template, entry, arg0, stack_top, sentinel, preps=()):
     return r["ninsns"], r["cycles"]
 
 
-def remaster_costs():
+def staged_mem():
+    """(syms, mem_template, stack_top, sentinel) with the unpacked asset arena installed — the ONE
+    memory image every remaster measurement starts from (this module and tools/profile.py alike).
+    The remaster loads its assets from COURSES.DAT / GRAPHICS.GRA, and there is no filesystem under
+    Musashi — so drop the already-unpacked arena straight into the .bss block bench_main.c reserved
+    for it; bench_stage_assets then binds the pointers into it before every measured call."""
     syms = _syms(BENCH_ELF)
     mem, sp, sentinel = _load_flat(BENCH_BIN, syms)
-    # The remaster loads its assets from COURSES.DAT / GRAPHICS.GRA, and there is no filesystem under
-    # Musashi — so drop the already-unpacked arena straight into the .bss block bench_main.c reserved
-    # for it, and let bench_stage_assets bind the pointers into it before every measured call.
     arena = assets_load.fresh_arena()
     at = syms["arena_block"]
     # Slice-assigning past the end would silently GROW the bytearray and shift the stack/sentinel
     # layout out from under emu.run_bench, so require it to land inside the image.
     assert at + len(arena) <= len(mem), "arena_block does not fit the Musashi image"
     mem[at:at + len(arena)] = arena
+    return syms, mem, sp, sentinel
 
-    # render_road reads the control table geometry writes; blit_road_scroll reads the pre-rotated
-    # copies rm_scroll_prebuild builds — so run those preps first (they're per-leg, not per-frame),
-    # mirroring the recon's geometry prep, and measure only the per-frame call.
-    prep = {"render_road": syms["bench_build_geometry"], "blit_road_scroll": syms["bench_scroll_prebuild"]}
-    return {label: _run(mem, syms[rm], 0, sp, sentinel,
-                        preps=[syms["bench_stage_assets"], *([prep[label]] if label in prep else [])])
-            for label, _, rm in FUNCS}
+
+def preps_for(bench_sym):
+    """The prep symbols to run, in order, before measuring `bench_sym`: the staging pass plus the
+    stage's RM_PREPS entry, resolved through the FUNCS/COMPOSITES row for that symbol (RM_PREPS is
+    keyed by row label, and labels are not uniformly the symbol minus \"bench_\" — deriving the key
+    by string surgery is how tools/profile.py once skipped the scroll blit's prebuild silently)."""
+    label = next((lbl for lbl, _, rm in FUNCS + COMPOSITES if rm == bench_sym), None)
+    return ["bench_stage_assets", *RM_PREPS.get(label, ())]
+
+
+def remaster_costs():
+    syms, mem, sp, sentinel = staged_mem()
+    # Some wrappers read state another stage builds (the control table, the pre-rotated scroll
+    # copies) — run those preps first (they're per-leg / earlier-in-frame, not part of the measured
+    # stage), mirroring the recon's geometry prep, and measure only the per-frame call.
+    return {label: _run(mem, syms[rm], 0, sp, sentinel, preps=[syms[p] for p in preps_for(rm)])
+            for label, _, rm in FUNCS + COMPOSITES}
 
 
 def recon_costs():
@@ -121,8 +172,9 @@ def recon_costs():
         r = emu.run_bench(mem, syms[sym], arg0=image_addr, sp=stack_top, sentinel=sentinel)
         return r["ninsns"], r["cycles"]
 
-    out = {label: run(sym, prep_geometry=(label in ("render_road", "blit_road_scroll")))
-           for label, sym, _ in FUNCS}
+    GEOM_READERS = ("render_road", "blit_road_scroll", "object_tree")
+    out = {label: run(sym, prep_geometry=(label in GEOM_READERS))
+           for label, sym, _ in FUNCS + COMPOSITES if sym}
     # also the byte-exact machine-model render_road (the tight register/goto transcription — the
     # fastest reference), to show how much the idiomatic recon (and remaster) give up for readability.
     if "g_render_road_machine" in syms:
@@ -143,21 +195,24 @@ def main():
         hdr += f"{'rec.insn':>10}{'rec.cyc':>10}{'rec.ms':>8}{'rm/rec':>8}"
     print(hdr)
     print("  " + "-" * (len(hdr) - 2))
-    rm_tot = rec_tot = 0
-    for label, _, _ in FUNCS:
+
+    def row(label):
         ri, rc = rm[label]
-        rm_tot += rc
         line = f"  {label:<20}{ri:>10}{rc:>10}{1000 * rc / CPU_HZ:>8.2f}"
-        if rec:
+        if rec and label in rec:
             xi, xc = rec[label]
-            rec_tot += xc
             line += f"{xi:>10}{xc:>10}{1000 * xc / CPU_HZ:>8.2f}{rc / xc:>7.2f}x"
         print(line)
+        return rc
+
+    rm_tot = sum(row(label) for label, _, _ in FUNCS)
     print("  " + "-" * (len(hdr) - 2))
-    tline = f"  {'TOTAL':<20}{'':>10}{rm_tot:>10}{1000 * rm_tot / CPU_HZ:>8.2f}"
-    if rec:
-        tline += f"{'':>10}{rec_tot:>10}{1000 * rec_tot / CPU_HZ:>8.2f}{rm_tot / rec_tot:>7.2f}x"
-    print(tline)
+    print(f"  {'TOTAL (frame)':<20}{'':>10}{rm_tot:>10}{1000 * rm_tot / CPU_HZ:>8.2f}")
+
+    # Whole-scope comparison rows (re-run stages already counted above; not part of the TOTAL).
+    print()
+    for label, _, _ in COMPOSITES:
+        row(label)
 
     # render_road vs the byte-exact machine model (recon's tight register/goto transcription).
     if rec and "render_road_machine" in rec:
@@ -168,11 +223,10 @@ def main():
         print(f"    machine:{mi:>9}{mc:>10}{1000 * mc / CPU_HZ:>8.2f} ms   "
               f"remaster {rc / mc:.2f}x  ·  idiomatic recon {gc / mc:.2f}x")
 
-    print(f"\n  remaster: {rm_tot / FRAME_BUDGET:.2f} frame-budgets/frame", end="")
-    if rec:
-        print(f"    recon: {rec_tot / FRAME_BUDGET:.2f}  (remaster is {rm_tot / rec_tot:.2f}x the recon)")
-    else:
-        print("\n  (recon game.elf not built — run: bash render/atari/game_build.sh)")
+    print(f"\n  remaster: {rm_tot / FRAME_BUDGET:.2f} frame-budgets/frame "
+          f"({CPU_HZ / rm_tot:.1f} fps compute-bound; 30 fps needs <= {CPU_HZ / 30:.0f} cycles)")
+    if not rec:
+        print("  (recon game.elf not built — run: bash render/atari/game_build.sh)")
 
 
 if __name__ == "__main__":

@@ -108,21 +108,61 @@ rather than pinned against a fabricated record; a mutation to it survives the wh
 
 ## Perf
 
-`tools/bench.py` measures each render core's per-frame cost on the cycle-accurate Musashi 68000 —
-remaster (native structs, via the `bench_*` wrappers) vs recreate's recon (flat image) — on the same
-staged leg-1 frame. Build first: `bash render/atari/bench_build.sh`.
+`tools/bench.py` measures the demo's WHOLE frame per stage on the cycle-accurate Musashi 68000 —
+remaster (native structs, via the `bench_*` wrappers, staged exactly as demo_main.c's frame) vs
+recreate's recon (flat image) where an image-arg-only recon entry has the same scope — on the same
+staged leg-1 frame. Build first: `bash render/atari/bench_build.sh`. `tools/profile.py <bench_sym>`
+breaks any stage down to cycles-per-function (and per-PC with `--lines`) via the oracle's
+cycle histogram.
 
-Current (8 MHz ST, 160000-cycle frame budget), remaster **0.76× the recon** overall:
+Current (8 MHz ST, 160000-cycle 50 Hz frame budget) — the demo frame is **299 ms ≈ 3.3 fps** on the
+staged frame. Caveat before reading the object rows: the staged frame is the demo's BOOT frame — a
+leg start, with the start gate spanning the road — which is close to the object tree's worst case
+(see the frame-cost distribution below the table):
 
-| stage | remaster ms | recon ms | rm/rec |
-|-------|-------------|----------|--------|
-| build_road_geometry | 3.87 | 3.91 | 0.99× |
-| render_road | 49.84 | 54.86 | **0.91×** |
-| blit_road_scroll | **11.98** | 33.55 | **0.36×** |
-| draw_hud | 18.53 | 18.27 | 1.01× |
+| stage | remaster ms | recon ms | rm/rec | notes |
+|-------|-------------|----------|--------|-------|
+| player_update + course + views + prefix | 2.01 | — | | scalar state, noise |
+| build_road_geometry | 3.87 | 3.91 | 0.99× | |
+| **frame_clear (demo-only)** | **96.03** | — | | 32 KB memset, byte-loop @24 cyc/B; recreate never clears — the pipeline repaints every byte |
+| render_road | 50.68 | 55.47 | 0.91× | 67% in the per-scanline core, 33% in bands B/D |
+| blit_road_scroll | 11.98 | 33.55 | 0.36× | pre-rotated copies + unrolled fill |
+| draw_ground | 1.16 | — | | |
+| draw_fg_sprite | 2.40 | 2.39 | 1.00× | |
+| **objlist pass 1 (sprites)** | **51.50** | — | | 87% inside `rm_blit_objshift` |
+| draw_object | 0.89 | — | | |
+| objlist pass 2 | 0.09 | — | | empty on this frame |
+| **objlist fixed pass** | **55.99** | — | | 97% inside `rm_blit_objshift2` |
+| draw_buggy | 5.16 | 5.22 | 0.99× | |
+| draw_hud | 17.44 | 17.20 | 1.01× | 10.6 in the phases (dashboard masked blit), 6.0 in glyph_run |
+| **TOTAL (frame)** | **299.2** | | | recreate-parity would be ~240 ms — the original is this slow on this scene |
 
-`render_road` also beats the byte-exact **machine model** (`g_render_road_machine`, 56.18 ms → 0.89×):
-GCC optimises the idiomatic/native-pointer C better than the hand-threaded register/goto transcription.
+Whole-tree check: `object_tree` (prefix→buggy, recreate's `g_draw_game_objects` scope) is 117.2 ms
+vs the recon's 130.3 ms (**0.90×**). `render_road` also beats the byte-exact **machine model**
+(`g_render_road_machine`, 56.65 ms → 0.89×): GCC optimises the idiomatic/native-pointer C better
+than the hand-threaded register/goto transcription.
+
+**Frame-cost distribution** (recon `g_draw_frame` over legs 0/1/4 × warmups 0..600 step 30, 63
+frames): median **180 ms (5.6 fps)**, min 138 ms, p90 221 ms, max 315 ms. A median frame's object
+tree is ~46 ms — the staged bench frame's 117 ms is the start gate, near the tail of the
+distribution. Use the median for planning and the gate frame as the worst-case check.
+
+The headline findings (2026-07-22 profile):
+- **The demo's per-frame `memset` is ~a third of the frame and is redundant** — recreate's own
+  pipeline repaints every framebuffer byte (its captured frames are deterministic with no clear),
+  and the shim memset is a byte loop besides. Removing it is a free 96 ms.
+- **The two fine-x sprite blitters dominate the object tree** — `rm_blit_objshift`/
+  `rm_blit_objshift2` are 99 ms of the gate frame's 117 ms tree (87%/97% of their passes). Their
+  cell helpers mutate `col0/col1/sp` through pointers, so GCC keeps the loop state in memory: the
+  profile shows ~16 k cycles of pure `movel %sp@(x),%sp@(y)` spill shuffling plus memory-RMW cursor
+  updates per pass. Value-passing restructure (same bytes out, pinned by
+  `test/test_blit_engines.py`) is the next win.
+- **Where the fps can land (8 MHz ST, median frame ~180 ms recreate-parity):** dropping the memset
+  puts the remaster demo at ~155 ms ≈ 6.5 fps median. The full plan (blitters, road display list,
+  HUD static/dynamic split, scroll fill tracking — PORTING.md "Perf plan") projects a median around
+  **60–75 ms ≈ 13–17 fps**, with gate/tunnel frames at ~8–10 fps. 20 fps median is the stretch
+  ceiling if every item lands (likely needing hand-asm blitter cores); 30 fps is out of reach on a
+  stock ST while staying pixel-faithful.
 
 **Optimization — `blit_road_scroll`** (was the worst C-vs-asm ratio, 2.84× the original → now ~1.02×,
 matching the hand-asm): two changes, both byte-identical to the verified core (`test/test_scroll.py`,
@@ -139,5 +179,5 @@ Key gotcha: the cores **must be built `-O2`, not `-Os`** — at `-Os` GCC won't 
 primitives (`rr_copy_long`/`rr_fill_pair`), and the per-column call overhead ~doubles the render cost
 (measured 1.94× the recon before the flag was fixed). The on-target builds now use `-O2`.
 
-The full pipeline is now ~84 ms/frame. Next target is `render_road` (49.8 ms) — a precomputed road
-display list would cut the per-scanline dispatch. See [[buggyboy-perf-fast-track]].
+(The "~84 ms/frame" this section used to claim was the sum of the four stages benched at the time,
+not the frame: the 2026-07-22 full-frame bench above put the real figure at 299 ms.)

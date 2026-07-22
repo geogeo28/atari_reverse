@@ -44,6 +44,9 @@ _LIB.osh_cov_visited.argtypes = [ctypes.c_uint32]
 _LIB.osh_cov_visited.restype = ctypes.c_int
 _LIB.osh_cov_data.restype = _u8p
 _LIB.osh_cov_bytes.restype = ctypes.c_uint32
+_LIB.osh_prof_enable.argtypes = [ctypes.c_int]
+_LIB.osh_prof_data.restype = _u32p
+_LIB.osh_prof_slots.restype = ctypes.c_uint32
 
 _LIB.osh_run_bench.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32,
                                ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
@@ -88,6 +91,22 @@ def cov_data():
     """The raw visited-PC bitset (bit i = address i executed). For dumping/merging across workers."""
     n = _LIB.osh_cov_bytes()
     return bytes(ctypes.cast(_LIB.osh_cov_data(), ctypes.POINTER(ctypes.c_uint8 * n)).contents)
+
+
+def prof_enable(on=True):
+    """Turn on the cycle-per-PC profile in run_bench (off by default; adds nothing when off)."""
+    _LIB.osh_prof_enable(1 if on else 0)
+
+
+def prof_reset():
+    """Clear the accumulated cycle-per-PC tallies (call before the run(s) to profile)."""
+    _LIB.osh_prof_reset()
+
+
+def prof_data():
+    """The accumulated profile as a list of cycle tallies, one per even PC (index i = PC 2*i)."""
+    n = _LIB.osh_prof_slots()
+    return list(ctypes.cast(_LIB.osh_prof_data(), ctypes.POINTER(ctypes.c_uint32 * n)).contents)
 
 
 def psg_writes():

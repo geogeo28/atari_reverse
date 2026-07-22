@@ -33,6 +33,7 @@
 #include "game.h"
 #include "screen.h"
 #include "demo_fixture.h"
+#include "demo_frame.h"
 
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
                             uint8_t *ctrl, uint8_t *scanline);
@@ -73,7 +74,7 @@ extern void kbd_isr(void);
 
 /* Consume a latched key press. The driving keys are polled as HELD state, which is what steering and
  * throttle want, but a momentary key (quit, restart) cannot be read that way: the loop polls once per
- * frame and a frame here is ~84 ms, so a quick tap's make AND break both land between two polls and
+ * frame and a frame here is ~300 ms, so a quick tap's make AND break both land between two polls and
  * key_down is already back to 0 when it is read — the press is silently lost. key_hit is set by the
  * interrupt on the make and stays set until read here, so no press can be missed. */
 static int take_key_hit(int scancode) {
@@ -107,7 +108,7 @@ static uint8_t scanline[RM_SCANLINE_BYTES] __attribute__((aligned(2)));  /* BSS:
 static uint8_t shifted[RM_SCROLL_SHIFTS * RM_SCROLL_WINDOW] __attribute__((aligned(2)));  /* pre-rotated scroll copies */
 static uint8_t buf_a_ram[ARENA_BUF_A_BYTES] __attribute__((aligned(2)));  /* mutable buf_a copy (prefix writes mirrors) */
 static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));   /* COURSES.DAT + unpacked GRAPHICS.GRA */
-static uint8_t gobj_scratch[0x400] __attribute__((aligned(2)));          /* BSS: marker recs (inactive) */
+static uint8_t gobj_scratch[GOBJ_MARKER_RECS_BYTES] __attribute__((aligned(2)));  /* BSS: marker recs (inactive) */
 /* The live ring serialized back into the original's flat ST-byte row grid — the object-list
  * dispatcher's two flag streams walk this (rebuilt after every course advance). The other ring
  * consumers (sprite count, ground markers, sprite gates) read the native CourseRing directly. */
@@ -116,9 +117,6 @@ static uint8_t ring_st[RM_RING_ROWS * RM_RING_ROW_BYTES] __attribute__((aligned(
  * at 0x17f08): draw_game_objects' prefix writes the animated colour there, and draw_hud then reads it
  * as the fuel mask. Model that alias with one mutable buffer the prefix writes and the HUD reads. */
 static uint8_t fuel_mask_ram[8] __attribute__((aligned(2)));
-
-#define GOBJ_ANIM_BUF_OFF1 0xd70     /* buf_a + this = anim_word mirror 1 (read as a record by draws) */
-#define GOBJ_ANIM_BUF_OFF2 0x1250    /* buf_a + this = anim_word mirror 2 */
 
 /* Two screen buffers, 256-byte aligned at RUNTIME (the ST video base only uses the high/mid address
  * bytes, so a non-256-aligned base is rounded down → the image shifts). The link-time alignment isn't
@@ -142,17 +140,6 @@ static Framebuffer *screen_buf(int i) {
 }
 
 static const int16_t seg_data_init[13] = ROAD_SEG_DATA_INIT;
-
-/* How the two roadside object-list passes split: rm_ring_sprite_count over the live ring's marker
- * column (src/course.c) — the flat-image walk this replaces read the fixture's frozen copy. */
-#define GOBJ_SPRITE_LAST    10
-#define GOBJ_ROW_A3_STRIDE  0x20
-#define GOBJ_ROW_A5_STRIDE  0x22
-#define GOBJ_D6_INIT        0xb0
-#define GOBJ_D6_ROW_STEP    0x10
-#define GOBJ_VIEW_REAR      4
-#define GOBJ_SPRITE_PASS_ROW 1       /* the sprite passes' flag stream starts at this ring row */
-#define GOBJ_FIXED_PASS_ROW 12       /* the fixed-object pass's flag stream starts at this ring row */
 
 /* Re-derive every ring-owned view — the dispatcher's ST mirror, the ground markers, the sprite
  * gates — from the live ring. Must run wherever the ring changes: at seed, after every course

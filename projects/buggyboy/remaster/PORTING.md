@@ -171,9 +171,10 @@ DEMO_EXTRA_CFLAGS="-DDEMO_KEYLOG -DDEMO_TRACE=2000 -Wa,--defsym,KBD_RAWLOG=1" \
   bash render/atari/build_demo.sh
 ```
 
-`run_hatari.RUN_VBLS` defaults to 4000, which is **not enough for a long trace** — a frame costs ~84 ms
-(≈4 vbls), so a 600-frame run needs ~60000 and a raised `timeout=`. Set both when driving headlessly,
-or the run dies with "did not produce SCREEN.BIN" and looks like a build failure.
+`run_hatari.RUN_VBLS` defaults to 4000, which is **not enough for a long trace** — a frame costs
+~300 ms (≈15 vbls; measured by the 2026-07-22 full-frame bench, see STATUS "Perf"), so a 600-frame
+run needs ~60000 and a raised `timeout=`. Set both when driving headlessly, or the run dies with
+"did not produce SCREEN.BIN" and looks like a build failure.
 
 A trace run necessarily reports `DIFF` from `run_demo.py`: `golden.bin` is frame 0 and the dump is
 frame N (or telemetry). That is the run working, not failing — a `MATCH` there would mean nothing moved.
@@ -189,6 +190,38 @@ bash render/atari/build.sh && python render/atari/run_hatari.py   # on-target: p
 ```
 
 Tests use `../recreate/.venv/bin/python` (numpy/pytest pinned there). `make test` runs `pytest -n auto`.
+
+## Perf plan (2026-07-22 full-frame bench + drive distribution — numbers in STATUS "Perf")
+
+Baselines: recreate-parity median frame **180 ms (5.6 fps)** over real drives (min 138 / max 315);
+the demo today adds a redundant 96 ms clear on top. The ranked proposals, each byte-identical by
+construction and pinned by the existing differential tests:
+
+1. **Drop the per-frame 32 KB `memset`** (demo_main.c `draw_frame`) — recreate's own pipeline
+   repaints every framebuffer byte, so clear each screen buffer once at boot and never again.
+   −96 ms, trivial. Verify: `run_demo.py` MATCH plus a later-frame autodrive dump (a stale-byte bug
+   would surface after the buffers have alternated, not on frame 0).
+2. **De-pointer the fine-x blitter loops** (`src/blit.c`) — the cell helpers take
+   `Offset *col0/*col1/*sp`, so the loop state is address-taken and GCC keeps it in memory (the
+   profile shows the spill shuffling directly). Restructure to value-in/value-out or inline the row
+   loop. The engines are 99 ms on the gate frame, ~35 ms on a median frame; expect 25–40% off them.
+   Pinned by `test/test_blit_engines.py` byte-exact fuzz.
+3. **render_road display list** (50.7 ms every frame) — 67% is the per-scanline interpret-and-
+   dispatch core; a per-frame plan (or per-band specialised writers) cuts the dispatch. Expect
+   15–25 ms off. Pinned by `test/test_road.py` whole-framebuffer compares.
+4. **draw_hud static/dynamic split** (17.4 ms) — the dashboard masked blit repaints unchanged pixels
+   every frame; draw the static dashboard once per buffer, then per-frame only the dynamic cells
+   (digits, gauges, blink, crash fx), restoring their background from the pristine dashboard first.
+   Expect ~10 ms off. Needs per-buffer bookkeeping (two alternating buffers). Pinned by
+   `test/test_hud.py`.
+5. **blit_road_scroll top-fill dirty tracking** (part of 12.0 ms) — the constant fill above the band
+   only changes when the horizon moves relative to that buffer's previous frame; skip it otherwise.
+   Small and stateful; do last.
+
+Projected landing zone (8 MHz ST): median **~60–75 ms ≈ 13–17 fps**, gate/tunnel frames ~8–10 fps.
+20 fps median is the stretch ceiling if everything lands (hand-asm blitter cores after item 2);
+30 fps needs a 16 MHz+ target or giving up pixel-faithfulness. Profile any candidate first:
+`tools/profile.py bench_<stage> [--lines]`; re-check the distribution with `tools/frame_dist.py`.
 
 ## The recipe (porting one function)
 

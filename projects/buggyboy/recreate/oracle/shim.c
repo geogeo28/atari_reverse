@@ -29,6 +29,19 @@ void osh_cov_enable(int on) { g_cov_on = on; }
 void osh_cov_reset(void)    { for (uint32_t i = 0; i < sizeof g_cov; i++) g_cov[i] = 0; }
 int  osh_cov_visited(uint32_t pc) { return pc < COV_SIZE && ((g_cov[pc >> 3] >> (pc & 7)) & 1); }
 
+/* --- optional cycle-per-PC profile (off by default; osh_prof_enable turns it on) -------------
+ * One uint32 cycle tally per even PC in [0, PROF_SIZE), accumulated across osh_run_bench calls
+ * (reset with osh_prof_reset). Sized for the cross-compiled recon/remaster ELFs, which link at
+ * base 0 and stay well under 1 MiB of text. remaster's tools/profile.py maps the tallies back to
+ * symbols. Gated so it adds nothing to a normal bench run. */
+#define PROF_SIZE (1u << 20)                /* PCs covered: [0, 1 MiB) */
+static uint32_t g_prof[PROF_SIZE / 2];      /* tally per even PC */
+static int      g_prof_on;
+void osh_prof_enable(int on) { g_prof_on = on; }
+void osh_prof_reset(void)    { for (uint32_t i = 0; i < PROF_SIZE / 2; i++) g_prof[i] = 0; }
+const uint32_t *osh_prof_data(void)  { return g_prof; }
+uint32_t        osh_prof_slots(void) { return PROF_SIZE / 2; }
+
 /* --- IKBD 6850 ACIA (keyboard/joystick), $fffffc00/02 -> 24-bit bus alias $fffc00/02 -----
  * read_joystick busy-waits on the status TDRE bit then sends a command; the joystick reply
  * arrives via an interrupt we don't run (input state is instead scripted as an image global —
@@ -294,7 +307,9 @@ int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
         if (pc == sentinel) break;
         uint32_t cur_a7 = m68k_get_reg(0, M68K_REG_A7);
         if (cur_a7 < g_min_a7) g_min_a7 = cur_a7;
-        g_ncycles += (uint32_t)m68k_execute(1);
+        uint32_t cyc = (uint32_t)m68k_execute(1);
+        g_ncycles += cyc;
+        if (g_prof_on && pc < PROF_SIZE) g_prof[pc >> 1] += cyc;
     }
     g_ninsns = n;
     out_regs[0] = m68k_get_reg(0, M68K_REG_D0);
