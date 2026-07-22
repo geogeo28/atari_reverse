@@ -54,9 +54,13 @@ A_persp_seg_tbl = 0x17156                          # const: per-segment run leng
 A_width_count_tbl = 0x1718a                        # const: per-row width run counts (4 banks of 16)
 A_road_curve_tbl = 0x18efc                          # builder output region (== render_road width_tbl base)
 
-# render_road control-table geometry (mirror include/game.h RM_CTRL_* — pinned by test_geometry)
+# render_road control-table geometry (mirror include/game.h RM_CTRL_* — the copies are pinned equal
+# by test_course_ring.test_python_constants_match_the_c; the spill pad is additionally pinned to the
+# stamp loop's measured write extent by test_geometry)
 RM_CTRL_LONGS = 106
 RM_CTRL_BYTES = RM_CTRL_LONGS * 4
+RM_CTRL_STAMP_SPILL = 8                                # stage 4's band stamp spills past the table; alloc covers it
+RM_CTRL_ALLOC_BYTES = RM_CTRL_BYTES + RM_CTRL_STAMP_SPILL
 RM_CTRL_WIDTH_OFF = 0x28
 RM_SCANLINE_BYTES = 0x80
 ROAD_PERSP_SEG_BYTES = 0x31                         # persp_seg_tbl length (PERSP_SEGMENTS + 1)

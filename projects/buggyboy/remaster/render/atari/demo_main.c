@@ -100,7 +100,7 @@ static int take_key_hit(int scancode) {
  * dispatcher then reads — so buf_a must be a MUTABLE copy of the fixture for the prefix write to be
  * seen by the draws, exactly as recreate's g_draw_game_objects does. The marker records + animated
  * colour are off-frame (this frame's marker slot is inactive), so they go to BSS scratch. */
-static uint8_t ctrl[RM_CTRL_BYTES] __attribute__((aligned(2)));          /* BSS: per-frame control-long table */
+static uint8_t ctrl[RM_CTRL_ALLOC_BYTES] __attribute__((aligned(2)));    /* BSS: per-frame control-long table */
 static uint8_t scanline[RM_SCANLINE_BYTES] __attribute__((aligned(2)));  /* BSS: build_road_geometry scratch */
 static uint8_t shifted[RM_SCROLL_SHIFTS * RM_SCROLL_WINDOW] __attribute__((aligned(2)));  /* pre-rotated scroll copies */
 static uint8_t buf_a_ram[ARENA_BUF_A_BYTES] __attribute__((aligned(2)));  /* mutable buf_a copy (prefix writes mirrors) */

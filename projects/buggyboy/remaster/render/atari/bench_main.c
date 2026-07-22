@@ -24,7 +24,7 @@ void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 #define BENCH_SCROLL_SPEED 0x20     /* a representative racing speed (exercises the scroll edge/wrap tail) */
 
 static Framebuffer fb __attribute__((aligned(2)));
-static uint8_t ctrl[RM_CTRL_BYTES] __attribute__((aligned(2)));
+static uint8_t ctrl[RM_CTRL_ALLOC_BYTES] __attribute__((aligned(2)));
 static uint8_t scanline[RM_SCANLINE_BYTES] __attribute__((aligned(2)));
 static uint8_t shifted[RM_SCROLL_SHIFTS * RM_SCROLL_WINDOW] __attribute__((aligned(2)));
 

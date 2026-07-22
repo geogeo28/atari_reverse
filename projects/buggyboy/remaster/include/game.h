@@ -136,6 +136,13 @@ typedef struct {
  * `.width_tbl = ctrl + RM_CTRL_WIDTH_OFF`. */
 #define RM_CTRL_LONGS       106
 #define RM_CTRL_BYTES       (RM_CTRL_LONGS * 4)
+/* Stage 4's band stamp emits Σ(width_count[bank+band] + 1) words at stride 4, which runs 2 bytes
+ * past RM_CTRL_BYTES on view bank 0 and 6 bytes on banks 2/4/6 — faithful to the original, whose
+ * writes spill into the bytes after the table (nothing reads them). Allocating the spill is cheaper
+ * than a bounds check in the 106-write stamp loop; the pad is the 6-byte worst case rounded up to a
+ * whole long so derived buffers stay long-sized. test_geometry pins it to the measured write extent. */
+#define RM_CTRL_STAMP_SPILL 8
+#define RM_CTRL_ALLOC_BYTES (RM_CTRL_BYTES + RM_CTRL_STAMP_SPILL)
 #define RM_CTRL_WIDTH_OFF   0x28
 #define RM_SCANLINE_BYTES   0x80        /* per-row cumulative-slope scratch (road_scanline_tbl) */
 
@@ -161,9 +168,10 @@ typedef struct {
     const uint8_t *width_count;  /* per-row width run counts, 4 view banks of 16 bytes */
 } RoadSource;
 
-/* Rebuild `ctrl` (RM_CTRL_BYTES, ST bytes) — the control-long table render_road consumes — and the
- * `scanline` scratch (RM_SCANLINE_BYTES), from the pose, the const sources and the ring's per-band
- * road widths. Also writes the pose's seg_head / horizon_row / horizon_frac outputs. */
+/* Rebuild `ctrl` (allocate RM_CTRL_ALLOC_BYTES; the table proper is RM_CTRL_BYTES of ST bytes) — the
+ * control-long table render_road consumes — and the `scanline` scratch (RM_SCANLINE_BYTES), from the
+ * pose, the const sources and the ring's per-band road widths. Also writes the pose's seg_head /
+ * horizon_row / horizon_frac outputs. */
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
                             uint8_t *ctrl, uint8_t *scanline);
 

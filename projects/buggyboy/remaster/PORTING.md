@@ -44,7 +44,7 @@ self-driving game has. Three traps it cost real time to find:
 
 ## State of play — read this first if you are picking the work up
 
-Last verified: 2026-07-21. `make test` = **339 passed, 1 skipped**. Last commit before this work =
+Last verified: 2026-07-21. `make test` = **343 passed, 1 skipped**. Last commit before this work =
 `a530497`. Section 12's **object / marker ring** is now ported (`CourseRing` in `include/game.h`,
 `rm_road_course_advance` in `src/course.c`), which was the chunk the previous revision of this
 section named as next.
@@ -85,15 +85,17 @@ frames, leg 3 on 174. The demo draws the buggy on all of them, because `SpriteSt
 is still seeded once from the fixture. No host test covers this — the leg drives compare the ring,
 not the sprite gates.
 
-### Known, diagnosed, not yet fixed
+### Recently fixed (kept here until the next STATUS pass)
 
-**`build_road_geometry` writes past the end of `ctrl`.** Pre-existing, found while reviewing the ring
-port. The width loop emits `Σ(width_count[bank+band] + 1)` control longs, which reaches `ctrl+0x1a8`
-on view bank 0 and `ctrl+0x1ac` on banks 2/4/6, while `RM_CTRL_BYTES` is `0x1a8` — a 2-byte overrun
-on bank 0 and 6 bytes on the others. In `demo_main.c` and `bench_main.c` `ctrl` is immediately
-followed by `scanline` in BSS, so on-target it clobbers `scanline[0..5]`; harmless only because
-stage 2 has already consumed that scratch by then. In the Python harness it is a plain ctypes heap
-overrun. Fix by sizing the buffer `RM_CTRL_BYTES + 8` or clamping `dst`.
+**`build_road_geometry`'s write past the end of `ctrl`** is fixed by allocation, not clamping: the
+stamp loop's spill (2 bytes on view bank 0, 6 on banks 2/4/6) is faithful to the original, so every
+ctrl buffer is now sized `RM_CTRL_ALLOC_BYTES` (= `RM_CTRL_BYTES + RM_CTRL_STAMP_SPILL`). Two pins
+keep it honest, because no ctrl comparison can see an under-sized pad (they all stop at
+`RM_CTRL_BYTES`): `test_course_ring.test_python_constants_match_the_c` pins the game.h/adapter.py
+copies equal, and `test_geometry.test_stamp_spill_stays_within_alloc` poison-pins the pad to the
+stamp's measured write extent per view bank.
+
+### Known, diagnosed, not yet fixed
 
 **Esc freezes the picture instead of returning to the desktop.** The program *has* exited; the demo
 points the video base at its own buffers with `Setscreen` and never restores the original, so the

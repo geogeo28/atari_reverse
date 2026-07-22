@@ -183,10 +183,10 @@ def _build_candidate_ctrl(lib, image):
     pose = adapter.road_pose(image)
     source, _keep = adapter.road_source(image)
     ring = adapter.course_ring(image)
-    ctrl = (ctypes.c_uint8 * adapter.RM_CTRL_BYTES)()
+    ctrl = (ctypes.c_uint8 * adapter.RM_CTRL_ALLOC_BYTES)()
     scan = (ctypes.c_uint8 * adapter.RM_SCANLINE_BYTES)()
     lib.rm_build_road_geometry(ctypes.byref(pose), ctypes.byref(source), ctypes.byref(ring), ctrl, scan)
-    return bytes(ctrl), pose
+    return bytes(ctrl)[:adapter.RM_CTRL_BYTES], pose
 
 
 def compare_geometry(lib, image, pokes=None):
@@ -1065,7 +1065,7 @@ class _Candidate:
         self.lib = lib
         self.pose = adapter.road_pose(state)
         self.source, self._k_src = adapter.road_source(state)
-        self.ctrl = (ctypes.c_uint8 * adapter.RM_CTRL_BYTES)()
+        self.ctrl = (ctypes.c_uint8 * adapter.RM_CTRL_ALLOC_BYTES)()
         self.scan = (ctypes.c_uint8 * adapter.RM_SCANLINE_BYTES)()
         self.course = adapter.course_state(state)
         self.ring = adapter.course_ring(state)
@@ -1092,7 +1092,7 @@ class _Candidate:
         # section 9 adds it into the curve. Carry the reference's value or the next frame drifts.
         self.scroll.hscroll_step2 = _r16(state, adapter.A_hscroll_step2)
         lo, n = adapter.A_road_curve_tbl, adapter.RM_CTRL_BYTES
-        self.ctrl[:] = state[lo:lo + n]
+        self.ctrl[:n] = state[lo:lo + n]
 
     def step(self, in_bits):
         """One frame of the game loop: physics, the course advance its view-wrap triggers, then the
@@ -1183,7 +1183,7 @@ def compare_leg_drive(lib, image, inputs):
             _count_ring_branches(state, cand.ring.row[0], cand.course.read_pos, stats)
 
         lo, n = adapter.A_road_curve_tbl, adapter.RM_CTRL_BYTES
-        if bytes(cand.ctrl) != bytes(state[lo:lo + n]):
+        if bytes(cand.ctrl)[:n] != bytes(state[lo:lo + n]):
             first = next(i for i in range(n) if cand.ctrl[i] != state[lo + i])
             mismatches.append((frame, f"ctrl[{first:#x}]", cand.ctrl[first], state[lo + first]))
         mismatches.extend(_ring_mismatches(frame, cand.ring, state))

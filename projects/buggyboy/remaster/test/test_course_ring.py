@@ -164,12 +164,24 @@ def test_python_constants_match_the_c():
     constants matter differently: a drifted copy there does not crash, it makes the branch-coverage
     counters silently count the wrong branch, so the hard-to-reach tests above would assert on a
     stale predicate and report coverage that never happened."""
-    game_h = _defines("include/game.h", r"^#define\s+(RM_RING_\w+|EDGE_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+    game_h = _defines("include/game.h",
+                      r"^#define\s+(RM_RING_\w+|EDGE_\w+|RM_CTRL_\w+|RM_SCANLINE_\w+)\s+(\w+)\s*(?:/\*.*)?$")
     assert {"RM_RING_ROWS", "RM_RING_SLOTS"} <= game_h.keys(), "ring geometry moved out of game.h"
     assert equiv.adapter.RM_RING_ROWS == game_h["RM_RING_ROWS"]
     assert equiv.adapter.RM_RING_SLOTS == game_h["RM_RING_SLOTS"]
     assert equiv.adapter.RING_ROW_BYTES == (game_h["RM_RING_SLOTS"] + 1) * 2
     assert equiv.EDGE_ANY == game_h["EDGE_OPEN"] | game_h["EDGE_LEFT"] | game_h["EDGE_RIGHT"]
+
+    # The control-table geometry, incl. the ALLOC spill pad: a drifted copy here under-allocates the
+    # ctypes ctrl buffer and the C spill corrupts the interpreter heap with the suite still green
+    # (every ctrl comparison stops at RM_CTRL_BYTES, so nothing else can catch it).
+    assert {"RM_CTRL_LONGS", "RM_CTRL_STAMP_SPILL"} <= game_h.keys(), "ctrl geometry moved out of game.h"
+    assert equiv.adapter.RM_CTRL_LONGS == game_h["RM_CTRL_LONGS"]
+    assert equiv.adapter.RM_CTRL_BYTES == game_h["RM_CTRL_LONGS"] * 4
+    assert equiv.adapter.RM_CTRL_STAMP_SPILL == game_h["RM_CTRL_STAMP_SPILL"]
+    assert equiv.adapter.RM_CTRL_ALLOC_BYTES == equiv.adapter.RM_CTRL_BYTES + game_h["RM_CTRL_STAMP_SPILL"]
+    assert equiv.adapter.RM_CTRL_WIDTH_OFF == game_h["RM_CTRL_WIDTH_OFF"]
+    assert equiv.adapter.RM_SCANLINE_BYTES == game_h["RM_SCANLINE_BYTES"]
     # ctypes must agree with the C struct byte for byte, or byref() hands C a short buffer.
     assert ctypes.sizeof(equiv.adapter.CourseRow) == equiv.adapter.RING_ROW_BYTES
     assert (ctypes.sizeof(equiv.adapter.CourseRing)
