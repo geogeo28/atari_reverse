@@ -47,6 +47,7 @@ void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
 void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEventCtx *ctx);
 void rm_course_probe(RmEventCtx *c);
 void rm_course_events(RmEventCtx *c);
+void rm_crash_fx_update(RmEventCtx *c);
 void rm_draw_ground(const GroundState *s, const GroundAssets *a, Framebuffer *fb);
 void rm_draw_fg_sprite(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
 void rm_draw_buggy(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
@@ -296,8 +297,14 @@ static void kbd_remove(long old_vector) {
 #ifndef AUTODRIVE_STEER_AFTER
 #define AUTODRIVE_STEER_AFTER 60         /* throttle up first, then hold a steering lock */
 #endif
+/* The base bits held every frame. Default is throttle (drive the course). Set to 0 (with a large
+ * AUTODRIVE_STEER_AFTER) to IDLE the buggy, which is what a leg-end time-out trace needs: nothing
+ * moves, so nothing crashes, and §4's bonus clock is the only thing that fires. */
+#ifndef AUTODRIVE_BASE_INPUT
+#define AUTODRIVE_BASE_INPUT RM_IN_ACCEL
+#endif
 static uint16_t autodrive_input(int frame) {
-    return (uint16_t)(RM_IN_ACCEL | (frame < AUTODRIVE_STEER_AFTER ? 0 : RM_IN_LEFT));
+    return (uint16_t)(AUTODRIVE_BASE_INPUT | (frame < AUTODRIVE_STEER_AFTER ? 0 : RM_IN_LEFT));
 }
 #endif
 
@@ -306,11 +313,16 @@ static uint16_t autodrive_input(int frame) {
  * to SCREEN.BIN, padded to a full framebuffer, purely so the existing headless runner picks it up
  * unchanged — it is telemetry, not an image. Words are big-endian by virtue of being 68000 stores. */
 #ifdef DEMO_TRACE
-#define TRACE_WORDS 8
-#define TRACE_SLOTS (SCREEN_BYTES / (TRACE_WORDS * 2))
+#define TRACE_WORDS 9
+/* Round UP so the dump is >= SCREEN_BYTES whatever TRACE_WORDS is — the headless runner waits for a
+ * full framebuffer's worth of bytes (9 words divides 32000 unevenly, unlike the old 8). And never
+ * fewer slots than DEMO_TRACE asks for: the runner minimum alone caps at 1778 slots with 9 words,
+ * which would silently truncate the documented DEMO_TRACE=2000 keylog run. */
+#define TRACE_MIN_SLOTS ((SCREEN_BYTES + TRACE_WORDS * 2 - 1) / (TRACE_WORDS * 2))
+#define TRACE_SLOTS (DEMO_TRACE > TRACE_MIN_SLOTS ? DEMO_TRACE : TRACE_MIN_SLOTS)
 static uint16_t trace_log[TRACE_SLOTS][TRACE_WORDS];
 
-static void trace_frame(int frame, const PlayerState *p, const CourseState *c) {
+static void trace_frame(int frame, const PlayerState *p, const EventState *e, const CourseState *c) {
     if (frame >= TRACE_SLOTS) return;
     uint16_t *rec = trace_log[frame];
     rec[0] = (uint16_t)frame;
@@ -321,6 +333,7 @@ static void trace_frame(int frame, const PlayerState *p, const CourseState *c) {
     rec[5] = p->collision_lock;
     rec[6] = (uint16_t)p->hud_crash_timer;
     rec[7] = (uint16_t)(p->view_wrapped ? 1 : 0);
+    rec[8] = e->abort_flag;      /* leg-end countdown: < 0 (0x8000..0xffff) ends the leg */
 }
 
 static void trace_dump(void) {
@@ -553,6 +566,12 @@ void main(void) {
         .hud_crash_timer = HUD_CRASH_TIMER, .timeout_gate = PL_TIMEOUT_GATE_INIT,
     };
     PlayerState player = player_init;
+#ifdef DEMO_TIME_LEFT
+    /* Debug builds only: shorten the leg's bonus clock so a headless idle trace reaches the time-out
+     * (and thus the leg end) in ~140 frames instead of ~800. The R-restart re-seeds the FULL clock
+     * from player_init, so a restart is visible in the trace as time_left jumping back up. */
+    player.time_left = DEMO_TIME_LEFT;
+#endif
 
     /* --- the course-event engine (src/events.c): the system that decides to crash you and delivers
      * the checkpoint / finish / bonus events. rm_player_update dispatches through it on the §6 event
@@ -614,10 +633,13 @@ void main(void) {
     uint16_t input_prev = 0;
     int frame_count = 0;
     int quit = 0;
+    int restart_pending = 0;   /* set at the leg end (abort_flag < 0) to restart on the next frame */
     for (int frame = 0; !quit; frame++, frame_count++) {
-        if (take_key_hit(SCAN_R)) {                   /* restart the leg from the baked start state */
+        int r_pressed = take_key_hit(SCAN_R);         /* R restarts the leg from the baked start state */
+        if (r_pressed || restart_pending) {
+            restart_pending = 0;
 #ifdef DEMO_KEYLOG
-            keylog_restarts++;
+            if (r_pressed) keylog_restarts++;         /* count key presses only, not leg-end restarts */
 #endif
             player = player_init;
             ev = ev_init;                             /* the event engine's state is leg state too */
@@ -674,9 +696,28 @@ void main(void) {
             rm_course_events(&ctx);
             ring_views_refresh(&ring, &ground_mut, &sprite);
         }
+
+        /* HUD phase 8's STATE side (draw_crash_fx @0x15872, split out from hud.c's DRAW): decay the
+         * crash-arm timer, or once it goes negative run the leg-end tally — drain the bonus time /
+         * units / score-digit rollovers into the score and arm abort_flag. It runs every frame at the
+         * per-frame tail, where the original runs it inside draw_hud. The load-bearing invariant is
+         * BEFORE apply_player, so the drawn HUD reflects this frame's tally through the six
+         * EventState -> HudState view fields apply_player copies (equiv._Candidate.step keeps the same
+         * invariant but sequences the tally after its blit — immaterial, no shared state). make test
+         * never runs this loop: the demo's ordering is pinned only by on-target runs. */
+        rm_crash_fx_update(&ctx);
+        /* abort_flag < 0 is the leg end — the original's main @0x10100 breaks its frame loop here and
+         * hands off to update_highscore -> game_over_flag++ -> the intermission -> init_leg. That whole
+         * handoff is UNPORTED (see STATUS/PORTING "slice 2"), so we stand in by restarting the current
+         * leg from its boot state on the next frame — the same reset R uses, which re-seeds every field
+         * slice 1 made persistent (abort_flag, crash_frame, hud_crash_timer, time_left, crash_lap, the
+         * HUD-text score/rollover region, marker_pending). Deferring to next frame keeps the reset on a
+         * single code path. */
+        if ((int16_t)ev.abort_flag < 0) restart_pending = 1;
+
         apply_player(&player, &pose, &road, &scroll, &sprite, &hud, &ground_mut, &objlist, &ev);
 #ifdef DEMO_TRACE
-        trace_frame(frame, &player, &course);
+        trace_frame(frame, &player, &ev, &course);
 #endif
 
         /* render off-screen, then flip the video base to it at the vblank (no tearing). */

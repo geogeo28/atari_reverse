@@ -76,12 +76,23 @@ clock times out, **ends** (`abort_flag` goes negative, which the frame loop read
 Pinned by `test/test_crash_fx.py` (every branch, mutation-verified) and organically by
 `test/test_leg_drive.py`'s idle-to-time-out drives.
 
-Still unported (documented at each call site, per convention): the DEMO / on-target wiring of the
-tally and the `EventState`→`HudState` view copy (**slice 2**); off-frame sound (INITTUNE/INITFX/
+**The tally is wired on-target (slice 2 tail).** `demo_main.c`'s frame loop now calls
+`rm_crash_fx_update` every frame at the per-frame tail (before `apply_player`, so the drawn HUD sees
+this frame's tally — the same order `equiv._Candidate.step` established). When `abort_flag` goes
+negative — the leg end — the demo **restarts the current leg** from its boot state (the same reset the
+`R` key uses, which re-seeds every field slice 1 made persistent: `abort_flag`, `crash_frame`,
+`hud_crash_timer`, `time_left`, `crash_lap`, the HUD-text score/rollover region, `marker_pending`).
+This is a documented stand-in for the unported intermission / `init_leg` handoff (see the call site).
+Proven on the 68000 by the idle leg-end trace above: `hud_crash_timer` arms 0x5b at the time-out,
+decays negative by frame 128, `abort_flag` arms 0xffff at 129, and the leg restarts at 130 (state
+reset visible; the demo runs on cleanly, no hang).
+
+Still unported (documented at each call site, per convention): off-frame sound (INITTUNE/INITFX/
 TURNOFF, the VBL vector; `rev_reload` aliases `lean_frame` and is invisible to every compared
 surface — verified, not assumed); the record-driven mode-2/4/6 palette / screen-offset events in
-`game_update_course_advance`'s tail; and the intermission / `init_leg` flow the frame loop hands off
-to once `abort_flag` goes negative (`game_over_flag++` before the intermission).
+`game_update_course_advance`'s tail; and the real intermission / `init_leg` flow the frame loop hands
+off to once `abort_flag` goes negative (`game_over_flag++` before the intermission), for which the
+leg restart above stands in.
 
 ### What the ring port did and did not fix
 
@@ -195,10 +206,16 @@ Three build flags, all off in normal builds, set via `DEMO_EXTRA_CFLAGS`:
 # bisect a divergence to one render stage (0 road, 1 ground, 2 foreground, 3 pass 1)
 DEMO_EXTRA_CFLAGS="-DDEMO_DUMP_STAGE=0" bash render/atari/build_demo.sh
 
-# drive a fixed script headlessly and log per-frame course state to SCREEN.BIN (8 BE words/frame:
-# frame, read_pos, row_ctr, speed, rpm, collision_lock, hud_crash_timer, view_wrapped)
+# drive a fixed script headlessly and log per-frame course state to SCREEN.BIN (9 BE words/frame:
+# frame, read_pos, row_ctr, speed, rpm, collision_lock, hud_crash_timer, view_wrapped, abort_flag)
 DEMO_EXTRA_CFLAGS="-DDEMO_AUTODRIVE=600 -DDEMO_TRACE=600 -DAUTODRIVE_STEER_AFTER=100000" \
   bash render/atari/build_demo.sh
+
+# drive the IDLE leg-end path (no throttle, shortened bonus clock) to prove the tally ends the leg on
+# the 68000: hud_crash_timer arms 0x5b, decays negative, abort_flag arms, the loop restarts the leg.
+# AUTODRIVE_BASE_INPUT=0 idles; DEMO_TIME_LEFT shortens the clock so the time-out lands in ~130 frames.
+DEMO_EXTRA_CFLAGS="-DDEMO_AUTODRIVE=160 -DDEMO_TRACE=160 -DAUTODRIVE_BASE_INPUT=0 \
+  -DAUTODRIVE_STEER_AFTER=100000 -DDEMO_TIME_LEFT=6" bash render/atari/build_demo.sh
 
 # interactive session: log every raw IKBD byte + the per-frame trace to KEYLOG.BIN on quit
 DEMO_EXTRA_CFLAGS="-DDEMO_KEYLOG -DDEMO_TRACE=2000 -Wa,--defsym,KBD_RAWLOG=1" \
