@@ -41,6 +41,92 @@ self-driving game has. Three traps it cost real time to find:
   incremental (a spin override can be armed on top of one already held), and an idle test also
   swallows the real bug you want to see — a script that walks wrong or quits early.
 
+## State of play — read this first if you are picking the work up
+
+Last verified: 2026-07-21. `make test` = **320 passed**. Last commit = `2a10896` (the §6 crash script
++ the free-running leg-drive harness). Everything below that line is **uncommitted working tree**.
+
+### One missing subsystem explains three open symptoms
+
+Section 12's **object / marker ring** is not ported. `rm_road_course_advance` ports §12's segment
+scroll and record pull — which is why the *road surface* streams — but not the ring shuffle and the
+15-marker-word unpack that populate the scenery and part of the control table. That single gap is
+behind all three of these, which were chased separately before the connection was spotted:
+
+| Symptom | Where you see it |
+|---|---|
+| The start pole stays put as you drive, then snaps back to its original position | `DEMO.PRG`, driving |
+| `run_demo.py` reports `DIFF 1110/32000`, confined to the object tree | headless, since the leg-0 start |
+| `compare_leg_drive` has to hand the road control table over every frame | `test/equiv.py` |
+
+Evidence, so it does not have to be re-derived:
+
+- `DEMO_DUMP_STAGE=0` (geometry + `render_road` + `blit_road_scroll`) vs the matching partial reference
+  is **diff 0** — the road half is byte-perfect at a cold leg start. The divergence enters with
+  `draw_game_objects`, at the far right of the screen (rows 3–174, cols 153–157).
+- In `compare_leg_drive`, the candidate's control table diverges from the reference's at **frame ~9**,
+  at offsets `0x140–0x15f` — the marker rows. `build_road_geometry` does not write them.
+- The old staging (leg 1, 60 warmup frames, 40 segments in) **hid all three**, because the warmup had
+  already populated that state. Starting cold is what exposed it, not what broke it.
+
+So: porting §12's object ring is the next real chunk. It should make the scenery stream, clear the
+`DIFF 1110`, and let the leg-drive harness stop handing the control table over.
+
+### Uncommitted changes in the tree
+
+- **Key-latch fix** (`render/atari/os.s`, `render/atari/demo_main.c`) — *a real fix, keep it.* The demo
+  polls held keys once per frame at ~12 fps, so a tap shorter than ~84 ms had its make **and** break
+  land between two polls and was silently dropped; Esc typically needed three presses. The interrupt
+  now latches every make into `key_hit[]`, which only the consuming C clears. Momentary keys (Esc / Q /
+  R) read the latch; held keys (arrows, Space) still read `key_down[]`, which is correct for them.
+- **Leg-0 start** (`render/atari/gen_demo_fixture.py`: `DEMO_LEG = 0`, `DEMO_START_SEGMENT = 0`) — the
+  demo now boots where the player does instead of mid-race. Correct, and wanted, but it is what
+  surfaces the `DIFF 1110` above, so `run_demo.py` is **red** while §12's ring is outstanding. Raising
+  `DEMO_START_SEGMENT` is all it takes to start further in again (the perf bench wants a busier frame).
+- **Debug scaffolding** (`-DDEMO_TRACE=N`, `-DDEMO_KEYLOG`, and `os.s`'s `.ifdef KBD_RAWLOG`) — decide
+  whether to keep or strip. It is guarded, so normal builds are unaffected. See "Debugging on-target".
+
+### Known, diagnosed, not yet fixed
+
+**Esc freezes the picture instead of returning to the desktop.** The program *has* exited; the demo
+points the video base at its own buffers with `Setscreen` and never restores the original, so the
+shifter still shows the last frame while the desktop redraws into TOS's buffer. Fix: capture
+`Physbase()` before the first `Setscreen` and restore it on exit. `Physbase` is already declared in
+`os.s` and simply unused.
+
+### Two dead ends — do not repeat them
+
+- **The IKBD is not the problem.** A raw byte log of everything the ACIA delivered showed only
+  well-formed make/break pairs — no stray mouse/joystick packet bytes reaching `key_down[]`. The
+  "packet noise corrupts key state" theory is refuted by evidence.
+- **Seeding the demo's `ctrl` from the leg's control table does nothing.** `draw_frame` rebuilds
+  `ctrl` before anything reads the seed; the diff was byte-identical with and without. Reverted.
+
+## Debugging on-target
+
+Three build flags, all off in normal builds, set via `DEMO_EXTRA_CFLAGS`:
+
+```bash
+# bisect a divergence to one render stage (0 road, 1 ground, 2 foreground, 3 pass 1)
+DEMO_EXTRA_CFLAGS="-DDEMO_DUMP_STAGE=0" bash render/atari/build_demo.sh
+
+# drive a fixed script headlessly and log per-frame course state to SCREEN.BIN (8 BE words/frame:
+# frame, read_pos, row_ctr, speed, rpm, collision_lock, hud_crash_timer, view_wrapped)
+DEMO_EXTRA_CFLAGS="-DDEMO_AUTODRIVE=600 -DDEMO_TRACE=600 -DAUTODRIVE_STEER_AFTER=100000" \
+  bash render/atari/build_demo.sh
+
+# interactive session: log every raw IKBD byte + the per-frame trace to KEYLOG.BIN on quit
+DEMO_EXTRA_CFLAGS="-DDEMO_KEYLOG -DDEMO_TRACE=2000 -Wa,--defsym,KBD_RAWLOG=1" \
+  bash render/atari/build_demo.sh
+```
+
+`run_hatari.RUN_VBLS` defaults to 4000, which is **not enough for a long trace** — a frame costs ~84 ms
+(≈4 vbls), so a 600-frame run needs ~60000 and a raised `timeout=`. Set both when driving headlessly,
+or the run dies with "did not produce SCREEN.BIN" and looks like a build failure.
+
+A trace run necessarily reports `DIFF` from `run_demo.py`: `golden.bin` is frame 0 and the dump is
+frame N (or telemetry). That is the run working, not failing — a `MATCH` there would mean nothing moved.
+
 ## Commands
 
 ```bash

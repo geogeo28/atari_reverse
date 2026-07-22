@@ -30,10 +30,8 @@ import render_screen as R                         # noqa: E402  MEM_BASE (where 
 import gen_hud_fixture as hud                      # noqa: E402  reuse the HUD asset/define/palette baking
 
 # A visually busy HUD over the road (same spirit as the HUD demo).
-CONTROLS = {adapter.A_flag_seq_count: 3, adapter.A_crash_lap: 4,
-            adapter.A_speed: 120, adapter.A_time_left: 45,
-            adapter.A_crash_active: 0, adapter.A_hud_crash_timer: 0, adapter.A_dsp_toggle: 0}
-DEMO_START_SEGMENT = 40                            # skip leg 1's uniform-slope opening straight
+DEMO_LEG = 0                                       # the demo starts where the player does: leg 0...
+DEMO_START_SEGMENT = 0                             # ...at its first segment, with nothing skipped
 
 # buf_a's record region, copied into demo RAM because the prefix mutates it (anim-word mirrors).
 # OBJ_LOW is the STATIC+bss table region draw_game_objects reads (jump table, colour/edge tables,
@@ -45,20 +43,22 @@ OBJ_LOW_END = 0x19100
 
 
 def staged_image():
-    """The demo's starting leg-1 image: geometry built, a valid view bank, HUD scalars poked, the
-    course advanced past leg 1's uniform-slope opening, and the asset arena replaced by a
-    freshly-loaded one (see the note at the end — the demo loads its assets off disk, so the
-    reference must too). Shared by the fixture baking and the perf bench so both measure the SAME
-    frame. Screen is left as staged (caller blanks if needed)."""
-    # mid_race staging leaves view_flags at the section-12 trigger value 0x10, which is not a real
-    # 0/2/4/6 view; build_road_geometry needs a real bank.
-    img = equiv.road_background(leg=1, warmup=60)
-    equiv._w16(img, adapter.A_view_flags, 0)
-    for addr, val in CONTROLS.items():
-        equiv._w16(img, addr, val & 0xffff)
+    """The demo's starting image: the START OF LEG 0, exactly as the player meets it — the oracle's
+    init_leg with no warmup frames and no course skipping, so the buggy is stationary on the grid with
+    the leg's own clock, and driving forward covers the leg from its first segment.
 
-    # Skip ahead (via the verified course advance) to where the segment profile varies, so the road
-    # visibly bends/straightens from the first throttle instead of after an unchanging opening.
+    (It used to start mid-race — leg 1, 60 warmup frames, 40 segments in — which was fine for
+    validating the renderer against a busy frame but meant you could never drive a leg from the
+    beginning. Nothing here needs the old staging fixups: those cleared artefacts the warmup drive
+    left behind, and a leg start has none of them.)
+
+    The asset arena is replaced by a freshly-loaded one (see the note at the end — the demo loads its
+    assets off disk, so the reference must too). Shared by the fixture baking and the perf bench so
+    both measure the SAME frame. Screen is left as staged (caller blanks if needed)."""
+    img = equiv.leg_start_background(DEMO_LEG)
+
+    # Kept as a loop over the verified course advance so that raising DEMO_START_SEGMENT is all it
+    # takes to start further into the leg again (the perf bench wants a busier frame than segment 0).
     lib = equiv._lib()
     pose, cs = adapter.road_pose(img), adapter.course_state(img)
     stream, _k = adapter.course_stream(img)
