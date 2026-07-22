@@ -13,7 +13,11 @@
 # then:  load_dump.sh <proj_dir> <name> dump.bin 0x<base> 0x<entry>
 set -euo pipefail
 
-TOS="$(find /opt/homebrew/Cellar/hatari -name tos.img 2>/dev/null | head -1)"
+# TOS ROM: yours via $TOS_IMG, else the one Hatari ships (Homebrew path, version-globbed).
+# TOS ROMs are Atari copyright and are not distributed with this repo.
+TOS="${TOS_IMG:-$(find /opt/homebrew/Cellar/hatari -name tos.img 2>/dev/null | head -1)}"
+[ -r "${TOS:-}" ] || { echo "error: no TOS ROM found; set TOS_IMG to a TOS image file." >&2; exit 1; }
+
 GAMEDIR="$1"; AUTO="${2:-}"; PARSE="${3:-}"
 
 ARGS=(--tos "$TOS" --memsize 1 --monitor rgb --tos-res low --harddrive "$GAMEDIR")

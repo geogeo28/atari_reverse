@@ -6,9 +6,8 @@
 # processor defaults to 68000:BE:32:default (use 68000:BE:32:MC68030 for 68010/020/030 code).
 set -euo pipefail
 
-GHIDRA=/opt/homebrew/Cellar/ghidra/12.1.2/libexec
-export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/ghidra_env.sh"          # sets $GHIDRA, exports $JAVA_HOME (override via GHIDRA_HOME)
 
 PROJ_DIR="$1"; PROJ_NAME="$2"; DUMP="$3"; BASE="$4"
 ENTRY="${5:-$BASE}"; OUT="${6:-$PROJ_DIR/decomp.c}"; PROC="${7:-68000:BE:32:default}"
