@@ -149,6 +149,18 @@ int8_t rm_ring_fg_gate(const CourseRing *ring) {
     return (int8_t)(ring->row[RM_RING_GATE_ROW].marker & 0xff);
 }
 
+/* Poke one big-endian byte into the live ring at flat grid offset `flat_off`, inverting the
+ * rm_ring_store_st mapping: the grid is RM_RING_ROWS rows of 16 words (15 slots + the marker), so a
+ * flat offset resolves to (band, word, byte-parity). See RM_RING_OBJ_ACTIVE_OFF in game.h. */
+void rm_ring_poke_byte(CourseRing *ring, unsigned flat_off, uint8_t val) {
+    unsigned band = flat_off / RM_RING_ROW_BYTES;
+    unsigned in_row = flat_off % RM_RING_ROW_BYTES;
+    unsigned word = in_row / 2;
+    uint16_t *w = (word == RM_RING_SLOTS) ? &ring->row[band].marker : &ring->row[band].slot[word];
+    if (in_row & 1) *w = (uint16_t)((*w & 0xff00) | val);                    /* low byte */
+    else            *w = (uint16_t)((*w & 0x00ff) | ((uint16_t)val << 8));   /* high byte */
+}
+
 void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, const uint8_t *stream) {
     for (int i = 0; i < SEG_SLOTS - 1; i++)          /* scroll the slope column up one slot */
         pose->seg_data[i] = pose->seg_data[i + 1];

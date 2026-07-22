@@ -124,6 +124,18 @@ fn 0x11ba4 evt_flag_gate
 fn 0x11c2c evt_collision
 fn 0x11c5a evt_score_msg
 fn 0x11cb2 handle_marker            # ctx
+fn 0x118b6 game_update_fx_and_events
+fn 0x11d1a evt_ckpt_counter
+fn 0x11d3a evt_marker_decay_spawn
+fn 0x11d64 evt_spin_arm
+fn 0x11d8e evt_rpm_collide
+fn 0x11dcc evt_curve_freeze
+fn 0x11de2 evt_rpm_penalty
+fn 0x11e16 evt_common_collide
+fn 0x11e4e evt_disp_finish_a
+fn 0x11e5c evt_disp_finish_b
+fn 0x11e8e evt_disp_bonus_l
+fn 0x11e92 evt_disp_bonus_r
 
 # ==== results / high-score / intermission ====
 fn 0x1238e update_highscore

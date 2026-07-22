@@ -94,13 +94,10 @@
 #define CRASH_ROLLOVER_OFF 0x1c         /* rollover records 0x1818e (stride 0xe) */
 #define CRASH_HUD_LAP_OFF  0x68         /* CRASH_HUD_LAP  0x181da ('0' + crash_lap) */
 #define CRASH_BAR2_OFF     0x5a         /* CRASH_STR_BAR2 0x181cc */
-#define CRASH_SCORE_STR_OFF 0xbe        /* score_str 0x18230 (live digits at +4) */
-#define CRASH_SCORE_BCD_OFF 0xda        /* score_bcd 0x1824c (6 ASCII digits) */
 #define CRASH_ROLL_STRIDE  0xe
 #define CRASH_ROLL_TARGET  0x60         /* a record is done when 0x60 - digit[-1] - digit == 0 */
 #define CRASH_ROLL_HI      0x35         /* the tens digit that resets instead of carrying */
 #define CRASH_FRAME_MIN    0xa          /* the drain body runs once crash_frame reaches this */
-#define SCORE_DIGITS       6
 #define CRASH_NUM_DST      0x4770       /* draw_num dst */
 #define CRASH_BAR_FIRST    0x54b8
 #define CRASH_BAR_LOOP     0x5cd0
@@ -272,26 +269,6 @@ static void hud_format_time(uint16_t time_left, bool game_over, uint8_t *str) {
     str[HUD_TIME_TXT_OFF + 2] = '0' + t % HUD_DIGIT_DIV;
 }
 
-/* Add v to the n-byte big-endian integer at p (binary carry across bytes, as 68k add.l/.w). */
-static void add_be(uint8_t *p, int n, uint32_t v) {
-    uint32_t acc = 0;
-    for (int i = 0; i < n; i++) acc = (acc << 8) | p[i];
-    acc += v;
-    for (int i = n - 1; i >= 0; i--) { p[i] = (uint8_t)acc; acc >>= 8; }
-}
-
-/* Add a 6-byte delta to the score (six ASCII digits: 4 + a 2-byte counter), carry decimal, refresh
- * the display digits (score_str[4..]) and blank leading zeros ('0' -> '/'). recreate's score_add. */
-static void score_add(uint8_t *score, uint8_t *score_str, const uint8_t *delta, bool game_over) {
-    if (game_over) return;
-    add_be(score,     4, be32(delta));
-    add_be(score + 4, 2, be16(delta + 4));
-    for (int i = SCORE_DIGITS - 1; i >= 1; i--)
-        if ((int8_t)('9' - score[i]) < 0) { score[i] -= 10; score[i - 1] += 1; }
-    for (int i = 0; i < SCORE_DIGITS; i++) score_str[4 + i] = score[i];
-    for (uint8_t *q = score_str + 4; *q == '0'; q++) *q -= 1;
-}
-
 /* Phase 8 — crash / end-of-race bonus tally. Drains time/units/rollovers into the score, then draws
  * the score number + gauge bars. `text` is the shared HUD-text buffer (crash offsets are relative to
  * its base, 0x18172); phase 8 is last, so it mutates it in place. Runs only once the crash-arm timer
@@ -321,7 +298,7 @@ static void hud_crash_fx(const HudState *s, const HudAssets *a, uint8_t *text, F
                 }
             }                                            /* the abort_flag arm here is off-frame */
         }
-        if (delta) score_add(text + CRASH_SCORE_BCD_OFF, text + CRASH_SCORE_STR_OFF, delta, s->game_over);
+        if (delta) rm_score_add(text + RM_HUD_SCORE_BCD_OFF, text + RM_HUD_SCORE_STR_OFF, delta, s->game_over);
     }
 
     text[CRASH_HUD_LAP_OFF] = (uint8_t)('0' + crash_lap);

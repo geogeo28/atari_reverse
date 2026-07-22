@@ -44,11 +44,20 @@ self-driving game has. Three traps it cost real time to find:
 
 ## State of play — read this first if you are picking the work up
 
-Last verified: 2026-07-22. `make test` = **363 passed, 1 skipped**; `run_demo.py` = **MATCH**. Section 12's **object / marker
+Last verified: 2026-07-22. `make test` = **408 passed, 1 skipped**; `run_demo.py` = **MATCH**. Section 12's **object / marker
 ring** is ported (`CourseRing` in `include/game.h`, `rm_road_course_advance` in `src/course.c`) and
-its four aliased consumers are unified onto it (see below). The next chunk is section 12's tail:
-the collision probe, the fx block, and the horizon-event dispatch — the system that decides to
-crash you and ends a leg.
+its four aliased consumers are unified onto it (see below).
+
+**The course-event engine landed** (`src/events.c`): the event jump-table dispatch (`rm_event_dispatch`),
+section 12's tail (`rm_course_events` — the fx block, the two horizon-keyed dispatches, and the
+checkpoint / collision / score markers), and the collision-probe head (`rm_course_probe`), plus the
+leg-0 dashboard rebuild and the checkpoint-banner scroll. Every piece is differential-tested against
+recreate's `g_gu_dispatch_event` / `g_game_update_fx_and_events` / `g_probe_collision` on staged
+frames (`test/test_events.py`). This is slice 1: the native core + its tests. **Slice 2** wires it in
+— call `rm_event_dispatch` from `rm_player_update`'s §6 event path, drop `test_leg_drive`'s crash
+handover so the leg drive runs the real dispatch, and add the demo wiring so a leg can finish.
+Off-frame sound (INITTUNE/INITFX/TURNOFF, the VBL vector) is still unported and documented at each
+call site, per the established convention.
 
 ### What the ring port did and did not fix
 

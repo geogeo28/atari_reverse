@@ -89,6 +89,16 @@ def _lib():
                                      ctypes.POINTER(adapter.PlayerAssets),
                                      ctypes.POINTER(ctypes.c_uint8)]
     lib.rm_player_update.restype = None
+    ectx = ctypes.POINTER(adapter.RmEventCtx)
+    lib.rm_event_dispatch.argtypes = [ectx, ctypes.c_uint16, ctypes.c_uint16,
+                                      ctypes.c_uint16, ctypes.c_uint16]
+    lib.rm_event_dispatch.restype = None
+    lib.rm_course_events.argtypes = [ectx]
+    lib.rm_course_events.restype = None
+    lib.rm_course_probe.argtypes = [ectx]
+    lib.rm_course_probe.restype = None
+    lib.rm_event_classify.argtypes = [ctypes.c_uint16]
+    lib.rm_event_classify.restype = ctypes.c_uint32
     return lib
 
 
@@ -1205,3 +1215,214 @@ def compare_leg_drive(lib, image, inputs):
             mismatches.append((frame, "view_wrapped", bool(cand.player.view_wrapped),
                                _r16(state, adapter.A_view_wrap_flag) != 0))
     return mismatches, stats
+
+
+# ---- course-event engine (game_update §12 tail + the jump-table dispatch) ----
+# rm_event_dispatch / rm_course_events / rm_course_probe run on native structs the adapter builds
+# from a staged image; the recreate references (g_gu_dispatch_event / g_game_update_fx_and_events /
+# g_probe_collision) run in-image. We compare every state location the engine owns: the crash-script
+# PlayerState fields, the EventState counters, the GobjPrefixState bonus/flag fields, ring rows 11-13
+# (the bands the obj_active pokes and the horizon dispatch land in), the shared HUD-text window (the
+# score digits), the road control table (disp_bonus rebuilds it), and the graphics arena (the
+# dashboard / banner bitmaps the checkpoint path writes).
+
+# (native field, image addr, signed) grouped by owning struct.
+EVENT_PLAYER_FIELDS = (
+    ("collision_lock", adapter.A_collision_lock, False),
+    ("crash_phase", adapter.A_crash_phase, True),
+    ("turn_flags", adapter.A_turn_flags, False),
+    ("event_pending", adapter.A_event_pending, False),
+    ("spin_reset", adapter.A_spin_reset, False),
+    ("spin_word2", adapter.A_spin_reset + 2, False),
+    ("curve_window_lo", adapter.A_curve_window, False),
+    ("curve_window_hi", adapter.A_curve_window + 2, False),
+    ("curve_freeze", adapter.A_curve_freeze, False),
+    ("engine_rpm", adapter.A_engine_rpm, False),
+    ("speed", adapter.A_speed, False),
+    ("road_curve", adapter.A_road_curve, True),
+    ("hud_crash_timer", adapter.A_hud_crash_timer, True),
+    ("time_left", adapter.A_time_left, True),
+)
+EVENT_EV_FIELDS = (
+    ("crash_bars", adapter.A_crash_bars, False),
+    ("crash_active", adapter.A_crash_active, False),
+    ("crash_lap", adapter.A_crash_lap, False),
+    ("gauge_blink", adapter.A_gauge_blink, False),
+    ("gauge_blink_on", adapter.A_gauge_blink_on, False),
+    ("ckpt_scroll", adapter.A_ckpt_scroll, False),
+    ("spin_state", adapter.A_spin_state, False),
+)
+EVENT_GOBJ_FIELDS = (
+    ("flag_seq_count", adapter.A_flag_seq_count, True),
+    ("bonus_timer", adapter.A_bonus_timer, False),
+    ("marker_active", adapter.A_marker_decay, False),
+    ("marker_off", adapter.A_marker_decay + 2, True),
+    ("marker_countdown", adapter.A_marker_decay + 4, True),
+    ("flag_seq_off", adapter.A_flag_seq_off, False),
+)
+EVENT_RING_BANDS = (11, 12, 13)   # obj_active pokes + the horizon dispatch land here
+
+
+def _gu_dispatch_fn():
+    fn = bench_frame.harness._lib.g_gu_dispatch_event
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8)] + [ctypes.c_uint32] * 4
+    fn.restype = None
+    return fn
+
+
+def _ref_read(ref, addr, signed):
+    return _i16s(ref, addr) if signed else _r16(ref, addr)
+
+
+def _first_diff(name, cand, ref):
+    """(f'{name}[i]', cand[i], ref[i]) for the first differing byte of two equal-length byte strings,
+    or None if they match. The reusable form of the four buffer scans the event checks share."""
+    if cand == ref:
+        return None
+    i = next(k for k in range(len(cand)) if cand[k] != ref[k])
+    return (f"{name}[{i:#x}]", cand[i], ref[i])
+
+
+def _event_mismatches(b, ref, check_ctrl=True, check_gfx=False):
+    """Compare the run event bundle `b` against the reference image `ref`, location by location."""
+    out = []
+    for struct, fields in ((b.player, EVENT_PLAYER_FIELDS), (b.ev, EVENT_EV_FIELDS),
+                           (b.gobj, EVENT_GOBJ_FIELDS)):
+        for name, addr, signed in fields:
+            if getattr(struct, name) != _ref_read(ref, addr, signed):
+                out.append((name, getattr(struct, name), _ref_read(ref, addr, signed)))
+    # dash_marker: two bytes + a word
+    for name, addr in (("dash_y", adapter.A_dash_marker), ("dash_bit", adapter.A_dash_marker + 1)):
+        if getattr(b.ev, name) != ref[addr]:
+            out.append((name, getattr(b.ev, name), ref[addr]))
+    if b.ev.dash_x != _r16(ref, adapter.A_dash_marker + 2):
+        out.append(("dash_x", b.ev.dash_x, _r16(ref, adapter.A_dash_marker + 2)))
+    if b.ev.course_flag_bit != ref[adapter.A_course_flag_bit]:
+        out.append(("course_flag_bit", b.ev.course_flag_bit, ref[adapter.A_course_flag_bit]))
+
+    for band in EVENT_RING_BANDS:
+        row = adapter.A_ring_base + band * adapter.RING_ROW_BYTES
+        for slot in range(adapter.RM_RING_SLOTS):
+            if b.ring.row[band].slot[slot] != _r16(ref, row + slot * 2):
+                out.append((f"ring[{band}].slot[{slot}]", b.ring.row[band].slot[slot],
+                            _r16(ref, row + slot * 2)))
+        if b.ring.row[band].marker != _r16(ref, row + adapter.RM_RING_SLOTS * 2):
+            out.append((f"ring[{band}].marker", b.ring.row[band].marker,
+                        _r16(ref, row + adapter.RM_RING_SLOTS * 2)))
+
+    d = _first_diff("hud_text", bytes(b.hud_text),
+                    bytes(ref[adapter.A_hud_text:adapter.A_hud_text + adapter.HUD_TEXT_BYTES]))
+    if d:
+        out.append(d)
+
+    if check_ctrl:
+        n = adapter.RM_CTRL_BYTES
+        d = _first_diff("ctrl", bytes(b.ctrl)[:n],
+                        bytes(ref[adapter.A_road_curve_tbl:adapter.A_road_curve_tbl + n]))
+        if d:
+            out.append(d)
+
+    if check_gfx:
+        d = _first_diff("gfx", bytes(b.gfx), bytes(ref[b.buf_c:b.buf_c + adapter.GFX_EVENT_BYTES]))
+        if d:
+            out.append(d)
+    return out
+
+
+# The mid-race base image is deterministic per (leg, warmup) but costs an init_leg emulation plus the
+# warmup game_update frames to build; the dispatch fuzz asks for the same (leg 1, warmup 40) base
+# thousands of times. Cache the base bytes once per (leg, warmup) and copy per case.
+_EVENT_BASE_CACHE = {}
+
+
+def event_background(leg=0, warmup=60, pokes=None):
+    """A realistic mid-race image with the event-engine globals optionally poked. `pokes` writes are
+    16-bit words at the given image addresses (a byte field's low byte is its word's low byte)."""
+    base = _EVENT_BASE_CACHE.get((leg, warmup))
+    if base is None:
+        base = bytes(bench_frame.mid_race_state(leg, warmup))
+        _EVENT_BASE_CACHE[(leg, warmup)] = base
+    state = bytearray(base)
+    for addr, val in (pokes or {}).items():
+        _w16(state, addr, val & 0xffff)
+    return state
+
+
+def compare_event_dispatch(lib, image, idx, slot, flag_a, flag_b):
+    """Run recreate's g_gu_dispatch_event and remaster's rm_event_dispatch on the same staged image
+    and compare every owned location. Returns a list of (name, candidate, reference)."""
+    ref = bytearray(image)
+    _gu_dispatch_fn()((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref),
+                      idx, slot, flag_a, flag_b)
+    b = adapter.event_ctx(image)
+    lib.rm_event_dispatch(ctypes.byref(b.ctx), idx, slot, flag_a, flag_b)
+    return _event_mismatches(b, ref, check_ctrl=True, check_gfx=False)
+
+
+def compare_course_events(lib, image):
+    """Run recreate's g_game_update_fx_and_events and remaster's rm_course_events on the same staged
+    image and compare every owned location (incl. the graphics arena). Returns mismatches."""
+    ref = bytearray(image)
+    _bind("g_game_update_fx_and_events")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+    b = adapter.event_ctx(image)
+    lib.rm_course_events(ctypes.byref(b.ctx))
+    return _event_mismatches(b, ref, check_ctrl=True, check_gfx=True)
+
+
+def _coll_mask_base(image):
+    """Image address of the current leg's collision-flag long table (crash_bars 0)."""
+    buf_a = int.from_bytes(image[adapter.A_buf_a:adapter.A_buf_a + 4], "big")
+    leg = _r16(image, adapter.A_leg_index)
+    return buf_a + leg * adapter.COURSE_LEG_STRIDE + adapter.COURSE_MASK_OFF
+
+
+def compare_course_probe(lib, image, mask, start_bit, dash=None):
+    """Directed comparison of rm_course_probe. Pokes the leg-0 collision-flag long and course_flag_bit
+    (and, if given, `dash` = (y, bit, x) onto the progress marker), runs the native probe head, and
+    checks: (1) the flag-bit walk (increment + wrap) matches a Python mirror of the C, and (2) when the
+    probed bit fires, the dashboard marker walk matches recreate's g_probe_collision on the same dash
+    state + bitmap. Returns (mismatches, fired)."""
+    state = bytearray(image)
+    _w16(state, adapter.A_crash_bars, 0)
+    state[adapter.A_course_flag_bit] = start_bit & 0xff
+    if dash is not None:
+        state[adapter.A_dash_marker] = dash[0] & 0xff
+        state[adapter.A_dash_marker + 1] = dash[1] & 0xff
+        _w16(state, adapter.A_dash_marker + 2, dash[2] & 0xffff)
+    base = _coll_mask_base(state)
+    state[base:base + 4] = (mask & 0xffffffff).to_bytes(4, "big")
+
+    # Python mirror of the flag-bit walk (rm_course_probe head).
+    expected_bit = (start_bit + 1) & 0xff
+    byte0 = (mask >> 24) & 0xff
+    if ((byte0 - expected_bit) & 0xff) & 0x80:            # (int8)(byte0 - expected) < 0
+        expected_bit = 0
+    fired = bool(mask & (1 << (expected_bit & 0x1f)))
+
+    b = adapter.event_ctx(state)
+    lib.rm_course_probe(ctypes.byref(b.ctx))
+
+    out = []
+    if b.ev.course_flag_bit != expected_bit:
+        out.append(("course_flag_bit", b.ev.course_flag_bit, expected_bit))
+
+    if fired:
+        ref = bytearray(state)
+        _bind("g_probe_collision")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+        for name, addr in (("dash_y", adapter.A_dash_marker), ("dash_bit", adapter.A_dash_marker + 1)):
+            if getattr(b.ev, name) != ref[addr]:
+                out.append((name, getattr(b.ev, name), ref[addr]))
+        if b.ev.dash_x != _r16(ref, adapter.A_dash_marker + 2):
+            out.append(("dash_x", b.ev.dash_x, _r16(ref, adapter.A_dash_marker + 2)))
+        d = _first_diff("gfx", bytes(b.gfx), bytes(ref[b.buf_c:b.buf_c + adapter.GFX_EVENT_BYTES]))
+        if d:
+            out.append(d)
+    else:
+        # no fire: the marker + bitmap must be untouched.
+        seed = adapter.event_state(state)
+        if (b.ev.dash_y, b.ev.dash_bit, b.ev.dash_x) != (seed.dash_y, seed.dash_bit, seed.dash_x):
+            out.append(("dash_marker(nofire)", (b.ev.dash_y, b.ev.dash_bit, b.ev.dash_x),
+                        (seed.dash_y, seed.dash_bit, seed.dash_x)))
+        if bytes(b.gfx) != bytes(state[b.buf_c:b.buf_c + adapter.GFX_EVENT_BYTES]):
+            out.append(("gfx(nofire)", "changed", "unchanged"))
+    return out, fired

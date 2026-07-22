@@ -225,6 +225,45 @@ STEER_CURVE_WINDOW_BYTES = STEER_CURVE_ZERO_OFF + 0x80   # ...and +0x60 + the rp
 
 
 
+# ---- course-event engine (game_update §12 tail + the jump-table dispatch) globals + assets ----
+A_course_flag_bit = 0x18c70                        # collision-probe bit cursor (byte)
+A_dash_marker = 0x18c3a                            # dashboard progress marker: {y:b, bit:b, x:w}
+A_ckpt_scroll = 0x18c72                            # checkpoint-banner scroll position
+A_spin_state = 0x18caa                             # the fx<<8 word §G writes (word)
+A_event_type = 0x18eca                             # ring row 12 slot 7 word; low byte = the §I event code
+A_score_str = 0x18230                              # HUD score string (live digits at +4)
+A_score_bcd = 0x1824c                              # 6 ASCII score digits
+A_score_overlay_dig = 0x18215                      # bonus score-overlay digit
+A_fx_type_tbl = 0x18640                            # spin/collision fx records, idx from the gate bits
+A_evt_obj_type_tbl = 0x18b68                       # word[8] collision-object type per rpm band
+A_score_deltas = 0x1736a                           # 7 x 6-byte BCD add_score deltas
+A_score_label = 0x18540                            # "SCORE/" header; checkpoint char = [7 + crash_bars]
+A_flag_seq_table = 0x17e3a                         # expected roadside-object type sequence
+A_probe_deltas = 0x17e7a                           # 8 x {delta_bit:w, delta_x:w} neighbour probes
+A_ckpt_anim_tbl = 0x17324                          # checkpoint-banner scroll control records
+A_mem_base = 0x18bfc                               # raw per-leg dashboard block base (init_leg_dash source)
+COURSE_MASK_OFF = 0x5d48                           # leg_base + this: per-course collision-flag longs
+RM_EVENT_TABLE_ENTRIES = 65                        # mirror include/game.h (event idx 0..64)
+# Asset window sizes. Where the indexed range exceeds the next global, the range wins (correctness
+# over the next-global heuristic) — see the fx_type_tbl note.
+FX_TYPE_TBL_BYTES = 0x100                           # sel 0..7 -> a code fx in 1..0x7f, then read [fx..fx+0x17]
+EVT_OBJ_TYPE_TBL_BYTES = 0x10                       # word[8], indexed by rpm band 0..0xe
+SCORE_DELTAS_BYTES = 7 * 6                          # 7 contiguous 6-byte BCD records
+SCORE_LABEL_BYTES = 0x20                            # score_label[7 + crash_bars]; crash_bars is the small
+#                                                    checkpoint counter (0..5), so the deepest read is
+#                                                    offset 0xc — well within score_label's own span (the
+#                                                    next addrs.h global is fx_type_tbl at 0x18640, +0x100)
+FLAG_SEQ_TABLE_BYTES = 0x40                         # expected[flag_seq_off + flag_seq_count]: 0x40 is the
+#                                                    full span to the next global, probe_deltas at 0x17e7a
+PROBE_DELTAS_BYTES = 8 * 4
+CKPT_ANIM_TBL_BYTES = 0x50                          # 7 + 4 + 1 groups of control words
+COLL_MASK_BYTES = 0x20                              # crash_bars << 2 (0..0x18) + a long
+DASH_RAW_BYTES = 5 * 0x500                          # 5 legs of raw dashboard block (leg*0x500 stride)
+BUF_A_DASH_BYTES = 0xa00                            # covers the leg-dash label/clear/marker-seed tables
+FONT_GLYPH_BYTES = 0x600                            # glyphs 0..0x5f (16 bytes each)
+GFX_EVENT_BYTES = 0x14000                           # buf_c window: banner (0x9c40) + dashboard (..0x13520)
+
+
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
 A_color_pairs = 0x15afa                           # 16 colours x 8-byte fill
 A_color_bar_mask = 0x17d14                        # phase-5 {mask,ink} stream (5 cols x 12 rows x 4B)
@@ -453,6 +492,44 @@ class PlayerAssets(ctypes.Structure):
                 ("steer_curve_tbl", ctypes.POINTER(ctypes.c_uint8)),
                 ("legflag_tbl", ctypes.POINTER(ctypes.c_uint8)),
                 ("crash_anim_tbl", ctypes.POINTER(ctypes.c_uint8))]
+
+
+class EventState(ctypes.Structure):
+    _fields_ = [("course_flag_bit", ctypes.c_uint8), ("dash_y", ctypes.c_uint8),
+                ("dash_bit", ctypes.c_uint8), ("dash_x", ctypes.c_uint16),
+                ("crash_bars", ctypes.c_uint16), ("crash_active", ctypes.c_uint16),
+                ("crash_lap", ctypes.c_uint16), ("gauge_blink", ctypes.c_uint16),
+                ("gauge_blink_on", ctypes.c_uint16), ("ckpt_scroll", ctypes.c_uint16),
+                ("spin_state", ctypes.c_uint16)]
+
+
+class EventAssets(ctypes.Structure):
+    _fields_ = [("fx_type_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("evt_obj_type_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("score_deltas", ctypes.POINTER(ctypes.c_uint8)),
+                ("score_label", ctypes.POINTER(ctypes.c_uint8)),
+                ("flag_seq_table", ctypes.POINTER(ctypes.c_uint8)),
+                ("probe_deltas", ctypes.POINTER(ctypes.c_uint8)),
+                ("ckpt_anim_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("coll_mask", ctypes.POINTER(ctypes.c_uint8)),
+                ("buf_a", ctypes.POINTER(ctypes.c_uint8)),
+                ("dash_raw", ctypes.POINTER(ctypes.c_uint8)),
+                ("font", ctypes.POINTER(ctypes.c_uint8))]
+
+
+class RmEventCtx(ctypes.Structure):
+    _fields_ = [("player", ctypes.POINTER(PlayerState)),
+                ("gobj", ctypes.POINTER(GobjPrefixState)),
+                ("ring", ctypes.POINTER(CourseRing)),
+                ("pose", ctypes.POINTER(RoadPose)),
+                ("road_src", ctypes.POINTER(RoadSource)),
+                ("ctrl", ctypes.POINTER(ctypes.c_uint8)),
+                ("scanline", ctypes.POINTER(ctypes.c_uint8)),
+                ("ev", ctypes.POINTER(EventState)),
+                ("hud_text", ctypes.POINTER(ctypes.c_uint8)),
+                ("gfx", ctypes.POINTER(ctypes.c_uint8)),
+                ("assets", ctypes.POINTER(EventAssets)),
+                ("leg", ctypes.c_uint16), ("game_over", ctypes.c_bool)]
 
 
 def _i16(image, addr):
@@ -780,3 +857,96 @@ def road_ctrl(image):
     reads its edge-flag rows. Returns (ptr, keepalive)."""
     ctrl = (ctypes.c_uint8 * RM_CTRL_BYTES)(*image[A_road_curve_tbl:A_road_curve_tbl + RM_CTRL_BYTES])
     return ctypes.cast(ctrl, ctypes.POINTER(ctypes.c_uint8)), ctrl
+
+
+def event_state(image):
+    """The dynamic event-engine scalars (recreate's globals) as a native EventState."""
+    def u16(addr):
+        return (image[addr] << 8) | image[addr + 1]
+    return EventState(image[A_course_flag_bit], image[A_dash_marker], image[A_dash_marker + 1],
+                      u16(A_dash_marker + 2), u16(A_crash_bars), u16(A_crash_active),
+                      u16(A_crash_lap), u16(A_gauge_blink), u16(A_gauge_blink_on),
+                      u16(A_ckpt_scroll), u16(A_spin_state))
+
+
+def _gobj_state(image):
+    """The GobjPrefixState the event engine's bonus / flag-sequence counters live in."""
+    def u16(addr):
+        return (image[addr] << 8) | image[addr + 1]
+    return GobjPrefixState(
+        u16(A_marker_decay), _i16(image, A_marker_decay + 2), _i16(image, A_marker_decay + 4),
+        u16(A_view_parity), u16(A_anim_counter), u16(A_anim_word), u16(A_bonus_timer),
+        u16(A_dsp_color_scroll), u16(A_flag_seq_off), _i16(image, A_flag_seq_count))
+
+
+def event_assets(image):
+    """The const asset windows the event engine reads, as a native EventAssets. Returns (assets,
+    keepalive). coll_mask points at the current leg's collision-flag long table (buf_a + leg*0x2000 +
+    0x5d48); buf_a / dash_raw / font feed the leg-0 dashboard rebuild."""
+    def buf(addr, n):
+        return (ctypes.c_uint8 * n).from_buffer_copy(image[addr:addr + n])
+
+    buf_a = int.from_bytes(image[A_buf_a:A_buf_a + 4], "big")
+    mem_base = int.from_bytes(image[A_mem_base:A_mem_base + 4], "big")
+    leg = (image[A_leg_index] << 8) | image[A_leg_index + 1]
+    mask_base = buf_a + leg * COURSE_LEG_STRIDE + COURSE_MASK_OFF
+
+    fx_type = buf(A_fx_type_tbl, FX_TYPE_TBL_BYTES)
+    evt_obj = buf(A_evt_obj_type_tbl, EVT_OBJ_TYPE_TBL_BYTES)
+    deltas = buf(A_score_deltas, SCORE_DELTAS_BYTES)
+    label = buf(A_score_label, SCORE_LABEL_BYTES)
+    flag_seq = buf(A_flag_seq_table, FLAG_SEQ_TABLE_BYTES)
+    probe = buf(A_probe_deltas, PROBE_DELTAS_BYTES)
+    ckpt = buf(A_ckpt_anim_tbl, CKPT_ANIM_TBL_BYTES)
+    coll = buf(mask_base, COLL_MASK_BYTES)
+    buf_a_win = buf(buf_a, BUF_A_DASH_BYTES)
+    dash_raw = buf(mem_base, DASH_RAW_BYTES)
+    font = buf(A_font_glyphs, FONT_GLYPH_BYTES)
+    p = ctypes.POINTER(ctypes.c_uint8)
+    assets = EventAssets(
+        ctypes.cast(fx_type, p), ctypes.cast(evt_obj, p), ctypes.cast(deltas, p),
+        ctypes.cast(label, p), ctypes.cast(flag_seq, p), ctypes.cast(probe, p),
+        ctypes.cast(ckpt, p), ctypes.cast(coll, p), ctypes.cast(buf_a_win, p),
+        ctypes.cast(dash_raw, p), ctypes.cast(font, p))
+    return assets, (fx_type, evt_obj, deltas, label, flag_seq, probe, ckpt, coll,
+                    buf_a_win, dash_raw, font)
+
+
+class EventBundle:
+    """Everything a course-event step owns, built from one flat image and held together so the ctypes
+    buffers outlive the RmEventCtx that points into them. The mutated structs/buffers are read back
+    after the C runs to compare against recreate's in-image writes."""
+
+    def __init__(self, image, inputs=0):
+        def u16(addr):
+            return (image[addr] << 8) | image[addr + 1]
+        self.player = player_state(image, inputs)
+        self.gobj = _gobj_state(image)
+        self.ring = course_ring(image)
+        self.pose = road_pose(image)
+        self.pose.horizon_row = _i16(image, A_horizon_row)   # §H reads these; road_pose zeroes them
+        self.pose.horizon_frac = _i16(image, A_horizon_frac)
+        self.source, self._k_src = road_source(image)
+        self.ctrl = (ctypes.c_uint8 * RM_CTRL_ALLOC_BYTES)()
+        self.ctrl[:RM_CTRL_BYTES] = image[A_road_curve_tbl:A_road_curve_tbl + RM_CTRL_BYTES]
+        self.scan = (ctypes.c_uint8 * RM_SCANLINE_BYTES)()
+        self.ev = event_state(image)
+        self.hud_text = (ctypes.c_uint8 * HUD_TEXT_BYTES).from_buffer_copy(
+            image[A_hud_text:A_hud_text + HUD_TEXT_BYTES])
+        self.buf_c = int.from_bytes(image[A_buf_c:A_buf_c + 4], "big")
+        self.gfx = (ctypes.c_uint8 * GFX_EVENT_BYTES).from_buffer_copy(
+            image[self.buf_c:self.buf_c + GFX_EVENT_BYTES])
+        self.assets, self._k_assets = event_assets(image)
+        self.leg = u16(A_leg_index)
+        p = ctypes.POINTER(ctypes.c_uint8)
+        self.ctx = RmEventCtx(
+            ctypes.pointer(self.player), ctypes.pointer(self.gobj), ctypes.pointer(self.ring),
+            ctypes.pointer(self.pose), ctypes.pointer(self.source),
+            ctypes.cast(self.ctrl, p), ctypes.cast(self.scan, p), ctypes.pointer(self.ev),
+            ctypes.cast(self.hud_text, p), ctypes.cast(self.gfx, p), ctypes.pointer(self.assets),
+            self.leg, u16(A_game_over_flag) != 0)
+
+
+def event_ctx(image, inputs=0):
+    """Build an EventBundle for `image` (see EventBundle)."""
+    return EventBundle(image, inputs)

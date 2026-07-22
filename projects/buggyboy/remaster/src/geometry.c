@@ -26,7 +26,7 @@
 #define PERSP_SEGMENTS   0x30    /* perspective integration outer count */
 #define CURVE_ROWS       0x6a    /* ctrl length in longs (106) and curve-spread denominator */
 #define HORIZON_BIAS    0x210    /* added to horizon before dividing */
-#define HORIZON_DIV      0x16    /* horizon divisor / clamp bound (22) */
+#define HORIZON_DIV      RM_HORIZON_DIV   /* horizon divisor / clamp bound (0x16 == 22); game.h owns it */
 #define HORIZON_OFF     0x162    /* recreate's A_horizon (0x1905e) lies INSIDE ctrl: the low word of
                                   * control long #88. So the horizon set_horizon clamps is not an
                                   * independent input — it's the value integrate/spread just wrote. */

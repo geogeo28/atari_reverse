@@ -15,7 +15,7 @@
 #define NUM_CELL_ROWS   15      /* rows blitted per digit sprite */
 
 /* Pack two 1bpp glyph row words into a cell's (mask, ink): char1 -> high byte, char2 -> low byte. */
-static void glyph_pair(uint16_t g1, uint16_t g2, uint16_t *mask, uint16_t *ink) {
+void rm_glyph_pair(uint16_t g1, uint16_t g2, uint16_t *mask, uint16_t *ink) {
     *mask = (uint16_t)((g1 & 0xff00) | (g2 >> 8));
     *ink  = (uint16_t)(((g1 & 0x00ff) << 8) | (g2 & 0x00ff));
 }
@@ -36,7 +36,7 @@ Offset rm_glyph_run(Framebuffer *fb, Offset dst, Plane4 fill_lo, Plane4 fill_hi,
         Offset cell = dst;
         for (int row = 0; row < TEXT_CELL_ROWS; row++, cell += ROW_STRIDE, glyph1 += 2, glyph2 += 2) {
             uint16_t mask16, ink16;
-            glyph_pair(be16(glyph1), be16(glyph2), &mask16, &ink16);
+            rm_glyph_pair(be16(glyph1), be16(glyph2), &mask16, &ink16);
             cell_overlay(px, cell, dup16(mask16), dup16(ink16), fill_lo, fill_hi);
         }
         dst += CELL_WIDTH;

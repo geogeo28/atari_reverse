@@ -24,7 +24,7 @@ CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
        $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c \
        $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c \
        $REMASTER/src/blit.c $REMASTER/src/object_list.c $REMASTER/src/gameplay.c \
-       $REMASTER/src/player.c $REMASTER/src/assets.c"
+       $REMASTER/src/player.c $REMASTER/src/events.c $REMASTER/src/assets.c"
 
 echo ">> compile + link bench.elf (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \

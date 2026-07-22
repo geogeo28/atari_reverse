@@ -15,6 +15,10 @@
 #define TEXT_CELL_ROWS  8      /* rows blitted per character cell */
 #define TEXT_MAX_CELLS_M1 0x13 /* draw_hud_bar / draw_text preset cell count-1 */
 
+/* Pack two 1bpp glyph row words into a masked cell's (mask, ink): char1's row word gives the high
+ * byte of each, char2's the low byte. Shared by the gauge/text runs and the leg-label blitter. */
+void rm_glyph_pair(uint16_t g1, uint16_t g2, uint16_t *mask, uint16_t *ink);
+
 /* Draw glyph pairs from str[si..] into fb at byte offset `dst`, tinted by (fill_lo, fill_hi), for at
  * most cells_m1+1 cells. Stops early on a 0 first byte; a 0 second byte substitutes glyph 0x2f and
  * ends after that cell. Returns the advanced string index (past the terminator, +1, as the 68k

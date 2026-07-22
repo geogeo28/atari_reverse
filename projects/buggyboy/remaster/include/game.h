@@ -33,17 +33,22 @@ typedef struct {
     int16_t flag_seq_count;    /* matched-in-a-row flags -> one lit bar each (phase 4) */
     int16_t flag_seq_off;      /* colour-index cursor offset (phase 5) */
     int16_t dsp_color_scroll;  /* scrolling colour-index cursor offset (phase 5) */
-    int16_t crash_lap;         /* remaining bonus units -> one fuel column each (phase 6a) */
+    int16_t crash_lap;         /* remaining bonus units -> one fuel column each (phase 6a). VIEW of
+                                * EventState.crash_lap (narrowed to signed); the game loop copies it in */
     uint16_t speed;            /* speedometer value (phase 1 formats its low byte into the string) */
     uint16_t time_left;        /* bonus time remaining (phase 2 formats into the string) */
     bool game_over;            /* blank the timer to 0 when set (phase 2) */
     bool dsp_toggle;           /* suppress the dashboard-variant sprite when set (phase 3) */
     uint16_t dsp_variant_idx;  /* byte offset into the dashboard-variant record table (phase 3) */
-    uint16_t gauge_blink;      /* small-gauge blink phase; bit1 of (blink-1) gates the draw (phase 6b) */
-    bool gauge_blink_on;       /* enable the extra bar under the blinking small gauge (phase 6b) */
-    bool crash_active;         /* crash/bonus-tally gate (phase 8) */
+    uint16_t gauge_blink;      /* small-gauge blink phase; bit1 of (blink-1) gates the draw (phase 6b).
+                                * VIEW of EventState.gauge_blink; the game loop copies it in */
+    bool gauge_blink_on;       /* enable the extra bar under the blinking small gauge (phase 6b). VIEW
+                                * of EventState.gauge_blink_on (narrowed to bool) */
+    bool crash_active;         /* crash/bonus-tally gate (phase 8). VIEW of EventState.crash_active
+                                * (narrowed to bool) */
     int16_t crash_frame;       /* crash-effect frame counter; +1 drives the colour cycle (phase 8) */
-    uint16_t crash_bars;       /* number of gauge bars to draw, 0-5 (phase 8) */
+    uint16_t crash_bars;       /* number of gauge bars to draw, 0-5 (phase 8). VIEW of
+                                * EventState.crash_bars; the game loop copies it in */
     int16_t hud_crash_timer;   /* crash-arm timer: phase 8 draws only once this is negative */
 } HudState;
 
@@ -145,6 +150,12 @@ typedef struct {
 #define RM_CTRL_ALLOC_BYTES (RM_CTRL_BYTES + RM_CTRL_STAMP_SPILL)
 #define RM_CTRL_WIDTH_OFF   0x28
 #define RM_SCANLINE_BYTES   0x80        /* per-row cumulative-slope scratch (road_scanline_tbl) */
+
+/* set_horizon (geometry.c) clamps horizon_row to the even range [0, RM_HORIZON_DIV*2], so the deepest
+ * row is RM_MAX_HORIZON_ROW. RM_HORIZON_DIV is the one source of truth for the clamp bound (geometry.c's
+ * HORIZON_DIV is defined from it); events.c sizes its fx scratch against the max row. */
+#define RM_HORIZON_DIV      0x16
+#define RM_MAX_HORIZON_ROW  (RM_HORIZON_DIV * 2)   /* 0x2c: the highest horizon_row set_horizon emits */
 
 /* Dynamic road-geometry inputs the builder integrates each frame (recreate's scalar globals). curve
  * (steering) and the segment slopes drive the road's bend/tilt; view_flags selects the width bank.
@@ -266,6 +277,14 @@ void rm_ring_ground_markers(const CourseRing *ring, uint8_t *markers);
 #define RM_RING_GATE_ROW 11
 uint8_t rm_ring_buggy_gate(const CourseRing *ring);
 int8_t rm_ring_fg_gate(const CourseRing *ring);
+
+/* The obj_active clear the event engine fires: the original clears image[A_obj_active + slot + 1],
+ * and A_obj_active (0x18eb4) sits inside the ring's row grid (base 0x18d3c), so the write lands at
+ * flat grid offset RM_RING_OBJ_ACTIVE_OFF + slot. rm_ring_poke_byte inverts rm_ring_store_st's flat-
+ * grid mapping — RM_RING_ROW_BYTES rows of 16 big-endian words — to poke one byte (band/word/parity)
+ * of the live ring, so the handlers touch it directly instead of a serialized copy. */
+#define RM_RING_OBJ_ACTIVE_OFF 0x179   /* 0x18eb5 - 0x18d3c: obj_active[slot+1] as a flat grid offset */
+void rm_ring_poke_byte(CourseRing *ring, unsigned flat_off, uint8_t val);
 
 /* ---- player physics (the driving slice of game_update @0x1110e) ----
  *
@@ -577,5 +596,123 @@ typedef struct {
 /* Advance the per-frame object state (marker decay, colour animation, bonus flag). No framebuffer
  * writes. */
 void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
+
+/* ---- shared score helper (add_score @0x1580a) ----
+ *
+ * Six ASCII score digits (score_bcd, MS first) plus their on-screen copy (score_str[4..9]), both
+ * inside the shared HUD-text region. Add a 6-byte BCD delta, carry decimal, refresh the display
+ * digits and blank leading zeros. The HUD's crash tally and the event engine both call it — one
+ * definition, no duplicate (CLAUDE.md §6). Offsets are within the 0x18172 HUD-text base. */
+#define RM_HUD_SCORE_STR_OFF     0xbe   /* score_str  (image 0x18230); live digits at +4 */
+#define RM_HUD_SCORE_BCD_OFF     0xda   /* score_bcd  (image 0x1824c); 6 ASCII digits */
+#define RM_HUD_SCORE_OVERLAY_OFF 0xa3   /* score_overlay_dig (image 0x18215); bonus-overlay digit */
+#define RM_SCORE_DIGITS          6
+void rm_score_add(uint8_t *score, uint8_t *score_str, const uint8_t *delta, bool game_over);
+
+/* ---- course-event engine (game_update §12's tail + the jump-table dispatch) ----
+ *
+ * The system that decides to crash you and ends a leg. It reads the near course bands (the ring), the
+ * horizon the geometry builder produced, and the record's event byte; it arms the crash script's
+ * PlayerState fields, bumps the checkpoint/score counters, and rebuilds the dashboard on a checkpoint.
+ * It writes NO framebuffer pixels — everything it touches is off-frame game state or the graphics
+ * arena (the dashboard/banner bitmaps a later HUD/draw pass consumes).
+ *
+ * OFF-FRAME sound is SKIPPED, as everywhere in the remaster (see buggyboy-sound-architecture): every
+ * play_event_tune / handle_marker / stop_music the original fires is documented at its call site and
+ * omitted — no INITTUNE/INITFX/TURNOFF, no VBL-vector poke.
+ */
+
+/* Dynamic event-engine state (recreate's scalar globals, named). The crash-script fields the handlers
+ * arm live in PlayerState (collision_lock, crash_phase, turn_flags, spin_reset/word2, curve_window_*,
+ * curve_freeze, event_pending, road_curve, engine_rpm, speed, time_left, hud_crash_timer); the bonus
+ * / flag-sequence counters live in GobjPrefixState (bonus_timer, flag_seq_off, flag_seq_count,
+ * marker_active/off/countdown). What is left is here.
+ *
+ * OWNERSHIP — EventState is the sole OWNER of crash_bars, crash_active, crash_lap, gauge_blink and
+ * gauge_blink_on: the event engine mutates them (see course_markers in events.c). HudState declares
+ * its own copies of the same five, but those are the draw's per-frame VIEW — the game loop refreshes
+ * them from here before each rm_draw_hud, exactly as it already does for speed / time_left (see
+ * demo_main.c apply_player). The flow is one-directional (EventState -> HudState copy); the HudState
+ * types differ deliberately (crash_active / gauge_blink_on are the draw's bool gate, crash_lap its
+ * signed count) and the copy narrows into them. Slice 2 wires that copy. */
+typedef struct {
+    uint8_t  course_flag_bit;  /* collision-probe bit cursor (0x18c70) */
+    uint8_t  dash_y;           /* dash_marker byte y      (0x18c3a) */
+    uint8_t  dash_bit;         /* dash_marker bit index   (0x18c3b) */
+    uint16_t dash_x;           /* dash_marker word x      (0x18c3c) */
+    uint16_t crash_bars;       /* gauge bars / checkpoint counter (0x18d00) */
+    uint16_t crash_active;     /* crash/bonus-tally gate  (0x18c7a) */
+    uint16_t crash_lap;        /* remaining bonus units   (0x18c4a) */
+    uint16_t gauge_blink;      /* checkpoint-banner timer (0x18d02) */
+    uint16_t gauge_blink_on;   /* small-gauge extra bar   (0x18d04) */
+    uint16_t ckpt_scroll;      /* checkpoint-banner scroll (0x18c72) */
+    uint16_t spin_state;       /* the fx<<8 word §G writes (0x18caa); SpriteState.spin_state = its hi byte */
+} EventState;
+
+/* Const asset windows the event engine reads (STATIC region + a couple of arena tables), raw
+ * big-endian bytes (st.h). score_deltas is one window of 7 contiguous 6-byte BCD records (0x1736a);
+ * the byte offsets of each are RM_EVT_SCORE_* below. coll_mask points at the current leg's
+ * collision-flag long table (buf_a + leg*0x2000 + 0x5d48), indexed by crash_bars<<2. buf_a / dash_raw
+ * / font feed the leg-0 dashboard rebuild (rm_init_leg_dash / rm_draw_leg_labels). */
+typedef struct {
+    const uint8_t *fx_type_tbl;      /* 0x18640: spin/collision fx records, idx from the gate bits */
+    const uint8_t *evt_obj_type_tbl; /* 0x18b68: word[8] collision-object type per rpm band */
+    const uint8_t *score_deltas;     /* 0x1736a: 7 x 6-byte BCD add_score deltas */
+    const uint8_t *score_label;      /* 0x18540: "SCORE/" header; checkpoint char = [7 + crash_bars] */
+    const uint8_t *flag_seq_table;   /* 0x17e3a: expected roadside-object type sequence */
+    const uint8_t *probe_deltas;     /* 0x17e7a: 8 x {delta_bit:w, delta_x:w} neighbour probes */
+    const uint8_t *ckpt_anim_tbl;    /* 0x17324: checkpoint-banner scroll control records */
+    const uint8_t *coll_mask;        /* leg collision-flag longs (buf_a + leg*0x2000 + 0x5d48) */
+    const uint8_t *buf_a;            /* leg-dash label/clear/marker-seed tables */
+    const uint8_t *dash_raw;         /* mem_base: raw per-leg dashboard block (init_leg_dash source) */
+    const uint8_t *font;             /* 1bpp glyphs for the leg labels */
+} EventAssets;
+
+/* score_deltas byte offsets (7 contiguous 6-byte BCD records from 0x1736a). */
+#define RM_EVT_SCORE_BYTES 6
+#define RM_EVT_SCORE_CKPT  0x00   /* checkpoint / end-of-section-I add */
+#define RM_EVT_SCORE_GATE  0x06   /* flag-gate normal */
+#define RM_EVT_SCORE_MSG   0x0c   /* score-message group A (0x17376) */
+#define RM_EVT_SCORE_B     0x12   /* group B (0x1737c) */
+#define RM_EVT_SCORE_C     0x18   /* group C (0x17382) */
+#define RM_EVT_SCORE_BONUS 0x1e   /* flag-sequence bonus (0x17388) */
+#define RM_EVT_SCORE_EVT   0x24   /* marker-decay object spawn (0x1738e) */
+
+/* One frame of the course-event engine, bundling every state view the handlers touch. Passed by
+ * pointer so slice 2 can drive rm_event_dispatch from rm_player_update's §6 event path with the same
+ * bundle. gfx is the mutable graphics arena (recreate's buf_c): the dashboard bitmap the probe reads
+ * and the banner the checkpoint anim scrolls live in it. */
+typedef struct {
+    PlayerState       *player;
+    GobjPrefixState   *gobj;
+    CourseRing        *ring;
+    RoadPose          *pose;
+    const RoadSource  *road_src;
+    uint8_t           *ctrl;       /* road control table (RM_CTRL_ALLOC_BYTES) rm_build_road_geometry writes */
+    uint8_t           *scanline;   /* the builder's per-row scratch (RM_SCANLINE_BYTES) */
+    EventState        *ev;
+    uint8_t           *hud_text;   /* mutable HUD-text region (base 0x18172): score digits live here */
+    uint8_t           *gfx;        /* mutable graphics arena (buf_c): dashboard + banner bitmaps */
+    const EventAssets *assets;
+    uint16_t           leg;
+    bool               game_over;
+} RmEventCtx;
+
+/* Resolve event `idx` (0..64) through the native jump table and run its handler with the frame's slot
+ * and the two object-type gate flags. Slice 2 also calls this from the §6 event path. */
+void rm_event_dispatch(RmEventCtx *c, uint16_t idx, uint16_t slot, uint16_t flag_a, uint16_t flag_b);
+
+/* Sections G/H/I of the course-advance tail: rebuild the fx block from the near band, dispatch the two
+ * horizon-keyed events, then handle the checkpoint / collision / score markers. */
+void rm_course_events(RmEventCtx *c);
+
+/* The collision-probe head (game_update §12 lines 509-515): walk the per-course flag bit and, when it
+ * fires, step the dashboard progress marker. Runs before rm_road_course_advance on a wrap frame. */
+void rm_course_probe(RmEventCtx *c);
+
+/* Test seam: classify event `idx` as a packed (kind<<24 | gate<<16 | arg) word, so a test can pin the
+ * native jump table against the image's own table at 0x11aa2 (see test_events). */
+uint32_t rm_event_classify(uint16_t idx);
+#define RM_EVENT_TABLE_ENTRIES 65
 
 #endif /* RM_GAME_H */

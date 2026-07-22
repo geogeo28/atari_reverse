@@ -77,7 +77,8 @@ game clears a bit. That bit returns on its own once the system that writes it is
 | ring consumer views (dispatcher flag streams, sprite count, ground markers, sprite gates) | the original's aliases onto the ring's row grid | ✅ unified onto the live ring | `test/test_ring_consumers.py` — each `src/course.c` helper (incl. the full serialized ST mirror, byte-for-byte) pinned to the raw image bytes at the aliased addresses, 5 legs × 3 warmups, with real variety (sprite counts 0/11, a live gate-suppress case) |
 | player physics (`rm_player_update`) | `g_game_update` §3,4,5,7,8,9,10 | ✅ ported | `test/test_player.py` — every physics scalar identical to recreate frame-for-frame over 8 scripted 240-frame drives × legs 0/1/4 (throttle/brake/slalom/both locks/recentre/fire/time-out) |
 | crash / auto-steer script | `g_game_update` §6 (+ the §5/§7/§9/§10 crash branches) | ✅ ported | `test/test_leg_drive.py` — free-running 600-frame drives × 4 scripts × legs 0/1/4, every crash played out and handed the controls back under strict comparison (up to 204 crash frames / 20 handoffs per drive) |
-| `game_update` (rest) | `g_game_update` §1,2,12-tail | ⬜ sound, collision probe, fx block / event dispatch, score not started | — |
+| course-event engine (`rm_event_dispatch` / `rm_course_events` / `rm_course_probe`) | `g_game_update` §12 tail + the event jump table | ✅ ported (`src/events.c`) | `test/test_events.py` — the jump table pinned against the image's own table at 0x11aa2; per-handler dispatch fuzzed over every idx × gate flags × collision_lock × curve sign; the composite §G/§H/§I tail vs `g_game_update_fx_and_events` over legs 0–4 × warmups (incl. the graphics arena); directed §I checkpoint/leg-end/leg-0-dashboard/collision/banner cases; the collision probe vs `g_probe_collision`; directed fx-slot-mapping + run-fill pins added after mutation-testing |
+| `game_update` (integration + sound) | `g_game_update` §1,2 + wiring | ⬜ the events core is not yet wired into `rm_player_update`'s §6 event path, the leg-drive handover isn't removed, the demo doesn't call it, and the sound path (INITTUNE/INITFX/TURNOFF, the VBL vector) is still unported | — |
 
 **What the player-physics slice covers** (see `include/game.h` for the state model): the engine
 rpm→speed model with its rev limiter, the road-scroll rate and the view advance whose wrap times the
@@ -105,6 +106,20 @@ consequences, all measured rather than assumed:
 (`MARKER_KIND_SIDES`) fires for **0 of the 5120** course records across all five legs, so this game's
 data cannot exercise it at all. It is transcribed from the disassembly and left honestly unpinned
 rather than pinned against a fabricated record; a mutation to it survives the whole suite.
+
+In the event engine (`src/events.c`), the **single endpoint words** of the §G 0x3e run-fill (`fx+0x1a`
+and `fx+0x2e`) are ported from the disassembly but not differentially observable. The fx block is
+local scratch whose only output is which event §H dispatches, and the fill writes the uniform value
+0x3e (→ idx 62, `disp_finish` — an idempotent record write). §H reads `fx[horizon_row+1]` and
+`fx[horizon_row+3]`, and `horizon_row` is even in `[0, 0x2c]`, so each endpoint word's sole dispatch
+route is shared with an adjacent filled word that fires the same idempotent record — dropping one
+endpoint alone changes nothing. `test_fx_run_fills` pins the fill as a whole (disabling it, or shrinking
+it by ≥2 words, is caught, mutation-verified) and the 0x3d fill's extent fully (its last word is
+followed by unfilled space, so it dispatches alone); the 0x3e fill's two edge words are left honestly
+unpinned. Mutation-testing this slice's coverage also drove three directed tests that plugged real
+holes a warm-frame composite left dead: the fx-block slot→position map, the probe erase's y-offset
+(caught only with the marker on a set track cell), and the run-fills (see the tests' rationale
+comments).
 
 ## Perf
 
