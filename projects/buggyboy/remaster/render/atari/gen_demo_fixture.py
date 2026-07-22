@@ -37,7 +37,12 @@ DEMO_START_SEGMENT = 0                             # ...at its first segment, wi
 # OBJ_LOW is the STATIC+bss table region draw_game_objects reads (jump table, colour/edge tables,
 # object streams, sprite piece tables, ground tables, anim tables) — program data, not file content,
 # so it stays baked. Everything that IS file content now comes from the arena the demo loads itself.
-OBJ_BUF_A_BYTES = 0x3400
+# The window must cover the dispatcher's whole per-type record table: OBJ_TYPE_BASE (0x8a0) +
+# 64 types (the 0x3f flag mask + 1) * OBJ_TYPE_STRIDE (0xd0) = 0x3ca0. It was 0x3400, sized by
+# what the old mid-race demo happened to reach — the leg-0 start gate's codes (0x3a/0x3b) index
+# past that, so the demo read zeros beyond its copy and silently dropped the whole gate (the
+# frame-0 golden DIFF). Pinned against src/object_list.c's constants by test_demo_fixture.
+OBJ_BUF_A_BYTES = 0x3ca0
 OBJ_LOW_BASE = 0x13000
 OBJ_LOW_END = 0x19100
 

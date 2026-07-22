@@ -44,7 +44,7 @@ self-driving game has. Three traps it cost real time to find:
 
 ## State of play — read this first if you are picking the work up
 
-Last verified: 2026-07-22. `make test` = **361 passed, 1 skipped**. Section 12's **object / marker
+Last verified: 2026-07-22. `make test` = **363 passed, 1 skipped**; `run_demo.py` = **MATCH**. Section 12's **object / marker
 ring** is ported (`CourseRing` in `include/game.h`, `rm_road_course_advance` in `src/course.c`) and
 its four aliased consumers are unified onto it (see below). The next chunk is section 12's tail:
 the collision probe, the fx block, and the horizon-event dispatch — the system that decides to
@@ -58,7 +58,7 @@ three** — worth recording, because the reasoning error is repeatable:
 | Symptom | Status |
 |---|---|
 | `compare_leg_drive` hands the road control table over every frame | **fixed** — the table is now a compared result, and the ring is compared band by band |
-| `run_demo.py` reports `DIFF 1110/32000` | **not fixed, and the ring was never a candidate** — the diff is present at frame 0, before any course advance runs, so a static-vs-scrolling ring could not have caused it |
+| `run_demo.py` reports `DIFF 1110/32000` | **fixed — it was the leg-0 start gate, dropped by two demo-fixture bugs** (see below); `run_demo.py` prints `MATCH` again |
 | The start pole stays put as you drive | **fixed by the consumer unification below** — a frame-300 autodrive shows the course scenery arriving (tunnel approach), not the leg-start objects |
 
 The lesson: a symptom that appears on **frame 0** cannot be explained by state that only diverges
@@ -108,6 +108,26 @@ stamp's measured write extent per view bank.
 **Esc returning to a frozen picture** is fixed: the demo captures `Physbase()` and the 16 palette
 registers (`Setcolor(reg, -1)`) before taking the screen, and restores both on exit — base only
 would hand back a desktop drawn in the racing palette.
+
+**The frame-0 `DIFF 1110/32000` was the leg-0 start gate, silently dropped by two demo bugs.**
+Neither was in a core (every stage matched the host byte-exactly under the on-target
+`DEMO_DUMP_STAGE` bisect until pass 1, which painted *nothing*):
+
+- `buf_a_ram` was sized 0x3400 by what the old mid-race demo happened to reach, but the
+  dispatcher's per-type record table runs to `OBJ_TYPE_BASE + 0x40 * OBJ_TYPE_STRIDE = 0x3ca0` —
+  the gate's type codes (0x3a/0x3b) indexed past the copy, read BSS zeros, and dispatched to the
+  noop. `test_demo_fixture.py` now pins the window to the dispatcher's constants.
+- `ObjListCtx.obj_scan_off` was seeded 0, but the list-cursor offset and the ground's view column
+  are ONE original global (0x18c58, = 442 at a leg start): frame 0's passes read their display
+  records 442 bytes early, because the first draw runs before `apply_player` ever copies
+  `ground_view_off` in.
+
+Two diagnosis lessons, paid for in a day of byte archaeology: **bisect with `DEMO_DUMP_STAGE`
+against host-built partial frames first** — it took four probes to notice pass 1 painted nothing at
+all (`stage3 == stage2`), which no amount of comparing wrong pixels against wrong models would have
+shown; and **verify on-target data with word-granularity C reads before trusting byte-copy probe
+dumps** — a chain of byte-level probes manufactured a phantom "+1 shift" that word reads of the
+same memory refuted.
 
 ### Two dead ends — do not repeat them
 

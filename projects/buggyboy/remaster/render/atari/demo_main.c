@@ -492,7 +492,10 @@ void main(void) {
         .objsh2p_tbl = low + OBJ_LOW_OBJSH2P_TBL, .jumptable = low + OBJ_LOW_JUMPTABLE,
         .xoff_tbl = low + OBJ_LOW_XOFF_TBL, .view_flags = ROAD_VIEW_FLAGS_INIT,
         .view_parity = OBJ_VIEW_PARITY_INIT, .bonus_timer = PFX_BONUS_TIMER_INIT,
-        .obj_scan_off = 0, .p24_flag = OBJ_P24_FLAG_INIT,
+        /* the list-cursor offset and the ground's view column are ONE original global (0x18c58);
+         * seeding it 0 made frame 0's passes read their display records 442 bytes early — the first
+         * draw runs before apply_player ever copies ground_view_off in */
+        .obj_scan_off = OBJ_GROUND_VIEW_INIT, .p24_flag = OBJ_P24_FLAG_INIT,
     };
     SpriteState sprite = {
         .lean = SP_LEAN_INIT, .pitch = SP_PITCH_INIT, .skid = SP_SKID_INIT,
