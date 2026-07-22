@@ -186,7 +186,6 @@ void bench_course_advance(void) { rm_road_course_advance(&pose, &course, &ring, 
 /* The game-loop step + the draw_game_objects stages (demo_main.c draw_frame order). */
 void bench_player_update(void)  { rm_player_update(&player, &player_assets, ctrl); }
 void bench_gobj_prefix(void)    { rm_gobj_prefix(&pfx, &pfx_assets); }
-void bench_frame_clear(void)    { memset(fb.px, 0, SCREEN_BYTES); }
 void bench_draw_ground(void)    { rm_draw_ground(&ground, &ground_assets, &fb); }
 void bench_draw_fg_sprite(void) { rm_draw_fg_sprite(&sprite, &sprite_assets, &fb); }
 void bench_draw_object(void)    { rm_draw_object(&object, &fb); }
@@ -251,7 +250,6 @@ void bench_draw_frame(void) {
     objlist.view_parity = pfx.view_parity;
     bench_build_geometry();
     scroll.seg_head = pose.seg_head;
-    bench_frame_clear();
     bench_render_road();
     bench_blit_scroll();
     object_stages();

@@ -115,7 +115,7 @@ staged leg-1 frame. Build first: `bash render/atari/bench_build.sh`. `tools/prof
 breaks any stage down to cycles-per-function (and per-PC with `--lines`) via the oracle's
 cycle histogram.
 
-Current (8 MHz ST, 160000-cycle 50 Hz frame budget) — the demo frame is **299 ms ≈ 3.3 fps** on the
+Current (8 MHz ST, 160000-cycle 50 Hz frame budget) — the demo frame is **203 ms ≈ 4.9 fps** on the
 staged frame. Caveat before reading the object rows: the staged frame is the demo's BOOT frame — a
 leg start, with the start gate spanning the road — which is close to the object tree's worst case
 (see the frame-cost distribution below the table):
@@ -124,7 +124,6 @@ leg start, with the start gate spanning the road — which is close to the objec
 |-------|-------------|----------|--------|-------|
 | player_update + course + views + prefix | 2.01 | — | | scalar state, noise |
 | build_road_geometry | 3.87 | 3.91 | 0.99× | |
-| **frame_clear (demo-only)** | **96.03** | — | | 32 KB memset, byte-loop @24 cyc/B; recreate never clears — the pipeline repaints every byte |
 | render_road | 50.68 | 55.47 | 0.91× | 67% in the per-scanline core, 33% in bands B/D |
 | blit_road_scroll | 11.98 | 33.55 | 0.36× | pre-rotated copies + unrolled fill |
 | draw_ground | 1.16 | — | | |
@@ -135,7 +134,7 @@ leg start, with the start gate spanning the road — which is close to the objec
 | **objlist fixed pass** | **55.99** | — | | 97% inside `rm_blit_objshift2` |
 | draw_buggy | 5.16 | 5.22 | 0.99× | |
 | draw_hud | 17.44 | 17.20 | 1.01× | 10.6 in the phases (dashboard masked blit), 6.0 in glyph_run |
-| **TOTAL (frame)** | **299.2** | | | recreate-parity would be ~240 ms — the original is this slow on this scene |
+| **TOTAL (frame)** | **203.2** | | | recreate-parity would be ~240 ms — the original is this slow on this scene, and remaster now beats it on this frame (the scroll-blit win) |
 
 Whole-tree check: `object_tree` (prefix→buggy, recreate's `g_draw_game_objects` scope) is 117.2 ms
 vs the recon's 130.3 ms (**0.90×**). `render_road` also beats the byte-exact **machine model**
@@ -148,9 +147,12 @@ tree is ~46 ms — the staged bench frame's 117 ms is the start gate, near the t
 distribution. Use the median for planning and the gate frame as the worst-case check.
 
 The headline findings (2026-07-22 profile):
-- **The demo's per-frame `memset` is ~a third of the frame and is redundant** — recreate's own
-  pipeline repaints every framebuffer byte (its captured frames are deterministic with no clear),
-  and the shim memset is a byte loop besides. Removing it is a free 96 ms.
+- **The demo's per-frame `memset` was ~a third of the frame and redundant — now removed (free 96 ms).**
+  recreate's own pipeline repaints every framebuffer byte (its captured frames are deterministic with
+  no clear), and the shim memset was a byte loop besides. The demo now clears both screen buffers once
+  at boot and never again. Verified: `run_demo.py` still reports MATCH on the frame-0 golden, and the
+  autodrive frame-2 and frame-61 dumps are byte-identical to a per-frame-clear build (proving the
+  clear was redundant on both buffer parities, not just frame 0).
 - **The two fine-x sprite blitters dominate the object tree** — `rm_blit_objshift`/
   `rm_blit_objshift2` are 99 ms of the gate frame's 117 ms tree (87%/97% of their passes). Their
   cell helpers mutate `col0/col1/sp` through pointers, so GCC keeps the loop state in memory: the
@@ -180,4 +182,5 @@ primitives (`rr_copy_long`/`rr_fill_pair`), and the per-column call overhead ~do
 (measured 1.94× the recon before the flag was fixed). The on-target builds now use `-O2`.
 
 (The "~84 ms/frame" this section used to claim was the sum of the four stages benched at the time,
-not the frame: the 2026-07-22 full-frame bench above put the real figure at 299 ms.)
+not the frame: the 2026-07-22 full-frame bench above put the real figure at 203 ms — 299 ms before
+the per-frame clear was dropped.)

@@ -172,7 +172,7 @@ DEMO_EXTRA_CFLAGS="-DDEMO_KEYLOG -DDEMO_TRACE=2000 -Wa,--defsym,KBD_RAWLOG=1" \
 ```
 
 `run_hatari.RUN_VBLS` defaults to 4000, which is **not enough for a long trace** — a frame costs
-~300 ms (≈15 vbls; measured by the 2026-07-22 full-frame bench, see STATUS "Perf"), so a 600-frame
+~200 ms (≈10 vbls; measured by the 2026-07-22 full-frame bench, see STATUS "Perf"), so a 600-frame
 run needs ~60000 and a raised `timeout=`. Set both when driving headlessly, or the run dies with
 "did not produce SCREEN.BIN" and looks like a build failure.
 
@@ -201,6 +201,8 @@ construction and pinned by the existing differential tests:
    repaints every framebuffer byte, so clear each screen buffer once at boot and never again.
    −96 ms, trivial. Verify: `run_demo.py` MATCH plus a later-frame autodrive dump (a stale-byte bug
    would surface after the buffers have alternated, not on frame 0).
+   **DONE 2026-07-22** — frame TOTAL 299 → 203 ms. `run_demo.py` MATCH, and the autodrive frame-2 /
+   frame-61 dumps are byte-identical to a per-frame-clear build (both buffer parities).
 2. **De-pointer the fine-x blitter loops** (`src/blit.c`) — the cell helpers take
    `Offset *col0/*col1/*sp`, so the loop state is address-taken and GCC keeps it in memory (the
    profile shows the spill shuffling directly). Restructure to value-in/value-out or inline the row

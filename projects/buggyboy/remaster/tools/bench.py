@@ -52,7 +52,6 @@ FUNCS = [
     ("ring_views",          None,                    "bench_ring_views"),
     ("gobj_prefix",         "g_draw_game_objects_prefix", "bench_gobj_prefix"),
     ("build_road_geometry", "g_build_road_geometry", "bench_build_geometry"),
-    ("frame_clear",         None,                    "bench_frame_clear"),
     ("render_road",         "g_render_road",         "bench_render_road"),
     ("blit_road_scroll",    "g_blit_road_scroll",    "bench_blit_scroll"),
     ("draw_ground",         None,                    "bench_draw_ground"),

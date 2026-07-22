@@ -5,16 +5,11 @@
  * bench_main.c) links this one file rather than carrying its own copies. The declarations live in
  * shim_include/string.h, which stands in for the real header at compile time.
  *
- * Plain byte loops, correct for any alignment. They are NOT free: the demo clears a 32000-byte
- * framebuffer through `memset` every frame, and the boot-time graphics unpack slides ~450 KB through
- * `memmove`/`memcpy`. Neither shows up in `tools/bench.py`, which measures the four render cores
- * individually — so a long-word version is an open optimisation, not a done one.
- *
- * Note the one real cost of centralising them: with `memset` defined in the caller's own translation
- * unit GCC inlined it at the call site, and across a TU boundary it cannot, so the per-frame frame
- * clear in demo_main.c is now an out-of-line call rather than an inlined loop. One call per 32000-byte
- * clear is negligible against the copy itself, and the render cores' generated code is untouched
- * (bench.py's counts are unchanged) — but "identical code" would be the wrong claim to make.
+ * Plain byte loops, correct for any alignment. They are NOT free: `memset` clears the two screen
+ * buffers once at boot (demo_main.c — the per-frame clear was removed as redundant), and the
+ * boot-time graphics unpack slides ~450 KB through `memmove`/`memcpy`. Neither shows up in
+ * `tools/bench.py`, which measures the four render cores individually — so a long-word version is an
+ * open optimisation, not a done one.
  */
 #include <stdint.h>
 #include <string.h>          /* resolves to shim_include/string.h via each build's -I */

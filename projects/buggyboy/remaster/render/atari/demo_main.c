@@ -74,7 +74,7 @@ extern void kbd_isr(void);
 
 /* Consume a latched key press. The driving keys are polled as HELD state, which is what steering and
  * throttle want, but a momentary key (quit, restart) cannot be read that way: the loop polls once per
- * frame and a frame here is ~300 ms, so a quick tap's make AND break both land between two polls and
+ * frame and a frame here is ~200 ms, so a quick tap's make AND break both land between two polls and
  * key_down is already back to 0 when it is read — the press is silently lost. key_hit is set by the
  * interrupt on the make and stays set until read here, so no press can be missed. */
 static int take_key_hit(int scancode) {
@@ -171,7 +171,12 @@ static void draw_frame(Framebuffer *fb, RoadPose *pose, const RoadSource *src,
      * the original (obj_xoff_tbl == road_width_tbl + 2), so rebind it to this frame's ctrl. */
     objlist->xoff_tbl = ctrl + RM_CTRL_WIDTH_OFF + 2;
     scroll->seg_head = pose->seg_head;               /* the scroll step follows the near slope */
-    memset(fb->px, 0, SCREEN_BYTES);                 /* blank frame, then draw only remaster's pipeline */
+    /* No per-frame clear: the pipeline below repaints every visible byte (blit_road_scroll's fill +
+     * band, render_road, the ground/object tree, then the HUD), so drawing over this buffer's
+     * two-frames-old content is byte-identical to drawing over zeros. The buffers are cleared once in
+     * main() to establish that invariant. Verified byte-exact against a per-frame-clear build by the
+     * autodrive frame-2/frame-61 dumps; the old memset here cost 96 ms/frame (a third of the frame —
+     * the shim memset is a byte loop). */
     rm_render_road(road, fb);
     rm_blit_road_scroll(scroll, shifted, fb);
 
@@ -534,6 +539,12 @@ void main(void) {
     for (int reg = 0; reg < 16; reg++) tos_palette[reg] = (uint16_t)Setcolor((short)reg, -1);
     Setpalette(fixture_palette);
     rm_scroll_prebuild(arena.gfx + ARENA_SCROLL_PLAY_OFF, shifted);   /* pre-rotate the playfield once (screen_offset is fixed) */
+    /* Clear both screen buffers once, so "buffers start blank" holds before the first draw. The pool
+     * is BSS and already zero at GEMDOS load, so this is redundant today — but draw_frame relies on
+     * the invariant (it never clears), and the explicit clear keeps it if the pool ever stops being
+     * BSS. Boot-time cost is invisible (twice, never again). */
+    memset(screen_buf(0)->px, 0, SCREEN_BYTES);
+    memset(screen_buf(1)->px, 0, SCREEN_BYTES);
     int shown = 0;
     draw_frame(screen_buf(shown), &pose, &src, &ring, &road, &scroll, &hud, &assets, &pfx, &pfx_assets,
                &ground_mut, &ground_assets, &sprite, &sprite_assets, &object, &objlist, low);
