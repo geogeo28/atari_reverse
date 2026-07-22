@@ -78,8 +78,7 @@ reverse/
 
 ## Working conventions (code + commit hygiene)
 
-Adapted from `research_ops/CLAUDE.md`. Same bar; the docs gate points at this workspace's
-surfaces (`names.txt` / `STATUS.md` / `docs/`) instead of a handbook.
+The docs gate points at this workspace's surfaces: `names.txt` / `STATUS.md` / `docs/`.
 
 ### Branch workflow
 - **`main`** — canonical history.
