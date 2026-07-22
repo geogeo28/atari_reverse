@@ -177,22 +177,37 @@ Ikbdws:
 | C polls key_down[] once a frame. Interrupt handlers run in supervisor mode, so no mode juggling.
     .globl  kbd_isr
 kbd_isr:
-    movem.l %d0/%a0,-(%sp)
+    movem.l %d0/%d1/%a0/%a1,-(%sp)
     btst    #0,0xfffffc00       | IKBD ACIA status: receive buffer full?
     beq.s   kbd_eoi
     moveq   #0,%d0
     move.b  0xfffffc02,%d0      | scancode; bit 7 = break (key released)
+    .ifdef  KBD_RAWLOG
+    | Debug (--defsym KBD_RAWLOG=1): record EVERY byte the ACIA delivers, in arrival order, before
+    | it is interpreted as a scancode. That is the ground truth for whether non-keyboard packets
+    | (mouse/joystick reports) are still coming through and being indexed into key_down[].
+    move.w  kbd_raw_pos,%d1
+    cmpi.w  #KBD_RAW_MAX,%d1
+    bge.s   kbd_nolog
+    lea     kbd_raw_log,%a1
+    move.b  %d0,(%a1,%d1.w)
+    addq.w  #1,%d1
+    move.w  %d1,kbd_raw_pos
+kbd_nolog:
+    .endif
     lea     key_down,%a0
     btst    #7,%d0
     bne.s   kbd_break
-    move.b  #1,(%a0,%d0.w)
+    move.b  #1,(%a0,%d0.w)      | held state: set on make, cleared on break
+    lea     key_hit,%a1
+    move.b  #1,(%a1,%d0.w)      | latched press: set on make, cleared only by the C that consumes it
     bra.s   kbd_eoi
 kbd_break:
     andi.w  #0x7f,%d0
     clr.b   (%a0,%d0.w)
 kbd_eoi:
     move.b  #0xbf,0xfffffa11    | MFP ISRB: clear the in-service bit for channel 6 (write 0 to it)
-    movem.l (%sp)+,%d0/%a0
+    movem.l (%sp)+,%d0/%d1/%a0/%a1
     rte
 
     .bss
@@ -200,3 +215,17 @@ kbd_eoi:
     .globl  key_down
 key_down:
     .space  128                 | one byte per scancode: nonzero while held
+    .globl  key_hit
+key_hit:
+    .space  128                 | one byte per scancode: latched press, cleared by the C that reads it
+
+    .ifdef  KBD_RAWLOG
+    .equ    KBD_RAW_MAX,4096
+    .align  2
+    .globl  kbd_raw_pos
+kbd_raw_pos:
+    .space  2                   | bytes logged so far (stops at KBD_RAW_MAX)
+    .globl  kbd_raw_log
+kbd_raw_log:
+    .space  KBD_RAW_MAX
+    .endif

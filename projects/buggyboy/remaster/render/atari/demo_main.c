@@ -64,7 +64,19 @@ extern void Ikbdws(short count_m1, const void *buf);
 
 /* Held-key state, maintained by the IKBD interrupt handler in os.s (indexed by scancode). */
 extern volatile uint8_t key_down[128];
+extern volatile uint8_t key_hit[128];
 extern void kbd_isr(void);
+
+/* Consume a latched key press. The driving keys are polled as HELD state, which is what steering and
+ * throttle want, but a momentary key (quit, restart) cannot be read that way: the loop polls once per
+ * frame and a frame here is ~84 ms, so a quick tap's make AND break both land between two polls and
+ * key_down is already back to 0 when it is read — the press is silently lost. key_hit is set by the
+ * interrupt on the make and stays set until read here, so no press can be missed. */
+static int take_key_hit(int scancode) {
+    if (!key_hit[scancode]) return 0;
+    key_hit[scancode] = 0;
+    return 1;
+}
 
 /* ST keyboard scancodes. */
 #define SCAN_ESC 0x01
@@ -261,9 +273,69 @@ static void kbd_remove(long old_vector) {
  * frame after N frames, so a headless run can prove the whole loop — physics, course advance, render
  * — runs on the 68000 and the buggy actually moves. Undefined in normal builds. */
 #ifdef DEMO_AUTODRIVE
+#ifndef AUTODRIVE_STEER_AFTER
 #define AUTODRIVE_STEER_AFTER 60         /* throttle up first, then hold a steering lock */
+#endif
 static uint16_t autodrive_input(int frame) {
     return (uint16_t)(RM_IN_ACCEL | (frame < AUTODRIVE_STEER_AFTER ? 0 : RM_IN_LEFT));
+}
+#endif
+
+/* DEMO_TRACE=N (debug builds only, with DEMO_AUTODRIVE): log N frames of driving state instead of a
+ * framebuffer, so a headless run can see whether the course actually advances on-target. The log goes
+ * to SCREEN.BIN, padded to a full framebuffer, purely so the existing headless runner picks it up
+ * unchanged — it is telemetry, not an image. Words are big-endian by virtue of being 68000 stores. */
+#ifdef DEMO_TRACE
+#define TRACE_WORDS 8
+#define TRACE_SLOTS (SCREEN_BYTES / (TRACE_WORDS * 2))
+static uint16_t trace_log[TRACE_SLOTS][TRACE_WORDS];
+
+static void trace_frame(int frame, const PlayerState *p, const CourseState *c) {
+    if (frame >= TRACE_SLOTS) return;
+    uint16_t *rec = trace_log[frame];
+    rec[0] = (uint16_t)frame;
+    rec[1] = c->read_pos;
+    rec[2] = c->row_ctr;
+    rec[3] = p->speed;
+    rec[4] = p->engine_rpm;
+    rec[5] = p->collision_lock;
+    rec[6] = (uint16_t)p->hud_crash_timer;
+    rec[7] = (uint16_t)(p->view_wrapped ? 1 : 0);
+}
+
+static void trace_dump(void) {
+    long h = Fcreate("SCREEN.BIN", 0);
+    if (h >= 0) { Fwrite((short)h, (long)sizeof trace_log, trace_log); Fclose((short)h); }
+}
+#endif
+
+/* DEMO_KEYLOG (debug builds only, needs -Wa,--defsym,KBD_RAWLOG=1): play normally, then on quit dump
+ * every byte the IKBD ACIA delivered, in order, plus how many times the R-restart fired. Written to
+ * KEYLOG.BIN on the demo's own drive, so an interactive session can be inspected afterwards. This is
+ * how we find out whether non-keyboard packets are reaching key_down[] — see README. */
+#ifdef DEMO_KEYLOG
+extern volatile uint8_t kbd_raw_log[];
+extern volatile uint16_t kbd_raw_pos;
+
+#define KEYLOG_HEADER_WORDS 4
+static uint16_t keylog_restarts;
+
+static void keylog_dump(int frames) {
+    static uint16_t header[KEYLOG_HEADER_WORDS];
+    header[0] = kbd_raw_pos;          /* bytes captured */
+    header[1] = keylog_restarts;      /* times the R-restart path ran */
+    header[2] = (uint16_t)frames;
+    header[3] = 0;
+    long h = Fcreate("KEYLOG.BIN", 0);
+    if (h < 0) return;
+    Fwrite((short)h, (long)sizeof header, header);
+    Fwrite((short)h, (long)kbd_raw_pos, (void *)kbd_raw_log);
+#ifdef DEMO_TRACE
+    /* ...followed by the per-frame driving state, so one interactive session shows both what was
+     * pressed and what the course position did in response. */
+    Fwrite((short)h, (long)sizeof trace_log, trace_log);
+#endif
+    Fclose((short)h);
 }
 #endif
 
@@ -467,8 +539,13 @@ void main(void) {
 
     long old_kbd_vector = kbd_install();
     uint16_t input_prev = 0;
-    for (int frame = 0; !key_down[SCAN_ESC] && !key_down[SCAN_Q]; frame++) {
-        if (key_down[SCAN_R]) {                       /* restart the leg from the baked start state */
+    int frame_count = 0;
+    int quit = 0;
+    for (int frame = 0; !quit; frame++, frame_count++) {
+        if (take_key_hit(SCAN_R)) {                   /* restart the leg from the baked start state */
+#ifdef DEMO_KEYLOG
+            keylog_restarts++;
+#endif
             player = player_init;
             course.row_ctr = COURSE_ROW_CTR_INIT;
             course.read_pos = COURSE_READ_POS_INIT;
@@ -494,6 +571,9 @@ void main(void) {
         /* The view wrapping is what advances the course, so the road's bends arrive at the speed the
          * buggy is actually travelling (section 11/12 of the original). */
         if (player.view_wrapped) rm_road_course_advance(&pose, &course, stream);
+#ifdef DEMO_TRACE
+        trace_frame(frame, &player, &course);
+#endif
 
         /* render off-screen, then flip the video base to it at the vblank (no tearing). */
         int back = shown ^ 1;
@@ -502,9 +582,15 @@ void main(void) {
         Setscreen(-1L, (long)screen_buf(back)->px, -1);
         Vsync();
         shown = back;
-#ifdef DEMO_AUTODRIVE
+        quit = take_key_hit(SCAN_ESC) || take_key_hit(SCAN_Q);
+#if defined(DEMO_TRACE) && defined(DEMO_AUTODRIVE)
+        if (frame + 1 >= DEMO_TRACE) { trace_dump(); break; }
+#elif defined(DEMO_AUTODRIVE)
         if (frame + 1 >= DEMO_AUTODRIVE) { dump_frame(screen_buf(shown)); break; }
 #endif
     }
     kbd_remove(old_kbd_vector);
+#ifdef DEMO_KEYLOG
+    keylog_dump(frame_count);
+#endif
 }
