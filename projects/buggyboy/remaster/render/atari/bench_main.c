@@ -150,6 +150,15 @@ static PlayerState player = {
     .time_subctr = PL_TIME_SUBCTR_INIT, .time_left = HUD_TIME_LEFT,
     .hud_crash_timer = HUD_CRASH_TIMER, .timeout_gate = PL_TIMEOUT_GATE_INIT,
 };
+/* rm_player_update takes an RmEventCtx*, but the bench frame drives with collision_lock and
+ * event_pending clear, so §6's event path (the only code that dereferences ctx) is never taken and
+ * the dispatch never runs — so just the physics-side pointers are enough; the event-only fields
+ * (ev / assets / hud_text / gfx the dispatch would read) are left unset, which the measured call never
+ * touches. */
+static RmEventCtx ctx = {
+    .player = &player, .gobj = &pfx, .ring = &ring, .pose = &pose, .road_src = &src,
+    .ctrl = ctrl, .scanline = scanline, .leg = DEMO_LEG_INDEX, .game_over = 0,
+};
 
 void bench_ring_views(void);
 
@@ -184,7 +193,7 @@ void bench_draw_hud(void)       { rm_draw_hud(&hud, &assets, &fb); }
 void bench_course_advance(void) { rm_road_course_advance(&pose, &course, &ring, course_stream); }
 
 /* The game-loop step + the draw_game_objects stages (demo_main.c draw_frame order). */
-void bench_player_update(void)  { rm_player_update(&player, &player_assets, ctrl); }
+void bench_player_update(void)  { rm_player_update(&player, &player_assets, ctrl, &ctx); }
 void bench_gobj_prefix(void)    { rm_gobj_prefix(&pfx, &pfx_assets); }
 void bench_draw_ground(void)    { rm_draw_ground(&ground, &ground_assets, &fb); }
 void bench_draw_fg_sprite(void) { rm_draw_fg_sprite(&sprite, &sprite_assets, &fb); }

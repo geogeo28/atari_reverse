@@ -9,8 +9,8 @@ accumulates instead of being erased, which is the only way a self-driving remast
 The drives run from `init_leg` with no warmup, i.e. the state the player actually starts a leg in.
 They are long enough to crash: every script here reaches the roadside-object collisions the course
 dispatches, so the ported §6 crash / auto-steer script plays out and hands the controls back under
-comparison. Only the frame where the still-unported event system ARMS a crash is excluded (and
-counted) — see equiv.compare_leg_drive.
+comparison. Nothing is handed over: the candidate runs the real event engine, so it arms its own
+crashes and every frame is compared strictly, free-running — see equiv.compare_leg_drive.
 """
 import adapter
 import equiv

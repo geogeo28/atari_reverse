@@ -76,9 +76,9 @@ game clears a bit. That bit returns on its own once the system that writes it is
 | course object/marker ring | `g_game_update` §12 (ring shuffle + record unpack) | ✅ ported | `test/test_course_ring.py` — bands 0–11 byte-exact vs recreate over free-running 600-frame drives × 3 scripts × legs 0–4 (bands 12/13: marker only — see below), plus the control table the marker column feeds, plus directed drives for the two branches a leg start cannot reach |
 | ring consumer views (dispatcher flag streams, sprite count, ground markers, sprite gates) | the original's aliases onto the ring's row grid | ✅ unified onto the live ring | `test/test_ring_consumers.py` — each `src/course.c` helper (incl. the full serialized ST mirror, byte-for-byte) pinned to the raw image bytes at the aliased addresses, 5 legs × 3 warmups, with real variety (sprite counts 0/11, a live gate-suppress case) |
 | player physics (`rm_player_update`) | `g_game_update` §3,4,5,7,8,9,10 | ✅ ported | `test/test_player.py` — every physics scalar identical to recreate frame-for-frame over 8 scripted 240-frame drives × legs 0/1/4 (throttle/brake/slalom/both locks/recentre/fire/time-out) |
-| crash / auto-steer script | `g_game_update` §6 (+ the §5/§7/§9/§10 crash branches) | ✅ ported | `test/test_leg_drive.py` — free-running 600-frame drives × 4 scripts × legs 0/1/4, every crash played out and handed the controls back under strict comparison (up to 204 crash frames / 20 handoffs per drive) |
-| course-event engine (`rm_event_dispatch` / `rm_course_events` / `rm_course_probe`) | `g_game_update` §12 tail + the event jump table | ✅ ported (`src/events.c`) | `test/test_events.py` — the jump table pinned against the image's own table at 0x11aa2; per-handler dispatch fuzzed over every idx × gate flags × collision_lock × curve sign; the composite §G/§H/§I tail vs `g_game_update_fx_and_events` over legs 0–4 × warmups (incl. the graphics arena); directed §I checkpoint/leg-end/leg-0-dashboard/collision/banner cases; the collision probe vs `g_probe_collision`; directed fx-slot-mapping + run-fill pins added after mutation-testing |
-| `game_update` (integration + sound) | `g_game_update` §1,2 + wiring | ⬜ the events core is not yet wired into `rm_player_update`'s §6 event path, the leg-drive handover isn't removed, the demo doesn't call it, and the sound path (INITTUNE/INITFX/TURNOFF, the VBL vector) is still unported | — |
+| crash / auto-steer script | `g_game_update` §6 (+ the §5/§7/§9/§10 crash branches) | ✅ ported + wired | `test/test_leg_drive.py` — free-running 600-frame drives × 4 scripts × legs 0/1/4; the candidate now runs the real event engine, so it ARMS ITS OWN crashes (no handover — see below) and every crash plays out and hands the controls back under strict comparison (up to 213 crash frames / 20 handoffs per drive) |
+| course-event engine (`rm_event_dispatch` / `rm_course_events` / `rm_course_probe`) | `g_game_update` §12 tail + the event jump table | ✅ ported (`src/events.c`) + wired | `test/test_events.py` — the jump table pinned against the image's own table at 0x11aa2; per-handler dispatch fuzzed over every idx × gate flags × collision_lock × curve sign; the composite §G/§H/§I tail vs `g_game_update_fx_and_events` over legs 0–4 × warmups (incl. the graphics arena); directed §I checkpoint/leg-end/leg-0-dashboard/collision/banner cases; the collision probe vs `g_probe_collision`; directed fx-slot-mapping + run-fill pins. **Wired** into `rm_player_update`'s §6 event path and the leg drive's wrap-frame tail (`test/test_leg_drive.py`), and into the demo (on-target autodrive trace) |
+| `game_update` (integration + sound) | `g_game_update` §1,2 + wiring | 🟨 events core WIRED end-to-end: `rm_player_update`'s §6 event path dispatches through it, the leg drive runs the real probe + fx/horizon tail (handover removed, all 14 ring bands + the event-owned state compared), and the demo calls `rm_course_probe`/`rm_course_events` on wrap frames. What remains: the sound path (INITTUNE/INITFX/TURNOFF, the VBL vector), the record-driven mode-2/4/6 palette / screen-offset events (course_advance's tail), and the leg/game flow that a finished leg hands off to (§1,2) — see below | — |
 
 **What the player-physics slice covers** (see `include/game.h` for the state model): the engine
 rpm→speed model with its rev limiter, the road-scroll rate and the view advance whose wrap times the
@@ -86,21 +86,32 @@ course, the wheel position → body lean → road-curvature integrator, the road
 off-road push, and — since §6 landed — the crash / auto-steer script that takes the controls away
 while a canned crash replays out of `crash_anim_tbl` and then hands them back.
 
-The precondition is now *no event pending*. What is still missing is the system that **decides** to
-crash you: §12's collision probe, the fx block rebuilt from `obj_flags`, and the horizon-event
-dispatch (which also delivers the checkpoint and finish-line events that would end a leg). Three
-consequences, all measured rather than assumed:
+The precondition on `rm_player_update` is gone: the course-event engine that **decides** to crash you
+— §12's collision probe, the fx block rebuilt from `obj_flags`, and the horizon-event dispatch — is
+now wired in end-to-end (slice 2). The §6 event path dispatches a pending event through it (a
+bonus-display record even rebuilds the control table mid-dispatch), and the leg drive / demo run the
+probe + fx/horizon tail on every view-wrap. Consequences, all measured rather than assumed:
 
-- A leg drive still cannot *finish* a leg — nothing signals the end of one.
-- `test/test_leg_drive.py` now hands over exactly **one** thing and counts it: the single frame where
-  recreate arms a crash (detected as an event-owned global going 0 → nonzero). The road control table
-  used to be handed over too; since the ring landed it is a compared **result**. Everything else —
-  including every frame of every crash playout — is compared strictly, free-running, never re-seeded.
-- Two exclusions remain, both bounded and counted rather than silent: bands 12/13's type codes are
-  exempt from the ring comparison (the dispatch clears bytes that land there — see
-  `equiv.RING_EVENT_OWNED_BANDS` for the derived footprint, which is *not* `obj_flags`), and leg 2's
-  slalom drive is skipped because recreate's rpm-penalty handler arms nothing, so the 0 → nonzero
-  detector cannot see it.
+- **The leg-drive handover is gone (handoffs of the arming decision = 0).** The candidate runs the
+  real event engine, so it arms its own crashes and delivers its own checkpoint / finish / bonus
+  events; a divergence (the reference arming something the candidate did not, or vice versa) now fails
+  the drive loudly as a strict mismatch in the event-owned PlayerState fields rather than being
+  re-seeded away. Every frame is compared, free-running, never re-seeded.
+- **All 14 ring bands are now compared whole** — the old bands-12/13 exemption is closed, because the
+  horizon dispatch pokes those bands' type codes on the candidate exactly as on the reference. The
+  drive also now compares the event-owned surfaces per frame: EventState (crash_bars / crash_active /
+  crash_lap / gauge_blink[_on] / ckpt_scroll / spin_state, the dashboard marker, the flag-bit cursor),
+  the GobjPrefixState bonus / flag / marker-decay counters, and the score digits in the shared
+  HUD-text window. (The leg-2 slalom skip `test_course_ring.py` used to carry — the case the old
+  0 → nonzero arming detector could not see, since recreate's rpm-penalty handler arms nothing — is
+  now removed: the horizon-event dispatch is ported and the case runs with 0 mismatches.)
+- **A leg still cannot *finish* here.** The finish / checkpoint / bonus records are delivered
+  correctly (host-tested by `test_events`' directed §I cases, and the finish/bonus record's control-
+  table rebuild is reached through `rm_player_update`'s §6 path in the leg drives), but the
+  free-running 600-frame drives do not organically reach a checkpoint marker (`checkpoints` = 0 across
+  all scripts — the near-band `event_type` never becomes `0x1a` within 600 frames of these inputs), so
+  no leg-end fires in them either. Actually ending a leg needs the leg/game flow (`g_game_update`
+  §1,2 + what consumes `hud_crash_timer == 0x65`), which lives outside the ported `game_update` body.
 
 **Ported faithfully but not pinned:** `marker_unpack`'s "both shoulders" fixup
 (`MARKER_KIND_SIDES`) fires for **0 of the 5120** course records across all five legs, so this game's
@@ -174,6 +185,11 @@ The headline findings (2026-07-22 profile):
   profile shows ~16 k cycles of pure `movel %sp@(x),%sp@(y)` spill shuffling plus memory-RMW cursor
   updates per pass. Value-passing restructure (same bytes out, pinned by
   `test/test_blit_engines.py`) is the next win.
+- **Do not collapse the wrap-frame's double `rm_build_road_geometry`.** On a view-wrap the demo
+  builds twice: once before `rm_course_events` (so `horizon_row` is fresh for the event tail), then
+  again inside `draw_frame` (off the ring bands the tail pokes). Both are faithful — the original's
+  own `g_draw_frame` (recreate gameplay.c:268) likewise rebuilds after the event pokes — so a future
+  perf pass must not "dedupe" it: dropping either build renders stale-horizon / pre-poke geometry.
 - **Where the fps can land (8 MHz ST, median frame ~180 ms recreate-parity):** dropping the memset
   puts the remaster demo at ~155 ms ≈ 6.5 fps median. The full plan (blitters, road display list,
   HUD static/dynamic split, scroll fill tracking — PORTING.md "Perf plan") projects a median around

@@ -46,18 +46,30 @@ self-driving game has. Three traps it cost real time to find:
 
 Last verified: 2026-07-22. `make test` = **408 passed, 1 skipped**; `run_demo.py` = **MATCH**. Section 12's **object / marker
 ring** is ported (`CourseRing` in `include/game.h`, `rm_road_course_advance` in `src/course.c`) and
-its four aliased consumers are unified onto it (see below).
+its four aliased consumers are unified onto it (see below). **Slice 2 is done**: the course-event
+engine is wired into `rm_player_update`'s §6 event path and the frame loop (leg drive + demo), the
+leg-drive crash handover is removed, and the demo's autodrive trace arms `collision_lock` on the
+68000 at the same frame the host reference does.
 
 **The course-event engine landed** (`src/events.c`): the event jump-table dispatch (`rm_event_dispatch`),
 section 12's tail (`rm_course_events` — the fx block, the two horizon-keyed dispatches, and the
 checkpoint / collision / score markers), and the collision-probe head (`rm_course_probe`), plus the
 leg-0 dashboard rebuild and the checkpoint-banner scroll. Every piece is differential-tested against
 recreate's `g_gu_dispatch_event` / `g_game_update_fx_and_events` / `g_probe_collision` on staged
-frames (`test/test_events.py`). This is slice 1: the native core + its tests. **Slice 2** wires it in
-— call `rm_event_dispatch` from `rm_player_update`'s §6 event path, drop `test_leg_drive`'s crash
-handover so the leg drive runs the real dispatch, and add the demo wiring so a leg can finish.
-Off-frame sound (INITTUNE/INITFX/TURNOFF, the VBL vector) is still unported and documented at each
-call site, per the established convention.
+frames (`test/test_events.py`). Slice 1 was the native core + its tests; **slice 2 wired it in**:
+`rm_player_update` grew an `RmEventCtx *` (and a non-const `ctrl`), and its §6 event path now
+dispatches a pending event through `rm_event_dispatch` — a bonus-display record even rebuilds the
+control table mid-dispatch via `rm_build_road_geometry`, which §10's edge clamp reads back. The frame
+loop (both `equiv._Candidate` and `demo_main.c`) runs the wrap-frame course tail in the original's
+order — `rm_course_probe` → `rm_road_course_advance` → `rm_build_road_geometry` (so `horizon_row` is
+fresh) → `rm_course_events` — after clearing `event_pending` (recreate `game_update.c:504`). The
+leg-drive crash handover is gone: the candidate arms its own crashes and every field (all 14 ring
+bands, EventState, the GobjPrefixState counters, the HUD-text score) is compared strictly.
+
+Still unported (documented at each call site, per convention): off-frame sound (INITTUNE/INITFX/
+TURNOFF, the VBL vector); the record-driven mode-2/4/6 palette / screen-offset events in
+`game_update_course_advance`'s tail; and the leg/game flow (`g_game_update` §1,2 + whatever consumes
+`hud_crash_timer == 0x65`) that a finished leg would hand off to — so a leg still does not *end* here.
 
 ### What the ring port did and did not fix
 
@@ -99,10 +111,11 @@ bit-7 suppress flag. The ring's *values* over time were already pinned by the le
 tests pin the *address arithmetic*. The demo *wiring* itself has no host test (`make test` never
 runs `demo_main.c`) — it is verified on-target by the golden frame-0 compare and autodrive runs.
 
-**Known limitation, inherent until the event dispatch is ported:** the fixed-object pass and
-`GroundState.markers[12]` consume ring bands 12/13's slot words, which the leg drives verify only
-by marker — the unported horizon-event dispatch clears bytes there in the original, so those
-bands' values are faithful to the ring but not yet to the dispatch.
+**Closed (slice 2):** ring bands 12/13's slot words — which the fixed-object pass and
+`GroundState.markers[12]` consume — used to be exempt from the leg-drive ring comparison, because the
+then-unported horizon-event dispatch cleared bytes that land there. The dispatch now runs on the
+candidate too (via `rm_course_events`), so `equiv._ring_mismatches` compares **all 14 bands whole**
+and the exemption (`RING_EVENT_OWNED_BANDS`) is deleted.
 
 ### Recently fixed (kept here until the next STATUS pass)
 

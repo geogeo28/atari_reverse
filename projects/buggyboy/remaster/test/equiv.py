@@ -85,11 +85,11 @@ def _lib():
     lib.rm_gobj_prefix.argtypes = [ctypes.POINTER(adapter.GobjPrefixState),
                                    ctypes.POINTER(adapter.GobjPrefixAssets)]
     lib.rm_gobj_prefix.restype = None
+    ectx = ctypes.POINTER(adapter.RmEventCtx)
     lib.rm_player_update.argtypes = [ctypes.POINTER(adapter.PlayerState),
                                      ctypes.POINTER(adapter.PlayerAssets),
-                                     ctypes.POINTER(ctypes.c_uint8)]
+                                     ctypes.POINTER(ctypes.c_uint8), ectx]
     lib.rm_player_update.restype = None
-    ectx = ctypes.POINTER(adapter.RmEventCtx)
     lib.rm_event_dispatch.argtypes = [ectx, ctypes.c_uint16, ctypes.c_uint16,
                                       ctypes.c_uint16, ctypes.c_uint16]
     lib.rm_event_dispatch.restype = None
@@ -757,10 +757,10 @@ PLAYER_SCRIPT_BYTE_FIELDS = (
     ("marker_pending", adapter.A_marker_pending),
 )
 
-# The globals the still-unported event system OWNS: section 12's collision probe, the fx block rebuilt
-# from obj_flags, and the horizon-event dispatch are what arm these. The ported crash script reaches
-# them too (it steps collision_lock and clears it on the terminal record), so they are compared like
-# any other field — the leg drive only hands them over on the frame the reference arms from idle.
+# The globals the course-event engine OWNS: section 12's collision probe, the fx block rebuilt from
+# obj_flags, and the horizon-event dispatch are what arm these. That engine is now ported and wired in
+# (the leg drive runs it on the candidate too), so these are compared strictly like any other field,
+# free-running with no handover — the candidate arms its own crashes and a divergence fails the drive.
 PLAYER_EVENT_FIELDS = (
     ("collision_lock", adapter.A_collision_lock, False),
     ("crash_phase", adapter.A_crash_phase, True),
@@ -774,30 +774,6 @@ PLAYER_EVENT_FIELDS = (
 )
 
 COURSE_FIELDS = (("row_ctr", adapter.A_course_row_ctr), ("read_pos", adapter.A_course_read_pos))
-
-# The state a crash is ARMED through — the event system's two shapes are a collision (collision_lock +
-# crash_phase) and a spin override (the spin pair, armed with collision_lock still clear). The
-# candidate only ever carries these because a handover gave them to it, so "candidate clear of all of
-# them while the reference is not" is exactly the moment the unported system fired. turn_flags is
-# excluded on purpose: the script leaves it set after a crash, and only an event clears it again.
-PLAYER_ARMED_FIELDS = ("collision_lock", "crash_phase", "event_pending", "spin_reset", "spin_word2",
-                       "curve_window_lo", "curve_window_hi", "curve_freeze")
-
-
-def _armed_snapshot(state):
-    """The reference's armed state, so a 0 -> nonzero transition can be spotted."""
-    return {name: _r16(state, addr) for name, addr, _signed in PLAYER_EVENT_FIELDS
-            if name in PLAYER_ARMED_FIELDS}
-
-
-def _newly_armed(before, after, player):
-    """The fields the unported event system armed on THIS frame: zero on the reference before it, set
-    after it, and still zero on the candidate — which could not have produced them (it only ever steps
-    collision_lock or clears these). Restricting it to the 0 -> nonzero edge is what keeps a genuine
-    divergence in an ALREADY-armed field — a crash script that walks wrong or quits early — visible
-    instead of being mistaken for an arming and handed over."""
-    return [name for name in PLAYER_ARMED_FIELDS
-            if after[name] != 0 and before[name] == 0 and getattr(player, name) == 0]
 
 
 def player_background(leg=0, warmup=60, pokes=None):
@@ -819,6 +795,19 @@ def leg_start_background(leg=0):
     behind (an armed hud_crash_timer, view_flags parked at the section-12 trigger), and a leg start
     has neither."""
     return bench_frame.mid_race_state(leg, 0)
+
+
+def _staged_ctx(state):
+    """A minimal RmEventCtx for callers that drive frames OUTSIDE the §6 event regime
+    (compare_player_drive / compare_spin_arming clear the event globals every frame, so the event path
+    is never taken — but rm_player_update needs a valid ctx pointer regardless). Built ONCE per drive
+    and returned as the whole bundle (its ctypes buffers are the keepalive): the bundle's ev / ring /
+    gfx views stay image-fresh from the seed frame and never advance, which is fine precisely because
+    the frames that WOULD dispatch through them are excluded from the comparison in both callers. Only
+    ctx.player must track the current frame's PlayerState — the caller repoints it each frame before
+    the call (ctx.player = ctypes.pointer(p)), which also keeps player/ctx consistent on the rare
+    excluded frame that does dispatch."""
+    return adapter.event_ctx(state, 0)
 
 
 def compare_spin_arming(lib, image, pokes, inputs):
@@ -843,6 +832,7 @@ def compare_spin_arming(lib, image, pokes, inputs):
 
     mismatches = []
     stats = dict(frames=len(inputs), spun=0, settled=0, events=0)
+    ctx_bundle = _staged_ctx(state)   # built once; ev/ring/gfx stay image-fresh (dispatch frames excluded)
     for frame, in_bits in enumerate(inputs):
         for addr, val in pokes.items():
             _w16(state, addr, val & 0xffff)
@@ -850,7 +840,8 @@ def compare_spin_arming(lib, image, pokes, inputs):
         p = adapter.player_state(state, in_bits)
         assets, _keep = adapter.player_assets(state)
         ctrl, _keep_ctrl = adapter.road_ctrl(state)
-        lib.rm_player_update(ctypes.byref(p), ctypes.byref(assets), ctrl)
+        ctx_bundle.ctx.player = ctypes.pointer(p)
+        lib.rm_player_update(ctypes.byref(p), ctypes.byref(assets), ctrl, ctypes.byref(ctx_bundle.ctx))
 
         _w16(state, adapter.A_input_state, in_bits)
         game_update(buf)
@@ -895,11 +886,13 @@ def compare_player_drive(lib, image, inputs):
 
     mismatches = []
     stats = dict(frames=len(inputs), wraps=0, events=0, clamp=0, offroad=0, fire=0, timeout=0)
+    ctx_bundle = _staged_ctx(state)   # built once; ev/ring/gfx stay image-fresh (dispatch frames excluded)
     for frame, in_bits in enumerate(inputs):
         p = adapter.player_state(state, in_bits)
         assets, _keep = adapter.player_assets(state)
         ctrl, _keep_ctrl = adapter.road_ctrl(state)
-        lib.rm_player_update(ctypes.byref(p), ctypes.byref(assets), ctrl)
+        ctx_bundle.ctx.player = ctypes.pointer(p)
+        lib.rm_player_update(ctypes.byref(p), ctypes.byref(assets), ctrl, ctypes.byref(ctx_bundle.ctx))
 
         _w16(state, adapter.A_input_state, in_bits)
         game_update(buf)
@@ -948,21 +941,6 @@ def _restage_player(state, p):
 def _i16s(state, addr):
     v = _r16(state, addr)
     return v - 0x10000 if v & 0x8000 else v
-
-
-# Bands whose type codes the unported horizon-event dispatch writes. Not obj_flags (band 12 slot 0),
-# which was the original guess and provably never diverges: the writer is
-# `image[A_obj_active + slot + 1] = 0` (recreate game_update.c:169), with A_obj_active = 0x18eb4 =
-# band 11 slot 12 and slot = horizon_row, clamped to 0..44. So the real footprint is odd bytes
-# 0x18eb5..0x18ee3 — band 11 slots 12-14 and its marker, all of band 12, and band 13 slots 0-3.
-#
-# The exemption below is therefore coarser than the footprint in one direction (it drops bands 12/13
-# entirely) and narrower in the other (band 11 stays under strict comparison). It holds for every
-# drive in the suite — observed horizon_row is 6..36 — but it is empirical, not derived: a drive that
-# lands a dispatch on horizon_row >= 34 will fail on ring[11].marker rather than being handed over.
-# The principled fix is to compare all 14 bands and hand over + COUNT a mismatch confined to the
-# derived window, the way the crash arming is already handled. Deferred with the event-dispatch port.
-RING_EVENT_OWNED_BANDS = (12, 13)
 
 
 RING_ANIM_CODES = frozenset({0x0d, 0x10, 0x13, 0x16})   # each implies its two successors
@@ -1051,16 +1029,17 @@ def _count_ring_branches(state, band, read_pos, stats):
 
 
 def _ring_mismatches(frame, cand_ring, state):
-    """Compare the candidate's ring against the reference image's row grid, band by band."""
+    """Compare the candidate's ring against the reference image's row grid, band by band — ALL 14
+    bands whole. The horizon-event dispatch runs on the candidate now (it pokes bands 11-13's type
+    codes exactly as the reference does), so there is no exempted band any more."""
     out = []
     for band in range(adapter.RM_RING_ROWS):
         row = adapter.A_ring_base + band * adapter.RING_ROW_BYTES
-        if band not in RING_EVENT_OWNED_BANDS:
-            for slot in range(adapter.RM_RING_SLOTS):
-                ref = _r16(state, row + slot * 2)
-                if cand_ring.row[band].slot[slot] != ref:
-                    out.append((frame, f"ring[{band}].slot[{slot}]",
-                                cand_ring.row[band].slot[slot], ref))
+        for slot in range(adapter.RM_RING_SLOTS):
+            ref = _r16(state, row + slot * 2)
+            if cand_ring.row[band].slot[slot] != ref:
+                out.append((frame, f"ring[{band}].slot[{slot}]",
+                            cand_ring.row[band].slot[slot], ref))
         ref_marker = _r16(state, row + adapter.RM_RING_SLOTS * 2)
         if cand_ring.row[band].marker != ref_marker:
             out.append((frame, f"ring[{band}].marker", cand_ring.row[band].marker, ref_marker))
@@ -1069,7 +1048,11 @@ def _ring_mismatches(frame, cand_ring, state):
 
 class _Candidate:
     """The remaster side of a leg drive: the structs a self-driving game loop owns, seeded once from
-    the leg-start image and thereafter advanced only by remaster's own cores."""
+    the leg-start image and thereafter advanced only by remaster's own cores — including, now, the
+    course-event engine (probe + fx/horizon dispatch), which arms its own crashes and delivers the
+    checkpoint / finish events. The RmEventCtx bundles the same player/pose/ring/ctrl the loop drives,
+    plus the event-only state (EventState, the GobjPrefixState bonus/flag counters, the HUD-text score
+    window and the graphics arena) so the dispatch mutates exactly what the reference's globals do."""
 
     def __init__(self, lib, state):
         self.lib = lib
@@ -1088,11 +1071,32 @@ class _Candidate:
         self.assets, self._k_assets = adapter.player_assets(state)
         self.player = adapter.player_state(state, 0)
         self.input_prev = 0
+        # event-engine state, seeded once and self-driven thereafter (never re-seeded).
+        self.ev = adapter.event_state(state)
+        self.gobj = adapter._gobj_state(state)
+        self.hud_text = (ctypes.c_uint8 * adapter.HUD_TEXT_BYTES).from_buffer_copy(
+            state[adapter.A_hud_text:adapter.A_hud_text + adapter.HUD_TEXT_BYTES])
+        self.buf_c = int.from_bytes(state[adapter.A_buf_c:adapter.A_buf_c + 4], "big")
+        self.gfx = (ctypes.c_uint8 * adapter.GFX_EVENT_BYTES).from_buffer_copy(
+            state[self.buf_c:self.buf_c + adapter.GFX_EVENT_BYTES])
+        self.evt_assets, self._k_evt = adapter.event_assets(state)
+        self.leg = _r16(state, adapter.A_leg_index)
+        self.game_over = _r16(state, adapter.A_game_over_flag) != 0
         self.reseed(state, 0)
+        self._build_ctx()
+
+    def _build_ctx(self):
+        """The RmEventCtx pointing at THIS candidate's live structs (built after reseed so the pointers
+        target the final player/pose/ring objects)."""
+        self.ctx = adapter.make_event_ctx(
+            player=self.player, gobj=self.gobj, ring=self.ring, pose=self.pose, road_src=self.source,
+            ctrl=self.ctrl, scanline=self.scan, ev=self.ev, hud_text=self.hud_text, gfx=self.gfx,
+            assets=self.evt_assets, leg=self.leg, game_over=self.game_over)
 
     def reseed(self, state, in_bits):
-        """Re-take the whole driving state from the reference image — used at the start and on the one
-        frame per crash where the unported event system arms it."""
+        """Take the whole driving state from the reference image — used ONCE, to seed the leg start.
+        (The former per-crash handover is gone: the candidate now runs the real dispatch, so it arms
+        its own crashes and every field is compared strictly, never re-seeded.)"""
         self.player = adapter.player_state(state, in_bits)
         self.pose = adapter.road_pose(state)
         self.course = adapter.course_state(state)
@@ -1105,21 +1109,30 @@ class _Candidate:
         self.ctrl[:n] = state[lo:lo + n]
 
     def step(self, in_bits):
-        """One frame of the game loop: physics, the course advance its view-wrap triggers, then the
-        geometry and scroll whose outputs feed back into next frame's physics."""
+        """One frame of the game loop: physics (whose §6 event path dispatches through ctx), then on a
+        view-wrap the course advance the original runs in section 12 — the collision-probe head, the
+        ring/segment scroll, the geometry rebuild (so horizon_row is fresh), and the fx/horizon event
+        tail — then the geometry + scroll whose outputs feed back into next frame's physics. Ordering
+        mirrors recreate game_update.c: §12 clears event_pending (line 504) and probes before the ring
+        scroll; the build inside course_advance (line 570/608) precedes fx_and_events (line 611)."""
         p = self.player
         p.input, p.input_prev = in_bits, self.input_prev
         p.hscroll_step2 = self.scroll.hscroll_step2
         self.input_prev = in_bits
-        self.lib.rm_player_update(ctypes.byref(p), ctypes.byref(self.assets), self.ctrl)
+        self.lib.rm_player_update(ctypes.byref(p), ctypes.byref(self.assets), self.ctrl,
+                                  ctypes.byref(self.ctx))
 
         self.pose.curve, self.pose.view_flags = p.road_curve, p.view_flags
         self.scroll.scroll_speed = p.scroll_speed
         if p.view_wrapped:
+            p.event_pending = 0                                    # game_update.c:504
+            self.lib.rm_course_probe(ctypes.byref(self.ctx))       # §12 collision-probe head
             self.lib.rm_road_course_advance(ctypes.byref(self.pose), ctypes.byref(self.course),
                                             ctypes.byref(self.ring), self.stream)
         self.lib.rm_build_road_geometry(ctypes.byref(self.pose), ctypes.byref(self.source),
                                         ctypes.byref(self.ring), self.ctrl, self.scan)
+        if p.view_wrapped:
+            self.lib.rm_course_events(ctypes.byref(self.ctx))      # §G/§H/§I: arm crashes + deliver events
         self.scroll.seg_head = self.pose.seg_head
         self.lib.rm_blit_road_scroll(ctypes.byref(self.scroll), self.shifted, ctypes.byref(self.fb))
 
@@ -1128,40 +1141,45 @@ def compare_leg_drive(lib, image, inputs):
     """Drive a leg free-running on both sides and check remaster tracks recreate scalar for scalar.
 
     Unlike compare_player_drive, the candidate is NOT re-seeded per frame: it is seeded once from the
-    leg-start image and then drives itself — physics, course advance, geometry and scroll — so any
-    drift accumulates and shows up instead of being erased every frame. The reference runs the same
-    two cores recreate's own frame does (g_game_update, which builds its geometry itself, then
+    leg-start image and then drives itself — physics, the collision probe, the course advance, the
+    geometry rebuild, the horizon-event dispatch, and the scroll — so any drift accumulates and shows
+    up instead of being erased every frame. The reference runs the same cores recreate's own frame
+    does (g_game_update, whole, including §12's probe/advance/build/fx-and-events; then
     g_blit_road_scroll, whose hscroll_step2 feeds back into the curve).
 
-    ONE thing is handed over: the decision to crash. The collision probe and the horizon-event
-    dispatch arm the crash script; on the single frame where the reference arms one the candidate
-    could not have known about, the whole driving state is re-seeded and that frame is excluded and
-    counted. Every frame of the crash PLAYOUT that follows is compared strictly — that is what
-    exercises the ported §6 script.
+    NOTHING is handed over any more. The candidate runs the real event engine, so it ARMS ITS OWN
+    crashes and delivers its own checkpoint / finish / bonus events; a divergence — the reference
+    arming something the candidate did not, or vice versa — surfaces as a strict mismatch in the
+    event-owned PlayerState fields (collision_lock / crash_phase / the spin pair / curve_window /
+    event_pending) and fails the drive loudly, rather than being reseeded away.
 
-    Everything else is checked, including the two things this drive used to be given:
+    Every owned surface is compared, all of it now a RESULT rather than an input:
 
-    - The course object/marker ring, band by band. Bands 0..11 are compared whole; bands 12/13 only
-      by their marker word, because the unported horizon-event dispatch clears bytes that land in
-      them (see RING_EVENT_OWNED_BANDS for the derived footprint — it is NOT obj_flags).
-    - The road control table, which is now a RESULT rather than an input. Its per-band road widths
-      come from the ring's marker column, so a ring that drifts shows up here as well.
+    - The course object/marker ring, ALL 14 bands whole (the dispatch pokes bands 11-13's type codes
+      on the candidate exactly as on the reference — the old bands-12/13 exemption is gone).
+    - The road control table (its per-band widths come from the ring's marker column, and a bonus
+      display record rebuilds it inside the dispatch).
+    - EventState (crash_bars / crash_active / crash_lap / gauge_blink[_on] / ckpt_scroll / spin_state,
+      the dashboard progress marker and the collision-probe bit cursor), the GobjPrefixState bonus /
+      flag-sequence / marker-decay counters the dispatch bumps, and the score digits in the shared
+      HUD-text window.
 
     Returns (mismatches, stats): mismatches is a list of (frame, field, candidate, reference); stats
-    counts the frames worth knowing were reached, so a drive that never crashes, never recovers or
-    never moves is visible rather than vacuously green."""
+    counts the frames worth knowing were reached — including crashes the CANDIDATE armed, checkpoints
+    reached, and any leg-end — so a drive that never crashes, never recovers or never moves is visible
+    rather than vacuously green."""
     state = bytearray(image)
     buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
     game_update = _bind("g_game_update")
     cand = _Candidate(lib, state)
 
+    stats = dict(frames=len(inputs), wraps=0, armed=0, crash_frames=0, handoffs=0, checkpoints=0,
+                 leg_end=0, clamp=0, offroad=0, ring_checked=0, ring_refills=0, ring_ages=0,
+                 ring_anim_visible=0, ring_marker_right=0, ring_echoes=0, ring_edge_bands=0)
     mismatches = []
-    stats = dict(frames=len(inputs), wraps=0, armed=0, crash_frames=0, handoffs=0, clamp=0,
-                 offroad=0, ring_checked=0, ring_refills=0, ring_ages=0, ring_anim_visible=0,
-                 ring_marker_right=0, ring_echoes=0, ring_edge_bands=0)
     for frame, in_bits in enumerate(inputs):
         was_locked = cand.player.collision_lock
-        armed_before = _armed_snapshot(state)
+        crash_bars_before = cand.ev.crash_bars
         read_pos_before = cand.course.read_pos
         cand.step(in_bits)
         refilled = cand.player.view_wrapped and cand.course.read_pos != read_pos_before
@@ -1171,31 +1189,24 @@ def compare_leg_drive(lib, image, inputs):
         game_update(buf)
         _run_pipeline(state, ("g_blit_road_scroll",))
 
+        # Stats reflect what the CANDIDATE (running the real event engine) did, not a handover.
         stats["wraps"] += _r16(state, adapter.A_view_wrap_flag) != 0
+        stats["armed"] += was_locked == 0 and cand.player.collision_lock != 0   # candidate armed a crash
         stats["crash_frames"] += cand.player.collision_lock != 0
         stats["handoffs"] += was_locked != 0 and cand.player.collision_lock == 0
+        stats["checkpoints"] += cand.ev.crash_bars != crash_bars_before          # checkpoint marker fired
+        stats["leg_end"] += cand.player.hud_crash_timer == adapter.RM_HUD_TIMER_LEG_END  # leg-complete arm
         stats["clamp"] += bool(cand.player.curve_clamp)
         stats["offroad"] += cand.player.skid != 0
-
-        # The unported event system armed a crash this frame: hand it over, skip only this frame. Every
-        # frame of the playout that follows is compared strictly — that is what exercises the §6 script.
-        if _newly_armed(armed_before, _armed_snapshot(state), cand.player):
-            cand.reseed(state, in_bits)
-            stats["armed"] += 1
-            continue
-
-        # Coverage is tallied only for frames that reach the comparison below. Counting before the
-        # handover above would credit a branch on a frame whose ring is then re-seeded from the
-        # reference and never checked — a coverage claim for output nobody verified.
         stats["ring_refills"] += refilled
         stats["ring_ages"] += aged
         if refilled:
             _count_ring_branches(state, cand.ring.row[0], cand.course.read_pos, stats)
 
         lo, n = adapter.A_road_curve_tbl, adapter.RM_CTRL_BYTES
-        if bytes(cand.ctrl)[:n] != bytes(state[lo:lo + n]):
-            first = next(i for i in range(n) if cand.ctrl[i] != state[lo + i])
-            mismatches.append((frame, f"ctrl[{first:#x}]", cand.ctrl[first], state[lo + first]))
+        d = _first_diff("ctrl", bytes(cand.ctrl)[:n], bytes(state[lo:lo + n]))
+        if d:
+            mismatches.append((frame,) + d)
         mismatches.extend(_ring_mismatches(frame, cand.ring, state))
         stats["ring_checked"] += 1
 
@@ -1214,6 +1225,12 @@ def compare_leg_drive(lib, image, inputs):
         if (_r16(state, adapter.A_view_wrap_flag) != 0) != bool(cand.player.view_wrapped):
             mismatches.append((frame, "view_wrapped", bool(cand.player.view_wrapped),
                                _r16(state, adapter.A_view_wrap_flag) != 0))
+
+        # The event surfaces the dispatch now runs on the candidate too (EventState scalars + the
+        # dashboard marker + the flag-bit cursor; the GobjPrefixState bonus / flag / marker-decay
+        # counters; the score digits in the shared HUD-text window) — the same portion the directed
+        # dispatch / course-events checks compare, via the shared _event_state_mismatches helper.
+        mismatches.extend((frame,) + m for m in _event_state_mismatches(cand, state))
     return mismatches, stats
 
 
@@ -1283,14 +1300,18 @@ def _first_diff(name, cand, ref):
     return (f"{name}[{i:#x}]", cand[i], ref[i])
 
 
-def _event_mismatches(b, ref, check_ctrl=True, check_gfx=False):
-    """Compare the run event bundle `b` against the reference image `ref`, location by location."""
+def _event_state_mismatches(b, ref):
+    """The event-owned surfaces BOTH the leg drive and the directed dispatch / course-events checks
+    compare: EventState scalars + the dashboard marker + the flag-bit cursor, the GobjPrefixState
+    bonus / flag / marker-decay counters, and the score digits in the shared HUD-text window. `b` is
+    any object exposing .ev / .gobj / .hud_text (a run event bundle or a _Candidate); `ref` is the
+    reference image bytes. Returns [(name, candidate, reference), ...]; the leg-drive caller prepends
+    a frame number. The ring, the ctrl table and the (broader) player field set are NOT here — the two
+    callers scan those differently, so they stay at each call site."""
     out = []
-    for struct, fields in ((b.player, EVENT_PLAYER_FIELDS), (b.ev, EVENT_EV_FIELDS),
-                           (b.gobj, EVENT_GOBJ_FIELDS)):
-        for name, addr, signed in fields:
-            if getattr(struct, name) != _ref_read(ref, addr, signed):
-                out.append((name, getattr(struct, name), _ref_read(ref, addr, signed)))
+    for name, addr, signed in EVENT_EV_FIELDS:
+        if getattr(b.ev, name) != _ref_read(ref, addr, signed):
+            out.append((name, getattr(b.ev, name), _ref_read(ref, addr, signed)))
     # dash_marker: two bytes + a word
     for name, addr in (("dash_y", adapter.A_dash_marker), ("dash_bit", adapter.A_dash_marker + 1)):
         if getattr(b.ev, name) != ref[addr]:
@@ -1299,6 +1320,23 @@ def _event_mismatches(b, ref, check_ctrl=True, check_gfx=False):
         out.append(("dash_x", b.ev.dash_x, _r16(ref, adapter.A_dash_marker + 2)))
     if b.ev.course_flag_bit != ref[adapter.A_course_flag_bit]:
         out.append(("course_flag_bit", b.ev.course_flag_bit, ref[adapter.A_course_flag_bit]))
+    for name, addr, signed in EVENT_GOBJ_FIELDS:
+        if getattr(b.gobj, name) != _ref_read(ref, addr, signed):
+            out.append((name, getattr(b.gobj, name), _ref_read(ref, addr, signed)))
+    d = _first_diff("hud_text", bytes(b.hud_text),
+                    bytes(ref[adapter.A_hud_text:adapter.A_hud_text + adapter.HUD_TEXT_BYTES]))
+    if d:
+        out.append(d)
+    return out
+
+
+def _event_mismatches(b, ref, check_ctrl=True, check_gfx=False):
+    """Compare the run event bundle `b` against the reference image `ref`, location by location."""
+    out = []
+    for name, addr, signed in EVENT_PLAYER_FIELDS:
+        if getattr(b.player, name) != _ref_read(ref, addr, signed):
+            out.append((name, getattr(b.player, name), _ref_read(ref, addr, signed)))
+    out.extend(_event_state_mismatches(b, ref))
 
     for band in EVENT_RING_BANDS:
         row = adapter.A_ring_base + band * adapter.RING_ROW_BYTES
@@ -1309,11 +1347,6 @@ def _event_mismatches(b, ref, check_ctrl=True, check_gfx=False):
         if b.ring.row[band].marker != _r16(ref, row + adapter.RM_RING_SLOTS * 2):
             out.append((f"ring[{band}].marker", b.ring.row[band].marker,
                         _r16(ref, row + adapter.RM_RING_SLOTS * 2)))
-
-    d = _first_diff("hud_text", bytes(b.hud_text),
-                    bytes(ref[adapter.A_hud_text:adapter.A_hud_text + adapter.HUD_TEXT_BYTES]))
-    if d:
-        out.append(d)
 
     if check_ctrl:
         n = adapter.RM_CTRL_BYTES

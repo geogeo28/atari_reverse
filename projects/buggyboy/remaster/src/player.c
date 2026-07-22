@@ -14,8 +14,10 @@
  * script has the controls and replays a canned crash out of `crash_anim_tbl`, one record per frame,
  * until a terminal record hands them back. Holding a steering lock long enough arms it too (§10).
  *
- * See game.h for the state model and the no-event-pending PRECONDITION that keeps sections 1, 2 and
- * the event dispatch out. The 68000 works in 16-bit registers, so intermediates wrap mod 2^16 —
+ * §6's event path is now wired in: when an event is pending it dispatches through the course-event
+ * engine (rm_event_dispatch, via the RmEventCtx bundle), which is what arms the crashes the script
+ * above replays. Still out of this slice are sections 1 and 2 (the sound gates and the raw input read).
+ * See game.h for the state model. The 68000 works in 16-bit registers, so intermediates wrap mod 2^16 —
  * mirrored with explicit uint16_t/int16_t, exactly as in geometry.c. Verified frame-by-frame against
  * recreate's g_game_update (test/test_player.py, test/test_leg_drive.py).
  */
@@ -137,8 +139,9 @@ static void update_bonus_clock(PlayerState *p) {
 
 /* §5 — advance the idle-bounce animation. The table byte is the lean; a negative entry means "this
  * frame the body is lifted", which is also the frame the lower body is drawn on. A spin override left
- * armed by the event system replaces the animated lean outright. */
-static void update_lean_anim(PlayerState *p, const PlayerAssets *a) {
+ * armed by the event system replaces the animated lean outright. Returns the resolved spin override —
+ * §6's event path passes it to the dispatch as the event slot (recreate captures it here too). */
+static uint16_t update_lean_anim(PlayerState *p, const PlayerAssets *a) {
     p->lean_phase = (uint16_t)((p->lean_phase + 1) & LEAN_PHASE_MASK);
     p->buggy_draw_flag = 0;
 
@@ -153,6 +156,7 @@ static void update_lean_anim(PlayerState *p, const PlayerAssets *a) {
 
     uint16_t spin = p->spin_reset != 0 ? p->spin_reset : p->spin_word2;
     if (spin != 0) p->lean = spin;
+    return spin;
 }
 
 /* §6 (live-steering path) — the effective input when nothing has taken the controls away. Game over
@@ -203,10 +207,24 @@ static uint16_t run_crash_script(PlayerState *p, const PlayerAssets *a, uint16_t
     return in;
 }
 
-/* §6 — who has the controls this frame. */
-static uint16_t update_controls(PlayerState *p, const PlayerAssets *a, uint16_t frame_input) {
+/* §6 — who has the controls this frame. Three regimes, in the original's order:
+ *   collision_lock == 0 && event_pending == 0 -> the player drives (steer_centre).
+ *   collision_lock == 0 && event_pending != 0 -> an event is pending: dispatch it through the
+ *     course-event engine (which may ARM a crash), zero the live input, then fall into the script
+ *     body with the freshly-armed lock. `spin` (the §5-resolved override) is the event slot.
+ *   collision_lock != 0                       -> the crash script already has the controls.
+ * The dispatch arms/reads `ctx` (whose player is `p`); a bonus-display record rebuilds ctx->ctrl in
+ * place, which §10's edge clamp then reads back. */
+static uint16_t update_controls(PlayerState *p, const PlayerAssets *a,
+                                RmEventCtx *ctx, uint16_t frame_input, uint16_t spin) {
     p->buggy_pitch_off = 0;
-    if (p->collision_lock == 0) return steer_centre_input(p);
+    if (p->collision_lock == 0 && p->event_pending == 0) return steer_centre_input(p);
+    if (p->collision_lock == 0) {
+        uint16_t pending = p->event_pending;             /* captured before it is cleared (recreate §2) */
+        p->event_pending = 0;
+        rm_event_dispatch(ctx, pending, spin, 1, 0);     /* slot=spin, obj_flag_a=1, obj_flag_b=0 */
+        frame_input = 0;
+    }
     return run_crash_script(p, a, frame_input);
 }
 
@@ -390,14 +408,14 @@ static void update_edge_clamp(PlayerState *p, const uint8_t *ctrl, uint16_t stee
     p->collision_lock = 0;
 }
 
-void rm_player_update(PlayerState *p, const PlayerAssets *a, const uint8_t *ctrl) {
+void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEventCtx *ctx) {
     uint16_t frame_input = p->game_over ? 0 : (uint16_t)(p->input & IN_MASK);
 
     update_dashboard_anim(p, a, frame_input);
     update_bonus_clock(p);
-    update_lean_anim(p, a);
+    uint16_t spin = update_lean_anim(p, a);
 
-    uint16_t in = update_controls(p, a, frame_input);
+    uint16_t in = update_controls(p, a, ctx, frame_input, spin);
     update_engine(p, a, in);
     update_view_and_scroll(p, a);
     uint16_t steer_src = update_steering(p, a, in);

@@ -298,11 +298,14 @@ void rm_ring_poke_byte(CourseRing *ring, unsigned flat_off, uint8_t val);
  * This is game_update sections 3,4,5,6,7,8,9,10 — including the crash / auto-steer script that takes
  * the controls away while a crash plays out.
  *
- * PRECONDITION — no event pending (`event_pending` == 0). What is still NOT ported is the system that
- * *decides* to crash you: section 12's collision probe, the fx block rebuilt from `obj_flags`, and the
- * horizon-event dispatch that arms `collision_lock` / `crash_phase` / `turn_flags` / the spin pair (and
- * that also delivers the checkpoint and finish-line events which end a leg). Once armed by that
- * system, the script here plays the crash out and hands the controls back on its own.
+ * Section 6's event path is now wired in: when `event_pending` is set (and the crash lock is clear),
+ * this function dispatches the pending event through the course-event engine (`rm_event_dispatch`,
+ * via the `ctx` bundle) — the system that *decides* to crash you (section 12's collision probe, the fx
+ * block rebuilt from `obj_flags`, and the horizon-event dispatch) arms `collision_lock` / `crash_phase`
+ * / `turn_flags` / the spin pair through that same bundle, and a bonus-display record rebuilds `ctrl`
+ * in place. Once armed, the script here plays the crash out and hands the controls back on its own.
+ * The probe and the fx / horizon dispatch themselves run on the caller's view-wrap frame (see the
+ * frame loops in `demo_main.c` / `equiv._Candidate`), not inside this function.
  *
  * Two writes the original's section 6 makes are deliberately absent, both sound: the `rev_reload`
  * poke that accompanies an rpm override, and restoring the VBL sound vector on the terminal record.
@@ -323,6 +326,10 @@ void rm_ring_poke_byte(CourseRing *ring, unsigned flat_off, uint8_t val);
  * shoulder/edge flags at the buggy's row, and the near-row sign that enables the narrow clamp. */
 #define RM_CTRL_EDGE_FLAGS_OFF  0x160   /* control long #88, high word: edge/shoulder flag bits */
 #define RM_CTRL_GEOM_HI_OFF     0x198   /* control long #102, high word: < 0 enables the edge clamp */
+
+/* rm_player_update's §6 event path dispatches through the course-event engine (defined at the end of
+ * this header); forward-declared here so the physics prototype can name it. */
+typedef struct RmEventCtx RmEventCtx;
 
 typedef struct {
     /* ---- per-frame input ---- */
@@ -366,7 +373,8 @@ typedef struct {
     int16_t  crash_phase;      /* in/out: which crash the script is playing. < 0 suspends the edge
                                 * clamp; == CRASH_PHASE_LEAN leans the body with the wheel. */
     uint16_t turn_flags;       /* in/out: the input bits the script forces (RM_IN_COAST) */
-    uint16_t event_pending;    /* in: PRECONDITION 0 — see the note above */
+    uint16_t event_pending;    /* in: nonzero -> §6 dispatches this event idx through ctx, then clears
+                                * it (recreate game_update §2). See the note above. */
     uint16_t spin_reset;       /* in/out: spin lean override; the pair is cleared together */
     uint16_t spin_word2;       /* in/out: the second override, used when spin_reset is 0 */
     uint16_t curve_window_lo;  /* in/out: a road_curve window that skips the script forward one record */
@@ -399,8 +407,10 @@ typedef struct {
 } PlayerAssets;
 
 /* Advance one frame of player physics from p->input. `ctrl` is this frame's road control table
- * (rm_build_road_geometry's output), read for the edge flags above. */
-void rm_player_update(PlayerState *p, const PlayerAssets *a, const uint8_t *ctrl);
+ * (rm_build_road_geometry's output), read for the edge flags above and REBUILT IN PLACE when §6's
+ * event path fires a bonus-display record. `ctx` bundles the course-event state §6 dispatches through;
+ * its player MUST be `p` and its ctrl MUST be `ctrl` (the dispatch mutates them through the bundle). */
+void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEventCtx *ctx);
 
 /* ---- player buggy + foreground sprites (draw_fg_sprite .. draw_buggy @ 0x1518a..) ---- */
 
@@ -607,6 +617,9 @@ void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
 #define RM_HUD_SCORE_BCD_OFF     0xda   /* score_bcd  (image 0x1824c); 6 ASCII digits */
 #define RM_HUD_SCORE_OVERLAY_OFF 0xa3   /* score_overlay_dig (image 0x18215); bonus-overlay digit */
 #define RM_SCORE_DIGITS          6
+/* The value §I stamps into hud_crash_timer when a checkpoint rolls the score digit past its max: the
+ * leg-complete sentinel the (unported) leg/game flow watches for to end the leg. */
+#define RM_HUD_TIMER_LEG_END     0x65
 void rm_score_add(uint8_t *score, uint8_t *score_str, const uint8_t *delta, bool game_over);
 
 /* ---- course-event engine (game_update §12's tail + the jump-table dispatch) ----
@@ -679,10 +692,12 @@ typedef struct {
 #define RM_EVT_SCORE_EVT   0x24   /* marker-decay object spawn (0x1738e) */
 
 /* One frame of the course-event engine, bundling every state view the handlers touch. Passed by
- * pointer so slice 2 can drive rm_event_dispatch from rm_player_update's §6 event path with the same
- * bundle. gfx is the mutable graphics arena (recreate's buf_c): the dashboard bitmap the probe reads
- * and the banner the checkpoint anim scrolls live in it. */
-typedef struct {
+ * pointer so rm_player_update's §6 event path drives rm_event_dispatch through the same bundle the
+ * caller's view-wrap tail (probe + fx/horizon) uses — one shared state view across both.
+ * gfx is the mutable graphics arena (recreate's buf_c): the dashboard bitmap the probe reads
+ * and the banner the checkpoint anim scrolls live in it. Tagged (forward-declared above) so the
+ * physics prototype can take an RmEventCtx* before the full definition. */
+struct RmEventCtx {
     PlayerState       *player;
     GobjPrefixState   *gobj;
     CourseRing        *ring;
@@ -696,7 +711,7 @@ typedef struct {
     const EventAssets *assets;
     uint16_t           leg;
     bool               game_over;
-} RmEventCtx;
+};
 
 /* Resolve event `idx` (0..64) through the native jump table and run its handler with the frame's slot
  * and the two object-type gate flags. Slice 2 also calls this from the §6 event path. */

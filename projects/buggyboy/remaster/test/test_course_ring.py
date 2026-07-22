@@ -27,22 +27,11 @@ DRIVES = {
     "lift_and_brake": [ACCEL if f % 90 < 60 else BRAKE if f % 90 < 75 else 0 for f in range(FRAMES)],
 }
 
-# (leg, drive) combinations that run into an unported event handler the harness cannot hand over.
-# equiv.compare_leg_drive spots the event system acting by watching for a 0 -> nonzero ARMING, but
-# recreate's rpm-penalty handler (0x11de2, event idx 38-40) arms nothing — it only subtracts
-# GU_RPM_DROP from engine_rpm — so the frame is invisible to the detector and the drive diverges on
-# physics from there. Nothing to do with the ring: the pre-ring code fails these identically. They
-# come back when the horizon-event dispatch is ported.
-BLOCKED_BY_UNPORTED_EVENTS = {(2, "slalom")}
-
-
 @pytest.mark.parametrize("leg", [0, 1, 2, 3, 4])
 @pytest.mark.parametrize("drive", sorted(DRIVES))
 def test_ring_tracks_recreate(leg, drive, capsys):
     """Every band of the ring, and the control table its marker column drives, identical to recreate
     for the whole drive with the candidate free-running."""
-    if (leg, drive) in BLOCKED_BY_UNPORTED_EVENTS:
-        pytest.skip(f"leg {leg} {drive} reaches the unported rpm-penalty event handler")
     lib = equiv._lib()
     image = equiv.leg_start_background(leg)
     mismatches, stats = equiv.compare_leg_drive(lib, image, DRIVES[drive])
@@ -81,8 +70,6 @@ def test_ring_unpack_branches_are_reached(capsys):
     totals = {"ring_echoes": 0, "ring_edge_bands": 0}
     for leg in range(5):
         for drive in sorted(DRIVES):
-            if (leg, drive) in BLOCKED_BY_UNPORTED_EVENTS:
-                continue
             image = equiv.leg_start_background(leg)
             mismatches, stats = equiv.compare_leg_drive(lib, image, DRIVES[drive])
             assert not mismatches, f"leg {leg} {drive} diverged"
@@ -165,12 +152,16 @@ def test_python_constants_match_the_c():
     counters silently count the wrong branch, so the hard-to-reach tests above would assert on a
     stale predicate and report coverage that never happened."""
     game_h = _defines("include/game.h",
-                      r"^#define\s+(RM_RING_\w+|EDGE_\w+|RM_CTRL_\w+|RM_SCANLINE_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+                      r"^#define\s+(RM_RING_\w+|EDGE_\w+|RM_CTRL_\w+|RM_SCANLINE_\w+|RM_HUD_TIMER_\w+)\s+(\w+)\s*(?:/\*.*)?$")
     assert {"RM_RING_ROWS", "RM_RING_SLOTS"} <= game_h.keys(), "ring geometry moved out of game.h"
     assert equiv.adapter.RM_RING_ROWS == game_h["RM_RING_ROWS"]
     assert equiv.adapter.RM_RING_SLOTS == game_h["RM_RING_SLOTS"]
     assert equiv.adapter.RING_ROW_BYTES == (game_h["RM_RING_SLOTS"] + 1) * 2
     assert equiv.EDGE_ANY == game_h["EDGE_OPEN"] | game_h["EDGE_LEFT"] | game_h["EDGE_RIGHT"]
+
+    # The leg-complete sentinel §I stamps into hud_crash_timer, mirrored in adapter.py for the leg
+    # drive's leg_end detector (equiv.compare_leg_drive) — pin the Python copy equal to the C.
+    assert equiv.adapter.RM_HUD_TIMER_LEG_END == game_h["RM_HUD_TIMER_LEG_END"]
 
     # The control-table geometry, incl. the ALLOC spill pad: a drifted copy here under-allocates the
     # ctypes ctrl buffer and the C spill corrupts the interpreter heap with the suite still green

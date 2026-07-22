@@ -541,7 +541,7 @@ static void course_markers(RmEventCtx *c) {
         c->ev->crash_bars   = (uint16_t)(c->ev->crash_bars + 1);
         c->ev->crash_active = (uint16_t)(c->ev->crash_active + 1);
         if (score_str[1] == SCORE_MAX_DIGIT) {
-            p->hud_crash_timer = 0x65;
+            p->hud_crash_timer = RM_HUD_TIMER_LEG_END;
             /* play_event_tune(1): leg complete, off-frame sound, skipped */
             return;
         }

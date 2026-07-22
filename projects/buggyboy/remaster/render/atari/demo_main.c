@@ -44,7 +44,9 @@ void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring,
                             const uint8_t *stream);
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
-void rm_player_update(PlayerState *p, const PlayerAssets *a, const uint8_t *ctrl);
+void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEventCtx *ctx);
+void rm_course_probe(RmEventCtx *c);
+void rm_course_events(RmEventCtx *c);
 void rm_draw_ground(const GroundState *s, const GroundAssets *a, Framebuffer *fb);
 void rm_draw_fg_sprite(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
 void rm_draw_buggy(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
@@ -117,6 +119,11 @@ static uint8_t ring_st[RM_RING_ROWS * RM_RING_ROW_BYTES] __attribute__((aligned(
  * at 0x17f08): draw_game_objects' prefix writes the animated colour there, and draw_hud then reads it
  * as the fuel mask. Model that alias with one mutable buffer the prefix writes and the HUD reads. */
 static uint8_t fuel_mask_ram[8] __attribute__((aligned(2)));
+/* The shared HUD-text region as MUTABLE RAM: the course-event engine writes the score digits here on
+ * a checkpoint/gate frame, and draw_hud reads it (via assets.hud_text) as the template it copies and
+ * overlays the speed/time digits onto — the original aliases one region, so both must see the same
+ * bytes. Seeded from fixture_hud_text at boot (frame 0 is thus byte-identical to the const fixture). */
+static uint8_t hud_text_ram[sizeof fixture_hud_text] __attribute__((aligned(2)));
 
 /* Two screen buffers, 256-byte aligned at RUNTIME (the ST video base only uses the high/mid address
  * bytes, so a non-256-aligned base is rounded down → the image shifts). The link-time alignment isn't
@@ -232,7 +239,8 @@ static void draw_frame(Framebuffer *fb, RoadPose *pose, const RoadSource *src,
  * the foreground-sprite suppressor, exactly as in the original), the ground column and the object
  * list's scan offset are the same global, and the HUD shows the speed and clock. */
 static void apply_player(const PlayerState *p, RoadPose *pose, RoadInput *road, ScrollState *scroll,
-                         SpriteState *sprite, HudState *hud, GroundState *ground, ObjListCtx *objlist) {
+                         SpriteState *sprite, HudState *hud, GroundState *ground, ObjListCtx *objlist,
+                         const EventState *ev) {
     pose->curve = p->road_curve;
     pose->view_flags = p->view_flags;
     road->edge_tbl = fixture_road_edge + ROAD_EDGE_PAD + p->road_edge_sel;
@@ -256,6 +264,14 @@ static void apply_player(const PlayerState *p, RoadPose *pose, RoadInput *road, 
     hud->time_left = (uint16_t)p->time_left;
     hud->dsp_variant_idx = p->dsp_variant_idx;
     hud->hud_crash_timer = p->hud_crash_timer;
+
+    /* The five HUD scalars EventState OWNS (see game.h ownership contract): the draw's per-frame VIEW,
+     * refreshed from the event engine each frame exactly as speed/time are from the physics. */
+    hud->crash_lap = (int16_t)ev->crash_lap;
+    hud->gauge_blink = ev->gauge_blink;
+    hud->gauge_blink_on = ev->gauge_blink_on != 0;
+    hud->crash_active = ev->crash_active != 0;
+    hud->crash_bars = ev->crash_bars;
 }
 
 /* Take the IKBD interrupt so held keys are visible (see os.s). Mouse and joystick reporting are
@@ -416,7 +432,7 @@ void main(void) {
     const HudAssets assets = {
         .color_pairs = fixture_color_pairs, .color_bar_mask = fixture_color_bar_mask,
         .color_bar_cidx = fixture_color_bar_cidx + CIDX_ZERO_OFF, .fuel_mask = fuel_mask_ram,
-        .font = fixture_font, .hud_text = fixture_hud_text,
+        .font = fixture_font, .hud_text = hud_text_ram,   /* mutable: course_events writes the score here */
         .dashboard_src = arena.gfx + ARENA_DASH_SRC_OFF,
         /* dsp_table's record offsets are absolute within the graphics arena, so dsp_src is its base */
         .dsp_table = fixture_dsp_table, .dsp_src = arena.gfx,
@@ -453,15 +469,19 @@ void main(void) {
      * the ground + scaled-object inputs, the buggy sprite state, and the prefix state. --- */
     for (unsigned i = 0; i < sizeof buf_a_ram; i++) buf_a_ram[i] = arena.tables[i];
     for (unsigned i = 0; i < sizeof fuel_mask_ram; i++) fuel_mask_ram[i] = fixture_fuel_mask[i];
+    for (unsigned i = 0; i < sizeof hud_text_ram; i++) hud_text_ram[i] = fixture_hud_text[i];
     const uint8_t *low = fixture_obj_low;
 
-    GobjPrefixState pfx = {
+    /* The event engine mutates the prefix state too (flag_seq_count/off, bonus_timer, the marker
+     * decay counters), so it is leg state and the R-restart must rewind it — hence a const init. */
+    const GobjPrefixState pfx_init = {
         .marker_active = PFX_MARKER_ACTIVE_INIT, .marker_off = PFX_MARKER_OFF_INIT,
         .marker_countdown = PFX_MARKER_CD_INIT, .view_parity = OBJ_VIEW_PARITY_INIT,
         .anim_counter = PFX_ANIM_COUNTER_INIT, .anim_word = PFX_ANIM_WORD_INIT,
         .bonus_timer = PFX_BONUS_TIMER_INIT, .dsp_color_scroll = PFX_DSP_SCROLL_INIT,
         .flag_seq_off = PFX_FLAG_SEQ_OFF_INIT, .flag_seq_count = PFX_FLAG_SEQ_CNT_INIT,
     };
+    GobjPrefixState pfx = pfx_init;
     const GobjPrefixAssets pfx_assets = {
         .anim_word_tbl = low + OBJ_LOW_ANIM_WORD_TBL,
         .anim_coloridx_tbl = low + OBJ_LOW_ANIM_COLORIDX, .color_pairs = low + OBJ_LOW_COLOR_PAIRS,
@@ -533,6 +553,36 @@ void main(void) {
     };
     PlayerState player = player_init;
 
+    /* --- the course-event engine (src/events.c): the system that decides to crash you and delivers
+     * the checkpoint / finish / bonus events. rm_player_update dispatches through it on the §6 event
+     * path; the wrap-frame block below runs its probe + fx/horizon tail. EventState is the leg-start
+     * scalar globals (reset on R); the const tables are program data (obj-low), the coll-mask / dash
+     * label & clear tables / raw dashboard block are arena-resident (per PORTING.md, from the loaded
+     * arena, not baked); the score digits land in the shared hud_text_ram the HUD reads. --- */
+    const EventState ev_init = {
+        .course_flag_bit = EV_COURSE_FLAG_BIT_INIT, .dash_y = EV_DASH_Y_INIT,
+        .dash_bit = EV_DASH_BIT_INIT, .dash_x = EV_DASH_X_INIT, .crash_bars = EV_CRASH_BARS_INIT,
+        .crash_active = EV_CRASH_ACTIVE_INIT, .crash_lap = EV_CRASH_LAP_INIT,
+        .gauge_blink = EV_GAUGE_BLINK_INIT, .gauge_blink_on = EV_GAUGE_BLINK_ON_INIT,
+        .ckpt_scroll = EV_CKPT_SCROLL_INIT, .spin_state = EV_SPIN_STATE_INIT,
+    };
+    EventState ev = ev_init;
+    const EventAssets event_assets = {
+        .fx_type_tbl = low + OBJ_LOW_FX_TYPE_TBL, .evt_obj_type_tbl = low + OBJ_LOW_EVT_OBJ_TYPE,
+        .score_deltas = low + OBJ_LOW_SCORE_DELTAS, .score_label = low + OBJ_LOW_SCORE_LABEL,
+        .flag_seq_table = low + OBJ_LOW_FLAG_SEQ_TBL, .probe_deltas = low + OBJ_LOW_PROBE_DELTAS,
+        .ckpt_anim_tbl = low + OBJ_LOW_CKPT_ANIM_TBL,
+        .coll_mask = arena.tables + ARENA_COURSE_MASK_OFF,   /* per-leg collision-flag longs (buf_a data) */
+        .buf_a = arena.tables, .dash_raw = arena.course, .font = fixture_font,
+    };
+    /* The bundle the §6 dispatch and the wrap-frame tail share: it points at the SAME player / pose /
+     * ring / ctrl the loop drives, so an armed crash or a rebuilt control table is seen by everything. */
+    RmEventCtx ctx = {
+        .player = &player, .gobj = &pfx, .ring = &ring, .pose = &pose, .road_src = &src,
+        .ctrl = ctrl, .scanline = scanline, .ev = &ev, .hud_text = hud_text_ram,
+        .gfx = arena.gfx, .assets = &event_assets, .leg = DEMO_LEG_INDEX, .game_over = 0,
+    };
+
     ring_views_refresh(&ring, &ground_mut, &sprite);   /* seed every ring-derived view */
 
     uint16_t tos_palette[16];    /* the desktop's colours — restored on exit alongside its video base */
@@ -569,6 +619,11 @@ void main(void) {
             keylog_restarts++;
 #endif
             player = player_init;
+            ev = ev_init;                             /* the event engine's state is leg state too */
+            pfx = pfx_init;                            /* ...and so is the prefix state it mutates */
+            /* The score digits live in the shared HUD-text window the event engine pokes, so they are
+             * leg state too — re-seed the baked leg-start text or a restart shows the last score. */
+            for (unsigned i = 0; i < sizeof hud_text_ram; i++) hud_text_ram[i] = fixture_hud_text[i];
             course.row_ctr = COURSE_ROW_CTR_INIT;
             course.read_pos = COURSE_READ_POS_INIT;
             for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
@@ -591,16 +646,34 @@ void main(void) {
 #endif
         player.hscroll_step2 = (int16_t)scroll.hscroll_step2;
         input_prev = player.input;
-        rm_player_update(&player, &player_assets, ctrl);
-        apply_player(&player, &pose, &road, &scroll, &sprite, &hud, &ground_mut, &objlist);
+        rm_player_update(&player, &player_assets, ctrl, &ctx);
+
+        /* Sync the pose/scroll the wrap-frame build reads BEFORE it runs (apply_player re-syncs after
+         * the event tail, so a bonus-record curve kick reaches the render). */
+        pose.curve = player.road_curve;
+        pose.view_flags = player.view_flags;
+        scroll.scroll_speed = player.scroll_speed;
 
         /* The view wrapping is what advances the course, so the road's bends arrive at the speed the
-         * buggy is actually travelling (section 11/12 of the original). Every ring-derived view is
-         * refreshed with it, or the scenery freezes at its seed values while the road animates. */
+         * buggy is actually travelling (section 12 of the original). The order mirrors recreate's
+         * game_update.c §12: clear event_pending (line 504), the collision-probe head, the ring +
+         * segment scroll, the geometry rebuild (so horizon_row is fresh for the event tail, line
+         * 570/608), then the fx / horizon-event dispatch (line 611) — which arms crashes and delivers
+         * the checkpoint / finish / bonus records, and pokes ring bands 11-13, so every ring-derived
+         * view is refreshed after it (or the scenery freezes while the road animates). */
         if (player.view_wrapped) {
+            player.event_pending = 0;
+            rm_course_probe(&ctx);
             rm_road_course_advance(&pose, &course, &ring, stream);
+            /* This build feeds horizon_row to the event tail below; draw_frame builds AGAIN after,
+             * off the ring bands the tail pokes — BOTH are faithful (the original's own g_draw_frame,
+             * recreate gameplay.c:268, likewise rebuilds after the event pokes). Dropping either shows
+             * stale horizon_row / pre-poke geometry; see STATUS.md's perf note before "optimizing" it. */
+            rm_build_road_geometry(&pose, &src, &ring, ctrl, scanline);
+            rm_course_events(&ctx);
             ring_views_refresh(&ring, &ground_mut, &sprite);
         }
+        apply_player(&player, &pose, &road, &scroll, &sprite, &hud, &ground_mut, &objlist, &ev);
 #ifdef DEMO_TRACE
         trace_frame(frame, &player, &course);
 #endif

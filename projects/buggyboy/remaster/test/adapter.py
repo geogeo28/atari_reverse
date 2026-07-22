@@ -244,6 +244,7 @@ A_ckpt_anim_tbl = 0x17324                          # checkpoint-banner scroll co
 A_mem_base = 0x18bfc                               # raw per-leg dashboard block base (init_leg_dash source)
 COURSE_MASK_OFF = 0x5d48                           # leg_base + this: per-course collision-flag longs
 RM_EVENT_TABLE_ENTRIES = 65                        # mirror include/game.h (event idx 0..64)
+RM_HUD_TIMER_LEG_END = 0x65                        # mirror include/game.h: §I's leg-complete sentinel
 # Asset window sizes. Where the indexed range exceeds the next global, the range wins (correctness
 # over the next-global heuristic) — see the fx_type_tbl note.
 FX_TYPE_TBL_BYTES = 0x100                           # sel 0..7 -> a code fx in 1..0x7f, then read [fx..fx+0x17]
@@ -530,6 +531,21 @@ class RmEventCtx(ctypes.Structure):
                 ("gfx", ctypes.POINTER(ctypes.c_uint8)),
                 ("assets", ctypes.POINTER(EventAssets)),
                 ("leg", ctypes.c_uint16), ("game_over", ctypes.c_bool)]
+
+
+def make_event_ctx(*, player, gobj, ring, pose, road_src, ctrl, scanline, ev, hud_text, gfx,
+                   assets, leg, game_over):
+    """Build an RmEventCtx from live structs/buffers by KEYWORD — wrapping each struct in a pointer
+    and casting the byte buffers to uint8*. One builder so both the dispatch bundle (EventBundle) and
+    the leg-drive candidate (equiv._Candidate) seed the ctx identically, without a positional field
+    list either has to keep in sync with the struct."""
+    u8 = ctypes.POINTER(ctypes.c_uint8)
+    return RmEventCtx(
+        player=ctypes.pointer(player), gobj=ctypes.pointer(gobj), ring=ctypes.pointer(ring),
+        pose=ctypes.pointer(pose), road_src=ctypes.pointer(road_src),
+        ctrl=ctypes.cast(ctrl, u8), scanline=ctypes.cast(scanline, u8), ev=ctypes.pointer(ev),
+        hud_text=ctypes.cast(hud_text, u8), gfx=ctypes.cast(gfx, u8), assets=ctypes.pointer(assets),
+        leg=leg, game_over=game_over)
 
 
 def _i16(image, addr):
@@ -938,13 +954,10 @@ class EventBundle:
             image[self.buf_c:self.buf_c + GFX_EVENT_BYTES])
         self.assets, self._k_assets = event_assets(image)
         self.leg = u16(A_leg_index)
-        p = ctypes.POINTER(ctypes.c_uint8)
-        self.ctx = RmEventCtx(
-            ctypes.pointer(self.player), ctypes.pointer(self.gobj), ctypes.pointer(self.ring),
-            ctypes.pointer(self.pose), ctypes.pointer(self.source),
-            ctypes.cast(self.ctrl, p), ctypes.cast(self.scan, p), ctypes.pointer(self.ev),
-            ctypes.cast(self.hud_text, p), ctypes.cast(self.gfx, p), ctypes.pointer(self.assets),
-            self.leg, u16(A_game_over_flag) != 0)
+        self.ctx = make_event_ctx(
+            player=self.player, gobj=self.gobj, ring=self.ring, pose=self.pose, road_src=self.source,
+            ctrl=self.ctrl, scanline=self.scan, ev=self.ev, hud_text=self.hud_text, gfx=self.gfx,
+            assets=self.assets, leg=self.leg, game_over=u16(A_game_over_flag) != 0)
 
 
 def event_ctx(image, inputs=0):
