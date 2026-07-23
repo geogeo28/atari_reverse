@@ -356,8 +356,8 @@ staged leg-0 boot frame. Build first: `bash render/atari/bench_build.sh`. `tools
 breaks any stage down to cycles-per-function (and per-PC with `--lines`) via the oracle's
 cycle histogram.
 
-Current (8 MHz ST, 160000-cycle 50 Hz frame budget) — the game frame is **203 ms ≈ 4.9 fps** on the
-staged frame. Caveat before reading the object rows: the staged frame is the game's BOOT frame — a
+Current (8 MHz ST, 160000-cycle 50 Hz frame budget) — the game frame is **194.6 ms ≈ 5.1 fps** on the
+staged frame (203 ms before PERF30 A1 landed on `rm_blit_objshift`). Caveat before reading the object rows: the staged frame is the game's BOOT frame — a
 leg start, with the start gate spanning the road — which is close to the object tree's worst case
 (see the frame-cost distribution below the table):
 
@@ -369,16 +369,16 @@ leg start, with the start gate spanning the road — which is close to the objec
 | blit_road_scroll | 11.98 | 33.55 | 0.36× | pre-rotated copies + unrolled fill |
 | draw_ground | 1.16 | — | | |
 | draw_fg_sprite | 2.40 | 2.39 | 1.00× | |
-| **objlist pass 1 (sprites)** | **51.50** | — | | 87% inside `rm_blit_objshift` |
+| **objlist pass 1 (sprites)** | **42.83** | — | | ~84% inside `rm_blit_objshift`; **PERF30 A1 landed** (value-passed cursor struct, 51.50 → 42.83 = 0.83×, the mem-to-mem cursor spills gone) |
 | draw_object | 0.89 | — | | |
 | objlist pass 2 | 0.09 | — | | empty on this frame |
-| **objlist fixed pass** | **55.99** | — | | 97% inside `rm_blit_objshift2` |
+| **objlist fixed pass** | **55.99** | — | | 97% inside `rm_blit_objshift2`; A1 does NOT apply — its baseline has no mem-to-mem spill and value-passing REGRESSED it +1.98 ms (PERF30 A1), so it stays by-pointer |
 | draw_buggy | 5.16 | 5.22 | 0.99× | |
 | draw_hud | 17.44 | 17.20 | 1.01× | 10.6 in the phases (dashboard masked blit), 6.0 in glyph_run |
-| **TOTAL (frame)** | **203.2** | | | recon (recreate-parity) is ~240 ms on this frame; the ORIGINAL asm is **110 ms (9.1 fps)** — remaster is **1.83× slower than the original** here, NOT faster (the ~240 ms is the recon, not the original — see PERF30.md Part 0) |
+| **TOTAL (frame)** | **194.6** | | | was 203.2 before A1 (objshift) landed; recon (recreate-parity) is ~240 ms on this frame; the ORIGINAL asm is **110 ms (9.1 fps)** — remaster is **1.77× slower than the original** here, NOT faster (the ~240 ms is the recon, not the original — see PERF30.md Part 0) |
 
-Whole-tree check: `object_tree` (prefix→buggy, recreate's `g_draw_game_objects` scope) is 117.2 ms
-vs the recon's 130.3 ms (**0.90×**). `render_road` also beats the byte-exact **machine model**
+Whole-tree check: `object_tree` (prefix→buggy, recreate's `g_draw_game_objects` scope) is 108.6 ms
+(was 117.2 before A1 landed) vs the recon's 130.3 ms (**0.83×**). `render_road` also beats the byte-exact **machine model**
 (`g_render_road_machine`, 56.65 ms → 0.89×): GCC optimises the idiomatic/native-pointer C better
 than the hand-threaded register/goto transcription.
 
@@ -395,11 +395,15 @@ The headline findings (2026-07-22 profile):
   autodrive frame-2 and frame-61 dumps are byte-identical to a per-frame-clear build (proving the
   clear was redundant on both buffer parities, not just frame 0).
 - **The two fine-x sprite blitters dominate the object tree** — `rm_blit_objshift`/
-  `rm_blit_objshift2` are 99 ms of the gate frame's 117 ms tree (87%/97% of their passes). Their
-  cell helpers mutate `col0/col1/sp` through pointers, so GCC keeps the loop state in memory: the
-  profile shows ~16 k cycles of pure `movel %sp@(x),%sp@(y)` spill shuffling plus memory-RMW cursor
-  updates per pass. Value-passing restructure (same bytes out, pinned by
-  `test/test_blit_engines.py`) is the next win.
+  `rm_blit_objshift2` are the bulk of the gate frame's tree (~84%/97% of their passes). **PERF30 A1
+  landed 2026-07-23 on `rm_blit_objshift` (pass 1 only):** its cell helpers mutated `col0/col1/sp`
+  through pointers, so GCC kept the loop state in memory (~16 k cyc/pass of pure `movel %sp@(x),%sp@(y)`
+  spill shuffling). Restructured to a value-in/value-out `ObjshCursor {col0,col1,sp}` struct passed by
+  value through the inlined helpers → cursors register-pinned, the mem-to-mem moves GONE, **51.50 →
+  42.83 ms (0.83×, −8.67 ms)**, byte-exact (`test/test_blit_engines.py` + `run_golden.py` 5-leg MATCH).
+  `rm_blit_objshift2` was left by-pointer: it has no such mem-to-mem spill (its cell body walks the
+  cursors in address registers) and is arithmetic/RMW-bound, so value-passing REGRESSED it +1.98 ms —
+  see PERF30.md A1.
 - **Do not collapse the wrap-frame's double `rm_build_road_geometry`.** On a view-wrap the game
   builds twice: once before `rm_course_events` (so `horizon_row` is fresh for the event tail), then
   again inside `draw_frame` (off the ring bands the tail pokes). Both are faithful — the original's

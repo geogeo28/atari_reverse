@@ -231,6 +231,28 @@ spill lines are ~16 k cyc/pass of pure memory-to-memory moves that vanish when t
 register-pinned. *Risk:* low — pure code shape, no arithmetic change. *Pinned:* `test/test_blit_engines.py`
 byte-exact fuzz across every fine-x / dispatch case; `test_composed_frame` on crash frames.
 
+> **LANDED 2026-07-23 (partial — objshift only; +8.65 ms of the gate frame).** The winning shape is a
+> value-in/value-out cursor struct `ObjshCursor {col0, col1, sp}` passed by value through the (inlined)
+> cell/row helpers, so GCC keeps the three cursors register-pinned. **`rm_blit_objshift` (pass 1):
+> 412,012 → 342,668 cyc = 51.50 → 42.83 ms (0.83×, −8.67 ms)** on the gate frame. The three
+> `movel sp@(x),sp@(y)` mem-to-mem moves are GONE from the disassembly (0 in the function; profile's
+> spill lines eliminated, not relocated), and all `objsh_*` helpers inline (`objsh_edge_cell` needed
+> `always_inline` — two call sites tripped GCC's size heuristic, which would re-spill the cursor across
+> the call on edge sprites). Gate-frame TOTAL **1,625,796 → 1,556,552 cyc = 203.22 → 194.57 ms**
+> (4.92 → 5.14 fps); object tree **117.24 → 108.58 ms (0.90× → 0.83×)**. Byte-exact: `make test` 558
+> passed; `run_golden.py` MATCH on all 5 legs; `GAME_FLOW_AUTO` trace unchanged (19 records).
+>
+> **`rm_blit_objshift2` (fixed pass) does NOT take this change — reverted.** A1's spill premise is
+> specific to pass 1: objshift2's baseline has **0** `movel sp@,sp@` mem-to-mem moves (its cell body
+> walks col0/col1 in address registers via `wr32(dst + *col0)`, spilling the cursors to the stack only
+> at row boundaries), and its cost is arithmetic/RMW-bound (`lsll`/`roll`/`orw`/`andl`/`orl`). Applying
+> the value-struct shape there **regressed it +15,844 cyc (55.99 → 57.97 ms, +1.98 ms)**: forcing the
+> cursors register-resident steals the address registers the RMW cell needs and spills the loop counter
+> (`addql #1,sp@(44)`) instead. The other candidate shape (inlined cell bodies as plain locals) gives
+> GCC the same IR freedom its already-inlined baseline has post-SRA, so it converges to baseline, not
+> below — objshift2's by-pointer baseline is already optimal for its register pressure. Kept as-is with
+> the rationale in a code comment. **Net A1 landed: the objshift half only.**
+
 **A2. Pre-shifted compiled sprites (build-time, from the sprite data).** *(Tier A/B boundary, ~40–55 ms
 — the single biggest lever after A1)* The 68000 variable shift is 8+2n cyc; the fixed pass spends 77,760
 cyc (18%) in `lsll`/`roll` alone, and the mask is rebuilt from the source words every cell every row.

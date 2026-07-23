@@ -61,57 +61,71 @@ static uint16_t objsh_fill_half(Plane4 fill_lo, Plane4 fill_hi, int plane) {
     return (uint16_t)((plane & 1) ? (reg & 0xffff) : (reg >> OBJSH_SUBPX_BITS));
 }
 
+/* The three loop cursors carried by value between cells and rows: the two destination columns and the
+ * source pointer. Passing this by value (not by pointer) keeps col0/col1/sp register-pinned once the
+ * static cell helpers inline — the by-pointer shape address-took them and forced per-cell memory RMW
+ * plus movel sp@,sp@ spill shuffling (PERF30 A1). */
+typedef struct { Offset col0, col1; uint32_t sp; } ObjshCursor;
+
 /* STRADDLE cell: 32-bit left shift straddles both columns; high half -> col0, low half -> col1. */
-static void objsh_straddle_cell(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1,
-                                uint32_t *sp, unsigned shl, Plane4 fill_lo, Plane4 fill_hi) {
-    uint32_t mask32 = rotl32(objsh_build_mask(src, *sp), shl);
+static ObjshCursor objsh_straddle_cell(uint8_t *dst, const uint8_t *src, ObjshCursor cur,
+                                       unsigned shl, Plane4 fill_lo, Plane4 fill_hi) {
+    uint32_t mask32 = rotl32(objsh_build_mask(src, cur.sp), shl);
     uint16_t mask_hi = (uint16_t)(mask32 >> OBJSH_SUBPX_BITS);   /* col0 */
     uint16_t mask_lo = (uint16_t)mask32;                         /* col1 */
     for (int plane = 0; plane < OBJSH_PLANES; plane++) {
-        uint32_t pix32 = (uint32_t)be16(src + *sp) << shl;
-        *sp += 2;
+        uint32_t pix32 = (uint32_t)be16(src + cur.sp) << shl;
+        cur.sp += 2;
         uint16_t fill = objsh_fill_half(fill_lo, fill_hi, plane);
         uint16_t pix_lo = (uint16_t)((pix32 & 0xffff) & fill);
         uint16_t pix_hi = (uint16_t)((pix32 >> OBJSH_SUBPX_BITS) & fill);
         if (plane == OBJSH_PLANES - 1) { pix_lo &= (uint16_t)~mask_lo; pix_hi &= (uint16_t)~mask_hi; }
-        plane_write(dst, *col1, mask_lo, pix_lo);   /* col1 first */
-        plane_write(dst, *col0, mask_hi, pix_hi);
-        *col0 += 2; *col1 += 2;
+        plane_write(dst, cur.col1, mask_lo, pix_lo);   /* col1 first */
+        plane_write(dst, cur.col0, mask_hi, pix_hi);
+        cur.col0 += 2; cur.col1 += 2;
     }
+    return cur;
 }
 
 /* EDGE cell (single on-screen column): mask built + shifted as the full 32-bit register (rol.l shl
- * for LEFT, lsr.l shr for RIGHT); low word gates the column. Pixels shift as words. */
-static void objsh_edge_cell(uint8_t *dst, const uint8_t *src, Offset *ptr, uint32_t *sp,
+ * for LEFT, lsr.l shr for RIGHT); low word gates the column. Pixels shift as words. RIGHT walks col0,
+ * LEFT walks col1. always_inline: it has two call sites, so GCC's size heuristic leaves it a real
+ * call otherwise — which re-spills the cursor across the call and defeats the register-pinning. */
+static inline __attribute__((always_inline))
+ObjshCursor objsh_edge_cell(uint8_t *dst, const uint8_t *src, ObjshCursor cur,
                             unsigned shift, int is_right, Plane4 fill_lo, Plane4 fill_hi) {
-    uint32_t m32 = objsh_build_mask(src, *sp);
+    uint32_t m32 = objsh_build_mask(src, cur.sp);
     uint16_t mask = (uint16_t)(is_right ? (m32 >> shift) : rotl32(m32, shift));
+    Offset ptr = is_right ? cur.col0 : cur.col1;
     for (int plane = 0; plane < OBJSH_PLANES; plane++) {
-        uint16_t word = be16(src + *sp);
-        *sp += 2;
+        uint16_t word = be16(src + cur.sp);
+        cur.sp += 2;
         uint16_t pix = is_right ? (uint16_t)(word >> shift) : (uint16_t)((uint32_t)word << shift);
         pix = (uint16_t)(pix & objsh_fill_half(fill_lo, fill_hi, plane));
         if (plane == OBJSH_PLANES - 1) pix &= (uint16_t)~mask;
-        plane_write(dst, *ptr, mask, pix);
-        *ptr += 2;
+        plane_write(dst, ptr, mask, pix);
+        ptr += 2;
     }
+    if (is_right) cur.col0 = ptr; else cur.col1 = ptr;
+    return cur;
 }
 
 enum objsh_family { OBJSH_CLIP, OBJSH_BASE, OBJSH_LEFT, OBJSH_RIGHT };
 
-static void objsh_row(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1, uint32_t *sp,
-                      enum objsh_family fam, int straddle, unsigned shl, unsigned shr,
-                      Plane4 fill_lo, Plane4 fill_hi) {
+static ObjshCursor objsh_row(uint8_t *dst, const uint8_t *src, ObjshCursor cur,
+                             enum objsh_family fam, int straddle, unsigned shl, unsigned shr,
+                             Plane4 fill_lo, Plane4 fill_hi) {
     if (fam == OBJSH_LEFT) {
-        objsh_edge_cell(dst, src, col1, sp, shl, /*is_right=*/0, fill_lo, fill_hi);
-        *col0 += OBJSH_CELL_BYTES;
+        cur = objsh_edge_cell(dst, src, cur, shl, /*is_right=*/0, fill_lo, fill_hi);
+        cur.col0 += OBJSH_CELL_BYTES;
     }
     for (int i = 0; i < straddle; i++)
-        objsh_straddle_cell(dst, src, col0, col1, sp, shl, fill_lo, fill_hi);
+        cur = objsh_straddle_cell(dst, src, cur, shl, fill_lo, fill_hi);
     if (fam == OBJSH_RIGHT) {
-        objsh_edge_cell(dst, src, col0, sp, shr, /*is_right=*/1, fill_lo, fill_hi);
-        *col1 += OBJSH_CELL_BYTES;
+        cur = objsh_edge_cell(dst, src, cur, shr, /*is_right=*/1, fill_lo, fill_hi);
+        cur.col1 += OBJSH_CELL_BYTES;
     }
+    return cur;
 }
 
 /* Colour-indexed fine-x blit. `stride` is the per-row src-stride word (recreate's blit_mode: 8 or
@@ -149,15 +163,16 @@ void rm_blit_objshift(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t
     uint16_t src_extra = (uint16_t)(OBJSH_CELL_BYTES * (total_cells - 1));
     int rows = (int16_t)rows_m1 + 1;
 
-    uint32_t sp = src_off + (uint32_t)(OBJSH_CELL_BYTES * skips);
-    Offset col0 = (dst_off + sx16((uint16_t)A)) + (uint32_t)(OBJSH_CELL_BYTES * skips);
-    Offset col1 = col0 + OBJSH_CELL_BYTES;
+    ObjshCursor cur;
+    cur.sp = src_off + (uint32_t)(OBJSH_CELL_BYTES * skips);
+    cur.col0 = (dst_off + sx16((uint16_t)A)) + (uint32_t)(OBJSH_CELL_BYTES * skips);
+    cur.col1 = cur.col0 + OBJSH_CELL_BYTES;
     for (int row = 0; row < rows; row++) {
-        objsh_row(dst, src, &col0, &col1, &sp, fam, straddle, shl, shr, fill_lo, fill_hi);
-        col0 = (Offset)(col0 - sx16(rewind));
-        col1 = (Offset)(col1 - sx16(rewind));
-        sp = (uint32_t)(sp - sx16((uint16_t)stride));
-        sp = (uint32_t)(sp - sx16(src_extra));
+        cur = objsh_row(dst, src, cur, fam, straddle, shl, shr, fill_lo, fill_hi);
+        cur.col0 = (Offset)(cur.col0 - sx16(rewind));
+        cur.col1 = (Offset)(cur.col1 - sx16(rewind));
+        cur.sp = (uint32_t)(cur.sp - sx16((uint16_t)stride));
+        cur.sp = (uint32_t)(cur.sp - sx16(src_extra));
     }
 }
 
@@ -177,6 +192,12 @@ void rm_blit_objshift(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t
 #define OBJSH2_REWIND1_DST 0xa8
 #define OBJSH2_REWIND1_SRC 0x54
 
+/* objshift2 carries the same {col0, col1, sp} cursor triple but is NOT value-passed: unlike objshift
+ * its baseline has no mem-to-mem cursor shuffle (the cell body walks col0/col1 in address registers via
+ * wr32(dst + *col0)), and its cost is arithmetic/RMW-bound. Forcing the cursors register-resident across
+ * the row loop only steals the address registers the RMW cell needs and spills the loop counter instead
+ * (measured +1.98 ms, PERF30 A1). The by-pointer shape lets GCC free the cursors during the cell body,
+ * which is the better tradeoff here — so it stays. */
 static void objsh2_straddle_cell(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1,
                                  uint32_t *sp, unsigned shl) {
     uint16_t w0 = be16(src + *sp);
