@@ -602,8 +602,12 @@ fps pixel-faithful is not reachable on a stock ST (faithful ceiling ~16–18 fps
 STE-blitter build). The ranked short list below is the near-term, already-scoped subset.
 
 Baselines: recreate-parity median frame **180 ms (5.6 fps)** over real drives (min 138 / max 315);
-the game today adds a redundant 96 ms clear on top. The ranked proposals, each byte-identical by
-construction and pinned by the existing differential tests:
+the game today adds a redundant 96 ms clear on top. **These are the RECON/remaster compiled-C figures,
+not the original.** The ORIGINAL binary runs the same frames at **~110 ms gate (9.1 fps) / ~82 ms
+median (12.1 fps) / ~53 ms object-free (19 fps)** — measured three ways (PERF30.md Part 0). That is the
+real Tier-A ceiling: hand-asm matching the original *is* ~12 fps median, a proven ~2× over the compiled
+C, and the object tree / render_road each carry a measured ~2× of hand-asm headroom. The ranked
+proposals, each byte-identical by construction and pinned by the existing differential tests:
 
 1. **Drop the per-frame 32 KB `memset`** (game_main.c `draw_frame`) — recreate's own pipeline
    repaints every framebuffer byte, so clear each screen buffer once at boot and never again.
@@ -629,8 +633,11 @@ construction and pinned by the existing differential tests:
    Small and stateful; do last.
 
 Projected landing zone (8 MHz ST): median **~60–75 ms ≈ 13–17 fps**, gate/tunnel frames ~8–10 fps.
-20 fps median is the stretch ceiling if everything lands (hand-asm blitter cores after item 2);
-30 fps needs a 16 MHz+ target or giving up pixel-faithfulness. Profile any candidate first:
+Tier-A hand-asm alone lands at the original's measured **~12 fps median / ~9 fps gate** (PERF30.md
+Part 0); the reach to 13–17 fps median comes from the algorithmic items (blitter de-pointer + display
+list) doing less per-frame work than the original. 20 fps median is not reached by the original itself
+(best object-light ~15 fps) — it needs everything landing plus light scenes; 30 fps needs a 16 MHz+
+/ STE target or giving up pixel-faithfulness. Profile any candidate first:
 `tools/profile.py bench_<stage> [--lines]`; re-check the distribution with `tools/frame_dist.py`.
 
 ## The recipe (porting one function)

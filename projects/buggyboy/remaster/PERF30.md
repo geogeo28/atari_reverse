@@ -10,6 +10,117 @@ Measurements taken 2026-07-23 on the cycle-accurate Musashi 68000 at 8 MHz, on C
 (`bench_build.sh` + `tools/bench.py` / `tools/frame_dist.py` / `tools/profile.py`). They reproduce the
 STATUS "Perf" table exactly (no regression since the frame.c hoist).
 
+> **REVISION 2026-07-23 — the baseline below was the wrong reference.** The "gap" figures in Part 1
+> and the "5–6 fps original" framing were taken from the *recon / remaster GCC-compiled C*, never from
+> the original game's own hand-written 68k. Measuring the **original binary** (three ways — see Part 0)
+> shows it runs the same frames at **~9 fps gate / ~12 fps median / ~19 fps on an object-free stretch** —
+> roughly **2× faster than the recon** the plan costed against. This does *not* raise the faithful
+> ceiling to 30 (the original itself never reaches even 20 fps in the race), but it corrects the
+> baseline, re-grounds every ratio, and turns the Tier-A hand-asm proposals from an estimate into a
+> **measured, existence-proven ~2× lever**. Part 0 is the correction; Part 1's original table is
+> superseded by Part 0's gap table.
+
+---
+
+## Part 0 — REVISION: the ORIGINAL binary's measured cost (the true baseline)
+
+The whole of Part 1 costs the **recon** (`frame_dist.py` runs recon `g_draw_frame`; `bench.py`'s
+per-stage rows are remaster-vs-recon) and never the original's own asm. The original *is* the faithful
+implementation of these exact algorithms, so its measured cost is the real baseline and the real Tier-A
+ceiling. It was measured three independent ways.
+
+### Measurement 1 — the original binary on the cycle-accurate oracle (authoritative)
+
+`emu.run()` executes the ORIGINAL image's own 68k. Its whole-frame wrapper is `draw_frame @0x12e22`
+(build_road_geometry → render_road → blit_road_scroll → draw_game_objects → draw_hud — the exact
+analog of recon `g_draw_frame`). Run on the **same staged frames** the remaster bench uses
+(`gen_game_fixture.staged_image(0)` for the gate; `bench_frame.mid_race_state` legs 0/1/4 × warmups
+0..600 for the distribution):
+
+- **Gate frame** (staged leg-0 start gate, the frame `bench.py` costs): original `draw_frame`
+  **880,376 cyc = 110.0 ms = 9.1 fps** (+game_update 22 k cyc → 8.9 fps).
+- **Mid-race distribution** (63 frames): draw_frame **min 66.9 ms (14.9 fps) · median 82.8 ms
+  (12.1 fps) · p90 101 ms (9.9 fps) · max 130 ms (7.7 fps)**.
+- **Object-independent floor** (geometry+road+scroll+hud, the part that does *not* depend on object
+  count): ~**53 ms ≈ 19 fps** across every sampled frame. `draw_game_objects` adds **13.6–76.7 ms**
+  (median 30 ms) on top. So the frame rate is variable: ~19 fps on a clear stretch, ~12 fps median,
+  ~9 fps at the gate/tunnel.
+
+### Measurement 2 — the real game live in cycle-exact Hatari
+
+The runnable original (`projects/buggyboy/bin/` — Atari's BUGGYBOY.PRG) booted headless (`hatari
+--machine st --cpu-exact on --fast-forward on --run-vbls N`, SDL dummy video). `flip_screen @0x121f8`
+writes the video-base register `$ffff8201` once per rendered frame; a value-change breakpoint
+(`:trace :lock`, stamping `VBL=`) counts flips and their inter-flip vblank gaps. Over 6000 vblanks the
+game's own rendering is **bimodal**:
+
+- **Heavy render** (the animated buggy-sprite parade — same masked fine-x blit engine as the race's
+  `draw_game_objects`): median **5 vblanks/frame = 10 fps**, range 3.6–12.5 fps.
+- **Light game screens** (title / hi-score, drawn once then flipped): **1–2 vblanks = 25–50 fps**.
+- **Whole-attract average: ~19 fps.**
+
+The input-free attract loops the sprite-parade + title/hi-score and does **not** enter the road-driving
+demo (that needs a start input headless Hatari can't inject), so the road-race fps rests on Measurement
+1 — but Hatari independently confirms the original's hand-asm masked blitter runs a screen-full of
+sprites at **~10 fps live**, matching the oracle's race numbers, and that light screens run 25–50 fps.
+
+### Measurement 3 — per-stage spot-check on the gate frame (original vs remaster)
+
+Same gate frame, per stage, original asm (`emu.run`) vs remaster C (`bench.py`):
+
+| stage (gate frame) | **ORIGINAL asm** | remaster C | recon C | **orig/rm** (rm slower by) |
+|--------------------|-----------------:|-----------:|--------:|---------------------------:|
+| **object tree** (`draw_game_objects`) | **57.34 ms** (458,728 cyc) | 117.24 ms | 130.25 ms | **0.49× (rm 2.04× slower)** |
+| **render_road** | **25.90 ms** (207,232) | 50.68 ms | 55.47 ms | **0.51× (1.96×)** |
+| draw_hud | **12.29 ms** (98,346) | 17.47 ms | 17.20 ms | 0.70× (1.42×) |
+| blit_road_scroll | **11.80 ms** (94,416) | 11.98 ms | 33.55 ms | **0.99× (parity)** |
+| build_road_geometry | **2.42 ms** (19,378) | 3.87 ms | 3.91 ms | 0.63× (1.60×) |
+| **whole draw_frame** | **110.05 ms** (880,376) | **201.22 ms** | **240.40 ms** | **0.55× (rm 1.83× slower)** |
+| **→ fps** | **9.1** | **5.0** | **4.2** | |
+
+**Reading it:** on *the fight* — the object tree — the original's hand asm is **2.04× faster** than the
+remaster's compiled C, and 1.96× on render_road. `blit_road_scroll` is the one stage already at
+**parity** with the original (1.01×) — the remaster's pre-rotation recovered original-level speed on
+that *plain-copy* stage, which is exactly why it can't be repeated on the *masked* object blitters. The
+"~240 ms original" that STATUS.md's Perf table cites is the **recon**, not the original; the original is
+110 ms.
+
+### What this corrects
+
+- **Baseline:** the original is **~2× faster** than the recon figures Part 1 costed against — not 3.5×,
+  and *not* 20 fps. The recon-parity model overstated the original's per-frame cost by **1.8× (gate) to
+  2.2× (mid-race)**.
+- **The "~20 fps" the game feels like** is real but is *not* the race frame: it is the object-free floor
+  (~19 fps on open stretches), the attract's light screens (25–50 fps), and the mix average (~19 fps).
+  The *driving* frame is ~12 fps median, dipping to ~9 at the gate/tunnel — the original's own hand-asm
+  proves that is what these algorithms cost.
+- **The faithful ceiling is now measured, not estimated.** Tier A (hand-asm, *same* algorithm) can at
+  best **match the original** — so the pixel-faithful Tier-A ceiling is the original's own speed:
+  **~12 fps median / ~9 fps gate**. Part 1's projected "16–18 fps median (Tier A+B)" sits *above* the
+  original and is therefore reachable **only** via the Tier-B algorithmic wins the original does *not*
+  do (pre-shifted sprites A2, road display list B2 — both do less per-frame work than the original).
+- **Which proposals move:**
+  - **A1 / A3 (value-pass + hand-asm blitter cores) GAIN the most** — the original is the *existence
+    proof* that hand asm does the object tree at 0.49× the compiled C. This is now a measured ~2× lever,
+    the biggest and safest win, not a hopeful estimate.
+  - **A4 (per-band road writers) gains similarly** — render_road has a measured 1.96× of hand-asm
+    headroom to recover before B2 (display list) is even needed to go *beyond* the original.
+  - **blit_road_scroll is done** (already at original parity); B5 top-fill tracking is the only
+    further, beyond-original nibble — low priority, as Part 1 already ranks it.
+  - **Tier B (A2, B2, B4) is reframed:** it is the *only* path above the original's ~12 fps median,
+    since it does work the original didn't. Valuable, but speculative relative to the now-proven Tier A.
+  - **Tier C / STE unchanged:** 25 fps still needs C1 (+C2/C3 for the gate); 30 fps still needs C4 (STE
+    blitter). The original's own 9-fps gate *reinforces* this — the hand-asm faithful game is 2.5–3.3×
+    short of 30, so no amount of matching it reaches 30 faithfully on stock hardware.
+
+**Corrected one-line verdict:** *the original hand-asm game runs these exact algorithms at ~9 fps gate /
+~12 fps median / ~19 fps object-free — so the pixel-faithful Tier-A ceiling is ~12 fps median (matching
+the original, a measured ~2× over today's compiled C), and 16–18 fps median needs the Tier-B
+algorithmic wins on top. 20 fps faithful race is above the original itself; 25 fps needs Tier C; 30 fps
+needs an STE. The original never ran at 20 fps in the race — that impression is the object-free floor and
+the attract's light screens.* Reproduce: `../recreate/.venv/bin/python tools/bench_frame.py 0 60`
+(original vs recon per stage) and Part 0's oracle/Hatari recipes.
+
 ---
 
 ## The target, in cycles
@@ -21,6 +132,8 @@ STATUS "Perf" table exactly (no regression since the frame.c hoist).
 | 25 fps | 40.0 | 320,000 | every 2nd vblank — the honest vsync-locked ST target (Tier C) |
 | today (gate) | 203.2 | 1,625,796 | the staged leg-0 boot frame (start gate in view) |
 | today (median) | ~155–160 | ~1.24 M | real drives, remaster ≈ 0.90× the recon median (180 ms) |
+| **original (gate)** | **110.0** | **880,376** | the ORIGINAL asm on the same frame — **9.1 fps**, the Tier-A ceiling (Part 0) |
+| **original (median)** | **82.8** | **662,470** | original mid-race — **12.1 fps**; object-free floor ~53 ms ≈ 19 fps |
 
 30 fps on a 50 Hz display is itself a Tier-C choice: it cannot be vsync-locked (1.66 frames), so it
 means either tearing or a 60 Hz/VGA modeset. The vsync-honest ST cadences are 50 / 25 / 16.7 fps. This
@@ -30,6 +143,11 @@ document keeps "30 fps" as the headline the task set, but the arithmetic below r
 ---
 
 ## Part 1 — the measured gap table
+
+> **Reference note (see Part 0):** the `recon ms` column and the "recon-parity" framing below are
+> the *compiled C*, not the original. The original asm runs this same gate frame at **110 ms (9.1 fps)**
+> — Part 0's gap table is the corrected reference; the `rm/rec` ratios here still hold as *C-vs-C*, but
+> the real headroom target for each stage is the **ORIGINAL** column in Part 0, ~2× under the remaster.
 
 ### Headline: where the frame goes (gate frame, `tools/bench.py`, current code)
 
@@ -271,11 +389,19 @@ tracks it at roughly 0.75×. Savings are the *mid* of each estimate.
 - **~16–18 fps median:** reachable pixel-faithful with the full Tier A+B sequence. This is the honest
   "how fast can the faithful remaster go on a stock ST" answer.
 
+> **Part 0 cross-check on this landing zone:** Tier A *alone* (hand-asm matching the original) lands at
+> the original's measured **~12 fps median / ~9 fps gate** — that half of the "16–18 fps" is now
+> *proven*, not projected. The remaining lift to 16–18 comes entirely from the **Tier-B** items (A2
+> pre-shifted sprites, B2 road display list) that do *less* per-frame work than the original — so
+> 16–18 fps median is credible only if those land; without them the faithful ceiling is the original's
+> ~12 fps. Either way the **gate frame stays ~9–11 fps**, the binding constraint below.
+
 ---
 
 ## Honesty section — what this plan does NOT believe is reachable
 
-**30 fps pixel-faithful on a stock 8 MHz ST is not credible, and here is the arithmetic.**
+**30 fps pixel-faithful on a stock 8 MHz ST is not credible — the ORIGINAL hand-asm game itself proves
+it (Part 0): it runs these exact algorithms at ~9 fps gate / ~12 fps median, 2.5–3.3× short of 30.**
 
 The three heavy stages are 158 ms and must fall to **~26 ms combined** (0.164×) to hit 30 fps. Consider
 the physical floor for the object blitters:
@@ -294,7 +420,10 @@ the physical floor for the object blitters:
   per scanline every frame, which it must, because the original does.
 
 **The credible faithful ceiling is ~16–18 fps median / ~10–11 fps gate** (full Tier A+B). This is
-consistent with, and slightly better than, the existing plan's 13–17 fps.
+consistent with, and slightly better than, the existing plan's 13–17 fps. **Part 0 anchors the lower
+half of that as measured fact:** Tier A alone (matching the original hand-asm) *is* ~12 fps median /
+~9 fps gate — the original's own speed — and the reach to 16–18 depends on Tier B doing work the
+original didn't.
 
 **The Tier-C combination that actually reaches 30 fps:** **C4 (STE hardware-blitter build)** — the
 STE blitter does the masked block moves in a fraction of the 68000 RMW cost and hardware fine-scroll
@@ -304,10 +433,15 @@ stock ST — that is the honest cost. On stock hardware, the honest target is **
 (C1)** with the full Tier A+B stack, and even then the **gate/tunnel frames need C2 or C3** (a
 fidelity trade) to hold the floor.
 
-**One-line verdict:** *30 fps pixel-faithful on a stock ST is out of reach — the faithful ceiling is
-~16–18 fps median (Tier A+B). 30 fps is an STE-blitter build (C4, still byte-faithful) or a stock-ST
-build that gives up pixel fidelity (C1+C2+C3). 25 fps median is reachable faithfully; 25 fps with the
-gate frame included needs one Tier-C item.*
+**One-line verdict** *(revised — see Part 0):* *the ORIGINAL hand-asm game runs these algorithms at
+~9 fps gate / ~12 fps median / ~19 fps object-free, so the pixel-faithful Tier-A ceiling is ~12 fps
+median (matching the original — a measured ~2× over today's compiled C, the biggest proven lever), and
+16–18 fps median needs the Tier-B algorithmic wins on top. 30 fps pixel-faithful is out of reach — the
+original is 2.5–3.3× short of it. 30 fps is an STE-blitter build (C4, still byte-faithful) or a
+stock-ST build that gives up pixel fidelity (C1+C2+C3). 25 fps median is reachable faithfully only with
+Tier B; 25 fps with the gate frame included needs one Tier-C item. The original never ran at 20 fps in
+the race — that impression is the object-free floor (~19 fps) and the attract's light screens (25–50
+fps), not the driving frame.*
 
 ---
 

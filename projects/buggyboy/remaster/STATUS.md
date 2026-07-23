@@ -375,7 +375,7 @@ leg start, with the start gate spanning the road — which is close to the objec
 | **objlist fixed pass** | **55.99** | — | | 97% inside `rm_blit_objshift2` |
 | draw_buggy | 5.16 | 5.22 | 0.99× | |
 | draw_hud | 17.44 | 17.20 | 1.01× | 10.6 in the phases (dashboard masked blit), 6.0 in glyph_run |
-| **TOTAL (frame)** | **203.2** | | | recreate-parity would be ~240 ms — the original is this slow on this scene, and remaster now beats it on this frame (the scroll-blit win) |
+| **TOTAL (frame)** | **203.2** | | | recon (recreate-parity) is ~240 ms on this frame; the ORIGINAL asm is **110 ms (9.1 fps)** — remaster is **1.83× slower than the original** here, NOT faster (the ~240 ms is the recon, not the original — see PERF30.md Part 0) |
 
 Whole-tree check: `object_tree` (prefix→buggy, recreate's `g_draw_game_objects` scope) is 117.2 ms
 vs the recon's 130.3 ms (**0.90×**). `render_road` also beats the byte-exact **machine model**
@@ -408,9 +408,12 @@ The headline findings (2026-07-22 profile):
 - **Where the fps can land (8 MHz ST, median frame ~180 ms recreate-parity):** dropping the memset
   puts the remaster game at ~155 ms ≈ 6.5 fps median. The full plan (blitters, road display list,
   HUD static/dynamic split, scroll fill tracking — PORTING.md "Perf plan") projects a median around
-  **60–75 ms ≈ 13–17 fps**, with gate/tunnel frames at ~8–10 fps. 20 fps median is the stretch
-  ceiling if every item lands (likely needing hand-asm blitter cores); 30 fps is out of reach on a
-  stock ST while staying pixel-faithful.
+  **60–75 ms ≈ 13–17 fps**, with gate/tunnel frames at ~8–10 fps. **The ORIGINAL binary sets the
+  Tier-A ceiling (measured, PERF30.md Part 0): ~12 fps median / ~9 fps gate / ~19 fps object-free** —
+  so hand-asm matching the original *is* ~12 fps median (a proven ~2× over today's compiled C), and
+  13–17 fps median needs the Tier-B algorithmic wins (pre-shifted sprites, road display list) that the
+  original doesn't do. 30 fps is out of reach on a stock ST while staying pixel-faithful — the
+  original's own 9-fps gate is 2.5–3.3× short of it.
 
 **Optimization — `blit_road_scroll`** (was the worst C-vs-asm ratio, 2.84× the original → now ~1.02×,
 matching the hand-asm): two changes, both byte-identical to the verified core (`test/test_scroll.py`,
