@@ -595,6 +595,12 @@ Tests use `../recreate/.venv/bin/python` (numpy/pytest pinned there). `make test
 
 ## Perf plan (2026-07-22 full-frame bench + drive distribution — numbers in STATUS "Perf")
 
+**The 30 fps plan (audacious, per-stage, with the honest verdict on what a stock ST can reach) is in
+[`PERF30.md`](PERF30.md)** — the measured gap table, tiered proposals (A = faster code, B = different
+algorithm, C = fidelity trades), the ranked sequence with cumulative ms, and the arithmetic showing 30
+fps pixel-faithful is not reachable on a stock ST (faithful ceiling ~16–18 fps median; 30 fps needs an
+STE-blitter build). The ranked short list below is the near-term, already-scoped subset.
+
 Baselines: recreate-parity median frame **180 ms (5.6 fps)** over real drives (min 138 / max 315);
 the game today adds a redundant 96 ms clear on top. The ranked proposals, each byte-identical by
 construction and pinned by the existing differential tests:
