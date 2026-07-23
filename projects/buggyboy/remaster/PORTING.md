@@ -74,6 +74,37 @@ build flag. Proven on the 68000 (see the flow-trace section below): a full attra
 (A→B→C→D→restart), the leg-select fire path starting a leg, and a timed-out leg reaching the
 intermission and returning to the leg select — the whole game loop closes unattended.
 
+**Slice D is done: the composition DRIVER is hoisted and given host coverage.** Slice C left the
+sequencing driver (`intermission_cycle` / `run_leg_select` / `main`'s game-over tail) in `demo_main.c`,
+which `make test` never compiled — an integration smoke test (the flow trace + the golden), not a
+differential, so four correctness bugs shipped green through it. Slice D moves that driver into
+`src/flow.c` (`rm_flow_intermission_cycle` / `rm_flow_intermission` / `rm_flow_leg_select` /
+`rm_flow_game_over`, structured to mirror `g_intermission` / `g_init_playfield`) behind a small `FlowOps`
+callback table + a `FlowTuning` (the attract-timing knobs — the old `DEMO_FLOW_FAST` #ifdefs promoted to
+data). The driver orders only the platform effects it actually issues — `poll_input` / `quit_requested` /
+`fkey_leg`, `draw_fade` / `draw_intermission` / `draw_results`, `set_palette` / `show`, `rebuild_dash` /
+`start_demo_leg` / `run_demo_frame`, and the `event` trace hook — and `demo_main.c` keeps only the 68000
+implementations (`op_*` over the `Shell`; the input source is repointed per call, replacing the old
+`input_of` / `fkey_leg` function-pointer args). SHIPPING behaviour is identical and the `DEMO_FLOW_AUTO`
+phase log is unchanged, with ONE cosmetic exception in the trace only: the driver now emits the flow's
+own `leg_index` in the trace's leg column at the six intermission event sites, where the old shell passed
+its race leg — the two differ on 2nd+ attract cycles, on a Phase-D abort, and on the select-idle path
+(the drawn frames and every counter are identical; only the diagnostic leg column moved).
+
+Host-side, `test/test_flow_machine.py`'s `test_flow_driver_*` run the hoisted driver with recording
+callbacks and give **two distinct guarantees**: every flow COUNTER at each callback routes through the
+verified in-image oracle slices (`g_int_stepA` / `g_int_phaseB_leg` / `g_int_stepD_counter` /
+`g_check_abort` / `g_init_playfield_*`), and the SEQUENCING (draws / flips / palettes / phase events, the
+loop structure) is pinned against a **hand-written Python structural mirror** (`_mirror_int_cycle` /
+`_mirror_leg_select`) — the A→B→C→D→leg-select sequence, the abort/quit unwind in every polling phase,
+and the game-over bracket, with 0 divergences. This is a structural mirror, NOT a lockstep against
+`g_intermission`: it catches a one-sided mutation but would pass an ordering error authored identically
+into both the C driver and the mirror. So of the four escaped bugs, only two (the idle hang past the leg
+end, Esc/Q unreachable from menus) live in this now-covered driver; the other two — the leg-start marker
+reseed (in `start_leg`, a host stub here) and the menu-race palette (set in `main()` after
+`rm_flow_leg_select` returns) — are NOT in the driver and stay guarded only by the on-target flow trace
+and the frame-0 golden. See `equiv.py`'s `compare_flow_*` + `_DriverRecorder` / `_MirrorRecorder`.
+
 The seams the shell stands in for, each documented at its call site in demo_main.c: sound (never
 played), the exact Vsync cadence, the per-phase palette Setpalettes (off-image — the byte-compare is
 palette-agnostic; the 121-frame leg-start "get ready" palette flash is a plain frame wait), the
@@ -85,7 +116,7 @@ output is baked as a program-data SEED (`fixture_highscore`) the shell copies in
 `highscore_ram` at boot, exactly as `fixture_hud_text` seeds `hud_text_ram` — the tiny init routine is
 not run on-target (its output is deterministic program data).
 
-Last verified: 2026-07-22. `make test` = **485 passed**; `run_demo.py` = **MATCH**. Section 12's **object / marker
+Last verified: 2026-07-22. `make test` = **498 passed**; `run_demo.py` = **MATCH**. Section 12's **object / marker
 ring** is ported (`CourseRing` in `include/game.h`, `rm_road_course_advance` in `src/course.c`) and
 its four aliased consumers are unified onto it (see below). **Slice 2 is done**: the course-event
 engine is wired into `rm_player_update`'s §6 event path and the frame loop (leg drive + demo), the

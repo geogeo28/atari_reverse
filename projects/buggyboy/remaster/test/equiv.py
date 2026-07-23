@@ -135,6 +135,13 @@ def _lib():
     lib.rm_init_playfield_nav.restype = None
     lib.rm_init_playfield_fire.argtypes = [fsp]
     lib.rm_init_playfield_fire.restype = ctypes.c_bool
+    # ---- flow COMPOSITION driver (slice D) ----
+    opsp = ctypes.POINTER(adapter.FlowOps)
+    tunp = ctypes.POINTER(adapter.FlowTuning)
+    for fn in (lib.rm_flow_intermission_cycle, lib.rm_flow_intermission, lib.rm_flow_game_over,
+               lib.rm_flow_leg_select):
+        fn.argtypes = [fsp, opsp, ctypes.c_void_p, tunp]
+        fn.restype = ctypes.c_int
     return lib
 
 
@@ -1945,7 +1952,7 @@ def compare_attract_cycle(lib, image, phaseA_frames=24):
     if c_frames != adapter.INT_C_FRAMES or fs.int_frame != _r16(ref, adapter.A_int_frame):
         mism.append(("phaseC.frames", c_frames, adapter.INT_C_FRAMES))
 
-    # Phase D (0x2894): the results carousel — leg_index starts 0, dwell INT_D_DWELL frames per leg,
+    # Phase D (0x2894): the results carousel — leg_index starts 0, dwell src/flow.c's INT_D_DWELL frames per leg,
     # advancing until every leg has shown, then RESTART. Lockstep the counter slice over the whole
     # carousel (cheap; the oracle's init_leg_dash on ADVANCE is fully staged by flow_background).
     fs.int_frame_hi = fs.leg_index = 0
@@ -2036,3 +2043,341 @@ def compare_game_flow(lib, leg, frames=140, time_left=6):
         if (getattr(fs, name) & 0xffff) != r:
             mism.append((name, getattr(fs, name) & 0xffff, r))
     return mism, stats
+
+# ---- flow COMPOSITION driver (slice D): host lockstep vs the oracle slices ----
+# The between-legs driver hoisted into src/flow.c (rm_flow_intermission_cycle / rm_flow_leg_select /
+# rm_flow_game_over — the prologue + phase A/B/C/D loop, the leg-select loop, the game-over bracket) is
+# run HERE on the host with RECORDING FlowOps callbacks. Its trajectory of platform-effect calls (draws,
+# flips, palettes, phase events, the demo-leg pipeline stubs) plus a snapshot of every flow counter at
+# each callback is compared, step for step, against a Python MIRROR of recreate's g_intermission /
+# g_init_playfield structure whose counter values come from the VERIFIED g_int_* / g_init_playfield_* /
+# g_check_abort oracle slices (run in-image). A divergence in the callback order, an argument, a return
+# code, or any flow counter fails the comparison. This closes the "Known structural gap" (STATUS): the
+# sequencing driver, previously only smoke-tested on-target, is now differentially locksteped host-side.
+
+
+def _to_s16(v):
+    """Sign-extend a 16-bit word (the flow mirror's subq/dbf arithmetic). One source of truth with the
+    leg-drive's abort_flag sign-extend."""
+    return _abort_signed(v & 0xffff)
+
+
+def _shift_ref_input(ref, inp):
+    """Advance the reference image's input HISTORY by one frame, exactly as flow_poll does on the
+    candidate FlowState: baseline = last frame's live bits, live = this frame's. The oracle slices read
+    A_input_state/prev. (Distinct from _stage_input_ref, which stages ONE fixed (state, prev) pair into a
+    blank image for the single-shot abort/fire leaf comparisons — no history shift.)"""
+    _w16(ref, adapter.A_input_prev, _r16(ref, adapter.A_input_state))
+    _w16(ref, adapter.A_input_state, inp & 0xffff)
+
+
+class _FlowScript:
+    """Scripted, index-addressed input/quit/fkey providers, consumed in call order. The candidate run and
+    the oracle mirror each hold one; identical control flow keeps their indices in lockstep."""
+    def __init__(self, poll_of, quit_of, fkey_of):
+        self._poll, self._quit, self._fkey = poll_of, quit_of, fkey_of
+        self.pi = self.qi = self.fi = 0
+        self.log = []
+
+    def poll(self):
+        v = self._poll(self.pi) & 0xffff
+        self.pi += 1
+        return v
+
+    def quit(self):
+        v = 1 if self._quit(self.qi) else 0
+        self.qi += 1
+        return v
+
+    def fkey(self):
+        v = int(self._fkey(self.fi))
+        self.fi += 1
+        return v
+
+
+class _DriverRecorder:
+    """Builds a FlowOps table of recording stubs over a candidate FlowState. Each callback appends
+    (kind, args, counter-snapshot) to the log; the input callbacks pull from the script. The demo-leg
+    pipeline (rebuild_dash / start_demo_leg / run_demo_frame) is a no-op stub — its render is a seam
+    pinned by the leg drives; here we record only that (and in which order) the driver invoked it."""
+    def __init__(self, fs, script):
+        self.fs, self.script = fs, script
+        self.log = []
+        self.ops, self._keep = self._build()
+
+    def _rec(self, kind, args=()):
+        self.log.append((kind, args, adapter.flow_snapshot_fs(self.fs)))
+
+    def _build(self):
+        def poll(_ctx):
+            v = self.script.poll()
+            self._rec("poll", (v,))
+            return v
+
+        def quit_(_ctx):
+            v = self.script.quit()
+            self._rec("quit", (v,))
+            return v
+
+        def fkey(_ctx):
+            v = self.script.fkey()
+            self._rec("fkey", (v,))
+            return v
+
+        def draw_fade(_ctx, scroll):
+            self._rec("draw_fade", (scroll,))
+
+        def draw_int(_ctx, scroll):
+            self._rec("draw_int", (scroll,))
+
+        def draw_res(_ctx, leg):
+            self._rec("draw_res", (leg,))
+
+        def set_pal(_ctx, which):
+            self._rec("palette", (which,))
+
+        def show(_ctx):
+            self._rec("show")
+
+        def rebuild(_ctx, leg):
+            self._rec("rebuild_dash", (leg,))
+
+        def start_demo(_ctx, leg):
+            self._rec("start_demo_leg", (leg,))
+
+        def run_demo(_ctx):
+            self._rec("run_demo_frame")
+
+        def event(_ctx, tag, leg, aux):
+            self._rec("event", (tag, leg, aux))
+
+        keep = [adapter._CB_POLL_INPUT(poll), adapter._CB_QUIT(quit_), adapter._CB_FKEY(fkey),
+                adapter._CB_DRAW_SCROLL(draw_fade), adapter._CB_DRAW_SCROLL(draw_int),
+                adapter._CB_DRAW_LEG(draw_res), adapter._CB_SET_PALETTE(set_pal), adapter._CB_VOID(show),
+                adapter._CB_DRAW_LEG(rebuild), adapter._CB_DRAW_LEG(start_demo),
+                adapter._CB_VOID(run_demo), adapter._CB_EVENT(event)]
+        return adapter.FlowOps(*keep), keep
+
+
+class _MirrorRecorder:
+    """The oracle side: records (kind, args, snapshot) from a reference image, stepping the verified
+    g_* slices for every counter change. Structure-for-structure with rm_flow_* / recreate's
+    g_intermission / g_init_playfield (see the mirrors below)."""
+    def __init__(self, ref, script):
+        self.ref = ref
+        self.rbuf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref)
+        self.script = script
+        self.log = []
+        self._stepA = _bind_ret("g_int_stepA", ctypes.c_int)
+        self._stepD = _bind_ret("g_int_stepD_counter", ctypes.c_int)
+        self._phaseB = _bind("g_int_phaseB_leg")
+        self._abort = _bind_ret("g_check_abort", ctypes.c_uint32)
+        self._nav = _bind("g_init_playfield_nav")
+        self._fire = _bind_ret("g_init_playfield_fire", ctypes.c_int)
+
+    def _rec(self, kind, args=()):
+        self.log.append((kind, args, adapter.flow_snapshot_image(self.ref)))
+
+    def _leg(self):
+        return _r16(self.ref, adapter.A_leg_index)
+
+
+def _mirror_int_cycle(m, tuning):
+    """Oracle mirror of rm_flow_intermission_cycle (g_intermission's for-body @0x127a0)."""
+    ref, rbuf, sc = m.ref, m.rbuf, m.script
+    # prologue (0x27a0)
+    _w16(ref, adapter.A_int_scroll, tuning.prologue_scroll & 0xffff)
+    _w16(ref, adapter.A_int_frame, tuning.prologue_frame & 0xffff)
+    _w16(ref, adapter.A_int_timer, tuning.prologue_timer & 0xffff)
+    m._rec("event", (adapter.RM_FLOW_EVT_INT_PROLOGUE, m._leg(), _r16(ref, adapter.A_int_scroll)))
+    m._rec("draw_fade", (_i16s(ref, adapter.A_int_scroll),))
+    m._rec("palette", (adapter.RM_FLOW_PAL_INT_A,))
+    m._rec("show")
+    m._rec("draw_fade", (_i16s(ref, adapter.A_int_scroll),))
+    m._rec("show")
+    # Phase A (0x27cc)
+    while True:
+        q = sc.quit()
+        m._rec("quit", (q,))
+        if q:
+            return adapter.RM_FLOW_QUIT
+        inp = sc.poll()
+        m._rec("poll", (inp,))
+        _shift_ref_input(ref, inp)
+        a = m._stepA(rbuf)
+        if a == adapter.RM_INT_A_BREAK:
+            break
+        m._rec("draw_int", (_i16s(ref, adapter.A_int_scroll),))
+        m._rec("show")
+        if a == adapter.RM_INT_A_ABORT:
+            m._rec("event", (adapter.RM_FLOW_EVT_INT_ABORT, m._leg(), 0))
+            return adapter.RM_FLOW_ABORT
+    m._rec("event", (adapter.RM_FLOW_EVT_INT_PHASEA_BREAK, m._leg(), _r16(ref, adapter.A_int_frame)))
+    # Phase B (0x27fe)
+    m._phaseB(rbuf)
+    m._rec("event", (adapter.RM_FLOW_EVT_INT_PHASEB, m._leg(), 0))
+    m._rec("start_demo_leg", (m._leg(),))
+    # Phase C (0x285e)
+    _w16(ref, adapter.A_int_frame_hi, 0)
+    _w16(ref, adapter.A_int_frame, 0)
+    while True:
+        m._rec("run_demo_frame")
+        f = (_r16(ref, adapter.A_int_frame) + 1) & 0xffff
+        _w16(ref, adapter.A_int_frame, f)
+        if _to_s16(f - tuning.phase_c_frames) >= 0:
+            break
+        q = sc.quit()
+        m._rec("quit", (q,))
+        if q:
+            return adapter.RM_FLOW_QUIT
+        inp = sc.poll()
+        m._rec("poll", (inp,))
+        _shift_ref_input(ref, inp)
+        if m._abort(rbuf):
+            m._rec("event", (adapter.RM_FLOW_EVT_INT_ABORT, m._leg(), 1))
+            return adapter.RM_FLOW_ABORT
+    m._rec("event", (adapter.RM_FLOW_EVT_INT_PHASEC_DONE, m._leg(), tuning.phase_c_frames & 0xffff))
+    # Phase D (0x2894)
+    _w16(ref, adapter.A_leg_index, 0)
+    m._rec("rebuild_dash", (0,))
+    m._rec("draw_res", (0,))
+    m._rec("palette", (adapter.RM_FLOW_PAL_LEG_SELECT,))
+    m._rec("show")
+    while True:
+        d = m._stepD(rbuf)
+        if d == adapter.RM_INT_D_RESTART:
+            m._rec("event", (adapter.RM_FLOW_EVT_INT_PHASED_RESTART, m._leg(), 0))
+            break
+        if d == adapter.RM_INT_D_ADVANCE:
+            m._rec("rebuild_dash", (m._leg(),))
+            m._rec("event", (adapter.RM_FLOW_EVT_INT_PHASED_ADVANCE, m._leg(), 0))
+        m._rec("draw_res", (m._leg(),))
+        m._rec("show")
+        q = sc.quit()
+        m._rec("quit", (q,))
+        if q:
+            return adapter.RM_FLOW_QUIT
+        inp = sc.poll()
+        m._rec("poll", (inp,))
+        _shift_ref_input(ref, inp)
+        if m._abort(rbuf):
+            m._rec("event", (adapter.RM_FLOW_EVT_INT_ABORT, m._leg(), 2))
+            return adapter.RM_FLOW_ABORT
+    return adapter.RM_FLOW_CONTINUE
+
+
+def _mirror_intermission(m, tuning):
+    """Oracle mirror of rm_flow_intermission: run cycles until an abort/quit."""
+    while True:
+        r = _mirror_int_cycle(m, tuning)
+        if r != adapter.RM_FLOW_CONTINUE:
+            return r
+
+
+def _mirror_game_over(m, tuning):
+    """Oracle mirror of rm_flow_game_over: bump game_over_flag, run the intermission, reset it."""
+    _w16(m.ref, adapter.A_game_over_flag, (_r16(m.ref, adapter.A_game_over_flag) + 1) & 0xffff)
+    r = _mirror_intermission(m, tuning)
+    _w16(m.ref, adapter.A_game_over_flag, 0)
+    return r
+
+
+def _mirror_leg_select(m, tuning):
+    """Oracle mirror of rm_flow_leg_select (g_init_playfield's leg-select loop @0x2af6). The nav + reload
+    and the fire edge come from g_init_playfield_nav / g_init_playfield_fire; the idle-countdown loop and
+    the dash-rebuild gate are the driver's directed structure (the countdown constant is the tuning)."""
+    ref, rbuf, sc = m.ref, m.rbuf, m.script
+    m._rec("event", (adapter.RM_FLOW_EVT_SELECT_ENTER, m._leg(), 0))
+    while True:
+        drawn_leg = 0xffff
+        _w16(ref, adapter.A_idle_countdown, tuning.idle_init & 0xffff)
+        while True:
+            fk = sc.fkey()
+            m._rec("fkey", (fk,))
+            if fk >= 0:
+                _w16(ref, adapter.A_leg_index, fk & 0xffff)
+                m._rec("event", (adapter.RM_FLOW_EVT_SELECT_FIRE, m._leg(), 1))
+                return adapter.RM_FLOW_START
+            if m._leg() != drawn_leg:
+                drawn_leg = m._leg()
+                m._rec("rebuild_dash", (drawn_leg,))
+            m._rec("draw_res", (m._leg(),))
+            m._rec("palette", (adapter.RM_FLOW_PAL_LEG_SELECT,))
+            m._rec("show")
+            inp = sc.poll()
+            m._rec("poll", (inp,))
+            _shift_ref_input(ref, inp)
+            m._nav(rbuf)
+            if m._fire(rbuf):
+                m._rec("event", (adapter.RM_FLOW_EVT_SELECT_FIRE, m._leg(), 0))
+                return adapter.RM_FLOW_START
+            q = sc.quit()
+            m._rec("quit", (q,))
+            if q:
+                return adapter.RM_FLOW_QUIT
+            nxt = _to_s16(_r16(ref, adapter.A_idle_countdown) - 1)
+            if nxt < 0:
+                break
+            _w16(ref, adapter.A_idle_countdown, nxt & 0xffff)
+        m._rec("event", (adapter.RM_FLOW_EVT_SELECT_IDLE, m._leg(), 0))
+        if _mirror_game_over(m, tuning) == adapter.RM_FLOW_QUIT:
+            return adapter.RM_FLOW_QUIT
+
+
+def _diff_trajectory(actual, expected, cand_result, ref_result):
+    """Compare the candidate driver's recorded trajectory against the oracle mirror's, step for step.
+    Returns (mismatches, stats). A mismatch is (index, actual_record, expected_record) or a result diff."""
+    mism = []
+    if cand_result != ref_result:
+        mism.append(("result", cand_result, ref_result))
+    for i in range(max(len(actual), len(expected))):
+        a = actual[i] if i < len(actual) else None
+        e = expected[i] if i < len(expected) else None
+        if a != e:
+            mism.append((i, a, e))
+            if len(mism) > 10:
+                break
+    events = [rec[1][0] for rec in actual if rec[0] == "event"]
+    stats = dict(steps=len(actual), result=cand_result,
+                 draws=sum(1 for rec in actual if rec[0] in ("draw_fade", "draw_int", "draw_res")),
+                 shows=sum(1 for rec in actual if rec[0] == "show"),
+                 run_demo=sum(1 for rec in actual if rec[0] == "run_demo_frame"),
+                 palettes=[rec[1][0] for rec in actual if rec[0] == "palette"],
+                 events=events)
+    return mism, stats
+
+
+def _run_flow_driver(image, driver_fn, mirror_fn, tuning, poll_of, quit_of, fkey_of):
+    """Run the hoisted C `driver_fn` with recording callbacks on a candidate FlowState seeded from
+    `image`, run `mirror_fn` (the oracle) on a copy, and diff the two trajectories."""
+    poll_of = poll_of or (lambda i: 0)
+    quit_of = quit_of or (lambda i: 0)
+    fkey_of = fkey_of or (lambda i: -1)
+
+    fs = adapter.flow_state(image)
+    rec = _DriverRecorder(fs, _FlowScript(poll_of, quit_of, fkey_of))
+    cand_result = driver_fn(ctypes.byref(fs), ctypes.byref(rec.ops), None, ctypes.byref(tuning))
+
+    ref = bytearray(image)
+    mir = _MirrorRecorder(ref, _FlowScript(poll_of, quit_of, fkey_of))
+    ref_result = mirror_fn(mir, tuning)
+    return _diff_trajectory(rec.log, mir.log, cand_result, ref_result)
+
+
+def compare_flow_intermission_cycle(lib, image, tuning, poll_of=None, quit_of=None, fkey_of=None):
+    """Lockstep one attract cycle (rm_flow_intermission_cycle) vs the oracle mirror. (mismatches, stats)."""
+    return _run_flow_driver(image, lib.rm_flow_intermission_cycle, _mirror_int_cycle,
+                            tuning, poll_of, quit_of, fkey_of)
+
+
+def compare_flow_intermission(lib, image, tuning, poll_of=None, quit_of=None, fkey_of=None):
+    """Lockstep the whole attract loop (rm_flow_intermission: cycles until abort/quit) vs the oracle."""
+    return _run_flow_driver(image, lib.rm_flow_intermission, _mirror_intermission,
+                            tuning, poll_of, quit_of, fkey_of)
+
+
+def compare_flow_leg_select(lib, image, tuning, poll_of=None, quit_of=None, fkey_of=None):
+    """Lockstep the leg-select loop (rm_flow_leg_select, incl. its idle -> game-over-bracketed attract
+    cycle) vs the oracle mirror of g_init_playfield. (mismatches, stats)."""
+    return _run_flow_driver(image, lib.rm_flow_leg_select, _mirror_leg_select,
+                            tuning, poll_of, quit_of, fkey_of)

@@ -219,13 +219,14 @@ def test_python_constants_match_the_c():
     # equal to the C so a drifted copy can't make the flow differential (test_flow_machine) green against
     # a stale constant — in particular the INT_C_FRAMES 0x96 boundary, whose Phase-C mirror loop is a
     # boundary-count only and cannot itself catch a drift (see equiv.compare_attract_cycle).
-    flow_c = _defines("src/flow.c", r"^#define\s+(HS_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+    flow_c = _defines("src/flow.c", r"^#define\s+(HS_\w+|INT_TIMER_WRAP)\s+(\w+)\s*(?:/\*.*)?$")
     assert equiv.adapter.HIGHSCORE_ROWS == flow_c["HS_ROWS"]
     assert equiv.adapter.HIGHSCORE_ROW == flow_c["HS_ROW"]
     assert equiv.adapter.HIGHSCORE_LEG_STRIDE == flow_c["HS_LEG_STRIDE"]
     assert equiv.adapter.HS_SCORE_REC_BYTES == flow_c["HS_RECORD_BYTES"]
+    assert equiv.adapter.INT_TIMER_WRAP == flow_c["INT_TIMER_WRAP"]   # test_flow_machine's fast-tuning seed
     flow_h = _defines("include/flow.h",
-                      r"^#define\s+(RM_ABORT_CODE|RM_INT_A_\w+|RM_INT_D_\w+|INT_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+                      r"^#define\s+(RM_ABORT_CODE|RM_INT_A_\w+|RM_INT_D_\w+|INT_\w+|IP_IDLE_INIT)\s+(\w+)\s*(?:/\*.*)?$")
     assert equiv.adapter.RM_ABORT_CODE == flow_h["RM_ABORT_CODE"]
     assert equiv.adapter.RM_INT_A_CONTINUE == flow_h["RM_INT_A_CONTINUE"]
     assert equiv.adapter.RM_INT_A_ABORT == flow_h["RM_INT_A_ABORT"]
@@ -237,3 +238,4 @@ def test_python_constants_match_the_c():
     assert equiv.adapter.INT_TIMER_INIT == flow_h["INT_TIMER_INIT"]
     assert equiv.adapter.INT_FRAME_INIT == flow_h["INT_FRAME_INIT"]
     assert equiv.adapter.INT_C_FRAMES == flow_h["INT_C_FRAMES"]
+    assert equiv.adapter.IP_IDLE_INIT == flow_h["IP_IDLE_INIT"]   # the shipping leg-select idle reload

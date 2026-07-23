@@ -135,7 +135,7 @@ void rm_update_highscore(FlowState *fs, uint8_t *highscore, uint8_t *score) {
 }
 
 /* ---- init_playfield leg-select (intermission.c g_init_playfield_nav / _fire) ---- */
-#define IP_IDLE_INIT     0x15e     /* idle_countdown reload on an input change */
+/* IP_IDLE_INIT (the idle_countdown reload) lives in flow.h — the tuning default shares it. */
 #define IP_SEL_REPEAT    3         /* auto-repeat delay reloaded after a leg step */
 #define IP_LEG_COUNT     5         /* legs 0..4 */
 #define IP_DEC_BITS      (RM_IN_ACCEL | RM_IN_LEFT)   /* up | left  -> previous leg */
@@ -183,3 +183,161 @@ bool rm_init_playfield_fire(const FlowState *fs) {
  * functions own its two edits — the host driver calls them around the intermission it composes. */
 void rm_flow_game_over_enter(FlowState *fs) { fs->game_over_flag++; }
 void rm_flow_game_over_exit(FlowState *fs)  { fs->game_over_flag = 0; }
+
+/* ---- the between-legs FLOW COMPOSITION driver (slice D) ------------------------------------------
+ *
+ * Hoisted from render/atari/demo_main.c (intermission_cycle / run_intermission / run_leg_select /
+ * main's game-over tail), it composes the rm_int_* / rm_check_abort / rm_init_playfield_* counters
+ * above with the PLATFORM effects (draw / flip / palette / input / the demo-leg pipeline) it reaches
+ * through the FlowOps table. Structure-for-structure with recreate's g_intermission @0x127a0 and
+ * g_init_playfield @0x12af6 (intermission.c). Seams (each documented at the ops it calls): the Vsync/
+ * flip pacing, the off-image palettes, the IKBD poll, and the demo-leg render (pinned by the leg
+ * drives). */
+
+/* Read this frame's input into the flow's scripted-input snapshots (flow_poll_input in the shell): the
+ * baseline becomes last frame's live bits, the live bits become this frame's. rm_check_abort /
+ * rm_init_playfield_fire compare the two. */
+static void flow_poll(FlowState *fs, const FlowOps *ops, void *ctx) {
+    fs->input_prev = fs->input_state;
+    fs->input_state = ops->poll_input(ctx);
+}
+
+/* The shared abort/quit tail of Phases C and D — byte-identical but for the INT_ABORT `aux` code (1 in
+ * Phase C, 2 in Phase D). Poll the quit edge, advance the scripted input, and abort on a fresh key.
+ * Returns RM_FLOW_QUIT / RM_FLOW_ABORT to unwind, or RM_FLOW_CONTINUE to keep the phase loop running. */
+static RmFlowResult flow_poll_abort_tail(FlowState *fs, const FlowOps *ops, void *ctx, uint16_t abort_aux) {
+    if (ops->quit_requested(ctx)) return RM_FLOW_QUIT;
+    flow_poll(fs, ops, ctx);
+    if (rm_check_abort(fs->input_state, fs->input_prev)) {
+        ops->event(ctx, RM_FLOW_EVT_INT_ABORT, fs->leg_index, abort_aux);
+        return RM_FLOW_ABORT;
+    }
+    return RM_FLOW_CONTINUE;
+}
+
+RmFlowResult rm_flow_intermission_cycle(FlowState *fs, const FlowOps *ops, void *ctx,
+                                        const FlowTuning *t) {
+    /* prologue (0x27a0): seed the Phase-A counters, paint two backdrop frames, load the A palette. */
+    fs->int_scroll = t->prologue_scroll;
+    fs->int_frame = t->prologue_frame;
+    fs->int_timer = t->prologue_timer;
+    ops->event(ctx, RM_FLOW_EVT_INT_PROLOGUE, fs->leg_index, (uint16_t)fs->int_scroll);
+    ops->draw_fade(ctx, fs->int_scroll);
+    ops->set_palette(ctx, RM_FLOW_PAL_INT_A);
+    ops->show(ctx);
+    ops->draw_fade(ctx, fs->int_scroll);
+    ops->show(ctx);
+
+    /* Phase A (0x27cc): scroll the hi-score/credits screen until the dwell counter runs out. The draw
+     * happens for CONTINUE and ABORT (the abort frame still draws); BREAK returns before any draw. */
+    for (;;) {
+        if (ops->quit_requested(ctx)) return RM_FLOW_QUIT;
+        flow_poll(fs, ops, ctx);
+        int a = rm_int_stepA(fs);
+        if (a == RM_INT_A_BREAK) break;
+        ops->draw_intermission(ctx, fs->int_scroll);
+        ops->show(ctx);
+        if (a == RM_INT_A_ABORT) { ops->event(ctx, RM_FLOW_EVT_INT_ABORT, fs->leg_index, 0); return RM_FLOW_ABORT; }
+    }
+    ops->event(ctx, RM_FLOW_EVT_INT_PHASEA_BREAK, fs->leg_index, (uint16_t)fs->int_frame);
+
+    /* Phase B (0x27fe): pick + start the next demo leg. start_demo_leg reseeds every owner struct via
+     * init_leg, rebuilds the picked leg's dashboard, settles it with a burst of game-updates, and
+     * paints the first frame (the demo palette is set inside it, as recreate's Phase B does). */
+    rm_int_phaseB_leg(fs);
+    ops->event(ctx, RM_FLOW_EVT_INT_PHASEB, fs->leg_index, 0);
+    ops->start_demo_leg(ctx, fs->leg_index);
+
+    /* Phase C (0x285e): play the demo for t->phase_c_frames frames (full render each frame). The
+     * leg-end tally may fire during the demo — it is ignored here (the attract exits on the frame count
+     * or check_abort, never abort_flag), exactly as recreate's Phase C ignores it. */
+    fs->int_frame_hi = 0;
+    fs->int_frame = 0;
+    for (;;) {
+        ops->run_demo_frame(ctx);
+        uint16_t f = (uint16_t)(fs->int_frame + 1);
+        fs->int_frame = (int16_t)f;
+        if ((int16_t)(f - t->phase_c_frames) >= 0) break;
+        RmFlowResult r = flow_poll_abort_tail(fs, ops, ctx, 1);   /* aux 1 = Phase C abort */
+        if (r != RM_FLOW_CONTINUE) return r;
+    }
+    ops->event(ctx, RM_FLOW_EVT_INT_PHASEC_DONE, fs->leg_index, t->phase_c_frames);
+
+    /* Phase D (0x2894): results carousel — cycle draw_leg_results across the legs, INT_D_DWELL each.
+     * The Phase-D palette is the leg-select palette. */
+    fs->leg_index = 0;
+    ops->rebuild_dash(ctx, fs->leg_index);            /* rebuild leg 0's dashboard for the first frame */
+    ops->draw_results(ctx, fs->leg_index);
+    ops->set_palette(ctx, RM_FLOW_PAL_LEG_SELECT);
+    ops->show(ctx);
+    for (;;) {
+        int d = rm_int_stepD_counter(fs);
+        if (d == RM_INT_D_RESTART) {
+            ops->event(ctx, RM_FLOW_EVT_INT_PHASED_RESTART, fs->leg_index, 0);
+            break;
+        }
+        if (d == RM_INT_D_ADVANCE) {
+            ops->rebuild_dash(ctx, fs->leg_index);    /* rebuild the advanced leg's dashboard */
+            ops->event(ctx, RM_FLOW_EVT_INT_PHASED_ADVANCE, fs->leg_index, 0);
+        }
+        ops->draw_results(ctx, fs->leg_index);
+        ops->show(ctx);
+        RmFlowResult r = flow_poll_abort_tail(fs, ops, ctx, 2);   /* aux 2 = Phase D abort */
+        if (r != RM_FLOW_CONTINUE) return r;
+    }
+    return RM_FLOW_CONTINUE;   /* cycle done -> the caller runs another prologue */
+}
+
+RmFlowResult rm_flow_intermission(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t) {
+    for (;;) {
+        RmFlowResult r = rm_flow_intermission_cycle(fs, ops, ctx, t);
+        if (r != RM_FLOW_CONTINUE) return r;   /* RM_FLOW_ABORT or RM_FLOW_QUIT */
+    }
+}
+
+RmFlowResult rm_flow_game_over(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t) {
+    rm_flow_game_over_enter(fs);
+    RmFlowResult r = rm_flow_intermission(fs, ops, ctx, t);
+    rm_flow_game_over_exit(fs);
+    return r;
+}
+
+RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t) {
+    ops->event(ctx, RM_FLOW_EVT_SELECT_ENTER, fs->leg_index, 0);
+    for (;;) {                                    /* outer loop: redraws + idle-timeout attract cycle */
+        uint16_t drawn_leg = 0xffff;              /* != any leg (0..4): forces a dash rebuild on entry */
+        fs->idle_countdown = t->idle_init;
+
+        for (;;) {                                /* per-frame loop (0x2b1a) */
+            int fk = ops->fkey_leg(ctx);
+            if (fk >= 0) {                        /* F1..F5 direct pick starts that leg */
+                fs->leg_index = (uint16_t)fk;
+                ops->event(ctx, RM_FLOW_EVT_SELECT_FIRE, fs->leg_index, 1);
+                return RM_FLOW_START;
+            }
+            /* Rebuild the dashboard only when the selected leg changed (as Phase D rebuilds only on an
+             * advance), not every idle frame — the graphic is identical between nav steps. */
+            if (fs->leg_index != drawn_leg) {
+                drawn_leg = fs->leg_index;
+                ops->rebuild_dash(ctx, fs->leg_index);
+            }
+            ops->draw_results(ctx, fs->leg_index);   /* default redraw (0x2b9e) */
+            ops->set_palette(ctx, RM_FLOW_PAL_LEG_SELECT);
+            ops->show(ctx);
+
+            flow_poll(fs, ops, ctx);                 /* joystick tail (0x2c00) */
+            rm_init_playfield_nav(fs);
+            if (rm_init_playfield_fire(fs)) {
+                ops->event(ctx, RM_FLOW_EVT_SELECT_FIRE, fs->leg_index, 0);
+                return RM_FLOW_START;
+            }
+            if (ops->quit_requested(ctx)) return RM_FLOW_QUIT;
+
+            int16_t next = (int16_t)(fs->idle_countdown - 1);   /* dbf (0x2c78) */
+            if (next < 0) break;                     /* countdown expired -> attract cycle */
+            fs->idle_countdown = (uint16_t)next;
+        }
+        ops->event(ctx, RM_FLOW_EVT_SELECT_IDLE, fs->leg_index, 0);
+        if (rm_flow_game_over(fs, ops, ctx, t) == RM_FLOW_QUIT) return RM_FLOW_QUIT;
+    }
+}

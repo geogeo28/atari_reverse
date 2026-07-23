@@ -173,4 +173,95 @@ bool rm_init_playfield_fire(const FlowState *fs);
 void rm_flow_game_over_enter(FlowState *fs);
 void rm_flow_game_over_exit(FlowState *fs);
 
+#define IP_IDLE_INIT 0x15e         /* idle_countdown reload (leg-select outer loop + nav input-change) */
+
+/* ---- the between-legs FLOW COMPOSITION driver (slice D) -----------------------------------------
+ *
+ * The driver that SEQUENCES the slice-A/B pieces — the attract cycle (prologue + phases A/B/C/D), the
+ * leg-select loop, and the game-over enter/exit bracket around an intermission — hoisted out of the
+ * on-target shell (render/atari/demo_main.c) so `make test` can lockstep it against recreate's
+ * g_intermission / g_init_playfield the same way the individual phase steps already are. It mirrors
+ * g_intermission / g_init_playfield structure-for-structure (recreate intermission.c @0x127a0 /
+ * @0x12af6). The counter arithmetic is the rm_int_* / rm_check_abort / rm_init_playfield_* functions
+ * above; the driver composes them and orders the PLATFORM effects through a FlowOps callback table so
+ * the shell keeps only the 68000 implementations (drawing, flipping, palettes, input, the demo-leg
+ * pipeline) and the host test can substitute recording stubs. */
+
+/* Phase-transition trace tags (the FlowOps `event` hook). demo_main's DEMO_FLOW_TRACE logs them and
+ * the host driver test records them; fixed values so the on-target trace format stays stable. The
+ * LEG_START/END/HISCORE tags are emitted by the shell's own leg loop, the rest by the driver. */
+enum {
+    RM_FLOW_EVT_LEG_START = 1, RM_FLOW_EVT_LEG_END, RM_FLOW_EVT_HISCORE,
+    RM_FLOW_EVT_INT_PROLOGUE, RM_FLOW_EVT_INT_PHASEA_BREAK, RM_FLOW_EVT_INT_PHASEB,
+    RM_FLOW_EVT_INT_PHASEC_DONE, RM_FLOW_EVT_INT_PHASED_ADVANCE, RM_FLOW_EVT_INT_PHASED_RESTART,
+    RM_FLOW_EVT_INT_ABORT, RM_FLOW_EVT_SELECT_ENTER, RM_FLOW_EVT_SELECT_FIRE, RM_FLOW_EVT_SELECT_IDLE
+};
+
+/* Palette selector for the FlowOps `set_palette` hook — the only two palettes the driver itself
+ * orders (the race/demo palette is set by the shell's start_leg, an off-image seam). */
+#define RM_FLOW_PAL_INT_A      0   /* prologue: the attract-scroll palette */
+#define RM_FLOW_PAL_LEG_SELECT 1   /* Phase D + leg select (Phase-D palette == the leg-select palette) */
+
+/* Driver return codes (the shell maps QUIT onto its Esc/Q unwind). */
+typedef enum {
+    RM_FLOW_CONTINUE = 0,   /* intermission_cycle: run another attract cycle */
+    RM_FLOW_ABORT,          /* attract aborted by a fresh input -> return to the caller */
+    RM_FLOW_QUIT,           /* Esc/Q -> unwind all the way to the shell's exit */
+    RM_FLOW_START           /* leg_select: a leg was chosen -> start the race */
+} RmFlowResult;
+
+/* The platform effects the driver orders, as a callback table (+ a shell-owned `ctx`). Only the
+ * effects the driver actually issues today — drawing into the back buffer, flipping, palettes, input,
+ * and the demo-leg pipeline pieces (Phase B/C are game-pipeline work the shell owns). The host test
+ * fills these with recording stubs; demo_main fills them with the 68000 implementations. */
+typedef struct {
+    /* input (the IKBD poll is the shell's seam) */
+    uint16_t (*poll_input)(void *ctx);      /* this frame's joystick/key bits */
+    int      (*quit_requested)(void *ctx);  /* Esc/Q edge -> unwind everything */
+    int      (*fkey_leg)(void *ctx);        /* leg select: F1..F5 direct pick 0..4, or -1 for none */
+    /* draw + present (all draw into the back buffer; `show` flips it at the vblank) */
+    void (*draw_fade)(void *ctx, int16_t scroll);          /* prologue backdrop (fade_step) */
+    void (*draw_intermission)(void *ctx, int16_t scroll);  /* Phase-A scrolling hi-score screen */
+    void (*draw_results)(void *ctx, uint16_t leg);         /* Phase-D + leg-select results screen */
+    void (*set_palette)(void *ctx, int which);             /* RM_FLOW_PAL_* */
+    void (*show)(void *ctx);                               /* flip the back buffer to the screen */
+    /* demo-leg pipeline (Phase B/C — the shell's game structs; the render is a seam pinned by the leg drives) */
+    void (*rebuild_dash)(void *ctx, uint16_t leg);         /* point the event ctx at `leg` + rebuild its dashboard */
+    void (*start_demo_leg)(void *ctx, uint16_t leg);       /* Phase B: (re)init + settle + paint the demo leg */
+    void (*run_demo_frame)(void *ctx);                     /* Phase C: one demo game-update + render + show */
+    /* phase-transition trace hook (RM_FLOW_EVT_*) */
+    void (*event)(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux);
+} FlowOps;
+
+/* Composition tuning — the debug DEMO_FLOW_FAST knobs promoted to data, so the shell (fast build) and
+ * the host driver test can both shorten the otherwise thousands-of-frames attract phases. The default
+ * is the real attract timing (g_intermission's prologue seeds + Phase-C length + the leg-select idle). */
+typedef struct {
+    int16_t  prologue_scroll;   /* Phase-A int_scroll seed */
+    int16_t  prologue_frame;    /* Phase-A int_frame (scroll-dwell) seed */
+    int16_t  prologue_timer;    /* Phase-A int_timer seed */
+    uint16_t phase_c_frames;    /* Phase-C demo length (frames before advancing to Phase D) */
+    uint16_t idle_init;         /* leg-select idle-countdown reload (expiry -> one attract cycle) */
+} FlowTuning;
+
+#define RM_FLOW_TUNING_DEFAULT { .prologue_scroll = INT_SCROLL_INIT, .prologue_frame = INT_FRAME_INIT, \
+    .prologue_timer = INT_TIMER_INIT, .phase_c_frames = INT_C_FRAMES, .idle_init = IP_IDLE_INIT }
+
+/* One attract cycle (g_intermission's for-body): prologue -> Phase A (scroll) -> Phase B (warm the demo
+ * leg) -> Phase C (play it) -> Phase D (results carousel). Returns RM_FLOW_CONTINUE (run another cycle),
+ * RM_FLOW_ABORT (a fresh input aborted the attract), or RM_FLOW_QUIT (Esc/Q). */
+RmFlowResult rm_flow_intermission_cycle(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t);
+
+/* g_intermission @0x127a0: run attract cycles until an abort (or a quit). Returns RM_FLOW_ABORT / QUIT. */
+RmFlowResult rm_flow_intermission(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t);
+
+/* Game-over bracket around an intermission (main @0x10100:312-317 + init_playfield's idle path): bump
+ * game_over_flag, run the intermission, reset it. Returns the intermission's result (ABORT / QUIT). */
+RmFlowResult rm_flow_game_over(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t);
+
+/* g_init_playfield's leg-select loop @0x12af6: show the results screen, let the player pick (nav) and
+ * start (fire / F-key) a leg, and on the idle-countdown expiry run one game-over-bracketed attract cycle
+ * and restart. Returns RM_FLOW_START (fs->leg_index is the chosen leg) or RM_FLOW_QUIT (Esc/Q). */
+RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t);
+
 #endif /* RM_FLOW_H */

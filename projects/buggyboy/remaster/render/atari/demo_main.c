@@ -208,6 +208,11 @@ typedef struct {
     FlowState *flow;
     const RmIntermissionAssets *int_assets;
     const RmResultsAssets *res_assets;  /* .leg is passed per-call, so one bundle covers all 5 legs */
+    /* the flow driver's input sources (the shell owns the IKBD seam): the joystick/key poll and the
+     * leg-select F-key pick. main repoints them per flow call (attract vs leg-select, auto vs keyboard),
+     * exactly as the old composition passed an input_of / fkey_leg function pointer down. */
+    uint16_t (*input_source)(void);
+    int (*fkey_source)(void);
     int shown;                          /* index of the on-screen buffer; the back buffer is shown ^ 1 */
     int quit;                           /* set when Esc/Q is seen in any loop; the outer loop unwinds + restores */
 } Shell;
@@ -374,7 +379,7 @@ static void start_leg(Shell *s, uint16_t leg) {
      * collision-probe origin. Marker only, NOT the dashboard graphic: the marker feeds the event-path
      * collision probe on later wrap frames, never the pre-physics boot draw, so the frame-0 golden holds;
      * the graphic is already loaded for the current leg (boot's stock arena / the leg-select rebuild) and
-     * is rebuilt where the leg changes (run_leg_select's gate, Phase B). */
+     * is rebuilt where the leg changes (the leg-select nav gate + Phase B, via op_rebuild_dash). */
     rm_seed_leg_dash_marker(s->ctx);
     rm_init_leg(s->player, s->course, s->pose, s->scroll, s->ring, s->ev, s->pfx, s->sprite,
                 hud_text_ram, s->obj_shade, s->screen_offset, s->init_assets, leg);
@@ -550,12 +555,12 @@ static void trace_dump(void) {
 
 #ifdef DEMO_FLOW_TRACE
 /* One phase-transition record per event: (tag, leg, aux) — the aux carries a phase-specific scalar
- * (Phase-A/C frame count, the leg select's leg, etc.). Written to SCREEN.BIN on quit. The tags below are
- * the between-legs flow's boundaries; a headless run reads them back to confirm A->B->C->D->restart,
- * the leg-select fire, and the leg-end -> intermission -> leg-select round trip. */
-enum { FT_LEG_START = 1, FT_LEG_END, FT_HISCORE, FT_INT_PROLOGUE, FT_INT_PHASEA_BREAK, FT_INT_PHASEB,
-       FT_INT_PHASEC_DONE, FT_INT_PHASED_ADVANCE, FT_INT_PHASED_RESTART, FT_INT_ABORT,
-       FT_SELECT_ENTER, FT_SELECT_FIRE, FT_SELECT_IDLE };
+ * (Phase-A/C frame count, the leg select's leg, etc.). Written to SCREEN.BIN on quit. The tags are the
+ * between-legs flow's boundaries (RM_FLOW_EVT_*, flow.h); a headless run reads them back to confirm
+ * A->B->C->D->restart, the leg-select fire, and the leg-end -> intermission -> leg-select round trip.
+ * NB: at the six intermission event sites the driver now passes the flow's own leg_index as the leg
+ * column (the pre-slice-D shell passed its race leg there); they differ on 2nd+ attract cycles / a
+ * Phase-D abort / the select-idle path. Diagnostic only — the drawn frames and counters are unchanged. */
 #define FLOW_TRACE_SLOTS 256
 static uint16_t flow_trace[FLOW_TRACE_SLOTS][3];
 static uint16_t flow_trace_pos;
@@ -620,187 +625,103 @@ static int load_assets(RmArena *arena) {
     return 1;
 }
 
-/* ---- the between-legs flow (recreate intermission.c: intermission @0x127a0 / init_playfield @0x12af6).
- * The counter arithmetic lives in flow.c (rm_int_stepA / _phaseB_leg / _stepD_counter / check_abort /
- * init_playfield_nav / _fire); the COMPOSITION — the prologue, the phase loop, the draws, the palettes
- * and the seams — is here, mirroring g_intermission / g_init_playfield structure-for-structure. ---- */
+/* ---- the between-legs FLOW COMPOSITION (slice D): the driver is hoisted into src/flow.c
+ * (rm_flow_intermission / rm_flow_leg_select / rm_flow_game_over — the prologue + phase A/B/C/D loop,
+ * the leg-select loop, and the game-over bracket, mirroring g_intermission / g_init_playfield). This
+ * file keeps only the 68000 implementations of the platform effects the driver orders, wired through a
+ * FlowOps table over the Shell (ctx), so `make test` can lockstep the sequence against the oracle. The
+ * composition constants that stay here are the ones the demo-leg pipeline callbacks own (Phase B's
+ * warm-up + rev override, the attract demo input); the counter-owned seeds live in flow.h + FlowTuning. ---- */
 
-/* Feed this frame's input into the flow's scripted-input snapshots (the IKBD poll is the seam): the
- * baseline becomes last frame's live bits, the live bits become this frame's. rm_check_abort /
- * rm_init_playfield_fire compare the two. */
-static void flow_poll_input(Shell *s, uint16_t input) {
-    s->flow->input_prev = s->flow->input_state;
-    s->flow->input_state = input;
-}
-
-/* Phase-C demo length + Phase-B warm-up (intermission's own composition constants; flow.h pins the
- * counter-owned ones). {INT_B_RPM_CAP, INT_B_RPM_ADD} = the original's leg_flags_c90 = 0x5a0001,
- * seeding the demo leg's {rpm_cap, rpm_add}. */
 #define INT_B_WARMUP   0x33        /* Phase-B settle: game_update iterations before the first draw */
 #define INT_B_RPM_CAP  0x5a        /* leg_flags_c90 high word (rev cap for the attract demo) */
 #define INT_B_RPM_ADD  0x0001      /* leg_flags_c90 low word (throttle step) */
-#ifdef DEMO_FLOW_FAST
-#define FLOW_PHASE_C_FRAMES 6      /* debug: a handful of demo frames instead of INT_C_FRAMES (0x96) */
-#define IP_IDLE_INIT_SHELL  8      /* debug: short leg-select idle so the attract path is reachable */
-#else
-#define FLOW_PHASE_C_FRAMES INT_C_FRAMES
-#define IP_IDLE_INIT_SHELL  0x15e  /* the original's IP_IDLE_INIT (350-frame attract delay) */
-#endif
 /* The attract demo's input: the original replays a recorded ghost drive (unported); here we hold
  * throttle so the demo actually covers the course. Documented stand-in (see the file header). */
 #define ATTRACT_DEMO_INPUT RM_IN_ACCEL
+
+/* The attract phase timing (FlowTuning). DEMO_FLOW_FAST shrinks it so a whole cycle fits a bounded
+ * headless trace (the real phases are thousands of frames); normal builds use the real attract timing.
+ * The fast Phase-A seeds break the scroll in ~2 frames (timer inside the gate, scroll/dwell at the edge). */
+#ifdef DEMO_FLOW_FAST
+#define FLOW_PHASE_C_FRAMES 6      /* debug: a handful of demo frames instead of INT_C_FRAMES (0x96) */
+#define FLOW_IDLE_INIT      8      /* debug: short leg-select idle so the attract path is reachable */
+static const FlowTuning flow_tuning = {
+    .prologue_scroll = 1, .prologue_frame = 0, .prologue_timer = INT_SCROLL_GATE + 2,
+    .phase_c_frames = FLOW_PHASE_C_FRAMES, .idle_init = FLOW_IDLE_INIT,
+};
+#else
+static const FlowTuning flow_tuning = RM_FLOW_TUNING_DEFAULT;
+#endif
 
 #ifdef DEMO_FLOW_AUTO
 static int auto_cycle_done;         /* set by Phase D's RESTART; the attract input aborts after it */
 #endif
 
-/* One attract cycle (g_intermission's for-body): prologue, Phase A (scrolling hi-score screen), Phase B
- * (warm up the next demo leg), Phase C (play the demo), Phase D (results carousel). Returns 1 on a
- * player ABORT (check_abort) — the caller stops the attract loop — else 0 to run another cycle.
- * `input_of` supplies each frame's input (scripted headless / the keyboard interactively). */
-static int intermission_cycle(Shell *s, uint16_t (*input_of)(void)) {
-    FlowState *fs = s->flow;
+/* ---- FlowOps: the 68000 implementation of each platform effect the driver orders, over the Shell. ---- */
+static uint16_t op_poll_input(void *ctx)     { return ((Shell *)ctx)->input_source(); }
+static int      op_quit_requested(void *ctx) { (void)ctx; return quit_requested(); }
+static int      op_fkey_leg(void *ctx)       { return ((Shell *)ctx)->fkey_source(); }
 
-    /* prologue (0x27a0): seed the animation counters, paint two backdrop frames, load the A palette. */
-#ifdef DEMO_FLOW_FAST
-    /* Break Phase A in ~2 frames: seed the timer already inside the scroll gate window and the
-     * scroll/dwell at the edge, so the underflow fires at once (the real seeds are thousands of frames). */
-    fs->int_scroll = 1; fs->int_frame = 0; fs->int_timer = INT_SCROLL_GATE + 2;
-#else
-    fs->int_scroll = INT_SCROLL_INIT; fs->int_frame = INT_FRAME_INIT; fs->int_timer = INT_TIMER_INIT;
-#endif
-    flow_event(FT_INT_PROLOGUE, s->leg, (uint16_t)fs->int_scroll);
-    rm_fade_step(back_buffer(s), s->int_assets, fs->int_scroll);
-    set_palette(s, OBJ_LOW_PAL_INT_A);
-    show_surface(s);
-    rm_fade_step(back_buffer(s), s->int_assets, fs->int_scroll);
-    show_surface(s);
+static void op_draw_fade(void *ctx, int16_t scroll) {
+    Shell *s = ctx; rm_fade_step(back_buffer(s), s->int_assets, scroll);
+}
+static void op_draw_intermission(void *ctx, int16_t scroll) {
+    Shell *s = ctx; rm_draw_intermission(back_buffer(s), s->int_assets, scroll);
+}
+static void op_draw_results(void *ctx, uint16_t leg) {
+    Shell *s = ctx; rm_draw_leg_results(back_buffer(s), s->res_assets, leg);
+}
+static void op_set_palette(void *ctx, int which) {
+    set_palette(ctx, which == RM_FLOW_PAL_INT_A ? OBJ_LOW_PAL_INT_A : OBJ_LOW_PAL_LEG_SELECT);
+}
+static void op_show(void *ctx) { show_surface(ctx); }
 
-    /* Phase A (0x27cc): scroll the hi-score/credits screen until the dwell counter runs out. The draw
-     * happens for CONTINUE and ABORT (the abort frame still draws); BREAK returns before any draw. */
-    for (;;) {
-        if (quit_requested()) { s->quit = 1; return 1; }
-        flow_poll_input(s, input_of());
-        int a = rm_int_stepA(fs);
-        if (a == RM_INT_A_BREAK) break;
-        rm_draw_intermission(back_buffer(s), s->int_assets, fs->int_scroll);
-        show_surface(s);
-        if (a == RM_INT_A_ABORT) { flow_event(FT_INT_ABORT, s->leg, 0); return 1; }
-    }
-    flow_event(FT_INT_PHASEA_BREAK, s->leg, (uint16_t)fs->int_frame);
+static void op_rebuild_dash(void *ctx, uint16_t leg) {
+    Shell *s = ctx; s->ctx->leg = leg; rm_init_leg_dash(s->ctx);
+}
 
-    /* Phase B (0x27fe): pick + (re)init the next demo leg, settle it, paint the first frame. start_leg
-     * reseeds every owner struct via init_leg (+ the dash marker + the race palette); rm_init_leg_dash
-     * then rebuilds the DASHBOARD GRAPHIC for the newly-picked demo leg, which start_leg's marker-only
-     * seed does not (the previous phase left a different leg's dashboard loaded). The 0x5a0001 leg_flags
-     * override sets the demo's engine limits; the leg_flags_sel / dsp_toggle tweaks the original also
-     * does are attract-feel only (off-image). */
-    rm_int_phaseB_leg(fs);
-    flow_event(FT_INT_PHASEB, fs->leg_index, 0);
-    start_leg(s, fs->leg_index);
-    rm_init_leg_dash(s->ctx);
+/* Phase B (0x27fe tail): (re)init the picked demo leg, rebuild its dashboard, override the engine
+ * limits, settle it with a burst of game-updates (no draw), then paint the first two frames. start_leg
+ * reseeds every owner struct via init_leg (+ the dash marker + the demo/race palette); rm_init_leg_dash
+ * then rebuilds the DASHBOARD GRAPHIC for the newly-picked leg (a previous phase left another leg's). The
+ * 0x5a0001 leg_flags override sets the demo's engine limits (the leg_flags_sel / dsp_toggle attract-feel
+ * tweaks the original also does are off-image). */
+static void op_start_demo_leg(void *ctx, uint16_t leg) {
+    Shell *s = ctx;
+    start_leg(s, leg);
+    op_rebuild_dash(ctx, leg);   /* bind_leg already set ctx->leg; rebuild the picked leg's dashboard */
     s->player->rpm_cap = INT_B_RPM_CAP;
     s->player->rpm_add = INT_B_RPM_ADD;
     for (int i = 0; i < INT_B_WARMUP; i++) game_update_step(s, ATTRACT_DEMO_INPUT);   /* settle, no draw */
     render_and_show(s);
     render_and_show(s);
+}
 
-    /* Phase C (0x285e): play the demo for FLOW_PHASE_C_FRAMES frames (full render each frame). The
-     * leg-end tally may fire during the demo — it is ignored here (the attract exits on the frame count
-     * or check_abort, never abort_flag), exactly as recreate's Phase C ignores it. */
-    fs->int_frame_hi = 0; fs->int_frame = 0;
-    for (;;) {
-        game_update_step(s, ATTRACT_DEMO_INPUT);
-        render_and_show(s);
-        uint16_t f = (uint16_t)(fs->int_frame + 1);
-        fs->int_frame = (int16_t)f;
-        if ((int16_t)(f - FLOW_PHASE_C_FRAMES) >= 0) break;
-        if (quit_requested()) { s->quit = 1; return 1; }
-        flow_poll_input(s, input_of());
-        if (rm_check_abort(fs->input_state, fs->input_prev)) { flow_event(FT_INT_ABORT, s->leg, 1); return 1; }
-    }
-    flow_event(FT_INT_PHASEC_DONE, s->leg, FLOW_PHASE_C_FRAMES);
+/* Phase C (0x285e body): one demo frame — game-update through the event engine, then full render + flip. */
+static void op_run_demo_frame(void *ctx) {
+    Shell *s = ctx;
+    game_update_step(s, ATTRACT_DEMO_INPUT);
+    render_and_show(s);
+}
 
-    /* Phase D (0x2894): results carousel — cycle draw_leg_results across the legs, INT_D_DWELL each. */
-    fs->leg_index = 0;
-    s->ctx->leg = 0;
-    rm_init_leg_dash(s->ctx);   /* rebuild leg 0's dashboard for the carousel's first frame */
-    rm_draw_leg_results(back_buffer(s), s->res_assets, fs->leg_index);
-    set_palette(s, OBJ_LOW_PAL_LEG_SELECT);   /* Phase-D palette == INT_PAL_D == the leg-select palette */
-    show_surface(s);
-    for (;;) {
-        int d = rm_int_stepD_counter(fs);
-        if (d == RM_INT_D_RESTART) {
-            flow_event(FT_INT_PHASED_RESTART, fs->leg_index, 0);
+/* Phase-transition trace hook: log it (DEMO_FLOW_TRACE) and, under DEMO_FLOW_AUTO, arm the attract abort
+ * once a full cycle has traced its RESTART (so the next cycle's Phase A sees a fresh key and aborts). */
+static void op_event(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux) {
+    (void)ctx;
+    flow_event(tag, leg, aux);
 #ifdef DEMO_FLOW_AUTO
-            auto_cycle_done = 1;        /* the next cycle's Phase A will now see a fresh key and abort */
+    if (tag == RM_FLOW_EVT_INT_PHASED_RESTART) auto_cycle_done = 1;
 #endif
-            break;
-        }
-        if (d == RM_INT_D_ADVANCE) {
-            s->ctx->leg = fs->leg_index;
-            rm_init_leg_dash(s->ctx);           /* host runs init_leg_dash on the leg advance */
-            flow_event(FT_INT_PHASED_ADVANCE, fs->leg_index, 0);
-        }
-        rm_draw_leg_results(back_buffer(s), s->res_assets, fs->leg_index);
-        show_surface(s);
-        if (quit_requested()) { s->quit = 1; return 1; }
-        flow_poll_input(s, input_of());
-        if (rm_check_abort(fs->input_state, fs->input_prev)) { flow_event(FT_INT_ABORT, s->leg, 2); return 1; }
-    }
-    return 0;   /* cycle done -> the caller runs another prologue */
+    (void)tag; (void)leg; (void)aux;   /* used above only under DEMO_FLOW_TRACE / _AUTO */
 }
 
-/* g_intermission: run attract cycles until the player aborts (or, headless, the caller's input scripts
- * an abort; or Esc/Q sets s->quit). */
-static void run_intermission(Shell *s, uint16_t (*input_of)(void)) {
-    while (!s->quit && !intermission_cycle(s, input_of)) { }
-}
-
-/* g_init_playfield's leg-select loop (0x2af6): show the leg-results screen, let the player pick a leg
- * (nav) and start it (fire, or an F1..F5 direct pick), and on the idle-countdown expiry run one attract
- * cycle and restart. Returns with fs->leg_index = the chosen leg once a leg is started (or on Esc/Q with
- * s->quit set). `input_of` supplies the joystick bits; `fkey_leg` returns 0..4 for a direct F-key pick
- * this frame, or -1. The draw_panel5 selector overlay is an unported sub-draw (an off-image seam); the
- * results screen still shows the selected leg. */
-static void run_leg_select(Shell *s, uint16_t (*input_of)(void), int (*fkey_leg)(void)) {
-    FlowState *fs = s->flow;
-    flow_event(FT_SELECT_ENTER, fs->leg_index, 0);
-    for (;;) {                                      /* outer loop: redraws + idle-timeout intermission */
-        uint16_t drawn_leg = 0xffff;                /* != any leg (0..4): forces a dash rebuild on entry */
-        fs->idle_countdown = IP_IDLE_INIT_SHELL;
-
-        for (;;) {                                  /* per-frame loop (0x2b1a) */
-            int fk = fkey_leg();
-            if (fk >= 0) { fs->leg_index = (uint16_t)fk; flow_event(FT_SELECT_FIRE, fs->leg_index, 1); return; }
-
-            /* Rebuild the dashboard only when the selected leg changed (as Phase D rebuilds only on an
-             * INT_D_ADVANCE), not every idle frame — the graphic is identical between nav steps. */
-            if (fs->leg_index != drawn_leg) {
-                drawn_leg = fs->leg_index;
-                s->ctx->leg = fs->leg_index;
-                rm_init_leg_dash(s->ctx);
-            }
-            rm_draw_leg_results(back_buffer(s), s->res_assets, fs->leg_index);   /* default redraw (0x2b9e) */
-            set_palette(s, OBJ_LOW_PAL_LEG_SELECT);
-            show_surface(s);
-
-            flow_poll_input(s, input_of());         /* joystick tail (0x2c00) */
-            rm_init_playfield_nav(fs);
-            if (rm_init_playfield_fire(fs)) { flow_event(FT_SELECT_FIRE, fs->leg_index, 0); return; }
-            if (quit_requested()) { s->quit = 1; return; }
-
-            int16_t next = (int16_t)(fs->idle_countdown - 1);   /* dbf (0x2c78) */
-            if (next < 0) break;                    /* countdown expired -> attract cycle */
-            fs->idle_countdown = (uint16_t)next;
-        }
-        flow_event(FT_SELECT_IDLE, fs->leg_index, 0);
-        rm_flow_game_over_enter(fs);
-        run_intermission(s, input_of);
-        rm_flow_game_over_exit(fs);
-        if (s->quit) return;
-    }
-}
+static const FlowOps flow_ops = {
+    .poll_input = op_poll_input, .quit_requested = op_quit_requested, .fkey_leg = op_fkey_leg,
+    .draw_fade = op_draw_fade, .draw_intermission = op_draw_intermission, .draw_results = op_draw_results,
+    .set_palette = op_set_palette, .show = op_show, .rebuild_dash = op_rebuild_dash,
+    .start_demo_leg = op_start_demo_leg, .run_demo_frame = op_run_demo_frame, .event = op_event,
+};
 
 /* Interactive leg-select input sources. read_fkey returns 0..4 for an F1..F5 tap (a direct leg pick,
  * as the original's function-key menu), or -1 for none; no_fkey is the headless placeholder. Each is
@@ -956,6 +877,7 @@ void main(void) {
         .low = low, .event_assets = &event_assets, .ctx = &ctx, .stream = arena.tables, .leg = DEMO_LEG_INDEX,
         .race_input_prev = 0, .flow = &flow,
         .int_assets = &int_assets, .res_assets = &res_assets,
+        .input_source = read_input, .fkey_source = read_fkey,   /* repointed per flow call below */
     };
     Shell *s = &shell;
 
@@ -983,20 +905,23 @@ void main(void) {
 #endif
 
     long old_kbd_vector = kbd_install();
-    flow_event(FT_LEG_START, DEMO_LEG_INDEX, 0);
+    flow_event(RM_FLOW_EVT_LEG_START, DEMO_LEG_INDEX, 0);
     int booted = 1;
     for (; !s->quit; booted = 0) {
         if (!booted) {
             /* Not the boot pass: run the leg select (init_playfield) to pick the next leg, then start
              * it (init_leg + the race palette, both inside start_leg). This is main's loop top. */
 #ifdef DEMO_FLOW_AUTO
-            run_leg_select(s, auto_select_input, no_fkey);
+            s->input_source = auto_select_input; s->fkey_source = no_fkey;
 #else
-            run_leg_select(s, read_input, read_fkey);
+            s->input_source = read_input; s->fkey_source = read_fkey;
 #endif
-            if (s->quit) break;                         /* Esc/Q from the leg select -> restore + exit */
+            if (rm_flow_leg_select(&flow, &flow_ops, s, &flow_tuning) == RM_FLOW_QUIT) {
+                s->quit = 1;                            /* Esc/Q from the leg select -> restore + exit */
+                break;
+            }
             start_leg(s, flow.leg_index);
-            flow_event(FT_LEG_START, flow.leg_index, 1);
+            flow_event(RM_FLOW_EVT_LEG_START, flow.leg_index, 1);
             render_and_show(s);                         /* race-start frame (start_leg set the palette) */
         }
 
@@ -1049,18 +974,18 @@ void main(void) {
         if (s->quit) break;
 
         /* ---- the leg ended (abort_flag < 0): update_highscore -> game_over++ -> intermission ->
-         * game_over = 0, then the loop top runs the leg select again. This is main @0x10100:286-317. */
-        flow_event(FT_LEG_END, s->leg, (uint16_t)ev.abort_flag);
+         * game_over = 0, then the loop top runs the leg select again. This is main @0x10100:286-317. The
+         * game-over enter/exit bracket around the intermission is rm_flow_game_over (flow.c). ---- */
+        flow_event(RM_FLOW_EVT_LEG_END, s->leg, (uint16_t)ev.abort_flag);
         flow.leg_index = s->leg;
         rm_update_highscore(&flow, highscore_ram, hud_text_ram + RM_HUD_SCORE_BCD_OFF);
-        flow_event(FT_HISCORE, flow.leg_index, flow.hiscore_pos);
-        rm_flow_game_over_enter(&flow);
+        flow_event(RM_FLOW_EVT_HISCORE, flow.leg_index, flow.hiscore_pos);
 #ifdef DEMO_FLOW_AUTO
-        run_intermission(s, auto_intermission_input);
+        s->input_source = auto_intermission_input;
 #else
-        run_intermission(s, read_input);
+        s->input_source = read_input;
 #endif
-        rm_flow_game_over_exit(&flow);
+        if (rm_flow_game_over(&flow, &flow_ops, s, &flow_tuning) == RM_FLOW_QUIT) s->quit = 1;
     }
 
     kbd_remove(old_kbd_vector);

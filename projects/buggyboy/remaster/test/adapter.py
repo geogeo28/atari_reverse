@@ -335,9 +335,20 @@ HS_SCORE_REC_BYTES = 12                             #   6 ASCII digits + 6 name/
 RM_ABORT_CODE = 0x0d
 RM_INT_A_CONTINUE, RM_INT_A_ABORT, RM_INT_A_BREAK = 0, 1, 2
 RM_INT_D_DRAW, RM_INT_D_ADVANCE, RM_INT_D_RESTART = 0, 1, 2
-# Attract-loop prologue seeds (intermission 0x27a0) + Phase-C length (mirror recreate).
+# Attract-loop prologue seeds (intermission 0x27a0) + Phase-A gates + Phase-C/D lengths (mirror recreate).
 INT_SCROLL_INIT, INT_TIMER_INIT, INT_FRAME_INIT = 0x63, 0x3b, 0x14
 INT_C_FRAMES = 0x96
+INT_TIMER_WRAP = 0x5c                               # Phase-A timer reload on underflow (src/flow.c)
+IP_IDLE_INIT = 0x15e                                # leg-select idle-countdown reload (include/flow.h)
+
+# ---- the between-legs FLOW COMPOSITION driver (slice D) ----
+# Driver return codes, palette selectors, phase-transition event tags (mirror include/flow.h).
+RM_FLOW_CONTINUE, RM_FLOW_ABORT, RM_FLOW_QUIT, RM_FLOW_START = 0, 1, 2, 3
+RM_FLOW_PAL_INT_A, RM_FLOW_PAL_LEG_SELECT = 0, 1
+(RM_FLOW_EVT_LEG_START, RM_FLOW_EVT_LEG_END, RM_FLOW_EVT_HISCORE, RM_FLOW_EVT_INT_PROLOGUE,
+ RM_FLOW_EVT_INT_PHASEA_BREAK, RM_FLOW_EVT_INT_PHASEB, RM_FLOW_EVT_INT_PHASEC_DONE,
+ RM_FLOW_EVT_INT_PHASED_ADVANCE, RM_FLOW_EVT_INT_PHASED_RESTART, RM_FLOW_EVT_INT_ABORT,
+ RM_FLOW_EVT_SELECT_ENTER, RM_FLOW_EVT_SELECT_FIRE, RM_FLOW_EVT_SELECT_IDLE) = range(1, 14)
 
 
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
@@ -1180,6 +1191,55 @@ def flow_state(image):
     for name, addr, signed in FLOW_FIELDS:
         setattr(fs, name, _i16(image, addr) if signed else ((image[addr] << 8) | image[addr + 1]))
     return fs
+
+
+# ---- the FLOW COMPOSITION driver's FlowOps callback table + FlowTuning (mirror include/flow.h) ----
+# ctypes CFUNCTYPE types for each platform-effect callback (all take a void* ctx first). The host driver
+# test fills these with recording stubs; the FlowOps field order must match the C struct exactly.
+_CB_POLL_INPUT = ctypes.CFUNCTYPE(ctypes.c_uint16, ctypes.c_void_p)
+_CB_QUIT = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
+_CB_FKEY = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
+_CB_DRAW_SCROLL = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_int16)   # draw_fade / draw_intermission
+_CB_DRAW_LEG = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint16)     # draw_results / rebuild_dash / start_demo_leg
+_CB_SET_PALETTE = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_int)
+_CB_VOID = ctypes.CFUNCTYPE(None, ctypes.c_void_p)                          # show / run_demo_frame
+_CB_EVENT = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint16, ctypes.c_uint16, ctypes.c_uint16)
+
+
+class FlowOps(ctypes.Structure):
+    _fields_ = [("poll_input", _CB_POLL_INPUT), ("quit_requested", _CB_QUIT), ("fkey_leg", _CB_FKEY),
+                ("draw_fade", _CB_DRAW_SCROLL), ("draw_intermission", _CB_DRAW_SCROLL),
+                ("draw_results", _CB_DRAW_LEG), ("set_palette", _CB_SET_PALETTE), ("show", _CB_VOID),
+                ("rebuild_dash", _CB_DRAW_LEG), ("start_demo_leg", _CB_DRAW_LEG),
+                ("run_demo_frame", _CB_VOID), ("event", _CB_EVENT)]
+
+
+class FlowTuning(ctypes.Structure):
+    _fields_ = [("prologue_scroll", ctypes.c_int16), ("prologue_frame", ctypes.c_int16),
+                ("prologue_timer", ctypes.c_int16), ("phase_c_frames", ctypes.c_uint16),
+                ("idle_init", ctypes.c_uint16)]
+
+
+# The flow counters compared per driver step: every FlowState counter with stable timing at a callback
+# boundary (the input snapshots are excluded — they shift mid-poll). Read the same way from a FlowState
+# (candidate) and from a reference image (oracle), so a divergence in ANY of them fails the lockstep.
+FLOW_DRIVER_SNAP = ("int_timer", "int_scroll", "int_frame", "int_frame_hi", "leg_index", "leg_select",
+                    "idle_countdown", "leg_dec_delay", "leg_inc_delay", "game_over_flag")
+
+# (name, addr) for each snapshot field, resolved once from FLOW_FIELDS (rebuilt per call before).
+_FLOW_SNAP_ADDR = tuple((name, addr) for name in FLOW_DRIVER_SNAP
+                        for fname, addr, _signed in FLOW_FIELDS if fname == name)
+
+
+def flow_snapshot_fs(fs):
+    return tuple(getattr(fs, name) & 0xffff for name in FLOW_DRIVER_SNAP)
+
+
+def flow_snapshot_image(image):
+    # Unsigned big-endian reads (flow_snapshot_fs masks &0xffff too), so the twin snapshots compare
+    # directly. A future signed-aware reuse must sign-extend BOTH sides or the two signed delay fields
+    # (leg_dec_delay / leg_inc_delay) mis-compare against the unsigned FlowState twin.
+    return tuple(_i16(image, addr) & 0xffff for _name, addr in _FLOW_SNAP_ADDR)
 
 
 def highscore_buffer(image):

@@ -251,3 +251,199 @@ def test_game_flow(leg, capsys):
         print(f"  game flow leg={leg}: {stats}")
     assert stats["ref_end"] >= 0 and stats["cand_end"] >= 0, f"the leg never ended: {stats}"
     assert not mism, f"game flow diverged from the oracle break sequence (leg={leg}): {mism[:12]}"
+
+
+# ---- composed: the FLOW COMPOSITION driver (slice D) vs the oracle + a structural mirror ----
+# The between-legs driver hoisted into src/flow.c (rm_flow_intermission_cycle / rm_flow_intermission /
+# rm_flow_leg_select / rm_flow_game_over) is run on the host with recording FlowOps callbacks. Two
+# guarantees, kept distinct:
+#   - the counter VALUES route through the verified in-image oracle slices (g_int_stepA / g_int_phaseB_leg
+#     / g_int_stepD_counter / g_check_abort / g_init_playfield_*): every flow counter at each callback is
+#     compared against them, so a counter-arithmetic divergence fails hard;
+#   - the SEQUENCING (draw / palette / show order, the phase-loop structure, the event emission) is pinned
+#     against a HAND-WRITTEN Python structural mirror (_mirror_int_cycle / _mirror_leg_select) — NOT against
+#     g_intermission itself. It catches a ONE-SIDED mutation (four were demonstrated caught below), but an
+#     ordering error authored identically into both the C driver and the mirror would pass.
+# Of the four correctness bugs that historically escaped, only the idle-hang and Esc/Q-unreachable classes
+# live in this now-lockstepped driver code. The leg-start marker reseed (start_leg -> op_start_demo_leg,
+# a host stub here) and the menu-race palette (set in main() after rm_flow_leg_select returns) are NOT in
+# the driver and remain guarded only by the on-target DEMO_FLOW_AUTO flow trace + the frame-0 golden.
+
+# A HARNESS-ONLY shortened tuning: the seeds are chosen purely for test speed (Phase A breaks in ~6
+# frames, Phase C is 6 demo frames, the leg-select idle is short — a whole cycle runs in-test), NOT the
+# on-target debug knobs. It is distinct from BOTH the shipping RM_FLOW_TUNING_DEFAULT (the real attract
+# timing — see _default_tuning) and demo_main's DEMO_FLOW_FAST ({scroll=1, frame=0, timer=0x4b, idle=8}).
+def _fast_tuning(**over):
+    base = dict(prologue_scroll=4, prologue_frame=1, prologue_timer=adapter.INT_TIMER_WRAP,
+                phase_c_frames=6, idle_init=0x40)
+    base.update(over)
+    return adapter.FlowTuning(**base)
+
+
+# The SHIPPING attract tuning (include/flow.h RM_FLOW_TUNING_DEFAULT), built from the pinned adapter
+# constants (test_python_constants_match_the_c pins each equal to its C #define) — no hand-copied literal.
+def _default_tuning():
+    return adapter.FlowTuning(prologue_scroll=adapter.INT_SCROLL_INIT, prologue_frame=adapter.INT_FRAME_INIT,
+                              prologue_timer=adapter.INT_TIMER_INIT, phase_c_frames=adapter.INT_C_FRAMES,
+                              idle_init=adapter.IP_IDLE_INIT)
+
+
+def _bg():
+    return equiv.flow_background(leg=0, warmup=60)
+
+
+EVT = adapter  # RM_FLOW_EVT_* live on adapter
+# The attract cycle's phase-event fingerprint: prologue, Phase-A break, Phase B pick, Phase C done, then
+# the Phase-D carousel advancing through legs 1..4 and restarting (== the on-target flow trace).
+CYCLE_EVENTS = [
+    EVT.RM_FLOW_EVT_INT_PROLOGUE, EVT.RM_FLOW_EVT_INT_PHASEA_BREAK, EVT.RM_FLOW_EVT_INT_PHASEB,
+    EVT.RM_FLOW_EVT_INT_PHASEC_DONE, EVT.RM_FLOW_EVT_INT_PHASED_ADVANCE, EVT.RM_FLOW_EVT_INT_PHASED_ADVANCE,
+    EVT.RM_FLOW_EVT_INT_PHASED_ADVANCE, EVT.RM_FLOW_EVT_INT_PHASED_ADVANCE, EVT.RM_FLOW_EVT_INT_PHASED_RESTART,
+]
+
+
+def test_flow_driver_intermission_cycle(capsys):
+    """One full attract cycle A->B->C->D locksteps vs the oracle: 0 divergences, the phase-event
+    sequence and the palette order match, every drawn frame is flipped (draws == shows), and Phase C
+    runs exactly phase_c_frames demo frames."""
+    lib = equiv._lib()
+    tuning = _fast_tuning()
+    mism, stats = equiv.compare_flow_intermission_cycle(lib, _bg(), tuning)
+    with capsys.disabled():
+        print(f"  intermission cycle: {stats}")
+    assert not mism, f"the hoisted driver diverged from the oracle: {mism[:6]}"
+    assert stats["result"] == adapter.RM_FLOW_CONTINUE, stats["result"]
+    assert stats["events"] == CYCLE_EVENTS, stats["events"]
+    # palette order: attract-scroll palette in the prologue, then the leg-select palette for Phase D.
+    assert stats["palettes"] == [adapter.RM_FLOW_PAL_INT_A, adapter.RM_FLOW_PAL_LEG_SELECT], stats["palettes"]
+    # flip parity: prologue + Phase A + Phase D draw and flip in lockstep (a dropped/extra show breaks it).
+    assert stats["draws"] == stats["shows"] and stats["draws"] > 0, (stats["draws"], stats["shows"])
+    assert stats["run_demo"] == tuning.phase_c_frames, (stats["run_demo"], tuning.phase_c_frames)
+
+
+def test_flow_driver_intermission_cycle_default_tuning(capsys):
+    """The full attract cycle under the SHIPPING RM_FLOW_TUNING_DEFAULT (the real prologue seeds, the
+    0x96-frame Phase C, the real leg-select idle) locksteps vs the oracle mirror — same phase-event and
+    palette fingerprint as the fast cycle. The demo-frame callbacks are host stubs so the full-length
+    cycle is cheap (Phase A breaks in ~a few hundred counter steps, Phase C is INT_C_FRAMES stubbed
+    frames), which is exactly the timing the shell ships but never exercises under `make test` otherwise."""
+    lib = equiv._lib()
+    tuning = _default_tuning()
+    mism, stats = equiv.compare_flow_intermission_cycle(lib, _bg(), tuning)
+    with capsys.disabled():
+        print(f"  intermission cycle (default tuning): {stats}")
+    assert not mism, f"the hoisted driver diverged from the oracle under the shipping tuning: {mism[:6]}"
+    assert stats["result"] == adapter.RM_FLOW_CONTINUE, stats["result"]
+    assert stats["events"] == CYCLE_EVENTS, stats["events"]
+    assert stats["palettes"] == [adapter.RM_FLOW_PAL_INT_A, adapter.RM_FLOW_PAL_LEG_SELECT], stats["palettes"]
+    assert stats["draws"] == stats["shows"] and stats["draws"] > 0, (stats["draws"], stats["shows"])
+    assert stats["run_demo"] == tuning.phase_c_frames == adapter.INT_C_FRAMES, stats["run_demo"]
+
+
+def test_flow_driver_intermission_multi_cycle():
+    """rm_flow_intermission runs attract cycles until a quit: cycle 1 completes (RESTART), the driver
+    loops back into a second prologue, then a quit unwinds it — locksteped throughout."""
+    lib = equiv._lib()
+    # cycle 1 quit-checks ~137 times; a quit past that lands in cycle 2, after a full first cycle.
+    mism, stats = equiv.compare_flow_intermission(lib, _bg(), _fast_tuning(), quit_of=lambda i: i >= 140)
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_QUIT, stats["result"]
+    assert stats["events"].count(EVT.RM_FLOW_EVT_INT_PHASED_RESTART) == 1, stats["events"]
+    assert stats["events"][-1] == EVT.RM_FLOW_EVT_INT_PROLOGUE, stats["events"][-1]   # into cycle 2
+
+
+# (target phase, the poll index that first lands in it for _fast_tuning, the INT_ABORT aux code). Phase
+# A polls at pi 0..5 (6 frames), Phase C at pi 6..10 (5 frames), Phase D from pi 11. The aux assertion
+# below fails loudly if a tuning change shifts these, so the indices are self-checking.
+ABORT_CASES = ((2, 0), (8, 1), (11, 2))
+
+
+@pytest.mark.parametrize("poll_idx,aux", ABORT_CASES)
+def test_flow_driver_abort_each_phase(poll_idx, aux):
+    """A fresh input aborts the attract in each polling phase (A / C / D): the driver returns ABORT with
+    the phase's INT_ABORT aux, matching the oracle's check_abort verdict frame for frame."""
+    lib = equiv._lib()
+    fresh = 0x05   # a low byte present and != the idle baseline (0) -> check_abort fires
+    poll_of = lambda i: fresh if i == poll_idx else 0
+    mism, stats = equiv.compare_flow_intermission_cycle(lib, _bg(), _fast_tuning(), poll_of=poll_of)
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_ABORT, stats["result"]
+    # The INT_ABORT aux code (0=Phase A, 1=Phase C, 2=Phase D) pins WHICH phase aborted; a tuning change
+    # that shifted the poll index into another phase would fail here. Recover it from the driver's log.
+    assert _abort_aux(lib, poll_of) == aux, f"aborted in the wrong phase (aux != {aux})"
+
+
+def _abort_aux(lib, poll_of):
+    """Run the driver alone with recording callbacks; return the aux of the INT_ABORT event it emitted."""
+    fs = adapter.flow_state(_bg())
+    rec = equiv._DriverRecorder(fs, equiv._FlowScript(poll_of, lambda i: 0, lambda i: -1))
+    lib.rm_flow_intermission_cycle(equiv.ctypes.byref(fs), equiv.ctypes.byref(rec.ops), None,
+                                   equiv.ctypes.byref(_fast_tuning()))
+    for kind, args, _snap in rec.log:
+        if kind == "event" and args[0] == adapter.RM_FLOW_EVT_INT_ABORT:
+            return args[2]
+    return None
+
+
+@pytest.mark.parametrize("quit_idx", [2, 8, 11])
+def test_flow_driver_quit_each_phase(quit_idx):
+    """Esc/Q (quit_requested) unwinds the attract from every phase that polls it (A / C / D): the driver
+    returns QUIT immediately. This is the path bug #3 (Esc/Q unreachable from menus) lived in."""
+    lib = equiv._lib()
+    mism, stats = equiv.compare_flow_intermission_cycle(
+        lib, _bg(), _fast_tuning(), quit_of=lambda i: i == quit_idx)
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_QUIT, stats["result"]
+
+
+def test_flow_driver_leg_select_fire():
+    """The leg-select loop starts a leg on a fresh fire press (rm_init_playfield_fire), returning START,
+    locksteped vs g_init_playfield's fire edge."""
+    lib = equiv._lib()
+    FIRE = 0x80
+    mism, stats = equiv.compare_flow_leg_select(
+        lib, _bg(), _fast_tuning(), poll_of=lambda i: FIRE if i >= 2 else 0)
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_START, stats["result"]
+    assert stats["events"] == [EVT.RM_FLOW_EVT_SELECT_ENTER, EVT.RM_FLOW_EVT_SELECT_FIRE], stats["events"]
+    # leg select shows the results screen under the leg-select palette every frame it draws.
+    assert set(stats["palettes"]) == {adapter.RM_FLOW_PAL_LEG_SELECT}, stats["palettes"]
+    assert stats["draws"] == stats["shows"] and stats["draws"] > 0, (stats["draws"], stats["shows"])
+
+
+def test_flow_driver_leg_select_fkey():
+    """An F1..F5 direct pick starts that leg at once (SELECT_FIRE aux 1), before any nav/draw."""
+    lib = equiv._lib()
+    mism, stats = equiv.compare_flow_leg_select(lib, _bg(), _fast_tuning(), fkey_of=lambda i: 3 if i >= 1 else -1)
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_START, stats["result"]
+    assert stats["events"] == [EVT.RM_FLOW_EVT_SELECT_ENTER, EVT.RM_FLOW_EVT_SELECT_FIRE], stats["events"]
+
+
+def test_flow_driver_leg_select_nav():
+    """Holding a direction steps leg_index through g_init_playfield_nav (auto-repeat delays + reload),
+    then fire starts the navigated-to leg — the whole nav trajectory locksteped vs the oracle."""
+    lib = equiv._lib()
+    RIGHT, FIRE = 0x08, 0x80
+    def poll(i):
+        if i < 12:
+            return RIGHT      # step toward later legs (auto-repeat)
+        return 0 if i == 12 else FIRE   # release then a fresh fire edge
+    mism, stats = equiv.compare_flow_leg_select(lib, _bg(), _fast_tuning(), poll_of=poll)
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_START, stats["result"]
+
+
+def test_flow_driver_leg_select_idle_intermission():
+    """Idling past the countdown runs one GAME-OVER-BRACKETED attract cycle (game_over_flag 0->1 around
+    the intermission, then 0), then Esc/Q unwinds the whole thing. Pins the leg-select -> attract path
+    and the enter/exit bracket, locksteped against the oracle (incl. game_over_flag in the snapshot)."""
+    lib = equiv._lib()
+    # idle_init=8 -> the leg select idles 9 frames (9 quit-checks, qi 0..8) then enters the intermission;
+    # a quit at qi>=9 lands in the intermission's Phase A and unwinds through the game-over exit.
+    mism, stats = equiv.compare_flow_leg_select(
+        lib, _bg(), _fast_tuning(idle_init=8), quit_of=lambda i: i >= 9)
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_QUIT, stats["result"]
+    assert stats["events"][:3] == [EVT.RM_FLOW_EVT_SELECT_ENTER, EVT.RM_FLOW_EVT_SELECT_IDLE,
+                                   EVT.RM_FLOW_EVT_INT_PROLOGUE], stats["events"]
