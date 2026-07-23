@@ -337,6 +337,15 @@ m68k target, byte-assembled on the little-endian host, so the compared bytes mat
 - `plane.h`: `cell_fill` / `cell_and` / `cell_overlay` — the three write patterns for one 4-plane cell.
 - `text.h`: `rm_glyph_run` (paired-glyph text/gauge/bar body) and `rm_num_run` (digit/label sprites
   from `buf_c`). Both are validated against recreate's own `g_draw_*` entry points.
+- `fill.h`: `rm_fill_span` / `rm_fill_words` / `rm_fill_screen` / `rm_fill_rect` — solid-colour fills
+  from a `color_pairs` cell (recreate's `fill_span` family). Added for the between-legs flow's
+  backdrops; reuse these rather than re-rolling a colour fill.
+
+**The flip-derived draw buffer.** Most render leaves draw into `physbase_tbl[flip_idx]` (adda.w on the
+word `flip_idx`), which is NOT always `SCREEN_BASE` — the between-legs surfaces are staged at both flip
+parities. When a differential test's reference draws through `draw_dst`, extract the buffer at
+`adapter.draw_buffer_addr(image)` (physbase_tbl[flip_idx]), not a fixed `SCREEN_BASE`; the remaster
+`Framebuffer` abstracts the flip away (its `px[0]` IS the draw buffer), so the core never sees it.
 
 **Adapter windowing patterns** (test-only bridge; the shipped game shares none of it):
 - Extract just the bytes the function indexes, as a ctypes array kept alive via the returned tuple.

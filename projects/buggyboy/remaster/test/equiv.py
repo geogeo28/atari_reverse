@@ -109,6 +109,17 @@ def _lib():
         P(adapter.GobjPrefixState), P(adapter.SpriteState), P(ctypes.c_uint8),
         P(ctypes.c_int16), P(ctypes.c_uint16), P(adapter.RmInitAssets), ctypes.c_uint16]
     lib.rm_init_leg.restype = None
+    lib.rm_intermission_poll.argtypes = [ctypes.POINTER(adapter.Framebuffer), u8p, u8p]
+    lib.rm_intermission_poll.restype = None
+    lib.rm_draw_intermission.argtypes = [ctypes.POINTER(adapter.Framebuffer),
+                                         ctypes.POINTER(adapter.RmIntermissionAssets), ctypes.c_int16]
+    lib.rm_draw_intermission.restype = None
+    lib.rm_fade_step.argtypes = [ctypes.POINTER(adapter.Framebuffer),
+                                 ctypes.POINTER(adapter.RmIntermissionAssets), ctypes.c_int16]
+    lib.rm_fade_step.restype = None
+    lib.rm_draw_leg_results.argtypes = [ctypes.POINTER(adapter.Framebuffer),
+                                        ctypes.POINTER(adapter.RmResultsAssets), ctypes.c_uint16]
+    lib.rm_draw_leg_results.restype = None
     return lib
 
 
@@ -170,12 +181,7 @@ def compare_hud(lib, image):
     lib.rm_draw_hud(ctypes.byref(state), ctypes.byref(assets), ctypes.byref(fb))
     cand_fb = bytes(fb.px)
 
-    footprint = [i for i in range(adapter.SCREEN_BYTES) if ref_fb[i] != base[i]]
-    matched = sum(1 for i in footprint if cand_fb[i] == ref_fb[i])
-    wrong = sum(1 for i in range(adapter.SCREEN_BYTES)
-                if cand_fb[i] != base[i] and cand_fb[i] != ref_fb[i])
-    coverage = matched / len(footprint) if footprint else 1.0
-    return coverage, wrong
+    return _coverage_fb(cand_fb, base, ref_fb)
 
 
 def road_background(leg=0, warmup=60):
@@ -1574,3 +1580,104 @@ def compare_course_probe(lib, image, mask, start_bit, dash=None):
         if bytes(b.gfx) != bytes(state[b.buf_c:b.buf_c + adapter.GFX_EVENT_BYTES]):
             out.append(("gfx(nofire)", "changed", "unchanged"))
     return out, fired
+
+
+# ---- between-legs flow draw surfaces (intermission / results, slice A) ----
+# These draw into physbase_tbl[flip_idx] (NOT necessarily SCREEN_BASE), so the reference/candidate
+# framebuffer is the region at that draw-buffer address. recreate exports each g_ as a leaf taking the
+# image; the candidate runs the remaster core on the same background via the adapter's native structs.
+
+def flow_background(leg=0, warmup=60, scroll=None, flip=0):
+    """A mid-race image staged for the between-legs draw surfaces: run init_scoretable (populate the
+    hi-score table draw_intermission scrolls — the prepared image leaves it zero), optionally select
+    the flip=4 draw buffer, and poke int_scroll. Returns the image bytearray."""
+    state = bench_frame.mid_race_state(leg, warmup)
+    _bind("g_init_scoretable")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state))
+    if flip == 4:
+        state[adapter.A_physbase_tbl + 4:adapter.A_physbase_tbl + 8] = \
+            adapter.FLOW_DRAW_BUF_ALT.to_bytes(4, "big")
+        _w16(state, adapter.A_flip_idx, 4)
+    else:
+        _w16(state, adapter.A_flip_idx, 0)
+    if scroll is not None:
+        _w16(state, adapter.A_int_scroll, scroll & 0xffff)
+    return state
+
+
+def _flow_ref(image, gname):
+    """Run recreate's g_<name>(image) and return (base, ref_fb) — the draw-buffer region (at the
+    flip-selected physbase) before and after the reference draw."""
+    draw_buf = adapter.draw_buffer_addr(image)
+    base = bytes(image[draw_buf:draw_buf + adapter.SCREEN_BYTES])
+    ref = bytearray(image)
+    _bind(gname)((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+    ref_fb = bytes(ref[draw_buf:draw_buf + adapter.SCREEN_BYTES])
+    return base, ref_fb
+
+
+def _flow_fb(base):
+    return adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)(*base))
+
+
+def _whole_fb(cand_fb, base, ref_fb):
+    diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
+    footprint = sum(1 for i in range(adapter.SCREEN_BYTES) if ref_fb[i] != base[i])
+    return diff, footprint
+
+
+def _coverage_fb(cand_fb, base, ref_fb):
+    """Footprint coverage + no-wrong-pixel over a draw buffer: coverage in [0,1] of the bytes the
+    reference changed that the candidate reproduces, and the count of bytes the candidate changed to a
+    value the reference did not. Shared by the composite-draw comparisons (compare_hud,
+    compare_draw_intermission) that report partial coverage rather than a strict whole-buffer diff."""
+    footprint = [i for i in range(adapter.SCREEN_BYTES) if ref_fb[i] != base[i]]
+    matched = sum(1 for i in footprint if cand_fb[i] == ref_fb[i])
+    wrong = sum(1 for i in range(adapter.SCREEN_BYTES)
+                if cand_fb[i] != base[i] and cand_fb[i] != ref_fb[i])
+    coverage = matched / len(footprint) if footprint else 1.0
+    return coverage, wrong
+
+
+def compare_intermission_poll(lib, image):
+    """recreate g_intermission_poll vs remaster rm_intermission_poll on the same background; whole
+    draw-buffer diff (the block copy is a leaf). Returns (diff_bytes, footprint)."""
+    base, ref_fb = _flow_ref(image, "g_intermission_poll")
+    a, _keep = adapter.intermission_assets(image)
+    fb = _flow_fb(base)
+    lib.rm_intermission_poll(ctypes.byref(fb), a.poll_src, a.poll_blits)
+    return _whole_fb(bytes(fb.px), base, ref_fb)
+
+
+def compare_leg_results(lib, image):
+    """recreate g_draw_leg_results vs remaster rm_draw_leg_results; whole draw-buffer diff (the fills +
+    panels + dashboard leave the rest untouched on both sides). Returns (diff_bytes, footprint)."""
+    base, ref_fb = _flow_ref(image, "g_draw_leg_results")
+    leg = _r16(image, adapter.A_leg_index)
+    a, _keep = adapter.results_assets(image)
+    fb = _flow_fb(base)
+    lib.rm_draw_leg_results(ctypes.byref(fb), ctypes.byref(a), leg)
+    return _whole_fb(bytes(fb.px), base, ref_fb)
+
+
+def compare_fade_step(lib, image):
+    """recreate g_fade_step vs remaster rm_fade_step; whole draw-buffer diff (fade_step fills the whole
+    screen then overlays). Returns (diff_bytes, footprint)."""
+    base, ref_fb = _flow_ref(image, "g_fade_step")
+    scroll = adapter._i16(image, adapter.A_int_scroll)
+    a, _keep = adapter.intermission_assets(image)
+    fb = _flow_fb(base)
+    lib.rm_fade_step(ctypes.byref(fb), ctypes.byref(a), scroll)
+    return _whole_fb(bytes(fb.px), base, ref_fb)
+
+
+def compare_draw_intermission(lib, image):
+    """recreate g_draw_intermission vs remaster rm_draw_intermission on the same background. Reported
+    as FOOTPRINT COVERAGE + no-wrong-pixel (the composite scrolls three ported sections): coverage in
+    [0,1] over the bytes draw_intermission changes; wrong = bytes the candidate changed to a value
+    recreate did not. Returns (coverage, wrong)."""
+    base, ref_fb = _flow_ref(image, "g_draw_intermission")
+    scroll = adapter._i16(image, adapter.A_int_scroll)
+    a, _keep = adapter.intermission_assets(image)
+    fb = _flow_fb(base)
+    lib.rm_draw_intermission(ctypes.byref(fb), ctypes.byref(a), scroll)
+    return _coverage_fb(bytes(fb.px), base, ref_fb)

@@ -279,6 +279,39 @@ IL_LEGTIME_BYTES = 0x3c                             # base + leg-1 offset (0x1e)
 IL_BUF_A_BYTES = 0xe000
 
 
+# ---- between-legs flow: intermission / results draw surfaces (slice A) ----
+A_int_scroll = 0x18ca8                             # vertical scroll consumed by draw_intermission
+A_int_tbl1 = 0x1858c                               # section-1 layout: 15 x 5 words (program data)
+A_int_tbl3 = 0x18622                               # section-3 layout: 3 x 5 words (program data)
+A_int_credits = 0x180f4                            # section-3 credit strings (program data)
+A_int_header = 0x18002                             # fade_step copyright header string (program data)
+A_highscore_table = 0x18266                        # hi-score table: 5 legs x 9 rows, stride 0x80
+A_leg_title = 0x18028                              # results row-1 concatenated labels (program data)
+A_leg_row_palette = 0x17e9f                        # results row-2 per-row colour bytes, indexed [i-leg]
+POLL_SRC_OFF = 0x32c80                             # intermission_poll source = buf_c + this
+POLL_BLITS_OFF = 0x1296a                           # inline 9 x {src_off,dst_off,dims} words (program data)
+POLL_ENTRIES = 9
+POLL_ENTRY_BYTES = 6
+FLOW_POLL_BLITS_BYTES = POLL_ENTRIES * POLL_ENTRY_BYTES  # 0x36
+FLOW_POLL_SRC_BYTES = 0x8000                       # source reach 0x7c80 from POLL_SRC_OFF
+FLOW_HIGHSCORE_BYTES = 0x280                       # the real table: 5 legs x 9 rows, stride 0x80 =
+#                                                    0x280 (section-1's deepest string read is 0x244).
+#                                                    0x300 would over-reach into A_score_label / A_dsp_
+#                                                    table — the aliasing trap for the slice-B buffer.
+FLOW_SEC1_BYTES = 15 * 10                          # 0x96
+FLOW_SEC3_BYTES = 3 * 10                           # 0x1e
+FLOW_CREDITS_BYTES = 0x100
+FLOW_HEADER_BYTES = 0x40
+FLOW_LEGNAMES_BYTES = 0x60                         # buf_a + 0x884: 5 rows x 0xc + digit-sprite reads
+FLOW_TITLE_BYTES = 0x40                            # "F1..F5" chained labels (20 bytes) + slack
+FLOW_RESULT_GFX_BYTES = 0x14000                    # buf_c base: result panels + dashboard reach ~0x137a0
+FLOW_LEG_PALETTE_PAD = 8                           # leg_palette cursor: index [i-leg] reaches -4..+4
+FLOW_LEG_STR_OFF = 0x884                            # buf_a: INT sec-2 leg-name sprites / results leg-digits
+FLOW_ROW_STR_OFF = 0x848                            # buf_a: results row-2 per-leg label strings
+# The digit/letter sprite window is the SAME as the HUD's — reuse NUM_GLYPH_BUF_OFF / NUM_SPRITES_BYTES.
+FLOW_DRAW_BUF_ALT = 0x80000                        # flip_idx=4 test buffer (clear of the 0x7ee08 arena)
+
+
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
 A_color_pairs = 0x15afa                           # 16 colours x 8-byte fill
 A_color_bar_mask = 0x17d14                        # phase-5 {mask,ink} stream (5 cols x 12 rows x 4B)
@@ -994,3 +1027,94 @@ class EventBundle:
 def event_ctx(image, inputs=0):
     """Build an EventBundle for `image` (see EventBundle)."""
     return EventBundle(image, inputs)
+
+
+# ---- between-legs flow draw surfaces (intermission / results) ----
+
+class RmIntermissionAssets(ctypes.Structure):
+    _fields_ = [("color_pairs", ctypes.POINTER(ctypes.c_uint8)),
+                ("font", ctypes.POINTER(ctypes.c_uint8)),
+                ("num_sprites", ctypes.POINTER(ctypes.c_uint8)),
+                ("num_glyph_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("poll_src", ctypes.POINTER(ctypes.c_uint8)),
+                ("poll_blits", ctypes.POINTER(ctypes.c_uint8)),
+                ("header_str", ctypes.POINTER(ctypes.c_uint8)),
+                ("sec1_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("sec3_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("credits", ctypes.POINTER(ctypes.c_uint8)),
+                ("leg_names", ctypes.POINTER(ctypes.c_uint8)),
+                ("highscore", ctypes.POINTER(ctypes.c_uint8))]
+
+
+class RmResultsAssets(ctypes.Structure):
+    _fields_ = [("color_pairs", ctypes.POINTER(ctypes.c_uint8)),
+                ("font", ctypes.POINTER(ctypes.c_uint8)),
+                ("num_sprites", ctypes.POINTER(ctypes.c_uint8)),
+                ("num_glyph_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("gfx", ctypes.POINTER(ctypes.c_uint8)),
+                ("title", ctypes.POINTER(ctypes.c_uint8)),
+                ("leg_palette", ctypes.POINTER(ctypes.c_uint8)),
+                ("row_names", ctypes.POINTER(ctypes.c_uint8)),
+                ("leg_digits", ctypes.POINTER(ctypes.c_uint8))]
+
+
+def draw_buffer_addr(image):
+    """The current draw buffer address: physbase_tbl indexed by the (word) flip_idx (adda.w)."""
+    flip = _i16(image, A_flip_idx)
+    return int.from_bytes(image[A_physbase_tbl + flip:A_physbase_tbl + flip + 4], "big")
+
+
+def _u8buf(image, addr, n):
+    return (ctypes.c_uint8 * n).from_buffer_copy(bytes(image[addr:addr + n]))
+
+
+def intermission_assets(image):
+    """The intermission screen's assets (draw_intermission / fade_step / poll) as a native
+    RmIntermissionAssets. Returns (assets, keepalive). `highscore` is the mutable hi-score table — for
+    this slice it is extracted from the image (seeded by init_scoretable); the flow slice owns updates.
+    Everything else is const arena graphics, buf_a strings, or program-data layout tables/strings."""
+    buf_a = int.from_bytes(image[A_buf_a:A_buf_a + 4], "big")
+    buf_c = int.from_bytes(image[A_buf_c:A_buf_c + 4], "big")
+    color_pairs = _u8buf(image, A_color_pairs, COLOR_PAIRS_BYTES)
+    font = _u8buf(image, A_font_glyphs, FONT_BYTES)
+    num_sprites = _u8buf(image, buf_c + NUM_GLYPH_BUF_OFF, NUM_SPRITES_BYTES)
+    num_glyph_tbl = _u8buf(image, A_num_glyph_tbl, NUM_TBL_BYTES)
+    poll_src = _u8buf(image, buf_c + POLL_SRC_OFF, FLOW_POLL_SRC_BYTES)
+    poll_blits = _u8buf(image, POLL_BLITS_OFF, FLOW_POLL_BLITS_BYTES)
+    header_str = _u8buf(image, A_int_header, FLOW_HEADER_BYTES)
+    sec1_tbl = _u8buf(image, A_int_tbl1, FLOW_SEC1_BYTES)
+    sec3_tbl = _u8buf(image, A_int_tbl3, FLOW_SEC3_BYTES)
+    credits = _u8buf(image, A_int_credits, FLOW_CREDITS_BYTES)
+    leg_names = _u8buf(image, buf_a + FLOW_LEG_STR_OFF, FLOW_LEGNAMES_BYTES)
+    highscore = _u8buf(image, A_highscore_table, FLOW_HIGHSCORE_BYTES)
+    p = ctypes.POINTER(ctypes.c_uint8)
+    keep = (color_pairs, font, num_sprites, num_glyph_tbl, poll_src, poll_blits, header_str,
+            sec1_tbl, sec3_tbl, credits, leg_names, highscore)
+    assets = RmIntermissionAssets(*[ctypes.cast(b, p) for b in keep])
+    return assets, keep
+
+
+def results_assets(image):
+    """The per-leg results screen's assets as a native RmResultsAssets. Returns (assets, keepalive).
+    `gfx` is the buf_c base (result-panel / dashboard src offsets are absolute into it); `leg_palette`
+    is a cursor pointing AT leg 0's palette byte, indexed [i - leg] (recreate's suba.w leg)."""
+    buf_a = int.from_bytes(image[A_buf_a:A_buf_a + 4], "big")
+    buf_c = int.from_bytes(image[A_buf_c:A_buf_c + 4], "big")
+    color_pairs = _u8buf(image, A_color_pairs, COLOR_PAIRS_BYTES)
+    font = _u8buf(image, A_font_glyphs, FONT_BYTES)
+    num_sprites = _u8buf(image, buf_c + NUM_GLYPH_BUF_OFF, NUM_SPRITES_BYTES)
+    num_glyph_tbl = _u8buf(image, A_num_glyph_tbl, NUM_TBL_BYTES)
+    gfx = _u8buf(image, buf_c, FLOW_RESULT_GFX_BYTES)
+    title = _u8buf(image, A_leg_title, FLOW_TITLE_BYTES)
+    row_names = _u8buf(image, buf_a + FLOW_ROW_STR_OFF, FLOW_LEGNAMES_BYTES)
+    leg_digits = _u8buf(image, buf_a + FLOW_LEG_STR_OFF, FLOW_LEGNAMES_BYTES)
+    # leg_palette is indexed [i - leg] (i,leg in 0..4), so window it with pad below and point at leg 0.
+    palette = _u8buf(image, A_leg_row_palette - FLOW_LEG_PALETTE_PAD, 2 * FLOW_LEG_PALETTE_PAD)
+    p = ctypes.POINTER(ctypes.c_uint8)
+    assets = RmResultsAssets(
+        ctypes.cast(color_pairs, p), ctypes.cast(font, p), ctypes.cast(num_sprites, p),
+        ctypes.cast(num_glyph_tbl, p), ctypes.cast(gfx, p), ctypes.cast(title, p),
+        ctypes.cast(ctypes.byref(palette, FLOW_LEG_PALETTE_PAD), p),
+        ctypes.cast(row_names, p), ctypes.cast(leg_digits, p))
+    return assets, (color_pairs, font, num_sprites, num_glyph_tbl, gfx, title, row_names,
+                    leg_digits, palette)

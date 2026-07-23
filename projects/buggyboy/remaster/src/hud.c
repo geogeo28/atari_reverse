@@ -17,6 +17,7 @@
  */
 #include <string.h>
 
+#include "fill.h"
 #include "game.h"
 #include "plane.h"
 #include "screen.h"
@@ -39,7 +40,6 @@
 #define COLOR_BAR_COLS     5
 #define COLOR_BAR_ROWS     12
 #define COLOR_BAR_COL_BACK 0x818        /* rewind to the next column (net +8 per column) */
-#define COLOR_PAIR_STRIDE  8            /* bytes per colour in color_pairs (colour_idx << 3) */
 
 /* Phase 6a — fuel/tacho gauge column pattern (15 rows per bonus unit). */
 #define FUEL_BASE          0x1798
@@ -65,10 +65,8 @@
 #define GAUGE_BAR2_ADV     0x4c0
 #define GAUGE_BAR5_BACK    0xae0
 
-/* Phase 7 dashboard — masked blit of the fixed dashboard graphic (recreate's draw_dashboard). */
+/* Phase 7 dashboard — masked blit of the fixed dashboard graphic (cell_dashboard, plane.h). */
 #define DASHBOARD_DST      0x280
-#define DASH_ROWS          40
-#define DASH_GROUPS        8            /* 8 groups of 4 dest words (0x40 bytes) per row */
 
 /* Phases 1-2 — speed/time digit strings. These write into the gauge-cluster string buffer (the
  * speed/time text buffers overlap it), so phase 7's bars render the live speedometer/timer digits.
@@ -146,9 +144,9 @@ static void hud_color_bars(const HudState *s, const HudAssets *assets, Framebuff
     Offset mask_off = 0;                                               /* into color_bar_mask */
     int32_t cidx = sx16(s->flag_seq_off) + sx16(s->dsp_color_scroll);  /* scrolling cursor */
     for (int col = 0; col < COLOR_BAR_COLS; col++) {
-        int16_t off = (int16_t)(uint16_t)(assets->color_bar_cidx[cidx + col] << 3);
-        Plane4 fill_lo = be32(assets->color_pairs + off);
-        Plane4 fill_hi = be32(assets->color_pairs + off + 4);
+        Plane4 fill_lo, fill_hi;
+        rm_color_fill(assets->color_pairs, assets->color_bar_cidx[cidx + col], COLOR_MASK_NUM,
+                      &fill_lo, &fill_hi);
         cell_and(px, a, COLOR_BAR_PRECLEAR); a += ROW_STRIDE;          /* top cap */
         for (int r = 0; r < COLOR_BAR_ROWS; r++, a += ROW_STRIDE) {
             Plane4 mask = dup16(be16(assets->color_bar_mask + mask_off));
@@ -186,8 +184,8 @@ static void hud_small_gauge(const HudState *s, const HudAssets *a, Framebuffer *
     if (s->crash_lap >= 1) return;                       /* 6a drew the fuel columns instead */
     int16_t blink = (int16_t)(s->gauge_blink - 1);
     if (blink < 0 || !(blink & GAUGE_BLINK_BIT)) return; /* dark blink phase: nothing this frame */
-    Plane4 f_lo = be32(a->color_pairs + SMALL_GAUGE_COLOR * COLOR_PAIR_STRIDE);
-    Plane4 f_hi = be32(a->color_pairs + SMALL_GAUGE_COLOR * COLOR_PAIR_STRIDE + 4);
+    Plane4 f_lo, f_hi;
+    rm_color_fill(a->color_pairs, SMALL_GAUGE_COLOR, COLOR_MASK_TEXT, &f_lo, &f_hi);
     Offset end, si = 0;
     si = rm_glyph_run(fb, SMALL_GAUGE_DST, f_lo, f_hi, a->font, a->small_gauge_str, si,
                       GAUGE_CELLS_M1, &end);
@@ -199,11 +197,11 @@ static void hud_small_gauge(const HudState *s, const HudAssets *a, Framebuffer *
  * string cursor (A3) threaded across each sub-draw exactly as the 68000 leaves them. `str` is the
  * gauge string with the phase-1/2 speed/time digits already formatted in. */
 static void hud_gauge_cluster(const HudAssets *a, const uint8_t *str, Framebuffer *fb) {
-    Plane4 g_lo = be32(a->color_pairs + GAUGE_MAIN_COLOR * COLOR_PAIR_STRIDE);
-    Plane4 g_hi = be32(a->color_pairs + GAUGE_MAIN_COLOR * COLOR_PAIR_STRIDE + 4);
+    Plane4 g_lo, g_hi;
+    rm_color_fill(a->color_pairs, GAUGE_MAIN_COLOR, COLOR_MASK_NUM, &g_lo, &g_hi);
     /* gauge0 derives its fill from the colour index (masked 0xf — here the same as g_lo/g_hi). */
-    Plane4 f_lo = be32(a->color_pairs + (GAUGE_MAIN_COLOR & 0xf) * COLOR_PAIR_STRIDE);
-    Plane4 f_hi = be32(a->color_pairs + (GAUGE_MAIN_COLOR & 0xf) * COLOR_PAIR_STRIDE + 4);
+    Plane4 f_lo, f_hi;
+    rm_color_fill(a->color_pairs, GAUGE_MAIN_COLOR, COLOR_MASK_TEXT, &f_lo, &f_hi);
     const uint8_t *font = a->font;
     Offset end, si = 0;
     si = rm_glyph_run(fb, GAUGE_MAIN_DST, f_lo, f_hi, font, str, si, GAUGE_CELLS_M1, &end);
@@ -214,29 +212,10 @@ static void hud_gauge_cluster(const HudAssets *a, const uint8_t *str, Framebuffe
     rm_glyph_run(fb, end - GAUGE_BAR5_BACK, 0x0000ffff, 0xffffffff, font, str, si, TEXT_MAX_CELLS_M1, 0);
 }
 
-/* Paint one plane word over the background: keep the background where `mask` is set, OR in `ink`. */
-static inline void overlay_word(uint8_t *p, uint16_t mask, uint16_t ink) {
-    wr16(p, (be16(p) & mask) | ink);
-}
-
-/* Phase 7 — the dashboard graphic: a masked blit from buf_c. Per group of four dest words the four
- * source words are (mask, a, b, c); each dest word keeps the background where mask is set and OR-s
- * in ink a, b, b, c (the middle word twice — one source word feeds two screen words). */
+/* Phase 7 — the dashboard graphic: a masked blit from buf_c (cell_dashboard, plane.h). The source
+ * starts at the dashboard_src base (src 0 = buf_c gfx), stamped at DASHBOARD_DST. */
 static void hud_dashboard(const HudAssets *a, Framebuffer *fb) {
-    uint8_t *px = fb->px;
-    Offset dst = DASHBOARD_DST, src = 0;                   /* src 0 = dashboard_src base (buf_c gfx) */
-    const uint8_t *g = a->dashboard_src;
-    for (int row = 0; row < DASH_ROWS; row++, dst += ROW_STRIDE, src += ROW_STRIDE) {
-        Offset d = dst, s = src;
-        for (int grp = 0; grp < DASH_GROUPS; grp++, d += 8, s += 8) {
-            uint16_t mask = be16(g + s);
-            uint16_t ink_a = be16(g + s + 2), ink_b = be16(g + s + 4), ink_c = be16(g + s + 6);
-            overlay_word(px + d,     mask, ink_a);
-            overlay_word(px + d + 2, mask, ink_b);
-            overlay_word(px + d + 4, mask, ink_b);
-            overlay_word(px + d + 6, mask, ink_c);
-        }
-    }
+    cell_dashboard(fb->px, DASHBOARD_DST, a->dashboard_src, 0);
 }
 
 /* Render a decimal digit as its ASCII char, or `blank` when it is 0 (leading-zero suppression).
@@ -292,8 +271,8 @@ static void hud_crash_fx(const HudState *s, const HudAssets *a, uint8_t *text, F
     text[CRASH_HUD_LAP_OFF] = (uint8_t)('0' + crash_lap);
 
     uint8_t color = a->crash_color_tbl[frame & 7];
-    Plane4 fill_lo = be32(a->color_pairs + color * COLOR_PAIR_STRIDE);
-    Plane4 fill_hi = be32(a->color_pairs + color * COLOR_PAIR_STRIDE + 4);
+    Plane4 fill_lo, fill_hi;
+    rm_color_fill(a->color_pairs, color, COLOR_MASK_NUM, &fill_lo, &fill_hi);
     rm_num_run(fb, CRASH_NUM_DST, fill_lo, fill_hi, a->num_sprites, a->num_glyph_tbl,
                text, CRASH_NUM_STR_OFF, TEXT_MAX_CELLS_M1);
 

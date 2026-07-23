@@ -207,3 +207,9 @@ def test_python_constants_match_the_c():
     gameplay_c = _defines("src/gameplay.c", r"^#define\s+(IL_LEGTIME_\w+)\s+(\w+)\s*(?:/\*.*)?$")
     assert (equiv.adapter.IL_LEGTIME_BYTES
             == gameplay_c["IL_LEGTIME_LEG_OFF"] + gameplay_c["IL_LEGTIME_ROWS"] * gameplay_c["IL_LEGTIME_COPY"])
+
+    # The between-legs poll table's shape is mirrored in adapter.py (POLL_ENTRIES/POLL_ENTRY_BYTES size
+    # the poll_blits window and drive its slicing); pin each Python copy to src/intermission.c's #define.
+    inter_c = _defines("src/intermission.c", r"^#define\s+(POLL_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+    assert equiv.adapter.POLL_ENTRIES == inter_c["POLL_ENTRIES"]
+    assert equiv.adapter.POLL_ENTRY_BYTES == inter_c["POLL_ENTRY"]

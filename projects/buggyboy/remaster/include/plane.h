@@ -6,6 +6,7 @@
 #ifndef RM_PLANE_H
 #define RM_PLANE_H
 
+#include "screen.h"
 #include "st.h"
 
 /* Set the two plane-longs (pass the same value for both when the cell is uniform). */
@@ -44,6 +45,28 @@ static inline void cell_transp(uint8_t *px, Offset at, const uint8_t *src) {
     wr16(px + at + 2, (uint16_t)((be16(px + at + 2) & mask) | b));
     wr16(px + at + 4, (uint16_t)((be16(px + at + 4) & mask) | c));
     wr16(px + at + 6, (uint16_t)((be16(px + at + 6) & mask) | (uint16_t)(d & ~mask)));
+}
+
+/* The dashboard graphic (recreate's draw_dashboard): a masked blit of DASH_ROWS rows, each DASH_GROUPS
+ * groups of four dest words. Per group the four source words are (mask, a, b, c); each dest word keeps
+ * the background where mask is set and OR-s in ink a, b, b, c (the middle source word feeds two screen
+ * words). `gfx`+`src` is the source block, `px`+`dst` the destination; both step one scanline per row.
+ * Shared by the HUD's fixed dashboard (phase 7) and the per-leg results dashboard. */
+#define DASH_ROWS   40
+#define DASH_GROUPS 8             /* 8 groups of 4 dest words (0x40 bytes) per row */
+
+static inline void cell_dashboard(uint8_t *px, Offset dst, const uint8_t *gfx, Offset src) {
+    for (int row = 0; row < DASH_ROWS; row++, dst += SCREEN_ROW_BYTES, src += SCREEN_ROW_BYTES) {
+        Offset d = dst, s = src;
+        for (int g = 0; g < DASH_GROUPS; g++, d += 8, s += 8) {
+            uint16_t mask = be16(gfx + s);
+            uint16_t ink_a = be16(gfx + s + 2), ink_b = be16(gfx + s + 4), ink_c = be16(gfx + s + 6);
+            wr16(px + d,     (uint16_t)((be16(px + d)     & mask) | ink_a));
+            wr16(px + d + 2, (uint16_t)((be16(px + d + 2) & mask) | ink_b));
+            wr16(px + d + 4, (uint16_t)((be16(px + d + 4) & mask) | ink_b));
+            wr16(px + d + 6, (uint16_t)((be16(px + d + 6) & mask) | ink_c));
+        }
+    }
 }
 
 #endif /* RM_PLANE_H */
