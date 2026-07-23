@@ -269,6 +269,51 @@ reproduce the mask/pixel words bit-exactly, but it is verified against the *same
 fuzz (the pre-shift table is just a memoised prefix of the current shift). *Pinned:* `test_blit_engines`
 + a new "prebuild == on-the-fly shift" equivalence test (like `test_mode2_scroll_prebuild`).
 
+> **MEASURED SIZING 2026-07-23 (decision #1 — the memory budget, not yet landed).** Instrumented the
+> three fine-x engines (guarded `BLIT_TRACE_SRC` touch-bitmap in `blit.c`, reverted) and ran a free
+> flat-out drive per leg 0–4 (600 frames, composing the candidate's own object tree every frame) to
+> record the **distinct** `buf_c` source bytes each engine actually reads. The min/max *span* wildly
+> overcounts (it is mostly inter-sprite gaps); the distinct footprint is what the table must cover:
+>
+> | engine (stage) | distinct src (union 5 legs) | per-leg | calls/leg | leg-invariant? |
+> |----------------|----------------------------:|--------:|----------:|----------------|
+> | **objshift2** (fixed pass, 56.0 ms) | **3.0 KB** | 3.0 KB | 3 240 | **yes** — identical `gfx[32000..45604]` region every leg |
+> | **objshift** (pass 1, 42.8 ms) | **8.8 KB** | ~8–9 KB | 25 k–72 k | mostly (shared sprites) |
+> | objsprite (*not* an A2 target — the small stages) | 66.8 KB | 38–46 KB | 35 k–91 k | no |
+>
+> **A2 target (objshift + objshift2) = 11.8 KB distinct source.** The key finding: **objshift2 — the
+> bigger 56 ms prize — reads only 3.0 KB of leg-invariant sprite data, and re-shifts it 3 240×/leg**;
+> that is the ideal pre-shift target (build once at *boot*, not even per-leg). objshift's 8.8 KB is
+> mostly shared across legs, so a per-leg build saves little over a whole-game build.
+>
+> **The expansion is the catch.** A masked straddle group is 8 source bytes but its pre-shifted form is
+> 32-bit-per-word (it straddles two columns), so — unlike `rm_scroll_prebuild`, whose scrolled word
+> stays 16-bit — the table cannot be a same-size offset-preserving window. Per 8-byte group per phase:
+> full (pix + mask) ≈ 16–20 B, masks-only ≈ 4–8 B. Two layouts trade size vs addressing:
+> *offset-preserving* over the **span** (simple `table[phase]+src_off`, blit unchanged) vs *compacted*
+> over the **distinct** groups (needs a `src_off→idx` map). Resulting table sizes:
+>
+> | variant | objshift2 | objshift | both |
+> |---------|----------:|---------:|-----:|
+> | full, compacted (distinct) | ~98 KB | ~360 KB | **~458 KB** |
+> | full, offset-preserving (span) | ~440 KB | ~1.4 MB | prohibitive |
+> | masks-only, compacted | ~49 KB | ~72 KB | ~121 KB |
+>
+> **RAM verdict** (arena `RM_ARENA_BYTES` = 389 KB, plus two screen buffers ≈ 108 KB + overdraw tails,
+> code, stack): on a **1 MB** ST there is room for **objshift2 full-compacted (~98 KB)** — the recommended
+> first landing, capturing the 56 ms prize — but **not** both engines full (~458 KB blows the budget).
+> objshift needs **masks-only (~72 KB)** or deferral to A3 (hand-asm; A1 already removed pass 1's spill).
+> On a **512 KB** ST no full table fits — only masks-only objshift2 (~49 KB) is plausible; a pre-shifted
+> build effectively **requires a 1 MB machine.** Before committing to full-vs-masks-only, measure the
+> *split* of the 18% (`lsll` pix-shift, one op, vs `roll`+mask-build, multi-op): masks-only keeps the
+> one-op pix `lsll` live and only fits captures the multi-op half. *Correctness note for the port:*
+> objshift gates pix by a per-**call** colour fill (`color_pairs[color]`) applied after the shift, so
+> the table stores the **pre-colour** shifted pix and mask (both colour-independent); the blit keeps the
+> per-plane `& fill` and the RMW — i.e. even full A2 leaves the irreducible masked-blit RMW, consistent
+> with the 0.45–0.55× estimate. The clip/edge/base/width dispatch stays as control flow (destination-
+> dependent); only the per-cell compute becomes a table read. *Status: measured + designed; the
+> bit-exact prebuild + rewired cells + equivalence test are the implementation, not yet built.*
+
 **A3. Hand-asm cores with a jump-table entry per fine-x.** *(Tier A, ~10–20 ms on top of A1/A2)* Once
 A1/A2 remove the spill and shift, the residual is word/long RMW to the framebuffer and per-cell
 branching. A hand-written `.s` core (register-pinned cursors, unrolled straddle cells, `movem` where the
