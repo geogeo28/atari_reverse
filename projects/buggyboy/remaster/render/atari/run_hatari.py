@@ -74,9 +74,10 @@ def run(prg, timeout=60):
         return out.read_bytes()
 
 
-def _palette_rgb():
-    """build/palette.bin -> 16 (r,g,b) from the ST 0x0RGB words (3-bit channels scaled to 8)."""
-    pal_words = (BUILD / "palette.bin").read_bytes()
+def _palette_rgb(palette_path=None):
+    """A palette.bin -> 16 (r,g,b) from the ST 0x0RGB words (3-bit channels scaled to 8). Defaults to
+    build/palette.bin (the HUD demo); run_golden.py passes its per-leg build/palette_leg<N>.bin."""
+    pal_words = (palette_path or BUILD / "palette.bin").read_bytes()
     pal = []
     for i in range(16):
         w = (pal_words[i * 2] << 8) | pal_words[i * 2 + 1]
@@ -85,31 +86,33 @@ def _palette_rgb():
     return pal
 
 
-def verify_frame(fb, png_basename, match_msg):
-    """Decode the Hatari framebuffer to a PNG, byte-compare it to build/golden.bin, and report the
-    result (MATCH: <match_msg>, or a DIFF + non-zero exit). Shared by both on-target harnesses so
-    they behave identically; only the PNG name and the MATCH line's subject differ."""
+def verify_frame(fb, png_basename, match_msg, golden_path=None, palette_path=None):
+    """Decode the Hatari framebuffer to a PNG, byte-compare it to a golden .bin, and report the result
+    (MATCH: <match_msg>, or a DIFF). Returns True on MATCH, False on DIFF — the caller decides the exit
+    code (the HUD demo pins one frame; run_golden.py loops legs 0-4 and exits nonzero if ANY diffs).
+    golden_path/palette_path default to build/golden.bin / build/palette.bin (the HUD demo)."""
     outdir = RECREATE.parent / "out" / "render"
     outdir.mkdir(parents=True, exist_ok=True)
     image = bytearray(SCREEN_BASE) + fb                   # pad so SCREEN_BASE indexing works
     rows = _decode_interleaved(image, SCREEN_BASE)
     png = outdir / png_basename
-    write_png(str(png), W, H, rows, _palette_rgb())
+    write_png(str(png), W, H, rows, _palette_rgb(palette_path))
     print(f"wrote {png} ({len(fb)} bytes from Hatari)")
 
-    golden = (BUILD / "golden.bin").read_bytes()
+    golden = (golden_path or BUILD / "golden.bin").read_bytes()
     if bytes(fb) == golden:
         print("MATCH: " + match_msg)
-    else:
-        ndiff = sum(1 for a, b in zip(fb, golden) if a != b)
-        print(f"DIFF: {ndiff}/{SCREEN_BYTES} bytes differ from recreate's golden frame")
-        sys.exit(1)
+        return True
+    ndiff = sum(1 for a, b in zip(fb, golden) if a != b)
+    print(f"DIFF: {ndiff}/{SCREEN_BYTES} bytes differ from recreate's golden frame")
+    return False
 
 
 def main():
     fb = run("HUD.PRG")
-    verify_frame(fb, "remaster_hud_hatari.png",
-                 "on-target remaster HUD is byte-identical to recreate's g_draw_hud")
+    ok = verify_frame(fb, "remaster_hud_hatari.png",
+                      "on-target remaster HUD is byte-identical to recreate's g_draw_hud")
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":

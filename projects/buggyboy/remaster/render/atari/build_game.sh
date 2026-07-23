@@ -13,11 +13,14 @@
 # be pinned byte-for-byte against recreate. GAME_EXTRA_CFLAGS also carries the debug flags (e.g.
 # -DGAME_DUMP_STAGE=3 to cut the frame short and dump a partial render). Empty in a plain shipping build.
 #
-# Env knobs (both passed through to gen_game_fixture.py):
+# Env knobs (all passed through to gen_game_fixture.py):
 #   GAME_PRG=<name>   output .PRG name (default BUGGYBOY.PRG; run_golden.py -> GOLDEN.PRG).
-#   GEN_GOLDEN=1      also render build/golden.bin + palette.bin (the golden-harness reference frame).
-#                     ONLY run_golden.py consumes those, so a plain shipping/bench build leaves it unset
-#                     and skips that heavy full-pipeline render; game_fixture.h is generated either way.
+#   GEN_GOLDEN=1      also render build/golden_leg<N>.bin + palette_leg<N>.bin (the golden-harness
+#                     reference frame for leg GOLDEN_LEG). ONLY run_golden.py consumes those, so a plain
+#                     shipping/bench build leaves it unset and skips that heavy full-pipeline render;
+#                     game_fixture.h is generated either way.
+#   GOLDEN_LEG=N      the golden-harness boot leg 0-4 (default 0): parameterises the golden render + the
+#                     GAME_LEG_INDEX define. run_golden.py sets it == -DGOLDEN_BOOT_LEG so both sides agree.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

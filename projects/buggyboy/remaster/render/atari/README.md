@@ -31,7 +31,7 @@ against the Musashi oracle, so this closes the loop end to end.)
 | `run.sh`             | interactive: watch it in the Hatari GUI |
 | `gen_game_fixture.py` / `game_main.c` | the on-target BuggyBoy game (below): non-asset-file fixture + the game shell (leg select → race → between-legs flow) |
 | `build_game.sh` | build `BUGGYBOY.PRG` (the shipping game) or, with `GAME_PRG`/`GAME_EXTRA_CFLAGS`, a variant |
-| `run_golden.py` | the frame-0 golden harness: build the `GOLDEN.PRG` fast-path variant + byte-compare its leg-0 boot frame vs recreate |
+| `run_golden.py` | the frame-0 golden harness: for each leg 0-4, build the `GOLDEN.PRG` fast-path variant + byte-compare its leg-start boot frame vs recreate |
 
 ## Use
 
@@ -101,15 +101,22 @@ the buggy. Each frame is game_update-then-draw, as the original orders it:
 
 ```bash
 bash render/atari/build_game.sh            # -> build/BUGGYBOY.PRG + disk/BUGGYBOY.PRG (shipping: boots the leg select)
-python render/atari/run_golden.py          # frame-0 golden harness: builds GOLDEN.PRG (-DGOLDEN_BOOT_LEG=0), prints MATCH
+python render/atari/run_golden.py          # frame-0 golden harness: builds GOLDEN.PRG per leg 0-4, prints MATCH for each
+python render/atari/run_golden.py 3        # a single leg (quick iteration)
 hatari --memsize 4 --tos-res low --harddrive render/atari/disk --auto 'C:\BUGGYBOY.PRG'   # play it
 ```
 
 The shipping `BUGGYBOY.PRG` boots into the leg select, so it has no deterministic first frame to pin;
-`run_golden.py` therefore builds a SEPARATE variant, `GOLDEN.PRG`, compiled with `-DGOLDEN_BOOT_LEG=0`,
-that skips the leg select and starts leg 0 directly — dumping that leg-start frame *before* any physics
-so it can be byte-compared to recreate's pipeline. **Legs 1–4 are playable, but only leg 0 has a
-golden** (a per-leg golden is deferred).
+`run_golden.py` therefore builds a SEPARATE variant, `GOLDEN.PRG`, compiled with `-DGOLDEN_BOOT_LEG=N`,
+that skips the leg select and starts leg N directly — dumping that leg-start frame *before* any physics
+so it can be byte-compared to recreate's pipeline. It loops **all five legs 0–4**, building one
+`GOLDEN.PRG` per leg (the leg is a parameter of both the reference render and the PRG build, from ONE
+source — the loop variable feeds `GOLDEN_LEG=N` to the fixture generator and `-DGOLDEN_BOOT_LEG=N` to
+the compile) and byte-comparing each against its own `golden_leg<N>.bin`; it exits nonzero if any leg
+diffs. A single-leg argument runs just that leg. **All five legs MATCH** (~3 s/leg, ~16 s for the set;
+sequential — the cores don't vary with the leg, but each leg needs a fresh golden render + cross-compile
++ Hatari run). The shipping `BUGGYBOY.PRG` still boots every leg from ONE binary via `bind_leg`; the
+golden variant just adds the boot fast path.
 
 Controls (**held** keys — the original arcade scheme; see the table above): **F1..F5** select + start a
 leg (leg-select screen), **↑/↓** throttle / brake, **←/→** steer, **Space** fire (cycles the dashboard
@@ -127,13 +134,16 @@ leg's packed course stream, the object record arena and every sprite are the rea
 the original program's own data-segment tables (fonts, colour pairs, road param/edge tables, the
 geometry const sources, the STATIC+bss blob the object dispatcher reads), the initial
 pose/scroll/course state and the palette — into `build/game_fixture.h`, plus the `ARENA_*` offsets at
-which the arena-resident assets live. Under `GEN_GOLDEN=1` (set only by `run_golden.py`) it *also*
-writes `golden.bin` (recreate's `g_build_road_geometry` + `g_render_road` + `g_blit_road_scroll` +
-`g_draw_game_objects` + `g_draw_hud` for the same pose, rendered from a freshly-loaded arena so both
-sides see identical assets) and `palette.bin`; a plain shipping/bench build leaves the flag unset and
-skips that heavy render, since only `run_golden.py` compares against it.
-`run_golden.py` byte-compares that GOLDEN.PRG variant's first frame — drawn *before* any physics runs — against it; a
-**MATCH** proves the whole ported pipeline is pixel-identical on a real 68000. The physics driving it
+which the arena-resident assets live. Under `GEN_GOLDEN=1` (set only by `run_golden.py`, with
+`GOLDEN_LEG=N` picking the leg) it *also* writes `golden_leg<N>.bin` (recreate's `g_build_road_geometry`
++ `g_render_road` + `g_blit_road_scroll` + `g_draw_game_objects` + `g_draw_hud` for leg N's start pose,
+rendered from a freshly-loaded arena so both sides see identical assets) and `palette_leg<N>.bin`; a
+plain shipping/bench build leaves the flag unset and skips that heavy render, since only `run_golden.py`
+compares against it. The fixture arrays themselves are leg-independent for the byte-compare (the palette
+is an off-image seam and `rm_init_leg` re-stages it per leg at boot), so the leg only parameterises the
+golden render — no divergent per-leg fixture.
+`run_golden.py` byte-compares each GOLDEN.PRG variant's first frame — drawn *before* any physics runs — against its leg's golden; five
+**MATCH**es prove the whole ported pipeline is pixel-identical on a real 68000 for every leg. The physics driving it
 is validated on the host against recreate's `g_game_update` (`test/test_player.py`), as are the
 geometry and course advance (`test/test_geometry.py`, `test/test_course.py`).
 
@@ -196,6 +206,6 @@ fault on an odd address on the 68000, so the fixture arrays and the BSS scratch 
 `HUD.PRG` is the HUD-only proof (rendered over a blank screen, no captured game frame — `run_hatari.py`
 pins it). `BUGGYBOY.PRG` is the whole playable game: the render pipeline (road, scroll, the object tree,
 the HUD) driven by the ported physics and the between-legs flow, everything drawn by remaster's own C.
-`run_golden.py` pins its leg-0 boot frame byte-for-byte against recreate's pipeline; the rest of the
-loop is guarded by the host equivalence suite (`make test`) and the on-target flow trace. The remaining
-seam is sound.
+`run_golden.py` pins the boot frame of every leg 0–4 byte-for-byte against recreate's pipeline; the rest
+of the loop is guarded by the host equivalence suite (`make test`) and the on-target flow trace. The
+remaining seam is sound.

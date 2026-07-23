@@ -8,10 +8,14 @@ STATIC+bss blob the object dispatcher reads, the between-legs flow's program-dat
 and the offsets at which the arena-resident assets live. The per-leg leg-start STATE is produced
 natively by rm_init_leg at boot, not baked here (a bench-only static HudState block is the one residual).
 
-With GEN_GOLDEN=1 (set by run_golden.py) it ALSO writes the golden-harness reference for the leg-0 boot
-frame: build/golden.bin — recreate's full five-stage pipeline (g_build_road_geometry, g_render_road,
-g_blit_road_scroll, g_draw_game_objects, g_draw_hud) on a blank screen — and build/palette.bin for the
-PNG. Only run_golden.py consumes those, so the shipping + bench builds skip that heavy render by default.
+With GEN_GOLDEN=1 (set by run_golden.py) it ALSO writes the golden-harness reference for the boot frame
+of leg GOLDEN_LEG (env, default GAME_LEG): build/golden_leg<N>.bin — recreate's full five-stage pipeline
+(g_build_road_geometry, g_render_road, g_blit_road_scroll, g_draw_game_objects, g_draw_hud) on a blank
+screen — and build/palette_leg<N>.bin for the PNG. Only run_golden.py consumes those (it loops legs 0-4,
+one golden per leg), so the shipping + bench builds skip that heavy render by default. The fixture arrays
+themselves are program data + palette (leg-independent for the byte-compare — the palette is an off-image
+seam and rm_init_leg re-stages it per leg at boot), so the leg only parameterises the golden render and
+the informational GAME_LEG_INDEX define; the shipping BUGGYBOY.PRG still boots every leg from ONE binary.
 """
 import ctypes
 import os
@@ -31,6 +35,7 @@ import gen_hud_fixture as hud                      # noqa: E402  reuse the HUD a
 # A visually busy HUD over the road (same spirit as the HUD demo).
 GAME_LEG = 0                                       # the game starts where the player does: leg 0...
 GAME_START_SEGMENT = 0                             # ...at its first segment, with nothing skipped
+NUM_LEGS = 5                                        # legs 0-4 (bounds the golden leg; == the shell's leg count)
 
 # buf_a's record region, copied into game RAM because the prefix mutates it (anim-word mirrors).
 # OBJ_LOW is the STATIC+bss table region draw_game_objects reads (jump table, colour/edge tables,
@@ -46,8 +51,8 @@ OBJ_LOW_BASE = 0x13000
 OBJ_LOW_END = 0x19100
 
 
-def staged_image():
-    """The game's starting image: the START OF LEG 0, exactly as the player meets it — the oracle's
+def staged_image(leg=GAME_LEG):
+    """The game's starting image: the START OF LEG `leg`, exactly as the player meets it — the oracle's
     init_leg with no warmup frames and no course skipping, so the buggy is stationary on the grid with
     the leg's own clock, and driving forward covers the leg from its first segment.
 
@@ -59,7 +64,7 @@ def staged_image():
     The asset arena is replaced by a freshly-loaded one (see the note at the end — the game loads its
     assets off disk, so the reference must too). Shared by the fixture baking and the perf bench so
     both measure the SAME frame. Screen is left as staged (caller blanks if needed)."""
-    img = equiv.leg_start_background(GAME_LEG)
+    img = equiv.leg_start_background(leg)
 
     # Kept as a loop over the verified course advance so that raising GAME_START_SEGMENT is all it
     # takes to start further into the leg again (the perf bench wants a busier frame than segment 0).
@@ -91,7 +96,7 @@ def staged_image():
     return img
 
 
-def boot_staged_palette(img, palette):
+def boot_staged_palette(img, palette, leg):
     """The palette the on-target game DISPLAYS at the leg-start boot, for the human-facing PNG
     (palette.bin) only. At boot the game seeds race_pal from fixture_palette and rm_init_leg's phase 11
     stages this leg's object-display record over regs 5-11 (the same seam mode 4 re-stages); this
@@ -108,7 +113,7 @@ def boot_staged_palette(img, palette):
     lib.rm_stage_palette_record.restype = None
     img_buf = (ctypes.c_uint8 * len(img)).from_buffer(img)              # read-only alias into img
     buf_a = int.from_bytes(bytes(img[adapter.A_buf_a:adapter.A_buf_a + 4]), "big")
-    record = lib.rm_objdisp_record(ctypes.cast(ctypes.byref(img_buf, buf_a), u8p), GAME_LEG, 0)
+    record = lib.rm_objdisp_record(ctypes.cast(ctypes.byref(img_buf, buf_a), u8p), leg, 0)
     staged = (ctypes.c_uint8 * len(palette)).from_buffer_copy(palette)
     obj_shade = ctypes.c_int16()
     lib.rm_stage_palette_record(ctypes.cast(staged, u8p), ctypes.byref(obj_shade), record)
@@ -120,23 +125,29 @@ def main():
     build.mkdir(exist_ok=True)
     sb, nb = adapter.SCREEN_BASE, adapter.SCREEN_BYTES
 
-    img = staged_image()
+    # The golden-harness boot leg (run_golden.py loops legs 0-4, one build per leg); default GAME_LEG.
+    # It parameterises the golden render + GAME_LEG_INDEX; the fixture arrays are leg-independent for the
+    # byte-compare (see the module docstring), so this stays a plain shipping fixture bake for any leg.
+    golden_leg = int(os.environ.get("GOLDEN_LEG", GAME_LEG))
+    assert 0 <= golden_leg < NUM_LEGS, f"GOLDEN_LEG {golden_leg} outside legs 0-{NUM_LEGS - 1}"
+
+    img = staged_image(golden_leg)
     img[sb:sb + nb] = bytes(nb)                   # blank screen: draw only remaster's own pipeline
 
     palette = hud.race_palette(img)               # needed unconditionally for fixture_palette below
 
-    # The golden-harness reference (golden.bin + palette.bin) is opt-in — only run_golden.py compares
-    # against it, so a plain shipping/bench build skips this heavy full-pipeline render (GEN_GOLDEN=1).
+    # The golden-harness reference (golden_leg<N>.bin + palette_leg<N>.bin) is opt-in — only run_golden.py
+    # compares against it, so a plain shipping/bench build skips this heavy full-pipeline render (GEN_GOLDEN=1).
     gen_golden = bool(os.environ.get("GEN_GOLDEN"))
     if gen_golden:
         # golden = recreate's full ported pipeline on the same pose + blank screen (byte-for-byte target).
         ref = bytearray(img)
         equiv._run_pipeline(ref, ("g_build_road_geometry", "g_render_road", "g_blit_road_scroll",
                                   "g_draw_game_objects", "g_draw_hud"))
-        (build / "golden.bin").write_bytes(bytes(ref[sb:sb + nb]))
-        # palette.bin (PNG only) is the game's DISPLAYED boot palette: fixture_palette with phase 11's
+        (build / f"golden_leg{golden_leg}.bin").write_bytes(bytes(ref[sb:sb + nb]))
+        # palette_leg<N>.bin (PNG only) is the game's DISPLAYED boot palette: fixture_palette with phase 11's
         # cursor-0 staging applied, exactly as start_leg + rm_init_leg produce it on-target.
-        (build / "palette.bin").write_bytes(boot_staged_palette(img, palette))
+        (build / f"palette_leg{golden_leg}.bin").write_bytes(boot_staged_palette(img, palette, golden_leg))
 
     # ---- render_road static tables + the geometry const sources + the initial pose ----
     buf_c = int.from_bytes(img[adapter.A_buf_c:adapter.A_buf_c + 4], "big")
@@ -334,7 +345,7 @@ def main():
         f"#define OBJ_LOW_CRASH_ANIM_TBL {low(adapter.A_crash_anim_tbl)}",
         "", "#endif /* RM_GAME_FIXTURE_H */", ""]
     (build / "game_fixture.h").write_text("\n".join(out))
-    also = ", golden.bin, palette.bin" if gen_golden else ""
+    also = f", golden_leg{golden_leg}.bin, palette_leg{golden_leg}.bin" if gen_golden else ""
     print(f"wrote {build/'game_fixture.h'}{also} "
           f"(leg={leg} curve={pose.curve} view_flags={pose.view_flags} seg0={pose.seg_data[0]} "
           f"row_ctr=0x{course.row_ctr:x} read_pos=0x{course.read_pos:x})")

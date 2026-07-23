@@ -95,3 +95,18 @@ def test_bind_leg_course_bases_match_the_adapter():
     mask_offs = [leg * stride + adapter.COURSE_MASK_OFF for leg in range(5)]
     assert stream_offs == [0x5ce0, 0x7ce0, 0x9ce0, 0xbce0, 0xdce0], stream_offs
     assert mask_offs == [0x5d48, 0x7d48, 0x9d48, 0xbd48, 0xdd48], mask_offs
+
+
+def test_golden_leg_count_matches_the_shell():
+    """The golden harness pins one boot frame per leg; the leg it CAN boot is bounded by the shell's leg
+    select. gen_game_fixture.NUM_LEGS (which bounds GOLDEN_LEG and, via run_golden.py's LEGS, the loop)
+    must equal the shell's own leg count IP_LEG_COUNT (src/flow.c) — one source, so the harness can never
+    loop a leg the game cannot start (or skip one it can)."""
+    gen = (adapter.REMASTER / "render/atari/gen_game_fixture.py").read_text()
+    found = re.search(r"^NUM_LEGS = (\d+)", gen, re.M)
+    assert found, "NUM_LEGS not found in gen_game_fixture.py"
+    num_legs = int(found.group(1))
+
+    flow = (adapter.REMASTER / "src/flow.c").read_text()
+    assert num_legs == _define(flow, "IP_LEG_COUNT"), (
+        f"NUM_LEGS ({num_legs}) != the shell's IP_LEG_COUNT — the golden loop and the leg select disagree")

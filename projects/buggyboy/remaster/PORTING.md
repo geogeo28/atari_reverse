@@ -73,7 +73,7 @@ and the scroll pre-build at runtime; the fixture's per-leg `ARENA_COURSE_*_OFF` 
 does — there is NO boot fast path in the shipping build. The frame-0 golden harness (`run_golden.py`)
 needs a deterministic first painted frame, so it builds a SEPARATE variant with `-DGOLDEN_BOOT_LEG=N`:
 that variant skips the leg select on the boot pass and starts leg N directly, drawing + dumping the
-leg-start frame (byte-identical to `golden.bin`). The `game_main.c` `#ifdef BOOT_FAST_LEG` block carries
+leg-start frame (byte-identical to `golden_leg<N>.bin`). The `game_main.c` `#ifdef BOOT_FAST_LEG` block carries
 that fast path and is compiled ONLY when `GOLDEN_BOOT_LEG` (the golden harness) or `GAME_AUTODRIVE` (the
 headless race trace, which can't drive the menu with a dead keyboard) is defined. Coverage seam worth
 naming: the shipping cold-boot leg-select branch (the `#else` of that `#ifdef BOOT_FAST_LEG`) is
@@ -82,8 +82,19 @@ and `run_golden.py` compiles the `BOOT_FAST_LEG` branch (the golden variant skip
 the leg-select-first boot path is on-target-only, proven by that trace. Proven on the 68000
 (see the flow-trace section below): booting into the leg select, its fire starting a leg, a timed-out
 leg reaching the intermission, a full attract cycle (A→B→C→D→restart), and the return to the leg select
-— the whole game loop closes unattended. **Legs 1–4 are playable, but only leg 0 has a golden**
-(`GOLDEN_BOOT_LEG=0`); a per-leg golden is deferred, not attempted here.
+— the whole game loop closes unattended. **All five legs 0–4 now have an on-target golden.**
+`run_golden.py` loops the legs (or takes a single-leg argument for quick iteration): for each leg N it
+builds `GOLDEN.PRG` with `-DGOLDEN_BOOT_LEG=N` and its reference with `GOLDEN_LEG=N`, both derived from
+the ONE loop variable, and byte-compares the boot frame against `golden_leg<N>.bin`. The leg is a
+parameter, not five divergent fixture bakes: the fixture arrays are leg-independent for the byte-compare
+(the palette is an off-image seam that `rm_init_leg` re-stages per leg at boot; `bind_leg` recomputes the
+per-leg stream/mask at runtime), so only the golden render and the informational `GAME_LEG_INDEX` vary
+with the leg — the shipping BUGGYBOY.PRG still boots every leg from ONE binary. The per-leg goldens
+genuinely differ (1624–5002 bytes vs leg 0), so five MATCHes are a real per-leg proof, not five identical
+frames. Runtime ~16 s for the set (~3 s/leg, sequential — the cores don't vary with the leg, but each
+needs a fresh golden render + cross-compile + Hatari run; restructuring the build to share the cores
+across the five is the deferred two-variant refactor, not attempted here). `NUM_LEGS` (the loop bound) is
+pinned == the shell's `IP_LEG_COUNT` by `test_game_fixture.py::test_golden_leg_count_matches_the_shell`.
 
 **Slice D is done: the composition DRIVER is hoisted and given host coverage.** Slice C left the
 sequencing driver (`intermission_cycle` / `run_leg_select` / `main`'s game-over tail) in `game_main.c`,
@@ -156,7 +167,7 @@ program-data SEED (`fixture_highscore`) the shell copies into a mutable `highsco
 as `fixture_hud_text` seeds `hud_text_ram` — the tiny init routine is not run on-target (its output is
 deterministic program data).
 
-Last verified: 2026-07-22. `make test` = **499 passed**; `run_golden.py` = **MATCH** (leg-0 frame-0 golden). Section 12's **object / marker
+Last verified: 2026-07-23. `make test` = **540 passed**; `run_golden.py` = **MATCH on all five legs 0–4** (each leg's frame-0 golden). Section 12's **object / marker
 ring** is ported (`CourseRing` in `include/game.h`, `rm_road_course_advance` in `src/course.c`) and
 its four aliased consumers are unified onto it (see below). **Slice 2 is done**: the course-event
 engine is wired into `rm_player_update`'s §6 event path and the frame loop (leg drive + game), the
