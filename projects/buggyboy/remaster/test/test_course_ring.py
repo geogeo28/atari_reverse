@@ -213,3 +213,27 @@ def test_python_constants_match_the_c():
     inter_c = _defines("src/intermission.c", r"^#define\s+(POLL_\w+)\s+(\w+)\s*(?:/\*.*)?$")
     assert equiv.adapter.POLL_ENTRIES == inter_c["POLL_ENTRIES"]
     assert equiv.adapter.POLL_ENTRY_BYTES == inter_c["POLL_ENTRY"]
+
+    # The between-legs FLOW state machine's constant mirrors (adapter.py copies the high-score geometry
+    # from src/flow.c and the return codes / attract-loop seeds from include/flow.h by hand). Pin each
+    # equal to the C so a drifted copy can't make the flow differential (test_flow_machine) green against
+    # a stale constant — in particular the INT_C_FRAMES 0x96 boundary, whose Phase-C mirror loop is a
+    # boundary-count only and cannot itself catch a drift (see equiv.compare_attract_cycle).
+    flow_c = _defines("src/flow.c", r"^#define\s+(HS_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+    assert equiv.adapter.HIGHSCORE_ROWS == flow_c["HS_ROWS"]
+    assert equiv.adapter.HIGHSCORE_ROW == flow_c["HS_ROW"]
+    assert equiv.adapter.HIGHSCORE_LEG_STRIDE == flow_c["HS_LEG_STRIDE"]
+    assert equiv.adapter.HS_SCORE_REC_BYTES == flow_c["HS_RECORD_BYTES"]
+    flow_h = _defines("include/flow.h",
+                      r"^#define\s+(RM_ABORT_CODE|RM_INT_A_\w+|RM_INT_D_\w+|INT_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+    assert equiv.adapter.RM_ABORT_CODE == flow_h["RM_ABORT_CODE"]
+    assert equiv.adapter.RM_INT_A_CONTINUE == flow_h["RM_INT_A_CONTINUE"]
+    assert equiv.adapter.RM_INT_A_ABORT == flow_h["RM_INT_A_ABORT"]
+    assert equiv.adapter.RM_INT_A_BREAK == flow_h["RM_INT_A_BREAK"]
+    assert equiv.adapter.RM_INT_D_DRAW == flow_h["RM_INT_D_DRAW"]
+    assert equiv.adapter.RM_INT_D_ADVANCE == flow_h["RM_INT_D_ADVANCE"]
+    assert equiv.adapter.RM_INT_D_RESTART == flow_h["RM_INT_D_RESTART"]
+    assert equiv.adapter.INT_SCROLL_INIT == flow_h["INT_SCROLL_INIT"]
+    assert equiv.adapter.INT_TIMER_INIT == flow_h["INT_TIMER_INIT"]
+    assert equiv.adapter.INT_FRAME_INIT == flow_h["INT_FRAME_INIT"]
+    assert equiv.adapter.INT_C_FRAMES == flow_h["INT_C_FRAMES"]

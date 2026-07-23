@@ -311,6 +311,34 @@ FLOW_ROW_STR_OFF = 0x848                            # buf_a: results row-2 per-l
 # The digit/letter sprite window is the SAME as the HUD's — reuse NUM_GLYPH_BUF_OFF / NUM_SPRITES_BYTES.
 FLOW_DRAW_BUF_ALT = 0x80000                        # flip_idx=4 test buffer (clear of the 0x7ee08 arena)
 
+# ---- between-legs FLOW state machine (slice B) ----
+# The flow's own counters (recreate's scalar globals) the FlowState models; leg_index / input_state /
+# input_prev / game_over_flag already have addresses above.
+A_int_frame_hi = 0x18ca2                            # Phase-D per-leg dwell counter
+A_int_frame = 0x18ca4                               # Phase-A scroll dwell / Phase-C demo frame counter
+A_int_timer = 0x18ca6                               # free-running Phase-A timer (gates the scroll)
+A_leg_select = 0x18c36                              # attract leg selector (0-4); copied to leg_index
+A_idle_countdown = 0x18c66                          # attract idle timer; expiry -> intermission
+A_leg_dec_delay = 0x18c62                           # leg-select auto-repeat delay (up/left, previous leg)
+A_leg_inc_delay = 0x18c64                           # leg-select auto-repeat delay (down/right, next leg)
+A_results_mode = 0x18c9e                            # update_highscore: 0 = made the table, 2 = missed
+A_hiscore_pos = 0x18c9c                             # update_highscore: 1-based rank reached (0 = none)
+A_countdown_timer = 0x18262                         # name-entry "TIME nn" countdown seed (deferred tail)
+A_countdown_sub = 0x18264                           # its per-frame sub-divider
+A_default_scores = 0x184e6                          # init_scoretable's 9 x 2-digit default scores
+HIGHSCORE_ROWS = 9                                  # rows per leg table
+HIGHSCORE_ROW = 0xe                                 # bytes per row
+HIGHSCORE_LEG_STRIDE = 0x80                         # bytes per leg's table (leg_index << 7)
+HS_SCORE_REC_OFF = 0xda                             # score record = hud_text + this (image 0x1824c);
+HS_SCORE_REC_BYTES = 12                             #   6 ASCII digits + 6 name/pad bytes, ends at 0x18258
+# Phase-step / abort return codes (mirror include/flow.h).
+RM_ABORT_CODE = 0x0d
+RM_INT_A_CONTINUE, RM_INT_A_ABORT, RM_INT_A_BREAK = 0, 1, 2
+RM_INT_D_DRAW, RM_INT_D_ADVANCE, RM_INT_D_RESTART = 0, 1, 2
+# Attract-loop prologue seeds (intermission 0x27a0) + Phase-C length (mirror recreate).
+INT_SCROLL_INIT, INT_TIMER_INIT, INT_FRAME_INIT = 0x63, 0x3b, 0x14
+INT_C_FRAMES = 0x96
+
 
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
 A_color_pairs = 0x15afa                           # 16 colours x 8-byte fill
@@ -1118,3 +1146,50 @@ def results_assets(image):
         ctypes.cast(row_names, p), ctypes.cast(leg_digits, p))
     return assets, (color_pairs, font, num_sprites, num_glyph_tbl, gfx, title, row_names,
                     leg_digits, palette)
+
+
+# ---- between-legs FLOW state machine (slice B) ----
+
+class FlowState(ctypes.Structure):
+    _fields_ = [("int_timer", ctypes.c_int16), ("int_scroll", ctypes.c_int16),
+                ("int_frame", ctypes.c_int16), ("int_frame_hi", ctypes.c_int16),
+                ("leg_select", ctypes.c_uint16), ("leg_index", ctypes.c_uint16),
+                ("idle_countdown", ctypes.c_uint16), ("leg_dec_delay", ctypes.c_int16),
+                ("leg_inc_delay", ctypes.c_int16), ("game_over_flag", ctypes.c_uint16),
+                ("input_state", ctypes.c_uint16), ("input_prev", ctypes.c_uint16),
+                ("results_mode", ctypes.c_uint16), ("hiscore_pos", ctypes.c_uint16),
+                ("countdown_timer", ctypes.c_uint16), ("countdown_sub", ctypes.c_uint16)]
+
+
+# (native FlowState field, image address, signed) — the flow scalars the differential compares.
+FLOW_FIELDS = (
+    ("int_timer", A_int_timer, True), ("int_scroll", A_int_scroll, True),
+    ("int_frame", A_int_frame, True), ("int_frame_hi", A_int_frame_hi, True),
+    ("leg_select", A_leg_select, False), ("leg_index", A_leg_index, False),
+    ("idle_countdown", A_idle_countdown, False), ("leg_dec_delay", A_leg_dec_delay, True),
+    ("leg_inc_delay", A_leg_inc_delay, True), ("game_over_flag", A_game_over_flag, False),
+    ("input_state", A_input_state, False), ("input_prev", A_input_prev, False),
+    ("results_mode", A_results_mode, False), ("hiscore_pos", A_hiscore_pos, False),
+    ("countdown_timer", A_countdown_timer, False), ("countdown_sub", A_countdown_sub, False),
+)
+
+
+def flow_state(image):
+    """The flow's own counters (recreate's scalar globals) read out of the image, as a FlowState."""
+    fs = FlowState()
+    for name, addr, signed in FLOW_FIELDS:
+        setattr(fs, name, _i16(image, addr) if signed else ((image[addr] << 8) | image[addr + 1]))
+    return fs
+
+
+def highscore_buffer(image):
+    """The persistent 0x280 hi-score table as a mutable ctypes buffer (update_highscore writes it)."""
+    return (ctypes.c_uint8 * FLOW_HIGHSCORE_BYTES).from_buffer_copy(
+        bytes(image[A_highscore_table:A_highscore_table + FLOW_HIGHSCORE_BYTES]))
+
+
+def score_record(image):
+    """The 12-byte score+name record (the shared HUD-text region's score digits) as a mutable buffer.
+    update_highscore blanks its leading zero and copies it into the winning row."""
+    lo = A_hud_text + HS_SCORE_REC_OFF
+    return (ctypes.c_uint8 * HS_SCORE_REC_BYTES).from_buffer_copy(bytes(image[lo:lo + HS_SCORE_REC_BYTES]))

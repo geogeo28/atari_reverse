@@ -120,6 +120,21 @@ def _lib():
     lib.rm_draw_leg_results.argtypes = [ctypes.POINTER(adapter.Framebuffer),
                                         ctypes.POINTER(adapter.RmResultsAssets), ctypes.c_uint16]
     lib.rm_draw_leg_results.restype = None
+    # ---- flow state machine (slice B) ----
+    fsp = ctypes.POINTER(adapter.FlowState)
+    lib.rm_check_abort.argtypes = [ctypes.c_uint16, ctypes.c_uint16]
+    lib.rm_check_abort.restype = ctypes.c_uint32
+    for fn in (lib.rm_int_stepA, lib.rm_int_stepD_counter):
+        fn.argtypes = [fsp]
+        fn.restype = ctypes.c_int
+    lib.rm_int_phaseB_leg.argtypes = [fsp]
+    lib.rm_int_phaseB_leg.restype = None
+    lib.rm_update_highscore.argtypes = [fsp, u8p, u8p]
+    lib.rm_update_highscore.restype = None
+    lib.rm_init_playfield_nav.argtypes = [fsp]
+    lib.rm_init_playfield_nav.restype = None
+    lib.rm_init_playfield_fire.argtypes = [fsp]
+    lib.rm_init_playfield_fire.restype = ctypes.c_bool
     return lib
 
 
@@ -1236,6 +1251,51 @@ class _Candidate:
         self.lib.rm_crash_fx_update(ctypes.byref(self.ctx))
 
 
+def _abort_signed(abort_flag):
+    """Sign-extend the 16-bit abort_flag word (negative arms the leg-end)."""
+    return abort_flag - 0x10000 if abort_flag & 0x8000 else abort_flag
+
+
+def _drive_frame(cand, state, buf, game_update, in_bits):
+    """One free-running drive frame in lockstep: advance the candidate, then run the same cores
+    recreate's frame runs (g_game_update + the road-scroll blit + HUD phase-8 crash-fx) on the reference
+    image. Shared by compare_leg_drive and compare_game_flow."""
+    cand.step(in_bits)
+    _w16(state, adapter.A_input_state, in_bits)
+    game_update(buf)
+    _run_pipeline(state, ("g_blit_road_scroll",))
+    _ref_crash_fx(state)                                  # HUD phase 8 (mirrors cand.step's tail)
+
+
+def _drive_mismatches(frame, cand, state):
+    """Every owned surface compared for one free-running drive frame: the road control table, the course
+    ring, the PlayerState / CourseState scalars, the view-wrap flag, and the event-owned state
+    (EventState + GobjPrefixState + the HUD-text score digits). Returns [(frame, field, cand, ref)]."""
+    out = []
+    lo, n = adapter.A_road_curve_tbl, adapter.RM_CTRL_BYTES
+    d = _first_diff("ctrl", bytes(cand.ctrl)[:n], bytes(state[lo:lo + n]))
+    if d:
+        out.append((frame,) + d)
+    out.extend(_ring_mismatches(frame, cand.ring, state))
+    for name, addr, signed in PLAYER_FIELDS + PLAYER_SCRIPT_FIELDS + PLAYER_EVENT_FIELDS:
+        ref = _i16s(state, addr) if signed else _r16(state, addr)
+        cand_val = getattr(cand.player, name)
+        if cand_val != ref:
+            out.append((frame, name, cand_val, ref))
+    for name, addr in PLAYER_SCRIPT_BYTE_FIELDS:
+        if getattr(cand.player, name) != state[addr]:
+            out.append((frame, name, getattr(cand.player, name), state[addr]))
+    for name, addr in COURSE_FIELDS:
+        ref = _r16(state, addr)
+        if getattr(cand.course, name) != ref:
+            out.append((frame, name, getattr(cand.course, name), ref))
+    if (_r16(state, adapter.A_view_wrap_flag) != 0) != bool(cand.player.view_wrapped):
+        out.append((frame, "view_wrapped", bool(cand.player.view_wrapped),
+                    _r16(state, adapter.A_view_wrap_flag) != 0))
+    out.extend((frame,) + m for m in _event_state_mismatches(cand, state))
+    return out
+
+
 def compare_leg_drive(lib, image, inputs, native_init_pre=None):
     """Drive a leg free-running on both sides and check remaster tracks recreate scalar for scalar.
 
@@ -1281,18 +1341,13 @@ def compare_leg_drive(lib, image, inputs, native_init_pre=None):
         was_locked = cand.player.collision_lock
         crash_bars_before = cand.ev.crash_bars
         read_pos_before = cand.course.read_pos
-        cand.step(in_bits)
+        _drive_frame(cand, state, buf, game_update, in_bits)
         refilled = cand.player.view_wrapped and cand.course.read_pos != read_pos_before
         aged = cand.player.view_wrapped and not refilled
 
-        _w16(state, adapter.A_input_state, in_bits)
-        game_update(buf)
-        _run_pipeline(state, ("g_blit_road_scroll",))
-        _ref_crash_fx(state)                                      # HUD phase 8 (mirrors cand.step's tail)
-
         # Stats reflect what the CANDIDATE (running the real event engine) did, not a handover.
         stats["wraps"] += _r16(state, adapter.A_view_wrap_flag) != 0
-        abort = cand.ev.abort_flag - 0x10000 if cand.ev.abort_flag & 0x8000 else cand.ev.abort_flag
+        abort = _abort_signed(cand.ev.abort_flag)
         stats["abort_armed"] += cand.ev.abort_flag != 0
         stats["leg_over"] += abort < 0                             # abort_flag negative -> leg ends
         stats["armed"] += was_locked == 0 and cand.player.collision_lock != 0   # candidate armed a crash
@@ -1307,34 +1362,11 @@ def compare_leg_drive(lib, image, inputs, native_init_pre=None):
         if refilled:
             _count_ring_branches(state, cand.ring.row[0], cand.course.read_pos, stats)
 
-        lo, n = adapter.A_road_curve_tbl, adapter.RM_CTRL_BYTES
-        d = _first_diff("ctrl", bytes(cand.ctrl)[:n], bytes(state[lo:lo + n]))
-        if d:
-            mismatches.append((frame,) + d)
-        mismatches.extend(_ring_mismatches(frame, cand.ring, state))
         stats["ring_checked"] += 1
-
-        for name, addr, signed in PLAYER_FIELDS + PLAYER_SCRIPT_FIELDS + PLAYER_EVENT_FIELDS:
-            ref = _i16s(state, addr) if signed else _r16(state, addr)
-            cand_val = getattr(cand.player, name)
-            if cand_val != ref:
-                mismatches.append((frame, name, cand_val, ref))
-        for name, addr in PLAYER_SCRIPT_BYTE_FIELDS:
-            if getattr(cand.player, name) != state[addr]:
-                mismatches.append((frame, name, getattr(cand.player, name), state[addr]))
-        for name, addr in COURSE_FIELDS:
-            ref = _r16(state, addr)
-            if getattr(cand.course, name) != ref:
-                mismatches.append((frame, name, getattr(cand.course, name), ref))
-        if (_r16(state, adapter.A_view_wrap_flag) != 0) != bool(cand.player.view_wrapped):
-            mismatches.append((frame, "view_wrapped", bool(cand.player.view_wrapped),
-                               _r16(state, adapter.A_view_wrap_flag) != 0))
-
-        # The event surfaces the dispatch now runs on the candidate too (EventState scalars + the
-        # dashboard marker + the flag-bit cursor; the GobjPrefixState bonus / flag / marker-decay
-        # counters; the score digits in the shared HUD-text window) — the same portion the directed
-        # dispatch / course-events checks compare, via the shared _event_state_mismatches helper.
-        mismatches.extend((frame,) + m for m in _event_state_mismatches(cand, state))
+        # Every owned surface: the ctrl table, the ring, the player/course scalars, the view-wrap flag,
+        # and the event-owned state (the same portion the directed dispatch / course-events checks
+        # compare, via the shared _event_state_mismatches helper). Shared with compare_game_flow.
+        mismatches.extend(_drive_mismatches(frame, cand, state))
     return mismatches, stats
 
 
@@ -1591,7 +1623,11 @@ def flow_background(leg=0, warmup=60, scroll=None, flip=0):
     """A mid-race image staged for the between-legs draw surfaces: run init_scoretable (populate the
     hi-score table draw_intermission scrolls — the prepared image leaves it zero), optionally select
     the flip=4 draw buffer, and poke int_scroll. Returns the image bytearray."""
-    state = bench_frame.mid_race_state(leg, warmup)
+    base = _EVENT_BASE_CACHE.get((leg, warmup))
+    if base is None:
+        base = bytes(bench_frame.mid_race_state(leg, warmup))
+        _EVENT_BASE_CACHE[(leg, warmup)] = base
+    state = bytearray(base)
     _bind("g_init_scoretable")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state))
     if flip == 4:
         state[adapter.A_physbase_tbl + 4:adapter.A_physbase_tbl + 8] = \
@@ -1681,3 +1717,322 @@ def compare_draw_intermission(lib, image):
     fb = _flow_fb(base)
     lib.rm_draw_intermission(ctypes.byref(fb), ctypes.byref(a), scroll)
     return _coverage_fb(bytes(fb.px), base, ref_fb)
+
+
+# ---- between-legs FLOW state machine (slice B) ----
+# The flow's LOGIC (phase-counter arithmetic, the abort poll, the high-score insert, the leg-select
+# nav) is native C over FlowState; the recreate references are the verified g_int_* / g_check_abort /
+# g_update_highscore / g_init_playfield_* exports, run in-image. The compared surface is the flow's
+# scalar counters (and, for update_highscore, the 0x280 table + the mutated score record).
+
+_FLOW_FIELD = {name: (addr, signed) for name, addr, signed in adapter.FLOW_FIELDS}
+
+
+def _flow_mismatches(fs, ref, names):
+    """Compare the named FlowState fields against the reference image. Returns [(name, cand, ref)]."""
+    out = []
+    for name in names:
+        addr, signed = _FLOW_FIELD[name]
+        r = _i16s(ref, addr) if signed else _r16(ref, addr)
+        c = getattr(fs, name)
+        if not signed:
+            c &= 0xffff
+        if c != r:
+            out.append((name, c, r))
+    return out
+
+
+def _bind_ret(name, restype, nargs=0):
+    """Bind a recreate g_ export taking the image (+ nargs uint32 extra args) with a return type."""
+    fn = getattr(bench_frame.harness._lib, name)
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8)] + [ctypes.c_uint32] * nargs
+    fn.restype = restype
+    return fn
+
+
+_BLANK_IMAGE = None
+
+
+def _stage_input_ref(gname, restype, input_state, input_prev):
+    """Stage the two input words into the shared blank image and run recreate's g_<gname>(image) — the
+    common prologue of the abort / fire leaf comparisons (both read only input_state/input_prev). Returns
+    the reference return value."""
+    global _BLANK_IMAGE
+    if _BLANK_IMAGE is None:
+        _BLANK_IMAGE = bytearray(bench_frame.IMAGE_SIZE)
+    state = _BLANK_IMAGE
+    _w16(state, adapter.A_input_state, input_state & 0xffff)
+    _w16(state, adapter.A_input_prev, input_prev & 0xffff)
+    return _bind_ret(gname, restype)((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state))
+
+
+def compare_check_abort(lib, input_state, input_prev):
+    """recreate g_check_abort vs remaster rm_check_abort over one (input_state, input_prev) pair.
+    Returns (candidate, reference) — both the 32-bit d0 value (abort code / swapped console read)."""
+    ref = _stage_input_ref("g_check_abort", ctypes.c_uint32, input_state, input_prev)
+    cand = lib.rm_check_abort(input_state & 0xffff, input_prev & 0xffff)
+    return cand & 0xffffffff, ref & 0xffffffff
+
+
+def compare_int_stepA(lib, image):
+    """recreate g_int_stepA vs remaster rm_int_stepA on the same staged counters. Compares the three
+    Phase-A counter words + the 3-way return code (the oracle's draw is a seam we don't diff). Returns
+    (mismatches, ret_cand, ret_ref)."""
+    ref = bytearray(image)
+    ret_r = _bind_ret("g_int_stepA", ctypes.c_int)(
+        (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+    fs = adapter.flow_state(image)
+    ret_c = lib.rm_int_stepA(ctypes.byref(fs))
+    bad = _flow_mismatches(fs, ref, ("int_timer", "int_scroll", "int_frame"))
+    return bad, ret_c, ret_r
+
+
+def compare_int_phaseB_leg(lib, image):
+    """recreate g_int_phaseB_leg vs remaster rm_int_phaseB_leg. Compares leg_select + leg_index."""
+    ref = bytearray(image)
+    _bind("g_int_phaseB_leg")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+    fs = adapter.flow_state(image)
+    lib.rm_int_phaseB_leg(ctypes.byref(fs))
+    return _flow_mismatches(fs, ref, ("leg_select", "leg_index"))
+
+
+def compare_int_stepD_counter(lib, image):
+    """recreate g_int_stepD_counter vs remaster rm_int_stepD_counter. Compares int_frame_hi +
+    leg_index + the 3-way return (the oracle's init_leg_dash on ADVANCE is the host's seam, not diffed).
+    Returns (mismatches, ret_cand, ret_ref)."""
+    ref = bytearray(image)
+    ret_r = _bind_ret("g_int_stepD_counter", ctypes.c_int)(
+        (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+    fs = adapter.flow_state(image)
+    ret_c = lib.rm_int_stepD_counter(ctypes.byref(fs))
+    bad = _flow_mismatches(fs, ref, ("int_frame_hi", "leg_index"))
+    return bad, ret_c, ret_r
+
+
+def compare_update_highscore(lib, image):
+    """recreate g_update_highscore (prefix checkpoint) vs remaster rm_update_highscore on a pre-staged
+    image (score record + leg table + leg_index poked by the caller). Compares the whole 0x280 table,
+    the mutated 12-byte score record, and results_mode / hiscore_pos / countdown_timer / countdown_sub.
+    Returns a list of (name, candidate, reference)."""
+    ref = bytearray(image)
+    _bind("g_update_highscore")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+
+    fs = adapter.flow_state(image)
+    hs = adapter.highscore_buffer(image)
+    score = adapter.score_record(image)
+    lib.rm_update_highscore(ctypes.byref(fs), hs, score)
+
+    out = []
+    d = _first_diff("table", bytes(hs),
+                    bytes(ref[adapter.A_highscore_table:adapter.A_highscore_table
+                              + adapter.FLOW_HIGHSCORE_BYTES]))
+    if d:
+        out.append(d)
+    rec_lo = adapter.A_hud_text + adapter.HS_SCORE_REC_OFF
+    d = _first_diff("score", bytes(score), bytes(ref[rec_lo:rec_lo + adapter.HS_SCORE_REC_BYTES]))
+    if d:
+        out.append(d)
+    out.extend(_flow_mismatches(fs, ref,
+               ("results_mode", "hiscore_pos", "countdown_timer", "countdown_sub")))
+    return out
+
+
+def compare_init_playfield_nav(lib, image):
+    """recreate g_init_playfield_nav vs remaster rm_init_playfield_nav. Compares leg_index, the two
+    auto-repeat delays and the idle countdown (the input-change reload)."""
+    ref = bytearray(image)
+    _bind("g_init_playfield_nav")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+    fs = adapter.flow_state(image)
+    lib.rm_init_playfield_nav(ctypes.byref(fs))
+    return _flow_mismatches(fs, ref,
+                            ("leg_index", "leg_dec_delay", "leg_inc_delay", "idle_countdown"))
+
+
+def compare_init_playfield_fire(lib, input_state, input_prev):
+    """recreate g_init_playfield_fire vs remaster rm_init_playfield_fire. Returns (candidate, reference)
+    as 0/1 (the fresh-fire-press verdict)."""
+    ref = _stage_input_ref("g_init_playfield_fire", ctypes.c_int, input_state, input_prev)
+    fs = adapter.FlowState()
+    fs.input_state, fs.input_prev = input_state & 0xffff, input_prev & 0xffff
+    cand = lib.rm_init_playfield_fire(ctypes.byref(fs))
+    return int(bool(cand)), int(bool(ref))
+
+
+# ---- composed attract cycle (intermission phases A -> D, host-driven vs the oracle slices) ----
+# g_intermission never returns (it loops forever except on abort), so the whole loop cannot run to
+# rts — exactly as recreate's own test enters each PC. The composed differential instead DRIVES the
+# candidate FlowState through g_intermission's control structure (prologue -> Phase A break -> Phase B
+# pick -> Phase C's frame count -> Phase D carousel -> restart).
+#
+# What each phase actually pins, stated honestly:
+#   Phases A / B / D are ORACLE-LOCKSTEPPED: every rm phase step (rm_int_stepA / _phaseB_leg /
+#     _stepD_counter) runs beside the matching g_int_* slice on a reference image and the counters +
+#     return code are compared. Phase A's full ~9000-frame scroll-out is not run (each frame draws); a
+#     handful of lockstep frames pin the loop body, then the counters jump to the break edge where BOTH
+#     must produce RM_INT_A_BREAK. Phase D locksteps the whole carousel.
+#   Phase C is a BOUNDARY-COUNT ONLY, not an oracle diff: the block is a pure-Python mirror of
+#     g_intermission's inline 0x96-frame count, run identically on both "sides", so it cannot itself
+#     fail — its only guard is that the 0x96 magic is the pinned INT_C_FRAMES constant (pinned equal to
+#     the C #define by test_course_ring.test_python_constants_match_the_c). The demo pipeline Phase C
+#     runs is pinned SEPARATELY and for real by the leg drives (compare_leg_drive / test_leg_drive);
+#     this cycle does not re-verify it.
+# The Vsync/palette/flip/sound are off-image seams (see flow.h).
+
+def compare_attract_cycle(lib, image, phaseA_frames=24):
+    """Drive one full attract cycle's flow-counter trajectory, candidate (rm_int_*) vs oracle
+    (g_int_*), and return (mismatches, stats)."""
+    ref = bytearray(image)
+    _w16(ref, adapter.A_input_state, 0)            # no abort during the scroll (input == prev)
+    _w16(ref, adapter.A_input_prev, 0)
+    stepA = _bind_ret("g_int_stepA", ctypes.c_int)
+    stepD = _bind_ret("g_int_stepD_counter", ctypes.c_int)
+    phaseB = _bind("g_int_phaseB_leg")
+    rbuf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref)
+
+    fs = adapter.flow_state(ref)
+    mism, stats = [], dict(phaseA=0, breakA=0, phaseD=0, advances=0, restart=0)
+
+    def prologue():
+        for tgt, val in (("int_frame", adapter.INT_FRAME_INIT), ("int_timer", adapter.INT_TIMER_INIT),
+                         ("int_scroll", adapter.INT_SCROLL_INIT)):
+            setattr(fs, tgt, val)
+            _w16(ref, _FLOW_FIELD[tgt][0], val)
+
+    # Prologue (0x27a0).
+    prologue()
+
+    # Phase A (0x27cc): lockstep a handful of scroll frames, then jump to the break edge.
+    for _ in range(phaseA_frames):
+        ret_r = stepA(rbuf)
+        ret_c = lib.rm_int_stepA(ctypes.byref(fs))
+        stats["phaseA"] += 1
+        if ret_c != ret_r:
+            mism.append(("phaseA.ret", ret_c, ret_r))
+        mism.extend(("phaseA." + n, c, r)
+                    for n, c, r in _flow_mismatches(fs, ref, ("int_timer", "int_scroll", "int_frame")))
+        assert ret_r != adapter.RM_INT_A_BREAK, "phase A broke before the frame cap (unexpected)"
+    # Jump both counters to the break edge: scroll underflow + dwell exhausted, timer in the gate.
+    for tgt, val in (("int_scroll", 0), ("int_frame", 0), ("int_timer", 0x50)):
+        setattr(fs, tgt, val)
+        _w16(ref, _FLOW_FIELD[tgt][0], val)
+    ret_r, ret_c = stepA(rbuf), lib.rm_int_stepA(ctypes.byref(fs))
+    stats["breakA"] = int(ret_c == adapter.RM_INT_A_BREAK)
+    if not (ret_c == ret_r == adapter.RM_INT_A_BREAK):
+        mism.append(("phaseA.break_ret", ret_c, ret_r))
+    mism.extend(("phaseA.break." + n, c, r)
+                for n, c, r in _flow_mismatches(fs, ref, ("int_scroll", "int_frame")))
+
+    # Phase B (0x27fe): pick the demo leg.
+    phaseB(rbuf)
+    lib.rm_int_phaseB_leg(ctypes.byref(fs))
+    mism.extend(("phaseB." + n, c, r) for n, c, r in _flow_mismatches(fs, ref, ("leg_select", "leg_index")))
+
+    # Phase C (0x285e): the demo runs INT_C_FRAMES frames, ticking int_frame from 0 (the clr.l zeroes
+    # the int_frame_hi/int_frame pair). This is a BOUNDARY-COUNT ONLY — a pure-Python mirror of
+    # g_intermission's inline count run identically on both "sides", so it cannot fail on its own; its
+    # value is that the 0x96 boundary lives in the pinned INT_C_FRAMES constant (== the C #define, see
+    # test_python_constants_match_the_c). The demo pipeline itself is pinned separately by the leg drives.
+    fs.int_frame_hi = fs.int_frame = 0
+    _w16(ref, adapter.A_int_frame_hi, 0)
+    _w16(ref, adapter.A_int_frame, 0)
+    c_frames = 0
+    while c_frames <= adapter.INT_C_FRAMES + 4:
+        fs.int_frame = (fs.int_frame + 1) & 0xffff
+        _w16(ref, adapter.A_int_frame, (_r16(ref, adapter.A_int_frame) + 1) & 0xffff)
+        c_frames += 1
+        if fs.int_frame >= adapter.INT_C_FRAMES:       # (int16)(f - 0x96) >= 0; f stays small here
+            break
+    if c_frames != adapter.INT_C_FRAMES or fs.int_frame != _r16(ref, adapter.A_int_frame):
+        mism.append(("phaseC.frames", c_frames, adapter.INT_C_FRAMES))
+
+    # Phase D (0x2894): the results carousel — leg_index starts 0, dwell INT_D_DWELL frames per leg,
+    # advancing until every leg has shown, then RESTART. Lockstep the counter slice over the whole
+    # carousel (cheap; the oracle's init_leg_dash on ADVANCE is fully staged by flow_background).
+    fs.int_frame_hi = fs.leg_index = 0
+    _w16(ref, adapter.A_int_frame_hi, 0)
+    _w16(ref, adapter.A_leg_index, 0)
+    for _ in range(adapter.INT_C_FRAMES + adapter.RM_INT_D_RESTART):   # generous cap
+        ret_r = stepD(rbuf)
+        ret_c = lib.rm_int_stepD_counter(ctypes.byref(fs))
+        stats["phaseD"] += 1
+        stats["advances"] += int(ret_c == adapter.RM_INT_D_ADVANCE)
+        if ret_c != ret_r:
+            mism.append(("phaseD.ret", ret_c, ret_r))
+        mism.extend(("phaseD." + n, c, r)
+                    for n, c, r in _flow_mismatches(fs, ref, ("int_frame_hi", "leg_index")))
+        if ret_c == adapter.RM_INT_D_RESTART:
+            stats["restart"] = 1
+            break
+    return mism, stats
+
+
+# ---- end-to-end game-flow drive (leg end -> update_highscore -> game_over++ -> intermission entry) ----
+# The sequence main takes when the race loop breaks (decomp.c main @0x10100:286-317): a leg ends
+# (abort_flag < 0), then update_highscore ranks the score, game_over_flag is bumped, and intermission
+# runs. This drives an idle leg to time-out on both sides (the pinned tally arms abort_flag), then
+# applies that break sequence and compares the surfaces it touches: the 0x280 hi-score table, the
+# mutated score record, results_mode / hiscore_pos, and game_over_flag. (The intermission the flow
+# enters next is pinned separately by compare_attract_cycle.)
+
+def compare_game_flow(lib, leg, frames=140, time_left=6):
+    """Drive leg `leg` to a time-out leg-end, run the main-loop break sequence on both sides, and
+    return (mismatches, stats)."""
+    image = leg_start_background(leg)
+    _bind("g_init_scoretable")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(image))
+    _w16(image, adapter.A_time_left, time_left)
+    seeded = bytearray(image)                       # the table + score before the drive
+    state = bytearray(image)
+    buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
+    game_update = _bind("g_game_update")
+    cand = _Candidate(lib, state)
+
+    ref_end = cand_end = -1
+    stats = dict(frames=0, ref_end=-1, cand_end=-1)
+    mism = []
+    for f in range(frames):
+        # Same free-running drive as compare_leg_drive, checked scalar-for-scalar every frame so a
+        # divergence on the run-up to the leg-end surfaces here, not just in the break sequence.
+        _drive_frame(cand, state, buf, game_update, 0)
+        stats["frames"] += 1
+        mism.extend(_drive_mismatches(f, cand, state))
+        if _i16s(state, adapter.A_abort_flag) < 0 and ref_end < 0:
+            ref_end = f
+        if _abort_signed(cand.ev.abort_flag) < 0 and cand_end < 0:
+            cand_end = f
+        if ref_end >= 0 and cand_end >= 0:
+            break
+    stats["ref_end"], stats["cand_end"] = ref_end, cand_end
+
+    if ref_end != cand_end:
+        mism.append(("leg_end_frame", cand_end, ref_end))
+
+    # --- the break sequence (main 286-317) ---
+    # Reference: update_highscore ranks the evolved score into the seeded table, then game_over++.
+    _bind("g_update_highscore")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state))
+    _w16(state, adapter.A_game_over_flag, (_r16(state, adapter.A_game_over_flag) + 1) & 0xffff)
+
+    # Candidate: rm_update_highscore over the seeded table + the candidate's own evolved score digits.
+    fs = adapter.flow_state(seeded)
+    fs.leg_index = cand.leg
+    hs = adapter.highscore_buffer(seeded)
+    score = (ctypes.c_uint8 * adapter.HS_SCORE_REC_BYTES)(
+        *bytes(cand.hud_text)[adapter.HS_SCORE_REC_OFF:adapter.HS_SCORE_REC_OFF + adapter.HS_SCORE_REC_BYTES])
+    lib.rm_update_highscore(ctypes.byref(fs), hs, score)
+    lib.rm_flow_game_over_enter(ctypes.byref(fs))   # the real C owner of main's game_over_flag++
+    # (The intermission the flow enters next — its prologue seeds + phases A-D — is pinned by
+    # compare_attract_cycle; here the surfaces are the ones this break sequence itself writes.)
+
+    d = _first_diff("table", bytes(hs),
+                    bytes(state[adapter.A_highscore_table:adapter.A_highscore_table
+                                + adapter.FLOW_HIGHSCORE_BYTES]))
+    if d:
+        mism.append(d)
+    rec_lo = adapter.A_hud_text + adapter.HS_SCORE_REC_OFF
+    d = _first_diff("score", bytes(score), bytes(state[rec_lo:rec_lo + adapter.HS_SCORE_REC_BYTES]))
+    if d:
+        mism.append(d)
+    for name in ("results_mode", "hiscore_pos", "game_over_flag"):
+        r = _r16(state, _FLOW_FIELD[name][0])
+        if (getattr(fs, name) & 0xffff) != r:
+            mism.append((name, getattr(fs, name) & 0xffff, r))
+    return mism, stats

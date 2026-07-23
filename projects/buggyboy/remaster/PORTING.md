@@ -44,7 +44,22 @@ self-driving game has. Three traps it cost real time to find:
 
 ## State of play — read this first if you are picking the work up
 
-Last verified: 2026-07-22. `make test` = **448 passed**; `run_demo.py` = **MATCH**. Section 12's **object / marker
+**The between-legs LEG / GAME FLOW is now composed host-side** (flow slice B, `src/flow.c` + `FlowState`
+in `include/flow.h`): the attract loop's phase-counter arithmetic (`rm_int_stepA`/`_phaseB_leg`/
+`_stepD_counter`), the abort poll (`rm_check_abort`), the high-score insert (`rm_update_highscore`,
+verified to recreate's prefix checkpoint — the ranking / row-shift / insert; the IKBD name-entry tail
+stays deferred), and the leg-select nav (`rm_init_playfield_nav`/`_fire`). Each is differential vs
+recreate's g_*, and two composed checks pin the wiring: an attract CYCLE (phases **A/B/D lockstep
+against the oracle slices**; **Phase C is a boundary-count only** — a pure-Python mirror of the
+0x96-frame count that cannot itself fail, guarded by the pinned `INT_C_FRAMES` constant, with the demo
+pipeline pinned separately by the leg drives) and an end-to-end GAME-FLOW drive (a leg times out →
+`update_highscore` → `game_over_flag`++ → intermission entry, matching main's loop-break path). The flow is host-side —
+`FlowState` is the composition's owner, exactly as `_Candidate` owns the leg-drive structs — and the
+Vsync/palette/flip/sound are off-image seams. **What is left is slice C**: the on-target game shell
+(the demo/game .PRG that runs `init_playfield` → race → this flow), which replaces the demo's
+current leg-restart stand-in. See `test/test_flow_machine.py` and STATUS's slice-B row.
+
+Last verified: 2026-07-22. `make test` = **485 passed**; `run_demo.py` = **MATCH**. Section 12's **object / marker
 ring** is ported (`CourseRing` in `include/game.h`, `rm_road_course_advance` in `src/course.c`) and
 its four aliased consumers are unified onto it (see below). **Slice 2 is done**: the course-event
 engine is wired into `rm_player_update`'s §6 event path and the frame loop (leg drive + demo), the
@@ -112,10 +127,11 @@ dropped.
 
 Still unported (documented at each call site, per convention): off-frame sound (INITTUNE/INITFX/
 TURNOFF, the VBL vector; `rev_reload` aliases `lean_frame` and is invisible to every compared
-surface — verified, not assumed); the record-driven mode-2/4/6 palette / screen-offset events in
-`game_update_course_advance`'s tail; and the intermission / results / highscore flow AROUND `init_leg`
-(the `game_over_flag++` handoff the frame loop takes once `abort_flag` goes negative), for which the
-demo's native leg restart stands in.
+surface — verified, not assumed); and the record-driven mode-2/4/6 palette / screen-offset events in
+`game_update_course_advance`'s tail. The intermission / results / highscore flow AROUND `init_leg`
+(the `game_over_flag++` handoff the frame loop takes once `abort_flag` goes negative) is now ported
+host-side (flow slice B, above); wiring it into the demo in place of the native leg-restart stand-in
+is slice C — the on-target game shell.
 
 ### What the ring port did and did not fix
 
