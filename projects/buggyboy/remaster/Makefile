@@ -24,7 +24,7 @@ ref: $(RECON)
 	$(PY) test/capture_ref.py
 
 # Run the equivalence suite (candidate framebuffers vs recreate references). Green = pixel-identical.
-PYTEST_ARGS ?= -n auto
+PYTEST_ARGS ?= -n auto --dist worksteal
 test: $(CAND) $(RECON)
 	$(PY) -m pytest -q $(PYTEST_ARGS) test
 
