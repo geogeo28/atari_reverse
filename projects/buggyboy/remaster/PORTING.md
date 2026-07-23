@@ -309,9 +309,44 @@ keep it honest, because no ctrl comparison can see an under-sized pad (they all 
 copies equal, and `test_geometry.test_stamp_spill_stays_within_alloc` poison-pins the pad to the
 stamp's measured write extent per view bank.
 
+**Controls are now identical to the original arcade port** (2026-07-23). The earlier shell scheme had
+invented bindings — `Esc`/`Q` quit the program, `R` restarted the leg — none of which the original has.
+The original's actual scheme, read from the decomp:
+- **Race** (`main @0x10100:273-311`): each frame after the flip does a non-blocking `Crawio(0xff)`
+  console read. **ESC** (ASCII `0x1b`, `0x286 cmpi.b #$1b,d0 / beq $1e6`) breaks the race loop straight
+  into `update_highscore` → `game_over++` → `intermission` — i.e. it aborts the leg back to the
+  intermission attract cycle (which returns to the leg select); the current score is ranked, no bonus
+  tally. `abort_flag < 0` (a natural time-out / finish) breaks to the SAME place. The read also stores
+  the scancode into `last_key` (the keyboard driving fallback `read_input @0x120b0` reads), toggles
+  **`dsp_toggle`** on scancode `0x22` = **G** (`0x296 not.w`), and runs a sound-reset debug on `0x62` =
+  Help (`0x2a2` — moot without sound). There is **no** quit key and **no** restart key: `main` is an
+  infinite `do…while(true)` — a coin-op that never terminates.
+- **Leg select** (`init_playfield @0x12af6`): joystick nav (up/left prev, down/right next) + button
+  starts; the function-key menu reads the console for **F1..F5** (`0x3b..0x3f`, direct select+start),
+  F6 (results preview), F10+RETURN (reload) — no ESC, exits only by a leg start or the idle-timeout →
+  intermission.
+
+The shipping `BUGGYBOY.PRG` now matches this: **ESC aborts a race back to the intermission** (sets the
+race loop's `ended` flag, joining the already-verified natural-leg-end path — `update_highscore` →
+`rm_flow_game_over` → intermission → leg select), **G toggles `dsp_toggle`**, **F1..F5** select a leg,
+and the invented **R-restart and Esc-quit are gone**. The **single deliberate deviation** is **Q =
+quit to the desktop** — a GEMDOS `.PRG` needs a way back to the desktop that a coin-op does not, so Q (a
+key the original never reads) is it; `quit_requested()` is now Q-only. A stray ESC pressed in the leg
+select is discarded at race entry (`take_key_hit(SCAN_ESC)`), mirroring the original menu's per-frame
+Crawio drain, so it never aborts the race on frame 0. Verification: the `GAME_FLOW_AUTO` flow trace is
+**unchanged at 19 records** (the documented sequence) — the auto build's keyboard is dead, so ESC/G/Q
+never fire and the leg ends via the `GAME_TIME_LEFT` time-out, not ESC — and `run_golden.py` still
+**MATCH**es (the golden's `BOOT_FAST_LEG` dumps frame 0 before the keyboard is even taken). The ESC-abort
+itself is pinned by the decomp quote above + the fact that it merges into the natural-leg-end path the
+trace already exercises; the race loop lives in `game_main.c`, which `make test` never compiles, so it
+carries no host differential (the leg-select/intermission logic it feeds is pinned in `src/flow.c`). The
+leg-select **arrow-key navigation** the shell keeps is the one non-conflicting convenience the arcade's
+`init_playfield` reads only from the stick — it collides with nothing and keeps keyboard-only play usable.
+
 **Esc returning to a frozen picture** is fixed: the game captures `Physbase()` and the 16 palette
 registers (`Setcolor(reg, -1)`) before taking the screen, and restores both on exit — base only
-would hand back a desktop drawn in the racing palette.
+would hand back a desktop drawn in the racing palette. (This restore now runs on the **Q** quit; the old
+`Esc`-quit that motivated it is gone, per the controls note above.)
 
 **The frame-0 `DIFF 1110/32000` was the leg-0 start gate, silently dropped by two game bugs.**
 Neither was in a core (every stage matched the host byte-exactly under the on-target
@@ -416,7 +451,7 @@ hatari --memsize 4 --tos-res low --joy1 keys --harddrive render/atari/disk --aut
 
 Then drive with the arrow keys (Hatari's `--joy1 keys` maps them to joystick port 1) — the buggy steers
 and accelerates through the joystick path, and the leg select / fire respond to the stick, while
-scancode-only keys (F1..F5, R, Esc/Q) stay clean. (The pre-joystick build, with reporting off, would
+scancode-only keys (F1..F5, G, ESC, Q) stay clean. (The pre-joystick build, with reporting off, would
 mis-read a `0xFD` report as scancodes; that this drives cleanly is the parser working.)
 
 ## Debugging on-target

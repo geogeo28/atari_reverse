@@ -387,7 +387,7 @@ def _abort_aux(lib, poll_of):
 
 @pytest.mark.parametrize("quit_idx", [2, 8, 11])
 def test_flow_driver_quit_each_phase(quit_idx):
-    """Esc/Q (quit_requested) unwinds the attract from every phase that polls it (A / C / D): the driver
+    """Q (quit_requested) unwinds the attract from every phase that polls it (A / C / D): the driver
     returns QUIT immediately. This is the path bug #3 (Esc/Q unreachable from menus) lived in."""
     lib = equiv._lib()
     mism, stats = equiv.compare_flow_intermission_cycle(
@@ -455,7 +455,7 @@ def test_flow_driver_leg_select_nav():
 
 def test_flow_driver_leg_select_idle_intermission():
     """Idling past the countdown runs one GAME-OVER-BRACKETED attract cycle (game_over_flag 0->1 around
-    the intermission, then 0), then Esc/Q unwinds the whole thing. Pins the leg-select -> attract path
+    the intermission, then 0), then Q unwinds the whole thing. Pins the leg-select -> attract path
     and the enter/exit bracket, locksteped against the oracle (incl. game_over_flag in the snapshot)."""
     lib = equiv._lib()
     # idle_init=8 -> the leg select idles 9 frames (9 quit-checks, qi 0..8) then enters the intermission;

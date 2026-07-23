@@ -34,11 +34,18 @@
  * leg N directly, drawing + dumping that leg-start frame (byte-identical to recreate's pipeline). The
  * shipping BUGGYBOY.PRG defines neither GOLDEN_BOOT_LEG nor GAME_AUTODRIVE, so it carries NO fast path.
  *
- * Controls (held keys / a joystick in port 1, read straight from the IKBD — see os.s; the joystick
- * has priority, the keyboard is the fallback, exactly as read_input @0x120b0 orders them):
+ * Controls — IDENTICAL to the original arcade port (held keys / a joystick in port 1, read straight from
+ * the IKBD — see os.s; the joystick has priority, the keyboard is the fallback, exactly as read_input
+ * @0x120b0 orders them). The one deliberate deviation is Q (below).
  *   Up / Down    : throttle / brake      Left / Right : steer     Space / joy-fire : fire (dashboard variant)
- *   F1..F5       : select + start that leg (leg-select screen)     R : restart the leg  (keyboard only)
- *   Esc / Q      : quit  (keyboard only)
+ *   ESC          : abort the race back to the intermission — breaks the race loop into update_highscore +
+ *                  intermission, exactly as the original (main @0x10100:286 `cmpi.b #$1b,d0 / beq`).
+ *   G            : toggle the dashboard-variant display (dsp_toggle; main @0x10100:296 `not.w dsp_toggle`).
+ *   F1..F5       : select + start that leg (leg-select screen, as init_playfield's function-key menu).
+ *   Q            : quit to the desktop. The SINGLE deviation from the original — a coin-op that never
+ *                  terminates (main @0x10100 is an infinite loop); a GEMDOS .PRG needs a way back to the
+ *                  desktop, so Q (a key the original never reads) is it. The original has NO quit and NO
+ *                  restart key, so the shell's old R-restart is gone.
  *   High-score name entry: Up/Left / Down/Right dial each initial back / forward, Space confirms one
  *   (a 30-second TIME countdown ends entry if it runs out).
  * Assets come from the game's own COURSES.DAT + GRAPHICS.GRA, read off disk and unpacked by
@@ -120,9 +127,9 @@ static int take_key_hit(int scancode) {
 }
 
 /* ST keyboard scancodes. */
-#define SCAN_ESC 0x01
-#define SCAN_Q 0x10
-#define SCAN_R 0x13
+#define SCAN_ESC 0x01             /* ESC = abort the race back to the intermission (main @0x10100:286) */
+#define SCAN_Q 0x10               /* Q = quit to the desktop (the one documented deviation; see the header) */
+#define SCAN_G 0x22               /* G = toggle dsp_toggle (hide/show the dashboard variant; main @0x10100:296) */
 #define SCAN_SPACE 0x39
 #define SCAN_UP 0x48
 #define SCAN_DOWN 0x50
@@ -130,9 +137,12 @@ static int take_key_hit(int scancode) {
 #define SCAN_RIGHT 0x4d
 #define SCAN_F1 0x3b              /* F1..F5 = 0x3b..0x3f: leg select (as init_playfield's function menu) */
 
-/* Esc or Q, latched-edge: the shell's global quit. Polled once per frame in the race loop and every
- * menu/attract loop; each sets s->quit and unwinds so main's exit (screen + palette restore) still runs. */
-static int quit_requested(void) { return take_key_hit(SCAN_ESC) || take_key_hit(SCAN_Q); }
+/* Q, latched-edge: quit to the desktop. This is the SINGLE deliberate deviation from the original, a
+ * coin-op that never terminates (main @0x10100 is an infinite loop) — a GEMDOS .PRG needs some way back
+ * to the desktop, so Q (a key the original never reads) is it. ESC does NOT quit; it aborts the race
+ * back to the intermission, exactly as the original does. Polled once per frame in the race loop and
+ * every menu/attract loop; sets s->quit and unwinds so main's exit (screen + palette restore) runs. */
+static int quit_requested(void) { return take_key_hit(SCAN_Q); }
 
 #define VEC_IKBD_ACIA 0x46           /* 68000 vector 0x46 (@0x118): MFP channel 6, the IKBD ACIA */
 #define IKBD_MOUSE_OFF 0x12
@@ -244,7 +254,7 @@ typedef struct {
     uint16_t (*input_source)(void);
     int (*fkey_source)(void);
     int shown;                          /* index of the on-screen buffer; the back buffer is shown ^ 1 */
-    int quit;                           /* set when Esc/Q is seen in any loop; the outer loop unwinds + restores */
+    int quit;                           /* set when Q is seen in any loop; the outer loop unwinds + restores */
 } Shell;
 
 /* Re-derive every ring-owned view — the dispatcher's ST mirror, the ground markers, the sprite
@@ -1103,7 +1113,7 @@ void main(void) {
             s->input_source = read_input; s->fkey_source = read_fkey;
 #endif
             if (rm_flow_leg_select(&flow, &flow_ops, s, &flow_tuning) == RM_FLOW_QUIT) {
-                s->quit = 1;                            /* Esc/Q from the leg select -> restore + exit */
+                s->quit = 1;                            /* Q from the leg select -> restore + exit */
                 break;
             }
             start_leg(s, flow.leg_index);
@@ -1113,6 +1123,12 @@ void main(void) {
 
         /* ---- the race loop ---- */
         int ended = 0;
+        /* Discard any ESC latched during the leg select. The original's menu consumes and ignores ESC
+         * each frame (ip_menu's Crawio), so a menu ESC must not carry into the race and abort it on frame
+         * 0. A firmly HELD ESC can still re-latch via IKBD auto-repeat before the first poll and abort
+         * immediately — the original's Crawio reads that repeat char identically, so behaviour matches.
+         * (Q is already consumed each menu frame by quit_requested, so it needs no such clear.) */
+        take_key_hit(SCAN_ESC);
 #if defined(GAME_FLOW_AUTO) && !defined(GAME_AUTODRIVE)
         /* The trace has already captured a full round trip (a leg, its time-out, the attract cycle) and
          * has now re-entered the leg select and started a leg again — the loop is closed. End the run
@@ -1121,7 +1137,6 @@ void main(void) {
 #endif
         for (int frame = 0; !s->quit && !ended; frame++) {
             (void)frame;   /* only read by the debug trace / autodrive frame budget below */
-            if (take_key_hit(SCAN_R)) start_leg(s, s->leg);   /* R restarts the current leg */
 
             uint16_t input;
 #ifdef GAME_AUTODRIVE
@@ -1135,6 +1150,12 @@ void main(void) {
             trace_frame(frame, &player, &ev, &course);
 #endif
             render_and_show(s);
+            /* End-of-frame console poll, in the original's order (after the flip — main @0x10100:286..296):
+             * ESC aborts the race into the leg-end path (update_highscore + intermission), like a natural
+             * leg end but with no bonus tally — it does NOT quit; G toggles the dashboard-variant display
+             * (dsp_toggle); Q quits (the one documented deviation). */
+            if (take_key_hit(SCAN_ESC)) ended = 1;
+            if (take_key_hit(SCAN_G)) s->hud->dsp_toggle = !s->hud->dsp_toggle;
             s->quit = quit_requested();
 #ifdef GAME_AUTODRIVE
             /* Headless frame budget: stop at the trace length (or the autodrive length when not tracing)

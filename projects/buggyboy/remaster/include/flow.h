@@ -267,11 +267,11 @@ enum {
 #define RM_FLOW_PAL_LEG_SELECT 1   /* Phase D + leg select (Phase-D palette == the leg-select palette) */
 #define RM_FLOW_PAL_RESULTS    2   /* the race-end / name-entry results screen (A_results_screen_pal) */
 
-/* Driver return codes (the shell maps QUIT onto its Esc/Q unwind). */
+/* Driver return codes (the shell maps QUIT onto its quit-key (Q) unwind). */
 typedef enum {
     RM_FLOW_CONTINUE = 0,   /* intermission_cycle: run another attract cycle */
     RM_FLOW_ABORT,          /* attract aborted by a fresh input -> return to the caller */
-    RM_FLOW_QUIT,           /* Esc/Q -> unwind all the way to the shell's exit */
+    RM_FLOW_QUIT,           /* the quit key (Q) -> unwind all the way to the shell's exit */
     RM_FLOW_START           /* leg_select: a leg was chosen -> start the race */
 } RmFlowResult;
 
@@ -282,7 +282,7 @@ typedef enum {
 typedef struct {
     /* input (the IKBD poll is the shell's seam) */
     uint16_t (*poll_input)(void *ctx);      /* this frame's joystick/key bits */
-    int      (*quit_requested)(void *ctx);  /* Esc/Q edge -> unwind everything */
+    int      (*quit_requested)(void *ctx);  /* quit-key (Q) edge -> unwind everything */
     int      (*fkey_leg)(void *ctx);        /* leg select: F1..F5 direct pick 0..4, or -1 for none */
     /* draw + present (all draw into the back buffer; `show` flips it at the vblank) */
     void (*draw_fade)(void *ctx, int16_t scroll);          /* prologue backdrop (fade_step) */
@@ -344,7 +344,7 @@ typedef struct {
 
 /* One attract cycle (g_intermission's for-body): prologue -> Phase A (scroll) -> Phase B (warm the demo
  * leg) -> Phase C (play it) -> Phase D (results carousel). Returns RM_FLOW_CONTINUE (run another cycle),
- * RM_FLOW_ABORT (a fresh input aborted the attract), or RM_FLOW_QUIT (Esc/Q). */
+ * RM_FLOW_ABORT (a fresh input aborted the attract), or RM_FLOW_QUIT (the quit key, Q). */
 RmFlowResult rm_flow_intermission_cycle(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t);
 
 /* g_intermission @0x127a0: run attract cycles until an abort (or a quit). Returns RM_FLOW_ABORT / QUIT. */
@@ -356,7 +356,7 @@ RmFlowResult rm_flow_game_over(FlowState *fs, const FlowOps *ops, void *ctx, con
 
 /* g_init_playfield's leg-select loop @0x12af6: show the results screen, let the player pick (nav) and
  * start (fire / F-key) a leg, and on the idle-countdown expiry run one game-over-bracketed attract cycle
- * and restart. Returns RM_FLOW_START (fs->leg_index is the chosen leg) or RM_FLOW_QUIT (Esc/Q). */
+ * and restart. Returns RM_FLOW_START (fs->leg_index is the chosen leg) or RM_FLOW_QUIT (the quit key, Q). */
 RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t);
 
 /* The interactive name-entry loop, run when a leg-end score MADE the table (results_mode == 0). Draws

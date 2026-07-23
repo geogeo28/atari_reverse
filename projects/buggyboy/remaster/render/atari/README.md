@@ -57,7 +57,8 @@ highscore [name entry] → intermission attract cycle → back to the leg select
 the leg's high-score table, the **name-entry screen** runs (`rm_flow_name_entry`): Up/Down/Left/Right dial
 each of the three initials (Up/Left step a letter back, Down/Right forward) and **Space** (fire) confirms
 one — a 30-second `TIME` countdown ends entry if it runs out; a score that misses shows a short game-over
-screen instead. The driving keys are re-used, so the controls are:
+screen instead. The controls are **identical to the original arcade port** (the one deliberate
+deviation is Q, below):
 
 | Key | Race | Leg select | Name entry |
 |-----|------|------------|------------|
@@ -66,13 +67,24 @@ screen instead. The driving keys are re-used, so the controls are:
 | Space | fire (dashboard variant) | start the selected leg | confirm an initial (on '`' backs up) |
 | Joystick (port 1) | steer + throttle/brake, button = fire | nav + button starts the leg | dial + button confirms |
 | F1..F5 | — | select + start that leg | — |
-| R | restart the leg | — | — |
-| Esc / Q | quit | quit | — |
+| G | toggle the dashboard-variant display (`dsp_toggle`) | — | — |
+| **ESC** | **abort back to the intermission** | — | — |
+| Q | quit to the desktop *(the one deviation)* | quit to the desktop *(the one deviation)* | — |
+
+**ESC** during a race does exactly what the original does (`main @0x10100:286` `cmpi.b #$1b,d0 / beq`):
+it breaks the race loop straight into `update_highscore` → the intermission attract cycle → the leg
+select — the leg ends immediately, its current score is ranked, no bonus tally. **Q** is the *single*
+deliberate deviation from the original: the arcade is a coin-op whose `main` is an infinite loop that
+never terminates, but a GEMDOS `.PRG` needs a way back to the desktop, so Q — a key the original never
+reads — quits. The original has **no** quit and **no** restart key, so the shell's earlier R-restart and
+`Esc`-quit are gone.
 
 A joystick in **port 1** works everywhere the driving keys do and has **priority**: whenever the stick
 reports any direction or the fire button, it wins and the keyboard is ignored; the keyboard is the
-fallback only when the stick is centred (`read_input @0x120b0`). F1..F5, R and Esc/Q stay keyboard-only
-(the arcade has no joystick equivalent).
+fallback only when the stick is centred (`read_input @0x120b0`). F1..F5, G, ESC and Q stay keyboard-only
+(the arcade has no joystick equivalent). The leg-select arrow-key navigation is the one *non-conflicting*
+convenience the shell keeps that the arcade's `init_playfield` reads only from the stick — it collides
+with nothing (F1..F5 are the arcade's keyboard way to pick a leg) and keeps keyboard-only play usable.
 
 The whole Phase-A render pipeline is driven by the ported **player physics** — you drive
 the buggy. Each frame is game_update-then-draw, as the original orders it:
@@ -99,9 +111,10 @@ that skips the leg select and starts leg 0 directly — dumping that leg-start f
 so it can be byte-compared to recreate's pipeline. **Legs 1–4 are playable, but only leg 0 has a
 golden** (a per-leg golden is deferred).
 
-Controls (**held** keys — see below): **F1..F5** select + start a leg (leg-select screen), **↑/↓**
-throttle / brake, **←/→** steer, **Space** fire (cycles the dashboard variant, as in the original),
-**R** restarts the leg, **Esc/Q** quits.
+Controls (**held** keys — the original arcade scheme; see the table above): **F1..F5** select + start a
+leg (leg-select screen), **↑/↓** throttle / brake, **←/→** steer, **Space** fire (cycles the dashboard
+variant, as in the original), **G** toggles the dashboard-variant display, **ESC** aborts a race back to
+the intermission, **Q** quits to the desktop (the one deviation from the original).
 **The game loads the game's own data files.** `COURSES.DAT` and `GRAPHICS.GRA` ship on the disk
 beside `BUGGYBOY.PRG` and are read + unpacked at boot by `src/assets.c` (see `include/assets.h`). Both
 reads are bounded by the arena and the unpack itself is bounded at both ends, so a missing,
