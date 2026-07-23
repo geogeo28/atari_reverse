@@ -242,12 +242,18 @@ def test_python_constants_match_the_c():
     # boundary-count only and cannot itself catch a drift (see equiv.compare_attract_cycle).
     flow_c = _defines("src/flow.c", r"^#define\s+(HS_\w+|INT_TIMER_WRAP)\s+(\w+)\s*(?:/\*.*)?$")
     assert equiv.adapter.HIGHSCORE_ROWS == flow_c["HS_ROWS"]
-    assert equiv.adapter.HIGHSCORE_ROW == flow_c["HS_ROW"]
-    assert equiv.adapter.HIGHSCORE_LEG_STRIDE == flow_c["HS_LEG_STRIDE"]
     assert equiv.adapter.HS_SCORE_REC_BYTES == flow_c["HS_RECORD_BYTES"]
     assert equiv.adapter.INT_TIMER_WRAP == flow_c["INT_TIMER_WRAP"]   # test_flow_machine's fast-tuning seed
+    # name-entry (slice F): the time-digit offset (adapter reads score_line[HS_TIME_HI_OFF]) == flow.c,
+    # and consistent with the score-line/time-digit addresses; the initials-field offset == flow.h.
+    assert equiv.adapter.HS_TIME_HI_OFF == flow_c["HS_TIME_HI_OFF"]
+    assert equiv.adapter.A_time_digit_hi - equiv.adapter.A_score_line == equiv.adapter.HS_TIME_HI_OFF
     flow_h = _defines("include/flow.h",
-                      r"^#define\s+(RM_ABORT_CODE|RM_INT_A_\w+|RM_INT_D_\w+|INT_\w+|IP_IDLE_INIT|IP_FLASH_FRAMES)\s+(\w+)\s*(?:/\*.*)?$")
+                      r"^#define\s+(RM_ABORT_CODE|RM_INT_A_\w+|RM_INT_D_\w+|INT_\w+|IP_IDLE_INIT|IP_FLASH_FRAMES|HS_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+    assert equiv.adapter.HS_NAME_FIELD_OFF == flow_h["HS_NAME_FIELD_OFF"]   # slice-F initials-field offset
+    assert equiv.adapter.HIGHSCORE_ROW == flow_h["HS_ROW"]                  # highscore geometry (shared w/ results.c)
+    assert equiv.adapter.HIGHSCORE_LEG_STRIDE == flow_h["HS_LEG_STRIDE"]
+    assert equiv.adapter.HS_HOLD_FRAMES == flow_h["HS_HOLD_FRAMES"]         # name-entry terminal hold length
     assert equiv.adapter.RM_ABORT_CODE == flow_h["RM_ABORT_CODE"]
     assert equiv.adapter.RM_INT_A_CONTINUE == flow_h["RM_INT_A_CONTINUE"]
     assert equiv.adapter.RM_INT_A_ABORT == flow_h["RM_INT_A_ABORT"]

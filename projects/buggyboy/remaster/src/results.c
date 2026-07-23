@@ -141,3 +141,98 @@ void rm_draw_panel5(Framebuffer *fb, const RmResultsAssets *a) {
     static const uint16_t dst[] = {0x4620, 0x5028, 0x5a30, 0x6438, 0x6e20};
     draw_panel(fb, a->color_pairs, a->font, a->panel5_str, dst, 5);
 }
+
+/* ---- draw_results_screen (recreate's g_draw_results_screen @0x1225a) — the RACE-END / name-entry
+ * results screen. Distinct from draw_leg_results (the between-legs carousel): its own title, palettes
+ * and strings. Two runtime words shape it: `mode` (0 = the score made the table / name entry, 2 =
+ * missed) sets the row count (9 - mode) and gates the "missed" label block; `pos` (1-based rank, 0 =
+ * none) offsets the per-row palette cursors and gates the score / "TIME nn" line. Row 1 chains one
+ * concatenated buffer (a->title, resuming past the title) across (9 - mode) labels; row 2 draws the
+ * highscore rows, each a label+bar gauge pair reusing the label's leftover dst + fill. */
+#define RS_FILL_COLOR      1
+#define RS_TITLE_DST       0x518
+#define RS_TITLE_COLOR     0xc
+#define RS_MAX_ROWS        8          /* row count = RS_MAX_ROWS - mode + 1 (dbf #(8-mode)) */
+#define RS_ROW1_DST        0xde0
+#define RS_ROW_STEP        0x8c0      /* screen dst step between rows */
+#define RS_ROW2_DST        0xe00
+#define RS_BAR_GAP         0x18       /* dst advance from the label end to its bar gauge */
+/* row 2 base = leg * HS_LEG_STRIDE + mode * HS_ROW into the highscore table (mode skips the top
+ * `mode` already-known rows). Geometry shared with the flow — HS_LEG_STRIDE / HS_ROW from flow.h. */
+#define RS_LEGTIME_DST     0x62c8
+#define RS_LEGTIME_COLOR   0xd
+#define RS_LEGTIME_OFF     0x80c      /* buf_a + this + leg * RS_LEGTIME_STRIDE: the leg-time string */
+#define RS_LEGTIME_STRIDE  0xc
+#define RS_SCORE_DST       0x6340
+#define RS_SCORE_COLOR     0xf
+#define RS_SCORE_NUM_DST   0x6980     /* the digits, from the score-line cursor past its label */
+#define RS_SCORE_NUM_M1    0x13       /* draw_num_thunk preset cell count-1 */
+#define RS_MODE_DST1       0x4ed8
+#define RS_MODE_DST2       0x53e0
+#define RS_MODE_DST3       0x5400
+#define RS_MODE_COLOR      0xe
+#define RS_MODE_STR2_OFF   0xc2       /* hud_text + this = image 0x18234 (the third missed-block label) */
+#define RS_DASH_DST        0x6070     /* the per-leg dashboard graphic (same src as leg-results) */
+#define RS_FINAL_OFF       0x910      /* buf_a + this + leg * 0x10: word0 = screen dst, +2 = the string */
+#define RS_FINAL_STRIDE    0x10
+#define RS_FINAL_COLOR     1
+
+/* draw_text (D0 dst, D1 colour, A3 string) returning the advanced string index — the results screen
+ * chains several labels from one buffer through this, exactly as recreate threads A3. */
+static Offset rs_text_chain(Framebuffer *fb, const uint8_t *cp, const uint8_t *font,
+                            uint16_t dst, uint16_t color, const uint8_t *str, Offset si) {
+    Plane4 lo, hi;
+    rm_color_fill(cp, color, COLOR_MASK_TEXT, &lo, &hi);
+    return rm_glyph_run(fb, (Offset)sx16(dst), lo, hi, font, str, si, TEXT_MAX_CELLS_M1, 0);
+}
+
+void rm_draw_results_screen(Framebuffer *fb, const RmResultsScreenAssets *a,
+                            uint16_t mode, uint16_t pos, uint16_t leg) {
+    const uint8_t *cp = a->color_pairs;
+    const uint8_t *font = a->font;
+    rm_fill_screen(fb, cp, RS_FILL_COLOR);
+
+    /* Title (colour 0xc); row 1's (9 - mode) labels then chain on through the same title buffer. */
+    Offset si = rs_text_chain(fb, cp, font, RS_TITLE_DST, RS_TITLE_COLOR, a->title, 0);
+    si += (Offset)sx16((uint16_t)(mode << 2));
+    const uint8_t *pal_a = a->palette_a;             /* cursor at 0x17ead, indexed [i - pos] */
+    Offset dst = RS_ROW1_DST;
+    for (int16_t c = (int16_t)(RS_MAX_ROWS - mode), i = 0; c != -1; c--, i++, dst += RS_ROW_STEP)
+        si = rs_text_chain(fb, cp, font, (uint16_t)dst, pal_a[i - (int)pos], a->title, si);
+
+    /* Row 2: (9 - mode) label+bar pairs from the highscore table, colour from palette B. Each bar
+     * reuses the label's leftover dst (+RS_BAR_GAP) and fill; the cursor chains label -> bar -> +1. */
+    const uint8_t *pal_b = a->palette_b;
+    const uint8_t *hs = a->highscore;
+    Offset hsi = (Offset)((uint16_t)(leg * HS_LEG_STRIDE) + (uint16_t)(mode * HS_ROW));
+    dst = RS_ROW2_DST;
+    for (int16_t c = (int16_t)(RS_MAX_ROWS - mode), i = 0; c != -1; c--, i++, dst += RS_ROW_STEP) {
+        Plane4 lo, hi;
+        rm_color_fill(cp, pal_b[i - (int)pos], COLOR_MASK_TEXT, &lo, &hi);
+        Offset label_end;
+        hsi = rm_glyph_run(fb, (Offset)sx16((uint16_t)dst), lo, hi, font, hs, hsi, TEXT_MAX_CELLS_M1, &label_end);
+        hsi = rm_glyph_run(fb, label_end + RS_BAR_GAP, lo, hi, font, hs, hsi, TEXT_MAX_CELLS_M1, 0);
+        hsi += 1;
+    }
+
+    rs_text_chain(fb, cp, font, RS_LEGTIME_DST, RS_LEGTIME_COLOR, a->buf_a,
+                  (Offset)(RS_LEGTIME_OFF + leg * RS_LEGTIME_STRIDE));
+
+    if (pos != 0) {                                  /* the score / "TIME nn" line (drawn only when ranked) */
+        Offset ssi = rs_text_chain(fb, cp, font, RS_SCORE_DST, RS_SCORE_COLOR, a->score_line, 0);
+        Plane4 lo, hi;
+        rm_color_fill(cp, RS_SCORE_COLOR, COLOR_MASK_NUM, &lo, &hi);
+        rm_num_run(fb, (Offset)sx16(RS_SCORE_NUM_DST), lo, hi, a->num_sprites, a->num_glyph_tbl,
+                   a->score_line, ssi, RS_SCORE_NUM_M1);
+    }
+    if (mode != 0) {                                 /* the "missed the table" label block */
+        Offset msi = rs_text_chain(fb, cp, font, RS_MODE_DST1, RS_MODE_COLOR, a->mode_str, 0);
+        rs_text_chain(fb, cp, font, RS_MODE_DST2, RS_MODE_COLOR, a->mode_str, msi);
+        rs_text_chain(fb, cp, font, RS_MODE_DST3, RS_MODE_COLOR, a->hud_text, RS_MODE_STR2_OFF);
+    }
+    cell_dashboard(fb->px, (Offset)sx16(RS_DASH_DST), a->gfx, DASH_SRC_OFF);
+
+    /* Final label: buf_a[final]'s first word is its screen dst, the string follows at +2. */
+    Offset fin = (Offset)(RS_FINAL_OFF + leg * RS_FINAL_STRIDE);
+    rs_text_chain(fb, cp, font, be16(a->buf_a + fin), RS_FINAL_COLOR, a->buf_a, fin + 2);
+}

@@ -70,8 +70,7 @@ int rm_int_stepD_counter(FlowState *fs) {
 
 /* ---- update_highscore (highscore.c g_update_highscore @0x1238e, verified to the prefix checkpoint) ---- */
 #define HS_ROWS          9         /* rows per leg table */
-#define HS_ROW           0xe       /* bytes per row */
-#define HS_LEG_STRIDE    0x80      /* bytes per leg's table (leg_index << 7) */
+/* HS_ROW (0xe, bytes/row) and HS_LEG_STRIDE (0x80, bytes/leg) live in flow.h — shared with results.c. */
 #define HS_CMP_BYTES     6         /* digits compared per row (cmp.b loop) */
 #define HS_RECORD_BYTES  12        /* score+name record inserted (3 longwords from score_bcd) */
 #define HS_ROW_TAIL      (HS_ROW - HS_RECORD_BYTES)  /* the top 2 bytes of each row the shift skips */
@@ -132,6 +131,60 @@ void rm_update_highscore(FlowState *fs, uint8_t *highscore, uint8_t *score) {
     fs->countdown_sub = 0;
     shift_rows_down(table, (HS_ROWS - 1) - rank0);        /* 0 iters when inserting at the last row */
     for (int b = 0; b < HS_RECORD_BYTES; b++) table[row + b] = score[b];
+}
+
+/* ---- name-entry per-frame pieces (highscore.c g_hiscore_countdown / g_hiscore_charstep) ---------- */
+#define HS_CD_SUB_PERIOD 0x11      /* countdown_timer ticks down once every 0x11 sub-frames */
+#define HS_CD_TENS_DIV   10        /* "TIME nn" = tens/units of countdown_timer */
+#define HS_TIME_HI_OFF   6         /* score_line + 6 == image A_time_digit_hi (0x1825e) */
+#define HS_TIME_LO_OFF   7         /* score_line + 7 == image A_time_digit_lo (0x1825f) */
+#define HS_SEL_REPEAT    3         /* auto-repeat delay reload after a successful char step */
+#define HS_INPUT_DEC     0x5       /* up (1) | left (4): step the char down */
+#define HS_INPUT_INC     0xa       /* down (2) | right (8): step the char up */
+#define HS_INPUT_FIRE    0x80
+#define HS_CHAR_LO       0x41      /* 'A': stepped below this wraps to the delete sentinel */
+#define HS_CHAR_WRAP     0x61      /* 'a': stepped up to here wraps back to 'A' */
+#define HS_CHAR_DEL      0x60      /* '`': the delete sentinel (fire on it backs up a char) */
+#define HS_CHAR_HOLD     0x5f      /* '_': placeholder left in the backed-out slot */
+#define HS_INITIALS      3         /* initials entered per name (the loop counts them 3, 2, 1) */
+#define HS_INPUT_ANY     0x8f      /* fire (0x80) | all four directions: the terminal release wait */
+
+int rm_hiscore_countdown(FlowState *fs, uint8_t *score_line) {
+    int16_t sub = (int16_t)fs->countdown_sub;
+    fs->countdown_sub = (uint16_t)(sub + 1);
+    if (sub - HS_CD_SUB_PERIOD >= 0) {                     /* sub was >= 0x11 */
+        fs->countdown_sub = 0;
+        int16_t timer = (int16_t)(fs->countdown_timer - 1);
+        fs->countdown_timer = (uint16_t)timer;
+        if (timer < 0) return 1;                           /* timed out */
+    }
+    int16_t timer = (int16_t)fs->countdown_timer;
+    int tens = timer / HS_CD_TENS_DIV;
+    score_line[HS_TIME_HI_OFF] = tens ? (uint8_t)(tens + ASCII_ZERO) : ASCII_SLASH;
+    score_line[HS_TIME_LO_OFF] = (uint8_t)((timer - tens * HS_CD_TENS_DIV) + ASCII_ZERO);
+    return 0;
+}
+
+void rm_hiscore_charstep(FlowState *fs, uint8_t *name_ptr) {
+    uint16_t in = fs->input_state;
+
+    int16_t dec = (int16_t)(fs->leg_dec_delay - 1);
+    fs->leg_dec_delay = dec;
+    if (dec < 0 && (in & HS_INPUT_DEC)) {
+        uint8_t c = (uint8_t)(*name_ptr - 1);
+        *name_ptr = c;
+        if ((int8_t)(c - HS_CHAR_LO) < 0) *name_ptr = HS_CHAR_DEL;              /* below 'A' -> '`' */
+        else { fs->leg_dec_delay = HS_SEL_REPEAT; fs->leg_inc_delay = 0; }
+    }
+
+    int16_t inc = (int16_t)(fs->leg_inc_delay - 1);
+    fs->leg_inc_delay = inc;
+    if (inc < 0 && (in & HS_INPUT_INC)) {
+        uint8_t c = (uint8_t)(*name_ptr + 1);
+        *name_ptr = c;
+        if ((int8_t)(c - HS_CHAR_WRAP) < 0) { fs->leg_inc_delay = HS_SEL_REPEAT; fs->leg_dec_delay = 0; }
+        else *name_ptr = HS_CHAR_LO;                                            /* reached 'a' -> 'A' */
+    }
 }
 
 /* ---- init_playfield leg-select (intermission.c g_init_playfield_nav / _fire) ---- */
@@ -364,4 +417,90 @@ RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, co
         ops->event(ctx, RM_FLOW_EVT_SELECT_IDLE, fs->leg_index, 0);
         if (rm_flow_game_over(fs, ops, ctx, t) == RM_FLOW_QUIT) return RM_FLOW_QUIT;
     }
+}
+
+/* ---- the interactive high-score NAME-ENTRY tail (highscore.c @0x12412) --------------------------
+ *
+ * Run when a leg-end score MADE the table (results_mode == 0). The prefix (rm_update_highscore) set
+ * hiscore_pos to the 1-based rank and seeded the countdown; this drives the initials screen, then the
+ * shared terminal fade. The name-entry jingle (rank 1 -> tune 4, else 3) and the terminal sound/IKBD
+ * waits (mzflag / TURNOFF / the Crawio key-drain) are off-image seams the game ships WITHOUT — recreate
+ * marks the same waits as never-returning-under-the-oracle SEAMS, so here they resolve to nothing and
+ * control returns to the caller (which runs the intermission next). Each per-frame draw is
+ * draw_results_screen; the colour-3 flash is the name_flash op (an off-image Setcolor, like the
+ * get-ready flash — the driver owns its per-frame COUNT, the content is a documented seam). */
+static void name_entry_prime(FlowState *fs, const FlowOps *ops, void *ctx) {
+    /* draw + palette + show, then a second draw + show — priming both flip buffers (0x2450..0x2470). */
+    ops->draw_results_screen(ctx, fs->results_mode, fs->hiscore_pos, fs->leg_index);
+    ops->set_palette(ctx, RM_FLOW_PAL_RESULTS);
+    ops->show(ctx);
+    ops->draw_results_screen(ctx, fs->results_mode, fs->hiscore_pos, fs->leg_index);
+    ops->show(ctx);
+}
+
+RmFlowResult rm_flow_name_entry(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
+                                uint8_t *highscore, uint8_t *score_line) {
+    uint16_t leg = fs->leg_index;
+    /* the current initial's byte inside the winning row (row + HS_NAME_FIELD_OFF). */
+    uint8_t *p = highscore + (uint16_t)(leg * HS_LEG_STRIDE)
+               + (uint16_t)((fs->hiscore_pos - 1) * HS_ROW) + HS_NAME_FIELD_OFF;
+
+    name_entry_prime(fs, ops, ctx);
+
+    int chars_left = HS_INITIALS - 1;                      /* counts the HS_INITIALS down: 2 -> 1 -> 0 -> -1 */
+    int timed_out = 0;
+    for (;;) {                                              /* outer loop (0x2472) */
+        for (;;) {                                          /* per-frame loop until a fresh fire press */
+            if (rm_hiscore_countdown(fs, score_line)) { timed_out = 1; break; }
+            ops->draw_results_screen(ctx, fs->results_mode, fs->hiscore_pos, leg);
+            ops->name_flash(ctx);                           /* the colour-3 flash (off-image seam) */
+            ops->show(ctx);
+            flow_poll(fs, ops, ctx);                        /* read_joystick: advance the input snapshots */
+            uint16_t in = fs->input_state, prev = fs->input_prev;
+            rm_hiscore_charstep(fs, p);
+            if (!(prev & HS_INPUT_FIRE) && (in & HS_INPUT_FIRE)) break;   /* fresh fire (0x2542) */
+        }
+        if (timed_out) break;
+
+        if (*p == HS_CHAR_DEL) {                            /* fire on '`' -> back up a char */
+            if (chars_left != HS_INITIALS - 1) {           /* not the first initial: a char can be undone */
+                *(p - 1) = *p;                              /* shift '`' back */
+                *p = HS_CHAR_HOLD;                          /* leave '_' */
+                chars_left += 1;
+                p -= 1;
+            }
+            continue;                                       /* re-enter the frame loop */
+        }
+        *(p + 1) = *p;                                      /* seed the next initial */
+        chars_left -= 1;
+        p += 1;
+        if (chars_left == -1) { *p = 0; break; }            /* counted past the last initial (HS_INITIALS entered), 0x257a */
+    }
+
+    /* shared terminal tail (0x257c): clear the rank, redraw + fade the results screen (the double-draw IS
+     * the "fade" — draw + palette + flip + draw + flip), hold it t->hold_frames Vsyncs (0x259c), then wait
+     * for the input to be released (0x25ae). Only the tune-end / mzflag wait (0x25bc), TURNOFF (0x25d2)
+     * and the key-drain (0x25de) are the off-image SOUND seams the game ships without. */
+    fs->hiscore_pos = 0;
+    name_entry_prime(fs, ops, ctx);
+    for (uint16_t n = 0; n < t->hold_frames; n++) ops->hold_frame(ctx);   /* 0x259c: hold the finished table */
+    do { flow_poll(fs, ops, ctx); } while (fs->input_state & HS_INPUT_ANY);  /* 0x25ae: wait for release */
+    return RM_FLOW_CONTINUE;
+}
+
+/* The "missed the table" tail (highscore.c g_hiscore_gameover @0x123e6 -> 0x240e): redraw the results
+ * screen twice under the results palette. The game-over jingle + the mzflag / key-drain waits are the
+ * same off-image seams. Run when results_mode == 2 (the score beat no row). */
+RmFlowResult rm_flow_game_over_tail(FlowState *fs, const FlowOps *ops, void *ctx) {
+    name_entry_prime(fs, ops, ctx);   /* same double-draw under the results palette (0x23e6..0x240e) */
+    return RM_FLOW_CONTINUE;
+}
+
+/* The high-score tail dispatch (see flow.h): route the ranked score to name entry (made) or the
+ * game-over redraw (missed). Hoisted from the shell so `make test` compiles + pins the branch. */
+RmFlowResult rm_flow_score_tail(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
+                                uint8_t *highscore, uint8_t *score_line) {
+    if (fs->results_mode == 0)
+        return rm_flow_name_entry(fs, ops, ctx, t, highscore, score_line);
+    return rm_flow_game_over_tail(fs, ops, ctx);
 }

@@ -59,6 +59,33 @@ typedef struct {
     const uint8_t *panel5_str;     /* the 5-entry leg-name menu's concatenated labels (program data, 0x1803c) */
 } RmResultsAssets;
 
+/* The RACE-END / high-score name-entry results screen's assets (recreate's g_draw_results_screen
+ * @0x1225a — distinct from draw_leg_results). `mode`/`pos`/`leg` are passed per call (they change
+ * during name entry). Mutable regions: `highscore` (row 2 + where the initials are written), `hud_text`
+ * (the third missed-block label at +0xc2), `score_line` (the 14-byte gap [0x18258,0x18266) holding the
+ * score-line string and the "TIME nn" digits rm_hiscore_countdown writes). The palettes are cursors AT
+ * their leg-0 byte, indexed [i - pos] (recreate's `suba.w pos`); the rest are const program data /
+ * buf_a strings / buf_c graphics. */
+typedef struct {
+    const uint8_t *color_pairs;
+    const uint8_t *font;
+    const uint8_t *num_sprites;
+    const uint8_t *num_glyph_tbl;
+    const uint8_t *gfx;            /* buf_c base: the dashboard graphic */
+    const uint8_t *title;          /* row-1 title + chained labels (program data, 0x184f8) */
+    const uint8_t *palette_a;      /* row-1 per-row colour cursor, indexed [i - pos] (0x17ead) */
+    const uint8_t *palette_b;      /* row-2 per-row colour cursor, indexed [i - pos] (0x17ebf) */
+    const uint8_t *mode_str;       /* "missed the table" label block (program data, 0x18538) */
+    const uint8_t *buf_a;          /* leg-time string (+0x80c) + the final label (+0x910) */
+    const uint8_t *highscore;      /* persistent hi-score table: row 2 + the initials field */
+    const uint8_t *hud_text;       /* the third missed-block label (hud_text + 0xc2) */
+    const uint8_t *score_line;     /* the score-line string + "TIME nn" digits (image 0x18258) */
+} RmResultsScreenAssets;
+
+/* The race-end / name-entry results screen for (mode, pos, leg). */
+void rm_draw_results_screen(Framebuffer *fb, const RmResultsScreenAssets *a,
+                            uint16_t mode, uint16_t pos, uint16_t leg);
+
 /* 9-entry table-driven block copy from `src` (buf_c + 0x32c80) into fb at +0x990. */
 void rm_intermission_poll(Framebuffer *fb, const uint8_t *src, const uint8_t *blits);
 
@@ -168,6 +195,34 @@ int rm_int_stepD_counter(FlowState *fs);
  * runs to completion under the differential oracle. EGOFF (sound) is the usual off-image seam. */
 void rm_update_highscore(FlowState *fs, uint8_t *highscore, uint8_t *score);
 
+/* ---- the interactive high-score NAME-ENTRY tail (recreate's highscore.c @0x12412 onward) ---------
+ *
+ * update_highscore stops at the ranking checkpoint (above); when the score made the table (results_mode
+ * == 0) the game runs an initials-entry screen — a vblank-paced loop rendering the results + a "TIME nn"
+ * countdown while the player dials in three initials, ending on the third confirm or on timeout. The two
+ * deterministic per-frame pieces are pure functions over FlowState (diffed against the oracle); the loop
+ * that sequences them is a FlowOps driver (below), as the attract cycle is. NAME_FIELD_OFF is the offset
+ * of the 3-char initials inside the inserted table row. */
+/* High-score table geometry, shared by the flow (update_highscore ranks/inserts by it, src/flow.c)
+ * and the results-screen draw (indexes the leg's rows by it, src/results.c). One definition, per
+ * CLAUDE.md §5 — pinned against the adapter/oracle by test_course_ring's constants test. */
+#define HS_ROW        0xe          /* bytes per table row */
+#define HS_LEG_STRIDE 0x80         /* bytes per leg's table (leg * 0x80 == leg << 7) */
+
+#define HS_NAME_FIELD_OFF 8        /* the initials sit at (winning row) + 8 */
+
+/* One name-entry frame's countdown tick (highscore.c g_hiscore_countdown @0x2472): advance the sub-frame
+ * counter, drop countdown_timer every HS_CD_SUB_PERIOD frames, and render it as the two "TIME nn" digits
+ * into score_line (image 0x1825e/0x1825f == score_line + 6/7). Returns 1 when the timer underflows (name
+ * entry times out), else 0. */
+int rm_hiscore_countdown(FlowState *fs, uint8_t *score_line);
+
+/* One name-entry frame's character selection (highscore.c g_hiscore_charstep @0x24ea): up/left steps the
+ * current initial down (wrapping 'A' -> '`'), down/right steps it up (wrapping past 'z' -> 'A'), each
+ * gated by its own auto-repeat delay (leg_dec_delay / leg_inc_delay). `name_ptr` points at the current
+ * initial byte inside the highscore table row. */
+void rm_hiscore_charstep(FlowState *fs, uint8_t *name_ptr);
+
 /* Leg-select navigation (init_playfield 0x2c00 tail): reload the idle countdown on an input change,
  * then step leg_index by the held direction, each gated by its auto-repeat delay. The IKBD poll it
  * fronts is a seam (input_state is scripted). */
@@ -210,6 +265,7 @@ enum {
  * orders (the race/demo palette is set by the shell's start_leg, an off-image seam). */
 #define RM_FLOW_PAL_INT_A      0   /* prologue: the attract-scroll palette */
 #define RM_FLOW_PAL_LEG_SELECT 1   /* Phase D + leg select (Phase-D palette == the leg-select palette) */
+#define RM_FLOW_PAL_RESULTS    2   /* the race-end / name-entry results screen (A_results_screen_pal) */
 
 /* Driver return codes (the shell maps QUIT onto its Esc/Q unwind). */
 typedef enum {
@@ -232,6 +288,7 @@ typedef struct {
     void (*draw_fade)(void *ctx, int16_t scroll);          /* prologue backdrop (fade_step) */
     void (*draw_intermission)(void *ctx, int16_t scroll);  /* Phase-A scrolling hi-score screen */
     void (*draw_results)(void *ctx, uint16_t leg);         /* Phase-D + leg-select results screen */
+    void (*draw_results_screen)(void *ctx, uint16_t mode, uint16_t pos, uint16_t leg); /* race-end / name-entry screen */
     void (*draw_panel5)(void *ctx);                        /* the 5-entry leg-name menu over the results screen */
     void (*set_palette)(void *ctx, int which);             /* RM_FLOW_PAL_* */
     void (*show)(void *ctx);                               /* flip the back buffer to the screen */
@@ -243,6 +300,15 @@ typedef struct {
     /* leg-start "get ready" flash (init_playfield's ip_start_leg @0x2c96): one frame of the 121-frame
      * leg_start_palette animation (a palette write + a vblank wait — an off-image seam; see game_main.c). */
     void (*flash_frame)(void *ctx);
+    /* name-entry colour-3 flash (highscore.c g_hiscore_name_entry: one per initials-screen frame): read
+     * A_name_anim_tbl[(anim_counter & 0xe)] into palette register 3 and load it. Off-image (Setcolor + a
+     * shared anim_counter bump), like flash_frame; the driver owns the per-frame COUNT. */
+    void (*name_flash)(void *ctx);
+    /* name-entry terminal HOLD (highscore.c g_hiscore_name_entry @0x259c: one of the 121 Vsyncs that hold
+     * the finished table on screen before returning). A plain vblank wait — NO draw, NO flip (the held
+     * table already sits on the front buffer) — so it is an off-image seam like flash_frame; the driver
+     * owns the COUNT (t->hold_frames). */
+    void (*hold_frame)(void *ctx);
     /* phase-transition trace hook (RM_FLOW_EVT_*) */
     void (*event)(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux);
 } FlowOps;
@@ -257,6 +323,7 @@ typedef struct {
     uint16_t phase_c_frames;    /* Phase-C demo length (frames before advancing to Phase D) */
     uint16_t idle_init;         /* leg-select idle-countdown reload (expiry -> one attract cycle) */
     uint16_t flash_frames;      /* leg-start "get ready" palette-flash length (ip_start_leg) */
+    uint16_t hold_frames;       /* name-entry terminal hold length (the 121 Vsyncs at 0x259c) */
 } FlowTuning;
 
 /* The leg-start flash length. Remaster: IP_FLASH_FRAMES = 121 = the total frame COUNT, run half-open
@@ -265,9 +332,15 @@ typedef struct {
  * value already IS recreate's iteration count; do NOT add 1 to it. */
 #define IP_FLASH_FRAMES 121
 
+/* The name-entry terminal hold length. Recreate's TAIL_VSYNCS is 0x78 = 120, a dbf bound
+ * (`for (i = 0x78; i >= 0; i--)`) that iterates 0x78 + 1 = 121 times; the remaster runs it half-open
+ * (flow.c's `for (n = 0; n < hold_frames; n++)`), so this value already IS that 121-frame count — like
+ * IP_FLASH_FRAMES, do NOT add 1. */
+#define HS_HOLD_FRAMES 121
+
 #define RM_FLOW_TUNING_DEFAULT { .prologue_scroll = INT_SCROLL_INIT, .prologue_frame = INT_FRAME_INIT, \
     .prologue_timer = INT_TIMER_INIT, .phase_c_frames = INT_C_FRAMES, .idle_init = IP_IDLE_INIT, \
-    .flash_frames = IP_FLASH_FRAMES }
+    .flash_frames = IP_FLASH_FRAMES, .hold_frames = HS_HOLD_FRAMES }
 
 /* One attract cycle (g_intermission's for-body): prologue -> Phase A (scroll) -> Phase B (warm the demo
  * leg) -> Phase C (play it) -> Phase D (results carousel). Returns RM_FLOW_CONTINUE (run another cycle),
@@ -285,5 +358,27 @@ RmFlowResult rm_flow_game_over(FlowState *fs, const FlowOps *ops, void *ctx, con
  * start (fire / F-key) a leg, and on the idle-countdown expiry run one game-over-bracketed attract cycle
  * and restart. Returns RM_FLOW_START (fs->leg_index is the chosen leg) or RM_FLOW_QUIT (Esc/Q). */
 RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t);
+
+/* The interactive name-entry loop, run when a leg-end score MADE the table (results_mode == 0). Draws
+ * the results + a "TIME nn" countdown each frame while the player dials three initials into the winning
+ * row (highscore + leg*0x80 + (pos-1)*0xe + HS_NAME_FIELD_OFF), ending on the third confirm or on
+ * timeout, then clears the rank, redraws, holds the finished table t->hold_frames Vsyncs and waits for
+ * the input to be released (recreate g_hiscore_name_entry @0x12412). The name-entry jingle and the
+ * terminal sound/IKBD waits (mzflag / TURNOFF / the key-drain) are off-image seams the game ships
+ * without. Returns RM_FLOW_CONTINUE (control returns to the caller, which runs the intermission next). */
+RmFlowResult rm_flow_name_entry(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
+                                uint8_t *highscore, uint8_t *score_line);
+
+/* The "missed the table" tail, run when the score beat no row (results_mode == 2): redraw the results
+ * screen twice under the results palette (recreate g_hiscore_gameover @0x123e6 -> 0x240e). The game-over
+ * jingle + key-drain are off-image seams. Returns RM_FLOW_CONTINUE. */
+RmFlowResult rm_flow_game_over_tail(FlowState *fs, const FlowOps *ops, void *ctx);
+
+/* The high-score tail DISPATCH (main @0x10100: update_highscore's two exits): after ranking, a score
+ * that MADE the table (results_mode == 0) runs the interactive name entry, one that MISSED (== 2) runs
+ * the game-over redraw. Kept in the flow (not the shell) so `make test` compiles + pins the branch.
+ * Returns whatever the chosen tail returns (RM_FLOW_CONTINUE). */
+RmFlowResult rm_flow_score_tail(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
+                                uint8_t *highscore, uint8_t *score_line);
 
 #endif /* RM_FLOW_H */

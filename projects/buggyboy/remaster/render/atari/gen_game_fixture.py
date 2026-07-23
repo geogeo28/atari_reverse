@@ -158,6 +158,10 @@ def main():
         ("fixture_poll_blits", win(adapter.POLL_BLITS_OFF, adapter.FLOW_POLL_BLITS_BYTES)),
         ("fixture_highscore",  bytes(hs_seed[adapter.A_highscore_table:
                                              adapter.A_highscore_table + adapter.FLOW_HIGHSCORE_BYTES])),
+        # The name-entry score-line region (score-line string + the "TIME nn" digits rm_hiscore_countdown
+        # writes), seeded into RAM at boot like fixture_hud_text — it sits in the gap between hud_text and
+        # the hi-score table, so it is not covered by either of those RAM windows.
+        ("fixture_score_line", win(adapter.A_score_line, adapter.FLOW_SCORE_LINE_BYTES)),
     ]
 
     # Where each arena-resident asset sits, so game_main.c can point at the loaded arena. All are
@@ -207,6 +211,14 @@ def main():
         f"#define OBJ_LOW_LEG_ROW_PAL   {low(adapter.A_leg_row_palette)}",  # results row-2 palette cursor
         f"#define OBJ_LOW_PAL_INT_A     {low(A_INT_PAL_A)}",            # intermission prologue palette
         f"#define OBJ_LOW_PAL_LEG_SELECT {low(A_LEG_SELECT_PAL)}",      # leg-select / results-carousel palette
+        # the race-end / name-entry results screen (slice F): title + palettes + missed-block strings, the
+        # results-screen palette (off-image seam), and the name-entry colour-3 flash table.
+        f"#define OBJ_LOW_RS_TITLE      {low(adapter.A_results_title)}",      # results title + row-1 labels
+        f"#define OBJ_LOW_RS_PAL_A      {low(adapter.A_results_palette_a)}",  # results row-1 palette cursor
+        f"#define OBJ_LOW_RS_PAL_B      {low(adapter.A_results_palette_b)}",  # results row-2 palette cursor
+        f"#define OBJ_LOW_RS_MODE_STR   {low(adapter.A_results_mode_str)}",   # "missed the table" label block
+        f"#define OBJ_LOW_PAL_RESULTS   {low(adapter.A_results_screen_pal)}", # results-screen palette (off-image seam)
+        f"#define OBJ_LOW_NAME_ANIM_TBL {low(adapter.A_name_anim_tbl)}",      # name-entry colour-3 flash table
         f"#define OBJ_LOW_LEG_FLASH_A   {low(A_LEG_FLASH_A)}",          # leg-start flash tables (off-image palette)
         f"#define OBJ_LOW_LEG_FLASH_B   {low(A_LEG_FLASH_B)}",
         f"#define OBJ_LOW_LEG_FLASH_C   {low(A_LEG_FLASH_C)}",

@@ -313,6 +313,23 @@ FLOW_ROW_STR_OFF = 0x848                            # buf_a: results row-2 per-l
 # The digit/letter sprite window is the SAME as the HUD's — reuse NUM_GLYPH_BUF_OFF / NUM_SPRITES_BYTES.
 FLOW_DRAW_BUF_ALT = 0x80000                        # flip_idx=4 test buffer (clear of the 0x7ee08 arena)
 
+# ---- between-legs flow: race-end / high-score name-entry results screen (slice F) ----
+A_results_title = 0x184f8                          # results-screen title + chained row-1 labels (program data)
+A_results_palette_a = 0x17ead                      # row-1 per-row colour cursor, indexed [i - pos]
+A_results_palette_b = 0x17ebf                      # row-2 per-row colour cursor, indexed [i - pos]
+A_results_mode_str = 0x18538                        # "missed the table" label block (program data)
+A_results_screen_pal = 0x17fc2                      # the results-screen palette (off-image seam)
+A_name_anim_tbl = 0x17f4a                           # name-entry colour-3 flash table, idx (anim_counter & 0xe)
+A_score_line = 0x18258                              # score-line string + "TIME nn" digits (gap before the table)
+A_time_digit_hi = 0x1825e                           # "TIME nn" tens digit == A_score_line + 6
+A_time_digit_lo = 0x1825f                           # units digit == A_score_line + 7
+FLOW_SCORE_LINE_BYTES = 0xe                         # [0x18258, 0x18266): score-line string + 2 time digits + slack
+FLOW_RS_TITLE_BYTES = 0x60                          # title + the chained row-1 labels
+FLOW_RS_MODE_STR_BYTES = 0x40                       # the missed-block label block
+FLOW_RS_BUF_A_BYTES = 0xa00                         # buf_a reach: leg-time (+0x80c) + final label (+0x910)
+FLOW_RS_PALETTE_PAD = 0x10                          # palette cursor: index [i - pos] reaches -9..+8
+FLOW_NAME_ANIM_BYTES = 0x10                         # name_anim_tbl: (anim_counter & 0xe) word index + slack
+
 # ---- between-legs FLOW state machine (slice B) ----
 # The flow's own counters (recreate's scalar globals) the FlowState models; leg_index / input_state /
 # input_prev / game_over_flag already have addresses above.
@@ -333,6 +350,8 @@ HIGHSCORE_ROW = 0xe                                 # bytes per row
 HIGHSCORE_LEG_STRIDE = 0x80                         # bytes per leg's table (leg_index << 7)
 HS_SCORE_REC_OFF = 0xda                             # score record = hud_text + this (image 0x1824c);
 HS_SCORE_REC_BYTES = 12                             #   6 ASCII digits + 6 name/pad bytes, ends at 0x18258
+HS_NAME_FIELD_OFF = 8                               # the 3 initials sit at (winning row) + 8 (== flow.h)
+HS_TIME_HI_OFF = 6                                  # "TIME nn" tens digit == A_score_line + 6 (== flow.c)
 # Phase-step / abort return codes (mirror include/flow.h).
 RM_ABORT_CODE = 0x0d
 RM_INT_A_CONTINUE, RM_INT_A_ABORT, RM_INT_A_BREAK = 0, 1, 2
@@ -343,11 +362,12 @@ INT_C_FRAMES = 0x96
 INT_TIMER_WRAP = 0x5c                               # Phase-A timer reload on underflow (src/flow.c)
 IP_IDLE_INIT = 0x15e                                # leg-select idle-countdown reload (include/flow.h)
 IP_FLASH_FRAMES = 121                               # leg-start "get ready" flash length (include/flow.h)
+HS_HOLD_FRAMES = 121                                # name-entry terminal hold length (include/flow.h)
 
 # ---- the between-legs FLOW COMPOSITION driver (slice D) ----
 # Driver return codes, palette selectors, phase-transition event tags (mirror include/flow.h).
 RM_FLOW_CONTINUE, RM_FLOW_ABORT, RM_FLOW_QUIT, RM_FLOW_START = 0, 1, 2, 3
-RM_FLOW_PAL_INT_A, RM_FLOW_PAL_LEG_SELECT = 0, 1
+RM_FLOW_PAL_INT_A, RM_FLOW_PAL_LEG_SELECT, RM_FLOW_PAL_RESULTS = 0, 1, 2
 (RM_FLOW_EVT_LEG_START, RM_FLOW_EVT_LEG_END, RM_FLOW_EVT_HISCORE, RM_FLOW_EVT_INT_PROLOGUE,
  RM_FLOW_EVT_INT_PHASEA_BREAK, RM_FLOW_EVT_INT_PHASEB, RM_FLOW_EVT_INT_PHASEC_DONE,
  RM_FLOW_EVT_INT_PHASED_ADVANCE, RM_FLOW_EVT_INT_PHASED_RESTART, RM_FLOW_EVT_INT_ABORT,
@@ -1164,6 +1184,54 @@ def results_assets(image):
                     leg_digits, palette, panel5_str)
 
 
+class RmResultsScreenAssets(ctypes.Structure):
+    _fields_ = [("color_pairs", ctypes.POINTER(ctypes.c_uint8)),
+                ("font", ctypes.POINTER(ctypes.c_uint8)),
+                ("num_sprites", ctypes.POINTER(ctypes.c_uint8)),
+                ("num_glyph_tbl", ctypes.POINTER(ctypes.c_uint8)),
+                ("gfx", ctypes.POINTER(ctypes.c_uint8)),
+                ("title", ctypes.POINTER(ctypes.c_uint8)),
+                ("palette_a", ctypes.POINTER(ctypes.c_uint8)),
+                ("palette_b", ctypes.POINTER(ctypes.c_uint8)),
+                ("mode_str", ctypes.POINTER(ctypes.c_uint8)),
+                ("buf_a", ctypes.POINTER(ctypes.c_uint8)),
+                ("highscore", ctypes.POINTER(ctypes.c_uint8)),
+                ("hud_text", ctypes.POINTER(ctypes.c_uint8)),
+                ("score_line", ctypes.POINTER(ctypes.c_uint8))]
+
+
+def results_screen_assets(image):
+    """The race-end / name-entry results screen's assets as a native RmResultsScreenAssets. Returns
+    (assets, keepalive). `highscore`, `hud_text` and `score_line` are windows onto the (mutable) game
+    state the draw reads; the palettes are cursors AT their leg-0 byte, indexed [i - pos]; the rest are
+    const program data / buf_a strings / the buf_c dashboard graphic."""
+    buf_a = int.from_bytes(image[A_buf_a:A_buf_a + 4], "big")
+    buf_c = int.from_bytes(image[A_buf_c:A_buf_c + 4], "big")
+    color_pairs = _u8buf(image, A_color_pairs, COLOR_PAIRS_BYTES)
+    font = _u8buf(image, A_font_glyphs, FONT_BYTES)
+    num_sprites = _u8buf(image, buf_c + NUM_GLYPH_BUF_OFF, NUM_SPRITES_BYTES)
+    num_glyph_tbl = _u8buf(image, A_num_glyph_tbl, NUM_TBL_BYTES)
+    gfx = _u8buf(image, buf_c, FLOW_RESULT_GFX_BYTES)
+    title = _u8buf(image, A_results_title, FLOW_RS_TITLE_BYTES)
+    mode_str = _u8buf(image, A_results_mode_str, FLOW_RS_MODE_STR_BYTES)
+    buf_a_win = _u8buf(image, buf_a, FLOW_RS_BUF_A_BYTES)
+    highscore = _u8buf(image, A_highscore_table, FLOW_HIGHSCORE_BYTES)
+    hud_text = _u8buf(image, A_hud_text, HUD_TEXT_BYTES)
+    score_line = _u8buf(image, A_score_line, FLOW_SCORE_LINE_BYTES)
+    pal_a = _u8buf(image, A_results_palette_a - FLOW_RS_PALETTE_PAD, 2 * FLOW_RS_PALETTE_PAD)
+    pal_b = _u8buf(image, A_results_palette_b - FLOW_RS_PALETTE_PAD, 2 * FLOW_RS_PALETTE_PAD)
+    p = ctypes.POINTER(ctypes.c_uint8)
+    assets = RmResultsScreenAssets(
+        ctypes.cast(color_pairs, p), ctypes.cast(font, p), ctypes.cast(num_sprites, p),
+        ctypes.cast(num_glyph_tbl, p), ctypes.cast(gfx, p), ctypes.cast(title, p),
+        ctypes.cast(ctypes.byref(pal_a, FLOW_RS_PALETTE_PAD), p),
+        ctypes.cast(ctypes.byref(pal_b, FLOW_RS_PALETTE_PAD), p),
+        ctypes.cast(mode_str, p), ctypes.cast(buf_a_win, p), ctypes.cast(highscore, p),
+        ctypes.cast(hud_text, p), ctypes.cast(score_line, p))
+    return assets, (color_pairs, font, num_sprites, num_glyph_tbl, gfx, title, mode_str,
+                    buf_a_win, highscore, hud_text, score_line, pal_a, pal_b)
+
+
 # ---- between-legs FLOW state machine (slice B) ----
 
 class FlowState(ctypes.Structure):
@@ -1206,6 +1274,8 @@ _CB_QUIT = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
 _CB_FKEY = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
 _CB_DRAW_SCROLL = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_int16)   # draw_fade / draw_intermission
 _CB_DRAW_LEG = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint16)     # draw_results / rebuild_dash / start_demo_leg
+_CB_DRAW_RESULTS_SCREEN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint16,
+                                           ctypes.c_uint16, ctypes.c_uint16)  # draw_results_screen(mode,pos,leg)
 _CB_SET_PALETTE = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_int)
 _CB_VOID = ctypes.CFUNCTYPE(None, ctypes.c_void_p)                          # show / run_demo_frame
 _CB_EVENT = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint16, ctypes.c_uint16, ctypes.c_uint16)
@@ -1214,17 +1284,20 @@ _CB_EVENT = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint16, ctypes.c_ui
 class FlowOps(ctypes.Structure):
     _fields_ = [("poll_input", _CB_POLL_INPUT), ("quit_requested", _CB_QUIT), ("fkey_leg", _CB_FKEY),
                 ("draw_fade", _CB_DRAW_SCROLL), ("draw_intermission", _CB_DRAW_SCROLL),
-                ("draw_results", _CB_DRAW_LEG), ("draw_panel5", _CB_VOID),
+                ("draw_results", _CB_DRAW_LEG),
+                ("draw_results_screen", _CB_DRAW_RESULTS_SCREEN), ("draw_panel5", _CB_VOID),
                 ("set_palette", _CB_SET_PALETTE), ("show", _CB_VOID),
                 ("rebuild_dash", _CB_DRAW_LEG), ("draw_leg_labels", _CB_DRAW_LEG),
                 ("start_demo_leg", _CB_DRAW_LEG), ("run_demo_frame", _CB_VOID),
-                ("flash_frame", _CB_VOID), ("event", _CB_EVENT)]
+                ("flash_frame", _CB_VOID), ("name_flash", _CB_VOID), ("hold_frame", _CB_VOID),
+                ("event", _CB_EVENT)]
 
 
 class FlowTuning(ctypes.Structure):
     _fields_ = [("prologue_scroll", ctypes.c_int16), ("prologue_frame", ctypes.c_int16),
                 ("prologue_timer", ctypes.c_int16), ("phase_c_frames", ctypes.c_uint16),
-                ("idle_init", ctypes.c_uint16), ("flash_frames", ctypes.c_uint16)]
+                ("idle_init", ctypes.c_uint16), ("flash_frames", ctypes.c_uint16),
+                ("hold_frames", ctypes.c_uint16)]
 
 
 # The flow counters compared per driver step: every FlowState counter with stable timing at a callback

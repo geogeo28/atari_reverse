@@ -141,6 +141,14 @@ def _lib():
     lib.rm_int_phaseB_leg.restype = None
     lib.rm_update_highscore.argtypes = [fsp, u8p, u8p]
     lib.rm_update_highscore.restype = None
+    lib.rm_draw_results_screen.argtypes = [ctypes.POINTER(adapter.Framebuffer),
+                                           ctypes.POINTER(adapter.RmResultsScreenAssets),
+                                           ctypes.c_uint16, ctypes.c_uint16, ctypes.c_uint16]
+    lib.rm_draw_results_screen.restype = None
+    lib.rm_hiscore_countdown.argtypes = [fsp, u8p]
+    lib.rm_hiscore_countdown.restype = ctypes.c_int
+    lib.rm_hiscore_charstep.argtypes = [fsp, u8p]
+    lib.rm_hiscore_charstep.restype = None
     lib.rm_init_playfield_nav.argtypes = [fsp]
     lib.rm_init_playfield_nav.restype = None
     lib.rm_init_playfield_fire.argtypes = [fsp]
@@ -152,6 +160,12 @@ def _lib():
                lib.rm_flow_leg_select):
         fn.argtypes = [fsp, opsp, ctypes.c_void_p, tunp]
         fn.restype = ctypes.c_int
+    lib.rm_flow_name_entry.argtypes = [fsp, opsp, ctypes.c_void_p, tunp, u8p, u8p]
+    lib.rm_flow_name_entry.restype = ctypes.c_int
+    lib.rm_flow_game_over_tail.argtypes = [fsp, opsp, ctypes.c_void_p]
+    lib.rm_flow_game_over_tail.restype = ctypes.c_int
+    lib.rm_flow_score_tail.argtypes = [fsp, opsp, ctypes.c_void_p, tunp, u8p, u8p]
+    lib.rm_flow_score_tail.restype = ctypes.c_int
     return lib
 
 
@@ -1783,6 +1797,21 @@ def compare_panel5(lib, image):
     return _whole_fb(bytes(fb.px), base, ref_fb)
 
 
+def compare_results_screen(lib, image):
+    """recreate g_draw_results_screen vs remaster rm_draw_results_screen on the same background; whole
+    draw-buffer diff (the RACE-END / name-entry screen). mode/pos/leg are read from the poked image
+    (A_results_mode / A_hiscore_pos / A_leg_index) and passed to the candidate. Returns
+    (diff_bytes, footprint)."""
+    base, ref_fb = _flow_ref(image, "g_draw_results_screen")
+    mode = _r16(image, adapter.A_results_mode)
+    pos = _r16(image, adapter.A_hiscore_pos)
+    leg = _r16(image, adapter.A_leg_index)
+    a, _keep = adapter.results_screen_assets(image)
+    fb = _flow_fb(base)
+    lib.rm_draw_results_screen(ctypes.byref(fb), ctypes.byref(a), mode, pos, leg)
+    return _whole_fb(bytes(fb.px), base, ref_fb)
+
+
 def compare_fade_step(lib, image):
     """recreate g_fade_step vs remaster rm_fade_step; whole draw-buffer diff (fade_step fills the whole
     screen then overlays). Returns (diff_bytes, footprint)."""
@@ -1923,6 +1952,128 @@ def compare_update_highscore(lib, image):
     out.extend(_flow_mismatches(fs, ref,
                ("results_mode", "hiscore_pos", "countdown_timer", "countdown_sub")))
     return out
+
+
+# ---- name-entry per-frame slices (highscore.c g_hiscore_countdown / g_hiscore_charstep) ----
+# The two deterministic pieces of the interactive initials screen, diffed against the oracle exactly as
+# recreate's test_highscore slices them (the surrounding loop never returns under the oracle). The time
+# digits the countdown writes land in a small `score_line` buffer (image 0x1825e/0x1825f); the countdown
+# scalars stay in FlowState (compared against image 0x18262/0x18264 via _flow_mismatches).
+
+def compare_hiscore_countdown(lib, image):
+    """recreate g_hiscore_countdown vs remaster rm_hiscore_countdown on the same staged countdown.
+    Compares countdown_timer / countdown_sub, the two 'TIME nn' digits, and the timeout return.
+    Returns (mismatches, ret_cand, ret_ref)."""
+    ref = bytearray(image)
+    ret_r = _bind_ret("g_hiscore_countdown", ctypes.c_int)(
+        (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+
+    fs = adapter.flow_state(image)
+    score_line = (ctypes.c_uint8 * adapter.FLOW_SCORE_LINE_BYTES).from_buffer_copy(
+        bytes(image[adapter.A_score_line:adapter.A_score_line + adapter.FLOW_SCORE_LINE_BYTES]))
+    ret_c = lib.rm_hiscore_countdown(ctypes.byref(fs), score_line)
+
+    bad = _flow_mismatches(fs, ref, ("countdown_timer", "countdown_sub"))
+    # only the two time digits are written here (not the countdown scalars, which overlap this window).
+    hi = adapter.HS_TIME_HI_OFF
+    d = _first_diff("time_digits", bytes(score_line[hi:hi + 2]),
+                    bytes(ref[adapter.A_time_digit_hi:adapter.A_time_digit_hi + 2]))
+    if d:
+        bad.append(d)
+    return bad, ret_c, ret_r
+
+
+CS_NAME_ADDR = 0x18400   # scratch image byte holding the current initial (== recreate's test)
+
+
+def compare_hiscore_charstep(lib, image):
+    """recreate g_hiscore_charstep vs remaster rm_hiscore_charstep on the same staged input + char.
+    Compares leg_dec_delay / leg_inc_delay and the mutated initial byte. Returns the mismatches."""
+    ref = bytearray(image)
+    fn = getattr(bench_frame.harness._lib, "g_hiscore_charstep")
+    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+    fn.restype = None
+    fn((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref), CS_NAME_ADDR)
+
+    fs = adapter.flow_state(image)
+    cand = bytearray(image)
+    cbuf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(cand)
+    name_ptr = ctypes.cast(ctypes.byref(cbuf, CS_NAME_ADDR), ctypes.POINTER(ctypes.c_uint8))
+    lib.rm_hiscore_charstep(ctypes.byref(fs), name_ptr)
+
+    bad = _flow_mismatches(fs, ref, ("leg_dec_delay", "leg_inc_delay"))
+    if cand[CS_NAME_ADDR] != ref[CS_NAME_ADDR]:
+        bad.append(("name", cand[CS_NAME_ADDR], ref[CS_NAME_ADDR]))
+    return bad
+
+
+# ---- composed: the interactive name-entry loop (rm_flow_name_entry) ----
+# The loop that sequences the per-frame slices is a FlowOps driver, run here with recording ops + a
+# scripted joystick over a MUTABLE highscore + score_line. Honest about what each half pins: the per-frame
+# countdown/charstep are ALREADY oracle-diffed above; this pins the SEQUENCING (the prime/terminal draws,
+# the per-frame draw/flash/show/poll order) STRUCTURALLY (a recording log), and the loop's own bookkeeping
+# (the initials written into row+8, the confirm/backspace/timeout termination, the rank cleared) directly.
+
+def _name_field_off(fs):
+    return (fs.leg_index * adapter.HIGHSCORE_LEG_STRIDE
+            + (fs.hiscore_pos - 1) * adapter.HIGHSCORE_ROW + adapter.HS_NAME_FIELD_OFF)
+
+
+# A short terminal-hold count for the recording drives, so the log carries a handful of hold_frame
+# markers (enough to pin the count) rather than the 121-frame shipping default. The default itself is
+# pinned == HS_HOLD_FRAMES by test_course_ring's constants test.
+NAME_ENTRY_HOLD_FRAMES = 3
+
+
+def _name_entry_tuning(hold_frames=NAME_ENTRY_HOLD_FRAMES):
+    """A FlowTuning carrying only what the name-entry tail reads (t->hold_frames); the attract knobs are
+    unused here, so they stay 0."""
+    return adapter.FlowTuning(hold_frames=hold_frames)
+
+
+def drive_name_entry(lib, image, poll_of, seed_char=0x41, hold_frames=NAME_ENTRY_HOLD_FRAMES):
+    """Drive rm_flow_name_entry with recording ops + a scripted joystick over a mutable highscore +
+    score_line seeded from `image` (leg_index / hiscore_pos / results_mode / countdown_* come from the
+    poked FlowState). The winning row's initial byte is seeded to `seed_char` (0x41 non-DEL confirms it;
+    0x60 = the '`' delete sentinel exercises the backspace arm). `hold_frames` is the terminal-hold count
+    the driver runs. Returns (result, log, highscore_bytes, fs)."""
+    fs = adapter.flow_state(image)
+    rec = _DriverRecorder(fs, _FlowScript(poll_of, lambda i: 0, lambda i: -1))
+    tuning = _name_entry_tuning(hold_frames)
+    highscore = (ctypes.c_uint8 * adapter.FLOW_HIGHSCORE_BYTES).from_buffer_copy(
+        bytes(image[adapter.A_highscore_table:adapter.A_highscore_table + adapter.FLOW_HIGHSCORE_BYTES]))
+    highscore[_name_field_off(fs)] = seed_char
+    score_line = (ctypes.c_uint8 * adapter.FLOW_SCORE_LINE_BYTES).from_buffer_copy(
+        bytes(image[adapter.A_score_line:adapter.A_score_line + adapter.FLOW_SCORE_LINE_BYTES]))
+    result = lib.rm_flow_name_entry(ctypes.byref(fs), ctypes.byref(rec.ops), None,
+                                    ctypes.byref(tuning), highscore, score_line)
+    return result, rec.log, bytes(highscore), fs
+
+
+def drive_game_over_tail(lib, image):
+    """Drive rm_flow_game_over_tail with recording ops (the missed-the-table path). Returns (result, log)."""
+    fs = adapter.flow_state(image)
+    rec = _DriverRecorder(fs, _FlowScript(lambda i: 0, lambda i: 0, lambda i: -1))
+    result = lib.rm_flow_game_over_tail(ctypes.byref(fs), ctypes.byref(rec.ops), None)
+    return result, rec.log
+
+
+def drive_score_tail(lib, image, poll_of=lambda i: 0, hold_frames=NAME_ENTRY_HOLD_FRAMES):
+    """Drive rm_flow_score_tail (the made/missed dispatch) with recording ops. results_mode in `image`
+    selects the branch: 0 -> name entry, 2 -> the game-over redraw. Returns (result, log, highscore_bytes,
+    fs)."""
+    fs = adapter.flow_state(image)
+    rec = _DriverRecorder(fs, _FlowScript(poll_of, lambda i: 0, lambda i: -1))
+    tuning = _name_entry_tuning(hold_frames)
+    highscore = (ctypes.c_uint8 * adapter.FLOW_HIGHSCORE_BYTES).from_buffer_copy(
+        bytes(image[adapter.A_highscore_table:adapter.A_highscore_table + adapter.FLOW_HIGHSCORE_BYTES]))
+    if fs.results_mode == 0:                       # made the table: seed the winning row's first initial
+        highscore[_name_field_off(fs)] = 0x41
+    score_line = (ctypes.c_uint8 * adapter.FLOW_SCORE_LINE_BYTES).from_buffer_copy(
+        bytes(image[adapter.A_score_line:adapter.A_score_line + adapter.FLOW_SCORE_LINE_BYTES]))
+    result = lib.rm_flow_score_tail(ctypes.byref(fs), ctypes.byref(rec.ops), None,
+                                    ctypes.byref(tuning), highscore, score_line)
+    return result, rec.log, bytes(highscore), fs
 
 
 def compare_init_playfield_nav(lib, image):
@@ -2214,6 +2365,9 @@ class _DriverRecorder:
         def draw_res(_ctx, leg):
             self._rec("draw_res", (leg,))
 
+        def draw_res_screen(_ctx, mode, pos, leg):
+            self._rec("draw_res_screen", (mode, pos, leg))
+
         def draw_panel5(_ctx):
             self._rec("draw_panel5")
 
@@ -2238,16 +2392,24 @@ class _DriverRecorder:
         def flash(_ctx):
             self._rec("flash_frame")
 
+        def name_flash(_ctx):
+            self._rec("name_flash")
+
+        def hold_frame(_ctx):
+            self._rec("hold_frame")
+
         def event(_ctx, tag, leg, aux):
             self._rec("event", (tag, leg, aux))
 
         keep = [adapter._CB_POLL_INPUT(poll), adapter._CB_QUIT(quit_), adapter._CB_FKEY(fkey),
                 adapter._CB_DRAW_SCROLL(draw_fade), adapter._CB_DRAW_SCROLL(draw_int),
-                adapter._CB_DRAW_LEG(draw_res), adapter._CB_VOID(draw_panel5),
+                adapter._CB_DRAW_LEG(draw_res), adapter._CB_DRAW_RESULTS_SCREEN(draw_res_screen),
+                adapter._CB_VOID(draw_panel5),
                 adapter._CB_SET_PALETTE(set_pal), adapter._CB_VOID(show),
                 adapter._CB_DRAW_LEG(rebuild), adapter._CB_DRAW_LEG(leg_labels),
                 adapter._CB_DRAW_LEG(start_demo), adapter._CB_VOID(run_demo),
-                adapter._CB_VOID(flash), adapter._CB_EVENT(event)]
+                adapter._CB_VOID(flash), adapter._CB_VOID(name_flash), adapter._CB_VOID(hold_frame),
+                adapter._CB_EVENT(event)]
         return adapter.FlowOps(*keep), keep
 
 

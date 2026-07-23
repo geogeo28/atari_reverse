@@ -48,7 +48,7 @@ self-driving game has. Three traps it cost real time to find:
 in `include/flow.h`): the attract loop's phase-counter arithmetic (`rm_int_stepA`/`_phaseB_leg`/
 `_stepD_counter`), the abort poll (`rm_check_abort`), the high-score insert (`rm_update_highscore`,
 verified to recreate's prefix checkpoint — the ranking / row-shift / insert; the IKBD name-entry tail
-stays deferred), and the leg-select nav (`rm_init_playfield_nav`/`_fire`). Each is differential vs
+is ported in slice F, below), and the leg-select nav (`rm_init_playfield_nav`/`_fire`). Each is differential vs
 recreate's g_*, and two composed checks pin the wiring: an attract CYCLE (phases **A/B/D lockstep
 against the oracle slices**; **Phase C is a boundary-count only** — a pure-Python mirror of the
 0x96-frame count that cannot itself fail, guarded by the pinned `INT_C_FRAMES` constant, with the demo
@@ -134,10 +134,20 @@ framebuffer). It adds frames but no new trace tags, so the `GAME_FLOW_AUTO` phas
 
 The seams the shell stands in for, each documented at its call site in game_main.c: sound (never
 played), the exact Vsync cadence, the per-phase palette Setpalettes (off-image — the byte-compare is
-palette-agnostic, including the leg-start flash's own animated palette), the interactive high-score
-NAME-ENTRY tail (update_highscore ranks + inserts the score so the results screen fills in, but the
-IKBD initials screen is not run — recreate defers it too), and the attract DEMO's input-replay (Phase C
-holds throttle instead of replaying a recorded ghost). `init_scoretable`'s output is baked as a
+palette-agnostic, including the leg-start flash's own animated palette), and the attract DEMO's
+input-replay (Phase C holds throttle instead of replaying a recorded ghost). The interactive high-score
+NAME-ENTRY tail is now PORTED + wired (slice F): the made/missed dispatch is `rm_flow_score_tail`
+(`src/flow.c`, not the shell, so `make test` pins the branch) — a leg-end score that made the table runs
+the initials screen (`rm_flow_name_entry` — `rm_draw_results_screen` per frame + a `TIME nn` countdown
+while the player dials three initials into row+8), one that missed runs the short game-over screen
+(`rm_flow_game_over_tail`), then the intermission. The terminal tail's NON-sound steps are reproduced:
+after the fade (redraw ×2) the finished table is HELD `FlowTuning.hold_frames` Vsyncs (default 121 ==
+`HS_HOLD_FRAMES`, `op_hold_frame` = a plain `Vsync`), then the input-release wait polls until no bit is
+held. Only the SOUND steps stay off-image, exactly as recreate marks them: the name-entry jingle and the
+terminal sound/IKBD waits (mzflag / TURNOFF / the Crawio key-drain) never return under the oracle, so
+with sound off they resolve to nothing and control returns to the intermission; the colour-3 flash (`op_name_flash`) is a `Setcolor` seam like the get-ready flash
+(the driver owns the per-frame COUNT, the content `A_name_anim_tbl[(anim_counter & 0xe)]` is documented).
+`init_scoretable`'s output is baked as a
 program-data SEED (`fixture_highscore`) the shell copies into a mutable `highscore_ram` at boot, exactly
 as `fixture_hud_text` seeds `hud_text_ram` — the tiny init routine is not run on-target (its output is
 deterministic program data).
@@ -210,8 +220,8 @@ dropped.
 Still unported (documented at each call site, per convention): off-frame sound (INITTUNE/INITFX/
 TURNOFF, the VBL vector; `rev_reload` aliases `lean_frame` and is invisible to every compared
 surface — verified, not assumed); the record-driven mode-2/4/6 palette / screen-offset events in
-`game_update_course_advance`'s tail; and the interactive high-score name-entry tail + the attract
-input-replay (both off-image seams the game shell documents). The intermission / results / highscore
+`game_update_course_advance`'s tail; and the attract input-replay (an off-image seam the game shell
+documents). The interactive high-score name-entry tail is now ported + wired (slice F, above). The intermission / results / highscore
 flow AROUND `init_leg` is ported (slice B) AND now composed on-target in place of the leg-restart
 stand-in (slice C, above).
 
@@ -391,7 +401,11 @@ PHASED_RESTART 0 → INT_PROLOGUE → INT_ABORT → SELECT_ENTER 0 → SELECT_FI
 That exercises, in the shipping order: booting into the **leg select**, its **fire** starting a leg, a
 timed-out leg (`LEG_END`, `abort_flag 0xffff`) reaching **highscore + intermission**, a full attract
 cycle **A→B→C→D→restart**, and the **return to the leg select** — where a fresh fire starts a leg again,
-so the **whole loop closes**. The attract Phase C also RACES the picked leg (leg 1 here) through the real
+so the **whole loop closes**. Slice F's name-entry branch leaves this log **unchanged** (still 19 records,
+verified 2026-07-23): the timed-out leg's score misses the default table (`HISCORE 0`, `hiscore_pos` 0),
+so the short game-over tail (two redraws, no new trace tags) runs between `HISCORE` and `INT_PROLOGUE`
+rather than the interactive initials screen — which the auto build's no-fire input never confirms and is
+instead exercised by the host tests (`test_name_entry.py`). The attract Phase C also RACES the picked leg (leg 1 here) through the real
 pipeline for 6 frames without hanging — on-target evidence that a non-zero leg's race runs. Decode with a
 runner that sets `RUN_VBLS` high and parses the log words (a `run_flow.py` scratch helper; the trace is
 the on-target guard, as `make test` never runs game_main.c). This is a deliberate re-pin from the old

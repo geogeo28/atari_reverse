@@ -24,9 +24,6 @@
  *   - Vsync pacing / the flip: the shell flips at the vblank; the original's exact frame cadence is off.
  *   - Palette fades: the flow's per-phase palettes are Setpalette'd (an off-image seam — the byte-compare
  *     is palette-agnostic); the 121-frame leg-start "get ready" palette FLASH is a plain frame wait.
- *   - The interactive high-score NAME-ENTRY tail: update_highscore ranks + inserts the score (the table
- *     fills in and the results screen shows it) but the IKBD initials screen is not run (recreate defers
- *     it too — it busy-polls the keyboard and the sound flag, never returning under the differential).
  *   - The attract DEMO's input-replay: the original plays a recorded ghost; here the attract Phase C
  *     holds throttle (a documented stand-in) so the attract demo actually drives the course.
  *
@@ -41,6 +38,8 @@
  *   Up / Down    : throttle / brake      Left / Right : steer     Space : fire (dashboard variant)
  *   F1..F5       : select + start that leg (leg-select screen)     R : restart the leg
  *   Esc / Q      : quit
+ *   High-score name entry: Up/Left / Down/Right dial each initial back / forward, Space confirms one
+ *   (a 30-second TIME countdown ends entry if it runs out).
  * Assets come from the game's own COURSES.DAT + GRAPHICS.GRA, read off disk and unpacked by
  * src/assets.c. Only the original PROGRAM's own data-segment tables (fonts, colour pairs, layout
  * tables, the phase palettes, the object jump table) and two seeds (the intermission_poll control
@@ -164,6 +163,10 @@ static uint8_t hud_text_ram[sizeof fixture_hud_text] __attribute__((aligned(2)))
  * deterministic output baked as program data, like fixture_hud_text; init_scoretable itself is not run
  * on-target). The score record update_highscore ranks is hud_text_ram + RM_HUD_SCORE_BCD_OFF. */
 static uint8_t highscore_ram[sizeof fixture_highscore] __attribute__((aligned(2)));
+/* The name-entry score-line region (the score-line string + the "TIME nn" digits rm_hiscore_countdown
+ * writes) as MUTABLE RAM. It sits in the gap between hud_text_ram and highscore_ram, so it is a separate
+ * seed (fixture_score_line); rm_draw_results_screen reads it as the score-line string. */
+static uint8_t score_line_ram[sizeof fixture_score_line] __attribute__((aligned(2)));
 
 /* Two screen buffers, 256-byte aligned at RUNTIME (the ST video base only uses the high/mid address
  * bytes, so a non-256-aligned base is rounded down → the image shifts). The link-time alignment isn't
@@ -212,6 +215,7 @@ typedef struct {
     FlowState *flow;
     const RmIntermissionAssets *int_assets;
     const RmResultsAssets *res_assets;  /* .leg is passed per-call, so one bundle covers all 5 legs */
+    const RmResultsScreenAssets *res_screen_assets;   /* the race-end / name-entry results screen */
     /* leg-start "get ready" palette flash (ip_start_leg): a mutable 16-word palette the flash animates
      * from the obj-low flash tables (s->low + OBJ_LOW_LEG_FLASH_*). Off-image — only the colours a
      * human/screenshot sees; the byte-compare and the golden are palette-agnostic. The flash's frame
@@ -634,9 +638,11 @@ static int load_assets(RmArena *arena) {
 #define FLOW_PHASE_C_FRAMES 6      /* debug: a handful of demo frames instead of INT_C_FRAMES (0x96) */
 #define FLOW_IDLE_INIT      8      /* debug: short leg-select idle so the attract path is reachable */
 #define FLOW_FLASH_FRAMES   4      /* debug: a short get-ready flash so a headless trace stays snappy */
+#define FLOW_HOLD_FRAMES    4      /* debug: a short name-entry terminal hold so a headless trace stays snappy */
 static const FlowTuning flow_tuning = {
     .prologue_scroll = 1, .prologue_frame = 0, .prologue_timer = INT_SCROLL_GATE + 2,
     .phase_c_frames = FLOW_PHASE_C_FRAMES, .idle_init = FLOW_IDLE_INIT, .flash_frames = FLOW_FLASH_FRAMES,
+    .hold_frames = FLOW_HOLD_FRAMES,
 };
 #else
 static const FlowTuning flow_tuning = RM_FLOW_TUNING_DEFAULT;
@@ -660,13 +666,37 @@ static void op_draw_intermission(void *ctx, int16_t scroll) {
 static void op_draw_results(void *ctx, uint16_t leg) {
     Shell *s = ctx; rm_draw_leg_results(back_buffer(s), s->res_assets, leg);
 }
+static void op_draw_results_screen(void *ctx, uint16_t mode, uint16_t pos, uint16_t leg) {
+    Shell *s = ctx; rm_draw_results_screen(back_buffer(s), s->res_screen_assets, mode, pos, leg);
+}
 static void op_draw_panel5(void *ctx) {
     Shell *s = ctx; rm_draw_panel5(back_buffer(s), s->res_assets);
 }
 static void op_set_palette(void *ctx, int which) {
-    set_palette(ctx, which == RM_FLOW_PAL_INT_A ? OBJ_LOW_PAL_INT_A : OBJ_LOW_PAL_LEG_SELECT);
+    uint32_t off = which == RM_FLOW_PAL_INT_A      ? OBJ_LOW_PAL_INT_A
+                 : which == RM_FLOW_PAL_LEG_SELECT ? OBJ_LOW_PAL_LEG_SELECT
+                 : OBJ_LOW_PAL_RESULTS;             /* RM_FLOW_PAL_RESULTS: the race-end / name-entry screen */
+    set_palette(ctx, off);
+}
+
+/* One name-entry colour-3 flash frame (highscore.c g_hiscore_name_entry: read A_name_anim_tbl[(anim_
+ * counter & 0xe)] into palette register 3 and load it). Off-image (Setcolor + the SHARED anim_counter
+ * bump, exactly like op_flash_frame) — the driver owns the per-frame COUNT, this owns the seam. */
+#define NAME_FLASH_MASK 0xe        /* (anim_counter & this) is the word byte-offset into name_anim_tbl */
+#define NAME_FLASH_REG  3          /* the palette register the name-entry screen flashes */
+static void op_name_flash(void *ctx) {
+    Shell *s = ctx;
+    uint16_t counter = (uint16_t)(s->pfx->anim_counter + 1);
+    s->pfx->anim_counter = counter;
+    Setcolor(NAME_FLASH_REG, (short)be16(s->low + OBJ_LOW_NAME_ANIM_TBL + (counter & NAME_FLASH_MASK)));
 }
 static void op_show(void *ctx) { show_surface(ctx); }
+
+/* One name-entry terminal HOLD frame (highscore.c g_hiscore_name_entry @0x259c: one of the 121 Vsyncs
+ * that hold the finished table before returning). A plain vblank wait — no draw, no flip (the held
+ * table already sits on the front buffer) — so it never touches the framebuffer; the driver owns the
+ * 121-frame COUNT (t->hold_frames). */
+static void op_hold_frame(void *ctx) { (void)ctx; Vsync(); }
 
 static void op_rebuild_dash(void *ctx, uint16_t leg) {
     Shell *s = ctx; s->ctx->leg = leg; rm_init_leg_dash(s->ctx);
@@ -758,10 +788,12 @@ static void op_event(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux) {
 static const FlowOps flow_ops = {
     .poll_input = op_poll_input, .quit_requested = op_quit_requested, .fkey_leg = op_fkey_leg,
     .draw_fade = op_draw_fade, .draw_intermission = op_draw_intermission, .draw_results = op_draw_results,
+    .draw_results_screen = op_draw_results_screen,
     .draw_panel5 = op_draw_panel5, .set_palette = op_set_palette, .show = op_show,
     .rebuild_dash = op_rebuild_dash, .draw_leg_labels = op_draw_leg_labels,
     .start_demo_leg = op_start_demo_leg, .run_demo_frame = op_run_demo_frame,
-    .flash_frame = op_flash_frame, .event = op_event,
+    .flash_frame = op_flash_frame, .name_flash = op_name_flash, .hold_frame = op_hold_frame,
+    .event = op_event,
 };
 
 /* Interactive leg-select input sources. read_fkey returns 0..4 for an F1..F5 tap (a direct leg pick,
@@ -802,6 +834,7 @@ void main(void) {
      * live here; the flow mutates them). */
     for (unsigned i = 0; i < sizeof fixture_hud_text; i++) hud_text_ram[i] = fixture_hud_text[i];
     for (unsigned i = 0; i < sizeof fixture_highscore; i++) highscore_ram[i] = fixture_highscore[i];
+    for (unsigned i = 0; i < sizeof fixture_score_line; i++) score_line_ram[i] = fixture_score_line[i];
     for (unsigned i = 0; i < sizeof buf_a_ram; i++) buf_a_ram[i] = arena.tables[i];
     for (unsigned i = 0; i < sizeof fuel_mask_ram; i++) fuel_mask_ram[i] = fixture_fuel_mask[i];
 
@@ -913,6 +946,17 @@ void main(void) {
         .row_names = arena.tables + ARENA_ROW_NAMES_OFF, .leg_digits = arena.tables + ARENA_LEG_NAMES_OFF,
         .panel5_str = low + OBJ_LOW_PANEL5_STR,
     };
+    /* The race-end / name-entry results screen (slice F). Const program data + buf_c dashboard; the
+     * mutable game-state windows point at the RAM the flow reads (the hi-score table, the HUD text, the
+     * score-line region). The palettes are cursors AT their leg-0 byte, indexed [i - pos]. */
+    const RmResultsScreenAssets res_screen_assets = {
+        .color_pairs = fixture_color_pairs, .font = fixture_font,
+        .num_sprites = arena.gfx + ARENA_NUM_SPRITES_OFF, .num_glyph_tbl = fixture_num_glyph_tbl,
+        .gfx = arena.gfx, .title = low + OBJ_LOW_RS_TITLE,
+        .palette_a = low + OBJ_LOW_RS_PAL_A, .palette_b = low + OBJ_LOW_RS_PAL_B,
+        .mode_str = low + OBJ_LOW_RS_MODE_STR, .buf_a = buf_a_ram, .highscore = highscore_ram,
+        .hud_text = hud_text_ram, .score_line = score_line_ram,
+    };
     /* The leg-start flash's mutable palette, seeded from the baked leg_start_palette (obj-low blob); the
      * flash animates six of its entries per frame (op_flash_frame). Off-image (palette only). */
     uint8_t leg_start_pal_ram[LEG_START_PAL_BYTES];
@@ -927,7 +971,7 @@ void main(void) {
         .sprite_assets = &sprite_assets, .player_assets = &player_assets, .init_assets = &init_assets,
         .low = low, .event_assets = &event_assets, .ctx = &ctx, .stream = arena.tables, .leg = GAME_LEG_INDEX,
         .race_input_prev = 0, .flow = &flow,
-        .int_assets = &int_assets, .res_assets = &res_assets,
+        .int_assets = &int_assets, .res_assets = &res_assets, .res_screen_assets = &res_screen_assets,
         .leg_start_pal = leg_start_pal_ram,
         .input_source = read_input, .fkey_source = read_fkey,   /* repointed per flow call below */
     };
@@ -1047,6 +1091,12 @@ void main(void) {
 #else
         s->input_source = read_input;
 #endif
+        /* The interactive high-score tail (rm_flow_score_tail): a score that MADE the table
+         * (results_mode == 0) runs the initials screen; one that MISSED (== 2) runs the short game-over
+         * screen. Both consume the input source set above and return control here, then the intermission
+         * runs. The dispatch lives in the flow (not this shell) so `make test` pins the branch. (The
+         * name-entry jingle + the terminal sound/IKBD waits are off-image seams — the game ships w/o sound.) */
+        rm_flow_score_tail(&flow, &flow_ops, s, &flow_tuning, highscore_ram, score_line_ram);
         if (rm_flow_game_over(&flow, &flow_ops, s, &flow_tuning) == RM_FLOW_QUIT) s->quit = 1;
 #ifdef GAME_FLOW_AUTO
         auto_intermission_done = 1;   /* the attract cycle returned; the next leg-select+start ends the trace */
