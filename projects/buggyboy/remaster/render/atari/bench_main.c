@@ -42,12 +42,15 @@ static const HudState hud = {
 static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));
 
 static uint8_t fuel_mask_ram[8] __attribute__((aligned(2)));   /* prefix anim_color / HUD fuel-mask alias */
+/* rm_init_leg rewrites the HUD-text score / bonus-time region; the demo does the same into a mutable
+ * copy, so mirror it here (seeded from the baked leg-start text in bench_stage_assets). */
+static uint8_t hud_text_ram[sizeof fixture_hud_text] __attribute__((aligned(2)));
 
 static HudAssets assets = {
     .color_pairs = fixture_color_pairs, .color_bar_mask = fixture_color_bar_mask,
     /* the HUD reads the same mutable buffer the prefix's animated colour writes, as in the demo */
     .color_bar_cidx = fixture_color_bar_cidx + CIDX_ZERO_OFF, .fuel_mask = fuel_mask_ram,
-    .font = fixture_font, .hud_text = fixture_hud_text, .dsp_table = fixture_dsp_table,
+    .font = fixture_font, .hud_text = hud_text_ram, .dsp_table = fixture_dsp_table,
     .small_gauge_str = fixture_small_gauge_str,
     .num_glyph_tbl = fixture_num_glyph_tbl, .crash_color_tbl = fixture_crash_color_tbl,
     .score_delta_time = fixture_score_delta_time, .score_delta_roll = fixture_score_delta_roll,
@@ -56,30 +59,28 @@ static const RoadSource src = {
     .persp_seg = (const int8_t *)fixture_road_persp_seg,
     .width_count = fixture_road_width_count,
 };
-/* The per-band road widths the builder reads: live course state, advanced by bench_course_advance. */
-static CourseRing ring = COURSE_RING_INIT;
+/* The per-band road widths the builder reads: live course state, seeded by rm_init_leg in
+ * bench_stage_assets and advanced by bench_course_advance. */
+static CourseRing ring;
 static RoadInput road = {
     .width_tbl = ctrl + RM_CTRL_WIDTH_OFF, .param = fixture_road_param,
     .edge_tbl = fixture_road_edge + ROAD_EDGE_PAD, .edge_const = fixture_road_edge_const,
 };
 static const uint8_t *course_stream;
-static RoadPose pose = {.curve = ROAD_CURVE_INIT, .view_flags = ROAD_VIEW_FLAGS_INIT,
-                        .seg_data = ROAD_SEG_DATA_INIT};
-static ScrollState scroll = {.scroll_speed = BENCH_SCROLL_SPEED, .hscroll_pos = HSCROLL_POS_INIT};
-static CourseState course = {.row_ctr = COURSE_ROW_CTR_INIT, .read_pos = COURSE_READ_POS_INIT};
+/* The per-leg owner structs rm_init_leg fills in bench_stage_assets (as demo_main.c stages them), not
+ * baked; scroll.scroll_speed is then forced to BENCH_SCROLL_SPEED there. */
+static RoadPose pose;
+static ScrollState scroll;
+static CourseState course;
+static EventState ev;              /* rm_init_leg owner struct (not otherwise read by the bench) */
+static uint16_t screen_offset;     /* rm_init_leg output; the bench prebuilds a FIXED scroll offset */
 
 /* --- the draw_game_objects tree + player step, staged exactly as demo_main.c stages them --- */
 static uint8_t buf_a_ram[ARENA_BUF_A_BYTES] __attribute__((aligned(2)));  /* mutable buf_a (prefix mirrors) */
 static uint8_t gobj_scratch[GOBJ_MARKER_RECS_BYTES] __attribute__((aligned(2)));  /* marker recs (inactive) */
 static uint8_t ring_st[RM_RING_ROWS * RM_RING_ROW_BYTES] __attribute__((aligned(2)));
 
-static GobjPrefixState pfx = {
-    .marker_active = PFX_MARKER_ACTIVE_INIT, .marker_off = PFX_MARKER_OFF_INIT,
-    .marker_countdown = PFX_MARKER_CD_INIT, .view_parity = OBJ_VIEW_PARITY_INIT,
-    .anim_counter = PFX_ANIM_COUNTER_INIT, .anim_word = PFX_ANIM_WORD_INIT,
-    .bonus_timer = PFX_BONUS_TIMER_INIT, .dsp_color_scroll = PFX_DSP_SCROLL_INIT,
-    .flag_seq_off = PFX_FLAG_SEQ_OFF_INIT, .flag_seq_count = PFX_FLAG_SEQ_CNT_INIT,
-};
+static GobjPrefixState pfx;        /* filled by rm_init_leg in bench_stage_assets */
 static const GobjPrefixAssets pfx_assets = {
     .anim_word_tbl = fixture_obj_low + OBJ_LOW_ANIM_WORD_TBL,
     .anim_coloridx_tbl = fixture_obj_low + OBJ_LOW_ANIM_COLORIDX,
@@ -87,15 +88,16 @@ static const GobjPrefixAssets pfx_assets = {
     .marker_recs = gobj_scratch, .anim_color = fuel_mask_ram,
     .anim_mirror1 = buf_a_ram + GOBJ_ANIM_BUF_OFF1, .anim_mirror2 = buf_a_ram + GOBJ_ANIM_BUF_OFF2,
 };
-static GroundState ground = {.view = OBJ_GROUND_VIEW_INIT};   /* markers staged from the ring */
+static GroundState ground;         /* view + markers derived from the reset state / ring (bench_stage_assets) */
 static const GroundAssets ground_assets = {
     .col_tbl = fixture_obj_low + OBJ_LOW_GROUND_COL,
     .band_records = fixture_obj_low + OBJ_LOW_GROUND_BAND,
     .color_pairs = fixture_obj_low + OBJ_LOW_COLOR_PAIRS,
 };
-static const ObjectInput object = {
+/* object.shade is rm_init_leg's obj_shade output, set in bench_stage_assets. */
+static ObjectInput object = {
     .width_tbl = ctrl + RM_CTRL_WIDTH_OFF, .blit_mask_l = fixture_obj_low + OBJ_LOW_BLIT_MASK_L,
-    .blit_mask_r = fixture_obj_low + OBJ_LOW_BLIT_MASK_R, .shade = OBJ_SHADE_INIT,
+    .blit_mask_r = fixture_obj_low + OBJ_LOW_BLIT_MASK_R,
 };
 static ObjListCtx objlist = {
     .px = 0, .draw_buf = 0, .buf_a = buf_a_ram, .buf_c = 0,   /* px/buf_c bound in bench_stage_assets */
@@ -104,23 +106,12 @@ static ObjListCtx objlist = {
     .objsh2p_tbl = fixture_obj_low + OBJ_LOW_OBJSH2P_TBL,
     .jumptable = fixture_obj_low + OBJ_LOW_JUMPTABLE,
     .xoff_tbl = ctrl + RM_CTRL_WIDTH_OFF + 2,                 /* aliases the freshly-built ctrl */
-    /* Standalone objlist rows run at this staged parity; the composites advance it via the prefix
-     * first, as the demo does. Both are real frames (parity alternates every frame) — the per-stage
-     * rows and the composites just sample opposite phases of it. */
-    .view_flags = ROAD_VIEW_FLAGS_INIT, .view_parity = OBJ_VIEW_PARITY_INIT,
-    .bonus_timer = PFX_BONUS_TIMER_INIT, .obj_scan_off = OBJ_GROUND_VIEW_INIT,
-    .p24_flag = OBJ_P24_FLAG_INIT,
+    /* view_flags / view_parity / bonus_timer / obj_scan_off / p24_flag are derived from the reset
+     * owner structs in bench_stage_assets (as demo_main.c's start_leg derives them). Standalone
+     * objlist rows run at that staged parity; the composites advance it via the prefix first, as the
+     * demo does — both are real frames (parity alternates every frame). */
 };
-static SpriteState sprite = {
-    .lean = SP_LEAN_INIT, .pitch = SP_PITCH_INIT, .skid = SP_SKID_INIT,
-    .crash_disp = SP_CRASH_DISP_INIT, .wheel_pos = SP_WHEEL_POS_INIT,
-    .spin_state = SP_SPIN_STATE_INIT, .road_curve = ROAD_CURVE_INIT,
-    .sprite_suppress = SP_SPRITE_SUPPRESS_INIT,
-    .anim_frame = SP_ANIM_FRAME_INIT, .spin_reset = SP_SPIN_RESET_INIT,
-    .buggy_draw_flag = SP_BUGGY_DRAW_FLAG_INIT,
-    .collision_lock = SP_COLLISION_LOCK_INIT, .speed_raw = SP_SPEED_RAW_INIT,
-    .lean_accum = SP_LEAN_ACCUM_INIT, .lean_frame = SP_LEAN_FRAME_INIT,
-};
+static SpriteState sprite;         /* the buggy pose — filled by rm_init_leg in bench_stage_assets */
 static SpriteAssets sprite_assets = {
     .gfx = 0,                                                 /* bound in bench_stage_assets */
     .fg_anim_tbl = fixture_obj_low + OBJ_LOW_FG_ANIM_TBL,
@@ -136,20 +127,9 @@ static const PlayerAssets player_assets = {
     .legflag_tbl = fixture_obj_low + OBJ_LOW_LEGFLAG_TBL,
     .crash_anim_tbl = fixture_obj_low + OBJ_LOW_CRASH_ANIM_TBL,
 };
-static PlayerState player = {
-    .input = RM_IN_ACCEL,       /* a driving frame, so the physics walks its live paths */
-    .engine_rpm = PL_ENGINE_RPM_INIT, .rpm_cap = PL_RPM_CAP_INIT, .rpm_add = PL_RPM_ADD_INIT,
-    .speed_raw = PL_SPEED_RAW_INIT, .speed = PL_SPEED_INIT,
-    .speed_jitter_ph = PL_SPEED_JITTER_PH_INIT, .scroll_phase = PL_SCROLL_PHASE_INIT,
-    .scroll_speed = SCROLL_SPEED_INIT, .view_flags = ROAD_VIEW_FLAGS_INIT,
-    .view_bank = PL_VIEW_BANK_INIT, .ground_view_off = PL_GROUND_VIEW_OFF_INIT,
-    .road_edge_sel = PL_ROAD_EDGE_SEL_INIT, .wheel_pos = PL_WHEEL_POS_INIT,
-    .steer_hold = PL_STEER_HOLD_INIT, .lean_phase = PL_LEAN_PHASE_INIT, .lean = SP_LEAN_INIT,
-    .road_curve = ROAD_CURVE_INIT, .skid = SP_SKID_INIT, .fire_hold = PL_FIRE_HOLD_INIT,
-    .dsp_variant_idx = HUD_DSP_VARIANT_IDX, .leg_flags_sel = PL_LEG_FLAGS_SEL_INIT,
-    .time_subctr = PL_TIME_SUBCTR_INIT, .time_left = HUD_TIME_LEFT,
-    .hud_crash_timer = HUD_CRASH_TIMER, .timeout_gate = PL_TIMEOUT_GATE_INIT,
-};
+/* Filled by rm_init_leg in bench_stage_assets; input is forced to a driving frame there so the physics
+ * walks its live paths. */
+static PlayerState player;
 /* rm_player_update takes an RmEventCtx*, but the bench frame drives with collision_lock and
  * event_pending clear, so §6's event path (the only code that dereferences ctx) is never taken and
  * the dispatch never runs — so just the physics-side pointers are enough; the event-only fields
@@ -181,6 +161,26 @@ void bench_stage_assets(void) {
     objlist.px = fb.px;
     objlist.buf_c = arena.gfx;
     sprite_assets.gfx = arena.gfx;
+
+    /* Stage the leg-start owner state NATIVELY (rm_init_leg, as demo_main.c does) rather than baking a
+     * *_INIT snapshot: the physics / course / pose / scroll scalars, the ring seeded from the leg's
+     * marker records, the buggy pose, the HUD-text region and object.shade. Then the bench's two
+     * deliberate overrides (a driving input; a representative racing scroll speed) and the render
+     * VIEWS derived from the owners exactly as demo_main.c's start_leg derives them. Re-run before
+     * every measured call, so each stage starts from a fresh leg-start state. */
+    for (unsigned i = 0; i < sizeof fixture_hud_text; i++) hud_text_ram[i] = fixture_hud_text[i];
+    RmInitAssets init_assets = {.buf_a = arena.tables, .legtime = fixture_legtime};
+    rm_init_leg(&player, &course, &pose, &scroll, &ring, &ev, &pfx, &sprite,
+                hud_text_ram, &object.shade, &screen_offset, &init_assets, DEMO_LEG_INDEX);
+    player.input = RM_IN_ACCEL;                 /* a driving frame, so the physics walks its live paths */
+    scroll.scroll_speed = BENCH_SCROLL_SPEED;   /* a representative racing speed (scroll edge/wrap tail) */
+    ground.view = player.ground_view_off;
+    objlist.view_flags = pose.view_flags;
+    objlist.view_parity = pfx.view_parity;
+    objlist.bonus_timer = pfx.bonus_timer;
+    objlist.obj_scan_off = player.ground_view_off;
+    objlist.p24_flag = hud_text_ram[RM_HUD_SCORE_STR_OFF + 1];
+
     bench_ring_views();
 }
 

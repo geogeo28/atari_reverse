@@ -27,11 +27,8 @@
 #define COURSE_ROW_RELOAD 0xf8     /* row_ctr reload = rec_ctl & this */
 #define SEG_SLOTS         13       /* RoadPose.seg_data entries */
 
-/* Packed course record — 8 bytes, read at a NEGATIVE offset from the stream base. */
-#define REC_SELECT_OFF    0        /* word: bit (RM_RING_SLOTS-1 - s) selects slot s */
-#define REC_CTL_OFF       2        /* byte: row_ctr reload (& 0xf8) and new slope (& 7) */
-#define REC_CODES_OFF     3        /* the selected slots' type codes, one byte each, in slot order */
-#define REC_MARKER_OFF    6        /* word: the new band's marker word */
+/* The packed course record read here (NEGATIVE offset from the stream base) uses the shared 8-byte
+ * RM_REC_* wire layout in game.h — the same layout gameplay.c's init_ring_seed decodes. */
 
 /* A band that no record refilled keeps only these bits of each code — it ages out the type. */
 #define RING_CODE_AGE_MASK 0xffc0
@@ -87,8 +84,8 @@ static uint16_t marker_unpack(uint16_t raw) {
  * sits at slot 11, so an expansion reaches slot 13 at most. */
 static void ring_refill(CourseRow *band, const uint8_t *rec) {
     uint16_t code_slot[RM_RING_SLOTS + CODE_ANIM_RUN_LEN - 1] = {0};
-    uint16_t select = be16(rec + REC_SELECT_OFF);
-    const uint8_t *code = rec + REC_CODES_OFF;
+    uint16_t select = be16(rec + RM_REC_SELECT_OFF);
+    const uint8_t *code = rec + RM_REC_CODES_OFF;
 
     for (int slot = 0; slot < RM_RING_SLOTS; slot++) {
         if (!(select & (1u << (RM_RING_SLOTS - 1 - slot))))
@@ -105,7 +102,7 @@ static void ring_refill(CourseRow *band, const uint8_t *rec) {
     if (band->slot[CODE_ECHO_FROM_SLOT] == CODE_ECHOED)
         band->slot[CODE_ECHO_TO_SLOT] = CODE_ECHOED;
 
-    band->marker = marker_unpack(be16(rec + REC_MARKER_OFF));
+    band->marker = marker_unpack(be16(rec + RM_REC_MARKER_OFF));
 }
 
 /* Age the far band in place: no record was pulled, so it keeps its marker and merely loses the low
@@ -170,7 +167,7 @@ void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, c
     if ((int16_t)cs->row_ctr < 0) {
         cs->read_pos = (uint16_t)((cs->read_pos + COURSE_ROW_STEP) & COURSE_READ_MASK);
         const uint8_t *rec = stream - cs->read_pos;  /* records grow downward from the stream base */
-        uint8_t rec_ctl = rec[REC_CTL_OFF];
+        uint8_t rec_ctl = rec[RM_REC_CTL_OFF];
         pose->seg_data[SEG_SLOTS - 1] = (int16_t)((rec_ctl & 7) - COURSE_SLOPE_BIAS);   /* new slope */
         cs->row_ctr = (uint16_t)(rec_ctl & COURSE_ROW_RELOAD);
         ring_refill(&ring->row[0], rec);

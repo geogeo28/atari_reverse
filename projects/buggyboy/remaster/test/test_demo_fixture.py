@@ -40,13 +40,22 @@ def test_buf_a_window_covers_the_type_record_table():
         f"types above {(window - base) // stride:#x} silently draw nothing")
 
 
-def test_obj_scan_off_seeded_from_the_shared_global():
-    """The demo must seed ObjListCtx.obj_scan_off with OBJ_GROUND_VIEW_INIT — the list-cursor
-    offset and the ground's view column are ONE original global (0x18c58), and the first draw runs
-    before apply_player ever copies ground_view_off in. Seeding 0 was half of the frame-0 golden
-    DIFF, and nothing else on the host can see a revert: make test never runs demo_main.c, so this
-    source-text pin is the only guard short of the on-target run_demo MATCH."""
+def test_frame0_views_derived_before_first_draw():
+    """rm_init_leg produces the leg-start OWNER state; the render VIEWS (obj_scan_off / ground.view /
+    the HUD / the sprite gates) are DERIVED from it by start_leg's apply_player + ring_views_refresh,
+    which MUST run before the frame-0 draw. Seeding obj_scan_off 0 was half of the old frame-0 golden
+    DIFF — the list-cursor offset and the ground's view column are ONE original global (0x18c58), and
+    the first draw once ran before apply_player ever copied ground_view_off in. make test never runs
+    demo_main.c, so this source pin plus the on-target run_demo MATCH are the only guards."""
     demo = (adapter.REMASTER / "render/atari/demo_main.c").read_text()
-    assert re.search(r"\.obj_scan_off\s*=\s*OBJ_GROUND_VIEW_INIT\b", demo), (
-        "demo_main.c no longer seeds .obj_scan_off from OBJ_GROUND_VIEW_INIT — frame 0's object "
-        "passes will read their display records at the wrong cursor (the 1110-byte golden DIFF)")
+    # apply_player copies the physics ground_view_off into the object-list cursor + the ground view.
+    assert re.search(r"objlist->obj_scan_off\s*=\s*p->ground_view_off", demo), (
+        "apply_player no longer copies ground_view_off into obj_scan_off")
+    # start_leg (which runs apply_player + ring_views_refresh) must precede the frame-0 draw.
+    assert "apply_player(player, pose, road, scroll, sprite, hud, ground, objlist, ev)" in demo, (
+        "start_leg no longer derives the frame-0 views via apply_player")
+    start_pos = demo.index("start_leg(&player")
+    draw_pos = demo.index("draw_frame(screen_buf(shown)")
+    assert start_pos < draw_pos, (
+        "start_leg (which derives the frame-0 views) must run before the frame-0 draw — else frame 0's "
+        "object passes read their display records at the wrong cursor (the 1110-byte golden DIFF)")

@@ -6,6 +6,8 @@
  * palette uses), and the bonus-window flag animation. Transcribed 1:1 from recreate (16-bit wraps
  * mirrored); the flat-image reads/writes become native fields + named arenas (see game.h).
  */
+#include <string.h>
+
 #include "game.h"
 #include "st.h"
 
@@ -63,4 +65,162 @@ void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a) {
                 s->flag_seq_count = 0;
         }
     }
+}
+
+/* ---- init_leg (recreate gameplay.c g_init_leg @0x104b8) — the leg-start state reset ----------------
+ *
+ * g_init_leg clears a contiguous 0x6d-word block of the flat image then seeds a few scalar defaults;
+ * that block is nearly the whole per-leg game-state region, so in native terms almost every field of
+ * the owner structs goes to zero and a handful get defaults. The clear does NOT reach a couple of
+ * fields below/above its bounds — the game-over flag and the time-out gate (PlayerState), and the
+ * anim-frame counter and flag-sequence cursor (GobjPrefixState) — which must survive a re-init, so
+ * those are preserved across the reset. */
+
+/* Phase-2 scalar defaults (recreate's INIT constants at those image addresses). */
+#define IL_ENGINE_RPM   0xf     /* engine_rpm */
+#define IL_RPM_CAP      0x44    /* leg_flags_c90 high word */
+#define IL_RPM_ADD      0x2     /* leg_flags_c90 low word */
+#define IL_VIEW_FLAGS   0x2     /* view_flags */
+#define IL_GROUND_VIEW  0x1ba   /* ground_view_off / obj_scan_off */
+#define IL_ROAD_EDGE    0xc0    /* road_edge_sel */
+#define IL_WHEEL_POS    0x2     /* wheel_pos */
+#define IL_LEAN         0x2     /* lean_state */
+#define IL_TIME_LEFT    0x46    /* time_left */
+#define IL_LEAN_FRAME   0x8     /* lean_frame (buggy lean-animation cursor) */
+#define IL_VARIANT      0x8     /* buggy_variant scratch (draw_buggy overwrites it with lean*8) */
+
+/* Phase 10 — the leg's 14 roadside-object marker records, unpacked into the ring's 14 bands. Each
+ * source record uses the shared 8-byte RM_REC_* wire layout (game.h), the same course.c decodes. */
+#define IL_MARKER_SRC_BASE   0x5ce0   /* buf_a + this + leg*IL_MARKER_LEG_STRIDE: the record block */
+#define IL_MARKER_LEG_STRIDE 0x2000
+#define IL_MARKER_MASK_BITS  0xe      /* the select mask walks bits 0xe..0 (slot = 0xe - bit) */
+#define IL_MARKER_FLAG_MASK  0x60     /* marker fixup: if neither of these bits set, clear the sign */
+#define IL_MARKER_SIGN_CLEAR 0x7f     /* ...i.e. AND off the sign bit (0x80), keeping the low 7 */
+
+/* Phase 11 — the first object-display record's selector / shade, per leg. */
+#define IL_OBJDISP_SEL_OFF   0x50     /* buf_a + this + leg*IL_OBJDISP_LEG_STRIDE: the selector byte */
+#define IL_OBJDISP_LEG_STRIDE 0x20    /* per-leg stride of the selector table */
+#define IL_OBJDISP_TBL_OFF   0xf2     /* buf_a + this + selector*IL_OBJDISP_REC_STRIDE: the record */
+#define IL_OBJDISP_REC_STRIDE 0x10    /* per-selector stride of the record table */
+#define IL_OBJDISP_SHADE_OFF 0xc      /* obj_shade = be16(record + this) - 2 */
+#define IL_OBJDISP_SHADE_BIAS 2
+
+/* Phase 7 — the road-scroll offset: the leg's scroll table (buf_a + leg*IL_SCROLL_TBL_STRIDE), indexed
+ * by scroll_frame (0 at a leg start, since phase 1 clears it), times one 40-scanline band. */
+#define IL_SCROLL_TBL_STRIDE 0x10
+#define IL_SCROLL_BAND_BYTES 0x1900
+
+/* Phase 4 — the HUD bonus-time strings ("/2000/" ...), copied from program data into the HUD-text
+ * region (leg 0 uses the base source; later legs start IL_LEGTIME_LEG_OFF further in). */
+#define IL_LEGTIME_LEG_OFF   0x1e
+#define IL_LEGTIME_DST_OFF   0x1a     /* hud_text + this (image 0x1818c) */
+#define IL_LEGTIME_ROWS      5
+#define IL_LEGTIME_COPY      6        /* bytes copied per row (a long + a word); 8 more are skipped */
+#define IL_LEGTIME_DST_STRIDE 0xe
+
+/* Phase 5/6 — the score string template + BCD reset, both inside the HUD-text region. */
+#define IL_SCORE_TMPL_OFF    0x8a     /* hud_text + this (image 0x181fc): the "/1______0" template */
+#define IL_SCORE_TMPL_BYTES  10
+#define IL_SCORE_DIGITS_OFF  RM_HUD_SCORE_BCD_OFF   /* six ASCII score digits reset to '0' (0x1824c) */
+#define IL_SCORE_DIGITS      6
+
+/* Seed the far-to-near ring from the leg's 14 packed marker records (phases 9 + 10). Each 8-byte
+ * record carries a 15-bit select mask; a set bit copies the next source byte into that slot's LOW byte
+ * (the high byte stays clear, so a code sits where the object-list dispatcher indexes it). The type
+ * word becomes the band's marker after a sign/priority fixup. */
+static void init_ring_seed(CourseRing *ring, const uint8_t *buf_a, uint16_t leg) {
+    const uint8_t *rec = buf_a + IL_MARKER_SRC_BASE + (uint32_t)leg * IL_MARKER_LEG_STRIDE;
+    for (int band = 0; band < RM_RING_ROWS; band++, rec += RM_REC_STRIDE) {
+        CourseRow *row = &ring->row[band];
+        for (int slot = 0; slot < RM_RING_SLOTS; slot++) row->slot[slot] = 0;   /* phase 9 clear */
+
+        int16_t  type = (int16_t)be16(rec + RM_REC_MARKER_OFF);
+        uint16_t mask = be16(rec + RM_REC_SELECT_OFF);
+        const uint8_t *code = rec + RM_REC_CODES_OFF;   /* mask word, a skipped ctl byte (+2), then codes */
+        for (int bit = IL_MARKER_MASK_BITS; bit >= 0; bit--)
+            if (mask & (1u << bit)) row->slot[IL_MARKER_MASK_BITS - bit] = *code++;
+
+        uint8_t hi = (uint8_t)((uint16_t)type >> 8);
+        if (type >= 0) hi = 0;                       /* a non-negative type keeps only its low byte */
+        if ((hi & IL_MARKER_FLAG_MASK) == 0) hi &= IL_MARKER_SIGN_CLEAR;   /* no priority bits -> drop the sign too */
+        row->marker = (uint16_t)((hi << 8) | ((uint16_t)type & 0xff));
+    }
+}
+
+void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *scroll,
+                 CourseRing *ring, EventState *ev, GobjPrefixState *gobj, SpriteState *sprite,
+                 uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset,
+                 const RmInitAssets *a, uint16_t leg) {
+    /* Phase 1/2: the physics scalars — clear then default. game_over / timeout_gate live below the
+     * cleared block, so a re-init preserves them. */
+    bool game_over = p->game_over, timeout_gate = p->timeout_gate;
+    memset(p, 0, sizeof *p);
+    p->game_over = game_over;
+    p->timeout_gate = timeout_gate;
+    p->engine_rpm = IL_ENGINE_RPM;
+    p->rpm_cap = IL_RPM_CAP;
+    p->rpm_add = IL_RPM_ADD;
+    p->view_flags = IL_VIEW_FLAGS;
+    p->ground_view_off = IL_GROUND_VIEW;
+    p->road_edge_sel = IL_ROAD_EDGE;
+    p->wheel_pos = IL_WHEEL_POS;
+    p->lean = IL_LEAN;
+    p->time_left = IL_TIME_LEFT;
+
+    memset(cs, 0, sizeof *cs);                       /* course_row_ctr / course_read_pos */
+
+    memset(pose, 0, sizeof *pose);                   /* curve, seg_data (phase 8), horizon outputs */
+    pose->view_flags = IL_VIEW_FLAGS;
+
+    memset(scroll, 0, sizeof *scroll);               /* hscroll_pos / step2 / speed / seg_head */
+
+    /* EventState: cleared, but the dashboard-marker scalars (dash_y/bit/x) sit below the cleared block
+     * and g_init_leg does not touch them (verified: 0 at a leg start), so preserve them. */
+    uint8_t dash_y = ev->dash_y, dash_bit = ev->dash_bit;
+    uint16_t dash_x = ev->dash_x;
+    memset(ev, 0, sizeof *ev);
+    ev->dash_y = dash_y;
+    ev->dash_bit = dash_bit;
+    ev->dash_x = dash_x;
+
+    /* GobjPrefixState: the anim-frame counter and flag-sequence cursor sit outside the cleared block. */
+    uint16_t anim_counter = gobj->anim_counter, flag_seq_off = gobj->flag_seq_off;
+    memset(gobj, 0, sizeof *gobj);
+    gobj->anim_counter = anim_counter;
+    gobj->flag_seq_off = flag_seq_off;
+
+    /* Phase 8/9/10: clear + seed the ring, then refresh the sprite gates the near band feeds. */
+    init_ring_seed(ring, a->buf_a, leg);
+
+    /* Buggy-sprite pose: the persistent lean-animation cursor and the leg-start body pose. The fields
+     * apply_player re-derives each frame (pitch/skid/speed_raw...) are set to 0 here for a consistent
+     * boot snapshot; the sprite gates come from the ring just seeded. */
+    memset(sprite, 0, sizeof *sprite);
+    sprite->lean = IL_LEAN;
+    sprite->wheel_pos = IL_WHEEL_POS;
+    sprite->lean_frame = IL_LEAN_FRAME;
+    sprite->variant = IL_VARIANT;
+    sprite->buggy_gate = rm_ring_buggy_gate(ring);
+    sprite->fg_gate = rm_ring_fg_gate(ring);
+
+    /* Phase 4: HUD bonus-time strings (the shorter set from leg 1 on). */
+    const uint8_t *src = a->legtime + (leg != 0 ? IL_LEGTIME_LEG_OFF : 0);
+    uint8_t *dst = hud_text + IL_LEGTIME_DST_OFF;
+    for (int row = 0; row < IL_LEGTIME_ROWS; row++, src += IL_LEGTIME_COPY, dst += IL_LEGTIME_DST_STRIDE)
+        for (int b = 0; b < IL_LEGTIME_COPY; b++) dst[b] = src[b];
+
+    /* Phase 5/6: score string template (copied within the HUD-text region) + the six-digit BCD reset. */
+    for (int b = 0; b < IL_SCORE_TMPL_BYTES; b++)
+        hud_text[RM_HUD_SCORE_STR_OFF + b] = hud_text[IL_SCORE_TMPL_OFF + b];
+    for (int b = 0; b < IL_SCORE_DIGITS; b++) hud_text[IL_SCORE_DIGITS_OFF + b] = '0';
+
+    /* Phase 7: this frame's road-scroll offset (scroll_frame is 0 at a leg start). */
+    uint8_t step = a->buf_a[(uint16_t)(leg * IL_SCROLL_TBL_STRIDE)];
+    *screen_offset = (uint16_t)(step * IL_SCROLL_BAND_BYTES);
+
+    /* Phase 11: the first object-display record's shade (the palette-staging record it also writes
+     * feeds the unported mode-2/4/6 palette event — skipped, like sound). */
+    uint8_t sel = a->buf_a[IL_OBJDISP_SEL_OFF + (uint16_t)(leg * IL_OBJDISP_LEG_STRIDE)];
+    const uint8_t *disp = a->buf_a + IL_OBJDISP_TBL_OFF + (uint16_t)(sel * IL_OBJDISP_REC_STRIDE);
+    *obj_shade = (int16_t)(be16(disp + IL_OBJDISP_SHADE_OFF) - IL_OBJDISP_SHADE_BIAS);
 }

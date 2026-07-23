@@ -153,7 +153,7 @@ def test_python_constants_match_the_c():
     stale predicate and report coverage that never happened."""
     game_h = _defines("include/game.h",
                       r"^#define\s+(RM_RING_\w+|EDGE_\w+|RM_CTRL_\w+|RM_SCANLINE_\w+|RM_HUD_TIMER_\w+"
-                      r"|RM_HUD_CRASH_\w+|RM_CRASH_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+                      r"|RM_HUD_CRASH_\w+|RM_CRASH_\w+|RM_REC_\w+)\s+(\w+)\s*(?:/\*.*)?$")
     assert {"RM_RING_ROWS", "RM_RING_SLOTS"} <= game_h.keys(), "ring geometry moved out of game.h"
     assert equiv.adapter.RM_RING_ROWS == game_h["RM_RING_ROWS"]
     assert equiv.adapter.RM_RING_SLOTS == game_h["RM_RING_SLOTS"]
@@ -187,13 +187,23 @@ def test_python_constants_match_the_c():
             == equiv.adapter.RING_ROW_BYTES * equiv.adapter.RM_RING_ROWS)
     assert equiv.adapter.CourseRow.marker.offset == equiv.adapter.RM_RING_SLOTS * 2
 
-    course_c = _defines("src/course.c", r"^#define\s+(REC_\w+|MARKER_\w+|CODE_ECHO\w*)\s+(\w+)\s*(?:/\*.*)?$")
-    assert equiv.RING_REC_SELECT_OFF == course_c["REC_SELECT_OFF"]
-    assert equiv.RING_REC_CODES_OFF == course_c["REC_CODES_OFF"]
-    assert equiv.RING_REC_MARKER_OFF == course_c["REC_MARKER_OFF"]
+    # The packed-record wire layout now lives ONCE in game.h (RM_REC_*), shared by course.c and
+    # gameplay.c's init_ring_seed; the marker/echo fixups stay file-static in course.c.
+    assert equiv.RING_REC_SELECT_OFF == game_h["RM_REC_SELECT_OFF"]
+    assert equiv.RING_REC_CODES_OFF == game_h["RM_REC_CODES_OFF"]
+    assert equiv.RING_REC_MARKER_OFF == game_h["RM_REC_MARKER_OFF"]
+    course_c = _defines("src/course.c", r"^#define\s+(MARKER_\w+|CODE_ECHO\w*)\s+(\w+)\s*(?:/\*.*)?$")
     assert equiv.RING_MARKER_RAW_FLAG == course_c["MARKER_RAW_FLAG"]
     assert equiv.RING_MARKER_KIND_MASK == course_c["MARKER_KIND_MASK"]
     assert equiv.RING_MARKER_KIND_RIGHT == course_c["MARKER_KIND_RIGHT"]
     assert equiv.RING_ECHOED_CODE == course_c["CODE_ECHOED"]
     assert equiv.RING_ECHO_FROM == course_c["CODE_ECHO_FROM_SLOT"]
     assert equiv.RING_ECHO_TO == course_c["CODE_ECHO_TO_SLOT"]
+
+    # adapter.py's IL_LEGTIME_BYTES (the baked-strings window sizing for init_assets) must equal the
+    # window rm_init_leg's phase-4 legtime copy actually reads: the leg-1 base offset plus the five
+    # rows it copies (see src/gameplay.c). Pin the Python copy to the C so a re-sized copy loop can't
+    # silently outrun the ctypes window.
+    gameplay_c = _defines("src/gameplay.c", r"^#define\s+(IL_LEGTIME_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+    assert (equiv.adapter.IL_LEGTIME_BYTES
+            == gameplay_c["IL_LEGTIME_LEG_OFF"] + gameplay_c["IL_LEGTIME_ROWS"] * gameplay_c["IL_LEGTIME_COPY"])

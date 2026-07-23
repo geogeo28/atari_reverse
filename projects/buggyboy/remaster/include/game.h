@@ -252,6 +252,16 @@ void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, c
 
 #define RM_RING_ROW_BYTES ((RM_RING_SLOTS + 1) * 2)   /* one serialized band: 15 slot words + marker */
 
+/* Packed course record — the 8-byte wire layout the ring is filled from, shared by BOTH decoders:
+ * course.c's rm_road_course_advance (the per-frame course-stream refill) and gameplay.c's
+ * init_ring_seed (the leg-start seed from the leg's 14 marker records). One canonical definition so
+ * the two cannot drift (see CLAUDE.md §5). */
+#define RM_REC_SELECT_OFF 0        /* word: bit (RM_RING_SLOTS-1 - s) selects slot s */
+#define RM_REC_CTL_OFF    2        /* byte: row_ctr reload (& 0xf8) and new slope (& 7) */
+#define RM_REC_CODES_OFF  3        /* the selected slots' type codes, one byte each, in slot order */
+#define RM_REC_MARKER_OFF 6        /* word: the new band's marker word */
+#define RM_REC_STRIDE     8        /* one record is 8 bytes */
+
 /* Serialize the ring into the original's flat ST-byte row grid (RM_RING_ROWS x RM_RING_ROW_BYTES
  * big-endian words) for the object-list dispatcher, which walks its flag streams through the grid
  * exactly as the original walked the image: the sprite passes' stream starts at row 1's slots
@@ -769,5 +779,43 @@ void rm_crash_fx_update(RmEventCtx *c);
  * native jump table against the image's own table at 0x11aa2 (see test_events). */
 uint32_t rm_event_classify(uint16_t idx);
 #define RM_EVENT_TABLE_ENTRIES 65
+
+/* ---- init_leg (recreate gameplay.c g_init_leg @0x104b8) — the leg-start state reset ----
+ *
+ * A leg STARTS natively rather than from a baked snapshot: this resets every per-leg surface to its
+ * leg-start value in one call — the physics/course/event/pose/scroll scalars (recreate's 0x6d-word
+ * live-state clear plus a handful of scalar defaults), the course object/marker ring seeded from the
+ * leg's packed marker records, the buggy-sprite pose, the HUD bonus-time / score strings, and the
+ * scaled-object shade + the road-scroll offset. It owns the OWNER structs (Player/Course/Pose/Scroll/
+ * Ring/Event/GobjPrefix/Sprite); the render VIEWS the demo derives per frame (Ground / ObjList / Hud)
+ * follow from them via the normal apply_player / ring_views_refresh, so they are not taken here.
+ *
+ * Homed with the draw_game_objects prefix in gameplay.c because that is where recreate keeps
+ * g_init_leg — both are gameplay-orchestrator code (per-leg init + per-frame object state), not a
+ * render leaf. It reproduces g_init_leg's eleven phases with two documented exceptions, neither a
+ * surface any consumer or the differential test reads:
+ *   - Phase 3's checkpoint-banner draw (draw_checkpoint_anim) writes only the gfx banner bitmap, which
+ *     rm_course_events regenerates on a checkpoint; the demo's golden renders from the freshly-loaded
+ *     arena (no init-time banner scroll), so it is skipped here.
+ *   - Phase 11's palette-staging record (image 0x17fb0) feeds the still-unported mode-2/4/6 palette
+ *     event (palette is off-image in the remaster, like sound); only its obj_shade output is consumed.
+ *
+ * The dash-marker scalars are NOT touched: verified against the oracle, g_init_leg leaves them
+ * unchanged (0 at a leg start) — the per-leg arena reseed is the intermission's init_leg_dash (already
+ * ported in events.c), which fires on a checkpoint, not here. */
+typedef struct {
+    const uint8_t *buf_a;    /* assets arena (COURSES.DAT): the leg's marker records (INIT_MARKER_SRC_BASE),
+                              * the object-display selector/record (0x50 / 0xf2) and the per-leg scroll
+                              * table (leg << 4) — all byte offsets into the loaded arena base */
+    const uint8_t *legtime;  /* program-data bonus-time strings ("/2000/" ...) source (image 0x18136) */
+} RmInitAssets;
+
+/* Reset all per-leg state to its leg-start value (see above). `obj_shade` (draw_object's centre/near
+ * fill selector) and `screen_offset` (buf_c road-scroll offset, feeds the scroll prebuild) are the two
+ * outputs with no owning struct field. `hud_text` is the shared mutable HUD-text region (base 0x18172). */
+void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *scroll,
+                 CourseRing *ring, EventState *ev, GobjPrefixState *gobj, SpriteState *sprite,
+                 uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset,
+                 const RmInitAssets *a, uint16_t leg);
 
 #endif /* RM_GAME_H */

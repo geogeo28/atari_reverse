@@ -17,6 +17,7 @@ pixel recreate doesn't. Unported phases are neutralised via their skip inputs wh
 3 via dsp_toggle, phase 8 via crash gates); phase 7 always draws, so it shows up as missing coverage.
 """
 import ctypes
+import types
 
 import adapter
 import bench_frame                                # recreate's realistic mid-race staging
@@ -101,6 +102,13 @@ def _lib():
     lib.rm_crash_fx_update.restype = None
     lib.rm_event_classify.argtypes = [ctypes.c_uint16]
     lib.rm_event_classify.restype = ctypes.c_uint32
+    P = ctypes.POINTER
+    lib.rm_init_leg.argtypes = [
+        P(adapter.PlayerState), P(adapter.CourseState), P(adapter.RoadPose),
+        P(adapter.ScrollState), P(adapter.CourseRing), P(adapter.EventState),
+        P(adapter.GobjPrefixState), P(adapter.SpriteState), P(ctypes.c_uint8),
+        P(ctypes.c_int16), P(ctypes.c_uint16), P(adapter.RmInitAssets), ctypes.c_uint16]
+    lib.rm_init_leg.restype = None
     return lib
 
 
@@ -806,6 +814,45 @@ def leg_start_background(leg=0):
     return bench_frame.mid_race_state(leg, 0)
 
 
+def leg_start_pre_init(leg=0):
+    """The image a leg is initialised FROM (buffers + graphics staged, unpack run, init_leg NOT). Feed
+    it to _Candidate(native_init_pre=...) so the candidate's leg-start state comes from rm_init_leg run
+    natively rather than the oracle's init_leg — proving the native init is drive-equivalent."""
+    import render_screen as R
+    img, _buf = R._prepared_image({adapter.A_leg_index: leg.to_bytes(2, "big")})
+    return bytearray(img)
+
+
+def run_init_leg(lib, pre, leg=None):
+    """Seed the eight leg-start owner structs from a pre-init image and run rm_init_leg over them.
+    Returns a namespace with every mutated struct (player/course/pose/scroll/ring/ev/gobj/sprite),
+    the two output scalars (obj_shade/screen_offset) and the HUD-text buffer — plus `keepalive`, the
+    RmInitAssets backing arrays that must outlive the struct. Shared by _Candidate._native_init (the
+    drive-equivalence path) and test_init_leg (the exact differential) so the seed cannot drift."""
+    r = types.SimpleNamespace()
+    r.player = adapter.player_state(pre, 0)
+    r.course = adapter.course_state(pre)
+    r.pose = adapter.road_pose(pre)
+    r.scroll = adapter.scroll_state(pre)
+    r.ring = adapter.course_ring(pre)
+    r.ev = adapter.event_state(pre)
+    r.gobj = adapter._gobj_state(pre)
+    r.sprite = adapter.sprite_state(pre)
+    r.hud_text = (ctypes.c_uint8 * adapter.HUD_TEXT_BYTES).from_buffer_copy(
+        pre[adapter.A_hud_text:adapter.A_hud_text + adapter.HUD_TEXT_BYTES])
+    r.obj_shade = ctypes.c_int16()
+    r.screen_offset = ctypes.c_uint16()
+    r.assets, r.keepalive = adapter.init_assets(pre)
+    if leg is None:
+        leg = _r16(pre, adapter.A_leg_index)
+    lib.rm_init_leg(ctypes.byref(r.player), ctypes.byref(r.course), ctypes.byref(r.pose),
+                    ctypes.byref(r.scroll), ctypes.byref(r.ring), ctypes.byref(r.ev),
+                    ctypes.byref(r.gobj), ctypes.byref(r.sprite), r.hud_text,
+                    ctypes.byref(r.obj_shade), ctypes.byref(r.screen_offset),
+                    ctypes.byref(r.assets), leg)
+    return r
+
+
 def _staged_ctx(state):
     """A minimal RmEventCtx for callers that drive frames OUTSIDE the §6 event regime
     (compare_player_drive / compare_spin_arming clear the event globals every frame, so the event path
@@ -1080,7 +1127,7 @@ class _Candidate:
     plus the event-only state (EventState, the GobjPrefixState bonus/flag counters, the HUD-text score
     window and the graphics arena) so the dispatch mutates exactly what the reference's globals do."""
 
-    def __init__(self, lib, state):
+    def __init__(self, lib, state, native_init_pre=None):
         self.lib = lib
         self.pose = adapter.road_pose(state)
         self.source, self._k_src = adapter.road_source(state)
@@ -1109,7 +1156,24 @@ class _Candidate:
         self.leg = _r16(state, adapter.A_leg_index)
         self.game_over = _r16(state, adapter.A_game_over_flag) != 0
         self.reseed(state, 0)
+        # Optionally REPLACE the leg-start owner structs with rm_init_leg's native output (seeded from
+        # the pre-init image) instead of the oracle's init_leg (read out of `state`). Everything else —
+        # the arenas, the stream, the road control table (built by geometry, not init_leg) — still
+        # comes from `state`, so the drive's reference (g_game_update on the post-init image) and the
+        # candidate start from the same place iff rm_init_leg reproduces init_leg (pinned by test_init_leg).
+        if native_init_pre is not None:
+            self._native_init(lib, native_init_pre)
         self._build_ctx()
+
+    def _native_init(self, lib, pre):
+        """Produce the leg-start owner structs (player / course / pose / scroll / ring / event / gobj /
+        hud_text) by running rm_init_leg on the pre-init image, replacing the oracle-seeded ones."""
+        r = run_init_leg(lib, pre, leg=self.leg)     # the drive holds no sprite; the helper makes one
+        self.player, self.course, self.pose = r.player, r.course, r.pose
+        self.scroll, self.ring, self.ev, self.gobj = r.scroll, r.ring, r.ev, r.gobj
+        self.hud_text = r.hud_text
+        self._init_assets, self._k_init = r.assets, r.keepalive
+        self._init_result = r      # keeps the sprite / output scalars / hud_text buffer alive
 
     def _build_ctx(self):
         """The RmEventCtx pointing at THIS candidate's live structs (built after reseed so the pointers
@@ -1166,7 +1230,7 @@ class _Candidate:
         self.lib.rm_crash_fx_update(ctypes.byref(self.ctx))
 
 
-def compare_leg_drive(lib, image, inputs):
+def compare_leg_drive(lib, image, inputs, native_init_pre=None):
     """Drive a leg free-running on both sides and check remaster tracks recreate scalar for scalar.
 
     Unlike compare_player_drive, the candidate is NOT re-seeded per frame: it is seeded once from the
@@ -1200,7 +1264,7 @@ def compare_leg_drive(lib, image, inputs):
     state = bytearray(image)
     buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
     game_update = _bind("g_game_update")
-    cand = _Candidate(lib, state)
+    cand = _Candidate(lib, state, native_init_pre=native_init_pre)
 
     stats = dict(frames=len(inputs), wraps=0, armed=0, crash_frames=0, handoffs=0, checkpoints=0,
                  leg_end=0, abort_armed=0, leg_over=0, clamp=0, offroad=0, ring_checked=0,

@@ -41,6 +41,27 @@ def test_leg_drive_tracks_recreate(leg, drive, capsys):
     assert stats["wraps"] > 0, f"the buggy never moved: {stats}"
 
 
+def test_leg_drive_from_native_init(capsys):
+    """The same free-running drive, but the candidate's leg-start state comes from rm_init_leg run
+    natively (native_init_pre) instead of the oracle's init_leg seed. Staying strict-green proves the
+    native leg START is drive-equivalent — a leg begun by rm_init_leg evolves identically to one begun
+    by the oracle. The reference is still g_game_update on the oracle's leg-start image.
+
+    ONE representative (leg, drive) is enough here: this is the end-to-end WIRING pin (rm_init_leg feeds
+    a real drive). The per-leg leg-start equivalence itself is pinned exactly, over all legs 0-4 and
+    both fresh/re-init, by test_init_leg's differential vs g_init_leg."""
+    leg, drive = 1, "slalom"
+    lib = equiv._lib()
+    image = equiv.leg_start_background(leg)
+    pre = equiv.leg_start_pre_init(leg)
+    mismatches, stats = equiv.compare_leg_drive(lib, image, DRIVES[drive], native_init_pre=pre)
+    with capsys.disabled():
+        print(f"  leg={leg} {drive} (native init): {len(mismatches)} mismatches / {stats}")
+    assert not mismatches, "native-init leg drive diverged from recreate: " + "; ".join(
+        f"frame {f} {name}: candidate {c} != recreate {r}" for f, name, c, r in mismatches[:8])
+    assert stats["wraps"] > 0, f"the buggy never moved: {stats}"
+
+
 SPIN_FRAMES = 40
 LOCK_LEFT = [ACCEL | LEFT] * SPIN_FRAMES
 LOCK_RIGHT = [ACCEL | RIGHT] * SPIN_FRAMES

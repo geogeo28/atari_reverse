@@ -48,6 +48,10 @@ void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEv
 void rm_course_probe(RmEventCtx *c);
 void rm_course_events(RmEventCtx *c);
 void rm_crash_fx_update(RmEventCtx *c);
+void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *scroll,
+                 CourseRing *ring, EventState *ev, GobjPrefixState *gobj, SpriteState *sprite,
+                 uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset,
+                 const RmInitAssets *a, uint16_t leg);
 void rm_draw_ground(const GroundState *s, const GroundAssets *a, Framebuffer *fb);
 void rm_draw_fg_sprite(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
 void rm_draw_buggy(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
@@ -147,8 +151,6 @@ static Framebuffer *screen_buf(int i) {
     return (Framebuffer *)(base + (unsigned long)i * SCREEN_STRIDE);
 }
 
-static const int16_t seg_data_init[13] = ROAD_SEG_DATA_INIT;
-
 /* Re-derive every ring-owned view — the dispatcher's ST mirror, the ground markers, the sprite
  * gates — from the live ring. Must run wherever the ring changes: at seed, after every course
  * advance, and on a leg restart (missing the last one leaves mid-course scenery on a reset road). */
@@ -157,6 +159,28 @@ static void ring_views_refresh(const CourseRing *ring, GroundState *ground, Spri
     rm_ring_ground_markers(ring, ground->markers);
     sprite->buggy_gate = rm_ring_buggy_gate(ring);
     sprite->fg_gate = rm_ring_fg_gate(ring);
+}
+
+/* Start (or restart) the leg NATIVELY: reset every per-leg OWNER struct to its leg-start value through
+ * rm_init_leg (recreate's init_leg), instead of the old baked *_INIT snapshot. It zeroes the owner
+ * structs, reseeds the shared HUD-text region (rm_init_leg's phase 5 reads the score template out of
+ * it, and phases 4/5/6 rewrite it), then fills them from the loaded arena. The render VIEWS (HudState,
+ * GroundState, ObjListCtx, the sprite gates) follow from apply_player + ring_views_refresh, exactly as
+ * every driving frame derives them. obj_shade / screen_offset are the two outputs with no owner field. */
+static void leg_reset(PlayerState *player, CourseState *course, RoadPose *pose, ScrollState *scroll,
+                      CourseRing *ring, EventState *ev, GobjPrefixState *pfx, SpriteState *sprite,
+                      const RmInitAssets *init_assets, int16_t *obj_shade, uint16_t *screen_offset) {
+    *player = (PlayerState){0};
+    *course = (CourseState){0};
+    *pose = (RoadPose){0};
+    *scroll = (ScrollState){0};
+    *ring = (CourseRing){0};
+    *ev = (EventState){0};
+    *pfx = (GobjPrefixState){0};
+    *sprite = (SpriteState){0};
+    for (unsigned i = 0; i < sizeof fixture_hud_text; i++) hud_text_ram[i] = fixture_hud_text[i];
+    rm_init_leg(player, course, pose, scroll, ring, ev, pfx, sprite,
+                hud_text_ram, obj_shade, screen_offset, init_assets, DEMO_LEG_INDEX);
 }
 
 /* Run the full ported render pipeline into `fb`, in draw_game_objects order: prefix (off-frame state),
@@ -274,6 +298,29 @@ static void apply_player(const PlayerState *p, RoadPose *pose, RoadInput *road, 
     hud->crash_active = ev->crash_active != 0;
     hud->crash_bars = ev->crash_bars;
     hud->crash_frame = (int16_t)ev->crash_frame;
+}
+
+/* Start (or restart) the leg: reset the owner structs natively (leg_reset -> rm_init_leg), then derive
+ * every render VIEW from them exactly as a driving frame does — the two scalars with no owner field
+ * (object.shade, the scroll's screen_offset), the object-list's live counters, then apply_player and
+ * ring_views_refresh. Used at boot AND on the R / leg-end restart, so the two paths cannot drift. */
+static void start_leg(PlayerState *player, CourseState *course, RoadPose *pose, ScrollState *scroll,
+                      CourseRing *ring, EventState *ev, GobjPrefixState *pfx, SpriteState *sprite,
+                      GroundState *ground, ObjListCtx *objlist, ObjectInput *object, HudState *hud,
+                      RoadInput *road, const RmInitAssets *init_assets,
+                      int16_t *obj_shade, uint16_t *screen_offset) {
+    leg_reset(player, course, pose, scroll, ring, ev, pfx, sprite, init_assets, obj_shade, screen_offset);
+#ifdef DEMO_TIME_LEFT
+    /* Debug builds only: shorten the leg's bonus clock so a headless idle trace reaches the time-out
+     * (and thus the leg end) in ~140 frames instead of ~800. A restart re-seeds the FULL clock from
+     * rm_init_leg first, so a restart shows time_left jumping back up before this shortens it again. */
+    player->time_left = DEMO_TIME_LEFT;
+#endif
+    object->shade = *obj_shade;
+    objlist->bonus_timer = pfx->bonus_timer;              /* the bonus clamp follows the prefix */
+    objlist->p24_flag = hud_text_ram[RM_HUD_SCORE_STR_OFF + 1];   /* the live score_str[1] rm_init_leg wrote */
+    apply_player(player, pose, road, scroll, sprite, hud, ground, objlist, ev);
+    ring_views_refresh(ring, ground, sprite);
 }
 
 /* Take the IKBD interrupt so held keys are visible (see os.s). Mouse and joystick reporting are
@@ -434,15 +481,10 @@ void main(void) {
     RmArena arena;
     if (!load_assets(&arena)) return;
 
-    HudState hud = {
-        .flag_seq_count = HUD_FLAG_SEQ_COUNT, .flag_seq_off = HUD_FLAG_SEQ_OFF,
-        .dsp_color_scroll = HUD_DSP_COLOR_SCROLL, .crash_lap = HUD_CRASH_LAP,
-        .speed = HUD_SPEED, .time_left = HUD_TIME_LEFT, .game_over = HUD_GAME_OVER,
-        .dsp_toggle = HUD_DSP_TOGGLE, .dsp_variant_idx = HUD_DSP_VARIANT_IDX,
-        .gauge_blink = HUD_GAUGE_BLINK, .gauge_blink_on = HUD_GAUGE_BLINK_ON,
-        .crash_active = HUD_CRASH_ACTIVE, .crash_frame = HUD_CRASH_FRAME,
-        .crash_bars = HUD_CRASH_BARS, .hud_crash_timer = HUD_CRASH_TIMER,
-    };
+    /* The HUD is a per-frame VIEW: apply_player refreshes every field the demo reads from the physics /
+     * event state (the leg-start values below are all it needs before the first apply_player, which
+     * runs before the frame-0 draw). It is not baked. */
+    HudState hud = {0};
     const HudAssets assets = {
         .color_pairs = fixture_color_pairs, .color_bar_mask = fixture_color_bar_mask,
         .color_bar_cidx = fixture_color_bar_cidx + CIDX_ZERO_OFF, .fuel_mask = fuel_mask_ram,
@@ -462,19 +504,21 @@ void main(void) {
     RoadInput road = {
         .width_tbl = ctrl + RM_CTRL_WIDTH_OFF,   /* rebound per frame after the build */
         .param = fixture_road_param,
-        .edge_tbl = fixture_road_edge + ROAD_EDGE_PAD + PL_ROAD_EDGE_SEL_INIT,   /* rebound per frame */
+        .edge_tbl = fixture_road_edge + ROAD_EDGE_PAD,   /* rebound by apply_player (road_edge_sel) */
         /* the road texture is the sprite-shift table region; the perspective seeds index below it */
         .tex = arena.scratch, .edge_const = fixture_road_edge_const,
     };
-    RoadPose pose = {.curve = ROAD_CURVE_INIT, .view_flags = ROAD_VIEW_FLAGS_INIT};
-    for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
-    ScrollState scroll = {.scroll_speed = SCROLL_SPEED_INIT, .hscroll_pos = HSCROLL_POS_INIT};
-    CourseState course = {.row_ctr = COURSE_ROW_CTR_INIT, .read_pos = COURSE_READ_POS_INIT};
-    /* The course window the advance scrolls. Its marker column is where the road's per-band widths
-     * and shoulder flags come from, so it has to be live state, not a baked table. The const copy
-     * is what the R-restart rewinds to. */
-    static const CourseRing ring_init = COURSE_RING_INIT;
-    CourseRing ring = ring_init;
+    /* Every per-leg owner struct below is filled by leg_reset (rm_init_leg), not a baked snapshot: the
+     * physics/course/event/pose/scroll scalars, the ring seeded from the leg's packed marker records,
+     * and the buggy pose. obj_shade / screen_offset are rm_init_leg's two output scalars. */
+    RoadPose pose;
+    ScrollState scroll;
+    CourseState course;
+    CourseRing ring;                 /* the live course window the advance scrolls (marker column = the
+                                      * road's per-band widths / shoulder flags), reseeded on restart */
+    int16_t obj_shade;
+    uint16_t screen_offset;
+    const RmInitAssets init_assets = {.buf_a = arena.tables, .legtime = fixture_legtime};
     /* the leg's course records, read backward from this anchor in the loaded COURSES.DAT */
     const uint8_t *stream = arena.tables + ARENA_COURSE_STREAM_OFF;
 
@@ -487,59 +531,40 @@ void main(void) {
     const uint8_t *low = fixture_obj_low;
 
     /* The event engine mutates the prefix state too (flag_seq_count/off, bonus_timer, the marker
-     * decay counters), so it is leg state and the R-restart must rewind it — hence a const init. */
-    const GobjPrefixState pfx_init = {
-        .marker_active = PFX_MARKER_ACTIVE_INIT, .marker_off = PFX_MARKER_OFF_INIT,
-        .marker_countdown = PFX_MARKER_CD_INIT, .view_parity = OBJ_VIEW_PARITY_INIT,
-        .anim_counter = PFX_ANIM_COUNTER_INIT, .anim_word = PFX_ANIM_WORD_INIT,
-        .bonus_timer = PFX_BONUS_TIMER_INIT, .dsp_color_scroll = PFX_DSP_SCROLL_INIT,
-        .flag_seq_off = PFX_FLAG_SEQ_OFF_INIT, .flag_seq_count = PFX_FLAG_SEQ_CNT_INIT,
-    };
-    GobjPrefixState pfx = pfx_init;
+     * decay counters), so it is per-leg state leg_reset rewinds. */
+    GobjPrefixState pfx;
     const GobjPrefixAssets pfx_assets = {
         .anim_word_tbl = low + OBJ_LOW_ANIM_WORD_TBL,
         .anim_coloridx_tbl = low + OBJ_LOW_ANIM_COLORIDX, .color_pairs = low + OBJ_LOW_COLOR_PAIRS,
         .marker_recs = gobj_scratch, .anim_color = fuel_mask_ram,   /* aliases the HUD's fuel mask */
         .anim_mirror1 = buf_a_ram + GOBJ_ANIM_BUF_OFF1, .anim_mirror2 = buf_a_ram + GOBJ_ANIM_BUF_OFF2,
     };
-    const GroundState ground = {.view = OBJ_GROUND_VIEW_INIT};   /* markers copied below */
     const GroundAssets ground_assets = {
         .col_tbl = low + OBJ_LOW_GROUND_COL, .band_records = low + OBJ_LOW_GROUND_BAND,
         .color_pairs = low + OBJ_LOW_COLOR_PAIRS,
     };
-    const ObjectInput object = {
+    /* object.shade is rm_init_leg's obj_shade output; set after leg_reset. */
+    ObjectInput object = {
         .width_tbl = ctrl + RM_CTRL_WIDTH_OFF, .blit_mask_l = low + OBJ_LOW_BLIT_MASK_L,
-        .blit_mask_r = low + OBJ_LOW_BLIT_MASK_R, .shade = OBJ_SHADE_INIT,
+        .blit_mask_r = low + OBJ_LOW_BLIT_MASK_R,
     };
     ObjListCtx objlist = {
         /* px is rebound to the frame's buffer in draw_frame (we alternate two screen buffers). */
         .px = 0, .draw_buf = 0, .buf_a = buf_a_ram, .buf_c = arena.gfx,
         .color_pairs = low + OBJ_LOW_COLOR_PAIRS, .view_xform = low + OBJ_LOW_VIEW_XFORM,
         .objsh2p_tbl = low + OBJ_LOW_OBJSH2P_TBL, .jumptable = low + OBJ_LOW_JUMPTABLE,
-        .xoff_tbl = low + OBJ_LOW_XOFF_TBL, .view_flags = ROAD_VIEW_FLAGS_INIT,
-        .view_parity = OBJ_VIEW_PARITY_INIT, .bonus_timer = PFX_BONUS_TIMER_INIT,
-        /* the list-cursor offset and the ground's view column are ONE original global (0x18c58);
-         * seeding it 0 made frame 0's passes read their display records 442 bytes early — the first
-         * draw runs before apply_player ever copies ground_view_off in */
-        .obj_scan_off = OBJ_GROUND_VIEW_INIT, .p24_flag = OBJ_P24_FLAG_INIT,
+        .xoff_tbl = low + OBJ_LOW_XOFF_TBL,
+        /* view_flags / view_parity / obj_scan_off are refreshed each frame (apply_player + draw_frame);
+         * bonus_timer follows the prefix; p24_flag is the live score_str[1] rm_init_leg wrote. All are
+         * set from the reset state below, so no leg-start value is baked. */
     };
-    SpriteState sprite = {
-        .lean = SP_LEAN_INIT, .pitch = SP_PITCH_INIT, .skid = SP_SKID_INIT,
-        .crash_disp = SP_CRASH_DISP_INIT, .wheel_pos = SP_WHEEL_POS_INIT,
-        .spin_state = SP_SPIN_STATE_INIT, .road_curve = ROAD_CURVE_INIT,
-        .sprite_suppress = SP_SPRITE_SUPPRESS_INIT,
-        .anim_frame = SP_ANIM_FRAME_INIT, .spin_reset = SP_SPIN_RESET_INIT,
-        .buggy_draw_flag = SP_BUGGY_DRAW_FLAG_INIT,
-        /* buggy_gate/fg_gate are ring row 11's marker bytes — seeded from the ring below */
-        .collision_lock = SP_COLLISION_LOCK_INIT, .speed_raw = SP_SPEED_RAW_INIT,
-        .lean_accum = SP_LEAN_ACCUM_INIT, .lean_frame = SP_LEAN_FRAME_INIT,
-    };
+    SpriteState sprite;                /* the buggy pose — filled by leg_reset (rm_init_leg) */
     const SpriteAssets sprite_assets = {
         .gfx = arena.gfx, .fg_anim_tbl = low + OBJ_LOW_FG_ANIM_TBL,
         .body_tbl = low + OBJ_LOW_BODY_TBL, .hi_tbl = low + OBJ_LOW_HI_TBL,
         .lo_piece_tbl = low + OBJ_LOW_LO_PIECE_TBL, .lo_piece_idx = low + OBJ_LOW_LO_PIECE_IDX,
     };
-    GroundState ground_mut = ground;   /* markers seeded from the ring below, refreshed per advance */
+    GroundState ground_mut = {0};   /* view + markers seeded from the reset state / ring below */
 
     /* --- the driving model (src/player.c). Its const tables all live inside the obj-low blob. --- */
     const PlayerAssets player_assets = {
@@ -552,26 +577,7 @@ void main(void) {
          * probe and event dispatch (see game.h) — but the pointer has to be real, not NULL. */
         .crash_anim_tbl = low + OBJ_LOW_CRASH_ANIM_TBL,
     };
-    const PlayerState player_init = {
-        .engine_rpm = PL_ENGINE_RPM_INIT, .rpm_cap = PL_RPM_CAP_INIT, .rpm_add = PL_RPM_ADD_INIT,
-        .speed_raw = PL_SPEED_RAW_INIT, .speed = PL_SPEED_INIT,
-        .speed_jitter_ph = PL_SPEED_JITTER_PH_INIT, .scroll_phase = PL_SCROLL_PHASE_INIT,
-        .scroll_speed = SCROLL_SPEED_INIT, .view_flags = ROAD_VIEW_FLAGS_INIT,
-        .view_bank = PL_VIEW_BANK_INIT, .ground_view_off = PL_GROUND_VIEW_OFF_INIT,
-        .road_edge_sel = PL_ROAD_EDGE_SEL_INIT, .wheel_pos = PL_WHEEL_POS_INIT,
-        .steer_hold = PL_STEER_HOLD_INIT, .lean_phase = PL_LEAN_PHASE_INIT, .lean = SP_LEAN_INIT,
-        .road_curve = ROAD_CURVE_INIT, .skid = SP_SKID_INIT, .fire_hold = PL_FIRE_HOLD_INIT,
-        .dsp_variant_idx = HUD_DSP_VARIANT_IDX, .leg_flags_sel = PL_LEG_FLAGS_SEL_INIT,
-        .time_subctr = PL_TIME_SUBCTR_INIT, .time_left = HUD_TIME_LEFT,
-        .hud_crash_timer = HUD_CRASH_TIMER, .timeout_gate = PL_TIMEOUT_GATE_INIT,
-    };
-    PlayerState player = player_init;
-#ifdef DEMO_TIME_LEFT
-    /* Debug builds only: shorten the leg's bonus clock so a headless idle trace reaches the time-out
-     * (and thus the leg end) in ~140 frames instead of ~800. The R-restart re-seeds the FULL clock
-     * from player_init, so a restart is visible in the trace as time_left jumping back up. */
-    player.time_left = DEMO_TIME_LEFT;
-#endif
+    PlayerState player;   /* filled by leg_reset (rm_init_leg) at boot + on restart */
 
     /* --- the course-event engine (src/events.c): the system that decides to crash you and delivers
      * the checkpoint / finish / bonus events. rm_player_update dispatches through it on the §6 event
@@ -579,14 +585,7 @@ void main(void) {
      * scalar globals (reset on R); the const tables are program data (obj-low), the coll-mask / dash
      * label & clear tables / raw dashboard block are arena-resident (per PORTING.md, from the loaded
      * arena, not baked); the score digits land in the shared hud_text_ram the HUD reads. --- */
-    const EventState ev_init = {
-        .course_flag_bit = EV_COURSE_FLAG_BIT_INIT, .dash_y = EV_DASH_Y_INIT,
-        .dash_bit = EV_DASH_BIT_INIT, .dash_x = EV_DASH_X_INIT, .crash_bars = EV_CRASH_BARS_INIT,
-        .crash_active = EV_CRASH_ACTIVE_INIT, .crash_lap = EV_CRASH_LAP_INIT,
-        .gauge_blink = EV_GAUGE_BLINK_INIT, .gauge_blink_on = EV_GAUGE_BLINK_ON_INIT,
-        .ckpt_scroll = EV_CKPT_SCROLL_INIT, .spin_state = EV_SPIN_STATE_INIT,
-    };
-    EventState ev = ev_init;
+    EventState ev;   /* filled by leg_reset (rm_init_leg); the dash marker stays 0 at a leg start */
     const EventAssets event_assets = {
         .fx_type_tbl = low + OBJ_LOW_FX_TYPE_TBL, .evt_obj_type_tbl = low + OBJ_LOW_EVT_OBJ_TYPE,
         .score_deltas = low + OBJ_LOW_SCORE_DELTAS, .score_label = low + OBJ_LOW_SCORE_LABEL,
@@ -603,12 +602,14 @@ void main(void) {
         .gfx = arena.gfx, .assets = &event_assets, .leg = DEMO_LEG_INDEX, .game_over = 0,
     };
 
-    ring_views_refresh(&ring, &ground_mut, &sprite);   /* seed every ring-derived view */
+    /* Start leg 0 NATIVELY (rm_init_leg via start_leg): reset every owner struct + derive the views. */
+    start_leg(&player, &course, &pose, &scroll, &ring, &ev, &pfx, &sprite, &ground_mut, &objlist,
+              &object, &hud, &road, &init_assets, &obj_shade, &screen_offset);
 
     uint16_t tos_palette[16];    /* the desktop's colours — restored on exit alongside its video base */
     for (int reg = 0; reg < 16; reg++) tos_palette[reg] = (uint16_t)Setcolor((short)reg, -1);
     Setpalette(fixture_palette);
-    rm_scroll_prebuild(arena.gfx + ARENA_SCROLL_PLAY_OFF, shifted);   /* pre-rotate the playfield once (screen_offset is fixed) */
+    rm_scroll_prebuild(arena.gfx + screen_offset, shifted);   /* pre-rotate the playfield once (screen_offset is fixed per leg) */
     /* Clear both screen buffers once, so "buffers start blank" holds before the first draw. The pool
      * is BSS and already zero at GEMDOS load, so this is redundant today — but draw_frame relies on
      * the invariant (it never clears), and the explicit clear keeps it if the pool ever stops being
@@ -635,25 +636,18 @@ void main(void) {
     int quit = 0;
     int restart_pending = 0;   /* set at the leg end (abort_flag < 0) to restart on the next frame */
     for (int frame = 0; !quit; frame++, frame_count++) {
-        int r_pressed = take_key_hit(SCAN_R);         /* R restarts the leg from the baked start state */
+        int r_pressed = take_key_hit(SCAN_R);         /* R restarts the leg natively (rm_init_leg) */
         if (r_pressed || restart_pending) {
             restart_pending = 0;
 #ifdef DEMO_KEYLOG
             if (r_pressed) keylog_restarts++;         /* count key presses only, not leg-end restarts */
 #endif
-            player = player_init;
-            ev = ev_init;                             /* the event engine's state is leg state too */
-            pfx = pfx_init;                            /* ...and so is the prefix state it mutates */
-            /* The score digits live in the shared HUD-text window the event engine pokes, so they are
-             * leg state too — re-seed the baked leg-start text or a restart shows the last score. */
-            for (unsigned i = 0; i < sizeof hud_text_ram; i++) hud_text_ram[i] = fixture_hud_text[i];
-            course.row_ctr = COURSE_ROW_CTR_INIT;
-            course.read_pos = COURSE_READ_POS_INIT;
-            for (int i = 0; i < 13; i++) pose.seg_data[i] = seg_data_init[i];
-            /* The ring is course state too: without this, a restart renders the reset road under
-             * MID-COURSE scenery, markers and sprite gates (the views are live now, not fixture). */
-            ring = ring_init;
-            ring_views_refresh(&ring, &ground_mut, &sprite);
+            /* Re-run the NATIVE leg start — the same path boot uses. It rewinds every per-leg owner
+             * struct (player / event / prefix / course / pose / ring / sprite) and the shared HUD-text
+             * score region, so a restart renders the reset road under leg-start scenery, not the
+             * mid-course ring the drive advanced into. Stands in for the unported intermission handoff. */
+            start_leg(&player, &course, &pose, &scroll, &ring, &ev, &pfx, &sprite, &ground_mut,
+                      &objlist, &object, &hud, &road, &init_assets, &obj_shade, &screen_offset);
         }
 
         /* One frame of the original's driving model, over the road geometry the last frame built.

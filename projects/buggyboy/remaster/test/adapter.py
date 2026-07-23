@@ -270,6 +270,15 @@ FONT_GLYPH_BYTES = 0x600                            # glyphs 0..0x5f (16 bytes e
 GFX_EVENT_BYTES = 0x14000                           # buf_c window: banner (0x9c40) + dashboard (..0x13520)
 
 
+# ---- init_leg (leg-start reset) assets ----
+A_legtime_src = 0x18136                             # program-data bonus-time strings ("/2000/" ...) source
+IL_LEGTIME_BYTES = 0x3c                             # base + leg-1 offset (0x1e) + 5 rows * 6 bytes
+# buf_a window init_leg indexes: obj-disp selector/record (0x50 / 0xf2 + sel<<4), the per-leg scroll
+# table (leg<<4), and the 14 marker records (0x5ce0 + leg*0x2000). Sized to reach leg 4's records:
+# 0x5ce0 + 4*0x2000 + 14*8 + record slack < 0xe000.
+IL_BUF_A_BYTES = 0xe000
+
+
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
 A_color_pairs = 0x15afa                           # 16 colours x 8-byte fill
 A_color_bar_mask = 0x17d14                        # phase-5 {mask,ink} stream (5 cols x 12 rows x 4B)
@@ -537,6 +546,22 @@ class RmEventCtx(ctypes.Structure):
                 ("gfx", ctypes.POINTER(ctypes.c_uint8)),
                 ("assets", ctypes.POINTER(EventAssets)),
                 ("leg", ctypes.c_uint16), ("game_over", ctypes.c_bool)]
+
+
+class RmInitAssets(ctypes.Structure):
+    _fields_ = [("buf_a", ctypes.POINTER(ctypes.c_uint8)),
+                ("legtime", ctypes.POINTER(ctypes.c_uint8))]
+
+
+def init_assets(image):
+    """The const assets rm_init_leg reads, as a native RmInitAssets. Returns (assets, keepalive).
+    buf_a is the loaded arena base (marker records, obj-display selector/record, scroll table);
+    legtime is the program-data bonus-time strings source."""
+    buf_a = int.from_bytes(image[A_buf_a:A_buf_a + 4], "big")
+    ba = (ctypes.c_uint8 * IL_BUF_A_BYTES).from_buffer_copy(image[buf_a:buf_a + IL_BUF_A_BYTES])
+    lt = (ctypes.c_uint8 * IL_LEGTIME_BYTES).from_buffer_copy(image[A_legtime_src:A_legtime_src + IL_LEGTIME_BYTES])
+    p = ctypes.POINTER(ctypes.c_uint8)
+    return RmInitAssets(ctypes.cast(ba, p), ctypes.cast(lt, p)), (ba, lt)
 
 
 def make_event_ctx(*, player, gobj, ring, pose, road_src, ctrl, scanline, ev, hud_text, gfx,
