@@ -1,19 +1,10 @@
-/* game_frame.h — the draw_game_objects frame-assembly constants shared by game_main.c (the playable
- * frame) and bench_main.c (the per-stage cycle bench), so the bench measures exactly the passes the
- * game draws. */
+/* game_frame.h — the prefix-arena assembly constants shared by game_main.c (the playable frame) and
+ * bench_main.c (the per-stage cycle bench). The object-list pass-split constants (GOBJ_SPRITE_LAST,
+ * GOBJ_D6_INIT, ...) moved into include/game.h alongside rm_draw_frame, which now owns the pass split;
+ * what stays here is the buf_a anim-word mirror layout + the marker-decay arena size the prefix
+ * asset-bundle setup needs. */
 #ifndef RM_GAME_FRAME_H
 #define RM_GAME_FRAME_H
-
-/* How the two roadside object-list passes split: rm_ring_sprite_count over the live ring's marker
- * column (src/course.c) — the flat-image walk this replaces read the fixture's frozen copy. */
-#define GOBJ_SPRITE_LAST    10
-#define GOBJ_ROW_A3_STRIDE  0x20
-#define GOBJ_ROW_A5_STRIDE  0x22
-#define GOBJ_D6_INIT        0xb0
-#define GOBJ_D6_ROW_STEP    0x10
-#define GOBJ_VIEW_REAR      4
-#define GOBJ_SPRITE_PASS_ROW 1       /* the sprite passes' flag stream starts at this ring row */
-#define GOBJ_FIXED_PASS_ROW 12       /* the fixed-object pass's flag stream starts at this ring row */
 
 #define GOBJ_ANIM_BUF_OFF1 0xd70     /* buf_a + this = anim_word mirror 1 (read as a record by draws) */
 #define GOBJ_ANIM_BUF_OFF2 0x1250    /* buf_a + this = anim_word mirror 2 */

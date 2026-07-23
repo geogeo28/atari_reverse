@@ -20,6 +20,11 @@ import render_screen as R                         # noqa: E402  SCREEN_BASE + bu
 
 SCREEN_BASE = R.SCREEN_BASE
 SCREEN_BYTES = R.ROW_STRIDE * R.H                 # 32000
+# draw_game_objects writes off-screen sprite fragments well past the visible 32000 bytes (clipped
+# roadside objects, measured up to ~102 KB past the screen). The composed-frame differential backs its
+# candidate framebuffer with this much extra tail so those writes don't overrun the buffer, exactly as
+# game_main.c gives each screen buffer a SCREEN_OVERDRAW tail.
+SCREEN_OVERDRAW = 0x20000
 
 # draw-buffer selection: physbase_tbl indexed by the (word) flip_idx (mirror recreate/draw.h).
 A_flip_idx = 0x18bf2
@@ -572,6 +577,25 @@ class GobjPrefixAssets(ctypes.Structure):
                 ("anim_color", ctypes.POINTER(ctypes.c_uint8)),
                 ("anim_mirror1", ctypes.POINTER(ctypes.c_uint8)),
                 ("anim_mirror2", ctypes.POINTER(ctypes.c_uint8))]
+
+
+class RmScene(ctypes.Structure):
+    """The whole-frame render bundle rm_draw_frame (src/frame.c) takes — every per-race owner struct
+    the draw reads + its const asset bundle + the scratch buffers threaded through the stages. Field
+    order MUST match the C RmScene in include/game.h. The composed-frame differential (equiv.py's
+    _ComposedScene) builds one from a candidate's live owner state so `make test` runs the shell's real
+    frame end-to-end."""
+    _p = ctypes.POINTER
+    _u8 = ctypes.POINTER(ctypes.c_uint8)
+    _fields_ = [("pfx", _p(GobjPrefixState)), ("pose", _p(RoadPose)), ("ring", _p(CourseRing)),
+                ("scroll", _p(ScrollState)), ("ground", _p(GroundState)), ("sprite", _p(SpriteState)),
+                ("objlist", _p(ObjListCtx)), ("object", _p(ObjectInput)), ("hud", _p(HudState)),
+                ("road", _p(RoadInput)),
+                ("pfx_assets", _p(GobjPrefixAssets)), ("src", _p(RoadSource)),
+                ("ground_assets", _p(GroundAssets)), ("sprite_assets", _p(SpriteAssets)),
+                ("hud_assets", _p(HudAssets)),
+                ("ctrl", _u8), ("scanline", _u8), ("shifted", _u8), ("ring_st", _u8),
+                ("obj_sprite_disp", _u8), ("obj_fixed_list", _u8)]
 
 
 class PlayerState(ctypes.Structure):

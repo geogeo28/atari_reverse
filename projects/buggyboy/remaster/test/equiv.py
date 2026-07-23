@@ -120,6 +120,18 @@ def _lib():
         P(adapter.SpriteState), P(adapter.GroundState), P(adapter.ObjListCtx), P(adapter.HudState),
         P(adapter.RoadInput), u8p]
     lib.rm_apply_player.restype = None
+    lib.rm_gobj_hud_view.argtypes = [P(adapter.GobjPrefixState), P(adapter.HudState)]
+    lib.rm_gobj_hud_view.restype = None
+    lib.rm_draw_frame.argtypes = [P(adapter.RmScene), P(adapter.Framebuffer)]
+    lib.rm_draw_frame.restype = None
+    lib.rm_ring_store_st.argtypes = [P(adapter.CourseRing), u8p]
+    lib.rm_ring_store_st.restype = None
+    lib.rm_ring_ground_markers.argtypes = [P(adapter.CourseRing), u8p]
+    lib.rm_ring_ground_markers.restype = None
+    lib.rm_ring_buggy_gate.argtypes = [P(adapter.CourseRing)]
+    lib.rm_ring_buggy_gate.restype = ctypes.c_uint8
+    lib.rm_ring_fg_gate.argtypes = [P(adapter.CourseRing)]
+    lib.rm_ring_fg_gate.restype = ctypes.c_int8
     lib.rm_intermission_poll.argtypes = [ctypes.POINTER(adapter.Framebuffer), u8p, u8p]
     lib.rm_intermission_poll.restype = None
     lib.rm_draw_intermission.argtypes = [ctypes.POINTER(adapter.Framebuffer),
@@ -187,6 +199,17 @@ def _bind(name):
 _g_draw_crash_fx = bench_frame.harness._lib.g_draw_crash_fx
 _g_draw_crash_fx.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
 _g_draw_crash_fx.restype = None
+
+
+def _ref_draw_frame(state):
+    """recreate's whole-frame render (g_draw_frame @0x12e22) on a COPY of `state` — the reference the
+    composed-frame differential compares against. A copy because g_draw_frame is destructive (it
+    advances the prefix + rebuilds geometry + draws), and the scalar drive keeps using `state`. Returns
+    the drawn screen bytes (at the image's current draw buffer, wherever the flip points)."""
+    ref = bytearray(state)
+    _bind("g_draw_frame")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+    draw_buf = adapter.draw_buffer_addr(ref)
+    return bytes(ref[draw_buf:draw_buf + adapter.SCREEN_BYTES])
 
 
 def _run_pipeline(state, names):
@@ -1296,13 +1319,18 @@ class _Candidate:
 
         # The draw-struct fan-out the shell runs after each frame (game_main.c apply_player, hoisted to
         # rm_apply_player). self.sprite carries the four crash/spin-script fields the fg / lower-body
-        # draws READ but that no owner struct field used to reach — the seam this closes. The scratch
-        # views catch the fan-out's other outputs (not pinned here); _edge_base is a never-dereferenced
-        # base for road->edge_tbl (the fan-out only stores base+sel, it does not read through it).
-        self.sprite = adapter.SpriteState()
+        # draws READ but that no owner struct field used to reach — the seam this closes. It is seeded
+        # from the leg-start image so the DRAW-internal pose cursors the fan does NOT set (lean_frame /
+        # variant / lean_accum / spin_counter) start at their init_leg values (the composed-frame
+        # differential draws the sprite, and those cursors stay frozen through the scalar drive, so they
+        # must match the reference's leg-start values). The fan overwrites the dynamic fields each frame.
+        # The scratch views catch the fan-out's other outputs (not pinned here); _edge_base is a
+        # never-dereferenced base for road->edge_tbl (the fan-out only stores base+sel).
+        self.sprite = adapter.sprite_state(state)
         self._fanout_views = (adapter.RoadPose(), adapter.ScrollState(), adapter.GroundState(),
                               adapter.ObjListCtx(), adapter.HudState(), adapter.RoadInput())
         self._edge_base = (ctypes.c_uint8 * adapter.ROAD_EDGE_ALL_BANKS_BYTES)()
+        self._scene = None            # the composed-frame scene, built lazily on the first compose check
 
     def _native_init(self, lib, pre):
         """Produce the leg-start owner structs (player / course / pose / scroll / ring / event / gobj /
@@ -1490,7 +1518,177 @@ def _drive_mismatches(frame, cand, state):
     return out
 
 
-def compare_leg_drive(lib, image, inputs, native_init_pre=None):
+class _ComposedScene:
+    """Runs the SHELL's real per-frame render composition — the fan-out (rm_apply_player then, inside
+    rm_draw_frame, rm_gobj_hud_view) into the draw structs, then rm_draw_frame — from a candidate's
+    LIVE owned state into an isolated framebuffer, so a missing wire BETWEEN the individually-verified
+    stages diverges from recreate's g_draw_frame. It closes the hole the scalar leg drive leaves: that
+    drive verifies every STATE transition and every DRAW STAGE in isolation but never runs the shell's
+    end-to-end composition (state -> apply_player / gobj_hud_view fan-outs -> the draw_frame stage
+    sequence), so any gap between verified pieces is invisible (the two play-test bugs that shipped
+    green — the jump anim_frame fan and the flag-bars HUD fan — were exactly this).
+
+    Layout mirrors the reference (_objlist_ctx): every static table + arena the draws read (obj-low
+    tables, colour pairs, the graphics arena, buf_a records) lives at its real image address, so each
+    asset pointer is `img + <addr>` into ONE mutable copy of the leg-start image. Per frame we:
+      1. sync the two arenas the drive mutates (the HUD-text score window; the event-engine graphics
+         window — dashboard/banner) from the candidate into that image copy;
+      2. snapshot pfx/pose/scroll into scene-owned structs and seed the sprite from the reference's
+         CURRENT pose (a NON-destructive peek: prefix/geometry/blit/buggy all write their inputs, and
+         the candidate's scalar-drive state must stay untouched);
+      3. run rm_apply_player into the scene's view structs from the candidate's OWN player/ev — the
+         fan-out under test — and derive the leg-start-owned view fields the shell derives;
+      4. compose with rm_draw_frame.
+    All state that DRIVES the composition (player, ev, pose, scroll, ring, gobj, obj_shade,
+    screen_offset, hud_text) is the CANDIDATE's own; only draw-internal cursors the fan never sets and
+    the scalar drive never models (the sprite lean/variant pose seeded from the leg-start image) are
+    taken as ground truth, so the composition WIRING is what is under test."""
+
+    def __init__(self, lib, image, cand):
+        self.lib = lib
+        self.cand = cand
+        self.img = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer_copy(bytes(image))
+        u8 = ctypes.POINTER(ctypes.c_uint8)
+
+        def at(addr):
+            return ctypes.cast(ctypes.byref(self.img, addr), u8)
+        self._at = at
+        self.buf_a = int.from_bytes(bytes(image[adapter.A_buf_a:adapter.A_buf_a + 4]), "big")
+        self.buf_c = int.from_bytes(bytes(image[adapter.A_buf_c:adapter.A_buf_c + 4]), "big")
+        buf_b = int.from_bytes(bytes(image[adapter.A_buf_b:adapter.A_buf_b + 4]), "big")
+
+        # scene-owned scratch threaded through the stages.
+        self.ctrl = (ctypes.c_uint8 * adapter.RM_CTRL_ALLOC_BYTES)()
+        self.scan = (ctypes.c_uint8 * adapter.RM_SCANLINE_BYTES)()
+        self.shifted = (ctypes.c_uint8 * (adapter.RM_SCROLL_SHIFTS * adapter.RM_SCROLL_WINDOW))()
+        self.ring_st = (ctypes.c_uint8 * (adapter.RM_RING_ROWS * adapter.RING_ROW_BYTES))()
+        # a framebuffer with an overdraw tail: off-screen object fragments write well past 32000, so
+        # back the Framebuffer overlay with SCREEN_BASE + SCREEN + overdraw bytes (as game_main.c does).
+        self._fb_buf = bytearray(adapter.SCREEN_BASE + adapter.SCREEN_BYTES + adapter.SCREEN_OVERDRAW)
+        self.fb = adapter.Framebuffer.from_buffer(self._fb_buf, adapter.SCREEN_BASE)
+
+        # const asset bundles — pointers into self.img at the real addresses (see class doc). The HUD's
+        # fuel_mask and the prefix's anim_color alias in the original (both 0x17f08); pointing both at
+        # img[0x17f08] reproduces the alias automatically.
+        self.pfx_assets = adapter.GobjPrefixAssets(
+            at(adapter.A_anim_word_tbl), at(adapter.A_anim_coloridx_tbl), at(adapter.A_color_pairs),
+            at(adapter.A_marker_decay_base), at(adapter.A_anim_color),
+            at(self.buf_a + adapter.GOBJ_ANIM_BUF_OFF1), at(self.buf_a + adapter.GOBJ_ANIM_BUF_OFF2))
+        self.ground_assets = adapter.GroundAssets(
+            at(adapter.A_ground_col_tbl), at(adapter.A_ground_band_records), at(adapter.A_color_pairs))
+        self.sprite_assets = adapter.SpriteAssets(
+            at(self.buf_c), at(adapter.A_fg_anim_tbl), at(adapter.A_body_tbl), at(adapter.A_hi_tbl),
+            at(adapter.A_lo_piece_tbl), at(adapter.A_lo_piece_idx))
+        # dsp_src = buf_c with the ORIGINAL dsp_table (its src_off is buf_c-relative, so no rebasing —
+        # dsp_src + src_off = buf_c + src_off, what recreate reads). color_bar_cidx points at its zero
+        # offset (negative deltas reach below, valid inside the full image).
+        self.hud_assets = adapter.HudAssets(
+            at(adapter.A_color_pairs), at(adapter.A_color_bar_mask), at(adapter.A_color_bar_cidx),
+            at(adapter.A_fuel_mask), at(adapter.A_font_glyphs), at(adapter.A_hud_text),
+            at(self.buf_c + adapter.DASH_SRC_OFF), at(adapter.A_dsp_table), at(self.buf_c),
+            at(adapter.A_small_gauge_str), at(self.buf_c + adapter.NUM_GLYPH_BUF_OFF),
+            at(adapter.A_num_glyph_tbl), at(adapter.A_crash_color_tbl),
+            at(adapter.A_score_delta_time), at(adapter.A_score_delta_roll))
+        self.src = cand.source            # RoadSource is const per leg — reuse the candidate's
+
+        # the scene's per-frame view structs (populated by the fan / the leg-start derivations).
+        self.ground = adapter.GroundState()
+        self.hud = adapter.HudState()
+        self.object = adapter.ObjectInput(
+            ctypes.cast(ctypes.byref(self.ctrl, adapter.RM_CTRL_WIDTH_OFF), u8),
+            at(adapter.A_blit_mask_l), at(adapter.A_blit_mask_r), 0)
+        # road: tex/param/edge_const point into the image; width_tbl is rebound by rm_draw_frame and
+        # edge_tbl by the fan (edge_base + road_edge_sel), so seed them at the image bases.
+        self.road = adapter.RoadInput(
+            at(adapter.A_road_width_tbl), at(adapter.A_road_param),
+            at(adapter.A_road_edge_base), at(buf_b), at(adapter.A_road_edge_const))
+        self._edge_base = at(adapter.A_road_edge_base)   # the fan adds road_edge_sel to this
+        self.objlist = adapter.ObjListCtx(
+            None, 0, at(self.buf_a), at(self.buf_c), at(adapter.A_color_pairs),
+            at(adapter.A_obj_view_xform), at(adapter.A_objsh2p_tbl), at(adapter.A_obj_type_jumptable),
+            at(adapter.A_obj_xoff_tbl), 0, 0, 0, 0, 0)
+        # objlist.bonus_timer / p24_flag are set ONCE at the leg start by the shell (start_leg) and
+        # never refreshed per frame — reproduce that staleness faithfully (if it ever matters, the
+        # composed differential is exactly what surfaces it as a divergence, which is the point).
+        self.objlist.bonus_timer = _r16(image, adapter.A_bonus_timer)
+        self.objlist.p24_flag = image[adapter.A_p24_flag]
+
+        # per-frame snapshot structs (the draws mutate these; discarded each frame — the peek).
+        self.pose = adapter.RoadPose()
+        self.scroll = adapter.ScrollState()
+        self.pfx = adapter.GobjPrefixState()
+        self.sprite = adapter.SpriteState()
+
+        self._scene = adapter.RmScene(
+            ctypes.pointer(self.pfx), ctypes.pointer(self.pose), ctypes.pointer(cand.ring),
+            ctypes.pointer(self.scroll), ctypes.pointer(self.ground), ctypes.pointer(self.sprite),
+            ctypes.pointer(self.objlist), ctypes.pointer(self.object), ctypes.pointer(self.hud),
+            ctypes.pointer(self.road),
+            ctypes.pointer(self.pfx_assets), ctypes.pointer(self.src),
+            ctypes.pointer(self.ground_assets), ctypes.pointer(self.sprite_assets),
+            ctypes.pointer(self.hud_assets),
+            ctypes.cast(self.ctrl, u8), ctypes.cast(self.scan, u8), ctypes.cast(self.shifted, u8),
+            ctypes.cast(self.ring_st, u8),
+            at(adapter.A_obj_sprite_disp), at(adapter.A_obj_list_base))   # the two display-list bases
+        self._prebuilt_off = None
+
+    def _prebuild_scroll(self):
+        """Pre-rotate the scroll playfield for the candidate's CURRENT screen_offset (as start_leg /
+        the mode-2 event does). Only re-runs when screen_offset moved (rare — a mode-2 course event)."""
+        off = self.cand.screen_offset.value
+        if off == self._prebuilt_off:
+            return
+        self.lib.rm_scroll_prebuild(self._at(self.buf_c + off), self.shifted)
+        self._prebuilt_off = off
+
+    def draw(self, state):
+        """Compose the candidate's current frame and return the drawn screen bytes. `state` is the
+        reference image (used only to seed the sprite's draw-internal pose cursors — see the class
+        doc); everything driving the composition is the candidate's own owned state."""
+        cand = self.cand
+        # (1) sync the two arenas the drive mutates into the image the assets point into.
+        self.img[adapter.A_hud_text:adapter.A_hud_text + adapter.HUD_TEXT_BYTES] = bytes(cand.hud_text)
+        self.img[self.buf_c:self.buf_c + adapter.GFX_EVENT_BYTES] = bytes(cand.gfx)
+        # (2) snapshot the owner structs the draws mutate (non-destructive peek). Sprite starts from
+        # the reference's current pose so the fan-untouched cursors (lean_frame/variant/gates) match,
+        # then the fan overwrites the dynamic fields it owns.
+        ctypes.memmove(ctypes.byref(self.pose), ctypes.byref(cand.pose), ctypes.sizeof(self.pose))
+        ctypes.memmove(ctypes.byref(self.scroll), ctypes.byref(cand.scroll), ctypes.sizeof(self.scroll))
+        ctypes.memmove(ctypes.byref(self.pfx), ctypes.byref(cand.gobj), ctypes.sizeof(self.pfx))
+        ref_sprite = adapter.sprite_state(state)
+        ctypes.memmove(ctypes.byref(self.sprite), ctypes.byref(ref_sprite), ctypes.sizeof(self.sprite))
+        # (3) the fan-out under test — into the scene's view structs, from the candidate's own state.
+        self.lib.rm_apply_player(
+            ctypes.byref(cand.player), ctypes.byref(cand.ev), ctypes.byref(self.pose),
+            ctypes.byref(self.scroll), ctypes.byref(self.sprite), ctypes.byref(self.ground),
+            ctypes.byref(self.objlist), ctypes.byref(self.hud), ctypes.byref(self.road),
+            self._edge_base)
+        # the leg-start-owned view fields the shell derives (start_leg / course_mode_event /
+        # ring_views_refresh): obj_shade -> object.shade, the ring -> ground markers + sprite gates +
+        # the serialized dispatcher grid.
+        self.object.shade = cand.obj_shade.value
+        self.lib.rm_ring_ground_markers(ctypes.byref(cand.ring), self.ground.markers)
+        self.sprite.buggy_gate = self.lib.rm_ring_buggy_gate(ctypes.byref(cand.ring))
+        self.sprite.fg_gate = self.lib.rm_ring_fg_gate(ctypes.byref(cand.ring))
+        self.lib.rm_ring_store_st(ctypes.byref(cand.ring), self.ring_st)
+        self._prebuild_scroll()
+        # (4) compose.
+        self.lib.rm_draw_frame(ctypes.byref(self._scene), ctypes.byref(self.fb))
+        return bytes(self._fb_buf[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES])
+
+
+def _composed_mismatch(frame, cand_fb, ref_fb):
+    """Byte-compare one composed frame (candidate's rm_draw_frame vs recreate's g_draw_frame). Returns
+    a single (frame, 'composed_fb', diff_bytes, 0) tuple if they differ (with the first differing byte
+    offset folded into the field name), else None. Strict byte-exact: NO persistent-diff allowlist."""
+    if cand_fb == ref_fb:
+        return None
+    i = next(k for k in range(len(cand_fb)) if cand_fb[k] != ref_fb[k])
+    diff = sum(1 for k in range(len(cand_fb)) if cand_fb[k] != ref_fb[k])
+    return (frame, "composed_fb@%#x" % i, cand_fb[i], ref_fb[i], diff)
+
+
+def compare_leg_drive(lib, image, inputs, native_init_pre=None, compose=None):
     """Drive a leg free-running on both sides and check remaster tracks recreate scalar for scalar.
 
     Unlike compare_player_drive, the candidate is NOT re-seeded per frame: it is seeded once from the
@@ -1520,18 +1718,32 @@ def compare_leg_drive(lib, image, inputs, native_init_pre=None):
     Returns (mismatches, stats): mismatches is a list of (frame, field, candidate, reference); stats
     counts the frames worth knowing were reached — including crashes the CANDIDATE armed, checkpoints
     reached, and any leg-end — so a drive that never crashes, never recovers or never moves is visible
-    rather than vacuously green."""
+    rather than vacuously green.
+
+    THE COMPOSED-FRAME DIFFERENTIAL (opt-in via `compose`): the scalar comparison above verifies every
+    STATE transition and every DRAW STAGE in isolation, but never runs the shell's per-frame COMPOSITION
+    (state -> the apply_player / gobj_hud_view fan-outs -> the draw_frame stage sequence) end-to-end, so
+    a missing wire between two verified pieces is invisible. `compose` is a predicate (frame, is_event)
+    -> bool; on the frames it selects, the candidate runs its OWN full composition (rm_apply_player ->
+    rm_draw_frame from its live owned state, via _ComposedScene) into its own framebuffer while the
+    reference runs recreate's g_draw_frame on the image, and the two framebuffers are byte-compared
+    (STRICT — no persistent-diff allowlist). Any wiring gap with a visible effect then fails the drive
+    as a `composed_fb@…` mismatch. `is_event` is True on wrap / crash-arm / leg-end frames (where wiring
+    bugs bite); callers sample those plus every Nth frame. Left None (existing callers), it costs
+    nothing — a full frame pair is ~a few ms host-side, too much for every frame of every drive."""
     state = bytearray(image)
     buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
     game_update = _bind("g_game_update")
     cand = _Candidate(lib, state, native_init_pre=native_init_pre)
+    scene = _ComposedScene(lib, image, cand) if compose is not None else None
 
     stats = dict(frames=len(inputs), wraps=0, armed=0, crash_frames=0, handoffs=0, checkpoints=0,
                  leg_end=0, abort_armed=0, leg_over=0, clamp=0, offroad=0, ring_checked=0,
                  ring_refills=0, ring_ages=0,
                  ring_anim_visible=0, ring_marker_right=0, ring_echoes=0, ring_edge_bands=0,
                  mode2=0, mode4=0, mode6=0,
-                 fanout_anim_nz=0, fanout_spin_state_nz=0, fanout_collision_nz=0, fanout_spin_reset_nz=0)
+                 fanout_anim_nz=0, fanout_spin_state_nz=0, fanout_collision_nz=0, fanout_spin_reset_nz=0,
+                 composed_checked=0, composed_diffs=0)
     mismatches = []
     for frame, in_bits in enumerate(inputs):
         was_locked = cand.player.collision_lock
@@ -1584,6 +1796,19 @@ def compare_leg_drive(lib, image, inputs, native_init_pre=None):
         # and the event-owned state (the same portion the directed dispatch / course-events checks
         # compare, via the shared _event_state_mismatches helper). Shared with compare_game_flow.
         mismatches.extend(_drive_mismatches(frame, cand, state))
+
+        # The composed-frame differential on the sampled frames (see the docstring). is_event = a wrap,
+        # a crash arm, or a leg-end frame — where composition/fan wiring bugs bite.
+        if scene is not None:
+            is_event = (bool(_r16(state, adapter.A_view_wrap_flag))
+                        or (was_locked == 0 and cand.player.collision_lock != 0)
+                        or _abort_signed(cand.ev.abort_flag) < 0)
+            if compose(frame, is_event):
+                stats["composed_checked"] += 1
+                m = _composed_mismatch(frame, scene.draw(state), _ref_draw_frame(state))
+                if m is not None:
+                    stats["composed_diffs"] += 1
+                    mismatches.append(m)
     return mismatches, stats
 
 

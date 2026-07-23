@@ -56,7 +56,12 @@ Each phase is gated by a green equivalence harness before the next begins.
 
 2. **Phase B — gameplay equivalence.**
    Port `game_update` to native structs; drive both sides from the same per-frame input script; the
-   framebuffer diff then covers the whole loop and the remaster is self-driving.
+   framebuffer diff then covers the whole loop and the remaster is self-driving. The per-stage diffs
+   verify each renderer in isolation with inputs staged from the reference; the **composed-frame
+   differential** (`test/test_composed_frame.py`) closes the gap BETWEEN them — on sampled drive frames
+   the candidate runs the shell's OWN whole-frame composition (the `apply_player`/`gobj_hud_view`
+   fan-outs → `rm_draw_frame`, from its live owned state) and byte-compares it to recreate's
+   `g_draw_frame`, so a missing wire between two individually-verified stages fails a drive.
 
 The **adapter** (native structs ↔ flat `recreate` image) is test-only scaffolding — the bridge that
 makes differential validation possible across the two layouts. It never ships in the game build.

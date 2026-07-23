@@ -254,7 +254,10 @@ void bench_object_tree(void) {
     object_stages();
 }
 
-/* The game's whole draw_frame (game_main.c), for the true per-frame render cost. */
+/* The game's whole draw_frame, for the true per-frame render cost. The canonical composition + order
+ * is rm_draw_frame (src/frame.c), which the shell calls; this rig mirrors that order but stages the
+ * HUD scalars deliberately (const `hud` above) so the measured frame exercises a representative HUD,
+ * rather than letting the hud-view fan overwrite them with the leg-start prefix's zeros. */
 void bench_draw_frame(void) {
     bench_gobj_prefix();
     objlist.view_parity = pfx.view_parity;

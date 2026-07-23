@@ -76,6 +76,9 @@ typedef struct {
     const uint8_t *score_delta_roll;/* phase-8 6-byte add_score delta per bonus unit / rollover */
 } HudAssets;
 
+/* Draw the whole HUD (all 8 phases) into `fb` from this frame's scalars + the static asset tables. */
+void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
+
 /* ---- render_road (the pseudo-3D road rasterizer @0x19144) ---- */
 
 /* Per-frame inputs render_road consumes. In the full game these tables are rebuilt each frame by
@@ -626,6 +629,63 @@ void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
  * Runs at HUD-draw time, AFTER rm_gobj_prefix (which advances these), mirroring the original's order
  * (g_draw_game_objects then g_draw_hud). Without it the flag-sequence bars never appear. */
 void rm_gobj_hud_view(const GobjPrefixState *g, HudState *hud);
+
+/* ---- whole-frame render composition (draw_frame @0x12e22 + draw_game_objects @0x12dcc) ------------
+ *
+ * The platform-independent per-frame render pipeline, in the exact order the game draws it: the
+ * off-frame prefix advance, then the road (geometry -> raster -> fine-scroll band), then the object
+ * tree (ground, foreground sprite, the two roadside-sprite passes split around the scaled object, and
+ * the fixed pass ordered against the buggy by the view), then the HUD (with the flag-sequence fan-out
+ * just before it). Hoisted out of the on-target shell (render/atari/game_main.c) and the bench
+ * (the shell calls it; bench_main.c deliberately mirrors it with staged HUD scalars) — and, crucially, so `make test` runs the shell's real
+ * frame end-to-end (the composed-frame differential in test/equiv.py) and catches any missing wiring
+ * between the individually-verified stages. The shell keeps only buffer selection + Setscreen.
+ *
+ * How the two roadside object-list passes split (rm_ring_sprite_count over the ring's marker column). */
+#define GOBJ_SPRITE_LAST    10       /* the fixed pass runs when sprite_count <= this */
+#define GOBJ_ROW_A3_STRIDE  0x20     /* pass-2 flag-stream cursor step per skipped sprite row */
+#define GOBJ_ROW_A5_STRIDE  0x22     /* pass-2 list cursor step per skipped sprite row */
+#define GOBJ_D6_INIT        0xb0     /* pass-1 rec_off seed */
+#define GOBJ_D6_ROW_STEP    0x10     /* pass-2 rec_off decrement per skipped sprite row */
+#define GOBJ_VIEW_REAR      4        /* view_flags bit: rear view -> buggy draws before the fixed pass */
+#define GOBJ_SPRITE_PASS_ROW 1       /* the sprite passes' flag stream starts at this ring row */
+#define GOBJ_FIXED_PASS_ROW 12       /* the fixed-object pass's flag stream starts at this ring row */
+
+/* Every per-race owner struct the render reads + its const asset bundle + the scratch buffers the
+ * stages thread through, in one handle so rm_draw_frame takes one argument. The owner structs carry
+ * THIS frame's state (populated by rm_apply_player / rm_gobj_hud_view / the leg-start derivations
+ * before the call); rm_draw_frame only reads them + writes the few cursor fields the original writes
+ * inside the draw (objlist view_parity/px/xoff_tbl, road width_tbl, scroll seg_head). */
+typedef struct {
+    /* per-race owner structs the draw reads (mutated by the caller's fan-out) */
+    GobjPrefixState *pfx;
+    RoadPose        *pose;
+    CourseRing      *ring;
+    ScrollState     *scroll;
+    GroundState     *ground;
+    SpriteState     *sprite;
+    ObjListCtx      *objlist;
+    ObjectInput     *object;
+    HudState        *hud;
+    RoadInput       *road;
+    /* const asset bundles */
+    const GobjPrefixAssets *pfx_assets;
+    const RoadSource       *src;
+    const GroundAssets     *ground_assets;
+    const SpriteAssets     *sprite_assets;
+    const HudAssets        *hud_assets;
+    /* scratch buffers threaded through the stages */
+    uint8_t       *ctrl;          /* per-frame control-long table (geometry out; road/objlist in) */
+    uint8_t       *scanline;      /* build_road_geometry scratch */
+    const uint8_t *shifted;       /* pre-rotated scroll copies (rm_scroll_prebuild output) */
+    uint8_t       *ring_st;       /* the ring serialized to the flat ST row grid (dispatcher flag streams) */
+    /* obj-low program-data list bases the two object-list pass families walk */
+    const uint8_t *obj_sprite_disp;  /* low + OBJ_LOW_SPRITE_DISP: the roadside-sprite display list */
+    const uint8_t *obj_fixed_list;   /* low + OBJ_LOW_LIST_BASE:  the fixed-object display list */
+} RmScene;
+
+/* Compose one whole frame into `fb`, in the game's exact draw order. See the notes above. */
+void rm_draw_frame(const RmScene *sc, Framebuffer *fb);
 
 /* ---- shared score helper (add_score @0x1580a) ----
  *

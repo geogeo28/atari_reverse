@@ -27,6 +27,7 @@ framebuffer → diff). Order follows the in-race draw order.
 | fine-x blit engines (`blit_objshift`, `blit_objshift2`, objsprite) | `g_blit_objshift` / `_w2` / `g_blit_objshift2` / `g_objsprite_t*` | ✅ ported | `test/test_blit_engines.py` — byte-exact fuzz across every fine-x, dispatch case (clip/edge/base/wide), colours, strides, all width families |
 | object-list dispatcher (`draw_object_list` + obj_dispatch + handlers) | `g_draw_object_list` | ✅ ported | `test/test_object_list_rm.py` — whole-framebuffer byte-exact across the real per-frame passes, legs 0–4 |
 | `draw_game_objects` (prefix + orchestrator) | `g_draw_game_objects` / `g_draw_game_objects_prefix` | ✅ ported | `test/test_game_objects_rm.py` — whole-frame composite byte-exact; `test/test_gobj_prefix.py` — prefix state byte-exact (marker/anim/bonus) |
+| whole-frame composition (`draw_frame`) | `g_draw_frame` | ✅ hoisted (`src/frame.c`, `rm_draw_frame`) — the shell calls ONE composition (the bench deliberately mirrors it with staged HUD scalars); the shell keeps only buffer selection + `Setscreen` | `test/test_composed_frame.py` — the **composed-frame differential**: the candidate's OWN full per-frame composition (the `apply_player`/`gobj_hud_view` fan-outs → `rm_draw_frame`, from its live owned state) is byte-identical to recreate's `g_draw_frame` on sampled event/cadence frames of the free + directed drives (all legs, incl. real crash + flag-capture + leg-end frames); **strict, no allowlist**; mutation-verified (the two escaped fan-out bugs + a dropped stage + a swapped stage each fail). Backstops the fan-out coverage hole the per-stage tests leave — see the coverage-audit note |
 | asset loading (`rm_assets_unpack`) | `g_unpack_graphics` | ✅ ported | `test/test_assets.py` — the **whole 0x5ee08 arena** byte-identical, loaded from the unmodified `COURSES.DAT` + `GRAPHICS.GRA`; `test/test_assets_bounds.py` — malformed/truncated input refused with the arena intact |
 
 
@@ -253,6 +254,34 @@ probe + fx/horizon tail on every view-wrap. Consequences, all measured rather th
   fails a test). On-target: `run_golden.py` MATCH (frame 0 fans 0→0) and the `GAME_FLOW_AUTO` trace
   unchanged at 19 records (an additive draw-time HUD fan, no flow tags).
 
+- **The COMPOSED-FRAME differential is the new backstop for both fan-out classes above (and any
+  future one).** Both bugs shipped GREEN because the scalar coverage model has a structural hole: the
+  leg drive verifies every STATE transition differentially and every DRAW STAGE byte-exact, but with
+  the draw inputs staged FROM the reference image — it never runs the shell's actual per-frame
+  COMPOSITION (state → the `rm_apply_player`/`rm_gobj_hud_view` fan-outs → the `draw_frame` stage
+  sequence) end-to-end, so a missing wire BETWEEN two individually-verified pieces is invisible. Closed
+  by hoisting the composition into **`rm_draw_frame` (`src/frame.c`)** — the shell's `draw_frame` and
+  the shell now calls ONE composition (the bench deliberately mirrors it) (the shell keeps only buffer selection + `Setscreen`) — and by the
+  composed-frame differential in **`test/test_composed_frame.py`**: on sampled frames of each drive the
+  candidate runs its OWN full composition (`rm_apply_player` → `rm_draw_frame`, from its live owned
+  state, via `equiv._ComposedScene`) into its own framebuffer while the reference runs recreate's
+  `g_draw_frame` on the image, and the two framebuffers are **byte-compared, strict (no persistent-diff
+  allowlist)**. **Sampling rule** (a full frame pair is ~1.7 ms host-side, too much for every frame of
+  every 600-frame drive): compose on every EVENT frame (a view-wrap, a crash arm, or a leg-end frame —
+  where fan/composition wiring bugs bite) PLUS every 15th frame. **Drives**: a free flat-out per leg
+  0–4 (crashes fire on every leg → the crash-script `anim_frame`/spin fan is exercised on real crash
+  frames), plus directed slalom (leg 2/4), a flag capture (leg 2 → the flag-sequence HUD fan), and the
+  bonus-clock time-out that ends a leg (legs 0/1). **Mutation-verified** — re-introducing each escaped
+  class fails a composed drive: dropping the `anim_frame` fan (28 diffs on crash frames), dropping
+  `rm_gobj_hud_view` (111 of 127 composed frames diff on the flag-capture drive), dropping a stage (the fg sprite, 482
+  diffs), and swapping two ordered stages (fg sprite vs ground, 17 diffs). It found **no** pre-existing
+  divergence: the composed frame is byte-identical to `g_draw_frame` across all five legs and every
+  sampled crash frame, so the shell's composition — including the `objlist.bonus_timer`/`p24_flag` that
+  `start_leg` seeds once and never refreshes — is faithful on this game's data. Suite cost: +10 tests,
+  suite time unchanged (~15 s under `-n auto`; each drive is its own xdist work unit). On-target
+  unaffected: `run_golden.py` MATCH on all 5 legs (the hoist is byte-preserving) and the `GAME_FLOW_AUTO`
+  trace unchanged at 19 records.
+
 ### Game-mechanics coverage audit (2026-07-23)
 
 Every in-race gameplay mechanism and its current differential reach (the playtest asked "check the game
@@ -262,7 +291,7 @@ a staged case reaches a branch the drives cannot.
 | Mechanism | Reach |
 |-----------|-------|
 | **Flags — order match / score / consumption** | `test_flag_capture` (directed capture drive + the boundary branches: bonus/wrap/forced-match/out-of-order) + `test_events` dispatch fuzz (idx 1-12) + leg drives (organic captures) |
-| **Flag HUD bars (phase 4/5) fan-out** | `test_flag_capture::test_hud_flag_bars_are_fanned_in` (the fix) + `test_hud` (the draw itself) |
+| **Flag HUD bars (phase 4/5) fan-out** | `test_flag_capture::test_hud_flag_bars_are_fanned_in` (the fix) + `test_hud` (the draw itself) + `test_composed_frame` (the fan wired into the whole-frame composition, on a real flag-capture drive) |
 | **Football / bonus-number display (idx 41/42/63/64)** | `test_events::test_dispatch_matches_recreate` (all idx × gates × curve sign) + `test_dispatch_reaches_every_handler_kind` (non-vacuous: the record's own state change) |
 | **Finish-line display (idx 61/62)** | dispatch fuzz + `test_events::test_fx_run_fills` (the 0x3d fill dispatches `disp_finish`) |
 | **Marker-decay roadside pickup + score (idx 30/60)** | dispatch fuzz + `test_fx_block_slot_mapping` (dispatched from the right slot) + `test_gobj_prefix` (the decay retire) |
@@ -272,7 +301,7 @@ a staged case reaches a branch the drives cannot.
 | **Time-gate suppression / bonus-clock time-out** | `test_leg_drive::test_leg_ends_on_timeout` + `_via_bonus_tally`; `test_crash_fx` (the drain order + abort arm) |
 | **Crash varieties (common / rpm-band / curve-freeze / rpm-penalty collides, idx 25/27/34/35-40/43-59)** | dispatch fuzz (collision_lock gate) + leg drives ARM their own crashes (`test_crash_script_plays_out_and_returns_control`) |
 | **Spin (idx 32/33 + §10 arming)** | `test_leg_drive::test_spin_arming_matches_recreate` + `_reaches_both_outcomes` (directed — the drives can't coincide an armed override with a held lock) |
-| **Jumps / ramps (crash-script anim frame)** | `test_sprite` (fg frame) + `test_leg_drive::test_fanout_tracks_recreate_and_reaches_nonzero` (the anim/spin/lower-body fan-out) |
+| **Jumps / ramps (crash-script anim frame)** | `test_sprite` (fg frame) + `test_leg_drive::test_fanout_tracks_recreate_and_reaches_nonzero` (the anim/spin/lower-body fan-out) + `test_composed_frame` (the fan wired into the whole-frame composition, on real crash frames) |
 | **Off-road push + edge clamp (§10)** | leg drives (`stats["offroad"]`/`["clamp"]` > 0) + `test_player::test_offroad_push_is_reached` |
 | **Tunnel palette (mode 6) / screen-offset (mode 2) / race palette (mode 4)** | `test_leg_drive::test_course_mode_event_matches_recreate` (mode 4/6 organic, mode 2 directed) + `test_mode2_scroll_prebuild` — all three pinned |
 | **Score multiplier (flag 5-in-a-row bonus window)** | `test_flag_capture` (the bonus arm) + `test_gobj_prefix` (the `flag_seq_off` advance at `bonus_timer==0x28`) |

@@ -323,6 +323,28 @@ which runs before the prefix). Pinned host-side by `test/test_flag_capture.py` (
 a directed capture drive, and the flag_gate boundary branches the dispatch fuzz never reaches), all
 mutation-verified. See STATUS "flag-sequence HUD fan-out gap" + the game-mechanics coverage audit.
 
+**The COMPOSED-FRAME differential closes the coverage HOLE both fan-out bugs slipped through
+(2026-07-23).** Both shipped green because the model verifies every state transition and every draw
+STAGE in isolation, with the draw inputs staged FROM the reference image — it never ran the shell's
+per-frame COMPOSITION (state → the fan-outs → the `draw_frame` stage sequence) end-to-end, so a gap
+BETWEEN two verified pieces was invisible. Closed by hoisting the render composition into
+**`rm_draw_frame` (`src/frame.c`)** — `game_main.c`'s `draw_frame` is now a thin wrapper that builds an
+`RmScene` (a bundle of the owner structs + const assets + scratch buffers, `include/game.h`) and calls
+it, so the shell calls ONE composition (`bench_main.c` deliberately mirrors it with staged HUD scalars) (the shell keeps only buffer selection +
+`Setscreen`; `GAME_DUMP_STAGE`'s staged cuts move into `rm_draw_frame` under the same macro, still an
+on-target debug knob). On top of it, `test/test_composed_frame.py` drives each leg and, on sampled
+frames, runs the candidate's OWN composition (`rm_apply_player` → `rm_draw_frame` from its live owned
+state, via `equiv._ComposedScene`) into an isolated framebuffer and **byte-compares it strict — no
+persistent-diff allowlist — to recreate's `g_draw_frame`** on the image. Sampling = every EVENT frame
+(view-wrap / crash arm / leg-end — where wiring bugs bite) + every 15th; drives = a free flat-out per
+leg 0–4 (crashes on every leg) + directed slalom + a flag capture + a time-out leg-end. Mutation-
+verified: dropping the `anim_frame` fan, dropping `rm_gobj_hud_view`, dropping a stage, and swapping
+two ordered stages each fail a composed drive. It found **no** existing divergence (the composition,
+incl. the once-seeded `objlist.bonus_timer`/`p24_flag`, is faithful on this game's data), cost ~0 suite
+time (each drive is an xdist unit), and left `run_golden.py` MATCH + the `GAME_FLOW_AUTO` trace (19
+records) unchanged. This is the general backstop for future fan/composition wiring bugs. See STATUS
+"COMPOSED-FRAME differential".
+
 **Closed (slice 2):** ring bands 12/13's slot words — which the fixed-object pass and
 `GroundState.markers[12]` consume — used to be exempt from the leg-drive ring comparison, because the
 then-unported horizon-event dispatch cleared bytes that land there. The dispatch now runs on the

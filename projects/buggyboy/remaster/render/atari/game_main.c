@@ -274,82 +274,31 @@ static void ring_views_refresh(const CourseRing *ring, GroundState *ground, Spri
     sprite->fg_gate = rm_ring_fg_gate(ring);
 }
 
-/* Run the full ported render pipeline into `fb`, in draw_game_objects order: prefix (off-frame state),
- * geometry + road + scroll band, then the object tree (ground, foreground sprite, the two sprite
- * object-list passes split around draw_object, and the buggy ordered against the fixed pass by the
- * view), then the HUD. The scroll advances every frame; the prefix advances view_parity/anim. */
+/* Bundle the shell's per-race owner structs + const assets + scratch buffers into an RmScene — the
+ * one handle rm_draw_frame (src/frame.c) takes. Built fresh each frame from the Shell; every pointer
+ * is stable (the owner structs live for the whole run, the scratch buffers are module statics), so
+ * this is pure pointer plumbing, no per-frame cost that matters. The obj-low list bases resolve the
+ * two fixture offsets the composition walks. */
+static RmScene shell_scene(const Shell *s) {
+    RmScene sc = {
+        .pfx = s->pfx, .pose = s->pose, .ring = s->ring, .scroll = s->scroll,
+        .ground = s->ground, .sprite = s->sprite, .objlist = s->objlist, .object = s->object,
+        .hud = s->hud, .road = s->road,
+        .pfx_assets = s->pfx_assets, .src = s->src, .ground_assets = s->ground_assets,
+        .sprite_assets = s->sprite_assets, .hud_assets = s->hud_assets,
+        .ctrl = ctrl, .scanline = scanline, .shifted = shifted, .ring_st = ring_st,
+        .obj_sprite_disp = s->low + OBJ_LOW_SPRITE_DISP, .obj_fixed_list = s->low + OBJ_LOW_LIST_BASE,
+    };
+    return sc;
+}
+
+/* Run the full ported render pipeline into `fb` via the hoisted composition (rm_draw_frame). The
+ * shell keeps only the buffer selection (screen_buf / Setscreen, above) + the scene plumbing; the
+ * draw order and the no-per-frame-clear invariant live in src/frame.c now (the buffers are cleared
+ * once in main(); repainting over two-frames-old content is byte-identical to over zeros). */
 static void draw_frame(const Shell *s, Framebuffer *fb) {
-    GobjPrefixState *pfx = s->pfx;
-    ObjListCtx *objlist = s->objlist;
-    RoadInput *road = s->road;
-    const uint8_t *low = s->low;
-
-    rm_gobj_prefix(pfx, s->pfx_assets);              /* off-frame: advance view_parity/anim/marker */
-    objlist->view_parity = pfx->view_parity;         /* the dispatcher (handler_lo) reads the advanced parity */
-    objlist->px = fb->px;                            /* the dispatcher's draw target: this frame's buffer */
-    rm_build_road_geometry(s->pose, s->src, s->ring, ctrl, scanline);
-    road->width_tbl = ctrl + RM_CTRL_WIDTH_OFF;
-    /* The object dispatcher's per-row x-offset table aliases the freshly-built road control table in
-     * the original (obj_xoff_tbl == road_width_tbl + 2), so rebind it to this frame's ctrl. */
-    objlist->xoff_tbl = ctrl + RM_CTRL_WIDTH_OFF + 2;
-    s->scroll->seg_head = s->pose->seg_head;         /* the scroll step follows the near slope */
-    /* No per-frame clear: the pipeline below repaints every visible byte (blit_road_scroll's fill +
-     * band, render_road, the ground/object tree, then the HUD), so drawing over this buffer's
-     * two-frames-old content is byte-identical to drawing over zeros. The buffers are cleared once in
-     * main() to establish that invariant. Verified byte-exact against a per-frame-clear build. */
-    rm_render_road(road, fb);
-    rm_blit_road_scroll(s->scroll, shifted, fb);
-
-    /* --- draw_game_objects tree ---
-     * GAME_DUMP_STAGE (debug builds only) cuts the frame short after a chosen stage, so the normal
-     * SCREEN.BIN dump yields a partial frame and a headless run can pinpoint the first stage whose
-     * on-target output diverges from the host reference. Undefined in normal builds. */
-#if defined(GAME_DUMP_STAGE) && GAME_DUMP_STAGE == 0
-    return;
-#endif
-    rm_draw_ground(s->ground, s->ground_assets, fb);
-#if defined(GAME_DUMP_STAGE) && GAME_DUMP_STAGE == 1
-    return;
-#endif
-    rm_draw_fg_sprite(s->sprite, s->sprite_assets, fb);
-#if defined(GAME_DUMP_STAGE) && GAME_DUMP_STAGE == 2
-    return;
-#endif
-
-    /* The dispatcher's flag streams and the pass split all come from the LIVE ring: the sprite
-     * passes walk the serialized grid from row 1, the fixed pass from row 12 — the same aliasing
-     * the original gets from pointing into its flat row grid. */
-    int count = rm_ring_sprite_count(s->ring);
-    if (count - 1 >= 0)                               /* pass 1: the active sprite rows */
-        rm_draw_object_list(objlist, low + OBJ_LOW_SPRITE_DISP, 0, ring_st + GOBJ_SPRITE_PASS_ROW * RM_RING_ROW_BYTES, 0,
-                            (uint16_t)(count - 1), GOBJ_D6_INIT, (uint16_t)count);
-#if defined(GAME_DUMP_STAGE) && GAME_DUMP_STAGE == 3
-    return;
-#endif
-    rm_draw_object(s->object, fb);
-    if (GOBJ_SPRITE_LAST - count >= 0)               /* pass 2: the remaining rows */
-        rm_draw_object_list(objlist,
-                            low + OBJ_LOW_SPRITE_DISP, (uint16_t)(count * GOBJ_ROW_A5_STRIDE),
-                            ring_st + GOBJ_SPRITE_PASS_ROW * RM_RING_ROW_BYTES, (uint16_t)(count * GOBJ_ROW_A3_STRIDE),
-                            (uint16_t)(GOBJ_SPRITE_LAST - count),
-                            (uint16_t)(GOBJ_D6_INIT - count * GOBJ_D6_ROW_STEP), 0);
-    if ((objlist->view_flags & GOBJ_VIEW_REAR) == 0) {   /* pass 3 (fixed) + buggy, view-ordered */
-        rm_draw_object_list(objlist, low + OBJ_LOW_LIST_BASE, 0,
-                            ring_st + GOBJ_FIXED_PASS_ROW * RM_RING_ROW_BYTES, 0, 0, 0, 0);
-        rm_draw_buggy(s->sprite, s->sprite_assets, fb);
-    } else {
-        rm_draw_buggy(s->sprite, s->sprite_assets, fb);
-        rm_draw_object_list(objlist, low + OBJ_LOW_LIST_BASE, 0,
-                            ring_st + GOBJ_FIXED_PASS_ROW * RM_RING_ROW_BYTES, 0, 0, 0, 0);
-    }
-
-    /* Fan the flag-sequence state pfx OWNS into the HUD view (phase-4 bars + phase-5 colour cursor).
-     * apply_player fans the physics + EventState scalars, but the flag counters live in pfx and are
-     * only current AFTER rm_gobj_prefix above — so this copy sits here, right before the HUD draw,
-     * mirroring the original's g_draw_game_objects-then-g_draw_hud order. Without it the flag bars
-     * never appear (capturing a flag looks like it does nothing). */
-    rm_gobj_hud_view(pfx, s->hud);
-    rm_draw_hud(s->hud, s->hud_assets, fb);
+    RmScene sc = shell_scene(s);
+    rm_draw_frame(&sc, fb);
 }
 
 /* Fan rm_player_update's outputs out to the render structs — the whole of the "game loop" beyond

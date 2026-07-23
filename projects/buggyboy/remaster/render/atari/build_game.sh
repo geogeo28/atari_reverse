@@ -47,7 +47,8 @@ CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
        $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c \
        $REMASTER/src/blit.c $REMASTER/src/object_list.c $REMASTER/src/gameplay.c \
        $REMASTER/src/player.c $REMASTER/src/events.c $REMASTER/src/assets.c \
-       $REMASTER/src/intermission.c $REMASTER/src/results.c $REMASTER/src/flow.c"
+       $REMASTER/src/intermission.c $REMASTER/src/results.c $REMASTER/src/flow.c \
+       $REMASTER/src/frame.c"
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
