@@ -1,8 +1,8 @@
-/* demo_frame.h — the draw_game_objects frame-assembly constants shared by demo_main.c (the playable
+/* game_frame.h — the draw_game_objects frame-assembly constants shared by game_main.c (the playable
  * frame) and bench_main.c (the per-stage cycle bench), so the bench measures exactly the passes the
- * demo draws. */
-#ifndef RM_DEMO_FRAME_H
-#define RM_DEMO_FRAME_H
+ * game draws. */
+#ifndef RM_GAME_FRAME_H
+#define RM_GAME_FRAME_H
 
 /* How the two roadside object-list passes split: rm_ring_sprite_count over the live ring's marker
  * column (src/course.c) — the flat-image walk this replaces read the fixture's frozen copy. */
@@ -20,4 +20,4 @@
 
 #define GOBJ_MARKER_RECS_BYTES 0x400 /* the marker-decay record arena the prefix mutates */
 
-#endif /* RM_DEMO_FRAME_H */
+#endif /* RM_GAME_FRAME_H */

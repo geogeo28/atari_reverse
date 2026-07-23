@@ -41,7 +41,7 @@ reconstruction: its road rasterizer, scroll blitter, object dispatcher and HUD, 
 3. REMASTER               remaster/ — native structs, faster algorithms, pixel-identical output
         │
         ▼
-   DEMO.PRG on a 68000                       ── cross-compiled back to m68k, runs under Hatari
+   BUGGYBOY.PRG on a 68000                    ── cross-compiled back to m68k, runs under Hatari
 ```
 
 Each stage is refereed by the one above it, so nothing can go wrong quietly. Stage 2 is judged by a
@@ -178,9 +178,9 @@ that moves a single pixel fails.
 - **Phase B — gameplay: in progress.** Course streaming, the object ring, player physics and the
   crash/auto-steer script are ported and frame-exact; sound, collision probing and event dispatch
   are not started.
-- **On target:** `DEMO.PRG` cross-compiles back to m68k and runs under Hatari, loading the
-  unmodified `COURSES.DAT` and `GRAPHICS.GRA` at boot. Its leg-0 start frame is byte-identical to
-  the reconstruction's, and it is driveable.
+- **On target:** `BUGGYBOY.PRG` — the playable game (no sound) — cross-compiles back to m68k and runs
+  under Hatari, loading the unmodified `COURSES.DAT` and `GRAPHICS.GRA` at boot. It boots into the leg
+  select; its leg-0 start frame is byte-identical to the reconstruction's, and it is driveable.
 
 See [`remaster/STATUS.md`](projects/buggyboy/remaster/STATUS.md) for the per-subsystem table.
 

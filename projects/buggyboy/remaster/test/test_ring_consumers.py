@@ -9,8 +9,8 @@ by comparing every helper against the raw image bytes at the aliased addresses, 
 captured states (5 legs x 3 warmup depths).
 
 Two stated gaps, so nobody reads more coverage out of this file than is in it:
-- The demo_main.c WIRING (the ring_st refresh sites, the row-1/row-12 flag-stream pointers, the
-  restart reset) has no host test — `make test` never runs the demo. It is verified on-target: the
+- The game_main.c WIRING (the ring_st refresh sites, the row-1/row-12 flag-stream pointers, the
+  restart reset) has no host test — `make test` never runs game_main.c. It is verified on-target: the
   golden frame-0 compare plus autodrive runs (see PORTING.md).
 - The fixed pass consumes ring bands 12/13's slot words, which the leg drives verify only by
   marker (the still-unported horizon-event dispatch clears bytes there) — the mapping is pinned

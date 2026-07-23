@@ -1,12 +1,12 @@
 /* shim.c — the freestanding libc the cores need on the Atari target.
  *
  * m68k-elf has no libc and we link -nostdlib, so the handful of <string.h> functions the remaster
- * cores call have to come from somewhere. Every on-target program (main.c, demo_main.c,
+ * cores call have to come from somewhere. Every on-target program (main.c, game_main.c,
  * bench_main.c) links this one file rather than carrying its own copies. The declarations live in
  * shim_include/string.h, which stands in for the real header at compile time.
  *
  * Plain byte loops, correct for any alignment. They are NOT free: `memset` clears the two screen
- * buffers once at boot (demo_main.c — the per-frame clear was removed as redundant), and the
+ * buffers once at boot (game_main.c — the per-frame clear was removed as redundant), and the
  * boot-time graphics unpack slides ~450 KB through `memmove`/`memcpy`. Neither shows up in
  * `tools/bench.py`, which measures the four render cores individually — so a long-word version is an
  * open optimisation, not a done one.

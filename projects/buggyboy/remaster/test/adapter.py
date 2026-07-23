@@ -390,7 +390,7 @@ ROAD_PARAM_BYTES = 0x2000                          # >= the words the monotonic 
 ROAD_EDGE_PAD = 0x400                              # edge cursor walks +/- this around base+sel
 ROAD_EDGE_WINDOW_BYTES = 2 * ROAD_EDGE_PAD
 # A live drive re-picks the edge bank every frame (road_edge_sel = (view_flags + view_bank) * 0x60,
-# so 0..0xe * 0x60), which a single-bank window can't serve — the on-target demo bakes all of them.
+# so 0..0xe * 0x60), which a single-bank window can't serve — the on-target game bakes all of them.
 ROAD_EDGE_SEL_MAX = 0xe * 0x60
 ROAD_EDGE_ALL_BANKS_BYTES = ROAD_EDGE_PAD + ROAD_EDGE_SEL_MAX + ROAD_EDGE_PAD
 ROAD_CONST_BYTES = 0x60                            # covers the three const strips + their longs

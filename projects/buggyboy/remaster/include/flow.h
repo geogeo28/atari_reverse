@@ -127,7 +127,7 @@ typedef struct {
 #define INT_FRAME_INIT  0x14       /* int_frame seed (Phase-A scroll dwell) */
 #define INT_C_FRAMES    0x96       /* Phase-C demo runs this many frames before advancing to Phase D */
 #define INT_SCROLL_GATE 0x49       /* Phase-A: int_timer >= this advances the scroll one step (rm_int_stepA;
-                                    * the host's DEMO_FLOW_FAST prologue seeds the timer against it too) */
+                                    * the host's GAME_FLOW_FAST prologue seeds the timer against it too) */
 
 /* check_abort @0x128ea — abort (RM_ABORT_CODE) when the live input low byte is present AND differs
  * from the baseline; else 0 (the non-blocking console read is a no-key seam). Pure function of the
@@ -179,7 +179,7 @@ void rm_flow_game_over_exit(FlowState *fs);
  *
  * The driver that SEQUENCES the slice-A/B pieces — the attract cycle (prologue + phases A/B/C/D), the
  * leg-select loop, and the game-over enter/exit bracket around an intermission — hoisted out of the
- * on-target shell (render/atari/demo_main.c) so `make test` can lockstep it against recreate's
+ * on-target shell (render/atari/game_main.c) so `make test` can lockstep it against recreate's
  * g_intermission / g_init_playfield the same way the individual phase steps already are. It mirrors
  * g_intermission / g_init_playfield structure-for-structure (recreate intermission.c @0x127a0 /
  * @0x12af6). The counter arithmetic is the rm_int_* / rm_check_abort / rm_init_playfield_* functions
@@ -187,7 +187,7 @@ void rm_flow_game_over_exit(FlowState *fs);
  * the shell keeps only the 68000 implementations (drawing, flipping, palettes, input, the demo-leg
  * pipeline) and the host test can substitute recording stubs. */
 
-/* Phase-transition trace tags (the FlowOps `event` hook). demo_main's DEMO_FLOW_TRACE logs them and
+/* Phase-transition trace tags (the FlowOps `event` hook). game_main's GAME_FLOW_TRACE logs them and
  * the host driver test records them; fixed values so the on-target trace format stays stable. The
  * LEG_START/END/HISCORE tags are emitted by the shell's own leg loop, the rest by the driver. */
 enum {
@@ -213,7 +213,7 @@ typedef enum {
 /* The platform effects the driver orders, as a callback table (+ a shell-owned `ctx`). Only the
  * effects the driver actually issues today — drawing into the back buffer, flipping, palettes, input,
  * and the demo-leg pipeline pieces (Phase B/C are game-pipeline work the shell owns). The host test
- * fills these with recording stubs; demo_main fills them with the 68000 implementations. */
+ * fills these with recording stubs; game_main fills them with the 68000 implementations. */
 typedef struct {
     /* input (the IKBD poll is the shell's seam) */
     uint16_t (*poll_input)(void *ctx);      /* this frame's joystick/key bits */
@@ -233,7 +233,7 @@ typedef struct {
     void (*event)(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux);
 } FlowOps;
 
-/* Composition tuning — the debug DEMO_FLOW_FAST knobs promoted to data, so the shell (fast build) and
+/* Composition tuning — the debug GAME_FLOW_FAST knobs promoted to data, so the shell (fast build) and
  * the host driver test can both shorten the otherwise thousands-of-frames attract phases. The default
  * is the real attract timing (g_intermission's prologue seeds + Phase-C length + the leg-select idle). */
 typedef struct {

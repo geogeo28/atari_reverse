@@ -186,7 +186,7 @@ void rm_flow_game_over_exit(FlowState *fs)  { fs->game_over_flag = 0; }
 
 /* ---- the between-legs FLOW COMPOSITION driver (slice D) ------------------------------------------
  *
- * Hoisted from render/atari/demo_main.c (intermission_cycle / run_intermission / run_leg_select /
+ * Hoisted from render/atari/game_main.c (intermission_cycle / run_intermission / run_leg_select /
  * main's game-over tail), it composes the rm_int_* / rm_check_abort / rm_init_playfield_* counters
  * above with the PLATFORM effects (draw / flip / palette / input / the demo-leg pipeline) it reaches
  * through the FlowOps table. Structure-for-structure with recreate's g_intermission @0x127a0 and

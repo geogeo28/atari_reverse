@@ -452,7 +452,7 @@ static void draw_leg_labels(RmEventCtx *c) {
  * show the right dashboard for c->leg. This is init_leg_dash alone — NOT draw_leg_labels, which the
  * remaster folds a collision probe into (it is the leg-0 checkpoint handler, not a pure label draw), so
  * calling it outside the event path would arm a spurious crash. The label overlay is a documented gfx
- * seam in the shell (see demo_main.c). */
+ * seam in the shell (see game_main.c). */
 void rm_init_leg_dash(RmEventCtx *c) { init_leg_dash(c); }
 
 /* Re-seed ONLY the dash marker for c->leg (not the dashboard graphic). The shell calls this at every

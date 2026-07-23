@@ -5,9 +5,9 @@ Loads the game's unmodified `COURSES.DAT` + `GRAPHICS.GRA` into a remaster arena
 
 Two callers, and they need the *same* arena for the comparison to mean anything:
   * `test_assets.py` diffs it against recreate's verified `g_unpack_graphics`;
-  * `render/atari/gen_demo_fixture.py` stages it into the reference image before computing the
-    demo's golden frame, so the golden and the on-target demo (which loads the files off disk at
-    boot) are rendered from byte-identical assets.
+  * `render/atari/gen_game_fixture.py` stages it into the reference image before computing the
+    game's golden frame, so the golden and the on-target game (BUGGYBOY.PRG, which loads the files
+    off disk at boot) are rendered from byte-identical assets.
 """
 import ctypes
 from pathlib import Path

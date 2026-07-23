@@ -1,7 +1,8 @@
-/* demo_main.c — playable BuggyBoy on a real 68000, now the whole GAME SHELL (flow slice C).
+/* game_main.c — the on-target BuggyBoy game shell: playable BuggyBoy on a real 68000. Ships as
+ * BUGGYBOY.PRG. Explicitly WITHOUT sound (a documented seam, below).
  *
- * The demo is the game. main() composes the original's own outer loop (decomp.c main @0x10100) out of
- * remaster's ported pieces:
+ * main() composes the original's own outer loop (decomp.c main @0x10100) out of remaster's ported
+ * pieces. The shipping build boots into the LEG SELECT first, exactly as the original game does:
  *
  *   init_playfield (leg select) -> init_leg -> race-start frames -> the race loop -> on the leg end
  *   (abort_flag < 0): update_highscore -> game_over++ -> intermission (attract cycle) -> game_over = 0
@@ -18,22 +19,23 @@
  * FlowState (include/flow.h) is the composition's owner — the attract/leg-select counters, the leg
  * selector, the idle countdown and the game-over flag — exactly as the host harness's _Candidate owns
  * the leg-drive structs. The off-image SEAMS the shell stands in for, each documented at its call site:
- *   - Sound: INITTUNE / INITFX / TURNOFF / the VBL vector / stop_music — never played.
+ *   - Sound: INITTUNE / INITFX / TURNOFF / the VBL vector / stop_music — never played. Shipping the
+ *     game WITHOUT sound is a deliberate scope choice; the sound path stays an unported seam.
  *   - Vsync pacing / the flip: the shell flips at the vblank; the original's exact frame cadence is off.
  *   - Palette fades: the flow's per-phase palettes are Setpalette'd (an off-image seam — the byte-compare
  *     is palette-agnostic); the 121-frame leg-start "get ready" palette FLASH is a plain frame wait.
  *   - The interactive high-score NAME-ENTRY tail: update_highscore ranks + inserts the score (the table
  *     fills in and the results screen shows it) but the IKBD initials screen is not run (recreate defers
  *     it too — it busy-polls the keyboard and the sound flag, never returning under the differential).
- *   - The attract DEMO's input-replay: the original plays a recorded ghost; here Phase C holds throttle
- *     (a documented stand-in) so the demo actually drives the course.
+ *   - The attract DEMO's input-replay: the original plays a recorded ghost; here the attract Phase C
+ *     holds throttle (a documented stand-in) so the attract demo actually drives the course.
  *
- * BOOT / GOLDEN PARITY: run_demo.py byte-compares the FIRST painted frame (before any physics) to
- * recreate's pipeline on the leg-0 start (build/golden.bin). So the default boot takes a fast path: the
- * first outer-loop pass skips the leg select and starts leg DEMO_LEG_INDEX directly, drawing + dumping
- * that leg-start frame — byte-identical to today's demo. Only AFTER the first leg ends does the full
- * flow (highscore -> intermission -> leg select) run and close the loop. This is the "deterministic
- * first-race-frame" the task sanctions; it needs no build flag.
+ * BOOT / GOLDEN PARITY: the golden harness (run_golden.py) byte-compares the FIRST painted frame (before
+ * any physics) to recreate's pipeline on the leg-0 start (build/golden.bin). The SHIPPING build has no
+ * such frame — it boots into the leg select — so the golden harness builds a SEPARATE variant with the
+ * fast path enabled by -DGOLDEN_BOOT_LEG=N: that variant skips the leg select on the boot pass and starts
+ * leg N directly, drawing + dumping that leg-start frame (byte-identical to recreate's pipeline). The
+ * shipping BUGGYBOY.PRG defines neither GOLDEN_BOOT_LEG nor GAME_AUTODRIVE, so it carries NO fast path.
  *
  * Controls (held keys, read straight from the IKBD — see os.s):
  *   Up / Down    : throttle / brake      Left / Right : steer     Space : fire (dashboard variant)
@@ -42,7 +44,7 @@
  * Assets come from the game's own COURSES.DAT + GRAPHICS.GRA, read off disk and unpacked by
  * src/assets.c. Only the original PROGRAM's own data-segment tables (fonts, colour pairs, layout
  * tables, the phase palettes, the object jump table) and two seeds (the intermission_poll control
- * table, the default hi-score table = init_scoretable's output) are baked by gen_demo_fixture.py.
+ * table, the default hi-score table = init_scoretable's output) are baked by gen_game_fixture.py.
  */
 #include <stdint.h>
 #include <string.h>          /* freestanding libc, defined in shim.c */
@@ -51,8 +53,8 @@
 #include "game.h"
 #include "flow.h"
 #include "screen.h"
-#include "demo_fixture.h"
-#include "demo_frame.h"
+#include "game_fixture.h"
+#include "game_frame.h"
 
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
                             uint8_t *ctrl, uint8_t *scanline);
@@ -254,18 +256,18 @@ static void draw_frame(const Shell *s, Framebuffer *fb) {
     rm_blit_road_scroll(s->scroll, shifted, fb);
 
     /* --- draw_game_objects tree ---
-     * DEMO_DUMP_STAGE (debug builds only) cuts the frame short after a chosen stage, so the normal
+     * GAME_DUMP_STAGE (debug builds only) cuts the frame short after a chosen stage, so the normal
      * SCREEN.BIN dump yields a partial frame and a headless run can pinpoint the first stage whose
      * on-target output diverges from the host reference. Undefined in normal builds. */
-#if defined(DEMO_DUMP_STAGE) && DEMO_DUMP_STAGE == 0
+#if defined(GAME_DUMP_STAGE) && GAME_DUMP_STAGE == 0
     return;
 #endif
     rm_draw_ground(s->ground, s->ground_assets, fb);
-#if defined(DEMO_DUMP_STAGE) && DEMO_DUMP_STAGE == 1
+#if defined(GAME_DUMP_STAGE) && GAME_DUMP_STAGE == 1
     return;
 #endif
     rm_draw_fg_sprite(s->sprite, s->sprite_assets, fb);
-#if defined(DEMO_DUMP_STAGE) && DEMO_DUMP_STAGE == 2
+#if defined(GAME_DUMP_STAGE) && GAME_DUMP_STAGE == 2
     return;
 #endif
 
@@ -276,7 +278,7 @@ static void draw_frame(const Shell *s, Framebuffer *fb) {
     if (count - 1 >= 0)                               /* pass 1: the active sprite rows */
         rm_draw_object_list(objlist, low + OBJ_LOW_SPRITE_DISP, 0, ring_st + GOBJ_SPRITE_PASS_ROW * RM_RING_ROW_BYTES, 0,
                             (uint16_t)(count - 1), GOBJ_D6_INIT, (uint16_t)count);
-#if defined(DEMO_DUMP_STAGE) && DEMO_DUMP_STAGE == 3
+#if defined(GAME_DUMP_STAGE) && GAME_DUMP_STAGE == 3
     return;
 #endif
     rm_draw_object(s->object, fb);
@@ -383,11 +385,11 @@ static void start_leg(Shell *s, uint16_t leg) {
     rm_seed_leg_dash_marker(s->ctx);
     rm_init_leg(s->player, s->course, s->pose, s->scroll, s->ring, s->ev, s->pfx, s->sprite,
                 hud_text_ram, s->obj_shade, s->screen_offset, s->init_assets, leg);
-#ifdef DEMO_TIME_LEFT
+#ifdef GAME_TIME_LEFT
     /* Debug builds only: shorten the leg's bonus clock so a headless idle trace reaches the time-out
      * (and thus the leg end) in ~140 frames instead of ~800. A restart re-seeds the FULL clock from
      * rm_init_leg first, so a restart shows time_left jumping back up before this shortens it again. */
-    s->player->time_left = DEMO_TIME_LEFT;
+    s->player->time_left = GAME_TIME_LEFT;
 #endif
     rm_scroll_prebuild(s->arena->gfx + *s->screen_offset, shifted);   /* screen_offset is per-leg */
     s->object->shade = *s->obj_shade;
@@ -405,7 +407,7 @@ static void start_leg(Shell *s, uint16_t leg) {
 /* One race-frame UPDATE (no draw): run the driving model over the geometry the last frame built,
  * advance the course on a view-wrap (the same order as recreate's game_update.c §12), then the crash
  * / end-of-race tally. Returns 1 when the leg ENDS (abort_flag < 0), else 0. The caller draws + flips.
- * The wrap-frame block mirrors demo_main's original inline body one-for-one. */
+ * The wrap-frame block mirrors the shell's original inline body one-for-one. */
 static int game_update_step(Shell *s, uint16_t input) {
     PlayerState *player = s->player;
 
@@ -503,16 +505,31 @@ __attribute__((unused)) static void dump_frame(Framebuffer *fb) {
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, fb->px); Fclose((short)h); }
 }
 
+/* The BOOT fast path (skip the leg select, boot straight into a leg, dump frame 0). Enabled ONLY for
+ * the golden harness (GOLDEN_BOOT_LEG=N — run_golden.py builds this variant to pin the frame-0 golden
+ * against recreate's pipeline) and the headless autodrive race trace (GAME_AUTODRIVE — it cannot drive
+ * the leg-select menu with a dead keyboard, so it boots the fixture leg directly). The SHIPPING
+ * BUGGYBOY.PRG defines neither, so it has NO fast path and boots into the leg select. */
+#if defined(GOLDEN_BOOT_LEG)
+#define BOOT_FAST_LEG GOLDEN_BOOT_LEG
+#elif defined(GAME_AUTODRIVE)
+#define BOOT_FAST_LEG GAME_LEG_INDEX
+#endif
+
+#if defined(GAME_AUTODRIVE) && defined(GAME_FLOW_AUTO)
+#error "GAME_AUTODRIVE and GAME_FLOW_AUTO are mutually exclusive: autodrive takes the BOOT_FAST_LEG path and boots straight into a leg, skipping the leg select the GAME_FLOW_AUTO flow trace exists to prove."
+#endif
+
 /* ---- headless drive + trace (debug builds only) --------------------------------------------------
  *
- * DEMO_AUTODRIVE=N drives a fixed script instead of the keyboard and dumps the frame after N frames;
- * DEMO_TRACE=N logs N frames of driving state to SCREEN.BIN instead. DEMO_FLOW_TRACE adds a compact
+ * GAME_AUTODRIVE=N drives a fixed script instead of the keyboard and dumps the frame after N frames;
+ * GAME_TRACE=N logs N frames of driving state to SCREEN.BIN instead. GAME_FLOW_TRACE adds a compact
  * PHASE-transition log so a headless run can prove the between-legs flow (leg end -> highscore ->
- * intermission A->B->C->D -> leg select -> fire -> leg) runs on the 68000, and DEMO_FLOW_FAST shrinks
+ * intermission A->B->C->D -> leg select -> fire -> leg) runs on the 68000, and GAME_FLOW_FAST shrinks
  * the attract phases so a whole cycle fits a bounded run (the phase counts are otherwise thousands of
- * frames). DEMO_FLOW_AUTO scripts the flow inputs (auto-fire the leg select, auto-abort the attract).
+ * frames). GAME_FLOW_AUTO scripts the flow inputs (auto-fire the leg select, auto-abort the attract).
  */
-#ifdef DEMO_AUTODRIVE
+#ifdef GAME_AUTODRIVE
 #ifndef AUTODRIVE_STEER_AFTER
 #define AUTODRIVE_STEER_AFTER 60         /* throttle up first, then hold a steering lock */
 #endif
@@ -526,11 +543,11 @@ static uint16_t autodrive_input(int frame) {
 }
 #endif
 
-#ifdef DEMO_TRACE
+#ifdef GAME_TRACE
 #define TRACE_WORDS 9
-/* Round UP so the dump is >= SCREEN_BYTES whatever TRACE_WORDS is; never fewer slots than DEMO_TRACE. */
+/* Round UP so the dump is >= SCREEN_BYTES whatever TRACE_WORDS is; never fewer slots than GAME_TRACE. */
 #define TRACE_MIN_SLOTS ((SCREEN_BYTES + TRACE_WORDS * 2 - 1) / (TRACE_WORDS * 2))
-#define TRACE_SLOTS (DEMO_TRACE > TRACE_MIN_SLOTS ? DEMO_TRACE : TRACE_MIN_SLOTS)
+#define TRACE_SLOTS (GAME_TRACE > TRACE_MIN_SLOTS ? GAME_TRACE : TRACE_MIN_SLOTS)
 static uint16_t trace_log[TRACE_SLOTS][TRACE_WORDS];
 
 static void trace_frame(int frame, const PlayerState *p, const EventState *e, const CourseState *c) {
@@ -553,7 +570,7 @@ static void trace_dump(void) {
 }
 #endif
 
-#ifdef DEMO_FLOW_TRACE
+#ifdef GAME_FLOW_TRACE
 /* One phase-transition record per event: (tag, leg, aux) — the aux carries a phase-specific scalar
  * (Phase-A/C frame count, the leg select's leg, etc.). Written to SCREEN.BIN on quit. The tags are the
  * between-legs flow's boundaries (RM_FLOW_EVT_*, flow.h); a headless run reads them back to confirm
@@ -640,10 +657,10 @@ static int load_assets(RmArena *arena) {
  * throttle so the demo actually covers the course. Documented stand-in (see the file header). */
 #define ATTRACT_DEMO_INPUT RM_IN_ACCEL
 
-/* The attract phase timing (FlowTuning). DEMO_FLOW_FAST shrinks it so a whole cycle fits a bounded
+/* The attract phase timing (FlowTuning). GAME_FLOW_FAST shrinks it so a whole cycle fits a bounded
  * headless trace (the real phases are thousands of frames); normal builds use the real attract timing.
  * The fast Phase-A seeds break the scroll in ~2 frames (timer inside the gate, scroll/dwell at the edge). */
-#ifdef DEMO_FLOW_FAST
+#ifdef GAME_FLOW_FAST
 #define FLOW_PHASE_C_FRAMES 6      /* debug: a handful of demo frames instead of INT_C_FRAMES (0x96) */
 #define FLOW_IDLE_INIT      8      /* debug: short leg-select idle so the attract path is reachable */
 static const FlowTuning flow_tuning = {
@@ -654,7 +671,7 @@ static const FlowTuning flow_tuning = {
 static const FlowTuning flow_tuning = RM_FLOW_TUNING_DEFAULT;
 #endif
 
-#ifdef DEMO_FLOW_AUTO
+#ifdef GAME_FLOW_AUTO
 static int auto_cycle_done;         /* set by Phase D's RESTART; the attract input aborts after it */
 #endif
 
@@ -705,15 +722,15 @@ static void op_run_demo_frame(void *ctx) {
     render_and_show(s);
 }
 
-/* Phase-transition trace hook: log it (DEMO_FLOW_TRACE) and, under DEMO_FLOW_AUTO, arm the attract abort
+/* Phase-transition trace hook: log it (GAME_FLOW_TRACE) and, under GAME_FLOW_AUTO, arm the attract abort
  * once a full cycle has traced its RESTART (so the next cycle's Phase A sees a fresh key and aborts). */
 static void op_event(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux) {
     (void)ctx;
     flow_event(tag, leg, aux);
-#ifdef DEMO_FLOW_AUTO
+#ifdef GAME_FLOW_AUTO
     if (tag == RM_FLOW_EVT_INT_PHASED_RESTART) auto_cycle_done = 1;
 #endif
-    (void)tag; (void)leg; (void)aux;   /* used above only under DEMO_FLOW_TRACE / _AUTO */
+    (void)tag; (void)leg; (void)aux;   /* used above only under GAME_FLOW_TRACE / _AUTO */
 }
 
 static const FlowOps flow_ops = {
@@ -725,19 +742,21 @@ static const FlowOps flow_ops = {
 
 /* Interactive leg-select input sources. read_fkey returns 0..4 for an F1..F5 tap (a direct leg pick,
  * as the original's function-key menu), or -1 for none; no_fkey is the headless placeholder. Each is
- * used by exactly one build config (interactive vs DEMO_FLOW_AUTO), so both are marked maybe-unused. */
+ * used by exactly one build config (interactive vs GAME_FLOW_AUTO), so both are marked maybe-unused. */
 __attribute__((unused)) static int read_fkey(void) {
     for (int i = 0; i < 5; i++) if (take_key_hit(SCAN_F1 + i)) return i;
     return -1;
 }
 __attribute__((unused)) static int no_fkey(void) { return -1; }
 
-/* ---- headless flow scripting (DEMO_FLOW_AUTO): drive the whole shell without a keyboard so a trace
- * run proves the loop closes. The leg select auto-fires after a few frames; the intermission runs one
- * cycle then aborts (a fresh input the second time check_abort sees it). ---- */
-#ifdef DEMO_FLOW_AUTO
-#define FLOW_AUTO_RACE_CAP 4          /* the post-leg-select race runs this many frames, then the run quits */
-static int auto_select_frame;
+/* ---- headless flow scripting (GAME_FLOW_AUTO): drive the whole shell without a keyboard so a trace
+ * run proves the loop closes. Booting into the leg select (the shipping order), the script fires the
+ * select to start leg GAME_LEG_INDEX; the leg idles to its shortened time-out (GAME_TIME_LEFT), which
+ * runs highscore + one attract cycle; then the leg select re-enters and fires again — proving the whole
+ * loop (SELECT -> LEG -> LEG_END -> HISCORE -> INTERMISSION A->B->C->D -> SELECT) closed. ---- */
+#ifdef GAME_FLOW_AUTO
+static int auto_select_frame;          /* reset at each leg-select entry so the fire is a fresh 0->1 edge */
+static int auto_intermission_done;     /* set after the first attract cycle returns; ends the trace run */
 static uint16_t auto_select_input(void) {
     /* Idle a few frames (so the fire edge is a true 0->1 transition), then hold fire — a fresh fire
      * press starts the currently-selected leg (rm_init_playfield_fire). */
@@ -845,7 +864,7 @@ void main(void) {
     RmEventCtx ctx = {
         .player = &player, .gobj = &pfx, .ring = &ring, .pose = &pose, .road_src = &src,
         .ctrl = ctrl, .scanline = scanline, .ev = &ev, .hud_text = hud_text_ram,
-        .gfx = arena.gfx, .assets = &event_assets, .leg = DEMO_LEG_INDEX, .game_over = 0,
+        .gfx = arena.gfx, .assets = &event_assets, .leg = GAME_LEG_INDEX, .game_over = 0,
     };
 
     /* The between-legs flow's draw-asset bundles. Const graphics from the arena / obj-low blob; the
@@ -874,7 +893,7 @@ void main(void) {
         .obj_shade = &obj_shade, .screen_offset = &screen_offset,
         .src = &src, .hud_assets = &hud_assets, .pfx_assets = &pfx_assets, .ground_assets = &ground_assets,
         .sprite_assets = &sprite_assets, .player_assets = &player_assets, .init_assets = &init_assets,
-        .low = low, .event_assets = &event_assets, .ctx = &ctx, .stream = arena.tables, .leg = DEMO_LEG_INDEX,
+        .low = low, .event_assets = &event_assets, .ctx = &ctx, .stream = arena.tables, .leg = GAME_LEG_INDEX,
         .race_input_prev = 0, .flow = &flow,
         .int_assets = &int_assets, .res_assets = &res_assets,
         .input_source = read_input, .fkey_source = read_fkey,   /* repointed per flow call below */
@@ -885,33 +904,42 @@ void main(void) {
      * by start_leg (the single place every race entry funnels through — see fix note there). */
     uint16_t tos_palette[16];
     for (int reg = 0; reg < 16; reg++) tos_palette[reg] = (uint16_t)Setcolor((short)reg, -1);
+    long tos_screen = Physbase();        /* the desktop base, captured before any flip to our buffers */
     /* Clear both screen buffers once, so "buffers start blank" holds before the first draw (draw_frame
      * never clears). The pool is BSS and already zero at GEMDOS load, so this is belt-and-braces. */
     memset(screen_buf(0)->px, 0, SCREEN_BYTES);
     memset(screen_buf(1)->px, 0, SCREEN_BYTES);
 
-    /* BOOT fast path (golden parity): start leg DEMO_LEG_INDEX directly and dump its first painted
-     * frame BEFORE any physics — byte-identical to recreate's pipeline (build/golden.bin). Only after
-     * the first leg ends does the full flow (highscore -> intermission -> leg select) close the loop. */
-    start_leg(s, DEMO_LEG_INDEX);
-    flow.leg_index = DEMO_LEG_INDEX;
-    flow.leg_select = DEMO_LEG_INDEX;
+    long old_kbd_vector;
+#ifdef BOOT_FAST_LEG
+    /* BOOT fast path — GOLDEN harness / autodrive builds ONLY (see BOOT_FAST_LEG above). Skip the leg
+     * select and start leg BOOT_FAST_LEG directly, drawing (and, for the golden harness, dumping) its
+     * first painted frame BEFORE any physics — byte-identical to recreate's pipeline (build/golden.bin).
+     * The SHIPPING build compiles the #else branch: it has no fast path and boots into the leg select. */
+    start_leg(s, BOOT_FAST_LEG);
+    flow.leg_index = BOOT_FAST_LEG;
+    flow.leg_select = BOOT_FAST_LEG;
     draw_frame(s, screen_buf(s->shown));
-    long tos_screen = Physbase();
     Setscreen(-1L, (long)screen_buf(s->shown)->px, -1);
     Vsync();
-#if !defined(DEMO_AUTODRIVE) && !defined(DEMO_FLOW_AUTO)
+#ifdef GOLDEN_BOOT_LEG
     dump_frame(screen_buf(s->shown));    /* the golden frame-0 dump (before the keyboard is taken) */
 #endif
-
-    long old_kbd_vector = kbd_install();
-    flow_event(RM_FLOW_EVT_LEG_START, DEMO_LEG_INDEX, 0);
+    old_kbd_vector = kbd_install();
+    flow_event(RM_FLOW_EVT_LEG_START, BOOT_FAST_LEG, 0);
     int booted = 1;
+#else
+    /* SHIPPING boot: straight into the leg select (init_playfield), exactly as the original game boots
+     * (decomp.c main @0x10100). The loop top runs rm_flow_leg_select; fire starts the chosen leg. */
+    old_kbd_vector = kbd_install();
+    int booted = 0;
+#endif
     for (; !s->quit; booted = 0) {
         if (!booted) {
             /* Not the boot pass: run the leg select (init_playfield) to pick the next leg, then start
              * it (init_leg + the race palette, both inside start_leg). This is main's loop top. */
-#ifdef DEMO_FLOW_AUTO
+#ifdef GAME_FLOW_AUTO
+            auto_select_frame = 0;   /* fresh 0->1 fire edge for this leg-select entry */
             s->input_source = auto_select_input; s->fkey_source = no_fkey;
 #else
             s->input_source = read_input; s->fkey_source = read_fkey;
@@ -927,44 +955,45 @@ void main(void) {
 
         /* ---- the race loop ---- */
         int ended = 0;
+#if defined(GAME_FLOW_AUTO) && !defined(GAME_AUTODRIVE)
+        /* The trace has already captured a full round trip (a leg, its time-out, the attract cycle) and
+         * has now re-entered the leg select and started a leg again — the loop is closed. End the run
+         * here rather than idling a second leg to its time-out. */
+        if (auto_intermission_done) s->quit = 1;
+#endif
         for (int frame = 0; !s->quit && !ended; frame++) {
-            (void)frame;   /* only read by the debug trace / autodrive / flow-auto caps below */
+            (void)frame;   /* only read by the debug trace / autodrive frame budget below */
             if (take_key_hit(SCAN_R)) start_leg(s, s->leg);   /* R restarts the current leg */
 
             uint16_t input;
-#ifdef DEMO_AUTODRIVE
+#ifdef GAME_AUTODRIVE
             input = autodrive_input(frame);
 #else
             input = read_input();
 #endif
             ended = game_update_step(s, input);
 
-#ifdef DEMO_TRACE
+#ifdef GAME_TRACE
             trace_frame(frame, &player, &ev, &course);
 #endif
             render_and_show(s);
             s->quit = quit_requested();
-#ifdef DEMO_AUTODRIVE
+#ifdef GAME_AUTODRIVE
             /* Headless frame budget: stop at the trace length (or the autodrive length when not tracing)
              * even if the leg has not ended. The dump itself happens on loop exit (below), so it fires on
              * a leg end too — a shortened-clock idle trace ends well before the budget. */
-#ifdef DEMO_TRACE
-            if (frame + 1 >= DEMO_TRACE) s->quit = 1;
+#ifdef GAME_TRACE
+            if (frame + 1 >= GAME_TRACE) s->quit = 1;
 #else
-            if (frame + 1 >= DEMO_AUTODRIVE) s->quit = 1;
+            if (frame + 1 >= GAME_AUTODRIVE) s->quit = 1;
 #endif
-#endif
-#if defined(DEMO_FLOW_AUTO) && !defined(DEMO_AUTODRIVE)
-            /* A race reached via the leg select (booted == 0) proves the whole loop closed; run a few
-             * frames as evidence the started leg drives, then end the trace run. */
-            if (!booted && frame + 1 >= FLOW_AUTO_RACE_CAP) s->quit = 1;
 #endif
         }
-#if defined(DEMO_AUTODRIVE) && !defined(DEMO_FLOW_AUTO)
+#if defined(GAME_AUTODRIVE) && !defined(GAME_FLOW_AUTO)
         /* Headless autodrive dumps on race-loop EXIT — whichever came first, the leg end (abort_flag < 0)
          * or the frame budget — then quits instead of entering the between-legs flow, which would poll a
          * dead keyboard under headless Hatari and hang (so an idle leg-end trace never reached the dump). */
-#ifdef DEMO_TRACE
+#ifdef GAME_TRACE
         trace_dump();
 #else
         dump_frame(screen_buf(s->shown));
@@ -980,19 +1009,22 @@ void main(void) {
         flow.leg_index = s->leg;
         rm_update_highscore(&flow, highscore_ram, hud_text_ram + RM_HUD_SCORE_BCD_OFF);
         flow_event(RM_FLOW_EVT_HISCORE, flow.leg_index, flow.hiscore_pos);
-#ifdef DEMO_FLOW_AUTO
+#ifdef GAME_FLOW_AUTO
         s->input_source = auto_intermission_input;
 #else
         s->input_source = read_input;
 #endif
         if (rm_flow_game_over(&flow, &flow_ops, s, &flow_tuning) == RM_FLOW_QUIT) s->quit = 1;
+#ifdef GAME_FLOW_AUTO
+        auto_intermission_done = 1;   /* the attract cycle returned; the next leg-select+start ends the trace */
+#endif
     }
 
     kbd_remove(old_kbd_vector);
     Setscreen(-1L, tos_screen, -1);
     Setpalette(tos_palette);
     Vsync();
-#ifdef DEMO_FLOW_TRACE
+#ifdef GAME_FLOW_TRACE
     flow_trace_dump();
 #endif
 }

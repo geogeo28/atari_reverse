@@ -29,8 +29,9 @@ against the Musashi oracle, so this closes the loop end to end.)
 | `build.sh`           | generate fixture → cross-compile `hud.c`+`text.c`+shim → `.PRG` → stage `disk/` |
 | `run_hatari.py`      | headless: run the `.PRG`, byte-compare `SCREEN.BIN` vs `golden.bin`, write a PNG |
 | `run.sh`             | interactive: watch it in the Hatari GUI |
-| `gen_demo_fixture.py` / `demo_main.c` | the interactive road + HUD demo (below): fixture + TOS shim with the steer loop |
-| `build_demo.sh` / `run_demo.py` | build/verify `DEMO.PRG` (geometry + road + HUD cores) |
+| `gen_game_fixture.py` / `game_main.c` | the on-target BuggyBoy game (below): non-asset-file fixture + the game shell (leg select → race → between-legs flow) |
+| `build_game.sh` | build `BUGGYBOY.PRG` (the shipping game) or, with `GAME_PRG`/`GAME_EXTRA_CFLAGS`, a variant |
+| `run_golden.py` | the frame-0 golden harness: build the `GOLDEN.PRG` fast-path variant + byte-compare its leg-0 boot frame vs recreate |
 
 ## Use
 
@@ -44,10 +45,13 @@ bash render/atari/run.sh                   # watch it in Hatari (press a key in 
 
 Hatari needs a 4 MiB machine (`--memsize 4`); `build/` and `disk/` are gitignored build artifacts.
 
-## Playable demo (`DEMO.PRG`)
+## The game (`BUGGYBOY.PRG`)
 
-The whole Phase-A render pipeline, driven by the ported **player physics** — you drive the buggy.
-Each frame is game_update-then-draw, as the original orders it:
+`BUGGYBOY.PRG` is the playable game: it boots into the **leg select**, fire starts the chosen leg, and
+the whole outer loop (leg select → race → leg end → highscore → intermission attract cycle → back to
+the leg select) runs on a real 68000. It ships **without sound** — the sound path is a documented,
+unported seam. The whole Phase-A render pipeline is driven by the ported **player physics** — you drive
+the buggy. Each frame is game_update-then-draw, as the original orders it:
 
 1. `rm_player_update` (`src/player.c`) — the driving model: throttle → engine rpm → speed, speed →
    the road-scroll rate and the **view advance whose wrap advances the course**, steering → wheel
@@ -60,46 +64,55 @@ Each frame is game_update-then-draw, as the original orders it:
    against the fixed pass by the view) → `rm_draw_hud`, and flips.
 
 ```bash
-bash render/atari/build_demo.sh            # -> build/DEMO.PRG + disk/DEMO.PRG
-python render/atari/run_demo.py            # headless: prints MATCH, writes out/render/remaster_road_hud_hatari.png
-hatari --memsize 4 --tos-res low --harddrive render/atari/disk --auto 'C:\DEMO.PRG'   # play it
+bash render/atari/build_game.sh            # -> build/BUGGYBOY.PRG + disk/BUGGYBOY.PRG (shipping: boots the leg select)
+python render/atari/run_golden.py          # frame-0 golden harness: builds GOLDEN.PRG (-DGOLDEN_BOOT_LEG=0), prints MATCH
+hatari --memsize 4 --tos-res low --harddrive render/atari/disk --auto 'C:\BUGGYBOY.PRG'   # play it
 ```
 
-Controls (**held** keys — see below): **↑/↓** throttle / brake, **←/→** steer, **Space** fire (cycles
-the dashboard variant, as in the original), **R** restarts the leg, **Esc/Q** quits.
-**The demo loads the game's own data files.** `COURSES.DAT` and `GRAPHICS.GRA` ship on the disk
-beside `DEMO.PRG` and are read + unpacked at boot by `src/assets.c` (see `include/assets.h`). Both
+The shipping `BUGGYBOY.PRG` boots into the leg select, so it has no deterministic first frame to pin;
+`run_golden.py` therefore builds a SEPARATE variant, `GOLDEN.PRG`, compiled with `-DGOLDEN_BOOT_LEG=0`,
+that skips the leg select and starts leg 0 directly — dumping that leg-start frame *before* any physics
+so it can be byte-compared to recreate's pipeline. **Legs 1–4 are playable, but only leg 0 has a
+golden** (a per-leg golden is deferred).
+
+Controls (**held** keys — see below): **F1..F5** select + start a leg (leg-select screen), **↑/↓**
+throttle / brake, **←/→** steer, **Space** fire (cycles the dashboard variant, as in the original),
+**R** restarts the leg, **Esc/Q** quits.
+**The game loads the game's own data files.** `COURSES.DAT` and `GRAPHICS.GRA` ship on the disk
+beside `BUGGYBOY.PRG` and are read + unpacked at boot by `src/assets.c` (see `include/assets.h`). Both
 reads are bounded by the arena and the unpack itself is bounded at both ends, so a missing,
 truncated or foreign file is refused rather than walking the decode off the end of the arena. The
-demo then names the file on the ST console and exits — note that under *headless* Hatari that
+game then names the file on the ST console and exits — note that under *headless* Hatari that
 console is invisible, so the only symptom a script sees is a missing `SCREEN.BIN`. With both
 present, the road texture, the scroll playfield, the
 leg's packed course stream, the object record arena and every sprite are the real thing.
-`gen_demo_fixture.py` therefore bakes only what is *not* file content —
+`gen_game_fixture.py` therefore bakes only what is *not* file content —
 the original program's own data-segment tables (fonts, colour pairs, road param/edge tables, the
 geometry const sources, the STATIC+bss blob the object dispatcher reads), the initial
-pose/scroll/course state and the palette — into `build/demo_fixture.h`, plus the `ARENA_*` offsets at
-which the arena-resident assets live. It also writes `golden.bin` (recreate's `g_build_road_geometry`
-+ `g_render_road` + `g_blit_road_scroll` + `g_draw_game_objects` + `g_draw_hud` for the same pose,
-rendered from a freshly-loaded arena so both sides see identical assets).
-`run_demo.py` byte-compares the demo's first frame — drawn *before* any physics runs — against it; a
+pose/scroll/course state and the palette — into `build/game_fixture.h`, plus the `ARENA_*` offsets at
+which the arena-resident assets live. Under `GEN_GOLDEN=1` (set only by `run_golden.py`) it *also*
+writes `golden.bin` (recreate's `g_build_road_geometry` + `g_render_road` + `g_blit_road_scroll` +
+`g_draw_game_objects` + `g_draw_hud` for the same pose, rendered from a freshly-loaded arena so both
+sides see identical assets) and `palette.bin`; a plain shipping/bench build leaves the flag unset and
+skips that heavy render, since only `run_golden.py` compares against it.
+`run_golden.py` byte-compares that GOLDEN.PRG variant's first frame — drawn *before* any physics runs — against it; a
 **MATCH** proves the whole ported pipeline is pixel-identical on a real 68000. The physics driving it
 is validated on the host against recreate's `g_game_update` (`test/test_player.py`), as are the
 geometry and course advance (`test/test_geometry.py`, `test/test_course.py`).
 
-### Held keys: the demo takes the IKBD interrupt
+### Held keys: the game takes the IKBD interrupt
 
 GEMDOS reports key *presses*; driving needs to know which keys are *held*, and several at once
-(throttle plus steering). So the demo installs its own handler on the IKBD ACIA interrupt (MFP
+(throttle plus steering). So the game installs its own handler on the IKBD ACIA interrupt (MFP
 channel 6, vector `0x46` @ `0x118`) after switching mouse and joystick reporting off — which is what
 leaves the ACIA delivering nothing but keyboard make/break scancodes, so the handler in `os.s` is
 just "bit 7 clear → down, set → up" into a 128-byte `key_down[]` table the C polls once a frame. The
 old vector and the mouse mode are restored on exit. The first-frame dump happens *before* the install,
 so the headless MATCH run never depends on it.
 
-### Aliased globals the demo has to model
+### Aliased globals the game has to model
 
-recreate threads one flat image, so several logically-separate tables share an address. The demo keeps
+recreate threads one flat image, so several logically-separate tables share an address. The game keeps
 them separate and must reproduce the aliasing explicitly — each of these caused a real on-target diff:
 
 | Alias | Effect |
@@ -110,9 +123,9 @@ them separate and must reproduce the aliasing explicitly — each of these cause
 
 `draw_game_objects` also writes off-screen sprite fragments well past the visible 32000 bytes, so each
 screen buffer carries a `SCREEN_OVERDRAW` tail (in the original the draw buffer is followed by ample
-RAM). Two debug build flags: `DEMO_EXTRA_CFLAGS=-DDEMO_DUMP_STAGE=N` cuts the frame short after stage
+RAM). Two debug build flags: `GAME_EXTRA_CFLAGS=-DGAME_DUMP_STAGE=N` cuts the frame short after stage
 N (0 road, 1 ground, 2 foreground, 3 pass 1), so the dump holds a partial frame — that is how an
-on-target divergence gets bisected to a single stage. `-DDEMO_AUTODRIVE=N` replaces the keyboard with
+on-target divergence gets bisected to a single stage. `-DGAME_AUTODRIVE=N` replaces the keyboard with
 a fixed input script and dumps the frame after N frames, which is how the *loop* (physics → course
 advance → render, on the 68000) gets checked headlessly rather than only frame 0.
 
@@ -127,16 +140,20 @@ The roadside scenery streams along the course too: `draw_object_list`'s flag str
 from the live ring (`src/course.c`'s `rm_ring_*` helpers, refreshed after every course advance and
 on a restart) — see PORTING.md's "the ring's consumers are unified".
 
-What the demo still cannot do: nothing arms a crash (object collision, the fx block and the
-horizon-event dispatch with its discrete `road_curve += ±0x3c` kicks are unported), and the ring's
-bands 12/13 feed the fixed-object pass with slot words the dispatch would normally rewrite, so that
-pass stays dispatch-unfaithful until the event system is ported.
+What the game still leaves as a seam: **sound** (INITTUNE/INITFX/TURNOFF + the VBL vector — the game
+ships without it), and the record-driven mode-2/4/6 palette / screen-offset events in
+`course_advance`'s tail. The course-event engine that *decides* to crash you (the collision probe, the
+fx block and the horizon-event dispatch) is ported and wired, so the game arms its own crashes and
+delivers its own checkpoint / finish / bonus events — see STATUS/PORTING.
 
 The alignment gotcha: the cores read the baked tables with `be16`/`be32` (word/long moves), which
 fault on an odd address on the 68000, so the fixture arrays and the BSS scratch are `aligned(2)`.
 
 ## Scope
 
-Only remaster's own rendering is drawn, over a **blank screen** — no captured game frame. The HUD
-demo (`HUD.PRG`) is HUD-only; the road demo (`DEMO.PRG`) adds the road surface and live steering.
-As more of the pipeline is ported (road scroll, objects), this harness extends toward whole frames.
+`HUD.PRG` is the HUD-only proof (rendered over a blank screen, no captured game frame — `run_hatari.py`
+pins it). `BUGGYBOY.PRG` is the whole playable game: the render pipeline (road, scroll, the object tree,
+the HUD) driven by the ported physics and the between-legs flow, everything drawn by remaster's own C.
+`run_golden.py` pins its leg-0 boot frame byte-for-byte against recreate's pipeline; the rest of the
+loop is guarded by the host equivalence suite (`make test`) and the on-target flow trace. The remaining
+seam is sound.

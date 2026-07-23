@@ -36,7 +36,7 @@ RUN_VBLS = "4000"
 # does not — and build.sh never stages them — so requiring them for every .PRG would break the
 # documented `build.sh && run_hatari.py` flow on a clean checkout (disk/ is gitignored).
 DATA_FILES = ("COURSES.DAT", "GRAPHICS.GRA")
-NEEDS_DATA_FILES = ("DEMO.PRG",)
+NEEDS_DATA_FILES = ("BUGGYBOY.PRG", "GOLDEN.PRG")
 
 
 def run(prg, timeout=60):
@@ -85,24 +85,31 @@ def _palette_rgb():
     return pal
 
 
-def main():
-    fb = run("HUD.PRG")
-
+def verify_frame(fb, png_basename, match_msg):
+    """Decode the Hatari framebuffer to a PNG, byte-compare it to build/golden.bin, and report the
+    result (MATCH: <match_msg>, or a DIFF + non-zero exit). Shared by both on-target harnesses so
+    they behave identically; only the PNG name and the MATCH line's subject differ."""
     outdir = RECREATE.parent / "out" / "render"
     outdir.mkdir(parents=True, exist_ok=True)
     image = bytearray(SCREEN_BASE) + fb                   # pad so SCREEN_BASE indexing works
     rows = _decode_interleaved(image, SCREEN_BASE)
-    png = outdir / "remaster_hud_hatari.png"
+    png = outdir / png_basename
     write_png(str(png), W, H, rows, _palette_rgb())
     print(f"wrote {png} ({len(fb)} bytes from Hatari)")
 
     golden = (BUILD / "golden.bin").read_bytes()
     if bytes(fb) == golden:
-        print("MATCH: on-target remaster HUD is byte-identical to recreate's g_draw_hud")
+        print("MATCH: " + match_msg)
     else:
         ndiff = sum(1 for a, b in zip(fb, golden) if a != b)
         print(f"DIFF: {ndiff}/{SCREEN_BYTES} bytes differ from recreate's golden frame")
         sys.exit(1)
+
+
+def main():
+    fb = run("HUD.PRG")
+    verify_frame(fb, "remaster_hud_hatari.png",
+                 "on-target remaster HUD is byte-identical to recreate's g_draw_hud")
 
 
 if __name__ == "__main__":

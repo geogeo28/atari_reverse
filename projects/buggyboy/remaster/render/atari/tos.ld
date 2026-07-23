@@ -1,4 +1,4 @@
-/* tos.ld — link the demo at base 0 as one contiguous text+data blob (GEMDOS relocates at load).
+/* tos.ld — link the on-target program at base 0 as one contiguous text+data blob (GEMDOS relocates at load).
  * Copied from recreate/render/atari/tos.ld. rodata folds into text so it is reachable; .bss is
  * zeroed by TOS. Packed tight (no gaps) so a fixup's virtual address equals its byte offset in the
  * flat binary. text+data is padded to 256 and .bss abuts it (SUBALIGN 1) — see the recreate note. */

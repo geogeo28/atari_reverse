@@ -267,12 +267,12 @@ def test_game_flow(leg, capsys):
 # Of the four correctness bugs that historically escaped, only the idle-hang and Esc/Q-unreachable classes
 # live in this now-lockstepped driver code. The leg-start marker reseed (start_leg -> op_start_demo_leg,
 # a host stub here) and the menu-race palette (set in main() after rm_flow_leg_select returns) are NOT in
-# the driver and remain guarded only by the on-target DEMO_FLOW_AUTO flow trace + the frame-0 golden.
+# the driver and remain guarded only by the on-target GAME_FLOW_AUTO flow trace + the frame-0 golden.
 
 # A HARNESS-ONLY shortened tuning: the seeds are chosen purely for test speed (Phase A breaks in ~6
 # frames, Phase C is 6 demo frames, the leg-select idle is short — a whole cycle runs in-test), NOT the
 # on-target debug knobs. It is distinct from BOTH the shipping RM_FLOW_TUNING_DEFAULT (the real attract
-# timing — see _default_tuning) and demo_main's DEMO_FLOW_FAST ({scroll=1, frame=0, timer=0x4b, idle=8}).
+# timing — see _default_tuning) and game_main's GAME_FLOW_FAST ({scroll=1, frame=0, timer=0x4b, idle=8}).
 def _fast_tuning(**over):
     base = dict(prologue_scroll=4, prologue_frame=1, prologue_timer=adapter.INT_TIMER_WRAP,
                 phase_c_frames=6, idle_init=0x40)

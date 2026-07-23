@@ -1,12 +1,12 @@
 /* bench_main.c — per-function entry points for cycle-benchmarking the remaster render cores on a
  * 68000 (Musashi), against recreate's cross-compiled recon. Each bench_* symbol is a zero-work
- * wrapper that calls one core with structs staged from the baked demo fixture; tools/bench.py loads
+ * wrapper that calls one core with structs staged from the baked game fixture; tools/bench.py loads
  * this ELF, jumps to each wrapper via emu.run_bench, and counts instructions/cycles. Not a program
  * (no real main loop): main() exists only so os.s links.
  *
- * The wrappers cover every stage of the demo's frame (demo_main.c draw_frame + the game-loop step),
- * so their sum is the demo's true frame cost on the staged leg-1 frame. Object costs vary with what
- * is in view; this is one representative frame, not a worst case.
+ * The wrappers cover every stage of the game's frame (game_main.c draw_frame + the game-loop step),
+ * so their sum is the game's true frame cost on the staged leg-0 boot frame. Object costs vary with
+ * what is in view; this is one representative frame, not a worst case.
  */
 #include <stdint.h>
 #include <string.h>          /* freestanding libc, defined in shim.c */
@@ -14,8 +14,8 @@
 #include "assets.h"
 #include "game.h"
 #include "screen.h"
-#include "demo_fixture.h"
-#include "demo_frame.h"
+#include "game_fixture.h"
+#include "game_frame.h"
 
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 
@@ -42,13 +42,13 @@ static const HudState hud = {
 static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));
 
 static uint8_t fuel_mask_ram[8] __attribute__((aligned(2)));   /* prefix anim_color / HUD fuel-mask alias */
-/* rm_init_leg rewrites the HUD-text score / bonus-time region; the demo does the same into a mutable
+/* rm_init_leg rewrites the HUD-text score / bonus-time region; the game does the same into a mutable
  * copy, so mirror it here (seeded from the baked leg-start text in bench_stage_assets). */
 static uint8_t hud_text_ram[sizeof fixture_hud_text] __attribute__((aligned(2)));
 
 static HudAssets assets = {
     .color_pairs = fixture_color_pairs, .color_bar_mask = fixture_color_bar_mask,
-    /* the HUD reads the same mutable buffer the prefix's animated colour writes, as in the demo */
+    /* the HUD reads the same mutable buffer the prefix's animated colour writes, as in the game */
     .color_bar_cidx = fixture_color_bar_cidx + CIDX_ZERO_OFF, .fuel_mask = fuel_mask_ram,
     .font = fixture_font, .hud_text = hud_text_ram, .dsp_table = fixture_dsp_table,
     .small_gauge_str = fixture_small_gauge_str,
@@ -67,7 +67,7 @@ static RoadInput road = {
     .edge_tbl = fixture_road_edge + ROAD_EDGE_PAD, .edge_const = fixture_road_edge_const,
 };
 static const uint8_t *course_stream;
-/* The per-leg owner structs rm_init_leg fills in bench_stage_assets (as demo_main.c stages them), not
+/* The per-leg owner structs rm_init_leg fills in bench_stage_assets (as game_main.c stages them), not
  * baked; scroll.scroll_speed is then forced to BENCH_SCROLL_SPEED there. */
 static RoadPose pose;
 static ScrollState scroll;
@@ -75,7 +75,7 @@ static CourseState course;
 static EventState ev;              /* rm_init_leg owner struct (not otherwise read by the bench) */
 static uint16_t screen_offset;     /* rm_init_leg output; the bench prebuilds a FIXED scroll offset */
 
-/* --- the draw_game_objects tree + player step, staged exactly as demo_main.c stages them --- */
+/* --- the draw_game_objects tree + player step, staged exactly as game_main.c stages them --- */
 static uint8_t buf_a_ram[ARENA_BUF_A_BYTES] __attribute__((aligned(2)));  /* mutable buf_a (prefix mirrors) */
 static uint8_t gobj_scratch[GOBJ_MARKER_RECS_BYTES] __attribute__((aligned(2)));  /* marker recs (inactive) */
 static uint8_t ring_st[RM_RING_ROWS * RM_RING_ROW_BYTES] __attribute__((aligned(2)));
@@ -107,9 +107,9 @@ static ObjListCtx objlist = {
     .jumptable = fixture_obj_low + OBJ_LOW_JUMPTABLE,
     .xoff_tbl = ctrl + RM_CTRL_WIDTH_OFF + 2,                 /* aliases the freshly-built ctrl */
     /* view_flags / view_parity / bonus_timer / obj_scan_off / p24_flag are derived from the reset
-     * owner structs in bench_stage_assets (as demo_main.c's start_leg derives them). Standalone
+     * owner structs in bench_stage_assets (as game_main.c's start_leg derives them). Standalone
      * objlist rows run at that staged parity; the composites advance it via the prefix first, as the
-     * demo does — both are real frames (parity alternates every frame). */
+     * game does — both are real frames (parity alternates every frame). */
 };
 static SpriteState sprite;         /* the buggy pose — filled by rm_init_leg in bench_stage_assets */
 static SpriteAssets sprite_assets = {
@@ -137,12 +137,12 @@ static PlayerState player;
  * touches. */
 static RmEventCtx ctx = {
     .player = &player, .gobj = &pfx, .ring = &ring, .pose = &pose, .road_src = &src,
-    .ctrl = ctrl, .scanline = scanline, .leg = DEMO_LEG_INDEX, .game_over = 0,
+    .ctrl = ctrl, .scanline = scanline, .leg = GAME_LEG_INDEX, .game_over = 0,
 };
 
 void bench_ring_views(void);
 
-/* Bind everything that lives in the loaded asset arena, plus the mutable copies the demo stages at
+/* Bind everything that lives in the loaded asset arena, plus the mutable copies the game stages at
  * boot (buf_a, the fuel-mask alias, the serialized ring views). bench.py runs this before every
  * measured call, on memory it has already filled with the unpacked arena. */
 static const uint8_t *scroll_playfield;
@@ -162,16 +162,16 @@ void bench_stage_assets(void) {
     objlist.buf_c = arena.gfx;
     sprite_assets.gfx = arena.gfx;
 
-    /* Stage the leg-start owner state NATIVELY (rm_init_leg, as demo_main.c does) rather than baking a
+    /* Stage the leg-start owner state NATIVELY (rm_init_leg, as game_main.c does) rather than baking a
      * *_INIT snapshot: the physics / course / pose / scroll scalars, the ring seeded from the leg's
      * marker records, the buggy pose, the HUD-text region and object.shade. Then the bench's two
      * deliberate overrides (a driving input; a representative racing scroll speed) and the render
-     * VIEWS derived from the owners exactly as demo_main.c's start_leg derives them. Re-run before
+     * VIEWS derived from the owners exactly as game_main.c's start_leg derives them. Re-run before
      * every measured call, so each stage starts from a fresh leg-start state. */
     for (unsigned i = 0; i < sizeof fixture_hud_text; i++) hud_text_ram[i] = fixture_hud_text[i];
     RmInitAssets init_assets = {.buf_a = arena.tables, .legtime = fixture_legtime};
     rm_init_leg(&player, &course, &pose, &scroll, &ring, &ev, &pfx, &sprite,
-                hud_text_ram, &object.shade, &screen_offset, &init_assets, DEMO_LEG_INDEX);
+                hud_text_ram, &object.shade, &screen_offset, &init_assets, GAME_LEG_INDEX);
     player.input = RM_IN_ACCEL;                 /* a driving frame, so the physics walks its live paths */
     scroll.scroll_speed = BENCH_SCROLL_SPEED;   /* a representative racing speed (scroll edge/wrap tail) */
     ground.view = player.ground_view_off;
@@ -184,7 +184,7 @@ void bench_stage_assets(void) {
     bench_ring_views();
 }
 
-/* One representative frame's worth of each core (as the demo's draw_frame chains them). */
+/* One representative frame's worth of each core (as the game's draw_frame chains them). */
 void bench_build_geometry(void) { rm_build_road_geometry(&pose, &src, &ring, ctrl, scanline); }
 void bench_render_road(void)    { road.width_tbl = ctrl + RM_CTRL_WIDTH_OFF; rm_render_road(&road, &fb); }
 void bench_scroll_prebuild(void) { rm_scroll_prebuild(scroll_playfield, shifted); }
@@ -192,7 +192,7 @@ void bench_blit_scroll(void)    { rm_blit_road_scroll(&scroll, shifted, &fb); }
 void bench_draw_hud(void)       { rm_draw_hud(&hud, &assets, &fb); }
 void bench_course_advance(void) { rm_road_course_advance(&pose, &course, &ring, course_stream); }
 
-/* The game-loop step + the draw_game_objects stages (demo_main.c draw_frame order). */
+/* The game-loop step + the draw_game_objects stages (game_main.c draw_frame order). */
 void bench_player_update(void)  { rm_player_update(&player, &player_assets, ctrl, &ctx); }
 void bench_gobj_prefix(void)    { rm_gobj_prefix(&pfx, &pfx_assets); }
 void bench_draw_ground(void)    { rm_draw_ground(&ground, &ground_assets, &fb); }
@@ -206,7 +206,7 @@ void bench_ring_views(void)     {
     sprite.fg_gate = rm_ring_fg_gate(&ring);
 }
 
-/* The two roadside sprite passes split around draw_object, and the fixed pass (demo pass split). */
+/* The two roadside sprite passes split around draw_object, and the fixed pass (game pass split). */
 void bench_objlist_pass1(void) {
     int count = rm_ring_sprite_count(&ring);
     if (count - 1 >= 0)
@@ -230,7 +230,7 @@ void bench_objlist_fixed(void) {
 
 /* The object stages after the road — ground through the view-ordered fixed-pass/buggy tail. ONE
  * copy, called by both composites, so they cannot drift from each other (both must keep mirroring
- * demo_main.c's draw_frame). */
+ * game_main.c's draw_frame). */
 static void object_stages(void) {
     bench_draw_ground();
     bench_draw_fg_sprite();
@@ -253,7 +253,7 @@ void bench_object_tree(void) {
     object_stages();
 }
 
-/* The demo's whole draw_frame (demo_main.c), for the true per-frame render cost. */
+/* The game's whole draw_frame (game_main.c), for the true per-frame render cost. */
 void bench_draw_frame(void) {
     bench_gobj_prefix();
     objlist.view_parity = pfx.view_parity;

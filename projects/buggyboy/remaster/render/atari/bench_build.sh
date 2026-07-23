@@ -1,8 +1,8 @@
 #!/bin/bash
 # Build the remaster render cores + bench wrappers to a 68000 ELF for cycle benchmarking.
 #   bench_build.sh   -> build/bench.elf   (loaded by tools/bench.py into Musashi)
-# Same toolchain/flags as build_demo.sh, but links bench_main.c (per-function entry wrappers) instead
-# of the demo shim, and stops at the ELF (no .PRG). Requires the recreate .so (fixture generator).
+# Same toolchain/flags as build_game.sh, but links bench_main.c (per-function entry wrappers) instead
+# of the game shim, and stops at the ELF (no .PRG). Requires the recreate .so (fixture generator).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -11,8 +11,8 @@ BUILD="$HERE/build"; mkdir -p "$BUILD"
 
 PY="$REMASTER/../recreate/.venv/bin/python"; [ -x "$PY" ] || PY=python3
 
-echo ">> generate demo fixture (shared with the demo) for the bench structs"
-"$PY" "$HERE/gen_demo_fixture.py" >/dev/null
+echo ">> generate game fixture (shared with the game) for the bench structs"
+"$PY" "$HERE/gen_game_fixture.py" >/dev/null
 
 CC=m68k-elf-gcc
 # -O2 (matching recreate's recon) so the hot blit primitives inline; -Os leaves them as calls and the

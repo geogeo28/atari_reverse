@@ -1,4 +1,4 @@
-/* Minimal freestanding <string.h> for the on-target demo build (m68k-elf has no libc).
+/* Minimal freestanding <string.h> for the on-target program builds (m68k-elf has no libc).
  * Only what the HUD core calls; defined in main.c. */
 #ifndef RM_SHIM_STRING_H
 #define RM_SHIM_STRING_H

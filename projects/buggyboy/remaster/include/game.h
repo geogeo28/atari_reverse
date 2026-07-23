@@ -315,7 +315,7 @@ void rm_ring_poke_byte(CourseRing *ring, unsigned flat_off, uint8_t val);
  * / `turn_flags` / the spin pair through that same bundle, and a bonus-display record rebuilds `ctrl`
  * in place. Once armed, the script here plays the crash out and hands the controls back on its own.
  * The probe and the fx / horizon dispatch themselves run on the caller's view-wrap frame (see the
- * frame loops in `demo_main.c` / `equiv._Candidate`), not inside this function.
+ * frame loops in `game_main.c` / `equiv._Candidate`), not inside this function.
  *
  * Two writes the original's section 6 makes are deliberately absent, both sound: the `rev_reload`
  * poke that accompanies an rpm override, and restoring the VBL sound vector on the terminal record.
@@ -662,7 +662,7 @@ bool rm_crash_rollover_step(uint8_t *text, uint16_t crash_bars);
  * gauge_blink_on AND the crash-fx tally's crash_frame / abort_flag: the event engine mutates them (see
  * course_markers + rm_crash_fx_update in events.c). HudState declares its own copies of the first five
  * plus crash_frame, but those are the draw's per-frame VIEW — the game loop refreshes them from here
- * before each rm_draw_hud, exactly as it already does for speed / time_left (see demo_main.c
+ * before each rm_draw_hud, exactly as it already does for speed / time_left (see game_main.c
  * apply_player). The flow is one-directional (EventState -> HudState copy); the HudState types differ
  * deliberately (crash_active / gauge_blink_on are the draw's bool gate, crash_lap its signed count)
  * and the copy narrows into them. Slice 2 wires that copy. */

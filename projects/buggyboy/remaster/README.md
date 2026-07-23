@@ -68,6 +68,8 @@ include/   screen.h (framebuffer format)   game.h (native state structs — grow
 src/       main.c + one file per subsystem (road.c, objects.c, hud.c, score.c, game_update.c, …)
 test/      capture_ref.py (golden framebuffers from recreate)  equiv.py (candidate vs reference)
            adapter.*  (flat image → remaster structs)   inputs/ (deterministic per-frame scripts)
+render/atari/  on-target build: BUGGYBOY.PRG (the playable game — leg select, race, flow; no sound)
+           + the frame-0 golden harness (run_golden.py) — see render/atari/README.md
 tools/     bench.py (cycles vs original + vs recreate, extends recreate/tools/bench_frame.py)
 Makefile   build the host lib + run equivalence tests + bench
 STATUS.md  per-subsystem progress vs recreate

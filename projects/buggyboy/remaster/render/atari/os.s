@@ -1,4 +1,4 @@
-| os.s — GEMDOS PRG entry + trap wrappers for the remaster HUD demo.
+| os.s — GEMDOS PRG entry + trap wrappers for the remaster on-target programs (HUD.PRG, BUGGYBOY.PRG).
 | Copied from recreate/render/atari/os.s (generic GEMDOS glue).
 |
 | C ABI (m68k SysV): args on the stack at 4(%sp), 8(%sp), ...; each int/pointer is 4 bytes;
@@ -182,7 +182,7 @@ Ikbdws:
 
 | --- held-key tracking ------------------------------------------------------------------------
 | The GEMDOS console reports key PRESSES; driving needs to know which keys are HELD, and several at
-| once (throttle plus steering). So the demo takes the IKBD ACIA interrupt itself (MFP channel 6,
+| once (throttle plus steering). So the game takes the IKBD ACIA interrupt itself (MFP channel 6,
 | vector 0x46 @ 0x118). With mouse and joystick reporting switched off (kbd_install), the ACIA
 | delivers nothing but keyboard make/break scancodes, so the handler is simply:
 |   bit 7 clear -> that scancode is now down;  bit 7 set -> it is up.

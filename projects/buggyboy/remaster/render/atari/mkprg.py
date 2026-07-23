@@ -4,7 +4,7 @@
 Emits the 28-byte header, the flat text+data image (objcopy -O binary output), and a GEMDOS
 relocation table built from the ELF's R_68K_32 fixups (kept via `ld --emit-relocs`).
 
-Usage: mkprg.py demo.elf demo.bin out.prg
+Usage: mkprg.py game.elf game.bin out.prg
 """
 import re
 import struct
