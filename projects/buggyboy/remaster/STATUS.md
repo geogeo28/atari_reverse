@@ -225,6 +225,62 @@ probe + fx/horizon tail on every view-wrap. Consequences, all measured rather th
   half of the `spin_reset` long (the `<<16` shift OR the `| spin_word2` term) diverges the compared
   long — both caught by the one directed spin-reset drive.
 
+- **The flag-sequence HUD fan-out gap (capturing a flag looked like it did nothing) is fixed + host-
+  tested.** The flag STATE path was correct all along — the §H horizon dispatch fires a `flag_gate`
+  event (jump-table idx 1-12) whose flag colour is the fx-overlay byte at `fx[horizon_row+1/+3]`, the
+  order-match reads `flag_seq_table[flag_seq_off + flag_seq_count]`, the score is added and the
+  object's `obj_active` byte cleared — and the leg drives already tracked it wherever a flag fired
+  (leg 3 captures one by frame ~129, all compared strictly). But the SHELL never fanned the three
+  fields `GobjPrefixState` OWNS into the per-frame `HudState` the draw reads: `flag_seq_count`
+  (phase-4 bars), `flag_seq_off` + `dsp_color_scroll` (phase-5 colour cursor). `rm_apply_player` fans
+  the physics + `EventState` scalars but has no `gobj` param, so the flag-sequence bars **never drew** —
+  the capture was invisible (the score ticks every wrap frame from the distance award, so only the bars
+  are the flag's feedback). Same class as the draw-struct fan-out bug above: a shell view field with no
+  host test, invisible to the golden (frame 0, `flag_seq_count == 0`) and to the leg drives (they
+  compare the raw `gobj` state, not the HUD render). Fixed by `rm_gobj_hud_view` (`src/gameplay.c`), a
+  fan the shell's `draw_frame` runs **after `rm_gobj_prefix`, before `rm_draw_hud`** — the original's
+  `g_draw_game_objects`-then-`g_draw_hud` order, so it reads the post-prefix values (it can't fold into
+  `rm_apply_player`, which runs before the prefix). Pinned by `test/test_flag_capture.py`:
+  `test_hud_flag_bars_are_fanned_in` renders the HUD from a HudState whose flag fields come ONLY from
+  the fan (zeroed first) and matches recreate's `g_draw_hud` byte-exact (dropping the fan makes the bars
+  vanish — mutation-verified); `test_directed_flag_capture_drive` captures flags in order on a leg-2
+  drive, strict per-frame vs the oracle, asserting a capture happened on BOTH sides; and
+  `test_flag_gate_branches_match_recreate` stages `flag_seq_count` at the window boundaries to reach the
+  branches the dispatch fuzz (which only sees `flag_seq_count == 0`) never does — the 5-in-a-row bonus
+  (seq 4→5 arms `bonus_timer` 0x3c), the wrap past the window (seq ≥5 →1), the `bonus_timer`
+  forced-match, and the out-of-order miss — each compared to recreate and asserted non-vacuous.
+  Mutation-verified (drop the fan; invert the order-match; drop the `obj_active` consumption — each
+  fails a test). On-target: `run_golden.py` MATCH (frame 0 fans 0→0) and the `GAME_FLOW_AUTO` trace
+  unchanged at 19 records (an additive draw-time HUD fan, no flow tags).
+
+### Game-mechanics coverage audit (2026-07-23)
+
+Every in-race gameplay mechanism and its current differential reach (the playtest asked "check the game
+mechanisms are all working"). "Drive" = a free-running leg drive compares it organically; "directed" =
+a staged case reaches a branch the drives cannot.
+
+| Mechanism | Reach |
+|-----------|-------|
+| **Flags — order match / score / consumption** | `test_flag_capture` (directed capture drive + the boundary branches: bonus/wrap/forced-match/out-of-order) + `test_events` dispatch fuzz (idx 1-12) + leg drives (organic captures) |
+| **Flag HUD bars (phase 4/5) fan-out** | `test_flag_capture::test_hud_flag_bars_are_fanned_in` (the fix) + `test_hud` (the draw itself) |
+| **Football / bonus-number display (idx 41/42/63/64)** | `test_events::test_dispatch_matches_recreate` (all idx × gates × curve sign) + `test_dispatch_reaches_every_handler_kind` (non-vacuous: the record's own state change) |
+| **Finish-line display (idx 61/62)** | dispatch fuzz + `test_events::test_fx_run_fills` (the 0x3d fill dispatches `disp_finish`) |
+| **Marker-decay roadside pickup + score (idx 30/60)** | dispatch fuzz + `test_fx_block_slot_mapping` (dispatched from the right slot) + `test_gobj_prefix` (the decay retire) |
+| **Checkpoint gate + time extension (§I)** | `test_events::test_section_i_directed` (checkpoint, leg-end at score '5', leg-0 dash rebuild, banner scroll) — the free drives reach 0 checkpoints, so this is directed-only |
+| **Checkpoint counters (idx 22-24)** | dispatch fuzz (all three gates) + `test_dispatch_reaches_every_handler_kind` |
+| **Score message (idx 13-21)** | dispatch fuzz (three delta groups × three gates) |
+| **Time-gate suppression / bonus-clock time-out** | `test_leg_drive::test_leg_ends_on_timeout` + `_via_bonus_tally`; `test_crash_fx` (the drain order + abort arm) |
+| **Crash varieties (common / rpm-band / curve-freeze / rpm-penalty collides, idx 25/27/34/35-40/43-59)** | dispatch fuzz (collision_lock gate) + leg drives ARM their own crashes (`test_crash_script_plays_out_and_returns_control`) |
+| **Spin (idx 32/33 + §10 arming)** | `test_leg_drive::test_spin_arming_matches_recreate` + `_reaches_both_outcomes` (directed — the drives can't coincide an armed override with a held lock) |
+| **Jumps / ramps (crash-script anim frame)** | `test_sprite` (fg frame) + `test_leg_drive::test_fanout_tracks_recreate_and_reaches_nonzero` (the anim/spin/lower-body fan-out) |
+| **Off-road push + edge clamp (§10)** | leg drives (`stats["offroad"]`/`["clamp"]` > 0) + `test_player::test_offroad_push_is_reached` |
+| **Tunnel palette (mode 6) / screen-offset (mode 2) / race palette (mode 4)** | `test_leg_drive::test_course_mode_event_matches_recreate` (mode 4/6 organic, mode 2 directed) + `test_mode2_scroll_prebuild` — all three pinned |
+| **Score multiplier (flag 5-in-a-row bonus window)** | `test_flag_capture` (the bonus arm) + `test_gobj_prefix` (the `flag_seq_off` advance at `bonus_timer==0x28`) |
+| **Dashboard collision-probe marker walk (mini-map)** | `test_events::test_course_probe` + `_marker_walk` + `_reaches_both_outcomes` |
+
+Honestly unpinned: `marker_unpack`'s "both shoulders" fixup (0 of 5120 records reach it — below) and the
+§G 0x3e run-fill endpoint words (not differentially observable — below).
+
 **Ported faithfully but not pinned:** `marker_unpack`'s "both shoulders" fixup
 (`MARKER_KIND_SIDES`) fires for **0 of the 5120** course records across all five legs, so this game's
 data cannot exercise it at all. It is transcribed from the disassembly and left honestly unpinned

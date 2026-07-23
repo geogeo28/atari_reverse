@@ -67,6 +67,16 @@ void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a) {
     }
 }
 
+/* Fan the flag-sequence state into the HUD view (see game.h). draw_hud reads flag_seq_count (phase 4)
+ * and the flag_seq_off / dsp_color_scroll colour cursors (phase 5) as globals in the original; here
+ * they are GobjPrefixState fields the shell must copy into the per-frame HudState, like the EventState
+ * crash scalars rm_apply_player copies. Called after rm_gobj_prefix, before rm_draw_hud. */
+void rm_gobj_hud_view(const GobjPrefixState *g, HudState *hud) {
+    hud->flag_seq_count   = g->flag_seq_count;
+    hud->flag_seq_off     = (int16_t)g->flag_seq_off;
+    hud->dsp_color_scroll = (int16_t)g->dsp_color_scroll;
+}
+
 /* ---- init_leg (recreate gameplay.c g_init_leg @0x104b8) — the leg-start state reset ----------------
  *
  * g_init_leg clears a contiguous 0x6d-word block of the flat image then seeds a few scalar defaults;

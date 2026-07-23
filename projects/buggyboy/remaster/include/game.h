@@ -619,6 +619,14 @@ typedef struct {
  * writes. */
 void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
 
+/* Fan the flag-sequence state GobjPrefixState OWNS into the HUD view the draw reads: the phase-4
+ * bar count and the phase-5 colour-index cursors. The original's draw_hud reads these globals
+ * directly (flag_seq_count/flag_seq_off/dsp_color_scroll); the remaster HudState is a per-frame VIEW,
+ * so the shell must copy them in — exactly as it copies EventState's crash scalars (rm_apply_player).
+ * Runs at HUD-draw time, AFTER rm_gobj_prefix (which advances these), mirroring the original's order
+ * (g_draw_game_objects then g_draw_hud). Without it the flag-sequence bars never appear. */
+void rm_gobj_hud_view(const GobjPrefixState *g, HudState *hud);
+
 /* ---- shared score helper (add_score @0x1580a) ----
  *
  * Six ASCII score digits (score_bcd, MS first) plus their on-screen copy (score_str[4..9]), both

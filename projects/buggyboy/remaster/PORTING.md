@@ -310,6 +310,19 @@ drives run the fan-out each frame and pin the four crash/spin SpriteState fields
 that used to be MISSED, so the dirt/wheel sprite stayed on the road through a jump (see STATUS
 "Recently fixed").
 
+A SECOND fan-out of the same class was found + fixed (2026-07-23): the **HUD flag-sequence view**.
+`draw_hud` reads `flag_seq_count` (phase-4 bars) and `flag_seq_off` / `dsp_color_scroll` (phase-5
+colour cursor) as globals; those live in `GobjPrefixState`, and `rm_apply_player` (which has no `gobj`
+param) never fanned them into `HudState`, so the flag-sequence bars never drew — capturing a flag was
+invisible (only the bars are its feedback; the score ticks every wrap frame anyway). The flag STATE
+path (dispatch → order-match → score → `obj_active` consumption) was correct and already tracked by the
+leg drives; ONLY the HUD view was unwired. Fixed by `rm_gobj_hud_view` (`src/gameplay.c`), which
+`draw_frame` runs **after `rm_gobj_prefix`, before `rm_draw_hud`** (the original's `g_draw_game_objects`
+-then-`g_draw_hud` order — it reads the *post*-prefix values, so it can't fold into `rm_apply_player`,
+which runs before the prefix). Pinned host-side by `test/test_flag_capture.py` (the HUD-bars fan render,
+a directed capture drive, and the flag_gate boundary branches the dispatch fuzz never reaches), all
+mutation-verified. See STATUS "flag-sequence HUD fan-out gap" + the game-mechanics coverage audit.
+
 **Closed (slice 2):** ring bands 12/13's slot words — which the fixed-object pass and
 `GroundState.markers[12]` consume — used to be exempt from the leg-drive ring comparison, because the
 then-unported horizon-event dispatch cleared bytes that land there. The dispatch now runs on the

@@ -236,6 +236,30 @@ def compare_hud(lib, image):
     return _coverage_fb(cand_fb, base, ref_fb)
 
 
+def compare_hud_flag_fan(lib, image):
+    """Like compare_hud, but the candidate's flag-sequence HUD fields (flag_seq_count / flag_seq_off /
+    dsp_color_scroll — phases 4/5) are NOT staged from the image: they are ZEROED and then fanned in
+    from the GobjPrefixState via rm_gobj_hud_view, exactly as the shell's draw_frame does after
+    rm_gobj_prefix. This pins the shell fan-out the plain compare_hud bypasses — the seam that made
+    capturing a flag look like it does nothing (the bars never drew). With the fan dropped the flag
+    fields stay 0, the bars vanish, and the footprint/wrong-pixel check fails. Returns (coverage,
+    wrong_bytes) like compare_hud."""
+    base = image[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    ref = bytearray(image)
+    _run_pipeline(ref, ("g_draw_hud",))
+    ref_fb = ref[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
+
+    state = adapter.hud_state(image)
+    state.flag_seq_count = state.flag_seq_off = state.dsp_color_scroll = 0   # the un-fanned HudState
+    gobj = _gobj_prefix_state(image)                                          # the pfx the shell fans from
+    lib.rm_gobj_hud_view(ctypes.byref(gobj), ctypes.byref(state))
+    assets, _keep = adapter.hud_assets(image)
+    fb = adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)(*base))
+    lib.rm_draw_hud(ctypes.byref(state), ctypes.byref(assets), ctypes.byref(fb))
+    return _coverage_fb(bytes(fb.px), base, ref_fb)
+
+
 def road_background(leg=0, warmup=60):
     """A mid-race image with real road geometry built (game_update warmup) but render_road not yet
     applied — the background render_road draws over. Returns the image bytearray."""

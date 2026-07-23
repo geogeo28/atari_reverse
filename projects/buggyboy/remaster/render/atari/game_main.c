@@ -79,6 +79,7 @@ bool rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring,
                             const uint8_t *stream);
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
+void rm_gobj_hud_view(const GobjPrefixState *g, HudState *hud);
 void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEventCtx *ctx);
 void rm_course_probe(RmEventCtx *c);
 void rm_course_events(RmEventCtx *c);
@@ -342,6 +343,12 @@ static void draw_frame(const Shell *s, Framebuffer *fb) {
                             ring_st + GOBJ_FIXED_PASS_ROW * RM_RING_ROW_BYTES, 0, 0, 0, 0);
     }
 
+    /* Fan the flag-sequence state pfx OWNS into the HUD view (phase-4 bars + phase-5 colour cursor).
+     * apply_player fans the physics + EventState scalars, but the flag counters live in pfx and are
+     * only current AFTER rm_gobj_prefix above — so this copy sits here, right before the HUD draw,
+     * mirroring the original's g_draw_game_objects-then-g_draw_hud order. Without it the flag bars
+     * never appear (capturing a flag looks like it does nothing). */
+    rm_gobj_hud_view(pfx, s->hud);
     rm_draw_hud(s->hud, s->hud_assets, fb);
 }
 
