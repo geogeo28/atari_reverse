@@ -64,9 +64,15 @@ screen instead. The driving keys are re-used, so the controls are:
 | Up / Down | throttle / brake | previous / next leg | dial initial back / forward |
 | Left / Right | steer | previous / next leg | dial initial back / forward |
 | Space | fire (dashboard variant) | start the selected leg | confirm an initial (on '`' backs up) |
+| Joystick (port 1) | steer + throttle/brake, button = fire | nav + button starts the leg | dial + button confirms |
 | F1..F5 | — | select + start that leg | — |
 | R | restart the leg | — | — |
 | Esc / Q | quit | quit | — |
+
+A joystick in **port 1** works everywhere the driving keys do and has **priority**: whenever the stick
+reports any direction or the fire button, it wins and the keyboard is ignored; the keyboard is the
+fallback only when the stick is centred (`read_input @0x120b0`). F1..F5, R and Esc/Q stay keyboard-only
+(the arcade has no joystick equivalent).
 
 The whole Phase-A render pipeline is driven by the ported **player physics** — you drive
 the buggy. Each frame is game_update-then-draw, as the original orders it:
@@ -121,12 +127,17 @@ geometry and course advance (`test/test_geometry.py`, `test/test_course.py`).
 ### Held keys: the game takes the IKBD interrupt
 
 GEMDOS reports key *presses*; driving needs to know which keys are *held*, and several at once
-(throttle plus steering). So the game installs its own handler on the IKBD ACIA interrupt (MFP
-channel 6, vector `0x46` @ `0x118`) after switching mouse and joystick reporting off — which is what
-leaves the ACIA delivering nothing but keyboard make/break scancodes, so the handler in `os.s` is
-just "bit 7 clear → down, set → up" into a 128-byte `key_down[]` table the C polls once a frame. The
-old vector and the mouse mode are restored on exit. The first-frame dump happens *before* the install,
-so the headless MATCH run never depends on it.
+(throttle plus steering), plus the joystick. So the game installs its own handler on the IKBD ACIA
+interrupt (MFP channel 6, vector `0x46` @ `0x118`) after switching **mouse** reporting off (joystick
+reporting is left **on**). The ACIA now delivers two kinds of message, so the `os.s` handler is a small
+packet state machine: a keyboard make/break is a single byte `< 0xF6` (break codes top out at `0xF2`) —
+"bit 7 clear → down, set → up" into a 128-byte `key_down[]` table; an IKBD **report** is a header
+`0xF6..0xFF` plus a fixed payload, and a joystick report (`0xFD`) routes its payload into `joy_state`
+(any other report's payload is swallowed so it never lands in `key_down[]`). `read_input` interrogates
+the sticks once a frame with IKBD command `0x16` — via `Ikbdws` (XBIOS), because this shell is a
+*user-mode* GEMDOS program where the ACIA is supervisor-only, whereas the arcade port (which pokes the
+ACIA directly, `read_joystick @0x12110`) ran supervisor. The old vector and the mouse mode are restored
+on exit. The first-frame dump happens *before* the install, so the headless MATCH run never depends on it.
 
 ### Aliased globals the game has to model
 

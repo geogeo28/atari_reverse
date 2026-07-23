@@ -316,7 +316,10 @@ same memory refuted.
 
 - **The IKBD is not the problem.** A raw byte log of everything the ACIA delivered showed only
   well-formed make/break pairs — no stray mouse/joystick packet bytes reaching `key_down[]`. The
-  "packet noise corrupts key state" theory is refuted by evidence.
+  "packet noise corrupts key state" theory is refuted by evidence. (This held because both mouse and
+  joystick reporting were OFF then. Joystick support later turned joystick reporting back ON, so 0xFD
+  reports DO arrive now — `kbd_isr` grew a packet state machine that routes them to `joy_state` and
+  keeps them out of `key_down[]`; see the joystick note below.)
 - **Seeding the game's `ctrl` from the leg's control table does nothing.** `draw_frame` rebuilds
   `ctrl` before anything reads the seed; the diff was byte-identical with and without. Reverted.
 
@@ -335,6 +338,65 @@ reading:
   appears in 25 records — all in leg 3 — and "both shoulders" in **none** of the 5120. Pin what the
   data can reach by *seeding `read_pos` onto a real record* (`test_ring_hard_to_reach_branches`);
   say so in `STATUS.md` for what it cannot, and never fabricate a record to manufacture a green tick.
+
+### Joystick support (port 1) — and the supervisor-mode gotcha
+
+The arcade reads a joystick in port 1 every frame: `read_joystick @0x12110` busy-waits the IKBD ACIA
+transmit register empty and pokes command `0x16` (interrogate joystick) into the data register; a TOS
+`joyvec` handler (`@0x12156`, installed via `Kbdvbase`) then snapshots `input_state` and copies the
+two joystick payload bytes into it. The game's input word bits (`RM_IN_ACCEL 0x01` … `FIRE 0x80`) are
+byte-identical to the Atari joystick packet byte, and `read_input @0x120b0` already gives the joystick
+priority (keyboard is the fallback only when `(input_state & 0x8f) == 0`).
+
+The shell keeps its **own** ACIA vector (it does not use TOS's `joyvec` route), so two pieces landed:
+
+- **`kbd_isr` grew a packet state machine** (`os.s`). It stops disabling joystick reporting (keeps
+  mouse-off), so 0xFD joystick reports now arrive interleaved with scancodes. A byte `< 0xF6` is a
+  keyboard make/break (break codes top out at `0xF2`); `0xF6..0xFF` is a report header whose payload
+  length comes from a small table, and a joystick report (`0xFD`/`0xFE`/`0xFF`) routes its payload into
+  `joy_state` (any other report's payload is swallowed, so mouse noise can never reach `key_down[]`).
+  Reports arrive byte-contiguous, so `pkt_left` tracks one across interrupts without a scancode slipping
+  in mid-payload. `read_input` then merges joystick-priority: `if (joy & 0x8f) return joy;` else the
+  arrow/Space fallback — mirroring recreate `input.c:32`.
+
+- **The interrogate goes through `Ikbdws`, not a raw ACIA poke.** The arcade ran in **supervisor**
+  mode, so its direct `move.b (a1),d2` on `0xfffffc00` is legal. This shell is a **user-mode** GEMDOS
+  program, where the IKBD ACIA (`0xffff8000`+) is supervisor-only: a raw read **bus-errors**
+  (`Bus Error reading at address $fffffc00, PC=$1b150` — caught by the `GAME_FLOW_AUTO` trace, whose
+  race loop drives through `read_input`). The fix is to send `0x16` via `Ikbdws` (XBIOS 25), the same
+  BIOS path `kbd_install` already uses for mouse-off. The reply still returns through our own ACIA
+  vector into `kbd_isr` (whose raw ACIA reads are fine — interrupts always run supervisor).
+
+**A one-byte BSS trap paid for once.** `os.s`'s three new BSS bytes (`joy_state`/`pkt_left`/`pkt_join`)
+made that section's `.bss` **odd**-sized; `tos.ld` packs the next object's `.bss` immediately after it
+(`SUBALIGN(1)`, no gap), so every word-aligned global downstream shifted to an **odd** address and a
+`move.w` at boot address-errored ($a970b) — before any dump, so it read as a build/boot failure that
+`run_golden.py` caught. `key_down`+`key_hit` were 256 (even) on their own. The fix is a trailing `.even`
+directive closing that `.bss` (not a hand-counted pad byte): the assembler now rounds the section up to
+even automatically, so any future `os.s` `.bss` addition stays even-sized without anyone re-counting.
+
+**Verification is honest about its limits.** The parser + interrogate are on an on-target path
+`make test` cannot reach, and the headless gates pin LESS of it than they might seem to. What they cover:
+`run_golden.py` MATCH (unaffected — the interrogate is never called before the frame-0 dump), and the
+`GAME_FLOW_AUTO` trace **unchanged at 19 records** (the documented sequence) — its race loop now runs
+`read_input` every frame, so the `Ikbdws` interrogate and the `kbd_isr` packet parse execute, which
+proves only that they **don't hang, don't bus-error, and don't corrupt the keyboard/flow**. It does NOT
+pin the joystick STORE/decode: headless Hatari has no stick attached, so the interrogate reply is
+all-zeros, `joy_state` stays 0 and the keyboard fallback is intact — and the flow trace is byte-identical
+whether the decode is correct or completely broken (an all-zero reply exercises neither the store guard
+nor the bit mapping). This is exactly the repo's "beware output-inferred coverage" rule: a green trace
+here is not evidence the decode works. **The joystick STORE path is pinned ONLY by the manual
+stick-in-hand run** — headless Hatari cannot receive key/joystick events:
+
+```bash
+bash render/atari/build_game.sh
+hatari --memsize 4 --tos-res low --joy1 keys --harddrive render/atari/disk --auto 'C:\BUGGYBOY.PRG'
+```
+
+Then drive with the arrow keys (Hatari's `--joy1 keys` maps them to joystick port 1) — the buggy steers
+and accelerates through the joystick path, and the leg select / fire respond to the stick, while
+scancode-only keys (F1..F5, R, Esc/Q) stay clean. (The pre-joystick build, with reporting off, would
+mis-read a `0xFD` report as scancodes; that this drives cleanly is the parser working.)
 
 ## Debugging on-target
 

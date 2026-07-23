@@ -34,10 +34,11 @@
  * leg N directly, drawing + dumping that leg-start frame (byte-identical to recreate's pipeline). The
  * shipping BUGGYBOY.PRG defines neither GOLDEN_BOOT_LEG nor GAME_AUTODRIVE, so it carries NO fast path.
  *
- * Controls (held keys, read straight from the IKBD — see os.s):
- *   Up / Down    : throttle / brake      Left / Right : steer     Space : fire (dashboard variant)
- *   F1..F5       : select + start that leg (leg-select screen)     R : restart the leg
- *   Esc / Q      : quit
+ * Controls (held keys / a joystick in port 1, read straight from the IKBD — see os.s; the joystick
+ * has priority, the keyboard is the fallback, exactly as read_input @0x120b0 orders them):
+ *   Up / Down    : throttle / brake      Left / Right : steer     Space / joy-fire : fire (dashboard variant)
+ *   F1..F5       : select + start that leg (leg-select screen)     R : restart the leg  (keyboard only)
+ *   Esc / Q      : quit  (keyboard only)
  *   High-score name entry: Up/Left / Down/Right dial each initial back / forward, Space confirms one
  *   (a 30-second TIME countdown ends entry if it runs out).
  * Assets come from the game's own COURSES.DAT + GRAPHICS.GRA, read off disk and unpacked by
@@ -98,9 +99,11 @@ extern long Setcolor(short idx, short color);                  /* color -1 reads
 extern long Setexc(short number, long vector);
 extern void Ikbdws(short count_m1, const void *buf);
 
-/* Held-key state, maintained by the IKBD interrupt handler in os.s (indexed by scancode). */
+/* Held-key + joystick state, maintained by the IKBD interrupt handler in os.s. key_down/key_hit are
+ * indexed by scancode; joy_state is joystick 1 (the game port), updated from each joystick report. */
 extern volatile uint8_t key_down[128];
 extern volatile uint8_t key_hit[128];
+extern volatile uint8_t joy_state;
 extern void kbd_isr(void);
 
 /* Consume a latched key press. The driving keys are polled as HELD state, which is what steering and
@@ -131,8 +134,15 @@ static int quit_requested(void) { return take_key_hit(SCAN_ESC) || take_key_hit(
 
 #define VEC_IKBD_ACIA 0x46           /* 68000 vector 0x46 (@0x118): MFP channel 6, the IKBD ACIA */
 #define IKBD_MOUSE_OFF 0x12
-#define IKBD_JOYSTICK_OFF 0x1a
 #define IKBD_MOUSE_RELATIVE 0x08     /* the mode TOS leaves the mouse in; restored on exit */
+/* The "any real input" bits read_input tests to give the joystick priority over the keyboard: up 1 /
+ * down 2 / left 4 / right 8 / fire 0x80 (recreate input.c INPUT_ACTIVE_MASK). */
+#define RM_IN_ACTIVE_MASK 0x8f
+#define IKBD_INTERROGATE_JOYSTICK 0x16   /* read_joystick @0x12110 pokes the ACIA with this each frame */
+/* Joystick INTERROGATION mode: the IKBD sends NO unsolicited joystick reports (event-mode 0xFD and the
+ * single-stick 0xFE/0xFF) — the stick answers only a 0x16 interrogate (HD6301 protocol). Pins the report
+ * stream instead of trusting the TOS boot default; installed alongside mouse-off in kbd_install. */
+#define IKBD_JOY_INTERROGATE_MODE 0x15
 
 /* The prefix mutates its arenas (marker records, buf_a anim-word mirrors, the animated colour). The
  * anim-word mirrors land inside buf_a's record region (offsets 0xd70/0x1250), which the object
@@ -450,11 +460,15 @@ static void render_and_show(Shell *s) {
  * the byte-compare is palette-agnostic, so these only affect the colours a human/screenshot sees). ---- */
 static void set_palette(const Shell *s, uint32_t off) { Setpalette(s->low + off); }
 
-/* Take the IKBD interrupt so held keys are visible (see os.s). Mouse and joystick reporting are
- * switched off first, which is what leaves the ACIA delivering keyboard scancodes only. */
+/* Take the IKBD interrupt so held keys AND the joystick are visible (see os.s). Two mode commands PIN
+ * the ACIA's report stream rather than trusting the TOS boot default: 0x12 turns mouse reporting off,
+ * and 0x15 puts the joystick in INTERROGATION mode — no unsolicited event reports (0xFD/0xFE/0xFF), the
+ * stick answers only a 0x16 interrogate — so the ACIA delivers nothing but scancodes and our own
+ * interrogate replies. kbd_isr's packet parser routes those replies to joy_state and keeps scancodes out
+ * of key_down[]; read_input then kicks a 0x16 each frame and reads the reply from joy_state. */
 static long kbd_install(void) {
-    static const uint8_t quiet[] = {IKBD_MOUSE_OFF, IKBD_JOYSTICK_OFF};
-    Ikbdws(sizeof quiet - 1, quiet);
+    static const uint8_t modes[] = {IKBD_MOUSE_OFF, IKBD_JOY_INTERROGATE_MODE};
+    Ikbdws(sizeof modes - 1, modes);
     return Setexc(VEC_IKBD_ACIA, (long)kbd_isr);
 }
 
@@ -464,7 +478,30 @@ static void kbd_remove(long old_vector) {
     Ikbdws(sizeof restore - 1, restore);
 }
 
+/* Kick this frame's joystick interrogate (IKBD command 0x16), the role of read_joystick @0x12110. The
+ * original — running SUPERVISOR — pokes the ACIA data register directly; this shell is a user-mode
+ * GEMDOS program, where the ACIA at 0xfffffc00 is supervisor-only (a raw poke bus-errors), so the
+ * command goes through the BIOS instead (Ikbdws, XBIOS 25). The reply — a 0xFD joystick report — still
+ * comes back through our own ACIA vector into kbd_isr, which parses it into joy_state. (kbd_isr's raw
+ * ACIA reads are fine: interrupt handlers always run supervisor.) */
+static void interrogate_joystick(void) {
+    static const uint8_t cmd[] = {IKBD_INTERROGATE_JOYSTICK};
+    Ikbdws(sizeof cmd - 1, cmd);
+}
+
+/* Poll the input, joystick-priority — read_input @0x120b0 / recreate input.c. Kick this frame's
+ * interrogate first (its reply, parsed by kbd_isr into joy_state, is consumed on the NEXT frame,
+ * exactly as the original's async joyvec delivery works). If the stick reports any active bit it wins
+ * and the keyboard is ignored (input.c:32 `(input_state & 0x8f) != 0`); joy_state's bits are the RM_IN_*
+ * bits (game.h), so it is returned as-is (its high byte, the mouse-port stick, is 0 — the game consumes
+ * only joystick 1). Otherwise fall back to the arrow keys + Space, as the original does.
+ * joy_state RETAINS the last interrogate reply, so if a reply is ever lost the previous stick state
+ * stands — there is no timeout that falls back to the keyboard while the stick is held. This mirrors the
+ * original's async joyvec delivery (the game reads whatever the last snapshot left); by design. */
 static uint16_t read_input(void) {
+    interrogate_joystick();
+    uint16_t joy = joy_state;
+    if ((joy & RM_IN_ACTIVE_MASK) != 0) return joy;
     uint16_t in = 0;
     if (key_down[SCAN_UP]) in |= RM_IN_ACCEL;
     if (key_down[SCAN_DOWN]) in |= RM_IN_BRAKE;

@@ -180,20 +180,60 @@ Ikbdws:
     lea     8(%sp),%sp
     rts
 
-| --- held-key tracking ------------------------------------------------------------------------
+| --- held keys + IKBD packet parsing --------------------------------------------------------------
 | The GEMDOS console reports key PRESSES; driving needs to know which keys are HELD, and several at
-| once (throttle plus steering). So the game takes the IKBD ACIA interrupt itself (MFP channel 6,
-| vector 0x46 @ 0x118). With mouse and joystick reporting switched off (kbd_install), the ACIA
-| delivers nothing but keyboard make/break scancodes, so the handler is simply:
-|   bit 7 clear -> that scancode is now down;  bit 7 set -> it is up.
-| C polls key_down[] once a frame. Interrupt handlers run in supervisor mode, so no mode juggling.
+| once (throttle plus steering), PLUS the joystick. So the game takes the IKBD ACIA interrupt itself
+| (MFP channel 6, vector 0x46 @ 0x118). Mouse reporting is switched off (kbd_install), but joystick
+| reporting is kept, so the ACIA delivers two kinds of message and this handler is a small packet
+| state machine, not a bare scancode reader:
+|   * a keyboard make/break is a single byte < 0xF6 (break codes = scancode|0x80 top out at 0xF2):
+|       bit 7 clear -> that scancode is now down;  bit 7 set -> it is up  (key_down[] / key_hit[]).
+|   * an IKBD report is a header 0xF6..0xFF followed by a fixed-length payload (ikbd_pkt_payload). The
+|     joystick INTERROGATE reply is a 0xFD both-sticks report: header, then the joystick-0 byte, then the
+|     joystick-1 byte. Only that FINAL byte (joystick 1, the ST's game port) is stored to joy_state — the
+|     byte read_input reads, its bits (up 1 / down 2 / left 4 / right 8 / fire 0x80) byte-identical to the
+|     RM_IN_* word; the joystick-0 byte is swallowed, so a mouse-port stick never briefly leaks into it.
+|     Every other report's payload is swallowed too: mouse packets never reach key_down[], and the
+|     event-mode single-stick reports (0xFE joy0 / 0xFF joy1) — which mode 0x15 stops the IKBD from ever
+|     sending, so only interrogate replies arrive (see kbd_install) — never store the wrong port. IKBD
+|     reports arrive byte-contiguous, so pkt_left tracks a report cleanly across interrupts without a
+|     scancode interleaving mid-payload.
+| C polls key_down[] / joy_state once a frame. Interrupt handlers run in supervisor mode, no mode juggling.
     .globl  kbd_isr
 kbd_isr:
     movem.l %d0/%d1/%a0/%a1,-(%sp)
     btst    #0,0xfffffc00       | IKBD ACIA status: receive buffer full?
-    beq.s   kbd_eoi
+    beq     kbd_eoi
     moveq   #0,%d0
-    move.b  0xfffffc02,%d0      | scancode; bit 7 = break (key released)
+    move.b  0xfffffc02,%d0      | the received byte
+
+    tst.b   pkt_left            | mid-report? then this byte is one of its payload bytes
+    beq.s   kbd_header_or_key
+    tst.b   pkt_join            | a 0xFD joystick report? (only its payload is stored)
+    beq.s   kbd_swallow         | no (mouse/other/0xFE/0xFF): swallow the payload byte
+    cmpi.b  #1,pkt_left         | store ONLY the final payload byte = joystick 1 (the game port);
+    bne.s   kbd_swallow         | the joystick-0 byte (pkt_left==2 here) is never briefly visible
+    move.b  %d0,joy_state
+kbd_swallow:
+    subq.b  #1,pkt_left
+    bra     kbd_eoi
+
+kbd_header_or_key:
+    cmpi.b  #0xf6,%d0           | 0xF6..0xFF is an IKBD report header (keyboard break codes stop at 0xF2)
+    bcs.s   kbd_scancode        | below 0xF6 -> a keyboard make/break scancode
+    move.w  %d0,%d1
+    subi.w  #0xf6,%d1           | index 0..9 into the payload-length table
+    lea     ikbd_pkt_payload,%a1
+    move.b  (%a1,%d1.w),pkt_left  | payload bytes to expect for this report
+    moveq   #0,%d1              | pkt_join set ONLY for a 0xFD report (both sticks): its final byte is
+    cmpi.b  #0xfd,%d0           | stored. 0xFE/0xFF (single-stick, event mode) and every other report
+    bne.s   kbd_set_join        | are swallowed — 0xFE's lone byte is joystick 0, so storing it would
+    moveq   #1,%d1              | leak the wrong port; with mode 0x15 pinned neither ever arrives anyway.
+kbd_set_join:
+    move.b  %d1,pkt_join
+    bra     kbd_eoi
+
+kbd_scancode:
     lea     key_down,%a0
     btst    #7,%d0
     bne.s   kbd_break
@@ -209,6 +249,26 @@ kbd_eoi:
     movem.l (%sp)+,%d0/%d1/%a0/%a1
     rte
 
+    .align  2
+| IKBD report payload lengths (bytes AFTER the header), indexed by header - 0xF6 (standard HD6301
+| protocol). Only the joystick report (0xFD) can actually arrive here — mouse, clock and status
+| reporting are never enabled (kbd_install sends mouse-off + joystick-interrogation-mode 0x15, so only
+| an 0x16-interrogate reply comes back) — so the other rows are defensive: they let a stray report's
+| payload be swallowed rather than mis-read as scancodes. (.rodata folds into .text per tos.ld; sits
+| after the rte, never executed.)
+ikbd_pkt_payload:
+    .byte 7                     | 0xF6 status report
+    .byte 5                     | 0xF7 absolute mouse position
+    .byte 2                     | 0xF8 relative mouse (buttons 00)
+    .byte 2                     | 0xF9 relative mouse
+    .byte 2                     | 0xFA relative mouse
+    .byte 2                     | 0xFB relative mouse (buttons 11)
+    .byte 6                     | 0xFC time-of-day
+    .byte 2                     | 0xFD joystick, both sticks (joy0, joy1)
+    .byte 1                     | 0xFE joystick 0
+    .byte 1                     | 0xFF joystick 1
+    .align  2
+
     .bss
     .align  2
     .globl  key_down
@@ -217,3 +277,13 @@ key_down:
     .globl  key_hit
 key_hit:
     .space  128                 | one byte per scancode: latched press, cleared by the C that reads it
+    .globl  joy_state
+joy_state:
+    .space  1                   | joystick 1 (game port): the final byte of the last 0xFD reply kbd_isr saw
+pkt_left:
+    .space  1                   | IKBD report payload bytes still expected (0 = idle: header or scancode next)
+pkt_join:
+    .space  1                   | nonzero while a 0xFD joystick report's payload is in progress
+    .even                       | keep this .bss EVEN-sized: tos.ld packs the next object's .bss right
+                                | after it (SUBALIGN(1), no gap), so an odd size would shift every
+                                | word-aligned global downstream odd -> a move.w address-errors at boot.
