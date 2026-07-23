@@ -97,18 +97,42 @@ void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a) {
 #define IL_MARKER_FLAG_MASK  0x60     /* marker fixup: if neither of these bits set, clear the sign */
 #define IL_MARKER_SIGN_CLEAR 0x7f     /* ...i.e. AND off the sign bit (0x80), keeping the low 7 */
 
-/* Phase 11 — the first object-display record's selector / shade, per leg. */
+/* Phase 11 — the first object-display / palette record's selector, per leg. The record is shared with
+ * the mode-4 palette event (rm_course_mode_event), so its resolver and stager live in game.h as
+ * rm_objdisp_record / rm_stage_palette_record and are used by both. */
 #define IL_OBJDISP_SEL_OFF   0x50     /* buf_a + this + leg*IL_OBJDISP_LEG_STRIDE: the selector byte */
 #define IL_OBJDISP_LEG_STRIDE 0x20    /* per-leg stride of the selector table */
 #define IL_OBJDISP_TBL_OFF   0xf2     /* buf_a + this + selector*IL_OBJDISP_REC_STRIDE: the record */
 #define IL_OBJDISP_REC_STRIDE 0x10    /* per-selector stride of the record table */
-#define IL_OBJDISP_SHADE_OFF 0xc      /* obj_shade = be16(record + this) - 2 */
 #define IL_OBJDISP_SHADE_BIAS 2
 
+/* Resolve the object-display / palette record for a given palette cursor (0 at a leg start): the
+ * selector byte at buf_a[0x50 + cursor + leg*0x20] indexes the 16-byte record table at buf_a + 0xf2. */
+const uint8_t *rm_objdisp_record(const uint8_t *buf_a, uint16_t leg, uint16_t cursor) {
+    uint8_t sel = buf_a[(uint16_t)(IL_OBJDISP_SEL_OFF + cursor + leg * IL_OBJDISP_LEG_STRIDE)];
+    return buf_a + IL_OBJDISP_TBL_OFF + (uint16_t)(sel * IL_OBJDISP_REC_STRIDE);
+}
+
+/* Stage the record's four colour pieces into `race_pal` (the original's 0x17fac.. writes overlapping
+ * the race palette) and derive obj_shade. The odd write order / offsets mirror g_init_leg exactly. */
+void rm_stage_palette_record(uint8_t *race_pal, int16_t *obj_shade, const uint8_t *disp) {
+    wr16(race_pal + RM_PAL_STAGE_W1_OFF, be16(disp));         /* disp[0..1]   -> 0x17fb0 */
+    wr32(race_pal + RM_PAL_STAGE_L1_OFF, be32(disp + 2));     /* disp[2..5]   -> 0x17fb2 */
+    wr32(race_pal + RM_PAL_STAGE_L2_OFF, be32(disp + 6));     /* disp[6..9]   -> 0x17fb6 */
+    wr16(race_pal + RM_PAL_STAGE_W2_OFF, be16(disp + 0xa));   /* disp[0xa..b] -> 0x17fac */
+    *obj_shade = (int16_t)(be16(disp + RM_OBJDISP_SHADE_OFF) - IL_OBJDISP_SHADE_BIAS);
+}
+
 /* Phase 7 — the road-scroll offset: the leg's scroll table (buf_a + leg*IL_SCROLL_TBL_STRIDE), indexed
- * by scroll_frame (0 at a leg start, since phase 1 clears it), times one 40-scanline band. */
+ * by scroll_frame (0 at a leg start, since phase 1 clears it), times one 40-scanline band. Shared with
+ * the mode-2 screen-offset event (rm_course_mode_event), which calls it at the advanced scroll_frame. */
 #define IL_SCROLL_TBL_STRIDE 0x10
 #define IL_SCROLL_BAND_BYTES 0x1900
+
+uint16_t rm_screen_offset(const uint8_t *buf_a, uint16_t leg, uint16_t scroll_frame) {
+    uint8_t step = buf_a[(uint16_t)(leg * IL_SCROLL_TBL_STRIDE + scroll_frame)];
+    return (uint16_t)(step * IL_SCROLL_BAND_BYTES);
+}
 
 /* Phase 4 — the HUD bonus-time strings ("/2000/" ...), copied from program data into the HUD-text
  * region (leg 0 uses the base source; later legs start IL_LEGTIME_LEG_OFF further in). */
@@ -149,7 +173,7 @@ static void init_ring_seed(CourseRing *ring, const uint8_t *buf_a, uint16_t leg)
 
 void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *scroll,
                  CourseRing *ring, EventState *ev, GobjPrefixState *gobj, SpriteState *sprite,
-                 uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset,
+                 uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset, uint8_t *race_pal,
                  const RmInitAssets *a, uint16_t leg) {
     /* Phase 1/2: the physics scalars — clear then default. game_over / timeout_gate live below the
      * cleared block, so a re-init preserves them. */
@@ -215,14 +239,11 @@ void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *s
     for (int b = 0; b < IL_SCORE_DIGITS; b++) hud_text[IL_SCORE_DIGITS_OFF + b] = '0';
 
     /* Phase 7: this frame's road-scroll offset (scroll_frame is 0 at a leg start). */
-    uint8_t step = a->buf_a[(uint16_t)(leg * IL_SCROLL_TBL_STRIDE)];
-    *screen_offset = (uint16_t)(step * IL_SCROLL_BAND_BYTES);
+    *screen_offset = rm_screen_offset(a->buf_a, leg, 0);
 
-    /* Phase 11: the first object-display record's shade (the palette-staging record it also writes
-     * feeds the unported mode-2/4/6 palette event — skipped, like sound). */
-    uint8_t sel = a->buf_a[IL_OBJDISP_SEL_OFF + (uint16_t)(leg * IL_OBJDISP_LEG_STRIDE)];
-    const uint8_t *disp = a->buf_a + IL_OBJDISP_TBL_OFF + (uint16_t)(sel * IL_OBJDISP_REC_STRIDE);
-    *obj_shade = (int16_t)(be16(disp + IL_OBJDISP_SHADE_OFF) - IL_OBJDISP_SHADE_BIAS);
+    /* Phase 11: the first object-display / palette record (palette cursor 0 at a leg start). Stage its
+     * colours into race_pal (an off-image Setpalette seam mode 4 re-stages) and derive obj_shade. */
+    rm_stage_palette_record(race_pal, obj_shade, rm_objdisp_record(a->buf_a, leg, 0));
 }
 
 /* ---- apply_player — fan the driving model's per-frame outputs out to the render structs -------------

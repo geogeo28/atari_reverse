@@ -231,6 +231,11 @@ A_dash_marker = 0x18c3a                            # dashboard progress marker: 
 A_ckpt_scroll = 0x18c72                            # checkpoint-banner scroll position
 A_spin_state = 0x18caa                             # the fx<<8 word §G writes (word)
 A_abort_flag = 0x18c4e                             # leg/game-over abort countdown (0xffff / 0x33, -2/frame)
+A_scroll_frame = 0x18cb2                           # mode-2 road-scroll frame index (0..15)
+A_palette_cursor = 0x18cba                         # mode-4 palette-record cursor (0..0x1f)
+A_palette_toggle = 0x18c5c                          # mode-4/6 palette double-buffer toggle
+A_race_palette = 0x17fa2                           # in-race palette; mode 4 / init phase 11 stage regs 5-11
+RACE_PAL_BYTES = 0x20                              # one ST palette (16 words)
 A_event_type = 0x18eca                             # ring row 12 slot 7 word; low byte = the §I event code
 A_score_str = 0x18230                              # HUD score string (live digits at +4)
 A_score_bcd = 0x1824c                              # 6 ASCII score digits
@@ -250,6 +255,8 @@ RM_HUD_CRASH_DECAY = 2                              # mirror include/game.h: hud
 RM_CRASH_ROLLOVER_OFF = 0x1c                        # mirror include/game.h: score-digit rollover records
 RM_CRASH_ROLL_STRIDE = 0xe                          # mirror include/game.h
 RM_CRASH_ROLL_TARGET = 0x60                         # mirror include/game.h: record drained when tens+ones==this
+RM_MODE_MASK = 6                                    # mirror include/game.h: the control-word bits selecting the event
+RM_MODE_SCREEN_OFFSET = 2                           # mirror include/game.h: mode 2 (record-driven road-scroll offset)
 # Asset window sizes. Where the indexed range exceeds the next global, the range wins (correctness
 # over the next-global heuristic) — see the fx_type_tbl note.
 FX_TYPE_TBL_BYTES = 0x100                           # sel 0..7 -> a code fx in 1..0x7f, then read [fx..fx+0x17]
@@ -611,7 +618,18 @@ class EventState(ctypes.Structure):
                 ("crash_lap", ctypes.c_uint16), ("gauge_blink", ctypes.c_uint16),
                 ("gauge_blink_on", ctypes.c_uint16), ("ckpt_scroll", ctypes.c_uint16),
                 ("spin_state", ctypes.c_uint16), ("crash_frame", ctypes.c_uint16),
-                ("abort_flag", ctypes.c_uint16)]
+                ("abort_flag", ctypes.c_uint16),
+                ("scroll_frame", ctypes.c_uint16), ("palette_cursor", ctypes.c_uint16),
+                ("palette_toggle", ctypes.c_uint16)]
+
+
+class RmPaletteWrite(ctypes.Structure):
+    """rm_course_mode_event's out-param: which off-image palette write the shell should issue.
+    kind: 0=none, 1=Setpalette(race_pal), 2=poke reg (mode 6)."""
+    _fields_ = [("kind", ctypes.c_int), ("reg", ctypes.c_int16), ("color", ctypes.c_uint16)]
+
+
+PAL_NONE, PAL_SETPALETTE, PAL_POKE_REG = 0, 1, 2
 
 
 class EventAssets(ctypes.Structure):
@@ -1008,7 +1026,8 @@ def event_state(image):
     return EventState(image[A_course_flag_bit], image[A_dash_marker], image[A_dash_marker + 1],
                       u16(A_dash_marker + 2), u16(A_crash_bars), u16(A_crash_active),
                       u16(A_crash_lap), u16(A_gauge_blink), u16(A_gauge_blink_on),
-                      u16(A_ckpt_scroll), u16(A_spin_state), u16(A_crash_frame), u16(A_abort_flag))
+                      u16(A_ckpt_scroll), u16(A_spin_state), u16(A_crash_frame), u16(A_abort_flag),
+                      u16(A_scroll_frame), u16(A_palette_cursor), u16(A_palette_toggle))
 
 
 def _gobj_state(image):

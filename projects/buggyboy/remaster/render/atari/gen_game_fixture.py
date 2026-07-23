@@ -91,6 +91,30 @@ def staged_image():
     return img
 
 
+def boot_staged_palette(img, palette):
+    """The palette the on-target game DISPLAYS at the leg-start boot, for the human-facing PNG
+    (palette.bin) only. At boot the game seeds race_pal from fixture_palette and rm_init_leg's phase 11
+    stages this leg's object-display record over regs 5-11 (the same seam mode 4 re-stages); this
+    reproduces that staging on `palette` through the SAME C stager the game runs
+    (rm_stage_palette_record / rm_objdisp_record — the record layout stays one source, no offsets are
+    re-derived here), reading the cursor-0 record from the loaded arena's buf_a. The framebuffer golden
+    is palette-agnostic, so this moves no COMPARED surface — the PNG just gets the true boot colours,
+    independent of whether the baked seed already carried the staging."""
+    lib = equiv._lib()
+    u8p = ctypes.POINTER(ctypes.c_uint8)
+    lib.rm_objdisp_record.argtypes = [u8p, ctypes.c_uint16, ctypes.c_uint16]
+    lib.rm_objdisp_record.restype = u8p
+    lib.rm_stage_palette_record.argtypes = [u8p, ctypes.POINTER(ctypes.c_int16), u8p]
+    lib.rm_stage_palette_record.restype = None
+    img_buf = (ctypes.c_uint8 * len(img)).from_buffer(img)              # read-only alias into img
+    buf_a = int.from_bytes(bytes(img[adapter.A_buf_a:adapter.A_buf_a + 4]), "big")
+    record = lib.rm_objdisp_record(ctypes.cast(ctypes.byref(img_buf, buf_a), u8p), GAME_LEG, 0)
+    staged = (ctypes.c_uint8 * len(palette)).from_buffer_copy(palette)
+    obj_shade = ctypes.c_int16()
+    lib.rm_stage_palette_record(ctypes.cast(staged, u8p), ctypes.byref(obj_shade), record)
+    return bytes(staged)
+
+
 def main():
     build = HERE / "build"
     build.mkdir(exist_ok=True)
@@ -110,7 +134,9 @@ def main():
         equiv._run_pipeline(ref, ("g_build_road_geometry", "g_render_road", "g_blit_road_scroll",
                                   "g_draw_game_objects", "g_draw_hud"))
         (build / "golden.bin").write_bytes(bytes(ref[sb:sb + nb]))
-        (build / "palette.bin").write_bytes(palette)
+        # palette.bin (PNG only) is the game's DISPLAYED boot palette: fixture_palette with phase 11's
+        # cursor-0 staging applied, exactly as start_leg + rm_init_leg produce it on-target.
+        (build / "palette.bin").write_bytes(boot_staged_palette(img, palette))
 
     # ---- render_road static tables + the geometry const sources + the initial pose ----
     buf_c = int.from_bytes(img[adapter.A_buf_c:adapter.A_buf_c + 4], "big")

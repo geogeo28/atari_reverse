@@ -10,7 +10,7 @@ the SAME pre-init image, then compares every surface rm_init_leg owns:
   - the course object/marker ring, band by band AND its serialized ST mirror (rm_ring_store_st),
   - the buggy-sprite leg-start pose,
   - the HUD bonus-time / score strings (the whole HUD-text region, bytes),
-  - the scaled-object shade and the road-scroll offset.
+  - the scaled-object shade, the road-scroll offset, and phase 11's staged palette record.
 
 Two scenarios per leg pin both directions the flow uses:
   - FRESH  : a clean pre-init image (_prepared_image) — a leg started from scratch.
@@ -92,6 +92,11 @@ def _mismatches(lib, pre):
         bad.append(("obj_shade", c.obj_shade.value, equiv._i16s(ref, adapter.A_obj_shade)))
     if c.screen_offset.value != equiv._r16(ref, adapter.A_screen_offset):
         bad.append(("screen_offset", c.screen_offset.value, equiv._r16(ref, adapter.A_screen_offset)))
+
+    # Phase 11's staged palette record (the 0x17fac / 0x17fb0.. writes mode 4 also makes) — an off-image
+    # Setpalette seam, so only the four WRITTEN pieces move; compare exactly those against the reference
+    # (the same check the leg drive runs, via the shared equiv helper).
+    bad += equiv.staged_palette_mismatches(c.race_pal, ref)
     return bad
 
 

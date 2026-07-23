@@ -12,7 +12,8 @@
  * separated: one row_ctr underflow refills both.
  *
  * Out of scope here (none of it reads or writes the ring): section 12's collision probe, the record's
- * palette / screen-offset event, and the fx-block and horizon-event dispatch that follow it.
+ * palette / screen-offset event (rm_course_mode_event in events.c, fired by the caller when this
+ * returns true), and the fx-block and horizon-event dispatch that follow it.
  *
  * The one hint at the original's flat-image layout: recreate's slope "shift" copies a 16-word window
  * (seg_data plus adjacent scratch), leaving seg_data[11] = the old seg_data[12]; the tail is then
@@ -158,7 +159,7 @@ void rm_ring_poke_byte(CourseRing *ring, unsigned flat_off, uint8_t val) {
     else            *w = (uint16_t)((*w & 0x00ff) | ((uint16_t)val << 8));   /* high byte */
 }
 
-void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, const uint8_t *stream) {
+bool rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, const uint8_t *stream) {
     for (int i = 0; i < SEG_SLOTS - 1; i++)          /* scroll the slope column up one slot */
         pose->seg_data[i] = pose->seg_data[i + 1];
     ring_scroll(ring);
@@ -171,8 +172,9 @@ void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, c
         pose->seg_data[SEG_SLOTS - 1] = (int16_t)((rec_ctl & 7) - COURSE_SLOPE_BIAS);   /* new slope */
         cs->row_ctr = (uint16_t)(rec_ctl & COURSE_ROW_RELOAD);
         ring_refill(&ring->row[0], rec);
-    } else {
-        pose->seg_data[SEG_SLOTS - 1] = pose->seg_data[SEG_SLOTS - 2];   /* keep the previous slope */
-        ring_age(&ring->row[0]);
+        return true;                                 /* record pulled: the caller fires the mode event */
     }
+    pose->seg_data[SEG_SLOTS - 1] = pose->seg_data[SEG_SLOTS - 2];   /* keep the previous slope */
+    ring_age(&ring->row[0]);
+    return false;
 }

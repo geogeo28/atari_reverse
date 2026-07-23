@@ -26,9 +26,10 @@ sys.path.insert(0, str(REMASTER / "test"))
 import adapter                                    # noqa: E402  flat-image -> struct extraction
 import equiv                                      # noqa: E402  mid-race staging + recreate pipeline
 
-RACE_PALETTE = 0x17fa2                            # in-race palette (A_race_palette; loaded before the
-                                                  # leg starts, reloaded by sprite-mode 4) — 16 ST words
-PALETTE_BYTES = 32
+RACE_PALETTE = adapter.A_race_palette            # in-race palette (loaded before the leg starts, reloaded
+                                                  # by sprite-mode 4) — the adapter owns this address,
+                                                  # pinned vs game.h, so this stays one source of truth
+PALETTE_BYTES = adapter.RACE_PAL_BYTES            # one ST palette (16 words)
 # A visually busy mid-race HUD: a few flag bars + fuel columns, a plausible speed/time.
 CONTROLS = {adapter.A_flag_seq_count: 3, adapter.A_crash_lap: 4,
             adapter.A_speed: 120, adapter.A_time_left: 45}

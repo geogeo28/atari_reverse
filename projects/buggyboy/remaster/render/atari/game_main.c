@@ -62,20 +62,22 @@ void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseR
 void rm_render_road(const RoadInput *in, Framebuffer *fb);
 void rm_scroll_prebuild(const uint8_t *playfield, uint8_t *shifted);
 void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb);
-void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring,
+bool rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring,
                             const uint8_t *stream);
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
 void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a);
 void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEventCtx *ctx);
 void rm_course_probe(RmEventCtx *c);
 void rm_course_events(RmEventCtx *c);
+void rm_course_mode_event(RmEventCtx *c, int16_t *obj_shade, uint16_t *screen_offset,
+                          uint8_t *race_pal, RmPaletteWrite *out);
 void rm_crash_fx_update(RmEventCtx *c);
 void rm_init_leg_dash(RmEventCtx *c);      /* rebuild the current leg's dashboard graphic + seed the marker (src/events.c) */
 void rm_seed_leg_dash_marker(RmEventCtx *c); /* re-seed ONLY the dash marker (marker-only; src/events.c) */
 void rm_draw_leg_labels(RmEventCtx *c);    /* draw the current leg's place-name labels onto the dashboard (src/events.c) */
 void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *scroll,
                  CourseRing *ring, EventState *ev, GobjPrefixState *gobj, SpriteState *sprite,
-                 uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset,
+                 uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset, uint8_t *race_pal,
                  const RmInitAssets *a, uint16_t leg);
 void rm_draw_ground(const GroundState *s, const GroundAssets *a, Framebuffer *fb);
 void rm_draw_fg_sprite(SpriteState *s, const SpriteAssets *a, Framebuffer *fb);
@@ -232,6 +234,10 @@ typedef struct {
      * counter is the SHARED GobjPrefixState.anim_counter (pfx above), not a private one, so it carries
      * the preceding race/demo's animation history exactly as the original does (see op_flash_frame). */
     uint8_t *leg_start_pal;             /* mutable 16-word (32-byte) palette buffer */
+    /* The mutable in-race palette (RM_RACE_PAL_BYTES): seeded from fixture_palette at each leg start,
+     * then mode 4 / rm_init_leg's phase 11 stage a record's colours into regs 5-11 (off-image seam).
+     * start_leg loads it (the leg-start staged palette); mode 4 reloads it each tunnel-palette event. */
+    uint8_t *race_pal;
     /* the flow driver's input sources (the shell owns the IKBD seam): the joystick/key poll and the
      * leg-select F-key pick. main repoints them per flow call (attract vs leg-select, auto vs keyboard),
      * exactly as the old composition passed an input_of / fkey_leg function pointer down. */
@@ -367,8 +373,11 @@ static void start_leg(Shell *s, uint16_t leg) {
      * the graphic is already loaded for the current leg (boot's stock arena / the leg-select rebuild) and
      * is rebuilt where the leg changes (the leg-select nav gate + Phase B, via op_rebuild_dash). */
     rm_seed_leg_dash_marker(s->ctx);
+    /* Seed the in-race palette from fixture_palette; rm_init_leg's phase 11 then stages this leg's
+     * object-display record over regs 5-11 (the same seam mode 4 re-stages). */
+    memcpy(s->race_pal, fixture_palette, RM_RACE_PAL_BYTES);
     rm_init_leg(s->player, s->course, s->pose, s->scroll, s->ring, s->ev, s->pfx, s->sprite,
-                hud_text_ram, s->obj_shade, s->screen_offset, s->init_assets, leg);
+                hud_text_ram, s->obj_shade, s->screen_offset, s->race_pal, s->init_assets, leg);
 #ifdef GAME_TIME_LEFT
     /* Debug builds only: shorten the leg's bonus clock so a headless idle trace reaches the time-out
      * (and thus the leg end) in ~140 frames instead of ~800. A restart re-seeds the FULL clock from
@@ -383,9 +392,41 @@ static void start_leg(Shell *s, uint16_t leg) {
     ring_views_refresh(s->ring, s->ground, s->sprite);
     s->race_input_prev = 0;
     /* The race palette, set in ONE place so every race entry (boot / leg-select fire / R / attract
-     * Phase B) agrees. INT_PAL_B == the race palette == fixture_palette (0x17fa2); an off-image seam
-     * (the byte-compare is palette-agnostic). */
-    Setpalette(fixture_palette);
+     * Phase B) agrees. It is race_pal — fixture_palette (0x17fa2) with phase 11's staging applied, as
+     * the original loads 0x17fa2 after init_leg staged it; an off-image seam (byte-compare is
+     * palette-agnostic, so the staged regs move no compared surface). */
+    Setpalette(s->race_pal);
+}
+
+/* The mode-6 tunnel poke targets hardware colour register (ST_PAL_POKE_BASE + reg_sel), as recreate's
+ * g_poke_color_reg does; Setcolor takes a register INDEX instead, so the byte address is folded back to
+ * an index against the palette base. (reg_sel is 4 in the shipped data -> 0xffff8250 -> register 8.) */
+#define ST_PAL_BASE      0xffff8240L   /* ST palette register 0 */
+#define ST_PAL_POKE_BASE 0xffff824cL   /* g_poke_color_reg pokes this + reg_sel */
+#define ST_PAL_REG_BYTES 2             /* ST palette registers are one word apart: byte offset / this = register index */
+
+/* Fire the pulled record's mode-2/4/6 event (rm_course_mode_event). The compared state (obj_shade,
+ * screen_offset, the EventState scalars) is owned by the core; the shell owns the three side effects it
+ * cannot: propagating obj_shade to the draw (mode 4), re-prebuilding the scroll copies when
+ * screen_offset moved (mode 2), and issuing the actual palette write (mode 4 Setpalette / mode 6
+ * per-register Setcolor — off-image seams the byte-compare and golden do not see). */
+static void course_mode_event(Shell *s) {
+    RmPaletteWrite pw;
+    uint16_t screen_off_before = *s->screen_offset;
+    rm_course_mode_event(s->ctx, s->obj_shade, s->screen_offset, s->race_pal, &pw);
+    s->object->shade = *s->obj_shade;                                     /* mode 4 changed obj_shade */
+    if (*s->screen_offset != screen_off_before)                          /* mode 2 changed screen_offset */
+        rm_scroll_prebuild(s->arena->gfx + *s->screen_offset, shifted);
+    if (pw.kind == RM_PAL_SETPALETTE) {                                  /* mode 4 (seam) */
+        Setpalette(s->race_pal);
+    } else if (pw.kind == RM_PAL_POKE_REG) {                             /* mode 6 (seam) */
+        /* Fold the poked byte address back to a Setcolor register index. reg_sel is taken UNSIGNED (no
+         * sign-extend): valid tunnel data never yields a negative or odd selector — its high bit and
+         * bit 0 are always clear — so widening it unsigned changes nothing (a reviewer verified this
+         * against the shipped course data). */
+        short reg_idx = (short)((ST_PAL_POKE_BASE + (unsigned short)pw.reg - ST_PAL_BASE) / ST_PAL_REG_BYTES);
+        Setcolor(reg_idx, (short)pw.color);
+    }
 }
 
 /* One race-frame UPDATE (no draw): run the driving model over the geometry the last frame built,
@@ -419,8 +460,9 @@ static int game_update_step(Shell *s, uint16_t input) {
     if (player->view_wrapped) {
         player->event_pending = 0;
         rm_course_probe(s->ctx);
-        rm_road_course_advance(s->pose, s->course, s->ring, s->stream);
+        bool pulled = rm_road_course_advance(s->pose, s->course, s->ring, s->stream);
         rm_build_road_geometry(s->pose, s->src, s->ring, ctrl, scanline);
+        if (pulled) course_mode_event(s);   /* mode 2/4/6: screen_offset / obj_shade / palette */
         rm_course_events(s->ctx);
         ring_views_refresh(s->ring, s->ground, s->sprite);
     }
@@ -998,6 +1040,8 @@ void main(void) {
      * flash animates six of its entries per frame (op_flash_frame). Off-image (palette only). */
     uint8_t leg_start_pal_ram[LEG_START_PAL_BYTES];
     memcpy(leg_start_pal_ram, low + OBJ_LOW_LEG_START_PAL, sizeof leg_start_pal_ram);
+    /* The in-race palette start_leg / mode 4 stage into (seeded from fixture_palette per leg start). */
+    uint8_t race_pal_ram[RM_RACE_PAL_BYTES];
 
     Shell shell = {
         .arena = &arena, .player = &player, .course = &course, .pose = &pose, .scroll = &scroll,
@@ -1009,7 +1053,7 @@ void main(void) {
         .low = low, .event_assets = &event_assets, .ctx = &ctx, .stream = arena.tables, .leg = GAME_LEG_INDEX,
         .race_input_prev = 0, .flow = &flow,
         .int_assets = &int_assets, .res_assets = &res_assets, .res_screen_assets = &res_screen_assets,
-        .leg_start_pal = leg_start_pal_ram,
+        .leg_start_pal = leg_start_pal_ram, .race_pal = race_pal_ram,
         .input_source = read_input, .fkey_source = read_fkey,   /* repointed per flow call below */
     };
     Shell *s = &shell;

@@ -625,6 +625,45 @@ void rm_course_events(RmEventCtx *c) {
     course_markers(c);                                         /* I */
 }
 
+/* ---- record-driven mode-2/4/6 palette / screen-offset event (game_update.c §12 lines 572-602) ----
+ *
+ * Fired by the caller when rm_road_course_advance pulls a record, between the geometry rebuild and
+ * rm_course_events (exactly where the original runs it). The mode is the new near band's control-word
+ * high byte & RM_MODE_MASK (ring row 0's marker, the original's road_width_src). See game.h. */
+
+/* mode 6's tunnel record is the SAME selection as the mode-4 record but 2 bytes earlier (buf_a + 0xf0
+ * vs 0xf2), read at the CURRENT palette cursor (mode 6 does not advance it). So its register selector
+ * at record+0xe is the same word mode 4 reads as obj_shade's source (record4 + 0xc). */
+#define MODE6_TBL_BACKSHIFT 2        /* the tunnel table sits this many bytes before the mode-4 base */
+#define MODE6_REG_SEL_OFF   0xe      /* be16(tunnel record + this): the colour-register selector */
+
+void rm_course_mode_event(RmEventCtx *c, int16_t *obj_shade, uint16_t *screen_offset,
+                          uint8_t *race_pal, RmPaletteWrite *out) {
+    out->kind = RM_PAL_NONE;
+    uint8_t mode = (uint8_t)(c->ring->row[0].marker >> 8) & RM_MODE_MASK;
+    const uint8_t *buf_a = c->assets->buf_a;
+
+    if (mode == RM_MODE_SCREEN_OFFSET) {
+        c->ev->scroll_frame = (uint16_t)((c->ev->scroll_frame + 1) & RM_SCROLL_FRAME_MASK);
+        *screen_offset = rm_screen_offset(buf_a, c->leg, c->ev->scroll_frame);
+    } else if (mode == RM_MODE_PALETTE) {
+        c->ev->palette_cursor = (uint16_t)((c->ev->palette_cursor + 1) & RM_PALETTE_CURSOR_MASK);
+        rm_stage_palette_record(race_pal, obj_shade, rm_objdisp_record(buf_a, c->leg, c->ev->palette_cursor));
+        c->ev->palette_toggle = 0;
+        out->kind = RM_PAL_SETPALETTE;              /* shell loads race_pal (off-image seam) */
+    } else if (mode == RM_MODE_TUNNEL) {
+        const uint8_t *rec = rm_objdisp_record(buf_a, c->leg, c->ev->palette_cursor) - MODE6_TBL_BACKSHIFT;
+        int16_t reg_sel = (int16_t)be16(rec + MODE6_REG_SEL_OFF);
+        /* alternate the poked colour between record[0] and record[reg_sel] each pass. */
+        int16_t src_off;
+        if (c->ev->palette_toggle == 0) { src_off = 0; c->ev->palette_toggle = (uint16_t)reg_sel; }
+        else { src_off = reg_sel; c->ev->palette_toggle = 0; }
+        out->kind = RM_PAL_POKE_REG;                /* shell pokes 0xffff824c + reg (off-image seam) */
+        out->reg = reg_sel;
+        out->color = be16(rec + src_off);
+    }
+}
+
 /* ---- crash / end-of-race tally: HUD phase 8 timer + draw_crash_fx's STATE side (@0x15872) ---- */
 
 /* The two add_score deltas the tally drains one per frame both live in the shared score_deltas window

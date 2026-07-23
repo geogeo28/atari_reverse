@@ -62,6 +62,56 @@ def test_leg_drive_from_native_init(capsys):
     assert stats["wraps"] > 0, f"the buggy never moved: {stats}"
 
 
+# Directed record-driven mode-2/4/6 course events (game_update §12's tail, rm_course_mode_event). The
+# free drives above reach mode 4 (legs 0/1) and mode 6 (legs 0/4) organically — see the mode2/4/6 stats
+# — but read_pos advances too slowly (the buggy keeps crashing) to reach mode 2, whose earliest record
+# is deep in every leg's stream. Each case pokes course_read_pos so the FIRST view-wrap pulls the chosen
+# mode's earliest record, then drives ACCEL long enough to fire and COMPARE it against recreate's
+# g_game_update (the drive already pins scroll_frame / palette_cursor / palette_toggle / obj_shade /
+# screen_offset / the staged palette). Read positions from the leg-stream mode scan.
+MODE_CASES = {
+    "mode2_leg3": (3, 1360, "mode2"),   # screen-offset event (mutates screen_offset, a render surface)
+    "mode2_leg4": (4, 1056, "mode2"),
+    "mode4_leg0": (0, 376, "mode4"),    # palette stage + obj_shade
+    "mode6_leg0": (0, 336, "mode6"),    # tunnel per-register poke (palette_toggle flip)
+    "mode6_leg4": (4, 304, "mode6"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(MODE_CASES))
+def test_course_mode_event_matches_recreate(case, capsys):
+    leg, read_pos, mode = MODE_CASES[case]
+    lib = equiv._lib()
+    image = bytearray(equiv.leg_start_background(leg))
+    equiv._w16(image, adapter.A_course_read_pos, read_pos - 8)   # +8 on the first pull -> read_pos
+    equiv._w16(image, adapter.A_course_row_ctr, 0)               # underflow on the first wrap -> pull
+    mismatches, stats = equiv.compare_leg_drive(lib, image, [ACCEL] * 90)
+    with capsys.disabled():
+        counts = {k: stats[k] for k in ("mode2", "mode4", "mode6")}
+        print(f"  {case}: {len(mismatches)} mismatches / mode-counts {counts}")
+    assert not mismatches, "mode-event drive diverged from recreate: " + "; ".join(
+        f"frame {f} {name}: candidate {c} != recreate {r}" for f, name, c, r in mismatches[:8])
+    assert stats[mode] >= 1, f"{case} never fired {mode} (nothing pinned): {stats}"
+
+
+@pytest.mark.parametrize("case", [c for c, v in sorted(MODE_CASES.items()) if v[2] == "mode2"])
+def test_mode2_scroll_prebuild_matches_recreate(case, capsys):
+    """The mode-2 event's RE-PREBUILT scroll pixels, not just its screen_offset scalar. When a mode-2
+    event moves screen_offset the shell re-runs rm_scroll_prebuild from the new offset before the next
+    blit (game_main.c course_mode_event); test_course_mode_event above pins only the scalar. This drives
+    to the mode-2 event, then re-prebuilds from the new offset and blits, and compares the whole
+    framebuffer byte-exact against recreate's g_blit_road_scroll at that state (compare_scroll's path)."""
+    leg, read_pos, _mode = MODE_CASES[case]
+    lib = equiv._lib()
+    image = equiv.leg_start_background(leg)
+    fired, diff, scalars_ok = equiv.compare_mode2_scroll(lib, image, read_pos)
+    with capsys.disabled():
+        print(f"  {case}: fired={fired} diff={diff} scalars_ok={scalars_ok}")
+    assert fired, f"{case} never fired a mode-2 event (screen_offset never moved) — nothing pinned"
+    assert diff == 0, f"{case} re-prebuilt scroll differs from recreate in {diff} bytes"
+    assert scalars_ok, f"{case} hscroll_pos / hscroll_step2 outputs differ from recreate"
+
+
 SPIN_FRAMES = 40
 LOCK_LEFT = [ACCEL | LEFT] * SPIN_FRAMES
 LOCK_RIGHT = [ACCEL | RIGHT] * SPIN_FRAMES

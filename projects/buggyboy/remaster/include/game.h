@@ -238,8 +238,10 @@ typedef struct {
  * rm_build_road_geometry.
  *
  * NOT included from section 12 (they neither read nor write anything here): the collision probe, the
- * record's palette/screen-offset event, and the fx-block / horizon-event dispatch. */
-void rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, const uint8_t *stream);
+ * record's palette/screen-offset event (rm_course_mode_event below), and the fx-block / horizon-event
+ * dispatch. Returns TRUE when a new record was pulled this step (row_ctr underflowed) — the caller
+ * fires rm_course_mode_event only then, exactly as the original runs the mode event inside the pull. */
+bool rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, const uint8_t *stream);
 
 /* ---- the ring's other consumers ----
  *
@@ -682,6 +684,11 @@ typedef struct {
     uint16_t abort_flag;       /* leg/game-over abort countdown (0x18c4e): 0xffff (game over) or 0x33
                                 * (bonus exhausted), decays by 2/frame — the frame loop ends the leg
                                 * when this goes negative */
+    /* Record-driven mode-2/4/6 course-event state (course-advance tail; rm_course_mode_event). All
+     * three are cleared to 0 by rm_init_leg (they sit in g_init_leg's phase-1 live-state clear). */
+    uint16_t scroll_frame;     /* mode 2: road-scroll frame index 0..15 (0x18cb2), indexes the leg scroll table */
+    uint16_t palette_cursor;   /* mode 4: palette-record cursor 0..0x1f (0x18cba), indexes buf_a + 0x50 */
+    uint16_t palette_toggle;   /* mode 4/6: palette double-buffer toggle (0x18c5c) */
 } EventState;
 
 /* Const asset windows the event engine reads (STATIC region + a couple of arena tables), raw
@@ -747,6 +754,66 @@ void rm_course_events(RmEventCtx *c);
  * fires, step the dashboard progress marker. Runs before rm_road_course_advance on a wrap frame. */
 void rm_course_probe(RmEventCtx *c);
 
+/* ---- record-driven mode-2/4/6 palette / screen-offset event (game_update §12 lines 572-602) ----
+ *
+ * When a record is pulled, the low bits of the new near band's control word (ring row 0's marker high
+ * byte & MODE_MASK) select one of three in-race effects:
+ *   mode 2 — advance the road-scroll frame and re-pick screen_offset (a COMPARED render surface).
+ *   mode 4 — advance the palette cursor, stage the next palette record (its obj_shade IS compared; the
+ *            palette itself is an off-image Setpalette seam), reset the toggle.
+ *   mode 6 — a per-register tunnel colour poke (off-image Setcolor seam), flipping the toggle.
+ * The scalar state (scroll_frame / palette_cursor / palette_toggle) lives in EventState; obj_shade and
+ * screen_offset are the shell's leg-start outputs; the palette bytes stage into `race_pal` (below). The
+ * ACTUAL palette write is off-image (palette-agnostic byte-compare + golden) and is owned by the shell:
+ * rm_course_mode_event reports which write to issue in *out, and the shell issues it (see game_main.c).
+ *
+ * The mode selector reads ring row 0's marker after the refill: (row0.marker >> 8) & MODE_MASK. */
+#define RM_MODE_MASK          6    /* the two control-word bits that select the event */
+#define RM_MODE_SCREEN_OFFSET 2    /* road-scroll offset event */
+#define RM_MODE_PALETTE       4    /* palette-record stage + obj_shade */
+#define RM_MODE_TUNNEL        6    /* per-register tunnel colour poke */
+#define RM_PALETTE_CURSOR_MASK 0x1f
+#define RM_SCROLL_FRAME_MASK   0xf
+
+/* The mutable in-race palette buffer (RM_RACE_PAL_BYTES = one ST palette, base image 0x17fa2). mode 4
+ * and rm_init_leg's phase 11 stage a record's colours into it at RM_PAL_STAGE_* (the original's
+ * 0x17fac.. writes overlap the race palette's regs 5/7-11 — a partial in-race fade). The shell seeds it
+ * from the const race palette; Setpalette loads it whole. The non-staged bytes never change. */
+#define RM_RACE_PAL_BASE   0x17fa2
+#define RM_RACE_PAL_BYTES  0x20
+#define RM_PAL_STAGE_W2_OFF 0x0a   /* record[0xa..0xb] -> image 0x17fac */
+#define RM_PAL_STAGE_W1_OFF 0x0e   /* record[0..1]     -> image 0x17fb0 */
+#define RM_PAL_STAGE_L1_OFF 0x10   /* record[2..5]     -> image 0x17fb2 */
+#define RM_PAL_STAGE_L2_OFF 0x14   /* record[6..9]     -> image 0x17fb6 */
+#define RM_OBJDISP_SHADE_OFF 0x0c  /* obj_shade = be16(record + this) - 2 */
+
+/* What off-image palette write the shell should issue after rm_course_mode_event (all palette-agnostic
+ * seams; NONE on modes 0/2). */
+typedef enum { RM_PAL_NONE = 0, RM_PAL_SETPALETTE, RM_PAL_POKE_REG } RmPaletteWriteKind;
+typedef struct {
+    RmPaletteWriteKind kind;
+    int16_t  reg;      /* POKE_REG: the colour-register selector (0xffff824c + reg) */
+    uint16_t color;    /* POKE_REG: the colour word to poke */
+} RmPaletteWrite;
+
+/* Resolve the object-display / palette record: buf_a + 0xf2 + sel*0x10, where sel is the per-leg
+ * selector byte buf_a[0x50 + cursor + leg*0x20]. Shared by rm_init_leg (cursor 0) and mode 4. */
+const uint8_t *rm_objdisp_record(const uint8_t *buf_a, uint16_t leg, uint16_t cursor);
+
+/* Stage a 14-byte object-display / palette record into `race_pal` (4 pieces at RM_PAL_STAGE_*) and
+ * derive obj_shade. Shared by rm_init_leg's phase 11 and mode 4. */
+void rm_stage_palette_record(uint8_t *race_pal, int16_t *obj_shade, const uint8_t *disp);
+
+/* This frame's road-scroll offset into buf_c: the leg's 16-byte scroll table (buf_a + leg*0x10) indexed
+ * by scroll_frame, times one 40-scanline band. Shared by rm_init_leg's phase 7 (frame 0) and mode 2. */
+uint16_t rm_screen_offset(const uint8_t *buf_a, uint16_t leg, uint16_t scroll_frame);
+
+/* The mode-2/4/6 event: fire the effect the pulled record selects. Mutates the EventState scalars in
+ * `c->ev` plus *obj_shade / *screen_offset / `race_pal` per the mode, and reports the shell's palette
+ * write in *out. Runs after rm_build_road_geometry and before rm_course_events, only on a record pull. */
+void rm_course_mode_event(RmEventCtx *c, int16_t *obj_shade, uint16_t *screen_offset,
+                          uint8_t *race_pal, RmPaletteWrite *out);
+
 /* ---- crash / end-of-race tally (HUD phase 8 timer + draw_crash_fx's STATE side @0x15872) ----
  *
  * The persistent counterpart to hud.c's hud_crash_fx DRAW. draw_hud phase 8 decays hud_crash_timer by
@@ -797,8 +864,8 @@ uint32_t rm_event_classify(uint16_t idx);
  *   - Phase 3's checkpoint-banner draw (draw_checkpoint_anim) writes only the gfx banner bitmap, which
  *     rm_course_events regenerates on a checkpoint; the demo's golden renders from the freshly-loaded
  *     arena (no init-time banner scroll), so it is skipped here.
- *   - Phase 11's palette-staging record (image 0x17fb0) feeds the still-unported mode-2/4/6 palette
- *     event (palette is off-image in the remaster, like sound); only its obj_shade output is consumed.
+ *   - Phase 11 stages the object-display / palette record into `race_pal` (the same 0x17fac.. record
+ *     mode 4 re-stages — an off-image Setpalette seam) AND derives obj_shade from it. Fully ported.
  *
  * The dash-marker scalars are NOT touched: verified against the oracle, g_init_leg leaves them
  * unchanged (0 at a leg start) — the per-leg arena reseed is the intermission's init_leg_dash (already
@@ -811,11 +878,12 @@ typedef struct {
 } RmInitAssets;
 
 /* Reset all per-leg state to its leg-start value (see above). `obj_shade` (draw_object's centre/near
- * fill selector) and `screen_offset` (buf_c road-scroll offset, feeds the scroll prebuild) are the two
- * outputs with no owning struct field. `hud_text` is the shared mutable HUD-text region (base 0x18172). */
+ * fill selector), `screen_offset` (buf_c road-scroll offset, feeds the scroll prebuild) and `race_pal`
+ * (the mutable in-race palette phase 11 stages into, RM_RACE_PAL_BYTES) are the three outputs with no
+ * owning struct field. `hud_text` is the shared mutable HUD-text region (base 0x18172). */
 void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *scroll,
                  CourseRing *ring, EventState *ev, GobjPrefixState *gobj, SpriteState *sprite,
-                 uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset,
+                 uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset, uint8_t *race_pal,
                  const RmInitAssets *a, uint16_t leg);
 
 /* Fan the per-frame driving-model outputs (PlayerState + the event-owned EventState) out to the render

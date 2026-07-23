@@ -170,8 +170,9 @@ void bench_stage_assets(void) {
      * every measured call, so each stage starts from a fresh leg-start state. */
     for (unsigned i = 0; i < sizeof fixture_hud_text; i++) hud_text_ram[i] = fixture_hud_text[i];
     RmInitAssets init_assets = {.buf_a = arena.tables, .legtime = fixture_legtime};
+    static uint8_t race_pal[RM_RACE_PAL_BYTES];   /* phase-11 staging sink (obj_shade is the read output) */
     rm_init_leg(&player, &course, &pose, &scroll, &ring, &ev, &pfx, &sprite,
-                hud_text_ram, &object.shade, &screen_offset, &init_assets, GAME_LEG_INDEX);
+                hud_text_ram, &object.shade, &screen_offset, race_pal, &init_assets, GAME_LEG_INDEX);
     player.input = RM_IN_ACCEL;                 /* a driving frame, so the physics walks its live paths */
     scroll.scroll_speed = BENCH_SCROLL_SPEED;   /* a representative racing speed (scroll edge/wrap tail) */
     ground.view = player.ground_view_off;

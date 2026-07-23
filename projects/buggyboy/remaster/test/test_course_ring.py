@@ -174,7 +174,7 @@ def test_python_constants_match_the_c():
     stale predicate and report coverage that never happened."""
     game_h = _defines("include/game.h",
                       r"^#define\s+(RM_RING_\w+|EDGE_\w+|RM_CTRL_\w+|RM_SCANLINE_\w+|RM_HUD_TIMER_\w+"
-                      r"|RM_HUD_CRASH_\w+|RM_CRASH_\w+|RM_REC_\w+)\s+(\w+)\s*(?:/\*.*)?$")
+                      r"|RM_HUD_CRASH_\w+|RM_CRASH_\w+|RM_REC_\w+|RM_RACE_PAL_\w+|RM_PAL_STAGE_\w+)\s+(\w+)\s*(?:/\*.*)?$")
     assert {"RM_RING_ROWS", "RM_RING_SLOTS"} <= game_h.keys(), "ring geometry moved out of game.h"
     assert equiv.adapter.RM_RING_ROWS == game_h["RM_RING_ROWS"]
     assert equiv.adapter.RM_RING_SLOTS == game_h["RM_RING_SLOTS"]
@@ -220,6 +220,16 @@ def test_python_constants_match_the_c():
     assert equiv.RING_ECHOED_CODE == course_c["CODE_ECHOED"]
     assert equiv.RING_ECHO_FROM == course_c["CODE_ECHO_FROM_SLOT"]
     assert equiv.RING_ECHO_TO == course_c["CODE_ECHO_TO_SLOT"]
+
+    # The record-driven mode-2/4/6 palette-event seam: the race-palette buffer base/size (mirrored in
+    # adapter.py) and the four staged-piece offsets (equiv._PAL_STAGE_PIECES, absolute image addresses).
+    # Pin each hand copy to game.h so the init_leg / leg-drive palette-stage comparison can't check the
+    # wrong bytes (a drifted offset would silently compare an unwritten region and stay green).
+    assert equiv.adapter.A_race_palette == game_h["RM_RACE_PAL_BASE"]
+    assert equiv.adapter.RACE_PAL_BYTES == game_h["RM_RACE_PAL_BYTES"]
+    stage_offs = {game_h[k] for k in
+                  ("RM_PAL_STAGE_W2_OFF", "RM_PAL_STAGE_W1_OFF", "RM_PAL_STAGE_L1_OFF", "RM_PAL_STAGE_L2_OFF")}
+    assert {addr - equiv.adapter.A_race_palette for addr, _ in equiv._PAL_STAGE_PIECES} == stage_offs
 
     # adapter.py's IL_LEGTIME_BYTES (the baked-strings window sizing for init_assets) must equal the
     # window rm_init_leg's phase-4 legtime copy actually reads: the leg-1 base offset plus the five

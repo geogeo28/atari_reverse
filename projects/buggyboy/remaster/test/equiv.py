@@ -52,7 +52,7 @@ def _lib():
                                            ctypes.POINTER(adapter.CourseState),
                                            ctypes.POINTER(adapter.CourseRing),
                                            ctypes.POINTER(ctypes.c_uint8)]
-    lib.rm_road_course_advance.restype = None
+    lib.rm_road_course_advance.restype = ctypes.c_bool
     for fn in (lib.rm_draw_fg_sprite, lib.rm_draw_buggy):
         fn.argtypes = [ctypes.POINTER(adapter.SpriteState),
                        ctypes.POINTER(adapter.SpriteAssets),
@@ -98,6 +98,11 @@ def _lib():
     lib.rm_course_events.restype = None
     lib.rm_course_probe.argtypes = [ectx]
     lib.rm_course_probe.restype = None
+    lib.rm_course_mode_event.argtypes = [ectx, ctypes.POINTER(ctypes.c_int16),
+                                         ctypes.POINTER(ctypes.c_uint16),
+                                         ctypes.POINTER(ctypes.c_uint8),
+                                         ctypes.POINTER(adapter.RmPaletteWrite)]
+    lib.rm_course_mode_event.restype = None
     lib.rm_crash_fx_update.argtypes = [ectx]
     lib.rm_crash_fx_update.restype = None
     lib.rm_event_classify.argtypes = [ctypes.c_uint16]
@@ -107,7 +112,8 @@ def _lib():
         P(adapter.PlayerState), P(adapter.CourseState), P(adapter.RoadPose),
         P(adapter.ScrollState), P(adapter.CourseRing), P(adapter.EventState),
         P(adapter.GobjPrefixState), P(adapter.SpriteState), P(ctypes.c_uint8),
-        P(ctypes.c_int16), P(ctypes.c_uint16), P(adapter.RmInitAssets), ctypes.c_uint16]
+        P(ctypes.c_int16), P(ctypes.c_uint16), P(ctypes.c_uint8),
+        P(adapter.RmInitAssets), ctypes.c_uint16]
     lib.rm_init_leg.restype = None
     lib.rm_apply_player.argtypes = [
         P(adapter.PlayerState), P(adapter.EventState), P(adapter.RoadPose), P(adapter.ScrollState),
@@ -342,6 +348,37 @@ def compare_scroll(lib, image, pokes=None):
 
     diff = sum(1 for i in range(adapter.SCREEN_BYTES) if cand_fb[i] != ref_fb[i])
     return diff, (cand_scalars == ref_scalars)
+
+
+# ACCEL bit (game.h RM_IN_ACCEL / input.c) — throttle drives the view-wraps that pull course records.
+_RM_IN_ACCEL = 0x01
+
+
+def compare_mode2_scroll(lib, image, read_pos, frames=90):
+    """Verify the mode-2 re-prebuilt scroll PIXELS, not just the screen_offset scalar.
+
+    A mode-2 screen-offset event moves screen_offset, and the shell re-runs rm_scroll_prebuild from the
+    new offset before the next blit (game_main.c course_mode_event). test_course_mode_event pins the
+    screen_offset scalar; this pins the pixels that scalar selects. Drive the reference (g_game_update,
+    ACCEL) from a read_pos staged so the first view-wrap pulls a mode-2 record, until screen_offset
+    moves, then re-prebuild from the NEW offset and blit and compare the whole framebuffer byte-exact vs
+    recreate's g_blit_road_scroll at that state (compare_scroll's path — the same offset feeds both
+    sides). Returns (fired, diff, scalars_ok)."""
+    state = bytearray(image)
+    _w16(state, adapter.A_course_read_pos, read_pos - 8)   # +8 on the first pull -> read_pos
+    _w16(state, adapter.A_course_row_ctr, 0)               # underflow on the first wrap -> pull
+    buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
+    game_update = _bind("g_game_update")
+    screen_off_before = _r16(state, adapter.A_screen_offset)
+    fired = False
+    for _ in range(frames):
+        _w16(state, adapter.A_input_state, _RM_IN_ACCEL)
+        game_update(buf)
+        if _r16(state, adapter.A_screen_offset) != screen_off_before:
+            fired = True
+            break
+    diff, scalars_ok = compare_scroll(lib, state)          # prebuild + blit from the NEW screen_offset
+    return fired, diff, scalars_ok
 
 
 def _seg_data(state):
@@ -894,13 +931,17 @@ def run_init_leg(lib, pre, leg=None):
         pre[adapter.A_hud_text:adapter.A_hud_text + adapter.HUD_TEXT_BYTES])
     r.obj_shade = ctypes.c_int16()
     r.screen_offset = ctypes.c_uint16()
+    # The in-race palette phase 11 stages into: seed from the image's baked race palette (0x17fa2), as
+    # the shell seeds it from fixture_palette; phase 11 overlays regs 5-11 (RM_PAL_STAGE_*).
+    r.race_pal = (ctypes.c_uint8 * adapter.RACE_PAL_BYTES).from_buffer_copy(
+        pre[adapter.A_race_palette:adapter.A_race_palette + adapter.RACE_PAL_BYTES])
     r.assets, r.keepalive = adapter.init_assets(pre)
     if leg is None:
         leg = _r16(pre, adapter.A_leg_index)
     lib.rm_init_leg(ctypes.byref(r.player), ctypes.byref(r.course), ctypes.byref(r.pose),
                     ctypes.byref(r.scroll), ctypes.byref(r.ring), ctypes.byref(r.ev),
                     ctypes.byref(r.gobj), ctypes.byref(r.sprite), r.hud_text,
-                    ctypes.byref(r.obj_shade), ctypes.byref(r.screen_offset),
+                    ctypes.byref(r.obj_shade), ctypes.byref(r.screen_offset), r.race_pal,
                     ctypes.byref(r.assets), leg)
     return r
 
@@ -1207,6 +1248,18 @@ class _Candidate:
         self.evt_assets, self._k_evt = adapter.event_assets(state)
         self.leg = _r16(state, adapter.A_leg_index)
         self.game_over = _r16(state, adapter.A_game_over_flag) != 0
+        # mode-2/4/6 course-event outputs the shell owns: obj_shade (draw_object), screen_offset (scroll
+        # source) and the in-race palette phase 11 / mode 4 stage into. Seeded from the image, then
+        # advanced only by rm_course_mode_event (fired on a record pull), like the reference's globals.
+        self.obj_shade = ctypes.c_int16(_i16s(state, adapter.A_obj_shade))
+        self.screen_offset = ctypes.c_uint16(_r16(state, adapter.A_screen_offset))
+        self.race_pal = (ctypes.c_uint8 * adapter.RACE_PAL_BYTES).from_buffer_copy(
+            state[adapter.A_race_palette:adapter.A_race_palette + adapter.RACE_PAL_BYTES])
+        self._pw = adapter.RmPaletteWrite()
+        # The mode-2/4/6 selector the course-event dispatch acted on THIS frame (None on a frame with no
+        # record pull), surfaced for the drive stats so the mode-fired counts read the event's own signal
+        # rather than inferring it from which EventState scalar moved (see compare_leg_drive).
+        self._mode_fired = None
         self.reseed(state, 0)
         # Optionally REPLACE the leg-start owner structs with rm_init_leg's native output (seeded from
         # the pre-init image) instead of the oracle's init_leg (read out of `state`). Everything else —
@@ -1234,6 +1287,7 @@ class _Candidate:
         self.player, self.course, self.pose = r.player, r.course, r.pose
         self.scroll, self.ring, self.ev, self.gobj = r.scroll, r.ring, r.ev, r.gobj
         self.hud_text = r.hud_text
+        self.obj_shade, self.screen_offset, self.race_pal = r.obj_shade, r.screen_offset, r.race_pal
         self._init_assets, self._k_init = r.assets, r.keepalive
         self._init_result = r      # keeps the sprite / output scalars / hud_text buffer alive
 
@@ -1271,6 +1325,7 @@ class _Candidate:
         p.input, p.input_prev = in_bits, self.input_prev
         p.hscroll_step2 = self.scroll.hscroll_step2
         self.input_prev = in_bits
+        self._mode_fired = None                                    # set below iff a record is pulled this frame
         self.lib.rm_player_update(ctypes.byref(p), ctypes.byref(self.assets), self.ctrl,
                                   ctypes.byref(self.ctx))
 
@@ -1279,11 +1334,18 @@ class _Candidate:
         if p.view_wrapped:
             p.event_pending = 0                                    # game_update.c:504
             self.lib.rm_course_probe(ctypes.byref(self.ctx))       # §12 collision-probe head
-            self.lib.rm_road_course_advance(ctypes.byref(self.pose), ctypes.byref(self.course),
-                                            ctypes.byref(self.ring), self.stream)
+            self._pulled = self.lib.rm_road_course_advance(ctypes.byref(self.pose), ctypes.byref(self.course),
+                                                           ctypes.byref(self.ring), self.stream)
         self.lib.rm_build_road_geometry(ctypes.byref(self.pose), ctypes.byref(self.source),
                                         ctypes.byref(self.ring), self.ctrl, self.scan)
         if p.view_wrapped:
+            if self._pulled:                                       # mode-2/4/6 event (record pulled)
+                # The dispatch's OWN selector (ring row-0 marker high byte & mask), read exactly as
+                # rm_course_mode_event reads it — the writer-independent signal the stats key off.
+                self._mode_fired = (self.ring.row[0].marker >> 8) & adapter.RM_MODE_MASK
+                self.lib.rm_course_mode_event(ctypes.byref(self.ctx), ctypes.byref(self.obj_shade),
+                                              ctypes.byref(self.screen_offset), self.race_pal,
+                                              ctypes.byref(self._pw))
             self.lib.rm_course_events(ctypes.byref(self.ctx))      # §G/§H/§I: arm crashes + deliver events
         self.scroll.seg_head = self.pose.seg_head
         self.lib.rm_blit_road_scroll(ctypes.byref(self.scroll), self.shifted, ctypes.byref(self.fb))
@@ -1338,11 +1400,45 @@ def _fanout_mismatches(frame, cand, state):
     return [(frame, name, c, r) for name, c, r in checks if c != r]
 
 
+# The mode-2/4/6 course-event outputs the shell owns (rm_course_mode_event): obj_shade (draw_object's
+# fill selector) and screen_offset (the scroll source) plus the four palette pieces mode 4 / init phase
+# 11 stage. race_pal mirrors image 0x17fa2..; only the WRITTEN pieces are pinned (the rest never moves).
+_PAL_STAGE_PIECES = ((0x17fac, 2), (0x17fb0, 2), (0x17fb2, 4), (0x17fb6, 4))
+
+
+def staged_palette_mismatches(race_pal, ref):
+    """Compare the four palette pieces phase 11 / mode 4 stage over regs 5-11 (`race_pal`) against the
+    reference image's in-race palette window (`ref` at A_race_palette). Only the WRITTEN pieces move (the
+    rest of the palette is an off-image Setpalette seam that never changes), so exactly those are checked.
+    Returns [(label, cand_hex, ref_hex)] for each differing piece; the caller prepends any frame column.
+    Shared by _mode_event_mismatches (the leg drive) and test_init_leg (the exact init differential)."""
+    pal = bytes(race_pal)
+    out = []
+    for addr, n in _PAL_STAGE_PIECES:
+        off = addr - adapter.A_race_palette
+        c, r = pal[off:off + n].hex(), bytes(ref[addr:addr + n]).hex()
+        if c != r:
+            out.append(("race_pal@%#x" % addr, c, r))
+    return out
+
+
+def _mode_event_mismatches(frame, cand, state):
+    out = []
+    if cand.obj_shade.value != _i16s(state, adapter.A_obj_shade):
+        out.append((frame, "obj_shade", cand.obj_shade.value, _i16s(state, adapter.A_obj_shade)))
+    if cand.screen_offset.value != _r16(state, adapter.A_screen_offset):
+        out.append((frame, "screen_offset", cand.screen_offset.value, _r16(state, adapter.A_screen_offset)))
+    for label, c, r in staged_palette_mismatches(cand.race_pal, state):
+        out.append((frame, label, c, r))
+    return out
+
+
 def _drive_mismatches(frame, cand, state):
     """Every owned surface compared for one free-running drive frame: the road control table, the course
     ring, the PlayerState / CourseState scalars, the view-wrap flag, the event-owned state (EventState +
-    GobjPrefixState + the HUD-text score digits), and the draw-struct fan-out (the four SpriteState
-    crash/spin fields). Returns [(frame, field, cand, ref)]."""
+    GobjPrefixState + the HUD-text score digits), the mode-2/4/6 course-event outputs (obj_shade /
+    screen_offset / the staged palette), and the draw-struct fan-out (four SpriteState crash/spin
+    fields). Returns [(frame, field, cand, ref)]."""
     out = []
     lo, n = adapter.A_road_curve_tbl, adapter.RM_CTRL_BYTES
     d = _first_diff("ctrl", bytes(cand.ctrl)[:n], bytes(state[lo:lo + n]))
@@ -1365,6 +1461,7 @@ def _drive_mismatches(frame, cand, state):
         out.append((frame, "view_wrapped", bool(cand.player.view_wrapped),
                     _r16(state, adapter.A_view_wrap_flag) != 0))
     out.extend((frame,) + m for m in _event_state_mismatches(cand, state))
+    out.extend(_mode_event_mismatches(frame, cand, state))
     out.extend(_fanout_mismatches(frame, cand, state))
     return out
 
@@ -1409,6 +1506,7 @@ def compare_leg_drive(lib, image, inputs, native_init_pre=None):
                  leg_end=0, abort_armed=0, leg_over=0, clamp=0, offroad=0, ring_checked=0,
                  ring_refills=0, ring_ages=0,
                  ring_anim_visible=0, ring_marker_right=0, ring_echoes=0, ring_edge_bands=0,
+                 mode2=0, mode4=0, mode6=0,
                  fanout_anim_nz=0, fanout_spin_state_nz=0, fanout_collision_nz=0, fanout_spin_reset_nz=0)
     mismatches = []
     for frame, in_bits in enumerate(inputs):
@@ -1416,6 +1514,20 @@ def compare_leg_drive(lib, image, inputs, native_init_pre=None):
         crash_bars_before = cand.ev.crash_bars
         read_pos_before = cand.course.read_pos
         _drive_frame(cand, state, buf, game_update, in_bits)
+        # Which mode-2/4/6 event fired, from the dispatch's OWN outputs rather than inferred from which
+        # EventState scalar moved: pw.kind is the palette event's declared kind (mode 4 = SETPALETTE,
+        # mode 6 = POKE_REG — counted even when reg_sel == 0 leaves palette_toggle unmoved), and the
+        # ring-marker selector distinguishes mode 2 (screen offset, no palette kind) from a no-op pull.
+        # rm_course_mode_event resets pw.kind on every pull, so gating on "a record fired this frame"
+        # (cand._mode_fired is not None) keeps a stale kind from an earlier frame out. Writer-independent:
+        # immune to a second writer of the scroll_frame / palette_cursor / palette_toggle fields.
+        if cand._mode_fired is not None:
+            if cand._pw.kind == adapter.PAL_SETPALETTE:
+                stats["mode4"] += 1
+            elif cand._pw.kind == adapter.PAL_POKE_REG:
+                stats["mode6"] += 1
+            elif cand._mode_fired == adapter.RM_MODE_SCREEN_OFFSET:
+                stats["mode2"] += 1
         refilled = cand.player.view_wrapped and cand.course.read_pos != read_pos_before
         aged = cand.player.view_wrapped and not refilled
 
@@ -1487,6 +1599,9 @@ EVENT_EV_FIELDS = (
     ("spin_state", adapter.A_spin_state, False),
     ("crash_frame", adapter.A_crash_frame, False),   # crash-fx tally counter (rm_crash_fx_update)
     ("abort_flag", adapter.A_abort_flag, False),      # leg/game-over countdown (< 0 ends the leg)
+    ("scroll_frame", adapter.A_scroll_frame, False),   # mode-2 course event (rm_course_mode_event)
+    ("palette_cursor", adapter.A_palette_cursor, False),  # mode-4 course event
+    ("palette_toggle", adapter.A_palette_toggle, False),  # mode-4/6 course event
 )
 EVENT_GOBJ_FIELDS = (
     ("flag_seq_count", adapter.A_flag_seq_count, True),
