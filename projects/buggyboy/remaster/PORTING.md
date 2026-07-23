@@ -53,11 +53,37 @@ recreate's g_*, and two composed checks pin the wiring: an attract CYCLE (phases
 against the oracle slices**; **Phase C is a boundary-count only** — a pure-Python mirror of the
 0x96-frame count that cannot itself fail, guarded by the pinned `INT_C_FRAMES` constant, with the demo
 pipeline pinned separately by the leg drives) and an end-to-end GAME-FLOW drive (a leg times out →
-`update_highscore` → `game_over_flag`++ → intermission entry, matching main's loop-break path). The flow is host-side —
-`FlowState` is the composition's owner, exactly as `_Candidate` owns the leg-drive structs — and the
-Vsync/palette/flip/sound are off-image seams. **What is left is slice C**: the on-target game shell
-(the demo/game .PRG that runs `init_playfield` → race → this flow), which replaces the demo's
-current leg-restart stand-in. See `test/test_flow_machine.py` and STATUS's slice-B row.
+`update_highscore` → `game_over_flag`++ → intermission entry, matching main's loop-break path). The flow's LOGIC is host-side — `FlowState` is the composition's
+owner, exactly as `_Candidate` owns the leg-drive structs — and the Vsync/palette/flip/sound are
+off-image seams. See `test/test_flow_machine.py` and STATUS's slice-B row.
+
+**Slice C is done: the demo is now the GAME.** `render/atari/demo_main.c` composes the original's whole
+outer loop (decomp.c main @0x10100) out of the ported pieces — `run_leg_select` (init_playfield) →
+`start_leg` (rm_init_leg) → the race loop → on the leg end (`abort_flag < 0`) `rm_update_highscore` →
+`rm_flow_game_over_enter` → `run_intermission` (the attract A→B→C→D cycle) → `rm_flow_game_over_exit` →
+back to the leg select. A `Shell` struct is the composition's on-target owner (pointers to every race
+owner struct + its render views + the const asset bundles + `FlowState` + the flow's draw-asset
+bundles); one handle so `game_update_step` / `start_leg` / the flow phases take one argument. The old
+per-frame leg-restart stand-in is GONE — a finished leg now runs the real between-legs flow. The
+leg-select fire can start ANY leg (`bind_leg` recomputes the per-leg stream / collision-mask pointers
+and the scroll pre-build at runtime; the fixture's per-leg `ARENA_COURSE_*_OFF` stay only for
+`bench_main.c`). BOOT/GOLDEN PARITY is kept by a runtime fast path — the first outer pass skips the leg
+select and boots straight into leg `DEMO_LEG_INDEX`, drawing + dumping that leg-start frame
+(byte-identical to `golden.bin`); only after the first leg ends does the full flow run. This needs no
+build flag. Proven on the 68000 (see the flow-trace section below): a full attract cycle
+(A→B→C→D→restart), the leg-select fire path starting a leg, and a timed-out leg reaching the
+intermission and returning to the leg select — the whole game loop closes unattended.
+
+The seams the shell stands in for, each documented at its call site in demo_main.c: sound (never
+played), the exact Vsync cadence, the per-phase palette Setpalettes (off-image — the byte-compare is
+palette-agnostic; the 121-frame leg-start "get ready" palette flash is a plain frame wait), the
+interactive high-score NAME-ENTRY tail (update_highscore ranks + inserts the score so the results
+screen fills in, but the IKBD initials screen is not run — recreate defers it too), the attract DEMO's
+input-replay (Phase C holds throttle instead of replaying a recorded ghost), and `draw_panel5` / the
+folded-probe `draw_leg_labels` (unported sub-draws; the results screen still shows). `init_scoretable`'s
+output is baked as a program-data SEED (`fixture_highscore`) the shell copies into a mutable
+`highscore_ram` at boot, exactly as `fixture_hud_text` seeds `hud_text_ram` — the tiny init routine is
+not run on-target (its output is deterministic program data).
 
 Last verified: 2026-07-22. `make test` = **485 passed**; `run_demo.py` = **MATCH**. Section 12's **object / marker
 ring** is ported (`CourseRing` in `include/game.h`, `rm_road_course_advance` in `src/course.c`) and
@@ -91,16 +117,15 @@ clock times out, **ends** (`abort_flag` goes negative, which the frame loop read
 Pinned by `test/test_crash_fx.py` (every branch, mutation-verified) and organically by
 `test/test_leg_drive.py`'s idle-to-time-out drives.
 
-**The tally is wired on-target (slice 2 tail).** `demo_main.c`'s frame loop now calls
-`rm_crash_fx_update` every frame at the per-frame tail (before `apply_player`, so the drawn HUD sees
-this frame's tally — the same order `equiv._Candidate.step` established). When `abort_flag` goes
-negative — the leg end — the demo **restarts the current leg** from its boot state (the same reset the
-`R` key uses, which re-seeds every field slice 1 made persistent: `abort_flag`, `crash_frame`,
-`hud_crash_timer`, `time_left`, `crash_lap`, the HUD-text score/rollover region, `marker_pending`).
-This is a documented stand-in for the unported intermission / `init_leg` handoff (see the call site).
-Proven on the 68000 by the idle leg-end trace above: `hud_crash_timer` arms 0x5b at the time-out,
-decays negative by frame 128, `abort_flag` arms 0xffff at 129, and the leg restarts at 130 (state
-reset visible; the demo runs on cleanly, no hang).
+**The tally is wired on-target.** `demo_main.c`'s `game_update_step` calls `rm_crash_fx_update` every
+frame at the per-frame tail (before `apply_player`, so the drawn HUD sees this frame's tally — the same
+order `equiv._Candidate.step` established). When `abort_flag` goes negative — the leg end — the shell
+now runs the REAL between-legs flow (slice C, above): `rm_update_highscore` → `rm_flow_game_over_enter`
+→ the intermission → `rm_flow_game_over_exit` → the leg select → the next leg. (The old leg-restart
+stand-in — restart the current leg from its `R`-key boot state on `abort_flag < 0` — is gone.) The
+idle leg-end path is still proven on the 68000 by the autodrive trace (`hud_crash_timer` arms 0x5b at
+the time-out, decays negative, `abort_flag` arms 0xffff), and the flow-trace run then shows that leg
+end flowing through highscore → intermission → leg select → a new leg start.
 
 **The leg START is now native** (`rm_init_leg` in `src/gameplay.c`, homed with the gobj prefix as in
 recreate's own gameplay.c). It reproduces `g_init_leg`'s eleven phases across the native owner structs
@@ -127,11 +152,11 @@ dropped.
 
 Still unported (documented at each call site, per convention): off-frame sound (INITTUNE/INITFX/
 TURNOFF, the VBL vector; `rev_reload` aliases `lean_frame` and is invisible to every compared
-surface — verified, not assumed); and the record-driven mode-2/4/6 palette / screen-offset events in
-`game_update_course_advance`'s tail. The intermission / results / highscore flow AROUND `init_leg`
-(the `game_over_flag++` handoff the frame loop takes once `abort_flag` goes negative) is now ported
-host-side (flow slice B, above); wiring it into the demo in place of the native leg-restart stand-in
-is slice C — the on-target game shell.
+surface — verified, not assumed); the record-driven mode-2/4/6 palette / screen-offset events in
+`game_update_course_advance`'s tail; and the interactive high-score name-entry tail + the attract
+input-replay (both off-image seams the game shell documents). The intermission / results / highscore
+flow AROUND `init_leg` is ported (slice B) AND now composed on-target in place of the leg-restart
+stand-in (slice C, above).
 
 ### What the ring port did and did not fix
 
@@ -246,20 +271,31 @@ Three build flags, all off in normal builds, set via `DEMO_EXTRA_CFLAGS`:
 DEMO_EXTRA_CFLAGS="-DDEMO_DUMP_STAGE=0" bash render/atari/build_demo.sh
 
 # drive a fixed script headlessly and log per-frame course state to SCREEN.BIN (9 BE words/frame:
-# frame, read_pos, row_ctr, speed, rpm, collision_lock, hud_crash_timer, view_wrapped, abort_flag)
+# frame, read_pos, row_ctr, speed, rpm, collision_lock, hud_crash_timer, view_wrapped, abort_flag).
+# Under DEMO_AUTODRIVE the trace is dumped on race-loop EXIT — whichever comes first, the leg end
+# (abort_flag < 0) or the DEMO_TRACE frame budget — then the run quits rather than entering the
+# between-legs flow (which would poll a dead keyboard under headless Hatari and hang).
 DEMO_EXTRA_CFLAGS="-DDEMO_AUTODRIVE=600 -DDEMO_TRACE=600 -DAUTODRIVE_STEER_AFTER=100000" \
   bash render/atari/build_demo.sh
 
 # drive the IDLE leg-end path (no throttle, shortened bonus clock) to prove the tally ends the leg on
-# the 68000: hud_crash_timer arms 0x5b, decays negative, abort_flag arms, the loop restarts the leg.
-# AUTODRIVE_BASE_INPUT=0 idles; DEMO_TIME_LEFT shortens the clock so the time-out lands in ~130 frames.
+# the 68000: hud_crash_timer arms 0x5b, decays negative, abort_flag arms — SCREEN.BIN then holds the
+# leg-end frames (the last record has abort_flag = 0xffff, ~frame 129), because the dump fires on the
+# leg end, not only at the frame budget. AUTODRIVE_BASE_INPUT=0 idles; DEMO_TIME_LEFT shortens the clock.
 DEMO_EXTRA_CFLAGS="-DDEMO_AUTODRIVE=160 -DDEMO_TRACE=160 -DAUTODRIVE_BASE_INPUT=0 \
   -DAUTODRIVE_STEER_AFTER=100000 -DDEMO_TIME_LEFT=6" bash render/atari/build_demo.sh
 
-# interactive session: log every raw IKBD byte + the per-frame trace to KEYLOG.BIN on quit
-DEMO_EXTRA_CFLAGS="-DDEMO_KEYLOG -DDEMO_TRACE=2000 -Wa,--defsym,KBD_RAWLOG=1" \
+# drive the WHOLE game shell (slice C) headlessly and log the flow's phase transitions to SCREEN.BIN:
+# boot leg times out (DEMO_TIME_LEFT) -> update_highscore -> intermission (A->B->C->D->restart, the
+# phases shortened by DEMO_FLOW_FAST so a cycle fits a bounded run) -> auto-abort -> leg select -> a
+# fresh fire starts a leg -> the loop closes. DEMO_FLOW_AUTO scripts the inputs; DEMO_FLOW_TRACE writes
+# the (tag, leg, aux) phase log. Decode with the run_flow helper (see the flow-trace section).
+DEMO_EXTRA_CFLAGS="-DDEMO_FLOW_AUTO -DDEMO_FLOW_FAST -DDEMO_FLOW_TRACE -DDEMO_TIME_LEFT=6" \
   bash render/atari/build_demo.sh
 ```
+
+(The old `-DDEMO_KEYLOG` raw-IKBD-byte log is gone: the slice-C rewrite of demo_main.c dropped it, and
+the IKBD-noise investigation it served is a closed dead end — "The IKBD is not the problem", below.)
 
 `run_hatari.RUN_VBLS` defaults to 4000, which is **not enough for a long trace** — a frame costs
 ~200 ms (≈10 vbls; measured by the 2026-07-22 full-frame bench, see STATUS "Perf"), so a 600-frame
@@ -268,6 +304,24 @@ run needs ~60000 and a raised `timeout=`. Set both when driving headlessly, or t
 
 A trace run necessarily reports `DIFF` from `run_demo.py`: `golden.bin` is frame 0 and the dump is
 frame N (or telemetry). That is the run working, not failing — a `MATCH` there would mean nothing moved.
+
+### The flow phase trace (slice C)
+
+`DEMO_FLOW_TRACE` writes the between-legs flow's PHASE-transition log to SCREEN.BIN (padded to a full
+framebuffer so the standard runner picks it up): word 0 = the record count, then `(tag, leg, aux)`
+triples. The tags are the flow boundaries — `LEG_START` / `LEG_END` / `HISCORE`, the intermission's
+`INT_PROLOGUE` / `PHASEA_BREAK` / `PHASEB` / `PHASEC_DONE` / `PHASED_ADVANCE` / `PHASED_RESTART` /
+`ABORT`, and the leg select's `SELECT_ENTER` / `SELECT_FIRE` / `SELECT_IDLE`. A headless run of the
+`DEMO_FLOW_AUTO` build reads these back to confirm the loop closes. The observed log (RUN_VBLS 150000,
+DEMO_FLOW_FAST + DEMO_TIME_LEFT=6): `LEG_START 0` → `LEG_END 0 (abort_flag 0xffff)` → `HISCORE 0` →
+`INT_PROLOGUE` → `PHASEA_BREAK` → `PHASEB 1` → `PHASEC_DONE (6 frames)` → `PHASED_ADVANCE 1,2,3,4` →
+`PHASED_RESTART 0` → `INT_PROLOGUE`/`INT_ABORT` → `SELECT_ENTER` → `SELECT_FIRE 0` → `LEG_START 0` — a
+full attract cycle **A→B→C→D→restart**, the leg-select **fire** starting a leg, and a timed-out leg
+reaching the intermission and returning to the leg select (the **whole loop closes**). The attract
+Phase C also RACES the picked leg (leg 1 here) through the real pipeline for 6 frames without hanging —
+on-target evidence that a non-zero leg's race runs. Decode with a runner that sets `RUN_VBLS` high and
+parses the log words (a `run_flow.py` scratch helper; the trace is the on-target guard, as `make test`
+never runs demo_main.c).
 
 ## Commands
 

@@ -142,6 +142,21 @@ def main():
         ("fixture_legtime", win(adapter.A_legtime_src, adapter.IL_LEGTIME_BYTES)),
     ]
 
+    # ---- between-legs flow (slice C): the two baked program-data arrays the shell needs that do NOT
+    # live inside the obj-low blob. The intermission_poll control table sits inline in the program CODE
+    # (below OBJ_LOW_BASE), and the default hi-score table is init_scoretable's deterministic output —
+    # baked as a SEED the shell copies into RAM at boot (rm_update_highscore mutates it), exactly as
+    # fixture_hud_text seeds hud_text_ram. Everything else the flow draws is either arena-resident (poll
+    # source graphic, num sprites, buf_a strings) or already inside the obj-low blob (layout tables,
+    # header/credit strings, per-row palette bytes, the phase palettes) — offsets below.
+    hs_seed = bytearray(img)                            # init_scoretable writes only A_highscore_table
+    equiv._run_pipeline(hs_seed, ("g_init_scoretable",))
+    flow_arrays = [
+        ("fixture_poll_blits", win(adapter.POLL_BLITS_OFF, adapter.FLOW_POLL_BLITS_BYTES)),
+        ("fixture_highscore",  bytes(hs_seed[adapter.A_highscore_table:
+                                             adapter.A_highscore_table + adapter.FLOW_HIGHSCORE_BYTES])),
+    ]
+
     # Where each arena-resident asset sits, so demo_main.c can point at the loaded arena. All are
     # offsets from a named region base in include/assets.h, never absolute addresses.
     course_mask_off = leg * adapter.COURSE_LEG_STRIDE + adapter.COURSE_MASK_OFF
@@ -152,12 +167,39 @@ def main():
         f"#define ARENA_COURSE_MASK_OFF {course_mask_off}",         # tables + this: per-leg collision-flag longs
         f"#define ARENA_DASH_SRC_OFF    {adapter.DASH_SRC_OFF}",    # gfx + this: dashboard graphic
         f"#define ARENA_NUM_SPRITES_OFF {adapter.NUM_GLYPH_BUF_OFF}",  # gfx + this: digit sprites
-        f"#define DEMO_LEG_INDEX        {leg}",                     # the leg the demo drives (RmEventCtx.leg)
+        f"#define DEMO_LEG_INDEX        {leg}",                     # the leg the demo BOOTS into (golden frame)
+        # The game shell (slice C) can start ANY leg the leg-select picks, so it computes the per-leg
+        # stream / collision-mask pointers at runtime from these bases (the per-leg ARENA_COURSE_*_OFF
+        # above stay for bench_main.c, which only ever stages leg DEMO_LEG_INDEX).
+        f"#define COURSE_LEG_STRIDE     {adapter.COURSE_LEG_STRIDE}",   # tables: per-leg stride in buf_a
+        f"#define ARENA_COURSE_STREAM_BASE {adapter.COURSE_STREAM_OFF}",  # tables + leg*STRIDE + this
+        f"#define ARENA_COURSE_MASK_BASE   {adapter.COURSE_MASK_OFF}",    # tables + leg*STRIDE + this
+        # The between-legs flow's arena-resident asset offsets (poll source graphic + the two buf_a
+        # string blocks). All are offsets from a named region base, never absolute addresses.
+        f"#define ARENA_POLL_SRC_OFF    {adapter.POLL_SRC_OFF}",    # gfx + this: intermission_poll source
+        f"#define ARENA_LEG_NAMES_OFF   {adapter.FLOW_LEG_STR_OFF}",  # tables + this: INT leg-times / results digits
+        f"#define ARENA_ROW_NAMES_OFF   {adapter.FLOW_ROW_STR_OFF}",  # tables + this: results row-2 label strings
     ]
 
     def low(addr):                                 # offset of a STATIC/bss table within fixture_obj_low
         assert OBJ_LOW_BASE <= addr < OBJ_LOW_END, f"{addr:#x} outside the obj-low blob"
         return addr - OBJ_LOW_BASE
+
+    # The between-legs flow's obj-low-resident program data: the intermission / results layout tables,
+    # the header / credit strings, the per-row palette-byte cursor, and the four phase palettes (all
+    # inside [OBJ_LOW_BASE, OBJ_LOW_END), so the shell points at fixture_obj_low + these). The palettes
+    # are an off-image seam (the byte-compare is palette-agnostic); the addresses are recreate's addrs.h.
+    A_INT_PAL_A, A_LEG_SELECT_PAL = 0x17fe2, 0x17f62   # INT_PAL_A ; INT_PAL_D == leg-select palette
+    flow_defines = [
+        f"#define OBJ_LOW_INT_HEADER    {low(adapter.A_int_header)}",   # fade_step copyright header string
+        f"#define OBJ_LOW_INT_SEC1      {low(adapter.A_int_tbl1)}",     # draw_intermission section-1 layout
+        f"#define OBJ_LOW_INT_SEC3      {low(adapter.A_int_tbl3)}",     # draw_intermission section-3 layout
+        f"#define OBJ_LOW_INT_CREDITS   {low(adapter.A_int_credits)}",  # section-3 credit strings
+        f"#define OBJ_LOW_LEG_TITLE     {low(adapter.A_leg_title)}",    # results row-1 concatenated labels
+        f"#define OBJ_LOW_LEG_ROW_PAL   {low(adapter.A_leg_row_palette)}",  # results row-2 palette cursor
+        f"#define OBJ_LOW_PAL_INT_A     {low(A_INT_PAL_A)}",            # intermission prologue palette
+        f"#define OBJ_LOW_PAL_LEG_SELECT {low(A_LEG_SELECT_PAL)}",      # leg-select / results-carousel palette
+    ]
 
     # pose / course are read only for the informational print below; rm_init_leg produces the demo's
     # actual leg-start state at boot, so no per-leg scalar is baked here any more.
@@ -182,6 +224,8 @@ def main():
         out.append(hud._c_array(name, data))
     for name, data in obj_arrays:
         out.append(hud._c_array(name, data))
+    for name, data in flow_arrays:
+        out.append(hud._c_array(name, data))
     out.append(hud._c_array("fixture_palette", palette))
     out.append("")
     # The per-leg leg-start STATE is no longer baked: rm_init_leg (src/gameplay.c) produces it at demo
@@ -197,7 +241,7 @@ def main():
     # HudState from these so bench_draw_hud renders the same leg-start HUD its recon oracle does (see
     # the `st` note above). The demo does not use them — its HUD is derived by apply_player.
     out += hud.hud_state_defines(st)
-    out += [""] + arena_defines + [""]
+    out += [""] + arena_defines + [""] + flow_defines + [""]
 
     # ---- draw_game_objects: the table OFFSETS within fixture_obj_low (program-data table locations,
     # not baked state). The per-leg object / prefix / sprite / player / event START scalars that used

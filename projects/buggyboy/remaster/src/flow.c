@@ -28,7 +28,6 @@ uint32_t rm_check_abort(uint16_t input_state, uint16_t input_prev) {
 
 /* ---- intermission phase steps (intermission.c) ---- */
 #define INT_TIMER_WRAP  0x5c       /* Phase-A timer reloads here when it underflows */
-#define INT_SCROLL_GATE 0x49       /* timer >= this advances the scroll one step */
 #define INT_LEGS        5          /* legs cycled by the attract loop */
 #define INT_D_DWELL     0x1a       /* Phase-D per-leg dwell (frames before advancing) */
 

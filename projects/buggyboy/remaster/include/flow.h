@@ -126,6 +126,8 @@ typedef struct {
 #define INT_TIMER_INIT  0x3b       /* int_timer seed */
 #define INT_FRAME_INIT  0x14       /* int_frame seed (Phase-A scroll dwell) */
 #define INT_C_FRAMES    0x96       /* Phase-C demo runs this many frames before advancing to Phase D */
+#define INT_SCROLL_GATE 0x49       /* Phase-A: int_timer >= this advances the scroll one step (rm_int_stepA;
+                                    * the host's DEMO_FLOW_FAST prologue seeds the timer against it too) */
 
 /* check_abort @0x128ea — abort (RM_ABORT_CODE) when the live input low byte is present AND differs
  * from the baseline; else 0 (the non-blocking console read is a no-key seam). Pure function of the

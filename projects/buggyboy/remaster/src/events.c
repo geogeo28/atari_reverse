@@ -388,12 +388,19 @@ void rm_course_probe(RmEventCtx *c) {
 #define LABEL_CLEAR_STRIDE 8
 #define LABEL_CLEAR_ROWS   4
 
-static void init_leg_dash(RmEventCtx *c) {
-    uint16_t leg = c->leg;
-    const uint8_t *seed = c->assets->buf_a + DASH_MARKER_TBL + leg * 4;
+/* Seed the current leg's dash-marker coordinates into EventState (the collision-probe origin). Split
+ * out of init_leg_dash so the game shell can re-seed the marker after it zeroes EventState at a leg
+ * start WITHOUT rebuilding the dashboard graphic (which would disturb the frame-0 golden). */
+static void seed_dash_marker(RmEventCtx *c) {
+    const uint8_t *seed = c->assets->buf_a + DASH_MARKER_TBL + c->leg * 4;
     c->ev->dash_y   = seed[0];
     c->ev->dash_bit = seed[1];
     c->ev->dash_x   = be16(seed + 2);
+}
+
+static void init_leg_dash(RmEventCtx *c) {
+    uint16_t leg = c->leg;
+    seed_dash_marker(c);
 
     const uint8_t *src = c->assets->dash_raw + sx16((uint16_t)(leg * DASH_LEG_STRIDE));
     uint8_t *dst = c->gfx + RM_DASH_SRC_OFF;
@@ -439,6 +446,21 @@ static void draw_leg_labels(RmEventCtx *c) {
     }
     probe_collision(c);
 }
+
+/* Public entry for the between-legs game shell (slice C): rebuild the current leg's dashboard graphic
+ * in the arena (+ seed the dash marker), so the leg-select / results-carousel / attract-demo screens
+ * show the right dashboard for c->leg. This is init_leg_dash alone — NOT draw_leg_labels, which the
+ * remaster folds a collision probe into (it is the leg-0 checkpoint handler, not a pure label draw), so
+ * calling it outside the event path would arm a spurious crash. The label overlay is a documented gfx
+ * seam in the shell (see demo_main.c). */
+void rm_init_leg_dash(RmEventCtx *c) { init_leg_dash(c); }
+
+/* Re-seed ONLY the dash marker for c->leg (not the dashboard graphic). The shell calls this at every
+ * leg start: start_leg zeroes EventState, and rm_init_leg preserves rather than seeds the marker, so
+ * without this the leg-select-fire / R-restart / boot legs would drive with a (0,0) collision-probe
+ * origin. Marker-only so the frame-0 golden (which compares the draw pipeline on a pre-staged leg-0
+ * image, no leg-init) is untouched — the graphic rebuild stays with the leg-change paths. */
+void rm_seed_leg_dash_marker(RmEventCtx *c) { seed_dash_marker(c); }
 
 /* ---- checkpoint banner scroll (recreate sprite.c draw_checkpoint_anim @0x1442c) ---- */
 

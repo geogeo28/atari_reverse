@@ -51,11 +51,45 @@ def test_frame0_views_derived_before_first_draw():
     # apply_player copies the physics ground_view_off into the object-list cursor + the ground view.
     assert re.search(r"objlist->obj_scan_off\s*=\s*p->ground_view_off", demo), (
         "apply_player no longer copies ground_view_off into obj_scan_off")
-    # start_leg (which runs apply_player + ring_views_refresh) must precede the frame-0 draw.
-    assert "apply_player(player, pose, road, scroll, sprite, hud, ground, objlist, ev)" in demo, (
-        "start_leg no longer derives the frame-0 views via apply_player")
-    start_pos = demo.index("start_leg(&player")
-    draw_pos = demo.index("draw_frame(screen_buf(shown)")
+    # start_leg derives the frame-0 views: apply_player then ring_views_refresh, in that order over the
+    # Shell handle (intervening lines allowed — e.g. the race-palette set start_leg now ends with).
+    assert re.search(r"apply_player\(s\);[\s\S]{0,400}?ring_views_refresh\(", demo), (
+        "start_leg no longer derives the frame-0 views via apply_player + ring_views_refresh")
+    # The boot fast path starts leg DEMO_LEG_INDEX (which runs start_leg's view derivation) before the
+    # frame-0 draw — else frame 0's object passes read their display records at the wrong cursor.
+    start_pos = demo.index("start_leg(s, DEMO_LEG_INDEX)")
+    draw_pos = demo.index("draw_frame(s, screen_buf(s->shown))")
     assert start_pos < draw_pos, (
         "start_leg (which derives the frame-0 views) must run before the frame-0 draw — else frame 0's "
         "object passes read their display records at the wrong cursor (the 1110-byte golden DIFF)")
+
+
+def test_bind_leg_course_bases_match_the_adapter():
+    """demo_main.c bind_leg points at leg L's course records via
+    arena.tables + L*COURSE_LEG_STRIDE + ARENA_COURSE_{STREAM,MASK}_BASE. gen_demo_fixture bakes those
+    three constants straight from the adapter, and adapter.course_stream / coll_mask read each leg with
+    the SAME L*STRIDE + OFF arithmetic — pin the two paths agree for every leg so a stride/offset drift
+    can't send bind_leg to the wrong leg's stream or collision mask (a silent wrong-course race)."""
+    gen = (adapter.REMASTER / "render/atari/gen_demo_fixture.py").read_text()
+    for define, attr in (("COURSE_LEG_STRIDE", "COURSE_LEG_STRIDE"),
+                         ("ARENA_COURSE_STREAM_BASE", "COURSE_STREAM_OFF"),
+                         ("ARENA_COURSE_MASK_BASE", "COURSE_MASK_OFF")):
+        assert re.search(rf"#define {define} +\{{adapter\.{attr}\}}", gen), (
+            f"{define} no longer emitted from adapter.{attr}")
+
+    # bind_leg's own arithmetic, and the adapter's per-leg readers, must both be L*STRIDE + OFF.
+    demo = (adapter.REMASTER / "render/atari/demo_main.c").read_text()
+    assert re.search(r"leg_off\s*=\s*\(uint32_t\)leg\s*\*\s*COURSE_LEG_STRIDE", demo)
+    assert re.search(r"leg_off\s*\+\s*ARENA_COURSE_STREAM_BASE", demo)
+    assert re.search(r"leg_off\s*\+\s*ARENA_COURSE_MASK_BASE", demo)
+    src = (adapter.REMASTER / "test/adapter.py").read_text()
+    assert re.search(r"leg \* COURSE_LEG_STRIDE \+ COURSE_STREAM_OFF", src)
+    assert re.search(r"leg \* COURSE_LEG_STRIDE \+ COURSE_MASK_OFF", src)
+
+    # The five per-leg bases bind_leg computes, spelled out — they must stay distinct (a zero stride
+    # would overlap every leg onto leg 0's records) and match the adapter constant arithmetic.
+    stride = adapter.COURSE_LEG_STRIDE
+    stream_offs = [leg * stride + adapter.COURSE_STREAM_OFF for leg in range(5)]
+    mask_offs = [leg * stride + adapter.COURSE_MASK_OFF for leg in range(5)]
+    assert stream_offs == [0x5ce0, 0x7ce0, 0x9ce0, 0xbce0, 0xdce0], stream_offs
+    assert mask_offs == [0x5d48, 0x7d48, 0x9d48, 0xbd48, 0xdd48], mask_offs
