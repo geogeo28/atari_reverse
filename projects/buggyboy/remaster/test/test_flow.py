@@ -42,6 +42,28 @@ def test_leg_results_matches(leg, flip, capsys):
 
 
 @pytest.mark.parametrize("flip", [0, 4])
+def test_divider_matches(flip, capsys):
+    lib = equiv._lib()
+    image = equiv.flow_background(leg=0, warmup=60, flip=flip)
+    diff, footprint = equiv.compare_divider(lib, image)
+    with capsys.disabled():
+        print(f"  divider flip={flip}: footprint={footprint} diff={diff}")
+    assert footprint > 0, "draw_divider drew nothing"
+    assert diff == 0, f"draw_divider differs from recreate in {diff} bytes (flip={flip})"
+
+
+@pytest.mark.parametrize("flip", [0, 4])
+def test_panel5_matches(flip, capsys):
+    lib = equiv._lib()
+    image = equiv.flow_background(leg=0, warmup=60, flip=flip)
+    diff, footprint = equiv.compare_panel5(lib, image)
+    with capsys.disabled():
+        print(f"  panel5 flip={flip}: footprint={footprint} diff={diff}")
+    assert footprint > 0, "draw_panel5 drew nothing"
+    assert diff == 0, f"draw_panel5 differs from recreate in {diff} bytes (flip={flip})"
+
+
+@pytest.mark.parametrize("flip", [0, 4])
 def test_fade_step_matches(flip, capsys):
     lib = equiv._lib()
     image = equiv.flow_background(leg=0, warmup=60, scroll=0x30, flip=flip)

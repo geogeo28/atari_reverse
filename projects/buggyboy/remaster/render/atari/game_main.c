@@ -53,6 +53,7 @@
 #include "game.h"
 #include "flow.h"
 #include "screen.h"
+#include "st.h"              /* be16/wr16/be32/wr32 for the leg-start palette flash */
 #include "game_fixture.h"
 #include "game_frame.h"
 
@@ -71,6 +72,7 @@ void rm_course_events(RmEventCtx *c);
 void rm_crash_fx_update(RmEventCtx *c);
 void rm_init_leg_dash(RmEventCtx *c);      /* rebuild the current leg's dashboard graphic + seed the marker (src/events.c) */
 void rm_seed_leg_dash_marker(RmEventCtx *c); /* re-seed ONLY the dash marker (marker-only; src/events.c) */
+void rm_draw_leg_labels(RmEventCtx *c);    /* draw the current leg's place-name labels onto the dashboard (src/events.c) */
 void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *scroll,
                  CourseRing *ring, EventState *ev, GobjPrefixState *gobj, SpriteState *sprite,
                  uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset,
@@ -210,6 +212,12 @@ typedef struct {
     FlowState *flow;
     const RmIntermissionAssets *int_assets;
     const RmResultsAssets *res_assets;  /* .leg is passed per-call, so one bundle covers all 5 legs */
+    /* leg-start "get ready" palette flash (ip_start_leg): a mutable 16-word palette the flash animates
+     * from the obj-low flash tables (s->low + OBJ_LOW_LEG_FLASH_*). Off-image — only the colours a
+     * human/screenshot sees; the byte-compare and the golden are palette-agnostic. The flash's frame
+     * counter is the SHARED GobjPrefixState.anim_counter (pfx above), not a private one, so it carries
+     * the preceding race/demo's animation history exactly as the original does (see op_flash_frame). */
+    uint8_t *leg_start_pal;             /* mutable 16-word (32-byte) palette buffer */
     /* the flow driver's input sources (the shell owns the IKBD seam): the joystick/key poll and the
      * leg-select F-key pick. main repoints them per flow call (attract vs leg-select, auto vs keyboard),
      * exactly as the old composition passed an input_of / fkey_leg function pointer down. */
@@ -625,9 +633,10 @@ static int load_assets(RmArena *arena) {
 #ifdef GAME_FLOW_FAST
 #define FLOW_PHASE_C_FRAMES 6      /* debug: a handful of demo frames instead of INT_C_FRAMES (0x96) */
 #define FLOW_IDLE_INIT      8      /* debug: short leg-select idle so the attract path is reachable */
+#define FLOW_FLASH_FRAMES   4      /* debug: a short get-ready flash so a headless trace stays snappy */
 static const FlowTuning flow_tuning = {
     .prologue_scroll = 1, .prologue_frame = 0, .prologue_timer = INT_SCROLL_GATE + 2,
-    .phase_c_frames = FLOW_PHASE_C_FRAMES, .idle_init = FLOW_IDLE_INIT,
+    .phase_c_frames = FLOW_PHASE_C_FRAMES, .idle_init = FLOW_IDLE_INIT, .flash_frames = FLOW_FLASH_FRAMES,
 };
 #else
 static const FlowTuning flow_tuning = RM_FLOW_TUNING_DEFAULT;
@@ -651,6 +660,9 @@ static void op_draw_intermission(void *ctx, int16_t scroll) {
 static void op_draw_results(void *ctx, uint16_t leg) {
     Shell *s = ctx; rm_draw_leg_results(back_buffer(s), s->res_assets, leg);
 }
+static void op_draw_panel5(void *ctx) {
+    Shell *s = ctx; rm_draw_panel5(back_buffer(s), s->res_assets);
+}
 static void op_set_palette(void *ctx, int which) {
     set_palette(ctx, which == RM_FLOW_PAL_INT_A ? OBJ_LOW_PAL_INT_A : OBJ_LOW_PAL_LEG_SELECT);
 }
@@ -658,6 +670,50 @@ static void op_show(void *ctx) { show_surface(ctx); }
 
 static void op_rebuild_dash(void *ctx, uint16_t leg) {
     Shell *s = ctx; s->ctx->leg = leg; rm_init_leg_dash(s->ctx);
+}
+
+/* Draw leg `leg`'s place-name labels onto the dashboard graphic in the arena (+ the folded marker
+ * probe), so the race / demo / get-ready dashboard shows them (recreate g_draw_leg_labels). The
+ * dashboard graphic must already be built for `leg` (op_rebuild_dash) — this overlays the labels. */
+static void op_draw_leg_labels(void *ctx, uint16_t leg) {
+    Shell *s = ctx; s->ctx->leg = leg; rm_draw_leg_labels(s->ctx);
+}
+
+/* One leg-start "get ready" flash frame (ip_start_leg @0x2c96): animate six leg_start_palette entries
+ * from the obj-low flash tables and load them, pacing two Vsyncs. Off-image (palette + vblank only), so
+ * it never touches the framebuffer — the driver owns the 121-frame COUNT (a wrong length diverges the
+ * driver test); this owns the per-frame palette animation the byte-compare cannot see. */
+#define IP_FLASH_MASK_A   0x0c        /* (anim_counter & this) >> 1 -> flash_tbl_a word index */
+#define IP_FLASH_MASK_BC  0x1c        /* ...tbl_b / tbl_c */
+#define IP_FLASH_MASK_D   0x06        /* ...tbl_d long index (raw, not halved) */
+#define IP_PAL_OFF_A      0x1c        /* leg_start_pal byte offsets the flash writes */
+#define IP_PAL_OFF_B0     0x08
+#define IP_PAL_OFF_B1     0x1e
+#define IP_PAL_OFF_C      0x0c
+#define IP_PAL_OFF_D0     0x12
+#define IP_PAL_OFF_D1     0x16
+#define LEG_START_PAL_BYTES 0x20      /* 16 ST palette words the flash animates + Setpalette loads */
+static void op_flash_frame(void *ctx) {
+    Shell *s = ctx;
+    /* Read + increment the SHARED anim_counter (GobjPrefixState, bumped +2/frame by the race's object
+     * animation), +1 per flash frame, exactly as ip_start_leg does (intermission.c:406 reads/writes
+     * A_anim_counter). The flash runs during the leg select, BEFORE start_leg re-zeroes the prefix, so
+     * the counter still holds the preceding race/demo's value — the get-ready flash carries the
+     * animation history like the arcade, rather than always restarting from 0. Off-image seam. */
+    uint16_t counter = (uint16_t)(s->pfx->anim_counter + 1);
+    s->pfx->anim_counter = counter;
+    uint16_t ia  = (uint16_t)((counter & IP_FLASH_MASK_A) >> 1);
+    uint16_t ibc = (uint16_t)((counter & IP_FLASH_MASK_BC) >> 1);
+    uint16_t id  = (uint16_t)(counter & IP_FLASH_MASK_D);
+    uint8_t *pal = s->leg_start_pal;
+    wr16(pal + IP_PAL_OFF_A,  be16(s->low + OBJ_LOW_LEG_FLASH_A + ia));
+    wr16(pal + IP_PAL_OFF_B0, be16(s->low + OBJ_LOW_LEG_FLASH_B + ibc));
+    wr16(pal + IP_PAL_OFF_B1, be16(s->low + OBJ_LOW_LEG_FLASH_B + ibc));
+    wr16(pal + IP_PAL_OFF_C,  be16(s->low + OBJ_LOW_LEG_FLASH_C + ibc));
+    wr32(pal + IP_PAL_OFF_D0, be32(s->low + OBJ_LOW_LEG_FLASH_D + id));
+    wr32(pal + IP_PAL_OFF_D1, be32(s->low + OBJ_LOW_LEG_FLASH_D + 4 + id));
+    Setpalette(pal);
+    Vsync(); Vsync();
 }
 
 /* Phase B (0x27fe tail): (re)init the picked demo leg, rebuild its dashboard, override the engine
@@ -670,6 +726,10 @@ static void op_start_demo_leg(void *ctx, uint16_t leg) {
     Shell *s = ctx;
     start_leg(s, leg);
     op_rebuild_dash(ctx, leg);   /* bind_leg already set ctx->leg; rebuild the picked leg's dashboard */
+    /* Labels MUST draw AFTER the rebuild: rm_init_leg_dash rebuilds the dashboard GRAPHIC from scratch,
+     * wiping anything overlaid on it, so labels drawn first would be erased. Same order as the fire-start
+     * get-ready (flow_start_leg: rebuild_dash then draw_leg_labels) and intermission.c:268-271. */
+    op_draw_leg_labels(ctx, leg); /* Phase B (intermission.c:268-271): the demo dashboard shows the labels */
     s->player->rpm_cap = INT_B_RPM_CAP;
     s->player->rpm_add = INT_B_RPM_ADD;
     for (int i = 0; i < INT_B_WARMUP; i++) game_update_step(s, ATTRACT_DEMO_INPUT);   /* settle, no draw */
@@ -698,8 +758,10 @@ static void op_event(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux) {
 static const FlowOps flow_ops = {
     .poll_input = op_poll_input, .quit_requested = op_quit_requested, .fkey_leg = op_fkey_leg,
     .draw_fade = op_draw_fade, .draw_intermission = op_draw_intermission, .draw_results = op_draw_results,
-    .set_palette = op_set_palette, .show = op_show, .rebuild_dash = op_rebuild_dash,
-    .start_demo_leg = op_start_demo_leg, .run_demo_frame = op_run_demo_frame, .event = op_event,
+    .draw_panel5 = op_draw_panel5, .set_palette = op_set_palette, .show = op_show,
+    .rebuild_dash = op_rebuild_dash, .draw_leg_labels = op_draw_leg_labels,
+    .start_demo_leg = op_start_demo_leg, .run_demo_frame = op_run_demo_frame,
+    .flash_frame = op_flash_frame, .event = op_event,
 };
 
 /* Interactive leg-select input sources. read_fkey returns 0..4 for an F1..F5 tap (a direct leg pick,
@@ -775,7 +837,10 @@ void main(void) {
 
     const uint8_t *low = fixture_obj_low;
 
-    GobjPrefixState pfx;
+    /* Zero-initialised (unlike the other per-race owner structs, which start_leg zeroes before use):
+     * the get-ready flash reads pfx.anim_counter during the FIRST leg select, before any start_leg, so
+     * it must start at 0 to match the original's zero-at-boot A_anim_counter (see op_flash_frame). */
+    GobjPrefixState pfx = {0};
     const GobjPrefixAssets pfx_assets = {
         .anim_word_tbl = low + OBJ_LOW_ANIM_WORD_TBL,
         .anim_coloridx_tbl = low + OBJ_LOW_ANIM_COLORIDX, .color_pairs = low + OBJ_LOW_COLOR_PAIRS,
@@ -846,7 +911,12 @@ void main(void) {
         .num_sprites = arena.gfx + ARENA_NUM_SPRITES_OFF, .num_glyph_tbl = fixture_num_glyph_tbl,
         .gfx = arena.gfx, .title = low + OBJ_LOW_LEG_TITLE, .leg_palette = low + OBJ_LOW_LEG_ROW_PAL,
         .row_names = arena.tables + ARENA_ROW_NAMES_OFF, .leg_digits = arena.tables + ARENA_LEG_NAMES_OFF,
+        .panel5_str = low + OBJ_LOW_PANEL5_STR,
     };
+    /* The leg-start flash's mutable palette, seeded from the baked leg_start_palette (obj-low blob); the
+     * flash animates six of its entries per frame (op_flash_frame). Off-image (palette only). */
+    uint8_t leg_start_pal_ram[LEG_START_PAL_BYTES];
+    memcpy(leg_start_pal_ram, low + OBJ_LOW_LEG_START_PAL, sizeof leg_start_pal_ram);
 
     Shell shell = {
         .arena = &arena, .player = &player, .course = &course, .pose = &pose, .scroll = &scroll,
@@ -858,6 +928,7 @@ void main(void) {
         .low = low, .event_assets = &event_assets, .ctx = &ctx, .stream = arena.tables, .leg = GAME_LEG_INDEX,
         .race_input_prev = 0, .flow = &flow,
         .int_assets = &int_assets, .res_assets = &res_assets,
+        .leg_start_pal = leg_start_pal_ram,
         .input_source = read_input, .fkey_source = read_fkey,   /* repointed per flow call below */
     };
     Shell *s = &shell;

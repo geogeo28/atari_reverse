@@ -447,13 +447,20 @@ static void draw_leg_labels(RmEventCtx *c) {
     probe_collision(c);
 }
 
-/* Public entry for the between-legs game shell (slice C): rebuild the current leg's dashboard graphic
- * in the arena (+ seed the dash marker), so the leg-select / results-carousel / attract-demo screens
- * show the right dashboard for c->leg. This is init_leg_dash alone — NOT draw_leg_labels, which the
- * remaster folds a collision probe into (it is the leg-0 checkpoint handler, not a pure label draw), so
- * calling it outside the event path would arm a spurious crash. The label overlay is a documented gfx
- * seam in the shell (see game_main.c). */
+/* Public entry for the between-legs game shell: rebuild the current leg's dashboard graphic in the
+ * arena (+ seed the dash marker), so the leg-select / results-carousel / attract-demo screens show the
+ * right dashboard for c->leg. This is init_leg_dash alone — the ORIGINAL keeps init_leg_dash and
+ * draw_leg_labels as two distinct steps (intermission.c: init_leg_dash then draw_leg_labels), so this
+ * stays labels-free and the flow calls rm_draw_leg_labels separately where the original does. */
 void rm_init_leg_dash(RmEventCtx *c) { init_leg_dash(c); }
+
+/* Public entry for the flow's Phase B + fire-start "get ready" (recreate g_draw_leg_labels @0x9f90,
+ * called from intermission.c's Phase B and ip_start_leg): draw c->leg's place-name labels onto the
+ * dashboard graphic, mask the marker's start cells, and advance the dashboard progress-marker one step
+ * (the folded probe_collision — which only WALKS the marker along the mini-map, it does NOT arm a crash,
+ * so it is safe here exactly as the original runs it in these fresh-state contexts). Byte-identical to
+ * the leg-0 checkpoint handler's own call (pinned by test_events' checkpoint_leg0 case). */
+void rm_draw_leg_labels(RmEventCtx *c) { draw_leg_labels(c); }
 
 /* Re-seed ONLY the dash marker for c->leg (not the dashboard graphic). The shell calls this at every
  * leg start: start_leg zeroes EventState, and rm_init_leg preserves rather than seeds the marker, so

@@ -47,10 +47,13 @@ Hatari needs a 4 MiB machine (`--memsize 4`); `build/` and `disk/` are gitignore
 
 ## The game (`BUGGYBOY.PRG`)
 
-`BUGGYBOY.PRG` is the playable game: it boots into the **leg select**, fire starts the chosen leg, and
-the whole outer loop (leg select → race → leg end → highscore → intermission attract cycle → back to
-the leg select) runs on a real 68000. It ships **without sound** — the sound path is a documented,
-unported seam. The whole Phase-A render pipeline is driven by the ported **player physics** — you drive
+`BUGGYBOY.PRG` is the playable game: it boots into the **leg select** — the course map plus the
+5-entry **leg-name menu** (`rm_draw_panel5`) — and fire starts the chosen leg through the "get ready"
+screen (the results + menu frozen while the leg-start palette flashes, the dashboard **place-name
+labels** (`rm_draw_leg_labels`) drawn on for the race that follows — they are NOT on the interactive
+select screen, only the get-ready and the Phase-B attract demo). The whole outer loop (leg select → race → leg end →
+highscore → intermission attract cycle → back to the leg select) runs on a real 68000. It ships
+**without sound** — the sound path is a documented, unported seam. The whole Phase-A render pipeline is driven by the ported **player physics** — you drive
 the buggy. Each frame is game_update-then-draw, as the original orders it:
 
 1. `rm_player_update` (`src/player.c`) — the driving model: throttle → engine rpm → speed, speed →

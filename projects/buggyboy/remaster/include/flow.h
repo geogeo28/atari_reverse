@@ -56,6 +56,7 @@ typedef struct {
     const uint8_t *leg_palette;    /* per-row colour bytes, indexed [i - leg] (cursor at leg 0) */
     const uint8_t *row_names;      /* row-2 per-leg label strings (buf_a + 0x848) */
     const uint8_t *leg_digits;     /* leg time/score digit string (buf_a + 0x884) */
+    const uint8_t *panel5_str;     /* the 5-entry leg-name menu's concatenated labels (program data, 0x1803c) */
 } RmResultsAssets;
 
 /* 9-entry table-driven block copy from `src` (buf_c + 0x32c80) into fb at +0x990. */
@@ -69,6 +70,14 @@ void rm_fade_step(Framebuffer *fb, const RmIntermissionAssets *a, int16_t int_sc
 
 /* The per-leg results screen for leg `leg` (0-4). */
 void rm_draw_leg_results(Framebuffer *fb, const RmResultsAssets *a, uint16_t leg);
+
+/* The leg-select divider: a colour-3 rectangle plus its two vertical bounding lines (recreate's
+ * g_draw_divider @text.c). The building block of the leg-name menu panel below. */
+void rm_draw_divider(Framebuffer *fb, const uint8_t *color_pairs);
+
+/* The 5-entry leg-name menu drawn over the leg-select / get-ready screens (recreate's g_draw_panel5):
+ * the divider then five colour-7 labels chained from one concatenated string (a->panel5_str). */
+void rm_draw_panel5(Framebuffer *fb, const RmResultsAssets *a);
 
 /* ---- the between-legs FLOW state machine (slice B) ----------------------------------------------
  *
@@ -223,12 +232,17 @@ typedef struct {
     void (*draw_fade)(void *ctx, int16_t scroll);          /* prologue backdrop (fade_step) */
     void (*draw_intermission)(void *ctx, int16_t scroll);  /* Phase-A scrolling hi-score screen */
     void (*draw_results)(void *ctx, uint16_t leg);         /* Phase-D + leg-select results screen */
+    void (*draw_panel5)(void *ctx);                        /* the 5-entry leg-name menu over the results screen */
     void (*set_palette)(void *ctx, int which);             /* RM_FLOW_PAL_* */
     void (*show)(void *ctx);                               /* flip the back buffer to the screen */
     /* demo-leg pipeline (Phase B/C — the shell's game structs; the render is a seam pinned by the leg drives) */
     void (*rebuild_dash)(void *ctx, uint16_t leg);         /* point the event ctx at `leg` + rebuild its dashboard */
+    void (*draw_leg_labels)(void *ctx, uint16_t leg);      /* draw `leg`'s place-name labels onto the dashboard graphic */
     void (*start_demo_leg)(void *ctx, uint16_t leg);       /* Phase B: (re)init + settle + paint the demo leg */
     void (*run_demo_frame)(void *ctx);                     /* Phase C: one demo game-update + render + show */
+    /* leg-start "get ready" flash (init_playfield's ip_start_leg @0x2c96): one frame of the 121-frame
+     * leg_start_palette animation (a palette write + a vblank wait — an off-image seam; see game_main.c). */
+    void (*flash_frame)(void *ctx);
     /* phase-transition trace hook (RM_FLOW_EVT_*) */
     void (*event)(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux);
 } FlowOps;
@@ -242,10 +256,18 @@ typedef struct {
     int16_t  prologue_timer;    /* Phase-A int_timer seed */
     uint16_t phase_c_frames;    /* Phase-C demo length (frames before advancing to Phase D) */
     uint16_t idle_init;         /* leg-select idle-countdown reload (expiry -> one attract cycle) */
+    uint16_t flash_frames;      /* leg-start "get ready" palette-flash length (ip_start_leg) */
 } FlowTuning;
 
+/* The leg-start flash length. Remaster: IP_FLASH_FRAMES = 121 = the total frame COUNT, run half-open
+ * (flow.c's `for (n = 0; n < flash_frames; n++)`). Recreate's same-named constant is 0x78 = 120 — a dbf
+ * bound (`for (n = 0x78; n >= 0; n--)`) that iterates 0x78 + 1 = 121 times, the SAME 121 frames. So this
+ * value already IS recreate's iteration count; do NOT add 1 to it. */
+#define IP_FLASH_FRAMES 121
+
 #define RM_FLOW_TUNING_DEFAULT { .prologue_scroll = INT_SCROLL_INIT, .prologue_frame = INT_FRAME_INIT, \
-    .prologue_timer = INT_TIMER_INIT, .phase_c_frames = INT_C_FRAMES, .idle_init = IP_IDLE_INIT }
+    .prologue_timer = INT_TIMER_INIT, .phase_c_frames = INT_C_FRAMES, .idle_init = IP_IDLE_INIT, \
+    .flash_frames = IP_FLASH_FRAMES }
 
 /* One attract cycle (g_intermission's for-body): prologue -> Phase A (scroll) -> Phase B (warm the demo
  * leg) -> Phase C (play it) -> Phase D (results carousel). Returns RM_FLOW_CONTINUE (run another cycle),

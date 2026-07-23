@@ -275,7 +275,7 @@ def test_game_flow(leg, capsys):
 # timing — see _default_tuning) and game_main's GAME_FLOW_FAST ({scroll=1, frame=0, timer=0x4b, idle=8}).
 def _fast_tuning(**over):
     base = dict(prologue_scroll=4, prologue_frame=1, prologue_timer=adapter.INT_TIMER_WRAP,
-                phase_c_frames=6, idle_init=0x40)
+                phase_c_frames=6, idle_init=0x40, flash_frames=3)   # 3 flash frames: enough to pin the count
     base.update(over)
     return adapter.FlowTuning(**base)
 
@@ -285,7 +285,7 @@ def _fast_tuning(**over):
 def _default_tuning():
     return adapter.FlowTuning(prologue_scroll=adapter.INT_SCROLL_INIT, prologue_frame=adapter.INT_FRAME_INIT,
                               prologue_timer=adapter.INT_TIMER_INIT, phase_c_frames=adapter.INT_C_FRAMES,
-                              idle_init=adapter.IP_IDLE_INIT)
+                              idle_init=adapter.IP_IDLE_INIT, flash_frames=adapter.IP_FLASH_FRAMES)
 
 
 def _bg():
@@ -418,6 +418,25 @@ def test_flow_driver_leg_select_fkey():
     assert not mism, mism[:6]
     assert stats["result"] == adapter.RM_FLOW_START, stats["result"]
     assert stats["events"] == [EVT.RM_FLOW_EVT_SELECT_ENTER, EVT.RM_FLOW_EVT_SELECT_FIRE], stats["events"]
+
+
+def test_flow_driver_get_ready_flash(capsys):
+    """The fire-start "get ready" (ip_start_leg): starting a leg redraws the results + the leg-name menu
+    twice, adds the dashboard labels, then flashes the palette exactly tuning.flash_frames frames — all
+    locksteped vs the oracle mirror. Pins draw_panel5 (leg select redraw + the two get-ready frames), the
+    single draw_leg_labels, and the flash length. A dropped panel5, a dropped flash frame, or a wrong
+    flash length in the driver diverges from the mirror (mutation-verified)."""
+    lib = equiv._lib()
+    tuning = _fast_tuning(flash_frames=5)
+    mism, stats = equiv.compare_flow_leg_select(lib, _bg(), tuning, poll_of=lambda i: 0x80 if i >= 2 else 0)
+    with capsys.disabled():
+        print(f"  get-ready: panel5={stats['panel5']} labels={stats['leg_labels']} flash={stats['flash']}")
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_START, stats["result"]
+    assert stats["flash"] == tuning.flash_frames == 5, stats["flash"]
+    assert stats["leg_labels"] == 1, stats["leg_labels"]      # ip_start_leg draws the labels once
+    # panel5 is drawn on every leg-select redraw (>=1 nav frame before fire) AND twice in the get-ready.
+    assert stats["panel5"] >= 3, stats["panel5"]
 
 
 def test_flow_driver_leg_select_nav():

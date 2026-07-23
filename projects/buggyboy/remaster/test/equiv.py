@@ -125,6 +125,11 @@ def _lib():
     lib.rm_draw_leg_results.argtypes = [ctypes.POINTER(adapter.Framebuffer),
                                         ctypes.POINTER(adapter.RmResultsAssets), ctypes.c_uint16]
     lib.rm_draw_leg_results.restype = None
+    lib.rm_draw_divider.argtypes = [ctypes.POINTER(adapter.Framebuffer), u8p]
+    lib.rm_draw_divider.restype = None
+    lib.rm_draw_panel5.argtypes = [ctypes.POINTER(adapter.Framebuffer),
+                                   ctypes.POINTER(adapter.RmResultsAssets)]
+    lib.rm_draw_panel5.restype = None
     # ---- flow state machine (slice B) ----
     fsp = ctypes.POINTER(adapter.FlowState)
     lib.rm_check_abort.argtypes = [ctypes.c_uint16, ctypes.c_uint16]
@@ -1757,6 +1762,27 @@ def compare_leg_results(lib, image):
     return _whole_fb(bytes(fb.px), base, ref_fb)
 
 
+def compare_divider(lib, image):
+    """recreate g_draw_divider vs remaster rm_draw_divider; whole draw-buffer diff (a rectangle + two
+    vertical lines, all in the draw buffer). Returns (diff_bytes, footprint)."""
+    base, ref_fb = _flow_ref(image, "g_draw_divider")
+    color_pairs = adapter._u8buf(image, adapter.A_color_pairs, adapter.COLOR_PAIRS_BYTES)
+    fb = _flow_fb(base)
+    lib.rm_draw_divider(ctypes.byref(fb),
+                        ctypes.cast(color_pairs, ctypes.POINTER(ctypes.c_uint8)))
+    return _whole_fb(bytes(fb.px), base, ref_fb)
+
+
+def compare_panel5(lib, image):
+    """recreate g_draw_panel5 vs remaster rm_draw_panel5; whole draw-buffer diff (divider + five labels).
+    Returns (diff_bytes, footprint)."""
+    base, ref_fb = _flow_ref(image, "g_draw_panel5")
+    a, _keep = adapter.results_assets(image)
+    fb = _flow_fb(base)
+    lib.rm_draw_panel5(ctypes.byref(fb), ctypes.byref(a))
+    return _whole_fb(bytes(fb.px), base, ref_fb)
+
+
 def compare_fade_step(lib, image):
     """recreate g_fade_step vs remaster rm_fade_step; whole draw-buffer diff (fade_step fills the whole
     screen then overlays). Returns (diff_bytes, footprint)."""
@@ -2188,6 +2214,9 @@ class _DriverRecorder:
         def draw_res(_ctx, leg):
             self._rec("draw_res", (leg,))
 
+        def draw_panel5(_ctx):
+            self._rec("draw_panel5")
+
         def set_pal(_ctx, which):
             self._rec("palette", (which,))
 
@@ -2197,20 +2226,28 @@ class _DriverRecorder:
         def rebuild(_ctx, leg):
             self._rec("rebuild_dash", (leg,))
 
+        def leg_labels(_ctx, leg):
+            self._rec("draw_leg_labels", (leg,))
+
         def start_demo(_ctx, leg):
             self._rec("start_demo_leg", (leg,))
 
         def run_demo(_ctx):
             self._rec("run_demo_frame")
 
+        def flash(_ctx):
+            self._rec("flash_frame")
+
         def event(_ctx, tag, leg, aux):
             self._rec("event", (tag, leg, aux))
 
         keep = [adapter._CB_POLL_INPUT(poll), adapter._CB_QUIT(quit_), adapter._CB_FKEY(fkey),
                 adapter._CB_DRAW_SCROLL(draw_fade), adapter._CB_DRAW_SCROLL(draw_int),
-                adapter._CB_DRAW_LEG(draw_res), adapter._CB_SET_PALETTE(set_pal), adapter._CB_VOID(show),
-                adapter._CB_DRAW_LEG(rebuild), adapter._CB_DRAW_LEG(start_demo),
-                adapter._CB_VOID(run_demo), adapter._CB_EVENT(event)]
+                adapter._CB_DRAW_LEG(draw_res), adapter._CB_VOID(draw_panel5),
+                adapter._CB_SET_PALETTE(set_pal), adapter._CB_VOID(show),
+                adapter._CB_DRAW_LEG(rebuild), adapter._CB_DRAW_LEG(leg_labels),
+                adapter._CB_DRAW_LEG(start_demo), adapter._CB_VOID(run_demo),
+                adapter._CB_VOID(flash), adapter._CB_EVENT(event)]
         return adapter.FlowOps(*keep), keep
 
 
@@ -2337,6 +2374,25 @@ def _mirror_game_over(m, tuning):
     return r
 
 
+def _mirror_start_leg(m, tuning, fire_aux):
+    """Oracle mirror of flow_start_leg (ip_start_leg's "get ready": announce the fire, redraw the
+    results + leg-name menu twice, add the dashboard labels, then flash the leg-start palette for
+    tuning.flash_frames frames). The counters do not change here, so every snapshot matches."""
+    leg = m._leg()
+    m._rec("event", (adapter.RM_FLOW_EVT_SELECT_FIRE, leg, fire_aux))
+    m._rec("rebuild_dash", (leg,))
+    m._rec("draw_res", (leg,))
+    m._rec("draw_panel5")
+    m._rec("show")
+    m._rec("draw_res", (leg,))
+    m._rec("draw_panel5")
+    m._rec("show")
+    m._rec("draw_leg_labels", (leg,))
+    for _ in range(tuning.flash_frames):
+        m._rec("flash_frame")
+    return adapter.RM_FLOW_START
+
+
 def _mirror_leg_select(m, tuning):
     """Oracle mirror of rm_flow_leg_select (g_init_playfield's leg-select loop @0x2af6). The nav + reload
     and the fire edge come from g_init_playfield_nav / g_init_playfield_fire; the idle-countdown loop and
@@ -2346,26 +2402,28 @@ def _mirror_leg_select(m, tuning):
     while True:
         drawn_leg = 0xffff
         _w16(ref, adapter.A_idle_countdown, tuning.idle_init & 0xffff)
+        # leg-select palette at the OUTER-loop entry (0x2af6), BEFORE the F-key branch — mirrors flow.c's
+        # move of set_palette out of the inner redraw, so an F-key pick's get-ready is not under a stale
+        # palette. The original loads it once here and not in the inner default redraw (0x2b9e).
+        m._rec("palette", (adapter.RM_FLOW_PAL_LEG_SELECT,))
         while True:
             fk = sc.fkey()
             m._rec("fkey", (fk,))
             if fk >= 0:
                 _w16(ref, adapter.A_leg_index, fk & 0xffff)
-                m._rec("event", (adapter.RM_FLOW_EVT_SELECT_FIRE, m._leg(), 1))
-                return adapter.RM_FLOW_START
+                return _mirror_start_leg(m, tuning, 1)
             if m._leg() != drawn_leg:
                 drawn_leg = m._leg()
                 m._rec("rebuild_dash", (drawn_leg,))
             m._rec("draw_res", (m._leg(),))
-            m._rec("palette", (adapter.RM_FLOW_PAL_LEG_SELECT,))
+            m._rec("draw_panel5")
             m._rec("show")
             inp = sc.poll()
             m._rec("poll", (inp,))
             _shift_ref_input(ref, inp)
             m._nav(rbuf)
             if m._fire(rbuf):
-                m._rec("event", (adapter.RM_FLOW_EVT_SELECT_FIRE, m._leg(), 0))
-                return adapter.RM_FLOW_START
+                return _mirror_start_leg(m, tuning, 0)
             q = sc.quit()
             m._rec("quit", (q,))
             if q:
@@ -2397,6 +2455,9 @@ def _diff_trajectory(actual, expected, cand_result, ref_result):
                  draws=sum(1 for rec in actual if rec[0] in ("draw_fade", "draw_int", "draw_res")),
                  shows=sum(1 for rec in actual if rec[0] == "show"),
                  run_demo=sum(1 for rec in actual if rec[0] == "run_demo_frame"),
+                 panel5=sum(1 for rec in actual if rec[0] == "draw_panel5"),
+                 leg_labels=sum(1 for rec in actual if rec[0] == "draw_leg_labels"),
+                 flash=sum(1 for rec in actual if rec[0] == "flash_frame"),
                  palettes=[rec[1][0] for rec in actual if rec[0] == "palette"],
                  events=events)
     return mism, stats

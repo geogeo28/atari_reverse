@@ -193,15 +193,25 @@ def main():
     # inside [OBJ_LOW_BASE, OBJ_LOW_END), so the shell points at fixture_obj_low + these). The palettes
     # are an off-image seam (the byte-compare is palette-agnostic); the addresses are recreate's addrs.h.
     A_INT_PAL_A, A_LEG_SELECT_PAL = 0x17fe2, 0x17f62   # INT_PAL_A ; INT_PAL_D == leg-select palette
+    # The leg-start "get ready" flash source: the four animation tables and the palette it seeds from
+    # (addrs.h A_leg_flash_tbl_a..d @0x17f12/0x17f1a/0x17f2a/0x17f3a, A_leg_start_pal @0x17f82).
+    A_LEG_FLASH_A, A_LEG_FLASH_B, A_LEG_FLASH_C, A_LEG_FLASH_D = 0x17f12, 0x17f1a, 0x17f2a, 0x17f3a
+    A_LEG_START_PAL = 0x17f82
     flow_defines = [
         f"#define OBJ_LOW_INT_HEADER    {low(adapter.A_int_header)}",   # fade_step copyright header string
         f"#define OBJ_LOW_INT_SEC1      {low(adapter.A_int_tbl1)}",     # draw_intermission section-1 layout
         f"#define OBJ_LOW_INT_SEC3      {low(adapter.A_int_tbl3)}",     # draw_intermission section-3 layout
         f"#define OBJ_LOW_INT_CREDITS   {low(adapter.A_int_credits)}",  # section-3 credit strings
         f"#define OBJ_LOW_LEG_TITLE     {low(adapter.A_leg_title)}",    # results row-1 concatenated labels
+        f"#define OBJ_LOW_PANEL5_STR    {low(adapter.A_panel5_str)}",   # leg-name menu: 5 concatenated labels
         f"#define OBJ_LOW_LEG_ROW_PAL   {low(adapter.A_leg_row_palette)}",  # results row-2 palette cursor
         f"#define OBJ_LOW_PAL_INT_A     {low(A_INT_PAL_A)}",            # intermission prologue palette
         f"#define OBJ_LOW_PAL_LEG_SELECT {low(A_LEG_SELECT_PAL)}",      # leg-select / results-carousel palette
+        f"#define OBJ_LOW_LEG_FLASH_A   {low(A_LEG_FLASH_A)}",          # leg-start flash tables (off-image palette)
+        f"#define OBJ_LOW_LEG_FLASH_B   {low(A_LEG_FLASH_B)}",
+        f"#define OBJ_LOW_LEG_FLASH_C   {low(A_LEG_FLASH_C)}",
+        f"#define OBJ_LOW_LEG_FLASH_D   {low(A_LEG_FLASH_D)}",
+        f"#define OBJ_LOW_LEG_START_PAL {low(A_LEG_START_PAL)}",        # baked seed for the flashed palette
     ]
 
     # pose / course are read only for the informational print below; rm_init_leg produces the game's

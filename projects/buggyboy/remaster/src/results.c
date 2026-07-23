@@ -96,3 +96,48 @@ void rm_draw_leg_results(Framebuffer *fb, const RmResultsAssets *a, uint16_t leg
 
     cell_dashboard(fb->px, (Offset)sx16(DASH_DST), a->gfx, DASH_SRC_OFF);
 }
+
+/* ---- leg-name menu panel (recreate's g_draw_divider / draw_panel / g_draw_panel5 @text.c) ----
+ *
+ * The right-hand leg-select menu: a divider (a colour-3 rectangle bounded by two vertical lines) then
+ * a column of colour-7 labels chained from one concatenated string. It overlays the leg-select and
+ * get-ready screens; the attract results-carousel (Phase D) does NOT draw it. */
+#define DIVIDER_FILL_DST   0x4118      /* fill_rect: dst, colour 3, DIVIDER_FILL_CELLS_M1 x _ROWS_M1 */
+#define DIVIDER_FILL_COLOR 3
+#define DIVIDER_FILL_CELLS_M1 0xd
+#define DIVIDER_FILL_ROWS_M1  0x57
+#define DIVIDER_LINE_DST   0x411a      /* first vertical line; the second is +DIVIDER_LINE_COL2 */
+#define DIVIDER_LINE_COL2  0x68
+#define DIVIDER_LINE_ROWS  0x58        /* 88 rows */
+#define DIVIDER_LINE_LEFT  0x00ff      /* plane pattern at the first line */
+#define DIVIDER_LINE_RIGHT 0xff00      /* plane pattern at the second line */
+#define PANEL_TEXT_COLOR   7
+
+void rm_draw_divider(Framebuffer *fb, const uint8_t *color_pairs) {
+    rm_fill_rect(fb, color_pairs, DIVIDER_FILL_DST, DIVIDER_FILL_COLOR,
+                 DIVIDER_FILL_CELLS_M1, DIVIDER_FILL_ROWS_M1);
+    uint8_t *px = fb->px;
+    Offset line = (Offset)sx16(DIVIDER_LINE_DST);
+    for (int row = 0; row < DIVIDER_LINE_ROWS; row++, line += ROW_STRIDE) {
+        wr16(px + line, DIVIDER_LINE_LEFT);
+        wr16(px + line + DIVIDER_LINE_COL2, DIVIDER_LINE_RIGHT);
+    }
+}
+
+/* Draw the divider then `count` colour-7 labels from one concatenated string, chaining the cursor
+ * (recreate's draw_panel: each text run resumes where the previous one ended). */
+static void draw_panel(Framebuffer *fb, const uint8_t *color_pairs, const uint8_t *font,
+                       const uint8_t *str, const uint16_t *label_dst, int count) {
+    rm_draw_divider(fb, color_pairs);
+    Plane4 fill_lo, fill_hi;
+    rm_color_fill(color_pairs, PANEL_TEXT_COLOR, COLOR_MASK_TEXT, &fill_lo, &fill_hi);
+    Offset si = 0;
+    for (int i = 0; i < count; i++)
+        si = rm_glyph_run(fb, (Offset)sx16(label_dst[i]), fill_lo, fill_hi, font, str, si,
+                          TEXT_MAX_CELLS_M1, 0);
+}
+
+void rm_draw_panel5(Framebuffer *fb, const RmResultsAssets *a) {
+    static const uint16_t dst[] = {0x4620, 0x5028, 0x5a30, 0x6438, 0x6e20};
+    draw_panel(fb, a->color_pairs, a->font, a->panel5_str, dst, 5);
+}

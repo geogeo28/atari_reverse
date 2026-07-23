@@ -287,6 +287,7 @@ A_int_credits = 0x180f4                            # section-3 credit strings (p
 A_int_header = 0x18002                             # fade_step copyright header string (program data)
 A_highscore_table = 0x18266                        # hi-score table: 5 legs x 9 rows, stride 0x80
 A_leg_title = 0x18028                              # results row-1 concatenated labels (program data)
+A_panel5_str = 0x1803c                             # leg-name menu: 5 concatenated labels (program data)
 A_leg_row_palette = 0x17e9f                        # results row-2 per-row colour bytes, indexed [i-leg]
 POLL_SRC_OFF = 0x32c80                             # intermission_poll source = buf_c + this
 POLL_BLITS_OFF = 0x1296a                           # inline 9 x {src_off,dst_off,dims} words (program data)
@@ -304,6 +305,7 @@ FLOW_CREDITS_BYTES = 0x100
 FLOW_HEADER_BYTES = 0x40
 FLOW_LEGNAMES_BYTES = 0x60                         # buf_a + 0x884: 5 rows x 0xc + digit-sprite reads
 FLOW_TITLE_BYTES = 0x40                            # "F1..F5" chained labels (20 bytes) + slack
+FLOW_PANEL5_BYTES = 0x56                           # panel5 5 labels: 0x1803c up to panel3_str (0x18092)
 FLOW_RESULT_GFX_BYTES = 0x14000                    # buf_c base: result panels + dashboard reach ~0x137a0
 FLOW_LEG_PALETTE_PAD = 8                           # leg_palette cursor: index [i-leg] reaches -4..+4
 FLOW_LEG_STR_OFF = 0x884                            # buf_a: INT sec-2 leg-name sprites / results leg-digits
@@ -340,6 +342,7 @@ INT_SCROLL_INIT, INT_TIMER_INIT, INT_FRAME_INIT = 0x63, 0x3b, 0x14
 INT_C_FRAMES = 0x96
 INT_TIMER_WRAP = 0x5c                               # Phase-A timer reload on underflow (src/flow.c)
 IP_IDLE_INIT = 0x15e                                # leg-select idle-countdown reload (include/flow.h)
+IP_FLASH_FRAMES = 121                               # leg-start "get ready" flash length (include/flow.h)
 
 # ---- the between-legs FLOW COMPOSITION driver (slice D) ----
 # Driver return codes, palette selectors, phase-transition event tags (mirror include/flow.h).
@@ -1094,7 +1097,8 @@ class RmResultsAssets(ctypes.Structure):
                 ("title", ctypes.POINTER(ctypes.c_uint8)),
                 ("leg_palette", ctypes.POINTER(ctypes.c_uint8)),
                 ("row_names", ctypes.POINTER(ctypes.c_uint8)),
-                ("leg_digits", ctypes.POINTER(ctypes.c_uint8))]
+                ("leg_digits", ctypes.POINTER(ctypes.c_uint8)),
+                ("panel5_str", ctypes.POINTER(ctypes.c_uint8))]
 
 
 def draw_buffer_addr(image):
@@ -1147,6 +1151,7 @@ def results_assets(image):
     title = _u8buf(image, A_leg_title, FLOW_TITLE_BYTES)
     row_names = _u8buf(image, buf_a + FLOW_ROW_STR_OFF, FLOW_LEGNAMES_BYTES)
     leg_digits = _u8buf(image, buf_a + FLOW_LEG_STR_OFF, FLOW_LEGNAMES_BYTES)
+    panel5_str = _u8buf(image, A_panel5_str, FLOW_PANEL5_BYTES)
     # leg_palette is indexed [i - leg] (i,leg in 0..4), so window it with pad below and point at leg 0.
     palette = _u8buf(image, A_leg_row_palette - FLOW_LEG_PALETTE_PAD, 2 * FLOW_LEG_PALETTE_PAD)
     p = ctypes.POINTER(ctypes.c_uint8)
@@ -1154,9 +1159,9 @@ def results_assets(image):
         ctypes.cast(color_pairs, p), ctypes.cast(font, p), ctypes.cast(num_sprites, p),
         ctypes.cast(num_glyph_tbl, p), ctypes.cast(gfx, p), ctypes.cast(title, p),
         ctypes.cast(ctypes.byref(palette, FLOW_LEG_PALETTE_PAD), p),
-        ctypes.cast(row_names, p), ctypes.cast(leg_digits, p))
+        ctypes.cast(row_names, p), ctypes.cast(leg_digits, p), ctypes.cast(panel5_str, p))
     return assets, (color_pairs, font, num_sprites, num_glyph_tbl, gfx, title, row_names,
-                    leg_digits, palette)
+                    leg_digits, palette, panel5_str)
 
 
 # ---- between-legs FLOW state machine (slice B) ----
@@ -1209,15 +1214,17 @@ _CB_EVENT = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint16, ctypes.c_ui
 class FlowOps(ctypes.Structure):
     _fields_ = [("poll_input", _CB_POLL_INPUT), ("quit_requested", _CB_QUIT), ("fkey_leg", _CB_FKEY),
                 ("draw_fade", _CB_DRAW_SCROLL), ("draw_intermission", _CB_DRAW_SCROLL),
-                ("draw_results", _CB_DRAW_LEG), ("set_palette", _CB_SET_PALETTE), ("show", _CB_VOID),
-                ("rebuild_dash", _CB_DRAW_LEG), ("start_demo_leg", _CB_DRAW_LEG),
-                ("run_demo_frame", _CB_VOID), ("event", _CB_EVENT)]
+                ("draw_results", _CB_DRAW_LEG), ("draw_panel5", _CB_VOID),
+                ("set_palette", _CB_SET_PALETTE), ("show", _CB_VOID),
+                ("rebuild_dash", _CB_DRAW_LEG), ("draw_leg_labels", _CB_DRAW_LEG),
+                ("start_demo_leg", _CB_DRAW_LEG), ("run_demo_frame", _CB_VOID),
+                ("flash_frame", _CB_VOID), ("event", _CB_EVENT)]
 
 
 class FlowTuning(ctypes.Structure):
     _fields_ = [("prologue_scroll", ctypes.c_int16), ("prologue_frame", ctypes.c_int16),
                 ("prologue_timer", ctypes.c_int16), ("phase_c_frames", ctypes.c_uint16),
-                ("idle_init", ctypes.c_uint16)]
+                ("idle_init", ctypes.c_uint16), ("flash_frames", ctypes.c_uint16)]
 
 
 # The flow counters compared per driver step: every FlowState counter with stable timing at a callback

@@ -134,11 +134,32 @@ def test_ring_hard_to_reach_branches(branch, capsys):
     assert reached > 0, f"{branch} was never actually exercised, so it stays untested"
 
 
-def _defines(path, pattern):
-    """The `#define NAME literal` pairs in a C source file, as {name: int}."""
-    text = (equiv.adapter.REMASTER / path).read_text()
+def _defines(path, pattern, base=None):
+    """The `#define NAME literal` pairs in a C source file, as {name: int}. `base` defaults to the
+    remaster tree; pass adapter.RECREATE to parse recreate's canonical headers/sources."""
+    text = ((base or equiv.adapter.REMASTER) / path).read_text()
     return {name: int(literal, 0)
             for name, literal in re.findall(pattern, text, re.M)}
+
+
+def _py_hex_consts(path, names):
+    """{name: int} for `NAME = 0xHEX` and tuple `A, B = 0x1, 0x2` int assignments in a Python source,
+    for the given names. gen_game_fixture.py bakes its addresses as plain assignments, not #defines, so
+    _defines can't read them — this pins those hand-copied fixture constants against their C source."""
+    text = (equiv.adapter.REMASTER / path).read_text()
+    found = {}
+    for line in text.splitlines():
+        if "=" not in line or "==" in line:
+            continue
+        lhs, _, rhs = line.partition("=")
+        lnames = [t.strip() for t in lhs.split(",")]
+        rvals = [t.strip() for t in rhs.split("#")[0].split(",")]
+        if len(lnames) != len(rvals):
+            continue
+        for name, val in zip(lnames, rvals):
+            if name in names and re.fullmatch(r"0x[0-9a-fA-F]+", val):
+                found[name] = int(val, 0)
+    return found
 
 
 def test_python_constants_match_the_c():
@@ -226,7 +247,7 @@ def test_python_constants_match_the_c():
     assert equiv.adapter.HS_SCORE_REC_BYTES == flow_c["HS_RECORD_BYTES"]
     assert equiv.adapter.INT_TIMER_WRAP == flow_c["INT_TIMER_WRAP"]   # test_flow_machine's fast-tuning seed
     flow_h = _defines("include/flow.h",
-                      r"^#define\s+(RM_ABORT_CODE|RM_INT_A_\w+|RM_INT_D_\w+|INT_\w+|IP_IDLE_INIT)\s+(\w+)\s*(?:/\*.*)?$")
+                      r"^#define\s+(RM_ABORT_CODE|RM_INT_A_\w+|RM_INT_D_\w+|INT_\w+|IP_IDLE_INIT|IP_FLASH_FRAMES)\s+(\w+)\s*(?:/\*.*)?$")
     assert equiv.adapter.RM_ABORT_CODE == flow_h["RM_ABORT_CODE"]
     assert equiv.adapter.RM_INT_A_CONTINUE == flow_h["RM_INT_A_CONTINUE"]
     assert equiv.adapter.RM_INT_A_ABORT == flow_h["RM_INT_A_ABORT"]
@@ -239,3 +260,30 @@ def test_python_constants_match_the_c():
     assert equiv.adapter.INT_FRAME_INIT == flow_h["INT_FRAME_INIT"]
     assert equiv.adapter.INT_C_FRAMES == flow_h["INT_C_FRAMES"]
     assert equiv.adapter.IP_IDLE_INIT == flow_h["IP_IDLE_INIT"]   # the shipping leg-select idle reload
+    assert equiv.adapter.IP_FLASH_FRAMES == flow_h["IP_FLASH_FRAMES"]   # the shipping get-ready flash length
+
+    # The leg-start "get ready" flash constants (an OFF-IMAGE seam: no host test exercises op_flash_frame's
+    # palette arithmetic — the flow driver stubs the callback — so a drifted copy would animate the wrong
+    # palette entries on-target with the suite still green). Pin the two hand-copied sets equal to
+    # recreate's canonical definitions, per CLAUDE.md §5. This pins the VALUES only; the flash's arithmetic
+    # stays an on-target seam (see STATUS.md).
+    #   (a) the flash-table + seed ADDRESSES: gen_game_fixture.py's copies == recreate's addrs.h.
+    recr_addrs = _defines("include/addrs.h",
+                          r"^#define\s+(A_leg_flash_tbl_[abcd]|A_leg_start_pal)\s+(\w+)\s*(?:/\*.*)?$",
+                          base=equiv.adapter.RECREATE)
+    fixture_flash = _py_hex_consts("render/atari/gen_game_fixture.py",
+                                   ("A_LEG_FLASH_A", "A_LEG_FLASH_B", "A_LEG_FLASH_C",
+                                    "A_LEG_FLASH_D", "A_LEG_START_PAL"))
+    assert fixture_flash["A_LEG_FLASH_A"] == recr_addrs["A_leg_flash_tbl_a"]
+    assert fixture_flash["A_LEG_FLASH_B"] == recr_addrs["A_leg_flash_tbl_b"]
+    assert fixture_flash["A_LEG_FLASH_C"] == recr_addrs["A_leg_flash_tbl_c"]
+    assert fixture_flash["A_LEG_FLASH_D"] == recr_addrs["A_leg_flash_tbl_d"]
+    assert fixture_flash["A_LEG_START_PAL"] == recr_addrs["A_leg_start_pal"]
+    #   (b) the flash mask + palette-offset #defines: game_main.c's copies == recreate's intermission.c.
+    flash_pat = r"^#define\s+(IP_FLASH_MASK_\w+|IP_PAL_OFF_\w+)\s+(\w+)\s*(?:/\*.*)?$"
+    recr_flash = _defines("src/intermission.c", flash_pat, base=equiv.adapter.RECREATE)
+    game_flash = _defines("render/atari/game_main.c", flash_pat)
+    assert {"IP_FLASH_MASK_A", "IP_FLASH_MASK_BC", "IP_FLASH_MASK_D",
+            "IP_PAL_OFF_A", "IP_PAL_OFF_B0", "IP_PAL_OFF_B1",
+            "IP_PAL_OFF_C", "IP_PAL_OFF_D0", "IP_PAL_OFF_D1"} <= recr_flash.keys(), recr_flash
+    assert game_flash == recr_flash, (game_flash, recr_flash)

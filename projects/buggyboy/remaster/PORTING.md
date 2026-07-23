@@ -118,16 +118,29 @@ reseed (in `start_leg`, a host stub here) and the menu-race palette (set in `mai
 `rm_flow_leg_select` returns) — are NOT in the driver and stay guarded only by the on-target flow trace
 and the frame-0 golden. See `equiv.py`'s `compare_flow_*` + `_DriverRecorder` / `_MirrorRecorder`.
 
+The between-legs **sub-draws are now ported and wired**: `rm_draw_divider` / `rm_draw_panel5`
+(`src/results.c`, byte-exact vs `g_draw_divider` / `g_draw_panel5` — `test/test_flow.py`) draw the
+5-entry leg-name menu over the leg-select and "get ready" screens, and `rm_draw_leg_labels`
+(`src/events.c`, the existing folded-probe body exposed publicly) draws each leg's place-name labels
+onto the dashboard graphic in Phase B and the fire-start (matching `g_draw_leg_labels`; its folded
+`probe_collision` only WALKS the dashboard marker — it does not arm a crash — so it is safe in these
+fresh-state contexts exactly as the original runs it). The fire-start now runs the real `ip_start_leg`
+"get ready" sequence — redraw the results + menu twice, add the labels, then the **121-frame
+`leg_start_palette` flash** (a per-frame palette animation from the obj-low flash tables + a vblank
+wait; `op_flash_frame` in game_main.c). The driver (`src/flow.c`) owns the flash COUNT (a `FlowTuning`
+knob, pinned + mutation-verified in `test/test_flow_machine.py`); the palette animation itself is an
+off-image seam (Setpalette is palette-agnostic to the byte-compare, so the flash never touches the
+framebuffer). It adds frames but no new trace tags, so the `GAME_FLOW_AUTO` phase log is unchanged.
+
 The seams the shell stands in for, each documented at its call site in game_main.c: sound (never
 played), the exact Vsync cadence, the per-phase palette Setpalettes (off-image — the byte-compare is
-palette-agnostic; the 121-frame leg-start "get ready" palette flash is a plain frame wait), the
-interactive high-score NAME-ENTRY tail (update_highscore ranks + inserts the score so the results
-screen fills in, but the IKBD initials screen is not run — recreate defers it too), the attract DEMO's
-input-replay (Phase C holds throttle instead of replaying a recorded ghost), and `draw_panel5` / the
-folded-probe `draw_leg_labels` (unported sub-draws; the results screen still shows). `init_scoretable`'s
-output is baked as a program-data SEED (`fixture_highscore`) the shell copies into a mutable
-`highscore_ram` at boot, exactly as `fixture_hud_text` seeds `hud_text_ram` — the tiny init routine is
-not run on-target (its output is deterministic program data).
+palette-agnostic, including the leg-start flash's own animated palette), the interactive high-score
+NAME-ENTRY tail (update_highscore ranks + inserts the score so the results screen fills in, but the
+IKBD initials screen is not run — recreate defers it too), and the attract DEMO's input-replay (Phase C
+holds throttle instead of replaying a recorded ghost). `init_scoretable`'s output is baked as a
+program-data SEED (`fixture_highscore`) the shell copies into a mutable `highscore_ram` at boot, exactly
+as `fixture_hud_text` seeds `hud_text_ram` — the tiny init routine is not run on-target (its output is
+deterministic program data).
 
 Last verified: 2026-07-22. `make test` = **499 passed**; `run_golden.py` = **MATCH** (leg-0 frame-0 golden). Section 12's **object / marker
 ring** is ported (`CourseRing` in `include/game.h`, `rm_road_course_advance` in `src/course.c`) and

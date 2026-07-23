@@ -302,18 +302,44 @@ RmFlowResult rm_flow_game_over(FlowState *fs, const FlowOps *ops, void *ctx, con
     return r;
 }
 
+/* Fire-start "get ready" (ip_start_leg @0x2c96): announce the fire, redraw the leg-results + the
+ * leg-name menu twice, add the dashboard place-name labels (for the race dashboard that follows), then
+ * flash the leg_start_palette for t->flash_frames frames (a per-frame palette write + vblank wait — an
+ * off-image seam). The two Vsyncs/frame and the palette animation live in the shell's flash_frame op;
+ * the driver owns the frame COUNT so a wrong length / a dropped frame diverges the driver test. Shared
+ * by both start paths (the F-key direct pick and the joystick fire edge), each with its own trace aux. */
+static RmFlowResult flow_start_leg(FlowState *fs, const FlowOps *ops, void *ctx,
+                                   const FlowTuning *t, uint16_t fire_aux) {
+    ops->event(ctx, RM_FLOW_EVT_SELECT_FIRE, fs->leg_index, fire_aux);
+    ops->rebuild_dash(ctx, fs->leg_index);
+    ops->draw_results(ctx, fs->leg_index);
+    ops->draw_panel5(ctx);
+    ops->show(ctx);
+    ops->draw_results(ctx, fs->leg_index);
+    ops->draw_panel5(ctx);
+    ops->show(ctx);
+    ops->draw_leg_labels(ctx, fs->leg_index);
+    for (uint16_t n = 0; n < t->flash_frames; n++) ops->flash_frame(ctx);
+    return RM_FLOW_START;
+}
+
 RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t) {
     ops->event(ctx, RM_FLOW_EVT_SELECT_ENTER, fs->leg_index, 0);
     for (;;) {                                    /* outer loop: redraws + idle-timeout attract cycle */
         uint16_t drawn_leg = 0xffff;              /* != any leg (0..4): forces a dash rebuild on entry */
         fs->idle_countdown = t->idle_init;
+        /* Load the leg-select palette at the OUTER-loop entry (g_init_playfield @0x2af6,
+         * intermission.c:498), BEFORE the F-key branch below — so an F1..F5 direct pick reaches the
+         * get-ready flash under the leg-select palette, not the stale boot/Phase-D palette. The
+         * original sets it once here and NOT in the inner default redraw (0x2b9e), so we don't either.
+         * Off-image seam (palette only; the byte-compare is palette-agnostic). */
+        ops->set_palette(ctx, RM_FLOW_PAL_LEG_SELECT);
 
         for (;;) {                                /* per-frame loop (0x2b1a) */
             int fk = ops->fkey_leg(ctx);
             if (fk >= 0) {                        /* F1..F5 direct pick starts that leg */
                 fs->leg_index = (uint16_t)fk;
-                ops->event(ctx, RM_FLOW_EVT_SELECT_FIRE, fs->leg_index, 1);
-                return RM_FLOW_START;
+                return flow_start_leg(fs, ops, ctx, t, 1);
             }
             /* Rebuild the dashboard only when the selected leg changed (as Phase D rebuilds only on an
              * advance), not every idle frame — the graphic is identical between nav steps. */
@@ -322,15 +348,13 @@ RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, co
                 ops->rebuild_dash(ctx, fs->leg_index);
             }
             ops->draw_results(ctx, fs->leg_index);   /* default redraw (0x2b9e) */
-            ops->set_palette(ctx, RM_FLOW_PAL_LEG_SELECT);
+            ops->draw_panel5(ctx);                   /* the 5-entry leg-name menu (0x2b9e tail) */
             ops->show(ctx);
 
             flow_poll(fs, ops, ctx);                 /* joystick tail (0x2c00) */
             rm_init_playfield_nav(fs);
-            if (rm_init_playfield_fire(fs)) {
-                ops->event(ctx, RM_FLOW_EVT_SELECT_FIRE, fs->leg_index, 0);
-                return RM_FLOW_START;
-            }
+            if (rm_init_playfield_fire(fs))
+                return flow_start_leg(fs, ops, ctx, t, 0);
             if (ops->quit_requested(ctx)) return RM_FLOW_QUIT;
 
             int16_t next = (int16_t)(fs->idle_countdown - 1);   /* dbf (0x2c78) */
