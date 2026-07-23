@@ -133,9 +133,13 @@ off-image seam (Setpalette is palette-agnostic to the byte-compare, so the flash
 framebuffer). It adds frames but no new trace tags, so the `GAME_FLOW_AUTO` phase log is unchanged.
 
 The seams the shell stands in for, each documented at its call site in game_main.c: sound (never
-played), the exact Vsync cadence, the per-phase palette Setpalettes (off-image — the byte-compare is
-palette-agnostic, including the leg-start flash's own animated palette), and the attract DEMO's
-input-replay (Phase C holds throttle instead of replaying a recorded ghost). The interactive high-score
+played), the exact Vsync cadence, and the per-phase palette Setpalettes (off-image — the byte-compare is
+palette-agnostic, including the leg-start flash's own animated palette). **The attract DEMO's input is
+NOT a seam** (scouted 2026-07-23): the original does not replay a recorded ghost — it runs the demo with
+`game_over_flag != 0`, in which `game_update` forces the player input to a constant throttle (`if
+(game_over_flag != 0) uVar11 = 1`), and Phase C feeds the identical constant (`ATTRACT_DEMO_INPUT =
+RM_IN_ACCEL`). See STATUS's `game_update` row + the ATTRACT_DEMO_INPUT note in game_main.c for the
+mechanism and the one honest `p->game_over` nuance. The interactive high-score
 NAME-ENTRY tail is now PORTED + wired (slice F): the made/missed dispatch is `rm_flow_score_tail`
 (`src/flow.c`, not the shell, so `make test` pins the branch) — a leg-end score that made the table runs
 the initials screen (`rm_flow_name_entry` — `rm_draw_results_screen` per frame + a `TIME nn` countdown
@@ -220,8 +224,10 @@ dropped.
 
 Still unported (documented at each call site, per convention): off-frame sound (INITTUNE/INITFX/
 TURNOFF, the VBL vector; `rev_reload` aliases `lean_frame` and is invisible to every compared
-surface — verified, not assumed) — **that is now the LAST unported in-race feature**; and the attract
-input-replay (an off-image seam the game shell documents). The interactive high-score name-entry tail
+surface — verified, not assumed) — **that is now the LAST unported in-race feature**. (The attract demo
+input is NO LONGER listed as unported: it was never a replay — the original holds a constant throttle via
+`game_over_flag != 0`, which Phase C reproduces with `ATTRACT_DEMO_INPUT`; scouted 2026-07-23, see above.)
+The interactive high-score name-entry tail
 is now ported + wired (slice F, above). The intermission / results / highscore flow AROUND `init_leg`
 is ported (slice B) AND now composed on-target in place of the leg-restart stand-in (slice C, above).
 

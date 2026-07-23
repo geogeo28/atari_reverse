@@ -24,8 +24,14 @@
  *   - Vsync pacing / the flip: the shell flips at the vblank; the original's exact frame cadence is off.
  *   - Palette fades: the flow's per-phase palettes are Setpalette'd (an off-image seam — the byte-compare
  *     is palette-agnostic); the 121-frame leg-start "get ready" palette FLASH is a plain frame wait.
- *   - The attract DEMO's input-replay: the original plays a recorded ghost; here the attract Phase C
- *     holds throttle (a documented stand-in) so the attract demo actually drives the course.
+ *   - The attract DEMO's input: NOT a seam — the original does not replay a recorded ghost. It runs the
+ *     demo with game_over_flag != 0 (main @0x10100:314 / init_playfield @0x12af6:3946 both do
+ *     `game_over_flag++; intermission(); game_over_flag = 0`), and game_update forces the player input to
+ *     a constant throttle in that state (decomp game_update `uVar11 = input_state & 0xff8f; if
+ *     (game_over_flag != 0) uVar11 = 1`). So the demo simply holds accel; the road-edge clamp + the §6
+ *     auto-steer/crash script keep it on the course. Phase C feeds ATTRACT_DEMO_INPUT = RM_IN_ACCEL,
+ *     the identical constant. (The remaster reaches it via the explicit constant rather than by setting
+ *     the demo player's game_over — see the ATTRACT_DEMO_INPUT note below for the one honest nuance.)
  *
  * BOOT / GOLDEN PARITY: the golden harness (run_golden.py) byte-compares the FIRST painted frame (before
  * any physics) to recreate's pipeline on the leg-0 start (build/golden.bin). The SHIPPING build has no
@@ -716,8 +722,16 @@ static int load_assets(RmArena *arena) {
 #define INT_B_WARMUP   0x33        /* Phase-B settle: game_update iterations before the first draw */
 #define INT_B_RPM_CAP  0x5a        /* leg_flags_c90 high word (rev cap for the attract demo) */
 #define INT_B_RPM_ADD  0x0001      /* leg_flags_c90 low word (throttle step) */
-/* The attract demo's input: the original replays a recorded ghost drive (unported); here we hold
- * throttle so the demo actually covers the course. Documented stand-in (see the file header). */
+/* The attract demo's input is a CONSTANT throttle — this is what the ORIGINAL does, not a stand-in for a
+ * (non-existent) recorded ghost. The intermission runs with game_over_flag != 0 (main:314 / init_playfield
+ * :3946 bracket it, and init_leg preserves the flag — its clear starts at 0x18c42, game_over_flag is at
+ * 0x18c34, below the range), and game_update forces the player input to 1 in that state (`if
+ * (game_over_flag != 0) uVar11 = 1`). rm_player_update reproduces the same forcing (`if (p->game_over) in
+ * = RM_IN_ACCEL`, src/player.c). Nuance (honest): start_leg zeroes the demo player, so p->game_over is 0
+ * during the demo and we feed the constant EXPLICITLY here instead of relying on the forcing. The input
+ * word is identical (0x01) either way; the only game_over-conditional side effect we thus skip is the
+ * demo's score SUPPRESSION (rm_score_add early-returns when game_over) — unreachable in practice, since no
+ * checkpoint/bonus event fires inside a 0x96-frame demo (the leg drives reach 0 checkpoints in 600). */
 #define ATTRACT_DEMO_INPUT RM_IN_ACCEL
 
 /* The attract phase timing (FlowTuning). GAME_FLOW_FAST shrinks it so a whole cycle fits a bounded
