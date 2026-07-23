@@ -109,6 +109,11 @@ def _lib():
         P(adapter.GobjPrefixState), P(adapter.SpriteState), P(ctypes.c_uint8),
         P(ctypes.c_int16), P(ctypes.c_uint16), P(adapter.RmInitAssets), ctypes.c_uint16]
     lib.rm_init_leg.restype = None
+    lib.rm_apply_player.argtypes = [
+        P(adapter.PlayerState), P(adapter.EventState), P(adapter.RoadPose), P(adapter.ScrollState),
+        P(adapter.SpriteState), P(adapter.GroundState), P(adapter.ObjListCtx), P(adapter.HudState),
+        P(adapter.RoadInput), u8p]
+    lib.rm_apply_player.restype = None
     lib.rm_intermission_poll.argtypes = [ctypes.POINTER(adapter.Framebuffer), u8p, u8p]
     lib.rm_intermission_poll.restype = None
     lib.rm_draw_intermission.argtypes = [ctypes.POINTER(adapter.Framebuffer),
@@ -1193,6 +1198,16 @@ class _Candidate:
             self._native_init(lib, native_init_pre)
         self._build_ctx()
 
+        # The draw-struct fan-out the shell runs after each frame (game_main.c apply_player, hoisted to
+        # rm_apply_player). self.sprite carries the four crash/spin-script fields the fg / lower-body
+        # draws READ but that no owner struct field used to reach — the seam this closes. The scratch
+        # views catch the fan-out's other outputs (not pinned here); _edge_base is a never-dereferenced
+        # base for road->edge_tbl (the fan-out only stores base+sel, it does not read through it).
+        self.sprite = adapter.SpriteState()
+        self._fanout_views = (adapter.RoadPose(), adapter.ScrollState(), adapter.GroundState(),
+                              adapter.ObjListCtx(), adapter.HudState(), adapter.RoadInput())
+        self._edge_base = (ctypes.c_uint8 * adapter.ROAD_EDGE_ALL_BANKS_BYTES)()
+
     def _native_init(self, lib, pre):
         """Produce the leg-start owner structs (player / course / pose / scroll / ring / event / gobj /
         hud_text) by running rm_init_leg on the pre-init image, replacing the oracle-seeded ones."""
@@ -1256,6 +1271,17 @@ class _Candidate:
         # HUD phase 8 (draw_hud runs after game_update): decay the crash-arm timer, or once negative run
         # the leg-end tally that arms abort_flag. The persistent state side; the draw is not in this loop.
         self.lib.rm_crash_fx_update(ctypes.byref(self.ctx))
+        # Fan the frame's outputs to the render structs, exactly as the shell does after the physics/
+        # events tail (game_update_step -> apply_player). Only self.sprite's four crash/spin fields are
+        # pinned (against the recreate image) in _fanout_mismatches; the rest land in scratch views.
+        self._apply_fanout()
+
+    def _apply_fanout(self):
+        pose, scroll, ground, objlist, hud, road = self._fanout_views
+        self.lib.rm_apply_player(
+            ctypes.byref(self.player), ctypes.byref(self.ev), ctypes.byref(pose),
+            ctypes.byref(scroll), ctypes.byref(self.sprite), ctypes.byref(ground),
+            ctypes.byref(objlist), ctypes.byref(hud), ctypes.byref(road), self._edge_base)
 
 
 def _abort_signed(abort_flag):
@@ -1274,10 +1300,30 @@ def _drive_frame(cand, state, buf, game_update, in_bits):
     _ref_crash_fx(state)                                  # HUD phase 8 (mirrors cand.step's tail)
 
 
+# The draw-struct fan-out (rm_apply_player): the four SpriteState fields the fg / lower-body sprite
+# draws READ but that no owner struct field used to reach — the seam apply_player MISSED (dirt/wheel
+# sprite stuck on the road during a jump). Each is pinned against the recreate image byte(s)
+# g_game_update writes, so the fan-out reproduces the original's aliasing (byte width + which byte)
+# exactly, not a guess: anim_frame is the word at 0x18d0c (hi byte 0, low = the script's rec[5]);
+# spin_state is the hi byte of the fx<<8 word at 0x18caa; spin_reset is the long at 0x18cc8; and
+# collision_lock is the word at 0x18c84.
+def _fanout_mismatches(frame, cand, state):
+    s = cand.sprite
+    checks = (
+        ("fanout_anim_frame", s.anim_frame & 0xffff, _r16(state, adapter.A_anim_frame)),
+        ("fanout_spin_state", s.spin_state & 0xff, state[adapter.A_spin_state]),
+        ("fanout_spin_reset", s.spin_reset & 0xffffffff,
+         int.from_bytes(state[adapter.A_spin_reset:adapter.A_spin_reset + 4], "big")),
+        ("fanout_collision_lock", s.collision_lock & 0xffff, _r16(state, adapter.A_collision_lock)),
+    )
+    return [(frame, name, c, r) for name, c, r in checks if c != r]
+
+
 def _drive_mismatches(frame, cand, state):
     """Every owned surface compared for one free-running drive frame: the road control table, the course
-    ring, the PlayerState / CourseState scalars, the view-wrap flag, and the event-owned state
-    (EventState + GobjPrefixState + the HUD-text score digits). Returns [(frame, field, cand, ref)]."""
+    ring, the PlayerState / CourseState scalars, the view-wrap flag, the event-owned state (EventState +
+    GobjPrefixState + the HUD-text score digits), and the draw-struct fan-out (the four SpriteState
+    crash/spin fields). Returns [(frame, field, cand, ref)]."""
     out = []
     lo, n = adapter.A_road_curve_tbl, adapter.RM_CTRL_BYTES
     d = _first_diff("ctrl", bytes(cand.ctrl)[:n], bytes(state[lo:lo + n]))
@@ -1300,6 +1346,7 @@ def _drive_mismatches(frame, cand, state):
         out.append((frame, "view_wrapped", bool(cand.player.view_wrapped),
                     _r16(state, adapter.A_view_wrap_flag) != 0))
     out.extend((frame,) + m for m in _event_state_mismatches(cand, state))
+    out.extend(_fanout_mismatches(frame, cand, state))
     return out
 
 
@@ -1342,7 +1389,8 @@ def compare_leg_drive(lib, image, inputs, native_init_pre=None):
     stats = dict(frames=len(inputs), wraps=0, armed=0, crash_frames=0, handoffs=0, checkpoints=0,
                  leg_end=0, abort_armed=0, leg_over=0, clamp=0, offroad=0, ring_checked=0,
                  ring_refills=0, ring_ages=0,
-                 ring_anim_visible=0, ring_marker_right=0, ring_echoes=0, ring_edge_bands=0)
+                 ring_anim_visible=0, ring_marker_right=0, ring_echoes=0, ring_edge_bands=0,
+                 fanout_anim_nz=0, fanout_spin_state_nz=0, fanout_collision_nz=0, fanout_spin_reset_nz=0)
     mismatches = []
     for frame, in_bits in enumerate(inputs):
         was_locked = cand.player.collision_lock
@@ -1370,6 +1418,13 @@ def compare_leg_drive(lib, image, inputs, native_init_pre=None):
             _count_ring_branches(state, cand.ring.row[0], cand.course.read_pos, stats)
 
         stats["ring_checked"] += 1
+        # Fan-out nonzero coverage: the crash/spin script drives these off zero, so a green run that
+        # never leaves zero would pin the aliasing only against 0==0. Counted so the nonzero test above
+        # (test_fanout_*) can prove the fields actually moved.
+        stats["fanout_anim_nz"] += cand.sprite.anim_frame != 0
+        stats["fanout_spin_state_nz"] += (cand.sprite.spin_state & 0xff) != 0
+        stats["fanout_collision_nz"] += cand.sprite.collision_lock != 0
+        stats["fanout_spin_reset_nz"] += cand.sprite.spin_reset != 0
         # Every owned surface: the ctrl table, the ring, the player/course scalars, the view-wrap flag,
         # and the event-owned state (the same portion the directed dispatch / course-events checks
         # compare, via the shared _event_state_mismatches helper). Shared with compare_game_flow.

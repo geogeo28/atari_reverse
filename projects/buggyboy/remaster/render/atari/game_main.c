@@ -302,50 +302,12 @@ static void draw_frame(const Shell *s, Framebuffer *fb) {
 }
 
 /* Fan rm_player_update's outputs out to the render structs — the whole of the "game loop" beyond
- * running the physics and drawing. Each assignment is one of the original's shared globals: the
- * pose's curve/view come straight from the physics, the sprite reads the body pose (skid doubles as
- * the foreground-sprite suppressor, exactly as in the original), the ground column and the object
- * list's scan offset are the same global, and the HUD shows the speed and clock. */
+ * running the physics and drawing. The derivation itself is hoisted into rm_apply_player (src/
+ * gameplay.c) so `make test` exercises it host-side; this wrapper only unpacks the Shell and supplies
+ * the shell-owned edge table (fixture_road_edge + ROAD_EDGE_PAD). */
 static void apply_player(const Shell *s) {
-    const PlayerState *p = s->player;
-    RoadPose *pose = s->pose;
-    SpriteState *sprite = s->sprite;
-    HudState *hud = s->hud;
-    ObjListCtx *objlist = s->objlist;
-    const EventState *ev = s->ev;
-
-    pose->curve = p->road_curve;
-    pose->view_flags = p->view_flags;
-    s->road->edge_tbl = fixture_road_edge + ROAD_EDGE_PAD + p->road_edge_sel;
-    s->scroll->scroll_speed = p->scroll_speed;
-
-    sprite->lean = p->lean;
-    sprite->pitch = p->buggy_pitch_off;      /* the crash script's body bounce */
-    sprite->wheel_pos = p->wheel_pos;
-    sprite->skid = p->skid;
-    sprite->sprite_suppress = (uint16_t)p->skid;
-    sprite->crash_disp = p->crash_disp;
-    sprite->buggy_draw_flag = p->buggy_draw_flag;
-    sprite->speed_raw = p->speed_raw;
-    sprite->road_curve = p->road_curve;
-
-    s->ground->view = p->ground_view_off;
-    objlist->view_flags = p->view_flags;
-    objlist->obj_scan_off = p->ground_view_off;
-
-    hud->speed = p->speed;
-    hud->time_left = (uint16_t)p->time_left;
-    hud->dsp_variant_idx = p->dsp_variant_idx;
-    hud->hud_crash_timer = p->hud_crash_timer;
-
-    /* The six HUD scalars EventState OWNS (see game.h ownership contract): the draw's per-frame VIEW,
-     * refreshed from the event engine each frame exactly as speed/time are from the physics. */
-    hud->crash_lap = (int16_t)ev->crash_lap;
-    hud->gauge_blink = ev->gauge_blink;
-    hud->gauge_blink_on = ev->gauge_blink_on != 0;
-    hud->crash_active = ev->crash_active != 0;
-    hud->crash_bars = ev->crash_bars;
-    hud->crash_frame = (int16_t)ev->crash_frame;
+    rm_apply_player(s->player, s->ev, s->pose, s->scroll, s->sprite, s->ground, s->objlist,
+                    s->hud, s->road, fixture_road_edge + ROAD_EDGE_PAD);
 }
 
 /* Point the shell at leg `leg`'s per-leg data: the packed course stream (rm_road_course_advance reads

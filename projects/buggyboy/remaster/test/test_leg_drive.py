@@ -179,6 +179,65 @@ def test_section1_clears_pending_marker(leg, capsys):
         f"frame {f} {name}: candidate {c} != recreate {r}" for f, name, c, r in mismatches[:8])
 
 
+def test_fanout_tracks_recreate_and_reaches_nonzero(capsys):
+    """The draw-struct fan-out (rm_apply_player) the shell runs after every frame — the seam that used
+    to MISS four SpriteState fields, so the dirt/wheel sprite stayed on the road during a jump. The leg
+    drive now runs the fan-out each frame and pins sprite.anim_frame / spin_state / spin_reset /
+    collision_lock against the recreate image bytes (folded into compare_leg_drive's per-frame check).
+
+    This asserts the pin is NON-VACUOUS: over the crash (slalom) drives the crash/spin script drives
+    anim_frame, spin_state and collision_lock off zero at some point, so the aliasing is pinned against
+    real values rather than only 0==0. (spin_reset needs §10's spin override, which a free-running leg
+    drive cannot arm — the same reachability limit test_spin_arming documents; it is covered by
+    test_fanout_spin_reset below, and here it legitimately stays zero.)"""
+    lib = equiv._lib()
+    totals = {"fanout_anim_nz": 0, "fanout_spin_state_nz": 0, "fanout_collision_nz": 0}
+    for leg in (1, 4):                        # legs whose slalom crashes reach a nonzero spin_state
+        image = equiv.leg_start_background(leg)
+        mismatches, stats = equiv.compare_leg_drive(lib, image, DRIVES["slalom"])
+        assert not mismatches, f"leg {leg} fan-out diverged: " + "; ".join(
+            f"frame {f} {name}: candidate {c} != recreate {r}" for f, name, c, r in mismatches[:8])
+        for k in totals:
+            totals[k] += stats[k]
+    with capsys.disabled():
+        print(f"  fan-out nonzero frames across legs 1/4 slalom: {totals}")
+    assert totals["fanout_anim_nz"] > 0, f"anim_frame never left zero — aliasing untested: {totals}"
+    assert totals["fanout_spin_state_nz"] > 0, f"spin_state never left zero — gate untested: {totals}"
+    assert totals["fanout_collision_nz"] > 0, f"collision_lock never left zero — suppress untested: {totals}"
+
+
+@pytest.mark.parametrize("leg", [0, 1])
+def test_fanout_spin_reset_reaches_lower_body_suppress(leg, capsys):
+    """The one fan-out field a free-running leg drive can't otherwise reach: spin_reset, the spin
+    override the lower-body draw reads as a suppressor (sprite.c draw_buggy_lo). §10's spin arming is
+    the only thing that leaves it nonzero at draw time, so — exactly as test_spin_arming stages the
+    §10 combination — this seeds the override (spin_reset + a steer_hold past the threshold) at the leg
+    start and holds the steering lock. The fan-out's spin_reset long then goes nonzero and is compared
+    against recreate's 0x18cc8 long every frame (compare_leg_drive's fan-out check), pinning the
+    (spin_reset<<16)|spin_word2 reconstruction. Without it, dropping the spin_reset fan-out is invisible.
+
+    BOTH words of the long are seeded nonzero so both halves of the reconstruction are pinned: the high
+    word (0x18cc8, the <<16 shift) and the low word (0x18cca / spin_word2, the | term). spin_word2 is a
+    real field the reference writes 0x19 into — §10's arming stores GU_SPIN_HI there when obj_flag_b!=0
+    (game_update.c gu_dispatch_event idx 32/33) — but no leg/fuzz drive makes it nonzero at draw time,
+    so it is staged here directly (mirroring test_spin_arming's word2 cases). With spin_reset already
+    nonzero the arming leaves the low word untouched, so it rides the long intact to the fan-out; the
+    LEFT lock keeps wheel off 0/4 so the long is not cleared. Dropping either the <<16 or the |spin_word2
+    then makes the candidate long diverge from recreate's — both mutations caught by this one drive."""
+    lib = equiv._lib()
+    image = equiv.leg_start_background(leg)
+    equiv._w16(image, adapter.A_spin_reset, 0x19)         # spin override high word -> pins the <<16 shift
+    equiv._w16(image, adapter.A_spin_reset + 2, 0x19)     # spin_word2 low word -> pins the |spin_word2 term
+    equiv._w16(image, adapter.A_steer_hold, 0x20)         # past the spin threshold -> frame 0 decides
+    mismatches, stats = equiv.compare_leg_drive(lib, image, [ACCEL | LEFT] * 6)
+    with capsys.disabled():
+        print(f"  leg={leg}: spin_reset nonzero frames={stats['fanout_spin_reset_nz']}")
+    assert not mismatches, "spin_reset fan-out drive diverged from recreate: " + "; ".join(
+        f"frame {f} {name}: candidate {c} != recreate {r}" for f, name, c, r in mismatches[:8])
+    assert stats["fanout_spin_reset_nz"] > 0, \
+        f"spin_reset never reached the lower-body suppressor — fan-out untested: {stats}"
+
+
 @pytest.mark.parametrize("leg", [0, 1, 4])
 def test_crash_script_plays_out_and_returns_control(leg, capsys):
     """The point of §6: a crash the course threw at us must play out frame for frame and then GIVE THE

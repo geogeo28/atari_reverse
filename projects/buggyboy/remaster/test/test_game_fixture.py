@@ -45,12 +45,14 @@ def test_frame0_views_derived_before_first_draw():
     the HUD / the sprite gates) are DERIVED from it by start_leg's apply_player + ring_views_refresh,
     which MUST run before the frame-0 draw. Seeding obj_scan_off 0 was half of the old frame-0 golden
     DIFF — the list-cursor offset and the ground's view column are ONE original global (0x18c58), and
-    the first draw once ran before apply_player ever copied ground_view_off in. make test never runs
-    game_main.c, so this source pin plus the on-target run_golden MATCH are the only guards."""
+    the first draw once ran before apply_player ever copied ground_view_off in. The DERIVATION itself
+    is hoisted to rm_apply_player (src/gameplay.c) and now host-tested (test_leg_drive's fan-out check);
+    this pins the derivation's home and that the shell WIRES it before the frame-0 draw."""
+    fanout = (adapter.REMASTER / "src/gameplay.c").read_text()
+    # rm_apply_player copies the physics ground_view_off into the object-list cursor + the ground view.
+    assert re.search(r"objlist->obj_scan_off\s*=\s*p->ground_view_off", fanout), (
+        "rm_apply_player no longer copies ground_view_off into obj_scan_off")
     game = (adapter.REMASTER / "render/atari/game_main.c").read_text()
-    # apply_player copies the physics ground_view_off into the object-list cursor + the ground view.
-    assert re.search(r"objlist->obj_scan_off\s*=\s*p->ground_view_off", game), (
-        "apply_player no longer copies ground_view_off into obj_scan_off")
     # start_leg derives the frame-0 views: apply_player then ring_views_refresh, in that order over the
     # Shell handle (intervening lines allowed — e.g. the race-palette set start_leg now ends with).
     assert re.search(r"apply_player\(s\);[\s\S]{0,400}?ring_views_refresh\(", game), (

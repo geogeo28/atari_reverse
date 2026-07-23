@@ -818,4 +818,12 @@ void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *s
                  uint8_t *hud_text, int16_t *obj_shade, uint16_t *screen_offset,
                  const RmInitAssets *a, uint16_t leg);
 
+/* Fan the per-frame driving-model outputs (PlayerState + the event-owned EventState) out to the render
+ * VIEW structs, deriving exactly what the draws read. `road_edge_base` = the edge table biased by
+ * ROAD_EDGE_PAD (the shell's fixture pointer). Pure derivation; no I/O (see gameplay.c). */
+void rm_apply_player(const PlayerState *p, const EventState *ev,
+                     RoadPose *pose, ScrollState *scroll, SpriteState *sprite,
+                     GroundState *ground, ObjListCtx *objlist, HudState *hud,
+                     RoadInput *road, const uint8_t *road_edge_base);
+
 #endif /* RM_GAME_H */

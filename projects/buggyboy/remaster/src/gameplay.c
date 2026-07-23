@@ -224,3 +224,62 @@ void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *s
     const uint8_t *disp = a->buf_a + IL_OBJDISP_TBL_OFF + (uint16_t)(sel * IL_OBJDISP_REC_STRIDE);
     *obj_shade = (int16_t)(be16(disp + IL_OBJDISP_SHADE_OFF) - IL_OBJDISP_SHADE_BIAS);
 }
+
+/* ---- apply_player — fan the driving model's per-frame outputs out to the render structs -------------
+ *
+ * The whole of the "game loop" beyond running the physics/events and drawing: each assignment is one
+ * of the original's shared globals, so the draws read this frame's state through their own structs.
+ * Pure struct-to-struct derivation, hoisted out of the on-target shell (game_main.c) so `make test`
+ * compiles and exercises it host-side (test_leg_drive pins the sprite fan-out against recreate's image
+ * bytes). `road_edge_base` is the edge-run table already biased by ROAD_EDGE_PAD (a fixture pointer
+ * the shell owns); the per-frame edge_tbl aliases it at road_edge_sel, exactly as the original does.
+ *
+ * The pose's curve/view come straight from the physics; the ground column and the object list's scan
+ * offset are the same global; the HUD shows the speed and clock plus the six scalars EventState OWNS
+ * (game.h ownership contract), refreshed from the event engine each frame like speed/time. The sprite
+ * reads the body pose AND the crash/spin script state: skid doubles as the foreground-sprite
+ * suppressor; the crash script's anim_frame_sel picks the foreground frame; the fx<<8 spin word's hi
+ * byte gates the spin abort; and collision_lock plus the spin longword suppress the lower body. */
+void rm_apply_player(const PlayerState *p, const EventState *ev,
+                     RoadPose *pose, ScrollState *scroll, SpriteState *sprite,
+                     GroundState *ground, ObjListCtx *objlist, HudState *hud,
+                     RoadInput *road, const uint8_t *road_edge_base) {
+    pose->curve = p->road_curve;
+    pose->view_flags = p->view_flags;
+    road->edge_tbl = road_edge_base + p->road_edge_sel;
+    scroll->scroll_speed = p->scroll_speed;
+
+    sprite->lean = p->lean;
+    sprite->pitch = p->buggy_pitch_off;      /* the crash script's body bounce */
+    sprite->wheel_pos = p->wheel_pos;
+    sprite->skid = p->skid;
+    sprite->sprite_suppress = (uint16_t)p->skid;
+    sprite->crash_disp = p->crash_disp;
+    sprite->buggy_draw_flag = p->buggy_draw_flag;
+    sprite->speed_raw = p->speed_raw;
+    sprite->road_curve = p->road_curve;
+    /* Crash/spin script view: the four fields the fg/lower-body draws read but that no owner field
+     * used to reach (game_update.c writes each into the flat image; here they alias the same way). */
+    sprite->anim_frame = p->anim_frame_sel;                                /* fg frame; byte->word forces hi byte 0x18d0c to 0 (script writes only 0x18d0d) */
+    sprite->spin_state = (int8_t)(ev->spin_state >> 8);                    /* the fx<<8 word's hi byte (0x18caa) */
+    sprite->spin_reset = ((uint32_t)p->spin_reset << 16) | p->spin_word2;  /* the 0x18cc8 spin longword */
+    sprite->collision_lock = p->collision_lock;                           /* lower-body crash suppressor (0x18c84) */
+
+    ground->view = p->ground_view_off;
+    objlist->view_flags = p->view_flags;
+    objlist->obj_scan_off = p->ground_view_off;
+
+    hud->speed = p->speed;
+    hud->time_left = (uint16_t)p->time_left;
+    hud->dsp_variant_idx = p->dsp_variant_idx;
+    hud->hud_crash_timer = p->hud_crash_timer;
+
+    /* The six HUD scalars EventState OWNS (see game.h ownership contract): the draw's per-frame VIEW,
+     * refreshed from the event engine each frame exactly as speed/time are from the physics. */
+    hud->crash_lap = (int16_t)ev->crash_lap;
+    hud->gauge_blink = ev->gauge_blink;
+    hud->gauge_blink_on = ev->gauge_blink_on != 0;
+    hud->crash_active = ev->crash_active != 0;
+    hud->crash_bars = ev->crash_bars;
+    hud->crash_frame = (int16_t)ev->crash_frame;
+}

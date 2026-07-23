@@ -19,11 +19,16 @@ CASES = [(0, 60), (1, 90), (4, 60)]
 # curve while spin_state is negative arms the counter and skips the draw). spin_state is a byte at
 # A_sp_spin_state, so the poke's HIGH byte lands there (_w16 writes big-endian).
 FG_POKES = [
-    {},                                                                 # normal foreground draw
+    {},                                                                 # normal foreground draw (frame 0)
+    {adapter.A_sp_anim_frame: 8},                                       # a later fg frame the crash script picks
+    {adapter.A_sp_anim_frame: 16},                                      # and another
     {adapter.A_sp_sprite_suppress: 1},                                  # suppressed -> no draw
     {adapter.A_sp_spin_state: 0xff00, adapter.A_sp_road_curve: 0x0200}, # right-curve spin abort
     {adapter.A_sp_spin_state: 0x8000, adapter.A_sp_road_curve: 0xfe00}, # left-curve spin abort
 ]
+# The anim_frame pokes above are real rec[5] values (0, 8, 16 are the only frames the crash script
+# emits, observed over legs 0/1/4 slalom drives): the crash/jump script advances the foreground
+# sprite through them, which is the state apply_player's fan-out has to reach (test_leg_drive pins it).
 
 # draw_buggy branches: a spread of leans covering flag==0 (upright, WHEELS_CELLS) and flag!=0
 # (leaning, BUGGY_BODY_CELLS inline blit), plus crash/pitch/skid position offsets, and one case that

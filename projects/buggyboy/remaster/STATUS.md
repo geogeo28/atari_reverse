@@ -166,6 +166,33 @@ probe + fx/horizon tail on every view-wrap. Consequences, all measured rather th
   `speed == 0` — the very condition that triggers the reference's `rev_reload` write every frame — and
   pass with zero mismatches, so the skip is demonstrably invisible rather than merely presumed.
 
+- **The draw-struct fan-out gap (dirt/wheel sprite stuck on the road during a jump) is fixed + host-
+  tested.** The per-frame `apply_player` fan-out copied PlayerState → the draw structs but MISSED four
+  fields the verified sprite draws READ: `sprite->anim_frame` (the fg frame the crash script picks —
+  `sprite.c` reads `sx16(s->anim_frame)`, never written in the shell), `sprite->spin_state` (the fg
+  spin-abort gate), and `sprite->spin_reset` + `sprite->collision_lock` (the lower-body suppressors
+  during a crash/spin). Each is now fanned out reproducing recreate's exact aliasing (verified against
+  `game_update.c`): `anim_frame = p->anim_frame_sel` (byte → word, hi 0 = image 0x18d0c/0x18d0d);
+  `spin_state = (int8_t)(ev->spin_state >> 8)` (the fx<<8 word's hi byte, 0x18caa); `spin_reset =
+  (p->spin_reset << 16) | p->spin_word2` (the 0x18cc8 long); `collision_lock = p->collision_lock`
+  (0x18c84). The whole fan-out body was **hoisted** out of `game_main.c` into `rm_apply_player`
+  (`src/gameplay.c`), which `make test` compiles — closing the coverage hole (the seam had no host
+  test: `test_sprite` staged SpriteState straight from the image, and the leg drives never derived the
+  sprite). `test/test_leg_drive.py` now runs the fan-out every frame and pins the four fields against
+  recreate's image bytes over the crash/jump drives, asserting they go NONZERO
+  (`test_fanout_tracks_recreate_and_reaches_nonzero`; `spin_reset` — reachable only via §10's spin
+  override, like `test_spin_arming` — by `test_fanout_spin_reset_reaches_lower_body_suppress`, which
+  seeds BOTH words of the long: the high word (0x18cc8, the `<<16` shift) and `spin_word2` (0x18cca,
+  the `|` term). `spin_word2` is a real field the reference writes 0x19 into — §10's arming stores
+  `GU_SPIN_HI` there when `obj_flag_b != 0` (`game_update.c` `gu_dispatch_event` idx 32/33) — but no
+  leg/fuzz drive makes it nonzero at draw time, so it is staged directly (like `test_spin_arming`'s
+  word2 cases); with `spin_reset` already nonzero the arming leaves the low word intact, so it rides
+  the long to the fan-out.
+  `test_sprite` gained an FG case at a real nonzero `anim_frame` (rec[5] ∈ {8,16}, from live drives).
+  Mutation-verified: zeroing any of the four fan-out lines fails a fan-out test, and dropping either
+  half of the `spin_reset` long (the `<<16` shift OR the `| spin_word2` term) diverges the compared
+  long — both caught by the one directed spin-reset drive.
+
 **Ported faithfully but not pinned:** `marker_unpack`'s "both shoulders" fixup
 (`MARKER_KIND_SIDES`) fires for **0 of the 5120** course records across all five legs, so this game's
 data cannot exercise it at all. It is transcribed from the disassembly and left honestly unpinned

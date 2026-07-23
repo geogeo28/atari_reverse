@@ -239,8 +239,15 @@ is compared against the raw image bytes at the aliased addresses — including t
 mirror byte-for-byte — plus directed cases for the sprite-count walk (the captured cases only
 sample counts 0 and 11) and a reachability check that at least one sampled case carries the gate's
 bit-7 suppress flag. The ring's *values* over time were already pinned by the leg drives; these
-tests pin the *address arithmetic*. The game *wiring* itself has no host test (`make test` never
-runs `game_main.c`) — it is verified on-target by the golden frame-0 compare and autodrive runs.
+tests pin the *address arithmetic*. Most of the game *wiring* still has no host test (`make test`
+never runs `game_main.c`) — it is verified on-target by the golden frame-0 compare and autodrive
+runs. The one wiring seam that IS now host-tested is the per-frame **draw-struct fan-out**
+(`apply_player`): its pure struct-to-struct body is hoisted into `rm_apply_player` (`src/gameplay.c`),
+which `make test` compiles, and `game_main.c`'s `apply_player` is a thin wrapper over it. The leg
+drives run the fan-out each frame and pin the four crash/spin SpriteState fields (`anim_frame`,
+`spin_state`, `spin_reset`, `collision_lock`) it derives against recreate's image bytes — the seam
+that used to be MISSED, so the dirt/wheel sprite stayed on the road through a jump (see STATUS
+"Recently fixed").
 
 **Closed (slice 2):** ring bands 12/13's slot words — which the fixed-object pass and
 `GroundState.markers[12]` consume — used to be exempt from the leg-drive ring comparison, because the
