@@ -209,3 +209,63 @@ the HUD) driven by the ported physics and the between-legs flow, everything draw
 `run_golden.py` pins the boot frame of every leg 0–4 byte-for-byte against recreate's pipeline; the rest
 of the loop is guarded by the host equivalence suite (`make test`) and the on-target flow trace. The
 remaining seam is sound.
+
+## Hand-asm cores (`src/asm/`) — PERF30 A3
+
+The hottest render leaves have reached the ceiling of what GCC will emit from readable C, so the perf
+plan (PERF30.md) replaces individual engines with hand-written m68k, ported from the ORIGINAL game's own
+disassembly. **The C in `src/*.c` stays the byte-exact reference — never modified functionally; it is
+what the host `make test` suite pins against recreate's verified oracle. The asm is a drop-in with the
+same C signature, shipped only on the m68k builds.**
+
+Phase 1 core: `src/asm/objshift2.S` → `rm_blit_objshift2_asm`, the fixed-pass fine-x masked blitter
+(reference: `rm_blit_objshift2` in `src/blit.c`).
+
+**Selection.** `include/game.h` declares the asm entry under `#ifdef RM_ASM_BLIT` and defines a dispatch
+macro:
+
+```c
+#ifdef RM_ASM_BLIT                   /* umbrella flag the m68k build scripts pass */
+#  ifndef RM_ASM_OBJSHIFT2
+#    define RM_ASM_OBJSHIFT2          /* ... turns on the per-core flag (unless already set) */
+#  endif
+#endif
+#ifdef RM_ASM_OBJSHIFT2
+#define RM_BLIT_OBJSHIFT2 rm_blit_objshift2_asm   /* m68k builds: the shipped hand-asm */
+#else
+#define RM_BLIT_OBJSHIFT2 rm_blit_objshift2       /* host test build: the C reference */
+#endif
+```
+
+**Per-core flags (F10):** one umbrella `-DRM_ASM_BLIT` turns on each individual core flag, and each
+engine's dispatch macro keys off its OWN flag (`RM_BLIT_OBJSHIFT2` off `RM_ASM_OBJSHIFT2`). Phase 2's
+`rm_blit_objshift` core gets `RM_ASM_OBJSHIFT` for free under the same umbrella, and each core stays
+individually bisectable (define/undef one flag to A/B a single engine). Callers (`src/object_list.c`)
+use `RM_BLIT_OBJSHIFT2(...)` — grep for that macro to find every dispatch site. `bench_build.sh` and
+`build_game.sh` link the `.S` (a `.S`, so cpp expands its shared-constant `#include`s — see below) and
+pass `-DRM_ASM_BLIT`, so the game and the composed bench rows run the asm exactly alike. The host
+`libremaster.so` (Makefile) defines no flag, so the 558-test host suite keeps compiling and pinning the C
+reference — the asm changes nothing there.
+
+**Shared constants (F11):** the engine constants the asm shares with the C live once in
+`include/blit_const.h` (a `#define`-only, asm-safe header both `src/blit.c` and `objshift2.S` include),
+with `SCREEN_ROW_BYTES` from `screen.h` (its C-only parts guarded behind `__ASSEMBLER__`) — which is why
+the core is a `.S`. The refactor is verified pure (the asm section objdumps byte-identical before/after).
+
+**How it is verified (three independent pins):**
+- `test/test_asm_blit.py` — a Musashi-executed **C-vs-asm differential**: every objshift2 fuzz case (all
+  width families × fine-x × clip/edge/base columns × row counts, plus a bit-15-set `rows_m1` list) is run
+  through both the C entry and the asm entry on `bench.elf` (via a `bench_main.c` param-block wrapper) and
+  a bracketed region — the dst window, GUARD bytes either side, and the src buffer — is byte-compared, so a
+  wild store past the window is caught too (F5). A positive control asserts the base cases actually drew
+  (F4), so a dead harness fails loudly. The harness is descriptor-driven (F12) and shares `_x_for` /
+  loader with the host suite (F7). `make test` builds `bench.elf` first (Makefile prerequisite); a missing
+  elf fails the suite with a build hint rather than skipping. The pin the host fuzz cannot give (C only).
+- `run_golden.py` — the GAME build now runs the asm path; its leg-0..4 boot frames stay byte-identical to
+  recreate's pipeline in Hatari (MATCH ×5), the end-to-end proof.
+- `tools/bench.py` — reports `objshift2 C ref` vs `objshift2 asm` head to head, and the composed
+  `objlist_fixed` / `object_tree` / `draw_frame` rows already run the asm (they dispatch like the game).
+
+**Writing/verifying a core:** read the C as the SPEC, port the original's inner-cell tricks, keep every
+register's role named in the file header (the repo bans raw-register mystery), and prove it with the
+differential above — including a **mutation check** (flip one instruction, watch the suite fail, restore).

@@ -229,6 +229,54 @@ void bench_objlist_fixed(void) {
                         ring_st + GOBJ_FIXED_PASS_ROW * RM_RING_ROW_BYTES, 0, 0, 0, 0);
 }
 
+/* ---- PERF30 A3: objshift2 hand-asm core, C vs asm, plus the asm-vs-C differential param block ----
+ * The composed rows above (bench_objlist_fixed / bench_object_tree / bench_draw_frame) already run the
+ * ASM path — this build defines RM_ASM_BLIT, so object_list.c's RM_BLIT_OBJSHIFT2 dispatches to the
+ * asm, exactly like the game. These extra entries measure the two engines head to head on one
+ * self-contained representative blit, and expose a param-block harness for test/test_asm_blit.py. */
+#define OBJSH2_BUF_BYTES  0x4000
+#define OBJSH2_BUF_MID    0x2000            /* start the cursors mid-buffer: room to walk up 0x2a rows */
+uint8_t objsh2_dst[OBJSH2_BUF_BYTES] __attribute__((aligned(2)));
+uint8_t objsh2_src[OBJSH2_BUF_BYTES] __attribute__((aligned(2)));
+
+/* Representative gate-frame-class workload: a full base straddle (width_idx 0 -> 3 straddle cells),
+ * fine_x 7, 0x2a rows — the dominant fixed-pass shape. bench.py measures _c vs _asm on it. */
+#define OBJSH2_BENCH_X       ((0x40 << 1) | 7)   /* aligned col 0x40, fine_x 7 -> BASE straddle 3 */
+#define OBJSH2_BENCH_ROWS_M1 0x2a
+/* ONE 7-arg marshalling site (F9), shared by the microbench pair (static args) and the param-block
+ * pair below: `engine` and the arg source are the only things that vary. Expands to the same direct
+ * call as before, so the C-vs-asm cycle counts (and their ratio) are unchanged. */
+#define OBJSH2_INVOKE(engine, D, DOFF, S, SOFF, X, ROWS, WI) \
+    engine((uint8_t *)(D), (DOFF), (const uint8_t *)(S), (SOFF), (X), (ROWS), (WI))
+void bench_objshift2_c(void) {
+    OBJSH2_INVOKE(rm_blit_objshift2, objsh2_dst, OBJSH2_BUF_MID, objsh2_src, OBJSH2_BUF_MID,
+                  OBJSH2_BENCH_X, OBJSH2_BENCH_ROWS_M1, 0);
+}
+void bench_objshift2_asm(void) {
+    OBJSH2_INVOKE(rm_blit_objshift2_asm, objsh2_dst, OBJSH2_BUF_MID, objsh2_src, OBJSH2_BUF_MID,
+                  OBJSH2_BENCH_X, OBJSH2_BENCH_ROWS_M1, 0);
+}
+
+/* Param block the differential test pokes: dst/src are absolute addresses of any staged buffer in the
+ * flat Musashi image (objsh2_dst/objsh2_src, or the test's own region); the run wrappers unpack it and
+ * invoke one engine, so the test can drive every fuzz case through both and byte-compare. */
+typedef struct {
+    uint32_t dst, dst_off, src, src_off;
+    uint16_t x, rows_m1;
+    int32_t  width_idx;
+} Objsh2Args;
+Objsh2Args objsh2_args;
+void bench_objsh2_run_c(void) {
+    OBJSH2_INVOKE(rm_blit_objshift2, objsh2_args.dst, objsh2_args.dst_off,
+                  objsh2_args.src, objsh2_args.src_off,
+                  objsh2_args.x, objsh2_args.rows_m1, objsh2_args.width_idx);
+}
+void bench_objsh2_run_asm(void) {
+    OBJSH2_INVOKE(rm_blit_objshift2_asm, objsh2_args.dst, objsh2_args.dst_off,
+                  objsh2_args.src, objsh2_args.src_off,
+                  objsh2_args.x, objsh2_args.rows_m1, objsh2_args.width_idx);
+}
+
 /* The object stages after the road — ground through the view-ordered fixed-pass/buggy tail. ONE
  * copy, called by both composites, so they cannot drift from each other (both must keep mirroring
  * game_main.c's draw_frame). */

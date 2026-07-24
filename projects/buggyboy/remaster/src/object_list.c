@@ -241,24 +241,24 @@ static uint32_t objshift2_prefix_dst(const ObjListCtx *c, uint16_t rows_m1) {
 static void objshift2_glue(const ObjListCtx *c, uint16_t x, uint16_t rows, uint32_t dst, uint32_t src,
                            int groups) {
     for (int i = 0; i <= groups; i++)
-        rm_blit_objshift2(c->px, dst, c->buf_c, src + OBJSH2P_SUBCELL_S * i,
+        RM_BLIT_OBJSHIFT2(c->px, dst, c->buf_c, src + OBJSH2P_SUBCELL_S * i,
                           (uint16_t)(x + OBJSH2P_SUBCELL_X * i), rows, /*width_idx=*/0);
 }
 
 static void obj_handler_p24(const ObjListCtx *c, uint16_t x, uint16_t rows_m1, uint32_t src) {
     uint32_t dp = objshift2_prefix_dst(c, rows_m1);
     if (c->p24_flag == OBJ_P24_FLAG_ON) {
-        rm_blit_objshift2(c->px, dp, c->buf_c, src, x, /*rows=*/0x2a, /*width_idx=*/0);   /* stage 1 */
+        RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src, x, /*rows=*/0x2a, /*width_idx=*/0);   /* stage 1 */
         uint16_t x2 = (uint16_t)(OBJSH2P_SUBCELL_X + x);
         uint32_t src2 = OBJ_P24_SRC2_OFF;
         objshift2_glue(c, x2, /*rows=*/0x26, dp, src2, /*groups=*/2);
-        rm_blit_objshift2(c->px, dp, c->buf_c, src2 + OBJSH2P_SUBCELL_S * (2 + 1),
+        RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src2 + OBJSH2P_SUBCELL_S * (2 + 1),
                           (uint16_t)(x2 + OBJSH2P_SUBCELL_X * (2 + 1)), /*rows=*/0x26, 2);
-        rm_blit_objshift2(c->px, dp, c->buf_c, src + OBJ_P24_SRC3_OFF,
+        RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src + OBJ_P24_SRC3_OFF,
                           (uint16_t)(x + OBJ_P24_X3_OFF), /*rows=*/0x2a, 0);                /* stage 3 */
     } else {
         objshift2_glue(c, x, /*rows=*/0x2a, dp, src, /*groups=*/4);
-        rm_blit_objshift2(c->px, dp, c->buf_c, src + OBJSH2P_SUBCELL_S * (4 + 1),
+        RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src + OBJSH2P_SUBCELL_S * (4 + 1),
                           (uint16_t)(x + OBJSH2P_SUBCELL_X * (4 + 1)), /*rows=*/0x2a, 2);
     }
 }
@@ -269,7 +269,7 @@ static void obj_handler_p_glue(const ObjListCtx *c, uint16_t x, uint16_t rows_m1
     uint32_t dp = objshift2_prefix_dst(c, rows_m1);
     objshift2_glue(c, x, rows, dp, src, groups);
     if (final_wi >= 0)
-        rm_blit_objshift2(c->px, dp, c->buf_c, src + OBJSH2P_SUBCELL_S * (groups + 1),
+        RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src + OBJSH2P_SUBCELL_S * (groups + 1),
                           (uint16_t)(x + OBJSH2P_SUBCELL_X * (groups + 1)), rows, final_wi);
 }
 
@@ -330,7 +330,7 @@ static void obj_dispatch(const ObjListCtx *c, uint16_t jumpidx, uint16_t x, uint
         case OBJ_H_P36: obj_handler_p_glue(c, x, rows_m1, src, 0x06, 0, 2); break;
         case OBJ_H_P38: {
             uint32_t dp = objshift2_prefix_dst(c, rows_m1);
-            rm_blit_objshift2(c->px, dp, c->buf_c, src, x, 0x04, 0);
+            RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src, x, 0x04, 0);
             break;
         }
         default: break;

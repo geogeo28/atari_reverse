@@ -13,6 +13,7 @@
 #include "game.h"
 #include "screen.h"
 #include "st.h"
+#include "blit_const.h"   /* OBJSH_CELL_BYTES / OBJSH2_* — shared with src/asm/objshift2.S (F11) */
 
 /* Host-only invariant guard: enforces the pointer-walking non-wrap rule (see Offset in st.h) on the
  * 64-bit test build (clang, NDEBUG unset → assert is live), and compiles to nothing on the m68k
@@ -27,7 +28,7 @@
 /* ---- shared fine-x geometry ---- */
 #define OBJSH_NIBBLE     0xf     /* fine-x / colour-index low nibble */
 #define OBJSH_SUBPX_BITS 16      /* left-shift count = 16 - fine_x */
-#define OBJSH_CELL_BYTES 8       /* one 16-pixel 4-plane cell / column step */
+/* OBJSH_CELL_BYTES is shared with the asm core — defined in blit_const.h (included above). */
 #define OBJSH_PLANES     4
 #define COL_ALIGN        0xfff8  /* aligned_col = ((int16)x >> 1) & this (8-byte column) */
 
@@ -253,11 +254,9 @@ void rm_blit_objshift(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t
  * from two source words; pixels copied plain-shifted and OR'd. Three width families
  * (width_idx 0/1/2 = base ceiling 0x88/0x90/0x98).
  * ============================================================================================ */
-#define OBJSH2_RIGHT_BOUND 0x88
-#define OBJSH2_LADDER_STEP 8
+/* OBJSH2_RIGHT_BOUND / OBJSH2_LADDER_STEP / OBJSH2_BASE_STRADDLE / OBJSH2_SRC_ROW_BYTES are shared with
+ * the asm core — defined in blit_const.h (included at the top). */
 #define OBJSH2_MASK_INIT   0xffffffffu
-#define OBJSH2_BASE_STRADDLE 3
-#define OBJSH2_SRC_ROW_BYTES 0x50   /* the sprite source row stride: source cursor's net per-row step */
 
 /* objshift2 carries the same {col0, col1, sp} cursor triple but is NOT value-passed: unlike objshift its
  * baseline has no mem-to-mem cursor shuffle, and its cost is arithmetic/RMW-bound. Forcing the cursors
@@ -369,6 +368,9 @@ static void objsh2_row(uint8_t **col0, uint8_t **col1, const uint8_t **sp,
     if (edge == OBJSH2_EDGE_RIGHT) objsh2_right_edge_cell(col0, col1, sp, shr);
 }
 
+/* This is the byte-exact REFERENCE. On the m68k builds -DRM_ASM_BLIT (via RM_ASM_OBJSHIFT2) points the
+ * dispatcher's RM_BLIT_OBJSHIFT2 macro at the hand-written core rm_blit_objshift2_asm (src/asm/
+ * objshift2.S); this C is still compiled and pinned equal to the asm by test/test_asm_blit.py. */
 void rm_blit_objshift2(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t src_off,
                        uint16_t x, uint16_t rows_m1, int width_idx) {
     unsigned fine_x = (unsigned)(x & OBJSH_NIBBLE);

@@ -8,7 +8,12 @@
 #ifndef RM_SCREEN_H
 #define RM_SCREEN_H
 
+/* The dimension #defines are shared with the hand-written m68k blit core (src/asm/objshift2.S), which
+ * #includes this header after cpp expands it — so the C-only parts (stdint, the Framebuffer typedef)
+ * are hidden from the assembler behind __ASSEMBLER__ (gcc defines it when assembling a .S). */
+#ifndef __ASSEMBLER__
 #include <stdint.h>
+#endif
 
 #define SCREEN_W        320
 #define SCREEN_H        200
@@ -16,8 +21,10 @@
 #define SCREEN_ROW_BYTES 160                  /* (SCREEN_W / 8) * SCREEN_PLANES */
 #define SCREEN_BYTES    (SCREEN_ROW_BYTES * SCREEN_H)   /* 32000 */
 
+#ifndef __ASSEMBLER__
 typedef struct {
     uint8_t px[SCREEN_BYTES];                 /* interleaved 4-plane framebuffer, ST byte order */
 } Framebuffer;
+#endif
 
 #endif /* RM_SCREEN_H */

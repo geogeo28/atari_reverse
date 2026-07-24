@@ -70,6 +70,16 @@ COMPOSITES = [
     ("draw_frame",          None,                    "bench_draw_frame"),
 ]
 
+# PERF30 A3: the objshift2 hand-asm core (src/asm/objshift2.s) vs the C reference (src/blit.c), on ONE
+# self-contained representative fixed-pass blit (base straddle 3, 0x2a rows). Head-to-head engine
+# microbench, NOT part of the TOTAL. NOTE: the composed rows above (objlist_fixed / object_tree /
+# draw_frame) ALREADY run the asm path — the bench build defines RM_ASM_BLIT so the dispatcher calls
+# the asm exactly like the game; this pair isolates the two engines so the per-engine ratio is explicit.
+ASM_AB = [
+    ("objshift2 C ref",     "bench_objshift2_c"),
+    ("objshift2 asm",       "bench_objshift2_asm"),
+]
+
 # Remaster wrappers that need a built control table (and, for draw_frame, the pre-rotated scroll
 # copies) before the measured call — same reason recon preps geometry for its road readers.
 RM_PREPS = {
@@ -143,12 +153,19 @@ def preps_for(bench_sym):
 
 
 def remaster_costs():
+    """Every remaster measurement from ONE staged image (F8, no second staged_mem() pass): the per-stage
+    FUNCS + whole-scope COMPOSITES + the PERF30 A3 objshift2 C-vs-asm A/B pair. Some wrappers read state
+    another stage builds (the control table, the pre-rotated scroll copies) — preps_for runs those first
+    (per-leg / earlier-in-frame, not part of the measured stage); the self-contained A/B wrappers resolve
+    to just bench_stage_assets (their label is unknown to preps_for)."""
     syms, mem, sp, sentinel = staged_mem()
-    # Some wrappers read state another stage builds (the control table, the pre-rotated scroll
-    # copies) — run those preps first (they're per-leg / earlier-in-frame, not part of the measured
-    # stage), mirroring the recon's geometry prep, and measure only the per-frame call.
-    return {label: _run(mem, syms[rm], 0, sp, sentinel, preps=[syms[p] for p in preps_for(rm)])
-            for label, _, rm in FUNCS + COMPOSITES}
+
+    def cost(rm):
+        return _run(mem, syms[rm], 0, sp, sentinel, preps=[syms[p] for p in preps_for(rm)])
+
+    rows = {label: cost(rm) for label, _, rm in FUNCS + COMPOSITES}
+    rows.update({label: cost(rm) for label, rm in ASM_AB})
+    return rows
 
 
 def recon_costs():
@@ -212,6 +229,18 @@ def main():
     print()
     for label, _, _ in COMPOSITES:
         row(label)
+
+    # PERF30 A3: objshift2 hand-asm vs the C reference, one representative fixed-pass blit (folded into
+    # remaster_costs' one staged image — F8).
+    print("\n  objshift2 engine — hand-asm vs C reference (one base-straddle-3 blit, 0x2a rows;")
+    print("  the composed objlist_fixed/object_tree/draw_frame rows above ALREADY run the asm path):")
+    c_cyc = rm["objshift2 C ref"][1]
+    for label, _rm in ASM_AB:
+        i, c = rm[label]
+        line = f"    {label:<18}{i:>10}{c:>10}{1000 * c / CPU_HZ:>8.2f} ms"
+        if label != "objshift2 C ref":
+            line += f"   {c / c_cyc:.3f}x C"
+        print(line)
 
     # render_road vs the byte-exact machine model (recon's tight register/goto transcription).
     if rec and "render_road_machine" in rec:

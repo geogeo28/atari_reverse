@@ -543,6 +543,30 @@ void rm_blit_objshift(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32
 void rm_blit_objshift2(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
                        uint16_t x, uint16_t rows_m1, int width_idx);
 
+/* PERF30 A3 phase 1 — hand-written m68k core for the fixed-pass engine (src/asm/objshift2.S). The C
+ * above stays the byte-exact REFERENCE (fuzz-pinned); the asm is a drop-in with the same signature.
+ *
+ * Per-core selection flags (F10): RM_ASM_BLIT is the umbrella the m68k builds pass; it turns on each
+ * individual core flag (unless already defined), and each engine's dispatch macro keys off its OWN
+ * flag. So the objshift2 core is RM_ASM_OBJSHIFT2, and phase 2's rm_blit_objshift core will be
+ * RM_ASM_OBJSHIFT — each independently bisectable (define/undef one flag to A/B a single core), while
+ * the umbrella keeps the build scripts a single -DRM_ASM_BLIT. The host test build defines neither, so
+ * every RM_BLIT_* macro resolves to the C reference and the host suite keeps pinning C; the asm-vs-C
+ * equivalence is pinned separately by test/test_asm_blit.py under Musashi. */
+#ifdef RM_ASM_BLIT
+#  ifndef RM_ASM_OBJSHIFT2
+#    define RM_ASM_OBJSHIFT2
+#  endif
+#endif
+
+#ifdef RM_ASM_OBJSHIFT2
+void rm_blit_objshift2_asm(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                           uint16_t x, uint16_t rows_m1, int width_idx);
+#define RM_BLIT_OBJSHIFT2 rm_blit_objshift2_asm
+#else
+#define RM_BLIT_OBJSHIFT2 rm_blit_objshift2
+#endif
+
 /* objsprite engine (recreate's @0x131f6): the third fine-x blitter — four-word SHOW mask, no colour.
  * width_idx 0/1/2/3 selects WIDTH 0x80/0x88/0x90/0x98 (the t4/w88/t2/t1 glue). */
 void rm_objsprite(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,

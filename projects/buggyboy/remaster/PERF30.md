@@ -881,3 +881,89 @@ cases).
 > cyc = 167.83 → 163.76 ms (−32,544, −4.07 ms)**. The pure-C object-tree levers are now exhausted:
 > objshift's residue is hand-asm (A3), objshift2's mask immediates resist GCC (C2), and objsprite is
 > cold. What remains on the tree is A3 (hand-asm) or the Tier-B algorithmic wins (A2 pre-shift, culling).
+
+### A3 phase 1 — hand-asm objshift2 core LANDED (2026-07-23; the fixed-pass engine dropped to asm)
+
+The pure-C levers on `rm_blit_objshift2` were exhausted (C1 landed the straddle switch; C2 mask-immediate
+reshaping REGRESSED twice). The residue is the C-ABI/register-allocation overhead GCC cannot shed — so
+phase 1 replaces the fixed-pass engine with a hand-written m68k core, `src/asm/objshift2.S`, ported from
+the ORIGINAL game's own `blit_objshift2 @0x13ed6` (the measured template, 262,940 cyc). **The C stays the
+byte-exact reference** (`src/blit.c` `rm_blit_objshift2`, still fuzz-pinned by `test/test_blit_engines.py`);
+the asm is a drop-in with the same signature.
+
+**Selection mechanism (C is reference, asm is the shipped hot path).** `include/game.h` defines a dispatch
+macro `RM_BLIT_OBJSHIFT2` → asm (m68k builds) / C (host); `src/object_list.c`'s call sites call the macro.
+Per-core flags (F10): the m68k build scripts (`bench_build.sh`, `build_game.sh`) pass one umbrella flag
+`-DRM_ASM_BLIT`, which turns on the individual core flag `RM_ASM_OBJSHIFT2` (the macro keys off *that*);
+phase 2's `rm_blit_objshift` core will get its own `RM_ASM_OBJSHIFT`, so each core is independently
+bisectable. The scripts link `objshift2.S` (a `.S`, so cpp runs first — it `#include`s the shared blit
+constants; see F11). The host test build defines no flag, so the 558-test host suite keeps pinning the C
+reference unchanged.
+
+**What the asm does differently from the C (the original's tricks, ported):**
+- `moveq #-1` mask seed — the 0xFFFF high word that rotates into col0's straddle half is free, vs the C's
+  `oril #-65536` (16 cyc) the compiler wouldn't drop (C2).
+- mask split into the two column masks by `move`/`swap` shuffles (4-cyc ops) instead of `andi.w` immediates.
+- both destination columns walked with `(a0)+`/`(a2)+` post-increment; source with `(a1)+` — the cheapest
+  addressing mode, no `dst+offset` rebuild.
+- the three BASE families (`width_idx` 0/1/2 → 3/2/1 straddle cells) are each a fully-unrolled row loop —
+  zero per-cell loop control; the per-row rewind is held in `d3`/`d5` (F3) so the row bookkeeping is 3
+  `suba.w %dN,%aN` (8 cyc) + `dbra`, matching the original, not the `suba.w #imm` (12 cyc) it first used
+  nor the C's cursor-triple stack reload. The (cold) LEFT/RIGHT clip ladders + edge cells are transcribed
+  for correctness. A `bmi` at entry (F1) skips a bit-15-set `rows_m1` — the C draws `(int16)rows_m1+1 <= 0`
+  = zero rows there, and a plain 16-bit `dbra` would otherwise loop up to 65536 times.
+- the one structural change from the original is the ABI: the original is register-in
+  (`x@D0 rows_m1@D4 dst@A0 src@A1`); this implements the remaster C signature, reading its 7 stack args
+  and doing a GCC-style `movem.l %d2-%d7/%a2-%a3` save/restore — the only overhead over the original's
+  zero-prologue core.
+
+**Measured on the gate frame (`tools/bench.py` / `tools/profile.py bench_objlist_fixed`), post-F3:**
+- **`rm_blit_objshift2` (the fixed-pass engine): C 314,216 cyc (39.28 ms) → asm `rm_blit_objshift2_asm`
+  264,930 cyc (33.12 ms) = 0.843×, −49,286 cyc (−6.16 ms).**
+- **`bench_objlist_fixed` (the whole fixed pass): 325,424 → 276,138 cyc (40.68 → 34.52 ms).**
+- Isolated head-to-head microbench (`bench_objshift2_c` vs `bench_objshift2_asm`, one base-straddle-3
+  blit × 0x2a rows): **56,658 → 47,266 cyc = 0.834×** (data-independent, same-build A/B).
+- Whole object tree **573,948 cyc = 71.74 ms**; TOTAL (frame, funcs-sum) **1,260,780 cyc = 157.60 ms**.
+
+**Gap to the original (F2 — the earlier "exactly the movem" claim was wrong).** Before F3 the asm profiled
+269,118 cyc, +6,178 over the original's 262,940. That gap decomposes (per the review) as: the C-ABI
+`movem` save/restore ≈ 890 cyc (≈148/call × ~6 calls); a per-row `suba.w #imm` (12 cyc) regression the
+first cut carried where the original holds the rewind in a register ≈ 2,900; and C-ABI argument
+marshalling + the runtime width-family dispatch ≈ 2,400 — NOT a single `movem` term. F3 switches the three
+hot base loops to register-held rewinds (`suba.w %dN,%aN`, 8 cyc), measured **−4,188 cyc** on the profile
+(more than the ~2,900 the review estimated for that term), taking the asm to 264,930 — **+1,990 over the
+original**, the residue being the `movem` prologue + the C-ABI marshalling/dispatch the register-in
+original skips.
+
+**Verification.** A Musashi-executed differential, `test/test_asm_blit.py`, runs every objshift2 fuzz case
+(3 width families × 16 fine-x × 12 clip/edge/base columns × 3 row counts = 1728, PLUS a 12-case bit-15-set
+`rows_m1` list, F1 = **1740 cases**, sharded into 8 chunks) through BOTH the C entry and the asm entry on
+`bench.elf` under the cycle-accurate 68000 (via a `bench_main.c` param-block wrapper). The compare is
+bracketed (F5): the whole dst window plus GUARD bytes either side of it plus the src buffer must be
+byte-identical between the C and asm runs — a guard/src divergence flags a wild asm store past the window.
+A positive control (F4) asserts the known base-drawing cases changed dst from the pre-blit noise, so a dead
+harness (broken param block / renamed wrapper) fails loudly instead of false-greening C==asm. The harness
+is driven by an engine descriptor (F12) so phase 2 adds a descriptor + case table, not a parallel class;
+`_x_for` and the flat-image loader are imported from `test_blit_engines` / `tools/bench.py`, not copied
+(F7). Wired into `make test` (bench.elf is a Makefile prerequisite — now also rebuilt when the build glue
+changes, F6; a missing elf FAILS with a build hint, never silently skips). **Mutation check**: flipping the
+cell's `not.w %d1` → `not.l %d1` corrupts the high mask word and the suite fails; restored, green again.
+`make test` **566 passed** (558 host + 8 asm-differential chunks); `run_golden.py` **MATCH on all 5 legs**
+(the flagged GAME binary runs the asm path in Hatari — the end-to-end pin).
+
+**One source of truth (F11).** The engine constants the asm shares with the C were duplicated (`.equ` in
+the asm, `#define` in `blit.c`): hoisted into `include/blit_const.h` (a `#define`-only, asm-safe header
+`blit.c` and `objshift2.S` both `#include`), and `SCREEN_ROW_BYTES` now comes from `screen.h` (its C-only
+parts guarded behind `__ASSEMBLER__`) — which is *why* the asm is a `.S`. The refactor is verified pure:
+the `rm_blit_objshift2_asm` section objdumps byte-identical before/after.
+
+**What the differential pins, honestly (F13a).** `test_asm_blit.py` is an EQUIVALENCE pin (asm == C), and
+the C reference itself is directly oracle-fuzzed only at `width_idx 0` (only `g_blit_objshift2` has a
+public recreate entry). For `width_idx 1/2` the asm-vs-C differential still proves the two agree, but the
+C's own correctness there rests on the composed-frame differential (`test/equiv.py`) and the 5-leg goldens,
+which drive the dispatcher through all three families — not on a direct leaf-level oracle fuzz.
+
+**Deferred to phase 2:** `rm_blit_objshift` (pass 1) — its spill residue is the other hand-asm target
+(PERF30 L2/E-sweep noted the register-pressure wall no C shape relieves). Not started here. F8/F9 already
+de-duplicated the bench harness (`bench.py` folds the A/B rows into one staged image; `bench_main.c` shares
+one arg-marshalling macro) so the phase-2 core slots in with minimal new scaffolding.

@@ -42,8 +42,11 @@ CC=m68k-elf-gcc
 # see PERF30.md "GCC-level sweep"). rm_blit_objshift also carries a per-function optimize() attribute in
 # blit.c that is paired with this -O3. -fno-tree-loop-distribute-patterns keeps the hand-written fill
 # loops from being turned into libc calls.
+# -DRM_ASM_BLIT: dispatch the fixed-pass fine-x blitter (object_list.c's RM_BLIT_OBJSHIFT2) to the
+# hand-written m68k core src/asm/objshift2.s (PERF30 A3). run_golden.py verifies THIS build byte-exact
+# in Hatari, which is the end-to-end pin that the asm path draws the same pixels as the C reference.
 CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
-        -fomit-frame-pointer -nostdlib -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
+        -fomit-frame-pointer -nostdlib -DRM_ASM_BLIT -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
         ${GAME_EXTRA_CFLAGS:-}"
 CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
        $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c \
@@ -55,7 +58,8 @@ CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
-    "$HERE/os.s" "$HERE/shim.c" "$HERE/game_main.c" $CORES -lgcc -o "$BUILD/game.elf"
+    "$HERE/os.s" "$REMASTER/src/asm/objshift2.S" "$HERE/shim.c" "$HERE/game_main.c" $CORES -lgcc \
+    -o "$BUILD/game.elf"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).
 ENTRY=$(m68k-elf-nm "$BUILD/game.elf" | awk '$3=="_start"{print $1}')
