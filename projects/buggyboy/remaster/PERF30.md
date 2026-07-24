@@ -528,3 +528,21 @@ differential tests (`test_blit_engines` / `test_road` / `test_hud` / `test_scrol
 differential (`test_composed_frame`), and the on-target per-leg goldens (`run_golden.py` MATCH on legs
 0–4). A Tier-C item that trades pixels ships as a **separate build profile with its own goldens**, never
 under the `recreate/` byte-compare.
+
+### A2 implementation attempt 2026-07-23 — BLOCKED, expectations corrected
+
+Measured before implementing (scratchpad/analyze_groups.py; 648 distinct 4-byte straddle groups
+in 125 runs, 129 right-edge, dense span [32000,45596]):
+- **The A2 win was over-estimated ~5×**: only 17.4% of objshift2's cycles are shifts (77,760 cyc);
+  the masked RMW majority (dst read + and + or + write per plane-word) is irreducible by a table.
+  Honest full-table payoff **~8–11 ms** (objshift2 55.99 → ~45–48 ms), masks-only ~6 ms.
+- **RAM blocker**: the shipping game.elf is **927 KB** (arena 389 KB + screen_pool 326 KB —
+  SCREEN_OVERDRAW 0x20000 per screen, ~4× the apparent max object reach — + shifted 106 KB + text).
+  The full table (dense arithmetic addressing, 638 KB; compacted, ~128 KB) does not fit a literal
+  1 MB ST; the compacted idxmap is UNSOUND besides (the group set is object-record-driven, not
+  boot-enumerable — a missed group = visual corruption). The 4 MB Hatari harness would not catch
+  the overflow.
+- **Path if A2 is still wanted**: right-size SCREEN_OVERDRAW first (measure the true max write
+  reach; 0x20000 → ~0x8000 frees ~192 KB), then the DENSE table fits 1 MB with margin.
+- **Rerank consequence**: A3 (hand-asm cores) now dominates — the original's asm is the measured
+  proof of ~2× on the whole object tree (~50 ms available) vs A2's corrected ~8–11 ms.
