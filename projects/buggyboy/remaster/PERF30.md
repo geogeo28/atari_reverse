@@ -1053,3 +1053,55 @@ the value now hoisted into `blit_const.h`; fold it onto the shared constant (out
 was untouched, so `blit.c`'s "single source" note points at the duplicate rather than claiming to erase it).
 
 **Both hot fine-x engines are now hand-asm.** `objsprite` (the third, cold family) stays C. A3 is done.
+
+### A4 — render_road pointer cursors + B/D localization LANDED (2026-07-24; 50.64 → 43.79 ms)
+
+The C-shape levers from the blitter campaign (P4 real-pointer cursors, cursor localization) carry to
+the road; the plan's per-flag-combo specialization does **not** (measured reasoning below). Landed, all
+byte-exact every step (`make test` 700 passed; `run_golden.py` MATCH ×5 on-target):
+
+- **P4 real-pointer cursors (all bands).** The blit primitives took `(Framebuffer*, Offset *dst)` and
+  recomputed `fb->px + *dst` per write; the copies in bands B/D compiled to base+index
+  `%fp@(4,%d6:l)` accesses (+6 cyc each). Converting the primitives to walk a native `uint8_t*`
+  (formed once per row/tail per st.h's offset-first rule) makes every store displacement/post-increment.
+  **405,148 → 378,890 cyc (−26,258; 50.64 → 47.36 ms).**
+- **B/D cursor localization.** `rr_band_B`/`rr_band_D` mutated `r->param/width/edge/dst` through the
+  `rr_regs*` per scanline; GCC must assume every framebuffer store aliases `r->*` and re-wrote the
+  struct fields every row (`movel %aN,%a2@(12/16/20)`). Pulling the cursors into locals (write back
+  once at return) keeps them register-resident. **378,890 → 355,998 cyc (−22,892; → 44.50 ms).**
+- **Review-gate hardening (net −5,688 on top).** The gate's verify pass confirmed the pointer
+  conversion formed out-of-object pointers before their guards at three sites (band A shoulder walk,
+  B-far/C-far tails — strict-C UB the old uint32 Offset math was immune to; harmless at -O2 today).
+  The B-far/C-far hoists are free; band A's shoulder fill was reshaped into two phases — the skip
+  prefix (cells past the row end, the actual UB) walks in Offset space forming no pointer, then the
+  in-bounds write loop runs the fast predecrement pointer walk with the skip test dropped entirely.
+  The naive all-Offset rewrite was measured **+8,012** and rejected; the two-phase shape is faster
+  than the pre-fix code: **355,998 → 350,310 cyc (→ 43.79 ms, 0.79× recon)**. Also: `rr_fill_full_row`
+  folded into `rr_fill_row` (post-refactor duplicate), `_Static_assert(RR_ROW_LONG_PAIRS * 8 ==
+  RR_ROW_STRIDE_D2)` pins the fill/stride coupling the old cursor-advancing fill enforced by
+  construction.
+- **Gate frame TOTAL 1,190,068 → 1,135,230 cyc = 148.76 → 141.90 ms.** Original binary reference for
+  the stage: 207,232 cyc / 25.9 ms — remaining gap is ~1.69×.
+
+**Dead ends (measured — don't retry):**
+- **Localizing bands A/C: +7,526.** A/C inline into `rm_render_road`; three resident cursor-sets
+  spill (same register-pressure wall as L2/E2). The asymmetry is fenced by a why-not comment at
+  `rr_band_B`'s localization note.
+- **IRA `region=one`+`priority` attribute: +5,648 on B/D, +8,622 on `rm_render_road`.** The road is
+  store/loop-control-bound, not spill-bound like objshift — the allocator lever regresses here.
+- **All-Offset band-A shoulder walk: +8,012** (see above; the two-phase reshape is the right form).
+
+**A4-proper (per-combo specialised writers) not pursued.** The flag census (77 staged frames, legs
+0–4 × warmups; temporary `RR_CENSUS` instrumentation, removed) shows the dispatch fans wide —
+14–38 distinct `(flags, col_sign)` combos per band, skewed ~45% to `flags=0` everywhere (D-far's
+largest bucket is `col<0`, road off the left edge, 1819/6930 rows) — but the after-profile puts
+`rm_render_road` (A+C inlined) at 248,526 cyc dominated by irreducible fill/copy stores
+(`movel %d2,%a0@(4)`) and band A's variable-count shoulder-fill loop control; `rr_band_B`/`rr_band_D`
+at ~54k each with the base+index gone. Dispatch is a small fraction — specialising it can't pay.
+Below this the road needs hand-asm (A3-style) or the **B2 display list** (do less work per frame),
+which is the next front.
+
+**Deferred (noted by the review, needs its own re-measure):** band B open-codes
+`rr_draw_edge_cell`'s body at three sites and bands C open-code `rr_fill_shoulder`'s fill at two —
+verified byte-equivalent, but both helpers are static non-inline and new call sites could shift
+inlining in the hot loops; collapse only with a bench before/after.
