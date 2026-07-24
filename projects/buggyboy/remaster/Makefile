@@ -9,11 +9,14 @@ PY       := $(RECREATE)/.venv/bin/python
 CAND    := build/libremaster.so
 SRC     := $(wildcard src/*.c)
 RECON   := $(RECREATE)/build/libbuggyboy.so
-# Generated: the sound driver's baked program-data constants (const tables + tune note streams +
-# the Dosound lists), regenerated whenever the generator, the image it bakes from, or the loader that
-# relocates it changes. Lives in render/atari/build/ with every other generated fixture (one fixture
-# home — the m68k cross builds already -I that directory).
+# Generated: the sound driver's baked program-data constants. gen_sound_fixture.py emits TWO headers in
+# one run — sound_data.h (SND_CONST: const tables + tune note streams, read by src/sound.c every frame)
+# and sound_dosound.h (SND_DOSOUND: the TOS Dosound command lists, only the on-target seam includes).
+# Both regenerate whenever the generator, the image it bakes from, or the loader that relocates it
+# changes. They live in render/atari/build/ with every other generated fixture (one fixture home — the
+# m68k cross builds already -I that directory).
 SOUND_DATA := render/atari/build/sound_data.h
+SOUND_DOSOUND := render/atari/build/sound_dosound.h
 SOUND_IMAGE := ../bin/BUGGYBOY.PRG
 # The cross-compiled m68k bench.elf — needed by test/test_asm_blit.py (the Musashi differential that
 # pins both hand-asm cores (objshift2 + objshift) byte-exact vs the C references; PERF30 A3). Built by bench_build.sh.
@@ -23,6 +26,11 @@ $(SOUND_DATA): render/atari/gen_sound_fixture.py render/atari/fixture_lib.py \
                $(SOUND_IMAGE) $(RECREATE)/oracle/loader.py
 	@mkdir -p render/atari/build
 	$(PY) render/atari/gen_sound_fixture.py
+
+# The same generator run produces sound_dosound.h; depend on sound_data.h so it is regenerated in step,
+# and (make 3.81 has no grouped targets) re-run the idempotent generator if only this header is missing.
+$(SOUND_DOSOUND): $(SOUND_DATA)
+	@test -f $@ || $(PY) render/atari/gen_sound_fixture.py
 
 $(CAND): $(SRC) $(wildcard include/*.h) $(SOUND_DATA)
 	@mkdir -p build

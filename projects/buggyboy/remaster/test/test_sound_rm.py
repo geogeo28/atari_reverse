@@ -160,6 +160,9 @@ def _refresh_both(buf, st):
     on = _ORACLE.g_REFRESH(buf, o_reg, o_val, PSG_CAP)
     c_reg, c_val = (ctypes.c_uint8 * PSG_CAP)(), (ctypes.c_uint8 * PSG_CAP)()
     cn = _CAND.rm_refresh(ctypes.byref(st), c_reg, c_val, PSG_CAP)
+    # The shell sizes its VBL PSG buffer to SND_PSG_WRITES_MAX (sound.h); a frame that emitted more would
+    # overrun it. Pin both sides against the header constant so a driver change that adds a write is caught.
+    assert on <= _SND_H["SND_PSG_WRITES_MAX"] and cn <= _SND_H["SND_PSG_WRITES_MAX"], (on, cn)
     o_psg = [(o_reg[i], o_val[i]) for i in range(on)]
     c_psg = [(c_reg[i], c_val[i]) for i in range(cn)]
     return o_psg, c_psg

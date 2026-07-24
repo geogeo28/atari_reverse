@@ -1,5 +1,6 @@
 /* game_main.c — the on-target BuggyBoy game shell: playable BuggyBoy on a real 68000. Ships as
- * BUGGYBOY.PRG. Explicitly WITHOUT sound (a documented seam, below).
+ * BUGGYBOY.PRG, WITH sound: a 50 Hz VBL pump writes the ported REFRESH driver's YM2149 stream to the
+ * chip and the trigger seam plays the baked Dosound lists through XBIOS (the sound-pump section below).
  *
  * main() composes the original's own outer loop (decomp.c main @0x10100) out of remaster's ported
  * pieces. The shipping build boots into the LEG SELECT first, exactly as the original game does:
@@ -19,8 +20,11 @@
  * FlowState (include/flow.h) is the composition's owner — the attract/leg-select counters, the leg
  * selector, the idle countdown and the game-over flag — exactly as the host harness's _Candidate owns
  * the leg-drive structs. The off-image SEAMS the shell stands in for, each documented at its call site:
- *   - Sound: INITTUNE / INITFX / TURNOFF / the VBL vector / stop_music — never played. Shipping the
- *     game WITHOUT sound is a deliberate scope choice; the sound path stays an unported seam.
+ *   - Sound: WIRED and audible. The ported REFRESH driver's state is driven by the in-race / flow
+ *     triggers (INITTUNE / INITFX / TURNOFF / stop_music), the 50 Hz VBL pump (vbl_sound, below) writes
+ *     its YM2149 stream to the chip, and the Dosound trigger seam plays the baked command lists through
+ *     XBIOS. Only the audio QUALITY (timbre / pitch / tempo) is still verified by ear rather than by the
+ *     differential — the pump's register stream is proven right, the way it SOUNDS on real hardware is not.
  *   - Vsync pacing / the flip: the shell flips at the vblank; the original's exact frame cadence is off.
  *   - Palette fades: the flow's per-phase palettes are Setpalette'd (an off-image seam — the byte-compare
  *     is palette-agnostic); the 121-frame leg-start "get ready" palette FLASH is a plain frame wait.
@@ -115,6 +119,8 @@ extern void Setpalette(const void *pal16);
 extern long Setcolor(short idx, short color);                  /* color -1 reads a register without writing */
 extern long Setexc(short number, long vector);
 extern void Ikbdws(short count_m1, const void *buf);
+extern void Dosound(const void *list);        /* XBIOS 32: play a YM2149 command list (TOS steps it per VBL) */
+extern long Supexec(long (*func)(void));       /* XBIOS 38: run func in supervisor mode, return to user */
 
 /* Held-key + joystick state, maintained by the IKBD interrupt handler in os.s. key_down/key_hit are
  * indexed by scancode; joy_state is joystick 1 (the game port), updated from each joystick report. */
@@ -132,6 +138,14 @@ static int take_key_hit(int scancode) {
     if (!key_hit[scancode]) return 0;
     key_hit[scancode] = 0;
     return 1;
+}
+
+#define SCANCODE_COUNT 128        /* key_down / key_hit are indexed by the full 7-bit scancode space */
+
+/* Drain every latched keypress (the Crawio key-drain @0x25de), so a key pressed to skip the jingle does
+ * not carry into the leg select that follows. */
+static void drain_key_hits(void) {
+    for (int i = 0; i < SCANCODE_COUNT; i++) key_hit[i] = 0;
 }
 
 /* ST keyboard scancodes. */
@@ -476,6 +490,27 @@ static void render_and_show(Shell *s) {
     show_surface(s);
 }
 
+/* The leg-start "3-2-1-GO" countdown (original main @0x10226-0x10254; recreate game_main.c:402-405):
+ * stop_music(BEEP) ×3 then stop_music(GO), each paced by a Vsync wait. Each stop_music parks the VBL
+ * music pump (so the get-ready tune goes quiet) and hands the beep list to XBIOS Dosound, which TOS's
+ * kept _vblqueue entries step over the wait — that is what makes the beeps audible. game_over is 0 here
+ * (a real race entry). The original folds a road-scroll-offset write into each wait (wait_vbl_set_offset
+ * @0x102ee); the remaster's screen_offset is already set by start_leg's prebuild and does not animate
+ * pre-race, so this is a pure pacing wait. */
+#define RACE_START_BEEPS       3    /* three "3-2-1" beeps, then the GO tone */
+#ifdef GAME_FLOW_FAST
+#define RACE_START_BEEP_VSYNCS 2    /* debug: keep a headless flow trace snappy (the beeps still fire) */
+#else
+#define RACE_START_BEEP_VSYNCS 51   /* wait_vbl_set_offset @0x102ee: 0x32+1 Vsyncs (~1 s/beep) */
+#endif
+static void race_start_countdown(Shell *s) {
+    for (int beep = 0; beep < RACE_START_BEEPS + 1; beep++) {
+        uint16_t list = beep < RACE_START_BEEPS ? SND_DOSOUND_BEEP : SND_DOSOUND_GO;
+        rm_stop_music(s->ctx->snd, list, false);
+        for (int v = 0; v < RACE_START_BEEP_VSYNCS; v++) Vsync();
+    }
+}
+
 /* ---- the between-legs flow palettes (all inside the obj-low program-data blob; an off-image seam —
  * the byte-compare is palette-agnostic, so these only affect the colours a human/screenshot sees). ---- */
 static void set_palette(const Shell *s, uint32_t off) { Setpalette(s->low + off); }
@@ -534,6 +569,138 @@ static uint16_t read_input(void) {
 __attribute__((unused)) static void dump_frame(Framebuffer *fb) {
     long h = Fcreate("SCREEN.BIN", 0);
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, fb->px); Fclose((short)h); }
+}
+
+/* ==== sound (slice 3): make the wired triggers AUDIBLE on the 68000 ================================
+ *
+ * Slices 1+2 gave a fully-driven SoundDriver whose YM2149 (reg,val) stream rm_refresh returns but never
+ * plays — the driver state is verified host-side, the chip stays silent. This section closes that seam:
+ * a 50 Hz VBL pump writes rm_refresh's stream to the PSG, and the Dosound trigger seam plays the baked
+ * command lists through the real XBIOS. It mirrors recreate/render/atari/game_main.c (which solved this
+ * on-target) with one structural difference — the remaster shell runs USER mode (Setexc/Ikbdws/Setscreen
+ * traps, GEMDOS SCREEN.BIN dumps), so the two supervisor touch-points are reached differently:
+ *   - the VBL handler runs supervisor anyway (TOS calls the queue at interrupt), so its PSG pokes are fine;
+ *   - the one-shot install (the TOS VBL queue + conterm, both supervisor-only low memory) runs in a brief
+ *     Supexec excursion instead of flipping the whole program supervisor (which would run the golden /
+ *     flow-trace GEMDOS dumps supervisor and risk the handle-0 GEMDOS-HD bug os.s's header warns about).
+ *
+ * VBL REENTRANCY — why a guard, and why a FLAG not an SR-mask. The pump calls rm_refresh on the SAME
+ * SoundState the main loop mutates through the sound_trig leaves (rm_inittune / rm_stop_music / …). The
+ * original 68k asm publishes a tune change safely by instruction ORDER (mzflag cleared first, records
+ * rewritten, mzflag set last); -O3 C gives no such guarantee, so a VBL landing mid-mutation could
+ * rm_refresh a half-written record. The mitigation is RM_SOUND_LOCK/UNLOCK (sound.h) bracketing each
+ * leaf's mutation; here they are a nesting COUNTER (snd_lock_depth) the pump checks. Because a VBL is an
+ * interrupt, it runs ATOMICALLY w.r.t. the main line (the CPU is single-threaded): a VBL either sees the
+ * counter clear — and then the main line is provably NOT mid-mutation (a leaf only clears the counter
+ * after finishing) — or sees it nonzero and SKIPS this frame's refresh. That is full mutual exclusion.
+ * The counter is set only around the tiny per-leaf mutation (a few µs), NOT the whole ~150 ms game frame,
+ * so a skip is rare and costs at most one 20 ms frame of held PSG state (inaudible) — masking the pump
+ * for the whole frame would instead wreck REFRESH's 50 Hz tempo. An SR-mask (defer rather than skip)
+ * would be marginally nicer but needs supervisor (`move #x,sr`), which this user-mode shell hasn't got;
+ * the counter is correct in user mode and is exactly the "shell-side guard the handler checks" shape. */
+
+/* YM2149 ports (reached only from the VBL handler, which runs supervisor). */
+#define PSG_SELECT (*(volatile uint8_t *)0xffff8800UL)   /* register-select port */
+#define PSG_WRITE  (*(volatile uint8_t *)0xffff8802UL)   /* data-write port */
+
+/* TOS low memory the one-shot install touches (all supervisor-only — reached via Supexec). */
+#define SYS_NVBLS    (*(volatile int16_t *)0x454UL)      /* VBL-queue length */
+#define SYS_VBLQUEUE (*(volatile uint32_t *)0x456UL)     /* -> array of VBL routine pointers */
+#define SYS_CONTERM  (*(volatile uint8_t *)0x484UL)      /* console flags: bit1 = the TOS key-click */
+
+#define TOS_VBL_SLOTS   8      /* how many displaced TOS VBL entries we preserve after our own (recreate) */
+#define PSG_WRITE_CAP   SND_PSG_WRITES_MAX   /* the pump's per-frame PSG buffer/cap (sound.h): 14 writes */
+
+/* Our VBL queue: slot 0 is the sound pump, slots 1.. are the TOS VBL routines we displace at install
+ * (see vbl_install_super). The initializer's function address becomes an R_68K_32 reloc mkprg fixes up
+ * at load (exactly as the flow_ops table does), so slot 0 points at the real vbl_sound. */
+static void vbl_sound(void);
+static void (*vbl_queue[1 + TOS_VBL_SLOTS])(void) = { vbl_sound };
+
+static SoundDriver *volatile snd_ptr;      /* the driver the pump refreshes (set by install_sound) */
+static volatile uint16_t snd_lock_depth;   /* nonzero while a trigger mutates SoundState: the pump skips */
+static uint32_t saved_vblqueue;            /* the TOS _vblqueue pointer install displaced (restored on exit) */
+static int16_t  saved_nvbls;               /* the TOS _nvbls count install displaced (restored on exit) */
+
+/* RM_SOUND_LOCK/UNLOCK (sound.h) on the m68k build: the shell-provided VBL-reentrancy counter. A COUNTER
+ * (not a flag) so an accidentally-nested lock can't clear the guard early — the four self-bracketing sound
+ * primitives (sound.c) may nest inside a trigger's own bracket (rm_stop_music), and the counter absorbs
+ * that. `addq/subq` on a word in memory is a single instruction the VBL never interrupts mid-way, and the
+ * pump only READS the counter, so no read-modify-write race exists between them. The `memory` barrier keeps
+ * the compiler from floating the SoundState stores across the counter update — correctness then survives a
+ * future build inlining these (e.g. -flto), not just their being out-of-line calls (sound.h CONTRACT). */
+void rm_sound_lock(void)   { snd_lock_depth++; __asm__ volatile("" ::: "memory"); }
+void rm_sound_unlock(void) { __asm__ volatile("" ::: "memory"); snd_lock_depth--; }
+
+/* The 50 Hz VBL sound pump — TOS calls this every vertical blank (supervisor). When the driver is RUNNING
+ * and no trigger mutation is in flight, refresh one frame and write its YM2149 stream to the chip. When
+ * PARKED (stop_music parked it) it does nothing — silence, exactly as the original's parked VBL vector.
+ * snd_ptr is set by install_sound BEFORE the queue is spliced and stays valid until uninstall detaches the
+ * queue, so it is never NULL here (no guard needed). */
+static void vbl_sound(void) {
+    if (snd_ptr->vbl_enable != RM_VBL_RUNNING) return;
+    if (snd_lock_depth) return;    /* a trigger is publishing a change: skip this frame (see the note) */
+    uint8_t regs[PSG_WRITE_CAP], vals[PSG_WRITE_CAP];
+    uint32_t n = rm_refresh((SoundState *)&snd_ptr->state, regs, vals, PSG_WRITE_CAP);
+    for (uint32_t i = 0; i < n; i++) { PSG_SELECT = regs[i]; PSG_WRITE = vals[i]; }
+}
+
+/* Splice our sound pump in as _vblqueue[0], PRESERVING the TOS VBL routines after it (mirrors recreate /
+ * the original main @0x101b8) — keeping them is what lets TOS's own per-VBL Dosound stepper run, which is
+ * what plays the countdown beeps / engine idle; dropping them silenced them once (recreate SOUND handoff).
+ * Save the displaced _vblqueue pointer + count so the exit path can restore them (vbl_uninstall_super).
+ * Then kill the TOS key-click (conterm = 0; original main @0x101dc), else TOS pokes the YM on every key.
+ * Runs under Supexec (supervisor) — every address here is supervisor-only low memory. */
+static long vbl_install_super(void) {
+    uint32_t *old_q = (uint32_t *)(uintptr_t)SYS_VBLQUEUE;
+    int16_t old_n = SYS_NVBLS;
+    saved_vblqueue = SYS_VBLQUEUE;                      /* remember what to restore on exit */
+    saved_nvbls = old_n;
+    if (old_n > TOS_VBL_SLOTS) old_n = TOS_VBL_SLOTS;
+    for (int i = 0; i < old_n; i++) vbl_queue[1 + i] = (void (*)(void))(uintptr_t)old_q[i];
+    SYS_NVBLS = 0;                                      /* detach while we swap the queue pointer */
+    SYS_VBLQUEUE = (uint32_t)(uintptr_t)vbl_queue;
+    SYS_NVBLS = (int16_t)(1 + old_n);
+    SYS_CONTERM = 0;
+    return 0;
+}
+
+/* Detach the pump: restore the TOS _vblqueue pointer + count install displaced, so TOS stops calling
+ * vbl_sound. The mirror of vbl_install_super; runs under Supexec (supervisor low memory). */
+static long vbl_uninstall_super(void) {
+    SYS_NVBLS = 0;                                      /* detach before swapping the pointer back */
+    SYS_VBLQUEUE = saved_vblqueue;
+    SYS_NVBLS = saved_nvbls;
+    return 0;
+}
+
+/* Point the pump at `snd` and install the VBL queue + conterm clear (the supervisor part via Supexec).
+ * Idempotent-safe to call once at boot; after it the pump is live but silent until a trigger sets the
+ * driver RUNNING. */
+static void install_sound(SoundDriver *snd) {
+    snd_ptr = snd;
+    Supexec(vbl_install_super);
+}
+
+/* Detach the pump on exit (mirror of install_sound, like kbd_remove mirrors kbd_install): park the driver
+ * so a final in-flight VBL is a no-op, then restore the TOS VBL queue — BEFORE main() Pterms, so TOS never
+ * calls vbl_sound in the freed TPA (a random-timed crash otherwise). snd_ptr stays valid: the park below
+ * dereferences it, and the queue is still live until the Supexec detaches it. */
+static void uninstall_sound(void) {
+    snd_ptr->vbl_enable = RM_VBL_PARKED;
+    Supexec(vbl_uninstall_super);
+}
+
+#include "sound_dosound.h"     /* SND_DOSOUND: the five baked Dosound command lists (target build only) */
+
+/* The on-target Dosound seam — replaces src/sound_trig.c's host ledger (compiled out under
+ * RM_SOUND_TARGET, which build_game.sh always passes; the include + this definition are unconditional so
+ * a dropped -D fails loudly as a duplicate-symbol link against that ledger, not a silently mute PRG).
+ * rm_stop_music / rm_stop_music_chk call this with a SND_DOSOUND_* offset; hand TOS a pointer to that list
+ * in the baked blob (XBIOS Dosound; TOS's kept _vblqueue entries step it). Every caller runs after
+ * install_sound, so the queue always exists — no install guard needed. */
+void rm_dosound(uint16_t list_off) {
+    Dosound(SND_DOSOUND + list_off);
 }
 
 /* The BOOT fast path (skip the leg select, boot straight into a leg, dump frame 0). Enabled ONLY for
@@ -762,14 +929,25 @@ static void op_show(void *ctx) { show_surface(ctx); }
  * 121-frame COUNT (t->hold_frames). */
 static void op_hold_frame(void *ctx) { (void)ctx; Vsync(); }
 
-/* The name-entry / game-over terminal "wait for the jingle to end" (highscore.c @0x25bc / @0x2406). The
- * original spins one Vsync per poll until the tune finishes (rm_sound_music_on goes false) OR a fresh key
- * arrives. SLICE 3 TODO: once the VBL pumps rm_refresh the tune actually advances to its end, so this can
- * become that spin. Until then the game is silent (no pump), so a real spin would never see mzflag clear
- * and would HANG — so it returns at once, exactly as the terminal tail resolved before the op existed. */
-static void op_wait_music_off(void *ctx) {
+/* The name-entry / game-over terminal "wait for the jingle to end". Spins one Vsync per poll while the
+ * tune plays (rm_sound_music_on: the VBL pump advances the stream each Vsync until its end command clears
+ * mzflag), so the spin actually terminates. The two call sites differ in whether a fresh input skips it:
+ *   - name-entry (highscore.c @0x25bc): SKIPPABLE. Each spin re-reads FRESH input (read_input — the same
+ *     joystick-priority path the race loop uses; the original polls read_joystick + `input_state & 0x8f`),
+ *     so any joystick move / key press breaks out. NOT the old any_key_hit() scan of stale key_hit latches,
+ *     which the race left set and which a joystick could never satisfy.
+ *   - game-over (highscore.c @0x2406 g_wait_music_off): NOT skippable — a bare do{}while(mzflag), the
+ *     original never lets you cut the game-over jingle short. `skippable` carries that distinction from the
+ *     two flow.c call sites.
+ * Both paths then drain the key latches (@0x25de, the Crawio drain) so a skip key doesn't leak into the
+ * leg select that follows. */
+static void op_wait_music_off(void *ctx, bool skippable) {
     Shell *s = ctx;
-    (void)s;   /* slice 3: while (rm_sound_music_on(s->ctx->snd) && !any_input()) Vsync(); */
+    while (rm_sound_music_on(s->ctx->snd)) {
+        if (skippable && (read_input() & RM_IN_ACTIVE_MASK)) break;   /* fresh input skips (name-entry only) */
+        Vsync();
+    }
+    drain_key_hits();   /* @0x25de: the Crawio key-drain, so a skip key doesn't leak into the leg select */
 }
 
 static void op_rebuild_dash(void *ctx, uint16_t leg) {
@@ -1005,20 +1183,12 @@ void main(void) {
         .coll_mask = arena.tables + ARENA_COURSE_MASK_BASE,   /* rebound per leg */
         .buf_a = arena.tables, .dash_raw = arena.course, .font = fixture_font,
     };
-    /* The in-race sound driver (slice 2): the physics / event / flow triggers evolve its state here. On
-     * target it starts parked with no tune. SLICE 3 TODO: pump rm_refresh from the 50 Hz VBL when
-     * snd.vbl_enable == RM_VBL_RUNNING, and map rm_dosound(list) to the real XBIOS Dosound. Until then the
-     * triggers keep the driver STATE correct (verified host-side) but the YM2149 stays silent.
-     *
-     * VBL REENTRANCY HAZARD (read before wiring the pump): slice 3's VBL handler calls rm_refresh on the
-     * SAME SoundState the main loop mutates via rm_inittune / rm_stop_music / rm_turnoff (the triggers
-     * here run at frame level). The original's asm publishes a tune change reentrantly-safely by ORDER —
-     * it clears mzflag FIRST, rewrites the note-stream records, then sets mzflag = 0xff LAST, so a VBL
-     * landing mid-update sees "no music" rather than a half-written record. -O2 C gives NO such guarantee
-     * (dead-store elimination / reordering can float the mzflag store). The intended mitigation is to MASK
-     * the VBL around every trigger mutation — a short interrupt-disable window (or a "refresh busy" flag
-     * the VBL respects) wrapping the rm_inittune / rm_stop_music / rm_turnoff calls in the slice-3 shell
-     * trigger wrappers — NOT volatile on the host structs. Documented here so the pump author reads it. */
+    /* The in-race sound driver: the physics / event / flow triggers evolve its state (slice 2), and the
+     * VBL pump + real Dosound seam above (slice 3) make it audible. It starts PARKED with no tune; a
+     * trigger sets it RUNNING and the 50 Hz VBL (vbl_sound) writes rm_refresh's YM2149 stream to the chip.
+     * install_sound(&snd) below points the pump at it and splices the VBL queue. The rm_inittune /
+     * rm_stop_music / rm_turnoff mutations the triggers run at frame level are bracketed against the pump
+     * by RM_SOUND_LOCK/UNLOCK (see the VBL-reentrancy write-up in the sound-pump section above). */
     SoundDriver snd;
     rm_sound_reset(&snd.state);
     snd.vbl_enable = RM_VBL_PARKED;
@@ -1093,6 +1263,11 @@ void main(void) {
     memset(screen_buf(0)->px, 0, SCREEN_BYTES);
     memset(screen_buf(1)->px, 0, SCREEN_BYTES);
 
+    /* Install the 50 Hz VBL sound pump (and clear the TOS key-click) before the game runs. It starts
+     * silent — snd is PARKED — so it is harmless for the golden / autodrive fast-path frame below; a
+     * trigger sets it RUNNING and from then on the VBL writes rm_refresh's stream to the YM2149. */
+    install_sound(&snd);
+
     long old_kbd_vector;
 #ifdef BOOT_FAST_LEG
     /* BOOT fast path — GOLDEN harness / autodrive builds ONLY (see BOOT_FAST_LEG above). Skip the leg
@@ -1134,6 +1309,7 @@ void main(void) {
             start_leg(s, flow.leg_index);
             flow_event(RM_FLOW_EVT_LEG_START, flow.leg_index, 1);
             render_and_show(s);                         /* race-start frame (start_leg set the palette) */
+            race_start_countdown(s);                    /* the "3-2-1-GO" beeps (main @0x10226) */
         }
 
         /* ---- the race loop ---- */
@@ -1212,8 +1388,9 @@ void main(void) {
          * (results_mode == 0) runs the initials screen; one that MISSED (== 2) runs the short game-over
          * screen. Both consume the input source set above and return control here, then the intermission
          * runs. The dispatch lives in the flow (not this shell) so `make test` pins the branch. Sound is
-         * WIRED (slice 2): the name-entry / game-over jingles + the terminal TURNOFF drive `snd`. Only the
-         * audible pump (the VBL rm_refresh + XBIOS Dosound) and the wait-op spin are the slice-3 TODO. */
+         * fully wired and audible: the name-entry / game-over jingles + the terminal TURNOFF drive `snd`,
+         * the VBL pump plays them (op_wait_music_off spins on the real rm_sound_music_on), and the terminal
+         * jingle wait is skippable on the name-entry path only. */
         rm_flow_score_tail(&flow, &flow_ops, s, &flow_tuning, highscore_ram, score_line_ram, &snd);
         if (rm_flow_game_over(&flow, &flow_ops, s, &flow_tuning) == RM_FLOW_QUIT) s->quit = 1;
 #ifdef GAME_FLOW_AUTO
@@ -1221,6 +1398,7 @@ void main(void) {
 #endif
     }
 
+    uninstall_sound();   /* detach the VBL pump before Pterm, so TOS never calls it in the freed TPA */
     kbd_remove(old_kbd_vector);
     Setscreen(-1L, tos_screen, -1);
     Setpalette(tos_palette);

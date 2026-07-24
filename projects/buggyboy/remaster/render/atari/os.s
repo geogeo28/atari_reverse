@@ -180,6 +180,31 @@ Ikbdws:
     lea     8(%sp),%sp
     rts
 
+| void Dosound(const void *ptr)   XBIOS 32 (play a YM2149 command list; TOS steps it per VBL)
+| The race-start countdown beeps + the engine idle go through this, exactly as the original (main
+| @0x1021c). TOS's own kept _vblqueue entries advance the list — see the sound install in game_main.c.
+    .globl  Dosound
+Dosound:
+    move.l  4(%sp),-(%sp)       | list pointer
+    move.w  #32,-(%sp)
+    trap    #14
+    addq.l  #6,%sp
+    rts
+
+| long Supexec(long (*func)(void))   XBIOS 38 (run func in supervisor mode, return to the caller's mode)
+| The shell is a user-mode GEMDOS program, but installing the VBL sound handler touches the TOS VBL
+| queue (_vblqueue/_nvbls at 0x456/0x454) and conterm (0x484) — all supervisor-only low memory. Rather
+| than flip the whole program supervisor (which would run the GEMDOS SCREEN.BIN dumps supervisor and
+| risk the handle-0 GEMDOS-HD bug this file's header warns about), the install runs in one brief
+| Supexec excursion; the VBL handler itself already runs supervisor (TOS calls the queue at interrupt).
+    .globl  Supexec
+Supexec:
+    move.l  4(%sp),-(%sp)       | func pointer
+    move.w  #38,-(%sp)
+    trap    #14
+    addq.l  #6,%sp
+    rts
+
 | --- held keys + IKBD packet parsing --------------------------------------------------------------
 | The GEMDOS console reports key PRESSES; driving needs to know which keys are HELD, and several at
 | once (throttle plus steering), PLUS the joystick. So the game takes the IKBD ACIA interrupt itself

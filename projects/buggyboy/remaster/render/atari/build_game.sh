@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build the on-target BuggyBoy game .PRG and stage it for Hatari.
-#   build_game.sh                          -> build/BUGGYBOY.PRG + disk/BUGGYBOY.PRG   (shipping: boots the leg select, no sound)
+#   build_game.sh                          -> build/BUGGYBOY.PRG + disk/BUGGYBOY.PRG   (shipping: boots the leg select, with sound)
 #   GAME_PRG=GOLDEN.PRG GAME_EXTRA_CFLAGS="-DGOLDEN_BOOT_LEG=0" build_game.sh
 #                                          -> build/GOLDEN.PRG  + disk/GOLDEN.PRG      (golden harness variant: boots straight
 #                                                                                       into leg 0 + dumps frame 0)
@@ -52,8 +52,12 @@ CC=m68k-elf-gcc
 # RM_BLIT_OBJSHIFT colour-indexed pass 1) to the hand-written m68k cores src/asm/objshift2.S / objshift.S
 # (PERF30 A3). run_golden.py verifies THIS build byte-exact in Hatari, which is the end-to-end pin that
 # both asm paths draw the same pixels as the C references.
+# -DRM_SOUND_TARGET: the on-target sound seam. It (a) swaps src/sound_trig.c's host Dosound ledger for
+# the real XBIOS Dosound game_main.c provides over the baked SND_DOSOUND blob, and (b) turns the
+# RM_SOUND_LOCK/UNLOCK trigger-mutation guards into the shell's VBL-reentrancy counter (no-ops on the
+# host/bench builds, so the differential .so is unchanged). See game_main.c's sound-pump section.
 CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
-        -fomit-frame-pointer -nostdlib -DRM_ASM_BLIT -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
+        -fomit-frame-pointer -nostdlib -DRM_ASM_BLIT -DRM_SOUND_TARGET -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
         ${GAME_EXTRA_CFLAGS:-}"
 CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
        $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c \

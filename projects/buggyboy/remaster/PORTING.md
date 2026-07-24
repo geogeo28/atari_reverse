@@ -143,9 +143,11 @@ knob, pinned + mutation-verified in `test/test_flow_machine.py`); the palette an
 off-image seam (Setpalette is palette-agnostic to the byte-compare, so the flash never touches the
 framebuffer). It adds frames but no new trace tags, so the `GAME_FLOW_AUTO` phase log is unchanged.
 
-The seams the shell stands in for, each documented at its call site in game_main.c: sound (never
-played), the exact Vsync cadence, and the per-phase palette Setpalettes (off-image — the byte-compare is
-palette-agnostic, including the leg-start flash's own animated palette). **The attract DEMO's input is
+The seams the shell stands in for, each documented at its call site in game_main.c: the exact Vsync
+cadence, and the per-phase palette Setpalettes (off-image — the byte-compare is palette-agnostic,
+including the leg-start flash's own animated palette). **Sound is NO LONGER a seam** (slice 3): a 50 Hz
+VBL pump plays the REFRESH driver's YM2149 stream and the leg-start countdown / engine idle go through
+real XBIOS Dosound — see the "Sound (slice 3)" section below. **The attract DEMO's input is
 NOT a seam** (scouted 2026-07-23): the original does not replay a recorded ghost — it runs the demo with
 `game_over_flag != 0`, in which `game_update` forces the player input to a constant throttle (`if
 (game_over_flag != 0) uVar11 = 1`), and Phase C feeds the identical constant (`ATTRACT_DEMO_INPUT =
@@ -158,9 +160,10 @@ while the player dials three initials into row+8), one that missed runs the shor
 (`rm_flow_game_over_tail`), then the intermission. The terminal tail's NON-sound steps are reproduced:
 after the fade (redraw ×2) the finished table is HELD `FlowTuning.hold_frames` Vsyncs (default 121 ==
 `HS_HOLD_FRAMES`, `op_hold_frame` = a plain `Vsync`), then the input-release wait polls until no bit is
-held. Only the SOUND steps stay off-image, exactly as recreate marks them: the name-entry jingle and the
-terminal sound/IKBD waits (mzflag / TURNOFF / the Crawio key-drain) never return under the oracle, so
-with sound off they resolve to nothing and control returns to the intermission; the colour-3 flash (`op_name_flash`) is a `Setcolor` seam like the get-ready flash
+held. The SOUND steps are host-verified as driver STATE (the name-entry jingle + TURNOFF) and, on target
+(slice 3), actually AUDIBLE: `op_wait_music_off` is the real jingle-end spin (Vsync until `rm_sound_music_on`
+goes false — the pump advances the tune to its end command — or a fresh key) + the Crawio key-drain, so the
+jingle plays out before control returns to the intermission; the colour-3 flash (`op_name_flash`) is a `Setcolor` seam like the get-ready flash
 (the driver owns the per-frame COUNT, the content `A_name_anim_tbl[(anim_counter & 0xe)]` is documented).
 `init_scoretable`'s output is baked as a
 program-data SEED (`fixture_highscore`) the shell copies into a mutable `highscore_ram` at boot, exactly
@@ -233,9 +236,9 @@ at a leg start; the per-leg arena reseed is the intermission's `init_leg_dash` (
 `events.c`), which fires on a checkpoint. The baked `EV_DASH_*_INIT` were therefore 0 and are simply
 dropped.
 
-Still unported (documented at each call site, per convention): off-frame sound (INITTUNE/INITFX/
-TURNOFF, the VBL vector; `rev_reload` aliases `lean_frame` and is invisible to every compared
-surface — verified, not assumed) — **that is now the LAST unported in-race feature**. (The attract demo
+Sound is now fully ported and wired end-to-end (slices 1–3): the REFRESH driver + triggers are verified
+host-side and slice 3 makes them audible on target (the VBL pump + real Dosound + the countdown; `rev_reload`
+aliases `lean_frame` and is invisible to every compared surface — verified, not assumed). (The attract demo
 input is NO LONGER listed as unported: it was never a replay — the original holds a constant throttle via
 `game_over_flag != 0`, which Phase C reproduces with `ATTRACT_DEMO_INPUT`; scouted 2026-07-23, see above.)
 The interactive high-score name-entry tail
@@ -371,7 +374,9 @@ The original's actual scheme, read from the decomp:
   tally. `abort_flag < 0` (a natural time-out / finish) breaks to the SAME place. The read also stores
   the scancode into `last_key` (the keyboard driving fallback `read_input @0x120b0` reads), toggles
   **`dsp_toggle`** on scancode `0x22` = **G** (`0x296 not.w`), and runs a sound-reset debug on `0x62` =
-  Help (`0x2a2` — moot without sound). There is **no** quit key and **no** restart key: `main` is an
+  Help (`0x2a2`). Now that the remaster ships WITH sound (the VBL pump, slice 3) that Help sound-reset key
+  is a meaningful debug action — but it is deliberately left UNPORTED (a developer debug key, not part of
+  the player-facing controls). There is **no** quit key and **no** restart key: `main` is an
   infinite `do…while(true)` — a coin-op that never terminates.
 - **Leg select** (`init_playfield @0x12af6`): joystick nav (up/left prev, down/right next) + button
   starts; the function-key menu reads the console for **F1..F5** (`0x3b..0x3f`, direct select+start),
@@ -580,6 +585,50 @@ pipeline for 6 frames without hanging — on-target evidence that a non-zero leg
 runner that sets `RUN_VBLS` high and parses the log words (a `run_flow.py` scratch helper; the trace is
 the on-target guard, as `make test` never runs game_main.c). This is a deliberate re-pin from the old
 boot-into-leg-0 sequence, which used to lead with `LEG_START 0`.
+
+Slice 3's leg-start countdown (below) leaves this log **unchanged at 19 records** too — it adds Vsyncs (4
+beeps × the pacing wait) at each `LEG_START` but emits no trace tags. Under `GAME_FLOW_FAST` the beep
+pacing is shrunk to 2 Vsyncs/beep so the trace stays snappy; the beeps still fire (a PSG trace sees them).
+
+## Sound (slice 3): making the wired triggers audible + proving it
+
+Slices 1–2 left a fully-driven `SoundDriver` whose YM2149 stream `rm_refresh` returns but never plays.
+Slice 3 (`render/atari/game_main.c`) plays it:
+
+- **The VBL pump** — `vbl_sound` is spliced into `_vblqueue[0]` (a brief `Supexec`, since the queue +
+  conterm are supervisor-only low memory and the shell runs USER mode) PRESERVING the displaced TOS
+  entries — that is what keeps TOS's per-VBL Dosound stepper running (dropping them silences the
+  countdown). Each vblank it writes `rm_refresh`'s (reg,val) stream to `0xffff8800/02` when the driver is
+  RUNNING. PARKED = silent, exactly as the original's parked VBL vector.
+- **Real Dosound** — under `-DRM_SOUND_TARGET` the shell's `rm_dosound` is `Dosound(SND_DOSOUND + off)`
+  over the baked blob (`build/sound_dosound.h`, split out of `sound_data.h`), replacing `sound_trig.c`'s
+  host ledger. The countdown / engine idle / crash effects play through it.
+- **The countdown** — `race_start_countdown` fires `stop_music(BEEP)` ×3 + `stop_music(GO)` (`main`
+  @0x10226), each paced by a Vsync wait; each `stop_music` parks the pump and hands the beep to Dosound.
+- **VBL reentrancy** — the pump refreshes the SAME `SoundState` the main-loop triggers mutate.
+  `RM_SOUND_LOCK`/`UNLOCK` (sound.h) bracket each `sound_trig.c` leaf's mutation; on target they are a
+  nesting counter `snd_lock_depth` the pump skips a frame on (a VBL is atomic vs the main line, so this is
+  full mutual exclusion; the window is µs, so a skip is rare + inaudible). They are no-ops on the host /
+  bench builds, so the differential `.so` is byte-unchanged. An SR-mask would defer rather than skip but
+  needs supervisor, which the user-mode shell hasn't got; the counter is correct in user mode.
+
+**Proof (Hatari PSG trace).** Build the flow-auto variant, run it under a headless Hatari with
+`--trace psg_write --msg-repeat`, and read the `ff8800`/`ff8802` writes back:
+
+```bash
+GAME_PRG=FLOWSND.PRG GAME_EXTRA_CFLAGS="-DGAME_FLOW_AUTO -DGAME_FLOW_FAST -DGAME_FLOW_TRACE -DGAME_TIME_LEFT=6" \
+  bash render/atari/build_game.sh
+hatari --sound off --fast-forward on --tos-res low --run-vbls 60000 --trace psg_write --msg-repeat \
+  --trace-file /tmp/psg.txt --harddrive <dir-with-FLOWSND.PRG+data> --auto 'C:\FLOWSND.PRG'
+```
+
+A register write is a `ff8800=0xNN` (select reg NN) then `ff8802=0xVV` (value); `pc=e1xxxx` is TOS ROM
+(the Dosound stepper), a lower `pc` is our REFRESH pump. The documented signatures, verified 2026-07-24:
+the **countdown** = `reg 13 = 0x00` ×4 from Dosound (once per leg start), the **engine idle** = `reg 13 =
+0x0e` repeating from Dosound, and **music** = regs 0–0xc from the REFRESH pump. `run_golden.py` still
+MATCHes all 5 legs (sound is off-image) and the flow trace still closes at 19 records. Audio QUALITY (does
+it sound right) is only verifiable by ear on real hardware / a sound-enabled Hatari — the trace proves the
+right registers get the right values, not the timbre.
 
 ## Commands
 

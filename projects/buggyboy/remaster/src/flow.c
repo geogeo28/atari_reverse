@@ -501,7 +501,7 @@ RmFlowResult rm_flow_name_entry(FlowState *fs, const FlowOps *ops, void *ctx, co
      * (0x25d2) must follow the wait — doing it first (as an earlier port did) clears SND_MUSIC_ON, the
      * byte the wait reads, so the jingle would always be cut. The wait itself + the Crawio key-drain
      * (0x25de) are the shell's slice-3 seams (it polls rm_sound_music_on); fxflag clear (0x25d8) is wired. */
-    ops->wait_music_off(ctx);
+    ops->wait_music_off(ctx, true);   /* name-entry (0x25bc): a fresh input skips the jingle */
     rm_turnoff(&snd->state);
     snd->state.header[SND_FX_FLAG] = 0;
     return RM_FLOW_CONTINUE;
@@ -513,7 +513,7 @@ RmFlowResult rm_flow_name_entry(FlowState *fs, const FlowOps *ops, void *ctx, co
 RmFlowResult rm_flow_game_over_tail(FlowState *fs, const FlowOps *ops, void *ctx, SoundDriver *snd) {
     name_entry_prime(fs, ops, ctx);   /* same double-draw under the results palette (0x23e6..0x240e) */
     rm_play_event_tune(snd, RM_TUNE_GAME_OVER, fs->game_over_flag != 0);   /* the game-over jingle (0x2400) */
-    ops->wait_music_off(ctx);         /* 0x2406: spin until the jingle ends (shares name-entry's seam op) */
+    ops->wait_music_off(ctx, false);  /* 0x2406: spin until the jingle ends — NOT skippable (game-over) */
     /* the Crawio key-drain (0x25de) stays a slice-3 shell seam; there is no TURNOFF on this path. */
     return RM_FLOW_CONTINUE;
 }

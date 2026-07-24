@@ -189,6 +189,12 @@ void rm_inittune(SoundState *s, uint32_t tune_id);
  * the caller drives the chip from the returned stream (the same seam recreate's g_REFRESH uses). */
 uint32_t rm_refresh(SoundState *s, uint8_t *regs, uint8_t *vals, int cap);
 
+/* The most (reg, value) writes rm_refresh can emit in one frame: 13 fixed registers (the psg_regs
+ * table in src/sound.c) plus the envelope-shape register, emitted only when nonzero. The shell sizes
+ * its VBL PSG buffer/cap to this (render/atari/game_main.c); test_sound_rm asserts the observed count
+ * never exceeds it. */
+#define SND_PSG_WRITES_MAX  14
+
 /* ---- slice 2: the TRIGGER layer (the game's in-race sound decisions) --------------------------
  *
  * The events / physics / flow slices decide WHEN music and effects start and stop; this is the small
@@ -200,10 +206,14 @@ uint32_t rm_refresh(SoundState *s, uint8_t *regs, uint8_t *vals, int cap);
  * game_over_flag), matching how the tree threads such guards. REFRESH itself still runs off the VBL
  * (slice 3 maps rm_dosound + the VBL vector to the real XBIOS).
  *
- * VBL REENTRANCY (slice 3): once the VBL pumps rm_refresh, it and these leaves both touch one SoundState.
- * The original stays safe by asm publication ORDER (mzflag cleared first, records rewritten, mzflag set
- * last); -O2 C does not guarantee that, so the slice-3 shell must MASK the VBL around each trigger mutation
- * (a short interrupt-disable window), NOT rely on store ordering. Full write-up in game_main.c's snd TODO. */
+ * VBL REENTRANCY (slice 3): the VBL pump (game_main.c vbl_sound) calls rm_refresh on the SAME SoundState
+ * these leaves mutate. The original stays safe by asm publication ORDER (mzflag cleared first, records
+ * rewritten, mzflag set last); -O3 C does not guarantee that, so the multi-store primitives (rm_turnoff /
+ * rm_egoff / rm_inittune / rm_initfx in sound.c) bracket their writes with RM_SOUND_LOCK/UNLOCK (below).
+ * On target that is a NESTING COUNTER the pump checks: a VBL that finds it nonzero SKIPS this frame's
+ * refresh, so it never reads a half-written record. It is NOT an SR-mask (interrupt-disable) — this shell
+ * runs USER mode, where `move #x,sr` privilege-faults; see the full write-up in game_main.c's sound-pump
+ * section. On the host/bench builds RM_SOUND_LOCK/UNLOCK are no-ops, so the differential .so is unchanged. */
 
 /* A_vbl_sound_vec @0x18c0c models a two-state enable: parked at a bare rts (music silent) or pointing
  * at REFRESH (running). The image stores the actual handler address; the differential maps it to this. */
@@ -216,6 +226,28 @@ typedef struct SoundDriver {
     uint16_t   vbl_enable;   /* A_vbl_sound_vec: RM_VBL_PARKED (rts) / RM_VBL_RUNNING (REFRESH) */
     uint16_t   cur_tune_id;  /* A_cur_tune_id @0x18cfa: the tune the priority guards test */
 } SoundDriver;
+
+/* ---- slice-3 VBL-reentrancy guard (see the REENTRANCY note above + the full write-up in
+ * render/atari/game_main.c) ---------------------------------------------------------------------
+ * The multi-store sound primitives (rm_turnoff / rm_egoff / rm_inittune / rm_initfx in sound.c) bracket
+ * their SoundState writes with RM_SOUND_LOCK/UNLOCK so the on-target 50 Hz VBL sound pump cannot
+ * rm_refresh a half-written voice record. On the m68k PRG (RM_SOUND_TARGET, set by build_game.sh) these
+ * call the shell-provided nesting counter the VBL respects (game_main.c); everywhere else (the
+ * differential .so, the bench elf) they are no-ops, so the host build — and thus test_sound_rm /
+ * test_sound_trig — is compiled unchanged.
+ *
+ * CONTRACT: the counter's correctness relies on the SoundState stores NOT being reordered across the
+ * lock/unlock. rm_sound_lock/rm_sound_unlock therefore carry a compiler memory barrier (game_main.c), so
+ * the guard holds even if a future build inlines them (e.g. an -flto sweep) — do not remove that barrier. */
+#ifdef RM_SOUND_TARGET
+void rm_sound_lock(void);
+void rm_sound_unlock(void);
+#define RM_SOUND_LOCK()   rm_sound_lock()
+#define RM_SOUND_UNLOCK() rm_sound_unlock()
+#else
+#define RM_SOUND_LOCK()   ((void)0)
+#define RM_SOUND_UNLOCK() ((void)0)
+#endif
 
 /* ---- guard / id constants (recreate events.c / sound.c / highscore.c) ------------------------- */
 #define SND_TUNE_PRIORITY   6    /* play_event_tune won't interrupt this tune while music is playing */

@@ -53,7 +53,8 @@ screen (the results + menu frozen while the leg-start palette flashes, the dashb
 labels** (`rm_draw_leg_labels`) drawn on for the race that follows — they are NOT on the interactive
 select screen, only the get-ready and the Phase-B attract demo). The whole outer loop (leg select → race → leg end →
 highscore [name entry] → intermission attract cycle → back to the leg select) runs on a real 68000. It ships
-**without sound** — the sound path is a documented, unported seam. When a race ends with a score that makes
+**with sound** (slice 3): a 50 Hz VBL pump drives the REFRESH driver's YM2149 stream and the leg-start
+"3-2-1-GO" countdown / engine idle play through XBIOS Dosound — see the "Sound" note below. When a race ends with a score that makes
 the leg's high-score table, the **name-entry screen** runs (`rm_flow_name_entry`): Up/Down/Left/Right dial
 each of the three initials (Up/Left step a letter back, Down/Right forward) and **Space** (fire) confirms
 one — a 30-second `TIME` countdown ends entry if it runs out; a score that misses shows a short game-over
@@ -192,11 +193,15 @@ The roadside scenery streams along the course too: `draw_object_list`'s flag str
 from the live ring (`src/course.c`'s `rm_ring_*` helpers, refreshed after every course advance and
 on a restart) — see PORTING.md's "the ring's consumers are unified".
 
-What the game still leaves as a seam: **sound** (INITTUNE/INITFX/TURNOFF + the VBL vector — the game
-ships without it), and the record-driven mode-2/4/6 palette / screen-offset events in
-`course_advance`'s tail. The course-event engine that *decides* to crash you (the collision probe, the
-fx block and the horizon-event dispatch) is ported and wired, so the game arms its own crashes and
-delivers its own checkpoint / finish / bonus events — see STATUS/PORTING.
+**Sound** is wired end-to-end (slices 1–3): the REFRESH driver (INITTUNE/INITFX/TURNOFF + the note-stream
+DSP) is a verified native port, the triggers drive it, and slice 3 makes it audible — `vbl_sound`
+(spliced into `_vblqueue[0]` via a brief `Supexec`, preserving the TOS entries) pumps `rm_refresh`'s
+YM2149 stream to the chip every vblank, `rm_dosound` is the real XBIOS Dosound over the baked command
+lists, and the leg-start "3-2-1-GO" countdown fires. VBL reentrancy is handled by the `RM_SOUND_LOCK`/
+`UNLOCK` guard (a nesting counter the pump respects; no-ops on the host build). The course-event engine
+that *decides* to crash you (the collision probe, the fx block and the horizon-event dispatch) is ported
+and wired, so the game arms its own crashes and delivers its own checkpoint / finish / bonus events — see
+STATUS/PORTING. Off-image seams that remain: the per-phase palette fades and the exact Vsync frame cadence.
 
 The alignment gotcha: the cores read the baked tables with `be16`/`be32` (word/long moves), which
 fault on an odd address on the 68000, so the fixture arrays and the BSS scratch are `aligned(2)`.
@@ -207,8 +212,8 @@ fault on an odd address on the 68000, so the fixture arrays and the BSS scratch 
 pins it). `BUGGYBOY.PRG` is the whole playable game: the render pipeline (road, scroll, the object tree,
 the HUD) driven by the ported physics and the between-legs flow, everything drawn by remaster's own C.
 `run_golden.py` pins the boot frame of every leg 0–4 byte-for-byte against recreate's pipeline; the rest
-of the loop is guarded by the host equivalence suite (`make test`) and the on-target flow trace. The
-remaining seam is sound.
+of the loop is guarded by the host equivalence suite (`make test`) and the on-target flow trace. Sound is
+wired end-to-end and proven audible by a Hatari `psg_write` trace (slice 3).
 
 ## Hand-asm cores (`src/asm/`) — PERF30 A3
 

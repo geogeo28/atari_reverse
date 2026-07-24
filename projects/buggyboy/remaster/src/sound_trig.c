@@ -15,7 +15,12 @@
  */
 #include "sound.h"
 
-/* ---- Dosound side-effect ledger (host .so only) ---------------------------------------------- */
+/* ---- Dosound side-effect ledger (host .so only) ----------------------------------------------
+ * On the m68k PRG (RM_SOUND_TARGET) rm_dosound is instead the REAL XBIOS Dosound over the baked
+ * command-list blob — the shell provides it in game_main.c, so this host ledger (the differential's
+ * observable) is compiled out there. The host/bench builds leave RM_SOUND_TARGET undefined and keep
+ * the ledger, so test_sound_trig's Dosound diff is unchanged. */
+#ifndef RM_SOUND_TARGET
 
 #define RM_DOSOUND_LOG_MAX 256
 
@@ -33,8 +38,13 @@ void rm_dosound(uint16_t list_off) {
         rm_dosound_log[rm_dosound_log_n++] = SND_DOSOUND_BASE + list_off;
 }
 
+#endif /* !RM_SOUND_TARGET */
+
 /* ---- the trigger leaves -------------------------------------------------------------------------- */
 
+/* No lock here: the priority guard runs first (a clean early return), and the only multi-store publish
+ * is rm_inittune, which brackets itself (sound.c). The single stores around it — vbl_enable, the fxflag
+ * byte, cur_tune_id (the pump never reads it) — are each atomic w.r.t. the VBL on their own. */
 void rm_play_event_tune(SoundDriver *snd, uint32_t tune, bool game_over) {
     if (game_over) return;
     snd->vbl_enable = RM_VBL_RUNNING;                          /* always re-point at REFRESH first */
@@ -44,6 +54,8 @@ void rm_play_event_tune(SoundDriver *snd, uint32_t tune, bool game_over) {
     rm_inittune(&snd->state, tune);
 }
 
+/* rm_turnoff then rm_initfx each self-bracket (sound.c); between them the state is consistent (music off,
+ * the prior fx record intact), so no outer bracket is needed. */
 void rm_handle_marker(SoundDriver *snd, uint32_t fx_id, bool game_over) {
     if (game_over) return;
     if ((int16_t)snd->cur_tune_id < SND_MARKER_TUNE_MIN && snd->state.header[SND_MUSIC_ON]) return;
@@ -51,13 +63,18 @@ void rm_handle_marker(SoundDriver *snd, uint32_t fx_id, bool game_over) {
     rm_initfx(&snd->state, fx_id);
 }
 
+/* This ONE leaf still needs its own bracket: TURNOFF -> clear fxflag -> clear tune -> PARK must publish
+ * as a unit, so the pump can't refresh one more frame with the tune half-torn down after PARK is meant.
+ * (rm_turnoff self-brackets too; the nesting counter makes that inner lock harmless — see sound.h.) */
 void rm_stop_music(SoundDriver *snd, uint16_t list_off, bool game_over) {
     if (game_over) return;
+    RM_SOUND_LOCK();
     rm_turnoff(&snd->state);
     snd->state.header[SND_FX_FLAG] = 0;
     snd->cur_tune_id = 0;
     snd->vbl_enable = RM_VBL_PARKED;                           /* park the VBL handler at a bare rts */
-    rm_dosound(list_off);                                      /* XBIOS Dosound(A0): hardware-only */
+    RM_SOUND_UNLOCK();
+    rm_dosound(list_off);          /* XBIOS Dosound(A0) on target / ledger on host — no SoundState touch */
 }
 
 void rm_stop_music_chk(SoundDriver *snd, uint16_t list_off, bool game_over) {
@@ -71,11 +88,11 @@ void rm_sound_engine_update(SoundDriver *snd, uint16_t speed, int16_t crash_phas
         if (speed == 0)
             rm_stop_music_chk(snd, SND_DOSOUND_IDLE, game_over);   /* stopped: engine idle (rev_reload skipped) */
         else {
-            snd->state.header[SND_EG_FLAG] = 1;                    /* moving: arm the engine EG */
-            snd->vbl_enable = RM_VBL_RUNNING;
+            snd->state.header[SND_EG_FLAG] = 1;                    /* moving: arm the engine EG (atomic store) */
+            snd->vbl_enable = RM_VBL_RUNNING;                      /* atomic store; no torn multi-store here */
         }
     } else {
-        rm_egoff(&snd->state);
+        rm_egoff(&snd->state);                                    /* self-brackets its two stores (sound.c) */
     }
 }
 

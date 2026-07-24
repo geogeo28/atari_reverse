@@ -2886,8 +2886,8 @@ class _DriverRecorder:
         def hold_frame(_ctx):
             self._rec("hold_frame")
 
-        def wait_music_off(_ctx):
-            self._rec("wait_music_off")
+        def wait_music_off(_ctx, skippable):
+            self._rec("wait_music_off", (bool(skippable),))
 
         def event(_ctx, tag, leg, aux):
             self._rec("event", (tag, leg, aux))
@@ -2900,7 +2900,7 @@ class _DriverRecorder:
                 adapter._CB_DRAW_LEG(rebuild), adapter._CB_DRAW_LEG(leg_labels),
                 adapter._CB_DRAW_LEG(start_demo), adapter._CB_VOID(run_demo),
                 adapter._CB_VOID(flash), adapter._CB_VOID(name_flash), adapter._CB_VOID(hold_frame),
-                adapter._CB_VOID(wait_music_off),
+                adapter._CB_WAIT_MUSIC(wait_music_off),
                 adapter._CB_EVENT(event)]
         return adapter.FlowOps(*keep), keep
 

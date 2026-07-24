@@ -311,12 +311,13 @@ typedef struct {
      * owns the COUNT (t->hold_frames). */
     void (*hold_frame)(void *ctx);
     /* name-entry / game-over terminal "wait for the jingle to end" (highscore.c @0x25bc / @0x2406): spin
-     * until the tune finishes (SoundState mzflag clears) OR a fresh input arrives, one vblank per poll.
-     * Called BEFORE the terminal TURNOFF so mzflag is still readable — TURNOFF would clear it, making the
-     * wait unimplementable. An off-image seam like hold_frame: the host driver records it; the shell
-     * implements it as a Vsync + rm_sound_music_on spin (slice 3, until the VBL pump exists it returns
-     * at once, so the silent-on-target game never hangs here). */
-    void (*wait_music_off)(void *ctx);
+     * until the tune finishes (SoundState mzflag clears), one vblank per poll. Called BEFORE the terminal
+     * TURNOFF so mzflag is still readable — TURNOFF would clear it, making the wait unimplementable.
+     * `skippable` carries the two call sites' semantic difference: the name-entry wait (@0x25bc) breaks
+     * early on a fresh input (skippable = true); the game-over wait (@0x2406) never does (skippable =
+     * false — the original never cuts the game-over jingle). The shell implements it as a Vsync +
+     * rm_sound_music_on spin (game_main.c), the VBL pump advancing the tune; the host driver records it. */
+    void (*wait_music_off)(void *ctx, bool skippable);
     /* phase-transition trace hook (RM_FLOW_EVT_*) */
     void (*event)(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux);
 } FlowOps;

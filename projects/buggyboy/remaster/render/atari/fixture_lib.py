@@ -15,3 +15,20 @@ def c_array(name, data):
         lines.append("    " + "".join(f"0x{b:02x}," for b in data[i:i + 16]))
     lines.append("};")
     return "\n".join(lines)
+
+
+def emit_header(guard, comment, name, data):
+    """Emit a self-contained generated C header as one string: a comment banner, an include guard, and a
+    single c_array(name, data). `comment` is the banner's already-formatted lines (each a full '/* ...' /
+    ' * ...' line). Used for every one-array fixture header so the guard/include boilerplate lives once."""
+    lines = list(comment) + [
+        f"#ifndef {guard}",
+        f"#define {guard}",
+        "#include <stdint.h>",
+        "",
+        c_array(name, data),
+        "",
+        f"#endif /* {guard} */",
+        "",
+    ]
+    return "\n".join(lines)

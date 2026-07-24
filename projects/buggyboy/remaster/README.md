@@ -77,7 +77,7 @@ src/asm/   hand-written m68k cores for the hottest render leaves (objshift2.S, o
            picks asm on the m68k builds / C on the host — see render/atari/README.md and PERF30.md A3
 test/      capture_ref.py (golden framebuffers from recreate)  equiv.py (candidate vs reference)
            adapter.*  (flat image → remaster structs)   inputs/ (deterministic per-frame scripts)
-render/atari/  on-target build: BUGGYBOY.PRG (the playable game — leg select, race, flow; no sound)
+render/atari/  on-target build: BUGGYBOY.PRG (the playable game — leg select, race, flow, sound)
            + the frame-0 golden harness (run_golden.py) — see render/atari/README.md
 tools/     bench.py (cycles vs original + vs recreate, extends recreate/tools/bench_frame.py)
 Makefile   build the host lib + run equivalence tests + bench

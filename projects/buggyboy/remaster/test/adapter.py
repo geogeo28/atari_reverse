@@ -1378,6 +1378,7 @@ _CB_DRAW_RESULTS_SCREEN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint1
                                            ctypes.c_uint16, ctypes.c_uint16)  # draw_results_screen(mode,pos,leg)
 _CB_SET_PALETTE = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_int)
 _CB_VOID = ctypes.CFUNCTYPE(None, ctypes.c_void_p)                          # show / run_demo_frame
+_CB_WAIT_MUSIC = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_bool)     # wait_music_off(ctx, skippable)
 _CB_EVENT = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint16, ctypes.c_uint16, ctypes.c_uint16)
 
 
@@ -1390,7 +1391,7 @@ class FlowOps(ctypes.Structure):
                 ("rebuild_dash", _CB_DRAW_LEG), ("draw_leg_labels", _CB_DRAW_LEG),
                 ("start_demo_leg", _CB_DRAW_LEG), ("run_demo_frame", _CB_VOID),
                 ("flash_frame", _CB_VOID), ("name_flash", _CB_VOID), ("hold_frame", _CB_VOID),
-                ("wait_music_off", _CB_VOID),
+                ("wait_music_off", _CB_WAIT_MUSIC),
                 ("event", _CB_EVENT)]
 
 

@@ -33,12 +33,16 @@ static void snd_music_off(SoundState *s) {
 }
 
 void rm_turnoff(SoundState *s) {
+    RM_SOUND_LOCK();      /* freeze the pump across the multi-store publish (no-op off target; see sound.h) */
     snd_music_off(s);
+    RM_SOUND_UNLOCK();
 }
 
 void rm_egoff(SoundState *s) {
+    RM_SOUND_LOCK();
     s->header[SND_EG_FLAG] = 0;
     s->header[SND_MUSIC_BYTE] = 0;
+    RM_SOUND_UNLOCK();
 }
 
 /* ---- INITFX / INITTUNE ------------------------------------------------------------------------ */
@@ -48,6 +52,7 @@ void rm_initfx(SoundState *s, uint32_t fx_id) {
     uint16_t prod = (uint16_t)(idx * SND_FX_RECORD);           /* mulu.w #0x12 (low word) */
     uint32_t src = SND_FX_TABLE_OFF + sx16(prod);              /* adda.w d0, a0 */
 
+    RM_SOUND_LOCK();      /* fxflag 0 -> params -> fxflag 0xff: the pump must not read a torn record */
     s->header[SND_FX_FLAG] = 0;
     for (int i = 0; i < SND_FX_WORDS; i++)
         wr16(s->header + SND_FX_PARAMS + 2 * i, be16(SND_CONST + src + 2 * i));
@@ -55,12 +60,14 @@ void rm_initfx(SoundState *s, uint32_t fx_id) {
     wr16(s->header + SND_FX_PRE_HI, be16(SND_CONST + src + SND_FX_WORDS * 2 + 2));   /* word 8 */
     wr16(s->header + SND_FX_TAIL, be16(s->header + SND_FX_REREAD));
     s->header[SND_FX_FLAG] = 0xff;
+    RM_SOUND_UNLOCK();
 }
 
 void rm_inittune(SoundState *s, uint32_t tune_id) {
     uint16_t tune_ext = (uint16_t)(int16_t)(int8_t)tune_id;           /* ext.w d0 */
     uint16_t idx = set_low_byte(tune_ext, (uint8_t)(tune_ext << 3));  /* asl.b #3 (8-byte tune stride) */
 
+    RM_SOUND_LOCK();      /* the asm's safe publish: mzflag 0 -> rewrite the voice records -> mzflag 0xff */
     s->header[SND_MUSIC_ON] = 0;
     s->header[SND_TUNE_LEN] = SND_TUNE_LEN_VAL;
     s->header[SND_TUNE_ON] = 0xff;
@@ -78,6 +85,7 @@ void rm_inittune(SoundState *s, uint32_t tune_id) {
         wr16(rec + SND_VC_STREAM, be16(SND_CONST + param));         /* per-voice stream start */
     }
     s->header[SND_MUSIC_ON] = 0xff;
+    RM_SOUND_UNLOCK();
 }
 
 /* ---- snd_voice_step: per-frame note-stream stepper -------------------------------------------
