@@ -19,16 +19,24 @@
 
 /* Per-core selection (mirrors game.h's RM_ASM_BLIT -> RM_ASM_OBJSHIFT* pattern): the m68k builds pass the
  * umbrella -DRM_ASM_ROAD, which turns on each band's individual core flag. Slice 1 = band D
- * (RM_ASM_RR_BAND_D), slice 2 = band B (RM_ASM_RR_BAND_B). Only road.c's RR_BAND_?_FN dispatch keys off a
- * flag; road_band.S assembles both cores unconditionally and road.c compiles both C references
- * unconditionally (as blit.c/objshift2.S do), so undefining one flag A/Bs that band on every build without
- * pulling code in and out. */
+ * (RM_ASM_RR_BAND_D), slice 2 = band B (RM_ASM_RR_BAND_B), slice 3 = band C (RM_ASM_RR_BAND_C, gating BOTH
+ * the near and far C cores — they always ship together, so one flag keeps the umbrella simple) then band A
+ * (RM_ASM_RR_BAND_A) — with A asm too the whole road is asm. Only road.c's RR_BAND_?_FN dispatch keys off a
+ * flag; road_band.S assembles the cores unconditionally and
+ * road.c compiles the C references unconditionally (as blit.c/objshift2.S do), so undefining one flag A/Bs
+ * that band on every build without pulling code in and out. */
 #ifdef RM_ASM_ROAD
 #  ifndef RM_ASM_RR_BAND_D
 #    define RM_ASM_RR_BAND_D
 #  endif
 #  ifndef RM_ASM_RR_BAND_B
 #    define RM_ASM_RR_BAND_B
+#  endif
+#  ifndef RM_ASM_RR_BAND_C
+#    define RM_ASM_RR_BAND_C
+#  endif
+#  ifndef RM_ASM_RR_BAND_A
+#    define RM_ASM_RR_BAND_A
 #  endif
 #endif
 
@@ -42,6 +50,7 @@
 #define RR_EDGE_BAND_STEP 0x00c0     /* edge cursor -= this between groups */
 
 /* ---- per-band scanline counts the pipeline dbf's (rows_m1: drawn count-1) ---- */
+#define RR_ROWS_A         0x5f       /* band A: 96 scanlines (dbf count = rows-1) */
 #define RR_ROWS_B_NEAR    0x04       /* band B near copy */
 #define RR_ROWS_B_FAR     0x5a       /* band B far copy  */
 #define RR_ROWS_C_NEAR    0x05       /* band C near copy */
@@ -101,9 +110,11 @@
 #define RR_D7_WORD_MASK   0xfff8     /* masks the road half-width to a column-aligned (8-byte) offset */
 #define RR_ROW_LONG_PAIRS 20         /* a 160-byte scanline = 20 (fill_lo, fill_hi) long pairs */
 /* dbf counts (one less than the iteration count) for the three full-row fill shapes in road_band.S:
- *   _DBF      — quad-store fill (4 longs = 2 pairs per iteration): RR_ROW_LONG_PAIRS/2 iterations.
- *   _PAIR_DBF — pair-store fill (band B far, col<0, no edge cell): RR_ROW_LONG_PAIRS pairs.
- *   _EDGE_DBF — pair-store fill after one 2-long edge cell (band B far, col<0, col+8>=0): 2 pairs fewer. */
+ *   _DBF      — quad-store fill (4 longs = 2 pairs per iteration): RR_ROW_LONG_PAIRS/2 iterations. Used by
+ *               every core's full-row (col >= stride) fill.
+ *   _PAIR_DBF — pair-store fill of the whole row (no edge cell): RR_ROW_LONG_PAIRS pairs. Bands B far and A
+ *               fast-split, col<0, col+8<0.
+ *   _EDGE_DBF — pair-store fill after one 2-long edge cell: 2 pairs fewer. Bands B far and A, col<0, col+8>=0. */
 #define RR_ROW_FILL_DBF      (RR_ROW_LONG_PAIRS / 2 - 1)
 #define RR_ROW_FILL_PAIR_DBF (RR_ROW_LONG_PAIRS - 1)
 #define RR_ROW_FILL_EDGE_DBF (RR_ROW_LONG_PAIRS - 2)

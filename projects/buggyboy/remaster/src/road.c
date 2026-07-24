@@ -213,15 +213,15 @@ static void rr_band_A_interior_center(uint8_t **dst, const uint8_t **src, int16_
     }
 }
 
-/* Bands A and C inline into rm_render_road, bands B/D are separate calls — the shape plain C compiles
- * (PERF30 A4 — three resident cursor-sets; localizing A/C regressed +7,526). always_inline forces it:
- * once rm_render_road calls the external asm band-D core, GCC's auto-inliner de-inlines band A into a
- * cold `.constprop` clone (+17k cyc), so A and both C halves are pinned inline here to keep them
- * resident. See rm_render_road's slice-1 cost note. */
-static inline __attribute__((always_inline)) void rr_band_A(rr_regs *r) {
+/* rr_band_A_c is the byte-exact C REFERENCE (always compiled, `unused` in the shipping asm build — it and
+ * the four rr_band_A_* helpers above are reached only through it). PERF30 road-asm slice 3 phase 2 ships a
+ * hand-m68k core (rr_band_A_asm) reached via RR_BAND_A_FN; test/test_asm_road.py pins the two byte-identical.
+ * With band A now asm too, rm_render_road inlines NO band — the +17k band-A de-inline tax that slices 1-3
+ * carried is gone (nothing left to de-inline), so the always_inline it needed goes away with this port. */
+static __attribute__((unused)) void rr_band_A_c(rr_regs *r) {
     Framebuffer *fb = r->fb;
     const int16_t stride = r->stride;
-    uint32_t rows = 0x5f;                             /* 96 scanlines */
+    uint32_t rows = RR_ROWS_A;                        /* 96 scanlines (dbf seed) */
 
     for (;;) {
         const uint8_t *src = r->tex;
@@ -460,8 +460,12 @@ static __attribute__((unused)) void rr_band_B_c(rr_regs *r, uint32_t rows_m1, in
  * Band C-near. The edge mask is read unconditionally and masks a FULL long on the split edge cell.
  * Two tails feed the row: a fast edge-split tail ([edge cell | left-shoulder fill]) and a merge tail
  * (a narrow [texture | one-cell fill | texture] blit around the column).
+ *
+ * rr_band_C_near_c is the byte-exact C REFERENCE (always compiled, `unused` in the shipping asm build).
+ * PERF30 road-asm slice 3 ships a hand-m68k core (rr_band_C_near_asm) reached via RR_BAND_C_NEAR_FN;
+ * test/test_asm_road.py pins the two byte-identical under Musashi.
  * ===================================================================================== */
-static inline __attribute__((always_inline)) void rr_band_C_near(rr_regs *r, uint32_t rows_m1) {
+static __attribute__((unused)) void rr_band_C_near_c(rr_regs *r, uint32_t rows_m1) {
     Framebuffer *fb = r->fb;
     const int16_t stride = r->stride;
     uint32_t remaining = rows_m1;
@@ -567,8 +571,11 @@ static inline __attribute__((always_inline)) void rr_band_C_near(rr_regs *r, uin
  * Band C-far. Preamble + src dispatch match C-near, but the fast edge-split path selects the source
  * strip first and consumes one extra param word, and the merge tail is bidirectional (forward
  * texture longs when the road grows rightward, a BACKWARD shoulder fill when it recedes).
+ *
+ * rr_band_C_far_c is the byte-exact C REFERENCE (always compiled, `unused` in the shipping asm build);
+ * rr_band_C_far_asm is the slice-3 hand-m68k core (RR_BAND_C_FAR_FN), pinned by test/test_asm_road.py.
  * ===================================================================================== */
-static inline __attribute__((always_inline)) void rr_band_C_far(rr_regs *r, uint32_t rows_m1) {
+static __attribute__((unused)) void rr_band_C_far_c(rr_regs *r, uint32_t rows_m1) {
     Framebuffer *fb = r->fb;
     const int16_t stride = r->stride;
     uint32_t remaining = rows_m1;
@@ -805,29 +812,43 @@ static __attribute__((unused)) void rr_band_D_c(rr_regs *r, uint32_t rows_m1, in
 /* road_band.S is ALWAYS assembled (like objshift2.S); only the RR_BAND_?_FN dispatch keys off each
  * per-core flag, so undefining one genuinely A/Bs that band. The externs are declared unconditionally —
  * on the host build the asm object is not linked, but rm_render_road references them only when the flag is
- * set (and the differential entries only under RM_ROAD_DIFF), so no unresolved symbol is emitted. */
+ * set (and the differential entries only under RM_ROAD_DIFF), so no unresolved symbol is emitted. Band C's
+ * cores take no `second` (near/far are distinct entries). */
+void rr_band_A_asm(rr_regs *r);                                 /* src/asm/road_band.S (slice 3 ph.2) */
 void rr_band_B_asm(rr_regs *r, uint32_t rows_m1, int second);   /* src/asm/road_band.S (slice 2) */
 void rr_band_D_asm(rr_regs *r, uint32_t rows_m1, int second);   /* src/asm/road_band.S (slice 1) */
+void rr_band_C_near_asm(rr_regs *r, uint32_t rows_m1);          /* src/asm/road_band.S (slice 3) */
+void rr_band_C_far_asm(rr_regs *r, uint32_t rows_m1);           /* src/asm/road_band.S (slice 3) */
+#ifdef RM_ASM_RR_BAND_A
+#define RR_BAND_A_FN rr_band_A_asm
+#else
+#define RR_BAND_A_FN rr_band_A_c         /* host / no-asm build: band A IS the C reference */
+#endif
 #ifdef RM_ASM_RR_BAND_B
 #define RR_BAND_B_FN rr_band_B_asm
 #else
-#define RR_BAND_B_FN rr_band_B_c         /* host / no-asm build: band B IS the C reference */
+#define RR_BAND_B_FN rr_band_B_c
 #endif
 #ifdef RM_ASM_RR_BAND_D
 #define RR_BAND_D_FN rr_band_D_asm
 #else
-#define RR_BAND_D_FN rr_band_D_c         /* host / no-asm build: band D IS the C reference */
+#define RR_BAND_D_FN rr_band_D_c
+#endif
+#ifdef RM_ASM_RR_BAND_C
+#define RR_BAND_C_NEAR_FN rr_band_C_near_asm
+#define RR_BAND_C_FAR_FN  rr_band_C_far_asm
+#else
+#define RR_BAND_C_NEAR_FN rr_band_C_near_c
+#define RR_BAND_C_FAR_FN  rr_band_C_far_c
 #endif
 
 /* The seven-band pipeline. `param` streams monotonically across all bands; `width`/`edge`/d7 reset at
- * each group step. Band A runs alone; B/C/D each run a near then a far copy per group. A local
- * `rr_regs r = {...}` (not a helper taking rr_regs*) lets GCC keep the cursor fields in registers.
+ * each group step. Band A runs alone; B/C/D each run a near then a far copy per group.
  *
- * PERF30 road-asm cost note (slices 1-2): the FIRST external asm band inside this otherwise-inlined C road
- * makes GCC de-inline band A into a cold `.constprop` clone (+17k cyc) — a ONE-TIME cost, not per band.
- * always_inline on A/C (above) keeps them resident. So slice 1 (band D alone) was ~break-even, but slice 2
- * (band B, RR_BAND_B_FN) adds its own saving with no further de-inline tax, taking the composite below the
- * pre-asm C floor. See PERF30.md "Road-asm slice 2". */
+ * PERF30 road-asm cost note (slices 1-3): slices 1-3 phase 1 paid a one-time +17k GCC de-inline of the
+ * inlined C band A when the first external asm band appeared. Slice 3 phase 2 makes band A asm too, so
+ * rm_render_road inlines NO band — it is pure glue calling seven asm cores + the group steps, the tax is
+ * gone, and the road runs at the original's register-discipline floor. See PERF30.md "Road-asm slice 3". */
 void rm_render_road(const RoadInput *in, Framebuffer *fb) {
     rr_regs r = {
         .fb         = fb,
@@ -839,21 +860,23 @@ void rm_render_road(const RoadInput *in, Framebuffer *fb) {
         .edge_const = in->edge_const,
         .width_base = in->width_tbl,
         .stride     = RR_ROW_STRIDE_D2,
-        .d7         = 0,                 /* band A never masks the width with d7 (scratch there) */
+        .d7         = 0,                 /* band A runs with d7 == 0: it masks the column with the
+                                         * RR_D7_WORD_MASK constant, not r->d7, and reuses d7 as scratch */
     };
 
-    rr_band_A(&r);
+    RR_BAND_A_FN(&r);
     rr_group_step(&r);
     /* 0xfff8 from the first group step onward — so bands B/C/D always see d7 == RR_D7_WORD_MASK, the
-     * invariant road_band.S's CONTRACT relies on (band B's asm + C both read r->d7; band D's asm reads it
-     * while its C hardcodes the same value). */
+     * invariant road_band.S's CONTRACT relies on: their asm reads r->d7; band B's C and band C-far's C read
+     * r->d7 too (agree unconditionally), while band C-near's C and band D's C hardcode the same constant
+     * (agree via this invariant). Band A already ran, with d7 == 0 as scratch. */
     r.d7 = RR_D7_WORD_MASK;
 
     RR_BAND_B_FN(&r, RR_ROWS_B_NEAR, 0);/* near copy */
     RR_BAND_B_FN(&r, RR_ROWS_B_FAR, 1); /* far copy (distinct wider blit tail) */
     rr_group_step(&r);
-    rr_band_C_near(&r, RR_ROWS_C_NEAR);
-    rr_band_C_far(&r, RR_ROWS_C_FAR);   /* far copy (distinct fast-split + merge tail) */
+    RR_BAND_C_NEAR_FN(&r, RR_ROWS_C_NEAR);
+    RR_BAND_C_FAR_FN(&r, RR_ROWS_C_FAR);/* far copy (distinct fast-split + merge tail) */
     rr_group_step(&r);
     RR_BAND_D_FN(&r, RR_ROWS_D_NEAR, 0);/* near copy */
     RR_BAND_D_FN(&r, RR_ROWS_D_FAR, 1); /* far copy */
@@ -861,39 +884,58 @@ void rm_render_road(const RoadInput *in, Framebuffer *fb) {
 
 #ifdef RM_ROAD_DIFF
 /* Bench-only differential entries (bench_main.c -> test/test_asm_road.py). The isolation BASELINE is
- * _allasm (both bands on their shipping cores); each band's _c entry swaps just that band to the C
- * reference, so comparing _c against _allasm isolates that band's output (C vs asm). There is only ONE
- * all-asm entry — running band D's and band B's asm variants would be the identical config and re-measure
- * the same ~340k-cyc code. The _noD/_noB no-op entries are the per-band positive controls. Compiled only
- * under -DRM_ROAD_DIFF (the bench); these out-of-line entries pass the bands by pointer and do not share
- * rm_render_road's body, so they cannot perturb its A/C inlining. */
+ * _allasm (every band on its shipping core); each band's _c entry swaps just that band to the C reference,
+ * so comparing _c against _allasm isolates that band's output (C vs asm). There is only ONE all-asm entry —
+ * per-band asm variants would be the identical config and re-measure the same code. The _no? no-op entries
+ * are the per-band positive controls. Band C-near and C-far are isolated separately (they are distinct
+ * cores). Compiled only under -DRM_ROAD_DIFF (the bench); these out-of-line entries pass the bands by
+ * pointer and do not share rm_render_road's body, so they cannot perturb its band-A inlining. */
 typedef void (*rr_band_fn)(rr_regs *r, uint32_t rows_m1, int second);
+typedef void (*rr_band2_fn)(rr_regs *r, uint32_t rows_m1);   /* band C: no `second` */
+typedef void (*rr_band1_fn)(rr_regs *r);                     /* band A: no rows / `second` */
 static void rr_band_noop(rr_regs *r, uint32_t rows_m1, int second) { (void)r; (void)rows_m1; (void)second; }
+static void rr_band2_noop(rr_regs *r, uint32_t rows_m1) { (void)r; (void)rows_m1; }
+static void rr_band1_noop(rr_regs *r) { (void)r; }
 
-static void render_road_pipeline(const RoadInput *in, Framebuffer *fb, rr_band_fn band_B, rr_band_fn band_D) {
+static void render_road_pipeline(const RoadInput *in, Framebuffer *fb, rr_band1_fn band_A, rr_band_fn band_B,
+                                 rr_band2_fn band_C_near, rr_band2_fn band_C_far, rr_band_fn band_D) {
     rr_regs r = {
         .fb = fb, .dst = RR_DST_ROAD_OFF, .tex = in->tex, .param = in->param,
         .width = in->width_tbl, .edge = in->edge_tbl, .edge_const = in->edge_const,
         .width_base = in->width_tbl, .stride = RR_ROW_STRIDE_D2, .d7 = 0,
     };
-    rr_band_A(&r);
+    band_A(&r);
     rr_group_step(&r);
     r.d7 = RR_D7_WORD_MASK;
     band_B(&r, RR_ROWS_B_NEAR, 0);
     band_B(&r, RR_ROWS_B_FAR, 1);
     rr_group_step(&r);
-    rr_band_C_near(&r, RR_ROWS_C_NEAR);
-    rr_band_C_far(&r, RR_ROWS_C_FAR);
+    band_C_near(&r, RR_ROWS_C_NEAR);
+    band_C_far(&r, RR_ROWS_C_FAR);
     rr_group_step(&r);
     band_D(&r, RR_ROWS_D_NEAR, 0);
     band_D(&r, RR_ROWS_D_FAR, 1);
 }
 
-/* The all-asm isolation baseline (both bands on their shipping cores) + each band swapped to its C ref /
- * a no-op (the other band stays shipping). */
-void rm_render_road_allasm(const RoadInput *in, Framebuffer *fb)    { render_road_pipeline(in, fb, RR_BAND_B_FN, RR_BAND_D_FN); }
-void rm_render_road_bandD_c(const RoadInput *in, Framebuffer *fb)   { render_road_pipeline(in, fb, RR_BAND_B_FN, rr_band_D_c); }
-void rm_render_road_bandD_noD(const RoadInput *in, Framebuffer *fb) { render_road_pipeline(in, fb, RR_BAND_B_FN, rr_band_noop); }
-void rm_render_road_bandB_c(const RoadInput *in, Framebuffer *fb)   { render_road_pipeline(in, fb, rr_band_B_c, RR_BAND_D_FN); }
-void rm_render_road_bandB_noB(const RoadInput *in, Framebuffer *fb) { render_road_pipeline(in, fb, rr_band_noop, RR_BAND_D_FN); }
+/* Each RR_DIFF_<slot>(in, fb, fn) runs the whole road with just ONE band slot bound to `fn` (the rest on
+ * their shipping cores) — so the swapped band is an entry's only per-entry difference, and the slot config
+ * is written down exactly once per slot. A wrong slot is a compile error where arity differs (band A / C
+ * take fewer args than B/D) and a visibly wrong macro name otherwise. */
+#define RR_DIFF_A(in, fb, fn)  render_road_pipeline(in, fb, fn, RR_BAND_B_FN, RR_BAND_C_NEAR_FN, RR_BAND_C_FAR_FN, RR_BAND_D_FN)
+#define RR_DIFF_B(in, fb, fn)  render_road_pipeline(in, fb, RR_BAND_A_FN, fn, RR_BAND_C_NEAR_FN, RR_BAND_C_FAR_FN, RR_BAND_D_FN)
+#define RR_DIFF_CN(in, fb, fn) render_road_pipeline(in, fb, RR_BAND_A_FN, RR_BAND_B_FN, fn, RR_BAND_C_FAR_FN, RR_BAND_D_FN)
+#define RR_DIFF_CF(in, fb, fn) render_road_pipeline(in, fb, RR_BAND_A_FN, RR_BAND_B_FN, RR_BAND_C_NEAR_FN, fn, RR_BAND_D_FN)
+#define RR_DIFF_D(in, fb, fn)  render_road_pipeline(in, fb, RR_BAND_A_FN, RR_BAND_B_FN, RR_BAND_C_NEAR_FN, RR_BAND_C_FAR_FN, fn)
+
+void rm_render_road_allasm(const RoadInput *in, Framebuffer *fb)     { RR_DIFF_A(in, fb, RR_BAND_A_FN); }  /* all shipping */
+void rm_render_road_bandA_c(const RoadInput *in, Framebuffer *fb)    { RR_DIFF_A(in, fb, rr_band_A_c); }
+void rm_render_road_bandA_noA(const RoadInput *in, Framebuffer *fb)  { RR_DIFF_A(in, fb, rr_band1_noop); }
+void rm_render_road_bandB_c(const RoadInput *in, Framebuffer *fb)    { RR_DIFF_B(in, fb, rr_band_B_c); }
+void rm_render_road_bandB_noB(const RoadInput *in, Framebuffer *fb)  { RR_DIFF_B(in, fb, rr_band_noop); }
+void rm_render_road_bandCn_c(const RoadInput *in, Framebuffer *fb)   { RR_DIFF_CN(in, fb, rr_band_C_near_c); }
+void rm_render_road_bandCn_noC(const RoadInput *in, Framebuffer *fb) { RR_DIFF_CN(in, fb, rr_band2_noop); }
+void rm_render_road_bandCf_c(const RoadInput *in, Framebuffer *fb)   { RR_DIFF_CF(in, fb, rr_band_C_far_c); }
+void rm_render_road_bandCf_noC(const RoadInput *in, Framebuffer *fb) { RR_DIFF_CF(in, fb, rr_band2_noop); }
+void rm_render_road_bandD_c(const RoadInput *in, Framebuffer *fb)    { RR_DIFF_D(in, fb, rr_band_D_c); }
+void rm_render_road_bandD_noD(const RoadInput *in, Framebuffer *fb)  { RR_DIFF_D(in, fb, rr_band_noop); }
 #endif

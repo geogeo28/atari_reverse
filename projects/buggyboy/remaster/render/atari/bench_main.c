@@ -337,33 +337,42 @@ void bench_objsh_run_asm(void) {
                  objsh_args.color_pairs, objsh_args.base_cells);
 }
 
-/* ---- PERF30 road-asm slices 1-2: render_road band D + B hand-asm cores, C vs asm + differential ----
- * road.c compiles (under -DRM_ROAD_DIFF) whole-road entries with ONE band swapped to the C reference / a
- * no-op (the other on its shipping core) plus a single all-asm baseline; the wrappers below drive them.
- * The composed rows (bench_render_road / draw_frame) already run the asm path (this build defines
- * RM_ASM_ROAD, like the game). Two staging paths:
- *   - microbench (tools/bench.py): bench_road_allasm / bench_road_dc / bench_road_bc render the BAKED
- *     leg-0 gate frame (same `road`/`fb`/build_geometry as bench_render_road), so each band's C-vs-asm
- *     delta (its _c row minus the shared all-asm row) is measured on the canonical frame.
- *   - differential (test/test_asm_road.py): bench_road_run_{allasm,Dc,noD,Bc,noB} render a POKED road
- *     frame (the test stages real leg x warmup buffers extracted from equiv.road_background), so each case
- *     drives both bands through their variants; a Musashi run of _Dc / _Bc vs the all-asm baseline differs
- *     only in that band. */
+/* ---- PERF30 road-asm slices 1-3: render_road's five band cores (A, B, C-near, C-far, D), C vs asm +
+ * differential ---- road.c compiles (under -DRM_ROAD_DIFF) whole-road entries with ONE band swapped to the
+ * C reference / a no-op (the others on their shipping cores) plus a single all-asm baseline; the wrappers
+ * below drive them. The composed rows (bench_render_road / draw_frame) already run the asm path (this build
+ * defines RM_ASM_ROAD, like the game). Two staging paths:
+ *   - microbench (tools/bench.py): bench_road_allasm / bench_road_{ac,dc,bc,cnc,cfc} render the BAKED leg-0
+ *     gate frame (same `road`/`fb`/build_geometry as bench_render_road), so each band's C-vs-asm delta (its
+ *     _c row minus the shared all-asm row) is measured on the canonical frame.
+ *   - differential (test/test_asm_road.py): bench_road_run_{allasm, and per band _Ac/noA, _Dc/noD, _Bc/noB,
+ *     _Cnc/noCn, _Cfc/noCf} render a POKED road frame (the test stages real leg x warmup buffers extracted
+ *     from equiv.road_background); a Musashi run of any band's _c vs the all-asm baseline differs only in
+ *     that band. */
 #ifdef RM_ROAD_DIFF
 void rm_render_road_allasm(const RoadInput *in, Framebuffer *fb);
+void rm_render_road_bandA_c(const RoadInput *in, Framebuffer *fb);
+void rm_render_road_bandA_noA(const RoadInput *in, Framebuffer *fb);
 void rm_render_road_bandD_c(const RoadInput *in, Framebuffer *fb);
 void rm_render_road_bandD_noD(const RoadInput *in, Framebuffer *fb);
 void rm_render_road_bandB_c(const RoadInput *in, Framebuffer *fb);
 void rm_render_road_bandB_noB(const RoadInput *in, Framebuffer *fb);
+void rm_render_road_bandCn_c(const RoadInput *in, Framebuffer *fb);
+void rm_render_road_bandCn_noC(const RoadInput *in, Framebuffer *fb);
+void rm_render_road_bandCf_c(const RoadInput *in, Framebuffer *fb);
+void rm_render_road_bandCf_noC(const RoadInput *in, Framebuffer *fb);
 
 /* Microbench (baked leg-0 frame): the built control table is `ctrl`, so rebind road.width_tbl to it (as
  * bench_render_road does) before each measured run. */
 static void bench_road_stage(void) { road.width_tbl = ctrl + RM_CTRL_WIDTH_OFF; }
 /* One all-asm baseline + each band swapped to its C ref, so (C - allasm) is that band's saving on the
- * canonical gate frame. No per-band _asm row — both would be the identical all-asm config. */
+ * canonical gate frame. No per-band _asm row — every one would be the identical all-asm config. */
 void bench_road_allasm(void) { bench_road_stage(); rm_render_road_allasm(&road, &fb); }
+void bench_road_ac(void)     { bench_road_stage(); rm_render_road_bandA_c(&road, &fb); }
 void bench_road_dc(void)     { bench_road_stage(); rm_render_road_bandD_c(&road, &fb); }
 void bench_road_bc(void)     { bench_road_stage(); rm_render_road_bandB_c(&road, &fb); }
+void bench_road_cnc(void)    { bench_road_stage(); rm_render_road_bandCn_c(&road, &fb); }
+void bench_road_cfc(void)    { bench_road_stage(); rm_render_road_bandCf_c(&road, &fb); }
 
 /* Differential staging buffers (the test pokes these). Sizes + the edge/tex internal offsets mirror the
  * host road_input() extraction in test/adapter.py (ROAD_*_BYTES / ROAD_EDGE_PAD / ROAD_TEX_PAD_LO).
@@ -394,15 +403,22 @@ static const RoadInput rr_diff_road = {
     .edge_const = rr_diff_const,
 };
 /* Differential wrappers on the poked frame. The test runs ONE all-asm baseline (bench_road_run_allasm)
- * per frame and compares each band's C-isolation run (_Dc / _Bc — that band C, the other shipping-asm)
- * against it to isolate the band C-vs-asm; _noD / _noB are the per-band no-op positive controls. */
+ * per frame and compares each band's C-isolation run (that band C, the others shipping-asm) against it to
+ * isolate the band C-vs-asm; _no? are the per-band no-op positive controls. Band C-near and C-far are
+ * isolated separately (distinct cores). */
 void bench_road_run_allasm(void) { rm_render_road_allasm(&rr_diff_road, &rr_diff_fb.fb); }
+void bench_road_run_Ac(void)     { rm_render_road_bandA_c(&rr_diff_road, &rr_diff_fb.fb); }
+void bench_road_run_noA(void)    { rm_render_road_bandA_noA(&rr_diff_road, &rr_diff_fb.fb); }
 void bench_road_run_Dc(void)     { rm_render_road_bandD_c(&rr_diff_road, &rr_diff_fb.fb); }
 void bench_road_run_noD(void)    { rm_render_road_bandD_noD(&rr_diff_road, &rr_diff_fb.fb); }
 void bench_road_run_Bc(void)     { rm_render_road_bandB_c(&rr_diff_road, &rr_diff_fb.fb); }
 void bench_road_run_noB(void)    { rm_render_road_bandB_noB(&rr_diff_road, &rr_diff_fb.fb); }
-/* The SHIPPING pipeline (rm_render_road, both bands on their asm cores) on the same staged frame. The test
- * asserts this is byte-identical to bench_road_run_allasm — same both-asm config through the DUPLICATED
+void bench_road_run_Cnc(void)    { rm_render_road_bandCn_c(&rr_diff_road, &rr_diff_fb.fb); }
+void bench_road_run_noCn(void)   { rm_render_road_bandCn_noC(&rr_diff_road, &rr_diff_fb.fb); }
+void bench_road_run_Cfc(void)    { rm_render_road_bandCf_c(&rr_diff_road, &rr_diff_fb.fb); }
+void bench_road_run_noCf(void)   { rm_render_road_bandCf_noC(&rr_diff_road, &rr_diff_fb.fb); }
+/* The SHIPPING pipeline (rm_render_road, every band on its asm core) on the same staged frame. The test
+ * asserts this is byte-identical to bench_road_run_allasm — same all-asm config through the DUPLICATED
  * render_road_pipeline — so the two hand-kept copies of the seven-band sequence, and the shipping order,
  * cannot drift. */
 void bench_road_run_shipping(void) { rm_render_road(&rr_diff_road, &rr_diff_fb.fb); }

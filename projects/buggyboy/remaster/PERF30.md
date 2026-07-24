@@ -1284,3 +1284,85 @@ d7==0 there — the CONTRACT's d7 invariant does NOT hold for A; its col uses d7
 1.63× may be an acceptable stop for the road: the two hot standalone bands are done, and the remaining gap
 is the inlined-band register-pressure wall A4 already charted. Recommend profiling band A's C vs a hand-asm
 estimate before committing slice 3.
+
+### Road-asm slice 3 — bands C + A LANDED; the whole road is asm, at 1.11x the original. CAMPAIGN CLOSED. 2026-07-24
+
+Slice 3 finishes the road: it ports the remaining bands to hand-m68k cores in `src/asm/road_band.S` in two
+sub-phases. **Phase 1 = band C** (`rr_band_C_near_asm` + `rr_band_C_far_asm`, one umbrella flag
+`RM_ASM_RR_BAND_C`), **phase 2 = band A** (`rr_band_A_asm`, `RM_ASM_RR_BAND_A`). With all seven writers asm,
+`rm_render_road` is pure C glue calling seven cores + the group steps — **no band is inlined, so the +17k
+GCC de-inline tax that slices 1-2 carried is gone**, and the `always_inline` mitigation on bands A/C was
+removed with the port.
+
+**Result — render_road lands at the original's register-discipline floor.**
+- **render_road (all seven bands asm) = 230,766 cyc / 28.85 ms** vs the ORIGINAL binary's **207,232 =
+  1.114x** (0.52x the idiomatic recon; 0.51x recon's machine-model transcription). The 23.5k residual is
+  the per-band C-ABI overhead — 7 `movem` prologue/epilogues + the rr_regs struct load/store per call + the
+  glue — the same "C-ABI residue over the register-in original" the A3 blitters showed, scaled to 7 calls
+  (~3.4k/call).
+- **Gate TOTAL 1,015,686 cyc / 126.96 ms.**
+- Per-band asm saving vs its C reference (gate frame, C-isolation minus the all-asm baseline):
+
+  | band | asm saving | x C | note |
+  |------|-----------:|----:|------|
+  | A       | 62,864 | 0.786 | biggest — the 96-row two-pass renderer; GCC's C was far off the tight original |
+  | C-far   | 35,944 | 0.865 | the bidirectional reverse-fill merge tail |
+  | B       | 17,928 | 0.928 | |
+  | D       | 14,514 | 0.941 | |
+  | C-near  |  1,318 | 0.994 | small/cheap band; barely moves |
+
+**Campaign arc (gate render_road, all measured):** pre-asm C floor **350,310** -> slice 1 (D) 352,968
+(+2,658, the one-time de-inline tax) -> slice 2 (B+D) 337,984 -> slice 3 ph.1 (B+C+D) 302,594 -> ph.2
+(A+B+C+D) **230,766**. **Net campaign win: 350,310 -> 230,766 = -119,544 (0.66x), and vs the pre-A3 road
+(50.68 ms recon-era) the whole stack is now 28.85 ms.** The tax elimination is confirmed: slice 2's
+always_inline-era all-C-bands road was ~+17k inflated; with band A asm that inflation is structurally gone
+(nothing left to de-inline), which is why band A's composite drop (71,828 ph.1->ph.2) exceeds its isolated
+62,864 saving.
+
+**Macro extraction (the slice-2 deferral, done at 5 copies + tightened in the slice-3 review).** Two clean,
+self-contained shared blocks are extracted, both byte-neutral (differential 0-mismatch before/after;
+composite unchanged at 230,766) and mutation-checkable: **`RR_ROW_HEAD`** (8 instructions: reset cursors,
+ctrl+param -> half_width, fine-x src offset — all five cores; a flip fails all five shards) and
+**`RR_SRCSEL(merge)`** (the plane-hi / SRC_CONST src-strip select — bands A/C-near/C-far, differing only in
+the merge-target label, passed as the one macro arg; its plane-hi arm's mutation is caught, though its
+const sub-arm is a frame-coverage hole like the others below). The prologue/epilogue were already shared
+(RR_BAND_PROLOGUE/EPILOGUE). What is deliberately NOT extracted, pinned with lockstep cross-reference
+comments instead: (a) the mask read + `edge_seed` load + fill defaults (order/conditionality genuinely
+differ per band — a macro would need per-band params); (b) C-far's row front end through the SPLIT_C
+dispatch, instruction-identical to C-near's but the branch TARGETS differ — extracting the flag-dispatch
+ladder would obscure each core's flag identity, so C-far's banner states the lockstep and "any edit to one
+MUST be mirrored" (the differential pins it). Judgment call per the review's escape hatch.
+
+**Structure.** Band A uses the shared prologue/epilogue too: its `r->d7` (== 0 pre-group-step) seeds the d7
+scratch it wants, `d2` (stride) is reused as a saved col and restored before the row tail, `d4` is overridden
+to 96 (band A takes no rows arg), and a3/d2 are unchanged at exit so the epilogue's param/width/edge/dst
+write-back is exactly right. The differential's `render_road_pipeline` now takes all five band pointers (A,
+B, C-near, C-far, D); band C-near/C-far and band A are each isolated separately against the single all-asm
+baseline. CONTRACT extended (not restated) for band A's d7-is-scratch / masks-with-the-constant rule.
+
+**Verification.**
+- **Differential** `test/test_asm_road.py` (5 leg shards + the staging pin): the `BANDS` descriptor now
+  carries A/B/C-near/C-far/D; each is byte-compared (C-isolation vs the all-asm baseline) over framebuffer +
+  GUARD + read-only inputs, with the shipping-pipeline-drift pin and per-band no-op positive controls. All
+  five bands draw and match on every staged frame. **Mutation checks on both new cores + the extracted
+  macro**: band C-near (fast-split shoulder) and C-far (fast-split fill) each fail when flipped; band A
+  (width-cursor post-increment) fails; a flip inside `RR_ROW_HEAD` fails all shards; all restored green.
+- `make test` **706 passed**; `run_golden.py` **MATCH x5** — the GAME build (all seven asm bands on) is
+  byte-identical to recreate's pipeline on all 5 legs in Hatari.
+
+**Mutation-coverage caveats (honest).** Two band paths the staged frames do not exercise, so their flips are
+not caught by the differential: band C-far's "road spans the whole row" reverse-fill (the census's rare
+bucket) and band A's backward shoulder-fill *value* (on these frames the shoulder pattern has d5==d6, so a
+d5<->d6 flip is invisible; the fill IS exercised, only value-insensitive). Both are pinned only structurally
+(byte-exact on every exercised frame + the 5-leg goldens). Also band A's col-input mutations (fine-x, the
++param delta) are masked because those inputs are 0 on the staged frames — the col itself (from the road
+half-width) is non-zero and fully exercised. Seeding a frame that spans the row / varies fine-x would close
+these; deferred as low-value (the original's own data rarely hits them).
+
+**Road campaign closing verdict.** The road is DONE: 1.11x the original's hand-asm, the two hot bands (A,
+C-far) at ~0.8x their C, and the residual is purely the per-band C-ABI glue. Closing that last 23.5k would
+mean collapsing the seven calls into ONE monolithic asm render_road (like the original's register-resident
+loop), which trades away the per-band C-vs-asm differential + the C references as the readable spec — NOT
+worth it for 23.5k (0.3 ms). The gate frame TOTAL is now 126.96 ms (was 141.90 post-A4); the remaining
+frame cost is the object tree + HUD, not the road. Next campaign front (if any) is `blit_road_scroll` (0.36x
+already) or the object tree, not render_road.

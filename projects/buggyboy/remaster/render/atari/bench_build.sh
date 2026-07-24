@@ -33,11 +33,11 @@ CC=m68k-elf-gcc
 # bench_draw_frame) measure the asm the game runs. The C references rm_blit_objshift2 / rm_blit_objshift
 # are still compiled (blit.c) and linked, so bench_main.c's bench_objshift2_c/_asm and bench_objshift_c/_asm
 # wrappers can measure C vs asm side by side (PERF30 A3).
-# -DRM_ASM_ROAD: dispatch render_road's bands B + D to the hand-written m68k cores src/asm/road_band.S
-# (PERF30 road-asm slices 1-2), EXACTLY like the shipping game build — so the composed rows
-# (bench_render_road / draw_frame) measure the asm the game runs, and the A/B rows + test_asm_road
-# differential pin each core vs its C reference. The C references rr_band_B_c / rr_band_D_c stay compiled
-# (road.c) as the byte-exact specs.
+# -DRM_ASM_ROAD: dispatch ALL of render_road's bands (A, B, C-near, C-far, D — the whole road) to the
+# hand-written m68k cores src/asm/road_band.S (PERF30 road-asm slices 1-3), EXACTLY like the shipping game
+# build — so the composed rows (bench_render_road / draw_frame) measure the asm the game runs, and the road
+# A/B rows + test_asm_road differential pin each core vs its C reference. The C references rr_band_?_c stay
+# compiled (road.c) as the byte-exact specs.
 # -DRM_ROAD_DIFF: compile road.c's bench-only whole-road differential entries (each band bound to C / asm /
 # no-op), which bench_main.c's bench_road_* wrappers call for tools/bench.py + test/test_asm_road.py.
 CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \

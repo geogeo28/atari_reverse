@@ -56,12 +56,11 @@ CC=m68k-elf-gcc
 # the real XBIOS Dosound game_main.c provides over the baked SND_DOSOUND blob, and (b) turns the
 # RM_SOUND_LOCK/UNLOCK trigger-mutation guards into the shell's VBL-reentrancy counter (no-ops on the
 # host/bench builds, so the differential .so is unchanged). See game_main.c's sound-pump section.
-# -DRM_ASM_ROAD: dispatch render_road's bands B + D to the hand-written m68k cores src/asm/road_band.S
-# (PERF30 road-asm slices 1-2). Slice 1 (band D alone) was ~break-even because the first asm band de-inlines
-# band A (+17k, one-time); slice 2 (band B) adds its saving with no further de-inline tax, so the composite
-# now runs BELOW the pre-asm C floor (see PERF30.md "Road-asm slice 2"). run_golden.py verifies THIS build
-# byte-exact in Hatari — the end-to-end pin that both asm bands draw the same pixels as their C references.
-# (No -DRM_ROAD_DIFF: the game omits road.c's bench-only differential entries.)
+# -DRM_ASM_ROAD: dispatch the WHOLE road (all seven band writers A/B/C-near/C-far/D) to the hand-written
+# m68k cores src/asm/road_band.S (PERF30 road-asm slices 1-3). render_road now runs at 1.11x the original's
+# hand-asm (230,766 cyc), no band inlined, no de-inline tax (see PERF30.md "Road-asm slice 3"). run_golden.py
+# verifies THIS build byte-exact in Hatari — the end-to-end pin that every asm band draws the same pixels as
+# its C reference. (No -DRM_ROAD_DIFF: the game omits road.c's bench-only differential entries.)
 CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -DRM_ASM_BLIT -DRM_ASM_ROAD -DRM_SOUND_TARGET -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
         ${GAME_EXTRA_CFLAGS:-}"

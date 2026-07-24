@@ -100,21 +100,24 @@ ASM_AB = [
     ("objshift2 asm",       "bench_objshift2_asm"),
     ("objshift C ref",      "bench_objshift_c"),
     ("objshift asm",        "bench_objshift_asm"),
-    # PERF30 road-asm slices 1-2: the whole road with ONE band bound to the C ref (the other on its
-    # shipping-asm core), plus ONE shared all-asm baseline — so (band-? C) - (all asm) is that band's
-    # saving. No per-band asm row: both would be the identical all-asm config. All need the built control
-    # table (bench_build_geometry).
+    # PERF30 road-asm slices 1-3: the whole road with ONE band bound to the C ref (the others on their
+    # shipping-asm cores), plus ONE shared all-asm baseline — so (band-? C) - (all asm) is that band's
+    # saving. No per-band asm row: every one would be the identical all-asm config. All need the built
+    # control table (bench_build_geometry).
+    ("road (band-A C)",     "bench_road_ac"),
     ("road (band-D C)",     "bench_road_dc"),
     ("road (band-B C)",     "bench_road_bc"),
+    ("road (band-Cn C)",    "bench_road_cnc"),
+    ("road (band-Cf C)",    "bench_road_cfc"),
     ("road (all asm)",      "bench_road_allasm"),
 ]
 # Head-to-head print pairs, derived from the row list above (laid out C-ref, asm, C-ref, asm ...): each
 # asm row pairs with the C-ref row just before it, so its ratio is measured against the right reference.
-# The blit engines pair positionally (C-ref, asm); the road rows are printed separately (two C-isolation
-# rows against the single all-asm baseline), so only the first four rows form head-to-head pairs.
+# The blit engines pair positionally (C-ref, asm); the road rows are printed separately (five per-band
+# C-isolation rows against the single all-asm baseline), so only the first four rows form head-to-head pairs.
 ASM_AB_PAIRS = [(ASM_AB[i][0], ASM_AB[i + 1][0]) for i in range(0, 4, 2)]
 ROAD_AB_BASELINE = "road (all asm)"
-ROAD_AB_ISOLATIONS = ("road (band-D C)", "road (band-B C)")
+ROAD_AB_ISOLATIONS = ("road (band-A C)", "road (band-D C)", "road (band-B C)", "road (band-Cn C)", "road (band-Cf C)")
 
 # Per-row-LABEL preps: wrappers that need a built control table (and, for draw_frame, the pre-rotated
 # scroll copies) before the measured call — same reason recon preps geometry for its road readers. Keyed
@@ -128,12 +131,12 @@ RM_PREPS = {
     "objlist_fixed":  ["bench_build_geometry"],
     "object_tree":    ["bench_build_geometry"],
     "render_road":    ["bench_build_geometry"],
-    "road (band-D C)":   ["bench_build_geometry"],
-    "road (band-B C)":   ["bench_build_geometry"],
-    "road (all asm)":    ["bench_build_geometry"],
     "blit_road_scroll": ["bench_scroll_prebuild"],
     "draw_frame":     ["bench_scroll_prebuild"],
 }
+# The road A/B rows (the per-band C-isolations + the all-asm baseline) all read the built control table
+# too — derive them from the row lists rather than hand-listing (one source of truth with the print).
+RM_PREPS.update({label: ["bench_build_geometry"] for label in (*ROAD_AB_ISOLATIONS, ROAD_AB_BASELINE)})
 
 
 def _syms(elf):

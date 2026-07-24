@@ -1,19 +1,19 @@
 """test_asm_road.py — Musashi-executed differential: the hand-written m68k render_road band cores
-(src/asm/road_band.S — PERF30 road-asm slice 1 = band D, slice 2 = band B) must be byte-for-byte
-identical to their C references (rr_band_D_c / rr_band_B_c in src/road.c) on every staged road frame.
+(src/asm/road_band.S — PERF30 road-asm slices 1-3 port ALL of render_road's writers: band D, band B, then
+bands C-near/C-far and band A) must be byte-for-byte identical to their C references (rr_band_?_c in
+src/road.c) on every staged road frame.
 
 The host equivalence suite (test/test_road.py) proves the C render_road matches recreate's verified
 g_render_road, but it links C only and cannot execute m68k asm. This suite closes that gap per asm band:
-it stages a real road frame, then runs the WHOLE road TWICE on the cross-compiled bench.elf under the
-cycle-accurate Musashi 68000 — once with the band under test bound to the C reference, once bound to the
-asm (the OTHER asm band stays on its shipping core in both) — and byte-compares the framebuffer. Every
-other band is identical between the two runs, so any framebuffer divergence isolates the band under test.
+it stages a real road frame, then runs the WHOLE road under Musashi with the band under test bound to its
+C reference (every OTHER band on its shipping asm core) and byte-compares that against a single all-asm
+baseline — so any framebuffer divergence isolates the band under test.
 
 Why the whole road, not a band in isolation: `param` is a single monotonic cursor read across all seven
 bands, so a band's entry state depends on how many param words the earlier bands consumed on THIS frame's
-control stream — it cannot be constructed without running them. So each side runs the full pipeline and
-only the band under test differs. The BANDS descriptor names each band's (c/asm/noop) wrappers, so one
-leg-sharded harness covers both bands (no copied class).
+control stream — it cannot be constructed without running them. So each run is the full pipeline and only
+the band under test differs. The BANDS descriptor names each band's (c/noop) wrappers, so one leg-sharded
+harness covers all five cores (no copied class).
 
 Staging (real frames, the flag census in PERF30's A4 note): each leg builds a mid-race image with real
 game_update geometry, checkpointed at warmups 60/90/120 (they are prefixes of one simulation — one sim
@@ -26,11 +26,11 @@ the GUARD-bracketed rr_diff_fb; the buffer sizes are pinned against the bench EL
 
 Cross-checks per frame (ONE all-asm baseline shared across the checks — running each band's asm variant
 separately would be the identical both-asm config):
-  - C vs asm, per band: each band's C-isolation run (that band = C ref, the other band = shipping asm)
+  - C vs asm, per band: each band's C-isolation run (that band = C ref, every other band = shipping asm)
     must equal the all-asm baseline over the framebuffer window + GUARD bytes each side + the five
     read-only input buffers (a guard/input divergence is a wild asm store).
   - pipeline pin: bench_road_run_shipping (rm_render_road, the SHIPPING seven-band sequence) must equal
-    bench_road_run_allasm (the DUPLICATED render_road_pipeline with both bands asm), so the two hand-kept
+    bench_road_run_allasm (the DUPLICATED render_road_pipeline with every band asm), so the two hand-kept
     copies of the pipeline cannot drift.
   - positive control, per band: a no-op run for that band must draw a DIFFERENT framebuffer from its
     C-isolation run on at least one frame per leg, so a dead harness fails loudly instead of greening.
@@ -54,19 +54,23 @@ import bench_frame                                  # noqa: E402  the leg-simula
 from bench import BENCH_ELF, BENCH_BIN, _syms, _load_flat, require_bench_elf, noise_bytes  # noqa: E402
 
 # All 5 legs; warmups are prefixes of one simulation (checkpointed). Legs are the shard axis (one worker
-# per leg), so bench.elf is loaded once per worker and each leg's road is simulated once; both bands run
+# per leg), so bench.elf is loaded once per worker and each leg's road is simulated once; all five cores run
 # on the same staged frames.
 LEGS = (0, 1, 2, 3, 4)
 WARMUPS = (60, 90, 120)
 
 # Per-band descriptor: the two bench wrappers that run the whole road with THIS band swapped to the C
-# reference / a no-op (the other band stays on its shipping-asm core). The asm side is the SHARED all-asm
-# baseline (both bands asm) — running each band's asm variant separately would be the identical config, so
-# ALL_ASM is run once per frame and each band's _c is compared against it. Band D is slice 1, B is slice 2.
+# reference / a no-op (the other bands stay on their shipping-asm cores). The asm side is the SHARED
+# all-asm baseline (every band asm) — running each band's asm variant separately would be the identical
+# config, so ALL_ASM is run once per frame and each band's _c is compared against it. D = slice 1, B =
+# slice 2, C-near/C-far + A = slice 3 (A/C-near/C-far isolated separately — distinct cores).
 ALL_ASM = "bench_road_run_allasm"
 BANDS = (
-    {"name": "D", "c": "bench_road_run_Dc", "noop": "bench_road_run_noD"},
-    {"name": "B", "c": "bench_road_run_Bc", "noop": "bench_road_run_noB"},
+    {"name": "A",  "c": "bench_road_run_Ac",  "noop": "bench_road_run_noA"},
+    {"name": "D",  "c": "bench_road_run_Dc",  "noop": "bench_road_run_noD"},
+    {"name": "B",  "c": "bench_road_run_Bc",  "noop": "bench_road_run_noB"},
+    {"name": "Cn", "c": "bench_road_run_Cnc", "noop": "bench_road_run_noCn"},
+    {"name": "Cf", "c": "bench_road_run_Cfc", "noop": "bench_road_run_noCf"},
 )
 
 SCREEN_BYTES = adapter.SCREEN_BYTES
@@ -193,15 +197,16 @@ def test_staging_matches_adapter():
 
 @pytest.mark.parametrize("leg", LEGS)
 def test_bands_asm_match_c(leg, capsys):
-    """Every staged road frame for one leg, for each asm band (D, B): whole road with that band = C ref vs
-    = asm, byte-exact over the bracketed framebuffer + read-only inputs; plus the shipping-pipeline pin and
-    the no-op positive control. Both bands run on the SAME staged frames (one simulation per leg)."""
+    """Every staged road frame for one leg, for each asm band (A, D, B, C-near, C-far): whole road with that
+    band = C ref vs the all-asm baseline, byte-exact over the bracketed framebuffer + read-only inputs; plus
+    the shipping-pipeline pin and the no-op positive control. All bands run on the SAME staged frames (one
+    simulation per leg)."""
     h = _harness()
     frames = _leg_frames(leg)
     bad, pipe_bad, drew = [], [], {b["name"]: 0 for b in BANDS}
     for warmup in WARMUPS:
         mem, sizes = h.stage(frames[warmup])
-        # ONE all-asm baseline (both bands asm through render_road_pipeline) — reused as every band's asm
+        # ONE all-asm baseline (every band asm through render_road_pipeline) — reused as every band's asm
         # side (running each band's asm variant would be this identical config).
         wa = h.compare_region(h.run(mem, ALL_ASM), sizes)
         # Pipeline pin (once): the shipping road (rm_render_road, direct body) must match the all-asm
