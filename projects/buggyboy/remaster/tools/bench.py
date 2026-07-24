@@ -100,15 +100,21 @@ ASM_AB = [
     ("objshift2 asm",       "bench_objshift2_asm"),
     ("objshift C ref",      "bench_objshift_c"),
     ("objshift asm",        "bench_objshift_asm"),
-    # PERF30 road-asm slice 1: the whole road with band D bound to the C ref vs the asm, on the same
-    # baked leg-0 gate frame render_road uses — so (C ref - asm) is band D's saving, and the asm row is
-    # the render_road total after the port. Both need the built control table (bench_build_geometry).
+    # PERF30 road-asm slices 1-2: the whole road with ONE band bound to the C ref (the other on its
+    # shipping-asm core), plus ONE shared all-asm baseline — so (band-? C) - (all asm) is that band's
+    # saving. No per-band asm row: both would be the identical all-asm config. All need the built control
+    # table (bench_build_geometry).
     ("road (band-D C)",     "bench_road_dc"),
-    ("road (band-D asm)",   "bench_road_dasm"),
+    ("road (band-B C)",     "bench_road_bc"),
+    ("road (all asm)",      "bench_road_allasm"),
 ]
 # Head-to-head print pairs, derived from the row list above (laid out C-ref, asm, C-ref, asm ...): each
 # asm row pairs with the C-ref row just before it, so its ratio is measured against the right reference.
-ASM_AB_PAIRS = [(ASM_AB[i][0], ASM_AB[i + 1][0]) for i in range(0, len(ASM_AB), 2)]
+# The blit engines pair positionally (C-ref, asm); the road rows are printed separately (two C-isolation
+# rows against the single all-asm baseline), so only the first four rows form head-to-head pairs.
+ASM_AB_PAIRS = [(ASM_AB[i][0], ASM_AB[i + 1][0]) for i in range(0, 4, 2)]
+ROAD_AB_BASELINE = "road (all asm)"
+ROAD_AB_ISOLATIONS = ("road (band-D C)", "road (band-B C)")
 
 # Per-row-LABEL preps: wrappers that need a built control table (and, for draw_frame, the pre-rotated
 # scroll copies) before the measured call — same reason recon preps geometry for its road readers. Keyed
@@ -123,7 +129,8 @@ RM_PREPS = {
     "object_tree":    ["bench_build_geometry"],
     "render_road":    ["bench_build_geometry"],
     "road (band-D C)":   ["bench_build_geometry"],
-    "road (band-D asm)": ["bench_build_geometry"],
+    "road (band-B C)":   ["bench_build_geometry"],
+    "road (all asm)":    ["bench_build_geometry"],
     "blit_road_scroll": ["bench_scroll_prebuild"],
     "draw_frame":     ["bench_scroll_prebuild"],
 }
@@ -277,6 +284,17 @@ def main():
             if label == asm_label:
                 line += f"   {c / c_cyc:.3f}x C"
             print(line)
+
+    # render_road bands — the all-asm whole-road baseline + each band's C-isolation (that band C, the
+    # other shipping-asm), so (C-isolation - all-asm) is that band's asm saving on the gate frame.
+    print("\n  render_road bands — hand-asm vs C reference (whole road, one band swapped):")
+    base = rm[ROAD_AB_BASELINE][1]
+    bi, bc = rm[ROAD_AB_BASELINE]
+    print(f"    {ROAD_AB_BASELINE:<18}{bi:>10}{bc:>10}{1000 * bc / CPU_HZ:>8.2f} ms   (baseline)")
+    for label in ROAD_AB_ISOLATIONS:
+        i, c = rm[label]
+        print(f"    {label:<18}{i:>10}{c:>10}{1000 * c / CPU_HZ:>8.2f} ms   "
+              f"asm saves {c - base} ({base / c:.3f}x C)")
 
     # render_road vs the byte-exact machine model (recon's tight register/goto transcription).
     if rec and "render_road_machine" in rec:

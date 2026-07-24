@@ -1,18 +1,19 @@
-"""test_asm_road.py — Musashi-executed differential: the hand-written m68k render_road band-D core
-(src/asm/road_band.S — PERF30 road-asm slice 1) must be byte-for-byte identical to its C reference
-(rr_band_D_c in src/road.c) on every staged road frame.
+"""test_asm_road.py — Musashi-executed differential: the hand-written m68k render_road band cores
+(src/asm/road_band.S — PERF30 road-asm slice 1 = band D, slice 2 = band B) must be byte-for-byte
+identical to their C references (rr_band_D_c / rr_band_B_c in src/road.c) on every staged road frame.
 
 The host equivalence suite (test/test_road.py) proves the C render_road matches recreate's verified
-g_render_road, but it links C only and cannot execute m68k asm. This suite closes that gap for band D:
+g_render_road, but it links C only and cannot execute m68k asm. This suite closes that gap per asm band:
 it stages a real road frame, then runs the WHOLE road TWICE on the cross-compiled bench.elf under the
-cycle-accurate Musashi 68000 — once with band D bound to the C reference (bench_road_run_c), once with
-band D bound to the asm (bench_road_run_asm) — and byte-compares the framebuffer. Bands A/B/C are C in
-both runs, so any framebuffer divergence isolates band D. A one-byte difference on any case fails.
+cycle-accurate Musashi 68000 — once with the band under test bound to the C reference, once bound to the
+asm (the OTHER asm band stays on its shipping core in both) — and byte-compares the framebuffer. Every
+other band is identical between the two runs, so any framebuffer divergence isolates the band under test.
 
-Why the whole road, not band D in isolation: `param` is a single monotonic cursor read across all seven
-bands, so band D's entry state depends on how many param words A/B/C consumed on THIS frame's control
-stream — it cannot be constructed without running A/B/C. So each side runs A/B/C (identical) then its
-band-D variant; only band D differs.
+Why the whole road, not a band in isolation: `param` is a single monotonic cursor read across all seven
+bands, so a band's entry state depends on how many param words the earlier bands consumed on THIS frame's
+control stream — it cannot be constructed without running them. So each side runs the full pipeline and
+only the band under test differs. The BANDS descriptor names each band's (c/asm/noop) wrappers, so one
+leg-sharded harness covers both bands (no copied class).
 
 Staging (real frames, the flag census in PERF30's A4 note): each leg builds a mid-race image with real
 game_update geometry, checkpointed at warmups 60/90/120 (they are prefixes of one simulation — one sim
@@ -23,14 +24,16 @@ full-row fills. The buffers are poked into the bench's rr_diff_* staging buffers
 the GUARD-bracketed rr_diff_fb; the buffer sizes are pinned against the bench ELF's own symbol spacing
 (test_staging_matches_adapter), so a C-side resize without a matching poke cannot false-green.
 
-Three cross-checks per frame:
-  - C vs asm: the framebuffer window + GUARD bytes each side + the five read-only input buffers must be
-    IDENTICAL between the two runs (a guard/input divergence is a wild asm store).
-  - pipeline pin: bench_road_run_shipping (rm_render_road, the SHIPPING seven-band sequence with the asm
-    band D) must equal bench_road_run_asm (the DUPLICATED render_road_bandD sequence with the same asm),
-    so the two hand-kept copies of the pipeline cannot drift.
-  - positive control: a no-op-band-D run (bench_road_run_noD) must draw a DIFFERENT framebuffer from the
-    C run on at least one frame per leg, so a dead harness fails loudly instead of false-greening C==asm.
+Cross-checks per frame (ONE all-asm baseline shared across the checks — running each band's asm variant
+separately would be the identical both-asm config):
+  - C vs asm, per band: each band's C-isolation run (that band = C ref, the other band = shipping asm)
+    must equal the all-asm baseline over the framebuffer window + GUARD bytes each side + the five
+    read-only input buffers (a guard/input divergence is a wild asm store).
+  - pipeline pin: bench_road_run_shipping (rm_render_road, the SHIPPING seven-band sequence) must equal
+    bench_road_run_allasm (the DUPLICATED render_road_pipeline with both bands asm), so the two hand-kept
+    copies of the pipeline cannot drift.
+  - positive control, per band: a no-op run for that band must draw a DIFFERENT framebuffer from its
+    C-isolation run on at least one frame per leg, so a dead harness fails loudly instead of greening.
 
 Requires the m68k bench.elf (bash render/atari/bench_build.sh); make test builds it first. If it is
 absent the suite FAILS with that hint (bench.require_bench_elf) rather than skipping.
@@ -51,9 +54,20 @@ import bench_frame                                  # noqa: E402  the leg-simula
 from bench import BENCH_ELF, BENCH_BIN, _syms, _load_flat, require_bench_elf, noise_bytes  # noqa: E402
 
 # All 5 legs; warmups are prefixes of one simulation (checkpointed). Legs are the shard axis (one worker
-# per leg), so bench.elf is loaded once per worker and each leg's road is simulated once.
+# per leg), so bench.elf is loaded once per worker and each leg's road is simulated once; both bands run
+# on the same staged frames.
 LEGS = (0, 1, 2, 3, 4)
 WARMUPS = (60, 90, 120)
+
+# Per-band descriptor: the two bench wrappers that run the whole road with THIS band swapped to the C
+# reference / a no-op (the other band stays on its shipping-asm core). The asm side is the SHARED all-asm
+# baseline (both bands asm) — running each band's asm variant separately would be the identical config, so
+# ALL_ASM is run once per frame and each band's _c is compared against it. Band D is slice 1, B is slice 2.
+ALL_ASM = "bench_road_run_allasm"
+BANDS = (
+    {"name": "D", "c": "bench_road_run_Dc", "noop": "bench_road_run_noD"},
+    {"name": "B", "c": "bench_road_run_Bc", "noop": "bench_road_run_noB"},
+)
 
 SCREEN_BYTES = adapter.SCREEN_BYTES
 GUARD = 0x40                        # bench_main.c RR_DIFF_GUARD: canary bytes bracketing the framebuffer
@@ -178,34 +192,37 @@ def test_staging_matches_adapter():
 
 
 @pytest.mark.parametrize("leg", LEGS)
-def test_band_d_asm_matches_c(leg, capsys):
-    """Every staged road frame for one leg: whole road with band D = C ref vs band D = asm, byte-exact
-    over the bracketed framebuffer + read-only inputs; plus the shipping-pipeline pin and the no-op
-    positive control."""
+def test_bands_asm_match_c(leg, capsys):
+    """Every staged road frame for one leg, for each asm band (D, B): whole road with that band = C ref vs
+    = asm, byte-exact over the bracketed framebuffer + read-only inputs; plus the shipping-pipeline pin and
+    the no-op positive control. Both bands run on the SAME staged frames (one simulation per leg)."""
     h = _harness()
     frames = _leg_frames(leg)
-    bad, pipe_bad, drew = [], [], 0
+    bad, pipe_bad, drew = [], [], {b["name"]: 0 for b in BANDS}
     for warmup in WARMUPS:
         mem, sizes = h.stage(frames[warmup])
-        cm = h.run(mem, "bench_road_run_c")
-        am = h.run(mem, "bench_road_run_asm")
-        wc, wa = h.compare_region(cm, sizes), h.compare_region(am, sizes)
-        if wc != wa:
-            bad.append((leg, warmup, sum(1 for a, b in zip(wc, wa) if a != b)))
-        # Pipeline pin: the shipping road (rm_render_road) must match the duplicated render_road_bandD
-        # pipeline on the same asm band D — proves the two hand-kept band sequences did not drift.
-        sm = h.run(mem, "bench_road_run_shipping")
-        if h.compare_region(sm, sizes) != wa:
+        # ONE all-asm baseline (both bands asm through render_road_pipeline) — reused as every band's asm
+        # side (running each band's asm variant would be this identical config).
+        wa = h.compare_region(h.run(mem, ALL_ASM), sizes)
+        # Pipeline pin (once): the shipping road (rm_render_road, direct body) must match the all-asm
+        # pipeline byte-for-byte — proves the two hand-kept copies of the seven-band sequence did not drift.
+        if h.compare_region(h.run(mem, "bench_road_run_shipping"), sizes) != wa:
             pipe_bad.append((leg, warmup))
-        # Positive control: only until we have seen band D actually paint (a few real frames are entirely
-        # col<0 / SKIP_D blank — A4 census — so it is per-leg aggregate, not per-frame).
-        if drew == 0:
-            nm = h.run(mem, "bench_road_run_noD")
-            if h.fb_window(cm) != h.fb_window(nm):
-                drew += 1
+        for b in BANDS:
+            cm = h.run(mem, b["c"])          # this band = C ref, the other band = shipping asm
+            wc = h.compare_region(cm, sizes)
+            if wc != wa:
+                bad.append((leg, warmup, b["name"], sum(1 for a, x in zip(wc, wa) if a != x)))
+            # Positive control per band: only until we have seen it paint (a few real frames are entirely
+            # col<0 / SKIP blank — A4 census — so it is per-leg aggregate, not per-frame).
+            if drew[b["name"]] == 0:
+                if h.fb_window(cm) != h.fb_window(h.run(mem, b["noop"])):
+                    drew[b["name"]] += 1
     with capsys.disabled():
-        print(f"  road band-D asm leg {leg}: {len(bad)} mismatches, {len(pipe_bad)} pipeline drift, "
-              f"drew={'yes' if drew else 'NO'} ({len(WARMUPS)} frames)")
-    assert drew >= 1, f"positive control: band D drew nothing on any warmup of leg {leg} (dead harness?)"
-    assert not pipe_bad, f"shipping pipeline diverges from render_road_bandD: {pipe_bad}"
-    assert not bad, f"band D asm diverges from C reference: {bad}"
+        drew_str = " ".join(f"{n}={'y' if d else 'N'}" for n, d in drew.items())
+        print(f"  road band asm leg {leg}: {len(bad)} mismatches, {len(pipe_bad)} pipeline drift, "
+              f"drew[{drew_str}] ({len(WARMUPS)} frames x {len(BANDS)} bands)")
+    missing = [n for n, d in drew.items() if not d]
+    assert not missing, f"positive control: band(s) {missing} drew nothing on any warmup of leg {leg}"
+    assert not pipe_bad, f"shipping road diverges from the all-asm pipeline: {pipe_bad}"
+    assert not bad, f"band asm diverges from C reference: {bad}"

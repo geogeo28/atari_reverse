@@ -1225,3 +1225,62 @@ return) and it shares the src-dispatch shape, but its near/far tails differ from
 cursors before the asr, and its far tail (0x9514) has TWO fill shapes (a `moveq #$13` dbf-counted fill AND
 the shoulder fill) plus a distinct full-fill; crib the machine model rr_band_B @0x93c2/@0x948c. Expect band
 B asm to add ~−14k with no further de-inline tax → the composite drops below the C floor.
+
+### Road-asm slice 2 — hand-asm band B LANDED; composite drops BELOW the C floor (the amortization pays off). 2026-07-24
+
+Slice 1 predicted the lone-band break-even would flip positive once a SECOND band ported (the +17k
+band-A de-inline is a one-time cost, not per band). Slice 2 ports band B (`rr_band_B`, the other ~54k
+standalone A4 band) to a second core in `src/asm/road_band.S` (`rr_band_B_asm`), behind its own per-core
+flag `RM_ASM_RR_BAND_B` under the `RM_ASM_ROAD` umbrella. **Prediction confirmed: render_road now runs
+below the pre-asm C floor, and the shipping game build turns both asm bands ON.**
+
+**Result — the composite beats the C floor.**
+- **`rr_band_B_asm` = 38,552 cyc** vs the C `rr_band_B` **54,084** = **0.71×, −15,532** (profile.py, per-PC) —
+  same A3 register discipline (row-start/working cursor pair, (aN)+ stores, register-held rewinds).
+- **render_road (bands B+D asm) = 337,984 cyc / 42.25 ms** vs the pre-asm C floor **350,310** = **−12,326
+  (0.965×)**, and vs slice 1's band-D-only **352,968** = **−14,984** (band B's contribution, ≈ its isolated
+  saving — the de-inline tax did NOT grow). 0.75× the machine-model reference, 0.76× the idiomatic recon.
+- **Gate TOTAL 1,122,904 cyc / 140.36 ms** (bands B+D asm, both blit cores asm). render_road vs the ORIGINAL
+  binary's 207,232: **1.63×** (was 1.69× pre-asm-road).
+
+**Structure (reused slice 1's, per the review's reuse bar).** Band B is a second `.globl` core in the same
+`.S`; the movem prologue + the param/width/edge/dst write-back epilogue (the shared A4 localization ABI) are
+now `RR_BAND_PROLOGUE` / `RR_BAND_EPILOGUE` macros used by BOTH cores — band D's bytes are unchanged
+(differential + goldens confirm). The CONTRACT block is extended, not restated (the slice-1 hazard): it now
+covers the d7 invariant for both — band B's C reads `r->d7` (its `col_mask` local) and its asm reads `r->d7`,
+so they agree unconditionally; band D's C hardcodes `RR_D7_WORD_MASK` while its asm reads the field, agreeing
+via the post-group-step invariant. road.c: `rr_band_B` → `rr_band_B_c` (`__attribute__((unused))`, compiled
+unconditionally), `RR_BAND_B_FN` dispatch mirrors band D. The differential's `render_road_pipeline` now takes
+BOTH band pointers so either can be swapped C-vs-asm while the other stays its shipping core; the bench
+measures ONE all-asm baseline and compares each band's C-isolation against it (no per-band asm re-run of the
+identical config), and the fill-count immediates (`moveq`) are all derived from `RR_ROW_LONG_PAIRS`.
+
+*Deferred to slice 3:* the per-row header decode (14 instructions) and the const-strip select are
+instruction-identical between the two cores, but their macro extraction is deferred — it would trade
+read-against-the-machine-model clarity and force re-verification of both cores, and only earns its keep at
+THREE copies (when band C ports). Revisit it with band C.
+
+**Verification.**
+- **Differential** `test/test_asm_road.py`: the leg-sharded harness now carries a `BANDS` descriptor
+  ((c/asm/noop) wrapper names per band), so ONE harness covers B and D — both run on the same per-leg
+  simulation, byte-compared over framebuffer + GUARD + read-only inputs, with the shipping-pipeline-drift
+  pin (each band's both-asm run == `rm_render_road`) and per-band no-op positive control. **Mutation checks
+  BOTH cores**: flipping band B's near shoulder-fill `%d5`→`%d6` fails the differential; likewise band D's;
+  restored, green.
+- `make test` **706 passed** (band B folded into the existing 5 leg shards + the staging-pin test — no new
+  shards, per the reuse bar).
+- `run_golden.py` **MATCH ×5** — the GAME build (now `-DRM_ASM_ROAD` ON: bands B+D asm) is byte-identical to
+  recreate's pipeline on all 5 legs in Hatari.
+
+**Next (slice 3): the inlined bands A and C, or a stop-point call.** What remains between 337,984 and the
+original's 207,232 (1.63×) is dominated by bands A (~146k, 46% — inlined) and C (~91k+4k, 26% — inlined);
+B/D are now ~38.5k each, essentially at the original's efficiency. The catch: A/C are `always_inline` INTO
+`rm_render_road` (three resident cursor-sets; A4 measured localizing them at +7,526), so they are NOT
+standalone functions to swap. BUT the +17k de-inline tax the asm bands pay is EXACTLY the cost of band A
+being inlined — if A (and C) themselves become asm cores, there is nothing left to de-inline, so that tax
+disappears too. Porting A/C is the path to the original's floor; it is more work (band A alone is 96 rows
+with the shoulder-fill/interior sub-shapes) and needs its own ABI (A runs before the first group step, so
+d7==0 there — the CONTRACT's d7 invariant does NOT hold for A; its col uses d7 as scratch). Alternatively,
+1.63× may be an acceptable stop for the road: the two hot standalone bands are done, and the remaining gap
+is the inlined-band register-pressure wall A4 already charted. Recommend profiling band A's C vs a hand-asm
+estimate before committing slice 3.
