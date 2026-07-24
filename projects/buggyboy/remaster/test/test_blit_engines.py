@@ -80,7 +80,10 @@ def test_blit_objshift_matches(chunk, capsys):
     for idx, (bc, fx, col) in enumerate(OBJSHIFT_CASES):
         if idx % FUZZ_CHUNKS != chunk:
             continue
-        for color, rows_m1, stride in ((3, 3, 8), (11, 0, 0x10), (14, 5, -8 & 0xffff)):
+        # stride 0xa8 is the other real caller stride (see rm_blit_objshift doc): net source step is
+        # -0xa0/row (backward), so the src cursor walks back into the staged buffer's lower half — the
+        # SRC_BASE - SRC_SPAN//2 headroom (0x4000) covers rows_m1 up to ~102; 0x1f rows stay well inside.
+        for color, rows_m1, stride in ((3, 3, 8), (11, 0, 0x10), (14, 5, -8 & 0xffff), (7, 0x1f, 0xa8)):
             x = _x_for(col, fx)
             diff = _check_objshift(lib, x, color, rows_m1, stride, bc, seed=idx * 97 + color)
             if diff:

@@ -16,7 +16,14 @@
 
 /* Semantic aliases for the two roles a 32-bit word plays in the ST render code (both are uint32_t,
  * which reads ambiguously): a byte offset/cursor into a buffer, and a 4-plane 16-pixel longword
- * (two plane words packed). Pointers stay uint8_t*, single plane words stay uint16_t. */
+ * (two plane words packed). Pointers stay uint8_t*, single plane words stay uint16_t.
+ *
+ * Pointer-walking rule (host-64 vs target-32): the m68k target is 32-bit, so a cursor `base + off`
+ * and every per-row delta applied to it wrap mod 2^32 for free. A 64-bit host pointer does NOT wrap,
+ * so any delta added straight to a real pointer must carry its true sign (int32_t / sx16) — a negative
+ * delta stored unsigned is a ~4 GB forward walk, not a step back. The running offsets themselves stay
+ * non-negative (screen overdraw / staged src guarantee it), so forming `base + (Offset)off` — compute
+ * the 32-bit offset first, then widen it onto the base — reads the same byte on both. */
 typedef uint32_t Offset;
 typedef uint32_t Plane4;
 

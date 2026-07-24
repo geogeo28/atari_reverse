@@ -615,6 +615,65 @@ remains only for whatever residue is left after C parity ~— the measured ceili
 > after; its pre-P1+P2 value at that basis was not captured, so no before is quoted. An earlier draft
 > mis-compared the composite after-value against the funcs-sum before-value.)
 
+> **LANDED 2026-07-23 (P4 — real-pointer cursors on BOTH fine-x engines; +2.34 ms of the gate frame).**
+> Mechanism #2 above (split `dst + Offset` addressing): the `ObjshCursor` fields and the objshift2 cell
+> pointees became real `uint8_t *`/`const uint8_t *` instead of 32-bit byte offsets, so the cell body
+> reads/writes through them and the row rewind subtracts from them — no per-access `dst + offset` rebuild
+> and no per-row base add. Both engines kept their existing calling shape (objshift value-in/value-out
+> cursor struct; objshift2 by-pointer pointees — the A1 shapes), so P4 is purely the offset→pointer
+> axis. Byte-identical by construction: the offset arithmetic is the same mod 2^32 on the 32-bit m68k
+> target, and the running offsets stay positive (non-wrapping) on the 64-bit host — the invariant the
+> offset form already relied on. ("Both fine-x engines" = the two hot ones; the *third* fine-x family,
+> `rm_objsprite`, was left on offset cursors deliberately — it is cold on the gate frame, so the
+> conversion is unmeasured and not worth the bring-up.)
+>
+> **P4a — `rm_blit_objshift` (pass 1): 235,456 → 221,328 cyc = 29.43 → 27.67 ms (0.94×, −1.77 ms);
+> `bench_objlist_pass1` 289,868 → 275,740 cyc.** The per-row `moveal %sp@(x),%aN` + `addal %a3,%aN`
+> pointer rebuilds (3 cursors × ~1,140 cyc/row region each — the dst-base re-add) are GONE from the row
+> head; the src pointer is loaded once and rewound directly. *Fidelity fix during bring-up:* the fuzz
+> drives `stride = -8`, so the source rewind `sp_rewind = sx16(stride) + sx16(src_extra)` is negative;
+> stored as `uint32_t` and subtracted from a 64-bit host pointer it is a ~4 GB unsigned walk → segfault
+> (the offset form wrapped it back mod 2^32; a pointer cannot). Kept `sp_rewind` **signed** (`int32_t`)
+> so the negative delta moves the pointer the right way on both engines. The blit fuzz caught this
+> immediately — pinned.
+>
+> **P4b — `rm_blit_objshift2` (fixed pass): 435,940 → 431,380 cyc = 54.49 → 53.92 ms (0.99×, −0.57 ms);
+> `bench_objlist_fixed` 447,950 → 443,390 cyc — BELOW the 435,900 / 447,982 measure-or-revert bars, so
+> kept.** The objshift2 baseline already carried col0/col1/sp as offsets in *registers* (d3/d6/d7), so
+> the only per-row waste was the base+index `lea %a5@(0,%d3:l)` column-pointer rebuild (2 per row, 2,904
+> cyc/line region) — those vanish, replaced by cheap displacement `lea %a0@(8),%a1`. This is why P4b's
+> win is small next to P4a's: objshift2 never had the per-access `dst+offset` in its hot writes (already
+> post-inc `%a2@`), only the per-row rebuild. Not a regression (unlike the A1 value-struct attempt),
+> because the calling shape is unchanged — register pressure is the same, one addressing mode cheaper.
+>
+> Byte-exact: `make test` **558 passed** (blit fuzz incl. LEFT/RIGHT clip families and negative stride);
+> `run_golden.py` **MATCH on all 5 legs**. Gate-frame object tree **101.98 → 99.64 ms**; TOTAL (frame,
+> funcs-sum basis) **1,503,688 → 1,484,968 cyc = 187.96 → 185.62 ms**. Off-gate `frame_dist` (63 frames)
+> median **179.8 ms**, p90 **221.4 ms** (the win concentrates on object-heavy frames; the median frame's
+> object tree is ~46 ms, so its share is small). **Residual:** both engines still keep part of the cursor
+> triple in stack slots at row boundaries under register pressure (fills + shl occupy the data regs), and
+> the inner cell is now RMW-instruction-selection-bound — mechanism #3 (memory-destination `and.w/or.w`
+> vs load/and/or/store). A forced RMW experiment (volatile) is explicitly OUT of scope here; noted only.
+>
+> **Review-fix pass 2026-07-23 (constant-row-step fold, on top of P4 — both engines improved further).**
+> The pre-commit review found the per-row rewind bookkeeping was a constant step in disguise: every
+> family advances both columns AND the source by a per-cell-count amount per row, then rewinds a matching
+> per-cell-count constant, so the `total_cells`/`cells` terms cancel. Net per-row step is constant — both
+> columns move one scanline up (`−SCREEN_ROW_BYTES`) and the source steps `OBJSH_CELL_BYTES − stride`
+> (objshift) / `−OBJSH2_SRC_ROW_BYTES` (objshift2, 0x50). The row loops now save the row-start cursor,
+> run the row's writes, then set the next row from row-start + the constant delta (col1 always col0 +
+> `OBJSH_CELL_BYTES`); the `objsh_row`/`objsh2_row` internal cursor mutation is discarded. This deleted
+> the per-row `rewind`/`src_extra`/`sp_rewind` computes, the objshift2 cells-switch, and the orphaned
+> `OBJSH_ROW_REWIND`/`OBJSH2_REWIND*` constants. The signed-step lesson is kept: objshift's `sp_step`
+> stays `int32_t` (stride > 8 → negative source walk). **`rm_blit_objshift` 221,328 → 199,152 cyc
+> (−22,176, 27.67 → 24.89 ms); `rm_blit_objshift2` 431,380 → 405,540 cyc (−25,840, 53.92 → 50.69 ms)** —
+> both below the P4 measure-or-revert bars, neither reverted. `bench_objlist_pass1` 275,740 → 253,564,
+> `bench_objlist_fixed` 443,390 → 417,546. Gate-frame object tree **99.64 → 93.63 ms** (0.72×); TOTAL
+> (frame, funcs-sum) **1,484,968 → 1,436,948 cyc = 185.62 → 179.62 ms**. Byte-exact: `make test` **558
+> passed** (fuzz gained stride 0xa8, the real caller's backward-walking source stride); `run_golden.py`
+> **MATCH on all 5 legs**. A host-only `RM_HOST_ASSERT` now enforces the non-wrap invariant at each
+> col0 formation (compiled out on `__m68k__`, zero target cycles).
+
 ### A2 implementation attempt 2026-07-23 — BLOCKED, expectations corrected
 
 Measured before implementing (scratchpad/analyze_groups.py; 648 distinct 4-byte straddle groups

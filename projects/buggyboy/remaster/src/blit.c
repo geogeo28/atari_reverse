@@ -14,6 +14,16 @@
 #include "screen.h"
 #include "st.h"
 
+/* Host-only invariant guard: enforces the pointer-walking non-wrap rule (see Offset in st.h) on the
+ * 64-bit test build (clang, NDEBUG unset → assert is live), and compiles to nothing on the m68k
+ * target (__m68k__), so the shipped blit costs no cycles for it. */
+#ifdef __m68k__
+#define RM_HOST_ASSERT(cond) ((void)0)
+#else
+#include <assert.h>
+#define RM_HOST_ASSERT(cond) assert(cond)
+#endif
+
 /* ---- shared fine-x geometry ---- */
 #define OBJSH_NIBBLE     0xf     /* fine-x / colour-index low nibble */
 #define OBJSH_SUBPX_BITS 16      /* left-shift count = 16 - fine_x */
@@ -32,9 +42,15 @@ static uint32_t rotl32(uint32_t v, unsigned count) {
 }
 
 /* Masked OR-in of one plane word into a destination column: keep the background where mask is set,
- * drop in the shifted pixels (68k `and.w mask,(ptr)` + `or.w pix,(ptr)`). */
+ * drop in the shifted pixels (68k `and.w mask,(ptr)` + `or.w pix,(ptr)`). The by-pointer form is what
+ * the objshift real-pointer cursors write through (PERF30 P4); the objsprite family still passes a
+ * dst+offset pair, so keep that entry as a thin wrapper. */
+static void plane_write_p(uint8_t *dst_col, uint16_t mask, uint16_t pix) {
+    wr16(dst_col, (uint16_t)((be16(dst_col) & mask) | pix));
+}
+
 static void plane_write(uint8_t *dst, Offset ptr, uint16_t mask, uint16_t pix) {
-    wr16(dst + ptr, (uint16_t)((be16(dst + ptr) & mask) | pix));
+    plane_write_p(dst + ptr, mask, pix);
 }
 
 /* ============================================================================================
@@ -46,12 +62,16 @@ static void plane_write(uint8_t *dst, Offset ptr, uint16_t mask, uint16_t pix) {
  * "0x98") / 2 (0x144ac "0x90").
  * ============================================================================================ */
 #define OBJSH_RIGHT_BOUND 0x98    /* absolute right screen bound (aligned_col) */
-#define OBJSH_ROW_REWIND  0xa8    /* base per-row dst rewind (Δ = this + 8*(cells-1)) */
 #define OBJSH_MASK_HI     0xffff0000u
 
-static uint32_t objsh_build_mask(const uint8_t *src, uint32_t p) {
-    uint16_t a = be16(src + p), b = be16(src + p + 2), c = be16(src + p + 4), d = be16(src + p + 6);
+static uint32_t objsh_build_mask_p(const uint8_t *src_words) {
+    uint16_t a = be16(src_words), b = be16(src_words + 2), c = be16(src_words + 4), d = be16(src_words + 6);
     return OBJSH_MASK_HI | (uint16_t)(~(a | b | c) & d);
+}
+
+/* dst+offset wrapper kept for the objsprite family, which still walks its source by offset. */
+static uint32_t objsh_build_mask(const uint8_t *src, uint32_t p) {
+    return objsh_build_mask_p(src + p);
 }
 
 /* The four per-plane 16-bit colour-fill words (plane order 0..3 = fill_lo hi / fill_lo lo /
@@ -63,25 +83,29 @@ typedef struct { uint16_t plane[OBJSH_PLANES]; } ObjshFill;
 /* The three loop cursors carried by value between cells and rows: the two destination columns and the
  * source pointer. Passing this by value (not by pointer) keeps col0/col1/sp register-pinned once the
  * static cell helpers inline — the by-pointer shape address-took them and forced per-cell memory RMW
- * plus movel sp@,sp@ spill shuffling (PERF30 A1). */
-typedef struct { Offset col0, col1; uint32_t sp; } ObjshCursor;
+ * plus movel sp@,sp@ spill shuffling (PERF30 A1). The three fields are REAL pointers, not byte offsets
+ * (PERF30 P4): the cell body reads/writes through them directly and the row loop steps them directly,
+ * so GCC never rebuilds `dst + offset` per access nor re-adds the dst base with a per-row `lea`.
+ * Byte-identical on both builds by the pointer-walking rule (see Offset in st.h); pinned by
+ * test/test_blit_engines.py. */
+typedef struct { uint8_t *col0, *col1; const uint8_t *sp; } ObjshCursor;
 
 /* One plane of a STRADDLE cell: left-shift the source word across both columns, gate by this plane's
  * colour fill, drop the low half into col1 and the high half into col0. Split out so the 4-plane
  * unroll in objsh_straddle_cell is straight-line (PERF30 P2) — no loop counter, no per-plane branch.
  * always_inline so the value-passed cursor stays register-resident across the four calls (A1). */
 static inline __attribute__((always_inline))
-ObjshCursor objsh_straddle_plane(uint8_t *dst, const uint8_t *src, ObjshCursor cur, unsigned shl,
+ObjshCursor objsh_straddle_plane(ObjshCursor cur, unsigned shl,
                                  uint16_t mask_hi, uint16_t mask_lo, ObjshFill fill, int plane) {
     uint16_t f = fill.plane[plane];
     int is_last = plane == OBJSH_PLANES - 1;
-    uint32_t pix32 = (uint32_t)be16(src + cur.sp) << shl;
+    uint32_t pix32 = (uint32_t)be16(cur.sp) << shl;
     cur.sp += 2;
     uint16_t pix_lo = (uint16_t)((pix32 & 0xffff) & f);
     uint16_t pix_hi = (uint16_t)((pix32 >> OBJSH_SUBPX_BITS) & f);
     if (is_last) { pix_lo &= (uint16_t)~mask_lo; pix_hi &= (uint16_t)~mask_hi; }
-    plane_write(dst, cur.col1, mask_lo, pix_lo);   /* col1 first */
-    plane_write(dst, cur.col0, mask_hi, pix_hi);
+    plane_write_p(cur.col1, mask_lo, pix_lo);   /* col1 first */
+    plane_write_p(cur.col0, mask_hi, pix_hi);
     cur.col0 += 2; cur.col1 += 2;
     return cur;
 }
@@ -91,15 +115,14 @@ ObjshCursor objsh_straddle_plane(uint8_t *dst, const uint8_t *src, ObjshCursor c
  * always_inline (matching objsh_edge_cell): a second call site or compiler bump must not flip GCC's
  * called-once heuristic and reintroduce a real call that re-spills the value-passed cursor. */
 static inline __attribute__((always_inline))
-ObjshCursor objsh_straddle_cell(uint8_t *dst, const uint8_t *src, ObjshCursor cur,
-                                unsigned shl, ObjshFill fill) {
-    uint32_t mask32 = rotl32(objsh_build_mask(src, cur.sp), shl);
+ObjshCursor objsh_straddle_cell(ObjshCursor cur, unsigned shl, ObjshFill fill) {
+    uint32_t mask32 = rotl32(objsh_build_mask_p(cur.sp), shl);
     uint16_t mask_hi = (uint16_t)(mask32 >> OBJSH_SUBPX_BITS);   /* col0 */
     uint16_t mask_lo = (uint16_t)mask32;                         /* col1 */
-    cur = objsh_straddle_plane(dst, src, cur, shl, mask_hi, mask_lo, fill, 0);
-    cur = objsh_straddle_plane(dst, src, cur, shl, mask_hi, mask_lo, fill, 1);
-    cur = objsh_straddle_plane(dst, src, cur, shl, mask_hi, mask_lo, fill, 2);
-    cur = objsh_straddle_plane(dst, src, cur, shl, mask_hi, mask_lo, fill, 3);
+    cur = objsh_straddle_plane(cur, shl, mask_hi, mask_lo, fill, 0);
+    cur = objsh_straddle_plane(cur, shl, mask_hi, mask_lo, fill, 1);
+    cur = objsh_straddle_plane(cur, shl, mask_hi, mask_lo, fill, 2);
+    cur = objsh_straddle_plane(cur, shl, mask_hi, mask_lo, fill, 3);
     return cur;
 }
 
@@ -108,17 +131,17 @@ ObjshCursor objsh_straddle_cell(uint8_t *dst, const uint8_t *src, ObjshCursor cu
  * constant at each call site, so the ternaries fold). Split out for the same straight-line 4-plane
  * unroll as the straddle cell (PERF30 P2). */
 static inline __attribute__((always_inline))
-ObjshCursor objsh_edge_plane(uint8_t *dst, const uint8_t *src, ObjshCursor cur, unsigned shift,
+ObjshCursor objsh_edge_plane(ObjshCursor cur, unsigned shift,
                              int is_right, uint16_t mask, ObjshFill fill, int plane) {
     uint16_t f = fill.plane[plane];
     int is_last = plane == OBJSH_PLANES - 1;
-    uint16_t word = be16(src + cur.sp);
+    uint16_t word = be16(cur.sp);
     cur.sp += 2;
     uint16_t pix = is_right ? (uint16_t)(word >> shift) : (uint16_t)((uint32_t)word << shift);
     pix = (uint16_t)(pix & f);
     if (is_last) pix &= (uint16_t)~mask;
-    if (is_right) { plane_write(dst, cur.col0, mask, pix); cur.col0 += 2; }
-    else          { plane_write(dst, cur.col1, mask, pix); cur.col1 += 2; }
+    if (is_right) { plane_write_p(cur.col0, mask, pix); cur.col0 += 2; }
+    else          { plane_write_p(cur.col1, mask, pix); cur.col1 += 2; }
     return cur;
 }
 
@@ -127,14 +150,13 @@ ObjshCursor objsh_edge_plane(uint8_t *dst, const uint8_t *src, ObjshCursor cur, 
  * inline. always_inline: it has two call sites, so GCC's size heuristic leaves it a real call
  * otherwise — which re-spills the cursor across the call and defeats the register-pinning. */
 static inline __attribute__((always_inline))
-ObjshCursor objsh_edge_cell(uint8_t *dst, const uint8_t *src, ObjshCursor cur,
-                            unsigned shift, int is_right, ObjshFill fill) {
-    uint32_t m32 = objsh_build_mask(src, cur.sp);
+ObjshCursor objsh_edge_cell(ObjshCursor cur, unsigned shift, int is_right, ObjshFill fill) {
+    uint32_t m32 = objsh_build_mask_p(cur.sp);
     uint16_t mask = (uint16_t)(is_right ? (m32 >> shift) : rotl32(m32, shift));
-    cur = objsh_edge_plane(dst, src, cur, shift, is_right, mask, fill, 0);
-    cur = objsh_edge_plane(dst, src, cur, shift, is_right, mask, fill, 1);
-    cur = objsh_edge_plane(dst, src, cur, shift, is_right, mask, fill, 2);
-    cur = objsh_edge_plane(dst, src, cur, shift, is_right, mask, fill, 3);
+    cur = objsh_edge_plane(cur, shift, is_right, mask, fill, 0);
+    cur = objsh_edge_plane(cur, shift, is_right, mask, fill, 1);
+    cur = objsh_edge_plane(cur, shift, is_right, mask, fill, 2);
+    cur = objsh_edge_plane(cur, shift, is_right, mask, fill, 3);
     return cur;
 }
 
@@ -143,17 +165,16 @@ enum objsh_family { OBJSH_CLIP, OBJSH_BASE, OBJSH_LEFT, OBJSH_RIGHT };
 /* always_inline (like the cell helpers): keeps the value-passed cursor register-resident across the
  * row body instead of re-spilling it around a real call if GCC's heuristic ever demotes this. */
 static inline __attribute__((always_inline))
-ObjshCursor objsh_row(uint8_t *dst, const uint8_t *src, ObjshCursor cur,
-                      enum objsh_family fam, int straddle, unsigned shl, unsigned shr,
-                      ObjshFill fill) {
+ObjshCursor objsh_row(ObjshCursor cur, enum objsh_family fam, int straddle,
+                      unsigned shl, unsigned shr, ObjshFill fill) {
     if (fam == OBJSH_LEFT) {
-        cur = objsh_edge_cell(dst, src, cur, shl, /*is_right=*/0, fill);
+        cur = objsh_edge_cell(cur, shl, /*is_right=*/0, fill);
         cur.col0 += OBJSH_CELL_BYTES;
     }
     for (int i = 0; i < straddle; i++)
-        cur = objsh_straddle_cell(dst, src, cur, shl, fill);
+        cur = objsh_straddle_cell(cur, shl, fill);
     if (fam == OBJSH_RIGHT) {
-        cur = objsh_edge_cell(dst, src, cur, shr, /*is_right=*/1, fill);
+        cur = objsh_edge_cell(cur, shr, /*is_right=*/1, fill);
         cur.col1 += OBJSH_CELL_BYTES;
     }
     return cur;
@@ -195,21 +216,32 @@ void rm_blit_objshift(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t
         fam = OBJSH_BASE; straddle = base_cells;
     }
 
-    int total_cells = straddle + (fam == OBJSH_BASE ? 0 : 1);
-    uint16_t rewind = (uint16_t)(OBJSH_ROW_REWIND + OBJSH_CELL_BYTES * (total_cells - 1));
-    uint16_t src_extra = (uint16_t)(OBJSH_CELL_BYTES * (total_cells - 1));
     int rows = (int16_t)rows_m1 + 1;
 
+    /* Form each cursor from its (non-wrapping, non-negative) byte offset once, then walk the pointer
+     * (pointer-walking rule: see Offset in st.h). */
+    Offset col0_off = (dst_off + sx16((uint16_t)A)) + (uint32_t)(OBJSH_CELL_BYTES * skips);
+    RM_HOST_ASSERT((int32_t)col0_off >= 0);   /* enforce the non-wrap invariant on the host build */
     ObjshCursor cur;
-    cur.sp = src_off + (uint32_t)(OBJSH_CELL_BYTES * skips);
-    cur.col0 = (dst_off + sx16((uint16_t)A)) + (uint32_t)(OBJSH_CELL_BYTES * skips);
+    cur.sp = src + src_off + (uint32_t)(OBJSH_CELL_BYTES * skips);
+    cur.col0 = dst + col0_off;
     cur.col1 = cur.col0 + OBJSH_CELL_BYTES;
-    uint32_t sp_rewind = (uint32_t)(sx16((uint16_t)stride) + sx16(src_extra));
+
+    /* The per-row bookkeeping is a constant step in disguise: every family advances both columns AND the
+     * source by 8*total_cells per row, then rewinds 0xa8+8*(total_cells-1) (dst) / stride+8*(total_cells
+     * -1) (src). The total_cells terms cancel, so the net per-row step is constant — both columns move
+     * one scanline up (−SCREEN_ROW_BYTES) and the source steps OBJSH_CELL_BYTES − stride. Save the
+     * row-start cursor, run the row's writes, then set the next row from row-start + the constant delta
+     * (col1 stays col0 + OBJSH_CELL_BYTES). sp_step is signed: stride > 8 makes it negative (the source
+     * walks back) — a real host pointer can't wrap it, so the sign must be real (see Offset in st.h). */
+    int32_t sp_step = OBJSH_CELL_BYTES - sx16((uint16_t)stride);
     for (int row = 0; row < rows; row++) {
-        cur = objsh_row(dst, src, cur, fam, straddle, shl, shr, fill);
-        cur.col0 = (Offset)(cur.col0 - sx16(rewind));
-        cur.col1 = (Offset)(cur.col1 - sx16(rewind));
-        cur.sp = (uint32_t)(cur.sp - sp_rewind);
+        uint8_t *row_col0 = cur.col0;
+        const uint8_t *row_sp = cur.sp;
+        cur = objsh_row(cur, fam, straddle, shl, shr, fill);
+        cur.col0 = row_col0 - SCREEN_ROW_BYTES;
+        cur.col1 = cur.col0 + OBJSH_CELL_BYTES;
+        cur.sp = row_sp + sp_step;
     }
 }
 
@@ -222,23 +254,19 @@ void rm_blit_objshift(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t
 #define OBJSH2_LADDER_STEP 8
 #define OBJSH2_MASK_INIT   0xffffffffu
 #define OBJSH2_BASE_STRADDLE 3
-#define OBJSH2_REWIND3_DST 0xb8
-#define OBJSH2_REWIND3_SRC 0x5c
-#define OBJSH2_REWIND2_DST 0xb0
-#define OBJSH2_REWIND2_SRC 0x58
-#define OBJSH2_REWIND1_DST 0xa8
-#define OBJSH2_REWIND1_SRC 0x54
+#define OBJSH2_SRC_ROW_BYTES 0x50   /* the sprite source row stride: source cursor's net per-row step */
 
-/* objshift2 carries the same {col0, col1, sp} cursor triple but is NOT value-passed: unlike objshift
- * its baseline has no mem-to-mem cursor shuffle (the cell body walks col0/col1 in address registers via
- * wr32(dst + *col0)), and its cost is arithmetic/RMW-bound. Forcing the cursors register-resident across
- * the row loop only steals the address registers the RMW cell needs and spills the loop counter instead
- * (measured +1.98 ms, PERF30 A1). The by-pointer shape lets GCC free the cursors during the cell body,
- * which is the better tradeoff here — so it stays. */
-static void objsh2_straddle_cell(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1,
-                                 uint32_t *sp, unsigned shl) {
-    uint16_t w0 = be16(src + *sp);
-    uint16_t w1 = be16(src + *sp + 2);
+/* objshift2 carries the same {col0, col1, sp} cursor triple but is NOT value-passed: unlike objshift its
+ * baseline has no mem-to-mem cursor shuffle, and its cost is arithmetic/RMW-bound. Forcing the cursors
+ * register-resident across the row loop (the value-struct A1 shape) only steals the address registers
+ * the RMW cell needs and spills the loop counter instead (measured +1.98 ms, PERF30 A1) — so the
+ * by-pointer calling shape stays. The pointees are REAL pointers (uint8_t **), not byte offsets
+ * (PERF30 P4b): the cell writes through them (wr32(*col0)) and the row loop steps them directly, so GCC
+ * no longer rebuilds each row's column pointers with a base+index `lea %a5@(0,%d3:l)`. Byte-identical by
+ * the pointer-walking rule (see Offset in st.h). */
+static void objsh2_straddle_cell(uint8_t **col0, uint8_t **col1, const uint8_t **sp, unsigned shl) {
+    uint16_t w0 = be16(*sp);
+    uint16_t w1 = be16(*sp + 2);
     uint32_t mask_col0 = OBJSH2_MASK_INIT;
     mask_col0 = (mask_col0 & 0xffff0000u) | w0;
     mask_col0 = (mask_col0 & 0xffff0000u) | (uint16_t)(mask_col0 | w1);
@@ -247,69 +275,67 @@ static void objsh2_straddle_cell(uint8_t *dst, const uint8_t *src, Offset *col0,
     uint32_t mask_col1 = dup16((uint16_t)mask_col0);
     uint32_t swapped = (mask_col0 >> 16) | (mask_col0 << 16);
     mask_col0 = (mask_col0 & 0xffff0000u) | (uint16_t)swapped;
-    wr32(dst + *col0, be32(dst + *col0) & mask_col0);
-    wr32(dst + *col1, be32(dst + *col1) & mask_col1);
+    wr32(*col0, be32(*col0) & mask_col0);
+    wr32(*col1, be32(*col1) & mask_col1);
 
     for (int i = 0; i < 2; i++) {
-        uint32_t pix = (uint32_t)be16(src + *sp) << shl;
+        uint32_t pix = (uint32_t)be16(*sp) << shl;
         *sp += 2;
-        wr16(dst + *col1, (uint16_t)(be16(dst + *col1) | (uint16_t)pix));
-        wr16(dst + *col0, (uint16_t)(be16(dst + *col0) | (uint16_t)(pix >> 16)));
+        wr16(*col1, (uint16_t)(be16(*col1) | (uint16_t)pix));
+        wr16(*col0, (uint16_t)(be16(*col0) | (uint16_t)(pix >> 16)));
         *col0 += 2; *col1 += 2;
     }
-    wr32(dst + *col0, (be32(dst + *col0) & mask_col0) | ~mask_col0);
+    wr32(*col0, (be32(*col0) & mask_col0) | ~mask_col0);
     *col0 += 4;
-    wr32(dst + *col1, (be32(dst + *col1) & mask_col1) | ~mask_col1);
+    wr32(*col1, (be32(*col1) & mask_col1) | ~mask_col1);
     *col1 += 4;
 }
 
-static void objsh2_left_edge_cell(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1,
-                                  uint32_t *sp, unsigned shl) {
-    uint32_t both = be32(src + *sp);
-    uint16_t lo = (uint16_t)((uint16_t)both | be16(src + *sp));
+static void objsh2_left_edge_cell(uint8_t **col0, uint8_t **col1, const uint8_t **sp, unsigned shl) {
+    uint32_t both = be32(*sp);
+    uint16_t lo = (uint16_t)((uint16_t)both | be16(*sp));
     *sp += 2;
     uint16_t mask = (uint16_t)(~(uint16_t)(lo << shl));
     uint32_t mask_col1 = dup16(mask);
-    wr32(dst + *col1, be32(dst + *col1) & mask_col1);
+    wr32(*col1, be32(*col1) & mask_col1);
     uint16_t w0 = (uint16_t)(both >> 16);
-    wr16(dst + *col1, (uint16_t)(be16(dst + *col1) | (uint16_t)(w0 << shl)));
+    wr16(*col1, (uint16_t)(be16(*col1) | (uint16_t)(w0 << shl)));
     *col1 += 2;
-    uint16_t w1 = be16(src + *sp);
+    uint16_t w1 = be16(*sp);
     *sp += 2;
-    wr16(dst + *col1, (uint16_t)(be16(dst + *col1) | (uint16_t)(w1 << shl)));
+    wr16(*col1, (uint16_t)(be16(*col1) | (uint16_t)(w1 << shl)));
     *col1 += 2;
-    wr32(dst + *col1, (be32(dst + *col1) & mask_col1) | ~mask_col1);
+    wr32(*col1, (be32(*col1) & mask_col1) | ~mask_col1);
     *col1 += 4;
     *col0 += OBJSH_CELL_BYTES;
 }
 
-static void objsh2_right_edge_cell(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1,
-                                   uint32_t *sp, unsigned shr) {
-    uint32_t both = be32(src + *sp);
-    uint16_t lo = (uint16_t)((uint16_t)both | be16(src + *sp));
+static void objsh2_right_edge_cell(uint8_t **col0, uint8_t **col1, const uint8_t **sp, unsigned shr) {
+    uint32_t both = be32(*sp);
+    uint16_t lo = (uint16_t)((uint16_t)both | be16(*sp));
     *sp += 2;
     uint16_t mask = (uint16_t)(~(uint16_t)(lo >> shr));
     uint32_t mask_col0 = dup16(mask);
-    wr32(dst + *col0, be32(dst + *col0) & mask_col0);
+    wr32(*col0, be32(*col0) & mask_col0);
     uint16_t w0 = (uint16_t)(both >> 16);
-    wr16(dst + *col0, (uint16_t)(be16(dst + *col0) | (uint16_t)(w0 >> shr)));
+    wr16(*col0, (uint16_t)(be16(*col0) | (uint16_t)(w0 >> shr)));
     *col0 += 2;
-    uint16_t w1 = be16(src + *sp);
+    uint16_t w1 = be16(*sp);
     *sp += 2;
-    wr16(dst + *col0, (uint16_t)(be16(dst + *col0) | (uint16_t)(w1 >> shr)));
+    wr16(*col0, (uint16_t)(be16(*col0) | (uint16_t)(w1 >> shr)));
     *col0 += 2;
-    wr32(dst + *col0, (be32(dst + *col0) & mask_col0) | ~mask_col0);
+    wr32(*col0, (be32(*col0) & mask_col0) | ~mask_col0);
     *col0 += 4;
     *col1 += OBJSH_CELL_BYTES;
 }
 
 enum objsh2_edge { OBJSH2_EDGE_NONE, OBJSH2_EDGE_LEFT, OBJSH2_EDGE_RIGHT };
 
-static void objsh2_row(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1, uint32_t *sp,
+static void objsh2_row(uint8_t **col0, uint8_t **col1, const uint8_t **sp,
                        enum objsh2_edge edge, int straddle, unsigned shl, unsigned shr) {
-    if (edge == OBJSH2_EDGE_LEFT) objsh2_left_edge_cell(dst, src, col0, col1, sp, shl);
-    for (int i = 0; i < straddle; i++) objsh2_straddle_cell(dst, src, col0, col1, sp, shl);
-    if (edge == OBJSH2_EDGE_RIGHT) objsh2_right_edge_cell(dst, src, col0, col1, sp, shr);
+    if (edge == OBJSH2_EDGE_LEFT) objsh2_left_edge_cell(col0, col1, sp, shl);
+    for (int i = 0; i < straddle; i++) objsh2_straddle_cell(col0, col1, sp, shl);
+    if (edge == OBJSH2_EDGE_RIGHT) objsh2_right_edge_cell(col0, col1, sp, shr);
 }
 
 void rm_blit_objshift2(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t src_off,
@@ -320,12 +346,16 @@ void rm_blit_objshift2(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_
 
     int16_t col = (int16_t)((int16_t)(uint16_t)x >> 1) & (int16_t)COL_ALIGN;
     int16_t base_ceiling = (int16_t)(OBJSH2_RIGHT_BOUND + OBJSH2_LADDER_STEP * width_idx);
-    Offset col0 = (Offset)(dst_off + sx16((uint16_t)col));
-    uint32_t sp = src_off;
+    /* Real pointers, not byte offsets (PERF30 P4b — see the cell-helper comment). Form col0 from its
+     * (non-wrapping, non-negative) offset once, then walk the pointer (pointer-walking rule: Offset in
+     * st.h). */
+    Offset col0_off = dst_off + sx16((uint16_t)col);
+    RM_HOST_ASSERT((int32_t)col0_off >= 0);   /* enforce the non-wrap invariant on the host build */
+    uint8_t *col0 = dst + col0_off;
+    const uint8_t *sp = src + src_off;
 
     enum objsh2_edge edge;
     int straddle;
-    uint16_t rewind_dst, rewind_src;
 
     if (col < 0) {
         int16_t c = col;
@@ -356,20 +386,21 @@ void rm_blit_objshift2(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_
         straddle = OBJSH2_BASE_STRADDLE - width_idx;
     }
 
-    int cells = straddle + (edge == OBJSH2_EDGE_NONE ? 0 : 1);
-    switch (cells) {
-        case 3: rewind_dst = OBJSH2_REWIND3_DST; rewind_src = OBJSH2_REWIND3_SRC; break;
-        case 2: rewind_dst = OBJSH2_REWIND2_DST; rewind_src = OBJSH2_REWIND2_SRC; break;
-        default: rewind_dst = OBJSH2_REWIND1_DST; rewind_src = OBJSH2_REWIND1_SRC; break;
-    }
-
-    Offset col1 = col0 + OBJSH_CELL_BYTES;
+    /* Same constant-step fold as objshift: each row advances both columns by 8*cells and the source by
+     * 4*cells, then rewinds 8*cells+160 (dst) / 4*cells+80 (src). The cells terms cancel, so the net
+     * per-row step is constant — both columns one scanline up (−SCREEN_ROW_BYTES), the source back one
+     * sprite row (−OBJSH2_SRC_ROW_BYTES). Save the row-start cursors, run the row's writes, then set the
+     * next row from row-start + the constant delta (col1 stays col0 + OBJSH_CELL_BYTES). Both deltas are
+     * always negative here — no stride word — so no signed-step subtlety (cf. objshift). */
+    uint8_t *col1 = col0 + OBJSH_CELL_BYTES;
     int rows = (int16_t)rows_m1 + 1;
     for (int row = 0; row < rows; row++) {
-        objsh2_row(dst, src, &col0, &col1, &sp, edge, straddle, shl, shr);
-        col0 = (Offset)(col0 - sx16(rewind_dst));
-        col1 = (Offset)(col1 - sx16(rewind_dst));
-        sp = (uint32_t)(sp - sx16(rewind_src));
+        uint8_t *row_col0 = col0;
+        const uint8_t *row_sp = sp;
+        objsh2_row(&col0, &col1, &sp, edge, straddle, shl, shr);
+        col0 = row_col0 - SCREEN_ROW_BYTES;
+        col1 = col0 + OBJSH_CELL_BYTES;
+        sp = row_sp - OBJSH2_SRC_ROW_BYTES;
     }
 }
 
@@ -380,6 +411,10 @@ void rm_blit_objshift2(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_
  * formula, 0xFFFF high word) and there is NO colour indexing — pixels are copied plain-shifted and
  * OR'd. Four width families width_idx 0..3 (WIDTH 0x80/0x88/0x90/0x98). PURE LEAF. Used by the
  * roadside-object dispatcher's t1/t2/t4/w88/t53 handlers.
+ *
+ * Kept on offset cursors deliberately (NOT converted to real pointers like PERF30 P4 did for the two
+ * sibling engines): this family is cold on the gate frame — objlist pass 2 ≈ 0.09 ms, draw_object
+ * ≈ 0.89 ms — so the conversion is unmeasured here and not worth the bring-up.
  * ============================================================================================ */
 #define OBJSP_WIDTH_80    0x80    /* width_idx 0 base width; WIDTH = this + 8*width_idx */
 #define OBJSP_WIDTHS      4       /* four width families */
