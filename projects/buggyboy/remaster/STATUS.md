@@ -154,6 +154,47 @@ probe + fx/horizon tail on every view-wrap. Consequences, all measured rather th
   the auto keyboard is dead, so ESC/G/Q never fire and the leg ends via time-out) + `run_golden.py`
   **MATCH** (frame 0 dumps before the keyboard is taken). See PORTING "Controls are now identical".
 
+- **The three remaining `ip_menu` / `main` keyboard features are now implemented** (2026-07-24): the
+  leg-select **F6 results-screen preview** and **F10 + Return graphics/score reload**, and the race
+  **Help-key pause**. F6/F10 belong in the FLOW so `make test` pins them: `rm_flow_leg_select`
+  (`src/flow.c`) grew a `flow_fkey_menu` mirroring recreate's `ip_menu` (intermission.c @0x2b24) — F6
+  (@0x2b86) sets `results_mode = 0`, draws the race-end results screen under the RESULTS palette,
+  delegates the F6-release + fresh-key busy-wait to a new **shell op** (`preview_wait`), redraws the
+  leg-select screen and skips that frame's default redraw (→ the nav tail); F10 (@0x2b36) draws the
+  reload prompt (`draw_panel3`), takes a **blocking** confirm op (`reload_confirm`, returning an
+  op-provided **code** — `RM_FKEY_RETURN` / another F-key code — not a raw scancode), and on RETURN draws
+  `draw_panel2` ×2 + a shell **reload op** (`reload_assets`), else falls through to the F-key test (so F10
+  then F3 starts leg 2). The `fkey_leg` seam's contract is extended to `RM_FKEY_*` codes, which — with the
+  shared leg count `IP_LEG_COUNT` — now live in **`include/flow.h`** as the one source of truth (F6 =
+  `IP_LEG_COUNT`, F10 = +1, RETURN = +2, laid out above the leg range so a pick and a debug key can't
+  collide); `game_main.c` / `flow.c` / `adapter.py` all read it, pinned by
+  `test_game_fixture::test_fkey_codes_match_the_header`. New draws `rm_draw_panel3` / `rm_draw_panel2`
+  (`src/results.c`) mirror `rm_draw_panel5` (recreate `g_draw_panel3` / `g_draw_panel2`), fed the
+  `panel3_str` / `panel2_str` program-data strings (`OBJ_LOW_PANEL3_STR` / `_PANEL2_STR`, both already
+  inside `fixture_obj_low`) and now **byte-exact pixel-pinned** vs recreate (`test_flow::test_reload_panels_match`).
+  The FLOW is pinned by `test/test_flow_machine.py::test_flow_driver_leg_select_f6_preview` / `_f10_reload` /
+  `_f10_declined_falls_through_to_fkey`, each locksteped vs the extended oracle mirror (`_mirror_fkey_menu`
+  / `_mirror_preview`); the per-frame dash rebuild is recorded BEFORE the menu (matching intermission.c:504's
+  `g_init_leg_dash` before `ip_menu`) so the F10/F6 overlays composite over a fresh dash, and a confirmed
+  reload re-arms the only-on-change rebuild (`FLOW_MENU_RELOAD`) for the live selection. The **Help-key
+  pause** (SCAN_HELP 0x62, main @0x10100:293) is **shell-only** in `game_main.c`'s race-loop poll
+  (`pause_race` — `make test` never compiles it): it silences the driver via a new `rm_pause_silence` trigger
+  (`src/sound_trig.c` — TURNOFF + EGOFF + `fxflag = 0`, `RM_SOUND_LOCK`-bracketed, KEEPING the VBL pump
+  RUNNING so it plays silence rather than parking), waits — via a shared `wait_key_release_then_fresh`
+  helper, also used by the F6 preview — for the Help auto-repeat to end then any fresh key, captures a
+  Q-to-resume into `s->quit` (so a quit during the pause isn't swallowed), then drains the resume key so it
+  can't leak into the race loop's edge-triggered keys (ESC/G/Help/Q; steering reads `key_down` levels, not
+  latches). The silence is now **partially tested**: `test_sound_trig::test_pause_silence` (+ `_lock_balanced`)
+  pins mzflag/music/fx/EG cleared, the pump left RUNNING, and the lock bracket balanced — the surrounding
+  `pause_race` busy-wait stays shell-only. `op_reload_confirm` drains stale latches but PRESERVES a
+  RETURN/F-key **typed ahead** during the prompt draw, so the fast F10+RETURN chord isn't lost;
+  `op_reload_assets` **bails** on a failed `load_graphics` (a truncated read has clobbered the arena — it
+  sets `s->quit`, which `op_quit_requested` honours, so the flow unwinds to main's restore + exit rather
+  than rendering on). On-target: `make prg` (build_game.sh) compiles clean and `run_golden.py` leg 0 still
+  **MATCH**es (frame 0 is unaffected). **One deviation**: F10's `xbios_setscreen` is subsumed by the shell's
+  own double-buffer flip (there is no separate screen re-establish); noted at `op_reload_assets`. `make
+  test` = **700 passed**.
+
 - **The flow COMPOSITION now has host coverage (slice D — closes the slice-C gap).** The driver that
   SEQUENCES the between-legs pieces — the prologue, the Phase A/B/C/D loop, the draws/flips/palettes, the
   leg-select loop, the game-over enter/exit bracket, the quit unwind — is hoisted out of `game_main.c`

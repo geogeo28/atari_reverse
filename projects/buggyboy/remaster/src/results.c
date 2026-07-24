@@ -142,6 +142,18 @@ void rm_draw_panel5(Framebuffer *fb, const RmResultsAssets *a) {
     draw_panel(fb, a->color_pairs, a->font, a->panel5_str, dst, 5);
 }
 
+/* The F10 reload-menu panels (recreate's g_draw_panel3 / g_draw_panel2): same divider + chained-label
+ * body as panel5, with the reload prompt's / confirmation's own label string and per-label dst offsets. */
+void rm_draw_panel3(Framebuffer *fb, const RmResultsAssets *a) {
+    static const uint16_t dst[] = {0x5020, 0x5a28, 0x6430};
+    draw_panel(fb, a->color_pairs, a->font, a->panel3_str, dst, 3);
+}
+
+void rm_draw_panel2(Framebuffer *fb, const RmResultsAssets *a) {
+    static const uint16_t dst[] = {0x5030, 0x5a38};
+    draw_panel(fb, a->color_pairs, a->font, a->panel2_str, dst, 2);
+}
+
 /* ---- draw_results_screen (recreate's g_draw_results_screen @0x1225a) — the RACE-END / name-entry
  * results screen. Distinct from draw_leg_results (the between-legs carousel): its own title, palettes
  * and strings. Two runtime words shape it: `mode` (0 = the score made the table / name entry, 2 =

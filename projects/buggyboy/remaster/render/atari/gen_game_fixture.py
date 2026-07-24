@@ -245,6 +245,8 @@ def main():
         f"#define OBJ_LOW_INT_CREDITS   {low(adapter.A_int_credits)}",  # section-3 credit strings
         f"#define OBJ_LOW_LEG_TITLE     {low(adapter.A_leg_title)}",    # results row-1 concatenated labels
         f"#define OBJ_LOW_PANEL5_STR    {low(adapter.A_panel5_str)}",   # leg-name menu: 5 concatenated labels
+        f"#define OBJ_LOW_PANEL3_STR    {low(adapter.A_panel3_str)}",   # F10 reload-prompt panel: 3 labels
+        f"#define OBJ_LOW_PANEL2_STR    {low(adapter.A_panel2_str)}",   # F10 reload-confirmed panel: 2 labels
         f"#define OBJ_LOW_LEG_ROW_PAL   {low(adapter.A_leg_row_palette)}",  # results row-2 palette cursor
         f"#define OBJ_LOW_PAL_INT_A     {low(A_INT_PAL_A)}",            # intermission prologue palette
         f"#define OBJ_LOW_PAL_LEG_SELECT {low(A_LEG_SELECT_PAL)}",      # leg-select / results-carousel palette

@@ -68,6 +68,21 @@ def test_panel5_matches(flip, capsys):
     assert diff == 0, f"draw_panel5 differs from recreate in {diff} bytes (flip={flip})"
 
 
+# The F10 reload-menu panels (draw_panel3 = the "insert disk / press RETURN" prompt, draw_panel2 = the
+# "loading / please wait" confirmation), byte-exact vs recreate — same divider + chained-label body as
+# panel5, their own label strings and dst offsets.
+@pytest.mark.parametrize("compare,name", [(equiv.compare_panel3, "panel3"), (equiv.compare_panel2, "panel2")])
+@pytest.mark.parametrize("flip", [0, 4])
+def test_reload_panels_match(compare, name, flip, capsys):
+    lib = equiv._lib()
+    image = equiv.flow_background(leg=0, warmup=60, flip=flip)
+    diff, footprint = compare(lib, image)
+    with capsys.disabled():
+        print(f"  {name} flip={flip}: footprint={footprint} diff={diff}")
+    assert footprint > 0, f"draw_{name} drew nothing"
+    assert diff == 0, f"draw_{name} differs from recreate in {diff} bytes (flip={flip})"
+
+
 @pytest.mark.parametrize("flip", [0, 4])
 @pytest.mark.parametrize("mode,pos,leg", RESULTS_SCREEN_CASES)
 def test_results_screen_matches(mode, pos, leg, flip, capsys):

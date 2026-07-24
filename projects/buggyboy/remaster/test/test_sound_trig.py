@@ -58,6 +58,8 @@ def _bind():
     for name in ("rm_stop_music", "rm_stop_music_chk"):
         getattr(c, name).argtypes = [SDP, ctypes.c_uint16, ctypes.c_bool]
         getattr(c, name).restype = None
+    c.rm_pause_silence.argtypes = [SDP]
+    c.rm_pause_silence.restype = None
     c.rm_dosound_reset.restype = None
     c.rm_dosound_count.restype = ctypes.c_uint32
     c.rm_dosound_args.restype = ctypes.POINTER(ctypes.c_uint32)
@@ -152,6 +154,38 @@ def test_stop_music_chk(lst, game_over, mzflag):
         game_over=game_over, mzflag=mzflag)
     assert not out, f"stop_music_chk list={lst:#x} go={game_over} mz={mzflag}: {out}"
     assert c_led == o_led
+
+
+# ---- rm_pause_silence: the Help-key pause silence (main @0x10100:293-300) ----
+# There is no recreate g_* leaf for this (the Help pause is main-level code, not a decompiled export), so
+# it is unit-pinned: seed every field it touches ACTIVE, silence, and check the cleared state.
+
+def test_pause_silence():
+    """rm_pause_silence silences the driver for a Help pause: mzflag + the music byte, the effect flag and
+    the envelope generator all cleared, but the VBL pump left RUNNING (pointed at REFRESH) so it plays
+    silence rather than being parked — unlike rm_stop_music, which parks the vector."""
+    snd = adapter.sound_driver(harness.make_image())
+    snd.state.header[_SND_H["SND_MUSIC_ON"]] = 0xff      # mzflag: music master enable
+    snd.state.header[_SND_H["SND_MUSIC_BYTE"]] = 0xff    # music-playing byte (TURNOFF/EGOFF clear it)
+    snd.state.header[_SND_H["SND_FX_FLAG"]] = 0xff       # effect active
+    snd.state.header[_SND_H["SND_EG_FLAG"]] = 0xff       # envelope generator active
+    snd.vbl_enable = adapter.RM_VBL_PARKED               # start PARKED to prove it is set RUNNING
+    _CAND.rm_pause_silence(ctypes.byref(snd))
+    assert snd.state.header[_SND_H["SND_MUSIC_ON"]] == 0, "mzflag not cleared"
+    assert snd.state.header[_SND_H["SND_MUSIC_BYTE"]] == 0, "music byte not cleared"
+    assert snd.state.header[_SND_H["SND_FX_FLAG"]] == 0, "fxflag not cleared"
+    assert snd.state.header[_SND_H["SND_EG_FLAG"]] == 0, "EG flag not cleared"
+    assert snd.vbl_enable == adapter.RM_VBL_RUNNING, "VBL pump parked, not left RUNNING"
+
+
+def test_pause_silence_lock_balanced():
+    """The multi-store publish is bracketed atomically (like rm_stop_music) so the 50 Hz VBL pump never
+    refreshes a half-silenced record: exactly one balanced RM_SOUND_LOCK / RM_SOUND_UNLOCK pair. (On the
+    host build the locks are no-ops, so balance is pinned structurally in the source.)"""
+    src = (Path("src") / "sound_trig.c").read_text()
+    start = src.index("void rm_pause_silence(")
+    body = src[start:src.index("\n}", start)]            # the body has no nested braces
+    assert body.count("RM_SOUND_LOCK()") == 1 and body.count("RM_SOUND_UNLOCK()") == 1, body
 
 
 # ---- cross-language source-of-truth pins for the hand-copied slice-2 constants ----

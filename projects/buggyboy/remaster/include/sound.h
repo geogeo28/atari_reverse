@@ -276,6 +276,12 @@ void rm_stop_music(SoundDriver *snd, uint16_t list_off, bool game_over);
 /* stop_music_chk @0x12ebc — stop_music, but only when no music is playing (mzflag == 0). */
 void rm_stop_music_chk(SoundDriver *snd, uint16_t list_off, bool game_over);
 
+/* Help-key pause silence (main @0x10100:293-300) — silence the driver (TURNOFF + EGOFF + fxflag clear)
+ * while KEEPING the VBL pump pointed at REFRESH (RUNNING), so it plays silence rather than being parked.
+ * Unlike rm_stop_music it neither parks the vector nor Dosounds: the pause holds the game frozen, and the
+ * engine sound resumes naturally via rm_sound_engine_update once the race continues. */
+void rm_pause_silence(SoundDriver *snd);
+
 /* game_update §1's engine-sound enable (recreate game_update.c:252-258): while the buggy is under the
  * player's control (not game-over / not a crash phase 1 / not mid-tally), a stopped buggy silences the
  * envelope generator via stop_music_chk(idle) and a moving one arms it (EG_FLAG + REFRESH); otherwise

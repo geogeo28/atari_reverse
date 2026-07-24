@@ -100,13 +100,29 @@ def test_bind_leg_course_bases_match_the_adapter():
 def test_golden_leg_count_matches_the_shell():
     """The golden harness pins one boot frame per leg; the leg it CAN boot is bounded by the shell's leg
     select. gen_game_fixture.NUM_LEGS (which bounds GOLDEN_LEG and, via run_golden.py's LEGS, the loop)
-    must equal the shell's own leg count IP_LEG_COUNT (src/flow.c) — one source, so the harness can never
-    loop a leg the game cannot start (or skip one it can)."""
+    must equal the shell's own leg count IP_LEG_COUNT (include/flow.h) — one source, so the harness can
+    never loop a leg the game cannot start (or skip one it can)."""
     gen = (adapter.REMASTER / "render/atari/gen_game_fixture.py").read_text()
     found = re.search(r"^NUM_LEGS = (\d+)", gen, re.M)
     assert found, "NUM_LEGS not found in gen_game_fixture.py"
     num_legs = int(found.group(1))
 
-    flow = (adapter.REMASTER / "src/flow.c").read_text()
-    assert num_legs == _define(flow, "IP_LEG_COUNT"), (
+    flowh = (adapter.REMASTER / "include/flow.h").read_text()
+    assert num_legs == _define(flowh, "IP_LEG_COUNT"), (
         f"NUM_LEGS ({num_legs}) != the shell's IP_LEG_COUNT — the golden loop and the leg select disagree")
+
+
+def test_fkey_codes_match_the_header():
+    """adapter's RM_FKEY_* / IP_LEG_COUNT mirrors (test scripts read_fkey answers with them) must equal
+    include/flow.h — the one source the C shell and the flow share. The debug codes are laid out ABOVE the
+    leg range (F6 == IP_LEG_COUNT, F10 == +1, RETURN == +2) so a leg pick and a debug key never collide;
+    pin both the numeric agreement and that flow.h still defines them relative to IP_LEG_COUNT."""
+    flowh = (adapter.REMASTER / "include/flow.h").read_text()
+    ip = _define(flowh, "IP_LEG_COUNT")
+    assert adapter.IP_LEG_COUNT == ip, (adapter.IP_LEG_COUNT, ip)
+    assert (adapter.RM_FKEY_NONE, adapter.RM_FKEY_F6, adapter.RM_FKEY_F10, adapter.RM_FKEY_RETURN) \
+        == (-1, ip, ip + 1, ip + 2), (adapter.RM_FKEY_F6, adapter.RM_FKEY_F10, adapter.RM_FKEY_RETURN)
+    # the codes must stay STRUCTURALLY tied to IP_LEG_COUNT in the header, not hard-coded literals.
+    assert re.search(r"#define\s+RM_FKEY_F6\s+IP_LEG_COUNT\b", flowh), "RM_FKEY_F6 not defined as IP_LEG_COUNT"
+    assert re.search(r"#define\s+RM_FKEY_F10\s+\(IP_LEG_COUNT \+ 1\)", flowh), "RM_FKEY_F10 not IP_LEG_COUNT+1"
+    assert re.search(r"#define\s+RM_FKEY_RETURN\s+\(IP_LEG_COUNT \+ 2\)", flowh), "RM_FKEY_RETURN not IP_LEG_COUNT+2"

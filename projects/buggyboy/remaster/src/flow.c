@@ -197,7 +197,7 @@ void rm_hiscore_charstep(FlowState *fs, uint8_t *name_ptr) {
 /* ---- init_playfield leg-select (intermission.c g_init_playfield_nav / _fire) ---- */
 /* IP_IDLE_INIT (the idle_countdown reload) lives in flow.h — the tuning default shares it. */
 #define IP_SEL_REPEAT    3         /* auto-repeat delay reloaded after a leg step */
-#define IP_LEG_COUNT     5         /* legs 0..4 */
+/* IP_LEG_COUNT (legs 0..4) lives in flow.h — the one source of truth shared with the RM_FKEY_* codes. */
 #define IP_DEC_BITS      (RM_IN_ACCEL | RM_IN_LEFT)   /* up | left  -> previous leg */
 #define IP_INC_BITS      (RM_IN_BRAKE | RM_IN_RIGHT)  /* down | right -> next leg */
 
@@ -384,6 +384,66 @@ static RmFlowResult flow_start_leg(FlowState *fs, const FlowOps *ops, void *ctx,
     return RM_FLOW_START;
 }
 
+/* The leg-select function-key menu's outcome. ip_menu @0x2b24 collapses reload + out-of-range into one
+ * "redraw"; the remaster splits RELOAD out because its only-on-change dash rebuild must be re-armed after a
+ * reload wipes the graphics arena (the original rebuilds the dash unconditionally every frame, so it can't). */
+typedef enum {
+    FLOW_MENU_REDRAW,   /* no action / out-of-range key -> the default redraw (0x2b9e) */
+    FLOW_MENU_RELOAD,   /* F10 reload confirmed -> the reload wiped the dash; re-arm the rebuild, then redraw */
+    FLOW_MENU_START,    /* F1..F5 -> caller starts fs->leg_index (0x2c96) */
+    FLOW_MENU_NAV,      /* F6 preview redrew the screen itself -> skip to the nav tail (0x2c00) */
+} FlowMenuResult;
+
+/* F6 results-screen preview (ip_menu @0x2b86): draw the race-end results screen under its palette, delegate
+ * the F6-release + fresh-key busy-wait to the shell (so the flow never blocks a scripted test), then redraw
+ * the leg-select screen. The caller then goes straight to the nav tail, SKIPPING the default redraw. Reuses
+ * the score-tail's results-screen draw op (like rm_flow_name_entry) — no duplicated draw bundle. */
+static void flow_preview_results(FlowState *fs, const FlowOps *ops, void *ctx) {
+    fs->results_mode = 0;                                             /* 0x2bac */
+    ops->draw_results_screen(ctx, fs->results_mode, fs->hiscore_pos, fs->leg_index);
+    ops->set_palette(ctx, RM_FLOW_PAL_RESULTS);
+    ops->show(ctx);
+    ops->preview_wait(ctx);                                          /* 0x2bc4/0x2bd8: F6-release then a fresh key */
+    ops->draw_results(ctx, fs->leg_index);                          /* 0x2bec: redraw the leg-select screen */
+    ops->draw_panel5(ctx);
+    ops->set_palette(ctx, RM_FLOW_PAL_LEG_SELECT);
+    ops->show(ctx);
+}
+
+/* Function-key menu (ip_menu @0x2b24): read one F-key and act. F10 (@0x2b36) prompts a GRAPHICS.GRA /
+ * score-table reload — draw the prompt panel, take a blocking confirm; RETURN reloads (then a default
+ * redraw), otherwise the key just read falls through to the F-key test below (so F10 then F3 starts that
+ * leg). F6 (@0x2b86) previews the results screen and skips to the nav tail. F1..F5 (@0x2b8a) select+start
+ * that leg. Any other key -> the default redraw. */
+static FlowMenuResult flow_fkey_menu(FlowState *fs, const FlowOps *ops, void *ctx) {
+    int key = ops->fkey_leg(ctx);                                    /* 0x2b24: F-key code, RM_FKEY_NONE if none */
+    if (key == RM_FKEY_F10) {                                        /* 0x2b36: F10 -> reload prompt */
+        ops->draw_results(ctx, fs->leg_index);
+        ops->draw_panel3(ctx);
+        ops->show(ctx);
+        key = ops->reload_confirm(ctx);                             /* 0x2b48: Crawcin (blocking) */
+        if (key == RM_FKEY_RETURN) {                                /* 0x2b50: confirmed */
+            ops->draw_results(ctx, fs->leg_index);
+            ops->draw_panel2(ctx);
+            ops->show(ctx);
+            ops->draw_results(ctx, fs->leg_index);                 /* second draw primes the back buffer (0x2b5e) */
+            ops->draw_panel2(ctx);
+            ops->reload_assets(ctx);                               /* 0x2b64: setscreen + load_graphics + dash + score table */
+            return FLOW_MENU_RELOAD;                               /* 0x2b7a -> re-arm the dash rebuild, then default redraw */
+        }
+        /* not RETURN: fall through with key = the char just read (0x2b7c) */
+    }
+    if (key == RM_FKEY_F6) {                                         /* 0x2b86: F6 -> results-screen preview */
+        flow_preview_results(fs, ops, ctx);
+        return FLOW_MENU_NAV;                                        /* 0x2bfc -> nav tail (skips the default redraw) */
+    }
+    if (key >= 0 && key < IP_LEG_COUNT) {                            /* 0x2b8a: F1..F5 -> select leg 0..4 */
+        fs->leg_index = (uint16_t)key;
+        return FLOW_MENU_START;                                      /* 0x2b9a -> start the leg */
+    }
+    return FLOW_MENU_REDRAW;                                         /* 0x2b80/0x2b88: out of range -> default redraw */
+}
+
 RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
                                 SoundDriver *snd) {
     ops->event(ctx, RM_FLOW_EVT_SELECT_ENTER, fs->leg_index, 0);
@@ -398,20 +458,27 @@ RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, co
         ops->set_palette(ctx, RM_FLOW_PAL_LEG_SELECT);
 
         for (;;) {                                /* per-frame loop (0x2b1a) */
-            int fk = ops->fkey_leg(ctx);
-            if (fk >= 0) {                        /* F1..F5 direct pick starts that leg */
-                fs->leg_index = (uint16_t)fk;
-                return flow_start_leg(fs, ops, ctx, t, 1, snd);
-            }
-            /* Rebuild the dashboard only when the selected leg changed (as Phase D rebuilds only on an
-             * advance), not every idle frame — the graphic is identical between nav steps. */
+            /* Rebuild the dashboard when the selected leg changed (as Phase D rebuilds only on an advance),
+             * not every idle frame — the graphic is identical between nav steps. This runs BEFORE the
+             * function-key menu (matching intermission.c:504 where g_init_leg_dash precedes ip_menu @0x2b1e),
+             * so the F10 reload-prompt and F6 preview overlays composite over a fresh dash, not last leg's. */
             if (fs->leg_index != drawn_leg) {
                 drawn_leg = fs->leg_index;
                 ops->rebuild_dash(ctx, fs->leg_index);
             }
-            ops->draw_results(ctx, fs->leg_index);   /* default redraw (0x2b9e) */
-            ops->draw_panel5(ctx);                   /* the 5-entry leg-name menu (0x2b9e tail) */
-            ops->show(ctx);
+
+            FlowMenuResult menu = flow_fkey_menu(fs, ops, ctx);   /* function-key menu (0x2b24) */
+            if (menu == FLOW_MENU_START)          /* F1..F5 direct pick starts fs->leg_index */
+                return flow_start_leg(fs, ops, ctx, t, 1, snd);
+            if (menu == FLOW_MENU_RELOAD)         /* the reload re-read GRAPHICS.GRA, so the dash the shell
+                                                   * rebuilt may be for another leg — force a rebuild for the
+                                                   * live selection on the next frame (see op_reload_assets). */
+                drawn_leg = 0xffff;
+            if (menu != FLOW_MENU_NAV) {          /* the F6 preview already redrew (0x2bfc) */
+                ops->draw_results(ctx, fs->leg_index);   /* default redraw (0x2b9e) */
+                ops->draw_panel5(ctx);                   /* the 5-entry leg-name menu (0x2b9e tail) */
+                ops->show(ctx);
+            }
 
             flow_poll(fs, ops, ctx);                 /* joystick tail (0x2c00) */
             rm_init_playfield_nav(fs);

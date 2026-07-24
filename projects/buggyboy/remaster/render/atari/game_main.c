@@ -52,7 +52,10 @@
  *   ESC          : abort the race back to the intermission — breaks the race loop into update_highscore +
  *                  intermission, exactly as the original (main @0x10100:286 `cmpi.b #$1b,d0 / beq`).
  *   G            : toggle the dashboard-variant display (dsp_toggle; main @0x10100:296 `not.w dsp_toggle`).
+ *   Help         : pause the race — silence the sound and freeze until any key (main @0x10100:293, scancode 0x62).
  *   F1..F5       : select + start that leg (leg-select screen, as init_playfield's function-key menu).
+ *   F6           : preview the race-end results screen (leg select; ip_menu @0x2b86, holds until a fresh key).
+ *   F10 + Return : reload GRAPHICS.GRA + the score table (leg select; ip_menu @0x2b36 — Return confirms).
  *   Q            : quit to the desktop. The SINGLE deviation from the original — a coin-op that never
  *                  terminates (main @0x10100 is an infinite loop); a GEMDOS .PRG needs a way back to the
  *                  desktop, so Q (a key the original never reads) is it. The original has NO quit and NO
@@ -148,6 +151,14 @@ static void drain_key_hits(void) {
     for (int i = 0; i < SCANCODE_COUNT; i++) key_hit[i] = 0;
 }
 
+/* Any latched keypress? Used by the wait-for-a-fresh-key busy-waits (Help pause, F6 preview), each of
+ * which drains the latches FIRST so a set latch here is genuinely fresh (not a stale race latch — the
+ * reason the general leg-select waits use read_input instead; see op_wait_music_off). */
+static int any_key_hit(void) {
+    for (int i = 0; i < SCANCODE_COUNT; i++) if (key_hit[i]) return 1;
+    return 0;
+}
+
 /* ST keyboard scancodes. */
 #define SCAN_ESC 0x01             /* ESC = abort the race back to the intermission (main @0x10100:286) */
 #define SCAN_Q 0x10               /* Q = quit to the desktop (the one documented deviation; see the header) */
@@ -158,6 +169,11 @@ static void drain_key_hits(void) {
 #define SCAN_LEFT 0x4b
 #define SCAN_RIGHT 0x4d
 #define SCAN_F1 0x3b              /* F1..F5 = 0x3b..0x3f: leg select (as init_playfield's function menu) */
+#define SCAN_F6 0x40              /* F6 = 0x40: results-screen preview (ip_menu @0x2b86) */
+#define SCAN_F10 0x44             /* F10 = 0x44: graphics / score-table reload prompt (ip_menu @0x2b36) */
+#define SCAN_RETURN 0x1c          /* Return: confirms the F10 reload (ip_menu @0x2b50 — ASCII 0x0d) */
+#define SCAN_HELP 0x62            /* Help = pause the race, silence sound, resume on any key (main @0x10100:293) */
+/* IP_LEG_COUNT (the leg-select F-key range) lives in flow.h, shared with the flow + the RM_FKEY_* codes. */
 
 /* Q, latched-edge: quit to the desktop. This is the SINGLE deliberate deviation from the original, a
  * coin-op that never terminates (main @0x10100 is an infinite loop) — a GEMDOS .PRG needs some way back
@@ -211,6 +227,12 @@ static uint8_t highscore_ram[sizeof fixture_highscore] __attribute__((aligned(2)
  * writes) as MUTABLE RAM. It sits in the gap between hud_text_ram and highscore_ram, so it is a separate
  * seed (fixture_score_line); rm_draw_results_screen reads it as the score-line string. */
 static uint8_t score_line_ram[sizeof fixture_score_line] __attribute__((aligned(2)));
+
+/* Seed the persistent hi-score table from its baked default (fixture_highscore == init_scoretable's
+ * deterministic output). Shared by the boot seed and the F10 reload (op_reload_assets). */
+static void seed_highscore_table(void) {
+    memcpy(highscore_ram, fixture_highscore, sizeof fixture_highscore);
+}
 
 /* Two screen buffers, 256-byte aligned at RUNTIME (the ST video base only uses the high/mid address
  * bytes, so a non-256-aligned base is rounded down → the image shifts). The link-time alignment isn't
@@ -509,6 +531,31 @@ static void race_start_countdown(Shell *s) {
         rm_stop_music(s->ctx->snd, list, false);
         for (int v = 0; v < RACE_START_BEEP_VSYNCS; v++) Vsync();
     }
+}
+
+/* Wait for the trigger key `scancode` to be released (draining its IKBD auto-repeat) then for any fresh
+ * key — the shared body of the Help pause (main @0x10100:2ac..2d0) and the F6 preview (ip_menu
+ * @0x2bc4/0x2bd8). Vblank-paced. It deliberately does NOT drain the fresh key: each caller drains after,
+ * and pause_race must first peek Q out of it (a Q-to-resume still quits) — so the final drain can't live
+ * here. Shell-only (game_main.c is never compiled by `make test`; see STATUS). */
+static void wait_key_release_then_fresh(int scancode) {
+    while (key_down[scancode]) Vsync();            /* wait for release: drain the trigger key's auto-repeat */
+    drain_key_hits();                              /* so the fresh-key wait sees only a genuinely new press */
+    while (!any_key_hit()) Vsync();                /* wait for any fresh key */
+}
+
+/* Help-key pause (main @0x10100:293-309): freeze the race and silence the sound (rm_pause_silence: TURNOFF
+ * + EGOFF + fxflag clear; the VBL pump stays RUNNING, so it plays silence rather than being parked), wait
+ * for the Help auto-repeat to end then for any fresh key, then drain the resume key. The final drain
+ * protects the race loop's edge-triggered keys (the ESC/G/Help/Q take_key_hit polls) from a stale latch —
+ * steering reads key_down levels, not latches, so it is unaffected. A Q pressed to resume must still quit,
+ * so capture it BEFORE the drain eats it. The engine sound resumes on its own via the per-frame
+ * rm_sound_engine_update once the race continues. */
+static void pause_race(Shell *s) {
+    rm_pause_silence(s->ctx->snd);
+    wait_key_release_then_fresh(SCAN_HELP);
+    if (take_key_hit(SCAN_Q)) s->quit = 1;         /* a Q-to-resume still quits (peek it before the drain) */
+    drain_key_hits();                              /* drain the resume key so it doesn't leak into the race loop's edge keys */
 }
 
 /* ---- the between-legs flow palettes (all inside the obj-low program-data blob; an off-image seam —
@@ -819,15 +866,10 @@ static long read_file(const char *name, uint8_t *dst, long max) {
     return got;
 }
 
-/* Load the game's own data files and unpack the graphics — everything the render pipeline draws from.
- * Both must sit next to the .PRG. Returns 0 after naming the file at fault (Cconws is invisible under
- * headless Hatari, so the only symptom there is a missing SCREEN.BIN). */
-static int load_assets(RmArena *arena) {
-    rm_arena_init(arena, arena_block);
-    if (read_file("COURSES.DAT", arena->course, RM_COURSE_FILE_BYTES) != RM_COURSE_FILE_BYTES) {
-        Cconws("COURSES.DAT missing or wrong size\r\n");
-        return 0;
-    }
+/* Re-read + unpack GRAPHICS.GRA into the arena (the original's load_graphics). Shared by the boot load
+ * and the F10 reload. Returns 0 after naming the file at fault (Cconws is invisible under headless
+ * Hatari, so the only symptom there is a missing SCREEN.BIN). */
+static int load_graphics(RmArena *arena) {
     long gfx_bytes = read_file("GRAPHICS.GRA", arena->gfx + RM_GFX_LOAD_OFF, RM_GFX_READ_MAX);
     if (gfx_bytes < RM_GFX_FILE_MIN) {
         Cconws("GRAPHICS.GRA missing or too short\r\n");
@@ -838,6 +880,17 @@ static int load_assets(RmArena *arena) {
         return 0;
     }
     return 1;
+}
+
+/* Load the game's own data files and unpack the graphics — everything the render pipeline draws from.
+ * Both must sit next to the .PRG. Returns 0 after naming the file at fault. */
+static int load_assets(RmArena *arena) {
+    rm_arena_init(arena, arena_block);
+    if (read_file("COURSES.DAT", arena->course, RM_COURSE_FILE_BYTES) != RM_COURSE_FILE_BYTES) {
+        Cconws("COURSES.DAT missing or wrong size\r\n");
+        return 0;
+    }
+    return load_graphics(arena);
 }
 
 /* ---- the between-legs FLOW COMPOSITION (slice D): the driver is hoisted into src/flow.c
@@ -885,7 +938,9 @@ static int auto_cycle_done;         /* set by Phase D's RESTART; the attract inp
 
 /* ---- FlowOps: the 68000 implementation of each platform effect the driver orders, over the Shell. ---- */
 static uint16_t op_poll_input(void *ctx)     { return ((Shell *)ctx)->input_source(); }
-static int      op_quit_requested(void *ctx) { (void)ctx; return quit_requested(); }
+/* Q edge OR a shell quit already latched (op_reload_assets sets s->quit on a failed reload) — so a flow
+ * checking this unwinds on either, letting a catastrophic reload bail like the boot path. */
+static int      op_quit_requested(void *ctx) { return quit_requested() || ((Shell *)ctx)->quit; }
 static int      op_fkey_leg(void *ctx)       { return ((Shell *)ctx)->fkey_source(); }
 
 static void op_draw_fade(void *ctx, int16_t scroll) {
@@ -902,6 +957,65 @@ static void op_draw_results_screen(void *ctx, uint16_t mode, uint16_t pos, uint1
 }
 static void op_draw_panel5(void *ctx) {
     Shell *s = ctx; rm_draw_panel5(back_buffer(s), s->res_assets);
+}
+
+static int read_fkey(void);   /* the leg-select F-key reader (defined below), reused by op_reload_confirm */
+
+/* The F10 reload-menu panels (ip_menu's draw_panel3 / draw_panel2), overlaid on the leg-select screen. */
+static void op_draw_panel3(void *ctx) { Shell *s = ctx; rm_draw_panel3(back_buffer(s), s->res_assets); }
+static void op_draw_panel2(void *ctx) { Shell *s = ctx; rm_draw_panel2(back_buffer(s), s->res_assets); }
+
+/* F6 preview busy-wait (ip_menu @0x2bc4/0x2bd8): wait for F6 released then any fresh key (the shared body),
+ * then drain the resume key so it does not leak into the nav. The flow delegates this so a scripted host
+ * test never blocks (the op is a recorded no-op there). */
+static void op_preview_wait(void *ctx) {
+    (void)ctx;
+    wait_key_release_then_fresh(SCAN_F6);
+    drain_key_hits();                             /* drain the resume key so it doesn't leak into the nav */
+}
+
+/* Drain stale latches but PRESERVE the keys the confirm loop reads (RETURN + the leg-select F-key range),
+ * so a RETURN or F-key typed AHEAD during the prompt draw still lands — the fast F10+RETURN chord the
+ * original's Crawcin honors — while stale junk that would spuriously decline is still cleared. */
+static void drain_confirm_stale(void) {
+    for (int i = 0; i < SCANCODE_COUNT; i++) {
+        int keep = i == SCAN_RETURN || (i >= SCAN_F1 && i < SCAN_F1 + IP_LEG_COUNT)   /* F1..F5 */
+                   || i == SCAN_F6 || i == SCAN_F10;
+        if (!keep) key_hit[i] = 0;
+    }
+}
+
+/* F10 reload confirm (ip_menu @0x2b48 Crawcin, blocking): block until RETURN (confirm), an F-key (re-tested
+ * by the caller), or any other key (declines -> RM_FKEY_NONE). The leading drain clears stale latches but
+ * KEEPS a RETURN/F-key already typed ahead, so the F10+RETURN chord isn't lost to it. Vblank-paced. */
+static int op_reload_confirm(void *ctx) {
+    (void)ctx;
+    drain_confirm_stale();
+    for (;;) {
+        if (take_key_hit(SCAN_RETURN)) return RM_FKEY_RETURN;
+        int fk = read_fkey();                     /* F1..F5 / F6 / F10 as a code, else RM_FKEY_NONE */
+        if (fk != RM_FKEY_NONE) return fk;
+        if (any_key_hit()) { drain_key_hits(); return RM_FKEY_NONE; }   /* some other key -> declines */
+        Vsync();
+    }
+}
+
+/* F10 reload (ip_menu @0x2b64): re-read + unpack GRAPHICS.GRA (load_graphics), re-seed the hi-score table
+ * from its baked default (fixture_highscore == the remaster's init_scoretable output), and rebuild the
+ * current leg's dashboard (init_leg_dash). The original's xbios_setscreen is subsumed by the shell's own
+ * double-buffer flip (it renders into the back buffer), so there is no separate screen re-establish — a
+ * documented deviation. Shell-only debug path; not under `make test`. */
+static void op_reload_assets(void *ctx) {
+    Shell *s = ctx;
+    if (!load_graphics(s->arena)) {   /* load_graphics @0x2b64 */
+        /* A truncated read has already clobbered the live graphics arena; load_graphics can't tell a
+         * missing file from a short one, so bail uniformly — rendering on a half-loaded arena is worse
+         * than exiting. quit_requested honours s->quit, so the flow unwinds to main's restore + exit. */
+        s->quit = 1;
+        return;
+    }
+    seed_highscore_table();           /* init_scoretable: reseed the hi-score table from its baked default */
+    rm_init_leg_dash(s->ctx);         /* init_leg_dash: rebuild the dashboard */
 }
 static void op_set_palette(void *ctx, int which) {
     uint32_t off = which == RM_FLOW_PAL_INT_A      ? OBJ_LOW_PAL_INT_A
@@ -1055,6 +1169,8 @@ static const FlowOps flow_ops = {
     .start_demo_leg = op_start_demo_leg, .run_demo_frame = op_run_demo_frame,
     .flash_frame = op_flash_frame, .name_flash = op_name_flash, .hold_frame = op_hold_frame,
     .wait_music_off = op_wait_music_off,
+    .draw_panel3 = op_draw_panel3, .draw_panel2 = op_draw_panel2, .preview_wait = op_preview_wait,
+    .reload_confirm = op_reload_confirm, .reload_assets = op_reload_assets,
     .event = op_event,
 };
 
@@ -1062,10 +1178,12 @@ static const FlowOps flow_ops = {
  * as the original's function-key menu), or -1 for none; no_fkey is the headless placeholder. Each is
  * used by exactly one build config (interactive vs GAME_FLOW_AUTO), so both are marked maybe-unused. */
 __attribute__((unused)) static int read_fkey(void) {
-    for (int i = 0; i < 5; i++) if (take_key_hit(SCAN_F1 + i)) return i;
-    return -1;
+    for (int i = 0; i < IP_LEG_COUNT; i++) if (take_key_hit(SCAN_F1 + i)) return i;   /* F1..F5 -> 0..4 */
+    if (take_key_hit(SCAN_F6)) return RM_FKEY_F6;      /* results-screen preview */
+    if (take_key_hit(SCAN_F10)) return RM_FKEY_F10;    /* graphics / score-table reload */
+    return RM_FKEY_NONE;
 }
-__attribute__((unused)) static int no_fkey(void) { return -1; }
+__attribute__((unused)) static int no_fkey(void) { return RM_FKEY_NONE; }
 
 /* ---- headless flow scripting (GAME_FLOW_AUTO): drive the whole shell without a keyboard so a trace
  * run proves the loop closes. Booting into the leg select (the shipping order), the script fires the
@@ -1095,7 +1213,7 @@ void main(void) {
     /* Seed the two persistent RAM regions from their baked defaults (the score record + hi-score table
      * live here; the flow mutates them). */
     for (unsigned i = 0; i < sizeof fixture_hud_text; i++) hud_text_ram[i] = fixture_hud_text[i];
-    for (unsigned i = 0; i < sizeof fixture_highscore; i++) highscore_ram[i] = fixture_highscore[i];
+    seed_highscore_table();
     for (unsigned i = 0; i < sizeof fixture_score_line; i++) score_line_ram[i] = fixture_score_line[i];
     for (unsigned i = 0; i < sizeof buf_a_ram; i++) buf_a_ram[i] = arena.tables[i];
     for (unsigned i = 0; i < sizeof fuel_mask_ram; i++) fuel_mask_ram[i] = fixture_fuel_mask[i];
@@ -1219,6 +1337,7 @@ void main(void) {
         .gfx = arena.gfx, .title = low + OBJ_LOW_LEG_TITLE, .leg_palette = low + OBJ_LOW_LEG_ROW_PAL,
         .row_names = arena.tables + ARENA_ROW_NAMES_OFF, .leg_digits = arena.tables + ARENA_LEG_NAMES_OFF,
         .panel5_str = low + OBJ_LOW_PANEL5_STR,
+        .panel3_str = low + OBJ_LOW_PANEL3_STR, .panel2_str = low + OBJ_LOW_PANEL2_STR,
     };
     /* The race-end / name-entry results screen (slice F). Const program data + buf_c dashboard; the
      * mutable game-state windows point at the RAM the flow reads (the hi-score table, the HUD text, the
@@ -1347,7 +1466,8 @@ void main(void) {
              * (dsp_toggle); Q quits (the one documented deviation). */
             if (take_key_hit(SCAN_ESC)) ended = 1;
             if (take_key_hit(SCAN_G)) s->hud->dsp_toggle = !s->hud->dsp_toggle;
-            s->quit = quit_requested();
+            if (take_key_hit(SCAN_HELP)) pause_race(s);   /* Help = pause: silence + freeze until any key (main @0x10100:293) */
+            s->quit |= quit_requested();                  /* OR: pause_race may already have latched a Q-to-resume quit */
 #ifdef GAME_AUTODRIVE
             /* Headless frame budget: stop at the trace length (or the autodrive length when not tracing)
              * even if the leg has not ended. The dump itself happens on loop exit (below), so it fires on

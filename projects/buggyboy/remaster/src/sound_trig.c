@@ -82,6 +82,19 @@ void rm_stop_music_chk(SoundDriver *snd, uint16_t list_off, bool game_over) {
     rm_stop_music(snd, list_off, game_over);
 }
 
+/* Silence for the Help-key pause: keep the pump RUNNING (pointed at REFRESH) but stop music, the envelope
+ * generator and any effect. Bracketed as a unit — like rm_stop_music, the whole tear-down must publish
+ * atomically so the VBL pump never refreshes a half-silenced record (rm_turnoff / rm_egoff self-bracket
+ * too; the nesting counter makes those inner locks harmless — see sound.h). No PARK, no Dosound. */
+void rm_pause_silence(SoundDriver *snd) {
+    RM_SOUND_LOCK();
+    snd->vbl_enable = RM_VBL_RUNNING;              /* vbl_sound_vec = &REFRESH (0x2ac) */
+    rm_turnoff(&snd->state);                       /* TURNOFF (0x2b8): mzflag + music bytes off */
+    rm_egoff(&snd->state);                         /* EGOFF (0x2be): envelope generator off */
+    snd->state.header[SND_FX_FLAG] = 0;            /* FXFLAG = 0 (0x2c4) */
+    RM_SOUND_UNLOCK();
+}
+
 void rm_sound_engine_update(SoundDriver *snd, uint16_t speed, int16_t crash_phase,
                             uint16_t crash_frame, bool game_over) {
     if (!game_over && crash_phase >= 0 && crash_phase != 1 && crash_frame == 0) {

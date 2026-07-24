@@ -145,9 +145,9 @@ def _lib():
     lib.rm_draw_leg_results.restype = None
     lib.rm_draw_divider.argtypes = [ctypes.POINTER(adapter.Framebuffer), u8p]
     lib.rm_draw_divider.restype = None
-    lib.rm_draw_panel5.argtypes = [ctypes.POINTER(adapter.Framebuffer),
-                                   ctypes.POINTER(adapter.RmResultsAssets)]
-    lib.rm_draw_panel5.restype = None
+    for panel in (lib.rm_draw_panel5, lib.rm_draw_panel3, lib.rm_draw_panel2):
+        panel.argtypes = [ctypes.POINTER(adapter.Framebuffer), ctypes.POINTER(adapter.RmResultsAssets)]
+        panel.restype = None
     # ---- flow state machine (slice B) ----
     fsp = ctypes.POINTER(adapter.FlowState)
     lib.rm_check_abort.argtypes = [ctypes.c_uint16, ctypes.c_uint16]
@@ -2279,6 +2279,26 @@ def compare_panel5(lib, image):
     return _whole_fb(bytes(fb.px), base, ref_fb)
 
 
+def compare_panel3(lib, image):
+    """recreate g_draw_panel3 vs remaster rm_draw_panel3; whole draw-buffer diff (divider + three labels —
+    the F10 reload prompt). Returns (diff_bytes, footprint)."""
+    base, ref_fb = _flow_ref(image, "g_draw_panel3")
+    a, _keep = adapter.results_assets(image)
+    fb = _flow_fb(base)
+    lib.rm_draw_panel3(ctypes.byref(fb), ctypes.byref(a))
+    return _whole_fb(bytes(fb.px), base, ref_fb)
+
+
+def compare_panel2(lib, image):
+    """recreate g_draw_panel2 vs remaster rm_draw_panel2; whole draw-buffer diff (divider + two labels —
+    the F10 reload confirmation). Returns (diff_bytes, footprint)."""
+    base, ref_fb = _flow_ref(image, "g_draw_panel2")
+    a, _keep = adapter.results_assets(image)
+    fb = _flow_fb(base)
+    lib.rm_draw_panel2(ctypes.byref(fb), ctypes.byref(a))
+    return _whole_fb(bytes(fb.px), base, ref_fb)
+
+
 def compare_results_screen(lib, image):
     """recreate g_draw_results_screen vs remaster rm_draw_results_screen on the same background; whole
     draw-buffer diff (the RACE-END / name-entry screen). mode/pos/leg are read from the poked image
@@ -2794,9 +2814,16 @@ def _shift_ref_input(ref, inp):
 class _FlowScript:
     """Scripted, index-addressed input/quit/fkey providers, consumed in call order. The candidate run and
     the oracle mirror each hold one; identical control flow keeps their indices in lockstep."""
-    def __init__(self, poll_of, quit_of, fkey_of):
+    def __init__(self, poll_of, quit_of, fkey_of, confirm_of=None):
         self._poll, self._quit, self._fkey = poll_of, quit_of, fkey_of
-        self.pi = self.qi = self.fi = 0
+        # F10 reload_confirm answer (RM_FKEY_RETURN / another F-key code). No default: a test that reaches
+        # the reload confirm without scripting one is a bug, so surface it loudly rather than silently
+        # confirming F10 (which would mask a mis-scripted fkey sequence).
+        def _no_confirm(i):
+            raise AssertionError("reload_confirm reached without a confirm_of script — the F-key sequence "
+                                 "steered into the F10 reload prompt unexpectedly")
+        self._confirm = confirm_of or _no_confirm
+        self.pi = self.qi = self.fi = self.ci = 0
         self.log = []
 
     def poll(self):
@@ -2812,6 +2839,11 @@ class _FlowScript:
     def fkey(self):
         v = int(self._fkey(self.fi))
         self.fi += 1
+        return v
+
+    def confirm(self):
+        v = int(self._confirm(self.ci))
+        self.ci += 1
         return v
 
 
@@ -2889,6 +2921,23 @@ class _DriverRecorder:
         def wait_music_off(_ctx, skippable):
             self._rec("wait_music_off", (bool(skippable),))
 
+        def draw_panel3(_ctx):
+            self._rec("draw_panel3")
+
+        def draw_panel2(_ctx):
+            self._rec("draw_panel2")
+
+        def preview_wait(_ctx):
+            self._rec("preview_wait")
+
+        def reload_confirm(_ctx):
+            v = self.script.confirm()
+            self._rec("reload_confirm", (v,))
+            return v
+
+        def reload_assets(_ctx):
+            self._rec("reload_assets")
+
         def event(_ctx, tag, leg, aux):
             self._rec("event", (tag, leg, aux))
 
@@ -2901,6 +2950,8 @@ class _DriverRecorder:
                 adapter._CB_DRAW_LEG(start_demo), adapter._CB_VOID(run_demo),
                 adapter._CB_VOID(flash), adapter._CB_VOID(name_flash), adapter._CB_VOID(hold_frame),
                 adapter._CB_WAIT_MUSIC(wait_music_off),
+                adapter._CB_VOID(draw_panel3), adapter._CB_VOID(draw_panel2), adapter._CB_VOID(preview_wait),
+                adapter._CB_FKEY(reload_confirm), adapter._CB_VOID(reload_assets),
                 adapter._CB_EVENT(event)]
         return adapter.FlowOps(*keep), keep
 
@@ -3047,6 +3098,58 @@ def _mirror_start_leg(m, tuning, fire_aux):
     return adapter.RM_FLOW_START
 
 
+# Function-key menu outcomes (mirror flow.c's FlowMenuResult). RELOAD is REDRAW plus a re-arm of the
+# only-on-change dash rebuild (the reload wiped the graphics arena); the numeric values need not match the
+# C enum — only the recorded op sequences are compared.
+_FLOW_MENU_REDRAW, _FLOW_MENU_RELOAD, _FLOW_MENU_START, _FLOW_MENU_NAV = 0, 1, 2, 3
+
+
+def _mirror_preview(m):
+    """Oracle mirror of flow_preview_results (ip_menu's F6 results-screen preview @0x2b86): draw the
+    race-end results screen under its palette, delegate the busy-wait, then redraw the leg-select screen."""
+    ref = m.ref
+    _w16(ref, adapter.A_results_mode, 0)                                   # 0x2bac
+    m._rec("draw_res_screen", (0, _r16(ref, adapter.A_hiscore_pos), m._leg()))
+    m._rec("palette", (adapter.RM_FLOW_PAL_RESULTS,))
+    m._rec("show")
+    m._rec("preview_wait")
+    m._rec("draw_res", (m._leg(),))
+    m._rec("draw_panel5")
+    m._rec("palette", (adapter.RM_FLOW_PAL_LEG_SELECT,))
+    m._rec("show")
+
+
+def _mirror_fkey_menu(m):
+    """Oracle mirror of flow_fkey_menu (ip_menu @0x2b24). F10 -> reload prompt + a blocking confirm (RETURN
+    reloads, else the key falls through to the F-key test); F6 -> preview then the nav tail; F1..F5 ->
+    START that leg; else REDRAW."""
+    ref, sc = m.ref, m.script
+    key = sc.fkey()
+    m._rec("fkey", (key,))
+    if key == adapter.RM_FKEY_F10:                                         # 0x2b36
+        m._rec("draw_res", (m._leg(),))
+        m._rec("draw_panel3")
+        m._rec("show")
+        key = sc.confirm()                                                # 0x2b48: Crawcin
+        m._rec("reload_confirm", (key,))
+        if key == adapter.RM_FKEY_RETURN:                                 # 0x2b50: confirmed
+            m._rec("draw_res", (m._leg(),))
+            m._rec("draw_panel2")
+            m._rec("show")
+            m._rec("draw_res", (m._leg(),))
+            m._rec("draw_panel2")
+            m._rec("reload_assets")
+            return _FLOW_MENU_RELOAD
+        # not RETURN: fall through with key = the char just read (0x2b7c)
+    if key == adapter.RM_FKEY_F6:                                          # 0x2b86
+        _mirror_preview(m)
+        return _FLOW_MENU_NAV
+    if 0 <= key < adapter.IP_LEG_COUNT:                                    # 0x2b8a
+        _w16(ref, adapter.A_leg_index, key & 0xffff)
+        return _FLOW_MENU_START
+    return _FLOW_MENU_REDRAW
+
+
 def _mirror_leg_select(m, tuning):
     """Oracle mirror of rm_flow_leg_select (g_init_playfield's leg-select loop @0x2af6). The nav + reload
     and the fire edge come from g_init_playfield_nav / g_init_playfield_fire; the idle-countdown loop and
@@ -3061,17 +3164,20 @@ def _mirror_leg_select(m, tuning):
         # palette. The original loads it once here and not in the inner default redraw (0x2b9e).
         m._rec("palette", (adapter.RM_FLOW_PAL_LEG_SELECT,))
         while True:
-            fk = sc.fkey()
-            m._rec("fkey", (fk,))
-            if fk >= 0:
-                _w16(ref, adapter.A_leg_index, fk & 0xffff)
-                return _mirror_start_leg(m, tuning, 1)
+            # Rebuild the dash only on a leg change, BEFORE the function-key menu (intermission.c:504's
+            # g_init_leg_dash precedes ip_menu) — so the F10/F6 overlays composite over a fresh dash.
             if m._leg() != drawn_leg:
                 drawn_leg = m._leg()
                 m._rec("rebuild_dash", (drawn_leg,))
-            m._rec("draw_res", (m._leg(),))
-            m._rec("draw_panel5")
-            m._rec("show")
+            menu = _mirror_fkey_menu(m)                    # function-key menu (0x2b24)
+            if menu == _FLOW_MENU_START:
+                return _mirror_start_leg(m, tuning, 1)
+            if menu == _FLOW_MENU_RELOAD:                   # the reload wiped the dash -> re-arm the rebuild
+                drawn_leg = 0xffff
+            if menu != _FLOW_MENU_NAV:                      # the F6 preview already redrew (0x2bfc)
+                m._rec("draw_res", (m._leg(),))
+                m._rec("draw_panel5")
+                m._rec("show")
             inp = sc.poll()
             m._rec("poll", (inp,))
             _shift_ref_input(ref, inp)
@@ -3110,6 +3216,11 @@ def _diff_trajectory(actual, expected, cand_result, ref_result):
                  shows=sum(1 for rec in actual if rec[0] == "show"),
                  run_demo=sum(1 for rec in actual if rec[0] == "run_demo_frame"),
                  panel5=sum(1 for rec in actual if rec[0] == "draw_panel5"),
+                 panel3=sum(1 for rec in actual if rec[0] == "draw_panel3"),
+                 panel2=sum(1 for rec in actual if rec[0] == "draw_panel2"),
+                 preview=sum(1 for rec in actual if rec[0] == "preview_wait"),
+                 reload=sum(1 for rec in actual if rec[0] == "reload_assets"),
+                 res_screen=sum(1 for rec in actual if rec[0] == "draw_res_screen"),
                  leg_labels=sum(1 for rec in actual if rec[0] == "draw_leg_labels"),
                  flash=sum(1 for rec in actual if rec[0] == "flash_frame"),
                  palettes=[rec[1][0] for rec in actual if rec[0] == "palette"],
@@ -3117,21 +3228,23 @@ def _diff_trajectory(actual, expected, cand_result, ref_result):
     return mism, stats
 
 
-def _run_flow_driver(image, driver_fn, mirror_fn, tuning, poll_of, quit_of, fkey_of, driver_extra=()):
+def _run_flow_driver(image, driver_fn, mirror_fn, tuning, poll_of, quit_of, fkey_of, driver_extra=(),
+                     confirm_of=None):
     """Run the hoisted C `driver_fn` with recording callbacks on a candidate FlowState seeded from
     `image`, run `mirror_fn` (the oracle) on a copy, and diff the two trajectories. `driver_extra` is any
-    trailing C args (rm_flow_leg_select's SoundDriver, for the get-ready tune)."""
+    trailing C args (rm_flow_leg_select's SoundDriver, for the get-ready tune); `confirm_of` scripts the
+    F10 reload_confirm answer (leg select only)."""
     poll_of = poll_of or (lambda i: 0)
     quit_of = quit_of or (lambda i: 0)
     fkey_of = fkey_of or (lambda i: -1)
 
     fs = adapter.flow_state(image)
-    rec = _DriverRecorder(fs, _FlowScript(poll_of, quit_of, fkey_of))
+    rec = _DriverRecorder(fs, _FlowScript(poll_of, quit_of, fkey_of, confirm_of))
     cand_result = driver_fn(ctypes.byref(fs), ctypes.byref(rec.ops), None, ctypes.byref(tuning),
                             *driver_extra)
 
     ref = bytearray(image)
-    mir = _MirrorRecorder(ref, _FlowScript(poll_of, quit_of, fkey_of))
+    mir = _MirrorRecorder(ref, _FlowScript(poll_of, quit_of, fkey_of, confirm_of))
     ref_result = mirror_fn(mir, tuning)
     return _diff_trajectory(rec.log, mir.log, cand_result, ref_result)
 
@@ -3148,9 +3261,10 @@ def compare_flow_intermission(lib, image, tuning, poll_of=None, quit_of=None, fk
                             tuning, poll_of, quit_of, fkey_of)
 
 
-def compare_flow_leg_select(lib, image, tuning, poll_of=None, quit_of=None, fkey_of=None):
+def compare_flow_leg_select(lib, image, tuning, poll_of=None, quit_of=None, fkey_of=None, confirm_of=None):
     """Lockstep the leg-select loop (rm_flow_leg_select, incl. its idle -> game-over-bracketed attract
-    cycle) vs the oracle mirror of g_init_playfield. (mismatches, stats)."""
+    cycle, the F6 preview and the F10 reload) vs the oracle mirror of g_init_playfield. (mismatches, stats)."""
     snd = adapter.sound_driver(image)         # the get-ready tune (not compared; the mirror is structural)
     return _run_flow_driver(image, lib.rm_flow_leg_select, _mirror_leg_select,
-                            tuning, poll_of, quit_of, fkey_of, driver_extra=(ctypes.byref(snd),))
+                            tuning, poll_of, quit_of, fkey_of, driver_extra=(ctypes.byref(snd),),
+                            confirm_of=confirm_of)

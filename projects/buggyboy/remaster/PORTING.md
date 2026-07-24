@@ -374,9 +374,10 @@ The original's actual scheme, read from the decomp:
   tally. `abort_flag < 0` (a natural time-out / finish) breaks to the SAME place. The read also stores
   the scancode into `last_key` (the keyboard driving fallback `read_input @0x120b0` reads), toggles
   **`dsp_toggle`** on scancode `0x22` = **G** (`0x296 not.w`), and runs a sound-reset debug on `0x62` =
-  Help (`0x2a2`). Now that the remaster ships WITH sound (the VBL pump, slice 3) that Help sound-reset key
-  is a meaningful debug action — but it is deliberately left UNPORTED (a developer debug key, not part of
-  the player-facing controls). There is **no** quit key and **no** restart key: `main` is an
+  Help (`0x2a2`). Now that the remaster ships WITH sound (the VBL pump, slice 3) that Help key is PORTED
+  as the in-race pause: `rm_pause_silence` (TURNOFF + EGOFF + fxflag clear, pump left running) + the
+  shell's release-then-fresh-key wait, matching the original's silence-and-freeze loop (`0x2a2`; a
+  resume-Q still quits — the drain preserves the Q latch). There is **no** quit key and **no** restart key: `main` is an
   infinite `do…while(true)` — a coin-op that never terminates.
 - **Leg select** (`init_playfield @0x12af6`): joystick nav (up/left prev, down/right next) + button
   starts; the function-key menu reads the console for **F1..F5** (`0x3b..0x3f`, direct select+start),

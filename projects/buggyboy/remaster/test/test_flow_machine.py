@@ -439,6 +439,69 @@ def test_flow_driver_get_ready_flash(capsys):
     assert stats["panel5"] >= 3, stats["panel5"]
 
 
+def test_flow_driver_leg_select_f6_preview():
+    """F6 in the leg select (ip_menu @0x2b86) previews the race-end results screen, waits (a shell op), then
+    redraws the leg-select screen and drops to the nav tail — SKIPPING that frame's default redraw. A later
+    fire starts the leg. Locksteped vs the oracle mirror; pins the preview draw + palette + wait sequence."""
+    lib = equiv._lib()
+    # F6 on the first menu read, then no key; fire on the 2nd frame so the loop terminates in START.
+    fkey_of = lambda i: adapter.RM_FKEY_F6 if i == 0 else adapter.RM_FKEY_NONE
+    poll_of = lambda i: FIRE if i >= 1 else 0
+    mism, stats = equiv.compare_flow_leg_select(lib, _bg(), _fast_tuning(), poll_of=poll_of, fkey_of=fkey_of)
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_START, stats["result"]
+    assert stats["preview"] == 1 and stats["res_screen"] == 1, (stats["preview"], stats["res_screen"])
+    # the preview draws the results screen under the RESULTS palette then restores the leg-select palette.
+    assert adapter.RM_FLOW_PAL_RESULTS in stats["palettes"], stats["palettes"]
+    # flip parity: every paint flips — the leg-select redraws (draws) AND the preview's results screen.
+    assert stats["shows"] == stats["draws"] + stats["res_screen"] and stats["shows"] > 0, (stats["draws"], stats["shows"])
+
+
+def test_flow_driver_leg_select_f10_reload():
+    """F10 + RETURN (ip_menu @0x2b36) draws the reload prompt (panel3), takes a blocking confirm, and on
+    RETURN reloads the assets (panel2 ×2 + reload_assets) then falls to the default redraw. Locksteped vs
+    the oracle mirror."""
+    lib = equiv._lib()
+    fkey_of = lambda i: adapter.RM_FKEY_F10 if i == 0 else adapter.RM_FKEY_NONE
+    confirm_of = lambda i: adapter.RM_FKEY_RETURN            # RETURN confirms the reload
+    poll_of = lambda i: FIRE if i >= 1 else 0            # fire on the next frame to end the loop
+    mism, stats = equiv.compare_flow_leg_select(lib, _bg(), _fast_tuning(),
+                                                poll_of=poll_of, fkey_of=fkey_of, confirm_of=confirm_of)
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_START, stats["result"]
+    assert stats["reload"] == 1, stats["reload"]            # the reload ran exactly once
+    assert stats["panel3"] == 1 and stats["panel2"] == 2, (stats["panel3"], stats["panel2"])
+
+
+def test_flow_driver_leg_select_f10_declined_falls_through_to_fkey():
+    """F10 then a non-RETURN key falls through to the F-key test (ip_menu @0x2b7c): F10 then F3 (code 2)
+    starts leg 2, with NO reload. Locksteped vs the oracle mirror, and the started leg is read directly."""
+    lib = equiv._lib()
+    F3_CODE = 2                                             # F3 -> leg index 2 (scancode - F1)
+    fkey_of = lambda i: adapter.RM_FKEY_F10 if i == 0 else adapter.RM_FKEY_NONE
+    confirm_of = lambda i: F3_CODE                          # the reload prompt read returns F3, not RETURN
+    mism, stats = equiv.compare_flow_leg_select(lib, _bg(), _fast_tuning(),
+                                                fkey_of=fkey_of, confirm_of=confirm_of)
+    assert not mism, mism[:6]
+    assert stats["result"] == adapter.RM_FLOW_START, stats["result"]
+    assert stats["reload"] == 0 and stats["panel2"] == 0, (stats["reload"], stats["panel2"])
+    assert stats["panel3"] == 1, stats["panel3"]           # the prompt drew, but the reload declined
+    assert stats["events"] == [EVT.RM_FLOW_EVT_SELECT_ENTER, EVT.RM_FLOW_EVT_SELECT_FIRE], stats["events"]
+    # Directly pin that the fall-through started leg 2 (run the driver alone and read fs->leg_index).
+    assert _leg_select_started_leg(lib, fkey_of, confirm_of) == F3_CODE
+
+
+def _leg_select_started_leg(lib, fkey_of, confirm_of):
+    """Run rm_flow_leg_select alone with recording callbacks; return the leg it started (fs->leg_index)."""
+    img = _bg()
+    fs = adapter.flow_state(img)
+    snd = adapter.sound_driver(img)
+    rec = equiv._DriverRecorder(fs, equiv._FlowScript(lambda i: 0, lambda i: 0, fkey_of, confirm_of))
+    lib.rm_flow_leg_select(equiv.ctypes.byref(fs), equiv.ctypes.byref(rec.ops), None,
+                           equiv.ctypes.byref(_fast_tuning()), equiv.ctypes.byref(snd))
+    return fs.leg_index
+
+
 def test_flow_driver_leg_select_nav():
     """Holding a direction steps leg_index through g_init_playfield_nav (auto-repeat delays + reload),
     then fire starts the navigated-to leg — the whole nav trajectory locksteped vs the oracle."""

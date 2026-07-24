@@ -58,6 +58,8 @@ typedef struct {
     const uint8_t *row_names;      /* row-2 per-leg label strings (buf_a + 0x848) */
     const uint8_t *leg_digits;     /* leg time/score digit string (buf_a + 0x884) */
     const uint8_t *panel5_str;     /* the 5-entry leg-name menu's concatenated labels (program data, 0x1803c) */
+    const uint8_t *panel3_str;     /* F10 reload-prompt panel: 3 concatenated labels (program data, 0x18092) */
+    const uint8_t *panel2_str;     /* F10 reload-confirmed panel: 2 concatenated labels (program data, 0x180d4) */
 } RmResultsAssets;
 
 /* The RACE-END / high-score name-entry results screen's assets (recreate's g_draw_results_screen
@@ -106,6 +108,12 @@ void rm_draw_divider(Framebuffer *fb, const uint8_t *color_pairs);
 /* The 5-entry leg-name menu drawn over the leg-select / get-ready screens (recreate's g_draw_panel5):
  * the divider then five colour-7 labels chained from one concatenated string (a->panel5_str). */
 void rm_draw_panel5(Framebuffer *fb, const RmResultsAssets *a);
+
+/* The F10 reload-menu panels (recreate's g_draw_panel3 / g_draw_panel2 @text.c): the divider then 3 / 2
+ * colour-7 labels. The leg-select function-key menu's F10 branch overlays them on the leg-select screen —
+ * panel3 is the "reload? " prompt, panel2 the confirmation. */
+void rm_draw_panel3(Framebuffer *fb, const RmResultsAssets *a);
+void rm_draw_panel2(Framebuffer *fb, const RmResultsAssets *a);
 
 /* ---- the between-legs FLOW state machine (slice B) ----------------------------------------------
  *
@@ -276,6 +284,23 @@ typedef enum {
     RM_FLOW_START           /* leg_select: a leg was chosen -> start the race */
 } RmFlowResult;
 
+/* IP_LEG_COUNT — the leg-select function-key range (F1..F5 -> legs 0..IP_LEG_COUNT-1). The one source
+ * of truth for the shell (game_main.c read_fkey), the flow (flow.c nav clamp + fkey menu) and the RM_FKEY_*
+ * debug codes below, which are laid out ABOVE the leg range so a leg pick and a debug key never collide. */
+#define IP_LEG_COUNT   5
+
+/* fkey_leg / reload_confirm return codes — the leg-select function-key menu (ip_menu @0x2b24). The
+ * original reads a raw IKBD scancode; these codes abstract it so the flow never compares scancodes.
+ * 0..IP_LEG_COUNT-1 select+start that leg; F6 / F10 are the two debug keys; RM_FKEY_RETURN is
+ * reload_confirm's "the F10 reload was confirmed" answer (RETURN); RM_FKEY_NONE = no key. The debug codes
+ * are defined RELATIVE to IP_LEG_COUNT so the coupling is structural — a leg-count change moves them too. */
+#define RM_FKEY_NONE   (-1)
+#define RM_FKEY_F6     IP_LEG_COUNT        /* F6: results-screen preview (ip_menu @0x2b86) */
+#define RM_FKEY_F10    (IP_LEG_COUNT + 1)  /* F10: graphics / score-table reload prompt (ip_menu @0x2b36) */
+/* NB: RM_FKEY_RETURN squats in the F-key code space just above F10 — any future F7..F9 code MUST stay
+ * below it (or it must move) so a real F-key never reads back as "reload confirmed". */
+#define RM_FKEY_RETURN (IP_LEG_COUNT + 2)  /* reload_confirm: RETURN confirmed the F10 reload (ip_menu @0x2b50) */
+
 /* The platform effects the driver orders, as a callback table (+ a shell-owned `ctx`). Only the
  * effects the driver actually issues today — drawing into the back buffer, flipping, palettes, input,
  * and the demo-leg pipeline pieces (Phase B/C are game-pipeline work the shell owns). The host test
@@ -284,7 +309,8 @@ typedef struct {
     /* input (the IKBD poll is the shell's seam) */
     uint16_t (*poll_input)(void *ctx);      /* this frame's joystick/key bits */
     int      (*quit_requested)(void *ctx);  /* quit-key (Q) edge -> unwind everything */
-    int      (*fkey_leg)(void *ctx);        /* leg select: F1..F5 direct pick 0..4, or -1 for none */
+    int      (*fkey_leg)(void *ctx);        /* leg select: an RM_FKEY_* code — F1..F5 -> 0..IP_LEG_COUNT-1,
+                                             * RM_FKEY_F6 / RM_FKEY_F10 (debug keys), or RM_FKEY_NONE */
     /* draw + present (all draw into the back buffer; `show` flips it at the vblank) */
     void (*draw_fade)(void *ctx, int16_t scroll);          /* prologue backdrop (fade_step) */
     void (*draw_intermission)(void *ctx, int16_t scroll);  /* Phase-A scrolling hi-score screen */
@@ -318,6 +344,16 @@ typedef struct {
      * false — the original never cuts the game-over jingle). The shell implements it as a Vsync +
      * rm_sound_music_on spin (game_main.c), the VBL pump advancing the tune; the host driver records it. */
     void (*wait_music_off)(void *ctx, bool skippable);
+    /* leg-select function-key menu debug keys (ip_menu @0x2b24). The F6 preview and F10 reload are only
+     * reachable from a real keyboard (fkey_leg is a no-key seam under the oracle), so these are shell
+     * effects the driver merely orders — the host test records them. */
+    void (*draw_panel3)(void *ctx);   /* F10 reload prompt overlay (draw_panel3 @0x2b3e) */
+    void (*draw_panel2)(void *ctx);   /* F10 reload-confirmed overlay (draw_panel2 @0x2b58/0x2b62) */
+    void (*preview_wait)(void *ctx);  /* F6: wait for F6-release then a fresh key (0x2bc4/0x2bd8) — the busy-wait
+                                       * the flow delegates so it never blocks a scripted host test */
+    int  (*reload_confirm)(void *ctx);/* F10: blocking read (Crawcin @0x2b48) -> RM_FKEY_RETURN, another
+                                       * F-key code, or RM_FKEY_NONE */
+    void (*reload_assets)(void *ctx); /* F10 reload (@0x2b64): re-read GRAPHICS.GRA + re-seed the score table + dash */
     /* phase-transition trace hook (RM_FLOW_EVT_*) */
     void (*event)(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux);
 } FlowOps;

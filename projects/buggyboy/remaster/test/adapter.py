@@ -300,6 +300,8 @@ A_int_header = 0x18002                             # fade_step copyright header 
 A_highscore_table = 0x18266                        # hi-score table: 5 legs x 9 rows, stride 0x80
 A_leg_title = 0x18028                              # results row-1 concatenated labels (program data)
 A_panel5_str = 0x1803c                             # leg-name menu: 5 concatenated labels (program data)
+A_panel3_str = 0x18092                              # F10 reload-prompt panel: 3 concatenated labels (program data)
+A_panel2_str = 0x180d4                              # F10 reload-confirmed panel: 2 concatenated labels (program data)
 A_leg_row_palette = 0x17e9f                        # results row-2 per-row colour bytes, indexed [i-leg]
 POLL_SRC_OFF = 0x32c80                             # intermission_poll source = buf_c + this
 POLL_BLITS_OFF = 0x1296a                           # inline 9 x {src_off,dst_off,dims} words (program data)
@@ -318,6 +320,8 @@ FLOW_HEADER_BYTES = 0x40
 FLOW_LEGNAMES_BYTES = 0x60                         # buf_a + 0x884: 5 rows x 0xc + digit-sprite reads
 FLOW_TITLE_BYTES = 0x40                            # "F1..F5" chained labels (20 bytes) + slack
 FLOW_PANEL5_BYTES = 0x56                           # panel5 5 labels: 0x1803c up to panel3_str (0x18092)
+FLOW_PANEL3_BYTES = 0x42                            # panel3 3 labels: 0x18092 up to panel2_str (0x180d4)
+FLOW_PANEL2_BYTES = 0x20                            # panel2 2 labels: "LOADING/COURSES/" + "PLEASE/WAIT/"
 FLOW_RESULT_GFX_BYTES = 0x14000                    # buf_c base: result panels + dashboard reach ~0x137a0
 FLOW_LEG_PALETTE_PAD = 8                           # leg_palette cursor: index [i-leg] reaches -4..+4
 FLOW_LEG_STR_OFF = 0x884                            # buf_a: INT sec-2 leg-name sprites / results leg-digits
@@ -384,6 +388,9 @@ RM_FLOW_PAL_INT_A, RM_FLOW_PAL_LEG_SELECT, RM_FLOW_PAL_RESULTS = 0, 1, 2
  RM_FLOW_EVT_INT_PHASEA_BREAK, RM_FLOW_EVT_INT_PHASEB, RM_FLOW_EVT_INT_PHASEC_DONE,
  RM_FLOW_EVT_INT_PHASED_ADVANCE, RM_FLOW_EVT_INT_PHASED_RESTART, RM_FLOW_EVT_INT_ABORT,
  RM_FLOW_EVT_SELECT_ENTER, RM_FLOW_EVT_SELECT_FIRE, RM_FLOW_EVT_SELECT_IDLE) = range(1, 14)
+# fkey_leg / reload_confirm return codes (mirror include/flow.h): 0..4 select a leg, then the debug keys.
+RM_FKEY_NONE, RM_FKEY_F6, RM_FKEY_F10, RM_FKEY_RETURN = -1, 5, 6, 7
+IP_LEG_COUNT = 5   # legs 0..4 (the leg-select F-key range; == flow.h's IP_LEG_COUNT, pinned in test_game_fixture)
 
 
 # ---- slice-2 sound trigger layer (recreate sound.c / events.c / os.c image addresses) ----
@@ -1218,7 +1225,9 @@ class RmResultsAssets(ctypes.Structure):
                 ("leg_palette", ctypes.POINTER(ctypes.c_uint8)),
                 ("row_names", ctypes.POINTER(ctypes.c_uint8)),
                 ("leg_digits", ctypes.POINTER(ctypes.c_uint8)),
-                ("panel5_str", ctypes.POINTER(ctypes.c_uint8))]
+                ("panel5_str", ctypes.POINTER(ctypes.c_uint8)),
+                ("panel3_str", ctypes.POINTER(ctypes.c_uint8)),
+                ("panel2_str", ctypes.POINTER(ctypes.c_uint8))]
 
 
 def draw_buffer_addr(image):
@@ -1272,6 +1281,8 @@ def results_assets(image):
     row_names = _u8buf(image, buf_a + FLOW_ROW_STR_OFF, FLOW_LEGNAMES_BYTES)
     leg_digits = _u8buf(image, buf_a + FLOW_LEG_STR_OFF, FLOW_LEGNAMES_BYTES)
     panel5_str = _u8buf(image, A_panel5_str, FLOW_PANEL5_BYTES)
+    panel3_str = _u8buf(image, A_panel3_str, FLOW_PANEL3_BYTES)
+    panel2_str = _u8buf(image, A_panel2_str, FLOW_PANEL2_BYTES)
     # leg_palette is indexed [i - leg] (i,leg in 0..4), so window it with pad below and point at leg 0.
     palette = _u8buf(image, A_leg_row_palette - FLOW_LEG_PALETTE_PAD, 2 * FLOW_LEG_PALETTE_PAD)
     p = ctypes.POINTER(ctypes.c_uint8)
@@ -1279,9 +1290,10 @@ def results_assets(image):
         ctypes.cast(color_pairs, p), ctypes.cast(font, p), ctypes.cast(num_sprites, p),
         ctypes.cast(num_glyph_tbl, p), ctypes.cast(gfx, p), ctypes.cast(title, p),
         ctypes.cast(ctypes.byref(palette, FLOW_LEG_PALETTE_PAD), p),
-        ctypes.cast(row_names, p), ctypes.cast(leg_digits, p), ctypes.cast(panel5_str, p))
+        ctypes.cast(row_names, p), ctypes.cast(leg_digits, p), ctypes.cast(panel5_str, p),
+        ctypes.cast(panel3_str, p), ctypes.cast(panel2_str, p))
     return assets, (color_pairs, font, num_sprites, num_glyph_tbl, gfx, title, row_names,
-                    leg_digits, palette, panel5_str)
+                    leg_digits, palette, panel5_str, panel3_str, panel2_str)
 
 
 class RmResultsScreenAssets(ctypes.Structure):
@@ -1392,6 +1404,9 @@ class FlowOps(ctypes.Structure):
                 ("start_demo_leg", _CB_DRAW_LEG), ("run_demo_frame", _CB_VOID),
                 ("flash_frame", _CB_VOID), ("name_flash", _CB_VOID), ("hold_frame", _CB_VOID),
                 ("wait_music_off", _CB_WAIT_MUSIC),
+                # leg-select function-key menu debug keys (F6 preview / F10 reload)
+                ("draw_panel3", _CB_VOID), ("draw_panel2", _CB_VOID), ("preview_wait", _CB_VOID),
+                ("reload_confirm", _CB_FKEY), ("reload_assets", _CB_VOID),
                 ("event", _CB_EVENT)]
 
 
