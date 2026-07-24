@@ -33,6 +33,9 @@ def _lib():
                                 ctypes.POINTER(adapter.HudAssets),
                                 ctypes.POINTER(adapter.Framebuffer)]
     lib.rm_draw_hud.restype = None
+    lib.rm_hud_dashboard_prebuild.argtypes = [ctypes.POINTER(adapter.HudAssets),
+                                              ctypes.POINTER(ctypes.c_uint8)]
+    lib.rm_hud_dashboard_prebuild.restype = None
     lib.rm_render_road.argtypes = [ctypes.POINTER(adapter.RoadInput),
                                    ctypes.POINTER(adapter.Framebuffer)]
     lib.rm_render_road.restype = None
@@ -343,10 +346,22 @@ def hud_background(leg=0, warmup=60, controls=None):
     return state
 
 
-def compare_hud(lib, image):
+def hud_prebuild(lib, assets):
+    """Prebuild the phase-7 dashboard (rm_hud_dashboard_prebuild) into a fresh buffer and point
+    `assets.dash_pristine` at it, so rm_draw_hud takes the bulk-copy path (as the shell/bench do). The
+    buffer is returned for the caller to keep alive."""
+    buf = (ctypes.c_uint8 * adapter.RM_HUD_DASH_PRISTINE_BYTES)()
+    lib.rm_hud_dashboard_prebuild(ctypes.byref(assets), buf)
+    assets.dash_pristine = ctypes.cast(buf, ctypes.POINTER(ctypes.c_uint8))
+    return buf
+
+
+def compare_hud(lib, image, prebuild=True):
     """Run recreate's g_draw_hud (reference) and remaster's rm_draw_hud (candidate) on `image`, and
     diff the framebuffer. Returns (coverage, wrong_bytes): coverage in [0,1] over draw_hud's
-    footprint; wrong_bytes = count of bytes the candidate changed to a value recreate didn't."""
+    footprint; wrong_bytes = count of bytes the candidate changed to a value recreate didn't. With
+    `prebuild` (default) the candidate takes the prebuilt dashboard bulk-copy path; `prebuild=False`
+    leaves dash_pristine NULL so it takes the on-the-fly masked-blit fallback (pinned equal too)."""
     base = image[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES]
 
     ref = bytearray(image)
@@ -355,6 +370,7 @@ def compare_hud(lib, image):
 
     state = adapter.hud_state(image)
     assets, _keep = adapter.hud_assets(image)
+    _pristine = hud_prebuild(lib, assets) if prebuild else None   # bulk-copy path vs NULL fallback
     fb = adapter.Framebuffer((ctypes.c_uint8 * adapter.SCREEN_BYTES)(*base))
     lib.rm_draw_hud(ctypes.byref(state), ctypes.byref(assets), ctypes.byref(fb))
     cand_fb = bytes(fb.px)
@@ -1703,6 +1719,13 @@ class _ComposedScene:
             at(adapter.A_small_gauge_str), at(self.buf_c + adapter.NUM_GLYPH_BUF_OFF),
             at(adapter.A_num_glyph_tbl), at(adapter.A_crash_color_tbl),
             at(adapter.A_score_delta_time), at(adapter.A_score_delta_roll))
+        # Prebuild the phase-7 dashboard ONCE from the leg's art (immutable within a leg), as the shell
+        # does at leg init — so rm_draw_frame's HUD takes the bulk-copy path. If a mid-leg event ever
+        # rewrote the art without a rebuild, this stale pristine would diverge from recreate's re-blit and
+        # the strict composed differential would fail — the invalidation pin.
+        self._dash_pristine = (ctypes.c_uint8 * adapter.RM_HUD_DASH_PRISTINE_BYTES)()
+        lib.rm_hud_dashboard_prebuild(ctypes.byref(self.hud_assets), self._dash_pristine)
+        self.hud_assets.dash_pristine = ctypes.cast(self._dash_pristine, ctypes.POINTER(ctypes.c_uint8))
         self.src = cand.source            # RoadSource is const per leg — reuse the candidate's
 
         # the scene's per-frame view structs (populated by the fan / the leg-start derivations).
@@ -1763,6 +1786,13 @@ class _ComposedScene:
         # (1) sync the two arenas the drive mutates into the image the assets point into.
         self.img[adapter.A_hud_text:adapter.A_hud_text + adapter.HUD_TEXT_BYTES] = bytes(cand.hud_text)
         self.img[self.buf_c:self.buf_c + adapter.GFX_EVENT_BYTES] = bytes(cand.gfx)
+        # The dashboard art carries a progress marker probe_collision moves on WRAP frames (src/events.c),
+        # the only mid-race writer — so rebuild dash_pristine exactly when the shell does (leg init +
+        # wrap), mirroring game_main.c. This pins the invalidation rule: if the marker ever moved off a
+        # wrap frame, this stale pristine would diverge from recreate's re-blit and the strict differential
+        # would fail. (Suppressing the rebuild is the mutation — it reddens on the first post-wrap frame.)
+        if _r16(state, adapter.A_view_wrap_flag):
+            self.lib.rm_hud_dashboard_prebuild(ctypes.byref(self.hud_assets), self._dash_pristine)
         # (2) snapshot the owner structs the draws mutate (non-destructive peek). Sprite starts from
         # the reference's current pose so the fan-untouched cursors (lean_frame/variant/gates) match,
         # then the fan overwrites the dynamic fields it owns.

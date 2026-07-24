@@ -428,6 +428,7 @@ GAUGE_STR_BYTES = 64                              # covers the 6 phase-7 substri
 HUD_TEXT_BYTES = 0xe6                              # shared HUD-text region [0x18172, 0x18258)
 SMALL_GAUGE_STR_BYTES = 32                         # phase-6b gauge0 + optional bar substrings
 DASH_SRC_BYTES = 40 * 160                         # 40 rows at the screen stride
+RM_HUD_DASH_PRISTINE_BYTES = 40 * 160             # mirror include/game.h (pinned by test_hud)
 DSP_RECORDS = 8                                   # phase-3 variant records
 DSP_TABLE_BYTES = DSP_RECORDS * 8
 NUM_TBL_BYTES = 0xc0                               # phase-8 num_glyph_tbl (glyphs up to 0x5f; letters too)
@@ -479,7 +480,11 @@ class HudAssets(ctypes.Structure):
                 ("num_glyph_tbl", ctypes.POINTER(ctypes.c_uint8)),
                 ("crash_color_tbl", ctypes.POINTER(ctypes.c_uint8)),
                 ("score_delta_time", ctypes.POINTER(ctypes.c_uint8)),
-                ("score_delta_roll", ctypes.POINTER(ctypes.c_uint8))]
+                ("score_delta_roll", ctypes.POINTER(ctypes.c_uint8)),
+                # APPEND-ONLY: hud_assets() below constructs HudAssets positionally and omits this last
+                # field (ctypes zero-fills it -> NULL -> the masked-blit fallback). A field inserted
+                # mid-struct instead of appended would silently misalign every pointer after it.
+                ("dash_pristine", ctypes.POINTER(ctypes.c_uint8))]
 
 
 class Framebuffer(ctypes.Structure):

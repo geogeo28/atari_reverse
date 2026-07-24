@@ -1412,3 +1412,26 @@ remaining Tier-B algorithmic item is measured dead. The pixel-faithful stock-ST 
 **gate 125.59 ms (~8.0 fps) / median proportionally better**, and the remaining levers are Tier-A
 residue (A5 glyph movem fills ~2–3 ms, object-tree dispatcher/objsprite ABI, the ~4 ms HUD memcpy
 option) and Tier-C departures (C1 25 fps vsync cadence, C4 STE blitter build).
+
+### B4 follow-on LANDED — dashboard precompute+memcpy (−3.07 ms); A5 measured NO-GO in C. 2026-07-24
+
+**Dashboard precompute+memcpy.** The phase-7 dashboard is 100% opaque (all 5 legs, pinned by the new
+`test_hud_dashboard_is_opaque`), so its masked blit's output is background-independent: prebuild it
+once per leg into a 6.25 KB `dash_pristine` (`RM_HUD_DASH_PRISTINE_BYTES` = 40 rows × 160 B, one
+copy serves both screen buffers) by running the SAME verified `cell_dashboard` blit, then bulk-copy
+64 B/row per frame. **draw_hud 130,120 → 105,556 cyc = 16.27 → 13.19 ms (0.77× recon); gate TOTAL
+1,004,690 → 980,126 cyc = 125.59 → 122.52 ms.** The art carries a wrap-only progress marker
+(`probe_collision` via the checkpoint rebuild), so the shell re-prebuilds on leg init + wrap via
+`dash_pristine_dirty`; the composed differential mirrors the rule and **reddens (8 drives) if the
+wrap rebuild is suppressed** — the invalidation is load-bearing and pinned. NULL pristine falls back
+to the on-the-fly masked blit (kept + newly covered by `test_hud_dashboard_fallback_matches`).
+`make test` 708; goldens MATCH ×5 (the on-target build runs the real prebuild + dirty path).
+
+**A5 (glyph bulk-store) is a measured NO-GO in C.** `rm_glyph_run` = 52,986 cyc / 6.62 ms (40.7% of
+draw_hud), but **0% of glyph/num rows are opaque** (per-row tally, all HUD phases, legs 0–2) — every
+cell is a transparent masked overlay, so the solid/aligned `movem` premise never fires. The cost is
+masked-RMW base+index addressing (~12k) + pack shuffles (~7k) under register pressure (45 stack refs).
+Two C reshapes measured as washes (real-pointer displacement walk → 8 row-pointer spills;
+`no-unroll-loops` → identical) — the objshift story again. **The ~2.5–3 ms is reachable only via a
+hand-asm `rm_glyph_run` core** (ideal ~168 cyc/row vs 331 today; road_band.S pattern: frozen C ref +
+per-core flag + Musashi differential + mutation).

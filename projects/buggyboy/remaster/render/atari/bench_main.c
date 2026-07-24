@@ -196,6 +196,10 @@ void bench_build_geometry(void) { rm_build_road_geometry(&pose, &src, &ring, ctr
 void bench_render_road(void)    { road.width_tbl = ctrl + RM_CTRL_WIDTH_OFF; rm_render_road(&road, &fb); }
 void bench_scroll_prebuild(void) { rm_scroll_prebuild(scroll_playfield, shifted); }
 void bench_blit_scroll(void)    { rm_blit_road_scroll(&scroll, shifted, &fb); }
+/* Per-leg dashboard prebuild (assets.dash_pristine points at this buffer; the shell does the same). */
+static uint8_t dash_pristine[RM_HUD_DASH_PRISTINE_BYTES] __attribute__((aligned(2)));
+void bench_hud_prebuild(void)   { assets.dash_pristine = dash_pristine;
+                                  rm_hud_dashboard_prebuild(&assets, dash_pristine); }
 void bench_draw_hud(void)       { rm_draw_hud(&hud, &assets, &fb); }
 void bench_course_advance(void) { rm_road_course_advance(&pose, &course, &ring, course_stream); }
 

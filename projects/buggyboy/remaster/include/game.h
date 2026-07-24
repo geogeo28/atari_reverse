@@ -75,10 +75,27 @@ typedef struct {
     const uint8_t *crash_color_tbl; /* phase-8 per-frame colour index, indexed (frame & 7) */
     const uint8_t *score_delta_time;/* phase-8 6-byte add_score delta while draining time */
     const uint8_t *score_delta_roll;/* phase-8 6-byte add_score delta per bonus unit / rollover */
+    /* PERF: the phase-7 dashboard is a fixed graphic composited every frame over the constant top-fill,
+     * and its mask is 100% opaque (verified on all 5 legs, on-target), so the blit's output is a fixed
+     * function of the leg's dashboard art — background-independent. dash_pristine holds that prebuilt
+     * output (rm_hud_dashboard_prebuild, once per leg); when non-NULL rm_draw_hud bulk-copies it instead
+     * of re-running the masked blit, skipping the per-group source reads. NULL falls back to the blit. */
+    const uint8_t *dash_pristine;
 } HudAssets;
+
+/* Bytes of the dash_pristine buffer: DASH_ROWS (plane.h, = 40) scanlines at the screen stride (the last
+ * needs only the dashboard's 64 bytes, but a full stride keeps rm_hud_dashboard_prebuild's cell_dashboard
+ * write in bounds). game.h does not include plane.h, so DASH_ROWS is spelled 40 here and pinned by test. */
+#define RM_HUD_DASH_PRISTINE_BYTES (40 * SCREEN_ROW_BYTES)
 
 /* Draw the whole HUD (all 8 phases) into `fb` from this frame's scalars + the static asset tables. */
 void rm_draw_hud(const HudState *s, const HudAssets *a, Framebuffer *fb);
+
+/* Prebuild the phase-7 dashboard output into `pristine` (RM_HUD_DASH_PRISTINE_BYTES). Runs the SAME
+ * verified cell_dashboard blit the per-frame path would, so the bulk-copy is byte-identical. Call once
+ * per leg after the dashboard art (init_leg_dash / draw_leg_labels) is in place, and again on ANY event
+ * that rewrites the art — the art is otherwise immutable within a leg (see src/hud.c). */
+void rm_hud_dashboard_prebuild(const HudAssets *a, uint8_t *pristine);
 
 /* ---- render_road (the pseudo-3D road rasterizer @0x19144) ---- */
 

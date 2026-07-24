@@ -36,6 +36,34 @@ def test_hud_ported_phases_no_wrong_pixel(cfg, capsys):
     assert coverage == 1.0, f"HUD footprint only {coverage:.1%} covered (cfg={cfg})"
 
 
+def test_hud_dashboard_fallback_matches():
+    """The phase-7 dashboard has two paths: the prebuilt bulk-copy (dash_pristine set) and the on-the-fly
+    masked blit (dash_pristine NULL). rm_draw_hud picks the fallback when no pristine is supplied; pin it
+    byte-exact too, so a regression to the fallback branch (wrong dst, dropped return) can't ship green."""
+    lib = equiv._lib()
+    image = equiv.hud_background(leg=0)
+    coverage, wrong = equiv.compare_hud(lib, image, prebuild=False)
+    assert wrong == 0 and coverage == 1.0, f"fallback dashboard blit diverged: wrong={wrong} cov={coverage}"
+
+
+def test_hud_dashboard_is_opaque():
+    """The dashboard bulk-copy is byte-exact ONLY because every dashboard group is fully opaque (mask==0):
+    then cell_dashboard writes ink independent of the background, so a prebuilt snapshot equals the
+    on-the-fly blit. Enforce that invariant on the actual per-leg art — a transparent group would make the
+    prebuild composite over its own (zero/stale) buffer instead of the live top-fill, silently diverging."""
+    DASH_GROUPS, ROW, DASH_ROWS = 8, 160, 40
+    for leg in range(5):
+        image = equiv.hud_background(leg=leg)
+        buf_c = int.from_bytes(image[adapter.A_buf_c:adapter.A_buf_c + 4], "big")
+        src = buf_c + adapter.DASH_SRC_OFF
+        for row in range(DASH_ROWS):
+            for g in range(DASH_GROUPS):
+                off = src + row * ROW + g * 8
+                mask = (image[off] << 8) | image[off + 1]
+                assert mask == 0, (f"leg{leg} dashboard group (row{row},g{g}) is NOT opaque (mask={mask:#06x})"
+                                   " — the dash_pristine bulk-copy is unsafe; use the masked-blit fallback")
+
+
 # (speed, time) — exercise the phase-1/2 digit formatting across the real domain: every speedometer
 # prefix branch (<100 "//", 100-199 "/1", >=200 "/2") and leading-blank vs. leading-zero tens, and
 # the 2-digit timer 0..99. Speed is a byte (0..255); the timer field is 2 digits (0..99).

@@ -132,7 +132,8 @@ RM_PREPS = {
     "object_tree":    ["bench_build_geometry"],
     "render_road":    ["bench_build_geometry"],
     "blit_road_scroll": ["bench_scroll_prebuild"],
-    "draw_frame":     ["bench_scroll_prebuild"],
+    "draw_hud":       ["bench_hud_prebuild"],
+    "draw_frame":     ["bench_scroll_prebuild", "bench_hud_prebuild"],
 }
 # The road A/B rows (the per-band C-isolations + the all-asm baseline) all read the built control table
 # too — derive them from the row lists rather than hand-listing (one source of truth with the print).
