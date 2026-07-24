@@ -138,7 +138,7 @@ static struct obj_hi_out draw_obj_sprite_hi(const ObjListCtx *c, uint16_t x, uin
     uint16_t height = (uint16_t)(width * rows_byte);
     dst_top = (uint32_t)(dst_top - sx16(height));
 
-    rm_blit_objshift(c->px, dst, c->buf_c, src, x, colour, rows_m1, OBJH_MODE_MAIN,
+    RM_BLIT_OBJSHIFT(c->px, dst, c->buf_c, src, x, colour, rows_m1, OBJH_MODE_MAIN,
                      c->color_pairs, /*base_cells=*/1);
 
     struct obj_hi_out out = { base_col, rows_copy, dst_top,
@@ -152,7 +152,7 @@ static void obj_handler_lo(const ObjListCtx *c, uint16_t x, uint16_t colour, uin
                            uint32_t dst, uint32_t src, uint32_t rec_cursor, int base_cells) {
     uint16_t parity = (uint16_t)(OBJH_PARITY_MASK & c->view_parity);
     src = (uint32_t)(src + sx16(be16(c->buf_a + rec_cursor + OBJ_HANDLER_SRCADJ + parity)));
-    rm_blit_objshift(c->px, dst, c->buf_c, src, x, colour, rows_m1, OBJH_MODE_TAIL,
+    RM_BLIT_OBJSHIFT(c->px, dst, c->buf_c, src, x, colour, rows_m1, OBJH_MODE_TAIL,
                      c->color_pairs, base_cells);
 }
 
@@ -168,7 +168,7 @@ static void obj_handler_dbl(const ObjListCtx *c, uint16_t x, uint16_t colour, ui
                             int base_cells) {
     struct obj_hi_out r = draw_obj_sprite_hi(c, x, colour, OBJD_WIDTH, rows_seed, voff, dst, src,
                                              rec_cursor);
-    rm_blit_objshift(c->px, r.dst_out, c->buf_c, r.src_out, r.x_out, colour, r.rows_out,
+    RM_BLIT_OBJSHIFT(c->px, r.dst_out, c->buf_c, r.src_out, r.x_out, colour, r.rows_out,
                      OBJH_MODE_TAIL, c->color_pairs, base_cells);
 }
 

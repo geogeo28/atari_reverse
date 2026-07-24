@@ -22,11 +22,12 @@ CC=m68k-elf-gcc
 # noise) — see PERF30.md "GCC-level sweep". rm_blit_objshift additionally carries a per-function
 # optimize() attribute (blit.c) that MUST stay paired with this -O3. -fno-tree-loop-distribute-patterns:
 # keep GCC from turning the hand-written fill loops into memset/memcpy calls (as recreate does).
-# -DRM_ASM_BLIT: link the hand-written m68k core src/asm/objshift2.s and dispatch the fixed-pass
-# blitter (object_list.c's RM_BLIT_OBJSHIFT2) to it, EXACTLY like the game build — so the composed
-# rows (bench_objlist_fixed / bench_object_tree / bench_draw_frame) measure the asm the game runs. The
-# C reference rm_blit_objshift2 is still compiled (blit.c) and linked, so bench_main.c's
-# bench_objshift2_c/_asm wrappers can measure C vs asm side by side (PERF30 A3).
+# -DRM_ASM_BLIT: link BOTH hand-written m68k cores (src/asm/objshift2.S fixed-pass + src/asm/objshift.S
+# colour-indexed pass 1) and dispatch both blitters (object_list.c's RM_BLIT_OBJSHIFT2 / RM_BLIT_OBJSHIFT)
+# to them, EXACTLY like the game build — so the composed rows (bench_objlist_fixed / bench_object_tree /
+# bench_draw_frame) measure the asm the game runs. The C references rm_blit_objshift2 / rm_blit_objshift
+# are still compiled (blit.c) and linked, so bench_main.c's bench_objshift2_c/_asm and bench_objshift_c/_asm
+# wrappers can measure C vs asm side by side (PERF30 A3).
 CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -DRM_ASM_BLIT -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra"
 CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
@@ -37,7 +38,8 @@ CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
 
 echo ">> compile + link bench.elf (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
-    "$HERE/os.s" "$REMASTER/src/asm/objshift2.S" "$HERE/shim.c" "$HERE/bench_main.c" $CORES -lgcc \
+    "$HERE/os.s" "$REMASTER/src/asm/objshift2.S" "$REMASTER/src/asm/objshift.S" \
+    "$HERE/shim.c" "$HERE/bench_main.c" $CORES -lgcc \
     -o "$BUILD/bench.elf"
 
 echo ">> objcopy -> flat binary (loaded into Musashi at base 0)"

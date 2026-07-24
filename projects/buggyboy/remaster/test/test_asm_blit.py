@@ -1,6 +1,6 @@
-"""test_asm_blit.py — Musashi-executed differential: the hand-written m68k objshift2 core
-(src/asm/objshift2.S, PERF30 A3) must be byte-for-byte identical to the C reference rm_blit_objshift2
-(src/blit.c) on every fuzz case.
+"""test_asm_blit.py — Musashi-executed differential: the hand-written m68k blit cores (src/asm/
+objshift2.S phase 1, src/asm/objshift.S phase 2 — PERF30 A3) must be byte-for-byte identical to their C
+references (rm_blit_objshift2 / rm_blit_objshift in src/blit.c) on every fuzz case.
 
 The host equivalence suite (test/test_blit_engines.py) proves the C reference matches recreate's verified
 oracle, but it links C only and cannot execute m68k asm. This suite closes that gap: it runs each case
@@ -10,7 +10,10 @@ region. A one-byte divergence on any case fails the suite (mutation-proven, PERF
 
 Shape (F12): the harness is driven by an engine DESCRIPTOR (wrapper symbols, staged buffers, the param-
 block packer, its case table) so phase 2's rm_blit_objshift asm core is a second descriptor + case
-table, not a parallel harness class. The run wrappers unpack a param block (bench_main.c Objsh2Args):
+table (OBJSHIFT below), NOT a parallel harness class — the one engine-agnostic _Harness runs both. The
+colour engine adds a third staged buffer (objsh_pairs, the color_pairs table it indexes by the colour
+nibble); the descriptor names it and the harness stages a distinct-byte table there so the colour gate
+bits actually vary across cases. The run wrappers unpack a param block (bench_main.c Objsh2Args/ObjshArgs):
 emu.run_bench passes a single arg0, so the test pokes the args + noise buffers into the flat image, then
 calls a zero-arg wrapper that reads the block and invokes one engine. dst/src are absolute addresses of
 the bench's staged buffers (objsh2_dst / objsh2_src), started mid-buffer so the up-walk (0x2a rows * 160)
@@ -97,8 +100,65 @@ OBJSHIFT2 = {
     "dst_sym":  "objsh2_dst",
     "src_sym":  "objsh2_src",
     "args_sym": "objsh2_args",
-    "pack":     _pack_objsh2,
     "cases":    CASES,
+    "base_draw_cols": BASE_DRAW_COLS,
+    "noise_seeds":    (131, 7, 977, 13),    # (dst_mul, dst_add, src_mul, src_add) per case index
+    "case_key":       lambda c: (c[2], c[1], c[3]),   # (col, fine_x, rows_m1) from (wi, fx, col, rows_m1)
+    "make_blk":       lambda h, c, x: _pack_objsh2(h.dst, h.src, x, c[3], c[0]),
+}
+
+
+# ---- objshift (colour-indexed, phase 2) cases: mirror test_blit_engines.py's objshift fuzz ----
+# Both base_cells families, every fine-x, the LEFT/RIGHT clip-ladder columns + off-edge both sides + the
+# base span, and the same four (colour, rows_m1, stride) tuples the host fuzz uses — which cover strides
+# 8 / 0x10 / -8 / 0xa8 (the SIGNED source step: 8 -> net 0 re-reads the row, 0xa8 -> -160, -8 -> +16).
+OSH_COLUMNS = (-32, -24, -16, -8, 0x0, 0x30, 0x40, 0x78, 0x88, 0x90, 0x98, 0xa0)
+OSH_COLOR_ROW_STRIDE = ((3, 3, 8), (11, 0, 0x10), (14, 5, -8 & 0xffff), (7, 0x1f, 0xa8))
+OSH_BASE_CASES = [(bc, fx, col, color, rows_m1, stride)
+                  for bc in (1, 2)
+                  for fx in range(16)
+                  for col in OSH_COLUMNS
+                  for (color, rows_m1, stride) in OSH_COLOR_ROW_STRIDE]
+
+# F1: bit-15-set rows_m1 draws NOTHING (rows = (int16)rows_m1 + 1 <= 0); the asm's `bmi` must guard the
+# 16-bit dbra. Over a left-clip / base / right-clip column, both base_cells, two fine-x.
+OSH_HIGH_ROW_CASES = [(bc, fx, col, 7, rows_m1, 8)
+                      for bc in (1, 2)
+                      for fx in (0, 7)
+                      for col in (-8, 0x40, 0x90)
+                      for rows_m1 in (0xffff, 0x8000)]
+
+OSH_CASES = OSH_BASE_CASES + OSH_HIGH_ROW_CASES
+
+# 0x0 / 0x40 are BASE (on-screen, drawing) for BOTH base_cells families — the positive control (F4).
+OSH_BASE_DRAW_COLS = (0x0, 0x40)
+
+# A distinct-byte 16 x 8 color_pairs table (bench_main.c OBJSH_PAIRS_BYTES) staged into objsh_pairs so
+# each colour nibble selects a different 4-plane fill — the colour gate bits vary case to case.
+OSH_PAIRS = bytes((i * 8 + j * 37 + 5) & 0xff for i in range(16) for j in range(8))
+
+
+def _pack_objsh(dst, src, pairs, x, color, rows_m1, stride, base_cells):
+    """ObjshArgs (bench_main.c): dst, dst_off, src, src_off (u32); x, color, rows_m1 (u16); stride (i16);
+    color_pairs (u32); base_cells (i32)."""
+    return struct.pack(">IIIIHHHHIi", dst, DST_OFF, src, DST_OFF,
+                       x & 0xffff, color & 0xffff, rows_m1 & 0xffff, stride & 0xffff, pairs, base_cells)
+
+
+OBJSHIFT = {
+    "name":      "objshift",
+    "run_c":     "bench_objsh_run_c",
+    "run_asm":   "bench_objsh_run_asm",
+    "dst_sym":   "objsh_dst",
+    "src_sym":   "objsh_src",
+    "args_sym":  "objsh_args",
+    "pairs_sym": "objsh_pairs",
+    "pairs_data": OSH_PAIRS,
+    "cases":     OSH_CASES,
+    "base_draw_cols": OSH_BASE_DRAW_COLS,
+    "noise_seeds":    (149, 11, 811, 17),   # (dst_mul, dst_add, src_mul, src_add) per case index
+    "case_key":       lambda c: (c[2], c[1], c[4]),   # (col, fine_x, rows_m1) from (bc, fx, col, color, rows_m1, stride)
+    "make_blk":       lambda h, c, x: _pack_objsh(h.dst, h.src, h.pairs, x, c[3], c[4], c[5], c[0]),
 }
 
 
@@ -114,20 +174,30 @@ class _Harness:
         self.dst = self.syms[desc["dst_sym"]]
         self.src = self.syms[desc["src_sym"]]
         self.args = self.syms[desc["args_sym"]]
+        # The colour engine indexes a color_pairs table (read-only); stage a fixed distinct-byte table
+        # there so the colour gate bits vary. The plain engine has no such buffer (pairs stays None).
+        self.pairs = self.syms[desc["pairs_sym"]] if desc.get("pairs_sym") else None
+        self.pairs_data = desc.get("pairs_data")
 
     def run(self, wrapper, blk, noise_dst, noise_src):
         mem = bytearray(self.mem_t)
         mem[self.dst:self.dst + BUF_BYTES] = noise_dst
         mem[self.src:self.src + BUF_BYTES] = noise_src
+        if self.pairs is not None:
+            mem[self.pairs:self.pairs + len(self.pairs_data)] = self.pairs_data
         mem[self.args:self.args + len(blk)] = blk
         self.emu.run_bench(mem, self.syms[wrapper], arg0=0, sp=self.sp, sentinel=self.sentinel)
         return mem
 
     def compare_region(self, mem):
         """The slice the C and asm runs must agree on (F5): the dst window bracketed by GUARD bytes on
-        each side + the whole src buffer. Any difference outside the window = a wild asm store."""
-        return bytes(mem[self.dst - GUARD:self.dst + BUF_BYTES + GUARD]) + \
+        each side + the whole src buffer (+ the read-only color_pairs table, if any). Any difference
+        outside the dst window = a wild asm store (into the src or the pairs table)."""
+        r = bytes(mem[self.dst - GUARD:self.dst + BUF_BYTES + GUARD]) + \
             bytes(mem[self.src:self.src + BUF_BYTES])
+        if self.pairs is not None:
+            r += bytes(mem[self.pairs:self.pairs + len(self.pairs_data)])
+        return r
 
     def dst_window(self, mem):
         return bytes(mem[self.dst:self.dst + BUF_BYTES])
@@ -156,34 +226,51 @@ def _draws_zero_rows(rows_m1):
     return bool(rows_m1 & 0x8000)
 
 
-@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
-def test_objshift2_asm_matches_c(chunk, capsys):
-    """Every objshift2 case, C entry vs asm entry, byte-exact over the bracketed dst window + src."""
-    desc = OBJSHIFT2
+def _run_engine_chunk(desc, chunk, capsys):
+    """Run one chunk of a descriptor's cases: each case through the C entry and the asm entry, byte-exact
+    over the bracketed region (dst window + GUARD + src, plus the color_pairs table if the engine has one).
+    Descriptor-driven so both engines share ONE runner (F12); the two pytest entry points below keep the
+    per-engine labels and xdist sharding. `case_key` pulls (col, fine_x, rows_m1) out of the engine's case
+    tuple; `make_blk` builds its param block; a mismatch/dead entry records the whole case tuple."""
     h = _harness(desc)
+    dst_mul, dst_add, src_mul, src_add = desc["noise_seeds"]
     bad = []
     dead = []
-    for idx, (wi, fx, col, rows_m1) in enumerate(desc["cases"]):
+    for idx, case in enumerate(desc["cases"]):
         if idx % FUZZ_CHUNKS != chunk:
             continue
+        col, fx, rows_m1 = desc["case_key"](case)
         # Same noise into dst+src for both runs; a distinct seed per case exercises real mask/pixel bits.
-        nd = _noise(idx * 131 + 7, BUF_BYTES)
-        ns = _noise(idx * 977 + 13, BUF_BYTES)
+        nd = _noise(idx * dst_mul + dst_add, BUF_BYTES)
+        ns = _noise(idx * src_mul + src_add, BUF_BYTES)
         x = _x_for(col, fx)
-        blk = desc["pack"](h.dst, h.src, x, rows_m1, wi)
+        blk = desc["make_blk"](h, case, x)
         cm = h.run(desc["run_c"], blk, nd, ns)
         am = h.run(desc["run_asm"], blk, nd, ns)
         wc, wa = h.compare_region(cm), h.compare_region(am)
         if wc != wa:
             diff = sum(1 for i in range(len(wc)) if wc[i] != wa[i])
-            bad.append((wi, fx, col, rows_m1, diff))
+            bad.append(case + (diff,))
         # F4 positive control: a base-drawing case MUST change dst from the noise baseline. If it didn't,
         # the harness is dead (broken param block / renamed wrapper) and C==asm would false-green.
-        if col in BASE_DRAW_COLS and not _draws_zero_rows(rows_m1):
+        if col in desc["base_draw_cols"] and not _draws_zero_rows(rows_m1):
             if h.dst_window(cm) == nd:
-                dead.append((wi, fx, col, rows_m1))
+                dead.append(case)
     with capsys.disabled():
         n = sum(1 for i in range(len(desc["cases"])) if i % FUZZ_CHUNKS == chunk)
-        print(f"  objshift2 asm chunk {chunk}: {len(bad)} mismatches, {len(dead)} dead ({n} cases)")
+        print(f"  {desc['name']} asm chunk {chunk}: {len(bad)} mismatches, {len(dead)} dead ({n} cases)")
     assert not dead, f"positive control: C drew nothing on a base case (dead harness?): {dead[:8]}"
     assert not bad, f"asm diverges from C reference: {bad[:8]}"
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_objshift2_asm_matches_c(chunk, capsys):
+    """Every objshift2 case, C entry vs asm entry, byte-exact over the bracketed dst window + src."""
+    _run_engine_chunk(OBJSHIFT2, chunk, capsys)
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_objshift_asm_matches_c(chunk, capsys):
+    """Every objshift (colour-indexed) case, C entry vs asm entry, byte-exact over the bracketed dst
+    window + src + the read-only color_pairs table."""
+    _run_engine_chunk(OBJSHIFT, chunk, capsys)

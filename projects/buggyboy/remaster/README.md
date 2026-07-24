@@ -70,9 +70,9 @@ makes differential validation possible across the two layouts. It never ships in
 
 ```
 include/   screen.h (framebuffer format)   game.h (native state structs — grows per subsystem)
-           blit_const.h (fine-x blit constants shared by src/blit.c and the asm core)
+           blit_const.h (fine-x blit constants shared by src/blit.c and the asm cores)
 src/       main.c + one file per subsystem (road.c, objects.c, hud.c, score.c, game_update.c, …)
-src/asm/   hand-written m68k cores for the hottest render leaves (objshift2.S); the C in src/*.c stays
+src/asm/   hand-written m68k cores for the hottest render leaves (objshift2.S, objshift.S); the C in src/*.c stays
            the byte-exact reference, and a per-core flag (game.h RM_ASM_* + the RM_BLIT_* dispatch macro)
            picks asm on the m68k builds / C on the host — see render/atari/README.md and PERF30.md A3
 test/      capture_ref.py (golden framebuffers from recreate)  equiv.py (candidate vs reference)

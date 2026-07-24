@@ -78,7 +78,12 @@ COMPOSITES = [
 ASM_AB = [
     ("objshift2 C ref",     "bench_objshift2_c"),
     ("objshift2 asm",       "bench_objshift2_asm"),
+    ("objshift C ref",      "bench_objshift_c"),
+    ("objshift asm",        "bench_objshift_asm"),
 ]
+# Head-to-head print pairs, derived from the row list above (laid out C-ref, asm, C-ref, asm ...): each
+# asm row pairs with the C-ref row just before it, so its ratio is measured against the right reference.
+ASM_AB_PAIRS = [(ASM_AB[i][0], ASM_AB[i + 1][0]) for i in range(0, len(ASM_AB), 2)]
 
 # Remaster wrappers that need a built control table (and, for draw_frame, the pre-rotated scroll
 # copies) before the measured call — same reason recon preps geometry for its road readers.
@@ -230,17 +235,19 @@ def main():
     for label, _, _ in COMPOSITES:
         row(label)
 
-    # PERF30 A3: objshift2 hand-asm vs the C reference, one representative fixed-pass blit (folded into
-    # remaster_costs' one staged image — F8).
-    print("\n  objshift2 engine — hand-asm vs C reference (one base-straddle-3 blit, 0x2a rows;")
-    print("  the composed objlist_fixed/object_tree/draw_frame rows above ALREADY run the asm path):")
-    c_cyc = rm["objshift2 C ref"][1]
-    for label, _rm in ASM_AB:
-        i, c = rm[label]
-        line = f"    {label:<18}{i:>10}{c:>10}{1000 * c / CPU_HZ:>8.2f} ms"
-        if label != "objshift2 C ref":
-            line += f"   {c / c_cyc:.3f}x C"
-        print(line)
+    # PERF30 A3: the two hand-asm blit cores vs their C references, one representative blit each (folded
+    # into remaster_costs' one staged image — F8). objshift2 = fixed pass (base-straddle-3); objshift =
+    # pass 1 (colour-indexed, base-straddle-1). The composed objlist_*/object_tree/draw_frame rows above
+    # ALREADY run both asm paths (the bench build defines RM_ASM_BLIT, like the game).
+    print("\n  fine-x blit engines — hand-asm vs C reference (one representative blit each):")
+    for cref_label, asm_label in ASM_AB_PAIRS:
+        c_cyc = rm[cref_label][1]
+        for label in (cref_label, asm_label):
+            i, c = rm[label]
+            line = f"    {label:<18}{i:>10}{c:>10}{1000 * c / CPU_HZ:>8.2f} ms"
+            if label == asm_label:
+                line += f"   {c / c_cyc:.3f}x C"
+            print(line)
 
     # render_road vs the byte-exact machine model (recon's tight register/goto transcription).
     if rec and "render_road_machine" in rec:

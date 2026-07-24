@@ -26,11 +26,10 @@
 #endif
 
 /* ---- shared fine-x geometry ---- */
-#define OBJSH_NIBBLE     0xf     /* fine-x / colour-index low nibble */
-#define OBJSH_SUBPX_BITS 16      /* left-shift count = 16 - fine_x */
-/* OBJSH_CELL_BYTES is shared with the asm core — defined in blit_const.h (included above). */
+/* OBJSH_NIBBLE / OBJSH_SUBPX_BITS / COL_ALIGN / OBJSH_CELL_BYTES / OBJSH_RIGHT_BOUND are shared with the
+ * asm cores — defined in blit_const.h (included above), the single source for the blit engines (F11).
+ * (object.c carries a historical duplicate COL_ALIGN 0xfff8 of its own — see PERF30 A3 follow-ups.) */
 #define OBJSH_PLANES     4
-#define COL_ALIGN        0xfff8  /* aligned_col = ((int16)x >> 1) & this (8-byte column) */
 
 static uint16_t objsh_aligned_col(uint16_t x) {
     return (uint16_t)((int16_t)x >> 1) & (uint16_t)COL_ALIGN;
@@ -58,7 +57,7 @@ static void plane_write_p(uint8_t *dst_col, uint16_t mask, uint16_t pix) {
  * a per-plane colour fill (from color_pairs[colour]). Two width families: base_cells 1 (0x14680
  * "0x98") / 2 (0x144ac "0x90").
  * ============================================================================================ */
-#define OBJSH_RIGHT_BOUND 0x98    /* absolute right screen bound (aligned_col) */
+/* OBJSH_RIGHT_BOUND is shared with the asm core — defined in blit_const.h (included at the top). */
 #define OBJSH_MASK_HI     0xffff0000u
 
 static uint32_t objsh_build_mask_p(const uint8_t *src_words) {

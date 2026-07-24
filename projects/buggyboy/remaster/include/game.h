@@ -548,7 +548,7 @@ void rm_blit_objshift2(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint3
  *
  * Per-core selection flags (F10): RM_ASM_BLIT is the umbrella the m68k builds pass; it turns on each
  * individual core flag (unless already defined), and each engine's dispatch macro keys off its OWN
- * flag. So the objshift2 core is RM_ASM_OBJSHIFT2, and phase 2's rm_blit_objshift core will be
+ * flag. So the objshift2 core is RM_ASM_OBJSHIFT2, and phase 2's rm_blit_objshift core is
  * RM_ASM_OBJSHIFT — each independently bisectable (define/undef one flag to A/B a single core), while
  * the umbrella keeps the build scripts a single -DRM_ASM_BLIT. The host test build defines neither, so
  * every RM_BLIT_* macro resolves to the C reference and the host suite keeps pinning C; the asm-vs-C
@@ -556,6 +556,9 @@ void rm_blit_objshift2(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint3
 #ifdef RM_ASM_BLIT
 #  ifndef RM_ASM_OBJSHIFT2
 #    define RM_ASM_OBJSHIFT2
+#  endif
+#  ifndef RM_ASM_OBJSHIFT
+#    define RM_ASM_OBJSHIFT
 #  endif
 #endif
 
@@ -565,6 +568,18 @@ void rm_blit_objshift2_asm(uint8_t *dst, uint32_t dst_off, const uint8_t *src, u
 #define RM_BLIT_OBJSHIFT2 rm_blit_objshift2_asm
 #else
 #define RM_BLIT_OBJSHIFT2 rm_blit_objshift2
+#endif
+
+/* PERF30 A3 phase 2 — hand-written m68k core for the colour-indexed pass-1 engine (src/asm/objshift.S).
+ * Same umbrella (RM_ASM_BLIT) and per-core flag shape as objshift2; the C rm_blit_objshift stays the
+ * byte-exact REFERENCE, pinned vs the asm by test/test_asm_blit.py under Musashi. */
+#ifdef RM_ASM_OBJSHIFT
+void rm_blit_objshift_asm(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                          uint16_t x, uint16_t color, uint16_t rows_m1, int16_t stride,
+                          const uint8_t *color_pairs, int base_cells);
+#define RM_BLIT_OBJSHIFT rm_blit_objshift_asm
+#else
+#define RM_BLIT_OBJSHIFT rm_blit_objshift
 #endif
 
 /* objsprite engine (recreate's @0x131f6): the third fine-x blitter — four-word SHOW mask, no colour.

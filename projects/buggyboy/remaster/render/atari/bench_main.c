@@ -277,6 +277,60 @@ void bench_objsh2_run_asm(void) {
                   objsh2_args.x, objsh2_args.rows_m1, objsh2_args.width_idx);
 }
 
+/* ---- PERF30 A3 phase 2: objshift (colour-indexed pass-1) hand-asm core, C vs asm + differential ----
+ * Same shape as the objshift2 block above (buffers started mid-buffer, ONE marshalling macro, a static
+ * microbench pair for bench.py, and a param-block pair for test/test_asm_blit.py). The extra buffer here
+ * is objsh_pairs: the 16-entry x 8-byte color_pairs table the engine indexes by the colour nibble — the
+ * differential test stages a distinct-byte table into it and fuzzes the nibble so the colour gate bits
+ * actually vary; the static microbench reads the real baked fixture_color_pairs. */
+#define OBJSH_PAIRS_BYTES  (16 * 8)         /* 16 colour entries x one 4-plane fill pair (8 bytes) */
+uint8_t objsh_dst[OBJSH2_BUF_BYTES] __attribute__((aligned(2)));
+uint8_t objsh_src[OBJSH2_BUF_BYTES] __attribute__((aligned(2)));
+uint8_t objsh_pairs[OBJSH_PAIRS_BYTES] __attribute__((aligned(2)));
+
+/* Representative gate-frame shape: base_cells 1 -> BASE straddle 1, fine_x 7, colour 7, stride 8 (the
+ * pass-1 hi/tail callers' mode word), 0x2a rows — the dominant pass-1 blit. bench.py measures _c vs _asm. */
+#define OBJSH_BENCH_X       ((0x40 << 1) | 7)   /* aligned col 0x40, fine_x 7 -> BASE */
+#define OBJSH_BENCH_COLOR    7
+#define OBJSH_BENCH_ROWS_M1  0x2a
+#define OBJSH_BENCH_STRIDE   8
+#define OBJSH_BENCH_BCELLS   1
+/* ONE 10-arg marshalling site, shared by the microbench pair (static args) and the param-block pair. */
+#define OBJSH_INVOKE(engine, D, DOFF, S, SOFF, X, COL, ROWS, STR, CP, BC) \
+    engine((uint8_t *)(D), (DOFF), (const uint8_t *)(S), (SOFF), (X), (COL), (ROWS), (STR), \
+           (const uint8_t *)(CP), (BC))
+void bench_objshift_c(void) {
+    OBJSH_INVOKE(rm_blit_objshift, objsh_dst, OBJSH2_BUF_MID, objsh_src, OBJSH2_BUF_MID,
+                 OBJSH_BENCH_X, OBJSH_BENCH_COLOR, OBJSH_BENCH_ROWS_M1, OBJSH_BENCH_STRIDE,
+                 fixture_color_pairs, OBJSH_BENCH_BCELLS);
+}
+void bench_objshift_asm(void) {
+    OBJSH_INVOKE(rm_blit_objshift_asm, objsh_dst, OBJSH2_BUF_MID, objsh_src, OBJSH2_BUF_MID,
+                 OBJSH_BENCH_X, OBJSH_BENCH_COLOR, OBJSH_BENCH_ROWS_M1, OBJSH_BENCH_STRIDE,
+                 fixture_color_pairs, OBJSH_BENCH_BCELLS);
+}
+
+/* Param block the differential test pokes (all 10 args; dst/src/color_pairs are absolute addresses of
+ * staged buffers in the flat Musashi image). Field order + sizes mirror the test's struct.pack layout. */
+typedef struct {
+    uint32_t dst, dst_off, src, src_off;
+    uint16_t x, color, rows_m1;
+    int16_t  stride;
+    uint32_t color_pairs;
+    int32_t  base_cells;
+} ObjshArgs;
+ObjshArgs objsh_args;
+void bench_objsh_run_c(void) {
+    OBJSH_INVOKE(rm_blit_objshift, objsh_args.dst, objsh_args.dst_off, objsh_args.src, objsh_args.src_off,
+                 objsh_args.x, objsh_args.color, objsh_args.rows_m1, objsh_args.stride,
+                 objsh_args.color_pairs, objsh_args.base_cells);
+}
+void bench_objsh_run_asm(void) {
+    OBJSH_INVOKE(rm_blit_objshift_asm, objsh_args.dst, objsh_args.dst_off, objsh_args.src, objsh_args.src_off,
+                 objsh_args.x, objsh_args.color, objsh_args.rows_m1, objsh_args.stride,
+                 objsh_args.color_pairs, objsh_args.base_cells);
+}
+
 /* The object stages after the road — ground through the view-ordered fixed-pass/buggy tail. ONE
  * copy, called by both composites, so they cannot drift from each other (both must keep mirroring
  * game_main.c's draw_frame). */

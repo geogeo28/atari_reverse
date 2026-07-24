@@ -10,7 +10,7 @@ CAND    := build/libremaster.so
 SRC     := $(wildcard src/*.c)
 RECON   := $(RECREATE)/build/libbuggyboy.so
 # The cross-compiled m68k bench.elf — needed by test/test_asm_blit.py (the Musashi differential that
-# pins the hand-asm objshift2 core byte-exact vs the C reference; PERF30 A3). Built by bench_build.sh.
+# pins both hand-asm cores (objshift2 + objshift) byte-exact vs the C references; PERF30 A3). Built by bench_build.sh.
 BENCH_ELF := render/atari/build/bench.elf
 
 $(CAND): $(SRC) $(wildcard include/*.h)

@@ -967,3 +967,89 @@ which drive the dispatcher through all three families — not on a direct leaf-l
 (PERF30 L2/E-sweep noted the register-pressure wall no C shape relieves). Not started here. F8/F9 already
 de-duplicated the bench harness (`bench.py` folds the A/B rows into one staged image; `bench_main.c` shares
 one arg-marshalling macro) so the phase-2 core slots in with minimal new scaffolding.
+
+### A3 phase 2 — hand-asm objshift core LANDED (2026-07-23; the colour-indexed pass-1 engine dropped to asm)
+
+The second (and last hot) fine-x engine, `rm_blit_objshift @0x14680`, is now a hand-written m68k core
+(`src/asm/objshift.S`) behind the same `-DRM_ASM_BLIT` umbrella (its own per-core flag `RM_ASM_OBJSHIFT`,
+dispatch macro `RM_BLIT_OBJSHIFT` at `object_list.c`'s three call sites). **The C stays the byte-exact
+REFERENCE** (`rm_blit_objshift`, still compiled + fuzz-pinned); the asm mirrors the ORIGINAL game's own
+`blit_objshift` (the measured template, **110,572 cyc**).
+
+**Result — it lands essentially at the original.** On the gate frame (`profile.py bench_objlist_pass1`):
+**`rm_blit_objshift_asm` = 111,192 cyc = 13.90 ms**, vs the C's **181,836** (with the per-function IRA
+attribute) — **−70,644 cyc (0.61×)**, and only **+620 cyc (+0.6%) over the original's 110,572**. That is
+below the 115–135k target zone (the target budgeted more C-ABI overhead than the register-held source
+rewind actually costs). `bench_objlist_pass1` **229,948 → 159,304 cyc** (the whole pass-1 scope, asm path;
+229,948 is the C3-landed baseline = 28.74 ms, and 229,948 − 159,304 = 70,644 = exactly the engine delta).
+Same-build A/B microbench (`bench.py`, one base-straddle-1 blit × 0x2a rows): **objshift C 40,616 → asm
+24,762 cyc = 0.610×** (data-independent). Whole object tree **503,468 cyc = 62.93 ms**; TOTAL (frame,
+funcs-sum) **1,190,300 cyc = 148.79 ms** (objshift2 phase-1 basis was 157.60 ms → −8.8 ms from this core).
+
+**Gap to the original, decomposed honestly (F2).** Headline: **+620 cyc** — the recon's asm over the gate
+frame's **6 objshift calls** (111,192) vs the original's **110,572** template. The scopes differ (caveat
+below), so read +620 as indicative, not a clean per-call delta. The terms, over the recon's 6-call frame:
+- **movem save/restore, +888.** The C-ABI entry adds `movem.l %d2-%d7/%a2-%a3`: 72 cyc/call save
+  (`MOVEM.L` 8 regs reg→mem = 8+8·8) + 76 restore (mem→reg = 12+8·8) = 148/call × 6 (the entry-`movem`
+  PC profiled exactly 432 = 6 × 72, confirming the call count).
+- **register src-rewind claw-back, −760.** The asm rewinds the source with a register op `suba.l %a3,%a1`
+  (8 cyc) where the original does a memory-indirect `suba.w (a3),a1` (12 cyc; its register ABI passed
+  `stride` BY POINTER in a3) — 4 cyc/row × ~190 rows across the frame.
+- **C-ABI marshalling + in-function `color_pairs` indexing, ≈ +500.** A REAL net add: the original receives
+  its args in registers and bakes `color_pairs[color]` as an immediate; the recon reads the 10 stack slots
+  (`movea.l`/`adda.l`/`move.w`) and indexes `color_pairs` at runtime. The original's caller-side register
+  setup is OUTSIDE the 110,572 baseline, so it cannot cancel this.
+
+These terms sum to 888 − 760 + 500 = **+628 ≈ the measured +620**. NOT a single "movem" term. **Scope
+caveat:** the original's 110,572 is an **8-call** frame — 2 of those are off-edge early returns (≈ +280)
+the recon's frame does not make; on matched scope (drop the 2 off-edge returns) the gap widens to ≈ **+900
+≈ the movem term** alone. Either framing lands the engine within ~0.6–0.8% of the original.
+
+**What the asm does differently from the C (why it wins).** The engine is COLOUR-INDEXED: each of the 4
+planes ORs the shifted source word gated by that plane's `color_pairs[color]` fill. The asm (a) loads the
+four fill words ONCE per call into `d3`/`d5` as two 32-bit pairs and `swap`-toggles them per plane (2
+registers hold 4 halves — no per-plane `color_pairs` reload, no `objsh_fill_half` ladder), (b) builds the
+`~(a|b|c)&d` SHOW mask with a `moveq #-1` seed so the load-bearing `0xFFFF` high word is free, (c) fully
+unrolls all 4 planes with `(a1)+` source walking and interleaved `and.w`/`or.w` memory RMW (plane 3 folds
+the transparency `~mask` inline), (d) bakes the per-family dst rewind as an immediate and holds the runtime
+src rewind (`stride + 8·(cells−1)`) in `a3`. The families (BASE / LEFT ladder with skips / RIGHT ladder off
+the 0x98 bound) and both `base_cells` 1/2 width families dispatch to straight-line unrolled row loops (no
+per-cell branch). The signed `stride` (8 → net source step 0 = re-read the row; 0xa8 → −160; −8 → +16) is
+handled by `suba.l %a3,%a1` where `a3` is sign-extended from the stack slot — the fuzz drives all four.
+
+**Bring-up bug the fuzz caught.** The base-vs-right ceiling test first used `d3` as a scratch (`move.w
+%d0,%d3` …) — but `d3` holds colour fill pair 0. That clobbered `fill.plane[1]` (its low word) while
+leaving `fill.plane[0]` (high word) intact, so plane 0 was correct and plane 1 diverged by a few bytes.
+Reworked the test to use only `d0`/`d2`. The differential flagged it on the first run (small per-plane
+diff on every BASE case); pinned.
+
+**Verification.** `test/test_asm_blit.py` gains an `OBJSHIFT` engine descriptor (F12 — a second descriptor
++ case table, not a parallel harness class; the one engine-agnostic `_Harness` gained an optional read-only
+`color_pairs` buffer it stages with a distinct-byte table so the colour gate bits vary). Both engines' chunk
+tests now call ONE descriptor-driven runner `_run_engine_chunk` (the objshift2/objshift bodies had drifted
+into a ~25-line copy-paste), with two thin per-engine pytest entry points so xdist sharding and the
+per-engine labels stay intact. Cases mirror `test_blit_engines.py`'s objshift fuzz and widen it: both
+`base_cells` families × 16 fine-x × 12 clip/base/off-edge columns × the same four `(color, rows_m1, stride)`
+tuples (strides **8 / 0x10 / −8 / 0xa8**), PLUS a bit-15-set `rows_m1` list (F1: the C draws 0 rows; the
+asm's `bmi` guards the 16-bit `dbra`) = **1,560 cases**, sharded into 8 chunks. The compare is bracketed
+(F5: dst window + GUARD + src + the color_pairs table) with the F4 positive control. **Mutation check (both
+engines, re-run through the reshaped runner):** flipping objshift's `OSH_PLANE_LAST` `not.w %d2` → `not.w
+%d1` (wrong register for the col1 transparency fill) fails all 8 objshift chunks; flipping objshift2's cell
+`not.w %d1` → `not.l %d1` (corrupts the load-bearing 0xFFFF high mask word) fails all 8 objshift2 chunks;
+each restored, green again. `make test` **574 passed** (558 host + 8 objshift2 + 8 objshift asm chunks);
+`run_golden.py` **MATCH on all 5 legs** (the GAME binary now runs BOTH asm cores in Hatari — the end-to-end
+pin). The shared constants `OBJSH_NIBBLE`/`OBJSH_SUBPX_BITS`/`COL_ALIGN`/`OBJSH_RIGHT_BOUND` were hoisted
+from `blit.c` into `include/blit_const.h` (F11), joining `OBJSH_CELL_BYTES` there (consumed by `blit.c` +
+`objshift.S`; `objshift2.S` bakes its own immediates and takes only `OBJSH_CELL_BYTES` / `OBJSH2_*`).
+
+**Coverage honesty.** Two branches are unexercised by BOTH the host fuzz (`test_blit_engines.py`) and the
+Musashi differential, mirroring each other, because no game data reaches them: `base_cells` ∉ {1,2} (the
+asm's BASE path falls to the 2-cell family — see the objshift.S CONTRACT note; every `object_list.c` caller
+passes 1 or 2) and `color` ≥ 16 (the fill index `(color & 0xf) << 3` only ever sees nibbles 0..15). Per
+CLAUDE.md these stay honestly unpinned — a branch the game's own data never drives, not a missing test.
+
+**A3 follow-ups (deferred).** `src/object.c` carries a historical duplicate `#define COL_ALIGN 0xfff8` of
+the value now hoisted into `blit_const.h`; fold it onto the shared constant (out of scope here — object.c
+was untouched, so `blit.c`'s "single source" note points at the duplicate rather than claiming to erase it).
+
+**Both hot fine-x engines are now hand-asm.** `objsprite` (the third, cold family) stays C. A3 is done.
