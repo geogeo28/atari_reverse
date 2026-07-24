@@ -356,26 +356,26 @@ staged leg-0 boot frame. Build first: `bash render/atari/bench_build.sh`. `tools
 breaks any stage down to cycles-per-function (and per-PC with `--lines`) via the oracle's
 cycle histogram.
 
-Current (8 MHz ST, 160000-cycle 50 Hz frame budget) — the game frame is **172.1 ms ≈ 5.8 fps** on the
+Current (8 MHz ST, 160000-cycle 50 Hz frame budget) — the game frame is **167.8 ms ≈ 6.0 fps** on the
 staged frame (203 ms before PERF30 A1 landed on `rm_blit_objshift`). Caveat before reading the object rows: the staged frame is the game's BOOT frame — a
 leg start, with the start gate spanning the road — which is close to the object tree's worst case
 (see the frame-cost distribution below the table):
 
 | stage | remaster ms | recon ms | rm/rec | notes |
 |-------|-------------|----------|--------|-------|
-| player_update + course + views + prefix | 2.01 | — | | scalar state, noise |
-| build_road_geometry | 3.87 | 3.91 | 0.99× | |
-| render_road | 50.68 | 55.47 | 0.91× | 67% in the per-scanline core, 33% in bands B/D |
-| blit_road_scroll | 11.98 | 33.55 | 0.36× | pre-rotated copies + unrolled fill |
-| draw_ground | 1.16 | — | | |
-| draw_fg_sprite | 2.40 | 2.39 | 1.00× | |
-| **objlist pass 1 (sprites)** | **31.70** | — | | ~79% inside `rm_blit_objshift`; **PERF30 A1 + P1/P2 + P4a + review-fix constant-row-step fold landed** (A1 value-passed cursor 51.50 → 42.83; P1 hoist fills + P2 unroll planes 42.83 → 36.57; code-review row-rewind hoist → 36.23; P4a real-pointer cursors → 34.47; review-fix folded the disguised-constant row step 34.47 → 31.70 = `rm_blit_objshift` 288,256 → 199,152 cyc; P3 measured no-op, reverted; **L2 fill-pair swap-packing REGRESSED it +14,352 cyc, reverted** — PERF30 L2) |
-| draw_object | 0.89 | — | | |
-| objlist pass 2 | 0.09 | — | | empty on this frame |
-| **objlist fixed pass** | **44.66** | — | | 97% inside `rm_blit_objshift2`; A1 does NOT apply (value-passing REGRESSED it +1.98 ms, PERF30 A1) — stays by-pointer; **PERF30 P4b + review-fix fold + L1 straddle-unroll landed** (P4b real-pointer pointees 435,940 → 431,380; review-fold 431,380 → 405,540; **L1 unrolled the 2-iteration straddle pixel loop → displacement addressing, 405,540 → 345,264 cyc, −7.53 ms**) |
-| draw_buggy | 5.16 | 5.22 | 0.99× | |
-| draw_hud | 17.44 | 17.20 | 1.01× | 10.6 in the phases (dashboard masked blit), 6.0 in glyph_run |
-| **TOTAL (frame)** | **172.1** | | | was 203.2 before A1, 194.6 after A1, 188.0 after P1/P2, 185.6 after P4, 179.6 after the review-fix fold; **L1 straddle-unroll on `rm_blit_objshift2` took it to 172.1** (funcs-sum basis); recon (recreate-parity) is ~240 ms on this frame; the ORIGINAL asm is **110 ms (9.1 fps)** — remaster is still slower than the original here, NOT faster (the ~240 ms is the recon, not the original — see PERF30.md Part 0) |
+| player_update + course + views + prefix | 1.64 | — | | scalar state, noise; −0.37 from the -O3 sweep |
+| build_road_geometry | 3.90 | 3.91 | 1.00× | |
+| render_road | 50.64 | 55.47 | 0.91× | 67% in the per-scanline core, 33% in bands B/D |
+| blit_road_scroll | 12.06 | 33.55 | 0.36× | pre-rotated copies + unrolled fill |
+| draw_ground | 0.88 | — | | −0.28 from -O3 |
+| draw_fg_sprite | 2.06 | 2.39 | 0.86× | −0.34 from -O3 (objsprite family) |
+| **objlist pass 1 (sprites)** | **28.93** | — | | ~79% inside `rm_blit_objshift`; **PERF30 A1 + P1/P2 + P4a + review-fix fold + GCC-level sweep landed** (…P4a → 34.47; review-fix folded the disguised-constant row step → 31.70; **GCC-level sweep: global -O3 + a per-function `optimize("-fira-region=one","-fira-algorithm=priority")` on `rm_blit_objshift` let IRA place the pressure-bound cursor triple — the function itself 199,152 → 181,836 cyc (−17,316), and the whole pass bench_objlist_pass1 253,564 → 231,480 (−22,084 = 31.70 → 28.93 ms; the extra −4,768 is -O3 on the dispatcher glue)**); P3 no-op reverted; **L2 swap-packing +14,352, reverted; E2 local register vars +15,208, dropped; E3 LTO breaks the harness, dropped** — PERF30 "GCC-level sweep") |
+| draw_object | 0.90 | — | | |
+| objlist pass 2 | 0.05 | — | | empty on this frame |
+| **objlist fixed pass** | **44.55** | — | | 97% inside `rm_blit_objshift2`; A1 does NOT apply (value-passing REGRESSED it +1.98 ms, PERF30 A1) — stays by-pointer; **P4b + review-fix fold + L1 straddle-unroll + -O3 sweep landed** (…L1 → 345,264 cyc; **global -O3 shaved a further −834 to `rm_blit_objshift2` 356,436; region=one/priority REGRESS objshift2 (+4,440) so its attribute is objshift-only** — PERF30 "GCC-level sweep") |
+| draw_buggy | 4.56 | 5.22 | 0.87× | −0.60 from -O3 (objsprite family) |
+| draw_hud | 17.64 | 17.20 | 1.03× | 10.6 in the phases (dashboard masked blit), 6.0 in glyph_run; +0.17 under -O3 (within noise, outweighed by the objsprite wins) |
+| **TOTAL (frame)** | **167.8** | | | was 203.2 before A1, 194.6 after A1, 188.0 after P1/P2, 185.6 after P4, 179.6 after the review-fix fold, 172.1 after L1; **GCC-level sweep (-O3 + objshift allocator attribute) took it to 167.8** (funcs-sum basis; −34,062 cyc from L1); recon (recreate-parity) is ~240 ms on this frame; the ORIGINAL asm is **110 ms (9.1 fps)** — remaster is still slower than the original here, NOT faster (the ~240 ms is the recon, not the original — see PERF30.md Part 0) |
 
 Whole-tree check: `object_tree` (prefix→buggy, recreate's `g_draw_game_objects` scope) is 86.1 ms
 (was 117.2 before A1, 108.6 after A1, 102.0 after P1/P2, 99.6 after P4, 93.6 after the review-fix fold, 86.1 after L1)

@@ -36,10 +36,13 @@ echo ">> generate game fixture (road tables + pose + HUD assets + golden) from t
 "$PY" "$HERE/gen_game_fixture.py"
 
 CC=m68k-elf-gcc
-# -O2 (not -Os): the road blit primitives must inline or the per-column call overhead ~doubles the
-# render cost (see tools/bench.py). -fno-tree-loop-distribute-patterns keeps the hand-written fill
+# -O3 (was -O2, not -Os): the road blit primitives must inline or the per-column call overhead ~doubles
+# the render cost (see tools/bench.py). -O3 over -O2 measured -16,746 cyc on the gate frame and must
+# match bench_build.sh flag-for-flag (run_golden.py verifies THIS build byte-exact under these flags —
+# see PERF30.md "GCC-level sweep"). rm_blit_objshift also carries a per-function optimize() attribute in
+# blit.c that is paired with this -O3. -fno-tree-loop-distribute-patterns keeps the hand-written fill
 # loops from being turned into libc calls.
-CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
+CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
         ${GAME_EXTRA_CFLAGS:-}"
 CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \

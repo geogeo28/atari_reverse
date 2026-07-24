@@ -182,6 +182,18 @@ ObjshCursor objsh_row(ObjshCursor cur, enum objsh_family fam, int straddle,
 
 /* Colour-indexed fine-x blit. `stride` is the per-row src-stride word (recreate's blit_mode: 8 or
  * 0xa8). base_cells 1 / 2 select the width family. */
+/* Per-function register-allocator override (m68k target only; clang ignores it on the host build, so
+ * the differential tests still compile identical C). The straddle row loop is register-pressure-bound —
+ * the L2 note in PERF30.md showed GCC spills the col0/col1/sp cursor triple to the stack under the
+ * default IRA no matter how the C is shaped, and forcing residency by hand (local register vars) makes
+ * it worse. -fira-region=one + -fira-algorithm=priority let the allocator FIND the better assignment
+ * instead of us forcing it: measured bench_objlist_pass1 248,796 -> 231,480 cyc on top of the global
+ * -O3 (the function itself: 199,152 -> 181,836, -17,316). Scoped to this ONE function on purpose — the same two flags REGRESS rm_blit_objshift2
+ * (+4,440), so a per-file or global flag can't be used; the attribute is the only way to give objshift
+ * the allocator lever without touching objshift2. Byte-identical (register choice is semantically
+ * transparent) — pinned by test/test_blit_engines.py + run_golden.py. Keep paired with -O3 in
+ * build_game.sh / bench_build.sh. See PERF30.md "GCC-level sweep". */
+__attribute__((optimize("-fira-region=one", "-fira-algorithm=priority")))
 void rm_blit_objshift(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t src_off,
                       uint16_t x, uint16_t color, uint16_t rows_m1, int16_t stride,
                       const uint8_t *color_pairs, int base_cells) {

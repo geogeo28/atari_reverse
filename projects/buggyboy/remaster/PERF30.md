@@ -737,3 +737,74 @@ in 125 runs, 129 right-edge, dense span [32000,45596]):
   reach; 0x20000 → ~0x8000 frees ~192 KB), then the DENSE table fits 1 MB with margin.
 - **Rerank consequence**: A3 (hand-asm cores) now dominates — the original's asm is the measured
   proof of ~2× on the whole object tree (~50 ms available) vs A2's corrected ~8–11 ms.
+
+> **LANDED 2026-07-23 — GCC-level sweep (E1 kept; E2/E3 measured and dropped; +4.25 ms of the gate
+> frame). This is the GCC-tools attack on the register-pressure wall the L2 note identified.** L2 proved
+> that no *C shape* relieves `rm_blit_objshift`'s cursor-triple spill and that *forcing* residency by
+> hand makes it worse; this sweep went one level down to the compiler's own allocator knobs. **Final
+> config: global `-O3` (was `-O2`) in BOTH build scripts, plus a per-function
+> `__attribute__((optimize("-fira-region=one","-fira-algorithm=priority")))` on `rm_blit_objshift`
+> only.** Measured on the gate frame (`bench_build.sh` + `tools/bench.py`), one flag added at a time:
+>
+> | flag (global, on -O2 base) | objlist_pass1 | objlist_fixed | TOTAL | verdict |
+> |----------------------------|--------------:|--------------:|------:|---------|
+> | *baseline* | 253,564 | 357,270 | 1,376,672 | — |
+> | **-O3** | 248,796 | 356,436 | **1,359,926** | **KEPT** — both engines + objsprite family (buggy −4,812, fg_sprite −2,716, ground −2,224) improve; only draw_hud +1,334 (+0.17 ms, within noise) |
+> | -fira-algorithm=priority | 240,766 | 363,076 | 1,364,940 | pass1 −12,798 but fixed +5,806 AND draw_hud +7,712 (+0.96 ms) — global reject; the pass1 lever is real, scoped below |
+> | -fira-region=one | 243,966 | 357,294 | 1,370,416 | pass1 −9,598 but draw_hud +2,108 (+0.26 ms) — global reject; scoped below |
+> | -fira-region=all | 253,564 | 357,270 | 1,376,672 | no-op at -O2 |
+> | -flive-range-shrinkage | 253,564 | 357,270 | 1,376,672 | no-op |
+> | -fweb | 253,564 | 357,202 | 1,376,604 | noise |
+> | -frename-registers | 255,350 | 358,324 | 1,382,480 | REGRESSION everywhere — drop |
+> | -fno-caller-saves | 253,338 | 357,066 | 1,376,270 | noise |
+> | -fno-crossjumping | 253,564 | 357,270 | 1,379,038 | +2,366 elsewhere, blitters flat — drop |
+> | -fipa-ra | 253,564 | 357,270 | 1,376,672 | no-op |
+> | -fschedule-insns -fsched-pressure | 253,564 | 357,270 | 1,375,850 | −822 elsewhere, blitters flat (m68k has a weak scheduler); not worth the risk — drop |
+> | -funroll-loops | 341,876 | 357,982 | 1,493,064 | pass1 +88,312 — severe REGRESSION, drop |
+>
+> **The register-pressure lever is `-fira-region=one` + `-fira-algorithm=priority`, but only on
+> `rm_blit_objshift`.** Applied *globally* both regress draw_hud past the ±0.2 ms bar; applied
+> *per-file* to blit.c they help pass1 but the same two flags **REGRESS `rm_blit_objshift2` +4,440**
+> (objshift2 is arithmetic/RMW-bound, not spill-bound — priority steals the address registers its RMW
+> cell needs, the identical wall the A1 value-struct hit). The **per-function `optimize()` attribute**
+> is the only tool that scopes the allocator lever to the one function that benefits. Composition
+> matrix (on global -O3):
+>
+> | scope of region=one+priority | objlist_pass1 | objlist_fixed | TOTAL |
+> |------------------------------|--------------:|--------------:|------:|
+> | -O3 only (no allocator flag) | 248,796 | 356,436 | 1,359,926 |
+> | blit.c per-file (hits BOTH engines) | 231,824 | 360,880 (+4,440 ✗) | 1,347,398 |
+> | **attribute on objshift ONLY** | **231,480** | **356,436** | **1,342,610** ← kept |
+> | attribute region=one only | 239,676 | 356,436 | 1,350,806 |
+> | attribute priority only | 239,152 | 356,436 | 1,350,282 |
+>
+> The two flags **compose** (231,480 is far below either alone), and the attribute leaves objshift2 at
+> -O3's clean 356,436. No attribute helps objshift2 (region=one/live-range/fweb all neutral; the pair
+> regresses it) — its win is -O3's −834 only.
+>
+> **E2 (local register variables) — MEASURED REGRESSION, DROPPED.** Pinned the cursor triple to
+> a2/a3/a4 with guarded `register … __asm__("aN")` vars in the row loop (the task's exact recipe). It
+> **regressed**: on -O3 + the attribute, `rm_blit_objshift` 231,480 → 246,688 (+15,208); standalone
+> (no attribute) 253,564 → 278,844 (-O3) / 285,932 (-O2). Same wall as L2 — forcing the cursors
+> resident collides with the fills/mask/shift live set and spills worse. The allocator FINDING the
+> assignment (E1's attribute) beats us FORCING it; the attribute is E2's lever done right.
+>
+> **E3 (-flto / cross-TU dispatcher inlining) — DROPPED, incompatible with the harness.** LTO's
+> whole-program DCE internalizes every symbol reached only from *outside* the link — the `bench_*`
+> entry points (0 `T bench_` symbols survive) and the staging symbols `tools/bench.py` resolves by name
+> (`arena_block`, the prep functions), so the bench cannot even run; `-Wl,-u` force-retention hits the
+> next missing symbol. It also reflows a RWX LOAD segment the tight `tos.ld` + entry-at-0 + mkprg reloc
+> contract does not expect. The dispatcher glue (~31 k cyc) is real headroom but LTO is the wrong tool
+> for it through this name-based harness; unmeasurable and unshippable here.
+>
+> **Result:** `rm_blit_objshift` (the function) 199,152 → **181,836** (−17,316 from the attribute);
+> the whole pass `bench_objlist_pass1` 253,564 → **231,480** (−22,084 = 31.70 → 28.93 ms; the extra
+> −4,768 is -O3 on the dispatcher glue). `rm_blit_objshift2` 357,270 → **356,436** (−834, -O3 only,
+> `bench_objlist_fixed`); both engine rows improve, no other
+> row regresses past ±0.2 ms (draw_hud +0.17, outweighed by objsprite-family −1.2 ms). Gate-frame TOTAL
+> **1,376,672 → 1,342,610 cyc = 172.08 → 167.83 ms** (−34,062, −4.25 ms); object tree 86.10 → 81.97 ms.
+> Byte-exact: `make test` **558 passed** (host; clang ignores the m68k `optimize` attribute, so the
+> differential C is unchanged); `run_golden.py` **MATCH on all 5 legs** (the real gate — the flagged
+> GAME binary runs in Hatari). Both `bench_build.sh` and `build_game.sh` carry `-O3` identically; the
+> attribute lives in blit.c so both builds get it. The GCC-level lever on the blitters is now
+> **exhausted** — what remains on objshift is the hand-asm (A3) spill residue, not a compiler knob.

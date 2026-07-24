@@ -15,10 +15,14 @@ echo ">> generate game fixture (shared with the game) for the bench structs"
 "$PY" "$HERE/gen_game_fixture.py" >/dev/null
 
 CC=m68k-elf-gcc
-# -O2 (matching recreate's recon) so the hot blit primitives inline; -Os leaves them as calls and the
-# per-column overhead dominates the road blit. -fno-tree-loop-distribute-patterns: keep GCC from
-# turning the hand-written fill loops into memset/memcpy calls (as recreate does).
-CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
+# -O3 (was -O2) so the hot blit primitives inline; -Os leaves them as calls and the per-column overhead
+# dominates the road blit. -O3 over -O2 measured -16,746 cyc on the gate frame (172.08 -> 169.99 ms):
+# both fine-x engines improve (objshift -4,768, objshift2 -834) and the objsprite family broadly
+# (draw_buggy -4,812, draw_fg_sprite -2,716, draw_ground -2,224), for -0.17 ms only on draw_hud (within
+# noise) — see PERF30.md "GCC-level sweep". rm_blit_objshift additionally carries a per-function
+# optimize() attribute (blit.c) that MUST stay paired with this -O3. -fno-tree-loop-distribute-patterns:
+# keep GCC from turning the hand-written fill loops into memset/memcpy calls (as recreate does).
+CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra"
 CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
        $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c \
