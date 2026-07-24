@@ -35,14 +35,7 @@ CONTROLS = {adapter.A_flag_seq_count: 3, adapter.A_crash_lap: 4,
             adapter.A_speed: 120, adapter.A_time_left: 45}
 
 
-def _c_array(name, data):
-    # aligned(2): the cores read these tables with be16/be32 (word/long moves), which fault on an odd
-    # address on the 68000. A plain uint8_t[] has no alignment guarantee, so pin it to an even base.
-    lines = [f"static const uint8_t {name}[{len(data)}] __attribute__((aligned(2))) = {{"]
-    for i in range(0, len(data), 16):
-        lines.append("    " + "".join(f"0x{b:02x}," for b in data[i:i + 16]))
-    lines.append("};")
-    return "\n".join(lines)
+from fixture_lib import c_array as _c_array   # noqa: E402  shared emit helper (one aligned(2) source)
 
 
 def hud_asset_arrays(img, from_arena=False):

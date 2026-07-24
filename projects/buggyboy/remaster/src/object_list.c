@@ -103,10 +103,7 @@
 #define OBJ_P24_SRC3_OFF 0x34
 #define OBJ_XFORM_VIEW_BIT 0x4
 
-/* set the low byte of a word, leaving the high byte (68k `.b` op on a word register). */
-static uint16_t set_low_byte(uint16_t word, uint8_t byte) {
-    return (uint16_t)((word & 0xff00u) | byte);
-}
+/* set_low_byte (68k `.b` op on a word register) now lives in st.h, shared with sound.c. */
 
 /* ---- objsprite width wrappers (map to rm_objsprite / rm_objsprite_alt) ----
  * width_idx: t4=0, w88=1, t2=2, t1=3. The wrappers differ only in how they derive the dst base and

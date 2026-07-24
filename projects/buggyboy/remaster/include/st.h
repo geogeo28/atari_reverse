@@ -50,5 +50,7 @@ static inline void wr32(uint8_t *p, uint32_t v) {
 static inline Plane4 dup16(uint16_t w) { return ((Plane4)w << 16) | w; }
 /* Sign-extend a 16-bit table offset to a signed index (68k adda.w / word displacement). */
 static inline int32_t sx16(uint16_t w) { return (int32_t)(int16_t)w; }
+/* Replace the low byte of a word, keeping its high byte (the 68k `move.b`/`add.b` on a word reg). */
+static inline uint16_t set_low_byte(uint16_t word, uint8_t lo) { return (uint16_t)((word & 0xff00) | lo); }
 
 #endif /* RM_ST_H */
