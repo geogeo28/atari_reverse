@@ -62,6 +62,28 @@ def test_leg_drive_from_native_init(capsys):
     assert stats["wraps"] > 0, f"the buggy never moved: {stats}"
 
 
+def test_attract_demo_is_silent(capsys):
+    """The attract demo runs a leg with game_over SET — the original brackets the intermission with
+    game_over_flag != 0 (main @0x10100:314), and the shell's op_start_demo_leg raises the demo player's
+    game_over to match. Every in-race sound trigger then bails on game_over and §1's engine-sound enable
+    goes to EGOFF, so the demo is SILENT: no engine EG armed, no idle Dosound, no INITFX on a demo crash.
+
+    Stage game_over on BOTH sides (the image's A_game_over_flag, read into the reference's g_game_update
+    AND the candidate's p->game_over / ctx->game_over) and drive: the SND_STATE + VBL enable + cur_tune
+    track reset-identical (a strict-green drive) and both Dosound ledgers stay EMPTY. Re-zeroing the demo
+    game_over would arm the EG / log Dosound(idle) / INITFX on a crash and diverge this (mutation-caught)."""
+    lib = equiv._lib()
+    image = equiv.leg_start_background(0)
+    equiv._w16(image, adapter.A_game_over_flag, 1)          # the game-over-bracketed attract demo
+    mismatches, stats = equiv.compare_leg_drive(lib, image, [ACCEL] * 200)
+    with capsys.disabled():
+        print(f"  demo-silence: {len(mismatches)} mismatches / {stats}")
+    assert not mismatches, "game-over demo drive diverged from recreate: " + "; ".join(
+        f"frame {f} {name}: candidate {c} != recreate {r}" for f, name, c, r in mismatches[:8])
+    cand_led, ref_led = equiv._dosound_streams(lib)
+    assert cand_led == ref_led == [], f"the game-over demo emitted Dosounds: cand={cand_led} ref={ref_led}"
+
+
 # Directed record-driven mode-2/4/6 course events (game_update §12's tail, rm_course_mode_event). The
 # free drives above reach mode 4 (legs 0/1) and mode 6 (legs 0/4) organically — see the mode2/4/6 stats
 # — but read_pos advances too slowly (the buggy keeps crashing) to reach mode 2, whose earliest record

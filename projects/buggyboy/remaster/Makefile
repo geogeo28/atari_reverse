@@ -37,7 +37,7 @@ $(RECON):
 # flag or glue edit can't leave a stale elf under `make test`. bench_build.sh regenerates the fixture.
 $(BENCH_ELF): $(SRC) $(wildcard src/asm/*.S) render/atari/bench_main.c render/atari/os.s \
               render/atari/shim.c render/atari/tos.ld render/atari/bench_build.sh \
-              $(wildcard render/atari/shim_include/*) $(wildcard include/*.h)
+              $(wildcard render/atari/shim_include/*) $(wildcard include/*.h) $(SOUND_DATA)
 	bash render/atari/bench_build.sh
 
 .PHONY: ref test bench clean

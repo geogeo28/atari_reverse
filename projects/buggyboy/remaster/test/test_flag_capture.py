@@ -78,6 +78,7 @@ def test_directed_flag_capture_drive(capsys):
     buf = (ctypes.c_uint8 * equiv.bench_frame.IMAGE_SIZE).from_buffer(state)
     gu = equiv._bind("g_game_update")
     cand = equiv._Candidate(lib, state)
+    equiv._sound_reset(lib)                     # fresh Dosound ledgers (this drive compares sound too)
     mismatches, ref_max, cand_max = [], 0, 0
     for f in range(CAPTURE_FRAMES):
         equiv._drive_frame(cand, state, buf, gu, ACCEL)

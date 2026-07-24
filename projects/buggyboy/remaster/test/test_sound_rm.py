@@ -63,9 +63,14 @@ TUNE_IDS = range(0, 11)              # all 11 tune records
 FX_IDS = range(0, 10)               # 9 real fx records + fx 9's bss-zero record
 
 
-class SoundState(ctypes.Structure):
-    _fields_ = [("header", ctypes.c_uint8 * SND_STATE_BYTES),
-                ("voice", (ctypes.c_uint8 * SND_VOICE_STRIDE) * SND_VOICES)]
+# adapter owns the one ctypes mirror of the C SoundState; reuse it here rather than a second copy. Pin
+# adapter's hand-copied geometry against this file's _defines-parsed sizes so a layout change in either
+# source is caught (the CLAUDE.md one-source rule — the two must not drift silently).
+SoundState = adapter.SoundState
+_SS_FIELDS = dict(adapter.SoundState._fields_)
+assert ctypes.sizeof(_SS_FIELDS["header"]) == SND_STATE_BYTES
+assert ctypes.sizeof(_SS_FIELDS["voice"]) == SND_VOICES * SND_VOICE_STRIDE
+assert ctypes.sizeof(adapter.SoundState) == SND_STATE_BYTES + SND_VOICES * SND_VOICE_STRIDE
 
 
 U8P = ctypes.POINTER(ctypes.c_uint8)

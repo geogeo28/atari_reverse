@@ -20,6 +20,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "screen.h"
+#include "sound.h"   /* SoundDriver — the between-legs jingles / EGOFF / TURNOFF drive it (slice 2) */
 
 /* The intermission screen's assets (draw_intermission + fade_step + the poll leaf).
  *
@@ -192,8 +193,8 @@ int rm_int_stepD_counter(FlowState *fs);
  *
  * DEFERRED, exactly as recreate defers it: the interactive IKBD-driven name-entry tail (the initials
  * screen) after this prefix — it busy-polls the keyboard and waits on the sound flag, so it never
- * runs to completion under the differential oracle. EGOFF (sound) is the usual off-image seam. */
-void rm_update_highscore(FlowState *fs, uint8_t *highscore, uint8_t *score);
+ * runs to completion under the differential oracle. `snd` drives the leading EGOFF (slice 2). */
+void rm_update_highscore(FlowState *fs, uint8_t *highscore, uint8_t *score, SoundDriver *snd);
 
 /* ---- the interactive high-score NAME-ENTRY tail (recreate's highscore.c @0x12412 onward) ---------
  *
@@ -309,6 +310,13 @@ typedef struct {
      * table already sits on the front buffer) — so it is an off-image seam like flash_frame; the driver
      * owns the COUNT (t->hold_frames). */
     void (*hold_frame)(void *ctx);
+    /* name-entry / game-over terminal "wait for the jingle to end" (highscore.c @0x25bc / @0x2406): spin
+     * until the tune finishes (SoundState mzflag clears) OR a fresh input arrives, one vblank per poll.
+     * Called BEFORE the terminal TURNOFF so mzflag is still readable — TURNOFF would clear it, making the
+     * wait unimplementable. An off-image seam like hold_frame: the host driver records it; the shell
+     * implements it as a Vsync + rm_sound_music_on spin (slice 3, until the VBL pump exists it returns
+     * at once, so the silent-on-target game never hangs here). */
+    void (*wait_music_off)(void *ctx);
     /* phase-transition trace hook (RM_FLOW_EVT_*) */
     void (*event)(void *ctx, uint16_t tag, uint16_t leg, uint16_t aux);
 } FlowOps;
@@ -357,28 +365,30 @@ RmFlowResult rm_flow_game_over(FlowState *fs, const FlowOps *ops, void *ctx, con
 /* g_init_playfield's leg-select loop @0x12af6: show the results screen, let the player pick (nav) and
  * start (fire / F-key) a leg, and on the idle-countdown expiry run one game-over-bracketed attract cycle
  * and restart. Returns RM_FLOW_START (fs->leg_index is the chosen leg) or RM_FLOW_QUIT (the quit key, Q). */
-RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t);
+RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
+                                SoundDriver *snd);
 
 /* The interactive name-entry loop, run when a leg-end score MADE the table (results_mode == 0). Draws
  * the results + a "TIME nn" countdown each frame while the player dials three initials into the winning
  * row (highscore + leg*0x80 + (pos-1)*0xe + HS_NAME_FIELD_OFF), ending on the third confirm or on
  * timeout, then clears the rank, redraws, holds the finished table t->hold_frames Vsyncs and waits for
- * the input to be released (recreate g_hiscore_name_entry @0x12412). The name-entry jingle and the
- * terminal sound/IKBD waits (mzflag / TURNOFF / the key-drain) are off-image seams the game ships
- * without. Returns RM_FLOW_CONTINUE (control returns to the caller, which runs the intermission next). */
+ * the input to be released (recreate g_hiscore_name_entry @0x12412). Slice 2 wires the name-entry jingle
+ * (`snd`) and the terminal TURNOFF; only the tune-end / mzflag WAIT + the key-drain stay slice-3 shell
+ * seams. Returns RM_FLOW_CONTINUE (control returns to the caller, which runs the intermission next). */
 RmFlowResult rm_flow_name_entry(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
-                                uint8_t *highscore, uint8_t *score_line);
+                                uint8_t *highscore, uint8_t *score_line, SoundDriver *snd);
 
 /* The "missed the table" tail, run when the score beat no row (results_mode == 2): redraw the results
- * screen twice under the results palette (recreate g_hiscore_gameover @0x123e6 -> 0x240e). The game-over
- * jingle + key-drain are off-image seams. Returns RM_FLOW_CONTINUE. */
-RmFlowResult rm_flow_game_over_tail(FlowState *fs, const FlowOps *ops, void *ctx);
+ * screen twice under the results palette (recreate g_hiscore_gameover @0x123e6 -> 0x240e), then play the
+ * game-over jingle (tune 2, slice-2-wired via `snd`). The mzflag WAIT + key-drain stay shell seams.
+ * Returns RM_FLOW_CONTINUE. */
+RmFlowResult rm_flow_game_over_tail(FlowState *fs, const FlowOps *ops, void *ctx, SoundDriver *snd);
 
 /* The high-score tail DISPATCH (main @0x10100: update_highscore's two exits): after ranking, a score
  * that MADE the table (results_mode == 0) runs the interactive name entry, one that MISSED (== 2) runs
  * the game-over redraw. Kept in the flow (not the shell) so `make test` compiles + pins the branch.
  * Returns whatever the chosen tail returns (RM_FLOW_CONTINUE). */
 RmFlowResult rm_flow_score_tail(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
-                                uint8_t *highscore, uint8_t *score_line);
+                                uint8_t *highscore, uint8_t *score_line, SoundDriver *snd);
 
 #endif /* RM_FLOW_H */

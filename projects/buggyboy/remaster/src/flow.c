@@ -13,7 +13,14 @@
  */
 #include "flow.h"
 #include "game.h"      /* RM_IN_* joystick bits (shared with the gameplay input path) */
+#include "sound.h"     /* the between-legs jingles / EGOFF / TURNOFF (slice 2) */
 #include "st.h"
+
+/* ---- between-legs sound trigger ids (recreate highscore.c / intermission.c) ------------------- */
+#define RM_TUNE_GET_READY 0    /* leg-start "get ready" (ip_start_leg @0x2c96) */
+#define RM_TUNE_GAME_OVER 2    /* the miss-the-table game-over jingle (g_hiscore_gameover) */
+#define RM_TUNE_RANK1     4    /* name-entry jingle for a rank-1 score */
+#define RM_TUNE_OTHER     3    /* ...for ranks 2..9 */
 
 /* ---- check_abort (input.c g_check_abort @0x128ea) ---- */
 #define ABORT_INPUT_MASK 0xff      /* the input_state LOW byte the abort compares (cmp.b) */
@@ -106,8 +113,8 @@ static void shift_rows_down(uint8_t *table, int iters) {
     }
 }
 
-void rm_update_highscore(FlowState *fs, uint8_t *highscore, uint8_t *score) {
-    /* EGOFF (stop the envelope generator) is an off-image sound seam. */
+void rm_update_highscore(FlowState *fs, uint8_t *highscore, uint8_t *score, SoundDriver *snd) {
+    rm_egoff(&snd->state);                                 /* stop the envelope generator (recreate:56) */
     if (score[0] == ASCII_ZERO) score[0] = ASCII_SLASH;   /* blank a leading zero before ranking */
 
     uint8_t *table = highscore + (uint16_t)(fs->leg_index * HS_LEG_STRIDE);
@@ -362,7 +369,8 @@ RmFlowResult rm_flow_game_over(FlowState *fs, const FlowOps *ops, void *ctx, con
  * the driver owns the frame COUNT so a wrong length / a dropped frame diverges the driver test. Shared
  * by both start paths (the F-key direct pick and the joystick fire edge), each with its own trace aux. */
 static RmFlowResult flow_start_leg(FlowState *fs, const FlowOps *ops, void *ctx,
-                                   const FlowTuning *t, uint16_t fire_aux) {
+                                   const FlowTuning *t, uint16_t fire_aux, SoundDriver *snd) {
+    rm_play_event_tune(snd, RM_TUNE_GET_READY, fs->game_over_flag != 0);   /* ip_start_leg @0x2c96 */
     ops->event(ctx, RM_FLOW_EVT_SELECT_FIRE, fs->leg_index, fire_aux);
     ops->rebuild_dash(ctx, fs->leg_index);
     ops->draw_results(ctx, fs->leg_index);
@@ -376,7 +384,8 @@ static RmFlowResult flow_start_leg(FlowState *fs, const FlowOps *ops, void *ctx,
     return RM_FLOW_START;
 }
 
-RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t) {
+RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
+                                SoundDriver *snd) {
     ops->event(ctx, RM_FLOW_EVT_SELECT_ENTER, fs->leg_index, 0);
     for (;;) {                                    /* outer loop: redraws + idle-timeout attract cycle */
         uint16_t drawn_leg = 0xffff;              /* != any leg (0..4): forces a dash rebuild on entry */
@@ -392,7 +401,7 @@ RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, co
             int fk = ops->fkey_leg(ctx);
             if (fk >= 0) {                        /* F1..F5 direct pick starts that leg */
                 fs->leg_index = (uint16_t)fk;
-                return flow_start_leg(fs, ops, ctx, t, 1);
+                return flow_start_leg(fs, ops, ctx, t, 1, snd);
             }
             /* Rebuild the dashboard only when the selected leg changed (as Phase D rebuilds only on an
              * advance), not every idle frame — the graphic is identical between nav steps. */
@@ -407,7 +416,7 @@ RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, co
             flow_poll(fs, ops, ctx);                 /* joystick tail (0x2c00) */
             rm_init_playfield_nav(fs);
             if (rm_init_playfield_fire(fs))
-                return flow_start_leg(fs, ops, ctx, t, 0);
+                return flow_start_leg(fs, ops, ctx, t, 0, snd);
             if (ops->quit_requested(ctx)) return RM_FLOW_QUIT;
 
             int16_t next = (int16_t)(fs->idle_countdown - 1);   /* dbf (0x2c78) */
@@ -423,9 +432,9 @@ RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, co
  *
  * Run when a leg-end score MADE the table (results_mode == 0). The prefix (rm_update_highscore) set
  * hiscore_pos to the 1-based rank and seeded the countdown; this drives the initials screen, then the
- * shared terminal fade. The name-entry jingle (rank 1 -> tune 4, else 3) and the terminal sound/IKBD
- * waits (mzflag / TURNOFF / the Crawio key-drain) are off-image seams the game ships WITHOUT — recreate
- * marks the same waits as never-returning-under-the-oracle SEAMS, so here they resolve to nothing and
+ * shared terminal fade. Slice 2 WIRES the name-entry jingle (rank 1 -> tune 4, else 3) and the terminal
+ * TURNOFF through the SoundDriver; only the tune-end / mzflag WAIT (the shell polls rm_sound_music_on)
+ * and the Crawio key-drain stay slice-3 shell seams, so here they resolve to nothing and
  * control returns to the caller (which runs the intermission next). Each per-frame draw is
  * draw_results_screen; the colour-3 flash is the name_flash op (an off-image Setcolor, like the
  * get-ready flash — the driver owns its per-frame COUNT, the content is a documented seam). */
@@ -439,12 +448,15 @@ static void name_entry_prime(FlowState *fs, const FlowOps *ops, void *ctx) {
 }
 
 RmFlowResult rm_flow_name_entry(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
-                                uint8_t *highscore, uint8_t *score_line) {
+                                uint8_t *highscore, uint8_t *score_line, SoundDriver *snd) {
     uint16_t leg = fs->leg_index;
     /* the current initial's byte inside the winning row (row + HS_NAME_FIELD_OFF). */
     uint8_t *p = highscore + (uint16_t)(leg * HS_LEG_STRIDE)
                + (uint16_t)((fs->hiscore_pos - 1) * HS_ROW) + HS_NAME_FIELD_OFF;
 
+    /* the name-entry jingle (recreate @0x2450: tune 4 for a rank-1 score, else 3). */
+    rm_play_event_tune(snd, fs->hiscore_pos == 1 ? RM_TUNE_RANK1 : RM_TUNE_OTHER,
+                       fs->game_over_flag != 0);
     name_entry_prime(fs, ops, ctx);
 
     int chars_left = HS_INITIALS - 1;                      /* counts the HS_INITIALS down: 2 -> 1 -> 0 -> -1 */
@@ -485,22 +497,32 @@ RmFlowResult rm_flow_name_entry(FlowState *fs, const FlowOps *ops, void *ctx, co
     name_entry_prime(fs, ops, ctx);
     for (uint16_t n = 0; n < t->hold_frames; n++) ops->hold_frame(ctx);   /* 0x259c: hold the finished table */
     do { flow_poll(fs, ops, ctx); } while (fs->input_state & HS_INPUT_ANY);  /* 0x25ae: wait for release */
+    /* Wait out the tune BEFORE TURNOFF (0x25bc): spin until mzflag clears or a fresh key arrives. TURNOFF
+     * (0x25d2) must follow the wait — doing it first (as an earlier port did) clears SND_MUSIC_ON, the
+     * byte the wait reads, so the jingle would always be cut. The wait itself + the Crawio key-drain
+     * (0x25de) are the shell's slice-3 seams (it polls rm_sound_music_on); fxflag clear (0x25d8) is wired. */
+    ops->wait_music_off(ctx);
+    rm_turnoff(&snd->state);
+    snd->state.header[SND_FX_FLAG] = 0;
     return RM_FLOW_CONTINUE;
 }
 
 /* The "missed the table" tail (highscore.c g_hiscore_gameover @0x123e6 -> 0x240e): redraw the results
- * screen twice under the results palette. The game-over jingle + the mzflag / key-drain waits are the
- * same off-image seams. Run when results_mode == 2 (the score beat no row). */
-RmFlowResult rm_flow_game_over_tail(FlowState *fs, const FlowOps *ops, void *ctx) {
+ * screen twice under the results palette, then play the game-over jingle (tune 2, slice-2-wired). The
+ * mzflag WAIT + key-drain stay slice-3 shell seams. Run when results_mode == 2 (the score beat no row). */
+RmFlowResult rm_flow_game_over_tail(FlowState *fs, const FlowOps *ops, void *ctx, SoundDriver *snd) {
     name_entry_prime(fs, ops, ctx);   /* same double-draw under the results palette (0x23e6..0x240e) */
+    rm_play_event_tune(snd, RM_TUNE_GAME_OVER, fs->game_over_flag != 0);   /* the game-over jingle (0x2400) */
+    ops->wait_music_off(ctx);         /* 0x2406: spin until the jingle ends (shares name-entry's seam op) */
+    /* the Crawio key-drain (0x25de) stays a slice-3 shell seam; there is no TURNOFF on this path. */
     return RM_FLOW_CONTINUE;
 }
 
 /* The high-score tail dispatch (see flow.h): route the ranked score to name entry (made) or the
  * game-over redraw (missed). Hoisted from the shell so `make test` compiles + pins the branch. */
 RmFlowResult rm_flow_score_tail(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
-                                uint8_t *highscore, uint8_t *score_line) {
+                                uint8_t *highscore, uint8_t *score_line, SoundDriver *snd) {
     if (fs->results_mode == 0)
-        return rm_flow_name_entry(fs, ops, ctx, t, highscore, score_line);
-    return rm_flow_game_over_tail(fs, ops, ctx);
+        return rm_flow_name_entry(fs, ops, ctx, t, highscore, score_line, snd);
+    return rm_flow_game_over_tail(fs, ops, ctx, snd);
 }

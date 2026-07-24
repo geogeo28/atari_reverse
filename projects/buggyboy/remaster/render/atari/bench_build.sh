@@ -14,6 +14,11 @@ PY="$REMASTER/../recreate/.venv/bin/python"; [ -x "$PY" ] || PY=python3
 echo ">> generate game fixture (shared with the game) for the bench structs"
 "$PY" "$HERE/gen_game_fixture.py" >/dev/null
 
+# The bench links src/sound.c + src/sound_trig.c (bench_player_update drives §1's engine-sound triggers),
+# so it needs the sound driver's baked blob (build/sound_data.h) too. Generate it (idempotent).
+echo ">> generate sound fixture (const tables + tune streams + Dosound lists) for the sound driver"
+"$PY" "$HERE/gen_sound_fixture.py" >/dev/null
+
 CC=m68k-elf-gcc
 # -O3 (was -O2) so the hot blit primitives inline; -Os leaves them as calls and the per-column overhead
 # dominates the road blit. -O3 over -O2 measured -16,746 cyc on the gate frame (172.08 -> 169.99 ms):
@@ -34,7 +39,8 @@ CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
        $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c \
        $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c \
        $REMASTER/src/blit.c $REMASTER/src/object_list.c $REMASTER/src/gameplay.c \
-       $REMASTER/src/player.c $REMASTER/src/events.c $REMASTER/src/assets.c"
+       $REMASTER/src/player.c $REMASTER/src/events.c $REMASTER/src/assets.c \
+       $REMASTER/src/sound.c $REMASTER/src/sound_trig.c"
 
 echo ">> compile + link bench.elf (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \

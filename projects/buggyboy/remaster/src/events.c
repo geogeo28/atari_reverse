@@ -10,16 +10,35 @@
  * dashboard on a checkpoint. It writes NO framebuffer pixels — every write is off-frame game state or
  * the graphics arena (the dashboard/banner bitmaps a later draw consumes).
  *
- * OFF-FRAME sound is SKIPPED throughout, the established remaster convention (see
- * buggyboy-sound-architecture): every play_event_tune / handle_marker / stop_music the original fires
- * is documented at its call site and omitted. The 68000 works in 16-bit registers, so intermediates
- * wrap mod 2^16 — mirrored with explicit uint16_t/int16_t exactly as in player.c / geometry.c.
+ * Slice 2 WIRES the in-race sound triggers: every play_event_tune / handle_marker / stop_music the
+ * original fires now drives the sound trigger layer (sound_trig.c) through the ctx's SoundDriver, guarded
+ * on the ctx's game_over (the priority / mzflag guards live inside the leaves). The 68000 works in 16-bit
+ * registers, so intermediates wrap mod 2^16 — mirrored with explicit uint16_t/int16_t exactly as in
+ * player.c / geometry.c.
  */
 #include <string.h>
 
 #include "game.h"
+#include "sound.h"
 #include "st.h"
 #include "text.h"
+
+/* ---- in-race sound trigger ids (recreate game_update.c / events.c) ---------------------------- */
+#define RM_TUNE_FLAG_BONUS   6    /* flag 5-in-a-row bonus (evt_flag_gate) */
+#define RM_TUNE_FLAG_NORMAL  7    /* flag gate otherwise */
+#define RM_TUNE_SCORE_MSG    8    /* score-message event (idx 13-21) */
+#define RM_TUNE_CKPT_COUNTER 9    /* checkpoint counter (idx 22-24) */
+#define RM_TUNE_EVT_A        0xa  /* marker-decay object spawn (idx 30/60) */
+#define RM_TUNE_CKPT_PASS    5    /* §I checkpoint reached */
+#define RM_TUNE_LEG_END      1    /* §I leg complete (score digit hit its max) */
+#define RM_TUNE_COLL_MARK    6    /* §I collision-marker frame */
+#define RM_MARKER_FX_CURVE   5    /* curve-freeze collide marker (idx 35-37) */
+#define RM_MARKER_FX_RPM     6    /* rpm-penalty collide marker (idx 38-40) */
+#define RM_MARKER_FX_COMMON  3    /* common collide marker (idx 25/27/43-59) */
+#define RM_MARKER_FX_BONUS   8    /* bonus-display marker (idx 41/42/63/64) */
+#define RM_MARKER_FX_BAND_HI 1    /* rpm-band collide (idx 34), band >= RM_RPM_BAND_FX_SPLIT */
+#define RM_MARKER_FX_BAND_LO 0    /* ...band < RM_RPM_BAND_FX_SPLIT */
+#define RM_RPM_BAND_FX_SPLIT 6    /* rpm-band threshold selecting the marker fx */
 
 /* ---- add_score (recreate score.c @0x1580a) — the shared score helper (declared in game.h) ---- */
 
@@ -135,7 +154,7 @@ static void evt_add_score(RmEventCtx *c, uint16_t delta_off) {
 static void ckpt_counter(RmEventCtx *c) {   /* recreate gu_ckpt_counter (0x11d1a body) */
     c->ev->crash_lap    = (uint16_t)(c->ev->crash_lap + 1);
     c->ev->crash_active = (uint16_t)(c->ev->crash_active + 1);
-    /* play_event_tune(9): off-frame sound, skipped */
+    rm_play_event_tune(c->snd, RM_TUNE_CKPT_COUNTER, c->game_over);
 }
 
 /* ---- flag-gate family (recreate events.c) ---- */
@@ -146,18 +165,20 @@ static void ckpt_counter(RmEventCtx *c) {   /* recreate gu_ckpt_counter (0x11d1a
 static void flag_gate_advance(RmEventCtx *c, uint16_t slot, bool match) {
     GobjPrefixState *g = c->gobj;
     uint16_t delta_off = RM_EVT_SCORE_GATE;
+    uint16_t tune = RM_TUNE_FLAG_NORMAL;
     if (match) {
         g->flag_seq_count = (int16_t)(g->flag_seq_count + 1);
         if (g->flag_seq_count == FLAG_SEQ_TARGET) {
             g->bonus_timer = FLAG_BONUS_FRAMES;
             delta_off = RM_EVT_SCORE_BONUS;
+            tune = RM_TUNE_FLAG_BONUS;
         } else if (g->flag_seq_count > FLAG_SEQ_TARGET) {
             g->flag_seq_count = 1;                          /* wrap past the window */
         }
     }
     evt_add_score(c, delta_off);
     rm_ring_poke_byte(c->ring, RM_RING_OBJ_ACTIVE_OFF + slot, 0);   /* clear the object's active flag */
-    /* play_event_tune: off-frame sound, skipped */
+    rm_play_event_tune(c->snd, tune, c->game_over);
 }
 
 static void flag_gate(RmEventCtx *c, uint16_t slot, uint16_t obj_type) {
@@ -193,7 +214,7 @@ static void marker_decay_spawn(RmEventCtx *c, uint16_t slot) {   /* idx 30/60 (0
     c->gobj->marker_off      = (int16_t)slot;
     c->gobj->marker_countdown = MARKER_DECAY_ARM;
     evt_add_score(c, RM_EVT_SCORE_EVT);
-    /* play_event_tune(0xa): off-frame sound, skipped */
+    rm_play_event_tune(c->snd, RM_TUNE_EVT_A, c->game_over);
 }
 
 static void spin_arm(RmEventCtx *c, uint16_t obj_flag_b) {   /* idx 32/33 (0x11d64) */
@@ -212,14 +233,15 @@ static void rpm_collide(RmEventCtx *c) {   /* idx 34 (0x11d8e): collision object
     uint16_t band = (uint16_t)((p->engine_rpm & RPM_BAND) >> 3);
     p->collision_lock = be16(c->assets->evt_obj_type_tbl + band);
     p->crash_phase = 3;
-    /* handle_marker(band >= 6 ? 1 : 0): off-frame sound, skipped */
+    rm_handle_marker(c->snd, band >= RM_RPM_BAND_FX_SPLIT ? RM_MARKER_FX_BAND_HI : RM_MARKER_FX_BAND_LO,
+                     c->game_over);
 }
 
 static void curve_freeze_evt(RmEventCtx *c) {   /* idx 35-37 (0x11dcc) */
     PlayerState *p = c->player;
     if (p->collision_lock != 0) return;
     p->curve_freeze = 5;
-    /* handle_marker(5): off-frame sound, skipped */
+    rm_handle_marker(c->snd, RM_MARKER_FX_CURVE, c->game_over);
 }
 
 static void rpm_penalty(RmEventCtx *c) {   /* idx 38-40 (0x11de2): rpm penalty -> speed */
@@ -229,7 +251,7 @@ static void rpm_penalty(RmEventCtx *c) {   /* idx 38-40 (0x11de2): rpm penalty -
     if (rpm < RPM_MIN) rpm = RPM_MIN;
     p->engine_rpm = (uint16_t)rpm;
     p->speed = (uint16_t)((uint16_t)(rpm - RPM_MIN) * SPEED_PER_RPM);
-    /* handle_marker(6): off-frame sound, skipped */
+    rm_handle_marker(c->snd, RM_MARKER_FX_RPM, c->game_over);
 }
 
 static void common_collide(RmEventCtx *c) {   /* idx 25/27/43-59 (0x11e16) */
@@ -239,7 +261,7 @@ static void common_collide(RmEventCtx *c) {   /* idx 25/27/43-59 (0x11e16) */
     p->turn_flags = 0x10;
     p->collision_lock = (int16_t)p->speed >= SPEED_BIG ? 0x18 : 8;
     p->crash_phase = 2;
-    /* handle_marker(3): off-frame sound, skipped */
+    rm_handle_marker(c->snd, RM_MARKER_FX_COMMON, c->game_over);
 }
 
 /* ---- finish / bonus display records (recreate gu_disp_finish / gu_disp_bonus) ---- */
@@ -266,7 +288,7 @@ static void disp_finish(RmEventCtx *c, uint16_t type) {   /* 0x11e6a body */
     p->collision_lock = type;
     p->crash_phase = 1;
     set_curve_window(p, GU_DISP_CW_FINISH);
-    /* stop_music: off-frame sound, skipped */
+    rm_stop_music(c->snd, SND_DOSOUND_COLLIDE, c->game_over);
 }
 
 static void disp_bonus(RmEventCtx *c, uint16_t type, uint16_t id, uint16_t curve_step) {  /* 0x11ebe */
@@ -293,7 +315,7 @@ static void disp_bonus(RmEventCtx *c, uint16_t type, uint16_t id, uint16_t curve
     p->road_curve = (int16_t)(p->road_curve + curve_step);
     c->pose->curve = p->road_curve;             /* the road rebuild reads the just-kicked curve */
     rm_build_road_geometry(c->pose, c->road_src, c->ring, c->ctrl, c->scanline);
-    /* handle_marker(8): off-frame sound, skipped */
+    rm_handle_marker(c->snd, RM_MARKER_FX_BONUS, c->game_over);
 }
 
 /* ---- dispatch ---- */
@@ -305,8 +327,11 @@ void rm_event_dispatch(RmEventCtx *c, uint16_t idx, uint16_t slot, uint16_t flag
     case EV_NOOP:              return;
     case EV_FLAG_GATE:         flag_gate(c, slot, e->gate); return;
     case EV_FLAG_GATE_FORCED:  flag_gate_advance(c, slot, true); return;   /* d7=6 variant: gate skipped */
-    case EV_SCORE:             /* evt_add_score, then play_event_tune(8) — sound off-frame, skipped */
-        if (gu_gate(e->gate, flag_a, flag_b)) evt_add_score(c, e->arg);
+    case EV_SCORE:             /* evt_add_score, then play_event_tune(8) (recreate gu_score_fire) */
+        if (gu_gate(e->gate, flag_a, flag_b)) {
+            evt_add_score(c, e->arg);
+            rm_play_event_tune(c->snd, RM_TUNE_SCORE_MSG, c->game_over);
+        }
         return;
     case EV_CKPT:              if (gu_gate(e->gate, flag_a, flag_b)) ckpt_counter(c); return;
     case EV_MARKER_DECAY:      marker_decay_spawn(c, slot); return;
@@ -564,14 +589,14 @@ static void course_markers(RmEventCtx *c) {
     uint8_t event_code = (uint8_t)(c->ring->row[12].slot[7] & 0xff);   /* event_type low byte */
 
     if (event_code == EVT_CKPT) {
-        /* play_event_tune(5): off-frame sound, skipped */
+        rm_play_event_tune(c->snd, RM_TUNE_CKPT_PASS, c->game_over);
         uint16_t lap = c->ev->crash_lap;
         p->hud_crash_timer = 0;
         c->ev->crash_bars   = (uint16_t)(c->ev->crash_bars + 1);
         c->ev->crash_active = (uint16_t)(c->ev->crash_active + 1);
         if (score_str[1] == SCORE_MAX_DIGIT) {
             p->hud_crash_timer = RM_HUD_TIMER_LEG_END;
-            /* play_event_tune(1): leg complete, off-frame sound, skipped */
+            rm_play_event_tune(c->snd, RM_TUNE_LEG_END, c->game_over);   /* leg complete */
             return;
         }
         score_str[1] = (uint8_t)(score_str[1] + 1);
@@ -607,7 +632,7 @@ static void course_markers(RmEventCtx *c) {
         return;
     }
     c->gobj->bonus_timer = BONUS_ARM;
-    /* play_event_tune(6): off-frame sound, skipped */
+    rm_play_event_tune(c->snd, RM_TUNE_COLL_MARK, c->game_over);
 }
 
 void rm_course_events(RmEventCtx *c) {
@@ -730,7 +755,7 @@ void rm_crash_fx_update(RmEventCtx *c) {
         if (delta_off >= 0) {
             rm_score_add(c->hud_text + RM_HUD_SCORE_BCD_OFF, c->hud_text + RM_HUD_SCORE_STR_OFF,
                          c->assets->score_deltas + delta_off, c->game_over);
-            /* stop_music on the drained unit: off-frame sound, skipped */
+            rm_stop_music_chk(c->snd, SND_DOSOUND_CRASH, c->game_over);   /* draw_crash_fx @0x15914 */
         } else if (ev->abort_flag == 0) {
             ev->abort_flag = RM_ABORT_BONUS_DONE;             /* bonus exhausted: begin the abort countdown */
         }

@@ -157,7 +157,8 @@ def _lib():
         fn.restype = ctypes.c_int
     lib.rm_int_phaseB_leg.argtypes = [fsp]
     lib.rm_int_phaseB_leg.restype = None
-    lib.rm_update_highscore.argtypes = [fsp, u8p, u8p]
+    sdp = ctypes.POINTER(adapter.SoundDriver)
+    lib.rm_update_highscore.argtypes = [fsp, u8p, u8p, sdp]
     lib.rm_update_highscore.restype = None
     lib.rm_draw_results_screen.argtypes = [ctypes.POINTER(adapter.Framebuffer),
                                            ctypes.POINTER(adapter.RmResultsScreenAssets),
@@ -174,16 +175,24 @@ def _lib():
     # ---- flow COMPOSITION driver (slice D) ----
     opsp = ctypes.POINTER(adapter.FlowOps)
     tunp = ctypes.POINTER(adapter.FlowTuning)
-    for fn in (lib.rm_flow_intermission_cycle, lib.rm_flow_intermission, lib.rm_flow_game_over,
-               lib.rm_flow_leg_select):
+    for fn in (lib.rm_flow_intermission_cycle, lib.rm_flow_intermission, lib.rm_flow_game_over):
         fn.argtypes = [fsp, opsp, ctypes.c_void_p, tunp]
         fn.restype = ctypes.c_int
-    lib.rm_flow_name_entry.argtypes = [fsp, opsp, ctypes.c_void_p, tunp, u8p, u8p]
+    lib.rm_flow_leg_select.argtypes = [fsp, opsp, ctypes.c_void_p, tunp, sdp]   # get-ready tune 0
+    lib.rm_flow_leg_select.restype = ctypes.c_int
+    lib.rm_flow_name_entry.argtypes = [fsp, opsp, ctypes.c_void_p, tunp, u8p, u8p, sdp]
     lib.rm_flow_name_entry.restype = ctypes.c_int
-    lib.rm_flow_game_over_tail.argtypes = [fsp, opsp, ctypes.c_void_p]
+    lib.rm_flow_game_over_tail.argtypes = [fsp, opsp, ctypes.c_void_p, sdp]
     lib.rm_flow_game_over_tail.restype = ctypes.c_int
-    lib.rm_flow_score_tail.argtypes = [fsp, opsp, ctypes.c_void_p, tunp, u8p, u8p]
+    lib.rm_flow_score_tail.argtypes = [fsp, opsp, ctypes.c_void_p, tunp, u8p, u8p, sdp]
     lib.rm_flow_score_tail.restype = ctypes.c_int
+    # slice-2 Dosound ledger accessors — bound eagerly here with the rest of the candidate's signatures.
+    lib.rm_dosound_reset.argtypes = []
+    lib.rm_dosound_reset.restype = None
+    lib.rm_dosound_count.argtypes = []
+    lib.rm_dosound_count.restype = ctypes.c_uint32
+    lib.rm_dosound_args.argtypes = []
+    lib.rm_dosound_args.restype = ctypes.POINTER(ctypes.c_uint32)
     return lib
 
 
@@ -200,14 +209,108 @@ _g_draw_crash_fx = bench_frame.harness._lib.g_draw_crash_fx
 _g_draw_crash_fx.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
 _g_draw_crash_fx.restype = None
 
+# Slice-2 Dosound side-effect ledgers, bound once. The reference (recreate g_game_update / g_draw_crash_fx)
+# logs each Dosound(A0) into recreate's g_dosound_log; the candidate's trigger layer logs into the
+# remaster ledger. Both entries are Ghidra image addresses (SND_DOSOUND_BASE + list offset), so the drive
+# diffs the two ordered streams directly. The remaster accessors are bound eagerly in _lib().
+_g_dosound_reset = bench_frame.harness._lib.g_dosound_log_reset
+_g_dosound_reset.restype = None
+_g_dosound_count = bench_frame.harness._lib.g_dosound_log_count      # restype set by recreate's harness
+_g_dosound_args = bench_frame.harness._lib.g_dosound_log_args        # restype set by recreate's harness
+
+
+# Both Dosound ledgers are fixed-size ring-free arrays (remaster RM_DOSOUND_LOG_MAX == recreate
+# MAX_DOSOUND_LOG); once a stream hits the cap it stops logging SILENTLY, so a compare past it would pass
+# on a truncated stream. The drive fails loudly instead (see _dosound_ledger_mismatch). The two caps are
+# pinned equal to this value by test_sound_trig.test_python_constants_match_the_c.
+DOSOUND_LEDGER_CAP = 256
+
+
+def _sound_reset(lib):
+    """Fresh Dosound ledgers on both sides at the start of a drive."""
+    _g_dosound_reset()
+    lib.rm_dosound_reset()
+
+
+def _dosound_streams(lib):
+    """The two ordered Dosound streams so far: (candidate, reference), each a list of image addresses."""
+    ref = [_g_dosound_args()[i] for i in range(_g_dosound_count())]
+    cand = [lib.rm_dosound_args()[i] for i in range(lib.rm_dosound_count())]
+    return cand, ref
+
+
+def _driver_sound_mismatches(snd, ref_image):
+    """Compare a SoundDriver against a reference image's sound state: the SND_STATE header bytes + the
+    three voice records (kept byte-identical so they compare directly), the VBL enable (parked/running),
+    and the current tune id. Returns [(name, cand, ref)]."""
+    ref_hdr, ref_voices, ref_vbl, ref_cur = adapter.ref_sound_view(ref_image)
+    out = []
+    d = _first_diff("snd_header", bytes(snd.state.header), ref_hdr)
+    if d:
+        out.append(d)
+    for v in range(adapter.SND_VOICES):
+        d = _first_diff(f"snd_voice{v}", bytes(snd.state.voice[v]), ref_voices[v])
+        if d:
+            out.append(d)
+    if snd.vbl_enable != ref_vbl:
+        out.append(("snd_vbl_enable", snd.vbl_enable, ref_vbl))
+    if snd.cur_tune_id != ref_cur:
+        out.append(("snd_cur_tune_id", snd.cur_tune_id, ref_cur))
+    return out
+
+
+def _sound_mismatches(frame, cand, state):
+    """The candidate bundle/drive's SoundDriver vs the reference image, tagged with the drive frame."""
+    return [(frame,) + m for m in _driver_sound_mismatches(cand.snd, state)]
+
+
+def _dosound_ledger_mismatch(lib):
+    """The ordered Dosound stream diff (candidate vs reference), as a single FRAME-FREE mismatch tuple
+    (name, cand, ref) at the first differing entry, or None if the two streams agree so far. Callers that
+    tag by frame prepend it (as _event_state_mismatches documents). Off-image XBIOS Dosound(A0) touches no
+    RAM, so this is the only way a wrong/missing command list is caught (see recreate's SOUND_VERIFY_HANDOFF)."""
+    cand, ref = _dosound_streams(lib)
+    # A ledger at its cap has stopped logging silently, so any compare past it is blind — fail loudly.
+    assert len(cand) < DOSOUND_LEDGER_CAP and len(ref) < DOSOUND_LEDGER_CAP, (
+        f"Dosound ledger hit its cap ({DOSOUND_LEDGER_CAP}): cand={len(cand)} ref={len(ref)} — the "
+        "compare beyond it would be blind; shorten the drive or raise the (pinned-equal) caps")
+    if cand == ref:
+        return None
+    n = min(len(cand), len(ref))
+    i = next((k for k in range(n) if cand[k] != ref[k]), n)
+    return (f"dosound_ledger[{i}]",
+            cand[i] if i < len(cand) else -1, ref[i] if i < len(ref) else -1)
+
+
+def _event_sound_mismatches(b, ref, lib):
+    """The slice-2 sound surface for a directed event comparison (dispatch / course-events / crash-fx):
+    the candidate bundle `b`'s SoundDriver vs the reference image `ref`'s sound state, plus the Dosound
+    ledger. In the (name, cand, ref) frame-free shape the directed _event_mismatches uses. The caller must
+    _sound_reset(lib) BEFORE running the reference and candidate."""
+    out = _driver_sound_mismatches(b.snd, ref)
+    m = _dosound_ledger_mismatch(lib)
+    if m:
+        out.append(m)
+    return out
+
 
 def _ref_draw_frame(state):
     """recreate's whole-frame render (g_draw_frame @0x12e22) on a COPY of `state` — the reference the
     composed-frame differential compares against. A copy because g_draw_frame is destructive (it
     advances the prefix + rebuilds geometry + draws), and the scalar drive keeps using `state`. Returns
-    the drawn screen bytes (at the image's current draw buffer, wherever the flip points)."""
+    the drawn screen bytes (at the image's current draw buffer, wherever the flip points).
+
+    HAZARD: g_draw_frame reaches g_draw_crash_fx -> g_stop_music_chk, whose Dosound would append to the
+    PROCESS-GLOBAL recreate ledger (g_dosound_log lives in the .so, not the copied image), polluting the
+    cumulative ledger compare the enclosing drive runs. The image copy does NOT isolate that. Today the
+    composed sample frames never reach that Dosound (masked by data behaviour); pin it so a future frame
+    that does fails loudly here rather than silently diverging the drive's ledger."""
+    ledger_before = _g_dosound_count()
     ref = bytearray(state)
     _bind("g_draw_frame")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
+    assert _g_dosound_count() == ledger_before, (
+        "the composed reference frame issued a Dosound — it would pollute the drive's cumulative ledger; "
+        "snapshot/restore the recreate ledger around this render before allowing that")
     draw_buf = adapter.draw_buffer_addr(ref)
     return bytes(ref[draw_buf:draw_buf + adapter.SCREEN_BYTES])
 
@@ -1295,6 +1398,10 @@ class _Candidate:
         self.evt_assets, self._k_evt = adapter.event_assets(state)
         self.leg = _r16(state, adapter.A_leg_index)
         self.game_over = _r16(state, adapter.A_game_over_flag) != 0
+        # slice-2 sound trigger state, seeded once from the leg-start image and self-driven thereafter
+        # (the physics §1/§2 + the event handlers' triggers). Compared against the reference's SND_STATE
+        # + VBL vector + cur_tune each frame, and the Dosound ledger diffed as an ordered stream.
+        self.snd = adapter.sound_driver(state)
         # mode-2/4/6 course-event outputs the shell owns: obj_shade (draw_object), screen_offset (scroll
         # source) and the in-race palette phase 11 / mode 4 stage into. Seeded from the image, then
         # advanced only by rm_course_mode_event (fired on a record pull), like the reference's globals.
@@ -1349,7 +1456,7 @@ class _Candidate:
         self.ctx = adapter.make_event_ctx(
             player=self.player, gobj=self.gobj, ring=self.ring, pose=self.pose, road_src=self.source,
             ctrl=self.ctrl, scanline=self.scan, ev=self.ev, hud_text=self.hud_text, gfx=self.gfx,
-            assets=self.evt_assets, leg=self.leg, game_over=self.game_over)
+            assets=self.evt_assets, leg=self.leg, game_over=self.game_over, snd=self.snd)
 
     def reseed(self, state, in_bits):
         """Take the whole driving state from the reference image — used ONCE, to seed the leg start.
@@ -1515,6 +1622,13 @@ def _drive_mismatches(frame, cand, state):
     out.extend((frame,) + m for m in _event_state_mismatches(cand, state))
     out.extend(_mode_event_mismatches(frame, cand, state))
     out.extend(_fanout_mismatches(frame, cand, state))
+    # Slice-2 sound: the driver state (SND_STATE + voices), the VBL enable, the current tune id, and the
+    # ordered Dosound ledger — the reference's in-image triggers (g_game_update / g_draw_crash_fx) vs the
+    # candidate's own (rm_player_update §1/§2, the event handlers, rm_crash_fx_update).
+    out.extend(_sound_mismatches(frame, cand, state))
+    m = _dosound_ledger_mismatch(cand.lib)
+    if m:
+        out.append((frame,) + m)
     return out
 
 
@@ -1735,6 +1849,7 @@ def compare_leg_drive(lib, image, inputs, native_init_pre=None, compose=None):
     buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
     game_update = _bind("g_game_update")
     cand = _Candidate(lib, state, native_init_pre=native_init_pre)
+    _sound_reset(lib)                        # fresh Dosound ledgers for this drive (both sides)
     scene = _ComposedScene(lib, image, cand) if compose is not None else None
 
     stats = dict(frames=len(inputs), wraps=0, armed=0, crash_frames=0, handoffs=0, checkpoints=0,
@@ -1967,22 +2082,24 @@ def event_background(leg=0, warmup=60, pokes=None):
 def compare_event_dispatch(lib, image, idx, slot, flag_a, flag_b):
     """Run recreate's g_gu_dispatch_event and remaster's rm_event_dispatch on the same staged image
     and compare every owned location. Returns a list of (name, candidate, reference)."""
+    _sound_reset(lib)                          # fresh Dosound ledgers for this dispatch case
     ref = bytearray(image)
     _gu_dispatch_fn()((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref),
                       idx, slot, flag_a, flag_b)
     b = adapter.event_ctx(image)
     lib.rm_event_dispatch(ctypes.byref(b.ctx), idx, slot, flag_a, flag_b)
-    return _event_mismatches(b, ref, check_ctrl=True, check_gfx=False)
+    return _event_mismatches(b, ref, check_ctrl=True, check_gfx=False) + _event_sound_mismatches(b, ref, lib)
 
 
 def compare_course_events(lib, image):
     """Run recreate's g_game_update_fx_and_events and remaster's rm_course_events on the same staged
     image and compare every owned location (incl. the graphics arena). Returns mismatches."""
+    _sound_reset(lib)                          # fresh Dosound ledgers (the §I jingles / finish stop_music)
     ref = bytearray(image)
     _bind("g_game_update_fx_and_events")((ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(ref))
     b = adapter.event_ctx(image)
     lib.rm_course_events(ctypes.byref(b.ctx))
-    return _event_mismatches(b, ref, check_ctrl=True, check_gfx=True)
+    return _event_mismatches(b, ref, check_ctrl=True, check_gfx=True) + _event_sound_mismatches(b, ref, lib)
 
 
 def compare_crash_fx(lib, image):
@@ -1993,11 +2110,12 @@ def compare_crash_fx(lib, image):
     window (the rollover records + score digits + the score/lap display lines the tally rewrites). The
     ring / ctrl / gfx / gobj surfaces are compared too (the tally must not touch them). Returns
     mismatches."""
+    _sound_reset(lib)                          # fresh Dosound ledgers (the crash-drain stop_music_chk)
     ref = bytearray(image)
     _ref_crash_fx(ref)
     b = adapter.event_ctx(image)
     lib.rm_crash_fx_update(ctypes.byref(b.ctx))
-    return _event_mismatches(b, ref, check_ctrl=True, check_gfx=True)
+    return _event_mismatches(b, ref, check_ctrl=True, check_gfx=True) + _event_sound_mismatches(b, ref, lib)
 
 
 def _coll_mask_base(image):
@@ -2301,9 +2419,10 @@ def compare_update_highscore(lib, image):
     fs = adapter.flow_state(image)
     hs = adapter.highscore_buffer(image)
     score = adapter.score_record(image)
-    lib.rm_update_highscore(ctypes.byref(fs), hs, score)
+    snd = adapter.sound_driver(image)
+    lib.rm_update_highscore(ctypes.byref(fs), hs, score, ctypes.byref(snd))
 
-    out = []
+    out = _driver_sound_mismatches(snd, ref)   # the leading EGOFF (recreate g_update_highscore:56)
     d = _first_diff("table", bytes(hs),
                     bytes(ref[adapter.A_highscore_table:adapter.A_highscore_table
                               + adapter.FLOW_HIGHSCORE_BYTES]))
@@ -2409,8 +2528,9 @@ def drive_name_entry(lib, image, poll_of, seed_char=0x41, hold_frames=NAME_ENTRY
     highscore[_name_field_off(fs)] = seed_char
     score_line = (ctypes.c_uint8 * adapter.FLOW_SCORE_LINE_BYTES).from_buffer_copy(
         bytes(image[adapter.A_score_line:adapter.A_score_line + adapter.FLOW_SCORE_LINE_BYTES]))
+    snd = adapter.sound_driver(image)             # drives the jingle + terminal TURNOFF (not compared here)
     result = lib.rm_flow_name_entry(ctypes.byref(fs), ctypes.byref(rec.ops), None,
-                                    ctypes.byref(tuning), highscore, score_line)
+                                    ctypes.byref(tuning), highscore, score_line, ctypes.byref(snd))
     return result, rec.log, bytes(highscore), fs
 
 
@@ -2418,7 +2538,8 @@ def drive_game_over_tail(lib, image):
     """Drive rm_flow_game_over_tail with recording ops (the missed-the-table path). Returns (result, log)."""
     fs = adapter.flow_state(image)
     rec = _DriverRecorder(fs, _FlowScript(lambda i: 0, lambda i: 0, lambda i: -1))
-    result = lib.rm_flow_game_over_tail(ctypes.byref(fs), ctypes.byref(rec.ops), None)
+    snd = adapter.sound_driver(image)             # drives the game-over jingle (not compared here)
+    result = lib.rm_flow_game_over_tail(ctypes.byref(fs), ctypes.byref(rec.ops), None, ctypes.byref(snd))
     return result, rec.log
 
 
@@ -2435,8 +2556,9 @@ def drive_score_tail(lib, image, poll_of=lambda i: 0, hold_frames=NAME_ENTRY_HOL
         highscore[_name_field_off(fs)] = 0x41
     score_line = (ctypes.c_uint8 * adapter.FLOW_SCORE_LINE_BYTES).from_buffer_copy(
         bytes(image[adapter.A_score_line:adapter.A_score_line + adapter.FLOW_SCORE_LINE_BYTES]))
+    snd = adapter.sound_driver(image)             # drives the jingle branch (not compared here)
     result = lib.rm_flow_score_tail(ctypes.byref(fs), ctypes.byref(rec.ops), None,
-                                    ctypes.byref(tuning), highscore, score_line)
+                                    ctypes.byref(tuning), highscore, score_line, ctypes.byref(snd))
     return result, rec.log, bytes(highscore), fs
 
 
@@ -2588,6 +2710,7 @@ def compare_game_flow(lib, leg, frames=140, time_left=6):
     buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
     game_update = _bind("g_game_update")
     cand = _Candidate(lib, state)
+    _sound_reset(lib)                               # fresh Dosound ledgers for this drive (both sides)
 
     ref_end = cand_end = -1
     stats = dict(frames=0, ref_end=-1, cand_end=-1)
@@ -2620,7 +2743,8 @@ def compare_game_flow(lib, leg, frames=140, time_left=6):
     hs = adapter.highscore_buffer(seeded)
     score = (ctypes.c_uint8 * adapter.HS_SCORE_REC_BYTES)(
         *bytes(cand.hud_text)[adapter.HS_SCORE_REC_OFF:adapter.HS_SCORE_REC_OFF + adapter.HS_SCORE_REC_BYTES])
-    lib.rm_update_highscore(ctypes.byref(fs), hs, score)
+    lib.rm_update_highscore(ctypes.byref(fs), hs, score, ctypes.byref(cand.snd))
+    mism.extend(_driver_sound_mismatches(cand.snd, state))   # the break-sequence EGOFF stays in sync
     lib.rm_flow_game_over_enter(ctypes.byref(fs))   # the real C owner of main's game_over_flag++
     # (The intermission the flow enters next — its prologue seeds + phases A-D — is pinned by
     # compare_attract_cycle; here the surfaces are the ones this break sequence itself writes.)
@@ -2762,6 +2886,9 @@ class _DriverRecorder:
         def hold_frame(_ctx):
             self._rec("hold_frame")
 
+        def wait_music_off(_ctx):
+            self._rec("wait_music_off")
+
         def event(_ctx, tag, leg, aux):
             self._rec("event", (tag, leg, aux))
 
@@ -2773,6 +2900,7 @@ class _DriverRecorder:
                 adapter._CB_DRAW_LEG(rebuild), adapter._CB_DRAW_LEG(leg_labels),
                 adapter._CB_DRAW_LEG(start_demo), adapter._CB_VOID(run_demo),
                 adapter._CB_VOID(flash), adapter._CB_VOID(name_flash), adapter._CB_VOID(hold_frame),
+                adapter._CB_VOID(wait_music_off),
                 adapter._CB_EVENT(event)]
         return adapter.FlowOps(*keep), keep
 
@@ -2989,16 +3117,18 @@ def _diff_trajectory(actual, expected, cand_result, ref_result):
     return mism, stats
 
 
-def _run_flow_driver(image, driver_fn, mirror_fn, tuning, poll_of, quit_of, fkey_of):
+def _run_flow_driver(image, driver_fn, mirror_fn, tuning, poll_of, quit_of, fkey_of, driver_extra=()):
     """Run the hoisted C `driver_fn` with recording callbacks on a candidate FlowState seeded from
-    `image`, run `mirror_fn` (the oracle) on a copy, and diff the two trajectories."""
+    `image`, run `mirror_fn` (the oracle) on a copy, and diff the two trajectories. `driver_extra` is any
+    trailing C args (rm_flow_leg_select's SoundDriver, for the get-ready tune)."""
     poll_of = poll_of or (lambda i: 0)
     quit_of = quit_of or (lambda i: 0)
     fkey_of = fkey_of or (lambda i: -1)
 
     fs = adapter.flow_state(image)
     rec = _DriverRecorder(fs, _FlowScript(poll_of, quit_of, fkey_of))
-    cand_result = driver_fn(ctypes.byref(fs), ctypes.byref(rec.ops), None, ctypes.byref(tuning))
+    cand_result = driver_fn(ctypes.byref(fs), ctypes.byref(rec.ops), None, ctypes.byref(tuning),
+                            *driver_extra)
 
     ref = bytearray(image)
     mir = _MirrorRecorder(ref, _FlowScript(poll_of, quit_of, fkey_of))
@@ -3021,5 +3151,6 @@ def compare_flow_intermission(lib, image, tuning, poll_of=None, quit_of=None, fk
 def compare_flow_leg_select(lib, image, tuning, poll_of=None, quit_of=None, fkey_of=None):
     """Lockstep the leg-select loop (rm_flow_leg_select, incl. its idle -> game-over-bracketed attract
     cycle) vs the oracle mirror of g_init_playfield. (mismatches, stats)."""
+    snd = adapter.sound_driver(image)         # the get-ready tune (not compared; the mirror is structural)
     return _run_flow_driver(image, lib.rm_flow_leg_select, _mirror_leg_select,
-                            tuning, poll_of, quit_of, fkey_of)
+                            tuning, poll_of, quit_of, fkey_of, driver_extra=(ctypes.byref(snd),))

@@ -28,10 +28,11 @@
  *     demo with game_over_flag != 0 (main @0x10100:314 / init_playfield @0x12af6:3946 both do
  *     `game_over_flag++; intermission(); game_over_flag = 0`), and game_update forces the player input to
  *     a constant throttle in that state (decomp game_update `uVar11 = input_state & 0xff8f; if
- *     (game_over_flag != 0) uVar11 = 1`). So the demo simply holds accel; the road-edge clamp + the §6
- *     auto-steer/crash script keep it on the course. Phase C feeds ATTRACT_DEMO_INPUT = RM_IN_ACCEL,
- *     the identical constant. (The remaster reaches it via the explicit constant rather than by setting
- *     the demo player's game_over — see the ATTRACT_DEMO_INPUT note below for the one honest nuance.)
+ *     (game_over_flag != 0) uVar11 = 1`). op_start_demo_leg RAISES the demo player's game_over to match,
+ *     so the demo holds accel via the §6 forcing (`if (p->game_over) in = RM_IN_ACCEL`) AND runs SILENT
+ *     with its scoring suppressed, exactly as the original's game-over-bracketed demo does — the road-edge
+ *     clamp + the §6 auto-steer/crash script keep it on the course. (Sound is a seam only on TARGET, where
+ *     the VBL pump is slice 3; the driver STATE is kept correct host-side.)
  *
  * BOOT / GOLDEN PARITY: the golden harness (run_golden.py) byte-compares the FIRST painted frame (before
  * any physics) to recreate's pipeline on the leg-0 start (build/golden.bin). The SHIPPING build has no
@@ -363,6 +364,11 @@ static void start_leg(Shell *s, uint16_t leg) {
     apply_player(s);
     ring_views_refresh(s->ring, s->ground, s->sprite);
     s->race_input_prev = 0;
+    /* A real race runs with game_over CLEAR — reset the event ctx's mirror of it here (the single funnel
+     * for every race entry), matching the zeroed player struct above. The attract demo re-raises both
+     * mirrors after this (op_start_demo_leg), so a demo cycle can't leave game_over stuck for the next
+     * real leg. game_over_flag (the flow's own counter) is a separate global the flow brackets. */
+    s->ctx->game_over = 0;
     /* The race palette, set in ONE place so every race entry (boot / leg-select fire / R / attract
      * Phase B) agrees. It is race_pal — fixture_palette (0x17fa2) with phase 11's staging applied, as
      * the original loads 0x17fa2 after init_leg staged it; an off-image seam (byte-compare is
@@ -682,12 +688,11 @@ static int load_assets(RmArena *arena) {
  * (non-existent) recorded ghost. The intermission runs with game_over_flag != 0 (main:314 / init_playfield
  * :3946 bracket it, and init_leg preserves the flag — its clear starts at 0x18c42, game_over_flag is at
  * 0x18c34, below the range), and game_update forces the player input to 1 in that state (`if
- * (game_over_flag != 0) uVar11 = 1`). rm_player_update reproduces the same forcing (`if (p->game_over) in
- * = RM_IN_ACCEL`, src/player.c). Nuance (honest): start_leg zeroes the demo player, so p->game_over is 0
- * during the demo and we feed the constant EXPLICITLY here instead of relying on the forcing. The input
- * word is identical (0x01) either way; the only game_over-conditional side effect we thus skip is the
- * demo's score SUPPRESSION (rm_score_add early-returns when game_over) — unreachable in practice, since no
- * checkpoint/bonus event fires inside a 0x96-frame demo (the leg drives reach 0 checkpoints in 600). */
+ * (game_over_flag != 0) uVar11 = 1`). op_start_demo_leg now RAISES the demo player's game_over (above), so
+ * rm_player_update reproduces that forcing itself (`if (p->game_over) in = RM_IN_ACCEL`, src/player.c) AND
+ * the sound triggers + score suppression fire faithfully — the demo is silent and does not tally. We still
+ * pass this constant to game_update_step below; with game_over set §2 zeroes the raw input and §6 forces
+ * accel anyway, so it is belt-and-suspenders that documents "the demo drives on the throttle". */
 #define ATTRACT_DEMO_INPUT RM_IN_ACCEL
 
 /* The attract phase timing (FlowTuning). GAME_FLOW_FAST shrinks it so a whole cycle fits a bounded
@@ -757,6 +762,16 @@ static void op_show(void *ctx) { show_surface(ctx); }
  * 121-frame COUNT (t->hold_frames). */
 static void op_hold_frame(void *ctx) { (void)ctx; Vsync(); }
 
+/* The name-entry / game-over terminal "wait for the jingle to end" (highscore.c @0x25bc / @0x2406). The
+ * original spins one Vsync per poll until the tune finishes (rm_sound_music_on goes false) OR a fresh key
+ * arrives. SLICE 3 TODO: once the VBL pumps rm_refresh the tune actually advances to its end, so this can
+ * become that spin. Until then the game is silent (no pump), so a real spin would never see mzflag clear
+ * and would HANG — so it returns at once, exactly as the terminal tail resolved before the op existed. */
+static void op_wait_music_off(void *ctx) {
+    Shell *s = ctx;
+    (void)s;   /* slice 3: while (rm_sound_music_on(s->ctx->snd) && !any_input()) Vsync(); */
+}
+
 static void op_rebuild_dash(void *ctx, uint16_t leg) {
     Shell *s = ctx; s->ctx->leg = leg; rm_init_leg_dash(s->ctx);
 }
@@ -814,6 +829,15 @@ static void op_flash_frame(void *ctx) {
 static void op_start_demo_leg(void *ctx, uint16_t leg) {
     Shell *s = ctx;
     start_leg(s, leg);
+    /* Run the demo leg with game_over SET, exactly as the original brackets the intermission with
+     * game_over_flag != 0 (main @0x10100:314). This is what makes the attract demo SILENT: every sound
+     * trigger bails on game_over and §1's engine-sound goes to EGOFF (no EG, no idle Dosound, no INITFX on
+     * a demo crash — see rm_sound_engine_update / the trigger leaves). It also forces the demo's input to a
+     * constant throttle via the already-modeled §6 path (`if (p->game_over) in = RM_IN_ACCEL`, player.c),
+     * and suppresses the demo's own scoring (rm_score_add early-returns on game_over). Both mirrors of the
+     * single game_over flag (the physics' p->game_over and the event ctx's game_over) are raised. */
+    s->player->game_over = 1;
+    s->ctx->game_over = 1;
     op_rebuild_dash(ctx, leg);   /* bind_leg already set ctx->leg; rebuild the picked leg's dashboard */
     /* Labels MUST draw AFTER the rebuild: rm_init_leg_dash rebuilds the dashboard GRAPHIC from scratch,
      * wiping anything overlaid on it, so labels drawn first would be erased. Same order as the fire-start
@@ -852,6 +876,7 @@ static const FlowOps flow_ops = {
     .rebuild_dash = op_rebuild_dash, .draw_leg_labels = op_draw_leg_labels,
     .start_demo_leg = op_start_demo_leg, .run_demo_frame = op_run_demo_frame,
     .flash_frame = op_flash_frame, .name_flash = op_name_flash, .hold_frame = op_hold_frame,
+    .wait_music_off = op_wait_music_off,
     .event = op_event,
 };
 
@@ -980,10 +1005,30 @@ void main(void) {
         .coll_mask = arena.tables + ARENA_COURSE_MASK_BASE,   /* rebound per leg */
         .buf_a = arena.tables, .dash_raw = arena.course, .font = fixture_font,
     };
+    /* The in-race sound driver (slice 2): the physics / event / flow triggers evolve its state here. On
+     * target it starts parked with no tune. SLICE 3 TODO: pump rm_refresh from the 50 Hz VBL when
+     * snd.vbl_enable == RM_VBL_RUNNING, and map rm_dosound(list) to the real XBIOS Dosound. Until then the
+     * triggers keep the driver STATE correct (verified host-side) but the YM2149 stays silent.
+     *
+     * VBL REENTRANCY HAZARD (read before wiring the pump): slice 3's VBL handler calls rm_refresh on the
+     * SAME SoundState the main loop mutates via rm_inittune / rm_stop_music / rm_turnoff (the triggers
+     * here run at frame level). The original's asm publishes a tune change reentrantly-safely by ORDER —
+     * it clears mzflag FIRST, rewrites the note-stream records, then sets mzflag = 0xff LAST, so a VBL
+     * landing mid-update sees "no music" rather than a half-written record. -O2 C gives NO such guarantee
+     * (dead-store elimination / reordering can float the mzflag store). The intended mitigation is to MASK
+     * the VBL around every trigger mutation — a short interrupt-disable window (or a "refresh busy" flag
+     * the VBL respects) wrapping the rm_inittune / rm_stop_music / rm_turnoff calls in the slice-3 shell
+     * trigger wrappers — NOT volatile on the host structs. Documented here so the pump author reads it. */
+    SoundDriver snd;
+    rm_sound_reset(&snd.state);
+    snd.vbl_enable = RM_VBL_PARKED;
+    snd.cur_tune_id = 0;
+
     RmEventCtx ctx = {
         .player = &player, .gobj = &pfx, .ring = &ring, .pose = &pose, .road_src = &src,
         .ctrl = ctrl, .scanline = scanline, .ev = &ev, .hud_text = hud_text_ram,
         .gfx = arena.gfx, .assets = &event_assets, .leg = GAME_LEG_INDEX, .game_over = 0,
+        .snd = &snd,
     };
 
     /* The between-legs flow's draw-asset bundles. Const graphics from the arena / obj-low blob; the
@@ -1082,7 +1127,7 @@ void main(void) {
 #else
             s->input_source = read_input; s->fkey_source = read_fkey;
 #endif
-            if (rm_flow_leg_select(&flow, &flow_ops, s, &flow_tuning) == RM_FLOW_QUIT) {
+            if (rm_flow_leg_select(&flow, &flow_ops, s, &flow_tuning, &snd) == RM_FLOW_QUIT) {
                 s->quit = 1;                            /* Q from the leg select -> restore + exit */
                 break;
             }
@@ -1156,7 +1201,7 @@ void main(void) {
          * game-over enter/exit bracket around the intermission is rm_flow_game_over (flow.c). ---- */
         flow_event(RM_FLOW_EVT_LEG_END, s->leg, (uint16_t)ev.abort_flag);
         flow.leg_index = s->leg;
-        rm_update_highscore(&flow, highscore_ram, hud_text_ram + RM_HUD_SCORE_BCD_OFF);
+        rm_update_highscore(&flow, highscore_ram, hud_text_ram + RM_HUD_SCORE_BCD_OFF, &snd);
         flow_event(RM_FLOW_EVT_HISCORE, flow.leg_index, flow.hiscore_pos);
 #ifdef GAME_FLOW_AUTO
         s->input_source = auto_intermission_input;
@@ -1166,9 +1211,10 @@ void main(void) {
         /* The interactive high-score tail (rm_flow_score_tail): a score that MADE the table
          * (results_mode == 0) runs the initials screen; one that MISSED (== 2) runs the short game-over
          * screen. Both consume the input source set above and return control here, then the intermission
-         * runs. The dispatch lives in the flow (not this shell) so `make test` pins the branch. (The
-         * name-entry jingle + the terminal sound/IKBD waits are off-image seams — the game ships w/o sound.) */
-        rm_flow_score_tail(&flow, &flow_ops, s, &flow_tuning, highscore_ram, score_line_ram);
+         * runs. The dispatch lives in the flow (not this shell) so `make test` pins the branch. Sound is
+         * WIRED (slice 2): the name-entry / game-over jingles + the terminal TURNOFF drive `snd`. Only the
+         * audible pump (the VBL rm_refresh + XBIOS Dosound) and the wait-op spin are the slice-3 TODO. */
+        rm_flow_score_tail(&flow, &flow_ops, s, &flow_tuning, highscore_ram, score_line_ram, &snd);
         if (rm_flow_game_over(&flow, &flow_ops, s, &flow_tuning) == RM_FLOW_QUIT) s->quit = 1;
 #ifdef GAME_FLOW_AUTO
         auto_intermission_done = 1;   /* the attract cycle returned; the next leg-select+start ends the trace */

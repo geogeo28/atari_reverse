@@ -113,7 +113,9 @@ def test_name_entry_full():
     first_hold = kinds.index("hold_frame")
     assert kinds[first_hold - 5:first_hold] == PRIME, kinds[first_hold - 5:first_hold]
     last_hold = len(kinds) - 1 - kinds[::-1].index("hold_frame")
-    assert kinds[last_hold + 1:] == ["poll"], kinds[last_hold + 1:]       # one release-wait poll (input cleared)
+    # one release-wait poll (input cleared), then the tune-end wait op BEFORE the terminal TURNOFF (0x25bc);
+    # dropping the wait op leaves ["poll"] here (a cut jingle) — mutation-caught.
+    assert kinds[last_hold + 1:] == ["poll", "wait_music_off"], kinds[last_hold + 1:]
     # one flash per entry frame; the only extra poll is the terminal release wait.
     assert kinds.count("name_flash") == 5, kinds.count("name_flash")      # 3 confirms over 5 polled frames
     assert kinds.count("poll") == kinds.count("name_flash") + 1, kinds.count("poll")
@@ -185,7 +187,8 @@ def test_game_over_tail():
     equiv._w16(img, adapter.A_leg_index, 1)
     result, log = equiv.drive_game_over_tail(lib, img)
     assert result == adapter.RM_FLOW_CONTINUE
-    assert [r[0] for r in log] == PRIME, [r[0] for r in log]
+    # the double-draw fade, then the game-over jingle's tune-end wait op (0x2406).
+    assert [r[0] for r in log] == PRIME + ["wait_music_off"], [r[0] for r in log]
     for r in log:
         if r[0] == "draw_res_screen":
             assert r[1] == (2, 0, 1), r[1]         # missed mode, no rank, leg 1
@@ -222,5 +225,5 @@ def test_score_tail_missed_routes_to_game_over():
     result, log, hs, fs = equiv.drive_score_tail(lib, _tail_image(2, leg=1, pos=0))
     assert result == adapter.RM_FLOW_CONTINUE
     kinds = [r[0] for r in log]
-    assert kinds == PRIME, kinds
+    assert kinds == PRIME + ["wait_music_off"], kinds
     assert "hold_frame" not in kinds, "missed path ran the name-entry hold (dispatch inverted)"

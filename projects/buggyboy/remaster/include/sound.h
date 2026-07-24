@@ -21,6 +21,7 @@
 #ifndef RM_SOUND_H
 #define RM_SOUND_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* ---- state block geometry --------------------------------------------------------------------- */
@@ -152,6 +153,7 @@
 #define SND_FX_TABLE_OFF      0xbfa   /* 0x1bc56: per-effect parameter records */
 
 /* ---- Dosound command-list offsets within SND_DOSOUND (for slice 2) ----------------------------- */
+#define SND_DOSOUND_BASE      0x18b78 /* the first Dosound list's image address; offset 0 aliases it */
 #define SND_DOSOUND_COLLIDE   0x00    /* 0x18b78: collision / spin-out */
 #define SND_DOSOUND_CRASH     0x1a    /* 0x18b92: crash sound */
 #define SND_DOSOUND_IDLE      0x2a    /* 0x18ba2: engine idle */
@@ -186,5 +188,74 @@ void rm_inittune(SoundState *s, uint32_t tune_id);
  * (reg, value) writes to regs[]/vals[] (up to `cap`); returns the write count. Touches no hardware —
  * the caller drives the chip from the returned stream (the same seam recreate's g_REFRESH uses). */
 uint32_t rm_refresh(SoundState *s, uint8_t *regs, uint8_t *vals, int cap);
+
+/* ---- slice 2: the TRIGGER layer (the game's in-race sound decisions) --------------------------
+ *
+ * The events / physics / flow slices decide WHEN music and effects start and stop; this is the small
+ * set of leaves they call. It owns two more image globals the driver-not-the-state carries — the VBL
+ * sound-handler vector (parked at an rts vs pointing at REFRESH) and the "current tune id" the priority
+ * guards read — in a SoundDriver wrapper AFTER the byte-compared SoundState, so the slice-1 state
+ * compare (test_sound_rm) is untouched while these two are still differentially compared (against image
+ * 0x18c0c parked/running and 0x18cfa). The game-over guard is threaded as a parameter (the caller's
+ * game_over_flag), matching how the tree threads such guards. REFRESH itself still runs off the VBL
+ * (slice 3 maps rm_dosound + the VBL vector to the real XBIOS).
+ *
+ * VBL REENTRANCY (slice 3): once the VBL pumps rm_refresh, it and these leaves both touch one SoundState.
+ * The original stays safe by asm publication ORDER (mzflag cleared first, records rewritten, mzflag set
+ * last); -O2 C does not guarantee that, so the slice-3 shell must MASK the VBL around each trigger mutation
+ * (a short interrupt-disable window), NOT rely on store ordering. Full write-up in game_main.c's snd TODO. */
+
+/* A_vbl_sound_vec @0x18c0c models a two-state enable: parked at a bare rts (music silent) or pointing
+ * at REFRESH (running). The image stores the actual handler address; the differential maps it to this. */
+typedef enum { RM_VBL_PARKED = 0, RM_VBL_RUNNING = 1 } RmVblEnable;
+
+/* The owned driver: the byte-compared slice-1 state, plus the two trigger-owned globals appended after
+ * it so the slice-1 SoundState byte-compare stays intact. */
+typedef struct SoundDriver {
+    SoundState state;        /* slice-1 driver state (SND_STATE + the three voice records) */
+    uint16_t   vbl_enable;   /* A_vbl_sound_vec: RM_VBL_PARKED (rts) / RM_VBL_RUNNING (REFRESH) */
+    uint16_t   cur_tune_id;  /* A_cur_tune_id @0x18cfa: the tune the priority guards test */
+} SoundDriver;
+
+/* ---- guard / id constants (recreate events.c / sound.c / highscore.c) ------------------------- */
+#define SND_TUNE_PRIORITY   6    /* play_event_tune won't interrupt this tune while music is playing */
+#define SND_MARKER_TUNE_MIN 7    /* cur_tune_id >= this bypasses handle_marker's music-playing guard */
+
+/* Dosound side-effect ledger (host .so only): rm_dosound appends the list's image address; slice 3's
+ * PRG seam issues the real XBIOS Dosound instead. Resettable, with accessors, mirroring recreate's
+ * g_dosound_log — the drive diffs this ordered stream against the oracle's Dosound trap stream. */
+void            rm_dosound(uint16_t list_off);   /* logs SND_DOSOUND_BASE + list_off */
+void            rm_dosound_reset(void);
+uint32_t        rm_dosound_count(void);
+const uint32_t *rm_dosound_args(void);
+
+/* play_event_tune @0x11c7a — start music track `tune`, unless game-over or a higher-priority tune is
+ * playing. Always re-points the VBL vector at REFRESH first. */
+void rm_play_event_tune(SoundDriver *snd, uint32_t tune, bool game_over);
+
+/* handle_marker @0x11cb2 — stop music and start effect `fx_id`, unless game-over or a low-priority
+ * tune is protected while music plays. */
+void rm_handle_marker(SoundDriver *snd, uint32_t fx_id, bool game_over);
+
+/* stop_music @0x12ec4 — silence the driver (unless game-over): TURNOFF the music state, clear the
+ * effect flag + current tune, PARK the VBL vector, then Dosound the given SND_DOSOUND_* list. */
+void rm_stop_music(SoundDriver *snd, uint16_t list_off, bool game_over);
+
+/* stop_music_chk @0x12ebc — stop_music, but only when no music is playing (mzflag == 0). */
+void rm_stop_music_chk(SoundDriver *snd, uint16_t list_off, bool game_over);
+
+/* game_update §1's engine-sound enable (recreate game_update.c:252-258): while the buggy is under the
+ * player's control (not game-over / not a crash phase 1 / not mid-tally), a stopped buggy silences the
+ * envelope generator via stop_music_chk(idle) and a moving one arms it (EG_FLAG + REFRESH); otherwise
+ * EGOFF. The `rev_reload` poke the original pairs with the idle case aliases lean_frame (no compared
+ * surface reads it) and stays skipped, as everywhere in the tree. */
+void rm_sound_engine_update(SoundDriver *snd, uint16_t speed, int16_t crash_phase,
+                            uint16_t crash_frame, bool game_over);
+
+/* "Is a tune still playing?" — the flow's terminal jingle waits (mzflag spins: highscore.c @0x25bc /
+ * game_over @0x2406) are slice-3 SHELL seams; the host driver never busy-waits. This query is what the
+ * shell polls on-target to know when a jingle has finished: it returns header[SND_MUSIC_ON] != 0, so a
+ * false result (header[SND_MUSIC_ON] == 0) means the music has finished and the wait may break. */
+bool rm_sound_music_on(const SoundDriver *snd);
 
 #endif /* RM_SOUND_H */

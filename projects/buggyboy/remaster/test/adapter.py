@@ -386,6 +386,17 @@ RM_FLOW_PAL_INT_A, RM_FLOW_PAL_LEG_SELECT, RM_FLOW_PAL_RESULTS = 0, 1, 2
  RM_FLOW_EVT_SELECT_ENTER, RM_FLOW_EVT_SELECT_FIRE, RM_FLOW_EVT_SELECT_IDLE) = range(1, 14)
 
 
+# ---- slice-2 sound trigger layer (recreate sound.c / events.c / os.c image addresses) ----
+A_snd_state = 0x1b05c                              # SND_STATE: the driver state block (== SoundState.header)
+A_snd_voice_ctrl = 0x1b64a                         # the three voice-control records (SoundState.voice)
+A_vbl_sound_vec = 0x18c0c                          # VBL sound-handler vector (parked rts vs REFRESH address)
+A_refresh = 0x1b086                                # REFRESH handler address stored into vbl_sound_vec (running)
+A_cur_tune_id = 0x18cfa                            # the tune id the priority guards test
+SND_STATE_BYTES = 0x2a                             # mirror include/sound.h (SoundState.header)
+SND_VOICES = 3                                     # mirror include/sound.h
+SND_VOICE_STRIDE = 0x18                            # mirror include/sound.h
+SND_DOSOUND_BASE = 0x18b78                         # mirror include/sound.h: first Dosound list address (offset 0)
+
 # ---- static asset tables the HUD reads (STATIC.BIN region) ----
 A_color_pairs = 0x15afa                           # 16 colours x 8-byte fill
 A_color_bar_mask = 0x17d14                        # phase-5 {mask,ink} stream (5 cols x 12 rows x 4B)
@@ -670,6 +681,49 @@ class EventAssets(ctypes.Structure):
                 ("font", ctypes.POINTER(ctypes.c_uint8))]
 
 
+class SoundState(ctypes.Structure):
+    """The slice-1 byte-compared driver state (SND_STATE header + the three voice records). Field
+    layout MUST match include/sound.h's SoundState."""
+    _fields_ = [("header", ctypes.c_uint8 * SND_STATE_BYTES),
+                ("voice", (ctypes.c_uint8 * SND_VOICE_STRIDE) * SND_VOICES)]
+
+
+class SoundDriver(ctypes.Structure):
+    """The slice-2 sound owner: SoundState plus the two trigger-owned globals appended after it (the VBL
+    enable and the current tune id). Field layout MUST match include/sound.h's SoundDriver."""
+    _fields_ = [("state", SoundState),
+                ("vbl_enable", ctypes.c_uint16), ("cur_tune_id", ctypes.c_uint16)]
+
+
+RM_VBL_PARKED, RM_VBL_RUNNING = 0, 1
+
+
+def sound_driver(image):
+    """A SoundDriver seeded from the flat image, via ref_sound_view's single decode of the sound bytes
+    (the header/voice slices, the vec->RM_VBL_* mapping and the cur_tune_id be16 live there, one copy)."""
+    header, voices, vbl, cur_tune = ref_sound_view(image)
+    d = SoundDriver()
+    d.state.header[:] = header
+    for v in range(SND_VOICES):
+        d.state.voice[v][:] = voices[v]
+    d.vbl_enable = vbl
+    d.cur_tune_id = cur_tune
+    return d
+
+
+def ref_sound_view(image):
+    """The reference image's sound state, in the same shape the candidate's SoundDriver holds it — the
+    SND_STATE header bytes, the three voice records, the VBL enable (mapped from the handler address),
+    and the current tune id — so a drive can byte-compare the two directly."""
+    header = bytes(image[A_snd_state:A_snd_state + SND_STATE_BYTES])
+    voices = [bytes(image[A_snd_voice_ctrl + v * SND_VOICE_STRIDE:
+                          A_snd_voice_ctrl + (v + 1) * SND_VOICE_STRIDE]) for v in range(SND_VOICES)]
+    vec = int.from_bytes(image[A_vbl_sound_vec:A_vbl_sound_vec + 4], "big")
+    vbl = RM_VBL_RUNNING if vec == A_refresh else RM_VBL_PARKED
+    cur_tune = (image[A_cur_tune_id] << 8) | image[A_cur_tune_id + 1]
+    return header, voices, vbl, cur_tune
+
+
 class RmEventCtx(ctypes.Structure):
     _fields_ = [("player", ctypes.POINTER(PlayerState)),
                 ("gobj", ctypes.POINTER(GobjPrefixState)),
@@ -682,7 +736,8 @@ class RmEventCtx(ctypes.Structure):
                 ("hud_text", ctypes.POINTER(ctypes.c_uint8)),
                 ("gfx", ctypes.POINTER(ctypes.c_uint8)),
                 ("assets", ctypes.POINTER(EventAssets)),
-                ("leg", ctypes.c_uint16), ("game_over", ctypes.c_bool)]
+                ("leg", ctypes.c_uint16), ("game_over", ctypes.c_bool),
+                ("snd", ctypes.POINTER(SoundDriver))]
 
 
 class RmInitAssets(ctypes.Structure):
@@ -702,18 +757,19 @@ def init_assets(image):
 
 
 def make_event_ctx(*, player, gobj, ring, pose, road_src, ctrl, scanline, ev, hud_text, gfx,
-                   assets, leg, game_over):
+                   assets, leg, game_over, snd):
     """Build an RmEventCtx from live structs/buffers by KEYWORD — wrapping each struct in a pointer
     and casting the byte buffers to uint8*. One builder so both the dispatch bundle (EventBundle) and
     the leg-drive candidate (equiv._Candidate) seed the ctx identically, without a positional field
-    list either has to keep in sync with the struct."""
+    list either has to keep in sync with the struct. `snd` is the SoundDriver the handlers' triggers
+    drive (slice 2)."""
     u8 = ctypes.POINTER(ctypes.c_uint8)
     return RmEventCtx(
         player=ctypes.pointer(player), gobj=ctypes.pointer(gobj), ring=ctypes.pointer(ring),
         pose=ctypes.pointer(pose), road_src=ctypes.pointer(road_src),
         ctrl=ctypes.cast(ctrl, u8), scanline=ctypes.cast(scanline, u8), ev=ctypes.pointer(ev),
         hud_text=ctypes.cast(hud_text, u8), gfx=ctypes.cast(gfx, u8), assets=ctypes.pointer(assets),
-        leg=leg, game_over=game_over)
+        leg=leg, game_over=game_over, snd=ctypes.pointer(snd))
 
 
 def _i16(image, addr):
@@ -1123,10 +1179,11 @@ class EventBundle:
             image[self.buf_c:self.buf_c + GFX_EVENT_BYTES])
         self.assets, self._k_assets = event_assets(image)
         self.leg = u16(A_leg_index)
+        self.snd = sound_driver(image)   # slice-2 sound trigger state, seeded from the image
         self.ctx = make_event_ctx(
             player=self.player, gobj=self.gobj, ring=self.ring, pose=self.pose, road_src=self.source,
             ctrl=self.ctrl, scanline=self.scan, ev=self.ev, hud_text=self.hud_text, gfx=self.gfx,
-            assets=self.assets, leg=self.leg, game_over=u16(A_game_over_flag) != 0)
+            assets=self.assets, leg=self.leg, game_over=u16(A_game_over_flag) != 0, snd=self.snd)
 
 
 def event_ctx(image, inputs=0):
@@ -1333,6 +1390,7 @@ class FlowOps(ctypes.Structure):
                 ("rebuild_dash", _CB_DRAW_LEG), ("draw_leg_labels", _CB_DRAW_LEG),
                 ("start_demo_leg", _CB_DRAW_LEG), ("run_demo_frame", _CB_VOID),
                 ("flash_frame", _CB_VOID), ("name_flash", _CB_VOID), ("hold_frame", _CB_VOID),
+                ("wait_music_off", _CB_VOID),
                 ("event", _CB_EVENT)]
 
 

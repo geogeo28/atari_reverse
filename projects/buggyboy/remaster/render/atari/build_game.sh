@@ -35,6 +35,12 @@ PY="$REMASTER/../recreate/.venv/bin/python"; [ -x "$PY" ] || PY=python3
 echo ">> generate game fixture (road tables + pose + HUD assets + golden) from the host harness"
 "$PY" "$HERE/gen_game_fixture.py"
 
+# The sound driver (src/sound.c) reads its baked program-data blob from build/sound_data.h; the game
+# shell + flow/event/player trigger sites link src/sound_trig.c against it. Generate it before compiling
+# (idempotent, like gen_game_fixture.py above).
+echo ">> generate sound fixture (const tables + tune streams + Dosound lists) for the sound driver"
+"$PY" "$HERE/gen_sound_fixture.py"
+
 CC=m68k-elf-gcc
 # -O3 (was -O2, not -Os): the road blit primitives must inline or the per-column call overhead ~doubles
 # the render cost (see tools/bench.py). -O3 over -O2 measured -16,746 cyc on the gate frame and must
@@ -55,7 +61,7 @@ CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
        $REMASTER/src/blit.c $REMASTER/src/object_list.c $REMASTER/src/gameplay.c \
        $REMASTER/src/player.c $REMASTER/src/events.c $REMASTER/src/assets.c \
        $REMASTER/src/intermission.c $REMASTER/src/results.c $REMASTER/src/flow.c \
-       $REMASTER/src/frame.c"
+       $REMASTER/src/sound.c $REMASTER/src/sound_trig.c $REMASTER/src/frame.c"
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \

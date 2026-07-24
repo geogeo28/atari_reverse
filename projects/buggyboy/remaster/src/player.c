@@ -17,8 +17,10 @@
  * §6's event path is now wired in: when an event is pending it dispatches through the course-event
  * engine (rm_event_dispatch, via the RmEventCtx bundle), which is what arms the crashes the script
  * above replays. §1's marker gate (clearing the marker the crash script raised, closing the
- * raise/consume loop) and §2's input capture are modeled too; the rest of §1/§2 is off-frame sound
- * (handle_marker, the engine-sound enable block) this slice skips.
+ * raise/consume loop) and §2's input capture are modeled too. Slice 2 WIRES §1's sound: the marker gate
+ * hands the raised effect to handle_marker, the engine-sound enable block (EG / VBL vector / idle
+ * Dosound / EGOFF) is rm_sound_engine_update, and §7 writes engfreq — all through the ctx's SoundDriver.
+ * The `rev_reload` poke stays skipped (it aliases lean_frame, which no compared surface reads).
  * See game.h for the state model. The 68000 works in 16-bit registers, so intermediates wrap mod 2^16 —
  * mirrored with explicit uint16_t/int16_t, exactly as in geometry.c. Verified frame-by-frame against
  * recreate's g_game_update (test/test_player.py, test/test_leg_drive.py).
@@ -105,13 +107,13 @@
 
 /* §1 — the marker gate. The gate byte is the effect id the crash script raised last frame
  * (run_crash_script writes marker_pending from CRASH_MARKER); §1 hands it to handle_marker and CLEARS
- * it, closing the raise/consume loop across frames. Everything §1 does beyond the clear is off-frame
- * state this slice does not own: handle_marker and the engine-sound enable block (rev_reload / EGFLAG /
- * the VBL sound vector / EGOFF) are all sound — rev_reload aliases lean_frame (0x18d12), which no
- * compared surface reads, so it is skipped exactly as §6/§7 skip the same poke (see game.h). */
-static void apply_marker_gate(PlayerState *p) {
+ * it, closing the raise/consume loop across frames. Slice 2 wires the handle_marker trigger; the
+ * engine-sound enable that follows in §1 is rm_sound_engine_update (below). The `rev_reload` poke that
+ * accompanies the idle case aliases lean_frame (0x18d12), which no compared surface reads, so it stays
+ * skipped exactly as §6/§7 skip the same poke (see game.h). */
+static void apply_marker_gate(PlayerState *p, SoundDriver *snd) {
     if (p->marker_pending != 0) {
-        /* g_handle_marker(marker_pending): off-frame sound (stop music + INITFX), skipped */
+        rm_handle_marker(snd, p->marker_pending, p->game_over);
         p->marker_pending = 0;
     }
 }
@@ -190,7 +192,7 @@ static uint16_t steer_centre_input(PlayerState *p) {
 /* §6 (script path) — replay one crash_anim_tbl record. The record poses the body, may override the
  * engine, and kicks the curve; the cursor then steps on. Steering is the only live input that still
  * gets through, OR'd onto whatever the script forces via turn_flags. Returns the effective input. */
-static uint16_t run_crash_script(PlayerState *p, const PlayerAssets *a, uint16_t in) {
+static uint16_t run_crash_script(PlayerState *p, const PlayerAssets *a, uint16_t in, SoundDriver *snd) {
     const uint8_t *rec = a->crash_anim_tbl + p->collision_lock;
 
     in = (uint16_t)(p->turn_flags | (in & (RM_IN_LEFT | RM_IN_RIGHT)));
@@ -199,6 +201,7 @@ static uint16_t run_crash_script(PlayerState *p, const PlayerAssets *a, uint16_t
     if ((int8_t)rec[CRASH_LEAN] < 0) {          /* terminal record: the player drives again */
         p->crash_phase = 0;
         p->collision_lock = 0;
+        snd->vbl_enable = RM_VBL_RUNNING;       /* restore the VBL sound handler (recreate §6:321) */
         return steer_centre_input(p);
     }
 
@@ -240,13 +243,13 @@ static uint16_t update_controls(PlayerState *p, const PlayerAssets *a,
         rm_event_dispatch(ctx, pending, spin, 1, 0);     /* slot=spin, obj_flag_a=1, obj_flag_b=0 */
         frame_input = 0;
     }
-    return run_crash_script(p, a, frame_input);
+    return run_crash_script(p, a, frame_input, ctx->snd);
 }
 
 /* §7 — engine rpm and the two speeds derived from it: speed_raw (the true rate, which drives the
  * lean animation and the steering tables) and speed (speed_raw plus a jitter that makes the
  * speedometer flicker at high revs). Returns the engine frequency, which gates that jitter. */
-static void update_engine(PlayerState *p, const PlayerAssets *a, uint16_t in) {
+static void update_engine(PlayerState *p, const PlayerAssets *a, uint16_t in, SoundDriver *snd) {
     uint16_t rpm = p->engine_rpm;
     if (in & RM_IN_ACCEL) {
         rpm = (uint16_t)(rpm + p->rpm_add);
@@ -272,6 +275,7 @@ static void update_engine(PlayerState *p, const PlayerAssets *a, uint16_t in) {
         engine_freq = (uint16_t)((uint16_t)((rpm - RPM_IDLE) * EGF_TURBO_MUL) >> 1);
         if ((int16_t)(engine_freq - EGF_MAX) >= 0) engine_freq = 0xffff;
     }
+    snd->state.header[SND_EG_P1] = (uint8_t)engine_freq;   /* §7 engfreq -> the engine EG's pitch param */
 
     p->speed = raw;
     if ((int16_t)(engine_freq - JITTER_MIN_EGF) >= 0) {
@@ -424,7 +428,9 @@ static void update_edge_clamp(PlayerState *p, const uint8_t *ctrl, uint16_t stee
 }
 
 void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEventCtx *ctx) {
-    apply_marker_gate(p);                                          /* §1 */
+    apply_marker_gate(p, ctx->snd);                               /* §1 pending-marker gate */
+    /* §1 engine-sound enable: reads last frame's speed / crash state (all pre-§6/§7 here). */
+    rm_sound_engine_update(ctx->snd, p->speed, p->crash_phase, ctx->ev->crash_frame, p->game_over);
     uint16_t frame_input = p->game_over ? 0 : (uint16_t)(p->input & IN_MASK);   /* §2 input capture */
 
     update_dashboard_anim(p, a, frame_input);
@@ -432,7 +438,7 @@ void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEv
     uint16_t spin = update_lean_anim(p, a);
 
     uint16_t in = update_controls(p, a, ctx, frame_input, spin);
-    update_engine(p, a, in);
+    update_engine(p, a, in, ctx->snd);
     update_view_and_scroll(p, a);
     uint16_t steer_src = update_steering(p, a, in);
     arm_spin(p, in, p->wheel_pos);

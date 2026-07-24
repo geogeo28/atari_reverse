@@ -131,13 +131,16 @@ static const PlayerAssets player_assets = {
  * walks its live paths. */
 static PlayerState player;
 /* rm_player_update takes an RmEventCtx*, but the bench frame drives with collision_lock and
- * event_pending clear, so §6's event path (the only code that dereferences ctx) is never taken and
- * the dispatch never runs — so just the physics-side pointers are enough; the event-only fields
- * (ev / assets / hud_text / gfx the dispatch would read) are left unset, which the measured call never
- * touches. */
+ * event_pending clear, so §6's event path (the only code that dereferences ctx->assets/hud_text/gfx) is
+ * never taken and the dispatch never runs. §1's engine-sound enable DOES run every frame, though: it
+ * reads ctx->ev->crash_frame and drives ctx->snd, so both must be bound to real storage (a NULL ctx->ev
+ * / ctx->snd would corrupt the Musashi image at their zero-page-relative field offsets). The SoundDriver
+ * is reset in bench_stage_assets before every measured call. */
+static SoundDriver bench_snd;
 static RmEventCtx ctx = {
     .player = &player, .gobj = &pfx, .ring = &ring, .pose = &pose, .road_src = &src,
-    .ctrl = ctrl, .scanline = scanline, .leg = GAME_LEG_INDEX, .game_over = 0,
+    .ctrl = ctrl, .scanline = scanline, .ev = &ev, .snd = &bench_snd,
+    .leg = GAME_LEG_INDEX, .game_over = 0,
 };
 
 void bench_ring_views(void);
@@ -175,6 +178,9 @@ void bench_stage_assets(void) {
                 hud_text_ram, &object.shade, &screen_offset, race_pal, &init_assets, GAME_LEG_INDEX);
     player.input = RM_IN_ACCEL;                 /* a driving frame, so the physics walks its live paths */
     scroll.scroll_speed = BENCH_SCROLL_SPEED;   /* a representative racing speed (scroll edge/wrap tail) */
+    rm_sound_reset(&bench_snd.state);           /* §1's engine-sound enable evolves it; start each call clean */
+    bench_snd.vbl_enable = RM_VBL_PARKED;
+    bench_snd.cur_tune_id = 0;
     ground.view = player.ground_view_off;
     objlist.view_flags = pose.view_flags;
     objlist.view_parity = pfx.view_parity;

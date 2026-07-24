@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include "screen.h"
+#include "sound.h"   /* SoundDriver — the in-race sound trigger state the event/physics slices drive */
 
 /* Player buggy pose — what the object/car draw reads. Fields added as the draw path is ported. */
 typedef struct {
@@ -322,9 +323,10 @@ void rm_ring_poke_byte(CourseRing *ring, unsigned flat_off, uint8_t val);
  * The probe and the fx / horizon dispatch themselves run on the caller's view-wrap frame (see the
  * frame loops in `game_main.c` / `equiv._Candidate`), not inside this function.
  *
- * Two writes the original's section 6 makes are deliberately absent, both sound: the `rev_reload`
- * poke that accompanies an rpm override, and restoring the VBL sound vector on the terminal record.
- * Sound is off-frame state this slice does not own (see [[buggyboy-sound-architecture]]). */
+ * Section 6's sound is now wired (slice 2, via the ctx's SoundDriver): the terminal record restores the
+ * VBL sound vector, and §1's marker gate / engine-sound block fire through the trigger layer. The one
+ * write still skipped is the `rev_reload` poke that accompanies an rpm override — it aliases lean_frame
+ * (0x18d12), which no compared surface reads. */
 
 /* Input bits, as the original's input_state packs them (joystick, or arrow keys mapped by read_input).
  * COAST is not a joystick bit — IN_MASK strips it from live input; only the crash script raises it
@@ -756,9 +758,10 @@ bool rm_crash_rollover_step(uint8_t *text, uint16_t crash_bars);
  * It writes NO framebuffer pixels — everything it touches is off-frame game state or the graphics
  * arena (the dashboard/banner bitmaps a later HUD/draw pass consumes).
  *
- * OFF-FRAME sound is SKIPPED, as everywhere in the remaster (see buggyboy-sound-architecture): every
- * play_event_tune / handle_marker / stop_music the original fires is documented at its call site and
- * omitted — no INITTUNE/INITFX/TURNOFF, no VBL-vector poke.
+ * IN-RACE sound is WIRED (slice 2): every play_event_tune / handle_marker / stop_music the original
+ * fires drives the ctx's SoundDriver through the trigger layer (sound.h), guarded on ctx->game_over.
+ * The driver state (SND_STATE + voices), the VBL enable and the Dosound ledger are compared against
+ * recreate in the leg / dispatch / crash drives.
  */
 
 /* Dynamic event-engine state (recreate's scalar globals, named). The crash-script fields the handlers
@@ -847,6 +850,7 @@ struct RmEventCtx {
     const EventAssets *assets;
     uint16_t           leg;
     bool               game_over;
+    SoundDriver       *snd;        /* slice 2: the sound trigger state the event handlers drive */
 };
 
 /* Resolve event `idx` (0..64) through the native jump table and run its handler with the frame's slot
@@ -932,7 +936,8 @@ void rm_course_mode_event(RmEventCtx *c, int16_t *obj_shade, uint16_t *screen_of
  * PlayerState.time_left, the rollover records + score in hud_text) so a self-running leg advances.
  * Runs after the course tail on the caller's frame, as draw_hud phase 8 runs after game_update.
  *
- * OFF-FRAME sound (stop_music on each drained unit) is SKIPPED, per the remaster convention. */
+ * Slice 2 WIRES the crash-drain sound: each drained unit fires stop_music_chk(crash) through the ctx's
+ * SoundDriver (recreate draw_crash_fx @0x15914), Dosound-ledgered like the rest. */
 #define RM_HUD_CRASH_DECAY 2        /* hud_crash_timer step per frame while positive */
 #define RM_ABORT_GAME_OVER 0xffff   /* abort_flag armed at once when crash_active == 0 */
 #define RM_ABORT_BONUS_DONE 0x33    /* ...when the bonus tally is exhausted instead */
