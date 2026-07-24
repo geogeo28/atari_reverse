@@ -1435,3 +1435,34 @@ Two C reshapes measured as washes (real-pointer displacement walk → 8 row-poin
 `no-unroll-loops` → identical) — the objshift story again. **The ~2.5–3 ms is reachable only via a
 hand-asm `rm_glyph_run` core** (ideal ~168 cyc/row vs 331 today; road_band.S pattern: frozen C ref +
 per-core flag + Musashi differential + mutation).
+
+### A5 hand-asm rm_glyph_run — MEASURED 0.86× (−0.95 ms), below the 1.5 ms bar; NOT landed. 2026-07-24
+
+A whole-run m68k core (register-pinned fills d6/d7, displacement-addressed RMW, outer scan + inner
+8-row blit in one call behind the movem prologue) was built and proven byte-exact to the C:
+750 Musashi cases (random fonts/strings driving the terminator + LAST_HALF_GLYPH paths, every HUD
+dst alignment, all fill combos, si offsets, budgets, end_dst NULL/non-NULL) + GUARD canary +
+positive control + mutation (lsr #8→#7 fails 8 shards). Measured: glyph runs 52,986 → 45,394 cyc;
+draw_hud 105,556 → 97,964 (13.19 → 12.25 ms); gate TOTAL 973,488 / 121.69 ms.
+
+**Why only 0.86×: the "~168 cyc/row ideal" estimate ignored the 68000's shift-by-8.** The two-glyph
+pack interleaves bytes (mask16 = [g1.hi:g2.hi], ink16 = [g1.lo:g2.lo]) and the 68000 has no
+byte-permute — each repositioning is a 22-cyc lsr/lsl #8, 44 cyc/row irreducible, on top of the
+~112-cyc masked 2-long RMW and a 24-cyc dup16. The asm removes the C's real waste (45 stack spills +
+base+index, ~73 cyc/row) but the floor is ~258 cyc/row vs the C's 331. Every shift-avoidance route
+(byte-read repositioning, long-deinterleave, rol, dup-then-pack) costs an equivalent shift-class op.
+**A 2× glyph win is not reachable on this engine; the honest ceiling is ~0.9 ms.**
+
+Per the pre-declared bar (<1.5 ms → report, don't force), the core was NOT landed — 0.95 ms does not
+justify a standing .S core + differential suite + a 5-file dispatch refactor. The verified sources
+are preserved in the session scratchpad (a5_glyph_asm_backup/) and this note records the register
+design and the floor analysis for any future revisit.
+
+**Perf campaign close-out (2026-07-24).** With this verdict every measured lever on the faithful
+stock-ST build is resolved: object tree (A1/A2-reframed/A3/C-levers), render_road (A4 + full
+hand-asm), HUD (opaque fast path + precompute/memcpy), scroll (pre-rotation, earlier), and the
+measured NO-GOs (B2, B4-as-scoped, B5, A5-asm-below-bar, plus every dead end logged in the campaign
+notes). **The faithful frame stands at gate 122.52 ms (~8.2 fps) — from 203 ms (4.9 fps) at the
+campaign's start — with the original binary's own gate at 110 ms.** What remains is Tier-C
+territory requiring sign-off: C1 (25 fps vsync-locked cadence — pixel-faithful, the honest
+presentation), C4 (STE blitter build — byte-faithful, separate binary), C2/C3 (fidelity trades).
