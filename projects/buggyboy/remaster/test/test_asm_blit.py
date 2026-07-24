@@ -49,9 +49,8 @@ sys.path.insert(0, str(RECREATE / "oracle"))       # emu (Musashi runner)
 sys.path.insert(0, str(REMASTER / "tools"))        # bench: the flat-image loader (one source of truth, F7)
 
 from bench import BENCH_ELF, BENCH_BIN, _syms, _load_flat   # noqa: E402
+from bench import require_bench_elf, noise_bytes as _noise  # noqa: E402  shared with test_asm_road (F7)
 from test_blit_engines import _x_for                        # noqa: E402  the C fuzz's x decoder (F7)
-
-BUILD_HINT = "bench.elf missing — build it: bash render/atari/bench_build.sh (make test builds it)"
 
 FUZZ_CHUNKS = 8
 DST_OFF = 0x2000               # start the cursors mid-buffer (bench_main.c OBJSH2_BUF_MID)
@@ -207,18 +206,11 @@ _HARNESSES = {}
 
 
 def _harness(desc):
-    if not (BENCH_ELF.exists() and BENCH_BIN.exists()):
-        pytest.fail(BUILD_HINT)
+    require_bench_elf()
     h = _HARNESSES.get(desc["name"])
     if h is None:
         h = _HARNESSES[desc["name"]] = _Harness(desc)
     return h
-
-
-def _noise(seed, n):
-    import random
-    rng = random.Random(seed)
-    return bytes(rng.randrange(256) for _ in range(n))
 
 
 def _draws_zero_rows(rows_m1):

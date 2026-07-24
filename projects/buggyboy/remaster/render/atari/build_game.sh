@@ -56,6 +56,13 @@ CC=m68k-elf-gcc
 # the real XBIOS Dosound game_main.c provides over the baked SND_DOSOUND blob, and (b) turns the
 # RM_SOUND_LOCK/UNLOCK trigger-mutation guards into the shell's VBL-reentrancy counter (no-ops on the
 # host/bench builds, so the differential .so is unchanged). See game_main.c's sound-pump section.
+# PERF30 road-asm slice 1: the game build runs the C band D FOR NOW — NO -DRM_ASM_ROAD. src/asm/road_band.S
+# is still assembled + linked (below), and road.c's RR_BAND_D_FN dispatch defaults to the C reference
+# rr_band_D_c when the flag is off. A lone asm band is a measured +2,658-cyc regression on the gate frame
+# (it de-inlines band A; see PERF30.md "Road-asm slice 1"), so the flag flips ON only when slice 2 (band B)
+# makes the composite net-positive — re-run run_golden.py THEN. Until then the asm's correctness is pinned
+# by test/test_asm_road.py (Musashi C-vs-asm differential) + tools/bench.py's A/B row, NOT by these goldens,
+# which exercise the C path. (No -DRM_ROAD_DIFF: the game omits road.c's bench-only differential entries.)
 CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -DRM_ASM_BLIT -DRM_SOUND_TARGET -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
         ${GAME_EXTRA_CFLAGS:-}"
@@ -70,6 +77,7 @@ CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
     "$HERE/os.s" "$REMASTER/src/asm/objshift2.S" "$REMASTER/src/asm/objshift.S" \
+    "$REMASTER/src/asm/road_band.S" \
     "$HERE/shim.c" "$HERE/game_main.c" $CORES -lgcc \
     -o "$BUILD/game.elf"
 

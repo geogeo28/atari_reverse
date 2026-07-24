@@ -33,8 +33,17 @@ CC=m68k-elf-gcc
 # bench_draw_frame) measure the asm the game runs. The C references rm_blit_objshift2 / rm_blit_objshift
 # are still compiled (blit.c) and linked, so bench_main.c's bench_objshift2_c/_asm and bench_objshift_c/_asm
 # wrappers can measure C vs asm side by side (PERF30 A3).
+# -DRM_ASM_ROAD: dispatch render_road's band D to the hand-written m68k core src/asm/road_band.S (PERF30
+# road-asm slice 1). The bench keeps this ON — UNLIKE the shipping game build, which holds band D on the C
+# reference for now (a lone asm band is a +2,658-cyc gate-frame regression; the game flag flips ON at slice
+# 2). So this bench measures the asm the game WILL run and pins it (bench_render_road / the A/B row / the
+# test_asm_road differential all exercise rr_band_D_asm here). The C reference rr_band_D_c stays compiled
+# either way (road.c) as the byte-exact spec.
+# -DRM_ROAD_DIFF: compile road.c's bench-only whole-road differential entries (band D bound to C / asm /
+# no-op), which bench_main.c's bench_road_* wrappers call for tools/bench.py + test/test_asm_road.py.
 CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
-        -fomit-frame-pointer -nostdlib -DRM_ASM_BLIT -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra"
+        -fomit-frame-pointer -nostdlib -DRM_ASM_BLIT -DRM_ASM_ROAD -DRM_ROAD_DIFF \
+        -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra"
 CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
        $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c \
        $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c \
@@ -45,6 +54,7 @@ CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
 echo ">> compile + link bench.elf (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
     "$HERE/os.s" "$REMASTER/src/asm/objshift2.S" "$REMASTER/src/asm/objshift.S" \
+    "$REMASTER/src/asm/road_band.S" \
     "$HERE/shim.c" "$HERE/bench_main.c" $CORES -lgcc \
     -o "$BUILD/bench.elf"
 

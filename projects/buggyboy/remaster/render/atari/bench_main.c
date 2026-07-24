@@ -337,6 +337,63 @@ void bench_objsh_run_asm(void) {
                  objsh_args.color_pairs, objsh_args.base_cells);
 }
 
+/* ---- PERF30 road-asm slice 1: render_road band D hand-asm core, C vs asm + differential ----
+ * road.c compiles (under -DRM_ROAD_DIFF) three whole-road entries with band D bound to the C reference /
+ * the asm / a no-op; the wrappers below drive them. The composed rows (bench_render_road / draw_frame)
+ * already run the asm path (this build defines RM_ASM_ROAD, like the game). Two staging paths:
+ *   - microbench (tools/bench.py): bench_road_dc / bench_road_dasm render the BAKED leg-0 gate frame
+ *     (same `road`/`fb`/build_geometry as bench_render_road), so band D's C-vs-asm delta is measured on
+ *     the canonical frame — comparable to the render_road cycle figure.
+ *   - differential (test/test_asm_road.py): bench_road_run_{c,asm,noD} render a POKED road frame (the
+ *     test stages real leg x warmup buffers extracted from equiv.road_background), so each case drives
+ *     band D through its variants; a Musashi run of _c vs _asm differs only in band D. */
+#ifdef RM_ROAD_DIFF
+void rm_render_road_bandD_c(const RoadInput *in, Framebuffer *fb);
+void rm_render_road_bandD_asm(const RoadInput *in, Framebuffer *fb);
+void rm_render_road_bandD_noD(const RoadInput *in, Framebuffer *fb);
+
+/* Microbench (baked leg-0 frame). Rebind road.width_tbl like bench_render_road, then run the whole road
+ * with band D forced to the C ref / the asm. */
+void bench_road_dc(void)   { road.width_tbl = ctrl + RM_CTRL_WIDTH_OFF; rm_render_road_bandD_c(&road, &fb); }
+void bench_road_dasm(void) { road.width_tbl = ctrl + RM_CTRL_WIDTH_OFF; rm_render_road_bandD_asm(&road, &fb); }
+
+/* Differential staging buffers (the test pokes these). Sizes + the edge/tex internal offsets mirror the
+ * host road_input() extraction in test/adapter.py (ROAD_*_BYTES / ROAD_EDGE_PAD / ROAD_TEX_PAD_LO).
+ * test_asm_road.py pins these buffer sizes against the bench ELF's own symbol spacing (nm), so a resize
+ * here without a matching poke can't false-green. The framebuffer is bracketed by GUARD canaries (a store
+ * past the road band into the guard differs between the C and asm runs = a wild asm store). */
+#define RR_WIDTH_TBL_BYTES   0x200
+#define RR_PARAM_BYTES       0x2000
+#define RR_EDGE_PAD          0x400
+#define RR_EDGE_WINDOW_BYTES (2 * RR_EDGE_PAD)
+#define RR_CONST_BYTES       0x60
+#define RR_TEX_PAD_LO        0x4000
+#define RR_TEX_WINDOW_BYTES  0x14000
+#define RR_DIFF_GUARD        0x40
+uint8_t rr_diff_width[RR_WIDTH_TBL_BYTES] __attribute__((aligned(2)));
+uint8_t rr_diff_param[RR_PARAM_BYTES] __attribute__((aligned(2)));
+uint8_t rr_diff_edge[RR_EDGE_WINDOW_BYTES] __attribute__((aligned(2)));
+uint8_t rr_diff_const[RR_CONST_BYTES] __attribute__((aligned(2)));
+uint8_t rr_diff_tex[RR_TEX_WINDOW_BYTES] __attribute__((aligned(2)));
+struct { uint8_t lo[RR_DIFF_GUARD]; Framebuffer fb; uint8_t hi[RR_DIFF_GUARD]; }
+    rr_diff_fb __attribute__((aligned(2)));
+
+static const RoadInput rr_diff_road = {
+    .width_tbl  = rr_diff_width,
+    .param      = rr_diff_param,
+    .edge_tbl   = rr_diff_edge + RR_EDGE_PAD,
+    .tex        = rr_diff_tex + RR_TEX_PAD_LO,
+    .edge_const = rr_diff_const,
+};
+void bench_road_run_c(void)   { rm_render_road_bandD_c(&rr_diff_road, &rr_diff_fb.fb); }
+void bench_road_run_asm(void) { rm_render_road_bandD_asm(&rr_diff_road, &rr_diff_fb.fb); }
+void bench_road_run_noD(void) { rm_render_road_bandD_noD(&rr_diff_road, &rr_diff_fb.fb); }
+/* The SHIPPING pipeline (rm_render_road, band D = RR_BAND_D_FN = the asm here) on the same staged frame.
+ * The test asserts this is byte-identical to bench_road_run_asm — which runs the DUPLICATED render_road_bandD
+ * pipeline with the same asm band D — so the two hand-kept copies of the seven-band sequence cannot drift. */
+void bench_road_run_shipping(void) { rm_render_road(&rr_diff_road, &rr_diff_fb.fb); }
+#endif /* RM_ROAD_DIFF */
+
 /* The object stages after the road — ground through the view-ordered fixed-pass/buggy tail. ONE
  * copy, called by both composites, so they cannot drift from each other (both must keep mirroring
  * game_main.c's draw_frame). */

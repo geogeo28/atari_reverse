@@ -60,8 +60,10 @@ PYTEST_ARGS ?= -n auto --dist worksteal
 test: $(CAND) $(RECON) $(BENCH_ELF)
 	$(PY) -m pytest -q $(PYTEST_ARGS) test
 
-# Cycle cost vs the original and vs recon on-target (once a cross-compiled build exists).
-bench: $(CAND)
+# Cycle cost vs the original and vs recon on-target (once a cross-compiled build exists). bench.py loads
+# the m68k bench.elf and jumps its bench_* wrappers, so it is a prerequisite (a stale/absent elf otherwise
+# KeyErrors on the newer bench symbols).
+bench: $(CAND) $(BENCH_ELF)
 	$(PY) tools/bench.py
 
 clean:

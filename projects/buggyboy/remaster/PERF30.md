@@ -1157,3 +1157,71 @@ binary's 207,232 cyc / 25.90 ms** — the store-bound faithful floor (remaster: 
 original is itself a per-row interpreter with no display list, so it is the correct ceiling; the gap
 is register discipline on the stores/loads/loop control, exactly the lever that landed objshift and
 objshift2 within ~0.6% of the original.
+
+### Road-asm slice 1 — hand-asm band D LANDED (byte-exact), but a lone asm band nets ~break-even. 2026-07-24
+
+Following the B2 NO-GO fallback ("hand-asm the current seven bands, A3-style"), slice 1 ports render_road's
+band D (near + far copy) to a hand-written m68k core, `src/asm/road_band.S` (`rr_band_D_asm`), behind
+`-DRM_ASM_ROAD` (per-core flag `RM_ASM_RR_BAND_D`; dispatch `RR_BAND_D_FN` in road.c). The C `rr_band_D_c`
+stays the byte-exact reference. **The core is correct and 27% faster in isolation, but composing a single
+asm band into the otherwise-inlined C road de-inlines its neighbours, so the gate-frame road is break-even
+— a measured cost that only a SECOND ported band amortises.**
+
+**Which band + why.** Band D is one of the two ~54k standalone band functions (B/D) the A4 note flagged; D
+was picked over B because its near/far tails share the most structure (both end in a reset-to-row-start
+forward fill + `rr_fill_full_row`), so the transcription cribs cleanly from the original's machine model
+(`recreate/src/machine/road.c` rr_band_D @0x987c/@0x9950). The asm mirrors that register map (a2=row-start
+dst, a0/a1=working dst/src, a3=tex, a4/a5/a6=param/width/edge, d3=mask, d5/d6=fill, d2=stride, d7=col-mask,
+d4=dbra), adapting only the addressing to the remaster ABI (RoadInput native pointers + an Offset dst
+rebased onto fb->px; write-back of param/width/edge/dst at return) exactly as objshift2.S adapted the blitter.
+
+**Isolated: the asm wins (profile.py bench_render_road, per-PC).** `rr_band_D_asm` = **38,722 cyc** vs the
+C `rr_band_D` **53,240** = **0.73×, −14,518** on the gate frame — squarely in A3 territory, the register-held
+cursors + (aN)+ stores beating GCC's struct-localized C.
+
+**Composed: it does NOT pay (the neighbour-inlining tax).** render_road with band D asm = **352,968 cyc**
+vs the pre-slice C road **350,310** = **+2,658 (+0.76%)**. Cause, measured every way: the moment
+rm_render_road contains an opaque external asm call, GCC drops band A from a resident inline into a cold
+`.constprop` clone (**+17k cyc**) — the "A/C inline into rm_render_road" wall from A4, now tripped by the
+asm call rather than by localization. `always_inline` on bands A + C_near + C_far pins them resident and
+recovers the clone penalty to a worse-regalloc residue, but the residue (~+17k) still slightly exceeds
+band D's 14.5k saving. `noinline`/`noipa` wrappers, an `optimize()` growth-param attribute, and guarding
+the unused C body out were all tried and did not move it (all leave A de-inlined or spilling). Host suite
++ 5-leg goldens stay byte-exact throughout.
+
+**Why this is groundwork, not a dead end.** The +17k de-inline is a ONE-TIME cost of having *any* asm band
+inside the C road — it does not grow with the number of asm bands (band A is already de-inlined). So slice 2
+(band B, the sibling ~54k standalone function) adds ~another −14k with ~no further de-inline tax, flipping
+the composite to a clear net win (~339k, below the 350,310 C floor). The lone-band break-even is the price
+of admission; the campaign pays off from the second band on.
+
+**Shipping decision (this commit): the game holds on the C band D.** `build_game.sh` does NOT pass
+`-DRM_ASM_ROAD`, so `RR_BAND_D_FN` defaults to `rr_band_D_c` and the game runs no regression; the flag flips
+ON when slice 2 makes the composite net-positive (re-golden then). The core, the differential and the bench
+A/B stay landed and verified via `bench_build.sh` (which DOES pass `-DRM_ASM_ROAD` + `-DRM_ROAD_DIFF`).
+road_band.S assembles unconditionally and `rr_band_D_c` compiles unconditionally (as blit.c/objshift2.S do),
+so only the dispatch macro keys off the flag — undefining it A/Bs the band on every build.
+
+**Verification.**
+- **Differential** `test/test_asm_road.py` (Musashi, sharded by LEG — 5 shards + a staging-pin test): each
+  leg's mid-race road is simulated ONCE and checkpointed at warmups 60/90/120 (prefixes), then
+  `adapter.road_input` extracts the five road buffers (as test_road.py does) and pokes them + a
+  GUARD-bracketed background into the bench's `rr_diff_*` staging. `test_staging_matches_adapter` pins those
+  buffer sizes against the bench ELF's own symbol spacing (nm), so a C-side resize can't false-green. Each
+  frame runs the WHOLE road three ways — band D = C (`bench_road_run_c`) vs asm (`bench_road_run_asm`) vs the
+  SHIPPING `rm_render_road` (`bench_road_run_shipping`) — and byte-compares the framebuffer + GUARD + the
+  read-only inputs: C-vs-asm isolates band D, and shipping-vs-asm pins the duplicated `render_road_bandD`
+  pipeline against `rm_render_road`. Positive control: a no-op-band-D run must draw a different frame (per
+  leg). **Mutation check**: flipping the near shoulder-fill `%d5`→`%d6` fails the differential; restored, green.
+- `make test` **706 passed** (700 host + the road-asm shards; test_asm_blit unchanged).
+- `run_golden.py` **MATCH ×5** — the GAME build (now on the C band D) is byte-identical to recreate's
+  pipeline on all 5 legs. The asm's own on-target pixels are pinned by test_asm_road.py; re-golden with the
+  flag on at slice 2.
+
+**Next slice (2): port band B** (`rr_band_B`, ~54k, the other standalone A4 band) to `road_band.S` behind its
+own per-core flag `RM_ASM_RR_BAND_B`, reusing this differential harness (add a `bench_road_run_*` pair / a
+`bench_road_bB_*` micro A/B). ABI/contract note: band B's write-back is identical (param/width/edge/dst at
+return) and it shares the src-dispatch shape, but its near/far tails differ from D — near does `+8` to both
+cursors before the asr, and its far tail (0x9514) has TWO fill shapes (a `moveq #$13` dbf-counted fill AND
+the shoulder fill) plus a distinct full-fill; crib the machine model rr_band_B @0x93c2/@0x948c. Expect band
+B asm to add ~−14k with no further de-inline tax → the composite drops below the C floor.

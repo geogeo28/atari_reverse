@@ -35,6 +35,26 @@ CPU_HZ = bench_frame.CPU_HZ                          # 8 MHz ST 68000
 FRAME_BUDGET = bench_frame.FRAME_BUDGET_CYCLES       # cycles per 50 Hz frame
 BENCH_ELF = REMASTER / "render" / "atari" / "build" / "bench.elf"
 BENCH_BIN = REMASTER / "render" / "atari" / "build" / "bench.bin"
+# Shared by the Musashi differential suites (test_asm_blit.py / test_asm_road.py): the build hint + a
+# fail-if-missing guard (a silent skip would hide a broken asm) and the seeded byte generator both suites
+# poke as noise. Kept here so the two test files import ONE definition rather than copying them.
+BUILD_HINT = "bench.elf missing — build it: bash render/atari/bench_build.sh (make test builds it)"
+
+
+def require_bench_elf():
+    """FAIL (not skip) the calling test if bench.elf/.bin are absent — a missing elf must be loud."""
+    if not (BENCH_ELF.exists() and BENCH_BIN.exists()):
+        import pytest
+        pytest.fail(BUILD_HINT)
+
+
+def noise_bytes(seed, n):
+    """n deterministic bytes from `seed` — the fuzz noise both differential suites poke into their buffers."""
+    import random
+    rng = random.Random(seed)
+    return bytes(rng.randrange(256) for _ in range(n))
+
+
 A_view_flags = 0x18c56
 A_scroll_speed = 0x18cb4
 BENCH_SCROLL_SPEED = 0x20                            # must match bench_main.c BENCH_SCROLL_SPEED
@@ -80,13 +100,20 @@ ASM_AB = [
     ("objshift2 asm",       "bench_objshift2_asm"),
     ("objshift C ref",      "bench_objshift_c"),
     ("objshift asm",        "bench_objshift_asm"),
+    # PERF30 road-asm slice 1: the whole road with band D bound to the C ref vs the asm, on the same
+    # baked leg-0 gate frame render_road uses — so (C ref - asm) is band D's saving, and the asm row is
+    # the render_road total after the port. Both need the built control table (bench_build_geometry).
+    ("road (band-D C)",     "bench_road_dc"),
+    ("road (band-D asm)",   "bench_road_dasm"),
 ]
 # Head-to-head print pairs, derived from the row list above (laid out C-ref, asm, C-ref, asm ...): each
 # asm row pairs with the C-ref row just before it, so its ratio is measured against the right reference.
 ASM_AB_PAIRS = [(ASM_AB[i][0], ASM_AB[i + 1][0]) for i in range(0, len(ASM_AB), 2)]
 
-# Remaster wrappers that need a built control table (and, for draw_frame, the pre-rotated scroll
-# copies) before the measured call — same reason recon preps geometry for its road readers.
+# Per-row-LABEL preps: wrappers that need a built control table (and, for draw_frame, the pre-rotated
+# scroll copies) before the measured call — same reason recon preps geometry for its road readers. Keyed
+# by label across FUNCS + COMPOSITES + ASM_AB (the road A/B pair also needs the control table), so
+# preps_for is one lookup over one table.
 RM_PREPS = {
     "player_update":  ["bench_build_geometry"],
     "objlist_pass1":  ["bench_build_geometry"],
@@ -95,6 +122,8 @@ RM_PREPS = {
     "objlist_fixed":  ["bench_build_geometry"],
     "object_tree":    ["bench_build_geometry"],
     "render_road":    ["bench_build_geometry"],
+    "road (band-D C)":   ["bench_build_geometry"],
+    "road (band-D asm)": ["bench_build_geometry"],
     "blit_road_scroll": ["bench_scroll_prebuild"],
     "draw_frame":     ["bench_scroll_prebuild"],
 }
@@ -149,20 +178,20 @@ def staged_mem():
 
 
 def preps_for(bench_sym):
-    """The prep symbols to run, in order, before measuring `bench_sym`: the staging pass plus the
-    stage's RM_PREPS entry, resolved through the FUNCS/COMPOSITES row for that symbol (RM_PREPS is
-    keyed by row label, and labels are not uniformly the symbol minus \"bench_\" — deriving the key
-    by string surgery is how tools/profile.py once skipped the scroll blit's prebuild silently)."""
-    label = next((lbl for lbl, _, rm in FUNCS + COMPOSITES if rm == bench_sym), None)
+    """The prep symbols to run, in order, before measuring `bench_sym`: the staging pass plus the stage's
+    RM_PREPS entry, resolved through the FUNCS/COMPOSITES/ASM_AB row for that symbol (RM_PREPS is keyed by
+    row label, and labels are not uniformly the symbol minus \"bench_\" — deriving the key by string
+    surgery is how tools/profile.py once skipped the scroll blit's prebuild silently)."""
+    label = next((lbl for lbl, *rest in FUNCS + COMPOSITES + ASM_AB if rest[-1] == bench_sym), None)
     return ["bench_stage_assets", *RM_PREPS.get(label, ())]
 
 
 def remaster_costs():
     """Every remaster measurement from ONE staged image (F8, no second staged_mem() pass): the per-stage
-    FUNCS + whole-scope COMPOSITES + the PERF30 A3 objshift2 C-vs-asm A/B pair. Some wrappers read state
+    FUNCS + whole-scope COMPOSITES + the PERF30 A3/road C-vs-asm A/B pairs. Some wrappers read state
     another stage builds (the control table, the pre-rotated scroll copies) — preps_for runs those first
-    (per-leg / earlier-in-frame, not part of the measured stage); the self-contained A/B wrappers resolve
-    to just bench_stage_assets (their label is unknown to preps_for)."""
+    (per-leg / earlier-in-frame, not part of the measured stage); the self-contained objshift A/B wrappers
+    have no RM_PREPS entry and resolve to just bench_stage_assets."""
     syms, mem, sp, sentinel = staged_mem()
 
     def cost(rm):
