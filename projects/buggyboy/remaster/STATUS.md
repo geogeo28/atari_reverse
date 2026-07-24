@@ -369,16 +369,16 @@ leg start, with the start gate spanning the road — which is close to the objec
 | blit_road_scroll | 11.98 | 33.55 | 0.36× | pre-rotated copies + unrolled fill |
 | draw_ground | 1.16 | — | | |
 | draw_fg_sprite | 2.40 | 2.39 | 1.00× | |
-| **objlist pass 1 (sprites)** | **42.83** | — | | ~84% inside `rm_blit_objshift`; **PERF30 A1 landed** (value-passed cursor struct, 51.50 → 42.83 = 0.83×, the mem-to-mem cursor spills gone) |
+| **objlist pass 1 (sprites)** | **36.23** | — | | ~81% inside `rm_blit_objshift`; **PERF30 A1 + P1/P2 landed** (A1 value-passed cursor 51.50 → 42.83; P1 hoist fills + P2 unroll planes 42.83 → 36.57; code-review row-rewind hoist → 36.23 = `rm_blit_objshift` 288,256 → 235,456 cyc; P3 measured no-op, reverted) |
 | draw_object | 0.89 | — | | |
 | objlist pass 2 | 0.09 | — | | empty on this frame |
 | **objlist fixed pass** | **55.99** | — | | 97% inside `rm_blit_objshift2`; A1 does NOT apply — its baseline has no mem-to-mem spill and value-passing REGRESSED it +1.98 ms (PERF30 A1), so it stays by-pointer |
 | draw_buggy | 5.16 | 5.22 | 0.99× | |
 | draw_hud | 17.44 | 17.20 | 1.01× | 10.6 in the phases (dashboard masked blit), 6.0 in glyph_run |
-| **TOTAL (frame)** | **194.6** | | | was 203.2 before A1 (objshift) landed; recon (recreate-parity) is ~240 ms on this frame; the ORIGINAL asm is **110 ms (9.1 fps)** — remaster is **1.77× slower than the original** here, NOT faster (the ~240 ms is the recon, not the original — see PERF30.md Part 0) |
+| **TOTAL (frame)** | **188.0** | | | was 203.2 before A1, 194.6 after A1; P1/P2 + code-review rewind hoist on objshift took it to 188.0 (funcs-sum basis); recon (recreate-parity) is ~240 ms on this frame; the ORIGINAL asm is **110 ms (9.1 fps)** — remaster is **1.71× slower than the original** here, NOT faster (the ~240 ms is the recon, not the original — see PERF30.md Part 0) |
 
-Whole-tree check: `object_tree` (prefix→buggy, recreate's `g_draw_game_objects` scope) is 108.6 ms
-(was 117.2 before A1 landed) vs the recon's 130.3 ms (**0.83×**). `render_road` also beats the byte-exact **machine model**
+Whole-tree check: `object_tree` (prefix→buggy, recreate's `g_draw_game_objects` scope) is 102.0 ms
+(was 117.2 before A1, 108.6 after A1, 102.0 after P1/P2) vs the recon's 130.3 ms (**0.78×**). `render_road` also beats the byte-exact **machine model**
 (`g_render_road_machine`, 56.65 ms → 0.89×): GCC optimises the idiomatic/native-pointer C better
 than the hand-threaded register/goto transcription.
 

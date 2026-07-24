@@ -584,6 +584,37 @@ construction; pinned by the existing `test_blit_engines` fuzz + goldens. Hand as
 remains only for whatever residue is left after C parity ~— the measured ceiling is the original's
 57.3 ms tree.
 
+> **LANDED 2026-07-23 (P1+P2 on objshift; P3 measured no-op, reverted; a follow-up code-review pass
+> added a row-rewind hoist; +6.61 ms of the gate frame).**
+> `rm_blit_objshift` (pass 1): **288,256 → 235,456 cyc = 36.03 → 29.43 ms (0.82×, −6.61 ms)** on the
+> gate frame; **`bench_objlist_pass1` 342,668 → 289,868 cyc**. Split by change (each measured in
+> isolation): **P1** (hoist the four per-plane fill words into an `ObjshFill {plane[4]}` struct built
+> once per call, replacing the per-plane `objsh_fill_half` ladder) **−29,112 cyc**; **P2** (fully
+> unroll the 4-plane loop in the straddle + edge cells via an `always_inline` per-plane helper, plane 3
+> transparency inline) a further **−21,032 cyc** (P1+P2 = 238,112 cyc); the post-landing code-review
+> pass then hoisted the loop-invariant per-row source rewind out of the row loop for a further
+> **−2,656 cyc**, to the final 235,456. From the disassembly: the per-plane `pix` spill
+> (`movew/movel %d0,%sp@(44)`), the `objsh_fill_half` compare ladder (`swap`/`clrw`/reg-select), and the
+> per-plane loop counter (`clrl`/`addql #1,%sp@(52)`) are GONE; unrolling also collapsed the framebuffer
+> writes from base+index `%a2@(0,%a1:l)` to cheap displacement `%a2@(2/4/6)` (no `%aN:l` access remains).
+> The residual `sp@` traffic is now purely the **per-row** cursor rewind arithmetic (P4 territory, not
+> attempted) plus the irreducible variable shifts.
+>
+> **P3 (two-statement `plane_write`) is a measured no-op here — reverted.** Unlike objshift2, whose AND
+> and OR hit *distinct* addresses (so GCC emits the memory-destination `andl d0,a2@` form), objshift's
+> mask-AND and pix-OR target the **same** word; GCC dead-store-eliminates the split back into one
+> load/and/or/store either way (238,112 cyc identical with split vs. combined). Kept the objshift cells
+> on the shared `plane_write` — no separate helper. objsprite family untouched.
+>
+> **`rm_blit_objshift2` (fixed pass) is UNCHANGED — 435,940 cyc exactly** (spec's post-A1 value), the
+> proof objshift2 was not perturbed. The `bench_objlist_fixed` *total* moved 448,046 → 447,982 (−64 cyc)
+> only because that pass also draws a few objshift-family objects (792 cyc within it), which P1+P2 sped
+> up. Byte-exact: `make test` 558 passed; `run_golden.py` MATCH on all 5 legs. Gate-frame object tree
+> **108.58 → 101.98 ms**; TOTAL (frame, funcs-sum basis) **1,556,552 → 1,503,688 cyc = 194.57 →
+> 187.96 ms**. (The `draw_frame` composite row is a *different* basis — 1,487,660 cyc = 185.96 ms
+> after; its pre-P1+P2 value at that basis was not captured, so no before is quoted. An earlier draft
+> mis-compared the composite after-value against the funcs-sum before-value.)
+
 ### A2 implementation attempt 2026-07-23 — BLOCKED, expectations corrected
 
 Measured before implementing (scratchpad/analyze_groups.py; 648 distinct 4-byte straddle groups
