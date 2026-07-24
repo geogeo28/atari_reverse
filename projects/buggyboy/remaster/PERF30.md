@@ -529,6 +529,61 @@ differential (`test_composed_frame`), and the on-target per-leg goldens (`run_go
 0–4). A Tier-C item that trades pixels ships as a **separate build profile with its own goldens**, never
 under the `recreate/` byte-compare.
 
+### Instruction-level original-vs-remaster comparison 2026-07-23 — where the 2× actually is
+
+Per-PC cycle profiles of BOTH sides on the same gate frame (original `draw_game_objects` run under
+the profiling `run_bench` via an A6-staging trampoline — scratch tooling, reproduces Part 0's
+458,728 cyc; remaster via `tools/profile.py`'s machinery with a full annotated listing). The
+object-tree gap is NOT uniform and NOT mysterious:
+
+| engine | ORIGINAL | remaster (post-A1) | ratio | gap |
+|--------|---------:|-------------------:|------:|----:|
+| blit_objshift2 (fixed pass) | 262,940 cyc = 32.9 ms | 435,940 = 54.5 ms | **1.66×** | 21.6 ms |
+| blit_objshift (pass 1) | 110,572 = 13.8 ms | 288,256 = 36.0 ms | **2.61×** | 22.2 ms |
+| buggy (objsprite family) | 45,014 = 5.6 ms | ~41,300 = 5.2 ms | **0.92× — rm WINS** | — |
+| dispatcher + objsprite rest | ~25,900 | ~66,500 | ~2.6× | ~5 ms |
+
+The buckets reconcile against the measured gaps almost exactly (objshift2: +163 cyc/cell × 648
+cells + +282 cyc/row × 242 rows = 173.9k vs 173.0k measured; objshift: both sides run the same
+190 rows — orig 582 cyc/row vs rm 1,517). Five concrete mechanisms, ranked:
+
+1. **Stack traffic (the "extra memory instructions").** rm_blit_objshift spends **~72k cyc = 9 ms
+   (25% of the function)** in `sp@`-relative loads/stores/RMW: colour-fill halves re-read from the
+   stack per plane, the pix word spilled to `sp@(44)` and re-read, row bounds/rewinds and loop
+   counters kept as stack slots (`addql #1,sp@(52)`). rm_blit_objshift2: ~50k cyc = 6.3 ms (12%).
+   The original has ZERO stack traffic in its inner loops — every live value is a register.
+2. **Split `dst + Offset` addressing.** The remaster carries cursors as 32-bit byte offsets and GCC
+   addresses every framebuffer word as `a2@(0,a1:l)` (base+index, +6 cyc/access) and rebuilds
+   pointers with `lea` per row. The original walks REAL pointers with `(a0)+`/`(a2)+` post-increment
+   (free bump, cheapest addressing mode).
+3. **Load-modify-store vs memory-destination RMW.** C's `wr16(p, (be16(p) & mask) | pix)` compiles
+   to load(14)+and(4)+or(4)+store(14) = 36 cyc. The original issues `and.w d1,(a0)` then
+   `or.w d0,(a0)+` = 24 cyc — two single-instruction RMWs, legal because the intermediate
+   framebuffer state is invisible. Expressible in C as two statements (`wr16(p, be16(p)&mask);
+   wr16(p, be16(p)|pix);`) — GCC then emits the memory-destination forms (it already does for
+   objshift2's `andl d0,a2@`), and the final bytes are identical.
+4. **Per-call constants in registers + full unrolling.** The original loads the colour fills into
+   d3/d5 ONCE per call and `swap`-toggles them per plane; unrolls all 4 planes (objshift) and all
+   3 straddle cells (objshift2) with zero loop control; bakes the per-family rewind as an immediate
+   (`suba.w #$a8,a0`) in family-specialised entry paths. The remaster's plane loop is rolled, with a
+   per-plane compare ladder GCC made of `objsh_fill_half` + the last-plane special case.
+5. **Row bookkeeping.** Original row step = 3 `suba` + `dbra` ≈ 34–46 cyc. Remaster ≈ 150–316
+   cyc/row (cursor/bound reload from stack). This alone is ~68k cyc of the objshift2 gap.
+
+**What is NOT the problem:** the variable shifts cost both sides the same (~28–40 cyc each, same
+count — the original pays them too); and the objsprite family shows the remaster's C at parity, so
+the engine *shape* is fine — pass 1 and the fixed pass lose on register discipline, not algorithm.
+
+**Consequence for the plan:** most of the ~44 ms gap is reachable in plain C, no hand asm (revised
+A3): (P1) hoist the four fill half-words into locals once per call, killing the per-plane ladder
+and reloads; (P2) manually unroll the 4-plane loop (last plane inline); (P3) two-statement
+plane_write → memory-destination and/or; (P4) walk real `uint8_t*` cursors inside the row, not
+`dst+Offset`. P1–P3 REDUCE register pressure (unlike the failed A1-on-objshift2 attempt, which
+pinned more live values), so they compose with the by-pointer objshift2 shape. Byte-identical by
+construction; pinned by the existing `test_blit_engines` fuzz + goldens. Hand asm (A3 proper)
+remains only for whatever residue is left after C parity ~— the measured ceiling is the original's
+57.3 ms tree.
+
 ### A2 implementation attempt 2026-07-23 — BLOCKED, expectations corrected
 
 Measured before implementing (scratchpad/analyze_groups.py; 648 distinct 4-byte straddle groups
