@@ -362,7 +362,9 @@ doubled. *Verdict:* probably not pixel-faithful; if the data disproves it, drop 
 
 ### Stage 3 — draw_hud (17.47 ms, 9%)
 
-**B4. Static/dynamic dashboard split (already in the old plan).** *(Tier B, ~8–10 ms)* 61% is the
+**B4. Static/dynamic dashboard split (already in the old plan).** *(Tier B, ~8–10 ms)*
+**→ DECIDED NO-GO AS SCOPED 2026-07-24 — the premise is measured false; a 1.37 ms opaque fast path
+landed instead; see the "B4/B5 measurement" campaign note at the end of this file.** 61% is the
 dashboard masked blit repainting unchanged pixels every frame. Draw the static dashboard once per
 screen buffer at leg start; per frame restore only the dynamic cells (digits, gauges, blink, crash fx)
 from the pristine dashboard, then redraw them. *Grounded:* the masked blit is 10.6 ms of static pixels.
@@ -376,7 +378,9 @@ byte-exact.
 
 ### Stage 4 — blit_road_scroll (11.98 ms, 6%) — already 0.36×
 
-**B5. Top-fill dirty tracking.** *(Tier B, ~3–5 ms, do last)* The constant fill above the band only
+**B5. Top-fill dirty tracking.** *(Tier B, ~3–5 ms, do last)*
+**→ DECIDED NO-GO 2026-07-24 — the fill is a fixed-region constant, not horizon-relative, and it IS
+the deterministic background the masked composites rely on; see the "B4/B5 measurement" note.** The constant fill above the band only
 changes when the horizon moves relative to *this* buffer's previous frame; skip it otherwise. Small,
 stateful, per-buffer. *Pinned:* `test_scroll.py` whole-framebuffer + a later-frame autodrive dump (a
 stale-fill bug surfaces after the buffers alternate, not on frame 0).
@@ -1366,3 +1370,45 @@ loop), which trades away the per-band C-vs-asm differential + the C references a
 worth it for 23.5k (0.3 ms). The gate frame TOTAL is now 126.96 ms (was 141.90 post-A4); the remaining
 frame cost is the object tree + HUD, not the road. Next campaign front (if any) is `blit_road_scroll` (0.36x
 already) or the object tree, not render_road.
+
+### B4/B5 measurement — premises measured false; opaque-dashboard fast path landed (−1.37 ms). 2026-07-24
+
+Both remaining Tier-B items were investigated measure-first (scratch probes over real staged frames)
+and their premises do not hold in the real pipeline:
+
+- **B4's "draw static pixels once per buffer, skip repaints" is impossible.** The dashboard rows
+  (4–43) sit inside `[0, 0x3480)` — the region `blit_road_scroll`'s top-fill rewrites with the
+  constant fill **every frame**, after which `draw_game_objects` writes ~3.4 KB into the same region
+  (~1.1 KB inside the dashboard rows). The static pixels are destroyed before `draw_hud` runs; a
+  per-buffer skip would never fire. Also corrected: the composed-frame differential composes into ONE
+  persistent framebuffer (`test/equiv.py _ComposedScene`), so no existing pin alternates buffers —
+  the "test_composed_frame alternates buffers" claim in the B4 proposal was inaccurate.
+- **B5's "top-fill only changes when the horizon moves" is false.** The top-fill is a fixed-region
+  constant fill of `[0, 0x3480)` with no horizon dependence, and it is the mechanism that makes
+  `game_main.c`'s invariant hold ("repainting over two-frames-old content is byte-identical to over
+  zeros") — it IS the deterministic background the masked object/HUD composites over that region rely
+  on. Skipping it ghosts last-frame object pixels into the sky and corrupts the masked composites.
+  The only conservative variant is B1-class per-byte object-footprint tracking, which saves ~0 on
+  moving frames (B1's own verdict).
+
+**What IS true and landed: the dashboard graphic is 100% opaque** (mask==0 for all 320 groups,
+verified on all 5 legs' `mid_race_state`, the leg-drive fixtures, and on-target in Hatari). For an
+opaque group `(bg & 0) | ink == ink` — background-independent — so `cell_dashboard` (include/plane.h,
+shared by the HUD phase-7 blit and the results dashboard) gained a per-group `mask == 0` fast path
+that skips the framebuffer read+AND and stores the ink directly; the RMW branch remains for any
+transparent group. Provably byte-exact regardless of what scroll/objects wrote underneath.
+**draw_hud 141,116 → 130,120 cyc (17.64 → 16.27 ms, −1.37 ms); gate TOTAL 1,015,686 → 1,004,690
+(126.96 → 125.59 ms).** `make test` 706; goldens MATCH ×5; mutation check (perturb the opaque store)
+fails 44 tests, restored green.
+
+**Open option, not built (needs sign-off):** precompute the opaque dashboard into a pristine buffer
+once per leg and long-`memcpy` it per frame — ceiling ~4 ms total off draw_hud (≈2.5 ms beyond the
+landed fast path; the residual is unavoidable stores), at the cost of a `rm_hud_dashboard_prebuild`
+API + per-leg invalidation signal (`buf_c + DASH_SRC_OFF` is the same pointer every leg with
+different content). Judged borderline; recorded here so the trade is explicit.
+
+**Plan-of-record impact:** with B2 NO-GO (road), B4-as-scoped and B5 NO-GO (this note), every
+remaining Tier-B algorithmic item is measured dead. The pixel-faithful stock-ST frame now stands at
+**gate 125.59 ms (~8.0 fps) / median proportionally better**, and the remaining levers are Tier-A
+residue (A5 glyph movem fills ~2–3 ms, object-tree dispatcher/objsprite ABI, the ~4 ms HUD memcpy
+option) and Tier-C departures (C1 25 fps vsync cadence, C4 STE blitter build).

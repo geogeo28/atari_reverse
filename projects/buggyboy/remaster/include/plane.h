@@ -61,10 +61,22 @@ static inline void cell_dashboard(uint8_t *px, Offset dst, const uint8_t *gfx, O
         for (int g = 0; g < DASH_GROUPS; g++, d += 8, s += 8) {
             uint16_t mask = be16(gfx + s);
             uint16_t ink_a = be16(gfx + s + 2), ink_b = be16(gfx + s + 4), ink_c = be16(gfx + s + 6);
-            wr16(px + d,     (uint16_t)((be16(px + d)     & mask) | ink_a));
-            wr16(px + d + 2, (uint16_t)((be16(px + d + 2) & mask) | ink_b));
-            wr16(px + d + 4, (uint16_t)((be16(px + d + 4) & mask) | ink_b));
-            wr16(px + d + 6, (uint16_t)((be16(px + d + 6) & mask) | ink_c));
+            if (mask == 0) {
+                /* Fully-opaque group: (bg & 0) | ink == ink, so the output is background-independent —
+                 * skip the framebuffer read + AND and store the ink directly. Byte-exact for mask==0
+                 * (verified: the shipped dashboard/results graphics are 100% opaque, so this fast path
+                 * takes every group; a transparent group would still be exact via the RMW branch). This
+                 * is what lets the top-fill / objects the dashboard overpaints not matter here. */
+                wr16(px + d,     ink_a);
+                wr16(px + d + 2, ink_b);
+                wr16(px + d + 4, ink_b);
+                wr16(px + d + 6, ink_c);
+            } else {
+                wr16(px + d,     (uint16_t)((be16(px + d)     & mask) | ink_a));
+                wr16(px + d + 2, (uint16_t)((be16(px + d + 2) & mask) | ink_b));
+                wr16(px + d + 4, (uint16_t)((be16(px + d + 4) & mask) | ink_b));
+                wr16(px + d + 6, (uint16_t)((be16(px + d + 6) & mask) | ink_c));
+            }
         }
     }
 }
