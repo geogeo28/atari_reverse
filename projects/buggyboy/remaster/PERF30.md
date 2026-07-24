@@ -341,7 +341,9 @@ band B/D stores are the top PCs; removing the dispatch from the inner loop cuts 
 *Risk:* low-medium — must enumerate the flag combos the data actually uses. *Pinned:* `test/test_road.py`
 whole-framebuffer byte-exact across legs 0–4.
 
-**B2. Road display list (precompute per-(curve,view) scanline programs).** *(Tier B, ~15–25 ms)* The
+**B2. Road display list (precompute per-(curve,view) scanline programs).** *(Tier B, ~15–25 ms)*
+**→ DECIDED NO-GO 2026-07-24 — the premise is measured false; see the "B2 measurement" campaign note
+at the end of this file.** The
 road geometry is a function of (curve, view-bank, near-slope); the per-scanline control stream is
 recomputed every frame but only *changes* when those change. Precompute, per (curve,view) bucket, a
 compact "scanline program" (the sequence of column-copy / fill / edge-mask ops) and replay it, so the
@@ -1105,3 +1107,53 @@ which is the next front.
 `rr_draw_edge_cell`'s body at three sites and bands C open-code `rr_fill_shoulder`'s fill at two —
 verified byte-equivalent, but both helpers are static non-inline and new call sites could shift
 inlining in the hot loops; collapse only with a bench before/after.
+
+### B2 measurement — DECIDED: NO-GO (road display list does not pay). 2026-07-24
+
+B2's premise — "the per-scanline control stream only changes when (curve, view-bank, near-slope)
+change" — is **false, measured**. The control table is a moving perspective surface: its per-scanline
+road widths change on plain **forward motion, every frame**, before any steering. Census tool:
+`tools/road_dl_census.py` (legs 0–4 × 300 real frames, the `frame_dist` drive; forced advance/frame,
+input=0). Structural fact (road.c / geometry.c / fixtures): the display list (op sequence + source
+offsets + fill counts) is a pure function of `width_tbl` content + the view-selected edge window;
+`param`/`edge`/`edge_const`/`tex` are static, never branched on — so "DL changed ⟺ `width_tbl` (or
+the edge bank) changed."
+
+- **Q1 streams:** `width_tbl` changes **90.6%** of frames (mean 68 B of 512); `param` **0.0%**
+  (static fixture); `tex_base`/`hscroll` 0%. (`edge` shows 100% only because forcing an advance every
+  frame toggles `view_bank`/`road_edge_sel` — a harness artifact.)
+- **Q2 steering (the central question):** curve enters the control-long **low words per-row as a
+  RAMP** (`spread_curvature` accumulates curve/106 down the rows), not a per-frame scalar. Δcurve=±1
+  changes 54/106 low words and the shape DL; ±8 → 100/106; +64 → per-row deltas `[1,10,19,…,64]`.
+  A steering-continuous stream — any steered frame is a cache miss. (`test_geometry`'s "byte-exact
+  under arbitrary steering" is a correctness pin, not an invariance claim.)
+- **Q3 cache hit rates (1500 frames pooled):** FULL DL (op seq + operands — what a replay must
+  reproduce) changes **100%** frame-to-frame; content-addressed hit 20.5%; per-(curve, view, bank,
+  seg, markers) tuple hit **17.5%** (1237/1500 tuples unique; tuple space unbounded — curve is
+  ~continuous 16-bit, 13×16-bit slopes, 14×16-bit markers). SHAPE-only (ignores operands — the most
+  optimistic possible cache) still changes 79.9%; best-case content hit 30.7%.
+- **Q5 wraps:** the build is a pure function of (pose, ring); the wrap double-build differs by
+  exactly the per-advance delta (~68–79 B on ~90% of advances) — a cache must rebuild around every
+  course advance.
+- **Q6 store floor** (`bench_render_road` 350,310 cyc, per-PC classified): pixel stores/RMW 78,044
+  (22.3%) + copy/table loads 32,580 (9.3%) = **110,624 cyc irreducible (31.6%)** a replay still pays;
+  branches/dbf 29.0% + per-row setup 39.4% are only partly removable and must be re-spent building
+  the DL on every miss.
+- **Economics:** a miss (≥80% of frames unsteered, ~100% steered) costs *build + replay* > a plain
+  render; a hit costs the replay (~110k + flat-op overhead), which does not beat the original's
+  207,232 cyc; weighted at ~17% hit, B2 is break-even-to-worse than today's 350k. RAM seals it:
+  ~2.3–4.6 KB per cached DL (384 band-rows × 6–12 B) × the hundreds of live buckets needed, against
+  a ~927 KB build with ~97 KB headroom on a 1 MB ST.
+
+**Honesty caveats:** the drive forces a course-advance every frame (over-states advance frequency;
+the physical driver — perspective widths move on forward motion — holds regardless) and has no
+steering input (recon input glue is a no-op host-side; Q2's poke experiment covers steering, and it
+only worsens the miss rate). The SHAPE fingerprint's constant texture can only *under*-count shape
+changes, so the true best-case hit is ≤30.7%. Neither caveat is close to flipping a verdict that
+fails on both the hit-rate and store-floor axes.
+
+**Verdict: NO-GO. Fallback = hand-asm the current seven bands (A3-style), targeting the original
+binary's 207,232 cyc / 25.90 ms** — the store-bound faithful floor (remaster: 350,310 = 1.69×). The
+original is itself a per-row interpreter with no display list, so it is the correct ceiling; the gap
+is register discipline on the stores/loads/loop control, exactly the lever that landed objshift and
+objshift2 within ~0.6% of the original.
