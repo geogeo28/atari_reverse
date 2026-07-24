@@ -278,13 +278,22 @@ static void objsh2_straddle_cell(uint8_t **col0, uint8_t **col1, const uint8_t *
     wr32(*col0, be32(*col0) & mask_col0);
     wr32(*col1, be32(*col1) & mask_col1);
 
-    for (int i = 0; i < 2; i++) {
-        uint32_t pix = (uint32_t)be16(*sp) << shl;
-        *sp += 2;
-        wr16(*col1, (uint16_t)(be16(*col1) | (uint16_t)pix));
-        wr16(*col0, (uint16_t)(be16(*col0) | (uint16_t)(pix >> 16)));
-        *col0 += 2; *col1 += 2;
-    }
+    /* The two straddle-pixel iterations unrolled straight-line (PERF30 L1): with fixed base pointers
+     * and +0/+2 displacements GCC emits cheap displacement addressing (col@/col@(2)) and zero loop
+     * control, where the rolled 2-iteration loop compiled to indexed `col@(0,i:l)` reads/RMWs plus
+     * per-iteration counter arithmetic. Source read order and the col1-then-col0 write order per
+     * iteration are preserved; the two iterations write disjoint 2-byte cells, so this is byte-exact. */
+    uint8_t *c0 = *col0, *c1 = *col1;
+    const uint8_t *s = *sp;
+    uint32_t pix0 = (uint32_t)be16(s) << shl;
+    wr16(c1, (uint16_t)(be16(c1) | (uint16_t)pix0));
+    wr16(c0, (uint16_t)(be16(c0) | (uint16_t)(pix0 >> 16)));
+    uint32_t pix1 = (uint32_t)be16(s + 2) << shl;
+    wr16(c1 + 2, (uint16_t)(be16(c1 + 2) | (uint16_t)pix1));
+    wr16(c0 + 2, (uint16_t)(be16(c0 + 2) | (uint16_t)(pix1 >> 16)));
+    *sp = s + 4;
+    *col0 = c0 + 4; *col1 = c1 + 4;
+
     wr32(*col0, (be32(*col0) & mask_col0) | ~mask_col0);
     *col0 += 4;
     wr32(*col1, (be32(*col1) & mask_col1) | ~mask_col1);
@@ -293,7 +302,9 @@ static void objsh2_straddle_cell(uint8_t **col0, uint8_t **col1, const uint8_t *
 
 static void objsh2_left_edge_cell(uint8_t **col0, uint8_t **col1, const uint8_t **sp, unsigned shl) {
     uint32_t both = be32(*sp);
-    uint16_t lo = (uint16_t)((uint16_t)both | be16(*sp));
+    /* lo = low word OR high word of the long be32 already loaded; the high word IS be16(*sp)
+     * (bytes [0,1]) — reuse the loaded halves instead of re-reading (PERF30 L1). Byte-equivalent. */
+    uint16_t lo = (uint16_t)((uint16_t)both | (uint16_t)(both >> 16));
     *sp += 2;
     uint16_t mask = (uint16_t)(~(uint16_t)(lo << shl));
     uint32_t mask_col1 = dup16(mask);
@@ -312,7 +323,9 @@ static void objsh2_left_edge_cell(uint8_t **col0, uint8_t **col1, const uint8_t 
 
 static void objsh2_right_edge_cell(uint8_t **col0, uint8_t **col1, const uint8_t **sp, unsigned shr) {
     uint32_t both = be32(*sp);
-    uint16_t lo = (uint16_t)((uint16_t)both | be16(*sp));
+    /* lo = low word OR high word of the long be32 already loaded; the high word IS be16(*sp)
+     * (bytes [0,1]) — reuse the loaded halves instead of re-reading (PERF30 L1). Byte-equivalent. */
+    uint16_t lo = (uint16_t)((uint16_t)both | (uint16_t)(both >> 16));
     *sp += 2;
     uint16_t mask = (uint16_t)(~(uint16_t)(lo >> shr));
     uint32_t mask_col0 = dup16(mask);

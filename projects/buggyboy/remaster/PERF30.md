@@ -674,6 +674,52 @@ remains only for whatever residue is left after C parity ~— the measured ceili
 > **MATCH on all 5 legs**. A host-only `RM_HOST_ASSERT` now enforces the non-wrap invariant at each
 > col0 formation (compiled out on `__m68k__`, zero target cycles).
 
+> **Mechanism #3 verdict — DEAD post-P4 (measured, do not re-chase).** The instruction-selection lever
+> (memory-destination `and.w/or.w`, single RMW at 24 cyc, vs load/and/or/store at 36) was real only
+> under the OLD base+index addressing the pre-P4 code used. After P4 walks the cursors as real pointers
+> with `(An)`/`d16(An)`, **both** forms cost 24 cyc per plane word: the split form is load(8)+and(4)+
+> or(4)+store(8) = 24 through a pointer, and the memory-destination form is `and.w d,(An)` (12) +
+> `or.w d,(An)` (12) = 24 — identical. The 36→24 win existed only when every access paid the +6 cyc
+> base+index penalty that P4 eliminated. So mechanism #3 buys nothing now and is closed. (The separate
+> P3 note above — GCC dead-store-merges a same-address AND/OR split back into one load/and/or/store on
+> objshift — still stands and is a different point: P3 is about objshift's same-word target, #3 was
+> about objshift2's distinct-word targets.)
+
+> **LANDED 2026-07-23 (L1 — objshift2 straddle-cell pixel-loop unroll; +7.53 ms of the gate frame).**
+> The 2-iteration straddle pixel loop in `objsh2_straddle_cell` compiled ROLLED with indexed addressing
+> (`movew %a2@(0,%d1:l)`, 14 cyc; `orw %d2,%a0@(0,%d1:l)`, 18 cyc RMW; ×2 iterations plus ~31 cyc/cell of
+> loop control — counter, `cmpl`, `bne`) — ~262 cyc/cell vs the original asm's 160 for the same work.
+> Unrolling the `for (i = 0; i < 2; i++)` into straight-line code (two locals `c0`/`c1`/`s`, +0/+2
+> displacements, single write-back of the cursor triple at the end) lets GCC emit displacement
+> addressing (`%a0@`/`%a0@(2)`, 12/16 cyc) with **zero loop control** — the same shape P2 used on
+> objshift's planes. Source read order and the col1-then-col0 write order per iteration are preserved,
+> and the two iterations write disjoint 2-byte cells, so it is byte-exact by construction.
+> **`rm_blit_objshift2`: 405,540 → 345,264 cyc = 50.69 → 43.16 ms (0.85×, −7.53 ms)** — well below the
+> ~355-365k estimate; `bench_objlist_fixed` 417,546 → 357,270. From the disassembly the inner pixel
+> writes are now `orw %d1,%a0@` / `orw %d1,%a0@(2)` (displacement) with the indexed `%aN@(0,%d1:l)`
+> reads/RMWs and the `addql #2,%d1`/`moveq #4,%d2`/`cmpl`/`bnes` loop control GONE. Also folded the edge
+> cells' redundant high-source re-read (`lo = (uint16)both | be16(*sp)` → reuse `(uint16_t)(both >> 16)`,
+> the same bytes be32 already loaded) — byte-equivalent, 0 cyc change (edge cells are cold on the gate
+> frame) but one fewer memory access. The mask-split `andil #65535` (14 cyc) was left alone: it was
+> present in the landed baseline (unchanged by L1) and is register-allocation-driven micro-noise the
+> task flagged as not worth chasing. Gate-frame object tree **93.63 → 86.10 ms** (0.66×); TOTAL (frame,
+> funcs-sum) **1,436,948 → 1,376,672 cyc = 179.62 → 172.08 ms**. Byte-exact: `make test` **558 passed**;
+> `run_golden.py` **MATCH on all 5 legs**.
+
+> **L2 (objshift fill-pair swap-packing) — MEASURED REGRESSION, REVERTED.** The four `ObjshFill` colour
+> words exceed the free data registers, so `rm_blit_objshift`'s straddle row loop spills two to the stack
+> (`movew %d5,%sp@(48)` / `%d6,%sp@(46)`) and reloads them per plane (`movew %sp@(50)/(46)/(48)`, 12 cyc
+> each). L2 tried the original's trick — carry the fill as TWO `uint32_t` pairs (`{lo, hi}`) so both stay
+> resident in two registers and each plane's 16-bit half is a 4-cyc `swap`-toggle. It **regressed
+> `rm_blit_objshift` 199,152 → 213,504 cyc (+14,352)** — above the measure-or-revert bar, reverted to the
+> P1 `plane[4]` shape (the current landed state). The swap toggles did appear, but the pair carriage does
+> not relieve the fundamental pressure: the straddle row loop already needs col0/col1/sp pointers
+> (a0–a3), the rotated mask (d0), shl (d2), pix temps and the row counter, leaving no room for two
+> resident pair registers — GCC spilled the pairs anyway AND added a per-row `movel %d6,%sp@(44)` /
+> reload shuffle, so the toggle cost stacked on top of undiminished spilling. Same wall as the
+> A1-on-objshift2 attempt: objshift's row loop is register-pressure-bound, and forcing more values
+> resident spills something else. objshift's spill residue is a hand-asm (A3) target, not a C-shape one.
+
 ### A2 implementation attempt 2026-07-23 — BLOCKED, expectations corrected
 
 Measured before implementing (scratchpad/analyze_groups.py; 648 distinct 4-byte straddle groups
