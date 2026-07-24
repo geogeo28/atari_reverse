@@ -42,15 +42,11 @@ static uint32_t rotl32(uint32_t v, unsigned count) {
 }
 
 /* Masked OR-in of one plane word into a destination column: keep the background where mask is set,
- * drop in the shifted pixels (68k `and.w mask,(ptr)` + `or.w pix,(ptr)`). The by-pointer form is what
- * the objshift real-pointer cursors write through (PERF30 P4); the objsprite family still passes a
- * dst+offset pair, so keep that entry as a thin wrapper. */
+ * drop in the shifted pixels (68k `and.w mask,(ptr)` + `or.w pix,(ptr)`). All three fine-x engines
+ * write through this by-pointer form (their cursors are real pointers — PERF30 P4 for objshift/
+ * objshift2, C3 for objsprite). */
 static void plane_write_p(uint8_t *dst_col, uint16_t mask, uint16_t pix) {
     wr16(dst_col, (uint16_t)((be16(dst_col) & mask) | pix));
-}
-
-static void plane_write(uint8_t *dst, Offset ptr, uint16_t mask, uint16_t pix) {
-    plane_write_p(dst + ptr, mask, pix);
 }
 
 /* ============================================================================================
@@ -67,11 +63,6 @@ static void plane_write(uint8_t *dst, Offset ptr, uint16_t mask, uint16_t pix) {
 static uint32_t objsh_build_mask_p(const uint8_t *src_words) {
     uint16_t a = be16(src_words), b = be16(src_words + 2), c = be16(src_words + 4), d = be16(src_words + 6);
     return OBJSH_MASK_HI | (uint16_t)(~(a | b | c) & d);
-}
-
-/* dst+offset wrapper kept for the objsprite family, which still walks its source by offset. */
-static uint32_t objsh_build_mask(const uint8_t *src, uint32_t p) {
-    return objsh_build_mask_p(src + p);
 }
 
 /* The four per-plane 16-bit colour-fill words (plane order 0..3 = fill_lo hi / fill_lo lo /
@@ -276,7 +267,12 @@ void rm_blit_objshift(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_t
  * (PERF30 P4b): the cell writes through them (wr32(*col0)) and the row loop steps them directly, so GCC
  * no longer rebuilds each row's column pointers with a base+index `lea %a5@(0,%d3:l)`. Byte-identical by
  * the pointer-walking rule (see Offset in st.h). */
-static void objsh2_straddle_cell(uint8_t **col0, uint8_t **col1, const uint8_t **sp, unsigned shl) {
+/* always_inline: the C1 fall-through switch in objsh2_row calls this from three case labels, which
+ * trips GCC's called-more-than-once heuristic into emitting a real call — and a real call spills the
+ * by-pointer (uint8_t **) cursor args to memory (the A1 wall). Forcing the three straight-line inlined
+ * copies is the whole point of C1 (no per-cell loop control), so pin the inline. */
+static inline __attribute__((always_inline))
+void objsh2_straddle_cell(uint8_t **col0, uint8_t **col1, const uint8_t **sp, unsigned shl) {
     uint16_t w0 = be16(*sp);
     uint16_t w1 = be16(*sp + 2);
     uint32_t mask_col0 = OBJSH2_MASK_INIT;
@@ -359,7 +355,17 @@ enum objsh2_edge { OBJSH2_EDGE_NONE, OBJSH2_EDGE_LEFT, OBJSH2_EDGE_RIGHT };
 static void objsh2_row(uint8_t **col0, uint8_t **col1, const uint8_t **sp,
                        enum objsh2_edge edge, int straddle, unsigned shl, unsigned shr) {
     if (edge == OBJSH2_EDGE_LEFT) objsh2_left_edge_cell(col0, col1, sp, shl);
-    for (int i = 0; i < straddle; i++) objsh2_straddle_cell(col0, col1, sp, shl);
+    /* straddle is 0..3 and loop-invariant per call, so specialize the cell run as a fall-through
+     * switch instead of a counted loop (PERF30 C1): each case is straight-line (no per-cell
+     * addql/cmpl/bne loop control, ~23 cyc/cell) and lets GCC schedule across cell boundaries. The
+     * switch itself compiles to a compare chain (-fno-jump-tables) evaluated once per row, not per
+     * cell. Byte-exact: same objsh2_straddle_cell calls in the same order. */
+    switch (straddle) {
+        case OBJSH2_BASE_STRADDLE:     objsh2_straddle_cell(col0, col1, sp, shl); /* fallthrough */
+        case OBJSH2_BASE_STRADDLE - 1: objsh2_straddle_cell(col0, col1, sp, shl); /* fallthrough */
+        case OBJSH2_BASE_STRADDLE - 2: objsh2_straddle_cell(col0, col1, sp, shl); /* fallthrough */
+        default: break;
+    }
     if (edge == OBJSH2_EDGE_RIGHT) objsh2_right_edge_cell(col0, col1, sp, shr);
 }
 
@@ -437,75 +443,86 @@ void rm_blit_objshift2(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_
  * OR'd. Four width families width_idx 0..3 (WIDTH 0x80/0x88/0x90/0x98). PURE LEAF. Used by the
  * roadside-object dispatcher's t1/t2/t4/w88/t53 handlers.
  *
- * Kept on offset cursors deliberately (NOT converted to real pointers like PERF30 P4 did for the two
- * sibling engines): this family is cold on the gate frame — objlist pass 2 ≈ 0.09 ms, draw_object
- * ≈ 0.89 ms — so the conversion is unmeasured here and not worth the bring-up.
+ * Real-pointer cursors like its two sibling engines (PERF30 C3, applying the P4 mechanism here): the
+ * cells walk col0/col1/sp as pointers via local copies, so -O3 already unrolls the plane loops to
+ * displacement addressing (the P2 shape — no explicit unroll needed here). This family is cold on the
+ * gate frame (rm_objsprite ≈ 2.1 ms of objlist pass 1), but the conversion is byte-exact and drops the
+ * offset-wrapper helpers (plane_write / objsh_build_mask) that existed only for it.
  * ============================================================================================ */
 #define OBJSP_WIDTH_80    0x80    /* width_idx 0 base width; WIDTH = this + 8*width_idx */
 #define OBJSP_WIDTHS      4       /* four width families */
 #define OBJSP_LADDER_STEP 8
-#define OBJSP_REWIND_C0   0xc0    /* per-row rewind base (d3 = this - 8*rung) */
+#define OBJSP_REWIND_C0   0xc0    /* per-row rewind base (col/src step back = this - 8*rung) */
 #define OBJSP_BASE_CELLS  4       /* BASE straddle cells for width_idx 0 (4 - width_idx) */
 
-/* STRADDLE cell: like objsh but no colour fill (pixels copied plain). */
-static void objsp_straddle_cell(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1,
-                                uint32_t *sp, unsigned shl) {
-    uint32_t mask32 = rotl32(objsh_build_mask(src, *sp), shl);
+/* STRADDLE cell: like objsh but no colour fill (pixels copied plain). Real-pointer cursors (PERF30
+ * C3/P4): the cell reads the source and writes both columns through the real pointers directly (local
+ * copies walked with displacement addressing), so GCC no longer rebuilds a dst+offset base+index per
+ * plane word. Byte-identical by the pointer-walking rule (see Offset in st.h). */
+static void objsp_straddle_cell(uint8_t **col0, uint8_t **col1, const uint8_t **sp, unsigned shl) {
+    const uint8_t *s = *sp;
+    uint8_t *c0 = *col0, *c1 = *col1;
+    uint32_t mask32 = rotl32(objsh_build_mask_p(s), shl);
     uint16_t col0_mask = (uint16_t)(mask32 >> OBJSH_SUBPX_BITS);
     uint16_t col1_mask = (uint16_t)mask32;
     for (int plane = 0; plane < OBJSH_PLANES; plane++) {
-        uint32_t pix32 = (uint32_t)be16(src + *sp) << shl;
-        *sp += 2;
+        uint32_t pix32 = (uint32_t)be16(s) << shl;
+        s += 2;
         uint16_t col1_pix = (uint16_t)pix32;
         uint16_t col0_pix = (uint16_t)(pix32 >> OBJSH_SUBPX_BITS);
         if (plane == OBJSH_PLANES - 1) {
             col1_pix = (uint16_t)(col1_pix & (uint16_t)~col1_mask);
             col0_pix = (uint16_t)(col0_pix & (uint16_t)~col0_mask);
         }
-        plane_write(dst, *col1, col1_mask, col1_pix);   /* col1 first */
-        plane_write(dst, *col0, col0_mask, col0_pix);
-        *col0 += 2; *col1 += 2;
+        plane_write_p(c1, col1_mask, col1_pix);   /* col1 first */
+        plane_write_p(c0, col0_mask, col0_pix);
+        c0 += 2; c1 += 2;
     }
+    *sp = s; *col0 = c0; *col1 = c1;
 }
 
 /* LEFT-EDGE cell: only col1 drawn, mask rol.l'd (low word used), pixels shift left as words. */
-static void objsp_left_edge_cell(uint8_t *dst, const uint8_t *src, Offset *col1, uint32_t *sp,
-                                 unsigned shl) {
-    uint16_t mask = (uint16_t)rotl32(objsh_build_mask(src, *sp), shl);
+static void objsp_left_edge_cell(uint8_t **col1, const uint8_t **sp, unsigned shl) {
+    const uint8_t *s = *sp;
+    uint8_t *c1 = *col1;
+    uint16_t mask = (uint16_t)rotl32(objsh_build_mask_p(s), shl);
     for (int plane = 0; plane < OBJSH_PLANES; plane++) {
-        uint16_t pix = (uint16_t)((uint32_t)be16(src + *sp) << shl);
-        *sp += 2;
+        uint16_t pix = (uint16_t)((uint32_t)be16(s) << shl);
+        s += 2;
         if (plane == OBJSH_PLANES - 1) pix = (uint16_t)(pix & (uint16_t)~mask);
-        plane_write(dst, *col1, mask, pix);
-        *col1 += 2;
+        plane_write_p(c1, mask, pix);
+        c1 += 2;
     }
+    *sp = s; *col1 = c1;
 }
 
 /* RIGHT-EDGE cell: only col0 drawn, mask lsr.l'd by shr, pixels shift right as words. */
-static void objsp_right_edge_cell(uint8_t *dst, const uint8_t *src, Offset *col0, uint32_t *sp,
-                                  unsigned shr) {
-    uint16_t mask = (uint16_t)(objsh_build_mask(src, *sp) >> shr);
+static void objsp_right_edge_cell(uint8_t **col0, const uint8_t **sp, unsigned shr) {
+    const uint8_t *s = *sp;
+    uint8_t *c0 = *col0;
+    uint16_t mask = (uint16_t)(objsh_build_mask_p(s) >> shr);
     for (int plane = 0; plane < OBJSH_PLANES; plane++) {
-        uint16_t pix = (uint16_t)(be16(src + *sp) >> shr);
-        *sp += 2;
+        uint16_t pix = (uint16_t)(be16(s) >> shr);
+        s += 2;
         if (plane == OBJSH_PLANES - 1) pix = (uint16_t)(pix & (uint16_t)~mask);
-        plane_write(dst, *col0, mask, pix);
-        *col0 += 2;
+        plane_write_p(c0, mask, pix);
+        c0 += 2;
     }
+    *sp = s; *col0 = c0;
 }
 
 enum objsp_family { OBJSP_CLIP, OBJSP_BASE, OBJSP_LEFT, OBJSP_WIDE };
 
-static void objsp_row(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *col1, uint32_t *sp,
+static void objsp_row(uint8_t **col0, uint8_t **col1, const uint8_t **sp,
                       enum objsp_family fam, int straddle, unsigned shl, unsigned shr) {
     if (fam == OBJSP_LEFT) {
-        objsp_left_edge_cell(dst, src, col1, sp, shl);
+        objsp_left_edge_cell(col1, sp, shl);
         *col0 += OBJSH_CELL_BYTES;
     }
     for (int i = 0; i < straddle; i++)
-        objsp_straddle_cell(dst, src, col0, col1, sp, shl);
+        objsp_straddle_cell(col0, col1, sp, shl);
     if (fam == OBJSP_WIDE) {
-        objsp_right_edge_cell(dst, src, col0, sp, shr);
+        objsp_right_edge_cell(col0, sp, shr);
         *col1 += OBJSH_CELL_BYTES;
     }
 }
@@ -515,8 +532,9 @@ static void objsp_row(uint8_t *dst, const uint8_t *src, Offset *col0, Offset *co
 static void objsp_core(uint8_t *dst, const uint8_t *src, uint16_t aligned_col, unsigned shl,
                        unsigned shr, uint16_t rows_m1, Offset col0_init, uint32_t src_init,
                        int width_idx) {
-    Offset col0 = col0_init;
-    uint32_t sp = src_init;
+    RM_HOST_ASSERT((int32_t)col0_init >= 0);   /* enforce the non-wrap invariant on the host build */
+    uint8_t *col0 = dst + col0_init;
+    const uint8_t *sp = src + src_init;
     enum objsp_family fam;
     int straddle, rung;
 
@@ -549,14 +567,19 @@ static void objsp_core(uint8_t *dst, const uint8_t *src, uint16_t aligned_col, u
         }
     }
 
+    /* Per-row rewind = 0xc0 − 8*rung, subtracted equally from both columns and the source (all now real
+     * pointers — PERF30 C3/P4). rewind is always positive here (rung 0..3), so the cursors walk back up
+     * one scanline; no signed-step subtlety (cf. objshift's stride). The constant-step fold that helped
+     * objshift2 is byte-exact here too (net step is −SCREEN_ROW_BYTES for all three) but measured a
+     * no-op on this frame, so the faithful rewind form is kept (PERF30 C3c). */
     uint16_t rewind = (uint16_t)(OBJSP_REWIND_C0 - OBJSP_LADDER_STEP * rung);
-    Offset col1 = col0 + OBJSH_CELL_BYTES;
+    uint8_t *col1 = col0 + OBJSH_CELL_BYTES;
     int rows = (int16_t)rows_m1 + 1;
     for (int row = 0; row < rows; row++) {
-        objsp_row(dst, src, &col0, &col1, &sp, fam, straddle, shl, shr);
-        col0 = (Offset)(col0 - sx16(rewind));
-        col1 = (Offset)(col1 - sx16(rewind));
-        sp = (uint32_t)(sp - sx16(rewind));
+        objsp_row(&col0, &col1, &sp, fam, straddle, shl, shr);
+        col0 -= sx16(rewind);
+        col1 -= sx16(rewind);
+        sp -= sx16(rewind);
     }
 }
 

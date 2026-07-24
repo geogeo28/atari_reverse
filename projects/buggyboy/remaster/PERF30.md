@@ -808,3 +808,76 @@ in 125 runs, 129 right-edge, dense span [32000,45596]):
 > GAME binary runs in Hatari). Both `bench_build.sh` and `build_game.sh` carry `-O3` identically; the
 > attribute lives in blit.c so both builds get it. The GCC-level lever on the blitters is now
 > **exhausted** — what remains on objshift is the hand-asm (A3) spill residue, not a compiler knob.
+
+### C1/C2/C3 — the last three C-level object-tree levers (2026-07-23; C1 + C3 landed, C2 dropped; +4.07 ms of the gate frame)
+
+The three remaining pure-C levers on the object tree, after the GCC-level sweep exhausted the
+allocator knobs. Baselines re-measured on -O3 + the objshift IRA attribute (the switch moved
+function-level numbers): `rm_blit_objshift2` 345,264 cyc (43.16 ms); `rm_objsprite` 18,204 (2.28 ms);
+`bench_objlist_fixed` 356,436; `bench_objlist_pass1` 231,480; TOTAL 1,342,610 (167.83 ms). Fuzz
+(`test/test_blit_engines.py`) covers all three engines' clip/edge/base/wide families × 16 fine-x ×
+multi-row; no extension needed (C1 is byte-identical calls, C3 is offset→pointer under the existing
+cases).
+
+> **LANDED — C1 (objshift2 straddle-cell run specialized as a fall-through switch; +3.88 ms).** The
+> row's `for (i = 0; i < straddle; i++) objsh2_straddle_cell(...)` paid per-cell loop control that the
+> annotated profile put at `addql #1,%d3` (5,184 cyc) + `cmpl %d6,%d3` (3,888) + `bnes` (5,996) ≈ 15 k
+> cyc, and blocked cross-cell scheduling. `straddle` is 0..3 and constant per call, so the loop became
+> a fall-through `switch (straddle) { case 3: cell; case 2: cell; case 1: cell; default: break; }`
+> (case labels `OBJSH2_BASE_STRADDLE`/−1/−2, no magic numbers). The switch compiles to a compare chain
+> under `-fno-jump-tables`, run once per row, not per cell. **First attempt REGRESSED +176 k** — three
+> `case` labels tripped GCC's called-more-than-once heuristic into emitting a *real* call to
+> `objsh2_straddle_cell`, which spilled the by-pointer `uint8_t **` cursor args to memory (the A1 wall);
+> **`always_inline` on the cell** pins the three straight-line inlined copies and is the whole point.
+> Result: **`rm_blit_objshift2` 345,264 → 314,216 cyc = 43.16 → 39.28 ms (0.91×, −31,048 = −3.88 ms)** —
+> well past the ~2–2.5 ms estimate (eliminating loop control also freed cross-cell scheduling and
+> register reuse); `bench_objlist_fixed` 356,436 → 325,424. From the disassembly the three cells are now
+> unrolled straight-line (mask build `oril`/`roll`/`andil` appears 3× with no per-cell `addql/cmpl/bne`;
+> the only back-edge is the row loop). Byte-exact: `make test` **558 passed**; `run_golden.py` **MATCH
+> on all 5 legs**.
+
+> **C2 (objshift2 mask-build/split reshaping) — TWO honest shapes, BOTH REGRESSED, reverted.** The
+> per-cell mask code emits `oril #-65536` (16 cyc) + `andil #65535` (14 cyc ×2) where the original asm
+> uses a `moveq #-1` seed and 4-cyc `move`/`swap` shuffles. Analysis showed the chained
+> `(x & 0xffff0000)|…` idiom actually computes just `mask_col0 = dup16(hi16(mask32))`,
+> `mask_col1 = dup16(lo16(mask32))`. **Attempt #1** (express that directly with `dup16` of each half,
+> `OBJSH_MASK_HI | base` seed): `rm_blit_objshift2` 314,216 → **318,104 (+3,888)** — GCC still emitted
+> the `oril`/`andil` and added a worse split. **Attempt #2** (`~(w0|w1)` computed as `int`, whose sign
+> extension yields `0xffff_<base>` for a `not.l` instead of the `oril`): **325,182 (+10,966)** — the
+> `not.l` lengthened the dependency chain. Per the measure-or-revert rule (this is the class GCC refused
+> at P3/L2), both reverted to the landed chained idiom. The immediate ops are register-allocation
+> micro-noise GCC will not give up here.
+
+> **LANDED — C3 (objsprite family gets the P4 pointer treatment; +0.19 ms + dead-code drop).** The
+> third fine-x engine `objsp_core` (behind `rm_objsprite`/`rm_objsprite_alt`, the roadside dispatcher's
+> t1/t2/t4/w88/t53 handlers) was the one still on offset cursors. Correcting the plan's premise first:
+> `objsp_core` is used **only** by object_list.c's pass-1 objsprite objects — `rm_draw_buggy`/
+> `rm_draw_fg_sprite`/`rm_draw_ground` are *separate* engines (sprite.c/ground.c), not this family — so
+> C3's reach is `rm_objsprite` (18,204 cyc of `bench_objlist_pass1`), not the multi-row set the estimate
+> assumed.
+> - **(a) P4b pointer conversion** — the cell pointees `Offset *col0/*col1`, `uint32_t *sp` became real
+>   `uint8_t **`/`const uint8_t **` (by-pointer shape kept, per the A1 lesson — NOT the value-struct),
+>   the cells drop the `dst`/`src` params and write through the pointers. **`rm_objsprite` 18,204 →
+>   16,672 cyc (−1,532 = 2.28 → 2.08 ms)**; `bench_objlist_pass1` 231,480 → 229,948. This made the two
+>   offset wrappers (`plane_write`, `objsh_build_mask`) — which existed ONLY for objsprite — dead;
+>   removed, with their "kept for the objsprite family" comments and the banner's "kept on offset
+>   cursors deliberately" rationale.
+> - **(b) P2 plane unroll** — already done by `-O3`: the profile shows the objsprite plane loop compiled
+>   to displacement addressing (`%a1@(2)/(4)/(6)`) with the plane-3 clamp inline, not the indexed rolled
+>   loop. No explicit unroll needed; the P4 local-pointer copies are what let -O3 do it.
+> - **(c) constant row-step fold** — byte-exact (proved: every family's per-row advance `8*cells` equals
+>   `(0xc0 − 8*rung) − SCREEN_ROW_BYTES`, so the net step is `−SCREEN_ROW_BYTES` for col0/col1/**and**
+>   the screen-format source), but measured a **no-op** (+32 cyc, noise). Per the "affected rows improve
+>   net" acceptance bar, **reverted** — the faithful `rewind` form is kept.
+> - **dispatcher glue** (`rm_draw_object_list`/`obj_dispatch`/`objsprite_hi_wrapper`, ~30 k cyc): the
+>   line-level profile shows its cost is inherent long-parameter-list ABI marshalling (`movel
+>   %sp@(x),%sp@(y)` at 168 cyc each) and the record-walk loop bound — no surgical spill/re-derived
+>   pointer to take without restructuring the dispatcher, which is out of scope. Left as-is.
+>
+> Byte-exact: `make test` **558 passed**; `run_golden.py` **MATCH on all 5 legs**.
+
+> **Net C1+C3:** `bench_objlist_fixed` 356,436 → 325,424; `bench_objlist_pass1` 231,480 → 229,948;
+> object tree **81.97 → 77.90 ms** (0.60× the recon); TOTAL (frame, funcs-sum) **1,342,610 → 1,310,066
+> cyc = 167.83 → 163.76 ms (−32,544, −4.07 ms)**. The pure-C object-tree levers are now exhausted:
+> objshift's residue is hand-asm (A3), objshift2's mask immediates resist GCC (C2), and objsprite is
+> cold. What remains on the tree is A3 (hand-asm) or the Tier-B algorithmic wins (A2 pre-shift, culling).
