@@ -22,6 +22,7 @@
 #include <stdint.h>
 #include "st.h"
 #include "screen.h"        /* SCREEN_ROW_BYTES — used by the shared cookie-cut pass below */
+#include "blit_const.h"    /* OBJSH_* geometry + contract caps — shared with the C/asm engines */
 
 /* XBIOS 38 (os.s): run func in supervisor, return to the caller's mode. Declared here as the ONE source
  * for the STE driver + self-test (both reach the supervisor-only 0xFFFF8Axx page through it). */
@@ -132,6 +133,71 @@ void rm_blit_objshift_dispatch(uint8_t *dst, uint32_t dst_off, const uint8_t *sr
                                uint16_t x, uint16_t color, uint16_t rows_m1, int16_t stride,
                                const uint8_t *color_pairs, int base_cells);
 void rm_blit_objshift_cache_flush(void);
+
+/* Is this draw the BASE family — the only family the blitter paths serve (a positive aligned column
+ * below the width-dependent right bound, and a non-zero row count)? The engines that must run the test
+ * inline open-code it (src/blit.c, src/blitter_objshift.c); the paths that only ASK — the skew path's
+ * family gate and the census/sweep bookkeeping — share this one copy. */
+static inline int objsh_is_base(uint16_t x, uint16_t rows_m1, int base_cells) {
+    if ((int16_t)rows_m1 + 1 <= 0) return 0;               /* zero rows: no draw, not a BASE case */
+    int16_t col = (int16_t)((int16_t)((int16_t)(uint16_t)x >> 1) & (int16_t)COL_ALIGN);
+    int16_t ceiling = (int16_t)(OBJSH_RIGHT_BOUND - OBJSH_CELL_BYTES * (base_cells - 1));
+    return !(col < 0 || (int16_t)(col - ceiling) >= 0);    /* LEFT / RIGHT clip -> CPU hybrid */
+}
+
+/* ---- hardware-SKEW colour path (src/blitter_skew.c) — MEASUREMENT BUILD ONLY (GAME_STE_SWEEP) ----
+ * Same contract as rm_blit_objshift_blitter (1 = drawn, 0 = CPU hybrid) but blits from UNSHIFTED,
+ * colour-independent bitmaps with the chip's SKEW register doing the fine-x shift. Slice 1 of the
+ * hardware-SKEW campaign calibrates it against the sweep; routing + the static sprite table are slice 2. */
+#define OBJSH_SKEW_MAX_CELLS  2                            /* base_cells family max */
+/* Bitmap 0 is the show mask; bitmaps 1..OBJSH_PLANES are the per-plane pixel words. */
+#define OBJSH_SKEW_BM_MASK    0
+#define OBJSH_SKEW_BM_PLANE0  1
+#define OBJSH_SKEW_N_BITMAPS  (1 + OBJSH_PLANES)
+/* Pad words past the live rows*base_cells. ONE is the calibrated path's need: every line wastes one
+ * source read, and the last line's lands a word past the bitmap (see blitter_skew.c's header). The rest
+ * covers the RM_SKEW_MUT_FXSR mutation, whose extra per-line read drifts the source one word further
+ * per line — up to rows words by the last line. A mutate build must still FAIL, but it must not read
+ * out of bounds while doing so. */
+#define OBJSH_SKEW_PAD_WORDS  (OBJSH_MAX_ROWS + 1)
+#define OBJSH_SKEW_BM_WORDS   (OBJSH_MAX_ROWS * OBJSH_SKEW_MAX_CELLS + OBJSH_SKEW_PAD_WORDS)
+
+/* The UNSHIFTED, colour-independent bitmap set one sprite region materialises into. Slice 1 keeps a
+ * single scratch instance; slice 2's bounded sprite-key table hands out one instance per key, which is
+ * why materialise and blit take it explicitly rather than sharing a hidden static. */
+typedef struct {
+    uint16_t word[OBJSH_SKEW_N_BITMAPS][OBJSH_SKEW_BM_WORDS];
+} ObjshSkewBitmaps;
+
+/* Mutation knob for the sweep's coverage check (-DRM_SKEW_MUTATE=n, set by build_game.sh): each value
+ * breaks ONE calibrated register, so a sweep that still passes would prove the skew path is not really
+ * exercised. Declared here because src/blitter_sweep.c reads it too — a mutate build runs the skew grid
+ * ALONE (the other two grids are unmutated, so re-running them would only burn emulated cycles). */
+#define RM_SKEW_MUT_NONE       0
+#define RM_SKEW_MUT_SKEW_PLUS  1                           /* skew = fine_x + 1 */
+#define RM_SKEW_MUT_FXSR       2                           /* set FXSR (an extra source read per line) */
+#define RM_SKEW_MUT_ENDMASK1   3                           /* drop the column-0 leading-edge guard */
+#define RM_SKEW_MUT_ENDMASK3   4                           /* drop the last-column trailing-edge guard */
+#define RM_SKEW_MUT_PLANE3     5                           /* drop plane 3's `& ~m` is_last special */
+#ifndef RM_SKEW_MUTATE
+#define RM_SKEW_MUTATE RM_SKEW_MUT_NONE
+#endif
+#define RM_SKEW_MUTATED       (RM_SKEW_MUTATE != RM_SKEW_MUT_NONE)
+
+/* Materialise one sprite region into an explicit destination bitmap set — slice 2's table seam, and what
+ * the sweep times in isolation. */
+void rm_objsh_skew_materialise(ObjshSkewBitmaps *bm, const uint8_t *src, uint32_t src_off,
+                               int16_t stride, int rows, int base_cells);
+/* Blit an ALREADY-materialised bitmap set (slice 2 calls this straight off the table; the sweep re-fires
+ * it to time the chip passes in isolation). Returns 1 if drawn, 0 for the CPU hybrid — same family
+ * contract as the full entry below, which is materialise + this. Supervisor only. */
+int rm_blit_objshift_skew_from(const ObjshSkewBitmaps *bm, uint8_t *dst, uint32_t dst_off, uint16_t x,
+                               uint16_t color, uint16_t rows_m1, const uint8_t *color_pairs,
+                               int base_cells);
+/* Slice-1 entry: materialise into a private static scratch, then blit it. */
+int rm_blit_objshift_skew(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                          uint16_t x, uint16_t color, uint16_t rows_m1, int16_t stride,
+                          const uint8_t *color_pairs, int base_cells);
 
 /* Full-sweep proof (GAME_STE_SWEEP build): run rm_blit_objshift2_blitter vs the CPU engine over the
  * objshift2 case space; return a framebuffer encoding per-case results (see src/blitter_sweep.c) and the

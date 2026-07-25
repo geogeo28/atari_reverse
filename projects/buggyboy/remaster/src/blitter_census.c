@@ -12,6 +12,7 @@
  */
 #include "game.h"
 #include "blit_const.h"
+#include "blitter.h"       /* objsh_is_base — the shared BASE-family predicate */
 #include "st.h"
 
 #define CENSUS_SLOTS_FULL    0x10000                       /* 65536 slots for the two full-key engine sets */
@@ -63,17 +64,12 @@ static void census_add(Census *cs, uint32_t h) {
     cs->saturated = 1;
 }
 
-/* The materialise-family test (mirrors the blitter engines): is this a BASE-family draw a table serves? */
+/* The materialise-family test (mirrors the blitter engines): is this a BASE-family draw a table serves?
+ * The colour engine's half of the question is objsh_is_base, shared from blitter.h. */
 static int objsh2_is_base(uint16_t x, uint16_t rows_m1, int width_idx) {
     if ((int16_t)rows_m1 + 1 <= 0) return 0;               /* zero rows: no draw, not a table entry */
     int16_t col = (int16_t)((int16_t)((int16_t)(uint16_t)x >> 1) & (int16_t)COL_ALIGN);
     int16_t ceil = (int16_t)(OBJSH2_RIGHT_BOUND + OBJSH2_LADDER_STEP * width_idx);
-    return !(col < 0 || (int16_t)(col - ceil) >= 0);
-}
-static int objsh_is_base(uint16_t x, uint16_t rows_m1, int base_cells) {
-    if ((int16_t)rows_m1 + 1 <= 0) return 0;
-    int16_t col = (int16_t)((int16_t)((int16_t)(uint16_t)x >> 1) & (int16_t)COL_ALIGN);
-    int16_t ceil = (int16_t)(OBJSH_RIGHT_BOUND - OBJSH_CELL_BYTES * (base_cells - 1));
     return !(col < 0 || (int16_t)(col - ceil) >= 0);
 }
 

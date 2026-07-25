@@ -540,6 +540,22 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > byte-exactness calibration for skew — the data side is now proven affordable; the recipe is the next
 > slice. Full analysis + tables: `BLIT_STE_SPEC.md` §12.
 
+> **C4 slice 8 — the hardware-skew colour recipe PROVEN byte-exact; the calibration risk dissolves
+> (landed, not committed).** `src/blitter_skew.c` blits the colour BASE family from **unshifted,
+> colour-independent** bitmaps (`M = ~(A|B|C)&D`, planes A/B/C, `D&~M`) with `skew = fine_x` and — the
+> headline — **no FXSR, no NFSR**: the one polluted source read per line lands exactly in the bits
+> `endmask1 = 0xFFFF>>k` / `endmask3 = ~(0xFFFF>>k)` already block, and the colour fill rides in the
+> OR-pass endmasks (`dst |= src & e`), so a zero plane skips its pass outright (game blits average
+> **6 passes**, fills verified binary over all legs). Pinned: the sweep now runs THREE grids — **4800
+> cases, 0 mismatch** (objshift2 720 + pre-shift 704 + skew 704 handled), non-vacuity gated by
+> C-emitted expected counts (a forced-decline build fails loudly), `--mutate all` catches all 5
+> mutations (704/704/643/660/297) with the other grids skipped, `make test` 730, shipping PRG
+> sha-identical. **Cost (isolated pass timing — the old subtract-two-totals "passes are ~free" was an
+> artifact):** materialise 13,520 cyc, passes 12,920 (game fill), CPU asm 33,960 → **0.78× with
+> per-call materialise, 0.38× from a table.** Seam pre-built for slice 2 (`ObjshSkewBitmaps`,
+> materialise-into-entry / blit-from-entry). Slice 2 = §12's sprite-key static table + routing +
+> poke batching + the DRIVING cadence go/no-go. Full recipe + register table: `BLIT_STE_SPEC.md` §13.
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),

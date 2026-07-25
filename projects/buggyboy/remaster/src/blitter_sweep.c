@@ -4,7 +4,10 @@
  * dimensions) and reports a per-case mismatch grid to SCREEN.BIN.
  *
  * Case space: width_idx 0..2 x fine_x 0..15 x a column set spanning LEFT clip / BASE / RIGHT clip
- * x rows_m1 {0, 3, 0x2a} — plus the bit-15-set (zero-row) rows. For each case both engines draw the
+ * x rows_m1 {0, 3, 0x2a} — plus the bit-15-set (zero-row) rows. The colour-indexed engine's own grid is
+ * swept TWICE: once against the shipping pre-shift path (rm_blit_objshift_blitter) and once against the
+ * hardware-SKEW path (rm_blit_objshift_skew, src/blitter_skew.c) — separate arrays, so the pre-shift pin
+ * is untouched by the skew calibration. For each case both engines draw the
  * SAME synthetic sprite over the SAME background; the two framebuffers must be byte-identical over the
  * whole 32000 bytes (and the guard bands intact). A BASE case that the blitter path handles (returns 1)
  * must match exactly; a CLIP case the path declines (returns 0) is the pinned CPU hybrid and is checked
@@ -63,9 +66,19 @@ static const int OSH_CRS[][3]      = {{3, 3, 8}, {11, 0, 0x10}, {14, 5, (int)0xf
 #define OSH_PAIRS_BYTES (OSH_N_COLOURS * OBJSH_COLOR_STRIDE)
 static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[OSH_SRC_BYTES]; uint8_t hi[GUARD_BYTES]; } osh_src_g;
 #define osh_src (osh_src_g.px)
-static uint8_t osh_pairs[OSH_PAIRS_BYTES];
+static uint8_t osh_pairs[OSH_PAIRS_BYTES];                  /* the swept table: arbitrary distinct bytes */
+static uint8_t osh_pairs_binary[OSH_PAIRS_BYTES];           /* the GAME's own table (bench; see below) */
 static uint16_t osh_case_diff[N_OSH_CASES];
 static long osh_handled;
+
+/* The hardware-SKEW colour path (src/blitter_skew.c) is swept over the SAME case grid, in its own
+ * arrays, so the pre-shift sweep above stays the untouched pin. */
+static uint16_t skew_case_diff[N_OSH_CASES];
+static long skew_handled;
+
+/* Either colour-engine blitter path under test — the grid runner is shared (they take the same args). */
+typedef int (*ObjshBlitFn)(uint8_t *, uint32_t, const uint8_t *, uint32_t, uint16_t, uint16_t,
+                           uint16_t, int16_t, const uint8_t *, int);
 
 static uint16_t pattern(int r, int k, int lane) {
     unsigned v = (unsigned)(r * 2654435761u + k * 40503u + lane * 0x9E37u);
@@ -109,36 +122,186 @@ static long run_case(int width_idx, int fine_x, int col, int rows_m1, int *handl
     return n;
 }
 
-/* One colour-engine case: draw with the CPU rm_blit_objshift (ref) and rm_blit_objshift_blitter (test)
- * over the same background; count differing bytes + broken guards. */
-static long run_case_objsh(int base_cells, int fine_x, int col, int color, int rows_m1, int16_t stride,
-                           int *handled_out) {
+/* Both colour tables are case-INVARIANT, so they are built once at sweep start (the per-case refill they
+ * replace was pure emulated-cycle waste).
+ *   osh_pairs        — an arbitrary distinct-byte table so each colour nibble selects a different 4-plane
+ *                      fill (the c*8+b*37+5 generator mirrors test_asm_blit.py's OSH_PAIRS). Fills that
+ *                      are neither 0 nor 0xFFFF are the HARDER case for the skew recipe's endmask trick,
+ *                      which is why the grid sweeps them.
+ *   osh_pairs_binary — what the GAME actually passes: plane p's fill is all-ones iff bit p of the colour
+ *                      index is set. Used by the bench only, to measure the OR-pass skipping that real
+ *                      data buys (a zero plane fill costs no pass at all). */
+static void sweep_init_pairs(void) {
+    for (int c = 0; c < OSH_N_COLOURS; c++) {
+        for (int b = 0; b < OBJSH_COLOR_STRIDE; b++)
+            osh_pairs[c * OBJSH_COLOR_STRIDE + b] = (uint8_t)(c * 8 + b * 37 + 5);
+        for (int p = 0; p < OBJSH_PLANES; p++)
+            wr16(osh_pairs_binary + c * OBJSH_COLOR_STRIDE + p * 2,
+                 ((c >> p) & 1) ? 0xFFFFu : 0u);
+    }
+}
+
+/* The synthetic source depends only on (base_cells, colour), and the grid walks colour slowly — so
+ * refill it only when that key changes. The GUARD bands are still re-armed on EVERY case: they are the
+ * overrun tripwire and must not carry a previous case's damage forward. */
+static int osh_src_key_cells = -1, osh_src_key_color = -1;
+static void osh_src_refill(int base_cells, int color) {
+    if (base_cells == osh_src_key_cells && color == osh_src_key_color) return;
+    for (int i = 0; i < OSH_SRC_BYTES - 1; i += 2) wr16(osh_src + i, pattern(i, base_cells, color));
+    osh_src_key_cells = base_cells;
+    osh_src_key_color = color;
+}
+
+/* One colour-engine case: draw with the CPU rm_blit_objshift (ref) and `test_fn` (the pre-shift or the
+ * hardware-skew blitter path) over the same background; count differing bytes + broken guards. */
+static long run_case_objsh(ObjshBlitFn test_fn, int base_cells, int fine_x, int col, int color,
+                           int rows_m1, int16_t stride, int *handled_out) {
     for (int i = 0; i < SCREEN_BYTES; i++) ref_fb[i] = test_fb[i] = SWEEP_BG_BYTE;
     for (int i = 0; i < GUARD_BYTES; i++)
         osh_src_g.lo[i] = osh_src_g.hi[i] = test_g.lo[i] = test_g.hi[i] = GUARD_FILL;
-    for (int i = 0; i < OSH_SRC_BYTES - 1; i += 2) wr16(osh_src + i, pattern(i, base_cells, color));
-    /* An arbitrary distinct-byte colour_pairs table so each colour nibble selects a different 4-plane
-     * fill (the c*8+b*37+5 generator mirrors test_asm_blit.py's OSH_PAIRS; the constants need not agree
-     * with bench — each side drives its own ref-vs-test). */
-    for (int c = 0; c < OSH_N_COLOURS; c++)
-        for (int b = 0; b < OBJSH_COLOR_STRIDE; b++)
-            osh_pairs[c * OBJSH_COLOR_STRIDE + b] = (uint8_t)(c * 8 + b * 37 + 5);
+    osh_src_refill(base_cells, color);
 
     uint16_t x = make_x(col, fine_x);
     uint32_t dst_off = (uint32_t)((SCREEN_H / 2) * SCREEN_ROW_BYTES);   /* mid-screen; both engines walk up */
     rm_blit_objshift(ref_fb, dst_off, osh_src, OSH_SRC_OFF, x, (uint16_t)color, (uint16_t)rows_m1, stride,
                      osh_pairs, base_cells);
-    *handled_out = rm_blit_objshift_blitter(test_fb, dst_off, osh_src, OSH_SRC_OFF, x, (uint16_t)color,
-                                            (uint16_t)rows_m1, stride, osh_pairs, base_cells);
+    *handled_out = test_fn(test_fb, dst_off, osh_src, OSH_SRC_OFF, x, (uint16_t)color,
+                           (uint16_t)rows_m1, stride, osh_pairs, base_cells);
     long n = 0;
     for (int i = 0; i < SCREEN_BYTES; i++) if (ref_fb[i] != test_fb[i]) n++;
     n += guard_broken(osh_src_g.lo) + guard_broken(osh_src_g.hi) + guard_broken(test_g.lo) + guard_broken(test_g.hi);
     return n;
 }
 
-/* Sweep every case for BOTH engines. A handled (BASE) case must be byte-exact; a declined (CLIP) case is
- * the CPU hybrid (blitter drew nothing) — EXPECTED, not a mismatch. Only handled cases contribute. */
-long blitter_sweep_super(void) {
+/* Run the whole colour-engine case grid against one blitter path. Returns the summed mismatch; fills
+ * `diff_out` (one word per case) and `handled_out` (BASE cases the path drew). */
+static long sweep_objsh_grid(ObjshBlitFn test_fn, uint16_t *diff_out, long *handled_out) {
+    int idx = 0;
+    long total = 0, handled_count = 0;
+    for (int bi = 0; bi < N_OSH_BC; bi++)
+        for (int fx = 0; fx < N_FINEX; fx++)
+            for (int ci = 0; ci < N_OSH_COL; ci++)
+                for (int ti = 0; ti < N_OSH_CRS; ti++) {
+                    int handled;
+                    long d = run_case_objsh(test_fn, OSH_BASE_CELLS[bi], fx, OSH_COLUMNS[ci],
+                                            OSH_CRS[ti][0], OSH_CRS[ti][1], (int16_t)OSH_CRS[ti][2],
+                                            &handled);
+                    uint16_t logged = handled ? (uint16_t)(d > 0xffff ? 0xffff : d) : 0;
+                    diff_out[idx++] = logged;
+                    total += logged;
+                    handled_count += handled ? 1 : 0;
+                }
+    *handled_out = handled_count;
+    return total;
+}
+
+/* The BASE-family case count BOTH colour grids must report handled — enumerated here, from the shared
+ * predicate (blitter.h), so the runner can prove the grid is non-vacuous against a number the report
+ * carries rather than a Python literal that could drift from this grid. */
+static long osh_expected_base_cases(void) {
+    long n = 0;
+    for (int bi = 0; bi < N_OSH_BC; bi++)
+        for (int fx = 0; fx < N_FINEX; fx++)
+            for (int ci = 0; ci < N_OSH_COL; ci++)
+                for (int ti = 0; ti < N_OSH_CRS; ti++)
+                    n += objsh_is_base(make_x(OSH_COLUMNS[ci], fx), (uint16_t)OSH_CRS[ti][1],
+                                       OSH_BASE_CELLS[bi]) ? 1 : 0;
+    return n;
+}
+
+/* ---- slice-1 cost structure: how expensive is one skew blit, split materialise vs chip passes? ----
+ * Timed on the TOS 200 Hz frame counter (5 ms/tick = 40000 cycles at the ST's 8 MHz) over a case the
+ * grid above actually SWEEPS — base_cells 2 (the widest family) at rows_m1 0x1f (32 rows, the grid's
+ * tallest case), so the timed shape is one the byte-exactness pin covers. The shipping CPU engine
+ * (RM_BLIT_OBJSHIFT — the hand-written m68k core where this build selects it, the C reference under a
+ * per-core bisect) is timed on the same case as the reference point that decides whether the skew path
+ * is worth routing. Reported raw (ticks + iteration count) so the runner does the arithmetic.
+ *
+ * TWO colour tables, because the pass count depends on the fill: the swept synthetic table has four
+ * non-zero plane fills (8 passes), while the GAME's own table at colour 3 fills two planes and zeroes
+ * two (6 passes — the OR pass is skipped outright for a zero fill). The chip passes are ALSO timed in
+ * isolation, re-fired on an already-materialised bitmap set, rather than inferred by subtracting two
+ * near-equal totals. */
+#define SYS_HZ200         (*(volatile uint32_t *)0x4BAUL)   /* TOS _hz_200 frame counter (supervisor) */
+#define OSH_BENCH_ITERS   1000
+#define OSH_BENCH_CELLS   2
+#define OSH_BENCH_ROWS_M1 0x1f
+#define OSH_BENCH_STRIDE  8
+#define OSH_BENCH_COLOR   3                                 /* binary table: planes 0,1 filled -> 6 passes */
+#define OSH_BENCH_COL     0x40                              /* a BASE column (no clip) */
+#define OSH_BENCH_FINE_X  0xb                               /* a non-zero fine_x: the straddling shape */
+#define OSH_BENCH_ROWS    (OSH_BENCH_ROWS_M1 + 1)
+
+static ObjshSkewBitmaps bench_bm;                           /* the sweep's own set (the slice-2 seam) */
+static uint32_t bench_dst_off;
+static uint16_t bench_x;
+static long bench_declined;                                 /* timed calls that did NOT draw — must be 0 */
+static uint16_t bench_mat_ticks, bench_pass_synth_ticks, bench_pass_binary_ticks;
+static uint16_t bench_all_synth_ticks, bench_all_binary_ticks, bench_cpu_ticks;
+
+/* A timed call that the path DECLINED would clock a no-op and report a fantasy cost, so every bench
+ * loop routes its return through here and the tally ships in its own report word. */
+static void bench_note_handled(int handled) { if (!handled) bench_declined++; }
+
+static void bench_materialise(void) {
+    rm_objsh_skew_materialise(&bench_bm, osh_src, OSH_SRC_OFF, OSH_BENCH_STRIDE, OSH_BENCH_ROWS,
+                              OSH_BENCH_CELLS);
+}
+static void bench_passes(const uint8_t *pairs) {
+    bench_note_handled(rm_blit_objshift_skew_from(&bench_bm, test_fb, bench_dst_off, bench_x,
+                                                  OSH_BENCH_COLOR, OSH_BENCH_ROWS_M1, pairs,
+                                                  OSH_BENCH_CELLS));
+}
+static void bench_passes_synth(void)  { bench_passes(osh_pairs); }
+static void bench_passes_binary(void) { bench_passes(osh_pairs_binary); }
+
+static void bench_all(const uint8_t *pairs) {
+    bench_note_handled(rm_blit_objshift_skew(test_fb, bench_dst_off, osh_src, OSH_SRC_OFF, bench_x,
+                                             OSH_BENCH_COLOR, OSH_BENCH_ROWS_M1, OSH_BENCH_STRIDE,
+                                             pairs, OSH_BENCH_CELLS));
+}
+static void bench_all_synth(void)  { bench_all(osh_pairs); }
+static void bench_all_binary(void) { bench_all(osh_pairs_binary); }
+
+/* The CPU reference point. RM_BLIT_OBJSHIFT (game.h) is the hand-written core under this build's
+ * -DRM_ASM_BLIT and the C engine under a per-core bisect (-URM_ASM_OBJSHIFT), so the sweep build stays
+ * bisect-neutral instead of hard-wiring the asm symbol. */
+static void bench_cpu(void) {
+    RM_BLIT_OBJSHIFT(test_fb, bench_dst_off, osh_src, OSH_SRC_OFF, bench_x, OSH_BENCH_COLOR,
+                     OSH_BENCH_ROWS_M1, OSH_BENCH_STRIDE, osh_pairs, OSH_BENCH_CELLS);
+}
+
+/* One timing block for all six measurements: same loop, same call overhead, so the numbers compare. */
+typedef void (*BenchFn)(void);
+static uint16_t bench_ticks(BenchFn fn) {
+    uint32_t t0 = SYS_HZ200;
+    for (int i = 0; i < OSH_BENCH_ITERS; i++) fn();
+    return (uint16_t)(SYS_HZ200 - t0);
+}
+
+static void sweep_bench(void) {
+    osh_src_refill(OSH_BENCH_CELLS, OSH_BENCH_COLOR);       /* the bench owns its source, not the grid's */
+    bench_x = make_x(OSH_BENCH_COL, OSH_BENCH_FINE_X);
+    bench_dst_off = (uint32_t)((SCREEN_H / 2) * SCREEN_ROW_BYTES);
+    bench_materialise();                                    /* the pass-only loops re-fire this set */
+
+    bench_mat_ticks          = bench_ticks(bench_materialise);
+    bench_pass_synth_ticks   = bench_ticks(bench_passes_synth);
+    bench_pass_binary_ticks  = bench_ticks(bench_passes_binary);
+    bench_all_synth_ticks    = bench_ticks(bench_all_synth);
+    bench_all_binary_ticks   = bench_ticks(bench_all_binary);
+    bench_cpu_ticks          = bench_ticks(bench_cpu);
+}
+
+/* Which grids this build ran (report word; the runner must not read a skipped grid as "clean"). */
+#define SWEEP_GRID_OBJSHIFT2    1
+#define SWEEP_GRID_OSH_PRESHIFT 2
+#define SWEEP_GRID_OSH_SKEW     4
+static uint16_t sweep_grids_run;
+
+/* The objshift2 grid: the fixed-pass engine's own case space. Same shape as sweep_objsh_grid — returns
+ * the summed mismatch and reports the BASE cases the blitter path drew. */
+static long sweep_objshift2_grid(long *handled_out) {
     int idx = 0;
     long total = 0, handled_count = 0;
     for (int wi = 0; wi < N_WIDTH; wi++)
@@ -152,41 +315,92 @@ long blitter_sweep_super(void) {
                     total += logged;
                     handled_count += handled ? 1 : 0;
                 }
-    sweep_total = total;
-    sweep_handled = handled_count;
-
-    /* colour-indexed engine */
-    int oi = 0; long oh = 0;
-    for (int bi = 0; bi < N_OSH_BC; bi++)
-        for (int fx = 0; fx < N_FINEX; fx++)
-            for (int ci = 0; ci < N_OSH_COL; ci++)
-                for (int ti = 0; ti < N_OSH_CRS; ti++) {
-                    int handled;
-                    long d = run_case_objsh(OSH_BASE_CELLS[bi], fx, OSH_COLUMNS[ci], OSH_CRS[ti][0],
-                                            OSH_CRS[ti][1], (int16_t)OSH_CRS[ti][2], &handled);
-                    uint16_t logged = handled ? (uint16_t)(d > 0xffff ? 0xffff : d) : 0;
-                    osh_case_diff[oi++] = logged;
-                    total += logged;
-                    oh += handled ? 1 : 0;
-                }
-    osh_handled = oh;
-    sweep_total = total;                                    /* combined: both engines must be 0 */
+    *handled_out = handled_count;
     return total;
 }
 
-/* Pack the per-case grid into a framebuffer for SCREEN.BIN: word0 = total case count (objshift2 THEN
- * objshift), word1 = total mismatch (both engines), then the concatenated per-case diff words. The last
- * two words carry the BASE-handled counts (objshift2, objshift). run_ste_sweep.py parses it. */
+/* Sweep every case for all three grids. A handled (BASE) case must be byte-exact; a declined (CLIP) case is
+ * the CPU hybrid (blitter drew nothing) — EXPECTED, not a mismatch. Only handled cases contribute.
+ *
+ * A MUTATE build runs the skew grid ALONE: the mutation knob touches nothing the other two grids drive,
+ * so re-sweeping them would only burn emulated cycles (the coverage check builds five of these). The
+ * bench is skipped with them — it would be timing a deliberately broken configuration. sweep_grids_run
+ * tells the runner which of the three the numbers describe. */
+long blitter_sweep_super(void) {
+    long total = 0;
+    sweep_init_pairs();
+
+    /* A plain `if` on the compile-time knob, not an #if: the mutate build then still COMPILES the grids
+     * it skips, so a change that breaks them cannot hide behind the mutation flag. */
+    if (!RM_SKEW_MUTATED) {
+        total += sweep_objshift2_grid(&sweep_handled);
+        sweep_grids_run |= SWEEP_GRID_OBJSHIFT2;
+        total += sweep_objsh_grid(rm_blit_objshift_blitter, osh_case_diff, &osh_handled);
+        sweep_grids_run |= SWEEP_GRID_OSH_PRESHIFT;
+    }
+    total += sweep_objsh_grid(rm_blit_objshift_skew, skew_case_diff, &skew_handled);
+    sweep_grids_run |= SWEEP_GRID_OSH_SKEW;
+
+    if (!RM_SKEW_MUTATED) sweep_bench();
+    sweep_total = total;                                    /* combined: every grid run must be 0 */
+    return total;
+}
+
+/* Pack the per-case grid into a framebuffer for SCREEN.BIN: word0 = total case count (objshift2, then
+ * objshift pre-shift, then objshift hardware-skew), word1 = total mismatch (every grid run), then the
+ * concatenated per-case diff words. run_ste_sweep.py parses it; the tail indices are mirrored there.
+ *
+ * The tail is SELF-DESCRIBING: besides the BASE-handled counts and the cost bench it carries the grid
+ * LAYOUT (per-grid case counts), the BASE count each colour grid is expected to report, and which grids
+ * this build ran. Those four let the runner locate the skew grid and prove it non-vacuous from the
+ * report itself instead of from Python literals that can silently drift out of step with this file. */
+#define SWEEP_REPORT_WORDS        (SCREEN_BYTES / 2)
+#define SWEEP_TAIL_HANDLED2       1                         /* counted back from the end of the report */
+#define SWEEP_TAIL_HANDLED_OSH    2
+#define SWEEP_TAIL_HANDLED_SKEW   3
+#define SWEEP_TAIL_N_CASES2       4                         /* layout: objshift2 grid case count */
+#define SWEEP_TAIL_N_CASES_OSH    5                         /* layout: each colour grid's case count */
+#define SWEEP_TAIL_EXPECT_BASE    6                         /* BASE cases a colour grid must handle */
+#define SWEEP_TAIL_GRIDS_RUN      7                         /* SWEEP_GRID_* bitmask */
+#define SWEEP_TAIL_BENCH_ITERS    8
+#define SWEEP_TAIL_BENCH_MAT      9
+#define SWEEP_TAIL_BENCH_PASS_SYN 10
+#define SWEEP_TAIL_BENCH_PASS_BIN 11
+#define SWEEP_TAIL_BENCH_ALL_SYN  12
+#define SWEEP_TAIL_BENCH_ALL_BIN  13
+#define SWEEP_TAIL_BENCH_CPU      14
+#define SWEEP_TAIL_BENCH_DECLINED 15                        /* timed calls that did NOT draw (must be 0) */
+#define SWEEP_TAIL_WORDS          SWEEP_TAIL_BENCH_DECLINED
+/* The three per-case grids must not run into the tail words (they share one 32000-byte report). */
+typedef char sweep_report_fits[(2 + N_CASES + 2 * N_OSH_CASES
+                                <= SWEEP_REPORT_WORDS - SWEEP_TAIL_WORDS) ? 1 : -1];
+
 const uint8_t *blitter_sweep(long *mismatch_out) {
     Supexec(blitter_sweep_super);
     uint16_t *w = (uint16_t *)test_fb;
-    for (int i = 0; i < SCREEN_BYTES / 2; i++) w[i] = 0;
-    w[0] = (uint16_t)(N_CASES + N_OSH_CASES);
+    for (int i = 0; i < SWEEP_REPORT_WORDS; i++) w[i] = 0;
+    w[0] = (uint16_t)(N_CASES + 2 * N_OSH_CASES);
     w[1] = (uint16_t)(sweep_total > 0xffff ? 0xffff : sweep_total);
-    for (int i = 0; i < N_CASES && (2 + i) * 2 <= SCREEN_BYTES; i++) w[2 + i] = case_diff[i];
-    for (int i = 0; i < N_OSH_CASES && (2 + N_CASES + i) * 2 <= SCREEN_BYTES; i++) w[2 + N_CASES + i] = osh_case_diff[i];
-    w[SCREEN_BYTES / 2 - 1] = (uint16_t)sweep_handled;      /* objshift2 BASE cases drawn */
-    w[SCREEN_BYTES / 2 - 2] = (uint16_t)osh_handled;        /* objshift  BASE cases drawn */
+    int at = 2;
+    for (int i = 0; i < N_CASES; i++) w[at++] = case_diff[i];
+    for (int i = 0; i < N_OSH_CASES; i++) w[at++] = osh_case_diff[i];
+    for (int i = 0; i < N_OSH_CASES; i++) w[at++] = skew_case_diff[i];
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED2]       = (uint16_t)sweep_handled;  /* objshift2 BASE drawn */
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED_OSH]    = (uint16_t)osh_handled;    /* objshift  BASE drawn */
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED_SKEW]   = (uint16_t)skew_handled;   /* skew path BASE drawn */
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_N_CASES2]       = (uint16_t)N_CASES;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_N_CASES_OSH]    = (uint16_t)N_OSH_CASES;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_EXPECT_BASE]    = (uint16_t)osh_expected_base_cases();
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_GRIDS_RUN]      = sweep_grids_run;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_ITERS]    = OSH_BENCH_ITERS;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_MAT]      = bench_mat_ticks;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_PASS_SYN] = bench_pass_synth_ticks;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_PASS_BIN] = bench_pass_binary_ticks;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_ALL_SYN]  = bench_all_synth_ticks;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_ALL_BIN]  = bench_all_binary_ticks;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_CPU]      = bench_cpu_ticks;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_DECLINED] = (uint16_t)(bench_declined > 0xffff ? 0xffff
+                                                                                           : bench_declined);
     if (mismatch_out) *mismatch_out = sweep_total;
     return test_fb;
 }

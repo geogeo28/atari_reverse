@@ -23,11 +23,11 @@
 #include "st.h"
 #include "game.h"          /* rm_blit_objshift / rm_blit_objshift_asm — the byte-exact ref + CPU hybrid */
 
-#define OBJSH_PLANES         4
+/* OBJSH_PLANES / OBJSH_MAX_ROWS are the shared contract caps (blit_const.h) — src/blitter_skew.c sizes
+ * its own materialise buffers from the same two. */
 #define OBJSH_CELL_WORDS     4                             /* A,B,C,D — one 4-plane source cell = 8 bytes */
 #define OBJSH_MAX_STRADDLE   2                             /* base_cells max = 2 */
 #define OBJSH_MAX_COLS       (OBJSH_MAX_STRADDLE + 1)
-#define OBJSH_MAX_ROWS       0x30                          /* generous; the case space tops out at 32 rows */
 #define OBJSH_MAX_WORDS      (OBJSH_PLANES * OBJSH_MAX_COLS * OBJSH_MAX_ROWS)
 #define OBJSH_MASK_SEED      0xFFFF0000u                   /* rol.l seed: 1s rotate in outside the sprite */
 /* OBJSH_COLOR_STRIDE is shared from blitter.h (also used by the sweep). */

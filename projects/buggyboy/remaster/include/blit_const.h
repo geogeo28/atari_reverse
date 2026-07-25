@@ -21,6 +21,12 @@
 #define COL_ALIGN             0xfff8 /* aligned_col = ((int16)x >> 1) & this (8-byte column) */
 #define OBJSH_RIGHT_BOUND     0x98   /* absolute right screen bound (aligned_col); objshift base ceiling */
 
+/* Colour-engine (rm_blit_objshift) contract caps. The blitter paths size their materialise buffers from
+ * these, so they are ONE definition shared by src/blit.c, src/blitter_objshift.c and src/blitter_skew.c
+ * rather than a per-file copy. */
+#define OBJSH_PLANES          4      /* A,B,C,D — one 4-plane source cell, one dst word per plane */
+#define OBJSH_MAX_ROWS        0x30   /* row cap the blitter paths serve; the case space tops out at 32 */
+
 #define OBJSH2_RIGHT_BOUND    0x88   /* fixed right ladder base bound (aligned_col) */
 #define OBJSH2_LADDER_STEP    8      /* clip-ladder column step */
 #define OBJSH2_BASE_STRADDLE  3      /* base straddle for width_idx 0 */

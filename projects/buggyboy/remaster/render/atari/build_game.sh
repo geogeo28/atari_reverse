@@ -45,8 +45,13 @@ if [ "${GAME_STE_SELFTEST:-0}" = "1" ]; then
     STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_selftest.c"
 fi
 if [ "${GAME_STE_SWEEP:-0}" = "1" ]; then
-    STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SWEEP"
-    STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_sweep.c"
+    # src/blitter_skew.c (the hardware-SKEW colour path under calibration) is linked ONLY here, so the
+    # shipping BUGGYBOY.PRG stays byte-identical while the recipe is being pinned.
+    # GAME_STE_SKEW_MUTATE=n breaks one calibrated register (see RM_SKEW_MUT_* in include/blitter.h) —
+    # the coverage check that the sweep really exercises the skew path. A mutate build also sweeps the
+    # skew grid ALONE (blitter_sweep.c), since the mutation cannot perturb the other two.
+    STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SWEEP -DRM_SKEW_MUTATE=${GAME_STE_SKEW_MUTATE:-0}"
+    STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_sweep.c $REMASTER/src/blitter_skew.c"
 fi
 if [ "${GAME_STE_CENSUS:-0}" = "1" ]; then                # slice-5 boot-table census (run_ste_census.py)
     STE_CFLAGS="$STE_CFLAGS -DGAME_STE_CENSUS"

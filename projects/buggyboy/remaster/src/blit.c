@@ -26,10 +26,10 @@
 #endif
 
 /* ---- shared fine-x geometry ---- */
-/* OBJSH_NIBBLE / OBJSH_SUBPX_BITS / COL_ALIGN / OBJSH_CELL_BYTES / OBJSH_RIGHT_BOUND are shared with the
- * asm cores — defined in blit_const.h (included above), the single source for the blit engines (F11).
+/* OBJSH_NIBBLE / OBJSH_SUBPX_BITS / COL_ALIGN / OBJSH_CELL_BYTES / OBJSH_RIGHT_BOUND / OBJSH_PLANES are
+ * shared with the asm cores — defined in blit_const.h (included above), the single source for the blit
+ * engines (F11).
  * (object.c carries a historical duplicate COL_ALIGN 0xfff8 of its own — see PERF30 A3 follow-ups.) */
-#define OBJSH_PLANES     4
 
 static uint16_t objsh_aligned_col(uint16_t x) {
     return (uint16_t)((int16_t)x >> 1) & (uint16_t)COL_ALIGN;

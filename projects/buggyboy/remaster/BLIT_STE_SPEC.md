@@ -438,4 +438,69 @@ colour to a static table retires the 219 KB on-demand colour cache, so the **net
 `run_ste_sweep.py` case space) is the open engineering work; this slice only establishes the data side
 is bounded and affordable. Also unmeasured: the `base_cells` split of the 78–98 keys (RAM given as
 bounds) and the cross-leg key union (per-leg max vs sum given as bounds) — both cheap to instrument
-when the table is built.
+when the table is built. **→ Resolved by slice 8 (§13): the recipe is proven byte-exact.**
+
+## 13. Slice 8 — the hardware-SKEW colour recipe: PROVEN byte-exact (no FXSR/NFSR needed)
+
+`src/blitter_skew.c` implements the colour engine's BASE family from **unshifted, colour-independent**
+bitmaps with the chip doing the fine-x shift. The §8 straddle algebra collapses exactly onto the
+blitter's skew semantics (with `k = fine_x`): `net_mask[c] = skew(m_{c-1}, m_c)` and
+`net_data_p[c] = skew(P_{c-1}, P_c) & f_p` — the fill commutes with the skew, and the CPU reduction's
+`& m_hi` on the low half is a no-op (the `rol.l` seed's high bits are ones).
+
+**Unshifted bitmap set** (5 per sprite region, `base_cells` words/row + pad):
+`M = ~(A|B|C)&D`, `P0..P2 = A,B,C`, `P3 = D & ~M` (the engine's `is_last` special, pre-folded).
+Public seam (built for slice 2): `ObjshSkewBitmaps` + `rm_objsh_skew_materialise(bm, …)` (materialise
+into a caller-owned set — a table entry) + `rm_blit_objshift_skew_from(bm, …)` (blit from a given set);
+`rm_blit_objshift_skew` is the scratch-backed wrapper the sweep pins.
+
+**The calibrated register recipe — 4 AND + up to 4 OR passes, per plane, skew=fine_x, FXSR=0, NFSR=0:**
+
+| | AND (mask `M`) | OR (data `P_p`; skipped when `f_p == 0`) |
+|---|---|---|
+| HOP / LOP | SRC / AND | SRC / OR |
+| skew_ctl | `fine_x` (no FXSR, no NFSR) | same |
+| endmask1 / 2 / 3 | `0xFFFF>>k` / `0xFFFF` / `~(0xFFFF>>k)` | same, each `& f_p` |
+| x_count / y_count | `base_cells+1` / rows | same |
+| src_x_inc / src_y_inc | 2 / **0** | same |
+| dst_addr / x_inc / y_inc | plane col0, bottom row / 8 / `-(160 + 8*base_cells)` | same |
+
+Three structural findings (why the slice-2 risk dissolved):
+1. **FXSR/NFSR are unnecessary — endmasks do the edges.** Writing `base_cells+1` columns from
+   `base_cells` source words leaves exactly one polluted read per line (column 0's leftover top `k`
+   bits; the last column's wasted next-row read). The CPU engine touches neither, and
+   `endmask1 = 0xFFFF>>k` / `endmask3 = ~(0xFFFF>>k)` block exactly those bits. No preload, no
+   suppressed fetch, no sentinel columns in the bitmaps.
+2. **`src_y_inc = 0`**: with `x_count = base_cells+1` over a packed `base_cells`-word row, the x-walk
+   already spans the row; one pad row of words absorbs the final wasted read (padded to cover the
+   FXSR *mutation* build's drift too, so even diagnostic builds never read out of bounds).
+3. **The colour fill rides in the OR-pass ENDMASKS** (`dst |= src & e`), so the bitmaps stay
+   colour-independent for arbitrary fill words — stronger than §12 assumed. On real game data every
+   fill word is 0 or 0xFFFF (the `color_pairs` bit-expansion; verified over all legs), so a blit is
+   **4 AND + popcount(colour) OR ≈ 6 passes on average** — a zero plane's OR pass is skipped outright.
+
+**Pins (all green, supersedes §11's 3264-case figure):**
+
+| pin | result |
+|---|---|
+| sweep, three grids (objshift2 / pre-shift / skew) | **4800 cases, 0 mismatch**; handled 720 / 704 / 704 |
+| non-vacuity gate (C-emitted expected-BASE counts; self-describing layout tail) | handled == expected enforced; forced-decline build **fails loudly** (verified) |
+| mutation coverage, `--mutate all` (others grids skipped) | skew+1 **704**, FXSR-on **704**, endmask1 **643**, endmask3 **660**, plane-3 **297** — all caught |
+| host differential | `make test` **730** (incl. the Makefile `STE_SRC` exclusion of the skew file) |
+| shipping PRG | **sha256-identical** before/after the whole slice |
+
+**Cost (Hatari 200 Hz timer, swept shape base_cells 2 × 32 rows, 1000 iters):** materialise 13,520 cyc;
+blit passes **timed in isolation** 16,680 (synthetic 8-pass) / **12,920 (game fill, 6 passes)**;
+combined 26,400; shipping CPU asm 33,960. So the skew path is **0.78×** the CPU engine *with* a
+per-call materialise, and **0.38×** blitting from a table (slice 2). Honesty caveats: the earlier
+subtract-two-totals estimate (~1,920 cyc for the passes) was an artifact — the isolated timing is the
+honest figure; Hatari's blitter timing is a model, not cycle-exact hardware, like every C4 cadence
+number (§4); and the 33–48-row band (cap `OBJSH_MAX_ROWS = 0x30`) is above the sweep grid's top —
+structurally low risk (rows enters only as `y_count`) but stated.
+
+**Slice 2 (next):** the static table keyed on §12's `sprite` key (materialise into entries at load /
+first sight), routing behind the boot binding, per-pass register-poke batching (the setup is now the
+dominant per-blit CPU cost), the shipping-path clip-test dedup (`objsh_is_base` is shared by the
+census + skew paths; `blitter_objshift.c`'s two internal copies still pending), and the cadence
+measurement — the go/no-go is DRIVING must not regress (the §8 failure mode), with gate improvement
+expected from 0.38×.
