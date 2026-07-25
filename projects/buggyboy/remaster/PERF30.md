@@ -493,6 +493,22 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > win needs boot pre-shift tables (remove the per-frame materialise) — slice 5's gating item; the recipe +
 > sweep are the proven foundation.**
 
+> **C4 slice 5 — boot-table census: MEASURED NO-GO for colour, UNNEEDED for objshift2 (landed, not
+> committed).** Boot tables only pay off if the reachable materialise-key set is bounded + fits RAM, so
+> slice 5 measured it (`src/blitter_census.c`, `-DGAME_STE_CENSUS`: instrument every call over a real
+> drive, count DISTINCT base-family tuples). **objshift2: BOUNDED at 6 distinct tuples** (flat as the drive
+> grows — a fixed-sprite pass; the cache already covers it 100 %, tables UNNEEDED). **colour: effectively
+> UNBOUNDED** — distinct grows ~5/frame *accelerating* (30f→100, 40f→149, 60f→349; ~70 % of blits a
+> never-seen tuple) because the roadside pass draws many objects across a continuum of scale × sub-pixel-x.
+> Over a full leg → tens of thousands of entries × ~2 KB = **tens of MB, does not fit a 1 MB (or 4 MB)
+> STE** → NO-GO for full tables. The **hybrid also fails** (70 % unique = no recurring set to cache).
+> **Verdict (evidence over a forced landing):** the colour engine stays on the CPU (byte-exact recipe
+> preserved); the STE build's honest object win is objshift2 (gate −12 %). The colour pass's per-frame
+> materialise is irreducible under pre-shift+cache/tables — a real colour win would need hardware skew from
+> unshifted data (no materialise; the FXSR/NFSR calibration slice 2 deferred), a research item not a
+> landing. Gates: stock byte-neutral, default STE goldens ×5, `make test` 723 (census wiring inert off).
+> Full analysis: `BLIT_STE_SPEC.md` §10.
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),

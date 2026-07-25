@@ -21,6 +21,18 @@
  * HERE — the sole RM_BLIT_OBJSHIFT2 call site — keeps the seam out of include/game.h. */
 #ifdef GAME_STE
 #include "blitter.h"
+#ifdef GAME_STE_CENSUS
+/* slice-5 census build: count the distinct materialise-key tuples each engine issues over a drive, to
+ * decide whether boot pre-shift tables are finite (blitter_census.c). Wrappers record then draw via the
+ * CPU reference, so pixels are unaffected and every call is counted. Takes precedence over the dispatch. */
+void rm_blit_objshift2_census(uint8_t *, uint32_t, const uint8_t *, uint32_t, uint16_t, uint16_t, int);
+void rm_blit_objshift_census(uint8_t *, uint32_t, const uint8_t *, uint32_t, uint16_t, uint16_t, uint16_t,
+                             int16_t, const uint8_t *, int);
+#undef RM_BLIT_OBJSHIFT2
+#define RM_BLIT_OBJSHIFT2 rm_blit_objshift2_census
+#undef RM_BLIT_OBJSHIFT
+#define RM_BLIT_OBJSHIFT rm_blit_objshift_census
+#else
 #undef RM_BLIT_OBJSHIFT2
 #define RM_BLIT_OBJSHIFT2 rm_blit_objshift2_dispatch
 /* The COLOUR-indexed pass-1 engine is byte-exact on the blitter (run_ste_sweep.py) but is NOT routed by
@@ -33,7 +45,8 @@
 #undef RM_BLIT_OBJSHIFT
 #define RM_BLIT_OBJSHIFT rm_blit_objshift_dispatch
 #endif
-#endif
+#endif  /* GAME_STE_CENSUS / else */
+#endif  /* GAME_STE */
 
 /* Jump-table resolution: recreate stores, per jumpidx, a word offset that added to the table base
  * (Ghidra 0x13144) gives the handler's Ghidra address. Those offsets are position-independent (a

@@ -45,6 +45,10 @@ if [ "${GAME_STE:-0}" = "1" ]; then
         STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SWEEP"
         STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_sweep.c"
     fi
+    if [ "${GAME_STE_CENSUS:-0}" = "1" ]; then            # slice-5 boot-table census (run_ste_census.py)
+        STE_CFLAGS="$STE_CFLAGS -DGAME_STE_CENSUS"
+        STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_census.c"
+    fi
 else
     DEFAULT_PRG=BUGGYBOY.PRG
 fi

@@ -625,6 +625,17 @@ static void cadence_dump(void) {
 }
 #endif
 
+#ifdef GAME_STE_CENSUS
+extern void blitter_census_report(uint16_t *w);
+static void census_dump(void) {
+    uint8_t *buf = screen_buf(0)->px;
+    memset(buf, 0, SCREEN_BYTES);
+    blitter_census_report((uint16_t *)buf);               /* 12 words: per engine distinct/base/total/sat */
+    long h = Fcreate("SCREEN.BIN", 0);
+    if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, buf); Fclose((short)h); }
+}
+#endif
+
 /* Flip the video base to the back buffer at the vblank (no tearing) and make it the shown one. Callers
  * paint the back buffer (via back_buffer / draw_frame) first; this owns the flip + the shown toggle so
  * no caller repeats the derive-toggle bookkeeping. The C1 boundary wait (above) idles to one vblank
@@ -1660,7 +1671,9 @@ void main(void) {
         /* Headless autodrive dumps on race-loop EXIT — whichever came first, the leg end (abort_flag < 0)
          * or the frame budget — then quits instead of entering the between-legs flow, which would poll a
          * dead keyboard under headless Hatari and hang (so an idle leg-end trace never reached the dump). */
-#if defined(GAME_CADENCE_TRACE)
+#if defined(GAME_STE_CENSUS)
+        census_dump();
+#elif defined(GAME_CADENCE_TRACE)
         cadence_dump();
 #elif defined(GAME_TRACE)
         trace_dump();

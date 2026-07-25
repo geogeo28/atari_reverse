@@ -276,10 +276,48 @@ path, so a shipping build that never opts it in can drop it — but it is kept c
 
 ## 9. Slice 5 — go/no-go (revised by the slice-4 finding)
 
-1. **Boot pre-shift tables — GO, the gating item.** Without them neither the colour engine (driving) nor
-   objshift2's cold frames improve. This is the real remaining lever and it unblocks everything below.
-2. **Colour engine routing — GATED on the tables.** Re-route `rm_blit_objshift` once the tables remove the
-   materialise; re-measure driving (must not regress) before shipping.
-3. **Blitter-side clip (both engines) — GO after the tables** (endmask1/3), extend the sweep to keep the
-   currently-declined clip cases 0-XOR; CPU-hybrid any case the endmask can't reproduce.
+1. **Boot pre-shift tables — the gating item, now RESOLVED by census (§10): NO-GO for the colour engine,
+   UNNEEDED for objshift2.**
+2. **Colour engine routing — stays CPU** (the census shows tables can't rescue it).
+3. **Blitter-side clip (both engines)** — still open, but a minor win (clip is the blit minority).
 4. **objsprite engine (the third fine-x blitter) — LOWER priority**; same recipe, cold on the gate.
+
+## 10. Slice 5 — the boot-table census: a MEASURED verdict (NO-GO for colour, UNNEEDED for objshift2)
+
+Boot tables only pay off if the reachable materialise-key set is bounded and fits RAM. `src/blitter_census.c`
+(`-DGAME_STE_CENSUS`) instruments every objshift/objshift2 call over a real drive and counts the DISTINCT
+base-family tuples — the exact set a boot table would enumerate. `run_ste_census.py` drives leg 0 headless
+at growing frame counts:
+
+| frames | objshift2 distinct | objshift (colour) distinct | colour distinct/frame |
+|---:|---:|---:|---:|
+| 30 | **6** | 100 | 3.3 |
+| 40 | **6** | 149 | 3.7 |
+| 60 | **6** | 349 | 5.8 |
+
+**objshift2 — BOUNDED at 6 distinct tuples** (flat as the drive grows; it is a fixed-sprite pass). The
+128-slot cache already covers it 100 % (§6 hit rate) — **boot tables are UNNEEDED**; slice 3's routing is
+the whole win there. Confirmed **6 on every leg 0-4** (60-frame census).
+
+**colour engine — effectively UNBOUNDED.** Distinct grows ~5/frame and *accelerating* (more objects enter
+view as you drive), with ~70 % of blits carrying a never-before-seen tuple — the roadside pass draws many
+objects across a continuum of scale (`rows_m1`) × sub-pixel-x (`fine_x`) × `src_off`. Extrapolated over a
+full leg (hundreds–thousands of driving frames) the set is **tens of thousands of entries × ~2 KB ≈ tens
+of MB — it does not fit a 1 MB (or 4 MB) STE.** Confirmed on **all legs 0-4** (60-frame census: distinct
+131–349, 43–97 % unique). MEASURED **NO-GO for full colour boot tables.** (The
+headless autodrive drives off-course and crashes past ~60 clean frames, so the census caps there — but the
+monotonic super-linear curve to 60 frames is decisive, and it is **independently corroborated by slice 4's
+9 %/91 % cache hit/miss** at 96 slots: a bounded recurring set would have hit far more.)
+
+**The hybrid fallback also fails.** A "big non-evicting cache for the recurring set + CPU for the rest"
+needs a recurring set; here ~70 % of tuples are unique (never recur), so a bigger cache just fills with
+one-shot entries — each still pays the materialise once. There is no recurring set to cache. So neither
+full tables NOR a hybrid escapes the per-frame materialise for the colour pass.
+
+**Verdict (evidence over a forced landing, the B2/A5 precedent):** the colour engine stays on the CPU
+(byte-exact recipe preserved, `-DRM_STE_OBJSH_ROUTE` for experimentation); the STE build's honest object
+win is **objshift2 (gate −12 %)**. The colour pass's driving cost is irreducible under the pre-shift +
+cache/table approach — a real colour win would need a fundamentally different scheme (e.g. hardware
+skew from unshifted data, so no per-frame materialise at all — the FXSR/NFSR calibration risk slice 2
+deferred), not more tables. That is the only remaining lever for the colour pass, and it is a research
+item, not a landing.
