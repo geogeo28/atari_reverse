@@ -440,6 +440,24 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > phase tables, route `RM_BLIT_OBJSHIFT2` through the blitter under supervisor (hybrid CPU fallback for any
 > un-pinnable clip case), and measure the cadence delta (objlist fixed pass = 27.6% of the gate frame).
 
+> **C4 slice 2 — objshift2 blitter path byte-exact + ROUTED; cadence flat, the collapse is a DATA change
+> (landed, not committed).** The fixed-pass fine-x blit now runs on the blitter for the BASE family
+> (`src/blitter_objshift2.c`), the CPU asm engine for CLIP (a pinned hybrid; the dispatcher picks the
+> family in user mode, so a clip case never pays the excursion). **Recipe decision: pre-shift in the
+> materialiser + skew=0, NOT the hardware SKEW register** — slice 1 proved skew=0 byte-exact, so the
+> fine-x straddle is done in software into `straddle+1`-wide interleaved bitmaps and the blit is 2 passes
+> (AND all planes / OR all planes, contiguous); this keeps the pin on the proven aligned recipe and avoids
+> the FXSR/NFSR edge-calibration byte-exactness risk (hardware skew deferred as a RAM optimisation).
+> **Pinned:** `run_ste_sweep.py` sweeps 1728 cases (width_idx × fine_x 0..15 × 12 columns × rows) — 720
+> BASE blitter-drawn, **0 mismatch** vs the CPU engine (a shift-by-fine_x+1 mutation fails 601, so it is
+> not vacuous); STE goldens MATCH ×5 with objshift2 live on the blitter; whole-frame A/B stock-ST-vs-STE =
+> 0-mismatch over 10 drive frames (now load-bearing); `make test` 718; stock .PRG byte-neutral to the
+> `object_list.c`/`game_main.c` edits (both `#ifdef GAME_STE`). **Cadence (free-run, leg 0):** stock 6.61
+> vs STE 6.65 vbl/present — **flat**. The per-blit materialiser redoes the fine-x shift + a scratch
+> round-trip, so it only offloads the framebuffer RMW (~15 %/BASE-blit, swamped at leg 0). The real
+> collapse needs the **boot pre-shift tables** (remove the per-frame materialise → 2 blits over static
+> tables): that is slice 3, along with blitter-side clip and then the colour-indexed pass 1 (25.3 %).
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),

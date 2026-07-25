@@ -36,10 +36,14 @@ STE_CFLAGS=""; STE_SOURCES=""
 if [ "${GAME_STE:-0}" = "1" ]; then
     DEFAULT_PRG=BUGGYBST.PRG
     STE_CFLAGS="-DGAME_STE"
-    STE_SOURCES="$REMASTER/src/blitter.c"
+    STE_SOURCES="$REMASTER/src/blitter.c $REMASTER/src/blitter_objshift2.c"   # driver + objshift2 blitter path
     if [ "${GAME_STE_SELFTEST:-0}" = "1" ]; then
         STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SELFTEST"
         STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_selftest.c"
+    fi
+    if [ "${GAME_STE_SWEEP:-0}" = "1" ]; then
+        STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SWEEP"
+        STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_sweep.c"
     fi
 else
     DEFAULT_PRG=BUGGYBOY.PRG

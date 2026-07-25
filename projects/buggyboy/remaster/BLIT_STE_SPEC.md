@@ -104,26 +104,52 @@ src (tightly packed): src_x_inc = 2, src_y_inc = 2
 This pins the driver end-to-end: register poking, HOP=SRC + LOP AND/OR, the interleaved 4-plane walk,
 endmasks, and Hatari's blitter model all agree with the C engine.
 
-### 3b. Fine-x (skew) mapping — **DESIGN** (slice 2)
+### 3b. Fine-x mapping — **PROVEN + ROUTED via pre-shift, not hardware skew** (slice 2)
 
-For `fine_x != 0` the engine places the 16-px source word at pixel offset `fine_x`, straddling col0 (high
-bits) and col1 (low bits). The blitter's **SKEW** shifts the source right by `skew` bits into the dst word
-grid, so `skew = fine_x` reproduces the straddle, and the blit spans `straddle + 1` dst columns
-(`x_count = straddle + 1`). **FXSR** primes the shifter at line start (the leftmost dst word is formed from
-the first source word's high bits); the trailing dst word is formed from the last source word's low bits.
-The exact `FXSR`/`NFSR` + `endmask1`/`endmask3` values for the partial straddle edges must be **pinned by
-extending the self-test to sweep `fine_x` 1..15** before the engine is switched over — this is the first
-slice-2 task. The mask/data bitmaps are materialised per fine-x phase (§3), so the shift is a table read,
-not a runtime barrel.
+`src/blitter_objshift2.c` implements the BASE-family fine-x blit. **Decision: pre-shift in the
+materialiser + a skew=0 blit, NOT the hardware SKEW register.** Rationale: slice 1 proved the skew=0
+AND/OR cookie-cut byte-exact, so doing the fine-x straddle in software (each source word spread across two
+dst columns exactly as the CPU engine's `<<shl`, into pre-shifted `straddle+1`-wide bitmaps) keeps the pin
+on the proven aligned recipe and sidesteps the blitter's FXSR/NFSR/endmask edge semantics — a
+byte-exactness risk that would violate "no approximate pixels." The hardware-skew variant (unshifted
+tables + `skew=fine_x` + a calibrated FXSR/NFSR sweep) is deferred as a **RAM optimisation**, not a
+correctness path.
 
-### 3c. Clip / edge families
+Per column `j` (0..straddle), plane data = the fine-x-shifted source, mask = `~(shifted w0|w1)`:
+```
+sh_w = (left_cell << (16-fine_x)) | (this_cell >> fine_x)          per plane word
+data[j] = (sh_w0, sh_w1, sh_u, sh_u)   mask[j] = ~sh_u   (sh_u = sh_w0|sh_w1)   for planes 0..3
+```
+The 4 plane words of a 16-px cell are contiguous in the ST interleaved framebuffer and the cookie-cut
+mask is identical across planes, so the bitmaps are laid out **interleaved** and the blit is **2 passes
+per blit** (AND all planes, OR all planes) with a contiguous dst walk (`dst_x_inc=2`,
+`dst_y_inc = -(160 + 2*(nwords-1))` to walk UP one scanline, matching the engine's bottom-up row order) —
+not 8 per-plane passes.
 
-The base family (on-screen, no clip) needs no edge masking (`endmask = 0xFFFF`; bitmap zeros carry
-transparency). The LEFT/RIGHT clip families (`col < 0` / `col ≥ bound`) map to the blitter's `endmask1` /
-`endmask3` partial-column masks + an adjusted `dst_addr`/`x_count`, replacing the CPU's ladder. **Fallback:
-any clip case the endmask cannot reproduce byte-exactly stays on the CPU path (a pinned hybrid)** rather
-than shipping approximate pixels — the dispatch already branches on family, so a per-family CPU/blitter
-choice is cheap.
+**Proven:** `src/blitter_sweep.c` / `run_ste_sweep.py` sweeps the full case space (width_idx 0..2 × fine_x
+0..15 × 12 columns spanning clip/base/clip × rows {0,3,0x2a} = 1728 cases): **720 BASE cases blitter-drawn,
+0 mismatch** vs the CPU engine; 1008 CLIP cases correctly declined. A mutation (shift by fine_x+1) fails
+601 cases — the straddle is genuinely exercised, not vacuous.
+
+### 3c. Clip / edge families — **CPU hybrid** (slice 2)
+
+The LEFT/RIGHT clip families (`col < 0` / `col ≥ base_ceiling`) stay on the CPU asm engine (a pinned
+hybrid). `rm_blit_objshift2_dispatch` decides the family in USER mode (cheap arithmetic) and only enters
+the Supexec/blitter path for BASE — a declined clip case never pays the excursion. Blitter-side clip
+(endmask1/3 partial columns) is a future refinement; the hybrid keeps every clip pixel byte-exact today.
+
+### 3d. Runtime routing + supervisor (slice 2)
+
+`object_list.c` (the sole `RM_BLIT_OBJSHIFT2` call site) `#undef`/redefines the macro to
+`rm_blit_objshift2_dispatch` under `GAME_STE` — the seam is kept OUT of `include/game.h`. The blitter
+touches the supervisor-only I/O page, so a BASE draw runs inside **one Supexec per blit** (materialise +
+2 blit passes). Per-blit Supexec measured cheap (< 1 % of frame) since the family filter runs before it;
+a single excursion around the whole object pass is possible but carries supervisor-stack-depth risk on the
+deep render tree — deferred.
+
+**RAM cost:** the per-blit scratch is `bl_mask + bl_data = 2 × (4 planes × 4 cols × 43 rows) × 2 B ≈
+2.7 KB` static. The slice-3 boot pre-shift tables (below) trade this for ~49 KB masks / ~98 KB full — well
+inside the STE's ≥ 1 MB (the harness runs `--memsize 4`).
 
 ---
 
@@ -132,30 +158,39 @@ choice is cheap.
 Musashi cannot emulate the blitter, so the pins are Hatari-based (weaker instruction-level pinning than the
 host Musashi differentials, compensated by whole-frame byte equality over a real drive):
 
-| pin | script | slice 1 result |
-|---|---|---|
-| stock .PRG byte-identical with flag off | `shasum` | **PASS** (unchanged) |
-| stock goldens ×5 on `--machine st` | `run_golden.py` | **MATCH ×5** |
-| STE build goldens ×5 on `--machine ste` | `run_ste_golden.py` | **MATCH ×5** |
-| blitter == `rm_blit_objshift2` (aligned) | `run_ste_selftest.py` | **0/32000** |
-| whole-frame A/B (stock-ST vs STE) over the drive | `run_ste_ab.py` | **0-mismatch** |
-| host differential suite | `make test` | **708 passed** |
-| cadence instrument on `--machine ste` | `run_cadence.py` | works; STE == stock baseline |
-
-The A/B differential (`run_ste_ab.py`) is 0 by construction in slice 1 (objshift2 is still on the CPU in
-both builds); it becomes the **load-bearing byte-exactness gate** the moment slice 2 routes objshift2
-through the blitter.
+| pin | script | slice 1 | slice 2 |
+|---|---|---|---|
+| stock .PRG byte-identical (flag off) | `shasum` | PASS | PASS (my edits byte-neutral) |
+| stock goldens ×5 `--machine st` | `run_golden.py` | MATCH ×5 | MATCH ×5 |
+| STE goldens ×5 `--machine ste` (objshift2 on blitter) | `run_ste_golden.py` | MATCH ×5 | **MATCH ×5** |
+| blitter == `rm_blit_objshift2`, aligned | `run_ste_selftest.py` | 0/32000 | 0/32000 |
+| blitter == `rm_blit_objshift2`, **full sweep** | `run_ste_sweep.py` | — | **1728 cases, 0 mismatch (720 BASE)** |
+| whole-frame A/B stock-ST vs STE over the drive | `run_ste_ab.py` | 0 (by construction) | **0-mismatch ×10 frames (load-bearing)** |
+| host differential suite | `make test` | 708 | 718 (concurrent work; host untouched by STE files) |
+| cadence `--machine ste` before/after | `run_cadence.py` | baseline | see §6 |
 
 ---
 
-## 5. Slice 2 — what to convert next
+## 6. Cadence finding (slice 2) — the win needs the DATA, not just the blitter
 
-1. **Pin the skew** — extend `blitter_selftest.c` to sweep `fine_x` 1..15 (and each width_idx / clip
-   family), calibrating `skew`/`FXSR`/`NFSR`/endmasks against the real engine, all-zero XOR.
-2. **Build the A2 mask/data phase tables** once at asset load from the static `arena.gfx` (~49 KB masks).
-3. **Route `RM_BLIT_OBJSHIFT2`** (the `objshift2_glue` family in `src/object_list.c`) to a blitter path
-   under `GAME_STE`, running the object pass in supervisor; keep any un-pinnable clip case on the CPU
-   (hybrid). Gate every frame with `run_ste_ab.py` + `run_ste_golden.py`.
-4. **Measure** the cadence delta on `--machine ste` (objlist fixed pass is 27.6% of the gate frame). Then
-   slice 3: the colour-indexed `rm_blit_objshift` pass 1 (25.3%), same recipe with the 4-word
-   `~(A|B|C)&D` mask + colour fill.
+Free-running cadence (`-DGAME_PRESENT_FREERUN`, leg 0 autodrive, 399 presents): stock ST **mean 6.61
+vbl**, STE routed **mean 6.65 vbl** — essentially flat (a ~0.6 % regression, within noise). The blitter
+path is byte-exact and live, but does **not collapse** the objlist fixed pass at these frames. Why: the
+per-blit **materialiser** does the same fine-x shift + mask build the CPU engine does, plus a scratch
+round-trip, so it only offloads the framebuffer RMW — a per-BASE-blit win of ~15 % that is (a) swamped at
+leg 0, which is not objshift2-base-dense, and (b) partly eaten by the double memory traffic. **The
+collapse is a DATA change, not a blitter change:** boot-time pre-shift tables (§3, ~49 KB) remove the
+per-frame materialise entirely, leaving 2 blitter passes over static tables — then objshift2 drops toward
+the blitter's RMW floor. That is slice 3.
+
+## 7. Slice 3 — what to convert next
+
+1. **Boot pre-shift tables** — build the `(mask, data)` interleaved bitmaps for all 16 fine-x phases from
+   the static `arena.gfx` at asset load; the dispatch becomes a table lookup + 2 blit passes (no per-frame
+   shift). Re-measure `run_cadence.py` st-vs-ste — this is where the objlist pass should collapse.
+2. **Blitter-side clip** — move the LEFT/RIGHT families off the CPU hybrid using endmask1/3, extending the
+   sweep to keep them at 0 mismatch.
+3. **One-excursion supervisor** — if per-blit Supexec shows on the collapsed profile, wrap the object pass
+   in a single excursion (mind the supervisor stack).
+4. **Then the colour-indexed `rm_blit_objshift` pass 1** (25.3 % of the gate) — same cookie-cut with the
+   4-word `~(A|B|C)&D` mask + colour fill.

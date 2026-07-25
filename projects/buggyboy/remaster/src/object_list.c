@@ -16,6 +16,15 @@
 #include "screen.h"
 #include "st.h"
 
+/* STE hardware-blitter build (PERF30 C4): route the fixed-pass fine-x blit through the blitter dispatch
+ * (BASE family on the blitter, CLIP family on the CPU asm engine — a pinned hybrid). Overriding the macro
+ * HERE — the sole RM_BLIT_OBJSHIFT2 call site — keeps the seam out of include/game.h. */
+#ifdef GAME_STE
+#include "blitter.h"
+#undef RM_BLIT_OBJSHIFT2
+#define RM_BLIT_OBJSHIFT2 rm_blit_objshift2_dispatch
+#endif
+
 /* Jump-table resolution: recreate stores, per jumpidx, a word offset that added to the table base
  * (Ghidra 0x13144) gives the handler's Ghidra address. Those offsets are position-independent (a
  * difference of two code addresses), so we reconstruct the same key and switch on it — no code is

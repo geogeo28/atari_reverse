@@ -99,6 +99,22 @@ int blitter_available(void);
  * return the XOR-diff framebuffer (all-zero == byte-exact) plus the mismatch byte count. */
 const uint8_t *blitter_selftest(long *mismatch_out);
 
+/* Blitter path for the fixed-pass fine-x masked blit (src/blitter_objshift2.c). Same signature/contract
+ * as rm_blit_objshift2. Returns 1 if drawn by the blitter (BASE family or a zero-row no-op), 0 if the
+ * caller must run the CPU engine (LEFT/RIGHT clip family — a pinned hybrid). Supervisor only. */
+int rm_blit_objshift2_blitter(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                              uint16_t x, uint16_t rows_m1, int width_idx);
+
+/* Runtime dispatch (object_list.c's RM_BLIT_OBJSHIFT2 on GAME_STE): blitter for BASE, CPU asm for CLIP.
+ * Same signature/contract as rm_blit_objshift2; runs the blitter attempt in a Supexec. */
+void rm_blit_objshift2_dispatch(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                                uint16_t x, uint16_t rows_m1, int width_idx);
+
+/* Full-sweep proof (GAME_STE_SWEEP build): run rm_blit_objshift2_blitter vs the CPU engine over the
+ * objshift2 case space; return a framebuffer encoding per-case results (see src/blitter_sweep.c) and the
+ * total mismatch count. */
+const uint8_t *blitter_sweep(long *mismatch_out);
+
 /* Run one blitter pass to completion (HOG mode) from the current supervisor context. See src/blitter.c
  * for the HOG-vs-shared justification. */
 void blit_run(const BlitPass *p);

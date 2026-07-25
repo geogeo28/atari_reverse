@@ -1353,6 +1353,16 @@ void main(void) {
         return;
     }
 #endif
+#ifdef GAME_STE_SWEEP
+    /* Slice-2 recipe proof: sweep rm_blit_objshift2_blitter vs the CPU engine over the objshift2 case
+     * space, dump the per-case mismatch grid to SCREEN.BIN for run_ste_sweep.py. No game boot needed. */
+    {
+        long mismatch;
+        const uint8_t *grid = blitter_sweep(&mismatch);
+        dump_frame((Framebuffer *)grid);
+        return;
+    }
+#endif
 #endif
     RmArena arena;
     if (!load_assets(&arena)) return;
