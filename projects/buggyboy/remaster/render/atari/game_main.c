@@ -77,8 +77,9 @@
 #include "st.h"              /* be16/wr16/be32/wr32 for the leg-start palette flash */
 #include "game_fixture.h"
 #include "game_frame.h"
-#ifdef GAME_STE
-#include "blitter.h"          /* STE hardware-blitter target (PERF30 C4): presence check + self-test */
+#ifdef RM_BLITTER
+#include "blitter.h"          /* unified ST/STE binary (PERF30 C4): boot-probe + bind the objshift2 route */
+static int g_have_blitter;    /* set once at boot: a blitter is present and the objshift2 route is bound to it */
 #endif
 
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
@@ -118,9 +119,6 @@ extern long Fread(short handle, long count, void *buf);
 extern long Fwrite(short handle, long count, void *buf);
 extern long Fclose(short handle);
 extern long Cconws(const char *s);
-#ifdef GAME_STE
-extern long Cconin(void);      /* GEMDOS 0x01: block for a keypress (STE-build bail message) */
-#endif
 extern void Vsync(void);
 extern long Setscreen(long logLoc, long physLoc, short rez);   /* flip the video base (latches at vblank) */
 extern long Physbase(void);                                    /* current video base (to restore on exit) */
@@ -599,7 +597,7 @@ static void cadence_record(void) {
     cadence_last_vbl = now;
     if (cadence_pos < CADENCE_SLOTS) cadence_log[cadence_pos++] = span;
 }
-#ifdef GAME_STE
+#ifdef RM_BLITTER
 extern uint32_t rm_objsh2_cache_hits, rm_objsh2_cache_misses, rm_objsh_cache_hits, rm_objsh_cache_misses;
 #define CADENCE_TAIL_COUNTERS 4                            /* the 4 blitter hit/miss longs at the tail */
 #define CADENCE_TAIL_OFF (SCREEN_BYTES - CADENCE_TAIL_COUNTERS * (int)sizeof(uint32_t))   /* run_cadence.py pins this */
@@ -614,7 +612,7 @@ static void cadence_dump(void) {
     /* Forward span log; the tail (last CADENCE_TAIL_COUNTERS longs) holds the STE cache counters, so cap
      * the log short of it (a trace long enough to reach the tail would clobber them — belt-and-braces). */
     for (int i = 0; i < cadence_pos && (i + 2) * 2 <= CADENCE_TAIL_OFF; i++) w[1 + i] = cadence_log[i];
-#ifdef GAME_STE
+#ifdef RM_BLITTER
     /* Blitter cache hit/miss counters at the tail (each a 32-bit big-endian value), for run_cadence.py. */
     uint32_t *tail = (uint32_t *)(buf + CADENCE_TAIL_OFF);
     tail[0] = rm_objsh2_cache_hits; tail[1] = rm_objsh2_cache_misses;
@@ -1164,11 +1162,11 @@ static void op_reload_assets(void *ctx) {
     }
     seed_highscore_table();           /* init_scoretable: reseed the hi-score table from its baked default */
     rm_init_leg_dash(s->ctx);         /* init_leg_dash: rebuild the dashboard */
-#ifdef GAME_STE
-    /* The blitter caches key on the arena.gfx source pointer, which reload rewrites in place — flush both
-     * so a recovered arena is re-materialised, not served stale (see blitter_objshift{,2}.c). */
-    rm_blit_objshift2_cache_flush();
-    rm_blit_objshift_cache_flush();
+#ifdef RM_BLITTER
+    /* The blitter caches key on the arena.gfx source pointer, which reload rewrites in place — flush so a
+     * recovered arena is re-materialised, not served stale (see blitter_objshift{,2}.c). Only meaningful
+     * when the blitter path is bound (an ST/TT runs the CPU engine and never touches the caches). */
+    if (g_have_blitter) { rm_blit_objshift2_cache_flush(); rm_blit_objshift_cache_flush(); }
 #endif
 }
 static void op_set_palette(void *ctx, int which) {
@@ -1363,34 +1361,27 @@ static uint16_t auto_intermission_input(void) {
 #endif
 
 void main(void) {
-#ifdef GAME_STE
-    /* STE build (PERF30 C4): the masked object blits run on the hardware blitter, which a plain ST lacks.
-     * Bail with a clean message rather than bus-erroring on the first 0xFFFF8Axx poke. */
-    if (!blitter_available()) {
-        Cconws("BUGGYBOY STE build: this needs an STE (or later) with a blitter. Press a key.\r\n");
-        Cconin();
-        return;
-    }
 #ifdef GAME_STE_SELFTEST
-    /* Slice-1 driver proof: reproduce rm_blit_objshift2 with the blitter and dump the XOR diff
-     * (all-zero == byte-exact) to SCREEN.BIN for run_ste_selftest.py. No game boot needed. */
-    {
-        long mismatch;
-        const uint8_t *diff = blitter_selftest(&mismatch);
-        dump_frame((Framebuffer *)diff);
-        return;
-    }
+    /* Measurement build: reproduce rm_blit_objshift2 with the blitter and dump the XOR diff (all-zero ==
+     * byte-exact) to SCREEN.BIN for run_ste_selftest.py. Assumes --machine ste; no game boot. */
+    { long mismatch; dump_frame((Framebuffer *)blitter_selftest(&mismatch)); return; }
 #endif
 #ifdef GAME_STE_SWEEP
-    /* Slice-2 recipe proof: sweep rm_blit_objshift2_blitter vs the CPU engine over the objshift2 case
-     * space, dump the per-case mismatch grid to SCREEN.BIN for run_ste_sweep.py. No game boot needed. */
-    {
-        long mismatch;
-        const uint8_t *grid = blitter_sweep(&mismatch);
-        dump_frame((Framebuffer *)grid);
-        return;
-    }
+    /* Measurement build: sweep both blitter engines vs the CPU references, dump the per-case mismatch grid
+     * to SCREEN.BIN for run_ste_sweep.py. Assumes --machine ste; no game boot. */
+    { long mismatch; dump_frame((Framebuffer *)blitter_sweep(&mismatch)); return; }
 #endif
+#ifdef RM_BLITTER
+    /* Unified ST/STE binary (PERF30 C4): probe for a blitter ONCE and bind the objshift2 route — the
+     * hardware blitter when present, else the 68000 CPU asm engine. NEVER bail: a plain ST or TT binds the
+     * CPU path (blitter_available() returns 0 without touching any 0xFFFF8Axx register). GAME_FORCE_NO_BLITTER
+     * pins the CPU path even on an STE (a harness A/B baseline). */
+#ifdef GAME_FORCE_NO_BLITTER
+    g_have_blitter = 0;
+#else
+    g_have_blitter = blitter_available();
+#endif
+    rm_blit_objshift2_bind(g_have_blitter);
 #endif
     RmArena arena;
     if (!load_assets(&arena)) return;

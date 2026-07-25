@@ -28,32 +28,32 @@ REMASTER="$(cd "$HERE/../.." && pwd)"       # remaster/
 BUILD="$HERE/build"; DISK="$HERE/disk"
 mkdir -p "$BUILD" "$DISK"
 
-# --- STE hardware-blitter target (PERF30 C4): additive, opt-in via GAME_STE=1. When GAME_STE is unset
-#     every variable below is empty, so the stock ST build's CFLAGS / sources / link line are
-#     byte-for-byte the SAME — verified by hashing build/BUGGYBOY.PRG with the flag off. GAME_STE_SELFTEST
-#     also links the on-target blitter-vs-engine proof (src/blitter_selftest.c, run_ste_selftest.py). ---
-STE_CFLAGS=""; STE_SOURCES=""
-if [ "${GAME_STE:-0}" = "1" ]; then
-    DEFAULT_PRG=BUGGYBST.PRG
-    STE_CFLAGS="-DGAME_STE"
-    STE_SOURCES="$REMASTER/src/blitter.c $REMASTER/src/blitter_objshift2.c $REMASTER/src/blitter_objshift.c"   # driver + both blitter paths
-    if [ "${GAME_STE_SELFTEST:-0}" = "1" ]; then
-        STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SELFTEST"
-        STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_selftest.c"
-    fi
-    if [ "${GAME_STE_SWEEP:-0}" = "1" ]; then
-        STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SWEEP"
-        STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_sweep.c"
-    fi
-    if [ "${GAME_STE_CENSUS:-0}" = "1" ]; then            # slice-5 boot-table census (run_ste_census.py)
-        STE_CFLAGS="$STE_CFLAGS -DGAME_STE_CENSUS"
-        STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_census.c"
-    fi
-else
-    DEFAULT_PRG=BUGGYBOY.PRG
+# --- UNIFIED ST/STE binary (PERF30 C4): the shipping BUGGYBOY.PRG carries the hardware-blitter path
+#     UNCONDITIONALLY and binds it at boot iff a blitter is present (blitter_available()), else the 68000
+#     CPU asm engine — ONE .PRG for both machines (and the TT, which runs the CPU path). The blitter driver
+#     + both fine-x paths are always linked and gated on -DRM_BLITTER (the host differential build never sets
+#     it, so make test still pins the C reference). Objshift2 routes to the blitter (bound); the colour
+#     engine stays CPU everywhere (census NO-GO, BLIT_STE_SPEC §10). The census/selftest/sweep are extra
+#     compile-gated MEASUREMENT builds. GAME_FORCE_NO_BLITTER pins the CPU path at boot even on an STE — a
+#     harness A/B baseline knob only. (The old GAME_STE / separate BUGGYBST.PRG two-binary profile is
+#     retired; GAME_STE is accepted-but-ignored for script compatibility.) ---
+STE_CFLAGS="-DRM_BLITTER"
+STE_SOURCES="$REMASTER/src/blitter.c $REMASTER/src/blitter_objshift2.c $REMASTER/src/blitter_objshift.c"
+[ "${GAME_FORCE_NO_BLITTER:-0}" = "1" ] && STE_CFLAGS="$STE_CFLAGS -DGAME_FORCE_NO_BLITTER"
+if [ "${GAME_STE_SELFTEST:-0}" = "1" ]; then
+    STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SELFTEST"
+    STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_selftest.c"
+fi
+if [ "${GAME_STE_SWEEP:-0}" = "1" ]; then
+    STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SWEEP"
+    STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_sweep.c"
+fi
+if [ "${GAME_STE_CENSUS:-0}" = "1" ]; then                # slice-5 boot-table census (run_ste_census.py)
+    STE_CFLAGS="$STE_CFLAGS -DGAME_STE_CENSUS"
+    STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_census.c"
 fi
 
-PRG="${GAME_PRG:-$DEFAULT_PRG}"             # output .PRG name (run_golden.py overrides to GOLDEN.PRG)
+PRG="${GAME_PRG:-BUGGYBOY.PRG}"             # output .PRG name (run_golden.py overrides to GOLDEN.PRG)
 
 PY="$REMASTER/../recreate/.venv/bin/python"; [ -x "$PY" ] || PY=python3
 

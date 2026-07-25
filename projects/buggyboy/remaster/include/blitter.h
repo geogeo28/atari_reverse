@@ -110,10 +110,14 @@ const uint8_t *blitter_selftest(long *mismatch_out);
 int rm_blit_objshift2_blitter(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
                               uint16_t x, uint16_t rows_m1, int width_idx);
 
-/* Runtime dispatch (object_list.c's RM_BLIT_OBJSHIFT2 on GAME_STE): blitter for BASE, CPU asm for CLIP.
+/* Runtime dispatch (object_list.c's RM_BLIT_OBJSHIFT2 seam): blitter for BASE, CPU asm for CLIP.
  * Same signature/contract as rm_blit_objshift2; runs the blitter attempt in a Supexec. */
 void rm_blit_objshift2_dispatch(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
                                 uint16_t x, uint16_t rows_m1, int width_idx);
+
+/* Bind the RM_BLIT_OBJSHIFT2 function pointer ONCE at boot: have_blitter → the blitter dispatch, else the
+ * CPU asm engine (a plain ST/TT binds the CPU path — no bail). Call from main() after blitter_available(). */
+void rm_blit_objshift2_bind(int have_blitter);
 
 /* Invalidate the objshift2 pre-shift memoisation cache — call after the arena.gfx source is rewritten in
  * place (the F10 asset reload), or the cache would serve stale bitmaps. */

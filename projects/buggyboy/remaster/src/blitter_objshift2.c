@@ -58,7 +58,10 @@ typedef struct {
     uint16_t data[OBJSH2_MAX_WORDS];
 } Objsh2Cache;
 
-#define OBJSH2_CACHE_SLOTS 128                              /* 128 * ~2.7 KB ~= 350 KB (see RAM note) */
+/* Census-justified size (BLIT_STE_SPEC §10): objshift2's reachable set is a BOUNDED 6 distinct tuples on
+ * every leg, so 16 slots (nearest power of two with >2x margin) hold the whole working set with zero
+ * eviction — 16 * ~2.75 KB ~= 44 KB static BSS (down from 128 slots / 356 KB). Re-verified 100% gate hit. */
+#define OBJSH2_CACHE_SLOTS 16
 static Objsh2Cache objsh2_cache[OBJSH2_CACHE_SLOTS];
 uint32_t rm_objsh2_cache_hits, rm_objsh2_cache_misses;      /* profiling (run_cadence / stats dump) */
 
@@ -193,4 +196,14 @@ void rm_blit_objshift2_dispatch(uint8_t *dst, uint32_t dst_off, const uint8_t *s
     g_objsh2.x = x; g_objsh2.rows_m1 = rows_m1; g_objsh2.width_idx = width_idx;
     if (!Supexec(objsh2_blitter_super))                    /* BASE family drawn by the blitter, unless it */
         rm_blit_objshift2_asm(dst, dst_off, src, src_off, x, rows_m1, width_idx);  /* declines (oversized) -> CPU */
+}
+
+/* The RM_BLIT_OBJSHIFT2 seam (object_list.c). Bound ONCE at boot: the blitter dispatch when a blitter is
+ * present, else the CPU asm engine directly (zero per-blit branch on a plain ST — it IS the old stock
+ * call target, just reached through one pointer). Defaults to the CPU engine so it is safe before boot. */
+void (*rm_blit_objshift2_fn)(uint8_t *, uint32_t, const uint8_t *, uint32_t, uint16_t, uint16_t, int)
+    = rm_blit_objshift2_asm;
+
+void rm_blit_objshift2_bind(int have_blitter) {
+    rm_blit_objshift2_fn = have_blitter ? rm_blit_objshift2_dispatch : rm_blit_objshift2_asm;
 }

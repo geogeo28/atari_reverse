@@ -509,6 +509,20 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > landing. Gates: stock byte-neutral, default STE goldens ×5, `make test` 723 (census wiring inert off).
 > Full analysis: `BLIT_STE_SPEC.md` §10.
 
+> **C4 slice 6 — ONE unified ST/STE binary (landed, not committed).** The census (slice 5) made this cheap:
+> objshift2's reachable set is a bounded 6 tuples, so its cache shrinks to a census-justified **16 slots
+> (44 KB, down from 356 KB)** and lives unconditionally in BSS. The shipping `BUGGYBOY.PRG` now carries the
+> blitter path always (`-DRM_BLITTER`), **bound once at boot**: `blitter_available()` (the `_BLT`/`_MCH`
+> probe — never bails, binds the CPU path on a plain ST/TT) sets `rm_blit_objshift2_fn` to the blitter
+> dispatch on an STE or the 68000 asm engine otherwise. **Measured stock-ST overhead of the indirection:
+> ZERO** — the unified PRG on `--machine st` is cadence-identical to the old committed stock (gate
+> 8.932=8.932, drive 8.167=8.167 vbl/present). Same-PRG matrix: goldens **MATCH ×5 on `--machine st`** AND
+> **×5 on `--machine ste`**; whole-frame A/B st(CPU) vs ste(blitter) **0-mismatch ×15**; STE gate **−11 %**
+> (7.949); `--machine tt` **boots + renders on the CPU path, no bail**; sweep **3264/0**; `make test` 723.
+> The base game's **1 MB requirement does not move**. The separate `BUGGYBST.PRG` / "byte-identical stock"
+> pin is retired (there is no separate stock — the cadence identity on `--machine st` replaces it). Colour
+> engine stays CPU on every machine. Full analysis: `BLIT_STE_SPEC.md` §11.
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),

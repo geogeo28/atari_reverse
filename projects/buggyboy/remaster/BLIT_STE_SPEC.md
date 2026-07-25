@@ -1,38 +1,44 @@
-# BLIT_STE_SPEC — the STE hardware-blitter build target (PERF30 C4)
+# BLIT_STE_SPEC — the unified ST/STE hardware-blitter binary (PERF30 C4)
 
-A **separate, additive** build of the BuggyBoy remaster (`GAME_STE=1`) that runs the heavy masked
-object blits on the Atari STE/Mega-ST **BLiTTER** chip instead of the 68000 RMW loop. The blitter emits
-the **same framebuffer bytes** as the CPU engine, so every byte-compare pin still holds — this is a perf
-swap, never a pixel change. The stock ST binary is **unchanged** (byte-for-byte, verified by hash).
+**ONE `BUGGYBOY.PRG` runs on both a plain ST and an STE**, using the Atari STE/Mega-ST **BLiTTER** chip
+for the heavy masked object blits when present and the 68000 RMW engine when not. The blitter emits the
+**same framebuffer bytes** as the CPU engine, so every byte-compare pin holds — a perf swap, never a pixel
+change. (Slices 1-5 built and proved this as a *separate* `GAME_STE` binary; **slice 6 unified it** into
+the shipping PRG — that framing supersedes the "separate binary" language below where they conflict; see
+§11.)
 
-This document is the driver design + the objshift2 → blitter recipe. Slice 1 (this doc + `src/blitter.c`,
-`src/blitter_selftest.c`, the `run_ste_*.py` harness) builds and **proves** the driver; slice 2 wires the
-recipe into the live engine.
+This document is the driver design + the objshift2 → blitter recipe + the census that bounded the colour
+engine. Historical slice tags (1-5) are kept for provenance.
 
 ---
 
-## 1. Build target (slice 1 — landed)
+## 1. Build (slice 6 — the unified binary)
 
-`render/atari/build_game.sh` gains an opt-in profile:
+`render/atari/build_game.sh` builds the shipping `BUGGYBOY.PRG` with the blitter path **always linked**
+(`-DRM_BLITTER`; `src/blitter.c` + `src/blitter_objshift2.c` + `src/blitter_objshift.c`), bound at boot:
 
 | invocation | output | notes |
 |---|---|---|
-| `bash build_game.sh` | `BUGGYBOY.PRG` | stock ST — **byte-identical** to before C4 (hash-pinned) |
-| `GAME_STE=1 bash build_game.sh` | `BUGGYBST.PRG` | STE build: `-DGAME_STE`, links `src/blitter.c` |
-| `GAME_STE=1 GAME_STE_SELFTEST=1 …` | `BUGGYBST.PRG` | + `-DGAME_STE_SELFTEST`, links `src/blitter_selftest.c` |
+| `bash build_game.sh` | `BUGGYBOY.PRG` | **unified** — blitter on an STE, CPU asm on an ST/TT (bound at boot) |
+| `GAME_FORCE_NO_BLITTER=1 …` | `BUGGYBOY.PRG` | pins the CPU path even on an STE — a harness A/B baseline knob |
+| `GAME_STE_SELFTEST=1 …` | (measurement) | + `src/blitter_selftest.c`, boots the driver proof, no game |
+| `GAME_STE_SWEEP=1 …` | (measurement) | + `src/blitter_sweep.c`, boots the recipe sweep |
+| `GAME_STE_CENSUS=1 …` | (measurement) | + `src/blitter_census.c`, drives + counts distinct tuples |
 
-When `GAME_STE` is unset every added shell variable is empty, so the stock `CFLAGS` / source list / link
-line are unchanged. `src/blitter*.c` are excluded from the host `.so` and bench builds in the `Makefile`
-(`STE_SRC` filter-out) exactly like the `src/asm/*.S` cores — they poke supervisor-only I/O registers and
-never compile for the host differential.
+`src/blitter*.c` are excluded from the host `.so` / bench builds (`Makefile` `STE_SRC` filter-out) — they
+poke supervisor-only I/O registers, so `RM_BLITTER` is never set for the host differential and `make test`
+keeps pinning the C reference. The old `GAME_STE` two-binary profile / `BUGGYBST.PRG` is **retired**;
+`GAME_STE` is accepted-but-ignored for script compatibility. The stock ST binary is no longer a separate
+artifact — the unified PRG on an ST is **cadence-identical** to the old stock (§11), which replaces the
+byte-identical-stock pin.
 
-**Presence check + bail.** `main()` (under `#ifdef GAME_STE`) calls `blitter_available()` first: a Supexec
-excursion walks the cookie jar (`_p_cookies` @ `0x5A0`). It checks the **`_BLT` cookie first** — TOS
-creates it iff blitter hardware is present, so it is authoritative — and on a pre-`_BLT` TOS falls back to
-`_MCH` with the machine id ∈ {STE/MegaSTE = 1, Falcon = 3}. This is **not** "id ≥ 1": the **TT030 (id 2)
-has no blitter** and must bail, as must a plain ST (0) and a pre-cookie TOS (`0x5A0 == 0`). Anything
-without a blitter gets a clean `Cconws` message and exits — never a bus error on the first `0xFFFF8Axx`
-poke.
+**Presence check — bind, never bail.** `main()` calls `blitter_available()` once at boot: a Supexec
+excursion walks the cookie jar (`_p_cookies` @ `0x5A0`), checks the **`_BLT` cookie first** (TOS creates it
+iff blitter hardware exists — authoritative), and on a pre-`_BLT` TOS falls back to `_MCH` id ∈ {STE/MegaSTE
+= 1, Falcon = 3} — **not** "id ≥ 1", so the **TT030 (id 2) is correctly excluded**. A plain ST (0), TT, or
+pre-cookie TOS (`0x5A0 == 0`) returns 0 **without touching any `0xFFFF8Axx` register** and simply **binds
+the CPU asm engine** — no message, no exit. The result is stored in `g_have_blitter` (gates the F10-reload
+cache flush) and passed to `rm_blit_objshift2_bind()`.
 
 ---
 
@@ -321,3 +327,43 @@ cache/table approach — a real colour win would need a fundamentally different 
 skew from unshifted data, so no per-frame materialise at all — the FXSR/NFSR calibration risk slice 2
 deferred), not more tables. That is the only remaining lever for the colour pass, and it is a research
 item, not a landing.
+
+## 11. Slice 6 — the UNIFIED ST/STE binary
+
+The census (§10) made this cheap: objshift2's reachable set is a **bounded 6 distinct tuples**, so its
+cache shrinks to a census-justified static size and lives unconditionally in BSS. One `BUGGYBOY.PRG` now
+serves both machines.
+
+**Binding design — a boot-bound function pointer (zero ST overhead).** `object_list.c`'s sole
+`RM_BLIT_OBJSHIFT2` call site resolves (under `-DRM_BLITTER`, the m68k target) to `rm_blit_objshift2_fn` —
+a function pointer initialised to `rm_blit_objshift2_asm` and bound once at boot by
+`rm_blit_objshift2_bind(blitter_available())`: to the blitter dispatch on an STE, or left at the CPU asm
+engine on an ST/TT. Measured stock-ST overhead of the one indirection vs the old direct call: **ZERO** —
+`--machine st` cadence of the unified PRG is byte-identical to the old committed stock on both scenes
+(gate 8.932 = 8.932, drive 8.167 = 8.167 vbl/present). The pointer (not a per-blit `if (have_blitter)`
+branch) was chosen precisely so the plain ST pays nothing per blit. The colour engine stays on the CPU on
+every machine (§8/§10); only objshift2 is bound. The seam is kept OUT of `include/game.h` (it lives in
+`object_list.c`).
+
+**Cache shrink.** `OBJSH2_CACHE_SLOTS` 128 → **16** (nearest power of two > 2× the 6-tuple working set;
+zero eviction). Re-verified on the gate: objshift2 hit=360 miss=6 = **100 % after the 6 one-time warmup
+misses**. BSS: **356 KB → 44 KB** for the objshift2 cache. The colour cache (197 KB, unused on the CPU
+path) is kept compiled so the sweep pins it. **Net unified-PRG BSS over the old stock: +44 KB** (the
+objshift2 cache) + the small blitter code — well inside the base game's existing **1 MB** requirement,
+which does **not move**: the unified PRG runs in the same memory footprint on both a 1 MB ST and STE.
+
+**Same-PRG verification matrix (the two-binary story, retired):**
+
+| pin | result |
+|---|---|
+| SAME PRG, goldens ×5 on `--machine st` (CPU path) | **MATCH ×5** |
+| SAME PRG, goldens ×5 on `--machine ste --blitter` (blitter path) | **MATCH ×5** |
+| SAME PRG, whole-frame A/B st(CPU) vs ste(blitter), 15 frames | **0-mismatch** (`run_ste_ab.py`) |
+| recipe sweep (both engines, separate measurement build) | **3264 cases, 0 mismatch** |
+| stock-ST cadence UNREGRESSED (unified st vs old stock) | **identical** — gate 8.932=8.932, drive 8.167=8.167 |
+| STE gate win retained | **7.949 vbl (−11 %)** |
+| `--machine tt` (no blitter) boots + renders on the CPU path | **MATCH, no bail** |
+| host differential | `make test` green |
+
+**Retired:** the separate `BUGGYBST.PRG` and the "stock byte-identical" pin (there is no separate stock
+artifact any more; the unified-vs-old-stock *cadence identity* on `--machine st` is the replacement).

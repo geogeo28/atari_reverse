@@ -16,10 +16,12 @@
 #include "screen.h"
 #include "st.h"
 
-/* STE hardware-blitter build (PERF30 C4): route the fixed-pass fine-x blit through the blitter dispatch
- * (BASE family on the blitter, CLIP family on the CPU asm engine — a pinned hybrid). Overriding the macro
- * HERE — the sole RM_BLIT_OBJSHIFT2 call site — keeps the seam out of include/game.h. */
-#ifdef GAME_STE
+/* UNIFIED ST/STE binary (PERF30 C4): route the fixed-pass fine-x blit through rm_blit_objshift2_fn — a
+ * function pointer bound ONCE at boot (game_main.c) to the blitter dispatch when a blitter is present, else
+ * the 68000 CPU asm engine. ONE .PRG runs both machines. Overriding the macro HERE — the sole
+ * RM_BLIT_OBJSHIFT2 call site — keeps the seam out of include/game.h. Gated on RM_BLITTER (the m68k target
+ * build), so the host differential build keeps the C reference. */
+#ifdef RM_BLITTER
 #include "blitter.h"
 #ifdef GAME_STE_CENSUS
 /* slice-5 census build: count the distinct materialise-key tuples each engine issues over a drive, to
@@ -33,20 +35,19 @@ void rm_blit_objshift_census(uint8_t *, uint32_t, const uint8_t *, uint32_t, uin
 #undef RM_BLIT_OBJSHIFT
 #define RM_BLIT_OBJSHIFT rm_blit_objshift_census
 #else
+extern void (*rm_blit_objshift2_fn)(uint8_t *, uint32_t, const uint8_t *, uint32_t, uint16_t, uint16_t, int);
 #undef RM_BLIT_OBJSHIFT2
-#define RM_BLIT_OBJSHIFT2 rm_blit_objshift2_dispatch
-/* The COLOUR-indexed pass-1 engine is byte-exact on the blitter (run_ste_sweep.py) but is NOT routed by
- * default: its on-demand cache hits ~100% on static frames yet only ~9% while DRIVING (roadside objects
- * change fine-x/scale/colour every frame), so the expensive 4-word materialise runs on ~91% of driving
- * blits and REGRESSES the race ~15% (BLIT_STE_SPEC §8, run_cadence.py hit-rate table). A driving win needs
- * boot pre-shift tables (no per-frame materialise), the deferred sprite-layout work. Opt in for
- * experimentation with -DRM_STE_OBJSH_ROUTE; the byte-exact recipe ships ready underneath. */
+#define RM_BLIT_OBJSHIFT2 rm_blit_objshift2_fn                /* boot-bound: blitter (STE) or CPU asm (ST) */
+/* The COLOUR-indexed pass-1 engine is byte-exact on the blitter (run_ste_sweep.py) but stays on the CPU on
+ * EVERY machine: the boot-table census (BLIT_STE_SPEC §10) proved its reachable set is unbounded (~70% of
+ * driving blits carry a never-seen tuple), so neither a cache nor boot tables win — routing it regresses
+ * the race ~15%. Opt in for experimentation with -DRM_STE_OBJSH_ROUTE; the byte-exact recipe ships ready. */
 #ifdef RM_STE_OBJSH_ROUTE
 #undef RM_BLIT_OBJSHIFT
 #define RM_BLIT_OBJSHIFT rm_blit_objshift_dispatch
 #endif
 #endif  /* GAME_STE_CENSUS / else */
-#endif  /* GAME_STE */
+#endif  /* RM_BLITTER */
 
 /* Jump-table resolution: recreate stores, per jumpidx, a word offset that added to the table base
  * (Ghidra 0x13144) gives the handler's Ghidra address. Those offsets are position-independent (a
