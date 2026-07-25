@@ -422,6 +422,24 @@ separate binary that will not run on a stock ST.** *Harness:* a separate build t
 still pinnable against `recreate/` (the blitter produces the same bytes), so the existing byte-compare
 holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud.
 
+> **C4 slice 1 — infrastructure + driver + recipe PROVEN (landed, not committed).** The STE build target
+> exists: `GAME_STE=1 bash render/atari/build_game.sh` → `BUGGYBST.PRG` (`-DGAME_STE`, links
+> `src/blitter.c`); the stock `BUGGYBOY.PRG` is **byte-identical** with the flag off (hash-pinned). The
+> driver (`include/blitter.h` + `src/blitter.c`) is the named `0xFFFF8A00` register block, a `BlitPass`
+> struct + `blit_run()` (HOG mode — justified: per-object blits are µs, well under the 20 ms VBL, so the
+> bus-hold never starves the sound pump; the non-HOG restart loop is documented for a future screen-sized
+> blit), and a boot presence check (`_BLT` cookie first, else `_MCH` id ∈ {1,3} — so the TT030, which has
+> no blitter, also bails) that prints a clean `Cconws` message instead of bus-erroring. **Recipe:** objshift2's `dst = (dst & ~(w0|w1)) | pix` self-mask is a
+> two-pass blitter cookie-cut (AND `mask`, OR per-plane `data`, `HOP=SRC`); the mask is materialised in
+> memory (the sprite source is static — A2 phase tables, ~49 KB masks). The **aligned (fine_x=0)** case is
+> proven **byte-for-byte against the real `rm_blit_objshift2`** on `--machine ste --blitter` (0/32000,
+> `run_ste_selftest.py`). Pins all green: stock goldens ×5 (`--machine st`), STE goldens ×5 (`--machine
+> ste`), whole-frame A/B stock-vs-STE = 0-mismatch (`run_ste_ab.py`), `make test` 708. Cadence baseline on
+> `--machine ste` == stock (objshift2 still CPU this slice). **Full spec + slice-2 plan: `BLIT_STE_SPEC.md`.**
+> Slice 2: pin the fine_x **skew** (skew=fine_x + FXSR/NFSR/endmask, self-test sweep 1..15), build the A2
+> phase tables, route `RM_BLIT_OBJSHIFT2` through the blitter under supervisor (hybrid CPU fallback for any
+> un-pinnable clip case), and measure the cadence delta (objlist fixed pass = 27.6% of the gate frame).
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),

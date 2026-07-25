@@ -45,31 +45,39 @@ BUILD = HERE / "build"
 LEGS = range(NUM_LEGS)                                     # the legs to pin — the ONE source of the boot legs
 
 
-def build_golden_prg(leg):
+def build_golden_prg(leg, ste=False):
     """Build the GOLDEN.PRG variant booting `leg` (the boot fast path) via build_game.sh, with GEN_GOLDEN=1
     so the fixture generator also writes build/golden_leg<N>.bin + palette_leg<N>.bin (that leg's reference).
-    GOLDEN_LEG and -DGOLDEN_BOOT_LEG both derive from the SAME `leg` — the reference and the PRG can't drift."""
+    GOLDEN_LEG and -DGOLDEN_BOOT_LEG both derive from the SAME `leg` — the reference and the PRG can't drift.
+    ste=True builds the STE hardware-blitter target (GAME_STE, PERF30 C4). The env is scrubbed of any
+    leaked GAME_STE / GAME_STE_SELFTEST so each arm is exactly the build it names."""
     env = {**os.environ,
            "GAME_PRG": GOLDEN_PRG,
            "GEN_GOLDEN": "1",
            "GOLDEN_LEG": str(leg),
            "GAME_EXTRA_CFLAGS": f"-DGOLDEN_BOOT_LEG={leg}"}
+    env.pop("GAME_STE_SELFTEST", None)          # a golden is never a self-test build
+    if ste:
+        env["GAME_STE"] = "1"
+    else:
+        env.pop("GAME_STE", None)               # the stock ST golden must not inherit GAME_STE
     subprocess.run(["bash", str(HERE / "build_game.sh")], env=env, check=True)
 
 
-def verify_leg(leg):
-    """Build + run leg `leg`'s GOLDEN.PRG and byte-compare its boot frame vs recreate's pipeline.
-    Returns True on MATCH, False on DIFF."""
-    build_golden_prg(leg)
-    fb = run_hatari.run(GOLDEN_PRG)
+def verify_leg(leg, ste=False):
+    """Build + run leg `leg`'s GOLDEN.PRG and byte-compare its boot frame vs recreate's pipeline. ste=True
+    builds the STE target and boots it on --machine ste --blitter. Returns True on MATCH, False on DIFF."""
+    build_golden_prg(leg, ste=ste)
+    fb = run_hatari.run(GOLDEN_PRG, machine="ste" if ste else "st", blitter=ste)
+    where = "on STE (--machine ste --blitter)" if ste else "on-target road + objects + HUD"
     return run_hatari.verify_frame(
-        fb, f"remaster_road_hud_leg{leg}.png",
-        f"leg {leg} on-target road + objects + HUD is byte-identical to recreate's ported pipeline",
+        fb, f"remaster_{'ste' if ste else 'road_hud'}_leg{leg}.png",
+        f"leg {leg} {where} is byte-identical to recreate's ported pipeline",
         golden_path=BUILD / f"golden_leg{leg}.bin",
         palette_path=BUILD / f"palette_leg{leg}.bin")
 
 
-def main():
+def main(ste=False):
     if len(sys.argv) > 1:
         leg = int(sys.argv[1])
         if leg not in LEGS:
@@ -78,9 +86,9 @@ def main():
     else:
         legs = list(LEGS)
 
-    results = {leg: verify_leg(leg) for leg in legs}
+    results = {leg: verify_leg(leg, ste=ste) for leg in legs}
 
-    print("\n==== golden summary ====")
+    print(f"\n==== {'STE ' if ste else ''}golden summary ====")
     for leg in legs:
         print(f"  leg {leg}: {'MATCH' if results[leg] else 'DIFF'}")
     if not all(results.values()):

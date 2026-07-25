@@ -39,20 +39,34 @@ DATA_FILES = ("COURSES.DAT", "GRAPHICS.GRA")
 NEEDS_DATA_FILES = ("BUGGYBOY.PRG", "GOLDEN.PRG")
 
 
-def run(prg, timeout=60):
+def run(prg, timeout=60, machine="st", blitter=False, needs_data=None, run_vbls=None):
+    """Boot `prg` headless and return its 32000-byte SCREEN.BIN dump. machine selects the emulated
+    hardware (st/ste/...); blitter=True adds --blitter on (STE hardware-blitter build, PERF30 C4). The
+    bundled Hatari TOS is EmuTOS 1024k, which boots every machine type, so the STE A/B differential runs
+    from the same drive image as the stock ST run.
+
+    needs_data: whether to stage COURSES.DAT/GRAPHICS.GRA alongside the .PRG (the game reads them at
+    boot; without them it hangs to a timeout). None (default) auto-detects from the NEEDS_DATA_FILES
+    list; True/False forces it — so a runner naming its own .PRG (BUGGYBST/ABSTE/…) passes needs_data=True
+    instead of mutating the module global."""
     hatari, rom = tos_probe.find_hatari(), tos_probe.find_tos_rom()
     if not (hatari and rom):
         raise RuntimeError("Hatari or TOS ROM not available (brew install hatari)")
-    staged = (prg, *DATA_FILES) if prg in NEEDS_DATA_FILES else (prg,)
+    if needs_data is None:
+        needs_data = prg in NEEDS_DATA_FILES
+    staged = (prg, *DATA_FILES) if needs_data else (prg,)
     with tempfile.TemporaryDirectory() as d:
         drive = Path(d)
         for name in staged:
             (drive / name).write_bytes((HERE / "disk" / name).read_bytes())
         out = drive / "SCREEN.BIN"
         env = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}
-        args = [hatari, "--sound", "off", "--fast-forward", "on", "--confirm-quit", "off",
-                "--memsize", "4", "--monitor", "rgb", "--tos-res", "low", "--tos", rom,
-                "--run-vbls", RUN_VBLS, "--harddrive", str(drive), "--auto", "C:\\" + prg]
+        args = [hatari, "--machine", machine]
+        if blitter:
+            args += ["--blitter", "on"]
+        args += ["--sound", "off", "--fast-forward", "on", "--confirm-quit", "off",
+                 "--memsize", "4", "--monitor", "rgb", "--tos-res", "low", "--tos", rom,
+                 "--run-vbls", str(run_vbls or RUN_VBLS), "--harddrive", str(drive), "--auto", "C:\\" + prg]
         proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             deadline = time.time() + timeout

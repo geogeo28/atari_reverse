@@ -28,7 +28,24 @@ REMASTER="$(cd "$HERE/../.." && pwd)"       # remaster/
 BUILD="$HERE/build"; DISK="$HERE/disk"
 mkdir -p "$BUILD" "$DISK"
 
-PRG="${GAME_PRG:-BUGGYBOY.PRG}"             # output .PRG name (run_golden.py overrides to GOLDEN.PRG)
+# --- STE hardware-blitter target (PERF30 C4): additive, opt-in via GAME_STE=1. When GAME_STE is unset
+#     every variable below is empty, so the stock ST build's CFLAGS / sources / link line are
+#     byte-for-byte the SAME — verified by hashing build/BUGGYBOY.PRG with the flag off. GAME_STE_SELFTEST
+#     also links the on-target blitter-vs-engine proof (src/blitter_selftest.c, run_ste_selftest.py). ---
+STE_CFLAGS=""; STE_SOURCES=""
+if [ "${GAME_STE:-0}" = "1" ]; then
+    DEFAULT_PRG=BUGGYBST.PRG
+    STE_CFLAGS="-DGAME_STE"
+    STE_SOURCES="$REMASTER/src/blitter.c"
+    if [ "${GAME_STE_SELFTEST:-0}" = "1" ]; then
+        STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SELFTEST"
+        STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_selftest.c"
+    fi
+else
+    DEFAULT_PRG=BUGGYBOY.PRG
+fi
+
+PRG="${GAME_PRG:-$DEFAULT_PRG}"             # output .PRG name (run_golden.py overrides to GOLDEN.PRG)
 
 PY="$REMASTER/../recreate/.venv/bin/python"; [ -x "$PY" ] || PY=python3
 
@@ -63,7 +80,7 @@ CC=m68k-elf-gcc
 # its C reference. (No -DRM_ROAD_DIFF: the game omits road.c's bench-only differential entries.)
 CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -DRM_ASM_BLIT -DRM_ASM_ROAD -DRM_SOUND_TARGET -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
-        ${GAME_EXTRA_CFLAGS:-}"
+        ${STE_CFLAGS} ${GAME_EXTRA_CFLAGS:-}"
 CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
        $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c \
        $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c \
@@ -76,7 +93,7 @@ echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
     "$HERE/os.s" "$REMASTER/src/asm/objshift2.S" "$REMASTER/src/asm/objshift.S" \
     "$REMASTER/src/asm/road_band.S" \
-    "$HERE/shim.c" "$HERE/game_main.c" $CORES -lgcc \
+    "$HERE/shim.c" "$HERE/game_main.c" $CORES $STE_SOURCES -lgcc \
     -o "$BUILD/game.elf"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).

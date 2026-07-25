@@ -77,6 +77,9 @@
 #include "st.h"              /* be16/wr16/be32/wr32 for the leg-start palette flash */
 #include "game_fixture.h"
 #include "game_frame.h"
+#ifdef GAME_STE
+#include "blitter.h"          /* STE hardware-blitter target (PERF30 C4): presence check + self-test */
+#endif
 
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
                             uint8_t *ctrl, uint8_t *scanline);
@@ -115,6 +118,9 @@ extern long Fread(short handle, long count, void *buf);
 extern long Fwrite(short handle, long count, void *buf);
 extern long Fclose(short handle);
 extern long Cconws(const char *s);
+#ifdef GAME_STE
+extern long Cconin(void);      /* GEMDOS 0x01: block for a keypress (STE-build bail message) */
+#endif
 extern void Vsync(void);
 extern long Setscreen(long logLoc, long physLoc, short rez);   /* flip the video base (latches at vblank) */
 extern long Physbase(void);                                    /* current video base (to restore on exit) */
@@ -211,11 +217,22 @@ static uint8_t dash_pristine[RM_HUD_DASH_PRISTINE_BYTES] __attribute__((aligned(
 static int dash_pristine_dirty = 1;
 static uint8_t buf_a_ram[ARENA_BUF_A_BYTES] __attribute__((aligned(2)));  /* mutable buf_a copy (prefix writes mirrors) */
 static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));   /* COURSES.DAT + unpacked GRAPHICS.GRA */
-static uint8_t gobj_scratch[GOBJ_MARKER_RECS_BYTES] __attribute__((aligned(2)));  /* BSS: marker recs (inactive) */
 /* The live ring serialized back into the original's flat ST-byte row grid — the object-list
  * dispatcher's two flag streams walk this (rebuilt after every course advance). The other ring
- * consumers (sprite count, ground markers, sprite gates) read the native CourseRing directly. */
-static uint8_t ring_st[RM_RING_ROWS * RM_RING_ROW_BYTES] __attribute__((aligned(2)));
+ * consumers (sprite count, ground markers, sprite gates) read the native CourseRing directly.
+ *
+ * This grid is ALSO the marker-decay arena rm_gobj_prefix mutates: in the original both are the one
+ * block at A_obj_markers, and the decay base is 8 bytes below it (A_marker_decay_base), indexed by an
+ * even horizon row 0..0x2e — so the walk reaches RING_ST_DECAY_BIAS bytes below row 0 and a few past
+ * the last row. Hence the padded block and the biased base handed to the prefix: without that wire the
+ * decay writes land nowhere and a kicked roadside object never animates away (it just vanishes).
+ * The pad is inert here — the original's low pad is unnamed filler, and its high pad is the head of
+ * road_curve_tbl, which rm_build_road_geometry rewrites later in the same frame. */
+#define RING_ST_DECAY_BIAS 8    /* A_obj_markers - A_marker_decay_base */
+#define RING_ST_DECAY_SPILL 8   /* the decay walk's reach past the last row (max index 0x1ce) */
+static uint8_t ring_st_block[RING_ST_DECAY_BIAS + RM_RING_ROWS * RM_RING_ROW_BYTES + RING_ST_DECAY_SPILL]
+    __attribute__((aligned(2)));
+static uint8_t *const ring_st = ring_st_block + RING_ST_DECAY_BIAS;
 /* The prefix's animated colour aliases the HUD's phase-6a fuel-mask table in the original (both live
  * at 0x17f08): draw_game_objects' prefix writes the animated colour there, and draw_hud then reads it
  * as the fuel mask. Model that alias with one mutable buffer the prefix writes and the HUD reads. */
@@ -331,6 +348,7 @@ static RmScene shell_scene(const Shell *s) {
         .pfx_assets = s->pfx_assets, .src = s->src, .ground_assets = s->ground_assets,
         .sprite_assets = s->sprite_assets, .hud_assets = s->hud_assets,
         .ctrl = ctrl, .scanline = scanline, .shifted = shifted, .ring_st = ring_st,
+        .hud_text = hud_text_ram,        /* live: the dispatcher's p24 gate re-reads score_str[1] */
         .obj_sprite_disp = s->low + OBJ_LOW_SPRITE_DISP, .obj_fixed_list = s->low + OBJ_LOW_LIST_BASE,
     };
     return sc;
@@ -406,8 +424,10 @@ static void start_leg(Shell *s, uint16_t leg) {
 #endif
     rm_scroll_prebuild(s->arena->gfx + *s->screen_offset, shifted);   /* screen_offset is per-leg */
     s->object->shade = *s->obj_shade;
-    s->objlist->bonus_timer = s->pfx->bonus_timer;                    /* the bonus clamp follows the prefix */
-    s->objlist->p24_flag = hud_text_ram[RM_HUD_SCORE_STR_OFF + 1];    /* the live score_str[1] rm_init_leg wrote */
+    /* objlist's bonus_timer / p24_flag are NOT derived here: they are live globals the dispatcher
+     * reloads every frame, so rm_draw_frame refreshes them (src/frame.c). Deriving them once at a leg
+     * start is what froze them — the bonus window never clamped and the p24 gate never re-read the
+     * checkpoint-bumped score digit. */
     apply_player(s);
     ring_views_refresh(s->ring, s->ground, s->sprite);
     s->race_input_prev = 0;
@@ -1308,6 +1328,25 @@ static uint16_t auto_intermission_input(void) {
 #endif
 
 void main(void) {
+#ifdef GAME_STE
+    /* STE build (PERF30 C4): the masked object blits run on the hardware blitter, which a plain ST lacks.
+     * Bail with a clean message rather than bus-erroring on the first 0xFFFF8Axx poke. */
+    if (!blitter_available()) {
+        Cconws("BUGGYBOY STE build: this needs an STE (or later) with a blitter. Press a key.\r\n");
+        Cconin();
+        return;
+    }
+#ifdef GAME_STE_SELFTEST
+    /* Slice-1 driver proof: reproduce rm_blit_objshift2 with the blitter and dump the XOR diff
+     * (all-zero == byte-exact) to SCREEN.BIN for run_ste_selftest.py. No game boot needed. */
+    {
+        long mismatch;
+        const uint8_t *diff = blitter_selftest(&mismatch);
+        dump_frame((Framebuffer *)diff);
+        return;
+    }
+#endif
+#endif
     RmArena arena;
     if (!load_assets(&arena)) return;
 
@@ -1359,7 +1398,9 @@ void main(void) {
     const GobjPrefixAssets pfx_assets = {
         .anim_word_tbl = low + OBJ_LOW_ANIM_WORD_TBL,
         .anim_coloridx_tbl = low + OBJ_LOW_ANIM_COLORIDX, .color_pairs = low + OBJ_LOW_COLOR_PAIRS,
-        .marker_recs = gobj_scratch, .anim_color = fuel_mask_ram,   /* aliases the HUD's fuel mask */
+        /* marker_recs IS the dispatcher's flag grid, at the original's decay base (see ring_st_block);
+         * anim_color aliases the HUD's fuel mask. Both are aliases the original gets for free. */
+        .marker_recs = ring_st_block, .anim_color = fuel_mask_ram,
         .anim_mirror1 = buf_a_ram + GOBJ_ANIM_BUF_OFF1, .anim_mirror2 = buf_a_ram + GOBJ_ANIM_BUF_OFF2,
     };
     const GroundAssets ground_assets = {
