@@ -83,7 +83,8 @@ The docs gate points at this workspace's surfaces: `names.txt` / `STATUS.md` / `
 ### Branch workflow
 - **`main`** — canonical history.
 - **`ganneheim/dev`** — daily WIP; all work happens here. Merge into `main` (fast-forward
-  when possible) to promote. Local-only repo today; push once a remote is added.
+  when possible) to promote. Push to `origin` (`github.com:geogeo28/atari_reverse`) at every
+  commit boundary — verified work should not sit only on the local volume.
 
 ### Commit cadence
 Default to smaller commits. **Propose a commit at every logical boundary without being
