@@ -60,6 +60,7 @@ typedef struct {
 
 #define OBJSH2_CACHE_SLOTS 128                              /* 128 * ~2.7 KB ~= 350 KB (see RAM note) */
 static Objsh2Cache objsh2_cache[OBJSH2_CACHE_SLOTS];
+uint32_t rm_objsh2_cache_hits, rm_objsh2_cache_misses;      /* profiling (run_cadence / stats dump) */
 
 /* Direct-map slot for a key. A multiplicative (Knuth/Fibonacci) mix of the key fields — the constants are
  * arbitrary odd/prime multipliers, not load-bearing; `>> 15` drops the poorly-mixed low bits before the
@@ -95,26 +96,7 @@ void rm_blit_objshift2_cache_flush(void) {
     for (int i = 0; i < OBJSH2_CACHE_SLOTS; i++) objsh2_cache[i].valid = 0;
 }
 
-/* Fire one aligned (skew=0) blitter pass over the whole interleaved region (nwords = 4*ncols words/row,
- * fully contiguous in the framebuffer), all 4 planes at once. */
-static void objsh2_blit_pass(uint8_t *col0_bottom, const uint16_t *src_bm, int nwords, int rows, uint8_t lop) {
-    BlitPass pass;
-    pass.src_addr  = (uint32_t)src_bm;
-    pass.src_x_inc = 2;
-    pass.src_y_inc = 2;                                     /* tightly packed nwords words per row */
-    pass.dst_addr  = (uint32_t)col0_bottom;
-    pass.dst_x_inc = 2;                                     /* contiguous interleaved words */
-    pass.dst_y_inc = -(int16_t)(SCREEN_ROW_BYTES + 2 * (nwords - 1));  /* one scanline UP, back to col0 */
-    pass.endmask1  = 0xFFFF;
-    pass.endmask2  = 0xFFFF;
-    pass.endmask3  = 0xFFFF;
-    pass.x_count   = (uint16_t)nwords;
-    pass.y_count   = (uint16_t)rows;
-    pass.hop       = BLT_HOP_SRC;
-    pass.lop       = lop;
-    pass.skew_ctl  = 0;
-    blit_run(&pass);
-}
+/* The interleaved 2-pass cookie-cut is the shared blit_ste_cookiecut_pass (blitter.h). */
 
 /* Is this call a BASE-family draw the blitter path handles? Cheap arithmetic (no supervisor needed), so
  * the dispatcher can decide in USER mode and only enter Supexec for a case the blitter will actually
@@ -147,6 +129,7 @@ int rm_blit_objshift2_blitter(uint8_t *dst, uint32_t dst_off, const uint8_t *src
     /* Cache lookup on the (static-source) materialise key. Hit -> skip the shift entirely. */
     Objsh2Cache *e = &objsh2_cache[objsh2_cache_hash(src_off, fine_x, width_idx, rows_m1)];
     if (!objsh2_cache_hit(e, src, src_off, fine_x, width_idx, rows_m1)) {
+        rm_objsh2_cache_misses++;
         /* Miss: materialise the pre-shifted mask + per-plane data into the slot, bottom-up (row i reads
          * src_off - i*80, the engine's row walk). Per dst column j the fine-x straddle spreads source cell
          * (j-1)'s high part and cell j's low part — the `<<shl` split of the CPU engine's straddle cell. */
@@ -171,12 +154,14 @@ int rm_blit_objshift2_blitter(uint8_t *dst, uint32_t dst_off, const uint8_t *src
             }
         }
         objsh2_cache_store(e, src, src_off, fine_x, width_idx, rows_m1, SCREEN_PLANES * ncols, rows);
+    } else {
+        rm_objsh2_cache_hits++;
     }
 
     /* col0 of the BOTTOM row (the engine's first-drawn row): dst + dst_off + aligned_col. */
     uint8_t *col0_bottom = dst + dst_off + sx16((uint16_t)col);
-    objsh2_blit_pass(col0_bottom, e->mask, e->nwords, e->rows, BLT_LOP_AND);
-    objsh2_blit_pass(col0_bottom, e->data, e->nwords, e->rows, BLT_LOP_OR);
+    blit_ste_cookiecut_pass(col0_bottom, e->mask, e->nwords, e->rows, BLT_LOP_AND);
+    blit_ste_cookiecut_pass(col0_bottom, e->data, e->nwords, e->rows, BLT_LOP_OR);
     return 1;
 }
 

@@ -23,6 +23,16 @@
 #include "blitter.h"
 #undef RM_BLIT_OBJSHIFT2
 #define RM_BLIT_OBJSHIFT2 rm_blit_objshift2_dispatch
+/* The COLOUR-indexed pass-1 engine is byte-exact on the blitter (run_ste_sweep.py) but is NOT routed by
+ * default: its on-demand cache hits ~100% on static frames yet only ~9% while DRIVING (roadside objects
+ * change fine-x/scale/colour every frame), so the expensive 4-word materialise runs on ~91% of driving
+ * blits and REGRESSES the race ~15% (BLIT_STE_SPEC §8, run_cadence.py hit-rate table). A driving win needs
+ * boot pre-shift tables (no per-frame materialise), the deferred sprite-layout work. Opt in for
+ * experimentation with -DRM_STE_OBJSH_ROUTE; the byte-exact recipe ships ready underneath. */
+#ifdef RM_STE_OBJSH_ROUTE
+#undef RM_BLIT_OBJSHIFT
+#define RM_BLIT_OBJSHIFT rm_blit_objshift_dispatch
+#endif
 #endif
 
 /* Jump-table resolution: recreate stores, per jumpidx, a word offset that added to the table base

@@ -46,6 +46,27 @@ static uint16_t case_diff[N_CASES];                         /* per-case mismatch
 static long sweep_total;
 static long sweep_handled;                                  /* cases the blitter path drew (BASE family) */
 
+/* ---- colour-indexed engine (rm_blit_objshift) sweep — mirror test_asm_blit.py's objshift cases ---- */
+static const int OSH_BASE_CELLS[]  = {1, 2};
+static const int OSH_COLUMNS[]     = {-32, -24, -16, -8, 0x0, 0x30, 0x40, 0x78, 0x88, 0x90, 0x98, 0xa0};
+/* (colour, rows_m1, stride) tuples: strides 8 / 0x10 / -8 / 0xa8 (the signed source walk). */
+static const int OSH_CRS[][3]      = {{3, 3, 8}, {11, 0, 0x10}, {14, 5, (int)0xfff8}, {7, 0x1f, 0xa8}};
+#define N_OSH_BC   (int)(sizeof OSH_BASE_CELLS / sizeof OSH_BASE_CELLS[0])
+#define N_OSH_COL  (int)(sizeof OSH_COLUMNS / sizeof OSH_COLUMNS[0])
+#define N_OSH_CRS  (int)(sizeof OSH_CRS / sizeof OSH_CRS[0])
+#define N_OSH_CASES (N_OSH_BC * N_FINEX * N_OSH_COL * N_OSH_CRS)
+
+/* A big source (the stride walk reaches ~160*rows back / +16*rows forward) with src_off mid-buffer. */
+#define OSH_SRC_BYTES   6000
+#define OSH_SRC_OFF     5000
+#define OSH_N_COLOURS   16                                  /* colour nibble range (OBJSH_COLOR_STRIDE from blitter.h) */
+#define OSH_PAIRS_BYTES (OSH_N_COLOURS * OBJSH_COLOR_STRIDE)
+static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[OSH_SRC_BYTES]; uint8_t hi[GUARD_BYTES]; } osh_src_g;
+#define osh_src (osh_src_g.px)
+static uint8_t osh_pairs[OSH_PAIRS_BYTES];
+static uint16_t osh_case_diff[N_OSH_CASES];
+static long osh_handled;
+
 static uint16_t pattern(int r, int k, int lane) {
     unsigned v = (unsigned)(r * 2654435761u + k * 40503u + lane * 0x9E37u);
     return (uint16_t)((v >> 11) ^ (v >> 3));
@@ -88,9 +109,35 @@ static long run_case(int width_idx, int fine_x, int col, int rows_m1, int *handl
     return n;
 }
 
-/* Sweep every case. A handled (BASE) case must be byte-exact; a declined (CLIP) case is the CPU hybrid —
- * the blitter path drew nothing, so test_fb == background != ref, which is EXPECTED, not a failure. Only
- * handled cases contribute to sweep_total. */
+/* One colour-engine case: draw with the CPU rm_blit_objshift (ref) and rm_blit_objshift_blitter (test)
+ * over the same background; count differing bytes + broken guards. */
+static long run_case_objsh(int base_cells, int fine_x, int col, int color, int rows_m1, int16_t stride,
+                           int *handled_out) {
+    for (int i = 0; i < SCREEN_BYTES; i++) ref_fb[i] = test_fb[i] = SWEEP_BG_BYTE;
+    for (int i = 0; i < GUARD_BYTES; i++)
+        osh_src_g.lo[i] = osh_src_g.hi[i] = test_g.lo[i] = test_g.hi[i] = GUARD_FILL;
+    for (int i = 0; i < OSH_SRC_BYTES - 1; i += 2) wr16(osh_src + i, pattern(i, base_cells, color));
+    /* An arbitrary distinct-byte colour_pairs table so each colour nibble selects a different 4-plane
+     * fill (the c*8+b*37+5 generator mirrors test_asm_blit.py's OSH_PAIRS; the constants need not agree
+     * with bench — each side drives its own ref-vs-test). */
+    for (int c = 0; c < OSH_N_COLOURS; c++)
+        for (int b = 0; b < OBJSH_COLOR_STRIDE; b++)
+            osh_pairs[c * OBJSH_COLOR_STRIDE + b] = (uint8_t)(c * 8 + b * 37 + 5);
+
+    uint16_t x = make_x(col, fine_x);
+    uint32_t dst_off = (uint32_t)((SCREEN_H / 2) * SCREEN_ROW_BYTES);   /* mid-screen; both engines walk up */
+    rm_blit_objshift(ref_fb, dst_off, osh_src, OSH_SRC_OFF, x, (uint16_t)color, (uint16_t)rows_m1, stride,
+                     osh_pairs, base_cells);
+    *handled_out = rm_blit_objshift_blitter(test_fb, dst_off, osh_src, OSH_SRC_OFF, x, (uint16_t)color,
+                                            (uint16_t)rows_m1, stride, osh_pairs, base_cells);
+    long n = 0;
+    for (int i = 0; i < SCREEN_BYTES; i++) if (ref_fb[i] != test_fb[i]) n++;
+    n += guard_broken(osh_src_g.lo) + guard_broken(osh_src_g.hi) + guard_broken(test_g.lo) + guard_broken(test_g.hi);
+    return n;
+}
+
+/* Sweep every case for BOTH engines. A handled (BASE) case must be byte-exact; a declined (CLIP) case is
+ * the CPU hybrid (blitter drew nothing) — EXPECTED, not a mismatch. Only handled cases contribute. */
 long blitter_sweep_super(void) {
     int idx = 0;
     long total = 0, handled_count = 0;
@@ -100,8 +147,6 @@ long blitter_sweep_super(void) {
                 for (int ri = 0; ri < N_ROWS; ri++) {
                     int handled;
                     long d = run_case(SWEEP_WIDTH_IDX[wi], fx, SWEEP_COLUMNS[ci], SWEEP_ROWS_M1[ri], &handled);
-                    /* A declined clip case is a hybrid: not a mismatch. Record 0 for it; record the real
-                     * diff for handled cases. */
                     uint16_t logged = handled ? (uint16_t)(d > 0xffff ? 0xffff : d) : 0;
                     case_diff[idx++] = logged;
                     total += logged;
@@ -109,19 +154,39 @@ long blitter_sweep_super(void) {
                 }
     sweep_total = total;
     sweep_handled = handled_count;
+
+    /* colour-indexed engine */
+    int oi = 0; long oh = 0;
+    for (int bi = 0; bi < N_OSH_BC; bi++)
+        for (int fx = 0; fx < N_FINEX; fx++)
+            for (int ci = 0; ci < N_OSH_COL; ci++)
+                for (int ti = 0; ti < N_OSH_CRS; ti++) {
+                    int handled;
+                    long d = run_case_objsh(OSH_BASE_CELLS[bi], fx, OSH_COLUMNS[ci], OSH_CRS[ti][0],
+                                            OSH_CRS[ti][1], (int16_t)OSH_CRS[ti][2], &handled);
+                    uint16_t logged = handled ? (uint16_t)(d > 0xffff ? 0xffff : d) : 0;
+                    osh_case_diff[oi++] = logged;
+                    total += logged;
+                    oh += handled ? 1 : 0;
+                }
+    osh_handled = oh;
+    sweep_total = total;                                    /* combined: both engines must be 0 */
     return total;
 }
 
-/* Pack the per-case grid into a framebuffer for SCREEN.BIN: word0 = case count, word1 = total mismatch,
- * then the per-case diff words. run_ste_sweep.py parses it. */
+/* Pack the per-case grid into a framebuffer for SCREEN.BIN: word0 = total case count (objshift2 THEN
+ * objshift), word1 = total mismatch (both engines), then the concatenated per-case diff words. The last
+ * two words carry the BASE-handled counts (objshift2, objshift). run_ste_sweep.py parses it. */
 const uint8_t *blitter_sweep(long *mismatch_out) {
     Supexec(blitter_sweep_super);
     uint16_t *w = (uint16_t *)test_fb;
     for (int i = 0; i < SCREEN_BYTES / 2; i++) w[i] = 0;
-    w[0] = (uint16_t)N_CASES;
+    w[0] = (uint16_t)(N_CASES + N_OSH_CASES);
     w[1] = (uint16_t)(sweep_total > 0xffff ? 0xffff : sweep_total);
     for (int i = 0; i < N_CASES && (2 + i) * 2 <= SCREEN_BYTES; i++) w[2 + i] = case_diff[i];
-    w[SCREEN_BYTES / 2 - 1] = (uint16_t)sweep_handled;      /* last word: BASE cases the blitter drew */
+    for (int i = 0; i < N_OSH_CASES && (2 + N_CASES + i) * 2 <= SCREEN_BYTES; i++) w[2 + N_CASES + i] = osh_case_diff[i];
+    w[SCREEN_BYTES / 2 - 1] = (uint16_t)sweep_handled;      /* objshift2 BASE cases drawn */
+    w[SCREEN_BYTES / 2 - 2] = (uint16_t)osh_handled;        /* objshift  BASE cases drawn */
     if (mismatch_out) *mismatch_out = sweep_total;
     return test_fb;
 }

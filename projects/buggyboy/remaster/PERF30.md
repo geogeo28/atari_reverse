@@ -475,6 +475,24 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > blitter-side clip (now unblocked by the cache) + the colour-indexed pass 1 (25.3 %, same recipe) as the
 > headline; one-excursion Supexec DEFERRED (per-blit trap didn't block the win).**
 
+> **C4 slice 4 — colour-indexed pass 1: recipe byte-exact, but the on-demand cache hits a DRIVING wall
+> (landed, not committed).** The colour-indexed `rm_blit_objshift` (~25 % of the gate) ports to the SAME
+> cache-keyed pre-shift + 2-pass cookie-cut (`src/blitter_objshift.c`): 4-plane source, `~(A|B|C)&D` mask,
+> per-plane colour fill composited into the OR-data (no third pass), plane-3 `~mask` special. The
+> per-column values are the exact algebraic reduction of the CPU's sequential AND-then-OR straddle
+> (`net_mask=m_col1[j-1]&m_col0[j]`, `net_data=(pix_lo[j-1]&m_col0[j])|pix_hi[j]`). **Proven byte-exact:**
+> `run_ste_sweep.py` now sweeps BOTH engines — 3264 cases (1728 objshift2 + 1536 objshift), **0 mismatch**,
+> 704 colour BASE cases blitter-drawn; a plane-3 mutation fails 297. **But it is NOT routed:** hit-rate
+> counters show the colour cache is 100 % on the static gate yet only **9 % while DRIVING** (roadside
+> objects change fine-x/scale/colour every frame → the key never repeats), so the 4-word materialise runs
+> on ~91 % of driving blits and **regresses the race ~15 %** (7.06→8.13 vbl). objshift2 escaped only
+> because it issues ~0.24 blits/frame while driving. So the colour engine ships byte-exact on the CPU path
+> (`-DRM_STE_OBJSH_ROUTE` opts it in); default STE routes objshift2 only — **gate −12 %, driving flat**
+> (7.06→7.03, no regression). Pins: sweep 3264 0-XOR, STE goldens ×5, A/B 0-mismatch ×15, `make test` 723,
+> stock byte-neutral (`mkprg.py` only). Combined cache RAM ~553 KB (fits a 1 MB STE). **The colour driving
+> win needs boot pre-shift tables (remove the per-frame materialise) — slice 5's gating item; the recipe +
+> sweep are the proven foundation.**
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),

@@ -599,12 +599,27 @@ static void cadence_record(void) {
     cadence_last_vbl = now;
     if (cadence_pos < CADENCE_SLOTS) cadence_log[cadence_pos++] = span;
 }
+#ifdef GAME_STE
+extern uint32_t rm_objsh2_cache_hits, rm_objsh2_cache_misses, rm_objsh_cache_hits, rm_objsh_cache_misses;
+#define CADENCE_TAIL_COUNTERS 4                            /* the 4 blitter hit/miss longs at the tail */
+#define CADENCE_TAIL_OFF (SCREEN_BYTES - CADENCE_TAIL_COUNTERS * (int)sizeof(uint32_t))   /* run_cadence.py pins this */
+#else
+#define CADENCE_TAIL_OFF  SCREEN_BYTES                     /* no tail counters on the stock-ST cadence build */
+#endif
 static void cadence_dump(void) {
     uint8_t *buf = screen_buf(0)->px;
     memset(buf, 0, SCREEN_BYTES);
     uint16_t *w = (uint16_t *)buf;
     w[0] = cadence_pos;
-    for (int i = 0; i < cadence_pos && (i + 2) * 2 <= SCREEN_BYTES; i++) w[1 + i] = cadence_log[i];
+    /* Forward span log; the tail (last CADENCE_TAIL_COUNTERS longs) holds the STE cache counters, so cap
+     * the log short of it (a trace long enough to reach the tail would clobber them — belt-and-braces). */
+    for (int i = 0; i < cadence_pos && (i + 2) * 2 <= CADENCE_TAIL_OFF; i++) w[1 + i] = cadence_log[i];
+#ifdef GAME_STE
+    /* Blitter cache hit/miss counters at the tail (each a 32-bit big-endian value), for run_cadence.py. */
+    uint32_t *tail = (uint32_t *)(buf + CADENCE_TAIL_OFF);
+    tail[0] = rm_objsh2_cache_hits; tail[1] = rm_objsh2_cache_misses;
+    tail[2] = rm_objsh_cache_hits;  tail[3] = rm_objsh_cache_misses;
+#endif
     long h = Fcreate("SCREEN.BIN", 0);
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, buf); Fclose((short)h); }
 }
@@ -1139,9 +1154,10 @@ static void op_reload_assets(void *ctx) {
     seed_highscore_table();           /* init_scoretable: reseed the hi-score table from its baked default */
     rm_init_leg_dash(s->ctx);         /* init_leg_dash: rebuild the dashboard */
 #ifdef GAME_STE
-    /* The blitter objshift2 cache keys on the arena.gfx source pointer, which reload rewrites in place —
-     * flush it so a recovered arena is re-materialised, not served stale (see blitter_objshift2.c). */
+    /* The blitter caches key on the arena.gfx source pointer, which reload rewrites in place — flush both
+     * so a recovered arena is re-materialised, not served stale (see blitter_objshift{,2}.c). */
     rm_blit_objshift2_cache_flush();
+    rm_blit_objshift_cache_flush();
 #endif
 }
 static void op_set_palette(void *ctx, int which) {

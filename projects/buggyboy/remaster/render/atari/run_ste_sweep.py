@@ -33,12 +33,13 @@ def main():
     # 1728 cases x full-framebuffer memset/compare is a lot of emulated cycles — give it a generous
     # vblank budget + wall-clock so the sweep finishes and dumps (default 4000 vbls is too short).
     fb = run_hatari.run(SWEEP_PRG, machine="ste", blitter=True, needs_data=True,
-                        run_vbls=40000, timeout=240)[:SCREEN_BYTES]
+                        run_vbls=140000, timeout=400)[:SCREEN_BYTES]
     ncases = (fb[0] << 8) | fb[1]
     total = (fb[2] << 8) | fb[3]
-    handled = (fb[SCREEN_BYTES - 2] << 8) | fb[SCREEN_BYTES - 1]
+    handled2 = (fb[SCREEN_BYTES - 2] << 8) | fb[SCREEN_BYTES - 1]   # objshift2 BASE drawn
+    handled = (fb[SCREEN_BYTES - 4] << 8) | fb[SCREEN_BYTES - 3]    # objshift  BASE drawn
     bad = [i for i in range(ncases) if ((fb[(2 + i) * 2] << 8) | fb[(2 + i) * 2 + 1]) != 0]
-    print(f"cases: {ncases}   blitter-handled (BASE): {handled}   CPU-hybrid (CLIP): {ncases - handled}"
+    print(f"cases: {ncases} (objshift2 + objshift)   BASE blitter-drawn: objshift2={handled2} objshift={handled}"
           f"   total mismatch: {total}   failing cases: {len(bad)}")
     if not bad:
         print(f"MATCH: objshift2 blitter path is byte-exact over all {ncases} swept cases")

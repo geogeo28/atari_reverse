@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 #include "st.h"
+#include "screen.h"        /* SCREEN_ROW_BYTES — used by the shared cookie-cut pass below */
 
 /* XBIOS 38 (os.s): run func in supervisor, return to the caller's mode. Declared here as the ONE source
  * for the STE driver + self-test (both reach the supervisor-only 0xFFFF8Axx page through it). */
@@ -70,6 +71,10 @@ extern long Supexec(long (*func)(void));
 #define BLT_LOP_OR        0x7                  /* dst = src OR dst   (the cookie-cut PAINT pass) */
 #define BLT_LOP_ONE       0xF
 
+/* color_pairs table stride: one colour's 4-plane fill = 4 words = 8 bytes (blit.c reaches it as `<<3`).
+ * ONE definition shared by the colour engine + its sweep (was duplicated in both). */
+#define OBJSH_COLOR_STRIDE   8
+
 /* ---- typed register accessors (supervisor only) ---- */
 #define BLT_W(reg)   (*(volatile uint16_t *)(reg))
 #define BLT_L(reg)   (*(volatile uint32_t *)(reg))
@@ -114,6 +119,16 @@ void rm_blit_objshift2_dispatch(uint8_t *dst, uint32_t dst_off, const uint8_t *s
  * place (the F10 asset reload), or the cache would serve stale bitmaps. */
 void rm_blit_objshift2_cache_flush(void);
 
+/* Colour-indexed pass-1 engine (src/blitter_objshift.c): same 2-pass cookie-cut, 4-word mask + colour
+ * fill. Blitter path (BASE family, 0 = CPU hybrid), the runtime dispatch, and the reload cache flush. */
+int rm_blit_objshift_blitter(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                             uint16_t x, uint16_t color, uint16_t rows_m1, int16_t stride,
+                             const uint8_t *color_pairs, int base_cells);
+void rm_blit_objshift_dispatch(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
+                               uint16_t x, uint16_t color, uint16_t rows_m1, int16_t stride,
+                               const uint8_t *color_pairs, int base_cells);
+void rm_blit_objshift_cache_flush(void);
+
 /* Full-sweep proof (GAME_STE_SWEEP build): run rm_blit_objshift2_blitter vs the CPU engine over the
  * objshift2 case space; return a framebuffer encoding per-case results (see src/blitter_sweep.c) and the
  * total mismatch count. */
@@ -122,5 +137,29 @@ const uint8_t *blitter_sweep(long *mismatch_out);
 /* Run one blitter pass to completion (HOG mode) from the current supervisor context. See src/blitter.c
  * for the HOG-vs-shared justification. */
 void blit_run(const BlitPass *p);
+
+/* The shared cookie-cut pass both fine-x engines fire: one aligned (skew=0) blit over an INTERLEAVED
+ * pre-shifted bitmap (`nwords` = 4 planes * ncols words/row, contiguous), all 4 planes at once, walking
+ * UP one scanline per row (negative dst_y_inc) to match the CPU engines' bottom-up draw. col0_bottom is
+ * the first-drawn (bottom) row's col0; lop = AND (mask pass) or OR (data pass). */
+static inline void blit_ste_cookiecut_pass(uint8_t *col0_bottom, const uint16_t *src_bm,
+                                           int nwords, int rows, uint8_t lop) {
+    BlitPass pass;
+    pass.src_addr  = (uint32_t)src_bm;
+    pass.src_x_inc = 2;
+    pass.src_y_inc = 2;                                     /* tightly packed nwords words/row */
+    pass.dst_addr  = (uint32_t)col0_bottom;
+    pass.dst_x_inc = 2;                                     /* contiguous interleaved words */
+    pass.dst_y_inc = -(int16_t)(SCREEN_ROW_BYTES + 2 * (nwords - 1));   /* one scanline UP, back to col0 */
+    pass.endmask1  = 0xFFFF;
+    pass.endmask2  = 0xFFFF;
+    pass.endmask3  = 0xFFFF;
+    pass.x_count   = (uint16_t)nwords;
+    pass.y_count   = (uint16_t)rows;
+    pass.hop       = BLT_HOP_SRC;
+    pass.lop       = lop;
+    pass.skew_ctl  = 0;
+    blit_run(&pass);
+}
 
 #endif /* RM_BLITTER_H */

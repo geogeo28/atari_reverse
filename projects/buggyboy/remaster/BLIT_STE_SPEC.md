@@ -227,3 +227,59 @@ re-materialises the slot (verified — the full sweep stays 0-XOR with the cache
 4. **Static boot tables (vs the on-demand cache) — OPTIONAL.** The cache already reaches the `nomat`
    ceiling on repeated frames; precomputing all 16 phases at boot would only help the first appearance of
    each sprite (cold-cache frames) at a large RAM cost. Not worth it unless cold frames measure badly.
+
+## 8. Slice 4 — the colour-indexed engine: recipe PROVEN, but NOT routed (the cache's driving wall)
+
+**The recipe (byte-exact, `src/blitter_objshift.c`).** The colour-indexed pass 1 (`rm_blit_objshift`,
+~25 % of the gate) is the SAME cache-keyed pre-shift + 2-pass cookie-cut, with three differences from
+objshift2: the source is 4-plane (words A,B,C,D per 8-byte cell), the show mask is `~(A|B|C)&D`, and each
+plane's pixels are gated by a per-plane **colour fill** from `color_pairs[colour]`. **No third pass** — the
+fill is composited into the OR-data at materialise time; plane 3 (D) additionally masks its pixels by `~m`
+(the engine's `is_last` special). The per-column values are the exact algebraic reduction of the CPU
+engine's sequential AND-then-OR straddle (a column is written by cell j-1's col1 half then cell j's col0
+half):
+```
+net_mask[j]   = m_col1[j-1] & m_col0[j]
+net_data_p[j] = (pix_lo_p[j-1] & m_col0[j]) | pix_hi_p[j]      (absent neighbour → 0xFFFF mask seed / 0 px)
+```
+where a cell's half is `m = (rotl32(0xFFFF0000|mask16, shl))`'s high/low word and `pix = (word_p<<shl) &
+fill_p`. **Proven** over the full objshift case space (base_cells 1/2 × fine_x 0..15 × 12 columns × 4
+(colour,rows_m1,stride) tuples = 1536 cases): `run_ste_sweep.py` → **704 BASE cases blitter-drawn, 0
+mismatch** vs the real `rm_blit_objshift`; a dropped plane-3 `~mask` mutation fails 297 cases.
+
+**Why it is NOT routed — the on-demand cache hits a wall on driving.** Cache hit rates (250-frame
+autodrive, counters at the SCREEN.BIN tail):
+
+| scene | objshift2 hit | objshift (colour) hit |
+|---|---|---|
+| gate (idle) | 1500/1506 = **100 %** | 1500/1506 = **100 %** |
+| driving (throttle) | 54/60 = 90 % (but only 0.24 blits/frame) | 128/1420 = **9 %** |
+
+On DRIVING the colour engine issues ~5.7 blits/frame and **misses 91 %** — roadside objects change
+fine-x / scale (rows) / colour every frame, so the key never repeats. Each miss pays the expensive 4-word
+materialise, and routing it **REGRESSES the race ~15 %** (leg-0 driving 7.06 → 8.13 vbl). No on-demand-cache
+policy escapes this: not materialising on a miss leaves the cache empty (0 % hit, no win); materialising on
+a miss is pure overhead when the sprite never recurs. objshift2 escaped only because it issues almost no
+blits while driving (0.24/frame). **So the colour engine ships byte-exact but on the CPU path**
+(`-DRM_STE_OBJSH_ROUTE` opts it back in for experimentation); the shipping STE build routes objshift2 only.
+
+**The driving win needs the DATA, not the engine: boot pre-shift tables.** Eliminating the per-frame
+materialise (precompute the `(mask,data)` phases from the static `arena.gfx` at load) is the ONLY way the
+colour engine wins driving — the same conclusion slice 3 reached, now the binding constraint. This is the
+deferred sprite-layout work (§3's A2 note): the pre-shift crosses cell boundaries, so it must key on the
+sprite/subcell structure (`OBJSH2P_SUBCELL_S`), not a flat arena sweep.
+
+**Combined RAM (both caches, STE build):** objshift2 `128 × ~2.75 KB ≈ 356 KB` + objshift `96 ×
+~2.05 KB ≈ 197 KB` = **~553 KB** static BSS. Fits a 1 MB STE (the honest minimum) with headroom; a 512 KB
+STE needs both slot counts roughly halved (~277 KB). The colour cache is unused while it stays on the CPU
+path, so a shipping build that never opts it in can drop it — but it is kept compiled so the sweep pins it.
+
+## 9. Slice 5 — go/no-go (revised by the slice-4 finding)
+
+1. **Boot pre-shift tables — GO, the gating item.** Without them neither the colour engine (driving) nor
+   objshift2's cold frames improve. This is the real remaining lever and it unblocks everything below.
+2. **Colour engine routing — GATED on the tables.** Re-route `rm_blit_objshift` once the tables remove the
+   materialise; re-measure driving (must not regress) before shipping.
+3. **Blitter-side clip (both engines) — GO after the tables** (endmask1/3), extend the sweep to keep the
+   currently-declined clip cases 0-XOR; CPU-hybrid any case the endmask can't reproduce.
+4. **objsprite engine (the third fine-x blitter) — LOWER priority**; same recipe, cold on the gate.
