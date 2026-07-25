@@ -1,13 +1,15 @@
-/* game_frame.h — the prefix-arena assembly constants shared by game_main.c (the playable frame) and
- * bench_main.c (the per-stage cycle bench). The object-list pass-split constants (GOBJ_SPRITE_LAST,
- * GOBJ_D6_INIT, ...) moved into include/game.h alongside rm_draw_frame, which now owns the pass split;
- * what stays here is the buf_a anim-word mirror layout + the marker-decay arena size the prefix
- * asset-bundle setup needs. */
+/* game_frame.h — what is left of the shell/bench assembly constants after three hoists into
+ * include/game.h: the object-list pass split moved there with rm_draw_frame, and the anim-word mirror
+ * offsets moved there with rm_bind_gobj_prefix_assets, which now owns the whole prefix bundle.
+ *
+ * ONE constant remains, and only render/atari/bench_main.c uses it — the bench deliberately gives the
+ * prefix a SEPARATE decay arena (it stages one frozen frame and never arms a decay) where the shell
+ * must alias it onto the dispatcher's grid. A real shell wants rm_ring_decay_base(), not this. */
 #ifndef RM_GAME_FRAME_H
 #define RM_GAME_FRAME_H
 
-#define GOBJ_ANIM_BUF_OFF1 0xd70     /* buf_a + this = anim_word mirror 1 (read as a record by draws) */
-#define GOBJ_ANIM_BUF_OFF2 0x1250    /* buf_a + this = anim_word mirror 2 */
+/* The anim-word mirror offsets moved to include/game.h (RM_GOBJ_ANIM_MIRROR1_OFF /
+ * RM_GOBJ_ANIM_MIRROR2_OFF) when rm_bind_gobj_prefix_assets took over the binding. */
 
 #define GOBJ_MARKER_RECS_BYTES 0x400 /* the marker-decay record arena the prefix mutates */
 

@@ -193,8 +193,10 @@ A_anim_word_tbl = 0x17ec8                           # word table -> anim_word, i
 A_anim_word = 0x18c74                               # current anim word (mirrored into buf_a)
 A_anim_coloridx_tbl = 0x17ee8                       # word table -> color_pairs offset (<<3)
 A_anim_color = 0x17f08                              # current 8-byte (2-long) animated colour pair
-GOBJ_ANIM_BUF_OFF1 = 0xd70                          # buf_a + this = anim_word mirror 1
-GOBJ_ANIM_BUF_OFF2 = 0x1250                         # buf_a + this = anim_word mirror 2
+# buf_a + these = the two anim_word mirrors; mirrors game.h's RM_GOBJ_ANIM_MIRROR*_OFF, pinned equal
+# by test_game_fixture (the C binder rm_bind_gobj_prefix_assets applies them).
+GOBJ_ANIM_BUF_OFF1 = 0xd70
+GOBJ_ANIM_BUF_OFF2 = 0x1250
 MARKER_RECS_BYTES = 0x340                           # covers the 14-record decay slot (+ signed offset window)
 
 # ---- player physics (game_update sections 3,4,5,7,8,9,10) globals + tables (mirror addrs.h) ----

@@ -76,7 +76,6 @@
 #include "screen.h"
 #include "st.h"              /* be16/wr16/be32/wr32 for the leg-start palette flash */
 #include "game_fixture.h"
-#include "game_frame.h"
 #ifdef RM_BLITTER
 #include "blitter.h"          /* unified ST/STE binary (PERF30 C4): boot-probe + bind the objshift2 route */
 static int g_have_blitter;    /* set once at boot: a blitter is present and the objshift2 route is bound to it */
@@ -1431,14 +1430,13 @@ void main(void) {
      * the get-ready flash reads pfx.anim_counter during the FIRST leg select, before any start_leg, so
      * it must start at 0 to match the original's zero-at-boot A_anim_counter (see op_flash_frame). */
     GobjPrefixState pfx = {0};
-    const GobjPrefixAssets pfx_assets = {
-        .anim_word_tbl = low + OBJ_LOW_ANIM_WORD_TBL,
-        .anim_coloridx_tbl = low + OBJ_LOW_ANIM_COLORIDX, .color_pairs = low + OBJ_LOW_COLOR_PAIRS,
-        /* marker_recs IS the dispatcher's flag grid, at the original's decay base; anim_color aliases
-         * the HUD's fuel mask. Both are aliases the original gets for free from one flat image. */
-        .marker_recs = rm_ring_decay_base(ring_st), .anim_color = fuel_mask_ram,
-        .anim_mirror1 = buf_a_ram + GOBJ_ANIM_BUF_OFF1, .anim_mirror2 = buf_a_ram + GOBJ_ANIM_BUF_OFF2,
-    };
+    /* Bound by the SHARED binder (src/gameplay.c), not by hand: it owns every alias in this bundle, so
+     * the equivalence harness cannot bind them differently — which is how the dead kicked-object
+     * animation stayed invisible. The three table pointers are ours to resolve from the obj-low blob. */
+    GobjPrefixAssets pfx_assets = {0};
+    rm_bind_gobj_prefix_assets(&pfx_assets, low + OBJ_LOW_ANIM_WORD_TBL,
+                               low + OBJ_LOW_ANIM_COLORIDX, low + OBJ_LOW_COLOR_PAIRS,
+                               ring_st, buf_a_ram, hud_assets.fuel_mask);
     const GroundAssets ground_assets = {
         .col_tbl = low + OBJ_LOW_GROUND_COL, .band_records = low + OBJ_LOW_GROUND_BAND,
         .color_pairs = low + OBJ_LOW_COLOR_PAIRS,

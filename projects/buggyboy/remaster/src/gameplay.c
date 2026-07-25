@@ -21,6 +21,19 @@
 #define GOBJ_FLAG_SEQ_CAP     5
 #define GOBJ_COLORIDX_SHIFT   3      /* anim colour-index << this = color_pairs byte offset */
 
+void rm_bind_gobj_prefix_assets(GobjPrefixAssets *out,
+                                const uint8_t *anim_word_tbl, const uint8_t *anim_coloridx_tbl,
+                                const uint8_t *color_pairs,
+                                uint8_t *ring_st, uint8_t *buf_a, uint8_t *fuel_mask) {
+    out->anim_word_tbl = anim_word_tbl;
+    out->anim_coloridx_tbl = anim_coloridx_tbl;
+    out->color_pairs = color_pairs;
+    out->marker_recs = rm_ring_decay_base(ring_st);   /* the decay arena IS the dispatcher's grid */
+    out->anim_color = fuel_mask;                      /* ...and the animated colour IS the fuel mask */
+    out->anim_mirror1 = buf_a + RM_GOBJ_ANIM_MIRROR1_OFF;
+    out->anim_mirror2 = buf_a + RM_GOBJ_ANIM_MIRROR2_OFF;
+}
+
 void rm_gobj_prefix(GobjPrefixState *s, const GobjPrefixAssets *a) {
     /* marker-decay: clear this frame's 14-record slot, count down, retire the slot when exhausted. */
     if (s->marker_active != 0) {

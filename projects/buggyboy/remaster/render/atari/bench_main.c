@@ -91,7 +91,7 @@ static const GobjPrefixAssets pfx_assets = {
     .anim_coloridx_tbl = fixture_obj_low + OBJ_LOW_ANIM_COLORIDX,
     .color_pairs = fixture_obj_low + OBJ_LOW_COLOR_PAIRS,
     .marker_recs = gobj_scratch, .anim_color = fuel_mask_ram,
-    .anim_mirror1 = buf_a_ram + GOBJ_ANIM_BUF_OFF1, .anim_mirror2 = buf_a_ram + GOBJ_ANIM_BUF_OFF2,
+    .anim_mirror1 = buf_a_ram + RM_GOBJ_ANIM_MIRROR1_OFF, .anim_mirror2 = buf_a_ram + RM_GOBJ_ANIM_MIRROR2_OFF,
 };
 static GroundState ground;         /* view + markers derived from the reset state / ring (bench_stage_assets) */
 static const GroundAssets ground_assets = {

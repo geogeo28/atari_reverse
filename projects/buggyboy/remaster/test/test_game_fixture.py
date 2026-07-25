@@ -129,8 +129,22 @@ def test_marker_decay_arena_padding_covers_the_prefix_walk():
         "game_main.c no longer sizes the ring block with RM_RING_ST_BLOCK_BYTES"
     assert re.search(r"\*const ring_st = ring_st_block \+ RM_RING_DECAY_BIAS", game), \
         "game_main.c no longer places the grid at the decay bias"
-    assert re.search(r"\.marker_recs = rm_ring_decay_base\(ring_st\)", game), \
-        "game_main.c no longer hands the prefix rm_ring_decay_base(ring_st)"
+    # The shell must not hand-build this bundle at all: rm_bind_gobj_prefix_assets (src/gameplay.c) owns
+    # every alias in it, and the equivalence harness calls the SAME binder, so the two cannot diverge.
+    # Pin the ARGUMENTS, not just the call: the binder derives marker_recs and the mirrors, but
+    # anim_color is a pass-through, so a shell that handed the prefix a private colour buffer would
+    # still "use the binder" while silently breaking the HUD fuel-mask alias on hardware.
+    assert re.search(r"rm_bind_gobj_prefix_assets\(&pfx_assets,[\s\S]{0,240}?"
+                     r"ring_st,\s*buf_a_ram,\s*hud_assets\.fuel_mask\)", game), \
+        ("game_main.c must bind the prefix assets through rm_bind_gobj_prefix_assets, passing the "
+         "dispatcher's grid, buf_a, and the HUD's own fuel_mask (the animated-colour alias)")
+    assert not re.search(r"\.marker_recs\s*=", game), \
+        "game_main.c binds marker_recs by hand again — it must go through rm_bind_gobj_prefix_assets"
+
+    # The binder applies the two anim-word mirror offsets; adapter.py mirrors them for the prefix-slice
+    # comparator, so pin the pair across the language boundary (CLAUDE.md §5).
+    assert adapter.GOBJ_ANIM_BUF_OFF1 == _define(game_h, "RM_GOBJ_ANIM_MIRROR1_OFF")
+    assert adapter.GOBJ_ANIM_BUF_OFF2 == _define(game_h, "RM_GOBJ_ANIM_MIRROR2_OFF")
 
 
 def test_marker_decay_seed_matches_the_engine_constants():

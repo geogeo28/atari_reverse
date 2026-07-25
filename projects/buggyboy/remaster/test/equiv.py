@@ -123,6 +123,8 @@ def _lib():
         P(adapter.SpriteState), P(adapter.GroundState), P(adapter.ObjListCtx), P(adapter.HudState),
         P(adapter.RoadInput), u8p]
     lib.rm_apply_player.restype = None
+    lib.rm_bind_gobj_prefix_assets.argtypes = [P(adapter.GobjPrefixAssets)] + [u8p] * 6
+    lib.rm_bind_gobj_prefix_assets.restype = None
     lib.rm_gobj_hud_view.argtypes = [P(adapter.GobjPrefixState), P(adapter.HudState)]
     lib.rm_gobj_hud_view.restype = None
     lib.rm_draw_frame.argtypes = [P(adapter.RmScene), P(adapter.Framebuffer)]
@@ -870,10 +872,13 @@ def compare_gobj_prefix(lib, image):
     def at(addr):
         return ctypes.cast(ctypes.byref(cbuf, addr), ctypes.POINTER(ctypes.c_uint8))
 
-    assets = adapter.GobjPrefixAssets(
-        at(adapter.A_anim_word_tbl), at(adapter.A_anim_coloridx_tbl), at(adapter.A_color_pairs),
-        at(adapter.A_marker_decay_base), at(adapter.A_anim_color),
-        at(buf_a + adapter.GOBJ_ANIM_BUF_OFF1), at(buf_a + adapter.GOBJ_ANIM_BUF_OFF2))
+    # Bound by the SHELL's binder, like _ComposedScene — the aliasing in this bundle has exactly one
+    # definition in the tree. Passing the grid base (A_ring_base) makes the binder derive the decay base
+    # itself, which is A_marker_decay_base (pinned in test_game_fixture).
+    assets = adapter.GobjPrefixAssets()
+    lib.rm_bind_gobj_prefix_assets(
+        ctypes.byref(assets), at(adapter.A_anim_word_tbl), at(adapter.A_anim_coloridx_tbl),
+        at(adapter.A_color_pairs), at(adapter.A_ring_base), at(buf_a), at(adapter.A_anim_color))
     lib.rm_gobj_prefix(ctypes.byref(s), ctypes.byref(assets))
 
     # Write the remaster state scalars back into `cand` so we can compare regions uniformly.
@@ -1750,11 +1755,17 @@ class _ComposedScene:
         # const asset bundles — pointers into self.img at the real addresses (see class doc). The HUD's
         # fuel_mask and the prefix's anim_color alias in the original (both 0x17f08); pointing both at
         # img[0x17f08] reproduces the alias automatically.
-        self.pfx_assets = adapter.GobjPrefixAssets(
-            at(adapter.A_anim_word_tbl), at(adapter.A_anim_coloridx_tbl), at(adapter.A_color_pairs),
-            ctypes.cast(self._ring_st_block, ctypes.POINTER(ctypes.c_uint8)),   # = rm_ring_decay_base
-            at(adapter.A_anim_color),
-            at(self.buf_a + adapter.GOBJ_ANIM_BUF_OFF1), at(self.buf_a + adapter.GOBJ_ANIM_BUF_OFF2))
+        # Bound by the SHELL'S OWN BINDER (rm_bind_gobj_prefix_assets), not rebuilt here: this bundle is
+        # where every alias lives (decay arena == the dispatcher's grid, animated colour == the fuel
+        # mask, the two buf_a mirrors), and a harness that binds them independently is a harness that
+        # cannot see the shell binding them wrong. We supply only the three table pointers, which are
+        # base-relative and therefore genuinely ours (the shell resolves them from its obj-low blob).
+        self.pfx_assets = adapter.GobjPrefixAssets()
+        self.lib.rm_bind_gobj_prefix_assets(
+            ctypes.byref(self.pfx_assets), at(adapter.A_anim_word_tbl),
+            at(adapter.A_anim_coloridx_tbl), at(adapter.A_color_pairs),
+            self.ring_st,
+            at(self.buf_a), at(adapter.A_anim_color))
         self.ground_assets = adapter.GroundAssets(
             at(adapter.A_ground_col_tbl), at(adapter.A_ground_band_records), at(adapter.A_color_pairs))
         self.sprite_assets = adapter.SpriteAssets(

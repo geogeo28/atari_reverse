@@ -574,9 +574,35 @@ neither the `include/` nor the `shim_include/` wildcard covers.
 
 **What this does and does not buy.** It catches "the shell does not compile / does not link" — a real
 failure mode that reached `origin` twice. It would NOT have caught any of the four play-test bugs above:
-those were all semantically valid C. Executing the shell's bindings host-side is a different job, and the
-answer there is to keep hoisting them into shared code (`rm_draw_frame`, then the ring/decay geometry in
-`game.h`), not to compile `game_main.c` for the host.
+those were all semantically valid C. Executing the shell's bindings host-side is a different job — the
+next section.
+
+### Binding hoists: making the harness execute the SHELL's bindings
+
+The bug class the play-test found is not "does it compile" but "does the shell wire the arenas the way
+the original did". `make test` cannot answer that by compiling `game_main.c` for the host (it is full of
+TOS seams); the answer is to move each binding DECISION into shared code that the shell and the harness
+both call, so a wrong decision is wrong on both sides and the composed-frame differential sees it.
+
+Three hoists so far, in increasing order of what they retire:
+
+1. **`rm_draw_frame`** (`src/frame.c`) — the per-frame composition. The shell keeps only buffer
+   selection and `Setscreen`.
+2. **The ring/decay geometry** (`include/game.h`: `RM_RING_DECAY_BIAS`, `RM_RING_ST_BLOCK_BYTES`,
+   `rm_ring_decay_base()`) — the shape of the aliasing, so both sides allocate one padded block.
+3. **`rm_bind_gobj_prefix_assets`** (`src/gameplay.c`) — the whole bundle. The caller still resolves the
+   three const table pointers (only it knows its own base: the shell walks its obj-low blob, the harness
+   points into the 68k image — they agree because `OBJ_LOW_BASE + OBJ_LOW_X == A_X`), but every ALIAS and
+   OFFSET is applied in one place: decay arena → the dispatcher's grid, animated colour → the HUD's
+   fuel mask, the two `buf_a` anim-word mirrors. `_ComposedScene` no longer builds this bundle at all.
+   Mutation-verified: dropping the bias inside the binder now fails four tests, because the harness runs
+   the shell's own binding code.
+
+What is left, and the reason it is bigger than it looks: the other bundles (`HudAssets` most of all)
+carry their offsets in the GENERATED `game_fixture.h` — `OBJ_LOW_*`, `ARENA_*_OFF`, `CIDX_ZERO_OFF` —
+which `src/` would have to include to bind them, pulling every baked array into the host `.so` as well.
+Hoisting those cleanly needs `gen_game_fixture.py` split into a defines header and an arrays header.
+Until then, bind bundle-by-bundle, starting with whichever one holds an alias.
 
 ### Joystick support (port 1) — and the supervisor-mode gotcha
 

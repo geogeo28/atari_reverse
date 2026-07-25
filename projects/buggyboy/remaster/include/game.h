@@ -697,9 +697,29 @@ typedef struct {
     const uint8_t *color_pairs;        /* palette source (8 bytes copied to anim_color) */
     uint8_t       *marker_recs;        /* marker-decay record arena (base; marker_off indexes it) */
     uint8_t       *anim_color;         /* out: 8-byte animated colour pair */
-    uint8_t       *anim_mirror1;       /* out: buf_a + 0xd70 anim-word mirror */
-    uint8_t       *anim_mirror2;       /* out: buf_a + 0x1250 anim-word mirror */
+    uint8_t       *anim_mirror1;       /* out: buf_a + RM_GOBJ_ANIM_MIRROR1_OFF (below) */
+    uint8_t       *anim_mirror2;       /* out: buf_a + RM_GOBJ_ANIM_MIRROR2_OFF */
 } GobjPrefixAssets;
+
+/* The two buf_a words the prefix mirrors the animated colour word into (the original writes it to three
+ * places, and later draws read the mirrors back as record fields). */
+#define RM_GOBJ_ANIM_MIRROR1_OFF 0xd70
+#define RM_GOBJ_ANIM_MIRROR2_OFF 0x1250
+
+/* Bind the prefix's asset bundle — the ONE place the shell and the equivalence harness agree on it.
+ *
+ * The three const table pointers stay the caller's to resolve (the shell walks its obj-low blob, the
+ * harness points into the 68k image), because only the caller knows its own base. Everything ALIASED or
+ * OFFSET is decided here instead: the decay arena IS the dispatcher's flag grid at its biased base, the
+ * animated colour IS the HUD's fuel-mask table, and the two mirrors are fixed offsets into buf_a. Every
+ * one of those is an alias the original gets for free from a single flat image and a port has to
+ * re-establish by hand — deciding them per-caller is what left the kicked-object animation writing to a
+ * dead buffer, AND what stopped the composed-frame differential from noticing (see PORTING.md, "The
+ * shell-binding trap"). */
+void rm_bind_gobj_prefix_assets(GobjPrefixAssets *out,
+                                const uint8_t *anim_word_tbl, const uint8_t *anim_coloridx_tbl,
+                                const uint8_t *color_pairs,
+                                uint8_t *ring_st, uint8_t *buf_a, uint8_t *fuel_mask);
 
 /* Advance the per-frame object state (marker decay, colour animation, bonus flag). No framebuffer
  * writes. */

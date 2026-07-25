@@ -382,6 +382,14 @@ a ~21 s suite; the m68k toolchain was already a hard prerequisite via `bench.elf
 `game_main.c` now fails `make test` at the build step. It catches "does not compile / does not link" —
 NOT the binding class above, which stays the job of hoisting bindings into shared code.
 
+**Binding hoist (the L3 job gap #2 does NOT cover).** `rm_bind_gobj_prefix_assets` (`src/gameplay.c`)
+now owns every alias in the prefix bundle — decay arena → the dispatcher's grid, animated colour → the
+HUD fuel mask, the two `buf_a` mirrors — and BOTH the shell and `equiv._ComposedScene` call it, so the
+harness executes the shell's own binding code rather than a re-implementation of it. Mutation-verified:
+dropping the bias inside the binder fails four tests. The remaining bundles (`HudAssets` especially)
+carry their offsets in the generated `game_fixture.h`, so hoisting them needs that generator split into
+defines vs arrays first — see `PORTING.md`, "Binding hoists".
+
 **Residuals on #1, recorded rather than fixed blind** (both found by the pre-commit review, neither a
 regression — before the fix the decay wrote nowhere at all):
 
