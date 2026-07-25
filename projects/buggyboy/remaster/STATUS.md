@@ -360,11 +360,29 @@ i.e. the old harness was noise, not signal. The decay's grid write itself is ver
 walked `0xff` reaches the right band, high byte, through the pointer the dispatcher is given), so the
 difference is downstream of it.
 
-**Prime suspect is a HARNESS artifact, not a port defect** (raised by the review, not yet confirmed):
-`equiv._ComposedScene.draw` re-serializes the grid from the ring on EVERY frame, while the shell — and
-the original — rewrite it only on a course advance. With the arenas now aliased, that per-frame store
-wipes the prefix's accumulated column clears at the top of each frame, which the reference's in-image
-grid keeps. Worth resolving before reading anything into the 2 frames.
+**Suspect REFUTED, and the effect localised (2026-07-25).** The proposed cause — `_ComposedScene.draw`
+re-serializing the grid every frame where the shell only does so on a course advance — is not it:
+gating the store on the wrap flag leaves the divergence at exactly 2 of 27. What a `marker_off` sweep
+shows instead (frame 0, leg 0, whole-framebuffer diff vs `g_draw_frame`):
+
+| `marker_off` | grid offset | diff | rows |
+|---|---|---|---|
+| none armed | — | **0** | — |
+| `0x00` | the LOW PAD, below row 0 | 109 | 118–136 |
+| `0x08` | row 0 byte 0 | 0 | — |
+| `0x10` | row 0 byte 8 | 263 | 143–167 |
+| `0x14` | row 0 byte 0xc | 528 | 143–167 |
+| `0x20` | row 0 byte 0x18 | 0 | — |
+| `0x2c` | row 1 byte 4 | 0 | — |
+
+Two things follow. **The `0x00` row is residual #2, confirmed empirically**: that offset is the low pad,
+which is `RoadPose.seg_data[12]` in the original — the reference zeroes a far road-slope byte and the
+port writes into inert pad, and the road geometry visibly moves (rows 118–136 is the horizon band).
+**The rest is still unexplained**: for `0x10` the decay writes stay entirely inside the grid, and the
+candidate's and the reference's grids are BYTE-IDENTICAL after both prefixes have run (verified), yet
+263 framebuffer bytes differ. So the cause is downstream of the flag bytes the dispatcher reads, and it
+is offset-dependent — the next step is to bisect the draw stages on a diverging offset rather than
+theorise. The test seeds `0x10`, i.e. one of the diverging cases, deliberately.
 
 It is asserted as `stats["composed_diffs"] == DECAY_KNOWN_DIFFS`, **not** marked `xfail`: a binary xfail
 cannot distinguish "still failing for the documented reason" from "failing because someone unbound the
