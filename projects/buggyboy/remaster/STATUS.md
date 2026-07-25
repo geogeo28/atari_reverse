@@ -609,3 +609,19 @@ primitives (`rr_copy_long`/`rr_fill_pair`), and the per-column call overhead ~do
 (The "~84 ms/frame" this section used to claim was the sum of the four stages benched at the time,
 not the frame: the 2026-07-22 full-frame bench above put the real figure at 203 ms — 299 ms before
 the per-frame clear was dropped.)
+
+## Known issues (play-test, 2026-07-25)
+
+- **In-race mini-map (top-left dashboard graphic) renders a BLACK background instead of the
+  original's sky.** NOT a palette seam — the hardware palette regs are byte-identical
+  original-vs-remaster at the same in-race moment (verified 0xFF8240–5E dumps, NORTH + EAST). It is
+  a pixel difference in the **runtime `init_leg_dash` rebuild path** (attract `op_rebuild_dash` +
+  leg-select→race), which the baked goldens / `make test` / autodrive never exercise (they use a
+  pre-staged `arena.gfx`). The runtime rebuild writes `gfx+0x11c20 = ffff0000…` where the
+  baked/correct bytes are `0000ffff…` (one word off); `cell_dashboard`'s masked blit then
+  composites black over the remaster's index-0 top-left where the original shows sky. NOTE:
+  recreate's host `g_init_leg_dash` produces the SAME `ffff0000` (so the differential is green and
+  a naive "fix" would break it) — the divergence is between the runtime rebuild + top-strip
+  compositing and the original's actual race-time behavior. Fix TBD: compare the original's
+  `init_leg_dash` @0x12d38 output and the buf_c→screen compositing byte-for-byte in Hatari
+  (memory-snapshot diff), then correct the remaster's runtime path faithfully.

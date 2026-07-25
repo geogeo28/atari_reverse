@@ -874,11 +874,37 @@ static void install_sound(SoundDriver *snd) {
     Supexec(vbl_install_super);
 }
 
-/* Detach the pump on exit (mirror of install_sound, like kbd_remove mirrors kbd_install): park the driver
- * so a final in-flight VBL is a no-op, then restore the TOS VBL queue — BEFORE main() Pterms, so TOS never
- * calls vbl_sound in the freed TPA (a random-timed crash otherwise). snd_ptr stays valid: the park below
- * dereferences it, and the queue is still live until the Supexec detaches it. */
+/* A one-byte Dosound program: `0xff 0x00` = "end, sound stays as last set". Handing this to XBIOS Dosound
+ * makes TOS drop any in-flight Dosound list AND its 0x81-installed per-frame modulation (the engine idle's
+ * sweep) so nothing keeps poking the YM after we detach — see uninstall_sound. */
+#define DOSOUND_END      0xff
+#define DOSOUND_END_STOP 0x00
+static const uint8_t dosound_stop[] = { DOSOUND_END, DOSOUND_END_STOP };
+
+/* One final silent PSG frame, run under Supexec (the YM ports are supervisor). rm_pause_silence has already
+ * driven the REFRESH state to silence — music off, envelope generator off, effect off, and (via TURNOFF's
+ * music-word store) all three voice volume staging bytes zeroed — so rm_refresh now emits vols A/B/C = 0 and
+ * reg 7 = SND_MIXER_BASE. Writing that stream latches the silence onto the chip; reg 7's port-A/B direction
+ * bits are exactly the ones the pump writes every frame (SND_MIXER_BASE), so the ST hardware port A drives
+ * is left as the driver leaves it. */
+static long snd_silence_super(void) {
+    uint8_t regs[PSG_WRITE_CAP], vals[PSG_WRITE_CAP];
+    uint32_t n = rm_refresh((SoundState *)&snd_ptr->state, regs, vals, PSG_WRITE_CAP);
+    for (uint32_t i = 0; i < n; i++) { PSG_SELECT = regs[i]; PSG_WRITE = vals[i]; }
+    return 0;
+}
+
+/* Detach the pump on exit (mirror of install_sound, like kbd_remove mirrors kbd_install): first SILENCE the
+ * chip — the pump only stops REFRESHING the PSG, it never clears the last note's latched registers, so
+ * without this the last tone (or the engine-idle envelope) drones on the desktop after Q. Silence both
+ * sound paths: the REFRESH driver via its own rm_pause_silence + one flushed refresh frame, and any TOS
+ * Dosound (the countdown/idle path) via a Dosound stop program. THEN park the driver so a final in-flight
+ * VBL is a no-op and restore the TOS VBL queue — BEFORE main() Pterms, so TOS never calls vbl_sound in the
+ * freed TPA (a random-timed crash otherwise). snd_ptr stays valid throughout. */
 static void uninstall_sound(void) {
+    rm_pause_silence(snd_ptr);            /* driver's own silence: music + EG + fx off, all voice volumes 0 */
+    Supexec(snd_silence_super);           /* flush one refresh frame so the chip latches the silence */
+    Dosound(dosound_stop);                /* stop any in-flight TOS Dosound list + its per-frame modulation */
     snd_ptr->vbl_enable = RM_VBL_PARKED;
     Supexec(vbl_uninstall_super);
 }
