@@ -1466,3 +1466,30 @@ notes). **The faithful frame stands at gate 122.52 ms (~8.2 fps) — from 203 ms
 campaign's start — with the original binary's own gate at 110 ms.** What remains is Tier-C
 territory requiring sign-off: C1 (25 fps vsync-locked cadence — pixel-faithful, the honest
 presentation), C4 (STE blitter build — byte-faithful, separate binary), C2/C3 (fidelity trades).
+
+### C1 LANDED — vsync-locked presentation cadence (pixel-faithful). 2026-07-24
+
+A free-running 50 Hz `vbl_count` (bumped at the top of the VBL sound pump, before its early-outs)
+drives an even-vblank flip lock in `show_surface`: each present quantizes onto a fixed
+`PRESENT_QUANTUM_VBLS = 2` grid, so consecutive frames land 2/4/6… vblanks apart (25/12.5/8.3 fps
+steps) instead of free-running. Measured over a 249-present headless autodrive (Hatari,
+emulated-time-exact): baseline jitters 5/6/7/8 vblanks per present (98/249 odd-span, 39%); locked
+collapses to 6/8 (153×6 + 93×8; 2/249 odd = an instrument artifact — `present_target` is even by
+construction). Mean 6.59 → 6.99 vblanks: the ~0.4-vblank cost of rounding heavy frames up to the
+next even boundary (the lock only ever waits).
+
+**Honesty notes:** at the 122.5 ms gate the real cadence is 6/8 vblanks — the deliverable is the
+LOCK (regular pacing), not 25 fps compute; 2-vblank presents need <40 ms frames, which no faithful
+stock-ST frame reaches. And tearing was NEVER present — Setscreen's base poke latches at the next
+vblank on the shifter, before and after; C1's fix is pacing jitter, not tearing.
+
+**Design:** the wait is the shell's plain `Vsync()` (services the VBL pump + IKBD while idling; no
+busy-poll/halt needed — nothing to overlap). `vbl_count` is single-writer (VBL hook) /
+single-reader (main line), one indivisible 68000 op each side — no lock. Liveness is fenced by
+ordering (install_sound before the first show_surface; the exit path flips raw after uninstall) and
+commented at the declaration. No game-logic skew: every game clock is a per-frame counter (bonus
+time, TIME entry, crash timer) — nothing reads a vblank/wall clock, so presentation timing cannot
+change what is computed. `GAME_PRESENT_FREERUN` compiles the lock out (the baseline-measurement
+build); `GAME_CADENCE_TRACE=N` is the scratch cadence instrument (SCREEN.BIN dump, runner in the
+session scratchpad). Shell-local: game_main.c only. Pixels: goldens MATCH ×5, `make test` 708,
+flow trace unchanged at 19 records, psg_write signature confirms sound alive under the lock.
