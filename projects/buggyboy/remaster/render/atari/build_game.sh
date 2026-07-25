@@ -114,6 +114,14 @@ m68k-elf-objcopy -O binary "$BUILD/game.elf" "$BUILD/game.bin"
 echo ">> wrap -> GEMDOS .PRG"
 "$PY" "$HERE/mkprg.py" "$BUILD/game.elf" "$BUILD/game.bin" "$BUILD/$PRG"
 
+# GAME_NO_STAGE=1 stops here with the .PRG built but NOT copied to the Hatari drive. `make test`'s build
+# gate sets it: the gate only needs to know the shell compiles and links, and re-staging disk/ on every
+# test run would litter the mounted drive and could rewrite its data files under a running emulator.
+if [ "${GAME_NO_STAGE:-0}" = "1" ]; then
+    ls -l "$BUILD/$PRG"
+    exit 0
+fi
+
 cp "$BUILD/$PRG" "$DISK/$PRG"
 
 # The game reads its own data files at boot (see include/assets.h), so they ship on the disk alongside

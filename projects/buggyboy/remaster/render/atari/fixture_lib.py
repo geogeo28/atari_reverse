@@ -7,6 +7,18 @@ of adapter/equiv/ctypes imports.
 """
 
 
+def write_if_changed(path, text):
+    """Write `text` to `path` only when the content differs, so an unchanged fixture keeps its mtime.
+
+    The generators are re-run unconditionally by build_game.sh / bench_build.sh, so a plain write_text
+    would bump the header's mtime on every build — and every make target that depends on the header
+    (libremaster.so, bench.elf, the on-target build gate) would then be out of date the moment it
+    finished, rebuilding on every `make test` forever. Content-stable writes make those targets truly
+    incremental."""
+    if not (path.exists() and path.read_text() == text):
+        path.write_text(text)
+
+
 def c_array(name, data):
     # aligned(2): the cores read these tables with be16/be32 (word/long moves), which fault on an odd
     # address on the 68000. A plain uint8_t[] has no alignment guarantee, so pin it to an even base.

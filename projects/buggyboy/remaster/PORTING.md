@@ -528,6 +528,56 @@ first course advance). Binding them separately hid it entirely — the same driv
 i.e. the old harness was noise, not signal. That divergence is real, unresolved, and now recorded as a
 strict `xfail` rather than a comment; see `STATUS.md`.
 
+### Harness gap #2 — the on-target build is now a test gate (2026-07-24)
+
+`make test` used to compile the game shell for **nobody**. `render/atari/game_main.c` (1721 lines — every
+asset binding, the frame loop, every TOS seam) is in neither the host `.so` (`SRC` is `src/*.c` only) nor
+`bench.elf` (`bench_build.sh` links `bench_main.c` and a 17-file subset of `src/`), and four `src/` files
+— `frame.c`, `flow.c`, `intermission.c`, `results.c` — are host-compiled but never cross-compiled. The
+only thing that built the shell was `build_game.sh`, which nothing in the gate invoked.
+
+Consequence, twice in one session: a commit landed `game_main.c` using symbols whose header half was
+still uncommitted, so the m68k build was broken **on `origin`** and every test stayed green.
+
+Closed by making the real build part of the gate:
+
+- `make test` now depends on `GATE.PRG` **and** `GATESTE.PRG` — full cross-compile + link + `.PRG` wrap,
+  stock ST and `GAME_STE=1` (which selects different sources and CFLAGS, so without the second build the
+  STE-only sources compile nowhere). ~2 s each; the m68k toolchain was ALREADY a hard prerequisite via
+  `bench.elf`, so this adds no dependency, only ~4 s.
+- Both go through `build_game.sh` rather than restating its flags. A third copy of the cross flags is
+  exactly the drift this gate exists to catch. They build under gate-only names so the shipping
+  `BUGGYBOY.PRG` is never clobbered.
+- `make golden` promotes the existing Hatari end-to-end (5 legs, byte-compared against recreate's ported
+  pipeline) to a named target. Not in `make test` — it needs Hatari and ~20 s — but it is the only check
+  that runs the shipped shell on a 68000.
+
+Mutation-verified: a typo'd constant in `game_main.c` now fails `make test` at the build step, before
+pytest runs.
+
+**The trap adding it exposed: a generated header that is rewritten unconditionally poisons every
+downstream target's incrementality.** `build_game.sh` and `bench_build.sh` both re-run
+`gen_sound_fixture.py` on every invocation, so `build/sound_data.h`'s mtime bumped every build — and
+every target depending on it (`libremaster.so`, `bench.elf`, now the gate `.PRG`s) was out of date the
+moment it finished, rebuilding forever. `bench.elf` had been doing exactly that, unnoticed, because
+nobody times a 2 s step. The fix is at the root, not in the dependency lists: `fixture_lib.write_if_changed()`
+skips the write when the content is identical, so all three generators are content-stable and `make test`
+on an unchanged tree now rebuilds nothing. Reaching for order-only prerequisites instead (the first
+attempt) "works" only by dropping the rebuild coverage that made the dependency worth declaring — the
+review caught it.
+
+Dependency lists for a target built by a *script* are easy to under-declare, and an under-declared gate
+is worth nothing: it certifies a binary it did not rebuild. `GATE_DEPS` therefore lists the generators
+and the harness modules the fixture is baked from (`test/adapter.py` bakes the asset windows — an
+adapter change is precisely what shipped the truncated font fixture), plus `render/atari/*.h`, which
+neither the `include/` nor the `shim_include/` wildcard covers.
+
+**What this does and does not buy.** It catches "the shell does not compile / does not link" — a real
+failure mode that reached `origin` twice. It would NOT have caught any of the four play-test bugs above:
+those were all semantically valid C. Executing the shell's bindings host-side is a different job, and the
+answer there is to keep hoisting them into shared code (`rm_draw_frame`, then the ring/decay geometry in
+`game.h`), not to compile `game_main.c` for the host.
+
 ### Joystick support (port 1) — and the supervisor-mode gotcha
 
 The arcade reads a joystick in port 1 every frame: `read_joystick @0x12110` busy-waits the IKBD ACIA
@@ -711,10 +761,15 @@ right registers get the right values, not the timbre.
 ```bash
 cd ../recreate && make build/libbuggyboy.so   # once: the reference .so the harness drives
 cd ../remaster
-make test                                       # build the candidate .so + run the equivalence suite
+make test                                       # the gate: build the .so + BOTH on-target .PRGs + run the suite
+make gate                                       # just the on-target builds (ST + STE), ~4 s
+make golden                                     # END-TO-END: run the shipped shell in Hatari, 5 legs, ~20 s
 make ref                                        # sanity: recreate's render pipeline is deterministic
-bash render/atari/build.sh && python render/atari/run_hatari.py   # on-target: prints MATCH
 ```
+
+`make test` now cross-compiles AND LINKS the game shell both ways before running the suite — see
+"Harness gap #2" below for why. `make golden` is deliberately NOT part of it (needs Hatari, ~20 s); run
+it before promoting to `main`.
 
 Tests use `../recreate/.venv/bin/python` (numpy/pytest pinned there). `make test` runs `pytest -n auto`.
 

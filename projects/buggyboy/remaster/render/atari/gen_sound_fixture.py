@@ -32,7 +32,7 @@ sys.path.insert(0, str(RECREATE / "oracle"))
 sys.path.insert(0, str(HERE))
 
 from loader import load_image      # noqa: E402
-from fixture_lib import emit_header  # noqa: E402  loader-only shared emit helper (see fixture_lib.py)
+from fixture_lib import emit_header, write_if_changed  # noqa: E402  loader-only shared emit helper (see fixture_lib.py)
 
 PRG = RECREATE.parent / "bin" / "BUGGYBOY.PRG"
 
@@ -72,8 +72,8 @@ def main():
     ], "SND_DOSOUND", dosound)
     build = HERE / "build"
     build.mkdir(exist_ok=True)
-    (build / "sound_data.h").write_text(data_out)
-    (build / "sound_dosound.h").write_text(dosound_out)
+    write_if_changed(build / "sound_data.h", data_out)
+    write_if_changed(build / "sound_dosound.h", dosound_out)
     print(f"wrote {build/'sound_data.h'} (SND_CONST {len(const)} bytes @ SND_STATE {SND_STATE:#x}) "
           f"+ {build/'sound_dosound.h'} (SND_DOSOUND {len(dosound)} bytes)")
 

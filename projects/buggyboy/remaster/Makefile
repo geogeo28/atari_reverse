@@ -53,7 +53,53 @@ $(BENCH_ELF): $(SRC) $(wildcard src/asm/*.S) render/atari/bench_main.c render/at
               $(wildcard render/atari/shim_include/*) $(wildcard include/*.h) $(SOUND_DATA)
 	bash render/atari/bench_build.sh
 
-.PHONY: ref test bench clean
+# --- the on-target BUILD GATE (harness gap #2) ---------------------------------------------------
+# Until this existed, `make test` compiled the game shell for NOBODY: render/atari/game_main.c (1721
+# lines — every asset binding and every TOS seam) is in neither the host .so (SRC is src/*.c) nor
+# bench.elf (bench_build.sh links a 17-file src/ subset), and four more src/ files — frame, flow,
+# intermission, results — are in the host .so but not in bench.elf. build_game.sh did compile all of
+# them; nothing in the gate ever RAN it. A shell that did not compile therefore reached origin twice in
+# one session with the suite green. These targets build the real .PRG (~2 s each; the m68k toolchain is
+# already a hard prerequisite via bench.elf), so a broken shell fails `make test`, not a play-test.
+# (src/render.c stays uncovered — a dead Phase-A stub linked by neither cross build.)
+#
+# They build under gate-only names so the shipping BUGGYBOY.PRG is never clobbered, with GAME_NO_STAGE
+# so they never touch the Hatari drive, and they reuse build_game.sh rather than restating its flags —
+# a third copy of the cross flags would be exactly the kind of drift this gate exists to catch.
+#
+# TWO builds because the stock one cannot reach every source: src/blitter_{selftest,sweep,census}.c are
+# compiled only under their own measurement flags. Those three combine in ONE extra build (they are
+# alternate main() entry points, and the gate only asks whether they compile and link), so between them
+# the two builds cover every .c in the project.
+GATE_PRG      := render/atari/build/GATE.PRG
+GATE_MEAS_PRG := render/atari/build/GATEMEAS.PRG
+# Everything the built .PRG is derived from — including the GENERATORS and the fixture's struct source
+# (test/adapter.py bakes the asset windows), because a stale gate that skips its rebuild is worth
+# nothing. That is not hypothetical: an adapter.py window change is precisely what shipped the truncated
+# font fixture.
+GATE_DEPS := $(SRC) $(STE_SRC) $(wildcard src/asm/*.S) render/atari/game_main.c render/atari/shim.c \
+             render/atari/os.s render/atari/tos.ld render/atari/build_game.sh \
+             render/atari/gen_game_fixture.py render/atari/gen_hud_fixture.py \
+             render/atari/fixture_lib.py render/atari/mkprg.py \
+             test/adapter.py test/equiv.py test/assets_load.py $(RECREATE)/render/render_screen.py \
+             $(wildcard render/atari/shim_include/*) $(wildcard render/atari/*.h) \
+             $(wildcard include/*.h) $(SOUND_DATA) $(CAND) $(RECON)
+
+# ORDER-ONLY chain (the `|` prerequisites): build_game.sh and bench_build.sh share fixed-name
+# intermediates in render/atari/build/ (game_fixture.h, game.elf, game.bin), so two of them running
+# concurrently under `make -j` would clobber each other — and could wrap one build's .bin into the
+# other's .PRG, i.e. a green gate that validated nothing. The chain serialises the three m68k builds
+# without serialising the rest of the Makefile.
+$(GATE_PRG): $(GATE_DEPS) | $(BENCH_ELF)
+	GAME_NO_STAGE=1 GAME_PRG=$(notdir $(GATE_PRG)) bash render/atari/build_game.sh
+
+$(GATE_MEAS_PRG): $(GATE_DEPS) | $(GATE_PRG)
+	GAME_NO_STAGE=1 GAME_STE_SELFTEST=1 GAME_STE_SWEEP=1 GAME_STE_CENSUS=1 \
+	    GAME_PRG=$(notdir $(GATE_MEAS_PRG)) bash render/atari/build_game.sh
+
+.PHONY: ref test gate golden bench clean
+# Build the shell both ways without running the suite (the gate alone).
+gate: $(GATE_PRG) $(GATE_MEAS_PRG)
 # Sanity-check the reference capture: prove recreate's render pipeline is deterministic per frame.
 ref: $(RECON)
 	$(PY) test/capture_ref.py
@@ -62,8 +108,15 @@ ref: $(RECON)
 # bench.elf is a prerequisite so test_asm_blit.py's Musashi differential always runs (a missing elf
 # fails that suite loudly with a build hint rather than skipping — see test_asm_blit.py).
 PYTEST_ARGS ?= -n auto --dist worksteal
-test: $(CAND) $(RECON) $(BENCH_ELF)
+test: $(CAND) $(RECON) $(BENCH_ELF) $(GATE_PRG) $(GATE_MEAS_PRG)
 	$(PY) -m pytest -q $(PYTEST_ARGS) test
+
+# The END-TO-END pin: build GOLDEN.PRG per leg, run it in Hatari, byte-compare its frame 0 against
+# recreate's whole ported pipeline. It is NOT part of `make test` — it needs Hatari installed and takes
+# ~20 s for the five legs — but it is the only check that runs the shipped shell on a 68000, so run it
+# before promoting to main. `make gate` already proves the same build compiles and links.
+golden: $(CAND) $(RECON) | $(GATE_MEAS_PRG)
+	$(PY) render/atari/run_golden.py
 
 # Cycle cost vs the original and vs recon on-target (once a cross-compiled build exists). bench.py loads
 # the m68k bench.elf and jumps its bench_* wrappers, so it is a prerequisite (a stale/absent elf otherwise

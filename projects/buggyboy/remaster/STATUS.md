@@ -370,6 +370,18 @@ It is asserted as `stats["composed_diffs"] == DECAY_KNOWN_DIFFS`, **not** marked
 cannot distinguish "still failing for the documented reason" from "failing because someone unbound the
 arenas" — under the bias mutation that drive goes to 27 of 27 and an xfail would stay green (verified).
 
+**Harness gap #2 closed (2026-07-24) — the on-target build is a test gate.** `make test` compiled the
+game shell for nobody: `render/atari/game_main.c` is in neither the host `.so` nor `bench.elf`, and four
+`src/` files (`frame`/`flow`/`intermission`/`results`) are host-compiled but never cross-compiled. A
+commit landing `game_main.c` without its header half therefore left the m68k build broken **on origin**
+with the suite green — twice in one session. `make test` now depends on a full cross-compile + link +
+`.PRG` wrap in BOTH variants (stock ST and `GAME_STE=1`, which selects different sources), ~4 s on top of
+a ~21 s suite; the m68k toolchain was already a hard prerequisite via `bench.elf`. Both go through
+`build_game.sh` so the cross flags are never restated. `make golden` promotes the Hatari end-to-end
+(5 legs, ~20 s) to a named target for pre-promotion runs. Mutation-verified: a typo'd constant in
+`game_main.c` now fails `make test` at the build step. It catches "does not compile / does not link" —
+NOT the binding class above, which stays the job of hoisting bindings into shared code.
+
 **Residuals on #1, recorded rather than fixed blind** (both found by the pre-commit review, neither a
 regression — before the fix the decay wrote nowhere at all):
 

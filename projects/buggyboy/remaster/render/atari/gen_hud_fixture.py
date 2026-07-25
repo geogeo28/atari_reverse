@@ -35,7 +35,7 @@ CONTROLS = {adapter.A_flag_seq_count: 3, adapter.A_crash_lap: 4,
             adapter.A_speed: 120, adapter.A_time_left: 45}
 
 
-from fixture_lib import c_array as _c_array   # noqa: E402  shared emit helper (one aligned(2) source)
+from fixture_lib import c_array as _c_array, write_if_changed   # noqa: E402  shared emit helper (one aligned(2) source)
 
 
 def hud_asset_arrays(img, from_arena=False):
@@ -140,7 +140,7 @@ def main():
     out.append("")
     out += hud_state_defines(st)
     out += ["", "#endif /* RM_HUD_FIXTURE_H */", ""]
-    (build / "hud_fixture.h").write_text("\n".join(out))
+    write_if_changed(build / "hud_fixture.h", "\n".join(out))
     print(f"wrote {build/'hud_fixture.h'}, golden.bin, palette.bin "
           f"(flag={st.flag_seq_count} lap={st.crash_lap} speed={st.speed} time={st.time_left} "
           f"dsp_toggle={st.dsp_toggle} dsp_idx={st.dsp_variant_idx})")

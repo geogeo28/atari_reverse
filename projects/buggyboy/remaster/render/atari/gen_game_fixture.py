@@ -30,6 +30,7 @@ import adapter                                    # noqa: E402
 import assets_load as al                          # noqa: E402  remaster's own COURSES/GRAPHICS loader
 import equiv                                      # noqa: E402
 import render_screen as R                         # noqa: E402  MEM_BASE (where the arena sits)
+from fixture_lib import write_if_changed          # noqa: E402  content-stable fixture write
 import gen_hud_fixture as hud                      # noqa: E402  reuse the HUD asset/define/palette baking
 
 # A visually busy HUD over the road (same spirit as the HUD demo).
@@ -346,7 +347,7 @@ def main():
         f"#define OBJ_LOW_LEGFLAG_TBL   {low(adapter.A_legflag_tbl)}",
         f"#define OBJ_LOW_CRASH_ANIM_TBL {low(adapter.A_crash_anim_tbl)}",
         "", "#endif /* RM_GAME_FIXTURE_H */", ""]
-    (build / "game_fixture.h").write_text("\n".join(out))
+    write_if_changed(build / "game_fixture.h", "\n".join(out))
     also = f", golden_leg{golden_leg}.bin, palette_leg{golden_leg}.bin" if gen_golden else ""
     print(f"wrote {build/'game_fixture.h'}{also} "
           f"(leg={leg} curve={pose.curve} view_flags={pose.view_flags} seg0={pose.seg_data[0]} "
