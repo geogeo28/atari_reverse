@@ -280,6 +280,11 @@ sprite/subcell structure (`OBJSH2P_SUBCELL_S`), not a flat arena sweep.
 STE needs both slot counts roughly halved (~277 KB). The colour cache is unused while it stays on the CPU
 path, so a shipping build that never opts it in can drop it — but it is kept compiled so the sweep pins it.
 
+> **Stale figures (superseded by slice 6 + measured in §12):** the shipping caches today are
+> objshift2 **16 slots / 43 KB** (§11) + colour **219 KB** = **262 KB**, not 553 KB; and the measured
+> unified footprint is **1.18 MB** (text 122,624 + BSS 1,114,796), so "fits a 1 MB STE" is wrong — the
+> honest minimum machine is **2 MB** (see §12 for the diet option).
+
 ## 9. Slice 5 — go/no-go (revised by the slice-4 finding)
 
 1. **Boot pre-shift tables — the gating item, now RESOLVED by census (§10): NO-GO for the colour engine,
@@ -328,6 +333,17 @@ skew from unshifted data, so no per-frame materialise at all — the FXSR/NFSR c
 deferred), not more tables. That is the only remaining lever for the colour pass, and it is a research
 item, not a landing.
 
+> **CORRECTION (2026-07-25, slice 7 — see §12).** Two facts above are superseded:
+> 1. *"The headless autodrive drives off-course and crashes past ~60 clean frames"* was an
+>    instrumentation artifact, not a crash: the census build also passed `-DGOLDEN_BOOT_LEG`, whose
+>    boot-time golden dump **races `census_dump` for SCREEN.BIN** (the runner takes the first full
+>    file). With the flag dropped (and a `#error` now guarding the pair) the autodrive censuses
+>    cleanly to **≥300 frames**. The slice-5 counts themselves were sound — the re-key control
+>    reproduces leg-0 full-key 100/149/349 at 30/40/60 exactly — so the UNBOUNDED verdict for the
+>    **full pre-shift key** stands.
+> 2. That verdict does **not** transfer to reduced keys: §12 measures the set as **BOUNDED** once
+>    the pre-shift scheme's key fields (fine_x, colour, rows) are removed by hardware skew.
+
 ## 11. Slice 6 — the UNIFIED ST/STE binary
 
 The census (§10) made this cheap: objshift2's reachable set is a **bounded 6 distinct tuples**, so its
@@ -367,3 +383,59 @@ which does **not move**: the unified PRG runs in the same memory footprint on bo
 
 **Retired:** the separate `BUGGYBST.PRG` and the "stock byte-identical" pin (there is no separate stock
 artifact any more; the unified-vs-old-stock *cadence identity* on `--machine st` is the replacement).
+
+> **Correction (2026-07-25, §12):** "the base game's existing 1 MB requirement" was asserted, not
+> measured. The measured unified footprint is **1.18 MB** (`m68k-elf-nm -S`: text 122,624 + BSS
+> 1,114,796 — arena 380 KB, screen pool 319 KB, colour cache 219 KB, scroll prebuild 104 KB, objshift2
+> cache 43 KB), so the honest minimum machine is **2 MB** on ST and STE alike. The unused 219 KB colour
+> cache is the obvious diet if a 1 MB target ever matters (it only backs the `-DRM_STE_OBJSH_ROUTE`
+> experiment and the sweep's measurement build).
+
+## 12. Slice 7 — the RE-KEY census: BOUNDED under hardware skew (tables are GO)
+
+Slice 5's NO-GO measured the **full pre-shift key** `(src_off, fine_x, color, stride, rows_m1,
+base_cells)` — the set a *pre-shifted* table must enumerate. A **hardware-skew** engine (SKEW +
+FXSR/NFSR, blitting from **unshifted** bitmaps) shrinks that key structurally:
+
+- `fine_x` — the chip shifts at blit time; the materialised content no longer depends on it.
+- `color` — the per-plane fill is a **binary select** (`fill_p ∈ {0, 0xFFFF}`): a plane is either
+  OR'd with the source bitmap or skipped. Colour picks *which* passes run, not the bitmap bytes.
+- `rows_m1` — materialise each sprite at its max rows and blit fewer via `y_count`.
+
+`src/blitter_census.c` now counts the colour engine under four keys at once (full / noshift /
+noshift-nocolor / **sprite** `(src_off, stride, base_cells)`), hashed as one subset chain; the report
+carries a magic + set-count header that `run_ste_census.py` validates (the C↔Python wire-format pin,
+and the tripwire that would have caught the §10 race).
+
+**Measured (leg 0, distinct per key by drive length; full key = the slice-5 control):**
+
+| frames | full | noshift | noshift-nocolor | **sprite** |
+|---:|---:|---:|---:|---:|
+| 30 | 100 | 62 | 62 | **18** |
+| 60 | 349 | 136 | 124 | **60** |
+| 80 | 479 | 199 | 158 | **76** |
+| 140 | 617 | 216 | 162 | **78** |
+| 300 | 989 | 280 | **162** | **78** |
+
+- **full — UNBOUNDED** (control): reproduces slice 5 exactly (100/149/349), still climbing at 300 f.
+- **noshift — still growing** ~14× slower: dropping fine_x alone is not enough.
+- **noshift-nocolor — BOUNDED at 162** (flat 140→300 f): roadside scales are quantised per sprite.
+- **sprite — BOUNDED at 78** (flat from ~80 f). All legs at 140 f: 78/75/79/98/79. From 140→300 f
+  leg 0 issued +700 base calls and **0 new sprite keys — a 100 % table hit rate**; over the whole
+  300-frame drive only 4.8 % of blits carried a first-sight key (vs 60 % under the full key). This is
+  the recurring set the §8 on-demand cache (9 % hit) could not find — it exists once fine_x/colour/rows
+  leave the key.
+
+**RAM.** Entry = (1 mask + 4 data planes) × `base_cells` × 43 rows × 2 B = 430 B (cells=1) / 860 B
+(cells=2). Worst leg (98 entries): **41–82 KB**; all-legs sum 409 entries (a loose upper bound — legs
+share the catalogue): 172–344 KB. Hard structural ceiling regardless of counts: entries store 1.25× the
+disjoint arena bytes they cover, and the whole gfx arena is 234 KB → **≤ ~293 KB total**. Routing
+colour to a static table retires the 219 KB on-demand colour cache, so the **net footprint delta is
+≈ −40 KB to +75 KB**.
+
+**What this does NOT prove:** the skew recipe itself. The FXSR/NFSR/endmask edge semantics under
+`skew = fine_x` are the byte-exactness risk slice 2 deferred — that calibration (pinned by the existing
+`run_ste_sweep.py` case space) is the open engineering work; this slice only establishes the data side
+is bounded and affordable. Also unmeasured: the `base_cells` split of the 78–98 keys (RAM given as
+bounds) and the cross-leg key union (per-leg max vs sum given as bounds) — both cheap to instrument
+when the table is built.

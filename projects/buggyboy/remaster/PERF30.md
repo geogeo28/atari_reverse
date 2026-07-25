@@ -523,6 +523,23 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > pin is retired (there is no separate stock — the cadence identity on `--machine st` replaces it). Colour
 > engine stays CPU on every machine. Full analysis: `BLIT_STE_SPEC.md` §11.
 
+> **C4 slice 7 — RE-KEY census: the colour engine's set is BOUNDED under hardware skew — the slice-5
+> NO-GO flips (landed, not committed).** Slice 5 measured the **full pre-shift key** (src_off × fine_x ×
+> colour × stride × rows × cells) as unbounded — correct for pre-shifted tables. A **hardware-SKEW**
+> engine (blit from UNSHIFTED bitmaps, chip shifts at blit time) removes fine_x from the materialised
+> content, colour (a per-plane binary fill select), and rows (max-rows materialise, blit fewer via
+> y_count) — so the census now counts four keys at once. **Measured: the `sprite` key
+> (src_off, stride, base_cells) is BOUNDED at 78 entries on leg 0 (98 worst leg), flat from ~80 frames
+> through a 300-frame drive — the last +700 base calls added 0 new keys (100 % table hit)**, while the
+> full-key control reproduces slice 5 exactly (100/149/349) and keeps growing. Table RAM: 41–82 KB
+> worst-leg (structural ceiling ~293 KB); retiring the redundant 219 KB on-demand colour cache makes the
+> net delta ≈ −40 KB…+75 KB. Bonus findings: §10's "~60 clean frames" ceiling was a
+> `GOLDEN_BOOT_LEG`-vs-census SCREEN.BIN dump race (now `#error`-guarded; autodrive censuses ≥300 frames
+> clean), and the measured shipping footprint is **1.18 MB** — the "1 MB STE" claim was wrong; honest
+> minimum 2 MB (diet: drop the unused colour cache). **Open risk unchanged:** the FXSR/NFSR/endmask
+> byte-exactness calibration for skew — the data side is now proven affordable; the recipe is the next
+> slice. Full analysis + tables: `BLIT_STE_SPEC.md` §12.
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),
@@ -1515,6 +1532,17 @@ residue (A5 glyph movem fills ~2–3 ms, object-tree dispatcher/objsprite ABI, t
 option) and Tier-C departures (C1 25 fps vsync cadence, C4 STE blitter build).
 
 ### B4 follow-on LANDED — dashboard precompute+memcpy (−3.07 ms); A5 measured NO-GO in C. 2026-07-24
+
+> **REVERTED 2026-07-25 (correctness).** The precompute+memcpy below rests on a FALSE premise: the
+> dashboard is 100% opaque *only* for the leg-independent baked atlas the goldens/`make test`/autodrive
+> stage. The LIVE per-leg mini-map `init_leg_dash` builds is TRANSPARENT (mask `0xffff` keeps the
+> background), so the bulk-copy composited it over its background-less buffer and opaquely overwrote the
+> road's sky — the in-race mini-map black-background bug (STATUS.md Known issues). Phase 7 is back to the
+> on-the-fly masked blit (the original's behaviour); `dash_pristine` / `RM_HUD_DASH_PRISTINE_BYTES` /
+> `dash_pristine_dirty` and the two tests cited below (`test_hud_dashboard_is_opaque`,
+> `test_hud_dashboard_fallback_matches`) are removed, replaced by
+> `test_hud_dashboard_transparent_composites_over_frame` (drives the real `init_leg_dash`). The ~3 ms is
+> given back; the dashboard blit is a tiny fraction of the frame. The rest of this section is historical.
 
 **Dashboard precompute+memcpy.** The phase-7 dashboard is 100% opaque (all 5 legs, pinned by the new
 `test_hud_dashboard_is_opaque`), so its masked blit's output is background-independent: prebuild it

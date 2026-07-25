@@ -623,11 +623,15 @@ static void cadence_dump(void) {
 #endif
 
 #ifdef GAME_STE_CENSUS
+#if defined(GOLDEN_BOOT_LEG)
+#error "GAME_STE_CENSUS and GOLDEN_BOOT_LEG are mutually exclusive: both write SCREEN.BIN, so the boot golden races the end-of-run census report and the runner keeps whichever full file it sees first."
+#endif
 extern void blitter_census_report(uint16_t *w);
 static void census_dump(void) {
     uint8_t *buf = screen_buf(0)->px;
     memset(buf, 0, SCREEN_BYTES);
-    blitter_census_report((uint16_t *)buf);               /* 12 words: per engine distinct/base/total/sat */
+    blitter_census_report((uint16_t *)buf);               /* 2-word header + 5 x 7-word blocks (objshift2 +
+                                                           * the colour engine's 4 keys); see blitter_census.c */
     long h = Fcreate("SCREEN.BIN", 0);
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, buf); Fclose((short)h); }
 }
