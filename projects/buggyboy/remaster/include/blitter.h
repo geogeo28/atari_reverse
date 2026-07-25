@@ -110,6 +110,10 @@ int rm_blit_objshift2_blitter(uint8_t *dst, uint32_t dst_off, const uint8_t *src
 void rm_blit_objshift2_dispatch(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
                                 uint16_t x, uint16_t rows_m1, int width_idx);
 
+/* Invalidate the objshift2 pre-shift memoisation cache — call after the arena.gfx source is rewritten in
+ * place (the F10 asset reload), or the cache would serve stale bitmaps. */
+void rm_blit_objshift2_cache_flush(void);
+
 /* Full-sweep proof (GAME_STE_SWEEP build): run rm_blit_objshift2_blitter vs the CPU engine over the
  * objshift2 case space; return a framebuffer encoding per-case results (see src/blitter_sweep.c) and the
  * total mismatch count. */

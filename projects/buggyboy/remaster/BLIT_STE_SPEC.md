@@ -167,30 +167,63 @@ host Musashi differentials, compensated by whole-frame byte equality over a real
 | blitter == `rm_blit_objshift2`, **full sweep** | `run_ste_sweep.py` | — | **1728 cases, 0 mismatch (720 BASE)** |
 | whole-frame A/B stock-ST vs STE over the drive | `run_ste_ab.py` | 0 (by construction) | **0-mismatch ×10 frames (load-bearing)** |
 | host differential suite | `make test` | 708 | 718 (concurrent work; host untouched by STE files) |
-| cadence `--machine ste` before/after | `run_cadence.py` | baseline | see §6 |
+| cadence `--machine ste` before/after | `run_cadence.py` | baseline | **gate 8.22→7.22 vbl (~12%), §6** |
 
 ---
 
-## 6. Cadence finding (slice 2) — the win needs the DATA, not just the blitter
+## 6. Cadence — the win, and how it was found (slices 2→3)
 
-Free-running cadence (`-DGAME_PRESENT_FREERUN`, leg 0 autodrive, 399 presents): stock ST **mean 6.61
-vbl**, STE routed **mean 6.65 vbl** — essentially flat (a ~0.6 % regression, within noise). The blitter
-path is byte-exact and live, but does **not collapse** the objlist fixed pass at these frames. Why: the
-per-blit **materialiser** does the same fine-x shift + mask build the CPU engine does, plus a scratch
-round-trip, so it only offloads the framebuffer RMW — a per-BASE-blit win of ~15 % that is (a) swamped at
-leg 0, which is not objshift2-base-dense, and (b) partly eaten by the double memory traffic. **The
-collapse is a DATA change, not a blitter change:** boot-time pre-shift tables (§3, ~49 KB) remove the
-per-frame materialise entirely, leaving 2 blitter passes over static tables — then objshift2 drops toward
-the blitter's RMW floor. That is slice 3.
+**Slice 2 measured flat** (leg-0 driving, free-run: stock 6.61 vs STE 6.65 vbl). The blitter is byte-exact
+and live but did not collapse the objlist pass, so slice 3 **profiled the objshift2-DENSE gate frame**
+(idle the autodrive on the leg-start gate — the frame the objlist pass dominates, PERF30 "gate frame").
+Decomposition (free-run mean vbl/present, `GAME_STE_PROF_NOMAT/NOBLIT` timing builds):
 
-## 7. Slice 3 — what to convert next
+| variant | mean | isolates |
+|---|---|---|
+| stock ST (CPU asm) | 8.28 | baseline |
+| STE bare (dispatch + Supexec, no work) | 6.27 | removing the base CPU blits saves ~2.0 vbl |
+| STE **nomat** (blit, skip materialise) | **7.27** | the boot-table ceiling — beats stock by ~1 vbl |
+| STE noblit (materialise, skip blit) | 9.28 | **materialise alone = +3.0 vbl** |
+| STE full (materialise + blit) | 9.28 | blitter passes are ~free (~1 vbl) |
 
-1. **Boot pre-shift tables** — build the `(mask, data)` interleaved bitmaps for all 16 fine-x phases from
-   the static `arena.gfx` at asset load; the dispatch becomes a table lookup + 2 blit passes (no per-frame
-   shift). Re-measure `run_cadence.py` st-vs-ste — this is where the objlist pass should collapse.
-2. **Blitter-side clip** — move the LEFT/RIGHT families off the CPU hybrid using endmask1/3, extending the
-   sweep to keep them at 0 mismatch.
-3. **One-excursion supervisor** — if per-blit Supexec shows on the collapsed profile, wrap the object pass
-   in a single excursion (mind the supervisor stack).
-4. **Then the colour-indexed `rm_blit_objshift` pass 1** (25.3 % of the gate) — same cookie-cut with the
-   4-word `~(A|B|C)&D` mask + colour fill.
+**Finding: the per-frame MATERIALISE (~3 vbl) is the whole cost; the blitter passes are cheap.** The naive
+path is a net LOSS because it re-shifts every frame. The blitter works; the *data prep* was the problem.
+
+**Slice-3 fix: a memoisation cache** (`src/blitter_objshift2.c`). The materialised bitmap is a pure
+function of `(src, src_off, fine_x, width_idx, rows_m1)` over `arena.gfx`, which is **static for the whole
+race** (read once at asset load; the only writer is the F10 reload, off the render path — re-verified in
+`src/assets.c` / `load_assets`). So a direct-mapped cache of the interleaved `(mask,data)` bitmaps never
+invalidates: a miss materialises into the slot, a hit blits it straight. The gate/tunnel sprites (drawn
+identically every frame) hit after warm-up → the profiled `nomat` win, byte-exact.
+
+**Result (free-run):**
+
+| scene | stock ST | STE cached | delta |
+|---|---|---|---|
+| leg-0 gate (idle, objshift2-dense) | 8.22 | **7.22** | **−12 %** |
+| leg-4 gate (idle, second leg — not a leg-0 artifact) | 8.23 | **7.23** | **−12 %** |
+| leg-0 driving (throttle) | 7.06 | 7.04 | ~flat (slow-moving sprites hit) |
+
+**RAM:** the cache is `OBJSH2_CACHE_SLOTS (128) × sizeof(Objsh2Cache) ≈ 356 KB` static BSS in the STE
+build (each slot holds a full interleaved mask+data bitmap = 2 × 4 planes × 4 cols × 43 rows × 2 B ≈
+2.75 KB + key). Well inside the harness's `--memsize 4`; the honest **minimum STE config is 1 MB** (the
+base STE ships 512 KB–1 MB — a 1 MB STE fits it with room, a 512 KB STE would need `OBJSH2_CACHE_SLOTS`
+cut to ~64 = 178 KB). Collisions never corrupt pixels: a key mismatch is treated as a miss and
+re-materialises the slot (verified — the full sweep stays 0-XOR with the cache live).
+
+## 7. Slice 4 — what next (go/no-go)
+
+1. **Blitter-side clip (LEFT/RIGHT) — GO, now unblocked.** In slice 2 moving clip to the blitter would
+   have added materialise cost; the cache removes that objection (clip sprites cache too). Fold the 1008
+   currently-declined clip cases in via `endmask1/3` partial columns, extend the sweep to keep them 0-XOR.
+   Keep any case the endmask can't reproduce on the CPU hybrid.
+2. **Colour-indexed `rm_blit_objshift` pass 1 (25.3 % of the gate) — GO, same pattern.** Its cookie-cut is
+   the 4-word `~(A|B|C)&D` mask + a colour fill; the identical cache-keyed pre-shift + 2-pass recipe
+   applies. This is the bigger remaining stage — recommended as the slice-4 headline.
+3. **One-excursion supervisor — DEFER.** Per-blit Supexec did not block the win (STE-bare 6.27 already
+   beats stock 8.28), so the trap overhead is small; wrapping the object pass in one excursion is a minor
+   optimisation with supervisor-stack-depth risk on the deep render tree. Revisit only if it shows on a
+   collapsed profile.
+4. **Static boot tables (vs the on-demand cache) — OPTIONAL.** The cache already reaches the `nomat`
+   ceiling on repeated frames; precomputing all 16 phases at boot would only help the first appearance of
+   each sprite (cold-cache frames) at a large RAM cost. Not worth it unless cold frames measure badly.

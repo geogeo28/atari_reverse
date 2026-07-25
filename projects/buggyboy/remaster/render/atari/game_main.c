@@ -221,11 +221,10 @@ static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));   /* COU
  * dispatcher's two flag streams walk this (rebuilt after every course advance). The other ring
  * consumers (sprite count, ground markers, sprite gates) read the native CourseRing directly.
  *
- * This grid is ALSO the marker-decay arena rm_gobj_prefix mutates: in the original both are the one
- * block at A_obj_markers, and the decay base is 8 bytes below it (A_marker_decay_base), indexed by an
- * even horizon row 0..0x2e — so the walk reaches RING_ST_DECAY_BIAS bytes below row 0 and a few past
- * the last row. Hence the padded block and the biased base handed to the prefix: without that wire the
- * decay writes land nowhere and a kicked roadside object never animates away (it just vanishes).
+ * This grid is ALSO the marker-decay arena rm_gobj_prefix mutates — the geometry of that aliasing
+ * (RM_RING_DECAY_BIAS / RM_RING_ST_BLOCK_BYTES / rm_ring_decay_base) lives in game.h so the shell and
+ * the equivalence harness cannot disagree about it, which is exactly how the missing kicked-object
+ * animation hid. Without the wire the decay writes land nowhere and the object just vanishes.
  * The pad is inert here, which is faithful at the high end and NOT at the low end:
  *   - high pad: the original's is the head of road_curve_tbl, which rm_build_road_geometry rewrites
  *     later in the same frame, so absorbing those writes changes nothing.
@@ -235,11 +234,8 @@ static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));   /* COU
  *     KNOWN residual rather than fixed blind: routing the low pad into the native seg_data needs its
  *     own differential, and this wire is already the difference between an animation and none. See
  *     STATUS.md's play-test table. */
-#define RING_ST_DECAY_BIAS 8    /* A_obj_markers - A_marker_decay_base */
-#define RING_ST_DECAY_SPILL 8   /* the decay walk's reach past the last row (max index 0x1ce) */
-static uint8_t ring_st_block[RING_ST_DECAY_BIAS + RM_RING_ROWS * RM_RING_ROW_BYTES + RING_ST_DECAY_SPILL]
-    __attribute__((aligned(2)));
-static uint8_t *const ring_st = ring_st_block + RING_ST_DECAY_BIAS;
+static uint8_t ring_st_block[RM_RING_ST_BLOCK_BYTES] __attribute__((aligned(2)));
+static uint8_t *const ring_st = ring_st_block + RM_RING_DECAY_BIAS;
 /* The prefix's animated colour aliases the HUD's phase-6a fuel-mask table in the original (both live
  * at 0x17f08): draw_game_objects' prefix writes the animated colour there, and draw_hud then reads it
  * as the fuel mask. Model that alias with one mutable buffer the prefix writes and the HUD reads. */
@@ -1142,6 +1138,11 @@ static void op_reload_assets(void *ctx) {
     }
     seed_highscore_table();           /* init_scoretable: reseed the hi-score table from its baked default */
     rm_init_leg_dash(s->ctx);         /* init_leg_dash: rebuild the dashboard */
+#ifdef GAME_STE
+    /* The blitter objshift2 cache keys on the arena.gfx source pointer, which reload rewrites in place —
+     * flush it so a recovered arena is re-materialised, not served stale (see blitter_objshift2.c). */
+    rm_blit_objshift2_cache_flush();
+#endif
 }
 static void op_set_palette(void *ctx, int which) {
     uint32_t off = which == RM_FLOW_PAL_INT_A      ? OBJ_LOW_PAL_INT_A
@@ -1415,9 +1416,9 @@ void main(void) {
     const GobjPrefixAssets pfx_assets = {
         .anim_word_tbl = low + OBJ_LOW_ANIM_WORD_TBL,
         .anim_coloridx_tbl = low + OBJ_LOW_ANIM_COLORIDX, .color_pairs = low + OBJ_LOW_COLOR_PAIRS,
-        /* marker_recs IS the dispatcher's flag grid, at the original's decay base (see ring_st_block);
-         * anim_color aliases the HUD's fuel mask. Both are aliases the original gets for free. */
-        .marker_recs = ring_st_block, .anim_color = fuel_mask_ram,
+        /* marker_recs IS the dispatcher's flag grid, at the original's decay base; anim_color aliases
+         * the HUD's fuel mask. Both are aliases the original gets for free from one flat image. */
+        .marker_recs = rm_ring_decay_base(ring_st), .anim_color = fuel_mask_ram,
         .anim_mirror1 = buf_a_ram + GOBJ_ANIM_BUF_OFF1, .anim_mirror2 = buf_a_ram + GOBJ_ANIM_BUF_OFF2,
     };
     const GroundAssets ground_assets = {

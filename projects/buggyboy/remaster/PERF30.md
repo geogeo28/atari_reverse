@@ -458,6 +458,23 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > collapse needs the **boot pre-shift tables** (remove the per-frame materialise → 2 blits over static
 > tables): that is slice 3, along with blitter-side clip and then the colour-indexed pass 1 (25.3 %).
 
+> **C4 slice 3 — objshift2 collapses on the gate frame: −12 % via a memoisation cache (landed, not
+> committed).** Slice 2's cadence was flat, so slice 3 profiled the objshift2-DENSE gate frame (idle the
+> autodrive on the leg-start gate). Decomposition (`GAME_STE_PROF_NOMAT/NOBLIT` timing builds, free-run
+> mean vbl/present): stock 8.28; STE-bare (dispatch+Supexec, no work) 6.27; STE-**nomat** (blit, skip the
+> materialise) 7.27; STE-noblit (materialise, skip blit) 9.28; STE-full 9.28. **The per-frame MATERIALISE
+> is ~3 vbl — the entire cost; the blitter passes are ~free.** Fix: a memoisation cache — the materialised
+> bitmap is a pure function of (src, src_off, fine_x, width_idx, rows_m1) over the STATIC `arena.gfx`, so a
+> direct-mapped cache of the interleaved (mask,data) bitmaps never invalidates; the gate/tunnel sprites hit
+> after warm-up → the `nomat` win, byte-exact. **Result (free-run):** leg-0 gate 8.22→**7.22** (−12 %),
+> leg-4 gate 8.23→**7.23** (−12 %, not a leg-0 artifact), leg-0 driving 7.06→7.04 (~flat). Cache RAM ≈
+> **356 KB** BSS (128 slots; fits a 1 MB STE, tunable to 64 slots / 178 KB for 512 KB). Pins all green:
+> sweep 1728 cases 0-XOR *with the cache live*, STE goldens ×5, A/B 0-mismatch ×10, `make test` 718, stock
+> byte-neutral (the one stock-path edit — `mkprg.py`'s `abs_fixups` now filters relocs to `.rela.text/.data`,
+> excluding debug-section relocs that the bigger STE binary emitted — hashes identically). **Slice 4:
+> blitter-side clip (now unblocked by the cache) + the colour-indexed pass 1 (25.3 %, same recipe) as the
+> headline; one-excursion Supexec DEFERRED (per-blit trap didn't block the win).**
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),

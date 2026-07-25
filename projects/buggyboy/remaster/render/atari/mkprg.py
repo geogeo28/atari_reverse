@@ -34,10 +34,24 @@ def sym_value(elf, name):
 
 def abs_fixups(elf):
     out = subprocess.check_output([READELF, "-r", "-W", elf], text=True)
+    # Only relocs in the LOADED sections (.text/.data) belong in the .PRG reloc table. For this base-0
+    # `ld --emit-relocs` executable a reloc's Offset column is a VIRTUAL ADDRESS: an allocated section's
+    # vaddr equals its offset in the flat text+data image, so .rela.text/.rela.data offsets are already
+    # the correct .PRG fixup positions (no +text_size adjustment — .data's vaddr already includes it).
+    # Non-allocated debug sections sit at vaddr 0, so their relocs collide with low .text offsets (and land
+    # odd, tripping reloc_table) — hence the filter. The section whitelist is correct under the current
+    # tos.ld (only .rela.text/.rela.data are allocated; .rodata folds into .text); a future split-out
+    # allocated reloc section (e.g. -ffunction-sections .rela.text.hot) would need adding here. Stock
+    # builds carry no debug relocs, so this is a no-op there; only a build that emits debug line-info needs it.
     offs = set()
+    in_loaded = False
     for line in out.splitlines():
+        m = re.search(r"Relocation section '(\S+)'", line)
+        if m:
+            in_loaded = m.group(1) in (".rela.text", ".rela.data")
+            continue
         m = re.match(r"\s*([0-9a-fA-F]{8})\s+[0-9a-fA-F]{8}\s+(\S+)", line)
-        if m and m.group(2) == "R_68K_32":
+        if in_loaded and m and m.group(2) == "R_68K_32":
             offs.add(int(m.group(1), 16))
     return sorted(offs)
 
