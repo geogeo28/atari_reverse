@@ -448,6 +448,18 @@ reading:
   expansion would have written. Deleting the whole expansion left the suite green. The same trap bit
   the slot-1 → slot-13 echo counter a second time. Derive coverage from the **record consumed**, not
   from the band produced.
+- **A differential can be pinned on the wrong DATA.** `draw_results_screen` was byte-compared against
+  recreate across every mode, rank and leg — and still missed the black-box glyph, because the default
+  hi-score table's names are `"..."`, so the name-entry alphabet never reached the glyph blitter from
+  there. The draw was covered; the *character set* was not. When a surface renders data, ask which
+  values the fixture actually contains, not just which code paths run (`test_flow`'s alphabet windows).
+- **Mutation testing lies if the edit preserves file size.** Python validates a cached `.pyc` on
+  (mtime, size), so a same-length constant edit — `0x60` → `0x5f` — applied and reverted inside one
+  filesystem second can leave the MUTATED bytecode in `__pycache__`. A mutation "caught" or "survived"
+  under those conditions proves nothing. `find test -name __pycache__ -delete` between mutation runs,
+  and be suspicious of a mutation result that contradicts a source read. (It also bit the generated
+  fixture: a gate build running under the mutated `adapter.py` baked a truncated `fixture_font`, which
+  the shipped-fixture assertion then caught — the reason that assertion is worth having.)
 - **The data may not reach a branch at all.** Of the four `marker_unpack` outcomes, "right shoulder"
   appears in 25 records — all in leg 3 — and "both shoulders" in **none** of the 5120. Pin what the
   data can reach by *seeding `read_pos` onto a real record* (`test_ring_hard_to_reach_branches`);

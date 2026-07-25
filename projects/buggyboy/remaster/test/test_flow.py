@@ -122,3 +122,76 @@ def test_draw_intermission_matches(scroll, flip, capsys):
     assert wrong == 0, f"draw_intermission painted {wrong} wrong pixels (scroll={scroll:#x}, flip={flip})"
     assert coverage == 1.0, \
         f"draw_intermission coverage {coverage:.4f} < 1.0 (scroll={scroll:#x}, flip={flip})"
+
+
+# ---- the name-entry CHARACTER RANGE, drawn ----
+# The results screen is the surface the initials are drawn on, and test_results_screen_matches above
+# already byte-compares it — but only over the DEFAULT hi-score table, whose names are "...". The
+# name-entry alphabet ('A'..'`') therefore never reached the glyph blitter from here, which is why a
+# font window one glyph short of '`' shipped and drew a BLACK BOX on target (STATUS.md's play-test
+# table). These cases seed the alphabet into the table's initials fields so the screen actually draws it.
+from test_game_fixture import _define                      # noqa: E402  shared #define reader
+
+_FLOW_C = (adapter.REMASTER / "src/flow.c").read_text()
+_FLOW_H = (adapter.REMASTER / "include/flow.h").read_text()
+NAME_CHAR_LO = _define(_FLOW_C, "HS_CHAR_LO")              # 'A'
+NAME_CHAR_HI = _define(_FLOW_C, "HS_CHAR_DEL")             # '`' — the delete sentinel, the top of the range
+NAME_FIELD_OFF = _define(_FLOW_H, "HS_NAME_FIELD_OFF")
+NAME_INITIALS = _define(_FLOW_C, "HS_INITIALS")
+NAME_SLOTS = adapter.HIGHSCORE_ROWS * NAME_INITIALS        # initials fields in one leg's table
+# Two windows tile the alphabet across the table's slots (the range is wider than one table holds).
+NAME_WINDOWS = [NAME_CHAR_LO, NAME_CHAR_HI - NAME_SLOTS + 1]
+
+
+def _seed_name_alphabet(image, leg, first):
+    """Write consecutive name-entry characters into every initials field of `leg`'s table, low row
+    first, so `first + NAME_SLOTS - 1` (the top of the window) lands in the LAST row."""
+    table = adapter.A_highscore_table + leg * adapter.HIGHSCORE_LEG_STRIDE
+    for slot in range(NAME_SLOTS):
+        row, ch_i = divmod(slot, NAME_INITIALS)
+        image[table + row * adapter.HIGHSCORE_ROW + NAME_FIELD_OFF + ch_i] = first + slot
+
+
+@pytest.mark.parametrize("first", NAME_WINDOWS)
+@pytest.mark.parametrize("leg", [0, 2])
+def test_results_screen_draws_the_name_entry_alphabet(first, leg, capsys):
+    """Every character the initials entry can produce, actually drawn and byte-compared against
+    recreate. The two windows together cover 'A'..'`' inclusive; the top one ends ON the delete
+    sentinel, the glyph whose absence from the font window was invisible to every other test.
+
+    Mutation-verified: shrinking FONT_BYTES back to 0x600 reddens the window that draws '`'."""
+    # Gap-freeness, not "the last window ends at the top char" — that is true BY CONSTRUCTION of
+    # NAME_WINDOWS and would still hold with a hole in the middle (e.g. if the table shrank to 5 rows).
+    assert NAME_WINDOWS[0] + NAME_SLOTS >= NAME_WINDOWS[1], "the windows no longer tile the alphabet"
+    last = first + NAME_SLOTS - 1
+    lib = equiv._lib()
+
+    def staged(top_char):
+        img = equiv.flow_background(leg=leg, warmup=60, flip=0)
+        equiv._w16(img, adapter.A_results_mode, 0)         # the made-the-table layout draws the names
+        equiv._w16(img, adapter.A_hiscore_pos, 1)
+        _seed_name_alphabet(img, leg, first)
+        # overwrite just the final initial, so the two images differ ONLY in the window's top character
+        table = adapter.A_highscore_table + leg * adapter.HIGHSCORE_LEG_STRIDE
+        img[table + (adapter.HIGHSCORE_ROWS - 1) * adapter.HIGHSCORE_ROW
+            + NAME_FIELD_OFF + NAME_INITIALS - 1] = top_char
+        return img
+
+    image = staged(last)
+    diff, footprint = equiv.compare_results_screen(lib, image)
+    with capsys.disabled():
+        print(f"  results name alphabet leg={leg} {first:#04x}..{last:#04x}: "
+              f"footprint={footprint} diff={diff}")
+    assert diff == 0, (f"results screen differs from recreate in {diff} bytes while drawing "
+                       f"{first:#04x}..{last:#04x}")
+
+    # NON-VACUITY: `diff == 0` alone cannot show the alphabet reached the screen — both sides read the
+    # same seeded table, and the initials are ~250 bytes of a ~9600-byte footprint dominated by the
+    # background fill, so a screen that never blitted the LAST row (results.c's RS_MAX_ROWS is not
+    # pinned to HS_ROWS) would agree with the reference and pass. Prove the row carrying the window's
+    # TOP character is really drawn: change only that character and the reference output must move.
+    _, ref_top = equiv._flow_ref(image, "g_draw_results_screen")
+    _, ref_alt = equiv._flow_ref(staged(NAME_CHAR_LO), "g_draw_results_screen")
+    assert bytes(ref_top) != bytes(ref_alt), (
+        f"changing the last initial ({last:#04x}) did not change the drawn screen — the row carrying "
+        f"the top of the alphabet is never blitted, so this case proves nothing about it")

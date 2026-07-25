@@ -416,7 +416,14 @@ two names — `0x18c58` (`obj_scan_off`/`ground_view_off`, fanned by `rm_apply_p
 harmless) and `0x18d12`. Three were already handled; only `0x18d12` was broken. `names.txt` now records
 the dual role at that address.
 
-Suite: **720 passed + 2 xfailed** (was 708), ~20 s under `-n auto`.
+The name-entry ALPHABET is now drawn and compared (`test_flow::test_results_screen_draws_the_name_entry_alphabet`).
+The results screen was already byte-compared against recreate across modes and legs — it missed the black
+box purely on DATA: the default table's names are `"..."`, so `'`'` never reached the glyph blitter. Two
+windows of the table's initials fields now tile `'A'..'`'`, the top one ending ON the delete sentinel.
+Mutation-verified: restoring `FONT_BYTES = 0x600` reddens exactly the window that draws it (23 bytes),
+leaving the other green — i.e. this test would have caught the shipped bug directly.
+
+Suite: **727 passed** (was 708), ~21 s under `-n auto`.
 
 ### Game-mechanics coverage audit (2026-07-23)
 
