@@ -95,18 +95,20 @@ void rm_pause_silence(SoundDriver *snd) {
     RM_SOUND_UNLOCK();
 }
 
-void rm_sound_engine_update(SoundDriver *snd, uint16_t speed, int16_t crash_phase,
+bool rm_sound_engine_update(SoundDriver *snd, uint16_t speed, int16_t crash_phase,
                             uint16_t crash_frame, bool game_over) {
     if (!game_over && crash_phase >= 0 && crash_phase != 1 && crash_frame == 0) {
-        if (speed == 0)
-            rm_stop_music_chk(snd, SND_DOSOUND_IDLE, game_over);   /* stopped: engine idle (rev_reload skipped) */
-        else {
+        if (speed == 0) {
+            rm_stop_music_chk(snd, SND_DOSOUND_IDLE, game_over);   /* stopped: engine idle */
+            return true;                                           /* ...and the rev_reload poke fires */
+        } else {
             snd->state.header[SND_EG_FLAG] = 1;                    /* moving: arm the engine EG (atomic store) */
             snd->vbl_enable = RM_VBL_RUNNING;                      /* atomic store; no torn multi-store here */
         }
     } else {
         rm_egoff(&snd->state);                                    /* self-brackets its two stores (sound.c) */
     }
+    return false;
 }
 
 bool rm_sound_music_on(const SoundDriver *snd) {

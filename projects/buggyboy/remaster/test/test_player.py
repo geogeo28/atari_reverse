@@ -55,3 +55,35 @@ def test_offroad_push_is_reached():
     mismatches, stats = equiv.compare_player_drive(lib, image, DRIVES["recentre"][0])
     assert not mismatches
     assert stats["offroad"] > 0, f"no off-road push reached: {stats}"
+
+
+# The two sites that carry the original's `rev_reload` poke, as (name, pokes). §1 fires on a leg-start
+# frame as it stands (speed 0, no crash). §6 needs the crash script to hold the controls on a record
+# whose rpm-override byte is non-negative: crash_anim_tbl + 0x90 is one (lean 0x2a, rpm 0x00), and it is
+# a real entry point (the finish-display record arms exactly this cursor). Its `speed` poke keeps §1's
+# idle branch OUT of the frame, so a raised flag can only have come from the script.
+REV_RELOAD_SITES = {
+    "s1_engine_idle": {},
+    "s6_script_rpm_override": {adapter.A_collision_lock: 0x90, adapter.A_speed: 0x40},
+}
+
+
+@pytest.mark.parametrize("leg", [0, 1, 4])
+@pytest.mark.parametrize("site", sorted(REV_RELOAD_SITES))
+def test_rev_reload_poke_restarts_the_lean_overlay(leg, site):
+    """The original's `rev_reload` poke, at BOTH its sites. 0x18d12 is ONE global under two names —
+    rev_reload and lean_frame — so each poke restarts the lean-overlay animation the buggy draw reads.
+    The reference stamps lean_frame; the candidate must land on the same value through
+    PlayerState.lean_frame_reload -> rm_apply_player -> SpriteState.lean_frame.
+
+    Directly diffed because no other test can see it: the composed-frame differential re-seeds the
+    sprite's draw-internal cursors (lean_frame / lean_accum / variant) from the reference every frame by
+    design, so dropping the fan there passes. Both sides are seeded with a NON-reload lean_frame first,
+    and `raised` is asserted, so a frame where the poke never fires fails instead of passing vacuously.
+    Mutation-verified at both sites: deleting either raise reddens its case only."""
+    lib = equiv._lib()
+    cand, ref, raised = equiv.compare_lean_frame_reload(lib, equiv.leg_start_background(leg),
+                                                        pokes=REV_RELOAD_SITES[site])
+    assert raised, f"{site}: the poke never fired — the case went unexercised"
+    assert ref != equiv.LEAN_FRAME_SEED, f"{site}: the reference never wrote lean_frame — test is vacuous"
+    assert cand == ref, f"{site}: lean_frame after the rev_reload poke: candidate {cand} != recreate {ref}"

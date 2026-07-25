@@ -32,6 +32,8 @@ import pytest
 ACCEL, BRAKE, LEFT, RIGHT = 0x01, 0x02, 0x04, 0x08
 FRAMES = 600
 SAMPLE_EVERY = 15          # compose on every event frame + every Nth frame (see the module docstring)
+BONUS_WINDOW_FRAMES = 0x3c   # events.c FLAG_BONUS_FRAMES — the window a 5-flag run opens
+BONUS_DRIVE_FRAMES = 90      # enough sampled frames (incl. event frames) to cover the clamp broadly
 
 
 def _sampler(frame, is_event):
@@ -83,6 +85,38 @@ def test_composed_crash_drive(leg, drive, capsys):
               f"diffs={stats['composed_diffs']} crashes={stats['armed']}")
     assert not comp, msg
     assert stats["armed"] > 0, "no crash fired — the crash-script fan-out went unexercised"
+
+
+@pytest.mark.parametrize("leg", [0, 2])
+def test_composed_bonus_window_clamps_low_object_types(leg, capsys):
+    """The 5-flag BONUS WINDOW, composed. While bonus_timer is open the object dispatcher clamps every
+    object type below OBJ_BONUS_MIN_TYPE up to it, so the roadside scenery changes for the window's
+    length — and bonus_timer is a LIVE global the dispatcher reloads every frame, not a leg-start
+    capture (the shell froze it at the leg-start 0 once, so the clamp never fired at all).
+
+    Directed because no free drive opens the window: it needs five flags matched in a row, or the §I
+    collision-marker frame, neither of which a flat-out drive reaches. Seeding the leg-start image's
+    bonus_timer opens it on BOTH sides — the reference's g_draw_frame reads the same global.
+    Mutation-verified: freezing objlist->bonus_timer at 0 in rm_draw_frame fails this (32 of 37 composed
+    frames diverge).
+
+    Coverage limit, stated honestly: the window stays OPEN for the whole drive. Only rm_gobj_prefix
+    decrements bonus_timer, and it runs inside the compose — which both sides discard (the candidate
+    advances a per-frame snapshot of its gobj state, the reference draws into a copy), so the seeded
+    0x3c is still 0x3c at frame 90 (measured). This therefore pins the clamp-OPEN path; the window's
+    CLOSE path and the flag-sequence step at bonus_timer == 0x28 are left to test_gobj_prefix, which
+    drives the prefix directly."""
+    lib = equiv._lib()
+    image = equiv.leg_start_background(leg)
+    equiv._w16(image, adapter.A_bonus_timer, BONUS_WINDOW_FRAMES)
+    mismatches, stats = equiv.compare_leg_drive(lib, image, [ACCEL] * BONUS_DRIVE_FRAMES,
+                                                compose=_sampler)
+    comp, msg = _report(mismatches, stats)
+    with capsys.disabled():
+        print(f"  leg={leg} bonus window: composed checked={stats['composed_checked']} "
+              f"diffs={stats['composed_diffs']}")
+    assert not comp, msg
+    assert stats["composed_checked"] > 0, "no composed frame was checked"
 
 
 def test_composed_flag_capture(capsys):

@@ -226,8 +226,15 @@ static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));   /* COU
  * even horizon row 0..0x2e — so the walk reaches RING_ST_DECAY_BIAS bytes below row 0 and a few past
  * the last row. Hence the padded block and the biased base handed to the prefix: without that wire the
  * decay writes land nowhere and a kicked roadside object never animates away (it just vanishes).
- * The pad is inert here — the original's low pad is unnamed filler, and its high pad is the head of
- * road_curve_tbl, which rm_build_road_geometry rewrites later in the same frame. */
+ * The pad is inert here, which is faithful at the high end and NOT at the low end:
+ *   - high pad: the original's is the head of road_curve_tbl, which rm_build_road_geometry rewrites
+ *     later in the same frame, so absorbing those writes changes nothing.
+ *   - low pad: the original's first word is RoadPose.seg_data[12] (game.h: seg_data[11]/[12] ARE
+ *     marker_slope_src / marker_decay_base), which the port models natively. So a decay armed on a
+ *     horizon_row == 0 frame zeroes that slope byte in the original and only the pad here. Left as a
+ *     KNOWN residual rather than fixed blind: routing the low pad into the native seg_data needs its
+ *     own differential, and this wire is already the difference between an animation and none. See
+ *     STATUS.md's play-test table. */
 #define RING_ST_DECAY_BIAS 8    /* A_obj_markers - A_marker_decay_base */
 #define RING_ST_DECAY_SPILL 8   /* the decay walk's reach past the last row (max index 0x1ce) */
 static uint8_t ring_st_block[RING_ST_DECAY_BIAS + RM_RING_ROWS * RM_RING_ROW_BYTES + RING_ST_DECAY_SPILL]

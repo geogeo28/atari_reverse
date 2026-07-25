@@ -453,6 +453,56 @@ reading:
   data can reach by *seeding `read_pos` onto a real record* (`test_ring_hard_to_reach_branches`);
   say so in `STATUS.md` for what it cannot, and never fabricate a record to manufacture a green tick.
 
+### The shell-binding trap: what the tests bind is not what the game binds (2026-07-24)
+
+A play-test turned up four bugs at once, and **not one of them was in `src/`** — every ported core was
+byte-exact. They were all in the layer the harness cannot see: `render/atari/game_main.c` decides which
+arena each asset pointer aims at and how big each fixture window is, while `test/adapter.py` +
+`test/equiv.py` build *their own* bindings for the same structs. Where the two disagree, the suite is
+green and the game is wrong. Concretely:
+
+- **A live global captured once.** `objlist.bonus_timer` / `p24_flag` were derived in `start_leg` and
+  never refreshed; in the original the dispatcher reloads both every frame. The 5-flag bonus window
+  therefore never clamped an object type, and the p24 gate never re-read the score digit §I bumps at a
+  checkpoint. Worse, `equiv._ComposedScene` *reproduced the staleness on purpose* "so the composed
+  differential would surface it" — but reproducing a bug on both sides is exactly what stops a
+  differential from surfacing it. **Both are now refreshed in `rm_draw_frame`**, where the original
+  reads them, and the test seeds neither.
+- **An arena pointed at dead scratch.** `GobjPrefixAssets.marker_recs` was bound to a private BSS block
+  while the object dispatcher read `ring_st`. In the original both are the one grid at `A_obj_markers`
+  (the decay base is 8 bytes below it), so the marker-decay animation — a kicked roadside object flying
+  away, drawn by walking a `0xff` through the grid one band nearer per frame — wrote to nowhere. The
+  object still vanished and still scored, so it looked *almost* right. `ring_st` is now a padded block
+  and the prefix gets the biased base.
+- **A fixture window sized by its first caller.** `FONT_BYTES` was `0x600` — "all the gauge string
+  uses" — but the high-score initials cycle up to `'`'` (0x60), one glyph past the end. On target the
+  blitter read the next fixture as glyph pixels, and an all-zero `(mask, ink)` row *replaces* the cell
+  with colour 0: a black box. Host tests never saw it because they hand the C code a slice of the live
+  68k image, where the bytes past the window are the real font.
+- **An alias the port split.** See the bullet below.
+
+The generalisable rules:
+
+- **Every fixture window needs a bound derived from the widest caller, asserted in a test** — not a
+  comment naming the caller it was measured against. `test_game_fixture.py` is where those bounds live.
+- **A global two subsystems share must be refreshed where the original reads it**, not where the port
+  finds it convenient to derive.
+- **Never teach a test to imitate the shell's binding.** If the test needs its own copy of a binding,
+  that binding is the untested thing. The structural fix is to hoist the binding into shared code both
+  the shell and the harness call — the same move that hoisted `rm_draw_frame` out of `game_main.c`.
+- **Aliased addresses are load-bearing.** `recreate/include/addrs.h` has four addresses under two names
+  (`0x18c58`, `0x18d5a`, `0x18d12`, and one duplicate); three are handled, and `0x18d12`
+  (`rev_reload` == `lean_frame`) was not: the port skipped the `rev_reload` poke on the reasoning that
+  "no compared surface reads lean_frame", which is false — `draw_buggy_hi` reads it every frame. Sweep
+  `addrs.h` for duplicate addresses when porting, and justify each one in code.
+
+Coverage note, honestly: of the four, the composed-frame differential now pins the two `objlist`
+globals, `test_text` + `test_game_fixture` pin the font, and a directed
+`test_rev_reload_poke_restarts_the_lean_overlay` pins the alias (nothing else could — the composed
+differential re-seeds the sprite's draw-internal cursors from the reference by design). The
+`marker_recs` binding lives in `game_main.c`, which `make test` does not compile, so it is pinned only
+by reading + the on-target run. That is harness gap #1.
+
 ### Joystick support (port 1) — and the supervisor-mode gotcha
 
 The arcade reads a joystick in port 1 every frame: `read_joystick @0x12110` busy-waits the IKBD ACIA

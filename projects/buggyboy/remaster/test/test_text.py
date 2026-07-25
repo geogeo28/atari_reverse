@@ -18,10 +18,14 @@ import pytest
 harness = adapter.harness
 SCREEN_BASE, SCREEN_BYTES = adapter.SCREEN_BASE, adapter.SCREEN_BYTES
 
-FONT_ADDR, FONT_LEN = 0x176a8, 0x600      # 1bpp glyph table (chars 0..0x5f, 16 bytes each)
+FONT_ADDR, FONT_LEN = adapter.A_font_glyphs, adapter.FONT_BYTES   # the ONE font window (adapter.py)
 A_color_pairs = adapter.A_color_pairs
 STR_ADDR, STR_MAX = 0x800, 48             # scratch string buffer, below the framebuffer region
-GLYPH_LO, GLYPH_HI = 0x20, 0x5f           # printable glyph range (stays inside the font table)
+# Glyph range the fuzz draws. The top END of it is the point: FONT_MAX_GLYPH is the name-entry delete
+# sentinel '`', the highest glyph the game can ask for, and it used to sit one glyph past the window
+# every asset bundle handed the blitter — so it drew a black box on target while every test stayed
+# green. Drawing it here diffs it against recreate's glyph body, which reads the whole image.
+GLYPH_LO, GLYPH_HI = 0x20, adapter.FONT_MAX_GLYPH
 CHUNKS, CASES = 8, 60
 
 

@@ -20,8 +20,8 @@
  * raise/consume loop) and §2's input capture are modeled too. Slice 2 WIRES §1's sound: the marker gate
  * hands the raised effect to handle_marker, the engine-sound enable block (EG / VBL vector / idle
  * Dosound / EGOFF) is rm_sound_engine_update, and §7 writes engfreq — all through the ctx's SoundDriver.
- * The `rev_reload` poke stays skipped (it aliases lean_frame, which no compared surface reads).
- * See game.h for the state model. The 68000 works in 16-bit registers, so intermediates wrap mod 2^16 —
+ * The `rev_reload` poke is wired through lean_frame_reload — it aliases lean_frame, the lean overlay's
+ * animation cursor (see game.h). See game.h for the state model. The 68000 works in 16-bit registers, so intermediates wrap mod 2^16 —
  * mirrored with explicit uint16_t/int16_t, exactly as in geometry.c. Verified frame-by-frame against
  * recreate's g_game_update (test/test_player.py, test/test_leg_drive.py).
  */
@@ -108,9 +108,9 @@
 /* §1 — the marker gate. The gate byte is the effect id the crash script raised last frame
  * (run_crash_script writes marker_pending from CRASH_MARKER); §1 hands it to handle_marker and CLEARS
  * it, closing the raise/consume loop across frames. Slice 2 wires the handle_marker trigger; the
- * engine-sound enable that follows in §1 is rm_sound_engine_update (below). The `rev_reload` poke that
- * accompanies the idle case aliases lean_frame (0x18d12), which no compared surface reads, so it stays
- * skipped exactly as §6/§7 skip the same poke (see game.h). */
+ * engine-sound enable that follows in §1 is rm_sound_engine_update (below), whose idle branch carries
+ * the `rev_reload` poke — one global with lean_frame (0x18d12), so it restarts the lean overlay through
+ * PlayerState.lean_frame_reload (see game.h). */
 static void apply_marker_gate(PlayerState *p, SoundDriver *snd) {
     if (p->marker_pending != 0) {
         rm_handle_marker(snd, p->marker_pending, p->game_over);
@@ -207,7 +207,10 @@ static uint16_t run_crash_script(PlayerState *p, const PlayerAssets *a, uint16_t
 
     p->lean = rec[CRASH_LEAN];
     p->buggy_pitch_off = (int16_t)be16(rec + CRASH_PITCH);
-    if ((int8_t)rec[CRASH_RPM] >= 0) p->engine_rpm = rec[CRASH_RPM];
+    if ((int8_t)rec[CRASH_RPM] >= 0) {
+        p->engine_rpm = rec[CRASH_RPM];
+        p->lean_frame_reload = true;         /* the rev_reload poke paired with it — restarts the overlay */
+    }
     p->anim_frame_sel = rec[CRASH_ANIM];
     p->steer_delta = (int8_t)rec[CRASH_STEER];
     p->marker_pending = rec[CRASH_MARKER];
@@ -429,8 +432,11 @@ static void update_edge_clamp(PlayerState *p, const uint8_t *ctrl, uint16_t stee
 
 void rm_player_update(PlayerState *p, const PlayerAssets *a, uint8_t *ctrl, RmEventCtx *ctx) {
     apply_marker_gate(p, ctx->snd);                               /* §1 pending-marker gate */
-    /* §1 engine-sound enable: reads last frame's speed / crash state (all pre-§6/§7 here). */
-    rm_sound_engine_update(ctx->snd, p->speed, p->crash_phase, ctx->ev->crash_frame, p->game_over);
+    /* §1 engine-sound enable: reads last frame's speed / crash state (all pre-§6/§7 here). Its idle
+     * branch carries the rev_reload poke, i.e. the lean-overlay restart (see game.h). This assignment
+     * is also the per-frame reset of the flag — §6 raises it again below if the script pokes too. */
+    p->lean_frame_reload =
+        rm_sound_engine_update(ctx->snd, p->speed, p->crash_phase, ctx->ev->crash_frame, p->game_over);
     uint16_t frame_input = p->game_over ? 0 : (uint16_t)(p->input & IN_MASK);   /* §2 input capture */
 
     update_dashboard_anim(p, a, frame_input);

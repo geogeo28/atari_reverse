@@ -186,7 +186,7 @@ void bench_stage_assets(void) {
     objlist.view_parity = pfx.view_parity;
     objlist.bonus_timer = pfx.bonus_timer;
     objlist.obj_scan_off = player.ground_view_off;
-    objlist.p24_flag = hud_text_ram[RM_HUD_SCORE_STR_OFF + 1];
+    objlist.p24_flag = hud_text_ram[RM_HUD_P24_DIGIT_OFF];
 
     bench_ring_views();
 }

@@ -278,7 +278,6 @@ CKPT_ANIM_TBL_BYTES = 0x50                          # 7 + 4 + 1 groups of contro
 COLL_MASK_BYTES = 0x20                              # crash_bars << 2 (0..0x18) + a long
 DASH_RAW_BYTES = 5 * 0x500                          # 5 legs of raw dashboard block (leg*0x500 stride)
 BUF_A_DASH_BYTES = 0xa00                            # covers the leg-dash label/clear/marker-seed tables
-FONT_GLYPH_BYTES = 0x600                            # glyphs 0..0x5f (16 bytes each)
 GFX_EVENT_BYTES = 0x14000                           # buf_c window: banner (0x9c40) + dashboard (..0x13520)
 
 
@@ -423,7 +422,15 @@ NUM_GLYPH_BUF_OFF = 0xbb80                          # phase-8 digit sprites at b
 COLOR_PAIRS_BYTES = 16 * 8
 COLOR_BAR_MASK_BYTES = 5 * 12 * 4
 FUEL_MASK_BYTES = 8
-FONT_BYTES = 0x600                                # glyphs 0..0x5f (all the gauge string uses)
+# Font window — ONE definition, used by every asset bundle AND by the on-target fixture bake
+# (gen_hud_fixture.hud_asset_arrays), so the shipped fixture_font and the host tests always agree.
+# The highest glyph the game can ask for is the name-entry DELETE sentinel '`' (flow.c HS_CHAR_DEL):
+# the initials cycle 'A'..'`' and '`' draws a left-arrow. Sizing this to what the HUD gauge strings
+# alone need (0x600) left that glyph off the end of fixture_font, so on target the blitter read the
+# NEXT fixture as glyph pixels — an all-zero (mask, ink) row clears the cell, i.e. a black box.
+FONT_MAX_GLYPH = 0x60                             # '`' — the name-entry delete sentinel
+FONT_GLYPH_STRIDE = 16                            # 8 rows x (mask, ink); mirrors GLYPH_BYTES (text.h)
+FONT_BYTES = (FONT_MAX_GLYPH + 1) * FONT_GLYPH_STRIDE    # 0x610
 GAUGE_STR_BYTES = 64                              # covers the 6 phase-7 substrings (indices 0..52)
 HUD_TEXT_BYTES = 0xe6                              # shared HUD-text region [0x18172, 0x18258)
 SMALL_GAUGE_STR_BYTES = 32                         # phase-6b gauge0 + optional bar substrings
@@ -617,7 +624,7 @@ class RmScene(ctypes.Structure):
                 ("pfx_assets", _p(GobjPrefixAssets)), ("src", _p(RoadSource)),
                 ("ground_assets", _p(GroundAssets)), ("sprite_assets", _p(SpriteAssets)),
                 ("hud_assets", _p(HudAssets)),
-                ("ctrl", _u8), ("scanline", _u8), ("shifted", _u8), ("ring_st", _u8),
+                ("ctrl", _u8), ("scanline", _u8), ("shifted", _u8), ("ring_st", _u8), ("hud_text", _u8),
                 ("obj_sprite_disp", _u8), ("obj_fixed_list", _u8)]
 
 
@@ -646,7 +653,7 @@ class PlayerState(ctypes.Structure):
                 ("fire_hold", ctypes.c_uint16), ("dsp_variant_idx", ctypes.c_uint16),
                 ("leg_flags_sel", ctypes.c_uint16), ("time_subctr", ctypes.c_uint16),
                 ("time_left", ctypes.c_int16), ("hud_crash_timer", ctypes.c_int16),
-                ("timeout_gate", ctypes.c_bool)]
+                ("timeout_gate", ctypes.c_bool), ("lean_frame_reload", ctypes.c_bool)]
 
 
 class PlayerAssets(ctypes.Structure):
@@ -1154,7 +1161,7 @@ def event_assets(image):
     coll = buf(mask_base, COLL_MASK_BYTES)
     buf_a_win = buf(buf_a, BUF_A_DASH_BYTES)
     dash_raw = buf(mem_base, DASH_RAW_BYTES)
-    font = buf(A_font_glyphs, FONT_GLYPH_BYTES)
+    font = buf(A_font_glyphs, FONT_BYTES)
     p = ctypes.POINTER(ctypes.c_uint8)
     assets = EventAssets(
         ctypes.cast(fx_type, p), ctypes.cast(evt_obj, p), ctypes.cast(deltas, p),

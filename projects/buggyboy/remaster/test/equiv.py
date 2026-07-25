@@ -972,6 +972,10 @@ def compare_game_objects(lib, image):
     return diff, footprint
 
 
+# A lean_frame value the rev_reload poke must overwrite (its reload is 8, and 0 means "overlay not
+# drawn"), so compare_lean_frame_reload cannot pass by both sides happening to hold the reload value.
+LEAN_FRAME_SEED = 0x10
+
 # The player-physics state rm_player_update owns, paired with the recreate global it must match.
 # (native PlayerState field, image address, signed)
 PLAYER_FIELDS = (
@@ -1176,6 +1180,45 @@ def compare_spin_arming(lib, image, pokes, inputs):
             if getattr(p, name) != ref:
                 mismatches.append((frame, name, getattr(p, name), ref))
     return mismatches, stats
+
+
+def compare_lean_frame_reload(lib, image, in_bits=0, seed=LEAN_FRAME_SEED, pokes=()):
+    """One frame of the `rev_reload` poke, diffed. 0x18d12 is ONE global under two names in the original
+    — rev_reload and lean_frame — so §1's engine-idle branch and §6's script rpm override both restart
+    the lean overlay draw_buggy_hi animates. The port splits the owners (rm_player_update raises
+    PlayerState.lean_frame_reload; rm_apply_player fans it into SpriteState.lean_frame), so nothing but
+    a direct diff of the fanned field against the reference's 0x18d12 can see it — the composed-frame
+    differential re-seeds the sprite's draw-internal cursors from the reference every frame by design.
+
+    `seed` is written to 0x18d12 on BOTH sides first, so a run where the poke never fires cannot pass
+    vacuously. Returns (candidate lean_frame, reference lean_frame, poke raised?)."""
+    state = bytearray(image)
+    for addr, val in dict(pokes).items():
+        _w16(state, addr, val & 0xffff)
+    _w16(state, adapter.A_sp_lean_frame, seed)
+    buf = (ctypes.c_uint8 * bench_frame.IMAGE_SIZE).from_buffer(state)
+
+    p = adapter.player_state(state, in_bits)
+    ev = adapter.event_state(state)
+    sprite = adapter.sprite_state(state)
+    assets, _keep = adapter.player_assets(state)
+    ctrl, _keep_ctrl = adapter.road_ctrl(state)
+    ctx_bundle = _staged_ctx(state)
+    ctx_bundle.ctx.player = ctypes.pointer(p)
+    lib.rm_player_update(ctypes.byref(p), ctypes.byref(assets), ctrl, ctypes.byref(ctx_bundle.ctx))
+
+    views = (adapter.RoadPose(), adapter.ScrollState(), adapter.GroundState(),
+             adapter.ObjListCtx(), adapter.HudState(), adapter.RoadInput())
+    edge_base = (ctypes.c_uint8 * adapter.ROAD_EDGE_ALL_BANKS_BYTES)()
+    pose, scroll, ground, objlist, hud, road = views
+    lib.rm_apply_player(ctypes.byref(p), ctypes.byref(ev), ctypes.byref(pose), ctypes.byref(scroll),
+                        ctypes.byref(sprite), ctypes.byref(ground), ctypes.byref(objlist),
+                        ctypes.byref(hud), ctypes.byref(road),
+                        ctypes.cast(edge_base, ctypes.POINTER(ctypes.c_uint8)))
+
+    _w16(state, adapter.A_input_state, in_bits)
+    _bind("g_game_update")(buf)
+    return sprite.lean_frame, _r16(state, adapter.A_sp_lean_frame), bool(p.lean_frame_reload)
 
 
 def compare_player_drive(lib, image, inputs):
@@ -1744,11 +1787,11 @@ class _ComposedScene:
             None, 0, at(self.buf_a), at(self.buf_c), at(adapter.A_color_pairs),
             at(adapter.A_obj_view_xform), at(adapter.A_objsh2p_tbl), at(adapter.A_obj_type_jumptable),
             at(adapter.A_obj_xoff_tbl), 0, 0, 0, 0, 0)
-        # objlist.bonus_timer / p24_flag are set ONCE at the leg start by the shell (start_leg) and
-        # never refreshed per frame — reproduce that staleness faithfully (if it ever matters, the
-        # composed differential is exactly what surfaces it as a divergence, which is the point).
-        self.objlist.bonus_timer = _r16(image, adapter.A_bonus_timer)
-        self.objlist.p24_flag = image[adapter.A_p24_flag]
+        # objlist.bonus_timer / p24_flag are LIVE globals the dispatcher reloads every frame, so they are
+        # NOT seeded here: rm_draw_frame refreshes them from the prefix / the candidate's own hud_text,
+        # which is what the composed differential must exercise. (They used to be captured once at the
+        # leg start, mirroring a shell that did the same — and that agreement is exactly why the
+        # composed differential could not see the staleness.)
 
         # per-frame snapshot structs (the draws mutate these; discarded each frame — the peek).
         self.pose = adapter.RoadPose()
@@ -1766,6 +1809,7 @@ class _ComposedScene:
             ctypes.pointer(self.hud_assets),
             ctypes.cast(self.ctrl, u8), ctypes.cast(self.scan, u8), ctypes.cast(self.shifted, u8),
             ctypes.cast(self.ring_st, u8),
+            at(adapter.A_hud_text),      # live: draw() syncs the candidate's own hud_text into the image
             at(adapter.A_obj_sprite_disp), at(adapter.A_obj_list_base))   # the two display-list bases
         self._prebuilt_off = None
 

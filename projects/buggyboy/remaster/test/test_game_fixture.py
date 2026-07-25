@@ -8,6 +8,8 @@ so the game silently dropped the whole gate (the frame-0 golden DIFF of 1110 byt
 """
 import re
 
+import pytest
+
 import adapter
 
 
@@ -38,6 +40,76 @@ def test_buf_a_window_covers_the_type_record_table():
     assert window >= table_end, (
         f"buf_a window {window:#x} stops short of the per-type record table end {table_end:#x} — "
         f"types above {(window - base) // stride:#x} silently draw nothing")
+
+
+def test_font_window_covers_the_name_entry_character_range():
+    """FONT_BYTES must reach past the HIGHEST glyph the game can ask for, which is NOT a HUD glyph:
+    the high-score initials cycle 'A'..'`' (src/flow.c), so the delete sentinel HS_CHAR_DEL tops the
+    range. Sized to what the gauge strings alone need (0x600) it stopped exactly one glyph short, and
+    on target the blitter read the array declared after fixture_font as glyph pixels — an all-zero
+    (mask, ink) row REPLACES the cell with colour 0, so name entry drew a black box for '`'.
+
+    Three pins: the window covers the range, the glyph stride agrees with the C blitter across the
+    language boundary, and the SHIPPED fixture is at least as long (a stale generated header)."""
+    flow = (adapter.REMASTER / "src/flow.c").read_text()
+    top_char = _define(flow, "HS_CHAR_DEL")
+    assert adapter.FONT_MAX_GLYPH >= top_char, (
+        f"FONT_MAX_GLYPH {adapter.FONT_MAX_GLYPH:#x} is below the name-entry top char {top_char:#x}")
+
+    text_h = (adapter.REMASTER / "include/text.h").read_text()
+    assert adapter.FONT_GLYPH_STRIDE == _define(text_h, "GLYPH_BYTES"), \
+        "adapter's glyph stride disagrees with the C blitter's GLYPH_BYTES"
+
+    need = (top_char + 1) * adapter.FONT_GLYPH_STRIDE
+    assert adapter.FONT_BYTES >= need, (
+        f"font window {adapter.FONT_BYTES:#x} stops short of glyph {top_char:#x} (needs {need:#x}) — "
+        f"the blitter reads past the fixture and draws a black box")
+
+    # The shipped fixture is a GENERATED, gitignored artifact of the m68k build (render/atari/build/),
+    # so it is absent on a fresh checkout and this leg only applies once it has been baked.
+    fixture_h = adapter.REMASTER / "render/atari/build/game_fixture.h"
+    if not fixture_h.exists():
+        pytest.skip("game_fixture.h not built yet (run render/atari/gen_game_fixture.py)")
+    found = re.search(r"fixture_font\[(\d+)\]", fixture_h.read_text())
+    assert found, "fixture_font not found in the generated game_fixture.h"
+    assert int(found.group(1)) >= need, (
+        f"shipped fixture_font is {int(found.group(1)):#x} bytes, short of {need:#x} — "
+        f"re-run gen_game_fixture.py")
+
+
+def test_marker_decay_arena_padding_covers_the_prefix_walk():
+    """The shell hands rm_gobj_prefix a marker-decay base BELOW the object grid (game_main.c's
+    ring_st_block): in the original the decay base is `A_obj_markers - 8` and the walk runs
+    `marker_off + i * stride` for 14 records, so it reaches below row 0 and past the last row. Both pads
+    must therefore be derived quantities, not two coincidental 8s — under-size either and the prefix
+    writes outside the block (or, worse, lands 8 bytes off and silently animates nothing, which is the
+    bug this padding was added to fix).
+
+    `game_main.c` is not compiled by `make test`, so this is the only host-side check on those two
+    constants; it pins them against the addresses in adapter.py and the walk in src/gameplay.c."""
+    game = (adapter.REMASTER / "render/atari/game_main.c").read_text()
+    bias = _define(game, "RING_ST_DECAY_BIAS")
+    spill = _define(game, "RING_ST_DECAY_SPILL")
+
+    assert bias == adapter.A_ring_base - adapter.A_marker_decay_base, (
+        f"RING_ST_DECAY_BIAS {bias:#x} != the original's grid-to-decay-base gap "
+        f"{adapter.A_ring_base - adapter.A_marker_decay_base:#x}")
+
+    prefix = (adapter.REMASTER / "src/gameplay.c").read_text()
+    records = _define(prefix, "GOBJ_MARKER_RECS") + 1          # the loop runs 0..GOBJ_MARKER_RECS
+    stride = _define(prefix, "GOBJ_MARKER_STRIDE")
+    events = (adapter.REMASTER / "src/events.c").read_text()
+    # §H dispatches at horizon_row and horizon_row + 2, and marker_decay_spawn takes that as marker_off.
+    # RM_MAX_HORIZON_ROW is RM_HORIZON_DIV * 2 (game.h), so derive it from the one source of truth.
+    max_off = _define((adapter.REMASTER / "include/game.h").read_text(), "RM_HORIZON_DIV") * 2 + 2
+    assert "rm_event_dispatch(c, event, (uint16_t)(horizon_row + 2)" in events, \
+        "the §H slot expression moved — re-derive max_off before trusting this bound"
+
+    reach = max_off + (records - 1) * stride                    # deepest byte the clear loop touches
+    block = bias + adapter.RING_ROW_BYTES * adapter.RM_RING_ROWS + spill
+    assert reach < block, (
+        f"the decay walk reaches {reach:#x} but ring_st_block is only {block:#x} bytes — "
+        f"raise RING_ST_DECAY_SPILL")
 
 
 def test_frame0_views_derived_before_first_draw():

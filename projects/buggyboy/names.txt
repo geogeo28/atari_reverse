@@ -364,7 +364,8 @@ cmt 0x1b394 Sound-command jump table (note-stream commands >= 0x80).
 # ---- game_update @ 0x1110e per-frame state (see recreate/include/addrs.h for full roles) ----
 var 0x18d14 marker_pending   # b: gate -> handle_marker()
 var 0x18c86 crash_phase   # w: crash/despawn phase (signed
-var 0x18d12 rev_reload   # w: engine idle/rev-target reload (set to 8)
+var 0x18d12 rev_reload   # w: engine idle/rev-target reload (set to 8) — ALSO lean_frame, the lean-overlay
+cmt 0x18d12 ALIASED: rev_reload (game_update writes 8 on engine idle / a script rpm override) and lean_frame (draw_buggy_hi's lean-overlay animation cursor, 0/8/0x10) are ONE word. The poke restarts the overlay; a port that splits the two owners must re-establish that (remaster: PlayerState.lean_frame_reload -> SpriteState.lean_frame).
 var 0x1b07d engfreq   # b: EGFREQ engine-sound frequency (adjacent to EGFLAG 0x1b07c)
 var 0x18c82 event_pending   # w: pending-event id dispatched via A_event_jumptable
 var 0x18c98 fire_hold   # w: fire-hold / dashboard-variant countdown (init 4)

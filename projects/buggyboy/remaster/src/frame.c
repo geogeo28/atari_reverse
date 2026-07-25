@@ -15,7 +15,14 @@ void rm_draw_frame(const RmScene *sc, Framebuffer *fb) {
     ObjListCtx *objlist = sc->objlist;
 
     rm_gobj_prefix(pfx, sc->pfx_assets);             /* off-frame: advance view_parity/anim/marker */
+    /* The three LIVE globals the object dispatcher reads. In the original each is one word/byte it
+     * loads at draw time, so all three must be refreshed HERE, every frame, not captured at a leg
+     * start: view_parity and bonus_timer are advanced by the prefix just above (bonus_timer opens the
+     * 5-flag window that clamps low object types), and p24_flag is score_str[1], which §I bumps at
+     * every checkpoint. */
     objlist->view_parity = pfx->view_parity;         /* the dispatcher (handler_lo) reads the advanced parity */
+    objlist->bonus_timer = pfx->bonus_timer;
+    objlist->p24_flag = sc->hud_text[RM_HUD_P24_DIGIT_OFF];
     objlist->px = fb->px;                            /* the dispatcher's draw target: this frame's buffer */
     rm_build_road_geometry(sc->pose, sc->src, sc->ring, sc->ctrl, sc->scanline);
     sc->road->width_tbl = sc->ctrl + RM_CTRL_WIDTH_OFF;

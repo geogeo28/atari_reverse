@@ -285,9 +285,11 @@ void rm_pause_silence(SoundDriver *snd);
 /* game_update §1's engine-sound enable (recreate game_update.c:252-258): while the buggy is under the
  * player's control (not game-over / not a crash phase 1 / not mid-tally), a stopped buggy silences the
  * envelope generator via stop_music_chk(idle) and a moving one arms it (EG_FLAG + REFRESH); otherwise
- * EGOFF. The `rev_reload` poke the original pairs with the idle case aliases lean_frame (no compared
- * surface reads it) and stays skipped, as everywhere in the tree. */
-void rm_sound_engine_update(SoundDriver *snd, uint16_t speed, int16_t crash_phase,
+ * EGOFF. Returns whether the IDLE branch ran: the original pairs that branch with a `rev_reload` poke,
+ * and 0x18d12 is one global under two names (rev_reload / lean_frame), so the caller turns this into
+ * the lean-overlay restart PlayerState.lean_frame_reload carries (see game.h). Reported rather than
+ * poked here so the gate condition stays in ONE place. */
+bool rm_sound_engine_update(SoundDriver *snd, uint16_t speed, int16_t crash_phase,
                             uint16_t crash_frame, bool game_over);
 
 /* "Is a tune still playing?" — the flow's terminal jingle waits (mzflag spins: highscore.c @0x25bc /

@@ -326,6 +326,50 @@ probe + fx/horizon tail on every view-wrap. Consequences, all measured rather th
   unaffected: `run_golden.py` MATCH on all 5 legs (the hoist is byte-preserving) and the `GAME_FLOW_AUTO`
   trace unchanged at 19 records.
 
+### Play-test bugs — four SHELL-BINDING defects, fixed (2026-07-24)
+
+A play-test reported two visible faults ("no animation when the buggy kicks a roadside object"; "a
+black box for the character during high-score name entry"). Both traced to the same class, and the
+sweep for that class found two more. **None was in `src/`** — every ported core is still byte-exact.
+They were all in the layer `make test` does not compile (`render/atari/game_main.c`) or in the fixture
+windows it consumes, where the harness builds its own bindings instead of the shell's. The lesson and
+the generalised rules are written up in `PORTING.md` ("The shell-binding trap").
+
+| # | Defect | Effect in the game | Fix | Pinned by |
+|---|--------|--------------------|-----|-----------|
+| 1 | `GobjPrefixAssets.marker_recs` bound to a private BSS block, while the object dispatcher reads `ring_st`. In the original both are the one grid at `A_obj_markers` (decay base = grid − 8) | The marker-decay animation (idx 30/60: a kicked roadside object flying away — the prefix walks a `0xff` through the grid one band nearer per frame, which the dispatcher's SPECIAL pass draws) wrote to a dead buffer. The object still vanished and still scored, so it read as "the animation is missing" | `ring_st` is now a padded block (`RING_ST_DECAY_BIAS` below, `RING_ST_DECAY_SPILL` above) and the prefix gets the biased base | **Reading + the on-target run only** — the binding lives in `game_main.c`, which `make test` does not compile. Honestly unpinned host-side; harness gap #1 |
+| 2 | `FONT_BYTES = 0x600` ("all the gauge string uses"), one glyph short of `'`'` (0x60), the name-entry delete sentinel | On target the blitter read the array declared after `fixture_font` as glyph pixels; an all-zero `(mask, ink)` row *replaces* the cell with colour 0 — a black box mid-name-entry. Invisible host-side, where the tests hand the C code a slice of the live image and the bytes past the window are the real font | One derived `FONT_BYTES = (FONT_MAX_GLYPH + 1) * FONT_GLYPH_STRIDE`; the duplicate `FONT_GLYPH_BYTES` is gone | `test_game_fixture::test_font_window_covers_the_name_entry_character_range` (bound derived from `flow.c`'s `HS_CHAR_DEL`, stride cross-checked against `text.h`, shipped fixture length checked) + `test_text` now fuzzes up to the top glyph. Mutation-verified |
+| 3 | `objlist.bonus_timer` / `p24_flag` derived once in `start_leg`; the original's dispatcher reloads both every frame | The 5-flag bonus window never clamped a low object type (the roadside scenery never changed for the window), and the p24 gate never re-read the score digit §I bumps at each checkpoint | Both refreshed in `rm_draw_frame`, where the original reads them; `start_leg` derives neither | `test_composed_frame::test_composed_bonus_window_clamps_low_object_types` (directed — no free drive opens the window; seeds it into the leg-start image so both sides open it). Mutation-verified: freezing either fails. **Two limits:** the seeded window never CLOSES during the drive (only the prefix decrements it, and the compose that runs the prefix is discarded on both sides — measured: still `0x3c` at frame 90), so this pins the clamp-open path only; and `p24_flag` is pinned against *not reading it*, not against a stale-but-plausible value, which needs a checkpoint no composed drive reaches |
+| 4 | The `rev_reload` poke (§1 engine idle, §6 script rpm override) was skipped, justified as "it aliases `lean_frame`, which no compared surface reads" — false: `draw_buggy_hi` reads `lean_frame` every frame | `0x18d12` is ONE word under two names, so in the original every rpm override restarts the lean-overlay animation. The port let it free-run | `PlayerState.lean_frame_reload` (per-frame out-field) → `rm_apply_player` → `SpriteState.lean_frame`, conditional because that field is in/out | `test_player::test_rev_reload_poke_restarts_the_lean_overlay` — **both** poke sites × legs 0/1/4 (§6 reached by arming the crash script on `crash_anim_tbl + 0x90`, whose rpm byte is non-negative). Nothing else can see it: the composed differential re-seeds the sprite's draw-internal cursors from the reference by design. Mutation-verified per site: dropping either raise reddens only its own cases, and dropping the fan passed the whole suite before this test existed |
+
+**Residuals on #1, recorded rather than fixed blind** (both found by the pre-commit review, neither a
+regression — before the fix the decay wrote nowhere at all):
+
+- **The clears do not persist past the animation.** `ring_st` is a *derived* mirror: `ring_views_refresh`
+  re-runs `rm_ring_store_st` from the authoritative `CourseRing` on every course advance, and the decay
+  never touches the ring. During the animation this is invisible (the prefix re-applies the full clear
+  every frame, after the re-serialize and before the object passes), but once the decay retires, the
+  next advance restores the type codes the original had erased for good — the kicked scenery column
+  pops back. Fixing it properly means giving the decay a home in the ring, which needs its own
+  differential.
+- **The low pad is not inert in the original.** `A_marker_decay_base`'s first word is
+  `RoadPose.seg_data[12]` (`game.h`: `seg_data[11]/[12]` *are* `marker_slope_src` / `marker_decay_base`),
+  which the port models natively. A decay armed on a `horizon_row == 0` frame therefore zeroes a far
+  slope byte in the original and only pad here. Documented at the declaration in `game_main.c`.
+
+Also noted, not folded in (out of scope): `render/atari/bench_main.c` still derives `objlist.bonus_timer`
+/ `p24_flag` once at setup, so the perf bench no longer mirrors the shell's per-frame refresh and
+measures the never-clamping path. Changing it moves the PERF30 baselines, so it belongs with the perf
+work, not here.
+
+Alias sweep over `recreate/include/addrs.h` (the root cause of #4 generalised): four addresses carry
+two names — `0x18c58` (`obj_scan_off`/`ground_view_off`, fanned by `rm_apply_player`), `0x18d5a`
+(`sprite_list_base`/`road_width_src`, documented at `game.h:142`), `0x18c7e` (a duplicate `#define`,
+harmless) and `0x18d12`. Three were already handled; only `0x18d12` was broken. `names.txt` now records
+the dual role at that address.
+
+Suite: **718 passed** (was 708), ~22 s under `-n auto`.
+
 ### Game-mechanics coverage audit (2026-07-23)
 
 Every in-race gameplay mechanism and its current differential reach (the playtest asked "check the game

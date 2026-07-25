@@ -96,7 +96,9 @@ void rm_gobj_hud_view(const GobjPrefixState *g, HudState *hud) {
 #define IL_WHEEL_POS    0x2     /* wheel_pos */
 #define IL_LEAN         0x2     /* lean_state */
 #define IL_TIME_LEFT    0x46    /* time_left */
-#define IL_LEAN_FRAME   0x8     /* lean_frame (buggy lean-animation cursor) */
+/* lean_frame (the buggy lean-animation cursor at 0x18d12). ONE value with two writers, both `moveq #8`
+ * in the original: init_leg's leg-start seed and the rev_reload poke rm_apply_player replays below. */
+#define LEAN_FRAME_SEED 0x8
 #define IL_VARIANT      0x8     /* buggy_variant scratch (draw_buggy overwrites it with lean*8) */
 
 /* Phase 10 — the leg's 14 roadside-object marker records, unpacked into the ring's 14 bands. Each
@@ -232,7 +234,7 @@ void rm_init_leg(PlayerState *p, CourseState *cs, RoadPose *pose, ScrollState *s
     memset(sprite, 0, sizeof *sprite);
     sprite->lean = IL_LEAN;
     sprite->wheel_pos = IL_WHEEL_POS;
-    sprite->lean_frame = IL_LEAN_FRAME;
+    sprite->lean_frame = LEAN_FRAME_SEED;
     sprite->variant = IL_VARIANT;
     sprite->buggy_gate = rm_ring_buggy_gate(ring);
     sprite->fg_gate = rm_ring_fg_gate(ring);
@@ -295,6 +297,11 @@ void rm_apply_player(const PlayerState *p, const EventState *ev,
     sprite->spin_state = (int8_t)(ev->spin_state >> 8);                    /* the fx<<8 word's hi byte (0x18caa) */
     sprite->spin_reset = ((uint32_t)p->spin_reset << 16) | p->spin_word2;  /* the 0x18cc8 spin longword */
     sprite->collision_lock = p->collision_lock;                           /* lower-body crash suppressor (0x18c84) */
+    /* The rev_reload poke, consumed: 0x18d12 is rev_reload AND lean_frame in the original, so an rpm
+     * override (or a stopped engine) restarts the lean overlay. Conditional — unlike the fields above,
+     * lean_frame is in/out (draw_buggy_hi advances it), so it must not be fanned every frame. The flag
+     * is a per-frame output: rm_player_update clears it on entry and raises it at either poke site. */
+    if (p->lean_frame_reload) sprite->lean_frame = LEAN_FRAME_SEED;
 
     ground->view = p->ground_view_off;
     objlist->view_flags = p->view_flags;

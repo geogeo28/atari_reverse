@@ -341,9 +341,11 @@ void rm_ring_poke_byte(CourseRing *ring, unsigned flat_off, uint8_t val);
  * frame loops in `game_main.c` / `equiv._Candidate`), not inside this function.
  *
  * Section 6's sound is now wired (slice 2, via the ctx's SoundDriver): the terminal record restores the
- * VBL sound vector, and §1's marker gate / engine-sound block fire through the trigger layer. The one
- * write still skipped is the `rev_reload` poke that accompanies an rpm override — it aliases lean_frame
- * (0x18d12), which no compared surface reads. */
+ * VBL sound vector, and §1's marker gate / engine-sound block fire through the trigger layer. The
+ * `rev_reload` poke that accompanies an rpm override (and the §1 engine-idle case) is wired too: in the
+ * original 0x18d12 is ONE global under two names — rev_reload and lean_frame — so that poke resets the
+ * lean-overlay animation, which draw_buggy_hi reads. The port splits the two owners, so the poke sets
+ * `lean_frame_reload` here and rm_apply_player fans it into SpriteState.lean_frame (below). */
 
 /* Input bits, as the original's input_state packs them (joystick, or arrow keys mapped by read_input).
  * COAST is not a joystick bit — IN_MASK strips it from live input; only the crash script raises it
@@ -427,6 +429,11 @@ typedef struct {
     int16_t  time_left;        /* out: bonus time remaining */
     int16_t  hud_crash_timer;  /* out: armed when the clock runs out; freezes the clock, forces braking */
     bool     timeout_gate;     /* nonzero suppresses arming hud_crash_timer at time-out */
+    /* out: the original's `rev_reload` poke (§1 engine idle, §6 script rpm override). That address is
+     * also lean_frame, so the poke restarts the lean overlay. Per-frame — §1 assigns it (which doubles
+     * as the reset) and §6 raises it too; rm_apply_player fans it into SpriteState.lean_frame ONLY when
+     * raised, since that field is in/out (the draw advances it). See the section-6 note above. */
+    bool     lean_frame_reload;
 } PlayerState;
 
 /* Static ST-format tables the physics indexes (STATIC region, big-endian; see st.h). */
@@ -737,6 +744,7 @@ typedef struct {
     uint8_t       *scanline;      /* build_road_geometry scratch */
     const uint8_t *shifted;       /* pre-rotated scroll copies (rm_scroll_prebuild output) */
     uint8_t       *ring_st;       /* the ring serialized to the flat ST row grid (dispatcher flag streams) */
+    const uint8_t *hud_text;      /* the shared HUD-text region: the dispatcher's p24 gate reads a score digit */
     /* obj-low program-data list bases the two object-list pass families walk */
     const uint8_t *obj_sprite_disp;  /* low + OBJ_LOW_SPRITE_DISP: the roadside-sprite display list */
     const uint8_t *obj_fixed_list;   /* low + OBJ_LOW_LIST_BASE:  the fixed-object display list */
@@ -752,6 +760,9 @@ void rm_draw_frame(const RmScene *sc, Framebuffer *fb);
  * digits and blank leading zeros. The HUD's crash tally and the event engine both call it — one
  * definition, no duplicate (CLAUDE.md §6). Offsets are within the 0x18172 HUD-text base. */
 #define RM_HUD_SCORE_STR_OFF     0xbe   /* score_str  (image 0x18230); live digits at +4 */
+/* score_str's second digit (image 0x18231) doubles as the object dispatcher's P24 gate byte — §I bumps
+ * it at every checkpoint, so the draw must re-read it per frame (src/frame.c). */
+#define RM_HUD_P24_DIGIT_OFF     (RM_HUD_SCORE_STR_OFF + 1)
 #define RM_HUD_SCORE_BCD_OFF     0xda   /* score_bcd  (image 0x1824c); 6 ASCII digits */
 #define RM_HUD_SCORE_OVERLAY_OFF 0xa3   /* score_overlay_dig (image 0x18215); bonus-overlay digit */
 #define RM_SCORE_DIGITS          6
