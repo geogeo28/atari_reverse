@@ -292,6 +292,24 @@ bool rm_road_course_advance(RoadPose *pose, CourseState *cs, CourseRing *ring, c
  * after every rm_road_course_advance. */
 void rm_ring_store_st(const CourseRing *ring, uint8_t *dst);
 
+/* ---- the grid's SECOND role: the marker-decay arena rm_gobj_prefix mutates ----
+ *
+ * In the original the serialized grid (A_obj_markers) and the decay arena are the SAME block, and the
+ * decay base sits RM_RING_DECAY_BIAS bytes BELOW row 0 (A_marker_decay_base). The prefix walks
+ * `marker_off + i * 0x20` for RM_RING_ROWS records with marker_off an even horizon row, so it reads
+ * below row 0 and spills a little past the last row. Anyone who allocates the grid must therefore size
+ * it RM_RING_ST_BLOCK_BYTES, place the grid at +RM_RING_DECAY_BIAS, and hand the prefix
+ * rm_ring_decay_base(grid) — otherwise the decay writes miss the bytes the dispatcher reads and a
+ * kicked roadside object silently never animates (that shipped; see PORTING.md "The shell-binding
+ * trap"). These live here, not in the shell, so the game and the harness cannot disagree. */
+#define RM_RING_DECAY_BIAS   8    /* A_obj_markers - A_marker_decay_base */
+#define RM_RING_DECAY_SPILL  8    /* the walk's reach past the last row (deepest index 0x1ce) */
+#define RM_RING_ST_BLOCK_BYTES \
+    (RM_RING_DECAY_BIAS + RM_RING_ROWS * RM_RING_ROW_BYTES + RM_RING_DECAY_SPILL)
+
+/* The decay arena for a grid placed at block + RM_RING_DECAY_BIAS (see above). */
+static inline uint8_t *rm_ring_decay_base(uint8_t *ring_st) { return ring_st - RM_RING_DECAY_BIAS; }
+
 /* draw_game_objects' sprite-slot count — how the two roadside object-list passes split. The original
  * walks the grid's marker column: 0 if row 0's marker is negative, else the number of consecutive
  * non-negative markers over rows 1.., capped at RM_RING_SPRITE_ROWS. */

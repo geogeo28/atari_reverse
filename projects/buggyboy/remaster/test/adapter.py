@@ -101,6 +101,11 @@ A_ring_base = 0x18d3c
 RM_RING_ROWS = 14
 RM_RING_SLOTS = 15
 RING_ROW_BYTES = (RM_RING_SLOTS + 1) * 2            # 0x20 — one band
+# The serialized grid is ALSO the marker-decay arena, whose base sits below row 0 — mirrors game.h's
+# RM_RING_DECAY_BIAS / RM_RING_ST_BLOCK_BYTES, pinned equal by test_game_fixture.
+RM_RING_DECAY_BIAS = 8
+RM_RING_DECAY_SPILL = 8
+RM_RING_ST_BLOCK_BYTES = RM_RING_DECAY_BIAS + RM_RING_ROWS * RING_ROW_BYTES + RM_RING_DECAY_SPILL
 
 
 # ---- player buggy / foreground sprite globals + const piece tables (mirror addrs.h) ----

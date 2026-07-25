@@ -1734,7 +1734,14 @@ class _ComposedScene:
         self.ctrl = (ctypes.c_uint8 * adapter.RM_CTRL_ALLOC_BYTES)()
         self.scan = (ctypes.c_uint8 * adapter.RM_SCANLINE_BYTES)()
         self.shifted = (ctypes.c_uint8 * (adapter.RM_SCROLL_SHIFTS * adapter.RM_SCROLL_WINDOW))()
-        self.ring_st = (ctypes.c_uint8 * (adapter.RM_RING_ROWS * adapter.RING_ROW_BYTES))()
+        # The dispatcher's flag grid, allocated the way the SHELL allocates it: one padded block whose
+        # low pad is the marker-decay base (game.h RM_RING_DECAY_BIAS / RM_RING_ST_BLOCK_BYTES). The
+        # grid and the decay arena are one block in the original, so binding them separately here — as
+        # this harness used to, pointing marker_recs at the image while the dispatcher read a private
+        # ring_st — reproduces the shell bug instead of catching it.
+        self._ring_st_block = (ctypes.c_uint8 * adapter.RM_RING_ST_BLOCK_BYTES)()
+        self.ring_st = ctypes.cast(ctypes.byref(self._ring_st_block, adapter.RM_RING_DECAY_BIAS),
+                                   ctypes.POINTER(ctypes.c_uint8))
         # a framebuffer with an overdraw tail: off-screen object fragments write well past 32000, so
         # back the Framebuffer overlay with SCREEN_BASE + SCREEN + overdraw bytes (as game_main.c does).
         self._fb_buf = bytearray(adapter.SCREEN_BASE + adapter.SCREEN_BYTES + adapter.SCREEN_OVERDRAW)
@@ -1745,7 +1752,8 @@ class _ComposedScene:
         # img[0x17f08] reproduces the alias automatically.
         self.pfx_assets = adapter.GobjPrefixAssets(
             at(adapter.A_anim_word_tbl), at(adapter.A_anim_coloridx_tbl), at(adapter.A_color_pairs),
-            at(adapter.A_marker_decay_base), at(adapter.A_anim_color),
+            ctypes.cast(self._ring_st_block, ctypes.POINTER(ctypes.c_uint8)),   # = rm_ring_decay_base
+            at(adapter.A_anim_color),
             at(self.buf_a + adapter.GOBJ_ANIM_BUF_OFF1), at(self.buf_a + adapter.GOBJ_ANIM_BUF_OFF2))
         self.ground_assets = adapter.GroundAssets(
             at(adapter.A_ground_col_tbl), at(adapter.A_ground_band_records), at(adapter.A_color_pairs))

@@ -337,10 +337,38 @@ the generalised rules are written up in `PORTING.md` ("The shell-binding trap").
 
 | # | Defect | Effect in the game | Fix | Pinned by |
 |---|--------|--------------------|-----|-----------|
-| 1 | `GobjPrefixAssets.marker_recs` bound to a private BSS block, while the object dispatcher reads `ring_st`. In the original both are the one grid at `A_obj_markers` (decay base = grid − 8) | The marker-decay animation (idx 30/60: a kicked roadside object flying away — the prefix walks a `0xff` through the grid one band nearer per frame, which the dispatcher's SPECIAL pass draws) wrote to a dead buffer. The object still vanished and still scored, so it read as "the animation is missing" | `ring_st` is now a padded block (`RING_ST_DECAY_BIAS` below, `RING_ST_DECAY_SPILL` above) and the prefix gets the biased base | **Reading + the on-target run only** — the binding lives in `game_main.c`, which `make test` does not compile. Honestly unpinned host-side; harness gap #1 |
+| 1 | `GobjPrefixAssets.marker_recs` bound to a private BSS block, while the object dispatcher reads `ring_st`. In the original both are the one grid at `A_obj_markers` (decay base = grid − 8) | The marker-decay animation (idx 30/60: a kicked roadside object flying away — the prefix walks a `0xff` through the grid one band nearer per frame, which the dispatcher's SPECIAL pass draws) wrote to a dead buffer. The object still vanished and still scored, so it read as "the animation is missing" | `ring_st` is now a padded block (`RM_RING_DECAY_BIAS` below, `RM_RING_DECAY_SPILL` above, both in `game.h`) and the prefix gets the biased base | **Reading + the on-target run only** — the binding lives in `game_main.c`, which `make test` does not compile. Honestly unpinned host-side; harness gap #1 |
 | 2 | `FONT_BYTES = 0x600` ("all the gauge string uses"), one glyph short of `'`'` (0x60), the name-entry delete sentinel | On target the blitter read the array declared after `fixture_font` as glyph pixels; an all-zero `(mask, ink)` row *replaces* the cell with colour 0 — a black box mid-name-entry. Invisible host-side, where the tests hand the C code a slice of the live image and the bytes past the window are the real font | One derived `FONT_BYTES = (FONT_MAX_GLYPH + 1) * FONT_GLYPH_STRIDE`; the duplicate `FONT_GLYPH_BYTES` is gone | `test_game_fixture::test_font_window_covers_the_name_entry_character_range` (bound derived from `flow.c`'s `HS_CHAR_DEL`, stride cross-checked against `text.h`, shipped fixture length checked) + `test_text` now fuzzes up to the top glyph. Mutation-verified |
 | 3 | `objlist.bonus_timer` / `p24_flag` derived once in `start_leg`; the original's dispatcher reloads both every frame | The 5-flag bonus window never clamped a low object type (the roadside scenery never changed for the window), and the p24 gate never re-read the score digit §I bumps at each checkpoint | Both refreshed in `rm_draw_frame`, where the original reads them; `start_leg` derives neither | `test_composed_frame::test_composed_bonus_window_clamps_low_object_types` (directed — no free drive opens the window; seeds it into the leg-start image so both sides open it). Mutation-verified: freezing either fails. **Two limits:** the seeded window never CLOSES during the drive (only the prefix decrements it, and the compose that runs the prefix is discarded on both sides — measured: still `0x3c` at frame 90), so this pins the clamp-open path only; and `p24_flag` is pinned against *not reading it*, not against a stale-but-plausible value, which needs a checkpoint no composed drive reaches |
 | 4 | The `rev_reload` poke (§1 engine idle, §6 script rpm override) was skipped, justified as "it aliases `lean_frame`, which no compared surface reads" — false: `draw_buggy_hi` reads `lean_frame` every frame | `0x18d12` is ONE word under two names, so in the original every rpm override restarts the lean-overlay animation. The port let it free-run | `PlayerState.lean_frame_reload` (per-frame out-field) → `rm_apply_player` → `SpriteState.lean_frame`, conditional because that field is in/out | `test_player::test_rev_reload_poke_restarts_the_lean_overlay` — **both** poke sites × legs 0/1/4 (§6 reached by arming the crash script on `crash_anim_tbl + 0x90`, whose rpm byte is non-negative). Nothing else can see it: the composed differential re-seeds the sprite's draw-internal cursors from the reference by design. Mutation-verified per site: dropping either raise reddens only its own cases, and dropping the fan passed the whole suite before this test existed |
+
+**Harness gap #1 closed (2026-07-24).** #1's binding lived in `game_main.c`, which `make test` does not
+compile, so it shipped pinned only by reading. Rather than compile the shell host-side, the *opportunity
+to disagree* was removed: the aliasing geometry (`RM_RING_DECAY_BIAS`, `RM_RING_ST_BLOCK_BYTES`,
+`rm_ring_decay_base()`) moved into `include/game.h`, and `equiv._ComposedScene` — which had been binding
+`marker_recs` into the image while its own dispatcher read a private `ring_st`, independently
+reproducing the shell's bug — now allocates the same padded block. Pinned by
+`test_composed_frame::test_marker_decay_writes_reach_the_dispatcher_grid` (direct: the decay's walked
+marker must land in the grid the dispatcher reads; mutation-verified against any other arena) plus a
+directed armed-decay drive, since no free drive kicks an object.
+
+**That immediately exposed a divergence, asserted as an exact count.** With the arenas correctly aliased
+the composed frame still differs from recreate on **2 of 27** sampled frames of the decay drive (263
+bytes each, both early cadence samples before the first course advance). Not a regression from the
+binding fix — it is what the fix made visible: bound separately the same drive diverged on **25 of 27**,
+i.e. the old harness was noise, not signal. The decay's grid write itself is verified correct (the
+walked `0xff` reaches the right band, high byte, through the pointer the dispatcher is given), so the
+difference is downstream of it.
+
+**Prime suspect is a HARNESS artifact, not a port defect** (raised by the review, not yet confirmed):
+`equiv._ComposedScene.draw` re-serializes the grid from the ring on EVERY frame, while the shell — and
+the original — rewrite it only on a course advance. With the arenas now aliased, that per-frame store
+wipes the prefix's accumulated column clears at the top of each frame, which the reference's in-image
+grid keeps. Worth resolving before reading anything into the 2 frames.
+
+It is asserted as `stats["composed_diffs"] == DECAY_KNOWN_DIFFS`, **not** marked `xfail`: a binary xfail
+cannot distinguish "still failing for the documented reason" from "failing because someone unbound the
+arenas" — under the bias mutation that drive goes to 27 of 27 and an xfail would stay green (verified).
 
 **Residuals on #1, recorded rather than fixed blind** (both found by the pre-commit review, neither a
 regression — before the fix the decay wrote nowhere at all):
@@ -368,7 +396,7 @@ two names — `0x18c58` (`obj_scan_off`/`ground_view_off`, fanned by `rm_apply_p
 harmless) and `0x18d12`. Three were already handled; only `0x18d12` was broken. `names.txt` now records
 the dual role at that address.
 
-Suite: **718 passed** (was 708), ~22 s under `-n auto`.
+Suite: **720 passed + 2 xfailed** (was 708), ~20 s under `-n auto`.
 
 ### Game-mechanics coverage audit (2026-07-23)
 

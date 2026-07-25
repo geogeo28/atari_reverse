@@ -498,10 +498,35 @@ The generalisable rules:
 
 Coverage note, honestly: of the four, the composed-frame differential now pins the two `objlist`
 globals, `test_text` + `test_game_fixture` pin the font, and a directed
-`test_rev_reload_poke_restarts_the_lean_overlay` pins the alias (nothing else could — the composed
-differential re-seeds the sprite's draw-internal cursors from the reference by design). The
-`marker_recs` binding lives in `game_main.c`, which `make test` does not compile, so it is pinned only
-by reading + the on-target run. That is harness gap #1.
+`test_rev_reload_poke_restarts_the_lean_overlay` pins the alias at both its poke sites (nothing else
+could — the composed differential re-seeds the sprite's draw-internal cursors from the reference by
+design).
+
+#### Harness gap #1 — closed (2026-07-24)
+
+The `marker_recs` binding lives in `game_main.c`, which `make test` does not compile, so at first it
+was pinned only by reading. The fix was **not** to compile the shell host-side but to remove the
+opportunity to disagree:
+
+- The aliasing geometry moved OUT of the shell into `include/game.h` — `RM_RING_DECAY_BIAS`,
+  `RM_RING_ST_BLOCK_BYTES`, `rm_ring_decay_base()`. One definition; the shell and the harness both
+  allocate the padded block and take the biased base from it.
+- `equiv._ComposedScene` had been binding `marker_recs` into the image while its dispatcher read a
+  private `ring_st` — i.e. **the harness independently reproduced the shell's bug**, which is why the
+  composed differential was blind to it. It now allocates the same padded block.
+- A directed drive seeds an armed decay (no free drive kicks an object), plus a direct assertion that
+  the decay's walked marker lands in the grid the dispatcher reads
+  (`test_marker_decay_writes_reach_the_dispatcher_grid`). Mutation-verified: any other arena fails it.
+
+The generalised rule this adds to the list above: **when two subsystems must see the same bytes, the
+geometry of that aliasing belongs in shared code, not in each caller.** A constant the shell and the
+harness each define is a constant they can each get wrong.
+
+What it immediately caught: with the arenas correctly aliased the composed frame still diverges from
+recreate on 2 of 27 sampled frames of the decay drive (263 bytes, both early cadence samples before the
+first course advance). Binding them separately hid it entirely — the same drive diverged on 25 of 27,
+i.e. the old harness was noise, not signal. That divergence is real, unresolved, and now recorded as a
+strict `xfail` rather than a comment; see `STATUS.md`.
 
 ### Joystick support (port 1) — and the supervisor-mode gotcha
 

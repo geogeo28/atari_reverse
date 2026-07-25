@@ -77,6 +77,11 @@ static uint16_t screen_offset;     /* rm_init_leg output; the bench prebuilds a 
 
 /* --- the draw_game_objects tree + player step, staged exactly as game_main.c stages them --- */
 static uint8_t buf_a_ram[ARENA_BUF_A_BYTES] __attribute__((aligned(2)));  /* mutable buf_a (prefix mirrors) */
+/* NOT the shell's layout, deliberately: game.h says the decay arena and the grid must be ONE padded
+ * block (rm_ring_decay_base), because that aliasing is what makes a kicked object animate. The bench
+ * never arms a decay — it stages one frozen frame — so it keeps the two apart to measure the object
+ * pass in isolation. Do not copy this into a real shell: the separated form is the bug that shipped
+ * (STATUS.md's play-test table). */
 static uint8_t gobj_scratch[GOBJ_MARKER_RECS_BYTES] __attribute__((aligned(2)));  /* marker recs (inactive) */
 static uint8_t ring_st[RM_RING_ROWS * RM_RING_ROW_BYTES] __attribute__((aligned(2)));
 

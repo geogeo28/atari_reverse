@@ -78,21 +78,31 @@ def test_font_window_covers_the_name_entry_character_range():
 
 
 def test_marker_decay_arena_padding_covers_the_prefix_walk():
-    """The shell hands rm_gobj_prefix a marker-decay base BELOW the object grid (game_main.c's
-    ring_st_block): in the original the decay base is `A_obj_markers - 8` and the walk runs
+    """The prefix's marker-decay base sits BELOW the object grid: in the original the decay base is
+    `A_obj_markers - 8` and the walk runs
     `marker_off + i * stride` for 14 records, so it reaches below row 0 and past the last row. Both pads
     must therefore be derived quantities, not two coincidental 8s — under-size either and the prefix
     writes outside the block (or, worse, lands 8 bytes off and silently animates nothing, which is the
     bug this padding was added to fix).
 
-    `game_main.c` is not compiled by `make test`, so this is the only host-side check on those two
-    constants; it pins them against the addresses in adapter.py and the walk in src/gameplay.c."""
-    game = (adapter.REMASTER / "render/atari/game_main.c").read_text()
-    bias = _define(game, "RING_ST_DECAY_BIAS")
-    spill = _define(game, "RING_ST_DECAY_SPILL")
+    The geometry now lives in include/game.h (not the shell), so the harness allocates its grid the
+    same way — this pins the shared constants against the addresses in adapter.py and the walk in
+    src/gameplay.c, and pins adapter.py's mirror of them equal across the language boundary."""
+    game_h = (adapter.REMASTER / "include/game.h").read_text()
+    bias = _define(game_h, "RM_RING_DECAY_BIAS")
+    spill = _define(game_h, "RM_RING_DECAY_SPILL")
+    assert (bias, spill) == (adapter.RM_RING_DECAY_BIAS, adapter.RM_RING_DECAY_SPILL), \
+        "adapter.py's ring-block mirror disagrees with game.h"
+    # ...and the C macro's own body, which nothing else reads: comparing adapter's derived value to
+    # adapter's own definition would be tautological, and dropping a term from game.h's expression
+    # (e.g. the spill) would silently under-size the shell's block by the walk's overrun.
+    macro = re.search(r"#define\s+RM_RING_ST_BLOCK_BYTES\s*\\\s*\n\s*(.+)", game_h)
+    assert macro, "RM_RING_ST_BLOCK_BYTES not found in game.h"
+    for term in ("RM_RING_DECAY_BIAS", "RM_RING_ROWS", "RM_RING_ROW_BYTES", "RM_RING_DECAY_SPILL"):
+        assert term in macro.group(1), f"RM_RING_ST_BLOCK_BYTES no longer includes {term}"
 
     assert bias == adapter.A_ring_base - adapter.A_marker_decay_base, (
-        f"RING_ST_DECAY_BIAS {bias:#x} != the original's grid-to-decay-base gap "
+        f"RM_RING_DECAY_BIAS {bias:#x} != the original's grid-to-decay-base gap "
         f"{adapter.A_ring_base - adapter.A_marker_decay_base:#x}")
 
     prefix = (adapter.REMASTER / "src/gameplay.c").read_text()
@@ -101,15 +111,41 @@ def test_marker_decay_arena_padding_covers_the_prefix_walk():
     events = (adapter.REMASTER / "src/events.c").read_text()
     # §H dispatches at horizon_row and horizon_row + 2, and marker_decay_spawn takes that as marker_off.
     # RM_MAX_HORIZON_ROW is RM_HORIZON_DIV * 2 (game.h), so derive it from the one source of truth.
-    max_off = _define((adapter.REMASTER / "include/game.h").read_text(), "RM_HORIZON_DIV") * 2 + 2
+    max_off = _define(game_h, "RM_HORIZON_DIV") * 2 + 2
     assert "rm_event_dispatch(c, event, (uint16_t)(horizon_row + 2)" in events, \
         "the §H slot expression moved — re-derive max_off before trusting this bound"
 
     reach = max_off + (records - 1) * stride                    # deepest byte the clear loop touches
     block = bias + adapter.RING_ROW_BYTES * adapter.RM_RING_ROWS + spill
     assert reach < block, (
-        f"the decay walk reaches {reach:#x} but ring_st_block is only {block:#x} bytes — "
-        f"raise RING_ST_DECAY_SPILL")
+        f"the decay walk reaches {reach:#x} but the ring block is only {block:#x} bytes — "
+        f"raise RM_RING_DECAY_SPILL")
+
+    # The SHELL's own allocation. game_main.c is never compiled by `make test`, so without this a build
+    # that drops the bias (or re-points marker_recs at scratch — the bug that shipped) keeps the whole
+    # suite green: the harness allocates correctly on its own and would never notice.
+    game = (adapter.REMASTER / "render/atari/game_main.c").read_text()
+    assert re.search(r"ring_st_block\[RM_RING_ST_BLOCK_BYTES\]", game), \
+        "game_main.c no longer sizes the ring block with RM_RING_ST_BLOCK_BYTES"
+    assert re.search(r"\*const ring_st = ring_st_block \+ RM_RING_DECAY_BIAS", game), \
+        "game_main.c no longer places the grid at the decay bias"
+    assert re.search(r"\.marker_recs = rm_ring_decay_base\(ring_st\)", game), \
+        "game_main.c no longer hands the prefix rm_ring_decay_base(ring_st)"
+
+
+def test_marker_decay_seed_matches_the_engine_constants():
+    """test_composed_frame seeds an armed decay with its own copies of two C constants. Pin them, as
+    CLAUDE.md §5 requires of a value duplicated across a language boundary — otherwise a change to
+    either silently moves the seeded walk off the band the tests assume, and the binding pin fails with
+    a message blaming the binding."""
+    from test_composed_frame import DECAY_COUNTDOWN, DECAY_STRIDE
+
+    events = (adapter.REMASTER / "src/events.c").read_text()
+    prefix = (adapter.REMASTER / "src/gameplay.c").read_text()
+    assert DECAY_COUNTDOWN == _define(events, "MARKER_DECAY_ARM"), \
+        "the seeded countdown is not the arm value marker_decay_spawn writes"
+    assert DECAY_STRIDE == _define(prefix, "GOBJ_MARKER_STRIDE"), \
+        "the seeded stride is not the prefix's per-record stride"
 
 
 def test_frame0_views_derived_before_first_draw():
