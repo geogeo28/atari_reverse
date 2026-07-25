@@ -28,11 +28,8 @@
  * (they run in the gaps BETWEEN blits, one per object). Shared mode (HOG=0, 64-word bursts with a
  * CPU-side restart loop) only earns its keep on screen-sized blits where the CPU has overlapping work;
  * here there is none, so HOG is the simpler correct choice. The restart discipline for a future
- * screen-sized (road/scroll) blit is documented in BLIT_STE_SPEC.md.
- *
- * WAIT: after starting a HOG blit the 68000 is frozen until the chip releases the bus, so the very next
- * instruction already sees BUSY clear; a poll loop is kept anyway (belt-and-braces + it is the shape a
- * shared-mode restart would need). */
+ * screen-sized (road/scroll) blit is documented in BLIT_STE_SPEC.md. The start + wait itself is
+ * blit_start_and_wait (blitter.h), shared with the skew path's batched passes. */
 void blit_run(const BlitPass *p) {
     /* HOP=SRC never reads the halftone RAM, so this seed is not functionally required; we set halftone
      * lines 0-3 (the two longs written here) to 0xFFFF as belt-and-braces for a caller that later selects
@@ -55,9 +52,7 @@ void blit_run(const BlitPass *p) {
     BLT_B(BLT_LOP)       = p->lop;
     BLT_B(BLT_SKEW)      = p->skew_ctl;
 
-    /* Start: BUSY | HOG, halftone line 0. */
-    BLT_B(BLT_CONTROL) = (uint8_t)(BLT_CTL_BUSY | BLT_CTL_HOG);
-    while (BLT_B(BLT_CONTROL) & BLT_CTL_BUSY) { /* HOG completes before the next fetch; poll is a no-op */ }
+    blit_start_and_wait();                   /* BUSY | HOG, halftone line 0 (blitter.h) */
 }
 
 /* True iff the machine has a BLiTTER. The _BLT cookie is authoritative — TOS creates it iff blitter
@@ -84,4 +79,21 @@ int blitter_present(void) {
  * pointer at 0x5A0 is supervisor-only), like game_main's other supervisor touch-points. */
 int blitter_available(void) {
     return (int)Supexec((long (*)(void))blitter_present);
+}
+
+/* ---- the fine-x object routes, enumerated once (see blitter.h) ---------------------------------- */
+
+/* Boot: point BOTH object seams at the hardware blitter when one is present, else at the 68000 CPU asm
+ * engines. Called once from main() after blitter_available(). */
+void rm_blit_bind_all(int have_blitter) {
+    rm_blit_objshift2_bind(have_blitter);
+    rm_blit_objshift_bind(have_blitter);
+}
+
+/* Reload: both routes memoise bitmaps built from the arena.gfx bytes, which the F10 asset reload
+ * rewrites IN PLACE at the same address — so every materialised bitmap must be dropped or the routes
+ * would serve bitmaps built from the old contents. */
+void rm_blit_flush_all(void) {
+    rm_blit_objshift2_cache_flush();
+    rm_blit_objshift_skew_table_flush();
 }

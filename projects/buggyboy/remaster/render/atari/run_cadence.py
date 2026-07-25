@@ -8,9 +8,17 @@ Pass machine=ste to measure on the STE hardware-blitter build (GAME_STE=1, --mac
 before/after metric for the C4 blitter engine conversion. Cycle-exactness is NOT available for the blitter
 under Hatari; the vblank-span distribution is the perf metric.
 
-Usage: python render/atari/run_cadence.py [st|ste] [frames] [--legs N]
-       python render/atari/run_cadence.py            # stock ST, 400 frames, leg 0
+--freerun drops the C1 even-vblank flip lock (-DGAME_PRESENT_FREERUN) so a present costs exactly what
+the frame took: WITH the lock every present is quantised onto the 2-vblank grid, which hides a render win
+smaller than one grid step. The C4 blitter before/after numbers (BLIT_STE_SPEC §6/§11) are free-run.
+
+--idle holds the buggy on the leg-start GATE (no throttle) instead of driving — the objshift-dense
+scene the C4 blitter routes were profiled on; without it the script drives the course.
+
+Usage: python render/atari/run_cadence.py [st|ste] [frames] [--legs N] [--idle] [--freerun]
+       python render/atari/run_cadence.py            # stock ST, 400 frames, leg 0, driving
        python render/atari/run_cadence.py ste         # STE build on --machine ste --blitter
+       python render/atari/run_cadence.py ste 200 --idle --freerun   # the leg-start gate, unquantised
 """
 import os
 import statistics
@@ -23,12 +31,25 @@ sys.path.insert(0, str(HERE))
 import run_hatari                                          # noqa: E402  shared machine-parametrised runner
 
 VBLS_PER_FRAME_HEADROOM = 12                               # gate frames are ~6-8 vblanks; 12 is safe slack
+IDLE_CFLAGS = "-DAUTODRIVE_BASE_INPUT=0 -DAUTODRIVE_STEER_AFTER=1000000"   # no throttle, never steer
+# game_main.c's cadence tail, in dump order: the sub-vblank render clock, then the blitter route
+# counters. Each name appears once; TAIL_COUNTERS is the wire order, the two groups are what the report
+# prints separately. The route counters read 0 on a machine that bound the CPU engines.
+RENDER_COUNTERS = ("render ticks", "render frames")
+ROUTE_COUNTERS = ("objshift2 hit", "objshift2 miss",
+                  "colour table hit", "colour first-sight", "colour grow", "colour table-full")
+TAIL_COUNTERS = RENDER_COUNTERS + ROUTE_COUNTERS
+CADENCE_MAGIC = 0xCADE00C5                                 # game_main.c's CADENCE_MAGIC; pins the tail
+CADENCE_HEADER_LONGS = 2                                   # {magic, counter count} ahead of the counters
+HZ200_MS = 1000.0 / 200                                    # one TOS _hz_200 tick
 
 
-def build(machine, frames, leg):
+def build(machine, frames, leg, idle=False, freerun=False):
     prg = "CADENCEST.PRG" if machine == "ste" else "CADENCE.PRG"
-    env = {**os.environ, "GAME_PRG": prg, "GOLDEN_LEG": str(leg),
-           "GAME_EXTRA_CFLAGS": f"-DGAME_AUTODRIVE={frames} -DGAME_CADENCE_TRACE={frames}"}
+    extra = f"-DGAME_AUTODRIVE={frames} -DGAME_CADENCE_TRACE={frames}" + (f" {IDLE_CFLAGS}" if idle else "")
+    if freerun:
+        extra += " -DGAME_PRESENT_FREERUN"
+    env = {**os.environ, "GAME_PRG": prg, "GOLDEN_LEG": str(leg), "GAME_EXTRA_CFLAGS": extra}
     env.pop("GAME_STE_SELFTEST", None)
     if machine == "ste":
         env["GAME_STE"] = "1"
@@ -43,6 +64,37 @@ def parse(fb):
     return [(fb[2 + i * 2] << 8) | fb[2 + i * 2 + 1] for i in range(n)]
 
 
+def parse_counters(fb):
+    """The counter longs game_main.c writes at the end of the dump, behind a {magic, count} header.
+
+    SCREEN.BIN is a shared channel — every build variant dumps a frame through it — so a tail read from
+    the wrong dump, or from a build whose counter list has moved, would still yield plausible-looking
+    numbers. Refuse to report any of them unless the header matches."""
+    def long_at(i):
+        return int.from_bytes(fb[i * 4:i * 4 + 4], "big")
+
+    base = len(fb) // 4 - (CADENCE_HEADER_LONGS + len(TAIL_COUNTERS))
+    magic, count = long_at(base), long_at(base + 1)
+    if magic != CADENCE_MAGIC or count != len(TAIL_COUNTERS):
+        die(f"cadence tail header is {magic:#010x}/{count}, expected {CADENCE_MAGIC:#010x}/"
+            f"{len(TAIL_COUNTERS)} — this SCREEN.BIN is not a cadence dump, or game_main.c's tail layout "
+            f"moved and run_cadence.py did not follow")
+    return {name: long_at(base + CADENCE_HEADER_LONGS + i) for i, name in enumerate(TAIL_COUNTERS)}
+
+
+def die(msg):
+    print(f"FAIL: {msg}")
+    sys.exit(1)
+
+
+def pop_flag(args, flag):
+    """Remove `flag` from `args` (in place) and report whether it was there."""
+    if flag not in args:
+        return False
+    args.remove(flag)
+    return True
+
+
 def report(label, spans):
     s = spans[1:]                                          # drop present 0 (boot-to-first-flip, not a cadence)
     print(f"\n=== {label}: {len(s)} presents (frame 0 dropped) ===")
@@ -54,17 +106,26 @@ def report(label, spans):
         print(f"    {v:2d} vbl ({v * 20:4d} ms, {50.0 / v:4.1f} fps): {hist[v]:3d}  {'#' * min(hist[v], 60)}")
 
 
-def measure(machine="st", frames=400, leg=0):
-    prg = build(machine, frames, leg)
+def measure(machine="st", frames=400, leg=0, idle=False, freerun=False):
+    prg = build(machine, frames, leg, idle, freerun)
     fb = run_hatari.run(prg, machine=machine, blitter=(machine == "ste"), needs_data=True,
                         run_vbls=frames * VBLS_PER_FRAME_HEADROOM, timeout=180)
     spans = parse(fb)
-    report(f"{machine} (leg {leg}, {frames} frames)", spans)
-    return spans
+    report(f"{machine} (leg {leg}, {frames} frames, {'gate/idle' if idle else 'driving'}"
+           f"{', free-run' if freerun else ''})", spans)
+    counters = parse_counters(fb)
+    ticks, rendered = counters["render ticks"], counters["render frames"]
+    if rendered:
+        print(f"  render time (sub-vblank, {rendered} frames): "
+              f"{ticks * HZ200_MS / rendered:.2f} ms/frame  ({ticks} ticks total)")
+    print("  blitter routes: " + "  ".join(f"{k}={counters[k]}" for k in ROUTE_COUNTERS))
+    return spans, counters
 
 
 def main():
     args = [a for a in sys.argv[1:]]
+    idle = pop_flag(args, "--idle")
+    freerun = pop_flag(args, "--freerun")
     leg = 0
     if "--legs" in args:
         i = args.index("--legs")
@@ -72,7 +133,7 @@ def main():
         del args[i:i + 2]
     machine = args[0] if args and args[0] in ("st", "ste") else "st"
     frames = next((int(a) for a in args if a.isdigit()), 400)
-    measure(machine, frames, leg)
+    measure(machine, frames, leg, idle, freerun)
 
 
 if __name__ == "__main__":

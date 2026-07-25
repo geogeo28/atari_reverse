@@ -77,8 +77,8 @@
 #include "st.h"              /* be16/wr16/be32/wr32 for the leg-start palette flash */
 #include "game_fixture.h"
 #ifdef RM_BLITTER
-#include "blitter.h"          /* unified ST/STE binary (PERF30 C4): boot-probe + bind the objshift2 route */
-static int g_have_blitter;    /* set once at boot: a blitter is present and the objshift2 route is bound to it */
+#include "blitter.h"          /* unified ST/STE binary (PERF30 C4): boot-probe + bind both object routes */
+static int g_have_blitter;    /* set once at boot: a blitter is present and both object routes are bound to it */
 #endif
 
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
@@ -384,6 +384,17 @@ static void bind_leg(Shell *s, uint16_t leg) {
  * ring_views_refresh). Used at boot, on R, on the leg-select fire, and by the attract Phase-B warm-up. */
 static void start_leg(Shell *s, uint16_t leg) {
     bind_leg(s, leg);
+#ifdef RM_BLITTER
+    /* Drop the colour route's sprite table at every leg entry. Its key set is bounded PER LEG (census:
+     * 78-98 keys) but the cross-leg UNION over a 5-leg race is 128 — EXACTLY the table's capacity, i.e.
+     * no headroom at all (run_ste_census.py's union). Left un-flushed the table would fill mid-race and
+     * the route would retire to the CPU engine for the rest of it; flushed per leg the live set is one
+     * leg's, with ~30 entries spare. The cost is re-warming over a leg's first frames — measured no
+     * cadence regression, since a leg starts on the gate where the same few sprites repeat. objshift2's
+     * cache is deliberately NOT flushed here: its key set is 6 tuples on EVERY leg, so it never fills
+     * and re-warming it would be pure loss. */
+    if (g_have_blitter) rm_blit_objshift_skew_table_flush();
+#endif
     *s->player = (PlayerState){0};
     *s->course = (CourseState){0};
     *s->pose = (RoadPose){0};
@@ -579,27 +590,49 @@ static void cadence_record(void) {
     cadence_last_vbl = now;
     if (cadence_pos < CADENCE_SLOTS) cadence_log[cadence_pos++] = span;
 }
-#ifdef RM_BLITTER
-extern uint32_t rm_objsh2_cache_hits, rm_objsh2_cache_misses, rm_objsh_cache_hits, rm_objsh_cache_misses;
-#define CADENCE_TAIL_COUNTERS 4                            /* the 4 blitter hit/miss longs at the tail */
+
+/* Sub-vblank RENDER clock. A present's vblank span is quantised to whole vblanks (20 ms), which hides
+ * any render change smaller than one — so the trace also accumulates the TOS 200 Hz counter across
+ * draw_frame alone (no present wait). Per frame that is a coarse 5 ms tick, but the tick boundary walks
+ * relative to a ~130 ms frame, so the rounding averages out over a few hundred frames and the TOTAL
+ * resolves well under 1 %. Supervisor-only address (SYS_HZ200, st.h), so each read costs one Supexec —
+ * identical in every build being compared, and ~0.03 % of a frame. */
+static uint32_t cadence_render_ticks, cadence_render_frames;
+static long cadence_hz200_super(void) { return (long)SYS_HZ200; }
+static uint32_t cadence_hz200(void) { return (uint32_t)Supexec(cadence_hz200_super); }
+
+/* The blitter route counters are ALWAYS available: build_game.sh sets -DRM_BLITTER unconditionally (the
+ * unified ST/STE binary binds the CPU engines at boot on a machine without a blitter — it never compiles
+ * the routes out), so there is no counter-less tail variant to carry. On an ST run they simply read 0. */
+extern uint32_t rm_objsh2_cache_hits, rm_objsh2_cache_misses;
+extern uint32_t rm_objsh_skew_hits, rm_objsh_skew_first, rm_objsh_skew_grows, rm_objsh_skew_full;
+#define CADENCE_ROUTE_COUNTERS 6
+/* The tail longs, in dump order: a {magic, count} header, then the render clock, then the route
+ * counters. The header is the tripwire run_cadence.py checks before it believes a single number —
+ * SCREEN.BIN is a shared channel every build variant dumps through, and a silently-shifted tail would
+ * otherwise be read as a plausible measurement. */
+#define CADENCE_MAGIC          0xCADE00C5UL
+#define CADENCE_HEADER_LONGS   2
+#define CADENCE_RENDER_COUNTERS 2                          /* render ticks, rendered frames */
+#define CADENCE_TAIL_COUNTERS (CADENCE_HEADER_LONGS + CADENCE_RENDER_COUNTERS + CADENCE_ROUTE_COUNTERS)
 #define CADENCE_TAIL_OFF (SCREEN_BYTES - CADENCE_TAIL_COUNTERS * (int)sizeof(uint32_t))   /* run_cadence.py pins this */
-#else
-#define CADENCE_TAIL_OFF  SCREEN_BYTES                     /* no tail counters on the stock-ST cadence build */
-#endif
 static void cadence_dump(void) {
     uint8_t *buf = screen_buf(0)->px;
     memset(buf, 0, SCREEN_BYTES);
     uint16_t *w = (uint16_t *)buf;
     w[0] = cadence_pos;
-    /* Forward span log; the tail (last CADENCE_TAIL_COUNTERS longs) holds the STE cache counters, so cap
-     * the log short of it (a trace long enough to reach the tail would clobber them — belt-and-braces). */
+    /* Forward span log; the tail (last CADENCE_TAIL_COUNTERS longs) holds the counters, so cap the log
+     * short of it (a trace long enough to reach the tail would clobber them — belt-and-braces). */
     for (int i = 0; i < cadence_pos && (i + 2) * 2 <= CADENCE_TAIL_OFF; i++) w[1 + i] = cadence_log[i];
-#ifdef RM_BLITTER
-    /* Blitter cache hit/miss counters at the tail (each a 32-bit big-endian value), for run_cadence.py. */
+    /* Tail longs (each 32-bit big-endian), for run_cadence.py: the header, the sub-vblank render clock,
+     * then the objshift2 cache's hit/miss and the colour skew table's hit / first-sight / grow /
+     * full-decline. */
     uint32_t *tail = (uint32_t *)(buf + CADENCE_TAIL_OFF);
-    tail[0] = rm_objsh2_cache_hits; tail[1] = rm_objsh2_cache_misses;
-    tail[2] = rm_objsh_cache_hits;  tail[3] = rm_objsh_cache_misses;
-#endif
+    tail[0] = CADENCE_MAGIC;         tail[1] = CADENCE_TAIL_COUNTERS - CADENCE_HEADER_LONGS;
+    tail[2] = cadence_render_ticks;  tail[3] = cadence_render_frames;
+    tail[4] = rm_objsh2_cache_hits;  tail[5] = rm_objsh2_cache_misses;
+    tail[6] = rm_objsh_skew_hits;    tail[7] = rm_objsh_skew_first;
+    tail[8] = rm_objsh_skew_grows;   tail[9] = rm_objsh_skew_full;
     long h = Fcreate("SCREEN.BIN", 0);
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, buf); Fclose((short)h); }
 }
@@ -613,8 +646,9 @@ extern void blitter_census_report(uint16_t *w);
 static void census_dump(void) {
     uint8_t *buf = screen_buf(0)->px;
     memset(buf, 0, SCREEN_BYTES);
-    blitter_census_report((uint16_t *)buf);               /* 2-word header + 5 x 7-word blocks (objshift2 +
-                                                           * the colour engine's 4 keys); see blitter_census.c */
+    blitter_census_report((uint16_t *)buf);               /* 3-word header + 5 x 7-word blocks (objshift2 +
+                                                           * the colour engine's 4 keys) + the sprite key
+                                                           * set contents; see blitter_census.c */
     long h = Fcreate("SCREEN.BIN", 0);
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, buf); Fclose((short)h); }
 }
@@ -639,7 +673,14 @@ static void show_surface(Shell *s) {
 
 /* Render the race pipeline into the back buffer and show it (draw_frame + show_surface). */
 static void render_and_show(Shell *s) {
+#ifdef GAME_CADENCE_TRACE
+    uint32_t render_t0 = cadence_hz200();                  /* time the RENDER alone — no present wait */
+#endif
     draw_frame(s, back_buffer(s));
+#ifdef GAME_CADENCE_TRACE
+    cadence_render_ticks += cadence_hz200() - render_t0;
+    cadence_render_frames++;
+#endif
     show_surface(s);
 }
 
@@ -1175,10 +1216,11 @@ static void op_reload_assets(void *ctx) {
     seed_highscore_table();           /* init_scoretable: reseed the hi-score table from its baked default */
     rm_init_leg_dash(s->ctx);         /* init_leg_dash: rebuild the dashboard */
 #ifdef RM_BLITTER
-    /* The blitter caches key on the arena.gfx source pointer, which reload rewrites in place — flush so a
-     * recovered arena is re-materialised, not served stale (see blitter_objshift{,2}.c). Only meaningful
-     * when the blitter path is bound (an ST/TT runs the CPU engine and never touches the caches). */
-    if (g_have_blitter) { rm_blit_objshift2_cache_flush(); rm_blit_objshift_cache_flush(); }
+    /* Both blitter routes memoise bitmaps keyed on the arena.gfx source pointer, which reload rewrites
+     * in place — flush them so a recovered arena is re-materialised, not served stale (rm_blit_flush_all,
+     * src/blitter.c). Only meaningful when the blitter paths are bound (an ST/TT runs the CPU engines
+     * and never touches them). */
+    if (g_have_blitter) rm_blit_flush_all();
 #endif
 }
 static void op_set_palette(void *ctx, int which) {
@@ -1382,16 +1424,17 @@ void main(void) {
     { long mismatch; dump_frame((Framebuffer *)blitter_sweep(&mismatch)); return; }
 #endif
 #ifdef RM_BLITTER
-    /* Unified ST/STE binary (PERF30 C4): probe for a blitter ONCE and bind the objshift2 route — the
-     * hardware blitter when present, else the 68000 CPU asm engine. NEVER bail: a plain ST or TT binds the
-     * CPU path (blitter_available() returns 0 without touching any 0xFFFF8Axx register). GAME_FORCE_NO_BLITTER
+    /* Unified ST/STE binary (PERF30 C4): probe for a blitter ONCE and bind BOTH fine-x object routes —
+     * objshift2 and the colour-indexed engine — to the hardware blitter when present, else to the 68000
+     * CPU asm engines (rm_blit_bind_all, src/blitter.c). NEVER bail: a plain ST or TT binds the CPU path
+     * (blitter_available() returns 0 without touching any 0xFFFF8Axx register). GAME_FORCE_NO_BLITTER
      * pins the CPU path even on an STE (a harness A/B baseline). */
 #ifdef GAME_FORCE_NO_BLITTER
     g_have_blitter = 0;
 #else
     g_have_blitter = blitter_available();
 #endif
-    rm_blit_objshift2_bind(g_have_blitter);
+    rm_blit_bind_all(g_have_blitter);
 #endif
     RmArena arena;
     if (!load_assets(&arena)) return;

@@ -46,6 +46,13 @@ static inline void wr32(uint8_t *p, uint32_t v) {
 }
 #endif
 
+/* TOS's free-running 200 Hz counter (_hz_200, system variable 0x4BA) — the finest clock the target
+ * offers without programming a timer, so every on-target cost measurement reads it (the sweep's cost
+ * bench, the cadence trace's sub-vblank render clock). SUPERVISOR ONLY: low memory bus-errors from user
+ * mode, so a user-mode reader wraps the load in a Supexec excursion. Target-only, but harmless on a
+ * host build that never expands it. */
+#define SYS_HZ200 (*(volatile uint32_t *)0x4BAUL)
+
 /* Duplicate a 16-bit plane word into both halves of a long (the 68k mask/ink broadcast). */
 static inline Plane4 dup16(uint16_t w) { return ((Plane4)w << 16) | w; }
 /* Sign-extend a 16-bit table offset to a signed index (68k adda.w / word displacement). */

@@ -487,7 +487,8 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > objects change fine-x/scale/colour every frame → the key never repeats), so the 4-word materialise runs
 > on ~91 % of driving blits and **regresses the race ~15 %** (7.06→8.13 vbl). objshift2 escaped only
 > because it issues ~0.24 blits/frame while driving. So the colour engine ships byte-exact on the CPU path
-> (`-DRM_STE_OBJSH_ROUTE` opts it in); default STE routes objshift2 only — **gate −12 %, driving flat**
+> (`-DRM_STE_OBJSH_ROUTE` opts it in — knob DELETED in slice 9, which routes the colour engine through
+> the hardware-skew table instead); default STE routes objshift2 only — **gate −12 %, driving flat**
 > (7.06→7.03, no regression). Pins: sweep 3264 0-XOR, STE goldens ×5, A/B 0-mismatch ×15, `make test` 723,
 > stock byte-neutral (`mkprg.py` only). Combined cache RAM ~553 KB (fits a 1 MB STE). **The colour driving
 > win needs boot pre-shift tables (remove the per-frame materialise) — slice 5's gating item; the recipe +
@@ -555,6 +556,23 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > per-call materialise, 0.38× from a table.** Seam pre-built for slice 2 (`ObjshSkewBitmaps`,
 > materialise-into-entry / blit-from-entry). Slice 2 = §12's sprite-key static table + routing +
 > poke batching + the DRIVING cadence go/no-go. Full recipe + register table: `BLIT_STE_SPEC.md` §13.
+
+> **C4 slice 9 — the colour engine ROUTED through the skew table: GO, driving improves (landed, not
+> committed).** The shipping STE build routes `rm_blit_objshift`'s BASE family via a 128-entry
+> no-eviction first-sight table (sprite key + `src`; grow-on-demand rows; 123 KB BSS) behind a
+> boot-bound `rm_blit_objshift_fn`; `-DRM_STE_OBJSH_ROUTE` is DELETED and the pre-shift path + its
+> 219 KB cache left the shipping link (sweep-only). **The census key-union measurement forced a per-leg
+> flush**: converged per-leg key sets are 78/75/79/98/79 but their cross-leg UNION is exactly 128 = the
+> table capacity, zero headroom — so `start_leg()` flushes (live set ≤ 98, ~30 spare) and a saturation
+> latch guards overflow by retiring the route (pixel-identical CPU hybrid) instead of scanning forever.
+> Poke batching: 42 register writes per 6-pass blit vs blit_run's 102 (`src_addr` must re-poke — the
+> chip walks it; X_COUNT latch-reloads, sweep-verified). **Cadence (sub-vblank render clock, leg 0):
+> STE gate 111.05 → 105.58 ms (−19.2 % vs stock ST), STE drive 99.22 → 97.18 ms (−2.5 % vs stock,
+> NO regression — §8's 9 %-hit failure inverted to 90 % hits); ST tick-identical.** Table blit 9,400
+> cyc vs CPU asm 33,920 (0.28×). Pins: sweep **4936/0** incl. a new 134-case table section
+> (grow/clip/hit/full/latch/flush), 6/6 mutations (NOGROW caught only by the table section), goldens
+> ×5 + ×5, A/B 0-mismatch, make test 730, TT clean. Footprint 1.08 MB (−97 KB). Quantified + deferred:
+> per-blit Supexec ≈ 0.3–0.55 ms/frame. Full design: `BLIT_STE_SPEC.md` §14.
 
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:

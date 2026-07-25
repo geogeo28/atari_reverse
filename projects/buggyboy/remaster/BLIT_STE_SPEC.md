@@ -268,6 +268,8 @@ policy escapes this: not materialising on a miss leaves the cache empty (0 % hit
 a miss is pure overhead when the sprite never recurs. objshift2 escaped only because it issues almost no
 blits while driving (0.24/frame). **So the colour engine ships byte-exact but on the CPU path**
 (`-DRM_STE_OBJSH_ROUTE` opts it back in for experimentation); the shipping STE build routes objshift2 only.
+*(Superseded by slice 9, §14: the knob and its glue are DELETED — the colour engine now ships routed
+through the hardware-skew table, and the pre-shift path is sweep-only.)*
 
 **The driving win needs the DATA, not the engine: boot pre-shift tables.** Eliminating the per-frame
 materialise (precompute the `(mask,data)` phases from the static `arena.gfx` at load) is the ONLY way the
@@ -331,7 +333,8 @@ win is **objshift2 (gate −12 %)**. The colour pass's driving cost is irreducib
 cache/table approach — a real colour win would need a fundamentally different scheme (e.g. hardware
 skew from unshifted data, so no per-frame materialise at all — the FXSR/NFSR calibration risk slice 2
 deferred), not more tables. That is the only remaining lever for the colour pass, and it is a research
-item, not a landing.
+item, not a landing. *(That lever landed: §12 measured the skew key bounded, §13 proved the recipe,
+§14 routed it — `-DRM_STE_OBJSH_ROUTE` is deleted; the skew table ships.)*
 
 > **CORRECTION (2026-07-25, slice 7 — see §12).** Two facts above are superseded:
 > 1. *"The headless autodrive drives off-course and crashes past ~60 clean frames"* was an
@@ -389,7 +392,8 @@ artifact any more; the unified-vs-old-stock *cadence identity* on `--machine st`
 > 1,114,796 — arena 380 KB, screen pool 319 KB, colour cache 219 KB, scroll prebuild 104 KB, objshift2
 > cache 43 KB), so the honest minimum machine is **2 MB** on ST and STE alike. The unused 219 KB colour
 > cache is the obvious diet if a 1 MB target ever matters (it only backs the `-DRM_STE_OBJSH_ROUTE`
-> experiment and the sweep's measurement build).
+> experiment and the sweep's measurement build). *(Realized in slice 9: the cache left the shipping
+> link entirely — footprint now 1.08 MB, §14.)*
 
 ## 12. Slice 7 — the RE-KEY census: BOUNDED under hardware skew (tables are GO)
 
@@ -503,4 +507,67 @@ first sight), routing behind the boot binding, per-pass register-poke batching (
 dominant per-blit CPU cost), the shipping-path clip-test dedup (`objsh_is_base` is shared by the
 census + skew paths; `blitter_objshift.c`'s two internal copies still pending), and the cadence
 measurement — the go/no-go is DRIVING must not regress (the §8 failure mode), with gate improvement
-expected from 0.38×.
+expected from 0.38×. **→ Landed as slice 9 (§14): GO.**
+
+## 14. Slice 9 — the colour engine ROUTED through the skew table: GO (driving improves)
+
+The shipping STE build now routes `rm_blit_objshift`'s BASE family through the hardware-skew table.
+`-DRM_STE_OBJSH_ROUTE` and its glue are **deleted**; the pre-shift path (`rm_blit_objshift_blitter` +
+its 219 KB cache) left the shipping link and lives **sweep-only**, where it still pins the pre-shift
+recipe. The shipping route is pinned by the goldens / A-B / the new table sweep section — not by the
+pre-shift grid.
+
+**Design.**
+- **Table:** `skew_table[128]` (`ObjshSkewEntry` ≈ 984 B; 123 KB BSS), open-addressed, linear probe,
+  **no eviction**; key = `(src, src_off, stride, base_cells)`; `rows_done == 0` marks free. Entries
+  **grow on demand** (a taller call re-materialises the same key from row 0; rows are prefix-stable, so
+  a grown entry is byte-identical and a shorter call just blits fewer via `y_count`) — chosen over
+  materialise-at-max so the stride-driven source walk never reads rows no real call asked for.
+- **Flush per leg (the union measurement made this mandatory):** the census now dumps the sprite-key
+  set contents and the runner unions legs 0–4 — converged (300 f/leg) per-leg 78/75/79/98/79, but
+  **union = 128 = exactly the table capacity, zero headroom**. An F10-only flush would fill the table
+  mid-race and retire the route. So `start_leg()` (the single leg-init funnel) flushes the table:
+  the live set is one leg's ≤ 98 (~30 spare), and each leg pays only the measured warm-up (the leg-0
+  driving figure below IS the cold-table case: 68 first-sights + 43 grows inside it). objshift2's
+  6-tuple cache is deliberately not flushed. A **saturation latch** guards the impossible-per-census
+  overflow: on the first full-table decline the whole route retires to the (pixel-identical) CPU
+  hybrid for the race — no perpetual 128-probe scans — re-armed by the flush.
+- **Routing:** boot-bound `rm_blit_objshift_fn` (statically defaulted to the CPU asm — no NULL window),
+  bound with objshift2's via one `rm_blit_bind_all(have_blitter)`; flushes via `rm_blit_flush_all()`.
+  Seam in `object_list.c`, out of game.h. CLIP / over-tall / zero-row decided in user mode; BASE = one
+  Supexec per blit (**quantified: ~0.3–0.55 ms/frame at ~4.5 blits — the §7 one-excursion idea stays
+  deferred on that number**).
+- **Poke batching:** `blit_skew_begin` owns the per-blit invariants (increments, HOP, skew, X_COUNT —
+  the chip reloads x_count from an internal latch per line, sweep-verified); passes grouped 4 AND then
+  ORs so endmasks/LOP poke once per group. `src_addr` must be re-poked every pass — **the chip walks
+  it** to `bitmap + 2*base_cells*rows`. 42 register writes per 6-pass blit vs `blit_run`'s 102; the
+  HOG start/wait is one shared `blit_start_and_wait` (single owner for the bus policy). Table hash is
+  a shift/xor mix (no `__mulsi3`).
+
+**Pins (all green):**
+
+| pin | result |
+|---|---|
+| sweep | **4936 cases, 0 mismatch** — grids 720/704/704 + **table section 134/134** (GROW / CLIP / HIT / fill-128 / FULL-decline / latched-decline / flush-rearm; declined cases must leave the fb untouched and complete byte-exactly on the CPU hybrid) |
+| `--mutate all` | **6/6 caught** — recipe mutations 704/704/643/660/297 + `NOGROW` **caught only by the table section** (1 case; grow ordering is load-bearing and documented) |
+| goldens | same PRG **MATCH ×5 `--machine st`** and **×5 `--machine ste`** (re-run after the flush landed) |
+| whole-frame A/B st(CPU) vs ste(blitter) | **0-mismatch** (now load-bearing for the colour engine) |
+| host differential | `make test` **730** |
+| `--machine tt` | CPU path, 0 bytes different from st |
+
+**Cadence (leg 0, sub-vblank render clock; ST tick-identical throughout):**
+
+| scene | objshift2-only routing | + colour routed | vs stock ST |
+|---|---:|---:|---:|
+| STE gate (idle 200 f) | 111.05 ms | **105.58 ms** | **−19.2 %** |
+| STE drive (250 f) | 99.22 ms | **97.18 ms** | **−2.5 % — GO, no regression** |
+
+Driving route counters: **90 % pure table hits** (1004 hit / 68 first-sight / 43 grow / 0 full) — the
+inversion of §8's 9 %-hit failure. Sweep cost bench: table blit **9,400 cyc** vs CPU asm 33,920
+(**0.28×**). Shipping footprint: text 122,368 + BSS 1,009,752 = **1.08 MB** (−97 KB vs pre-slice: the
+219 KB cache left, the 123 KB table + code came in). Honest minimum machine stays **2 MB**.
+
+**Noted, not folded in:** the probe's `muluw #984` (entry not power-of-two; ~0.4 %/blit — padding to
+1024 B costs 5 KB BSS for a shift); grow-from-`rows_done` (warm-up-only saving, measured and skipped);
+the `SYS_HZ200` `-Warray-bounds` build noise (pre-existing pattern). Hatari-model caveat (§13) applies
+to every cadence number here; the byte-exactness pins do not depend on it.

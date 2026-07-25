@@ -38,14 +38,14 @@ void rm_blit_objshift_census(uint8_t *, uint32_t, const uint8_t *, uint32_t, uin
 extern void (*rm_blit_objshift2_fn)(uint8_t *, uint32_t, const uint8_t *, uint32_t, uint16_t, uint16_t, int);
 #undef RM_BLIT_OBJSHIFT2
 #define RM_BLIT_OBJSHIFT2 rm_blit_objshift2_fn                /* boot-bound: blitter (STE) or CPU asm (ST) */
-/* The COLOUR-indexed pass-1 engine is byte-exact on the blitter (run_ste_sweep.py) but stays on the CPU on
- * EVERY machine: the boot-table census (BLIT_STE_SPEC §10) proved its reachable set is unbounded (~70% of
- * driving blits carry a never-seen tuple), so neither a cache nor boot tables win — routing it regresses
- * the race ~15%. Opt in for experimentation with -DRM_STE_OBJSH_ROUTE; the byte-exact recipe ships ready. */
-#ifdef RM_STE_OBJSH_ROUTE
+/* The COLOUR-indexed pass-1 engine takes the SAME boot-bound seam. Its earlier pre-shift route was a
+ * measured NO-GO (BLIT_STE_SPEC §8/§10: the materialise key never repeats while driving); the HARDWARE-SKEW
+ * engine (src/blitter_skew.c) removes fine_x, colour and rows from that key, which the §12 census measured
+ * BOUNDED at 78-98 sprite keys — so it blits off a static no-eviction table with no per-call materialise. */
+extern void (*rm_blit_objshift_fn)(uint8_t *, uint32_t, const uint8_t *, uint32_t, uint16_t, uint16_t,
+                                   uint16_t, int16_t, const uint8_t *, int);
 #undef RM_BLIT_OBJSHIFT
-#define RM_BLIT_OBJSHIFT rm_blit_objshift_dispatch
-#endif
+#define RM_BLIT_OBJSHIFT rm_blit_objshift_fn                  /* boot-bound: blitter (STE) or CPU asm (ST) */
 #endif  /* GAME_STE_CENSUS / else */
 #endif  /* RM_BLITTER */
 

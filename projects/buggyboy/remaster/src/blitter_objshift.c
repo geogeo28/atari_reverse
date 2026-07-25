@@ -1,6 +1,11 @@
-/* blitter_objshift.c — the STE hardware-blitter path for the COLOUR-INDEXED fine-x masked blitter
- * rm_blit_objshift (recreate's blit_objshift @0x14680, PERF30 C4 slice 4). GAME_STE build only. This is
- * the bigger of the two fine-x object passes (~25% of the gate frame).
+/* blitter_objshift.c — the PRE-SHIFT STE hardware-blitter path for the COLOUR-INDEXED fine-x masked
+ * blitter rm_blit_objshift (recreate's blit_objshift @0x14680, PERF30 C4 slice 4). This is the bigger of
+ * the two fine-x object passes (~25% of the gate frame).
+ *
+ * MEASUREMENT BUILD ONLY (GAME_STE_SWEEP). The shipping colour route is the HARDWARE-SKEW path
+ * (src/blitter_skew.c): this one's materialise key carries fine_x/colour/rows, which a real drive never
+ * repeats, so routing it regressed driving ~15% (BLIT_STE_SPEC §8/§10) and its 219 KB on-demand cache is
+ * dead weight in a shipping BSS. It stays compiled + swept so the pre-shift recipe remains pinned.
  *
  * RECIPE (BLIT_STE_SPEC §8). Same cache-keyed pre-shift + 2-pass cookie-cut as objshift2, but the source
  * is 4-plane (four words A,B,C,D per cell), the show mask is ~(A|B|C)&D (not ~(w0|w1)), and each plane's
@@ -50,7 +55,6 @@ typedef struct {
 
 #define OBJSH_CACHE_SLOTS 96                               /* 96 * ~2 KB ~= 190 KB (see combined RAM note) */
 static ObjshCache objsh_cache[OBJSH_CACHE_SLOTS];
-uint32_t rm_objsh_cache_hits, rm_objsh_cache_misses;       /* profiling (run_cadence / stats dump) */
 
 /* Direct-map slot: a multiplicative mix of the key fields (arbitrary odd/prime multipliers, not
  * load-bearing; a bad mix is caught as a miss), `>> 15` before `% SLOTS` — same scheme as
@@ -115,18 +119,14 @@ int rm_blit_objshift_blitter(uint8_t *dst, uint32_t dst_off, const uint8_t *src,
     unsigned fine_x = (unsigned)(x & OBJSH_NIBBLE);
     unsigned shl = OBJSH_SUBPX_BITS - fine_x;
     int16_t A = (int16_t)((int16_t)((int16_t)(uint16_t)x >> 1) & (int16_t)COL_ALIGN);
-    int16_t base_ceiling = (int16_t)(OBJSH_RIGHT_BOUND - OBJSH_CELL_BYTES * (base_cells - 1));
-    if (A < 0 || (int16_t)(A - base_ceiling) >= 0)
+    if (!objsh_is_base(x, rows_m1, base_cells))
         return 0;                                          /* LEFT/RIGHT clip -> CPU hybrid */
 
     int straddle = base_cells;                             /* BASE family: 1 or 2 */
     int ncols = straddle + 1;
 
     ObjshCache *e = &objsh_cache[objsh_cache_hash(src_off, fine_x, base_cells, color, stride, rows_m1)];
-    if (objsh_cache_hit(e, src, color_pairs, src_off, fine_x, color, stride, rows_m1, base_cells)) {
-        rm_objsh_cache_hits++;
-    } else {
-        rm_objsh_cache_misses++;
+    if (!objsh_cache_hit(e, src, color_pairs, src_off, fine_x, color, stride, rows_m1, base_cells)) {
         uint16_t fill[OBJSH_PLANES];
         uint16_t col_off = (uint16_t)((color & OBJSH_NIBBLE) * OBJSH_COLOR_STRIDE);
         for (int p = 0; p < OBJSH_PLANES; p++) fill[p] = be16(color_pairs + col_off + p * 2);
@@ -156,41 +156,3 @@ int rm_blit_objshift_blitter(uint8_t *dst, uint32_t dst_off, const uint8_t *src,
     blit_ste_cookiecut_pass(col0_bottom, e->data, e->nwords, e->rows, BLT_LOP_OR);
     return 1;
 }
-
-void rm_blit_objshift_cache_flush(void) {
-    for (int i = 0; i < OBJSH_CACHE_SLOTS; i++) objsh_cache[i].valid = 0;
-}
-
-/* ---- runtime dispatch (object_list.c's RM_BLIT_OBJSHIFT, only under -DRM_STE_OBJSH_ROUTE) ----
- * Off by default: the colour engine regresses driving with the on-demand cache (see the routing note in
- * object_list.c). The byte-exact rm_blit_objshift_blitter above is always compiled + swept; this glue is
- * only reached when the engine is opted back in. */
-#ifdef RM_STE_OBJSH_ROUTE
-static struct {
-    uint8_t *dst; uint32_t dst_off; const uint8_t *src; uint32_t src_off;
-    uint16_t x, color, rows_m1; int16_t stride; const uint8_t *pairs; int base_cells;
-} g_objsh;
-
-static long objsh_blitter_super(void) {
-    return rm_blit_objshift_blitter(g_objsh.dst, g_objsh.dst_off, g_objsh.src, g_objsh.src_off,
-                                    g_objsh.x, g_objsh.color, g_objsh.rows_m1, g_objsh.stride,
-                                    g_objsh.pairs, g_objsh.base_cells);
-}
-
-void rm_blit_objshift_dispatch(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
-                               uint16_t x, uint16_t color, uint16_t rows_m1, int16_t stride,
-                               const uint8_t *color_pairs, int base_cells) {
-    /* Decide the family in USER mode; a clip case skips the excursion (mirrors the C's family test). */
-    int16_t A = (int16_t)((int16_t)((int16_t)(uint16_t)x >> 1) & (int16_t)COL_ALIGN);
-    int16_t base_ceiling = (int16_t)(OBJSH_RIGHT_BOUND - OBJSH_CELL_BYTES * (base_cells - 1));
-    if ((int16_t)rows_m1 + 1 > 0 && (A < 0 || (int16_t)(A - base_ceiling) >= 0)) {
-        rm_blit_objshift_asm(dst, dst_off, src, src_off, x, color, rows_m1, stride, color_pairs, base_cells);
-        return;
-    }
-    g_objsh.dst = dst; g_objsh.dst_off = dst_off; g_objsh.src = src; g_objsh.src_off = src_off;
-    g_objsh.x = x; g_objsh.color = color; g_objsh.rows_m1 = rows_m1; g_objsh.stride = stride;
-    g_objsh.pairs = color_pairs; g_objsh.base_cells = base_cells;
-    if (!Supexec(objsh_blitter_super))
-        rm_blit_objshift_asm(dst, dst_off, src, src_off, x, color, rows_m1, stride, color_pairs, base_cells);
-}
-#endif  /* RM_STE_OBJSH_ROUTE */

@@ -84,9 +84,12 @@ static Census *const objsh_key_sets[OBJSH_KEY_COUNT] = {
 };
 
 /* ---- census wrappers: record the tuple, then draw with the CPU reference ----
- * NOTE: the colour wrapper below is a THIRD enumeration of the objshift cache key, alongside
- * objsh_cache_hit / objsh_cache_store in src/blitter_objshift.c. A field added to that key must be
- * added here too, or the census silently under-counts distinct tuples. */
+ * NOTE: the colour wrapper's SPRITE key below is the same key the SHIPPING route enumerates —
+ * skew_table_lookup / skew_table_hash in src/blitter_skew.c — and this census is what sizes that table.
+ * A field added to that key must be added to the sprite chain here too, or the census
+ * under-counts and the table is sized against a key the game does not actually use. (The full key is
+ * likewise a third enumeration of objsh_cache_hit / objsh_cache_store in src/blitter_objshift.c, the
+ * retired pre-shift path the sweep still pins.) */
 void rm_blit_objshift2_census(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
                               uint16_t x, uint16_t rows_m1, int width_idx) {
     census_objsh2_set.calls++;
@@ -124,15 +127,24 @@ void rm_blit_objshift_census(uint8_t *dst, uint32_t dst_off, const uint8_t *src,
     RM_BLIT_OBJSHIFT(dst, dst_off, src, src_off, x, color, rows_m1, stride, color_pairs, base_cells);
 }
 
-/* The report's wire format (run_ste_census.py mirrors it): a 2-word header {CENSUS_MAGIC, set count},
- * then one 7-word block per set from word CENSUS_HEADER_WORDS. Each block is
+/* The report's wire format (run_ste_census.py mirrors it): a 3-word header
+ * {CENSUS_MAGIC, set count, dumped sprite-key count}, then one 7-word block per set from word
+ * CENSUS_HEADER_WORDS, then the sprite key SET CONTENTS. Each block is
  * {distinct_hi, distinct_lo, base_hi, base_lo, total_hi, total_lo, saturated} — 32-bit big-endian hi/lo
  * except saturated. The header is the tripwire: SCREEN.BIN is also written by other build variants
  * (the boot golden), so a reader that finds no magic knows it is looking at something else. */
 #define CENSUS_MAGIC        0xC5C5u
-#define CENSUS_HEADER_WORDS 2
+#define CENSUS_HEADER_WORDS 3
 #define CENSUS_REPORT_SETS  (1 + OBJSH_KEY_COUNT)
 #define CENSUS_BLOCK_WORDS  7
+/* Sprite keys the report can carry (2 words each). The per-leg count is measured at 78-98, and what the
+ * shipping table must survive is the UNION over a whole race — which only the runner can form, from
+ * these contents. 1024 is ~10x either number; a truncated dump is caught by the runner, which requires
+ * the dumped count to equal the sprite set's own distinct count. */
+#define CENSUS_KEY_DUMP_MAX 1024
+/* The whole report is dumped through one framebuffer (game_main's census_dump), so it must fit in it. */
+typedef char census_report_fits[(CENSUS_HEADER_WORDS + CENSUS_REPORT_SETS * CENSUS_BLOCK_WORDS
+                                 + 2 * CENSUS_KEY_DUMP_MAX <= SCREEN_BYTES / 2) ? 1 : -1];
 
 /* The block order, declared once — run_ste_census.py's SETS tuple mirrors it element for element. */
 static const Census *const report_sets[CENSUS_REPORT_SETS] = {
@@ -140,9 +152,27 @@ static const Census *const report_sets[CENSUS_REPORT_SETS] = {
     &census_objsh_noshift_set, &census_objsh_nocolor_set, &census_objsh_sprite_set
 };
 
+/* Dump the SPRITE key set's CONTENTS (the reduced-key hashes, 32-bit big-endian hi/lo per key) into `w`,
+ * and return how many were written. The per-leg distinct COUNTS above cannot answer the question the
+ * shipping table actually poses: skew_table's 128 entries are never flushed mid-race, so what has to fit
+ * is the UNION of the per-leg key sets, and forming a union needs the keys themselves. They come out in
+ * slot order, which is an artefact of the hash — the runner unions by value, so it does not care. */
+static uint16_t census_dump_sprite_keys(uint16_t *w) {
+    const Census *cs = &census_objsh_sprite_set;
+    uint32_t slots = cs->mask + 1u, n = 0;
+    for (uint32_t i = 0; i < slots && n < CENSUS_KEY_DUMP_MAX; i++) {
+        if (!cs->key[i]) continue;                         /* 0 is the empty-slot marker (census_add) */
+        w[n * 2] = (uint16_t)(cs->key[i] >> 16);
+        w[n * 2 + 1] = (uint16_t)cs->key[i];
+        n++;
+    }
+    return (uint16_t)n;
+}
+
 void blitter_census_report(uint16_t *w) {
     w[0] = CENSUS_MAGIC;
     w[1] = CENSUS_REPORT_SETS;
+    w[2] = census_dump_sprite_keys(w + CENSUS_HEADER_WORDS + CENSUS_REPORT_SETS * CENSUS_BLOCK_WORDS);
     for (int i = 0; i < CENSUS_REPORT_SETS; i++) {
         const Census *cs = report_sets[i];
         /* The colour engine's four keys share one call stream, counted on the full-key set (see the

@@ -32,26 +32,29 @@ mkdir -p "$BUILD" "$DISK"
 #     UNCONDITIONALLY and binds it at boot iff a blitter is present (blitter_available()), else the 68000
 #     CPU asm engine — ONE .PRG for both machines (and the TT, which runs the CPU path). The blitter driver
 #     + both fine-x paths are always linked and gated on -DRM_BLITTER (the host differential build never sets
-#     it, so make test still pins the C reference). Objshift2 routes to the blitter (bound); the colour
-#     engine stays CPU everywhere (census NO-GO, BLIT_STE_SPEC §10). The census/selftest/sweep are extra
+#     it, so make test still pins the C reference). BOTH fine-x object engines route to the blitter when
+#     bound: objshift2 off its pre-shift cache, the colour-indexed engine off the hardware-skew sprite
+#     table (BLIT_STE_SPEC §12/§13). The census/selftest/sweep are extra
 #     compile-gated MEASUREMENT builds. GAME_FORCE_NO_BLITTER pins the CPU path at boot even on an STE — a
 #     harness A/B baseline knob only. (The old GAME_STE / separate BUGGYBST.PRG two-binary profile is
 #     retired; GAME_STE is accepted-but-ignored for script compatibility.) ---
 STE_CFLAGS="-DRM_BLITTER"
-STE_SOURCES="$REMASTER/src/blitter.c $REMASTER/src/blitter_objshift2.c $REMASTER/src/blitter_objshift.c"
+STE_SOURCES="$REMASTER/src/blitter.c $REMASTER/src/blitter_objshift2.c $REMASTER/src/blitter_skew.c"
 [ "${GAME_FORCE_NO_BLITTER:-0}" = "1" ] && STE_CFLAGS="$STE_CFLAGS -DGAME_FORCE_NO_BLITTER"
 if [ "${GAME_STE_SELFTEST:-0}" = "1" ]; then
     STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SELFTEST"
     STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_selftest.c"
 fi
 if [ "${GAME_STE_SWEEP:-0}" = "1" ]; then
-    # src/blitter_skew.c (the hardware-SKEW colour path under calibration) is linked ONLY here, so the
-    # shipping BUGGYBOY.PRG stays byte-identical while the recipe is being pinned.
-    # GAME_STE_SKEW_MUTATE=n breaks one calibrated register (see RM_SKEW_MUT_* in include/blitter.h) —
-    # the coverage check that the sweep really exercises the skew path. A mutate build also sweeps the
-    # skew grid ALONE (blitter_sweep.c), since the mutation cannot perturb the other two.
+    # src/blitter_objshift.c (the retired PRE-SHIFT colour path) is linked ONLY here: the shipping colour
+    # route is the hardware-skew path, so its 219 KB on-demand cache would be dead BSS in BUGGYBOY.PRG —
+    # but the sweep still pins the pre-shift recipe against the CPU engine.
+    # GAME_STE_SKEW_MUTATE=n breaks one thing the skew route depends on — a calibrated register or the
+    # sprite table's grow rule (see RM_SKEW_MUT_* in include/blitter.h) — the coverage check that the
+    # sweep really exercises the shipping path. A mutate build sweeps the skew grid + the table section
+    # ALONE (blitter_sweep.c), since the mutation cannot perturb the other two grids.
     STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SWEEP -DRM_SKEW_MUTATE=${GAME_STE_SKEW_MUTATE:-0}"
-    STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_sweep.c $REMASTER/src/blitter_skew.c"
+    STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_sweep.c $REMASTER/src/blitter_objshift.c"
 fi
 if [ "${GAME_STE_CENSUS:-0}" = "1" ]; then                # slice-5 boot-table census (run_ste_census.py)
     STE_CFLAGS="$STE_CFLAGS -DGAME_STE_CENSUS"
