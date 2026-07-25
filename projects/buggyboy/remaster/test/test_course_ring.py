@@ -181,14 +181,6 @@ def test_python_constants_match_the_c():
     assert equiv.adapter.RING_ROW_BYTES == (game_h["RM_RING_SLOTS"] + 1) * 2
     assert equiv.EDGE_ANY == game_h["EDGE_OPEN"] | game_h["EDGE_LEFT"] | game_h["EDGE_RIGHT"]
 
-    # The dash_pristine buffer size (game.h RM_HUD_DASH_PRISTINE_BYTES = 40 * SCREEN_ROW_BYTES) is
-    # mirrored in adapter.py; pin it equal to DASH_ROWS (plane.h) * SCREEN_ROW_BYTES (screen.h) so the
-    # ctypes buffer the host tests hand rm_hud_dashboard_prebuild cannot become smaller than the C writes.
-    dash_rows = _defines("include/plane.h", r"^#define\s+(DASH_ROWS)\s+(\w+)\s*(?:/\*.*)?$")["DASH_ROWS"]
-    row_bytes = _defines("include/screen.h", r"^#define\s+(SCREEN_ROW_BYTES)\s+(\w+)\s*(?:/\*.*)?$")["SCREEN_ROW_BYTES"]
-    assert dash_rows == 40, "DASH_ROWS moved — update RM_HUD_DASH_PRISTINE_BYTES's literal in game.h"
-    assert equiv.adapter.RM_HUD_DASH_PRISTINE_BYTES == dash_rows * row_bytes
-
     # The leg-complete sentinel §I stamps into hud_crash_timer, mirrored in adapter.py for the leg
     # drive's leg_end detector (equiv.compare_leg_drive) — pin the Python copy equal to the C.
     assert equiv.adapter.RM_HUD_TIMER_LEG_END == game_h["RM_HUD_TIMER_LEG_END"]

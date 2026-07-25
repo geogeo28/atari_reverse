@@ -65,10 +65,8 @@
 #define GAUGE_BAR2_ADV     0x4c0
 #define GAUGE_BAR5_BACK    0xae0
 
-/* Phase 7 dashboard — masked blit of the fixed dashboard graphic (cell_dashboard, plane.h). */
+/* Phase 7 dashboard — masked blit of the per-leg dashboard graphic (cell_dashboard, plane.h). */
 #define DASHBOARD_DST      0x280
-#define DASH_GROUP_BYTES   8                   /* one dashboard group: 4 dest words (cell_dashboard) */
-#define DASH_ROW_BYTES     (DASH_GROUPS * DASH_GROUP_BYTES)   /* bytes the dashboard writes per scanline */
 
 /* Phases 1-2 — speed/time digit strings. These write into the gauge-cluster string buffer (the
  * speed/time text buffers overlap it), so phase 7's bars render the live speedometer/timer digits.
@@ -214,32 +212,15 @@ static void hud_gauge_cluster(const HudAssets *a, const uint8_t *str, Framebuffe
     rm_glyph_run(fb, end - GAUGE_BAR5_BACK, 0x0000ffff, 0xffffffff, font, str, si, TEXT_MAX_CELLS_M1, 0);
 }
 
-/* Prebuild the phase-7 dashboard output once per leg: run the SAME cell_dashboard blit into `pristine`
- * at a zero origin (rows 0..DASH_ROWS-1 at SCREEN_ROW_BYTES stride), so the per-frame bulk-copy below is
- * byte-identical to the on-the-fly blit. The dashboard is 100% opaque, so cell_dashboard's opaque fast
- * path never reads `pristine` (which starts uninitialised) — the output depends only on the art. That
- * full opacity is load-bearing (a transparent group would composite over this buffer, not the live
- * top-fill, and diverge); it is enforced across all legs by test_hud.test_hud_dashboard_is_opaque. The
- * art is written by init_leg_dash / draw_leg_labels at leg setup and by probe_collision on wrap frames
- * (src/events.c), so a prebuild per leg + per wrap covers the race; the shell (game_main.c) does exactly
- * that via dash_pristine_dirty. */
-void rm_hud_dashboard_prebuild(const HudAssets *a, uint8_t *pristine) {
-    cell_dashboard(pristine, 0, a->dashboard_src, 0);
-}
-
-/* Phase 7 — the dashboard graphic. When the leg's output has been prebuilt (dash_pristine != NULL), the
- * blit is a fixed-per-leg picture over the constant top-fill, so bulk-copy the DASH_ROW_BYTES the blit
- * touches on each scanline straight in (long stores, no per-group source reads or masking). Otherwise
- * fall back to the on-the-fly masked blit from buf_c (cell_dashboard, plane.h), stamped at DASHBOARD_DST. */
+/* Phase 7 — the dashboard graphic: an on-the-fly MASKED blit of the per-leg art from buf_c to the
+ * framebuffer (cell_dashboard, plane.h), stamped at DASHBOARD_DST. The per-leg mini-map init_leg_dash
+ * builds is TRANSPARENT (cell_dashboard keeps the framebuffer background wherever a group's mask word is
+ * set — only the course-outline groups are opaque), so it MUST composite over the LIVE frame: the road's
+ * sky fill shows through behind the outline, exactly as the original's draw_hud (@0x1555e). A prebuilt
+ * bulk-copy cannot do this — it would composite the art over its own (background-less) buffer and then
+ * opaquely overwrite the sky with black; that is the mini-map-black-background bug (STATUS.md). */
 static void hud_dashboard(const HudAssets *a, Framebuffer *fb) {
-    if (!a->dash_pristine) {
-        cell_dashboard(fb->px, DASHBOARD_DST, a->dashboard_src, 0);
-        return;
-    }
-    const uint8_t *src = a->dash_pristine;
-    uint8_t *dst = fb->px + DASHBOARD_DST;
-    for (int row = 0; row < DASH_ROWS; row++, src += ROW_STRIDE, dst += ROW_STRIDE)
-        for (int b = 0; b < DASH_ROW_BYTES; b += 4) wr32(dst + b, be32(src + b));
+    cell_dashboard(fb->px, DASHBOARD_DST, a->dashboard_src, 0);
 }
 
 /* Render a decimal digit as its ASCII char, or `blank` when it is 0 (leading-zero suppression).

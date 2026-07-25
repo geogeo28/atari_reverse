@@ -5,6 +5,7 @@ phases (4 flag-bars, 5 colour-bars, 6a fuel-gauge), then asserts the remaster ca
 wrong pixel (every byte it paints matches recreate). Footprint coverage is reported for progress.
 """
 import adapter
+import assets_load
 import equiv
 import pytest
 
@@ -36,32 +37,36 @@ def test_hud_ported_phases_no_wrong_pixel(cfg, capsys):
     assert coverage == 1.0, f"HUD footprint only {coverage:.1%} covered (cfg={cfg})"
 
 
-def test_hud_dashboard_fallback_matches():
-    """The phase-7 dashboard has two paths: the prebuilt bulk-copy (dash_pristine set) and the on-the-fly
-    masked blit (dash_pristine NULL). rm_draw_hud picks the fallback when no pristine is supplied; pin it
-    byte-exact too, so a regression to the fallback branch (wrong dst, dropped return) can't ship green."""
+@pytest.mark.parametrize("leg", range(5))
+def test_hud_dashboard_transparent_composites_over_frame(leg):
+    """The RUNTIME per-leg mini-map (the course map init_leg_dash builds from the leg's block) is
+    TRANSPARENT — cell_dashboard keeps the framebuffer background wherever a group's mask word is 0xffff,
+    so only the course-outline groups are opaque. Phase 7 must therefore composite it over the LIVE frame
+    (the road's sky behind the top-left panel), exactly as recreate's g_draw_hud does.
+
+    This drives the real init_leg_dash (the shell's op_rebuild_dash path) over a fully rendered mid-race
+    frame, then pins the remaster's HUD byte-exact to recreate. It is the coverage the baked-fixture path
+    (test_hud_ported_phases / hud_background) never reaches: that stages the leg-independent OPAQUE atlas,
+    so a prebuilt bulk-copy of it happened to equal the masked blit. On this transparent art a bulk-copy
+    composites over its own background-less buffer and paints a BLACK box over the sky — the mini-map bug
+    (STATUS.md). Here the masked blit keeps the sky and only draws the outline; a regression back to a
+    background-baked copy reddens this test."""
     lib = equiv._lib()
-    image = equiv.hud_background(leg=0)
-    coverage, wrong = equiv.compare_hud(lib, image, prebuild=False)
-    assert wrong == 0 and coverage == 1.0, f"fallback dashboard blit diverged: wrong={wrong} cov={coverage}"
-
-
-def test_hud_dashboard_is_opaque():
-    """The dashboard bulk-copy is byte-exact ONLY because every dashboard group is fully opaque (mask==0):
-    then cell_dashboard writes ink independent of the background, so a prebuilt snapshot equals the
-    on-the-fly blit. Enforce that invariant on the actual per-leg art — a transparent group would make the
-    prebuild composite over its own (zero/stale) buffer instead of the live top-fill, silently diverging."""
-    DASH_GROUPS, ROW, DASH_ROWS = 8, 160, 40
-    for leg in range(5):
-        image = equiv.hud_background(leg=leg)
-        buf_c = int.from_bytes(image[adapter.A_buf_c:adapter.A_buf_c + 4], "big")
-        src = buf_c + adapter.DASH_SRC_OFF
-        for row in range(DASH_ROWS):
-            for g in range(DASH_GROUPS):
-                off = src + row * ROW + g * 8
-                mask = (image[off] << 8) | image[off + 1]
-                assert mask == 0, (f"leg{leg} dashboard group (row{row},g{g}) is NOT opaque (mask={mask:#06x})"
-                                   " — the dash_pristine bulk-copy is unsafe; use the masked-blit fallback")
+    image = equiv.hud_background(leg=leg)              # road/sky drawn into the frame; opaque baked dash in buf_c
+    # Point init_leg_dash at the loaded arena: mem_base (its per-leg block source) = the arena base, which
+    # mid_race_state leaves NULL in the image (it inits natively) — recover it from buf_c (= base+RM_GFX_OFF).
+    buf_c = int.from_bytes(image[adapter.A_buf_c:adapter.A_buf_c + 4], "big")
+    mem_base = buf_c - assets_load.RM_GFX_OFF
+    image[adapter.A_mem_base:adapter.A_mem_base + 4] = mem_base.to_bytes(4, "big")
+    image[adapter.A_leg_index:adapter.A_leg_index + 2] = leg.to_bytes(2, "big")
+    equiv._run_pipeline(image, ("g_init_leg_dash",))  # -> the per-leg TRANSPARENT course map at buf_c+DASH_SRC_OFF
+    off = buf_c + adapter.DASH_SRC_OFF
+    mask0 = (image[off] << 8) | image[off + 1]
+    assert mask0 == 0xffff, (f"leg{leg}: init_leg_dash did not yield a transparent dashboard (group-0 mask="
+                             f"{mask0:#06x}); this pin would not be exercising the transparent path")
+    coverage, wrong = equiv.compare_hud(lib, image)
+    assert wrong == 0, f"leg{leg}: transparent dashboard HUD diverged from recreate (wrong={wrong})"
+    assert coverage == 1.0, f"leg{leg}: HUD footprint only {coverage:.1%} covered"
 
 
 # (speed, time) — exercise the phase-1/2 digit formatting across the real domain: every speedometer

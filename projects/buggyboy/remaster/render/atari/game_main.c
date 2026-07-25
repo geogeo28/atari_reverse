@@ -205,13 +205,6 @@ static int quit_requested(void) { return take_key_hit(SCAN_Q); }
 static uint8_t ctrl[RM_CTRL_ALLOC_BYTES] __attribute__((aligned(2)));    /* BSS: per-frame control-long table */
 static uint8_t scanline[RM_SCANLINE_BYTES] __attribute__((aligned(2)));  /* BSS: build_road_geometry scratch */
 static uint8_t shifted[RM_SCROLL_SHIFTS * RM_SCROLL_WINDOW] __attribute__((aligned(2)));  /* pre-rotated scroll copies */
-/* The phase-7 dashboard is a fixed-per-leg opaque graphic; rm_hud_dashboard_prebuild renders it once into
- * this buffer and rm_draw_hud bulk-copies it per frame (PERF: skips the masked blit's source reads). It is
- * rebuilt only when the dashboard art changes — leg setup (op_rebuild_dash / op_draw_leg_labels) and the
- * per-wrap progress-marker move (probe_collision, in game_update_step's wrap block) — flagged by
- * dash_pristine_dirty so draw_frame refreshes it exactly then. Starts dirty so the first draw builds it. */
-static uint8_t dash_pristine[RM_HUD_DASH_PRISTINE_BYTES] __attribute__((aligned(2)));
-static int dash_pristine_dirty = 1;
 static uint8_t buf_a_ram[ARENA_BUF_A_BYTES] __attribute__((aligned(2)));  /* mutable buf_a copy (prefix writes mirrors) */
 static uint8_t arena_block[RM_ARENA_BYTES] __attribute__((aligned(2)));   /* COURSES.DAT + unpacked GRAPHICS.GRA */
 /* The live ring serialized back into the original's flat ST-byte row grid — the object-list
@@ -359,10 +352,6 @@ static RmScene shell_scene(const Shell *s) {
  * draw order and the no-per-frame-clear invariant live in src/frame.c now (the buffers are cleared
  * once in main(); repainting over two-frames-old content is byte-identical to over zeros). */
 static void draw_frame(const Shell *s, Framebuffer *fb) {
-    if (dash_pristine_dirty) {          /* refresh the prebuilt dashboard after any art change (rare) */
-        rm_hud_dashboard_prebuild(s->hud_assets, dash_pristine);
-        dash_pristine_dirty = 0;
-    }
     RmScene sc = shell_scene(s);
     rm_draw_frame(&sc, fb);
 }
@@ -441,7 +430,6 @@ static void start_leg(Shell *s, uint16_t leg) {
      * the original loads 0x17fa2 after init_leg staged it; an off-image seam (byte-compare is
      * palette-agnostic, so the staged regs move no compared surface). */
     Setpalette(s->race_pal);
-    dash_pristine_dirty = 1;   /* every race entry re-prebuilds the dashboard (the leg's art is now set) */
 }
 
 /* The mode-6 tunnel poke targets hardware colour register (ST_PAL_POKE_BASE + reg_sel), as recreate's
@@ -506,11 +494,6 @@ static int game_update_step(Shell *s, uint16_t input) {
     if (player->view_wrapped) {
         player->event_pending = 0;
         rm_course_probe(s->ctx);            /* may move the dashboard progress marker (probe_collision) */
-        /* The whole wrap block can rewrite the dashboard art: rm_course_probe's probe_collision moves the
-         * marker, and rm_course_events (below) can rebuild it outright on a checkpoint (init_leg_dash +
-         * draw_leg_labels) or re-probe on a collision. Flag it dirty unconditionally here, before those
-         * run, so ANY of them is covered — do NOT narrow this to "only when the marker moved". */
-        dash_pristine_dirty = 1;
         bool pulled = rm_road_course_advance(s->pose, s->course, s->ring, s->stream);
         rm_build_road_geometry(s->pose, s->src, s->ring, ctrl, scanline);
         if (pulled) course_mode_event(s);   /* mode 2/4/6: screen_offset / obj_shade / palette */
@@ -1247,7 +1230,6 @@ static void op_wait_music_off(void *ctx, bool skippable) {
 
 static void op_rebuild_dash(void *ctx, uint16_t leg) {
     Shell *s = ctx; s->ctx->leg = leg; rm_init_leg_dash(s->ctx);
-    dash_pristine_dirty = 1;              /* the dashboard graphic was rebuilt -> re-prebuild */
 }
 
 /* Draw leg `leg`'s place-name labels onto the dashboard graphic in the arena (+ the folded marker
@@ -1255,7 +1237,6 @@ static void op_rebuild_dash(void *ctx, uint16_t leg) {
  * dashboard graphic must already be built for `leg` (op_rebuild_dash) — this overlays the labels. */
 static void op_draw_leg_labels(void *ctx, uint16_t leg) {
     Shell *s = ctx; s->ctx->leg = leg; rm_draw_leg_labels(s->ctx);
-    dash_pristine_dirty = 1;              /* labels + the folded marker probe changed the art */
 }
 
 /* One leg-start "get ready" flash frame (ip_start_leg @0x2c96): animate six leg_start_palette entries
@@ -1434,7 +1415,6 @@ void main(void) {
         .num_sprites = arena.gfx + ARENA_NUM_SPRITES_OFF,
         .num_glyph_tbl = fixture_num_glyph_tbl, .crash_color_tbl = fixture_crash_color_tbl,
         .score_delta_time = fixture_score_delta_time, .score_delta_roll = fixture_score_delta_roll,
-        .dash_pristine = dash_pristine,   /* prebuilt per leg; see dash_pristine_dirty */
     };
     const RoadSource src = {
         .persp_seg = (const int8_t *)fixture_road_persp_seg,

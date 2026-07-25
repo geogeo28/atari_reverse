@@ -612,16 +612,24 @@ the per-frame clear was dropped.)
 
 ## Known issues (play-test, 2026-07-25)
 
-- **In-race mini-map (top-left dashboard graphic) renders a BLACK background instead of the
-  original's sky.** NOT a palette seam — the hardware palette regs are byte-identical
-  original-vs-remaster at the same in-race moment (verified 0xFF8240–5E dumps, NORTH + EAST). It is
-  a pixel difference in the **runtime `init_leg_dash` rebuild path** (attract `op_rebuild_dash` +
-  leg-select→race), which the baked goldens / `make test` / autodrive never exercise (they use a
-  pre-staged `arena.gfx`). The runtime rebuild writes `gfx+0x11c20 = ffff0000…` where the
-  baked/correct bytes are `0000ffff…` (one word off); `cell_dashboard`'s masked blit then
-  composites black over the remaster's index-0 top-left where the original shows sky. NOTE:
-  recreate's host `g_init_leg_dash` produces the SAME `ffff0000` (so the differential is green and
-  a naive "fix" would break it) — the divergence is between the runtime rebuild + top-strip
-  compositing and the original's actual race-time behavior. Fix TBD: compare the original's
-  `init_leg_dash` @0x12d38 output and the buf_c→screen compositing byte-for-byte in Hatari
-  (memory-snapshot diff), then correct the remaster's runtime path faithfully.
+- **RESOLVED — In-race mini-map (top-left dashboard graphic) rendered a BLACK background instead of
+  the original's sky.** NOT a palette seam (hardware palette regs are byte-identical
+  original-vs-remaster at the same in-race moment: 0xFF8240–5E dumps, NORTH + EAST). Root cause
+  proven by original-side Hatari memory snapshots: the per-leg mini-map `init_leg_dash` builds at
+  `buf_c+0x11c20` is **TRANSPARENT** — its group mask words are `0xffff`, so `cell_dashboard` keeps
+  the framebuffer background wherever the mask is set and only the course-outline groups are opaque.
+  The ORIGINAL's `buf_c+0x11c20` is the SAME transparent `ffff0000…` at race time (never opaque),
+  and the remaster's runtime buffer is byte-identical to it — so the source was always correct on
+  both sides. The defect was **downstream compositing**: the shell's `dash_pristine` PERF
+  optimization (a per-leg prebuilt bulk-copy) composited that transparent art over its own
+  background-less buffer and then **opaquely** copied it to the framebuffer, painting a black box
+  over the sky the road renderer had drawn. The original/recreate (`g_draw_hud` @0x1555e) always do
+  the direct **masked** blit over the live frame. The `dash_pristine` premise ("the dashboard is
+  100% opaque") held only for the leg-independent baked atlas the goldens/`make test`/autodrive
+  stage — never for the transparent per-leg art the live game shows — which is why every gate was
+  green while the shipping game was wrong. **Fix:** remove the `dash_pristine` bulk-copy; Phase 7
+  now always masked-blits the per-leg art over the live frame (`src/hud.c`), matching the original.
+  **Pin:** `test_hud::test_hud_dashboard_transparent_composites_over_frame` drives the real
+  `g_init_leg_dash` over a rendered (sky) frame and pins the HUD byte-exact to recreate — the
+  transparent-dashboard coverage the baked path never reached (mutation-verified). On-target the
+  race top-left now shows the course outline over the sky; goldens ×5 (ST + STE) still MATCH.
