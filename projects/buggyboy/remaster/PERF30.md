@@ -537,7 +537,7 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > net delta ≈ −40 KB…+75 KB. Bonus findings: §10's "~60 clean frames" ceiling was a
 > `GOLDEN_BOOT_LEG`-vs-census SCREEN.BIN dump race (now `#error`-guarded; autodrive censuses ≥300 frames
 > clean), and the measured shipping footprint is **1.18 MB** — the "1 MB STE" claim was wrong; honest
-> minimum 2 MB (diet: drop the unused colour cache). **Open risk unchanged:** the FXSR/NFSR/endmask
+> minimum 2 MB — superseded by the slice-10 diet: minimum is 1 MB. **Open risk unchanged:** the FXSR/NFSR/endmask
 > byte-exactness calibration for skew — the data side is now proven affordable; the recipe is the next
 > slice. Full analysis + tables: `BLIT_STE_SPEC.md` §12.
 
@@ -573,6 +573,22 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > (grow/clip/hit/full/latch/flush), 6/6 mutations (NOGROW caught only by the table section), goldens
 > ×5 + ×5, A/B 0-mismatch, make test 730, TT clean. Footprint 1.08 MB (−97 KB). Quantified + deferred:
 > per-blit Supexec ≈ 0.3–0.55 ms/frame. Full design: `BLIT_STE_SPEC.md` §14.
+
+> **C4 slice 10 — the 1 MB DIET (landed, not committed): the remaster fits a 1 MB ST *and* a 1 MB STE,
+> like the original.** Two measurement-first moves. (1) The 2×128 KB `SCREEN_OVERDRAW` tails were sized
+> to the "~102 KB past the screen" folklore — the reach census (5,240 composed + 4,000 forced-branch +
+> 305 staged frames, in-repo `tools/reach_census.py`) measured the TRUE max at **8 bytes** (render_road;
+> every object engine stays below 32,000; the off-screen cull idea is moot — nothing draws below the
+> screen). Tail → 0x1000 (512× margin), −253,952 B, with standing guards so the number can never rot
+> again: the host suite canaries the tail every compared frame (mutation-checked), trace builds scan the
+> whole tail per present on target, and a new 32-case below-screen sweep section pins the chip path
+> against the tail too. (2) `skew_table` + `objsh2_cache` (170,432 B) leave BSS — placed into free TPA
+> above `_end` at boot only when the blitter binds (os.s captures basepage + SP; ceiling
+> min(p_hitpa, SP) − 16 KB; unplaced state is TOTALLY safe: latched routes, null-safe flushes, sweep
+> reports a clean decline). **Footprint 1,132,000 → 707,840 B. Measured TPA at 1 MB: EmuTOS 905,448 —
+> a 1 MB ST fits +197 KB; a 1 MB STE fits WITH the tables placed (blitter route live, 14 KB spare —
+> the thin-margin watch item).** New standing pin: goldens ×5 + ×5 at `--memsize 1` on both machines
+> (plus 730 host tests, sweep 4,968/0, A/B 0-mismatch, cadence in noise). `BLIT_STE_SPEC.md` §15.
 
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:

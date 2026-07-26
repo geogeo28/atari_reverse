@@ -3,12 +3,14 @@
 engines across the whole case space (fine_x x width/base_cells x column/clip family x rows x colour).
 
 Builds the GAME_STE_SWEEP variant and boots it on --machine ste --blitter. The PRG (src/blitter_sweep.c)
-runs four sections — the objshift2 grid, the objshift pre-shift grid, the objshift HARDWARE-SKEW grid,
-and the skew route's sprite-key TABLE (hit / grow / y_count clip / full-table decline) — against their
-CPU references and dumps a per-case mismatch grid to SCREEN.BIN: word0 = case count, word1 = total
-mismatch, then one word per case (0 == byte-exact; clip cases the blitter declines are logged 0 as the
-pinned CPU hybrid), then a SELF-DESCRIBING tail: the section layout, the drawn counts, the count each
-section must reach, which sections ran, and the cost bench. ALL case words zero == PASS.
+runs five sections — the objshift2 grid, the objshift pre-shift grid, the objshift HARDWARE-SKEW grid,
+the skew route's sprite-key TABLE (hit / grow / y_count clip / full-table decline), and a BELOW-SCREEN
+section that blits both shipping routes at and past the bottom edge and compares the overdraw tail too —
+against their CPU references, and dumps a per-case mismatch grid to SCREEN.BIN: word0 = case count,
+word1 = total mismatch, then one word per case (0 == byte-exact; clip cases the blitter declines are
+logged 0 as the pinned CPU hybrid), then a SELF-DESCRIBING tail: the section layout, the drawn counts,
+the count each section must reach, which sections ran, whether the boot bind placed the routes' tables at
+all, and the cost bench. ALL case words zero == PASS.
 
 A pass is not enough on its own: a section that declined every case would also report zero mismatches.
 So the run additionally fails unless each section drew the number of cases the report itself says it
@@ -38,13 +40,18 @@ TAIL = {"handled2": 1, "handled_osh": 2, "handled_skew": 3,
         "n_cases2": 4, "n_cases_osh": 5, "expect_base": 6, "grids_run": 7,
         "bench_iters": 8, "bench_mat": 9, "bench_pass_syn": 10, "bench_pass_bin": 11,
         "bench_all_syn": 12, "bench_all_bin": 13, "bench_cpu": 14, "bench_declined": 15,
-        "n_cases_tbl": 16, "cases_run_tbl": 17, "served_tbl": 18, "expect_tbl": 19}
+        "n_cases_tbl": 16, "cases_run_tbl": 17, "served_tbl": 18, "expect_tbl": 19,
+        "n_cases_below": 20, "handled_below": 21, "tables_bound": 22}
 
 # SWEEP_GRID_* in blitter_sweep.c: which sections the build actually ran.
-GRID_OBJSHIFT2, GRID_OSH_PRESHIFT, GRID_OSH_SKEW, GRID_OSH_TABLE = 1, 2, 4, 8
-GRIDS_ALL = GRID_OBJSHIFT2 | GRID_OSH_PRESHIFT | GRID_OSH_SKEW | GRID_OSH_TABLE
+GRID_OBJSHIFT2, GRID_OSH_PRESHIFT, GRID_OSH_SKEW, GRID_OSH_TABLE, GRID_BELOW = 1, 2, 4, 8, 16
+GRIDS_ALL = GRID_OBJSHIFT2 | GRID_OSH_PRESHIFT | GRID_OSH_SKEW | GRID_OSH_TABLE | GRID_BELOW
 # A mutate build sweeps only the two sections the skew route owns (blitter_sweep_super).
 GRIDS_MUTATE = GRID_OSH_SKEW | GRID_OSH_TABLE
+# 4 MB pinned, not RM_MEMSIZE's default: the sweep's own statics plus the two lookup tables the boot bind
+# places in the free TPA are a REQUIREMENT of this measurement — a starved run would decline the tables
+# and sweep nothing (which the report's tables_bound word then reports honestly, but is not a pin).
+SWEEP_MEMSIZE = "4"
 
 HZ200_CYCLES = 8_000_000 // 200                            # ST 68000 cycles per TOS _hz_200 tick
 
@@ -54,6 +61,7 @@ HZ200_CYCLES = 8_000_000 // 200                            # ST 68000 cycles per
 # silently re-attributing cases to the wrong section.
 N_CASES_MIRROR, N_OSH_CASES_MIRROR = 3 * 16 * 12 * 3, 2 * 16 * 12 * 4
 N_TBL_CASES_MIRROR = 128 + 8                               # OBJSH_SKEW_TABLE_ENTRIES + the 8 fixed cases
+N_BELOW_CASES_MIRROR = 4 * 2 * (2 + 2)                     # under x fine_x x (objshift2 widths + base_cells)
 # Decode hint for the fine_x diagnostic only (columns x (colour,rows,stride) tuples — the colour grid's
 # two innermost loops). Not a gate: it only labels which fine_x values a mutation failed at.
 OSH_INNER_PER_FINEX = 12 * 4
@@ -92,16 +100,17 @@ class Report:
         self.fb = fb
         self.ncases = word(fb, 0)
         self.total = word(fb, 1)
-        layout = N_CASES_MIRROR + 2 * N_OSH_CASES_MIRROR + N_TBL_CASES_MIRROR
+        layout = N_CASES_MIRROR + 2 * N_OSH_CASES_MIRROR + N_TBL_CASES_MIRROR + N_BELOW_CASES_MIRROR
         if self.ncases != layout:
             die(f"report layout mismatch: word0={self.ncases}, this runner mirrors {layout} — "
                 f"blitter_sweep.c's section dimensions moved and run_ste_sweep.py did not follow")
         self.n_cases2 = tail(fb, "n_cases2")
         self.n_osh = tail(fb, "n_cases_osh")
         self.n_tbl = tail(fb, "n_cases_tbl")
-        if self.n_cases2 + 2 * self.n_osh + self.n_tbl != self.ncases:
-            die(f"report tail disagrees with word0: {self.n_cases2} + 2*{self.n_osh} + {self.n_tbl} "
-                f"!= {self.ncases}")
+        self.n_below = tail(fb, "n_cases_below")
+        if self.n_cases2 + 2 * self.n_osh + self.n_tbl + self.n_below != self.ncases:
+            die(f"report tail disagrees with word0: {self.n_cases2} + 2*{self.n_osh} + {self.n_tbl} + "
+                f"{self.n_below} != {self.ncases}")
         cases_run_tbl = tail(fb, "cases_run_tbl")
         if cases_run_tbl != self.n_tbl:
             die(f"the table section logged {cases_run_tbl} cases but its layout word says {self.n_tbl} — "
@@ -115,7 +124,11 @@ class Report:
                       ("objshift skew", self.n_cases2 + self.n_osh, self.n_osh, GRID_OSH_SKEW,
                        tail(fb, "handled_skew"), self.expect_base),
                       ("objshift table", self.n_cases2 + 2 * self.n_osh, self.n_tbl, GRID_OSH_TABLE,
-                       tail(fb, "served_tbl"), tail(fb, "expect_tbl"))]
+                       tail(fb, "served_tbl"), tail(fb, "expect_tbl")),
+                      # No case here may be declined (the family predicates are horizontal-only), so the
+                      # section's expectation is its whole case count — see sweep_below_screen_grid.
+                      ("below-screen", self.n_cases2 + 2 * self.n_osh + self.n_tbl, self.n_below,
+                       GRID_BELOW, tail(fb, "handled_below"), self.n_below)]
 
     def ran(self, bit):
         return bool(self.grids_run & bit)
@@ -180,7 +193,7 @@ def print_bench(rep):
 def print_counts(rep):
     drawn = "  ".join(f"{name}={d}" + ("" if rep.ran(bit) else " (skipped)")
                       for name, _, _, bit, d, _ in rep.grids)
-    print(f"cases: {rep.ncases} (objshift2 + objshift pre-shift + objshift skew + table)   "
+    print(f"cases: {rep.ncases} (objshift2 + objshift pre-shift + objshift skew + table + below-screen)   "
           f"blitter-drawn: {drawn}   expected BASE per colour grid: {rep.expect_base}"
           f"   total mismatch: {rep.total}")
 
@@ -190,8 +203,18 @@ def run_sweep(mutate):
     build(mutate)
     # 4800 cases x full-framebuffer memset/compare is a lot of emulated cycles — give it a generous
     # vblank budget + wall-clock so the sweep finishes and dumps (default 4000 vbls is far too short).
-    fb = run_hatari.run(SWEEP_PRG, machine="ste", blitter=True, needs_data=True,
+    fb = run_hatari.run(SWEEP_PRG, machine="ste", blitter=True, needs_data=True, memsize=SWEEP_MEMSIZE,
                         run_vbls=240000, timeout=900)[:SCREEN_BYTES]
+    # Checked BEFORE the report is decoded: on a declined run every section is legitimately empty, so the
+    # layout checks in Report would fire first and blame blitter_sweep.c for being out of step.
+    if not tail(fb, "tables_bound"):
+        # The legal-but-vacuous combo (GAME_FORCE_NO_BLITTER, a non-blitter machine, or a TPA with no room
+        # for the tables): the boot bind placed nothing, every blitter path declines by design and NOTHING
+        # was swept. Say so instead of decoding an all-zero grid as a pass.
+        print("DECLINED: tables unplaced — the boot bind placed no blitter tables "
+              "(GAME_FORCE_NO_BLITTER, no blitter, or no room in the TPA), so no section was swept and "
+              "nothing is pinned")
+        sys.exit(1)
     return Report(fb)
 
 
@@ -273,8 +296,8 @@ def main():
     if bad:
         print(f"DIFF: {len(bad)} case(s) mismatch (indices {bad[:20]}{'...' if len(bad) > 20 else ''})")
         sys.exit(1)
-    print(f"MATCH: all three blitter paths and the skew sprite table are byte-exact over all "
-          f"{rep.ncases} swept cases")
+    print(f"MATCH: all three blitter paths, the skew sprite table and the below-screen destinations are "
+          f"byte-exact (framebuffer + overdraw tail) over all {rep.ncases} swept cases")
 
 
 if __name__ == "__main__":

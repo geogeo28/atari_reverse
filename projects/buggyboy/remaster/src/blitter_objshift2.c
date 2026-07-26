@@ -60,10 +60,22 @@ typedef struct {
 
 /* Census-justified size (BLIT_STE_SPEC §10): objshift2's reachable set is a BOUNDED 6 distinct tuples on
  * every leg, so 16 slots (nearest power of two with >2x margin) hold the whole working set with zero
- * eviction — 16 * ~2.75 KB ~= 44 KB static BSS (down from 128 slots / 356 KB). Re-verified 100% gate hit. */
+ * eviction — 16 * ~2.75 KB ~= 44 KB of table (down from 128 slots / 356 KB). Re-verified 100% gate hit. */
 #define OBJSH2_CACHE_SLOTS 16
-static Objsh2Cache objsh2_cache[OBJSH2_CACHE_SLOTS];
+/* NOT in BSS (1 MB memory diet, slice 2): 44 KB of cache that only a blitter machine ever reads would
+ * otherwise be linked into the .PRG's bss size on EVERY machine. rm_blit_bind_all places it in the free
+ * TPA above the program when — and only when — the blitter route is bound; the pointer stays null on an
+ * ST/TT, where nothing in this file is reachable. */
+static Objsh2Cache *objsh2_cache;
 uint32_t rm_objsh2_cache_hits, rm_objsh2_cache_misses;      /* profiling (run_cadence / stats dump) */
+
+uint32_t rm_blit_objshift2_cache_bytes(void) {
+    return (uint32_t)sizeof(Objsh2Cache) * OBJSH2_CACHE_SLOTS;
+}
+
+void rm_blit_objshift2_cache_place(void *mem) {
+    objsh2_cache = (Objsh2Cache *)mem;
+}
 
 /* Direct-map slot for a key. A multiplicative (Knuth/Fibonacci) mix of the key fields — the constants are
  * arbitrary odd/prime multipliers, not load-bearing; `>> 15` drops the poorly-mixed low bits before the
@@ -95,7 +107,10 @@ static void objsh2_cache_store(Objsh2Cache *e, const uint8_t *src, uint32_t src_
  * bytes at that address don't change — true during a race (arena.gfx is load-once). The F10 reload
  * (op_reload_assets) re-unpacks arena.gfx IN PLACE at the same address; if it recovers from a corrupt
  * arena the cached bitmaps would be stale, so game_main flushes here on reload. */
+/* TOTAL: a flush on an UNPLACED cache is a no-op, not a null dereference — see the flush's twin in
+ * src/blitter_skew.c. */
 void rm_blit_objshift2_cache_flush(void) {
+    if (!objsh2_cache) return;
     for (int i = 0; i < OBJSH2_CACHE_SLOTS; i++) objsh2_cache[i].valid = 0;
 }
 
@@ -116,6 +131,11 @@ int rm_blit_objshift2_is_base(uint16_t x, uint16_t rows_m1, int width_idx) {
  * caller must fall back to the CPU engine (LEFT/RIGHT clip family). Same signature/contract as the C. */
 int rm_blit_objshift2_blitter(uint8_t *dst, uint32_t dst_off, const uint8_t *src, uint32_t src_off,
                               uint16_t x, uint16_t rows_m1, int width_idx) {
+    /* UNPLACED cache -> decline everything, exactly as the skew route's start-latched skew_table_full
+     * does: one pointer test at the single entry, so no path below can dereference a null slot. A machine
+     * that never placed the tables (no blitter, or no room in the TPA) is never bound to this route at
+     * all — this makes the route safe even when a measurement build calls it directly. */
+    if (!objsh2_cache) return 0;
     int rows = (int16_t)rows_m1 + 1;
     if (rows <= 0) return 1;                                /* draws nothing — matches the C's rows<=0 skip */
     if (rows > OBJSH2_MAX_ROWS) return 0;                   /* beyond the bitmap height -> CPU hybrid (safety) */

@@ -22,8 +22,9 @@ Play the shipping game (leg select, then arrow keys) with a manual run:
     bash render/atari/build_game.sh
     hatari --harddrive render/atari/disk --auto 'C:\\BUGGYBOY.PRG'
 See README.
-Usage: python render/atari/run_golden.py        # all legs 0-4
-       python render/atari/run_golden.py 3      # a single leg, for quick iteration
+Usage: python render/atari/run_golden.py                  # all legs 0-4
+       python render/atari/run_golden.py 3                # a single leg, for quick iteration
+       python render/atari/run_golden.py --memsize 1      # all legs on a 1 MB machine (the memory-diet gate)
 """
 import os
 import subprocess
@@ -64,11 +65,12 @@ def build_golden_prg(leg, ste=False):
     subprocess.run(["bash", str(HERE / "build_game.sh")], env=env, check=True)
 
 
-def verify_leg(leg, ste=False):
+def verify_leg(leg, ste=False, memsize=None):
     """Build + run leg `leg`'s GOLDEN.PRG and byte-compare its boot frame vs recreate's pipeline. ste=True
-    builds the STE target and boots it on --machine ste --blitter. Returns True on MATCH, False on DIFF."""
+    builds the STE target and boots it on --machine ste --blitter. memsize selects the emulated RAM in MB
+    (None = run_hatari's default). Returns True on MATCH, False on DIFF."""
     build_golden_prg(leg, ste=ste)
-    fb = run_hatari.run(GOLDEN_PRG, machine="ste" if ste else "st", blitter=ste)
+    fb = run_hatari.run(GOLDEN_PRG, machine="ste" if ste else "st", blitter=ste, memsize=memsize)
     where = "on STE (--machine ste --blitter)" if ste else "on-target road + objects + HUD"
     return run_hatari.verify_frame(
         fb, f"remaster_{'ste' if ste else 'road_hud'}_leg{leg}.png",
@@ -78,17 +80,30 @@ def verify_leg(leg, ste=False):
 
 
 def main(ste=False):
-    if len(sys.argv) > 1:
-        leg = int(sys.argv[1])
+    args = sys.argv[1:]
+    memsize = None
+    if "--memsize" in args:
+        # The 1 MB memory-diet gate. Passed through to run_hatari.run, where an explicit value WINS over
+        # the RM_MEMSIZE env default — so `--memsize 1` means 1 MB whatever the environment says.
+        i = args.index("--memsize")
+        if i + 1 >= len(args):
+            sys.exit("--memsize needs a value in MB (e.g. --memsize 1)")
+        memsize = args[i + 1]
+        if not memsize.isdigit():
+            sys.exit(f"--memsize takes an integer number of MB, got {memsize!r}")
+        del args[i:i + 2]
+    if args:
+        leg = int(args[0])
         if leg not in LEGS:
             sys.exit(f"leg {leg} outside legs 0-{NUM_LEGS - 1}")
         legs = [leg]
     else:
         legs = list(LEGS)
 
-    results = {leg: verify_leg(leg, ste=ste) for leg in legs}
+    results = {leg: verify_leg(leg, ste=ste, memsize=memsize) for leg in legs}
 
-    print(f"\n==== {'STE ' if ste else ''}golden summary ====")
+    ram = f", {memsize} MB" if memsize else ""
+    print(f"\n==== {'STE ' if ste else ''}golden summary{ram} ====")
     for leg in legs:
         print(f"  leg {leg}: {'MATCH' if results[leg] else 'DIFF'}")
     if not all(results.values()):

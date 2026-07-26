@@ -6,6 +6,7 @@ takes. It is test-only scaffolding — the seam that lets one captured snapshot 
 their framebuffers can be diffed (see ../README.md). The shipped remaster game shares none of it.
 """
 import ctypes
+import re
 import sys
 from pathlib import Path
 
@@ -20,11 +21,28 @@ import render_screen as R                         # noqa: E402  SCREEN_BASE + bu
 
 SCREEN_BASE = R.SCREEN_BASE
 SCREEN_BYTES = R.ROW_STRIDE * R.H                 # 32000
-# draw_game_objects writes off-screen sprite fragments well past the visible 32000 bytes (clipped
-# roadside objects, measured up to ~102 KB past the screen). The composed-frame differential backs its
-# candidate framebuffer with this much extra tail so those writes don't overrun the buffer, exactly as
-# game_main.c gives each screen buffer a SCREEN_OVERDRAW tail.
-SCREEN_OVERDRAW = 0x20000
+
+GAME_MAIN_C = REMASTER / "render" / "atari" / "game_main.c"
+
+
+def _game_main_define(name):
+    """One #define read straight out of render/atari/game_main.c (precedent: run_ste_census.py reading
+    OBJSH_SKEW_TABLE_ENTRIES out of include/blitter.h). The shell OWNS the screen-buffer layout; a Python
+    copy of one of its numbers is a copy that drifts the day the shell's number changes."""
+    m = re.search(rf"^#define\s+{name}\s+(0x[0-9a-fA-F]+|\d+)", GAME_MAIN_C.read_text(), re.M)
+    if not m:
+        raise RuntimeError(f"{name} not found in {GAME_MAIN_C} — the screen-buffer layout moved")
+    return int(m.group(1), 0)
+
+
+# draw_game_objects writes off-screen sprite fragments past the visible 32000 bytes (clipped roadside
+# objects). The composed-frame differential backs its candidate framebuffer with this much extra tail so
+# those writes don't overrun the buffer, exactly as game_main.c gives each screen buffer a SCREEN_OVERDRAW
+# tail — read from that file, so host and target genuinely share ONE definition of how much slack the
+# engines get rather than two numbers that agree today. SCREEN_TAIL_LIVE is the measured part of the tail
+# a frame legitimately writes; the composed differential canaries everything above it (see equiv.py).
+SCREEN_OVERDRAW = _game_main_define("SCREEN_OVERDRAW")
+SCREEN_TAIL_LIVE = _game_main_define("SCREEN_TAIL_LIVE")
 
 # draw-buffer selection: physbase_tbl indexed by the (word) flip_idx (mirror recreate/draw.h).
 A_flip_idx = 0x18bf2

@@ -79,6 +79,47 @@
 #ifdef RM_BLITTER
 #include "blitter.h"          /* unified ST/STE binary (PERF30 C4): boot-probe + bind both object routes */
 static int g_have_blitter;    /* set once at boot: a blitter is present and both object routes are bound to it */
+
+/* ---- the TPA map (1 MB memory diet, slice 2) -----------------------------------------------------
+ * The blitter routes' two lookup tables (objshift2's pre-shift cache + the colour route's sprite-key
+ * table, 170,432 bytes together) are of no use on an ST or a TT, yet as static BSS they were part of the
+ * .PRG's bss size on EVERY machine — a third of the whole footprint. They now live in the free TPA ABOVE
+ * the program, placed at boot only when the blitter route is actually bound.
+ *
+ * NOT Malloc: GEMDOS hands a .PRG the WHOLE TPA and this shell never Mshrinks, so a Malloc would only
+ * hand back a slice of memory the program already owns outright. The map GEMDOS gives us is:
+ *
+ *   p_lowtpa .. p_bbase+p_blen   basepage + text + data + bss   (loaded and BSS-zeroed by GEMDOS)
+ *   p_bbase+p_blen .. SP         FREE, uninitialised            <- the tables go at the bottom of this
+ *   SP (== p_hitpa on TOS/EmuTOS, which starts the child's stack at the top of the TPA) downwards: stack
+ *
+ * so the window is [end of BSS, ceiling), with the ceiling the LOWER of p_hitpa and the SP GEMDOS handed
+ * _start (os.s captures both; taking the minimum keeps the check honest if a TOS ever parks SP elsewhere),
+ * less TPA_STACK_MARGIN of headroom for the descending stack. If the tables do not fit — a 1 MB STE is
+ * the tight case — rm_blit_bind_all returns 0 and the shell binds the 68000 CPU engines exactly as it
+ * does on a machine with no blitter: slower, pixel-identical, no special case anywhere else. */
+typedef struct {              /* GEMDOS BASPAG, through the fields this shell reads */
+    uint32_t lowtpa, hitpa;
+    uint32_t tbase, tlen;
+    uint32_t dbase, dlen;
+    uint32_t bbase, blen;
+} Basepage;
+extern Basepage *basepage;    /* captured by _start from 4(sp) — see os.s */
+extern uint8_t *initial_sp;   /* the stack pointer GEMDOS handed _start — see os.s */
+
+#define TPA_STACK_MARGIN 0x4000   /* 16 KB kept clear between the placed tables and the descending stack */
+
+/* The free-TPA window described above: returns its base, and its size through *bytes (0 if there is none).
+ * The base is rounded up to BLIT_TABLE_ALIGN (blitter.h — the placer's own constant, not a second copy);
+ * the placer re-pads anyway, so this only keeps the reported size honest. */
+static uint8_t *tpa_free_window(uint32_t *bytes) {
+    uint32_t base = (basepage->bbase + basepage->blen + (BLIT_TABLE_ALIGN - 1)) & ~(uint32_t)(BLIT_TABLE_ALIGN - 1);
+    uint32_t sp = (uint32_t)(unsigned long)initial_sp;
+    uint32_t ceiling = basepage->hitpa < sp ? basepage->hitpa : sp;
+    ceiling = ceiling > TPA_STACK_MARGIN ? ceiling - TPA_STACK_MARGIN : 0;
+    *bytes = ceiling > base ? ceiling - base : 0;
+    return (uint8_t *)(unsigned long)base;
+}
 #endif
 
 void rm_build_road_geometry(RoadPose *pose, const RoadSource *src, const CourseRing *ring,
@@ -258,12 +299,27 @@ static void seed_highscore_table(void) {
  * blit to the live screen tears badly at this render rate. SCREEN_BYTES is a multiple of 256, so the
  * second buffer stays aligned too.
  *
- * draw_game_objects legitimately writes off-screen sprite fragments well past the visible 32000 bytes
- * (partially/fully clipped roadside objects — measured up to ~102 KB past the screen). In the original
- * the draw buffer is followed by ample RAM, so those writes are harmless; here each buffer needs an
- * OVERDRAW tail so they don't corrupt the next buffer or BSS mid-frame. */
+ * draw_game_objects legitimately writes off-screen sprite fragments past the visible 32000 bytes
+ * (partially clipped roadside objects). In the original the draw buffer is followed by ample RAM, so
+ * those writes are harmless; here each buffer needs an OVERDRAW tail so they don't corrupt the next
+ * buffer or BSS mid-frame.
+ *
+ * HOW BIG. Measured, not estimated (1 MB memory-diet slice 1, tools/reach_probe.c): over 5,240 composed
+ * frames plus 4,000 forced-branch runs, the furthest any of the three fine-x engines wrote was offset
+ * 32007 — EIGHT bytes past the visible screen. The old 0x20000 came from a "~102 KB" guess that the
+ * census refuted. 0x1000 keeps a 512x margin over the measured reach, and 32000 + 0x1000 = 36096 is a
+ * multiple of SCREEN_ALIGN, so the SECOND buffer inherits the 256-byte video-base alignment from the
+ * first exactly as it did before. The debug tail canary below is the standing guard on the number.
+ *
+ * The measured reach splits in two. The three fine-x OBJECT engines never left the visible screen at all
+ * (deepest write 31,039). The 8 bytes past it are RENDER_ROAD's bottom-row cell, on 81 of those 5,240
+ * frames (tools/reach_census.py attributes each tail hit to its stage). SCREEN_TAIL_LIVE names that
+ * measured, legitimate part of the tail: it is the only part any draw may touch, so it is the part the
+ * canary below excludes and everything above it is guarded. Host and target share both numbers —
+ * test/adapter.py reads them out of THIS file, so the composed differential guards the same band. */
 #define SCREEN_ALIGN 256
-#define SCREEN_OVERDRAW 0x20000       /* scratch tail per buffer for off-screen object writes (>= max reach) */
+#define SCREEN_OVERDRAW 0x1000        /* scratch tail per buffer for off-screen object writes (>= max reach) */
+#define SCREEN_TAIL_LIVE 8            /* measured bytes of that tail a frame legitimately writes */
 #define SCREEN_STRIDE (SCREEN_BYTES + SCREEN_OVERDRAW)
 static uint8_t screen_pool[2 * SCREEN_STRIDE + SCREEN_ALIGN];
 
@@ -271,6 +327,45 @@ static Framebuffer *screen_buf(int i) {
     unsigned long base = ((unsigned long)screen_pool + (SCREEN_ALIGN - 1)) & ~(unsigned long)(SCREEN_ALIGN - 1);
     return (Framebuffer *)(base + (unsigned long)i * SCREEN_STRIDE);
 }
+
+/* ---- debug tail canary (measurement/trace builds only) -------------------------------------------
+ * SCREEN_OVERDRAW above is a measured number, so it needs a standing check that the measurement still
+ * holds: fill each buffer's whole guarded tail with a pattern at boot and re-check it at every present.
+ * A changed byte means a draw reached past SCREEN_TAIL_LIVE — the 512x margin is being eaten — and the
+ * trip is counted into the cadence tail, where run_cadence.py reports it as a failure.
+ *
+ * WHOLE tail, not a band at the top of it: a top band only sees a reach that has already consumed nearly
+ * the entire margin, which is a tripwire that fires after the fact. Guarding from SCREEN_TAIL_LIVE up
+ * catches the FIRST byte past what the census measured. Scanned a long at a time (the pool is 256-byte
+ * aligned and both bounds are multiples of 4) so a 4 KB band costs a fraction of a frame.
+ *
+ * Compiled ONLY into the cadence-trace build (or on demand via -DGAME_TAIL_CANARY), so the shipping .PRG
+ * pays nothing. */
+#if defined(GAME_CADENCE_TRACE) || defined(GAME_TAIL_CANARY)
+#define RM_TAIL_CANARY 1
+#define SCREEN_CANARY_BYTES (SCREEN_OVERDRAW - SCREEN_TAIL_LIVE)
+#define SCREEN_CANARY_FILL 0xa5
+#define SCREEN_CANARY_LONG (0x01010101UL * SCREEN_CANARY_FILL)   /* the same byte, four up (memset/scan) */
+/* The long-word scan needs a 4-multiple band on a 4-aligned base — the base is SCREEN_ALIGN-aligned plus
+ * two 4-multiples, so this is the one condition worth pinning at compile time. */
+typedef char screen_canary_scan_fits[(SCREEN_TAIL_LIVE % 4 == 0 && SCREEN_CANARY_BYTES % 4 == 0) ? 1 : -1];
+static uint32_t canary_trips;
+
+static uint8_t *canary_band(int i) { return screen_buf(i)->px + SCREEN_BYTES + SCREEN_TAIL_LIVE; }
+
+static void canary_fill(void) {
+    memset(canary_band(0), SCREEN_CANARY_FILL, SCREEN_CANARY_BYTES);
+    memset(canary_band(1), SCREEN_CANARY_FILL, SCREEN_CANARY_BYTES);
+}
+
+/* One present's check on the buffer just painted. Deliberately does NOT re-fill: a tripped band stays
+ * tripped, so a single overrun keeps being counted rather than being papered over on the next frame. */
+static void canary_check(int i) {
+    const uint32_t *band = (const uint32_t *)canary_band(i);
+    for (int b = 0; b < (int)(SCREEN_CANARY_BYTES / sizeof(uint32_t)); b++)
+        if (band[b] != SCREEN_CANARY_LONG) { canary_trips++; return; }
+}
+#endif
 
 /* ---- the game shell's single handle: pointers to every per-race owner struct, its render views, the
  * const asset bundles, the course-event context, the flow state + its draw asset bundles, and the
@@ -608,13 +703,17 @@ extern uint32_t rm_objsh2_cache_hits, rm_objsh2_cache_misses;
 extern uint32_t rm_objsh_skew_hits, rm_objsh_skew_first, rm_objsh_skew_grows, rm_objsh_skew_full;
 #define CADENCE_ROUTE_COUNTERS 6
 /* The tail longs, in dump order: a {magic, count} header, then the render clock, then the route
- * counters. The header is the tripwire run_cadence.py checks before it believes a single number —
+ * counters, then the memory-diet pair (the tail-canary trip count and the free-TPA window the boot bind
+ * measured). The header is the tripwire run_cadence.py checks before it believes a single number —
  * SCREEN.BIN is a shared channel every build variant dumps through, and a silently-shifted tail would
  * otherwise be read as a plausible measurement. */
 #define CADENCE_MAGIC          0xCADE00C5UL
 #define CADENCE_HEADER_LONGS   2
 #define CADENCE_RENDER_COUNTERS 2                          /* render ticks, rendered frames */
-#define CADENCE_TAIL_COUNTERS (CADENCE_HEADER_LONGS + CADENCE_RENDER_COUNTERS + CADENCE_ROUTE_COUNTERS)
+#define CADENCE_MEMORY_COUNTERS 2                          /* tail-canary trips, free TPA bytes */
+#define CADENCE_TAIL_COUNTERS (CADENCE_HEADER_LONGS + CADENCE_RENDER_COUNTERS + CADENCE_ROUTE_COUNTERS \
+                               + CADENCE_MEMORY_COUNTERS)
+static uint32_t cadence_tpa_free;                          /* boot: free TPA above BSS, for the report */
 #define CADENCE_TAIL_OFF (SCREEN_BYTES - CADENCE_TAIL_COUNTERS * (int)sizeof(uint32_t))   /* run_cadence.py pins this */
 static void cadence_dump(void) {
     uint8_t *buf = screen_buf(0)->px;
@@ -633,6 +732,7 @@ static void cadence_dump(void) {
     tail[4] = rm_objsh2_cache_hits;  tail[5] = rm_objsh2_cache_misses;
     tail[6] = rm_objsh_skew_hits;    tail[7] = rm_objsh_skew_first;
     tail[8] = rm_objsh_skew_grows;   tail[9] = rm_objsh_skew_full;
+    tail[10] = canary_trips;         tail[11] = cadence_tpa_free;
     long h = Fcreate("SCREEN.BIN", 0);
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, buf); Fclose((short)h); }
 }
@@ -660,6 +760,9 @@ static void census_dump(void) {
  * before the next even cadence slot; the Setscreen + Vsync then latch the flip ON that slot. */
 static void show_surface(Shell *s) {
     Framebuffer *fb = screen_buf(s->shown ^ 1);
+#ifdef RM_TAIL_CANARY
+    canary_check(s->shown ^ 1);              /* debug: did this frame's draws eat the overdraw tail? */
+#endif
 #ifndef GAME_PRESENT_FREERUN
     present_wait_boundary();                 /* C1: quantize the flip onto the even-vblank cadence grid */
 #endif
@@ -1413,6 +1516,30 @@ static uint16_t auto_intermission_input(void) {
 #endif
 
 void main(void) {
+#ifdef RM_BLITTER
+    /* Unified ST/STE binary (PERF30 C4): probe for a blitter ONCE and bind BOTH fine-x object routes —
+     * objshift2 and the colour-indexed engine — to the hardware blitter when present, else to the 68000
+     * CPU asm engines (rm_blit_bind_all, src/blitter.c). NEVER bail: a plain ST or TT binds the CPU path
+     * (blitter_available() returns 0 without touching any 0xFFFF8Axx register). GAME_FORCE_NO_BLITTER
+     * pins the CPU path even on an STE (a harness A/B baseline).
+     *
+     * FIRST thing main does, ahead of the measurement entry points below: the bind is also what PLACES
+     * both routes' lookup tables in the free TPA (see the TPA map above), and the sweep/self-test builds
+     * call those engines directly. Running the same bind for every build keeps the SHIPPING placement
+     * path the one every harness exercises. The bind's RETURN value is what g_have_blitter must hold —
+     * it is 0 when the probe found a blitter but there was no room for its tables. */
+#ifdef GAME_FORCE_NO_BLITTER
+    g_have_blitter = 0;
+#else
+    g_have_blitter = blitter_available();
+#endif
+    uint32_t tpa_free_bytes;
+    uint8_t *tpa_free_base = tpa_free_window(&tpa_free_bytes);
+    g_have_blitter = rm_blit_bind_all(g_have_blitter, tpa_free_base, tpa_free_bytes);
+#ifdef GAME_CADENCE_TRACE
+    cadence_tpa_free = tpa_free_bytes;
+#endif
+#endif
 #ifdef GAME_STE_SELFTEST
     /* Measurement build: reproduce rm_blit_objshift2 with the blitter and dump the XOR diff (all-zero ==
      * byte-exact) to SCREEN.BIN for run_ste_selftest.py. Assumes --machine ste; no game boot. */
@@ -1420,21 +1547,10 @@ void main(void) {
 #endif
 #ifdef GAME_STE_SWEEP
     /* Measurement build: sweep both blitter engines vs the CPU references, dump the per-case mismatch grid
-     * to SCREEN.BIN for run_ste_sweep.py. Assumes --machine ste; no game boot. */
-    { long mismatch; dump_frame((Framebuffer *)blitter_sweep(&mismatch)); return; }
-#endif
-#ifdef RM_BLITTER
-    /* Unified ST/STE binary (PERF30 C4): probe for a blitter ONCE and bind BOTH fine-x object routes —
-     * objshift2 and the colour-indexed engine — to the hardware blitter when present, else to the 68000
-     * CPU asm engines (rm_blit_bind_all, src/blitter.c). NEVER bail: a plain ST or TT binds the CPU path
-     * (blitter_available() returns 0 without touching any 0xFFFF8Axx register). GAME_FORCE_NO_BLITTER
-     * pins the CPU path even on an STE (a harness A/B baseline). */
-#ifdef GAME_FORCE_NO_BLITTER
-    g_have_blitter = 0;
-#else
-    g_have_blitter = blitter_available();
-#endif
-    rm_blit_bind_all(g_have_blitter);
+     * to SCREEN.BIN for run_ste_sweep.py. Assumes --machine ste; no game boot. g_have_blitter is the bind's
+     * RETURN, so a build that placed no tables (GAME_FORCE_NO_BLITTER, or a TPA too small) makes the sweep
+     * report an honest decline instead of a vacuous all-zero grid. */
+    { long mismatch; dump_frame((Framebuffer *)blitter_sweep(&mismatch, g_have_blitter)); return; }
 #endif
     RmArena arena;
     if (!load_assets(&arena)) return;
@@ -1611,6 +1727,9 @@ void main(void) {
      * never clears). The pool is BSS and already zero at GEMDOS load, so this is belt-and-braces. */
     memset(screen_buf(0)->px, 0, SCREEN_BYTES);
     memset(screen_buf(1)->px, 0, SCREEN_BYTES);
+#ifdef RM_TAIL_CANARY
+    canary_fill();                       /* debug: arm the overdraw-tail guard bands (see SCREEN_OVERDRAW) */
+#endif
 
     /* Install the 50 Hz VBL sound pump (and clear the TOS key-click) before the game runs. It starts
      * silent — snd is PARKED — so it is harmless for the golden / autodrive fast-path frame below; a

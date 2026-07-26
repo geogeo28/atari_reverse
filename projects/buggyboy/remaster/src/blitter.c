@@ -11,6 +11,8 @@
  * links it, so the shipping .PRG is byte-for-byte unchanged (verified by hashing build/BUGGYBOY.PRG
  * with the flag off).
  */
+#include <string.h>       /* memset — the placement zeroing below */
+
 #include "blitter.h"
 
 /* ---- cookie jar (low memory, supervisor) ---- */
@@ -83,11 +85,38 @@ int blitter_available(void) {
 
 /* ---- the fine-x object routes, enumerated once (see blitter.h) ---------------------------------- */
 
-/* Boot: point BOTH object seams at the hardware blitter when one is present, else at the 68000 CPU asm
- * engines. Called once from main() after blitter_available(). */
-void rm_blit_bind_all(int have_blitter) {
+/* Lay both routes' lookup tables out in `window` (the free TPA above the program — see game_main.c's TPA
+ * map) and hand each module its base. Returns 0 when the window is too small, which is the whole point of
+ * the check: a 1 MB machine may not have 170 KB to spare above a ~700 KB program, and the caller then
+ * binds the CPU engines exactly as it would on a machine with no blitter at all.
+ *
+ * The memory is UNINITIALISED (GEMDOS zeroes the BSS, not the TPA above it), and both tables mark a free
+ * slot with a zero field — Objsh2Cache.valid, ObjshSkewEntry.rows_done — so the whole window is zeroed
+ * here rather than each module re-deriving the BSS-zero assumption it was written under. */
+static int blit_tables_place(uint8_t *window, uint32_t window_bytes) {
+    uint32_t misalign = (uint32_t)(unsigned long)window & (BLIT_TABLE_ALIGN - 1);
+    uint32_t pad = (BLIT_TABLE_ALIGN - misalign) & (BLIT_TABLE_ALIGN - 1);
+    uint32_t cache_bytes = rm_blit_objshift2_cache_bytes();
+    uint32_t table_bytes = rm_blit_objshift_skew_table_bytes();
+    uint32_t need = pad + cache_bytes + table_bytes;      /* both sizes are multiples of BLIT_TABLE_ALIGN */
+    if (window_bytes < need) return 0;
+
+    uint8_t *p = window + pad;
+    memset(p, 0, cache_bytes + table_bytes);
+    rm_blit_objshift2_cache_place(p);
+    rm_blit_objshift_skew_table_place(p + cache_bytes);
+    rm_blit_objshift_skew_table_flush();                  /* clears the start-latched full flag */
+    return 1;
+}
+
+/* Boot: place both routes' tables, then point BOTH object seams at the hardware blitter when one is
+ * present, else at the 68000 CPU asm engines. Called once from main() after blitter_available(); returns
+ * the binding actually made (0 when there was no blitter, or no room for its tables). */
+int rm_blit_bind_all(int have_blitter, void *window, uint32_t window_bytes) {
+    if (have_blitter && !blit_tables_place((uint8_t *)window, window_bytes)) have_blitter = 0;
     rm_blit_objshift2_bind(have_blitter);
     rm_blit_objshift_bind(have_blitter);
+    return have_blitter;
 }
 
 /* Reload: both routes memoise bitmaps built from the arena.gfx bytes, which the F10 asset reload

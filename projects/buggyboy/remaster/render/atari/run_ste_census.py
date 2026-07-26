@@ -51,6 +51,7 @@ HEADER_WORDS = 3                       # {CENSUS_MAGIC, set count, dumped key co
 CENSUS_MAGIC = 0xC5C5                                    # pins this wire format; see src/blitter_census.c
 SETS = ("objshift2", "objshift/full", "objshift/noshift", "objshift/noshift-nocolor", "objshift/sprite")
 SPRITE_SET = "objshift/sprite"                           # the key the shipping skew table is built on
+CENSUS_MEMSIZE = "4"                                     # MB; a REQUIREMENT of this .PRG — see census_leg
 VBLS_PER_FRAME = 20                                      # generous headroom: a census frame runs on the CPU
 VBLS_BOOT = 900                                          # EmuTOS boot + asset load, before frame 0
 HATARI_TIMEOUT_MIN = 300                                 # seconds; scaled with the vbl budget below
@@ -84,7 +85,10 @@ def build(leg, frames):
 def census_leg(leg, frames):
     build(leg, frames)
     run_vbls = VBLS_BOOT + frames * VBLS_PER_FRAME
+    # 4 MB pinned, not RM_MEMSIZE's default: CENSUS.PRG is ~1.4 MB (its open-addressed key sets are
+    # ~700 KB of BSS on top of the shell), so it does not even load on a 1 MB machine.
     fb = run_hatari.run(CENSUS_PRG, machine="ste", blitter=True, needs_data=True, run_vbls=run_vbls,
+                        memsize=CENSUS_MEMSIZE,
                         timeout=max(HATARI_TIMEOUT_MIN, int(run_vbls * HATARI_SECS_PER_VBL)))
     blocks_end = HEADER_WORDS + BLOCK_WORDS * len(SETS)
     w = struct.unpack(f">{blocks_end}H", fb[:blocks_end * 2])

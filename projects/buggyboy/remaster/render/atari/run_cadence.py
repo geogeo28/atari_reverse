@@ -32,13 +32,16 @@ import run_hatari                                          # noqa: E402  shared 
 
 VBLS_PER_FRAME_HEADROOM = 12                               # gate frames are ~6-8 vblanks; 12 is safe slack
 IDLE_CFLAGS = "-DAUTODRIVE_BASE_INPUT=0 -DAUTODRIVE_STEER_AFTER=1000000"   # no throttle, never steer
-# game_main.c's cadence tail, in dump order: the sub-vblank render clock, then the blitter route
-# counters. Each name appears once; TAIL_COUNTERS is the wire order, the two groups are what the report
-# prints separately. The route counters read 0 on a machine that bound the CPU engines.
+# game_main.c's cadence tail, in dump order: the sub-vblank render clock, the blitter route counters,
+# then the memory-diet pair. Each name appears once; TAIL_COUNTERS is the wire order, the groups are what
+# the report prints separately. The route counters read 0 on a machine that bound the CPU engines.
 RENDER_COUNTERS = ("render ticks", "render frames")
 ROUTE_COUNTERS = ("objshift2 hit", "objshift2 miss",
                   "colour table hit", "colour first-sight", "colour grow", "colour table-full")
-TAIL_COUNTERS = RENDER_COUNTERS + ROUTE_COUNTERS
+# The overdraw-tail guard band (game_main.c's SCREEN_OVERDRAW / canary_check) and the free TPA above BSS
+# the boot bind measured. A nonzero trip count means an object draw ate the tail margin — a FAILURE.
+MEMORY_COUNTERS = ("tail canary trips", "free TPA bytes")
+TAIL_COUNTERS = RENDER_COUNTERS + ROUTE_COUNTERS + MEMORY_COUNTERS
 CADENCE_MAGIC = 0xCADE00C5                                 # game_main.c's CADENCE_MAGIC; pins the tail
 CADENCE_HEADER_LONGS = 2                                   # {magic, counter count} ahead of the counters
 HZ200_MS = 1000.0 / 200                                    # one TOS _hz_200 tick
@@ -119,6 +122,9 @@ def measure(machine="st", frames=400, leg=0, idle=False, freerun=False):
         print(f"  render time (sub-vblank, {rendered} frames): "
               f"{ticks * HZ200_MS / rendered:.2f} ms/frame  ({ticks} ticks total)")
     print("  blitter routes: " + "  ".join(f"{k}={counters[k]}" for k in ROUTE_COUNTERS))
+    trips = counters["tail canary trips"]
+    print(f"  memory: free TPA above BSS = {counters['free TPA bytes']} bytes;  "
+          + (f"*** TAIL CANARY TRIPPED on {trips} presents ***" if trips else "tail canary clean (0 trips)"))
     return spans, counters
 
 

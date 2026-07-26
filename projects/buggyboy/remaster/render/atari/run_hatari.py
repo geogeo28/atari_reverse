@@ -30,6 +30,12 @@ BUILD = HERE / "build"
 SCREEN_BASE = 0x2000                                      # only for _decode_interleaved's indexing
 SCREEN_BYTES = W * H * 4 // 8                             # 32000
 RUN_VBLS = "4000"
+# Emulated RAM in MB. 4 is the harness default; the 1 MB memory-diet gate re-runs every pin at 1, where a
+# ~700 KB program leaves EmuTOS ~197 KB of free TPA above its BSS. Overridable per call, or for a whole
+# harness run via RM_MEMSIZE so runners that don't take the argument themselves still follow. Runners whose
+# .PRG has a REQUIREMENT (the census sets, the sweep's statics + the placed tables) pass memsize
+# explicitly and so are immune to RM_MEMSIZE — a measurement must never be silently starved of RAM.
+DEFAULT_MEMSIZE = os.environ.get("RM_MEMSIZE", "4")
 
 
 # .PRGs that load the game's data files themselves at boot, and so need them on the drive. HUD.PRG
@@ -39,7 +45,7 @@ DATA_FILES = ("COURSES.DAT", "GRAPHICS.GRA")
 NEEDS_DATA_FILES = ("BUGGYBOY.PRG", "GOLDEN.PRG")
 
 
-def run(prg, timeout=60, machine="st", blitter=False, needs_data=None, run_vbls=None):
+def run(prg, timeout=60, machine="st", blitter=False, needs_data=None, run_vbls=None, memsize=None):
     """Boot `prg` headless and return its 32000-byte SCREEN.BIN dump. machine selects the emulated
     hardware (st/ste/...); blitter=True adds --blitter on (STE hardware-blitter build, PERF30 C4). The
     bundled Hatari TOS is EmuTOS 1024k, which boots every machine type, so the STE A/B differential runs
@@ -48,7 +54,9 @@ def run(prg, timeout=60, machine="st", blitter=False, needs_data=None, run_vbls=
     needs_data: whether to stage COURSES.DAT/GRAPHICS.GRA alongside the .PRG (the game reads them at
     boot; without them it hangs to a timeout). None (default) auto-detects from the NEEDS_DATA_FILES
     list; True/False forces it — so a runner naming its own .PRG (BUGGYBST/ABSTE/…) passes needs_data=True
-    instead of mutating the module global."""
+    instead of mutating the module global.
+
+    memsize: emulated RAM in MB (see DEFAULT_MEMSIZE) — the 1 MB memory-diet gate runs the pins at 1."""
     hatari, rom = tos_probe.find_hatari(), tos_probe.find_tos_rom()
     if not (hatari and rom):
         raise RuntimeError("Hatari or TOS ROM not available (brew install hatari)")
@@ -65,7 +73,8 @@ def run(prg, timeout=60, machine="st", blitter=False, needs_data=None, run_vbls=
         if blitter:
             args += ["--blitter", "on"]
         args += ["--sound", "off", "--fast-forward", "on", "--confirm-quit", "off",
-                 "--memsize", "4", "--monitor", "rgb", "--tos-res", "low", "--tos", rom,
+                 "--memsize", str(memsize or DEFAULT_MEMSIZE),
+                 "--monitor", "rgb", "--tos-res", "low", "--tos", rom,
                  "--run-vbls", str(run_vbls or RUN_VBLS), "--harddrive", str(drive), "--auto", "C:\\" + prg]
         proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:

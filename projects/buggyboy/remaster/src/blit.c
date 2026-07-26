@@ -15,11 +15,30 @@
 #include "st.h"
 #include "blit_const.h"   /* OBJSH_CELL_BYTES / OBJSH2_* — shared with src/asm/objshift2.S (F11) */
 
+/* MEASUREMENT ONLY (1 MB memory-diet slice 1, tools/reach_probe.c): shadow the two destination-write
+ * accessors so every framebuffer byte these engines touch is recorded. wr16/wr32 in THIS file are
+ * used for nothing but the destination columns, so the shim needs no filtering. Never defined for
+ * libremaster.so, bench.elf or the shipped .PRG — only for build/libremaster_probe.so. */
+#ifdef RM_REACH_PROBE
+void rm_reach_note(const void *p, unsigned n);
+static inline void rm_probe_wr16(uint8_t *p, uint16_t v) { rm_reach_note(p, 2); wr16(p, v); }
+static inline void rm_probe_wr32(uint8_t *p, uint32_t v) { rm_reach_note(p, 4); wr32(p, v); }
+#define wr16 rm_probe_wr16
+#define wr32 rm_probe_wr32
+#endif
+
 /* Host-only invariant guard: enforces the pointer-walking non-wrap rule (see Offset in st.h) on the
  * 64-bit test build (clang, NDEBUG unset → assert is live), and compiles to nothing on the m68k
  * target (__m68k__), so the shipped blit costs no cycles for it. */
 #ifdef __m68k__
 #define RM_HOST_ASSERT(cond) ((void)0)
+#elif defined(RM_REACH_PROBE)
+/* MEASUREMENT ONLY: record the violation and unwind out of the blit instead of aborting, so a census
+ * run can report HOW OFTEN and with what parameters the non-wrap invariant is broken. (A 64-bit host
+ * cannot simply continue: the negative offset is a uint32_t, so `dst + col0_init` is a ~4 GB forward
+ * walk, not a step back.) */
+void rm_reach_assert(int ok);
+#define RM_HOST_ASSERT(cond) rm_reach_assert((cond) ? 1 : 0)
 #else
 #include <assert.h>
 #define RM_HOST_ASSERT(cond) assert(cond)
@@ -382,8 +401,6 @@ void rm_blit_objshift2(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_
      * (non-wrapping, non-negative) offset once, then walk the pointer (pointer-walking rule: Offset in
      * st.h). */
     Offset col0_off = dst_off + sx16((uint16_t)col);
-    RM_HOST_ASSERT((int32_t)col0_off >= 0);   /* enforce the non-wrap invariant on the host build */
-    uint8_t *col0 = dst + col0_off;
     const uint8_t *sp = src + src_off;
 
     enum objsh2_edge edge;
@@ -396,7 +413,7 @@ void rm_blit_objshift2(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_
         for (rung = width_idx; rung <= OBJSH2_BASE_STRADDLE - 1; rung++) {
             c = (int16_t)(c + OBJSH2_LADDER_STEP);
             if (c >= 0) { straddle = (OBJSH2_BASE_STRADDLE - 1) - rung; break; }
-            if (rung < OBJSH2_BASE_STRADDLE - 1) { sp += 4; col0 += OBJSH_CELL_BYTES; }
+            if (rung < OBJSH2_BASE_STRADDLE - 1) { sp += 4; col0_off += OBJSH_CELL_BYTES; }
         }
         if (straddle < 0) return;                         /* off the left edge */
     } else if ((int16_t)(col - base_ceiling) >= 0) {
@@ -417,6 +434,13 @@ void rm_blit_objshift2(uint8_t *dst, Offset dst_off, const uint8_t *src, uint32_
         edge = OBJSH2_EDGE_NONE;
         straddle = OBJSH2_BASE_STRADDLE - width_idx;
     }
+
+    /* The non-wrap invariant, checked AFTER the family test on the cursor the row loop will actually
+     * write from (the left ladder walks col0_off forward per skipped cell). A blit clipped entirely off
+     * the left edge returns above having written nothing, and its notional cursor is legitimately
+     * negative — asserting before the ladder aborted the host on a draw that never happens. */
+    RM_HOST_ASSERT((int32_t)col0_off >= 0);
+    uint8_t *col0 = dst + col0_off;
 
     /* Same constant-step fold as objshift: each row advances both columns by 8*cells and the source by
      * 4*cells, then rewinds 8*cells+160 (dst) / 4*cells+80 (src). The cells terms cancel, so the net
@@ -533,8 +557,7 @@ static void objsp_row(uint8_t **col0, uint8_t **col1, const uint8_t **sp,
 static void objsp_core(uint8_t *dst, const uint8_t *src, uint16_t aligned_col, unsigned shl,
                        unsigned shr, uint16_t rows_m1, Offset col0_init, uint32_t src_init,
                        int width_idx) {
-    RM_HOST_ASSERT((int32_t)col0_init >= 0);   /* enforce the non-wrap invariant on the host build */
-    uint8_t *col0 = dst + col0_init;
+    Offset col0_off = col0_init;
     const uint8_t *sp = src + src_init;
     enum objsp_family fam;
     int straddle, rung;
@@ -546,7 +569,7 @@ static void objsp_core(uint8_t *dst, const uint8_t *src, uint16_t aligned_col, u
             col_walk = (int16_t)(col_walk + OBJSP_LADDER_STEP);
             if (col_walk >= 0) { fam = OBJSP_LEFT; break; }
             sp += OBJSH_CELL_BYTES;
-            col0 += OBJSH_CELL_BYTES;
+            col0_off += OBJSH_CELL_BYTES;
         }
         if (fam == OBJSP_CLIP) return;                    /* fully off-left */
         straddle = (OBJSP_WIDTHS - 1) - rung;
@@ -573,6 +596,13 @@ static void objsp_core(uint8_t *dst, const uint8_t *src, uint16_t aligned_col, u
      * one scanline; no signed-step subtlety (cf. objshift's stride). The constant-step fold that helped
      * objshift2 is byte-exact here too (net step is −SCREEN_ROW_BYTES for all three) but measured a
      * no-op on this frame, so the faithful rewind form is kept (PERF30 C3c). */
+    /* The non-wrap invariant, checked AFTER the family test on the cursor the row loop will actually
+     * write from (the left ladder walks col0_off forward per skipped cell). A sprite clipped entirely off
+     * the left edge returns above having written nothing, and its notional cursor is legitimately
+     * negative — asserting before the ladder aborted the host on a draw that never happens. */
+    RM_HOST_ASSERT((int32_t)col0_off >= 0);
+    uint8_t *col0 = dst + col0_off;
+
     uint16_t rewind = (uint16_t)(OBJSP_REWIND_C0 - OBJSP_LADDER_STEP * rung);
     uint8_t *col1 = col0 + OBJSH_CELL_BYTES;
     int rows = (int16_t)rows_m1 + 1;

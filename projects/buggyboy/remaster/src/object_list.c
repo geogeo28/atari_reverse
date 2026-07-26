@@ -49,6 +49,24 @@ extern void (*rm_blit_objshift_fn)(uint8_t *, uint32_t, const uint8_t *, uint32_
 #endif  /* GAME_STE_CENSUS / else */
 #endif  /* RM_BLITTER */
 
+/* MEASUREMENT ONLY (1 MB memory-diet slice 1, tools/reach_probe.c): route the three fine-x leaves
+ * through the reach probe, which records each blit's destination window and optionally CULLS the
+ * draws whose whole destination lies below the visible screen. Overridden HERE, after the RM_BLITTER
+ * seam above, so the probe wins on the host measurement build; never defined for libremaster.so,
+ * bench.elf or the shipped .PRG. */
+#ifdef RM_REACH_PROBE
+void rm_probe_objshift(uint8_t *, uint32_t, const uint8_t *, uint32_t, uint16_t, uint16_t, uint16_t,
+                       int16_t, const uint8_t *, int);
+void rm_probe_objshift2(uint8_t *, uint32_t, const uint8_t *, uint32_t, uint16_t, uint16_t, int);
+void rm_probe_objsprite(uint8_t *, uint32_t, const uint8_t *, uint32_t, uint16_t, uint16_t, int);
+void rm_reach_pass_begin(void);
+#undef RM_BLIT_OBJSHIFT
+#define RM_BLIT_OBJSHIFT rm_probe_objshift
+#undef RM_BLIT_OBJSHIFT2
+#define RM_BLIT_OBJSHIFT2 rm_probe_objshift2
+#define rm_objsprite rm_probe_objsprite
+#endif
+
 /* Jump-table resolution: recreate stores, per jumpidx, a word offset that added to the table base
  * (Ghidra 0x13144) gives the handler's Ghidra address. Those offsets are position-independent (a
  * difference of two code addresses), so we reconstruct the same key and switch on it — no code is
@@ -370,6 +388,9 @@ static void obj_dispatch(const ObjListCtx *c, uint16_t jumpidx, uint16_t x, uint
 void rm_draw_object_list(const ObjListCtx *c, const uint8_t *list, uint32_t list_off,
                          const uint8_t *flags, uint32_t flags_off,
                          uint16_t outer_rows_m1, uint16_t rec_off, uint16_t colour) {
+#ifdef RM_REACH_PROBE
+    rm_reach_pass_begin();                       /* MEASUREMENT ONLY — tag this frame's pass 0/1/2 */
+#endif
     list_off = (uint32_t)(list_off + sx16((uint16_t)c->obj_scan_off));    /* adda.w obj_scan_off,a5 */
 
     int outer = (int16_t)outer_rows_m1 + 1;

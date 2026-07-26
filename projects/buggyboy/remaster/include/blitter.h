@@ -135,6 +135,12 @@ void rm_blit_objshift2_bind(int have_blitter);
  * place (the F10 asset reload), or the cache would serve stale bitmaps. */
 void rm_blit_objshift2_cache_flush(void);
 
+/* Size of, and base for, the objshift2 pre-shift cache. It is NOT static BSS (1 MB memory diet, slice 2):
+ * rm_blit_bind_all places it in the free TPA above the program, and only on a machine that actually binds
+ * the blitter route. Both are for that owner alone — nothing else may place or size it. */
+uint32_t rm_blit_objshift2_cache_bytes(void);
+void rm_blit_objshift2_cache_place(void *mem);
+
 /* Colour-indexed pass-1 engine, PRE-SHIFT path (src/blitter_objshift.c): the same 2-pass cookie-cut as
  * objshift2 with a 4-word mask + a colour fill composited into the OR data. MEASUREMENT BUILD ONLY
  * (GAME_STE_SWEEP) — the shipping colour route is the hardware-SKEW path below, which needs no per-call
@@ -246,17 +252,33 @@ void rm_blit_objshift_bind(int have_blitter);
  * old bytes. */
 void rm_blit_objshift_skew_table_flush(void);
 
+/* Size of, and base for, the sprite-key table — placed exactly like the objshift2 cache above (slice 2).
+ * Until the place call the table declines every blit, so an unplaced route can never dereference it. */
+uint32_t rm_blit_objshift_skew_table_bytes(void);
+void rm_blit_objshift_skew_table_place(void *mem);
+
 /* ---- the two engine routes, enumerated ONCE (src/blitter.c) --------------------------------------
  * Every boot / reload site drives the fine-x object engines as a SET, so the list of engines lives in
  * one place instead of being repeated at each site (game_main's boot bind + its F10 reload flush).
  * Adding a third engine means editing these two functions and nothing else. */
-void rm_blit_bind_all(int have_blitter);   /* boot: bind every route to the blitter or the CPU asm engine */
+/* Alignment both placed tables need — their entry structs hold longs, so 4 keeps every field naturally
+ * aligned. Owned here because TWO sides depend on it: rm_blit_bind_all pads the window base up to it,
+ * and game_main.c's TPA map rounds the window base itself (the free TPA starts wherever the BSS ends).
+ * A second copy of the number is a second thing to keep in step, so the window side includes this one. */
+#define BLIT_TABLE_ALIGN 4
+/* Boot: place both routes' lookup tables in `window` (the free TPA above the program) and bind every
+ * route to the blitter or the CPU asm engine. Returns the binding actually made — 0 when there is no
+ * blitter OR the window is too small for the tables, in which case the CPU engines are bound exactly as
+ * on a machine with no blitter. The caller must use the RETURN value, not its own probe result. */
+int rm_blit_bind_all(int have_blitter, void *window, uint32_t window_bytes);
 void rm_blit_flush_all(void);              /* reload: drop every materialised bitmap both routes hold */
 
 /* Full-sweep proof (GAME_STE_SWEEP build): run rm_blit_objshift2_blitter vs the CPU engine over the
  * objshift2 case space; return a framebuffer encoding per-case results (see src/blitter_sweep.c) and the
- * total mismatch count. */
-const uint8_t *blitter_sweep(long *mismatch_out);
+ * total mismatch count. `tables_bound` is rm_blit_bind_all's RETURN: 0 means the routes' lookup tables
+ * were never placed (no blitter, or no room in the TPA), and the sweep then sweeps nothing and says so
+ * in its report rather than reporting a vacuous zero. */
+const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound);
 
 /* Run one blitter pass to completion (HOG mode) from the current supervisor context. See src/blitter.c
  * for the HOG-vs-shared justification. */

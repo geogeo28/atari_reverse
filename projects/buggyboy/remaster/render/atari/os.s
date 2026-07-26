@@ -14,6 +14,10 @@
     .text
     .globl  _start
 _start:
+    move.l  4(%sp),basepage     | GEMDOS hands a child its BASPAG pointer at 4(sp) (the Pexec convention);
+                                | game_main.c reads p_bbase/p_blen/p_hitpa out of it to find the free TPA.
+    move.l  %sp,initial_sp      | ... and starts the stack at the top of that TPA. Captured so the free-TPA
+                                | window can be floored by the LOWER of p_hitpa and the real stack.
     jsr     main
     clr.w   -(%sp)              | Pterm0 (GEMDOS 0x00): terminate
     trap    #1
@@ -296,6 +300,14 @@ ikbd_pkt_payload:
 
     .bss
     .align  2
+| Captured by _start (above), read by game_main.c's TPA map. FIRST in this .bss block so the two longs
+| stay word-aligned whatever the byte-sized state below grows to.
+    .globl  basepage
+basepage:
+    .space  4                   | GEMDOS BASPAG of this process (4(sp) at entry)
+    .globl  initial_sp
+initial_sp:
+    .space  4                   | the stack pointer GEMDOS handed _start (top of the TPA)
     .globl  key_down
 key_down:
     .space  128                 | one byte per scancode: nonzero while held

@@ -244,13 +244,21 @@ typedef struct {
     ObjshSkewBitmaps bm;
 } ObjshSkewEntry;
 
-static ObjshSkewEntry skew_table[OBJSH_SKEW_TABLE_ENTRIES];
+/* NOT in BSS (1 MB memory diet, slice 2): 126 KB of table that only a blitter machine ever reads would
+ * otherwise be linked into the .PRG's bss size on EVERY machine. rm_blit_bind_all places it in the free
+ * TPA above the program when — and only when — the blitter route is bound. */
+static ObjshSkewEntry *skew_table;
+
 /* Latched by the first full-table decline. Once every entry belongs to another key, a first-sight key
  * can only be discovered by walking all 128 probes — a scan the route would then pay on EVERY blit for
  * the rest of the race. So the whole route retires to the CPU engine instead: byte-identical pixels
  * (the hybrid is the pinned fallback), a bounded cost, and rm_objsh_skew_full keeps counting so the
- * cadence trace shows it happened. The census says this is unreachable; the flush re-arms it. */
-static int skew_table_full;
+ * cadence trace shows it happened. The census says this is unreachable; the flush re-arms it.
+ *
+ * It starts LATCHED (the one .data initialiser here), which is also what makes an UNPLACED table safe:
+ * until rm_blit_objshift_skew_table_place has run, the same single test that declines a full table
+ * declines every call, so no path can dereference the null pointer. */
+static int skew_table_full = 1;
 /* Profiling (game_main.c's cadence tail): served from the table / first-sight materialise / grown to a
  * taller sprite / declined because the table was full. */
 uint32_t rm_objsh_skew_hits, rm_objsh_skew_first, rm_objsh_skew_grows, rm_objsh_skew_full;
@@ -301,9 +309,21 @@ static const ObjshSkewBitmaps *skew_table_lookup(const uint8_t *src, uint32_t sr
     return 0;
 }
 
+/* TOTAL: a flush on an UNPLACED table is a no-op, not a null dereference. The F10 asset reload calls it
+ * unconditionally, and on a machine whose tables were never placed (no blitter, or no room in the TPA)
+ * there is nothing to flush and the route is already declining every call. */
 void rm_blit_objshift_skew_table_flush(void) {
+    if (!skew_table) return;
     for (int i = 0; i < OBJSH_SKEW_TABLE_ENTRIES; i++) skew_table[i].rows_done = 0;
     skew_table_full = 0;
+}
+
+uint32_t rm_blit_objshift_skew_table_bytes(void) {
+    return (uint32_t)sizeof(ObjshSkewEntry) * OBJSH_SKEW_TABLE_ENTRIES;
+}
+
+void rm_blit_objshift_skew_table_place(void *mem) {
+    skew_table = (ObjshSkewEntry *)mem;
 }
 
 /* Table lookup + blit, already in supervisor mode. The dispatch below reaches it through one Supexec;

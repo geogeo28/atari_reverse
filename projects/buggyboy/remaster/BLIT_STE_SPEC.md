@@ -285,7 +285,8 @@ path, so a shipping build that never opts it in can drop it — but it is kept c
 > **Stale figures (superseded by slice 6 + measured in §12):** the shipping caches today are
 > objshift2 **16 slots / 43 KB** (§11) + colour **219 KB** = **262 KB**, not 553 KB; and the measured
 > unified footprint is **1.18 MB** (text 122,624 + BSS 1,114,796), so "fits a 1 MB STE" is wrong — the
-> honest minimum machine is **2 MB** (see §12 for the diet option).
+> honest minimum machine is **2 MB** (see §12 for the diet option). *(Superseded by §15: the 1 MB diet
+> landed — the minimum is **1 MB** on ST and STE alike.)*
 
 ## 9. Slice 5 — go/no-go (revised by the slice-4 finding)
 
@@ -393,7 +394,7 @@ artifact any more; the unified-vs-old-stock *cadence identity* on `--machine st`
 > cache 43 KB), so the honest minimum machine is **2 MB** on ST and STE alike. The unused 219 KB colour
 > cache is the obvious diet if a 1 MB target ever matters (it only backs the `-DRM_STE_OBJSH_ROUTE`
 > experiment and the sweep's measurement build). *(Realized in slice 9: the cache left the shipping
-> link entirely — footprint now 1.08 MB, §14.)*
+> link entirely — footprint now 1.08 MB, §14. Then §15's diet landed the rest: minimum = **1 MB**.)*
 
 ## 12. Slice 7 — the RE-KEY census: BOUNDED under hardware skew (tables are GO)
 
@@ -565,9 +566,72 @@ pre-shift grid.
 Driving route counters: **90 % pure table hits** (1004 hit / 68 first-sight / 43 grow / 0 full) — the
 inversion of §8's 9 %-hit failure. Sweep cost bench: table blit **9,400 cyc** vs CPU asm 33,920
 (**0.28×**). Shipping footprint: text 122,368 + BSS 1,009,752 = **1.08 MB** (−97 KB vs pre-slice: the
-219 KB cache left, the 123 KB table + code came in). Honest minimum machine stays **2 MB**.
+219 KB cache left, the 123 KB table + code came in). Honest minimum machine stays **2 MB**
+*(superseded by §15: the diet took it to **1 MB**)*.
 
 **Noted, not folded in:** the probe's `muluw #984` (entry not power-of-two; ~0.4 %/blit — padding to
 1024 B costs 5 KB BSS for a shift); grow-from-`rows_done` (warm-up-only saving, measured and skipped);
 the `SYS_HZ200` `-Warray-bounds` build noise (pre-existing pattern). Hatari-model caveat (§13) applies
 to every cadence number here; the byte-exactness pins do not depend on it.
+
+## 15. Slice 10 — the 1 MB DIET: the remaster runs on a 1 MB ST and STE, like the original
+
+**User requirement:** the original ran on a 1 MB machine (resident set ≈ 0.5 MB; 512 KB was not
+enough); the remaster must too. Post-slice-9 footprint was 1.132 MB against a measured TPA of
+**905,448 B** (EmuTOS 1 MB, the binding number; TOS 1.04 desktop 940,906 — measured with a
+`Malloc(-1)` probe at `--memsize 1`). The diet closed the gap in two moves, both measurement-first.
+
+**Move 1 — the 256 KB overdraw tails were sized to folklore.** `SCREEN_OVERDRAW` was 0x20000 per
+buffer because clipped roadside draws "write up to ~102 KB past the screen" — an unverified estimate
+(PERF30 §A2 had flagged it). The reach census (`tools/reach_census.py` + `tools/reach_probe.c`,
+now in-repo and reproducible): over **5,240 composed frames + 4,000 forced-branch dispatcher runs +
+305 staged frames**, all legs and scene classes, the maximum write past the visible 32,000 bytes is
+**8 bytes** (`render_road`, offsets 32,000–32,007, 81 frames; every object engine tops out *below*
+32,000; 0 writes before offset 0). The planned fully-off-screen cull is **moot** — nothing is ever
+drawn below the screen (both family predicates are purely horizontal). New tail: **0x1000** (512×
+the measured reach; `32,000 + 0x1000 = 36,096` keeps the second buffer 256-aligned), saving
+**253,952 B**. `SCREEN_TAIL_LIVE (8)` names the legitimate render_road prefix.
+
+**Standing guards on the number** (the ~102 KB lesson: never folklore again):
+- **Host**: `test/equiv.py` canaries the whole tail past `SCREEN_TAIL_LIVE` and asserts it untouched
+  on every compared composed frame — `make test` is now the reach-regression tripwire (mutation-
+  checked: a draw at +0x800 reddens 16 tests). `test/adapter.py` regex-reads `SCREEN_OVERDRAW` and
+  `SCREEN_TAIL_LIVE` from game_main.c — one source of truth.
+- **Target**: trace builds (`GAME_CADENCE_TRACE`/`GAME_TAIL_CANARY`) canary-fill and scan the whole
+  4,088-byte guarded tail per present, latched trip counters in the cadence tail (mutation-checked
+  on target: +0x800 draw trips 100 presents). Zero cost in the shipping PRG.
+- **Chip path**: a new 32-case below-screen sweep section (destinations flush/straddling/1-row/
+  wholly-below the bottom edge, both engines, both paths) with every sweep comparison now spanning
+  screen + tail — the blitter writes nothing past the tail the CPU doesn't.
+
+**Move 2 — the STE tables leave BSS.** `skew_table` (125,952 B) + `objsh2_cache` (44,480 B) are now
+**placed into the free TPA above BSS at boot**, only when the blitter binds: `os.s` `_start` captures
+the basepage and initial SP; `rm_blit_bind_all` computes `base = align(p_bbase + p_blen)`,
+`ceiling = min(p_hitpa, initial_sp) − 0x4000` (stack margin), memsets the block (the BSS-zero
+markers — `rows_done`, `valid` — are re-established manually), and hands each module its pointer. No
+`Mshrink`/`Malloc` — the shell owns the whole TPA, exactly the "ample RAM" the original relied on.
+**Total safety for the unplaced state**: the skew route starts latched-full, `objsh2` declines at its
+single entry on a null cache, both flushes are null-safe total functions, and a declined placement
+binds the CPU engines exactly like a no-blitter machine. The sweep consumes the bind result and
+reports a clean DECLINE (verified via `GAME_FORCE_NO_BLITTER`) instead of running unplaced.
+
+**Result (all pins green):**
+
+| | before diet | after |
+|---|---:|---:|
+| text + data + bss | 1,132,000 | **707,840** |
+| screen_pool | 326,400 | 72,448 |
+| skew_table / objsh2_cache | 170,432 B BSS | placed at boot (STE only) |
+| 1 MB ST | won't load (−227 KB) | **fits, +197 KB spare** |
+| 1 MB STE incl. placed tables | won't load | **fits — blitter route LIVE, 14,092 B spare above the 16 KB stack margin** |
+
+Pins: `make test` 730 (host canary live); goldens ×5 st + ×5 ste at default memsize AND at
+**`--memsize 1`** (the new standing pin — run_golden/run_ste_golden take `--memsize`, all runners
+honor `RM_MEMSIZE`, and the census/sweep pin themselves to 4 MB — CENSUS.PRG alone is 1.4 MB);
+sweep **4,968 cases 0-XOR** incl. the below-screen section; A/B 0-mismatch; cadence within noise
+(gate 105.47 / drive 97.34 ms) with 0 canary trips.
+
+**Watch item:** the 1 MB STE margin is thin — **~14 KB of future program growth silently drops a
+1 MB STE to the CPU engines** (pixel-identical, slower; the cadence tail's `free TPA bytes` counter
+is the observable). Check it when BSS grows. The `--memsize 1` goldens are placement-blind by design
+(CPU fallback is pixel-identical); the cadence route counters are what prove the blitter bound.

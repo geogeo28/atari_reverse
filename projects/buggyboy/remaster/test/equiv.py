@@ -1682,6 +1682,14 @@ def _drive_mismatches(frame, cand, state):
     return out
 
 
+# The composed-scene framebuffer's overdraw tail, and the canary pattern refilled into it every composed
+# frame. A repeating non-zero, non-0xff byte so a partial word write shows up; sliced once so the
+# per-frame check is a single bytes compare (see _ComposedScene._check_tail_canary).
+_TAIL0 = adapter.SCREEN_BASE + adapter.SCREEN_BYTES
+_TAIL_CANARY = bytes([0xa5]) * adapter.SCREEN_OVERDRAW
+_TAIL_CANARY_GUARDED = _TAIL_CANARY[adapter.SCREEN_TAIL_LIVE:]
+
+
 class _ComposedScene:
     """Runs the SHELL's real per-frame render composition — the fan-out (rm_apply_player then, inside
     rm_draw_frame, rm_gobj_hud_view) into the draw structs, then rm_draw_frame — from a candidate's
@@ -1733,8 +1741,9 @@ class _ComposedScene:
         self._ring_st_block = (ctypes.c_uint8 * adapter.RM_RING_ST_BLOCK_BYTES)()
         self.ring_st = ctypes.cast(ctypes.byref(self._ring_st_block, adapter.RM_RING_DECAY_BIAS),
                                    ctypes.POINTER(ctypes.c_uint8))
-        # a framebuffer with an overdraw tail: off-screen object fragments write well past 32000, so
-        # back the Framebuffer overlay with SCREEN_BASE + SCREEN + overdraw bytes (as game_main.c does).
+        # a framebuffer with an overdraw tail: off-screen object fragments write past 32000, so back the
+        # Framebuffer overlay with SCREEN_BASE + SCREEN + overdraw bytes (as game_main.c does, with the
+        # same SCREEN_OVERDRAW — adapter.py reads it out of game_main.c).
         self._fb_buf = bytearray(adapter.SCREEN_BASE + adapter.SCREEN_BYTES + adapter.SCREEN_OVERDRAW)
         self.fb = adapter.Framebuffer.from_buffer(self._fb_buf, adapter.SCREEN_BASE)
 
@@ -1856,9 +1865,28 @@ class _ComposedScene:
         self.sprite.fg_gate = self.lib.rm_ring_fg_gate(ctypes.byref(cand.ring))
         self.lib.rm_ring_store_st(ctypes.byref(cand.ring), self.ring_st)
         self._prebuild_scroll()
-        # (4) compose.
+        # (4) compose, with the overdraw tail canaried (see _check_tail_canary).
+        self._fb_buf[_TAIL0:] = _TAIL_CANARY
         self.lib.rm_draw_frame(ctypes.byref(self._scene), ctypes.byref(self.fb))
+        self._check_tail_canary()
         return bytes(self._fb_buf[adapter.SCREEN_BASE:adapter.SCREEN_BASE + adapter.SCREEN_BYTES])
+
+    def _check_tail_canary(self):
+        """The standing REACH regression guard on game_main.c's SCREEN_OVERDRAW. That tail is a MEASURED
+        number (1 MB memory-diet slice 1, tools/reach_census.py: over 5,240 composed frames the deepest
+        write was 8 bytes past the visible screen — SCREEN_TAIL_LIVE), and this is what keeps `make test`
+        honest about it: every composed frame refills the whole tail with a canary and every byte above
+        the measured live prefix must come back untouched. A draw that starts reaching further fails the
+        composed differential here, on the frame that did it, instead of silently eating the margin the
+        shipping .PRG budgets for."""
+        guarded = memoryview(self._fb_buf)[_TAIL0 + adapter.SCREEN_TAIL_LIVE:]
+        if guarded != _TAIL_CANARY_GUARDED:
+            deep = max(i for i in range(len(guarded)) if guarded[i] != _TAIL_CANARY_GUARDED[i])
+            raise AssertionError(
+                f"overdraw-tail canary broken: a draw reached {adapter.SCREEN_TAIL_LIVE + deep + 1} bytes "
+                f"past the visible screen, past the measured {adapter.SCREEN_TAIL_LIVE} "
+                f"(game_main.c SCREEN_OVERDRAW = {adapter.SCREEN_OVERDRAW:#x}) — re-run "
+                f"tools/reach_census.py before changing the number")
 
 
 def _composed_mismatch(frame, cand_fb, ref_fb):

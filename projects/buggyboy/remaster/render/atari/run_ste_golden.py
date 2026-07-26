@@ -8,8 +8,9 @@ build's whole render pipeline draws the SAME pixels as the stock ST build (the o
 C/asm CPU reference in this slice; the blitter driver is proven separately by run_ste_selftest.py). This
 is the "STE goldens MATCH x5 on --machine ste" pin. The leg-bounds check + summary live in run_golden.main.
 
-Usage: python render/atari/run_ste_golden.py        # all legs
-       python render/atari/run_ste_golden.py 3      # a single leg
+Usage: python render/atari/run_ste_golden.py                 # all legs
+       python render/atari/run_ste_golden.py 3               # a single leg
+       python render/atari/run_ste_golden.py --memsize 1     # all legs on a 1 MB machine (the memory-diet gate)
 """
 import sys
 from pathlib import Path

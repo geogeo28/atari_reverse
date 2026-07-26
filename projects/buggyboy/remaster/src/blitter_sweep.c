@@ -19,7 +19,8 @@
  *
  * A fourth section drives the shipping route's sprite-key TABLE (see sweep_table_section): the three
  * grids all call un-tabled entry points, so without it the table's own branches — hit, grow, clip, the
- * full-table decline — would ship unpinned.
+ * full-table decline — would ship unpinned. A fifth blits at and past the BOTTOM EDGE (see
+ * sweep_below_screen_grid), where the sprite fragments the shell's overdraw tail exists for land.
  */
 #include "blitter.h"
 #include "screen.h"
@@ -43,15 +44,27 @@ static const int SWEEP_ROWS_M1[]   = {0, 3, 0x2a};
 #define GUARD_BYTES     256
 #define GUARD_FILL      0xA5
 
+/* Both framebuffers carry a TAIL past the visible screen, and every compare in this file spans it. The
+ * below-screen section deliberately blits with its first-drawn row up to SWEEP_BELOW_UNDER_MAX scanlines
+ * under the bottom edge, so the tail is sized from THAT case space (+1 row of slack for the blit itself)
+ * rather than copied from the shell's SCREEN_OVERDRAW — the sweep owns its own buffers. The on-screen
+ * grids then also prove they leave the tail alone, and the guard bands past it stay the overrun trip. */
+#define SWEEP_BELOW_UNDER_MAX 16
+#define SWEEP_FB_TAIL   ((SWEEP_BELOW_UNDER_MAX + 2) * SCREEN_ROW_BYTES)
+#define SWEEP_FB_BYTES  (SCREEN_BYTES + SWEEP_FB_TAIL)
+
 /* x that yields aligned column `col` (multiple of 8) and low nibble `fine_x`: col = ((int16)x>>1)&~7,
  * fine_x = x&0xf, so x = 2*col + fine_x. */
 static uint16_t make_x(int col, int fine_x) { return (uint16_t)(2 * col + fine_x); }
 
 static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[SWEEP_SRC_ROWS * OBJSH2_SRC_ROW_BYTES]; uint8_t hi[GUARD_BYTES]; } src_g;
-static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[SCREEN_BYTES]; uint8_t hi[GUARD_BYTES]; } test_g;
+static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[SWEEP_FB_BYTES]; uint8_t hi[GUARD_BYTES]; } test_g;
+/* The CPU reference framebuffer is guarded too, now that the sweep deliberately blits below the visible
+ * screen: a reference engine that ran off the end would otherwise silently eat the next BSS object. */
+static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[SWEEP_FB_BYTES]; uint8_t hi[GUARD_BYTES]; } ref_g;
 #define src_sprite (src_g.px)
 #define test_fb    (test_g.px)
-static uint8_t ref_fb[SCREEN_BYTES];
+#define ref_fb     (ref_g.px)
 static uint16_t case_diff[N_CASES];                         /* per-case mismatch count (0 == byte-exact) */
 static long sweep_total;
 static long sweep_handled;                                  /* cases the blitter path drew (BASE family) */
@@ -98,11 +111,37 @@ static long guard_broken(const uint8_t *g) {
     return bad;
 }
 
+/* Every case re-arms the guard bands on all four buffers — both sources and both framebuffers: they are
+ * the overrun tripwire and must not carry a previous case's damage forward. */
+static void sweep_arm_guards(void) {
+    for (int i = 0; i < GUARD_BYTES; i++)
+        src_g.lo[i] = src_g.hi[i] = osh_src_g.lo[i] = osh_src_g.hi[i] =
+            test_g.lo[i] = test_g.hi[i] = ref_g.lo[i] = ref_g.hi[i] = GUARD_FILL;
+}
+
+static long sweep_guards_broken(void) {
+    return guard_broken(src_g.lo) + guard_broken(src_g.hi) +
+           guard_broken(osh_src_g.lo) + guard_broken(osh_src_g.hi) +
+           guard_broken(test_g.lo) + guard_broken(test_g.hi) +
+           guard_broken(ref_g.lo) + guard_broken(ref_g.hi);
+}
+
+/* Bytes on which the two framebuffers disagree, over the visible screen AND the overdraw tail — so a
+ * chip path that wrote past the bottom edge where the CPU path did not is a mismatch, not invisible. */
+static long sweep_fb_diff(void) {
+    long n = 0;
+    for (int i = 0; i < SWEEP_FB_BYTES; i++) if (ref_fb[i] != test_fb[i]) n++;
+    return n;
+}
+
 /* Draw one case with the CPU engine (ref) and the blitter path (test) over the same background; count
- * differing framebuffer bytes + any broken guard. handled_out reports the blitter path's return. */
-static long run_case(int width_idx, int fine_x, int col, int rows_m1, int *handled_out) {
-    for (int i = 0; i < SCREEN_BYTES; i++) ref_fb[i] = test_fb[i] = SWEEP_BG_BYTE;
-    for (int i = 0; i < GUARD_BYTES; i++) src_g.lo[i] = src_g.hi[i] = test_g.lo[i] = test_g.hi[i] = GUARD_FILL;
+ * differing framebuffer bytes + any broken guard. handled_out reports the blitter path's return.
+ * dst_off addresses the blit's first-drawn (bottom) row — the below-screen section puts it under the
+ * visible screen, the grids mid-screen. */
+static long run_case(int width_idx, int fine_x, int col, int rows_m1, uint32_t dst_off,
+                     int *handled_out) {
+    for (int i = 0; i < SWEEP_FB_BYTES; i++) ref_fb[i] = test_fb[i] = SWEEP_BG_BYTE;
+    sweep_arm_guards();
 
     uint16_t x = make_x(col, fine_x);
     int rows = (int16_t)(uint16_t)rows_m1 + 1;
@@ -116,17 +155,19 @@ static long run_case(int width_idx, int fine_x, int col, int rows_m1, int *handl
         }
     }
 
-    /* Address the bottom row (both engines walk up); src_off top row reads offset 0. */
-    uint32_t dst_off = (uint32_t)((SCREEN_H / 4 + (rows > 0 ? rows - 1 : 0)) * SCREEN_ROW_BYTES);
+    /* src_off top row reads offset 0 (both engines walk up from the caller's bottom row). */
     uint32_t src_off = (uint32_t)((rows > 0 ? rows - 1 : 0) * OBJSH2_SRC_ROW_BYTES);
 
     rm_blit_objshift2(ref_fb, dst_off, src_sprite, src_off, x, (uint16_t)rows_m1, width_idx);
     *handled_out = rm_blit_objshift2_blitter(test_fb, dst_off, src_sprite, src_off, x, (uint16_t)rows_m1, width_idx);
 
-    long n = 0;
-    for (int i = 0; i < SCREEN_BYTES; i++) if (ref_fb[i] != test_fb[i]) n++;
-    n += guard_broken(src_g.lo) + guard_broken(src_g.hi) + guard_broken(test_g.lo) + guard_broken(test_g.hi);
-    return n;
+    return sweep_fb_diff() + sweep_guards_broken();
+}
+
+/* The bottom row the objshift2 grid blits at: low enough on the screen that even its tallest case
+ * (rows_m1 0x2a) stays wholly visible. */
+static uint32_t sweep_grid_dst_off(int rows) {
+    return (uint32_t)((SCREEN_H / 4 + (rows > 0 ? rows - 1 : 0)) * SCREEN_ROW_BYTES);
 }
 
 /* Both colour tables are case-INVARIANT, so they are built once at sweep start (the per-case refill they
@@ -149,8 +190,7 @@ static void sweep_init_pairs(void) {
 }
 
 /* The synthetic source depends only on (base_cells, colour), and the grid walks colour slowly — so
- * refill it only when that key changes. The GUARD bands are still re-armed on EVERY case: they are the
- * overrun tripwire and must not carry a previous case's damage forward. */
+ * refill it only when that key changes (sweep_arm_guards still re-arms every band on every case). */
 static int osh_src_key_cells = -1, osh_src_key_color = -1;
 static void osh_src_refill(int base_cells, int color) {
     if (base_cells == osh_src_key_cells && color == osh_src_key_color) return;
@@ -159,25 +199,24 @@ static void osh_src_refill(int base_cells, int color) {
     osh_src_key_color = color;
 }
 
+/* The mid-screen bottom row the colour grids blit at (the colour engine's own tallest case still fits). */
+#define OSH_GRID_DST_OFF ((uint32_t)((SCREEN_H / 2) * SCREEN_ROW_BYTES))
+
 /* One colour-engine case: draw with the CPU rm_blit_objshift (ref) and `test_fn` (the pre-shift or the
- * hardware-skew blitter path) over the same background; count differing bytes + broken guards. */
+ * hardware-skew blitter path) over the same background; count differing bytes + broken guards.
+ * dst_off addresses the blit's first-drawn (bottom) row (see run_case). */
 static long run_case_objsh(ObjshBlitFn test_fn, int base_cells, int fine_x, int col, int color,
-                           int rows_m1, int16_t stride, int *handled_out) {
-    for (int i = 0; i < SCREEN_BYTES; i++) ref_fb[i] = test_fb[i] = SWEEP_BG_BYTE;
-    for (int i = 0; i < GUARD_BYTES; i++)
-        osh_src_g.lo[i] = osh_src_g.hi[i] = test_g.lo[i] = test_g.hi[i] = GUARD_FILL;
+                           int rows_m1, int16_t stride, uint32_t dst_off, int *handled_out) {
+    for (int i = 0; i < SWEEP_FB_BYTES; i++) ref_fb[i] = test_fb[i] = SWEEP_BG_BYTE;
+    sweep_arm_guards();
     osh_src_refill(base_cells, color);
 
     uint16_t x = make_x(col, fine_x);
-    uint32_t dst_off = (uint32_t)((SCREEN_H / 2) * SCREEN_ROW_BYTES);   /* mid-screen; both engines walk up */
     rm_blit_objshift(ref_fb, dst_off, osh_src, OSH_SRC_OFF, x, (uint16_t)color, (uint16_t)rows_m1, stride,
                      osh_pairs, base_cells);
     *handled_out = test_fn(test_fb, dst_off, osh_src, OSH_SRC_OFF, x, (uint16_t)color,
                            (uint16_t)rows_m1, stride, osh_pairs, base_cells);
-    long n = 0;
-    for (int i = 0; i < SCREEN_BYTES; i++) if (ref_fb[i] != test_fb[i]) n++;
-    n += guard_broken(osh_src_g.lo) + guard_broken(osh_src_g.hi) + guard_broken(test_g.lo) + guard_broken(test_g.hi);
-    return n;
+    return sweep_fb_diff() + sweep_guards_broken();
 }
 
 /* Run the whole colour-engine case grid against one blitter path. Returns the summed mismatch; fills
@@ -192,7 +231,7 @@ static long sweep_objsh_grid(ObjshBlitFn test_fn, uint16_t *diff_out, long *hand
                     int handled;
                     long d = run_case_objsh(test_fn, OSH_BASE_CELLS[bi], fx, OSH_COLUMNS[ci],
                                             OSH_CRS[ti][0], OSH_CRS[ti][1], (int16_t)OSH_CRS[ti][2],
-                                            &handled);
+                                            OSH_GRID_DST_OFF, &handled);
                     uint16_t logged = handled ? (uint16_t)(d > 0xffff ? 0xffff : d) : 0;
                     diff_out[idx++] = logged;
                     total += logged;
@@ -256,30 +295,25 @@ static uint16_t tbl_cases_run;                              /* cases actually lo
  * DECLINE must leave the framebuffer untouched and is then completed by the CPU hybrid — the shipping
  * dispatch's own fallback. Returns the mismatch count (0 == the branch behaved AND the pixels match). */
 static long run_case_table(uint32_t src_off, int rows, int expect_served, int *served_out) {
-    for (int i = 0; i < SCREEN_BYTES; i++) ref_fb[i] = test_fb[i] = SWEEP_BG_BYTE;
-    for (int i = 0; i < GUARD_BYTES; i++)
-        osh_src_g.lo[i] = osh_src_g.hi[i] = test_g.lo[i] = test_g.hi[i] = GUARD_FILL;
+    for (int i = 0; i < SWEEP_FB_BYTES; i++) ref_fb[i] = test_fb[i] = SWEEP_BG_BYTE;
+    sweep_arm_guards();
     osh_src_refill(TBL_CELLS, TBL_COLOR);   /* the content must stay put: the table keys on the ADDRESS */
 
     uint16_t x = make_x(TBL_COL, TBL_FINE_X);
     uint16_t rows_m1 = (uint16_t)(rows - 1);
-    uint32_t dst_off = (uint32_t)((SCREEN_H / 2) * SCREEN_ROW_BYTES);   /* mid-screen; both walk up */
-    rm_blit_objshift(ref_fb, dst_off, osh_src, src_off, x, TBL_COLOR, rows_m1, TBL_STRIDE,
+    rm_blit_objshift(ref_fb, OSH_GRID_DST_OFF, osh_src, src_off, x, TBL_COLOR, rows_m1, TBL_STRIDE,
                      osh_pairs, TBL_CELLS);
-    int served = rm_blit_objshift_skew_tabled(test_fb, dst_off, osh_src, src_off, x, TBL_COLOR, rows_m1,
-                                              TBL_STRIDE, osh_pairs, TBL_CELLS);
+    int served = rm_blit_objshift_skew_tabled(test_fb, OSH_GRID_DST_OFF, osh_src, src_off, x, TBL_COLOR,
+                                              rows_m1, TBL_STRIDE, osh_pairs, TBL_CELLS);
     *served_out = served;
 
     long n = (served != expect_served) ? 1 : 0;             /* the branch this case exists to pin */
     if (!served) {
-        for (int i = 0; i < SCREEN_BYTES; i++) if (test_fb[i] != SWEEP_BG_BYTE) n++;   /* drew nothing */
-        RM_BLIT_OBJSHIFT(test_fb, dst_off, osh_src, src_off, x, TBL_COLOR, rows_m1, TBL_STRIDE,
+        for (int i = 0; i < SWEEP_FB_BYTES; i++) if (test_fb[i] != SWEEP_BG_BYTE) n++;  /* drew nothing */
+        RM_BLIT_OBJSHIFT(test_fb, OSH_GRID_DST_OFF, osh_src, src_off, x, TBL_COLOR, rows_m1, TBL_STRIDE,
                          osh_pairs, TBL_CELLS);             /* the dispatch's CPU hybrid completes it */
     }
-    for (int i = 0; i < SCREEN_BYTES; i++) if (ref_fb[i] != test_fb[i]) n++;
-    n += guard_broken(osh_src_g.lo) + guard_broken(osh_src_g.hi) +
-         guard_broken(test_g.lo) + guard_broken(test_g.hi);
-    return n;
+    return n + sweep_fb_diff() + sweep_guards_broken();
 }
 
 /* Run one table case and log it into the report grid. */
@@ -301,10 +335,13 @@ static long sweep_table_section(void) {
     /* GROW FIRST, on a table nothing has touched yet. A missing grow is only VISIBLE if the rows the
      * un-grown entry never materialised hold something other than the right bytes — and had this key's
      * slot already held a taller materialise of the SAME key, those stale words would be exactly right
-     * and a dropped grow would blit correct pixels by accident. Before any other case runs, the table is
-     * static BSS: the deep words are zero, which no correct blit of this sprite produces. (A flush only
-     * frees entries; it does not scrub their bitmaps, and scrubbing 126 KB per flush to make the order
-     * not matter would cost the shipping route real time for a measurement build's benefit.) */
+     * and a dropped grow would blit correct pixels by accident. Before any other case runs the table is
+     * still all zeroes: rm_blit_bind_all ZEROES the window it places both tables in (src/blitter.c — the
+     * free TPA it carves them from is uninitialised, so the placer scrubs it), and zero deep words are
+     * what no correct blit of this sprite produces. That placement is also why the sweep must run AFTER
+     * the boot bind — main() binds first, then enters this build's entry point. (A flush only frees
+     * entries; it does not scrub their bitmaps, and scrubbing 126 KB per flush to make the order not
+     * matter would cost the shipping route real time for a measurement build's benefit.) */
     rm_blit_objshift_skew_table_flush();
     total += tbl_case(TBL_KEY_OFF, TBL_ROWS_SHORT, TBL_SERVED);   /* first sight, only 4 rows deep */
     total += tbl_case(TBL_KEY_OFF, TBL_ROWS_TALL,  TBL_SERVED);   /* GROW: re-materialise deeper */
@@ -410,11 +447,78 @@ static void sweep_bench(void) {
     bench_cpu_ticks          = bench_ticks(bench_cpu);
 }
 
+/* ---- the BELOW-SCREEN section: both shipping routes at and past the bottom edge -------------------
+ * Every grid above blits mid-screen, so nothing there pins what either path writes BELOW the last
+ * visible scanline — which is exactly the region game_main.c's SCREEN_OVERDRAW tail exists to absorb,
+ * and exactly where a chip path that clipped, clamped or wrapped differently from the CPU engine would
+ * corrupt whatever follows the buffer. The family predicates (rm_blit_objshift2_is_base / objsh_is_base,
+ * blitter.h) are purely HORIZONTAL — they never look at the destination row — so neither path declines a
+ * below-screen destination: both really draw, and the pin is the full-buffer comparison, tail included
+ * (sweep_fb_diff spans SWEEP_FB_BYTES, and the guard bands past it catch anyone who goes further).
+ *
+ * Cases: each route x {flush with the bottom edge, straddling it, wholly below it} x fine_x {0, a
+ * straddling nibble} x its two extreme width/base_cells. BASE columns throughout, so every case draws. */
+static const int SWEEP_BELOW_UNDER[]  = {0, 1, 3, SWEEP_BELOW_UNDER_MAX};  /* rows under the last visible one */
+static const int SWEEP_BELOW_FINE_X[] = {0, 0xb};                          /* aligned, and a straddling nibble */
+static const int SWEEP_BELOW_WIDTH[]  = {0, 2};                            /* objshift2's widest / narrowest */
+#define SWEEP_BELOW_COL     0x40                            /* a BASE column for both routes */
+#define SWEEP_BELOW_ROWS_M1 3
+#define SWEEP_BELOW_COLOR   3
+#define SWEEP_BELOW_STRIDE  0x10
+#define N_BELOW_UNDER  (int)(sizeof SWEEP_BELOW_UNDER  / sizeof SWEEP_BELOW_UNDER[0])
+#define N_BELOW_FINEX  (int)(sizeof SWEEP_BELOW_FINE_X / sizeof SWEEP_BELOW_FINE_X[0])
+#define N_BELOW_WIDTH  (int)(sizeof SWEEP_BELOW_WIDTH  / sizeof SWEEP_BELOW_WIDTH[0])
+/* objshift2 (one case per width) + the colour skew route (one per base_cells), at every under x fine_x. */
+#define N_BELOW_CASES  (N_BELOW_UNDER * N_BELOW_FINEX * (N_BELOW_WIDTH + N_OSH_BC))
+
+static uint16_t below_case_diff[N_BELOW_CASES];
+static long below_handled;
+static int below_idx;                                       /* the case cursor sweep_below_case logs at */
+
+/* The blit's first-drawn (bottom) row `under` scanlines below the last visible one. */
+static uint32_t below_dst_off(int under) {
+    return (uint32_t)((SCREEN_H - 1 + under) * SCREEN_ROW_BYTES);
+}
+
+/* Log one below-screen case. Unlike the grids above, a DECLINED case is logged with its real mismatch
+ * rather than as 0: no case here may be declined (the family predicates are horizontal-only), so a
+ * blitter path that drew nothing while the CPU engine drew must show up as the failure it is. */
+static long sweep_below_case(long d, int handled) {
+    uint16_t logged = (uint16_t)(d > 0xffff ? 0xffff : d);
+    below_case_diff[below_idx++] = logged;
+    below_handled += handled ? 1 : 0;
+    return logged;
+}
+
+static long sweep_below_screen_grid(void) {
+    long total = 0;
+    for (int ui = 0; ui < N_BELOW_UNDER; ui++)
+        for (int fi = 0; fi < N_BELOW_FINEX; fi++) {
+            uint32_t dst_off = below_dst_off(SWEEP_BELOW_UNDER[ui]);
+            int fine_x = SWEEP_BELOW_FINE_X[fi];
+            int handled;
+            long d;
+            for (int wi = 0; wi < N_BELOW_WIDTH; wi++) {
+                d = run_case(SWEEP_BELOW_WIDTH[wi], fine_x, SWEEP_BELOW_COL, SWEEP_BELOW_ROWS_M1,
+                             dst_off, &handled);
+                total += sweep_below_case(d, handled);
+            }
+            for (int bi = 0; bi < N_OSH_BC; bi++) {
+                d = run_case_objsh(rm_blit_objshift_skew, OSH_BASE_CELLS[bi], fine_x, SWEEP_BELOW_COL,
+                                   SWEEP_BELOW_COLOR, SWEEP_BELOW_ROWS_M1, SWEEP_BELOW_STRIDE,
+                                   dst_off, &handled);
+                total += sweep_below_case(d, handled);
+            }
+        }
+    return total;
+}
+
 /* Which sections this build ran (report word; the runner must not read a skipped grid as "clean"). */
 #define SWEEP_GRID_OBJSHIFT2    1
 #define SWEEP_GRID_OSH_PRESHIFT 2
 #define SWEEP_GRID_OSH_SKEW     4
 #define SWEEP_GRID_OSH_TABLE    8
+#define SWEEP_GRID_BELOW        16
 static uint16_t sweep_grids_run;
 
 /* The objshift2 grid: the fixed-pass engine's own case space. Same shape as sweep_objsh_grid — returns
@@ -427,7 +531,9 @@ static long sweep_objshift2_grid(long *handled_out) {
             for (int ci = 0; ci < N_COL; ci++)
                 for (int ri = 0; ri < N_ROWS; ri++) {
                     int handled;
-                    long d = run_case(SWEEP_WIDTH_IDX[wi], fx, SWEEP_COLUMNS[ci], SWEEP_ROWS_M1[ri], &handled);
+                    int rows_m1 = SWEEP_ROWS_M1[ri];
+                    long d = run_case(SWEEP_WIDTH_IDX[wi], fx, SWEEP_COLUMNS[ci], rows_m1,
+                                      sweep_grid_dst_off((int16_t)(uint16_t)rows_m1 + 1), &handled);
                     uint16_t logged = handled ? (uint16_t)(d > 0xffff ? 0xffff : d) : 0;
                     case_diff[idx++] = logged;
                     total += logged;
@@ -457,6 +563,8 @@ long blitter_sweep_super(void) {
         sweep_grids_run |= SWEEP_GRID_OBJSHIFT2;
         total += sweep_objsh_grid(rm_blit_objshift_blitter, osh_case_diff, &osh_handled);
         sweep_grids_run |= SWEEP_GRID_OSH_PRESHIFT;
+        total += sweep_below_screen_grid();
+        sweep_grids_run |= SWEEP_GRID_BELOW;
     }
     total += sweep_objsh_grid(rm_blit_objshift_skew, skew_case_diff, &skew_handled);
     sweep_grids_run |= SWEEP_GRID_OSH_SKEW;
@@ -469,14 +577,15 @@ long blitter_sweep_super(void) {
 }
 
 /* Pack the per-case grid into a framebuffer for SCREEN.BIN: word0 = total case count (objshift2, then
- * objshift pre-shift, then objshift hardware-skew, then the table section), word1 = total mismatch
- * (every section run), then the concatenated per-case diff words. run_ste_sweep.py parses it; the tail
- * indices are mirrored there.
+ * objshift pre-shift, then objshift hardware-skew, then the table section, then the below-screen
+ * section), word1 = total mismatch (every section run), then the concatenated per-case diff words.
+ * run_ste_sweep.py parses it; the tail indices are mirrored there.
  *
  * The tail is SELF-DESCRIBING: besides the BASE-handled counts and the cost bench it carries the section
- * LAYOUT (per-section case counts), the count each section is expected to have drawn, and which sections
- * this build ran. Those let the runner locate each section and prove it non-vacuous from the report
- * itself instead of from Python literals that can silently drift out of step with this file. */
+ * LAYOUT (per-section case counts), the count each section is expected to have drawn, which sections
+ * this build ran, and whether the boot bind PLACED the routes' tables at all. Those let the runner locate
+ * each section and prove it non-vacuous from the report itself instead of from Python literals that can
+ * silently drift out of step with this file. */
 #define SWEEP_REPORT_WORDS        (SCREEN_BYTES / 2)
 #define SWEEP_TAIL_HANDLED2       1                         /* counted back from the end of the report */
 #define SWEEP_TAIL_HANDLED_OSH    2
@@ -497,22 +606,30 @@ long blitter_sweep_super(void) {
 #define SWEEP_TAIL_CASES_RUN_TBL  17                        /* cases it actually logged (layout check) */
 #define SWEEP_TAIL_SERVED_TBL     18                        /* table-section cases the table path drew */
 #define SWEEP_TAIL_EXPECT_TBL     19                        /* ...and how many it must have drawn */
-#define SWEEP_TAIL_WORDS          SWEEP_TAIL_EXPECT_TBL
-/* The four per-case sections must not run into the tail words (they share one 32000-byte report). */
-typedef char sweep_report_fits[(2 + N_CASES + 2 * N_OSH_CASES + N_TBL_CASES
+#define SWEEP_TAIL_N_CASES_BELOW  20                        /* layout: the below-screen section's case count */
+#define SWEEP_TAIL_HANDLED_BELOW  21                        /* below-screen cases the blitter paths drew */
+#define SWEEP_TAIL_TABLES_BOUND   22                        /* 0 = the boot bind placed no tables (see below) */
+#define SWEEP_TAIL_WORDS          SWEEP_TAIL_TABLES_BOUND
+/* The five per-case sections must not run into the tail words (they share one 32000-byte report). */
+typedef char sweep_report_fits[(2 + N_CASES + 2 * N_OSH_CASES + N_TBL_CASES + N_BELOW_CASES
                                 <= SWEEP_REPORT_WORDS - SWEEP_TAIL_WORDS) ? 1 : -1];
 
-const uint8_t *blitter_sweep(long *mismatch_out) {
-    Supexec(blitter_sweep_super);
+/* `tables_bound` is rm_blit_bind_all's return (game_main.c passes it straight through). When it is 0 the
+ * routes' lookup tables were never placed — GAME_FORCE_NO_BLITTER, a machine with no blitter, or a TPA
+ * too small — and every blitter path declines by design. Sweeping then would report a vacuous all-zero
+ * grid that LOOKS like a pass, so nothing is swept and the report says so in its own tail word instead. */
+const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound) {
+    if (tables_bound) Supexec(blitter_sweep_super);
     uint16_t *w = (uint16_t *)test_fb;
     for (int i = 0; i < SWEEP_REPORT_WORDS; i++) w[i] = 0;
-    w[0] = (uint16_t)(N_CASES + 2 * N_OSH_CASES + N_TBL_CASES);
+    w[0] = (uint16_t)(N_CASES + 2 * N_OSH_CASES + N_TBL_CASES + N_BELOW_CASES);
     w[1] = (uint16_t)(sweep_total > 0xffff ? 0xffff : sweep_total);
     int at = 2;
     for (int i = 0; i < N_CASES; i++) w[at++] = case_diff[i];
     for (int i = 0; i < N_OSH_CASES; i++) w[at++] = osh_case_diff[i];
     for (int i = 0; i < N_OSH_CASES; i++) w[at++] = skew_case_diff[i];
     for (int i = 0; i < N_TBL_CASES; i++) w[at++] = tbl_case_diff[i];
+    for (int i = 0; i < N_BELOW_CASES; i++) w[at++] = below_case_diff[i];
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED2]       = (uint16_t)sweep_handled;  /* objshift2 BASE drawn */
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED_OSH]    = (uint16_t)osh_handled;    /* objshift  BASE drawn */
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED_SKEW]   = (uint16_t)skew_handled;   /* skew path BASE drawn */
@@ -524,6 +641,9 @@ const uint8_t *blitter_sweep(long *mismatch_out) {
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_CASES_RUN_TBL]  = tbl_cases_run;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_SERVED_TBL]     = (uint16_t)tbl_served;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_EXPECT_TBL]     = (uint16_t)N_TBL_SERVED;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_N_CASES_BELOW]  = (uint16_t)N_BELOW_CASES;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED_BELOW]  = (uint16_t)below_handled;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_TABLES_BOUND]   = (uint16_t)(tables_bound ? 1 : 0);
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_ITERS]    = OSH_BENCH_ITERS;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_MAT]      = bench_mat_ticks;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_PASS_SYN] = bench_pass_synth_ticks;
