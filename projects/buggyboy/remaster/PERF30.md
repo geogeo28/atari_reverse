@@ -590,6 +590,14 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > the thin-margin watch item).** New standing pin: goldens ×5 + ×5 at `--memsize 1` on both machines
 > (plus 730 host tests, sweep 4,968/0, A/B 0-mismatch, cadence in noise). `BLIT_STE_SPEC.md` §15.
 
+> **Consolidated measurement at HEAD 6ac3066 (2026-07-26)** — one build, one instrument, all four
+> cells fresh: ST gate **130.50 ms** / drive **99.42**; STE gate **105.38** (−19.2 %) / drive
+> **97.36** (−2.1 %); 1 MB cells bit-identical to 4 MB (RAM size costs zero speed). Resident memory
+> without TOS: **ST 708,004 B**, **STE 878,436 B** (incl. the 170,432 B placed tables; pad 0,
+> pinned empirically — placement declines at exactly +4 B over need). 1 MB STE shipping margin
+> corrected to **10,620 B** (the §15 "14,092" was the trace build's). The canonical tables live in
+> **`README.md` "Measured performance & memory"**.
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),
@@ -1661,6 +1669,11 @@ next even boundary (the lock only ever waits).
 LOCK (regular pacing), not 25 fps compute; 2-vblank presents need <40 ms frames, which no faithful
 stock-ST frame reaches. And tearing was NEVER present — Setscreen's base poke latches at the next
 vblank on the shifter, before and after; C1's fix is pacing jitter, not tearing.
+*(2026-07-26 consolidated measurement: the lock leaks ~2 % ODD spans while driving, always in
+adjacent pairs — a `present_wait_boundary` race when a frame finishes exactly on the grid; the
+grid re-phases on the next present, no pixel effect. "Always even" is not literally true. Also:
+the trace build's tail canary costs ~7 ms/present, so locked-cadence numbers measured under
+`GAME_CADENCE_TRACE` are taxed — a `-DGAME_NO_TAIL_CANARY` opt-out is the noted follow-up.)*
 
 **Design:** the wait is the shell's plain `Vsync()` (services the VBL pump + IKBD while idling; no
 busy-poll/halt needed — nothing to overlap). `vbl_count` is single-writer (VBL hook) /

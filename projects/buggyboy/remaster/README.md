@@ -85,6 +85,47 @@ STATUS.md  per-subsystem progress vs recreate
 PORTING.md how to continue the port — recipe, conventions, gotchas (read this to pick up the work)
 ```
 
+## Measured performance & memory (2026-07-26, commit 6ac3066)
+
+The canonical current-state tables — one build (`BUGGYBOY.PRG`, byte-identical on both machines),
+one instrument (the 200 Hz sub-vblank render clock around `draw_frame`), one protocol (leg 0;
+gate = 200 idle frames at the leg-start gate, the object-dense worst case; drive = 250 autodrive
+frames; Hatari + EmuTOS 1024k). Measured by `render/atari/run_cadence.py`; raw runs in
+`PERF30.md`'s C4 slice-10 note and `BLIT_STE_SPEC.md` §15.
+
+### Frame time (render clock = compute; locked cadence = player-visible latency)
+
+| machine | scene | render ms/frame | render fps | locked present cadence | live engines |
+|---|---|---:|---:|---|---|
+| ST | gate (worst case) | **130.50** | 7.66 | 8 vbl → 160 ms → **6.25 fps** ¹ | 68000 hand-asm |
+| ST | driving | **99.42** | 10.06 | mostly 6/8 vbl, mean ≈7.6 → **≈6.5 fps** | 68000 hand-asm |
+| STE | gate (worst case) | **105.38** | 9.49 | 8 vbl → 160 ms → **6.25 fps** | blitter (objshift2 + colour skew table) |
+| STE | driving | **97.36** | 10.27 | mostly 6/8 vbl, mean ≈7.5 → **≈6.7 fps** | blitter, 90 % colour-table hits |
+
+STE vs ST: **gate −19.2 %, driving −2.1 %** — same pixels, byte-identical framebuffers on both
+machines (goldens ×5 each + whole-frame A/B pin it). RAM size has **zero** effect on speed: the
+1 MB cells return bit-identical tick totals and route counters to the 4 MB cells.
+
+¹ The locked-cadence instrument (`GAME_CADENCE_TRACE`) pays a ~7 ms/present tail-canary tax the
+shipping PRG does not; the taxed ST gate frame quantises to 10 vbl in the trace build, but the
+slice-9 no-canary measurement at the same render clock showed 8 vbl — 8 is the shipping figure.
+The C1 even-vblank lock also leaks ~2 % odd spans in adjacent pairs (a boundary race, no pixel
+effect). All timing is the Hatari model, not cycle-exact hardware; comparisons are same-instrument
+and fully deterministic (repeat runs are bit-identical).
+
+### Memory (total resident, TOS excluded)
+
+| configuration | bytes | ≈ | notes |
+|---|---:|---|---|
+| **ST (any RAM)** | **708,004** | 691 KB | basepage 256 + text 122,368 + BSS 585,380; blitter tables never placed |
+| **STE** | **878,436** | 858 KB | + 170,432 B of blitter tables placed into free TPA at boot (alignment pad 0) |
+| 1 MB usable TPA (EmuTOS) | 905,440 | 884 KB | so: 1 MB ST fits with **197,436 B** spare |
+| 1 MB STE margin after tables + 16 KB stack margin | **10,620** | 10.4 KB | **watch item** — BSS/text growth beyond this silently drops a 1 MB STE to the (pixel-identical, slower) CPU engines; the cadence `free TPA bytes` counter is the gauge |
+
+Static BSS breakdown: arena 388,616 · scroll prebuild 106,496 · screen pool 72,448 (2 × 32,000
+screens + 2 × 4,096 measured-overdraw tails + alignment) · buf_a 15,520 · the rest ≈ 2.3 KB.
+**Minimum machine: 1 MB, ST and STE alike — the same as the original.**
+
 ## Relationship to `recreate/`
 
 `remaster/` **depends on** `recreate/` at test time only: it drives `recreate/build/libbuggyboy.so`

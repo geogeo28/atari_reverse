@@ -631,7 +631,12 @@ honor `RM_MEMSIZE`, and the census/sweep pin themselves to 4 MB — CENSUS.PRG a
 sweep **4,968 cases 0-XOR** incl. the below-screen section; A/B 0-mismatch; cadence within noise
 (gate 105.47 / drive 97.34 ms) with 0 canary trips.
 
-**Watch item:** the 1 MB STE margin is thin — **~14 KB of future program growth silently drops a
+**Watch item:** the 1 MB STE margin is thin — **10,620 B of future program growth silently drops a
 1 MB STE to the CPU engines** (pixel-identical, slower; the cadence tail's `free TPA bytes` counter
 is the observable). Check it when BSS grows. The `--memsize 1` goldens are placement-blind by design
 (CPU fallback is pixel-identical); the cadence route counters are what prove the blitter bound.
+*(Margin corrected 2026-07-26 by the consolidated measurement: the earlier "14,092 B" was the TRACE
+build's margin — the shipping PRG's is 10,620 B, pinned empirically: a BSS-pad probe shows the
+placement declining at exactly +4 bytes over the 170,432 the tables need. The usable 1 MB TPA is
+905,440 B by basepage arithmetic — the earlier 905,448 was the `Malloc(-1)` view, 8 B apart. The
+canonical perf + memory tables live in `README.md` "Measured performance & memory".)*
