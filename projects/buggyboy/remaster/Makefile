@@ -62,7 +62,6 @@ $(BENCH_ELF): $(SRC) $(wildcard src/asm/*.S) render/atari/bench_main.c render/at
 # them; nothing in the gate ever RAN it. A shell that did not compile therefore reached origin twice in
 # one session with the suite green. These targets build the real .PRG (~2 s each; the m68k toolchain is
 # already a hard prerequisite via bench.elf), so a broken shell fails `make test`, not a play-test.
-# (src/render.c stays uncovered — a dead Phase-A stub linked by neither cross build.)
 #
 # They build under gate-only names so the shipping BUGGYBOY.PRG is never clobbered, with GAME_NO_STAGE
 # so they never touch the Hatari drive, and they reuse build_game.sh rather than restating its flags —
