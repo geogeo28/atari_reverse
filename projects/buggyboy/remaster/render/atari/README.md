@@ -44,6 +44,12 @@ Every `.PRG` variant lands in `build/`, and the headless runners boot it from th
 drive. `disk/` is only the **interactive-play** drive — `BUGGYBOY.PRG` + `COURSES.DAT` + `GRAPHICS.GRA`,
 refreshed by a plain `build_game.sh`; harness builds pass `GAME_NO_STAGE=1` and never touch it.
 
+**Play it:** `bash game_run.sh` boots the remaster from `disk/` in a Hatari GUI; `bash game_run.sh
+original` boots the ORIGINAL binary (`bin/START.PRG` loader, staged onto `disk_orig/`) with the same
+emulator setup for an apples-to-apples comparison — the same two-arm pattern as
+`recreate/render/atari/game_run.sh`. For the STE blitter build, add `--machine ste` by hand (one .PRG,
+boot-bound).
+
 ## The game (`BUGGYBOY.PRG`)
 
 `BUGGYBOY.PRG` is the playable game: it boots into the **leg select** — the course map plus the
