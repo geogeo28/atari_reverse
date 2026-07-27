@@ -88,7 +88,7 @@ def census_leg(leg, frames):
     run_vbls = VBLS_BOOT + frames * VBLS_PER_FRAME
     # 4 MB pinned, not RM_MEMSIZE's default: CENSUS.PRG is ~1.4 MB (its open-addressed key sets are
     # ~700 KB of BSS on top of the shell), so it does not even load on a 1 MB machine.
-    fb = run_hatari.run(CENSUS_PRG, machine="ste", blitter=True, needs_data=True, run_vbls=run_vbls,
+    fb = run_hatari.run(CENSUS_PRG, machine="ste", blitter=True, run_vbls=run_vbls,
                         memsize=CENSUS_MEMSIZE,
                         timeout=max(HATARI_TIMEOUT_MIN, int(run_vbls * HATARI_SECS_PER_VBL)))
     blocks_end = HEADER_WORDS + BLOCK_WORDS * len(SETS)

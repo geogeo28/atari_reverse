@@ -94,7 +94,7 @@ control wrappers (`Super`/`Malloc`/`Crawio`) before them made Hatari hand back h
 
 Verify a build headlessly: run it under Hatari with a GEMDOS drive, have the shim dump a
 framebuffer / result file to `C:`, read it back and diff against the host reconstruction
-(`render/atari/run_hatari.py`, `game_smoke.py`). See [`tos-os-calls.md`](tos-os-calls.md)
+(`render/atari/run_golden.py`, `game_smoke.py`). See [`tos-os-calls.md`](tos-os-calls.md)
 for the trap selectors and startup sequence to mirror.
 
 → Next: [`m68k-disassembly.md`](m68k-disassembly.md) or [`ghidra-pipeline.md`](ghidra-pipeline.md).

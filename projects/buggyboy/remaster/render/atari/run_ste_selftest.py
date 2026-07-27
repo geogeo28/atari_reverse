@@ -36,7 +36,7 @@ def build():
 
 def main():
     build()
-    diff = run_hatari.run(SELFTEST_PRG, machine="ste", blitter=True, needs_data=True)[:SCREEN_BYTES]
+    diff = run_hatari.run(SELFTEST_PRG, machine="ste", blitter=True)[:SCREEN_BYTES]
     nz = sum(1 for b in diff if b)
     if nz == 0:
         print("MATCH: STE blitter reproduces rm_blit_objshift2 byte-for-byte (0/%d)" % SCREEN_BYTES)

@@ -30,10 +30,9 @@ import adapter                                    # noqa: E402
 import assets_load as al                          # noqa: E402  remaster's own COURSES/GRAPHICS loader
 import equiv                                      # noqa: E402
 import render_screen as R                         # noqa: E402  MEM_BASE (where the arena sits)
-from fixture_lib import write_if_changed          # noqa: E402  content-stable fixture write
+from fixture_lib import c_array, write_if_changed  # noqa: E402  shared aligned(2) emit + content-stable write
 import gen_hud_fixture as hud                      # noqa: E402  reuse the HUD asset/define/palette baking
 
-# A visually busy HUD over the road (same spirit as the HUD demo).
 GAME_LEG = 0                                       # the game starts where the player does: leg 0...
 GAME_START_SEGMENT = 0                             # ...at its first segment, with nothing skipped
 NUM_LEGS = 5                                        # legs 0-4 (bounds the golden leg; == the shell's leg count)
@@ -284,14 +283,14 @@ def main():
            " * Everything from COURSES.DAT and GRAPHICS.GRA the game loads itself at boot (assets.h). */",
            "#ifndef RM_GAME_FIXTURE_H", "#define RM_GAME_FIXTURE_H", "#include <stdint.h>", ""]
     for name, data in hud.hud_asset_arrays(img, from_arena=True):
-        out.append(hud._c_array(name, data))
+        out.append(c_array(name, data))
     for name, data in road_arrays:
-        out.append(hud._c_array(name, data))
+        out.append(c_array(name, data))
     for name, data in obj_arrays:
-        out.append(hud._c_array(name, data))
+        out.append(c_array(name, data))
     for name, data in flow_arrays:
-        out.append(hud._c_array(name, data))
-    out.append(hud._c_array("fixture_palette", palette))
+        out.append(c_array(name, data))
+    out.append(c_array("fixture_palette", palette))
     out.append("")
     # The per-leg leg-start STATE is no longer baked: rm_init_leg (src/gameplay.c) produces it at game
     # boot and on every restart, seeded from the loaded arena — the pose/scroll/course scalars, the

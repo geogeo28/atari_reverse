@@ -116,7 +116,7 @@ def report(label, spans):
 
 def measure(machine="st", frames=400, leg=0, idle=False, freerun=False):
     prg = build(machine, frames, leg, idle, freerun)
-    fb = run_hatari.run(prg, machine=machine, blitter=(machine == "ste"), needs_data=True,
+    fb = run_hatari.run(prg, machine=machine, blitter=(machine == "ste"),
                         run_vbls=frames * VBLS_PER_FRAME_HEADROOM, timeout=CELL_TIMEOUT_S)
     spans = parse(fb)
     report(f"{machine} (leg {leg}, {frames} frames, {'gate/idle' if idle else 'driving'}"

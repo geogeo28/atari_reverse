@@ -256,7 +256,7 @@ def run_sweep(mutate):
     build(mutate)
     # 4800 cases x full-framebuffer memset/compare is a lot of emulated cycles — give it a generous
     # vblank budget + wall-clock so the sweep finishes and dumps (default 4000 vbls is far too short).
-    fb = run_hatari.run(SWEEP_PRG, machine="ste", blitter=True, needs_data=True, memsize=SWEEP_MEMSIZE,
+    fb = run_hatari.run(SWEEP_PRG, machine="ste", blitter=True, memsize=SWEEP_MEMSIZE,
                         run_vbls=240000, timeout=900)[:SCREEN_BYTES]
     # Checked BEFORE the report is decoded: on a declined run every section is legitimately empty, so the
     # layout checks in Report would fire first and blame blitter_sweep.c for being out of step.

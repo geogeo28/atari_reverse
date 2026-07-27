@@ -1,46 +1,42 @@
-# render/atari — run the remaster HUD on a real 68000 (Hatari)
+# render/atari — run the remaster game on a real 68000 (Hatari)
 
-remaster renders only the HUD so far, so this cross-compiles `rm_draw_hud` to 68000 and runs it as
-a GEMDOS `.PRG` under Hatari — proving the remaster C is correct not just on the host, but compiled
-and executed on an independent 68000.
+This cross-compiles remaster's C to 68000 and runs it as a GEMDOS `.PRG` under Hatari — proving the C
+is correct not just on the host, but compiled and executed on an independent 68000. The shipping
+program is `BUGGYBOY.PRG` (the playable game, below); the pin is the **frame-0 golden harness**
+(`run_golden.py`), which builds a `GOLDEN.PRG` variant per leg and byte-compares its boot frame
+against recreate's verified pipeline.
 
-Because the HUD reads asset tables (font, colour-fill table, mask/cursor tables, the gauge string,
-the dashboard graphic and the variant sprites from `buf_c`) that normally come from the recreate
-loaders, we **capture them once on the host** (`gen_hud_fixture.py`, via the same `adapter.py` the
-equivalence tests use), bake them + the `HudState` into `build/hud_fixture.h`, and draw the HUD over
-a **blank screen** on-target — rendering only what remaster's C implements (no captured game frame).
+Some of what the cores read is the original program's own data-segment content rather than file
+content, so we **capture it once on the host** (`gen_game_fixture.py` + `gen_hud_fixture.py`, via the
+same `adapter.py` the equivalence tests use) and bake it into `build/game_fixture.h`. Everything that
+*is* file content the game loads itself from `COURSES.DAT` / `GRAPHICS.GRA` at boot.
 
-## The proof
-
-`gen_hud_fixture.py` also writes `build/golden.bin` — recreate's `g_draw_hud` on the same blank
-screen. The demo dumps its painted framebuffer to `C:\SCREEN.BIN`; `run_hatari.py` byte-compares
-that against `golden.bin`. A **MATCH** proves remaster's HUD, cross-compiled and run on a real 68000,
-is pixel-identical to the verified recreate cores. (recreate's HUD is itself verified byte-for-byte
-against the Musashi oracle, so this closes the loop end to end.)
+*History:* a standalone HUD-only demo (`main.c` + `build.sh` + `run.sh` → `HUD.PRG`, pinned by
+`run_hatari.py`'s own `main`) was the first on-target proof, back when `rm_draw_hud` was all remaster
+rendered. It is **retired** — the full game plus the golden harness superseded it, and `run_hatari.py`
+is now a library module the runners share.
 
 ## Pieces
 
 | file | role |
 |------|------|
-| `gen_hud_fixture.py` | capture background + assets + `HudState` + golden + palette from the host harness |
-| `main.c`             | TOS shim: build the structs from the fixture, `rm_draw_hud`, dump `SCREEN.BIN`, set palette, blit, wait for a key |
+| `gen_game_fixture.py` / `gen_hud_fixture.py` | capture the non-file-content tables, `HudState` and palette from the host harness into `build/game_fixture.h` |
+| `game_main.c` | the on-target game shell (leg select → race → between-legs flow) |
 | `os.s` / `tos.ld` / `mkprg.py` | GEMDOS entry + trap wrappers, link script, `.PRG` wrapper (copied from recreate's harness) |
 | `shim_include/string.h` / `shim.c` | freestanding `<string.h>` decls + defs, linked by every on-target program (bare-metal GCC has no libc) |
-| `build.sh`           | generate fixture → cross-compile `hud.c`+`text.c`+shim → `build/HUD.PRG` |
-| `run_hatari.py`      | headless: run a `.PRG` from `build/`, byte-compare `SCREEN.BIN` vs `golden.bin`, write a PNG |
-| `run.sh`             | interactive: watch it in the Hatari GUI |
-| `gen_game_fixture.py` / `game_main.c` | the on-target BuggyBoy game (below): non-asset-file fixture + the game shell (leg select → race → between-legs flow) |
 | `build_game.sh` | build `BUGGYBOY.PRG` (the shipping game) or, with `GAME_PRG`/`GAME_EXTRA_CFLAGS`, a variant |
-| `run_golden.py` | the frame-0 golden harness: for each leg 0-4, build the `GOLDEN.PRG` fast-path variant + byte-compare its leg-start boot frame vs recreate |
+| `run_hatari.py` | the shared library: boot a `.PRG` from `build/` headless, and byte-compare its `SCREEN.BIN` against a golden `.bin` (writing a PNG) |
+| `run_golden.py` / `run_ste_golden.py` | the frame-0 golden harness: for each leg 0-4, build the `GOLDEN.PRG` fast-path variant + byte-compare its leg-start boot frame vs recreate — on ST and on STE |
+| `bench_main.c` / `bench_build.sh` | the m68k `bench.elf` the Musashi C-vs-asm differential and `tools/bench.py` drive |
+| `run_cadence.py` / `run_ste_*.py` | the Hatari measurement runners (frame cadence, STE blitter A/B, self-test, sweep, census) |
 
 ## Use
 
 ```bash
 cd projects/buggyboy/recreate && make build/libbuggyboy.so   # once: the fixture generator drives it
 cd ../remaster
-bash render/atari/build.sh                 # -> build/HUD.PRG
-python render/atari/run_hatari.py          # headless: prints MATCH, writes out/render/remaster_hud_hatari.png
-bash render/atari/run.sh                   # watch it in Hatari (press a key in the ST to exit)
+bash render/atari/build_game.sh             # -> build/BUGGYBOY.PRG + disk/BUGGYBOY.PRG
+python render/atari/run_golden.py           # headless: builds GOLDEN.PRG per leg 0-4, prints MATCH for each
 ```
 
 Hatari needs a 4 MiB machine (`--memsize 4`); `build/` and `disk/` are gitignored build artifacts.
@@ -211,8 +207,7 @@ fault on an odd address on the 68000, so the fixture arrays and the BSS scratch 
 
 ## Scope
 
-`HUD.PRG` is the HUD-only proof (rendered over a blank screen, no captured game frame — `run_hatari.py`
-pins it). `BUGGYBOY.PRG` is the whole playable game: the render pipeline (road, scroll, the object tree,
+`BUGGYBOY.PRG` is the whole playable game: the render pipeline (road, scroll, the object tree,
 the HUD) driven by the ported physics and the between-legs flow, everything drawn by remaster's own C.
 `run_golden.py` pins the boot frame of every leg 0–4 byte-for-byte against recreate's pipeline; the rest
 of the loop is guarded by the host equivalence suite (`make test`) and the on-target flow trace. Sound is

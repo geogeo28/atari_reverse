@@ -42,8 +42,8 @@ def main():
     ok = True
     for n in frames:
         build(n)                                            # ONE binary, run on both machines
-        fb_st = run_hatari.run(AB_PRG, machine="st", blitter=False, needs_data=True)[:SCREEN_BYTES]
-        fb_ste = run_hatari.run(AB_PRG, machine="ste", blitter=True, needs_data=True)[:SCREEN_BYTES]
+        fb_st = run_hatari.run(AB_PRG, machine="st", blitter=False)[:SCREEN_BYTES]
+        fb_ste = run_hatari.run(AB_PRG, machine="ste", blitter=True)[:SCREEN_BYTES]
         ndiff = sum(1 for a, b in zip(fb_st, fb_ste) if a != b)
         tag = "MATCH" if ndiff == 0 else f"DIFF {ndiff}/{SCREEN_BYTES}"
         print(f"frame {n:4d}: same PRG  st(CPU) vs ste(blitter)  {tag}")

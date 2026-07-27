@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""run_hatari.py — run the remaster HUD .PRG on a headless Hatari and verify the on-target frame.
+"""run_hatari.py — the shared headless-Hatari runner. A LIBRARY MODULE, not an entry point.
 
-The demo writes its painted 32000-byte framebuffer to C:\\SCREEN.BIN; we auto-run it on a headless
-Hatari GEMDOS drive, read that dump back, and byte-compare it to build/golden.bin (recreate's HUD
-frame for the same inputs). A MATCH proves remaster's HUD C, cross-compiled and executed on a real
-68000 core, produces the exact same pixels as the verified recreate cores. A PNG is also written.
+An on-target program writes its painted 32000-byte framebuffer to C:\\SCREEN.BIN; `run()` auto-runs the
+.PRG on a headless Hatari GEMDOS drive and returns that dump, and `verify_frame()` byte-compares it to a
+golden .bin rendered by recreate's verified cores (writing a PNG alongside). A MATCH proves remaster's C,
+cross-compiled and executed on a real 68000 core, produces the exact same pixels.
 
-Usage: python render/atari/run_hatari.py     # build.sh must have run first
+Every on-target runner imports this: run_golden.py / run_ste_golden.py (the frame-0 goldens), plus the
+measurement runners run_cadence.py and run_ste_{ab,census,selftest,sweep}.py.
 """
 import os
 import subprocess
@@ -39,23 +40,20 @@ RUN_VBLS = "4000"
 DEFAULT_MEMSIZE = os.environ.get("RM_MEMSIZE", "4")
 
 
-# .PRGs that load the game's data files themselves at boot, and so need them on the drive. HUD.PRG
-# does not — and nothing stages them for it — so requiring them for every .PRG would break the
-# documented `build.sh && run_hatari.py` flow on a clean checkout (build/ and disk/ are gitignored).
+# The game's data files, staged beside every .PRG: every on-target program built from game_main.c loads
+# them itself at boot (src/assets.c) and hangs to a timeout without them. The opt-out this used to carry
+# existed only for the retired HUD-only demo, which loaded nothing.
 DATA_FILES = ("COURSES.DAT", "GRAPHICS.GRA")
-NEEDS_DATA_FILES = ("BUGGYBOY.PRG", "GOLDEN.PRG")
 
 
-def run(prg, timeout=60, machine="st", blitter=False, needs_data=None, run_vbls=None, memsize=None):
+def run(prg, timeout=60, machine="st", blitter=False, run_vbls=None, memsize=None):
     """Boot `prg` headless and return its 32000-byte SCREEN.BIN dump. machine selects the emulated
     hardware (st/ste/...); blitter=True adds --blitter on (STE hardware-blitter build, PERF30 C4). The
     bundled Hatari TOS is EmuTOS 1024k, which boots every machine type, so the STE A/B differential runs
     from the same drive image as the stock ST run.
 
-    needs_data: whether to stage COURSES.DAT/GRAPHICS.GRA alongside the .PRG (the game reads them at
-    boot; without them it hangs to a timeout). None (default) auto-detects from the NEEDS_DATA_FILES
-    list; True/False forces it — so a runner naming its own .PRG (BUGGYBST/ABSTE/…) passes needs_data=True
-    instead of mutating the module global.
+    COURSES.DAT/GRAPHICS.GRA are staged beside the .PRG (see DATA_FILES) — every on-target program reads
+    them at boot; without them it hangs to a timeout.
 
     The .PRG is read from build/, where every variant lands, so a measurement build never has to be
     copied into disk/ (that stays the interactive-play drive: BUGGYBOY.PRG + the two data files, which
@@ -66,14 +64,11 @@ def run(prg, timeout=60, machine="st", blitter=False, needs_data=None, run_vbls=
     hatari, rom = tos_probe.find_hatari(), tos_probe.find_tos_rom()
     if not (hatari and rom):
         raise RuntimeError("Hatari or TOS ROM not available (brew install hatari)")
-    if needs_data is None:
-        needs_data = prg in NEEDS_DATA_FILES
     with tempfile.TemporaryDirectory() as d:
         drive = Path(d)
         (drive / prg).write_bytes((BUILD / prg).read_bytes())
-        if needs_data:
-            for name in DATA_FILES:
-                (drive / name).write_bytes((DISK / name).read_bytes())
+        for name in DATA_FILES:
+            (drive / name).write_bytes((DISK / name).read_bytes())
         out = drive / "SCREEN.BIN"
         env = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}
         args = [hatari, "--machine", machine]
@@ -104,10 +99,10 @@ def run(prg, timeout=60, machine="st", blitter=False, needs_data=None, run_vbls=
         return out.read_bytes()
 
 
-def _palette_rgb(palette_path=None):
-    """A palette.bin -> 16 (r,g,b) from the ST 0x0RGB words (3-bit channels scaled to 8). Defaults to
-    build/palette.bin (the HUD demo); run_golden.py passes its per-leg build/palette_leg<N>.bin."""
-    pal_words = (palette_path or BUILD / "palette.bin").read_bytes()
+def _palette_rgb(palette_path):
+    """A palette .bin -> 16 (r,g,b) from the ST 0x0RGB words (3-bit channels scaled to 8). run_golden.py
+    passes its per-leg build/palette_leg<N>.bin."""
+    pal_words = Path(palette_path).read_bytes()
     pal = []
     for i in range(16):
         w = (pal_words[i * 2] << 8) | pal_words[i * 2 + 1]
@@ -116,11 +111,10 @@ def _palette_rgb(palette_path=None):
     return pal
 
 
-def verify_frame(fb, png_basename, match_msg, golden_path=None, palette_path=None):
-    """Decode the Hatari framebuffer to a PNG, byte-compare it to a golden .bin, and report the result
+def verify_frame(fb, png_basename, match_msg, golden_path, palette_path):
+    """Decode the Hatari framebuffer to a PNG, byte-compare it to `golden_path`, and report the result
     (MATCH: <match_msg>, or a DIFF). Returns True on MATCH, False on DIFF — the caller decides the exit
-    code (the HUD demo pins one frame; run_golden.py loops legs 0-4 and exits nonzero if ANY diffs).
-    golden_path/palette_path default to build/golden.bin / build/palette.bin (the HUD demo)."""
+    code (run_golden.py loops legs 0-4 and exits nonzero if ANY diffs)."""
     outdir = RECREATE.parent / "out" / "render"
     outdir.mkdir(parents=True, exist_ok=True)
     image = bytearray(SCREEN_BASE) + fb                   # pad so SCREEN_BASE indexing works
@@ -129,7 +123,7 @@ def verify_frame(fb, png_basename, match_msg, golden_path=None, palette_path=Non
     write_png(str(png), W, H, rows, _palette_rgb(palette_path))
     print(f"wrote {png} ({len(fb)} bytes from Hatari)")
 
-    golden = (golden_path or BUILD / "golden.bin").read_bytes()
+    golden = Path(golden_path).read_bytes()
     if bytes(fb) == golden:
         print("MATCH: " + match_msg)
         return True
@@ -138,12 +132,7 @@ def verify_frame(fb, png_basename, match_msg, golden_path=None, palette_path=Non
     return False
 
 
-def main():
-    fb = run("HUD.PRG")
-    ok = verify_frame(fb, "remaster_hud_hatari.png",
-                      "on-target remaster HUD is byte-identical to recreate's g_draw_hud")
-    sys.exit(0 if ok else 1)
-
-
 if __name__ == "__main__":
-    main()
+    sys.exit("run_hatari is a library module, not a runner — use "
+             "run_golden.py / run_ste_golden.py (the frame-0 goldens) or the run_* measurement runners. "
+             "(It used to boot the HUD-only demo, retired once the full game + golden harness superseded it.)")

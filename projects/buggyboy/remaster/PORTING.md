@@ -875,8 +875,9 @@ list) doing less per-frame work than the original. 20 fps median is not reached 
    image, and mirror the ctypes struct layout **exactly** (a mismatch shows up as wrong pixels).
 6. **Write the differential test** (`test/test_<area>.py`) — see "Test shape" below — and iterate
    until it's **100 % of the footprint, 0 wrong pixels** (or whole-framebuffer exact for a leaf).
-7. **Wire the on-target game** if it grew the structs: `render/atari/gen_hud_fixture.py` (emit the new
-   arrays/defines) + `main.c` (fill the new fields), then re-run `run_hatari.py` for a MATCH.
+7. **Wire the on-target game** if it grew the structs: `render/atari/gen_game_fixture.py` (emit the new
+   arrays/defines — the HUD's share of them lives in `gen_hud_fixture.py`) + `game_main.c` (fill the new
+   fields), then re-run `run_golden.py` for a MATCH on every leg.
 8. **Commit** green, with the test in the same commit; update STATUS.
 
 ## Conventions

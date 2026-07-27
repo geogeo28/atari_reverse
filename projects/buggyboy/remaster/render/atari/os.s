@@ -1,4 +1,5 @@
-| os.s — GEMDOS PRG entry + trap wrappers for the remaster on-target programs (HUD.PRG, BUGGYBOY.PRG).
+| os.s — GEMDOS PRG entry + trap wrappers for every remaster on-target program: BUGGYBOY.PRG and the
+| harness/measurement variants build_game.sh emits from the same shell, plus bench.elf (bench_build.sh).
 | Copied from recreate/render/atari/os.s (generic GEMDOS glue).
 |
 | C ABI (m68k SysV): args on the stack at 4(%sp), 8(%sp), ...; each int/pointer is 4 bytes;
