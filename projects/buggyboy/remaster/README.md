@@ -44,11 +44,13 @@ low-res framebuffer.
 interleaved word-by-word, 160-byte row stride, 32000 bytes total. Constants live in
 `include/screen.h`.
 
-## Two-phase migration
+## Two-phase migration — both phases complete
 
-Each phase is gated by a green equivalence harness before the next begins.
+Each phase was gated by a green equivalence harness before the next began. Both are green: the game
+is playable end-to-end and the 5-leg goldens MATCH on ST and STE. The design is kept here because it
+explains why the code is split the way it is.
 
-1. **Phase A — render equivalence from captured state** *(current focus).*
+1. **Phase A — render equivalence from captured state.**
    Capture real mid-race state snapshots from `recreate/` (reusing `recreate/tools/bench_frame.py`'s
    staging), translate each into remaster structs via a test-only **adapter**, run the remaster
    render pipeline, and diff its framebuffer against `recreate/`'s render of the same snapshot. This
@@ -69,16 +71,23 @@ makes differential validation possible across the two layouts. It never ships in
 ## Layout
 
 ```
-include/   screen.h (framebuffer format)   game.h (native state structs — grows per subsystem)
-           blit_const.h (fine-x blit constants shared by src/blit.c and the asm cores)
-src/       main.c + one file per subsystem (road.c, objects.c, hud.c, score.c, game_update.c, …)
-src/asm/   hand-written m68k cores for the hottest render leaves (objshift2.S, objshift.S); the C in src/*.c stays
-           the byte-exact reference, and a per-core flag (game.h RM_ASM_* + the RM_BLIT_* dispatch macro)
-           picks asm on the m68k builds / C on the host — see render/atari/README.md and PERF30.md A3
-test/      capture_ref.py (golden framebuffers from recreate)  equiv.py (candidate vs reference)
-           adapter.*  (flat image → remaster structs)   inputs/ (deterministic per-frame scripts)
+include/   14 headers: screen.h (framebuffer format)  game.h (native state structs — the whole owned state)
+           blitter.h (the STE hardware-blitter seam)  sound.h  flow.h  text.h  assets.h  st.h, plus the
+           per-subsystem constant tables (blit_const.h, road_const.h, scroll_const.h, dash_const.h, …)
+src/       30 .c files, one per subsystem — render (road.c, ground.c, object.c, object_list.c, sprite.c,
+           scroll.c, geometry.c, blit.c, hud.c, text.c), gameplay (player.c, gameplay.c, events.c, course.c,
+           frame.c, flow.c, intermission.c, results.c), assets.c and sound.c/sound_trig.c. There is no
+           main.c — the on-target shell lives in render/atari/game_main.c. Nine blitter*.c are the STE
+           target-only route + its measurement builds (never in the host .so; see BLIT_STE_SPEC.md)
+src/asm/   hand-written m68k cores for the hottest render leaves (objshift2.S, objshift.S, road_band.S); the C
+           in src/*.c stays the byte-exact reference, and a per-core flag (game.h RM_ASM_* + the RM_BLIT_*
+           dispatch macro) picks asm on the m68k builds / C on the host — see render/atari/README.md and PERF30.md A3
+test/      the differential harness: capture_ref.py (golden state/framebuffers from recreate)  equiv.py
+           (candidate vs reference)  adapter.py (flat recreate image ↔ remaster structs)  assets_load.py,
+           plus 32 test_*.py — one per subsystem, each driving recreate and remaster from the same inputs
 render/atari/  on-target build: BUGGYBOY.PRG (the playable game — leg select, race, flow, sound)
-           + the frame-0 golden harness (run_golden.py) — see render/atari/README.md
+           + the frame-0 golden harness (run_golden.py) and the Hatari measurement runners
+           (run_cadence.py, run_ste_*.py) — see render/atari/README.md
 tools/     bench.py (cycles vs original + vs recreate, extends recreate/tools/bench_frame.py)
 Makefile   build the host lib + run equivalence tests + bench
 STATUS.md  per-subsystem progress vs recreate

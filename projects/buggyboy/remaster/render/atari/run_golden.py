@@ -46,30 +46,27 @@ BUILD = HERE / "build"
 LEGS = range(NUM_LEGS)                                     # the legs to pin — the ONE source of the boot legs
 
 
-def build_golden_prg(leg, ste=False):
+def build_golden_prg(leg):
     """Build the GOLDEN.PRG variant booting `leg` (the boot fast path) via build_game.sh, with GEN_GOLDEN=1
     so the fixture generator also writes build/golden_leg<N>.bin + palette_leg<N>.bin (that leg's reference).
     GOLDEN_LEG and -DGOLDEN_BOOT_LEG both derive from the SAME `leg` — the reference and the PRG can't drift.
-    ste=True builds the STE hardware-blitter target (GAME_STE, PERF30 C4). The env is scrubbed of any
-    leaked GAME_STE / GAME_STE_SELFTEST so each arm is exactly the build it names."""
+    ONE binary covers both machines (PERF30 C4), so the ST and STE arms build the same .PRG and differ only
+    in how Hatari runs it. The env is scrubbed of a leaked GAME_STE_SELFTEST so the build is what it names."""
     env = {**os.environ,
            "GAME_PRG": GOLDEN_PRG,
            "GEN_GOLDEN": "1",
            "GOLDEN_LEG": str(leg),
+           "GAME_NO_STAGE": "1",                # a harness variant stays in build/; disk/ is the play drive
            "GAME_EXTRA_CFLAGS": f"-DGOLDEN_BOOT_LEG={leg}"}
     env.pop("GAME_STE_SELFTEST", None)          # a golden is never a self-test build
-    if ste:
-        env["GAME_STE"] = "1"
-    else:
-        env.pop("GAME_STE", None)               # the stock ST golden must not inherit GAME_STE
     subprocess.run(["bash", str(HERE / "build_game.sh")], env=env, check=True)
 
 
 def verify_leg(leg, ste=False, memsize=None):
     """Build + run leg `leg`'s GOLDEN.PRG and byte-compare its boot frame vs recreate's pipeline. ste=True
-    builds the STE target and boots it on --machine ste --blitter. memsize selects the emulated RAM in MB
-    (None = run_hatari's default). Returns True on MATCH, False on DIFF."""
-    build_golden_prg(leg, ste=ste)
+    boots the SAME binary on --machine ste --blitter. memsize selects the emulated RAM in MB (None =
+    run_hatari's default). Returns True on MATCH, False on DIFF."""
+    build_golden_prg(leg)
     fb = run_hatari.run(GOLDEN_PRG, machine="ste" if ste else "st", blitter=ste, memsize=memsize)
     where = "on STE (--machine ste --blitter)" if ste else "on-target road + objects + HUD"
     return run_hatari.verify_frame(

@@ -30,7 +30,7 @@ engine + (§16) the road-scroll route. Historical slice tags (1-5) are kept for 
 `src/blitter*.c` are excluded from the host `.so` / bench builds (`Makefile` `STE_SRC` filter-out) — they
 poke supervisor-only I/O registers, so `RM_BLITTER` is never set for the host differential and `make test`
 keeps pinning the C reference. The old `GAME_STE` two-binary profile / `BUGGYBST.PRG` is **retired**;
-`GAME_STE` is accepted-but-ignored for script compatibility. The stock ST binary is no longer a separate
+the `GAME_STE` knob is gone entirely — nothing reads it. The stock ST binary is no longer a separate
 artifact — the unified PRG on an ST is **cadence-identical** to the old stock (§11), which replaces the
 byte-identical-stock pin.
 

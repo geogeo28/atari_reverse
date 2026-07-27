@@ -4,9 +4,9 @@
 Builds a GAME_CADENCE_TRACE + GAME_AUTODRIVE variant and boots it on Hatari for `machine` (st / ste). The
 shell records the vblank SPAN of every present (game_main.c's cadence_record) into a log dumped to
 C:\\SCREEN.BIN on exit; this parses it and prints the span distribution (vblanks / ms / fps per present).
-Pass machine=ste to measure on the STE hardware-blitter build (GAME_STE=1, --machine ste --blitter) — the
-before/after metric for the C4 blitter engine conversion. Cycle-exactness is NOT available for the blitter
-under Hatari; the vblank-span distribution is the perf metric.
+Pass machine=ste to measure the STE hardware-blitter route (--machine ste --blitter; the unified binary
+binds the blitter at boot) — the before/after metric for the C4 blitter engine conversion. Cycle-exactness
+is NOT available for the blitter under Hatari; the vblank-span distribution is the perf metric.
 
 --freerun drops the C1 even-vblank flip lock (-DGAME_PRESENT_FREERUN) so a present costs exactly what
 the frame took: WITH the lock every present is quantised onto the 2-vblank grid, which hides a render win
@@ -60,12 +60,9 @@ def build(machine, frames, leg, idle=False, freerun=False):
     extra = f"-DGAME_AUTODRIVE={frames} -DGAME_CADENCE_TRACE={frames}" + (f" {IDLE_CFLAGS}" if idle else "")
     if freerun:
         extra += " -DGAME_PRESENT_FREERUN"
-    env = {**os.environ, "GAME_PRG": prg, "GOLDEN_LEG": str(leg), "GAME_EXTRA_CFLAGS": extra}
+    env = {**os.environ, "GAME_PRG": prg, "GOLDEN_LEG": str(leg), "GAME_EXTRA_CFLAGS": extra,
+           "GAME_NO_STAGE": "1"}                # a harness variant stays in build/; disk/ is the play drive
     env.pop("GAME_STE_SELFTEST", None)
-    if machine == "ste":
-        env["GAME_STE"] = "1"
-    else:
-        env.pop("GAME_STE", None)
     subprocess.run(["bash", str(HERE / "build_game.sh")], env=env, check=True, stdout=subprocess.DEVNULL)
     return prg
 

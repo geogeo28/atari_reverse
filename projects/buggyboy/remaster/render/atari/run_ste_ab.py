@@ -29,8 +29,11 @@ DEFAULT_FRAMES = (20, 40, 60, 80)
 
 
 def build(frame_n):
-    """Build ONE unified GAME_AUTODRIVE=frame_n dump build (the shipping code path — no GAME_STE split)."""
-    env = {**os.environ, "GAME_PRG": AB_PRG, "GAME_EXTRA_CFLAGS": f"-DGAME_AUTODRIVE={frame_n}"}
+    """Build ONE unified GAME_AUTODRIVE=frame_n dump build (the shipping code path — one binary, both machines).
+
+    GAME_NO_STAGE keeps this measurement variant in build/ — disk/ is the interactive-play drive."""
+    env = {**os.environ, "GAME_PRG": AB_PRG, "GAME_EXTRA_CFLAGS": f"-DGAME_AUTODRIVE={frame_n}",
+           "GAME_NO_STAGE": "1"}
     subprocess.run(["bash", str(HERE / "build_game.sh")], env=env, check=True, stdout=subprocess.DEVNULL)
 
 

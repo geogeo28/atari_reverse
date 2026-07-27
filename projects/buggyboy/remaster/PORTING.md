@@ -554,9 +554,9 @@ still uncommitted, so the m68k build was broken **on `origin`** and every test s
 Closed by making the real build part of the gate:
 
 - `make test` now depends on `GATE.PRG` **and** `GATESTE.PRG` — full cross-compile + link + `.PRG` wrap,
-  stock ST and `GAME_STE=1` (which selects different sources and CFLAGS, so without the second build the
-  STE-only sources compile nowhere). ~2 s each; the m68k toolchain was ALREADY a hard prerequisite via
-  `bench.elf`, so this adds no dependency, only ~4 s.
+  the shipping build and the measurement build (`GAME_STE_SELFTEST/SWEEP/CENSUS=1`, which adds sources
+  and CFLAGS, so without the second build those sources compile nowhere). ~2 s each; the m68k toolchain
+  was ALREADY a hard prerequisite via `bench.elf`, so this adds no dependency, only ~4 s.
 - Both go through `build_game.sh` rather than restating its flags. A third copy of the cross flags is
   exactly the drift this gate exists to catch. They build under gate-only names so the shipping
   `BUGGYBOY.PRG` is never clobbered.

@@ -77,7 +77,8 @@ def build(leg, frames):
     # returns the FIRST dump it observes — so the boot frame raced the census report and won at some frame
     # counts (the pre-existing "crashed" rows). GAME_AUTODRIVE alone boots the same leg via GAME_LEG_INDEX
     # (game_main.c's BOOT_FAST_LEG), which GOLDEN_LEG already sets, and dumps only the census.
-    env = {**os.environ, "GAME_STE": "1", "GAME_STE_CENSUS": "1", "GAME_PRG": CENSUS_PRG,
+    # GAME_NO_STAGE keeps this measurement variant in build/ — disk/ is the interactive-play drive.
+    env = {**os.environ, "GAME_STE_CENSUS": "1", "GAME_PRG": CENSUS_PRG, "GAME_NO_STAGE": "1",
            "GOLDEN_LEG": str(leg), "GAME_EXTRA_CFLAGS": f"-DGAME_AUTODRIVE={frames}"}
     subprocess.run(["bash", str(HERE / "build_game.sh")], env=env, check=True, stdout=subprocess.DEVNULL)
 

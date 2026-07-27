@@ -1,15 +1,15 @@
 #!/bin/bash
-# Build the remaster HUD demo .PRG and stage a drive for Hatari.
-#   build.sh          -> build/HUD.PRG + disk/HUD.PRG
+# Build the remaster HUD demo .PRG.
+#   build.sh          -> build/HUD.PRG   (run_hatari.py boots it from there)
 # Bakes the captured HUD inputs (gen_hud_fixture.py) into build/hud_fixture.h, cross-compiles
-# remaster's HUD (hud.c + text.c) + the TOS shim, and wraps to a GEMDOS .PRG. build/ and disk/
-# are gitignored. Requires the recreate .so to be built (the fixture generator drives it).
+# remaster's HUD (hud.c + text.c) + the TOS shim, and wraps to a GEMDOS .PRG. build/ is gitignored.
+# Requires the recreate .so to be built (the fixture generator drives it).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REMASTER="$(cd "$HERE/../.." && pwd)"       # remaster/
-BUILD="$HERE/build"; DISK="$HERE/disk"
-mkdir -p "$BUILD" "$DISK"
+BUILD="$HERE/build"
+mkdir -p "$BUILD"
 
 PY="$REMASTER/../recreate/.venv/bin/python"; [ -x "$PY" ] || PY=python3
 
@@ -35,5 +35,4 @@ m68k-elf-objcopy -O binary "$BUILD/hud.elf" "$BUILD/hud.bin"
 echo ">> wrap -> GEMDOS .PRG"
 "$PY" "$HERE/mkprg.py" "$BUILD/hud.elf" "$BUILD/hud.bin" "$BUILD/HUD.PRG"
 
-cp "$BUILD/HUD.PRG" "$DISK/HUD.PRG"
-ls -l "$DISK/HUD.PRG"
+ls -l "$BUILD/HUD.PRG"

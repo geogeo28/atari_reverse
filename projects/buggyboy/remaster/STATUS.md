@@ -4,7 +4,7 @@ A free, optimized, human-readable re-implementation, validated **pixel-identical
 `recreate/` cores per frame (see [`README.md`](README.md)). This tracks per-subsystem progress; a
 subsystem is "green" when its framebuffer matches `recreate/`'s over the equivalence harness.
 
-## Phase A — render pipeline (current)
+## Phase A — render pipeline (complete)
 
 Validate each render stage against a captured `recreate/` snapshot (adapter → remaster structs →
 framebuffer → diff). Order follows the in-race draw order.
@@ -70,7 +70,7 @@ arena's 388616 bytes, 347 differ after 60 staged frames — all in the graphics 
 one of them reaches the framebuffer: the 4th byte of the dashboard graphic, in which the running
 game clears a bit. That bit returns on its own once the system that writes it is ported.
 
-## Phase B — gameplay (later)
+## Phase B — gameplay (complete — the shipping BUGGYBOY.PRG plays end-to-end)
 
 | Subsystem     | recreate reference | remaster status | Equivalence |
 |---------------|--------------------|-----------------|-------------|
@@ -393,8 +393,9 @@ game shell for nobody: `render/atari/game_main.c` is in neither the host `.so` n
 `src/` files (`frame`/`flow`/`intermission`/`results`) are host-compiled but never cross-compiled. A
 commit landing `game_main.c` without its header half therefore left the m68k build broken **on origin**
 with the suite green — twice in one session. `make test` now depends on a full cross-compile + link +
-`.PRG` wrap in BOTH variants (stock ST and `GAME_STE=1`, which selects different sources), ~4 s on top of
-a ~21 s suite; the m68k toolchain was already a hard prerequisite via `bench.elf`. Both go through
+`.PRG` wrap in BOTH variants (the shipping build and the `GAME_STE_SELFTEST/SWEEP/CENSUS=1` measurement
+build, which adds the sources the shipping one omits), ~4 s on top of a ~21 s suite; the m68k toolchain
+was already a hard prerequisite via `bench.elf`. Both go through
 `build_game.sh` so the cross flags are never restated. `make golden` promotes the Hatari end-to-end
 (5 legs, ~20 s) to a named target for pre-promotion runs. Mutation-verified: a typo'd constant in
 `game_main.c` now fails `make test` at the build step. It catches "does not compile / does not link" —

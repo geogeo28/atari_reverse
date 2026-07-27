@@ -105,7 +105,8 @@ MUTATIONS = {1: ("skew = fine_x + 1", "objshift skew", GRIDS_MUTATE_SKEW),
 
 
 def build(mutate):
-    env = {**os.environ, "GAME_STE": "1", "GAME_STE_SWEEP": "1", "GAME_PRG": SWEEP_PRG,
+    # GAME_NO_STAGE keeps this measurement variant in build/ — disk/ is the interactive-play drive.
+    env = {**os.environ, "GAME_STE_SWEEP": "1", "GAME_PRG": SWEEP_PRG, "GAME_NO_STAGE": "1",
            "GAME_STE_SKEW_MUTATE": str(mutate)}
     env.pop("GAME_STE_SELFTEST", None)
     subprocess.run(["bash", str(HERE / "build_game.sh")], env=env, check=True, stdout=subprocess.DEVNULL)

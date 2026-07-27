@@ -1,8 +1,8 @@
 #!/bin/bash
 # Build the on-target BuggyBoy game .PRG and stage it for Hatari.
 #   build_game.sh                          -> build/BUGGYBOY.PRG + disk/BUGGYBOY.PRG   (shipping: boots the leg select, with sound)
-#   GAME_PRG=GOLDEN.PRG GAME_EXTRA_CFLAGS="-DGOLDEN_BOOT_LEG=0" build_game.sh
-#                                          -> build/GOLDEN.PRG  + disk/GOLDEN.PRG      (golden harness variant: boots straight
+#   GAME_NO_STAGE=1 GAME_PRG=GOLDEN.PRG GAME_EXTRA_CFLAGS="-DGOLDEN_BOOT_LEG=0" build_game.sh
+#                                          -> build/GOLDEN.PRG                         (golden harness variant: boots straight
 #                                                                                       into leg 0 + dumps frame 0)
 # Bakes the non-asset-file inputs (gen_game_fixture.py) into build/game_fixture.h, cross-compiles
 # remaster's whole ported pipeline + the game shell + the TOS shim, and wraps to a GEMDOS .PRG. build/
@@ -37,7 +37,7 @@ mkdir -p "$BUILD" "$DISK"
 #     §12/§13), and the road fine-scroll straight off the pre-rotated playfield (§16). The census/selftest/sweep are extra
 #     compile-gated MEASUREMENT builds. GAME_FORCE_NO_BLITTER pins the CPU path at boot even on an STE — a
 #     harness A/B baseline knob only. (The old GAME_STE / separate BUGGYBST.PRG two-binary profile is
-#     retired; GAME_STE is accepted-but-ignored for script compatibility.) FOUR routes bind now — the
+#     retired: the GAME_STE knob no longer exists — nothing reads it.) FOUR routes bind now — the
 #     HUD dashboard composite joins them straight off the live arena art (§17). ---
 STE_CFLAGS="-DRM_BLITTER"
 STE_SOURCES="$REMASTER/src/blitter.c $REMASTER/src/blitter_objshift2.c $REMASTER/src/blitter_skew.c \
@@ -129,9 +129,11 @@ m68k-elf-objcopy -O binary "$BUILD/game.elf" "$BUILD/game.bin"
 echo ">> wrap -> GEMDOS .PRG"
 "$PY" "$HERE/mkprg.py" "$BUILD/game.elf" "$BUILD/game.bin" "$BUILD/$PRG"
 
-# GAME_NO_STAGE=1 stops here with the .PRG built but NOT copied to the Hatari drive. `make test`'s build
-# gate sets it: the gate only needs to know the shell compiles and links, and re-staging disk/ on every
-# test run would litter the mounted drive and could rewrite its data files under a running emulator.
+# GAME_NO_STAGE=1 stops here with the .PRG built but NOT copied to the Hatari drive. EVERY caller that
+# names its own GAME_PRG sets it — `make test`'s build gate and all the measurement runners — so disk/
+# stays exactly the interactive-play drive (BUGGYBOY.PRG + the two data files) instead of accumulating
+# one variant .PRG per harness. The runners don't need the staging: run_hatari.py boots each variant
+# from build/ and copies it onto a throwaway drive. Only the SHIPPING build below refreshes disk/.
 if [ "${GAME_NO_STAGE:-0}" = "1" ]; then
     ls -l "$BUILD/$PRG"
     exit 0

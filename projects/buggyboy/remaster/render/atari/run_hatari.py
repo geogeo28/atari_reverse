@@ -26,7 +26,8 @@ import tos_probe                                          # noqa: E402  Hatari +
 from render_screen import _decode_interleaved, W, H       # noqa: E402
 from extract_graphics import write_png                    # noqa: E402
 
-BUILD = HERE / "build"
+BUILD = HERE / "build"                                    # every .PRG variant the build scripts emit
+DISK = HERE / "disk"                                      # the interactive-play drive: BUGGYBOY.PRG + its data
 SCREEN_BASE = 0x2000                                      # only for _decode_interleaved's indexing
 SCREEN_BYTES = W * H * 4 // 8                             # 32000
 RUN_VBLS = "4000"
@@ -39,8 +40,8 @@ DEFAULT_MEMSIZE = os.environ.get("RM_MEMSIZE", "4")
 
 
 # .PRGs that load the game's data files themselves at boot, and so need them on the drive. HUD.PRG
-# does not — and build.sh never stages them — so requiring them for every .PRG would break the
-# documented `build.sh && run_hatari.py` flow on a clean checkout (disk/ is gitignored).
+# does not — and nothing stages them for it — so requiring them for every .PRG would break the
+# documented `build.sh && run_hatari.py` flow on a clean checkout (build/ and disk/ are gitignored).
 DATA_FILES = ("COURSES.DAT", "GRAPHICS.GRA")
 NEEDS_DATA_FILES = ("BUGGYBOY.PRG", "GOLDEN.PRG")
 
@@ -56,17 +57,23 @@ def run(prg, timeout=60, machine="st", blitter=False, needs_data=None, run_vbls=
     list; True/False forces it — so a runner naming its own .PRG (BUGGYBST/ABSTE/…) passes needs_data=True
     instead of mutating the module global.
 
+    The .PRG is read from build/, where every variant lands, so a measurement build never has to be
+    copied into disk/ (that stays the interactive-play drive: BUGGYBOY.PRG + the two data files, which
+    build_game.sh's shipping build keeps fresh). The run itself happens on a throwaway TemporaryDirectory
+    drive, so it can't write back over either directory.
+
     memsize: emulated RAM in MB (see DEFAULT_MEMSIZE) — the 1 MB memory-diet gate runs the pins at 1."""
     hatari, rom = tos_probe.find_hatari(), tos_probe.find_tos_rom()
     if not (hatari and rom):
         raise RuntimeError("Hatari or TOS ROM not available (brew install hatari)")
     if needs_data is None:
         needs_data = prg in NEEDS_DATA_FILES
-    staged = (prg, *DATA_FILES) if needs_data else (prg,)
     with tempfile.TemporaryDirectory() as d:
         drive = Path(d)
-        for name in staged:
-            (drive / name).write_bytes((HERE / "disk" / name).read_bytes())
+        (drive / prg).write_bytes((BUILD / prg).read_bytes())
+        if needs_data:
+            for name in DATA_FILES:
+                (drive / name).write_bytes((DISK / name).read_bytes())
         out = drive / "SCREEN.BIN"
         env = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}
         args = [hatari, "--machine", machine]

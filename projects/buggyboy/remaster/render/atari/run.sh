@@ -12,4 +12,4 @@ import tos_probe; print(tos_probe.find_hatari(), tos_probe.find_tos_rom())")
 [ -n "$HATARI" ] && [ -n "$ROM" ] || { echo 'Hatari or TOS ROM not found (brew install hatari)'; exit 1; }
 
 exec "$HATARI" --confirm-quit off --memsize 4 --monitor rgb --tos-res low \
-     --tos "$ROM" --harddrive "$HERE/disk" --auto 'C:\HUD.PRG'
+     --tos "$ROM" --harddrive "$HERE/build" --auto 'C:\HUD.PRG'

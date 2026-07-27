@@ -26,8 +26,8 @@ against the Musashi oracle, so this closes the loop end to end.)
 | `main.c`             | TOS shim: build the structs from the fixture, `rm_draw_hud`, dump `SCREEN.BIN`, set palette, blit, wait for a key |
 | `os.s` / `tos.ld` / `mkprg.py` | GEMDOS entry + trap wrappers, link script, `.PRG` wrapper (copied from recreate's harness) |
 | `shim_include/string.h` / `shim.c` | freestanding `<string.h>` decls + defs, linked by every on-target program (bare-metal GCC has no libc) |
-| `build.sh`           | generate fixture → cross-compile `hud.c`+`text.c`+shim → `.PRG` → stage `disk/` |
-| `run_hatari.py`      | headless: run the `.PRG`, byte-compare `SCREEN.BIN` vs `golden.bin`, write a PNG |
+| `build.sh`           | generate fixture → cross-compile `hud.c`+`text.c`+shim → `build/HUD.PRG` |
+| `run_hatari.py`      | headless: run a `.PRG` from `build/`, byte-compare `SCREEN.BIN` vs `golden.bin`, write a PNG |
 | `run.sh`             | interactive: watch it in the Hatari GUI |
 | `gen_game_fixture.py` / `game_main.c` | the on-target BuggyBoy game (below): non-asset-file fixture + the game shell (leg select → race → between-legs flow) |
 | `build_game.sh` | build `BUGGYBOY.PRG` (the shipping game) or, with `GAME_PRG`/`GAME_EXTRA_CFLAGS`, a variant |
@@ -38,12 +38,15 @@ against the Musashi oracle, so this closes the loop end to end.)
 ```bash
 cd projects/buggyboy/recreate && make build/libbuggyboy.so   # once: the fixture generator drives it
 cd ../remaster
-bash render/atari/build.sh                 # -> build/HUD.PRG + disk/HUD.PRG
+bash render/atari/build.sh                 # -> build/HUD.PRG
 python render/atari/run_hatari.py          # headless: prints MATCH, writes out/render/remaster_hud_hatari.png
 bash render/atari/run.sh                   # watch it in Hatari (press a key in the ST to exit)
 ```
 
 Hatari needs a 4 MiB machine (`--memsize 4`); `build/` and `disk/` are gitignored build artifacts.
+Every `.PRG` variant lands in `build/`, and the headless runners boot it from there onto a throwaway
+drive. `disk/` is only the **interactive-play** drive — `BUGGYBOY.PRG` + `COURSES.DAT` + `GRAPHICS.GRA`,
+refreshed by a plain `build_game.sh`; harness builds pass `GAME_NO_STAGE=1` and never touch it.
 
 ## The game (`BUGGYBOY.PRG`)
 

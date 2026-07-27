@@ -8,7 +8,7 @@ PY       := $(RECREATE)/.venv/bin/python
 
 CAND    := build/libremaster.so
 # STE hardware-blitter target-only sources (PERF30 C4): they poke supervisor-only 0xFFFF8Axx registers
-# and are linked ONLY by the GAME_STE build (render/atari/build_game.sh's $STE_SOURCES), never by the
+# and are linked ONLY by the m68k target build (render/atari/build_game.sh's $STE_SOURCES), never by the
 # host .so / bench — exactly like the src/asm/*.S cores. Excluded from the wildcard so the differential
 # build stays host-portable.
 STE_SRC := src/blitter.c src/blitter_objshift2.c src/blitter_objshift.c src/blitter_selftest.c src/blitter_sweep.c \

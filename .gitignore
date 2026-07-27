@@ -5,6 +5,8 @@ projects/*/decomp.c
 **/.DS_Store
 **/__pycache__/
 *.pyc
+.pytest_cache/                  # pytest's per-run cache
+*.dSYM/                         # clang debug bundles next to a built .so/binary
 .idea/
 projects/*/recreate/.venv/
 projects/*/recreate/build/

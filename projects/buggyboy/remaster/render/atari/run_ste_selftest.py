@@ -28,7 +28,8 @@ SCREEN_BYTES = run_hatari.SCREEN_BYTES
 def build():
     # GAME_PRG makes this runner's SELFTEST_PRG constant authoritative — the build writes exactly the
     # .PRG we then boot, so a stale earlier build can't cause a false pass.
-    env = {**os.environ, "GAME_STE": "1", "GAME_STE_SELFTEST": "1", "GAME_PRG": SELFTEST_PRG}
+    # GAME_NO_STAGE keeps this measurement variant in build/ — disk/ is the interactive-play drive.
+    env = {**os.environ, "GAME_STE_SELFTEST": "1", "GAME_PRG": SELFTEST_PRG, "GAME_NO_STAGE": "1"}
     subprocess.run(["bash", str(HERE / "build_game.sh")], env=env, check=True,
                    stdout=subprocess.DEVNULL)
 
