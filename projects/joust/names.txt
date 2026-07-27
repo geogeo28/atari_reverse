@@ -1,7 +1,13 @@
 # Joust (Atari ST, Williams/Atari; Gamex release). Depacked from JOUSTS.CTE via
 # tools/depack_gamex.py. Ghidra addresses = image offset + 0x10000. No DRI symbols.
-# Full solve: 74/74 functions named. "# ctx" = inferred from behaviour/context
-# (refinable); untagged = confirmed from the body.
+# 75/75 functions named. "# ctx" = inferred from behaviour/context (refinable);
+# untagged = confirmed by reading the body (decomp.c + 68000 disassembly).
+#
+# NOTE: many names here were corrected after reading the asm — the XBIOS opcode
+# table in tools/prg_dis.py and tools/ghidra_scripts/AtariOsTrapAnnotate.java is
+# wrong (0x20 is Dosound, not Supexec; 0x1c Giaccess and 0x19 Ikbdws are missing;
+# 0x1f/0x21/0x28/0x2a are decimal-as-hex mistakes). That mislabelled the whole
+# sound driver as palette/keyboard/graphics code. See the cmt lines below.
 
 # ==== entry / init ====
 fn 0x10000 _start
@@ -9,51 +15,53 @@ fn 0x10080 init_system
 fn 0x105f0 init_game
 fn 0x10aae title_screen
 fn 0x104b2 init_video
-fn 0x1096e init_gfx                   # ctx
 
 # ==== main loop: game logic ====
 fn 0x12014 update_objects
-fn 0x12606 animate_objects            # ctx
-fn 0x1285c draw_objects_buf2          # ctx
+fn 0x12606 update_eggs
+fn 0x1285c update_egg_draw
 fn 0x12caa render_objects
-fn 0x12cb2 render_objects_b           # ctx
-fn 0x12cc2 render_objects_impl        # ctx
+fn 0x12cb2 render_objects_next
+fn 0x12cc2 render_object_body
 fn 0x13842 collision_check
-fn 0x14ada spawn_wave                 # ctx
-fn 0x1783c wave_manager               # ctx
-fn 0x146f6 lava_troll                 # ctx
+fn 0x14ada update_pterodactyl
+fn 0x1783c wave_manager
+fn 0x146f6 lava_troll
 fn 0x142de draw_messages
-fn 0x1437a check_highscore            # ctx
-fn 0x1033e count_objects              # ctx
-fn 0x11dd6 control_player             # ctx
-fn 0x11f28 player_death               # ctx
+fn 0x1437a check_highscore
+fn 0x1033e count_objects_and_pad
+fn 0x11dd6 control_player
+fn 0x11f28 player_death
 
 # ==== player / object mechanics ====
-fn 0x140fe joust_bounce               # ctx
-fn 0x13fe6 pixel_collision            # ctx
-fn 0x13ef2 test_overlap               # ctx
-fn 0x14098 respawn_player             # ctx
-fn 0x13300 check_platform             # ctx
-fn 0x15226 check_platform_y           # ctx
-fn 0x15276 check_proximity            # ctx
-fn 0x129b4 alloc_object               # ctx
-fn 0x12a2a advance_anim               # ctx
-fn 0x12914 draw_sprite_at             # ctx
-fn 0x149b8 troll_draw                 # ctx
-fn 0x14a32 troll_grab                 # ctx
+fn 0x140fe joust_bounce
+fn 0x13fe6 pixel_collision
+fn 0x13ef2 test_overlap
+fn 0x14098 start_death_anim
+fn 0x13300 check_platform
+fn 0x15226 ptero_avoid_platform
+fn 0x15276 ptero_spot_player
+fn 0x129b4 erase_egg_sprite
+fn 0x12a2a update_egg_physics
+fn 0x12914 draw_egg_sprite
+fn 0x149b8 troll_erase_hand
+fn 0x14a32 troll_draw_hand
 
 # ==== scoring / lives / messages ====
-fn 0x14172 add_score_p1               # ctx
-fn 0x14166 add_score_p2               # ctx
-fn 0x14160 add_score                  # ctx
-fn 0x14246 bonus_life                 # ctx
-fn 0x1424e draw_lives_p1              # ctx
-fn 0x14260 draw_lives_p2              # ctx
-fn 0x1435c check_messages             # ctx
+fn 0x14172 score_update_p1
+fn 0x14166 score_update_p2
+fn 0x14160 score_update
+fn 0x14246 draw_lives
+fn 0x1424e draw_lives_p1
+fn 0x14260 draw_lives_p2
+fn 0x1435c find_free_message
 
 # ==== high-score entry ====
-fn 0x146a6 draw_hiscore_entry         # ctx
-fn 0x14658 draw_hiscore_cursor        # ctx
+fn 0x146a6 draw_hiscore_entry
+fn 0x14658 draw_hiscore_cursor
+fn 0x144d4 hiscore_key_input
+fn 0x14538 hiscore_joystick_input
+fn 0x144b0 flash_hiscore_color
 
 # ==== graphics primitives ====
 fn 0x1042a blit_copy
@@ -61,77 +69,220 @@ fn 0x10456 blit_or
 fn 0x10482 blit_andnot
 fn 0x17752 blit_sprite_mask
 fn 0x177a2 blit_sprite
-fn 0x136e8 draw_object_data           # ctx
-fn 0x137bc draw_object_mask           # ctx
-fn 0x1369c blit_masked_rows           # ctx
-fn 0x13628 blit_sprite3               # ctx
-fn 0x15098 blit_mask_wide             # ctx
-fn 0x1510c blit_sprite_planes         # ctx
-fn 0x175ba clear_sprite_mask          # ctx
-fn 0x17438 draw_explosions            # ctx
+fn 0x136e8 draw_object_data
+fn 0x137bc draw_object_mask
+fn 0x1369c blit_pattern_rows
+fn 0x13628 draw_spawn_sparkle        # ctx
+fn 0x15098 blit_mask_wide
+fn 0x1510c blit_sprite_planes
+fn 0x175ba paint_floor_row
+fn 0x17438 dissolve_platforms
 fn 0x102e2 fill_screen
+fn 0x102fe make_fill_pattern
+fn 0x10334 fill_pattern_n
 fn 0x10700 draw_string
-fn 0x1052e anim_sprites               # ctx
-fn 0x1757a scroll_screen_up           # ctx
-fn 0x175de draw_scroller              # ctx
-fn 0x182a2 pos_to_screen              # ctx
-fn 0x182d6 pos_to_screen2             # ctx
+fn 0x1052e draw_platforms
+fn 0x1757a raise_floor
+fn 0x175de animate_ground_shrink     # ctx
+fn 0x182a2 pos_to_screen
+fn 0x182d6 screen_to_pos
+fn 0x135f4 select_sprite_base
 
 # ==== palette / colour ====
 fn 0x10c46 xbios_setpalette
-fn 0x144b0 xbios_setcolor
-fn 0x10c56 cycle_palette              # ctx
-fn 0x10a56 set_color_lvl              # ctx
-fn 0x105c2 advance_scroll             # ctx
+fn 0x10c56 cycle_palette
 
-# ==== input / timing / stubs ====
-fn 0x10a8a read_key_flag              # ctx
-fn 0x11c24 poll_key                   # ctx
-fn 0x144d4 read_key                   # ctx
-fn 0x11d9a wait_vsync                 # ctx
-fn 0x14538 vsync_wait2                # ctx
-fn 0x102fe stub_ret                   # ctx
-fn 0x135f4 stub_ret2                  # ctx
+# ==== sound (XBIOS Dosound / Giaccess — NOT palette/keyboard, see header) ====
+fn 0x10a56 play_sound
+fn 0x10a8a snd_poll_done
+fn 0x1096e snd_tone_sweep
 
-# ==== variables ====
+# ==== input / rng / quit ====
+fn 0x11d9a read_joysticks
+fn 0x11c24 poll_quit_key
+fn 0x105c2 rng_advance
+
+# ==== variables: screen / geometry ====
 var 0x10dde screen_base
-var 0x10d60 screen_back
+var 0x10d60 playfield_bottom
 var 0x10d66 bytes_per_row
-var 0x117ba screen_right
-var 0x117b8 screen_left
+var 0x10cd2 palette
 var 0x00484 conterm
 var 0x10d22 conterm_save
-var 0x10cf2 num_players
+var 0x10d18 saved_mousevec
+var 0x10d1c saved_joyvec
+
+# ==== variables: game state ====
+var 0x10cf2 players_alive
 var 0x10cf3 wave_num
+var 0x10cf4 wave_num_text
 var 0x10d08 game_phase
 var 0x10d09 active_players
+var 0x10d11 two_player_mode
 var 0x10d12 game_over_flag
+var 0x10d0a live_object_count
+var 0x10d0b egg_count
+var 0x10d0c message_char_count
+var 0x10d0d ptero_spawn_count
+var 0x10d02 egg_wave_countdown
+var 0x10d03 team_wave_countdown
+var 0x10d04 ptero_wave_countdown
+var 0x10d05 gladiator_wave_countdown
+var 0x10d06 player_conflict_flag
+var 0x10d07 first_dismount_owner
 var 0x10dc1 collision_hit
-var 0x10e11 text_flags
-var 0x10df4 cursor_pos                # ctx
+
+# ==== variables: tables ====
 var 0x10f36 object_table
-var 0x10f84 player2                   # ctx
-var 0x113ba spawn_table
+var 0x10f84 player2
+var 0x10fd2 enemy_objects
+var 0x10f38 p1_x
+var 0x10f3a p1_y
+var 0x10f86 p2_x
+var 0x10f88 p2_y
 var 0x1137a effect_table
+var 0x113ba pterodactyl_table
 var 0x117b4 platform_table
-var 0x119d4 collision_table
+var 0x10cfa platform_present
+var 0x117b8 ground_x0
+var 0x117ba ground_x1
+var 0x117f4 platform_edge_table
+var 0x11964 spawn_points
+var 0x10d14 spawn_point_cursor
+var 0x119b4 egg_bonus_table
+var 0x119d4 platform_sprites
 var 0x10e16 message_table
+var 0x11774 sound_table
+var 0x102c8 fname_highsco
+var 0x18396 hiscore_name
+var 0x18388 hiscore_dirty
+
+# ==== variables: per-wave difficulty ====
+var 0x10d54 wave_layout_mask
+var 0x10d55 wave_type1_count
+var 0x10d56 wave_type2_count
+var 0x10d57 wave_type3_count
+var 0x10d58 speed_type1
+var 0x10d5a speed_type2
+var 0x10d5c speed_type3
+var 0x10ddc flap_delay
 var 0x10dfa spawn_interval
 var 0x10dfc spawn_timer
-var 0x10f3a p1_x                      # ctx
-var 0x10f88 p2_x                      # ctx
 
-# ==== comments ====
-cmt 0x10000 Entry: init_system, init_game, title_screen, init_video; then infinite main loop of per-frame subsystems.
-cmt 0x12014 update_objects: per-object physics + AI (flap/gravity/direction, home toward players) — the buzzard/enemy movement.
-cmt 0x140fe joust_bounce: the core mechanic — on collision the higher rider wins; flips the loser's velocity/direction.
-cmt 0x11dd6 control_player: apply joystick (flap/left/right) to a player object; from attract, fire starts the game.
-cmt 0x11f28 player_death: decrement death timer, remove player, trigger GAME OVER or respawn message.
-cmt 0x146f6 lava_troll: from wave 4+, the lava hand reaches up to grab objects lingering over the pit.
-cmt 0x14ada spawn_wave: enemy/egg spawn scheduler; ramps difficulty by halving spawn_interval.
-cmt 0x1783c wave_manager: game-phase/round transitions; spawns wave-announcement messages; next-wave setup.
-cmt 0x13842 collision_check: broad-phase box test each object vs platforms/objects (test_overlap), then pixel_collision.
-cmt 0x14172 add_score_p1: BCD add to player 1 score with carry; awards bonus_life at thresholds; redraws score.
+# ==== variables: sprite draw scratch (set by the caller, read by the blitters) ====
+var 0x10de8 draw_dst
+var 0x10dec draw_x
+var 0x10dee draw_y
+var 0x10df0 draw_src
+var 0x10df4 draw_shift
+var 0x10df6 draw_rows
+var 0x10df8 draw_dst_off
+var 0x10dc2 draw_half_select
+var 0x10da0 hit_box_a
+var 0x10db0 hit_box_b
+var 0x10dc0 hit_rows
+
+# ==== variables: text engine ====
+var 0x10e0a text_ptr
+var 0x10e0e text_shift
+var 0x10e0f text_color
+var 0x10e10 text_bg_color
+var 0x10e11 text_flags
+var 0x10e12 text_x
+var 0x10e14 text_y
+
+# ==== variables: sound / input / rng ====
+var 0x10d4c snd_priority
+var 0x10d48 snd_sweep_pitch
+var 0x10d4a snd_sweep_volume
+var 0x10d52 palette_cycle_ctr
+var 0x10e06 ikbd_packet
+var 0x1145b ikbd_cmd_joyread
+var 0x10dfe rng_ptr
+
+# ==== variables: lava troll ====
+var 0x10dc4 troll_state
+var 0x10dc6 troll_prev_dst
+var 0x10dca troll_prev_src
+var 0x10dce troll_prev_shift
+var 0x10dd0 troll_x
+var 0x10dd2 troll_y
+var 0x10dd4 troll_target
+var 0x10dd8 troll_prev_rows
+var 0x10dda troll_frame
+var 0x10ddd troll_step_timer
+var 0x14aba troll_sprite_table
+
+# ==== comments: top level ====
+cmt 0x10000 Entry: init_system, init_game, title_screen, init_video; then an infinite per-frame loop. hiscore_key_input's RETURN handler jumps back to 0x10006 (init_game) to restart the game.
+cmt 0x10080 init_system: bail out if Getrez()==2 (mono), install the IKBD mouse/joystick vectors via Kbdvbase (saving the old ones in saved_mousevec/saved_joyvec), save+mask conterm (0x484), record Physbase in screen_base.
+cmt 0x105f0 init_game: copy the state templates (0x114f8 -> players_alive.., 0x1145c -> object_table), relocate the two score-text pointers by screen_base, clear the message/pterodactyl/effect tables, set geometry (ground_x0/x1 = 0..0x13f) and playfield_bottom = screen_base+32000.
+cmt 0x10aae title_screen: draw the title bitmap (0x23aae..0x2b7ae) to screen_base, three draw_string lines, cycle_palette + rotate 6 palette entries, then Bconin: '1'/'2' select 1P/2P (players_alive + two_player_mode); a 400-tick timeout falls through to the attract loop.
+cmt 0x104b2 init_video: fill_screen, draw the HUD separator rows, then draw_platforms + score/lives redraw + snd_tone_sweep (the start-of-game sound).
+
+# ==== comments: object model ====
+cmt 0x10f36 object_table: 14 slots x 0x4e bytes, ending at effect_table. Slot 0 = player 1, slot 1 = player 2 (0x10f84), slots 2..13 = enemies (enemy_objects, 0x10fd2). Fields: +0 flags.w, +2 x.w, +4 y.w, +6 vx.w, +8 vy.w, +0xa anim timer.b, +0xb step timer.b, +0xc target vx.w, +0xe flap frame.w, +0x10/+0x12 prev x/y, +0x14 prev dst.l, +0x18 prev src.l, +0x1c rows.b, +0x1d shift.b, +0x1e EGG state.b, +0x20/+0x22 egg x/y, +0x24/+0x26 egg dx/dy, +0x28/+0x29 egg timers, +0x2a egg dst.l, +0x2e egg src.l, +0x32 egg rows.b, +0x33 egg shift.b, +0x35 egg-chain counter, +0x36 score text ptr.l, +0x3a score text shift.w, +0x3c..+0x44 ASCII score digits, +0x49/+0x4b AI timers, +0x4c lives.
+cmt 0x12014 update_objects flags word (object+0): bits0-1 = enemy type 1/2/3 (each has its own speed: speed_type1/2/3), bit2 = is a player, bit4 = grabbed by the lava troll, bit6/bit11 = flapping, bit7 = awaiting respawn, bit8 = falling into the lava, bit9 = standing on a platform, bit13 = dead/removed, bit14 = bumped a platform edge, bit15 = facing right.
+cmt 0x113ba pterodactyl_table: 4 slots x 0x20 bytes. Fields: +0 flags.w (bit0 = just spawned, bit2 = moving right, bit5 = dying), +2 dst.l, +6 src.l, +0xc x.w, +0xe y.w, +0x10 x speed.w, +0x12 y speed.w, +0x16 dst offset.w, +0x1a anim.w, +0x1c..0x1f direction/dwell timers.
+cmt 0x117b4 platform_table: 8 records x 8 bytes {y0.w, y1.w, x0.w, x1.w} — the landable boxes, gated by platform_present[i] (0x10cfa, one byte per platform: 0 = absent this wave, >0 = needs a redraw, -1 = drawn).
+cmt 0x117f4 platform_edge_table: 28 records x 12 bytes {y0,y1,x0,x1, x-push.b, y-push.b, platform index.w} — the bump boxes used by render_object_body's bit14 branch to push an object off a platform edge and force a platform redraw.
+cmt 0x119d4 platform_sprites: 8 records x 16 bytes {ptr to platform_present[i], rows.w, cols.w, src.l, dst offset.l} — the platform bitmaps, OR-blitted by draw_platforms and used as the pixel-collision surface by collision_check/test_overlap.
+cmt 0x11964 spawn_points: 5 longs per record, terminated at 0x119b4 {in-use.b, y0.w, y1.w, x0.w, x1.w, y.w, x.w}. render_object_body walks them with spawn_point_cursor looking for one clear of every object before respawning a rider there.
+cmt 0x10e16 message_table: records of 12 bytes {kind.b, timer.b, colour.b, shift.b, screen ptr.l, string ptr.l}, running up to object_table. find_free_message returns the first slot with kind==0 in a0.
+
+# ==== comments: verified renames (evidence) ====
+cmt 0x10a56 play_sound(index.w @4): if index <= snd_priority, store it and XBIOS Dosound(sound_table[index]) — trap #14 opcode 0x20 is Dosound (38/0x26 is Supexec). Lower index = higher priority. Was mis-named set_color_lvl from a wrong XBIOS table.
+cmt 0x10a8a snd_poll_done: XBIOS Giaccess(0, 7) reads the YM2149 mixer; when all six tone+noise enables are off (0x3f) the sound has finished, so snd_priority is released to 0x10 (idle). Called once per frame from _start. Was mis-named read_key_flag.
+cmt 0x1096e snd_tone_sweep: writes YM2149 registers 0,1,2,3,7,8,9,0xa via XBIOS Giaccess in a nested loop that steps snd_sweep_pitch down by 2 and snd_sweep_volume down by 1 — a descending two-channel sweep played at the end of init_video. Was mis-named init_gfx.
+cmt 0x11d9a read_joysticks: Ikbdws(0, ikbd_cmd_joyread) sends the IKBD 'interrogate joysticks' command (0x16), spins until the IKBD handler stores the reply in ikbd_packet, then calls control_player with a0=player1/d0=joystick1 and a0=player2/d0=joystick0. Nothing here waits for vblank — was mis-named wait_vsync.
+cmt 0x11dd6 control_player(a0=player object, d0.b=joystick byte): bit7 fire = flap, bit3 = right (vx +4), bit2 = left (vx -4). With no players left, fire restarts the game (game_over_flag, check_highscore, init_game, init_video and back into the main loop).
+cmt 0x11c24 poll_quit_key: Bconstat/Bconin; only Ctrl-C (3) acts — Dosound(silence), write hiscore_name to HIGH.SCO (Fopen/Fcreate + Fwrite 0x1a bytes + Fclose) if hiscore_dirty, restore conterm/Setscreen/IKBD vectors/palette, Pterm. Every other key falls through the 0x11d58 table and returns.
+cmt 0x105c2 rng_advance: the pseudo-random source is a pointer (rng_ptr) walking the program image 2 bytes at a time and wrapping at 0x17832; callers read words at *rng_ptr for randomness (spawn side, spawn x, explosion dither).
+cmt 0x102fe make_fill_pattern(d0.b = colour): builds the 4-plane fill longwords d1:d2 tested by fill_screen's move.l d1/d2 loop. All four btst/or blocks in the shipped binary are byte-identical (btst #0 / or.l #$ffff0000,d1), so only bit 0 of the colour has any effect — either the fill is deliberately 2-colour or the static depacker over-repeated a 12-byte run here. Worth re-checking against a Hatari dump.
+cmt 0x10334 fill_pattern_n: unreferenced. Fills d0 groups of 8 bytes at (a0)+ with d1/d2 — a count-driven twin of fill_screen's loop. No caller anywhere in the image.
+cmt 0x135f4 select_sprite_base(a0=object, d0.w=flags): returns in d1 the rider sprite-set base — 0x1c64a for player 1, 0x1ebaa for player 2, 0x22f4a otherwise — plus 0x130 when the facing bit (15) is set. Callers store d1 into draw_src. Was mis-named stub_ret2 (Ghidra decompiles it to `return;` because the result is a register).
+cmt 0x1033e count_objects_and_pad: counts live objects (live_object_count) and eggs (egg_count) when game_phase==0, or message characters (message_char_count) otherwise — then burns busy-wait loops proportional to (8 - live), (0x0e - eggs) and (0x23 - chars). The delays are a frame-time equaliser so the frame costs the same however much is on screen.
+cmt 0x1052e draw_platforms: OR-blits every platform_sprites record whose platform_present byte is > 0 (then latches it to -1), after forcing the paired platform flags 2/3 and 6/7 to agree. This is the repair pass that redraws platforms sprites have overdrawn. Was mis-named anim_sprites.
+cmt 0x1757a raise_floor: every 7 frames (while the counter at 0x10d65 is non-zero) playfield_bottom moves up one 0xa0-byte row and paint_floor_row paints the two halves of the newly exposed row. wave_manager adds 5 rows per wave for waves 0-3, so the floor/lava builds up over the opening waves; any object whose draw address reaches playfield_bottom is flagged 0x100 and dies. Was mis-named scroll_screen_up.
+cmt 0x175ba paint_floor_row(a1 = row): for 5 groups of 4 plane words, sets plane 3 wherever all four planes are 0 — i.e. recolours background pixels to colour 8 without touching existing graphics. Was mis-named clear_sprite_mask.
+cmt 0x17438 dissolve_platforms: for each effect_table record, looks up platform_sprites[kind] (0x119c8 + kind*0x10), un-draws the platform bitmap a row at a time and ORs random noise sampled through rng_ptr over it. wave_manager fills effect_table from (old layout mask AND NOT new), so this animates the platforms that vanish between waves. Was mis-named draw_explosions.
+cmt 0x175de animate_ground_shrink: gated on the counter at 0x10d68 (set for waves 3-4). Walks a 0x10d68..0x10d9e state block, blits two sprites (0x18636 / 0x187e6) with blit_sprite_mask+blit_sprite, and on wave 3 steps ground_x0 up and ground_x1 down — platform 0 (the ground) narrows. STILL # ctx: the retracting-ground reading is inferred from the x-range shrink; rendering the two sprites at 0x18636/0x187e6 with tools/extract_graphics.py would settle what is actually drawn. Was mis-named draw_scroller.
+cmt 0x182a2 pos_to_screen(x@10.w, y@12.w -> dst@4.l, shift@8.w): dst = screen_base + y*0xa0 + (x/16)*8, shift = x mod 16. Callers push y, x, then a word and a long of space, and pop the results into draw_dst / draw_shift.
+cmt 0x182d6 screen_to_pos(dst@4.l, shift@8.w -> x@10.w, y@12.w): the inverse of pos_to_screen — divides (dst - screen_base) by 0xa0 for y and by 8 for the word-group. Unreferenced anywhere in the image (dead code), and its x reconstruction multiplies the group by 22 rather than 16, so it would not round-trip. Was mis-named pos_to_screen2.
+cmt 0x144b0 flash_hiscore_color: bumps a counter and XBIOS Setcolor(10, 0x400 | (n & 7)) — pen 10 flashes through 8 shades. Its only caller is the high-score entry wait loop.
+cmt 0x144d4 hiscore_key_input: Bconstat/Bconin for the name entry — backspace moves the cursor left, RETURN finishes (jumping back into _start at 0x10006), space and A-Z (lower case folded up) store into draw_dst_off, redraw via draw_hiscore_entry and advance draw_shift (the cursor index, capped at 15). Was mis-named read_key.
+cmt 0x14538 hiscore_joystick_input: same IKBD interrogate as read_joysticks, picks the stick belonging to the entering player (draw_src == player2), fire finishes the entry, up/down step the current letter through ' ' and 'A'..'Z' with wrap, left/right move the cursor; 0x1415e is the auto-repeat delay. Was mis-named vsync_wait2.
+cmt 0x1437a check_highscore: runs only when game_over_flag is set. Picks the higher of the two players' score strings, and if it beats hiscore_name it marks hiscore_dirty, copies the score, clears the screen, and enters the name-entry loop (hiscore_key_input / hiscore_joystick_input / flash_hiscore_color) which never returns — RETURN or fire restarts the game.
+cmt 0x146a6 draw_hiscore_entry: stores draw_dst_off (the current letter) into hiscore_name[draw_shift], sets text_shift 1 or 9 for the odd/even column, points text_ptr at screen_base+0x52b0 + cursor*4 and draws the single character.
+cmt 0x14658 draw_hiscore_cursor: paints the 0xfefefefe underline row at screen_base+0x57b0 and then the wide cursor bar at the column given by draw_shift.
+cmt 0x14160 score_update(a0=object) / 0x14166 score_update_p2 / 0x14172 score_update_p1: these do NOT take an amount — callers add directly into the ASCII score digits at object+0x41..+0x43, and this propagates the decimal carries up the string, awards an extra life (and draw_lives + play_sound) each time the 10000s digit turns even, then redraws the score. Was mis-named add_score*.
+cmt 0x14246 draw_lives(a0=object): dispatches to draw_lives_p1/draw_lives_p2 by comparing a0 with player2, then draws five life glyphs (0x1861d / 0x18629) or blanks (0x1861b) from object+0x4c. Was mis-named bonus_life.
+cmt 0x1435c find_free_message: returns in a0 the first message_table slot whose kind byte is 0 (the caller fills in string/timer/colour/position). It tests nothing else. Was mis-named check_messages.
+cmt 0x12606 update_eggs: walks object_table and drives each object's egg sub-record (+0x1e state). States seen: 0x24 falling into the lava, 0x22 resting on a platform, 0x21 ready to hatch, 0x23 thrown, 0x20/0x19 the rider death animation, 0x12/0x11.. the hatch countdown, >0x20 in flight (update_egg_physics + gravity). Hatching turns the egg back into a rider with the buzzard sprite sets 0x18b9a/0x18aea/0x18c4a. Was mis-named animate_objects.
+cmt 0x1285c update_egg_draw: the draw/advance tail of update_eggs, entered by jumps — erase_egg_sprite / draw_egg_sprite and then the next object. Ghidra split it into its own function because the loop jumps back here. Was mis-named draw_objects_buf2.
+cmt 0x12914 draw_egg_sprite: ORs the egg sprite (draw_src, 4 words x draw_rows, stride 0x4d words) at draw_dst with draw_shift, plus the wrap-around column pass; if the destination reaches playfield_bottom the egg state becomes 0x24 (fell in the lava). Was mis-named draw_sprite_at.
+cmt 0x129b4 erase_egg_sprite(a0=object): AND-NOTs the egg sprite recorded at object+0x2a/+0x2e/+0x32/+0x33 out of the screen, including the wrap-around column. It allocates nothing. Was mis-named alloc_object.
+cmt 0x12a2a update_egg_physics(a0=object): tests the egg's box against platform_table (landing: state 0x22, egg sprite 0x1899a, roll direction from platform_edge_table) and then against platform_sprites; sets the roll/bounce sprites 0x18a0a / 0x18a7a and, once the egg has settled and stopped rolling, state 0x21 = ready to hatch. Was mis-named advance_anim.
+cmt 0x12caa render_objects: entry — a0 = object_table, falls into render_object_body.
+cmt 0x12cb2 render_objects_next: the loop tail (a0 += 0x4e, stop at effect_table). Not a callable routine — it is only ever branched to. Was mis-named render_objects_b.
+cmt 0x12cc2 render_object_body: per-object physics + draw. Branches on the flags word: bit14 platform-edge bump, bit8 falling into the lava (death + score), bit7 respawn via spawn_points, bit9 walking on a platform, otherwise flight with gravity; then selects the rider sprite set (0x1a80a/0x1cd6a for the players, 0x1f2ca/0x201ea/0x2110a by enemy type, 0x2202a when dead) and erases + redraws through draw_object_mask/draw_object_data. Was named render_objects_impl.
+cmt 0x13300 check_platform(a0=object, d0=flags): scans platform_table for a present platform containing (object x, y); on a hit it snaps y to the platform top and returns d0 | 0x200 (standing), otherwise it clears bit 9 and resets the walk state.
+cmt 0x13628 draw_spawn_sparkle(a0=object, d0=flags): indexes the spawn point recorded in object+8 (offset into spawn_points), takes a 3-longword pattern from 0x1194c and a plane-select byte from 0x11944, and calls blit_pattern_rows three times — the effect drawn while a rider materialises. STILL # ctx: the "sparkle" reading is from the call site (bit7 respawn branch); rendering 0x1194c would confirm the shape. Was mis-named blit_sprite3.
+cmt 0x1369c blit_pattern_rows(a3=dst, d2=plane select, d5/d6/d7=row data): for each of 4 plane words, ORs the data in where the d2 bit is set and AND-NOTs it out where it is clear, on three rows at strides 0 / 0xa0 / 0x140.
+cmt 0x13842 collision_check: per object, box+pixel tests (test_overlap) against platform_sprites, then the other objects (joust: the higher rider wins — start_death_anim for the loser, score for the winner, joust_bounce otherwise), then the eggs held by other object slots (the 250/500/750/1000 chain from egg_bonus_table), then pterodactyl_table.
+cmt 0x13ef2 test_overlap: broad phase for two boxes staged in hit_box_a/hit_box_b {dst.l, src.l, cols.w, shift.b, rows.b, cur col.w, y.w}; if their y bands overlap it aligns both to the same column and calls pixel_collision for the overlapping rows, setting collision_hit.
+cmt 0x13fe6 pixel_collision: ORs the four plane words of each sprite row (plus the wrapped word when a shift is in play), shifts both to a common origin, and sets collision_hit = 0xff on the first row where the two masks share a bit.
+cmt 0x14098 start_death_anim(a0=object): begins the dismount/death sequence — clears the egg-chain counter, points the egg record at the death sprite (0x1922a for player 1, 0x193da otherwise) one row above the rider, sets the egg state to 0x19/0x20, adds 500 to the score digit at +0x43 and returns flags | 0x3000 (dead + removed). It does not respawn anything; the respawn is render_object_body's bit7 branch. Was mis-named respawn_player.
+cmt 0x140fe joust_bounce(a0, a3 = the two objects; d0/d1 = their flags): a draw. Compares the two x positions and flips both riders' horizontal velocity and facing bit so they bounce apart. The higher-rider-wins decision is in collision_check, not here.
+cmt 0x14ada update_pterodactyl: the pterodactyl scheduler and mover. A free slot arms when spawn_timer runs out (spawn_interval halves each time), enters from the left or right depending on a bit sampled through rng_ptr, avoids platforms (ptero_avoid_platform), homes on the nearer player (ptero_spot_player), and posts the "1000" popup (0x152be) when it dies. wave_manager arms a slot immediately from wave 16 on. Was mis-named spawn_wave.
+cmt 0x15226 ptero_avoid_platform(a0=pterodactyl): when the pterodactyl's x is between 0x3c and 0xfa, scans platform_sprites for a platform whose row band brackets its y and returns a vertical step of 4 (0 when clear) so it climbs or dives around the platform. Was mis-named check_platform_y.
+cmt 0x15276 ptero_spot_player(a0=pterodactyl, a3=player, d0=flags): when the player is within +/-4..10 rows and 8..0x69 pixels ahead in the direction of travel, plays sound 3 and sets the pterodactyl's +0x1e swoop timer to 0x14. Was mis-named check_proximity.
+cmt 0x146f6 lava_troll: from wave 4 on. Picks any object below y 0x8e that lingers over the pit, walks the hand (troll_x/troll_y) up toward it a frame at a time from the sprite table at 0x14aba, and on contact sets the object's bit4 (grabbed) and drags it down; releases if the object dies or respawns. troll_erase_hand undraws the previous frame (AND mask), troll_draw_hand ORs the new one.
+cmt 0x149b8 troll_erase_hand: AND-masks the PREVIOUS frame's hand (troll_prev_src + 0x90, troll_prev_dst, troll_prev_shift, troll_prev_rows) out of the screen; returns early when nothing moved. Was mis-named troll_draw.
+cmt 0x14a32 troll_draw_hand: when troll_state bit 0 is set, ORs the current hand sprite (draw_src, draw_dst, draw_shift, draw_rows) into the screen, clipped at playfield_bottom. Was mis-named troll_grab.
+cmt 0x1783c wave_manager: drives game_phase. With game_phase==0 it declares the wave over once egg_count is 0 and every surviving object is a player, then hands out the team/survival/gladiator bonus messages. Counting down to 0 starts the next wave: bump wave_num and wave_num_text, raise the floor for waves 0-3, arm animate_ground_shrink for waves 3-4, load the platform layout mask from 0x11b58, seed effect_table with the platforms that disappear, recompute speed_type1/2/3, and spawn the new riders (flags 0x81/0x82/0x83) at free spawn points. Posts "WAVE"/"EGG WAVE"/"PTERODACTYL WAVE"/"GLADIATOR WAVE"/etc from 0x18429.
+cmt 0x142de draw_messages: walks message_table, counts each slot's timer down (instantly when no players are left), draws it through draw_string, and when the "THY GAME IS OVER" string (0x185c5) expires sets game_over_flag.
+cmt 0x10700 draw_string(string ptr @4): control bytes 1 = set x,y (two words, via pos_to_screen), 2 = colour, 3 = background colour (bit4 of text_flags), 8 = back up one character, 9 = select the 8-row font (0x17eba) instead of the 5-row font (0x18192), 0 = end.
 
 # ==== blit helpers: semantic param names + register maps ====
 # stack-arg blits: commit a signature with explicit stack storage -> named params
@@ -144,9 +295,9 @@ cmt 0x10456 blit_or(dst@4, src@8, cols@12.w, rows@14.w): OR src onto dst, dst ad
 cmt 0x10482 blit_andnot(dst@4, src@8, cols@12.w, rows@14.w): AND-NOT (mask) src onto dst, dst advances 0xa0/row.
 cmt 0x17752 blit_sprite_mask: a5->{src=[0], dst_off=[1], shift=[2].w&0x3f, plane=[10].b}, d7=rows; AND-mask pass, dst=screen_base+dst_off, row stride 0x50 words.
 cmt 0x177a2 blit_sprite: a5->{src=[0], dst_off=[1], shift=[2].w&0x3f, plane=[10].b}, d7=rows; AND mask + OR data, row stride 0x50 words.
-cmt 0x136e8 draw_object_data(a0=object): src=DAT_df0, dst=DAT_de8, shift=DAT_df4, rows=DAT_df6, half-select=DAT_dc2; OR data, 4 words/row, stride 0x4d.
-cmt 0x137bc draw_object_mask(a0=object): dst=[a0+0x14], src=[a0+0x18], rows=[a0+0x1c], shift=[a0+0x1d]; AND-NOT mask pass, stride 0x4d.
-cmt 0x1369c blit_masked_rows(dst=a3, rowsel=d2, row0/1/2=d5/d6/d7): OR where bit set else AND-NOT; 3 rows at strides 0 / 0xa0 / 0x140.
-cmt 0x15098 blit_mask_wide(a0->{src=[6]+0x120, dst_base=[2], dst_off=[0x16], shift=[10].w&0x3f, rows=[0x18]}): AND-mask, 8 words/row, stride 0x50.
-cmt 0x1510c blit_sprite_planes: src=DAT_df0, dst_off=DAT_df8, shift=DAT_df4, rows=DAT_df6; plane enables DAT_d0f/d0e/d10; OR data, stride 0x50.
-cmt 0x12914 draw_sprite_at: src=DAT_df0, dst=DAT_de8, x/y=DAT_dec/dee, shift=DAT_df4, rows=DAT_df6; sets regs then calls draw_object_mask/data.
+cmt 0x136e8 draw_object_data(a0=object): src=draw_src, dst=draw_dst, shift=draw_shift, rows=draw_rows, half-select=draw_half_select; OR data, 4 words/row, stride 0x4d. Sets the object's bit8 (falling into the lava) if dst reaches playfield_bottom.
+cmt 0x137bc draw_object_mask(a0=object): dst=[a0+0x14], src=[a0+0x18], rows=[a0+0x1c], shift=[a0+0x1d]; AND-NOT mask pass over the object's PREVIOUS position, stride 0x4d.
+cmt 0x15098 blit_mask_wide(a0->{src=[6]+0x120, dst_base=[2], dst_off=[0x16], shift=[10].w&0x3f, rows=[0x18]}): AND-mask, 8 words/row, stride 0x50 — the pterodactyl's erase pass.
+cmt 0x1510c blit_sprite_planes: src=draw_src, dst_off=draw_dst_off, shift=draw_shift, rows=draw_rows; per-plane enables at 0x10d0e/0x10d0f/0x10d10 clip the sprite at the screen edges; OR data, stride 0x50 — the pterodactyl's draw pass.
+cmt 0x10c46 xbios_setpalette: XBIOS Setpalette(palette) — the 16-entry table at 0x10cd2.
+cmt 0x10c56 cycle_palette: rotates the single hue held in palette entry 4 (0x10cda) through R/G/B, selected by bits 8-10 of palette_cycle_ctr.
