@@ -50,7 +50,11 @@ static void draw_result_row(Framebuffer *fb, const uint8_t *gfx, Offset dst_off,
 /* ---- dashboard graphic (masked blit from buf_c) — cell_dashboard (plane.h) ---- */
 #define DASH_DST     0x1948        /* draw-buffer offset the dashboard is stamped at */
 
-/* ---- draw_leg_results ---- */
+/* ---- draw_leg_results ----
+ * The background is laid down first as two CONTIGUOUS spans that between them cover the whole buffer:
+ * the top fill runs from offset 0 for LEG_TOP_CELLS_M1+1 cells (= 15200 bytes, which is exactly
+ * LEG_BOTTOM_DST) and the bottom band covers the rest, so the two counts sum to SCREEN_CELLS. The panel,
+ * the four result blocks and the divider are then painted over it. */
 #define LEG_LABEL_ROWS    5
 #define LEG_ROW_DST_STEP  0xa00    /* screen dst step between label rows */
 #define LEG_ROW_STR_STRIDE 0xc     /* bytes between per-row buf_a strings / digit records */
@@ -58,28 +62,58 @@ static void draw_result_row(Framebuffer *fb, const uint8_t *gfx, Offset dst_off,
 #define LEG_DIGITS_COLOR  4
 #define NUM_MAX_CELLS_M1  0x13     /* draw_num_thunk preset cell count-1 */
 
+#define LEG_BG_COLOR       1       /* the screen background: both spans, and the divider that re-paints it */
+#define LEG_TOP_CELLS_M1   0x76b   /* fill_words cell count-1: everything above LEG_BOTTOM_DST */
+#define LEG_BOTTOM_DST     0x3b60  /* where the top fill ends and the bottom band begins */
+#define LEG_BOTTOM_CELLS_M1 0x833  /* fill_span cell count-1: LEG_BOTTOM_DST to the end of the buffer */
+#define LEG_PANEL_DST      0x9a8   /* results-panel background rectangle */
+#define LEG_PANEL_COLOR    6
+#define LEG_PANEL_CELLS_M1 8
+#define LEG_PANEL_ROWS_M1  0x48
+/* A one-cell-wide background stripe: byte column 144 of row 8, running 88 rows down. That column sits
+ * just RIGHT of the panel (which spans columns 72..143 from row 15), and over its first 7 rows it repaints
+ * the last cell of the LEG_RESULT_COL1 tile block (columns 72..151) — trimming that block back. It
+ * does the same for LEG_RESULT_COL2's run (rows 88..94), which is why it spans all 88 rows. */
+#define LEG_DIVIDER_DST    0x590
+#define LEG_DIVIDER_CELLS_M1 0     /* one cell wide (the sibling fills name their count, so name this too) */
+#define LEG_DIVIDER_ROWS_M1 0x57
+/* The four result panels: two masked-row blits stacked down, two tiled-column copies. Each is a
+ * (draw-buffer dst, buf_c arena offset) pair — a->gfx is the UNPACKED graphics arena, so these index
+ * decoded bytes, not offsets into the GRAPHICS.GRA file. */
+#define LEG_RESULT_ROW1_DST 0x540
+#define LEG_RESULT_ROW1_SRC 0x12430
+#define LEG_RESULT_ROW2_DST 0x588
+#define LEG_RESULT_ROW2_SRC 0x12438
+#define LEG_RESULT_COL1_DST 0x548
+#define LEG_RESULT_COL1_SRC 0x11a30
+#define LEG_RESULT_COL2_DST 0x3748
+#define LEG_RESULT_COL2_SRC 0x11f30
+#define LEG_ROW1_DST       0xa10   /* first label of the chained row-1 run */
+#define LEG_ROW2_DST       0xa18   /* first label of the per-leg row-2 run */
+#define LEG_DIGITS_DST     0xa48   /* the leg-time digits */
+
 void rm_draw_leg_results(Framebuffer *fb, const RmResultsAssets *a, uint16_t leg) {
     const uint8_t *cp = a->color_pairs;
-    rm_fill_words(fb, cp, 1, 0x76b);                 /* clear the top of the screen to colour 1 */
-    rm_fill_rect(fb, cp, 0x9a8, 6, 8, 0x48);         /* results panel background */
-    draw_result_row(fb, a->gfx, 0x540, 0x12430);
-    draw_result_row(fb, a->gfx, 0x588, 0x12438);
-    draw_result_col(fb, a->gfx, 0x548, 0x11a30);
-    draw_result_col(fb, a->gfx, 0x3748, 0x11f30);
-    rm_fill_rect(fb, cp, 0x590, 1, 0, 0x57);         /* left divider column */
-    rm_fill_span(fb, cp, 0x3b60, 1, 0x833);          /* bottom band */
+    rm_fill_words(fb, cp, LEG_BG_COLOR, LEG_TOP_CELLS_M1);
+    rm_fill_rect(fb, cp, LEG_PANEL_DST, LEG_PANEL_COLOR, LEG_PANEL_CELLS_M1, LEG_PANEL_ROWS_M1);
+    draw_result_row(fb, a->gfx, LEG_RESULT_ROW1_DST, LEG_RESULT_ROW1_SRC);
+    draw_result_row(fb, a->gfx, LEG_RESULT_ROW2_DST, LEG_RESULT_ROW2_SRC);
+    draw_result_col(fb, a->gfx, LEG_RESULT_COL1_DST, LEG_RESULT_COL1_SRC);
+    draw_result_col(fb, a->gfx, LEG_RESULT_COL2_DST, LEG_RESULT_COL2_SRC);
+    rm_fill_rect(fb, cp, LEG_DIVIDER_DST, LEG_BG_COLOR, LEG_DIVIDER_CELLS_M1, LEG_DIVIDER_ROWS_M1);
+    rm_fill_span(fb, cp, LEG_BOTTOM_DST, LEG_BG_COLOR, LEG_BOTTOM_CELLS_M1);
 
     /* Row 1: five labels from one concatenated buffer, colour 8; the string cursor chains across. */
     Plane4 r1_lo, r1_hi;
     rm_color_fill(cp, LEG_ROW1_COLOR, COLOR_MASK_TEXT, &r1_lo, &r1_hi);
     Offset si = 0;
-    Offset dst = 0xa10;
+    Offset dst = LEG_ROW1_DST;
     for (int i = 0; i < LEG_LABEL_ROWS; i++, dst += LEG_ROW_DST_STEP)
         si = rm_glyph_run(fb, (Offset)sx16((uint16_t)dst), r1_lo, r1_hi, a->font, a->title, si,
                           TEXT_MAX_CELLS_M1, 0);
 
     /* Row 2: five per-leg label strings from buf_a, each with its own palette colour ([row - leg]). */
-    dst = 0xa18;
+    dst = LEG_ROW2_DST;
     for (int i = 0; i < LEG_LABEL_ROWS; i++, dst += LEG_ROW_DST_STEP) {
         uint8_t colour = a->leg_palette[i - (int)leg];
         Plane4 fill_lo, fill_hi;
@@ -90,7 +124,7 @@ void rm_draw_leg_results(Framebuffer *fb, const RmResultsAssets *a, uint16_t leg
 
     Plane4 d_lo, d_hi;
     rm_color_fill(cp, LEG_DIGITS_COLOR, COLOR_MASK_NUM, &d_lo, &d_hi);
-    rm_num_run(fb, (Offset)sx16(0xa48), d_lo, d_hi, a->num_sprites, a->num_glyph_tbl,
+    rm_num_run(fb, (Offset)sx16(LEG_DIGITS_DST), d_lo, d_hi, a->num_sprites, a->num_glyph_tbl,
                a->leg_digits, (Offset)(leg * LEG_ROW_STR_STRIDE), NUM_MAX_CELLS_M1);
 
     cell_dashboard(fb->px, (Offset)sx16(DASH_DST), a->gfx, RM_DASH_SRC_OFF);

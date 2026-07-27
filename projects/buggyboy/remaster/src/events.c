@@ -202,6 +202,8 @@ static void flag_gate(RmEventCtx *c, uint16_t slot, uint16_t obj_type) {
 #define RPM_MIN          0xf
 #define SPEED_PER_RPM    3
 #define SPEED_BIG        0x64    /* collision_lock 0x18 vs 8 threshold (0x11e16) */
+/* The crash_anim_tbl entry points this arms are RM_CRASH_LOCK_SPIN / RM_CRASH_LOCK_SLOW (game.h) — the
+ * same two player.c's spin-out uses, so they are named once there rather than copied per file. */
 
 /* Clear the spin lean-override pair (the original's clr.l over spin_reset + spin_word2). */
 static void clear_spin(PlayerState *p) {
@@ -259,8 +261,8 @@ static void common_collide(RmEventCtx *c) {   /* idx 25/27/43-59 (0x11e16) */
     PlayerState *p = c->player;
     if (p->collision_lock != 0) return;
     clear_spin(p);
-    p->turn_flags = 0x10;
-    p->collision_lock = (int16_t)p->speed >= SPEED_BIG ? 0x18 : 8;
+    p->turn_flags = RM_IN_COAST;                               /* the input bit the crash script forces */
+    p->collision_lock = (int16_t)p->speed >= SPEED_BIG ? RM_CRASH_LOCK_SPIN : RM_CRASH_LOCK_SLOW;
     p->crash_phase = 2;
     rm_handle_marker(c->snd, RM_MARKER_FX_COMMON, c->game_over);
 }
@@ -388,13 +390,14 @@ static void probe_collision(RmEventCtx *c) {
 }
 
 #define GU_COURSE_MASK_STEP 4        /* crash_bars indexes the collision-flag long table by this */
+#define COLL_MASK_BIT_SEL   0x1f     /* coll_mask is ONE long: the flag cursor selects a bit mod 32 */
 
 void rm_course_probe(RmEventCtx *c) {
     const uint8_t *mask = c->assets->coll_mask + (int16_t)(c->ev->crash_bars << 2);
     uint32_t coll_mask = be32(mask);
     c->ev->course_flag_bit = (uint8_t)(c->ev->course_flag_bit + 1);
     if ((int8_t)(mask[0] - c->ev->course_flag_bit) < 0) c->ev->course_flag_bit = 0;
-    if (coll_mask & (1u << (c->ev->course_flag_bit & 0x1f)))
+    if (coll_mask & (1u << (c->ev->course_flag_bit & COLL_MASK_BIT_SEL)))
         probe_collision(c);
 }
 
@@ -545,8 +548,33 @@ _Static_assert(RM_MAX_HORIZON_ROW + 3 < FX_BLOCK_BYTES, "fx scratch too small fo
 #define SCORE_MAX_DIGIT '5'      /* score_str[1] == this ends the leg */
 #define BONUS_ARM      0x3c      /* bonus_timer armed on a collision-marker frame */
 #define CKPT_BANNER_T  0x28      /* gauge_blink (checkpoint banner timer) reload */
-#define FX_RUN_3D      0x3d      /* fx[+6] / fx[+0x26] == this triggers the run fills */
-#define FX_RUN_3E      0x3e
+
+/* The ring band sections G and I read is the row the original calls obj_flags (obj_markers row 12,
+ * 0x18ebc) — the same row the fixed-object draw pass streams its flags from, so the row index is
+ * GOBJ_FIXED_PASS_ROW (game.h) rather than a second copy of 12 here. */
+#define OBJ_FLAGS_EVT_SLOT 7     /* event_type (0x18eca): EVT_CKPT / EVT_COLLIDE in its low byte */
+
+/* Where that band's slot words land in the fx block, named after the original's fx_block_XX fields
+ * (names.txt 0x19114..0x19142). Every other word of the block starts zero. */
+#define FX_OFF_SLOT0    6        /* fx_block_06 <- slot 0 */
+#define FX_OFF_SLOT1    0xa      /* fx_block_0a <- slots 1..13, one word each (up to +0x22) */
+#define FX_OFF_SLOT14   0x26     /* fx_block_26 <- slot 14 */
+
+/* The two run fills, and the word offsets they span. */
+#define FX_RUN_3D       0x3d     /* fx[FX_OFF_SLOT0] / fx[FX_OFF_SLOT14] == this triggers a run fill */
+#define FX_RUN_3E       0x3e
+#define FX_RUN_3D_LAST  0x12     /* the 0x3d run's last word (fills bytes +0..+0x13) */
+#define FX_RUN_3E_FIRST 0x1a     /* fx_block_1a: the 0x3e run's first word... */
+#define FX_RUN_3E_LAST  0x2e     /* ...fx_block_2e, its last */
+
+/* The spin-fx selector bits: the two ring-row-11 marker bytes the original reads at obj_flags-2 /
+ * obj_flags-1, combined into a 3-bit index into fx_type_tbl. */
+#define FX_SEL_BUGGY_BITS 0x60   /* buggy_gate bits 5-6 (obj_flags-2), shifted up one into the index */
+#define FX_SEL_FG_BITS    0xe0   /* fg_gate bits 5-7 (obj_flags-1) */
+
+#define EVT_DISPATCH2_FLAG_B 0xff  /* §H's second dispatch passes this flag_b (the first passes 0) */
+#define CKPT_SCROLL_STEP     4     /* ckpt_scroll advances this per banner-scroll frame... */
+#define CKPT_SCROLL_LIMIT    0x10  /* ...and resets to 0 once the pre-advance cursor reaches this */
 
 /* Rebuild the fx block from the near band (ring row 12) into `fx`, then overlay the spin fx. The
  * band's slot words map to fx words: +6 <- slot 0, +0xa..+0x22 <- slots 1..13, +0x26 <- slot 14; all
@@ -554,16 +582,16 @@ _Static_assert(RM_MAX_HORIZON_ROW + 3 < FX_BLOCK_BYTES, "fx scratch too small fo
  * horizon_row is even in [0, 0x2c] (geometry.c set_horizon), so fx[horizon_row+3] <= 0x2f is in range. */
 static void build_fx_block(RmEventCtx *c, uint8_t fx[FX_BLOCK_BYTES]) {
     memset(fx, 0, FX_BLOCK_BYTES);
-    const CourseRow *band = &c->ring->row[12];                 /* obj_flags = ring row 12 slot words */
-    wr16(fx + 6, band->slot[0]);
-    for (int k = 0; k < 13; k++) wr16(fx + 0xa + k * 2, band->slot[1 + k]);
-    wr16(fx + 0x26, band->slot[14]);
+    const CourseRow *band = &c->ring->row[GOBJ_FIXED_PASS_ROW];
+    wr16(fx + FX_OFF_SLOT0, band->slot[0]);
+    for (int k = 0; k < 13; k++) wr16(fx + FX_OFF_SLOT1 + k * 2, band->slot[1 + k]);
+    wr16(fx + FX_OFF_SLOT14, band->slot[14]);
 
     c->ev->spin_state = 0;
     uint8_t buggy_gate = rm_ring_buggy_gate(c->ring);            /* obj_flags-2 (ring row 11 marker hi) */
     uint8_t fg_gate    = (uint8_t)rm_ring_fg_gate(c->ring);      /* obj_flags-1 (ring row 11 marker lo) */
-    uint8_t flag_hi = (uint8_t)(buggy_gate & 0x60);
-    if ((int8_t)buggy_gate >= 0 && ((fg_gate & 0xe0) != 0 || flag_hi != 0)) {
+    uint8_t flag_hi = (uint8_t)(buggy_gate & FX_SEL_BUGGY_BITS);
+    if ((int8_t)buggy_gate >= 0 && ((fg_gate & FX_SEL_FG_BITS) != 0 || flag_hi != 0)) {
         uint8_t sel = (uint8_t)((fg_gate | (uint8_t)(flag_hi * 2)) >> 5);
         uint8_t fx_code = c->assets->fx_type_tbl[sel];
         c->ev->spin_state = (uint16_t)(fx_code << 8);
@@ -571,10 +599,11 @@ static void build_fx_block(RmEventCtx *c, uint8_t fx[FX_BLOCK_BYTES]) {
             for (int k = 0; k < FX_BLOCK_WORDS; k++)
                 if (be16(fx + k * 2) == 0) fx[k * 2 + 1] = c->assets->fx_type_tbl[fx_code + k];
     }
-    if (be16(fx + 6) == FX_RUN_3D)
-        for (int off = 0; off <= 0x12; off += 2) wr16(fx + off, FX_RUN_3D);       /* fills +0..+0x13 */
-    if (be16(fx + 0x26) == FX_RUN_3D)
-        for (int off = 0x1a; off <= 0x2e; off += 2) wr16(fx + off, FX_RUN_3E);    /* fills +0x1a..+0x2f */
+    if (be16(fx + FX_OFF_SLOT0) == FX_RUN_3D)
+        for (int off = 0; off <= FX_RUN_3D_LAST; off += 2) wr16(fx + off, FX_RUN_3D);   /* fills +0..+0x13 */
+    if (be16(fx + FX_OFF_SLOT14) == FX_RUN_3D)
+        for (int off = FX_RUN_3E_FIRST; off <= FX_RUN_3E_LAST; off += 2)
+            wr16(fx + off, FX_RUN_3E);                                                  /* fills +0x1a..+0x2f */
 }
 
 /* Section I — checkpoint / collision / score markers. Returns nothing; writes the checkpoint counters,
@@ -582,7 +611,7 @@ static void build_fx_block(RmEventCtx *c, uint8_t fx[FX_BLOCK_BYTES]) {
 static void course_markers(RmEventCtx *c) {
     PlayerState *p = c->player;
     uint8_t *score_str = c->hud_text + RM_HUD_SCORE_STR_OFF;
-    uint8_t event_code = (uint8_t)(c->ring->row[12].slot[7] & 0xff);   /* event_type low byte */
+    uint8_t event_code = (uint8_t)(c->ring->row[GOBJ_FIXED_PASS_ROW].slot[OBJ_FLAGS_EVT_SLOT] & 0xff);
 
     if (event_code == EVT_CKPT) {
         rm_play_event_tune(c->snd, RM_TUNE_CKPT_PASS, c->game_over);
@@ -619,8 +648,8 @@ static void course_markers(RmEventCtx *c) {
     uint8_t gs3 = (uint8_t)(c->ring->row[0].slot[7] & 0xff);
     if (gs1 != EVT_COLLIDE) {
         if (gs3 == EVT_CKPT && score_str[1] != '1') {
-            int16_t s = (int16_t)(c->ev->ckpt_scroll - 0x10);
-            c->ev->ckpt_scroll = (uint16_t)(c->ev->ckpt_scroll + 4);
+            int16_t s = (int16_t)(c->ev->ckpt_scroll - CKPT_SCROLL_LIMIT);
+            c->ev->ckpt_scroll = (uint16_t)(c->ev->ckpt_scroll + CKPT_SCROLL_STEP);
             if (s >= 0) c->ev->ckpt_scroll = 0;
             draw_checkpoint_anim(c);
         }
@@ -641,7 +670,8 @@ void rm_course_events(RmEventCtx *c) {
     uint8_t event = fx[horizon_row + 1];
     if (event != 0) rm_event_dispatch(c, event, horizon_row, horizon_frac, 0);
     event = fx[(uint16_t)(horizon_row + 2) + 1];
-    if (event != 0) rm_event_dispatch(c, event, (uint16_t)(horizon_row + 2), horizon_frac, 0xff);
+    if (event != 0)
+        rm_event_dispatch(c, event, (uint16_t)(horizon_row + 2), horizon_frac, EVT_DISPATCH2_FLAG_B);
 
     course_markers(c);                                         /* I */
 }

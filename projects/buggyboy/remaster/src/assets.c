@@ -56,7 +56,14 @@
 #define SPRITE_STORE_BYTES 16        /* bytes one shift position occupies */
 #define SPRITE_MSK_STEP  0x200       /* the mask variant's per-sprite advance */
 
-/* The seven masked builds, as (scratch offset, header offset, count-1). */
+/* The seven masked builds the original issues, one row per build_mask_shifts call:
+ *   dst_off   scratch byte offset of the run's FIRST stored shift position; the other 15 descend from
+ *             it by SPRITE_STORE_BYTES, and SPRITE_MSK_STEP is then added to that descended cursor,
+ *             so consecutive sprites' 16-position blocks sit adjacent (no gap), ascending
+ *   src_off   byte offset of the run's first source group inside the stashed header (sign-extended,
+ *             which is why build_mask_shifts applies sx16 — the original passes it in a word register)
+ *   count_m1  sprites in the run, as the original's dbf count-1 (0x13 -> 20 sprites, 0x01 -> 2)
+ * These are the call sites' argument literals, not a derivable table — a row IS one call. */
 static const struct { uint16_t dst_off, src_off, count_m1; } GFX_MSK_BUILDS[] = {
     {0x14f0, 0x140, 0x13}, {0x3cf0, 0x3c0, 0x13}, {0x6cf0, 0x6c0, 0x13},
     {0x94f0, 0x940, 0x13}, {0x52f0, 0x520, 0x01}, {0x56f0, 0x560, 0x01},
@@ -176,8 +183,9 @@ static void build_sprite_shifts(const uint8_t *header, uint8_t *scratch, uint32_
 }
 
 /* Phase H — the masks. Same table shape, but a mask shifts left with a sticky bit 0 (so the mask
- * grows rather than sign-filling) and the 16 positions are written *downward* from the block's
- * offset, the block base rising by SPRITE_MSK_STEP per sprite. */
+ * grows rather than sign-filling) and the 16 positions are written *downward* from `dst_off`. The
+ * per-sprite SPRITE_MSK_STEP is added to the cursor once it has descended, netting a rise of one
+ * 16-position block, so the blocks themselves still run upward. */
 static void build_mask_shifts(const uint8_t *header, uint8_t *scratch,
                               uint16_t dst_off, uint16_t src_off, uint32_t count_m1) {
     const uint8_t *src = header + sx16(src_off);

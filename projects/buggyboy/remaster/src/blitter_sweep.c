@@ -50,6 +50,10 @@ static const int SWEEP_ROWS_M1[]   = {0, 3, 0x2a};
 #define SWEEP_BG_BYTE   0x5A
 #define GUARD_BYTES     256
 #define GUARD_FILL      0xA5
+/* The MISMATCH counts (and bench_declined) saturate here rather than wrapping into a 16-bit report
+ * word, so a broken count can never read back as a small number. Note the bench TICK words and the
+ * case-count totals are plain truncating casts — those would wrap. */
+#define SWEEP_LOG_MAX   0xffff
 
 /* Both framebuffers carry a TAIL past the visible screen, and every compare in this file spans it. The
  * below-screen section deliberately blits with its first-drawn row up to SWEEP_BELOW_UNDER_MAX scanlines
@@ -273,7 +277,7 @@ static long sweep_objsh_grid(ObjshBlitFn test_fn, uint16_t *diff_out, long *hand
                     long d = run_case_objsh(test_fn, OSH_BASE_CELLS[bi], fx, OSH_COLUMNS[ci],
                                             OSH_CRS[ti][0], OSH_CRS[ti][1], (int16_t)OSH_CRS[ti][2],
                                             OSH_GRID_DST_OFF, &handled);
-                    uint16_t logged = handled ? (uint16_t)(d > 0xffff ? 0xffff : d) : 0;
+                    uint16_t logged = handled ? (uint16_t)(d > SWEEP_LOG_MAX ? SWEEP_LOG_MAX : d) : 0;
                     diff_out[idx++] = logged;
                     total += logged;
                     handled_count += handled ? 1 : 0;
@@ -361,7 +365,7 @@ static long run_case_table(uint32_t src_off, int rows, int expect_served, int *s
 static long tbl_case(uint32_t src_off, int rows, int expect_served) {
     int served;
     long d = run_case_table(src_off, rows, expect_served, &served);
-    uint16_t logged = (uint16_t)(d > 0xffff ? 0xffff : d);
+    uint16_t logged = (uint16_t)(d > SWEEP_LOG_MAX ? SWEEP_LOG_MAX : d);
     if (tbl_cases_run < N_TBL_CASES) tbl_case_diff[tbl_cases_run] = logged;
     tbl_cases_run++;
     tbl_served += served ? 1 : 0;
@@ -525,7 +529,7 @@ static uint32_t below_dst_off(int under) {
  * rather than as 0: no case here may be declined (the family predicates are horizontal-only), so a
  * blitter path that drew nothing while the CPU engine drew must show up as the failure it is. */
 static long sweep_below_case(long d, int handled) {
-    uint16_t logged = (uint16_t)(d > 0xffff ? 0xffff : d);
+    uint16_t logged = (uint16_t)(d > SWEEP_LOG_MAX ? SWEEP_LOG_MAX : d);
     below_case_diff[below_idx++] = logged;
     below_handled += handled ? 1 : 0;
     return logged;
@@ -637,7 +641,7 @@ static long sweep_scroll_section(void) {
     scroll_init_playfield();
     for (int i = 0; i < N_SCROLL_CASES; i++) {
         long d = run_case_scroll((uint16_t)i, i & 1);       /* alternate the delta sign: both wrap branches */
-        uint16_t logged = (uint16_t)(d > 0xffff ? 0xffff : d);
+        uint16_t logged = (uint16_t)(d > SWEEP_LOG_MAX ? SWEEP_LOG_MAX : d);
         scroll_case_diff[i] = logged;
         total += logged;
     }
@@ -762,7 +766,7 @@ static long sweep_dash_section(DashStageFn stage, void *ctx) {
         dash_note_art(art);
         for (int bg = 0; bg < N_DASH_BG; bg++) {
             long d = run_case_dash(bg);
-            uint16_t logged = (uint16_t)(d > 0xffff ? 0xffff : d);
+            uint16_t logged = (uint16_t)(d > SWEEP_LOG_MAX ? SWEEP_LOG_MAX : d);
             dash_case_diff[idx++] = logged;
             total += logged;
         }
@@ -794,7 +798,7 @@ static long sweep_objshift2_grid(long *handled_out) {
                     int rows_m1 = SWEEP_ROWS_M1[ri];
                     long d = run_case(SWEEP_WIDTH_IDX[wi], fx, SWEEP_COLUMNS[ci], rows_m1,
                                       sweep_grid_dst_off((int16_t)(uint16_t)rows_m1 + 1), &handled);
-                    uint16_t logged = handled ? (uint16_t)(d > 0xffff ? 0xffff : d) : 0;
+                    uint16_t logged = handled ? (uint16_t)(d > SWEEP_LOG_MAX ? SWEEP_LOG_MAX : d) : 0;
                     case_diff[idx++] = logged;
                     total += logged;
                     handled_count += handled ? 1 : 0;
@@ -912,7 +916,7 @@ const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound, DashStageFn d
     for (int i = 0; i < SWEEP_REPORT_WORDS; i++) w[i] = 0;
     w[0] = (uint16_t)(N_CASES + 2 * N_OSH_CASES + N_TBL_CASES + N_BELOW_CASES + N_SCROLL_CASES
                       + N_DASH_CASES);
-    w[1] = (uint16_t)(sweep_total > 0xffff ? 0xffff : sweep_total);
+    w[1] = (uint16_t)(sweep_total > SWEEP_LOG_MAX ? SWEEP_LOG_MAX : sweep_total);
     int at = 2;
     for (int i = 0; i < N_CASES; i++) w[at++] = case_diff[i];
     for (int i = 0; i < N_OSH_CASES; i++) w[at++] = osh_case_diff[i];
@@ -948,7 +952,7 @@ const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound, DashStageFn d
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_ALL_SYN]  = bench_all_synth_ticks;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_ALL_BIN]  = bench_all_binary_ticks;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_CPU]      = bench_cpu_ticks;
-    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_DECLINED] = (uint16_t)(bench_declined > 0xffff ? 0xffff
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_DECLINED] = (uint16_t)(bench_declined > SWEEP_LOG_MAX ? SWEEP_LOG_MAX
                                                                                            : bench_declined);
     if (mismatch_out) *mismatch_out = sweep_total;
     return test_fb;

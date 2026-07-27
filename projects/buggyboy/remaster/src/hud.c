@@ -220,6 +220,9 @@ static void hud_gauge_cluster(const HudAssets *a, const uint8_t *str, Framebuffe
     si = rm_glyph_run(fb, GAUGE_MAIN_DST, f_lo, f_hi, font, str, si, GAUGE_CELLS_M1, &end);
     si = rm_glyph_run(fb, end + GAUGE_BAR1_ADV, g_lo, g_hi, font, str, si, TEXT_MAX_CELLS_M1, &end);
     si = rm_glyph_run(fb, end + GAUGE_BAR2_ADV, g_lo, g_hi, font, str, si, TEXT_MAX_CELLS_M1, &end);
+    /* Bars 3-5 pass a literal 4-plane pattern rather than a palette lookup. A (lo, hi) pair is the
+     * cell's four plane words — lo = (p0 << 16) | p1, hi = (p2 << 16) | p3 — so an all-ones plane sets
+     * that colour bit across all 16 pixels: these three pairs are solid colours 12, 15 and 14. */
     si = rm_glyph_run(fb, end, 0, 0xffffffff, font, str, si, TEXT_MAX_CELLS_M1, &end);
     si = rm_glyph_run(fb, end, 0xffffffff, 0xffffffff, font, str, si, TEXT_MAX_CELLS_M1, &end);
     rm_glyph_run(fb, end - GAUGE_BAR5_BACK, 0x0000ffff, 0xffffffff, font, str, si, TEXT_MAX_CELLS_M1, 0);

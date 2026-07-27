@@ -406,7 +406,8 @@ typedef struct {
 
     /* ---- crash / auto-steer script (§6) ---- */
     uint16_t collision_lock;   /* in/out: crash_anim_tbl cursor. Nonzero = the script has the controls;
-                                * it steps the cursor per frame and clears this on the terminal record. */
+                                * it steps the cursor per frame and clears this on the terminal record.
+                                * Seeded from the RM_CRASH_LOCK_* entry points below. */
     int16_t  crash_phase;      /* in/out: which crash the script is playing. < 0 suspends the edge
                                 * clamp; == CRASH_PHASE_LEAN leans the body with the wheel. */
     uint16_t turn_flags;       /* in/out: the input bits the script forces (RM_IN_COAST) */
@@ -945,6 +946,13 @@ void rm_course_probe(RmEventCtx *c);
 #define RM_PAL_STAGE_W1_OFF 0x0e   /* record[0..1]     -> image 0x17fb0 */
 #define RM_PAL_STAGE_L1_OFF 0x10   /* record[2..5]     -> image 0x17fb2 */
 #define RM_PAL_STAGE_L2_OFF 0x14   /* record[6..9]     -> image 0x17fb6 */
+/* ...and where each staged piece sits in the record itself. g_init_leg reads the record as one forward
+ * `(a3)+` walk (word, long, long, word, word), so these are that cursor's stops; the first piece is at
+ * +0 and needs no constant. The pieces' individual colour meaning is not recovered — each is known only
+ * by which race-palette word it lands on. */
+#define RM_OBJDISP_L1_OFF   0x02   /* -> RM_PAL_STAGE_L1_OFF */
+#define RM_OBJDISP_L2_OFF   0x06   /* -> RM_PAL_STAGE_L2_OFF */
+#define RM_OBJDISP_W2_OFF   0x0a   /* -> RM_PAL_STAGE_W2_OFF */
 #define RM_OBJDISP_SHADE_OFF 0x0c  /* obj_shade = be16(record + this) - 2 */
 
 /* What off-image palette write the shell should issue after rm_course_mode_event (all palette-agnostic
@@ -994,6 +1002,13 @@ void rm_course_mode_event(RmEventCtx *c, int16_t *obj_shade, uint16_t *screen_of
 /* Shared crash-tally layout — the DRAW (hud.c hud_crash_fx) and this UPDATE both walk the same
  * one-unit-per-frame rollover (rm_crash_rollover_step) and index the same HUD lap digit, so the shared
  * layout is defined once here. All offsets are relative to the HUD-text base (0x18172). */
+/* The two crash_anim_tbl entry points anything seeds `collision_lock` with, as byte cursors into the
+ * 8-byte records (CRASH_REC_BYTES in player.c): one record in, and three in. ONE name each because TWO
+ * files arm them — src/events.c's common_collide (speed-gated) and src/player.c's steer-hold spin-out —
+ * and a re-derived record layout must not be able to move one arm without the other. */
+#define RM_CRASH_LOCK_SLOW      0x08   /* gentler entry: a low-speed collision */
+#define RM_CRASH_LOCK_SPIN      0x18   /* the canned spin: a high-speed collision, and the spin-out */
+
 #define RM_CRASH_FRAME_MIN      0xa    /* the tally body runs once crash_frame reaches this */
 #define RM_CRASH_ROLLOVER_OFF   0x1c   /* score-digit rollover records (0x1818e), stride below */
 #define RM_CRASH_ROLL_STRIDE    0xe

@@ -69,20 +69,29 @@
 #define SND_TUNE_ON       0x26    /* INITTUNE active flag (== the initial SND_TEMPO_ACC) */
 #define SND_TEMPO_ACC     0x26    /* tempo accumulator; a carry advances the note stream */
 #define SND_STATE_NOTE    0x27    /* last note - SND_NOTE_SPLIT */
-#define SND_STATE_CMD8B   0x28    /* cmd 0x8b target / R6 source */
+#define SND_STATE_CMD8B   0x28    /* SND_OP_SET_R6_SRC target / R6 source */
 #define SND_STATE_MVOL    0x29    /* master volume added to each voice (power-on default 0x0f) */
 
 #define SND_TUNE_LEN_VAL  6       /* value INITTUNE writes to the music-header length field */
 #define SND_TEMPO_RELOAD  6       /* SND_TEMPO_DIV reload value */
+/* The value the driver arms a flag byte with — the 68000's `st.b`. SND_MUSIC_ON / SND_FX_FLAG are read
+ * purely as booleans, so for them any nonzero would do.
+ *
+ * NOT so at SND_TUNE_ON: that byte ALIASES SND_TEMPO_ACC, and its only reader is arithmetic —
+ * rm_refresh does `acc = SND_TEMPO_ACC + SND_TUNE_PARAM` and steps the note stream on the 8-bit carry.
+ * 0xff is the maximum seed, so the first add carries for any SND_TUNE_PARAM >= 1 and the tune's first
+ * note lands on the first eligible frame. Lower this and every tune starts late: the value is
+ * load-bearing there, not merely "nonzero". */
+#define SND_FLAG_ON       0xff
 
 /* ---- voice-control record field offsets (into SoundState.voice[v]) ----------------------------
  * INITTUNE seeds it; the stepper drives it each frame off the note stream. Roles partly reversed. */
 #define SND_VC_FLAGS      0x00    /* state/mode bits; INITTUNE writes word => byte0=0, LOOP_CNT=2 */
-#define SND_VC_LOOP_CNT   0x01    /* byte index into the loop-point table (cmd 0x85); seeded = 2 */
+#define SND_VC_LOOP_CNT   0x01    /* byte index into the loop-point table (SND_OP_LOOP); seeded = 2 */
 #define SND_VC_STREAM     0x02    /* word: current note-stream cursor (SND_CONST offset) */
-#define SND_VC_LOOP_OFF   0x04    /* word: loop-point table cursor (SND_CONST offset; cmd 0x85) */
-#define SND_VC_PORTA_STEP 0x06    /* portamento step (cmd 0x82) */
-#define SND_VC_PORTA_LEN  0x07    /* portamento length (cmd 0x82) */
+#define SND_VC_LOOP_OFF   0x04    /* word: loop-point table cursor (SND_CONST offset; SND_OP_LOOP) */
+#define SND_VC_PORTA_STEP 0x06    /* portamento step (SND_OP_PORTAMENTO) */
+#define SND_VC_PORTA_LEN  0x07    /* portamento length (SND_OP_PORTAMENTO) */
 #define SND_VC_GLIDE_ACC  0x08    /* word: glide/portamento accumulator (cleared per note) */
 #define SND_VC_TIMER      0x0a    /* note-duration countdown; reloads from SND_VC_DUR */
 #define SND_VC_DUR        0x0b    /* note-duration reload value (stream 0xe0..0xff) */
@@ -90,23 +99,32 @@
 #define SND_VC_ENV_D      0x0d    /* envelope segment index */
 #define SND_VC_ENV_E      0x0e    /* envelope level (decays; high nibble is the volume) */
 #define SND_VC_PITCH_F    0x0f    /* pitch field (stream 0xc0..0xdf) */
-#define SND_VC_VIB_2X     0x10    /* vibrato depth*2 (cmd 0x86) */
-#define SND_VC_VIB_A      0x11    /* vibrato step (cmd 0x86) */
-#define SND_VC_VIB_B      0x12    /* vibrato phase / depth (cmd 0x86) */
-#define SND_VC_F13        0x13    /* cmd 0x89 target; INITTUNE clears it */
-#define SND_VC_ENV_FLG    0x14    /* per-frame control bits (set to 2 for notes >= SND_NOTE_SPLIT) */
+#define SND_VC_VIB_2X     0x10    /* vibrato depth*2 (SND_OP_VIBRATO) */
+#define SND_VC_VIB_A      0x11    /* vibrato step (SND_OP_VIBRATO) */
+#define SND_VC_VIB_B      0x12    /* vibrato phase / depth (SND_OP_VIBRATO) */
+#define SND_VC_F13        0x13    /* SND_OP_SET_F13 target; INITTUNE clears it */
+#define SND_VC_ENV_FLG    0x14    /* per-frame control bits — the VC_EF_* set below */
 #define SND_VC_WAVE       0x15    /* waveform index (stream 0xb0..0xbf via SND_PITCH_TABLE) */
 #define SND_VC_WAVE_CUR   0x16    /* working copy of SND_VC_WAVE, latched per note */
 
 #define SND_VC_STATE_VAL  2       /* INITTUNE seeds word@0 with this (=> FLAGS 0, LOOP_CNT 2) */
 #define SND_TUNE_STEP     2       /* per-voice advance through the tune word table (addq.b #2) */
 
+/* ---- SND_VC_ENV_FLG bits ---------------------------------------------------------------------
+ * A DIFFERENT byte from SND_VC_FLAGS below. The bit POSITIONS coincide but the roles do not, so it gets
+ * its own names rather than borrowing the VC_F_* ones — reusing those would claim a shared vocabulary
+ * the driver does not have. */
+#define VC_EF_SOUNDING    0x01    /* rm_refresh's mixer pass enables this voice's tone+noise; the EG and
+                                   * FX blocks CLEAR it on the channel they take over */
+#define VC_EF_NOTE_HI     0x02    /* armed by a note >= SND_NOTE_SPLIT; latches, and is what makes the
+                                   * next frame's control byte nonzero */
+
 /* ---- voice FLAGS (SND_VC_FLAGS) bits ---------------------------------------------------------- */
 #define VC_F_BIT0         0x01    /* toggled every cmd-step frame */
-#define VC_F_BIT1         0x02    /* cmds 0x87/0x8a/0x8b */
-#define VC_F_BIT2         0x04    /* cmds 0x8a/0x8b */
-#define VC_F_PORTA        0x08    /* cmd 0x82; enables the pitch glide in cmd-step */
-#define VC_F_VIBRATO      0x10    /* cmd 0x86 */
+#define VC_F_BIT1         0x02    /* SND_OP_SET_BIT1 / SET_BIT12 / SET_R6_SRC */
+#define VC_F_BIT2         0x04    /* SND_OP_SET_BIT12 / SND_OP_SET_R6_SRC */
+#define VC_F_PORTA        0x08    /* SND_OP_PORTAMENTO; enables the pitch glide in cmd-step */
+#define VC_F_VIBRATO      0x10    /* SND_OP_VIBRATO */
 #define VC_F_VIB_DIR      0x20    /* vibrato ramp direction (toggled at the range limits) */
 #define VC_F_RETRIG_KEEP  0x30    /* bits preserved when a note re-triggers (andi.b #0x30) */
 #define VC_F_GLIDE_EN     0x40
@@ -121,14 +139,45 @@
 #define SND_STREAM_PITCH_BIAS 0x40  /* added to a 0xb0/0xc0-class stream byte -> pitch field / table index */
 #define SND_STREAM_DUR_BIAS   0x21  /* added to a 0xe0-class stream byte -> note duration */
 #define SND_BYTE_CARRY   0x100    /* carry out of an 8-bit add (bit 8) — the volume/tempo carry gate */
+#define SND_VC_NOTE_HOLD  0x80    /* SND_VC_NOTE bit 7 (cmd SND_OP_ENV_HOLD sets it): the next note reuses
+                                   * the running envelope instead of restarting it */
+
+/* ---- note-stream COMMANDS: stream bytes SND_CMD_LO..SND_OP_ENV_HOLD ---------------------------
+ * The 13 entries of snd_cmd_table (image 0x1b394; see names.txt and docs/sound.md). Each name says what
+ * that entry's handler in snd_voice_step DOES. The musical intent of the ones that only set a partly
+ * reversed flag is NOT recovered, so those keep the offset+role convention of the VC_F_BIT* bits they
+ * arm. "(n op)" = the command consumes n operand bytes from the stream after the command byte. */
+#define SND_OP_REST        0x80   /* envelope -> SND_ENV_MAX (silent), then finalise: a rest of one duration */
+#define SND_OP_FLAGS_CLEAR 0x81   /* clear every SND_VC_FLAGS mode bit (glide / portamento / vibrato off) */
+#define SND_OP_PORTAMENTO  0x82   /* (2 op) step, then delay; arms VC_F_PORTA */
+#define SND_OP_GLIDE_DOWN  0x83   /* arms VC_F_GLIDE_DOWN, then falls into SND_OP_GLIDE_UP */
+#define SND_OP_GLIDE_UP    0x84   /* arms VC_F_GLIDE_EN: the sounding note walks +-1 per STREAM STEP
+                                   * (snd_voice_step only runs on a tempo carry, not every 50 Hz frame) */
+#define SND_OP_LOOP        0x85   /* jump to the next SND_VC_LOOP_OFF table entry (a 0 entry restarts it) */
+#define SND_OP_VIBRATO     0x86   /* (2 op) step, then depth; arms VC_F_VIBRATO */
+#define SND_OP_SET_BIT1    0x87   /* arms VC_F_BIT1 (role only partly reversed) */
+#define SND_OP_END_TUNE    0x88   /* stop music (TURNOFF's writes) and abort the rest of the REFRESH frame */
+#define SND_OP_SET_F13     0x89   /* (1 op) -> SND_VC_F13, which biases the period-table index */
+#define SND_OP_SET_BIT12   0x8a   /* arms VC_F_BIT1 | VC_F_BIT2 (roles only partly reversed) */
+#define SND_OP_SET_R6_SRC  0x8b   /* (1 op) -> SND_STATE_CMD8B, the value cmd-step then feeds to reg 6;
+                                   * also arms VC_F_BIT1 | VC_F_BIT2 like SND_OP_SET_BIT12 */
+#define SND_OP_ENV_HOLD    0x8c   /* set SND_VC_NOTE_HOLD (see above) */
+/* Pin the family to the dispatch window: snd_voice_step routes `b >= SND_CMD_LO && b < SND_PITCH_LO`
+ * through this 13-entry jump table, so a re-numbered opcode would compile silently and dispatch to the
+ * wrong handler. Compile-time only — zero bytes in any build (the scroll_const.h assert pattern). */
+typedef char snd_op_family_matches_dispatch_window[
+    (SND_OP_REST == SND_CMD_LO && SND_OP_ENV_HOLD == SND_CMD_LO + 12) ? 1 : -1];
 
 /* ---- cmd-step envelope / period constants ----------------------------------------------------- */
 #define SND_MOD_ENV_OFF   0x1a    /* offset into the modulation table for the envelope reload */
 #define SND_ENV_STEP      0x10    /* envelope level lives in the high nibble; decays by this/frame */
 #define SND_ENV_MAX       0xf0    /* envelope level >= this is inactive (no decay / silent) */
+#define SND_MOD_RESTART   0x80    /* modulation-table byte bit 7: restart the waveform at SND_VC_WAVE */
+#define SND_MOD_VALUE_MASK 0x7f   /* the LFO offset the remaining bits of that byte carry */
 
 /* ---- EG (envelope generator) constants -------------------------------------------------------- */
 #define SND_EG_PHASE_DEC  0x0d    /* EG phase decrement per frame */
+#define SND_EG_PHASE_MASK 0x1f    /* the phase-counter bits folded into the EG period */
 #define SND_EG_PERIOD_HI  0x0100  /* high byte of the EG period seed */
 #define SND_VOL_ENV_MODE  0x10    /* volume byte value that selects the envelope generator */
 

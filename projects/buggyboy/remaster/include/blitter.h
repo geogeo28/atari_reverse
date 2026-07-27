@@ -56,8 +56,10 @@ extern long Supexec(long (*func)(void));
  * so pin them equal rather than letting one be re-mapped without the other. */
 typedef char blt_busy_bit_matches_mask[((1u << BLT_CTL_BUSY_BIT) == BLT_CTL_BUSY) ? 1 : -1];
 
-/* Every pass in this project writes whole destination words, so all three endmasks are all-ones. Named
- * once here, where the rest of the BLT_* vocabulary lives, instead of as a bare literal per pass builder. */
+/* Every pass built through the BlitPass struct below writes whole destination words, so all three of
+ * its endmasks are all-ones. Named once here, where the rest of the BLT_* vocabulary lives, instead of
+ * as a bare literal per pass builder. (src/blitter_skew.c does NOT go through BlitPass — it programs
+ * the registers directly and carries a colour fill mask in the endmasks.) */
 #define BLT_ENDMASK_ALL   0xFFFFu
 
 /* ---- skew byte bits (0x8A3D) ---- */
@@ -127,7 +129,9 @@ static inline void blit_start_and_wait_shared(void) {
 /* One fully-specified blitter pass. All fields map 1:1 to registers; the driver (blit_run) pokes them
  * and starts the chip. x_count is dst words per line, y_count lines. src/dst_addr are byte addresses of
  * the first (top) word; the +inc walk goes forward through memory. endmask1/3 clip the first/last dst
- * word of every line; endmask2 (usually 0xFFFF) covers the middle. skew shifts the source right 0..15
+ * word of every line; endmask2 (BLT_ENDMASK_ALL for every BlitPass builder here — but see the note on
+ * BLT_ENDMASK_ALL above: the skew route bypasses BlitPass and does not) covers the middle.
+ * skew shifts the source right 0..15
  * bits into the dst word grid; fxsr/nfsr handle the edge source reads for a skewed run. */
 typedef struct {
     uint32_t src_addr, dst_addr;
@@ -398,9 +402,9 @@ static inline void blit_ste_cookiecut_pass(uint8_t *col0_bottom, const uint16_t 
     pass.dst_addr  = (uint32_t)col0_bottom;
     pass.dst_x_inc = 2;                                     /* contiguous interleaved words */
     pass.dst_y_inc = -(int16_t)(SCREEN_ROW_BYTES + 2 * (nwords - 1));   /* one scanline UP, back to col0 */
-    pass.endmask1  = 0xFFFF;
-    pass.endmask2  = 0xFFFF;
-    pass.endmask3  = 0xFFFF;
+    pass.endmask1  = BLT_ENDMASK_ALL;
+    pass.endmask2  = BLT_ENDMASK_ALL;
+    pass.endmask3  = BLT_ENDMASK_ALL;
     pass.x_count   = (uint16_t)nwords;
     pass.y_count   = (uint16_t)rows;
     pass.hop       = BLT_HOP_SRC;

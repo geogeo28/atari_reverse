@@ -88,9 +88,9 @@
 #define RPM_COL_SHIFT      4       /* rpm >> this = steer-curve table column */
 
 /* §10 — spin-out. Holding a lock this long, against the spin override the event system left armed,
- * throws the buggy into the canned spin at SPIN_LOCK_START. */
+ * throws the buggy into the canned spin at RM_CRASH_LOCK_SPIN (game.h — shared with events.c, which
+ * arms the same entry on a high-speed collision). */
 #define STEER_HOLD_SPIN    10
-#define SPIN_LOCK_START    0x18
 
 /* §10 — road-edge clamp and off-road push. */
 #define CLAMP_WIDE         0x144   /* road_curve limit with no shoulder in sight */
@@ -364,7 +364,7 @@ static void arm_spin(PlayerState *p, uint16_t in, uint16_t wheel) {
     } else if (override_armed && (int16_t)(p->steer_hold - STEER_HOLD_SPIN) >= 0) {
         if (wheel == spin_lock) {
             p->turn_flags = RM_IN_COAST;
-            p->collision_lock = SPIN_LOCK_START;
+            p->collision_lock = RM_CRASH_LOCK_SPIN;
             consumed = true;
         } else if (wheel == settle_lock) {
             consumed = true;

@@ -14,12 +14,16 @@
 #include "game.h"
 #include "screen.h"
 #include "st.h"
+#include "blit_const.h"     /* COL_ALIGN — the one source shared with the blit engines and the asm cores */
+/* OBJ_ROAD_START_OFF — the one source shared with both scroll routes. NOTE this header is NOT
+ * #define-only (unlike blit_const.h above): it carries inlines and typedefs, so it is not safe to
+ * cpp over a .S file. If object.c is ever promoted to hand-asm, the offset must move to a
+ * #define-only home first. */
+#include "scroll_const.h"
 
 #define OBJ_FULL_CELLS     10       /* full-width fill: 10 * 16-byte writes = one 160-byte scanline */
 #define OBJ_ROW_UP         0xa0     /* 160 bytes: one scanline up */
-#define OBJ_ROAD_START_OFF 0x3480   /* draw-buffer offset where the road band begins */
 #define OBJ_ROAD_ROWS      0x54     /* max scanline rows walked (84) */
-#define COL_ALIGN          0xfff8   /* x/2 with the low 3 bits cleared (8-byte cell) */
 
 /* Byte-aligned draw column from a screen x: x/2 with the low 3 bits cleared (8-byte cell). */
 static uint16_t obj_aligned_col(uint16_t x) {
@@ -165,6 +169,7 @@ static void road_walk(const ObjectInput *in, Framebuffer *fb, int16_t width, Pla
 #define OBJD_CENTER_SPAN 0x6b        /* centre-band row-count derivation */
 #define OBJD_CENTER_BIAS (-0x2a)     /* centre-band row-count bias (moveq #$d6 sign-extended) */
 #define OBJD_CLEAR_TAIL  0xa8        /* added to the clear count when the row past the object is visible */
+#define OBJD_CLEAR_W_ALIGN 0xfffc    /* rounds the row tally (accumulated 2 per row) down to a multiple of 4 */
 #define OBJD_F_LEFT      0x40000000u
 #define OBJD_F_RIGHT     0x20000000u
 #define OBJD_F_FAR       0x10000000u
@@ -175,6 +180,7 @@ static void road_walk(const ObjectInput *in, Framebuffer *fb, int16_t width, Pla
 #define OBJD_ROW_MAX     0xc7        /* (this - row) * width = scanline offset */
 #define OBJD_VPOS_CLAMP  0x54
 #define OBJD_VPOS_BIAS   0x73
+#define OBJD_VPOS_BIAS_S2 0xf        /* the scale2 arm's own vpos bias (OBJD_VPOS_BIAS is the plain arm's) */
 
 static uint16_t objd_row_off(uint16_t row) {
     return (uint16_t)((uint16_t)(OBJD_ROW_MAX - row) * OBJD_WIDTH);
@@ -182,7 +188,7 @@ static uint16_t objd_row_off(uint16_t row) {
 static uint16_t objd_vpos(uint16_t row, int scale2) {
     if (scale2) {
         uint16_t r = (uint16_t)(OBJD_SCAN_ROWS - row);
-        return (uint16_t)(0xf + r + (r >> 1));
+        return (uint16_t)(OBJD_VPOS_BIAS_S2 + r + (r >> 1));
     }
     int16_t t = (int16_t)(OBJD_SCAN_ROWS - row);
     if (t >= OBJD_VPOS_CLAMP) t = OBJD_VPOS_CLAMP;         /* cmpi #$54; bmi keeps */
@@ -255,7 +261,7 @@ void rm_draw_object(const ObjectInput *in, Framebuffer *fb) {
     }
 
     uint16_t row_after = (uint16_t)(cur_row + 1);
-    extra_x2 = (int)((uint16_t)(((uint16_t)extra_x2 & 0xfffc) - 1));   /* clear-width count-1 */
+    extra_x2 = (int)((uint16_t)(((uint16_t)extra_x2 & OBJD_CLEAR_W_ALIGN) - 1));   /* clear-width count-1 */
     int16_t center_rows;                                   /* centre-band rows-1 (-1 = none) */
     uint16_t clear_w;
     int32_t next_entry = (int32_t)be32(in->width_tbl + width_cur); width_cur += 4;

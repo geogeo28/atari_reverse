@@ -34,6 +34,33 @@ sound chip and input can share code.
   bytes ≥ `0x80`/`0xB0` are commands dispatched through a small jump table (BuggyBoy's is
   at `snd_cmd_table`). Struct fields per voice hold current note, envelope counter,
   glide/portamento state.
+
+### BuggyBoy's stream encoding (worked example)
+
+A recovered command set, for the shape to expect. Bytes `< 0x80` are notes (a note reloads the
+duration timer and ends the frame's stream read); `0x80..0x8C` index the 13-entry jump table at
+`snd_cmd_table` (`0x1b394`); `≥ 0xB0` set a field in place and read on — `0xB0..0xBF` waveform,
+`0xC0..0xDF` pitch, `0xE0..0xFF` note duration. "(n op)" = n operand bytes follow the command.
+
+| Byte | Name | Handler does |
+|-----:|------|--------------|
+| `0x80` | `REST` | envelope → inactive, then finalise: a rest of one note duration |
+| `0x81` | `FLAGS_CLEAR` | clear every voice mode bit (glide / portamento / vibrato off) |
+| `0x82` | `PORTAMENTO` | (2 op) step, then delay; arms the portamento bit |
+| `0x83` | `GLIDE_DOWN` | arm glide-down, then fall into `GLIDE_UP` |
+| `0x84` | `GLIDE_UP` | arm glide: the sounding note walks ±1 per frame |
+| `0x85` | `LOOP` | jump to the next loop-table entry (a 0 entry restarts the loop) |
+| `0x86` | `VIBRATO` | (2 op) step, then depth; arms the vibrato bit |
+| `0x87` | `SET_BIT1` | arms voice flag bit 1 (musical role not recovered) |
+| `0x88` | `END_TUNE` | stop music, and abort the rest of the driver's frame |
+| `0x89` | `SET_F13` | (1 op) → the voice byte that biases the period-table index |
+| `0x8A` | `SET_BIT12` | arms voice flag bits 1+2 (roles not recovered) |
+| `0x8B` | `SET_R6_SRC` | (1 op) → the value the per-frame DSP feeds to PSG reg 6; also bits 1+2 |
+| `0x8C` | `ENV_HOLD` | set note bit 7 so the next note keeps the running envelope |
+
+Names are *claims* recovered from what each handler does; the two `SET_BIT*` entries keep the
+offset+role convention because their musical intent was never grounded. The port's `SND_OP_*`
+constants (`projects/buggyboy/remaster/include/sound.h`) are this table.
 - "Play jingle N" entry points take a track id in `d0`, gate on a priority flag
   (don't interrupt a higher-priority tune), set state, and call the tune-init routine —
   these are the hooks the game triggers on events (start, crash, checkpoint, game-over).

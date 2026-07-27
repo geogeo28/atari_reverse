@@ -1328,9 +1328,16 @@ asm's BASE path falls to the 2-cell family — see the objshift.S CONTRACT note;
 passes 1 or 2) and `color` ≥ 16 (the fill index `(color & 0xf) << 3` only ever sees nibbles 0..15). Per
 CLAUDE.md these stay honestly unpinned — a branch the game's own data never drives, not a missing test.
 
-**A3 follow-ups (deferred).** `src/object.c` carries a historical duplicate `#define COL_ALIGN 0xfff8` of
-the value now hoisted into `blit_const.h`; fold it onto the shared constant (out of scope here — object.c
-was untouched, so `blit.c`'s "single source" note points at the duplicate rather than claiming to erase it).
+**A3 follow-ups — CLOSED (2026-07-26, readability sweep).** `src/object.c`'s historical duplicate
+`#define COL_ALIGN 0xfff8` is gone: it now `#include`s `blit_const.h` for the hoisted constant, and its
+second duplicate `#define OBJ_ROAD_START_OFF 0x3480` likewise folds onto `scroll_const.h`'s. Within the
+**remaster tree** each name now has exactly one definition. (`recreate/` keeps its own copies of both —
+that is the independent oracle-side port, not a missed fold.) Pinned byte-identical: the shipping
+`BUGGYBOY.PRG` sha256 is unchanged across the fold.
+
+> STILL OPEN (noted, not folded — out of this sweep's scope): the *value+role* `0xfff8` also lives as
+> `COARSE_MASK` (`scroll_const.h`) and `RR_D7_WORD_MASK` (`road_const.h`). Three names for one 8-byte
+> column mask. Folding those touches the road/scroll engines and their asm, so it is a separate change.
 
 **Both hot fine-x engines are now hand-asm.** `objsprite` (the third, cold family) stays C. A3 is done.
 

@@ -281,9 +281,9 @@ static __attribute__((unused)) void rr_band_A_c(rr_regs *r) {
             /* ---- narrow: a single forward fill, no shoulder pass ---- */
             uint8_t *dst = fb->px + row_dst;
             if (is_split) {
-                uint32_t count = 0x13;
+                uint32_t count = RR_ROW_FILL_PAIR_DBF;          /* fill the whole 160-byte row */
                 if (rr_wadd((uint16_t)col, 8) >= 0) {           /* copy an edge cell first */
-                    count = 0x12; src += 8;
+                    count = RR_ROW_FILL_EDGE_DBF; src += 8;
                     if (plane_hi) { rr_copy_long(&dst, &src); rr_copy_long(&dst, &src); }
                     else          { rr_copy_long(&dst, &src);
                                     rr_copy_long_masked(&dst, &src, edge_mask); }
@@ -416,7 +416,7 @@ static __attribute__((unused)) void rr_band_B_c(rr_regs *r, uint32_t rows_m1, in
         /* ---- far tail: wider blit ---- */
         if (col < 0) {                                          /* road off-screen: counted fill */
             int16_t rem = rr_wadd((uint16_t)col, 8);
-            uint32_t cells = (rem < 0) ? 0x13 : 0x12;
+            uint32_t cells = (rem < 0) ? RR_ROW_FILL_PAIR_DBF : RR_ROW_FILL_EDGE_DBF;
             if (rem >= 0) {                                     /* one masked edge cell first */
                 src += 8;
                 rr_copy_long(&dst, &src);

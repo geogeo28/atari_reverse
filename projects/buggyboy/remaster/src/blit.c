@@ -47,8 +47,9 @@ void rm_reach_assert(int ok);
 /* ---- shared fine-x geometry ---- */
 /* OBJSH_NIBBLE / OBJSH_SUBPX_BITS / COL_ALIGN / OBJSH_CELL_BYTES / OBJSH_RIGHT_BOUND / OBJSH_PLANES are
  * shared with the asm cores — defined in blit_const.h (included above), the single source for the blit
- * engines (F11).
- * (object.c carries a historical duplicate COL_ALIGN 0xfff8 of its own — see PERF30 A3 follow-ups.) */
+ * engines (F11). object.c #includes it for COL_ALIGN too, so blit_const.h is the only definition of
+ * these names in the REMASTER tree. (recreate/ keeps its own COL_ALIGN — that is the oracle-side port,
+ * deliberately independent of this one, not a missed fold.) */
 
 static uint16_t objsh_aligned_col(uint16_t x) {
     return (uint16_t)((int16_t)x >> 1) & (uint16_t)COL_ALIGN;

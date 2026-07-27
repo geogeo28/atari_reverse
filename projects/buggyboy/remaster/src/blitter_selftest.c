@@ -28,7 +28,7 @@
 #define ST_ROWS      40           /* sprite height in rows */
 #define ST_SRC_ROWS  ST_ROWS      /* source rows == drawn rows */
 #define ST_X         0x40         /* x with fine_x==0 (multiple of 16); aligned_col = 0x20 */
-#define ST_ALIGNED_COL 0x20       /* (ST_X>>1) & 0xfff8 — byte column of col0 in each row */
+#define ST_ALIGNED_COL 0x20       /* (ST_X>>1) & COL_ALIGN — byte column of col0 in each row */
 #define ST_Y_TOP     100          /* top screen row of the sprite */
 #define ST_WIDTH_IDX 0            /* base family, straddle 3 */
 #define ST_BG_BYTE   0x5A         /* non-trivial background so the AND pass's preserve path is tested */
@@ -107,9 +107,9 @@ static void blit_plane(uint8_t *fb, int plane, const uint16_t *src_bm, uint8_t l
     pass.dst_addr  = (uint32_t)(fb + ST_Y_TOP * SCREEN_ROW_BYTES + ST_ALIGNED_COL + plane * 2);
     pass.dst_x_inc = OBJSH_CELL_BYTES;             /* next 16-px column, same plane (interleaved) */
     pass.dst_y_inc = SCREEN_ROW_BYTES - OBJSH_CELL_BYTES * (ST_CELLS - 1);   /* next line, back to col 0 */
-    pass.endmask1  = 0xFFFF;                        /* no edge clip — bitmap zeros carry transparency */
-    pass.endmask2  = 0xFFFF;
-    pass.endmask3  = 0xFFFF;
+    pass.endmask1  = BLT_ENDMASK_ALL;               /* no edge clip — bitmap zeros carry transparency */
+    pass.endmask2  = BLT_ENDMASK_ALL;
+    pass.endmask3  = BLT_ENDMASK_ALL;
     pass.x_count   = ST_CELLS;
     pass.y_count   = ST_ROWS;
     pass.hop       = BLT_HOP_SRC;

@@ -25,7 +25,7 @@ void rm_sound_reset(SoundState *s) {
 }
 
 /* Stop music: clear the music-active byte/word and mzflag. Shared by TURNOFF and the note stream's
- * end-tune command (0x88), which reaches the same three writes by falling into TURNOFF's body. */
+ * SND_OP_END_TUNE, which reaches the same three writes by falling into TURNOFF's body. */
 static void snd_music_off(SoundState *s) {
     s->header[SND_MUSIC_ON] = 0;
     s->header[SND_MUSIC_BYTE] = 0;
@@ -59,7 +59,7 @@ void rm_initfx(SoundState *s, uint32_t fx_id) {
     wr16(s->header + SND_FX_PRE_LO, be16(SND_CONST + src + SND_FX_WORDS * 2));       /* word 7 */
     wr16(s->header + SND_FX_PRE_HI, be16(SND_CONST + src + SND_FX_WORDS * 2 + 2));   /* word 8 */
     wr16(s->header + SND_FX_TAIL, be16(s->header + SND_FX_REREAD));
-    s->header[SND_FX_FLAG] = 0xff;
+    s->header[SND_FX_FLAG] = SND_FLAG_ON;
     RM_SOUND_UNLOCK();
 }
 
@@ -70,7 +70,7 @@ void rm_inittune(SoundState *s, uint32_t tune_id) {
     RM_SOUND_LOCK();      /* the asm's safe publish: mzflag 0 -> rewrite the voice records -> mzflag 0xff */
     s->header[SND_MUSIC_ON] = 0;
     s->header[SND_TUNE_LEN] = SND_TUNE_LEN_VAL;
-    s->header[SND_TUNE_ON] = 0xff;
+    s->header[SND_TUNE_ON] = SND_FLAG_ON;
     s->header[SND_TUNE_PARAM] = SND_CONST[SND_TUNE_TAB_B_OFF + idx];
 
     uint16_t cur = idx;                                              /* d0.w indexes the word table */
@@ -84,16 +84,16 @@ void rm_inittune(SoundState *s, uint32_t tune_id) {
         wr16(rec + SND_VC_LOOP_OFF, param);
         wr16(rec + SND_VC_STREAM, be16(SND_CONST + param));         /* per-voice stream start */
     }
-    s->header[SND_MUSIC_ON] = 0xff;
+    s->header[SND_MUSIC_ON] = SND_FLAG_ON;
     RM_SOUND_UNLOCK();
 }
 
 /* ---- snd_voice_step: per-frame note-stream stepper -------------------------------------------
  *
  * Each frame the note-duration timer counts down; while it still runs only glide steps the note. On
- * expiry the stream is read: bytes >= 0xb0 set pitch/param fields, 0x80..0x8c are commands (a 13-entry
- * jump table), and a byte < 0x80 is the next note (which finalises the frame and reloads the timer).
- * Returns 1 iff the stream hit command 0x88 ("end tune"): on the real 68k that rewrote the caller's
+ * expiry the stream is read: bytes >= 0xb0 set pitch/param fields, 0x80..0x8c are the SND_OP_* commands
+ * (a 13-entry jump table), and a byte < 0x80 is the next note (which finalises the frame and reloads the
+ * timer). Returns 1 iff the stream hit SND_OP_END_TUNE: on the real 68k that rewrote the caller's
  * return to re-enter REFRESH past its whole music block, so REFRESH must abort the rest of the frame. */
 static int snd_voice_step(SoundState *s, uint8_t *rec) {
     uint8_t timer = (uint8_t)(rec[SND_VC_TIMER] - 1);
@@ -122,20 +122,20 @@ static int snd_voice_step(SoundState *s, uint8_t *rec) {
                 rec[SND_VC_WAVE] = SND_CONST[SND_PITCH_TABLE_OFF + (uint8_t)(b + SND_STREAM_PITCH_BIAS)];
             continue;
         }
-        if (b >= SND_CMD_LO) {                  /* 0x80..0x8c: command jump table */
+        if (b >= SND_CMD_LO) {                  /* 0x80..0x8c: command jump table (SND_OP_*) */
             switch (b) {
-            case 0x80:                          /* set env inactive, then finalise (no note setup) */
+            case SND_OP_REST:                   /* set env inactive, then finalise (no note setup) */
                 rec[SND_VC_ENV_E] = SND_ENV_MAX;
                 goto note_tail;
-            case 0x81: rec[SND_VC_FLAGS] = 0; continue;
-            case 0x82:
+            case SND_OP_FLAGS_CLEAR: rec[SND_VC_FLAGS] = 0; continue;
+            case SND_OP_PORTAMENTO:
                 rec[SND_VC_PORTA_STEP] = SND_CONST[stream++];
                 rec[SND_VC_FLAGS] |= VC_F_PORTA;
                 rec[SND_VC_PORTA_LEN] = SND_CONST[stream++];
                 continue;
-            case 0x83: rec[SND_VC_FLAGS] |= VC_F_GLIDE_DOWN; /* fall through */
-            case 0x84: rec[SND_VC_FLAGS] |= VC_F_GLIDE_EN; continue;
-            case 0x85: {                        /* loop/repeat: jump to the next loop-table entry */
+            case SND_OP_GLIDE_DOWN: rec[SND_VC_FLAGS] |= VC_F_GLIDE_DOWN; /* fall through */
+            case SND_OP_GLIDE_UP:   rec[SND_VC_FLAGS] |= VC_F_GLIDE_EN; continue;
+            case SND_OP_LOOP: {                 /* loop/repeat: jump to the next loop-table entry */
                 uint32_t table = be16(rec + SND_VC_LOOP_OFF);       /* SND_CONST cursor */
                 uint8_t idx = rec[SND_VC_LOOP_CNT];                 /* byte index, steps by 2 */
                 if (be16(SND_CONST + table + idx) == 0) idx = 0;    /* 0 entry => restart the loop */
@@ -143,7 +143,7 @@ static int snd_voice_step(SoundState *s, uint8_t *rec) {
                 rec[SND_VC_LOOP_CNT] = (uint8_t)(idx + 2);
                 continue;
             }
-            case 0x86: {                        /* vibrato */
+            case SND_OP_VIBRATO: {
                 rec[SND_VC_VIB_A] = SND_CONST[stream++];
                 uint8_t depth = SND_CONST[stream++];
                 rec[SND_VC_VIB_B] = depth;
@@ -151,25 +151,29 @@ static int snd_voice_step(SoundState *s, uint8_t *rec) {
                 rec[SND_VC_FLAGS] |= VC_F_VIBRATO;
                 continue;
             }
-            case 0x87: rec[SND_VC_FLAGS] |= VC_F_BIT1; continue;
-            case 0x88:                          /* end tune: TURNOFF, then signal REFRESH to abort */
+            case SND_OP_SET_BIT1: rec[SND_VC_FLAGS] |= VC_F_BIT1; continue;
+            case SND_OP_END_TUNE:               /* TURNOFF, then signal REFRESH to abort the frame */
                 snd_music_off(s);
                 return 1;
-            case 0x89: rec[SND_VC_F13] = SND_CONST[stream++]; continue;
-            case 0x8a:
+            case SND_OP_SET_F13: rec[SND_VC_F13] = SND_CONST[stream++]; continue;
+            case SND_OP_SET_BIT12:
                 rec[SND_VC_FLAGS] |= (VC_F_BIT1 | VC_F_BIT2);
                 continue;
-            case 0x8b:
+            case SND_OP_SET_R6_SRC:
                 s->header[SND_STATE_CMD8B] = SND_CONST[stream++];
                 rec[SND_VC_FLAGS] |= (VC_F_BIT1 | VC_F_BIT2);
                 continue;
-            case 0x8c: rec[SND_VC_NOTE] = 0xff; continue;
+            /* Writes the WHOLE byte, not just SND_VC_NOTE_HOLD. The low bits only stop mattering if
+             * the next stream element is a note; SND_OP_REST exits via note_tail without touching
+             * SND_VC_NOTE, so a 0x8c->0x80 pair would leave 0xff live as the period index. No shipped
+             * tune does that (0x8c occurs 4x in SND_CONST, always before a note) — honestly unpinned. */
+            case SND_OP_ENV_HOLD: rec[SND_VC_NOTE] = 0xff; continue;
             }
         }
 
         /* b < 0x80: a note. Set it up, then fall into the tail. */
         wr16(rec + SND_VC_GLIDE_ACC, 0);
-        if (!(rec[SND_VC_NOTE] & 0x80)) {
+        if (!(rec[SND_VC_NOTE] & SND_VC_NOTE_HOLD)) {   /* SND_OP_ENV_HOLD suppresses the envelope restart */
             rec[SND_VC_ENV_E] = 0;
             rec[SND_VC_ENV_D] = 0;
         }
@@ -177,7 +181,7 @@ static int snd_voice_step(SoundState *s, uint8_t *rec) {
         rec[SND_VC_WAVE_CUR] = rec[SND_VC_WAVE];
         rec[SND_VC_ENV_FLG] = 0;
         if (b >= SND_NOTE_SPLIT) {
-            rec[SND_VC_ENV_FLG] = 2;
+            rec[SND_VC_ENV_FLG] = VC_EF_NOTE_HI;
             s->header[SND_STATE_NOTE] = (uint8_t)(b - SND_NOTE_SPLIT);
         }
     note_tail:
@@ -215,9 +219,9 @@ static uint16_t snd_cmd_step(SoundState *s, uint8_t *rec, uint32_t out_off) {
      * the base tone period for (lfo + note + f13). */
     uint8_t phase = (uint8_t)(rec[SND_VC_WAVE_CUR] + 1);
     uint8_t lfo = SND_CONST[mod + phase];
-    if (lfo & 0x80) {                                    /* restart the modulation waveform */
+    if (lfo & SND_MOD_RESTART) {                         /* restart the modulation waveform */
         phase = rec[SND_VC_WAVE];
-        lfo &= 0x7f;
+        lfo &= SND_MOD_VALUE_MASK;
     }
     rec[SND_VC_WAVE_CUR] = phase;
     uint8_t pidx = (uint8_t)(lfo + rec[SND_VC_NOTE] + rec[SND_VC_F13]);
@@ -259,12 +263,13 @@ static uint16_t snd_cmd_step(SoundState *s, uint8_t *rec, uint32_t out_off) {
         }
     }
 
-    /* Next frame's control byte: 3 if the note's env-flag is armed, else 0; then, when flags bits 0+1
-     * are both set, feed R6 from the cmd-0x8b slot and OR in 1. */
-    uint8_t ctl = (rec[SND_VC_ENV_FLG] & VC_F_BIT1) ? 3 : 0;
+    /* Next frame's SND_VC_ENV_FLG (its own VC_EF_* bits — NOT the VC_F_* ones, which belong to the
+     * separate SND_VC_FLAGS byte tested on the next line). Feed R6 from the SND_OP_SET_R6_SRC slot
+     * whenever FLAGS bits 0+1 are both set. */
+    uint8_t ctl = (rec[SND_VC_ENV_FLG] & VC_EF_NOTE_HI) ? (VC_EF_SOUNDING | VC_EF_NOTE_HI) : 0;
     if ((rec[SND_VC_FLAGS] & VC_F_BIT1) && (rec[SND_VC_FLAGS] & VC_F_BIT0)) {
         s->header[SND_STATE_R6] = s->header[SND_STATE_CMD8B];
-        ctl |= 1;
+        ctl |= VC_EF_SOUNDING;
     }
     if (rec[SND_VC_FLAGS] & VC_F_BIT2)
         rec[SND_VC_FLAGS] &= (uint8_t)~VC_F_BIT1;
@@ -290,7 +295,7 @@ uint32_t rm_refresh(SoundState *s, uint8_t *regs, uint8_t *vals, int cap) {
                      || snd_voice_step(s, s->voice[1])
                      || snd_voice_step(s, s->voice[2]);
             }
-            /* An "end tune" (cmd 0x88) skips straight to the EG block, dropping the rest of the
+            /* An SND_OP_END_TUNE skips straight to the EG block, dropping the rest of the
              * voices' steps and the whole DSP pass this frame. */
             if (!ended) {
                 s->header[SND_STATE_R6] = s->header[SND_STATE_NOTE];
@@ -309,11 +314,11 @@ uint32_t rm_refresh(SoundState *s, uint8_t *regs, uint8_t *vals, int cap) {
         eg_period = (uint16_t)(eg_period + eg_period); eg_period = (uint16_t)(eg_period + pitch_inv);
         eg_period = (uint16_t)(eg_period + eg_period); eg_period = (uint16_t)(eg_period + pitch_inv);
         uint8_t phase = s->header[SND_EG_PHASE];
-        eg_period = (uint16_t)(eg_period + (phase & 0x1f));
+        eg_period = (uint16_t)(eg_period + (phase & SND_EG_PHASE_MASK));
         s->header[SND_EG_PHASE] = (uint8_t)(phase - SND_EG_PHASE_DEC);
         if (s->header[SND_EG_PHASE] & 1) eg_period = (uint16_t)(eg_period + SND_EG_PERIOD_HI);
         wr16(s->header + SND_PERIOD_A, eg_period);
-        v0[SND_VC_ENV_FLG] &= (uint8_t)~VC_F_BIT0;
+        v0[SND_VC_ENV_FLG] &= (uint8_t)~VC_EF_SOUNDING;
     }
 
     /* --- effects: sweep the frequency / gate the noise, drive channel C --- */
@@ -341,7 +346,7 @@ uint32_t rm_refresh(SoundState *s, uint8_t *regs, uint8_t *vals, int cap) {
             s->header[SND_VOL_C] = SND_VOL_ENV_MODE;
             wr16(s->header + SND_PERIOD_C, be16(s->header + SND_FX_FREQ));
             uint8_t *v2 = s->voice[2];
-            v2[SND_VC_ENV_FLG] &= (uint8_t)~VC_F_BIT0;
+            v2[SND_VC_ENV_FLG] &= (uint8_t)~VC_EF_SOUNDING;
             uint8_t rot = s->header[SND_FX_NZ_ROT];
             int bit0 = rot & 1;
             s->header[SND_FX_NZ_ROT] = (uint8_t)((rot >> 1) | (rot << 7));           /* ror.b #1 */
@@ -356,7 +361,7 @@ uint32_t rm_refresh(SoundState *s, uint8_t *regs, uint8_t *vals, int cap) {
     static const uint8_t mixer_mask[SND_VOICES] = {SND_MIXER_A, SND_MIXER_B, SND_MIXER_C};
     uint8_t mixer = SND_MIXER_BASE;
     for (int v = 0; v < SND_VOICES; v++)
-        if (s->voice[v][SND_VC_ENV_FLG] & VC_F_BIT0)
+        if (s->voice[v][SND_VC_ENV_FLG] & VC_EF_SOUNDING)
             mixer ^= mixer_mask[v];
 
     /* --- dump the PSG registers (reg, value) in the driver's fixed order --- */

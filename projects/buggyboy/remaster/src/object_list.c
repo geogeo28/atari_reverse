@@ -124,6 +124,7 @@ void rm_reach_pass_begin(void);
 #define OBJ_REC_DSTADJ   0x08       /* a0 += this word (normal) / special record cursor */
 #define OBJ_REC_XADJ     0x0a       /* x += this word (normal) / normal record cursor */
 #define OBJ_HANDLER_SRCADJ 0x02     /* handler_lo: src += word@(cursor + this + parity) */
+#define OBJ_HI_ROWS_OFF    0x04     /* draw_obj_sprite_hi: rows byte at (cursor - 2) + this + view */
 #define OBJ_BONUS_MIN_TYPE 6
 #define OBJ_ROWS_ONLY    0x3f
 #define OBJ_ROW_OBJECTS  0xe        /* inner loop runs this+1 (=15) objects per row */
@@ -147,11 +148,14 @@ void rm_reach_pass_begin(void);
 #define OBJH_PARITY_MASK 0x2
 #define OBJH_SRC_REWIND 0xa0
 
-/* P24 global-byte flag path. */
+/* P24 global-byte flag path. The two row counts are the objshift2 leaf's rows_m1 (dbf seed); named
+ * because each recurs across P24's stages, unlike the once-each counts of P26..P38. */
 #define OBJ_P24_FLAG_ON  0x31
 #define OBJ_P24_SRC2_OFF 0xb1f8
 #define OBJ_P24_X3_OFF   0xd0
 #define OBJ_P24_SRC3_OFF 0x34
+#define OBJ_P24_ROWS_M1     0x2a    /* outer stages, both flag arms */
+#define OBJ_P24_ROWS_M1_MID 0x26    /* the flag-on middle glue run */
 #define OBJ_XFORM_VIEW_BIT 0x4
 
 /* set_low_byte (68k `.b` op on a word register) now lives in st.h, shared with sound.c. */
@@ -179,7 +183,7 @@ static struct obj_hi_out draw_obj_sprite_hi(const ObjListCtx *c, uint16_t x, uin
     uint16_t base_col = (uint16_t)(xoff + x);
 
     uint16_t view = (uint16_t)(c->view_flags >> 1);
-    uint8_t rows_byte = c->buf_a[rec_xoff + 4 + view];
+    uint8_t rows_byte = c->buf_a[rec_xoff + OBJ_HI_ROWS_OFF + view];
     uint16_t rows_m1 = set_low_byte(rows_seed, rows_byte);
 
     uint32_t dst_top = (uint32_t)(dst - sx16(width));
@@ -296,22 +300,23 @@ static void objshift2_glue(const ObjListCtx *c, uint16_t x, uint16_t rows, uint3
 static void obj_handler_p24(const ObjListCtx *c, uint16_t x, uint16_t rows_m1, uint32_t src) {
     uint32_t dp = objshift2_prefix_dst(c, rows_m1);
     if (c->p24_flag == OBJ_P24_FLAG_ON) {
-        RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src, x, /*rows=*/0x2a, /*width_idx=*/0);   /* stage 1 */
+        RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src, x, OBJ_P24_ROWS_M1, /*width_idx=*/0);   /* stage 1 */
         uint16_t x2 = (uint16_t)(OBJSH2P_SUBCELL_X + x);
         uint32_t src2 = OBJ_P24_SRC2_OFF;
-        objshift2_glue(c, x2, /*rows=*/0x26, dp, src2, /*groups=*/2);
+        objshift2_glue(c, x2, OBJ_P24_ROWS_M1_MID, dp, src2, /*groups=*/2);
         RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src2 + OBJSH2P_SUBCELL_S * (2 + 1),
-                          (uint16_t)(x2 + OBJSH2P_SUBCELL_X * (2 + 1)), /*rows=*/0x26, 2);
+                          (uint16_t)(x2 + OBJSH2P_SUBCELL_X * (2 + 1)), OBJ_P24_ROWS_M1_MID, 2);
         RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src + OBJ_P24_SRC3_OFF,
-                          (uint16_t)(x + OBJ_P24_X3_OFF), /*rows=*/0x2a, 0);                /* stage 3 */
+                          (uint16_t)(x + OBJ_P24_X3_OFF), OBJ_P24_ROWS_M1, 0);              /* stage 3 */
     } else {
-        objshift2_glue(c, x, /*rows=*/0x2a, dp, src, /*groups=*/4);
+        objshift2_glue(c, x, OBJ_P24_ROWS_M1, dp, src, /*groups=*/4);
         RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src + OBJSH2P_SUBCELL_S * (4 + 1),
-                          (uint16_t)(x + OBJSH2P_SUBCELL_X * (4 + 1)), /*rows=*/0x2a, 2);
+                          (uint16_t)(x + OBJSH2P_SUBCELL_X * (4 + 1)), OBJ_P24_ROWS_M1, 2);
     }
 }
 
-/* P-prefix + glue(g) + optional final blit (P26..P38). rows/glue-groups/final width per handler. */
+/* P-prefix + glue(g) + optional final blit (P26..P38). rows/glue-groups/final width per handler:
+ * `rows` is the objshift2 leaf's rows_m1 (dbf seed), `final_wi` < 0 means no final blit. */
 static void obj_handler_p_glue(const ObjListCtx *c, uint16_t x, uint16_t rows_m1, uint32_t src,
                                uint16_t rows, int groups, int final_wi) {
     uint32_t dp = objshift2_prefix_dst(c, rows_m1);
@@ -366,6 +371,11 @@ static void obj_dispatch(const ObjListCtx *c, uint16_t jumpidx, uint16_t x, uint
         case OBJ_H_LO_FULL:  obj_handler_lo_full(c, x, colour, rows_m1, src, rec_cursor, 1); break;
         case OBJ_H_LO_FULL2: obj_handler_lo_full(c, x, colour, rows_m1, src, rec_cursor, 2); break;
 
+        /* P24..P38 are one geometry ladder spelled as a switch, shrinking down the list. Only the
+         * rows_m1 column is all-distinct (0x2a..0x04) — the glue-groups and final-width columns DO
+         * repeat, so treat a change to those as a ladder-wide edit, not a per-case one. The literals
+         * stay inline at the case that already names its handler rather than becoming a parallel
+         * table of names. */
         case OBJ_H_P24: obj_handler_p24(c, x, rows_m1, src); break;
         case OBJ_H_P26: obj_handler_p_glue(c, x, rows_m1, src, 0x20, 3, -1); break;
         case OBJ_H_P28: obj_handler_p_glue(c, x, rows_m1, src, 0x1c, 2, 2); break;
@@ -378,7 +388,7 @@ static void obj_dispatch(const ObjListCtx *c, uint16_t jumpidx, uint16_t x, uint
         case OBJ_H_P36: obj_handler_p_glue(c, x, rows_m1, src, 0x06, 0, 2); break;
         case OBJ_H_P38: {
             uint32_t dp = objshift2_prefix_dst(c, rows_m1);
-            RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src, x, 0x04, 0);
+            RM_BLIT_OBJSHIFT2(c->px, dp, c->buf_c, src, x, /*rows_m1=*/0x04, /*width_idx=*/0);
             break;
         }
         default: break;

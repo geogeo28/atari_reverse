@@ -444,11 +444,15 @@ static FlowMenuResult flow_fkey_menu(FlowState *fs, const FlowOps *ops, void *ct
     return FLOW_MENU_REDRAW;                                         /* 0x2b80/0x2b88: out of range -> default redraw */
 }
 
+/* drawn_leg's "nothing drawn yet" value: any word that is not a leg index (0..IP_LEG_COUNT-1), so the
+ * next frame's compare always misses and rebuilds the dash. */
+#define FLOW_LEG_NONE 0xffff
+
 RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, const FlowTuning *t,
                                 SoundDriver *snd) {
     ops->event(ctx, RM_FLOW_EVT_SELECT_ENTER, fs->leg_index, 0);
     for (;;) {                                    /* outer loop: redraws + idle-timeout attract cycle */
-        uint16_t drawn_leg = 0xffff;              /* != any leg (0..4): forces a dash rebuild on entry */
+        uint16_t drawn_leg = FLOW_LEG_NONE;       /* forces a dash rebuild on entry */
         fs->idle_countdown = t->idle_init;
         /* Load the leg-select palette at the OUTER-loop entry (g_init_playfield @0x2af6,
          * intermission.c:498), BEFORE the F-key branch below — so an F1..F5 direct pick reaches the
@@ -473,7 +477,7 @@ RmFlowResult rm_flow_leg_select(FlowState *fs, const FlowOps *ops, void *ctx, co
             if (menu == FLOW_MENU_RELOAD)         /* the reload re-read GRAPHICS.GRA, so the dash the shell
                                                    * rebuilt may be for another leg — force a rebuild for the
                                                    * live selection on the next frame (see op_reload_assets). */
-                drawn_leg = 0xffff;
+                drawn_leg = FLOW_LEG_NONE;
             if (menu != FLOW_MENU_NAV) {          /* the F6 preview already redrew (0x2bfc) */
                 ops->draw_results(ctx, fs->leg_index);   /* default redraw (0x2b9e) */
                 ops->draw_panel5(ctx);                   /* the 5-entry leg-name menu (0x2b9e tail) */

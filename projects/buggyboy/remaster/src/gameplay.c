@@ -141,10 +141,10 @@ const uint8_t *rm_objdisp_record(const uint8_t *buf_a, uint16_t leg, uint16_t cu
 /* Stage the record's four colour pieces into `race_pal` (the original's 0x17fac.. writes overlapping
  * the race palette) and derive obj_shade. The odd write order / offsets mirror g_init_leg exactly. */
 void rm_stage_palette_record(uint8_t *race_pal, int16_t *obj_shade, const uint8_t *disp) {
-    wr16(race_pal + RM_PAL_STAGE_W1_OFF, be16(disp));         /* disp[0..1]   -> 0x17fb0 */
-    wr32(race_pal + RM_PAL_STAGE_L1_OFF, be32(disp + 2));     /* disp[2..5]   -> 0x17fb2 */
-    wr32(race_pal + RM_PAL_STAGE_L2_OFF, be32(disp + 6));     /* disp[6..9]   -> 0x17fb6 */
-    wr16(race_pal + RM_PAL_STAGE_W2_OFF, be16(disp + 0xa));   /* disp[0xa..b] -> 0x17fac */
+    wr16(race_pal + RM_PAL_STAGE_W1_OFF, be16(disp));                       /* disp[0..1]   -> 0x17fb0 */
+    wr32(race_pal + RM_PAL_STAGE_L1_OFF, be32(disp + RM_OBJDISP_L1_OFF));   /* disp[2..5]   -> 0x17fb2 */
+    wr32(race_pal + RM_PAL_STAGE_L2_OFF, be32(disp + RM_OBJDISP_L2_OFF));   /* disp[6..9]   -> 0x17fb6 */
+    wr16(race_pal + RM_PAL_STAGE_W2_OFF, be16(disp + RM_OBJDISP_W2_OFF));   /* disp[0xa..b] -> 0x17fac */
     *obj_shade = (int16_t)(be16(disp + RM_OBJDISP_SHADE_OFF) - IL_OBJDISP_SHADE_BIAS);
 }
 
