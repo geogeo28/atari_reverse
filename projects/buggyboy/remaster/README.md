@@ -106,6 +106,33 @@ STE vs ST: **gate −19.2 %, driving −2.1 %** — same pixels, byte-identical 
 machines (goldens ×5 each + whole-frame A/B pin it). RAM size has **zero** effect on speed: the
 1 MB cells return bit-identical tick totals and route counters to the 4 MB cells.
 
+### vs the ORIGINAL binary (same instrument: Musashi cycle counts, staged gate frame, 8 MHz)
+
+Both sides re-measured at HEAD on the identical staged leg-0 gate frame — the original via its own
+68000 code under the oracle, the remaster via the cross-compiled bench build. The original never
+touches the blitter (verified: zero `$FFFF8Axx` references in the binary), so its number is the
+baseline on ST **and** STE.
+
+| stage (gate frame) | original | remaster | ratio |
+|---|---:|---:|---:|
+| build_road_geometry | 2.42 ms | 3.90 ms | 1.61× |
+| render_road | 26.19 ms | 28.85 ms | 1.10× |
+| blit_road_scroll | 11.80 ms | 12.06 ms | 1.02× |
+| object tree | 57.34 ms | 62.93 ms | 1.10× |
+| draw_hud | 12.29 ms | 16.27 ms | 1.32× ² |
+| **TOTAL draw_frame** | **110.05 ms** (9.09 fps) | **123.98 ms** (8.06 fps) | **1.127×** |
+| mid-race median | 82.8 ms (12.1 fps) | — (never measured on this instrument) | |
+| **remaster on STE (estimate ³)** | 110.05 ms | **≈100.1 ms** (≈10.0 fps) | **≈0.91×** |
+
+On a plain ST the hand-written original keeps an **11–13 %** edge on the worst frame; on an STE the
+remaster's blitter path makes it — by the labeled estimate — **~9 % faster than the original runs
+anywhere**: the first configuration where the port beats the original, at byte-identical pixels.
+
+² draw_hud includes the dashboard memcpy revert (the live mini-map is transparent; the bulk copy
+was overwriting the sky — pixel correctness beat the 3 ms, see PERF30's dash_pristine note).
+³ Estimate: the Musashi ST figure scaled by the same-build Hatari render-clock ratio
+(105.38 / 130.50 = 0.808) — the ratio is same-instrument, the absolute STE ms is not a measurement.
+
 ¹ The locked-cadence instrument (`GAME_CADENCE_TRACE`) pays a ~7 ms/present tail-canary tax the
 shipping PRG does not; the taxed ST gate frame quantises to 10 vbl in the trace build, but the
 slice-9 no-canary measurement at the same render clock showed 8 vbl — 8 is the shipping figure.
@@ -117,14 +144,23 @@ and fully deterministic (repeat runs are bit-identical).
 
 | configuration | bytes | ≈ | notes |
 |---|---:|---|---|
-| **ST (any RAM)** | **708,004** | 691 KB | basepage 256 + text 122,368 + BSS 585,380; blitter tables never placed |
-| **STE** | **878,436** | 858 KB | + 170,432 B of blitter tables placed into free TPA at boot (alignment pad 0) |
+| **ORIGINAL** (reference) | **437,248** TPA held | 427 KB | 48,632 program (text carries all globals + the stack; data=0 bss=0) + one 388,616 B Malloc — read from the binary's own `main`; **469,248 B incl. the TOS-owned second screen** |
+| **remaster, ST (any RAM)** | **708,004** | 691 KB | basepage 256 + text 122,368 + BSS 585,380; blitter tables never placed |
+| **remaster, STE** | **878,436** | 858 KB | + 170,432 B of blitter tables placed into free TPA at boot (alignment pad 0) |
 | 1 MB usable TPA (EmuTOS) | 905,440 | 884 KB | so: 1 MB ST fits with **197,436 B** spare |
 | 1 MB STE margin after tables + 16 KB stack margin | **10,620** | 10.4 KB | **watch item** — BSS/text growth beyond this silently drops a 1 MB STE to the (pixel-identical, slower) CPU engines; the cadence `free TPA bytes` counter is the gauge |
 
-Static BSS breakdown: arena 388,616 · scroll prebuild 106,496 · screen pool 72,448 (2 × 32,000
-screens + 2 × 4,096 measured-overdraw tails + alignment) · buf_a 15,520 · the rest ≈ 2.3 KB.
-**Minimum machine: 1 MB, ST and STE alike — the same as the original.**
+Static BSS breakdown: arena 388,616 (exactly the original's Malloc size — it models the same work
+block) · scroll prebuild 106,496 · screen pool 72,448 (2 × 32,000 screens + 2 × 4,096
+measured-overdraw tails + alignment) · buf_a 15,520 · the rest ≈ 2.3 KB.
+
+**Minimum machine: the remaster needs 1 MB (ST and STE alike). The ORIGINAL's recovered design
+target was a 512 KB ST** — its 427 KB TPA hold fits one tightly, and `START.PRG` hard-codes a
+scratch address (`0x77000`) that is exactly the highest safe spot on a 512 KB machine
+(medium-high confidence; nothing in either binary gates on RAM size). The remaster's extra
+~270 KB buys the perf structures the original didn't have: the pre-rotated scroll copies
+(104 KB), the compiled C text (122 vs 48 KB), the double-buffered screens with measured tails,
+and the mutable course copy.
 
 ## Relationship to `recreate/`
 

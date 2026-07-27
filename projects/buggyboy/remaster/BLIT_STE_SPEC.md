@@ -576,8 +576,13 @@ to every cadence number here; the byte-exactness pins do not depend on it.
 
 ## 15. Slice 10 — the 1 MB DIET: the remaster runs on a 1 MB ST and STE, like the original
 
-**User requirement:** the original ran on a 1 MB machine (resident set ≈ 0.5 MB; 512 KB was not
-enough); the remaster must too. Post-slice-9 footprint was 1.132 MB against a measured TPA of
+**User requirement:** the remaster must run on a 1 MB machine like the original. *(Corrected
+2026-07-26 by the binary-recovered numbers: the original holds only **437 KB of TPA** — 48.6 KB
+program + one 388,616 B Malloc — and START.PRG's hard-coded `0x77000` scratch pins a **512 KB ST
+design target** (medium-high confidence). "512 KB was not enough" was wrong; ≈0.5 MB resident incl.
+the TOS screen was right. The requirement as set — 1 MB max — stands and is met; a 512 KB target
+would be a separate ~270 KB campaign against the perf structures. See README "Measured performance
+& memory".)* Post-slice-9 footprint was 1.132 MB against a measured TPA of
 **905,448 B** (EmuTOS 1 MB, the binding number; TOS 1.04 desktop 940,906 — measured with a
 `Malloc(-1)` probe at `--memsize 1`). The diet closed the gap in two moves, both measurement-first.
 
