@@ -37,7 +37,8 @@ IDLE_CFLAGS = "-DAUTODRIVE_BASE_INPUT=0 -DAUTODRIVE_STEER_AFTER=1000000"   # no 
 # the report prints separately. The route counters read 0 on a machine that bound the CPU engines.
 RENDER_COUNTERS = ("render ticks", "render frames")
 ROUTE_COUNTERS = ("objshift2 hit", "objshift2 miss",
-                  "colour table hit", "colour first-sight", "colour grow", "colour table-full")
+                  "colour table hit", "colour first-sight", "colour grow", "colour table-full",
+                  "scroll routed", "scroll declined")
 # The overdraw-tail guard band (game_main.c's SCREEN_OVERDRAW / canary_check) and the free TPA above BSS
 # the boot bind measured. A nonzero trip count means an object draw ate the tail margin — a FAILURE.
 MEMORY_COUNTERS = ("tail canary trips", "free TPA bytes")

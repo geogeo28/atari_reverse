@@ -701,7 +701,9 @@ static uint32_t cadence_hz200(void) { return (uint32_t)Supexec(cadence_hz200_sup
  * the routes out), so there is no counter-less tail variant to carry. On an ST run they simply read 0. */
 extern uint32_t rm_objsh2_cache_hits, rm_objsh2_cache_misses;
 extern uint32_t rm_objsh_skew_hits, rm_objsh_skew_first, rm_objsh_skew_grows, rm_objsh_skew_full;
-#define CADENCE_ROUTE_COUNTERS 6
+/* The road-scroll route's pair (blitter.h): routed = frames the chip drew the band, declined = frames
+ * the x_count tripwire handed back to the C reference (expected 0 — see src/blitter_scroll.c). */
+#define CADENCE_ROUTE_COUNTERS 8
 /* The tail longs, in dump order: a {magic, count} header, then the render clock, then the route
  * counters, then the memory-diet pair (the tail-canary trip count and the free-TPA window the boot bind
  * measured). The header is the tripwire run_cadence.py checks before it believes a single number —
@@ -724,15 +726,16 @@ static void cadence_dump(void) {
      * short of it (a trace long enough to reach the tail would clobber them — belt-and-braces). */
     for (int i = 0; i < cadence_pos && (i + 2) * 2 <= CADENCE_TAIL_OFF; i++) w[1 + i] = cadence_log[i];
     /* Tail longs (each 32-bit big-endian), for run_cadence.py: the header, the sub-vblank render clock,
-     * then the objshift2 cache's hit/miss and the colour skew table's hit / first-sight / grow /
-     * full-decline. */
+     * then the objshift2 cache's hit/miss, the colour skew table's hit / first-sight / grow /
+     * full-decline, and the road-scroll route's routed / declined. */
     uint32_t *tail = (uint32_t *)(buf + CADENCE_TAIL_OFF);
     tail[0] = CADENCE_MAGIC;         tail[1] = CADENCE_TAIL_COUNTERS - CADENCE_HEADER_LONGS;
     tail[2] = cadence_render_ticks;  tail[3] = cadence_render_frames;
     tail[4] = rm_objsh2_cache_hits;  tail[5] = rm_objsh2_cache_misses;
     tail[6] = rm_objsh_skew_hits;    tail[7] = rm_objsh_skew_first;
     tail[8] = rm_objsh_skew_grows;   tail[9] = rm_objsh_skew_full;
-    tail[10] = canary_trips;         tail[11] = cadence_tpa_free;
+    tail[10] = rm_scroll_blit_routed; tail[11] = rm_scroll_blit_declined;
+    tail[12] = canary_trips;         tail[13] = cadence_tpa_free;
     long h = Fcreate("SCREEN.BIN", 0);
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, buf); Fclose((short)h); }
 }

@@ -1,14 +1,15 @@
-# BLIT_STE_SPEC — the unified ST/STE hardware-blitter binary (PERF30 C4)
+# BLIT_STE_SPEC — the unified ST/STE hardware-blitter binary (PERF30 C4 + C5)
 
 **ONE `BUGGYBOY.PRG` runs on both a plain ST and an STE**, using the Atari STE/Mega-ST **BLiTTER** chip
-for the heavy masked object blits when present and the 68000 RMW engine when not. The blitter emits the
+for the heavy masked object blits and the road fine-scroll when present and the 68000 RMW engines when
+not. The blitter emits the
 **same framebuffer bytes** as the CPU engine, so every byte-compare pin holds — a perf swap, never a pixel
 change. (Slices 1-5 built and proved this as a *separate* `GAME_STE` binary; **slice 6 unified it** into
 the shipping PRG — that framing supersedes the "separate binary" language below where they conflict; see
 §11.)
 
 This document is the driver design + the objshift2 → blitter recipe + the census that bounded the colour
-engine. Historical slice tags (1-5) are kept for provenance.
+engine + (§16) the road-scroll route. Historical slice tags (1-5) are kept for provenance.
 
 ---
 
@@ -21,6 +22,7 @@ engine. Historical slice tags (1-5) are kept for provenance.
 |---|---|---|
 | `bash build_game.sh` | `BUGGYBOY.PRG` | **unified** — blitter on an STE, CPU asm on an ST/TT (bound at boot) |
 | `GAME_FORCE_NO_BLITTER=1 …` | `BUGGYBOY.PRG` | pins the CPU path even on an STE — a harness A/B baseline knob |
+| `GAME_SCROLL_HOG=1 …` | `BUGGYBOY.PRG` | road-scroll passes on HOG instead of the shipping shared-bus restart loop — the §16 bus-policy A/B |
 | `GAME_STE_SELFTEST=1 …` | (measurement) | + `src/blitter_selftest.c`, boots the driver proof, no game |
 | `GAME_STE_SWEEP=1 …` | (measurement) | + `src/blitter_sweep.c`, boots the recipe sweep |
 | `GAME_STE_CENSUS=1 …` | (measurement) | + `src/blitter_census.c`, drives + counts distinct tuples |
@@ -61,6 +63,15 @@ restart:  bset.b  #7,(BLT_CONTROL)   ; set BUSY -> the chip runs one 64-word bur
           bne.s   restart            ; the bset's Z reflects the prior BUSY; loop until the blit completes
 ```
 — documented, not shipped in slice 1.
+
+> **CORRECTION (2026-07-26, C5 slice 1 — the loop above is INCOMPLETE as written; see §16).** It has no
+> START. The `bset`'s Z flag reports the bit's value BEFORE the write, so on the first pass through the
+> loop it reports the pre-start BUSY = 0 and the branch falls straight through — the chip runs one burst
+> and the caller returns with the pass unfinished. Measured, not reasoned: shipped that way, the C5
+> slice-1 sweep failed **640/640** scroll cases with ~63 of 3,360 words written per fill pass. The
+> shipping form (`blit_start_and_wait_shared`, blitter.h) prefixes an explicit
+> `move.b #BLT_CTL_BUSY,(BLT_CONTROL)` — which also CLEARS the HOG bit a previous `blit_start_and_wait`
+> left set — and only then enters the loop above.
 
 **Supervisor.** The `0xFFFF8Axx` page bus-errors from user mode. Slice 1's self-test runs the whole test in
 one `Supexec`. Slice 2's live engine keeps the **entire `draw_object_list` pass in supervisor** (one
@@ -645,3 +656,166 @@ build's margin — the shipping PRG's is 10,620 B, pinned empirically: a BSS-pad
 placement declining at exactly +4 bytes over the 170,432 the tables need. The usable 1 MB TPA is
 905,440 B by basepage arithmetic — the earlier 905,448 was the `Malloc(-1)` view, 8 B apart. The
 canonical perf + memory tables live in `README.md` "Measured performance & memory".)*
+
+## 16. C5 slice 1 — the ROAD FINE-SCROLL on the blitter (the third route, and the first with no table)
+
+`rm_blit_road_scroll` (`src/scroll.c`) was the last big stage still on the 68000 when the blitter is
+bound: **12.06 ms of the 130.5 ms gate frame** on the Musashi bench, 9 % of it, and the second-largest
+single stage after the object tree. It is also the most blitter-shaped work in the game — two constant
+fills and a rectangular copy — so it is a much cleaner cookie than either object engine, and the whole
+campaign fits in one slice.
+
+**It needs NO lookup table.** Both object routes exist to dodge a per-call materialise, and both pay for
+that with a placed table (§14/§15). The scroll route blits **straight out of the `shifted` pre-rotated
+playfield the CPU reference already reads** — `rm_scroll_prebuild` built it once per leg. So there is
+nothing to place, nothing to flush, and nothing the 1 MB TPA can veto.
+
+### Design
+
+`src/blitter_scroll.c` implements the route; `include/scroll_const.h` is the new ONE home for the scroll
+geometry (`OBJ_ROAD_START_OFF`, `SRC_ROW_STRIDE`, …, hoisted out of `scroll.c` — the `blit_const.h` /
+`road_const.h` precedent) plus the two seams both routes must run identically:
+
+- **`rm_scroll_advance`** — the per-frame scalar head (the `seg_head * scroll_speed` step, the
+  `[0, 0x280)` wrap, `hscroll_step2`). It is **state, not pixels**, and must run exactly ONCE per call on
+  either route, so it is a shared `static inline` and each route calls it once.
+- **`rm_scroll_seam_row`** — the 4-plane masked wrap blend of one row, shared because the blitter route
+  keeps the seam on the CPU.
+
+`src/scroll.c` keeps the byte-exact reference and now exposes it as `rm_scroll_draw(geo, shifted, fb)` —
+"draw an already-advanced frame" — with `rm_blit_road_scroll` being head + draw. That split is what lets
+the blitter route run the head once and still fall back to *these exact pixels*.
+
+### The recipe — 3 or 4 passes, and one CPU seam
+
+| | A. top fill, EVEN plane-words | A. top fill, ODD plane-words | B. main band copy | B. wrapped tail (edge ≥ 1) |
+|---|---|---|---|---|
+| HOP / LOP | ONE / **ONE** | ONE / **ZERO** | SRC / SRC | SRC / SRC |
+| dst_addr | `fb` | `fb + 2` | band start | band + `main_cols`·8 |
+| dst_x_inc / dst_y_inc | 4 / `160 − 39·4` = 4 | same | 2 / `160 − 2(w−1)` | same |
+| src_x_inc / src_y_inc | 0 / 0 (unread) | same | 2 / `0x140 − 2(w−1)` | same |
+| x_count / y_count | 40 / 84 | 40 / 84 | `w = main_cols·4` / 20 | `w = edge·4` / 20 |
+| endmask1/2/3 | all `0xFFFF` | all `0xFFFF` | all `0xFFFF` | all `0xFFFF` |
+| skew | 0 | 0 | 0 (both ends column-aligned) | 0 |
+
+Three things make this fall out cleanly:
+
+1. **`ROAD_TOP_FILL` is `0xffff0000`**, which in the ST's interleaved framebuffer is exactly "every EVEN
+   plane-word all ones, every ODD plane-word zero" — so the 13,440-byte constant fill is TWO source-less
+   passes over the same 84×40 pair grid, one word apart, distinguished only by LOP. With `HOP = ONE` and
+   all-ones endmasks the chip needs neither a source nor a destination read. (A `typedef char [...]`
+   static assert in `blitter_scroll.c` pins the constant to the recipe: a different pattern would need
+   different LOPs.)
+2. **Both pitches are constant across the 20 rows**, so the band is ONE blit, not one per row.
+3. **`x_count` is never 0.** `edge == 0` wraps no columns, so the wrap pass is SKIPPED rather than
+   programmed with a zero width (the chip reads 0 as 65,536). `main_cols ∈ [1, 20]` for all 640 reachable
+   scroll positions; a `scroll_blit_serves` tripwire declines anything else to the CPU reference and
+   counts it. It is a tripwire on the chip contract, **not** a safe harbour — the only state that trips it
+   is an out-of-range position, which the C reference (the original's single-wrap arithmetic, unchanged
+   here by design) walks just as badly. What it prevents is handing that state to the *chip*.
+
+**The seam stays on the CPU** (20 rows × 4 words): the blitter cannot compute it — the fraction is a
+shift of a *different* source word ORed under a mask. **Ordering** is the one real constraint: the seam
+READS framebuffer words the main copy WRITES, so it must run AFTER it. The wrap blit writes columns
+`main_cols … main_cols+edge−1` and the seam writes column `main_cols−1` — disjoint — so the wrap may run
+either side; it runs before, inside the same excursion. Net: **[fill even, fill odd, main, wrap] in ONE
+Supexec, then the seam.** And when `shift == 0` the seam is the identity by construction (mask all ones,
+fraction `>> 16` = 0), so the blitter route skips the whole pass rather than rewriting bytes.
+
+**Supexec:** all 3–4 passes share ONE excursion — they are consecutive with no user-mode work between
+them, so four traps for one stage would be pure overhead. This is *not* the §7 "one excursion for the
+whole object pass" idea, which spans user-mode dispatch work and stays deferred.
+
+**Routing:** a boot-bound `rm_blit_road_scroll_fn`, statically defaulted to the C reference (no NULL
+window), bound by `rm_blit_bind_all` alongside the object routes. The seam is an UPPERCASE
+`RM_BLIT_ROAD_SCROLL` macro at the sole call site (`src/frame.c`), out of `game.h` — the `object_list.c`
+shape. **It is bound FIRST, on the probe result alone**, before table placement can veto: with no table
+of its own it cannot be retired by a TPA too small for the object routes' 170 KB, so a 1 MB STE that
+loses the object tables still keeps the scroll on the chip. (`rm_blit_bind_all`'s RETURN keeps its old
+meaning — the *tabled* routes' binding.)
+
+### Bus policy — the shared-bus restart loop SHIPS; HOG measured and declined
+
+These are screen-sized passes (the fill alone is 6,720 words), not the object blits' tens of
+microseconds, so §2's non-HOG restart discipline is the default — and this slice is where it first
+shipped. §2's snippet turned out to be **incomplete**: it has no start, so its own first `bset` reports
+the pre-start `BUSY = 0` and the loop falls through after one burst. Shipped that way the sweep failed
+**640/640** cases with ~63 of 3,360 words written per fill pass. `blit_start_and_wait_shared`
+(`blitter.h`) prefixes an explicit `move.b #BUSY` — which also clears the HOG bit a previous
+`blit_start_and_wait` left set — and then runs §2's loop. §2 now carries that correction.
+
+Both policies are byte-exact (the sweep is 0-mismatch either way). Measured on the cadence, leg 0:
+
+| bus policy | STE gate (200 idle f) | STE drive (250 f) | canary trips | present cadence |
+|---|---:|---:|---:|---|
+| shared-bus restart (**ships**) | **99.25 ms** (3,970 ticks) | **90.72 ms** (4,536) | 0 | median 8 / 6 vbl |
+| HOG (`GAME_SCROLL_HOG=1`) | 98.22 ms (3,929) | 90.20 ms (4,510) | 0 | median 8 / 6 vbl — identical |
+
+**HOG is 1.03 ms (1.0 %) faster on the gate, 0.52 ms (0.6 %) driving, with no anomaly**: no canary trips,
+an identical vblank-span distribution, and no possibility of lost 200 Hz ticks (the whole stage costs
+≈4.8 ms on the chip, so no single bus hold can approach the 5 ms tick — the instrument cannot be
+under-counting). **We still ship the restart loop.** 1 % of a frame does not buy a ~3 ms whole-CPU freeze
+every frame: that freeze delays the 50 Hz sound pump and the IKBD ISR by up to 15 % of a VBL period, it
+is the one cost none of our pins can see (the goldens are pixels; the cadence quantises to 20 ms), and
+Hatari's bus model is exactly the part of the emulation least like real hardware. The knob stays so the
+number is reproducible.
+
+### Pins (all green)
+
+| pin | result |
+|---|---|
+| sweep | **5,608 cases, 0 mismatch** — the five existing sections + a new **road-scroll section, 640/640 routed** |
+| `--mutate 7…10` (new) | **4/4 caught** — odd-fill LOP **640**, main `x_count`+1 **640**, wrap blit skipped **304** (= exactly the `edge ≥ 1` cases), seam before the blits **300** (= exactly the `edge ≥ 0 ∧ shift ≠ 0` cases) |
+| `--mutate 1…6` (regression) | 6/6 still caught — 704 / 704 / 643 / 660 / 297 / 1 |
+| goldens | same PRG **MATCH ×5 `--machine st`** and **×5 `--machine ste`**, and again at **`--memsize 1`** on both (the slice-10 standing pin) |
+| whole-frame A/B st(CPU) vs ste(blitter) | **0-mismatch** ×4 frames — now load-bearing for the scroll route (and the only pin on the dispatch's head-once property) |
+| host differential | `make test` **730** |
+| cadence, ST | gate **130.30** (was 130.45) / drive **99.40** (was 99.88) — the C reference got *faster*, see below |
+| route counters | gate `scroll routed=201 declined=0`; drive `routed=251 declined=0` — the route is live, the tripwire never fires |
+
+**The sweep's new section is EXHAUSTIVE, not sampled**: `hscroll_pos` wraps modulo 640, so 640 cases are
+the entire reachable case space — every (shift × coarse column × edge) combination, including `edge = −1`
+(no wrap), `edge = 0` (a seam with no wrap columns), `shift = 0` with an edge, and the maximum edge (one
+main column left). The playfield is a seeded LCG put through the REAL `rm_scroll_prebuild`, so the 16
+pre-rotated copies have the shipping shape, copy 0 raw included. The delta's SIGN alternates case by case
+so both wrap branches of the head run, and the whole `ScrollState` is compared after every case.
+
+**Stated limitation:** the sweep's scroll section, like every other, is gated on `blitter_sweep`'s
+`tables_bound` — which is the *object* routes' binding. On a machine where the object tables do not place
+but the scroll route does, the sweep would report a clean decline and pin nothing. That configuration is
+unreachable for the sweep (it pins itself to `--memsize 4`, and CENSUS/SWEEP PRGs are far larger than the
+shipping one), so it is documented rather than plumbed.
+
+### Cadence and cost
+
+| scene | ST (CPU, before) | ST (CPU, after) | STE (before) | STE (after) | STE delta |
+|---|---:|---:|---:|---:|---:|
+| gate (200 idle f) | 130.45 | **130.30** | 105.47 | **99.25** | **−6.22 ms (−5.9 %)** |
+| drive (250 f) | 99.88 | **99.40** | 97.34 | **90.72** | **−6.62 ms (−6.8 %)** |
+
+STE vs stock ST is now **gate −23.8 %, drive −8.7 %** (was −19.2 % / −2.1 %). The stage itself goes from
+12.06 ms to ≈5.8 ms — the chip does the pixels, the CPU keeps the seam and one Supexec.
+
+**The ST path got faster too, by 0.15–0.48 ms, and that was NOT free.** Splitting `rm_blit_road_scroll`
+into head + `rm_scroll_draw` first cost **+13,690 cyc/frame** (12.06 → 13.77 ms on `tools/bench.py`):
+across the function boundary GCC stopped strength-reducing `copy_run`'s loop and emitted a
+double-indexed `move.l (aN,dI.l),(aM,dI.l)` plus index bookkeeping instead of `move.l (aN)+,(aM)+` —
+~17 cyc × 800 longs. Rewriting `copy_run` as an explicit post-increment pointer walk (the shape the top
+fill right below it already uses, and for the same reason) recovered all of it and 1,254 cyc more:
+**bench `blit_road_scroll` 96,514 → 95,260 cyc (12.06 → 11.91 ms)**. Passing the geometry by pointer vs
+by value was measured too and is noise (95,260 vs 95,434).
+
+### Memory
+
+| | before | after |
+|---|---:|---:|
+| shipping PRG text + data + bss | 707,748 | **708,804** (text 122,368 → 123,392; bss 585,380 → 585,412) |
+| resident on a 1 MB machine (+ 256 B basepage) | 708,004 | **709,060** |
+| 1 MB STE margin after the 170,432 B of placed tables + the 16 KB stack margin | 10,620 | **9,564** |
+
+**+1,056 B of program, so the §15 watch item's margin drops 10,620 → 9,564 B** — still positive, and
+measured live: a `--memsize 1 --machine ste` cadence run reports `free TPA = 184,244` with
+`objshift2 hit=240` / `colour table hit=242` / `scroll routed=41`, i.e. both object tables placed AND the
+scroll route bound on a 1 MB STE. The margin is now under 10 KB; the next slice that adds text must check
+it. Note the new asymmetry in the failure mode: if the margin ever goes negative, the object routes retire
+to the CPU but **the scroll route stays on the chip** (it has no table to place).

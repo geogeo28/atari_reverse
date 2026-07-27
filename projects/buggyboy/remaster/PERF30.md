@@ -598,6 +598,48 @@ holds on STE hardware/emulation. This is the honest way to say "30 fps" out loud
 > corrected to **10,620 B** (the §15 "14,092" was the trace build's). The canonical tables live in
 > **`README.md` "Measured performance & memory"**.
 
+### C5 — the ROAD FINE-SCROLL on the blitter (a new campaign, distinct from the Tier-C "C5" below)
+
+C4 closed with the two object engines routed and the 1 MB diet landed, leaving `blit_road_scroll` as the
+largest stage still on the 68000 when the blitter is bound (12.06 ms of the 130.5 ms gate frame). The C4
+proposal above already named it ("hardware fine-scroll offloads `blit_road_scroll` entirely"); this
+campaign does it with the blitter rather than the shifter's hardware scroll, so the pixels stay
+byte-identical. **NAME CLASH, noted once:** the Tier-C proposal list below also has a "C5" (palette
+tricks); the two are unrelated — this is the campaign tag, that is a proposal id.
+
+> **C5 slice 1 — `blit_road_scroll` ROUTED through the blitter: GO (landed, not committed).** The third
+> route, and the first with **no lookup table**: it blits straight out of the `shifted` pre-rotated
+> playfield the CPU reference already reads, so nothing is placed and nothing can be vetoed by a tight
+> TPA — it is therefore bound on the blitter probe ALONE, before `rm_blit_bind_all`'s table placement can
+> retire the object routes. **Recipe (3-4 passes + a CPU seam):** `ROAD_TOP_FILL` is `0xffff0000`, which
+> in the interleaved framebuffer is "every EVEN plane-word ones, every ODD one zero" — so the 13,440-byte
+> constant fill is TWO **source-less** passes over one 84x40 pair grid (`HOP=ONE`, `LOP=ONE`/`ZERO`,
+> all-ones endmasks: write-only bus cycles, no source or destination read); both band pitches are
+> constant across the 20 rows, so the main copy is ONE blit (+ one more for the wrapped tail when
+> `edge >= 1`, SKIPPED at `edge == 0` — `x_count` 0 means 65,536 to the chip). The 4-word masked seam
+> stays on the CPU and must run AFTER the main blit (it reads what that blit wrote); the wrap blit is
+> disjoint from it. All passes share ONE Supexec. **Bus policy: the shared-bus restart loop SHIPS.** §2's
+> documented snippet was incomplete — no start, so its own first `bset` reads the pre-start `BUSY=0` and
+> falls through after one burst (measured: 640/640 sweep cases failed, ~63 of 3,360 words written). With
+> the explicit `move.b #BUSY` start it is byte-exact. HOG measured at **98.22/90.20 ms vs the restart
+> loop's 99.25/90.72** (gate/drive) with an identical vblank distribution and 0 canary trips — **1.0 %,
+> declined**: not worth a ~3 ms whole-CPU freeze per frame that no pin can see (sound pump + IKBD
+> latency), knob kept as `GAME_SCROLL_HOG=1`. **Cadence (leg 0): STE gate 105.47 -> 99.25 ms (-5.9 %),
+> STE drive 97.34 -> 90.72 (-6.8 %); vs stock ST that is -23.8 % / -8.7 %** (was -19.2 % / -2.1 %).
+> **The ST path got FASTER too (gate 130.45 -> 130.30, drive 99.88 -> 99.40) — and that was not free:**
+> splitting `rm_blit_road_scroll` into a shared scalar head + `rm_scroll_draw` first cost **+13,690
+> cyc/frame** because GCC stopped strength-reducing `copy_run` across the new function boundary
+> (double-indexed `move.l (aN,dI.l),(aM,dI.l)` instead of `move.l (aN)+,(aM)+`, ~17 cyc x 800 longs);
+> rewriting `copy_run` as an explicit post-increment pointer walk recovered it and 1,254 cyc more —
+> bench `blit_road_scroll` **96,514 -> 95,260 cyc (12.06 -> 11.91 ms)**. Pins: sweep **5,608/0** incl. a
+> new **640-case EXHAUSTIVE** road-scroll section (every reachable `hscroll_pos`, both delta signs, whole
+> `ScrollState` compared), `--mutate 7..10` **4/4 caught** (640/640/304/300 — the last two exactly the
+> `edge>=1` and `edge>=0 & shift!=0` case counts) with 1-6 unregressed, goldens x5 st + x5 ste at default
+> AND `--memsize 1`, A/B 0-mismatch, `make test` 730, route counters `routed=201/251 declined=0`.
+> **Footprint +1,056 B (708,804), so the 1 MB STE margin drops 10,620 -> 9,564 B** — verified live at
+> `--memsize 1 --machine ste` (tables placed, all three routes bound). Full design: `BLIT_STE_SPEC.md`
+> §16.
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),

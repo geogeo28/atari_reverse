@@ -10,6 +10,19 @@
  */
 #include "game.h"
 
+/* UNIFIED ST/STE binary (PERF30 C5 slice 1): route the road fine-scroll through rm_blit_road_scroll_fn —
+ * a function pointer bound ONCE at boot (rm_blit_bind_all) to the hardware-blitter dispatch when a
+ * blitter is present, else left at the C reference. The seam lives HERE, at the sole call site, and not
+ * in include/game.h — exactly as object_list.c does for the two object engines, and in the same shape: an
+ * UPPERCASE seam name, so the call site reads as a seam and the real function's name is never shadowed.
+ * Gated on RM_BLITTER (the m68k target build), so the host differential keeps calling the C reference. */
+#ifdef RM_BLITTER
+#include "scroll_const.h"
+#define RM_BLIT_ROAD_SCROLL rm_blit_road_scroll_fn        /* boot-bound: blitter (STE) or the C reference */
+#else
+#define RM_BLIT_ROAD_SCROLL rm_blit_road_scroll
+#endif
+
 void rm_draw_frame(const RmScene *sc, Framebuffer *fb) {
     GobjPrefixState *pfx = sc->pfx;
     ObjListCtx *objlist = sc->objlist;
@@ -31,7 +44,7 @@ void rm_draw_frame(const RmScene *sc, Framebuffer *fb) {
     objlist->xoff_tbl = sc->ctrl + RM_CTRL_WIDTH_OFF + 2;
     sc->scroll->seg_head = sc->pose->seg_head;       /* the scroll step follows the near slope */
     rm_render_road(sc->road, fb);
-    rm_blit_road_scroll(sc->scroll, sc->shifted, fb);
+    RM_BLIT_ROAD_SCROLL(sc->scroll, sc->shifted, fb);
 
     /* --- draw_game_objects tree ---
      * GAME_DUMP_STAGE (on-target debug builds only; never defined for the host lib) cuts the frame

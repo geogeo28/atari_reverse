@@ -529,7 +529,7 @@ leg start, with the start gate spanning the road — which is close to the objec
 | player_update + course + views + prefix | 1.64 | — | | scalar state, noise; −0.37 from the -O3 sweep |
 | build_road_geometry | 3.90 | 3.91 | 1.00× | |
 | render_road | 50.64 | 55.47 | 0.91× | 67% in the per-scanline core, 33% in bands B/D |
-| blit_road_scroll | 12.06 | 33.55 | 0.36× | pre-rotated copies + unrolled fill |
+| blit_road_scroll | 11.91 | 33.55 | 0.35× | pre-rotated copies + unrolled fill + a post-increment `copy_run` (PERF30 C5 slice 1). **On an STE this stage is ROUTED to the hardware blitter** (≈5.8 ms; `src/blitter_scroll.c`, BLIT_STE_SPEC §16) — this row is the 68000 reference both machines share |
 | draw_ground | 0.88 | — | | −0.28 from -O3 |
 | draw_fg_sprite | 2.06 | 2.39 | 0.86× | −0.34 from -O3 (objsprite family) |
 | **objlist pass 1 (sprites)** | **19.91** | — | | ~70% inside `rm_blit_objshift`; C-level landed A1 + P1/P2 + P4a + review-fix fold + GCC-level sweep (…the per-function IRA attribute took the C function to 181,836 cyc, bench_objlist_pass1 253,564 → 231,480 = 28.93 ms; P3/L2/E2/E3 dropped; C3 pointer cursors on objsprite → 229,948 = 28.74 ms). **PERF30 A3 phase 2 (LANDED): the engine is now hand-written m68k, `src/asm/objshift.S` (ported from the ORIGINAL's `blit_objshift @0x14680`, template 110,572 cyc), selected via -DRM_ASM_BLIT → the per-core RM_ASM_OBJSHIFT (include/game.h RM_BLIT_OBJSHIFT; C stays the byte-exact reference in blit.c). `rm_blit_objshift` C 181,836 → `rm_blit_objshift_asm` 111,192 cyc (0.61×, −70,644); bench_objlist_pass1 229,948 → 159,304 (28.74 → 19.91 ms). Gap to the original is +620 across the recon's 6-call frame (movem 888 − register src-rewind claw-back ~760 `suba.l %a3,%a1` vs the original's memory-indirect `suba.w (a3),a1` + C-ABI marshalling/color_pairs indexing ~500 ≈ 628; scopes differ — the original's 110,572 is an 8-call frame incl. 2 off-edge returns ≈ +280, so on matched scope ≈ +900 ≈ the movem term). Pinned by test/test_asm_blit.py (1560-case Musashi C-vs-asm differential incl. the color_pairs table, bracketed compare + positive control, mutation-checked) + run_golden.py 5-leg MATCH** — PERF30 "A3 phase 2" |
@@ -601,6 +601,21 @@ all 5 legs):
 2. *Fast top fill* — the 13 KB constant fill above the band was ~78% of the remaining cost; unrolling
    8× + laundering the constant into a register (so stores are `move.l dN,(a0)`, not the 20-cyc
    `move.l #imm,(a0)`) took it 19.33 → **11.98 ms**.
+3. *Post-increment `copy_run`* (PERF30 C5 slice 1) — splitting the function into a shared scalar head
+   (`rm_scroll_advance`) + `rm_scroll_draw` cost **+13,690 cyc/frame** on its own: across the new
+   function boundary GCC stopped strength-reducing the column copy and emitted a double-indexed
+   `move.l (aN,dI.l),(aM,dI.l)` instead of `move.l (aN)+,(aM)+`. Writing `copy_run` as an explicit
+   pointer walk — the shape the top fill above already uses, for the same reason — recovered it and
+   1,254 cyc more: **12.06 → 11.91 ms**.
+
+**STE route (PERF30 C5 slice 1).** On a machine with a blitter the whole stage is routed to
+`src/blitter_scroll.c` through a boot-bound `rm_blit_road_scroll_fn` (the `object_list.c` seam pattern,
+at the sole call site `src/frame.c`): two source-less constant blits for the top fill, one (or two)
+whole-band rectangular copies, and the 4-word masked seam kept on the CPU — all in ONE Supexec, on the
+shared-bus restart loop. Byte-exact (sweep 640/640 exhaustive positions, goldens ×5 + ×5, A/B
+0-mismatch); STE cadence gate 105.47 → 99.25 ms, drive 97.34 → 90.72. It is the only blitter route with
+no lookup table, so it binds on the blitter probe alone — a 1 MB STE too tight for the object tables
+still keeps the scroll on the chip. Full design: `BLIT_STE_SPEC.md` §16.
 
 Key gotcha: the cores **must be built `-O2`, not `-Os`** — at `-Os` GCC won't inline the hot blit
 primitives (`rr_copy_long`/`rr_fill_pair`), and the per-column call overhead ~doubles the render cost

@@ -32,15 +32,19 @@ mkdir -p "$BUILD" "$DISK"
 #     UNCONDITIONALLY and binds it at boot iff a blitter is present (blitter_available()), else the 68000
 #     CPU asm engine — ONE .PRG for both machines (and the TT, which runs the CPU path). The blitter driver
 #     + both fine-x paths are always linked and gated on -DRM_BLITTER (the host differential build never sets
-#     it, so make test still pins the C reference). BOTH fine-x object engines route to the blitter when
-#     bound: objshift2 off its pre-shift cache, the colour-indexed engine off the hardware-skew sprite
-#     table (BLIT_STE_SPEC §12/§13). The census/selftest/sweep are extra
+#     it, so make test still pins the C reference). THREE routes bind to the blitter: objshift2 off its
+#     pre-shift cache, the colour-indexed engine off the hardware-skew sprite table (BLIT_STE_SPEC
+#     §12/§13), and the road fine-scroll straight off the pre-rotated playfield (§16). The census/selftest/sweep are extra
 #     compile-gated MEASUREMENT builds. GAME_FORCE_NO_BLITTER pins the CPU path at boot even on an STE — a
 #     harness A/B baseline knob only. (The old GAME_STE / separate BUGGYBST.PRG two-binary profile is
 #     retired; GAME_STE is accepted-but-ignored for script compatibility.) ---
 STE_CFLAGS="-DRM_BLITTER"
-STE_SOURCES="$REMASTER/src/blitter.c $REMASTER/src/blitter_objshift2.c $REMASTER/src/blitter_skew.c"
+STE_SOURCES="$REMASTER/src/blitter.c $REMASTER/src/blitter_objshift2.c $REMASTER/src/blitter_skew.c \
+             $REMASTER/src/blitter_scroll.c"
 [ "${GAME_FORCE_NO_BLITTER:-0}" = "1" ] && STE_CFLAGS="$STE_CFLAGS -DGAME_FORCE_NO_BLITTER"
+# The road-scroll route's bus policy A/B (BLIT_STE_SPEC §16): 1 = HOG, unset/0 = the shared-bus restart
+# loop the route ships with. A measurement knob — it is what produced §16's HOG-vs-restart cadence table.
+[ "${GAME_SCROLL_HOG:-0}" = "1" ] && STE_CFLAGS="$STE_CFLAGS -DBLIT_SCROLL_HOG=1"
 if [ "${GAME_STE_SELFTEST:-0}" = "1" ]; then
     STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SELFTEST"
     STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_selftest.c"

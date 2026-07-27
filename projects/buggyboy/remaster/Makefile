@@ -12,7 +12,7 @@ CAND    := build/libremaster.so
 # host .so / bench — exactly like the src/asm/*.S cores. Excluded from the wildcard so the differential
 # build stays host-portable.
 STE_SRC := src/blitter.c src/blitter_objshift2.c src/blitter_objshift.c src/blitter_selftest.c src/blitter_sweep.c \
-           src/blitter_skew.c src/blitter_census.c
+           src/blitter_skew.c src/blitter_scroll.c src/blitter_census.c
 SRC     := $(filter-out $(STE_SRC),$(wildcard src/*.c))
 RECON   := $(RECREATE)/build/libbuggyboy.so
 # Generated: the sound driver's baked program-data constants. gen_sound_fixture.py emits TWO headers in

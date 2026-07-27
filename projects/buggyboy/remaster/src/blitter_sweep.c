@@ -20,12 +20,15 @@
  * A fourth section drives the shipping route's sprite-key TABLE (see sweep_table_section): the three
  * grids all call un-tabled entry points, so without it the table's own branches — hit, grow, clip, the
  * full-table decline — would ship unpinned. A fifth blits at and past the BOTTOM EDGE (see
- * sweep_below_screen_grid), where the sprite fragments the shell's overdraw tail exists for land.
+ * sweep_below_screen_grid), where the sprite fragments the shell's overdraw tail exists for land. A
+ * sixth sweeps the ROAD FINE-SCROLL route (see sweep_scroll_section) over every reachable scroll
+ * position — a different engine entirely: whole-band rectangular blits, not a masked sprite.
  */
 #include "blitter.h"
 #include "screen.h"
 #include "blit_const.h"
 #include "game.h"
+#include "scroll_const.h"
 
 extern long Supexec(long (*func)(void));
 
@@ -513,12 +516,111 @@ static long sweep_below_screen_grid(void) {
     return total;
 }
 
+/* ---- the ROAD FINE-SCROLL section (src/blitter_scroll.c) ----------------------------------------
+ * A different engine from everything above: no sprite, no mask — two source-less constant fills and one
+ * or two whole-band rectangular copies, with a CPU seam the chip cannot compute. Its whole case space is
+ * the scroll POSITION, and that space is small enough to sweep EXHAUSTIVELY: hscroll_pos wraps modulo
+ * SCROLL_WRAP, so 640 cases cover every (shift x coarse column x edge) combination the game can reach —
+ * including edge == -1 (no wrap), edge == 0 (a seam with no wrap columns), shift == 0 with an edge (the
+ * seam that computes to a no-op), and the maximum edge (one main column left).
+ *
+ * The playfield is deterministic pseudo-random (a seeded LCG — no clock, no host randomness, so every
+ * run compares the same bytes) put through the REAL rm_scroll_prebuild, so the 16 pre-rotated copies the
+ * routes read have exactly the shipping shape, copy 0 raw included (which is what the seam reads).
+ *
+ * The scalar head is swept too: each case starts from the hscroll_pos that a NON-ZERO delta advances onto
+ * the case's position, alternating the delta's SIGN case by case so both wrap branches run (a negative
+ * seg_head is a left curve; positive-only cases never reach the `(int16_t)h < 0` correction). What the
+ * ScrollState compare then pins is that rm_blit_road_scroll — the C entry the ST calls — is exactly
+ * `head once, then draw`: the reference side calls it whole, the test side calls the head and the draw
+ * separately, so a wrapper that advanced twice would show up as a position mismatch. It does NOT pin the
+ * blitter DISPATCH's own head-once property (the dispatch takes a Supexec, which cannot nest inside the
+ * one this sweep already runs in); run_ste_ab.py is what pins that, by diffing whole frames of the SAME
+ * PRG driven on both machines. */
+#define SCROLL_SEG_HEAD    3                                /* |delta| = SEG_HEAD * SPEED = 15: a non-zero */
+#define SCROLL_SPEED       5                                /* head, so the wrap arithmetic really runs */
+#define SCROLL_DELTA       (SCROLL_SEG_HEAD * SCROLL_SPEED)
+#define SCROLL_PLAYFIELD_BYTES (RM_SCROLL_WINDOW + ROAD_COL_BYTES)   /* prebuild pairs word b with b+8 */
+#define N_SCROLL_CASES     SCROLL_WRAP                      /* 640 = every reachable hscroll_pos */
+/* A plain LCG (the classic glibc constants); only its determinism matters, not its statistics. */
+#define SCROLL_LCG_SEED    0x13579BDFu
+#define SCROLL_LCG_MUL     1103515245u
+#define SCROLL_LCG_ADD     12345u
+
+/* aligned(2) like the shell's own copies (game_main.c / bench_main.c): the prebuild's wr16/be16 are raw
+ * word accesses on the big-endian target, and the blitter's src_addr ignores bit 0 — an odd base would
+ * address-error on one route and silently blit from base-1 on the other. */
+static uint8_t scroll_playfield[SCROLL_PLAYFIELD_BYTES] __attribute__((aligned(2)));
+static uint8_t scroll_shifted[RM_SCROLL_SHIFTS * RM_SCROLL_WINDOW] __attribute__((aligned(2)));
+static uint16_t scroll_case_diff[N_SCROLL_CASES];
+static long scroll_routed;                                  /* cases the blitter route drew */
+
+static void scroll_init_playfield(void) {
+    uint32_t r = SCROLL_LCG_SEED;
+    for (uint32_t i = 0; i < SCROLL_PLAYFIELD_BYTES; i++) {
+        r = r * SCROLL_LCG_MUL + SCROLL_LCG_ADD;
+        scroll_playfield[i] = (uint8_t)(r >> 24);           /* the high byte: the LCG's best-mixed bits */
+    }
+    rm_scroll_prebuild(scroll_playfield, scroll_shifted);
+}
+
+/* The freestanding shim (render/atari/shim.c) has no memcmp, and adding one for a measurement build
+ * would put dead code in the shipping PRG — so compare the state's bytes here. */
+static int scroll_state_differs(const ScrollState *a, const ScrollState *b) {
+    const uint8_t *pa = (const uint8_t *)a, *pb = (const uint8_t *)b;
+    for (unsigned i = 0; i < sizeof(ScrollState); i++) if (pa[i] != pb[i]) return 1;
+    return 0;
+}
+
+/* One scroll case: land both routes on scroll position `hpos` from a state SCROLL_DELTA behind it, draw
+ * with the C reference (ref) and the blitter route (test), and count differing framebuffer bytes, broken
+ * guards, and any disagreement in the ScrollState the head left. */
+static long run_case_scroll(uint16_t hpos, int negative_delta) {
+    for (int i = 0; i < SWEEP_FB_BYTES; i++) ref_fb[i] = test_fb[i] = SWEEP_BG_BYTE;
+    sweep_arm_guards();
+
+    /* Start SCROLL_DELTA short of (or past) hpos so the head lands exactly on it either way. */
+    ScrollState ref_state, test_state;
+    ref_state.seg_head = (int16_t)(negative_delta ? -SCROLL_SEG_HEAD : SCROLL_SEG_HEAD);
+    ref_state.scroll_speed = SCROLL_SPEED;
+    ref_state.hscroll_pos = (uint16_t)((hpos + (negative_delta ? SCROLL_DELTA
+                                                              : SCROLL_WRAP - SCROLL_DELTA)) % SCROLL_WRAP);
+    ref_state.hscroll_step2 = 0;
+    test_state = ref_state;
+
+    rm_blit_road_scroll(&ref_state, scroll_shifted, (Framebuffer *)ref_fb);
+    /* The blitter route's dispatch would enter a nested Supexec (the whole sweep already runs in one),
+     * so drive its supervisor half directly — head first, exactly as the dispatch does. */
+    ScrollGeometry geo = rm_scroll_advance(&test_state);
+    rm_blit_road_scroll_draw(&geo, scroll_shifted, (Framebuffer *)test_fb);
+
+    long n = sweep_fb_diff() + sweep_guards_broken();
+    /* The WHOLE state, not the two fields the head writes: a route that clobbered seg_head or
+     * scroll_speed would draw perfect pixels and pass a field-picked compare. */
+    return n + scroll_state_differs(&test_state, &ref_state);
+}
+
+static long sweep_scroll_section(void) {
+    uint32_t routed_before = rm_scroll_blit_routed;
+    long total = 0;
+    scroll_init_playfield();
+    for (int i = 0; i < N_SCROLL_CASES; i++) {
+        long d = run_case_scroll((uint16_t)i, i & 1);       /* alternate the delta sign: both wrap branches */
+        uint16_t logged = (uint16_t)(d > 0xffff ? 0xffff : d);
+        scroll_case_diff[i] = logged;
+        total += logged;
+    }
+    scroll_routed = (long)(rm_scroll_blit_routed - routed_before);
+    return total;
+}
+
 /* Which sections this build ran (report word; the runner must not read a skipped grid as "clean"). */
 #define SWEEP_GRID_OBJSHIFT2    1
 #define SWEEP_GRID_OSH_PRESHIFT 2
 #define SWEEP_GRID_OSH_SKEW     4
 #define SWEEP_GRID_OSH_TABLE    8
 #define SWEEP_GRID_BELOW        16
+#define SWEEP_GRID_SCROLL       32
 static uint16_t sweep_grids_run;
 
 /* The objshift2 grid: the fixed-pass engine's own case space. Same shape as sweep_objsh_grid — returns
@@ -543,22 +645,26 @@ static long sweep_objshift2_grid(long *handled_out) {
     return total;
 }
 
-/* Sweep every case for all four sections. A handled (BASE) case must be byte-exact; a declined (CLIP)
+/* Sweep every case for all six sections. A handled (BASE) case must be byte-exact; a declined (CLIP)
  * case is the CPU hybrid (blitter drew nothing) — EXPECTED, not a mismatch. Only handled cases
  * contribute.
  *
- * A MUTATE build runs the two SKEW-route sections alone — the grid and the table: the mutation knob
- * touches nothing the other two grids drive, so re-sweeping them would only burn emulated cycles (the
- * coverage check builds one of these per mutation). The bench is skipped with them — it would be timing
- * a deliberately broken configuration. sweep_grids_run tells the runner which sections the numbers
- * describe, and run_ste_sweep.py knows which section each mutation must make fail. */
+ * A MUTATE build runs only the sections of the ROUTE its mutation breaks — the skew grid + the table for
+ * mutations 1-6, the scroll section for 7-10: the knob touches nothing the other sections drive, so
+ * re-sweeping them would only burn emulated cycles (the coverage check builds one PRG per mutation). The
+ * bench is skipped with them — it would be timing a deliberately broken configuration. sweep_grids_run
+ * tells the runner which sections the numbers describe, and run_ste_sweep.py knows which section each
+ * mutation must make fail. */
 long blitter_sweep_super(void) {
     long total = 0;
+    /* Plain `if`s on the compile-time knobs, not #ifs: a mutate build then still COMPILES the sections it
+     * skips, so a change that breaks them cannot hide behind the mutation flag. */
+    int sweep_all = !RM_SKEW_MUTATED;                      /* no mutation: every section */
+    int sweep_skew = !RM_SCROLL_MUTATED;                    /* no mutation, or one that breaks the skew route */
+    int sweep_scroll = sweep_all || RM_SCROLL_MUTATED;      /* no mutation, or one that breaks this route */
     sweep_init_pairs();
 
-    /* A plain `if` on the compile-time knob, not an #if: the mutate build then still COMPILES the grids
-     * it skips, so a change that breaks them cannot hide behind the mutation flag. */
-    if (!RM_SKEW_MUTATED) {
+    if (sweep_all) {
         total += sweep_objshift2_grid(&sweep_handled);
         sweep_grids_run |= SWEEP_GRID_OBJSHIFT2;
         total += sweep_objsh_grid(rm_blit_objshift_blitter, osh_case_diff, &osh_handled);
@@ -566,12 +672,18 @@ long blitter_sweep_super(void) {
         total += sweep_below_screen_grid();
         sweep_grids_run |= SWEEP_GRID_BELOW;
     }
-    total += sweep_objsh_grid(rm_blit_objshift_skew, skew_case_diff, &skew_handled);
-    sweep_grids_run |= SWEEP_GRID_OSH_SKEW;
-    total += sweep_table_section();
-    sweep_grids_run |= SWEEP_GRID_OSH_TABLE;
+    if (sweep_skew) {
+        total += sweep_objsh_grid(rm_blit_objshift_skew, skew_case_diff, &skew_handled);
+        sweep_grids_run |= SWEEP_GRID_OSH_SKEW;
+        total += sweep_table_section();
+        sweep_grids_run |= SWEEP_GRID_OSH_TABLE;
+    }
+    if (sweep_scroll) {
+        total += sweep_scroll_section();
+        sweep_grids_run |= SWEEP_GRID_SCROLL;
+    }
 
-    if (!RM_SKEW_MUTATED) sweep_bench();
+    if (sweep_all) sweep_bench();
     sweep_total = total;                                    /* combined: every section run must be 0 */
     return total;
 }
@@ -609,10 +721,12 @@ long blitter_sweep_super(void) {
 #define SWEEP_TAIL_N_CASES_BELOW  20                        /* layout: the below-screen section's case count */
 #define SWEEP_TAIL_HANDLED_BELOW  21                        /* below-screen cases the blitter paths drew */
 #define SWEEP_TAIL_TABLES_BOUND   22                        /* 0 = the boot bind placed no tables (see below) */
-#define SWEEP_TAIL_WORDS          SWEEP_TAIL_TABLES_BOUND
-/* The five per-case sections must not run into the tail words (they share one 32000-byte report). */
+#define SWEEP_TAIL_N_CASES_SCROLL 23                        /* layout: the road-scroll section's case count */
+#define SWEEP_TAIL_ROUTED_SCROLL  24                        /* road-scroll cases the blitter route drew */
+#define SWEEP_TAIL_WORDS          SWEEP_TAIL_ROUTED_SCROLL
+/* The six per-case sections must not run into the tail words (they share one 32000-byte report). */
 typedef char sweep_report_fits[(2 + N_CASES + 2 * N_OSH_CASES + N_TBL_CASES + N_BELOW_CASES
-                                <= SWEEP_REPORT_WORDS - SWEEP_TAIL_WORDS) ? 1 : -1];
+                                + N_SCROLL_CASES <= SWEEP_REPORT_WORDS - SWEEP_TAIL_WORDS) ? 1 : -1];
 
 /* `tables_bound` is rm_blit_bind_all's return (game_main.c passes it straight through). When it is 0 the
  * routes' lookup tables were never placed — GAME_FORCE_NO_BLITTER, a machine with no blitter, or a TPA
@@ -622,7 +736,7 @@ const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound) {
     if (tables_bound) Supexec(blitter_sweep_super);
     uint16_t *w = (uint16_t *)test_fb;
     for (int i = 0; i < SWEEP_REPORT_WORDS; i++) w[i] = 0;
-    w[0] = (uint16_t)(N_CASES + 2 * N_OSH_CASES + N_TBL_CASES + N_BELOW_CASES);
+    w[0] = (uint16_t)(N_CASES + 2 * N_OSH_CASES + N_TBL_CASES + N_BELOW_CASES + N_SCROLL_CASES);
     w[1] = (uint16_t)(sweep_total > 0xffff ? 0xffff : sweep_total);
     int at = 2;
     for (int i = 0; i < N_CASES; i++) w[at++] = case_diff[i];
@@ -630,6 +744,7 @@ const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound) {
     for (int i = 0; i < N_OSH_CASES; i++) w[at++] = skew_case_diff[i];
     for (int i = 0; i < N_TBL_CASES; i++) w[at++] = tbl_case_diff[i];
     for (int i = 0; i < N_BELOW_CASES; i++) w[at++] = below_case_diff[i];
+    for (int i = 0; i < N_SCROLL_CASES; i++) w[at++] = scroll_case_diff[i];
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED2]       = (uint16_t)sweep_handled;  /* objshift2 BASE drawn */
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED_OSH]    = (uint16_t)osh_handled;    /* objshift  BASE drawn */
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED_SKEW]   = (uint16_t)skew_handled;   /* skew path BASE drawn */
@@ -644,6 +759,8 @@ const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound) {
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_N_CASES_BELOW]  = (uint16_t)N_BELOW_CASES;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED_BELOW]  = (uint16_t)below_handled;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_TABLES_BOUND]   = (uint16_t)(tables_bound ? 1 : 0);
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_N_CASES_SCROLL] = (uint16_t)N_SCROLL_CASES;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_ROUTED_SCROLL]  = (uint16_t)scroll_routed;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_ITERS]    = OSH_BENCH_ITERS;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_MAT]      = bench_mat_ticks;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_PASS_SYN] = bench_pass_synth_ticks;

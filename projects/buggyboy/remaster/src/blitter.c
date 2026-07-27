@@ -23,16 +23,18 @@
 #define MCH_STE         1                                  /* STE/MegaSTE (high word 1) — has a blitter */
 #define MCH_FALCON      3                                  /* Falcon030 — has a blitter (TT=2 does NOT) */
 
-/* HOG-vs-shared: blit_run uses HOG (bit6) so the chip holds the bus and runs the whole pass to
- * completion in one go, then the CPU resumes with BUSY already clear. Justification: the masked object
- * blits this driver replaces are SMALL (a few dst words wide by <=43 rows) — tens of microseconds, far
- * under the 20 ms VBL period — so hogging the bus never starves the 50 Hz sound pump or the IKBD ISR
- * (they run in the gaps BETWEEN blits, one per object). Shared mode (HOG=0, 64-word bursts with a
- * CPU-side restart loop) only earns its keep on screen-sized blits where the CPU has overlapping work;
- * here there is none, so HOG is the simpler correct choice. The restart discipline for a future
- * screen-sized (road/scroll) blit is documented in BLIT_STE_SPEC.md. The start + wait itself is
- * blit_start_and_wait (blitter.h), shared with the skew path's batched passes. */
-void blit_run(const BlitPass *p) {
+/* Poke every register of one pass and STOP — the caller owns the bus policy. Split out of blit_run so
+ * the road-scroll route can poke a pass and start it in SHARED-bus mode (blit_start_and_wait_shared);
+ * blit_run below is this plus the HOG start.
+ *
+ * HOG-vs-shared, per route: blit_run's callers are the masked OBJECT blits, which are SMALL (a few dst
+ * words wide by <=43 rows) — tens of microseconds, far under the 20 ms VBL period — so hogging the bus
+ * never starves the 50 Hz sound pump or the IKBD ISR (they run in the gaps BETWEEN blits, one per
+ * object), and HOG is the simpler correct choice. Shared mode (HOG=0, 64-word bursts with a CPU-side
+ * restart loop) earns its keep on SCREEN-SIZED passes, where a single hold would freeze the 68000 for
+ * milliseconds: that is the road-scroll route, and BLIT_STE_SPEC §16 carries its measured
+ * HOG-vs-restart numbers. Both starts live in blitter.h so the two policies cannot drift apart. */
+void blit_poke(const BlitPass *p) {
     /* HOP=SRC never reads the halftone RAM, so this seed is not functionally required; we set halftone
      * lines 0-3 (the two longs written here) to 0xFFFF as belt-and-braces for a caller that later selects
      * a halftone HOP. The other 12 words are left as-is. */
@@ -53,7 +55,10 @@ void blit_run(const BlitPass *p) {
     BLT_B(BLT_HOP)       = p->hop;
     BLT_B(BLT_LOP)       = p->lop;
     BLT_B(BLT_SKEW)      = p->skew_ctl;
+}
 
+void blit_run(const BlitPass *p) {
+    blit_poke(p);
     blit_start_and_wait();                   /* BUSY | HOG, halftone line 0 (blitter.h) */
 }
 
@@ -109,10 +114,16 @@ static int blit_tables_place(uint8_t *window, uint32_t window_bytes) {
     return 1;
 }
 
-/* Boot: place both routes' tables, then point BOTH object seams at the hardware blitter when one is
- * present, else at the 68000 CPU asm engines. Called once from main() after blitter_available(); returns
- * the binding actually made (0 when there was no blitter, or no room for its tables). */
+/* Boot: place the OBJECT routes' tables, then point every seam at the hardware blitter when one is
+ * present, else at the 68000 CPU engines. Called once from main() after blitter_available(); returns the
+ * binding the TABLED routes actually made (0 when there was no blitter, or no room for their tables).
+ *
+ * The road-scroll route is bound FIRST and on the probe result alone, because it is the one route with
+ * no lookup table: it blits out of the `shifted` buffer the CPU reference already reads, so a TPA too
+ * small to place 170 KB of object tables (the 1 MB STE's thin margin — BLIT_STE_SPEC §15) has no bearing
+ * on it. A machine that loses the object routes therefore still keeps the scroll on the chip. */
 int rm_blit_bind_all(int have_blitter, void *window, uint32_t window_bytes) {
+    rm_blit_road_scroll_bind(have_blitter);
     if (have_blitter && !blit_tables_place((uint8_t *)window, window_bytes)) have_blitter = 0;
     rm_blit_objshift2_bind(have_blitter);
     rm_blit_objshift_bind(have_blitter);

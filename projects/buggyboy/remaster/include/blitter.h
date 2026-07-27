@@ -49,8 +49,16 @@ extern long Supexec(long (*func)(void));
 
 /* ---- control byte bits (0x8A3C) ---- */
 #define BLT_CTL_BUSY      0x80                 /* write 1 = start; reads 1 while running */
+#define BLT_CTL_BUSY_BIT  7                    /* ...as a BIT INDEX: the shared-bus loop needs a bset operand */
 #define BLT_CTL_HOG       0x40                 /* 1 = hold the bus until done; 0 = shared (64-word bursts) */
 #define BLT_CTL_SMUDGE    0x20
+/* The mask and the bit index are the same fact spelled twice (C cannot take a bset operand from a mask),
+ * so pin them equal rather than letting one be re-mapped without the other. */
+typedef char blt_busy_bit_matches_mask[((1u << BLT_CTL_BUSY_BIT) == BLT_CTL_BUSY) ? 1 : -1];
+
+/* Every pass in this project writes whole destination words, so all three endmasks are all-ones. Named
+ * once here, where the rest of the BLT_* vocabulary lives, instead of as a bare literal per pass builder. */
+#define BLT_ENDMASK_ALL   0xFFFFu
 
 /* ---- skew byte bits (0x8A3D) ---- */
 #define BLT_SKEW_FXSR     0x80                 /* force an extra source read at line start */
@@ -90,6 +98,30 @@ extern long Supexec(long (*func)(void));
 static inline void blit_start_and_wait(void) {
     BLT_B(BLT_CONTROL) = (uint8_t)(BLT_CTL_BUSY | BLT_CTL_HOG);
     while (BLT_B(BLT_CONTROL) & BLT_CTL_BUSY) { /* HOG completes before the next fetch; poll is a no-op */ }
+}
+
+/* The SHARED-bus (non-HOG) sibling: the chip yields the bus every 64 words instead of freezing the 68000
+ * for the whole pass, and the CPU re-arms BUSY until the pass completes. This is the second half of the
+ * ONE bus policy this header owns — the road-scroll route (src/blitter_scroll.c) fires SCREEN-SIZED
+ * passes, a different trade from the object blits' tens of microseconds (BLIT_STE_SPEC §16).
+ *
+ * TWO parts, and the FIRST is the one that is easy to get wrong (measured: without it the sweep fails
+ * 640/640 cases, with ~64 words written per pass):
+ *   1. an explicit `move.b #BUSY` START. It also CLEARS HOG, which a previous blit_start_and_wait left
+ *      set. Without it the loop's own first `bset` would be the start — and its Z flag would report the
+ *      PRE-start BUSY (0), so the loop would fall straight through after one burst.
+ *   2. BLIT_STE_SPEC §2's restart discipline: `bset` re-arms BUSY and reports the pre-write bit in one
+ *      indivisible bus cycle, so the loop spins while the chip is mid-pass and falls through on the
+ *      first read of 0 — the completed state, where re-arming is a no-op against y_count == 0. It must
+ *      be asm because C has no set-and-test-the-old-value. `nop` lets the chip settle before the branch.
+ * Supervisor only. */
+static inline void blit_start_and_wait_shared(void) {
+    volatile uint8_t *ctl = (volatile uint8_t *)BLT_CONTROL;
+    BLT_B(BLT_CONTROL) = BLT_CTL_BUSY;                 /* HOG CLEAR — the start the restart loop resumes */
+    __asm__ volatile ("1: bset.b #%c1,(%0)\n\t"
+                      "   nop\n\t"
+                      "   bne.s 1b"
+                      : : "a"(ctl), "i"(BLT_CTL_BUSY_BIT) : "cc", "memory");
 }
 
 /* One fully-specified blitter pass. All fields map 1:1 to registers; the driver (blit_run) pokes them
@@ -180,10 +212,23 @@ static inline int objsh_is_base(uint16_t x, uint16_t rows_m1, int base_cells) {
 #define RM_SKEW_MUT_ENDMASK3   4                           /* drop the last-column trailing-edge guard */
 #define RM_SKEW_MUT_PLANE3     5                           /* drop plane 3's `& ~m` is_last special */
 #define RM_SKEW_MUT_NOGROW     6                           /* never re-materialise a table entry deeper */
+/* The ROAD-SCROLL route's mutations (src/blitter_scroll.c) share this one knob rather than adding a
+ * second -D and a second set of build-script plumbing; they start at RM_SKEW_MUT_SCROLL_FIRST so a build
+ * can tell which route it is breaking (a mutate build sweeps only the sections of THAT route). */
+#define RM_SKEW_MUT_SCROLL_FILL_LOP  7                     /* fill the odd plane-words with ones, not zeros */
+#define RM_SKEW_MUT_SCROLL_XCOUNT    8                     /* main copy one dst word per row too wide */
+#define RM_SKEW_MUT_SCROLL_NOWRAP    9                     /* never fire the wrapped-tail blit */
+#define RM_SKEW_MUT_SCROLL_SEAM_1ST 10                     /* run the CPU seam BEFORE the blits, not after */
+#define RM_SKEW_MUT_SCROLL_FIRST     RM_SKEW_MUT_SCROLL_FILL_LOP
+#define RM_SKEW_MUT_SCROLL_LAST      RM_SKEW_MUT_SCROLL_SEAM_1ST
 #ifndef RM_SKEW_MUTATE
 #define RM_SKEW_MUTATE RM_SKEW_MUT_NONE
 #endif
 #define RM_SKEW_MUTATED       (RM_SKEW_MUTATE != RM_SKEW_MUT_NONE)
+/* A BOUNDED range, not `>= FIRST`: a fourth route's mutations would otherwise be classified as scroll
+ * ones and would sweep the scroll section instead of their own. */
+#define RM_SCROLL_MUTATED     (RM_SKEW_MUTATE >= RM_SKEW_MUT_SCROLL_FIRST && \
+                               RM_SKEW_MUTATE <= RM_SKEW_MUT_SCROLL_LAST)
 
 #define OBJSH_SKEW_MAX_CELLS  2                            /* base_cells family max */
 /* Bitmap 0 is the show mask; bitmaps 1..OBJSH_PLANES are the per-plane pixel words. */
@@ -192,11 +237,13 @@ static inline int objsh_is_base(uint16_t x, uint16_t rows_m1, int base_cells) {
 #define OBJSH_SKEW_N_BITMAPS  (1 + OBJSH_PLANES)
 /* Pad words past the live rows*base_cells. ONE is the calibrated path's need: every line wastes one
  * source read, and the last line's lands a word past the bitmap (see blitter_skew.c's header), so the
- * shipping table pays exactly one pad word per bitmap. A MUTATE build needs far more: RM_SKEW_MUT_FXSR's
- * extra per-line read drifts the source one word further per line, up to rows words by the last line. A
- * mutate build must still FAIL, but it must not read out of bounds while doing so — and it is a
- * measurement build, so the headroom costs the shipping PRG nothing. */
-#if RM_SKEW_MUTATED
+ * shipping table pays exactly one pad word per bitmap. A SKEW-mutate build needs far more:
+ * RM_SKEW_MUT_FXSR's extra per-line read drifts the source one word further per line, up to rows words by
+ * the last line. A mutate build must still FAIL, but it must not read out of bounds while doing so — and
+ * it is a measurement build, so the headroom costs the shipping PRG nothing. A SCROLL mutation touches no
+ * skew register, so it keeps the shipping pad — and with it the shipping table size, rather than asking
+ * rm_blit_bind_all for 61 KB more TPA to pad a route its sweep does not even run. */
+#if RM_SKEW_MUTATED && !RM_SCROLL_MUTATED
 #define OBJSH_SKEW_PAD_WORDS  (OBJSH_MAX_ROWS + 1)
 #else
 #define OBJSH_SKEW_PAD_WORDS  1
@@ -257,10 +304,22 @@ void rm_blit_objshift_skew_table_flush(void);
 uint32_t rm_blit_objshift_skew_table_bytes(void);
 void rm_blit_objshift_skew_table_place(void *mem);
 
-/* ---- the two engine routes, enumerated ONCE (src/blitter.c) --------------------------------------
- * Every boot / reload site drives the fine-x object engines as a SET, so the list of engines lives in
- * one place instead of being repeated at each site (game_main's boot bind + its F10 reload flush).
- * Adding a third engine means editing these two functions and nothing else. */
+/* ---- the road fine-scroll route (src/blitter_scroll.c) ------------------------------------------
+ * The third route, and the only one with NO lookup table: it blits the road band straight out of the
+ * `shifted` pre-rotated playfield the CPU reference already reads, so there is nothing to place and
+ * nothing to flush. Bind ONCE at boot, like the object routes; the seam itself (a boot-bound function
+ * pointer over rm_blit_road_scroll) lives at the sole call site, src/frame.c. The route's own entry
+ * points take a ScrollState and so are declared in include/scroll_const.h, which owns that type's
+ * geometry — only the bind is needed here, by rm_blit_bind_all below. */
+void rm_blit_road_scroll_bind(int have_blitter);
+/* Routed / declined call counts for the cadence tail (game_main.c) — the observable that proves the
+ * route was live on a run. `declined` is a tripwire, not a family split: see src/blitter_scroll.c. */
+extern uint32_t rm_scroll_blit_routed, rm_scroll_blit_declined;
+
+/* ---- the three engine routes, enumerated ONCE (src/blitter.c) ------------------------------------
+ * Every boot / reload site drives the routes as a SET, so the list lives in one place instead of being
+ * repeated at each site (game_main's boot bind + its F10 reload flush).
+ * Adding a fourth engine means editing these two functions and nothing else. */
 /* Alignment both placed tables need — their entry structs hold longs, so 4 keeps every field naturally
  * aligned. Owned here because TWO sides depend on it: rm_blit_bind_all pads the window base up to it,
  * and game_main.c's TPA map rounds the window base itself (the free TPA starts wherever the BSS ends).
@@ -280,8 +339,11 @@ void rm_blit_flush_all(void);              /* reload: drop every materialised bi
  * in its report rather than reporting a vacuous zero. */
 const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound);
 
-/* Run one blitter pass to completion (HOG mode) from the current supervisor context. See src/blitter.c
- * for the HOG-vs-shared justification. */
+/* Poke every register of one fully-specified pass WITHOUT starting the chip, so the caller owns the bus
+ * policy (blit_start_and_wait / blit_start_and_wait_shared above). Supervisor only. */
+void blit_poke(const BlitPass *p);
+/* Run one blitter pass to completion (HOG mode) from the current supervisor context: blit_poke + the HOG
+ * start. See src/blitter.c for the HOG-vs-shared justification. */
 void blit_run(const BlitPass *p);
 
 /* The shared cookie-cut pass both fine-x engines fire: one aligned (skew=0) blit over an INTERLEAVED

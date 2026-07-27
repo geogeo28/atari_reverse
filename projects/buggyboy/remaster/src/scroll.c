@@ -13,19 +13,7 @@
 #include "game.h"
 #include "screen.h"
 #include "st.h"
-
-#define OBJ_ROAD_START_OFF 0x3480    /* draw-buffer offset where the scroll band begins (row 84) */
-#define ROAD_COL_BYTES     8         /* one 16-pixel, 4-plane column (4 plane words) */
-#define ROAD_PLANES        4
-#define ROAD_ROWS          0x14      /* scanlines blitted */
-#define ROAD_COLS          0x14      /* columns per scanline (160-byte row) */
-#define SCROLL_WRAP        0x280     /* hscroll_pos wraps modulo this (double screen width) */
-#define SRC_ROW_STRIDE     0x140     /* source row pitch in the playfield (double-wide) */
-#define EDGE_THRESH        0x140     /* hscroll_pos >= this starts wrapping the row tail */
-#define SEAM_MASK_BASE     0xffff    /* seam mask = this << shift */
-#define ROAD_TOP_FILL      0xffff0000u /* plane pattern filling the area above the road band */
-#define FINE_MASK          0xf       /* hscroll_pos & this = the fine bit shift */
-#define COARSE_MASK        0xfff8    /* (hscroll_pos >> 1) & this = the column-aligned byte offset */
+#include "scroll_const.h"   /* the geometry constants + the head/seam seams shared with the blitter route */
 
 /* One 16-bit plane-word fine-scrolled by `shift` (0..15): `cur` shifted up, the top `shift` bits of
  * the next column's same-plane word `next` brought in from the right. (= low 16 of rol32(next:cur).) */
@@ -43,50 +31,37 @@ void rm_scroll_prebuild(const uint8_t *playfield, uint8_t *shifted) {
 }
 
 /* Copy a contiguous run of `nbytes` (multiple of 4) of pre-rotated columns to the framebuffer. Both
- * ends are word-aligned, so this is a straight long copy (no per-column bookkeeping). */
-static inline void copy_run(Framebuffer *fb, Offset dst, const uint8_t *src, uint32_t nbytes) {
-    for (uint32_t i = 0; i < nbytes; i += 4) wr32(fb->px + dst + i, be32(src + i));
+ * ends are word-aligned, so this is a straight long copy (no per-column bookkeeping). Written as a
+ * POST-INCREMENT pointer walk, not an indexed `base + i` loop, for the same reason the top fill below
+ * is: GCC emits `move.l (aN)+,(aM)+` (20 cyc) for this shape and a double-indexed
+ * `move.l (aN,dI.l),(aM,dI.l)` + index bookkeeping (~17 cyc more per long) for the indexed one —
+ * measured +13,690 cyc/frame on tools/bench.py's gate frame, the whole difference. */
+static inline void copy_run(uint8_t *dst, const uint8_t *src, uint32_t nbytes) {
+    const uint8_t *end = src + nbytes;
+    while (src < end) { wr32(dst, be32(src)); src += 4; dst += 4; }
 }
 
-void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb) {
-    uint16_t delta = (uint16_t)((int16_t)s->seg_head * (int16_t)s->scroll_speed);   /* muls.w, low word */
-    s->hscroll_step2 = (uint16_t)(delta * 2);
-
-    uint16_t h = (uint16_t)(s->hscroll_pos + delta);
-    if ((int16_t)h < 0) h += SCROLL_WRAP;
-    else if ((int16_t)(h - SCROLL_WRAP) >= 0) h -= SCROLL_WRAP;
-    s->hscroll_pos = h;
-
-    unsigned shift = h & FINE_MASK;
-    uint32_t coarse = (uint32_t)(uint16_t)(((int16_t)h >> 1) & COARSE_MASK);
-    const uint8_t *sh = shifted + (uint32_t)shift * RM_SCROLL_WINDOW;   /* this frame's pre-rotated copy */
-    const uint8_t *raw = shifted;                                      /* copy 0 == the raw playfield */
-
-    /* When the scroll passes EDGE_THRESH the last `edge` columns wrap to the source row start. */
-    int edge = -1;
-    unsigned main_cols = ROAD_COLS;
-    if ((int16_t)(h - EDGE_THRESH) >= 0) {
-        edge = (uint16_t)(h - EDGE_THRESH) >> 4;
-        main_cols = ROAD_COLS - edge;
-    }
+void rm_scroll_draw(const ScrollGeometry *geo, const uint8_t *shifted, Framebuffer *fb) {
+    unsigned shift = geo->shift, main_cols = geo->main_cols;
+    uint32_t coarse = geo->coarse;
+    int edge = geo->edge;
+    const uint8_t *sh = rm_scroll_copy(shifted, shift);   /* this frame's pre-rotated copy */
+    const uint8_t *raw = shifted;                         /* copy 0 == the raw playfield */
 
     for (unsigned row = 0; row < ROAD_ROWS; row++) {
         uint32_t src_off = coarse + row * SRC_ROW_STRIDE;
         uint32_t wrap_off = row * SRC_ROW_STRIDE;
         Offset dst = OBJ_ROAD_START_OFF + row * SCREEN_ROW_BYTES;
 
-        copy_run(fb, dst, sh + src_off, main_cols * ROAD_COL_BYTES);   /* the main columns, in bulk */
+        copy_run(fb->px + dst, sh + src_off, main_cols * ROAD_COL_BYTES);   /* the main columns, in bulk */
 
         if (edge >= 0) {
             /* Seam: mask the last main column, then OR in the wrap column's fractional pixels (the top
              * `shift` bits of the raw wrap words — copy 0 is the raw playfield). */
             Offset seam = dst + (main_cols - 1) * ROAD_COL_BYTES;
-            uint16_t mask = (uint16_t)(SEAM_MASK_BASE << shift);
-            for (int p = 0; p < ROAD_PLANES; p++) {
-                uint16_t frac = (uint16_t)(be16(raw + wrap_off + p * 2) >> (16 - shift));
-                wr16(fb->px + seam + p * 2, (uint16_t)((be16(fb->px + seam + p * 2) & mask) | frac));
-            }
-            copy_run(fb, dst + main_cols * ROAD_COL_BYTES, sh + wrap_off, (uint32_t)edge * ROAD_COL_BYTES);
+            rm_scroll_seam_row(fb->px + seam, raw + wrap_off, shift);
+            copy_run(fb->px + dst + main_cols * ROAD_COL_BYTES, sh + wrap_off,
+                     (uint32_t)edge * ROAD_COL_BYTES);
         }
     }
 
@@ -104,4 +79,9 @@ void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb
         wr32(p + 16, fill); wr32(p + 20, fill); wr32(p + 24, fill); wr32(p + 28, fill);
         p += 32;
     }
+}
+
+void rm_blit_road_scroll(ScrollState *s, const uint8_t *shifted, Framebuffer *fb) {
+    ScrollGeometry geo = rm_scroll_advance(s);
+    rm_scroll_draw(&geo, shifted, fb);
 }
