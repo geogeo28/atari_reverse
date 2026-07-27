@@ -85,13 +85,36 @@ STATUS.md  per-subsystem progress vs recreate
 PORTING.md how to continue the port — recipe, conventions, gotchas (read this to pick up the work)
 ```
 
-## Measured performance & memory (2026-07-26; STE re-measured at C5 slice 2, ST/original at 6ac3066)
+## Measured performance & memory (2026-07-26, HEAD = C5 slice 2)
 
 The canonical current-state tables — one build (`BUGGYBOY.PRG`, byte-identical on both machines),
-one instrument (the 200 Hz sub-vblank render clock around `draw_frame`), one protocol (leg 0;
-gate = 200 idle frames at the leg-start gate, the object-dense worst case; drive = 250 autodrive
-frames; Hatari + EmuTOS 1024k). Measured by `render/atari/run_cadence.py`; raw runs in
-`PERF30.md`'s C4 slice-10 / C5 slice-1/2 notes and `BLIT_STE_SPEC.md` §15-§17.
+one instrument per table (labeled), one protocol (leg 0; gate = 200 idle frames at the leg-start
+gate, the object-dense worst case; drive = 250 autodrive frames; Hatari + EmuTOS 1024k). Cadence
+measured by `render/atari/run_cadence.py`; raw runs in `PERF30.md`'s C4 slice-10 / C5 slice-1/2
+notes and `BLIT_STE_SPEC.md` §15-§17.
+
+### The final picture — ORIGINAL → remaster ST → remaster STE
+
+One row per question people actually ask. Two instruments, never mixed within a column pair:
+Musashi = cycle-exact 68000 counts on the identical staged frame (the only instrument the original
+can run under); render clock = the 200 Hz sub-vblank clock around `draw_frame` under Hatari.
+
+| | ORIGINAL (ST or STE) | remaster on ST | remaster on STE |
+|---|---:|---:|---:|
+| worst-case frame (gate), Musashi | **110.05 ms** (9.1 fps) | **123.83 ms** (8.1 fps) = **1.13×** | **≈92.9 ms** (≈10.8 fps) = **≈0.84× ³** |
+| worst-case frame (gate), render clock | — (no instrument in the binary) | 130.30 ms | **97.75 ms** |
+| driving, render clock | — ⁶ | 99.78 ms | **89.80 ms** |
+| memory: resident bytes | **437,248** (427 KB) | **709,076** (693 KB) | **879,508** (859 KB, tables placed) |
+| minimum machine | 512 KB (recovered design target) | **1 MB** | **1 MB** (blitter routes live) |
+
+Bottom line: on a plain ST the hand-written original keeps an **11–13 %** edge on the worst frame;
+on an STE the remaster is — by the labeled estimate — **~16 % faster than the original runs
+anywhere**, at byte-identical pixels. The original never touches the blitter (verified: zero
+`$FFFF8Axx` references in the binary), so its number is the baseline on ST **and** STE.
+
+⁶ The original's mid-race median is **82.8 ms** under Musashi; the remaster's driving cells were
+never measured on that instrument (and 99.78/89.80 are render-clock numbers), so the driving row
+has no honest original-vs-remaster pair — flagged rather than guessed.
 
 ### Frame time (render clock = compute; locked cadence = player-visible latency)
 
@@ -106,40 +129,40 @@ STE vs ST: **gate −25.0 %, driving −10.0 %** — same pixels, byte-identical
 machines (goldens ×5 each + whole-frame A/B pin it). RAM size has **zero** effect on speed: the
 1 MB cells return bit-identical tick totals and route counters to the 4 MB cells.
 
-*Moved at C5 slice 2 (`BLIT_STE_SPEC.md` §17): the HUD dashboard composite now runs on the blitter too,
-taking the STE cells from 99.25 / 90.72 to **97.75 / 89.80** ms (slice 1 had taken them from 105.47 /
-97.34 to 99.25 / 90.72 when the road fine-scroll moved). All four cells here are same-session
-before/after pairs, which is what makes the deltas comparable — the Hatari model is deterministic within
-a session but drifts run-to-run across sessions.*
+*Cells are same-session before/after pairs (the Hatari model is deterministic within a session,
+drifts across sessions): C4 close 105.47/97.34 → slice 1 (road scroll) 99.25/90.72 → slice 2 (HUD
+dashboard) 97.75/89.80. Instrument caveat: the render clock counts whole 5 ms ticks per frame, so a
+sub-tick change re-phases frames across tick boundaries and sums to ±N ticks over a run — treat
+sub-0.5 ms moves in the driving cells as instrument phase, not cost (the +0.38 ms ST-driving wobble
+at slice 2 is exactly this: the Musashi bench shows `draw_frame` unchanged to the cycle).*
 
-*The ST driving cell reads 99.78 against slice 1's 99.40, and the ST gate cell is BIT-identical (5,212
-render-clock ticks both sides). That +0.38 ms is not the new seam: the cycle-exact Musashi bench reports
-`draw_hud` 130,120 cyc and `draw_frame` 990,618 cyc, unchanged to the cycle. The render clock counts whole
-5 ms ticks per frame, so a sub-tick per-frame change re-phases some frames across a tick boundary and sums
-to ±N ticks over 250 frames (+19 here = 0.076 ticks/frame). Treat sub-0.5 ms moves in the driving cells as
-instrument phase, not cost.*
+### Latency per stage (Musashi cycle counts, staged gate frame, 8 MHz)
 
-### vs the ORIGINAL binary (same instrument: Musashi cycle counts, staged gate frame, 8 MHz)
+Original and remaster measured at HEAD on the identical staged leg-0 gate frame — the original via
+its own 68000 code under the oracle, the remaster via the cross-compiled bench build. The
+`original` and `remaster (68000)` columns are the same instrument and directly comparable; the
+68000 column is also what a plain ST ships. The STE columns say which engine the boot bind selects
+there and what that route measurably removed from the whole frame when it landed (same-session
+render-clock deltas at the gate — per-stage Musashi numbers do not exist for the blitter, so these
+are attributions, not a third same-instrument column).
 
-Both sides re-measured at HEAD on the identical staged leg-0 gate frame — the original via its own
-68000 code under the oracle, the remaster via the cross-compiled bench build. The original never
-touches the blitter (verified: zero `$FFFF8Axx` references in the binary), so its number is the
-baseline on ST **and** STE.
+| stage (gate frame) | original | remaster (68000) | ratio | on the STE: engine | measured Δ gate |
+|---|---:|---:|---:|---|---:|
+| build_road_geometry | 2.42 ms | 3.90 ms | 1.61× | 68000 (same C) | — |
+| render_road | 26.19 ms | 28.85 ms | 1.10× | 68000 (same hand-asm) | — |
+| blit_road_scroll | 11.80 ms | 11.91 ms | 1.01× | **blitter** (C5 slice 1) | **−6.2 ms** |
+| object tree | 57.34 ms | 62.93 ms | 1.10× | **blitter** (objshift2 + colour skew table, C4) | **−24.8 ms** |
+| draw_hud | 12.29 ms ⁵ | 16.27 ms ⁵ | 1.32× ² | **blitter** dashboard composite (C5 slice 2), rest 68000 | **−1.5 ms** |
+| **TOTAL draw_frame** | **110.05 ms** (9.09 fps) | **123.83 ms** (8.08 fps) | **1.125×** | render clock 130.30 → **97.75 ms** | **−32.5 ms** |
+| mid-race median | 82.8 ms (12.1 fps) | — (never measured on this instrument) | | | |
+| **remaster on STE (estimate ³)** | 110.05 ms | **≈92.9 ms** (≈10.8 fps) | **≈0.84×** | | |
 
-| stage (gate frame) | original | remaster | ratio |
-|---|---:|---:|---:|
-| build_road_geometry | 2.42 ms | 3.90 ms | 1.61× |
-| render_road | 26.19 ms | 28.85 ms | 1.10× |
-| blit_road_scroll | 11.80 ms | 11.91 ms | 1.01× ⁴ |
-| object tree | 57.34 ms | 62.93 ms | 1.10× |
-| draw_hud | 12.29 ms ⁵ | 16.27 ms ⁵ | 1.32× ² |
-| **TOTAL draw_frame** | **110.05 ms** (9.09 fps) | **123.83 ms** (8.08 fps) | **1.125×** |
-| mid-race median | 82.8 ms (12.1 fps) | — (never measured on this instrument) | |
-| **remaster on STE (estimate ³)** | 110.05 ms | **≈92.9 ms** (≈10.8 fps) | **≈0.84×** |
-
-On a plain ST the hand-written original keeps an **11–13 %** edge on the worst frame; on an STE the
-remaster's blitter path makes it — by the labeled estimate — **~16 % faster than the original runs
-anywhere**: the first configuration where the port beats the original, at byte-identical pixels.
+The Δ column sums to the whole measured ST-vs-STE render-clock gap at the gate (130.30 − 97.75 =
+32.5 ms), because each route landed alone with a same-session before/after pair: the object routes
+measured −25.0 at C4 close (130.50 → 105.47, shown as the −24.8 residual after the ST baseline
+itself gained 0.2 ms from slice 1's `copy_run` rewrite), road scroll −6.2 (C5 slice 1), dashboard
+−1.5 (C5 slice 2). Driving deltas are smaller (object ≈−2.1, scroll −6.6, dashboard −0.9 — the gate
+is the object-dense worst case).
 
 ² draw_hud includes the dashboard memcpy revert (the live mini-map is transparent; the bulk copy
 was overwriting the sky — pixel correctness beat the 3 ms, see PERF30's dash_pristine note).
@@ -151,12 +174,9 @@ mini-map: the same blit then costs 67,978 cyc / 8.50 ms instead of 5.70, and rea
 original's 12.29 are same-instrument on the same staged frame, so the 1.32× ratio stands; what is NOT
 determinable from the binary is whether 12.29 would move the same way on live art — the original runs
 the identical masked-blit algorithm with no fast path, so it plausibly moves less. Flagged rather than
-guessed. On an STE this stage is now ROUTED to the blitter (`BLIT_STE_SPEC.md` §17).
+guessed.
 ³ Estimate: the Musashi ST figure scaled by the same-build Hatari render-clock ratio
 (97.75 / 130.30 = 0.750) — the ratio is same-instrument, the absolute STE ms is not a measurement.
-⁴ On an STE the same stage runs on the blitter instead, at ≈5.8 ms — this row is the CPU path both
-machines' 68000 reference shares (and the only path a plain ST has). The same is now true of the
-dashboard blit inside draw_hud (`BLIT_STE_SPEC.md` §17).
 
 ¹ The locked-cadence instrument (`GAME_CADENCE_TRACE`) pays a ~7 ms/present tail-canary tax the
 shipping PRG does not; the taxed ST gate frame quantises to 10 vbl in the trace build, but the
