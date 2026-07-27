@@ -696,6 +696,21 @@ tricks); the two are unrelated — this is the campaign tag, that is a proposal 
 >   **19.06 ms**, not 16.27 — the fast path fires on only **1-9 of 320 groups** in race. The baked number
 >   is not wrong, it is answering a different question; anywhere the two are compared, say which art.
 
+> **C5 CAMPAIGN CLOSED 2026-07-27.** Two slices landed (road scroll d1731fb, HUD dashboard 6f710cb):
+> **STE gate 105.47 → 97.75 ms, drive 97.34 → 89.80** over the campaign, byte-identical pixels
+> throughout, and the play-test passed (user, 2026-07-27 — controls, audio by ear, remaster-vs-original
+> side-by-side via `game_run.sh`). The remaining faithful levers are QUANTIFIED AND DECLINED, not
+> unknown: the **one-excursion Supexec** (12 excursions/frame at the gate ≈ 0.80–1.47 ms, but it spans
+> the object pass's user-mode dispatch and carries the supervisor-stack-depth risk that deferred it in
+> §7 and §14 — the two C5 routes already batch their own passes into one excursion each, which is the
+> cheap 80 % of the idea) and **build_road_geometry at 1.61×** (~1.5 ms notional, CPU-shaped, would be
+> an A-series ST campaign, not an STE one). Neither moves the locked present cadence (gate stays 8 vbl,
+> driving stays 6/8), which is the player-visible surface — so neither clears the bar a slice must
+> clear. What remains beyond them is **Tier-C fidelity trades only** (C2 letterbox / C3 interlaced far
+> scenery — different pixels, own goldens, need explicit sign-off). Re-open this campaign only for one
+> of those, or if a future slice's text growth forces the 1 MB STE margin conversation (9,548 B at
+> close; the cadence `free TPA bytes` counter is the gauge).
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),
@@ -1335,9 +1350,14 @@ second duplicate `#define OBJ_ROAD_START_OFF 0x3480` likewise folds onto `scroll
 that is the independent oracle-side port, not a missed fold.) Pinned byte-identical: the shipping
 `BUGGYBOY.PRG` sha256 is unchanged across the fold.
 
-> STILL OPEN (noted, not folded — out of this sweep's scope): the *value+role* `0xfff8` also lives as
-> `COARSE_MASK` (`scroll_const.h`) and `RR_D7_WORD_MASK` (`road_const.h`). Three names for one 8-byte
-> column mask. Folding those touches the road/scroll engines and their asm, so it is a separate change.
+> ~~STILL OPEN~~ **CLOSED 2026-07-27 — keep all three names, by design.** The *value+role* `0xfff8`
+> also lives as `COARSE_MASK` (`scroll_const.h`) and `RR_D7_WORD_MASK` (`road_const.h`). On inspection
+> these are three DIFFERENT facts that coincide at the same value: `COL_ALIGN` aligns an object's
+> destination column to its 8-byte cell, `COARSE_MASK` extracts the scroll position's column-aligned
+> byte offset (its shape follows `hscroll_pos`'s encoding, not the cell size), and `RR_D7_WORD_MASK`
+> is the road core's register-word mask. Folding them would assert an equivalence the engines do not
+> share — exactly the "shared abstraction onto coincidence" CLAUDE.md §6 warns against. Verdict:
+> distinct names stay; this note is the record so it is not re-opened.
 
 **Both hot fine-x engines are now hand-asm.** `objsprite` (the third, cold family) stays C. A3 is done.
 

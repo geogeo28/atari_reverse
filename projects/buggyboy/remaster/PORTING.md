@@ -4,19 +4,13 @@ For anyone (human or agent) picking up `remaster/`. Read [`README.md`](README.md
 *contract* (pixel-identical to `recreate/` per frame) and [`STATUS.md`](STATUS.md) for *what's done*.
 This doc is the *how*: the recipe, the conventions, and the traps.
 
-`draw_hud` (all 8 phases) is ported and verified on host + on a real 68000. The render pipeline is now
-complete: `render_road`, `blit_road_scroll`, `build_road_geometry`, and the whole `draw_game_objects`
-tree (`draw_ground`, the buggy/foreground sprites, `draw_object`, the fine-x blit engines, the
-`draw_object_list` dispatcher, and the prefix/orchestrator) are all byte-exact vs `recreate/`.
-
-Phase B has started: the **player physics** (`src/player.c`, `game_update` §3,4,5,6,7,8,9,10) is
-ported and verified frame-for-frame against `g_game_update`, and `render/atari/BUGGYBOY.PRG` is a playable
-buggy on the 68000. That now includes the crash / auto-steer script (§6), which replays a canned crash
-out of `crash_anim_tbl` and hands the controls back, and section 12's object / marker ring — the
-course window that scrolls the scenery and the road's per-band flags toward you. What remains in
-`game_update` is the system that *decides* to crash you: section 12's collision probe, the fx block
-rebuilt from `obj_flags`, and the horizon-event dispatch (which also carries the checkpoint and finish
-events, so a leg still cannot be finished) — see STATUS.
+The port is **complete**: the whole render pipeline and the whole of `game_update` (physics, crash
+script, collision probe, fx block, horizon events — checkpoints and finishes included) are byte-exact
+vs `recreate/`, and `render/atari/BUGGYBOY.PRG` is the full playable game on a real 68000 — leg select,
+races, high scores, attract cycle, sound — with the perf campaigns closed on top (PERF30.md,
+BLIT_STE_SPEC.md). See STATUS.md for the per-function ledger. This doc stays as the *how* for whoever
+extends the port (a new subsystem, a fidelity-trade build, the next binary): the recipe below is what
+built all of it.
 
 A note on porting a *gameplay* function rather than a render one: there is no framebuffer to diff, so
 the equivalence surface is the scalar state. `test/equiv.py`'s `compare_player_drive` is the pattern —
@@ -876,7 +870,7 @@ list) doing less per-frame work than the original. 20 fps median is not reached 
 6. **Write the differential test** (`test/test_<area>.py`) — see "Test shape" below — and iterate
    until it's **100 % of the footprint, 0 wrong pixels** (or whole-framebuffer exact for a leaf).
 7. **Wire the on-target game** if it grew the structs: `render/atari/gen_game_fixture.py` (emit the new
-   arrays/defines — the HUD's share of them lives in `gen_hud_fixture.py`) + `game_main.c` (fill the new
+   arrays/defines — the HUD's share of them lives in `hud_capture.py`) + `game_main.c` (fill the new
    fields), then re-run `run_golden.py` for a MATCH on every leg.
 8. **Commit** green, with the test in the same commit; update STATUS.
 

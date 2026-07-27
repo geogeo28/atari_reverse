@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gen_hud_fixture.py — bake the remaster HUD's inputs for the on-target build. A LIBRARY MODULE.
+"""hud_capture.py — capture the remaster HUD's inputs for the on-target build. A LIBRARY MODULE.
 
 The HUD reads a set of assets (font, colour-fill table, mask/cursor tables, the gauge string, the
 dashboard graphic and the variant sprites from buf_c) plus a HudState, all of which normally come from
@@ -99,5 +99,5 @@ def race_palette(img):
 
 
 if __name__ == "__main__":
-    sys.exit("gen_hud_fixture is a library module, not a generator — the on-target fixture is emitted by "
+    sys.exit("hud_capture is a library module, not a generator — the on-target fixture is emitted by "
              "gen_game_fixture.py (run via render/atari/build_game.sh).")

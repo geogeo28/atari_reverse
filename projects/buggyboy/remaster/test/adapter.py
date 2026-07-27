@@ -448,7 +448,7 @@ COLOR_PAIRS_BYTES = 16 * 8
 COLOR_BAR_MASK_BYTES = 5 * 12 * 4
 FUEL_MASK_BYTES = 8
 # Font window — ONE definition, used by every asset bundle AND by the on-target fixture bake
-# (gen_hud_fixture.hud_asset_arrays), so the shipped fixture_font and the host tests always agree.
+# (hud_capture.hud_asset_arrays), so the shipped fixture_font and the host tests always agree.
 # The highest glyph the game can ask for is the name-entry DELETE sentinel '`' (flow.c HS_CHAR_DEL):
 # the initials cycle 'A'..'`' and '`' draws a left-arrow. Sizing this to what the HUD gauge strings
 # alone need (0x600) left that glyph off the end of fixture_font, so on target the blitter read the

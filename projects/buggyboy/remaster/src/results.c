@@ -60,7 +60,8 @@ static void draw_result_row(Framebuffer *fb, const uint8_t *gfx, Offset dst_off,
 #define LEG_ROW_STR_STRIDE 0xc     /* bytes between per-row buf_a strings / digit records */
 #define LEG_ROW1_COLOR    8
 #define LEG_DIGITS_COLOR  4
-#define NUM_MAX_CELLS_M1  0x13     /* draw_num_thunk preset cell count-1 */
+#define NUM_MAX_CELLS_M1  0x13     /* draw_num_thunk preset cell count-1 — the leg rows AND the
+                                    * score lines pass the same preset (one fact, one name) */
 
 #define LEG_BG_COLOR       1       /* the screen background: both spans, and the divider that re-paints it */
 #define LEG_TOP_CELLS_M1   0x76b   /* fill_words cell count-1: everything above LEG_BOTTOM_DST */
@@ -211,7 +212,6 @@ void rm_draw_panel2(Framebuffer *fb, const RmResultsAssets *a) {
 #define RS_SCORE_DST       0x6340
 #define RS_SCORE_COLOR     0xf
 #define RS_SCORE_NUM_DST   0x6980     /* the digits, from the score-line cursor past its label */
-#define RS_SCORE_NUM_M1    0x13       /* draw_num_thunk preset cell count-1 */
 #define RS_MODE_DST1       0x4ed8
 #define RS_MODE_DST2       0x53e0
 #define RS_MODE_DST3       0x5400
@@ -268,7 +268,7 @@ void rm_draw_results_screen(Framebuffer *fb, const RmResultsScreenAssets *a,
         Plane4 lo, hi;
         rm_color_fill(cp, RS_SCORE_COLOR, COLOR_MASK_NUM, &lo, &hi);
         rm_num_run(fb, (Offset)sx16(RS_SCORE_NUM_DST), lo, hi, a->num_sprites, a->num_glyph_tbl,
-                   a->score_line, ssi, RS_SCORE_NUM_M1);
+                   a->score_line, ssi, NUM_MAX_CELLS_M1);
     }
     if (mode != 0) {                                 /* the "missed the table" label block */
         Offset msi = rs_text_chain(fb, cp, font, RS_MODE_DST1, RS_MODE_COLOR, a->mode_str, 0);

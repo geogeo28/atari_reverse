@@ -7,7 +7,7 @@ program is `BUGGYBOY.PRG` (the playable game, below); the pin is the **frame-0 g
 against recreate's verified pipeline.
 
 Some of what the cores read is the original program's own data-segment content rather than file
-content, so we **capture it once on the host** (`gen_game_fixture.py` + `gen_hud_fixture.py`, via the
+content, so we **capture it once on the host** (`gen_game_fixture.py` + `hud_capture.py`, via the
 same `adapter.py` the equivalence tests use) and bake it into `build/game_fixture.h`. Everything that
 *is* file content the game loads itself from `COURSES.DAT` / `GRAPHICS.GRA` at boot.
 
@@ -20,7 +20,7 @@ is now a library module the runners share.
 
 | file | role |
 |------|------|
-| `gen_game_fixture.py` / `gen_hud_fixture.py` | capture the non-file-content tables, `HudState` and palette from the host harness into `build/game_fixture.h` |
+| `gen_game_fixture.py` / `hud_capture.py` | capture the non-file-content tables, `HudState` and palette from the host harness into `build/game_fixture.h` |
 | `game_main.c` | the on-target game shell (leg select → race → between-legs flow) |
 | `os.s` / `tos.ld` / `mkprg.py` | GEMDOS entry + trap wrappers, link script, `.PRG` wrapper (copied from recreate's harness) |
 | `shim_include/string.h` / `shim.c` | freestanding `<string.h>` decls + defs, linked by every on-target program (bare-metal GCC has no libc) |
@@ -39,7 +39,9 @@ bash render/atari/build_game.sh             # -> build/BUGGYBOY.PRG + disk/BUGGY
 python render/atari/run_golden.py           # headless: builds GOLDEN.PRG per leg 0-4, prints MATCH for each
 ```
 
-Hatari needs a 4 MiB machine (`--memsize 4`); `build/` and `disk/` are gitignored build artifacts.
+The harness runners default to a 4 MiB machine (`RM_MEMSIZE`/`--memsize 4`) but the game itself needs
+only **1 MB** (the slice-10 diet; the `--memsize 1` goldens are a standing pin). `build/` and `disk/`
+are gitignored build artifacts.
 Every `.PRG` variant lands in `build/`, and the headless runners boot it from there onto a throwaway
 drive. `disk/` is only the **interactive-play** drive — `BUGGYBOY.PRG` + `COURSES.DAT` + `GRAPHICS.GRA`,
 refreshed by a plain `build_game.sh`; harness builds pass `GAME_NO_STAGE=1` and never touch it.

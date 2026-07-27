@@ -55,7 +55,6 @@
       "Bash(python -m pytest:*)",
       "Bash(python3 -m pytest:*)",
       "Bash(.venv/bin/python -m pytest:*)",
-      "Bash(.venv/bin/python **/run_hatari.py:*)",
       "Bash(python3 **/prg_dis.py:*)",
       "Bash(make:*)",
       "Bash(clang:*)"

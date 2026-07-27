@@ -31,7 +31,7 @@ import assets_load as al                          # noqa: E402  remaster's own C
 import equiv                                      # noqa: E402
 import render_screen as R                         # noqa: E402  MEM_BASE (where the arena sits)
 from fixture_lib import c_array, write_if_changed  # noqa: E402  shared aligned(2) emit + content-stable write
-import gen_hud_fixture as hud                      # noqa: E402  reuse the HUD asset/define/palette baking
+import hud_capture as hud                      # noqa: E402  reuse the HUD asset/define/palette baking
 
 GAME_LEG = 0                                       # the game starts where the player does: leg 0...
 GAME_START_SEGMENT = 0                             # ...at its first segment, with nothing skipped

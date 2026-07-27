@@ -79,7 +79,7 @@ GATE_MEAS_PRG := render/atari/build/GATEMEAS.PRG
 # font fixture.
 GATE_DEPS := $(SRC) $(STE_SRC) $(wildcard src/asm/*.S) render/atari/game_main.c render/atari/shim.c \
              render/atari/os.s render/atari/tos.ld render/atari/build_game.sh \
-             render/atari/gen_game_fixture.py render/atari/gen_hud_fixture.py \
+             render/atari/gen_game_fixture.py render/atari/hud_capture.py \
              render/atari/fixture_lib.py render/atari/mkprg.py \
              test/adapter.py test/equiv.py test/assets_load.py $(RECREATE)/render/render_screen.py \
              $(wildcard render/atari/shim_include/*) $(wildcard render/atari/*.h) \
