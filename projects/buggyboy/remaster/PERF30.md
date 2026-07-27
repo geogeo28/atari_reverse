@@ -640,6 +640,62 @@ tricks); the two are unrelated — this is the campaign tag, that is a proposal 
 > `--memsize 1 --machine ste` (tables placed, all three routes bound). Full design: `BLIT_STE_SPEC.md`
 > §16.
 
+> **C5 slice 2 — the HUD DASHBOARD composite ROUTED through the blitter: GO (landed, not committed).**
+> The FOURTH route, and the second with no lookup table — this one needs no materialise either: the chip
+> reads the LIVE per-leg art **IN PLACE** out of the graphics arena, because `ARENA_ROW_STRIDE ==
+> SCREEN_ROW_BYTES` (160) makes the source and destination walks identical. Zero RAM, no invalidation, and
+> immune to the trap that killed `dash_pristine` (below): the art is rebuilt per leg by `init_leg_dash`
+> and one word of it is mutated MID-LEG by `probe_collision`, so anything precomputed must be invalidated
+> and this cannot go stale. **Recipe: 8 passes**, four `LOP=AND` from the group's mask word then four
+> `LOP=OR` from `{ink_a, ink_b, ink_b, ink_c}`, one per plane, `x_count` 8 groups x `y_count` 40 rows,
+> both pitches 104, skew 0, all-ones endmasks; plane p owns byte 2p of every group so the four planes
+> write disjoint words and the AND/OR regrouping is byte-identical. Poke-batched (§14 shape): 36 register
+> writes per composite vs `blit_run`'s 136. Geometry hoisted to `include/dash_const.h` — it was spelled in
+> THREE files (`DASHBOARD_DST` in hud.c; `DASH_ROWS`/`DASH_GROUPS` in both plane.h AND events.c, which
+> does not include plane.h) and the route needs all of them to agree.
+> **The proposed "7-pass refinement" is WRONG and was disproved by measurement, not argument.** Planes 1
+> and 2 take the same ink word, so copying plane 1's finished framebuffer column to plane 2 looks free —
+> but the results are `(bg1 & mask) | ink_b` vs `(bg2 & mask) | ink_b`, equal only where `mask == 0` or
+> the two planes' BACKGROUNDS agree, and the real background here is `ROAD_TOP_FILL = 0xffff0000`, i.e.
+> plane-1 word `0x0000` against plane-2 word `0xFFFF`. It ships as sweep mutation 14 and is **CAUGHT on 14
+> of 16 cases** — the 2 misses being the all-opaque BAKED atlas, which is exactly the art the goldens
+> stage. **This is the `dash_pristine` trap again in a new costume: a pin built only on the baked atlas
+> would have blessed a wrong recipe.** (A second vacuity of the same family was found while building the
+> section — its first background was a UNIFORM byte fill, under which mutation 14 was invisible 16/16.
+> Uniform test backgrounds cannot pin per-plane recipes.)
+> **Bus policy: the shared-bus restart loop ships again.** HOG measured at 97.22/88.98 vs 97.75/89.80
+> (gate/drive) = 0.54 %/0.91 %, declined for §16's reason; knob kept as `GAME_DASH_HOG=1`.
+> **Cadence (leg 0): STE gate 99.25 -> 97.75 ms (-1.5 %), STE drive 90.72 -> 89.80 (-1.0 %)**; vs stock ST
+> that is **-25.0 % / -10.0 %** (was -23.8 % / -8.7 %). The ST gate cell is bit-identical (5,212 ticks both
+> sides) and the ST drive cell moved +0.38 ms, which is NOT the seam — the cycle-exact bench reports
+> `draw_hud` 130,120 cyc and `draw_frame` 990,618 unchanged to the cycle; the render clock counts whole
+> 5 ms ticks per frame, so a sub-tick change re-phases frames across tick boundaries (+19 ticks over 250
+> frames = 0.076 ticks/frame). **The measured saving is well under the census's ~3.3 ms projection** (that
+> was the two engines timed in isolation: CPU 9.18 vs blitter-shared 5.08 ms); both figures are
+> reproducible, the disagreement is unexplained, and the cadence one is what the README carries. Pins:
+> sweep **5,624/0** incl. a new 16-case dashboard section over all five legs' REAL art (staged by driving
+> the game's own `rm_init_leg_dash` + `rm_draw_leg_labels`) plus a marker-stepped variant and the two
+> algebraic extremes, over seeded-noise and top-fill backgrounds, with a report word proving all 8 staged
+> arts DISTINCT; `--mutate 11..14` **4/4 caught** (16/16/16/14) with 1-10 unregressed; goldens x5 st + x5
+> ste at default AND `--memsize 1`; A/B 0-mismatch; `make test` 730; route counters `routed=201/251
+> declined=0`; a 1 MB STE cadence run reports `free TPA = 184,188` with all FOUR routes bound.
+> **Footprint +16 B only (708,820), so the 1 MB STE margin goes 9,564 -> 9,548 B.** Full design:
+> `BLIT_STE_SPEC.md` §17.
+>
+> **Three older items the C5 measurement census CLOSED along the way:**
+> - **BLIT_STE_SPEC §7 item 1, "blitter-side CLIP (LEFT/RIGHT) — GO": measured NO-GO.** The clip family
+>   costs **2 CLIP calls / 1,802 cyc = 0.225 ms** on the gate frame, and `objshift2` makes **zero** clip
+>   calls in real play. Folding clip onto the chip would add endmask-partial-column recipes and sweep
+>   cases to buy a fifth of a millisecond on the worst frame and nothing at all on the common one.
+> - **The §14 `muluw #984` probe pad: NO-GO on SIZE.** 0.028 ms/frame for 5,120 B of BSS, against a 1 MB
+>   STE margin of 9,548 B — half the remaining headroom for 0.03 % of a frame. §14 now says so inline.
+> - **The `draw_hud` figure was measured on the WRONG ART.** The published 16.27 ms (and the 5.70 ms
+>   dashboard cell inside it) come from the leg-independent BAKED atlas the goldens and `make test` stage,
+>   which is 100 % opaque so `cell_dashboard`'s `mask == 0` fast path takes every group. On the LIVE
+>   per-leg mini-map the same blit costs **67,978 cyc / 8.50 ms** and real in-race `draw_hud` is
+>   **19.06 ms**, not 16.27 — the fast path fires on only **1-9 of 320 groups** in race. The baked number
+>   is not wrong, it is answering a different question; anywhere the two are compared, say which art.
+
 **C5. Palette tricks to fake work.** *(Tier C, situational)* Colour-cycling / palette animation to
 simulate motion the CPU didn't draw (e.g. a scrolling texture faked in the palette). **Fidelity trade:
 the framebuffer bytes differ from `recreate/`** — off-image already (Setpalette is a documented seam),

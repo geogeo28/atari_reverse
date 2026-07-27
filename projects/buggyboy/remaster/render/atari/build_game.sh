@@ -37,14 +37,17 @@ mkdir -p "$BUILD" "$DISK"
 #     §12/§13), and the road fine-scroll straight off the pre-rotated playfield (§16). The census/selftest/sweep are extra
 #     compile-gated MEASUREMENT builds. GAME_FORCE_NO_BLITTER pins the CPU path at boot even on an STE — a
 #     harness A/B baseline knob only. (The old GAME_STE / separate BUGGYBST.PRG two-binary profile is
-#     retired; GAME_STE is accepted-but-ignored for script compatibility.) ---
+#     retired; GAME_STE is accepted-but-ignored for script compatibility.) FOUR routes bind now — the
+#     HUD dashboard composite joins them straight off the live arena art (§17). ---
 STE_CFLAGS="-DRM_BLITTER"
 STE_SOURCES="$REMASTER/src/blitter.c $REMASTER/src/blitter_objshift2.c $REMASTER/src/blitter_skew.c \
-             $REMASTER/src/blitter_scroll.c"
+             $REMASTER/src/blitter_scroll.c $REMASTER/src/blitter_dash.c"
 [ "${GAME_FORCE_NO_BLITTER:-0}" = "1" ] && STE_CFLAGS="$STE_CFLAGS -DGAME_FORCE_NO_BLITTER"
 # The road-scroll route's bus policy A/B (BLIT_STE_SPEC §16): 1 = HOG, unset/0 = the shared-bus restart
 # loop the route ships with. A measurement knob — it is what produced §16's HOG-vs-restart cadence table.
 [ "${GAME_SCROLL_HOG:-0}" = "1" ] && STE_CFLAGS="$STE_CFLAGS -DBLIT_SCROLL_HOG=1"
+# The HUD-dashboard route's bus policy A/B (BLIT_STE_SPEC §17), same knob shape as the scroll one above.
+[ "${GAME_DASH_HOG:-0}" = "1" ] && STE_CFLAGS="$STE_CFLAGS -DBLIT_DASH_HOG=1"
 if [ "${GAME_STE_SELFTEST:-0}" = "1" ]; then
     STE_CFLAGS="$STE_CFLAGS -DGAME_STE_SELFTEST"
     STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_selftest.c"

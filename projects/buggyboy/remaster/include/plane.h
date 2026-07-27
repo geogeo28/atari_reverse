@@ -6,6 +6,7 @@
 #ifndef RM_PLANE_H
 #define RM_PLANE_H
 
+#include "dash_const.h"   /* DASH_ROWS / DASH_GROUPS / DASH_GROUP_BYTES — shared with the blitter route */
 #include "screen.h"
 #include "st.h"
 
@@ -51,14 +52,13 @@ static inline void cell_transp(uint8_t *px, Offset at, const uint8_t *src) {
  * groups of four dest words. Per group the four source words are (mask, a, b, c); each dest word keeps
  * the background where mask is set and OR-s in ink a, b, b, c (the middle source word feeds two screen
  * words). `gfx`+`src` is the source block, `px`+`dst` the destination; both step one scanline per row.
- * Shared by the HUD's fixed dashboard (phase 7) and the per-leg results dashboard. */
-#define DASH_ROWS   40
-#define DASH_GROUPS 8             /* 8 groups of 4 dest words (0x40 bytes) per row */
-
+ * Shared by the HUD's fixed dashboard (phase 7) and the per-leg results dashboard. The row/group counts
+ * and the group stride live in dash_const.h — the blitter route (src/blitter_dash.c) blits this exact
+ * geometry, so it cannot be spelled twice. */
 static inline void cell_dashboard(uint8_t *px, Offset dst, const uint8_t *gfx, Offset src) {
     for (int row = 0; row < DASH_ROWS; row++, dst += SCREEN_ROW_BYTES, src += SCREEN_ROW_BYTES) {
         Offset d = dst, s = src;
-        for (int g = 0; g < DASH_GROUPS; g++, d += 8, s += 8) {
+        for (int g = 0; g < DASH_GROUPS; g++, d += DASH_GROUP_BYTES, s += DASH_GROUP_BYTES) {
             uint16_t mask = be16(gfx + s);
             uint16_t ink_a = be16(gfx + s + 2), ink_b = be16(gfx + s + 4), ink_c = be16(gfx + s + 6);
             if (mask == 0) {

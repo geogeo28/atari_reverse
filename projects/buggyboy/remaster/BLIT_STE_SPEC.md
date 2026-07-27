@@ -230,10 +230,13 @@ re-materialises the slot (verified — the full sweep stays 0-XOR with the cache
 
 ## 7. Slice 4 — what next (go/no-go)
 
-1. **Blitter-side clip (LEFT/RIGHT) — GO, now unblocked.** In slice 2 moving clip to the blitter would
-   have added materialise cost; the cache removes that objection (clip sprites cache too). Fold the 1008
-   currently-declined clip cases in via `endmask1/3` partial columns, extend the sweep to keep them 0-XOR.
-   Keep any case the endmask can't reproduce on the CPU hybrid.
+1. **Blitter-side clip (LEFT/RIGHT) — ~~GO, now unblocked~~ MEASURED NO-GO (C5 census, 2026-07-26).** In
+   slice 2 moving clip to the blitter would have added materialise cost; the cache removes that objection
+   (clip sprites cache too). The plan was to fold the 1008 currently-declined clip cases in via
+   `endmask1/3` partial columns and extend the sweep to keep them 0-XOR. **The census then costed the
+   family: 2 CLIP calls / 1,802 cyc = 0.225 ms on the GATE frame, and objshift2 makes ZERO clip calls in
+   real play.** A whole extra recipe family plus its sweep cases, for a fifth of a millisecond on the
+   worst frame and nothing on the common one. Closed; see PERF30's C5 slice-2 note.
 2. **Colour-indexed `rm_blit_objshift` pass 1 (25.3 % of the gate) — GO, same pattern.** Its cookie-cut is
    the 4-word `~(A|B|C)&D` mask + a colour fill; the identical cache-keyed pre-shift + 2-pass recipe
    applies. This is the bigger remaining stage — recommended as the slice-4 headline.
@@ -581,7 +584,10 @@ inversion of §8's 9 %-hit failure. Sweep cost bench: table blit **9,400 cyc** v
 *(superseded by §15: the diet took it to **1 MB**)*.
 
 **Noted, not folded in:** the probe's `muluw #984` (entry not power-of-two; ~0.4 %/blit — padding to
-1024 B costs 5 KB BSS for a shift); grow-from-`rows_done` (warm-up-only saving, measured and skipped);
+1024 B costs 5 KB BSS for a shift) — **CLOSED as a NO-GO on SIZE (C5 census, see PERF30's C5 slice-2
+note): the measured win is 0.028 ms/frame and the pad costs 5,120 B of a margin now standing at 9,548 B
+(§17). Half the 1 MB STE's remaining headroom for 0.03 % of a frame is not a trade this build makes**;
+grow-from-`rows_done` (warm-up-only saving, measured and skipped);
 the `SYS_HZ200` `-Warray-bounds` build noise (pre-existing pattern). Hatari-model caveat (§13) applies
 to every cadence number here; the byte-exactness pins do not depend on it.
 
@@ -819,3 +825,207 @@ measured live: a `--memsize 1 --machine ste` cadence run reports `free TPA = 184
 scroll route bound on a 1 MB STE. The margin is now under 10 KB; the next slice that adds text must check
 it. Note the new asymmetry in the failure mode: if the margin ever goes negative, the object routes retire
 to the CPU but **the scroll route stays on the chip** (it has no table to place).
+
+## 17. C5 slice 2 — the HUD DASHBOARD on the blitter (the fourth route, and the second with no table)
+
+`cell_dashboard` (`include/plane.h`), fired once per frame from `draw_hud`'s phase 7, is the biggest
+single thing left in `draw_hud` once the object routes and the road scroll are on the chip. It is also
+the most cookie-cut-shaped work in the game after the object engines: 40 rows x 8 groups of
+`{mask, ink_a, ink_b, ink_c}`, composited per plane as `(dst & mask) | ink`.
+
+### It needs NO lookup table, and no materialise either
+
+The scroll route (§16) already blits straight out of a buffer the CPU reference reads. This one goes one
+step further: **the chip reads the LIVE per-leg art IN PLACE, out of the graphics arena**, because
+`ARENA_ROW_STRIDE == SCREEN_ROW_BYTES` — the arena's row pitch and the framebuffer's are the same 160
+bytes. Source and destination therefore walk with the same x-step and the same per-row correction, and
+the recipe needs no stream, no cache, no invalidation and no RAM at all.
+
+That is not just tidiness. This art is the one asset that **changes under the route**: `init_leg_dash`
+rebuilds the whole mini-map between legs, `draw_leg_labels` overlays the place names, and
+`probe_collision` mutates ONE word of it MID-LEG as the progress marker walks. The last attempt to
+precompute this blit is exactly the `dash_pristine` revert in PERF30 (it composited the transparent
+mini-map over a background-less buffer and painted the sky black). Reading in place cannot go stale.
+
+`include/dash_const.h` is the new ONE home for the geometry. It existed in three places before —
+`DASHBOARD_DST` as a `hud.c` literal, `DASH_ROWS`/`DASH_GROUPS` in BOTH `plane.h` and `events.c` (which
+does not include `plane.h`, so they were genuine independent copies), and the arena row stride only in
+`events.c` — and the route depends on all four AGREEING. The header carries a static assert pinning
+`ARENA_ROW_STRIDE == SCREEN_ROW_BYTES`, which is the fact the whole recipe rests on.
+
+### The recipe — 8 passes, four AND then four OR
+
+Per group the four source words are `{mask, ink_a, ink_b, ink_c}` and the four destination words are
+
+```
+plane 0 = (dst & mask) | ink_a      plane 2 = (dst & mask) | ink_b
+plane 1 = (dst & mask) | ink_b      plane 3 = (dst & mask) | ink_c
+```
+
+so per plane it is the classic two-pass cookie-cut. Everything except `src_addr`, `dst_addr` and the LOP
+is constant across all eight passes:
+
+| | AND pass, plane p | OR pass, plane p |
+|---|---|---|
+| HOP / LOP | SRC / **AND** | SRC / **OR** |
+| src_addr | `art + 0` (the mask word) | `art + {2,4,4,6}[p]` |
+| dst_addr | `fb + DASHBOARD_DST + 2p` | same |
+| src_x_inc / dst_x_inc | 8 / 8 (one group) | same |
+| src_y_inc / dst_y_inc | 104 / 104 (`160 - 7x8`) | same |
+| x_count / y_count | 8 groups / 40 rows | same |
+| endmask1/2/3 | all `0xFFFF` | all `0xFFFF` |
+| skew | 0 (every column is word-aligned) | 0 |
+
+Three things fall out:
+
+1. **Plane p owns byte offset 2p of every group**, so the four planes write DISJOINT destination words.
+   No plane can observe another's write; only AND-before-OR *within* a plane is ordered. That is what
+   lets the passes be regrouped into two LOP groups (the `blitter_skew.c` argument, §14), which is what
+   makes the poke batching worth it.
+2. **The middle source word feeds TWO planes** — `ink_b` is planes 1 and 2. This is the one part of the
+   mapping that is not a straight per-plane index, and it is the trap below.
+3. **Poke batching (§14 shape):** `dash_blit_begin` pokes the four increments, HOP, skew, the three
+   endmasks and `x_count` ONCE (the chip reloads `x_count` from an internal latch per line); each group
+   pokes one LOP; each pass pokes the two addresses and `y_count`. 36 register writes per composite,
+   where `blit_run`'s 17 per pass would be 136.
+
+**The tripwire.** Unlike the scroll route there is no runtime geometry at all — destination, rows, groups
+and both pitches are compile-time constants, asserted in the file. The only runtime input is the pair of
+base addresses, and the only thing the chip cannot express about them is an ODD one: `src_addr`/`dst_addr`
+ignore bit 0, so an odd art pointer would blit from `base-1` while the CPU reference reads the words the
+caller meant. `dash_blit_serves` declines that to the C reference and counts it. It is a tripwire on the
+chip contract, not a family split: the arena and both screen buffers are word-aligned by construction, so
+its counter reading 0 is the expected result. It is not a safe harbour either — the C reference would
+take an ADDRESS ERROR on the same pointer (`be16`/`wr16` are raw word accesses).
+
+### The "7-pass refinement" is WRONG, and the sweep is what says so
+
+Planes 1 and 2 take the same ink word, so "blit plane 1, then copy its finished framebuffer column to
+plane 2" looks like a free pass — 7 instead of 8. **It is not equivalent.** The two results are
+`(bg1 & mask) | ink_b` and `(bg2 & mask) | ink_b`, equal only where `mask == 0` or the two planes'
+BACKGROUND words agree. The real background under the dashboard rows is the road top fill, and
+`ROAD_TOP_FILL = 0xffff0000` is precisely "plane 1 word `0x0000`, plane 2 word `0xFFFF`" — the worst
+possible case for the assumption.
+
+Rather than argue it, the variant ships as sweep mutation `RM_SKEW_MUT_DASH_P2COPY` (14) and is
+**CAUGHT on 14 of the section's 16 cases**. The two it does NOT break are the all-opaque atlas
+(`mask == 0` everywhere, where the algebra really is background-independent) — which is exactly the
+baked art the goldens and `make test` stage, and exactly the trap that shipped the `dash_pristine` bug.
+A pin built only on the baked atlas would have blessed a wrong recipe.
+
+*(A second vacuity of the same family was found and fixed while building the section: its first
+background was the sweep's uniform `SWEEP_BG_BYTE` fill, under which every plane's background word is
+equal and mutation 14 was invisible — 0 of 16 caught on that background. The section now uses a seeded
+LCG fill and the real `ROAD_TOP_FILL` pattern, both of which have per-plane asymmetry. Uniform test
+backgrounds cannot pin per-plane recipes.)*
+
+### Bus policy — the shared-bus restart loop SHIPS again; HOG measured and declined
+
+Eight screen-width passes over 40 rows is the scroll route's trade, not the object blits', so the default
+is §2's shared-bus restart loop. `GAME_DASH_HOG=1` rebuilds it on HOG. Measured, leg 0:
+
+| bus policy | STE gate (200 idle f) | STE drive (250 f) | canary trips |
+|---|---:|---:|---:|
+| shared-bus restart (**ships**) | **97.75 ms** | **89.80 ms** | 0 |
+| HOG (`GAME_DASH_HOG=1`) | 97.22 ms (−0.53, −0.54 %) | 88.98 ms (−0.82, −0.91 %) | 0 |
+
+Same verdict as §16 and for the same reason: half a percent of a frame does not buy a whole-CPU freeze
+that delays the 50 Hz sound pump and the IKBD ISR and that no pin can see. The knob stays so the number
+is reproducible.
+
+### The sweep's new section — the data IS the case space
+
+The recipe has no case space; the DATA does, because the per-group mask decides per destination word
+between a read-modify-write and a plain store, and the CPU reference even takes a different BRANCH for a
+fully-opaque group. So the section is art x background:
+
+- **art** — all five legs' REAL art, staged by driving the game's own `rm_init_leg_dash` +
+  `rm_draw_leg_labels` into the loaded arena; a marker-STEPPED leg-0 variant (extra label passes, each
+  folding one `probe_collision` step); and the two algebraic extremes, an all-opaque atlas and an
+  all-transparent one (where the composite must be the identity). 8 variants.
+- **background** — seeded LCG noise, and `ROAD_TOP_FILL`. 2.
+
+16 cases, whole screen + overdraw tail compared, guard bands armed BEFORE the art is staged (so a
+staging overrun is caught too). Staging real art meant the sweep build now runs `load_assets` before its
+entry point and is handed a minimal `RmEventCtx` by `game_main.c` — the shell owns the arena, the sweep
+owns the comparison.
+
+**The section carries its own non-vacuity gate.** Every other section generates its inputs in
+`blitter_sweep.c`; this one's come from the ASSET FILES through the game's leg-init code, so "the real
+art was staged" is an assumption a mis-wired context would satisfy silently — eight identical images,
+sixteen byte-exact cases, nothing pinned. The report therefore carries how many DISTINCT arts were
+staged (a hash per variant) and the runner fails unless it is 8. That is also the only thing that proves
+the marker-stepped variant is a different image from plain leg 0.
+
+### Stated limitations (what these pins do NOT cover)
+
+Named rather than left implicit, per CLAUDE.md's mutation-coverage rule:
+
+- **The tripwire's decline branch is unexercised.** `dash_blit_serves` can only fail on an odd base
+  address, and the arena and both screen buffers are word-aligned by construction — no build can reach
+  it, and the sweep cannot seed it without mis-aligning its own framebuffers (which would decline all 16
+  cases and read as a route regression). `rm_dash_blit_declined` is structurally 0. §16's `x_count`
+  tripwire has the same shape; this is the second instance and neither is pinned.
+- **The tripwire does not cover 24-bit truncation.** The chip's address registers hold 24 bits, so a
+  source above 16 MB (a Falcon running from TT-RAM — `blitter_present()` accepts Falcon) is truncated,
+  not declined. True of all four routes; predates this slice and is not fixed here.
+- **The BOOT BINDING is proven only by the cadence route counters.** The sweep calls
+  `rm_blit_hud_dashboard_draw` directly and the goldens/A-B compare pixels, which are identical either
+  way — so deleting `rm_blit_hud_dashboard_bind` from `rm_blit_bind_all` would leave every automated pin
+  green and silently give the perf win back. `dash routed=201/251` in the cadence tail is what says the
+  route was live; `run_cadence.py` prints it but does not assert it. Same gap as §16's scroll route.
+
+### Pins (all green)
+
+| pin | result |
+|---|---|
+| sweep | **5,624 cases, 0 mismatch** — the six existing sections + a new **HUD-dashboard section, 16/16 routed, 8/8 distinct arts staged** |
+| `--mutate 11…14` (new) | **4/4 caught** — LOP swap **16**, `x_count` 8→9 **16**, `y_inc` 104→96 **16**, plane-2 copy **14** (the 2 misses are the all-opaque atlas, by construction — see above) |
+| `--mutate 1…10` (regression) | 10/10 still caught, counts unchanged — 704 / 704 / 643 / 660 / 297 / 1 / 640 / 640 / 304 / 300 |
+| goldens | same PRG **MATCH ×5 `--machine st`** and **×5 `--machine ste`**, and again at **`--memsize 1`** on both |
+| whole-frame A/B st(CPU) vs ste(blitter) | **0-mismatch** ×4 frames — now load-bearing for the dashboard route |
+| host differential | `make test` **730** |
+| cycle-exact bench | `draw_hud` **130,120 cyc / 16.27 ms** and `draw_frame` **990,618 / 123.83 ms** — both bit-identical to HEAD, i.e. the constant hoist and the seam cost the CPU reference nothing |
+| route counters | gate `dash routed=201 declined=0`; drive `routed=251 declined=0` |
+| 1 MB STE | `free TPA = 184,188` with `objshift2 hit` / `colour table hit` / `scroll routed=61` / `dash routed=61` — all FOUR routes bound |
+
+### Cadence and cost
+
+| scene | ST (CPU, before) | ST (CPU, after) | STE (before) | STE (after) | STE delta |
+|---|---:|---:|---:|---:|---:|
+| gate (200 idle f) | 130.30 | **130.30** | 99.25 | **97.75** | **−1.50 ms (−1.5 %)** |
+| drive (250 f) | 99.40 | **99.78** | 90.72 | **89.80** | **−0.92 ms (−1.0 %)** |
+
+STE vs stock ST is now **gate −25.0 %, drive −10.0 %** (was −23.8 % / −8.7 %).
+
+**Two honesty notes on these numbers.**
+
+1. **The saving is well under the pre-slice census's projection.** That census measured the two engines
+   in isolation on a staged leg-0 gate frame (CPU 9.18 ms vs blitter-shared 5.08 ms) and projected
+   ≈3.3 ms/frame; the whole-frame instrument says **1.50**. Both are same-instrument and reproducible;
+   what is NOT established is why they disagree, and the cadence figure is the one the README carries
+   because it is the one a player experiences. The route is still a clear GO — it is free of RAM, free of
+   invalidation risk, and monotone on both scenes — but "≈3.3 ms" should not be repeated.
+2. **The ST drive cell moved +0.38 ms and the ST gate cell did not move at all** (bit-identical, 5,212
+   ticks both sides). It is not the seam: the cycle-exact Musashi bench reports `draw_hud` and
+   `draw_frame` unchanged to the cycle. The render clock counts whole 200 Hz ticks per frame, so a
+   sub-tick per-frame change re-phases some frames across a tick boundary and sums to ±N ticks over 250
+   frames; +19 ticks is 0.076 ticks/frame of phase. Reported rather than explained away.
+
+**Harness fix that came with the slice:** `run_cadence.py`'s `VBLS_PER_FRAME_HEADROOM` was 12, which is
+not enough for the stock-ST gate cell (200 idle frames at ~130 ms, 10 vblanks/present in the taxed trace
+build, plus the boot and leg-select vblanks) — that cell died with "did not produce SCREEN.BIN" until the
+headroom went to 16. The published 130.30 was reachable before only by luck of rounding.
+
+### Memory
+
+| | before | after |
+|---|---:|---:|
+| shipping PRG text + data + bss | 708,804 | **708,820** (text 123,392 unchanged; bss 585,412 → 585,428) |
+| resident on a 1 MB machine (+ 256 B basepage) | 709,060 | **709,076** |
+| 1 MB STE margin after the 170,432 B of placed tables + the 16 KB stack margin | 9,564 | **9,548** |
+
+**+16 B only** — the route's whole state is two counters and one 8-byte dispatch struct, and its code fit
+inside the padding the flat image already carries up to the BSS start (`mkprg.py` pads text to
+`bss_start`, so the reported `text` is unchanged even though the ELF's `.text` grew). The §15 watch item
+therefore barely moves: 9,548 B of headroom left before a 1 MB STE silently drops its OBJECT routes.

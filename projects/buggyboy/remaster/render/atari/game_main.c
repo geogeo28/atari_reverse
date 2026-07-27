@@ -71,6 +71,7 @@
 #include <string.h>          /* freestanding libc, defined in shim.c */
 
 #include "assets.h"
+#include "dash_const.h"   /* RM_DASH_SRC_OFF — pinned against the baked ARENA_DASH_SRC_OFF below */
 #include "game.h"
 #include "flow.h"
 #include "screen.h"
@@ -701,9 +702,10 @@ static uint32_t cadence_hz200(void) { return (uint32_t)Supexec(cadence_hz200_sup
  * the routes out), so there is no counter-less tail variant to carry. On an ST run they simply read 0. */
 extern uint32_t rm_objsh2_cache_hits, rm_objsh2_cache_misses;
 extern uint32_t rm_objsh_skew_hits, rm_objsh_skew_first, rm_objsh_skew_grows, rm_objsh_skew_full;
-/* The road-scroll route's pair (blitter.h): routed = frames the chip drew the band, declined = frames
- * the x_count tripwire handed back to the C reference (expected 0 — see src/blitter_scroll.c). */
-#define CADENCE_ROUTE_COUNTERS 8
+/* The two table-less routes' pairs (blitter.h): routed = frames the chip drew the stage, declined =
+ * frames a tripwire handed back to the C reference (expected 0 — see src/blitter_scroll.c and
+ * src/blitter_dash.c). */
+#define CADENCE_ROUTE_COUNTERS 10
 /* The tail longs, in dump order: a {magic, count} header, then the render clock, then the route
  * counters, then the memory-diet pair (the tail-canary trip count and the free-TPA window the boot bind
  * measured). The header is the tripwire run_cadence.py checks before it believes a single number —
@@ -727,7 +729,7 @@ static void cadence_dump(void) {
     for (int i = 0; i < cadence_pos && (i + 2) * 2 <= CADENCE_TAIL_OFF; i++) w[1 + i] = cadence_log[i];
     /* Tail longs (each 32-bit big-endian), for run_cadence.py: the header, the sub-vblank render clock,
      * then the objshift2 cache's hit/miss, the colour skew table's hit / first-sight / grow /
-     * full-decline, and the road-scroll route's routed / declined. */
+     * full-decline, and the road-scroll and HUD-dashboard routes' routed / declined. */
     uint32_t *tail = (uint32_t *)(buf + CADENCE_TAIL_OFF);
     tail[0] = CADENCE_MAGIC;         tail[1] = CADENCE_TAIL_COUNTERS - CADENCE_HEADER_LONGS;
     tail[2] = cadence_render_ticks;  tail[3] = cadence_render_frames;
@@ -735,9 +737,39 @@ static void cadence_dump(void) {
     tail[6] = rm_objsh_skew_hits;    tail[7] = rm_objsh_skew_first;
     tail[8] = rm_objsh_skew_grows;   tail[9] = rm_objsh_skew_full;
     tail[10] = rm_scroll_blit_routed; tail[11] = rm_scroll_blit_declined;
-    tail[12] = canary_trips;         tail[13] = cadence_tpa_free;
+    tail[12] = rm_dash_blit_routed;   tail[13] = rm_dash_blit_declined;
+    tail[14] = canary_trips;         tail[15] = cadence_tpa_free;
     long h = Fcreate("SCREEN.BIN", 0);
     if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, buf); Fclose((short)h); }
+}
+#endif
+
+/* ONE number, two spellings that cannot import each other: src/events.c rebuilds the dashboard graphic
+ * at RM_DASH_SRC_OFF (dash_const.h) and the HUD reads it at ARENA_DASH_SRC_OFF, which test/adapter.py
+ * bakes into game_fixture.h. Pin them equal (CLAUDE.md §5) — and pin them UNCONDITIONALLY, because the
+ * SHIPPING build depends on the equality just as hard as any measurement build: hud_assets.dashboard_src
+ * below uses the baked offset, so if the two ever drifted every leg change would leave the HUD
+ * compositing a window of the arena that nothing writes, with a green test suite. */
+typedef char rm_dash_arena_offset_agrees[(ARENA_DASH_SRC_OFF == RM_DASH_SRC_OFF) ? 1 : -1];
+
+#ifdef GAME_STE_SWEEP
+/* The sweep's HUD-dashboard section (src/blitter_sweep.c) composites the game's REAL per-leg art, which
+ * only the game's own leg-init code can build — so the sweep asks US for it through one function, and
+ * the shell keeps every piece of shell knowledge: which entry points rebuild the art, and where in the
+ * arena it lands. Rebuild leg `leg`'s mini-map, walk its progress marker `extra_label_passes` further
+ * (every draw_leg_labels folds one probe_collision step — the one word of this art that moves mid-leg;
+ * the labels themselves are masked AND/OR writes and so are idempotent), and return the art's address.
+ *
+ * TWO context notes, both safe only because the sweep build ENDS at its dump and never boots the game:
+ * the sweep calls this from inside its one Supexec, so these two ordinary user-mode entry points run on
+ * the supervisor stack (they are shallow); and staging mutates the LIVE arena, which is left holding
+ * whichever leg was staged last. Anyone making the sweep non-terminal must revisit both. */
+static const uint8_t *sweep_stage_leg_dash(void *ctx, int leg, int extra_label_passes) {
+    RmEventCtx *c = ctx;
+    c->leg = (uint16_t)leg;
+    rm_init_leg_dash(c);                      /* rebuild this leg's mini-map from the raw per-leg block */
+    for (int i = 0; i <= extra_label_passes; i++) rm_draw_leg_labels(c);
+    return c->gfx + ARENA_DASH_SRC_OFF;
 }
 #endif
 
@@ -1548,15 +1580,38 @@ void main(void) {
      * byte-exact) to SCREEN.BIN for run_ste_selftest.py. Assumes --machine ste; no game boot. */
     { long mismatch; dump_frame((Framebuffer *)blitter_selftest(&mismatch)); return; }
 #endif
-#ifdef GAME_STE_SWEEP
-    /* Measurement build: sweep both blitter engines vs the CPU references, dump the per-case mismatch grid
-     * to SCREEN.BIN for run_ste_sweep.py. Assumes --machine ste; no game boot. g_have_blitter is the bind's
-     * RETURN, so a build that placed no tables (GAME_FORCE_NO_BLITTER, or a TPA too small) makes the sweep
-     * report an honest decline instead of a vacuous all-zero grid. */
-    { long mismatch; dump_frame((Framebuffer *)blitter_sweep(&mismatch, g_have_blitter)); return; }
-#endif
     RmArena arena;
-    if (!load_assets(&arena)) return;
+    int assets_ok = load_assets(&arena);
+#ifdef GAME_STE_SWEEP
+    /* Measurement build: sweep every blitter route vs the CPU references, dump the per-case mismatch grid
+     * to SCREEN.BIN for run_ste_sweep.py. Assumes --machine ste; no game boot beyond the asset load.
+     * g_have_blitter is the bind's RETURN, so a build that placed no tables (GAME_FORCE_NO_BLITTER, or a
+     * TPA too small) makes the sweep report an honest decline instead of a vacuous all-zero grid.
+     *
+     * The assets are loaded FIRST (this used to return before load_assets) because the HUD-dashboard
+     * section composites all five legs' REAL art, which only the game's own leg-init code can build. The
+     * sweep is handed sweep_stage_leg_dash below and knows nothing else about the shell; the minimal
+     * event context that function needs is built here rather than reusing the full race bundle further
+     * down, because the sweep needs no player, no ring and no sound. */
+    {
+        EventState sweep_ev = {0};
+        const EventAssets sweep_ev_assets = {
+            .probe_deltas = fixture_obj_low + OBJ_LOW_PROBE_DELTAS,
+            .buf_a = arena.tables, .dash_raw = arena.course, .font = fixture_font,
+        };
+        RmEventCtx sweep_ctx = {
+            .ev = &sweep_ev, .gfx = arena.gfx, .assets = &sweep_ev_assets, .leg = 0,
+        };
+        long mismatch;
+        /* A failed asset load leaves nothing to stage, so the sweep must DECLINE rather than sweep — and
+         * must still write its report, or the runner sees no SCREEN.BIN and blames Hatari for what is a
+         * missing data file. `tables_bound = 0` is the existing honest-decline channel. */
+        dump_frame((Framebuffer *)blitter_sweep(&mismatch, assets_ok && g_have_blitter,
+                                                sweep_stage_leg_dash, &sweep_ctx));
+        return;
+    }
+#endif
+    if (!assets_ok) return;
 
     /* Seed the two persistent RAM regions from their baked defaults (the score record + hi-score table
      * live here; the flow mutates them). */

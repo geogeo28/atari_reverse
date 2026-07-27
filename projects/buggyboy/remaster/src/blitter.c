@@ -88,7 +88,7 @@ int blitter_available(void) {
     return (int)Supexec((long (*)(void))blitter_present);
 }
 
-/* ---- the fine-x object routes, enumerated once (see blitter.h) ---------------------------------- */
+/* ---- the engine routes, enumerated once (see blitter.h) ---------------------------------------- */
 
 /* Lay both routes' lookup tables out in `window` (the free TPA above the program — see game_main.c's TPA
  * map) and hand each module its base. Returns 0 when the window is too small, which is the whole point of
@@ -118,12 +118,14 @@ static int blit_tables_place(uint8_t *window, uint32_t window_bytes) {
  * present, else at the 68000 CPU engines. Called once from main() after blitter_available(); returns the
  * binding the TABLED routes actually made (0 when there was no blitter, or no room for their tables).
  *
- * The road-scroll route is bound FIRST and on the probe result alone, because it is the one route with
- * no lookup table: it blits out of the `shifted` buffer the CPU reference already reads, so a TPA too
- * small to place 170 KB of object tables (the 1 MB STE's thin margin — BLIT_STE_SPEC §15) has no bearing
- * on it. A machine that loses the object routes therefore still keeps the scroll on the chip. */
+ * The TABLE-LESS routes — the road scroll and the HUD dashboard — are bound FIRST and on the probe
+ * result alone: each blits straight out of a buffer the CPU reference already reads (the `shifted`
+ * playfield; the graphics arena), so a TPA too small to place 170 KB of object tables (the 1 MB STE's
+ * thin margin — BLIT_STE_SPEC §15) has no bearing on them. A machine that loses the object routes
+ * therefore still keeps both of these on the chip. */
 int rm_blit_bind_all(int have_blitter, void *window, uint32_t window_bytes) {
     rm_blit_road_scroll_bind(have_blitter);
+    rm_blit_hud_dashboard_bind(have_blitter);
     if (have_blitter && !blit_tables_place((uint8_t *)window, window_bytes)) have_blitter = 0;
     rm_blit_objshift2_bind(have_blitter);
     rm_blit_objshift_bind(have_blitter);

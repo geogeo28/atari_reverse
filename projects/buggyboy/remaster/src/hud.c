@@ -17,12 +17,25 @@
  */
 #include <string.h>
 
+#include "dash_const.h"
 #include "fill.h"
 #include "game.h"
 #include "plane.h"
 #include "screen.h"
 #include "st.h"
 #include "text.h"
+
+/* UNIFIED ST/STE binary (PERF30 C5 slice 2): route the phase-7 dashboard composite through
+ * rm_blit_hud_dashboard_fn — a function pointer bound ONCE at boot (rm_blit_bind_all) to the
+ * hardware-blitter dispatch when a blitter is present, else left at the C reference. The seam lives
+ * HERE, at the sole call site, and not in include/game.h — the src/frame.c / src/object_list.c shape: an
+ * UPPERCASE seam name, so the call site reads as a seam and the real function's name is never shadowed.
+ * Gated on RM_BLITTER (the m68k target build), so the host differential keeps calling the C reference. */
+#ifdef RM_BLITTER
+#define RM_BLIT_HUD_DASHBOARD rm_blit_hud_dashboard_fn   /* boot-bound: blitter (STE) or the C reference */
+#else
+#define RM_BLIT_HUD_DASHBOARD rm_hud_dashboard
+#endif
 
 #define ROW_STRIDE SCREEN_ROW_BYTES
 
@@ -65,8 +78,8 @@
 #define GAUGE_BAR2_ADV     0x4c0
 #define GAUGE_BAR5_BACK    0xae0
 
-/* Phase 7 dashboard — masked blit of the per-leg dashboard graphic (cell_dashboard, plane.h). */
-#define DASHBOARD_DST      0x280
+/* Phase 7 dashboard — masked blit of the per-leg dashboard graphic (cell_dashboard, plane.h); its
+ * geometry, DASHBOARD_DST included, lives in dash_const.h (shared with the STE blitter route). */
 
 /* Phases 1-2 — speed/time digit strings. These write into the gauge-cluster string buffer (the
  * speed/time text buffers overlap it), so phase 7's bars render the live speedometer/timer digits.
@@ -218,9 +231,17 @@ static void hud_gauge_cluster(const HudAssets *a, const uint8_t *str, Framebuffe
  * set — only the course-outline groups are opaque), so it MUST composite over the LIVE frame: the road's
  * sky fill shows through behind the outline, exactly as the original's draw_hud (@0x1555e). A prebuilt
  * bulk-copy cannot do this — it would composite the art over its own (background-less) buffer and then
- * opaquely overwrite the sky with black; that is the mini-map-black-background bug (STATUS.md). */
+ * opaquely overwrite the sky with black; that is the mini-map-black-background bug (STATUS.md).
+ *
+ * This is the C reference BOTH routes resolve to: the STE blitter route (src/blitter_dash.c) emits the
+ * same bytes on the chip and falls back to this body when its tripwire declines, so the pixels have one
+ * source. Declared in dash_const.h. */
+void rm_hud_dashboard(uint8_t *px, const uint8_t *gfx) {
+    cell_dashboard(px, DASHBOARD_DST, gfx, 0);
+}
+
 static void hud_dashboard(const HudAssets *a, Framebuffer *fb) {
-    cell_dashboard(fb->px, DASHBOARD_DST, a->dashboard_src, 0);
+    RM_BLIT_HUD_DASHBOARD(fb->px, a->dashboard_src);
 }
 
 /* Render a decimal digit as its ASCII char, or `blank` when it is 0 (leading-zero suppression).

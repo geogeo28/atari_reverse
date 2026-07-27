@@ -85,33 +85,39 @@ STATUS.md  per-subsystem progress vs recreate
 PORTING.md how to continue the port — recipe, conventions, gotchas (read this to pick up the work)
 ```
 
-## Measured performance & memory (2026-07-26; STE re-measured at C5 slice 1, ST/original at 6ac3066)
+## Measured performance & memory (2026-07-26; STE re-measured at C5 slice 2, ST/original at 6ac3066)
 
 The canonical current-state tables — one build (`BUGGYBOY.PRG`, byte-identical on both machines),
 one instrument (the 200 Hz sub-vblank render clock around `draw_frame`), one protocol (leg 0;
 gate = 200 idle frames at the leg-start gate, the object-dense worst case; drive = 250 autodrive
 frames; Hatari + EmuTOS 1024k). Measured by `render/atari/run_cadence.py`; raw runs in
-`PERF30.md`'s C4 slice-10 / C5 slice-1 notes and `BLIT_STE_SPEC.md` §15-§16.
+`PERF30.md`'s C4 slice-10 / C5 slice-1/2 notes and `BLIT_STE_SPEC.md` §15-§17.
 
 ### Frame time (render clock = compute; locked cadence = player-visible latency)
 
 | machine | scene | render ms/frame | render fps | locked present cadence | live engines |
 |---|---|---:|---:|---|---|
 | ST | gate (worst case) | **130.30** | 7.68 | 8 vbl → 160 ms → **6.25 fps** ¹ | 68000 hand-asm |
-| ST | driving | **99.40** | 10.06 | mostly 6/8 vbl, mean ≈7.6 → **≈6.5 fps** | 68000 hand-asm |
-| STE | gate (worst case) | **99.25** | 10.08 | 8 vbl → 160 ms → **6.25 fps** | blitter (objshift2 + colour skew table + road scroll) |
-| STE | driving | **90.72** | 11.02 | mostly 6/8 vbl, mean ≈7.1 → **≈7.0 fps** | blitter, 90 % colour-table hits |
+| ST | driving | **99.78** | 10.02 | mostly 6/8 vbl, mean ≈7.6 → **≈6.5 fps** | 68000 hand-asm |
+| STE | gate (worst case) | **97.75** | 10.23 | 8 vbl → 160 ms → **6.25 fps** | blitter (objshift2 + colour skew table + road scroll + HUD dashboard) |
+| STE | driving | **89.80** | 11.14 | mostly 6/8 vbl, mean ≈7.1 → **≈7.0 fps** | blitter, 90 % colour-table hits |
 
-STE vs ST: **gate −23.8 %, driving −8.7 %** — same pixels, byte-identical framebuffers on both
+STE vs ST: **gate −25.0 %, driving −10.0 %** — same pixels, byte-identical framebuffers on both
 machines (goldens ×5 each + whole-frame A/B pin it). RAM size has **zero** effect on speed: the
 1 MB cells return bit-identical tick totals and route counters to the 4 MB cells.
 
-*Moved at C5 slice 1 (`BLIT_STE_SPEC.md` §16): the road fine-scroll now runs on the blitter, taking the
-STE cells from 105.47 / 97.34 to 99.25 / 90.72 ms. The ST cells moved 130.45 → 130.30 and 99.88 → 99.40
-in the same change — the C reference's `copy_run` was rewritten as a post-increment pointer walk, worth
-1,254 cyc/frame. (Both ST cells re-measured here; the 130.50 / 99.42 published at 6ac3066 were 130.45 /
-99.88 when re-run in this session's Hatari — within the model's run-to-run spread, which is why the
-before/after pairs above are same-session.)*
+*Moved at C5 slice 2 (`BLIT_STE_SPEC.md` §17): the HUD dashboard composite now runs on the blitter too,
+taking the STE cells from 99.25 / 90.72 to **97.75 / 89.80** ms (slice 1 had taken them from 105.47 /
+97.34 to 99.25 / 90.72 when the road fine-scroll moved). All four cells here are same-session
+before/after pairs, which is what makes the deltas comparable — the Hatari model is deterministic within
+a session but drifts run-to-run across sessions.*
+
+*The ST driving cell reads 99.78 against slice 1's 99.40, and the ST gate cell is BIT-identical (5,212
+render-clock ticks both sides). That +0.38 ms is not the new seam: the cycle-exact Musashi bench reports
+`draw_hud` 130,120 cyc and `draw_frame` 990,618 cyc, unchanged to the cycle. The render clock counts whole
+5 ms ticks per frame, so a sub-tick per-frame change re-phases some frames across a tick boundary and sums
+to ±N ticks over 250 frames (+19 here = 0.076 ticks/frame). Treat sub-0.5 ms moves in the driving cells as
+instrument phase, not cost.*
 
 ### vs the ORIGINAL binary (same instrument: Musashi cycle counts, staged gate frame, 8 MHz)
 
@@ -126,21 +132,31 @@ baseline on ST **and** STE.
 | render_road | 26.19 ms | 28.85 ms | 1.10× |
 | blit_road_scroll | 11.80 ms | 11.91 ms | 1.01× ⁴ |
 | object tree | 57.34 ms | 62.93 ms | 1.10× |
-| draw_hud | 12.29 ms | 16.27 ms | 1.32× ² |
+| draw_hud | 12.29 ms ⁵ | 16.27 ms ⁵ | 1.32× ² |
 | **TOTAL draw_frame** | **110.05 ms** (9.09 fps) | **123.83 ms** (8.08 fps) | **1.125×** |
 | mid-race median | 82.8 ms (12.1 fps) | — (never measured on this instrument) | |
-| **remaster on STE (estimate ³)** | 110.05 ms | **≈94.3 ms** (≈10.6 fps) | **≈0.86×** |
+| **remaster on STE (estimate ³)** | 110.05 ms | **≈92.9 ms** (≈10.8 fps) | **≈0.84×** |
 
 On a plain ST the hand-written original keeps an **11–13 %** edge on the worst frame; on an STE the
-remaster's blitter path makes it — by the labeled estimate — **~14 % faster than the original runs
+remaster's blitter path makes it — by the labeled estimate — **~16 % faster than the original runs
 anywhere**: the first configuration where the port beats the original, at byte-identical pixels.
 
 ² draw_hud includes the dashboard memcpy revert (the live mini-map is transparent; the bulk copy
 was overwriting the sky — pixel correctness beat the 3 ms, see PERF30's dash_pristine note).
+⁵ **Both draw_hud cells are measured on the BAKED atlas, not on live art.** The staged bench frame
+carries the leg-independent dashboard atlas, which is 100 % opaque, so `cell_dashboard`'s `mask == 0`
+fast path takes every group. Driving a real leg, `init_leg_dash` replaces it with a TRANSPARENT per-leg
+mini-map: the same blit then costs 67,978 cyc / 8.50 ms instead of 5.70, and real in-race `draw_hud` is
+**19.06 ms**, not 16.27 (the fast path fires on 1–9 of 320 groups). The remaster's 16.27 and the
+original's 12.29 are same-instrument on the same staged frame, so the 1.32× ratio stands; what is NOT
+determinable from the binary is whether 12.29 would move the same way on live art — the original runs
+the identical masked-blit algorithm with no fast path, so it plausibly moves less. Flagged rather than
+guessed. On an STE this stage is now ROUTED to the blitter (`BLIT_STE_SPEC.md` §17).
 ³ Estimate: the Musashi ST figure scaled by the same-build Hatari render-clock ratio
-(99.25 / 130.30 = 0.762) — the ratio is same-instrument, the absolute STE ms is not a measurement.
+(97.75 / 130.30 = 0.750) — the ratio is same-instrument, the absolute STE ms is not a measurement.
 ⁴ On an STE the same stage runs on the blitter instead, at ≈5.8 ms — this row is the CPU path both
-machines' 68000 reference shares (and the only path a plain ST has).
+machines' 68000 reference shares (and the only path a plain ST has). The same is now true of the
+dashboard blit inside draw_hud (`BLIT_STE_SPEC.md` §17).
 
 ¹ The locked-cadence instrument (`GAME_CADENCE_TRACE`) pays a ~7 ms/present tail-canary tax the
 shipping PRG does not; the taxed ST gate frame quantises to 10 vbl in the trace build, but the
@@ -154,10 +170,10 @@ and fully deterministic (repeat runs are bit-identical).
 | configuration | bytes | ≈ | notes |
 |---|---:|---|---|
 | **ORIGINAL** (reference) | **437,248** TPA held | 427 KB | 48,632 program (text carries all globals + the stack; data=0 bss=0) + one 388,616 B Malloc — read from the binary's own `main`; **469,248 B incl. the TOS-owned second screen** |
-| **remaster, ST (any RAM)** | **709,060** | 693 KB | basepage 256 + text 123,392 + BSS 585,412; blitter tables never placed |
-| **remaster, STE** | **879,492** | 859 KB | + 170,432 B of blitter tables placed into free TPA at boot (alignment pad 0) |
-| 1 MB usable TPA (EmuTOS) | 905,440 | 884 KB | so: 1 MB ST fits with **196,380 B** spare |
-| 1 MB STE margin after tables + 16 KB stack margin | **9,564** | 9.3 KB | **watch item** — text/BSS growth beyond this silently drops a 1 MB STE's OBJECT routes to the (pixel-identical, slower) CPU engines; the road-scroll route has no table and stays on the chip. The cadence `free TPA bytes` counter is the gauge. C5 slice 1 spent 1,056 B of it (10,620 → 9,564) |
+| **remaster, ST (any RAM)** | **709,076** | 693 KB | basepage 256 + text 123,392 + BSS 585,428; blitter tables never placed |
+| **remaster, STE** | **879,508** | 859 KB | + 170,432 B of blitter tables placed into free TPA at boot (alignment pad 0) |
+| 1 MB usable TPA (EmuTOS) | 905,440 | 884 KB | so: 1 MB ST fits with **196,364 B** spare |
+| 1 MB STE margin after tables + 16 KB stack margin | **9,548** | 9.3 KB | **watch item** — text/BSS growth beyond this silently drops a 1 MB STE's OBJECT routes to the (pixel-identical, slower) CPU engines; the two TABLE-LESS routes (road scroll, HUD dashboard) stay on the chip. The cadence `free TPA bytes` counter is the gauge. C5 slice 1 spent 1,056 B of it (10,620 → 9,564) and slice 2 a further 16 B (→ 9,548) |
 
 Static BSS breakdown: arena 388,616 (exactly the original's Malloc size — it models the same work
 block) · scroll prebuild 106,496 · screen pool 72,448 (2 × 32,000 screens + 2 × 4,096

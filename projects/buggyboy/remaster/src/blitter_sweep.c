@@ -22,11 +22,15 @@
  * full-table decline — would ship unpinned. A fifth blits at and past the BOTTOM EDGE (see
  * sweep_below_screen_grid), where the sprite fragments the shell's overdraw tail exists for land. A
  * sixth sweeps the ROAD FINE-SCROLL route (see sweep_scroll_section) over every reachable scroll
- * position — a different engine entirely: whole-band rectangular blits, not a masked sprite.
+ * position — a different engine entirely: whole-band rectangular blits, not a masked sprite. A seventh
+ * sweeps the HUD DASHBOARD route (see sweep_dash_section) over all five legs' REAL art plus the two
+ * algebraic extremes.
  */
 #include "blitter.h"
 #include "screen.h"
 #include "blit_const.h"
+#include "dash_const.h"
+#include "flow.h"          /* IP_LEG_COUNT — the one source for how many legs there are */
 #include "game.h"
 #include "scroll_const.h"
 
@@ -61,10 +65,16 @@ static const int SWEEP_ROWS_M1[]   = {0, 3, 0x2a};
 static uint16_t make_x(int col, int fine_x) { return (uint16_t)(2 * col + fine_x); }
 
 static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[SWEEP_SRC_ROWS * OBJSH2_SRC_ROW_BYTES]; uint8_t hi[GUARD_BYTES]; } src_g;
-static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[SWEEP_FB_BYTES]; uint8_t hi[GUARD_BYTES]; } test_g;
+/* aligned(2): these are BLIT DESTINATIONS as well as compare buffers. The chip ignores dst_addr bit 0
+ * and the CPU references use raw word accesses, so an odd `px` would diverge on one route and
+ * address-error on the other — and the dashboard route's tripwire would decline every case, which reads
+ * as a route regression rather than the BSS-layout accident it would be. */
+static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[SWEEP_FB_BYTES]; uint8_t hi[GUARD_BYTES]; } test_g
+    __attribute__((aligned(2)));
 /* The CPU reference framebuffer is guarded too, now that the sweep deliberately blits below the visible
  * screen: a reference engine that ran off the end would otherwise silently eat the next BSS object. */
-static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[SWEEP_FB_BYTES]; uint8_t hi[GUARD_BYTES]; } ref_g;
+static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[SWEEP_FB_BYTES]; uint8_t hi[GUARD_BYTES]; } ref_g
+    __attribute__((aligned(2)));
 #define src_sprite (src_g.px)
 #define test_fb    (test_g.px)
 #define ref_fb     (ref_g.px)
@@ -89,6 +99,16 @@ static const int OSH_CRS[][3]      = {{3, 3, 8}, {11, 0, 0x10}, {14, 5, (int)0xf
 #define OSH_PAIRS_BYTES (OSH_N_COLOURS * OBJSH_COLOR_STRIDE)
 static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[OSH_SRC_BYTES]; uint8_t hi[GUARD_BYTES]; } osh_src_g;
 #define osh_src (osh_src_g.px)
+/* The HUD dashboard section's art buffer, declared here with the other GUARDED buffers (the guard
+ * helpers below arm and check them all in one place); the section itself is far below.
+ * aligned(2) for the same reason as the scroll playfield: the blitter's src_addr ignores bit 0 and the
+ * reference's be16 is a raw word access, so an odd base would diverge on one route and address-error on
+ * the other (which is exactly what dash_blit_serves declines — but this buffer must not provoke it). */
+#define DASH_ART_BYTES  (DASH_ROWS * ARENA_ROW_STRIDE)
+static struct { uint8_t lo[GUARD_BYTES]; uint8_t px[DASH_ART_BYTES]; uint8_t hi[GUARD_BYTES]; } dash_src_g
+    __attribute__((aligned(2)));
+#define dash_src (dash_src_g.px)
+
 static uint8_t osh_pairs[OSH_PAIRS_BYTES];                  /* the swept table: arbitrary distinct bytes */
 static uint8_t osh_pairs_binary[OSH_PAIRS_BYTES];           /* the GAME's own table (bench; see below) */
 static uint16_t osh_case_diff[N_OSH_CASES];
@@ -108,23 +128,41 @@ static uint16_t pattern(int r, int k, int lane) {
     return (uint16_t)((v >> 11) ^ (v >> 3));
 }
 
+/* A deterministic pseudo-random byte fill — the classic glibc LCG; only its determinism matters, not its
+ * statistics (no clock, no host randomness, so every run compares the same bytes). Shared by the scroll
+ * section's playfield and the dashboard section's background, which both need "bytes that do not repeat":
+ * a UNIFORM fill would make every plane's background word equal, and a recipe that confused one plane
+ * with another would then be invisible (measured — that is exactly what an earlier uniform 0x5A
+ * dashboard background hid). */
+#define SWEEP_LCG_MUL   1103515245u
+#define SWEEP_LCG_ADD   12345u
+static void sweep_lcg_fill(uint8_t *dst, uint32_t n, uint32_t seed) {
+    uint32_t r = seed;
+    for (uint32_t i = 0; i < n; i++) {
+        r = r * SWEEP_LCG_MUL + SWEEP_LCG_ADD;
+        dst[i] = (uint8_t)(r >> 24);                        /* the high byte: the LCG's best-mixed bits */
+    }
+}
+
 static long guard_broken(const uint8_t *g) {
     long bad = 0;
     for (int i = 0; i < GUARD_BYTES; i++) if (g[i] != GUARD_FILL) bad++;
     return bad;
 }
 
-/* Every case re-arms the guard bands on all four buffers — both sources and both framebuffers: they are
- * the overrun tripwire and must not carry a previous case's damage forward. */
+/* Every case re-arms the guard bands on all five buffers — the three sources and both framebuffers: they
+ * are the overrun tripwire and must not carry a previous case's damage forward. */
 static void sweep_arm_guards(void) {
     for (int i = 0; i < GUARD_BYTES; i++)
         src_g.lo[i] = src_g.hi[i] = osh_src_g.lo[i] = osh_src_g.hi[i] =
+            dash_src_g.lo[i] = dash_src_g.hi[i] =
             test_g.lo[i] = test_g.hi[i] = ref_g.lo[i] = ref_g.hi[i] = GUARD_FILL;
 }
 
 static long sweep_guards_broken(void) {
     return guard_broken(src_g.lo) + guard_broken(src_g.hi) +
            guard_broken(osh_src_g.lo) + guard_broken(osh_src_g.hi) +
+           guard_broken(dash_src_g.lo) + guard_broken(dash_src_g.hi) +
            guard_broken(test_g.lo) + guard_broken(test_g.hi) +
            guard_broken(ref_g.lo) + guard_broken(ref_g.hi);
 }
@@ -542,10 +580,7 @@ static long sweep_below_screen_grid(void) {
 #define SCROLL_DELTA       (SCROLL_SEG_HEAD * SCROLL_SPEED)
 #define SCROLL_PLAYFIELD_BYTES (RM_SCROLL_WINDOW + ROAD_COL_BYTES)   /* prebuild pairs word b with b+8 */
 #define N_SCROLL_CASES     SCROLL_WRAP                      /* 640 = every reachable hscroll_pos */
-/* A plain LCG (the classic glibc constants); only its determinism matters, not its statistics. */
-#define SCROLL_LCG_SEED    0x13579BDFu
-#define SCROLL_LCG_MUL     1103515245u
-#define SCROLL_LCG_ADD     12345u
+#define SCROLL_LCG_SEED    0x13579BDFu                      /* fed to sweep_lcg_fill (see its note) */
 
 /* aligned(2) like the shell's own copies (game_main.c / bench_main.c): the prebuild's wr16/be16 are raw
  * word accesses on the big-endian target, and the blitter's src_addr ignores bit 0 — an odd base would
@@ -556,11 +591,7 @@ static uint16_t scroll_case_diff[N_SCROLL_CASES];
 static long scroll_routed;                                  /* cases the blitter route drew */
 
 static void scroll_init_playfield(void) {
-    uint32_t r = SCROLL_LCG_SEED;
-    for (uint32_t i = 0; i < SCROLL_PLAYFIELD_BYTES; i++) {
-        r = r * SCROLL_LCG_MUL + SCROLL_LCG_ADD;
-        scroll_playfield[i] = (uint8_t)(r >> 24);           /* the high byte: the LCG's best-mixed bits */
-    }
+    sweep_lcg_fill(scroll_playfield, SCROLL_PLAYFIELD_BYTES, SCROLL_LCG_SEED);
     rm_scroll_prebuild(scroll_playfield, scroll_shifted);
 }
 
@@ -614,6 +645,132 @@ static long sweep_scroll_section(void) {
     return total;
 }
 
+/* ---- the HUD DASHBOARD section (src/blitter_dash.c) ---------------------------------------------
+ * The fourth route, and the one whose byte-exactness the census could NOT establish (it only timed the
+ * two engines). Its recipe has no case space of its own — the destination, the row and group counts and
+ * both pitches are compile-time constants — so what has to be swept is the DATA: the per-group mask word
+ * decides, per destination word, between a read-modify-write and a plain store, and the CPU reference
+ * even takes a different BRANCH for a fully-opaque group (cell_dashboard's mask == 0 fast path).
+ *
+ * So the cases are (art x background):
+ *   art  — all five legs' REAL art, staged by driving the game's own rm_init_leg_dash +
+ *          rm_draw_leg_labels into the loaded arena; a marker-STEPPED variant of leg 0 (extra label
+ *          passes, each of which walks probe_collision one step — the one word of this art that mutates
+ *          MID-LEG); and the two algebraic extremes, an all-opaque atlas (mask 0 everywhere: the fast
+ *          path takes every group, which is what the BAKED atlas the goldens stage looks like) and an
+ *          all-transparent one (mask 0xffff, zero ink: the composite must be the identity).
+ *   bg   — seeded pseudo-random noise, and the REAL in-race background: ROAD_TOP_FILL, whose plane-1
+ *          word is 0x0000 and plane-2 word is 0xFFFF. Both are backgrounds whose PLANES DIFFER, which
+ *          this section needs and the other sections' uniform SWEEP_BG_BYTE fill does not give: it is
+ *          the plane-to-plane asymmetry that makes the "plane 2 is a copy of plane 1" refinement false,
+ *          and under a uniform fill that mutation is invisible (measured, before this was fixed).
+ *
+ * The staged art is COPIED out of the arena into a guarded buffer before either route reads it, so a
+ * chip pass that walked off the end of the art is caught here rather than silently reading more arena. */
+#define DASH_LEGS          IP_LEG_COUNT                     /* every leg has its own art (flow.h owns the count) */
+#define DASH_MARKER_STEPS  3                                /* extra label passes = probe_collision steps */
+#define DASH_ART_MARKER    DASH_LEGS                        /* ...art index of that stepped variant */
+#define DASH_ART_OPAQUE    (DASH_LEGS + 1)                  /* mask 0 everywhere (the baked-atlas extreme) */
+#define DASH_ART_TRANSP    (DASH_LEGS + 2)                  /* mask 0xffff, no ink (the identity extreme) */
+#define N_DASH_ART         (DASH_LEGS + 3)
+#define DASH_BG_NOISE      0                                /* seeded pseudo-random bytes */
+#define DASH_BG_TOP_FILL   1                                /* the real in-race background */
+#define N_DASH_BG          2
+#define N_DASH_CASES       (N_DASH_ART * N_DASH_BG)
+#define DASH_LCG_SEED      0x2468ACE0u                      /* fed to sweep_lcg_fill; not the scroll seed */
+
+static uint16_t dash_case_diff[N_DASH_CASES];
+static long dash_routed;                                    /* cases the blitter route drew */
+/* The section's own non-vacuity gate. Every other section's inputs are generated right here, but this
+ * one's come from the ASSET FILES via the game's leg-init code, so "the art staged" is an assumption:
+ * a mis-wired context would stage the same bytes eight times and every case would still be byte-exact.
+ * Hashing each staged variant and reporting how many were DISTINCT is what turns that into a check —
+ * and it is the only thing that pins the marker-stepped variant as a different image from plain leg 0. */
+static uint16_t dash_art_hash[N_DASH_ART];
+static uint16_t dash_arts_distinct;
+
+/* One of the two ALGEBRAIC EXTREMES, written straight into dash_src: an all-opaque atlas (mask 0, so
+ * every group takes the reference's fast path and the composite is background-independent) or an
+ * all-transparent one (mask 0xffff and no ink, so the composite must be the identity). */
+static void dash_stage_synthetic_art(int opaque) {
+    for (int row = 0; row < DASH_ROWS; row++)
+        for (int g = 0; g < DASH_GROUPS; g++) {
+            uint8_t *group = dash_src + row * ARENA_ROW_STRIDE + g * DASH_GROUP_BYTES;
+            wr16(group, opaque ? 0x0000u : 0xFFFFu);
+            for (int w = 1; w < SCREEN_PLANES; w++)
+                wr16(group + w * 2, opaque ? pattern(row, g, w) : 0);
+        }
+}
+
+/* Stage art variant `art` into dash_src: the two synthetic extremes above, or REAL art the caller's
+ * stage function rebuilds in the arena for us and which we then copy into our own guarded buffer. */
+static void dash_stage_art(DashStageFn stage, void *ctx, int art) {
+    if (art == DASH_ART_OPAQUE || art == DASH_ART_TRANSP) {
+        dash_stage_synthetic_art(art == DASH_ART_OPAQUE);
+        return;
+    }
+    /* The marker variant is leg 0 walked further along its mini-map — extra label passes, each folding
+     * one probe_collision step, the single word of live art that moves MID-leg. */
+    int leg = (art == DASH_ART_MARKER) ? 0 : art;
+    const uint8_t *arena_art = stage(ctx, leg, art == DASH_ART_MARKER ? DASH_MARKER_STEPS : 0);
+    /* Copy the ART, not the row pitch: only DASH_ROW_BYTES of every ARENA_ROW_STRIDE belong to the
+     * dashboard, and reading the other 96 would walk 3,840 bytes of unrelated arena we neither compare
+     * nor guard. dash_src keeps the full stride (the route's pitch depends on it); its gaps are simply
+     * never read — by either route, or by the distinctness hash. */
+    for (int row = 0; row < DASH_ROWS; row++)
+        for (int i = 0; i < DASH_ROW_BYTES; i++)
+            dash_src[row * ARENA_ROW_STRIDE + i] = arena_art[row * ARENA_ROW_STRIDE + i];
+}
+
+/* One dashboard case: composite the staged art over `bg` with the CPU reference (ref) and with the
+ * blitter route (test), and count differing framebuffer bytes plus any broken guard. */
+static long run_case_dash(int bg_kind) {
+    if (bg_kind == DASH_BG_TOP_FILL) {                      /* the real in-race background under the HUD */
+        for (int i = 0; i + 4 <= SWEEP_FB_BYTES; i += 4) wr32(ref_fb + i, ROAD_TOP_FILL);
+    } else {
+        sweep_lcg_fill(ref_fb, SWEEP_FB_BYTES, DASH_LCG_SEED);
+    }
+    for (int i = 0; i < SWEEP_FB_BYTES; i++) test_fb[i] = ref_fb[i];
+    sweep_arm_guards();
+
+    rm_hud_dashboard(ref_fb, dash_src);
+    rm_blit_hud_dashboard_draw(test_fb, dash_src);
+    return sweep_fb_diff() + sweep_guards_broken();
+}
+
+/* Fold the staged art into one word (a shift-xor mix — no multiply, so no __mulsi3) and count it as
+ * distinct if no earlier variant hashed the same. */
+static void dash_note_art(int art) {
+    uint16_t h = 0;
+    /* Only the GROUP COLUMNS — the 64 bytes per row the composite reads. The rest of each 160-byte row
+     * is neighbouring arena content no route touches, and the synthetic variants do not even write it,
+     * so hashing it would let a variant read "distinct" on bytes the section never compares. */
+    for (int row = 0; row < DASH_ROWS; row++)
+        for (int i = 0; i < DASH_ROW_BYTES; i++)
+            h = (uint16_t)((uint16_t)(h << 5) ^ (h >> 11) ^ dash_src[row * ARENA_ROW_STRIDE + i]);
+    dash_art_hash[art] = h;
+    for (int i = 0; i < art; i++) if (dash_art_hash[i] == h) return;
+    dash_arts_distinct++;
+}
+
+static long sweep_dash_section(DashStageFn stage, void *ctx) {
+    uint32_t routed_before = rm_dash_blit_routed;
+    long total = 0;
+    int idx = 0;
+    for (int art = 0; art < N_DASH_ART; art++) {
+        dash_stage_art(stage, ctx, art);
+        dash_note_art(art);
+        for (int bg = 0; bg < N_DASH_BG; bg++) {
+            long d = run_case_dash(bg);
+            uint16_t logged = (uint16_t)(d > 0xffff ? 0xffff : d);
+            dash_case_diff[idx++] = logged;
+            total += logged;
+        }
+    }
+    dash_routed = (long)(rm_dash_blit_routed - routed_before);
+    return total;
+}
+
 /* Which sections this build ran (report word; the runner must not read a skipped grid as "clean"). */
 #define SWEEP_GRID_OBJSHIFT2    1
 #define SWEEP_GRID_OSH_PRESHIFT 2
@@ -621,6 +778,7 @@ static long sweep_scroll_section(void) {
 #define SWEEP_GRID_OSH_TABLE    8
 #define SWEEP_GRID_BELOW        16
 #define SWEEP_GRID_SCROLL       32
+#define SWEEP_GRID_DASH         64
 static uint16_t sweep_grids_run;
 
 /* The objshift2 grid: the fixed-pass engine's own case space. Same shape as sweep_objsh_grid — returns
@@ -645,23 +803,27 @@ static long sweep_objshift2_grid(long *handled_out) {
     return total;
 }
 
-/* Sweep every case for all six sections. A handled (BASE) case must be byte-exact; a declined (CLIP)
+/* Sweep every case for all seven sections. A handled (BASE) case must be byte-exact; a declined (CLIP)
  * case is the CPU hybrid (blitter drew nothing) — EXPECTED, not a mismatch. Only handled cases
  * contribute.
  *
  * A MUTATE build runs only the sections of the ROUTE its mutation breaks — the skew grid + the table for
- * mutations 1-6, the scroll section for 7-10: the knob touches nothing the other sections drive, so
- * re-sweeping them would only burn emulated cycles (the coverage check builds one PRG per mutation). The
- * bench is skipped with them — it would be timing a deliberately broken configuration. sweep_grids_run
- * tells the runner which sections the numbers describe, and run_ste_sweep.py knows which section each
- * mutation must make fail. */
+ * mutations 1-6, the scroll section for 7-10, the dashboard section for 11-14: the knob touches nothing
+ * the other sections drive, so re-sweeping them would only burn emulated cycles (the coverage check
+ * builds one PRG per mutation). The bench is skipped with them — it would be timing a deliberately
+ * broken configuration. sweep_grids_run tells the runner which sections the numbers describe, and
+ * run_ste_sweep.py knows which section each mutation must make fail. */
+static DashStageFn g_dash_stage;                            /* the staging seam blitter_sweep was given */
+static void *g_dash_ctx;
+
 long blitter_sweep_super(void) {
     long total = 0;
     /* Plain `if`s on the compile-time knobs, not #ifs: a mutate build then still COMPILES the sections it
      * skips, so a change that breaks them cannot hide behind the mutation flag. */
     int sweep_all = !RM_SKEW_MUTATED;                      /* no mutation: every section */
-    int sweep_skew = !RM_SCROLL_MUTATED;                    /* no mutation, or one that breaks the skew route */
+    int sweep_skew = sweep_all || RM_SKEW_ROUTE_MUTATED;    /* no mutation, or one that breaks this route */
     int sweep_scroll = sweep_all || RM_SCROLL_MUTATED;      /* no mutation, or one that breaks this route */
+    int sweep_dash = sweep_all || RM_DASH_MUTATED;
     sweep_init_pairs();
 
     if (sweep_all) {
@@ -681,6 +843,10 @@ long blitter_sweep_super(void) {
     if (sweep_scroll) {
         total += sweep_scroll_section();
         sweep_grids_run |= SWEEP_GRID_SCROLL;
+    }
+    if (sweep_dash) {
+        total += sweep_dash_section(g_dash_stage, g_dash_ctx);
+        sweep_grids_run |= SWEEP_GRID_DASH;
     }
 
     if (sweep_all) sweep_bench();
@@ -723,20 +889,29 @@ long blitter_sweep_super(void) {
 #define SWEEP_TAIL_TABLES_BOUND   22                        /* 0 = the boot bind placed no tables (see below) */
 #define SWEEP_TAIL_N_CASES_SCROLL 23                        /* layout: the road-scroll section's case count */
 #define SWEEP_TAIL_ROUTED_SCROLL  24                        /* road-scroll cases the blitter route drew */
-#define SWEEP_TAIL_WORDS          SWEEP_TAIL_ROUTED_SCROLL
-/* The six per-case sections must not run into the tail words (they share one 32000-byte report). */
+#define SWEEP_TAIL_N_CASES_DASH   25                        /* layout: the HUD-dashboard section's case count */
+#define SWEEP_TAIL_ROUTED_DASH    26                        /* HUD-dashboard cases the blitter route drew */
+#define SWEEP_TAIL_ARTS_DASH      27                        /* ...and how many DISTINCT arts it staged */
+#define SWEEP_TAIL_N_ARTS_DASH    28                        /* ...out of how many (the layout word) */
+#define SWEEP_TAIL_WORDS          SWEEP_TAIL_N_ARTS_DASH
+/* The seven per-case sections must not run into the tail words (they share one 32000-byte report). */
 typedef char sweep_report_fits[(2 + N_CASES + 2 * N_OSH_CASES + N_TBL_CASES + N_BELOW_CASES
-                                + N_SCROLL_CASES <= SWEEP_REPORT_WORDS - SWEEP_TAIL_WORDS) ? 1 : -1];
+                                + N_SCROLL_CASES + N_DASH_CASES
+                                <= SWEEP_REPORT_WORDS - SWEEP_TAIL_WORDS) ? 1 : -1];
 
 /* `tables_bound` is rm_blit_bind_all's return (game_main.c passes it straight through). When it is 0 the
  * routes' lookup tables were never placed — GAME_FORCE_NO_BLITTER, a machine with no blitter, or a TPA
  * too small — and every blitter path declines by design. Sweeping then would report a vacuous all-zero
  * grid that LOOKS like a pass, so nothing is swept and the report says so in its own tail word instead. */
-const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound) {
+const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound, DashStageFn dash_stage,
+                             void *dash_ctx) {
+    g_dash_stage = dash_stage;
+    g_dash_ctx = dash_ctx;
     if (tables_bound) Supexec(blitter_sweep_super);
     uint16_t *w = (uint16_t *)test_fb;
     for (int i = 0; i < SWEEP_REPORT_WORDS; i++) w[i] = 0;
-    w[0] = (uint16_t)(N_CASES + 2 * N_OSH_CASES + N_TBL_CASES + N_BELOW_CASES + N_SCROLL_CASES);
+    w[0] = (uint16_t)(N_CASES + 2 * N_OSH_CASES + N_TBL_CASES + N_BELOW_CASES + N_SCROLL_CASES
+                      + N_DASH_CASES);
     w[1] = (uint16_t)(sweep_total > 0xffff ? 0xffff : sweep_total);
     int at = 2;
     for (int i = 0; i < N_CASES; i++) w[at++] = case_diff[i];
@@ -745,6 +920,7 @@ const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound) {
     for (int i = 0; i < N_TBL_CASES; i++) w[at++] = tbl_case_diff[i];
     for (int i = 0; i < N_BELOW_CASES; i++) w[at++] = below_case_diff[i];
     for (int i = 0; i < N_SCROLL_CASES; i++) w[at++] = scroll_case_diff[i];
+    for (int i = 0; i < N_DASH_CASES; i++) w[at++] = dash_case_diff[i];
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED2]       = (uint16_t)sweep_handled;  /* objshift2 BASE drawn */
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED_OSH]    = (uint16_t)osh_handled;    /* objshift  BASE drawn */
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_HANDLED_SKEW]   = (uint16_t)skew_handled;   /* skew path BASE drawn */
@@ -761,6 +937,10 @@ const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound) {
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_TABLES_BOUND]   = (uint16_t)(tables_bound ? 1 : 0);
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_N_CASES_SCROLL] = (uint16_t)N_SCROLL_CASES;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_ROUTED_SCROLL]  = (uint16_t)scroll_routed;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_N_CASES_DASH]   = (uint16_t)N_DASH_CASES;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_ROUTED_DASH]    = (uint16_t)dash_routed;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_ARTS_DASH]      = dash_arts_distinct;
+    w[SWEEP_REPORT_WORDS - SWEEP_TAIL_N_ARTS_DASH]    = (uint16_t)N_DASH_ART;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_ITERS]    = OSH_BENCH_ITERS;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_MAT]      = bench_mat_ticks;
     w[SWEEP_REPORT_WORDS - SWEEP_TAIL_BENCH_PASS_SYN] = bench_pass_synth_ticks;

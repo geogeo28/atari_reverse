@@ -4,10 +4,11 @@ their whole case spaces (fine_x x width/base_cells x column/clip family x rows x
 reachable road-scroll position).
 
 Builds the GAME_STE_SWEEP variant and boots it on --machine ste --blitter. The PRG (src/blitter_sweep.c)
-runs six sections — the objshift2 grid, the objshift pre-shift grid, the objshift HARDWARE-SKEW grid,
+runs seven sections — the objshift2 grid, the objshift pre-shift grid, the objshift HARDWARE-SKEW grid,
 the skew route's sprite-key TABLE (hit / grow / y_count clip / full-table decline), a BELOW-SCREEN
 section that blits both object routes at and past the bottom edge and compares the overdraw tail too,
-and the ROAD-SCROLL route over all 640 scroll positions — against their CPU references, and dumps a per-case mismatch grid to SCREEN.BIN: word0 = case count,
+the ROAD-SCROLL route over all 640 scroll positions, and the HUD-DASHBOARD route over all five legs'
+REAL art — against their CPU references, and dumps a per-case mismatch grid to SCREEN.BIN: word0 = case count,
 word1 = total mismatch, then one word per case (0 == byte-exact; clip cases the blitter declines are
 logged 0 as the pinned CPU hybrid), then a SELF-DESCRIBING tail: the section layout, the drawn counts,
 the count each section must reach, which sections ran, whether the boot bind placed the routes' tables at
@@ -43,16 +44,18 @@ TAIL = {"handled2": 1, "handled_osh": 2, "handled_skew": 3,
         "bench_all_syn": 12, "bench_all_bin": 13, "bench_cpu": 14, "bench_declined": 15,
         "n_cases_tbl": 16, "cases_run_tbl": 17, "served_tbl": 18, "expect_tbl": 19,
         "n_cases_below": 20, "handled_below": 21, "tables_bound": 22,
-        "n_cases_scroll": 23, "routed_scroll": 24}
+        "n_cases_scroll": 23, "routed_scroll": 24,
+        "n_cases_dash": 25, "routed_dash": 26, "arts_dash": 27, "n_arts_dash": 28}
 
 # SWEEP_GRID_* in blitter_sweep.c: which sections the build actually ran.
-GRID_OBJSHIFT2, GRID_OSH_PRESHIFT, GRID_OSH_SKEW, GRID_OSH_TABLE, GRID_BELOW, GRID_SCROLL = \
-    1, 2, 4, 8, 16, 32
+GRID_OBJSHIFT2, GRID_OSH_PRESHIFT, GRID_OSH_SKEW, GRID_OSH_TABLE, GRID_BELOW, GRID_SCROLL, GRID_DASH = \
+    1, 2, 4, 8, 16, 32, 64
 GRIDS_ALL = (GRID_OBJSHIFT2 | GRID_OSH_PRESHIFT | GRID_OSH_SKEW | GRID_OSH_TABLE | GRID_BELOW
-             | GRID_SCROLL)
+             | GRID_SCROLL | GRID_DASH)
 # A mutate build sweeps only the sections of the ROUTE its mutation breaks (blitter_sweep_super).
 GRIDS_MUTATE_SKEW = GRID_OSH_SKEW | GRID_OSH_TABLE
 GRIDS_MUTATE_SCROLL = GRID_SCROLL
+GRIDS_MUTATE_DASH = GRID_DASH
 # 4 MB pinned, not RM_MEMSIZE's default: the sweep's own statics plus the two lookup tables the boot bind
 # places in the free TPA are a REQUIREMENT of this measurement — a starved run would decline the tables
 # and sweep nothing (which the report's tables_bound word then reports honestly, but is not a pin).
@@ -68,6 +71,7 @@ N_CASES_MIRROR, N_OSH_CASES_MIRROR = 3 * 16 * 12 * 3, 2 * 16 * 12 * 4
 N_TBL_CASES_MIRROR = 128 + 8                               # OBJSH_SKEW_TABLE_ENTRIES + the 8 fixed cases
 N_BELOW_CASES_MIRROR = 4 * 2 * (2 + 2)                     # under x fine_x x (objshift2 widths + base_cells)
 N_SCROLL_CASES_MIRROR = 0x280                              # SCROLL_WRAP: every reachable hscroll_pos
+N_DASH_CASES_MIRROR = (5 + 3) * 2                          # (5 legs + marker-stepped + 2 extremes) x bg
 # Decode hint for the fine_x diagnostic only (columns x (colour,rows,stride) tuples — the colour grid's
 # two innermost loops). Not a gate: it only labels which fine_x values a mutation failed at.
 OSH_INNER_PER_FINEX = 12 * 4
@@ -77,7 +81,8 @@ OSH_INNER_PER_FINEX = 12 * 4
 # with it, since the table blits through the same recipe); 6 breaks the table's grow rule alone, which
 # no un-tabled grid can see — only the table section's taller-after-shorter case does.
 #
-# 7-10 break the ROAD-SCROLL route instead, so they fail (and sweep) only its own section.
+# 7-10 break the ROAD-SCROLL route and 11-14 the HUD-DASHBOARD route, so each fails (and sweeps)
+# only its own route's section.
 MUTATIONS = {1: ("skew = fine_x + 1", "objshift skew", GRIDS_MUTATE_SKEW),
              2: ("FXSR forced on", "objshift skew", GRIDS_MUTATE_SKEW),
              3: ("endmask1 leading guard dropped", "objshift skew", GRIDS_MUTATE_SKEW),
@@ -87,7 +92,16 @@ MUTATIONS = {1: ("skew = fine_x + 1", "objshift skew", GRIDS_MUTATE_SKEW),
              7: ("top fill's odd plane-words set to ones, not zeros", "road scroll", GRIDS_MUTATE_SCROLL),
              8: ("main band copy one dst word per row too wide", "road scroll", GRIDS_MUTATE_SCROLL),
              9: ("wrapped-tail blit never fired", "road scroll", GRIDS_MUTATE_SCROLL),
-             10: ("CPU seam run BEFORE the blits instead of after", "road scroll", GRIDS_MUTATE_SCROLL)}
+             10: ("CPU seam run BEFORE the blits instead of after", "road scroll", GRIDS_MUTATE_SCROLL),
+             # 11-14 break the HUD-DASHBOARD route. 14 is not a slip but the DISPROOF of the "7-pass
+             # refinement": plane 2 takes the same ink word as plane 1, so copying plane 1's finished
+             # framebuffer column looks equivalent — it is not, because the two planes' BACKGROUNDS differ
+             # wherever the mask is non-zero. This mutation IS that variant; catching it is the measurement.
+             11: ("cookie-cut's AND and OR passes swapped", "hud dashboard", GRIDS_MUTATE_DASH),
+             12: ("one group per row too wide", "hud dashboard", GRIDS_MUTATE_DASH),
+             13: ("per-row correction one group short", "hud dashboard", GRIDS_MUTATE_DASH),
+             14: ("plane 2 copied from plane 1 (the disproved 7-pass variant)", "hud dashboard",
+                  GRIDS_MUTATE_DASH)}
 
 
 def build(mutate):
@@ -113,7 +127,7 @@ class Report:
         self.ncases = word(fb, 0)
         self.total = word(fb, 1)
         layout = (N_CASES_MIRROR + 2 * N_OSH_CASES_MIRROR + N_TBL_CASES_MIRROR + N_BELOW_CASES_MIRROR
-                  + N_SCROLL_CASES_MIRROR)
+                  + N_SCROLL_CASES_MIRROR + N_DASH_CASES_MIRROR)
         if self.ncases != layout:
             die(f"report layout mismatch: word0={self.ncases}, this runner mirrors {layout} — "
                 f"blitter_sweep.c's section dimensions moved and run_ste_sweep.py did not follow")
@@ -122,9 +136,11 @@ class Report:
         self.n_tbl = tail(fb, "n_cases_tbl")
         self.n_below = tail(fb, "n_cases_below")
         self.n_scroll = tail(fb, "n_cases_scroll")
-        if self.n_cases2 + 2 * self.n_osh + self.n_tbl + self.n_below + self.n_scroll != self.ncases:
+        self.n_dash = tail(fb, "n_cases_dash")
+        if (self.n_cases2 + 2 * self.n_osh + self.n_tbl + self.n_below + self.n_scroll + self.n_dash
+                != self.ncases):
             die(f"report tail disagrees with word0: {self.n_cases2} + 2*{self.n_osh} + {self.n_tbl} + "
-                f"{self.n_below} + {self.n_scroll} != {self.ncases}")
+                f"{self.n_below} + {self.n_scroll} + {self.n_dash} != {self.ncases}")
         self.expect_base = tail(fb, "expect_base")
         self.grids_run = tail(fb, "grids_run")
         # Only meaningful when the table section RAN — a scroll-mutation build skips it, and a skipped
@@ -149,7 +165,13 @@ class Report:
                       # so its expectation is its whole case count too (a decline is the x_count
                       # tripwire, which the 640-case sweep is what proves unreachable).
                       ("road scroll", self.n_cases2 + 2 * self.n_osh + self.n_tbl + self.n_below,
-                       self.n_scroll, GRID_SCROLL, tail(fb, "routed_scroll"), self.n_scroll)]
+                       self.n_scroll, GRID_SCROLL, tail(fb, "routed_scroll"), self.n_scroll),
+                      # The dashboard route's geometry is entirely compile-time, so it has no family
+                      # split either: every case must be routed, and a decline is the odd-address
+                      # tripwire (which the aligned staging buffer is what proves unreachable).
+                      ("hud dashboard",
+                       self.n_cases2 + 2 * self.n_osh + self.n_tbl + self.n_below + self.n_scroll,
+                       self.n_dash, GRID_DASH, tail(fb, "routed_dash"), self.n_dash)]
 
     def ran(self, bit):
         return bool(self.grids_run & bit)
@@ -192,6 +214,14 @@ def check_non_vacuous(rep, expect_grids):
                 f"path it claims to pin")
         if drawn <= 0:
             die(f"section '{name}' drew no cases at all — vacuous")
+    # The dashboard section's INPUTS come from the asset files via the game's own leg-init code, not from
+    # a generator in blitter_sweep.c, so "the real art was staged" needs its own gate: a mis-wired staging
+    # context would stage one image eight times and every case would still be byte-exact.
+    if rep.ran(GRID_DASH):
+        arts, n_arts = tail(rep.fb, "arts_dash"), tail(rep.fb, "n_arts_dash")
+        if arts != n_arts:
+            die(f"the hud-dashboard section staged {arts} DISTINCT arts out of {n_arts} — the per-leg "
+                f"rebuild or the marker step is not producing different images")
 
 
 def print_bench(rep):
@@ -215,7 +245,7 @@ def print_counts(rep):
     drawn = "  ".join(f"{name}={d}" + ("" if rep.ran(bit) else " (skipped)")
                       for name, _, _, bit, d, _ in rep.grids)
     print(f"cases: {rep.ncases} (objshift2 + objshift pre-shift + objshift skew + table + below-screen "
-          f"+ road scroll)   "
+          f"+ road scroll + hud dashboard)   "
           f"blitter-drawn: {drawn}   expected BASE per colour grid: {rep.expect_base}"
           f"   total mismatch: {rep.total}")
 
@@ -233,9 +263,9 @@ def run_sweep(mutate):
         # The legal-but-vacuous combo (GAME_FORCE_NO_BLITTER, a non-blitter machine, or a TPA with no room
         # for the tables): the boot bind placed nothing, every blitter path declines by design and NOTHING
         # was swept. Say so instead of decoding an all-zero grid as a pass.
-        print("DECLINED: tables unplaced — the boot bind placed no blitter tables "
-              "(GAME_FORCE_NO_BLITTER, no blitter, or no room in the TPA), so no section was swept and "
-              "nothing is pinned")
+        print("DECLINED: nothing was swept — either the boot bind placed no blitter tables "
+              "(GAME_FORCE_NO_BLITTER, no blitter, or no room in the TPA) or the asset load failed "
+              "(COURSES.DAT / GRAPHICS.GRA missing or corrupt on the staged drive), so nothing is pinned")
         sys.exit(1)
     return Report(fb)
 
@@ -248,7 +278,7 @@ def mutation_verdict(rep, mutate, quiet=False):
     """A mutation is CAUGHT only if the section it is supposed to break actually failed. Returns True if
     caught. Each mutation names that section (MUTATIONS): a broken skew register shows up in the skew
     grid, the table's grow rule is invisible to every un-tabled grid and can only show up in the table
-    section, and a broken road-scroll recipe can only show up in the scroll section. A mutate build
+    section, and a broken road-scroll or HUD-dashboard recipe can only show up in its own section. A mutate build
     sweeps ONLY the sections of the route it breaks; check_non_vacuous has already enforced that the
     others were skipped and left no case words behind, and that the ones that ran still drew every case
     they are supposed to."""
@@ -321,8 +351,8 @@ def main():
         print(f"DIFF: {len(bad)} case(s) mismatch (indices {bad[:20]}{'...' if len(bad) > 20 else ''})")
         sys.exit(1)
     print(f"MATCH: all three blitter paths, the skew sprite table, the below-screen destinations and the "
-          f"road-scroll route are byte-exact (framebuffer + overdraw tail) over all {rep.ncases} swept "
-          f"cases")
+          f"road-scroll and HUD-dashboard routes are byte-exact (framebuffer + overdraw tail) over all "
+          f"{rep.ncases} swept cases")
 
 
 if __name__ == "__main__":

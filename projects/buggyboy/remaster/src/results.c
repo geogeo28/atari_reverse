@@ -48,7 +48,6 @@ static void draw_result_row(Framebuffer *fb, const uint8_t *gfx, Offset dst_off,
 }
 
 /* ---- dashboard graphic (masked blit from buf_c) — cell_dashboard (plane.h) ---- */
-#define DASH_SRC_OFF 0x11c20       /* dashboard graphic at gfx + this */
 #define DASH_DST     0x1948        /* draw-buffer offset the dashboard is stamped at */
 
 /* ---- draw_leg_results ---- */
@@ -94,7 +93,7 @@ void rm_draw_leg_results(Framebuffer *fb, const RmResultsAssets *a, uint16_t leg
     rm_num_run(fb, (Offset)sx16(0xa48), d_lo, d_hi, a->num_sprites, a->num_glyph_tbl,
                a->leg_digits, (Offset)(leg * LEG_ROW_STR_STRIDE), NUM_MAX_CELLS_M1);
 
-    cell_dashboard(fb->px, (Offset)sx16(DASH_DST), a->gfx, DASH_SRC_OFF);
+    cell_dashboard(fb->px, (Offset)sx16(DASH_DST), a->gfx, RM_DASH_SRC_OFF);
 }
 
 /* ---- leg-name menu panel (recreate's g_draw_divider / draw_panel / g_draw_panel5 @text.c) ----
@@ -242,7 +241,7 @@ void rm_draw_results_screen(Framebuffer *fb, const RmResultsScreenAssets *a,
         rs_text_chain(fb, cp, font, RS_MODE_DST2, RS_MODE_COLOR, a->mode_str, msi);
         rs_text_chain(fb, cp, font, RS_MODE_DST3, RS_MODE_COLOR, a->hud_text, RS_MODE_STR2_OFF);
     }
-    cell_dashboard(fb->px, (Offset)sx16(RS_DASH_DST), a->gfx, DASH_SRC_OFF);
+    cell_dashboard(fb->px, (Offset)sx16(RS_DASH_DST), a->gfx, RM_DASH_SRC_OFF);
 
     /* Final label: buf_a[final]'s first word is its screen dst, the string follows at +2. */
     Offset fin = (Offset)(RS_FINAL_OFF + leg * RS_FINAL_STRIDE);

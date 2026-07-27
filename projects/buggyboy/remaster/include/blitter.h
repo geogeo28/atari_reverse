@@ -212,6 +212,8 @@ static inline int objsh_is_base(uint16_t x, uint16_t rows_m1, int base_cells) {
 #define RM_SKEW_MUT_ENDMASK3   4                           /* drop the last-column trailing-edge guard */
 #define RM_SKEW_MUT_PLANE3     5                           /* drop plane 3's `& ~m` is_last special */
 #define RM_SKEW_MUT_NOGROW     6                           /* never re-materialise a table entry deeper */
+#define RM_SKEW_MUT_SKEW_FIRST RM_SKEW_MUT_SKEW_PLUS
+#define RM_SKEW_MUT_SKEW_LAST  RM_SKEW_MUT_NOGROW
 /* The ROAD-SCROLL route's mutations (src/blitter_scroll.c) share this one knob rather than adding a
  * second -D and a second set of build-script plumbing; they start at RM_SKEW_MUT_SCROLL_FIRST so a build
  * can tell which route it is breaking (a mutate build sweeps only the sections of THAT route). */
@@ -221,14 +223,27 @@ static inline int objsh_is_base(uint16_t x, uint16_t rows_m1, int base_cells) {
 #define RM_SKEW_MUT_SCROLL_SEAM_1ST 10                     /* run the CPU seam BEFORE the blits, not after */
 #define RM_SKEW_MUT_SCROLL_FIRST     RM_SKEW_MUT_SCROLL_FILL_LOP
 #define RM_SKEW_MUT_SCROLL_LAST      RM_SKEW_MUT_SCROLL_SEAM_1ST
+/* The HUD-DASHBOARD route's mutations (src/blitter_dash.c), on the same knob for the same reason. */
+#define RM_SKEW_MUT_DASH_LOP_SWAP   11                     /* swap the cookie-cut's AND and OR passes */
+#define RM_SKEW_MUT_DASH_XCOUNT     12                     /* one group per row too wide */
+#define RM_SKEW_MUT_DASH_YINC       13                     /* per-row correction one group short */
+#define RM_SKEW_MUT_DASH_P2COPY     14                     /* the disproved "7-pass" plane-2 copy */
+#define RM_SKEW_MUT_DASH_FIRST       RM_SKEW_MUT_DASH_LOP_SWAP
+#define RM_SKEW_MUT_DASH_LAST        RM_SKEW_MUT_DASH_P2COPY
 #ifndef RM_SKEW_MUTATE
 #define RM_SKEW_MUTATE RM_SKEW_MUT_NONE
 #endif
 #define RM_SKEW_MUTATED       (RM_SKEW_MUTATE != RM_SKEW_MUT_NONE)
-/* A BOUNDED range, not `>= FIRST`: a fourth route's mutations would otherwise be classified as scroll
- * ones and would sweep the scroll section instead of their own. */
+/* One BOUNDED range per route, and every selector reads POSITIVELY ("is this MY route's mutation?").
+ * Ranges rather than `>= FIRST` because the next route's numbers would otherwise be swallowed by the
+ * previous route's predicate and sweep the wrong section; positive rather than by-exclusion so adding a
+ * fifth route is an additive edit instead of an amendment to everyone else's negations. */
+#define RM_SKEW_ROUTE_MUTATED (RM_SKEW_MUTATE >= RM_SKEW_MUT_SKEW_FIRST && \
+                               RM_SKEW_MUTATE <= RM_SKEW_MUT_SKEW_LAST)
 #define RM_SCROLL_MUTATED     (RM_SKEW_MUTATE >= RM_SKEW_MUT_SCROLL_FIRST && \
                                RM_SKEW_MUTATE <= RM_SKEW_MUT_SCROLL_LAST)
+#define RM_DASH_MUTATED       (RM_SKEW_MUTATE >= RM_SKEW_MUT_DASH_FIRST && \
+                               RM_SKEW_MUTATE <= RM_SKEW_MUT_DASH_LAST)
 
 #define OBJSH_SKEW_MAX_CELLS  2                            /* base_cells family max */
 /* Bitmap 0 is the show mask; bitmaps 1..OBJSH_PLANES are the per-plane pixel words. */
@@ -240,10 +255,11 @@ static inline int objsh_is_base(uint16_t x, uint16_t rows_m1, int base_cells) {
  * shipping table pays exactly one pad word per bitmap. A SKEW-mutate build needs far more:
  * RM_SKEW_MUT_FXSR's extra per-line read drifts the source one word further per line, up to rows words by
  * the last line. A mutate build must still FAIL, but it must not read out of bounds while doing so — and
- * it is a measurement build, so the headroom costs the shipping PRG nothing. A SCROLL mutation touches no
- * skew register, so it keeps the shipping pad — and with it the shipping table size, rather than asking
- * rm_blit_bind_all for 61 KB more TPA to pad a route its sweep does not even run. */
-#if RM_SKEW_MUTATED && !RM_SCROLL_MUTATED
+ * it is a measurement build, so the headroom costs the shipping PRG nothing. Only a SKEW-ROUTE mutation
+ * needs it: another route's mutation touches no skew register, so it keeps the shipping pad — and with
+ * it the shipping table size, rather than asking rm_blit_bind_all for 61 KB more TPA to pad a route its
+ * sweep does not even run. */
+#if RM_SKEW_ROUTE_MUTATED
 #define OBJSH_SKEW_PAD_WORDS  (OBJSH_MAX_ROWS + 1)
 #else
 #define OBJSH_SKEW_PAD_WORDS  1
@@ -316,10 +332,24 @@ void rm_blit_road_scroll_bind(int have_blitter);
  * route was live on a run. `declined` is a tripwire, not a family split: see src/blitter_scroll.c. */
 extern uint32_t rm_scroll_blit_routed, rm_scroll_blit_declined;
 
-/* ---- the three engine routes, enumerated ONCE (src/blitter.c) ------------------------------------
+/* ---- the HUD dashboard route (src/blitter_dash.c) -----------------------------------------------
+ * The fourth route, and the second with no lookup table: it cookie-cuts the LIVE per-leg dashboard art
+ * in place out of the graphics arena (the arena and the framebuffer share a row pitch), so there is
+ * nothing to place, nothing to flush and nothing that can go stale. Bound ONCE at boot alongside the
+ * road scroll, on the probe alone; the seam itself (a boot-bound function pointer over rm_hud_dashboard)
+ * lives at the sole call site, src/hud.c. The route's own entry points take the dashboard geometry and
+ * so are declared in include/dash_const.h, which owns it — only the bind is needed here. */
+void rm_blit_hud_dashboard_bind(int have_blitter);
+/* Routed / declined call counts for the cadence tail — same contract as the scroll pair above; here the
+ * tripwire is an odd source/destination address (see src/blitter_dash.c). */
+extern uint32_t rm_dash_blit_routed, rm_dash_blit_declined;
+
+/* ---- the four engine routes, enumerated ONCE (src/blitter.c) ------------------------------------
  * Every boot / reload site drives the routes as a SET, so the list lives in one place instead of being
- * repeated at each site (game_main's boot bind + its F10 reload flush).
- * Adding a fourth engine means editing these two functions and nothing else. */
+ * repeated at each site (game_main's boot bind + its F10 reload flush) — a new engine's BIND and FLUSH
+ * go in these two functions and nowhere else. (The engine itself needs more than that: its own bind
+ * declaration above, a seam macro at its sole call site, the Makefile's STE_SRC and build_game.sh's
+ * STE_SOURCES, a cadence-tail counter pair, and a sweep section + mutation range.) */
 /* Alignment both placed tables need — their entry structs hold longs, so 4 keeps every field naturally
  * aligned. Owned here because TWO sides depend on it: rm_blit_bind_all pads the window base up to it,
  * and game_main.c's TPA map rounds the window base itself (the free TPA starts wherever the BSS ends).
@@ -336,8 +366,17 @@ void rm_blit_flush_all(void);              /* reload: drop every materialised bi
  * objshift2 case space; return a framebuffer encoding per-case results (see src/blitter_sweep.c) and the
  * total mismatch count. `tables_bound` is rm_blit_bind_all's RETURN: 0 means the routes' lookup tables
  * were never placed (no blitter, or no room in the TPA), and the sweep then sweeps nothing and says so
- * in its report rather than reporting a vacuous zero. */
-const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound);
+ * in its report rather than reporting a vacuous zero.
+ *
+ * `dash_stage` / `dash_ctx` let the HUD-dashboard section composite the game's REAL per-leg art. The
+ * sweep cannot build that art itself — it comes from the asset files through the game's leg-init code —
+ * so the CALLER (game_main.c, which owns the loaded arena and the shell's event context) passes one
+ * function that rebuilds leg `leg`'s art, walks its progress marker `extra_label_passes` further, and
+ * returns where the art landed. The sweep depends on that one function, not on the shell's struct
+ * shapes, which is why nothing here names a game type. */
+typedef const uint8_t *(*DashStageFn)(void *ctx, int leg, int extra_label_passes);
+const uint8_t *blitter_sweep(long *mismatch_out, int tables_bound, DashStageFn dash_stage,
+                             void *dash_ctx);
 
 /* Poke every register of one fully-specified pass WITHOUT starting the chip, so the caller owns the bus
  * policy (blit_start_and_wait / blit_start_and_wait_shared above). Supervisor only. */

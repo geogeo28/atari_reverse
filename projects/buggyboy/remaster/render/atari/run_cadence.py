@@ -30,7 +30,13 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import run_hatari                                          # noqa: E402  shared machine-parametrised runner
 
-VBLS_PER_FRAME_HEADROOM = 12                               # gate frames are ~6-8 vblanks; 12 is safe slack
+# Gate frames are ~6-8 vblanks, 10 in the tail-canary-taxed trace build, plus the boot + leg-select
+# vblanks before the autodrive script starts. 12 was NOT slack enough: the stock-ST gate cell (200 idle
+# frames at ~130 ms) ran out of vblanks mid-trace and died with "did not produce SCREEN.BIN".
+VBLS_PER_FRAME_HEADROOM = 16
+# Wall-clock budget for one cell, sized WITH the vblank budget above (raising one without the other just
+# moves the "did not produce SCREEN.BIN" failure to a different cell).
+CELL_TIMEOUT_S = 300
 IDLE_CFLAGS = "-DAUTODRIVE_BASE_INPUT=0 -DAUTODRIVE_STEER_AFTER=1000000"   # no throttle, never steer
 # game_main.c's cadence tail, in dump order: the sub-vblank render clock, the blitter route counters,
 # then the memory-diet pair. Each name appears once; TAIL_COUNTERS is the wire order, the groups are what
@@ -38,7 +44,8 @@ IDLE_CFLAGS = "-DAUTODRIVE_BASE_INPUT=0 -DAUTODRIVE_STEER_AFTER=1000000"   # no 
 RENDER_COUNTERS = ("render ticks", "render frames")
 ROUTE_COUNTERS = ("objshift2 hit", "objshift2 miss",
                   "colour table hit", "colour first-sight", "colour grow", "colour table-full",
-                  "scroll routed", "scroll declined")
+                  "scroll routed", "scroll declined",
+                  "dash routed", "dash declined")
 # The overdraw-tail guard band (game_main.c's SCREEN_OVERDRAW / canary_check) and the free TPA above BSS
 # the boot bind measured. A nonzero trip count means an object draw ate the tail margin — a FAILURE.
 MEMORY_COUNTERS = ("tail canary trips", "free TPA bytes")
@@ -113,7 +120,7 @@ def report(label, spans):
 def measure(machine="st", frames=400, leg=0, idle=False, freerun=False):
     prg = build(machine, frames, leg, idle, freerun)
     fb = run_hatari.run(prg, machine=machine, blitter=(machine == "ste"), needs_data=True,
-                        run_vbls=frames * VBLS_PER_FRAME_HEADROOM, timeout=180)
+                        run_vbls=frames * VBLS_PER_FRAME_HEADROOM, timeout=CELL_TIMEOUT_S)
     spans = parse(fb)
     report(f"{machine} (leg {leg}, {frames} frames, {'gate/idle' if idle else 'driving'}"
            f"{', free-run' if freerun else ''})", spans)

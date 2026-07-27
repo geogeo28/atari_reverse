@@ -18,6 +18,7 @@
  */
 #include <string.h>
 
+#include "dash_const.h"   /* ARENA_ROW_STRIDE / DASH_ROWS / DASH_GROUPS / RM_DASH_SRC_OFF — shared with the HUD */
 #include "game.h"
 #include "sound.h"
 #include "st.h"
@@ -352,9 +353,6 @@ void rm_event_dispatch(RmEventCtx *c, uint16_t idx, uint16_t slot, uint16_t flag
 
 /* ---- collision probe (recreate results.c probe_collision @0x110a4) ---- */
 
-#define ARENA_ROW_STRIDE   0xa0      /* one scanline in the graphics arena (== screen stride) */
-#define CELL_WIDTH         8         /* bytes to the next 16-px 4-plane cell */
-#define RM_DASH_SRC_OFF    0x11c20   /* dashboard graphic within the gfx arena (buf_c) */
 #define RM_DASH_PROBE_ORIGIN (RM_DASH_SRC_OFF + 2)   /* dash_marker coordinates are relative to this */
 #define PROBE_DIRS         8         /* neighbour cells probed */
 #define PROBE_CELL_BITS    0x10      /* bits spanned per cell before y steps a row */
@@ -405,8 +403,6 @@ void rm_course_probe(RmEventCtx *c) {
 #define DASH_MARKER_TBL    0x7f8     /* per-leg marker-seed longs at buf_a + this */
 #define DASH_LEG_STRIDE    0x500     /* raw per-leg dashboard block */
 #define DASH_SRC_STRIDE    0x20      /* raw source bytes per row (8 units x 4 bytes) */
-#define DASH_ROWS          40
-#define DASH_GROUPS        8
 #define LABEL_DESC_TBL     0x8c0     /* buf_a offset of the per-leg label descriptors */
 #define LABEL_DESC_STRIDE  0x10
 #define LABEL_CLEAR_TBL    0x7d0     /* buf_a offset of the per-leg clear records */
@@ -432,7 +428,7 @@ static void init_leg_dash(RmEventCtx *c) {
     for (int row = 0; row < DASH_ROWS; row++, dst += ARENA_ROW_STRIDE, src += DASH_SRC_STRIDE) {
         uint8_t *d = dst;
         const uint8_t *s = src;
-        for (int unit = 0; unit < DASH_GROUPS; unit++, d += 8, s += 4) {
+        for (int unit = 0; unit < DASH_GROUPS; unit++, d += DASH_GROUP_BYTES, s += 4) {
             uint16_t w0 = be16(s), w1 = be16(s + 2);           /* double each unit horizontally */
             wr16(d, w0); wr16(d + 2, w1); wr16(d + 4, w1); wr16(d + 6, w1);
         }
@@ -459,7 +455,7 @@ static void draw_leg_labels(RmEventCtx *c) {
             wr16(p,     (uint16_t)(be16(p)     & mask));
             wr16(p + 4, (uint16_t)(be16(p + 4) | ink));
         }
-        cell += CELL_WIDTH;
+        cell += DASH_GROUP_BYTES;   /* the next 16-px 4-plane cell of the same art */
     }
 
     const uint8_t *rec = buf_a + LABEL_CLEAR_TBL + leg * LABEL_CLEAR_STRIDE;
