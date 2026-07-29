@@ -24,11 +24,17 @@ GEMDOS = {
 BIOS = {0x00: "Getmpb", 0x01: "Bconstat", 0x02: "Bconin", 0x03: "Bconout",
         0x04: "Rwabs", 0x05: "Setexc", 0x06: "Tickcal", 0x07: "Getbpb",
         0x08: "Bcostat", 0x09: "Mediach", 0x0A: "Drvmap", 0x0B: "Kbshift"}
+# Key = the XBIOS opcode NUMBER. TOS references print these in DECIMAL (Dosound 32, Vsync 37,
+# Supexec 38) — convert before writing the key here. The original table pasted several decimal
+# numbers straight in as hex literals (0x20 "Supexec", when 0x20 = 32 = Dosound), which mislabelled
+# Joust's whole sound layer until the body reads caught it — see docs/tos-os-calls.md's warning.
+# Hand-mirrored in AtariOsTrapAnnotate.java; change both together.
 XBIOS = {0x00: "Initmous", 0x02: "Physbase", 0x03: "Logbase", 0x04: "Getrez",
          0x05: "Setscreen", 0x06: "Setpalette", 0x07: "Setcolor", 0x08: "Floprd",
-         0x09: "Flopwr", 0x0E: "Setprt", 0x0F: "Setpad?", 0x11: "Random",
-         0x14: "Scrdmp", 0x18: "Kbdvbase", 0x1F: "Vsync", 0x20: "Supexec",
-         0x21: "Puntaes", 0x26: "Supexec", 0x28: "Xbtimer", 0x2A: "Dosound"}
+         0x09: "Flopwr", 0x0E: "Iorec", 0x0F: "Rsconf", 0x11: "Random",
+         0x14: "Scrdmp", 0x18: "Bioskeys", 0x19: "Ikbdws", 0x1C: "Giaccess",
+         0x1F: "Xbtimer", 0x20: "Dosound", 0x21: "Setprt", 0x22: "Kbdvbase",
+         0x25: "Vsync", 0x26: "Supexec", 0x27: "Puntaes"}
 TRAPVEC = {1: ("GEMDOS", GEMDOS), 13: ("BIOS", BIOS), 14: ("XBIOS", XBIOS)}
 
 

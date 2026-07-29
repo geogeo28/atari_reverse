@@ -47,8 +47,16 @@ public class AtariOsTrapAnnotate extends GhidraScript {
         put(XBIOS, 0x00, "Initmous"); put(XBIOS, 0x02, "Physbase"); put(XBIOS, 0x03, "Logbase");
         put(XBIOS, 0x04, "Getrez"); put(XBIOS, 0x05, "Setscreen"); put(XBIOS, 0x06, "Setpalette");
         put(XBIOS, 0x07, "Setcolor"); put(XBIOS, 0x08, "Floprd"); put(XBIOS, 0x09, "Flopwr");
-        put(XBIOS, 0x11, "Random"); put(XBIOS, 0x1F, "Vsync"); put(XBIOS, 0x20, "Supexec");
-        put(XBIOS, 0x26, "Supexec"); put(XBIOS, 0x28, "Xbtimer"); put(XBIOS, 0x2A, "Dosound");
+        // Key = the XBIOS opcode NUMBER. TOS references print these in DECIMAL (Dosound 32,
+        // Vsync 37, Supexec 38) — convert before writing the key here. The original table pasted
+        // several decimal numbers straight in as hex literals (0x20 "Supexec", when 0x20 = 32 =
+        // Dosound) — it mislabelled Joust's whole sound layer.
+        // Hand-mirrored from tools/prg_dis.py's XBIOS dict; change both together.
+        put(XBIOS, 0x0E, "Iorec"); put(XBIOS, 0x0F, "Rsconf"); put(XBIOS, 0x11, "Random");
+        put(XBIOS, 0x14, "Scrdmp"); put(XBIOS, 0x18, "Bioskeys"); put(XBIOS, 0x19, "Ikbdws");
+        put(XBIOS, 0x1C, "Giaccess"); put(XBIOS, 0x1F, "Xbtimer"); put(XBIOS, 0x20, "Dosound");
+        put(XBIOS, 0x21, "Setprt"); put(XBIOS, 0x22, "Kbdvbase"); put(XBIOS, 0x25, "Vsync");
+        put(XBIOS, 0x26, "Supexec"); put(XBIOS, 0x27, "Puntaes");
     }
 
     private static void put(Map<Integer, String> m, int k, String v) {

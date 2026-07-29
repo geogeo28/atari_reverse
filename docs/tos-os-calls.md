@@ -23,8 +23,30 @@ Return value in `d0`. Caller cleans the stack (`addq`/`lea` after the trap).
 `0x48` Malloc, `0x4A` Mshrink, `0x4B` Pexec, `0x4C` Pterm.
 
 **XBIOS (trap #14):** `0x00` Initmous, `0x02` Physbase, `0x03` Logbase, `0x04` Getrez,
-`0x05` Setscreen, `0x06` Setpalette, `0x07` Setcolor, `0x1F` Vsync, `0x20`/`0x26` Supexec,
-`0x28` Xbtimer, `0x2A` Dosound.
+`0x05` Setscreen, `0x06` Setpalette, `0x07` Setcolor, `0x11` Random, `0x18` Bioskeys,
+`0x19` Ikbdws, `0x1C` Giaccess, `0x1F` Xbtimer, `0x20` Dosound, `0x21` Setprt,
+`0x22` Kbdvbase, `0x25` Vsync, `0x26` Supexec, `0x27` Puntaes.
+
+These lists are the *common* selectors, not the full tables — the canonical ones the tooling
+actually annotates from are the `GEMDOS`/`BIOS`/`XBIOS` dicts in `tools/prg_dis.py` (mirrored in
+`AtariOsTrapAnnotate.java`). A selector missing *here* is not evidence that an annotation is wrong.
+
+> **Trap-table warning (learned on Joust, 2026-07-27):** XBIOS opcodes are usually written in
+> DECIMAL in TOS references (Dosound = 32, Vsync = 37, Supexec = 38). An early version of this
+> doc — and of `tools/prg_dis.py` + `AtariOsTrapAnnotate.java` — copied several decimal numbers
+> as if they were hex (`0x20` labelled Supexec when XBIOS 0x20 = 32 = **Dosound**), which
+> mislabelled every trap in Joust's sound layer and produced a whole family of wrong function
+> names until body reads caught it. When a trap annotation drives a naming decision, check the
+> selector against a decimal-keyed TOS reference first — an annotation is an anchor only if the
+> table behind it is right.
+>
+> **The fix does not self-heal an existing project.** `AtariOsTrapAnnotate` runs only during the
+> `run.sh` bootstrap; `reapply.sh` is `-noanalysis` and never re-runs it. So a Ghidra DB imported
+> under the old table keeps its stale EOL trap comments and any `xbios_<wrongname>` symbol that
+> `renameWrappers()` minted (BuggyBoy's DB still carries `xbios_supexec` on a wrapper at `0x12eec`
+> that is really **Dosound**). `renameWrappers()` only touches functions still named `FUN_*`, so a
+> re-run won't correct it either. `names.txt` overrides the display, which is why nothing downstream
+> is mis-reported — but treat a pre-existing DB's trap comments as untrusted until re-imported.
 
 **GEM:** AES opcode in `contrl[0]` (10 appl_init, 77 graf_handle, …); VDI opcode 100 =
 v_opnvwk. Register `d0` only tells AES-vs-VDI; the specific function is in the parameter

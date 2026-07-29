@@ -57,8 +57,10 @@ variables. (The old header claimed 61 `# ctx` of 74; the file actually held 56 o
 
 **The biggest correction is that Joust's sound driver was named as graphics/input code.**
 The XBIOS opcode tables in `tools/prg_dis.py` and `tools/ghidra_scripts/AtariOsTrapAnnotate.java`
-are wrong (`0x20` is **Dosound**, not Supexec; `0x1c` Giaccess and `0x19` Ikbdws are missing
-entirely), so every trap in the sound layer was mislabelled. Reading the raw traps gave:
+**were** wrong (`0x20` is **Dosound**, not Supexec; `0x1c` Giaccess and `0x19` Ikbdws were missing
+entirely), so every trap in the sound layer was mislabelled. **Both tables are fixed now** — see the
+trap-table warning in [`docs/tos-os-calls.md`](../../docs/tos-os-calls.md); re-running `prg_dis.py`
+resolves all 71 trap sites with no `XBIOS ?` left. Reading the raw traps gave:
 `set_color_lvl` → **`play_sound`** (Dosound off `sound_table`, 21 call sites),
 `read_key_flag` → **`snd_poll_done`** (Giaccess reads the YM2149 mixer to release the
 priority), `init_gfx` → **`snd_tone_sweep`** (a PSG pitch/volume sweep), and

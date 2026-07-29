@@ -196,7 +196,7 @@ static void handle_trap(int vec) {
             if (g_dosound_n < MAX_DOSOUND)            /* log A0 (the command-list pointer) into the ledger */
                 g_dosound_arg[g_dosound_n++] = m68k_read_memory_32(arg1);
             break;
-        case 0x25: case 0x28: case 0x2a: break;       /* Vsync / other no-image-effect XBIOS calls */
+        case 0x25: break;                             /* Vsync: waits for the VBL, no image effect */
         default: modeled = 0; break;                  /* unknown */
         }
     } else if (vec == 2) {                            /* GEM: AES/VDI parameter-block calls */

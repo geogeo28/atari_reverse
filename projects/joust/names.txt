@@ -4,10 +4,12 @@
 # untagged = confirmed by reading the body (decomp.c + 68000 disassembly).
 #
 # NOTE: many names here were corrected after reading the asm — the XBIOS opcode
-# table in tools/prg_dis.py and tools/ghidra_scripts/AtariOsTrapAnnotate.java is
-# wrong (0x20 is Dosound, not Supexec; 0x1c Giaccess and 0x19 Ikbdws are missing;
-# 0x1f/0x21/0x28/0x2a are decimal-as-hex mistakes). That mislabelled the whole
+# table in tools/prg_dis.py and tools/ghidra_scripts/AtariOsTrapAnnotate.java WAS
+# wrong (0x20 is Dosound, not Supexec; 0x1c Giaccess and 0x19 Ikbdws were missing;
+# 0x1f/0x21/0x28/0x2a were decimal-as-hex mistakes). That mislabelled the whole
 # sound driver as palette/keyboard/graphics code. See the cmt lines below.
+# Both tables are CORRECT as of this commit — trust the annotations again; the
+# lesson is recorded in docs/tos-os-calls.md's trap-table warning.
 
 # ==== entry / init ====
 fn 0x10000 _start
