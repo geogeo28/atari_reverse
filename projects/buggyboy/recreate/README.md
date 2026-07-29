@@ -233,6 +233,16 @@ modeled by `os_fopen`/`os_fread`/`os_fclose` over an in-image *staged-file* tabl
 writes the real file bytes into a staging region and one table entry per file, so both sides
 serve identical bytes (see `harness.stage_files`).
 
+**On-target register rule (the wrappers, not the oracle).** The real `.PRG` wrappers in
+`render/atari/os.s` and `render/atari/game_os.s` must save `%d2`/`%a2` around every trap. GCC's m68k
+SysV ABI treats `%d2-%d7`/`%a2-%a6` as callee-saved and caches live values in them across a call;
+TOS preserves only `%d3-%d7`/`%a3-%a6`, so `%d2`/`%a2` are exactly the pair the compiler expects to
+survive and TOS may destroy. Omitting the save does not fail loudly — it silently corrupts one live
+variable in the caller. It shipped a 3-bombs-on-real-hardware crash in `remaster/render/atari/os.s`
+(TOS's `Ikbdws` returned `phystop-1` in `%d2` while GCC cached a pointer there), invisible to every
+Hatari pin because EmuTOS happens to leave a benign value in `%d2`. The oracle cannot see this class
+at all: it services traps in-process and never clobbers anything.
+
 Anything **not faithfully modeled** — GEMDOS `Super`, an unmodeled GEM/VDI opcode, a file that
 wasn't staged, or an unknown function number — is counted, and `emu.run` **raises** rather than
 diff a fabricated result. So an OS-bound function can only be marked verified once every OS call
