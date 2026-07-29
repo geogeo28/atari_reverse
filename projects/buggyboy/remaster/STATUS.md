@@ -628,7 +628,8 @@ the per-frame clear was dropped.)
 
 ## Known issues (play-test, 2026-07-25)
 
-- **RESOLVED — every tune played ~17% too slow on a PAL machine (reported 2026-07-28).** Pitch was
+- **RESOLVED, CONFIRMED ON HARDWARE 2026-07-28 — every tune played ~17% too slow on a PAL machine.**
+  (User re-tested on the real STE: the music now matches the original.) Pitch was
   correct, only the tempo dragged. Root cause: **the original's REFRESH branches its tempo prescaler on
   the video sync rate and we did not.** `REFRESH @0x1b096` does `btst #1,$ffff820a` every frame:
   * 60 Hz (bit clear) — tick the prescaler; on its 6th frame reload and SKIP that frame's advance, so the
