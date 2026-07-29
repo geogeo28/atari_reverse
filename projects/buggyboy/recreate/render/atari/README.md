@@ -70,12 +70,11 @@ stepper still runs — that plays the leg-start "3-2-1-go" countdown beeps, whic
 in user mode (GEMDOS handle allocation misbehaves from supervisor — see
 [`docs/binary-formats.md`](../../../../../docs/binary-formats.md)), then `Super()`s for the hardware phase.
 
-**Leg-select** is driven by the original's function-key menu (`ip_menu`, ported from `0x2b24`):
-press **F1–F5** to pick and start a leg (F1 = leg 1 … F5 = leg 5), **F6** to preview the results
-screen, **F10** then **RETURN** to reload the graphics. This menu polls the GEMDOS console, which the
-differential harness models as always-empty (so it stays a no-op under test); the real trap lives in
-`game_main.c`'s `g_console_scancode`/`g_console_wait_char` overrides. Once a leg starts, arrows steer,
-space fires/shifts, and ESC quits the leg.
+The **player-facing key table lives in [`../../README.md`](../../README.md) ("Play it")** — one home
+for it, so the two cannot drift. What matters here is the mechanism: leg-select is the original's own
+function-key menu (`ip_menu`, ported from `0x2b24`), which polls the GEMDOS console — modelled as
+always-empty by the differential harness, so it stays a no-op under test; the real trap lives in
+`game_main.c`'s `g_console_scancode` / `g_console_wait_char` overrides.
 
 ```bash
 bash render/atari/game_build.sh          # -> build/BUGGY.PRG + disk/
@@ -101,7 +100,7 @@ the highest marker present.
 ## Performance
 
 The reconstruction runs at close to the original's speed on a stock 8 MHz ST. The one change that
-mattered: the big-endian image accessors in `include/machine.h` (`be16`/`be32`/`wr16`/`wr32`) are
+mattered: the big-endian image accessors in the kit's `include/machine.h` (`be16`/`be32`/`wr16`/`wr32`) are
 compiled *natively* on the 68000. They exist to preserve the 68000's byte order on a little-endian
 *host* (the differential-test `.so`), where they must assemble each word byte-by-byte — but the
 m68k target IS big-endian, so there they are just aligned `move.w`/`move.l`. The accessors are now

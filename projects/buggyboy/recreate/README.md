@@ -28,7 +28,7 @@ so correctness never rests on a human reading being right.
 
 Both sides operate on the **same flat, big-endian memory image** whose indices are Ghidra
 addresses (the game's globals sit at their real addresses). Multi-byte access goes through the
-`be16`/`be32`/`wr16`/`wr32` accessors in `include/machine.h`, which preserve the 68000's big-endian
+`be16`/`be32`/`wr16`/`wr32` accessors in the kit's `include/machine.h`, which preserve the 68000's big-endian
 order; on the little-endian test host they assemble each word byte-by-byte, and on a big-endian
 target (the m68k PRG in `render/atari/`) they compile to native aligned loads — see that
 directory's README "Performance" note. Each function has:
@@ -55,16 +55,26 @@ band can't silently hide a real divergence. (A named global the relocated stack 
 
 ## Layout
 
+The game-agnostic half of the harness — the PRG loader, the Musashi oracle, the trap model and
+the differential driver — is shared with every other game in
+[`tools/recreate_kit/`](../../../tools/recreate_kit/README.md); `project.toml` binds it to this
+game (PRG path, names.txt, candidate `.so`, load base, image size).
+
 ```
-include/   machine.h (big-endian accessors)  addrs.h (named addresses)  buggyboy.h (protos)
+project.toml  binds tools/recreate_kit to BuggyBoy (paths + load base + image size)
+include/   addrs.h (named addresses)  buggyboy.h (protos)  draw.h
            road_bands.h (shared render_road pipeline + 68k primitives, used by both road layers)
+           (machine.h — big-endian accessors — and os.h are in the kit's include/)
 src/       <subsystem>.c — cores + glue (score.c, …)
 src/machine/  byte-exact 1:1 machine-model transcriptions kept as trust anchors (road.c)
-oracle/    loader.py (load+relocate PRG)  emu.py (Musashi runner)  shim.c (Musashi callbacks)
-           musashi/ (vendored MAME 68000 core — gitignored, refetched on build)
-test/      harness.py (differential driver)  test_<subsystem>.py
+test/      harness.py (4-line shim binding the kit)  test_<subsystem>.py
 sound/     sound_player.py (steps REFRESH in the oracle -> WAV)  ym2149.py / sid.py (chip renderers)
-Makefile   builds both libs + runs pytest;  STATUS.md tracks per-function progress
+Makefile   names the game + includes the kit's kit.mk;  STATUS.md tracks per-function progress
+
+tools/recreate_kit/           (shared)
+  oracle/  loader.py (load+relocate PRG)  emu.py (Musashi runner)  shim.c (Musashi callbacks)
+           musashi/ (vendored MAME 68000 core — gitignored, refetched on build)
+  harness.py (differential driver)  include/machine.h  include/os.h  kit.mk
 ```
 
 ## Two reconstruction layers
@@ -79,14 +89,60 @@ they cannot silently drift apart. Shared scaffolding (the band pipeline, the 68k
 primitives) lives in `include/road_bands.h` so there is one source of truth for the parts that are
 genuinely common.
 
+## Play it
+
+The reconstruction is not just a test fixture — it builds into a runnable game, `BUGGY.PRG`, whose
+cores ARE the original's logic (verified byte-exact against the 68000 by the differential suite). Use
+it when you want to play *the original's behaviour*; use [`../remaster/`](../remaster/README.md) when
+you want the optimized re-implementation.
+
+```bash
+bash render/atari/game_build.sh          # -> build/BUGGY.PRG + render/atari/disk/
+bash render/atari/game_run.sh            # play it in the Hatari GUI
+bash render/atari/game_run.sh original   # run the ORIGINAL binary, same setup, for a side-by-side
+```
+
+On real hardware, copy `render/atari/disk/` to a floppy or hard-disk partition and run `BUGGY.PRG`; it
+loads its data files from the directory it was started in and needs **low resolution** (320x200, 16
+colours).
+
+### Controls
+
+These are the ORIGINAL's controls, because this shell only supplies the hardware boundary — the menu is
+the original's own function-key menu (`ip_menu`, ported from `0x2b24`) read through the GEMDOS console,
+and driving input comes from the IKBD joystick handler with the console key as the fallback
+(`read_input`, `src/input.c`).
+
+| Key | What it does |
+|---|---|
+| **F1**–**F5** | leg select: pick that leg (F1 = leg 1 … F5 = leg 5) and start it |
+| **F6** | leg select: preview the race-results screen |
+| **F10** then **Return** | leg select: reload `GRAPHICS.GRA` + rebuild the score table |
+| **Up** / **Down** | race: accelerate / brake |
+| **Left** / **Right** | race: steer |
+| **Space** | race: fire / gear shift |
+| **Esc** | race: quit the leg (drops into the high-score + attract flow) |
+
+A **joystick in port 1** drives the race too, via the original's `joyvec` packet handler; the keyboard
+is the fallback. There is **no quit key** — the original is a coin-op whose `main` never terminates, so
+this faithful build has no way out other than resetting the machine or closing the emulator. (The
+remaster adds Q for exactly this reason, and that is its one deliberate deviation.)
+
+After a leg ends the flow is the original's: high-score name entry if you made the table, otherwise a
+game-over jingle, then the attract/intermission cycle, then back to the leg select.
+
+Build variants (`smoke`, `legdump`), the headless proofs and the hardware-boundary details are in
+[`render/atari/README.md`](render/atari/README.md).
+
 ## Use
 
 ```bash
 make test           # build oracle + candidate, run the full differential suite
-make oracle/build/liboracle.so   # (re)build just the Musashi oracle
+make ../../../tools/recreate_kit/oracle/build/liboracle.so   # (re)build just the Musashi oracle
 ```
 
-First build clones + compiles Musashi under `oracle/musashi/`. Requires the venv at `.venv/`
+First build clones + compiles Musashi under `tools/recreate_kit/oracle/musashi/` (shared by every
+game, so it is fetched and built once). Requires the venv at `.venv/`
 — run `make venv` (or `python -m venv .venv && .venv/bin/pip install -r requirements.txt`) to
 create it and install the pinned Python deps (numpy, pyresidfp, pytest, pytest-xdist). `pip install unicorn`
 too if you want it for ad-hoc experiments — the oracle itself doesn't use it.
@@ -221,10 +277,10 @@ byte-identical to this host render — see [`render/atari/README.md`](render/ata
 ## OS trap model
 
 OS-bound code enters TOS via `trap #N`, which the oracle can't route to real TOS. Instead
-`oracle/shim.c` points each trap vector at a magic PC, and on a hit reads the 68000 exception
+the kit's `oracle/shim.c` points each trap vector at a magic PC, and on a hit reads the 68000 exception
 frame + the GEMDOS/BIOS/XBIOS function number and services the call **deterministically** —
 the semantics both the oracle and any reconstructed wrapper must share live in
-[`include/os.h`](include/os.h). Calls that only touch hardware or files (Setpalette/Setcolor/
+[`os.h`](../../../tools/recreate_kit/include/os.h). Calls that only touch hardware or files (Setpalette/Setcolor/
 Setscreen, sound, console, Ikbdws) have no image effect and return 0; Physbase/Logbase return
 `OS_SCREEN_BASE`; Malloc bump-allocates from `OS_HEAP_BASE`; XBIOS `Supexec` runs the passed
 routine in place (its `rts` returns to the caller, its D0 is the result). GEM `trap #2` models
@@ -252,7 +308,7 @@ it makes is genuinely modeled. The remaining gap is `Malloc`: it bump-allocates 
 Two layers of tests guard this model. `test/test_os.py` drives tiny hand-assembled 68k stubs
 through the oracle to pin the shim's semantics at the edges — Malloc bump/rounding, the Fread
 cursor/EOF, and rejection of a closed/unstaged handle. `test/test_os_vs_tos.py` then anchors those
-semantics to **real hardware**: `oracle/tos_probe.py` assembles a GEMDOS program that runs the same
+semantics to **real hardware**: the kit's `oracle/tos_probe.py` assembles a GEMDOS program that runs the same
 calls, auto-runs it on a headless Hatari (real TOS ROM, SDL dummy video) with a GEMDOS drive, and
 reads the results back from a file. Exact-value calls (Getrez, Fread bytes + counts) must match the
 shim to the byte; machine-dependent ones (Malloc's address) are checked as the *invariant* the shim
@@ -273,7 +329,7 @@ the [`buggyboy-off-image-palette-debugging`] memory note and the `game_update` S
 
 The durable fix is to give these calls **capture ledgers** like the sound path already has
 (`emu.psg_writes()`, the Dosound arg ledger) and assert on them:
-- Capture XBIOS Setpalette (fn 6) / Setcolor (fn 7) in `oracle/shim.c` — the source pointer + the
+- Capture XBIOS Setpalette (fn 6) / Setcolor (fn 7) in the kit's `oracle/shim.c` — the source pointer + the
   16 loaded words — into an ordered ledger exposed like `psg_writes()`.
 - Mask `m68k_write_memory_16`/`_32` to the 24-bit bus the way `m68k_write_memory_8` already does
   (they currently drop `$ffffxxxx` word/long writes instead of aliasing them to `$ffxxxx`), so the
@@ -287,11 +343,11 @@ The durable fix is to give these calls **capture ledgers** like the sound path a
 The oracle is **Musashi** (kstenerud/Musashi, MAME's 68000 core) — faithful to real 68000
 behavior. Unicorn/QEMU's m68k core was tried first and rejected: its ColdFire-derived core
 raises spurious illegal-instruction exceptions on byte memory read-modify-write (`addq.b`,
-`subq.b`, … to memory), which pervade this code. `emu.py` is the only file that would change
+`subq.b`, … to memory), which pervade this code. the kit's `emu.py` is the only file that would change
 to swap oracles.
 
 Musashi is **cross-validated against a second, independent 68000** — Hatari's WinUAE-derived
-core — by `oracle/isa_conformance.py` (run in `test/test_isa_vs_tos.py`). It executes 277
+core — by the kit's `oracle/isa_conformance.py` (run in `test/test_isa_vs_tos.py`). It executes 277
 self-contained instruction snippets on both cores and compares the result + defined CCR bits,
 covering the classes this code leans on (byte/word/long memory RMW, `asr/lsl/rox`, `ext`,
 `muls/divs`, `addx`, `cmp.b`+`Scc`). All 277 agree; the only divergence found was N/Z after a
