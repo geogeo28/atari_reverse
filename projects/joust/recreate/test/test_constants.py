@@ -3,8 +3,13 @@
 The differential tests restate values that really live somewhere else — entry and global addresses
 that belong to `../names.txt`, and screen geometry / stack-frame offsets that belong to the C in
 `include/` and `src/`. Python cannot import either, so CLAUDE.md's rule applies: pick one canonical
-definition and pin the copy equal with a test. That is this file. A drift on either side fails here
-with the name of the constant, instead of quietly weakening a battery elsewhere.
+definition and pin the copy equal with a test. A drift on either side fails with the name of the
+constant, instead of quietly weakening a battery.
+
+This file covers the small batteries (test_blit / test_fill / test_rng / test_screen). test_draw.py
+and test_object.py mirror far more and each carries its OWN pin section, next to the constants it
+restates, importing `_defines` from here rather than copying it. So this file is not the whole
+inventory — check those two as well before adding a pin.
 """
 import re
 from pathlib import Path
@@ -26,7 +31,11 @@ def _defines(path):
 
 
 def test_entry_addresses_match_names_txt():
-    """Every address a test enters the oracle at is the address names.txt gives that function."""
+    """The entries THESE batteries use are the addresses names.txt gives those functions.
+
+    Not every entry in the suite: test_draw.py and test_object.py pin their own (see the module
+    docstring), so adding one here for a function they cover would be a second copy, not a check.
+    """
     expected = {
         test_fill.ENTRY_MAKE_FILL_PATTERN: "make_fill_pattern",
         test_fill.ENTRY_FILL_PATTERN_N: "fill_pattern_n",

@@ -171,6 +171,10 @@ var 0x10ddc flap_delay
 var 0x10dfa spawn_interval
 var 0x10dfc spawn_timer
 
+# ==== variables: fonts ====
+var 0x17eba font_large_glyphs
+var 0x18192 font_small_glyphs
+
 # ==== variables: sprite draw scratch (set by the caller, read by the blitters) ====
 var 0x10de8 draw_dst
 var 0x10dec draw_x
@@ -180,6 +184,10 @@ var 0x10df4 draw_shift
 var 0x10df6 draw_rows
 var 0x10df8 draw_dst_off
 var 0x10dc2 draw_half_select
+var 0x10d0e draw_clip_cell0
+var 0x10d0f draw_clip_cell1
+var 0x10d10 draw_clip_cell2
+var 0x11a54 egg_sprite_ptrs
 var 0x10da0 hit_box_a
 var 0x10db0 hit_box_b
 var 0x10dc0 hit_rows
@@ -303,3 +311,28 @@ cmt 0x15098 blit_mask_wide(a0->{src=[6]+0x120, dst_base=[2], dst_off=[0x16], shi
 cmt 0x1510c blit_sprite_planes: src=draw_src, dst_off=draw_dst_off, shift=draw_shift, rows=draw_rows; per-plane enables at 0x10d0e/0x10d0f/0x10d10 clip the sprite at the screen edges; OR data, stride 0x50 — the pterodactyl's draw pass.
 cmt 0x10c46 xbios_setpalette: XBIOS Setpalette(palette) — the 16-entry table at 0x10cd2.
 cmt 0x10c56 cycle_palette: rotates the single hue held in palette entry 4 (0x10cda) through R/G/B, selected by bits 8-10 of palette_cycle_ctr.
+
+# ==== comments refined during the reconstruction (verified against the oracle) ====
+# These correct or deepen earlier cmt lines above; where they disagree, these win —
+# each was checked instruction-by-instruction while porting the function to C.
+
+cmt 0x10d0e draw_clip_cell0/1/2: per-CELL suppressors blit_sprite_planes tests once per row (tst.b + bne). NONZERO means SKIP that cell — leading (dst+0), middle (dst+8), trailing (dst+16). Staged by update_pterodactyl (0x1502a) to clip the sprite at the screen edges. NOT "per-plane enables".
+cmt 0x17eba font_large_glyphs: 8 bytes per character from ' ' up, 6 px wide. Selected by bit 7 of text_flags.
+cmt 0x18192 font_small_glyphs: 5 bytes per character from ' ' up, one byte per row, 4 px wide. draw_string indexes it as (ch - 0x20) * 5; chars below ' ' index BACKWARDS out of the table and are still rendered.
+cmt 0x11a54 egg_sprite_ptrs: pointer table read by update_eggs; object.h treats it as the end of platform_sprites.
+
+cmt 0x102e2 fill_screen(colour.w @4): 4001 cells of 8 bytes from screen_base = 32008 bytes — EIGHT PAST the 32000-byte framebuffer, every call. Passes the colour to make_fill_pattern, which is degenerate, so only bit 0 survives.
+cmt 0x136e8 draw_object_data (append): re-reads playfield_bottom EVERY row and, on the lava exit, computes the rows-drawn byte as a FRESH read of draw_rows minus the row counter (sub.b/neg.b) — so a sprite drawn over either global bends the pass. Stopping on row 0 leaves draw_rows = 0, which the wrap column's subq.b loop reads as 256 rows.
+cmt 0x1510c blit_sprite_planes (append): three passes per row in a fixed order — middle cell, leading cell, then the trailing cell, whose four source words are RE-READ from memory after the first two passes have written. Each suppressor is tested once per row.
+cmt 0x17752 blit_sprite_mask (correct): a5->{src=[0], dst_off=[4].l, shift=[8].w, cell_select=[0xa] LOW BYTE, signed}. blt skips the trailing cell and bgt the leading one, so cell_select < 0 draws the LEADING cell alone, > 0 the TRAILING one, 0 both. Mask at src+0x90, 4 bytes/row.
+cmt 0x177a2 blit_sprite (correct): as blit_sprite_mask plus the colour data ORed in behind the mask — four plane words at src, 8 bytes/row, SHIFTED (not rotated). Same cell_select polarity.
+
+cmt 0x13fe6 pixel_collision(A1=box_a, A2=box_b): walks hit_rows rows of two sprites already aligned on a column by test_overlap; ORs each cell's 4 plane words and stops at the first shared bit. When cur_col != 0 AND shift != 0 the previous cell is swapped into the high half so a shifted sprite's spill is seen. On a hit: collision_hit = 0xff and box_a.cur_col = cols-1, which ends test_overlap's column sweep. Row stride is adda.w — low word only, sign-extended.
+cmt 0x13ef2 test_overlap: broad phase over hit_box_a/hit_box_b; exg puts the lower screen address in a1. Band test uses add.b, so y's low byte wraps instead of carrying. Column offset = (dst gap divu.w #$a0) remainder / 8; if that lands outside the upper sprite it is re-measured backwards (20 - n) against the lower one. MUTATES both boxes' src and cur_col as cursors.
+cmt 0x140fe joust_bounce(A0=obj_a, A3=obj_b, D0/D1=flags): height tie — both riders turned away and pushed apart. "A is on the left" iff gap >= 0xffee unsigned OR gap >= 0x12e signed — x wraps at 320, so a gap of -19 or less really means A is on the right. Velocity written only on a flip.
+cmt 0x13300 check_platform(A0=object, D0=flags) -> D0: scans platform_table for a present box holding (x,y); snaps object y to the platform top (+1 at flap frame 4) and sets bit 9. Off every platform: clears bit 9 and, only if it HAD been set, restarts the walk (anim 3, step 5, vy 0).
+cmt 0x129b4 erase_egg_sprite(A0=object): NOT an allocator despite the old alloc_object name. AND-NOTs the egg out in two passes over the same source rows: main, then the bits that spilled past the cell — one cell right, or a scanline BACK once egg x >= 0x130. Source row stride 0x10, of which only the first 4 words are read. Row count is subq.b: 0 means 256.
+cmt 0x12914 draw_egg_sprite(A0=object): ORs the egg in from the draw_* globals; returns at once if the slot carries no egg. If dst reaches playfield_bottom the egg is in the lava: state = 0x24 and draw_rows is rewritten to the rows actually drawn. A hit on row 0 leaves draw_rows = 0, which subq.b reads as 256 — the wrap pass then marches 256 scanlines down. Original behaviour, reproduced.
+cmt 0x15226 ptero_avoid_platform(A0=ptero, D1=scratch) -> D1: returns 4 while a platform's row band, extended 13 rows upward, brackets the pterodactyl's y; 0 when clear or outside x 0x3c..0xfa. ONLY D1's low word is written, so the high half returns the caller's value on the clear exits and the matching record's divu.w remainder on a hit. Every caller reads move.w d1.
+cmt 0x15276 ptero_spot_player(A0=ptero, A3=player, D0=flags): arms the swoop (timer 0x14, sound 3) when the player is within -4..+6 rows and in front. The +8 x bias is applied BEFORE the direction flip, making the window asymmetric: 1..0x60 left when flying left, 0x11..0x70 right when flying right. The cmpi.w #$ff29 test is strictly redundant — the later signed ble #$8 already rejects every value it does. Kept as shipped.
+cmt 0x1033e count_objects_and_pad: per-frame census plus a frame-time equaliser — each count is followed by a busy-wait proportional to the work NOT done: (8-live), (0x0e-eggs), (0x23-chars). Those loops touch no memory. Between waves (game_phase != 0) it counts message characters instead, and QUIRK: the walk follows the message's SCREEN pointer (+4), not its string pointer, so it counts screen bytes to the first zero. Only a delay loop reads it.
