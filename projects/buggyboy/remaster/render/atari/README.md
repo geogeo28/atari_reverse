@@ -29,6 +29,8 @@ is now a library module the runners share.
 | `run_golden.py` / `run_ste_golden.py` | the frame-0 golden harness: for each leg 0-4, build the `GOLDEN.PRG` fast-path variant + byte-compare its leg-start boot frame vs recreate — on ST and on STE |
 | `bench_main.c` / `bench_build.sh` | the m68k `bench.elf` the Musashi C-vs-asm differential and `tools/bench.py` drive |
 | `run_cadence.py` / `run_ste_*.py` | the Hatari measurement runners (frame cadence, STE blitter A/B, self-test, sweep, census) |
+| `crash.S` | the real-hardware crash reporter's exception stubs (`GAME_CRASH_REPORT=1`) — see "Diagnosing a crash on real hardware" |
+| `run_crash_selftest.py` | pins that reporter: plant a deliberate address error, check the reported PC maps back to the faulting symbol |
 
 ## Use
 
@@ -220,6 +222,74 @@ the HUD) driven by the ported physics and the between-legs flow, everything draw
 `run_golden.py` pins the boot frame of every leg 0–4 byte-for-byte against recreate's pipeline; the rest
 of the loop is guarded by the host equivalence suite (`make test`) and the on-target flow trace. Sound is
 wired end-to-end and proven audible by a Hatari `psg_write` trace (slice 3).
+
+## Diagnosing a crash on real hardware
+
+Every pin in this directory runs under Hatari, and Hatari's TOS is **EmuTOS** (`tos_probe`), on a GEMDOS
+hard-drive emulation, with no mouse ever plugged in. A real ST/STE differs on all three, and when it
+faults, TOS answers with the bomb screen: N bombs where N is the exception vector (2 = bus error,
+3 = **address error**, an odd-address word/long access, 4 = illegal instruction). That names the fault
+and nothing else — not the code, and the .PRG is relocated to a different address on every machine, so
+even a hand-read PC maps to nothing.
+
+The `GAME_CRASH_REPORT=1` build closes that gap. It takes those vectors itself (`crash.S` snapshots the
+68000 exception frame) and prints the fault instead of bombing:
+
+```bash
+GAME_CRASH_REPORT=1 bash render/atari/build_game.sh    # -> build/ + disk/BUGDIAG.PRG
+```
+
+It builds under its own name, so `disk/BUGGYBOY.PRG` stays the shipping game and cannot be confused with
+it. Copy `disk/` to the machine, run `BUGDIAG.PRG`, reproduce the crash, and read the report off the
+screen:
+
+```
+*** BUGGYBOY CRASH ***
+
+VEC=03 STAGE=06 FRAME=0002
+PC=0001E84A TEXT+00003832
+FAULT=00039F25 OP=30BC
+SR=0304 SSW=30A1
+TOS=0162 REZ=0 BLITTER=1
+```
+
+* `VEC` is the bomb count — the exception that fired.
+* `TEXT+xxxxxxxx` is the faulting PC **relative to `p_tbase`**, which is what makes it portable across
+  machines. Resolve it against the unrelocated ELF: `m68k-elf-nm -n build/game.elf`, then take the last
+  symbol at or below that offset. That must be the `game.elf` **of this diagnostic build** — it carries the
+  reporter, so its symbol addresses differ from the shipping build's. (On a group-0 fault — vectors 2 and
+  3 — the 68000's PC may be a few words past the faulting instruction; `OP` is the recorded opcode word,
+  the tie-breaker.)
+* `A0`–`A6` are the address registers as the faulting instruction left them: the fault address says a bad
+  pointer was dereferenced, these say *which* one. `USP` plus the three longs after it are the faulting
+  function's return address and arguments — printed only for a user-mode fault, since `%usp` means nothing
+  for one taken in the VBL pump or the IKBD handler (those print `SUPERVISOR FAULT` instead).
+* The whole report is also written to **`CRASH.TXT`** beside the `.PRG`, so it can be sent verbatim rather
+  than photographed.
+* `STAGE` is the last boot milestone reached (`CRASH_STAGE_*` in `game_main.c`) and `FRAME` the number of
+  flips completed, so the fault is bracketed even when the PC lands in shared code.
+* `SR` bit 13 set means the fault happened in **supervisor** mode — i.e. inside the VBL sound pump or the
+  IKBD handler, not in the game loop.
+* `TOS`/`REZ`/`BLITTER` record the three things the harness cannot vary: the real ROM version, the
+  desktop resolution the game inherited (`0` = low; the game never sets it), and whether the STE blitter
+  routes actually bound.
+
+Two caveats worth knowing before you trust a report:
+
+* **A red screen with no text** means the fault was caught but the report could not be printed. Printing
+  goes through GEMDOS/XBIOS, and neither is re-entrant, so a fault taken *inside* a TOS call (the floppy
+  asset load is the realistic case) can leave the reporter unable to finish. That is still an answer —
+  it says the fault was in OS-facing code — and it is distinguishable from bombs, which mean the stubs
+  never fired at all.
+* **`TEXT+OUTSIDE`** means the faulting PC is not inside this program (a jump through a null or garbage
+  pointer, or a fault taken in ROM). There is no symbol to resolve; use `PC` and `OP` instead.
+
+`make crash-selftest` is the pin for the reporter itself — it plants a deliberate address error just past
+`CRASH_STAGE_BOOT`, boots headless with the console echoed (`--conout 2`), and fails unless the report
+comes back naming `main` with the right vector, stage and frame count. `make gate` compiles this build so
+it cannot rot. The shipping build is unaffected: with the knob off every breadcrumb compiles to nothing,
+all of the reporter's storage lives in `crash.S` (so no other global moves), and `BUGGYBOY.PRG` is
+byte-identical.
 
 ## Hand-asm cores (`src/asm/`) — PERF30 A3
 

@@ -68,7 +68,20 @@ if [ "${GAME_STE_CENSUS:-0}" = "1" ]; then                # slice-5 boot-table c
     STE_SOURCES="$STE_SOURCES $REMASTER/src/blitter_census.c"
 fi
 
-PRG="${GAME_PRG:-BUGGYBOY.PRG}"             # output .PRG name (run_golden.py overrides to GOLDEN.PRG)
+# --- GAME_CRASH_REPORT=1: the real-hardware diagnostic build. Takes the 68000 fault vectors itself
+#     (render/atari/crash.S) and prints the faulting PC as an offset into TEXT, plus the boot stage and
+#     frame count, instead of leaving TOS to draw bombs — see render/atari/README.md, "Diagnosing a crash
+#     on real hardware". It ships under its OWN name (BUGDIAG.PRG, like every other variant here) so a
+#     diagnostic build can never quietly become disk/BUGGYBOY.PRG, the interactive-play drive's shipping
+#     game: the two are different binaries, and nothing on screen would say which one was running.
+CRASH_CFLAGS=""; CRASH_SOURCES=""; CRASH_DEFAULT_PRG=""
+if [ "${GAME_CRASH_REPORT:-0}" = "1" ]; then
+    CRASH_CFLAGS="-DGAME_CRASH_REPORT"
+    CRASH_SOURCES="$HERE/crash.S"
+    CRASH_DEFAULT_PRG="BUGDIAG.PRG"
+fi
+
+PRG="${GAME_PRG:-${CRASH_DEFAULT_PRG:-BUGGYBOY.PRG}}"   # output .PRG name (run_golden.py -> GOLDEN.PRG)
 
 PY="$REMASTER/../recreate/.venv/bin/python"; [ -x "$PY" ] || PY=python3
 
@@ -103,7 +116,7 @@ CC=m68k-elf-gcc
 # its C reference. (No -DRM_ROAD_DIFF: the game omits road.c's bench-only differential entries.)
 CFLAGS="-m68000 -O3 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -DRM_ASM_BLIT -DRM_ASM_ROAD -DRM_SOUND_TARGET -I$REMASTER/include -I$HERE/shim_include -I$BUILD -Wall -Wextra \
-        ${STE_CFLAGS} ${GAME_EXTRA_CFLAGS:-}"
+        ${STE_CFLAGS} ${CRASH_CFLAGS} ${GAME_EXTRA_CFLAGS:-}"
 CORES="$REMASTER/src/geometry.c $REMASTER/src/road.c $REMASTER/src/scroll.c \
        $REMASTER/src/course.c $REMASTER/src/hud.c $REMASTER/src/text.c \
        $REMASTER/src/ground.c $REMASTER/src/sprite.c $REMASTER/src/object.c \
@@ -116,7 +129,7 @@ echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs \
     "$HERE/os.s" "$REMASTER/src/asm/objshift2.S" "$REMASTER/src/asm/objshift.S" \
     "$REMASTER/src/asm/road_band.S" \
-    "$HERE/shim.c" "$HERE/game_main.c" $CORES $STE_SOURCES -lgcc \
+    "$HERE/shim.c" "$HERE/game_main.c" $CORES $STE_SOURCES $CRASH_SOURCES -lgcc \
     -o "$BUILD/game.elf"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).

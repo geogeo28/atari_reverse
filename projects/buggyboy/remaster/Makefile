@@ -68,9 +68,10 @@ $(BENCH_ELF): $(SRC) $(wildcard src/asm/*.S) render/atari/bench_main.c render/at
 # a third copy of the cross flags would be exactly the kind of drift this gate exists to catch.
 #
 # TWO builds because the stock one cannot reach every source: src/blitter_{selftest,sweep,census}.c are
-# compiled only under their own measurement flags. Those three combine in ONE extra build (they are
-# alternate main() entry points, and the gate only asks whether they compile and link), so between them
-# the two builds cover every .c in the project.
+# compiled only under their own measurement flags, and render/atari/crash.S plus game_main.c's crash
+# reporter are compiled only under GAME_CRASH_REPORT. Those combine in ONE extra build (the measurement
+# ones are alternate main() entry points, the reporter is orthogonal, and the gate only asks whether
+# they compile and link), so between them the two builds cover every source in the project.
 GATE_PRG      := render/atari/build/GATE.PRG
 GATE_MEAS_PRG := render/atari/build/GATEMEAS.PRG
 # Everything the built .PRG is derived from — including the GENERATORS and the fixture's struct source
@@ -78,7 +79,7 @@ GATE_MEAS_PRG := render/atari/build/GATEMEAS.PRG
 # nothing. That is not hypothetical: an adapter.py window change is precisely what shipped the truncated
 # font fixture.
 GATE_DEPS := $(SRC) $(STE_SRC) $(wildcard src/asm/*.S) render/atari/game_main.c render/atari/shim.c \
-             render/atari/os.s render/atari/tos.ld render/atari/build_game.sh \
+             render/atari/os.s render/atari/crash.S render/atari/tos.ld render/atari/build_game.sh \
              render/atari/gen_game_fixture.py render/atari/hud_capture.py \
              render/atari/fixture_lib.py render/atari/mkprg.py \
              test/adapter.py test/equiv.py test/assets_load.py $(RECREATE)/render/render_screen.py \
@@ -94,10 +95,10 @@ $(GATE_PRG): $(GATE_DEPS) | $(BENCH_ELF)
 	GAME_NO_STAGE=1 GAME_PRG=$(notdir $(GATE_PRG)) bash render/atari/build_game.sh
 
 $(GATE_MEAS_PRG): $(GATE_DEPS) | $(GATE_PRG)
-	GAME_NO_STAGE=1 GAME_STE_SELFTEST=1 GAME_STE_SWEEP=1 GAME_STE_CENSUS=1 \
+	GAME_NO_STAGE=1 GAME_STE_SELFTEST=1 GAME_STE_SWEEP=1 GAME_STE_CENSUS=1 GAME_CRASH_REPORT=1 \
 	    GAME_PRG=$(notdir $(GATE_MEAS_PRG)) bash render/atari/build_game.sh
 
-.PHONY: ref test gate golden bench clean
+.PHONY: ref test gate golden crash-selftest bench clean
 # Build the shell both ways without running the suite (the gate alone).
 gate: $(GATE_PRG) $(GATE_MEAS_PRG)
 # Sanity-check the reference capture: prove recreate's render pipeline is deterministic per frame.
@@ -117,6 +118,14 @@ test: $(CAND) $(RECON) $(BENCH_ELF) $(GATE_PRG) $(GATE_MEAS_PRG)
 # before promoting to main. `make gate` already proves the same build compiles and links.
 golden: $(CAND) $(RECON) | $(GATE_MEAS_PRG)
 	$(PY) render/atari/run_golden.py
+
+# The BEHAVIOUR pin for the real-hardware crash reporter: plant a deliberate address error, boot it in
+# Hatari, and check the report names the function that faulted. Like `golden` it needs Hatari and so is
+# not part of `make test` — `make gate` already proves the reporter compiles. Run it after touching
+# crash.S, crash_report(), or the report's field labels: those and the runner's parser are one contract
+# spanning asm, C and Python, and nothing else checks that they still agree.
+crash-selftest: | $(GATE_MEAS_PRG)
+	$(PY) render/atari/run_crash_selftest.py
 
 # Cycle cost vs the original and vs recon on-target (once a cross-compiled build exists). bench.py loads
 # the m68k bench.elf and jumps its bench_* wrappers, so it is a prerequisite (a stale/absent elf otherwise

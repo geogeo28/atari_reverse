@@ -77,6 +77,19 @@
 #include "screen.h"
 #include "st.h"              /* be16/wr16/be32/wr32 for the leg-start palette flash */
 #include "game_fixture.h"
+
+/* GEMDOS BASPAG, through the fields this shell reads. Two consumers: the free-TPA window the blitter
+ * tables are placed in (the TPA map below) and the crash reporter, which turns a faulting PC into an
+ * offset into p_tbase so it maps back to a symbol in the unrelocated build/game.elf. */
+typedef struct {
+    uint32_t lowtpa, hitpa;
+    uint32_t tbase, tlen;
+    uint32_t dbase, dlen;
+    uint32_t bbase, blen;
+} Basepage;
+extern Basepage *basepage;    /* captured by _start from 4(sp) — see os.s */
+extern uint8_t *initial_sp;   /* the stack pointer GEMDOS handed _start — see os.s */
+
 #ifdef RM_BLITTER
 #include "blitter.h"          /* unified ST/STE binary (PERF30 C4): boot-probe + bind both object routes */
 static int g_have_blitter;    /* set once at boot: a blitter is present and both object routes are bound to it */
@@ -99,15 +112,6 @@ static int g_have_blitter;    /* set once at boot: a blitter is present and both
  * less TPA_STACK_MARGIN of headroom for the descending stack. If the tables do not fit — a 1 MB STE is
  * the tight case — rm_blit_bind_all returns 0 and the shell binds the 68000 CPU engines exactly as it
  * does on a machine with no blitter: slower, pixel-identical, no special case anywhere else. */
-typedef struct {              /* GEMDOS BASPAG, through the fields this shell reads */
-    uint32_t lowtpa, hitpa;
-    uint32_t tbase, tlen;
-    uint32_t dbase, dlen;
-    uint32_t bbase, blen;
-} Basepage;
-extern Basepage *basepage;    /* captured by _start from 4(sp) — see os.s */
-extern uint8_t *initial_sp;   /* the stack pointer GEMDOS handed _start — see os.s */
-
 #define TPA_STACK_MARGIN 0x4000   /* 16 KB kept clear between the placed tables and the descending stack */
 
 /* The free-TPA window described above: returns its base, and its size through *bytes (0 if there is none).
@@ -176,6 +180,44 @@ extern volatile uint8_t key_down[128];
 extern volatile uint8_t key_hit[128];
 extern volatile uint8_t joy_state;
 extern void kbd_isr(void);
+
+/* ---- crash-report breadcrumbs (GAME_CRASH_REPORT builds only) -------------------------------------
+ * A fault on real hardware shows TOS's bomb screen and nothing more, so the diagnostic build leaves a
+ * breadcrumb at each boot milestone and counts flipped frames; crash_report() (next to the VBL install
+ * it has to detach, further down) prints both alongside the faulting PC. The macros compile to nothing
+ * in every other build, so the call sites below stay unconditional. */
+#ifdef GAME_CRASH_REPORT
+/* Both live in crash.S's .bss (so this build leaves every other global at its shipping address) and both
+ * are VOLATILE: they are written here and read only from an exception, a control flow the optimizer
+ * cannot see — without it -O3 may keep the stage in a register or coalesce the per-frame stores, and the
+ * two fields that exist to bracket the fault would report stale values.
+ * crash_frames counts frames PRESENTED, which is not the free-running vblank clock vbl_count: at this
+ * frame rate vbl_count ticks several times per drawn frame and starts ticking only once the sound pump is
+ * installed, so "did the first frame finish?" — the question a fault during the first draw asks — is only
+ * answerable from a flip counter. */
+extern volatile uint8_t crash_stage_id;
+extern volatile uint16_t crash_frames;
+#define CRASH_STAGE(id)     (crash_stage_id = (id))
+#define CRASH_FRAME_TICK()  (crash_frames++)
+/* Give TOS its fault vectors back on EVERY exit from main(), including the early ones — see
+ * crash_uninstall. A .PRG that Pterms with them still installed leaves them pointing into freed TPA. */
+static void crash_uninstall(void);
+#define CRASH_UNINSTALL()   crash_uninstall()
+#else
+#define CRASH_STAGE(id)     ((void)0)
+#define CRASH_FRAME_TICK()  ((void)0)
+#define CRASH_UNINSTALL()   ((void)0)
+#endif
+/* Boot milestones, in the order main() passes them. The reported stage is the LAST one reached, so it
+ * brackets the fault between that milestone and the next. */
+#define CRASH_STAGE_BOOT       1   /* main() entered; nothing installed yet */
+#define CRASH_STAGE_BLIT_BIND  2   /* blitter probed + both object routes' tables placed in the free TPA */
+#define CRASH_STAGE_ASSETS     3   /* COURSES.DAT + GRAPHICS.GRA read and unpacked */
+#define CRASH_STAGE_SEED       4   /* the persistent RAM regions seeded from their baked defaults */
+#define CRASH_STAGE_SOUND      5   /* the 50 Hz VBL sound pump spliced into the TOS VBL queue */
+#define CRASH_STAGE_KEYBOARD   6   /* the IKBD ACIA vector taken (os.s kbd_isr) */
+#define CRASH_STAGE_DRAW       7   /* inside draw_frame */
+#define CRASH_STAGE_FLIP       8   /* inside show_surface (Setscreen + Vsync) */
 
 /* Consume a latched key press. The driving keys are polled as HELD state, which is what steering and
  * throttle want, but a momentary key (quit, restart, an F-key) cannot be read that way: the loop polls
@@ -448,6 +490,7 @@ static RmScene shell_scene(const Shell *s) {
  * draw order and the no-per-frame-clear invariant live in src/frame.c now (the buffers are cleared
  * once in main(); repainting over two-frames-old content is byte-identical to over zeros). */
 static void draw_frame(const Shell *s, Framebuffer *fb) {
+    CRASH_STAGE(CRASH_STAGE_DRAW);
     RmScene sc = shell_scene(s);
     rm_draw_frame(&sc, fb);
 }
@@ -794,6 +837,7 @@ static void census_dump(void) {
  * no caller repeats the derive-toggle bookkeeping. The C1 boundary wait (above) idles to one vblank
  * before the next even cadence slot; the Setscreen + Vsync then latch the flip ON that slot. */
 static void show_surface(Shell *s) {
+    CRASH_STAGE(CRASH_STAGE_FLIP);
     Framebuffer *fb = screen_buf(s->shown ^ 1);
 #ifdef RM_TAIL_CANARY
     canary_check(s->shown ^ 1);              /* debug: did this frame's draws eat the overdraw tail? */
@@ -803,6 +847,8 @@ static void show_surface(Shell *s) {
 #endif
     Setscreen(-1L, (long)fb->px, -1);        /* poke the base; the shifter latches it at the next vblank */
     Vsync();                                 /* land on the boundary vblank: the new buffer is now visible */
+    CRASH_FRAME_TICK();                      /* ... AFTER the Vsync: FRAME counts flips COMPLETED, so that
+                                              * a fault in the very first present still reports FRAME=0000 */
     s->shown ^= 1;
 #ifdef GAME_CADENCE_TRACE
     cadence_record();                        /* scratch: log this present's vblank span (before/after evidence) */
@@ -1086,6 +1132,206 @@ static void uninstall_sound(void) {
 void rm_dosound(uint16_t list_off) {
     Dosound(SND_DOSOUND + list_off);
 }
+
+#ifdef GAME_CRASH_REPORT
+/* ---- the on-target crash reporter ------------------------------------------------------------------
+ *
+ * Formats what crash.S snapshotted and prints it. Why this build exists, and how to read the report, is
+ * in render/atari/README.md ("Diagnosing a crash on real hardware") — told once, there.
+ *
+ * Everything here runs SUPERVISOR: crash.S enters at IPL 7 and never leaves supervisor mode, so the TOS
+ * low memory this reads needs no Supexec (and could not use one — Supexec returns to the CALLER's mode,
+ * and there is no sane caller left).
+ *
+ * KNOWN LIMIT: printing goes through GEMDOS/XBIOS, and neither is re-entrant. A fault taken INSIDE a TOS
+ * call — the floppy asset load is the realistic case — re-enters GEMDOS over its own half-finished state,
+ * and the report may never appear. That is why the first thing this does is force the background colour
+ * straight at the hardware: a solid CRASH_SIGNAL_RED screen with no text means "the fault was caught but
+ * the OS could not be used to print it", which is a different (and still useful) answer from bombs. */
+
+/* The exception stubs, the frame snapshot they fill, and the reporter's buffers — all in crash.S, so that
+ * this build leaves every other global at its shipping address (see crash.S's header). The `_end` labels
+ * are what bound the two buffers; there is deliberately no duplicated size constant on this side. */
+extern void crash_stub_2(void), crash_stub_3(void), crash_stub_4(void), crash_stub_5(void),
+            crash_stub_6(void), crash_stub_7(void), crash_stub_8(void);
+extern volatile uint16_t crash_vector, crash_ssw, crash_opcode, crash_sr;
+extern volatile uint32_t crash_fault, crash_pc, crash_usp;
+extern volatile uint32_t crash_regs[];        /* D0-D7 then A0-A6, in movem order */
+extern char crash_text[], crash_text_end[];
+extern uint32_t crash_old_vectors[], crash_old_vectors_end[];
+
+#define CRASH_REG_A0    8              /* crash_regs index of A0: the D-registers occupy 0..7 */
+#define CRASH_REG_COUNT_A 7            /* A0..A6 */
+#define CRASH_STACK_WORDS 3            /* longs dumped from the faulting stack: return address, args */
+#define SYS_PHYSTOP  (*(volatile uint32_t *)0x42EUL)   /* first byte past RAM — bounds the stack dump */
+
+#define SYS_V_BAS_AD (*(volatile uint32_t *)0x44EUL)   /* logical screen base: where the TOS console draws */
+#define SYS_SSHIFTMD (*(volatile uint16_t *)0x44CUL)   /* shifter resolution: 0 low / 1 medium / 2 high */
+#define SYS_SYSBASE  (*(volatile uint32_t *)0x4F2UL)   /* -> OSHEADER */
+#define OSHEADER_VERSION_OFF 2                         /* word: TOS version in BCD (0x0162 = TOS 1.62) */
+#define MFP_IERB      (*(volatile uint8_t *)0xFFFFFA09UL)
+#define MFP_IERB_ACIA 0x40                             /* channel 6 enable: the IKBD/MIDI ACIA interrupt */
+#define SR_SUPER_IPL3 0x2300                           /* supervisor, interrupts back on below the VBL/MFP */
+#define SR_SUPERVISOR 0x2000                           /* SR bit 13: the fault happened in supervisor mode */
+#define VIDEO_PAL0   (*(volatile uint16_t *)0xFFFF8240UL)  /* colour register 0 = the background/border */
+#define CRASH_SIGNAL_RED 0x0700                        /* "the reporter was reached" — see the KNOWN LIMIT */
+
+/* Vector -> stub, one row per fault taken. WHICH vectors, and why 9/10/11 are not among them, is
+ * documented at crash.S's head — the same list must not be argued in two places. */
+static const struct { short vector; void (*stub)(void); } crash_catches[] = {
+    {2, crash_stub_2}, {3, crash_stub_3}, {4, crash_stub_4}, {5, crash_stub_5},
+    {6, crash_stub_6}, {7, crash_stub_7}, {8, crash_stub_8},
+};
+#define CRASH_CATCH_COUNT (sizeof crash_catches / sizeof crash_catches[0])
+
+/* Bound by crash_old_vectors' own extent as well as the table's, so adding a row without widening the
+ * asm slot array truncates the install instead of writing past it. */
+static unsigned crash_catch_slots(void) {
+    unsigned slots = (unsigned)(crash_old_vectors_end - crash_old_vectors);
+    return slots < CRASH_CATCH_COUNT ? slots : CRASH_CATCH_COUNT;
+}
+
+static void crash_install(void) {
+    for (unsigned i = 0; i < crash_catch_slots(); i++)
+        crash_old_vectors[i] = (uint32_t)Setexc(crash_catches[i].vector, (long)crash_catches[i].stub);
+}
+
+/* Give TOS its fault vectors back, the mirror of crash_install — as kbd_remove mirrors kbd_install, and
+ * for the same reason the sound pump is detached before Pterm: after the TPA is freed these stubs are
+ * gone, and a vector still pointing at them sends the NEXT fault on this machine into whatever memory
+ * now sits there, instead of showing bombs. */
+static void crash_uninstall(void) {
+    for (unsigned i = 0; i < crash_catch_slots(); i++)
+        Setexc(crash_catches[i].vector, (long)crash_old_vectors[i]);
+}
+
+/* Report text, built by hand: freestanding build, no printf, and the report must not allocate or call
+ * back into anything the fault may have corrupted. Every helper takes the buffer end and stops there —
+ * on an already-wrecked machine an overrun would corrupt the very state being reported. */
+static char *crash_puts(char *p, char *end, const char *s) {
+    while (*s && p < end) *p++ = *s++;
+    return p;
+}
+
+static char *crash_hex(char *p, char *end, uint32_t value, int digits) {
+    for (int shift = (digits - 1) * 4; shift >= 0 && p < end; shift -= 4) {
+        uint32_t nibble = (value >> shift) & 0xf;
+        *p++ = (char)(nibble < 10 ? '0' + nibble : 'A' + (nibble - 10));
+    }
+    return p;
+}
+
+/* `LABEL=xxxx` + a trailing space, the report's one repeated shape. */
+static char *crash_field(char *p, char *end, const char *label, uint32_t value, int digits) {
+    p = crash_puts(p, end, label);
+    p = crash_hex(p, end, value, digits);
+    return crash_puts(p, end, " ");
+}
+
+#define CRASH_NEWLINE "\r\n"
+#define CRASH_LOG_NAME "CRASH.TXT"     /* the report, written beside the .PRG so it can be sent verbatim */
+#define VT52_CLEAR_HOME "\033E"        /* the TOS console's clear-screen-and-home escape */
+#define CRASH_PAL_BLACK 0x0000
+#define CRASH_PAL_WHITE 0x0777         /* every non-zero pen white, so the text shows in any resolution */
+
+/* Called by crash.S with the frame already snapshotted, on its own stack, at IPL 7. Never returns. */
+void crash_report(void) {
+    VIDEO_PAL0 = CRASH_SIGNAL_RED;   /* FIRST, and straight at the hardware: see the KNOWN LIMIT above */
+
+    /* Detach OUR two interrupt hooks before letting interrupts back in — the printing below needs them,
+     * but the sound pump and the IKBD handler are still installed, and whichever of them faulted would
+     * fault again on the way to the screen. Clearing _nvbls parks the whole VBL queue (the pump is its
+     * slot 0) and masking MFP channel 6 stops the ACIA; both are one store, safe on a wrecked machine. */
+    SYS_NVBLS = 0;
+    MFP_IERB = (uint8_t)(MFP_IERB & ~MFP_IERB_ACIA);
+
+    uint32_t logical_screen = SYS_V_BAS_AD;
+    uint16_t resolution = SYS_SSHIFTMD;
+    uint16_t tos_version = *(volatile uint16_t *)(uintptr_t)(SYS_SYSBASE + OSHEADER_VERSION_OFF);
+    /* A PC outside this program's TEXT — a jump through a null/garbage pointer, or a fault taken inside
+     * TOS — has no meaningful offset, and reporting the wrapped subtraction would send the reader to a
+     * confidently wrong symbol. Say so instead. */
+    uint32_t pc = crash_pc;
+    int pc_in_text = pc >= basepage->tbase && pc - basepage->tbase < basepage->tlen;
+
+    __asm__ volatile("move.w %0,%%sr" :: "i"(SR_SUPER_IPL3) : "memory");
+
+    /* The game has been flipping its OWN buffers, so the console's logical screen is not the one on
+     * display; put it back before printing to it. */
+    Setscreen(-1L, (long)logical_screen, -1);
+    static const uint16_t crash_palette[16] = {
+        CRASH_PAL_BLACK, CRASH_PAL_WHITE, CRASH_PAL_WHITE, CRASH_PAL_WHITE,
+        CRASH_PAL_WHITE, CRASH_PAL_WHITE, CRASH_PAL_WHITE, CRASH_PAL_WHITE,
+        CRASH_PAL_WHITE, CRASH_PAL_WHITE, CRASH_PAL_WHITE, CRASH_PAL_WHITE,
+        CRASH_PAL_WHITE, CRASH_PAL_WHITE, CRASH_PAL_WHITE, CRASH_PAL_WHITE,
+    };
+    Setpalette(crash_palette);
+    Vsync();
+
+    char *end = crash_text_end - 1;               /* leave room for the NUL Cconws stops on */
+    char *p = crash_text;
+    p = crash_puts(p, end, VT52_CLEAR_HOME "*** BUGGYBOY CRASH ***" CRASH_NEWLINE CRASH_NEWLINE);
+    p = crash_field(p, end, "VEC=", crash_vector, 2);
+    p = crash_field(p, end, "STAGE=", crash_stage_id, 2);
+    p = crash_field(p, end, "FRAME=", crash_frames, 4);
+    p = crash_puts(p, end, CRASH_NEWLINE);
+    p = crash_field(p, end, "PC=", pc, 8);
+    if (pc_in_text) p = crash_field(p, end, "TEXT+", pc - basepage->tbase, 8);
+    else            p = crash_puts(p, end, "TEXT+OUTSIDE ");
+    p = crash_puts(p, end, CRASH_NEWLINE);
+    p = crash_field(p, end, "FAULT=", crash_fault, 8);
+    p = crash_field(p, end, "OP=", crash_opcode, 4);
+    p = crash_puts(p, end, CRASH_NEWLINE);
+    p = crash_field(p, end, "SR=", crash_sr, 4);
+    p = crash_field(p, end, "SSW=", crash_ssw, 4);
+    p = crash_puts(p, end, CRASH_NEWLINE);
+    p = crash_field(p, end, "TOS=", tos_version, 4);
+    p = crash_field(p, end, "REZ=", resolution, 1);
+#ifdef RM_BLITTER
+    p = crash_field(p, end, "BLITTER=", (uint32_t)g_have_blitter, 1);
+#endif
+    p = crash_puts(p, end, CRASH_NEWLINE);
+
+    /* The address registers: the fault address alone only says "a bad pointer was dereferenced"; these
+     * say WHICH one, and the stack words below give the faulting function's return address and its
+     * arguments — together that is the difference between a symbol and a diagnosis. */
+    for (int i = 0; i < CRASH_REG_COUNT_A; i++) {
+        char label[4] = {'A', (char)('0' + i), '=', '\0'};
+        p = crash_field(p, end, label, crash_regs[CRASH_REG_A0 + i], 8);
+        if (i % 2) p = crash_puts(p, end, CRASH_NEWLINE);
+    }
+    p = crash_puts(p, end, CRASH_NEWLINE);
+    /* The stack words are the faulting function's return address and arguments — but ONLY for a fault
+     * taken in user mode, where %usp IS the faulting stack. A supervisor-mode fault (the VBL sound pump,
+     * kbd_isr, a Supexec body) leaves %usp pointing at a stale user stack, and dumping it would fabricate
+     * a return address from an unrelated frame. Say which case this is rather than print a plausible lie. */
+    if (crash_sr & SR_SUPERVISOR) {
+        p = crash_puts(p, end, "SUPERVISOR FAULT - NO USER STACK");
+    } else {
+        p = crash_field(p, end, "USP=", crash_usp, 8);
+        /* Reading it must not fault in turn: only follow an even pointer inside RAM. */
+        if (!(crash_usp & 1) && crash_usp + CRASH_STACK_WORDS * 4 <= SYS_PHYSTOP) {
+            const volatile uint32_t *stack = (const volatile uint32_t *)(uintptr_t)crash_usp;
+            for (int i = 0; i < CRASH_STACK_WORDS; i++) p = crash_field(p, end, "", stack[i], 8);
+        }
+    }
+    p = crash_puts(p, end, CRASH_NEWLINE CRASH_NEWLINE "REPORT THIS, THEN POWER CYCLE." CRASH_NEWLINE);
+    *p = '\0';
+    Cconws(crash_text);
+
+    /* ...and to a file, so the report can be sent verbatim instead of photographed off a TV. Written
+     * AFTER the screen: if GEMDOS is the thing that is wedged (see the KNOWN LIMIT), the player still
+     * has the text in front of them. A failed Fcreate is ignored — the drive may be write-protected,
+     * which is exactly the case the screen copy covers. */
+    long handle = Fcreate(CRASH_LOG_NAME, 0);
+    if (handle >= 0) {
+        Fwrite((short)handle, (long)(p - crash_text), crash_text);
+        Fclose((short)handle);
+    }
+
+    for (;;) {}   /* hold the report on screen: there is nothing safe left to return to */
+}
+#endif /* GAME_CRASH_REPORT */
 
 /* The BOOT fast path (skip the leg select, boot straight into a leg, dump frame 0). Enabled ONLY for
  * the golden harness (GOLDEN_BOOT_LEG=N — run_golden.py builds this variant to pin the frame-0 golden
@@ -1551,6 +1797,19 @@ static uint16_t auto_intermission_input(void) {
 #endif
 
 void main(void) {
+#ifdef GAME_CRASH_REPORT
+    crash_install();    /* FIRST: from here on a fault prints where it happened instead of bombing */
+#endif
+    CRASH_STAGE(CRASH_STAGE_BOOT);
+#ifdef GAME_CRASH_SELFTEST
+    /* Prove the reporter itself: fault ON PURPOSE with the same exception the bomb screen shows (3 =
+     * a word access on an odd address). Without this the reporter is only ever exercised by the bug it
+     * exists to diagnose. It has to be inline asm — GCC can see that a plain `*(uint16_t *)odd = 0` is
+     * unaligned and legalises it into two BYTE stores, which is precisely the fault being asked for.
+     * Placed AFTER the milestone above so the report carries a real CRASH_STAGE_* value, which is what
+     * lets run_crash_selftest.py pin the breadcrumb mechanism and not just the PC. */
+    __asm__ volatile("move.w #0,(%0)" :: "a"((uint8_t *)crash_text + 1) : "memory");
+#endif
 #ifdef RM_BLITTER
     /* Unified ST/STE binary (PERF30 C4): probe for a blitter ONCE and bind BOTH fine-x object routes —
      * objshift2 and the colour-indexed engine — to the hardware blitter when present, else to the 68000
@@ -1574,11 +1833,12 @@ void main(void) {
 #ifdef GAME_CADENCE_TRACE
     cadence_tpa_free = tpa_free_bytes;
 #endif
+    CRASH_STAGE(CRASH_STAGE_BLIT_BIND);
 #endif
 #ifdef GAME_STE_SELFTEST
     /* Measurement build: reproduce rm_blit_objshift2 with the blitter and dump the XOR diff (all-zero ==
      * byte-exact) to SCREEN.BIN for run_ste_selftest.py. Assumes --machine ste; no game boot. */
-    { long mismatch; dump_frame((Framebuffer *)blitter_selftest(&mismatch)); return; }
+    { long mismatch; dump_frame((Framebuffer *)blitter_selftest(&mismatch)); CRASH_UNINSTALL(); return; }
 #endif
     RmArena arena;
     int assets_ok = load_assets(&arena);
@@ -1608,10 +1868,12 @@ void main(void) {
          * missing data file. `tables_bound = 0` is the existing honest-decline channel. */
         dump_frame((Framebuffer *)blitter_sweep(&mismatch, assets_ok && g_have_blitter,
                                                 sweep_stage_leg_dash, &sweep_ctx));
+        CRASH_UNINSTALL();
         return;
     }
 #endif
-    if (!assets_ok) return;
+    if (!assets_ok) { CRASH_UNINSTALL(); return; }   /* a missing data file is the LIKELIEST exit here */
+    CRASH_STAGE(CRASH_STAGE_ASSETS);
 
     /* Seed the two persistent RAM regions from their baked defaults (the score record + hi-score table
      * live here; the flow mutates them). */
@@ -1620,6 +1882,7 @@ void main(void) {
     for (unsigned i = 0; i < sizeof fixture_score_line; i++) score_line_ram[i] = fixture_score_line[i];
     for (unsigned i = 0; i < sizeof buf_a_ram; i++) buf_a_ram[i] = arena.tables[i];
     for (unsigned i = 0; i < sizeof fuel_mask_ram; i++) fuel_mask_ram[i] = fixture_fuel_mask[i];
+    CRASH_STAGE(CRASH_STAGE_SEED);
 
     HudState hud = {0};
     const HudAssets hud_assets = {
@@ -1793,6 +2056,7 @@ void main(void) {
      * silent — snd is PARKED — so it is harmless for the golden / autodrive fast-path frame below; a
      * trigger sets it RUNNING and from then on the VBL writes rm_refresh's stream to the YM2149. */
     install_sound(&snd);
+    CRASH_STAGE(CRASH_STAGE_SOUND);
 
     long old_kbd_vector;
 #ifdef BOOT_FAST_LEG
@@ -1810,12 +2074,15 @@ void main(void) {
     dump_frame(screen_buf(s->shown));    /* the golden frame-0 dump (before the keyboard is taken) */
 #endif
     old_kbd_vector = kbd_install();
+    CRASH_STAGE(CRASH_STAGE_KEYBOARD);   /* ... on BOTH boot paths, or the milestone is missing from the
+                                          * fast-path variants and a post-keyboard fault looks pre-keyboard */
     flow_event(RM_FLOW_EVT_LEG_START, BOOT_FAST_LEG, 0);
     int booted = 1;
 #else
     /* SHIPPING boot: straight into the leg select (init_playfield), exactly as the original game boots
      * (decomp.c main @0x10100). The loop top runs rm_flow_leg_select; fire starts the chosen leg. */
     old_kbd_vector = kbd_install();
+    CRASH_STAGE(CRASH_STAGE_KEYBOARD);
     int booted = 0;
 #endif
     for (; !s->quit; booted = 0) {
@@ -1931,6 +2198,7 @@ void main(void) {
 
     uninstall_sound();   /* detach the VBL pump before Pterm, so TOS never calls it in the freed TPA */
     kbd_remove(old_kbd_vector);
+    CRASH_UNINSTALL();   /* ... and the fault vectors, for exactly the same reason */
     Setscreen(-1L, tos_screen, -1);
     Setpalette(tos_palette);
     Vsync();
