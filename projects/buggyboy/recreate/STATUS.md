@@ -194,9 +194,10 @@ Physbase/Logbase → OS_SCREEN_BASE, Malloc hands out a real in-image block from
 reconstructed `gem_aes`/`gem_vdi`); realistic low-res values into the param block's `intout`.
 **GEMDOS Fopen/Fread/Fclose** are modeled by `os_fopen`/`os_fread`/`os_fclose` over an in-image
 staged-file table (the harness stages the real `COURSES.DAT`/`GRAPHICS.GRA` bytes; `IMAGE_SIZE`
-is 1 MiB to hold them + the load buffers). Anything still not faithfully modeled (GEMDOS
-**Super**, an **unmodeled GEM/VDI opcode**, an **unstaged file**, unknown fn) is counted and
-`emu.run` **raises** — a function that hits one cannot be falsely "verified".
+is 1 MiB to hold them + the load buffers). Anything still not faithfully modeled (an **unmodeled
+GEM/VDI opcode**, an **unstaged file**, a **non-console BIOS device**, unknown fn) is counted and
+`emu.run` **raises** — a function that hits one cannot be falsely "verified". The full per-trap
+model, and what each one does not capture, is `tools/recreate_kit/TRAP_MODEL.md`.
 
 ## Side-effect ledger + coverage-gap (off-image sound/OS triggers)
 

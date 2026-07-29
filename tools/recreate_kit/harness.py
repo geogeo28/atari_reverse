@@ -61,13 +61,34 @@ def label(addr):
 # to os.h; _vet_os_memory_map() below checks the addresses actually fit the bound project's image.
 # OS_HEAP_BASE is the one piece of the mirror that lives in oracle/emu.py instead (the per-run
 # Malloc guard there needs it); re-exported so `harness.OS_HEAP_BASE` still reads as one map.
+OS_IMAGE_SIZE = 0x100000     # image length the C model bounds its copies against (vetted below)
 OS_HEAP_BASE = emu.OS_HEAP_BASE   # modeled Malloc bump-allocates upward from here
 OS_FS_TABLE = 0xBF000        # staged-file table base
 OS_FS_STAGING = 0xC0000      # raw file bytes grow upward from here
-OS_FS_ENTRY = 32             # per-entry: name[16] | staging u32 | size u32 | cursor u32 | open u32
+OS_FS_ENTRY = 36             # name[16] | staging u32 | size u32 | cursor u32 | open u32 | cap u32
+OS_FS_SLOTS = 8              # entries in the table; staging a ninth file would overrun it
 OS_FS_NAME = 16
+# Field offsets within one entry. stage_files() writes each field by name rather than concatenating
+# them in order, so that reordering a field in os.h fails test_os_memory_map.py's pin loudly
+# instead of drifting silently — which is exactly how the capacity field was first missed.
+OS_FS_OFF_STAGING = 16       # u32: where this file's bytes live in the staging area
+OS_FS_OFF_SIZE = 20          # u32: current length in bytes
+OS_FS_OFF_CURSOR = 24        # u32: read/write position
+OS_FS_OFF_OPEN = 28          # u32: nonzero while a handle is open on this slot
+OS_FS_OFF_CAPACITY = 32      # u32: staging bytes reserved; os_fwrite refuses to exceed it
 OS_FS_FIRST_HANDLE = 6
 OS_DOSOUND_LOG_MAX = 256     # ledger cap, on BOTH sides (shim.c's mirror and src/dosound_log.c)
+
+# The harness-poked model state (os.h, 0x600..0x61f): hardware whose real value is time-varying is
+# an ordinary in-image test input, so both cores read the same bytes. See TRAP_MODEL.md.
+OS_CON_PENDING = 0x600       # u32: nonzero = a character is waiting at the console (Bconstat)
+OS_CON_CHAR = 0x604          # u32: the longword Bconin returns (scancode << 16 | ascii)
+OS_RANDOM_VALUE = 0x608      # u32: what XBIOS Random returns (masked to 24 bits)
+OS_PSG_REGS = 0x610          # the YM2149 register file that XBIOS Giaccess reads and writes
+OS_PSG_NREGS = 16
+OS_PSG_WRITE = 0x80          # bit 7 of Giaccess's register argument selects write over read
+OS_SUPER_TOKEN = 0x00535550  # the cookie GEMDOS Super(0) returns; Super(cookie) restores
+OS_POKE_BLOCK_END = OS_PSG_REGS + OS_PSG_NREGS   # first address above the poked block (0x620)
 
 
 # Does the modeled Malloc heap sit inside this project's own program? If so, any block the model
@@ -113,30 +134,83 @@ def _vet_os_memory_map():
             f"the stack guard {emu.STACK_GUARD_LO:#x} — staged file bytes would land in the band "
             f"the differential drops. Raise image_size in {_CFG.dir / project.CONFIG_NAME}, or "
             f"move the region down.")
+    if loader.LOAD_BASE < OS_POKE_BLOCK_END:
+        raise RuntimeError(
+            f"the harness-poked input block ({OS_CON_PENDING:#x}..{OS_POKE_BLOCK_END - 1:#x}, "
+            f"tools/recreate_kit/include/os.h) is not below {_CFG.name}'s program, which loads at "
+            f"{loader.LOAD_BASE:#x} — a staged keystroke, Random value or PSG register would be "
+            f"poked ON TOP of its own code with no diagnostic. Move that block (and its Python "
+            f"mirror above) down, or raise load_base in {_CFG.dir / project.CONFIG_NAME}.")
+    if OS_IMAGE_SIZE != loader.IMAGE_SIZE:
+        raise RuntimeError(
+            f"OS_IMAGE_SIZE ({OS_IMAGE_SIZE:#x}, tools/recreate_kit/include/os.h) is not "
+            f"{_CFG.name}'s image_size ({loader.IMAGE_SIZE:#x}) — os_fread/os_fwrite bound their "
+            f"copies against the C constant, so they would refuse a legitimate transfer above it "
+            f"(or, were it larger, copy past the end of the buffer). Keep the two equal: change "
+            f"image_size in {_CFG.dir / project.CONFIG_NAME}, or OS_IMAGE_SIZE and its Python "
+            f"mirror above.")
 
 
 _vet_os_memory_map()
 
 
+def console_key(char, scancode=0):
+    """Pokes staging ONE pending console keystroke, for Bconstat / Bconin / Crawio.
+
+    ``char`` is the ASCII character the program reads; ``scancode`` its IKBD scancode, which sits in
+    the high word the way TOS returns it. Bconin consumes the key, so one call is one keypress.
+    The pending flag and the character are built together because a test that set only one would
+    leave the console half-armed — armed with a NUL, or holding a character nothing reports.
+    """
+    return {OS_CON_PENDING: (1).to_bytes(4, "big"),      # nonzero = a character is waiting
+            OS_CON_CHAR: ((scancode << 16) | ord(char)).to_bytes(4, "big")}
+
+
+def psg_regs(values):
+    """Pokes staging the YM2149 register file XBIOS Giaccess reads (os.h OS_PSG_REGS).
+
+    ``values`` = {register: byte}. Every register not listed reads 0 — the value a fresh image
+    already has, since the model asserts nothing about the chip's power-on contents. The whole file
+    is one poke, so a partially written file is not expressible.
+    """
+    regfile = bytearray(OS_PSG_NREGS)
+    for reg, value in values.items():
+        assert 0 <= reg < OS_PSG_NREGS, f"YM2149 register {reg} is outside 0..{OS_PSG_NREGS - 1}"
+        regfile[reg] = value
+    return {OS_PSG_REGS: bytes(regfile)}
+
+
 def stage_files(files):
     """Lay staged files into FS-table + staging pokes so os_fopen/os_fread can serve them.
 
-    ``files`` = [(name, data), ...] in slot order. Returns (pokes, handles), where
-    handles[name] is the handle os_fopen(name) will return. Merge ``pokes`` into a test's
-    poke dict. If these constants drift from os.h the open/read test fails (the cross-language
-    pin), since os_fopen would look at the wrong table address.
+    ``files`` = [(name, data), ...] or [(name, data, capacity), ...] in slot order; ``capacity`` is
+    the staging space RESERVED for the file — what os_fwrite may grow it to — and defaults to the
+    data's own length, which is all a read-only file needs. Returns (pokes, handles), where
+    handles[name] is the handle os_fopen(name) will return. Merge ``pokes`` into a test's poke
+    dict. If these constants drift from os.h the open/read test fails (the cross-language pin),
+    since os_fopen would look at the wrong table address.
     """
+    assert len(files) <= OS_FS_SLOTS, (
+        f"{len(files)} files staged into a {OS_FS_SLOTS}-slot table — the extra entries would be "
+        f"written past its end, over the staging area os_fread then serves bytes from")
     pokes, handles, off = {}, {}, OS_FS_STAGING
-    for slot, (name, data) in enumerate(files):
+    for slot, spec in enumerate(files):
+        name, data = spec[0], spec[1]
+        capacity = spec[2] if len(spec) > 2 else len(data)
         nb = name.encode("ascii")
         assert len(nb) < OS_FS_NAME, f"{name!r} too long for the {OS_FS_NAME}-byte name field"
-        entry = (nb.ljust(OS_FS_NAME, b"\0")
-                 + off.to_bytes(4, "big") + len(data).to_bytes(4, "big")
-                 + b"\0" * 8)                          # cursor = 0, open = 0
-        pokes[OS_FS_TABLE + slot * OS_FS_ENTRY] = entry
+        assert capacity >= len(data), (
+            f"{name!r}: capacity {capacity} is less than its own {len(data)} staged bytes")
+        entry = bytearray(OS_FS_ENTRY)
+        entry[:len(nb)] = nb                           # the rest of the name field stays NUL
+        for field, value in ((OS_FS_OFF_STAGING, off), (OS_FS_OFF_SIZE, len(data)),
+                             (OS_FS_OFF_CURSOR, 0), (OS_FS_OFF_OPEN, 0),
+                             (OS_FS_OFF_CAPACITY, capacity)):
+            entry[field:field + 4] = value.to_bytes(4, "big")
+        pokes[OS_FS_TABLE + slot * OS_FS_ENTRY] = bytes(entry)
         pokes[off] = bytes(data)
         handles[name] = OS_FS_FIRST_HANDLE + slot
-        off += len(data)
+        off += capacity                    # step by the RESERVATION: two files must not overlap
         assert off <= emu.STACK_GUARD_LO, "staged files overflowed the stack guard"
     return pokes, handles
 

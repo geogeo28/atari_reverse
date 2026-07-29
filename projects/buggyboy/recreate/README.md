@@ -301,11 +301,13 @@ variable in the caller. It shipped a 3-bombs-on-real-hardware crash in `remaster
 Hatari pin because EmuTOS happens to leave a benign value in `%d2`. The oracle cannot see this class
 at all: it services traps in-process and never clobbers anything.
 
-Anything **not faithfully modeled** — GEMDOS `Super`, an unmodeled GEM/VDI opcode, a file that
-wasn't staged, or an unknown function number — is counted, and `emu.run` **raises** rather than
-diff a fabricated result. So an OS-bound function can only be marked verified once every OS call
-it makes is genuinely modeled. The remaining gap is `Malloc`: it bump-allocates small blocks, so
-`main`'s large screen-buffer allocation needs it pointed at a real in-image block first.
+Anything **not faithfully modeled** — an unmodeled GEM/VDI opcode, a file that wasn't staged, a BIOS
+device with no console state, or an unknown function number — is counted, and `emu.run` **raises**
+rather than diff a fabricated result. (Which traps *are* modeled, and what each model deliberately
+does not capture, is `tools/recreate_kit/TRAP_MODEL.md`.) So an OS-bound function can only be marked
+verified once every OS call it makes is genuinely modeled. The remaining gap is `Malloc`: it
+bump-allocates small blocks, so `main`'s large screen-buffer allocation needs it pointed at a real
+in-image block first.
 
 Two layers of tests guard this model. `test/test_os.py` drives tiny hand-assembled 68k stubs
 through the oracle to pin the shim's semantics at the edges — Malloc bump/rounding, the Fread

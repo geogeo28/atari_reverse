@@ -53,6 +53,8 @@ _LIB.osh_psg_regs.restype = _u8p
 _LIB.osh_psg_vals.restype = _u8p
 _LIB.osh_dosound_count.restype = ctypes.c_uint32
 _LIB.osh_dosound_args.restype = _u32p
+_LIB.osh_psg_mixed_paths.restype = ctypes.c_int
+_LIB.osh_psg_unmodeled.restype = ctypes.c_uint32
 _LIB.osh_cov_enable.argtypes = [ctypes.c_int]
 _LIB.osh_cov_visited.argtypes = [ctypes.c_uint32]
 _LIB.osh_cov_visited.restype = ctypes.c_int
@@ -197,9 +199,27 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
         where = f"checkpoint {stop_pc:#x}" if stop_pc else "rts"
         raise RuntimeError(f"function @ {entry:#x} did not reach {where} within {max_insns} "
                            f"instructions; final memory is mid-execution, not trustworthy")
+    # Three independent reasons a run's result may be fabricated. They are reported TOGETHER rather
+    # than as a first-match: a run can hit more than one, and naming only the first sends the reader
+    # off to fix that one and hit the identical message again. The two PSG causes are named
+    # specifically because otherwise they read as a puzzling "unmodeled OS call" on a run whose
+    # every trap WAS modeled. See tools/recreate_kit/TRAP_MODEL.md, Phase 3.
+    causes = []
     if _LIB.osh_unmodeled():
-        raise RuntimeError(f"function @ {entry:#x} used an unmodeled OS call "
-                           f"(e.g. Fread/Supexec/GEM); its result is fabricated, not trustworthy")
+        causes.append("an OS call (e.g. Bconin with no key staged, an unstaged file, GEM) "
+                      "has no model")
+    if _LIB.osh_psg_mixed_paths():
+        causes.append("it used XBIOS Giaccess AND the PSG ports ($ff8800/$ff8802) directly in one "
+                      "run — the modeled register file only sees Giaccess, so a read from it may "
+                      "be stale")
+    if _LIB.osh_psg_unmodeled():
+        causes.append("it accessed the PSG ports ($ff8800/$ff8802) in a way the model cannot serve "
+                      "— a READ (the ledger records writes only, so the selected register cannot "
+                      "be read back), or an access outside the byte select/data protocol")
+    if causes:
+        raise RuntimeError(f"function @ {entry:#x} hit unmodeled OS behaviour: "
+                           + "; also, ".join(causes)
+                           + "; its result is fabricated, not trustworthy")
 
     n = _LIB.osh_num_writes()
     waddr = _LIB.osh_write_addrs()

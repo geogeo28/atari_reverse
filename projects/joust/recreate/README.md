@@ -94,10 +94,26 @@ stand-in for `JOUST.MUR` is the PRG's *own* data segment (`img[0x23aae : 0x23aae
 differential only requires that both sides see identical staged bytes, not that the bytes are the
 real music. That stand-in must never be described as authentic music data.
 
-## Not yet modelled
+## The TOS traps Joust needs
 
-The kit's TOS shim covers what BuggyBoy needed. Joust also traps `Super`, `Giaccess`, `Fcreate`,
-`Fwrite`, `Random`, `Bconstat` and `Bconin`, none of which the shim models — the sound, input and
-high-score-save layers wait on that work. The XBIOS `Dosound` ledger the harness compares off-image
-sound against (Joust has four `Dosound` sites) is kit-wide — `tools/recreate_kit/src/dosound_log.c`,
-linked into every candidate — so the sound layer is unblocked on that front at least.
+The kit's shim originally covered only what BuggyBoy needed. The seven Joust also traps — `Super`,
+`Giaccess`, `Fcreate`, `Fwrite`, `Random`, `Bconstat`, `Bconin` — are now modelled kit-wide;
+`tools/recreate_kit/TRAP_MODEL.md` records what each one does and, per trap, what it deliberately
+does **not** capture. `test/test_os_traps.py` pins the semantics with hand-assembled 68000 stubs.
+Read the "not captured" notes before reconstructing a trap-bound function: two of them bound what
+can be verified at all — a run delivers at most one console keystroke, and the whole program
+executes in supervisor mode, so Joust's floppy routine never takes its user-mode `Super` path.
+
+**The raw-floppy routine at `0x152dc` is unverifiable, not merely pending — leave it off the
+reconstruction list.** The `Super` limitation above is the weaker one. The routine also reads the
+PSG select port directly (`move.b $ff8800,d1` at `0x15544`), and the kit rejects **any** direct PSG
+read on its own: the ledger records writes only, so there is nothing correct to return. That
+rejection does not depend on the mixed-path guard, so *no* `emu.run` reaching that instruction can
+go green, whatever else the run does. It is blocked on the oracle gaining a real PSG read model, not
+on someone writing the C. Do not "fix" a rejection by narrowing either guard — that restores the
+fabricated `0` read they exist to prevent (`tools/recreate_kit/TRAP_MODEL.md`, Phase 3).
+
+The XBIOS `Dosound` ledger the harness compares off-image sound against (Joust has four `Dosound`
+sites) is kit-wide — `tools/recreate_kit/src/dosound_log.c`, linked into every candidate.
+`Giaccess`, by contrast, needs no ledger: it reads and writes an in-image register file, so the
+differential covers it directly.

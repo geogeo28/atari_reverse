@@ -42,6 +42,12 @@ void osh_prof_reset(void)    { for (uint32_t i = 0; i < PROF_SIZE / 2; i++) g_pr
 const uint32_t *osh_prof_data(void)  { return g_prof; }
 uint32_t        osh_prof_slots(void) { return PROF_SIZE / 2; }
 
+/* The 68000 has a 24-bit address bus, so the top byte of an address is ignored: $ffff8800 and
+ * $fffffc00 reach the same hardware as $ff8800 and $fffc00. Every hardware-address comparison below
+ * masks with this first, so the idiom a game uses to reach a register cannot decide whether the
+ * guard sees it. */
+#define BUS_ADDR_MASK 0xffffffu
+
 /* --- IKBD 6850 ACIA (keyboard/joystick), $fffffc00/02 -> 24-bit bus alias $fffc00/02 -----
  * read_joystick busy-waits on the status TDRE bit then sends a command; the joystick reply
  * arrives via an interrupt we don't run (input state is instead scripted as an image global —
@@ -51,22 +57,6 @@ uint32_t        osh_prof_slots(void) { return PROF_SIZE / 2; }
 #define IKBD_STATUS 0xfffc00
 #define IKBD_TX_RDY 0x02        /* TDRE: transmit register empty */
 
-/* --- memory callbacks: big-endian, bounds-checked to the image --- */
-unsigned int m68k_read_memory_8(unsigned int a) {
-    if (a < g_size) return g_mem[a];
-    if ((a & 0xffffff) == IKBD_STATUS) return IKBD_TX_RDY;
-    return 0;
-}
-unsigned int m68k_read_memory_16(unsigned int a) {
-    return a + 1 < g_size ? (unsigned)(g_mem[a] << 8 | g_mem[a + 1]) : 0;
-}
-unsigned int m68k_read_memory_32(unsigned int a) {
-    if (a + 3 >= g_size) return 0;
-    return (unsigned)(g_mem[a] << 24 | g_mem[a + 1] << 16 | g_mem[a + 2] << 8 | g_mem[a + 3]);
-}
-
-static void logw(uint32_t a) { if (g_wn < MAX_WRITES) g_waddr[g_wn++] = a; }
-
 /* --- PSG (YM2149) capture -----------------------------------------------------------
  * The sound driver talks to the PSG by writing a register number to $ff8800 (select
  * latch) then the value to $ff8802 (data). Those addresses sit above the 1 MiB image, so
@@ -74,11 +64,77 @@ static void logw(uint32_t a) { if (g_wn < MAX_WRITES) g_waddr[g_wn++] = a; }
  * tools read after each REFRESH run — the register stream that drives a Python YM2149. */
 #define PSG_SELECT 0xff8800   /* register-select latch (68000's 24-bit bus aliases $ffff8800) */
 #define PSG_DATA   0xff8802   /* data port */
+/* The ST decodes the YM2149 incompletely: it answers across the whole $ff8800..$ff88ff block, of
+ * which the two addresses above are the canonical pair. The guards below cover the BLOCK, not the
+ * pair — a driver reaching the chip through a mirror is using the direct path just as much, and
+ * guarding only the pair would let it disarm the mixed-path check. */
+#define PSG_BLOCK_END 0xff8900
 #define MAX_PSG    4096
 static uint8_t  g_psg_reg[MAX_PSG];
 static uint8_t  g_psg_val[MAX_PSG];
 static uint32_t g_psgn;        /* captured (reg,val) writes this run */
 static uint8_t  g_psg_latch;   /* register selected by the last $ff8800 write */
+
+/* Which of the two PSG paths this run used. The readable register file (os.h OS_PSG_REGS) is fed
+ * by XBIOS Giaccess only — a direct $ff8800/$ff8802 access goes to the off-image ledger above (or,
+ * for a read, is not modeled at all) and leaves the file stale — so a run that uses BOTH cannot be
+ * served a correct Giaccess read. Rather than answer from a register file we know is out of date,
+ * count the run unmodeled and let emu.run reject it with the diagnostic osh_psg_mixed_paths backs.
+ * Joust reaches both (its sound driver calls Giaccess; its floppy routine at image 0x1553c selects
+ * and rewrites PSG port A directly), so this is a live guard, not a hypothetical one. */
+static uint32_t g_psg_direct;          /* direct $ff8800/$ff8802 accesses this run (any width) */
+static uint32_t g_psg_giaccess_calls;  /* XBIOS Giaccess traps served this run */
+int osh_psg_mixed_paths(void) { return g_psg_direct && g_psg_giaccess_calls; }
+
+/* Direct PSG accesses the model cannot serve at all (counted separately from g_psg_direct, which
+ * merely arms the mixed-path guard). osh_run rejects the whole run on either, rather than let it be
+ * verified against a fabricated value. Two kinds:
+ *   - ANY read of either port. Reading $ff8800 reads back the selected register on real hardware,
+ *     and the ledger records writes only, so there is nothing correct to return: serving 0 forces a
+ *     read-modify-write's preserved bits to zero (Joust's drive-select at image 0x15544 does
+ *     exactly `move.b $ff8800,d1; move.b d1,d2; and.b #$f8,d1`) and a reconstruction of it could be
+ *     "verified" against that fabricated 0. That rejection stands ALONE, so the enclosing floppy
+ *     routine at 0x152dc can never be differentially verified — see TRAP_MODEL.md.
+ *   - ANY OTHER access to the chip's address block. Only the BYTE protocol on the canonical pair
+ *     (select latch, then data) is modeled — not the odd-address decoding a `move.w #$0e00,$ff8800`
+ *     relies on, and not the mirrors. Tallying these is also what stops such an idiom from slipping
+ *     past the byte callback's equality test and silently DISARMING the mixed-path guard. Neither
+ *     game does it (Joust's three direct accesses are byte-sized and port-aligned; BuggyBoy reaches
+ *     the ports by `lea` + byte ops), so the guard no longer rests on that property of the inputs. */
+static uint32_t g_psg_unmodeled;
+
+/* Does an access of `n` bytes at `a` fall in the YM2149's address block? */
+static int psg_block_touched(uint32_t a, uint32_t n) {
+    uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff88xx to $ff88xx */
+    return lo < PSG_BLOCK_END && lo + n > PSG_SELECT;
+}
+
+/* Tally a PSG access the model cannot serve (see g_psg_unmodeled). Callers reach this only after
+ * the in-image fast path has missed, so it costs nothing on a normal access. */
+static void psg_note_unmodeled(uint32_t a, uint32_t n) {
+    if (!psg_block_touched(a, n)) return;
+    g_psg_direct++;                                /* it is still a use of the direct path */
+    g_psg_unmodeled++;
+}
+
+/* --- memory callbacks: big-endian, bounds-checked to the image --- */
+unsigned int m68k_read_memory_8(unsigned int a) {
+    if (a < g_size) return g_mem[a];
+    if ((a & BUS_ADDR_MASK) == IKBD_STATUS) return IKBD_TX_RDY;
+    psg_note_unmodeled(a, 1);
+    return 0;                                      /* off-image, like any unmapped address */
+}
+unsigned int m68k_read_memory_16(unsigned int a) {
+    if (a + 1 < g_size) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
+    psg_note_unmodeled(a, 2);
+    return 0;
+}
+unsigned int m68k_read_memory_32(unsigned int a) {
+    if (a + 3 >= g_size) { psg_note_unmodeled(a, 4); return 0; }
+    return (unsigned)(g_mem[a] << 24 | g_mem[a + 1] << 16 | g_mem[a + 2] << 8 | g_mem[a + 3]);
+}
+
+static void logw(uint32_t a) { if (g_wn < MAX_WRITES) g_waddr[g_wn++] = a; }
 
 /* --- XBIOS Dosound (fn 0x20) side-effect ledger -------------------------------------------
  * Dosound hands the YM2149 a command list via A0; that pointer touches no RAM, so a wrong or
@@ -93,9 +149,10 @@ uint32_t        osh_dosound_count(void) { return g_dosound_n; }
 const uint32_t *osh_dosound_args(void)  { return g_dosound_arg; }
 
 void m68k_write_memory_8(unsigned int a, unsigned int v) {
-    switch (a & 0xffffff) {                        /* mask to the 68000's 24-bit address bus */
-        case PSG_SELECT: g_psg_latch = (uint8_t)v & 0x0f; return;
+    switch (a & BUS_ADDR_MASK) {                   /* mask to the 68000's 24-bit address bus */
+        case PSG_SELECT: g_psg_direct++; g_psg_latch = (uint8_t)v & 0x0f; return;
         case PSG_DATA:
+            g_psg_direct++;                            /* see the mixed-path guard in osh_run */
             if (g_psgn < MAX_PSG) {
                 g_psg_reg[g_psgn] = g_psg_latch;
                 g_psg_val[g_psgn] = (uint8_t)v;
@@ -103,13 +160,15 @@ void m68k_write_memory_8(unsigned int a, unsigned int v) {
             }
             return;
     }
-    if (a < g_size) { g_mem[a] = (uint8_t)v; logw(a); }
+    if (a < g_size) { g_mem[a] = (uint8_t)v; logw(a); return; }
+    psg_note_unmodeled(a, 1);   /* the odd aliases $ff8801/$ff8803, whose decoding is not modeled */
 }
 void m68k_write_memory_16(unsigned int a, unsigned int v) {
-    if (a + 1 < g_size) { g_mem[a] = (uint8_t)(v >> 8); g_mem[a + 1] = (uint8_t)v; logw(a); logw(a + 1); }
+    if (a + 1 < g_size) { g_mem[a] = (uint8_t)(v >> 8); g_mem[a + 1] = (uint8_t)v; logw(a); logw(a + 1); return; }
+    psg_note_unmodeled(a, 2);                      /* only the byte PSG protocol is modeled */
 }
 void m68k_write_memory_32(unsigned int a, unsigned int v) {
-    if (a + 3 >= g_size) return;
+    if (a + 3 >= g_size) { psg_note_unmodeled(a, 4); return; }
     g_mem[a] = (uint8_t)(v >> 24); g_mem[a + 1] = (uint8_t)(v >> 16);
     g_mem[a + 2] = (uint8_t)(v >> 8); g_mem[a + 3] = (uint8_t)v;
     logw(a); logw(a + 1); logw(a + 2); logw(a + 3);
@@ -139,9 +198,9 @@ static uint64_t g_ncycles;      /* 68000 clock cycles executed in the last osh_r
 
 /* Service the trap the CPU jumped to (vec = 1/2/13/14). Reads the exception frame at A7,
  * services the OS call, and returns control to the caller with D0 set. Calls we faithfully
- * model set `modeled`; anything else (Super, BIOS, an unmodeled GEM opcode, an unstaged file,
- * unknown fn) is counted in g_unmodeled so the run can be rejected rather than trusted against
- * a fabricated result. */
+ * model set `modeled`; anything else (an unmodeled GEM opcode, a non-console BIOS device, an
+ * unstaged file, an unknown fn) is counted in g_unmodeled so the run can be rejected rather
+ * than trusted against a fabricated result. */
 static void handle_trap(int vec) {
     uint32_t sp     = m68k_get_reg(0, M68K_REG_A7);
     uint32_t sr     = m68k_read_memory_16(sp);       /* pushed status register */
@@ -169,6 +228,14 @@ static void handle_trap(int vec) {
              * g_heap where it was. See osh_malloc_count. */
             g_malloc_n++;
             d0 = g_heap; g_heap += (m68k_read_memory_32(arg1) + 1u) & ~1u; break;
+        case 0x20:                                    /* Super(stack): supervisor-mode token model */
+            modeled = os_super(m68k_read_memory_32(arg1), &d0);
+            break;
+        case 0x3c: {                                  /* Fcreate(fname, attr) -> handle */
+            int32_t h = os_fcreate(g_mem, m68k_read_memory_32(caller + 2));
+            if (h < 0) modeled = 0; else d0 = (uint32_t)h;
+            break;
+        }
         case 0x3d: {                                  /* Fopen(fname, mode) -> handle */
             int32_t h = os_fopen(g_mem, m68k_read_memory_32(caller + 2));
             if (h < 0) modeled = 0; else d0 = (uint32_t)h;
@@ -181,18 +248,33 @@ static void handle_trap(int vec) {
             if (nread < 0) modeled = 0; else d0 = (uint32_t)nread;
             break;
         }
+        case 0x40: {                                  /* Fwrite(handle, count, buf) -> bytes written */
+            int32_t nwrote = os_fwrite(g_mem, (uint16_t)m68k_read_memory_16(caller + 2),
+                                       m68k_read_memory_32(caller + 4),
+                                       m68k_read_memory_32(caller + 8));
+            if (nwrote < 0) modeled = 0; else d0 = (uint32_t)nwrote;
+            break;
+        }
         case 0x3e:                                    /* Fclose(handle) */
             if (os_fclose(g_mem, (uint16_t)m68k_read_memory_16(caller + 2)) < 0) modeled = 0;
             break;
         case 0x49: case 0x4a:                         /* Mfree / Mshrink -> success */
         case 0x02: case 0x09: break;                  /* Cconout / Cconws -> no image effect */
-        case 0x06: d0 = OS_CRAWIO_RESULT; break;      /* Crawio: raw non-blocking console I/O */
-        default: modeled = 0; break;                  /* Super, Pexec, unknown */
+        case 0x06:                                    /* Crawio(w): raw console I/O, either way */
+            d0 = os_crawio(g_mem, (uint16_t)m68k_read_memory_16(caller + 2));
+            break;
+        default: modeled = 0; break;                  /* Pterm, Dgetdrv, Pexec, unknown */
         }
     } else if (vec == 14) {                           /* XBIOS */
         switch (fn) {
         case 0x02: case 0x03: d0 = OS_SCREEN_BASE; break;   /* Physbase / Logbase */
         case 0x22: d0 = OS_KBDVBASE; break;           /* Kbdvbase -> fixed in-image KBDVBASE struct */
+        case 0x11: d0 = os_random(g_mem); break;      /* Random -> the harness-poked 24-bit value */
+        case 0x1c:                                    /* Giaccess(data, reg): YM2149 read/write */
+            g_psg_giaccess_calls++;
+            d0 = os_giaccess(g_mem, (uint16_t)m68k_read_memory_16(caller + 2),
+                             (uint16_t)m68k_read_memory_16(caller + 4));
+            break;
         case 0x04:                                    /* Getrez -> low-res */
         case 0x05: case 0x06: case 0x07:              /* Setscreen / Setpalette / Setcolor */
         case 0x19:                                    /* Ikbdws: serial write to the IKBD, no image effect */
@@ -208,7 +290,14 @@ static void handle_trap(int vec) {
         uint32_t reg_d0 = m68k_get_reg(0, M68K_REG_D0);   /* subsystem: AES 0xc8 / VDI 0x73 */
         uint32_t reg_d1 = m68k_get_reg(0, M68K_REG_D1);   /* -> parameter block */
         modeled = os_gem_trap(g_mem, reg_d0, reg_d1);     /* results land in the param block */
-    } else {                                          /* BIOS(13): not modeled */
+    } else if (vec == 13) {                           /* BIOS: console input only (os.h) */
+        uint16_t dev = (uint16_t)m68k_read_memory_16(caller + 2);
+        switch (fn) {
+        case 0x01: modeled = os_bconstat(g_mem, dev, &d0); break;   /* Bconstat(dev) */
+        case 0x02: modeled = os_bconin(g_mem, dev, &d0); break;     /* Bconin(dev) */
+        default: modeled = 0; break;                  /* Bconout, Setexc, Kbshift, unknown */
+        }
+    } else {
         modeled = 0;
     }
     if (!modeled) g_unmodeled++;
@@ -255,6 +344,12 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
 
     g_wn = 0;                             /* write-set = the function's writes only */
     g_psgn = 0;                           /* PSG capture = this run's register writes only */
+    g_psg_latch = 0;                      /* ... and its select latch, or run N's (reg,val) pairs
+                                           * would be attributed to run N-1's last selected
+                                           * register, making a -n auto suite order-dependent */
+    g_psg_direct = 0;                     /* all three PSG tallies are per-run (the guards below) */
+    g_psg_giaccess_calls = 0;
+    g_psg_unmodeled = 0;
     g_dosound_n = 0;                      /* Dosound ledger = this run's XBIOS Dosound calls only */
     g_min_a7 = sp;                        /* deepest stack pointer (for exclude-band sanity checks) */
     uint32_t n = 0;
@@ -272,6 +367,9 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
         else                         g_ncycles += (uint32_t)m68k_execute(1);   /* one insn; tally its cycles */
     }
     g_ninsns = n;                                   /* instruction count for perf profiling */
+    /* The two PSG rejections are NOT folded into g_unmodeled: emu.run tests all three counters and
+     * names every cause that applies, so a run that both mixes the PSG paths and makes an unmodeled
+     * OS call reports both rather than sending the reader after one of them twice. */
     out_regs[0] = m68k_get_reg(0, M68K_REG_D0);
     out_regs[1] = m68k_get_reg(0, M68K_REG_D1);
     out_regs[2] = m68k_get_reg(0, M68K_REG_A0);
@@ -336,6 +434,8 @@ uint32_t        osh_malloc_count(void) { return g_malloc_n; }
 uint32_t        osh_num_insns(void)   { return g_ninsns; }
 uint64_t        osh_num_cycles(void)  { return g_ncycles; }
 uint32_t        osh_psg_count(void)   { return g_psgn; }
+/* Direct PSG accesses the model refused this run — emu.run names them in its diagnostic. */
+uint32_t        osh_psg_unmodeled(void) { return g_psg_unmodeled; }
 const uint8_t  *osh_psg_regs(void)    { return g_psg_reg; }
 const uint8_t  *osh_psg_vals(void)    { return g_psg_val; }
 const uint8_t  *osh_cov_data(void)    { return g_cov; }          /* the visited-PC bitset (for merge) */

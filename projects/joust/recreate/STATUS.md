@@ -20,9 +20,22 @@ source of truth for every name.
 
 ## Ordering
 Leaf/pure functions first (no OS traps, simple contracts), then their callers, then the
-trap-bound ones. Seven of Joust's traps are **not yet modelled** by the kit's shim — `Super`,
-`Giaccess`, `Fcreate`, `Fwrite`, `Random`, `Bconstat`, `Bconin` — so the sound, input and
-high-score-save layers wait on that work.
+trap-bound ones. The seven traps that used to block the sound, input and high-score-save layers —
+`Super`, `Giaccess`, `Fcreate`, `Fwrite`, `Random`, `Bconstat`, `Bconin` — are modelled by the kit
+now (`tools/recreate_kit/TRAP_MODEL.md`, pinned by `test/test_os_traps.py`). Two GEMDOS selectors
+Joust also uses stay unmodelled on purpose and still raise: `Pterm` (0x4c) never returns, so there
+is no post-state to diff, and `Dgetdrv` (0x19) asks about a machine the harness does not have.
+
+## Off the list: the raw-floppy routine at `0x152dc`
+
+**Unverifiable under the current oracle — not pending work.** It is not one of the 75 rows below
+(it is absent from `../decomp.c`'s inventory), and it must stay unreconstructed. Its drive-select
+subroutine reads the PSG select port directly (`move.b $ff8800,d1` at `0x15544`), and the kit
+rejects **any** direct PSG read *on its own* — independently of the mixed-path guard — because the
+ledger records writes only and there is nothing correct to return. So no `emu.run` reaching that
+instruction can ever be green, and reconstructing the routine cannot be verified. It unblocks only
+when the oracle gains a real PSG read model. Narrowing a guard to make it pass would restore the
+fabricated `0` read the guard exists to prevent (`tools/recreate_kit/TRAP_MODEL.md`, Phase 3).
 
 ## Functions (by address)
 

@@ -11,13 +11,15 @@ worked reference example.
 ```
 tools/recreate_kit/
 ├── project.py        bind one recreate/ dir to the kit (reads its project.toml)
-├── harness.py        the differential driver (differential/report/make_image/stage_files)
+├── harness.py        the differential driver (differential/report/make_image/stage_files,
+│                     plus the model-state pokes console_key/psg_regs)
 ├── kit.mk            shared make rules: candidate .so, Musashi oracle, `test`/`venv`/`oracle`/`clean`
 ├── include/          machine.h (big-endian image accessors)  os.h (deterministic TOS trap model)
 ├── src/              C linked into EVERY candidate .so: dosound_log.c (the Dosound ledger below)
 ├── oracle/           loader.py (load+relocate PRG)  emu.py (Musashi runner)  shim.c (callbacks)
 │                     isa_conformance.py  tos_probe.py   musashi/ + build/ (gitignored)
 ├── test/             the kit's own regression tests (`make test` here; no project needed)
+├── TRAP_MODEL.md     what each modeled TOS trap does — and what it deliberately does NOT capture
 └── Makefile          runs test/
 ```
 
@@ -33,6 +35,10 @@ tools/recreate_kit/
    load_base  = 0x10000
    image_size = 0x100000
    ```
+
+   `load_base` must clear the poked-input block (`0x620`) and `image_size` must equal `os.h`'s
+   `OS_IMAGE_SIZE`, which `os_fread`/`os_fwrite` bound their copies against — the harness checks
+   both at import and names `project.toml` when they disagree.
 
 2. `projects/<game>/recreate/Makefile`:
 
@@ -65,22 +71,44 @@ which `kit.mk` links into every candidate — the ledger is one implementation s
 rather than a copy per project, and its cap is `os.h`'s `OS_DOSOUND_LOG_MAX`, the same one the
 oracle's mirror ledger truncates at.
 
+The Dosound ledger is one of the two things the model keeps **off-image**, which is exactly what a
+candidate has to mirror by hand — everything else the trap model touches is plain image state that
+`include/os.h`'s `os_*` helpers write identically on both sides. The other is the direct
+`$ff8800`/`$ff8802` PSG write stream, compared as an ordered `(reg, val)` list (BuggyBoy's
+`g_REFRESH` emits it through out-params). See [`TRAP_MODEL.md`](TRAP_MODEL.md).
+
 The harness still treats the group as *optional* at import (it probes the three accessors once), so
 a candidate built outside `kit.mk` keeps working: it is then served without the ledger while the
 oracle issues no `Dosound` at all, and `differential()` fails with that diagnostic the moment one
 appears. A reconstruction built for the real Atari supplies its own `g_dosound` that issues the
 real trap and does not compile this file — see `projects/buggyboy/recreate/render/atari/game_main.c`.
 
+### The modeled TOS traps
+
+Which GEMDOS/BIOS/XBIOS calls are serviced, with what semantics, and — just as important — what
+each model deliberately does not capture, is written up in **[`TRAP_MODEL.md`](TRAP_MODEL.md)**.
+Read it before reconstructing any function that traps. The one rule that outranks the rest: an
+unmodeled call sets `modeled = 0` and `emu.run` **raises**, because a partially-modeled call that
+returns a plausible-looking wrong value turns a loud failure into a silent one.
+
+Three regions of the image are **harness-poked inputs** rather than program memory, so that
+hardware whose real value is time-varying still reaches both cores identically:
+`OS_CON_PENDING`/`OS_CON_CHAR` (the pending console keystroke — `harness.console_key()`),
+`OS_RANDOM_VALUE` (what XBIOS `Random` returns), and `OS_PSG_REGS` (the YM2149 register file XBIOS
+`Giaccess` reads and writes — `harness.psg_regs()`).
+
 ### The shared TOS memory map
 
-`include/os.h` fixes the modeled Malloc heap (`OS_HEAP_BASE`) and the staged-file table
-(`OS_FS_TABLE` / `OS_FS_STAGING`) at kit-wide addresses, mirrored in Python by `harness.py` —
+`include/os.h` fixes the modeled Malloc heap (`OS_HEAP_BASE`), the staged-file table
+(`OS_FS_TABLE` / `OS_FS_STAGING`) and the poked-input block above at kit-wide addresses, mirrored
+in Python by `harness.py` —
 except `OS_HEAP_BASE`, which sits in `oracle/emu.py` where the per-run Malloc guard below needs it,
 and is re-exported as `harness.OS_HEAP_BASE`. `test/test_os_memory_map.py` pins every constant
 equal to `os.h` and refuses a second Python copy. They are **not** derived from `project.toml`, so the
-harness checks at import that they clear the bound project's program and stay below the stack
-guard, and fails with a diagnostic naming `project.toml` when they do not. A game whose text+bss
-reaches `0x20000` (heap) or `0xbf000` (staging) needs those constants moved on both sides.
+harness checks at import that they clear the bound project's program, stay below the stack guard,
+sit below its `load_base`, and that `OS_IMAGE_SIZE` matches its `image_size` — failing with a
+diagnostic naming `project.toml` when they do not. A game whose text+bss reaches `0x20000` (heap) or
+`0xbf000` (staging) needs those constants moved on both sides.
 
 One waiver exists for the heap: only a GEMDOS `Malloc` ever writes at `OS_HEAP_BASE`, so a game
 that issues none can set `tos_malloc_unused = true` in its `project.toml` (justifying it there) and

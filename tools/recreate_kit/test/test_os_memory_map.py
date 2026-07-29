@@ -22,8 +22,15 @@ OS_H = KIT / "include" / "os.h"
 PY_MIRRORS = (KIT / "harness.py", KIT / "oracle" / "emu.py")
 
 # Every constant that exists on both sides. os.h is the canonical definition.
-PINNED = ("OS_HEAP_BASE", "OS_FS_TABLE", "OS_FS_STAGING", "OS_FS_ENTRY", "OS_FS_NAME",
-          "OS_FS_FIRST_HANDLE", "OS_DOSOUND_LOG_MAX")
+PINNED = ("OS_IMAGE_SIZE", "OS_HEAP_BASE", "OS_FS_TABLE", "OS_FS_STAGING", "OS_FS_ENTRY",
+          "OS_FS_SLOTS", "OS_FS_NAME", "OS_FS_FIRST_HANDLE", "OS_DOSOUND_LOG_MAX",
+          # the staged-file entry's field offsets: harness.stage_files writes each field by name,
+          # so a field REORDERED in os.h drifts silently unless both sides are pinned too
+          "OS_FS_OFF_STAGING", "OS_FS_OFF_SIZE", "OS_FS_OFF_CURSOR", "OS_FS_OFF_OPEN",
+          "OS_FS_OFF_CAPACITY",
+          # the harness-poked model state (TRAP_MODEL.md): both cores must read the same bytes
+          "OS_CON_PENDING", "OS_CON_CHAR", "OS_RANDOM_VALUE", "OS_PSG_REGS", "OS_PSG_NREGS",
+          "OS_PSG_WRITE", "OS_SUPER_TOKEN")
 
 
 def _c_defines(source, names):
@@ -71,7 +78,7 @@ def test_python_mirror_matches_os_h():
 
 def test_staged_file_table_fits_below_staging():
     """The table must hold OS_FS_SLOTS entries without running into the staging area below it."""
-    c = _c_defines(OS_H.read_text(), PINNED + ("OS_FS_SLOTS",))
+    c = _c_defines(OS_H.read_text(), PINNED)
     table_bytes = c["OS_FS_SLOTS"] * c["OS_FS_ENTRY"]
     assert c["OS_FS_TABLE"] + table_bytes <= c["OS_FS_STAGING"], (
         f"the {c['OS_FS_SLOTS']}-entry staged-file table at {c['OS_FS_TABLE']:#x} "

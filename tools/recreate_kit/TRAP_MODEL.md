@@ -1,0 +1,301 @@
+# TOS trap model — what is modeled, and what is deliberately not
+
+The oracle can't call real TOS, so every `trap` is serviced with fixed semantics
+(`include/os.h` + `oracle/shim.c`). This file records, per trap, **what the model does, why that
+design, and what it does NOT capture** — so a reconstruction built on top of it knows exactly which
+of its behaviour is verified and which is merely un-contradicted.
+
+It is the sibling of [`projects/buggyboy/recreate/HARNESS.md`](../../projects/buggyboy/recreate/HARNESS.md),
+which established the governing rule and applied it to the IKBD.
+
+## The governing rule
+
+> The differential contract requires **both cores to see identical inputs.** The reconstruction is
+> pure C with no interrupts, so IRQ-driven, time-varying state has no analogue on the candidate
+> side and cannot be differentially verified. Therefore: model at the **state** level, not the
+> IRQ level — hardware state becomes harness-poked constants, i.e. ordinary test inputs, identical
+> on both sides.
+
+And its corollary, which outranks everything below:
+
+> **Never fabricate a result to make a call succeed.** An unmodeled call sets `modeled = 0`,
+> `g_unmodeled` counts it, and `emu.run` **raises** rather than diff a fabricated result. A
+> partially-modeled call that returns a plausible-looking wrong value is far worse than an honest
+> raise: it converts a loud failure into a silent one.
+
+## The harness-poked model state
+
+Four regions of the image are inputs the harness pokes, not program memory. Both cores read the
+same bytes, so every one of them is an ordinary, differentially-verifiable test input.
+
+| Address | Constant | Meaning |
+| --- | --- | --- |
+| `0x500` | `OS_KBDVBASE` | the KBDVBASE struct XBIOS `Kbdvbase` returns |
+| `0x600` | `OS_CON_PENDING` | u32, nonzero = a character is waiting at the console |
+| `0x604` | `OS_CON_CHAR` | u32, what `Bconin`/`Crawio` return (`scancode << 16 \| ascii`) |
+| `0x608` | `OS_RANDOM_VALUE` | u32, what XBIOS `Random` returns (masked to 24 bits) |
+| `0x610` | `OS_PSG_REGS` | 16 bytes, the YM2149 register file XBIOS `Giaccess` reads/writes |
+
+They sit in the free low region — clear of the 68000 vector page, above TOS's documented
+system-variable area, and below every program (`load_base >= 0x10000`). `harness.py` mirrors the
+addresses, `test/test_os_memory_map.py` pins the two sets equal, and
+`harness.console_key()` / `harness.psg_regs()` build the pokes so the fields that must move
+together cannot be set half-way.
+
+`harness._vet_os_memory_map()` refuses to run a project whose `load_base` is below `0x620`, so the
+"below every program" claim is checked rather than assumed. Two neighbouring regions are **still
+unvetted**, and nothing else in the repo tracks them: `OS_KBDVBASE` (`0x500`, whose KBDVBASE struct
+`install_handlers` patches) and `OS_SCREEN_BASE` (`0x8000`, what `Physbase`/`Logbase` return). Both
+rest on the same `load_base` argument, and the `load_base >= 0x10000` that the console block now
+enforces happens to cover them — but only incidentally, not by their own check.
+
+---
+
+## Phase 1 — BIOS `Bconstat` (0x01) / `Bconin` (0x02)
+
+Before this the whole `trap #13` arm was `modeled = 0`; the BIOS branch is new.
+
+**Modeled.** `Bconstat(dev)` returns `-1L` when a character is waiting and `0` when not — the
+longword convention Joust reads with `cmp.l #$ffffffff,d0` (`poll_quit_key`, `hiscore_key_input`)
+and with `tst.b d0; blt` (`title_screen`). `Bconin(dev)` returns `OS_CON_CHAR` and **consumes** the
+keystroke, clearing `OS_CON_PENDING` the way the real console does — so one poke is one keypress
+and a polling loop sees the letter exactly once rather than holding it down forever.
+
+**Design choice.** Keystrokes arrive on the IKBD interrupt, which the oracle never runs, so per
+HARNESS.md they become poked state rather than a simulated device. Consuming (rather than
+latching) the key was chosen because Joust's real consumers — the name-entry loop, the quit poll —
+are *loops*: a latched key would make every iteration see the same letter, which is a behaviour no
+real run has.
+
+**Not captured.**
+- **Only the console (`OS_BIOS_DEV_CON` = 2) is modeled.** `Bconstat`/`Bconin` on any other BIOS
+  device raise; there is no keystroke state for them and inventing one would be a fabrication.
+- **`Bconin` with nothing pending raises.** On real hardware it *blocks* until a key arrives, and
+  there is nothing here to wait for. A test must always stage the key it expects to be read.
+- **No keystroke *sequence*.** A run delivers at most one key. A loop that reads several distinct
+  keys (Joust's name entry) has to be verified one poked key per run, exactly as HARNESS.md's
+  Phase 2 did for the joystick.
+- **Every other BIOS selector still raises** — `Bconout`, `Setexc`, `Kbshift`, `Rwabs`, …
+
+## Phase 2 — GEMDOS `Super` (0x20)
+
+**Modeled — a TOKEN model, not a privilege model.** `Super(0)` returns the fixed cookie
+`OS_SUPER_TOKEN`; `Super(OS_SUPER_TOKEN)` accepts it back and returns 0; `Super(1)` (SUP_INQUIRE)
+returns `-1` (supervisor). **Any other restore value raises.**
+
+**Design choice, from reading all six of Joust's call sites** (`0x1018a`, `0x1021a`, `0x11d38`,
+`0x152ea`, `0x15480`, `0x154a4`):
+
+- three sites (`init_system` twice, `poll_quit_key` once) do `clr.l -(a7); move.w #$20,-(a7);
+  trap #1; addq #6,a7` — the returned stack pointer is **discarded**; the call exists only to stay
+  in supervisor mode while touching `$484` (conterm) and `$43e` (flock);
+- the floppy routine at `0x152dc` does `move sr,d0; btst #13,d0` to test the S bit **itself**, and
+  only if it is in user mode does it call `Super(0)`, save the result verbatim to `0x1560e`, and
+  later pass that same longword back to `Super(…)` at `0x15480`/`0x154a4`.
+
+So no site ever *inspects* the value; it is either dropped or round-tripped. That is exactly what a
+token satisfies, and it avoids the alternative — flipping the 68000 S bit and swapping A7 between
+USP and SSP — which would perturb the stack and interact with the harness's stack-guard band for
+no observable gain. Refusing an unrecognised restore value keeps the token from silently absorbing
+a site that does something else.
+
+**Not captured.**
+- **No privilege checking whatsoever.** Musashi starts every `osh_run` in supervisor mode and the
+  model never leaves it, so code that genuinely requires supervisor to touch a protected address
+  is never tested for it — it simply always succeeds.
+- **Consequently, `move sr` reads S = 1 for the whole run.** Joust's floppy routine therefore takes
+  its "already supervisor" branch and its three `Super` sites are **unreachable under the oracle**.
+  A user-mode path can only be exercised by a model that really flips the S bit.
+- The cookie is not a real stack pointer. A site that did arithmetic on `Super(0)`'s result would
+  be mismodeled — which is why anything other than the cookie is rejected rather than served.
+
+## Phase 3 — XBIOS `Giaccess` (0x1c) and the YM2149 register file
+
+This is the substantive one: before it there was a write *ledger* but no readable register state,
+so a `Giaccess` read had nothing correct to return.
+
+**Modeled.** A 16-byte register file at `OS_PSG_REGS`, in the image. `Giaccess(data, reg)` writes
+`data` to register `reg & 0x0f` when bit 7 of `reg` is set, and otherwise reads that register,
+zero-extended into D0. Because the file is plain image state, a `Giaccess` write is an ordinary
+image write the differential already covers, and `os_giaccess()` is shared verbatim by the shim and
+by any reconstruction — the same construction that makes `os_fopen` agree on both sides.
+
+**Initial state: all registers 0.** A fresh image is zero there, so a run is deterministic without
+the model asserting anything about the chip's power-on contents. A test whose control flow depends
+on a register states it with `harness.psg_regs({...})`. This matters: Joust's `snd_poll_done`
+(`0x10a8a`) reads the **mixer** (register 7) and releases `snd_priority` to idle only when all six
+tone+noise enables are set, so the value read steers control flow. Both branches are pinned by
+`projects/joust/recreate/test/test_os_traps.py::test_snd_poll_done_follows_the_staged_mixer`,
+which runs Joust's own function under the oracle with the mixer staged.
+
+**The PSG ledger is unchanged.** `emu.psg_writes()` still reports exactly the direct `$ff8802` byte
+writes it always did, in the same order, with the same `(reg, val)` tuples — BuggyBoy's
+`test_sound.py` and the remaster suite are untouched. `Giaccess` does **not** append to it; its
+writes are visible in the image instead.
+
+**Not captured — and guarded: the direct hardware path.** The register file is fed by `Giaccess`
+**only**. A driver that touches `$ff8800`/`$ff8802` directly is captured by the off-image ledger
+instead, and those writes deliberately do not reach the file: making them do so would put PSG bytes
+in the image on the oracle side only, since BuggyBoy's candidate emits its register stream into
+out-param arrays rather than into memory — the whole `test_refresh_*` battery would fail on a
+difference that has nothing to do with the reconstruction. So `osh_run` **rejects any run that uses
+both paths** (`osh_psg_mixed_paths()`), because such a run could be served a read from a register
+file it knows is stale. `emu.run` names that cause specifically, since it is otherwise a puzzling
+"unmodeled OS call" on a run whose every trap *was* modeled.
+
+**This guard is live, not hypothetical.** BuggyBoy is direct-only (no `Giaccess` anywhere), but
+**Joust reaches both**: its sound driver calls `Giaccess` ten times, while its raw-floppy routine
+selects and rewrites PSG port A directly at image `0x1553c` — the standard ST drive-select, six
+instructions:
+
+```
+0x1553c  move.b #$0e,$ff8800     0x1554c  and.b  #$f8,d1
+0x15544  move.b $ff8800,d1       0x15550  or.b   d0,d1
+0x1554a  move.b d1,d2            0x15552  move.b d1,$ff8802
+```
+
+(reached by `bsr` from `0x15342` and `0x154fc`; the enclosing subroutine starts six bytes earlier
+at `0x15536` with `move sr,-(a7); ori.w #$0700,sr`. `0x15540` is the *address operand* of the first
+instruction, not an instruction — note the `move.b d1,d2`, which saves the pre-mask port value.)
+Any single `osh_run` spanning both layers is therefore refused. The two
+touch disjoint registers (14 vs 0–10), so a finer guard keyed on the register number would let such
+a run through; the coarse one was chosen because being over-strict fails loudly while being
+under-strict fails silently, which is the wrong way round for this contract.
+
+**The direct path serves only byte writes; everything else about it raises.** `g_psg_unmodeled`
+counts, and `osh_run` rejects, two kinds of direct access — the same "refuse rather than
+fabricate" answer the trap dispatch gives an unmodeled selector:
+
+- **any read of either port.** Reading `$ff8800` reads back the selected register on real hardware,
+  and the ledger records writes only, so there is nothing correct to return. It used to be served
+  as 0, which is exactly the forbidden case: Joust's drive-select
+  (`move.b $ff8800,d1; move.b d1,d2; and.b #$f8,d1; or.b d0,d1; move.b d1,$ff8802`) would have port
+  A's preserved upper bits forced to zero, and — since a run using *only* the direct path never
+  trips the mixed-path guard — a reconstruction of that routine could be marked verified against the
+  fabricated read. BuggyBoy never reads the ports (`lea` + `move.b`/`clr.b` writes only, and
+  Musashi's `clr` does not emit the 68000's dummy read), so raising costs nothing.
+- **any other access to the chip's address block.** The ST decodes the YM2149 incompletely, so it
+  answers across `$ff8800..$ff88ff` (`PSG_BLOCK_END`); of that, only the byte
+  select-latch-then-data sequence on the canonical pair is modeled — not the odd-address decoding
+  a `move.w #$0e00,$ff8800` relies on, and not the mirrors. This is what keeps the mixed-path guard
+  honest: before, only the *byte* callbacks compared the address against the two ports, **by
+  equality**, so a wider access, an odd address, or a mirror reached neither the ledger nor the
+  tally and could be combined with `Giaccess` without tripping the guard. Neither binary does any
+  of it today — Joust's three direct accesses are byte-sized and port-aligned — so the guard's
+  soundness was an unenforced property of the two input binaries. Now every callback width tallies
+  any overlap with the block, so a third game cannot silently disarm it.
+
+**Consequence — Joust's raw-floppy routine (`0x152dc`) is unverifiable under this oracle.** Not just
+its `Super` sites (Phase 2): the *whole* routine. Because a direct port read is rejected **on its
+own**, the `move.b $ff8800,d1` at `0x15544` sinks any run that reaches it, with or without a
+`Giaccess` alongside — so no `emu.run` covering `0x152dc` can ever be green. It is therefore **not
+pending reconstruction work**; it is blocked until the oracle gains a real PSG read model, and it
+must stay off the reconstruction list until then (marked as such in
+[`projects/joust/recreate/STATUS.md`](../../projects/joust/recreate/STATUS.md)). Narrowing either
+guard to let it pass would restore exactly the fabricated `0` the guards exist to prevent.
+
+**GEMDOS `Crawio` (0x06) reads the same console state** as `Bconstat`/`Bconin` (`os_crawio`), rather
+than being a second, disconnected model: one staged key is visible to every console call and is
+consumed once, as on real hardware. Unlike `Bconin` it never refuses — "no key"
+(`OS_CRAWIO_RESULT`) is a legitimate answer for a non-blocking read, and it is what an image with
+nothing staged gives. Its argument picks the **direction** and is honoured: `OS_CRAWIO_READ`
+(`0xff`) reads, and any other value is a character to *write* to the console — no image effect and,
+crucially, no keystroke consumed, since servicing every `Crawio` as a read would let a program that
+merely prints a character swallow the key a later `Bconin` is waiting for. BuggyBoy's eight sites
+all pass `0xff`; Joust issues no `Crawio` at all — a byte scan of `JOUST.PRG` finds no `trap #1`
+with selector `0x06` anywhere — so only the read path is exercised today.
+BuggyBoy's candidate (`src/input.c` `check_abort`, `src/os.c` `console_scancode`) still hardcodes
+`OS_CRAWIO_RESULT` instead of calling `os_crawio`. That agrees byte for byte while no test stages a
+key — which is every BuggyBoy test, none of which pokes `OS_CON_PENDING` — and if one ever does,
+the two sides differ in D0, so the gap fails loudly rather than silently.
+
+Also not captured: **nothing plays sound**. `Dosound` only logs its list pointer, and there is no
+VBL sound engine, so the mixer never changes on its own — it holds whatever the program or the
+harness last put there. A "wait until the sound finishes" loop therefore terminates only if the
+mixer is staged to say so. And `Giaccess`'s return value for a *write* is modeled as 0; TOS does
+not define it, so no caller may rely on it.
+
+Finally, the register file records only each register's **final value**, not the ordered stream of
+writes — unlike the direct path's ledger. A `Giaccess`-driven driver is therefore verified more
+weakly than a direct-write one: two orderings that end in the same 16 bytes are indistinguishable.
+Closing that would mean one shared `os_psg_write()` feeding both a register file and an ordered
+ledger, with BuggyBoy's `g_REFRESH` out-params replaced by it — a worthwhile change, but one that
+reshapes a verified game's candidate ABI, so it is noted here rather than taken.
+
+## Phase 4 — GEMDOS `Fcreate` (0x3c) / `Fwrite` (0x40)
+
+**Modeled.** The staged-file table grows a `capacity` field (`OS_FS_OFF_CAPACITY`, entry stride
+32 → **36 bytes**). `harness.stage_files()` accepts `(name, data, capacity)` — and the plain
+`(name, data)` a read-only file needs, capacity then defaulting to the data's own length —
+reserves that many staging bytes, and lays each file out past the previous one's *reservation*, so a
+file grown by `Fwrite` cannot land on the next file's bytes. `Fcreate(name, attr)` truncates an
+already-staged file to zero length and opens it; `Fwrite(handle, count, buf)` copies into staging
+at the cursor, extends the length, and returns the byte count. All of it lands **in the image**, so
+both cores see the bytes and the diff covers them.
+
+**Design choice — the harness declares the filesystem.** Nothing here ever invents a staging
+address. `Fcreate` of a name the harness never staged returns -1 (→ raise) instead of handing out a
+block it has no space for, and `Fwrite` past the reservation returns -1 (→ raise) instead of
+overrunning the next file's bytes or fabricating a short-write/disk-full result the harness has no
+basis for. `Fcreate` also cannot walk past the table: it only ever matches an occupied slot inside
+`OS_FS_SLOTS`, and `stage_files` refuses to declare more files than there are slots.
+
+**Both ends of every copy are bounded** against `OS_IMAGE_SIZE`, not just `count` against the
+capacity. `buf` arrives from the emulated program's stack exactly as `count` does, so `Fwrite(6, 4,
+0xfffffff0)` would otherwise `memcpy` outside the image buffer — and `Fread`'s side is the worse
+one, since it *writes* through `buf`. Every `m68k_*_memory_*` callback bounds-checks its access this
+way; `os_fread`/`os_fwrite` are the only two places that touch the image without going through one.
+They refuse rather than truncate: a short count the harness has no basis for is a fabricated result.
+`OS_IMAGE_SIZE` is kit-wide because a reconstruction calling `os_fread` is handed the image pointer
+alone, never a length; `harness._vet_os_memory_map()` pins it equal to the bound project's
+`image_size`, so a project that grows its image fails loudly instead of copying past the buffer.
+
+**Not captured.** No directories, no `Fseek`/`Fdelete`/`Fattrib`, no attribute or mode handling
+(`Fopen`'s mode and `Fcreate`'s attr word are ignored), no error codes — the model has exactly two
+answers, "served" and "refused". Writes do not persist beyond the run: staging is image state, so
+it is gone with the image copy.
+
+The table layout is mirrored **field by field** in `harness.py` (`OS_FS_OFF_*`) rather than
+concatenated in order, and `test/test_os_memory_map.py` pins every offset against `os.h` — a field
+reordered on one side would otherwise drift in silence, which is how the capacity field came to be
+missing from the Python entry in the first place.
+
+## Phase 5 — XBIOS `Random` (0x11)
+
+**Modeled.** `Random()` returns `OS_RANDOM_VALUE` masked to 24 bits.
+
+**Design choice — Random is a test INPUT, not a generator.** Real `Random` is derived from the
+system clock: time-varying, machine-dependent, and by construction not reproducible by a pure-C
+candidate. Under the governing rule that makes it exactly the same kind of thing as `input_state`
+in HARNESS.md — a value the harness supplies identically to both sides. Seeding an LCG instead
+would have been a *second* cross-side ABI to mirror for one call site (Joust's is at `0x106b8`, in
+`init_game`, and it uses only `d0 & 0xfe`), which CLAUDE.md §2 does not justify.
+
+**Not captured.** Every call in one run returns the **same** value. A program that loops until
+`Random` differs would spin — but that failure is loud, not silent: the run exceeds `max_insns` and
+`emu.run` raises "did not reach rts". This is the one place where the honest answer might instead
+have been "leave it raising"; it is modeled because the failure mode of getting it wrong is a
+raise, never a wrong image.
+
+## What a candidate must mirror (cross-side ABI)
+
+Everything the model reads or writes in the image is shared by construction — a reconstruction that
+calls `os_bconstat`/`os_bconin`/`os_crawio`/`os_giaccess`/`os_random`/`os_fopen`/`os_fcreate`/
+`os_fread`/`os_fwrite`/`os_fclose` from `include/os.h` agrees with the oracle byte for byte and has
+nothing to mirror by hand. Two things are **not** in the image and must be matched explicitly:
+
+| what | where the oracle keeps it | what the candidate must do |
+| --- | --- | --- |
+| XBIOS `Dosound(A0)` list pointers | `shim.c`'s `g_dosound_arg` ledger | export the `g_dosound*` ledger ABI (README.md); `harness.differential` compares them |
+| direct `$ff8800`/`$ff8802` PSG writes | `shim.c`'s `g_psg_reg`/`g_psg_val` ledger | emit the same ordered `(reg, val)` stream (BuggyBoy: `g_REFRESH` out-params) |
+
+`OS_SUPER_TOKEN` is not off-image state but it is still a shared value: a reconstruction of a
+function that calls `Super` must return the same constant, since the program can store it into the
+image where the diff compares it. Using `os_super()` from `os.h` gets that for free.
+
+## Still unmodeled (an honest raise is the right answer)
+
+`Pterm` (0x4c) and `Dgetdrv` (0x19) both appear in Joust and are **not** modeled. `Pterm` ends the
+process and never returns, so there is no post-state to diff; `Dgetdrv`'s answer is a property of
+the machine the harness does not have. `Pexec`, `Fseek`, GEM opcodes outside the three in
+`os_gem_trap`, and every BIOS selector but the two above are in the same position. They raise.
