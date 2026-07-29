@@ -4,6 +4,8 @@
 CC      ?= clang
 CFLAGS  ?= -std=c11 -O2 -fPIC -Wall -Wextra -Iinclude -Irender/atari/build
 RECREATE := ../recreate
+# The shared differential harness (loader/emu/oracle) the sound fixture bakes its image with.
+KIT      := ../../../tools/recreate_kit
 PY       := $(RECREATE)/.venv/bin/python
 
 CAND    := build/libremaster.so
@@ -29,7 +31,7 @@ SOUND_IMAGE := ../bin/BUGGYBOY.PRG
 BENCH_ELF := render/atari/build/bench.elf
 
 $(SOUND_DATA): render/atari/gen_sound_fixture.py render/atari/fixture_lib.py \
-               $(SOUND_IMAGE) $(RECREATE)/oracle/loader.py
+               $(SOUND_IMAGE) $(KIT)/oracle/loader.py
 	@mkdir -p render/atari/build
 	$(PY) render/atari/gen_sound_fixture.py
 

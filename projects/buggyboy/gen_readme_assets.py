@@ -21,8 +21,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 WORKSPACE = HERE.parents[1]
 RECREATE = HERE / "recreate"
-for sub in ("oracle", "test", "render", "tools"):
-    sys.path.insert(0, str(RECREATE / sub))
+for sub in ("test", "render", "tools"):               # the oracle now lives in tools/recreate_kit,
+    sys.path.insert(0, str(RECREATE / sub))           # put on sys.path by test/harness.py's bind
 sys.path.insert(0, str(HERE / "remaster" / "test"))   # capture_ref (drives recreate's .so only)
 
 import render_screen as rs      # noqa: E402  loads libbuggyboy.so; buffer layout + PNG writer

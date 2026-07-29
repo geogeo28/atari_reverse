@@ -21,6 +21,7 @@ esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REC="$(cd "$HERE/../.." && pwd)"          # recreate/
+KIT="$(cd "$REC/../../../tools/recreate_kit" && pwd)"   # shared harness headers (machine.h, os.h)
 BIN="$REC/../bin"                          # projects/buggyboy/bin
 BUILD="$HERE/build"; DISK="$HERE/disk"
 PRG="BUGGY.PRG"
@@ -32,7 +33,7 @@ CC=m68k-elf-gcc
 # -fno-tree-loop-distribute-patterns: at -O2 GCC would otherwise recognise our hand-written
 # memcpy/memset loops and replace them with calls to memcpy/memset itself (infinite recursion).
 CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
-        -fomit-frame-pointer -nostdlib -I$REC/include -I$HERE/shim_include -Wall -Wno-array-bounds"
+        -fomit-frame-pointer -nostdlib -I$REC/include -I$KIT/include -I$HERE/shim_include -Wall -Wno-array-bounds"
 # All cores except os.c (the shim supplies its OS/hardware glue).
 CORES="$(ls "$REC"/src/*.c "$REC"/src/machine/*.c | grep -v '/os\.c$')"
 

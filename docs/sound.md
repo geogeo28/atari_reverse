@@ -78,7 +78,7 @@ Once the driver is located you can *listen* without reimplementing it: run the o
 `REFRESH` in the Musashi oracle and render the register writes it makes. For BuggyBoy this
 lives in `projects/buggyboy/recreate/sound/`:
 
-- `oracle/shim.c` taps writes to `$ff8800`/`$ff8802` into an ordered `(reg,val)` log
+- `tools/recreate_kit/oracle/shim.c` taps writes to `$ff8800`/`$ff8802` into an ordered `(reg,val)` log
   (`osh_psg_*`), read back per frame via `emu.psg_writes()`.
 - `sound_player.py` seeds a track with `INITTUNE` (music) or `INITFX` (effects), then calls
   `REFRESH` once per 50 Hz VBL — feeding the image forward so driver state persists — and

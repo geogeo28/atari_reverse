@@ -15,7 +15,7 @@ import isa_conformance as isa
 
 pytestmark = pytest.mark.skipif(
     not isa.tos_probe.available(),
-    reason="ISA cross-check needs Hatari + a TOS ROM (see oracle/isa_conformance.py)")
+    reason="ISA cross-check needs Hatari + a TOS ROM (see the kit's oracle/isa_conformance.py)")
 
 
 def test_musashi_matches_real_68000():

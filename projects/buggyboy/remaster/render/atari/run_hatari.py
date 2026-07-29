@@ -19,9 +19,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REMASTER = HERE.parents[1]
 RECREATE = REMASTER.parent / "recreate"
-sys.path.insert(0, str(RECREATE / "oracle"))
 sys.path.insert(0, str(RECREATE / "render"))
-sys.path.insert(0, str(RECREATE.parents[2] / "tools"))   # reverse/tools for write_png
+sys.path.insert(0, str(RECREATE.parents[2] / "tools"))   # reverse/tools for write_png + the kit
+from recreate_kit import project                        # noqa: E402
+project.load(RECREATE)                                  # binds the kit (tos_probe lives there)
 
 import tos_probe                                          # noqa: E402  Hatari + TOS ROM discovery
 from render_screen import _decode_interleaved, W, H       # noqa: E402

@@ -186,7 +186,7 @@ reads no input; it's a table-driven block blit and is verified.) What was learna
 ## OS trap layer
 
 OS-bound functions now run under the oracle: `trap #1/#13/#14/#2` are serviced by a
-deterministic model (`include/os.h`, dispatched in `oracle/shim.c`). Calls that only touch
+deterministic model (the kit's `include/os.h`, dispatched in its `oracle/shim.c`). Calls that only touch
 hardware/files (Setpalette/Setcolor/Setscreen, sound, console, Ikbdws) have no image effect;
 Physbase/Logbase → OS_SCREEN_BASE, Malloc hands out a real in-image block from OS_HEAP_BASE
 (sized for main's 0x5ee08-byte allocation); XBIOS Supexec runs the passed routine in place. **GEM trap #2** models the three AES/VDI calls BuggyBoy issues — AES
@@ -242,7 +242,7 @@ read-verified (unreachable under the no-key OS model). **All 91 canonical functi
 
 ## Oracle cross-validation
 
-The differential suite trusts Musashi as ground truth; `oracle/isa_conformance.py` certifies that
+The differential suite trusts Musashi as ground truth; the kit's `oracle/isa_conformance.py` certifies that
 trust against an **independent** 68000 — Hatari's WinUAE-derived core — so a Musashi quirk can't
 masquerade as "verified". It runs **277** self-contained, position-independent instruction snippets
 (inputs as immediates, flags captured with `move sr` right after the tested op, result saved via

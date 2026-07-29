@@ -27,11 +27,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent                                   # recreate/
-sys.path.insert(0, str(ROOT / "oracle"))
 sys.path.insert(0, str(ROOT / "test"))
-sys.path.insert(0, str(ROOT.parents[2] / "tools"))   # reverse/tools for write_png
+sys.path.insert(0, str(ROOT.parents[2] / "tools"))   # reverse/tools for write_png + the kit
 
-import harness                                        # noqa: E402  (loads the candidate .so)
+import harness                                        # noqa: E402  (binds the kit, loads the .so)
 from extract_graphics import write_png                # noqa: E402
 
 # ---- the game's buffer layout, exactly as `main` computes it off the big Malloc block ----

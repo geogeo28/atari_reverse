@@ -1,4 +1,4 @@
-"""Oracle: execute one BUGGYBOY function under Musashi's 68000 core (via liboracle.so).
+"""Oracle: execute one function of the program under test under Musashi's 68000 core (via liboracle.so).
 
 Ground truth for the differential test. Same interface the rest of the harness expects:
 ``run(image, entry, regs) -> (final_image, writes, out_regs)``. The backend is the MAME
@@ -8,11 +8,16 @@ Unicorn's ColdFire-derived core, which mis-handles byte memory read-modify-write
 import ctypes
 from pathlib import Path
 
-from loader import IMAGE_SIZE
+import loader   # bound by recreate_kit.project.load() before this module is first imported
+
+if loader.IMAGE_SIZE is None:
+    raise RuntimeError("emu was imported before recreate_kit.project.load(<recreate dir>): "
+                       "loader.IMAGE_SIZE is unbound, so the stack constants below have no image "
+                       "to derive from")
 
 # The stack lives at the top of the image; derived from IMAGE_SIZE so growing the image moves
 # it automatically (keep 0x100 headroom for the sentinel return slot, a 0xF00 guard span).
-STACK_TOP = IMAGE_SIZE - 0x100   # A7 start; stack grows down into the guard region below
+STACK_TOP = loader.IMAGE_SIZE - 0x100   # A7 start; stack grows down into the guard region below
 STACK_GUARD_LO = STACK_TOP - 0xF00  # [STACK_GUARD_LO, IMAGE_SIZE): stack scratch, excluded from the diff
 STACK_SCRATCH = 0x400     # bytes below STACK_TOP a call frame may legitimately use; a write in
                           # [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program output, not stack
@@ -131,14 +136,14 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     """
     regs = regs or {}
     mem = bytearray(image)
-    Buf = ctypes.c_uint8 * IMAGE_SIZE
+    Buf = ctypes.c_uint8 * loader.IMAGE_SIZE
     buf = Buf.from_buffer(mem)
 
     dregs = (ctypes.c_uint32 * 8)(*[regs.get(n, 0) & 0xFFFFFFFF for n in _DREG_NAMES])
     aregs = (ctypes.c_uint32 * 8)(*[regs.get(n, 0) & 0xFFFFFFFF for n in _AREG_NAMES])
     out = (ctypes.c_uint32 * 4)()
 
-    reached = _LIB.osh_run(buf, IMAGE_SIZE, entry & 0xFFFFFFFF, dregs, aregs,
+    reached = _LIB.osh_run(buf, loader.IMAGE_SIZE, entry & 0xFFFFFFFF, dregs, aregs,
                            STACK_TOP, SENTINEL, stop_pc & 0xFFFFFFFF, max_insns, out)
     if not reached:
         where = f"checkpoint {stop_pc:#x}" if stop_pc else "rts"

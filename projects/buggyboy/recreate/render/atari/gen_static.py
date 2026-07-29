@@ -9,7 +9,9 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parents[1] / "oracle"))     # recreate/oracle
+sys.path.insert(0, str(HERE.parents[4] / "tools"))       # reverse/tools — the shared recreate kit
+from recreate_kit import project                         # noqa: E402
+project.load(HERE.parents[1])                            # recreate/ — binds the kit's loader
 from loader import load_image                            # noqa: E402
 
 LO, HI = 0x10000, 0x1c000        # relocated PRG static region (must match main.c STATIC_LO/LEN)

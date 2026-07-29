@@ -39,7 +39,9 @@ reverse/
 │   ├── dump_names.sh         # reverse: export DB names -> names.txt format (recover GUI edits)
 │   ├── hatari_run.sh         # launch a game in Hatari (run depacker, then dump memory)
 │   ├── load_dump.sh          # analyze a raw memory dump (depacked game) — see docs/packed-executables.md
-│   └── new_project.sh        # scaffold projects/<name>/
+│   ├── new_project.sh        # scaffold projects/<name>/
+│   └── recreate_kit/         # shared differential harness: PRG loader, Musashi oracle, TOS trap
+│                             # model, harness.py, kit.mk — bound to a game by its project.toml
 └── projects/<name>/          # per-game: bin/ names.txt decomp.c ghidra_proj/ out/ run.sh reapply.sh
 ```
 

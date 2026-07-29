@@ -20,13 +20,14 @@ esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REC="$(cd "$HERE/../.." && pwd)"          # recreate/
+KIT="$(cd "$REC/../../../tools/recreate_kit" && pwd)"   # shared harness headers (machine.h, os.h)
 BIN="$REC/../bin"                          # projects/buggyboy/bin
 BUILD="$HERE/build"; DISK="$HERE/disk"
 mkdir -p "$BUILD" "$DISK"
 
 CC=m68k-elf-gcc
 CFLAGS="-m68000 -Os -ffreestanding -fno-jump-tables -fomit-frame-pointer -nostdlib \
-        -I$REC/include -I$HERE/shim_include -Wall"
+        -I$REC/include -I$KIT/include -I$HERE/shim_include -Wall"
 # highscore/intermission pull in g_init_scoretable/g_update_highscore (highscore.c),
 # g_draw_intermission (intermission.c) and, via update_highscore, g_EGOFF (sound.c).
 CORES="$REC/src/results.c $REC/src/screen.c $REC/src/text.c $REC/src/graphics.c \

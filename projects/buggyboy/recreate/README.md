@@ -138,7 +138,9 @@ Build variants (`smoke`, `legdump`), the headless proofs and the hardware-bounda
 
 ```bash
 make test           # build oracle + candidate, run the full differential suite
-make ../../../tools/recreate_kit/oracle/build/liboracle.so   # (re)build just the Musashi oracle
+make oracle         # (re)build just the shared Musashi oracle (tools/recreate_kit/oracle/build/)
+make clean          # this project's build/ only; `make -C ../../../tools/recreate_kit clean`
+                    # removes the shared oracle, which every project links against
 ```
 
 First build clones + compiles Musashi under `tools/recreate_kit/oracle/musashi/` (shared by every

@@ -7,13 +7,12 @@ each dumps its own file and coverage_gap.py OR-merges them. With COVGAP_DIR unse
 nothing, so a normal `make test` is unaffected.
 """
 import os
-import sys
 from pathlib import Path
 
 _COVDIR = os.environ.get("COVGAP_DIR")
 
 if _COVDIR:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "oracle"))
+    import harness   # noqa: F401  — binds the shared kit, putting its oracle/ on sys.path
     import emu
 
 

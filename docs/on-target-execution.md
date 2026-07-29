@@ -55,7 +55,7 @@ on `hw_ready` if it touches supervisor-only I/O space (`$ffff8xxx`, `$fffffcxx`)
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
 The image is a flat byte array indexed by Ghidra address; multi-byte fields go through `be16`/`be32`/
-`wr16`/`wr32` (`include/machine.h`) to preserve the 68000's big-endian order. On the **little-endian
+`wr16`/`wr32` (`tools/recreate_kit/include/machine.h`) to preserve the 68000's big-endian order. On the **little-endian
 host** (`.so`) those must assemble each word byte-by-byte. But the **68000 target is itself
 big-endian**, so there the same helpers are just aligned `move.w`/`move.l` — yet a naive
 byte-by-byte definition still compiles to an `lsl #8` shuffle on *every* field access in *every*

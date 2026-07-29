@@ -24,9 +24,16 @@
 #include <string.h>
 #include "machine.h"
 
+/* ---- the model's fixed memory map -------------------------------------------------------
+ * These addresses are kit-wide: one set of C constants serves every game, while load_base /
+ * image_size are per-project (project.toml). They therefore assume a program that fits below
+ * OS_HEAP_BASE and an image large enough to hold the staging area below the stack guard —
+ * harness._vet_os_memory_map() checks both against the bound project and fails loudly if not,
+ * which is the signal to move a region here (and its Python mirror in harness.py). */
 #define OS_SCREEN_BASE 0x8000u   /* Physbase/Logbase result (in-image screen region) */
-#define OS_HEAP_BASE   0x20000u  /* Malloc block base: a real in-image region above the program,
-                                  * sized for main's 0x5ee08-byte work block (ends ~0x7ee08) */
+#define OS_HEAP_BASE   0x20000u  /* Malloc bump-allocator base: an in-image region above the
+                                  * program, growing up (BuggyBoy's main takes a 0x5ee08-byte work
+                                  * block here, ending ~0x7ee08 — the largest claim so far) */
 #define OS_CRAWIO_RESULT 0u      /* GEMDOS Crawio(0xff) raw non-blocking read: no key pending in the
                                   * deterministic model. Shared by shim.c and check_abort so they agree. */
 #define OS_KBDVBASE    0x500u    /* XBIOS Kbdvbase() result: a fixed in-image KBDVBASE struct (free low
@@ -103,9 +110,12 @@ static inline int os_gem_trap(uint8_t *mem, uint32_t d0, uint32_t pblk) {
  * so a loader reading a file we didn't stage can never be falsely "verified".
  *
  * Table entry (OS_FS_ENTRY bytes): name[16] (nul-terminated) | staging addr u32 | size u32 |
- * cursor u32 | open flag u32. The harness lays out the same layout (see harness.stage_files);
- * the open/read round-trip test pins the two in agreement. */
-#define OS_FS_TABLE        0xbf000u  /* staged-file table: OS_FS_SLOTS entries of OS_FS_ENTRY bytes */
+ * cursor u32 | open flag u32. The harness mirrors this layout in Python (see harness.stage_files);
+ * tools/recreate_kit/test/test_os_memory_map.py pins the two constant sets equal, and the open/read
+ * round-trip test proves they agree end to end. */
+#define OS_FS_TABLE        0xbf000u  /* staged-file table: OS_FS_SLOTS entries of OS_FS_ENTRY bytes.
+                                      * Kit-wide (see the memory-map note above): it must sit above
+                                      * every game's program and below emu.STACK_GUARD_LO */
 #define OS_FS_STAGING      0xc0000u  /* raw file bytes, laid out below the stack by the harness */
 #define OS_FS_SLOTS        8
 #define OS_FS_ENTRY        32

@@ -18,8 +18,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REC = HERE.parents[1]                                # recreate/
-sys.path.insert(0, str(REC / "oracle"))
+sys.path.insert(0, str(REC.parents[2] / "tools"))    # reverse/tools — the shared recreate kit
 sys.path.insert(0, str(REC / "render"))
+
+from recreate_kit import project                      # noqa: E402
+project.load(REC)                                     # binds the kit (tos_probe/loader live there)
 
 import tos_probe                                      # noqa: E402
 from render_screen import _decode_interleaved, SCREEN_BASE, W, H  # noqa: E402
@@ -70,8 +73,7 @@ def host_leg_results():
     same buffer layout as the on-target legdump — for a byte-exact draw-vs-host comparison."""
     import ctypes
     import struct
-    sys.path.insert(0, str(REC / "oracle"))
-    from loader import load_image
+    from loader import load_image      # the kit's oracle/ is already on sys.path (project.load)
     lib = ctypes.CDLL(str(REC / "build" / "libbuggyboy.so"))
     img = bytearray(0x100000)
     base = load_image(str(REC.parent / "bin" / "BUGGYBOY.PRG"))

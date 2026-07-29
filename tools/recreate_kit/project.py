@@ -1,0 +1,73 @@
+"""Bind one project's ``recreate/`` directory to the shared kit.
+
+The kit's oracle modules (``loader``, ``emu``) are plain top-level modules living in
+``recreate_kit/oracle/``, so every existing ``import emu`` / ``from loader import …`` keeps
+working. They carry no game constants of their own: ``load()`` reads the project's
+``project.toml``, rebinds ``loader.LOAD_BASE`` / ``loader.IMAGE_SIZE``, and only then may
+``emu`` be imported (it derives its stack constants from ``loader.IMAGE_SIZE`` at import time).
+
+Call it before importing anything from the kit:
+
+    sys.path.insert(0, str(<reverse>/"tools"))
+    from recreate_kit import project
+    project.load(<path to projects/<game>/recreate>)
+"""
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+try:
+    import tomllib                     # stdlib from Python 3.11
+except ImportError:                    # 3.10 and older: the same parser, pre-stdlib
+    import tomli as tomllib
+
+KIT = Path(__file__).resolve().parent
+ORACLE = KIT / "oracle"
+CONFIG_NAME = "project.toml"
+
+_CONFIG = None
+
+
+def load(recreate_dir):
+    """Read ``<recreate_dir>/project.toml`` and bind it to the kit. Idempotent.
+
+    Returns the config namespace: name, dir, prg, names, lib (absolute paths) plus
+    load_base / image_size. Re-binding the kit to a *different* project inside one
+    process is refused — the module-level constants derived here are already frozen.
+    """
+    global _CONFIG
+    recreate_dir = Path(recreate_dir).resolve()
+    if _CONFIG is not None:
+        if _CONFIG.dir != recreate_dir:
+            raise RuntimeError(f"recreate_kit is already bound to {_CONFIG.dir}; "
+                               f"cannot rebind it to {recreate_dir} in the same process")
+        return _CONFIG
+
+    with open(recreate_dir / CONFIG_NAME, "rb") as fh:
+        raw = tomllib.load(fh)
+    cfg = SimpleNamespace(
+        name=raw["name"],
+        dir=recreate_dir,
+        prg=(recreate_dir / raw["prg"]).resolve(),
+        names=(recreate_dir / raw["names"]).resolve(),
+        lib=(recreate_dir / raw["lib"]).resolve(),
+        load_base=raw["load_base"],
+        image_size=raw["image_size"],
+    )
+
+    if str(ORACLE) not in sys.path:
+        sys.path.insert(0, str(ORACLE))
+    import loader                                   # noqa: E402  (only importable after the path insert)
+    loader.LOAD_BASE = cfg.load_base
+    loader.IMAGE_SIZE = cfg.image_size
+
+    _CONFIG = cfg
+    return cfg
+
+
+def current():
+    """The bound config, or a loud error if no project has been bound yet."""
+    if _CONFIG is None:
+        raise RuntimeError("no project bound — call recreate_kit.project.load(<recreate dir>) "
+                           "before importing the kit's oracle/harness modules")
+    return _CONFIG

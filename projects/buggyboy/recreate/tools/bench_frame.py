@@ -26,9 +26,12 @@ import sys
 from pathlib import Path
 
 REC = Path(__file__).resolve().parents[1]                  # recreate/
-sys.path.insert(0, str(REC / "oracle"))
+sys.path.insert(0, str(REC.parents[2] / "tools"))          # reverse/tools — the shared recreate kit
 sys.path.insert(0, str(REC / "test"))
 sys.path.insert(0, str(REC / "render"))
+
+from recreate_kit import project                           # noqa: E402
+project.load(REC)                                          # binds the kit's loader/emu to this game
 
 import emu                                                 # noqa: E402
 import harness                                             # noqa: E402

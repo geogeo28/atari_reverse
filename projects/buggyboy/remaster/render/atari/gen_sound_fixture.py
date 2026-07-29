@@ -28,7 +28,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REMASTER = HERE.parents[1]
 RECREATE = REMASTER.parent / "recreate"
-sys.path.insert(0, str(RECREATE / "oracle"))
+sys.path.insert(0, str(RECREATE.parents[2] / "tools"))   # reverse/tools — the shared recreate kit
+from recreate_kit import project                        # noqa: E402
+project.load(RECREATE)                                  # binds the kit's loader/emu to recreate
 sys.path.insert(0, str(HERE))
 
 from loader import load_image      # noqa: E402

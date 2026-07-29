@@ -18,8 +18,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REC = HERE.parents[1]                                # recreate/
-sys.path.insert(0, str(REC / "oracle"))
+sys.path.insert(0, str(REC.parents[2] / "tools"))    # reverse/tools — the shared recreate kit
 sys.path.insert(0, str(REC / "render"))
+
+from recreate_kit import project                      # noqa: E402
+project.load(REC)                                     # binds the kit (tos_probe lives there)
 
 import tos_probe                                      # noqa: E402  (Hatari + TOS ROM discovery)
 import render_screen                                  # noqa: E402

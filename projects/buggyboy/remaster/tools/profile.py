@@ -18,7 +18,10 @@ from pathlib import Path
 
 REMASTER = Path(__file__).resolve().parents[1]
 RECREATE = REMASTER.parent / "recreate"
-for p in ("oracle", "tools", "test", "render"):
+sys.path.insert(0, str(RECREATE.parents[2] / "tools"))   # reverse/tools — the shared recreate kit
+from recreate_kit import project                        # noqa: E402
+project.load(RECREATE)                                  # binds the kit's loader/emu to recreate
+for p in ("tools", "test", "render"):
     sys.path.insert(0, str(RECREATE / p))
 
 import emu                                          # noqa: E402  Musashi cycle-accurate runner

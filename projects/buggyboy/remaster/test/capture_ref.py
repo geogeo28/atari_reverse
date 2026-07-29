@@ -20,7 +20,9 @@ from pathlib import Path
 
 REMASTER = Path(__file__).resolve().parents[1]        # remaster/
 RECREATE = REMASTER.parent / "recreate"               # sibling verified reconstruction
-sys.path.insert(0, str(RECREATE / "oracle"))
+sys.path.insert(0, str(RECREATE.parents[2] / "tools"))   # reverse/tools — the shared recreate kit
+from recreate_kit import project                        # noqa: E402
+project.load(RECREATE)                                  # binds the kit's loader/emu to recreate
 sys.path.insert(0, str(RECREATE / "test"))
 sys.path.insert(0, str(RECREATE / "render"))
 sys.path.insert(0, str(RECREATE / "tools"))

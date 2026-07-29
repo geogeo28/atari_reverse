@@ -21,7 +21,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 RECREATE = HERE / "recreate"
-sys.path.insert(0, str(RECREATE / "render"))          # render_screen (adds oracle/test/tools paths)
+sys.path.insert(0, str(RECREATE / "render"))          # render_screen (adds test/ + the kit's paths)
 sys.path.insert(0, str(RECREATE / "sound"))           # ym2149
 sys.path.insert(0, str(HERE.parents[1] / "tools"))    # extract_graphics (RLE decoder)
 import render_screen as rs                             # noqa: E402  loads libbuggyboy.so via harness

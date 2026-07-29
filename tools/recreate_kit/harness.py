@@ -1,28 +1,36 @@
 """Differential test harness: real 68000 code (oracle) vs the reconstruction (candidate).
 
 Both run on the same flat memory image; a green case means byte-for-byte identical
-final memory. The candidate is the compiled ``libbuggyboy.so``, driven through ctypes.
+final memory. The candidate is the project's compiled ``.so`` (``lib`` in project.toml),
+driven through ctypes.
 """
 import ctypes
 import re
-import sys
-from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent                       # recreate/
-sys.path.insert(0, str(ROOT / "oracle"))
+from . import project
 
-from loader import load_image, IMAGE_SIZE, LOAD_BASE  # noqa: E402
+_CFG = project.current()                 # bound by project.load(); it also put oracle/ on sys.path
+
+import loader  # noqa: E402  (module access: load_image() sets loader.PROGRAM_END, read below)
+from loader import load_image, IMAGE_SIZE  # noqa: E402
 import emu  # noqa: E402
 
-PRG = ROOT.parent / "bin" / "BUGGYBOY.PRG"            # projects/buggyboy/bin/BUGGYBOY.PRG
-NAMES = ROOT.parent / "names.txt"
-LIB = ROOT / "build" / "libbuggyboy.so"
+PRG = _CFG.prg                                        # e.g. projects/buggyboy/bin/BUGGYBOY.PRG
+NAMES = _CFG.names
+LIB = _CFG.lib
 
 BASE_IMAGE = load_image(PRG)             # loaded + relocated once; tests copy & poke it
 _lib = ctypes.CDLL(str(LIB))
-_lib.g_dosound_log_count.restype = ctypes.c_uint32
-_lib.g_dosound_log_args.restype = ctypes.POINTER(ctypes.c_uint32)
+
+# The Dosound side-effect ledger (see differential()) is an OPTIONAL part of a candidate's ABI: a
+# game that never issues XBIOS Dosound has nothing to log. ctypes resolves a symbol on first
+# attribute access, so probe the three once here — otherwise a candidate lacking them would fail at
+# *import* with a bare dlsym AttributeError rather than being served without the ledger.
+_DOSOUND_LEDGER_ABI = ("g_dosound_log_reset", "g_dosound_log_count", "g_dosound_log_args")
+_has_dosound_ledger = all(hasattr(_lib, sym) for sym in _DOSOUND_LEDGER_ABI)
+if _has_dosound_ledger:
+    _lib.g_dosound_log_count.restype = ctypes.c_uint32
+    _lib.g_dosound_log_args.restype = ctypes.POINTER(ctypes.c_uint32)
 
 
 def _load_name_map():
@@ -47,12 +55,42 @@ def label(addr):
     return NAME_MAP[best] + (f"+{off}" if off else "")
 
 
-# ---- GEMDOS file staging (mirror of os.h; the open/read round-trip test pins the two) ----
+# ---- the TOS model's fixed memory map (mirror of include/os.h) ----
+# These addresses are KIT-WIDE (one set of C constants serves every game), while load_base /
+# image_size are per-project. tools/recreate_kit/test/test_os_memory_map.py pins this mirror equal
+# to os.h; _vet_os_memory_map() below checks the addresses actually fit the bound project's image.
+OS_HEAP_BASE = 0x20000       # modeled Malloc bump-allocates upward from here
 OS_FS_TABLE = 0xBF000        # staged-file table base
 OS_FS_STAGING = 0xC0000      # raw file bytes grow upward from here
 OS_FS_ENTRY = 32             # per-entry: name[16] | staging u32 | size u32 | cursor u32 | open u32
 OS_FS_NAME = 16
 OS_FS_FIRST_HANDLE = 6
+
+
+def _vet_os_memory_map():
+    """Refuse to run if the kit-wide TOS-model regions don't fit this project's image.
+
+    A program that reaches OS_HEAP_BASE or OS_FS_TABLE would have its own code/bss silently
+    overwritten by a Malloc block or a staged file — nothing else would catch that, since both are
+    plain image writes. Staging at or above the stack guard is the mirror hazard: those bytes are
+    dropped from the diff. (A too-small image_size is already caught loudly by stage_files.)
+    """
+    config = _CFG.dir / project.CONFIG_NAME
+    for name, addr in (("OS_HEAP_BASE", OS_HEAP_BASE), ("OS_FS_TABLE", OS_FS_TABLE)):
+        if addr < loader.PROGRAM_END:
+            raise RuntimeError(
+                f"{name} ({addr:#x}, tools/recreate_kit/include/os.h) lies inside {_CFG.name}'s "
+                f"program, which ends at {loader.PROGRAM_END:#x} — a Malloc block or a staged file "
+                f"would overwrite its own code/bss. Move that region (and its mirror in "
+                f"harness.py) above the program, or lower load_base in {config}.")
+    if OS_FS_STAGING >= emu.STACK_GUARD_LO:
+        raise RuntimeError(
+            f"OS_FS_STAGING ({OS_FS_STAGING:#x}, tools/recreate_kit/include/os.h) is at or above "
+            f"the stack guard {emu.STACK_GUARD_LO:#x} — staged file bytes would land in the band "
+            f"the differential drops. Raise image_size in {config}, or move the region down.")
+
+
+_vet_os_memory_map()
 
 
 def stage_files(files):
@@ -172,7 +210,8 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
 
     Buf = ctypes.c_uint8 * IMAGE_SIZE
     buf = Buf.from_buffer(bytearray(img))
-    _lib.g_dosound_log_reset()           # fresh Dosound ledger for this candidate run (see below)
+    if _has_dosound_ledger:
+        _lib.g_dosound_log_reset()       # fresh Dosound ledger for this candidate run (see below)
     cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
 
@@ -206,14 +245,22 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     # list is invisible to the image diff. Compare the oracle's ordered Dosound trap stream against
     # the candidate's g_dosound ledger — both list pointers are Ghidra image addresses — so an
     # off-image sound trigger with the wrong list fails here even though it touches no memory.
+    # The ledger is optional ABI (see _has_dosound_ledger); a candidate without one is only served
+    # while the oracle issues no Dosound at all, so the check is never silently lost.
     o_dosound = o_regs.get("dosound", [])
-    n = _lib.g_dosound_log_count()
-    c_args = _lib.g_dosound_log_args()
-    c_dosound = [c_args[i] for i in range(n)]
-    if o_dosound != c_dosound:
+    if _has_dosound_ledger:
+        n = _lib.g_dosound_log_count()
+        c_args = _lib.g_dosound_log_args()
+        c_dosound = [c_args[i] for i in range(n)]
+        if o_dosound != c_dosound:
+            raise AssertionError(
+                f"Dosound ledger mismatch: oracle={[hex(x) for x in o_dosound]} "
+                f"cand={[hex(x) for x in c_dosound]} — off-image XBIOS Dosound(A0) diverged")
+    elif o_dosound:
         raise AssertionError(
-            f"Dosound ledger mismatch: oracle={[hex(x) for x in o_dosound]} "
-            f"cand={[hex(x) for x in c_dosound]} — off-image XBIOS Dosound(A0) diverged")
+            f"the oracle issued {len(o_dosound)} XBIOS Dosound(A0) call(s) but {_CFG.name}'s "
+            f"candidate exports no Dosound ledger ({'/'.join(_DOSOUND_LEDGER_ABI)}) — the command "
+            f"lists cannot be compared, so a divergence here would pass unnoticed")
 
     if poison and not diffs:
         _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,

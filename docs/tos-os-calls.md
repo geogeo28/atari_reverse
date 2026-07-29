@@ -86,6 +86,6 @@ Gotchas: a freshly-run program owns the whole TPA, so **`Mshrink` first** or `Ma
 nothing; `--monitor rgb` (not mono) keeps `Getrez` in low-res. Machine-dependent results (Malloc
 base, Physbase) won't equal a fixed model — assert the *invariant* (even-aligned, non-overlapping,
 size rounded up), and reserve byte-equality for machine-independent calls (Getrez, `Fread` data +
-cursor/EOF counts). Worked example: `projects/buggyboy/recreate/oracle/tos_probe.py`.
+cursor/EOF counts). Worked example: `tools/recreate_kit/oracle/tos_probe.py`.
 
 → Direct hardware access (the other 90% of a game): [`hardware-map.md`](hardware-map.md).

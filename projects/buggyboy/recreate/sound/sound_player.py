@@ -26,7 +26,9 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "oracle"))
+sys.path.insert(0, str(HERE.parents[3] / "tools"))   # reverse/tools — the shared recreate kit
+from recreate_kit import project  # noqa: E402
+project.load(HERE.parent)         # recreate/ — binds the kit's loader/emu to this game
 from loader import load_image  # noqa: E402
 import emu                      # noqa: E402
 import ym2149                   # noqa: E402

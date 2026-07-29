@@ -5,3 +5,4 @@ pyresidfp==0.17.0     # reSID-fp SID emulation for the C64 sound transcode (soun
                       # because the emulated chip version affects the rendered audio
 pytest>=8.0           # differential test suite (make test)
 pytest-xdist>=3.0     # parallel test execution (`make test` runs -n auto across cores)
+tomli>=2.0; python_version < "3.11"   # project.toml parsing (stdlib tomllib from 3.11 on)

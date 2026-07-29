@@ -1,0 +1,9 @@
+# Binds the shared differential harness (tools/recreate_kit) to this game.
+# Read by recreate_kit.project.load(); paths are relative to this file's directory.
+name       = "buggyboy"
+prg        = "../bin/BUGGYBOY.PRG"
+names      = "../names.txt"
+lib        = "build/libbuggyboy.so"
+load_base  = 0x10000     # matches PrgLoader / run.sh default (see CLAUDE.md)
+image_size = 0x100000    # 1 MiB: program (ends 0x1bcf8) + room for file staging + load
+                         # buffers (load_graphics reads ~245 KiB across two files) + stack

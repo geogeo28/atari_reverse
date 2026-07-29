@@ -15,8 +15,9 @@ projects/*/recreate/render/atari/disk/
 projects/*/recreate/render/atari/disk_orig/
 *.so
 *.o
-projects/*/recreate/oracle/musashi/
-projects/*/recreate/oracle/build/
+# the shared kit's oracle: vendored MAME 68000 core + its generated opcode tables / liboracle.so
+tools/recreate_kit/oracle/musashi/
+tools/recreate_kit/oracle/build/
 
 # TOS ROM images — not redistributable (Atari copyright); supply your own locally
 tools/hatari/*.img
