@@ -647,7 +647,18 @@ the per-frame clear was dropped.)
   — lock removed, free-running present), `BBNOBLT.PRG` (`GAME_FORCE_NO_BLITTER=1` — CPU engines; on an
   accelerated machine the blitter runs at BUS speed while `blit_start_and_wait` idles the fast CPU, so the
   blitter routes may now be a pessimization), and `BBFAST.PRG` (both).
-  Not yet decided: whether to keep C1 (tear-free, even cadence) or make the quantum adaptive/1.
+  **What the ORIGINAL does (decomp `flip_screen` @0x121f8):** toggle `flip_idx`, poke the video base
+  registers DIRECTLY (`move.w #$2700,%sr` / write / `move.w #$2000,%sr` — it runs supervisor), then ONE
+  XBIOS 37 `Vsync`. That is all: free-running, present on the first vblank after the frame is done, no
+  quantization. `recreate/`'s `g_flip_screen` (render/atari/game_main.c) reproduces exactly that shape and
+  IS faithful. `remaster/`'s `show_surface` is NOT: it adds `present_wait_boundary()` (the C1 grid) and
+  uses XBIOS `Setscreen` rather than a direct poke. C1 is listed in PERF30.md under "Tier C — departures
+  that need sign-off", so this is a known deviation, not a regression.
+  Correction to an earlier note: free-running does NOT tear. Both shapes poke the base mid-frame and let
+  the shifter latch it at the vblank the flip's `Vsync` lands on. What C1 buys is an EVEN cadence (the
+  free-running gap jitters 5/6/7 vblanks with the render's phase), not tear-freedom. So `BBFREE.PRG` is
+  the original's pacing, and the trade for dropping the lock is jitter, not tearing.
+  Not yet decided: whether to keep C1 (even cadence) or make the quantum adaptive/1.
 
 - **RESOLVED — 3 bombs (address error) on a REAL ST/STE, as the leg select draws.** Reported on real
   hardware, TOS **1.62 and 2.06**, 4 MB, booted from **floppy**. Three bombs = vector 3 = a word/long
