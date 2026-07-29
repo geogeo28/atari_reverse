@@ -1015,6 +1015,10 @@ __attribute__((unused)) static void dump_frame(Framebuffer *fb) {
 #define PSG_SELECT (*(volatile uint8_t *)0xffff8800UL)   /* register-select port */
 #define PSG_WRITE  (*(volatile uint8_t *)0xffff8802UL)   /* data-write port */
 
+/* Shifter sync mode — same I/O page, same supervisor rule. Bit 1 set = 50 Hz (PAL), clear = 60 Hz. */
+#define VIDEO_SYNC_MODE  (*(volatile uint8_t *)0xffff820aUL)
+#define VIDEO_SYNC_50HZ  0x02
+
 /* TOS low memory the one-shot install touches (all supervisor-only — reached via Supexec). */
 #define SYS_NVBLS    (*(volatile int16_t *)0x454UL)      /* VBL-queue length */
 #define SYS_VBLQUEUE (*(volatile uint32_t *)0x456UL)     /* -> array of VBL routine pointers */
@@ -1051,6 +1055,10 @@ void rm_sound_unlock(void) { __asm__ volatile("" ::: "memory"); snd_lock_depth--
  * queue, so it is never NULL here (no guard needed). */
 static void vbl_sound(void) {
     vbl_count++;    /* C1: the free-running 50 Hz cadence clock — bumped every vblank, before any early-out */
+    /* Feed REFRESH the shifter's sync bit, which is what keeps the music at 50 note-advances/second on
+     * both video standards (see rm_refresh). Read here, per frame, exactly where the original reads it
+     * (REFRESH @0x1b096) — and legally, because the VBL runs supervisor and $ffff820a is I/O-page. */
+    rm_sound_video_50hz = (VIDEO_SYNC_MODE & VIDEO_SYNC_50HZ) != 0;
     if (snd_ptr->vbl_enable != RM_VBL_RUNNING) return;
     if (snd_lock_depth) return;    /* a trigger is publishing a change: skip this frame (see the note) */
     uint8_t regs[PSG_WRITE_CAP], vals[PSG_WRITE_CAP];

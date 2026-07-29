@@ -355,3 +355,60 @@ def test_fx_over_music():
         _CAND.rm_initfx(ctypes.byref(st), fx)
         _seed(img, st, A_fxflag, 0xff)
         _step_and_compare(img, buf, st, 60, f"fx-over-music tune={tune} fx={fx}")
+
+
+# ---- the 50/60 Hz tempo normalisation (rm_sound_video_50hz) -------------------------------------
+#
+# REFRESH @0x1b096 reads the shifter's sync bit every frame and branches the tempo prescaler on it:
+# at 60 Hz the prescaler drops one frame in SND_TEMPO_RELOAD frames, at 50 Hz it is skipped entirely and the
+# stream advances every frame. Both land on the SAME musical tempo — 50 note-advances per second.
+#
+# This branch is INVISIBLE to the differential above: the oracle reads $ffff820a as 0, so recreate
+# models the 60 Hz path unconditionally (its own comment says so). Running that path on a 50 Hz machine
+# is what made every tune play 50/60 = 16.7% slow on real hardware. So it is pinned here as a PROPERTY
+# — advances per second — rather than against the oracle, which cannot express it.
+
+def _advances_per_second(tune, is_50hz):
+    """Step REFRESH for one second of frames at the given standard; count note-stream advances.
+
+    An advance is a frame on which the tempo accumulator carried, which is exactly the frame the note
+    stream steps on — observable here as SND_TEMPO_ACC wrapping downward.
+    """
+    hz = 50 if is_50hz else 60
+    ctypes.c_int.in_dll(_CAND, "rm_sound_video_50hz").value = 1 if is_50hz else 0
+    st = _new_cand()
+    _CAND.rm_inittune(ctypes.byref(st), tune)
+    c_reg, c_val = (ctypes.c_uint8 * PSG_CAP)(), (ctypes.c_uint8 * PSG_CAP)()
+    advances, prev = 0, st.header[_SND_H["SND_TEMPO_ACC"]]
+    for _ in range(hz):
+        _CAND.rm_refresh(ctypes.byref(st), c_reg, c_val, PSG_CAP)
+        acc = st.header[_SND_H["SND_TEMPO_ACC"]]
+        if acc < prev:                      # 8-bit accumulator wrapped => carry => the stream advanced
+            advances += 1
+        prev = acc
+    ctypes.c_int.in_dll(_CAND, "rm_sound_video_50hz").value = 0   # restore the suite-wide default
+    return advances
+
+
+def test_tempo_is_the_same_at_50hz_and_60hz():
+    """The whole point of the prescaler: identical musical tempo on PAL and NTSC."""
+    for tune in TUNE_IDS:
+        at50 = _advances_per_second(tune, True)
+        at60 = _advances_per_second(tune, False)
+        assert at50 == at60, (
+            f"tune={tune}: {at50} note-advances/second at 50 Hz vs {at60} at 60 Hz — the sync-bit "
+            f"branch is wrong, and the music plays at different speeds on PAL and NTSC")
+
+
+def test_50hz_path_does_not_tick_the_prescaler():
+    """At 50 Hz the original branches OVER the subq, so SND_TEMPO_DIV must be untouched."""
+    ctypes.c_int.in_dll(_CAND, "rm_sound_video_50hz").value = 1
+    st = _new_cand()
+    _CAND.rm_inittune(ctypes.byref(st), TUNE_IDS[0])
+    before = st.header[_SND_H["SND_TEMPO_DIV"]]
+    c_reg, c_val = (ctypes.c_uint8 * PSG_CAP)(), (ctypes.c_uint8 * PSG_CAP)()
+    for _ in range(_SND_H["SND_TEMPO_RELOAD"] * 3):
+        _CAND.rm_refresh(ctypes.byref(st), c_reg, c_val, PSG_CAP)
+    after = st.header[_SND_H["SND_TEMPO_DIV"]]
+    ctypes.c_int.in_dll(_CAND, "rm_sound_video_50hz").value = 0
+    assert after == before, f"50 Hz path ticked the tempo prescaler: {before} -> {after}"

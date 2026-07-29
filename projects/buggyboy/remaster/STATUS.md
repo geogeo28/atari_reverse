@@ -628,6 +628,30 @@ the per-frame clear was dropped.)
 
 ## Known issues (play-test, 2026-07-25)
 
+- **RESOLVED — every tune played ~17% too slow on a PAL machine (reported 2026-07-28).** Pitch was
+  correct, only the tempo dragged. Root cause: **the original's REFRESH branches its tempo prescaler on
+  the video sync rate and we did not.** `REFRESH @0x1b096` does `btst #1,$ffff820a` every frame:
+  * 60 Hz (bit clear) — tick the prescaler; on its 6th frame reload and SKIP that frame's advance, so the
+    note stream advances 60 x 5/6 = **50 times a second**;
+  * 50 Hz (bit set) — branch over the prescaler entirely and advance EVERY frame = **50 a second** too.
+  The prescaler exists purely to normalise the musical tempo across PAL and NTSC. Our port ran the 60 Hz
+  path unconditionally *at* 50 Hz — 50 x 5/6 = 41.7 advances/second, i.e. **16.7% slow**, matching the
+  reported "15-20%" exactly.
+  **Why no test caught it:** the ORACLE reads `$ffff820a` as 0 (the address is above the image), so
+  `recreate/src/sound.c` models the 60 Hz path unconditionally — and says so in its own comment. remaster
+  is pinned to recreate by the sound differential, so all 730 tests agreed with each other and with the
+  oracle while disagreeing with the hardware. Same blind spot as the off-image palette seam
+  ([[buggyboy-off-image-palette-debugging]] in the session memory): **a hardware READ the oracle cannot
+  see is invisible to the whole differential.**
+  **Fix:** `rm_sound_video_50hz` (src/sound.c) carries the bit; the on-target VBL pump refreshes it from
+  `$ffff820a` each frame, exactly where the original reads it, and the host default stays 0 so the
+  differential is untouched. **Pins:** `test_tempo_is_the_same_at_50hz_and_60hz` (all 11 tunes must give
+  identical advances/second on both standards) and `test_50hz_path_does_not_tick_the_prescaler` — both
+  mutation-verified (reverting the fix fails the first). These are PROPERTY tests, not differential ones,
+  because the oracle cannot express this branch.
+  **Still modelled, not fixed, in `recreate/`:** its `g_REFRESH` keeps the 60 Hz assumption. Correct for
+  the oracle; wrong on a PAL machine if that binary is ever run for audio.
+
 - **RESOLVED — the game ran slower than the original on real hardware, and a 32 MHz accelerator barely
   helped (reported 2026-07-28; free-running made the default the same day).** Not a bug in the render: it is the **C1 flip lock** doing exactly what
   it was designed to do. `present_wait_boundary` rounds every flip UP onto a 2-vblank grid, so

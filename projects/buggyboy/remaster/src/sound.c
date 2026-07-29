@@ -279,12 +279,33 @@ static uint16_t snd_cmd_step(SoundState *s, uint8_t *rec, uint32_t out_off) {
 
 /* ---- REFRESH — the 50 Hz VBL sound driver ---------------------------------------------------- */
 
+/* The shifter's 50/60 Hz sync bit, as REFRESH's tempo branch needs it (see rm_refresh). 0 = 60 Hz, the
+ * modelled default every host test runs under; the on-target shell refreshes it from $ffff820a each VBL
+ * (game_main.c). A plain int, not a hardware read here, so this core stays freestanding and testable on
+ * the host — the one place the value comes from hardware is the shell, which already runs supervisor. */
+int rm_sound_video_50hz;
+
+void rm_sound_set_video_50hz(int is_50hz) { rm_sound_video_50hz = is_50hz ? 1 : 0; }
+
 uint32_t rm_refresh(SoundState *s, uint8_t *regs, uint8_t *vals, int cap) {
     uint8_t *v0 = s->voice[0];
 
-    /* --- music: prescale the tempo, step the note stream on a carry, then run the DSP --- */
+    /* --- music: prescale the tempo, step the note stream on a carry, then run the DSP ---
+     *
+     * The prescaler exists ONLY to normalise the tempo across the two video standards. The original
+     * (REFRESH @0x1b096) reads the shifter's sync bit every frame — `btst #1,$ffff820a` — and:
+     *   60 Hz (bit clear): tick the prescaler; on its 6th frame reload and SKIP this frame's advance,
+     *                      so the stream advances 60 x 5/6 = 50 times a second;
+     *   50 Hz (bit set):   skip the prescaler entirely and advance EVERY frame — also 50 a second.
+     * Either way the music runs at 50 note-advances/second, which is the tempo the tunes are written for.
+     * rm_sound_video_50hz carries that bit (see rm_sound_set_video_50hz). It defaults to 0 because the
+     * ORACLE reads $ffff820a as 0 — recreate therefore models the 60 Hz path unconditionally and the
+     * whole host differential is blind to this branch, which is exactly how a PAL machine ended up
+     * playing every tune at 50 x 5/6 = 41.7 advances/second, i.e. 16.7% slow. */
     if (s->header[SND_MUSIC_ON]) {
-        if (--s->header[SND_TEMPO_DIV] == 0) {
+        /* Short-circuit order matters: at 50 Hz the prescaler must not be decremented AT ALL, matching
+         * the original's branch over the subq. */
+        if (!rm_sound_video_50hz && --s->header[SND_TEMPO_DIV] == 0) {
             s->header[SND_TEMPO_DIV] = SND_TEMPO_RELOAD;
         } else {
             uint16_t acc = s->header[SND_TEMPO_ACC] + s->header[SND_TUNE_PARAM];

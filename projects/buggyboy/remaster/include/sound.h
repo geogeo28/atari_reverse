@@ -238,6 +238,13 @@ void rm_inittune(SoundState *s, uint32_t tune_id);
  * the caller drives the chip from the returned stream (the same seam recreate's g_REFRESH uses). */
 uint32_t rm_refresh(SoundState *s, uint8_t *regs, uint8_t *vals, int cap);
 
+/* The shifter's 50/60 Hz sync bit, which REFRESH's tempo prescaler branches on so the music runs at 50
+ * note-advances/second on BOTH standards (see rm_refresh). 0 = 60 Hz. It defaults to 0 because that is
+ * what the oracle reads at $ffff820a, so recreate models the 60 Hz path unconditionally and the host
+ * differential cannot see this branch at all; the on-target shell sets it from the real register. */
+extern int rm_sound_video_50hz;
+void rm_sound_set_video_50hz(int is_50hz);
+
 /* The most (reg, value) writes rm_refresh can emit in one frame: 13 fixed registers (the psg_regs
  * table in src/sound.c) plus the envelope-shape register, emitted only when nonzero. The shell sizes
  * its VBL PSG buffer/cap to this (render/atari/game_main.c); test_sound_rm asserts the observed count
