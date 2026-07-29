@@ -67,19 +67,11 @@ highscore [name entry] → intermission attract cycle → back to the leg select
 the leg's high-score table, the **name-entry screen** runs (`rm_flow_name_entry`): Up/Down/Left/Right dial
 each of the three initials (Up/Left step a letter back, Down/Right forward) and **Space** (fire) confirms
 one — a 30-second `TIME` countdown ends entry if it runs out; a score that misses shows a short game-over
-screen instead. The controls are **identical to the original arcade port** (the one deliberate
-deviation is Q, below):
+screen instead. The controls are **identical to the original arcade port** bar one deliberate
+deviation (Q).
 
-| Key | Race | Leg select | Name entry |
-|-----|------|------------|------------|
-| Up / Down | throttle / brake | previous / next leg | dial initial back / forward |
-| Left / Right | steer | previous / next leg | dial initial back / forward |
-| Space | fire (dashboard variant) | start the selected leg | confirm an initial (on '`' backs up) |
-| Joystick (port 1) | steer + throttle/brake, button = fire | nav + button starts the leg | dial + button confirms |
-| F1..F5 | — | select + start that leg | — |
-| G | toggle the dashboard-variant display (`dsp_toggle`) | — | — |
-| **ESC** | **abort back to the intermission** | — | — |
-| Q | quit to the desktop *(the one deviation)* | quit to the desktop *(the one deviation)* | — |
+The **player-facing key table lives in [`../../../README.md`](../../../README.md) ("Play it")** — one
+home for it, so the two cannot drift. What follows is only what a maintainer needs on top of it.
 
 **ESC** during a race does exactly what the original does (`main @0x10100:286` `cmpi.b #$1b,d0 / beq`):
 it breaks the race loop straight into `update_highscore` → the intermission attract cycle → the leg
