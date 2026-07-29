@@ -85,9 +85,9 @@ static uint8_t  g_psg_latch;   /* register selected by the last $ff8800 write */
  * missing list is invisible to the image diff even when the call runs. Record each Dosound's
  * list pointer (the runtime A0 == a Ghidra image address) in an ordered ledger, reset per run
  * like the PSG tap. harness.differential compares it against the candidate's g_dosound ledger,
- * making the off-image A0 argument diff-verifiable (improvement #2). */
-#define MAX_DOSOUND 256
-static uint32_t g_dosound_arg[MAX_DOSOUND];
+ * making the off-image A0 argument diff-verifiable (improvement #2). The cap is os.h's
+ * OS_DOSOUND_LOG_MAX — the same one the candidate's ledger uses, so both truncate identically. */
+static uint32_t g_dosound_arg[OS_DOSOUND_LOG_MAX];
 static uint32_t g_dosound_n;
 uint32_t        osh_dosound_count(void) { return g_dosound_n; }
 const uint32_t *osh_dosound_args(void)  { return g_dosound_arg; }
@@ -131,6 +131,7 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
 #define MAGIC_XBIOS  0x12c
 
 static uint32_t g_heap;         /* Malloc bump pointer */
+static uint32_t g_malloc_n;     /* GEMDOS Malloc calls serviced this run (see osh_malloc_count) */
 static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT model (fabricated D0) */
 static uint32_t g_min_a7;       /* lowest A7 (deepest stack pointer) reached this run */
 static uint32_t g_ninsns;       /* instructions executed in the last osh_run (perf profiling) */
@@ -163,6 +164,10 @@ static void handle_trap(int vec) {
     if (vec == 1) {                                   /* GEMDOS */
         switch (fn) {
         case 0x48:                                    /* Malloc: bump-allocate a block */
+            /* Count the CALL, not the bump: a zero/rounds-to-zero size (Malloc(-1), the "largest
+             * free block?" query) is still fully serviced — it returns OS_HEAP_BASE — yet leaves
+             * g_heap where it was. See osh_malloc_count. */
+            g_malloc_n++;
             d0 = g_heap; g_heap += (m68k_read_memory_32(arg1) + 1u) & ~1u; break;
         case 0x3d: {                                  /* Fopen(fname, mode) -> handle */
             int32_t h = os_fopen(g_mem, m68k_read_memory_32(caller + 2));
@@ -193,7 +198,7 @@ static void handle_trap(int vec) {
         case 0x19:                                    /* Ikbdws: serial write to the IKBD, no image effect */
             break;
         case 0x20:                                    /* Dosound: writes the YM2149, no image effect */
-            if (g_dosound_n < MAX_DOSOUND)            /* log A0 (the command-list pointer) into the ledger */
+            if (g_dosound_n < OS_DOSOUND_LOG_MAX)    /* log A0 (the command-list pointer) into the ledger */
                 g_dosound_arg[g_dosound_n++] = m68k_read_memory_32(arg1);
             break;
         case 0x25: break;                             /* Vsync: waits for the VBL, no image effect */
@@ -245,6 +250,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     m68k_write_memory_32(TRAP_VEC_BIOS, MAGIC_BIOS);
     m68k_write_memory_32(TRAP_VEC_GEM, MAGIC_GEM);
     g_heap = OS_HEAP_BASE;
+    g_malloc_n = 0;
     g_unmodeled = 0;
 
     g_wn = 0;                             /* write-set = the function's writes only */
@@ -320,6 +326,13 @@ uint32_t        osh_num_writes(void)  { return g_wn; }
 const uint32_t *osh_write_addrs(void) { return g_waddr; }
 uint32_t        osh_unmodeled(void)   { return g_unmodeled; }
 uint32_t        osh_min_a7(void)      { return g_min_a7; }
+/* The Malloc bump pointer left by the last osh_run — diagnostics only (how far the heap grew). */
+uint32_t        osh_heap(void)        { return g_heap; }
+/* How many GEMDOS Malloc calls the last osh_run serviced. This, NOT the bump pointer, is what
+ * "did this run allocate?" means: a serviced Malloc whose rounded size is 0 hands back a block at
+ * OS_HEAP_BASE without moving g_heap, so a pointer comparison would miss it. emu.run() keys the
+ * heap-over-program guard on this count (see emu._vet_no_malloc_over_program). */
+uint32_t        osh_malloc_count(void) { return g_malloc_n; }
 uint32_t        osh_num_insns(void)   { return g_ninsns; }
 uint64_t        osh_num_cycles(void)  { return g_ncycles; }
 uint32_t        osh_psg_count(void)   { return g_psgn; }

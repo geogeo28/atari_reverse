@@ -42,19 +42,10 @@ void g_vsync(void) { }
  *
  * The harness records each call's list pointer in a side-effect ledger (reset before a differential
  * run, then compared against the oracle's Dosound trap stream) so a wrong/missing list — invisible to
- * the image diff — fails a test. This logging is the .so/harness side only; game_main.c's PRG seam
- * issues the real trap and is unaffected. */
-#define MAX_DOSOUND_LOG 256
-static uint32_t g_dosound_log[MAX_DOSOUND_LOG];
-static uint32_t g_dosound_log_n;
-void            g_dosound_log_reset(void) { g_dosound_log_n = 0; }
-uint32_t        g_dosound_log_count(void) { return g_dosound_log_n; }
-const uint32_t *g_dosound_log_args(void)  { return g_dosound_log; }
-
-void g_dosound(uint8_t *image, uint32_t list_off) {
-    (void)image;
-    if (g_dosound_log_n < MAX_DOSOUND_LOG) g_dosound_log[g_dosound_log_n++] = list_off;
-}
+ * the image diff — fails a test. That ledger — g_dosound plus its three accessors — is kit-wide and
+ * lives in tools/recreate_kit/src/dosound_log.c, which kit.mk links into every candidate. This file
+ * only documents the seam; game_main.c's PRG build excludes os.c and the kit sources alike, and
+ * supplies its own g_dosound that issues the real trap. */
 
 /* wait_music_off @ update_highscore 0x2406 / 0x25ca — spin until the VBL sound driver clears mzflag
  * (i.e. the current tune has played out). The 50 Hz VBL driver advances the tune off-image, so this

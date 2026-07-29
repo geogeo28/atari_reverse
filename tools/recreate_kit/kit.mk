@@ -12,7 +12,9 @@ CFLAGS  ?= -std=c11 -O2 -fPIC -Wall -Wextra -Iinclude -I$(KIT)/include
 PY      := .venv/bin/python
 
 CAND    := build/lib$(GAME).so
-SRC     := $(wildcard src/*.c) $(wildcard src/machine/*.c)
+# The project's own cores, plus the kit sources every candidate must export (the Dosound ledger the
+# harness diffs off-image sound against — see "What the candidate .so must export" in README.md).
+SRC     := $(wildcard src/*.c) $(wildcard src/machine/*.c) $(wildcard $(KIT)/src/*.c)
 
 # Musashi + the oracle .so are shared by every project, so they live (and build) in the kit.
 MUSASHI := $(KIT)/oracle/musashi

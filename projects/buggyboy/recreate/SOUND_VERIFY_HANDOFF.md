@@ -46,8 +46,9 @@ Sinks (Ghidra addr): `play_event_tune 0x11c7a`, `handle_marker 0x11cb2`, `stop_m
 `stop_music_chk 0x12ebc`, `INITTUNE 0x1b59c`, `INITFX 0x1b560`, and the XBIOS `Dosound` trap (fn `0x20`).
 Dosound command lists (`include/addrs.h`): `A_dosound_beep 0x18bba`, `A_dosound_go 0x18bca`,
 `A_dosound_idle 0x18ba2`, `A_dosound_collide 0x18b78`, `A_dosound_crash 0x18b92`.
-Seam: `g_dosound(image, list_off)` — no-op in `src/os.c` (`.so`), real XBIOS `Dosound(image+off)` in
-`render/atari/game_main.c`. `g_stop_music(image, list_off)` / `g_stop_music_chk(...)` thread the list.
+Seam: `g_dosound(image, list_off)` — logs to the ledger in the `.so` (kit-wide since the Joust
+project: `tools/recreate_kit/src/dosound_log.c`; it lived in `src/os.c` when this was written), real
+XBIOS `Dosound(image+off)` in `render/atari/game_main.c`. `g_stop_music(image, list_off)` / `g_stop_music_chk(...)` thread the list.
 Oracle coverage: `oracle/shim.c` `osh_cov_*`; `oracle/emu.py` `cov_enable/reset/visited/data`;
 `test/conftest.py` dumps per-worker when `COVGAP_DIR` is set.
 

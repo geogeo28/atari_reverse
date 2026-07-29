@@ -398,7 +398,8 @@ void game_main(void) {
         /* Four settle frames @0x226..0x254. The original hands stop_music a Dosound command list
          * each frame — the countdown "3-2-1-go": three beeps then the go tone — and stop_music
          * (after parking the VBL sound vec) issues XBIOS Dosound(list) over the four vblank-paced
-         * gaps. Our g_stop_music threads that list through the g_dosound seam (a no-op off-target). */
+         * gaps. Our g_stop_music threads that list through the g_dosound seam — the real trap here,
+         * the kit's side-effect ledger off-target. */
         g_stop_music(image, A_dosound_beep); g_wait_vbl_set_offset(image);
         g_stop_music(image, A_dosound_beep); g_wait_vbl_set_offset(image);
         g_stop_music(image, A_dosound_beep); g_wait_vbl_set_offset(image);

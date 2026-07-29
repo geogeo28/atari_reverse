@@ -28,11 +28,29 @@ CONFIG_NAME = "project.toml"
 _CONFIG = None
 
 
+def _bool_flag(raw, key, recreate_dir):
+    """An optional project.toml flag that must be a real TOML boolean; False when absent.
+
+    These flags waive safety checks, and every non-empty TOML string is truthy in Python — so
+    ``tos_malloc_unused = "false"`` would silently *enable* the waiver it was written to disable.
+    Refuse anything that is not a bool rather than interpret it.
+    """
+    if key not in raw:
+        return False
+    value = raw[key]
+    if not isinstance(value, bool):
+        raise TypeError(f"{recreate_dir / CONFIG_NAME}: `{key}` must be a TOML boolean "
+                        f"(true/false), not {type(value).__name__} {value!r} — it waives a safety "
+                        f"check, and a quoted value would be read as true")
+    return value
+
+
 def load(recreate_dir):
     """Read ``<recreate_dir>/project.toml`` and bind it to the kit. Idempotent.
 
     Returns the config namespace: name, dir, prg, names, lib (absolute paths) plus
-    load_base / image_size. Re-binding the kit to a *different* project inside one
+    load_base / image_size and the optional tos_malloc_unused waiver (see harness's
+    _vet_os_memory_map). Re-binding the kit to a *different* project inside one
     process is refused — the module-level constants derived here are already frozen.
     """
     global _CONFIG
@@ -53,6 +71,9 @@ def load(recreate_dir):
         lib=(recreate_dir / raw["lib"]).resolve(),
         load_base=raw["load_base"],
         image_size=raw["image_size"],
+        # Optional: the game issues no GEMDOS Malloc, so the modeled heap is never allocated from
+        # and may sit inside its program. The project.toml declaring it must justify it there.
+        tos_malloc_unused=_bool_flag(raw, "tos_malloc_unused", recreate_dir),
     )
 
     if str(ORACLE) not in sys.path:

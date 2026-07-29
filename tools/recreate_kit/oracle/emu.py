@@ -9,6 +9,7 @@ import ctypes
 from pathlib import Path
 
 import loader   # bound by recreate_kit.project.load() before this module is first imported
+from recreate_kit import project   # already imported: it is what bound `loader` above
 
 if loader.IMAGE_SIZE is None:
     raise RuntimeError("emu was imported before recreate_kit.project.load(<recreate dir>): "
@@ -23,6 +24,12 @@ STACK_SCRATCH = 0x400     # bytes below STACK_TOP a call frame may legitimately 
                           # [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program output, not stack
 SENTINEL = 0x00000002     # even, mapped, never real code (code >= 0x10000): rts lands here
 
+# The modeled Malloc heap base, mirroring include/os.h (shim.c bump-allocates from it). It lives
+# here rather than with the rest of the os.h mirror in harness.py because the guard below — which
+# every emu.run() must pass through, harness or not — needs it; harness.py re-exports it, and
+# test/test_os_memory_map.py pins both Python files against os.h.
+OS_HEAP_BASE = 0x20000
+
 _DREG_NAMES = ("d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7")
 _AREG_NAMES = ("a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7")
 
@@ -36,6 +43,8 @@ _LIB.osh_num_writes.restype = ctypes.c_uint32
 _LIB.osh_write_addrs.restype = _u32p
 _LIB.osh_unmodeled.restype = ctypes.c_uint32
 _LIB.osh_min_a7.restype = ctypes.c_uint32
+_LIB.osh_heap.restype = ctypes.c_uint32
+_LIB.osh_malloc_count.restype = ctypes.c_uint32
 _LIB.osh_num_insns.restype = ctypes.c_uint32
 _LIB.osh_num_cycles.restype = ctypes.c_uint64
 _u8p = ctypes.POINTER(ctypes.c_uint8)
@@ -125,6 +134,45 @@ def psg_writes():
     return [(regs[i], vals[i]) for i in range(n)]
 
 
+def heap_overlaps_program():
+    """Does the modeled Malloc heap sit inside the loaded program?
+
+    If so, any block the model hands out lands ON TOP of the program's own code/data.
+    ``loader.PROGRAM_END`` is None until ``load_image()`` has run — no program is loaded then, so
+    there is nothing a block could overwrite.
+    """
+    return loader.PROGRAM_END is not None and OS_HEAP_BASE < loader.PROGRAM_END
+
+
+def _vet_no_malloc_over_program(malloc_calls):
+    """Reject a run that served a Malloc from a modeled heap overlapping the program — a FALSE GREEN.
+
+    Reachable only under the ``tos_malloc_unused`` waiver (see harness._vet_os_memory_map), which
+    claims the game issues no GEMDOS Malloc. If that claim is wrong the diff does not merely become
+    unreliable, it becomes actively misleading, so the claim is re-tested after every run rather
+    than trusted once. It lives here, not in harness.differential(), so that a bare ``emu.run()``
+    (an oracle-only test, the poison re-run inside harness._attribution_check) is covered too.
+
+    ``malloc_calls`` counts SERVICED Malloc traps rather than looking at the bump pointer: a
+    Malloc whose rounded size is 0 — canonically ``Malloc(-1)``, GEMDOS's "how big is the largest
+    free block?" query — is fully serviced and returns a block at OS_HEAP_BASE without moving the
+    pointer, so a pointer test would let exactly that case through.
+    """
+    if not (malloc_calls and heap_overlaps_program()):
+        return
+    cfg = project.current()
+    raise AssertionError(
+        f"the oracle served {malloc_calls} GEMDOS Malloc call(s) while OS_HEAP_BASE "
+        f"({OS_HEAP_BASE:#x}) lies inside {cfg.name}'s program, which ends at "
+        f"{loader.PROGRAM_END:#x}. The block was handed out ON TOP of the program's own code/data "
+        f"— and the candidate mirrors the same OS_HEAP_BASE by convention, so BOTH sides scribble "
+        f"the same bytes over the same program bytes and the diff comes back clean while proving "
+        f"nothing. A green result on this run is not evidence of anything. {cfg.name}'s "
+        f"`tos_malloc_unused = true` in {cfg.dir / project.CONFIG_NAME} is therefore false: drop it "
+        f"and move OS_HEAP_BASE above the program (include/os.h + its mirror in emu.py), or lower "
+        f"load_base.")
+
+
 def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     """Run ``entry`` on a copy of ``image``. Return (final_image, writes, out_regs).
 
@@ -158,8 +206,12 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     writes = {waddr[i]: mem[waddr[i]] for i in range(n)}
     out_regs = {"d0": out[0], "d1": out[1], "a0": out[2], "a1": out[3]}
     out_regs["min_a7"] = _LIB.osh_min_a7()   # deepest stack pointer; used to vet diff exclude bands
+    out_regs["heap"] = _LIB.osh_heap()       # Malloc bump pointer at the end of the run (diagnostics)
+    out_regs["malloc_calls"] = _LIB.osh_malloc_count()   # serviced GEMDOS Malloc traps this run
     out_regs["ninsns"] = _LIB.osh_num_insns()  # instructions executed (perf profiling)
     out_regs["cycles"] = _LIB.osh_num_cycles()  # 68000 clock cycles executed (perf profiling)
     dn, dargs = _LIB.osh_dosound_count(), _LIB.osh_dosound_args()
     out_regs["dosound"] = [dargs[i] for i in range(dn)]  # ordered XBIOS Dosound(A0) list pointers
+
+    _vet_no_malloc_over_program(out_regs["malloc_calls"])
     return mem, writes, out_regs

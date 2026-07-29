@@ -14,6 +14,7 @@ tools/recreate_kit/
 ├── harness.py        the differential driver (differential/report/make_image/stage_files)
 ├── kit.mk            shared make rules: candidate .so, Musashi oracle, `test`/`venv`/`oracle`/`clean`
 ├── include/          machine.h (big-endian image accessors)  os.h (deterministic TOS trap model)
+├── src/              C linked into EVERY candidate .so: dosound_log.c (the Dosound ledger below)
 ├── oracle/           loader.py (load+relocate PRG)  emu.py (Musashi runner)  shim.c (callbacks)
 │                     isa_conformance.py  tos_probe.py   musashi/ + build/ (gitignored)
 ├── test/             the kit's own regression tests (`make test` here; no project needed)
@@ -48,31 +49,64 @@ tools/recreate_kit/
 ### What the candidate `.so` must export
 
 `differential(entry, regs, glue, …)` only calls what the project's own `glue` callbacks name, so
-there is no required symbol — with one **optional** group:
+there is no required symbol — with one group the kit supplies for you:
 
 | symbol | signature | purpose |
 | --- | --- | --- |
 | `g_dosound_log_reset` | `void(void)` | clear the ledger before each candidate run |
 | `g_dosound_log_count` | `uint32_t(void)` | number of `Dosound` calls logged |
 | `g_dosound_log_args`  | `const uint32_t *(void)` | the ordered list pointers (image addresses) |
+| `g_dosound`           | `void(uint8_t *, uint32_t)` | what a reconstruction calls at a `Dosound` site |
 
 XBIOS `Dosound(A0)` writes the YM2149, not RAM, so a wrong or missing sound-command list is
-**invisible to the image diff**. When the three symbols are present the harness diffs the
-candidate's ledger against the oracle's ordered `Dosound` trap stream, catching exactly that. A
-game that never issues `Dosound` may omit them (the kit probes once at import, and skips both the
-reset and the comparison). It is not a silent downgrade: if the oracle *does* issue `Dosound` while
-the candidate exports no ledger, `differential()` fails with that diagnostic — so a game with sound
-should implement the ledger rather than drop it. `projects/buggyboy/recreate/src/os.c` is the
-reference implementation (~6 lines).
+**invisible to the image diff**. The harness diffs the candidate's ledger against the oracle's
+ordered `Dosound` trap stream, catching exactly that. All four symbols come from `src/dosound_log.c`,
+which `kit.mk` links into every candidate — the ledger is one implementation shared by every game
+rather than a copy per project, and its cap is `os.h`'s `OS_DOSOUND_LOG_MAX`, the same one the
+oracle's mirror ledger truncates at.
+
+The harness still treats the group as *optional* at import (it probes the three accessors once), so
+a candidate built outside `kit.mk` keeps working: it is then served without the ledger while the
+oracle issues no `Dosound` at all, and `differential()` fails with that diagnostic the moment one
+appears. A reconstruction built for the real Atari supplies its own `g_dosound` that issues the
+real trap and does not compile this file — see `projects/buggyboy/recreate/render/atari/game_main.c`.
 
 ### The shared TOS memory map
 
 `include/os.h` fixes the modeled Malloc heap (`OS_HEAP_BASE`) and the staged-file table
-(`OS_FS_TABLE` / `OS_FS_STAGING`) at kit-wide addresses, mirrored in Python by `harness.py` and
-pinned equal by `test/test_os_memory_map.py`. They are **not** derived from `project.toml`, so the
+(`OS_FS_TABLE` / `OS_FS_STAGING`) at kit-wide addresses, mirrored in Python by `harness.py` —
+except `OS_HEAP_BASE`, which sits in `oracle/emu.py` where the per-run Malloc guard below needs it,
+and is re-exported as `harness.OS_HEAP_BASE`. `test/test_os_memory_map.py` pins every constant
+equal to `os.h` and refuses a second Python copy. They are **not** derived from `project.toml`, so the
 harness checks at import that they clear the bound project's program and stay below the stack
 guard, and fails with a diagnostic naming `project.toml` when they do not. A game whose text+bss
 reaches `0x20000` (heap) or `0xbf000` (staging) needs those constants moved on both sides.
+
+One waiver exists for the heap: only a GEMDOS `Malloc` ever writes at `OS_HEAP_BASE`, so a game
+that issues none can set `tos_malloc_unused = true` in its `project.toml` (justifying it there) and
+let its program cover that region — `projects/joust/recreate/project.toml` is the worked example.
+`OS_FS_TABLE` has no waiver: the harness stages files itself, so an overlap there is always live.
+
+The waiver is a claim about the *game*, so it is not taken on trust. `emu.run()` calls
+`_vet_no_malloc_over_program()` after every oracle run and fails if the run served a GEMDOS `Malloc`
+while `OS_HEAP_BASE` lies inside the loaded program — the one case where a green diff means
+nothing, since the candidate mirrors the same `OS_HEAP_BASE` and would scribble the identical bytes
+over the identical program area. Two details make it hold:
+
+* it counts **serviced `Malloc` traps** (`osh_malloc_count`), not movement of the bump pointer. A
+  `Malloc` whose size rounds to zero — canonically `Malloc(-1)`, GEMDOS's "how big is the largest
+  free block?" query — is fully served and returns a block at `OS_HEAP_BASE` without moving the
+  pointer, so a pointer test would wave exactly that case through;
+* it lives in `emu.run()` rather than in `differential()`, so an oracle-only run and the poison
+  re-run inside `_attribution_check` are covered by the same check.
+
+It keys on the *overlap*, never on the flag, so it stays correct if `OS_HEAP_BASE` or a project's
+`load_base` moves, and setting the flag on a game that does allocate does not buy a green run. The
+flag itself must be a real TOML boolean (`project.py` rejects anything else: a quoted `"false"` is
+truthy in Python and would silently waive the check). What it does *not* cover: a program that
+reaches `OS_HEAP_BASE` through some other route than the modeled `Malloc` — nothing here watches
+plain writes into that region. `projects/joust/recreate/test/test_heap_guard.py` exercises the whole
+guard, since Joust is the only project it is armed for.
 
 ## Binding
 
@@ -111,7 +145,8 @@ the shared artifact game-specific — make's timestamps could not detect that ac
 `make test` in this directory runs `test/` — checks that belong to `tools/` rather than to any
 one game: the cross-language pin between `prg_dis.py`'s and `AtariOsTrapAnnotate.java`'s XBIOS
 trap tables, `prg_dis`'s 68000 decoder (reference encodings + an opcode-space sweep for
-impossible instruction forms), and the C-vs-Python pin on the TOS memory map above.
+impossible instruction forms), the C-vs-Python pin on the TOS memory map above, and
+`project._bool_flag`'s refusal of a non-boolean waiver flag.
 
 They need only pytest — but the kit has no venv of its own, so **`PY` defaults to BuggyBoy's**
 (`../../projects/buggyboy/recreate/.venv/bin/python`). That is a known wart: the game-agnostic kit

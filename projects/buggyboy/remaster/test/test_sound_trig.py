@@ -198,7 +198,10 @@ _REC_EVT = _defines(Path("src") / "events.c", _DEF_RE, base=adapter.RECREATE)
 _REC_GU = _defines(Path("src") / "game_update.c", _DEF_RE, base=adapter.RECREATE)
 _REC_HS = _defines(Path("src") / "highscore.c", _DEF_RE, base=adapter.RECREATE)
 _SND_TRIG_C = _defines(Path("src") / "sound_trig.c", _DEF_RE)
-_REC_OS = _defines(Path("src") / "os.c", _DEF_RE, base=adapter.RECREATE)
+# The Dosound ledger is kit-wide (tools/recreate_kit/src/dosound_log.c), so its cap is a kit
+# constant, not a recreate one.
+_KIT_OS_H = _defines(Path("include") / "os.h", _DEF_RE,
+                     base=adapter.RECREATE.parents[2] / "tools" / "recreate_kit")
 
 
 def test_python_constants_match_the_c():
@@ -240,10 +243,12 @@ def test_python_constants_match_the_c():
     _gets = re.findall(r"g_play_event_tune\(image,\s*(\d+)\)", _int_c)
     assert len(_gets) == 1, f"expected one g_play_event_tune call in intermission.c, got {_gets}"
     assert _FLOW_C["RM_TUNE_GET_READY"] == int(_gets[0])
-    # The two Dosound ledgers are fixed-size; pin the remaster cap == the recreate cap == the value the
-    # drive harness compares against (equiv.DOSOUND_LEDGER_CAP), so a stream can't silently truncate on
-    # one side only (fix: the drive fails loudly at the cap instead of comparing blind).
-    assert _SND_TRIG_C["RM_DOSOUND_LOG_MAX"] == _REC_OS["MAX_DOSOUND_LOG"] == equiv.DOSOUND_LEDGER_CAP
+    # The two Dosound ledgers are fixed-size; pin the remaster cap == the kit cap (which recreate's
+    # candidate links) == the value the drive harness compares against (equiv.DOSOUND_LEDGER_CAP), so a
+    # stream can't silently truncate on one side only (fix: the drive fails loudly at the cap instead
+    # of comparing blind).
+    assert (_SND_TRIG_C["RM_DOSOUND_LOG_MAX"] == _KIT_OS_H["OS_DOSOUND_LOG_MAX"]
+            == equiv.DOSOUND_LEDGER_CAP)
 
 
 def test_dosound_ledger_sensitivity():

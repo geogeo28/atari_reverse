@@ -290,7 +290,8 @@ void g_build_sprite_shifts_msk(uint8_t *image, uint32_t dst_off, uint32_t src_of
 void g_TURNOFF(uint8_t *image);
 void g_EGOFF(uint8_t *image);
 /* stop_music/_chk take the Dosound command-list image offset the original passes in A0 (one of the
- * A_dosound_* lists). Off-image: g_dosound is a no-op in the harness, the real XBIOS trap in the PRG. */
+ * A_dosound_* lists). Off-image: g_dosound logs the list into the kit's side-effect ledger in the
+ * harness, and issues the real XBIOS trap in the PRG. */
 void g_dosound(uint8_t *image, uint32_t list_off);               /* XBIOS 32: play a YM command list */
 void g_stop_music(uint8_t *image, uint32_t list_off);            /* silence the driver unless game-over; Dosound(list) */
 void g_stop_music_chk(uint8_t *image, uint32_t list_off);        /* stop_music, gated on MZFLAG == 0 */

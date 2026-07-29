@@ -40,6 +40,12 @@
                                   * region, clear of the vector page and the program). install_handlers
                                   * patches its mousevec (+0x10) / joyvec (+0x18). Shared with the shim. */
 
+/* XBIOS Dosound(A0) writes the chip, not the image, so both sides record their calls in a ledger the
+ * harness compares (src/dosound_log.c on the candidate side, shim.c's g_dosound_arg on the oracle's).
+ * ONE cap for both: were they to differ, a run past the smaller one would drop entries on that side
+ * only and diverge the comparison for a reason that has nothing to do with the reconstruction. */
+#define OS_DOSOUND_LOG_MAX 256
+
 /* ---- GEM trap #2 (AES / VDI) --------------------------------------------------------
  * A trap #2 selects the subsystem by D0 and points D1 at a parameter block of array
  * pointers. AES: apb = {contrl, global, intin, intout, addrin, addrout}; VDI:

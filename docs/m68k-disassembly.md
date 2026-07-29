@@ -29,6 +29,45 @@ python3 tools/prg_dis.py bin/GAME.PRG --start 0x<fileoff> --len 0x<n>
 ```
 (`prg_dis` addresses are image-relative = file_offset − 28.)
 
+### A desynced sweep **drops** instructions — never take a census from a listing
+
+Desync does not only print nonsense from the desync point on. It swallows the real instructions
+that follow into the extension words of a bogus one, so they are **absent from the listing
+altogether** — and the listing simultaneously invents instructions inside data. Any question of the
+form *"does this program ever do X?"* must therefore be answered by a **byte scan of text+data**,
+never by grepping a listing. A byte scan can over-count (data that happens to spell the opcode),
+which is the safe direction for a "never does X" claim; a listing under-counts, which is not.
+
+The worked case is Joust's trap census. A byte scan of text+data at even alignment finds **72**
+`4e4<n>` words: 22 `trap #1`, 1 `trap #2`, 2 `trap #7`, 9 `trap #13`, 35 `trap #14`, 3 `trap #15`.
+`prg_dis`'s listing shows **71** — the same set minus one `trap #13`, the `4e4d` at image `0x11c2c`
+(a BIOS `Bconstat`: `3f3c 0002 / 3f3c 0001 / 4e4d`), which is real code a desync rendered as
+`ori.b #$4e4d,d1`. That is the whole of the listing's under-count, and it is the dangerous
+direction: a "never does X" claim read off the listing would have missed a live OS call.
+
+The over-count is in **both** sources, so it is not a listing artefact — those two `trap #7` and
+three `trap #15`, *and* the lone `trap #2`, are all ASCII pairs inside string tables that happen to
+live in the text segment. Six spurious lines in total:
+
+| bytes | image | ASCII | inside |
+|---|---|---|---|
+| `4e4f` | `0x102c0` | `NO` | `MONO.ERR` (a filename) |
+| `4e47` | `0x1830c`, `0x1834c` | `NG` | `CONGRATULATIONS!` |
+| `4e42` | `0x18500` | `NB` | `BEWARE OF THE UNBEATABLE PTERODACTYL` |
+| `4e4f` | `0x18556`, `0x18588` | `NO` | `NO BONUS AWARDED` |
+
+So the real census is 22 `trap #1` + 9 `trap #13` + 35 `trap #14` = **66** OS calls, and every one
+of the 72 raw hits had to be classified by reading its bytes. Do not assume the extra trap *numbers*
+are the spurious ones and the "plausible" ones real: `trap #2` is a legitimate GEM vector on the ST,
+which is exactly why counting it as code went unnoticed.
+
+To census OS calls properly, scan for each `4e4<n>` opcode word and then read the `3f3c <sel>`
+selector immediate a compiler emits directly in front of it — checking that *every* site has one,
+so no selector is loaded through a register where the scan could not see it. A hit with no selector
+in front of it is the tell for an ASCII (or other data) misdecode.
+`projects/joust/recreate/project.toml` records exactly that scan as the evidence for its
+`tos_malloc_unused` waiver.
+
 ## The "impossible instruction" tell
 
 If a listing shows an instruction the 68000 **cannot encode**, the decoder is wrong — not
@@ -75,6 +114,41 @@ extension word, so the length is right and the sweep stays in sync: `ABCD`/`SBCD
 `and.b`/`or.b` into an `An`), `ADDX`/`SUBX` (as `add`/`sub`), and `CMPM` (as `eor`). The test
 above sweeps all 65536 opcode words for this impossible-destination tell and allowlists exactly
 those 832 encodings, so any *new* one fails the moment it appears.
+
+## Semantics that silently change a reconstruction
+
+Three 68000 behaviours a C reconstruction has to model explicitly. None of them shows in the
+mnemonic — the listing reads as ordinary arithmetic — and each yields a *plausible wrong answer*
+rather than a crash, so nothing draws attention to them.
+
+**A relocated *immediate operand*.** The DRI relocation table fixes up 32-bit longwords by image
+offset, and nothing requires the longword to be a pointer sitting in data: it can be the immediate
+field of an instruction. `cmpi.l #$00007832,d0` assembled against a text base of 0 becomes
+`cmpi.l #$00017832,d0` once loaded at `0x10000`. Disassemble the *unrelocated* file and you get a
+constant that is off by the load base, with no impossible instruction and no desync to warn you —
+just a magic number that looks fine. Joust's `rng_advance` bounds its pointer with `#$17832` and
+resets it to `#$10000`, both of which print as `#$7832` and `#$0` in a raw listing.
+
+So: always disassemble the **relocated** image (`recreate_kit/oracle/loader.py` applies the fixups;
+Ghidra's `PrgLoader` does too), and when a constant lands suspiciously near the load base, check
+whether its own image offset is in the relocation table. See
+[`binary-formats.md`](binary-formats.md) for the table's format.
+
+**`ADDA.W <ea>,An` adds only the low word, SIGN-EXTENDED.** The source's high word is discarded and
+a source with bit 15 set *subtracts*: `adda.w #$ffa0,a0` moves A0 back 96 bytes, not forward 65440.
+A C reconstruction writing `addr += offset` for a 32-bit `offset` is a different instruction; the
+faithful form is `addr += (int16_t)offset`. Joust's `pos_to_screen` folds both of its offsets in
+this way, so from y = 205 its screen address runs *backwards* — off-screen, and reproduced rather
+than fixed. (`ADDA.L` takes the whole longword; only the `.W` form truncates.)
+
+**`DIVU.W` / `DIVS.W` overflow leaves the destination register UNTOUCHED.** When the quotient will
+not fit in 16 bits the 68000 sets V and **does not write Dn at all** — the dividend stays there
+intact, neither quotient nor remainder. (Division by zero is a different case again: a trap through
+vector 5.) A reconstruction that unconditionally computes `dn = (remainder << 16) | quotient`
+diverges on exactly the inputs the original leaves alone. Joust's `screen.c` therefore routes both
+divides through one `divu_w()` helper that returns the dividend on overflow. Code that never tests
+V after the divide — most compiled code — silently carries the dividend forward as if it were a
+result, so this is a faithfulness question, not an error path.
 
 ## Idioms you'll see constantly
 

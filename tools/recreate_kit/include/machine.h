@@ -11,8 +11,8 @@
  * our reads mirror its accesses). On a little-endian host (the differential-test .so) we keep the
  * portable byte assembly, so the verified behaviour is byte-identical either way.
  */
-#ifndef BB_MACHINE_H
-#define BB_MACHINE_H
+#ifndef RECREATE_KIT_MACHINE_H
+#define RECREATE_KIT_MACHINE_H
 
 #include <stdint.h>
 
@@ -44,4 +44,4 @@ static inline uint16_t set_low_byte(uint16_t word, uint8_t byte) {
     return (uint16_t)((word & 0xFF00u) | byte);
 }
 
-#endif /* BB_MACHINE_H */
+#endif /* RECREATE_KIT_MACHINE_H */

@@ -54,6 +54,15 @@ longwords that must have the load base added.
 To relocate: for each fixup offset, `*(u32*)(image+off) += load_base`. Do this and
 absolute references become correct — the single biggest lever for good disassembly.
 
+**A fixup is not always a pointer in data.** The table names *longwords*, wherever they sit —
+including the immediate field of an instruction. `cmpi.l #$00007832,d0` in the file is really
+`cmpi.l #$00017832,d0` at a `0x10000` base, and a listing of the unrelocated bytes shows the wrong
+constant with nothing to flag it: no impossible instruction, no desync, just a magic number quietly
+short by the load base. This is why every listing should be taken from the **relocated** image, and
+why a constant that lands near the load base is worth checking against the fixup offsets. See
+[`m68k-disassembly.md`](m68k-disassembly.md) for the disassembly consequences (Joust's
+`rng_advance` is the worked example).
+
 ## Quick recon
 
 ```bash

@@ -1,0 +1,25 @@
+# Binds the shared differential harness (tools/recreate_kit) to this game.
+# Read by recreate_kit.project.load(); paths are relative to this file's directory.
+name       = "joust"
+prg        = "../bin/JOUST.PRG"
+names      = "../names.txt"
+lib        = "build/libjoust.so"
+load_base  = 0x10000     # matches PrgLoader / run.sh default (see CLAUDE.md); names.txt addresses
+                         # are Ghidra addresses at this base, so it must not move
+image_size = 0x100000    # 1 MiB: program (text 0x13aae + data 0x7d00 -> ends 0x2b7ae) + the TOS
+                         # model's file staging at 0xc0000 + the stack at the top
+
+# Joust's data segment runs to 0x2b7ae, covering the TOS model's Malloc heap (os.h OS_HEAP_BASE =
+# 0x20000). That is harmless here because Joust never allocates — established by an exhaustive BYTE
+# SCAN of text+data (there is no bss), not by reading a disassembly listing, whose linear sweep
+# silently drops trap sites after desyncing on data (it misses the one at 0x11c2c; see
+# docs/m68k-disassembly.md):
+#   * 22 `trap #1` (4e41) sites exist, and every one is immediately preceded by an in-line
+#     `3f3c <sel>` selector immediate — there is no register-loaded selector anywhere;
+#   * those selectors are 0x19/0x20/0x3c/0x3d/0x3e/0x3f/0x40/0x4c — no Malloc (0x48), no Mshrink
+#     (0x4a). The Gamex loader does the memory setup before the game runs;
+#   * the byte pattern `3f 3c 00 48` / `3f 3c 00 4a` occurs nowhere in the image at any alignment.
+# So no modeled Malloc block can ever be handed out on top of the program. The claim is also
+# enforced per run: see harness._vet_os_memory_map() and emu._vet_no_malloc_over_program() under
+# tools/recreate_kit/, pinned by test/test_heap_guard.py.
+tos_malloc_unused = true

@@ -1,0 +1,5 @@
+# Python dependencies for the Joust reconstruction harness.
+# Install into the project venv:  python -m venv .venv && .venv/bin/pip install -r requirements.txt
+pytest>=8.0           # differential test suite (make test)
+pytest-xdist>=3.0     # parallel test execution (`make test` runs -n auto across cores)
+tomli>=2.0; python_version < "3.11"   # project.toml parsing (stdlib tomllib from 3.11 on)

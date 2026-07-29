@@ -59,12 +59,32 @@ def label(addr):
 # These addresses are KIT-WIDE (one set of C constants serves every game), while load_base /
 # image_size are per-project. tools/recreate_kit/test/test_os_memory_map.py pins this mirror equal
 # to os.h; _vet_os_memory_map() below checks the addresses actually fit the bound project's image.
-OS_HEAP_BASE = 0x20000       # modeled Malloc bump-allocates upward from here
+# OS_HEAP_BASE is the one piece of the mirror that lives in oracle/emu.py instead (the per-run
+# Malloc guard there needs it); re-exported so `harness.OS_HEAP_BASE` still reads as one map.
+OS_HEAP_BASE = emu.OS_HEAP_BASE   # modeled Malloc bump-allocates upward from here
 OS_FS_TABLE = 0xBF000        # staged-file table base
 OS_FS_STAGING = 0xC0000      # raw file bytes grow upward from here
 OS_FS_ENTRY = 32             # per-entry: name[16] | staging u32 | size u32 | cursor u32 | open u32
 OS_FS_NAME = 16
 OS_FS_FIRST_HANDLE = 6
+OS_DOSOUND_LOG_MAX = 256     # ledger cap, on BOTH sides (shim.c's mirror and src/dosound_log.c)
+
+
+# Does the modeled Malloc heap sit inside this project's own program? If so, any block the model
+# hands out lands ON TOP of the program's code/data. _vet_os_memory_map() refuses that outright
+# unless project.toml waives it, and emu.run() re-checks the waiver's claim on every run
+# (emu._vet_no_malloc_over_program) — the waiver asserts something about the game, not about the kit.
+_HEAP_OVER_PROGRAM = emu.heap_overlaps_program()
+
+
+def _overlap_error(name, addr, waiver=""):
+    """The shared diagnostic for a TOS-model region that collides with the loaded program."""
+    return RuntimeError(
+        f"{name} ({addr:#x}, tools/recreate_kit/include/os.h) lies inside {_CFG.name}'s "
+        f"program, which ends at {loader.PROGRAM_END:#x} — a Malloc block or a staged file "
+        f"would overwrite its own code/bss. Move that region (and its Python mirror, in harness.py "
+        f"or oracle/emu.py) above the program, or lower load_base in "
+        f"{_CFG.dir / project.CONFIG_NAME}." + waiver)
 
 
 def _vet_os_memory_map():
@@ -74,20 +94,25 @@ def _vet_os_memory_map():
     overwritten by a Malloc block or a staged file — nothing else would catch that, since both are
     plain image writes. Staging at or above the stack guard is the mirror hazard: those bytes are
     dropped from the diff. (A too-small image_size is already caught loudly by stage_files.)
+
+    The heap check has one opt-out: only a GEMDOS Malloc ever writes at OS_HEAP_BASE, so a game
+    that issues none can declare ``tos_malloc_unused = true`` in its project.toml (which must
+    justify it) and let its program cover that region. OS_FS_TABLE has no such waiver — the
+    harness stages files itself, so an overlap there is always live.
     """
-    config = _CFG.dir / project.CONFIG_NAME
-    for name, addr in (("OS_HEAP_BASE", OS_HEAP_BASE), ("OS_FS_TABLE", OS_FS_TABLE)):
-        if addr < loader.PROGRAM_END:
-            raise RuntimeError(
-                f"{name} ({addr:#x}, tools/recreate_kit/include/os.h) lies inside {_CFG.name}'s "
-                f"program, which ends at {loader.PROGRAM_END:#x} — a Malloc block or a staged file "
-                f"would overwrite its own code/bss. Move that region (and its mirror in "
-                f"harness.py) above the program, or lower load_base in {config}.")
+    if _HEAP_OVER_PROGRAM and not _CFG.tos_malloc_unused:
+        raise _overlap_error(
+            "OS_HEAP_BASE", OS_HEAP_BASE,
+            " If this game issues no GEMDOS Malloc at all, `tos_malloc_unused = true` in "
+            "project.toml waives this check (emu.run() then enforces that claim per run).")
+    if OS_FS_TABLE < loader.PROGRAM_END:
+        raise _overlap_error("OS_FS_TABLE", OS_FS_TABLE)
     if OS_FS_STAGING >= emu.STACK_GUARD_LO:
         raise RuntimeError(
             f"OS_FS_STAGING ({OS_FS_STAGING:#x}, tools/recreate_kit/include/os.h) is at or above "
             f"the stack guard {emu.STACK_GUARD_LO:#x} — staged file bytes would land in the band "
-            f"the differential drops. Raise image_size in {config}, or move the region down.")
+            f"the differential drops. Raise image_size in {_CFG.dir / project.CONFIG_NAME}, or "
+            f"move the region down.")
 
 
 _vet_os_memory_map()
@@ -252,6 +277,12 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
         n = _lib.g_dosound_log_count()
         c_args = _lib.g_dosound_log_args()
         c_dosound = [c_args[i] for i in range(n)]
+        # Both ledgers stop logging SILENTLY at OS_DOSOUND_LOG_MAX, so two streams that diverge
+        # only past the cap truncate to the same list and compare equal. Fail loudly instead.
+        assert len(o_dosound) < OS_DOSOUND_LOG_MAX and len(c_dosound) < OS_DOSOUND_LOG_MAX, (
+            f"Dosound ledger hit its cap ({OS_DOSOUND_LOG_MAX}): oracle={len(o_dosound)} "
+            f"cand={len(c_dosound)} — the compare beyond it would be blind; shorten the run or "
+            f"raise OS_DOSOUND_LOG_MAX in include/os.h (its mirror in harness.py is pinned to it)")
         if o_dosound != c_dosound:
             raise AssertionError(
                 f"Dosound ledger mismatch: oracle={[hex(x) for x in o_dosound]} "

@@ -221,8 +221,9 @@ _g_dosound_count = bench_frame.harness._lib.g_dosound_log_count      # restype s
 _g_dosound_args = bench_frame.harness._lib.g_dosound_log_args        # restype set by recreate's harness
 
 
-# Both Dosound ledgers are fixed-size ring-free arrays (remaster RM_DOSOUND_LOG_MAX == recreate
-# MAX_DOSOUND_LOG); once a stream hits the cap it stops logging SILENTLY, so a compare past it would pass
+# Both Dosound ledgers are fixed-size ring-free arrays (remaster RM_DOSOUND_LOG_MAX == the kit's
+# OS_DOSOUND_LOG_MAX, which recreate's candidate links from tools/recreate_kit/src/dosound_log.c);
+# once a stream hits the cap it stops logging SILENTLY, so a compare past it would pass
 # on a truncated stream. The drive fails loudly instead (see _dosound_ledger_mismatch). The two caps are
 # pinned equal to this value by test_sound_trig.test_python_constants_match_the_c.
 DOSOUND_LEDGER_CAP = 256

@@ -160,7 +160,8 @@ void g_EGOFF(uint8_t *image) {
  * refresh handler), then issue XBIOS Dosound(A0). A0 is the command list the caller passes (one of
  * the A_dosound_* lists — the leg-start beeps, the engine idle, crash/collision effects). Dosound
  * writes the YM2149 in hardware, not our image, so it has no observable effect on the differential
- * diff; g_dosound is a no-op in the harness and the real XBIOS trap in the on-target PRG. */
+ * diff; g_dosound records the list into the kit's side-effect ledger in the harness (which compares
+ * it against the oracle's Dosound stream) and issues the real XBIOS trap in the on-target PRG. */
 #define VBL_SOUND_RTS  0x12ef4    /* bare rts vbl_sound_vec is parked at (0x2ef4 + load base) */
 
 void g_stop_music(uint8_t *image, uint32_t list_off) {
