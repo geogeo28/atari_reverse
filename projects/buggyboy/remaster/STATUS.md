@@ -628,6 +628,27 @@ the per-frame clear was dropped.)
 
 ## Known issues (play-test, 2026-07-25)
 
+- **OPEN — the game runs slower than the original on real hardware, and a 32 MHz accelerator barely
+  helps (reported 2026-07-28).** Not a bug in the render: it is the **C1 flip lock** doing exactly what
+  it was designed to do. `present_wait_boundary` rounds every flip UP onto a 2-vblank grid, so
+  `present = ceil(render / 40 ms) x 40 ms`. The STE renders the gate frame in **97.75 ms** — faster than
+  the original's **110.05 ms** — but presents at **160 ms (6.25 fps)** against the original's free-running
+  ~9 fps. Game logic is frame-stepped, so wall-clock game speed IS the present rate: we render faster and
+  play slower. An accelerator only helps when it crosses a whole 40 ms boundary, which is why 32 MHz feels
+  like nothing. Note the README's "~16% faster than the original" is a **render-clock** claim, not a
+  presented-cadence one — the locked-cadence column of that table is the honest wall-clock number.
+  **Audio:** the tune tempo is NOT affected — `rm_refresh` advances the tempo accumulator once per 50 Hz
+  VBL from the pump, independent of frame rate, so a tune must play at the original's tempo. What DOES
+  slow with the frame rate is everything the game sequences: engine pitch (tracks rpm/speed per frame),
+  the countdown, jingle spacing. So "the music itself is slower" and "the engine/countdown is slower" have
+  different causes — if a TUNE is genuinely slow, suspect dropped refreshes (`snd_lock_depth` skips, or
+  missed VBLs), not C1.
+  **Isolation builds (in `build/`, boot-verified on real TOS 1.04):** `BBFREE.PRG` (`-DGAME_PRESENT_FREERUN`
+  — lock removed, free-running present), `BBNOBLT.PRG` (`GAME_FORCE_NO_BLITTER=1` — CPU engines; on an
+  accelerated machine the blitter runs at BUS speed while `blit_start_and_wait` idles the fast CPU, so the
+  blitter routes may now be a pessimization), and `BBFAST.PRG` (both).
+  Not yet decided: whether to keep C1 (tear-free, even cadence) or make the quantum adaptive/1.
+
 - **RESOLVED — 3 bombs (address error) on a REAL ST/STE, as the leg select draws.** Reported on real
   hardware, TOS **1.62 and 2.06**, 4 MB, booted from **floppy**. Three bombs = vector 3 = a word/long
   access on an odd address.
