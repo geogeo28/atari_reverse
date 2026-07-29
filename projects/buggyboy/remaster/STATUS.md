@@ -628,6 +628,55 @@ the per-frame clear was dropped.)
 
 ## Known issues (play-test, 2026-07-25)
 
+- **RESOLVED — 3 bombs (address error) on a REAL ST/STE, as the leg select draws.** Reported on real
+  hardware, TOS **1.62 and 2.06**, 4 MB, booted from **floppy**. Three bombs = vector 3 = a word/long
+  access on an odd address.
+  **Root cause: `os.s`'s TOS trap wrappers did not preserve `%d2`/`%a2`.** Those two registers are the
+  single point where the two calling conventions disagree — GCC's m68k SysV ABI treats `%d2-%d7`/`%a2-%a6`
+  as CALLEE-SAVED and caches live values in them across a call, while GEMDOS/BIOS/XBIOS guarantee only
+  `%d3-%d7`/`%a3-%a6` and may return with anything in `%d0-%d2`/`%a0-%a2`. Concretely: `rm_flow_leg_select`
+  kept the flow's `ctx` (the `Shell *`) in `%d2`; its per-frame `flow_poll` → `read_input` →
+  `read_joystick` → **`Ikbdws`** (XBIOS 25) returned with **phystop-1** in `%d2`; the very next
+  `ops->quit_requested(ctx)` then ran `tst.l 148(a0)` on that odd pointer → address error, on the FIRST
+  leg-select frame. The bad pointer tracked RAM size exactly (`0x0FFFFF` / `0x1FFFFF` / `0x3FFFFF` at
+  1/2/4 MB), which is what identified it as a returned register rather than random corruption.
+  **Why every pin stayed green:** EmuTOS — the only TOS the harness ever booted — happens to leave a
+  benign, even value in `%d2`, so the same deref silently read garbage instead of faulting; and the
+  goldens dump frame 0 without ever running the leg-select input loop. Reproduced headlessly under **real
+  TOS 1.04** (`tools/hatari/TOS104US.img`), which faults identically at any memory size.
+  **Fix:** every wrapper in `render/atari/os.s` now saves/restores `%d2`/`%a2` around its trap (and reads
+  its C arguments at +8 accordingly); the rule is documented at that file's head. Verified: the shipping
+  `BUGGYBOY.PRG` runs clean on real TOS 1.04 at 4 MB where it previously died after one frame, `make test`
+  730 green, goldens ×5 MATCH.
+  **Latent elsewhere:** `recreate/render/atari/os.s` is the file this one was copied from and has the same
+  unprotected wrappers. It only ever runs under Hatari/EmuTOS, so it has never bitten — worth the same fix,
+  left out of this change because that tree has unrelated uncommitted work.
+  Ruled out along the way, rather than assumed:
+  - *Not a `.bss` alignment slip.* `tos.ld` packs `.bss` `SUBALIGN(1)`, which overrides each object's
+    requested alignment, so one odd-sized object would shift every global after it odd (the hazard
+    `os.s`'s tail note guards). Checked on the built ELF: no word/long-sized object sits at an odd
+    address — only the byte-sized `pkt_left`.
+  - *Not the emulator being blind to the fault class.* A deliberate odd-address `move.w` in a minimal
+    `.PRG` **is** trapped by Hatari (`--trace cpu_exception` → `cpu exception 3`), so a clean harness run
+    is real evidence, not a gap.
+  - *Not the VBL pump overrunning TOS's supervisor stack.* `vbl_sound` → `rm_refresh` is a ~64-byte
+    chain (no callees below `rm_refresh`), measured from the disassembly.
+  - *Not user-mode hardware poking.* Every `0xFFFF8Axx` / PSG / low-memory touch is inside a `Supexec`.
+  - *Not STE-specific.* It reproduces on a plain `--machine st` with the blitter routes never bound; the
+    STE was incidental to the report.
+  **A methodology note worth keeping:** the first pass through the real-TOS 1.04 trace was read through
+  `grep … | head -8`, which showed only TOS's own boot-time bus errors and led to "no fault under real
+  TOS" — the exception-3 lines were below the cut. The run had reproduced the bug on the first attempt and
+  the truncation hid it. Count matches before concluding a run is clean.
+  The reporter that localised it is kept: `GAME_CRASH_REPORT=1 bash render/atari/build_game.sh` — see
+  "Diagnosing a crash on real hardware" in [`render/atari/README.md`](render/atari/README.md).
+- **Untested on real hardware: the game never sets the screen resolution.** It renders 320×200×16 and
+  only ever calls `Setscreen(..., -1)`, so it inherits whatever resolution the desktop was in. Every
+  harness run forces low res (`--tos-res low`). Booted once at `--tos-res med` (STE, blitter, 4 MB,
+  6000 VBLs) it raises no fault, so a medium-res desktop garbles the picture rather than crashing — it is
+  NOT the 3-bomb cause above. Nothing in the suite covers it; the crash reporter prints `REZ` so a report
+  from real hardware settles which resolution the game actually inherited.
+
 - **RESOLVED — In-race mini-map (top-left dashboard graphic) rendered a BLACK background instead of
   the original's sky.** NOT a palette seam (hardware palette regs are byte-identical
   original-vs-remaster at the same in-race moment: 0xFF8240–5E dumps, NORTH + EAST). Root cause

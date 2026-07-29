@@ -6,6 +6,19 @@
 | integer/pointer results returned in %d0 (so pointer-returning traps are declared `long` in C
 | and cast). Each wrapper cleans only its own trap-frame pushes; the caller cleans the C args.
 |
+| REGISTERS — the one place the two calling conventions DISAGREE, and it bites hard:
+|   GCC (m68k SysV): %d0/%d1/%a0/%a1 are scratch; %d2-%d7 and %a2-%a6 are CALLEE-SAVED, so the compiler
+|                    freely caches a live value in %d2 or %a2 across a call to any wrapper here.
+|   TOS (GEMDOS/BIOS/XBIOS): preserves only %d3-%d7 and %a3-%a6. %d0-%d2 and %a0-%a2 are VOLATILE — a
+|                    system call may return with anything in them.
+| So %d2 and %a2 are exactly the registers GCC expects to survive and TOS is entitled to destroy. Every
+| wrapper below therefore saves and restores that pair around its trap (which is why each reads its C
+| arguments at +8 from where the plain ABI would put them). Skipping it does not fail loudly — it silently
+| corrupts one live variable in the CALLER: this cost a real 3-bombs-on-real-hardware bug, where TOS's
+| Ikbdws left phystop-1 in %d2 while GCC was caching the flow's `ctx` pointer there, and the next call
+| through that pointer address-errored on an odd address. EmuTOS happens to leave a benign value in %d2,
+| so every Hatari pin in this tree stayed green while real TOS 1.62/2.06 crashed on the leg select.
+|
 | ORDER MATTERS — keep the file-I/O wrappers (Fcreate/Fopen/Fread/Fwrite/Fclose) together and FIRST,
 | immediately after _start. Putting other wrappers ahead of or between them made Hatari's GEMDOS-HD
 | return handle 0 (stdin) from Fopen in a large .PRG instead of a real handle, so Fread then read the
@@ -26,163 +39,193 @@ _start:
 | long Fcreate(const char *name, short attr)   GEMDOS 0x3c
     .globl  Fcreate
 Fcreate:
-    move.l  4(%sp),%d1          | name
-    move.l  8(%sp),%d0          | attr (int); low word
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  12(%sp),%d1 | name
+    move.l  16(%sp),%d0 | attr (int); low word
     move.w  %d0,-(%sp)
     move.l  %d1,-(%sp)
     move.w  #0x3c,-(%sp)
     trap    #1
     lea     8(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Fopen(const char *name, short mode)     GEMDOS 0x3d  (mode 0 = read-only)
     .globl  Fopen
 Fopen:
-    move.l  4(%sp),%d1          | name
-    move.l  8(%sp),%d0          | mode (int); low word
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  12(%sp),%d1 | name
+    move.l  16(%sp),%d0 | mode (int); low word
     move.w  %d0,-(%sp)
     move.l  %d1,-(%sp)
     move.w  #0x3d,-(%sp)
     trap    #1
     lea     8(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Fread(short handle, long count, void *buf)    GEMDOS 0x3f
     .globl  Fread
 Fread:
-    move.l  12(%sp),%a1         | buf
-    move.l  8(%sp),%d1          | count
-    move.l  4(%sp),%d0          | handle (int); low word
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  20(%sp),%a1 | buf
+    move.l  16(%sp),%d1 | count
+    move.l  12(%sp),%d0 | handle (int); low word
     move.l  %a1,-(%sp)
     move.l  %d1,-(%sp)
     move.w  %d0,-(%sp)
     move.w  #0x3f,-(%sp)
     trap    #1
     lea     12(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Fwrite(short handle, long count, void *buf)   GEMDOS 0x40
     .globl  Fwrite
 Fwrite:
-    move.l  12(%sp),%a1         | buf
-    move.l  8(%sp),%d1          | count
-    move.l  4(%sp),%d0          | handle (int); low word
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  20(%sp),%a1 | buf
+    move.l  16(%sp),%d1 | count
+    move.l  12(%sp),%d0 | handle (int); low word
     move.l  %a1,-(%sp)
     move.l  %d1,-(%sp)
     move.w  %d0,-(%sp)
     move.w  #0x40,-(%sp)
     trap    #1
     lea     12(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Fclose(short handle)     GEMDOS 0x3e
     .globl  Fclose
 Fclose:
-    move.l  4(%sp),%d0
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  12(%sp),%d0
     move.w  %d0,-(%sp)
     move.w  #0x3e,-(%sp)
     trap    #1
     addq.l  #4,%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Cconws(const char *s)    GEMDOS 0x09 (write a NUL-terminated string to the console)
     .globl  Cconws
 Cconws:
-    move.l  4(%sp),-(%sp)
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  12(%sp),-(%sp)
     move.w  #9,-(%sp)
     trap    #1
     lea     6(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Cconin(void)             GEMDOS 0x01 (blocks for a key)
     .globl  Cconin
 Cconin:
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
     move.w  #1,-(%sp)
     trap    #1
     addq.l  #2,%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Cconis(void)             GEMDOS 0x0b (non-blocking: -1 if a key is waiting, else 0)
     .globl  Cconis
 Cconis:
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
     move.w  #0x0b,-(%sp)
     trap    #1
     addq.l  #2,%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | void Vsync(void)              XBIOS 37 (wait for the next vertical blank)
     .globl  Vsync
 Vsync:
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
     move.w  #37,-(%sp)
     trap    #14
     addq.l  #2,%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Physbase(void)           XBIOS 2 (physical screen base)
     .globl  Physbase
 Physbase:
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
     move.w  #2,-(%sp)
     trap    #14
     addq.l  #2,%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | void Setpalette(const void *pal16)    XBIOS 6 (load all 16 colour registers)
     .globl  Setpalette
 Setpalette:
-    move.l  4(%sp),-(%sp)
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  12(%sp),-(%sp)
     move.w  #6,-(%sp)
     trap    #14
     lea     6(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Setcolor(short idx, short color)   XBIOS 7 (color -1 reads without writing; returns the old value)
     .globl  Setcolor
 Setcolor:
-    move.w  10(%sp),%d1         | color (low word of the int arg)
-    move.w  6(%sp),%d0          | index (low word of the int arg)
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.w  18(%sp),%d1 | color (low word of the int arg)
+    move.w  14(%sp),%d0 | index (low word of the int arg)
     move.w  %d1,-(%sp)
     move.w  %d0,-(%sp)
     move.w  #7,-(%sp)
     trap    #14
     addq.l  #6,%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Setscreen(long logLoc, long physLoc, short rez)   XBIOS 5 (rez/-1 leaves it; latches at vblank)
     .globl  Setscreen
 Setscreen:
-    move.l  4(%sp),%a0          | logLoc
-    move.l  8(%sp),%a1          | physLoc
-    move.w  14(%sp),%d0         | rez (low word of the int arg)
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  12(%sp),%a0 | logLoc
+    move.l  16(%sp),%a1 | physLoc
+    move.w  22(%sp),%d0 | rez (low word of the int arg)
     move.w  %d0,-(%sp)
     move.l  %a1,-(%sp)
     move.l  %a0,-(%sp)
     move.w  #5,-(%sp)
     trap    #14
     lea     12(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Setexc(short number, long vector)   BIOS 5 (install an exception vector; returns the old one)
     .globl  Setexc
 Setexc:
-    move.l  8(%sp),%d1          | vector
-    move.l  4(%sp),%d0          | vector number (int); low word
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  16(%sp),%d1 | vector
+    move.l  12(%sp),%d0 | vector number (int); low word
     move.l  %d1,-(%sp)
     move.w  %d0,-(%sp)
     move.w  #5,-(%sp)
     trap    #13
     lea     8(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | void Ikbdws(short count_m1, const void *buf)   XBIOS 25 (send count_m1+1 bytes to the IKBD)
     .globl  Ikbdws
 Ikbdws:
-    move.l  8(%sp),%a0          | buf
-    move.l  4(%sp),%d0          | byte count - 1 (int); low word
+    movem.l %d2/%a2,-(%sp)      | see the TOS-vs-C register note at the head of this file
+    move.l  16(%sp),%a0 | buf
+    move.l  12(%sp),%d0 | byte count - 1 (int); low word
     move.l  %a0,-(%sp)
     move.w  %d0,-(%sp)
     move.w  #25,-(%sp)
     trap    #14
     lea     8(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | void Dosound(const void *ptr)   XBIOS 32 (play a YM2149 command list; TOS steps it per VBL)
@@ -190,10 +233,12 @@ Ikbdws:
 | @0x1021c). TOS's own kept _vblqueue entries advance the list — see the sound install in game_main.c.
     .globl  Dosound
 Dosound:
-    move.l  4(%sp),-(%sp)       | list pointer
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  12(%sp),-(%sp)       | list pointer
     move.w  #32,-(%sp)
     trap    #14
     addq.l  #6,%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | long Supexec(long (*func)(void))   XBIOS 38 (run func in supervisor mode, return to the caller's mode)
@@ -204,10 +249,12 @@ Dosound:
 | Supexec excursion; the VBL handler itself already runs supervisor (TOS calls the queue at interrupt).
     .globl  Supexec
 Supexec:
-    move.l  4(%sp),-(%sp)       | func pointer
+    movem.l %d2/%a2,-(%sp)      | TOS may trash d2/a2 (see the register note at the head of this file)
+    move.l  12(%sp),-(%sp)       | func pointer
     move.w  #38,-(%sp)
     trap    #14
     addq.l  #6,%sp
+    movem.l (%sp)+,%d2/%a2
     rts
 
 | --- held keys + IKBD packet parsing --------------------------------------------------------------
