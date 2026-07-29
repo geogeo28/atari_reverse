@@ -75,6 +75,9 @@ def parse_reloc(d, h):
 
 
 # --- effective-address decoding: returns (text, extra_bytes_consumed) -----------
+EA_AN = 1  # ea mode field 001 = "An direct"; illegal for many ops, which makes it a decode tell
+
+
 def ea(d, p, mode, reg, size, pc_after_op):
     if mode == 0: return "d%d" % reg, 0
     if mode == 1: return "a%d" % reg, 0
@@ -101,6 +104,14 @@ def ea(d, p, mode, reg, size, pc_after_op):
 
 
 SZC = {0: ".b", 1: ".w", 2: ".l"}
+# In lines 9/B/D, opmode 011/111 is the "<ea> -> An, word/long" form (SUBA/CMPA/ADDA).
+# Lines 8 and C have no such form — the 68000 cannot OR/AND into an address register — so
+# there those two opmodes are the word-size divide/multiply, "<ea> -> Dn" with a .w source.
+# Any decoder printing "and.w #imm,a0" is emitting an instruction that does not exist.
+MULDIV = {(8, 3): "divu", (8, 7): "divs", (0xc, 3): "mulu", (0xc, 7): "muls"}
+# Same tell in line C's "Dn -> <ea>" opmodes: AND cannot target Dn or An either, so
+# (line, opmode, ea-mode) triples that would decode as one of those are really EXG.
+EXG_FORMS = {(0xc, 5, 0): "exg d%d,d%d", (0xc, 5, 1): "exg a%d,a%d", (0xc, 6, 1): "exg d%d,a%d"}
 # Branch form: cc 0/1 = BRA/BSR. Scc/DBcc form: cc 0/1 = T/F (so DBcc 1 = DBRA).
 CC = ["ra", "sr", "hi", "ls", "cc", "cs", "ne", "eq",
       "vc", "vs", "pl", "mi", "ge", "lt", "gt", "le"]
@@ -165,12 +176,22 @@ def decode(d, p, base):
             n = rd16(d, p + 2)
             t, c = ea(d, p + 4, m, r, 0, pc2 + 2)
             return 4 + c, "%s #%d,%s" % (names[bit], n & 0xff, t)
-        if (w & 0x0100):  # dynamic bit op with Dn
-            bit = (w >> 6) & 3
-            names = ["btst", "bchg", "bclr", "bset"]
+        if (w & 0x0100):  # dynamic bit op with Dn -- or MOVEP, which shares this half of line 0
+            opmode = (w >> 6) & 3
             m, r = (w >> 3) & 7, w & 7
+            dn = (w >> 9) & 7
+            if m == EA_AN:
+                # Bit ops cannot address An, so mode 001 here is MOVEP <-> d16(Ay): a 16-bit
+                # displacement follows, making it 4 bytes. Read as a 2-byte "btst d0,a0" it
+                # both prints an impossible form and desyncs the sweep from there on.
+                sz = ".l" if opmode & 1 else ".w"
+                mem = "%d(a%d)" % (s16(rd16(d, p + 2)), r)
+                if opmode & 2:  # opmode 110/111: register -> memory
+                    return 4, "movep%s d%d,%s" % (sz, dn, mem)
+                return 4, "movep%s %s,d%d" % (sz, mem, dn)
+            names = ["btst", "bchg", "bclr", "bset"]
             t, c = ea(d, p + 2, m, r, 0, pc2)
-            return 2 + c, "%s d%d,%s" % (names[bit], (w >> 9) & 7, t)
+            return 2 + c, "%s d%d,%s" % (names[opmode], dn, t)
 
     # ---- line 4: misc ----
     if top == 4:
@@ -249,11 +270,17 @@ def decode(d, p, base):
         opmode = (w >> 6) & 7
         reg = (w >> 9) & 7
         m, r = (w >> 3) & 7, w & 7
-        if opmode in (3, 7):  # Ea forms: word / long
-            size = 1 if opmode == 3 else 2
+        if opmode in (3, 7):
+            muldiv = MULDIV.get((top, opmode))
+            if muldiv:  # MULU/MULS/DIVU/DIVS: source is always word-sized, dest is Dn
+                t, c = ea(d, p + 2, m, r, 1, pc2)
+                return 2 + c, "%s.w %s,d%d" % (muldiv, t, reg)
+            size = 1 if opmode == 3 else 2  # SUBA/CMPA/ADDA: <ea> -> An, word / long
             t, c = ea(d, p + 2, m, r, size, pc2)
-            amn = {8: "or", 9: "suba", 0xb: "cmpa", 0xc: "and", 0xd: "adda"}[top]
+            amn = {9: "suba", 0xb: "cmpa", 0xd: "adda"}[top]
             return 2 + c, "%s%s %s,a%d" % (amn, SZC[size], t, reg)
+        if (top, opmode, m) in EXG_FORMS:  # EXG hides in AND's "Dn -> <ea>" opmodes
+            return 2, EXG_FORMS[(top, opmode, m)] % (reg, r)
         size = opmode & 3
         t, c = ea(d, p + 2, m, r, size, pc2)
         mn = "eor" if (top == 0xb and opmode >= 4) else base_mn

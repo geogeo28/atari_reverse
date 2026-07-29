@@ -29,6 +29,53 @@ python3 tools/prg_dis.py bin/GAME.PRG --start 0x<fileoff> --len 0x<n>
 ```
 (`prg_dis` addresses are image-relative = file_offset − 28.)
 
+## The "impossible instruction" tell
+
+If a listing shows an instruction the 68000 **cannot encode**, the decoder is wrong — not
+the binary. The most useful case is the *destination register class*: only `MOVEA`, `ADDA`,
+`SUBA`, `CMPA` and `LEA` may target an address register. So **`and.w #imm,a0`,
+`or.w <ea>,a1` and `eor.b d0,a2` do not exist**; seeing one means those bits are really some
+other instruction (or plain data). A bit op on an address register (`btst d0,a0`) is the same
+tell — bit ops cannot address `An`, so that encoding is really `MOVEP`.
+
+The `Dn -> <ea>` direction of `AND`/`OR`/`ADD`/`SUB` additionally cannot use ea mode `000`
+(`Dn`) — those encodings are `ABCD`/`SBCD`/`EXG`/`ADDX`/`SUBX`. But that half is **not**
+visible in a listing: `and.w d0,d1` *is* a legal instruction (`AND.W <ea>,Dn`, opmode `001`),
+and both directions print the same text, so only the opcode word's opmode field can tell them
+apart. The `An` destination is the half you can spot by eye.
+
+In the 0x8xxx (`OR`) and 0xCxxx (`AND`) groups this bites hard, because the 3-bit opmode
+field is *not* laid out like `ADD`/`SUB`:
+
+| opmode | lines 9 / B / D | lines 8 / C |
+|--------|-----------------|-------------|
+| `011`  | `SUBA.W` / `CMPA.W` / `ADDA.W` — `<ea>,An` | **`DIVU.W` / `MULU.W` — `<ea>,Dn`** |
+| `111`  | `SUBA.L` / `CMPA.L` / `ADDA.L` — `<ea>,An` | **`DIVS.W` / `MULS.W` — `<ea>,Dn`** |
+| `100` (ea mode `000`/`001`) | `SUBX.B` / `CMPM.B`¹ / `ADDX.B` | **`SBCD`** (line 8) / **`ABCD`** (line C) |
+| `101`, `110` (ea mode `000`/`001`) | the same, `.W` / `.L` | line 8: illegal. line C: **`EXG`**² |
+
+¹ `CMPM` needs ea mode `001` (postincrement) — line B with ea mode `000` is an ordinary
+`EOR.x Dn,Dn`, not an impossible form.
+² the three legal `EXG` encodings are `101`+`000` (`Dx,Dy`), `101`+`001` (`Ax,Ay`) and
+`110`+`001` (`Dx,Ay`); opmode `110`+`000` would be `EXG`'s nonexistent opmode `10000`, so it is
+illegal (`prg_dis` prints it as `and.l dX,dY` — indistinguishable from the legal `<ea>,Dn` form).
+
+This is a **length** bug as well as a mnemonic one: read as an `xxxA.L` form, opmode `111`
+consumes a 4-byte immediate where `MULS.W #imm,Dn` has only 2 — enough to desync the sweep.
+`prg_dis` got this wrong until 2026-07-28; it silently turned Joust's coordinate math
+(`mulu.w #$a0,d0` = y × 160, `divu.w #$10,d0` = x ÷ 16) into meaningless masking.
+`tools/recreate_kit/test/test_prg_dis.py` pins the encodings; run the kit's suite after touching
+the decoder: `cd tools/recreate_kit && make test`.
+
+`MOVEP` was the same family's other **length** bug, fixed the same day: `0000 rrr 1 1xx 001 aaa`
+plus a displacement word = 4 bytes, which `prg_dis` read as a 2-byte dynamic bit op (`btst d0,a0`).
+
+Still knowingly unhandled in `prg_dis`, all *mnemonic-only* — ea modes `000`/`001` take no
+extension word, so the length is right and the sweep stays in sync: `ABCD`/`SBCD` (printed as
+`and.b`/`or.b` into an `An`), `ADDX`/`SUBX` (as `add`/`sub`), and `CMPM` (as `eor`). The test
+above sweeps all 65536 opcode words for this impossible-destination tell and allowlists exactly
+those 832 encodings, so any *new* one fails the moment it appears.
+
 ## Idioms you'll see constantly
 
 - `dbf Dn,label` (a.k.a. `dbra`) — decrement-and-loop; the workhorse loop. `Dn` counts
