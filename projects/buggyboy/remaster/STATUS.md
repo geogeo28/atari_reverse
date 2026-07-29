@@ -645,12 +645,13 @@ the per-frame clear was dropped.)
   goldens dump frame 0 without ever running the leg-select input loop. Reproduced headlessly under **real
   TOS 1.04** (`tools/hatari/TOS104US.img`), which faults identically at any memory size.
   **Fix:** every wrapper in `render/atari/os.s` now saves/restores `%d2`/`%a2` around its trap (and reads
-  its C arguments at +8 accordingly); the rule is documented at that file's head. Verified: the shipping
-  `BUGGYBOY.PRG` runs clean on real TOS 1.04 at 4 MB where it previously died after one frame, `make test`
-  730 green, goldens ×5 MATCH.
-  **Latent elsewhere:** `recreate/render/atari/os.s` is the file this one was copied from and has the same
-  unprotected wrappers. It only ever runs under Hatari/EmuTOS, so it has never bitten — worth the same fix,
-  left out of this change because that tree has unrelated uncommitted work.
+  its C arguments at +8 accordingly); the rule is documented at that file's head.
+  **CONFIRMED ON THE MACHINE 2026-07-28** — the user re-tested on the real 4 MB STE and the game no longer
+  crashes. That is the pin that matters: this whole class is invisible to the emulated suite. Also verified
+  under emulation: the shipping `BUGGYBOY.PRG` runs clean on real TOS 1.04 at 4 MB and 1 MB and on
+  EmuTOS/STE-with-blitter, where it previously died after one frame; `make test` 730 green, goldens ×5 MATCH.
+  **Fixed in `recreate/` too** (commit 498320e): the same 23 unprotected wrappers in
+  `recreate/render/atari/{os.s,game_os.s}`, latent there because that tree only ever boots EmuTOS.
   Ruled out along the way, rather than assumed:
   - *Not a `.bss` alignment slip.* `tos.ld` packs `.bss` `SUBALIGN(1)`, which overrides each object's
     requested alignment, so one odd-sized object would shift every global after it odd (the hazard
