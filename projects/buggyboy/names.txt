@@ -28,7 +28,12 @@ cmt 0x12e22 Whole-frame render (pure sequential wrapper, no args): build_road_ge
 fn 0x102ee wait_vbl_set_offset
 fn 0x10300 set_screen_offset
 fn 0x121f8 flip_screen
-fn 0x120f8 set_rez
+fn 0x120f8 ikbd_send_byte
+cmt 0x120f8 Ikbdws(count_m1=0, buf) — send ONE IKBD byte, the byte passed in d0.b. Verified from the
+cmt 0x120f8 opcodes: move.b d0,$8be6 / move.l #$8be6,-(sp) / clr.w -(sp) / move.w #$19,-(sp) / trap #14
+cmt 0x120f8 (XBIOS 25 = Ikbdws). Was named set_rez, which was wrong: it touches no resolution and no
+cmt 0x120f8 video register. main calls it four times at boot to set the IKBD up (mouse/joystick mode),
+cmt 0x120f8 the same job remaster's kbd_install does. The original never changes the video frequency.
 
 # ==== input ====
 fn 0x120b0 read_input
