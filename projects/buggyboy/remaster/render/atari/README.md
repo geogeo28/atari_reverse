@@ -70,7 +70,7 @@ one — a 30-second `TIME` countdown ends entry if it runs out; a score that mis
 screen instead. The controls are **identical to the original arcade port** bar one deliberate
 deviation (Q).
 
-The **player-facing key table lives in [`../../../README.md`](../../../README.md) ("Play it")** — one
+The **player-facing key table lives in [`../../README.md`](../../README.md) ("Play it")** — one
 home for it, so the two cannot drift. What follows is only what a maintainer needs on top of it.
 
 **ESC** during a race does exactly what the original does (`main @0x10100:286` `cmpi.b #$1b,d0 / beq`):

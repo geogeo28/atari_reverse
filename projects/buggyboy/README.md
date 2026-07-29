@@ -72,37 +72,12 @@ scenery, and reach the checkpoints before the clock runs out.
 
 ### Controls
 
-A **joystick in port 1** works everywhere the keys do and takes **priority**: whenever the stick reports
-any direction or its button, the keyboard is ignored for that frame. Keyboard is the fallback whenever
-the stick is centred. (This mirrors the original's own input order.)
+Arrows steer and accelerate, **Space** is fire/gear, **F1**–**F5** jump straight into a leg, **Esc**
+aborts a leg and **Q** quits to the desktop. A joystick in port 1 has priority over the keyboard.
 
-| Key | During a race | On the leg select | On the name-entry screen |
-|---|---|---|---|
-| **Up** | accelerate | previous leg | step the initial back (past `A` → `` ` ``) |
-| **Down** | brake | next leg | step the initial forward |
-| **Left** | steer left | previous leg | step the initial back |
-| **Right** | steer right | next leg | step the initial forward |
-| **Space** (or joystick fire) | change gear — swaps the engine's rev cap and throttle step | start the selected leg | confirm this initial |
-| **F1**–**F5** | — | select **and** start that leg directly | — |
-| **F6** | — | preview the race-results screen | — |
-| **F10** then **Return** | — | reload `GRAPHICS.GRA` + the score table | — |
-| **G** | toggle the dashboard-variant display | — | — |
-| **Help** | pause: silence the sound and freeze until any key | — | — |
-| **Esc** | abort the leg back to the attract cycle | — | — |
-| **Q** | quit to the desktop | quit to the desktop | — |
-
-A few notes:
-
-- **Esc** does what the original does — it ends the leg immediately, ranks the score you have, and drops
-  into the attract cycle. It is not a quit key and there is no bonus tally.
-- **Q** is the **one deliberate deviation** from the original. The arcade port is a coin-op whose `main`
-  never terminates; a GEMDOS `.PRG` needs a way back to the desktop, so Q — a key the original never
-  reads — quits. The original has no quit and no restart key.
-- On the name-entry screen, dialling **below `A`** gives you `` ` ``; confirming that character **backs
-  up** to re-enter the previous initial. A 30-second `TIME` countdown ends entry if it expires.
-
-Implementation notes for these controls — scancodes, the IKBD handler, why the joystick has priority —
-are in [`remaster/render/atari/README.md`](remaster/render/atari/README.md).
+**The full key table** — every key across the race, leg-select and name-entry screens, with the
+joystick rule and the two fidelity notes — is in
+[`remaster/README.md`](remaster/README.md#controls), next to the game it describes.
 
 ## Regenerate
 
