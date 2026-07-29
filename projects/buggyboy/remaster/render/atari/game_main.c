@@ -666,21 +666,28 @@ static int game_update_step(Shell *s, uint16_t input) {
  * flips to this same buffer and advances s->shown. */
 static Framebuffer *back_buffer(const Shell *s) { return screen_buf(s->shown ^ 1); }
 
-/* ==== C1: the vsync-locked 25 fps presentation cadence (PERF30 Tier-C C1) ==========================
+/* ==== presentation cadence: FREE-RUNNING by default, like the original ============================
  *
- * A free-running 50 Hz vblank clock (bumped by the VBL pump, vbl_sound below) lets the flip land on a
- * REGULAR cadence instead of free-running. Without the lock, each frame flips on whatever vblank the
- * render happens to finish near (a Setscreen + one Vsync), so the present-to-present gap jitters with the
- * render's phase against the 50 Hz grid — 5, 6, 7 vblanks frame to frame. The lock quantizes every flip
- * onto a fixed 2-vblank grid: consecutive frames present exactly 2 / 4 / 6 ... vblanks apart (the honest
- * ST vsync cadences: 25 / 12.5 / 8.3 fps). A frame lighter than one grid slot waits for it; a heavier
- * frame quantizes UP to the next even boundary. Fidelity trade: NONE in pixels — the frame drawn is the
- * same bytes, only WHEN it is shown moves. Game logic is frame-stepped (one game_update_step per drawn
- * frame; every clock is a per-frame counter — bonus time, TIME entry, crash timer), so the lock never
- * changes what is computed on which frame, only the presentation pacing. Still tearing-free: the flip is
- * a Setscreen (base poked mid-frame) that the shifter latches at the next vblank, which the flip's Vsync
- * lands on — exactly as before, just on a chosen boundary. GAME_PRESENT_FREERUN compiles the lock out
- * (the pre-C1 free-running behaviour), used to MEASURE the baseline cadence.
+ * The original presents free-running (`flip_screen` @0x121f8: toggle flip_idx, poke the video base
+ * registers directly, ONE XBIOS 37 Vsync — no quantization), and recreate's g_flip_screen reproduces
+ * that. So does this shell by default: draw, flip, wait for the one vblank that latches it.
+ *
+ * GAME_PRESENT_LOCK compiles in the C1 even-cadence lock (PERF30 Tier-C C1) instead. It quantizes every
+ * flip onto a fixed 2-vblank grid — consecutive frames present exactly 2 / 4 / 6 ... vblanks apart (the
+ * honest ST vsync cadences: 25 / 12.5 / 8.3 fps) — where free-running lets the gap jitter with the
+ * render's phase against the 50 Hz grid, 5/6/7 vblanks frame to frame. NEITHER shape tears: both poke
+ * the base mid-frame and the shifter latches it at the vblank the flip's Vsync lands on. The lock buys
+ * an EVEN cadence and costs wall-clock speed, because a frame heavier than one slot quantizes UP to the
+ * next boundary: present = ceil(render / 40 ms) x 40 ms. On real hardware that made the STE render the
+ * gate frame in 97.75 ms — faster than the original's 110.05 — but present at 160 ms, i.e. play SLOWER
+ * than the original despite drawing faster, and made a 32 MHz accelerator worth almost nothing (97 ms
+ * and 82 ms land on the same slot). Since matching the original is this port's contract, the lock is
+ * now opt-in and free-running is the default (STATUS.md, "the game runs slower than the original").
+ *
+ * Fidelity trade either way: NONE in pixels — the frame drawn is the same bytes, only WHEN it is shown
+ * moves. Game logic is frame-stepped (one game_update_step per drawn frame; every clock is a per-frame
+ * counter — bonus time, TIME entry, crash timer), so the cadence never changes what is computed on which
+ * frame. It DOES change wall-clock game speed, because speed is the present rate.
  *
  * WAIT DESIGN: the wait is the shell's existing Vsync() — its per-vblank primitive. Vsync services the
  * VBL sound pump (which runs in the very vblank Vsync waits for), so the pump's 50 Hz tempo and the IKBD
@@ -690,12 +697,14 @@ static Framebuffer *back_buffer(const Shell *s) { return screen_buf(s->shown ^ 1
  * vbl_count is a single-writer (the VBL hook) / single-reader (this main line) 32-bit counter, and a
  * 68000 addq.l / move.l on it is one indivisible instruction, so no lock or torn read is possible (same
  * argument as snd_lock_depth's; the counter and the sound guard are independent). */
-/* LIVENESS: the clock only ticks while the VBL pump is installed — show_surface's boundary wait would
- * spin forever otherwise. Safe today by ordering (install_sound precedes the first show_surface; the
- * exit path flips via raw Setscreen after uninstall_sound) — keep that ordering if either moves. */
+/* LIVENESS (GAME_PRESENT_LOCK builds): the clock only ticks while the VBL pump is installed, so the
+ * boundary wait would spin forever without it. Safe by ordering — install_sound precedes the first
+ * show_surface, and the exit path flips via raw Setscreen after uninstall_sound. Keep that ordering if
+ * either moves. The default free-running build does not wait on this clock at all (only the cadence
+ * instrument reads it), so it cannot hang there. */
 static volatile uint32_t vbl_count;    /* free-running 50 Hz vblank clock, incremented in vbl_sound */
 
-#ifndef GAME_PRESENT_FREERUN
+#ifdef GAME_PRESENT_LOCK
 #define PRESENT_QUANTUM_VBLS 2         /* present only every 2nd (even) vblank: the 25 fps vsync-lock cap */
 static uint32_t present_target;        /* the vbl_count the next flip lands on; a fixed PRESENT_QUANTUM grid */
 
@@ -717,7 +726,7 @@ static void present_wait_boundary(void) {
 #ifdef GAME_CADENCE_TRACE
 /* SCRATCH cadence instrument (not shipped): record the vblank SPAN of each present — the delta of the
  * 50 Hz clock across a full flip — so a headless autodrive run yields the before/after cadence
- * distribution (build GAME_PRESENT_FREERUN for the baseline, plain for the locked cadence). Dumped to
+ * distribution (plain build = free-running, GAME_PRESENT_LOCK for the C1 locked cadence). Dumped to
  * SCREEN.BIN on autodrive exit, padded like flow_trace_dump so the standard runner picks it up. */
 #define CADENCE_SLOTS GAME_CADENCE_TRACE
 static uint16_t cadence_log[CADENCE_SLOTS];
@@ -842,8 +851,8 @@ static void show_surface(Shell *s) {
 #ifdef RM_TAIL_CANARY
     canary_check(s->shown ^ 1);              /* debug: did this frame's draws eat the overdraw tail? */
 #endif
-#ifndef GAME_PRESENT_FREERUN
-    present_wait_boundary();                 /* C1: quantize the flip onto the even-vblank cadence grid */
+#ifdef GAME_PRESENT_LOCK
+    present_wait_boundary();                 /* C1 (opt-in): quantize the flip onto the even-vblank grid */
 #endif
     Setscreen(-1L, (long)fb->px, -1);        /* poke the base; the shifter latches it at the next vblank */
     Vsync();                                 /* land on the boundary vblank: the new buffer is now visible */

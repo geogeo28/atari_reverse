@@ -395,7 +395,13 @@ work. Ground/object are already small.
 
 ### Tier C — departures that need sign-off (each flagged with the fidelity trade)
 
-**C1. 25 fps vsync-locked instead of 30.** *(the honest ST target)* Render every 2nd 50 Hz vblank → a
+**C1. 25 fps vsync-locked instead of 30.** *(the honest ST target — LANDED, then made OPT-IN 2026-07-28;
+build `-DGAME_PRESENT_LOCK`)* Real-hardware play showed the round-up costs more than the even cadence is
+worth: the original presents free-running (`flip_screen` @0x121f8 — poke the base, one Vsync), and the
+lock quantising every present UP to the next 2-vblank slot made the port play SLOWER than the original
+despite rendering faster, and made a 32 MHz accelerator worth almost nothing. Free-running is now the
+default; measured delta on STE driving is median 7 vs 8 vbl/present (mean 6.94 vs 7.36). Neither shape
+tears. The text below is the original landing rationale, kept for the reasoning.* Render every 2nd 50 Hz vblank → a
 **40.0 ms / 320,000 cyc** budget (20% more than 30 fps) that is *tearing-free* on a stock 50 Hz display,
 which 30 fps is not. **Fidelity trade: none in pixels — only the frame rate label changes** (25 vs 30).
 *Harness:* no change; it is the same pixel-faithful frame, just presented at a locked cadence. This is
@@ -1806,7 +1812,6 @@ single-reader (main line), one indivisible 68000 op each side — no lock. Liven
 ordering (install_sound before the first show_surface; the exit path flips raw after uninstall) and
 commented at the declaration. No game-logic skew: every game clock is a per-frame counter (bonus
 time, TIME entry, crash timer) — nothing reads a vblank/wall clock, so presentation timing cannot
-change what is computed. `GAME_PRESENT_FREERUN` compiles the lock out (the baseline-measurement
-build); `GAME_CADENCE_TRACE=N` is the scratch cadence instrument (SCREEN.BIN dump, runner in the
+change what is computed. `GAME_CADENCE_TRACE=N` is the scratch cadence instrument (SCREEN.BIN dump, runner in the
 session scratchpad). Shell-local: game_main.c only. Pixels: goldens MATCH ×5, `make test` 708,
 flow trace unchanged at 19 records, psg_write signature confirms sound alive under the lock.

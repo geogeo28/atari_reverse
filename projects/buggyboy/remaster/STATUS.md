@@ -628,8 +628,8 @@ the per-frame clear was dropped.)
 
 ## Known issues (play-test, 2026-07-25)
 
-- **OPEN — the game runs slower than the original on real hardware, and a 32 MHz accelerator barely
-  helps (reported 2026-07-28).** Not a bug in the render: it is the **C1 flip lock** doing exactly what
+- **RESOLVED — the game ran slower than the original on real hardware, and a 32 MHz accelerator barely
+  helped (reported 2026-07-28; free-running made the default the same day).** Not a bug in the render: it is the **C1 flip lock** doing exactly what
   it was designed to do. `present_wait_boundary` rounds every flip UP onto a 2-vblank grid, so
   `present = ceil(render / 40 ms) x 40 ms`. The STE renders the gate frame in **97.75 ms** — faster than
   the original's **110.05 ms** — but presents at **160 ms (6.25 fps)** against the original's free-running
@@ -643,10 +643,16 @@ the per-frame clear was dropped.)
   the countdown, jingle spacing. So "the music itself is slower" and "the engine/countdown is slower" have
   different causes — if a TUNE is genuinely slow, suspect dropped refreshes (`snd_lock_depth` skips, or
   missed VBLs), not C1.
-  **Isolation builds (in `build/`, boot-verified on real TOS 1.04):** `BBFREE.PRG` (`-DGAME_PRESENT_FREERUN`
-  — lock removed, free-running present), `BBNOBLT.PRG` (`GAME_FORCE_NO_BLITTER=1` — CPU engines; on an
-  accelerated machine the blitter runs at BUS speed while `blit_start_and_wait` idles the fast CPU, so the
-  blitter routes may now be a pessimization), and `BBFAST.PRG` (both).
+  **Fix:** presentation is now **free-running by default** — the same shape as the original — and the C1
+  lock is opt-in via `-DGAME_PRESENT_LOCK`. Pure knob inversion: the new default `BUGGYBOY.PRG` is
+  byte-identical to the old `-DGAME_PRESENT_FREERUN` build. Measured on the same scene
+  (`run_cadence.py ste 200`, with and without `--lock`): median **7 vs 8** vblanks/present, mean **6.94 vs
+  7.36** — the lock was rounding 83 of 199 presents that finished in 7 vblanks up to 8. The win is larger
+  on a faster machine, where a shorter render lands lower on the grid.
+  **Still open for the accelerated machine:** `BBNOBLT.PRG` (`GAME_FORCE_NO_BLITTER=1`) is untested by the
+  user. The blitter runs at BUS speed regardless of CPU clock and `blit_start_and_wait` idles the fast CPU
+  waiting for it, so on a 32 MHz accelerator the blitter routes may now be a PESSIMIZATION — the boot probe
+  binds them on "is a blitter present" alone, which was the right call at 8 MHz.
   **What the ORIGINAL does (decomp `flip_screen` @0x121f8):** toggle `flip_idx`, poke the video base
   registers DIRECTLY (`move.w #$2700,%sr` / write / `move.w #$2000,%sr` — it runs supervisor), then ONE
   XBIOS 37 `Vsync`. That is all: free-running, present on the first vblank after the frame is done, no

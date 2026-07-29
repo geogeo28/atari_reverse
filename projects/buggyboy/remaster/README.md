@@ -125,14 +125,24 @@ anywhere**, at byte-identical pixels. The original never touches the blitter (ve
 never measured on that instrument (and 99.78/89.80 are render-clock numbers), so the driving row
 has no honest original-vs-remaster pair — flagged rather than guessed.
 
-### Frame time (render clock = compute; locked cadence = player-visible latency)
+### Frame time (render clock = compute; present cadence = player-visible latency)
 
-| machine | scene | render ms/frame | render fps | locked present cadence | live engines |
+Presentation is **free-running** by default, exactly as the original does it (`flip_screen` @0x121f8:
+poke the video base, one Vsync). The C1 even-vblank lock is opt-in (`-DGAME_PRESENT_LOCK`) — the
+cadence column below is the LOCKED one it was measured under; free-running is the same render with the
+round-up removed, so it is never slower and usually a vblank quicker.
+
+| machine | scene | render ms/frame | render fps | C1-LOCKED present cadence | live engines |
 |---|---|---:|---:|---|---|
 | ST | gate (worst case) | **130.30** | 7.68 | 8 vbl → 160 ms → **6.25 fps** ¹ | 68000 hand-asm |
 | ST | driving | **99.78** | 10.02 | mostly 6/8 vbl, mean ≈7.6 → **≈6.5 fps** | 68000 hand-asm |
 | STE | gate (worst case) | **97.75** | 10.23 | 8 vbl → 160 ms → **6.25 fps** | blitter (objshift2 + colour skew table + road scroll + HUD dashboard) |
 | STE | driving | **89.80** | 11.14 | mostly 6/8 vbl, mean ≈7.1 → **≈7.0 fps** | blitter, 90 % colour-table hits |
+
+Free-running vs locked, measured on the same scene (`run_cadence.py ste 200` with and without `--lock`,
+STE driving): median **7 vs 8** vblanks/present, mean **6.94 vs 7.36** — the lock was rounding 83 of 199
+presents that finished in 7 vblanks up to 8. The gap widens on a faster machine, because a shorter render
+lands lower on the grid and the round-up costs proportionally more.
 
 STE vs ST: **gate −25.0 %, driving −10.0 %** — same pixels, byte-identical framebuffers on both
 machines (goldens ×5 each + whole-frame A/B pin it). RAM size has **zero** effect on speed: the

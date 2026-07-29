@@ -8,17 +8,18 @@ Pass machine=ste to measure the STE hardware-blitter route (--machine ste --blit
 binds the blitter at boot) — the before/after metric for the C4 blitter engine conversion. Cycle-exactness
 is NOT available for the blitter under Hatari; the vblank-span distribution is the perf metric.
 
---freerun drops the C1 even-vblank flip lock (-DGAME_PRESENT_FREERUN) so a present costs exactly what
-the frame took: WITH the lock every present is quantised onto the 2-vblank grid, which hides a render win
-smaller than one grid step. The C4 blitter before/after numbers (BLIT_STE_SPEC §6/§11) are free-run.
+Free-running is the DEFAULT (it is what the original does), so a present costs exactly what the frame
+took. --lock adds the opt-in C1 even-vblank flip lock (-DGAME_PRESENT_LOCK), which quantises every present
+onto the 2-vblank grid and therefore hides a render win smaller than one grid step. The C4 blitter
+before/after numbers (BLIT_STE_SPEC §6/§11) are free-run, i.e. the default.
 
 --idle holds the buggy on the leg-start GATE (no throttle) instead of driving — the objshift-dense
 scene the C4 blitter routes were profiled on; without it the script drives the course.
 
-Usage: python render/atari/run_cadence.py [st|ste] [frames] [--legs N] [--idle] [--freerun]
+Usage: python render/atari/run_cadence.py [st|ste] [frames] [--legs N] [--idle] [--lock]
        python render/atari/run_cadence.py            # stock ST, 400 frames, leg 0, driving
        python render/atari/run_cadence.py ste         # STE build on --machine ste --blitter
-       python render/atari/run_cadence.py ste 200 --idle --freerun   # the leg-start gate, unquantised
+       python render/atari/run_cadence.py ste 200 --idle             # the leg-start gate, unquantised
 """
 import os
 import statistics
@@ -55,11 +56,11 @@ CADENCE_HEADER_LONGS = 2                                   # {magic, counter cou
 HZ200_MS = 1000.0 / 200                                    # one TOS _hz_200 tick
 
 
-def build(machine, frames, leg, idle=False, freerun=False):
+def build(machine, frames, leg, idle=False, lock=False):
     prg = "CADENCEST.PRG" if machine == "ste" else "CADENCE.PRG"
     extra = f"-DGAME_AUTODRIVE={frames} -DGAME_CADENCE_TRACE={frames}" + (f" {IDLE_CFLAGS}" if idle else "")
-    if freerun:
-        extra += " -DGAME_PRESENT_FREERUN"
+    if lock:
+        extra += " -DGAME_PRESENT_LOCK"
     env = {**os.environ, "GAME_PRG": prg, "GOLDEN_LEG": str(leg), "GAME_EXTRA_CFLAGS": extra,
            "GAME_NO_STAGE": "1"}                # a harness variant stays in build/; disk/ is the play drive
     env.pop("GAME_STE_SELFTEST", None)
@@ -114,13 +115,13 @@ def report(label, spans):
         print(f"    {v:2d} vbl ({v * 20:4d} ms, {50.0 / v:4.1f} fps): {hist[v]:3d}  {'#' * min(hist[v], 60)}")
 
 
-def measure(machine="st", frames=400, leg=0, idle=False, freerun=False):
-    prg = build(machine, frames, leg, idle, freerun)
+def measure(machine="st", frames=400, leg=0, idle=False, lock=False):
+    prg = build(machine, frames, leg, idle, lock)
     fb = run_hatari.run(prg, machine=machine, blitter=(machine == "ste"),
                         run_vbls=frames * VBLS_PER_FRAME_HEADROOM, timeout=CELL_TIMEOUT_S)
     spans = parse(fb)
     report(f"{machine} (leg {leg}, {frames} frames, {'gate/idle' if idle else 'driving'}"
-           f"{', free-run' if freerun else ''})", spans)
+           f"{', C1 locked' if lock else ', free-run'})", spans)
     counters = parse_counters(fb)
     ticks, rendered = counters["render ticks"], counters["render frames"]
     if rendered:
@@ -136,7 +137,7 @@ def measure(machine="st", frames=400, leg=0, idle=False, freerun=False):
 def main():
     args = [a for a in sys.argv[1:]]
     idle = pop_flag(args, "--idle")
-    freerun = pop_flag(args, "--freerun")
+    lock = pop_flag(args, "--lock")
     leg = 0
     if "--legs" in args:
         i = args.index("--legs")
@@ -144,7 +145,7 @@ def main():
         del args[i:i + 2]
     machine = args[0] if args and args[0] in ("st", "ste") else "st"
     frames = next((int(a) for a in args if a.isdigit()), 400)
-    measure(machine, frames, leg, idle, freerun)
+    measure(machine, frames, leg, idle, lock)
 
 
 if __name__ == "__main__":
