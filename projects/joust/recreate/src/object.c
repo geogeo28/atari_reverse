@@ -14,6 +14,7 @@
 #include "addrs.h"
 #include "joust.h"
 #include "object.h"
+#include "sound.h"   /* ptero_spot_player calls play_sound */
 
 /* ------------------------------------------------------------------ pixel_collision @ 0x13fe6 */
 
@@ -377,7 +378,6 @@ uint32_t ptero_avoid_platform(uint8_t *image, uint32_t pterodactyl, uint32_t scr
 /* ------------------------------------------------------------------ ptero_spot_player @ 0x15276 */
 
 #define SND_PTERO_SWOOP     3u      /* sound_table index played when a player is spotted */
-#define SOUND_TABLE_STRIDE  4u      /* lsl.l #2: the table holds longword list pointers */
 
 /* The four window thresholds, each spelled with the signedness of the branch that tests it: `bhi`
  * and `bcc` are unsigned (hence the `u`), `ble` and `bge` are signed (hence the int16_t cast).
@@ -389,18 +389,6 @@ uint32_t ptero_avoid_platform(uint8_t *image, uint32_t pterodactyl, uint32_t scr
 #define PTERO_SPOT_X_FAR   ((int16_t)0x69)  /* cmpi.w #$69 + bge: beyond this it is out of reach */
 #define PTERO_SPOT_X_BEHIND   0xff29u  /* cmpi.w #$ff29 + bcc — see the note in the body */
 #define PTERO_SWOOP_TIMER_SET 0x14u
-
-/* play_sound @ 0x10a56, reproduced here because ptero_spot_player calls it and the sound layer has
- * not been ported yet. A LOWER index outranks a higher one, so the call is dropped unless it beats
- * whatever is playing. Dosound's command list is off-image, hence the kit's side-effect ledger.
- * When the sound subsystem is ported this collapses into a call to that file's play_sound. */
-static void play_sound(uint8_t *image, uint16_t index) {
-    if ((int16_t)index > (int16_t)be16(image + A_snd_priority)) return;
-    wr16(image + A_snd_priority, index);
-    /* move.l (0,a0,d0.w): the scaled index reaches the table as a SIGN-EXTENDED word. */
-    uint32_t entry = A_sound_table + sign_ext16((uint32_t)index * SOUND_TABLE_STRIDE);
-    g_dosound(image, be32(image + entry));
-}
 
 /* ptero_spot_player(pterodactyl = A0, player = A3, flags = D0) — arm the swoop if this player is in
  * front of the pterodactyl and roughly level with it.

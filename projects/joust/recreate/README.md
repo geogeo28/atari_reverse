@@ -60,6 +60,18 @@ routines whose results land in D1/D2 (which an image diff cannot see): it `jsr`s
 stores D1/D2 through A0 with the same `move.l d1,(a0)+ / move.l d2,(a0)+` pair the game itself
 uses. The candidate glue mirrors that store, so both sides are compared on identical bytes.
 
+### A glue may refuse a call the original makes
+
+Glue is normally a bare forwarder, but the oracle's instruction cap has no candidate-side
+counterpart: a reconstructed routine that spins for ever hangs a pytest worker with **no output at
+all** under `-n auto`, which is the one failure the differential cannot report. So a glue in front
+of an unbounded spin may add a guard the original has no trace of, and report the refusal through
+its own return code rather than through the routine's result. `g_pause_until_key`
+(`src/input.c`) is the worked instance, with `_pause_glue` in `test/test_input.py` putting a
+wall-clock deadline on every candidate-side entry into the spin as the second layer. The
+reconstructed function itself stays uncapped and faithful — the guard lives in the glue precisely
+so that it does.
+
 ## `project.toml` — the heap waiver
 
 Joust's data segment runs to `0x2b7ae`, which covers the kit's modeled Malloc heap

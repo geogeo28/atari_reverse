@@ -22,7 +22,6 @@
 #define A_egg_count             0x10d0bu  /* .b */
 #define A_message_char_count    0x10d0cu  /* .b */
 #define A_ptero_spawn_count     0x10d0du  /* .b */
-#define A_snd_priority          0x10d4cu  /* .w — lower index = higher priority */
 #define A_hit_box_a             0x10da0u  /* the two staged collision boxes (HB_* below) */
 #define A_hit_box_b             0x10db0u
 #define A_hit_rows              0x10dc0u  /* .b — overlapping rows, set by test_overlap */
@@ -30,7 +29,6 @@
 #define COLLISION_HIT_SET       0xffu     /* move.b #$ff — callers only ever test it against 0 */
 #define A_draw_x                0x10decu  /* .w */
 #define A_message_table         0x10e16u
-#define A_sound_table           0x11774u  /* .l[] — Dosound command lists, indexed by sound number */
 #define A_platform_table        0x117b4u
 #define A_platform_sprites      0x119d4u
 
@@ -81,9 +79,6 @@
 
 /* ---- geometry this layer alone uses ---- */
 #define CELLS_PER_ROW  20u    /* SCREEN_ROW_BYTES / CELL_BYTES; test_overlap's `sub.w #$14` */
-
-/* ---- the kit's XBIOS Dosound side-effect ledger (tools/recreate_kit/src/dosound_log.c) ---- */
-void g_dosound(uint8_t *image, uint32_t list_addr);
 
 /* ---- object.c ---- */
 void pixel_collision(uint8_t *image, uint32_t box_a, uint32_t box_b);

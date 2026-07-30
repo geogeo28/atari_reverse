@@ -35,7 +35,8 @@ A_LIVE_OBJECT_COUNT = 0x10d0a
 A_EGG_COUNT = 0x10d0b
 A_MESSAGE_CHAR_COUNT = 0x10d0c
 A_PTERO_SPAWN_COUNT = 0x10d0d
-A_SND_PRIORITY = 0x10d4c
+A_SND_PRIORITY = 0x10d4c    # the sound layer's (include/sound.h): ptero_spot_player stages it,
+                            # because play_sound reads and writes it on its behalf
 A_PLAYFIELD_BOTTOM = 0x10d60
 A_HIT_BOX_A = 0x10da0
 A_HIT_BOX_B = 0x10db0
@@ -49,7 +50,6 @@ A_DRAW_ROWS = 0x10df6
 A_MESSAGE_TABLE = 0x10e16
 A_OBJECT_TABLE = 0x10f36
 A_PTERODACTYL_TABLE = 0x113ba
-A_SOUND_TABLE = 0x11774
 A_PLATFORM_TABLE = 0x117b4
 A_PLATFORM_SPRITES = 0x119d4
 
@@ -1006,24 +1006,24 @@ def test_entry_addresses_match_names_txt():
 def test_mirrored_constants_match_the_headers():
     """Every constant this file restates equals the one src/object.c compiles against.
 
-    Three headers, because the constants this layer shares with the drawing layer were hoisted out
-    of object.h: the globals it reads by address into addrs.h, and the object record — which both
-    layers walk — into joust.h. Each header is scraped by name rather than as one merged namespace,
+    Four headers, because the constants this layer shares with another were hoisted out of
+    object.h: the globals it reads by address into addrs.h, the object record — which the drawing
+    layer walks too — into joust.h, and snd_priority into sound.h, whose play_sound owns it on
+    ptero_spot_player's behalf. Each header is scraped by name rather than as one merged namespace,
     so a constant that drifts back into the wrong header fails here instead of being found in
     whichever copy still happens to hold the old value.
     """
     header = _defines("include/object.h")
     addrs_h = _defines("include/addrs.h")
     joust_h = _defines("include/joust.h")
+    sound_h = _defines("include/sound.h")
     mirrored = {
         "A_platform_present": A_PLATFORM_PRESENT, "A_game_phase": A_GAME_PHASE,
         "A_live_object_count": A_LIVE_OBJECT_COUNT, "A_egg_count": A_EGG_COUNT,
         "A_message_char_count": A_MESSAGE_CHAR_COUNT, "A_ptero_spawn_count": A_PTERO_SPAWN_COUNT,
-        "A_snd_priority": A_SND_PRIORITY,
         "A_hit_box_a": A_HIT_BOX_A, "A_hit_box_b": A_HIT_BOX_B, "A_hit_rows": A_HIT_ROWS,
         "A_collision_hit": A_COLLISION_HIT, "A_draw_x": A_DRAW_X,
-        "A_message_table": A_MESSAGE_TABLE,
-        "A_sound_table": A_SOUND_TABLE, "A_platform_table": A_PLATFORM_TABLE,
+        "A_message_table": A_MESSAGE_TABLE, "A_platform_table": A_PLATFORM_TABLE,
         "A_platform_sprites": A_PLATFORM_SPRITES,
         "MSG_RECORD": MSG_RECORD, "PSPR_RECORD": PSPR_RECORD,
         "PLAT_RECORD": PLAT_RECORD, "CELLS_PER_ROW": CELLS_PER_ROW,
@@ -1036,7 +1036,8 @@ def test_mirrored_constants_match_the_headers():
                                   "A_object_table": A_OBJECT_TABLE, "A_draw_dst": A_DRAW_DST,
                                   "A_draw_src": A_DRAW_SRC, "A_draw_shift": A_DRAW_SHIFT,
                                   "A_draw_rows": A_DRAW_ROWS}),
-            (joust_h, "joust.h", {"OBJ_SIZE": OBJ_SIZE, "CELL_PLANE_WORDS": CELL_PLANE_WORDS})):
+            (joust_h, "joust.h", {"OBJ_SIZE": OBJ_SIZE, "CELL_PLANE_WORDS": CELL_PLANE_WORDS}),
+            (sound_h, "sound.h", {"A_snd_priority": A_SND_PRIORITY})):
         for name, value in shared_mirrored.items():
             assert defines[name] == value, (f"{name}: {origin} has {defines[name]:#x}, "
                                             f"test has {value:#x}")

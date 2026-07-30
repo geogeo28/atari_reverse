@@ -120,6 +120,9 @@ var 0x00484 conterm
 var 0x10d22 conterm_save
 var 0x10d18 saved_mousevec
 var 0x10d1c saved_joyvec
+var 0x10d20 saved_rez
+var 0x10d24 ikbd_cmd_reset
+var 0x10d26 saved_palette
 
 # ==== variables: game state ====
 var 0x10cf2 players_alive
@@ -167,6 +170,8 @@ var 0x1922a death_sprite_p1
 var 0x193da death_sprite_other
 var 0x10e16 message_table
 var 0x11774 sound_table
+var 0x1150f snd_list_silence
+var 0x11d56 ikbd_cmd_mouse_rel
 var 0x102c8 fname_highsco
 var 0x18396 hiscore_name
 var 0x1861b str_life_blank
@@ -222,6 +227,7 @@ var 0x10d4c snd_priority
 var 0x10d48 snd_sweep_pitch
 var 0x10d4a snd_sweep_volume
 var 0x10d52 palette_cycle_ctr
+var 0x1415e repeat_delay
 var 0x10e06 ikbd_packet
 var 0x1145b ikbd_cmd_joyread
 var 0x10dfe rng_ptr

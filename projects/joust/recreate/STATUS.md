@@ -7,7 +7,7 @@ oracle running the real code vs. the compiled reconstruction, on the same memory
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 44/75.** The 75 are the functions in `../decomp.c`'s inventory; `../names.txt` is the
+**Verified: 50/75.** The 75 are the functions in `../decomp.c`'s inventory; `../names.txt` is the
 source of truth for every name.
 
 ## Method per function
@@ -55,14 +55,14 @@ fabricated `0` read the guard exists to prevent (`tools/recreate_kit/TRAP_MODEL.
 | `0x105c2` | `rng_advance` | 46 | ✅ verified | 12 edge cursors (wrap threshold, longword wrap, signed-negative) x 10 mixes with poison + hi-garbage mixes + 600-case fuzz; D0 preserved |
 | `0x105f0` | `init_game` | 272 | ⬜ pending | |
 | `0x10700` | `draw_string` | 622 | ✅ verified | both fonts x all 236 non-control glyphs, 16 shifts/colours/bg, all 6 control bytes, backspace cell-borrow, text drawn onto its own state block (per-plane re-read), 200-case sharded fuzz |
-| `0x1096e` | `snd_tone_sweep` | 232 | ⬜ pending | |
-| `0x10a56` | `play_sound` | 52 | ⬜ pending | |
-| `0x10a8a` | `snd_poll_done` | 36 | ⬜ pending | |
+| `0x1096e` | `snd_tone_sweep` | 232 | ✅ verified | 10 staged mixer values pinning the read-modify-write (bits 6-7 survive or.l #$3f + bclr #0/#1), whole register file staged to noise to pin exactly WHICH 8 registers it writes, both counters' residues (0xfffe/0xffff) pinning subq.w + SIGNED bge; poison. LIMITS: the intra-pass ORDER of the 7 register writes is INVISIBLE (Giaccess is a register file, not an ordered ledger — TRAP_MODEL.md Phase 3); shipped order checked by hand at 0x10990..0x10a3a. The volume start (0xf) is unobservable and the pitch start's MAGNITUDE among non-negative even values is too — both pinned against the ORIGINAL'S instruction encodings at 0x10980/0x10988 (opcode + immediate + target). The differential does pin the pitch start's parity and sign |
+| `0x10a56` | `play_sound` | 52 | ✅ verified | signed cmp.w gate over 96 index x priority pairs incl. 0x7fff/0x8000/0xffff, the SIGN-EXTENDED word table index over 12 wrapping indices (0x4000 reads entry 0, bit 13 flips direction), a staged distinct-pointer table asserted through the kit's Dosound ledger, the game's own 16 entries, 300-case sharded fuzz; poison on the negative indices — the only ones where a poisoned priority still admits the sound. Cannot use abi.stack_call_pokes: its 60-byte movem save area would land in diffed memory, so a word-arg stub keeps all stack traffic inside the guard band (no exclude band needed) |
+| `0x10a8a` | `snd_poll_done` | 36 | ✅ verified | ALL 256 mixer bytes (the andi.b #$3f masking of bits 6-7 is exhaustive, not sampled), 7 priorities incl. 0x7fff/0x8000/0xffff, release is unconditional; only register 7 is consulted, proven with the other 15 staged to noise; poison on both branches |
 | `0x10aae` | `title_screen` | 408 | ⬜ pending | |
 | `0x10c46` | `xbios_setpalette` | 16 | ⬜ pending | |
 | `0x10c56` | `cycle_palette` | 124 | ⬜ pending | |
-| `0x11c24` | `poll_quit_key` | 114 | ⬜ pending | |
-| `0x11d9a` | `read_joysticks` | 60 | ⬜ pending | |
+| `0x11c24` | `poll_quit_key` | 114 | ✅ verified | no-key / ordinary-key / 251-key sharded fuzz over ASCII x scancode; R/r at stop_pc=0x10006 and Ctrl-C at stop_pc=0x11d4c, EACH PAIRED with a proof the run does not reach rts (a stop_pc run that fell through would stop at the sentinel and pass silently); quit path covers the Dosound ledger, the hiscore_dirty gate, Fopen/Fwrite(0x1a)/Fclose into a staged HIGH.SCO, conterm and both KBDVBASE vectors; a 9-call battery reads Setscreen/Ikbdws x2/Kbdvbase/Super/Setpalette's arguments back out of the oracle's stack, since those traps change no memory; poison. LIMITS: the P/p pause needs a SECOND keystroke, which the console model cannot deliver (one key per run) — its loop is verified separately entered at 0x11d64; the Fopen->Fcreate fallback is UNREACHABLE by construction (os_fcreate = os_fopen + truncate, so both succeed or both refuse) and is reproduced unverified |
+| `0x11d9a` | `read_joysticks` | 60 | ⬜ blocked | blocked twice: it clears ikbd_packet then spins for a reply an IKBD INTERRUPT delivers, which the oracle never runs — so no poked packet survives the clr and no run leaves the loop (pinned by test_input.py::test_ikbd_wait_never_ends_from_the_routines_own_entry); and its whole body is two calls to control_player @0x11dd6, unported and itself never returning on the no-players-left path. A checkpoint at the loop head would prove one clr.l and nothing else |
 | `0x11dd6` | `control_player` | 338 | ⬜ pending | |
 | `0x11f28` | `player_death` | 236 | ⬜ pending | |
 | `0x12014` | `update_objects` | 1512 | ⬜ pending | |
@@ -85,7 +85,7 @@ fabricated `0` read the guard exists to prevent (`tools/recreate_kit/TRAP_MODEL.
 | `0x13fe6` | `pixel_collision` | 178 | ✅ verified | per-row hit position, spill gated on cursor+shift, 13 wide shifts (LSR.L mod 64) x 2 orderings, subq.b 0 = 256 rows, adda.w sign-extended stride, 400-case fuzz x 4 shards; poison on 3 |
 | `0x14098` | `start_death_anim` | 102 | ✅ verified | player-1 identity +/-1 byte (cmpa.l), the 0x280 rise and its SIGNED clamp incl. bit-31 screen bases, bset #13/#12 over 9 flag words, addq.b score wrap; D0 compared via a store stub; poison |
 | `0x140fe` | `joust_bounce` | 96 | ✅ verified | 14 gaps across both thresholds (unsigned bcc / signed bge) x 9 velocity pairs, neg.w 0x8000, flags high half not stored, already-correct velocity left untouched; poison on 2 |
-| `0x14160` | `score_update` | 6 | ⬜ blocked | blocked: needs play_sound @0x10a56 (extra-life branch). play_sound exists only as a `static` duplicate inside src/object.c, so it can be neither called nor re-copied |
+| `0x14160` | `score_update` | 6 | ⬜ blocked | unblocked as of the sound layer: play_sound is exported from include/sound.h and the static duplicate in object.c is gone |
 | `0x14166` | `score_update_p2` | 12 | ⬜ blocked | blocked: same as score_update — fall-through alias into the same body |
 | `0x14172` | `score_update_p1` | 212 | ⬜ blocked | blocked: same as score_update — fall-through alias into the same body |
 | `0x14246` | `draw_lives` | 8 | ✅ verified | dispatch only: full `cmpa.l` against player2 over 7 A0 values (+/-1 byte, enemies, 0, 0xffffffff). NOTE both bodies reload A0 from a constant, so draw_lives(enemy) draws PLAYER 1's row |
@@ -95,11 +95,11 @@ fabricated `0` read the guard exists to prevent (`tools/recreate_kit/TRAP_MODEL.
 | `0x1435c` | `find_free_message` | 30 | ✅ verified | first-free at slots 0/1/12/23, full table -> 0 (suba.l), every non-zero kind incl. 0x80, 200-case fuzz; A0 compared — it writes nothing, so an image diff proves nothing |
 | `0x1437a` | `check_highscore` | 310 | ⬜ blocked | blocked twice over: calls hiscore_key_input/hiscore_joystick_input (unported), AND its main path never returns (0x448e -> 0x44ae -> 0x448e is infinite), so there is no rts to diff at — needs a stop_pc checkpoint |
 | `0x144b0` | `flash_hiscore_color` | 36 | ✅ verified | counters 0/1/6/7/8/0x7fff/0x8000/0xffff, addq.w wrap pinned by a sentinel in the next word; the Setcolor pen and colour word read back out of the oracle's own trap arguments (the palette write is off-image); poison |
-| `0x144d4` | `hiscore_key_input` | 100 | ⬜ pending | |
-| `0x14538` | `hiscore_joystick_input` | 288 | ⬜ pending | |
+| `0x144d4` | `hiscore_key_input` | 100 | ✅ verified | backspace at columns 1/2/8/15 plus the 0x8000 subq OVERFLOW (bge is N==V, so it clamps) and the column-0 clamp; RETURN ignored untouched and at stop_pc=0x10006 for 3 non-zero draw_rows values, with a never-returns companion; all 26 upper-case, all 26 lower-case folded, space; 19 rejected bytes separating the UNSIGNED fold threshold from the SIGNED range tests; the last-column clamp and the 0xffff-wraps-to-0 UNSIGNED clamp; 256-key sharded fuzz; poison |
+| `0x14538` | `hiscore_joystick_input` | 288 | ✅ verified | VERIFIED FROM 0x1454e — entered at the IKBD wait loop with the reply staged. The prologue (clr.l ikbd_packet, the Ikbdws interrogate, the blocking wait) is NOT verified and cannot be: the routine clears the packet before waiting, so no poked constant survives it. From the packet read on: stick owner over 6 values incl. player2|0xffff0000 (the full cmpi.l), fire gated on draw_rows and set AFTER the test, centred stick clearing the counter, the subq.b repeat counter incl. 0x80's overflow into blt, both letter wraps in both directions with the second test RE-READING the byte, left/right into the shared cursor tails, direction priority, 256-stick sharded fuzz; poison |
 | `0x14658` | `draw_hiscore_cursor` | 78 | ✅ verified | all 16 columns x both parities, the 8-cell rule with noise past its end, sign-extended column offset, 4 screen bases, 200-case fuzz; poison |
 | `0x146a6` | `draw_hiscore_entry` | 80 | ✅ verified | 16 columns, letters incl. 0x00 and 0xff, the string really starting at draw_dst_off, BOTH sign-extensions (raw-cursor name index, and the bit-0-cleared screen offset), 200-case fuzz; poison |
-| `0x146f6` | `lava_troll` | 706 | ⬜ blocked | blocked: calls play_sound @0x10a56 and score_update @0x14160. Its two leaves (troll_erase_hand, troll_draw_hand) ARE verified, so it unblocks with the sound layer |
+| `0x146f6` | `lava_troll` | 706 | ⬜ blocked | play_sound is now exported (sound layer); still needs score_update @0x14160, which is itself now unblocked. Its two leaves are verified |
 | `0x149b8` | `troll_erase_hand` | 122 | ✅ verified | early-out needs ALL THREE of src/dst/shift, ror.l mod 32, signed-word rows (0/0x8000 draw nothing), playfield_bottom re-read EVERY row (pinned by a blit that overwrites the surface mid-run), self-overlap read-before-write, 200-case fuzz; poison |
 | `0x14a32` | `troll_draw_hand` | 136 | ✅ verified | bit-0 gate on the whole longword, LSR.L mod 64, lava clip re-read per row, all four planes read before any write over 6 overlap deltas, 200-case fuzz; poison |
 | `0x14ada` | `update_pterodactyl` | 1470 | ⬜ pending | |
