@@ -120,15 +120,15 @@ static void commit_and_draw(uint8_t *image, uint32_t object, uint32_t flags, uin
 /* The set, by identity for a player and by type for an enemy; the pose is added on afterwards. */
 static uint32_t rider_sprite_set(uint32_t flags) {
     if (flags & OBJ_FLAG_PLAYER) {
-        uint32_t set = (flags & OBJ_FLAG_TYPE_BIT1) ? SPRITE_RIDER_P2 : SPRITE_RIDER_P1;
+        uint32_t set = (flags & OBJ_FLAG_TYPE_HI) ? SPRITE_RIDER_P2 : SPRITE_RIDER_P1;
         return (flags & OBJ_FLAG_DEAD) ? set + SPRITE_RIDER_DEAD : set;
     }
     if (flags & OBJ_FLAG_DEAD) return SPRITE_ENEMY_DEAD;
 
     /* `btst #0` then `btst #1`: types 1 (01) and 3 (11) have their own sets, and BOTH type 2 (10)
      * and the type-0 (00) an enemy is never shipped with fall to the middle one. */
-    if (!(flags & OBJ_FLAG_TYPE_BIT0)) return SPRITE_ENEMY_TYPE2;
-    return (flags & OBJ_FLAG_TYPE_BIT1) ? SPRITE_ENEMY_TYPE3 : SPRITE_ENEMY_TYPE1;
+    if (!(flags & OBJ_FLAG_TYPE_LO)) return SPRITE_ENEMY_TYPE2;
+    return (flags & OBJ_FLAG_TYPE_HI) ? SPRITE_ENEMY_TYPE3 : SPRITE_ENEMY_TYPE1;
 }
 
 /* Release the looping walk sound if this object is the one still holding it. */
@@ -419,7 +419,7 @@ static void apply_edge_y_push(uint8_t *image, uint32_t object, uint32_t flags, u
              (uint16_t)(be16(image + object + OBJ_Y) + EDGE_PUSH_DOWN_DY));
         /* Only a box that does NOT also push sideways parks a type-3 enemy here for a while. */
         if (image[edge + EDGE_X_PUSH] == 0
-            && (flags & (OBJ_FLAG_TYPE_BIT0 | OBJ_FLAG_TYPE_BIT1)) == ENEMY_TYPE_3)
+            && (flags & ENEMY_TYPE_MASK) == ENEMY_TYPE_3)
             image[object + OBJ_FLAP_TIMER] = EDGE_DWELL_FRAMES;
     } else {
         if (be16(image + object + OBJ_VX) == 0)
@@ -486,7 +486,7 @@ static slot_result platform_edge_bump(uint8_t *image, uint32_t object, uint32_t 
 
         /* Redraw the object where it now is, with the sprite it was last drawn from — this branch
          * picks no new pose — and ask draw_platforms to repaint the platform it scraped. */
-        flags &= ~OBJ_FLAG_EDGE_BUMP;
+        flags &= ~OBJ_FLAG_PLATFORM_BUMP;
         image[A_draw_rows] = image[object + OBJ_PREV_ROWS];
         uint32_t sprite = be32(image + object + OBJ_PREV_SRC);
         image[A_platform_present + sign_ext16(be16(image + edge + EDGE_PLATFORM))] =
@@ -496,7 +496,7 @@ static slot_result platform_edge_bump(uint8_t *image, uint32_t object, uint32_t 
     }
 
     /* No box contains it after all: drop the bit and re-dispatch the same slot. */
-    wr16(image + object + OBJ_FLAGS, (uint16_t)(flags & ~OBJ_FLAG_EDGE_BUMP));
+    wr16(image + object + OBJ_FLAGS, (uint16_t)(flags & ~OBJ_FLAG_PLATFORM_BUMP));
     return SLOT_RESTART;
 }
 
@@ -692,7 +692,7 @@ static void render_slot(uint8_t *image, uint32_t object) {
         uint32_t flags = be16(image + object + OBJ_FLAGS);
         if (flags == 0) return;                             /* free slot */
 
-        if (flags & OBJ_FLAG_EDGE_BUMP) {
+        if (flags & OBJ_FLAG_PLATFORM_BUMP) {
             if (platform_edge_bump(image, object, flags) == SLOT_RESTART) continue;
             return;
         }

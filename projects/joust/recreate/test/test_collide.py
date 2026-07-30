@@ -1083,9 +1083,6 @@ def test_mirrored_constants_match_collide_h():
     for c_name, mirror in (("A_egg_bonus_table", A_EGG_BONUS_TABLE),
                            ("BONUS_RECORD", BONUS_RECORD),
                            ("EGG_STATE_THROWN", EGG_STATE_THROWN),
-                           ("OBJ_FLAG_PLATFORM_BUMP", OBJ_FLAG_PLATFORM_BUMP),
-                           ("OBJ_FLAG_TYPE_LO", OBJ_FLAG_TYPE_LO),
-                           ("OBJ_FLAG_TYPE_HI", OBJ_FLAG_TYPE_HI),
                            ("PT_FLAG_JUST_SPAWNED", PT_FLAG_JUST_SPAWNED),
                            ("PT_FLAG_DYING", PT_FLAG_DYING)):
         assert collide_h[c_name] == mirror, f"{c_name} differs from this file's mirror"
@@ -1093,14 +1090,20 @@ def test_mirrored_constants_match_collide_h():
 
 def test_mirrored_constants_match_the_shared_headers():
     """The rest of what this file restates belongs to a header collide.h only includes: the
-    gladiator bookkeeping the wave director shares with it, and the pterodactyl table and record
-    the wave director and the pterodactyl driver walk too."""
+    gladiator bookkeeping the wave director shares with it, the flags-word bits the render pass
+    reads back, and the pterodactyl table and record the wave director and the pterodactyl driver
+    walk too."""
     addrs_h = _defines("include/addrs.h")
+    joust_h = _defines("include/joust.h")
     object_h = _defines("include/object.h")
     for defines, origin, mirrored in (
             (addrs_h, "addrs.h", {"A_gladiator_wave_countdown": A_GLADIATOR_WAVE_COUNTDOWN,
                                   "A_player_conflict_flag": A_PLAYER_CONFLICT_FLAG,
                                   "A_first_dismount_owner": A_FIRST_DISMOUNT_OWNER}),
+            (joust_h, "joust.h",
+             {"OBJ_FLAG_PLATFORM_BUMP": OBJ_FLAG_PLATFORM_BUMP,
+              "OBJ_FLAG_TYPE_LO": OBJ_FLAG_TYPE_LO,
+              "OBJ_FLAG_TYPE_HI": OBJ_FLAG_TYPE_HI}),
             (object_h, "object.h", {"A_pterodactyl_table": A_PTERODACTYL_TABLE,
                                     "A_pterodactyl_table_END": A_PTERODACTYL_TABLE_END,
                                     "PT_RECORD": PT_RECORD})):

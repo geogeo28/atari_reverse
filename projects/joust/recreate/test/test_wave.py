@@ -58,7 +58,7 @@ A_FIRST_DISMOUNT_OWNER = 0x10d07
 A_GAME_PHASE = 0x10d08
 A_LIVE_OBJECT_COUNT = 0x10d0a
 A_EGG_COUNT = 0x10d0b
-A_SPAWN_IN_PROGRESS = 0x10d13
+A_RESPAWN_LOCK = 0x10d13
 A_SPAWN_POINT_CURSOR = 0x10d14
 A_SND_PRIORITY = 0x10d4c
 A_WAVE_LAYOUT_MASK = 0x10d54
@@ -68,7 +68,7 @@ A_WAVE_TYPE3_COUNT = 0x10d57
 A_SPEED_TYPE1 = 0x10d58
 A_SPEED_TYPE2 = 0x10d5a
 A_SPEED_TYPE3 = 0x10d5c
-A_HUNTER_COUNTS = 0x10d5e
+A_CHASERS_P1 = 0x10d5e
 A_FLOOR_STEP_TIMER = 0x10d64
 A_FLOOR_ROWS_LEFT = 0x10d65
 A_GROUND_ANIM = 0x10d68
@@ -757,8 +757,8 @@ def test_end_of_wave_screen_bases(screen_base):
 # ==================================================================================================
 
 # Everything the wave start writes, pre-filled so a write the candidate skips shows as a diff.
-FILLED_ON_START = ((A_SPAWN_IN_PROGRESS, 5),                    # + spawn_point_cursor
-                   (A_SPEED_TYPE1, 8),                          # + speed 2/3 and the hunter pair
+FILLED_ON_START = ((A_RESPAWN_LOCK, 5),                    # + spawn_point_cursor
+                   (A_SPEED_TYPE1, 8),                          # + speed 2/3 and the chase pair
                    (A_PLATFORM_PRESENT, N_PLATFORMS),
                    (A_FLAP_DELAY, 1),
                    (A_SPAWN_INTERVAL, 4),                       # + spawn_timer
@@ -962,14 +962,14 @@ def test_rider_speeds_are_one_shifted_chain_with_a_cap(wave):
         assert got == min((rank >> shift) + 1, RIDER_SPEED_MAX), f"speed at {at:#x}"
 
 
-def test_wave_start_clears_the_egg_chains_and_the_hunter_tallies():
-    """Both players' consecutive-egg counters go, and the pair of per-player hunter tallies is
+def test_wave_start_clears_the_egg_chains_and_the_chase_counts():
+    """Both players' consecutive-egg counters go, and the pair of per-player chase counts is
     cleared with ONE `clr.w` — so both bytes are written, not just the first."""
     info = _wave_start(wave=1)
     written = _image_writes(info)
     assert written[A_OBJECT_TABLE + OBJ_EGG_CHAIN] == 0
     assert written[A_PLAYER2 + OBJ_EGG_CHAIN] == 0
-    assert (written[A_HUNTER_COUNTS], written[A_HUNTER_COUNTS + 1]) == (0, 0)
+    assert (written[A_CHASERS_P1], written[A_CHASERS_P1 + 1]) == (0, 0)
 
 
 def test_wave_start_wipes_every_enemy_slot_whole():
@@ -984,7 +984,7 @@ def test_wave_start_wipes_every_enemy_slot_whole():
 def test_wave_start_rewinds_the_spawn_point_cursor():
     info = _wave_start(wave=1)
     written = _image_writes(info)
-    assert written[A_SPAWN_IN_PROGRESS] == 0
+    assert written[A_RESPAWN_LOCK] == 0
     assert int.from_bytes(bytes(written[A_SPAWN_POINT_CURSOR + n] for n in range(4)),
                           "big") == A_SPAWN_POINTS
 
@@ -1346,7 +1346,7 @@ MIRRORED_ADDRESSES = (
     ("A_GAME_PHASE", "include/object.h", "A_game_phase"),
     ("A_LIVE_OBJECT_COUNT", "include/object.h", "A_live_object_count"),
     ("A_EGG_COUNT", "include/object.h", "A_egg_count"),
-    ("A_SPAWN_IN_PROGRESS", "include/wave.h", "A_spawn_in_progress"),
+    ("A_RESPAWN_LOCK", "include/addrs.h", "A_respawn_lock"),
     ("A_SPAWN_POINT_CURSOR", "include/addrs.h", "A_spawn_point_cursor"),
     ("A_WAVE_LAYOUT_MASK", "include/wave.h", "A_wave_layout_mask"),
     ("A_WAVE_TYPE1_COUNT", "include/wave.h", "A_wave_type1_count"),
@@ -1355,7 +1355,7 @@ MIRRORED_ADDRESSES = (
     ("A_SPEED_TYPE1", "include/addrs.h", "A_speed_type1"),
     ("A_SPEED_TYPE2", "include/addrs.h", "A_speed_type2"),
     ("A_SPEED_TYPE3", "include/addrs.h", "A_speed_type3"),
-    ("A_HUNTER_COUNTS", "include/wave.h", "A_hunter_counts"),
+    ("A_CHASERS_P1", "include/addrs.h", "A_chasers_p1"),
     ("A_FLOOR_STEP_TIMER", "include/world.h", "A_floor_step_timer"),
     ("A_FLOOR_ROWS_LEFT", "include/world.h", "A_floor_rows_left"),
     ("A_GROUND_ANIM", "include/world.h", "A_ground_anim"),

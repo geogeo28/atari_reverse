@@ -3,9 +3,11 @@
  * Addresses are Ghidra addresses (image offset + the 0x10000 load base) and mirror `var` lines in
  * ../../names.txt. Only what this routine alone touches is declared here; everything it shares is
  * taken from the header that already owns it — addrs.h (A_object_table, A_screen_base, the
- * gladiator bookkeeping), joust.h (the object record and its flag bits), object.h (the hit boxes,
- * the platform sprites, the pterodactyl table and record, test_overlap / erase_egg_sprite), egg.h
- * (the egg record's fields and A_egg_sprite_still), world.h (OBJ_FLAG_PLAYER / OBJ_FLAG_REMOVED,
+ * gladiator bookkeeping), joust.h (the object record and its flag bits, including the
+ * OBJ_FLAG_PLATFORM_BUMP this routine alone sets and the OBJ_FLAG_TYPE_LO/HI it prices a kill by),
+ * object.h (the hit boxes, the platform sprites, the pterodactyl table and record, test_overlap /
+ * erase_egg_sprite), egg.h (the egg record's fields and A_egg_sprite_still),
+ * world.h (OBJ_FLAG_PLAYER / OBJ_FLAG_REMOVED,
  * OBJ_EGG_CHAIN,
  * OBJ_SCORE_PENDING, A_wave_num, the two death sprites), score.h (the message record,
  * find_free_message, the score_update family, A_players_alive) and sound.h (play_sound).
@@ -20,16 +22,6 @@
 
 /* ---- globals ---- */
 #define A_egg_bonus_table           0x119b4u
-
-/* ---- flags-word bits this routine reads or writes that joust.h / world.h do not name yet ---- */
-/* bit14 — this object's sprite overlapped a platform's bitmap this frame. Set here and nowhere
- * else; update_objects and render_object_body are its readers. names.txt calls it "bumped a
- * platform edge", which is what a rider walking into a platform's side looks like on screen. */
-#define OBJ_FLAG_PLATFORM_BUMP  (1u << 14)
-/* bits 0-1 are the rider type (1..3). They are `btst`ed one at a time here, so the two bits are
- * named rather than the pair joust.h carries as ENEMY_TYPE_MASK. */
-#define OBJ_FLAG_TYPE_LO  (1u << 0)
-#define OBJ_FLAG_TYPE_HI  (1u << 1)
 
 /* ---- pterodactyl record: the fields object.h does not already name ---- */
 #define PT_DST        0x2u   /* .l — screen address, before screen_base and PT_DST_OFF are added */

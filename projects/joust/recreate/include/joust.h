@@ -132,6 +132,12 @@ static inline uint32_t divu_w(uint32_t dividend, uint16_t divisor) {
  * by control_player, player_death, update_objects, render_object_body, collision_check, lava_troll
  * and ptero_spot_player — all three ported layers read it, hence its home here. */
 #define OBJ_FLAG_DEAD          (1u << 13)
+/* bit14 — this object's sprite overlapped a platform's bitmap this frame. collision_check's first
+ * sweep sets it and nothing else does; render_object_body is its only reader, and answers it by
+ * looking the object up in platform_edge_table and pushing it off the box it lands in — a lookup
+ * that may find nothing, which is why the bit is named for the overlap that sets it rather than for
+ * that response. names.txt calls it "bumped a platform edge". */
+#define OBJ_FLAG_PLATFORM_BUMP (1u << 14)
 #define OBJ_FLAG_FACING_RIGHT  0x8000u     /* bit15 — `btst #15,d0`, a bit test on the whole longword */
 
 /* The rider TYPE, in the flags word's low two bits: 0 for a player, 1..3 for an enemy. The enemy
@@ -139,6 +145,12 @@ static inline uint32_t divu_w(uint32_t dividend, uint16_t divisor) {
  * (The render pass also takes bits 0-2 together as one small number for the respawn branch — that
  * wider mask is render.h's, since nothing else reads bit 2.) */
 #define ENEMY_TYPE_MASK  3u
+/* The same pair one bit at a time, for the readers that take it that way: collision_check `btst`s
+ * them separately to price a kill, and the sprite select reads bit 1 alone to tell the two players
+ * apart. Anything reading the pair as a number uses ENEMY_TYPE_MASK above, which is the single
+ * `andi #$3` the original issues there. */
+#define OBJ_FLAG_TYPE_LO  (1u << 0)
+#define OBJ_FLAG_TYPE_HI  (1u << 1)
 #define ENEMY_TYPE_1     1u  /* cruises; climbs only while a player is above it */
 #define ENEMY_TYPE_2     2u  /* claims a chase slot and homes in, then breaks off and retreats */
 #define ENEMY_TYPE_3     3u  /* dives at a player below it, gliding through the dive */

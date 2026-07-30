@@ -48,8 +48,8 @@
 /* The fourth, A_gladiator_wave_countdown, is addrs.h's — the collision resolver reads it too, along
  * with the player_conflict_flag and first_dismount_owner this layer arms and pays out. */
 
-#define A_spawn_in_progress     0x10d13u  /* .b — nonzero while a rider is materialising; the
-                                           * spawn-point scan at 0x13384 stands down while it is set */
+/* A_respawn_lock — the .b the enemy spawn-point scan at 0x13384 stands down for — is addrs.h's:
+ * the render pass takes and releases it, and this layer clears it once more per wave. */
 
 /* The per-wave difficulty block, loaded as ONE LONGWORD out of A_wave_layout_table. */
 #define A_wave_layout_mask   0x10d54u  /* .b — bit n set = platform n is present this wave */
@@ -58,11 +58,8 @@
 #define A_wave_type3_count   0x10d57u  /* .b */
 
 /* The three rider speeds this block goes on to set are addrs.h's — the egg hatch and the enemy
- * driver steer by them. */
-/* .w — really the PAIR of byte tallies at 0x10d5e/0x10d5f counting how many enemies are hunting
- * player 1 and player 2 (update_objects compares each against the speed above and bumps it at
- * 0x122b2 / 0x122cc). A new wave clears both with one `clr.w`. */
-#define A_hunter_counts  0x10d5eu
+ * driver steer by them. So is the chase-count pair a new wave clears with one `clr.w $d5e`
+ * (A_chasers_p1 / A_chasers_p2), which update_objects owns. */
 
 #define A_spawn_interval  0x10dfau  /* .w — the pterodactyl scheduler's reload... */
 #define A_spawn_timer     0x10dfcu  /* .w — ...and its countdown */

@@ -163,7 +163,8 @@ var 0x11964 spawn_points
 var 0x10d14 spawn_point_cursor
 var 0x10d13 respawn_lock
 var 0x10d4e snd_owner
-var 0x10d5e hunter_counts
+var 0x10d5e chasers_p1
+var 0x10d5f chasers_p2
 var 0x10cf6 wave_num_tens
 var 0x10cf7 wave_num_units
 var 0x119b4 egg_bonus_table
@@ -399,4 +400,4 @@ cmt 0x17228 wave_manager's egg scatter: picks a platform (rng word AND 0x38, a w
 cmt 0x11b58 wave_layout_table: 0x33 longwords, one per wave, {platform mask.b, type1 count.b, type2 count.b, type3 count.b}, loaded WHOLE into wave_layout_mask. Indexed by wave_num sign-extended and x4, so a wave past 0x7f reads BELOW the table. It ends exactly at poll_quit_key (0x11c24), which is why the wave count wraps at 0x33.
 cmt 0x10d13 respawn_lock: set when a rider of type <= 3 takes a spawn point (0x13422), cleared when a NON-PLAYER finishes materialising (0x134fe) and again at 0x1720e. An enemy will not start looking for a spawn point while it is set, so only one enemy grows out of a pad at a time; a player ignores it.
 cmt 0x10d4e snd_owner: the object whose looping sound is playing, compared against the current slot before releasing it — so a rider only silences its OWN sound. Claimed AFTER the fact, because play_sound may drop a request a higher-priority sound holds.
-cmt 0x10d5e hunter_counts: two ADJACENT bytes, one per player, counting the type-2 riders holding a chase slot on it. Compared against each other SIGNED and against the cap UNSIGNED; with no players left BOTH are zeroed by a single clr.w word store.
+cmt 0x10d5e chasers_p1 / 0x10d5f chasers_p2 (was named hunter_counts as a single word): two ADJACENT bytes, one per player, counting the type-2 riders holding a chase slot on it. Compared against each other SIGNED and against the cap UNSIGNED; with no players left BOTH are zeroed by a single clr.w word store.

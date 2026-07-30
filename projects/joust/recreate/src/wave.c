@@ -570,14 +570,14 @@ static void start_next_wave(uint8_t *image) {
     /* A new wave breaks both players' egg chains and forgets who was hunting whom. */
     image[A_object_table + OBJ_EGG_CHAIN] = 0;
     image[A_player2 + OBJ_EGG_CHAIN] = 0;
-    wr16(image + A_hunter_counts, 0);
+    wr16(image + A_chasers_p1, 0);   /* `clr.w $d5e` — ONE word store over the adjacent pair */
 
     uint16_t rng_mix = set_rider_speeds(image);
 
     /* Wipe the whole enemy area — flags, physics, egg sub-records and all — then rewind the
      * round-robin spawn cursor. */
     for (uint32_t at = A_enemy_objects; at != A_object_table_END; at += 2) wr16(image + at, 0);
-    image[A_spawn_in_progress] = 0;
+    image[A_respawn_lock] = 0;
     wr32(image + A_spawn_point_cursor, A_spawn_points);
 
     if (image[A_egg_wave_countdown] == 0) place_wave_eggs(image, rng_mix);

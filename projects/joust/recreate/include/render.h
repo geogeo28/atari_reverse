@@ -24,31 +24,21 @@
 
 /* --- globals this layer alone touches --------------------------------------------------------- */
 
-/* NO `var` LINE YET in ../../names.txt: both are private to render_object_body bar one clr each.
- * Proposed names are in this change's report. */
-#define A_respawn_lock      0x10d13u  /* .b — an ENEMY will not start materialising while this is
-                                       * set, so only one is ever growing at a time. Set when a
-                                       * rider of type <= 3 takes a spawn point, cleared when a
-                                       * non-player finishes growing (and once more at 0x1720e) */
+/* A_respawn_lock is addrs.h's — the wave director clears it too. */
 #define A_snd_owner         0x10d4eu  /* .l — the object whose looping sound is playing; compared
                                        * with the current slot before releasing it */
 
 #define A_spawn_points_END    0x119b4u  /* == egg_bonus_table; the wrap bound of the spawn search */
 
-/* --- the flags word (object + OBJ_FLAGS): the bits this pass reads that no ported layer named yet
- *     ../../names.txt documents the whole word; joust.h and world.h hold the shared bits. -------- */
+/* --- the flags word (object + OBJ_FLAGS). Every BIT of it is shared and lives in joust.h or
+ *     world.h, with ../../names.txt documenting the whole word; what is left here is the one mask
+ *     no other layer takes. --------------------------------------------------------------------- */
 
-/* Bits 0-1 are the rider's TYPE. For an enemy they pick the sprite set (1/2/3); for a player, bit 1
- * alone says which of the two it is. The respawn branch takes them with the two bits above as one
- * small number (`and.b #$7`), which is why the mask is three bits wide. */
-#define OBJ_FLAG_TYPE_BIT0    (1u << 0)
-#define OBJ_FLAG_TYPE_BIT1    (1u << 1)
-#define OBJ_RIDER_TYPE_MASK   0x7u   /* joust.h's ENEMY_TYPE_MASK widened by the bit only this
-                                      * pass reads; the type values themselves are joust.h's */
-
-/* bit14 — the object is inside one of platform_edge_table's bump boxes. update_objects/collision
- * set it; this pass consumes it, applies the box's push and clears it again. */
-#define OBJ_FLAG_EDGE_BUMP      (1u << 14)
+/* The respawn branch reads bits 0-1 (the rider's TYPE, joust.h's OBJ_FLAG_TYPE_LO/HI) together with
+ * OBJ_FLAG_PLAYER above them as one small number (`and.b #$7`), which is why this mask is a bit
+ * wider than joust.h's ENEMY_TYPE_MASK — and why a PLAYER's masked type comes out 4 or 6 and so
+ * never passes the `cmp.b #$3` that takes the respawn lock. */
+#define OBJ_RIDER_TYPE_MASK   0x7u   /* the type values themselves are joust.h's */
 
 /* --- object-record fields only this layer touches. They belong in joust.h the moment a second
  *     subsystem reads them, the way addrs.h describes for globals. ------------------------------ */

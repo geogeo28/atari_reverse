@@ -2,12 +2,15 @@
  *
  * Every address here is a Ghidra address (image offset + the 0x10000 load base fixed by
  * project.toml / PrgLoader) and mirrors a `var` line in ../../names.txt, which stays the source
- * of truth for the name.
+ * of truth for the name. A_chasers_p1 / A_chasers_p2 are the one exception, and a documented one:
+ * names.txt names their address as the single word `hunter_counts`, and the C needs a name per
+ * byte — see the comment on the pair.
  *
  * A global moves here the moment a second subsystem reads it; one that only its own layer touches
  * stays in that layer's header (draw.h, object.h, ...). Two headers spelling out the same address
  * is the arrangement to avoid: no translation unit includes both, so nothing would diagnose the
- * copies drifting apart.
+ * copies drifting apart — nor two names for one address, which
+ * test_constants.py::test_no_value_has_two_spellings is what catches.
  */
 #ifndef JOUST_ADDRS_H
 #define JOUST_ADDRS_H
@@ -45,6 +48,15 @@
 #define A_first_dismount_owner      0x10d07u  /* .b — 0 nobody yet, 1 player 1 took it, above that
                                                * player 2 (a SIGNED test) */
 
+/* .b — the enemy-side respawn interlock: only one enemy is ever growing out of a pad at a time.
+ * Taken when a rider whose masked type is <= 3 claims a spawn point (0x13422) and handed back when
+ * a NON-PLAYER reaches full height (0x134fe), with the wave director clearing it again at 0x1720e.
+ * A PLAYER passes neither test — its OBJ_FLAG_PLAYER lands inside render.h's three-bit
+ * OBJ_RIDER_TYPE_MASK, so its type reads 4 or 6 — and it does not consult the byte either. It is
+ * named for the lock-out it imposes rather than for a spawn being "in progress", because the only
+ * thing that ever reads it is the enemy's spawn-point scan standing down. */
+#define A_respawn_lock  0x10d13u
+
 #define A_spawn_point_cursor  0x10d14u  /* .l — the round-robin cursor into spawn_points: where the
                                          * render pass resumes its search, and what a new wave resets */
 
@@ -54,6 +66,16 @@
 #define A_speed_type1  0x10d58u  /* .w */
 #define A_speed_type2  0x10d5au  /* .w */
 #define A_speed_type3  0x10d5cu  /* .w */
+
+/* .b, .b — how many type-2 riders currently hold a chase slot on each player. A rider claims one
+ * before homing in and gives it back when it loses the target, and speed_type3's low byte is the
+ * per-player cap. The pair is ADJACENT, so both the enemy driver's "no players left" reset and the
+ * wave director's per-wave reset clear the two with a single `clr.w $d5e` word store: one field to
+ * those writers and two to everyone else. ../../names.txt names the WORD `hunter_counts`; the two
+ * bytes need a name each, so they carry the enemy driver's own vocabulary (OBJ_CHASE_TARGET,
+ * chase_side) rather than a third spelling of the pair. */
+#define A_chasers_p1  0x10d5eu
+#define A_chasers_p2  0x10d5fu
 
 #define A_flap_delay  0x10ddcu  /* .b — frames between an AI rider's wing beats, set once per wave.
                                  * The render pass caps a troll-held rider's step timer to it, so a

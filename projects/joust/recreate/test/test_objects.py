@@ -835,8 +835,8 @@ def test_mirrored_constants_match_the_headers():
     Eight headers plus src/rng.c, because update_objects reads globals, record fields and whole
     constant groups that other layers already owned: egg.h has the egg's own y/mount bytes,
     world.h OBJ_FLAG_REMOVED, draw.h player 2's slot, object.h the table bound, player.h the
-    dead-rider exit strip and hover ladder, addrs.h the table base, rng_ptr, the three rider speeds
-    and the enemy-slot bound, joust.h the record itself with its flag bits and rider types, rng.c
+    dead-rider exit strip and hover ladder, addrs.h the table base, rng_ptr, the three rider speeds,
+    the two chase counts and the enemy-slot bound, joust.h the record itself with its flag bits and rider types, rng.c
     the cursor limit. Each is scraped by name rather than as one merged namespace, so a constant
     that drifts into the wrong header fails here instead of being found in whichever copy still
     holds the old value.
@@ -852,13 +852,12 @@ def test_mirrored_constants_match_the_headers():
     rng_c = _defines("src/rng.c")
 
     for defines, origin, mirrored in (
-            (objects_h, "objects.h", {
-                "A_active_players": A_ACTIVE_PLAYERS, "A_chasers_p1": A_CHASERS_P1,
-                "A_chasers_p2": A_CHASERS_P2}),
+            (objects_h, "objects.h", {"A_active_players": A_ACTIVE_PLAYERS}),
             (addrs_h, "addrs.h", {"A_object_table": A_OBJECT_TABLE, "A_rng_ptr": A_RNG_PTR,
                                   "A_speed_type1": A_SPEED_TYPE1, "A_speed_type2": A_SPEED_TYPE2,
                                   "A_speed_type3": A_SPEED_TYPE3,
-                                  "A_enemy_objects": A_ENEMY_OBJECTS}),
+                                  "A_enemy_objects": A_ENEMY_OBJECTS,
+                                  "A_chasers_p1": A_CHASERS_P1, "A_chasers_p2": A_CHASERS_P2}),
             (joust_h, "joust.h", {"OBJ_SIZE": OBJ_SIZE, "OBJ_FLAG_RESPAWN": FLAG_RESPAWN,
                                   "OBJ_FLAG_ON_PLATFORM": FLAG_ON_PLATFORM,
                                   "OBJ_FLAG_DEAD": FLAG_DEAD,

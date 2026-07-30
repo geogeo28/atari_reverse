@@ -197,7 +197,6 @@ static void pay_player_duel(uint8_t *image, uint32_t winner, uint8_t owner) {
 #define EGG_ROLL_FRAMES   4u
 #define EGG_SPRITE_ROWS   7u
 #define EGG_HATCH_FRAMES  0x88u /* the hatch wait, less wave_num: later waves hatch sooner */
-#define EGG_TYPE_TOP      (OBJ_FLAG_TYPE_LO | OBJ_FLAG_TYPE_HI)
 
 static void dismount_egg(uint8_t *image, uint32_t rider, uint32_t rider_flags) {
     wr16(image + rider + OBJ_EGG_X, be16(image + rider + OBJ_X));
@@ -216,8 +215,10 @@ static void dismount_egg(uint8_t *image, uint32_t rider, uint32_t rider_flags) {
     image[rider + OBJ_EGG_ROWS] = EGG_SPRITE_ROWS;
     image[rider + OBJ_EGG_STATE] = EGG_STATE_THROWN;
 
-    uint8_t hatched_type = (uint8_t)(rider_flags & EGG_TYPE_TOP);
-    if (hatched_type != EGG_TYPE_TOP) hatched_type++;
+    /* `andi.b #$3` then `cmpi.b #$3` — the hatched rider is one type harder than its parent, and
+     * type 3 is already the hardest. */
+    uint8_t hatched_type = (uint8_t)(rider_flags & ENEMY_TYPE_MASK);
+    if (hatched_type != ENEMY_TYPE_3) hatched_type++;
     image[rider + OBJ_EGG_SPAWN_FLAGS] = (uint8_t)(hatched_type | EGG_SPAWN_UNDRAWN);
 }
 

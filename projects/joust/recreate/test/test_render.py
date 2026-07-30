@@ -36,10 +36,10 @@ ENTRY_RENDER_OBJECT_BODY = 0x12cc2
 A_PLAYERS_ALIVE = 0x10cf2
 A_PLATFORM_PRESENT = 0x10cfa
 A_LIVE_OBJECT_COUNT = 0x10d0a
-A_RESPAWN_LOCK = 0x10d13        # no `var` line yet — see include/render.h
+A_RESPAWN_LOCK = 0x10d13        # names.txt `respawn_lock`; the C is include/addrs.h's
 A_SPAWN_POINT_CURSOR = 0x10d14
 A_SND_PRIORITY = 0x10d4c
-A_SND_OWNER = 0x10d4e           # no `var` line yet — see include/render.h
+A_SND_OWNER = 0x10d4e           # names.txt `snd_owner`; the C is include/render.h's
 A_PLAYFIELD_BOTTOM = 0x10d60
 A_DRAW_HALF_SELECT = 0x10dc2
 A_FLAP_DELAY = 0x10ddc
@@ -98,8 +98,8 @@ FIELDS = {
 }
 
 # --- the flags word ------------------------------------------------------------------------------
-FLAG_TYPE_BIT0 = 1 << 0
-FLAG_TYPE_BIT1 = 1 << 1
+FLAG_TYPE_LO = 1 << 0
+FLAG_TYPE_HI = 1 << 1
 FLAG_PLAYER = 1 << 2
 FLAG_GRABBED = 1 << 4
 FLAG_CORPSE_INSIDE = 1 << 5
@@ -111,7 +111,7 @@ FLAG_FLAP_TAKEN = 1 << 10
 FLAG_FLAP_REQUEST = 1 << 11
 FLAG_REMOVED = 1 << 12
 FLAG_DEAD = 1 << 13
-FLAG_EDGE_BUMP = 1 << 14
+FLAG_PLATFORM_BUMP = 1 << 14
 FLAG_FACING_RIGHT = 1 << 15
 
 # --- sprite sets and the pose offsets added to them ----------------------------------------------
@@ -364,7 +364,7 @@ def test_free_slot_is_skipped_entirely():
 # The flight branch: the fall-through case @ 0x12cea.
 # =================================================================================================
 
-FLYER = dict(flags=FLAG_TYPE_BIT0, x=0x50, y=0x40, step=2, prev_dst=SCREEN + 0x600,
+FLYER = dict(flags=FLAG_TYPE_LO, x=0x50, y=0x40, step=2, prev_dst=SCREEN + 0x600,
              prev_src=PREV_SPRITE, prev_rows=RIDER_ROWS_FLIGHT, prev_shift=3)
 
 
@@ -384,7 +384,7 @@ def test_flight_facing_follows_the_target_speed(target_vx):
     """`tst.w 12(a0)`: > 0 faces right, < 0 faces left, and 0 leaves the facing bit alone."""
     for facing in (0, FLAG_FACING_RIGHT):
         _fly_case(0x100 + (target_vx & 0xff) + facing, target_vx=target_vx,
-                  flags=FLAG_TYPE_BIT0 | facing)
+                  flags=FLAG_TYPE_LO | facing)
 
 
 @pytest.mark.parametrize("step,delay", ((0, 0), (1, 0), (5, 5), (6, 5), (0x7f, 0x7f), (0x80, 0x7f),
@@ -393,7 +393,7 @@ def test_troll_grabbed_caps_the_step_timer(step, delay):
     """`cmp.b flap_delay,d1 ; ble` is a SIGNED byte compare, so 0x80 counts as below 0x01."""
     pokes = _base_pokes(seed=0x200 + step * 4 + (delay & 3), flap_delay=delay)
     _put(pokes, OBJ_SLOTS - 1, **{**FLYER, "step": step, "vx": 0x1234, "target_vx": 7,
-                                  "flags": FLAG_TYPE_BIT0 | FLAG_GRABBED})
+                                  "flags": FLAG_TYPE_LO | FLAG_GRABBED})
     _body_case(pokes, OBJ_SLOTS - 1, label=f"grabbed step={step:#x} delay={delay:#x}")
 
 
@@ -401,7 +401,7 @@ def test_troll_grabbed_clears_vx_and_never_steers():
     """A grabbed rider's vx is zeroed and the ease-toward-target block is skipped outright."""
     pokes = _base_pokes(seed=0x210, flap_delay=0x40)
     _put(pokes, OBJ_SLOTS - 1, **{**FLYER, "vx": 0x30, "target_vx": 0x30,
-                                  "flags": FLAG_TYPE_BIT0 | FLAG_GRABBED | FLAG_FLAP_REQUEST})
+                                  "flags": FLAG_TYPE_LO | FLAG_GRABBED | FLAG_FLAP_REQUEST})
     _body_case(pokes, OBJ_SLOTS - 1, label="grabbed + flapping")
     final, _ = _oracle(pokes, OBJ_SLOTS - 1)
     assert _word(final, slot(OBJ_SLOTS - 1) + OBJ_VX) == 0, \
@@ -413,32 +413,32 @@ def test_troll_grabbed_clears_vx_and_never_steers():
 def test_flap_eases_vx_one_pixel_toward_the_target(vx, target):
     """`cmp.w 12(a0),d1` then addq/subq: one step per flap, and a target of 0 disables it."""
     _fly_case(0x300 + (vx & 0x1f) * 8 + (target & 7), vx=vx, target_vx=target,
-              flags=FLAG_TYPE_BIT0 | FLAG_FLAP_REQUEST)
+              flags=FLAG_TYPE_LO | FLAG_FLAP_REQUEST)
 
 
 @pytest.mark.parametrize("vy", (0, 1, 4, -2, -3, -4, -5, 0x7fff, -0x8000, -0x7fff, 0x8001))
 def test_flap_rise_saturates(vy):
     """`subq.w #2` then `cmp.w #$fffc ; bge`: the subtraction is a WORD op, so a vy of 0x8001 wraps
     to +0x7fff and reads as far ABOVE the rise limit rather than below it."""
-    _fly_case(0x400 + (vy & 0xff), vy=vy, flags=FLAG_TYPE_BIT0 | FLAG_FLAP_REQUEST)
+    _fly_case(0x400 + (vy & 0xff), vy=vy, flags=FLAG_TYPE_LO | FLAG_FLAP_REQUEST)
 
 
 def test_flap_is_latched_so_holding_fire_costs_one_kick():
     """bit10 gates the kick: the request without it flaps, with it falls."""
     for latched in (0, FLAG_FLAP_TAKEN):
         _fly_case(0x410 + latched, vy=0, step=1,
-                  flags=FLAG_TYPE_BIT0 | FLAG_FLAP_REQUEST | latched)
+                  flags=FLAG_TYPE_LO | FLAG_FLAP_REQUEST | latched)
 
 
 def test_releasing_the_flap_request_drops_the_latch():
     for latched in (0, FLAG_FLAP_TAKEN):
-        _fly_case(0x420 + latched, step=1, flags=FLAG_TYPE_BIT0 | latched)
+        _fly_case(0x420 + latched, step=1, flags=FLAG_TYPE_LO | latched)
 
 
 @pytest.mark.parametrize("index", (0, 1, 2, 3))
 def test_only_a_player_is_heard_flapping(index):
     """`cmpa.l #enemy_objects,a0 ; bcc` — the sound is skipped from the third slot up."""
-    _fly_case(0x430 + index, index=index, vy=0, flags=FLAG_TYPE_BIT0 | FLAG_FLAP_REQUEST,
+    _fly_case(0x430 + index, index=index, vy=0, flags=FLAG_TYPE_LO | FLAG_FLAP_REQUEST,
               label=f"flap sound slot={index}")
 
 
@@ -472,15 +472,15 @@ def test_horizontal_step_wraps_round_the_playfield(x, vx):
 
 _SPRITE_FLAG_SHAPES = (
     0,                                              # enemy, type 0 -> the middle set
-    FLAG_TYPE_BIT0,                                 # type 1
-    FLAG_TYPE_BIT1,                                 # type 2 -> also the middle set
-    FLAG_TYPE_BIT0 | FLAG_TYPE_BIT1,                # type 3
+    FLAG_TYPE_LO,                                   # type 1
+    FLAG_TYPE_HI,                                   # type 2 -> also the middle set
+    FLAG_TYPE_LO | FLAG_TYPE_HI,                    # type 3
     FLAG_DEAD,                                      # dead enemy: one set whatever the type
-    FLAG_DEAD | FLAG_TYPE_BIT0 | FLAG_TYPE_BIT1,
+    FLAG_DEAD | FLAG_TYPE_LO | FLAG_TYPE_HI,
     FLAG_PLAYER,                                    # player 1
-    FLAG_PLAYER | FLAG_TYPE_BIT1,                   # player 2
+    FLAG_PLAYER | FLAG_TYPE_HI,                     # player 2
     FLAG_PLAYER | FLAG_DEAD,
-    FLAG_PLAYER | FLAG_TYPE_BIT1 | FLAG_DEAD,
+    FLAG_PLAYER | FLAG_TYPE_HI | FLAG_DEAD,
 )
 
 
@@ -495,7 +495,7 @@ def test_airborne_sprite_set_and_pose(shape, pose):
 
 def test_flapping_sprite_is_one_row_taller():
     """`addq.b #1,draw_rows` — the wings-up pose is drawn RIDER_ROWS_FLIGHT + 1 rows deep."""
-    pokes = _fly_pokes(0x830, step=2, flags=FLAG_TYPE_BIT0 | FLAG_WINGS_UP)
+    pokes = _fly_pokes(0x830, step=2, flags=FLAG_TYPE_LO | FLAG_WINGS_UP)
     _body_case(pokes, OBJ_SLOTS - 1, label="flap rows")
     final, _ = _oracle(pokes, OBJ_SLOTS - 1)
     assert final[A_DRAW_ROWS] == RIDER_ROWS_FLIGHT + 1
@@ -511,7 +511,7 @@ def test_redrawing_in_place_still_commits_the_same_record():
     rendering a motionless rider twice from the state the first frame left behind.
     """
     pokes = _base_pokes(seed=0x840)
-    _put(pokes, OBJ_SLOTS - 1, flags=FLAG_TYPE_BIT0, x=0x64, y=0x30, step=5)
+    _put(pokes, OBJ_SLOTS - 1, flags=FLAG_TYPE_LO, x=0x64, y=0x30, step=5)
     final, _ = _oracle(pokes, OBJ_SLOTS - 1)
 
     settled = dict(pokes)
@@ -607,7 +607,7 @@ def test_the_corpse_clip_is_a_signed_x_test(x):
 
 def test_the_corpse_clip_needs_a_dead_rider_that_is_not_still_on_screen():
     """The two guards ahead of the bit-12 test: bit13 must be set and bit5 must be clear."""
-    for flags, why in ((FLAG_TYPE_BIT0, "a live rider"),
+    for flags, why in ((FLAG_TYPE_LO, "a live rider"),
                        (FLAG_DEAD | FLAG_CORPSE_INSIDE, "a corpse still inside the playfield"),
                        (FLAG_DEAD | FLAG_CORPSE_INSIDE | FLAG_REMOVED, "...even one being removed")):
         pokes = _corpse_pokes(0x940 + flags, flags, 0x134, -1)
@@ -637,7 +637,7 @@ def test_bit12_changes_nothing_when_the_corpse_is_not_at_the_edge():
 # check_platform instead of falling off, so the walk branch survives its own frame.
 WALK_PLATFORM = 5
 WALK_PRESENT = tuple(0xff if i == WALK_PLATFORM else 0 for i in range(PLATFORM_COUNT))
-WALKER = dict(flags=FLAG_TYPE_BIT0 | FLAG_ON_PLATFORM, x=0x80, y=33, anim=WALK_ANIM_RESET, step=3,
+WALKER = dict(flags=FLAG_TYPE_LO | FLAG_ON_PLATFORM, x=0x80, y=33, anim=WALK_ANIM_RESET, step=3,
               prev_dst=SCREEN + 0x700, prev_src=PREV_SPRITE, prev_rows=RIDER_ROWS_STANDING,
               prev_shift=2)
 
@@ -662,7 +662,7 @@ def test_walking_pose_is_one_stride_per_frame(frame):
     ends a stride: a row shorter, its own mirrored offset, and it wraps the counter to 0."""
     for facing in (0, FLAG_FACING_RIGHT):
         _walk_case(0xa00 + frame * 2 + bool(facing), frame=frame, vx=1, target_vx=1,
-                   flags=FLAG_TYPE_BIT0 | FLAG_ON_PLATFORM | facing)
+                   flags=FLAG_TYPE_LO | FLAG_ON_PLATFORM | facing)
 
 
 def test_turning_round_is_the_only_way_the_walk_branch_reaches_the_stride_frame():
@@ -730,7 +730,7 @@ def test_leaving_a_platform_swaps_bit9_for_bit6(index):
     cleared. The `cmpa.l #enemy_objects` that opens the block is DEAD — no branch reads its
     condition codes — so a player leaves the same way an enemy does."""
     pokes = _walk_case(0xae0 + index, index=index, vy=6, frame=2,
-                       flags=FLAG_TYPE_BIT0 | FLAG_ON_PLATFORM | FLAG_FLAP_REQUEST,
+                       flags=FLAG_TYPE_LO | FLAG_ON_PLATFORM | FLAG_FLAP_REQUEST,
                        label=f"take-off slot={index}")
     final, _ = _oracle(pokes, index)
     flags = _word(final, slot(index) + OBJ_FLAGS)
@@ -739,7 +739,7 @@ def test_leaving_a_platform_swaps_bit9_for_bit6(index):
 
 def test_a_latched_flap_request_keeps_the_rider_walking():
     _walk_case(0xaf0, vx=1, target_vx=1, frame=1,
-               flags=FLAG_TYPE_BIT0 | FLAG_ON_PLATFORM | FLAG_FLAP_REQUEST | FLAG_FLAP_TAKEN)
+               flags=FLAG_TYPE_LO | FLAG_ON_PLATFORM | FLAG_FLAP_REQUEST | FLAG_FLAP_TAKEN)
 
 
 # =================================================================================================
@@ -747,7 +747,7 @@ def test_a_latched_flap_request_keeps_the_rider_walking():
 # =================================================================================================
 
 LAVA_PREV_DST = SCREEN + 0x2000
-SINKER = dict(flags=FLAG_TYPE_BIT0 | FLAG_IN_LAVA, x=0x70, y=0x90, prev_dst=LAVA_PREV_DST,
+SINKER = dict(flags=FLAG_TYPE_LO | FLAG_IN_LAVA, x=0x70, y=0x90, prev_dst=LAVA_PREV_DST,
               prev_src=PREV_SPRITE, prev_rows=RIDER_ROWS_FLIGHT, prev_shift=4)
 
 
@@ -818,7 +818,7 @@ def _edge_record(index):
 EDGE_COUNT = (A_PLATFORM_EDGE_TABLE_END - A_PLATFORM_EDGE_TABLE) // EDGE_RECORD
 EDGES = [_edge_record(i) for i in range(EDGE_COUNT)]
 
-BUMPER = dict(flags=FLAG_TYPE_BIT0 | FLAG_EDGE_BUMP, step=3, prev_dst=SCREEN + 0xa00,
+BUMPER = dict(flags=FLAG_TYPE_LO | FLAG_PLATFORM_BUMP, step=3, prev_dst=SCREEN + 0xa00,
               prev_src=PREV_SPRITE, prev_rows=RIDER_ROWS_STANDING, prev_shift=6)
 
 
@@ -877,7 +877,7 @@ def test_a_downward_push_parks_only_a_type_three_enemy(rider_type):
     such a box: y push +1, x push 0."""
     box = EDGES[5]
     pokes = _only_this_edge(_bump_pokes(0xcc0 + rider_type, box["mid_x"], box["mid_y"], flap_timer=0,
-                                        flags=rider_type | FLAG_EDGE_BUMP), 5)
+                                        flags=rider_type | FLAG_PLATFORM_BUMP), 5)
     _body_case(pokes, OBJ_SLOTS - 1, label=f"park type={rider_type}")
 
     final, _ = _oracle(pokes, OBJ_SLOTS - 1)
@@ -890,7 +890,7 @@ def test_a_box_that_pushes_both_axes_skips_the_park():
     the `tst.b 9(a1) ; bne` guarding the park is exercised only by a poked push byte."""
     box = EDGES[5]
     pokes = _only_this_edge(_bump_pokes(0xce0, box["mid_x"], box["mid_y"], vx=1, flap_timer=0,
-                                        flags=ENEMY_TYPE_3 | FLAG_EDGE_BUMP), 5)
+                                        flags=ENEMY_TYPE_3 | FLAG_PLATFORM_BUMP), 5)
     pokes[box["addr"] + EDGE_Y_PUSH] = bytes((1, 1))     # push down AND right
     _body_case(pokes, OBJ_SLOTS - 1, label="both-axis push")
 
@@ -940,7 +940,7 @@ def test_an_upward_snap_starts_a_stopped_rider_walking(facing, vx):
     direction is its facing. Record 0 has y push -1 and no x push."""
     box = EDGES[0]
     pokes = _only_this_edge(_bump_pokes(0xd80 + facing + (vx & 3), box["mid_x"], box["mid_y"],
-                                        vx=vx, flags=FLAG_TYPE_BIT0 | FLAG_EDGE_BUMP | facing), 0)
+                                        vx=vx, flags=FLAG_TYPE_LO | FLAG_PLATFORM_BUMP | facing), 0)
     _body_case(pokes, OBJ_SLOTS - 1, label=f"snap facing={bool(facing)} vx={vx}")
 
 
@@ -948,12 +948,12 @@ def test_a_bump_with_no_box_re_dispatches_the_same_slot():
     """RESTART EDGE @ 0x1319c: bit14 is cleared, stored, and the body re-read from the top — so the
     object goes down whatever branch its remaining flags name, within the SAME call."""
     pokes = _bump_pokes(0xda0, 0x64, 0x0a, vy=0, prev_rows=RIDER_ROWS_FLIGHT,
-                        flags=FLAG_TYPE_BIT0 | FLAG_EDGE_BUMP | FLAG_FLAP_REQUEST)
+                        flags=FLAG_TYPE_LO | FLAG_PLATFORM_BUMP | FLAG_FLAP_REQUEST)
     _body_case(pokes, OBJ_SLOTS - 1, label="edge miss -> restart")
 
     final, _ = _oracle(pokes, OBJ_SLOTS - 1)
     flags = _word(final, slot(OBJ_SLOTS - 1) + OBJ_FLAGS)
-    assert not flags & FLAG_EDGE_BUMP, "the bump bit survived"
+    assert not flags & FLAG_PLATFORM_BUMP, "the bump bit survived"
     assert flags & FLAG_FLAP_TAKEN, "the flight branch never ran after the restart"
 
 
@@ -984,7 +984,7 @@ def _spawn_field(record, offset):
 def _spawn_pokes(seed, index=OBJ_SLOTS - 1, **fields):
     """A slot awaiting respawn that has never been drawn: prev_dst 0 sends it to the search."""
     pokes = _base_pokes(seed=seed, present=ALL_PLATFORMS)
-    _put(pokes, index, **{"flags": FLAG_TYPE_BIT0 | FLAG_RESPAWN, "x": 0x30, "y": 0x30,
+    _put(pokes, index, **{"flags": FLAG_TYPE_LO | FLAG_RESPAWN, "x": 0x30, "y": 0x30,
                           "prev_dst": 0, "prev_src": 0, "prev_rows": 0, **fields})
     return pokes
 
@@ -1070,7 +1070,7 @@ def test_another_object_over_the_pad_blocks_it(edge):
             "x1+1": (x1 + 1, mid_y)}[edge]
 
     pokes = _spawn_pokes(0xea0 + len(edge))
-    _put(pokes, 3, flags=FLAG_TYPE_BIT0, x=x, y=y)
+    _put(pokes, 3, flags=FLAG_TYPE_LO, x=x, y=y)
     _body_case(pokes, OBJ_SLOTS - 1, label=f"occupied {edge}")
 
 
@@ -1109,7 +1109,7 @@ def test_placing_a_rider_locks_out_the_next_one_and_announces_itself(rider_type)
 @pytest.mark.parametrize("index", (0, 1, 2, 3))
 def test_placing_a_player_repaints_its_lives_row(index):
     """`cmpa.l #object_table` / `#player2` at 0x13488: slots 0 and 1 alone call draw_lives."""
-    flags = (FLAG_PLAYER if index < 2 else FLAG_TYPE_BIT0) | FLAG_RESPAWN
+    flags = (FLAG_PLAYER if index < 2 else FLAG_TYPE_LO) | FLAG_RESPAWN
     _body_case(_spawn_pokes(0xf00 + index, index=index, flags=flags), index,
                label=f"place lives slot={index}")
 
@@ -1142,7 +1142,7 @@ def _grow_pokes(seed, index=OBJ_SLOTS - 1, spawn=1, **fields):
     record = A_SPAWN_POINTS + spawn * SPAWN_RECORD
     pokes = _base_pokes(seed=seed, present=ALL_PLATFORMS)
     pokes[record + SPAWN_IN_USE] = b"\x01"
-    _put(pokes, index, **{"flags": FLAG_TYPE_BIT0 | FLAG_RESPAWN | FLAG_ON_PLATFORM,
+    _put(pokes, index, **{"flags": FLAG_TYPE_LO | FLAG_RESPAWN | FLAG_ON_PLATFORM,
                           "x": _spawn_field(record, SPAWN_X), "y": _spawn_field(record, SPAWN_Y),
                           "vy": spawn * SPAWN_RECORD, "vx": RESPAWN_ANIM_FRAMES << 8,
                           "anim": RESPAWN_ANIM_FRAMES, "step": RESPAWN_STEP_FRAMES,
@@ -1195,7 +1195,7 @@ def test_the_three_materialise_counters(grow, step):
 @pytest.mark.parametrize("index", (0, OBJ_SLOTS - 1))
 def test_a_player_materialises_from_a_further_sprite(index):
     """`btst #2,d0 ; add.l #$260,d1` @ 0x1354a, applied only once the frame counter has run out."""
-    flags = (FLAG_PLAYER if index == 0 else FLAG_TYPE_BIT0) | FLAG_RESPAWN | FLAG_ON_PLATFORM
+    flags = (FLAG_PLAYER if index == 0 else FLAG_TYPE_LO) | FLAG_RESPAWN | FLAG_ON_PLATFORM
     _body_case(_grow_pokes(0x1100 + index, index=index, prev_rows=RIDER_ROWS_STANDING, vx=1 << 8,
                            step=3, flags=flags), index, label=f"materialise sprite slot={index}")
 
@@ -1214,7 +1214,7 @@ def test_the_respawn_finishes_and_re_dispatches_the_slot(ends):
     body re-read — so the rider walks in the SAME call."""
     fields = {"prev_rows": RIDER_ROWS_STANDING}
     if ends == "flap_request":
-        fields["flags"] = FLAG_TYPE_BIT0 | FLAG_RESPAWN | FLAG_ON_PLATFORM | FLAG_FLAP_REQUEST
+        fields["flags"] = FLAG_TYPE_LO | FLAG_RESPAWN | FLAG_ON_PLATFORM | FLAG_FLAP_REQUEST
     elif ends == "steer":
         fields["target_vx"] = 4
     else:
@@ -1257,8 +1257,8 @@ def _fuzz_cases():
     for _ in range(FUZZ_CASES):
         # One branch bit is forced on top of the random word so every branch keeps its share of the
         # cases; a uniform draw would spend most of them on the same two.
-        branch = rng.choice((0, FLAG_TYPE_BIT0, FLAG_PLAYER, FLAG_RESPAWN, FLAG_ON_PLATFORM,
-                             FLAG_EDGE_BUMP, FLAG_IN_LAVA, FLAG_DEAD))
+        branch = rng.choice((0, FLAG_TYPE_LO, FLAG_PLAYER, FLAG_RESPAWN, FLAG_ON_PLATFORM,
+                             FLAG_PLATFORM_BUMP, FLAG_IN_LAVA, FLAG_DEAD))
         fields = {
             "flags": rng.getrandbits(16) | branch,
             "x": rng.choice((rng.randrange(RIDER_X_WRAP), rng.getrandbits(16))),
@@ -1332,12 +1332,10 @@ def test_entry_addresses_match_names_txt():
 
 def test_mirrored_constants_match_render_h():
     _check(_defines("include/render.h"), "render.h", {
-        "A_respawn_lock": A_RESPAWN_LOCK, "A_snd_owner": A_SND_OWNER,
+        "A_snd_owner": A_SND_OWNER,
         "A_spawn_points_END": A_SPAWN_POINTS_END,
         "OBJ_PREV_Y": OBJ_PREV_Y,
-        "OBJ_FLAG_TYPE_BIT0": FLAG_TYPE_BIT0, "OBJ_FLAG_TYPE_BIT1": FLAG_TYPE_BIT1,
         "OBJ_RIDER_TYPE_MASK": 0x7,
-        "OBJ_FLAG_EDGE_BUMP": FLAG_EDGE_BUMP,
         "CORPSE_CLIP_X": CORPSE_CLIP_X, "CORPSE_KEEP_LEADING_CELL": CORPSE_KEEP_LEADING_CELL,
         "CORPSE_KEEP_WRAP_COLUMN": CORPSE_KEEP_WRAP_COLUMN, "RIDER_Y_MAX": RIDER_Y_MAX,
         "FALL_VY_MAX": 4, "EDGE_ROLL_DX": EDGE_ROLL_DX,
@@ -1399,10 +1397,13 @@ def test_shared_headers_match_the_c():
         "OBJ_FLAP_TIMER": OBJ_FLAP_TIMER, "OBJ_TURN_TIMER": OBJ_TURN_TIMER,
         "OBJ_FLAG_CORPSE_INSIDE": FLAG_CORPSE_INSIDE, "OBJ_FLAG_WINGS_UP": FLAG_WINGS_UP,
         "OBJ_FLAG_FLAP_REQUEST": FLAG_FLAP_REQUEST, "OBJ_FLAG_FLAP_TAKEN": FLAG_FLAP_TAKEN,
+        "OBJ_FLAG_TYPE_LO": FLAG_TYPE_LO, "OBJ_FLAG_TYPE_HI": FLAG_TYPE_HI,
+        "OBJ_FLAG_PLATFORM_BUMP": FLAG_PLATFORM_BUMP,
         "ENEMY_TYPE_3": ENEMY_TYPE_3,
     })
     _check(_defines("include/addrs.h"), "addrs.h", {
         "A_screen_base": A_SCREEN_BASE, "A_playfield_bottom": A_PLAYFIELD_BOTTOM,
+        "A_respawn_lock": A_RESPAWN_LOCK,
         "A_object_table": A_OBJECT_TABLE, "A_draw_dst": A_DRAW_DST, "A_draw_src": A_DRAW_SRC,
         "A_draw_shift": A_DRAW_SHIFT, "A_draw_rows": A_DRAW_ROWS,
         "A_spawn_point_cursor": A_SPAWN_POINT_CURSOR, "A_flap_delay": A_FLAP_DELAY,

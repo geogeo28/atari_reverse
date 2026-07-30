@@ -3,9 +3,9 @@
  * Addresses are Ghidra addresses (image offset + the 0x10000 load base) and mirror `var` lines in
  * ../../names.txt. Only what this routine alone touches is declared here; everything it shares is
  * taken from the header that already owns it — addrs.h (A_object_table, the three rider speeds,
- * A_enemy_objects), joust.h (the object record, its flag bits and the rider types), draw.h
- * (A_player2, draw_object_mask), object.h (A_object_table_END, erase_egg_sprite), egg.h
- * (OBJ_EGG_Y, OBJ_HATCH_MOUNT) and world.h (OBJ_FLAG_REMOVED).
+ * A_enemy_objects, the two chase counts), joust.h (the object record, its flag bits and the rider
+ * types), draw.h (A_player2, draw_object_mask), object.h (A_object_table_END, erase_egg_sprite),
+ * egg.h (OBJ_EGG_Y, OBJ_HATCH_MOUNT) and world.h (OBJ_FLAG_REMOVED).
  */
 #ifndef JOUST_OBJECTS_H
 #define JOUST_OBJECTS_H
@@ -20,13 +20,8 @@
  * player 1 and bit 1 player 2; a slot counts only while it is live, not dead and not waiting to
  * respawn, so the AI stops steering at a player who is mid-death. */
 #define A_active_players  0x10d09u
-/* .b, .b — how many type-2 riders currently hold a chase slot on each player. A rider claims one
- * before homing in and gives it back when it loses the target, and speed_type3's low byte is the
- * per-player cap. The pair is ADJACENT and the "no players left" reset clears both with a single
- * `clr.w $d5e` word store, which is why they are one field to that writer and two to everyone
- * else. */
-#define A_chasers_p1      0x10d5eu
-#define A_chasers_p2      0x10d5fu
+/* The two chase counts, A_chasers_p1 / A_chasers_p2, are addrs.h's — the wave director clears them
+ * at the start of every wave. */
 
 /* ---- object-record fields this layer owns ---- */
 #define OBJ_CHASE_TARGET  0x48u  /* .b, SIGNED — 0 none, 1/2 closing on that player, -1/-2 attacking it */

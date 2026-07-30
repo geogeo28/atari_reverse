@@ -36,6 +36,19 @@ _DEFINE_RE = re.compile(r"^#define\s+(?P<name>\w+)\s+(?:"
                         r")(?=\s*(?:/[/*]|$))", re.M)
 
 
+def _iter_defines(path):
+    """(name, value, is_shift) for every define `_DEFINE_RE` can read, in file order.
+
+    `is_shift` tells the `(1u << N)` spelling from the literal one, which is how the value-collision
+    pin below recognises a flag bit that carries no `_FLAG_` in its name.
+    """
+    text = (REC / path).read_text()
+    for m in _DEFINE_RE.finditer(text):
+        yield (m["name"],
+               int(m["literal"], 0) if m["literal"] else 1 << int(m["bit"]),
+               m["bit"] is not None)
+
+
 def _defines(path):
     """{name: value} for every `#define NAME <integer literal>` or `#define NAME (1u << N)`.
 
@@ -48,9 +61,56 @@ def _defines(path):
     Include guards need no exclusion list and never will: `#define JOUST_DRAW_H` has no value, so
     neither branch matches it.
     """
-    text = (REC / path).read_text()
-    return {m["name"]: int(m["literal"], 0) if m["literal"] else 1 << int(m["bit"])
-            for m in _DEFINE_RE.finditer(text)}
+    return {name: value for name, value, _ in _iter_defines(path)}
+
+
+def _all_sources():
+    """This reconstruction's headers and translation units, relative to its root.
+
+    Globbed, not enumerated, so a file added after this was written is covered the moment it exists.
+    Not the kit's own headers (`tools/recreate_kit/include/`), which every TU also compiles against;
+    test_input.py scrapes those by path where it needs them.
+    """
+    return [str(path.relative_to(REC))
+            for path in sorted(list((REC / "include").glob("*.h")) + list((REC / "src").glob("*.c")))]
+
+
+def _comparable_group(name, is_shift):
+    """What this constant's VALUE may be compared against, or None to leave it out of the pin.
+
+    Only two families are unambiguous enough that a shared value is always a defect:
+
+    * ADDRESSES — `A_*` is this reconstruction's spelling for an absolute Ghidra address, and one
+      address is one global, so a second `A_*` name for it is a second spelling of the same
+      variable. `A_..._END` is the exception, and a structural one rather than a suppressed case: an
+      exclusive bound's value is BY CONSTRUCTION whatever sits next in memory, which the headers
+      already document (`A_object_table_END` == `A_effect_table`, `A_spawn_points_END` ==
+      `A_egg_bonus_table`). Bounds are therefore compared only against other bounds, where a shared
+      value would again be two names for one thing.
+    * FLAG BITS — a `(1u << N)`, or a `_FLAG_` name that spells its bit as a literal
+      (`OBJ_FLAG_IN_LAVA 0x0100u`). These must be unique within the WORD they live in, and the first
+      two name components say which word that is: `OBJ_FLAG_*` the object record's flags,
+      `PT_FLAG_*` the pterodactyl's, `EGG_SPAWN_*` the egg's spawn byte, `PSG_MIXER_*` one
+      sound-chip register. TWO components, not one, because a record can own more than one bitfield
+      — `PSG_MIXER_TONE_A` and a later `PSG_ENV_HOLD` are both bit 0 of DIFFERENT registers, and
+      grouping on `PSG_` alone would report that as a defect. The cost is one admitted miss: a
+      second spelling that also drops the field component (`OBJ_BUMP_PLATFORM` beside
+      `OBJ_FLAG_PLATFORM_BUMP`) lands in a group of its own — but that name is already
+      off-convention, which review catches.
+
+    Everything else — record offsets, timers, speeds, sprite geometry — is out of reach on purpose,
+    because for those a shared value carries no information: `OBJ_FLAGS` and `PT_FLAGS` are both
+    offset 0 and both right, and within EGG_ alone seven unrelated constants are legitimately 2 (a
+    spawn type, a sweep's first slot, a hit-box width, three x/y biases and a mount bias).
+
+    So there is no exclusion list and nothing to exclude: a constant is either in one of the two
+    families or invisible here.
+    """
+    if name.startswith("A_"):                       # ../../names.txt's globals, as Ghidra addresses
+        return "an exclusive bound" if name.endswith("_END") else "an absolute address"
+    if is_shift or "_FLAG_" in name:
+        return f"a bit of {'_'.join(name.split('_')[:2])}"
+    return None
 
 
 def test_entry_addresses_match_names_txt():
@@ -117,9 +177,6 @@ def test_no_constant_is_defined_in_two_files():
     both, so the compiler stayed silent — and would have stayed silent had one copy drifted. The
     values now live once in addrs.h / joust.h; this pin is what keeps them there as new headers land.
 
-    The file list is globbed, not enumerated, so a header added after this was written is covered
-    the moment it exists.
-
     It catches a same-name/same-value duplicate and a same-name/DIFFERENT-value one alike, which is
     the case that matters: OBJ_FLAG_REMOVED was `(1u << 12)` in world.h and `(1u << 13)` in egg.h,
     two different bits under one name, and each file compiled happily against its own.
@@ -127,13 +184,46 @@ def test_no_constant_is_defined_in_two_files():
     Reach: whatever `_defines` cannot read, this cannot check — a macro whose value is arithmetic or
     another macro is still invisible here (see that function's docstring). Include guards fall out
     for free rather than by an exclusion list, so nothing is suppressed: a hit is a real duplicate.
+
+    Blind, BY CONSTRUCTION, to the inverse defect — one value under two names — because it keys on
+    the name. test_no_value_has_two_spellings below is that half.
     """
     files_by_constant = {}
-    for path in sorted(list((REC / "include").glob("*.h")) + list((REC / "src").glob("*.c"))):
-        rel = path.relative_to(REC)
+    for rel in _all_sources():
         for name in _defines(rel):
-            files_by_constant.setdefault(name, []).append(str(rel))
+            files_by_constant.setdefault(name, []).append(rel)
 
     duplicated = {name: files for name, files in files_by_constant.items() if len(files) > 1}
     assert not duplicated, "constants defined in more than one file — hoist each to a shared header:\n" + \
         "\n".join(f"  {name}: {', '.join(files)}" for name, files in sorted(duplicated.items()))
+
+
+def test_no_value_has_two_spellings():
+    """The inverse of the pin above: one address, or one flag bit, under two names.
+
+    Nothing else can see this class. The compiler cannot, because no translation unit includes both
+    headers of any pair; the name-keyed pin cannot, because the names differ by definition. Four
+    instances had accumulated by the time it was written — `A_respawn_lock` (render.h) and
+    `A_spawn_in_progress` (wave.h) both 0x10d13; `A_chasers_p1` (objects.h) and `A_hunter_counts`
+    (wave.h) both 0x10d5e; bits 0-1 of the object flags word spelled `OBJ_FLAG_TYPE_LO`/`_HI` in
+    collide.h and `OBJ_FLAG_TYPE_BIT0`/`_BIT1` in render.h; and bit 14 spelled
+    `OBJ_FLAG_PLATFORM_BUMP` by the routine that sets it and `OBJ_FLAG_EDGE_BUMP` by the one that
+    reads it. Each was one layer inventing a name for something another layer had already named.
+
+    `_comparable_group` is where the judgement lives: it decides which constants are even comparable
+    by value, and its docstring says what is out of scope and why.
+    """
+    names_by_value = {}
+    for rel in _all_sources():
+        for name, value, is_shift in _iter_defines(rel):
+            group = _comparable_group(name, is_shift)
+            if group is None:
+                continue
+            names_by_value.setdefault((group, value), []).append(f"{name} ({rel})")
+
+    collisions = {key: names for key, names in names_by_value.items() if len(names) > 1}
+    assert not collisions, \
+        "one value under two names — keep the spelling the instructions justify, hoist it to the " \
+        "header both layers include, and delete the other:\n" + \
+        "\n".join(f"  {value:#x} as {group}: {', '.join(sorted(names))}"
+                  for (group, value), names in sorted(collisions.items()))
