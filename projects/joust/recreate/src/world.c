@@ -7,8 +7,9 @@
  *   dissolve_platforms     eats away the platforms that vanish between waves,
  *   animate_ground_shrink  burns the ground in from both ends over waves 3-4,
  *   flash_spawn_pad        flashes the pad a rider is materialising on,
- *   troll_erase_hand /     undraw and draw the lava troll's hand (its driver, lava_troll, is
- *   troll_draw_hand        not reconstructed yet — see recreate/STATUS.md),
+ *   lava_troll             walks the troll's hand out of the lava and drags a rider under, with
+ *   troll_erase_hand /     undraw and draw the hand it leaves on screen,
+ *   troll_draw_hand
  *   start_death_anim       arms the sprite a killed rider leaves behind.
  *
  * As everywhere in this reconstruction, faithfulness beats correctness: where the original is odd
@@ -16,6 +17,8 @@
  * oddity is reproduced and commented, not fixed.
  */
 #include "machine.h"
+#include "score.h"     /* score_update: the escape bonus lava_troll pays a player */
+#include "sound.h"     /* play_sound: the grab */
 #include "world.h"
 
 /* =================================================================================================
@@ -261,6 +264,235 @@ void troll_draw_hand(uint8_t *image, uint32_t state) {
 }
 
 void g_troll_draw_hand(uint8_t *image, uint32_t state) { troll_draw_hand(image, state); }
+
+/* =================================================================================================
+ * lava_troll @ 0x146f6 — the driver behind the two passes above.
+ * ============================================================================================= */
+
+/* From wave 4 on, a hand reaches out of the lava at either end of the playfield, climbs towards
+ * whatever is loitering over the pit, and drags it under. Its whole state is six globals:
+ * troll_state (what it is doing), troll_x / troll_y (where the wrist is), troll_frame (which
+ * sprite), troll_target (what it has hold of) and troll_step_timer (the animation clock).
+ *
+ * The original is a tangle of forward branches with three tails, which is what the enum below
+ * names: every path either returns with nothing drawn, recomputes the sprite and its screen
+ * position first, or goes straight to the redraw with the position the globals already hold.
+ */
+#define SND_TROLL_GRAB  6u
+
+enum troll_frame_end {
+    TROLL_END_IDLE,        /* nothing out and nothing to reach for — return without drawing */
+    TROLL_END_REPOSITION,  /* pick this frame's sprite and work out where it goes, then redraw */
+    TROLL_END_REDRAW       /* redraw from whatever the draw_* block already holds */
+};
+
+/* `subq.b #1 ; bge` branches on N == V, i.e. on the sign of the TRUE difference rather than of the
+ * stored byte — so a timer of 0 (which wraps to 0xff) and one of 0x80 (which overflows to 0x7f)
+ * BOTH read as negative and reload. src/input.c's `subq_condition` is the same hazard. */
+static void tick_troll_step_timer(uint8_t *image) {
+    int32_t left = (int8_t)image[A_troll_step_timer] - 1;
+    image[A_troll_step_timer] = (uint8_t)left;
+    if (left < 0) image[A_troll_step_timer] = TROLL_STEP_PERIOD;
+}
+
+/* The object the hand goes for: the first slot in the table that is alive, not respawning, not dead
+ * and not already falling in, low enough to reach, and over one of the two ends of the lava.
+ *
+ * Once the hand is out the object must ALSO be within TROLL_GRAB_DX pixels to its right — and that
+ * window is tested twice, once directly and once as a SIGNED distance the other way round the
+ * playfield, so an object that has wrapped past x 0 is still within reach of a hand near x 0x13f.
+ * Returns 0 when the table runs out.
+ */
+static uint32_t find_troll_target(const uint8_t *image, int hand_is_out) {
+    for (uint32_t object = A_object_table; object != A_object_table_END; object += OBJ_SIZE) {
+        uint16_t flags = be16(image + object + OBJ_FLAGS);
+        if (flags == 0) continue;
+        if (flags & (OBJ_FLAG_RESPAWN | OBJ_FLAG_DEAD | OBJ_FLAG_IN_LAVA)) continue;
+        if ((int16_t)be16(image + object + OBJ_Y) < (int16_t)TROLL_REACH_Y) continue;
+        if ((uint16_t)(be16(image + object + OBJ_X) - TROLL_PIT_X0) <= TROLL_PIT_SPAN) continue;
+        if (!hand_is_out) return object;
+
+        uint16_t gap = (uint16_t)(be16(image + object + OBJ_X) - be16(image + A_troll_x));
+        if (gap <= TROLL_GRAB_DX || (int16_t)gap <= (int16_t)TROLL_GRAB_DX_WRAPPED) return object;
+    }
+    return 0;
+}
+
+/* Raise the hand at a fresh target and return the state word that describes it. The prev_* block is
+ * pointed at the first sprite so that the erase pass at the end of THIS call has a coherent frame
+ * to undo rather than whatever the last hand left behind.
+ *
+ * The original stores the target's x into troll_x and then subtracts from it in place, where this
+ * folds the two into one write; they diverge only for an object record that overlaps troll_x, and
+ * the scan above only ever returns a slot of the object table. */
+static uint16_t raise_troll_hand(uint8_t *image, uint32_t object) {
+    uint16_t state = TROLL_STATE_HAND_OUT;
+    if (be16(image + object + OBJ_FLAGS) & OBJ_FLAG_FACING_RIGHT) state |= TROLL_STATE_FACING_RIGHT;
+
+    wr16(image + A_troll_prev_shift, 0);
+    wr16(image + A_troll_frame, 0);
+    image[A_troll_step_timer] = TROLL_TIMER_ARMED;
+    wr16(image + A_troll_prev_rows, TROLL_ARM_ROWS);
+    wr16(image + A_troll_x, (uint16_t)(be16(image + object + OBJ_X) - TROLL_ARM_X_BACK));
+    wr16(image + A_troll_y, TROLL_ARM_Y);
+    wr32(image + A_troll_prev_src, TROLL_ARM_PREV_SRC);
+    wr32(image + A_troll_prev_dst, TROLL_ARM_PREV_DST);
+    return state;
+}
+
+/* One scanline nearer the object, drifting sideways with it. The sprite steps a frame only on the
+ * tick the timer reaches zero, and the step is clamped rather than wrapped, so the last climbing
+ * frame simply repeats until contact. */
+static void climb_troll_hand(uint8_t *image, uint32_t object) {
+    wr16(image + A_troll_y, (uint16_t)(be16(image + A_troll_y) - 1u));
+
+    if (image[A_troll_step_timer] == 0) {
+        uint16_t frame = (uint16_t)(be16(image + A_troll_frame) + TROLL_FRAME_STEP);
+        wr16(image + A_troll_frame,
+             frame > TROLL_FRAME_CLIMB_LAST ? TROLL_FRAME_CLIMB_LAST : frame);   /* `bls`: unsigned */
+    }
+    /* `add.w 6(a0),troll_x ; addq.w #1,troll_x` — the object's own velocity, plus a pixel of lead. */
+    wr16(image + A_troll_x,
+         (uint16_t)(be16(image + A_troll_x) + be16(image + object + OBJ_VX) + 1u));
+}
+
+/* Nothing to hold on to: the hand sinks a scanline a frame and runs its sprite frames backwards,
+ * and once it is past the first one the "out" bit goes down and the hand is gone. `subq.w #8 ; bge`
+ * reads N == V again, so a frame of 0x8000 retracts even though the stored 0x7ff8 looks positive. */
+static enum troll_frame_end retract_troll_hand(uint8_t *image, uint16_t *state) {
+    wr16(image + A_troll_y, (uint16_t)(be16(image + A_troll_y) + 1u));
+    wr16(image + A_troll_x, (uint16_t)(be16(image + A_troll_x) - 1u));
+    if (image[A_troll_step_timer] != 0) return TROLL_END_REPOSITION;
+
+    int32_t frame = (int16_t)be16(image + A_troll_frame) - (int32_t)TROLL_FRAME_STEP;
+    wr16(image + A_troll_frame, (uint16_t)frame);
+    if (frame >= 0) return TROLL_END_REPOSITION;
+
+    *state &= (uint16_t)~TROLL_STATE_HAND_OUT;
+    return TROLL_END_REDRAW;
+}
+
+/* The hand has hold of something. The grabbed bit comes DOWN first and only goes back up on the
+ * keep-hold path, which is what makes every release below leave the object free without saying so.
+ *
+ * It lets go when the object is empty, dead, respawning or already falling in — and when the object
+ * has climbed clear of the pit, which is an escape a PLAYER is paid for.
+ */
+static enum troll_frame_end hold_or_release_object(uint8_t *image, uint16_t *state) {
+    uint32_t object = be32(image + A_troll_target);
+    uint16_t flags = (uint16_t)(be16(image + object + OBJ_FLAGS) & ~OBJ_FLAG_GRABBED);
+    wr16(image + object + OBJ_FLAGS, flags);
+    *state &= (uint16_t)~TROLL_STATE_HOLDING;
+
+    if (flags == 0 || (flags & OBJ_FLAG_DEAD)) return retract_troll_hand(image, state);
+
+    if ((int16_t)be16(image + object + OBJ_Y) < (int16_t)TROLL_ESCAPE_Y) {
+        if (flags & OBJ_FLAG_PLAYER) {
+            image[object + OBJ_SCORE_PENDING] += TROLL_ESCAPE_SCORE;
+            score_update(image, object);
+        }
+        return retract_troll_hand(image, state);
+    }
+
+    /* Respawning, or already on its way into the lava: the object is dropped and the hand left
+     * exactly where it is instead of being retracted. The original also writes 0 to troll_state
+     * here and re-stores the flags word it has just written — both DEAD, the first because the tail
+     * of lava_troll overwrites troll_state from `state` before returning, the second because the
+     * word already holds that value. Collapsed; the surviving behaviour (the hand stays "out", so
+     * the next call retracts it) is unchanged. */
+    if (flags & (OBJ_FLAG_RESPAWN | OBJ_FLAG_IN_LAVA)) return TROLL_END_REDRAW;
+
+    /* Keep hold: the hand parks under the object and switches to the carrying frame. As in
+     * raise_troll_hand, the original's two-step in-place arithmetic on troll_x / troll_y is folded
+     * into one write each — they differ only for a troll_target aliasing those globals. */
+    wr16(image + object + OBJ_FLAGS, (uint16_t)(flags | OBJ_FLAG_GRABBED));
+    *state |= TROLL_STATE_HOLDING;
+    wr16(image + A_troll_y, (uint16_t)(be16(image + object + OBJ_Y) + TROLL_HOLD_DY));
+    wr16(image + A_troll_x, (uint16_t)(be16(image + object + OBJ_X) - TROLL_HOLD_DX));
+    wr16(image + A_troll_frame, TROLL_FRAME_HELD);
+    return TROLL_END_REPOSITION;
+}
+
+/* What the hand does this frame. */
+static enum troll_frame_end run_troll_hand(uint8_t *image, uint16_t *state) {
+    if (*state & TROLL_STATE_HOLDING) return hold_or_release_object(image, state);
+
+    uint32_t target = find_troll_target(image, *state & TROLL_STATE_HAND_OUT);
+    if (target == 0) {
+        if (!(*state & TROLL_STATE_HAND_OUT)) return TROLL_END_IDLE;
+        return retract_troll_hand(image, state);
+    }
+    if (!(*state & TROLL_STATE_HAND_OUT)) *state = raise_troll_hand(image, target);
+
+    /* Contact is an UNSIGNED window, so a hand that has already climbed PAST the object keeps
+     * climbing rather than grabbing backwards. */
+    if ((uint16_t)(be16(image + A_troll_y) - be16(image + target + OBJ_Y)) > TROLL_GRAB_DY) {
+        climb_troll_hand(image, target);
+        return TROLL_END_REPOSITION;
+    }
+
+    wr32(image + A_troll_target, target);
+    play_sound(image, SND_TROLL_GRAB);
+    /* The original branches straight into the hold block, which re-reads the target it has just
+     * stored — so the grab and the first frame of carrying happen in the same call. */
+    return hold_or_release_object(image, state);
+}
+
+/* Turn troll_frame / troll_x / troll_y into the draw_* block the two blitters read. */
+static void place_troll_hand(uint8_t *image, uint16_t state) {
+    uint32_t frame = A_troll_sprite_table + sign_ext16(be16(image + A_troll_frame));
+    wr32(image + A_draw_src, be32(image + frame + TROLL_SPR_SRC));
+    wr16(image + A_draw_rows, be16(image + frame + TROLL_SPR_ROWS));
+
+    /* A climbing hand grows out of a wrist that stays put, so a taller frame has to start higher:
+     * the change in row count is taken off troll_y. A hand that is carrying something does not —
+     * its position came from the object, and hold_or_release_object has just set it. */
+    if (!(state & TROLL_STATE_HOLDING))
+        wr16(image + A_troll_y, (uint16_t)(be16(image + A_troll_y)
+                                           + be16(image + A_troll_prev_rows)
+                                           - be16(image + A_draw_rows)));
+
+    /* Wrap x into the playfield. Both tests are SIGNED and the second re-reads what the first
+     * stored, so at most one whole TROLL_X_WRAP is ever added or taken off — a hand further out
+     * than that stays off screen. */
+    int16_t x = (int16_t)be16(image + A_troll_x);
+    if (x < 0) x = (int16_t)(x + TROLL_X_WRAP);
+    if (x >= (int16_t)TROLL_X_WRAP) x = (int16_t)(x - TROLL_X_WRAP);
+    wr16(image + A_troll_x, (uint16_t)x);
+
+    /* `mulu.w #$a0` gives the scanline's byte offset; `divu.w #$10` + `swap` puts the cell index in
+     * the high half and the pixel phase in the low one, so the same register yields draw_shift and
+     * — shifted down by TROLL_CELL_SHIFT — the cell's byte offset. Both reads are unsigned words,
+     * and the quotient of a word by 16 always fits, so the divide can never overflow. */
+    uint32_t row = (uint32_t)be16(image + A_troll_y) * SCREEN_ROW_BYTES;
+    uint32_t divided = divu_w(be16(image + A_troll_x), CELL_PIXELS);
+    uint32_t swapped = (divided << 16) | (divided >> 16);
+    wr16(image + A_draw_shift, (uint16_t)swapped);
+    wr32(image + A_draw_dst, row + (swapped >> TROLL_CELL_SHIFT));
+}
+
+void lava_troll(uint8_t *image) {
+    if ((int8_t)image[A_wave_num] < TROLL_FIRST_WAVE) return;
+    tick_troll_step_timer(image);
+
+    uint16_t state = be16(image + A_troll_state);
+    enum troll_frame_end end = run_troll_hand(image, &state);
+    if (end == TROLL_END_IDLE) return;
+    if (end == TROLL_END_REPOSITION) place_troll_hand(image, state);
+
+    troll_erase_hand(image);
+    troll_draw_hand(image, state);
+
+    /* This frame becomes the next one's "previous", which is the only thing troll_erase_hand has
+     * to go on. troll_state is stored from the register the whole routine has been carrying. */
+    wr16(image + A_troll_state, state);
+    wr16(image + A_troll_prev_rows, be16(image + A_draw_rows));
+    wr16(image + A_troll_prev_shift, be16(image + A_draw_shift));
+    wr32(image + A_troll_prev_dst, be32(image + A_draw_dst));
+    wr32(image + A_troll_prev_src, be32(image + A_draw_src));
+}
+
+void g_lava_troll(uint8_t *image) { lava_troll(image); }
 
 /* =================================================================================================
  * start_death_anim @ 0x14098 — arming the sprite a killed rider leaves behind.

@@ -40,6 +40,16 @@
 #define OBJ_SCORE_SHIFT_LO  (OBJ_SCORE_SHIFT + 1u)
 #define OBJ_LIVES           0x4cu   /* .b — signed; five positions are drawn whatever it holds */
 
+/* The score is held as the drawn STRING, not as a number: `02 <colour>` (draw_string's set-colour
+ * control pair), then seven ASCII digits most significant first, then the NUL at 0x45. Callers add
+ * their points straight into a digit byte (`addq.b #5,67(a0)`) and leave score_update to carry.
+ * The last digit is the units and the game holds it at '0' (`move.b #$30,68(a0)`, four sites), so
+ * every score is a multiple of ten and no caller ever bumps it. */
+#define OBJ_SCORE_TEXT        0x3cu   /* what draw_string is handed */
+#define OBJ_SCORE_FIRST_DIGIT 0x3eu   /* most significant; a carry out of it lands on the colour byte */
+#define OBJ_SCORE_LIFE_DIGIT  0x41u   /* the thousands: a carry OUT of it crosses 10,000 */
+#define OBJ_SCORE_LAST_DIGIT  0x44u   /* the units */
+
 /* --- message_table record: the fields object.h does not already name -------------------------- */
 #define MSG_TIMER           0x1u   /* .b — frames left; counted down with subq.b (0 wraps to 255) */
 #define MSG_COLOR           0x2u   /* .b */
@@ -54,6 +64,9 @@
 #define STR_GAME_OVER       0x185c5u  /* "THY GAME IS OVER" — its expiry ends the game */
 
 /* --- score.c ---------------------------------------------------------------------------------- */
+void score_update(uint8_t *image, uint32_t object);
+void score_update_p1(uint8_t *image);
+void score_update_p2(uint8_t *image);
 uint32_t find_free_message(const uint8_t *image);
 void draw_messages(uint8_t *image);
 void draw_lives(uint8_t *image, uint32_t object);

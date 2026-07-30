@@ -28,6 +28,13 @@
 #define A_troll_prev_src        0x10dcau  /* .l — and the sprite it was drawn from */
 #define A_troll_prev_shift      0x10dceu  /* .w */
 #define A_troll_prev_rows       0x10dd8u  /* .w */
+#define A_troll_state           0x10dc4u  /* .w — see TROLL_STATE_* */
+#define A_troll_x               0x10dd0u  /* .w — the hand's pixel column... */
+#define A_troll_y               0x10dd2u  /* .w — ...and the scanline its wrist is on */
+#define A_troll_target          0x10dd4u  /* .l — the object it has hold of */
+#define A_troll_frame           0x10ddau  /* .w — a BYTE offset into troll_sprite_table */
+#define A_troll_step_timer      0x10dddu  /* .b — frames left before the hand steps a sprite */
+#define A_troll_sprite_table    0x14abau  /* TROLL_SPR_* records, one per hand frame */
 #define A_effect_table          0x1137au  /* the dissolve slots (EFF_* below) */
 #define A_effect_table_END      0x113bau  /* == pterodactyl_table, the original's own `cmpa.l` bound */
 #define A_ground_x0             0x117b8u  /* .w — platform 0's landable left edge (== PLAT_X0) */
@@ -41,13 +48,27 @@
 /* ---- object-record fields only this layer touches. They belong in joust.h the moment a second
  *      subsystem reads them, the way addrs.h describes for globals. ---- */
 #define OBJ_EGG_CHAIN       0x35u  /* .b — consecutive-egg counter, reset when the rider dies */
-#define OBJ_SCORE_PENDING   0x43u  /* .b — score to award, in hundreds (`addq.b #5` = 500) */
-#define OBJ_FLAG_DEAD       (1u << 13)
+/* One ASCII DIGIT of the object's score string (include/score.h lays the string out): the second
+ * from the right, the rightmost being the units the game holds at '0'. A caller adds its points
+ * straight into this byte — `addq.b #5,67(a0)` is 50 points, not 500 — and score_update then
+ * carries the decimal columns. */
+#define OBJ_SCORE_PENDING   0x43u  /* .b */
+#define OBJ_FLAG_PLAYER     0x0004u  /* bit2 — not an enemy; only a player is paid for an escape */
+#define OBJ_FLAG_GRABBED    0x0010u  /* bit4 — the lava troll has hold of this object */
+/* bit12 — the slot is on its way OFF the board, as opposed to merely OBJ_FLAG_DEAD (joust.h's
+ * bit13, which a freshly hatched rider carries too). The two are set together by every death:
+ * `bset #13` then `bset #12`, at 0x13ac8 / 0x13e72 in collision_check and at 0x14098 here.
+ *
+ * update_objects also latches it alone. `btst #12,d0` at 0x12438 branches to 0x124a6 while it is
+ * clear; that tests OBJ_EGG_STATE and, when the state has run down to 0, does `bset #12,d0` at
+ * 0x124ac and branches back to the same btst — which now falls through to the removal tail: the
+ * off-playfield x compares, `jsr draw_object_mask` to erase, and `clr.l d0`, zeroing the flags word
+ * and freeing the slot. render_object_body is the other reader: inside its bit-13 branch,
+ * `btst #12,d0` at 0x12faa skips the draw_half_select `bset`s for an object already being removed.
+ *
+ * Both readers live in routines that are not ported yet, which is why nothing in the differential
+ * exercises this bit — only start_death_anim, which sets it. */
 #define OBJ_FLAG_REMOVED    (1u << 12)
-
-/* ---- platform_sprites fields the redraw pass needs; object.h names the rest of the record ---- */
-#define PSPR_COLS  0x6u  /* .w — cells per row */
-#define PSPR_SRC   0x8u  /* .l — the platform bitmap */
 
 /* ---- draw_platforms ---- */
 #define PLATFORM_COUNT  8u     /* `moveq #$8,d7` */
@@ -117,11 +138,56 @@
 #define DISSOLVE_NOISE_ADVANCE  0x8eu  /* rng_ptr is nudged this far before rng_advance re-steps it */
 
 /* ---- lava troll ---- */
-#define TROLL_STATE_HAND_OUT  1u  /* `btst #0,d0` — the hand is on screen */
+#define TROLL_STATE_HAND_OUT     1u        /* `btst #0,d0` — the hand is on screen */
+#define TROLL_STATE_HOLDING      0x2u     /* bit1 — ...and it has hold of troll_target */
+#define TROLL_STATE_FACING_RIGHT 0x4u     /* bit2 — copied off the target when the hand is raised;
+                                           * the sprite set has one direction, so nothing reads it */
 /* One rotated longword of AND mask per row. Same sprite layout as SPR_MASK_OFF above, and the same
  * value as src/draw.c's SPR_MASK_ROW_BYTES — that one is private to draw.c, so hoisting it into
  * draw.h next to SPR_MASK_OFF would collapse the pair. Flagged for the drawing layer. */
 #define TROLL_MASK_ROW_BYTES  4u
+
+/* ---- troll_sprite_table record: one hand frame, indexed by troll_frame's BYTE offset ---- */
+#define TROLL_SPR_SRC     0x0u  /* .l — the sprite; its AND mask sits SPR_MASK_OFF in */
+#define TROLL_SPR_ROWS    0x4u  /* .w */
+
+#define TROLL_FIRST_WAVE   4     /* `cmpi.b #4,wave_num ; blt` — a SIGNED byte compare */
+#define TROLL_STEP_PERIOD  2u    /* the timer's reload: the hand steps a frame every third call */
+#define TROLL_TIMER_ARMED  0xffu /* what a freshly raised hand starts on — negative, so the very
+                                  * next call reloads it and the first frame is held an extra tick */
+
+/* The hand fishes at the two ENDS of the lava: `x - 0x32` must be ABOVE 0xdc as an unsigned word,
+ * i.e. x < 0x32 or x > 0x10e. Everything between is the ground, where nothing can fall in. */
+#define TROLL_PIT_X0    0x32u
+#define TROLL_PIT_SPAN  0xdcu
+#define TROLL_REACH_Y   0x8fu    /* an object above this scanline is out of reach (signed) */
+#define TROLL_GRAB_DX   0xcu     /* ...and it must be within this many pixels to the hand's right */
+#define TROLL_GRAB_DX_WRAPPED 0xfeccu  /* the same window measured the other way round the screen,
+                                        * as a SIGNED word: -0x134 == 0xc - TROLL_X_WRAP */
+#define TROLL_GRAB_DY   0xbu     /* contact: the hand is this close under the object (unsigned) */
+#define TROLL_ESCAPE_Y  0x8cu    /* a held object that climbs above this line is free (signed) */
+#define TROLL_ESCAPE_SCORE 5u    /* `addq.b #5,67(a0)` — what a player is paid for the escape */
+
+#define TROLL_ARM_Y        0xafu    /* the scanline a new hand rises from... */
+#define TROLL_ARM_X_BACK   0xcu     /* ...and how far LEFT of its target it starts */
+#define TROLL_ARM_ROWS     9u       /* the prev_* block a new hand's first erase pass undoes: */
+#define TROLL_ARM_PREV_SRC 0x18f0au /* the first sprite (a RELOCATED immediate, so an address)... */
+#define TROLL_ARM_PREV_DST 0x5dc0u  /* ...and an offset from screen_base (not relocated) */
+
+#define TROLL_HOLD_DY 0xcu       /* a held object is carried this far above the hand's wrist... */
+#define TROLL_HOLD_DX 2u         /* ...and two pixels to its right */
+
+#define TROLL_FRAME_STEP       8u     /* `addq.w #8` — one whole record of the table, which is
+                                      * why the same value is the climb's step and the stride */
+#define TROLL_FRAME_CLIMB_LAST 0x10u  /* the climb stops stepping here (an UNSIGNED clamp) */
+#define TROLL_FRAME_HELD       0x18u  /* the frame a hand with something in it uses */
+
+/* The playfield width in pixels (`addi.w #$140` / `subi.w #$140`), written as the derivation of the
+ * scanline geometry rather than as 320 so that the two cannot drift apart. */
+#define TROLL_X_WRAP  (SCREEN_ROW_BYTES / CELL_BYTES * CELL_PIXELS)
+/* `lsr.l #8 ; lsr.l #5` on the SWAPPED divu result: 16 - log2(CELL_BYTES), i.e. the cell index
+ * scaled straight to bytes with the pixel remainder shifted out underneath it. */
+#define TROLL_CELL_SHIFT  13u
 
 /* --- world.c --- */
 void draw_platforms(uint8_t *image);
@@ -129,6 +195,7 @@ void raise_floor(uint8_t *image);
 void flash_spawn_pad(uint8_t *image, uint32_t object, uint32_t flags);
 void troll_erase_hand(uint8_t *image);
 void troll_draw_hand(uint8_t *image, uint32_t state);
+void lava_troll(uint8_t *image);
 uint32_t start_death_anim(uint8_t *image, uint32_t object, uint32_t flags);
 void animate_ground_shrink(uint8_t *image);
 void dissolve_platforms(uint8_t *image);

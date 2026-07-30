@@ -66,6 +66,8 @@
 /* ---- platform_sprites record: the platform bitmaps, also the pixel-collision surface ---- */
 #define PSPR_PRESENT  0x0u   /* .l — points at this platform's platform_present byte */
 #define PSPR_ROWS     0x4u   /* .w */
+#define PSPR_COLS     0x6u   /* .w — cells per row */
+#define PSPR_SRC      0x8u   /* .l — the platform bitmap */
 #define PSPR_DST_OFF  0xcu   /* .l — offset from screen_base */
 #define PSPR_RECORD   0x10u
 

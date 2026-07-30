@@ -1027,6 +1027,7 @@ def test_mirrored_constants_match_the_headers():
         "A_platform_sprites": A_PLATFORM_SPRITES,
         "MSG_RECORD": MSG_RECORD, "PSPR_RECORD": PSPR_RECORD,
         "PLAT_RECORD": PLAT_RECORD, "CELLS_PER_ROW": CELLS_PER_ROW,
+        "PT_FLAG_MOVING_RIGHT": PT_FLAG_MOVING_RIGHT,
     }
     for name, value in mirrored.items():
         assert header[name] == value, f"{name}: object.h has {header[name]:#x}, test has {value:#x}"
@@ -1053,7 +1054,8 @@ def test_mirrored_constants_match_the_headers():
                       # _platform_table packs ">HHHH"
                       ("PLAT_Y0", 0x0), ("PLAT_Y1", 0x2), ("PLAT_X0", 0x4), ("PLAT_X1", 0x6),
                       # _platform_sprites packs ">IHHII"
-                      ("PSPR_PRESENT", 0x0), ("PSPR_ROWS", 0x4), ("PSPR_DST_OFF", 0xc)):
+                      ("PSPR_PRESENT", 0x0), ("PSPR_ROWS", 0x4), ("PSPR_COLS", 0x6),
+                      ("PSPR_SRC", 0x8), ("PSPR_DST_OFF", 0xc)):
         assert header[name] == off, f"{name}: object.h has {header[name]:#x}, packers use {off:#x}"
 
     # The object record, likewise encoded positionally by _object — now in joust.h.

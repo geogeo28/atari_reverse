@@ -7,15 +7,16 @@
  * and text_shift as it goes and stores them back, so consecutive calls continue where the last one
  * stopped — which is how the lives row draws five glyphs from one staged cursor.
  *
- * The scoring routines proper (score_update @ 0x14160 and its two entry aliases) are NOT here: they
- * award an extra life through play_sound, which the sound layer has not yet exported. See
- * recreate/STATUS.md.
+ * The scoring routines are here too, and they are not what their name suggests: score_update adds
+ * nothing. Callers add their points straight into the object's ASCII score digits and call this to
+ * carry the decimal columns, hand out the extra lives those carries earn, and repaint the row.
  */
 #include "machine.h"
 #include "joust.h"
 #include "draw.h"
 #include "object.h"
 #include "score.h"
+#include "sound.h"
 
 /* =================================================================================================
  * find_free_message @ 0x1435c
@@ -78,7 +79,9 @@ void draw_messages(uint8_t *image) {
 #define LIVES_DRAWN         5     /* `moveq #5`: five positions are painted, whatever the count */
 #define LIVES_HUD_ADVANCE   0x10u /* the lives row starts this many bytes past the score's cell */
 #define LIVES_SHIFT_ADVANCE 0xau  /* ...and 10 pixels further into it */
-#define LIVES_BG_COLOR      0xfu
+/* Both HUD rows paint their background bar in colour 15 (`move.b #$f,text_bg_color` at 0x14256 and
+ * at 0x1420a) — one value, one name. */
+#define HUD_BG_COLOR        0xfu
 
 /* Repaint one player's five life positions: `lives` glyphs, then blanks. Both the large font and
  * the background bar are switched on for the row; only the bar is switched off again at the end,
@@ -88,7 +91,7 @@ static void draw_lives_row(uint8_t *image, uint32_t object, uint32_t life_glyph)
     wr32(image + A_text_ptr, be32(image + object + OBJ_SCORE_PTR) + LIVES_HUD_ADVANCE);
     image[A_text_shift] = (uint8_t)(image[object + OBJ_SCORE_SHIFT_LO] + LIVES_SHIFT_ADVANCE);
     image[A_text_flags] |= TEXT_FLAG_LARGE_FONT | TEXT_FLAG_BACKGROUND;
-    image[A_text_bg_color] = LIVES_BG_COLOR;
+    image[A_text_bg_color] = HUD_BG_COLOR;
 
     /* The count is re-read from the record on EVERY pass (`cmp.b 76(a0),d0` sits inside the loop),
      * so a row painted over the record itself changes how many of its own positions fill in. Both
@@ -110,6 +113,103 @@ void draw_lives(uint8_t *image, uint32_t object) {
     if (object == A_player2) draw_lives_p2(image);
     else                     draw_lives_p1(image);
 }
+
+/* =================================================================================================
+ * score_update @ 0x14160, score_update_p2 @ 0x14166, score_update_p1 @ 0x14172 — one alias family.
+ *
+ * Three entry points, six bytes apart, each falling through into the shared body at 0x1417c: the
+ * first takes its object in A0, the other two load player 2's or player 1's slot and ignore
+ * whatever A0 held.
+ *
+ * NONE of them adds a score. The caller has already added its points into a digit BYTE of the
+ * object's ASCII score string (`addq.b #5,67(a0)` and friends), which can leave that byte above
+ * '9' — or, if the position was still blank, at ' ' + n. This routine repairs the string: promote
+ * the bumped blanks to digits, carry the decimal columns right to left, pay out the extra lives
+ * those carries earn, and repaint the row.
+ * ============================================================================================= */
+
+#define SCORE_BLANK          0x20u  /* ' ' — a digit position the score has not reached yet */
+#define SCORE_DIGIT_0        0x30u
+#define SCORE_DIGIT_9        0x39u
+#define SCORE_BLANK_TO_DIGIT 0x10u  /* `addi.b #$10`: ' ' + n becomes '0' + n */
+#define SCORE_CARRY          0xau   /* `subi.b #$a` — one decimal column */
+#define SND_EXTRA_LIFE       1u
+
+/* A caller that bumps a position still holding ' ' leaves ' ' + n there, which is below '0'. Walk
+ * the string and turn every such byte into the digit it means.
+ *
+ * Two deliberate limits, both reproduced. The leading BLANKS are skipped rather than promoted, so
+ * the score stays left-padded with spaces instead of gaining leading zeroes — the scan stops at the
+ * first byte that is not exactly ' ', and only from there does the promotion run. And the sweep
+ * stops one short of the last digit, which is why a bump landing on the units position would never
+ * be promoted at all; the game holds that position at '0', so nothing ever bumps it.
+ *
+ * The "below '0'" test is a SIGNED byte compare, so a digit that has wrapped past 0x7f is promoted
+ * too — `addi.b #$10` on 0xff gives 0x0f, which the carry pass below then leaves alone.
+ */
+static void promote_blank_digits(uint8_t *image, uint32_t object) {
+    uint8_t at = OBJ_SCORE_FIRST_DIGIT;
+
+    while (image[object + at] == SCORE_BLANK)
+        if (++at == OBJ_SCORE_LAST_DIGIT) return;
+
+    for (; at != OBJ_SCORE_LAST_DIGIT; at++)
+        if ((int8_t)image[object + at] < (int8_t)SCORE_DIGIT_0)
+            image[object + at] += SCORE_BLANK_TO_DIGIT;
+}
+
+/* Every carry that leaves the 10,000s digit EVEN is a free life — i.e. one per 20,000 points. */
+static void award_extra_life(uint8_t *image, uint32_t object) {
+    image[object + OBJ_LIVES]++;             /* `addq.b #1`: a count of 0xff wraps to 0 */
+    draw_lives(image, object);
+    play_sound(image, SND_EXTRA_LIFE);
+}
+
+/* Carry the decimal columns, right to left, over the whole string.
+ *
+ * The sweep starts at the LAST digit and each column's carry lands on the byte one to its left —
+ * so the leftmost column carries into the string's colour byte (OBJ_SCORE_TEXT + 1) rather than
+ * overflowing cleanly. Reproduced: a score that big cannot be earned inside one game.
+ *
+ * The `> '9'` test is UNSIGNED, so a digit promote_blank_digits left above 0x7f carries repeatedly
+ * until ten-at-a-time brings it back into range. A column still holding a blank when the carry
+ * reaches it becomes '0' first, which is how the string grows leftwards one digit at a time.
+ */
+static void carry_score_digits(uint8_t *image, uint32_t object) {
+    for (uint8_t at = OBJ_SCORE_LAST_DIGIT; at != OBJ_SCORE_FIRST_DIGIT - 1u; at--) {
+        while (image[object + at] > SCORE_DIGIT_9) {
+            uint32_t higher = object + at - 1u;
+            if (image[higher] == SCORE_BLANK) image[higher] = SCORE_DIGIT_0;
+            image[higher]++;
+            image[object + at] -= SCORE_CARRY;
+
+            if (at == OBJ_SCORE_LIFE_DIGIT && !(image[higher] & 1u))
+                award_extra_life(image, object);
+        }
+    }
+}
+
+/* Repaint the row from the record's own cursor. The large font is switched on before the carries
+ * rather than here (`bset #7,text_flags` at 0x141aa) — which is invisible either way, since the
+ * only thing that runs in between is draw_lives, and that sets the same bit itself. */
+static void draw_score_row(uint8_t *image, uint32_t object) {
+    image[A_text_flags] |= TEXT_FLAG_BACKGROUND;
+    image[A_text_bg_color] = HUD_BG_COLOR;
+    image[A_text_shift] = image[object + OBJ_SCORE_SHIFT_LO];
+    wr32(image + A_text_ptr, be32(image + object + OBJ_SCORE_PTR));
+    draw_string(image, object + OBJ_SCORE_TEXT);
+    image[A_text_flags] &= (uint8_t)~TEXT_FLAG_BACKGROUND;
+}
+
+void score_update(uint8_t *image, uint32_t object) {
+    promote_blank_digits(image, object);
+    image[A_text_flags] |= TEXT_FLAG_LARGE_FONT;
+    carry_score_digits(image, object);
+    draw_score_row(image, object);
+}
+
+void score_update_p1(uint8_t *image) { score_update(image, A_object_table); }
+void score_update_p2(uint8_t *image) { score_update(image, A_player2); }
 
 /* =================================================================================================
  * The high-score name-entry screen: flash_hiscore_color @ 0x144b0, draw_hiscore_cursor @ 0x14658,
@@ -195,12 +295,24 @@ void draw_hiscore_entry(uint8_t *image) {
 
 /* ------------------------------------------------------------------------------------- glue ---
  *
- * Nothing in this layer takes a stack frame — draw_lives reads its object from A0 and the rest work
- * entirely off globals — so each g_* is a bare forwarder rather than the argument unpacker the other
- * layers' glue needs. The two results an image diff cannot see (find_free_message's slot, which the
+ * Nothing in this layer takes a stack frame — draw_lives and score_update read their object from A0
+ * and the rest work entirely off globals — so each g_* is a bare forwarder rather than the argument
+ * unpacker the other layers' glue needs. The two results an image diff cannot see (find_free_message's slot, which the
  * original returns in A0, and the colour word flash_hiscore_color hands XBIOS Setcolor) come back
  * as return values, and the test compares each against what the oracle really produced.
  */
+
+void g_score_update(uint8_t *image, uint32_t object) {
+    score_update(image, object);
+}
+
+void g_score_update_p1(uint8_t *image) {
+    score_update_p1(image);
+}
+
+void g_score_update_p2(uint8_t *image) {
+    score_update_p2(image);
+}
 
 uint32_t g_find_free_message(const uint8_t *image) {
     return find_free_message(image);

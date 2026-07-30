@@ -73,6 +73,7 @@ static inline uint32_t divu_w(uint32_t dividend, uint16_t divisor) {
 #define OBJ_VY              0x08u   /* .w */
 #define OBJ_ANIM_TIMER      0x0au   /* .b */
 #define OBJ_STEP_TIMER      0x0bu   /* .b */
+#define OBJ_TARGET_VX       0x0cu   /* .w — the horizontal speed the physics pass eases OBJ_VX to */
 #define OBJ_FLAP_FRAME      0x0eu   /* .w */
 #define OBJ_PREV_X          0x10u   /* .w */
 #define OBJ_PREV_DST        0x14u   /* .l — last drawn screen address */
@@ -85,11 +86,20 @@ static inline uint32_t divu_w(uint32_t dividend, uint16_t divisor) {
 #define OBJ_EGG_SRC         0x2eu   /* .l */
 #define OBJ_EGG_ROWS        0x32u   /* .b */
 #define OBJ_EGG_SHIFT       0x33u   /* .b */
+#define OBJ_TARGET_Y        0x46u   /* .w — the altitude a rider steers toward: the hatch's AI
+                                     * target, and the height a dead rider's hover aims for */
 #define OBJ_SIZE            0x4eu
 
 #define OBJ_FLAG_RESPAWN       (1u << 7)   /* awaiting respawn */
 #define OBJ_FLAG_IN_LAVA       0x0100u     /* bit8: the sprite reached playfield_bottom while being drawn */
 #define OBJ_FLAG_ON_PLATFORM   (1u << 9)   /* standing on a platform */
+/* bit13 — this slot is not a live rider on the playfield. Set by every death (`bset #13` at 0x13ac8
+ * / 0x13e72 in collision_check and at 0x14098 in start_death_anim, each immediately followed by the
+ * `bset #12` of OBJ_FLAG_REMOVED) and, alone, by the egg hatch (`bset #13,d0` at 0x1277e) on the
+ * rider it builds; cleared by `bclr #13,d0` at 0x1252a when update_objects places that rider. Read
+ * by control_player, player_death, update_objects, render_object_body, collision_check, lava_troll
+ * and ptero_spot_player — all three ported layers read it, hence its home here. */
+#define OBJ_FLAG_DEAD          (1u << 13)
 #define OBJ_FLAG_FACING_RIGHT  0x8000u     /* bit15 — `btst #15,d0`, a bit test on the whole longword */
 
 /* --- rng.c --- */

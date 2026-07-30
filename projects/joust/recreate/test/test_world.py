@@ -30,6 +30,7 @@ from test_constants import _defines   # the shared `#define` scraper; see the pi
 ENTRY_DRAW_PLATFORMS = 0x1052e
 ENTRY_FLASH_SPAWN_PAD = 0x13628
 ENTRY_START_DEATH_ANIM = 0x14098
+ENTRY_LAVA_TROLL = 0x146f6
 ENTRY_TROLL_ERASE_HAND = 0x149b8
 ENTRY_TROLL_DRAW_HAND = 0x14a32
 ENTRY_DISSOLVE_PLATFORMS = 0x17438
@@ -45,10 +46,17 @@ A_FLOOR_ROWS_LEFT = 0x10d65
 A_GROUND_ANIM_TIMER = 0x10d66
 A_GROUND_ANIM = 0x10d68
 A_GROUND_ANIM_NEXT = 0x10d84
+A_SND_PRIORITY = 0x10d4c
+A_TROLL_STATE = 0x10dc4
 A_TROLL_PREV_DST = 0x10dc6
 A_TROLL_PREV_SRC = 0x10dca
 A_TROLL_PREV_SHIFT = 0x10dce
+A_TROLL_X = 0x10dd0
+A_TROLL_Y = 0x10dd2
+A_TROLL_TARGET = 0x10dd4
 A_TROLL_PREV_ROWS = 0x10dd8
+A_TROLL_FRAME = 0x10dda
+A_TROLL_STEP_TIMER = 0x10ddd
 A_SCREEN_BASE = 0x10dde
 A_DRAW_DST = 0x10de8
 A_DRAW_SRC = 0x10df0
@@ -64,6 +72,7 @@ A_SPAWN_PAD_COLORS = 0x11944
 A_SPAWN_PAD_PATTERN = 0x1194c
 A_SPAWN_POINTS = 0x11964
 A_PLATFORM_SPRITES = 0x119d4
+A_TROLL_SPRITE_TABLE = 0x14aba
 A_DEATH_SPRITE_P1 = 0x1922a
 A_DEATH_SPRITE_OTHER = 0x193da
 
@@ -106,7 +115,7 @@ _U8P = ctypes.POINTER(ctypes.c_uint8)
 for _glue, _nargs in (("g_draw_platforms", 0), ("g_raise_floor", 0), ("g_flash_spawn_pad", 2),
                       ("g_troll_erase_hand", 0), ("g_troll_draw_hand", 1),
                       ("g_start_death_anim", 3), ("g_animate_ground_shrink", 0),
-                      ("g_dissolve_platforms", 0)):
+                      ("g_dissolve_platforms", 0), ("g_lava_troll", 0)):
     _fn = getattr(harness._lib, _glue)
     _fn.argtypes = [_U8P] + [ctypes.c_uint32] * _nargs
     _fn.restype = None
@@ -1246,6 +1255,587 @@ def test_dissolve_platforms_fuzz(chunk):
             + _free_slots(N_EFFECTS - 1), noise=noise), note=f"case {i}")
 
 
+# ------------------------------------------------------------------ lava_troll @ 0x146f6
+
+# The eleven troll globals are CONTIGUOUS, from troll_state up to troll_step_timer, so every case
+# stages them as one poke — which also fixes the unnamed byte before the timer that a partial
+# staging would leave holding whatever the base image has.
+TROLL_BLOCK_BYTES = A_TROLL_STEP_TIMER + 1 - A_TROLL_STATE
+TROLL_BLOCK_PACK = ">HIIHHHIHHBB"    # state, prev_dst, prev_src, prev_shift, x, y, target,
+#                                      prev_rows, frame, (unnamed), step_timer
+TROLL_PAD = 0x5a                     # what goes in that unnamed byte
+
+TROLL_STATE_HAND_OUT = 1 << 0
+TROLL_STATE_HOLDING = 1 << 1
+TROLL_STATE_FACING_RIGHT = 1 << 2
+
+TROLL_FIRST_WAVE = 4
+TROLL_STEP_PERIOD = 2
+TROLL_TIMER_ARMED = 0xff
+TROLL_PIT_X0, TROLL_PIT_SPAN = 0x32, 0xdc
+TROLL_REACH_Y, TROLL_ESCAPE_Y = 0x8f, 0x8c
+TROLL_GRAB_DX, TROLL_GRAB_DX_WRAPPED, TROLL_GRAB_DY = 0xc, 0xfecc, 0xb
+TROLL_ESCAPE_SCORE = 5
+TROLL_ARM_Y, TROLL_ARM_X_BACK, TROLL_ARM_ROWS = 0xaf, 0xc, 9
+TROLL_ARM_PREV_SRC, TROLL_ARM_PREV_DST = 0x18f0a, 0x5dc0
+TROLL_HOLD_DY, TROLL_HOLD_DX = 0xc, 2
+TROLL_FRAME_STEP, TROLL_FRAME_CLIMB_LAST, TROLL_FRAME_HELD = 8, 0x10, 0x18
+TROLL_X_WRAP = SCREEN_ROW_BYTES // CELL_BYTES * CELL_PIXELS
+TROLL_CELL_SHIFT = 13
+TROLL_SPR_SRC, TROLL_SPR_ROWS = 0x0, 0x4
+SND_TROLL_GRAB = 6
+SND_PRIORITY_IDLE = 0x10             # nothing playing (mirror of src/sound.c)
+
+# ---- the object table, and the object fields this routine reads ----
+N_OBJECTS = (A_EFFECT_TABLE - A_OBJECT_TABLE) // OBJ_SIZE
+OBJ_FLAGS, OBJ_X, OBJ_Y, OBJ_VX = 0x0, 0x2, 0x4, 0x6
+OBJ_SCORE_PTR, OBJ_SCORE_SHIFT_LO, OBJ_SCORE_TEXT, OBJ_SCORE_DIGITS = 0x36, 0x3b, 0x3c, 0x3e
+OBJ_LIVES = 0x4c
+OBJ_FLAG_PLAYER, OBJ_FLAG_GRABBED = 1 << 2, 1 << 4
+OBJ_FLAG_RESPAWN, OBJ_FLAG_IN_LAVA, OBJ_FLAG_DEAD = 1 << 7, 1 << 8, 1 << 13
+OBJ_FLAG_FACING_RIGHT = 0x8000
+TEXT_SET_COLOR = 2                   # the score string's leading control byte (src/draw.c)
+
+# Each object's HUD band, so that an escape bonus — which runs score_update, which repaints the row
+# — lands on the patterned screen rather than on zeros. The bands run from the top of the
+# framebuffer and stop well short of the rows the hand itself is drawn on.
+TROLL_SCORE_PITCH = 9                # scanlines per band
+TROLL_SCORE_DIGITS = b"0000050"      # +TROLL_ESCAPE_SCORE takes this over '9', so an escape CARRIES
+
+# One staged hand sprite per table record: the pixels the draw pass ORs in, then the AND mask at
+# SPR_MASK_OFF that the erase pass rotates. SPR_MASK_OFF bytes hold exactly 18 rows of pixels.
+TROLL_SPRITE_STRIDE = 0x400
+TROLL_SPRITE_TABLE_RECORDS = 4       # the whole shipped table; see the pin at the end of the file
+TROLL_MASK_ROWS = 32
+TROLL_TABLE_ROWS_BASE = 4            # staged record n is this many rows tall, plus n
+
+
+def _staged_rows(frame):
+    """The row count the staged sprite table gives `frame` — distinct per record, so a frame index
+    that is off by one shows up in draw_rows and in the number of scanlines blitted."""
+    return TROLL_TABLE_ROWS_BASE + frame // TROLL_FRAME_STEP
+
+
+def _troll_sprite(index):
+    pixels = _hand_pixels(SPR_MASK_OFF // (2 * CELL_PLANE_WORDS),
+                          shape=lambda r: (0xf00f ^ (0x1111 * (r + index)), 0x0ff0 + index,
+                                           0x8001 * (r + 1), 0xaa55 ^ index))
+    return pixels + _mask_rows(TROLL_MASK_ROWS,
+                               lambda r: (0xf0f0_0f0f ^ (0x1111_1111 * r)) + index)
+
+
+def _troll_sprite_table():
+    """TROLL_SPRITE_TABLE_RECORDS records over the shipped table, each with its OWN sprite and its
+    OWN row count — so a frame index that picks the wrong record shows up in both."""
+    pokes = {A_TROLL_SPRITE_TABLE: b"".join(
+        struct.pack(">IHH", SPRITE + index * TROLL_SPRITE_STRIDE,
+                    _staged_rows(index * TROLL_FRAME_STEP), 0)
+        for index in range(TROLL_SPRITE_TABLE_RECORDS))}
+    for index in range(TROLL_SPRITE_TABLE_RECORDS):
+        pokes[SPRITE + index * TROLL_SPRITE_STRIDE] = _troll_sprite(index)
+    return pokes
+
+
+def _troll_object(slot, fields):
+    """One object record: the four words the troll reads, plus the score/lives fields score_update
+    and draw_lives need whenever an escape bonus is paid."""
+    record = bytearray(OBJ_SIZE)
+    struct.pack_into(">HHHH", record, OBJ_FLAGS, fields.get("flags", 0) & 0xffff,
+                     fields.get("x", 0) & 0xffff, fields.get("y", 0) & 0xffff,
+                     fields.get("vx", 0) & 0xffff)
+    struct.pack_into(">I", record, OBJ_SCORE_PTR,
+                     SCREEN + slot * TROLL_SCORE_PITCH * SCREEN_ROW_BYTES)
+    record[OBJ_SCORE_SHIFT_LO] = fields.get("score_shift", 0)
+    record[OBJ_SCORE_TEXT] = TEXT_SET_COLOR
+    record[OBJ_SCORE_TEXT + 1] = 1 + slot % 0xf
+    record[OBJ_SCORE_DIGITS:OBJ_SCORE_DIGITS + len(TROLL_SCORE_DIGITS)] = TROLL_SCORE_DIGITS
+    record[OBJ_LIVES] = 3
+    return bytes(record)
+
+
+def _troll_pokes(slots=None, state=0, wave=TROLL_FIRST_WAVE, timer=1, x=0x20, y=0xa0, frame=0,
+                 target=0, prev_dst=TROLL_ARM_PREV_DST, prev_src=None, prev_shift=0, prev_rows=6,
+                 draw=(0, 0, 0, 0), screen_base=SCREEN, playfield=None,
+                 priority=SND_PRIORITY_IDLE):
+    """The whole world this routine reads: the framebuffer, the object table, the sprite table, the
+    troll block and the draw_* scratch its two blitters take their arguments from."""
+    block = struct.pack(TROLL_BLOCK_PACK, state, prev_dst,
+                        SPRITE if prev_src is None else prev_src, prev_shift & 0xffff, x & 0xffff,
+                        y & 0xffff, target, prev_rows & 0xffff, frame & 0xffff, TROLL_PAD,
+                        timer & 0xff)
+    assert len(block) == TROLL_BLOCK_BYTES, "the troll globals are no longer one contiguous block"
+
+    pokes = _blank_screen(screen_base)
+    pokes.update(_troll_sprite_table())
+    pokes.update({
+        A_SCREEN_BASE: struct.pack(">I", screen_base),
+        A_PLAYFIELD_BOTTOM: struct.pack(">I", playfield if playfield is not None
+                                        else screen_base + SCREEN_BYTES),
+        A_WAVE_NUM: bytes([wave]),
+        A_SND_PRIORITY: struct.pack(">H", priority & 0xffff),
+        A_TROLL_STATE: block,
+        # draw_src / draw_dst / draw_shift / draw_rows are OUTPUTS of the reposition path, staged
+        # with values of their own so that a path which skips it is distinguishable.
+        A_DRAW_DST: struct.pack(">I", draw[1]),
+        A_DRAW_SRC: struct.pack(">IHH", draw[0], draw[2] & 0xffff, draw[3] & 0xffff),
+        A_OBJECT_TABLE: b"".join(_troll_object(slot, (slots or {}).get(slot, {}))
+                                 for slot in range(N_OBJECTS)),
+    })
+    return pokes
+
+
+def _troll_case(poison=False, note="", **staging):
+    """poison is off, as for the other three pointer-output routines in this file: troll_prev_src,
+    troll_prev_dst and the draw_* block are ADDRESSES the next call dereferences, so an inverted
+    copy would aim both cores at random memory. Every one of those slots is staged with a value of
+    its own instead — the whole troll block is one poke — so a write the candidate skips still
+    shows up as a diff."""
+    diffs, info = differential(ENTRY_LAVA_TROLL, {"_pokes": _troll_pokes(**staging)},
+                               lambda lib, buf: lib.g_lava_troll(buf), poison=poison)
+    assert not diffs, f"{staging} {note}\n{report(diffs)}"
+    return info
+
+
+def _wrap_x(value):
+    """troll_x as place_troll_hand leaves it: two SIGNED tests, so at most ONE playfield width is
+    added or taken off — a hand further out than that stays where it is."""
+    x = ((value & 0xffff) ^ 0x8000) - 0x8000
+    if x < 0:
+        x += TROLL_X_WRAP
+    if x >= TROLL_X_WRAP:
+        x -= TROLL_X_WRAP
+    return x & 0xffff
+
+
+def _final(info, addr, staged, width=2):
+    """The value at `addr` after the run: the oracle's write set over the staged bytes."""
+    value = 0
+    for offset in range(width):
+        value = (value << 8) | info["writes"].get(addr + offset,
+                                                  (staged >> (8 * (width - 1 - offset))) & 0xff)
+    return value
+
+
+# A target the scan accepts: alive, not respawning/dead/in the lava, low enough, and left of the
+# ground's left edge so `x - TROLL_PIT_X0` lands above TROLL_PIT_SPAN.
+TROLL_TARGET_SLOT = 2
+TROLL_TARGET_X, TROLL_TARGET_Y = 0x20, 0x90
+
+
+def _target(**overrides):
+    fields = {"flags": OBJ_FLAG_PLAYER, "x": TROLL_TARGET_X, "y": TROLL_TARGET_Y}
+    fields.update(overrides)
+    return {TROLL_TARGET_SLOT: fields}
+
+
+# ---- the wave gate and the frame timer ----
+
+@pytest.mark.parametrize("wave", (0, 1, 3, 0x80, 0xff))
+def test_lava_troll_is_asleep_before_wave_4(wave):
+    """`cmpi.b #4,wave_num ; blt` — a SIGNED byte compare, so 0x80 and 0xff are BELOW 4 and the
+    troll stays away. Nothing at all happens on this path: not even the frame timer ticks."""
+    info = _troll_case(wave=wave, slots=_target(), state=TROLL_STATE_HAND_OUT)
+    assert not info["writes"], "the wave gate let something through"
+
+
+@pytest.mark.parametrize("wave", (TROLL_FIRST_WAVE, TROLL_FIRST_WAVE + 1, 0x7f))
+def test_lava_troll_runs_from_wave_4_on(wave):
+    info = _troll_case(wave=wave, slots=_target(), state=TROLL_STATE_HAND_OUT)
+    assert info["writes"], "the troll did nothing on a wave it should be awake for"
+
+
+@pytest.mark.parametrize("timer", (0, 1, 2, 3, 0x7f, 0x80, 0x81, 0xff))
+def test_lava_troll_step_timer_is_a_signed_subq(timer):
+    """`subq.b #1 ; bge` branches on N == V, so the reload fires for a timer of 0 (which wraps to
+    0xff) AND for 0x80 (which overflows to 0x7f) — neither of which a test of the stored byte's
+    sign would catch."""
+    left = ((timer ^ 0x80) - 0x80) - 1          # the true difference, as the 68000 sees it
+    expected = TROLL_STEP_PERIOD if left < 0 else left & 0xff
+    info = _troll_case(timer=timer, slots=_target(), state=TROLL_STATE_HAND_OUT)
+    assert _final(info, A_TROLL_STEP_TIMER, timer, width=1) == expected
+
+
+# ---- the scan ----
+
+@pytest.mark.parametrize("flags", (0, OBJ_FLAG_RESPAWN, OBJ_FLAG_IN_LAVA, OBJ_FLAG_DEAD,
+                                   OBJ_FLAG_PLAYER, OBJ_FLAG_PLAYER | OBJ_FLAG_RESPAWN,
+                                   OBJ_FLAG_PLAYER | OBJ_FLAG_IN_LAVA,
+                                   OBJ_FLAG_PLAYER | OBJ_FLAG_DEAD, 1, OBJ_FLAG_GRABBED))
+def test_lava_troll_scan_rejects_flags(flags):
+    """An empty slot, one awaiting respawn, one dead and one already falling into the lava are all
+    passed over; anything else with a non-zero flags word is fair game."""
+    _troll_case(slots=_target(flags=flags), note=f"flags={flags:#x}")
+
+
+@pytest.mark.parametrize("y", (0, 0x8e, TROLL_REACH_Y, TROLL_REACH_Y + 1, 0x8000, 0xffff))
+def test_lava_troll_scan_reach_is_a_signed_row(y):
+    """`cmpi.w #$8f,4(a0) ; blt` — an object above the reach line is skipped, and the compare is
+    SIGNED, so a wrapped y of 0xffff is above it rather than far below."""
+    _troll_case(slots=_target(y=y), note=f"y={y:#x}")
+
+
+@pytest.mark.parametrize("x", (0, TROLL_PIT_X0 - 1, TROLL_PIT_X0, TROLL_PIT_X0 + 1, 0x100,
+                               TROLL_PIT_X0 + TROLL_PIT_SPAN, TROLL_PIT_X0 + TROLL_PIT_SPAN + 1,
+                               TROLL_X_WRAP - 1, TROLL_X_WRAP, 0xffff))
+def test_lava_troll_scan_fishes_only_at_the_two_ends(x):
+    """`x - 0x32` must be ABOVE 0xdc as an UNSIGNED word: x below 0x32 wraps huge and qualifies,
+    the whole ground between 0x32 and 0x10e does not, and past 0x10e qualifies again."""
+    _troll_case(slots=_target(x=x), note=f"x={x:#x}")
+
+
+def test_lava_troll_scan_takes_the_first_matching_slot():
+    """The walk stops at the first candidate, so the hand is raised at THAT object's column — with
+    two candidates staged at different x, picking the later one moves troll_x."""
+    for first, second in ((2, 5), (5, 2), (0, N_OBJECTS - 1)):
+        slots = {first: {"flags": OBJ_FLAG_PLAYER, "x": 0x20, "y": TROLL_TARGET_Y},
+                 second: {"flags": OBJ_FLAG_PLAYER, "x": 0x10, "y": TROLL_TARGET_Y}}
+        info = _troll_case(slots=slots, note=f"{first},{second}")
+        chosen_x = 0x20 if first < second else 0x10
+        # The same call raises the hand (x := chosen_x - TROLL_ARM_X_BACK) and then climbs once,
+        # which adds the object's velocity — zero here — plus a pixel of lead.
+        assert _final(info, A_TROLL_X, 0x20) == _wrap_x(chosen_x - TROLL_ARM_X_BACK + 1)
+
+
+def test_lava_troll_scan_covers_every_slot():
+    """One candidate at a time, including the last — the walk's bound is effect_table, so a slot
+    short or long would show up as a hand that never rises."""
+    for slot in range(N_OBJECTS):
+        info = _troll_case(slots={slot: {"flags": OBJ_FLAG_PLAYER, "x": 0x20 + slot,
+                                         "y": TROLL_TARGET_Y}}, note=f"slot={slot}")
+        assert _final(info, A_TROLL_Y, 0xa0) != 0xa0, f"slot {slot} was never reached"
+
+
+def test_lava_troll_nothing_to_reach_for_leaves_the_hand_down():
+    """No candidate and no hand out: the routine returns having done nothing but tick its timer."""
+    info = _troll_case(state=0, slots={})
+    assert set(info["writes"]) == {A_TROLL_STEP_TIMER}, "an idle frame wrote more than the timer"
+
+
+# ---- raising the hand ----
+
+# States a raise can start from: anything with the `out` and `holding` bits clear, since either
+# would send the frame down another path.
+@pytest.mark.parametrize("incoming", (0, TROLL_STATE_FACING_RIGHT, 0xfffc))
+@pytest.mark.parametrize("flags", (OBJ_FLAG_PLAYER, OBJ_FLAG_PLAYER | OBJ_FLAG_FACING_RIGHT,
+                                   OBJ_FLAG_FACING_RIGHT, 1))
+def test_lava_troll_raises_the_hand_at_a_new_target(flags, incoming):
+    """A candidate with the hand down: it is armed at the object's column, at the lava line, with
+    its prev_* block pointed at the first sprite so this call's erase pass has something coherent
+    to undo.
+
+    The state word is BUILT (`clr.w d0 ; bset #0,d0`), not added to — so whatever it held before is
+    gone, and the only bit that survives from the target is its facing, which nothing reads again.
+    """
+    info = _troll_case(state=incoming, slots=_target(flags=flags), x=0x123, y=0x456, frame=0x30)
+    assert _final(info, A_TROLL_X, 0x123) != 0x123
+    expected = TROLL_STATE_HAND_OUT | (TROLL_STATE_FACING_RIGHT if flags & OBJ_FLAG_FACING_RIGHT
+                                       else 0)
+    assert _final(info, A_TROLL_STATE, incoming) == expected
+
+
+def test_lava_troll_a_raised_hand_starts_its_timer_negative():
+    """The armed timer is 0xff, which the NEXT call's `subq.b` reads as negative and reloads — so
+    the first frame is held an extra tick rather than stepping immediately."""
+    info = _troll_case(state=0, slots=_target(), timer=5)
+    assert _final(info, A_TROLL_STEP_TIMER, 5, width=1) == TROLL_TIMER_ARMED
+
+
+# ---- tracking a target with the hand already out ----
+
+@pytest.mark.parametrize("gap", (0, 1, TROLL_GRAB_DX, TROLL_GRAB_DX + 1, 0x100,
+                                 TROLL_GRAB_DX_WRAPPED - 1, TROLL_GRAB_DX_WRAPPED,
+                                 TROLL_GRAB_DX_WRAPPED + 1, 0xffff))
+def test_lava_troll_tracking_window_is_measured_both_ways_round(gap):
+    """With the hand out the object must be within TROLL_GRAB_DX pixels to its RIGHT — tested once
+    unsigned and once as a SIGNED distance the other way round the playfield, so an object that has
+    wrapped past x 0 is still in reach. A gap outside both windows is passed over."""
+    troll_x = 0x20
+    _troll_case(state=TROLL_STATE_HAND_OUT, x=troll_x,
+                slots=_target(x=(troll_x + gap) & 0xffff), note=f"gap={gap:#x}")
+
+
+@pytest.mark.parametrize("drop", (0, 1, TROLL_GRAB_DY, TROLL_GRAB_DY + 1, 0x100, 0xffff))
+def test_lava_troll_contact_window_is_unsigned(drop):
+    """`sub.w 4(a0),d2 ; cmpi.w #$b ; bhi` — the hand grabs once it is within TROLL_GRAB_DY
+    scanlines UNDER the object. A hand that has climbed past it wraps huge and keeps climbing."""
+    info = _troll_case(state=TROLL_STATE_HAND_OUT, y=(TROLL_TARGET_Y + drop) & 0xffff,
+                       x=TROLL_TARGET_X, slots=_target(), note=f"drop={drop:#x}")
+    grabbed = drop <= TROLL_GRAB_DY
+    assert bool(info["regs"]["dosound"]) == grabbed, "the grab sound disagrees with the window"
+    if grabbed:
+        assert _final(info, A_TROLL_TARGET, 0, width=4) == A_OBJECT_TABLE \
+               + TROLL_TARGET_SLOT * OBJ_SIZE
+
+
+@pytest.mark.parametrize("priority", (SND_PRIORITY_IDLE, SND_TROLL_GRAB, SND_TROLL_GRAB - 1, 0x8000))
+def test_lava_troll_grab_sound_goes_through_play_sound(priority):
+    """The grab is off-image (XBIOS Dosound), so only the kit's ledger sees it — and play_sound
+    drops a request that does not outrank what is playing, on a SIGNED compare."""
+    info = _troll_case(state=TROLL_STATE_HAND_OUT, y=TROLL_TARGET_Y, x=TROLL_TARGET_X,
+                       slots=_target(), priority=priority)
+    assert bool(info["regs"]["dosound"]) == (((priority ^ 0x8000) - 0x8000) >= SND_TROLL_GRAB)
+
+
+@pytest.mark.parametrize("vx", (0, 1, 0xffff, 0x8000, 0x7fff))
+def test_lava_troll_climbs_a_row_and_drifts_with_its_target(vx):
+    """One scanline up per call, and sideways by the object's own velocity plus a pixel of lead."""
+    troll_x, troll_y = 0x20, 0xa0
+    # prev_rows matched to frame 0's staged height, so the wrist adjustment below is a no-op and
+    # the row this asserts is the climb's own (test_..._grows_from_a_fixed_wrist covers the other).
+    info = _troll_case(state=TROLL_STATE_HAND_OUT, x=troll_x, y=troll_y, timer=3,
+                       prev_rows=_staged_rows(0), slots=_target(vx=vx))
+    assert _final(info, A_TROLL_Y, troll_y) == troll_y - 1
+    assert _final(info, A_TROLL_X, troll_x) == _wrap_x(troll_x + vx + 1)
+
+
+# Every frame a case leaves in troll_frame when the hand is repositioned has to be a RECORD
+# boundary. troll_frame is a byte offset folded straight into the table address, so a misaligned one
+# reads a sprite pointer out of the middle of two records — which both cores follow identically, but
+# out of the 1 MiB buffer the candidate is handed. The game only ever stores multiples of this.
+TROLL_TABLE_FRAMES = tuple(index * TROLL_FRAME_STEP for index in range(TROLL_SPRITE_TABLE_RECORDS))
+
+
+@pytest.mark.parametrize("frame", TROLL_TABLE_FRAMES)
+def test_lava_troll_climb_steps_a_frame_only_when_the_timer_is_due(frame):
+    """The frame advances on the tick the timer reaches 0 and is CLAMPED, not wrapped — the last
+    climbing frame simply repeats. The clamp is an unsigned compare against the stored word."""
+    for timer in (1, 2):                      # timer 1 -> 0 (due), timer 2 -> 1 (not due)
+        info = _troll_case(state=TROLL_STATE_HAND_OUT, y=0xa0, x=TROLL_TARGET_X, timer=timer,
+                           frame=frame, slots=_target(), note=f"timer={timer}")
+        stepped = min(frame + TROLL_FRAME_STEP, TROLL_FRAME_CLIMB_LAST)
+        assert _final(info, A_TROLL_FRAME, frame) == (stepped if timer == 1 else frame)
+
+
+# ---- retracting ----
+
+@pytest.mark.parametrize("frame", (0, 1, TROLL_FRAME_STEP - 1, TROLL_FRAME_STEP,
+                                   2 * TROLL_FRAME_STEP, TROLL_FRAME_HELD))
+def test_lava_troll_retracts_when_there_is_nothing_to_reach_for(frame):
+    """The hand sinks a scanline and steps its frames backwards; once it is past the first one the
+    state's `out` bit goes down and the hand is gone."""
+    troll_x, troll_y, prev_rows = 0x20, 0xa0, 6
+    info = _troll_case(state=TROLL_STATE_HAND_OUT, x=troll_x, y=troll_y, frame=frame, timer=1,
+                       prev_rows=prev_rows, slots={})
+    stepped = frame - TROLL_FRAME_STEP
+    # A hand that is still out goes on to be repositioned, and the wrist adjustment moves y again;
+    # one that has fully retracted skips that and is redrawn where it stands.
+    adjust = prev_rows - _staged_rows(stepped) if stepped >= 0 else 0
+    assert _final(info, A_TROLL_Y, troll_y) == troll_y + 1 + adjust
+    assert _final(info, A_TROLL_X, troll_x) == _wrap_x(troll_x - 1)
+    assert bool(_final(info, A_TROLL_STATE, TROLL_STATE_HAND_OUT) & TROLL_STATE_HAND_OUT) \
+        == (stepped >= 0)
+
+
+@pytest.mark.parametrize("frame", (0x8000, 0x8007, 0x8008, 0xfff8, 0xffff))
+def test_lava_troll_retract_frame_test_is_a_signed_subq(frame):
+    """`subq.w #8 ; bge` reads N == V, so 0x8000 - 8 counts as NEGATIVE even though the stored
+    0x7ff8 looks positive — the one value a test of the result's own sign gets backwards."""
+    _troll_case(state=TROLL_STATE_HAND_OUT, frame=frame, timer=1, slots={},
+                note=f"frame={frame:#x}")
+
+
+def test_lava_troll_retract_steps_its_frame_only_when_the_timer_is_due():
+    _troll_case(state=TROLL_STATE_HAND_OUT, frame=TROLL_FRAME_STEP, timer=3, slots={})
+
+
+# ---- holding, and letting go ----
+
+TROLL_HELD_SLOT = 3
+
+
+def _held(flags, **overrides):
+    """A hand that already has hold of slot TROLL_HELD_SLOT."""
+    fields = {"flags": flags, "x": TROLL_TARGET_X, "y": TROLL_TARGET_Y}
+    fields.update(overrides)
+    return {"state": TROLL_STATE_HAND_OUT | TROLL_STATE_HOLDING,
+            "target": A_OBJECT_TABLE + TROLL_HELD_SLOT * OBJ_SIZE,
+            "slots": {TROLL_HELD_SLOT: fields}}
+
+
+@pytest.mark.parametrize("flags", (0, OBJ_FLAG_GRABBED, OBJ_FLAG_DEAD | OBJ_FLAG_GRABBED,
+                                   OBJ_FLAG_PLAYER | OBJ_FLAG_DEAD))
+def test_lava_troll_lets_go_of_an_empty_or_dead_object(flags):
+    """The grabbed bit comes DOWN before anything else is tested, and an object whose flags then
+    read 0 — or which is dead — is released and the hand retracts. A flags word of exactly
+    OBJ_FLAG_GRABBED becomes 0 once that bit is cleared, which is the `tst.w` branch."""
+    info = _troll_case(**_held(flags), timer=1)
+    assert not _final(info, A_TROLL_STATE, 0) & TROLL_STATE_HOLDING
+
+
+@pytest.mark.parametrize("y", (0, TROLL_ESCAPE_Y - 1, TROLL_ESCAPE_Y, TROLL_ESCAPE_Y + 1, 0xffff))
+@pytest.mark.parametrize("flags", (OBJ_FLAG_PLAYER | OBJ_FLAG_GRABBED, OBJ_FLAG_GRABBED | 1))
+def test_lava_troll_pays_a_player_that_escapes(flags, y):
+    """An object that climbs above the escape line is let go — and if it is a PLAYER, its score
+    digit is bumped and score_update runs, which carries the column and repaints the row. An enemy
+    that gets away is released for nothing. The compare is SIGNED, so a wrapped y of 0xffff is
+    ABOVE the line."""
+    info = _troll_case(**_held(flags, y=y), timer=1)
+    object_addr = A_OBJECT_TABLE + TROLL_HELD_SLOT * OBJ_SIZE
+    escaped = ((y ^ 0x8000) - 0x8000) < TROLL_ESCAPE_Y
+    paid = escaped and bool(flags & OBJ_FLAG_PLAYER)
+    # TROLL_SCORE_DIGITS ends '5' in the bumped column, so a payment CARRIES into the next one —
+    # which is score_update's work, not this routine's, and is what proves it was called.
+    carried = info["writes"].get(object_addr + OBJ_SCORE_DIGITS + 4) is not None
+    assert carried == paid, f"y={y:#x} flags={flags:#x}: the escape bonus disagrees with the model"
+
+
+@pytest.mark.parametrize("flags", (OBJ_FLAG_RESPAWN | OBJ_FLAG_GRABBED,
+                                   OBJ_FLAG_IN_LAVA | OBJ_FLAG_GRABBED,
+                                   OBJ_FLAG_PLAYER | OBJ_FLAG_RESPAWN,
+                                   OBJ_FLAG_PLAYER | OBJ_FLAG_IN_LAVA))
+def test_lava_troll_drops_an_object_that_respawns_or_falls_in(flags):
+    """These two release without retracting: the hand is left exactly where it is and redrawn. The
+    original also writes 0 to troll_state here, which the tail then overwrites from the register —
+    so the hand stays `out` and the NEXT call is what retracts it."""
+    info = _troll_case(**_held(flags), timer=1)
+    state = _final(info, A_TROLL_STATE, TROLL_STATE_HAND_OUT | TROLL_STATE_HOLDING)
+    assert state & TROLL_STATE_HAND_OUT and not state & TROLL_STATE_HOLDING
+
+
+@pytest.mark.parametrize("y", (TROLL_ESCAPE_Y, TROLL_ESCAPE_Y + 1, 0x100, 0x7fff))
+def test_lava_troll_carries_an_object_it_still_holds(y):
+    """Keep-hold: the grabbed bit goes back up, the hand parks under the object, and the carrying
+    frame is selected whatever the climb had reached."""
+    info = _troll_case(**_held(OBJ_FLAG_PLAYER | OBJ_FLAG_GRABBED, y=y), timer=1, frame=0)
+    object_addr = A_OBJECT_TABLE + TROLL_HELD_SLOT * OBJ_SIZE
+    assert _final(info, object_addr + OBJ_FLAGS, OBJ_FLAG_PLAYER | OBJ_FLAG_GRABBED) \
+        & OBJ_FLAG_GRABBED
+    assert _final(info, A_TROLL_FRAME, 0) == TROLL_FRAME_HELD
+    assert _final(info, A_TROLL_Y, 0xa0) == (y + TROLL_HOLD_DY) & 0xffff
+    assert _final(info, A_TROLL_X, 0x20) == _wrap_x(TROLL_TARGET_X - TROLL_HOLD_DX)
+
+
+def test_lava_troll_a_fresh_grab_carries_in_the_same_call():
+    """The grab branches straight into the hold block, which re-reads the target it has just
+    stored — so the sound, the grabbed bit and the first frame of carrying all happen at once."""
+    info = _troll_case(state=TROLL_STATE_HAND_OUT, y=TROLL_TARGET_Y, x=TROLL_TARGET_X,
+                       slots=_target(flags=OBJ_FLAG_PLAYER), frame=0)
+    assert info["regs"]["dosound"], "no grab sound"
+    assert _final(info, A_TROLL_FRAME, 0) == TROLL_FRAME_HELD
+
+
+# ---- placing the hand ----
+
+@pytest.mark.parametrize("frame", TROLL_TABLE_FRAMES)
+def test_lava_troll_frame_selects_a_sprite_table_record(frame):
+    """troll_frame is a BYTE offset into troll_sprite_table, and each staged record carries its own
+    sprite and its own row count — so an index off by a record draws a different hand.
+
+    Driven through a retract whose timer is not due, which is the one path that repositions the hand
+    without choosing the frame for itself first.
+    """
+    info = _troll_case(state=TROLL_STATE_HAND_OUT, frame=frame, timer=3, slots={})
+    assert _final(info, A_DRAW_ROWS, 0) == _staged_rows(frame)
+
+
+@pytest.mark.parametrize("x", (0, 1, 0xf, 0x10, 0x11, TROLL_X_WRAP - 1, TROLL_X_WRAP,
+                               TROLL_X_WRAP + 1, 0xffff, 0x8000, 0xfec0))
+def test_lava_troll_x_wraps_into_the_playfield(x):
+    """`tst.w ; bge` then `cmpi.w #$140 ; blt`, both SIGNED and the second re-reading what the first
+    stored — so at most ONE playfield width is added or taken off, and a hand further out than that
+    stays off screen. The wrapped x then splits into a cell offset and a pixel phase."""
+    info = _troll_case(state=TROLL_STATE_HAND_OUT, x=x, y=0xa0, timer=3, frame=TROLL_FRAME_STEP,
+                       slots={}, note=f"x={x:#x}")
+    expected = _wrap_x(x - 1)          # the retract takes one off x before the wrap runs
+    assert _final(info, A_TROLL_X, x) == expected
+    assert _final(info, A_DRAW_SHIFT, 0) == expected % CELL_PIXELS
+
+
+@pytest.mark.parametrize("prev_rows", (0, 1, 6, 0x10, 0xffff, 0x8000))
+def test_lava_troll_a_climbing_hand_grows_from_a_fixed_wrist(prev_rows):
+    """A taller frame has to start higher, so the change in row count comes off troll_y. Only while
+    climbing: a hand that is carrying something takes its position from the object instead."""
+    troll_y = 0xa0
+    info = _troll_case(state=TROLL_STATE_HAND_OUT, x=TROLL_TARGET_X, y=troll_y, timer=3,
+                       prev_rows=prev_rows, slots=_target())
+    rows = _staged_rows(0)                   # a climb from frame 0 selects record 0
+    assert _final(info, A_TROLL_Y, troll_y) == (troll_y - 1 + prev_rows - rows) & 0xffff
+
+
+@pytest.mark.parametrize("y", (0, 1, 0x64, 0xc7, 0x100, 0x7fff, 0x8000, 0xfffe))
+def test_lava_troll_screen_offset_is_the_row_plus_the_cell(y):
+    """`mulu.w #$a0` for the scanline, `divu.w #$10` + `swap` for the cell and the pixel phase.
+
+    Both reads are UNSIGNED words, so a y past 0x7fff runs on DOWN rather than backwards — which
+    only the retract path can reach, the keep-hold one taking its y from an object the escape check
+    has already bounded below. Such a row is far past the lava, so the blits draw nothing.
+    """
+    frame, prev_rows, x = TROLL_FRAME_STEP, 6, 0x35
+    info = _troll_case(state=TROLL_STATE_HAND_OUT, y=y, x=x, timer=3, frame=frame,
+                       prev_rows=prev_rows, slots={})
+    final_y = (y + 1 + prev_rows - _staged_rows(frame)) & 0xffff
+    final_x = _wrap_x(x - 1)
+    assert _final(info, A_DRAW_DST, 0, width=4) == final_y * SCREEN_ROW_BYTES \
+        + final_x // CELL_PIXELS * CELL_BYTES
+    assert _final(info, A_DRAW_SHIFT, 0) == final_x % CELL_PIXELS
+
+
+@pytest.mark.parametrize("screen_base", SCREEN_BASES)
+def test_lava_troll_screen_bases(screen_base):
+    """draw_dst is an OFFSET; the two blitters are what add screen_base, and it is re-read from the
+    image. Every other case here stages the framebuffer at the same address."""
+    _troll_case(state=TROLL_STATE_HAND_OUT, x=TROLL_TARGET_X, y=0xa0, slots=_target(),
+                screen_base=screen_base, playfield=screen_base + SCREEN_BYTES)
+
+
+def test_lava_troll_publishes_this_frame_as_the_next_ones_previous():
+    """The tail copies the whole draw_* block into troll_prev_*, which is the only thing the next
+    call's erase pass has to go on."""
+    info = _troll_case(state=TROLL_STATE_HAND_OUT, x=TROLL_TARGET_X, y=0xa0, slots=_target(),
+                       prev_dst=0x1234, prev_src=SPRITE + TROLL_SPRITE_STRIDE, prev_shift=7,
+                       prev_rows=3)
+    for prev, current, width in ((A_TROLL_PREV_ROWS, A_DRAW_ROWS, 2),
+                                 (A_TROLL_PREV_SHIFT, A_DRAW_SHIFT, 2),
+                                 (A_TROLL_PREV_DST, A_DRAW_DST, 4),
+                                 (A_TROLL_PREV_SRC, A_DRAW_SRC, 4)):
+        assert _final(info, prev, 0, width=width) == _final(info, current, 0, width=width), \
+            f"{prev:#x} was not published from {current:#x}"
+
+
+TROLL_FUZZ_CHUNKS = 4
+
+
+def _troll_fuzz_cases():
+    rng = random.Random(0x146F6)                 # seeded ONCE — every chunk replays this stream
+    flag_bits = (OBJ_FLAG_PLAYER, OBJ_FLAG_GRABBED, OBJ_FLAG_RESPAWN, OBJ_FLAG_IN_LAVA,
+                 OBJ_FLAG_DEAD, OBJ_FLAG_FACING_RIGHT, 1, 2)
+    for i in range(200):
+        slots = {}
+        for slot in range(N_OBJECTS):
+            if rng.randint(0, 2):
+                continue
+            slots[slot] = {"flags": rng.choice(flag_bits) | rng.choice((0, OBJ_FLAG_PLAYER)),
+                           "x": rng.choice((rng.randrange(TROLL_X_WRAP), TROLL_TARGET_X)),
+                           "y": rng.randrange(0x60, 0xc0),
+                           "vx": rng.randrange(1 << 16)}
+        held = rng.choice(sorted(slots)) if slots else 0
+        yield (i, dict(
+            slots=slots,
+            state=rng.randrange(8),
+            timer=rng.choice((0, 1, 2, 3, 0x80, 0xff)),
+            x=rng.randrange(1 << 16), y=rng.randrange(0x60, 0xc0),
+            # A frame index outside the staged table would send both cores at a sprite pointer read
+            # out of the program's own bytes, which the candidate's 1 MiB buffer cannot follow.
+            frame=rng.randrange(TROLL_SPRITE_TABLE_RECORDS) * TROLL_FRAME_STEP,
+            target=A_OBJECT_TABLE + held * OBJ_SIZE,
+            prev_rows=rng.randrange(1, 20), prev_shift=rng.randrange(0x20),
+            prev_src=SPRITE + rng.randrange(TROLL_SPRITE_TABLE_RECORDS) * TROLL_SPRITE_STRIDE,
+            prev_dst=rng.randrange(0, 0x6000) & ~1,
+            priority=rng.choice((0, SND_TROLL_GRAB, SND_PRIORITY_IDLE)),
+        ))
+
+
+@pytest.mark.parametrize("chunk", range(TROLL_FUZZ_CHUNKS))
+def test_lava_troll_fuzz(chunk):
+    ran = 0
+    for i, staging in _troll_fuzz_cases():
+        if i % TROLL_FUZZ_CHUNKS != chunk:
+            continue
+        _troll_case(note=f"case {i}", **staging)
+        ran += 1
+    assert ran, "this shard ran no cases"
+
+
 # ------------------------------------------------------------------ the mirrored-constant pin
 
 def test_entry_addresses_match_names_txt():
@@ -1254,6 +1844,7 @@ def test_entry_addresses_match_names_txt():
         ENTRY_DRAW_PLATFORMS: "draw_platforms",
         ENTRY_FLASH_SPAWN_PAD: "flash_spawn_pad",
         ENTRY_START_DEATH_ANIM: "start_death_anim",
+        ENTRY_LAVA_TROLL: "lava_troll",
         ENTRY_TROLL_ERASE_HAND: "troll_erase_hand",
         ENTRY_TROLL_DRAW_HAND: "troll_draw_hand",
         ENTRY_DISSOLVE_PLATFORMS: "dissolve_platforms",
@@ -1287,6 +1878,31 @@ def test_mirrored_constants_match_the_headers():
             ("A_troll_prev_dst", A_TROLL_PREV_DST),
             ("A_troll_prev_src", A_TROLL_PREV_SRC), ("A_troll_prev_shift", A_TROLL_PREV_SHIFT),
             ("A_troll_prev_rows", A_TROLL_PREV_ROWS),
+            ("A_troll_state", A_TROLL_STATE), ("A_troll_x", A_TROLL_X), ("A_troll_y", A_TROLL_Y),
+            ("A_troll_target", A_TROLL_TARGET), ("A_troll_frame", A_TROLL_FRAME),
+            ("A_troll_step_timer", A_TROLL_STEP_TIMER),
+            ("A_troll_sprite_table", A_TROLL_SPRITE_TABLE),
+            # the lava troll's own branch thresholds and record layout
+            ("TROLL_STATE_HAND_OUT", TROLL_STATE_HAND_OUT),
+            ("TROLL_STATE_HOLDING", TROLL_STATE_HOLDING),
+            ("TROLL_STATE_FACING_RIGHT", TROLL_STATE_FACING_RIGHT),
+            ("TROLL_SPR_SRC", TROLL_SPR_SRC), ("TROLL_SPR_ROWS", TROLL_SPR_ROWS),
+            ("TROLL_FIRST_WAVE", TROLL_FIRST_WAVE), ("TROLL_STEP_PERIOD", TROLL_STEP_PERIOD),
+            ("TROLL_TIMER_ARMED", TROLL_TIMER_ARMED),
+            ("TROLL_PIT_X0", TROLL_PIT_X0), ("TROLL_PIT_SPAN", TROLL_PIT_SPAN),
+            ("TROLL_REACH_Y", TROLL_REACH_Y), ("TROLL_ESCAPE_Y", TROLL_ESCAPE_Y),
+            ("TROLL_GRAB_DX", TROLL_GRAB_DX),
+            ("TROLL_GRAB_DX_WRAPPED", TROLL_GRAB_DX_WRAPPED), ("TROLL_GRAB_DY", TROLL_GRAB_DY),
+            ("TROLL_ESCAPE_SCORE", TROLL_ESCAPE_SCORE),
+            ("TROLL_ARM_Y", TROLL_ARM_Y), ("TROLL_ARM_X_BACK", TROLL_ARM_X_BACK),
+            ("TROLL_ARM_ROWS", TROLL_ARM_ROWS),
+            ("TROLL_ARM_PREV_SRC", TROLL_ARM_PREV_SRC),
+            ("TROLL_ARM_PREV_DST", TROLL_ARM_PREV_DST),
+            ("TROLL_HOLD_DY", TROLL_HOLD_DY), ("TROLL_HOLD_DX", TROLL_HOLD_DX),
+            ("TROLL_FRAME_STEP", TROLL_FRAME_STEP),
+            ("TROLL_FRAME_CLIMB_LAST", TROLL_FRAME_CLIMB_LAST),
+            ("TROLL_FRAME_HELD", TROLL_FRAME_HELD), ("TROLL_CELL_SHIFT", TROLL_CELL_SHIFT),
+            ("OBJ_FLAG_PLAYER", OBJ_FLAG_PLAYER), ("OBJ_FLAG_GRABBED", OBJ_FLAG_GRABBED),
             ("A_effect_table", A_EFFECT_TABLE), ("A_effect_table_END", A_EFFECT_TABLE_END),
             ("A_ground_x0", A_GROUND_X0), ("A_ground_x1", A_GROUND_X1),
             ("A_spawn_pad_colors", A_SPAWN_PAD_COLORS),
@@ -1296,7 +1912,6 @@ def test_mirrored_constants_match_the_headers():
             ("A_death_sprite_other", A_DEATH_SPRITE_OTHER),
             # field offsets and geometry the packers above encode POSITIONALLY, in a struct.pack
             # format string — nothing else would catch these drifting
-            ("PSPR_COLS", PSPR_COLS), ("PSPR_SRC", PSPR_SRC),
             ("SPAWN_SHIFT", SPAWN_SHIFT), ("SPAWN_DST_OFF", SPAWN_DST_OFF),
             ("GA_ROWS_LATCH", GA_ROWS_LATCH), ("GA_ROWS", GA_ROWS),
             ("GA_FLAME_LEFT", GA_FLAME_LEFT), ("GA_FLAME_RIGHT", GA_FLAME_RIGHT),
@@ -1328,7 +1943,25 @@ def test_mirrored_constants_match_the_headers():
         assert world_h[name] == value, f"{name}: world.h has {world_h[name]:#x}, test has {value:#x}"
 
     assert world_c["DEATH_SPRITE_RISE"] == DEATH_SPRITE_RISE
+    assert world_c["SND_TROLL_GRAB"] == SND_TROLL_GRAB
     assert A_PLATFORM_SPRITES - object_h["PSPR_RECORD"] == DISSOLVE_SPRITE_BASE
+
+    # world.h spells TROLL_X_WRAP as a derivation rather than as 320, so _defines cannot scrape it;
+    # pin the derivation instead, against the geometry it is built from.
+    assert TROLL_X_WRAP == joust_h["SCREEN_ROW_BYTES"] // joust_h["CELL_BYTES"] \
+        * joust_h["CELL_PIXELS"]
+
+    # _troll_pokes stages the eleven troll globals as ONE `TROLL_BLOCK_PACK` poke and the draw_*
+    # scratch as another, which only reach the right fields while those blocks are laid out in this
+    # order at these offsets. Nothing else in the file would catch one of them moving.
+    for name, offset in (("A_troll_prev_dst", 2), ("A_troll_prev_src", 6),
+                         ("A_troll_prev_shift", 10), ("A_troll_x", 12), ("A_troll_y", 14),
+                         ("A_troll_target", 16), ("A_troll_prev_rows", 20),
+                         ("A_troll_frame", 22), ("A_troll_step_timer", 25)):
+        assert world_h[name] - A_TROLL_STATE == offset, f"{name} moved inside the troll block"
+    assert struct.calcsize(TROLL_BLOCK_PACK) == TROLL_BLOCK_BYTES
+    assert [addrs_h[name] - A_DRAW_SRC for name in ("A_draw_shift", "A_draw_rows")] == [4, 6], \
+        "draw_src / draw_shift / draw_rows are no longer the block _troll_pokes packs"
 
     # raise_floor hands paint_floor_row an address the ORIGINAL's callee advances; world.h spells
     # that advance out, so pin it to the strip src/draw.c actually paints (CLAUDE.md's rule for a
@@ -1350,7 +1983,11 @@ def test_mirrored_constants_match_the_headers():
                                   "OBJ_PREV_SHIFT": OBJ_PREV_SHIFT,
                                   "OBJ_EGG_STATE": OBJ_EGG_STATE, "OBJ_EGG_DST": OBJ_EGG_DST,
                                   "OBJ_EGG_SRC": OBJ_EGG_SRC, "OBJ_EGG_ROWS": OBJ_EGG_ROWS,
-                                  "OBJ_EGG_SHIFT": OBJ_EGG_SHIFT}),
+                                  "OBJ_EGG_SHIFT": OBJ_EGG_SHIFT,
+                                  "OBJ_FLAG_IN_LAVA": OBJ_FLAG_IN_LAVA,
+                                  "OBJ_FLAG_RESPAWN": OBJ_FLAG_RESPAWN,
+                                  "OBJ_FLAG_DEAD": OBJ_FLAG_DEAD,
+                                  "OBJ_FLAG_FACING_RIGHT": OBJ_FLAG_FACING_RIGHT}),
             (world_h, "world.h", {"OBJ_EGG_CHAIN": OBJ_EGG_CHAIN,
                                   "OBJ_SCORE_PENDING": OBJ_SCORE_PENDING}),
             (draw_h, "draw.h", {"SPR_MASK_OFF": SPR_MASK_OFF, "SPR_SRC": SPR_SRC,
@@ -1359,11 +1996,21 @@ def test_mirrored_constants_match_the_headers():
             (object_h, "object.h", {"A_platform_present": A_PLATFORM_PRESENT,
                                     "A_platform_sprites": A_PLATFORM_SPRITES,
                                     "PSPR_PRESENT": PSPR_PRESENT, "PSPR_ROWS": PSPR_ROWS,
+                                    "PSPR_COLS": PSPR_COLS, "PSPR_SRC": PSPR_SRC,
                                     "PSPR_DST_OFF": PSPR_DST_OFF,
                                     "PSPR_RECORD": PSPR_RECORD})):
         for name, value in mirrored.items():
             assert defines[name] == value, (f"{name}: {origin} has {defines[name]:#x}, "
                                             f"test has {value:#x}")
+
+
+def test_the_staged_sprite_table_fits_the_real_one():
+    """_troll_sprite_table pokes its records over troll_sprite_table ITSELF, which is what pins the
+    address the routine indexes. The real table is only as long as the gap to the next named
+    routine, so a record too many would quietly lay test data over that routine's code."""
+    table_end = min(addr for addr in harness.NAME_MAP if addr > A_TROLL_SPRITE_TABLE)
+    assert A_TROLL_SPRITE_TABLE + TROLL_SPRITE_TABLE_RECORDS * TROLL_FRAME_STEP <= table_end, (
+        f"{TROLL_SPRITE_TABLE_RECORDS} staged records run past {harness.label(table_end)}")
 
 
 def test_scratch_areas_are_clear_of_everything_the_model_owns():

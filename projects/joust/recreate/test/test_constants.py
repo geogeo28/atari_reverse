@@ -23,11 +23,34 @@ import test_screen
 REC = Path(__file__).resolve().parents[1]
 
 
+# Two spellings of a constant value: an integer literal, and the single-bit shift the flag-bit
+# macros use. The shift form was invisible until OBJ_FLAG_REMOVED was found defined as `(1u << 12)`
+# in world.h and `(1u << 13)` in egg.h — same name, different bits, and neither the duplicate pin
+# below nor the compiler (no translation unit includes both headers) could see it.
+# The trailing lookahead makes the value the WHOLE definition: a compound expression that merely
+# starts with one of these two forms — `(1u << 6) | (1u << 11)`, `0x10 + BAR` — stays invisible
+# rather than being half-read into a plausible wrong number.
+_DEFINE_RE = re.compile(r"^#define\s+(?P<name>\w+)\s+(?:"
+                        r"(?P<literal>0[xX][0-9a-fA-F]+|\d+)[uU]?"
+                        r"|\(\s*1[uU]?\s*<<\s*(?P<bit>\d+)\s*\)"
+                        r")(?=\s*(?:/[/*]|$))", re.M)
+
+
 def _defines(path):
-    """{name: value} for every simple `#define NAME <integer literal>` in a C source or header."""
+    """{name: value} for every `#define NAME <integer literal>` or `#define NAME (1u << N)`.
+
+    Still out of reach, deliberately: a value built from other macros or from arithmetic
+    (`RNG_PTR_RESET IMAGE_LOAD_BASE`, `TROLL_X_WRAP (SCREEN_ROW_BYTES / CELL_BYTES * CELL_PIXELS)`,
+    `PTERO_SPOT_X_NEAR ((int16_t)8)`). Evaluating those would mean resolving one header's macros
+    against another's, which is a C preprocessor, not a scraper — the tests that mirror them pin
+    the derivation instead (see test_world.py's TROLL_X_WRAP assertion).
+
+    Include guards need no exclusion list and never will: `#define JOUST_DRAW_H` has no value, so
+    neither branch matches it.
+    """
     text = (REC / path).read_text()
-    return {m.group(1): int(m.group(2), 0)
-            for m in re.finditer(r"^#define\s+(\w+)\s+(0[xX][0-9a-fA-F]+|\d+)u?\b", text, re.M)}
+    return {m["name"]: int(m["literal"], 0) if m["literal"] else 1 << int(m["bit"])
+            for m in _DEFINE_RE.finditer(text)}
 
 
 def test_entry_addresses_match_names_txt():
@@ -97,11 +120,13 @@ def test_no_constant_is_defined_in_two_files():
     The file list is globbed, not enumerated, so a header added after this was written is covered
     the moment it exists.
 
-    Reach: `_defines` only sees `#define NAME <integer literal>`, so this cannot catch a duplicated
-    macro whose value is an expression or another macro (`OBJ_FLAG_RESPAWN (1u << 7)`,
-    `RNG_PTR_RESET IMAGE_LOAD_BASE`, `PTERO_SPOT_X_NEAR ((int16_t)8)`). That same restriction is
-    why include guards need no exclusion list: `#define JOUST_DRAW_H` has no value and is never
-    scraped. Nothing here is suppressed — a hit is always a real duplicate.
+    It catches a same-name/same-value duplicate and a same-name/DIFFERENT-value one alike, which is
+    the case that matters: OBJ_FLAG_REMOVED was `(1u << 12)` in world.h and `(1u << 13)` in egg.h,
+    two different bits under one name, and each file compiled happily against its own.
+
+    Reach: whatever `_defines` cannot read, this cannot check — a macro whose value is arithmetic or
+    another macro is still invisible here (see that function's docstring). Include guards fall out
+    for free rather than by an exclusion list, so nothing is suppressed: a hit is a real duplicate.
     """
     files_by_constant = {}
     for path in sorted(list((REC / "include").glob("*.h")) + list((REC / "src").glob("*.c"))):

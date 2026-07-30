@@ -2,7 +2,8 @@
 
 Covered here, leaves first: find_free_message @ 0x1435c, flash_hiscore_color @ 0x144b0,
 draw_hiscore_cursor @ 0x14658, draw_hiscore_entry @ 0x146a6, the draw_lives alias family
-@ 0x14246/0x1424e/0x14260 and draw_messages @ 0x142de.
+@ 0x14246/0x1424e/0x14260, draw_messages @ 0x142de and the score_update alias family
+@ 0x14160/0x14166/0x14172.
 
 Every routine here takes its arguments in registers or in globals — none builds a stack frame — so
 the oracle is entered at the routine itself and its own machine stack stays inside the guard band
@@ -23,6 +24,9 @@ from harness import differential, report
 from test_constants import _defines   # the shared `#define` scraper; see the pin tests at the end
 
 # ---- entry points (Ghidra addresses; ../../names.txt) ----
+ENTRY_SCORE_UPDATE = 0x14160
+ENTRY_SCORE_UPDATE_P2 = 0x14166
+ENTRY_SCORE_UPDATE_P1 = 0x14172
 ENTRY_DRAW_LIVES = 0x14246
 ENTRY_DRAW_LIVES_P1 = 0x1424e
 ENTRY_DRAW_LIVES_P2 = 0x14260
@@ -48,6 +52,7 @@ A_MESSAGE_TABLE = 0x10e16
 A_OBJECT_TABLE = 0x10f36       # player 1's slot, and the message table's end bound
 A_PLAYER2 = 0x10f84
 A_HISCORE_NAME = 0x18396
+A_SND_PRIORITY = 0x10d4c       # play_sound's gate: a request above this is dropped
 
 # ---- strings ----
 STR_LIFE_BLANK = 0x1861b
@@ -60,6 +65,10 @@ MSG_RECORD, N_MESSAGES = 0xc, 24
 MSG_KIND, MSG_TIMER, MSG_COLOR, MSG_SHIFT, MSG_SCREEN_PTR, MSG_STRING = 0, 1, 2, 3, 4, 8
 MSG_KIND_PERSISTENT = 3
 OBJ_SCORE_PTR, OBJ_SCORE_SHIFT_LO, OBJ_LIVES = 0x36, 0x3b, 0x4c
+OBJ_SCORE_TEXT = 0x3c          # the string draw_string is handed: `02 <colour>`, then the digits
+OBJ_SCORE_FIRST_DIGIT = 0x3e
+OBJ_SCORE_LIFE_DIGIT = 0x41    # the thousands: a carry OUT of it crosses 10,000
+OBJ_SCORE_LAST_DIGIT = 0x44
 OBJ_SIZE = 0x4e
 CELL_BYTES = 8
 SCREEN_ROW_BYTES = 0xa0
@@ -72,6 +81,7 @@ NOISE_ROWS = 9             # scanlines to seed under one drawn character (the la
 
 # ---- scratch areas, clear of the program (ends 0x2b7ae), of abi's stub space (0x40000..0x40207),
 # of the staged-file table (0xbf000) and of the stack guard. ----
+SCORE_SCRATCH = 0x48000   # a third object record, away from BOTH player slots
 SCREEN = 0x70000
 STRINGS = 0x80000
 
@@ -83,7 +93,10 @@ FUZZ_CHUNKS = 2
 FIND_FREE_FUZZ_CHUNKS = 4       # cheap cases, so this one shards further
 
 _U8P = ctypes.POINTER(ctypes.c_uint8)
-for _glue, _nargs, _ret in (("g_find_free_message", 0, ctypes.c_uint32),
+for _glue, _nargs, _ret in (("g_score_update", 1, None),
+                            ("g_score_update_p1", 0, None),
+                            ("g_score_update_p2", 0, None),
+                            ("g_find_free_message", 0, ctypes.c_uint32),
                             ("g_draw_messages", 0, None),
                             ("g_draw_lives", 1, None),
                             ("g_draw_lives_p1", 0, None),
@@ -772,6 +785,409 @@ def test_draw_messages_fuzz(chunk):
     assert ran, "this shard ran no cases"
 
 
+# ------------- score_update @ 0x14160 / _p2 @ 0x14166 / _p1 @ 0x14172 — one alias family
+#
+# The family adds NOTHING. A caller has already added its points into one of the object's ASCII
+# score digits, and these three repair the string: promote a bumped blank to the digit it means,
+# carry the decimal columns, hand out the extra lives those carries earn, and repaint the row.
+
+SND_PRIORITY_IDLE = 0x10       # nothing playing; any request outranks it (mirror of src/sound.c)
+SND_EXTRA_LIFE = 1             # what the extra life asks play_sound for
+
+N_SCORE_DIGITS = OBJ_SCORE_LAST_DIGIT - OBJ_SCORE_FIRST_DIGIT + 1
+SCORE_COLOR_BYTE = OBJ_SCORE_TEXT + 1   # the `02 <colour>` pair's colour — what a carry overflows into
+TEXT_SET_COLOR = 2                      # draw_string's set-colour control byte...
+TEXT_SET_POS = 1                        # ...and the one that moves text_ptr (mirrors of src/draw.c)
+SCORE_COLOR = 7                         # the colour the shipped records carry
+
+BLANK = ord(" ")               # a digit position the score has not reached yet
+DIGIT_0, DIGIT_9 = ord("0"), ord("9")
+BLANK_TO_DIGIT = 0x10          # `addi.b #$10`: ' ' + n becomes '0' + n
+SCORE_CARRY = 0xa
+
+# Where the model's index sits relative to the digits: index 0 is the string's COLOUR byte (the
+# carry out of the leftmost digit lands there), so digit n is index n + 1.
+MODEL_LIFE_INDEX = OBJ_SCORE_LIFE_DIGIT - SCORE_COLOR_BYTE
+
+SCORE_ROW_CELLS = 9            # cells the digit row and the lives row beside it can reach
+SCORE_ROW_PITCH = 12           # scanlines between the three staged HUD bands
+
+# The three records every case stages. A routine that read the wrong one still reads something
+# known, and each has its OWN screen band, so painting the wrong row shows up as pixels.
+HUD_SLOTS = (A_OBJECT_TABLE, A_PLAYER2, SCORE_SCRATCH)
+HUD_FILLER = (b"  12340", b"  56780", b"  90120")   # a settled string per slot, all distinct
+
+
+def _hud_row(object_addr):
+    return SCREEN + HUD_SLOTS.index(object_addr) * SCORE_ROW_PITCH * SCREEN_ROW_BYTES
+
+
+def _score_record(digits, score_ptr, shift, lives, colour):
+    """One whole object record: the score string, the HUD cursor and the life count.
+
+    The shift is the LOW byte of a word field whose high byte is noise, as for draw_lives — and the
+    byte after the last digit stays 0, which is the string's terminator.
+    """
+    assert len(digits) == N_SCORE_DIGITS, "the score string is seven digits"
+    record = bytearray(OBJ_SIZE)
+    struct.pack_into(">I", record, OBJ_SCORE_PTR, score_ptr)
+    record[OBJ_SCORE_SHIFT_LO - 1] = SCORE_SHIFT_HIGH_BYTE
+    record[OBJ_SCORE_SHIFT_LO] = shift
+    record[OBJ_LIVES] = lives
+    record[OBJ_SCORE_TEXT] = TEXT_SET_COLOR
+    record[SCORE_COLOR_BYTE] = colour
+    record[OBJ_SCORE_FIRST_DIGIT:OBJ_SCORE_LAST_DIGIT + 1] = bytes(digits)
+    return bytes(record)
+
+
+def _score_pokes(digits, object_addr, shift=0, lives=0, colour=SCORE_COLOR,
+                 priority=SND_PRIORITY_IDLE, flags=0, score_ptr=None, seed=0):
+    """Stage all three HUD records plus the noise under their rows, then the case's own record."""
+    rng = random.Random(seed)
+    pokes = {}
+    for index, slot in enumerate(HUD_SLOTS):
+        row = SCREEN + index * SCORE_ROW_PITCH * SCREEN_ROW_BYTES
+        _seed_rows(pokes, rng, row, SCORE_ROW_CELLS)
+        pokes[slot] = _score_record(HUD_FILLER[index], row, index, index, index + 1)
+
+    row = _hud_row(object_addr) if score_ptr is None else score_ptr
+    if score_ptr is not None:
+        _seed_rows(pokes, rng, score_ptr & 0xffffffff, SCORE_ROW_CELLS)
+    pokes[object_addr] = _score_record(digits, row, shift, lives, colour)
+    pokes[A_SND_PRIORITY] = struct.pack(">H", priority)
+    pokes.update(_text_engine_pokes(flags))
+    return pokes, row
+
+
+def _model_score(digits, colour):
+    """The test's own model of the two sweeps: (final digits, final colour byte, lives awarded).
+
+    It exists to keep a case from passing vacuously: the image diff alone cannot tell "both cores
+    carried this column" from "neither core did anything at all".
+    """
+    string = [colour] + list(digits)          # index 0 = the colour byte, 1..7 = the digits
+
+    at = 1                                    # the promotion sweep stops one short of the last digit
+    while at < N_SCORE_DIGITS and string[at] == BLANK:
+        at += 1
+    while at < N_SCORE_DIGITS:
+        if ((string[at] ^ 0x80) - 0x80) < DIGIT_0:      # a SIGNED byte compare
+            string[at] = (string[at] + BLANK_TO_DIGIT) & 0xff
+        at += 1
+
+    lives = 0
+    for at in range(N_SCORE_DIGITS, 0, -1):
+        while string[at] > DIGIT_9:                     # ...and this one is UNSIGNED
+            if string[at - 1] == BLANK:
+                string[at - 1] = DIGIT_0
+            string[at - 1] = (string[at - 1] + 1) & 0xff
+            string[at] = (string[at] - SCORE_CARRY) & 0xff
+            if at == MODEL_LIFE_INDEX and not string[at - 1] & 1:
+                lives += 1
+    return bytes(string[1:]), string[0], lives
+
+
+def _poison_is_safe(final_digits):
+    """Would the attribution pass stay inside the image on this case? (see `poison` below)
+
+    Poison re-runs both cores on an image whose every WRITTEN byte is inverted — which here means
+    inverted score digits, i.e. a second, arbitrary run of the same two sweeps over ~digit. That is
+    only safe while the sweeps cannot land on draw_string's 0x01 set-position byte, which would aim
+    text_ptr through pos_to_screen at an address outside the 1 MiB buffer the candidate is handed.
+
+    A string that settles at '0'..'9' (or an untouched leading blank, which is never written and so
+    never poisoned) inverts to 0xc6..0xcf, which the promotion lifts to 0xd6..0xdf and the carries
+    then bring back down ten at a time — at most 17 of them, so the running total tops out at 0xf0
+    and can never wrap into the control range. Any other settled string can, so it is left alone.
+    """
+    return all(byte == BLANK or DIGIT_0 <= byte <= DIGIT_9 for byte in final_digits)
+
+
+def _score_case(entry, glue, digits, object_addr=A_OBJECT_TABLE, lives=0, colour=SCORE_COLOR,
+                expect_lives=None, poison=None, note="", **staging):
+    """Run both cores, then check the run was not vacuous against the model above.
+
+    `poison` defaults to whatever `_poison_is_safe` allows for this string, so a case does not have
+    to reason about the attribution pass itself; pass False to skip it outright.
+    """
+    if poison is None:
+        poison = _poison_is_safe(_model_score(digits, colour)[0])
+    pokes, row = _score_pokes(digits, object_addr, lives=lives, colour=colour, **staging)
+    diffs, info = differential(entry, {"a0": object_addr, "_pokes": pokes}, glue, poison=poison)
+    assert not diffs, (f"entry={entry:#x} object={object_addr:#x} digits={bytes(digits)!r} "
+                       f"lives={lives:#x} colour={colour:#x} {staging} {note}\n{report(diffs)}")
+
+    final_digits, final_colour, awarded = _model_score(digits, colour)
+    if expect_lives is not None:
+        assert awarded == expect_lives, (
+            f"the test's own model awards {awarded} extra lives, the case says {expect_lives} — "
+            f"the staging does not mean what the case claims")
+    for index in range(N_SCORE_DIGITS):
+        if final_digits[index] == digits[index]:
+            continue
+        addr = object_addr + OBJ_SCORE_FIRST_DIGIT + index
+        assert info["writes"].get(addr) == final_digits[index], (
+            f"digit {index}: the original left {info['writes'].get(addr)}, the model says "
+            f"{final_digits[index]:#x}")
+    if final_colour != colour:
+        assert info["writes"].get(object_addr + SCORE_COLOR_BYTE) == final_colour, (
+            "the carry out of the leftmost digit did not reach the string's colour byte")
+    if awarded:
+        assert info["writes"].get(object_addr + OBJ_LIVES) == (lives + awarded) & 0xff, (
+            "the extra lives did not reach the record's life count")
+    assert any(row <= addr < row + SCORE_ROW_CELLS * CELL_BYTES for addr in info["writes"]), (
+        f"nothing was painted at the score row itself ({row:#x}) — the case staged the HUD "
+        f"somewhere the routine never looks")
+    return info
+
+
+SCORE_ENTRIES = ((ENTRY_SCORE_UPDATE, A_OBJECT_TABLE),
+                 (ENTRY_SCORE_UPDATE_P2, A_PLAYER2),
+                 (ENTRY_SCORE_UPDATE_P1, A_OBJECT_TABLE))
+
+
+def _score_glue(entry, object_addr):
+    if entry == ENTRY_SCORE_UPDATE_P1:
+        return lambda lib, buf: lib.g_score_update_p1(buf)
+    if entry == ENTRY_SCORE_UPDATE_P2:
+        return lambda lib, buf: lib.g_score_update_p2(buf)
+    return lambda lib, buf: lib.g_score_update(buf, object_addr)
+
+
+def _update(digits, object_addr=A_OBJECT_TABLE, **kwargs):
+    """The A0 entry — what every case below uses unless it is about the aliases themselves."""
+    return _score_case(ENTRY_SCORE_UPDATE,
+                       lambda lib, buf: lib.g_score_update(buf, object_addr),
+                       digits, object_addr=object_addr, **kwargs)
+
+
+# ---- the three entry points ----
+
+@pytest.mark.parametrize("object_addr", HUD_SLOTS)
+def test_score_update_takes_its_object_from_a0(object_addr):
+    """0x14160 falls straight into the shared body with whatever A0 holds — including a record
+    that is neither player's, which the two aliases below can never reach."""
+    _update(b"  1239:", object_addr=object_addr, expect_lives=0)
+
+
+@pytest.mark.parametrize("entry,object_addr,other", ((ENTRY_SCORE_UPDATE_P1, A_OBJECT_TABLE,
+                                                      A_PLAYER2),
+                                                     (ENTRY_SCORE_UPDATE_P2, A_PLAYER2,
+                                                      A_OBJECT_TABLE)))
+def test_score_update_aliases_load_their_own_player_and_ignore_a0(entry, object_addr, other):
+    """Each alias is `movem` + `movea.l #<slot>,a0` + a branch into the body, so the A0 it was
+    entered with is dead. The other player's record carries its own settled string and its own
+    screen band, so working on the wrong one shows as both digits and pixels."""
+    _score_case(entry, _score_glue(entry, object_addr), b"  1239:", object_addr=object_addr,
+                expect_lives=0, note=f"other={other:#x}")
+
+
+# ---- the promotion sweep (0x1417c..0x141a8) ----
+
+def test_score_update_leading_blanks_stay_blank():
+    """The sweep skips over the blanks BEFORE the first real character rather than filling them
+    with zeroes, which is what keeps the row right-aligned."""
+    for digits in (b"      0", b"     10", b"  12340", b"1234560"):
+        _update(digits, expect_lives=0, note=repr(digits))
+
+
+def test_score_update_promotes_a_bumped_blank():
+    """The live case: a caller adds 5 into a position still holding ' ', leaving 0x25, and this is
+    what turns it into '5'. Nothing else in the routine would."""
+    _update(b"     %0", expect_lives=0)
+
+
+@pytest.mark.parametrize("digits", (b"    12%", b"      %"))
+def test_score_update_never_promotes_the_last_digit(digits):
+    """The sweep stops one short of the units position, so a bump landing THERE is never repaired.
+
+    Unreachable in the game — every reset writes '0' into that byte (`move.b #$30,68(a0)`) and no
+    caller adds to it — but it is the sweep's bound. The first string RUNS the promotion up to that
+    bound (a reconstruction that went one place further turns the '%' into a '5'); the second is all
+    blanks, so the skip loop hits the same bound and returns without promoting anything at all.
+    """
+    info = _update(digits, expect_lives=0, note=repr(digits))
+    assert A_OBJECT_TABLE + OBJ_SCORE_LAST_DIGIT not in info["writes"], (
+        "the units digit was rewritten — the promotion sweep ran one position too far")
+
+
+@pytest.mark.parametrize("byte", (0x00, 0x1f, 0x21, 0x2f, 0x30, 0x31, 0x7f, 0x80, 0xef, 0xff))
+def test_score_update_promotion_is_a_signed_compare(byte):
+    """`cmpi.b #$30 ; bge` — bytes 0x80..0xff are NEGATIVE, so they are promoted just as 0x00..0x2f
+    are, while 0x30..0x7f are left alone. An unsigned reading gets the whole top half backwards."""
+    _update(b"  0" + bytes([byte]) + b"000")
+
+
+def test_score_update_promotes_every_position_after_the_first_non_blank():
+    """One blank per position, each preceded by a real digit, so the promotion has to reach it."""
+    for index in range(1, N_SCORE_DIGITS - 1):
+        digits = bytearray(b"0000000")
+        digits[index] = BLANK
+        _update(bytes(digits), expect_lives=0, note=f"blank at {index}")
+
+
+# ---- the carry sweep (0x141b8..0x14200) ----
+
+@pytest.mark.parametrize("index", range(N_SCORE_DIGITS))
+def test_score_update_carries_every_column(index):
+    """':' is '9' + 1. Every position carries, the units included — which is the one the promotion
+    sweep above never reaches, so only the carry sweep can be reading it."""
+    digits = bytearray(b"0000000")
+    digits[index] = DIGIT_9 + 1
+    _update(bytes(digits), note=f"carry at {index}")
+
+
+def test_score_update_carry_cascades_the_whole_string():
+    """A string of nines carries all the way up, one column at a time."""
+    _update(b"099999:")
+
+
+def test_score_update_carry_promotes_a_blank_column():
+    """A carry arriving at a still-blank column makes it '0' first, which is how the number grows
+    a digit to the left. Without that step the ' ' would be incremented to '!'."""
+    _update(b"    :00", expect_lives=0)
+
+
+@pytest.mark.parametrize("byte", (DIGIT_9 + 1, 0x44, 0x50, 0x7f, 0x80, 0xff))
+def test_score_update_carry_repeats_until_the_digit_is_a_digit_again(byte):
+    """`bls` is UNSIGNED, so anything above '9' — 0x80 and 0xff included — is carried ten at a time
+    until it lands back in range. The column above therefore gains several units in one call."""
+    _update(b"00" + bytes([byte]) + b"0000", note=f"units {byte:#x}")
+
+
+def test_score_update_carries_out_of_the_leftmost_digit_into_the_colour_byte():
+    """Every column's carry lands one byte to its LEFT, and the leftmost digit's neighbour is the
+    string's `02 <colour>` pair — so an eight-digit score recolours its own row instead of
+    overflowing cleanly. Unreachable in a real game; reproduced, not fixed."""
+    info = _update(b":000000", expect_lives=0)
+    assert info["writes"].get(A_OBJECT_TABLE + SCORE_COLOR_BYTE) == SCORE_COLOR + 1
+
+
+@pytest.mark.parametrize("colour", (0, 1, SCORE_COLOR, 0xf))
+def test_score_update_draws_the_string_from_its_control_pair(colour):
+    """draw_string is handed OBJ_SCORE_TEXT, not the first digit, so the `02 <colour>` pair really
+    is part of the string — a different colour paints different pixels."""
+    _update(b"  12340", colour=colour, expect_lives=0)
+
+
+# ---- the extra life ----
+
+@pytest.mark.parametrize("ten_thousands", tuple(b"0123456789") + (BLANK,))
+def test_score_update_extra_life_when_the_ten_thousands_turns_even(ten_thousands):
+    """One carry out of the thousands column, i.e. one 10,000 crossed. The life is paid only when
+    the digit it lands on comes out EVEN (`btst #0`), which is one life per 20,000 points."""
+    digits = b"00" + bytes([ten_thousands]) + b":000"
+    expected = DIGIT_0 + 1 if ten_thousands == BLANK else ten_thousands + 1
+    _update(digits, lives=2, expect_lives=0 if expected & 1 else 1)
+
+
+@pytest.mark.parametrize("index", (0, 1, 2, 4, 5, 6))
+def test_score_update_no_extra_life_from_any_other_column(index):
+    """`cmp.b #$41,d0` — only the thousands column is checked, whatever the digit above it ends up
+    being. Every one of these carries leaves an EVEN digit behind and still pays nothing."""
+    digits = bytearray(b"1111111")
+    digits[index] = DIGIT_9 + 1
+    _update(bytes(digits), expect_lives=0, note=f"carry at {index}")
+
+
+def test_score_update_pays_several_lives_in_one_call():
+    """A digit far above '9' carries repeatedly, and each carry re-tests the column above — so one
+    call can cross several 20,000 boundaries. The five carries here step it 1..5, even twice."""
+    _update(b"000" + bytes([DIGIT_9 + 50]) + b"000", lives=1, expect_lives=2)
+
+
+@pytest.mark.parametrize("lives", (0, 1, 4, 0x7f, 0x80, 0xfe, 0xff))
+def test_score_update_extra_life_is_a_byte_increment(lives):
+    """`addq.b #1,76(a0)` wraps inside the byte, and draw_lives reads the result as SIGNED — so a
+    count of 0x7f becomes 0x80 and the row it repaints comes out empty."""
+    _update(b"001:000", lives=lives, expect_lives=1)
+
+
+def test_score_update_extra_life_redraws_player_1s_row_for_any_other_object():
+    """The life is added to the object A0 named, but draw_lives dispatches on that pointer and both
+    of its bodies then reload the object from a CONSTANT — so a scratch record's extra life bumps
+    its own count and repaints PLAYER 1's lives row."""
+    info = _update(b"001:000", object_addr=SCORE_SCRATCH, lives=0, expect_lives=1)
+    p1_row = _hud_row(A_OBJECT_TABLE) + LIVES_HUD_ADVANCE
+    assert any(p1_row <= addr < p1_row + LIVES_ROW_CELLS * CELL_BYTES for addr in info["writes"]), (
+        "player 1's lives row was not repainted")
+
+
+@pytest.mark.parametrize("priority,plays", ((SND_PRIORITY_IDLE, True), (SND_EXTRA_LIFE, True),
+                                            (SND_EXTRA_LIFE - 1, False), (0x8000, False)))
+def test_score_update_extra_life_sound_goes_through_play_sound(priority, plays):
+    """The sound is off-image (XBIOS Dosound), so only the kit's ledger sees it — and it is issued
+    through play_sound, which drops a request that does not outrank what is already playing. The
+    signed gate is what makes 0x8000 refuse where 0x10 admits."""
+    info = _update(b"001:000", lives=0, expect_lives=1, priority=priority)
+    assert bool(info["regs"]["dosound"]) == plays, (
+        f"priority={priority:#x}: the original {'played no' if plays else 'played a'} sound")
+    if plays:
+        assert info["writes"].get(A_SND_PRIORITY + 1) == SND_EXTRA_LIFE, (
+            "play_sound did not latch the extra-life index as the sound now playing")
+
+
+# ---- the redraw ----
+
+@pytest.mark.parametrize("shift", (0, 1, 5, 8, 0xf6, 0xff))
+def test_score_update_row_shift_is_the_records_low_byte(shift):
+    """text_shift comes from `move.w 58(a0),d0 ; move.b d0,...` — the LOW byte of the word field,
+    with noise staged in the high byte a reconstruction reading the field's own address would take."""
+    _update(b"  12340", shift=shift, expect_lives=0, seed=shift)
+
+
+@pytest.mark.parametrize("score_ptr", (SCREEN + 0x2000, SCREEN + 0x2001, SCREEN + 0x2004,
+                                       SCREEN + 0x2000 + SCREEN_ROW_BYTES))
+def test_score_update_row_follows_the_records_screen_pointer(score_ptr):
+    """text_ptr is the record's own pointer — nothing here is a constant, and the pointer is not
+    even cell-aligned in one of these."""
+    _update(b"  12340", expect_lives=0, score_ptr=score_ptr, seed=score_ptr & 0xff)
+
+
+@pytest.mark.parametrize("flags", (0, TEXT_FLAG_LARGE_FONT, TEXT_FLAG_BACKGROUND,
+                                   TEXT_FLAG_LARGE_FONT | TEXT_FLAG_BACKGROUND, 0xff))
+def test_score_update_sets_the_font_and_the_bar_then_clears_only_the_bar(flags):
+    """`bset #7` before the carries and `bset #4` / `bclr #4` around the draw: the large font is
+    left switched on for whatever draws next, the background bar is not."""
+    info = _update(b"  12340", flags=flags, expect_lives=0, seed=flags)
+    assert info["writes"].get(A_TEXT_FLAGS) == ((flags | TEXT_FLAG_LARGE_FONT)
+                                                & ~TEXT_FLAG_BACKGROUND)
+    assert info["writes"].get(A_TEXT_BG_COLOR) == _defines("src/score.c")["HUD_BG_COLOR"]
+
+
+# ---- fuzz ----
+
+# Weighted so most strings look like a real record's — digits and blanks — while the whole byte
+# range still turns up, which is where the signed promotion and the unsigned carry are separated.
+SCORE_FUZZ_BYTES = tuple(b"0123456789") * 4 + (BLANK,) * 8 + tuple(range(0x100))
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_score_update_fuzz(chunk):
+    rng = random.Random(0x5c02e)               # seeded ONCE — every chunk replays this stream
+    cases = [(rng.randrange(len(SCORE_ENTRIES)),
+              bytes(rng.choice(SCORE_FUZZ_BYTES) for _ in range(N_SCORE_DIGITS)),
+              rng.randint(0, 0xff), rng.randint(0, 0xff), rng.randint(0, 0xf),
+              rng.choice((0, 1, SND_PRIORITY_IDLE, 0x7fff)), rng.randint(0, 0xff))
+             for _ in range(200)]
+    ran = 0
+    for index, (which, digits, shift, lives, colour, priority, flags) in enumerate(cases):
+        if index % FUZZ_CHUNKS != chunk:
+            continue
+        # A string that SETTLES on draw_string's set-position byte aims text_ptr through
+        # pos_to_screen at an address outside the 1 MiB buffer the candidate is handed. No caller
+        # can produce one (they add a small number to a digit or a blank), and the crash it causes
+        # is the harness's limit rather than a divergence, so those cases are dropped.
+        if TEXT_SET_POS in _model_score(digits, colour)[0]:
+            continue
+        entry, object_addr = SCORE_ENTRIES[which]
+        _score_case(entry, _score_glue(entry, object_addr), digits, object_addr=object_addr,
+                    shift=shift, lives=lives, colour=colour, priority=priority, flags=flags,
+                    seed=index, poison=False, note=f"case {index}")
+        ran += 1
+    assert ran, "this shard ran no cases"
+
+
 # ------------------------------------------------------------------ mirrored-constant pins
 #
 # Everything above restates addresses and offsets that really live in ../names.txt and in the C.
@@ -790,7 +1206,10 @@ def _pin(defines, origin, mirrored):
 
 def test_entry_addresses_match_names_txt():
     """Every address this file enters the oracle at is the address names.txt gives that function."""
-    for addr, name in ((ENTRY_DRAW_LIVES, "draw_lives"),
+    for addr, name in ((ENTRY_SCORE_UPDATE, "score_update"),
+                       (ENTRY_SCORE_UPDATE_P1, "score_update_p1"),
+                       (ENTRY_SCORE_UPDATE_P2, "score_update_p2"),
+                       (ENTRY_DRAW_LIVES, "draw_lives"),
                        (ENTRY_DRAW_LIVES_P1, "draw_lives_p1"),
                        (ENTRY_DRAW_LIVES_P2, "draw_lives_p2"),
                        (ENTRY_DRAW_MESSAGES, "draw_messages"),
@@ -822,6 +1241,9 @@ def test_mirrored_constants_match_score_h():
         "A_players_alive": A_PLAYERS_ALIVE, "A_game_over_flag": A_GAME_OVER_FLAG,
         "A_hiscore_name": A_HISCORE_NAME,
         "OBJ_SCORE_PTR": OBJ_SCORE_PTR, "OBJ_LIVES": OBJ_LIVES,
+        "OBJ_SCORE_TEXT": OBJ_SCORE_TEXT, "OBJ_SCORE_FIRST_DIGIT": OBJ_SCORE_FIRST_DIGIT,
+        "OBJ_SCORE_LIFE_DIGIT": OBJ_SCORE_LIFE_DIGIT,
+        "OBJ_SCORE_LAST_DIGIT": OBJ_SCORE_LAST_DIGIT,
         "MSG_TIMER": MSG_TIMER, "MSG_COLOR": MSG_COLOR, "MSG_SHIFT": MSG_SHIFT,
         "MSG_STRING": MSG_STRING, "MSG_KIND_PERSISTENT": MSG_KIND_PERSISTENT,
         "STR_LIFE_BLANK": STR_LIFE_BLANK, "STR_LIFE_P1": STR_LIFE_P1,
@@ -841,7 +1263,19 @@ def test_mirrored_constants_match_score_c():
         "HISCORE_UNDERLINE_CELLS": HISCORE_UNDERLINE_CELLS,
         "HISCORE_COLUMN_BYTES": HISCORE_COLUMN_BYTES,
         "HISCORE_ENTRY_OFF": HISCORE_ENTRY_OFF,
+        "SCORE_BLANK": BLANK, "SCORE_DIGIT_0": DIGIT_0, "SCORE_DIGIT_9": DIGIT_9,
+        "SCORE_BLANK_TO_DIGIT": BLANK_TO_DIGIT, "SCORE_CARRY": SCORE_CARRY,
+        "SND_EXTRA_LIFE": SND_EXTRA_LIFE,
     })
+
+
+def test_mirrored_constants_match_the_sound_layer():
+    """score_update's extra life leaves through play_sound, so this file restates two of the sound
+    layer's own constants — the priority global it is gated on and the idle value that admits it."""
+    _pin(_defines("include/sound.h"), "sound.h", {"A_snd_priority": A_SND_PRIORITY})
+    _pin(_defines("src/sound.c"), "sound.c", {"SND_PRIORITY_IDLE": SND_PRIORITY_IDLE})
+    assert harness.NAME_MAP.get(A_SND_PRIORITY) == "snd_priority", \
+        "names.txt has no `snd_priority` at that address"
 
 
 def test_mirrored_constants_match_the_shared_headers():
