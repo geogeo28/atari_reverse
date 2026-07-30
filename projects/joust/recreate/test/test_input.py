@@ -146,6 +146,10 @@ for _glue, _ret in (("g_poll_quit_key", ctypes.c_uint32),
     _fn.argtypes = [_U8P]
     _fn.restype = _ret
 
+# The kit's refused-os_*-call recorder (include/os.h), called directly by the pin below.
+harness._lib.os_refused.argtypes = [ctypes.c_int32]
+harness._lib.os_refused.restype = ctypes.c_int32
+
 
 def _poll(lib, buf):
     return lib.g_poll_quit_key(buf)
@@ -242,6 +246,23 @@ def test_poll_quit_key_no_key_returns_at_once():
     diffs, info = differential(ENTRY_POLL_QUIT_KEY, {}, _poll, poison=True)
     assert not diffs, report(diffs)
     assert info["ret"] == INPUT_CONTINUE
+
+
+def test_a_candidate_side_refusal_fails_the_case():
+    """WHAT MAKES THE TEST ABOVE MEAN ANYTHING — and the module comment's closed asymmetry.
+
+    A refused os_* call used to reject the ORACLE's run only, so a candidate that dropped
+    poll_console_key's Bconstat gate called Bconin with nothing pending, got 0, touched nothing, and
+    left every case green. The kit now tallies the candidate's refusals too. Deleting the real gate
+    is how that was measured; this pins the wiring — reset, tally, raise — permanently, without
+    mutating the reconstruction: the glue itself refuses one call, exactly as os.h's helpers do.
+    """
+    def refusing_glue(lib, buf):
+        lib.os_refused(0)                       # os.h's answer when a helper cannot be served
+        return _poll(lib, buf)
+
+    with pytest.raises(AssertionError, match="REFUSES to serve"):
+        differential(ENTRY_POLL_QUIT_KEY, {}, refusing_glue)
 
 
 @pytest.mark.parametrize("key", (0x00, 0x01, 0x02, 0x04, 0x08, 0x0d, 0x20, 0x41, 0x51, 0x53,

@@ -23,6 +23,62 @@ And its corollary, which outranks everything below:
 > partially-modeled call that returns a plausible-looking wrong value is far worse than an honest
 > raise: it converts a loud failure into a silent one.
 
+### Refusing on ONE side is a false green (closed)
+
+That raise covers the oracle. It did **not** cover the candidate, and the gap was a false-green
+class rather than one function's quirk:
+
+> The candidate calls the same `os.h` helpers, gets the same sentinel — `0` from `os_bconstat` /
+> `os_bconin` / `os_super` / `os_gem_trap`, `-1` from the file calls — and carries on. `os_bconin`
+> with no key pending touches neither its out-param nor the image, and `os_fopen` on an unstaged
+> name touches nothing at all. So a reconstruction could **drop a guard the original has** and stay
+> green: the only input that would expose the difference is exactly the one the oracle refuses to
+> run.
+
+Measured twice in `projects/joust/recreate/src/input.c`. Deleting `poll_console_key`'s `Bconstat`
+gate outright left all 2325 cases green. `save_hiscore`'s `Fopen` is the same shape with no gate to
+delete: it hands the candidate `-1` and lets it walk the `Fcreate` fallback, while the same call
+rejects the oracle's run.
+
+**Closed by giving the candidate its own tally.** `os_refused()` (`include/os.h`) records each
+refusal and hands the sentinel straight back, so a helper cannot tally without also returning;
+`src/os_refusal.c` holds the counter and exports `g_os_refusal_reset` / `g_os_refusal_count`, and
+`kit.mk` links it into every candidate exactly as it does the Dosound ledger.
+`harness.differential()` clears it before **each** candidate run — the `poison=True` re-run included
+— and **raises if it comes back non-zero**, unconditionally, because a non-zero *oracle* tally
+already raised inside `emu.run()` before the diff was reached. The three symbols are **required**
+ABI, not probed-optional like the Dosound ledger: that ledger has an oracle-side witness saying when
+it was needed, and this one cannot (the oracle's count is zero by construction), so a missing symbol
+would reopen the class in silence. `harness` refuses to import instead.
+
+**What that catches, and what it does not.** Deleting the `Bconstat` gate now fails two named cases
+— `test_poll_quit_key_no_key_returns_at_once` and `test_hiscore_key_input_no_key_returns_at_once` —
+because those cases really do drive the candidate into `os_bconin`. The `Fopen` instance is the same
+mechanism, but **no case in the suite reaches it**: every quit case stages `HIGH.SCO`, so
+`save_hiscore`'s `Fopen` succeeds, and the one unstaged case is oracle-only (`emu.run`, no candidate
+at all). It was verified by construction instead — a case with `hiscore_dirty = 0`, `HIGH.SCO`
+unstaged and `save_hiscore`'s early-out deleted produces **zero byte diffs** and is caught by the
+tally alone. So the tally closes the class wherever a case reaches the call; it does not invent
+cases, and the `Fcreate` fallback stays unreachable for the reason in limit 2 below.
+
+Two details:
+
+* **A build that must not tally** defines `OS_NO_REFUSAL_TALLY` and gets a no-op `os_refused()`.
+  `shim.c` does — it keeps the oracle's own `g_unmodeled` and does not link `src/os_refusal.c` — with
+  the `#define` next to the `#include` rather than in `kit.mk`, since a build flag can be forgotten
+  where an adjacent line cannot. An **on-target** build whose cores call a refusing helper needs the
+  same define: `os_refused` is the one non-`static inline` symbol `os.h` references, and no Atari
+  build links the kit's `src/`. None needs it today (BuggyBoy's `game_build.sh` excludes `src/os.c`,
+  its only caller, and the `.PRG` still links), but Joust's `src/input.c` *is* an ordinary core that
+  calls `os_fopen`, so a Joust on-target build will. The switch is named for what it selects rather
+  than for the oracle so that the remedy is one `-D` and not a redesign.
+* **`Crawio` is not a refusal.** `os_crawio` and `os_bconin` share `os_console_take_key()`, which
+  only reports whether a key was there; `os_bconin` alone turns "none" into a refusal. An idle
+  console is a legitimate *result* for a non-blocking read and must not reach the tally.
+
+What it proves is narrow: that a guard is **reached**, not that it is the right guard. Transcribe
+guards from the original and reason about them; the tally only stops one from vanishing unnoticed.
+
 ## The harness-poked model state
 
 Four regions of the image are inputs the harness pokes, not program memory. Both cores read the
@@ -292,6 +348,53 @@ nothing to mirror by hand. Two things are **not** in the image and must be match
 `OS_SUPER_TOKEN` is not off-image state but it is still a shared value: a reconstruction of a
 function that calls `Super` must return the same constant, since the program can store it into the
 image where the diff compares it. Using `os_super()` from `os.h` gets that for free.
+
+## Four limits the input layer found
+
+Recorded here because each one is a property of the *model*, not of Joust: any game's
+reconstruction meets them, and none was written down before.
+
+**1. A poked constant only survives if the routine does not initialise it first.** State-level
+poking (the governing rule) puts the value in the image *before* the run, so a routine that clears
+its own input wipes it on entry and the poke buys nothing. Both of Joust's IKBD readers do exactly
+that — `read_joysticks` (`0x11d9a`) and `hiscore_joystick_input` (`0x14538`) both `clr.l
+ikbd_packet` before sending the "interrogate joysticks" command and spinning on the reply. A staged
+packet is therefore erased by the routine itself and the spin never ends. The only way in is to
+enter the oracle **at the wait loop** with the packet already staged, which is what
+`hiscore_joystick_input` does (verified from `0x1454e` onward) and what `read_joysticks` cannot do,
+since it goes on to call an unreconstructed function. So: check whether the routine writes its own
+poked input before assuming state-level modelling reaches it.
+
+**2. The `Fopen` → `Fcreate` fallback is unreachable by construction.** `os_fcreate` *is* `os_fopen`
+plus a truncation, so for any one name both succeed (staged) or both are refused (not staged) —
+there is no image in which `Fopen` returns an error and `Fcreate` then returns a handle. Every
+program's "open it, else create it" idiom therefore has its create arm reproduced but unverified,
+and both `< 0` tests with it. Pinned by
+`projects/joust/recreate/test/test_input.py::test_fcreate_fallback_is_unreachable_under_the_model`.
+Making it reachable would mean letting `Fcreate` invent staging space for a name the harness never
+declared, which is the fabrication the model exists to refuse.
+
+**3. `Pterm` does not stop the run — and misreports itself.** It is unmodeled (below), so the shim
+counts it and then *resumes* the caller with a fabricated `D0 = 0`, because the trap dispatch has
+one exit path. Execution runs on past a call that should never return, until the instruction cap.
+Worse, the run can no longer stop at the sentinel even in principle: `Pterm`'s own
+`move.w #retcode,-(a7); move.w #$4c,-(a7)` lands on the sentinel long itself (Joust's quit path
+reaches `trap #1` with A7 back at `STACK_TOP + 4`), leaving `00 4c 00 00` where `00 00 00 02` was —
+the selector in the sentinel's **high word**. And `emu.run` tests `reached` *before* it tests the
+unmodeled causes, so what comes back is `did not reach rts within 200000 instructions` rather than
+the honest `unmodeled OS behaviour`. Diff such a path at a **checkpoint `stop_pc`** placed before
+the trap; with one set, the same run reports the honest cause.
+
+**4. Model writes bypass the write-set, so `poison` never checks them.** The `os_*` helpers reach
+`g_mem` directly rather than through `m68k_write_memory_*`, so nothing calls `logw` for them:
+`os_bconin` clearing `OS_CON_PENDING`, `os_fwrite` filling a staged file and `os_gem_trap` filling
+`intout` are all **absent from `info["writes"]`**, which holds the 68000's own stores only. The
+image diff still covers those bytes — they are ordinary image state on both sides, which is the
+whole point of sharing `os.h` — but two things follow. A test that wants to assert on model state
+must read the oracle's final image, not its write set (`test_input.py::_oracle_final`). And
+`harness.differential(poison=True)` poisons exactly the oracle's write set, so a byte only the
+*model* wrote is never canaried: a candidate that omits it can still pass the attribution check by
+landing on a value the input image already held.
 
 ## Still unmodeled (an honest raise is the right answer)
 

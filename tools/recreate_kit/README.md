@@ -55,7 +55,7 @@ tools/recreate_kit/
 ### What the candidate `.so` must export
 
 `differential(entry, regs, glue, …)` only calls what the project's own `glue` callbacks name, so
-there is no required symbol — with one group the kit supplies for you:
+there is no required symbol — with two groups the kit supplies for you:
 
 | symbol | signature | purpose |
 | --- | --- | --- |
@@ -82,6 +82,27 @@ a candidate built outside `kit.mk` keeps working: it is then served without the 
 oracle issues no `Dosound` at all, and `differential()` fails with that diagnostic the moment one
 appears. A reconstruction built for the real Atari supplies its own `g_dosound` that issues the
 real trap and does not compile this file — see `projects/buggyboy/recreate/render/atari/game_main.c`.
+
+The second group is the **refused-`os_*`-call tally**, from `src/os_refusal.c` (likewise linked into
+every candidate by `kit.mk`). Unlike the ledger above it is **required**, not optional:
+
+| symbol | signature | purpose |
+| --- | --- | --- |
+| `g_os_refusal_reset` | `void(void)` | clear the tally before each candidate run |
+| `g_os_refusal_count` | `uint32_t(void)` | refused `os_*` calls the candidate made |
+| `os_refused`         | `int32_t(int32_t)` | what `include/os.h`'s helpers route a refusal through |
+
+`harness.differential()` clears the tally, runs the candidate, and **raises if it is non-zero** —
+closing a false-green class in which a reconstruction could drop a guard the original has and stay
+green, because the refusal rejected the oracle's run only. See [`TRAP_MODEL.md`](TRAP_MODEL.md),
+"Refusing on ONE side is a false green".
+
+Reconstruction code never calls `os_refused` itself — `os.h` does, at every point a helper answers
+"the model cannot serve this". It is nonetheless part of the exported ABI: the tests that pin the
+mechanism call it directly to stand in for a refusal, and `harness` probes all three at import.
+Absence is a hard error there rather than a graceful degrade, because the tally has no oracle-side
+witness the way the Dosound ledger does: the oracle's own count is zero by construction, so a
+missing symbol would reopen the false-green class on a suite that stays entirely green.
 
 ### The modeled TOS traps
 

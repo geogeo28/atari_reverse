@@ -7,6 +7,11 @@
  */
 #include <stdint.h>
 #include "m68k.h"
+/* The oracle keeps its own refusal tally — g_unmodeled, below — so os.h must give it the no-op
+ * os_refused() rather than the candidate-side counter in ../src/os_refusal.c, which the oracle does
+ * not link. Declared here rather than as a -D in kit.mk because this is the only oracle translation
+ * unit that includes os.h, and a build flag can be forgotten where an adjacent #define cannot. */
+#define OS_NO_REFUSAL_TALLY 1
 #include "os.h"
 
 static uint8_t *g_mem;

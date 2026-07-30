@@ -11,21 +11,23 @@
  *   * The two never-returning exits — GEMDOS Pterm and the jump back into _start — have no `rts`
  *     to diff at, so they are verified at a checkpoint PC (harness `stop_pc`) and report themselves
  *     through the INPUT_* result instead of through control flow.
- *   * A REFUSED os_* CALL REJECTS ONLY THE ORACLE'S RUN — a general asymmetry of the kit, not one
- *     gate's quirk. Every helper whose unmodeled answer is one the candidate simply discards
- *     behaves this way: on the oracle side the refusal sets g_unmodeled and the case is thrown
- *     away, while the candidate makes the same call, gets the same nothing, and carries on with
- *     nothing tallying it. SO DELETING A GUARD THE ORIGINAL HAS IS INVISIBLE TO THE DIFFERENTIAL.
- *     Two instances are already in this file. poll_console_key's Bconstat gate is the measured one
- *     — os_bconin with no key pending returns 0 and touches neither the out-param nor the image,
- *     and deleting the gate outright leaves the whole suite green. save_hiscore's Fopen is the
- *     same shape without a gate to delete: os_fopen on an unstaged name returns -1 to the
- *     candidate, which then walks the Fcreate fallback, while the same call rejects the oracle's
- *     run — which is precisely why that fallback has no case at all. A later reconstruction of
- *     init_system or title_screen inherits the hole: a dropped Bconstat/Fopen/Super guard will not
- *     fail a single case, so such guards must be transcribed from the original and reasoned about
- *     rather than trusted to the differential. Closing it needs a candidate-side tally in the kit,
- *     which is tracked separately.
+ *   * A REFUSED os_* CALL ONCE REJECTED ONLY THE ORACLE'S RUN — a general asymmetry of the kit,
+ *     not one gate's quirk, and now closed. Every helper whose unmodeled answer the candidate
+ *     simply discards behaved this way: the oracle's refusal set g_unmodeled and the case was
+ *     thrown away, while the candidate made the same call, got the same nothing, and carried on
+ *     with nothing tallying it — SO DELETING A GUARD THE ORIGINAL HAS WAS INVISIBLE TO THE
+ *     DIFFERENTIAL. Both measured instances are in this file: deleting poll_console_key's Bconstat
+ *     gate left the whole suite green, and save_hiscore's Fopen is the same shape without a gate to
+ *     delete — os_fopen on an unstaged name returns -1 to the candidate, which then walks the
+ *     Fcreate fallback, while the same call rejects the oracle's run, which is precisely why that
+ *     fallback has no case at all. The kit now tallies the candidate's own refusals (os_refused in
+ *     include/os.h, tools/recreate_kit/src/os_refusal.c) and harness.differential() raises on a
+ *     non-zero count. Deleting the Bconstat gate now fails two named cases; the Fopen shape is
+ *     caught by the same tally but NO case here reaches it, since every quit case stages HIGH.SCO
+ *     and the unstaged case is oracle-only — the tally closes the class wherever a case reaches the
+ *     call, it does not invent the case. And it proves a guard is REACHED, not that it is the right
+ *     guard, so a Bconstat/Fopen/Super gate in init_system or title_screen is still transcribed
+ *     from the original and reasoned about.
  *   * THE IKBD PATH CANNOT BE VERIFIED AT ALL, and read_joysticks (0x11d9a) is therefore absent
  *     from this file. It sends the IKBD an "interrogate joysticks" command with XBIOS Ikbdws, which
  *     the model swallows (no image effect), and then spins on ikbd_packet until an interrupt
@@ -116,9 +118,11 @@ static void restore_system(uint8_t *image) {
  * Bconin returns scancode << 16 | ascii, and every test either reader makes on it is a `cmp.b`, so
  * only the ASCII byte is ever looked at — the scancode half is dead.
  *
- * THIS GATE IS THE MEASURED CASE of the module comment's refused-os_*-call asymmetry, so what it is
- * worth differentially is nothing. It is transcribed from the original and reasoned about, not
- * proved; on real hardware it is what stops Bconin from blocking. */
+ * THIS GATE IS THE MEASURED CASE of the module comment's refused-os_*-call asymmetry — which is now
+ * closed, so deleting it fails test_poll_quit_key_no_key_returns_at_once and
+ * test_hiscore_key_input_no_key_returns_at_once rather than passing silently. What the tally proves
+ * is only that the gate is REACHED; that it is the RIGHT gate is still transcribed from the
+ * original and reasoned about. On real hardware it is what stops Bconin from blocking. */
 static int poll_console_key(uint8_t *image, uint8_t *key) {
     uint32_t pending = 0, console = 0;
 

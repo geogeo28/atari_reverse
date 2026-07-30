@@ -32,6 +32,22 @@ if _has_dosound_ledger:
     _lib.g_dosound_log_count.restype = ctypes.c_uint32
     _lib.g_dosound_log_args.restype = ctypes.POINTER(ctypes.c_uint32)
 
+# The refused-os_*-call tally (see _vet_no_os_refusal) is REQUIRED ABI, unlike the ledger above.
+# The Dosound ledger can be served without: the oracle's own Dosound stream says when it was needed,
+# so its absence fails loudly at the moment it matters. The refusal tally has no such witness — the
+# oracle's count is zero by construction — so a missing symbol would silently reopen the false-green
+# class the tally exists to close, on a suite that stays entirely green. Refuse to run instead.
+_OS_REFUSAL_ABI = ("g_os_refusal_reset", "g_os_refusal_count", "os_refused")
+_missing_refusal_abi = [sym for sym in _OS_REFUSAL_ABI if not hasattr(_lib, sym)]
+if _missing_refusal_abi:
+    raise RuntimeError(
+        f"{LIB} exports no {'/'.join(_missing_refusal_abi)} — tools/recreate_kit/src/os_refusal.c "
+        f"is not linked into {_CFG.name}'s candidate. Without it a refused os_* call is tallied on "
+        f"the oracle side only, and a reconstruction that drops a guard the original has stays "
+        f"green (see TRAP_MODEL.md). Build the candidate through kit.mk, whose SRC sweeps "
+        f"$(KIT)/src/*.c.")
+_lib.g_os_refusal_count.restype = ctypes.c_uint32
+
 
 def _load_name_map():
     """addr -> name, from names.txt `var`/`fn` lines, for readable diff reports."""
@@ -256,6 +272,31 @@ def _vet_exclude_bands(exclude, min_a7):
             + " — refusing to drop a known global from the diff")
 
 
+def _vet_no_os_refusal(entry):
+    """Reject a run in which the CANDIDATE made an os_* call the TOS model refuses — a FALSE GREEN.
+
+    Call it after EVERY candidate run, the poison pass included — a refusal reached only on the
+    poisoned image is the same untested-but-green case.
+
+    The oracle's own tally is necessarily zero here: a refused trap sets ``g_unmodeled`` and
+    ``emu.run()`` raises long before the diff. So any candidate-side refusal is an asymmetry, and it
+    is the one that hides a missing guard (include/os.h, "refusing a call, on BOTH sides").
+    """
+    refusals = _lib.g_os_refusal_count()
+    if not refusals:
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: the candidate made {refusals} os_* call(s) the TOS model REFUSES "
+        f"to serve, while the oracle made none — so a clean diff here would prove nothing. A refusal "
+        f"rejects the ORACLE's whole run (g_unmodeled), but on the candidate side it only returns a "
+        f"sentinel and touches neither the out-param nor the image, so the candidate is free to "
+        f"differ exactly where the oracle declines to look. Three causes: the candidate is missing a "
+        f"guard the original has (the Bconstat gate before Bconin, a test of Fopen's handle); or "
+        f"this case needs the state staged (harness.console_key(), harness.stage_files()) so BOTH "
+        f"sides execute the call; or a stop_pc checkpoint ended the oracle before a call the "
+        f"candidate still makes. See tools/recreate_kit/TRAP_MODEL.md.")
+
+
 def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
                        stop_pc, max_insns):
     """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
@@ -271,7 +312,13 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
             poisoned[a] = o_final[a] ^ 0xff
     po_final, _, _ = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns)
     buf = (ctypes.c_uint8 * IMAGE_SIZE).from_buffer(bytearray(poisoned))
+    # This is a SECOND candidate run, so it needs the same per-run bookkeeping the first one got:
+    # poisoning inverts oracle-written bytes, which can steer the candidate down a path the plain
+    # run never took — including into a refused os_* call. Reset before, vet after, or that refusal
+    # is tallied into a count nobody reads and the pass reports a clean attribution.
+    _lib.g_os_refusal_reset()
     glue(_lib, buf)
+    _vet_no_os_refusal(entry)
     pc_final = bytes(buf)
     bad = [a for a in range(guard_lo) if po_final[a] != pc_final[a] and not excluded(a)]
     if bad:
@@ -298,6 +345,8 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     outside [STACK_GUARD_LO, IMAGE_SIZE) (e.g. _start moves A7 to 0x1b044). The candidate is
     pure C and never writes a machine stack, so excluding the oracle's stack band is sound.
     ``max_insns`` caps the oracle run (raise it for data-heavy functions like the unpacker).
+    Raises before comparing anything if the candidate made an ``os_*`` call the TOS model refuses
+    (``_vet_no_os_refusal``) — such a case tests nothing, however clean its bytes look.
     ``poison`` runs an extra attribution pass (``_attribution_check``): re-run both cores on an
     image whose oracle-written bytes are pre-poisoned, catching a candidate that matches by
     coincidence without actually writing a byte the oracle wrote. Opt-in (safe for leaf functions).
@@ -311,8 +360,13 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     buf = Buf.from_buffer(bytearray(img))
     if _has_dosound_ledger:
         _lib.g_dosound_log_reset()       # fresh Dosound ledger for this candidate run (see below)
+    _lib.g_os_refusal_reset()            # ...and a fresh refused-os_*-call tally (see below)
     cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
+
+    # Before anything is compared: a candidate that made a refused os_* call has not been tested by
+    # this case at all, however clean the bytes look. See _vet_no_os_refusal.
+    _vet_no_os_refusal(entry)
 
     def excluded(a):
         return any(lo <= a < hi for lo, hi in (exclude or ()))

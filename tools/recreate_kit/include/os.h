@@ -25,6 +25,41 @@
 #include <string.h>
 #include "machine.h"
 
+/* ---- refusing a call, on BOTH sides ------------------------------------------------------
+ * Every helper below answers "the model cannot serve this" with a sentinel: 0 from os_bconstat /
+ * os_bconin / os_gem_trap / os_super, -1 from the file calls. On the ORACLE side shim.c turns that
+ * sentinel into g_unmodeled and emu.run() throws the whole case away. On the CANDIDATE side the
+ * same call is a no-op that returns — os_bconin with no key pending touches neither its out-param
+ * nor the image — so without a tally the refusal is ONE-SIDED, and a reconstruction that drops a
+ * guard the original has (the Bconstat gate before Bconin; a test of Fopen's handle) behaves
+ * identically and stays green. It stays green precisely because the input that would expose the
+ * difference is the one the oracle refuses to run.
+ *
+ * So the candidate counts its refusals. src/os_refusal.c keeps the tally and exports it — kit.mk
+ * links it into every candidate, exactly as it does the Dosound ledger — and harness.differential()
+ * clears it before EACH candidate run, the poison re-run included, and RAISES if it is non-zero. It
+ * can do that unconditionally: a non-zero ORACLE tally already raised in emu.run(), before the diff.
+ * test/test_os_refusal.py pins every refusal site below, since no differential case can: a correct
+ * reconstruction never reaches one, so reverting a `return os_refused(...)` here to a bare `return`
+ * leaves all three game suites green.
+ *
+ * A build that must NOT tally defines OS_NO_REFUSAL_TALLY and gets the no-op below — a compile-time
+ * split, because nothing at runtime distinguishes the cases: it is one header built into different
+ * binaries, and the only fact available is which translation unit is being compiled. Two callers:
+ * shim.c, which keeps the oracle's own tally and does not link src/os_refusal.c; and any on-target
+ * (real Atari) build whose cores call a refusing helper — real TOS refuses nothing, and that build
+ * links the kit's src/ no more than the oracle does. Today no on-target build compiles such a core
+ * (BuggyBoy's game_build.sh excludes src/os.c, its only caller), so none defines it yet; the switch
+ * is named for what it selects rather than for the oracle so that the day one does, the remedy is
+ * one -D and not a redesign. */
+#ifdef OS_NO_REFUSAL_TALLY
+static inline int32_t os_refused(int32_t sentinel) { return sentinel; }
+#else
+int32_t  os_refused(int32_t sentinel);  /* tally one refusal, and hand `sentinel` back unchanged */
+void     g_os_refusal_reset(void);      /* the harness clears the tally before each candidate run */
+uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back */
+#endif
+
 /* ---- the model's fixed memory map -------------------------------------------------------
  * These addresses are kit-wide: one set of C constants serves every game, while load_base /
  * image_size are per-project (project.toml). They therefore assume a program that fits below
@@ -117,9 +152,7 @@ static inline int os_gem_trap(uint8_t *mem, uint32_t d0, uint32_t pblk) {
             wr16(mem + intout + 8, OS_FONT_CELL_H);  /* hbox  */
             return 1;
         }
-        return 0;
-    }
-    if (d0 == GEM_VDI) {
+    } else if (d0 == GEM_VDI) {
         uint32_t intout = be32(mem + pblk + 3 * 4);  /* vpb[3] */
         if (opcode == VDI_V_OPNVWK) {
             /* work_out: only the two determinate low-res fields; the rest of the VDI
@@ -128,9 +161,8 @@ static inline int os_gem_trap(uint8_t *mem, uint32_t d0, uint32_t pblk) {
             wr16(mem + intout + 2, OS_SCREEN_MAX_Y);
             return 1;
         }
-        return 0;
     }
-    return 0;
+    return os_refused(0);                       /* unmodeled subsystem or opcode */
 }
 
 /* ---- BIOS console input (Bconstat 0x01 / Bconin 0x02) --------------------------------
@@ -143,8 +175,18 @@ static inline int os_gem_trap(uint8_t *mem, uint32_t d0, uint32_t pblk) {
 
 /* Bconstat(dev) -> *out. Returns 1 if modeled, 0 for a device the model has no state for. */
 static inline int os_bconstat(const uint8_t *mem, uint16_t dev, uint32_t *out) {
-    if (dev != OS_BIOS_DEV_CON) return 0;
+    if (dev != OS_BIOS_DEV_CON) return os_refused(0);
     *out = be32(mem + OS_CON_PENDING) ? OS_BCONSTAT_READY : 0;
+    return 1;
+}
+
+/* Take the pending keystroke from the console, if there is one: 1 and *out on success, 0 when the
+ * device isn't the console or nothing is staged. NOT a refusal in itself — "no key" is a legitimate
+ * answer for the non-blocking os_crawio below, and only os_bconin turns it into one. */
+static inline int os_console_take_key(uint8_t *mem, uint16_t dev, uint32_t *out) {
+    if (dev != OS_BIOS_DEV_CON || !be32(mem + OS_CON_PENDING)) return 0;
+    *out = be32(mem + OS_CON_CHAR);
+    wr32(mem + OS_CON_PENDING, 0);
     return 1;
 }
 
@@ -152,10 +194,8 @@ static inline int os_bconstat(const uint8_t *mem, uint16_t dev, uint32_t *out) {
  * Reading with no character pending is refused: on real hardware Bconin BLOCKS until a key
  * arrives, and there is no key to wait for here, so any answer would be fabricated. */
 static inline int os_bconin(uint8_t *mem, uint16_t dev, uint32_t *out) {
-    if (dev != OS_BIOS_DEV_CON || !be32(mem + OS_CON_PENDING)) return 0;
-    *out = be32(mem + OS_CON_CHAR);
-    wr32(mem + OS_CON_PENDING, 0);
-    return 1;
+    if (os_console_take_key(mem, dev, out)) return 1;
+    return os_refused(0);
 }
 
 /* Crawio(w): GEMDOS raw console I/O. `w` selects the direction — OS_CRAWIO_READ is a NON-BLOCKING
@@ -180,7 +220,9 @@ static inline int os_bconin(uint8_t *mem, uint16_t dev, uint32_t *out) {
 static inline uint32_t os_crawio(uint8_t *mem, uint16_t w) {
     uint32_t key;
     if (w != OS_CRAWIO_READ) return 0;              /* console output: no image effect, no key eaten */
-    return os_bconin(mem, OS_BIOS_DEV_CON, &key) ? key : OS_CRAWIO_RESULT;
+    /* os_console_take_key, not os_bconin: an idle console is a RESULT here, not a refusal, so it
+     * must not reach the tally that os_bconin's blocking-read refusal feeds. */
+    return os_console_take_key(mem, OS_BIOS_DEV_CON, &key) ? key : OS_CRAWIO_RESULT;
 }
 
 /* ---- GEMDOS Super (0x20) -------------------------------------------------------------
@@ -199,7 +241,7 @@ static inline int os_super(uint32_t arg, uint32_t *out) {
     if (arg == OS_SUPER_ENTER)   { *out = OS_SUPER_TOKEN;    return 1; }
     if (arg == OS_SUPER_INQUIRE) { *out = OS_SUPER_IS_SUPER; return 1; }  /* always supervisor here */
     if (arg == OS_SUPER_TOKEN)   { *out = 0;                 return 1; }  /* accept our own cookie */
-    return 0;                                       /* a stack pointer we never handed out */
+    return os_refused(0);                      /* a stack pointer we never handed out */
 }
 
 /* ---- XBIOS Giaccess (0x1c) — the YM2149 register file --------------------------------
@@ -327,7 +369,7 @@ static inline uint8_t *os_fs_entry(uint8_t *mem, uint16_t handle) {
 /* Fopen(name): match the staged-file table, reset the cursor, return a handle (>= 6), or -1. */
 static inline int32_t os_fopen(uint8_t *mem, uint32_t name_ptr) {
     int slot = os_fs_find_slot(mem, name_ptr);
-    if (slot < 0) return -1;
+    if (slot < 0) return os_refused(-1);
     uint8_t *entry = os_fs_slot(mem, slot);
     wr32(entry + OS_FS_OFF_CURSOR, 0);
     wr32(entry + OS_FS_OFF_OPEN, 1);
@@ -338,7 +380,7 @@ static inline int32_t os_fopen(uint8_t *mem, uint32_t name_ptr) {
  * length. -1 if the harness never staged that name — the model has no staging space to hand out,
  * so it refuses instead of inventing an address. */
 static inline int32_t os_fcreate(uint8_t *mem, uint32_t name_ptr) {
-    int32_t handle = os_fopen(mem, name_ptr);
+    int32_t handle = os_fopen(mem, name_ptr);        /* which already tallied the refusal, if any */
     if (handle < 0) return -1;
     wr32(os_fs_slot(mem, handle - OS_FS_FIRST_HANDLE) + OS_FS_OFF_SIZE, 0);
     return handle;
@@ -350,12 +392,12 @@ static inline int32_t os_fcreate(uint8_t *mem, uint32_t name_ptr) {
  * corrupts the harness's own memory rather than merely reading garbage. */
 static inline int32_t os_fread(uint8_t *mem, uint16_t handle, uint32_t count, uint32_t buf) {
     uint8_t *entry = os_fs_entry(mem, handle);
-    if (!entry || be32(entry + OS_FS_OFF_OPEN) == 0) return -1;   /* not staged / not open */
+    if (!entry || be32(entry + OS_FS_OFF_OPEN) == 0) return os_refused(-1);  /* not staged/not open */
     uint32_t staging = be32(entry + OS_FS_OFF_STAGING);
     uint32_t cursor = be32(entry + OS_FS_OFF_CURSOR);
     uint32_t n = be32(entry + OS_FS_OFF_SIZE) - cursor;  /* remaining; cursor never exceeds size */
     if (count < n) n = count;
-    if (!os_fs_copy_in_image(staging, cursor, buf, n)) return -1;
+    if (!os_fs_copy_in_image(staging, cursor, buf, n)) return os_refused(-1);
     memcpy(mem + buf, mem + staging + cursor, n);
     wr32(entry + OS_FS_OFF_CURSOR, cursor + n);
     return (int32_t)n;
@@ -367,14 +409,14 @@ static inline int32_t os_fread(uint8_t *mem, uint16_t handle, uint32_t count, ui
  * result the harness has no basis for, and a wild `buf` would read outside the buffer. */
 static inline int32_t os_fwrite(uint8_t *mem, uint16_t handle, uint32_t count, uint32_t buf) {
     uint8_t *entry = os_fs_entry(mem, handle);
-    if (!entry || be32(entry + OS_FS_OFF_OPEN) == 0) return -1;
+    if (!entry || be32(entry + OS_FS_OFF_OPEN) == 0) return os_refused(-1);
     uint32_t staging = be32(entry + OS_FS_OFF_STAGING);
     uint32_t cursor = be32(entry + OS_FS_OFF_CURSOR), capacity = be32(entry + OS_FS_OFF_CAPACITY);
     /* Written as a subtraction, never `cursor + count > capacity`: `count` comes straight off the
      * emulated program's stack, so the sum wraps for a large count and would wave through a memcpy
      * that runs off the end of the image. */
-    if (cursor > capacity || count > capacity - cursor) return -1;
-    if (!os_fs_copy_in_image(staging, cursor, buf, count)) return -1;
+    if (cursor > capacity || count > capacity - cursor) return os_refused(-1);
+    if (!os_fs_copy_in_image(staging, cursor, buf, count)) return os_refused(-1);
     memcpy(mem + staging + cursor, mem + buf, count);
     wr32(entry + OS_FS_OFF_CURSOR, cursor + count);
     if (cursor + count > be32(entry + OS_FS_OFF_SIZE))
@@ -385,7 +427,7 @@ static inline int32_t os_fwrite(uint8_t *mem, uint16_t handle, uint32_t count, u
 /* Fclose(handle): mark the slot closed. -1 on a bad handle. */
 static inline int32_t os_fclose(uint8_t *mem, uint16_t handle) {
     uint8_t *entry = os_fs_entry(mem, handle);
-    if (!entry) return -1;
+    if (!entry) return os_refused(-1);
     wr32(entry + OS_FS_OFF_OPEN, 0);
     return 0;
 }
