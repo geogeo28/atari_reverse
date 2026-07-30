@@ -29,7 +29,8 @@ self-depacking `START.TOS` → a valid PRG):
 text=0x13aae, data=0x7d00, **1227 relocations**) — a standard GEMDOS PRG. First-pass
 confirms the real game: clean init-dispatcher entry, strings `PREPARE TO JOUST` /
 `EGG WAVE` / `PTERODACTYL WAVE` / `COPYRIGHT 1985 … RUGBY CIRCLE`, loads `JOUST.MUR`
-music, GEMDOS file I/O + XBIOS video + BIOS keyboard. No DRI symbols (unlike BuggyBoy).
+(the TITLE PICTURE — 0x7d00 bytes = one whole low-res framebuffer — not music, despite the
+extension; and the loader is patched out in this release, see recreate/README.md), GEMDOS file I/O + XBIOS video + BIOS keyboard. No DRI symbols (unlike BuggyBoy).
 
 ## Analyze (normal pipeline — no dump needed)
 `JOUST.PRG` is a plain PRG, so it goes straight through `PrgLoader`:

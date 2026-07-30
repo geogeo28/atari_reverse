@@ -104,7 +104,12 @@ Joust reads two files at startup:
 
 - `HIGH.SCO` (26 bytes) — present in `../bin/`, authentic.
 - `JOUST.MUR` (0x7d00 bytes, read straight over the program's own data segment at `0x23aae`) —
-  **not shipped**. The PRG carries a placeholder data segment that `JOUST.MUR` overwrites.
+  **not shipped**. Despite the extension it is the **title picture**, not music: 0x7d00 = 32000
+  bytes = one whole low-res framebuffer, and `title_screen` copies exactly that buffer to
+  `screen_base`. Better still, **its loader is patched out** — `init_system` has a `bra.s` at
+  `0x10224` jumping over it (and another at `0x10204` over a raw-floppy loader), so the Gamex
+  release loads no external file but `HIGH.SCO` and runs on the placeholder picture the PRG
+  carries. Staging that placeholder is not a compromise — it is what the shipped game does.
 
 No test in the suite stages either file yet. When the startup path is reconstructed, the intended
 stand-in for `JOUST.MUR` is the PRG's *own* data segment (`img[0x23aae : 0x23aae + 0x7d00]`) — the

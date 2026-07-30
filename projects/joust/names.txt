@@ -115,7 +115,12 @@ var 0x10d65 floor_rows_left
 cmt 0x10d66 ground_anim_timer: a BYTE countdown, not a screen pitch. init_video sets it to 0x28 (0x106ce); animate_ground_shrink decrements it (subq.b, 0x175ec) and resets it to 3 (0x175f6) each time it fires — so the ground burn steps every 3rd call after a 40-frame delay. It was named bytes_per_row and UNTAGGED (i.e. recorded as confirmed); that was wrong — an ST row pitch is 0xa0, a word, and is never decremented. Caught when the world-layer reconstruction needed it and include/world.h named it independently.
 var 0x10d68 ground_anim
 var 0x10d84 ground_anim_next
-var 0x10cd2 palette
+var 0x10cd2 title_palette
+var 0x1143a game_palette
+var 0x1145a ikbd_cmd_joymode
+var 0x1145c init_players_template
+var 0x114f8 init_globals_template
+var 0x23aae load_buffer
 var 0x00484 conterm
 var 0x10d22 conterm_save
 var 0x10d18 saved_mousevec
@@ -187,6 +192,9 @@ var 0x17e7a egg_spread_scratch
 var 0x1150f snd_list_silence
 var 0x11d56 ikbd_cmd_mouse_rel
 var 0x102c8 fname_highsco
+var 0x102be fname_mono_err
+var 0x102d2 ikbd_mouse_handler
+var 0x102da ikbd_joy_handler
 var 0x18396 hiscore_name
 var 0x1861b str_life_blank
 var 0x1861d str_life_p1
@@ -401,3 +409,15 @@ cmt 0x11b58 wave_layout_table: 0x33 longwords, one per wave, {platform mask.b, t
 cmt 0x10d13 respawn_lock: set when a rider of type <= 3 takes a spawn point (0x13422), cleared when a NON-PLAYER finishes materialising (0x134fe) and again at 0x1720e. An enemy will not start looking for a spawn point while it is set, so only one enemy grows out of a pad at a time; a player ignores it.
 cmt 0x10d4e snd_owner: the object whose looping sound is playing, compared against the current slot before releasing it — so a rider only silences its OWN sound. Claimed AFTER the fact, because play_sound may drop a request a higher-priority sound holds.
 cmt 0x10d5e chasers_p1 / 0x10d5f chasers_p2 (was named hunter_counts as a single word): two ADJACENT bytes, one per player, counting the type-2 riders holding a chase slot on it. Compared against each other SIGNED and against the cap UNSIGNED; with no players left BOTH are zeroed by a single clr.w word store.
+
+# ==== comments: the init / title chain ====
+
+cmt 0x10204 GAMEX PATCH: bra.s OVER the raw-floppy music loader at 0x10206 (jsr 0x152c6, halt at 0x10214 on failure). Dead in the shipped binary — nothing branches into it. This is WHY the raw-floppy routine at 0x152dc never runs.
+cmt 0x10224 GAMEX PATCH: bra.s OVER the JOUST.MUR loader at 0x10226. Dead. So the Gamex release loads NO external file except HIGH.SCO and runs on the placeholder title picture carried in its own data segment.
+cmt 0x10ac0 title_screen paints 0x7d00 bytes from load_buffer (0x23aae) to screen_base — one WHOLE low-res framebuffer. JOUST.MUR is therefore the TITLE PICTURE, not music; init_system's dead loader reads exactly 0x7d00 bytes into the same buffer.
+cmt 0x10296 init_system stores 0x20 into hiscore_dirty after a SUCCESSFUL HIGH.SCO read, and save_hiscore gates on that byte with tst.b — so every Ctrl-C after a normal boot rewrites the file. A fresh boot is already "dirty". Original behaviour.
+cmt 0x104d0 init_video: `moveq #$ff,d2` SIGN-EXTENDS, so the score bar's planes-2/3 longword is 0xffffffff, not 0x000000ff. The differential caught the byte reading.
+cmt 0x106aa init_game: rng_ptr's reset value is a RELOCATED immediate — 0 in the file, 0x10000 loaded. Same class as rng_advance's two constants.
+cmt 0x1145a ikbd_cmd_joymode: one byte, IKBD $15 = SET JOYSTICK INTERROGATION MODE, sent once at boot. It is what makes the $16 JOYSTICK INTERROGATE that read_joysticks and title_screen send later answerable at all.
+cmt 0x10090 init_system's MONOCHROME branch (0x10090..0x1013d): the MONO.ERR splash, its RETURN wait and its Pterm. UNREACHABLE under the harness — XBIOS Getrez is modelled as a constant 0, so `cmpi.b #$2` never matches. Reproduced but unverified; its ten constants are pinned against the ORIGINAL'S instruction encodings instead, the only evidence available.
+cmt 0x10000 _start makes FOUR one-shot calls (init_system, init_game, title_screen, init_video) and the bra.s at 0x1007e returns to the FIFTH jsr — so init_video runs once and calls 5..21 are the per-frame loop.
