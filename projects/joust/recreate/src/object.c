@@ -20,7 +20,7 @@
 /* The four plane words of one cell, OR-ed into a single 16-bit occupancy mask. */
 static uint16_t or_planes(const uint8_t *image, uint32_t src) {
     uint16_t mask = 0;
-    for (unsigned plane = 0; plane < SPRITE_PLANES; plane++) mask |= be16(image + src + plane * 2u);
+    for (unsigned plane = 0; plane < CELL_PLANE_WORDS; plane++) mask |= be16(image + src + plane * 2u);
     return mask;
 }
 
@@ -57,8 +57,8 @@ void pixel_collision(uint8_t *image, uint32_t box_a, uint32_t box_b) {
 
     unsigned rows = loop_passes(image[A_hit_rows], COUNT_MASK_BYTE);   /* subq.b: 0 means 256 */
     while (rows--) {
-        uint16_t pixels_a = (uint16_t)lsr_l(row_mask(image, src_a, spill_a), shift_a);
-        uint16_t pixels_b = (uint16_t)lsr_l(row_mask(image, src_b, spill_b), shift_b);
+        uint16_t pixels_a = (uint16_t)lsr32(row_mask(image, src_a, spill_a), shift_a);
+        uint16_t pixels_b = (uint16_t)lsr32(row_mask(image, src_b, spill_b), shift_b);
         if (pixels_a & pixels_b) {
             image[A_collision_hit] = COLLISION_HIT_SET;
             wr16(image + box_a + HB_CUR_COL, (uint16_t)(cols_a - 1u));
@@ -241,11 +241,11 @@ enum egg_combine { EGG_MASK_OUT, EGG_OR_IN };    /* not.w + and.w (erase) vs or.
 
 static void egg_blit_row(uint8_t *image, uint32_t dst, uint32_t src, uint8_t shift,
                          enum egg_pass pass, enum egg_combine combine) {
-    for (unsigned plane = 0; plane < SPRITE_PLANES; plane++, dst += 2u, src += 2u) {
+    for (unsigned plane = 0; plane < CELL_PLANE_WORDS; plane++, dst += 2u, src += 2u) {
         uint32_t word = be16(image + src);
         /* The wrap pass swaps the word into the HIGH half first, so the shift leaves exactly the
          * bits that fell off the end of the cell. */
-        uint16_t bits = (uint16_t)lsr_l(pass == EGG_PASS_WRAP ? word << 16 : word, shift);
+        uint16_t bits = (uint16_t)lsr32(pass == EGG_PASS_WRAP ? word << 16 : word, shift);
         uint16_t screen = be16(image + dst);
         wr16(image + dst, combine == EGG_OR_IN ? (uint16_t)(screen | bits)
                                                : (uint16_t)(screen & (uint16_t)~bits));

@@ -7,7 +7,7 @@ oracle running the real code vs. the compiled reconstruction, on the same memory
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 28/75.** The 75 are the functions in `../decomp.c`'s inventory; `../names.txt` is the
+**Verified: 44/75.** The 75 are the functions in `../decomp.c`'s inventory; `../names.txt` is the
 source of truth for every name.
 
 ## Method per function
@@ -51,7 +51,7 @@ fabricated `0` read the guard exists to prevent (`tools/recreate_kit/TRAP_MODEL.
 | `0x10456` | `blit_or` | 44 | ✅ verified | same battery as blit_copy |
 | `0x10482` | `blit_andnot` | 48 | ✅ verified | same battery as blit_copy |
 | `0x104b2` | `init_video` | 124 | ⬜ pending | |
-| `0x1052e` | `draw_platforms` | 148 | ⬜ pending | |
+| `0x1052e` | `draw_platforms` | 148 | ✅ verified | signed present byte incl. the -1 latch, pairs 2/3 + 6/7 forced to the larger, the present POINTER indirection pinned with a permuted map, subq.b extents (0 = 256); poison on 3, 4 screen bases |
 | `0x105c2` | `rng_advance` | 46 | ✅ verified | 12 edge cursors (wrap threshold, longword wrap, signed-negative) x 10 mixes with poison + hi-garbage mixes + 600-case fuzz; D0 preserved |
 | `0x105f0` | `init_game` | 272 | ⬜ pending | |
 | `0x10700` | `draw_string` | 622 | ✅ verified | both fonts x all 236 non-control glyphs, 16 shifts/colours/bg, all 6 control bytes, backspace cell-borrow, text drawn onto its own state block (per-plane re-read), 200-case sharded fuzz |
@@ -76,44 +76,44 @@ fabricated `0` read the guard exists to prevent (`tools/recreate_kit/TRAP_MODEL.
 | `0x12cc2` | `render_object_body` | 2232 | ⬜ pending | |
 | `0x13300` | `check_platform` | 118 | ✅ verified | all 4 box edges inclusive x 36 positions, per-slot platform_present indexing, first-match-wins on overlapping boxes, flap-frame nudge, walk reset on leaving, signed coords; poison on 5 |
 | `0x135f4` | `select_sprite_base` | 52 | ✅ verified | both identities +/-1 byte (full-longword cmpa.l), bit-15 facing incl. bit-31 noise, 200-case fuzz; register result (D1) compared, not memory |
-| `0x13628` | `draw_spawn_sparkle` | 116 | ⬜ pending | |
+| `0x13628` | `flash_spawn_pad` | 116 | ✅ verified | phase = step_timer mod 4 + the phase-1/flags-bit-2 substitution, all 16 plane selects, 11 shifts across LSR.L mod 64, all 4 spawn records, BOTH adda.w sign extensions, 200-case fuzz; poison, 4 screen bases |
 | `0x1369c` | `blit_pattern_rows` | 76 | ✅ verified | all 16 plane selects, high bits of d2 ignored, word-sized masks (hi_garbage), the 12-word write set, poison, fuzz |
 | `0x136e8` | `draw_object_data` | 212 | ✅ verified | shifts x row counts (0 = 256) x wrap column across x=0x130 signed x half_select; playfield_bottom re-read EVERY row; lava row count from a FRESH draw_rows read (sub.b/neg.b); poison, fuzz |
 | `0x137bc` | `draw_object_mask` | 134 | ✅ verified | shifts, row counts, prev_x wrap; erase pass aimed at the record's own fields pins that the wrap column re-reads prev_rows/prev_src but NOT prev_dst/prev_shift; poison, fuzz |
 | `0x13842` | `collision_check` | 1712 | ⬜ pending | |
 | `0x13ef2` | `test_overlap` | 244 | ✅ verified | exg ordering by screen address, add.b y-band byte-wrap, divu.w #$a0 incl. overflow, both column-alignment branches over all 20 cell gaps, signed-byte row clamp, hit ends the sweep, 300-case fuzz x 4 shards |
 | `0x13fe6` | `pixel_collision` | 178 | ✅ verified | per-row hit position, spill gated on cursor+shift, 13 wide shifts (LSR.L mod 64) x 2 orderings, subq.b 0 = 256 rows, adda.w sign-extended stride, 400-case fuzz x 4 shards; poison on 3 |
-| `0x14098` | `start_death_anim` | 102 | ⬜ pending | |
+| `0x14098` | `start_death_anim` | 102 | ✅ verified | player-1 identity +/-1 byte (cmpa.l), the 0x280 rise and its SIGNED clamp incl. bit-31 screen bases, bset #13/#12 over 9 flag words, addq.b score wrap; D0 compared via a store stub; poison |
 | `0x140fe` | `joust_bounce` | 96 | ✅ verified | 14 gaps across both thresholds (unsigned bcc / signed bge) x 9 velocity pairs, neg.w 0x8000, flags high half not stored, already-correct velocity left untouched; poison on 2 |
-| `0x14160` | `score_update` | 6 | ⬜ pending | |
-| `0x14166` | `score_update_p2` | 12 | ⬜ pending | |
-| `0x14172` | `score_update_p1` | 212 | ⬜ pending | |
-| `0x14246` | `draw_lives` | 8 | ⬜ pending | |
-| `0x1424e` | `draw_lives_p1` | 18 | ⬜ pending | |
-| `0x14260` | `draw_lives_p2` | 126 | ⬜ pending | |
-| `0x142de` | `draw_messages` | 126 | ⬜ pending | |
-| `0x1435c` | `find_free_message` | 30 | ⬜ pending | |
-| `0x1437a` | `check_highscore` | 310 | ⬜ pending | |
-| `0x144b0` | `flash_hiscore_color` | 36 | ⬜ pending | |
+| `0x14160` | `score_update` | 6 | ⬜ blocked | blocked: needs play_sound @0x10a56 (extra-life branch). play_sound exists only as a `static` duplicate inside src/object.c, so it can be neither called nor re-copied |
+| `0x14166` | `score_update_p2` | 12 | ⬜ blocked | blocked: same as score_update — fall-through alias into the same body |
+| `0x14172` | `score_update_p1` | 212 | ⬜ blocked | blocked: same as score_update — fall-through alias into the same body |
+| `0x14246` | `draw_lives` | 8 | ✅ verified | dispatch only: full `cmpa.l` against player2 over 7 A0 values (+/-1 byte, enemies, 0, 0xffffffff). NOTE both bodies reload A0 from a constant, so draw_lives(enemy) draws PLAYER 1's row |
+| `0x1424e` | `draw_lives_p1` | 18 | ✅ verified | counts 0..6/0x7f and the SIGNED 0x80/0xfe/0xff, 7 shifts incl. the addi.b byte wrap, 4 caller flag states, 4 screen pointers, A0 ignored, count re-read every position (row painted over its own record), 120-case sharded fuzz; poison |
+| `0x14260` | `draw_lives_p2` | 126 | ✅ verified | the shared body through the p2 entry: its own record and glyph string, same battery |
+| `0x142de` | `draw_messages` | 126 | ✅ verified | all 24 slots, subq.b timer (0 -> 255), expiry frees the slot AND STILL DRAWS IT in colour 0 (that draw is the erase), players_alive cut-short over 6 counts with the kind-3 exemption, game-over cmpi.l probed on 3 bytes, distinct glyph per slot, 60-case fuzz; poison |
+| `0x1435c` | `find_free_message` | 30 | ✅ verified | first-free at slots 0/1/12/23, full table -> 0 (suba.l), every non-zero kind incl. 0x80, 200-case fuzz; A0 compared — it writes nothing, so an image diff proves nothing |
+| `0x1437a` | `check_highscore` | 310 | ⬜ blocked | blocked twice over: calls hiscore_key_input/hiscore_joystick_input (unported), AND its main path never returns (0x448e -> 0x44ae -> 0x448e is infinite), so there is no rts to diff at — needs a stop_pc checkpoint |
+| `0x144b0` | `flash_hiscore_color` | 36 | ✅ verified | counters 0/1/6/7/8/0x7fff/0x8000/0xffff, addq.w wrap pinned by a sentinel in the next word; the Setcolor pen and colour word read back out of the oracle's own trap arguments (the palette write is off-image); poison |
 | `0x144d4` | `hiscore_key_input` | 100 | ⬜ pending | |
 | `0x14538` | `hiscore_joystick_input` | 288 | ⬜ pending | |
-| `0x14658` | `draw_hiscore_cursor` | 78 | ⬜ pending | |
-| `0x146a6` | `draw_hiscore_entry` | 80 | ⬜ pending | |
-| `0x146f6` | `lava_troll` | 706 | ⬜ pending | |
-| `0x149b8` | `troll_erase_hand` | 122 | ⬜ pending | |
-| `0x14a32` | `troll_draw_hand` | 136 | ⬜ pending | |
+| `0x14658` | `draw_hiscore_cursor` | 78 | ✅ verified | all 16 columns x both parities, the 8-cell rule with noise past its end, sign-extended column offset, 4 screen bases, 200-case fuzz; poison |
+| `0x146a6` | `draw_hiscore_entry` | 80 | ✅ verified | 16 columns, letters incl. 0x00 and 0xff, the string really starting at draw_dst_off, BOTH sign-extensions (raw-cursor name index, and the bit-0-cleared screen offset), 200-case fuzz; poison |
+| `0x146f6` | `lava_troll` | 706 | ⬜ blocked | blocked: calls play_sound @0x10a56 and score_update @0x14160. Its two leaves (troll_erase_hand, troll_draw_hand) ARE verified, so it unblocks with the sound layer |
+| `0x149b8` | `troll_erase_hand` | 122 | ✅ verified | early-out needs ALL THREE of src/dst/shift, ror.l mod 32, signed-word rows (0/0x8000 draw nothing), playfield_bottom re-read EVERY row (pinned by a blit that overwrites the surface mid-run), self-overlap read-before-write, 200-case fuzz; poison |
+| `0x14a32` | `troll_draw_hand` | 136 | ✅ verified | bit-0 gate on the whole longword, LSR.L mod 64, lava clip re-read per row, all four planes read before any write over 6 overlap deltas, 200-case fuzz; poison |
 | `0x14ada` | `update_pterodactyl` | 1470 | ⬜ pending | |
 | `0x15098` | `blit_mask_wide` | 116 | ✅ verified | shift counts around 0/16/32/0x3f, non-positive counts incl. 0x8000 (BGE = N==V), sign-extended dst_off, middle cell masked twice per row; record-overlap case pins read-once; poison, fuzz |
 | `0x1510c` | `blit_sprite_planes` | 202 | ✅ verified | shifts x all 8 clip combinations x row counts; read/write phase order over 7 source deltas x 5 shifts — the trailing cell's 4 words are RE-READ after the first two passes write; suppressors re-tested per row; poison, fuzz |
 | `0x15226` | `ptero_avoid_platform` | 80 | ✅ verified | x band +/-1 over 9 values, row band swept 28 rows, D1 high half survives on all 3 exits (records carry a non-zero divu remainder), absent platforms, divu overflow; poison on 3 |
 | `0x15276` | `ptero_spot_player` | 72 | ✅ verified | row band both signs, 26 x-gaps straddling both thresholds from both directions, sound priority incl. the drop path, word-wrap coords, other flag bits ignored; poison on 2 |
-| `0x17438` | `dissolve_platforms` | 322 | ⬜ pending | |
-| `0x1757a` | `raise_floor` | 64 | ⬜ pending | |
+| `0x17438` | `dissolve_platforms` | 322 | ✅ verified | 1-based kind incl. its sign-extended word truncation (base is 0x119c4, one record BELOW platform_sprites), setup sweep vs running slot, subq.b extents on both, all-zero noise -> all-ones, rng cursor across the signed wrap, 4 slots threading one cursor, all THREE re-read semantics; 120-case fuzz, 4 screen bases |
+| `0x1757a` | `raise_floor` | 64 | ✅ verified | rows-left is a zero test not a sign test, subq.b timer (0 = 0xff), and the two strips at cells 0-4 / 15-19 — the second call's address is where the FIRST left a1 (+0x28) plus 0x50, not 'the two halves' |
 | `0x175ba` | `paint_floor_row` | 36 | ✅ verified | uniform + noise cells, poison, write set pinned to exactly the 5 plane-3 words |
-| `0x175de` | `animate_ground_shrink` | 372 | ⬜ pending | |
+| `0x175de` | `animate_ground_shrink` | 372 | ✅ verified | signed latch gate, 3-frame timer, flame-frame wrap, sink gate as a FULL-WORD compare, sink-outranks-climb, the climb's deliberate non-refresh of the latch, ground-edge wrap, SIGNED rollover at 0x7fff/0x8000 (subq.w+bge is N==V; the left flame is NOT symmetric), 150-case fuzz, 4 screen bases |
 | `0x17752` | `blit_sprite_mask` | 80 | ✅ verified | shared battery with blit_sprite: shifts, signed low-byte cell select with the high byte swept, row counts, hi_garbage on d7, full-longword dst_off, self-overdraw read-before-write, poison, sharded fuzz |
 | `0x177a2` | `blit_sprite` | 154 | ✅ verified | as blit_sprite_mask plus the colour data ORed behind the mask (shifted, not rotated); same battery |
-| `0x1783c` | `wave_manager` | 2660 | ⬜ pending | |
+| `0x1783c` | `wave_manager` | 2660 | ⬜ blocked | blocked: 2660 bytes calling find_free_message x20 plus score_update_p1/p2 |
 | `0x182a2` | `pos_to_screen` | 52 | ✅ verified | 5 screen bases x 14 x-values x 14 y-values (incl. the y>=205 adda.w sign flip) + 800-case fuzz, poison on 5 |
 | `0x182d6` | `screen_to_pos` | 42 | ✅ verified | 5 screen bases x 18 offsets (incl. divu.w overflow) x 9 shifts + 800-case fuzz, poison on 4; the x22 scale bug pinned explicitly |
 

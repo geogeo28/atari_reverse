@@ -15,8 +15,13 @@ Progress and per-function verification notes: [`STATUS.md`](STATUS.md).
 ```
 project.toml      binds this directory to the kit (paths, load base, image size)
 Makefile          three lines: KIT + GAME + include $(KIT)/kit.mk
-include/addrs.h   the game globals the C touches, by Ghidra address (mirrors ../names.txt)
-include/joust.h   public prototypes + the shared screen geometry
+include/addrs.h   the globals MORE THAN ONE subsystem touches, by Ghidra address (mirrors ../names.txt)
+include/joust.h   public prototypes + what several subsystems share: screen geometry, the 68000
+                  primitives (loop_passes, lsr32/ror32, divu_w) and the object record
+include/<sys>.h   one per subsystem (draw.h, object.h, …): only what that layer alone touches —
+                  a constant earns its way into addrs.h/joust.h when a SECOND layer needs it, and
+                  is never spelled out in two headers (no translation unit includes both, so a
+                  drifted copy would compile silently; the test_*.py mirror pins scrape by header)
 src/*.c           one file per subsystem: the readable core plus its `g_<name>` glue
                   (the kit also links its own src/*.c into the candidate — the Dosound ledger)
 test/harness.py   the kit-binding shim

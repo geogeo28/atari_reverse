@@ -85,3 +85,30 @@ def test_screen_to_pos_x_scale_is_still_the_original_wrong_one():
     """The reconstruction must keep the shipped `mulu.w #$16` (22), not the 16 the inverse needs."""
     scale = _defines("src/screen.c")["SCREEN_TO_POS_X_SCALE"]
     assert scale == test_screen.ORIGINAL_X_SCALE == 0x16, f"x scale is {scale}, not the original 22"
+
+
+def test_no_constant_is_defined_in_two_files():
+    """Every `#define` name belongs to exactly one file across include/ and src/.
+
+    draw.h and object.h once each defined the same nine addresses. No translation unit included
+    both, so the compiler stayed silent — and would have stayed silent had one copy drifted. The
+    values now live once in addrs.h / joust.h; this pin is what keeps them there as new headers land.
+
+    The file list is globbed, not enumerated, so a header added after this was written is covered
+    the moment it exists.
+
+    Reach: `_defines` only sees `#define NAME <integer literal>`, so this cannot catch a duplicated
+    macro whose value is an expression or another macro (`OBJ_FLAG_RESPAWN (1u << 7)`,
+    `RNG_PTR_RESET IMAGE_LOAD_BASE`, `PTERO_SPOT_X_NEAR ((int16_t)8)`). That same restriction is
+    why include guards need no exclusion list: `#define JOUST_DRAW_H` has no value and is never
+    scraped. Nothing here is suppressed — a hit is always a real duplicate.
+    """
+    files_by_constant = {}
+    for path in sorted(list((REC / "include").glob("*.h")) + list((REC / "src").glob("*.c"))):
+        rel = path.relative_to(REC)
+        for name in _defines(rel):
+            files_by_constant.setdefault(name, []).append(str(rel))
+
+    duplicated = {name: files for name, files in files_by_constant.items() if len(files) > 1}
+    assert not duplicated, "constants defined in more than one file — hoist each to a shared header:\n" + \
+        "\n".join(f"  {name}: {', '.join(files)}" for name, files in sorted(duplicated.items()))

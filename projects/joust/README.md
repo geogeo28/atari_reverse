@@ -44,7 +44,7 @@ project-sized effort like BuggyBoy — the framework is proven to reach it here.
 ## Naming progress (75/75 functions — verified)
 Every name has now been checked against the function body (Ghidra decompile **plus** the
 68000 disassembly, because Ghidra renders the register-argument routines as bare `return;`).
-**73 confirmed, 2 still `# ctx`**, and one function Ghidra had missed (`fill_pattern_n`,
+**All 75 confirmed — none is still `# ctx`**, and one function Ghidra had missed (`fill_pattern_n`,
 unreferenced) was added. Of the 56 names that carried `# ctx`, **37 were renamed** (35
 substantively, 2 cosmetically) and 19 stood up as written. One previously-*untagged*
 function was wrong too (`xbios_setcolor` → `flash_hiscore_color`), along with six untagged
@@ -76,12 +76,14 @@ the caller already bumped), `check_messages` → `find_free_message`,
 (`x mod 16`) that every blitter uses, reused as the name-entry cursor only during the
 high-score screen.
 
-Still `# ctx`, both for the same reason — the mechanism is read but the *picture* is not:
-- `draw_spawn_sparkle` (0x13628) — proven to draw a 3-longword pattern from `0x1194c` at a
-  `spawn_points` entry during the respawn branch; rendering `0x1194c` would name the shape.
-- `animate_ground_shrink` (0x175de) — proven to narrow `ground_x0`/`ground_x1` (platform 0)
-  on wave 3 while blitting two sprites; rendering `0x18636`/`0x187e6` with
-  `tools/extract_graphics.py` would settle what is actually on screen.
+The last two `# ctx` names were held open for the same reason — the mechanism was read but the
+*picture* was not — and both have since been discharged by reconstructing the routine and
+rendering its sprite data. One name held, one did not:
+- 0x13628 was `draw_spawn_sparkle`; rendering `0x1194c` showed a solid tapering trapezoid painted
+  in a flat cycled colour, landing on the colour-4 pad already baked into every platform bitmap.
+  It is not a sparkle — **renamed `flash_spawn_pad`**.
+- `animate_ground_shrink` (0x175de) — rendering `0x18636`/`0x187e6` settled it: two lava-flame
+  sprites that burn the ground in from both ends. The name stood.
 
 `names.txt` also grew from 26 to **95 `var`s and 76 `cmt`s**, including the 0x4e-byte object
 layout, the platform/edge/spawn-point/pterodactyl table formats, the message record, the

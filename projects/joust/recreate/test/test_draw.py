@@ -1495,13 +1495,15 @@ def test_entry_addresses_match_names_txt():
 
 
 def test_mirrored_globals_match_draw_h():
-    """The globals and record offsets restated here are the ones src/draw.c compiles against."""
+    """The globals and record offsets restated here are the ones src/draw.c compiles against.
+
+    Only the ones draw.h still owns: the globals and the object record that the object layer reads
+    too now live in addrs.h / joust.h, and test_shared_headers_match_the_c pins those.
+    """
     header = _defines("include/draw.h")
     _check(header, "draw.h", {
-        "A_object_table": A_OBJECT_TABLE, "A_player2": A_PLAYER2,
-        "A_playfield_bottom": A_PLAYFIELD_BOTTOM, "A_draw_half_select": A_DRAW_HALF_SELECT,
-        "A_draw_dst": A_DRAW_DST, "A_draw_src": A_DRAW_SRC, "A_draw_shift": A_DRAW_SHIFT,
-        "A_draw_rows": A_DRAW_ROWS, "A_draw_dst_off": A_DRAW_DST_OFF,
+        "A_player2": A_PLAYER2, "A_draw_half_select": A_DRAW_HALF_SELECT,
+        "A_draw_dst_off": A_DRAW_DST_OFF,
         "A_draw_clip_cell0": A_DRAW_CLIP_CELL0,
         "A_text_ptr": A_TEXT_PTR, "A_text_shift": A_TEXT_SHIFT, "A_text_color": A_TEXT_COLOR,
         "A_text_bg_color": A_TEXT_BG_COLOR, "A_text_flags": A_TEXT_FLAGS,
@@ -1515,10 +1517,6 @@ def test_mirrored_globals_match_draw_h():
         "PTERO_MASK_OFF": PTERO_MASK_OFF, "PTERO_MASK_ROW_BYTES": PTERO_MASK_ROW_BYTES,
         "SPR_SRC": SPR_SRC, "SPR_DST_OFF": SPR_DST_OFF, "SPR_SHIFT": SPR_SHIFT,
         "SPR_CELL_SELECT": SPR_CELL_SELECT, "SPR_MASK_OFF": SPR_MASK_OFF,
-        "OBJ_FLAGS": OBJ_FLAGS, "OBJ_X": OBJ_X, "OBJ_PREV_X": OBJ_PREV_X,
-        "OBJ_PREV_DST": OBJ_PREV_DST, "OBJ_PREV_SRC": OBJ_PREV_SRC,
-        "OBJ_PREV_ROWS": OBJ_PREV_ROWS, "OBJ_PREV_SHIFT": OBJ_PREV_SHIFT,
-        "OBJ_FLAG_IN_LAVA": OBJ_FLAG_IN_LAVA,
     })
     # One poke stages all three suppressors, which only holds while they are consecutive.
     assert (header["A_draw_clip_cell1"], header["A_draw_clip_cell2"]) == (A_DRAW_CLIP_CELL0 + 1,
@@ -1543,7 +1541,6 @@ def test_mirrored_constants_match_draw_c():
         "TEXT_FONT": TEXT_FONT,
     })
     # Spelled differently on the two sides, so each needs its own line.
-    assert 1 << FACING_RIGHT_BIT == body["OBJ_FLAG_FACING_RIGHT"], "the facing bit moved"
     assert body["FILL_SCREEN_CELLS"] * CELL_BYTES == FILL_SCREEN_BYTES, "the fill length moved"
     assert sorted(body[f"TEXT_NOP_{suffix}"]
                   for suffix in ("4", "5", "6", "7", "LF", "CR")) == sorted(TEXT_NOPS), (
@@ -1551,10 +1548,24 @@ def test_mirrored_constants_match_draw_c():
         "of them as a glyph, or skip a byte that really is one")
 
 
-def test_screen_geometry_and_screen_base_match_the_c():
-    """The cell/scanline geometry and the one global shared with every other subsystem."""
+def test_shared_headers_match_the_c():
+    """The cell/scanline geometry, the object record, and the globals shared with the object layer.
+
+    These are the mirrors of what draw.c reads out of joust.h / addrs.h rather than out of draw.h;
+    test_object.py pins the same headers from its own side, which is what makes a drift there fail
+    on both batteries at once instead of silently in neither.
+    """
     _check(_defines("include/joust.h"), "joust.h",
            {"CELL_BYTES": CELL_BYTES, "SCREEN_ROW_BYTES": SCREEN_ROW_BYTES,
-            "CELL_PIXELS": CELL_PIXELS})
-    _check(_defines("include/addrs.h"), "addrs.h", {"A_screen_base": A_SCREEN_BASE})
+            "CELL_PIXELS": CELL_PIXELS,
+            "OBJ_FLAGS": OBJ_FLAGS, "OBJ_X": OBJ_X, "OBJ_PREV_X": OBJ_PREV_X,
+            "OBJ_PREV_DST": OBJ_PREV_DST, "OBJ_PREV_SRC": OBJ_PREV_SRC,
+            "OBJ_PREV_ROWS": OBJ_PREV_ROWS, "OBJ_PREV_SHIFT": OBJ_PREV_SHIFT,
+            "OBJ_FLAG_IN_LAVA": OBJ_FLAG_IN_LAVA,
+            # Spelled as a bit number on this side, so it needs its own line.
+            "OBJ_FLAG_FACING_RIGHT": 1 << FACING_RIGHT_BIT})
+    _check(_defines("include/addrs.h"), "addrs.h",
+           {"A_screen_base": A_SCREEN_BASE, "A_object_table": A_OBJECT_TABLE,
+            "A_playfield_bottom": A_PLAYFIELD_BOTTOM, "A_draw_dst": A_DRAW_DST,
+            "A_draw_src": A_DRAW_SRC, "A_draw_shift": A_DRAW_SHIFT, "A_draw_rows": A_DRAW_ROWS})
     assert harness.NAME_MAP.get(A_SCREEN_BASE) == "screen_base"

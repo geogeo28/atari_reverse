@@ -235,7 +235,6 @@ void g_draw_string(uint8_t *image, uint32_t args) {
 #define SPRITE_SET_PLAYER2   0x1ebaau
 #define SPRITE_SET_ENEMY     0x22f4au
 #define SPRITE_SET_FACING    0x130u    /* the mirrored half of each set */
-#define OBJ_FLAG_FACING_RIGHT 0x8000u  /* btst #15,d0 — bit 15 of the whole longword */
 
 /* Register map: a0 = the object, d0 = its flags word; the answer comes back in d1, which callers
  * store into draw_src. Identity, not type: only the two player slots have their own sprites, and

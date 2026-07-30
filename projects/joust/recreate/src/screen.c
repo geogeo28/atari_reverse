@@ -7,16 +7,11 @@
 #include "addrs.h"
 #include "joust.h"
 
-/* 68000 DIVU.W leaves the 32-bit destination as (remainder << 16) | quotient — unless the quotient
- * would not fit in 16 bits, in which case the CPU sets V and leaves the destination UNCHANGED.
- * Neither routine here tests V, so an out-of-range dividend simply skips the divide and carries the
- * dividend forward. Only screen_to_pos's `divu.w #$a0` can reach that (an address more than
- * 0xa00000 past screen_base); pos_to_screen divides a zero-extended word, which never overflows. */
-static uint32_t divu_w(uint32_t dividend, uint16_t divisor) {
-    uint32_t quotient = dividend / divisor;
-    if (quotient > 0xffffu) return dividend;
-    return ((dividend % divisor) << 16) | quotient;
-}
+/* divu_w (joust.h) reproduces DIVU.W's overflow case: a quotient too wide for 16 bits sets V and
+ * leaves the destination UNCHANGED. Neither routine here tests V, so such a dividend simply skips
+ * the divide and carries forward. Only screen_to_pos's `divu.w #$a0` can reach it (an address more
+ * than 0xa00000 past screen_base); pos_to_screen divides a zero-extended word, which never
+ * overflows. */
 
 /* pos_to_screen(x, y) -> the containing cell's address, and *shift = x within that cell.
  *

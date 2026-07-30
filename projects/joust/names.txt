@@ -1,7 +1,9 @@
 # Joust (Atari ST, Williams/Atari; Gamex release). Depacked from JOUSTS.CTE via
 # tools/depack_gamex.py. Ghidra addresses = image offset + 0x10000. No DRI symbols.
-# 75/75 functions named. "# ctx" = inferred from behaviour/context (refinable);
-# untagged = confirmed by reading the body (decomp.c + 68000 disassembly).
+# 75/75 functions named, and as of this commit NONE is still inferred: every name has been
+# confirmed by reading the body (decomp.c + 68000 disassembly). The "# ctx" tag (inferred from
+# behaviour/context, refinable) is no longer used by any line; the last two were discharged by
+# reconstructing 0x175de and 0x13628 and rendering their sprite data — one name held, one did not.
 #
 # NOTE: many names here were corrected after reading the asm — the XBIOS opcode
 # table in tools/prg_dis.py and tools/ghidra_scripts/AtariOsTrapAnnotate.java WAS
@@ -74,7 +76,7 @@ fn 0x177a2 blit_sprite
 fn 0x136e8 draw_object_data
 fn 0x137bc draw_object_mask
 fn 0x1369c blit_pattern_rows
-fn 0x13628 draw_spawn_sparkle        # ctx
+fn 0x13628 flash_spawn_pad
 fn 0x15098 blit_mask_wide
 fn 0x1510c blit_sprite_planes
 fn 0x175ba paint_floor_row
@@ -85,7 +87,7 @@ fn 0x10334 fill_pattern_n
 fn 0x10700 draw_string
 fn 0x1052e draw_platforms
 fn 0x1757a raise_floor
-fn 0x175de animate_ground_shrink     # ctx
+fn 0x175de animate_ground_shrink
 fn 0x182a2 pos_to_screen
 fn 0x182d6 screen_to_pos
 fn 0x135f4 select_sprite_base
@@ -107,7 +109,12 @@ fn 0x105c2 rng_advance
 # ==== variables: screen / geometry ====
 var 0x10dde screen_base
 var 0x10d60 playfield_bottom
-var 0x10d66 bytes_per_row
+var 0x10d66 ground_anim_timer
+var 0x10d64 floor_step_timer
+var 0x10d65 floor_rows_left
+cmt 0x10d66 ground_anim_timer: a BYTE countdown, not a screen pitch. init_video sets it to 0x28 (0x106ce); animate_ground_shrink decrements it (subq.b, 0x175ec) and resets it to 3 (0x175f6) each time it fires — so the ground burn steps every 3rd call after a 40-frame delay. It was named bytes_per_row and UNTAGGED (i.e. recorded as confirmed); that was wrong — an ST row pitch is 0xa0, a word, and is never decremented. Caught when the world-layer reconstruction needed it and include/world.h named it independently.
+var 0x10d68 ground_anim
+var 0x10d84 ground_anim_next
 var 0x10cd2 palette
 var 0x00484 conterm
 var 0x10d22 conterm_save
@@ -153,10 +160,19 @@ var 0x11964 spawn_points
 var 0x10d14 spawn_point_cursor
 var 0x119b4 egg_bonus_table
 var 0x119d4 platform_sprites
+var 0x11944 spawn_pad_colors
+var 0x1194c spawn_pad_pattern
+var 0x18636 flame_sprites
+var 0x1922a death_sprite_p1
+var 0x193da death_sprite_other
 var 0x10e16 message_table
 var 0x11774 sound_table
 var 0x102c8 fname_highsco
 var 0x18396 hiscore_name
+var 0x1861b str_life_blank
+var 0x1861d str_life_p1
+var 0x18629 str_life_p2
+var 0x185c5 str_game_over
 var 0x18388 hiscore_dirty
 
 # ==== variables: per-wave difficulty ====
@@ -253,15 +269,16 @@ cmt 0x10334 fill_pattern_n: unreferenced. Fills d0 groups of 8 bytes at (a0)+ wi
 cmt 0x135f4 select_sprite_base(a0=object, d0.w=flags): returns in d1 the rider sprite-set base — 0x1c64a for player 1, 0x1ebaa for player 2, 0x22f4a otherwise — plus 0x130 when the facing bit (15) is set. Callers store d1 into draw_src. Was mis-named stub_ret2 (Ghidra decompiles it to `return;` because the result is a register).
 cmt 0x1033e count_objects_and_pad: counts live objects (live_object_count) and eggs (egg_count) when game_phase==0, or message characters (message_char_count) otherwise — then burns busy-wait loops proportional to (8 - live), (0x0e - eggs) and (0x23 - chars). The delays are a frame-time equaliser so the frame costs the same however much is on screen.
 cmt 0x1052e draw_platforms: OR-blits every platform_sprites record whose platform_present byte is > 0 (then latches it to -1), after forcing the paired platform flags 2/3 and 6/7 to agree. This is the repair pass that redraws platforms sprites have overdrawn. Was mis-named anim_sprites.
-cmt 0x1757a raise_floor: every 7 frames (while the counter at 0x10d65 is non-zero) playfield_bottom moves up one 0xa0-byte row and paint_floor_row paints the two halves of the newly exposed row. wave_manager adds 5 rows per wave for waves 0-3, so the floor/lava builds up over the opening waves; any object whose draw address reaches playfield_bottom is flagged 0x100 and dies. Was mis-named scroll_screen_up.
+cmt 0x1757a raise_floor: every 7 frames (while the counter at 0x10d65 is non-zero) playfield_bottom moves up one 0xa0-byte row and paint_floor_row paints TWO STRIPS of it — cells 0-4 (x 0-79) and cells 15-19 (x 240-319), because the callee leaves a1 advanced 0x28 and the caller then adds 0x50. That is the exposed lava either side of the ground platform (x 64-255), overlapping it by one cell at each end. wave_manager adds 5 rows per wave for waves 0-3, so the floor/lava builds up over the opening waves; any object whose draw address reaches playfield_bottom is flagged 0x100 and dies. Was mis-named scroll_screen_up.
 cmt 0x175ba paint_floor_row(a1 = row): for 5 groups of 4 plane words, sets plane 3 wherever all four planes are 0 — i.e. recolours background pixels to colour 8 without touching existing graphics. Was mis-named clear_sprite_mask.
-cmt 0x17438 dissolve_platforms: for each effect_table record, looks up platform_sprites[kind] (0x119c8 + kind*0x10), un-draws the platform bitmap a row at a time and ORs random noise sampled through rng_ptr over it. wave_manager fills effect_table from (old layout mask AND NOT new), so this animates the platforms that vanish between waves. Was mis-named draw_explosions.
-cmt 0x175de animate_ground_shrink: gated on the counter at 0x10d68 (set for waves 3-4). Walks a 0x10d68..0x10d9e state block, blits two sprites (0x18636 / 0x187e6) with blit_sprite_mask+blit_sprite, and on wave 3 steps ground_x0 up and ground_x1 down — platform 0 (the ground) narrows. STILL # ctx: the retracting-ground reading is inferred from the x-range shrink; rendering the two sprites at 0x18636/0x187e6 with tools/extract_graphics.py would settle what is actually drawn. Was mis-named draw_scroller.
+cmt 0x17438 dissolve_platforms: for each effect_table record, looks up platform_sprites[kind] at 0x119c4 + sign_ext16(kind*0x10) — EFF_KIND is 1-BASED, so the base is one record BELOW platform_sprites (0x119c4, NOT 0x119c8), and the offset is sign-extended from 16 bits, un-draws the platform bitmap a row at a time and ORs random noise sampled through rng_ptr over it. wave_manager fills effect_table from (old layout mask AND NOT new), so this animates the platforms that vanish between waves. Was mis-named draw_explosions.
+cmt 0x175de animate_ground_shrink: gated on the counter at 0x10d68 (set for waves 3-4). Walks a 0x10d68..0x10d9e state block, blits two sprites (0x18636 / 0x187e6) with blit_sprite_mask+blit_sprite, and on wave 3 steps ground_x0 up and ground_x1 down — platform 0 (the ground) narrows. CONFIRMED (# ctx discharged): 0x18636/0x187e6 render as LAVA FLAMES — four 18-row frames 0xd8 apart (0x18636..0x18996), colours 3/7/8/9, a flicker with a rising spark; 0x187e6 is frame 2, i.e. the right flame starts mid-cycle. One flame creeps right (pixel phase up, rolling into a cell step) and the other left, and on wave 3 ground_x0/ground_x1 close in one pixel per step behind them — so the ground narrows from BOTH ends with a flame at each retreating edge. Once the two are within 0x60 bytes the strip drops a scanline and loses a row; below 0x11 rows it climbs back WITHOUT refreshing the latch. Gotcha: the right flame rolls over on subq.w+bge (N==V, the sign of the TRUE difference, so phase 0x8000 rolls over though the stored 0x7fff looks positive); the LEFT flame is not symmetric — addq.w plus a SEPARATE cmpi.w, where the wrapped value decides. Was mis-named draw_scroller.
 cmt 0x182a2 pos_to_screen(x@10.w, y@12.w -> dst@4.l, shift@8.w): dst = screen_base + y*0xa0 + (x/16)*8, shift = x mod 16. Callers push y, x, then a word and a long of space, and pop the results into draw_dst / draw_shift. Both offsets are folded in with adda.w, i.e. only the low word of each product, SIGN-EXTENDED — so from y=205 on (y*0xa0 > 0x7fff) the address runs backwards. Off-screen only, but the reconstruction matches it.
 cmt 0x182d6 screen_to_pos(dst@4.l, shift@8.w -> x@10.w, y@12.w): the inverse of pos_to_screen — divides (dst - screen_base) by 0xa0 for y and by 8 for the word-group. Unreferenced anywhere in the image (dead code), and its x reconstruction multiplies the group by 22 rather than 16, so it would not round-trip. Was mis-named pos_to_screen2.
 cmt 0x144b0 flash_hiscore_color: bumps a counter and XBIOS Setcolor(10, 0x400 | (n & 7)) — pen 10 flashes through 8 shades. Its only caller is the high-score entry wait loop.
 cmt 0x144d4 hiscore_key_input: Bconstat/Bconin for the name entry — backspace moves the cursor left, RETURN finishes (jumping back into _start at 0x10006), space and A-Z (lower case folded up) store into draw_dst_off, redraw via draw_hiscore_entry and advance draw_shift (the cursor index, capped at 15). Was mis-named read_key.
 cmt 0x14538 hiscore_joystick_input: same IKBD interrogate as read_joysticks, picks the stick belonging to the entering player (draw_src == player2), fire finishes the entry, up/down step the current letter through ' ' and 'A'..'Z' with wrap, left/right move the cursor; 0x1415e is the auto-repeat delay. Was mis-named vsync_wait2.
+cmt 0x1437a check_highscore BUG: both comparison loops destroy their own counter — `move.b #$7,d0` sets a 7-character count, then `move.b (a0)+,d0` immediately OVERWRITES it with the character. The loop therefore exits only when the two strings differ, or when a character equals 1. Score bytes are never 1, so two IDENTICAL score strings scan past the end of both records until some later byte differs — an unbounded walk, not a 7-byte one. Same pattern at 0x143d2.
 cmt 0x1437a check_highscore: runs only when game_over_flag is set. Picks the higher of the two players' score strings, and if it beats hiscore_name it marks hiscore_dirty, copies the score, clears the screen, and enters the name-entry loop (hiscore_key_input / hiscore_joystick_input / flash_hiscore_color) which never returns — RETURN or fire restarts the game.
 cmt 0x146a6 draw_hiscore_entry: stores draw_dst_off (the current letter) into hiscore_name[draw_shift], sets text_shift 1 or 9 for the odd/even column, points text_ptr at screen_base+0x52b0 + cursor*4 and draws the single character.
 cmt 0x14658 draw_hiscore_cursor: paints the 0xfefefefe underline row at screen_base+0x57b0 and then the wide cursor bar at the column given by draw_shift.
@@ -277,7 +294,7 @@ cmt 0x12caa render_objects: entry — a0 = object_table, falls into render_objec
 cmt 0x12cb2 render_objects_next: the loop tail (a0 += 0x4e, stop at effect_table). Not a callable routine — it is only ever branched to. Was mis-named render_objects_b.
 cmt 0x12cc2 render_object_body: per-object physics + draw. Branches on the flags word: bit14 platform-edge bump, bit8 falling into the lava (death + score), bit7 respawn via spawn_points, bit9 walking on a platform, otherwise flight with gravity; then selects the rider sprite set (0x1a80a/0x1cd6a for the players, 0x1f2ca/0x201ea/0x2110a by enemy type, 0x2202a when dead) and erases + redraws through draw_object_mask/draw_object_data. Was named render_objects_impl.
 cmt 0x13300 check_platform(a0=object, d0=flags): scans platform_table for a present platform containing (object x, y); on a hit it snaps y to the platform top and returns d0 | 0x200 (standing), otherwise it clears bit 9 and resets the walk state.
-cmt 0x13628 draw_spawn_sparkle(a0=object, d0=flags): indexes the spawn point recorded in object+8 (offset into spawn_points), takes a 3-longword pattern from 0x1194c and a plane-select byte from 0x11944, and calls blit_pattern_rows three times — the effect drawn while a rider materialises. STILL # ctx: the "sparkle" reading is from the call site (bit7 respawn branch); rendering 0x1194c would confirm the shape. Was mis-named blit_sprite3.
+cmt 0x13628 flash_spawn_pad(a0=object, d0=flags): indexes the spawn point recorded in object+8 (offset into spawn_points), takes a 3-longword pattern from 0x1194c and a plane-select byte from 0x11944, and calls blit_pattern_rows three times — the effect drawn while a rider materialises. CONFIRMED (# ctx discharged) — and the NAME WAS WRONG: it is not a sparkle. 0x1194c renders as a SOLID TAPERING TRAPEZOID (30/26/22 px over 3 rows) painted in a FLAT colour cycled from spawn_pad_colors at 0x11944 (04 01 01 04 00 07 02 00 — two entries are colour 0, which blanks it); blit_pattern_rows either ORs the three row words into the selected plane or NOTs-and-ANDs them, i.e. a flat fill, never a highlight. Every platform bitmap already carries a colour-4 pad (30/28/24 px) baked into its top three rows, and for ALL FOUR spawn points this routine lands exactly on it: pad x = cells*16 + shift = 67 / 9 / 38 / 27, matching the first colour-4 pixel of platforms 0 / 2 / 4 / 5. Corroborated by the spawn record itself — +12 = x = pad_x + 6 and +10 = y = padrow - 1 for all four, and +18 points at that platform's platform_present byte. So it REPAINTS the platform's own spawn pad in a cycling flat colour while a rider materialises (the flash sits one pixel inside the baked pad on rows 1-2). Renamed draw_spawn_sparkle -> flash_spawn_pad; was mis-named blit_sprite3 before that.
 cmt 0x1369c blit_pattern_rows(a3=dst, d2=plane select, d5/d6/d7=row data): for each of 4 plane words, ORs the data in where the d2 bit is set and AND-NOTs it out where it is clear, on three rows at strides 0 / 0xa0 / 0x140.
 cmt 0x13842 collision_check: per object, box+pixel tests (test_overlap) against platform_sprites, then the other objects (joust: the higher rider wins — start_death_anim for the loser, score for the winner, joust_bounce otherwise), then the eggs held by other object slots (the 250/500/750/1000 chain from egg_bonus_table), then pterodactyl_table.
 cmt 0x13ef2 test_overlap: broad phase for two boxes staged in hit_box_a/hit_box_b {dst.l, src.l, cols.w, shift.b, rows.b, cur col.w, y.w}; if their y bands overlap it aligns both to the same column and calls pixel_collision for the overlapping rows, setting collision_hit.

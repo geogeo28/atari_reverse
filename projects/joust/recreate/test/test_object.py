@@ -62,7 +62,7 @@ PTERO_SIZE = 0x20
 CELL_BYTES = 8
 SCREEN_ROW_BYTES = 0xa0
 CELLS_PER_ROW = SCREEN_ROW_BYTES // CELL_BYTES     # 20 — test_overlap's `sub.w #$14`
-SPRITE_PLANES = 4
+CELL_PLANE_WORDS = 4                               # plane words per cell — every `moveq #$4` blit
 
 # ---- scratch areas, all clear of the program (ends 0x2b7ae), abi.STUB/RESULT (0x40000..0x40207),
 # the staged-file table (0xbf000) and the stack guard. Unpoked bytes read back as zero, which for a
@@ -109,8 +109,8 @@ def _box(dst, src, cols, shift, rows, cur_col=UNWRITTEN_W, y=0):
 # Which of a cell's 16 pixel columns each plane word carries, interleaved so no plane is empty and
 # no plane holds the whole mask. Putting the mask in plane 0 alone would let a candidate that ORed
 # only the first plane reproduce every case exactly.
-_PLANE_BIT_MASKS = tuple(sum(1 << bit for bit in range(16) if bit % SPRITE_PLANES == plane)
-                         for plane in range(SPRITE_PLANES))
+_PLANE_BIT_MASKS = tuple(sum(1 << bit for bit in range(16) if bit % CELL_PLANE_WORDS == plane)
+                         for plane in range(CELL_PLANE_WORDS))
 
 
 def _sprite(masks):
@@ -603,7 +603,7 @@ def _egg_source(rows):
     out = bytearray()
     for r in range(rows):
         row = bytearray(EGG_SRC_ROW_BYTES)
-        for plane in range(SPRITE_PLANES):
+        for plane in range(CELL_PLANE_WORDS):
             word = 0x8421 ^ (r * 0x1111) ^ (plane * 0x0f0f)
             struct.pack_into(">H", row, plane * 2, word & 0xffff)
         out += row
@@ -1003,36 +1003,48 @@ def test_entry_addresses_match_names_txt():
         assert harness.NAME_MAP.get(addr) == name, f"names.txt has no `{name}` at {addr:#x}"
 
 
-def test_mirrored_constants_match_object_h():
-    """Every constant this file restates equals the one src/object.c compiles against."""
+def test_mirrored_constants_match_the_headers():
+    """Every constant this file restates equals the one src/object.c compiles against.
+
+    Three headers, because the constants this layer shares with the drawing layer were hoisted out
+    of object.h: the globals it reads by address into addrs.h, and the object record — which both
+    layers walk — into joust.h. Each header is scraped by name rather than as one merged namespace,
+    so a constant that drifts back into the wrong header fails here instead of being found in
+    whichever copy still happens to hold the old value.
+    """
     header = _defines("include/object.h")
+    addrs_h = _defines("include/addrs.h")
+    joust_h = _defines("include/joust.h")
     mirrored = {
         "A_platform_present": A_PLATFORM_PRESENT, "A_game_phase": A_GAME_PHASE,
         "A_live_object_count": A_LIVE_OBJECT_COUNT, "A_egg_count": A_EGG_COUNT,
         "A_message_char_count": A_MESSAGE_CHAR_COUNT, "A_ptero_spawn_count": A_PTERO_SPAWN_COUNT,
-        "A_snd_priority": A_SND_PRIORITY, "A_playfield_bottom": A_PLAYFIELD_BOTTOM,
+        "A_snd_priority": A_SND_PRIORITY,
         "A_hit_box_a": A_HIT_BOX_A, "A_hit_box_b": A_HIT_BOX_B, "A_hit_rows": A_HIT_ROWS,
-        "A_collision_hit": A_COLLISION_HIT, "A_draw_dst": A_DRAW_DST, "A_draw_x": A_DRAW_X,
-        "A_draw_src": A_DRAW_SRC, "A_draw_shift": A_DRAW_SHIFT, "A_draw_rows": A_DRAW_ROWS,
-        "A_message_table": A_MESSAGE_TABLE, "A_object_table": A_OBJECT_TABLE,
+        "A_collision_hit": A_COLLISION_HIT, "A_draw_x": A_DRAW_X,
+        "A_message_table": A_MESSAGE_TABLE,
         "A_sound_table": A_SOUND_TABLE, "A_platform_table": A_PLATFORM_TABLE,
         "A_platform_sprites": A_PLATFORM_SPRITES,
-        "OBJ_SIZE": OBJ_SIZE, "MSG_RECORD": MSG_RECORD, "PSPR_RECORD": PSPR_RECORD,
-        "PLAT_RECORD": PLAT_RECORD, "SPRITE_PLANES": SPRITE_PLANES,
-        "CELLS_PER_ROW": CELLS_PER_ROW,
+        "MSG_RECORD": MSG_RECORD, "PSPR_RECORD": PSPR_RECORD,
+        "PLAT_RECORD": PLAT_RECORD, "CELLS_PER_ROW": CELLS_PER_ROW,
     }
     for name, value in mirrored.items():
         assert header[name] == value, f"{name}: object.h has {header[name]:#x}, test has {value:#x}"
 
+    for defines, origin, shared_mirrored in (
+            (addrs_h, "addrs.h", {"A_playfield_bottom": A_PLAYFIELD_BOTTOM,
+                                  "A_object_table": A_OBJECT_TABLE, "A_draw_dst": A_DRAW_DST,
+                                  "A_draw_src": A_DRAW_SRC, "A_draw_shift": A_DRAW_SHIFT,
+                                  "A_draw_rows": A_DRAW_ROWS}),
+            (joust_h, "joust.h", {"OBJ_SIZE": OBJ_SIZE, "CELL_PLANE_WORDS": CELL_PLANE_WORDS})):
+        for name, value in shared_mirrored.items():
+            assert defines[name] == value, (f"{name}: {origin} has {defines[name]:#x}, "
+                                            f"test has {value:#x}")
+
     # Field offsets the packers above encode positionally — in a `struct.pack` format string
     # (_box, _platform_table, _platform_sprites) or a literal offset (_object, _ptero_record,
     # _message) — and which therefore no other assertion can catch drifting.
-    for name, off in (("OBJ_FLAGS", 0x00), ("OBJ_X", 0x02), ("OBJ_Y", 0x04), ("OBJ_VX", 0x06),
-                      ("OBJ_VY", 0x08), ("OBJ_ANIM_TIMER", 0x0a), ("OBJ_STEP_TIMER", 0x0b),
-                      ("OBJ_FLAP_FRAME", 0x0e), ("OBJ_PREV_DST", 0x14), ("OBJ_EGG_STATE", 0x1e),
-                      ("OBJ_EGG_X", 0x20), ("OBJ_EGG_DST", 0x2a), ("OBJ_EGG_SRC", 0x2e),
-                      ("OBJ_EGG_ROWS", 0x32), ("OBJ_EGG_SHIFT", 0x33),
-                      ("PT_X", 0x0c), ("PT_Y", 0x0e), ("PT_SWOOP_TIMER", 0x1e),
+    for name, off in (("PT_X", 0x0c), ("PT_Y", 0x0e), ("PT_SWOOP_TIMER", 0x1e),
                       ("MSG_KIND", 0x0), ("MSG_SCREEN_PTR", 0x4),
                       # _box packs ">IIHBBHH"
                       ("HB_DST", 0x0), ("HB_SRC", 0x4), ("HB_COLS", 0x8), ("HB_SHIFT", 0xa),
@@ -1042,3 +1054,11 @@ def test_mirrored_constants_match_object_h():
                       # _platform_sprites packs ">IHHII"
                       ("PSPR_PRESENT", 0x0), ("PSPR_ROWS", 0x4), ("PSPR_DST_OFF", 0xc)):
         assert header[name] == off, f"{name}: object.h has {header[name]:#x}, packers use {off:#x}"
+
+    # The object record, likewise encoded positionally by _object — now in joust.h.
+    for name, off in (("OBJ_FLAGS", 0x00), ("OBJ_X", 0x02), ("OBJ_Y", 0x04), ("OBJ_VX", 0x06),
+                      ("OBJ_VY", 0x08), ("OBJ_ANIM_TIMER", 0x0a), ("OBJ_STEP_TIMER", 0x0b),
+                      ("OBJ_FLAP_FRAME", 0x0e), ("OBJ_PREV_DST", 0x14), ("OBJ_EGG_STATE", 0x1e),
+                      ("OBJ_EGG_X", 0x20), ("OBJ_EGG_DST", 0x2a), ("OBJ_EGG_SRC", 0x2e),
+                      ("OBJ_EGG_ROWS", 0x32), ("OBJ_EGG_SHIFT", 0x33)):
+        assert joust_h[name] == off, f"{name}: joust.h has {joust_h[name]:#x}, packers use {off:#x}"
