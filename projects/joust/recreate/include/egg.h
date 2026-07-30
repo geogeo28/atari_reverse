@@ -20,7 +20,6 @@
 
 /* ---- globals ---- */
 #define A_draw_y        0x10deeu  /* .w — the draw scratch's y, the partner of addrs.h's A_draw_x */
-#define A_speed_type1   0x10d58u  /* .w — this wave's type-1 rider speed; every hatched rider gets it */
 
 /* Two tables object.h already names by their neighbours' loop bounds (A_platform_table_END and
  * A_platform_sprites_END are these same two addresses). This layer WALKS them, so it needs them

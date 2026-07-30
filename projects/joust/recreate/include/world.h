@@ -66,8 +66,10 @@
  * and freeing the slot. render_object_body is the other reader: inside its bit-13 branch,
  * `btst #12,d0` at 0x12faa skips the draw_half_select `bset`s for an object already being removed.
  *
- * Both readers live in routines that are not ported yet, which is why nothing in the differential
- * exercises this bit — only start_death_anim, which sets it. */
+ * Both readers are now ported, and the bit is exercised from three sides: update_objects' latch by
+ * test_objects.py's test_removed_beats_a_surviving_egg, and render_object_body's skip by
+ * test_render.py's test_bit12_flips_which_half_of_a_departing_corpse_is_drawn and
+ * test_bit12_changes_nothing_when_the_corpse_is_not_at_the_edge. */
 #define OBJ_FLAG_REMOVED    (1u << 12)
 
 /* ---- draw_platforms ---- */

@@ -903,8 +903,9 @@ def test_mirrored_constants_match_the_headers():
     """Every constant this file restates equals the one src/egg.c compiles against.
 
     Four headers, because the egg layer's constants are split by reach: what only it touches is in
-    egg.h, the platform tables it shares with the collision layer are in object.h, the draw scratch
-    and the object table are in addrs.h, and the record and screen geometry are in joust.h.
+    egg.h, the platform tables it shares with the collision layer are in object.h, the draw scratch,
+    the object table and the wave's type-1 rider speed are in addrs.h, and the record and screen
+    geometry are in joust.h.
     """
     egg_h = _defines("include/egg.h")
     object_h = _defines("include/object.h")
@@ -913,7 +914,7 @@ def test_mirrored_constants_match_the_headers():
 
     for defines, origin, mirrored in (
             (egg_h, "egg.h", {
-                "A_draw_y": A_DRAW_Y, "A_speed_type1": A_SPEED_TYPE1,
+                "A_draw_y": A_DRAW_Y,
                 "A_platform_edge_table": A_PLATFORM_EDGE_TABLE,
                 "A_platform_edge_table_END": A_PLATFORM_EDGE_TABLE_END,
                 "A_egg_sprite_ptrs": A_EGG_SPRITE_PTRS,
@@ -938,7 +939,7 @@ def test_mirrored_constants_match_the_headers():
                 "A_playfield_bottom": A_PLAYFIELD_BOTTOM, "A_screen_base": A_SCREEN_BASE,
                 "A_draw_dst": A_DRAW_DST, "A_draw_src": A_DRAW_SRC,
                 "A_draw_shift": A_DRAW_SHIFT, "A_draw_rows": A_DRAW_ROWS,
-                "A_object_table": A_OBJECT_TABLE}),
+                "A_object_table": A_OBJECT_TABLE, "A_speed_type1": A_SPEED_TYPE1}),
             (joust_h, "joust.h", {
                 "OBJ_SIZE": OBJ_SIZE, "SCREEN_ROW_BYTES": SCREEN_ROW_BYTES,
                 "CELL_BYTES": CELL_BYTES, "CELL_PIXELS": CELL_PIXELS})):

@@ -34,4 +34,32 @@
 #define A_draw_shift        0x10df4u  /* pixel shift within the cell; .b to those readers, .w to the pterodactyl */
 #define A_draw_rows         0x10df6u  /* sprite height;               .b to those readers, .w to the pterodactyl */
 
+/* The two-player "gladiator" bookkeeping. Once gladiator_wave_countdown has reached 0, the FIRST
+ * dismount of a player-versus-player joust in the wave is worth 3000 instead of 500, and
+ * first_dismount_owner records which player took it so it can only happen once. The wave director
+ * arms and pays all three; the collision resolver is what sets and reads them during the wave. */
+#define A_gladiator_wave_countdown  0x10d05u  /* .b — non-zero disarms the bonus; `tst.b` only */
+#define A_player_conflict_flag      0x10d06u  /* .b — the players fought each other this wave, so the
+                                               * co-operation bonus is forfeit; set by every player
+                                               * death and every duel */
+#define A_first_dismount_owner      0x10d07u  /* .b — 0 nobody yet, 1 player 1 took it, above that
+                                               * player 2 (a SIGNED test) */
+
+#define A_spawn_point_cursor  0x10d14u  /* .l — the round-robin cursor into spawn_points: where the
+                                         * render pass resumes its search, and what a new wave resets */
+
+/* This wave's rider speed by type, three CONTIGUOUS words. The wave director sets all three; the
+ * egg hatch steers by type 1, and the enemy driver by all three (type 3's LOW BYTE also caps how
+ * many enemies may chase one player at a time). */
+#define A_speed_type1  0x10d58u  /* .w */
+#define A_speed_type2  0x10d5au  /* .w */
+#define A_speed_type3  0x10d5cu  /* .w */
+
+#define A_flap_delay  0x10ddcu  /* .b — frames between an AI rider's wing beats, set once per wave.
+                                 * The render pass caps a troll-held rider's step timer to it, so a
+                                 * grabbed rider flaps no faster than this either. */
+
+#define A_enemy_objects  0x10fd2u  /* object_table slot 2: the first of the 12 non-player slots, and
+                                    * so the `cmpa.l` bound that separates a player from an enemy */
+
 #endif /* JOUST_ADDRS_H */

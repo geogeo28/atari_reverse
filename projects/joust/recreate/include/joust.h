@@ -88,7 +88,39 @@ static inline uint32_t divu_w(uint32_t dividend, uint16_t divisor) {
 #define OBJ_EGG_SHIFT       0x33u   /* .b */
 #define OBJ_TARGET_Y        0x46u   /* .w — the altitude a rider steers toward: the hatch's AI
                                      * target, and the height a dead rider's hover aims for */
+/* .b — frames left in the rider's current flap burst; 0 means "may start a new one". update_objects
+ * counts it down each pass and clamps it to the wave's climb budget, and arms it to the dive length
+ * when a type-3 commits; render_object_body's only write reloads it when an edge box parks a
+ * type-3. ../../names.txt calls this the first of the pair of "AI timers". */
+#define OBJ_FLAP_TIMER      0x49u
+/* .b — how many sideways edge shoves the rider has taken. render_object_body bumps it once per
+ * horizontal edge push (0x130c4); update_objects flips the facing and clears it at
+ * TURN_TIMER_LIMIT, and clears it outright on respawn and on entering egg recovery. It counts
+ * events, not frames — the "timer" is ../../names.txt's spelling for the pair. */
+#define OBJ_TURN_TIMER      0x4bu
 #define OBJ_SIZE            0x4eu
+
+/* bit5 — this rider's x is comfortably inside the playfield (2 <= x < 0x12c). update_objects owns
+ * it, on DEAD slots only: `bset #5` at 0x124c2 once the corpse's x is in that band, `bclr #5` at
+ * 0x1243e the moment the slot enters the removal tail. It is the gate on both consequences — the
+ * corpse walking back to its egg there, and render_object_body (its only reader, at 0x12f9c)
+ * holding off the off-screen removal while it is set. Named for the position it records rather
+ * than for either consequence, because the two readers act on it differently. */
+#define OBJ_FLAG_CORPSE_INSIDE (1u << 5)
+
+/* The flap trio. The joystick raises bits 6 and 11 TOGETHER (player.h's OBJ_FLAGS_FLAPPING, 0x840),
+ * but update_objects' tails move them apart — 0x125b0 sets 11 and toggles 6, 0x125c0 clears 11 and
+ * toggles 6 — so each carries its own meaning and its own name. */
+#define OBJ_FLAG_WINGS_UP      (1u << 6)   /* the wings-up pose. It is TOGGLED, not set, which is
+                                            * what makes the beat alternate; the sprite select at
+                                            * 0x12f20 is what reads it. */
+#define OBJ_FLAG_FLAP_REQUEST  (1u << 11)  /* a flap is being ASKED for this frame, by the stick or
+                                            * by the AI */
+/* bit10 — that request has already been acted on. render_object_body's edge detector sets it with
+ * the upward kick (`bset #10,d0` at 0x12d2a, reached only when the `btst #11` at 0x12d1e finds a
+ * request and the `btst #10` at 0x12d24 finds it untaken) and clears it once the request goes away
+ * (0x12d80, 0x1321a, 0x135e8), which is why holding fire costs one kick rather than one per frame. */
+#define OBJ_FLAG_FLAP_TAKEN    (1u << 10)
 
 #define OBJ_FLAG_RESPAWN       (1u << 7)   /* awaiting respawn */
 #define OBJ_FLAG_IN_LAVA       0x0100u     /* bit8: the sprite reached playfield_bottom while being drawn */
@@ -101,6 +133,15 @@ static inline uint32_t divu_w(uint32_t dividend, uint16_t divisor) {
  * and ptero_spot_player — all three ported layers read it, hence its home here. */
 #define OBJ_FLAG_DEAD          (1u << 13)
 #define OBJ_FLAG_FACING_RIGHT  0x8000u     /* bit15 — `btst #15,d0`, a bit test on the whole longword */
+
+/* The rider TYPE, in the flags word's low two bits: 0 for a player, 1..3 for an enemy. The enemy
+ * driver switches on the pair and the render pass compares against type 3, so the group is shared.
+ * (The render pass also takes bits 0-2 together as one small number for the respawn branch — that
+ * wider mask is render.h's, since nothing else reads bit 2.) */
+#define ENEMY_TYPE_MASK  3u
+#define ENEMY_TYPE_1     1u  /* cruises; climbs only while a player is above it */
+#define ENEMY_TYPE_2     2u  /* claims a chase slot and homes in, then breaks off and retreats */
+#define ENEMY_TYPE_3     3u  /* dives at a player below it, gliding through the dive */
 
 /* --- rng.c --- */
 void rng_advance(uint8_t *image, uint32_t mix);

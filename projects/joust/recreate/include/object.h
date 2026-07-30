@@ -41,9 +41,14 @@
 #define A_platform_sprites_END     0x11a54u
 
 /* ---- pterodactyl record (0x20 bytes, pterodactyl_table) ---- */
+#define A_pterodactyl_table      0x113bau
+#define A_pterodactyl_table_END  0x1143au  /* the original's own `cmpa.l` bound: 4 x PT_RECORD on */
+
+#define PT_FLAGS            0x00u   /* .w — 0 = the slot is free */
 #define PT_X                0x0cu   /* .w */
 #define PT_Y                0x0eu   /* .w */
 #define PT_SWOOP_TIMER      0x1eu   /* .b — armed to 0x14 when a player is spotted */
+#define PT_RECORD           0x20u
 
 #define PT_FLAG_MOVING_RIGHT (1u << 2)
 
