@@ -2,9 +2,15 @@
 # Build JOUST.PRG from the verified reconstruction with the m68k-elf cross toolchain, and stage a
 # drive for Hatari.
 #
-#   build.sh              -> disk/JOUST.PRG   playable build (real console + real joysticks)
-#   build.sh title        -> disk/JOUST.PRG   -DSMOKE_TITLE: dump the title screen and terminate
-#   build.sh smoke [N]    -> disk/JOUST.PRG   -DSMOKE_FRAMES=N: type '1', run N frames, dump
+#   build.sh              -> playable build (real console + real joysticks)
+#   build.sh title        -> dump the title screen and terminate
+#   build.sh smoke [N]    -> type '1', run N frames, dump two of them and the stats
+#   build.sh quit         -> type '1', play, then Ctrl-C: the reconstruction's quit path, for real
+#   build.sh quittitle    -> Ctrl-C on the title screen instead
+#   build.sh restart      -> type '1', play, R (restart), then Ctrl-C from the new title screen
+#
+# Each writes disk/JOUST.PRG *and* keeps build/JOUST-<mode>.PRG, so a check that needs two builds in
+# sequence (smoke.py hiscore) can have them without rebuilding.
 #
 # Stages disk/{JOUST.PRG,JOUST.IMG,HIGH.SCO}. build/ and disk/ are gitignored.
 #
@@ -16,16 +22,33 @@
 set -euo pipefail
 
 SMOKE_FRAMES_DEFAULT=240          # past frame 156, where the first gameplay play_sound fires
-KEY_ONE_PLAYER=0x31              # '1' — the console key title_screen starts a one-player game on
-KEY_AFTER_POLLS=8                # console polls to leave for a real key before typing it ourselves
 EARLY_FRAME=2                    # the second gameplay frame is dumped too, to witness animation
 
-case "${1:-}" in
-  title) DEF="-DSMOKE -DSMOKE_TITLE" ;;
-  smoke) DEF="-DSMOKE -DSMOKE_FRAMES=${2:-$SMOKE_FRAMES_DEFAULT} -DSMOKE_EARLY_FRAME=$EARLY_FRAME \
-              -DSMOKE_KEY=$KEY_ONE_PLAYER -DSMOKE_KEY_AFTER=$KEY_AFTER_POLLS" ;;
-  "")    DEF="" ;;
-  *) echo "usage: build.sh [title | smoke [frames]]"; exit 2 ;;
+# The scripted console (joust_main.c): SMOKE_SCRIPT_KEYS is the sequence of ASCII bytes to type and
+# SMOKE_SCRIPT_WAIT how many console polls to wait for each after the previous was taken. On the
+# title screen a pass polls ~400 times, so a small wait lands on the first pass; during play
+# poll_quit_key is exactly one poll per frame, so a wait THERE is a frame count.
+# The keys are passed as the C MACRO NAMES joust_main.c watches for, never as bytes: a second
+# spelling here could drift from the shim's watcher and the only symptom would be a run that plays
+# on to the --run-vbls limit and reports a missing STATS.BIN.
+KEY_ONE_PLAYER=KEY_ONE_PLAYER    # '1' — starts a one-player game
+KEY_QUIT=KEY_CTRL_C              # quits to the desktop
+KEY_RESTART=KEY_RESTART_UPPER    # 'R' — restarts the game
+TITLE_POLLS=8                    # polls to leave for a real key before typing one on the title
+PLAY_FRAMES=60                   # ...and frames of play before the next scripted key
+
+MODE="${1:-play}"
+case "$MODE" in
+  title)     DEF="-DSMOKE -DSMOKE_TITLE" ;;
+  smoke)     DEF="-DSMOKE -DSMOKE_FRAMES=${2:-$SMOKE_FRAMES_DEFAULT} -DSMOKE_EARLY_FRAME=$EARLY_FRAME \
+                  -DSMOKE_SCRIPT_KEYS=$KEY_ONE_PLAYER -DSMOKE_SCRIPT_WAIT=$TITLE_POLLS" ;;
+  quit)      DEF="-DSMOKE -DSMOKE_SCRIPT_KEYS=$KEY_ONE_PLAYER,$KEY_QUIT \
+                  -DSMOKE_SCRIPT_WAIT=$TITLE_POLLS,$PLAY_FRAMES" ;;
+  quittitle) DEF="-DSMOKE -DSMOKE_SCRIPT_KEYS=$KEY_QUIT -DSMOKE_SCRIPT_WAIT=$TITLE_POLLS" ;;
+  restart)   DEF="-DSMOKE -DSMOKE_SCRIPT_KEYS=$KEY_ONE_PLAYER,$KEY_RESTART,$KEY_QUIT \
+                  -DSMOKE_SCRIPT_WAIT=$TITLE_POLLS,$PLAY_FRAMES,$TITLE_POLLS" ;;
+  play)      DEF="" ;;
+  *) echo "usage: build.sh [title | smoke [frames] | quit | quittitle | restart]"; exit 2 ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -56,6 +79,15 @@ PY="$REC/.venv/bin/python"; [ -x "$PY" ] || PY=python3
 cp "$BIN/HIGH.SCO" "$DISK/HIGH.SCO"
 DEF="$DEF -DPROGRAM_BYTES=$(wc -c < "$DISK/JOUST.IMG" | tr -d ' ')"   # BSD wc pads with spaces
 
+# The jmp_buf's length is one value in two languages that cannot import each other, so it is pinned
+# here rather than left to a comment: setjmp writes JB_LONGS longwords into a buffer the C declares
+# as SHIM_JMP_BUF_LONGS, and a mismatch would scribble past a BSS array on the restart path only.
+JB_ASM=$(sed -n 's/.*JB_LONGS *= *\([0-9]*\).*/\1/p' "$HERE/joust_os.s")
+JB_C=$(sed -n 's/^#define SHIM_JMP_BUF_LONGS *\([0-9]*\).*/\1/p' "$HERE/shim_include/tos.h")
+[ -n "$JB_ASM" ] && [ "$JB_ASM" = "$JB_C" ] || {
+  echo "ERROR: jmp_buf length disagrees — joust_os.s JB_LONGS=$JB_ASM, tos.h SHIM_JMP_BUF_LONGS=$JB_C"
+  exit 1; }
+
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS $DEF -T "$HERE/tos.ld" -Wl,--emit-relocs \
     "$HERE/joust_os.s" "$HERE/joust_main.c" $CORES -lgcc -o "$BUILD/joust.elf"
@@ -75,4 +107,5 @@ echo ">> wrap -> GEMDOS .PRG"
 python3 "$HERE/mkprg.py" "$BUILD/joust.elf" "$BUILD/joust.bin" "$BUILD/$PRG"
 
 cp "$BUILD/$PRG" "$DISK/$PRG"
+cp "$BUILD/$PRG" "$BUILD/JOUST-$MODE.PRG"
 ls -l "$DISK/$PRG" "$DISK/JOUST.IMG"

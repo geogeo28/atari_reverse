@@ -56,16 +56,59 @@
  * shim_console_polled() — one poll_quit_key per frame is the only Bconstat during play, so once
  *   the title is over this counts FRAMES for the SMOKE build's dump-and-terminate.
  * shim_console_pending() / shim_console_take() — SMOKE only: the scripted keystroke that starts the
- *   headless game, peeked at by Bconstat and consumed by Bconin, exactly as a real key is. */
+ *   headless game, peeked at by Bconstat and consumed by Bconin, exactly as a real key is.
+ * shim_console_key() — the shim watching the keys the game is handed, so it can finish the exits
+ *   the reconstruction reports through a result code `start()` drops (Ctrl-C, R). See joust_main.c.
+ * shim_check_exit() — ...and the point at which one of those is acted on. It is called at the TOP of
+ *   every seam below, because `start()` never returns and these calls are the only places the shim
+ *   gets control back. `at_console_poll` tells it which seam it is: a Ctrl-C that reaches a second
+ *   console poll without quit_to_desktop having run is one the game IGNORED (the high-score entry
+ *   loop does), and only then does the shim quit on the game's behalf.
+ *
+ *   THE FILE HELPERS MUST NEVER GAIN THIS HOOK. os_fopen/os_fwrite/os_fclose are the kit's, kept
+ *   verbatim (below), and quit_to_desktop calls all three THROUGH save_hiscore while the shim is
+ *   already in QUIT_TAIL_RUNNING. A hook there would fire shim_quit() in the middle of the record
+ *   being written and the write-back would go out truncated, or not at all. The exit is meant to
+ *   land after the tail has RETURNED, which is what makes every hook here a call the tail does not
+ *   make. If a file helper ever has to be shadowed for some other reason, leave the hook out.
+ *
+ *   AND g_dosound IS THE TAIL'S SIGNAL because nothing else can beat it to it: both readers that
+ *   act on Ctrl-C (poll_quit_key and title_screen's attract pass) test the key and call
+ *   quit_to_desktop in the same statement, and quit_to_desktop's FIRST act is the Dosound silence —
+ *   so no other Dosound can occur between the key and that one. check_highscore's entry loop, the
+ *   one reader that ignores the key, issues none at all, which is why the second console poll is a
+ *   safe way to recognise it. A new caller of g_dosound between a console read and quit_to_desktop
+ *   would break the scheme. */
 void          shim_psg_written(void);
 void          shim_console_polled(void);
 int           shim_console_pending(void);
 unsigned long shim_console_take(void);
+void          shim_console_key(unsigned long console);
+/* THE HOOK IS AN INLINE FLAG TEST, and it has to be: os_giaccess is called ~14,450 times by
+ * init_video's boot sweep alone, so an out-of-line `jsr` here cost ~1.9 M cycles — about a quarter
+ * of a second at 8 MHz, on every boot and again on every restart. The flag is set only by
+ * shim_console_key, so the common case is `tst.l` + `beq` and the real work stays in
+ * shim_take_exit(). `volatile` because the flag is read in the seam and written elsewhere. */
+extern volatile int shim_exit_armed;
+void          shim_take_exit(int at_console_poll);
+
+static inline void shim_check_exit(int at_console_poll) {
+    if (shim_exit_armed) shim_take_exit(at_console_poll);
+}
+/* init_game's XBIOS Random is the one trap it makes, and init_game IS the original's RESTART_ENTRY
+ * (_start+6) — so this call is exactly where a restarted run resumes. joust_main.c uses it to put
+ * back the two pieces of state re-entering `start()` would clobber and the original's restart never
+ * touches, because the original skips init_system on the way back in. */
+void          shim_init_game_started(void);
 
 /* ---- BIOS console (Bconstat 0x01 / Bconin 0x02) --------------------------------------------- */
 
+#define SHIM_AT_CONSOLE_POLL 1
+#define SHIM_AT_OTHER_SEAM   0
+
 static inline int os_bconstat(const uint8_t *mem, uint16_t dev, uint32_t *out) {
     (void)mem;
+    shim_check_exit(SHIM_AT_CONSOLE_POLL);
     shim_console_polled();
     *out = (uint32_t)Bconstat((short)dev);
     if (*out == 0 && shim_console_pending()) *out = OS_BCONSTAT_READY;
@@ -74,12 +117,13 @@ static inline int os_bconstat(const uint8_t *mem, uint16_t dev, uint32_t *out) {
 
 static inline int os_bconin(uint8_t *mem, uint16_t dev, uint32_t *out) {
     (void)mem;
+    shim_check_exit(SHIM_AT_OTHER_SEAM);
     /* A real key always wins: the scripted one is only offered when TOS has nothing waiting. */
-    if (Bconstat((short)dev) == 0 && shim_console_pending()) {
+    if (Bconstat((short)dev) == 0 && shim_console_pending())
         *out = (uint32_t)shim_console_take();
-        return 1;
-    }
-    *out = (uint32_t)Bconin((short)dev);   /* real TOS; every caller gates on Bconstat first */
+    else
+        *out = (uint32_t)Bconin((short)dev);  /* real TOS; every caller gates on Bconstat first */
+    shim_console_key(*out);
     return 1;
 }
 
@@ -87,6 +131,7 @@ static inline int os_bconin(uint8_t *mem, uint16_t dev, uint32_t *out) {
  * the model does. Every call site in Joust drops the result (init_system's `addq.l #6,a7`). */
 static inline int os_super(uint32_t arg, uint32_t *out) {
     (void)arg;
+    shim_check_exit(SHIM_AT_OTHER_SEAM);
     *out = OS_SUPER_TOKEN;
     return 1;
 }
@@ -95,6 +140,7 @@ static inline int os_super(uint32_t arg, uint32_t *out) {
  * register byte, which is exactly what snd_poll_done polls for silence. */
 static inline uint32_t os_giaccess(uint8_t *mem, uint16_t data, uint16_t reg) {
     (void)mem;
+    shim_check_exit(SHIM_AT_OTHER_SEAM);
     if (reg & OS_PSG_WRITE) shim_psg_written();
     return (uint32_t)Giaccess((short)data, (short)reg);
 }
@@ -103,6 +149,8 @@ static inline uint32_t os_giaccess(uint8_t *mem, uint16_t data, uint16_t reg) {
  * sees the same 24-bit shape it does under the differential. */
 static inline uint32_t os_random(const uint8_t *mem) {
     (void)mem;
+    shim_check_exit(SHIM_AT_OTHER_SEAM);
+    shim_init_game_started();
     return (uint32_t)Random() & OS_RANDOM_MASK;
 }
 

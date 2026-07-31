@@ -53,7 +53,7 @@ add a seam, the core/no-op side must have **no image effect** (or the oracle-mod
 differential test still holds; put the real trap/hardware poke only in the PRG override, and gate it
 on `hw_ready` if it touches supervisor-only I/O space (`$ffff8xxx`, `$fffffcxx`) before `Super(0)`.
 
-## Bug taxonomy (each one hit in a real build — 1-5 in BuggyBoy, 6 in Joust)
+## Bug taxonomy (each one hit in a real build — 1-5 in BuggyBoy, 6-7 in Joust)
 
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
@@ -175,6 +175,44 @@ reads correctly, in the one place the harness can never look: a loop over hardwa
   ways real TOS is not; the two disagreeing is a finding, and the two agreeing byte-for-byte (as the
   Joust framebuffers now do) is a much stronger green than either alone.
 
+### 7. The exits the reconstruction reports but its caller drops
+
+The original leaves a routine by a `jmp` that abandons the stack, or by a `Pterm` that ends the
+process. Neither has a post-state to diff, so the reconstruction returns a RESULT CODE instead —
+and its caller ignores it, faithfully, because in the original the routine that took such a path
+never came back and the next line was never reached. The differential is perfectly happy. On target
+the game then cannot be quit or restarted at all, and the loop simply carries on.
+
+- **Real example (Joust).** `poll_quit_key` returns `INPUT_QUIT` after running the verified
+  `quit_to_desktop`, and `INPUT_RESTART` for the R key; `check_highscore` returns
+  `CHECK_HIGHSCORE_RESTART`. `start()` drops all three — twenty-one `jsr`s, no result tested, which
+  is exactly what the original's `_start` does. Ctrl-C therefore saved the high score and kept
+  playing.
+- **Symptom:** a whole control-flow feature is inert on target, and there is nothing wrong with any
+  reconstructed function.
+- **Diagnosis:** grep the reconstruction for result codes whose enum names say "never returns"
+  (`INPUT_QUIT`, `*_RESTART`, `TITLE_QUIT`), then look at who calls them. A caller that discards
+  one is a feature the PRG owes.
+- **Fix:** the shim finishes the exit from the only place it gets control — the OS seams the cores
+  call, since the entry point never returns. WATCH the key rather than intercept it, so the verified
+  tail still runs: Joust's shim notes Ctrl-C at the console seam, waits for `quit_to_desktop`'s own
+  first trap to confirm the tail is running, and acts at the NEXT seam of any kind. Cost: the exit
+  lands one frame later than the original's jump. A restart needs an actual unwind (`longjmp`) back
+  to a `setjmp` in the shim, which then re-enters the verified entry point.
+- **Two traps inside that fix, both measured:**
+  * **hand the machine back on EVERY exit path.** Anything installed into TOS — KBDVBASE vectors,
+    the `_vblqueue`, `conterm`, the screen base, the palette — outlives the process, and an IKBD
+    handler still chaining interrogates out of freed memory halts the machine about a second after
+    `Pterm`. It is invisible while the program runs, so **let the emulator run on past the exit and
+    assert on what it reports** (`--run-vbls` plus the exit status) instead of stopping at the dump.
+  * **a freestanding build has no `setjmp`.** Writing one is ten instructions, and two details are
+    not optional: save the RETURN ADDRESS into the buffer rather than trusting the stack slot it sat
+    in (that slot is dead the instant `setjmp` returns and every later call reuses it), and declare
+    it `__attribute__((returns_twice))` or GCC compiles away the second return.
+- **Working rule:** the reconstruction's honesty about not returning becomes the PRG's bug list.
+  Every result code a caller drops is a feature the shim owes, and the shim's version of it is
+  necessarily *later* than the original's — say where, and by how much.
+
 ## Diagnostic toolkit
 
 You cannot single-step a `.PRG` the way you diff a function. These techniques turn "it's wrong on
@@ -195,6 +233,15 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   a loop over several of them: `$ffff8260`, four registers past the end of the palette, is the
   resolution register, and taxonomy class 6 is what a loop that runs one register long does to
   the machine. A probe is throwaway code, which is exactly why it gets written without thinking.
+
+- **Byte-compare against the original by dumping its RAM.** The strongest side-by-side there is,
+  and it costs one Hatari debugger script. Run the ORIGINAL binary to the screen you want, dump the
+  whole machine (`b VBL > N :once :file act.ini` with `savebin dump.bin 0 0x400000` and `cont` in
+  it — host paths, not GEMDOS ones, and give Hatari `/dev/null` on stdin or the debugger blocks),
+  then **search the dump for your own framebuffer bytes**. A hit means the two bitmaps are equal,
+  and you never had to find the original's screen address. Joust's on-target title screen is
+  byte-identical to the shipped binary's this way, at the original's own Physbase. Compare
+  BITPLANES, not colour: the palette is off-image on both sides, so it is a GUI check instead.
 
 - **Raster colour-bars for timing.** Set the border to a different colour before each per-frame
   stage; the on-screen *height* of each colour band is that stage's share of the frame. A single

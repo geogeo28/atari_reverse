@@ -6,7 +6,9 @@
 #   run.sh original   -> the shipped ../../bin/JOUST.PRG, same TOS/memsize/joystick wiring
 #
 # Keys: '1' / '2' on the title screen pick a one- or two-player game (or press fire). In play, the
-# cursor keys + right-Ctrl are joystick 1 (--joy1 keys). See README.md for what does NOT work yet.
+# cursor keys + right-Ctrl are joystick 1 (--joy1 keys), Ctrl-C quits to the desktop and R restarts.
+# README.md "Known gaps" lists what still does not work (chiefly: the high-score name entry cannot
+# be ended — press Ctrl-C from it).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

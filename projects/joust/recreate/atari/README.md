@@ -14,14 +14,17 @@ has no host `render/` layer for it to sit under: there is no PNG renderer here, 
 |-----------|----------------|-------|
 | **M1** title screen | the on-target framebuffer IS the title picture the staged program image carries, byte for byte, with the title text over it — and over *exactly* the four pinned scanline bands, nowhere else | ✅ `smoke.py title` |
 | **M2** gameplay | `'1'` really drove the ONE-player arm (`two_player_mode == 0`, `players_alive == 1`, read out of the image); 240 frames render a real scene (platforms, ground, riders, the score bar) and it MOVES between two dumped frames; a `play_sound` command list reaches XBIOS `Dosound` during the frame loop | ✅ `smoke.py frames` |
-| **M3** | joystick play, `HIGH.SCO` round-trip, the quit path, side-by-side vs the original | not started — see "What M3 needs" |
+| **M3** quit / restart | Ctrl-C runs the verified `quit_to_desktop`, hands the machine back and ends the process — from play *and* from the title screen; R restarts the game | ✅ `smoke.py quit` / `quittitle` / `restart` |
+| **M3** `HIGH.SCO` | a modified record goes in, the game reads it, the quit path writes it back out through real GEMDOS, and a reboot shows it on the title screen's HIGH SCORE line **and only there** | ✅ `smoke.py hiscore` |
+| **M3** side-by-side | our on-target title framebuffer is **byte-identical** to the shipped binary's, found at the original's own Physbase in a dump of its RAM | ✅ `smoke.py original` |
+| **M3** joystick | the IKBD path is live — ~1000 replies filed per run, and every wait loop in the game ends on one. Steering is a GUI check: headless Hatari has no stick to press (§11) | partial, by construction |
 
 Verified on **EmuTOS** (Hatari's bundled `tos.img`) and **TOS 1.04**, which produce byte-identical
 framebuffers and identical `STATS.BIN` counters. **TOS 1.02 never runs the program at all** under a
 Hatari GEMDOS drive (not one beacon appears) — a Hatari/TOS hard-disk limitation, not a property of
 this build.
 
-Both smokes **run Hatari to the end of `--run-vbls` and assert a clean exit** rather than killing
+Every smoke **runs Hatari to the end of `--run-vbls` and asserts a clean exit** rather than killing
 the emulator once the dump lands. That is not tidiness: the program `Pterm`s long before the
 emulator stops, so everything after it is TOS running on its own with whatever the shim left hooked,
 and an incomplete hand-back is only visible *there* (see "The bugs found on target"). The
@@ -33,11 +36,21 @@ ROM.
 ```bash
 brew install m68k-elf-gcc hatari        # one-time
 
-bash atari/build.sh title  && python3 atari/smoke.py title    # M1: byte-check the title screen
-bash atari/build.sh smoke  && python3 atari/smoke.py frames   # M2: 240 frames, sound, clean exit
-bash atari/build.sh        && bash    atari/run.sh            # play it in the Hatari GUI
-bash atari/run.sh original                                    # the shipped binary, same setup
+bash atari/build.sh title     && python3 atari/smoke.py title      # M1: byte-check the title screen
+bash atari/build.sh smoke     && python3 atari/smoke.py frames     # M2: 240 frames, sound, exit
+bash atari/build.sh quit      && python3 atari/smoke.py quit       # M3: Ctrl-C during play
+bash atari/build.sh quittitle && python3 atari/smoke.py quittitle  #     ...on the title screen
+bash atari/build.sh restart   && python3 atari/smoke.py restart    #     R restarts, then Ctrl-C
+bash atari/build.sh title && bash atari/build.sh quit
+python3 atari/smoke.py hiscore                                     # M3: HIGH.SCO round trip
+python3 atari/smoke.py title && python3 atari/smoke.py original     # M3: vs the shipped binary
+
+bash atari/build.sh        && bash atari/run.sh                    # play it in the Hatari GUI
+bash atari/run.sh original                                         # the shipped binary, same setup
 ```
+
+In the GUI build, `'1'`/`'2'` (or fire) start a game, **Ctrl-C** quits to the desktop and **R**
+restarts. `--joy1 keys` makes the cursor keys and right-Ctrl joystick 1.
 
 `build.sh smoke [N]` takes a frame count; the default is 240, chosen to be past frame 156 — the
 first frame on which the game itself asks for a sound. `smoke.py` finds a TOS ROM in
@@ -50,14 +63,14 @@ BSS. `build/` and `disk/` are gitignored build artifacts.
 | file | role |
 |------|------|
 | `joust_main.c` | the shim: build the image, wire screen/palette/IKBD, call `start()` |
-| `joust_os.s` | `_start`, the TOS trap wrappers, and the IKBD joystick-packet handler |
+| `joust_os.s` | `_start`, the TOS trap wrappers, the IKBD joystick-packet handler, and `setjmp`/`longjmp` (no libc here) |
 | `shim_include/os.h` | the real-TOS shadow of the kit's modelled `os.h` — **the seam** (below) |
 | `shim_include/tos.h` | the trap wrappers' prototypes |
 | `shim_include/string.h` | a freestanding `<string.h>` (this bare-metal GCC ships no libc) |
 | `gen_image.py` | dump the **pre-relocated** program `[0x10000, 0x2b7ae)` to `JOUST.IMG`, via the kit's own loader |
 | `tos.ld` / `mkprg.py` | link at base 0, then wrap the ELF into a GEMDOS `.PRG` with a relocation table (copied verbatim from the BuggyBoy build) |
-| `build.sh` | compile + link + wrap + stage `disk/` |
-| `smoke.py` | headless Hatari: boot, run to completion, read `C:\SCREEN.BIN` / `SCREEN0.BIN` / `STATS.BIN` back, check them |
+| `build.sh` | compile + link + wrap + stage `disk/`; one mode per on-target check (`title`, `smoke`, `quit`, `quittitle`, `restart`), each also kept as `build/JOUST-<mode>.PRG` |
+| `smoke.py` | headless Hatari: boot, run to completion, read `SCREEN.BIN` / `SCREEN0.BIN` / `STATS.BIN` / `HIGH.SCO` back, check them. Also `hiscore` (three chained boots) and `original` (RAM-dump comparison with the shipped binary) |
 | `run.sh` | interactive Hatari, ours or the original |
 
 ## The boundary decisions
@@ -90,7 +103,14 @@ mode — and GEMDOS handle allocation misbehaves from supervisor under Hatari's 
 BuggyBoy build shipped that bug). Keeping the kit's staged-file model means the cores' file calls
 are pure image operations with no privilege requirement at all: the shim `Fread`s `HIGH.SCO` into
 the staging area (`OS_FS_STAGING`) and fills in one table entry before the game starts, exactly as
-`harness.stage_files` does. Same bytes, no trap in the middle. The write-back is M3's.
+`harness.stage_files` does. Same bytes, no trap in the middle.
+
+The write-back is the mirror: `save_hiscore` puts the 26-byte record into that staging area through
+`os_fwrite`, and the shim copies it out to the real `HIGH.SCO` on the quit path, at the length the
+model's own table entry reports and behind the same `hiscore_dirty` gate the routine uses. That gate
+is always set, and that is the ORIGINAL's behaviour rather than an accident — `init_system` marks a
+successfully loaded file dirty, so every Ctrl-C rewrites it (`../src/init.c` calls it out as
+reproduced, not fixed).
 
 ### 3. Privilege: user mode, with balanced `Super` pairs
 
@@ -179,9 +199,16 @@ quit tail sends: the reset `$80 $01` (`ikbd_cmd_reset`) and the mouse-reporting 
 (`ikbd_cmd_mouse_rel`). `../src/input.c`'s `restore_system` is the image half of that hand-back; the
 traps are the half no reconstruction has.
 
-`shim_teardown` is compiled into the SMOKE builds only, because they are the only builds with an
-exit at all — `start()` never returns, and the Ctrl-C path that will need it in the playable build
-is M3's.
+`shim_teardown` runs on **every** exit path there is — the game's own Ctrl-C quit (§10) and the
+SMOKE builds' frame-limit dump alike. Alongside the four undos it makes the FIVE off-image trap
+calls the reconstruction's quit tail has no reconstruction for: `restore_system` (`../src/input.c`)
+puts back the three bytes it can see, all of them inside the image, and its `Setscreen`, two
+`Ikbdws`, `Super` and `Setpalette` touch nothing the differential could hold. Two of those five
+cannot use the image's answer — `Setscreen` is handed **TOS's own** log/phys base, saved before the
+shifter was pointed at the in-image framebuffer (the original never moved the screen, so it passes
+-1/-1), and `Setpalette` is handed the palette **the shim** read back at startup, because the one
+`save_palette` stored is sixteen zeros: the kit models XBIOS `Setcolor` as answering 0, so restoring
+the image's copy would hand the desktop a black screen.
 
 ### 8. The `D0`/`D2` hand-off — accepted as-is
 
@@ -203,11 +230,16 @@ than taken.
 
 ### 9. The headless keystroke
 
-`smoke.py frames` has no keyboard, so the `smoke` build offers `'1'` at the shim's **console seam** —
-the same place TOS delivers a real key. Two conditions gate it: the run must have made
-`SMOKE_KEY_AFTER` (8) console polls, and the real `Bconstat` must have nothing waiting on the poll
-that serves it, so an interactive key always wins. (The first is a poll *count*, not a silence
-detector; a real key arriving before poll 8 is taken by the second condition, not by the first.)
+A headless run has no keyboard, so the SMOKE builds offer a SEQUENCE of keys at the shim's
+**console seam** — the same place TOS delivers a real one. `build.sh` sets it: the keys, and how
+many console polls to wait for each after the previous was taken. That wait is a natural clock in
+both phases, because the title screen polls ~400 times per attract pass while during play
+`poll_quit_key` is exactly one poll per frame — so `quit` is "type '1', play 60 frames, press
+Ctrl-C" and `restart` adds "R, then Ctrl-C from the new title screen".
+
+Two conditions gate each key: the poll count above, and the real `Bconstat` having nothing waiting
+on the poll that serves it — so an interactive key always wins. (The first is a poll *count*, not a
+silence detector; a real key arriving early is taken by the second condition, not the first.)
 
 Everything downstream of that byte is the verified reconstruction, and `STATS.BIN` is what says so:
 `two_player_mode == 0` and `players_alive == 1`, read out of the image at the dump, are
@@ -215,33 +247,152 @@ Everything downstream of that byte is the verified reconstruction, and `STATS.BI
 legible in a framebuffer** — asserting on pixels would have left the `'1'` path assumed. What the
 headless run does *not* prove is TOS's own keyboard driver; `run.sh` is where a human proves that.
 
+### 10. Quit and restart, which `start()` cannot take itself
+
+Three of the reconstruction's exits are result codes `start()` drops — `INPUT_QUIT`,
+`INPUT_RESTART`, `CHECK_HIGHSCORE_RESTART` — and dropping them is CORRECT, because the original's
+twenty-one `jsr`s drop them too: there the routine that took such a path never came back. In C it
+does, so without the shim the on-target game cannot be quit or restarted at all. The shim finishes
+them from the only place it gets control, the OS seams the cores call, since `start()` never returns.
+
+**Ctrl-C is WATCHED, not intercepted**, because `quit_to_desktop` is verified code that has to run —
+it silences the chip, writes the record into the staged file and puts the image's system state back.
+So: the console seam sees the key go to the game; `quit_to_desktop`'s own first act, the `Dosound`
+silence, confirms the tail is running; and the next seam of any kind — the tail having returned —
+takes the exit.
+
+Two invariants hold that scheme up, and both are load-bearing enough to be worth stating where a
+future editor will trip over them (they are also on the hook list in `shim_include/os.h`):
+**the file helpers must never gain the exit hook** — `quit_to_desktop` calls all three of them
+through `save_hiscore` while the shim is already in `QUIT_TAIL_RUNNING`, so a hook there would fire
+the exit mid-record and truncate or lose the write-back; and **no other `Dosound` can occur between
+the key and the tail's own** — both readers that act on Ctrl-C test the key and call
+`quit_to_desktop` in the same statement, and `check_highscore`'s entry loop, the one reader that
+ignores the key, issues none at all, which is what makes "a second console poll instead" a safe way
+to recognise it. That is one seam later than the original's `Pterm`, and the cost differs by path. From play it is
+one more frame. **From the title screen it is the whole of `init_video`**: `title_screen` returns
+`TITLE_QUIT`, `start_init_chain` drops it and calls `init_video` next, whose first hooked seam is
+`snd_tone_sweep`'s `Giaccess` at the very *end* — so the title picture is blanked by `fill_screen`
+and the playfield, score bar and lives are painted before the exit lands (measured: `psg_writes = 0`
+in the `quittitle` run, i.e. it stops on that sweep's very first register write). On screen that is
+one frame of game before the desktop returns, and it is why `quittitle`'s dumped framebuffer is a
+game screen rather than a title one. Neither divergence outlives the exit — the shim puts TOS's own
+screen and palette back — but the title one is a visible flash, not 20 ms of nothing.
+
+**If the game does NOT react, the shim quits on its behalf.** A Ctrl-C that reaches a second console
+poll without that `Dosound` is one the game ignored — which `check_highscore`'s name-entry loop does,
+since `hiscore_key_input` has no Ctrl-C case and that loop never returns to `poll_quit_key`. Without
+this the game would be unquittable there. The shim then calls `quit_to_desktop(image)` itself: the
+exported routine, not a copy of it.
+
+**R restarts** by `longjmp`ing back to a `setjmp` in `joust_main` and re-entering `start()`. The
+original jumps to `RESTART_ENTRY` = `_start+6`, i.e. back to `init_game` with `init_system` SKIPPED;
+re-entering `start()` runs `init_system` as well. Running the VERIFIED `start()` is worth that,
+because the alternative is a second copy of `_start`'s twenty-one calls living in the shim — but the
+two things `init_system` writes that would be **observable** are snapshotted and put back at
+`shim_init_game_started()`, which is `init_game`'s own `Random` trap and so exactly where the
+original resumes: `two_player_mode` (zeroed, which would lose the mode a fire-button start reuses)
+and the in-memory high-score record (which `load_hiscore` would overwrite from the staged file,
+discarding a score just typed). "Two" is not a claim that `init_system` writes nothing else — it
+re-saves `saved_rez`, the 16-word `saved_palette`, `conterm_save`, the two in-image KBDVBASE vectors
+and the boot scratch too, and every one of those is image-only state that only the reconstruction's
+own quit tail reads, while the real machine is handed back from the shim's copies.
+
+**The shim's own view of the run is reset with it**, and forgetting that was a bug: `title_over`
+latches on the first `Giaccess` write and never clears, so the restarted attract screen ran under the
+GAME palette (measured: zero title-palette loads after a restart) and a `SMOKE_FRAMES` build would
+have counted title polls as frames and terminated on the title screen.
+
+**R is only a restart during play** — `title_over` set and `game_over_flag` clear — and that is a
+deliberately narrow trade with an edge on each side, *neither of which the original has*:
+
+- `game_over_flag` **set**: the name-entry screen may be up, and there R is a **letter** being typed
+  into the name. But the original's `poll_quit_key` tests nothing at all, so between `draw_messages`
+  setting the flag mid-loop and `init_game` clearing it there is a window in which the original
+  restarts and this build does not.
+- `title_over` **clear**: the attract screen. `game_over_flag` is clear there (`init_game` runs just
+  before `title_screen`), so that gate alone is wide open — and the original ignores R on the title
+  screen like any other key, `title_screen` having no R case at all.
+
+The shim can only see what state the game is *in*, never which reader consumed a key, so it buys
+fidelity on the two screens where R should do nothing at the cost of one window where it should.
+
+### 11. The joystick, as far as a headless run can go
+
+The IKBD path is proven **live**: `joy_handler` files a reply and chains the next interrogate, and
+`STATS.BIN` counts them — ~1000 per run, and every wait loop in the game (`read_joysticks`,
+`title_screen`'s attract pass, the name entry) blocks until one lands, so the run reaching its last
+frame at all is that path working. What a headless Hatari cannot do is *press* a stick: `--joy1 keys`
+maps host keys and there is no host keyboard, so `player_x`/`player_y` in `STATS.BIN` show the rider
+under gravity alone. Steering is therefore a GUI check — `run.sh`, cursor keys and right-Ctrl.
+
+That leaves the `D0`/`D2` decision of §8 exactly where it was and no more relevant: those registers
+carry out of `read_joysticks`' last `control_player` whether a stick moved or not, and the walk that
+found them unobservable was over the game's own frames, sticks and all.
+
 ## Known gaps
 
-- **Restart, quit and the high-score entry do not end.** `start()` ignores its callees' results
-  exactly as the original's twenty-one `jsr`s do — correct there, because the routine that took such
-  a path never returns. In C they *do* return, so on target Ctrl-C runs `quit_to_desktop` and then
-  carries on playing, `R` does nothing, and a game-over that beats the record re-enters
-  `check_highscore` every frame. All of this is M3.
-- **`quit_to_desktop` restores the image, not the machine.** `restore_system` writes `conterm` and
-  the two KBDVBASE vectors *inside the image* (the kit models low memory as image bytes), and the
-  five off-image calls around it — `Setscreen`, two `Ikbdws`, `Super`, `Setpalette` — have no
-  reconstruction at all. `../src/input.c` says so. The machine half already exists as §7's
-  `shim_teardown()`; what M3 owes is a quit path that reaches it and a `Setscreen` back to TOS's own
-  framebuffer.
-- **`HIGH.SCO` is read but not written back.** `save_hiscore` writes into the image staging area; the
-  shim does not yet copy it out to the real file.
+- **The high-score name entry does not END.** `check_highscore`'s entry loop is left, in the
+  original, by either reader jumping to `RESTART_ENTRY`; the C returns `CHECK_HIGHSCORE_RESTART` and
+  `start()` drops it, so RETURN or fire types the name and the screen stays up. §10's trick does not
+  reach it: unlike Ctrl-C there is no trap the shim can watch to tell "the reader ended the entry"
+  from "the reader accepted a letter", and deciding it in the shim would mean a second copy of
+  `hiscore_finish`'s gate. **Ctrl-C works there** (§10's second branch), so the screen is an
+  inconvenience rather than a trap. Closing it properly wants a seam in the core.
+- **`control_player`'s restart is not wired either.** Both riders dead on an empty slot sets
+  `game_over_flag` and, in the original, jumps to `RESTART_ENTRY`; the C returns `CONTROL_RESTART`
+  through `read_joysticks` and `start()` drops that too. The game keeps playing instead of
+  restarting. Same shape as the entry loop and the same reason.
+- **A NEW record has not been round-tripped, only a changed one.** `smoke.py hiscore` proves the
+  path end to end — a modified `HIGH.SCO` goes in, the game reads it, `save_hiscore` writes it back
+  into the staged file, the shim copies it out through GEMDOS, and a reboot shows it on the title
+  screen's HIGH SCORE line and only there. What no headless run has produced yet is a record the
+  PLAYER typed, because that needs a game over (four lives lost with the sticks centred) and then
+  the name entry above, which cannot be ended. Deferred on purpose rather than faked.
 - **1 MiB machine.** The image is a 1 MiB BSS array, so the PRG needs `--memsize 4`. The original
   runs on a 520 ST. Shrinking the image to the ~0x2c000 the program actually occupies plus the
   screen and the file staging is possible but needs `OS_IMAGE_SIZE`, `OS_FS_*` and the kit's memory
   map to move together — future work, deliberately not attempted here.
 - **The monochrome branch is dead code on target too.** `init_system` reads `Getrez` as the model's
   constant 0, so a mono machine gets the colour game rather than `MONO.ERR`.
+- **Joystick steering is only checked in the GUI** — see §11 for what the headless run does prove.
+
+## Reviewed and deferred
+
+The pre-commit review found four things worth doing that are **not** in this change, because each
+is a change to a verified core or to the shared kit rather than to the shim. They are recorded here
+rather than half-taken:
+
+- **An `os_pterm()` seam is the right depth for §10.** The original *traps GEMDOS Pterm* at exactly
+  the two sites that consume Ctrl-C, and the reconstruction dropped the trap because it has no image
+  effect. A seam there — no-op in the harness, `shim_quit()` on target — would delete the whole
+  watch-then-confirm state machine, both invariants above, the second-console-poll fallback **and**
+  the one-seam divergence. It is `docs/on-target-execution.md`'s own §5 recipe applied to this exit.
+- **Splitting `start()` would delete the restart snapshot.** `start()` is `start_init_chain(); for(;;)`
+  and `RESTART_ENTRY` is literally "everything but the first call". Exposing
+  `start_at_restart_entry()` is a few lines in `../src/init.c`, is differentially testable exactly as
+  the two existing rotations are, and removes the snapshot, the replay and the `os_random` hook —
+  along with their dependence on `init_game` being the only caller of `Random`.
+- **Two kit candidates.** The headless-Hatari launcher now exists three times (here and twice in
+  BuggyBoy's `render/atari/`) and the copies have already diverged in a way that matters — only this
+  one asserts on the exit status. The 68000 trap wrappers are a second such library, and the
+  `movem.l %d2/%a2` save every one of them needs is a bug class the oracle cannot see. Both belong
+  next to `tos_probe.py` in `tools/recreate_kit/`; moving them is a kit change.
+- **The key script could be staged, not compiled in.** Five `-D` flag sets, five link cycles and six
+  cached `build/JOUST-<mode>.PRG` exist only to vary three ASCII bytes. Reading them from a staged
+  file would leave one SMOKE build and put the scenario data in `smoke.py` beside the assertions
+  about it. Until then each check boots the build made for it and refuses one older than the sources,
+  so a mismatch is named rather than surfacing as a behavioural red.
+
+Two smaller ones declined outright: a `.macro` for the five no-arg XBIOS wrappers (it would rewrite
+proven trap glue for line count), and having `hiscore`'s first phase reuse `out/screen_title.bin`
+instead of booting (a self-contained baseline is worth the 6 s).
 
 ## The bugs found on target
 
-Both are the shape `docs/on-target-execution.md` warns about — real behaviour, in code the
-differential harness cannot execute at all — and neither was visible under the setup that found the
-first green.
+All three are the shape `docs/on-target-execution.md` warns about — real behaviour, in code the
+differential harness cannot execute at all — and none was visible under the setup that found the
+previous green.
 
 **1. A GCC addressing mode the 68000 reads differently (taxonomy class 6).** The VBL palette pusher
 first wrote `$ffff8240..$ffff825e` directly, as a 16-iteration loop over a `volatile uint16_t *`.
@@ -266,7 +417,19 @@ memory GEMDOS had taken back. Measured on TOS 1.04, run to completion:
 `Detected double bus/address error => CPU halted!`, exit status 1. Fixed by §7's `shim_teardown()`;
 the same run now exits 0 with no fault outside the TOS ROM.
 
-*Lesson, and it is the sharper of the two: the original smokes passed this build, because they
+*Lesson, and it is the sharpest of the three: the smokes of the day passed this build, because they
 killed Hatari a third of a second after `SCREEN.BIN` appeared.* A harness that stops watching at the
 moment of success cannot see a shutdown at all. Running to the end of `--run-vbls` and asserting on
-the exit costs eleven seconds a run and is now part of both checks.
+the exit costs eleven seconds a run and is now part of every check.
+
+**3. A hand-written `setjmp` that trusted the stack.** §10's restart needs an unwind, and a
+freestanding m68k build has no libc to get one from, so `shim_setjmp`/`shim_longjmp` are ten
+instructions in `joust_os.s`. The first version saved `%sp` as it stood *inside* setjmp — pointing at
+its own return address — and let `longjmp`'s `rts` pick the address up from there. That slot is dead
+the moment setjmp returns, and every call the game makes afterwards reuses it. Measured: the longjmp
+fired and the instruction after `setjmp` never ran. The buffer now holds the return address itself.
+A second, quieter half of the same bug: without `__attribute__((returns_twice))` GCC compiles the
+call as one that returns exactly once and reasons the landing away — also measured, and also silent.
+
+*Lesson: two of these three were only found because a SECOND observation was added — a second TOS
+ROM, and letting the emulator run past the exit. On target, the cheap extra observation is the tool.*

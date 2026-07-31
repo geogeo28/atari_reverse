@@ -150,6 +150,27 @@ Bconin:
 
 | ------------------------------------------------------------------ XBIOS (trap #14) ----------
 
+| long Logbase(void)            XBIOS 0x03 (and Physbase is 0x02) — TOS's own screen, saved at
+| startup so the quit path can give it back.
+    .globl  Logbase
+Logbase:
+    movem.l %d2/%a2,-(%sp)
+    move.w  #3,-(%sp)
+    trap    #14
+    addq.l  #2,%sp
+    movem.l (%sp)+,%d2/%a2
+    rts
+
+| long Physbase(void)           XBIOS 0x02
+    .globl  Physbase
+Physbase:
+    movem.l %d2/%a2,-(%sp)
+    move.w  #2,-(%sp)
+    trap    #14
+    addq.l  #2,%sp
+    movem.l (%sp)+,%d2/%a2
+    rts
+
 | void Setscreen(void *log, void *phys, short rez)   XBIOS 0x05
 | rez = -1 leaves the resolution alone. Setscreen (not a poke at $ffff8201/8203) because TOS's own
 | VBL routine reloads the shifter from _v_bas_ad, which only Setscreen updates.
@@ -165,6 +186,33 @@ Setscreen:
     move.w  #5,-(%sp)
     trap    #14
     lea     12(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
+    rts
+
+| void Setpalette(const void *palette16)    XBIOS 0x06
+    .globl  Setpalette
+Setpalette:
+    movem.l %d2/%a2,-(%sp)
+    move.l  12(%sp),-(%sp)
+    move.w  #6,-(%sp)
+    trap    #14
+    lea     6(%sp),%sp
+    movem.l (%sp)+,%d2/%a2
+    rts
+
+| long Setcolor(short pen, short colour)    XBIOS 0x07 — colour -1 QUERIES the pen without setting
+| it, which is how the shim reads the desktop's palette back at startup. Both args are the LOW word
+| of their 4-byte C slot.
+    .globl  Setcolor
+Setcolor:
+    movem.l %d2/%a2,-(%sp)
+    move.l  16(%sp),%d1             | colour
+    move.l  12(%sp),%d0             | pen
+    move.w  %d1,-(%sp)
+    move.w  %d0,-(%sp)
+    move.w  #7,-(%sp)
+    trap    #14
+    addq.l  #6,%sp
     movem.l (%sp)+,%d2/%a2
     rts
 
@@ -237,6 +285,53 @@ Vsync:
     movem.l (%sp)+,%d2/%a2
     rts
 
+| ------------------------------------------------------------- setjmp / longjmp ---------------
+|
+| The reconstruction's RESTART exit is a `jmp` back into the middle of _start that abandons the
+| stack (`addq.w #4,a7` and go). The C reconstruction cannot do that — it returns a result code that
+| `start()` drops, exactly as the original's `jsr`s do — so the SHIM has to unwind instead, and this
+| is the unwind. GCC's freestanding m68k ships no libc, so setjmp/longjmp are here rather than
+| #included; they save only what the m68k SysV ABI makes callee-saved, plus the stack pointer.
+|
+| The buffer's layout is named below and SHIM_JMP_BUF_LONGS (shim_include/tos.h) must equal
+| JB_LONGS — one C constant, one asm constant, and a comment in each pointing at the other, because
+| nothing in the build can check them against each other.
+|
+| THE RETURN ADDRESS IS SAVED, NOT LEFT ON THE STACK. A first version stored %sp as it stood inside
+| setjmp — pointing AT its own return address — and let longjmp's `rts` pick it up from there. That
+| slot is dead the moment setjmp returns, and every call the game makes afterwards reuses it, so by
+| the time longjmp ran it held whatever the last `jsr` had left. Measured: the longjmp fired and
+| execution never reached the instruction after setjmp.
+
+    JB_REGS  = 0                    | %d2-%d7/%a2-%a6, 11 longwords
+    JB_SP    = 44                   | the caller's %sp once setjmp has returned
+    JB_RET   = 48                   | ...and the address it returns to
+    JB_LONGS = 13                   | == SHIM_JMP_BUF_LONGS in shim_include/tos.h
+
+| int shim_setjmp(long env[JB_LONGS]) — 0 when called, `value` when longjmp lands here.
+    .globl  shim_setjmp
+shim_setjmp:
+    move.l  4(%sp),%a0
+    movem.l %d2-%d7/%a2-%a6,JB_REGS(%a0)
+    move.l  (%sp),JB_RET(%a0)       | the return address, copied OUT of the stack
+    lea     4(%sp),%a1
+    move.l  %a1,JB_SP(%a0)          | ...and the %sp the caller will have once we return
+    moveq   #0,%d0
+    rts
+
+| void shim_longjmp(long env[JB_LONGS], int value) — never returns; `value` of 0 is handed back as 1.
+    .globl  shim_longjmp
+shim_longjmp:
+    move.l  4(%sp),%a0
+    move.l  8(%sp),%d0
+    bne.s   shim_longjmp_go
+    moveq   #1,%d0
+shim_longjmp_go:
+    movem.l JB_REGS(%a0),%d2-%d7/%a2-%a6
+    move.l  JB_SP(%a0),%sp          | the caller's stack, unwound
+    move.l  JB_RET(%a0),-(%sp)      | its return address pushed back below it (dead space), and
+    rts                             |   consumed on the spot
+
 | ------------------------------------------------------- the IKBD joystick-packet handler -----
 |
 | Installed at KBDVBASE joyvec (+0x18). TOS's IKBD interrupt enters here with %a0 pointing at the
@@ -255,6 +350,8 @@ Vsync:
 |
 | It runs on an interrupt, so it saves everything it touches.
 
+    .extern ikbd_packets
+
     ACIA_STATUS = 0xfffffc00           | IKBD ACIA status; bit 1 = transmit data register empty
     ACIA_DATA   = 0xfffffc02
     IKBD_INTERROGATE = 0x16
@@ -267,6 +364,8 @@ joy_handler:
     move.b  (%a0),(%a1)             | joystick 1
     move.l  joy_slot_addr,%a1       | image + A_ikbd_packet, as a REAL address
     move.l  joy_packet_off,(%a1)    | ...holding the IMAGE OFFSET the cores dereference
+    addq.l  #1,ikbd_packets         | one more reply filed (the only headless evidence of a live
+                                    |   joystick path — see joust_main.c)
     move.b  ACIA_STATUS,%d0
     btst    #1,%d0
     beq.s   joy_no_chain            | transmitter busy: the VBL watchdog re-primes instead
