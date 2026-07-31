@@ -95,26 +95,6 @@ static void stage_rider_box(uint8_t *image, uint32_t box, uint32_t object) {
  * Sweep 1 — the platforms (0x13868..0x13908).
  * ============================================================================================= */
 
-/* A platform's own bitmap record IS its collision box: platform_sprites already holds the source,
- * the cell width and the screen offset draw_platforms blits it at.
- *
- * The row count is read as the LOW BYTE of PSPR_ROWS (`addq.l #1,a3 ; move.b (a3)+,11(a2)`), so a
- * platform more than 255 rows tall would be measured wrong; none is. The box's own y is that screen
- * offset's scanline, and `divu.w` leaves the dividend untouched on overflow — an offset past
- * 0x63ffa0 would therefore carry its own low word into the y field rather than a quotient.
- */
-static void stage_platform_box(uint8_t *image, uint32_t sprite) {
-    uint32_t dst_off = be32(image + sprite + PSPR_DST_OFF);
-    image[A_hit_box_b + HB_ROWS] = image[sprite + PSPR_ROWS + 1];
-    wr16(image + A_hit_box_b + HB_COLS, be16(image + sprite + PSPR_COLS));
-    wr32(image + A_hit_box_b + HB_SRC, be32(image + sprite + PSPR_SRC));
-    image[A_hit_box_b + HB_SHIFT] = 0;
-    /* The original stores dst_off and then adds screen_base to the field in place; folding the two
-     * into one write is exact — hit_box_b lies below screen_base, so it cannot alias it. */
-    wr32(image + A_hit_box_b + HB_DST, dst_off + be32(image + A_screen_base));
-    wr16(image + A_hit_box_b + HB_Y, (uint16_t)divu_w(dst_off, SCREEN_ROW_BYTES));
-}
-
 /* The platform sweep. hit_box_a is re-staged on EVERY pass, not once before the loop: test_overlap
  * uses the boxes' HB_SRC and HB_CUR_COL as its own cursors, so the previous platform's sweep has
  * left them somewhere else. The first platform that touches ends the sweep. */
@@ -410,7 +390,6 @@ static void collect_eggs(uint8_t *image, uint32_t player) {
  * Sweep 4 — the pterodactyls (0x13d1e..0x13ee6).
  * ============================================================================================= */
 
-#define PTERO_BOX_COLS  3u       /* `move.w #$3,8(a2)` — the bird is three cells wide */
 #define PTERO_DEATH_TIMERS  4u   /* both byte timers are armed to this on the frame it is lanced */
 
 /* The lance connects only when the bird is exactly one scanline above the player. */
@@ -500,10 +479,8 @@ static uint32_t player_lanced(uint8_t *image, uint32_t player, uint32_t flags) {
     return flags;
 }
 
-/* The pterodactyl sweep, players only and only while the player is still alive. The bird's box is
- * assembled from three pieces — a screen address, screen_base and a SIGN-extended offset — and its
- * y is its own y plus that offset's scanline count. The first bird that touches ends the sweep,
- * whichever way the exchange goes. */
+/* The pterodactyl sweep, players only and only while the player is still alive. The first bird that
+ * touches ends the sweep, whichever way the exchange goes. */
 static void joust_pterodactyls(uint8_t *image, uint32_t player, uint32_t flags) {
     for (uint32_t ptero = A_pterodactyl_table; ptero != A_pterodactyl_table_END;
          ptero += PT_RECORD) {
@@ -512,15 +489,7 @@ static void joust_pterodactyls(uint8_t *image, uint32_t player, uint32_t flags) 
         if (ptero_flags & (PT_FLAG_JUST_SPAWNED | PT_FLAG_DYING)) continue;    /* not solid */
 
         stage_rider_box(image, A_hit_box_a, player);
-        uint32_t dst_off = be16(image + ptero + PT_DST_OFF);
-        wr32(image + A_hit_box_b + HB_DST, be32(image + ptero + PT_DST)
-             + be32(image + A_screen_base) + sign_ext16(dst_off));
-        wr32(image + A_hit_box_b + HB_SRC, be32(image + ptero + PT_SRC));
-        wr16(image + A_hit_box_b + HB_COLS, PTERO_BOX_COLS);
-        image[A_hit_box_b + HB_SHIFT] = image[ptero + PT_SHIFT];
-        image[A_hit_box_b + HB_ROWS] = image[ptero + PT_ROWS];
-        wr16(image + A_hit_box_b + HB_Y, (uint16_t)(be16(image + ptero + PT_Y)
-                                                    + (uint16_t)divu_w(dst_off, SCREEN_ROW_BYTES)));
+        stage_ptero_box(image, A_hit_box_b, ptero);
         test_overlap(image);
         if (image[A_collision_hit] == 0) continue;
 

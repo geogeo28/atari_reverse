@@ -144,6 +144,54 @@ void test_overlap(uint8_t *image) {
     }
 }
 
+/* ------------------------------------------------------------------------- staging a hit box ---
+ *
+ * Two of the four things Joust collides are described by a record rather than by an object slot,
+ * and both are staged the same way wherever they are tested — collision_check does it for a rider's
+ * platform sweep and its pterodactyl sweep, update_pterodactyl for a bird's own platform sweep. The
+ * transcriptions live here, beside test_overlap, so that one shape has one reading.
+ */
+
+/* A platform's own bitmap record IS its collision box: platform_sprites already holds the source,
+ * the cell width and the screen offset draw_platforms blits it at. Always staged into hit_box_b —
+ * both callers put the moving party in hit_box_a.
+ *
+ * The row count is read as the LOW BYTE of PSPR_ROWS (`addq.l #1,a3 ; move.b (a3)+,11(a2)`), so a
+ * platform more than 255 rows tall would be measured wrong; none is. The box's own y is that screen
+ * offset's scanline, and `divu.w` leaves the dividend UNCHANGED on overflow — an offset past
+ * 0xa00000 would therefore carry its own low word into the y field rather than a quotient.
+ *
+ * All three sweeps that stage a platform go through here: collision_check's (0x13890),
+ * update_pterodactyl's (0x14c38) and update_egg_physics' (0x12b4a).
+ */
+void stage_platform_box(uint8_t *image, uint32_t sprite) {
+    uint32_t dst_off = be32(image + sprite + PSPR_DST_OFF);
+    image[A_hit_box_b + HB_ROWS] = image[sprite + PSPR_ROWS_LO];
+    wr16(image + A_hit_box_b + HB_COLS, be16(image + sprite + PSPR_COLS));
+    wr32(image + A_hit_box_b + HB_SRC, be32(image + sprite + PSPR_SRC));
+    image[A_hit_box_b + HB_SHIFT] = 0;
+    /* The original stores dst_off and then adds screen_base to the field in place; folding the two
+     * into one write is exact — hit_box_b lies below screen_base, so it cannot alias it. */
+    wr32(image + A_hit_box_b + HB_DST, dst_off + be32(image + A_screen_base));
+    wr16(image + A_hit_box_b + HB_Y, (uint16_t)divu_w(dst_off, SCREEN_ROW_BYTES));
+}
+
+/* A pterodactyl's box is where its sprite was last DRAWN: the record's screen address, plus
+ * screen_base, plus the SIGN-extended within-row offset. Its y is its own y advanced by however
+ * many whole scanlines that offset carries. `box` is hit_box_a when the bird is the party being
+ * swept (update_pterodactyl) and hit_box_b when it is what a rider ran into (collision_check). */
+void stage_ptero_box(uint8_t *image, uint32_t box, uint32_t ptero) {
+    uint32_t dst_off = be16(image + ptero + PT_DST_OFF);
+    wr32(image + box + HB_DST, be32(image + ptero + PT_DST) + be32(image + A_screen_base)
+         + sign_ext16(dst_off));
+    wr32(image + box + HB_SRC, be32(image + ptero + PT_SRC));
+    wr16(image + box + HB_COLS, PTERO_BOX_COLS);
+    image[box + HB_SHIFT] = image[ptero + PT_SHIFT];
+    image[box + HB_ROWS] = image[ptero + PT_ROWS];
+    wr16(image + box + HB_Y, (uint16_t)(be16(image + ptero + PT_Y)
+                                        + (uint16_t)divu_w(dst_off, SCREEN_ROW_BYTES)));
+}
+
 /* ---------------------------------------------------------------------- joust_bounce @ 0x140fe */
 
 /* The two thresholds of joust_bounce's wrap-aware "which rider is on the right?" compare. x wraps
@@ -377,8 +425,6 @@ uint32_t ptero_avoid_platform(uint8_t *image, uint32_t pterodactyl, uint32_t scr
 
 /* ------------------------------------------------------------------ ptero_spot_player @ 0x15276 */
 
-#define SND_PTERO_SWOOP     3u      /* sound_table index played when a player is spotted */
-
 /* The four window thresholds, each spelled with the signedness of the branch that tests it: `bhi`
  * and `bcc` are unsigned (hence the `u`), `ble` and `bge` are signed (hence the int16_t cast).
  * Suffixing a signed one `u` would silently convert the compared value in the same expression. */
@@ -414,7 +460,7 @@ void ptero_spot_player(uint8_t *image, uint32_t pterodactyl, uint32_t player, ui
     if ((int16_t)ahead >= PTERO_SPOT_X_FAR) return;
     if ((int16_t)ahead <= PTERO_SPOT_X_NEAR) return;
 
-    play_sound(image, SND_PTERO_SWOOP);
+    play_sound(image, SND_PTERO_CRY);
     image[pterodactyl + PT_SWOOP_TIMER] = PTERO_SWOOP_TIMER_SET;
 }
 

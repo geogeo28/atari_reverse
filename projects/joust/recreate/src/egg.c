@@ -156,28 +156,13 @@ static void stage_egg_hit_box(uint8_t *image, uint32_t object) {
     wr16(image + A_hit_box_a + HB_Y, be16(image + object + OBJ_EGG_Y));
 }
 
-/* 0x12b4a — one platform bitmap, as hit_box_b. Note the row count: the original walks the record
- * with `(a3)+` and reads a BYTE one past PSPR_ROWS, i.e. the low half of that word. */
-static void stage_platform_hit_box(uint8_t *image, uint32_t sprite) {
-    uint32_t offset = be32(image + sprite + PSPR_DST_OFF);
-    image[A_hit_box_b + HB_ROWS] = image[sprite + PSPR_ROWS + 1];
-    wr16(image + A_hit_box_b + HB_COLS, be16(image + sprite + PSPR_COLS));
-    wr32(image + A_hit_box_b + HB_SRC, be32(image + sprite + PSPR_SRC));
-    image[A_hit_box_b + HB_SHIFT] = 0;
-    /* `move.l (a3),dst ; add.l screen_base,dst` — folded; screen_base cannot alias hit_box_b. */
-    wr32(image + A_hit_box_b + HB_DST, offset + be32(image + A_screen_base));
-    /* divu_w reproduces DIVU.W's overflow case, where the destination is left UNCHANGED — so an
-     * offset past 0xa00000 stores its own low word as the scanline instead of a quotient. */
-    wr16(image + A_hit_box_b + HB_Y, (uint16_t)divu_w(offset, SCREEN_ROW_BYTES));
-}
-
 /* 0x12b06 — the pixel-collision pass over the platform bitmaps. Returns non-zero on the first hit. */
 static int egg_hits_a_platform_sprite(uint8_t *image, uint32_t object) {
     for (uint32_t sprite = A_platform_sprites; sprite != A_platform_sprites_END;
          sprite += PSPR_RECORD) {
         stage_egg_hit_box(image, object);          /* staged even when the platform is absent */
         if (image[be32(image + sprite + PSPR_PRESENT)] == 0) continue;
-        stage_platform_hit_box(image, sprite);
+        stage_platform_box(image, sprite);          /* 0x12b4a, object.c's shared transcription */
         test_overlap(image);
         if (image[A_collision_hit] != 0) return 1;
     }

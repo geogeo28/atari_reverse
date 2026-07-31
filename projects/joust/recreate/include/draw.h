@@ -2,8 +2,13 @@
  *
  * Addresses are Ghidra addresses (image offset + the 0x10000 load base) and mirror `var` lines in
  * ../../names.txt. The globals more than one subsystem reads (A_screen_base, the draw scratch,
- * A_playfield_bottom, A_object_table, ...) live in addrs.h, and the object record and the 68000
- * shift primitives in joust.h; everything below is touched only by this layer.
+ * A_playfield_bottom, A_object_table, ...) live in addrs.h, the object record and the 68000
+ * shift primitives in joust.h, and the pterodactyl record in object.h; everything below is touched
+ * only by this layer.
+ *
+ * Nothing DECLARED here needs the pterodactyl record — only blit_mask_wide's body does — so
+ * src/draw.c includes object.h itself rather than this header dragging the whole object layer into
+ * the ten files that include it.
  */
 #ifndef JOUST_DRAW_H
 #define JOUST_DRAW_H
@@ -44,12 +49,7 @@
 #define TEXT_FLAG_BACKGROUND  0x10u  /* bit4: paint the background bar behind each glyph */
 #define TEXT_FLAG_LARGE_FONT  0x80u  /* bit7: the 8-row font rather than the 5-row one */
 
-/* --- the pterodactyl record blit_mask_wide reads ---------------------------------------------- */
-#define PTERO_DST_BASE  0x02u   /* .l — added to screen_base */
-#define PTERO_SRC       0x06u   /* .l — the sprite set; the erase mask sits PTERO_MASK_OFF in */
-#define PTERO_SHIFT     0x0au   /* .w */
-#define PTERO_DST_OFF   0x16u   /* .w — SIGN-extended (adda.w) */
-#define PTERO_ROWS      0x18u   /* .w — signed; <= 0 draws nothing */
+/* --- the pterodactyl sprite set blit_mask_wide reads (the RECORD it indexes is object.h's) ----- */
 #define PTERO_MASK_OFF  0x120u
 #define PTERO_MASK_ROW_BYTES 8u /* two longwords consumed per row (`move.l (a2)+` twice) */
 

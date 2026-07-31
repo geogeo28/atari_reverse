@@ -17,6 +17,7 @@
 #include "machine.h"
 #include "joust.h"
 #include "draw.h"
+#include "object.h"   /* the pterodactyl record blit_mask_wide indexes */
 
 /* =================================================================================================
  * fill_screen @ 0x102e2 — the whole-screen flat fill.
@@ -434,11 +435,11 @@ static void mask_cell(uint8_t *image, uint32_t cell, uint16_t mask) {
  * tests N == V, not the sign of the result) still fails. Every field is read once, before the
  * loop, so a destination laid over the record does not change the pass. */
 void blit_mask_wide(uint8_t *image, uint32_t record) {
-    uint32_t src = be32(image + record + PTERO_SRC) + PTERO_MASK_OFF;
-    uint32_t dst = be32(image + record + PTERO_DST_BASE) + be32(image + A_screen_base)
-                 + sign_ext16(be16(image + record + PTERO_DST_OFF));
-    uint32_t shift = be16(image + record + PTERO_SHIFT);
-    int16_t rows = (int16_t)be16(image + record + PTERO_ROWS);
+    uint32_t src = be32(image + record + PT_SRC) + PTERO_MASK_OFF;
+    uint32_t dst = be32(image + record + PT_DST) + be32(image + A_screen_base)
+                 + sign_ext16(be16(image + record + PT_DST_OFF));
+    uint32_t shift = be16(image + record + PT_SHIFT_W);
+    int16_t rows = (int16_t)be16(image + record + PT_ROWS_W);
 
     for (int16_t row = 0; row < rows; row++) {
         uint32_t left = ror32(be32(image + src), shift);

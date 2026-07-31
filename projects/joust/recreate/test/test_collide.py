@@ -198,15 +198,24 @@ def _egg_holder(index, y, state=EGG_STATE_THROWN, **fields):
     return _obj(index, egg_state=state, **fields)
 
 
-_PT_FIELDS = {"flags": (0x00, "H"), "dst": (0x02, "I"), "src": (0x06, "I"), "shift": (0x0b, "B"),
-              "x": (0x0c, "H"), "y": (0x0e, "H"), "dst_off": (0x16, "H"), "rows": (0x19, "B"),
-              "swoop_timer": (0x1e, "B"), "dwell_timer": (0x1f, "B")}
+# The pterodactyl record, keyed by include/object.h's name for each field so the pin below can
+# check every offset this packer encodes positionally. `shift`/`rows` are the LOW BYTES of the
+# words at 0x0a/0x18, one byte off each — a pair a `_W` typo in stage_ptero_box would swap, and
+# which every case here stages as 0, so the differential alone would not see it.
+_PT_FIELDS = {"flags": ("PT_FLAGS", "H"), "dst": ("PT_DST", "I"), "src": ("PT_SRC", "I"),
+              "shift": ("PT_SHIFT", "B"), "x": ("PT_X", "H"), "y": ("PT_Y", "H"),
+              "dst_off": ("PT_DST_OFF", "H"), "rows": ("PT_ROWS", "B"),
+              "swoop_timer": ("PT_SWOOP_TIMER", "B"), "dwell_timer": ("PT_DWELL_TIMER", "B")}
+_PT_OFFSETS = {"PT_FLAGS": 0x00, "PT_DST": 0x02, "PT_SRC": 0x06, "PT_SHIFT": 0x0b, "PT_X": 0x0c,
+               "PT_Y": 0x0e, "PT_DST_OFF": 0x16, "PT_ROWS": 0x19, "PT_SWOOP_TIMER": 0x1e,
+               "PT_DWELL_TIMER": 0x1f}
 
 
 def _ptero(**fields):
     rec = bytearray(PT_RECORD)
     for name, value in fields.items():
-        off, fmt = _PT_FIELDS[name]
+        field, fmt = _PT_FIELDS[name]
+        off = _PT_OFFSETS[field]
         width = {"B": 8, "H": 16, "I": 32}[fmt]
         struct.pack_into(">" + fmt, rec, off, value & ((1 << width) - 1))
     return bytes(rec)
@@ -1082,9 +1091,7 @@ def test_mirrored_constants_match_collide_h():
     collide_h = _defines("include/collide.h")
     for c_name, mirror in (("A_egg_bonus_table", A_EGG_BONUS_TABLE),
                            ("BONUS_RECORD", BONUS_RECORD),
-                           ("EGG_STATE_THROWN", EGG_STATE_THROWN),
-                           ("PT_FLAG_JUST_SPAWNED", PT_FLAG_JUST_SPAWNED),
-                           ("PT_FLAG_DYING", PT_FLAG_DYING)):
+                           ("EGG_STATE_THROWN", EGG_STATE_THROWN)):
         assert collide_h[c_name] == mirror, f"{c_name} differs from this file's mirror"
 
 
@@ -1106,7 +1113,10 @@ def test_mirrored_constants_match_the_shared_headers():
               "OBJ_FLAG_TYPE_HI": OBJ_FLAG_TYPE_HI}),
             (object_h, "object.h", {"A_pterodactyl_table": A_PTERODACTYL_TABLE,
                                     "A_pterodactyl_table_END": A_PTERODACTYL_TABLE_END,
-                                    "PT_RECORD": PT_RECORD})):
+                                    "PT_RECORD": PT_RECORD,
+                                    "PT_FLAG_JUST_SPAWNED": PT_FLAG_JUST_SPAWNED,
+                                    "PT_FLAG_DYING": PT_FLAG_DYING,
+                                    **_PT_OFFSETS})):
         for c_name, mirror in mirrored.items():
             assert defines[c_name] == mirror, f"{c_name}: {origin} differs from this file's mirror"
 

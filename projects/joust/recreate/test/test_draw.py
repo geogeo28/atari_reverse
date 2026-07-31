@@ -349,8 +349,8 @@ def test_blit_pattern_rows_fuzz():
 
 # ---------------------------------------------------------------- blit_mask_wide @ 0x15098
 
-# The pterodactyl record's fields (mirrors PTERO_* in include/draw.h).
-PTERO_DST_BASE, PTERO_SRC, PTERO_SHIFT, PTERO_DST_OFF, PTERO_ROWS = 0x02, 0x06, 0x0a, 0x16, 0x18
+# The pterodactyl record's fields (mirrors PT_* in include/object.h, which owns the whole record).
+PT_DST, PT_SRC, PT_SHIFT_W, PT_DST_OFF, PT_ROWS_W = 0x02, 0x06, 0x0a, 0x16, 0x18
 PTERO_MASK_OFF = 0x120         # the erase mask sits this far into the sprite set
 PTERO_MASK_ROW_BYTES = 8       # two longwords per row
 PTERO_RECORD_BYTES = 0x1a
@@ -362,10 +362,10 @@ PTERO_SPRITE = 0x62000
 
 def _ptero_record(dst_base, src, shift, dst_off, rows):
     record = bytearray(PTERO_RECORD_BYTES)
-    struct.pack_into(">I", record, PTERO_DST_BASE, dst_base)
-    struct.pack_into(">I", record, PTERO_SRC, src)
-    struct.pack_into(">HH", record, PTERO_SHIFT, shift, 0)
-    struct.pack_into(">HH", record, PTERO_DST_OFF, dst_off & 0xffff, rows & 0xffff)
+    struct.pack_into(">I", record, PT_DST, dst_base)
+    struct.pack_into(">I", record, PT_SRC, src)
+    struct.pack_into(">HH", record, PT_SHIFT_W, shift, 0)
+    struct.pack_into(">HH", record, PT_DST_OFF, dst_off & 0xffff, rows & 0xffff)
     return bytes(record)
 
 
@@ -464,7 +464,7 @@ def test_blit_mask_wide_masks_the_middle_cell_twice_per_row():
 # 2 bytes in covers +0x02..+0x19, i.e. every field the routine reads and nothing but the two unused
 # leading bytes left over.
 MASK_WIDE_SELF_OVERLAP = 0x02
-_MASK_WIDE_RECORD_FIELDS = (PTERO_DST_BASE, PTERO_SRC, PTERO_SHIFT, PTERO_DST_OFF, PTERO_ROWS)
+_MASK_WIDE_RECORD_FIELDS = (PT_DST, PT_SRC, PT_SHIFT_W, PT_DST_OFF, PT_ROWS_W)
 MASK_WIDE_SELF_DST_OFF = 0x10   # non-zero, so zeroing it MOVES the destination
 
 
@@ -1512,8 +1512,6 @@ def test_mirrored_globals_match_draw_h():
         "TEXT_FLAG_LARGE_FONT": TEXT_FLAG_LARGE_FONT,
         # Record field offsets. _ptero_record, _spr_record and the object/message packers encode
         # these positionally, so a drifted one stages the field somewhere the routine never looks.
-        "PTERO_DST_BASE": PTERO_DST_BASE, "PTERO_SRC": PTERO_SRC, "PTERO_SHIFT": PTERO_SHIFT,
-        "PTERO_DST_OFF": PTERO_DST_OFF, "PTERO_ROWS": PTERO_ROWS,
         "PTERO_MASK_OFF": PTERO_MASK_OFF, "PTERO_MASK_ROW_BYTES": PTERO_MASK_ROW_BYTES,
         "SPR_SRC": SPR_SRC, "SPR_DST_OFF": SPR_DST_OFF, "SPR_SHIFT": SPR_SHIFT,
         "SPR_CELL_SELECT": SPR_CELL_SELECT, "SPR_MASK_OFF": SPR_MASK_OFF,
@@ -1521,6 +1519,16 @@ def test_mirrored_globals_match_draw_h():
     # One poke stages all three suppressors, which only holds while they are consecutive.
     assert (header["A_draw_clip_cell1"], header["A_draw_clip_cell2"]) == (A_DRAW_CLIP_CELL0 + 1,
                                                                          A_DRAW_CLIP_CELL0 + 2)
+
+
+def test_mirrored_pterodactyl_record_matches_object_h():
+    """The pterodactyl record moved to object.h once a third layer (src/ptero.c) read it — draw.h
+    keeps only the sprite-set geometry. _ptero_record packs these five positionally, so a drifted
+    one stages the field somewhere blit_mask_wide never looks."""
+    _check(_defines("include/object.h"), "object.h", {
+        "PT_DST": PT_DST, "PT_SRC": PT_SRC, "PT_SHIFT_W": PT_SHIFT_W,
+        "PT_DST_OFF": PT_DST_OFF, "PT_ROWS_W": PT_ROWS_W,
+    })
 
 
 def test_mirrored_constants_match_draw_c():

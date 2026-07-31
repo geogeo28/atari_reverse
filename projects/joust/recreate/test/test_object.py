@@ -805,7 +805,7 @@ def test_ptero_avoid_absent_platforms_and_divu_overflow():
 
 # ------------------------------------------------------------------ ptero_spot_player @ 0x15276
 
-SND_PTERO_SWOOP = 3
+SND_PTERO_CRY = 3   # include/sound.h — pinned below
 PT_FLAG_MOVING_RIGHT = 1 << 2
 PLAYER = A_OBJECT_TABLE
 
@@ -882,7 +882,7 @@ def test_ptero_spot_ignores_the_other_flag_bits():
 
 
 def test_ptero_spot_sound_priority():
-    """play_sound drops the call unless SND_PTERO_SWOOP outranks (is <=) the sound already playing;
+    """play_sound drops the call unless SND_PTERO_CRY outranks (is <=) the sound already playing;
     the Dosound command list itself is off-image and is compared through the kit's ledger."""
     for priority in (0, 2, 3, 4, 0x10, 0x7fff, 0x8000, 0xffff):
         _spot_case(0x100, 0x40, 0x100 - 0x20, 0x40, flags=0, priority=priority, poison=True)
@@ -1038,7 +1038,8 @@ def test_mirrored_constants_match_the_headers():
                                   "A_draw_src": A_DRAW_SRC, "A_draw_shift": A_DRAW_SHIFT,
                                   "A_draw_rows": A_DRAW_ROWS}),
             (joust_h, "joust.h", {"OBJ_SIZE": OBJ_SIZE, "CELL_PLANE_WORDS": CELL_PLANE_WORDS}),
-            (sound_h, "sound.h", {"A_snd_priority": A_SND_PRIORITY})):
+            (sound_h, "sound.h", {"A_snd_priority": A_SND_PRIORITY,
+                                  "SND_PTERO_CRY": SND_PTERO_CRY})):
         for name, value in shared_mirrored.items():
             assert defines[name] == value, (f"{name}: {origin} has {defines[name]:#x}, "
                                             f"test has {value:#x}")

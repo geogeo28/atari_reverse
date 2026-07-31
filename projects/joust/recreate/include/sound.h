@@ -25,6 +25,12 @@
 #define A_snd_priority      0x10d4cu  /* .w — the sound now playing; LOWER index = higher priority */
 #define A_sound_table       0x11774u  /* .l[] — Dosound command lists, indexed by sound number */
 
+/* The one sound_table index TWO layers ask for: the pterodactyl's cry. src/ptero.c plays it as a
+ * bird arrives and src/object.c's ptero_spot_player as one locks onto a player, so it is named for
+ * the creature rather than for either occasion. Every other index is private to the file that
+ * triggers it (src/collide.c, src/score.c, ...). */
+#define SND_PTERO_CRY       3u
+
 /* ---- the kit's XBIOS Dosound side-effect ledger (tools/recreate_kit/src/dosound_log.c) ---- */
 void g_dosound(uint8_t *image, uint32_t list_addr);
 
