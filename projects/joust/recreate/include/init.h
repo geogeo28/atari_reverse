@@ -64,6 +64,11 @@
 
 /* ---- palettes ------------------------------------------------------------------------------- */
 #define A_game_palette 0x1143au     /* the 16 words XBIOS Setpalette is handed when play starts */
+#define A_title_palette 0x10cd2u    /* ...and the 16 the TITLE screen is handed, by xbios_setpalette.
+                                     * A RELOCATED longword immediate: 0xcd2 in the file, 0x10cd2
+                                     * once loaded at IMAGE_LOAD_BASE (see rng.c for the same trap) */
+#define A_palette_cycle_ctr 0x10d52u /* .w — bumped once per title-screen frame; its bits 8-10 are
+                                      * what pick the components the hue is next shown in */
 
 /* ---- the templates init_game copies into RAM ------------------------------------------------ */
 #define A_init_players_template 0x1145cu /* the two player object records, back to back... */
@@ -84,6 +89,11 @@
 void init_system(uint8_t *image);
 void init_video(uint8_t *image);
 void init_game(uint8_t *image);
+
+/* The title screen's two palette helpers — see src/init.c for both, including why the first
+ * returns a value. */
+uint32_t xbios_setpalette(uint8_t *image);
+void cycle_palette(uint8_t *image);
 
 /* _start @ 0x10000, RECONSTRUCTED ONLY AS FAR AS ITS THIRD CALL — see the comment in src/init.c. */
 void start(uint8_t *image);

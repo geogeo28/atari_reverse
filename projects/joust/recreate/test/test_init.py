@@ -1,8 +1,9 @@
 """Differential tests for Joust's startup chain (src/init.c).
 
-Covered here: init_system @ 0x10080, init_video @ 0x104b2, init_game @ 0x105f0, and _start @ 0x10000
-as far as its third call. title_screen @ 0x10aae is NOT reconstructed; the reason is pinned by
-test_title_screen_is_blocked_on_two_unported_functions.
+Covered here: init_system @ 0x10080, init_video @ 0x104b2, init_game @ 0x105f0, _start @ 0x10000 as
+far as its third call, and title_screen's two palette helpers xbios_setpalette @ 0x10c46 and
+cycle_palette @ 0x10c56. title_screen @ 0x10aae itself is NOT reconstructed; the reason is measured
+by test_title_screen_no_key_path_stops_in_the_ikbd_wait.
 
 This is the most trap-dense code in the game, so the kit's TOS model
 (../../../../tools/recreate_kit/TRAP_MODEL.md) sets what can be proved at all. Four of its limits
@@ -33,6 +34,7 @@ import pytest
 import harness   # first: binds the kit, which puts oracle/ on sys.path for the next line
 import emu
 from harness import differential, report
+from test_collide import _wrote         # ...and the shared "what did the ORACLE actually store?"
 from test_constants import _defines     # the shared `#define` scraper; see the pins at the end
 
 # ---- entry points (Ghidra addresses; ../../names.txt) ----
@@ -41,6 +43,7 @@ ENTRY_INIT_SYSTEM = 0x10080
 ENTRY_INIT_VIDEO = 0x104b2
 ENTRY_INIT_GAME = 0x105f0
 ENTRY_TITLE_SCREEN = 0x10aae
+ENTRY_POLL_QUIT_KEY = 0x11c24      # verified in test_input.py; title_screen jumps into its MIDDLE
 
 # ---- checkpoint PCs (harness `stop_pc`) ----
 # _start's third `jsr`. Everything before it is init_system and init_game; title_screen and the
@@ -62,7 +65,7 @@ AFTER_FCLOSE = 0x102aa
 AFTER_SETPALETTE = 0x104be        # init_video's
 AFTER_RANDOM = 0x106ba            # init_game's
 
-# ---- the two functions title_screen is blocked on (../STATUS.md) ----
+# ---- title_screen's two palette helpers, the last of its callees to be ported (../STATUS.md) ----
 ENTRY_XBIOS_SETPALETTE = 0x10c46
 ENTRY_CYCLE_PALETTE = 0x10c56
 
@@ -77,6 +80,7 @@ A_SAVED_JOYVEC = 0x10d1c
 A_SAVED_REZ = 0x10d20
 A_CONTERM_SAVE = 0x10d22
 A_SAVED_PALETTE = 0x10d26
+A_IKBD_PACKET = 0x10e06            # input.h: what title_screen's no-key path clears and waits on
 A_GROUND_ANIM_TIMER = 0x10d66
 A_GROUND_ANIM = 0x10d68
 A_PLAYFIELD_BOTTOM = 0x10d60
@@ -169,10 +173,14 @@ SPIN_CAP = 1_000_000
 FUZZ_CHUNKS = 2
 
 _U8P = ctypes.POINTER(ctypes.c_uint8)
-for _glue in ("g_start", "g_init_system", "g_init_video", "g_init_game"):
+# g_xbios_setpalette RETURNS the table it hands the trap: the palette write is off-image, so that
+# pointer is the only thing about it a test can compare (see src/init.c).
+for _glue, _ret in (("g_start", None), ("g_init_system", None), ("g_init_video", None),
+                    ("g_init_game", None), ("g_cycle_palette", None),
+                    ("g_xbios_setpalette", ctypes.c_uint32)):
     _fn = getattr(harness._lib, _glue)
     _fn.argtypes = [_U8P]
-    _fn.restype = None
+    _fn.restype = _ret
 
 
 def _system(lib, buf):
@@ -189,6 +197,14 @@ def _game(lib, buf):
 
 def _start(lib, buf):
     return lib.g_start(buf)
+
+
+def _setpalette(lib, buf):
+    return lib.g_xbios_setpalette(buf)
+
+
+def _cycle(lib, buf):
+    return lib.g_cycle_palette(buf)
 
 
 # ------------------------------------------------------------------ shared staging helpers
@@ -669,11 +685,21 @@ def test_start_never_returns():
     _never_returns(_system_pokes(), ENTRY_START)
 
 
-def test_title_screen_is_blocked_on_two_unported_functions():
-    """WHY THE CHECKPOINT SITS WHERE IT DOES. title_screen's first instruction calls
-    xbios_setpalette @ 0x10c46, and it calls cycle_palette @ 0x10c56 before it reads a key; the
-    second writes memory, so no reconstruction of title_screen can be diffed past it. Pinned on the
-    two `bsr` targets so the claim tracks the binary rather than this comment."""
+def test_the_palette_routines_below_are_title_screens_own():
+    """WHY THE CHECKPOINT SITS WHERE IT DOES, and what the next section covers. title_screen's first
+    instruction calls xbios_setpalette @ 0x10c46, and it calls cycle_palette @ 0x10c56 before it
+    reads a key. Both are reconstructed now — at their OWN entries, below — but title_screen is not,
+    so the checkpoint still stops short of it (see
+    test_title_screen_no_key_path_stops_in_the_ikbd_wait). Pinned on the two `bsr` targets so the
+    claim tracks the binary rather than this comment.
+
+    These were the last two of its SIX `bsr` callees to be ported; the other four — fill_screen
+    @ 0x102e2, draw_string @ 0x10700 (three sites), snd_poll_done @ 0x10a8a and play_sound
+    @ 0x10a56 — were already verified in their own layers. A SEVENTH transfer is not a call at all
+    and is why "all its callees are ported" would still not mean "portable": the Ctrl-C key is a
+    `beq.w` at 0x10bea into 0x11c56, the MIDDLE of poll_quit_key, which ends in Pterm and never
+    comes back. See test_title_screen_ctrl_c_jumps_into_poll_quit_key.
+    """
     for site, callee in ((0x10aae, ENTRY_XBIOS_SETPALETTE), (0x10b22, ENTRY_CYCLE_PALETTE)):
         opcode = struct.unpack_from(">H", harness.BASE_IMAGE, site)[0]
         displacement = struct.unpack_from(">h", harness.BASE_IMAGE, site + 2)[0]
@@ -681,6 +707,318 @@ def test_title_screen_is_blocked_on_two_unported_functions():
         assert site + 2 + displacement == callee
     assert harness.NAME_MAP.get(ENTRY_CYCLE_PALETTE) == "cycle_palette"
     assert harness.NAME_MAP.get(ENTRY_XBIOS_SETPALETTE) == "xbios_setpalette"
+
+
+TITLE_IKBD_WAIT = 0x10bb8   # `tst.l ikbd_packet / beq.s *-6` — title_screen's no-key spin
+
+
+def test_title_screen_no_key_path_stops_in_the_ikbd_wait():
+    """Porting the two palette helpers did NOT unblock title_screen's no-key path, and this says
+    WHERE it stops rather than only that it stops. Two halves, and the pair is the point:
+
+      * a checkpoint run REACHES the wait head, so the 400-pass Bconstat poll ahead of it really
+        does fall through to `clr.l ikbd_packet` + Ikbdws + the spin;
+      * and an uncapped run never reaches `rts`, because the reply that would end that spin arrives
+        by an IKBD INTERRUPT the oracle never runs (TRAP_MODEL.md's IKBD limit — read_joysticks'
+        wall). Without the first half, a hang anywhere earlier would pass just as happily.
+
+    Says nothing about the keyed branches, and they do not agree with each other: '1' and '2' reach
+    the `rts` at 0x10c44 (ordinary unported work, one console keystroke per run), while Ctrl-C leaves
+    title_screen altogether — see test_title_screen_ctrl_c_jumps_into_poll_quit_key.
+    """
+    pokes = {A_SCREEN_BASE: struct.pack(">I", SCREEN),
+             # A sentinel in ikbd_packet, so "it is 0 at the wait" means the routine CLEARED it
+             # rather than found it clear.
+             A_IKBD_PACKET: struct.pack(">I", UNWRITTEN_L)}
+    # emu.run RAISES "did not reach checkpoint" when the stop_pc is not hit, so returning at all is
+    # the first half of the proof; the packet read is what says the clr.l ran on the way.
+    image, _, _ = emu.run(harness.make_image(pokes), ENTRY_TITLE_SCREEN,
+                          stop_pc=TITLE_IKBD_WAIT, max_insns=SPIN_CAP)
+    assert struct.unpack_from(">I", image, A_IKBD_PACKET)[0] == 0, "ikbd_packet was not cleared"
+    _never_returns(pokes, ENTRY_TITLE_SCREEN)
+
+
+TITLE_CTRL_C_TEST = 0x10be6    # `cmp.b #$3,d0` — the quit key, tested before '1' and '2'
+TITLE_CTRL_C_BRANCH = 0x10bea  # ...and the `beq.w` that leaves the routine
+POLL_QUIT_KEY_QUIT_TAIL = 0x11c56   # inside poll_quit_key @ 0x11c24 (114 bytes), NOT its entry
+CTRL_C_KEY = 3
+
+
+def test_title_screen_ctrl_c_jumps_into_poll_quit_key():
+    """The transfer that makes title_screen harder to port than its call graph suggests, and the
+    reason "all six callees are ported" is not the same as "portable".
+
+    Ctrl-C is not handled in title_screen at all: it is a `beq.w` into 0x11c56, the MIDDLE of
+    poll_quit_key — past that routine's own entry and its Bconstat/Bconin, straight into the quit
+    tail that silences the sound, writes HIGH.SCO and ends in Pterm. So it is neither a call nor a
+    branch that returns: a reconstruction of title_screen would need a stop_pc checkpoint plus a
+    never-returns pairing there, the way _start's third `jsr` is handled, and cannot simply call
+    poll_quit_key. Pinned on the encoding so the claim tracks the binary.
+    """
+    assert _immediate(TITLE_CTRL_C_TEST, 2) == 0xb03c, f"{TITLE_CTRL_C_TEST:#x} is not `cmp.b #imm,d0`"
+    assert _immediate(TITLE_CTRL_C_TEST + 2, 2) == CTRL_C_KEY
+    assert _immediate(TITLE_CTRL_C_BRANCH, 2) == 0x6700, f"{TITLE_CTRL_C_BRANCH:#x} is not a beq.w"
+    displacement = struct.unpack_from(">h", harness.BASE_IMAGE, TITLE_CTRL_C_BRANCH + 2)[0]
+    assert TITLE_CTRL_C_BRANCH + 2 + displacement == POLL_QUIT_KEY_QUIT_TAIL
+    assert harness.NAME_MAP.get(ENTRY_POLL_QUIT_KEY) == "poll_quit_key"
+    assert ENTRY_POLL_QUIT_KEY < POLL_QUIT_KEY_QUIT_TAIL, \
+        "the target must be INSIDE poll_quit_key, not its entry — that is the whole point"
+
+
+# ============================== the title-screen palette @ 0x10c46 and 0x10c56
+
+# The 16 words xbios_setpalette hands XBIOS Setpalette. The table's END is players_alive, which is
+# what test_title_palette_is_sixteen_pens turns into a check rather than a comment.
+A_TITLE_PALETTE = 0x10cd2
+TITLE_PALETTE_PENS = 0x10
+TITLE_PALETTE_HUE_PEN = 4                 # the one pen cycle_palette animates
+A_TITLE_HUE = A_TITLE_PALETTE + 2 * TITLE_PALETTE_HUE_PEN
+A_PALETTE_CYCLE_CTR = 0x10d52
+
+# The counter's three component-select bits, what the counter is REPLACED by when they come up zero,
+# and where each component sits in the palette word (all mirrors of src/init.c).
+PALETTE_CYCLE_BLUE, PALETTE_CYCLE_GREEN, PALETTE_CYCLE_RED = 0x100, 0x200, 0x400
+PALETTE_CYCLE_SELECT_MASK = 0x700
+PALETTE_CYCLE_FIRST = 0x100
+PALETTE_GREEN_SHIFT, PALETTE_RED_SHIFT = 4, 8
+COUNTER_LOW_BYTE = 0xff    # the counter's low byte: the divider below the selector bits
+
+# The trap's return address: reaching it means Setpalette has been serviced and its pushes are still
+# at A7. `xbios_setpalette` is 16 bytes of nothing else — push, push, trap, unwind, rts.
+AFTER_TITLE_SETPALETTE = 0x10c52
+
+
+def test_xbios_setpalette_hands_the_title_palette():
+    """The palette write is off-image (the kit models Setpalette as a no-op), so this routine has NO
+    image effect whatever and the argument read-back is the entire verification — the same footing as
+    init_video's Setpalette and flash_hiscore_color's Setcolor.
+
+    Three things at once: the original really traps to Setpalette, it is handed title_palette as a
+    RELOCATED longword (0xcd2 in the file, 0x10cd2 loaded), and the candidate returns that same
+    pointer instead of some other table's. The `assert not diffs` below is STRUCTURALLY VACUOUS —
+    the original's only writes are its two pushes, which sit inside the stack guard the diff drops,
+    so no reconstruction can fail it. It stays because `differential` is also what returns `ret` and
+    what vets a refused os_* call; the memory claim is made by the next test, not by this line.
+    """
+    diffs, info = differential(ENTRY_XBIOS_SETPALETTE, {"_pokes": {}}, _setpalette)
+    assert not diffs, report(diffs)
+
+    words = _trap_args({}, ENTRY_XBIOS_SETPALETTE, AFTER_TITLE_SETPALETTE, 3)
+    assert words[2] == XBIOS_SETPALETTE, f"the original trapped to XBIOS fn {words[2]:#x}"
+    assert _pushed_long(words, 0) == A_TITLE_PALETTE, "Setpalette was handed the wrong table"
+    assert info["ret"] == _pushed_long(words, 0), (
+        f"candidate returned {info['ret']:#x}, the original passed Setpalette "
+        f"{_pushed_long(words, 0):#x} — the palette write itself is off-image, so nothing else can "
+        f"catch this")
+
+
+def test_xbios_setpalette_writes_no_image_byte():
+    """...and this is the premise that lets the read-back above stand alone: the ORIGINAL writes no
+    image byte, so there is nothing for a diff to compare and nothing for poison to poison. It is a
+    fact about the shipped binary, measured rather than asserted in prose. The reconstruction is
+    still held to it by `differential`'s image compare — do not read this test as that guard."""
+    _, writes, _ = emu.run(harness.make_image(None), ENTRY_XBIOS_SETPALETTE)
+    program_writes = sorted(addr for addr in writes if addr < emu.STACK_GUARD_LO)
+    assert not program_writes, f"it wrote {len(program_writes)} byte(s), e.g. {program_writes[0]:#x}"
+
+
+def test_title_palette_is_sixteen_pens():
+    """The table xbios_setpalette hands over runs from title_palette up to players_alive — 16 words,
+    which is the ST's whole hardware palette. Nothing reads the bound, so this pins the ADDRESSES
+    against each other rather than an instruction."""
+    assert A_TITLE_PALETTE + 2 * TITLE_PALETTE_PENS == A_PLAYERS_ALIVE
+    assert TITLE_PALETTE_PENS == PALETTE_PENS, "the same 16 pens init_system reads back"
+
+
+def _cycle_pokes(counter, colour, seed=0):
+    """The WHOLE palette table under noise, plus the counter and a sentinel past it.
+
+    The whole table rather than the animated pen alone: a step that wrote the neighbouring pen would
+    otherwise land on the base image's own palette word, where it might pass unnoticed. The sentinel
+    past the counter is what pins `addq.w` (and the reset store) to a WORD — a longword either way
+    would carry into it.
+    """
+    table = bytearray(_noise(seed, 2 * TITLE_PALETTE_PENS))
+    struct.pack_into(">H", table, 2 * TITLE_PALETTE_HUE_PEN, colour)
+    return {A_TITLE_PALETTE: bytes(table),
+            A_PALETTE_CYCLE_CTR: struct.pack(">H", counter),
+            A_PALETTE_CYCLE_CTR + 2: bytes([UNWRITTEN_B, UNWRITTEN_B])}
+
+
+def _cycle_case(counter, colour, seed=0, poison=True):
+    """One differential step, returning the oracle's info so a caller can name what it expects.
+
+    WHAT THE TWO HALVES PROVE, since they are not the same thing. `differential` (image diff, plus
+    poison) is what holds the RECONSTRUCTION to the original. The `_wrote` reads below are on the
+    ORACLE's write set, so they state what the ORIGINAL does — which is what stops a battery passing
+    vacuously with both sides writing nothing, and is the only way to tell a written-but-identical
+    word from an untouched one. They do not constrain the candidate: a reconstruction that wrote the
+    pen back unchanged on the early-return path would still be image-equivalent, and green.
+    """
+    pokes = _cycle_pokes(counter, colour, seed)
+    diffs, info = differential(ENTRY_CYCLE_PALETTE, {"_pokes": pokes}, _cycle, poison=poison)
+    assert not diffs, f"counter={counter:#x} colour={colour:#x}\n{report(diffs)}"
+    return info
+
+
+def _cycle_step(counter, colour, expected_colour, expected_counter, seed=0, poison=True):
+    """...and assert both of them. `expected_colour` None means the ORIGINAL wrote no pen at all."""
+    info = _cycle_case(counter, colour, seed=seed, poison=poison)
+    where = f"counter={counter:#x} colour={colour:#x}"
+    assert _wrote(info, A_TITLE_HUE, 2) == expected_colour, f"{where}: wrong pen value"
+    assert _wrote(info, A_PALETTE_CYCLE_CTR, 2) == expected_counter, f"{where}: wrong counter"
+
+
+# (counter before the step, the colour word written, the counter written). The staged pen holds
+# blue = 3 throughout, so the expected colour says exactly which components the selector lit.
+_SELECTOR_STEPS = (
+    (0x0000, 0x003, 0x0100),   # counter 1: no select bit at all -> RESET, and blue from there
+    (0x00ff, 0x003, 0x0100),   # ...then every selector in turn, from the counter just below it
+    (0x01ff, 0x030, 0x0200),
+    (0x02ff, 0x033, 0x0300),
+    (0x03ff, 0x300, 0x0400),
+    (0x04ff, 0x303, 0x0500),
+    (0x05ff, 0x330, 0x0600),
+    (0x06ff, 0x333, 0x0700),
+    (0x07ff, 0x003, 0x0100),   # past the top selector, the counter is REPLACED rather than masked
+)
+
+
+@pytest.mark.parametrize("counter,expected_colour,expected_counter", _SELECTOR_STEPS)
+def test_cycle_palette_selector_places_the_hue(counter, expected_colour, expected_counter):
+    """All eight values of the three select bits, each stated as the colour word it produces rather
+    than recomputed — so the shifts (blue none, green 4, red 8) are pinned by value.
+
+    The first and last rows are the reset: with bits 8-10 zero the routine does not merely treat the
+    selection as "blue", it stores PALETTE_CYCLE_FIRST over the whole counter word.
+    """
+    _cycle_step(counter, 0x003, expected_colour, expected_counter)
+
+
+# (the staged pen, the hue it yields once every selector bit is set). All three components are lit
+# by counter 0x6ff -> 0x700, so the expected word repeats the hue in all three nibbles.
+# Only the rows a single component cannot state: one component at a time is swept exhaustively by
+# test_cycle_palette_moves_every_hue_level below.
+_HUE_SOURCES = (
+    (0x123, 0x333),   # all three lit: BLUE wins
+    (0x120, 0x222),   # blue empty: green wins
+    (0x100, 0x111),   # blue and green empty: red wins
+    (0xf001, 0x111),  # bits 12-15 are not a component and are DROPPED by the rebuild
+    (0xffff, 0xfff),
+)
+
+
+@pytest.mark.parametrize("colour,expected", _HUE_SOURCES)
+def test_cycle_palette_takes_the_first_non_zero_component(colour, expected):
+    """`move.w dN,d3 / bne` three times over, in blue, green, red order — the priority, and the fact
+    that a rotation reads ONE component and writes up to three."""
+    _cycle_step(0x06ff, colour, expected, PALETTE_CYCLE_SELECT_MASK)
+
+
+@pytest.mark.parametrize("level", range(1, 0x10))
+def test_cycle_palette_moves_every_hue_level(level):
+    """Every level a 4-bit component can hold, out of each of the three positions and into all
+    three. Exhaustive on the level, which is what pins the masks as nibbles: a mask one bit too wide
+    would take a neighbour's bit into the hue at some level here.
+
+    Level 0 is not a level but the early return, and is covered — poisoned — by
+    test_cycle_palette_leaves_a_colourless_pen_alone.
+    """
+    for source_shift in (0, PALETTE_GREEN_SHIFT, PALETTE_RED_SHIFT):
+        _cycle_step(0x06ff, level << source_shift, (level << 8) | (level << 4) | level,
+                    PALETTE_CYCLE_SELECT_MASK, seed=level, poison=False)
+
+
+@pytest.mark.parametrize("colour", (0x0000, 0xf000, 0x8000, 0x1000))
+def test_cycle_palette_leaves_a_colourless_pen_alone(colour):
+    """A pen with nothing in its low 12 bits has no hue to move, and the routine returns without
+    touching it — so its high nibble SURVIVES, where any rotation would have dropped it. The counter
+    has already been bumped by then, which is the write that keeps the case from being a no-op."""
+    _cycle_step(0x06ff, colour, None, PALETTE_CYCLE_SELECT_MASK)
+
+
+# (counter before the step, counter after it, the colour it lands on). Every wrap the word can take.
+_COUNTER_WRAPS = (
+    (0xffff, PALETTE_CYCLE_FIRST, 0x003),   # WORD wrap to 0: no select bits, so the reset fires
+    (0x7fff, PALETTE_CYCLE_FIRST, 0x003),   # 0x8000 — bit 15 is not a selector either
+    (0xf7ff, PALETTE_CYCLE_FIRST, 0x003),   # 0xf800: the reset REPLACES the word, high bits and all
+    (0x0800, PALETTE_CYCLE_FIRST, 0x003),   # 0x0801 — nor is bit 11
+    (0x00fe, PALETTE_CYCLE_FIRST, 0x003),   # 0x00ff: below every selector
+    (0x08ff, 0x0900, 0x003),                # ...but WITH a selector the high bits survive the step
+    (0xf6ff, 0xf700, 0x333),
+)
+
+
+@pytest.mark.parametrize("counter,expected_counter,expected_colour", _COUNTER_WRAPS)
+def test_cycle_palette_counter_wraps_within_the_word(counter, expected_counter, expected_colour):
+    """`addq.w #1` is WORD wide (the sentinel poked past the counter is what says so), and the reset
+    STORES PALETTE_CYCLE_FIRST rather than OR-ing it in — 0xf800 becomes 0x0100, not 0xf900."""
+    _cycle_step(counter, 0x003, expected_colour, expected_counter)
+
+
+def _cycle_fuzz_cases():
+    rng = random.Random(0x10c56)          # seeded ONCE — every chunk replays this stream
+    for index in range(400):
+        # Half the counters drawn from the whole word, and half with the low byte SATURATED so the
+        # step carries into the selector — leaving the selector itself random, which is what makes
+        # every carry (including 0x700 -> reset) reachable. Masking the selector off instead would
+        # pin all 200 of those cases to one selector and hit the reset never.
+        counter = rng.randrange(0x10000)
+        if index % 2:
+            counter |= COUNTER_LOW_BYTE
+        yield index, counter, rng.randrange(0x10000)
+
+
+def test_cycle_palette_fuzz_carries_into_every_selector():
+    """What the low-byte saturation above is FOR, asserted instead of assumed.
+
+    The property is NOT "all eight selectors occur" — 400 uniform draws give that on their own, so
+    an assertion phrased that way passes with the saturation deleted and guards nothing (measured).
+    What saturation buys is the CARRY: a step from a counter whose low byte is already full is the
+    only way the selector changes at all, and only ~1 in 256 uniform counters lands there. So this
+    asserts the eight selectors reached BY A CARRYING STEP, which collapses to almost nothing the
+    moment `|= COUNTER_LOW_BYTE` goes away.
+
+    Checked over the WHOLE stream rather than inside a shard, since each shard sees only half of it,
+    and it needs no oracle run: the generator is seeded once and is pure.
+    """
+    carried = {(counter + 1) & PALETTE_CYCLE_SELECT_MASK
+               for _, counter, _ in _cycle_fuzz_cases()
+               if counter & COUNTER_LOW_BYTE == COUNTER_LOW_BYTE}
+    expected = {bits << 8 for bits in range(8)}
+    assert carried == expected, \
+        f"no carrying step reaches selector(s) {sorted(expected - carried)} — is the low-byte " \
+        f"saturation in _cycle_fuzz_cases still there?"
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_cycle_palette_fuzz(chunk):
+    """Random counters x random pen values x a fresh noise table per case. Shares this module's
+    FUZZ_CHUNKS rather than naming its own: the whole battery is well under a second, so the sharding
+    is for the recipe's sake, not the critical path."""
+    ran = 0
+    for index, counter, colour in _cycle_fuzz_cases():
+        if index % FUZZ_CHUNKS != chunk:
+            continue
+        _cycle_case(counter, colour, seed=index, poison=False)
+        ran += 1
+    assert ran, "this shard ran no cases"
+
+
+def test_cycle_palette_attribution():
+    """Poison over the source components the batteries above do NOT reach.
+
+    Poisoning is MEASURED SAFE for this routine — its two outputs do steer the next step, but the
+    poisoned image is run through BOTH cores, so an inverted counter is simply a different and
+    equally valid case, not a divergence — which is why `_cycle_case` defaults to it and the three
+    hand-written batteries above carry it on every row. Those rows all stage a BLUE source, though,
+    and the exhaustive green/red sweep runs unpoisoned for cost; these four close that gap.
+    """
+    for counter, colour in ((0x03ff, 0x0f0),   # green source, into red alone
+                            (0x05ff, 0xf00),   # red source, into blue+red
+                            (0xffff, 0x0a0),   # green source through the counter's word wrap
+                            (0x0000, 0x000)):  # ...and the early return, through the reset
+        _cycle_case(counter, colour, poison=True)
 
 
 # ================================================================== mirror pins
@@ -691,7 +1029,9 @@ def test_title_screen_is_blocked_on_two_unported_functions():
 def test_entry_addresses_match_names_txt():
     for addr, name in ((ENTRY_START, "_start"), (ENTRY_INIT_SYSTEM, "init_system"),
                        (ENTRY_INIT_VIDEO, "init_video"), (ENTRY_INIT_GAME, "init_game"),
-                       (ENTRY_TITLE_SCREEN, "title_screen")):
+                       (ENTRY_TITLE_SCREEN, "title_screen"),
+                       (ENTRY_XBIOS_SETPALETTE, "xbios_setpalette"),
+                       (ENTRY_CYCLE_PALETTE, "cycle_palette")):
         assert harness.NAME_MAP.get(addr) == name, f"names.txt has no `{name}` at {addr:#x}"
 
 
@@ -704,6 +1044,8 @@ def test_global_addresses_match_the_c():
                              ("A_fname_mono_err", A_FNAME_MONO_ERR),
                              ("A_load_buffer", A_LOAD_BUFFER),
                              ("A_game_palette", A_GAME_PALETTE),
+                             ("A_title_palette", A_TITLE_PALETTE),
+                             ("A_palette_cycle_ctr", A_PALETTE_CYCLE_CTR),
                              ("A_init_players_template", A_INIT_PLAYERS_TEMPLATE),
                              ("A_init_globals_template", A_INIT_GLOBALS_TEMPLATE),
                              ("A_init_globals_template_END", A_INIT_GLOBALS_TEMPLATE_END),
@@ -712,6 +1054,12 @@ def test_global_addresses_match_the_c():
                              ("HISCORE_FILE_BYTES", HISCORE_FILE_BYTES),
                              ("SCREEN_BYTES", SCREEN_BYTES)):
         assert init_h[c_name] == mirrored, f"{c_name} differs from this module's mirror"
+
+    # Two globals this module mirrors that belong to OTHER layers' headers. players_alive became
+    # load-bearing when test_title_palette_is_sixteen_pens made it the palette table's bound.
+    for c_name, header, mirrored in (("A_players_alive", "include/score.h", A_PLAYERS_ALIVE),
+                                     ("A_ikbd_packet", "include/input.h", A_IKBD_PACKET)):
+        assert _defines(header)[c_name] == mirrored, f"{c_name} differs from this module's mirror"
 
 
 def test_hud_bar_constants_match_the_c():
@@ -730,3 +1078,47 @@ def test_startup_constants_match_the_c():
     assert init_c["PALETTE_PENS"] == PALETTE_PENS
     assert init_c["TOS_SETCOLOR_QUERY"] == SETCOLOR_QUERY
     assert init_c["HISCORE_LOADED_MARK"] == HISCORE_LOADED_MARK
+
+
+def test_palette_cycle_constants_match_the_c():
+    """The whole colour cycle's constants live in src/init.c; the batteries above spell every one of
+    them out as a literal expected value, so a drift on either side would weaken them silently
+    rather than fail."""
+    init_c = _defines("src/init.c")
+    assert (init_c["PALETTE_BLUE_MASK"], init_c["PALETTE_GREEN_MASK"], init_c["PALETTE_RED_MASK"]) \
+        == (0x00f, 0x0f0, 0xf00)
+    assert (init_c["PALETTE_GREEN_SHIFT"], init_c["PALETTE_RED_SHIFT"]) \
+        == (PALETTE_GREEN_SHIFT, PALETTE_RED_SHIFT)
+    assert (init_c["PALETTE_CYCLE_BLUE"], init_c["PALETTE_CYCLE_GREEN"], init_c["PALETTE_CYCLE_RED"]) \
+        == (PALETTE_CYCLE_BLUE, PALETTE_CYCLE_GREEN, PALETTE_CYCLE_RED)
+    assert init_c["PALETTE_CYCLE_SELECT_MASK"] == PALETTE_CYCLE_SELECT_MASK
+    assert init_c["PALETTE_CYCLE_FIRST"] == PALETTE_CYCLE_FIRST
+    assert init_c["TITLE_PALETTE_HUE_PEN"] == TITLE_PALETTE_HUE_PEN
+
+
+def test_the_palette_cycle_constants_that_must_agree_do():
+    """Two couplings the C spells as separate literals — because each is an instruction operand —
+    and which nothing else can see: the mirror pins above compare each name to its own copy, never
+    to the other name. `test_no_value_has_two_spellings` is blind here too, since neither is an
+    address and only the select BITS are in flag-bit form."""
+    assert PALETTE_CYCLE_SELECT_MASK == PALETTE_CYCLE_BLUE | PALETTE_CYCLE_GREEN | PALETTE_CYCLE_RED, \
+        "`andi.w #$700` must keep exactly the three select bits"
+    assert PALETTE_CYCLE_FIRST == PALETTE_CYCLE_BLUE, \
+        "the reset restarts the cycle at blue, and cycle_palette's rebuild depends on it"
+
+
+# 68000 register-shift encoding: 1110 ccc d ss i tt rrr — bits 4-3 are the type, 00 arithmetic,
+# 01 logical.
+SHIFT_TYPE_MASK, SHIFT_TYPE_LOGICAL = 0x0018, 0x0008
+
+
+def test_cycle_palettes_component_shifts_are_logical():
+    """The one thing about cycle_palette the differential CANNOT see. Both component extractions
+    mask BEFORE they shift (`andi.w #$f0` / `andi.w #$f00`), so bit 15 is already clear and `asr.w`
+    would answer identically for every input — no staged pen can separate them. The reconstruction's
+    unsigned `>>` is therefore pinned against the ORIGINAL'S INSTRUCTION ENCODING instead, the same
+    technique test_mono_branch_constants_match_the_original_encoding uses."""
+    for addr, what in ((0x10c88, "lsr.w #4,d1 — green"), (0x10c94, "lsr.w #8,d2 — red")):
+        opcode = _immediate(addr, 2)
+        assert opcode & SHIFT_TYPE_MASK == SHIFT_TYPE_LOGICAL, \
+            f"{what} @ {addr:#x} encodes as {opcode:#06x}, which is not a LOGICAL shift"

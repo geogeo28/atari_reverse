@@ -360,8 +360,8 @@ cmt 0x136e8 draw_object_data(a0=object): src=draw_src, dst=draw_dst, shift=draw_
 cmt 0x137bc draw_object_mask(a0=object): dst=[a0+0x14], src=[a0+0x18], rows=[a0+0x1c], shift=[a0+0x1d]; AND-NOT mask pass over the object's PREVIOUS position, stride 0x4d.
 cmt 0x15098 blit_mask_wide(a0->{src=[6]+0x120, dst_base=[2], dst_off=[0x16], shift=[10].w&0x3f, rows=[0x18]}): AND-mask, 8 words/row, stride 0x50 — the pterodactyl's erase pass.
 cmt 0x1510c blit_sprite_planes: src=draw_src, dst_off=draw_dst_off, shift=draw_shift, rows=draw_rows; per-plane enables at 0x10d0e/0x10d0f/0x10d10 clip the sprite at the screen edges; OR data, stride 0x50 — the pterodactyl's draw pass.
-cmt 0x10c46 xbios_setpalette: XBIOS Setpalette(palette) — the 16-entry table at 0x10cd2.
-cmt 0x10c56 cycle_palette: rotates the single hue held in palette entry 4 (0x10cda) through R/G/B, selected by bits 8-10 of palette_cycle_ctr.
+cmt 0x10c46 xbios_setpalette: XBIOS Setpalette(palette) — the 16-entry table at 0x10cd2, pushed as a RELOCATED longword (0xcd2 in the file). Called only by title_screen, twice (0x10aae, 0x10b64). 16 bytes of nothing else: push, push, trap, addq.l #6,a7, rts — so its whole effect is off-image.
+cmt 0x10c56 cycle_palette: rotates the single hue held in palette entry 4 (0x10cda) through R/G/B, selected by bits 8-10 of palette_cycle_ctr. Bumps the counter FIRST (addq.w — word-wide), and when those three bits come up zero REPLACES the whole word with 0x100 rather than masking it, so a counter that had climbed past bit 10 loses its high bits. The hue is the FIRST NON-ZERO of blue/green/red in that order (0x10c96..0x10ca0); a pen with nothing in its low 12 bits returns at 0x10ca2 with only the counter written, keeping even its high nibble. Otherwise the word is REBUILT from nibbles, so bits 12-15 are dropped.
 
 # ==== comments refined during the reconstruction (verified against the oracle) ====
 # These correct or deepen earlier cmt lines above; where they disagree, these win —

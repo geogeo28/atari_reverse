@@ -1,4 +1,5 @@
-/* init.c — Joust's startup chain: _start and the three initialisers it opens with.
+/* init.c — Joust's startup chain: _start, the three initialisers it opens with, and the two palette
+ * helpers its third call (title_screen) is built out of.
  *
  * This is the most trap-dense code in the game, so the kit's TOS model
  * (tools/recreate_kit/TRAP_MODEL.md) decides how much of it can be proved at all. Four of its
@@ -284,6 +285,114 @@ void init_game(uint8_t *image) {
 }
 
 /* =================================================================================================
+ * The title screen's palette: xbios_setpalette @ 0x10c46 and cycle_palette @ 0x10c56.
+ *
+ * Both belong to title_screen @ 0x10aae and to nothing else — it is their only caller (0x10aae and
+ * 0x10b64 for the first, 0x10b22 for the second), and they were the last two of its six callees to
+ * be ported. title_screen itself stays unreconstructed, so they are verified at their own entries.
+ * ============================================================================================= */
+
+/* xbios_setpalette: hand the whole title palette to XBIOS Setpalette.
+ *
+ * The trap writes the ST's colour registers, not memory, so the call has NO image effect at all and
+ * an image diff can say nothing about it. As with flash_hiscore_color (src/score.c), the argument is
+ * RETURNED instead of being dropped, and test_init.py compares it against the longword the ORIGINAL
+ * pushed for its own `trap #14` — which is the only thing that can catch a wrong table.
+ *
+ * It takes `image` it never reads so that it keeps this layer's one shape and its glue stays a bare
+ * forwarder like every other.
+ */
+uint32_t xbios_setpalette(uint8_t *image) {
+    (void)image;
+    return A_title_palette;
+}
+
+/* The ST colour word: one 4-bit level per component in the low 12 bits. Private to this file
+ * because cycle_palette is still the only routine that takes one apart — src/score.c builds one for
+ * XBIOS Setcolor but never decomposes it. The moment a second layer needs the layout it moves to
+ * include/joust.h whole, rather than being spelled out twice. */
+#define PALETTE_BLUE_MASK   0x00fu
+#define PALETTE_GREEN_MASK  0x0f0u
+#define PALETTE_RED_MASK    0xf00u
+#define PALETTE_GREEN_SHIFT 4u
+#define PALETTE_RED_SHIFT   8u
+
+/* Which of title_palette's 16 pens the cycle animates — word 4, i.e. 0x10cda. Here rather than in
+ * init.h beside the table's address because it is not an address and cycle_palette is its only
+ * reader; the mirror pin scrapes it from this file. */
+#define TITLE_PALETTE_HUE_PEN 4u
+
+/* Which components of the palette word the hue is shown in next, as bits of palette_cycle_ctr.
+ * `andi.w #$700` keeps exactly these three, so the counter's low byte is a per-frame divider: the
+ * selection only changes every 256 title-screen frames. The mask is spelled as the literal the
+ * instruction encodes, not as the three bits OR-ed; test_init.py pins the two equal. */
+#define PALETTE_CYCLE_BLUE  (1u << 8)
+#define PALETTE_CYCLE_GREEN (1u << 9)
+#define PALETTE_CYCLE_RED   (1u << 10)
+#define PALETTE_CYCLE_SELECT_MASK 0x700u
+/* When the three bits come up zero the counter is not merely masked, it is REPLACED: the whole word
+ * becomes this, so a counter that had climbed past bit 10 loses those high bits too. That is what
+ * keeps the selection out of the one state — no component at all — that would blank the pen.
+ * The value IS the blue select bit (the cycle restarts at its first component), which is a coupling
+ * the code below depends on and test_init.py asserts; it stays a literal because that is what the
+ * original's `move.w #$100` encodes. */
+#define PALETTE_CYCLE_FIRST 0x100u
+
+/* cycle_palette: one step of the colour cycle running under the title screen.
+ *
+ * The pen holds a single 4-bit hue in one of its three components, and each step moves that same
+ * level into whichever components the counter now selects — so the title's fifth colour walks
+ * blue -> green -> blue+green -> red -> ... rather than changing brightness.
+ *
+ * WHAT SEEDS THE PEN, AND WHAT THE GAME CAN ACTUALLY PUT THERE. The shipped title_palette holds
+ * 0x0000 at pen 4, so a COLD first call can only take the early return below. title_screen's six-pen
+ * ring (0x10b26..0x10b5e) is a closed cycle over pens 3/4/6/8/9/10 — shipped 0x0300, 0x0000, 0x0200,
+ * 0x0400, 0x0300, 0x0200 — and this routine only RELOCATES a level, never changes it, so the only
+ * values the game's own data can ever circulate through pen 4 are 0 and a level in {2,3,4}. Every
+ * other pen the tests stage is constructed; ../STATUS.md says which, rather than leaving the sweep
+ * looking data-backed.
+ */
+void cycle_palette(uint8_t *image) {
+    uint32_t hue_at = A_title_palette + 2u * TITLE_PALETTE_HUE_PEN;
+
+    uint16_t counter = (uint16_t)(be16(image + A_palette_cycle_ctr) + 1u);   /* addq.w #1 — WORD wide */
+    /* Stored before the selector is even looked at, and stored AGAIN by the reset — two `move.w`s
+     * to one address, as the original spells it. The second is not a correction of the first: the
+     * original bumps the counter in memory (`addq.w #1,$10d52`) and only then decides. */
+    wr16(image + A_palette_cycle_ctr, counter);
+    uint16_t select = counter & PALETTE_CYCLE_SELECT_MASK;
+    if (select == 0) {
+        select = PALETTE_CYCLE_FIRST;
+        wr16(image + A_palette_cycle_ctr, PALETTE_CYCLE_FIRST);
+    }
+
+    /* The original re-reads the pen for each component; nothing writes it in between, so one read
+     * is the same three values. */
+    uint16_t colour = be16(image + hue_at);
+    uint16_t blue = colour & PALETTE_BLUE_MASK;
+    uint16_t green = (uint16_t)((colour & PALETTE_GREEN_MASK) >> PALETTE_GREEN_SHIFT);
+    uint16_t red = (uint16_t)((colour & PALETTE_RED_MASK) >> PALETTE_RED_SHIFT);
+
+    /* `move.w dN,d3 / bne` three times over: the hue is the FIRST NON-ZERO component in blue,
+     * green, red order. A pen with no colour in its low 12 bits has no hue to move, and the routine
+     * leaves it exactly as it found it — high nibble included, since only the rebuild below clears
+     * that. The counter has already been bumped by then. */
+    uint16_t hue = blue ? blue : (green ? green : red);
+    if (hue == 0)
+        return;
+
+    /* Rebuilt from nibbles rather than edited in place, so bits 12-15 of the pen are dropped. */
+    uint16_t cycled = 0;
+    if (select & PALETTE_CYCLE_RED)
+        cycled |= (uint16_t)(hue << PALETTE_RED_SHIFT);
+    if (select & PALETTE_CYCLE_GREEN)
+        cycled |= (uint16_t)(hue << PALETTE_GREEN_SHIFT);
+    if (select & PALETTE_CYCLE_BLUE)
+        cycled |= hue;
+    wr16(image + hue_at, cycled);
+}
+
+/* =================================================================================================
  * _start @ 0x10000 — RECONSTRUCTED ONLY AS FAR AS ITS THIRD CALL.
  *
  * The original is twenty-one `jsr`s and a `bra` back into the middle of them. The first four —
@@ -292,11 +401,18 @@ void init_game(uint8_t *image) {
  * `rts` to diff at; test_init.py stops the oracle at the THIRD call and pairs that with a proof the
  * run really does not come back.
  *
- * It stops THERE, and not at the frame loop, because title_screen @ 0x10aae is not reconstructed:
- * its first instruction calls xbios_setpalette @ 0x10c46 and it goes on to call cycle_palette @
- * 0x10c56, which writes memory this layer cannot reproduce. The frame loop is blocked several
- * times over besides — read_joysticks @ 0x11d9a, update_pterodactyl @ 0x14ada and check_highscore
- * @ 0x1437a are all unported, and the first of those cannot be verified at all.
+ * It stops THERE, and not at the frame loop, because title_screen @ 0x10aae is not reconstructed.
+ * All SIX of its `bsr` callees now are, the last two being xbios_setpalette @ 0x10c46 and
+ * cycle_palette @ 0x10c56 above — but that is not the same as portable, in three different ways.
+ * Its no-key path clears ikbd_packet and spins for the IKBD interrupt the oracle never runs
+ * (TRAP_MODEL.md's IKBD limit), so that path can never be diffed at all. Its '1' and '2' branches
+ * DO reach the `rts` at 0x10c44, one console keystroke and one run each, and are simply unported.
+ * And Ctrl-C is a SEVENTH transfer that is not a call: a `beq.w` at 0x10bea into 0x11c56, the
+ * middle of poll_quit_key, whose quit tail ends in Pterm and never returns — so that branch needs
+ * a stop_pc checkpoint paired with a never-returns proof, exactly as this function does.
+ * The frame loop is blocked several times over besides
+ * — read_joysticks @ 0x11d9a, update_pterodactyl @ 0x14ada and check_highscore @ 0x1437a are all
+ * unported, and the first of those cannot be verified at all.
  *
  * So what this proves is exactly: _start does nothing of its own before those two calls, and makes
  * them in that order.
@@ -310,7 +426,10 @@ void start(uint8_t *image) {
 /* ------------------------------------------------------------------------------------- glue ---
  *
  * Nothing in this layer takes a stack frame — each routine works entirely off globals and the
- * modeled OS state — so every g_* is a bare forwarder.
+ * modeled OS state — so every g_* is a bare forwarder. The one result an image diff cannot see (the
+ * table xbios_setpalette hands the trap) comes back as a return value, exactly as
+ * g_flash_hiscore_color's colour word does, and the test compares it against what the oracle really
+ * pushed.
  */
 
 void g_init_system(uint8_t *image) { init_system(image); }
@@ -320,3 +439,7 @@ void g_init_video(uint8_t *image) { init_video(image); }
 void g_init_game(uint8_t *image) { init_game(image); }
 
 void g_start(uint8_t *image) { start(image); }
+
+uint32_t g_xbios_setpalette(uint8_t *image) { return xbios_setpalette(image); }
+
+void g_cycle_palette(uint8_t *image) { cycle_palette(image); }
