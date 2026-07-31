@@ -51,10 +51,16 @@ substantively, 2 cosmetically) and 19 stood up as written. One previously-*untag
 function was wrong too (`xbios_setcolor` → `flash_hiscore_color`), along with six untagged
 variables. (The old header claimed 61 `# ctx` of 74; the file actually held 56 of 74.)
 
-`_start` = `init_system`/`init_game`/`title_screen`/`init_video`, then a per-frame loop:
-`update_objects` (rider physics/AI) → `update_eggs` → `read_joysticks` → `update_pterodactyl`
-→ `render_objects` → `collision_check` → `draw_platforms` → `lava_troll` →
-`dissolve_platforms` → `wave_manager` → `snd_poll_done` → `poll_quit_key` → `check_highscore`.
+`_start` is twenty-one `jsr`s and a `bra.s`, nothing else. The first four —
+`init_system`/`init_game`/`title_screen`/`init_video` — run once, and the branch at `0x1007e` goes
+back to the **fifth**, so calls 5..21 are the per-frame loop, in this order:
+`raise_floor` → `animate_ground_shrink` → `count_objects_and_pad` → `update_eggs` →
+`read_joysticks` → `update_objects` (rider physics/AI) → `update_pterodactyl` → `render_objects` →
+`collision_check` → `draw_platforms` → `draw_messages` → `lava_troll` → `dissolve_platforms` →
+`wave_manager` → `snd_poll_done` → `poll_quit_key` → `check_highscore`.
+(An earlier revision of this paragraph listed thirteen of the seventeen and started them in the
+wrong place; the order above is asserted against the binary by
+`recreate/test/test_init.py::test_start_is_twenty_one_calls_and_a_branch`.)
 
 **The biggest correction is that Joust's sound driver was named as graphics/input code.**
 The XBIOS opcode tables in `tools/prg_dis.py` and `tools/ghidra_scripts/AtariOsTrapAnnotate.java`

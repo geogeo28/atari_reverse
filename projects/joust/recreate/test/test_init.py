@@ -1,9 +1,13 @@
 """Differential tests for Joust's startup chain (src/init.c).
 
-Covered here: init_system @ 0x10080, init_video @ 0x104b2, init_game @ 0x105f0, _start @ 0x10000 as
-far as its third call, title_screen @ 0x10aae, and its two palette helpers xbios_setpalette
-@ 0x10c46 and cycle_palette @ 0x10c56. Of title_screen's four exits only one is an `rts`; what each
-of the others is verified at, and why, is in the section that opens that battery.
+Covered here: init_system @ 0x10080, init_video @ 0x104b2, init_game @ 0x105f0, title_screen
+@ 0x10aae with its two palette helpers xbios_setpalette @ 0x10c46 and cycle_palette @ 0x10c56, and
+_start @ 0x10000 WHOLE — all twenty-one of its calls and the branch that closes its frame loop.
+
+Neither _start nor title_screen has an `rts` on most of its paths, and _start has none at all, so
+much of this file is checkpoints, rotations and never-returns proofs rather than plain diffs. What
+each exit is verified at, and why, is in the section that opens its battery; ../STATUS.md carries
+what is left unheld.
 
 This is the most trap-dense code in the game, so the kit's TOS model
 (../../../../tools/recreate_kit/TRAP_MODEL.md) sets what can be proved at all. Four of its limits
@@ -26,9 +30,14 @@ shape this whole file:
     sentinel and pass silently.
 """
 import functools
+import json
+import os
 import random
+import select
+import signal
 import struct
 import threading
+import time
 
 import ctypes
 import pytest
@@ -42,6 +51,12 @@ from test_constants import _defines     # the shared `#define` scraper; see the 
 # staging and checkpoint. Imported rather than restated: a second copy of the filesystem and system
 # state would drift from the battery that verified the tail.
 import test_input
+# read_joysticks' rotated entry, and the machinery for driving a candidate that may never return, are
+# test_player.py's — that battery verified the one and introduced the other, and _start's glues and
+# its lap chain need exactly the same. Imported rather than restated, as this module already does for
+# test_collide's `_wrote` and test_input's staging.
+from test_player import (BLOCKED_DWELL_S, CLEAR_TIMEOUT_S, GLUE_TIMEOUT_S, IKBD_WAIT_PC,
+                         STALE_PACKET, _glue_buffer, _packet_pointer, _within_deadline)
 
 # ---- entry points (Ghidra addresses; ../../names.txt) ----
 ENTRY_START = 0x10000
@@ -52,10 +67,12 @@ ENTRY_TITLE_SCREEN = 0x10aae
 ENTRY_POLL_QUIT_KEY = 0x11c24      # verified in test_input.py; title_screen jumps into its MIDDLE
 
 # ---- checkpoint PCs (harness `stop_pc`) ----
-# _start's third `jsr`. Everything before it is init_system and init_game. title_screen after it IS
-# reconstructed now; what keeps the checkpoint here is that entering it needs a glue refusal of its
-# own (see the module comment in ../src/init.c and _start's row in ../STATUS.md).
-CHECKPOINT_START_AT_TITLE = 0x1000c
+# The three seam addresses inside _start are DERIVED from its call table further down (CALL_SITE),
+# not written out again: the fifth call is where the `bra.s` at 0x1007e goes back to, the ninth is
+# where read_joysticks blocks for a reply an interrupt delivers — so where every run of the routine
+# has to stop on either core — and the tenth is where the rotated lap begins.
+BRA_BACK_TO_FRAME_HEAD = 0x1007e     # the branch that closes the loop
+START_BYTES = 0x80                   # the whole of _start: 21 `jsr`s and that branch
 # The return address of each trap whose arguments the image cannot show. Reaching one of these means
 # the trap has been serviced and A7 is back at the caller's pushes, which are still in memory.
 AFTER_GETREZ = 0x10086
@@ -98,6 +115,12 @@ A_DRAW_X = 0x10dec                 # ...its pen, then its GEMDOS file handle, th
 A_DRAW_Y = 0x10dee                 # addrs.h — draw_x's neighbour, which nothing here may touch
 A_SPAWN_TIMER = 0x10dfc
 A_RNG_PTR = 0x10dfe
+# The two the frame-loop driver marks its laps with, one written by each half of a frame and by
+# nothing else in it — objects.h's, rebuilt at the top of update_objects (the TAIL's first call),
+# and object.h's, written by count_objects_and_pad (the HEAD's third). The claim is checked against
+# the oracle's own write sets rather than trusted — see the driver's marker test at the end.
+A_ACTIVE_PLAYERS = 0x10d09
+A_MESSAGE_CHAR_COUNT = 0x10d0c
 A_MESSAGE_TABLE = 0x10e16
 A_OBJECT_TABLE = 0x10f36
 A_PLAYER2 = 0x10f84
@@ -180,20 +203,32 @@ NOISE_TABLES = ((A_MESSAGE_TABLE, A_GAME_PALETTE - A_MESSAGE_TABLE),
 
 # A run that spins for ever is capped rather than run to the harness default. It must still be large
 # enough that a run which DID return would have finished — _start's title screen alone copies a
-# whole framebuffer — or "did not reach rts" would prove nothing.
+# whole framebuffer — or "did not reach rts" would prove nothing. _start's own caps are not this
+# constant but FOUR TIMES the instructions the matching checkpointed run was measured to cost, so
+# the bound each of them spends is exactly the bound it argues; START_SPIN_CAP is the ceiling those
+# arguments are asserted to fit under.
 SPIN_CAP = 1_000_000
+START_SPIN_CAP = 2_000_000
+# ...and the ceiling on the checkpointed runs themselves, which the harness default (200,000) is far
+# too low for: the init chain alone paints the title screen and two whole framebuffers.
+START_MAX_INSNS = 500_000
 
 FUZZ_CHUNKS = 2
 
 _U8P = ctypes.POINTER(ctypes.c_uint8)
 # g_xbios_setpalette RETURNS the table it hands the trap: the palette write is off-image, so that
 # pointer is the only thing about it a test can compare (see src/init.c).
-for _glue, _ret in (("g_start", None), ("g_init_system", None), ("g_init_video", None),
-                    ("g_init_game", None), ("g_cycle_palette", None),
-                    ("g_xbios_setpalette", ctypes.c_uint32),
-                    ("g_title_screen", ctypes.c_uint32), ("g_title_ikbd_pass", ctypes.c_uint32)):
+# `start` itself is bound as well: the frame-loop driver at the end needs the WHOLE routine, which no
+# glue runs (it never returns).
+for _glue, _nargs, _ret in (("g_start", 0, ctypes.c_uint32), ("start", 0, None),
+                            ("g_start_frame_pass", 2, ctypes.c_uint32),
+                            ("g_init_system", 0, None), ("g_init_video", 0, None),
+                            ("g_init_game", 0, None), ("g_cycle_palette", 0, None),
+                            ("g_xbios_setpalette", 0, ctypes.c_uint32),
+                            ("g_title_screen", 0, ctypes.c_uint32),
+                            ("g_title_ikbd_pass", 0, ctypes.c_uint32)):
     _fn = getattr(harness._lib, _glue)
-    _fn.argtypes = [_U8P]
+    _fn.argtypes = [_U8P] + [ctypes.c_uint32] * _nargs
     _fn.restype = _ret
 
 
@@ -209,10 +244,6 @@ def _game(lib, buf):
     return lib.g_init_game(buf)
 
 
-def _start(lib, buf):
-    return lib.g_start(buf)
-
-
 def _setpalette(lib, buf):
     return lib.g_xbios_setpalette(buf)
 
@@ -225,26 +256,26 @@ def _title(lib, buf):
     return lib.g_title_screen(buf)
 
 
-# The glue's own probe is the FIRST layer against title_screen's uncapped IKBD spin; this is the
-# second, and the README (../README.md, "A glue may refuse a call the original makes") makes it
-# mandatory rather than optional. A candidate that entered the spin would hang this worker for ever
-# and print nothing at all under `-n auto` — the one failure a differential cannot report — so every
-# candidate-side entry goes through a deadline that turns it into an ordinary red assert. Modelled
-# on test_input.py's `_pause_glue`, which carries the full rationale; kept local rather than shared
-# because it names its own symbol, and a wrapper taking the symbol as an argument would be the only
-# thing either file gained.
-TITLE_GLUE_TIMEOUT_S = 5   # absurdly generous for a wait that leaves on its first read
+# `_within_deadline` (imported above) is the SECOND layer against the uncapped IKBD spins this file
+# drives into — the glue's own probe is the first, and ../README.md ("A glue may refuse a call the
+# original makes") makes both mandatory rather than optional. A candidate that entered a spin would
+# hang this worker for ever and print nothing at all under `-n auto`, the one failure a differential
+# cannot report, so every candidate-side entry below goes through it and turns non-termination into
+# an ordinary red assert. Three glues here need it: title_screen's rotated IKBD pass, and both of
+# _start's, whose passes contain that same wait and title_screen's.
 
 
 def _title_ikbd(lib, buf):
-    returned = []
-    call = threading.Thread(target=lambda: returned.append(lib.g_title_ikbd_pass(buf)), daemon=True)
-    call.start()
-    call.join(TITLE_GLUE_TIMEOUT_S)
+    return _within_deadline(lambda: lib.g_title_ikbd_pass(buf), "g_title_ikbd_pass")
 
-    assert returned, (f"g_title_ikbd_pass did not return within {TITLE_GLUE_TIMEOUT_S}s — the "
-                      "uncapped IKBD wait was entered and never left")
-    return returned[0]
+
+def _start(lib, buf):
+    return _within_deadline(lambda: lib.g_start(buf), "g_start")
+
+
+def _frame_pass(flags_in, probe_in):
+    return lambda lib, buf: _within_deadline(
+        lambda: lib.g_start_frame_pass(buf, flags_in, probe_in), "g_start_frame_pass")
 
 
 # ------------------------------------------------------------------ shared staging helpers
@@ -337,15 +368,19 @@ def _trap_args(pokes, entry, stop_pc, count):
     return _pushed_words(_oracle_final(pokes, entry, stop_pc=stop_pc), count)
 
 
-def _never_returns(pokes, entry):
+def _never_returns(pokes, entry, regs=None, cap=SPIN_CAP):
     """Assert the original does not come back from `entry` on this input.
 
     The `stop_pc` run elsewhere would pass just as happily on a routine that fell through to `rts` —
     osh_run stops at the sentinel or the checkpoint and reports success either way — so every
     checkpointed branch is paired with this.
+
+    `regs` must be the checkpointed case's own registers where the entry takes any: a run started
+    with different ones is a different case, and the pair would then say nothing about the branch it
+    is supposed to cover.
     """
     with pytest.raises(RuntimeError, match="did not reach rts"):
-        emu.run(harness.make_image(pokes), entry, max_insns=SPIN_CAP)
+        emu.run(harness.make_image(pokes), entry, regs or {}, max_insns=cap)
 
 
 # ================================================================== init_game @ 0x105f0
@@ -704,38 +739,12 @@ def test_the_two_dead_blocks_of_init_system_are_unreachable():
         assert branch + 2 + displacement == over, f"{branch:#x} no longer jumps to {over:#x}"
 
 
-# ================================================================== _start @ 0x10000
-
-def test_start_calls_init_system_then_init_game():
-    """Diffed at the third `jsr`. WHAT THIS PROVES: _start does nothing of its own before those two
-    calls and makes them in that order, on the state init_system itself leaves behind (screen_base
-    is XBIOS Physbase', not a poked one). WHAT IT DOES NOT: anything about title_screen, init_video
-    or the per-frame loop — the checkpoint is placed before the first of them."""
-    pokes = _system_pokes()
-    diffs, _ = differential(ENTRY_START, {"_pokes": pokes}, _start,
-                            stop_pc=CHECKPOINT_START_AT_TITLE, poison=True)
-    assert not diffs, report(diffs)
-
-    image = _oracle_final(pokes, ENTRY_START, stop_pc=CHECKPOINT_START_AT_TITLE)
-    assert struct.unpack_from(">I", image, A_SCREEN_BASE)[0] == OS_SCREEN_BASE, "init_system ran"
-    assert struct.unpack_from(">I", image, A_PLAYFIELD_BOTTOM)[0] == OS_SCREEN_BASE + SCREEN_BYTES, \
-        "init_game ran, and after init_system: it relocated against Physbase' answer"
-
-
-def test_start_never_returns():
-    """...and the checkpoint above is a checkpoint, not a fall-through: the per-frame loop is
-    endless, so without one the run cannot finish. The cap is large enough that a run which DID
-    return would have got there — title_screen alone copies a whole framebuffer."""
-    _never_returns(_system_pokes(), ENTRY_START)
-
-
 def test_the_palette_routines_below_are_title_screens_own():
-    """WHY _start's CHECKPOINT SITS WHERE IT DOES. title_screen's first instruction calls
-    xbios_setpalette @ 0x10c46, and it calls cycle_palette @ 0x10c56 before it reads a key. All
-    three are reconstructed now, each verified at its OWN entry; what still keeps _start's
-    checkpoint short of the third `jsr` is that title_screen returns only for a key that chooses a
-    game, so a forwarding g_start would need a refusal of its own (see ../src/init.c). Pinned on the
-    two `bsr` targets so the claim tracks the binary rather than this comment.
+    """THE TWO CALLEES THAT ARE NOT IN THE CALL GRAPH names.txt SHOWS FOR _start. title_screen's
+    first instruction calls xbios_setpalette @ 0x10c46, and it calls cycle_palette @ 0x10c56 before
+    it reads a key, so both run inside _start's THIRD call without appearing among its twenty-one.
+    Each is verified at its own entry below; pinned on the two `bsr` targets so the claim tracks the
+    binary rather than this comment.
 
     These were the last two of its SIX `bsr` callees to be ported; the other four — fill_screen
     @ 0x102e2, draw_string @ 0x10700 (three sites), snd_poll_done @ 0x10a8a and play_sound
@@ -1599,8 +1608,7 @@ def test_title_ikbd_glue_refuses_a_wait_it_could_not_leave(packet):
     OS_IMAGE_SIZE - 1 is the boundary case: the last byte is in the image, but the packet's SECOND
     byte is not, so it must be refused too.
     """
-    buf = (ctypes.c_uint8 * len(harness.BASE_IMAGE)).from_buffer(
-        bytearray(harness.make_image({A_IKBD_PACKET: struct.pack(">I", packet)})))
+    buf = _glue_buffer({A_IKBD_PACKET: struct.pack(">I", packet)})
     assert _title_ikbd(harness._lib, buf) == TITLE_PASS_REFUSED, \
         f"the glue entered the wait with ikbd_packet = {packet:#x}"
 
@@ -1624,8 +1632,7 @@ def test_title_ikbd_glue_accepts_the_last_readable_packet():
     a bound and not a blanket. Both packet bytes are inside the image, both are zero, so the run is
     the ordinary no-fire one and reports TITLE_ATTRACT."""
     packet = harness.OS_IMAGE_SIZE - IKBD_PACKET_BYTES
-    buf = (ctypes.c_uint8 * len(harness.BASE_IMAGE)).from_buffer(
-        bytearray(harness.make_image({A_IKBD_PACKET: struct.pack(">I", packet)})))
+    buf = _glue_buffer({A_IKBD_PACKET: struct.pack(">I", packet)})
     assert _title_ikbd(harness._lib, buf) == TITLE_ATTRACT
 
 
@@ -1698,6 +1705,893 @@ def test_title_screen_joystick_fuzz(chunk):
     assert 0 < fired < ran, "this shard no longer covers both arms of the fire test"
 
 
+# ================================================================== _start @ 0x10000
+#
+# Twenty-one `jsr`s and a `bra` back into the middle of them: the first four run once and the branch
+# at 0x1007e returns to the FIFTH, so calls 5..21 are the per-frame loop and the routine never
+# returns. It has no code of its own, so what there is to verify is WHICH routines it calls, in what
+# ORDER, and where the loop CLOSES.
+#
+# THE NINTH CALL BLOCKS. read_joysticks waits for a reply an IKBD interrupt delivers, which no
+# oracle run ever gets (TRAP_MODEL.md's limit 1), so the routine is diffed in TWO ROTATIONS that
+# between them execute all twenty-one calls and the back edge:
+#
+#   * 0x10000 -> 0x10030 — the four one-shot calls and calls 5..8, with a console key that chooses a
+#     game staged so title_screen returns on its first attract pass;
+#   * 0x10036 -> 0x10030 — calls 10..21, the `bra`, and calls 5..8 again: one whole lap, entered
+#     where the oracle can enter it. Walked over a CHAIN of successive frames, each lap a
+#     differential on the state the previous one produced.
+#
+# WHAT NEITHER ROTATION HOLDS is that read_joysticks sits BETWEEN the two halves, or that the loop
+# laps at all on the C side. Both are held by the last test in this section, which is not a
+# differential: the candidate is a shared library in this process and the IKBD wait is `volatile`
+# precisely because something outside the routine ends it, so a thread poking the image IS that
+# interrupt. See ../STATUS.md for what is left over.
+
+
+# The twenty-one callees in the ORIGINAL's order, straight off 0x10000..0x1007d. This is the only
+# evidence for the ORDER of the calls the rotations cannot compose (and for the four the differential
+# never reaches an `rts` through), so it is asserted against names.txt rather than written as prose.
+START_CALLS = ("init_system", "init_game", "title_screen", "init_video",
+               "raise_floor", "animate_ground_shrink", "count_objects_and_pad", "update_eggs",
+               "read_joysticks", "update_objects", "update_pterodactyl", "render_objects",
+               "collision_check", "draw_platforms", "draw_messages", "lava_troll",
+               "dissolve_platforms", "wave_manager", "snd_poll_done", "poll_quit_key",
+               "check_highscore")
+START_CALL_BYTES = 6      # `jsr <abs.l>`: one opcode word and a relocated longword
+
+# glue results — mirrors of include/init.h
+START_AT_JOYSTICKS, START_REFUSED = 0, 1
+
+# WHICH FRAMES THE ROTATED PASS IS DIFFED ON, and every one of them is a MEASUREMENT rather than a
+# round number. Three of the head's four calls sleep through the opening frames — the floor is not
+# being rebuilt and there are no eggs — so a walk of the first few alone leaves them unheld (measured
+# as surviving mutants of exactly this battery). The deep laps are where THE GAME'S OWN PLAY wakes
+# them, and test_the_deep_laps_are_where_the_sleeping_head_calls_wake pins each one, so a walk that
+# stopped reaching an arm fails instead of quietly going shallow.
+PLATFORM_REPAINT_LAP = 13   # the first frame on which draw_platforms CHANGES a byte rather than
+                            # repainting what is already there
+FLOOR_TIMER_LAP = 100       # ...at which raise_floor's row counter is armed, so it steps its timer
+FLOOR_ROW_LAP = 106         # ...and, six frames later, actually lifts the lava surface a row
+EGG_LAP = 159               # ...at which the first egg is on the board, so update_eggs has work
+HEAD_ORDER_LAP = 188        # ...and the only frame in 210 on which the head's own ORDER shows
+DIFFED_LAPS = (0, 1, 2, 3, PLATFORM_REPAINT_LAP,
+               FLOOR_TIMER_LAP, FLOOR_ROW_LAP, EGG_LAP, HEAD_ORDER_LAP)
+
+# Every call's own `jsr` site, DERIVED from START_CALLS rather than listed a second time: call i is
+# six bytes past call i-1, which test_start_is_twenty_one_calls_and_a_branch pins against the binary.
+# Used to read ONE call's effect off the oracle — which is how the walk's deep laps are pinned, and
+# how the calls it cannot reach are disclosed. The diffs themselves always run the whole pass.
+CALL_SITE = {name: ENTRY_START + START_CALL_BYTES * index
+             for index, name in enumerate(START_CALLS)}
+
+FRAME_LOOP_HEAD = CALL_SITE["raise_floor"]                    # 0x10018 — the fifth call
+CHECKPOINT_START_AT_JOYSTICKS = CALL_SITE["read_joysticks"]   # 0x10030 — the ninth, which blocks
+ENTRY_FRAME_TAIL = CALL_SITE["update_objects"]                # 0x10036 — the tenth
+
+
+def _start_pokes(seed=1, key="1", console=None):
+    """Everything _start reads from cold, plus noise wherever a missing write would otherwise hide.
+
+    It is init_system's staging (HIGH.SCO included — os_fopen refuses a name the harness never
+    declared) plus the two blocks title_screen and init_video paint into: the framebuffer XBIOS
+    Physbase hands out, and the data segment the title picture is copied from. Both are NOISE, so a
+    copy from or to the wrong address shows as a diff rather than as zero over zero.
+
+    `key` stages one console keystroke through the model; `console`, as in `_title_pokes`, pokes the
+    console longword RAW, which is the only way to build a low word real TOS cannot produce.
+    """
+    pokes = _system_pokes(seed)
+    pokes[OS_SCREEN_BASE] = _noise(seed + 2, SCREEN_SPAN)
+    pokes[A_LOAD_BUFFER] = _noise(seed + 3, SCREEN_BYTES)
+    if key is not None:
+        pokes.update(harness.console_key(key))
+    if console is not None:
+        pokes[harness.OS_CON_PENDING] = struct.pack(">I", 1)
+        pokes[harness.OS_CON_CHAR] = struct.pack(">I", console)
+    return pokes
+
+
+# ------------------------------------------------------------------ the init chain and the first
+#                                                                     four frame calls
+
+def test_start_runs_the_init_chain_then_the_frames_first_four_calls():
+    """0x10000 to the `jsr` at 0x10030, in ONE compare: init_system, init_game, title_screen and
+    init_video, then raise_floor, animate_ground_shrink, count_objects_and_pad and update_eggs.
+
+    WHAT THIS PROVES: _start does nothing of its own between those eight calls and makes them in
+    that order, each on the state the one before it left — screen_base is XBIOS Physbase' answer and
+    not a poke, and the title screen is painted into it. It is also the only case anywhere that runs
+    `title_screen` the FUNCTION rather than its first-pass seam: a console key that chooses a game is
+    the one input for which its `for (;;)` is left on the first pass.
+
+    WHAT IT DOES NOT PROVE: anything past the ninth call — the checkpoint is placed on it.
+    """
+    pokes = _start_pokes()
+    diffs, info = differential(ENTRY_START, {"_pokes": pokes}, _start,
+                               stop_pc=CHECKPOINT_START_AT_JOYSTICKS, max_insns=START_MAX_INSNS,
+                               poison=True)
+    assert not diffs, report(diffs)
+    assert info["ret"] == START_AT_JOYSTICKS
+
+    image = _oracle_final(pokes, ENTRY_START, stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                          max_insns=START_MAX_INSNS)
+    assert struct.unpack_from(">I", image, A_SCREEN_BASE)[0] == OS_SCREEN_BASE, "init_system ran"
+    assert struct.unpack_from(">I", image, A_PLAYFIELD_BOTTOM)[0] == OS_SCREEN_BASE + SCREEN_BYTES, \
+        "init_game ran, and after init_system: it relocated against Physbase' answer"
+    assert image[A_OBJECT_TABLE + OBJ_LIVES] == TITLE_STARTING_LIVES, \
+        "title_screen ran and armed player 1 for the key that was staged"
+    assert struct.unpack_from(">I", image, harness.OS_CON_PENDING)[0] == 0, \
+        "title_screen's Bconin consumed the staged key"
+
+
+def test_start_never_returns():
+    """...and the checkpoint above is a checkpoint, not a fall-through: `_start` has no `rts` at all,
+    so without one the run cannot finish. The cap is ARGUED rather than guessed — it is asserted to
+    exceed four times what the checkpointed run itself costs, so "did not reach rts" means the run is
+    inside the loop rather than merely slower than the cap."""
+    pokes = _start_pokes()
+    _, _, regs = emu.run(harness.make_image(pokes), ENTRY_START,
+                         stop_pc=CHECKPOINT_START_AT_JOYSTICKS, max_insns=START_MAX_INSNS)
+    assert regs["ninsns"] * 4 < START_SPIN_CAP, "START_SPIN_CAP no longer leaves room for the chain"
+    _never_returns(pokes, ENTRY_START, cap=regs["ninsns"] * 4)
+
+
+@pytest.mark.parametrize("key,two_player", ((chr(TITLE_KEY_ONE_PLAYER), 0),
+                                            (chr(TITLE_KEY_TWO_PLAYER), 1)))
+def test_start_enters_title_screen_for_either_game_key(key, two_player):
+    """Both keys the glue accepts, run whole — the positive pair its refusals need, so the guard is a
+    bound and not a blanket. Which game was chosen rides all the way out to two_player_mode."""
+    pokes = _start_pokes(key=key)
+    diffs, info = differential(ENTRY_START, {"_pokes": pokes}, _start,
+                               stop_pc=CHECKPOINT_START_AT_JOYSTICKS, max_insns=START_MAX_INSNS)
+    assert not diffs, report(diffs)
+    assert info["ret"] == START_AT_JOYSTICKS
+    assert info["writes"].get(A_TWO_PLAYER_MODE) == two_player
+
+
+# ---- what g_start refuses, and why ----
+
+# Every console the glue must turn away. The first is an EMPTY one, which is what an ordinary run
+# stages; the rest are keys title_screen reads and does not act on, Ctrl-C, and the two longwords
+# that separate the key WIDTHS — 0x0131 is not '1' (the digits are `cmp.w`s), while 0x0103 IS Ctrl-C
+# (that one is a `cmp.b`). The last two are CONSTRUCTED: real TOS returns scancode << 16 | ascii.
+REFUSED_CONSOLES = (None, "0", "3", "A", " ", chr(KEY_CTRL_C), 0x0131, 0x0132, 0x0103)
+# ...and a console that is EMPTY while its character slot still holds a game key. That is not a
+# contrived state: os_bconin clears the pending flag and leaves the character behind, so it is
+# exactly what _start's own run looks like once title_screen has taken the key. A guard that read the
+# character without the flag would accept it and enter the attract loop's wait (measured survivor).
+STALE_GAME_KEY_CONSOLE = TITLE_KEY_ONE_PLAYER
+
+
+@pytest.mark.parametrize("console", REFUSED_CONSOLES)
+def test_start_glue_refuses_a_console_title_screen_would_not_return_for(console):
+    """THE CANDIDATE'S HALF OF THE THIRD CALL, and why g_start is not a bare forwarder.
+
+    title_screen comes back for exactly two console keys. On anything else its attract loop spends
+    its four hundred polls and falls into the IKBD wait, which ends on neither core — the reply
+    arrives on an interrupt the oracle never runs, and the pass has just cleared the word a poke
+    could have put one in. The ORACLE raises at its cap; the reconstruction is uncapped and
+    faithfully so, and would hang this worker with no output at all under `-n auto`. Only
+    harness.differential's oracle-first ordering would otherwise keep a case out of it, and nothing
+    pins that ordering, so the refusal is reported here instead.
+
+    Ctrl-C is refused by the same predicate for a different reason: it does not hang, it ends in a
+    GEMDOS Pterm the model does not serve, so no oracle run reaches the checkpoint to be diffed
+    against anyway. title_screen's own battery covers that exit at its own entry.
+    """
+    if isinstance(console, str):
+        pokes = _start_pokes(key=console)
+    else:
+        pokes = _start_pokes(key=None, console=console)
+    assert _start(harness._lib, _glue_buffer(pokes)) == START_REFUSED, \
+        f"g_start entered title_screen with console {console!r}"
+
+
+def test_start_glue_refuses_a_console_that_is_empty_but_not_blank():
+    """The refusal reads the PENDING FLAG as well as the character, and this is what says so: the
+    character slot holds a game key while nothing is waiting. os_bconin leaves exactly that behind
+    once it has consumed a key, so it is the state a second pass through g_start would see."""
+    pokes = _start_pokes(key=None)
+    pokes[harness.OS_CON_CHAR] = struct.pack(">I", STALE_GAME_KEY_CONSOLE)
+    assert _start(harness._lib, _glue_buffer(pokes)) == START_REFUSED, \
+        "g_start read the character slot without the pending flag"
+
+
+# ------------------------------------------------------------------ one whole lap of the frame loop
+
+@functools.lru_cache(maxsize=None)
+def _frame_lap_states():
+    """{lap: the image the ORIGINAL has at 0x10036 on that frame}, for DIFFED_LAPS only.
+
+    Built with the oracle alone, and only out of entries the oracle can reach: _start's own from
+    cold, then read_joysticks' ROTATED entry (0x11db0, verified in test_player.py) with a reply
+    staged, then the frame tail. So each state is one the game itself PLAYED ITSELF into, not a
+    constructed one — which matters here more than usual, since the frame loop dereferences pointers
+    it stored on the frame before (render_object_body's prev_dst) and noise over those crashes the
+    candidate outright.
+
+    The walk runs the whole way and keeps only the wanted frames: a state is a megabyte, so holding
+    every one of them would cost more memory than the rest of the suite put together.
+    """
+    at_joysticks = _oracle_final(_start_pokes(), ENTRY_START,
+                                 stop_pc=CHECKPOINT_START_AT_JOYSTICKS, max_insns=START_MAX_INSNS)
+    rng = random.Random(ENTRY_START)
+    states = {}
+    for lap in range(max(DIFFED_LAPS) + 1):
+        # Play the interrupt the oracle has no model for: a reply pointer and two joystick bytes.
+        # Random sticks, because that is what wakes the head's sleeping calls at all — the riders
+        # have to fight the enemies for an egg to exist.
+        armed = bytearray(at_joysticks)
+        struct.pack_into(">I", armed, A_IKBD_PACKET, IKBD_PACKET_BUF)
+        armed[IKBD_PACKET_BUF:IKBD_PACKET_BUF + 2] = bytes([rng.randrange(0x100) for _ in range(2)])
+        after_joysticks, _, _ = emu.run(bytes(armed), IKBD_WAIT_PC,
+                                        max_insns=START_MAX_INSNS)
+        if lap in DIFFED_LAPS:
+            states[lap] = bytes(after_joysticks)
+        at_joysticks, _, _ = emu.run(bytes(after_joysticks), ENTRY_FRAME_TAIL,
+                                     stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                                     max_insns=START_MAX_INSNS)
+    return states
+
+
+def _image_at(lap, call):
+    """The image the ORACLE has when it arrives at `call` during `lap`'s rotated pass."""
+    image, _, _ = emu.run(_frame_lap_states()[lap], ENTRY_FRAME_TAIL, stop_pc=CALL_SITE[call],
+                          max_insns=START_MAX_INSNS)
+    return bytes(image)
+
+
+def _run_in_order(image, calls):
+    """Run the named calls back to back on `image` and return the result below the stack guard.
+
+    Running them out of the original's order is the only way to ask what a call's PLACE in the frame
+    is worth, and running one alone the only way to ask whether it is worth anything at all.
+    """
+    for call in calls:
+        site = CALL_SITE[call]
+        image = bytes(emu.run(image, site, stop_pc=site + START_CALL_BYTES,
+                              max_insns=START_MAX_INSNS)[0])
+    return image[:emu.STACK_GUARD_LO]
+
+
+def _call_changes(lap, call):
+    """The bytes ONE call CHANGES on `lap` — changed, not merely written: most of these repaint what
+    is already there, and a write of the same byte is exactly what a dropped call still passes."""
+    before = _image_at(lap, call)
+    after = _run_in_order(before, (call,))
+    # Compare the megabyte at C speed first and only walk it when it really differs — the same fast
+    # path harness.differential takes, and it matters here because most of these calls change
+    # nothing at all, which is the whole point of asking.
+    if before[:emu.STACK_GUARD_LO] == after:
+        return set()
+    return {addr for addr in range(emu.STACK_GUARD_LO) if before[addr] != after[addr]}
+
+
+# The D0/D2 each lap is entered with. They are NOT zero: update_objects reads both before writing
+# them, so the pass carries them as arguments, and driving them with the frame number in each half is
+# what keeps the whole argument chain — glue, seam, routine — executed rather than merely declared.
+# The oracle is entered with the same two, so the case stays a differential either way; no frame in
+# the walk makes them observable (test_the_registers_the_pass_carries_are_dead_on_every_frame_it_walks).
+def _lap_registers(lap):
+    return {"d0": 0xd000 | lap, "d2": 0x2d00 | lap}
+
+
+def _lap_case(lap):
+    """One rotated lap under the differential: calls 10..21, the `bra`, then calls 5..8.
+
+    No poison anywhere here — see test_poison_on_a_lap_would_not_even_be_a_valid_run."""
+    registers = _lap_registers(lap)
+    diffs, info = differential(ENTRY_FRAME_TAIL, dict({"_pokes": {0: _frame_lap_states()[lap]}},
+                                                      **registers),
+                               _frame_pass(registers["d0"], registers["d2"]),
+                               stop_pc=CHECKPOINT_START_AT_JOYSTICKS, max_insns=START_MAX_INSNS)
+    assert not diffs, f"lap {lap}\n{report(diffs)}"
+    assert info["ret"] == START_AT_JOYSTICKS
+    return info
+
+
+@pytest.mark.parametrize("lap", DIFFED_LAPS)
+def test_start_frame_pass_walks_the_games_own_frames(lap):
+    """Calls 10..21 and the back edge into calls 5..8, one differential per frame, each on the state
+    the frame before it produced.
+
+    ONE ROTATION IS ALL THERE IS PER FRAME: no oracle run can cross the ninth call, so the chain
+    steps through read_joysticks' own verified rotated entry between laps rather than pretending to
+    execute it here. What is diffed is everything else — and the walk is what stops the battery
+    resting on the opening frames, where three of the head's four calls do nothing at all.
+    """
+    assert _lap_case(lap)["writes"], "the lap wrote nothing at all, so it cannot have run"
+
+
+@pytest.mark.parametrize("lap,call", ((PLATFORM_REPAINT_LAP, "draw_platforms"),
+                                      (FLOOR_TIMER_LAP, "raise_floor"),
+                                      (FLOOR_ROW_LAP, "raise_floor"),
+                                      (EGG_LAP, "update_eggs"),
+                                      (HEAD_ORDER_LAP, "update_eggs")))
+def test_the_deep_laps_are_where_the_sleeping_head_calls_wake(lap, call):
+    """WHY THE WALK GOES AS DEEP AS IT DOES, asserted rather than left to the lap numbers.
+
+    raise_floor and update_eggs are gated on state the wave machinery and the fighting produce, and
+    on the opening frames neither has any: both return without storing a byte, so dropping either
+    from the head is invisible there (measured — it survived a sweep of the shallow walk).
+    draw_platforms is worse, because it is never silent: it repaints the platforms every frame, and
+    only on a frame where something has drawn OVER one does the repaint change a byte. These are the
+    frames at which the GAME'S OWN PLAY arms each of them, found by measurement and pinned here, so a
+    walk that stopped reaching one fails loudly instead of going quietly shallow again.
+
+    FLOOR_ROW_LAP is six frames past FLOOR_TIMER_LAP for a reason worth keeping: raise_floor reloads
+    its `subq.b` counter with FLOOR_STEP_FRAMES, so the first six armed calls only step it (one byte
+    each) and the SEVENTH is the one that lifts the lava surface and repaints two strips. Both are
+    asserted, so a walk that reached only the cheap one could not pass as covering the routine.
+    """
+    changed = _call_changes(lap, call)
+    assert changed, f"{call} changed nothing on lap {lap}, so that lap no longer covers it"
+    if (lap, call) == (FLOOR_ROW_LAP, "raise_floor"):
+        # SOME byte of the pointer, not its first: the surface moves one row, which leaves the
+        # longword's top byte exactly where it was.
+        assert changed & set(range(A_PLAYFIELD_BOTTOM, A_PLAYFIELD_BOTTOM + 4)), \
+            "the lava surface did not move on the floor-step frame"
+
+
+def test_the_head_holds_its_own_order_on_exactly_one_frame():
+    """WHY HEAD_ORDER_LAP IS IN THE WALK. count_objects_and_pad counts the eggs and update_eggs moves
+    them, so their order is only visible on a frame where the census would come out differently
+    either side of the update — and on 209 of the 210 frames swept for one, it does not: the two
+    touch disjoint state and swapping them is green (the survivor this lap exists to kill).
+
+    Run BOTH orders on the ORACLE and require them to disagree. One byte is the whole difference,
+    which is exactly why the lap had to be found by measurement rather than picked.
+    """
+    at_census = _image_at(HEAD_ORDER_LAP, "count_objects_and_pad")
+    census_first = ("count_objects_and_pad", "update_eggs")
+    assert _run_in_order(at_census, census_first) != _run_in_order(at_census, census_first[::-1]), \
+        f"lap {HEAD_ORDER_LAP} no longer separates the head's two middle calls"
+
+
+# THE ONE CALL LEFT WITH NOTHING TO SHOW, and why it is the only one. dissolve_platforms changes
+# nothing on any frame the walk reaches, and unlike lava_troll and animate_ground_shrink above it
+# cannot be armed by a scalar: its very first act is to walk effect_table, so the earliest observable
+# effect lies PAST a slot whose kind indexes a sprite pointer. Arming it means writing an effect
+# RECORD — fabricating exactly what the wave machinery writes, which ../../../CLAUDE.md forbids as a
+# way to make a branch look covered. So its PRESENCE is held by the ORIGINAL's `jsr` encoding alone
+# (test_start_is_twenty_one_calls_and_a_branch) and the ROUTINE by test_world.py at its own entry;
+# ../STATUS.md carries it as a disclosed surviving mutant, and this is the measurement behind that.
+UNREACHED_CALL = "dissolve_platforms"
+
+
+@pytest.mark.parametrize("lap", DIFFED_LAPS)
+def test_the_one_call_no_frame_in_the_walk_can_hold(lap):
+    """Saying it in a test rather than in prose means the day a frame does dissolve a platform, this
+    fails and asks for the ordinary case it can then have."""
+    assert not _call_changes(lap, UNREACHED_CALL), \
+        f"{UNREACHED_CALL} acts on lap {lap} now — the walk can hold this call, so give it a case"
+
+
+def test_the_tails_first_two_calls_never_show_their_order():
+    """A LIMIT, MEASURED — the sweep's `tail: swap update_objects/update_pterodactyl` survivor.
+
+    update_objects rebuilds active_players and update_pterodactyl reads it, so their order COULD
+    show. It does not: the census comes out the same either side of the bird's move, because nothing
+    in a frame changes which players are on the board between the two. That was established by an
+    OFFLINE sweep of 210 successive frames — the same depth that found the head pair's one separating
+    frame, so the two disclosures are comparable — and 260 frames of an independent sweep agreed.
+
+    WHAT THIS TEST RE-CHECKS IS THE NINE WALKED FRAMES, not those 210: a separating frame outside
+    DIFFED_LAPS would not be noticed here. It is a tripwire on the frames the suite already pays for,
+    and the day it fires the answer is the same as it was for the head's pair — put that lap in the
+    walk and make it an ordinary positive case.
+    """
+    separated = []
+    for lap in DIFFED_LAPS:
+        at_update = _image_at(lap, "update_objects")
+        objects_first = ("update_objects", "update_pterodactyl")
+        if _run_in_order(at_update, objects_first) != _run_in_order(at_update, objects_first[::-1]):
+            separated.append(lap)
+    assert not separated, \
+        f"laps {separated} DO separate the tail's first two calls — make one a positive case"
+
+
+def test_poison_on_a_lap_would_not_even_be_a_valid_run():
+    """WHY NO LAP CARRIES AN ATTRIBUTION PASS — measured, not asserted as prose.
+
+    Poison inverts every byte the ORACLE wrote and re-runs both cores on the result, which is sound
+    only where the routine does not read its own output back. A frame reads back nearly all of it,
+    and inverting a frame's worth of state does not merely produce a DIFFERENT case: it produces an
+    INVALID one. The oracle's own re-run reaches the PSG ports directly — the sound layer taking a
+    path the game's real state never sends it down — and the model cannot serve a raw PSG read
+    (TRAP_MODEL.md, Phase 3), so there is no second case to compare against at all.
+
+    The init chain above is the opposite and does carry poison: it starts from cold, so the bytes it
+    wrote are ones it computed rather than ones it will read back.
+    """
+    at_tail = _frame_lap_states()[0]
+    final, writes, _ = emu.run(at_tail, ENTRY_FRAME_TAIL, stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                               max_insns=START_MAX_INSNS)
+    poisoned = bytearray(at_tail)
+    for addr in writes:
+        if addr < emu.STACK_GUARD_LO:
+            poisoned[addr] = final[addr] ^ 0xff
+    with pytest.raises(RuntimeError, match="unmodeled OS behaviour"):
+        emu.run(bytes(poisoned), ENTRY_FRAME_TAIL, stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                max_insns=START_MAX_INSNS)
+
+
+def test_start_frame_pass_never_returns():
+    """The pair every checkpointed lap needs: the rotated pass has no `rts` to fall through to
+    either — the `bra` at 0x1007e goes back into the loop — so a run that reached the sentinel would
+    have proved the checkpoint was never a checkpoint. The cap is argued against the lap's own cost.
+    """
+    pokes = {0: _frame_lap_states()[0]}
+    _, _, regs = emu.run(harness.make_image(pokes), ENTRY_FRAME_TAIL,
+                         stop_pc=CHECKPOINT_START_AT_JOYSTICKS, max_insns=START_MAX_INSNS)
+    _never_returns(pokes, ENTRY_FRAME_TAIL, cap=regs["ninsns"] * 4)
+
+
+def test_the_registers_the_pass_carries_are_dead_on_every_frame_it_walks():
+    """A LIMIT, MEASURED — and the reason the sweep discloses `update_objects(image, 0, 0)`.
+
+    update_objects reads D0 and D2 before writing them (objects.h), and at 0x10036 both hold whatever
+    read_joysticks' last control_player left behind, so the rotated pass takes them as arguments and
+    the differential drives the ORIGINAL'S entry contract with them. What no frame in this walk does
+    is make them MATTER: D0 only reaches rng_advance's restart offset when the cursor wraps, and D2
+    only reaches the type-1/2 probe. Two extreme register pairs give the same image below the stack
+    guard on every diffed frame, so a candidate that dropped both arguments is green here.
+
+    That is a property of the GAME'S DATA, not of the harness — update_objects' own battery drives
+    both registers directly and holds them (test_objects.py). An OFFLINE sweep of 60 successive
+    frames found no separating frame either, for the whole pass or for update_objects alone; what
+    moves is two bytes of the ORACLE'S OWN SAVED REGISTERS, above the stack guard and outside the
+    comparison, which is what an earlier whole-image measurement mistook for a real difference.
+
+    As with the order tripwire above, this re-checks the NINE walked frames rather than those 60, and
+    fails if one ever does separate them — the cue to make it an ordinary positive case.
+    """
+    def lap_image(lap, d0, d2):
+        image, _, _ = emu.run(harness.make_image({0: _frame_lap_states()[lap]}), ENTRY_FRAME_TAIL,
+                              {"d0": d0, "d2": d2}, stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                              max_insns=START_MAX_INSNS)
+        return bytes(image[:emu.STACK_GUARD_LO])
+
+    # Each register is moved ON ITS OWN as well as with the other. A diagonal alone could not tell a
+    # frame where the two cancel from one where neither is read, and they reach different things —
+    # D0 rng_advance's restart offset, D2 the type-1/2 probe.
+    separated = []
+    for lap in DIFFED_LAPS:
+        quiet = lap_image(lap, 0, 0)
+        if any(lap_image(lap, d0, d2) != quiet
+               for d0, d2 in ((0xffff, 0), (0, 0xffff), (0xffff, 0xffff))):
+            separated.append(lap)
+    assert not separated, \
+        f"laps {separated} DO answer D0/D2 now — make one of them a positive case and drop this"
+
+
+# ---- what g_start_frame_pass refuses, and why ----
+
+# The keys poll_quit_key acts on: the original comes back from none of them. Ctrl-C traps GEMDOS
+# Pterm, R/r jumps to _start's SECOND call, and P/p waits for a keystroke the console model cannot
+# deliver (one key per run) — so the reconstruction, which returns from all three, would compose a
+# lap the original never composes. Taken from test_input.py, which owns those five constants and
+# pins them against src/input.c, rather than respelt here.
+QUIT_KEYS = tuple(chr(key) for key in test_input.SPECIAL_KEYS)
+IGNORED_KEY = "X"   # ...and one it does not act on, which is what makes the call observable at all
+assert ord(IGNORED_KEY) not in test_input.SPECIAL_KEYS, "the 'ignored' key is one poll_quit_key acts on"
+
+
+def _refuses(pokes):
+    """Did g_start_frame_pass turn this staging away? The registers do not matter to a refusal — it
+    is decided before the pass is entered — so the refusal cases share one spelling.
+
+    THE SCORES A REFUSAL CASE STAGES MUST DIFFER EARLY. There is no oracle run beside these calls,
+    and check_highscore_comes_back reaches walk_scores, whose only bound is that the two strings it
+    compares eventually differ (src/input.c). Every staging below sets the digits explicitly for
+    that reason; two byte-equal regions would walk off the end of the image and take the worker with
+    them rather than failing as a case.
+    """
+    return _frame_pass(0, 0)(harness._lib, _glue_buffer(pokes)) == START_REFUSED
+
+
+@pytest.mark.parametrize("key", QUIT_KEYS)
+def test_start_frame_pass_glue_refuses_a_key_poll_quit_key_would_not_return_from(key):
+    pokes = {0: _frame_lap_states()[0]}
+    pokes.update(harness.console_key(key))
+    assert _refuses(pokes), f"the glue ran a lap containing poll_quit_key with {key!r} staged"
+
+
+def test_start_frame_pass_glue_refuses_a_game_that_is_over_with_the_record_taken():
+    """The refusal, staged so it does not depend on what the walk's own scores happen to be: the
+    game is over AND the leader's digits beat the record outright. On that one input check_highscore
+    puts the name-entry screen up and stays in it, on both cores.
+
+    The pair to test_start_frame_pass_runs_check_highscore_when_the_record_stands below: together
+    they say the glue's bound is check_highscore's OWN gate and not a blanket over game_over_flag —
+    which is what lets that other case run the call for real and hold it.
+    """
+    pokes = {0: _frame_lap_states()[0], A_GAME_OVER_FLAG: bytes([1]),
+             A_HISCORE_SCORE: BEATABLE_SCORE,
+             A_OBJECT_TABLE + OBJ_SCORE_FIRST_DIGIT: UNBEATABLE_SCORE}
+    assert _refuses(pokes), "the glue ran a lap whose check_highscore never comes back"
+
+    # ...and the ORIGINAL really does not come back from it, which is the premise of the refusal.
+    _never_returns(pokes, ENTRY_FRAME_TAIL, regs={"d0": 0, "d2": 0}, cap=START_SPIN_CAP)
+
+
+def test_start_frame_pass_runs_poll_quit_key_for_a_key_it_ignores():
+    """The positive pair the console refusal needs — and the only thing that holds poll_quit_key's
+    presence in the lap at all. With no key staged the routine reads Bconstat, finds nothing and
+    returns without touching a byte, so DELETING THE CALL would be invisible on every frame of the
+    walk. An ordinary key it does not act on is different: Bconin CONSUMES it, and that consumption
+    is an image write the differential compares.
+    """
+    pokes = {0: _frame_lap_states()[0]}
+    pokes.update(harness.console_key(IGNORED_KEY))
+    diffs, info = differential(ENTRY_FRAME_TAIL, {"_pokes": pokes, "d0": 0, "d2": 0},
+                               _frame_pass(0, 0), stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                               max_insns=START_MAX_INSNS)
+    assert not diffs, report(diffs)
+    assert info["ret"] == START_AT_JOYSTICKS
+
+    # Off the ORACLE'S FINAL IMAGE, not its write set: the trap model reaches memory directly, so a
+    # key Bconin consumed never appears there (the same reason _oracle_final exists). What the
+    # assertion adds is that the ORIGINAL really did consume it — which is what stops the diff above
+    # passing vacuously with neither core touching the console.
+    image = _oracle_final(pokes, ENTRY_FRAME_TAIL, stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                          max_insns=START_MAX_INSNS)
+    assert struct.unpack_from(">I", image, harness.OS_CON_PENDING)[0] == 0, \
+        "poll_quit_key never consumed the staged key, so the call is not in the pass"
+
+
+# ---- the four calls that need something staged before they do anything ----
+#
+# Each is in the pass on every lap and each returns without touching a byte on every frame the walk
+# reaches, so dropping any of them is invisible there (measured, as surviving mutants). None can be
+# woken by playing longer: one waits on a chip register the model's Dosound never writes, one on a
+# game that is over, and two on counters a later wave arms than random joystick input survives to.
+#
+# So each gets ONE case built on a real frame state plus THE SMALLEST STAGING THAT DECIDES ITS
+# BRANCH — one or two bytes, always a scalar the routine's own first test reads. That bound matters:
+# a poke big enough to build a table RECORD would be fabricating what another subsystem writes,
+# which is what ../../../CLAUDE.md forbids, and it is why each case below claims only the gate and
+# the counter behind it rather than the whole routine. The staging is CONSTRUCTED and says nothing
+# about when the game reaches these states; what it buys is that the calls are present, in their
+# place, and reading the byte the original reads.
+
+# Both taken from the battery that verified them rather than restated: test_input.py owns the
+# high-score record's layout, and OBJ_SCORE_FIRST_DIGIT with it.
+A_HISCORE_SCORE = test_input.A_HISCORE_SCORE
+OBJ_SCORE_FIRST_DIGIT = test_input.OBJ_SCORE_FIRST_DIGIT
+HISCORE_SCORE_DIGITS = test_input.HISCORE_SCORE_DIGITS
+UNBEATABLE_SCORE = b"9" * HISCORE_SCORE_DIGITS
+BEATABLE_SCORE = b"0" * HISCORE_SCORE_DIGITS
+SND_BUSY_PRIORITY = 5          # any index that outranks idle: what "a sound is playing" looks like
+A_DRAW_SRC = 0x10df0           # addrs.h — where check_highscore leaves the leader it picked
+
+
+def test_start_frame_pass_releases_the_sound_when_the_chip_falls_silent():
+    """snd_poll_done reads the YM2149 mixer through XBIOS Giaccess and drops snd_priority back to
+    idle once every tone and noise channel is off. On a real frame it never fires: play_sound reaches
+    the chip through Dosound, which the model records in a LEDGER rather than in the register file it
+    reads (TRAP_MODEL.md), so the mixer stays at its power-on zero and the release never happens.
+
+    The mixer and the priority are both ordinary poked model state, so staging them is staging an
+    input, not fabricating a game record — and it is what makes the release an image write the
+    differential compares.
+    """
+    pokes = {0: _frame_lap_states()[0], A_SND_PRIORITY: struct.pack(">H", SND_BUSY_PRIORITY)}
+    pokes.update(harness.psg_regs({PSG_MIXER: PSG_MIXER_ALL_OFF}))
+    diffs, info = differential(ENTRY_FRAME_TAIL, {"_pokes": pokes, "d0": 0, "d2": 0},
+                               _frame_pass(0, 0), stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                               max_insns=START_MAX_INSNS)
+    assert not diffs, report(diffs)
+    assert info["ret"] == START_AT_JOYSTICKS
+    assert info["writes"].get(A_SND_PRIORITY + 1) == SND_PRIORITY_IDLE, \
+        "the ORIGINAL did not release the sound, so this case does not cover snd_poll_done"
+
+
+# world.h's, scraped rather than restated: the two gates below are its constants, and a drift in
+# either would otherwise leave these cases quietly staging nothing.
+_WORLD = _defines("include/world.h")
+A_WAVE_NUM = _WORLD["A_wave_num"]
+TROLL_FIRST_WAVE = _WORLD["TROLL_FIRST_WAVE"]
+A_TROLL_STEP_TIMER = _WORLD["A_troll_step_timer"]
+GA_ROWS_LATCH = _WORLD["GA_ROWS_LATCH"]
+GROUND_ARMED_LATCH = 1         # the smallest value that is not `<= 0`, which is the routine's test
+TROLL_STEP_RELOAD = 2          # what tick_troll_step_timer puts back once the counter runs out
+
+
+def test_start_frame_pass_ticks_the_lava_troll_once_the_wave_arms_it():
+    """lava_troll's FIRST act is a SIGNED byte test of wave_num, and its second — reached whatever
+    the troll is doing — is to tick troll_step_timer. The walk never gets past the first: the game is
+    still on wave 0 or 1 after 188 frames of random play, so the routine returns without a write and
+    dropping the call is invisible.
+
+    ONE BYTE arms it, and that byte is the gate's own operand rather than a record: no table is
+    indexed on the way to the tick, so nothing here is fabricated. WHAT IT CLAIMS is exactly that —
+    the call is present, and it reads wave_num and ticks the timer. The hand animation past the tick
+    is NOT reached and is not claimed; test_world.py verifies that at the routine's own entry.
+    """
+    state = _frame_lap_states()[0]
+    assert (state[A_WAVE_NUM] ^ 0x80) < (TROLL_FIRST_WAVE ^ 0x80), \
+        "the walk reaches the troll's wave by itself now — drop the poke and use a real frame"
+
+    pokes = {0: state, A_WAVE_NUM: bytes([TROLL_FIRST_WAVE])}
+    diffs, info = differential(ENTRY_FRAME_TAIL, {"_pokes": pokes, "d0": 0, "d2": 0},
+                               _frame_pass(0, 0), stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                               max_insns=START_MAX_INSNS)
+    assert not diffs, report(diffs)
+    assert info["ret"] == START_AT_JOYSTICKS
+    assert info["writes"].get(A_TROLL_STEP_TIMER) == TROLL_STEP_RELOAD, \
+        "the ORIGINAL did not tick the troll, so this case does not cover lava_troll"
+
+
+def test_start_frame_pass_steps_the_ground_burn_once_the_latch_arms_it():
+    """The same shape one call further on. animate_ground_shrink tests GA_ROWS_LATCH as a SIGNED
+    word and then decrements ground_anim_timer, and only when THAT reaches zero does it touch the
+    burn's sprite records. The walk never arms the latch — the burn belongs to a later wave — so the
+    routine returns without a write.
+
+    TWO BYTES arm it, and the timer's own natural value (well above 1) is what keeps the case on the
+    near side of the sprite work: the decrement is the whole observable effect, so no null record is
+    ever dereferenced. Arming the burn PROPERLY would mean writing the flame records the wave
+    machinery writes, which is the line this battery does not cross (see the section header).
+    """
+    state = _frame_lap_states()[0]
+    latch = struct.unpack_from(">h", state, A_GROUND_ANIM + GA_ROWS_LATCH)[0]
+    assert latch <= 0, "the walk arms the ground burn by itself now — drop the poke"
+    assert state[A_GROUND_ANIM_TIMER] > GROUND_ARMED_LATCH, \
+        "the burn timer is about to expire, so this case would reach the sprite records"
+
+    pokes = {0: state,
+             A_GROUND_ANIM + GA_ROWS_LATCH: struct.pack(">h", GROUND_ARMED_LATCH)}
+    diffs, info = differential(ENTRY_FRAME_TAIL, {"_pokes": pokes, "d0": 0, "d2": 0},
+                               _frame_pass(0, 0), stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                               max_insns=START_MAX_INSNS)
+    assert not diffs, report(diffs)
+    assert info["ret"] == START_AT_JOYSTICKS
+    assert info["writes"].get(A_GROUND_ANIM_TIMER) == state[A_GROUND_ANIM_TIMER] - 1, \
+        "the ORIGINAL did not step the burn timer, so this case does not cover the call"
+
+
+def test_start_frame_pass_runs_check_highscore_when_the_record_stands():
+    """check_highscore returns at once while the game is running, so on every frame the walk reaches
+    it writes nothing. Staging a FINISHED game whose record still stands is what makes it do its
+    work — it picks the leader into draw_src and returns — and that store is what the diff holds.
+
+    It is also the positive half of the refusal below: the two together say the glue's bound is the
+    routine's own gate and not a blanket over game_over_flag.
+    """
+    pokes = {0: _frame_lap_states()[0], A_GAME_OVER_FLAG: bytes([1]),
+             A_HISCORE_SCORE: UNBEATABLE_SCORE}
+    diffs, info = differential(ENTRY_FRAME_TAIL, {"_pokes": pokes, "d0": 0, "d2": 0},
+                               _frame_pass(0, 0), stop_pc=CHECKPOINT_START_AT_JOYSTICKS,
+                               max_insns=START_MAX_INSNS)
+    assert not diffs, report(diffs)
+    assert info["ret"] == START_AT_JOYSTICKS
+    assert A_DRAW_SRC in info["writes"], \
+        "the ORIGINAL never picked a leader, so this case does not cover check_highscore"
+
+
+# ---- the loop, driven the way the hardware drives it ----
+#
+# THE ONE TEST HERE THAT IS NOT A DIFFERENTIAL, and the only thing that runs `start` itself. Every
+# case above enters through a glue that stops at the ninth call, because no ORACLE run can cross it.
+# THE CANDIDATE HAS NO SUCH LIMIT: the wait is `volatile` precisely because an interrupt writes that
+# slot, and a Python thread poking the ctypes image IS that interrupt — the technique
+# test_read_joysticks_blocks_until_a_reply_lands introduced, applied one level up. So the two things
+# the rotations cannot hold between them are held here: that read_joysticks runs BETWEEN the head and
+# the tail, and that the loop LAPS.
+#
+# What it does NOT do is compare against the original — there is no oracle run to compare with, which
+# is the whole reason it can exist. It pins the reconstruction's control flow, not its equivalence.
+#
+# IT RUNS IN A FORKED CHILD, for two reasons. `start` never returns, so the thread driving it would
+# spin in the IKBD wait for the rest of the session and cost a core under `-n auto`; and a frame loop
+# walking evolving state is the one place a wild pointer could take the pytest worker down with it.
+# The child reports what it saw and exits; the parent does the asserting.
+
+PIPE_REPORT_CHUNK = 0x10000  # read size; the loop below runs to EOF, so it is not a cap
+# STALE_PACKET, CLEAR_TIMEOUT_S and BLOCKED_DWELL_S are test_player.py's, imported at the top: this
+# is the same technique on the same wait, and two sets of knobs for one mechanism would drift.
+LAP_MARKER = 0xff           # a value neither marker byte can legitimately hold
+# How many laps the driver walks. The marker pin below reads frames `lap` and `lap - 1` off the
+# chain, so the walk has to keep them: asserted rather than left to raise a bare KeyError.
+DRIVEN_LAPS = 3
+assert set(range(DRIVEN_LAPS)) <= set(DIFFED_LAPS), "the driver's laps are not all kept by the walk"
+
+
+def _lap_marker_writes(lap):
+    """(head write set, tail write set) for the frame the driver calls `lap`, off the ORACLE.
+
+    Frame 0's head is the one the init chain falls into, so it comes from a COLD run rather than from
+    the chain — which is exactly the frame the driver's first lap observes, and the one a walk-only
+    pin would have missed.
+    """
+    if lap == 0:
+        at_head = _oracle_final(_start_pokes(), ENTRY_START, stop_pc=FRAME_LOOP_HEAD,
+                                max_insns=START_MAX_INSNS)
+    else:
+        at_head, _, _ = emu.run(_frame_lap_states()[lap - 1], ENTRY_FRAME_TAIL,
+                                stop_pc=FRAME_LOOP_HEAD, max_insns=START_MAX_INSNS)
+    _, head_writes, _ = emu.run(bytes(at_head), FRAME_LOOP_HEAD,
+                                stop_pc=CHECKPOINT_START_AT_JOYSTICKS, max_insns=START_MAX_INSNS)
+    _, tail_writes, _ = emu.run(_frame_lap_states()[lap], ENTRY_FRAME_TAIL,
+                                stop_pc=FRAME_LOOP_HEAD, max_insns=START_MAX_INSNS)
+    return head_writes, tail_writes
+
+
+@pytest.mark.parametrize("lap", range(DRIVEN_LAPS))
+def test_the_lap_markers_are_written_where_the_driver_assumes(lap):
+    """The driver below reads a lap off two marker bytes, one per half of the frame. That only says
+    what it claims to if each half really writes its own and not the other's — so the claim is
+    checked against the ORACLE'S write sets for the very laps the driver walks, rather than left as a
+    comment that could go stale the first time the game's phase changed under it."""
+    head_writes, tail_writes = _lap_marker_writes(lap)
+    assert A_MESSAGE_CHAR_COUNT in head_writes, "count_objects_and_pad did not write the head marker"
+    assert A_MESSAGE_CHAR_COUNT not in tail_writes, "the tail writes the HEAD's marker"
+    assert A_ACTIVE_PLAYERS in tail_writes, "update_objects did not write the tail marker"
+    assert A_ACTIVE_PLAYERS not in head_writes, "the head writes the TAIL's marker"
+
+
+def _drive_frame_loop(laps):
+    """Run `start` on a thread, play the IKBD interrupt `laps` times, and report what each lap saw.
+
+    Runs in the CHILD of the fork below. The sequence the parent asserts is the routine's own: the
+    init chain and the frame's head run, then read_joysticks CLEARS ikbd_packet and BLOCKS, then the
+    reply lands and the tail runs, then the `bra` closes the loop and it all happens again.
+
+    IT PLAYS THE SAME REPLIES `_frame_lap_states` DOES — same seed, same two bytes per frame — so the
+    frames it walks ARE the frames the marker pin describes. Feeding anything else (centred sticks,
+    say) would send the game down a different branch within a frame or two, and the pin would then be
+    about a chain nothing here runs.
+    """
+    replies = random.Random(ENTRY_START)
+    pokes = _start_pokes()
+    pokes[A_IKBD_PACKET] = struct.pack(">I", STALE_PACKET)
+    pokes[A_MESSAGE_CHAR_COUNT] = bytes([LAP_MARKER])
+    pokes[A_ACTIVE_PLAYERS] = bytes([LAP_MARKER])
+    buf = _glue_buffer(pokes)
+
+    driver = threading.Thread(target=lambda: harness._lib.start(buf), daemon=True)
+    driver.start()
+
+    observed = []
+    for _ in range(laps):
+        deadline = time.monotonic() + CLEAR_TIMEOUT_S
+        while _packet_pointer(buf) != 0 and time.monotonic() < deadline:
+            time.sleep(0.001)
+        cleared = _packet_pointer(buf) == 0
+        head_ran = buf[A_MESSAGE_CHAR_COUNT] != LAP_MARKER
+
+        # THE TAIL IS SAMPLED AFTER THE DWELL, and that is the whole point of the dwell: a build with
+        # no wait would have read the packet it had just zeroed and run the tail within microseconds,
+        # so `tail_ran` on the first lap is what a missing wait fails. `alive` cannot say it — `start`
+        # never returns, so the thread is alive either way; it is a crash detector, nothing more.
+        time.sleep(BLOCKED_DWELL_S)
+        tail_ran = buf[A_ACTIVE_PLAYERS] != LAP_MARKER
+        observed.append({"cleared": cleared, "head_ran": head_ran, "tail_ran": tail_ran,
+                         "alive": driver.is_alive()})
+        if not cleared:
+            break
+
+        # Re-arm both markers BEFORE the interrupt lands, so nothing races the lap that follows.
+        buf[A_MESSAGE_CHAR_COUNT] = LAP_MARKER
+        buf[A_ACTIVE_PLAYERS] = LAP_MARKER
+        buf[IKBD_PACKET_BUF:IKBD_PACKET_BUF + 2] = bytes(replies.randrange(0x100) for _ in range(2))
+        buf[A_IKBD_PACKET:A_IKBD_PACKET + 4] = struct.pack(">I", IKBD_PACKET_BUF)
+    return observed
+
+
+# The parent's own deadline on the child. `_within_deadline` cannot cover this entry — the candidate
+# runs in another PROCESS — so the same discipline is spelled here instead: a blocking read with no
+# bound would hang this worker with no output at all, which is the one failure the suite may not
+# have. It is generous: the child's own work is DRIVEN_LAPS dwells plus microseconds of C.
+#
+# The fork is taken from a process that HAS OTHER THREADS (xdist's receiver, and any daemon a fired
+# deadline left behind), which is the classic hazard: a child that inherits a held allocator lock can
+# wedge. The deadline is what keeps that a red rather than a hang, and it is why the parent does the
+# asserting — the child only reports.
+FORK_TIMEOUT_S = GLUE_TIMEOUT_S + DRIVEN_LAPS * (CLEAR_TIMEOUT_S + BLOCKED_DWELL_S)
+
+
+def _forked(work):
+    """Run `work()` in a forked child and bring its JSON-able result back.
+
+    The child ALWAYS exits, whatever it leaves running behind it — which is why the driver below can
+    run a routine that never returns without costing this session a spinning thread, and why a wild
+    pointer inside a walked frame kills a throwaway process instead of the pytest worker.
+    """
+    read_fd, write_fd = os.pipe()
+    child = os.fork()
+    if child == 0:
+        try:
+            os.close(read_fd)
+            try:
+                payload = {"result": work()}
+            except BaseException as exc:                  # noqa: BLE001 — reported, not swallowed
+                payload = {"error": f"{type(exc).__name__}: {exc}"}
+            os.write(write_fd, json.dumps(payload).encode())
+        finally:
+            os._exit(0)
+
+    os.close(write_fd)
+    try:
+        # To EOF, not one read: `select` fires on the first byte, and a report longer than the pipe's
+        # atomic write size would otherwise come back truncated and fail as a JSON error.
+        raw = b""
+        while select.select([read_fd], [], [], FORK_TIMEOUT_S)[0]:
+            chunk = os.read(read_fd, PIPE_REPORT_CHUNK)
+            if not chunk:
+                break
+            raw += chunk
+    finally:
+        os.close(read_fd)
+        os.kill(child, signal.SIGKILL)      # a no-op once it has exited; a rescue if it wedged
+        os.waitpid(child, 0)
+
+    assert raw, (f"the forked driver said nothing within {FORK_TIMEOUT_S}s — it wedged or died "
+                 "before it could speak")
+    payload = json.loads(raw)
+    assert "error" not in payload, payload.get("error")
+    return payload["result"]
+
+
+def test_start_laps_its_frame_loop_when_the_ikbd_replies():
+    """`start` WHOLE, with the interrupt the oracle has no model for played by a thread.
+
+    Four things are asserted per lap, and each is a separate claim:
+
+      * THE CLEAR — polled for. read_joysticks' first instruction empties ikbd_packet, so a routine
+        that never reached the ninth call never gets past this.
+      * THE HEAD RAN FIRST — its marker is gone by the time the clear lands, which is what says
+        calls 5..8 come BEFORE the ninth and not after it.
+      * THE BLOCK, and THE TAIL NOT HAVING RUN — one assertion, taken a quarter-second after the
+        clear. Calls 10..21 write the other marker; on the first lap it is still untouched, which
+        says both that the ninth call stands between the two halves AND that it really waits. A
+        build with no wait would have read the packet it had just zeroed and run the tail within
+        microseconds of the clear, so that assertion is what it fails.
+
+    ...and then the reply lands, and the lap that follows shows the tail's marker gone and the head's
+    gone again, which is the `bra` at 0x1007e closing the loop.
+    """
+    laps = _forked(lambda: _drive_frame_loop(DRIVEN_LAPS))
+    assert len(laps) == DRIVEN_LAPS, f"the loop stopped lapping after {len(laps)}: {laps}"
+
+    for index, lap in enumerate(laps):
+        assert lap["cleared"], f"lap {index}: ikbd_packet was never cleared — the ninth call was " \
+                               "not reached, so the loop did not lap"
+        assert lap["head_ran"], f"lap {index}: calls 5..8 did not run before read_joysticks"
+        assert lap["alive"], f"lap {index}: the driver died — `start` crashed on a walked frame"
+        assert lap["tail_ran"] == (index > 0), \
+            f"lap {index}: calls 10..21 ran on the wrong side of the wait ({lap})"
+
+
+# ---- the whole routine, as the ORIGINAL encodes it ----
+
+def test_start_is_twenty_one_calls_and_a_branch():
+    """WHICH routines, in WHAT order, and where the loop closes — off the binary rather than off the
+    reconstruction. The rotations diff the calls' EFFECTS in two groups; the one thing no run can
+    show is the order across the seam at the ninth call, and the four calls whose own exits never
+    return. This says it, from the encodings.
+
+    `bra.s` at 0x1007e goes back to the FIFTH call, which is what makes calls 1..4 one-shot and
+    5..21 the frame loop — and its own end is exactly _start's last byte.
+    """
+    for index, name in enumerate(START_CALLS):
+        site = ENTRY_START + START_CALL_BYTES * index
+        opcode = struct.unpack_from(">H", harness.BASE_IMAGE, site)[0]
+        target = struct.unpack_from(">I", harness.BASE_IMAGE, site + 2)[0]
+        assert opcode == 0x4eb9, f"{site:#x} is not a `jsr <abs>.l`"
+        assert harness.NAME_MAP.get(target) == name, \
+            f"call {index + 1} @ {site:#x} goes to {target:#x}, which names.txt does not call {name}"
+
+    branch = ENTRY_START + START_CALL_BYTES * len(START_CALLS)
+    assert branch == BRA_BACK_TO_FRAME_HEAD
+    assert harness.BASE_IMAGE[branch] == 0x60, "0x1007e is not a bra.s"
+    displacement = struct.unpack_from(">b", harness.BASE_IMAGE, branch + 1)[0]
+    assert branch + 2 + displacement == FRAME_LOOP_HEAD, "the loop no longer closes on the fifth call"
+    assert branch + 2 == ENTRY_START + START_BYTES, "_start is not START_BYTES long"
+
+
 # ================================================================== mirror pins
 #
 # This module restates addresses that belong to ../../names.txt and constants that belong to the C.
@@ -1732,10 +2626,15 @@ def test_global_addresses_match_the_c():
                              ("SCREEN_BYTES", SCREEN_BYTES)):
         assert init_h[c_name] == mirrored, f"{c_name} differs from this module's mirror"
 
-    # Two globals this module mirrors that belong to OTHER layers' headers. players_alive became
-    # load-bearing when test_title_palette_is_sixteen_pens made it the palette table's bound.
+    # Four globals this module mirrors that belong to OTHER layers' headers. players_alive became
+    # load-bearing when test_title_palette_is_sixteen_pens made it the palette table's bound, and
+    # the last two when _start's frame-loop driver started reading its laps off them.
     for c_name, header, mirrored in (("A_players_alive", "include/score.h", A_PLAYERS_ALIVE),
-                                     ("A_ikbd_packet", "include/input.h", A_IKBD_PACKET)):
+                                     ("A_ikbd_packet", "include/input.h", A_IKBD_PACKET),
+                                     ("A_active_players", "include/objects.h", A_ACTIVE_PLAYERS),
+                                     ("A_message_char_count", "include/object.h",
+                                      A_MESSAGE_CHAR_COUNT),
+                                     ("A_draw_src", "include/addrs.h", A_DRAW_SRC)):
         assert _defines(header)[c_name] == mirrored, f"{c_name} differs from this module's mirror"
 
 
@@ -1751,10 +2650,17 @@ def test_hud_bar_constants_match_the_c():
 
 
 def test_startup_constants_match_the_c():
-    init_c = _defines("src/init.c")
+    init_c, init_h = _defines("src/init.c"), _defines("include/init.h")
     assert init_c["PALETTE_PENS"] == PALETTE_PENS
     assert init_c["TOS_SETCOLOR_QUERY"] == SETCOLOR_QUERY
     assert init_c["HISCORE_LOADED_MARK"] == HISCORE_LOADED_MARK
+
+    # _start's two glue results. They must also DIFFER from each other, which is the whole point of
+    # a refusal code: were they ever given the same number, every refusal case above would read as a
+    # completed run and go green having run nothing at all.
+    assert init_h["START_AT_JOYSTICKS"] == START_AT_JOYSTICKS
+    assert init_h["START_REFUSED"] == START_REFUSED
+    assert START_AT_JOYSTICKS != START_REFUSED
 
 
 def test_title_screen_constants_match_the_c():

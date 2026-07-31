@@ -92,6 +92,39 @@ cores block — the glue runs the clear (through the shared `request_ikbd_packet
 and reports `READ_JOYSTICKS_IKBD_WAIT`, which is the state the oracle has at its `0x11db0`
 checkpoint.
 
+`_start`'s two glues are the fifth and sixth, and they are the only ones that refuse a call they do
+not *contain* the spin of. `_start` is nothing but twenty-one `jsr`s and a `bra`, so each of its
+passes carries whole routines whose own exits do not come back, and the refusal is a question about
+**the staging** rather than about the routine:
+
+- `g_start` runs the four one-shot calls and the frame's first four, and refuses unless the staged
+  console key would make `title_screen` **return** — which only `'1'` and `'2'` do. It asks
+  `title_key_chooses_game`, the same pair of `cmp.w`s the attract pass decides with, so the bound has
+  one definition rather than one per caller.
+- `g_start_frame_pass` runs one whole lap and refuses a console key `poll_quit_key` would not come
+  back from, and a finished game whose leader has taken the record — which would send
+  `check_highscore` into its unleavable entry loop. Both questions go to the routine that owns them:
+  `poll_quit_key_comes_back` and `check_highscore_comes_back` live next to their routines and decide
+  through the very constants and helpers those routines decide with.
+
+**A staging refusal should be the routine's own gate, not a blanket over it.** The second guard was
+first written as "refuse any `game_over_flag`", which is true but coarse — and coarse cost a mutant:
+with every finished game turned away, nothing ever ran `check_highscore` for real and deleting the
+call from the frame was invisible. Asking the routine's exact question instead lets a finished game
+whose record still stands through, and that case holds the call.
+
+**And "it cannot be armed without fabricating a record" has to be checked against the routine's
+FIRST observable effect, not its interesting one.** Three of `_start`'s per-frame calls are asleep on
+every frame the walk reaches, and all three were disclosed as unreachable on that reasoning. Two of
+them were not: `lava_troll` gates on `wave_num` and then ticks a step timer, `animate_ground_shrink`
+gates on a latch and then decrements one — both SCALARS, both reached before any table is indexed, so
+a one- or two-byte poke of the gate's own operand wakes them without inventing anything, and both now
+have positive cases and dead mutants. Only `dissolve_platforms` really is forced: its first act is to
+walk `effect_table`, so nothing is observable until a slot's kind has indexed a sprite pointer, and
+arming it means writing the record another subsystem writes. The rule of thumb: before disclosing a
+call as unarmable, read forward to its first store and ask what the cheapest input that reaches it
+is.
+
 ### Entering a loop mid-body, so that a pass can be diffed at all
 
 The cost of that refusal is that the loop body is verified separately, and by a glue with **no
@@ -111,6 +144,18 @@ or outside the image, because the routine dereferences that pointer and the two 
 about what lies outside — the oracle's callbacks answer `0`, while the candidate would index host
 memory past the end of the buffer.
 
+`g_start_frame_pass` is the fourth rotation and the largest — a whole frame of the game. `_start`'s
+loop blocks on its ninth call, so the oracle is entered at the **tenth** (`0x10036`), runs calls
+10..21, takes the `bra` at `0x1007e` back to `0x10018` and stops at the ninth again: one lap, cut
+where the wait is. It is walked over a **chain** of successive frames rather than the opening one
+alone — each lap's staging is the state the previous lap produced, stepped past the wait through
+`read_joysticks`' own rotated entry — because the opening frame's head is nearly inert: the floor and
+ground timers have not come round, there are no eggs yet, and the platforms are being repainted over
+nothing. The stale `D0`/`D2` `update_objects` reads on entry are a different matter, and the walk
+does **not** rescue them: over sixty frames neither register changes a byte of program memory (they
+land in the oracle's saved-register slots and nowhere else), so they stay a disclosed limit rather
+than something a deeper walk would fix.
+
 `g_read_joysticks_pass` is the third rotation, for what lies past `read_joysticks`' wait at
 `0x11db0`, and it refuses the same two packet pointers for the same two reasons — through the same
 `ikbd_packet_readable` predicate, so the bound has one definition rather than one per glue. What
@@ -122,10 +167,13 @@ the second the shared GAME OVER into slot 1. Swapping the calls swaps both recor
 input the differential holds the sequence rather than the disassembly having to.
 
 **A refusing glue needs a wall-clock deadline as well as a probe.** The probe is one layer, and a
-gap in it costs the whole worker: `test_init.py` therefore routes every candidate-side entry into
-`g_title_ikbd_pass` through a `threading` deadline, exactly as `_pause_glue` does for the pause
-spin, and `test_player.py` does the same for both of `read_joysticks`' glues — through one
-`_within_deadline` helper that takes the glue as an argument, since that file drives two of them.
+gap in it costs the whole worker: every candidate-side entry into a glue whose pass contains a spin
+goes through a `threading` deadline, exactly as `_pause_glue` does for the pause spin. There is one
+`_within_deadline` for the project — `test_player.py` defines it and `test_init.py` imports it — and
+it takes the glue as an argument, since between them they drive four (`g_title_ikbd_pass`, `_start`'s
+two, and both of `read_joysticks`'). The rule outlives the thread, too: `_start`'s frame-loop driver
+runs its candidate in a forked CHILD, and the parent reads that child's report through a `select`
+deadline for exactly the same reason — a blocking read with no bound is the same silent hang.
 That second layer is what makes non-termination *assertable* rather than silent — with it,
 deleting the probe or narrowing the wait fails as an ordinary red instead of hanging, which is the
 difference between a mutation sweep that scores those mutants and one that cannot.
@@ -154,6 +202,24 @@ that does not wait.
 So: before writing "the harness cannot see this", ask whether that is a property of the *oracle* or
 of the *reconstruction*. The two disclosed survivors here were the first kind wearing the second's
 clothes, and the experiment that settled it was fifteen lines.
+
+**The same experiment scales to the whole program.** `_start`'s per-frame loop looked like the
+extreme case of the same hole: two rotations diff the calls either side of the ninth, and nothing
+composes them or shows the loop lapping. It is the oracle's limit again, and the same thread answers
+it — `test_start_laps_its_frame_loop_when_the_ikbd_replies` runs `start` itself, waits for
+`read_joysticks`' clear, checks the frame's HEAD has run and its TAIL has not, dwells to prove the
+block, then plays the interrupt and watches the next lap arrive. Each half is read off one marker
+byte only that half writes, and *that* claim is checked against the oracle's own write sets for the
+very frames the driver walks rather than left as a comment. It found a real mutant the differentials
+missed: deleting `frame_pass_head` from the loop leaves both rotations green, because each glue calls
+the head itself.
+
+Two things make that test practical rather than reckless. It runs in a **forked child**, because
+`start` never returns — a thread driving it would spin in the wait for the rest of the session and
+cost a core under `-n auto` — and because a frame loop walking evolving state is the one place a wild
+pointer could take the pytest worker down with it. And its staging is the state the **game itself**
+produces from cold, not noise: `render_object_body` dereferences the destination it stored on the
+frame before, so a constructed image is not merely a different case, it is a crash.
 
 **What that rotation buys is presence, not order.** No ordering anywhere in the entry loop is held
 by the differential on the C side — not in `check_highscore`'s own `for (;;)`, and not in the glue

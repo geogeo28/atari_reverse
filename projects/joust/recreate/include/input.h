@@ -118,6 +118,12 @@
  * function rather than one per glue so that the bound has a single definition. */
 int ikbd_packet_readable(const uint8_t *image);
 
+/* GLUE-LAYER too: is a console keystroke waiting, and which one? The peek every "would this routine
+ * come back?" predicate opens with — poll_quit_key_comes_back below and src/init.c's
+ * title_screen_comes_back — so the pending flag and the character are read in one place rather than
+ * once per predicate. */
+int console_key_pending(const uint8_t *image, uint32_t *console);
+
 /* `clr.l ikbd_packet` + XBIOS Ikbdws(0, ikbd_cmd_joyread): empty the slot the IKBD's interrupt
  * handler fills in, then ask the keyboard processor for a fresh reply. The trap changes no memory,
  * so the reconstruction issues nothing for it — exactly as init_system's Ikbdws is not issued
@@ -147,6 +153,14 @@ void wait_for_ikbd_packet(const uint8_t *image);
 void quit_to_desktop(uint8_t *image);
 
 uint32_t poll_quit_key(uint8_t *image);
+
+/* GLUE-LAYER, exactly as ikbd_packet_readable above is: would the ORIGINAL's poll_quit_key come
+ * BACK for the console this image is staged with? _start's frame-loop glue (src/init.c) has the
+ * call inside the pass it drives and asks this before running one — the routine's Ctrl-C, R/r and
+ * P/p never return to their caller. The predicate is defined next to poll_quit_key so it decides
+ * with that routine's own key constants rather than a second copy of them. */
+int poll_quit_key_comes_back(const uint8_t *image);
+
 uint32_t hiscore_key_input(uint8_t *image);
 
 /* Reconstructed from the IKBD WAIT LOOP (0x1454e) onward, so it reads whatever ikbd_packet already
@@ -161,5 +175,12 @@ uint32_t hiscore_joystick_input(uint8_t *image);
  * so an Atari build has it — but that build must ALSO issue the IKBD interrogate the entry loop's
  * joystick poll is missing (the paragraph above), or the screen acts on a stale packet for ever. */
 uint32_t check_highscore(uint8_t *image);
+
+/* GLUE-LAYER, exactly as poll_quit_key_comes_back is: would the routine above come BACK for the
+ * state this image is in? _start's frame-loop glue (src/init.c) has the call inside the pass it
+ * drives and asks this before running one — a finished game whose leader has beaten the record ends
+ * in the name-entry loop nothing leaves. Defined next to check_highscore so it decides through that
+ * routine's own two helpers rather than a second copy of its gate. */
+int check_highscore_comes_back(const uint8_t *image);
 
 #endif /* JOUST_INPUT_H */

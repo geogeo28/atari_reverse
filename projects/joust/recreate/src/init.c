@@ -513,6 +513,23 @@ static void start_game(uint8_t *image, int two_player) {
     image[A_object_table + OBJ_LIVES] = TITLE_STARTING_LIVES;
 }
 
+/* The two `cmp.w`s at 0x10bde and 0x10be4 — the only decision in the game that picks the mode, and
+ * the ONLY console input title_screen ever returns for. Named and shared rather than spelled twice
+ * because _start's glue has to ask the same question before it may enter title_screen at all: on
+ * anything else that routine ends in the IKBD wait no run leaves, and a bound with two
+ * implementations is a bound that drifts. */
+static int title_key_chooses_game(uint32_t console, int *two_player) {
+    if ((uint16_t)console == TITLE_KEY_ONE_PLAYER) {
+        *two_player = 0;
+        return 1;
+    }
+    if ((uint16_t)console == TITLE_KEY_TWO_PLAYER) {
+        *two_player = 1;
+        return 1;
+    }
+    return 0;
+}
+
 /* 0x10b22..0x10bb6 — one pass of the attract loop, ending either in a key that decides the game or
  * at the IKBD interrogate no oracle run gets past. */
 static uint32_t title_attract_pass(uint8_t *image) {
@@ -532,12 +549,9 @@ static uint32_t title_attract_pass(uint8_t *image) {
                 quit_to_desktop(image);
                 return TITLE_QUIT;
             }
-            if ((uint16_t)console == TITLE_KEY_ONE_PLAYER) {
-                start_game(image, 0);
-                return TITLE_STARTED;
-            }
-            if ((uint16_t)console == TITLE_KEY_TWO_PLAYER) {
-                start_game(image, 1);
+            int two_player;
+            if (title_key_chooses_game(console, &two_player)) {
+                start_game(image, two_player);
                 return TITLE_STARTED;
             }
             continue;   /* any other key: straight back to the poll, WITHOUT spending a pass */
@@ -590,44 +604,91 @@ uint32_t title_screen(uint8_t *image) {
 }
 
 /* =================================================================================================
- * _start @ 0x10000 — RECONSTRUCTED ONLY AS FAR AS ITS THIRD CALL.
+ * _start @ 0x10000 — twenty-one `jsr`s and a `bra` back into the middle of them.
  *
- * The original is twenty-one `jsr`s and a `bra` back into the middle of them. The first four —
- * init_system, init_game, title_screen, init_video — run once; the `bra` at 0x1007e returns to the
- * fifth, so the remaining seventeen are an endless per-frame loop. It never returns, so there is no
- * `rts` to diff at; test_init.py stops the oracle at the THIRD call and pairs that with a proof the
- * run really does not come back.
+ * The first four run once (init_system, init_game, title_screen, init_video) and the `bra.s` at
+ * 0x1007e goes back to the FIFTH, so calls 5..21 are the per-frame loop and the routine never
+ * returns. It has no code of its own — no test, no register set-up, nothing between the calls — so
+ * what there is to reconstruct is which routines it calls, in what order, and where the loop closes.
  *
- * title_screen IS RECONSTRUCTED NOW, above, so that is no longer what stops the checkpoint here.
- * What stops it is what the third call needs in order to be entered SAFELY. title_screen returns only for a console key that
- * chooses a game ('1' or '2'); on every other input its attract loop falls into the IKBD wait,
- * which never ends on either side. The oracle is capped and raises there, but the CANDIDATE is not,
- * and a forwarding g_start reached with the wrong key staged would hang the pytest worker with no
- * output at all under `-n auto` — the one failure a differential cannot report. Moving the
- * checkpoint to the FIFTH call therefore needs g_start to refuse such a run, and the only honest
- * refusal duplicates title_attract_pass's two `cmp.w`s. That is _start's own design decision, not
- * title_screen's, so it is recorded in ../STATUS.md and left for _start's next pass rather than
- * folded in here.
+ * THE ONE SEAM NEITHER CORE CAN CROSS is the ninth call. read_joysticks (src/player.c) blocks in
+ * the IKBD wait whose reply arrives on an interrupt the oracle never runs, so the loop is written
+ * as three named pieces around it and verified in two ROTATIONS that between them execute all
+ * twenty-one calls and the back edge:
  *
- * The frame loop past the fifth call is blocked regardless, and by the SAME wall rather than by a
- * missing port — every function it calls is reconstructed now. read_joysticks @ 0x11d9a
- * (src/player.c) is verified either side of an IKBD wait neither core can leave, so a forwarding
- * frame loop would hang on it exactly as it would here; and check_highscore @ 0x1437a does not come
- * back once a record is set.
+ *   * 0x10000 -> 0x10030 — the four one-shot calls and calls 5..8, diffed at the `jsr` to
+ *     read_joysticks with a console key that chooses a game staged;
+ *   * 0x10036 -> 0x10030 — calls 10..21, the `bra`, and calls 5..8 again: one whole lap, rotated to
+ *     begin where the oracle can begin.
  *
- * So what this proves is exactly: _start does nothing of its own before those two calls, and makes
- * them in that order.
+ * WHAT NEITHER ROTATION HOLDS is that read_joysticks sits BETWEEN the two pieces, or that the loop
+ * laps at all on the C side. Both are held by the one test that is not a differential: the
+ * candidate is a shared library in this process and the IKBD wait is `volatile` precisely because
+ * something outside the routine ends it, so a thread poking the image IS that interrupt — the
+ * technique test_read_joysticks_blocks_until_a_reply_lands introduced. ../STATUS.md records what is
+ * left over.
+ *
+ * ONE THING A C `_start` CANNOT REPRODUCE, and it is a fidelity gap rather than a harness limit:
+ * update_objects reads D0 and D2 before writing them (objects.h), and at 0x10036 both hold whatever
+ * read_joysticks' last control_player left behind. The rotated pass takes them as arguments and is
+ * driven with the same pair on both sides, so the argument chain is executed rather than merely
+ * declared — but no frame of the walk makes those two registers observable, so nothing here would
+ * catch a pass that dropped them (../STATUS.md discloses it; update_objects' own battery is what
+ * holds them). And `start` has no way to carry a register across a call at all: it passes zero.
  * ============================================================================================= */
-void start(uint8_t *image) {
+
+/* 0x10000..0x10017 — the four calls that run once, in the original's order. */
+static void start_init_chain(uint8_t *image) {
     init_system(image);
     init_game(image);
-    /* title_screen(image); init_video(image); then the per-frame loop, for ever. */
+    title_screen(image);
+    init_video(image);
+}
+
+/* 0x10018..0x1002f — the frame's first four calls, up to the one that blocks. */
+static void frame_pass_head(uint8_t *image) {
+    raise_floor(image);
+    animate_ground_shrink(image);
+    count_objects_and_pad(image);
+    update_eggs(image);
+}
+
+/* 0x10036..0x1007c — everything past the joystick read, ending at the `bra` back to 0x10018.
+ * `flags_in`/`probe_in` are the D0 and D2 update_objects reads before writing (see above). */
+static void frame_pass_tail(uint8_t *image, uint16_t flags_in, uint16_t probe_in) {
+    update_objects(image, flags_in, probe_in);
+    update_pterodactyl(image);
+    render_objects(image);
+    collision_check(image);
+    draw_platforms(image);
+    draw_messages(image);
+    lava_troll(image);
+    dissolve_platforms(image);
+    wave_manager(image);
+    snd_poll_done(image);
+    poll_quit_key(image);
+    check_highscore(image);
+}
+
+/* FOUR of the calls above have paths the ORIGINAL never comes back from — title_screen's IKBD wait
+ * and its Ctrl-C, read_joysticks' restart, poll_quit_key's quit/restart/pause, and
+ * check_highscore's entry loop. Each reconstruction reports its exit as a result code instead, and
+ * `_start` ignores every one of them exactly as the original's twenty-one `jsr`s do: on target the
+ * routine that took such a path does not return, so the next line is simply never reached. */
+void start(uint8_t *image) {
+    start_init_chain(image);
+    for (;;) {
+        frame_pass_head(image);
+        read_joysticks(image);
+        frame_pass_tail(image, 0, 0);   /* D0/D2 at 0x10036 — see the fidelity gap above */
+    }
 }
 
 /* ------------------------------------------------------------------------------------- glue ---
  *
  * Nothing in this layer takes a stack frame — each routine works entirely off globals and the
- * modeled OS state — so every g_* below is a bare forwarder bar the two title-screen ones. The one
+ * modeled OS state — so every g_* below is a bare forwarder bar four: title_screen's two, and
+ * _start's two at the end, each of which stops where the oracle has to stop. The one
  * result an image diff cannot see (the table xbios_setpalette hands the trap) comes back as a
  * return value, exactly as g_flash_hiscore_color's colour word does, and the test compares it
  * against what the oracle really pushed.
@@ -639,13 +700,11 @@ void g_init_video(uint8_t *image) { init_video(image); }
 
 void g_init_game(uint8_t *image) { init_game(image); }
 
-void g_start(uint8_t *image) { start(image); }
-
 uint32_t g_xbios_setpalette(uint8_t *image) { return xbios_setpalette(image); }
 
 void g_cycle_palette(uint8_t *image) { cycle_palette(image); }
 
-/* THE FIRST GLUE HERE THAT IS NOT A BARE FORWARDER: it stops where every oracle run must stop.
+/* THE FIRST OF THE FOUR THAT ARE NOT BARE FORWARDERS: it stops where every oracle run must stop.
  *
  * No run of title_screen can go round its attract loop twice. Either the first pass reads a key
  * that decides the game — '1', '2' or Ctrl-C — or it falls through to the IKBD wait, and that wait
@@ -682,4 +741,67 @@ uint32_t g_title_screen(uint8_t *image) {
 uint32_t g_title_ikbd_pass(uint8_t *image) {
     if (!ikbd_packet_readable(image)) return TITLE_PASS_REFUSED;
     return title_ikbd_pass(image);
+}
+
+/* Will title_screen COME BACK for the console this image is staged with? Only the two keys that
+ * choose a game make it return; every other input — an empty console included — ends it in the IKBD
+ * wait no run leaves, and Ctrl-C ends it in a GEMDOS Pterm the model refuses. It asks
+ * title_key_chooses_game, the same pair of `cmp.w`s the attract pass decides with, and PEEKS at the
+ * console rather than taking the key, which title_screen's own Bconin must still find there. */
+static int title_screen_comes_back(const uint8_t *image) {
+    uint32_t console;
+    int two_player;
+
+    if (!console_key_pending(image, &console))
+        return 0;
+    return title_key_chooses_game(console, &two_player);
+}
+
+/* THE INIT CHAIN AND THE FRAME LOOP'S HEAD — 0x10000 up to the `jsr` at 0x10030, which is where
+ * every oracle run must stop: the ninth call blocks for ever.
+ *
+ * IT REFUSES A CONSOLE THAT WOULD NOT LET title_screen RETURN, and that refusal is what let this
+ * checkpoint move past the third call at all. The reconstruction's title_screen is uncapped and
+ * faithful, so a forwarder handed the wrong key would spin in the attract loop's IKBD wait and hang
+ * the pytest worker with no output at all under `-n auto` — the one failure a differential cannot
+ * report. Only harness.differential's oracle-first ordering would otherwise keep a case out of it,
+ * and nothing pins that ordering, so the refusal is reported here instead. */
+uint32_t g_start(uint8_t *image) {
+    if (!title_screen_comes_back(image)) return START_REFUSED;
+    start_init_chain(image);
+    frame_pass_head(image);
+    return START_AT_JOYSTICKS;
+}
+
+/* ...and ONE WHOLE LAP OF THE FRAME LOOP, rotated to begin where the oracle can begin: at the tenth
+ * call (0x10036), round the `bra` at 0x1007e and back to the ninth. It drives the same two seams
+ * `start`'s own loop drives rather than a glue-side copy of them, so a call added to either is
+ * executed by every case here.
+ *
+ * IT REFUSES TWO STAGINGS, both for the reason above — the pass contains a routine that would not
+ * come back:
+ *
+ *   * a console key poll_quit_key acts on. Ctrl-C ends in Pterm, R/r jumps to _start's second call,
+ *     and P/p spins for a second keystroke the model cannot deliver.
+ *   * a finished game whose leader has beaten the record, which sends check_highscore into a
+ *     name-entry loop no staged input ends on either side.
+ *
+ * Both questions are asked of the routine that owns them — poll_quit_key_comes_back and
+ * check_highscore_comes_back, both src/input.c's, each deciding through the very constants and
+ * helpers its own routine decides with — so neither bound has a second copy here to drift from.
+ *
+ * BOTH ARE ASKED OF THE STAGED IMAGE, AND THE PASS CAN INVALIDATE THEM FROM INSIDE: the fifteenth
+ * call (draw_messages) can set game_over_flag, and score_update moves the very digits the record is
+ * compared against — so a lap that starts safe can reach the twenty-first call unsafe. That is a
+ * bound on the refusal, not a hole in it: such a run fails LOUDLY on both sides (the oracle raises
+ * at its instruction cap, the candidate at the test's wall-clock deadline) rather than passing, and
+ * no frame of the walk gets there. It is recorded in ../STATUS.md rather than guessed at with a
+ * second, mid-pass check that would have nothing to test itself against. */
+uint32_t g_start_frame_pass(uint8_t *image, uint32_t flags_in, uint32_t probe_in) {
+    if (!poll_quit_key_comes_back(image)) return START_REFUSED;
+    if (!check_highscore_comes_back(image)) return START_REFUSED;
+
+    frame_pass_tail(image, (uint16_t)flags_in, (uint16_t)probe_in);
+    frame_pass_head(image);
+    return START_AT_JOYSTICKS;
 }

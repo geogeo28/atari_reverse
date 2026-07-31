@@ -73,6 +73,18 @@ void wait_for_ikbd_packet(const uint8_t *image) {
         ;
 }
 
+/* Is a console keystroke waiting, and which one? PEEKED at rather than taken (os_bconin would
+ * consume it, and the routine being asked about still has to find it there), so it is spelled here
+ * once instead of in each of the glue predicates that ask — this file's poll_quit_key_comes_back
+ * and src/init.c's title_screen_comes_back. Both halves matter: the CHARACTER slot keeps its last
+ * value after a key is consumed, so a predicate reading it without the PENDING flag would act on a
+ * key that is no longer there. */
+int console_key_pending(const uint8_t *image, uint32_t *console) {
+    if (be32(image + OS_CON_PENDING) == 0) return 0;
+    *console = be32(image + OS_CON_CHAR);
+    return 1;
+}
+
 /* The one guard both wait-entering glues share; include/input.h carries the two reasons for it. */
 int ikbd_packet_readable(const uint8_t *image) {
     uint32_t packet = be32(image + A_ikbd_packet);
@@ -226,6 +238,25 @@ uint32_t poll_quit_key(uint8_t *image) {
     if (key == KEY_RESTART_UPPER || key == KEY_RESTART_LOWER)
         return INPUT_RESTART;                  /* ...and jumps to RESTART_ENTRY, likewise */
     return INPUT_CONTINUE;
+}
+
+/* GLUE-LAYER, not part of the reconstruction: would the ORIGINAL's poll_quit_key come back to its
+ * caller for the console this image is staged with? Three of the four keys it acts on never do —
+ * Ctrl-C traps GEMDOS Pterm, R/r jumps to _start's second call, and P/p enters a spin whose second
+ * keystroke the console model cannot deliver (one key per run). _start's frame-loop glue
+ * (src/init.c) contains the call, so it asks this before running a pass at all.
+ *
+ * It lives here, beside the routine, so that it reads the SAME five constants poll_quit_key decides
+ * with rather than a second copy of them; the console is PEEKED at rather than taken, since the
+ * key must still be there for the routine itself to consume. */
+int poll_quit_key_comes_back(const uint8_t *image) {
+    uint32_t console;
+    if (!console_key_pending(image, &console)) return 1;   /* no key: the poll returns at once */
+
+    uint8_t key = (uint8_t)console;
+    return key != KEY_CTRL_C
+        && key != KEY_PAUSE_UPPER && key != KEY_PAUSE_LOWER
+        && key != KEY_RESTART_UPPER && key != KEY_RESTART_LOWER;
 }
 
 /* =================================================================================================
@@ -596,6 +627,20 @@ uint32_t g_hiscore_key_input(uint8_t *image) {
 
 uint32_t g_hiscore_joystick_input(uint8_t *image) {
     return hiscore_joystick_input(image);
+}
+
+/* GLUE-LAYER, the same shape as poll_quit_key_comes_back above: would check_highscore come BACK for
+ * the state this image is in? It returns for everything except a finished game whose leader has
+ * beaten the record — and on that one input it puts the name-entry screen up and never leaves it,
+ * since no staged input ends that loop on either core (see the glue below). _start's frame-loop glue
+ * (src/init.c) contains the call, so it asks this before running a pass.
+ *
+ * It is the routine's OWN gate, read through the routine's own two helpers with only the entry
+ * screen — the part with an effect — left out, so a change to either test reaches this predicate as
+ * well. It inherits walk_scores' unboundedness with them, exactly as check_highscore does. */
+int check_highscore_comes_back(const uint8_t *image) {
+    if (image[A_game_over_flag] == 0) return 1;
+    return !beats_the_high_score(image, higher_scoring_player(image));
 }
 
 /* THE SECOND GLUE THAT IS NOT A BARE FORWARDER: it stops where every oracle run must stop.

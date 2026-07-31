@@ -20,19 +20,29 @@
 #include <stdint.h>
 
 #include "addrs.h"
+#include "collide.h"  /* collision_check — one of _start's per-frame calls, as are the entry points
+                       * noted on egg.h, objects.h and ptero.h below */
 #include "draw.h"     /* fill_screen, draw_string, A_player2, A_text_color */
+#include "egg.h"      /* update_eggs */
 #include "input.h"    /* the system state init_system saves for the quit path to hand back, and the
                        * quit tail itself (quit_to_desktop, KEY_CTRL_C) that title_screen branches
-                       * into, plus A_ikbd_packet */
-#include "object.h"   /* A_message_table / MSG_*, A_pterodactyl_table / PT_*, A_draw_x */
-#include "player.h"   /* A_two_player_mode */
-#include "render.h"   /* SPAWN_IN_USE, SPAWN_RECORD */
+                       * into, plus A_ikbd_packet; poll_quit_key and check_highscore, which _start
+                       * calls per frame, and poll_quit_key_comes_back, which its glue asks */
+#include "object.h"   /* A_message_table / MSG_*, A_pterodactyl_table / PT_*, A_draw_x,
+                       * count_objects_and_pad */
+#include "objects.h"  /* update_objects — and it is the one call taking REGISTER arguments */
+#include "player.h"   /* A_two_player_mode, read_joysticks */
+#include "ptero.h"    /* update_pterodactyl */
+#include "render.h"   /* SPAWN_IN_USE, SPAWN_RECORD, render_objects */
 #include "score.h"    /* score_update_p1/p2, draw_lives_p1/p2, OBJ_SCORE_PTR, A_game_over_flag,
-                       * and title_screen's OBJ_SCORE_LAST_DIGIT / OBJ_LIVES / A_players_alive */
+                       * draw_messages, and title_screen's OBJ_SCORE_LAST_DIGIT / OBJ_LIVES /
+                       * A_players_alive */
 #include "sound.h"    /* snd_tone_sweep, and title_screen's snd_poll_done / play_sound /
                        * A_snd_priority / SND_PRIORITY_IDLE / A_snd_list_silence / g_dosound */
-#include "wave.h"     /* A_spawn_timer */
-#include "world.h"    /* draw_platforms, the spawn/effect tables, the ground-fire edges */
+#include "wave.h"     /* A_spawn_timer, wave_manager */
+#include "world.h"    /* draw_platforms, the spawn/effect tables, the ground-fire edges,
+                       * and _start's raise_floor / animate_ground_shrink / lava_troll /
+                       * dissolve_platforms */
 
 /* The whole low-resolution framebuffer: 200 rows of SCREEN_ROW_BYTES. init_game puts the lava
  * surface one byte past its end, and the title picture is exactly this long. */
@@ -114,6 +124,12 @@
                               * joystick reply an INTERRUPT delivers, so it never comes back */
 #define TITLE_ATTRACT    3u  /* that reply held no fire button: back round the loop to 0x10b22 */
 
+/* --- how far _start's glue got ------------------------------------------------------------------
+ * _start never returns either, so its two glues report where they stopped the same way. */
+#define START_AT_JOYSTICKS 0u /* the `jsr` at 0x10030: the run reached read_joysticks, which blocks */
+#define START_REFUSED      1u /* glue-only: the staging holds a call the pass would not come back
+                               * from, so no part of it was run (see src/init.c for the three) */
+
 /* --- init.c ---------------------------------------------------------------------------------- */
 void init_system(uint8_t *image);
 void init_video(uint8_t *image);
@@ -124,13 +140,17 @@ void init_game(uint8_t *image);
 uint32_t xbios_setpalette(uint8_t *image);
 void cycle_palette(uint8_t *image);
 
-/* The attract screen @ 0x10aae, whole. NOTHING IN THE TEST SUITE CALLS IT — its loop cannot be gone
- * round twice (the IKBD wait never ends on either side), so the glue stops where every oracle run
- * must and the two halves are verified through that; see src/init.c and ../STATUS.md. It is the
- * shape _start `jsr`s, and is declared here so an Atari build has it. */
+/* The attract screen @ 0x10aae, whole. Its own loop cannot be gone round twice (the IKBD wait never
+ * ends on either side), so g_title_screen stops where every oracle run must and the two halves are
+ * verified through that; see src/init.c and ../STATUS.md. The FUNCTION is executed all the same —
+ * _start's own battery calls it through `start_init_chain` with a game key staged, which is the one
+ * input for which it returns on its first pass. */
 uint32_t title_screen(uint8_t *image);
 
-/* _start @ 0x10000, RECONSTRUCTED ONLY AS FAR AS ITS THIRD CALL — see the comment in src/init.c. */
+/* _start @ 0x10000 — the four one-shot calls and the endless per-frame loop, whole. NOTHING IN THE
+ * TEST SUITE CALLS IT under the differential (there is no `rts` to diff at, and the ninth call
+ * blocks); it is verified in two rotations through the glues, and its composition through the block
+ * by a thread that plays the IKBD interrupt. See src/init.c and ../STATUS.md. */
 void start(uint8_t *image);
 
 #endif /* JOUST_INIT_H */
