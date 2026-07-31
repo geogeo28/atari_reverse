@@ -913,8 +913,8 @@ def test_mirrored_constants_match_the_headers():
     joust_h = _defines("include/joust.h")
 
     for defines, origin, mirrored in (
+            (addrs_h, "addrs.h", {"A_draw_y": A_DRAW_Y}),
             (egg_h, "egg.h", {
-                "A_draw_y": A_DRAW_Y,
                 "A_platform_edge_table": A_PLATFORM_EDGE_TABLE,
                 "A_platform_edge_table_END": A_PLATFORM_EDGE_TABLE_END,
                 "A_egg_sprite_ptrs": A_EGG_SPRITE_PTRS,

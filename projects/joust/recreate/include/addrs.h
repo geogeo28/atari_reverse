@@ -27,6 +27,10 @@
  * layer both writes and consumes it; the object layer stages it for the blitters it hands over to. */
 #define A_draw_dst          0x10de8u  /* .l */
 #define A_draw_src          0x10df0u  /* .l */
+/* .w — the scratch y. Its partner A_draw_x is still object.h's, which is drift: this one moved
+ * here when the high-score entry became a second reader (the egg layer is the other), and moving
+ * the pair together would take object.h and its battery with it. */
+#define A_draw_y            0x10deeu
 
 /* WIDTH CLASH, FAITHFULLY REPRODUCED. draw_shift and draw_rows are read as BYTES by the rider
  * blitters (draw_object_data) and by the object layer, and as WORDS by the pterodactyl one

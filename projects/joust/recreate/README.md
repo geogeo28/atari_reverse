@@ -72,6 +72,35 @@ wall-clock deadline on every candidate-side entry into the spin as the second la
 reconstructed function itself stays uncapped and faithful — the guard lives in the glue precisely
 so that it does.
 
+`g_check_highscore` is the second, and its reason is different: its loop is not merely uncapped, it
+has **no exit no staged input can reach** — on either side. The oracle blocks in the joystick
+reader's IKBD wait on the first pass, and the candidate's entry screen clears the "has typed
+something" flag, so RETURN and fire are ignored on the pass that follows and the console has only
+one key to give. The glue therefore runs everything up to the loop head and reports
+`CHECK_HIGHSCORE_ENTERED`, which is exactly the state the oracle has at its checkpoint.
+
+### Entering a loop mid-body, so that a pass can be diffed at all
+
+The cost of that refusal is that the loop body is verified separately, and by a glue with **no
+counterpart C function**: `g_hiscore_entry_pass` runs one pass *rotated* to start where the oracle
+can start. The oracle is entered at the loop's colour-cycle tail (`0x14494`), runs round the branch
+back to the head and through the keyboard poll, and stops at the joystick call it never returns
+from (`0x14490`); the glue makes the same two calls.
+
+**What that rotation buys is presence, not order.** No ordering anywhere in the entry loop is held
+by the differential on the C side — not in `check_highscore`'s own `for (;;)`, and not in the glue
+either. The steps of a pass touch disjoint memory (the colour cycle writes `draw_x`/`draw_y`; the
+keyboard poll writes the letter and the screen and reads neither), so a final-image compare cannot
+distinguish one order from the other, and swapping the glue's two statements leaves the whole suite
+green. The order in both is **transcribed from the disassembly and asserted there** — the four
+`bsr` encodings pin what the ORIGINAL does — while presence is what the diff holds, and only in the
+glue: nothing executes `check_highscore`'s loop at all, so deleting a call from it is invisible too.
+`STATUS.md` lists each of those as a surviving mutant rather than leaving the gap implied.
+
+The general lesson is worth stating once: **a rotated single pass verifies the steps, never their
+sequence.** Where a loop's steps share no state, only the original's encoding can say what order
+they run in.
+
 ## `project.toml` — the heap waiver
 
 Joust's data segment runs to `0x2b7ae`, which covers the kit's modeled Malloc heap

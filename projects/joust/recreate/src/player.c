@@ -14,8 +14,9 @@
  *
  *   * control_player's no-players-left path drops TWO return addresses (`addq.w #8,a7` — its own
  *     and read_joysticks') and restarts the game through check_highscore / init_game / init_video
- *     and a `jmp` into the main loop. All three are unported, so the C stops at the last store
- *     before the first of them and returns CONTROL_RESTART.
+ *     and a `jmp` into the main loop. That `jmp` has no C form and check_highscore does not come
+ *     back once a record is set, so the C stops at the last store before the first of the three
+ *     and returns CONTROL_RESTART.
  *   * restart_reset_players is the piece of that path that lies BETWEEN two of those calls. It is
  *     reconstructed, but it cannot be called from here yet; see its own comment.
  */
@@ -169,9 +170,10 @@ static void hover_dead_rider(uint8_t *image, uint32_t object, uint16_t flags) {
  * button does nothing at all; with none left it restarts the game — and NEVER RETURNS, which is why
  * this function has a result at all. The original drops its own return address AND read_joysticks'
  * (`addq.w #8,a7`), sets game_over_flag, and runs check_highscore, init_game and init_video before
- * jumping into the main loop. All three are unported, so the reconstruction stops after the store
- * that precedes the first of them and reports CONTROL_RESTART; test_player.py diffs the original at
- * that same instruction and separately proves the run really does not reach `rts`.
+ * jumping into the main loop, which is a `jmp` with no C form — and check_highscore does not come
+ * back at all once a record is set. So the reconstruction stops after the store that precedes the
+ * first of the three and reports CONTROL_RESTART; test_player.py diffs the original at that same
+ * instruction and separately proves the run really does not reach `rts`.
  */
 uint32_t control_player(uint8_t *image, uint32_t object, uint32_t stick) {
     uint16_t flags = be16(image + object + OBJ_FLAGS);
@@ -204,10 +206,11 @@ uint32_t control_player(uint8_t *image, uint32_t object, uint32_t stick) {
  * one-player game player 2's slot is emptied instead of being handed anything.
  *
  * NOT CALLED FROM control_player ABOVE, deliberately. check_highscore and init_game sit between the
- * two, and neither is ported — a candidate that ran this would be ahead of an oracle stopped at the
- * first of them, and the checkpoint would fail. It is verified on its own instead, with the oracle
- * entered at 0x11e50 and stopped at the `jsr init_video` that follows. When those two land, the
- * restart path becomes: check_highscore, init_game, this, init_video, jump to the main loop.
+ * two, so a candidate that ran this would be ahead of an oracle stopped at the first of the three
+ * and the checkpoint would fail — and check_highscore does not come back at all once the game has
+ * just set a record, so on those games the restart path never reaches here. It is verified on its
+ * own instead, with the oracle entered at 0x11e50 and stopped at the `jsr init_video` that follows.
+ * The whole restart path is: check_highscore, init_game, this, init_video, jmp to the main loop.
  */
 static void reset_player_hud(uint8_t *image, uint32_t player) {
     image[player + OBJ_SCORE_LAST_DIGIT] = SCORE_UNITS_ZERO;

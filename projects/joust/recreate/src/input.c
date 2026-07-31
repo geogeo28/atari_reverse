@@ -1,7 +1,7 @@
-/* input.c — Joust's input layer: the console poll that pauses, restarts or quits the game, and the
- * two readers that drive the high-score name entry.
+/* input.c — Joust's input layer: the console poll that pauses, restarts or quits the game, the
+ * end-of-game high-score check, and the two readers that drive the name entry it puts up.
  *
- * All four routines are trap-bound, and the kit's TOS model
+ * All of it is trap-bound, and the kit's TOS model
  * (tools/recreate_kit/TRAP_MODEL.md) decides how much of each can be verified at all:
  *
  *   * BIOS Bconstat/Bconin are harness-poked console state, and a run delivers AT MOST ONE
@@ -353,13 +353,170 @@ uint32_t hiscore_joystick_input(uint8_t *image) {
     return INPUT_CONTINUE;
 }
 
+/* =================================================================================================
+ * check_highscore @ 0x1437a — the end-of-game high-score check, and the name-entry screen it puts
+ * up for the winner.
+ *
+ * Three exits. Not game over, or nobody beat the record: an ordinary `rts`. A new record: the
+ * routine DROPS ITS CALLER'S RETURN ADDRESS (`addq.w #4,a7` at 0x143e0), puts the entry screen up
+ * and falls into a loop with no exit instruction — 0x1448e..0x144af polls the keyboard, polls the
+ * joystick, and steps the colour cycle, for ever. The only way out is one of the two readers
+ * jumping to RESTART_ENTRY, which is why they have INPUT_* results at all.
+ * ============================================================================================= */
+
+#define HISCORE_SCORE_DIGITS  7u     /* `move.b #$7,d0`: what both comparisons MEANT to walk — and
+                                      * what the copy at 0x1440a, whose counter survives, does walk */
+#define HISCORE_DIRTY_SET     0x20u  /* what marks a record as needing writing back to HIGH.SCO */
+#define HISCORE_ENTRY_COLOR   6u     /* text_color for the name being typed */
+#define HISCORE_FLASH_PASSES  1u     /* colour-cycle steps per pass of the entry loop */
+
+/* `move.w #$3e80,d0 / subq.w #1,d0 / bne` — 16,000 spins of pure register arithmetic and the only
+ * thing pacing the entry screen's colour cycle. It touches no memory, so the differential cannot
+ * see it AT ALL: not the count, not the loop, not even whether this is called. test_input.py pins
+ * the ORIGINAL's encoding; nothing pins the C, and STATUS.md says so.
+ *
+ * Reproduced rather than dropped because an on-target build without it would run the cycle at the
+ * CPU's speed. What it reproduces is the COUNT, not the cost: `volatile` is what stops the compiler
+ * deleting an empty loop, and it also forces a load/store per pass, so on a real 68000 this spins
+ * roughly 2.5x slower than the original's two instructions. An on-target build that wants the
+ * original's pacing needs the register spin, not this. */
+#define HISCORE_FLASH_DELAY_SPINS 0x3e80u
+
+static void hiscore_flash_delay(void) {
+    for (volatile uint16_t spins = HISCORE_FLASH_DELAY_SPINS; spins != 0u; spins--)
+        ;
+}
+
+/* THE COUNTER-DESTRUCTION BUG, reproduced: this is a WALK, not a seven-byte compare.
+ *
+ * Both score comparisons open with `move.b #$7,d0` and then immediately overwrite that count with
+ * the character they have just fetched (`move.b (a0)+,d0`), so `subq.b #1,d0 / bne` can only ever
+ * end the loop on a character equal to 1. Two strings that agree therefore keep walking PAST both
+ * records into whatever follows them. Measured on the real image: with player 1's and player 2's
+ * seven digits equal, the walk runs 79 bytes, far enough that what decides the winner is player
+ * 2's own score digits against enemy slot 2's.
+ *
+ * Both `cmp.b` operands are SIGNED. Returns +1 when `left` is the greater string, -1 when `right`
+ * is, and 0 when a character of 1 stopped the walk — the two callers disagree about what that last
+ * answer means, so it is theirs to read.
+ *
+ * A walk over two regions that never differ would run off the end of the image — as would one
+ * started from a wild draw_src. Neither can reach here through the harness: every path into the
+ * candidate runs the oracle first (harness.differential, and its poison re-run), and the oracle
+ * spends an instruction per byte, so it exceeds max_insns and raises before the candidate is
+ * called. A caller that skips that ordering does NOT get the guarantee: reaching the end of the
+ * image here is undefined behaviour on the host, which during the mutation sweep showed up as a
+ * crashed pytest worker rather than a failing case.
+ */
+static int walk_scores(const uint8_t *image, uint32_t left, uint32_t right) {
+    for (;;) {
+        int8_t character = (int8_t)image[left++];     /* d0.b := the character; the count is gone */
+        int8_t against = (int8_t)image[right++];
+        if (character > against) return 1;
+        if (character < against) return -1;
+        if (character == 1) return 0;    /* `subq.b #1,d0 / bne`: only a 1 leaves zero behind */
+    }
+}
+
+/* Which player's score is the higher. A walk stopped by a character of 1 falls through into player
+ * 1's store at 0x143a8, so player 1 takes the tie. */
+static uint32_t higher_scoring_player(const uint8_t *image) {
+    return walk_scores(image, A_object_table + OBJ_SCORE_FIRST_DIGIT,
+                       A_player2 + OBJ_SCORE_FIRST_DIGIT) < 0 ? A_player2 : A_object_table;
+}
+
+/* ...and whether that score beats the record. Here the same stop falls through to the `rts` at
+ * 0x143de instead — the opposite verdict, from the same bug. */
+static int beats_the_high_score(const uint8_t *image, uint32_t player) {
+    return walk_scores(image, player + OBJ_SCORE_FIRST_DIGIT, A_hiscore_score) > 0;
+}
+
+/* Silence the chip, take the new record, and put the name-entry screen up: 0x143e0..0x1448d.
+ *
+ * `player` is the entering player's object slot. The original re-reads draw_src for the banner
+ * (`cmpi.l #$10f36,draw_src` at 0x1441e) rather than keeping it in a register — folded here, since
+ * the only thing between the two reads is fill_screen, which writes the framebuffer.
+ */
+static void show_hiscore_entry_screen(uint8_t *image, uint32_t player) {
+    g_dosound(image, A_snd_list_silence);
+    image[A_hiscore_dirty] = HISCORE_DIRTY_SET;
+
+    for (unsigned digit = 0; digit < HISCORE_SCORE_DIGITS; digit++)
+        image[A_hiscore_score + digit] = image[player + OBJ_SCORE_FIRST_DIGIT + digit];
+
+    fill_screen(image, 0);
+    draw_string(image, player == A_object_table ? STR_HISCORE_P1 : STR_HISCORE_P2);
+
+    for (unsigned column = 0; column < HISCORE_COLUMNS; column++)
+        image[A_hiscore_name + column] = KEY_SPACE;
+
+    image[A_text_flags] |= TEXT_FLAG_BACKGROUND;
+    image[A_text_bg_color] = 0;
+    image[A_text_color] = HISCORE_ENTRY_COLOR;
+    image[A_repeat_delay] = 0;
+    wr16(image + A_hiscore_touched, 0);
+    /* One WORD store fills both halves of draw_dst_off: the letter under the cursor (' ') in the
+     * high byte, and in the low one the NUL that terminates the single-character string
+     * draw_hiscore_entry hands to draw_string. */
+    wr16(image + A_hiscore_letter, (uint16_t)(KEY_SPACE << 8));
+    wr16(image + A_hiscore_cursor, 0);
+    draw_hiscore_cursor(image);
+}
+
+/* 0x1437a..0x1448d: everything before the entry loop. Non-zero once the screen is up, i.e. once the
+ * original has fallen into a loop it never leaves. */
+static int start_hiscore_entry(uint8_t *image) {
+    if (image[A_game_over_flag] == 0) return 0;
+
+    /* draw_src carries the leader on to the name entry, which reads it to pick the joystick. The
+     * original re-reads it from memory for each of the three uses below (0x143be, 0x143fa,
+     * 0x1441e); folded, because nothing between those reads writes draw_src itself — the entry
+     * screen touches its NEIGHBOURS draw_shift/draw_rows/draw_dst_off, never it. */
+    uint32_t leader = higher_scoring_player(image);
+    wr32(image + A_hiscore_stick, leader);
+    if (!beats_the_high_score(image, leader)) return 0;
+
+    show_hiscore_entry_screen(image, leader);
+    return 1;
+}
+
+/* One colour-cycle step of the entry loop @ 0x14494..0x144ad. The pass count lives in a byte of the
+ * sprite-draw scratch rather than a register, and is reloaded with 1 every time round the loop
+ * above it, so the `subq.b`/`bne` around the delay and the flash always runs exactly once. */
+static void hiscore_flash_pass(uint8_t *image) {
+    image[A_hiscore_flash_passes] = HISCORE_FLASH_PASSES;
+    do {
+        hiscore_flash_delay();
+        flash_hiscore_color(image);
+    } while (--image[A_hiscore_flash_passes] != 0u);
+}
+
+/* THE JOYSTICK POLL BELOW IS SHORT OF ITS PROLOGUE. The original's `bsr` at 0x14490 enters
+ * hiscore_joystick_input at 0x14538, which clears ikbd_packet and sends the IKBD its interrogate
+ * before waiting for the reply; the reconstruction starts at the WAIT LOOP (0x1454e) because no
+ * oracle run can get through that wait (see the section above and include/input.h). So this loop
+ * asks for no fresh packet, and an on-target build has to issue the interrogate itself before it
+ * can be used — until then the entry screen would act on whatever byte ikbd_packet last held.
+ * Under the harness it costs nothing: no run reaches a second pass. */
+uint32_t check_highscore(uint8_t *image) {
+    if (!start_hiscore_entry(image)) return CHECK_HIGHSCORE_RETURNED;
+
+    /* 0x1448e..0x144af. The original's loop has no exit: both readers END the entry by dropping
+     * this frame's return address and jumping to RESTART_ENTRY, which the C reports as a result. */
+    for (;;) {
+        if (hiscore_key_input(image) == INPUT_RESTART) return CHECK_HIGHSCORE_RESTART;
+        if (hiscore_joystick_input(image) == INPUT_RESTART) return CHECK_HIGHSCORE_RESTART;
+        hiscore_flash_pass(image);
+    }
+}
+
 /* ------------------------------------------------------------------------------------- glue ---
  *
  * Nothing in this layer takes a stack frame — each routine works entirely off globals and the
- * modeled console state — so each g_* is a bare forwarder, bar the one noted below. The one thing
- * an image diff cannot see is WHICH exit a routine took, since two of the three never return and
- * none of them differs in memory: that comes back as the INPUT_* result, and the test pins it
- * against the checkpoint the oracle had to stop at.
+ * modeled console state — so each g_* is a bare forwarder, bar the three noted below. The one thing
+ * an image diff cannot see is WHICH exit a routine took, since several of them never return and
+ * none of them differs in memory: that comes back as the INPUT_* / CHECK_HIGHSCORE_* result, and
+ * the test pins it against the checkpoint the oracle had to stop at.
  */
 
 uint32_t g_poll_quit_key(uint8_t *image) {
@@ -396,4 +553,37 @@ uint32_t g_hiscore_key_input(uint8_t *image) {
 
 uint32_t g_hiscore_joystick_input(uint8_t *image) {
     return hiscore_joystick_input(image);
+}
+
+/* THE SECOND GLUE THAT IS NOT A BARE FORWARDER: it stops where every oracle run must stop.
+ *
+ * check_highscore's entry loop cannot be left by any input a run can stage. The oracle blocks
+ * inside the joystick reader's IKBD wait on its FIRST pass, and the candidate is no better off:
+ * the entry screen clears hiscore_touched, so RETURN and fire are both ignored on the pass that
+ * follows, and the console delivers only one key while the IKBD packet never changes. So there is
+ * no image in which either core leaves the loop, and a forwarder would hang the pytest worker with
+ * no output at all under `-n auto`.
+ *
+ * It therefore runs 0x1437a..0x1448d and reports whether the screen went up, which is exactly the
+ * state the oracle has at its 0x1448e checkpoint. The loop itself is verified on its own, one pass
+ * at a time, through g_hiscore_entry_pass below; check_highscore stays uncapped and faithful
+ * precisely because the refusal lives here. */
+uint32_t g_check_highscore(uint8_t *image) {
+    return start_hiscore_entry(image) ? CHECK_HIGHSCORE_ENTERED : CHECK_HIGHSCORE_RETURNED;
+}
+
+/* One pass of the entry loop, entered where the ORACLE can enter it: at the colour-cycle tail
+ * (0x14494), round the branch at 0x144ae, and through the keyboard poll at 0x1448e. It stops before
+ * the joystick reader at 0x14490 — the instruction past which no run comes back.
+ *
+ * THE ORDER OF THESE TWO STATEMENTS IS TRANSCRIBED FROM THE DISASSEMBLY, NOT HELD BY THE DIFF.
+ * hiscore_flash_pass writes only draw_x/draw_y and the keyboard poll neither reads nor writes
+ * either, so the two steps are independent and a final-image compare cannot tell them apart:
+ * SWAPPING THEM LEAVES THE WHOLE SUITE GREEN (measured). What the diff does hold is that both are
+ * PRESENT — dropping the flash diverges on A_hiscore_flash, dropping the poll on the letter it
+ * types. The same is true of check_highscore's own loop, and worse: nothing executes it, so not
+ * even presence is pinned there. ../STATUS.md lists both as surviving mutants. */
+uint32_t g_hiscore_entry_pass(uint8_t *image) {
+    hiscore_flash_pass(image);
+    return hiscore_key_input(image);
 }

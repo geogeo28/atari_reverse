@@ -18,10 +18,8 @@
 #include "joust.h"
 #include "object.h"
 
-/* ---- globals ---- */
-#define A_draw_y        0x10deeu  /* .w — the draw scratch's y, the partner of addrs.h's A_draw_x */
-
-/* Two tables object.h already names by their neighbours' loop bounds (A_platform_table_END and
+/* ---- globals ----
+ * Two tables object.h already names by their neighbours' loop bounds (A_platform_table_END and
  * A_platform_sprites_END are these same two addresses). This layer WALKS them, so it needs them
  * under their own names; the duplication is the one object.h already documents for its `_END`s. */
 #define A_platform_edge_table       0x117f4u

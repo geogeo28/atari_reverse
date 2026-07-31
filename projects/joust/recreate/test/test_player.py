@@ -1,7 +1,7 @@
 """Differential tests for Joust's player-control layer (src/player.c).
 
 Covered here: player_death @ 0x11f28 and control_player @ 0x11dd6, plus the piece of
-control_player's restart path that lies between two unported calls (0x11e50, reconstructed as
+control_player's restart path that lies between two of its three calls (0x11e50, reconstructed as
 `restart_reset_players`).
 
 control_player has ONE PATH THAT NEVER RETURNS — no players left and fire pressed drops two return
@@ -29,9 +29,9 @@ ENTRY_PLAYER_DEATH = 0x11f28
 # ---- inner addresses of control_player's restart path. They are not function entries, so
 # names.txt cannot pin them; test_checkpoints_are_the_instructions_they_claim_to_be pins each
 # against the ORIGINAL'S OWN ENCODING at that address instead.
-CHECKPOINT_BEFORE_HISCORE = 0x11e44   # `jsr check_highscore` — the first unported call
+CHECKPOINT_BEFORE_HISCORE = 0x11e44   # `jsr check_highscore` — the first of the restart's 3 calls
 ENTRY_RESTART_TAIL = 0x11e50          # `tst.b two_player_mode`, just past `jsr init_game`
-CHECKPOINT_BEFORE_INIT_VIDEO = 0x11e94  # `jsr init_video`, the next unported call after the tail
+CHECKPOINT_BEFORE_INIT_VIDEO = 0x11e94  # `jsr init_video`, the call after the tail
 JSR_ABS_LONG = 0x4eb9                 # `jsr xxx.l`
 TST_B_ABS_LONG = 0x4a39               # `tst.b xxx.l`
 A_CHECK_HIGHSCORE = 0x1437a
@@ -420,15 +420,17 @@ def _restart_pokes():
 
 @pytest.mark.parametrize("stick", (STICK_FLAP, 0xff, 0xdeadbe80))
 def test_control_player_restart_sets_game_over_and_never_returns(stick):
-    """The no-players-left path. Diffed at `jsr check_highscore` — the first of three unported
+    """The no-players-left path. Diffed at `jsr check_highscore` — the first of the restart's three
     calls — so what this PROVES is: both guards (fire, and players_alive == 0) route here, and the
     only memory effect before that call is game_over_flag := 1.
 
     What it does NOT prove: the `addq.w #8,a7` that discards two return addresses (stack, which the
     diff drops and the C models as CONTROL_RESTART instead), nor anything from check_highscore
-    onwards — check_highscore, init_game and init_video are all unported, and the tail between the
-    last two is verified separately below. `stick` also shows that only bit 7 is consulted: a
-    longword with garbage in every other bit restarts just the same.
+    onwards. That call is reconstructed now (test_input.py), but it does not come back once the game
+    has just set a record, and the restart ends in a `jmp` into the main loop that has no C form —
+    so the checkpoint stays where it is, and the tail between the last two calls is verified
+    separately below. `stick` also shows that only bit 7 is consulted: a longword with garbage in
+    every other bit restarts just the same.
     """
     pokes = _restart_pokes()
     info = _control_case(A_OBJECT_TABLE, stick, pokes, stop_pc=CHECKPOINT_BEFORE_HISCORE,
@@ -566,8 +568,8 @@ def _control_fuzz_cases():
 def test_control_player_fuzz(chunk):
     """The whole input surface bar the restart path, which needs a checkpoint and is covered above.
     players_alive stays non-zero so a fuzzed empty slot with fire simply returns rather than
-    diverging into the unported restart. The stick carries hi_garbage: `btst` on a data register
-    reads the longword, and everything above bit 7 must stay dead."""
+    diverging into the restart, which has no `rts` to diff at. The stick carries hi_garbage: `btst`
+    on a data register reads the longword, and everything above bit 7 must stay dead."""
     ran = 0
     for i, slot, flags, x, y, vx, vy, stick, players_alive, lives in _control_fuzz_cases():
         if i % FUZZ_CHUNKS != chunk:
@@ -599,8 +601,10 @@ def test_restart_tail_sets_up_the_new_game(two_player):
     digit and lives in a two-player one) and player 1's, all as the original leaves them.
 
     What it does NOT prove: that control_player reaches here at all — check_highscore and init_game
-    sit in between and neither is ported, which is exactly why src/player.c does not call
-    restart_reset_players from control_player. Nor anything from init_video onwards.
+    sit in between, so a candidate that ran this from control_player would be ahead of an oracle
+    stopped at the first of the three (and on a game that has just set a record, check_highscore
+    never comes back at all). That is why src/player.c does not call restart_reset_players from
+    control_player. Nor anything from init_video onwards.
     """
     pokes = _restart_tail_pokes(two_player)
     diffs, info = differential(ENTRY_RESTART_TAIL, {"_pokes": pokes},

@@ -410,9 +410,8 @@ void cycle_palette(uint8_t *image) {
  * And Ctrl-C is a SEVENTH transfer that is not a call: a `beq.w` at 0x10bea into 0x11c56, the
  * middle of poll_quit_key, whose quit tail ends in Pterm and never returns — so that branch needs
  * a stop_pc checkpoint paired with a never-returns proof, exactly as this function does.
- * The frame loop is blocked several times over besides
- * — read_joysticks @ 0x11d9a, update_pterodactyl @ 0x14ada and check_highscore @ 0x1437a are all
- * unported, and the first of those cannot be verified at all.
+ * The frame loop is blocked besides: read_joysticks @ 0x11d9a is unported and cannot be verified
+ * at all, and check_highscore @ 0x1437a — ported — does not come back once a record is set.
  *
  * So what this proves is exactly: _start does nothing of its own before those two calls, and makes
  * them in that order.
