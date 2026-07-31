@@ -12,9 +12,13 @@ the method is differential rather than byte-matching, read the worked reference 
 
 Progress and per-function verification notes: [`STATUS.md`](STATUS.md).
 
+Running the same cores on a real 68000 — the cross-compiled `JOUST.PRG`, what it has to supply that
+the harness models away, and every gap that leaves: [`atari/README.md`](atari/README.md).
+
 ```
 project.toml      binds this directory to the kit (paths, load base, image size)
 Makefile          three lines: KIT + GAME + include $(KIT)/kit.mk
+atari/            the on-target build: the SAME cores cross-compiled to a GEMDOS .PRG (see above)
 include/addrs.h   the globals MORE THAN ONE subsystem touches, by Ghidra address (mirrors ../names.txt)
 include/joust.h   public prototypes + what several subsystems share: screen geometry, the 68000
                   primitives (loop_passes, lsr32/ror32, divu_w) and the object record

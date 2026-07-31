@@ -6,9 +6,12 @@ it is not the same as "the game runs." The last mile is compiling the verified c
 standalone GEMDOS `.PRG` and running them on a real 68000 (Hatari, or hardware). This doc is about
 that step and the class of bugs that **only** appears there.
 
-The BuggyBoy reference build lives in `projects/buggyboy/recreate/render/atari/` (`game_main.c` +
-`game_os.s` + `game_build.sh`); read its README for the concrete wiring. This doc generalises the
-lessons.
+Two reference builds exist. `projects/buggyboy/recreate/render/atari/` (`game_main.c` + `game_os.s`
++ `game_build.sh`) is the older and larger; `projects/joust/recreate/atari/` is the second, and
+differs in ways worth reading both for — its OS seam is the **include path** rather than the linker
+(the kit's `os_*` helpers are `static inline`, so there is no symbol to override), it keeps the
+kit's staged-file model on target instead of using real GEMDOS, and it stays in user mode. Read
+either README for the concrete wiring. This doc generalises the lessons.
 
 ## The core insight: the harness is blind to everything the oracle models as a no-op
 
@@ -26,8 +29,8 @@ effect is off-image is invisible to verification:
 | **Real OS/hardware behaviour** the model simplifies | oracle returns a constant (e.g. console = "no key") | a path that "can't happen" in the model does happen live |
 
 **Working rule:** every one of these is a real bug surface with **zero test coverage**. When
-on-target behaviour diverges from the harness-verified image, suspect one of these four before you
-suspect the reconstructed logic — the logic is the one part that *is* verified.
+on-target behaviour diverges from the harness-verified image, suspect one of these four dimensions
+before you suspect the reconstructed logic — the logic is the one part that *is* verified.
 
 ## The seam pattern
 
@@ -50,7 +53,7 @@ add a seam, the core/no-op side must have **no image effect** (or the oracle-mod
 differential test still holds; put the real trap/hardware poke only in the PRG override, and gate it
 on `hw_ready` if it touches supervisor-only I/O space (`$ffff8xxx`, `$fffffcxx`) before `Super(0)`.
 
-## Bug taxonomy (each hit in the BuggyBoy build)
+## Bug taxonomy (each one hit in a real build — 1-5 in BuggyBoy, 6 in Joust)
 
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
@@ -147,6 +150,31 @@ call is there or not — so it silently isn't.
   `Dosound`, a `Cconout`, an `Ikbdws`, a palette poke to an unchecked register: each may be carrying
   behaviour the test is blind to.
 
+### 6. Codegen again — an addressing mode whose semantics the compiler and the 68000 disagree on
+
+Class 4 is about code that is *slow*. This one is about code that is **wrong**, emitted from C that
+reads correctly, in the one place the harness can never look: a loop over hardware registers.
+
+- **Real example (Joust).** A VBL handler loaded the 16 shifter colour registers with
+  `for (i = 0; i < 16; i++) pen[i] = be16(table + 2*i);`, `pen` being a `volatile uint16_t *` at
+  `$ffff8240`. GCC folded it to one instruction — `move.w (%a0)+,(%a0,%d0.l)`, with `%d0` pre-biased
+  by `$ffff8240 - table`. On the 68000 a `MOVE`'s **destination** effective address is computed
+  *after* the source operand's postincrement, so every pen landed one register high and the
+  sixteenth write went to `$ffff8260` — the **resolution** register — carrying pen 15's `0x0777`.
+- **Symptom:** the machine hangs, and *which* machine matters — TOS 1.04 died on the spot, EmuTOS
+  absorbed it. Nothing in the diff is wrong, and the C is not wrong either.
+- **Diagnosis:** `objdump -d` the handler and look for one instruction using the **same address
+  register** in a postincrement source and an indexed destination. It is the shape, not the target,
+  that is suspect.
+- **Fix:** don't write hardware registers through a walked pointer at all. Where TOS has a
+  variable for the job, use it: one longword into `_colorptr` (`0x45a`) *is* a palette load, done by
+  TOS's own VBL — which is all XBIOS `Setpalette` does, and it is legal from an interrupt where the
+  trap is not.
+- **Working rule:** **run the smoke tests on more than one TOS ROM.** It costs one environment
+  variable and it is what turned this from "works here" into a located bug. EmuTOS is forgiving in
+  ways real TOS is not; the two disagreeing is a finding, and the two agreeing byte-for-byte (as the
+  Joust framebuffers now do) is a much stronger green than either alone.
+
 ## Diagnostic toolkit
 
 You cannot single-step a `.PRG` the way you diff a function. These techniques turn "it's wrong on
@@ -163,6 +191,10 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   points of interest; the screen colour tells you which branch ran with no debugger. Used to prove
   input delivery: red when `input_state` had joystick bits, green when `Crawio` returned a key,
   blue idle → "joystick works, console delivers nothing" isolated the bug to the console path.
+  Write **one** register with a constant — `*(volatile uint16_t *)0xffff8240ul = 0x700;` — and never
+  a loop over several of them: `$ffff8260`, four registers past the end of the palette, is the
+  resolution register, and taxonomy class 6 is what a loop that runs one register long does to
+  the machine. A probe is throwaway code, which is exactly why it gets written without thinking.
 
 - **Raster colour-bars for timing.** Set the border to a different colour before each per-frame
   stage; the on-screen *height* of each colour band is that stage's share of the frame. A single

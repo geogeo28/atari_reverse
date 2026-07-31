@@ -48,10 +48,11 @@
  * binaries, and the only fact available is which translation unit is being compiled. Two callers:
  * shim.c, which keeps the oracle's own tally and does not link src/os_refusal.c; and any on-target
  * (real Atari) build whose cores call a refusing helper — real TOS refuses nothing, and that build
- * links the kit's src/ no more than the oracle does. Today no on-target build compiles such a core
- * (BuggyBoy's game_build.sh excludes src/os.c, its only caller), so none defines it yet; the switch
- * is named for what it selects rather than for the oracle so that the day one does, the remedy is
- * one -D and not a redesign. */
+ * links the kit's src/ no more than the oracle does. Joust's PRG build is the second
+ * (projects/joust/recreate/atari/build.sh passes the -D): its cores call os_fopen/os_fread and the
+ * kit's staged-file model is kept on target, so the refusing helpers really are compiled in.
+ * BuggyBoy's is not — its game_build.sh excludes src/os.c, the only caller it has. The switch being
+ * named for what it selects rather than for the oracle is what made that one -D the whole remedy. */
 #ifdef OS_NO_REFUSAL_TALLY
 static inline int32_t os_refused(int32_t sentinel) { return sentinel; }
 #else
