@@ -110,7 +110,7 @@ PT_ANIM_STEP, PT_ANIM_FRAME_MASK, PT_ANIM_POSE2, PT_ANIM_POSE3 = 3, 0x18, 0x10, 
 PTERO_WRAP_ONE_CELL, PTERO_WRAP_TWO_CELLS = 0x120, 0x130
 PTERO_BOX_COLS = 3
 SND_PTERO_CRY = 3
-SND_PRIORITY_IDLE = 0x10          # src/sound.c's "nothing playing"
+SND_PRIORITY_IDLE = 0x10          # include/sound.h's "nothing playing"
 PTERO_SWOOP_TIMER_SET = 0x14      # src/object.c — what ptero_spot_player arms
 
 # ---- scratch areas, clear of the program (ends 0x2b7ae), of abi's stub space (0x40000..0x40207),

@@ -41,6 +41,11 @@
 
 #define RESTART_ENTRY   0x10006u  /* _start+6: where both never-returning restarts land */
 
+/* The quit key, tested with `cmp.b` by BOTH layers that read the console: poll_quit_key during play
+ * (0x11c4e) and title_screen on the title screen (0x10be6). Shared here rather than spelled twice
+ * because the two tests must agree — they reach the same quit tail. */
+#define KEY_CTRL_C      0x03u
+
 /* --- globals -----------------------------------------------------------------------------------
  * Four of these have no reader in input.c because what they feed is an OFF-IMAGE trap argument the
  * differential cannot see (Setscreen's resolution, the two IKBD command strings, Setpalette's
@@ -53,9 +58,6 @@
 #define A_ikbd_cmd_reset    0x10d24u  /* 2 bytes ($80 $01), the IKBD reset the game leaves behind */
 #define A_saved_palette     0x10d26u  /* the 16-word palette XBIOS Setpalette is handed on the way out */
 #define A_repeat_delay      0x1415eu  /* .b — frames until the joystick name-entry auto-repeat fires */
-#define A_snd_list_silence  0x1150fu  /* the XBIOS Dosound list that silences the chip when quitting.
-                                       * It is not one of sound_table's entries, so the input layer
-                                       * names it; move it to sound.h if that layer needs it too. */
 #define A_ikbd_packet       0x10e06u  /* .l — where the IKBD interrupt handler leaves the joystick
                                        * reply: a 2-byte packet, joystick 0 then joystick 1 */
 #define A_ikbd_cmd_joyread  0x1145bu  /* 1 byte ($16), the IKBD "interrogate joysticks" command */
@@ -93,6 +95,13 @@
 #define CHECK_HIGHSCORE_RESTART   2u  /* a reader ended the entry and jumped to RESTART_ENTRY */
 
 /* --- input.c ----------------------------------------------------------------------------------- */
+
+/* poll_quit_key's quit tail @ 0x11c56 — silence the chip, write HIGH.SCO back and hand the machine
+ * to TOS. Declared here because title_screen @ 0x10aae BRANCHES into it (`beq.w` at 0x10bea), which
+ * makes it a shared tail rather than a private block. It never returns in the original (GEMDOS
+ * Pterm follows), so its callers report the exit themselves. */
+void quit_to_desktop(uint8_t *image);
+
 uint32_t poll_quit_key(uint8_t *image);
 uint32_t hiscore_key_input(uint8_t *image);
 

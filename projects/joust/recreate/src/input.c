@@ -48,8 +48,7 @@
  * ============================================================================================= */
 
 /* The keys it acts on. Bconin's result is compared with `cmp.b`, so the upper/lower pairs are two
- * separate tests rather than a case fold. */
-#define KEY_CTRL_C        0x03u
+ * separate tests rather than a case fold. KEY_CTRL_C is input.h's — title_screen tests it too. */
 #define KEY_PAUSE_UPPER   0x50u   /* 'P' */
 #define KEY_PAUSE_LOWER   0x70u   /* 'p' */
 #define KEY_RESTART_UPPER 0x52u   /* 'R' */
@@ -162,6 +161,18 @@ static void pause_until_key(const uint8_t *image) {
     } while (pending != OS_BCONSTAT_READY);
 }
 
+/* poll_quit_key's quit tail @ 0x11c56, and THE ONE BLOCK IN THE GAME A SECOND ROUTINE BRANCHES
+ * INTO: title_screen's Ctrl-C is a `beq.w` at 0x10bea straight to this address — past this
+ * routine's own entry and its Bconstat/Bconin, so it is a shared tail and NOT a call to
+ * poll_quit_key. Nothing here ever comes back to either caller: the original's next act after the
+ * three effects below is GEMDOS Pterm. Each caller therefore reports the exit through its own
+ * result code (INPUT_QUIT, TITLE_QUIT) and this function returns nothing at all. */
+void quit_to_desktop(uint8_t *image) {
+    g_dosound(image, A_snd_list_silence);
+    save_hiscore(image);
+    restore_system(image);
+}
+
 /* One poll of the console during play. Ctrl-C quits to the desktop, P/p pauses, R/r restarts, and
  * every other key — and no key at all — simply returns. */
 uint32_t poll_quit_key(uint8_t *image) {
@@ -169,9 +180,7 @@ uint32_t poll_quit_key(uint8_t *image) {
     if (!poll_console_key(image, &key)) return INPUT_CONTINUE;
 
     if (key == KEY_CTRL_C) {
-        g_dosound(image, A_snd_list_silence);
-        save_hiscore(image);
-        restore_system(image);
+        quit_to_desktop(image);
         return INPUT_QUIT;                     /* the original traps Pterm here and never returns */
     }
     if (key == KEY_PAUSE_UPPER || key == KEY_PAUSE_LOWER) {

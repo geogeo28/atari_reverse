@@ -1501,7 +1501,6 @@ def test_mirrored_constants_match_input_h():
         "A_saved_mousevec": A_SAVED_MOUSEVEC, "A_saved_joyvec": A_SAVED_JOYVEC,
         "A_saved_rez": A_SAVED_REZ, "A_conterm_save": A_CONTERM_SAVE,
         "A_ikbd_cmd_reset": A_IKBD_CMD_RESET, "A_saved_palette": A_SAVED_PALETTE,
-        "A_snd_list_silence": A_SND_LIST_SILENCE,
         "A_ikbd_cmd_mouse_rel": A_IKBD_CMD_MOUSE_REL,
         "A_fname_highsco": A_FNAME_HIGHSCO, "A_hiscore_dirty": A_HISCORE_DIRTY,
         "A_ikbd_packet": A_IKBD_PACKET, "A_repeat_delay": A_REPEAT_DELAY,
@@ -1534,13 +1533,17 @@ def test_mirrored_constants_match_input_h():
         "A_hiscore_name": A_HISCORE_NAME, "A_game_over_flag": A_GAME_OVER_FLAG,
         "OBJ_SCORE_FIRST_DIGIT": OBJ_SCORE_FIRST_DIGIT,
     })
+    # Two constants the input layer reads but no longer owns, because title_screen (src/init.c)
+    # became a second reader of each: the quit key it tests to reach the same quit tail, and the
+    # Dosound list it silences the chip with.
+    _pin(_defines("include/input.h"), "input.h", {"KEY_CTRL_C": KEY_CTRL_C})
+    _pin(_defines("include/sound.h"), "sound.h", {"A_snd_list_silence": A_SND_LIST_SILENCE})
 
 
 def test_mirrored_constants_match_input_c_and_the_kit():
     _pin(_defines("src/input.c"), "input.c", {
         "HISCORE_RECORD_BYTES": HISCORE_RECORD_BYTES, "HIGHSCO_OPEN_MODE": HIGHSCO_OPEN_MODE,
         "TOS_CONTERM": TOS_CONTERM, "KBDV_MOUSEVEC": KBDV_MOUSEVEC, "KBDV_JOYVEC": KBDV_JOYVEC,
-        "KEY_CTRL_C": KEY_CTRL_C,
         "KEY_PAUSE_UPPER": KEY_PAUSE_UPPER, "KEY_PAUSE_LOWER": KEY_PAUSE_LOWER,
         "KEY_RESTART_UPPER": KEY_RESTART_UPPER, "KEY_RESTART_LOWER": KEY_RESTART_LOWER,
         "KEY_BACKSPACE": KEY_BACKSPACE, "KEY_RETURN": KEY_RETURN, "KEY_SPACE": KEY_SPACE,

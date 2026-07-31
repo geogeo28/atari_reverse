@@ -791,7 +791,7 @@ def test_draw_messages_fuzz(chunk):
 # score digits, and these three repair the string: promote a bumped blank to the digit it means,
 # carry the decimal columns, hand out the extra lives those carries earn, and repaint the row.
 
-SND_PRIORITY_IDLE = 0x10       # nothing playing; any request outranks it (mirror of src/sound.c)
+SND_PRIORITY_IDLE = 0x10       # nothing playing; any request outranks it (mirror of include/sound.h)
 SND_EXTRA_LIFE = 1             # what the extra life asks play_sound for
 
 N_SCORE_DIGITS = OBJ_SCORE_LAST_DIGIT - OBJ_SCORE_FIRST_DIGIT + 1
@@ -1272,8 +1272,8 @@ def test_mirrored_constants_match_score_c():
 def test_mirrored_constants_match_the_sound_layer():
     """score_update's extra life leaves through play_sound, so this file restates two of the sound
     layer's own constants — the priority global it is gated on and the idle value that admits it."""
-    _pin(_defines("include/sound.h"), "sound.h", {"A_snd_priority": A_SND_PRIORITY})
-    _pin(_defines("src/sound.c"), "sound.c", {"SND_PRIORITY_IDLE": SND_PRIORITY_IDLE})
+    _pin(_defines("include/sound.h"), "sound.h", {"A_snd_priority": A_SND_PRIORITY,
+                                                  "SND_PRIORITY_IDLE": SND_PRIORITY_IDLE})
     assert harness.NAME_MAP.get(A_SND_PRIORITY) == "snd_priority", \
         "names.txt has no `snd_priority` at that address"
 

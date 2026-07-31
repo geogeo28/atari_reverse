@@ -20,13 +20,17 @@
 #include <stdint.h>
 
 #include "addrs.h"
-#include "draw.h"     /* fill_screen, draw_string, A_player2 */
-#include "input.h"    /* the system state init_system saves for the quit path to hand back */
+#include "draw.h"     /* fill_screen, draw_string, A_player2, A_text_color */
+#include "input.h"    /* the system state init_system saves for the quit path to hand back, and the
+                       * quit tail itself (quit_to_desktop, KEY_CTRL_C) that title_screen branches
+                       * into, plus A_ikbd_packet */
 #include "object.h"   /* A_message_table / MSG_*, A_pterodactyl_table / PT_*, A_draw_x */
 #include "player.h"   /* A_two_player_mode */
 #include "render.h"   /* SPAWN_IN_USE, SPAWN_RECORD */
-#include "score.h"    /* score_update_p1/p2, draw_lives_p1/p2, OBJ_SCORE_PTR, A_game_over_flag */
-#include "sound.h"    /* snd_tone_sweep */
+#include "score.h"    /* score_update_p1/p2, draw_lives_p1/p2, OBJ_SCORE_PTR, A_game_over_flag,
+                       * and title_screen's OBJ_SCORE_LAST_DIGIT / OBJ_LIVES / A_players_alive */
+#include "sound.h"    /* snd_tone_sweep, and title_screen's snd_poll_done / play_sound /
+                       * A_snd_priority / SND_PRIORITY_IDLE / A_snd_list_silence / g_dosound */
 #include "wave.h"     /* A_spawn_timer */
 #include "world.h"    /* draw_platforms, the spawn/effect tables, the ground-fire edges */
 
@@ -70,6 +74,17 @@
 #define A_palette_cycle_ctr 0x10d52u /* .w — bumped once per title-screen frame; its bits 8-10 are
                                       * what pick the components the hue is next shown in */
 
+/* ---- the three lines the title screen paints over the picture -------------------------------- */
+#define STR_TITLE_PROMPT  0x183b3u  /* "ONE OR TWO PLAYERS (1/2)?" */
+/* "HIGH SCORE:" — and NOT a fixed string: HIGH.SCO's 26-byte record lies INSIDE it, so the title
+ * screen shows whatever init_system's Fread loaded, drawn in place. */
+#define STR_TITLE_HISCORE 0x18381u
+/* How far into that line the record starts: A_hiscore_name (score.h) IS this address. No C reads
+ * it — it is named so test_init.py can pin the coupling, the same reason src/input.c names
+ * HIGHSCO_OPEN_MODE, because nothing else would notice the two drifting apart. */
+#define STR_TITLE_HISCORE_RECORD_OFF 0x15u
+#define STR_TITLE_CREDITS 0x183d5u  /* "PRESENTED BY ATARI CORPORATION" + the copyright line */
+
 /* ---- the templates init_game copies into RAM ------------------------------------------------ */
 #define A_init_players_template 0x1145cu /* the two player object records, back to back... */
 #define A_init_globals_template 0x114f8u /* ...and, immediately after them, the wave/HUD globals.
@@ -77,13 +92,27 @@
 #define A_init_globals_template_END 0x1150fu
 
 /* ---- startup roles of the sprite-draw scratch ------------------------------------------------
- * init_system borrows two of the drawing layer's globals before anything is drawn, exactly as the
- * quit path and the name-entry screen do (see input.h). draw_x carries two unrelated values in one
- * routine — the palette pen being read back, and then a GEMDOS file handle — so it earns a name per
- * role rather than one vague one. Aliases, so there is still one address per name. */
+ * init_system and title_screen borrow two of the drawing layer's globals before anything is drawn,
+ * exactly as the quit path and the name-entry screen do (see input.h). draw_x carries THREE
+ * unrelated values here — the palette pen init_system reads back, then its GEMDOS file handle, then
+ * title_screen's console-poll counter — so each earns a name per role rather than one vague one.
+ * The roles do not overlap in time: init_system has finished before title_screen is called.
+ * Aliases, so there is still one address per name. */
 #define A_boot_palette_pen    A_draw_x    /* .w — 0..15 while the startup palette is read back */
 #define A_boot_palette_cursor A_draw_dst  /* .l — where the next Setcolor answer is stored */
 #define A_boot_file_handle    A_draw_x    /* .w — MONO.ERR's, then HIGH.SCO's, GEMDOS handle */
+#define A_title_poll_left     A_draw_x    /* .w — console polls the title screen still owes this
+                                           * attract pass before it asks the joysticks */
+
+/* --- what exit title_screen took ---------------------------------------------------------------
+ * Three of its four exits are not an `rts`, so — exactly as src/input.c's INPUT_* results do — the
+ * reconstruction reports which one it took and the test pins that against the checkpoint the oracle
+ * had to stop at. */
+#define TITLE_STARTED    0u  /* the `rts` at 0x10c44: a game is set up and about to begin */
+#define TITLE_QUIT       1u  /* Ctrl-C branched into quit_to_desktop, which ends in GEMDOS Pterm */
+#define TITLE_IKBD_WAIT  2u  /* the console poll ran out: the original is spinning at 0x10bb8 for a
+                              * joystick reply an INTERRUPT delivers, so it never comes back */
+#define TITLE_ATTRACT    3u  /* that reply held no fire button: back round the loop to 0x10b22 */
 
 /* --- init.c ---------------------------------------------------------------------------------- */
 void init_system(uint8_t *image);
@@ -94,6 +123,12 @@ void init_game(uint8_t *image);
  * returns a value. */
 uint32_t xbios_setpalette(uint8_t *image);
 void cycle_palette(uint8_t *image);
+
+/* The attract screen @ 0x10aae, whole. NOTHING IN THE TEST SUITE CALLS IT — its loop cannot be gone
+ * round twice (the IKBD wait never ends on either side), so the glue stops where every oracle run
+ * must and the two halves are verified through that; see src/init.c and ../STATUS.md. It is the
+ * shape _start `jsr`s, and is declared here so an Atari build has it. */
+uint32_t title_screen(uint8_t *image);
 
 /* _start @ 0x10000, RECONSTRUCTED ONLY AS FAR AS ITS THIRD CALL — see the comment in src/init.c. */
 void start(uint8_t *image);

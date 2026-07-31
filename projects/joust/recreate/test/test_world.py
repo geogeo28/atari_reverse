@@ -1284,7 +1284,7 @@ TROLL_X_WRAP = SCREEN_ROW_BYTES // CELL_BYTES * CELL_PIXELS
 TROLL_CELL_SHIFT = 13
 TROLL_SPR_SRC, TROLL_SPR_ROWS = 0x0, 0x4
 SND_TROLL_GRAB = 6
-SND_PRIORITY_IDLE = 0x10             # nothing playing (mirror of src/sound.c)
+SND_PRIORITY_IDLE = 0x10             # nothing playing (mirror of include/sound.h)
 
 # ---- the object table, and the object fields this routine reads ----
 N_OBJECTS = (A_EFFECT_TABLE - A_OBJECT_TABLE) // OBJ_SIZE

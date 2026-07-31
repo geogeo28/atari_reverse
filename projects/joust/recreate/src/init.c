@@ -1,5 +1,5 @@
-/* init.c — Joust's startup chain: _start, the three initialisers it opens with, and the two palette
- * helpers its third call (title_screen) is built out of.
+/* init.c — Joust's startup chain: _start, the three initialisers it opens with, the attract screen
+ * its third call puts up, and the two palette helpers that screen is built out of.
  *
  * This is the most trap-dense code in the game, so the kit's TOS model
  * (tools/recreate_kit/TRAP_MODEL.md) decides how much of it can be proved at all. Four of its
@@ -289,7 +289,8 @@ void init_game(uint8_t *image) {
  *
  * Both belong to title_screen @ 0x10aae and to nothing else — it is their only caller (0x10aae and
  * 0x10b64 for the first, 0x10b22 for the second), and they were the last two of its six callees to
- * be ported. title_screen itself stays unreconstructed, so they are verified at their own entries.
+ * be ported. They keep their own entries' batteries, which is what lets title_screen's below assert
+ * on the two AS COMPOSED (its ring carries cycle_palette's output on) rather than re-derive them.
  * ============================================================================================= */
 
 /* xbios_setpalette: hand the whole title palette to XBIOS Setpalette.
@@ -318,9 +319,15 @@ uint32_t xbios_setpalette(uint8_t *image) {
 #define PALETTE_RED_SHIFT   8u
 
 /* Which of title_palette's 16 pens the cycle animates — word 4, i.e. 0x10cda. Here rather than in
- * init.h beside the table's address because it is not an address and cycle_palette is its only
- * reader; the mirror pin scrapes it from this file. */
+ * init.h beside the table's address because it is not an address and only this file reads it; the
+ * mirror pin scrapes it from here. */
 #define TITLE_PALETTE_HUE_PEN 4u
+
+/* Where one of the table's 16 pens lives. Shared by cycle_palette and by the six-pen ring
+ * title_screen rotates below, which is the only reason it is a function and not a `+ 8`. */
+static uint32_t title_pen(unsigned pen) {
+    return A_title_palette + 2u * pen;
+}
 
 /* Which components of the palette word the hue is shown in next, as bits of palette_cycle_ctr.
  * `andi.w #$700` keeps exactly these three, so the counter's low byte is a per-frame divider: the
@@ -353,7 +360,7 @@ uint32_t xbios_setpalette(uint8_t *image) {
  * looking data-backed.
  */
 void cycle_palette(uint8_t *image) {
-    uint32_t hue_at = A_title_palette + 2u * TITLE_PALETTE_HUE_PEN;
+    uint32_t hue_at = title_pen(TITLE_PALETTE_HUE_PEN);
 
     uint16_t counter = (uint16_t)(be16(image + A_palette_cycle_ctr) + 1u);   /* addq.w #1 — WORD wide */
     /* Stored before the selector is even looked at, and stored AGAIN by the reset — two `move.w`s
@@ -393,6 +400,205 @@ void cycle_palette(uint8_t *image) {
 }
 
 /* =================================================================================================
+ * title_screen @ 0x10aae — the attract screen, and where the game is chosen.
+ *
+ * It paints the title picture and three lines of text once, then loops: one step of the colour
+ * cycle above, one console poll TITLE_POLL_PASSES deep, and — if no key came — one IKBD joystick
+ * interrogation. '1' and '2' pick the game and return; Ctrl-C leaves for the desktop; either
+ * stick's fire button starts a game in whatever mode was chosen last.
+ *
+ * THREE OF ITS FOUR EXITS ARE NOT AN `rts`, and each needs its own treatment:
+ *
+ *   * THE IKBD WAIT (0x10bb8) blocks for a reply an INTERRUPT delivers, which the oracle never
+ *     runs — and the routine clears ikbd_packet on the way in, so no poked reply survives to end
+ *     it either (TRAP_MODEL.md's limit 1, and read_joysticks' wall). It is reproduced as the honest
+ *     infinite loop it is; g_title_screen stops exactly where every oracle run must, so no case
+ *     enters it.
+ *   * CTRL-C IS A SEVENTH TRANSFER THAT IS NOT A CALL: a `beq.w` at 0x10bea into 0x11c56, the
+ *     MIDDLE of poll_quit_key — past that routine's entry and its own Bconstat/Bconin. So it cannot
+ *     be written as a call to poll_quit_key; what it reaches is the shared tail src/input.c exports
+ *     as quit_to_desktop, and the never-returning exit comes back as TITLE_QUIT.
+ *   * THE JOYSTICK START is reachable only from past that wait, so it is verified at its own
+ *     rotated entry — title_ikbd_pass, which the oracle enters at 0x10bb8 with a reply staged.
+ * ============================================================================================= */
+
+/* The three lines painted over the picture, each in its own colour (`move.b #imm,text_color`). */
+#define TITLE_COLOR_PROMPT   0xfu
+#define TITLE_COLOR_HISCORE  2u
+#define TITLE_COLOR_CREDITS  1u
+
+#define TITLE_POLL_PASSES 400u  /* console polls per attract pass before the joysticks are asked */
+#define SND_TITLE_TUNE    0xeu  /* sound_table index: the tune the attract loop keeps alive */
+#define TITLE_STARTING_LIVES 4u /* turns each player is given when a game starts */
+
+/* The two console keys that pick the game. Compared with `cmp.w` against the WHOLE low word of
+ * Bconin's result — unlike Ctrl-C one instruction earlier, which is a `cmp.b`. */
+#define TITLE_KEY_ONE_PLAYER 0x31u  /* '1' */
+#define TITLE_KEY_TWO_PLAYER 0x32u  /* '2' */
+
+/* 0x10aae..0x10b1e — the one-shot painting, run once before the attract loop. */
+static void draw_title_screen(uint8_t *image) {
+    (void)xbios_setpalette(image);   /* the table it hands the trap is dropped here */
+    fill_screen(image, 0);
+
+    /* The picture is SCREEN_BYTES straight out of the program's own data segment — one whole
+     * low-resolution framebuffer, a longword at a time, with an EXCLUSIVE `cmpa.l` bound on the
+     * source. fill_screen has just painted eight bytes MORE than that (see src/fill.c) and those
+     * eight survive the copy. The bound is a constant and the start is a constant, so testing it
+     * before the body is the original's post-test loop exactly. */
+    for (uint32_t src = A_load_buffer, dst = be32(image + A_screen_base);
+         src != A_load_buffer + SCREEN_BYTES; src += 4, dst += 4)
+        wr32(image + dst, be32(image + src));
+
+    image[A_text_color] = TITLE_COLOR_PROMPT;
+    draw_string(image, STR_TITLE_PROMPT);
+    image[A_text_color] = TITLE_COLOR_HISCORE;
+    draw_string(image, STR_TITLE_HISCORE);
+    image[A_text_color] = TITLE_COLOR_CREDITS;
+    draw_string(image, STR_TITLE_CREDITS);
+
+    g_dosound(image, A_snd_list_silence);   /* XBIOS Dosound: silence the chip behind the title */
+}
+
+/* The six pens the attract loop rotates, in the order the ORIGINAL moves them (0x10b26..0x10b5e):
+ * each takes its successor's colour and the last takes the first's, so the six walk one place round
+ * a closed ring every pass. TITLE_PALETTE_HUE_PEN is one of the six, so cycle_palette's write is
+ * carried on by the very next step — which is why the order of those two IS held by the
+ * differential here, unlike most transcribed orders in this reconstruction. */
+#define TITLE_HUE_RING_PENS 6u
+static const uint8_t TITLE_HUE_RING[TITLE_HUE_RING_PENS] = {10, 9, 8, 3, 6, 4};
+
+static void rotate_title_hues(uint8_t *image) {
+    uint16_t carried = be16(image + title_pen(TITLE_HUE_RING[0]));
+    for (unsigned step = 0; step + 1u < TITLE_HUE_RING_PENS; step++)
+        wr16(image + title_pen(TITLE_HUE_RING[step]),
+             be16(image + title_pen(TITLE_HUE_RING[step + 1u])));
+    wr16(image + title_pen(TITLE_HUE_RING[TITLE_HUE_RING_PENS - 1u]), carried);
+}
+
+/* Keep the attract tune going. snd_poll_done releases snd_priority to idle once the chip has fallen
+ * silent; the gate then RE-READS snd_priority rather than looking at what snd_poll_done did, so a
+ * pass that arrives already idle restarts the tune too. */
+static void restart_title_tune_when_idle(uint8_t *image) {
+    snd_poll_done(image);
+    if (be16(image + A_snd_priority) == SND_PRIORITY_IDLE)
+        play_sound(image, SND_TITLE_TUNE);
+}
+
+/* One console poll. Bconstat's answer is tested here with `tst.b` + `blt` rather than with the full
+ * `cmp.l #-1` poll_quit_key uses, so it is the SIGN OF THE LOW BYTE that says a key is waiting. */
+static int title_key_waiting(const uint8_t *image) {
+    uint32_t pending = 0;
+    os_bconstat(image, OS_BIOS_DEV_CON, &pending);
+    return (int8_t)pending < 0;
+}
+
+/* Both key branches and the joystick one end here: 0x10bfa for two players, 0x10c1e for one, and
+ * both fall into the shared tail at 0x10c32 that arms player 1. Each player gets a fresh turn count
+ * and its score's units digit put back to '0' — the game holds that digit there and never carries
+ * into it (score.h). The one-player arm additionally clears player 2's flags WORD, which is what
+ * takes that rider off the playfield. */
+static void start_game(uint8_t *image, int two_player) {
+    if (two_player) {
+        image[A_two_player_mode] = 1;
+        image[A_players_alive] = 2;
+        image[A_player2 + OBJ_SCORE_LAST_DIGIT] = '0';
+        image[A_player2 + OBJ_LIVES] = TITLE_STARTING_LIVES;
+    } else {
+        image[A_two_player_mode] = 0;
+        wr16(image + A_player2 + OBJ_FLAGS, 0);
+        image[A_players_alive] = 1;
+    }
+    image[A_object_table + OBJ_SCORE_LAST_DIGIT] = '0';
+    image[A_object_table + OBJ_LIVES] = TITLE_STARTING_LIVES;
+}
+
+/* 0x10b22..0x10bb6 — one pass of the attract loop, ending either in a key that decides the game or
+ * at the IKBD interrogate no oracle run gets past. */
+static uint32_t title_attract_pass(uint8_t *image) {
+    cycle_palette(image);
+    rotate_title_hues(image);
+    (void)xbios_setpalette(image);
+    restart_title_tune_when_idle(image);
+
+    wr16(image + A_title_poll_left, TITLE_POLL_PASSES);
+    for (;;) {
+        if (title_key_waiting(image)) {
+            uint32_t console = 0;
+            os_bconin(image, OS_BIOS_DEV_CON, &console);
+            /* Ctrl-C is a `cmp.b` and the two digits are `cmp.w`s, so a console longword whose low
+             * word is 0x0131 is NOT '1' — the only input that can tell the two widths apart. */
+            if ((uint8_t)console == KEY_CTRL_C) {
+                quit_to_desktop(image);
+                return TITLE_QUIT;
+            }
+            if ((uint16_t)console == TITLE_KEY_ONE_PLAYER) {
+                start_game(image, 0);
+                return TITLE_STARTED;
+            }
+            if ((uint16_t)console == TITLE_KEY_TWO_PLAYER) {
+                start_game(image, 1);
+                return TITLE_STARTED;
+            }
+            continue;   /* any other key: straight back to the poll, WITHOUT spending a pass */
+        }
+        /* `subq.w #1` + `bne`: a zero test on the word, not a sign test. */
+        uint16_t left = (uint16_t)(be16(image + A_title_poll_left) - 1u);
+        wr16(image + A_title_poll_left, left);
+        if (left == 0) break;
+    }
+
+    /* Ask the IKBD for both joysticks. The reply lands in ikbd_packet on an interrupt, so the
+     * routine clears the word first — which is also why no poked reply can survive to end the wait.
+     * XBIOS Ikbdws(0, A_ikbd_cmd_joyread) follows and has no image effect. */
+    wr32(image + A_ikbd_packet, 0);
+    return TITLE_IKBD_WAIT;
+}
+
+/* The wait itself. `volatile` is what stops the compiler assuming this loop terminates and deleting
+ * it: the reply is stored by an interrupt handler, which is exactly what volatile is for. Read as
+ * four BYTES rather than through a wider type — the image is a byte array, `ikbd_packet` is not
+ * longword-aligned, and a `tst.l` against zero does not care in which order the bytes are OR-ed. */
+static void wait_for_ikbd_packet(const uint8_t *image) {
+    const volatile uint8_t *packet = image + A_ikbd_packet;
+    while ((packet[0] | packet[1] | packet[2] | packet[3]) == 0)
+        ;
+}
+
+/* 0x10bb8..0x10bd7 — the wait, and what the reply says. */
+static uint32_t title_ikbd_pass(uint8_t *image) {
+    wait_for_ikbd_packet(image);
+
+    /* Either stick's fire button starts the game: the two joystick bytes are OR-ed and the branch
+     * reads the SIGN of that byte, which is the IKBD's fire bit. */
+    uint32_t packet = be32(image + A_ikbd_packet);
+    if ((int8_t)(image[packet] | image[packet + 1u]) >= 0) return TITLE_ATTRACT;
+
+    start_game(image, image[A_two_player_mode] != 0);   /* `tst.b`: whatever was chosen last */
+    return TITLE_STARTED;
+}
+
+/* The painting and the first attract pass — which is as far as ANY run gets, since every input
+ * either decides the game in that pass or reaches the IKBD wait. It is a named seam rather than two
+ * statements because g_title_screen has to stop exactly here, and a glue that re-composed it would
+ * be a second copy of the composition: a step added to the painting would then be executed by the
+ * routine and silently skipped by every case. */
+static uint32_t title_first_pass(uint8_t *image) {
+    draw_title_screen(image);
+    return title_attract_pass(image);
+}
+
+uint32_t title_screen(uint8_t *image) {
+    uint32_t outcome = title_first_pass(image);
+    for (;;) {
+        if (outcome != TITLE_IKBD_WAIT) return outcome;
+        outcome = title_ikbd_pass(image);
+        if (outcome != TITLE_ATTRACT) return outcome;
+        outcome = title_attract_pass(image);   /* round again, to the loop head at 0x10b22 */
+    }
+}
+
+/* =================================================================================================
  * _start @ 0x10000 — RECONSTRUCTED ONLY AS FAR AS ITS THIRD CALL.
  *
  * The original is twenty-one `jsr`s and a `bra` back into the middle of them. The first four —
@@ -401,17 +607,20 @@ void cycle_palette(uint8_t *image) {
  * `rts` to diff at; test_init.py stops the oracle at the THIRD call and pairs that with a proof the
  * run really does not come back.
  *
- * It stops THERE, and not at the frame loop, because title_screen @ 0x10aae is not reconstructed.
- * All SIX of its `bsr` callees now are, the last two being xbios_setpalette @ 0x10c46 and
- * cycle_palette @ 0x10c56 above — but that is not the same as portable, in three different ways.
- * Its no-key path clears ikbd_packet and spins for the IKBD interrupt the oracle never runs
- * (TRAP_MODEL.md's IKBD limit), so that path can never be diffed at all. Its '1' and '2' branches
- * DO reach the `rts` at 0x10c44, one console keystroke and one run each, and are simply unported.
- * And Ctrl-C is a SEVENTH transfer that is not a call: a `beq.w` at 0x10bea into 0x11c56, the
- * middle of poll_quit_key, whose quit tail ends in Pterm and never returns — so that branch needs
- * a stop_pc checkpoint paired with a never-returns proof, exactly as this function does.
- * The frame loop is blocked besides: read_joysticks @ 0x11d9a is unported and cannot be verified
- * at all, and check_highscore @ 0x1437a — ported — does not come back once a record is set.
+ * title_screen IS RECONSTRUCTED NOW, above, so that is no longer what stops the checkpoint here.
+ * What stops it is what the third call needs in order to be entered SAFELY. title_screen returns only for a console key that
+ * chooses a game ('1' or '2'); on every other input its attract loop falls into the IKBD wait,
+ * which never ends on either side. The oracle is capped and raises there, but the CANDIDATE is not,
+ * and a forwarding g_start reached with the wrong key staged would hang the pytest worker with no
+ * output at all under `-n auto` — the one failure a differential cannot report. Moving the
+ * checkpoint to the FIFTH call therefore needs g_start to refuse such a run, and the only honest
+ * refusal duplicates title_attract_pass's two `cmp.w`s. That is _start's own design decision, not
+ * title_screen's, so it is recorded in ../STATUS.md and left for _start's next pass rather than
+ * folded in here.
+ *
+ * The frame loop past the fifth call is blocked regardless: read_joysticks @ 0x11d9a is unported
+ * and cannot be verified at all, and check_highscore @ 0x1437a — ported — does not come back once
+ * a record is set.
  *
  * So what this proves is exactly: _start does nothing of its own before those two calls, and makes
  * them in that order.
@@ -425,10 +634,10 @@ void start(uint8_t *image) {
 /* ------------------------------------------------------------------------------------- glue ---
  *
  * Nothing in this layer takes a stack frame — each routine works entirely off globals and the
- * modeled OS state — so every g_* is a bare forwarder. The one result an image diff cannot see (the
- * table xbios_setpalette hands the trap) comes back as a return value, exactly as
- * g_flash_hiscore_color's colour word does, and the test compares it against what the oracle really
- * pushed.
+ * modeled OS state — so every g_* below is a bare forwarder bar the two title-screen ones. The one
+ * result an image diff cannot see (the table xbios_setpalette hands the trap) comes back as a
+ * return value, exactly as g_flash_hiscore_color's colour word does, and the test compares it
+ * against what the oracle really pushed.
  */
 
 void g_init_system(uint8_t *image) { init_system(image); }
@@ -442,3 +651,44 @@ void g_start(uint8_t *image) { start(image); }
 uint32_t g_xbios_setpalette(uint8_t *image) { return xbios_setpalette(image); }
 
 void g_cycle_palette(uint8_t *image) { cycle_palette(image); }
+
+/* THE FIRST GLUE HERE THAT IS NOT A BARE FORWARDER: it stops where every oracle run must stop.
+ *
+ * No run of title_screen can go round its attract loop twice. Either the first pass reads a key
+ * that decides the game — '1', '2' or Ctrl-C — or it falls through to the IKBD wait, and that wait
+ * never ends on either side: the reply arrives on an interrupt neither core runs, and the pass has
+ * just cleared the word a poke could have put one in. So the glue runs the painting and exactly one
+ * pass and reports where it stopped, which is precisely the state the oracle has at its 0x10bb8
+ * checkpoint. A forwarder would hang the pytest worker with no output at all under `-n auto`.
+ *
+ * THE PRICE, STATED RATHER THAN HIDDEN: nothing executes title_screen's `for (;;)`, so the loop's
+ * RE-ENTRY — the two calls it makes on a second time round — is not held by the differential. What
+ * the shared `title_first_pass` seam buys is that everything BEFORE that loop is: the glue drives
+ * the same function the routine does, so a step dropped from the painting or from the pass fails a
+ * case rather than vanishing. ../STATUS.md records what is left. */
+uint32_t g_title_screen(uint8_t *image) {
+    return title_first_pass(image);
+}
+
+/* ...and the second: the IKBD wait and the fire test, entered where the ORACLE can enter them — at
+ * the wait head (0x10bb8) with a reply already staged, the same rotation hiscore_joystick_input is
+ * verified through. The probe is g_pause_until_key's (src/input.c): an unstaged packet would spin
+ * for ever, and nothing but harness.differential's oracle-first ordering keeps a case from getting
+ * here, so the refusal is reported rather than left to that ordering.
+ *
+ * IT REFUSES AN OUT-OF-IMAGE PACKET POINTER TOO, and that half is not about hanging. The routine
+ * dereferences the pointer the wait spun for, and the two cores disagree about what lies outside
+ * the image: the oracle's memory callbacks answer 0 for any address past its size, while the
+ * candidate would index real host memory past the end of the buffer — undefined behaviour that
+ * either fabricates a diff or kills the worker outright. Refusing is the only honest answer, since
+ * neither reading is the original's. The reconstruction itself stays unguarded and faithful. */
+#define TITLE_PASS_REFUSED 4u   /* glue-only: the wait was refused, so it was never entered */
+
+/* Both packet bytes must be readable, so the last address the routine touches is packet + 1. */
+#define IKBD_PACKET_BYTES 2u
+
+uint32_t g_title_ikbd_pass(uint8_t *image) {
+    uint32_t packet = be32(image + A_ikbd_packet);
+    if (packet == 0 || packet > OS_IMAGE_SIZE - IKBD_PACKET_BYTES) return TITLE_PASS_REFUSED;
+    return title_ikbd_pass(image);
+}

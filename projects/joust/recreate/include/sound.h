@@ -23,7 +23,15 @@
 #define A_snd_sweep_pitch   0x10d48u  /* .w — snd_tone_sweep's descending tone period */
 #define A_snd_sweep_volume  0x10d4au  /* .w — snd_tone_sweep's descending amplitude */
 #define A_snd_priority      0x10d4cu  /* .w — the sound now playing; LOWER index = higher priority */
+/* What snd_poll_done stores into it once the chip has fallen silent. Here rather than private to
+ * src/sound.c because a SECOND layer reads it: title_screen (src/init.c) restarts the attract tune
+ * only while snd_priority holds exactly this, so the two must agree. */
+#define SND_PRIORITY_IDLE   0x10u
 #define A_sound_table       0x11774u  /* .l[] — Dosound command lists, indexed by sound number */
+/* The XBIOS Dosound list that silences the chip. NOT one of sound_table's entries — it is reached
+ * by address, from three places in two layers: the quit path and the high-score screen (src/input.c)
+ * and the title screen (src/init.c). It lived in input.h while that layer was its only user. */
+#define A_snd_list_silence  0x1150fu
 
 /* The one sound_table index TWO layers ask for: the pterodactyl's cry. src/ptero.c plays it as a
  * bird arrives and src/object.c's ptero_spot_player as one locks onto a player, so it is named for

@@ -79,6 +79,13 @@ something" flag, so RETURN and fire are ignored on the pass that follows and the
 one key to give. The glue therefore runs everything up to the loop head and reports
 `CHECK_HIGHSCORE_ENTERED`, which is exactly the state the oracle has at its checkpoint.
 
+`g_title_screen` (`src/init.c`) is the third, and it is the same shape as the second with one thing
+in its favour: **no run can go round `title_screen`'s attract loop twice**, so stopping after one
+pass is not an approximation, it is every reachable run. Either the pass reads a key that decides
+the game — `'1'`, `'2'` or Ctrl-C, all three diffed to their own end — or it falls through to the
+IKBD wait at `0x10bb8`, which ends on neither side. So the glue runs the painting and exactly one
+pass and reports `TITLE_IKBD_WAIT`, which is the state the oracle has at its checkpoint.
+
 ### Entering a loop mid-body, so that a pass can be diffed at all
 
 The cost of that refusal is that the loop body is verified separately, and by a glue with **no
@@ -86,6 +93,24 @@ counterpart C function**: `g_hiscore_entry_pass` runs one pass *rotated* to star
 can start. The oracle is entered at the loop's colour-cycle tail (`0x14494`), runs round the branch
 back to the head and through the keyboard poll, and stops at the joystick call it never returns
 from (`0x14490`); the glue makes the same two calls.
+
+`g_title_ikbd_pass` is the same rotation for what lies *past* `title_screen`'s wait: the oracle
+starts **at** `0x10bb8` with a reply already in `ikbd_packet`, so the wait falls straight through
+and the fire test, the mode test and the `rts` are ordinary diffed work. Starting any earlier is
+useless for the reason `hiscore_joystick_input` meets — the routine clears `ikbd_packet` on the way
+in, so the poke does not survive. Unlike the entry-loop rotation this one drives a **real function**
+(`title_ikbd_pass`) and so holds order as well as presence, its two steps being a wait and a test of
+what the wait produced. It is still not a bare forwarder: it refuses a packet pointer that is zero
+or outside the image, because the routine dereferences that pointer and the two cores disagree
+about what lies outside — the oracle's callbacks answer `0`, while the candidate would index host
+memory past the end of the buffer.
+
+**A refusing glue needs a wall-clock deadline as well as a probe.** The probe is one layer, and a
+gap in it costs the whole worker: `test_init.py` therefore routes every candidate-side entry into
+`g_title_ikbd_pass` through a `threading` deadline, exactly as `_pause_glue` does for the pause
+spin. That second layer is what makes non-termination *assertable* rather than silent — with it,
+deleting the probe or narrowing the wait fails as an ordinary red instead of hanging, which is the
+difference between a mutation sweep that scores those mutants and one that cannot.
 
 **What that rotation buys is presence, not order.** No ordering anywhere in the entry loop is held
 by the differential on the C side — not in `check_highscore`'s own `for (;;)`, and not in the glue
@@ -140,10 +165,13 @@ Joust reads two files at startup:
   release loads no external file but `HIGH.SCO` and runs on the placeholder picture the PRG
   carries. Staging that placeholder is not a compromise — it is what the shipped game does.
 
-No test in the suite stages either file yet. When the startup path is reconstructed, the intended
-stand-in for `JOUST.MUR` is the PRG's *own* data segment (`img[0x23aae : 0x23aae + 0x7d00]`) — the
-differential only requires that both sides see identical staged bytes, not that the bytes are the
-real music. That stand-in must never be described as authentic music data.
+`HIGH.SCO` is staged by `test_input.py`'s quit battery and by `test_init.py`'s `init_system` and
+Ctrl-C ones; `JOUST.MUR` is staged by nobody, because nothing opens it. `title_screen`'s battery
+pokes **noise** over the buffer it would have landed in instead — which is a stronger input than
+either the real picture or the PRG's placeholder, since a copy from the wrong address then shows as
+a diff. Those bytes are constructed and are not a stand-in for authentic picture data —
+`test_title_screen_paints_the_placeholder_picture_the_prg_carries` is the one case that runs on the
+buffer's shipped contents, and it is the only one that says anything about the real artwork.
 
 ## The TOS traps Joust needs
 

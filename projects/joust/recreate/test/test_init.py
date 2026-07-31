@@ -1,9 +1,9 @@
 """Differential tests for Joust's startup chain (src/init.c).
 
 Covered here: init_system @ 0x10080, init_video @ 0x104b2, init_game @ 0x105f0, _start @ 0x10000 as
-far as its third call, and title_screen's two palette helpers xbios_setpalette @ 0x10c46 and
-cycle_palette @ 0x10c56. title_screen @ 0x10aae itself is NOT reconstructed; the reason is measured
-by test_title_screen_no_key_path_stops_in_the_ikbd_wait.
+far as its third call, title_screen @ 0x10aae, and its two palette helpers xbios_setpalette
+@ 0x10c46 and cycle_palette @ 0x10c56. Of title_screen's four exits only one is an `rts`; what each
+of the others is verified at, and why, is in the section that opens that battery.
 
 This is the most trap-dense code in the game, so the kit's TOS model
 (../../../../tools/recreate_kit/TRAP_MODEL.md) sets what can be proved at all. Four of its limits
@@ -25,8 +25,10 @@ shape this whole file:
     really does not reach `rts` — otherwise a checkpointed run that fell through would stop at the
     sentinel and pass silently.
 """
+import functools
 import random
 import struct
+import threading
 
 import ctypes
 import pytest
@@ -36,6 +38,10 @@ import emu
 from harness import differential, report
 from test_collide import _wrote         # ...and the shared "what did the ORACLE actually store?"
 from test_constants import _defines     # the shared `#define` scraper; see the pins at the end
+# title_screen's Ctrl-C branches INTO poll_quit_key's quit tail, so its cases need that tail's own
+# staging and checkpoint. Imported rather than restated: a second copy of the filesystem and system
+# state would drift from the battery that verified the tail.
+import test_input
 
 # ---- entry points (Ghidra addresses; ../../names.txt) ----
 ENTRY_START = 0x10000
@@ -46,8 +52,9 @@ ENTRY_TITLE_SCREEN = 0x10aae
 ENTRY_POLL_QUIT_KEY = 0x11c24      # verified in test_input.py; title_screen jumps into its MIDDLE
 
 # ---- checkpoint PCs (harness `stop_pc`) ----
-# _start's third `jsr`. Everything before it is init_system and init_game; title_screen and the
-# per-frame loop after it are unreconstructed (see the module comment in ../src/init.c).
+# _start's third `jsr`. Everything before it is init_system and init_game. title_screen after it IS
+# reconstructed now; what keeps the checkpoint here is that entering it needs a glue refusal of its
+# own (see the module comment in ../src/init.c and _start's row in ../STATUS.md).
 CHECKPOINT_START_AT_TITLE = 0x1000c
 # The return address of each trap whose arguments the image cannot show. Reaching one of these means
 # the trap has been serviced and A7 is back at the caller's pushes, which are still in memory.
@@ -86,7 +93,9 @@ A_GROUND_ANIM = 0x10d68
 A_PLAYFIELD_BOTTOM = 0x10d60
 A_TROLL_STATE = 0x10dc4
 A_DRAW_DST = 0x10de8               # init_system's palette write cursor
-A_DRAW_X = 0x10dec                 # ...its pen, and then its GEMDOS file handle
+A_DRAW_X = 0x10dec                 # ...its pen, then its GEMDOS file handle, then title_screen's
+                                   # console-poll counter
+A_DRAW_Y = 0x10dee                 # addrs.h — draw_x's neighbour, which nothing here may touch
 A_SPAWN_TIMER = 0x10dfc
 A_RNG_PTR = 0x10dfe
 A_MESSAGE_TABLE = 0x10e16
@@ -97,6 +106,10 @@ A_EFFECT_TABLE = 0x1137a
 A_PTERODACTYL_TABLE = 0x113ba
 A_GAME_PALETTE = 0x1143a           # also A_pterodactyl_table_END
 A_IKBD_CMD_JOYMODE = 0x1145a
+A_IKBD_CMD_JOYREAD = 0x1145b       # input.h: the $16 title_screen and read_joysticks send
+A_SND_LIST_SILENCE = 0x1150f       # sound.h: the Dosound list that silences the chip. Shares its
+                                   # address with A_INIT_GLOBALS_TEMPLATE_END above — the list sits
+                                   # exactly where init_game's template stops
 A_INIT_PLAYERS_TEMPLATE = 0x1145c
 A_INIT_GLOBALS_TEMPLATE = 0x114f8
 A_INIT_GLOBALS_TEMPLATE_END = 0x1150f
@@ -155,7 +168,7 @@ SCREEN_ROW_BYTES = 0xa0
 # file table; filled with noise so a missing write shows as a diff rather than as zero over zero.
 SCREEN = 0x70000
 SCREEN_SPAN = 0x8000
-UNWRITTEN_B, UNWRITTEN_L = 0x5a, 0x5a5a5a5a
+UNWRITTEN_B, UNWRITTEN_W, UNWRITTEN_L = 0x5a, 0x5a5a, 0x5a5a5a5a
 STAGED_MOUSEVEC, STAGED_JOYVEC = 0x0001a5a5, 0x0001c3c3
 
 # init_game clears the first field of every record across four tables that happen to be contiguous
@@ -177,7 +190,8 @@ _U8P = ctypes.POINTER(ctypes.c_uint8)
 # pointer is the only thing about it a test can compare (see src/init.c).
 for _glue, _ret in (("g_start", None), ("g_init_system", None), ("g_init_video", None),
                     ("g_init_game", None), ("g_cycle_palette", None),
-                    ("g_xbios_setpalette", ctypes.c_uint32)):
+                    ("g_xbios_setpalette", ctypes.c_uint32),
+                    ("g_title_screen", ctypes.c_uint32), ("g_title_ikbd_pass", ctypes.c_uint32)):
     _fn = getattr(harness._lib, _glue)
     _fn.argtypes = [_U8P]
     _fn.restype = _ret
@@ -207,10 +221,40 @@ def _cycle(lib, buf):
     return lib.g_cycle_palette(buf)
 
 
+def _title(lib, buf):
+    return lib.g_title_screen(buf)
+
+
+# The glue's own probe is the FIRST layer against title_screen's uncapped IKBD spin; this is the
+# second, and the README (../README.md, "A glue may refuse a call the original makes") makes it
+# mandatory rather than optional. A candidate that entered the spin would hang this worker for ever
+# and print nothing at all under `-n auto` — the one failure a differential cannot report — so every
+# candidate-side entry goes through a deadline that turns it into an ordinary red assert. Modelled
+# on test_input.py's `_pause_glue`, which carries the full rationale; kept local rather than shared
+# because it names its own symbol, and a wrapper taking the symbol as an argument would be the only
+# thing either file gained.
+TITLE_GLUE_TIMEOUT_S = 5   # absurdly generous for a wait that leaves on its first read
+
+
+def _title_ikbd(lib, buf):
+    returned = []
+    call = threading.Thread(target=lambda: returned.append(lib.g_title_ikbd_pass(buf)), daemon=True)
+    call.start()
+    call.join(TITLE_GLUE_TIMEOUT_S)
+
+    assert returned, (f"g_title_ikbd_pass did not return within {TITLE_GLUE_TIMEOUT_S}s — the "
+                      "uncapped IKBD wait was entered and never left")
+    return returned[0]
+
+
 # ------------------------------------------------------------------ shared staging helpers
 
+@functools.lru_cache(maxsize=None)
 def _noise(seed, length):
-    return bytes(random.Random(seed).randrange(0x100) for _ in range(length))
+    """A seeded noise block. Memoised, and built in one `randbytes` call rather than per byte,
+    because title_screen's two inputs are 32 KiB each and its fuzz would otherwise spend more time
+    here than in the differential. Cached blocks are never mutated — `make_image` copies them."""
+    return random.Random(seed).randbytes(length)
 
 
 def _system_pokes(seed=1, conterm=0xff, hiscore=None):
@@ -686,17 +730,17 @@ def test_start_never_returns():
 
 
 def test_the_palette_routines_below_are_title_screens_own():
-    """WHY THE CHECKPOINT SITS WHERE IT DOES, and what the next section covers. title_screen's first
-    instruction calls xbios_setpalette @ 0x10c46, and it calls cycle_palette @ 0x10c56 before it
-    reads a key. Both are reconstructed now — at their OWN entries, below — but title_screen is not,
-    so the checkpoint still stops short of it (see
-    test_title_screen_no_key_path_stops_in_the_ikbd_wait). Pinned on the two `bsr` targets so the
-    claim tracks the binary rather than this comment.
+    """WHY _start's CHECKPOINT SITS WHERE IT DOES. title_screen's first instruction calls
+    xbios_setpalette @ 0x10c46, and it calls cycle_palette @ 0x10c56 before it reads a key. All
+    three are reconstructed now, each verified at its OWN entry; what still keeps _start's
+    checkpoint short of the third `jsr` is that title_screen returns only for a key that chooses a
+    game, so a forwarding g_start would need a refusal of its own (see ../src/init.c). Pinned on the
+    two `bsr` targets so the claim tracks the binary rather than this comment.
 
     These were the last two of its SIX `bsr` callees to be ported; the other four — fill_screen
     @ 0x102e2, draw_string @ 0x10700 (three sites), snd_poll_done @ 0x10a8a and play_sound
-    @ 0x10a56 — were already verified in their own layers. A SEVENTH transfer is not a call at all
-    and is why "all its callees are ported" would still not mean "portable": the Ctrl-C key is a
+    @ 0x10a56 — were already verified in their own layers. A SEVENTH transfer is not a call at all,
+    and is what "all its callees are ported" would still not have covered: the Ctrl-C key is a
     `beq.w` at 0x10bea into 0x11c56, the MIDDLE of poll_quit_key, which ends in Pterm and never
     comes back. See test_title_screen_ctrl_c_jumps_into_poll_quit_key.
     """
@@ -707,62 +751,6 @@ def test_the_palette_routines_below_are_title_screens_own():
         assert site + 2 + displacement == callee
     assert harness.NAME_MAP.get(ENTRY_CYCLE_PALETTE) == "cycle_palette"
     assert harness.NAME_MAP.get(ENTRY_XBIOS_SETPALETTE) == "xbios_setpalette"
-
-
-TITLE_IKBD_WAIT = 0x10bb8   # `tst.l ikbd_packet / beq.s *-6` — title_screen's no-key spin
-
-
-def test_title_screen_no_key_path_stops_in_the_ikbd_wait():
-    """Porting the two palette helpers did NOT unblock title_screen's no-key path, and this says
-    WHERE it stops rather than only that it stops. Two halves, and the pair is the point:
-
-      * a checkpoint run REACHES the wait head, so the 400-pass Bconstat poll ahead of it really
-        does fall through to `clr.l ikbd_packet` + Ikbdws + the spin;
-      * and an uncapped run never reaches `rts`, because the reply that would end that spin arrives
-        by an IKBD INTERRUPT the oracle never runs (TRAP_MODEL.md's IKBD limit — read_joysticks'
-        wall). Without the first half, a hang anywhere earlier would pass just as happily.
-
-    Says nothing about the keyed branches, and they do not agree with each other: '1' and '2' reach
-    the `rts` at 0x10c44 (ordinary unported work, one console keystroke per run), while Ctrl-C leaves
-    title_screen altogether — see test_title_screen_ctrl_c_jumps_into_poll_quit_key.
-    """
-    pokes = {A_SCREEN_BASE: struct.pack(">I", SCREEN),
-             # A sentinel in ikbd_packet, so "it is 0 at the wait" means the routine CLEARED it
-             # rather than found it clear.
-             A_IKBD_PACKET: struct.pack(">I", UNWRITTEN_L)}
-    # emu.run RAISES "did not reach checkpoint" when the stop_pc is not hit, so returning at all is
-    # the first half of the proof; the packet read is what says the clr.l ran on the way.
-    image, _, _ = emu.run(harness.make_image(pokes), ENTRY_TITLE_SCREEN,
-                          stop_pc=TITLE_IKBD_WAIT, max_insns=SPIN_CAP)
-    assert struct.unpack_from(">I", image, A_IKBD_PACKET)[0] == 0, "ikbd_packet was not cleared"
-    _never_returns(pokes, ENTRY_TITLE_SCREEN)
-
-
-TITLE_CTRL_C_TEST = 0x10be6    # `cmp.b #$3,d0` — the quit key, tested before '1' and '2'
-TITLE_CTRL_C_BRANCH = 0x10bea  # ...and the `beq.w` that leaves the routine
-POLL_QUIT_KEY_QUIT_TAIL = 0x11c56   # inside poll_quit_key @ 0x11c24 (114 bytes), NOT its entry
-CTRL_C_KEY = 3
-
-
-def test_title_screen_ctrl_c_jumps_into_poll_quit_key():
-    """The transfer that makes title_screen harder to port than its call graph suggests, and the
-    reason "all six callees are ported" is not the same as "portable".
-
-    Ctrl-C is not handled in title_screen at all: it is a `beq.w` into 0x11c56, the MIDDLE of
-    poll_quit_key — past that routine's own entry and its Bconstat/Bconin, straight into the quit
-    tail that silences the sound, writes HIGH.SCO and ends in Pterm. So it is neither a call nor a
-    branch that returns: a reconstruction of title_screen would need a stop_pc checkpoint plus a
-    never-returns pairing there, the way _start's third `jsr` is handled, and cannot simply call
-    poll_quit_key. Pinned on the encoding so the claim tracks the binary.
-    """
-    assert _immediate(TITLE_CTRL_C_TEST, 2) == 0xb03c, f"{TITLE_CTRL_C_TEST:#x} is not `cmp.b #imm,d0`"
-    assert _immediate(TITLE_CTRL_C_TEST + 2, 2) == CTRL_C_KEY
-    assert _immediate(TITLE_CTRL_C_BRANCH, 2) == 0x6700, f"{TITLE_CTRL_C_BRANCH:#x} is not a beq.w"
-    displacement = struct.unpack_from(">h", harness.BASE_IMAGE, TITLE_CTRL_C_BRANCH + 2)[0]
-    assert TITLE_CTRL_C_BRANCH + 2 + displacement == POLL_QUIT_KEY_QUIT_TAIL
-    assert harness.NAME_MAP.get(ENTRY_POLL_QUIT_KEY) == "poll_quit_key"
-    assert ENTRY_POLL_QUIT_KEY < POLL_QUIT_KEY_QUIT_TAIL, \
-        "the target must be INSIDE poll_quit_key, not its entry — that is the whole point"
 
 
 # ============================== the title-screen palette @ 0x10c46 and 0x10c56
@@ -1021,6 +1009,692 @@ def test_cycle_palette_attribution():
         _cycle_case(counter, colour, poison=True)
 
 
+# ================================================================== title_screen @ 0x10aae
+#
+# The attract screen, and the one routine of the startup chain with FOUR exits, only one of which is
+# an `rts`. What can be verified, and how, follows straight from the kit's console and IKBD models:
+#
+#   * '1' and '2' run to the `rts` at 0x10c44 and are diffed there, one console keystroke per run
+#     (the model delivers exactly one — TRAP_MODEL.md Phase 1).
+#   * CTRL-C leaves the routine altogether — a `beq.w` into poll_quit_key's quit tail, which ends in
+#     GEMDOS Pterm — so it is diffed at that tail's own checkpoint, PAIRED with a never-returns
+#     proof over the SAME staging.
+#   * EVERYTHING ELSE (no key, or a key it does not act on) falls through the console poll into the
+#     IKBD wait at 0x10bb8, which never ends on either side: the reply arrives on an interrupt the
+#     oracle never runs, and the routine clears ikbd_packet on the way in so no poke survives. Those
+#     runs are diffed at that wait, likewise paired with a never-returns proof.
+#   * THE JOYSTICK START past that wait is reachable only by ROTATING the entry: the oracle is
+#     started AT 0x10bb8 with a reply already staged, exactly as hiscore_joystick_input is.
+
+TITLE_IKBD_WAIT_PC = 0x10bb8     # `tst.l ikbd_packet / beq.s *-6`, in TWO roles: the checkpoint the
+                                 # attract pass stops at, and the entry the joystick pass is rotated
+                                 # to (nothing else can get an oracle run past the wait)
+TITLE_ATTRACT_HEAD = 0x10b22     # the attract loop's head: where a reply with no fire branches back
+TITLE_AFTER_COPY = 0x10ad0       # the first `move.b #imm,text_color`: the picture is on the screen
+                                 # and no text has been drawn over it yet
+AFTER_TITLE_IKBDWS = 0x10bb6     # the joystick interrogate's stack cleanup
+
+# title_screen's result codes (mirrors of include/init.h) and the glue-only refusal (src/init.c).
+TITLE_STARTED, TITLE_QUIT, TITLE_IKBD_WAIT, TITLE_ATTRACT, TITLE_PASS_REFUSED = 0, 1, 2, 3, 4
+
+TITLE_COLOR_PROMPT, TITLE_COLOR_HISCORE, TITLE_COLOR_CREDITS = 0xf, 2, 1
+STR_TITLE_PROMPT, STR_TITLE_HISCORE, STR_TITLE_CREDITS = 0x183b3, 0x18381, 0x183d5
+TITLE_POLL_PASSES = 400
+TITLE_STARTING_LIVES = 4
+SND_TITLE_TUNE = 0xe
+TITLE_KEY_ONE_PLAYER, TITLE_KEY_TWO_PLAYER = 0x31, 0x32
+KEY_CTRL_C = 3                     # input.h — poll_quit_key tests the same byte
+
+TITLE_CTRL_C_TEST = 0x10be6        # `cmp.b #$3,d0` — the quit key, tested before '1' and '2'
+TITLE_CTRL_C_BRANCH = 0x10bea      # ...and the `beq.w` that leaves the routine
+POLL_QUIT_KEY_QUIT_TAIL = 0x11c56  # inside poll_quit_key @ 0x11c24 (114 bytes), NOT its entry
+
+# The six pens the attract loop rotates, in the order the original moves them (../src/init.c).
+TITLE_HUE_RING = (10, 9, 8, 3, 6, 4)
+
+A_TEXT_COLOR = 0x10e0f             # draw.h
+A_SND_PRIORITY = 0x10d4c           # sound.h
+SND_PRIORITY_IDLE = 0x10
+PSG_MIXER, PSG_MIXER_ALL_OFF = 7, 0x3f   # src/sound.c: all six tone+noise enables off = silence
+A_SOUND_TABLE = 0x11774            # sound.h
+OBJ_SCORE_LAST_DIGIT = 0x44        # score.h
+OBJ_FLAGS = 0                      # joust.h
+
+# Two staged joystick bytes, clear of the program (ends 0x2b7ae), of SCREEN and of the file table.
+IKBD_PACKET_BUF = 0x60000
+# ...and a second buffer whose POINTER HAS A ZERO HIGH WORD (0x0000c000). It is what pins the wait
+# as a LONGWORD test, and its absence is what made that width look like an inherent limit: at
+# IKBD_PACKET_BUF the pointer's second byte is 0x06, so a wait reading only the first two bytes
+# still sees something non-zero and agrees on every case. Clear of the poked block (ends 0x620), of
+# the program (loads at 0x10000) and of SCREEN.
+IKBD_PACKET_BUF_HIGH_ZERO = 0xc000
+IKBD_PACKET_BYTES = 2              # src/init.c: what the glue's bound must leave readable
+IKBD_FIRE = 0x80                   # the IKBD joystick byte's bit 7 — read here as its SIGN
+
+
+# A cycled pen with NOTHING in its low 12 bits: cycle_palette returns early on one and leaves it
+# wholly untouched, high nibble included (see its own battery below), so it is a sentinel that
+# survives the colour cycle and lets the ring's permutation be read off on its own.
+TITLE_HUE_COLOURLESS = 0xf000
+TITLE_HUE_RED_3 = 0x0300     # ...and a hue the SHIPPED ring really circulates (red, level 3)
+
+
+def _title_palette(seed, hue=TITLE_HUE_COLOURLESS):
+    """16 DISTINCT pen words, with `hue` at the pen cycle_palette animates.
+
+    The fifteen others carry the seed in their low 12 bits so no two pens are equal — which is what
+    makes the ring's permutation readable — while `hue` decides whether the colour cycle does
+    anything at all this run.
+    """
+    pens = [((seed + pen) * 0x111 + pen) & 0x0fff | 0x1000 for pen in range(TITLE_PALETTE_PENS)]
+    pens[TITLE_PALETTE_HUE_PEN] = hue
+    return b"".join(struct.pack(">H", pen) for pen in pens)
+
+
+def _title_pokes(seed=1, key=None, console=None, counter=0, priority=None, mixer=None,
+                 two_player=UNWRITTEN_B, picture=None, hue=TITLE_HUE_COLOURLESS, screen=SCREEN):
+    """Everything title_screen reads, plus a sentinel wherever it must write.
+
+    `key` stages one console keystroke through the model; `console` pokes the console longword RAW,
+    which is the only way to build a low WORD real TOS cannot produce (see the width test below) —
+    both fields together, so the console is never half-armed. `screen` defaults to SCREEN because
+    the picture assertions read that span by name; the one case that moves it is what says the copy
+    destination is READ from screen_base rather than being a constant this battery always agrees
+    with (a wider sweep over the base belongs to init_game and init_video, which do the arithmetic).
+    """
+    pokes = {screen: _noise(seed, SCREEN_SPAN),
+             A_SCREEN_BASE: struct.pack(">I", screen),
+             # The title picture: the PRG's own data segment, which is where JOUST.MUR would have
+             # landed. Staged as NOISE so a copy from the wrong address fails as a diff.
+             A_LOAD_BUFFER: picture if picture is not None else _noise(seed + 1, SCREEN_BYTES),
+             A_TITLE_PALETTE: _title_palette(seed, hue),
+             A_PALETTE_CYCLE_CTR: struct.pack(">H", counter),
+             A_IKBD_PACKET: struct.pack(">I", UNWRITTEN_L),
+             A_PLAYERS_ALIVE: bytes([UNWRITTEN_B]),
+             A_TWO_PLAYER_MODE: bytes([two_player]),
+             A_DRAW_X: struct.pack(">H", UNWRITTEN_W),
+             # draw_x's neighbour: the poll counter is a WORD store, so this must survive it.
+             A_DRAW_Y: struct.pack(">H", UNWRITTEN_W),
+             A_TEXT_COLOR: bytes([UNWRITTEN_B])}
+    for player in (A_OBJECT_TABLE, A_PLAYER2):
+        # FOUR bytes, not two. The one-player arm clears these flags with a `clr.w`, and the base
+        # image is ALREADY ZERO in the two bytes above them — so a two-byte sentinel cannot tell
+        # that word store from a longword one, and a reconstruction using the wrong width passes.
+        # The extra two bytes are OBJ_X, which title_screen never touches.
+        pokes[player + OBJ_FLAGS] = struct.pack(">I", UNWRITTEN_L)
+        pokes[player + OBJ_SCORE_LAST_DIGIT] = bytes([UNWRITTEN_B])
+        pokes[player + OBJ_LIVES] = bytes([UNWRITTEN_B])
+    if priority is not None:
+        pokes[A_SND_PRIORITY] = struct.pack(">H", priority)
+    if mixer is not None:
+        pokes.update(harness.psg_regs({PSG_MIXER: mixer}))
+    if key is not None:
+        pokes.update(harness.console_key(key))
+    if console is not None:
+        pokes[harness.OS_CON_PENDING] = struct.pack(">I", 1)
+        pokes[harness.OS_CON_CHAR] = struct.pack(">I", console)
+    return pokes
+
+
+def _title_case(expect, stop_pc=0, poison=False, **staging):
+    """One title_screen run: oracle from 0x10aae, candidate through g_title_screen."""
+    pokes = _title_pokes(**staging)
+    diffs, info = differential(ENTRY_TITLE_SCREEN, {"_pokes": pokes}, _title,
+                               stop_pc=stop_pc, poison=poison)
+    assert not diffs, f"{staging}\n{report(diffs)}"
+    assert info["ret"] == expect, f"title_screen reported {info['ret']}, expected {expect}"
+    return pokes, info
+
+
+# ------------------------------------------------------------------ the two keys that start a game
+
+@pytest.mark.parametrize("key,two_player", ((chr(TITLE_KEY_ONE_PLAYER), False),
+                                            (chr(TITLE_KEY_TWO_PLAYER), True)))
+def test_title_screen_key_starts_the_chosen_game(key, two_player):
+    """The only two inputs that reach the `rts` at 0x10c44, so the only two runs the differential
+    can diff whole: the picture, the three text lines, the colour cycle, the palette ring, the sound
+    poll and the player records, all in one compare.
+
+    Both arms fall into the SAME tail at 0x10c32, which is why player 1 is armed identically by
+    each; only the two-player arm touches player 2's record, and only the one-player arm clears
+    player 2's flags WORD.
+    """
+    _, info = _title_case(TITLE_STARTED, key=key, poison=True)
+    writes = info["writes"]
+
+    # Read off the ORACLE'S WRITE SET rather than its final image: "the original stored this" is a
+    # stronger claim than "this byte ended up here", and the untouched cases below become "the
+    # original never stored there at all", which a final-image read cannot distinguish from a store
+    # that happened to write the sentinel back.
+    assert _wrote(info, A_PLAYERS_ALIVE) == (2 if two_player else 1)
+    assert _wrote(info, A_TWO_PLAYER_MODE) == (1 if two_player else 0)
+    assert _wrote(info, A_OBJECT_TABLE + OBJ_SCORE_LAST_DIGIT) == ord("0")
+    assert _wrote(info, A_OBJECT_TABLE + OBJ_LIVES) == TITLE_STARTING_LIVES
+    if two_player:
+        assert _wrote(info, A_PLAYER2 + OBJ_SCORE_LAST_DIGIT) == ord("0")
+        assert _wrote(info, A_PLAYER2 + OBJ_LIVES) == TITLE_STARTING_LIVES
+        assert A_PLAYER2 + OBJ_FLAGS not in writes, \
+            "the two-player arm must NOT clear player 2's flags"
+    else:
+        assert _wrote(info, A_PLAYER2 + OBJ_FLAGS, 2) == 0
+        assert A_PLAYER2 + OBJ_SCORE_LAST_DIGIT not in writes, \
+            "the one-player arm must leave player 2's score alone"
+        assert A_PLAYER2 + OBJ_LIVES not in writes
+
+
+def test_title_screen_counts_its_console_polls_in_a_word():
+    """The poll counter is `move.w #$190` + `subq.w #1` + `bne`. A key on the FIRST poll leaves it
+    at 400 untouched, which is the only run that can show the value at all (every run that spends
+    it ends at 0), and draw_y's sentinel one word up is what pins the store's WIDTH.
+
+    The `bne` is a zero test, not a sign test — unobservable from 400, so it is pinned against the
+    original's encoding rather than claimed from a case."""
+    pokes, _ = _title_case(TITLE_STARTED, key=chr(TITLE_KEY_ONE_PLAYER))
+    image = _oracle_final(pokes, ENTRY_TITLE_SCREEN)
+    assert struct.unpack_from(">H", image, A_DRAW_X)[0] == TITLE_POLL_PASSES
+    assert struct.unpack_from(">H", image, A_DRAW_Y)[0] == UNWRITTEN_W, \
+        "the poll counter was stored wider than a word"
+
+    assert _immediate(0x10b82, 2) == TITLE_POLL_PASSES, "move.w #$190,draw_x @ 0x10b80"
+    assert _immediate(0x10b9a, 2) == 0x5379, "0x10b9a is not `subq.w #1,abs.l`"
+    assert _immediate(0x10ba0, 2) == 0x66e6, "0x10ba0 is not the `bne.s` back to the poll head"
+
+
+# ------------------------------------------------------------------ what it paints
+
+def test_title_screen_paints_the_picture_over_the_fill():
+    """Checkpointed one instruction past the copy loop, before any text is drawn over it.
+
+    Three claims in one: the source is load_buffer (staged as noise, so a copy from anywhere else
+    diverges), the copy is exactly SCREEN_BYTES long — its `cmpa.l` bound is EXCLUSIVE — and the
+    eight bytes fill_screen paints PAST the framebuffer (src/fill.c) survive it.
+    """
+    pokes = _title_pokes()
+    image = _oracle_final(pokes, ENTRY_TITLE_SCREEN, stop_pc=TITLE_AFTER_COPY)
+    picture = pokes[A_LOAD_BUFFER]
+    assert image[SCREEN:SCREEN + SCREEN_BYTES] == picture
+    assert image[SCREEN + SCREEN_BYTES:SCREEN + SCREEN_BYTES + 8] == bytes(8), \
+        "fill_screen's eight extra bytes are not what the copy stops short of"
+    assert image[SCREEN + SCREEN_BYTES + 8:SCREEN + SCREEN_SPAN] == \
+        pokes[SCREEN][SCREEN_BYTES + 8:], "the run painted past fill_screen's own end"
+
+
+def test_title_screen_paints_the_placeholder_picture_the_prg_carries():
+    """THE ONE CASE THAT RUNS ON THE REAL ARTWORK. Every other case pokes noise over load_buffer,
+    which is the stronger input for catching a wrong source address but says nothing about the
+    shipped bytes. This says the routine really paints the picture JOUST.PRG carries — which is what
+    the Gamex release shows, since its JOUST.MUR loader is branched over (../README.md)."""
+    shipped = bytes(harness.BASE_IMAGE[A_LOAD_BUFFER:A_LOAD_BUFFER + SCREEN_BYTES])
+    assert len(set(shipped)) > 1, "load_buffer holds a blank framebuffer, not a picture"
+    pokes, _ = _title_case(TITLE_STARTED, key=chr(TITLE_KEY_ONE_PLAYER), picture=shipped)
+    image = _oracle_final(pokes, ENTRY_TITLE_SCREEN, stop_pc=TITLE_AFTER_COPY)
+    assert image[SCREEN:SCREEN + SCREEN_BYTES] == shipped
+
+
+SCREEN_SECOND = 0x88000   # a second base, clear of SCREEN (0x70000 + 0x8000) and of the file table
+
+
+def test_title_screen_paints_where_screen_base_points():
+    """The destination is READ from screen_base, not assumed.
+
+    Every other case in this file stages the same base, so a reconstruction that had the address
+    baked in would agree with all of them — this is the one that moves it. It also proves the eight
+    bytes fill_screen paints past the framebuffer follow the base rather than staying put.
+    """
+    pokes = _title_pokes(screen=SCREEN_SECOND)
+    diffs, info = differential(ENTRY_TITLE_SCREEN, {"_pokes": pokes}, _title,
+                               stop_pc=TITLE_IKBD_WAIT_PC)
+    assert not diffs, report(diffs)
+    assert info["ret"] == TITLE_IKBD_WAIT
+
+    image = _oracle_final(pokes, ENTRY_TITLE_SCREEN, stop_pc=TITLE_AFTER_COPY)
+    assert image[SCREEN_SECOND:SCREEN_SECOND + SCREEN_BYTES] == pokes[A_LOAD_BUFFER]
+    assert image[SCREEN:SCREEN + SCREEN_SPAN] == harness.BASE_IMAGE[SCREEN:SCREEN + SCREEN_SPAN], \
+        "the run painted at the base every OTHER case stages"
+
+
+def test_title_screen_draws_three_lines_each_in_its_own_colour():
+    """The three `draw_string` calls and the colour each is preceded by. The PAIRING is held by the
+    differential — a swapped colour repaints the glyphs differently — but the colour byte itself is
+    overwritten twice, so only the last survives to be read back; the pairing is therefore ALSO
+    pinned against the original's own immediates.
+
+    The middle line is not a fixed string: HIGH.SCO's record lies inside it (init.h), which is how
+    the title screen shows the saved high score.
+    """
+    pokes, _ = _title_case(TITLE_STARTED, key=chr(TITLE_KEY_ONE_PLAYER))
+    image = _oracle_final(pokes, ENTRY_TITLE_SCREEN)
+    assert image[A_TEXT_COLOR] == TITLE_COLOR_CREDITS, "the last line's colour is what survives"
+
+    for colour_at, colour, string_at, string in (
+            (0x10ad3, TITLE_COLOR_PROMPT, 0x10ada, STR_TITLE_PROMPT),
+            (0x10ae9, TITLE_COLOR_HISCORE, 0x10af0, STR_TITLE_HISCORE),
+            (0x10aff, TITLE_COLOR_CREDITS, 0x10b06, STR_TITLE_CREDITS)):
+        assert _immediate(colour_at, 1) == colour, f"text_color immediate @ {colour_at:#x}"
+        assert _immediate(string_at, 4) == string, f"draw_string's argument @ {string_at:#x}"
+    assert A_HISCORE_NAME == STR_TITLE_HISCORE + _defines("include/init.h")[
+        "STR_TITLE_HISCORE_RECORD_OFF"], "the HIGH SCORE line no longer contains hiscore_name"
+
+
+def test_title_screen_hands_setpalette_the_title_palette():
+    """The palette write is off-image, so a wrong table would be invisible to the diff. Read the
+    trap's own pushes back out of the oracle's stack at the FIRST of title_screen's two calls.
+
+    The outermost longword is the `bsr`'s own return address, which is the extra thing this says
+    over xbios_setpalette's battery: the call came from title_screen's very first instruction."""
+    words = _trap_args(_title_pokes(), ENTRY_TITLE_SCREEN, AFTER_TITLE_SETPALETTE, 5)
+    assert _pushed_long(words, 0) == ENTRY_TITLE_SCREEN + 4, "not title_screen's `bsr` at 0x10aae"
+    assert _pushed_long(words, 2) == A_TITLE_PALETTE
+    assert words[4] == XBIOS_SETPALETTE
+
+
+def test_title_screen_asks_the_ikbd_for_both_joysticks():
+    """XBIOS Ikbdws has no image effect either: the command string's address and its length word
+    (count - 1, so one byte) come back off the oracle's stack instead."""
+    words = _trap_args(_title_pokes(), ENTRY_TITLE_SCREEN, AFTER_TITLE_IKBDWS, 4)
+    assert _pushed_long(words, 0) == A_IKBD_CMD_JOYREAD
+    assert words[2] == IKBDWS_ONE_BYTE
+    assert words[3] == XBIOS_IKBDWS
+
+
+# ------------------------------------------------------------------ the palette ring
+
+def _ring_pen(image, pen):
+    return struct.unpack_from(">H", image, A_TITLE_PALETTE + 2 * pen)[0]
+
+
+def test_title_screen_rotates_six_palette_pens_one_place():
+    """The ring at 0x10b26..0x10b5e, read off a table of sixteen DISTINCT words.
+
+    Each of the six pens takes its successor's colour and the last takes the first's, so the six
+    walk one place round a closed cycle; the other ten must be untouched, which is what says the ring
+    is those six pens and no others. The cycled pen is staged colourless (see `_title_palette`) so
+    that cycle_palette contributes nothing here — the composition of the two is the next test.
+
+    ONE PASS PER RUN IS ALL THERE IS: the loop is only re-entered through the IKBD wait, which no
+    run leaves, so no case can rotate the ring twice.
+    """
+    pokes, _ = _title_case(TITLE_STARTED, key=chr(TITLE_KEY_ONE_PLAYER))
+    before = harness.make_image(pokes)
+    after = _oracle_final(pokes, ENTRY_TITLE_SCREEN)
+
+    for index, pen in enumerate(TITLE_HUE_RING):
+        source = TITLE_HUE_RING[(index + 1) % len(TITLE_HUE_RING)]
+        assert _ring_pen(after, pen) == _ring_pen(before, source), \
+            f"pen {pen} did not take pen {source}'s colour"
+    for pen in range(TITLE_PALETTE_PENS):
+        if pen in TITLE_HUE_RING:
+            continue
+        assert _ring_pen(after, pen) == _ring_pen(before, pen), f"pen {pen} is not in the ring"
+
+
+def test_title_screen_rotates_the_hue_the_cycle_has_just_moved():
+    """...and the ORDER of the two steps IS held by the differential, unlike most of this
+    reconstruction's transcribed orders: cycle_palette rewrites pen 4, which is IN the ring, so the
+    value that lands in pen 6 one instruction later is the cycle's OUTPUT and not the pen's old
+    colour. Swapping the two statements changes pen 6 and pen 4 both.
+
+    The counter is staged one short of a carry into the selector, so the selector comes up blue and
+    a red level 3 — a level the shipped ring really does circulate — is moved into blue.
+    """
+    pokes, _ = _title_case(TITLE_STARTED, key=chr(TITLE_KEY_ONE_PLAYER),
+                           hue=TITLE_HUE_RED_3, counter=PALETTE_CYCLE_FIRST - 1)
+    before, after = harness.make_image(pokes), _oracle_final(pokes, ENTRY_TITLE_SCREEN)
+
+    assert _ring_pen(after, 6) == 0x0003, "pen 6 did not take the cycle's freshly moved hue"
+    assert _ring_pen(after, TITLE_PALETTE_HUE_PEN) == _ring_pen(before, TITLE_HUE_RING[0])
+    assert struct.unpack_from(">H", after, A_PALETTE_CYCLE_CTR)[0] == PALETTE_CYCLE_FIRST
+
+
+# ------------------------------------------------------------------ the attract tune
+
+def _dosound(info):
+    return info["regs"]["dosound"]
+
+
+def _sound_list(index):
+    return struct.unpack_from(">I", harness.BASE_IMAGE, A_SOUND_TABLE + 4 * index)[0]
+
+
+def test_title_screen_silences_the_chip_behind_the_picture():
+    """The Dosound the painting ends with — the same silence list the quit path uses."""
+    _, info = _title_case(TITLE_STARTED, key=chr(TITLE_KEY_ONE_PLAYER), priority=0)
+    assert _dosound(info) == [A_SND_LIST_SILENCE]
+
+
+@pytest.mark.parametrize("priority,mixer,plays", (
+    (0, PSG_MIXER_ALL_OFF, True),                 # snd_poll_done releases the priority, so it plays
+    (SND_PRIORITY_IDLE, 0, True),                 # ...and an ALREADY idle priority plays it too
+    (0, PSG_MIXER_ALL_OFF ^ 1, False),            # one enable still on: the chip is busy
+    (SND_PRIORITY_IDLE - 1, 0, False)))           # ...as is a priority one short of idle
+def test_title_screen_restarts_the_tune_only_while_the_chip_is_idle(priority, mixer, plays):
+    """The gate re-reads snd_priority after snd_poll_done rather than looking at what it did, so
+    both routes to idle admit the tune and both routes away from it hold it off. Asserted on the
+    kit's Dosound ledger, since play_sound's whole effect past snd_priority is off-image."""
+    _, info = _title_case(TITLE_STARTED, key=chr(TITLE_KEY_ONE_PLAYER),
+                          priority=priority, mixer=mixer)
+    expected = [A_SND_LIST_SILENCE] + ([_sound_list(SND_TITLE_TUNE)] if plays else [])
+    assert _dosound(info) == expected
+    assert _immediate(0x10b6c, 2) == 0x0c79, "0x10b6c is not `cmpi.w #imm,abs.l`"
+    assert _immediate(0x10b6e, 2) == SND_PRIORITY_IDLE
+    assert _immediate(0x10b78, 2) == SND_TITLE_TUNE, "play_sound's index @ 0x10b76"
+
+
+# ------------------------------------------------------------------ the paths that never return
+
+def test_title_screen_no_key_path_stops_in_the_ikbd_wait():
+    """THE ONE PATH THAT CANNOT BE VERIFIED TO AN `rts`, diffed as far as it goes. Two halves, and
+    the pair is the point:
+
+      * the checkpoint run REACHES the wait head, so the 400-pass Bconstat poll ahead of it really
+        does fall through to `clr.l ikbd_packet` + Ikbdws + the spin — and the whole run up to there
+        is diffed, so everything the attract pass writes is verified even though its exit is not;
+      * and an uncapped run never reaches `rts`, because the reply that would end that spin arrives
+        by an IKBD INTERRUPT the oracle never runs (TRAP_MODEL.md's IKBD limit — read_joysticks'
+        wall). Without the first half, a hang anywhere earlier would pass just as happily.
+
+    ikbd_packet is staged with a sentinel, so "0 at the wait" means the routine CLEARED it rather
+    than found it clear; draw_x at 0 is the 400 passes having really been spent.
+    """
+    pokes, _ = _title_case(TITLE_IKBD_WAIT, stop_pc=TITLE_IKBD_WAIT_PC, poison=True)
+    image = _oracle_final(pokes, ENTRY_TITLE_SCREEN, stop_pc=TITLE_IKBD_WAIT_PC)
+    assert struct.unpack_from(">I", image, A_IKBD_PACKET)[0] == 0, "ikbd_packet was not cleared"
+    assert struct.unpack_from(">H", image, A_DRAW_X)[0] == 0, "the poll counter was not spent"
+    _never_returns(pokes, ENTRY_TITLE_SCREEN)
+
+
+@pytest.mark.parametrize("key,console", (("X", None), ("\r", None), (None, 0x0131), (None, 0x0132)))
+def test_title_screen_ignores_a_key_it_does_not_act_on(key, console):
+    """A key that is neither Ctrl-C nor '1' nor '2' is CONSUMED and then ignored: the poll goes
+    round again — without spending a pass on it — and the run ends in the IKBD wait like a run with
+    no key at all. players_alive and two_player_mode keep their sentinels, which is what says the
+    key decided nothing.
+
+    The last two cases are CONSTRUCTED, and say so: 0x0131/0x0132 put '1'/'2' in the low BYTE of the
+    console longword and something else in the byte above, which real TOS never does (Bconin returns
+    scancode << 16 | ascii). They are the only input that can separate the `cmp.w`s at 0x10bee and
+    0x10bf4 from the `cmp.b` at 0x10be6 one instruction earlier — read as bytes, both would start a
+    game.
+    """
+    pokes, _ = _title_case(TITLE_IKBD_WAIT, stop_pc=TITLE_IKBD_WAIT_PC, key=key, console=console)
+    image = _oracle_final(pokes, ENTRY_TITLE_SCREEN, stop_pc=TITLE_IKBD_WAIT_PC)
+    assert struct.unpack_from(">I", image, harness.OS_CON_PENDING)[0] == 0, "the key was not read"
+    assert image[A_PLAYERS_ALIVE] == UNWRITTEN_B
+    assert image[A_TWO_PLAYER_MODE] == UNWRITTEN_B
+    _never_returns(pokes, ENTRY_TITLE_SCREEN)
+
+
+def test_title_screen_ctrl_c_jumps_into_poll_quit_key():
+    """WHY Ctrl-C IS NOT A CALL, pinned on the encoding so the claim tracks the binary.
+
+    It is a `beq.w` into 0x11c56, the MIDDLE of poll_quit_key — past that routine's own entry and
+    its Bconstat/Bconin, straight into the quit tail that silences the sound, writes HIGH.SCO and
+    ends in Pterm. So a reconstruction cannot call poll_quit_key: what it reaches is the shared tail
+    src/input.c exports as `quit_to_desktop`, and the exit is reported as TITLE_QUIT (below).
+    """
+    assert _immediate(TITLE_CTRL_C_TEST, 2) == 0xb03c, f"{TITLE_CTRL_C_TEST:#x} is not `cmp.b #imm,d0`"
+    assert _immediate(TITLE_CTRL_C_TEST + 2, 2) == KEY_CTRL_C
+    assert _immediate(TITLE_CTRL_C_BRANCH, 2) == 0x6700, f"{TITLE_CTRL_C_BRANCH:#x} is not a beq.w"
+    displacement = struct.unpack_from(">h", harness.BASE_IMAGE, TITLE_CTRL_C_BRANCH + 2)[0]
+    assert TITLE_CTRL_C_BRANCH + 2 + displacement == POLL_QUIT_KEY_QUIT_TAIL
+    assert harness.NAME_MAP.get(ENTRY_POLL_QUIT_KEY) == "poll_quit_key"
+    assert ENTRY_POLL_QUIT_KEY < POLL_QUIT_KEY_QUIT_TAIL, \
+        "the target must be INSIDE poll_quit_key, not its entry — that is the whole point"
+
+
+def _ctrl_c_pokes(console=None, **staging):
+    """The Ctrl-C staging: title_screen's own inputs plus everything the quit tail reads.
+
+    Built on test_input's `_quit_pokes` so the two batteries stage the same filesystem and system
+    state — a second copy would drift from the one that verified that tail. `_quit_pokes` stages the
+    plain Ctrl-C keystroke itself; `console` replaces it with a raw longword afterwards.
+    """
+    pokes = _title_pokes(**staging)
+    pokes.update(test_input._quit_pokes())
+    if console is not None:
+        pokes[harness.OS_CON_CHAR] = struct.pack(">I", console)
+    return pokes
+
+
+def _ctrl_c_case(console=None, **staging):
+    """One Ctrl-C run, stopped at poll_quit_key's own pre-Pterm checkpoint — the counterpart of
+    `_title_case` for the one key that leaves title_screen altogether. The checkpoint belongs to
+    test_input, so naming it in one place is what stops the fuzz below drifting off it."""
+    pokes = _ctrl_c_pokes(console=console, **staging)
+    diffs, info = differential(ENTRY_TITLE_SCREEN, {"_pokes": pokes}, _title,
+                               stop_pc=test_input.CHECKPOINT_BEFORE_PTERM)
+    assert not diffs, f"{staging}\n{report(diffs)}"
+    assert info["ret"] == TITLE_QUIT
+    return pokes, info
+
+
+@pytest.mark.parametrize("console", (None, 0x0103))
+def test_title_screen_ctrl_c_quits_to_the_desktop(console):
+    """The Ctrl-C run, diffed at poll_quit_key's own pre-Pterm checkpoint and PAIRED with a proof
+    the same staging never reaches an `rts`.
+
+    Everything on both sides of the branch is in the compare: title_screen's picture and palette
+    work, then the quit tail's Dosound silence, the HIGH.SCO write-back and the restored system
+    state (that tail's own battery is test_input's; this says title_screen really lands in it).
+
+    The second case is CONSTRUCTED — 0x0103 is Ctrl-C in the low byte with a byte above it that real
+    TOS never sets — and is the other half of the width test: the `cmp.b` at 0x10be6 acts on it
+    where the two `cmp.w`s one instruction later would not.
+    """
+    pokes, info = _ctrl_c_case(console=console)
+    assert _dosound(info) == [A_SND_LIST_SILENCE, A_SND_LIST_SILENCE], \
+        "the title's own silence, then the quit path's"
+
+    # The cap is argued, not picked: the checkpointed run above is the longest thing this input can
+    # do before Pterm, so a cap several times its cost says "never returns", not "slower than".
+    # Read off the run the differential already made — `info["regs"]` is that run's out-regs.
+    assert info["regs"]["ninsns"] * 4 < SPIN_CAP, "SPIN_CAP no longer leaves room for the quit path"
+    _never_returns(pokes, ENTRY_TITLE_SCREEN)
+
+
+def test_title_screen_ctrl_c_really_writes_the_high_score():
+    """...and the bytes that reach HIGH.SCO are hiscore_name's, which is what says the branch landed
+    in the quit tail proper rather than merely somewhere past the `beq.w`."""
+    pokes = _ctrl_c_pokes()
+    image = _oracle_final(pokes, ENTRY_TITLE_SCREEN, stop_pc=test_input.CHECKPOINT_BEFORE_PTERM)
+    assert test_input._staged_highsco(image) == pokes[A_HISCORE_NAME]
+
+
+# ------------------------------------------------------------------ the joystick, past the wait
+
+def _ikbd_pokes(joystick0, joystick1, two_player, buffer=IKBD_PACKET_BUF):
+    """The rotated entry's staging: a reply already in ikbd_packet, and the mode it acts on."""
+    pokes = _title_pokes(two_player=two_player)
+    pokes[A_IKBD_PACKET] = struct.pack(">I", buffer)
+    pokes[buffer] = bytes([joystick0, joystick1])
+    return pokes
+
+
+def _ikbd_case(joystick0, joystick1, two_player, expect, stop_pc=0, poison=False,
+               buffer=IKBD_PACKET_BUF):
+    pokes = _ikbd_pokes(joystick0, joystick1, two_player, buffer)
+    diffs, info = differential(TITLE_IKBD_WAIT_PC, {"_pokes": pokes}, _title_ikbd,
+                               stop_pc=stop_pc, poison=poison)
+    assert not diffs, f"joysticks {joystick0:#04x}/{joystick1:#04x}\n{report(diffs)}"
+    assert info["ret"] == expect
+    return pokes, info
+
+
+# ZIPPED, not stacked: the fire test reads only the two joystick bytes and the mode test only
+# two_player_mode, so the axes are independent and a cross product would buy twelve duplicate runs.
+# All four fire shapes and all four mode bytes still appear, and the fuzz below crosses them anyway.
+@pytest.mark.parametrize("joystick0,joystick1,two_player",
+                         ((IKBD_FIRE, 0, 0), (0, IKBD_FIRE, 1),
+                          (IKBD_FIRE, IKBD_FIRE, 0x80), (0x8f, 0x0f, 0xff)))
+def test_title_screen_joystick_fire_starts_the_game(joystick0, joystick1, two_player):
+    """VERIFIED FROM 0x10bb8 — entered at the IKBD wait with the reply already staged, the same
+    rotation hiscore_joystick_input is verified through, and for the same reason: the wait's own
+    prologue clears ikbd_packet, so no poked reply survives a run that starts before it.
+
+    From the wait on this is an ordinary run to the `rts`. Either stick's fire button starts the
+    game — the two bytes are OR-ed and only the SIGN of that byte is read — and the mode comes from
+    whatever two_player_mode already held, tested with `tst.b`, so any non-zero byte means two.
+    """
+    _, info = _ikbd_case(joystick0, joystick1, two_player, TITLE_STARTED, poison=True)
+    assert _wrote(info, A_PLAYERS_ALIVE) == (2 if two_player else 1)
+    assert _wrote(info, A_TWO_PLAYER_MODE) == (1 if two_player else 0)
+    assert _wrote(info, A_OBJECT_TABLE + OBJ_LIVES) == TITLE_STARTING_LIVES
+
+
+@pytest.mark.parametrize("joystick0,joystick1", ((0, 0), (0x7f, 0x7f), (0x0f, 0x40)))
+def test_title_screen_joystick_without_fire_goes_round_the_attract_loop(joystick0, joystick1):
+    """No fire: the `bpl.w` branches back to the attract head at 0x10b22 having written NOTHING, and
+    from there the run is the no-key one again — so it never returns, which is the pair this
+    checkpoint needs."""
+    pokes, info = _ikbd_case(joystick0, joystick1, 0, TITLE_ATTRACT, stop_pc=TITLE_ATTRACT_HEAD)
+    assert not [addr for addr in info["writes"] if addr < emu.STACK_GUARD_LO], \
+        "the ORIGINAL wrote to the image on the no-fire path"
+    _never_returns(pokes, TITLE_IKBD_WAIT_PC)
+
+
+@pytest.mark.parametrize("joystick0,joystick1,expect,stop_pc",
+                         ((IKBD_FIRE, 0, TITLE_STARTED, 0),
+                          (0, 0, TITLE_ATTRACT, TITLE_ATTRACT_HEAD)))
+def test_title_screen_waits_on_the_whole_packet_longword(joystick0, joystick1, expect, stop_pc):
+    """THE WAIT IS A `tst.l`, pinned by STAGING rather than by an encoding read.
+
+    Every other case in this file puts the reply buffer at IKBD_PACKET_BUF, whose pointer's second
+    byte is 0x06 — so a wait that read only the first two bytes of ikbd_packet would see a non-zero
+    word and behave identically on all of them. That made the width look like an inherent limit of
+    the harness; it was a property of the chosen address. With the buffer at a pointer whose HIGH
+    WORD IS ZERO, a narrowed wait never terminates and `_title_ikbd`'s deadline turns that into an
+    ordinary red (measured: narrowing to `packet[0] | packet[1]` fails this case and leaves every
+    other one green).
+
+    THREE of the pointer's four bytes are pinned this way. The fourth — byte 0, the most significant
+    — cannot be: every address inside a 0x100000-byte image has it zero, so no legal pointer can
+    make it matter. That one byte is what test_the_ikbd_wait_tests_the_whole_longword still covers
+    against the original's own encoding.
+    """
+    _ikbd_case(joystick0, joystick1, 0, expect, stop_pc=stop_pc,
+               buffer=IKBD_PACKET_BUF_HIGH_ZERO)
+
+
+# What the glue refuses: an empty packet (the spin would never end) and a pointer the routine may
+# not dereference — 0x100000 is the first address past the image, and UNWRITTEN_L is _title_pokes'
+# OWN default, which is why an _ikbd_pokes that forgot its override must not sail through.
+UNREADABLE_PACKETS = (0, harness.OS_IMAGE_SIZE, harness.OS_IMAGE_SIZE - 1, UNWRITTEN_L, 0xffffffff)
+
+
+@pytest.mark.parametrize("packet", UNREADABLE_PACKETS)
+def test_title_ikbd_glue_refuses_a_wait_it_could_not_leave(packet):
+    """THE CANDIDATE'S HALF of the wait, and why g_title_ikbd_pass is not a bare forwarder.
+
+    Two refusals, and they fail differently. With ikbd_packet EMPTY the reconstruction's spin never
+    ends and would hang the pytest worker with no output at all; only harness.differential's
+    oracle-first ordering keeps that unreachable, and nothing pins that ordering. With a pointer
+    OUTSIDE THE IMAGE the spin ends at once and the two cores then disagree about what it points at
+    — the oracle's memory callbacks answer 0 for any address past its size, while the candidate
+    would index host memory past the end of the buffer, which is undefined behaviour that either
+    fabricates a diff or kills the worker. Neither reading is the original's, so the glue refuses.
+
+    OS_IMAGE_SIZE - 1 is the boundary case: the last byte is in the image, but the packet's SECOND
+    byte is not, so it must be refused too.
+    """
+    buf = (ctypes.c_uint8 * len(harness.BASE_IMAGE)).from_buffer(
+        bytearray(harness.make_image({A_IKBD_PACKET: struct.pack(">I", packet)})))
+    assert _title_ikbd(harness._lib, buf) == TITLE_PASS_REFUSED, \
+        f"the glue entered the wait with ikbd_packet = {packet:#x}"
+
+
+def test_the_ikbd_wait_tests_the_whole_longword():
+    """The ONE byte of the wait no staged pointer can reach, against the original's own encoding.
+
+    The other three are pinned by staging (test_title_screen_waits_on_the_whole_packet_longword);
+    byte 0 is not reachable at all, because every address inside a 0x100000-byte image has it zero,
+    so a wait ignoring it agrees with `tst.l` on every legal pointer. That is an equivalent mutant
+    under the model rather than a coverage hole — but the ORIGINAL still spells a longword test, and
+    this is what says so, the same technique test_cycle_palettes_component_shifts_are_logical uses.
+    """
+    assert _immediate(TITLE_IKBD_WAIT_PC, 2) == 0x4ab9, "0x10bb8 is not `tst.l abs.l`"
+    assert _immediate(TITLE_IKBD_WAIT_PC + 2, 4) == A_IKBD_PACKET
+    assert _immediate(TITLE_IKBD_WAIT_PC + 6, 2) == 0x67f8, "the `beq.s` back to the wait head"
+
+
+def test_title_ikbd_glue_accepts_the_last_readable_packet():
+    """...and the pair the refusals need: the byte BELOW the boundary is accepted, so the guard is
+    a bound and not a blanket. Both packet bytes are inside the image, both are zero, so the run is
+    the ordinary no-fire one and reports TITLE_ATTRACT."""
+    packet = harness.OS_IMAGE_SIZE - IKBD_PACKET_BYTES
+    buf = (ctypes.c_uint8 * len(harness.BASE_IMAGE)).from_buffer(
+        bytearray(harness.make_image({A_IKBD_PACKET: struct.pack(">I", packet)})))
+    assert _title_ikbd(harness._lib, buf) == TITLE_ATTRACT
+
+
+# ------------------------------------------------------------------ fuzz
+
+TITLE_KEY_CHUNKS = 8
+
+
+def _title_key_cases():
+    """Every ASCII byte the console can deliver, each with its own palette, picture and chip state.
+
+    Classified by what the key does, because that decides where the run can be stopped: '1'/'2'
+    reach the `rts`, Ctrl-C the quit tail's checkpoint, and everything else the IKBD wait.
+
+    The cycled pen is drawn from a set that is HALF colourless, so half the corpus runs the colour
+    cycle's early return and half runs it for real and feeds its output into the ring. The three
+    coloured values are the levels the shipped ring can circulate (see cycle_palette's row in
+    ../STATUS.md); without them every case would take the early return and the composed pass would
+    never be fuzzed.
+    """
+    hues = (TITLE_HUE_COLOURLESS, TITLE_HUE_COLOURLESS, 0x0300, 0x0020, 0x0004, 0x0200)
+    rng = random.Random(ENTRY_TITLE_SCREEN)
+    for key in range(0x100):
+        yield (key, rng.randrange(1, 1 << 16), rng.choice((0, PSG_MIXER_ALL_OFF)),
+               rng.randrange(2), rng.choice(hues))
+
+
+@pytest.mark.parametrize("chunk", range(TITLE_KEY_CHUNKS))
+def test_title_screen_key_fuzz(chunk):
+    """256 keys x a fresh noise picture, palette table, counter, mixer, mode and cycled pen."""
+    ran, cycled = 0, 0
+    for key, counter, mixer, two_player, hue in _title_key_cases():
+        if key % TITLE_KEY_CHUNKS != chunk:      # one case per byte, so the key IS the shard index
+            continue
+        cycled += hue != TITLE_HUE_COLOURLESS
+        staging = dict(seed=key, counter=counter, mixer=mixer, two_player=two_player, hue=hue)
+        if key == KEY_CTRL_C:
+            _ctrl_c_case(**staging)
+        elif key in (TITLE_KEY_ONE_PLAYER, TITLE_KEY_TWO_PLAYER):
+            _title_case(TITLE_STARTED, key=chr(key), **staging)
+        else:
+            _title_case(TITLE_IKBD_WAIT, stop_pc=TITLE_IKBD_WAIT_PC, key=chr(key), **staging)
+        ran += 1
+    assert ran, "this shard ran no cases"
+    assert 0 < cycled < ran, "this shard no longer covers both arms of the colour cycle"
+
+
+def _joystick_cases():
+    rng = random.Random(TITLE_IKBD_WAIT_PC)
+    return [(rng.randrange(0x100), rng.randrange(0x100), rng.randrange(0x100))
+            for _ in range(120)]
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_title_screen_joystick_fuzz(chunk):
+    """Random reply bytes x random two_player_mode bytes, each classified by the OR of the two
+    joystick bytes so a corpus that stopped covering one arm fails instead of sharding cleanly."""
+    fired = 0
+    ran = 0
+    for index, (joystick0, joystick1, two_player) in enumerate(_joystick_cases()):
+        if index % FUZZ_CHUNKS != chunk:
+            continue
+        fire = (joystick0 | joystick1) & IKBD_FIRE
+        fired += bool(fire)
+        _ikbd_case(joystick0, joystick1, two_player,
+                   TITLE_STARTED if fire else TITLE_ATTRACT,
+                   stop_pc=0 if fire else TITLE_ATTRACT_HEAD)
+        ran += 1
+    assert ran, "this shard ran no cases"
+    assert 0 < fired < ran, "this shard no longer covers both arms of the fire test"
+
+
 # ================================================================== mirror pins
 #
 # This module restates addresses that belong to ../../names.txt and constants that belong to the C.
@@ -1078,6 +1752,72 @@ def test_startup_constants_match_the_c():
     assert init_c["PALETTE_PENS"] == PALETTE_PENS
     assert init_c["TOS_SETCOLOR_QUERY"] == SETCOLOR_QUERY
     assert init_c["HISCORE_LOADED_MARK"] == HISCORE_LOADED_MARK
+
+
+def test_title_screen_constants_match_the_c():
+    """Everything the title-screen battery restates, against the file that owns it.
+
+    TITLE_HUE_RING is deliberately NOT pinned: it is a C array, which `_defines` cannot read, and it
+    does not need to be — the Python tuple is an INDEPENDENT model of the permutation, checked
+    against the ORACLE's image, while the C array is checked against the same oracle by the diff. A
+    drift on either side fails as a case rather than as a pin.
+    """
+    init_c, init_h = _defines("src/init.c"), _defines("include/init.h")
+    for name, mirrored in (("TITLE_COLOR_PROMPT", TITLE_COLOR_PROMPT),
+                           ("TITLE_COLOR_HISCORE", TITLE_COLOR_HISCORE),
+                           ("TITLE_COLOR_CREDITS", TITLE_COLOR_CREDITS),
+                           ("TITLE_POLL_PASSES", TITLE_POLL_PASSES),
+                           ("TITLE_STARTING_LIVES", TITLE_STARTING_LIVES),
+                           ("SND_TITLE_TUNE", SND_TITLE_TUNE),
+                           ("TITLE_KEY_ONE_PLAYER", TITLE_KEY_ONE_PLAYER),
+                           ("TITLE_KEY_TWO_PLAYER", TITLE_KEY_TWO_PLAYER),
+                           ("TITLE_HUE_RING_PENS", len(TITLE_HUE_RING)),
+                           ("TITLE_PASS_REFUSED", TITLE_PASS_REFUSED),
+                           ("IKBD_PACKET_BYTES", IKBD_PACKET_BYTES)):
+        assert init_c[name] == mirrored, f"{name} differs from src/init.c"
+    for name, mirrored in (("STR_TITLE_PROMPT", STR_TITLE_PROMPT),
+                           ("STR_TITLE_HISCORE", STR_TITLE_HISCORE),
+                           ("STR_TITLE_CREDITS", STR_TITLE_CREDITS),
+                           ("TITLE_STARTED", TITLE_STARTED), ("TITLE_QUIT", TITLE_QUIT),
+                           ("TITLE_IKBD_WAIT", TITLE_IKBD_WAIT),
+                           ("TITLE_ATTRACT", TITLE_ATTRACT)):
+        assert init_h[name] == mirrored, f"{name} differs from include/init.h"
+
+    # ...and the four other layers' constants this battery reaches into.
+    for header, names in (("include/input.h", (("KEY_CTRL_C", KEY_CTRL_C),
+                                               ("A_ikbd_cmd_joyread", A_IKBD_CMD_JOYREAD))),
+                          ("include/sound.h", (("A_snd_priority", A_SND_PRIORITY),
+                                               ("SND_PRIORITY_IDLE", SND_PRIORITY_IDLE),
+                                               ("A_snd_list_silence", A_SND_LIST_SILENCE),
+                                               ("A_sound_table", A_SOUND_TABLE))),
+                          ("include/draw.h", (("A_text_color", A_TEXT_COLOR),)),
+                          ("include/score.h", (("OBJ_SCORE_LAST_DIGIT", OBJ_SCORE_LAST_DIGIT),)),
+                          ("include/joust.h", (("OBJ_FLAGS", OBJ_FLAGS),)),
+                          ("include/addrs.h", (("A_draw_y", A_DRAW_Y),))):
+        defines = _defines(header)
+        for name, mirrored in names:
+            assert defines[name] == mirrored, f"{name} differs from {header}"
+
+    for name, mirrored in (("PSG_MIXER", PSG_MIXER), ("PSG_MIXER_ALL_OFF", PSG_MIXER_ALL_OFF)):
+        assert _defines("src/sound.c")[name] == mirrored, f"{name} differs from src/sound.c"
+
+    # g_title_ikbd_pass returns values from BOTH spaces — init.h's four outcomes and src/init.c's
+    # glue-only refusal — and the two pins above scrape one file each, so only this sees a
+    # collision. Without it, a later TITLE_* added to init.h as "the next free number" would make
+    # the refusal indistinguishable from a real outcome with every existing test still green.
+    outcomes = {name: init_h[name]
+                for name in ("TITLE_STARTED", "TITLE_QUIT", "TITLE_IKBD_WAIT", "TITLE_ATTRACT")}
+    assert init_c["TITLE_PASS_REFUSED"] not in outcomes.values(), \
+        f"TITLE_PASS_REFUSED collides with one of {outcomes}"
+
+
+def test_title_screen_resumes_the_poll_without_spending_a_pass():
+    """An unrecognised key branches back to the POLL HEAD at 0x10b88, not to the `subq.w` at
+    0x10b9a — so it costs the attract pass nothing. Both runs end at the same IKBD wait with the
+    counter at 0, so the differential cannot tell the two apart; only the encoding can."""
+    displacement = struct.unpack_from(">b", harness.BASE_IMAGE, 0x10bf9)[0]
+    assert _immediate(0x10bf8, 1) == 0x66, "0x10bf8 is not a `bne.s`"
+    assert 0x10bf8 + 2 + displacement == 0x10b88, "the unrecognised key no longer resumes the poll"
 
 
 def test_palette_cycle_constants_match_the_c():

@@ -163,7 +163,7 @@ SCREEN_ALT = 0x80000     # a second framebuffer, so screen_base is read rather t
 SCREEN_BYTES = 0x8000
 
 UNWRITTEN = 0x5a         # pre-filled into everything the routine must write
-SND_PRIORITY_IDLE = 0x10 # nothing playing (mirror of src/sound.c)
+SND_PRIORITY_IDLE = 0x10 # nothing playing (mirror of include/sound.h)
 
 # The four platform boxes the placement tests stage: distinct rows, distinct and NON-ZERO widths
 # (a zero-width platform is a 68000 divide-by-zero exception, so it is out of reach of the

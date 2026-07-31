@@ -65,8 +65,6 @@ void play_sound(uint8_t *image, uint16_t index) {
 
 /* --------------------------------------------------------------------- snd_poll_done @ 0x10a8a */
 
-#define SND_PRIORITY_IDLE   0x10u   /* the value that means "nothing is playing" */
-
 /* snd_poll_done() — release the priority once the effect Dosound started has run out.
  *
  * TOS's Dosound engine clears the enables as a command list finishes, so a mixer with all six set

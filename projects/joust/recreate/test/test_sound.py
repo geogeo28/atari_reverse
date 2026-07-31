@@ -386,9 +386,10 @@ def test_mirrored_constants_match_the_c():
     _pin(_defines("include/sound.h"), "sound.h", {
         "A_snd_sweep_pitch": A_SND_SWEEP_PITCH, "A_snd_sweep_volume": A_SND_SWEEP_VOLUME,
         "A_snd_priority": A_SND_PRIORITY, "A_sound_table": A_SOUND_TABLE,
+        "SND_PRIORITY_IDLE": SND_PRIORITY_IDLE,
     })
     _pin(_defines("src/sound.c"), "sound.c", {
-        "SOUND_TABLE_STRIDE": SOUND_TABLE_STRIDE, "SND_PRIORITY_IDLE": SND_PRIORITY_IDLE,
+        "SOUND_TABLE_STRIDE": SOUND_TABLE_STRIDE,
         "PSG_MIXER": PSG_MIXER, "PSG_MIXER_ALL_OFF": PSG_MIXER_ALL_OFF,
         "PSG_TONE_A_FINE": PSG_TONE_A_FINE, "PSG_TONE_A_COARSE": PSG_TONE_A_COARSE,
         "PSG_TONE_B_FINE": PSG_TONE_B_FINE, "PSG_TONE_B_COARSE": PSG_TONE_B_COARSE,
