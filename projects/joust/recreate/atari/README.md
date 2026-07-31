@@ -17,6 +17,7 @@ has no host `render/` layer for it to sit under: there is no PNG renderer here, 
 | **M3** quit / restart | Ctrl-C runs the verified `quit_to_desktop`, hands the machine back and ends the process — from play *and* from the title screen; R restarts the game | ✅ `smoke.py quit` / `quittitle` / `restart` |
 | **M3** `HIGH.SCO` | a modified record goes in, the game reads it, the quit path writes it back out through real GEMDOS, and a reboot shows it on the title screen's HIGH SCORE line **and only there** | ✅ `smoke.py hiscore` |
 | **M3** side-by-side | our on-target title framebuffer is **byte-identical** to the shipped binary's, found at the original's own Physbase in a dump of its RAM | ✅ `smoke.py original` |
+| **M4** frame differential | the same equality carried through starting a game and **240 frames of play**: both binaries anchored on one Hatari, framebuffers byte-compared at frames 1, 115, 150, 180, 210 and 240 — **identical at every one**, and each of those depths is one where the screen is MOVING (the neighbouring frame differs by 25-287 bytes), so each detects a one-frame mis-anchor | ✅ `smoke.py framediff` |
 | **M3** joystick | the IKBD path is live — ~1000 replies filed per run, and every wait loop in the game ends on one. Steering is a GUI check: headless Hatari has no stick to press (§11) | partial, by construction |
 
 Verified on **EmuTOS** (Hatari's bundled `tos.img`) and **TOS 1.04**, which produce byte-identical
@@ -44,6 +45,7 @@ bash atari/build.sh restart   && python3 atari/smoke.py restart    #     R resta
 bash atari/build.sh title && bash atari/build.sh quit
 python3 atari/smoke.py hiscore                                     # M3: HIGH.SCO round trip
 python3 atari/smoke.py title && python3 atari/smoke.py original     # M3: vs the shipped binary
+bash atari/build.sh framediff && python3 atari/smoke.py framediff   # M4: vs it frame by frame
 
 bash atari/build.sh        && bash atari/run.sh                    # play it in the Hatari GUI
 bash atari/run.sh original                                         # the shipped binary, same setup
@@ -317,7 +319,90 @@ deliberately narrow trade with an edge on each side, *neither of which the origi
 The shim can only see what state the game is *in*, never which reader consumed a key, so it buys
 fidelity on the two screens where R should do nothing at the cost of one window where it should.
 
-### 11. The joystick, as far as a headless run can go
+### 11. The frame differential: pinning the shipped binary from outside
+
+`smoke.py framediff` runs the shipped `bin/JOUST.PRG` and this build on the same Hatari, ROM and
+`HIGH.SCO`, and byte-compares their framebuffers at matched frame counts. Our side is scripted
+through the shim; the shipped side has no seams at all, so everything is done to it from Hatari's
+debugger, at run-time addresses derived from the load base that run discovered:
+
+- **The load base is found, not assumed.** A 64-byte signature from a relocation-free part of the
+  `.PRG` is searched for in a full RAM dump; its address minus its file offset is the base. It is
+  genuinely not a constant — **0x12596 under TOS 1.04 and 0x1b018 under EmuTOS** in the same test.
+  The signature is taken from the END of that reloc-free run: the start of it is the dead floppy
+  loader's variable block, six bytes and fifty-eight zeros, distinctive only by luck.
+- **The `'1'` is injected at the Bconin trap, not after it.** Forcing `Bconstat` to answer "a key is
+  waiting" makes the game call `Bconin` — which **blocks**, because TOS's buffer is empty, and the
+  run stops there for ever (measured). So the breakpoint sits *on* the trap and sets `D0` and `PC`
+  past it. It lands on the first console poll of the first attract pass, exactly where our scripted
+  key lands, and the byte itself is read out of `joust_main.c` so there is no second spelling of it.
+- **The frame anchor is `poll_quit_key`'s entry**, which the frame loop enters once per frame and
+  which exactly one `jsr` in the whole image refers to. Hatari's `:<count>` breaks on every count-th
+  hit and `:once` retires it, so one breakpoint per sample frame reads off that sample exactly. (A
+  count of `1` is rejected; frame 1 is a plain `:once`.) An action file that ends in `cont` still
+  leaves the debugger at its prompt, so the run is fed a supply of `c` on stdin or the emulation
+  stops dead after the first breakpoint.
+- **On our side the frame number is a console-poll count.** `frames` counts `os_bconstat` calls once
+  the title is over, which coincides with `poll_quit_key` entries only because the two other console
+  readers are unreachable at this depth: `pause_until_key`'s spin needs a P keypress and
+  `hiscore_key_input` needs a game over. Measured for the 121-frame run: `console_polls = 122`,
+  i.e. one title-screen poll plus 121 frames. If either reader ever became reachable in a sampled
+  window the two sides would be counting different things.
+
+**Result: identical at frames 1, 115, 150, 180, 210 and 240, on EmuTOS and on TOS 1.04.** The
+comparison is bitplanes, which is the right thing: the palette is off-image on both sides (§5).
+
+**The sample depths are chosen, not spread.** With the sticks centred the screen is static from about
+frame 2 to frame 110 — the rider settles and then nothing moves until the first enemy is on the
+board — so evenly spaced depths would mostly have re-sampled the same painted frame. Each depth here
+has a *moving* neighbour (frame N differs from N+1 by 113, 25, 227, 281, 282 and 287 bytes), which is
+what makes every one of them able to detect a mis-anchor.
+
+Three guards and two controls, because a compare that cannot fail proves nothing:
+
+- **Length.** `zip` stops at the shorter side, so a truncated — or empty — dump compares equal as far
+  as it goes and would report IDENTICAL (demonstrated: a zero-byte shipped dump passed). Every
+  framebuffer is now required to be exactly 32000 bytes on both sides, and our side additionally
+  reports the total bytes its dumps wrote (`frame_bytes_written`) so a `savebin` or `Fwrite` that
+  silently did nothing is caught rather than read back as a match.
+- **Determinism.** The shipped side is run a second time with the identical script and must produce
+  identical dumps — it is the side carrying all the machinery, so it is the side whose repeatability
+  is worth asserting.
+- **Sensitivity — a real injected fault.** The shipped side is re-run **anchored one frame late** and
+  the comparison must FAIL. It does, at all six samples (25-287 bytes each, with the first differing
+  byte and row named). An earlier version of this control compared `ours[early]` against
+  `shipped[late]` and called that sensitivity; that is a *theorem* once the main compare has passed,
+  and it stayed green in a run where the main compare correctly failed. The lesson is in
+  `docs/on-target-execution.md`: control the control with a fault you inject, not with a rearrangement
+  of numbers you already hold.
+
+**The RNG pin is precaution, and measurably inert here.** Joust has no arithmetic generator: `rng_ptr`
+walks the program's own text and callers read the word under it (`../src/rng.c`). Those bytes are
+*not* the same on both sides — 1117 relocation sites fall in that window, and a relocated longword
+holds *file value + load base* — so forcing the same XBIOS `Random` answer would pin only the starting
+offset into two different streams. Both sides therefore park the cursor in the largest
+relocation-free stretch (Ghidra `0x1551a`), and the mode checks our cursor stayed inside it (the
+bound is computed from the `.PRG`'s own relocation table, not written down; measured travel 2904
+bytes of 6896).
+
+But parking it changes nothing that reaches the screen at these depths. Parking **both sides at
+`0x10000` instead — a relocation-*bearing* region where the two loads genuinely hold different
+bytes — still leaves all six frames identical.** The stream is consulted (the cursor moves) and
+nothing it feeds is drawn yet. Worth knowing too: the parked stretch is 203 bytes of code followed by
+a 6,648-byte run of zeros, so the pinned regime is constant-zero randomness — artificial, not a
+neutral sample of the game's own entropy. The pin is kept because it costs nothing and makes the
+comparison honest at depths where the RNG *does* reach the screen; it is not the reason these frames
+match.
+
+**And the `D0`/`D2` gap did not separate.** §8's fidelity gap — our `start()` passes zeros where the
+original carries `read_joysticks`' leftovers — is exactly what this test would expose first, and the
+offline evidence for it was a sixty-frame sweep below the stack guard. Here it is two hundred and
+forty frames on a real 68000 against the real binary, and every sampled frame is equal. That does not
+*prove* the registers are dead — no neutral-stick run can, and the moving content is one spawning
+sprite rather than a busy playfield — but it is a considerably stronger statement of the same limit,
+and it is on-target evidence rather than harness evidence.
+
+### 12. The joystick, as far as a headless run can go
 
 The IKBD path is proven **live**: `joy_handler` files a reply and chains the next interrogate, and
 `STATS.BIN` counts them — ~1000 per run, and every wait loop in the game (`read_joysticks`,
@@ -326,9 +411,11 @@ frame at all is that path working. What a headless Hatari cannot do is *press* a
 maps host keys and there is no host keyboard, so `player_x`/`player_y` in `STATS.BIN` show the rider
 under gravity alone. Steering is therefore a GUI check — `run.sh`, cursor keys and right-Ctrl.
 
-That leaves the `D0`/`D2` decision of §8 exactly where it was and no more relevant: those registers
-carry out of `read_joysticks`' last `control_player` whether a stick moved or not, and the walk that
-found them unobservable was over the game's own frames, sticks and all.
+That leaves the `D0`/`D2` decision of §8 where it was — and §11 is now the strongest evidence for
+it: 120 frames against the shipped binary, byte-identical. A *steered* differential would be
+stronger still, and needs a deterministic way to press a stick on both sides; Hatari's debugger can
+force our side's IKBD packet but the shipped side reads TOS's own buffer, so that is future work
+rather than something this mode quietly skips.
 
 ## Known gaps
 

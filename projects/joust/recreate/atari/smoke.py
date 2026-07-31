@@ -9,6 +9,7 @@
     bash atari/build.sh title && bash atari/build.sh quit
     python3 atari/smoke.py hiscore                                     # M3  HIGH.SCO round trip
     python3 atari/smoke.py original                                    # M3  vs the shipped binary
+    bash atari/build.sh framediff && python3 atari/smoke.py framediff  # M4  ...frame by frame
 
 Each check boots the build made for it (build/JOUST-<mode>.PRG) and refuses one older than the
 sources, so a half-done build pair or a mode/build mismatch is named as such instead of surfacing
@@ -40,6 +41,7 @@ sys.path.insert(0, str(REC.parents[2] / "tools"))     # reverse/tools — the sh
 from recreate_kit import project                       # noqa: E402
 project.load(REC)
 import tos_probe                                       # noqa: E402
+import prg_dis                                         # noqa: E402  (tools/, for the reloc table)
 
 DISK = HERE / "disk"
 BUILD = HERE / "build"
@@ -50,7 +52,7 @@ INPUTS_ONLY = {"JOUST.PRG", "JOUST.IMG", "CMD.INI", "ACT.INI"}   # staged, never
 # `smoke.py restart` against the quit build and the run quits cleanly during play, which reads as
 # "the longjmp restart is broken" instead of "you booted the wrong PRG".
 MODE_BUILD = {"title": "title", "frames": "smoke", "quit": "quit",
-              "quittitle": "quittitle", "restart": "restart"}
+              "quittitle": "quittitle", "restart": "restart", "framediff": "framediff"}
 
 
 def prg_for(mode):
@@ -88,11 +90,11 @@ HUD_BAR_CELL = bytes.fromhex("0000ffffffffffff")
 MIN_PLAYFIELD_BYTES = 500
 MIN_DISTINCT_BYTES = 32
 
-# STATS.BIN — fourteen big-endian longwords, written by joust_main.c's dump_stats() in this order.
+# STATS.BIN — sixteen big-endian longwords, written by joust_main.c's dump_stats() in this order.
 STATS_FIELDS = ("frames", "console_polls", "dosound", "dosound_in_play", "first_sound_frame",
                 "psg_writes", "psg_writes_in_play", "ikbd_packets", "restarts",
-                "hiscore_bytes_written", "two_player_mode", "players_alive",
-                "player_x", "player_y")
+                "hiscore_bytes_written", "frame_bytes_written", "two_player_mode", "players_alive",
+                "player_x", "player_y", "rng_ptr")
 SMOKE_FRAMES = 240          # build.sh's SMOKE_FRAMES_DEFAULT; the frames run must reach exactly this
 MIN_PSG_WRITES = 1000       # snd_tone_sweep alone issues ~14.4k
 # joy_handler files one per reply and the chain keeps them coming, so a run of any length sees
@@ -119,6 +121,30 @@ SHORT_RUN_VBLS = "6000"     # ...for the modes that Pterm in the first few hundr
 RUN_TIMEOUT = 180
 ORIGINAL_DUMP_VBL = 2500    # by then the ORIGINAL is sitting on its title screen
 ORIGINAL_RUN_VBLS = "4000"
+# Enough for the shipped binary to boot, sit through one attract pass and play out the deepest
+# sample; it needs no tail, because the frame anchors dump long before it ends.
+FRAMEDIFF_RUN_VBLS = "8000"
+
+# ---- the frame differential's anchors in the SHIPPED binary ------------------------------------
+# All are Ghidra addresses (../names.txt's base), turned into run-time addresses by adding the load
+# base this run discovered. The shipped binary carries no symbol table, so each is derived rather
+# than looked up, and each is verified by the run itself: if any is wrong the anchored dumps simply
+# do not appear and the mode fails loudly.
+GHIDRA_AFTER_INIT_GAME = 0x1000c   # _start's third `jsr` — init_game has returned, title_screen next
+GHIDRA_TITLE_BCONSTAT = 0x10b96    # title_screen: `tst.b d0` on Bconstat's answer
+GHIDRA_TITLE_BCONIN = 0x10be0      # ...and its `trap #13` for Bconin
+GHIDRA_TITLE_BCONIN_SKIP = 0x10be2 # the `adda.w #4,sp` after it, where the injection resumes
+GHIDRA_POLL_QUIT_KEY = 0x11c24     # the frame anchor: one entry per frame, and nothing else calls it
+GHIDRA_RNG_PTR = 0x10dfe           # ../include/addrs.h A_rng_ptr
+
+# A relocation-free window in the shipped .PRG, used to find where GEMDOS loaded it: the bytes there
+# are the file's own, so the match is unique and its address gives the base directly. It sits at the
+# END of the reloc-free run rather than the start, because the start is the dead floppy loader's
+# variable block — six bytes and fifty-eight zeros, distinctive only by luck. [0x55c0,0x5600) is 30
+# distinct byte values.
+BASE_SIGNATURE_OFF = 0x55c0
+BASE_SIGNATURE_LEN = 64
+PRG_HEADER = 28             # GEMDOS .PRG header, ahead of the text the signature is taken from
 
 # TOS's ROM probes its own hardware at boot and bus-errors doing it; those are expected and are the
 # only ones allowed. Anything faulting from RAM is ours.
@@ -133,7 +159,7 @@ def find_rom():
     return str(local[-1]) if local else None
 
 
-def run(prg, files, trace=None, parse=None, run_vbls=RUN_VBLS):
+def run(prg, files, trace=None, parse=None, run_vbls=RUN_VBLS, debug_continues=0):
     """Boot `prg` headless on a drive holding `files`, let Hatari run to the end of --run-vbls, and
     return everything it left behind: {filename: bytes}, the beacon names, Hatari's own output and
     its exit status.
@@ -161,8 +187,13 @@ def run(prg, files, trace=None, parse=None, run_vbls=RUN_VBLS):
         if parse:
             (drive / "CMD.INI").write_text(parse.format(drive=drive))
             args += ["--parse", str(drive / "CMD.INI")]
+        # Each breakpoint that runs an action file leaves the debugger at its prompt afterwards, and
+        # a prompt with nothing to read stops the emulation dead — so a run with breakpoints is fed
+        # a supply of `c`. One per expected stop plus slack; unread lines cost nothing.
+        stdin_kw = ({"input": "c\n" * debug_continues} if debug_continues
+                    else {"stdin": subprocess.DEVNULL})
         proc = subprocess.run(args, env=env, capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, timeout=RUN_TIMEOUT)
+                              timeout=RUN_TIMEOUT, **stdin_kw)
         # HIGH.SCO is deliberately NOT excluded: it goes in as an input and comes back out as the
         # quit path's output, and reading it back is how the round trip is checked.
         produced = {p.name: p.read_bytes() for p in drive.iterdir() if p.name not in INPUTS_ONLY}
@@ -183,8 +214,11 @@ def require_fresh(prg):
         raise RuntimeError(f"{prg} is not built — see the header of this file for the build.sh line")
     if prg.parent != BUILD:
         return          # the shipped 1989 binary (mode `original`); nothing here builds it
+    # build.sh is in the list because it is not merely how the PRG is built: the frame differential
+    # reads its RNG_PARK and FRAME_SAMPLES and applies them to the SHIPPED binary, so a build.sh
+    # edited after the PRG was made would pin the two sides differently.
     sources = [*HERE.glob("*.c"), *HERE.glob("*.s"), *HERE.glob("shim_include/*.h"),
-               *REC.glob("src/*.c"), *REC.glob("include/*.h")]
+               HERE / "build.sh", *REC.glob("src/*.c"), *REC.glob("include/*.h")]
     newer = [src for src in sources if src.stat().st_mtime > prg.stat().st_mtime]
     if newer:
         raise RuntimeError(f"{prg.name} is older than {newer[0].name} and {len(newer) - 1} other "
@@ -490,6 +524,268 @@ def mode_original():
     return False, None
 
 
+# ---- the frame differential -------------------------------------------------------------------
+
+def build_setting(name):
+    """Read one shell assignment out of build.sh, so the pins have ONE definition.
+
+    RNG_PARK and FRAME_SAMPLES are compiled into this build with -D and must be applied identically
+    to the shipped binary from the debugger side; re-typing either here is exactly the across-a-
+    language-boundary duplication that would make a green mean nothing."""
+    text = (HERE / "build.sh").read_text()
+    match = re.search(rf"^{name}=(\S+)", text, re.M)
+    if not match:
+        raise RuntimeError(f"build.sh no longer defines {name} — the frame differential's pins moved")
+    return match.group(1)
+
+
+def c_define(name):
+    """One #define's value out of joust_main.c — the key byte the shipped side must be handed is the
+    same one this build's shim watches for, and build.sh already passes it by NAME for that reason."""
+    match = re.search(rf"^#define\s+{name}\s+(0x[0-9a-fA-F]+)", (HERE / "joust_main.c").read_text(),
+                      re.M)
+    if not match:
+        raise RuntimeError(f"joust_main.c no longer defines {name}")
+    return int(match.group(1), 16)
+
+
+def original_ram_dump():
+    """Boot the SHIPPED binary to its title screen and dump all of RAM through Hatari's debugger.
+
+    Both the side-by-side and the frame differential start here — one needs the whole image to
+    search, the other needs the load base and the screen address out of it."""
+    produced, _, _, proc = run(ORIGINAL_PRG,
+                               {"HIGH.SCO": SHIPPED_HISCORE.read_bytes(),
+                                "ACT.INI": "savebin {drive}/ORIGRAM.BIN 0 %#x\ncont\n" % RAM_BYTES},
+                               parse="b VBL > %d :once :file {drive}/ACT.INI\n" % ORIGINAL_DUMP_VBL,
+                               run_vbls=ORIGINAL_RUN_VBLS)
+    ram = produced.get("ORIGRAM.BIN")
+    if ram is None:
+        raise RuntimeError("the debugger did not dump the original's RAM")
+    return ram, proc
+
+
+def original_load_base(ram):
+    """Where GEMDOS put the shipped binary in this run, from a relocation-free signature.
+
+    It is NOT a constant: it depends on the ROM and on what TOS put below the TPA, so every anchor
+    below is derived from it per run rather than written down (measured: 0x12596 under TOS 1.04)."""
+    prg = ORIGINAL_PRG.read_bytes()
+    signature = prg[PRG_HEADER + BASE_SIGNATURE_OFF:][:BASE_SIGNATURE_LEN]
+    hits = ram.count(signature)
+    if hits != 1:
+        raise RuntimeError(f"the load-base signature appears {hits} times in RAM, expected exactly 1")
+    return ram.find(signature) - BASE_SIGNATURE_OFF
+
+
+def original_frame_script(script_dir, base, screen, samples, rng_park):
+    """The debugger script that makes the shipped binary comparable, and the files it calls.
+
+    Three pins and one anchor, all at run-time addresses derived from `base`:
+      * the RNG cursor is parked where this build parks its own, so both walk identical bytes;
+      * Bconstat is made to answer "a key is waiting" once;
+      * the Bconin trap is SKIPPED and '1' put in D0 — skipped because Bconin BLOCKS: forcing
+        Bconstat alone makes the game call it, and with no key in TOS's buffer it never returns
+        (measured: the run stops there for ever);
+      * poll_quit_key's entry is the frame counter. Hatari's `:<count>` breaks on every count-th hit
+        and `:once` retires it, so one breakpoint per sample frame reads off that sample exactly. A
+        count of 1 is rejected by Hatari, so frame 1 is a plain `:once`.
+    """
+    def runtime(ghidra):
+        return base + ghidra - IMAGE_LOAD_BASE
+
+    def action(name, *commands):
+        """Write one breakpoint's action file. These are HOST paths the debugger reads, and they
+        deliberately do not live on the emulated drive, where the game would see them."""
+        (script_dir / name).write_text("".join(command + "\n" for command in commands))
+        return f":file {script_dir / name}"
+
+    lines = [
+        f"b pc = ${runtime(GHIDRA_AFTER_INIT_GAME):x} :once :quiet "
+        + action("RNG.INI", f"w l ${runtime(GHIDRA_RNG_PTR):x} ${runtime(rng_park):x}"),
+        f"b pc = ${runtime(GHIDRA_TITLE_BCONSTAT):x} :once :quiet "
+        + action("STAT.INI", "r d0=$ff"),
+        f"b pc = ${runtime(GHIDRA_TITLE_BCONIN):x} :once :quiet "
+        + action("KEY.INI", f"r d0=${c_define('KEY_ONE_PLAYER'):x}",
+                 f"r pc=${runtime(GHIDRA_TITLE_BCONIN_SKIP):x}"),
+    ]
+    for index, frame in enumerate(samples, 1):
+        count = "" if frame == 1 else f":{frame} "
+        lines.append(f"b pc = ${runtime(GHIDRA_POLL_QUIT_KEY):x} {count}:once :quiet "
+                     + action(f"F{index}.INI",
+                              f"savebin {script_dir / ('OFRAME%d.BIN' % index)} "
+                              f"${screen:x} {SCREEN_BYTES}"))
+    return "\n".join(lines) + "\n"
+
+
+# The widest read any caller makes THROUGH the cursor: dissolve_platforms takes the WORD at
+# rng_ptr + 8, so the last byte it touches is rng_ptr + 9. The safe travel is the reloc-free run
+# minus that reach, not the whole run.
+RNG_WIDEST_CALLER_OFFSET = 8
+RNG_CALLER_READ_BYTES = 2
+RNG_WIDEST_CALLER_READ = RNG_WIDEST_CALLER_OFFSET + RNG_CALLER_READ_BYTES
+
+
+def rng_window_bytes(park):
+    """How far the cursor may travel from `park` before the two sides stop reading the same bytes.
+
+    COMPUTED FROM THE SHIPPED .PRG, not written down: it is the distance to the next relocation
+    site, and a relocated longword is precisely where the two loads differ (it holds file value +
+    load base). Deriving it means the number cannot drift from the file it describes, and moving
+    RNG_PARK in build.sh re-derives it for free."""
+    fixups = sorted(prg_dis.parse_reloc(*_shipped_prg_header()))
+    offset = park - IMAGE_LOAD_BASE
+    after = [fix for fix in fixups if fix >= offset]
+    if not after:
+        raise RuntimeError(f"RNG_PARK {park:#x} is past every relocation site")
+    return after[0] - offset - RNG_WIDEST_CALLER_READ
+
+
+def _shipped_prg_header():
+    data = ORIGINAL_PRG.read_bytes()
+    return data, prg_dis.parse_header(data)
+
+
+def check_rng_window(stats, rng_park):
+    """The parked cursor must have stayed inside the relocation-free stretch.
+
+    Outside it the two loads' bytes differ, so the two sides would stop reading the same random
+    stream. Measured at 121 frames: 2904 bytes travelled. This reads OUR side's cursor only — the
+    shipped side's is not sampled — which is sound because both are parked at the same offset and
+    driven by the same code, but it is a premise rather than an observation of both."""
+    travelled = stats["rng_ptr"] - rng_park
+    window = rng_window_bytes(rng_park)
+    print(f"RNG cursor travelled {travelled} bytes of the {window}-byte relocation-free window "
+          f"(our side; the shipped side is parked identically)")
+    if 0 <= travelled < window:
+        return True
+    print("FAIL: the cursor left the window — from here the two sides read different bytes, so "
+          "nothing downstream of the RNG is pinned any more")
+    return False
+
+
+def compare_frames(ours, theirs, samples, label="frame"):
+    """Byte-equality at every sampled frame, reporting the FIRST divergence rather than a count.
+
+    THE LENGTHS ARE CHECKED FIRST. `zip` stops at the shorter side, so a truncated — or empty —
+    dump compares equal as far as it goes and reports IDENTICAL (demonstrated: a zero-byte shipped
+    dump passed). `savebin` failing, or a breakpoint firing before the screen is drawn, would look
+    exactly like a green."""
+    ok = True
+    for frame in samples:
+        mine, shipped = ours[frame], theirs[frame]
+        if len(mine) != SCREEN_BYTES or len(shipped) != SCREEN_BYTES:
+            print(f"  {label} {frame:<4} UNUSABLE: ours {len(mine)} bytes, shipped {len(shipped)}, "
+                  f"expected {SCREEN_BYTES} each")
+            ok = False
+            continue
+        differing = [i for i, (a, b) in enumerate(zip(mine, shipped)) if a != b]
+        if not differing:
+            print(f"  {label} {frame:<4} IDENTICAL")
+            continue
+        ok = False
+        rows = sorted({i // SCREEN_ROW_BYTES for i in differing})
+        print(f"  {label} {frame:<4} DIVERGES: {len(differing)} bytes on {len(rows)} scanlines "
+              f"{rows[:8]}; first at {differing[0]:#x} (row {differing[0] // SCREEN_ROW_BYTES}) "
+              f"ours {mine[differing[0]]:#04x} vs shipped {shipped[differing[0]]:#04x}")
+    return ok
+
+
+def framediff_controls(base, screen, samples, rng_park, ours, theirs):
+    """Two controls, because a compare that cannot fail proves nothing.
+
+    DETERMINISM — the shipped side is run a second time with the identical script and must produce
+    identical dumps. It is the side with all the machinery (a discovered load base, four kinds of
+    debugger breakpoint, a skipped trap), so it is the side whose repeatability is worth asserting.
+
+    SENSITIVITY — the shipped side is re-run ANCHORED ONE FRAME LATE and the comparison must FAIL.
+    This is a real injected fault, not a rearrangement of the numbers already in hand: an earlier
+    version compared ours[early] against theirs[late] and called that sensitivity, which is a
+    theorem once the main compare has passed (theirs[late] == ours[late]) — measured, it stayed
+    green while the main compare correctly failed. It is also deliberately not the RNG pin, which
+    perturbs nothing at these depths (see the README): that is a fact about the samples, not about
+    the compare."""
+    print("--- control 1: determinism, the shipped side run twice")
+    again, _ = run_original_frames(base, screen, samples, rng_park)
+    ok = compare_frames(again, theirs, samples, label="rerun frame")
+    if not ok:
+        print("FAIL: the shipped side is not reproducible — the pins do not fully determine the run")
+
+    print("--- control 2: sensitivity, the shipped side deliberately MIS-ANCHORED by one frame")
+    shifted = [frame + 1 for frame in samples]
+    late, _ = run_original_frames(base, screen, shifted, rng_park)
+    print("    (the comparison below MUST fail; every sample depth was chosen to have a moving "
+          "neighbour, so all of them should)")
+    mis = compare_frames(ours, {frame: late[frame + 1] for frame in samples}, samples,
+                         label="mis-anchored")
+    if mis:
+        print("FAIL: the mode still passes with the shipped side a frame out — the anchor is not "
+              "anchoring and the equality above means nothing")
+        return False
+    print("  control 2 passed: a one-frame mis-anchor is detected at every sample")
+    return ok
+
+
+def run_original_frames(base, screen, samples, rng_park):
+    """Boot the SHIPPED binary pinned and anchored, and return its framebuffer per sample frame."""
+    with tempfile.TemporaryDirectory() as tmp:
+        script_dir = Path(tmp)
+        script = original_frame_script(script_dir, base, screen, samples, rng_park)
+        produced, _, _, proc = run(ORIGINAL_PRG, {"HIGH.SCO": SHIPPED_HISCORE.read_bytes()},
+                                   parse=script, run_vbls=FRAMEDIFF_RUN_VBLS,
+                                   # one `c` per expected stop: three pins plus one per sample,
+                                   # and a little slack for a debugger entry we did not schedule
+                                   debug_continues=len(samples) + 8)
+        # savebin writes to HOST paths, so the dumps land beside the script, not on the drive.
+        frames = {}
+        for index in range(1, len(samples) + 1):
+            dump = script_dir / f"OFRAME{index}.BIN"
+            if not dump.exists():
+                raise RuntimeError(f"the shipped binary produced no dump for frame {samples[index-1]}"
+                                   f" — an anchor address is wrong or the game never started")
+            frames[samples[index - 1]] = dump.read_bytes()
+        return frames, proc
+
+
+def mode_framediff():
+    """Byte-compare the SHIPPED binary's framebuffer against this build's, frame for frame.
+
+    The title screen already matches (mode `original`); this carries it through the start of a game
+    and 120 frames of play. Both sides run on the same Hatari, ROM and HIGH.SCO, and the shipped side
+    is pinned and anchored from the debugger — see original_frame_script for the three pins and why
+    the Bconin trap has to be skipped rather than answered.
+
+    THE PINS ARE NOT ALL LOAD-BEARING, and the controls below say which: parking the RNG cursor turns
+    out not to change any sampled frame (the stream is consulted but nothing it feeds reaches the
+    screen this early), so it is precaution rather than the reason the frames match. What IS
+    load-bearing is the frame anchor, and the cross-check proves the comparison can see a
+    difference at all."""
+    samples = [int(frame) for frame in build_setting("FRAME_SAMPLES").split(",")]
+    rng_park = int(build_setting("RNG_PARK"), 16)
+    print(f"sample frames {samples}; RNG cursor parked at {rng_park:#x} on both sides")
+
+    print("--- ours: one run, every sample")
+    produced, _, _, proc = run(prg_for("framediff"), drive_files())
+    ok = check_exit(proc)
+    require(produced, "STATS.BIN", *[f"FRAME{i}.BIN" for i in range(1, len(samples) + 1)])
+    stats = stats_of(produced)
+    ours = {frame: produced[f"FRAME{i}.BIN"] for i, frame in enumerate(samples, 1)}
+    ok &= check_stats(stats, {"frame_bytes_written": SCREEN_BYTES * len(samples)})
+    ok &= check_rng_window(stats, rng_park)
+
+    print("--- the shipped binary: load base, then the pinned and anchored run")
+    ram, _ = original_ram_dump()
+    base = original_load_base(ram)
+    screen = int.from_bytes(ram[TOS_V_BAS_AD:TOS_V_BAS_AD + 4], "big")
+    print(f"shipped binary loaded at {base:#x}, drawing at {screen:#x}")
+
+    theirs, proc = run_original_frames(base, screen, samples, rng_park)
+    ok &= check_exit(proc)
+    ok &= compare_frames(ours, theirs, samples)
+    ok &= framediff_controls(base, screen, samples, rng_park, ours, theirs)
+    return ok, ours[samples[-1]]
+
+
 MODES = {
     "title": mode_title,
     "frames": mode_frames,
@@ -503,6 +799,7 @@ MODES = {
     "restart": lambda: mode_exit("restart", {"restarts": 1, "two_player_mode": 0},
                                  at_least={"ikbd_packets": MIN_IKBD_PACKETS}),
     "hiscore": mode_hiscore,
+    "framediff": mode_framediff,
     "original": mode_original,
 }
 

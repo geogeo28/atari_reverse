@@ -160,6 +160,11 @@ static unsigned long psg_writes, psg_writes_in_play;
  * zeroes it — as a block, so that adding a counter here cannot silently survive a restart. */
 static unsigned long restarts;                /* completed R-key restarts */
 static unsigned long hiscore_bytes_written;   /* what the quit path put back into the real file */
+#ifdef SMOKE_FRAME_DUMPS
+static unsigned long frame_bytes_written;     /* ...and the frame differential's sample dumps */
+#else
+#define frame_bytes_written 0uL               /* no sample dumps in this build, so nothing wrote */
+#endif
 static int title_over;
 
 /* IKBD replies filed by joy_handler (declared in tos.h with the handler's other globals). It is the
@@ -387,6 +392,79 @@ static void start_ikbd(void) {
     Ikbdws(IKBD_ONE_BYTE, image + A_ikbd_cmd_joyread);   /* $16, likewise */
 }
 
+/* The one GEMDOS write/close in this file — the SMOKE dumps and the high-score write-back share it,
+ * and this project already has a recorded GEMDOS handle gotcha, so there is one place to fix if
+ * another turns up. Returns what Fwrite reported, or -1 if the handle was never opened. */
+static long write_and_close(long handle, const void *from, long count) {
+    if (handle < 0) return -1;
+    long written = Fwrite((short)handle, count, from);
+    Fclose((short)handle);
+    return written;
+}
+
+/* Create-or-truncate, for the SMOKE dumps: they are this run's output and nothing else's, and only
+ * the SMOKE builds make any. */
+#ifdef SMOKE
+static long dump_file(const char *name, const void *from, long count) {
+    return write_and_close(Fcreate(name, 0), from, count);
+}
+#endif
+
+/* ---- the frame differential's two pins (SMOKE only) -------------------------------------------
+ *
+ * `smoke.py framediff` byte-compares this build's framebuffer against the SHIPPED binary's at
+ * matched frame counts. Two things have to be made identical on both sides first, and one of them
+ * is not obvious:
+ *
+ * THE RANDOM SOURCE IS THE PROGRAM'S OWN TEXT. There is no arithmetic generator — rng_ptr walks
+ * [0x10000, 0x17832) and callers read the word under it (../src/rng.c). Those bytes are NOT the same
+ * on both sides: 1117 of the relocation sites in that window fall inside it, and a relocated
+ * longword holds `file value + load base`, which is 0x10000 for this image and 0x12596 for the
+ * shipped binary under the same Hatari. Forcing the same XBIOS Random answer is therefore NOT
+ * enough — it only picks the same STARTING offset into two different byte streams.
+ *
+ * So the cursor is parked instead, at an offset inside the largest RELOCATION-FREE stretch of the
+ * window (6906 bytes at image 0x551a, i.e. Ghidra 0x1551a): there the two programs' bytes are
+ * identical, so the random stream is too, for as long as the cursor stays inside. STATS.BIN reports
+ * where it ended up so the test can prove it never left. The poke lands at the first console poll,
+ * which is title_screen's — after init_game has seeded rng_ptr and long before the frame loop that
+ * is the first thing to read through it. */
+#ifdef SMOKE_RNG_PTR
+static int rng_pin_pending = 1;
+
+static void pin_rng_cursor(void) {
+    if (!rng_pin_pending) return;
+    rng_pin_pending = 0;
+    wr32(image + A_rng_ptr, SMOKE_RNG_PTR);
+}
+#else
+#define pin_rng_cursor() ((void)0)
+#endif
+
+/* The frames whose framebuffer is dumped, as FRAME1.BIN, FRAME2.BIN, ... in list order. One run
+ * yields every sample, so the comparison is against ONE game rather than one game per depth. */
+#ifdef SMOKE_FRAME_DUMPS
+static const unsigned long FRAME_DUMPS[] = { SMOKE_FRAME_DUMPS };
+#define FRAME_DUMP_COUNT (sizeof FRAME_DUMPS / sizeof FRAME_DUMPS[0])
+
+/* The filenames are FRAME1..FRAME9, one digit. */
+_Static_assert(FRAME_DUMP_COUNT <= 9, "SMOKE_FRAME_DUMPS holds at most nine sample frames");
+
+static void dump_sampled_frame(void) {
+    for (unsigned index = 0; index < FRAME_DUMP_COUNT; index++) {
+        if (FRAME_DUMPS[index] != frames) continue;
+        char name[12] = { 'F', 'R', 'A', 'M', 'E', (char)('1' + index), '.', 'B', 'I', 'N', 0, 0 };
+        long written = dump_file(name, image + OS_SCREEN_BASE, SCREEN_BYTES);
+        /* Totalled and reported for the same reason hiscore_bytes_written is: a dump that failed or
+         * ran short leaves a file the comparison would happily read, and a short read compares equal
+         * as far as it goes. The byte count is the only thing that says the frame really landed. */
+        if (written > 0) frame_bytes_written += (unsigned long)written;
+    }
+}
+#else
+#define dump_sampled_frame() ((void)0)
+#endif
+
 /* ---- the shim's hooks inside the cores' OS calls (shim_include/os.h explains each) ------------ */
 
 static unsigned long console_polls;   /* every Bconstat the game makes; `frames` above counts the
@@ -397,9 +475,6 @@ static unsigned long console_polls;   /* every Bconstat the game makes; `frames`
 #if defined(SMOKE_TITLE) || defined(SMOKE_FRAMES)
 #define SMOKE_HAS_FRAME_LIMIT 1
 static void smoke_finish(void);
-#endif
-#ifdef SMOKE
-static long dump_file(const char *name, const void *from, long count);
 #endif
 
 void shim_psg_written(void) {
@@ -412,8 +487,10 @@ void shim_psg_written(void) {
 
 void shim_console_polled(void) {
     BEACON_ONCE(7);   /* the first console poll: the attract loop is running */
+    pin_rng_cursor();
     console_polls++;
     if (title_over) frames++;
+    dump_sampled_frame();
 #ifdef SMOKE_TITLE
     /* The first poll of the run: title_screen has painted the picture, the three text lines and one
      * pass of the colour cycle, and is now counting its 400 console polls. */
@@ -421,9 +498,13 @@ void shim_console_polled(void) {
 #endif
 #ifdef SMOKE_FRAMES
     /* poll_quit_key is the 20th of start()'s 21 calls (the 16th of the 17 the frame loop makes), so
-     * the framebuffer is complete when this runs. Two frames are dumped: an early one, and the last
-     * one at smoke_finish, so the check can prove the game ANIMATED rather than painted once. */
+     * the framebuffer is complete when this runs — which is what makes it the frame anchor on BOTH
+     * sides of the differential (smoke.py counts the shipped binary's entries to the same routine).
+     * The `smoke` mode also dumps an early frame here, so its check can prove the game ANIMATED
+     * rather than painted once. */
+#ifdef SMOKE_EARLY_FRAME
     if (frames == SMOKE_EARLY_FRAME) dump_file("SCREEN0.BIN", image + OS_SCREEN_BASE, SCREEN_BYTES);
+#endif
     if (frames >= SMOKE_FRAMES) smoke_finish();
 #endif
 }
@@ -612,29 +693,11 @@ void shim_init_game_started(void) {
  *                answer, which init_system stores and every draw routine addresses from);
  *   STATS.BIN    the counters below — what the GAME asked for, which no framebuffer can show.
  * Then the machine goes back the way it was found and the process ends. */
-/* The one GEMDOS write/close in this file — the SMOKE dumps and the high-score write-back share it,
- * and this project already has a recorded GEMDOS handle gotcha, so there is one place to fix if
- * another turns up. Returns what Fwrite reported, or -1 if the handle was never opened. */
-static long write_and_close(long handle, const void *from, long count) {
-    if (handle < 0) return -1;
-    long written = Fwrite((short)handle, count, from);
-    Fclose((short)handle);
-    return written;
-}
-
-/* Create-or-truncate, for the SMOKE dumps: they are this run's output and nothing else's, and only
- * the SMOKE builds make any. */
 #ifdef SMOKE
-static long dump_file(const char *name, const void *from, long count) {
-    return write_and_close(Fcreate(name, 0), from, count);
-}
-#endif
-
-#ifdef SMOKE
-#define STATS_FIELDS 14
+#define STATS_FIELDS 16
 #define STATS_BYTES  (STATS_FIELDS * 4)
 
-/* The record smoke.py parses: fourteen big-endian longwords, in this order. The last six are read
+/* The record smoke.py parses: sixteen big-endian longwords, in this order. The last six are read
  * out of the IMAGE, and are what proves things no framebuffer can show: that the scripted '1' drove
  * title_screen's ONE-player arm, and that a restart really happened.
  *
@@ -648,9 +711,10 @@ static void dump_stats(void) {
         frames, console_polls,
         dosound_calls, dosound_calls_in_play, first_sound_frame,
         psg_writes, psg_writes_in_play,
-        ikbd_packets, restarts, hiscore_bytes_written,
+        ikbd_packets, restarts, hiscore_bytes_written, frame_bytes_written,
         image[A_two_player_mode], image[A_players_alive],
         be16(image + A_object_table + OBJ_X), be16(image + A_object_table + OBJ_Y),
+        be32(image + A_rng_ptr),
     };
     for (unsigned i = 0; i < STATS_FIELDS; i++) wr32(record + 4u * i, (uint32_t)fields[i]);
     dump_file("STATS.BIN", record, STATS_BYTES);

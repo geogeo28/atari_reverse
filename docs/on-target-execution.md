@@ -243,6 +243,42 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   byte-identical to the shipped binary's this way, at the original's own Physbase. Compare
   BITPLANES, not colour: the palette is off-image on both sides, so it is a GUI check instead.
 
+- **Run the original as a DIFFERENTIAL, not just as a benchmark.** The RAM-dump comparison above is
+  a single screen; the same debugger turns it into a frame-by-frame equality test against the
+  shipped binary, which is the strongest on-target statement a reconstruction can make. Four
+  techniques make it work, and each was a dead end first:
+  * **Discover the load base, never assume it.** Search a RAM dump for a signature taken from a
+    *relocation-free* part of the `.PRG`; the hit's address minus its file offset is the base. It
+    varies with the ROM and with what TOS put below the TPA (measured for one game: `0x12596` under
+    TOS 1.04, `0x1b018` under EmuTOS, same test). Every anchor is then `base + (ghidra - load_base)`.
+  * **Pin the randomness where the two programs AGREE.** A game whose "RNG" harvests its own text —
+    a common trick — reads different bytes in the two loads, because relocated longwords hold
+    *file value + load base*. Forcing the same `Random` result pins only the starting offset into two
+    different streams. Park the cursor inside the largest **relocation-free** stretch instead, and
+    report how far it travelled so the test can prove it never left.
+  * **Inject a keystroke ON the trap, not after it.** Forcing `Bconstat` to say "a key is waiting"
+    makes the game call `Bconin`, which BLOCKS on an empty buffer and never returns. Break on the
+    `trap` instruction itself and set both `D0` and `PC` past it.
+  * **Anchor frames on a per-frame routine's entry.** Hatari's `b pc=$x :<count> :once` fires on the
+    count-th hit, so one breakpoint per sample frame reads that frame off exactly (a count of `1` is
+    rejected — use a plain `:once`). And feed the emulator a stream of `c` on stdin: an action file
+    ending in `cont` still drops the debugger at its prompt, and a prompt with nothing to read stops
+    the emulation dead after the first breakpoint.
+  * **Choose the sample depths by where the screen MOVES.** With neutral input a game can be static
+    for most of a window — Joust's is, from about frame 2 to frame 110 — and a depth whose
+    neighbouring frame is identical cannot detect a mis-anchor at all. Measure frame N against N+1
+    first and sample only where it differs.
+  Then **control the control, with a fault you INJECT**: re-run the pinned side deliberately
+  mis-anchored by one frame and require the comparison to FAIL. A "sensitivity check" assembled from
+  numbers you already hold is a theorem, not a control — ours compared `ours[early]` against
+  `shipped[late]`, which is guaranteed to differ once the main compare has passed, and it stayed
+  green in a run where the main compare correctly failed. Check the dump LENGTHS too: `zip`-style
+  comparison stops at the shorter side, so an empty dump reads as a perfect match.
+  Finally, **say which pins turned out not to be load-bearing.** Ours was the RNG: parking both
+  sides in a region where their bytes genuinely differ still matched at every sampled frame, so the
+  stream is consulted but nothing it feeds is drawn that early. Reporting that is the difference
+  between evidence and theatre.
+
 - **Raster colour-bars for timing.** Set the border to a different colour before each per-frame
   stage; the on-screen *height* of each colour band is that stage's share of the frame. A single
   dominant band = the bottleneck. (Caveat: if everything "flashes with no dominant colour," the cost
