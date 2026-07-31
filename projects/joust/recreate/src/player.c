@@ -1,12 +1,12 @@
-/* player.c — Joust's player-control layer: what a joystick does to a rider, and what happens to a
- * rider that dies.
+/* player.c — Joust's player-control layer: what a joystick does to a rider, what happens to a rider
+ * that dies, and the per-frame reader that drives both.
  *
- * read_joysticks (0x11d9a, blocked — see src/input.c) calls control_player twice a frame, once per
- * player, with the object slot in A0 and that player's joystick byte in D0. Three shapes come out
- * of it: an EMPTY slot, where the fire button is the "insert coin" of the game-over screen; a LIVE
- * rider, where the stick sets the speed the physics pass will ease it towards; and a DEAD one,
- * whose corpse hovers under its own wingbeats until it drifts off the end of the playfield and
- * player_death takes its next life away.
+ * read_joysticks (0x11d9a) calls control_player twice a frame, once per player, with the object
+ * slot in A0 and that player's joystick byte in D0. Three shapes come out of it: an EMPTY slot,
+ * where the fire button is the "insert coin" of the game-over screen; a LIVE rider, where the stick
+ * sets the speed the physics pass will ease it towards; and a DEAD one, whose corpse hovers under
+ * its own wingbeats until it drifts off the end of the playfield and player_death takes its next
+ * life away.
  *
  * TWO THINGS HERE ARE NOT PLAIN FUNCTION RETURNS, and both are handled the way src/input.c handles
  * its quit and restart exits: the C reports the branch through its return value, and the
@@ -22,6 +22,7 @@
  */
 #include "machine.h"
 
+#include "input.h"   /* the IKBD interrogate read_joysticks shares with two other layers */
 #include "joust.h"
 #include "player.h"
 
@@ -228,15 +229,93 @@ void restart_reset_players(uint8_t *image) {
     reset_player_hud(image, A_object_table);
 }
 
+/* =================================================================================================
+ * read_joysticks @ 0x11d9a — one frame's input for both players, and nothing else.
+ *
+ * Sixty bytes: ask the IKBD for both sticks, wait for the reply, and hand each player its own byte.
+ * It writes no image state of its own past the packet clear; everything else it leaves behind is
+ * control_player's.
+ *
+ * THE ROUTING IS CROSSED, and it is the one thing here the differential has to hold: the reply is
+ * joystick 0's byte then joystick 1's, and the routine gives JOYSTICK 1 TO PLAYER 1 and JOYSTICK 0
+ * TO PLAYER 2 — player 1 first (`bsr` at 0x11dc8, then 0x11dd2).
+ *
+ * VERIFIED IN TWO PIECES, because no oracle run can cross the wait in the middle:
+ *
+ *   * the prologue (0x11d9a..0x11daf) is diffed at a checkpoint on the wait head, where its only
+ *     effect is the packet clear, PAIRED with a proof no run gets past it;
+ *   * everything from the wait on (0x11db0..0x11dd5) is diffed at the `rts`, with the oracle
+ *     entered AT the wait and a reply already staged — the same rotation title_screen's joystick
+ *     start and hiscore_joystick_input use, and for the same reason.
+ *
+ * EACH HALF IS A NAMED SEAM the matching glue drives — request_ikbd_packet (src/input.c) and
+ * read_joysticks_from_wait below — rather than something a glue re-composes, so a step added to
+ * either is executed by a case instead of vanishing. What is left unheld is only the two-line body
+ * of `read_joysticks` itself, which nothing executes: no run can cross the wait, so no case can
+ * drive the two halves in sequence. ../STATUS.md records that.
+ * ============================================================================================= */
+
+/* 0x11db0..0x11dd5: the wait, the packet read, and the two calls.
+ *
+ * The original loads joystick 0 into D1 with a BYTE move and hands it to the second call with a
+ * LONG one (`move.l d1,d0`), so player 2's stick arrives with whatever the caller left in D1's top
+ * three bytes. control_player consults only bits 7/3/2, so those bytes are dead — the same reason
+ * its `stick` parameter is a longword at all. */
+static uint32_t read_joysticks_from_wait(uint8_t *image) {
+    wait_for_ikbd_packet(image);
+
+    uint32_t packet = be32(image + A_ikbd_packet);
+    uint8_t joystick_0 = image[packet + IKBD_JOYSTICK_0];
+    uint8_t joystick_1 = image[packet + IKBD_JOYSTICK_1];
+
+    /* A first call that restarts the game never comes back — it drops read_joysticks' return
+     * address along with its own (`addq.w #8,a7`) — so player 2 is not steered on that frame. */
+    if (control_player(image, A_object_table, joystick_1) == CONTROL_RESTART)
+        return CONTROL_RESTART;
+    return control_player(image, A_player2, joystick_0);
+}
+
+uint32_t read_joysticks(uint8_t *image) {
+    request_ikbd_packet(image);
+    return read_joysticks_from_wait(image);
+}
+
 /* ------------------------------------------------------------------------------------- glue ---
  *
- * Both entry points take their arguments in registers (A0, D0) and neither returns anything the
- * original's callers read, so the glue is a bare forwarder. control_player's result is the branch
- * report described above, not a value the game itself produces.
+ * control_player and the restart tail take their arguments in registers (A0, D0) and neither
+ * returns anything the original's callers read, so those two are bare forwarders. control_player's
+ * result is the branch report described above, not a value the game itself produces.
+ *
+ * read_joysticks needs two glues instead, because the IKBD wait cuts it in half — the same shape
+ * title_screen has (src/init.c), and for the same reason.
  */
 
 uint32_t g_control_player(uint8_t *image, uint32_t object, uint32_t stick) {
     return control_player(image, object, stick);
+}
+
+/* THE PROLOGUE, and no more: it stops where every oracle run entered at 0x11d9a must stop.
+ *
+ * A forwarder would be worse than useless here. read_joysticks CLEARS ikbd_packet before waiting on
+ * it, so no staged reply survives into the spin on either side — the oracle raises at its cap and
+ * the candidate, which is uncapped and faithfully so, would hang the pytest worker with no output
+ * at all under `-n auto`. It runs the shared `request_ikbd_packet` rather than repeating the store,
+ * so a step added to the prologue is executed here too. */
+uint32_t g_read_joysticks(uint8_t *image) {
+    request_ikbd_packet(image);
+    return READ_JOYSTICKS_IKBD_WAIT;
+}
+
+/* ...and the rotated pass, entered where the ORACLE can enter it: at the wait head (0x11db0) with a
+ * reply already in ikbd_packet, so the spin falls straight through and the packet read, both
+ * control_player calls and the `rts` are ordinary diffed work.
+ *
+ * IT REFUSES A PACKET IT COULD NOT READ, through the same `ikbd_packet_readable` predicate
+ * g_title_ikbd_pass uses — include/input.h carries the two reasons. The reconstruction itself stays
+ * unguarded and faithful; the refusal lives in the glue precisely so that it can. */
+uint32_t g_read_joysticks_pass(uint8_t *image) {
+    if (!ikbd_packet_readable(image)) return READ_JOYSTICKS_REFUSED;
+    return read_joysticks_from_wait(image);
 }
 
 void g_restart_reset_players(uint8_t *image) {

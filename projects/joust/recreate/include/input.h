@@ -12,12 +12,16 @@
  * test/test_constants.py). All six are included by name rather than left to score.h's own
  * includes, so a tidy-up there cannot silently take an address out from under the aliases below.
  *
- * TWO ROUTINES OF THIS LAYER ARE NOT HERE, and cannot be: read_joysticks (0x11d9a) and the IKBD
- * prologue of hiscore_joystick_input (0x14538..0x1454d) send the IKBD an "interrogate joysticks"
- * command and then spin until an interrupt handler stores the reply in ikbd_packet. The oracle runs
- * no interrupts and XBIOS Ikbdws has no image effect, so that spin never ends — and the routine
- * CLEARS ikbd_packet on entry, so a harness-poked reply cannot survive it either. See the module
- * comment in src/input.c and tools/recreate_kit/TRAP_MODEL.md.
+ * THE IKBD INTERROGATE ITSELF IS HERE — request_ikbd_packet / wait_for_ikbd_packet, below. Not all
+ * of its callers are: read_joysticks (0x11d9a) drives the two players, so it lives with them in
+ * src/player.c. What NOTHING can prove is the WAIT. The command goes out through XBIOS Ikbdws (no
+ * image effect) and the reply arrives on an interrupt the oracle never runs, and the prologue
+ * CLEARS ikbd_packet, so a harness-poked reply cannot survive to end the spin either. So every
+ * routine that waits is verified from a rotated entry AT its wait with the reply staged, and its
+ * prologue separately or not at all: read_joysticks' is checkpointed (test_player.py) and
+ * title_screen's is diffed inside its attract pass, but hiscore_joystick_input's is NEITHER
+ * RECONSTRUCTED NOR VERIFIED — that routine begins at 0x1454e, past its own 0x14538..0x1454d, and
+ * its caller owes the interrogate on target. See src/input.c and tools/recreate_kit/TRAP_MODEL.md.
  */
 #ifndef JOUST_INPUT_H
 #define JOUST_INPUT_H
@@ -85,6 +89,46 @@
                                           * which joystick of the IKBD packet to read */
 #define A_hiscore_flash_passes A_draw_y  /* .b — draw_y's HIGH half: how many colour-cycle steps
                                           * the entry loop still owes this pass */
+
+/* --- the IKBD joystick interrogate --------------------------------------------------------------
+ * THREE ROUTINES OF THE ORIGINAL OPEN WITH THE SAME SIX INSTRUCTIONS, byte for byte: read_joysticks
+ * (0x11d9a), hiscore_joystick_input (0x14538) and title_screen's attract pass (0x10ba2). The pair
+ * below is that prologue, shared by the TWO reconstructions that have one — read_joysticks
+ * (src/player.c) and title_screen (src/init.c). hiscore_joystick_input starts past its wait and so
+ * has none to share. It lives here because A_ikbd_packet does. */
+
+/* Where each stick's byte sits in the reply — joystick 0 first, then joystick 1. */
+#define IKBD_JOYSTICK_0  0u
+#define IKBD_JOYSTICK_1  1u
+
+/* ...so the last address a reader of the packet touches is `packet + 1`. */
+#define IKBD_PACKET_BYTES 2u
+
+/* Can the packet ikbd_packet points at actually be read on BOTH sides of the differential?
+ *
+ * Every glue that enters a wait asks this before it does, and refuses when the answer is no — for
+ * two different reasons. An EMPTY pointer means the reconstruction's uncapped spin never ends and
+ * hangs a pytest worker with no output at all. One PAST THE IMAGE means the routine dereferences
+ * something the two cores disagree about: the oracle's memory callbacks answer 0 for any address
+ * past its size, while the candidate would index host memory past the end of the buffer. Neither
+ * reading is the original's, so a diff over one would prove nothing.
+ *
+ * This is a GLUE predicate, not the game's: no reconstructed routine consults it, and the original
+ * has no trace of it (see ../README.md, "A glue may refuse a call the original makes"). It is one
+ * function rather than one per glue so that the bound has a single definition. */
+int ikbd_packet_readable(const uint8_t *image);
+
+/* `clr.l ikbd_packet` + XBIOS Ikbdws(0, ikbd_cmd_joyread): empty the slot the IKBD's interrupt
+ * handler fills in, then ask the keyboard processor for a fresh reply. The trap changes no memory,
+ * so the reconstruction issues nothing for it — exactly as init_system's Ikbdws is not issued
+ * either. AN ON-TARGET BUILD MUST RE-ISSUE IT, or no reply ever arrives and every wait below hangs. */
+void request_ikbd_packet(uint8_t *image);
+
+/* ...and the `tst.l` spin that waits for the handler to store one. NO ORACLE RUN LEAVES IT: the kit
+ * models no interrupts (TRAP_MODEL.md), and the clear above wipes anything the harness poked
+ * beforehand — so every routine that calls this pair is verified from a ROTATED ENTRY at the wait
+ * with the reply already staged. */
+void wait_for_ikbd_packet(const uint8_t *image);
 
 /* --- check_highscore ---------------------------------------------------------------------------
  * Two of its three exits are an ordinary `rts`. The third is the name-entry loop, which has no exit

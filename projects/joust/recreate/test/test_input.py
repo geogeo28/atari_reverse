@@ -2,8 +2,10 @@
 
 Covered here: poll_quit_key @ 0x11c24 (with its pause loop @ 0x11d64), hiscore_key_input @ 0x144d4,
 hiscore_joystick_input @ 0x14538 and check_highscore @ 0x1437a (with its name-entry loop, entered at
-its colour-cycle tail @ 0x14494). read_joysticks @ 0x11d9a is NOT reconstructed; the reason is
-pinned by test_ikbd_wait_never_ends_from_the_routines_own_entry.
+its colour-cycle tail @ 0x14494). read_joysticks @ 0x11d9a shares this layer's IKBD wait and is
+covered in test_player.py, beside the control_player calls that are its whole body; the limit both
+routines meet is pinned here, for both entries, by
+test_ikbd_wait_never_ends_from_the_routines_own_entry.
 
 Every routine here is trap-bound, so the kit's TOS model
 (../../../../tools/recreate_kit/TRAP_MODEL.md) sets what can be proved at all. Four of its limits
@@ -23,8 +25,10 @@ shape this whole file:
   * **The IKBD reply never arrives.** Its interrogate command goes out through Ikbdws (no image
     effect) and the answer comes back on an interrupt the oracle never runs, so the two routines
     that wait for it spin forever — and they CLEAR the packet on entry, so a poked reply cannot
-    survive to end the wait. hiscore_joystick_input is therefore entered at its wait loop with the
-    reply staged, and read_joysticks is left unreconstructed.
+    survive to end the wait. Every routine that waits is therefore entered AT its wait loop with
+    the reply staged. The prologue in front of it is a separate question per routine:
+    read_joysticks' is checkpointed (test_player.py) and title_screen's is diffed inside its
+    attract pass, while hiscore_joystick_input's 0x14538..0x1454d is not reconstructed at all.
 """
 import collections
 import ctypes
@@ -49,7 +53,7 @@ ENTRY_PAUSE_LOOP = 0x11d64        # poll_quit_key's pause spin, entered directly
 ENTRY_HISCORE_KEY_INPUT = 0x144d4
 ENTRY_HISCORE_JOYSTICK_INPUT = 0x14538
 ENTRY_IKBD_WAIT = 0x1454e         # hiscore_joystick_input's IKBD wait loop, entered directly
-ENTRY_READ_JOYSTICKS = 0x11d9a    # not reconstructed — see the IKBD section below
+ENTRY_READ_JOYSTICKS = 0x11d9a    # reconstructed in test_player.py; only its wait is pinned here
 ENTRY_CHECK_HIGHSCORE = 0x1437a
 ENTRY_HISCORE_FLASH_TAIL = 0x14494  # check_highscore's colour-cycle tail, entered directly
 
@@ -128,6 +132,30 @@ JOY_FIRE, JOY_UP, JOY_DOWN, JOY_LEFT, JOY_RIGHT, JOY_DIRECTIONS = 0x80, 0x01, 0x
 REPEAT_DELAY_FIRST, REPEAT_DELAY_NEXT = 6, 2
 IKBD_PACKET_JOYSTICK_1 = 1         # the reply is joystick 0's byte then joystick 1's
 IKBD_PACKET_BUF = 0x60000          # scratch for the staged 2-byte reply, clear of SCREEN's band
+
+# ---- the two reply-buffer addresses that make the SHARED wait's WIDTH observable ----
+#
+# src/input.c's wait_for_ikbd_packet spins on all four bytes of the ikbd_packet longword, and every
+# battery that enters a wait needs the width pinned. An ordinary scratch buffer cannot do it: a
+# pointer's non-zero bytes are the only ones a narrowed wait has to read, so a wait that ignored the
+# bytes a given buffer leaves ZERO behaves identically on every case staged there. These two exist
+# for nothing but that, and each kills a different narrowing — with the pointer non-zero ONLY in the
+# byte named, a wait that skips that byte reads all-zero, never terminates, and the battery's
+# wall-clock deadline turns it into an ordinary red:
+#
+#   * HIGH_ZERO: non-zero only in byte 2, so a wait reading `packet[0] | packet[1]` dies;
+#   * LSB_ONLY:  non-zero only in byte 3, so a wait reading `packet[0] | packet[1] | packet[2]` dies.
+#
+# Byte 0 has no such buffer and can have none: every address inside a 0x100000-byte image has its
+# most significant byte zero, so no legal pointer separates a wait that reads it from one that does
+# not. That one byte is pinned against the ORIGINAL'S encoding instead.
+#
+# Both sit below the load base (0x10000) and above the kit's poked input block (0x600..0x61f), so
+# they belong to no layer's staging. THEY LIVE HERE, not in the batteries, because the wait they
+# probe is ONE function: test_init.py and test_player.py both import them rather than spelling the
+# addresses twice (CLAUDE.md §5 — one canonical definition, never a copy per file).
+IKBD_PACKET_BUF_HIGH_ZERO = 0x00c000
+IKBD_PACKET_BUF_LSB_ONLY = 0x0000f0
 
 # ---- the name-entry screen's staging ----
 # A scratch screen clear of the program (which ends 0x2b7ae), of abi's stub space and of the staged
@@ -863,8 +891,9 @@ def test_ikbd_wait_never_ends_from_the_routines_own_entry(entry, label):
     Each clears ikbd_packet, sends the IKBD its interrogate command with XBIOS Ikbdws — which the
     model swallows, no image effect — and then spins until an interrupt handler fills the packet in.
     The oracle runs no interrupts, and the routine's own `clr.l` wipes anything the harness poked
-    beforehand, so the spin never ends whatever is staged. That is why hiscore_joystick_input is
-    verified from its wait loop instead, and why read_joysticks is not reconstructed at all.
+    beforehand, so the spin never ends whatever is staged. That is why BOTH routines are verified
+    from their wait loop instead, with the prologue in front of it checkpointed on its own
+    (read_joysticks' half of that is in test_player.py).
     """
     _never_returns(_joystick_pokes(JOY_UP), entry)
 
@@ -1505,6 +1534,7 @@ def test_mirrored_constants_match_input_h():
         "A_fname_highsco": A_FNAME_HIGHSCO, "A_hiscore_dirty": A_HISCORE_DIRTY,
         "A_ikbd_packet": A_IKBD_PACKET, "A_repeat_delay": A_REPEAT_DELAY,
         "A_ikbd_cmd_joyread": A_IKBD_CMD_JOYREAD,
+        "IKBD_JOYSTICK_1": IKBD_PACKET_JOYSTICK_1,
         "A_hiscore_score": A_HISCORE_SCORE,
         "STR_HISCORE_P1": STR_HISCORE_P1, "STR_HISCORE_P2": STR_HISCORE_P2,
         "INPUT_CONTINUE": INPUT_CONTINUE, "INPUT_RESTART": INPUT_RESTART, "INPUT_QUIT": INPUT_QUIT,
@@ -1551,7 +1581,6 @@ def test_mirrored_constants_match_input_c_and_the_kit():
         "HISCORE_COLUMNS": HISCORE_COLUMNS,
         "JOY_FIRE": JOY_FIRE, "JOY_UP": JOY_UP, "JOY_DOWN": JOY_DOWN, "JOY_LEFT": JOY_LEFT,
         "JOY_RIGHT": JOY_RIGHT, "JOY_DIRECTIONS": JOY_DIRECTIONS,
-        "IKBD_JOYSTICK_1": IKBD_PACKET_JOYSTICK_1,
         "REPEAT_DELAY_FIRST": REPEAT_DELAY_FIRST, "REPEAT_DELAY_NEXT": REPEAT_DELAY_NEXT,
         # The four wrap thresholds are what make the alphabet ' ' + 'A'..'Z' rather than a plain
         # byte counter, and the differential is the only thing that could otherwise catch them.

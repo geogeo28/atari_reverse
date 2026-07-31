@@ -86,6 +86,12 @@ the game — `'1'`, `'2'` or Ctrl-C, all three diffed to their own end — or it
 IKBD wait at `0x10bb8`, which ends on neither side. So the glue runs the painting and exactly one
 pass and reports `TITLE_IKBD_WAIT`, which is the state the oracle has at its checkpoint.
 
+`g_read_joysticks` (`src/player.c`) is the fourth and the smallest: the refused part is six
+instructions. `read_joysticks` clears `ikbd_packet` and then waits on it, so on **every** input both
+cores block — the glue runs the clear (through the shared `request_ikbd_packet`, not a copy of it)
+and reports `READ_JOYSTICKS_IKBD_WAIT`, which is the state the oracle has at its `0x11db0`
+checkpoint.
+
 ### Entering a loop mid-body, so that a pass can be diffed at all
 
 The cost of that refusal is that the loop body is verified separately, and by a glue with **no
@@ -105,12 +111,49 @@ or outside the image, because the routine dereferences that pointer and the two 
 about what lies outside — the oracle's callbacks answer `0`, while the candidate would index host
 memory past the end of the buffer.
 
+`g_read_joysticks_pass` is the third rotation, for what lies past `read_joysticks`' wait at
+`0x11db0`, and it refuses the same two packet pointers for the same two reasons — through the same
+`ikbd_packet_readable` predicate, so the bound has one definition rather than one per glue. What
+makes it worth its own paragraph is that its pass holds **order as well as presence**. Its two steps are
+`control_player` on each player, and most frames they touch disjoint memory — one object record
+each — so the order would be invisible. On the frame both riders take their last life they share
+`players_alive` and the message table: the first to run posts its per-player banner into slot 0 and
+the second the shared GAME OVER into slot 1. Swapping the calls swaps both records, so on that one
+input the differential holds the sequence rather than the disassembly having to.
+
 **A refusing glue needs a wall-clock deadline as well as a probe.** The probe is one layer, and a
 gap in it costs the whole worker: `test_init.py` therefore routes every candidate-side entry into
 `g_title_ikbd_pass` through a `threading` deadline, exactly as `_pause_glue` does for the pause
-spin. That second layer is what makes non-termination *assertable* rather than silent — with it,
+spin, and `test_player.py` does the same for both of `read_joysticks`' glues — through one
+`_within_deadline` helper that takes the glue as an argument, since that file drives two of them.
+That second layer is what makes non-termination *assertable* rather than silent — with it,
 deleting the probe or narrowing the wait fails as an ordinary red instead of hanging, which is the
 difference between a mutation sweep that scores those mutants and one that cannot.
+
+### A limit inferred from the harness's shape is a hypothesis, not a finding
+
+Splitting a routine at its wait leaves an obvious-looking hole: no case runs the halves *in
+sequence*, so the composition is unheld and deleting the wait is unobservable. `read_joysticks`
+disclosed both as surviving mutants on exactly that reasoning — and both were wrong.
+
+The reasoning came from the **oracle**, which models no interrupts and so can never leave the spin.
+The **candidate** is a shared library in this process, and the wait is `volatile` precisely because
+something outside the routine writes that slot. A `threading.Thread` poking the ctypes image *is*
+the interrupt. `test_read_joysticks_blocks_until_a_reply_lands` runs the whole reconstructed routine
+on a thread, polls until its own `clr.l` lands, asserts it is **still blocked** a quarter-second
+later, and only then stores the reply pointer — which pins clear → block → read in order, and kills
+both mutants. It is deliberately **not** a differential: there is no oracle run to compare with,
+which is the entire reason it can exist. It pins the reconstruction's control flow, not its
+equivalence, and it is the only test in this project that does.
+
+Two guards keep the dwell from being a race. A wait-less build that somehow survived it is then
+handed the reply and *still* fails, because it read the packet it had just zeroed and both target
+speeds come out of the riders' own `vx` instead of the sticks. Neither layer can go green on a build
+that does not wait.
+
+So: before writing "the harness cannot see this", ask whether that is a property of the *oracle* or
+of the *reconstruction*. The two disclosed survivors here were the first kind wearing the second's
+clothes, and the experiment that settled it was fifteen lines.
 
 **What that rotation buys is presence, not order.** No ordering anywhere in the entry loop is held
 by the differential on the C side — not in `check_highscore`'s own `for (;;)`, and not in the glue
@@ -122,9 +165,12 @@ green. The order in both is **transcribed from the disassembly and asserted ther
 glue: nothing executes `check_highscore`'s loop at all, so deleting a call from it is invisible too.
 `STATUS.md` lists each of those as a surviving mutant rather than leaving the gap implied.
 
-The general lesson is worth stating once: **a rotated single pass verifies the steps, never their
-sequence.** Where a loop's steps share no state, only the original's encoding can say what order
-they run in.
+The general lesson is worth stating once: **a rotated single pass verifies the steps; it verifies
+their sequence only where the steps share state.** Where they touch disjoint memory — the entry
+loop's colour cycle and its keyboard poll — only the original's encoding can say what order they run
+in. Where they do share it the order comes free, so the work is finding the input that makes them
+share: `g_read_joysticks_pass` gets one from the single frame on which both riders take their last
+life, and `g_title_ikbd_pass` from a wait whose second step reads what the first produced.
 
 ## `project.toml` — the heap waiver
 

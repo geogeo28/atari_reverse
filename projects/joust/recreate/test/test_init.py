@@ -1062,13 +1062,12 @@ OBJ_FLAGS = 0                      # joust.h
 
 # Two staged joystick bytes, clear of the program (ends 0x2b7ae), of SCREEN and of the file table.
 IKBD_PACKET_BUF = 0x60000
-# ...and a second buffer whose POINTER HAS A ZERO HIGH WORD (0x0000c000). It is what pins the wait
-# as a LONGWORD test, and its absence is what made that width look like an inherent limit: at
-# IKBD_PACKET_BUF the pointer's second byte is 0x06, so a wait reading only the first two bytes
-# still sees something non-zero and agrees on every case. Clear of the poked block (ends 0x620), of
-# the program (loads at 0x10000) and of SCREEN.
-IKBD_PACKET_BUF_HIGH_ZERO = 0xc000
-IKBD_PACKET_BYTES = 2              # src/init.c: what the glue's bound must leave readable
+# ...and the two buffers that pin the wait's WIDTH, imported rather than respelled: the wait is ONE
+# shared function (src/input.c), so its probe addresses have one definition, in test_input.py beside
+# the constants of the layer that owns it. Each kills a different narrowing; see the comment there.
+IKBD_PACKET_BUF_HIGH_ZERO = test_input.IKBD_PACKET_BUF_HIGH_ZERO
+IKBD_PACKET_BUF_LSB_ONLY = test_input.IKBD_PACKET_BUF_LSB_ONLY
+IKBD_PACKET_BYTES = 2              # input.h: what the glue's bound must leave readable
 IKBD_FIRE = 0x80                   # the IKBD joystick byte's bit 7 — read here as its SIGN
 
 
@@ -1552,27 +1551,31 @@ def test_title_screen_joystick_without_fire_goes_round_the_attract_loop(joystick
     _never_returns(pokes, TITLE_IKBD_WAIT_PC)
 
 
+@pytest.mark.parametrize("buffer", (IKBD_PACKET_BUF_HIGH_ZERO, IKBD_PACKET_BUF_LSB_ONLY))
 @pytest.mark.parametrize("joystick0,joystick1,expect,stop_pc",
                          ((IKBD_FIRE, 0, TITLE_STARTED, 0),
                           (0, 0, TITLE_ATTRACT, TITLE_ATTRACT_HEAD)))
-def test_title_screen_waits_on_the_whole_packet_longword(joystick0, joystick1, expect, stop_pc):
+def test_title_screen_waits_on_the_whole_packet_longword(joystick0, joystick1, expect, stop_pc,
+                                                         buffer):
     """THE WAIT IS A `tst.l`, pinned by STAGING rather than by an encoding read.
 
     Every other case in this file puts the reply buffer at IKBD_PACKET_BUF, whose pointer's second
     byte is 0x06 — so a wait that read only the first two bytes of ikbd_packet would see a non-zero
     word and behave identically on all of them. That made the width look like an inherent limit of
-    the harness; it was a property of the chosen address. With the buffer at a pointer whose HIGH
-    WORD IS ZERO, a narrowed wait never terminates and `_title_ikbd`'s deadline turns that into an
-    ordinary red (measured: narrowing to `packet[0] | packet[1]` fails this case and leaves every
-    other one green).
+    the harness; it was a property of the chosen address.
+
+    ONE PROBE BUFFER IS NOT ENOUGH EITHER, and that was the second half of the same mistake: a
+    pointer whose high word is zero kills a wait reading `packet[0] | packet[1]`, but its own LOW
+    byte is zero too, so a wait reading `packet[0] | packet[1] | packet[2]` survives it. The second
+    buffer's pointer is non-zero ONLY in that last byte. With both, a wait narrowed at EITHER end
+    never terminates and `_title_ikbd`'s deadline turns that into an ordinary red (measured, both).
 
     THREE of the pointer's four bytes are pinned this way. The fourth — byte 0, the most significant
     — cannot be: every address inside a 0x100000-byte image has it zero, so no legal pointer can
     make it matter. That one byte is what test_the_ikbd_wait_tests_the_whole_longword still covers
     against the original's own encoding.
     """
-    _ikbd_case(joystick0, joystick1, 0, expect, stop_pc=stop_pc,
-               buffer=IKBD_PACKET_BUF_HIGH_ZERO)
+    _ikbd_case(joystick0, joystick1, 0, expect, stop_pc=stop_pc, buffer=buffer)
 
 
 # What the glue refuses: an empty packet (the spin would never end) and a pointer the routine may
@@ -1772,8 +1775,7 @@ def test_title_screen_constants_match_the_c():
                            ("TITLE_KEY_ONE_PLAYER", TITLE_KEY_ONE_PLAYER),
                            ("TITLE_KEY_TWO_PLAYER", TITLE_KEY_TWO_PLAYER),
                            ("TITLE_HUE_RING_PENS", len(TITLE_HUE_RING)),
-                           ("TITLE_PASS_REFUSED", TITLE_PASS_REFUSED),
-                           ("IKBD_PACKET_BYTES", IKBD_PACKET_BYTES)):
+                           ("TITLE_PASS_REFUSED", TITLE_PASS_REFUSED)):
         assert init_c[name] == mirrored, f"{name} differs from src/init.c"
     for name, mirrored in (("STR_TITLE_PROMPT", STR_TITLE_PROMPT),
                            ("STR_TITLE_HISCORE", STR_TITLE_HISCORE),
@@ -1785,7 +1787,8 @@ def test_title_screen_constants_match_the_c():
 
     # ...and the four other layers' constants this battery reaches into.
     for header, names in (("include/input.h", (("KEY_CTRL_C", KEY_CTRL_C),
-                                               ("A_ikbd_cmd_joyread", A_IKBD_CMD_JOYREAD))),
+                                               ("A_ikbd_cmd_joyread", A_IKBD_CMD_JOYREAD),
+                                               ("IKBD_PACKET_BYTES", IKBD_PACKET_BYTES))),
                           ("include/sound.h", (("A_snd_priority", A_SND_PRIORITY),
                                                ("SND_PRIORITY_IDLE", SND_PRIORITY_IDLE),
                                                ("A_snd_list_silence", A_SND_LIST_SILENCE),

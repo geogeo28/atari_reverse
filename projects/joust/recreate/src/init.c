@@ -548,21 +548,11 @@ static uint32_t title_attract_pass(uint8_t *image) {
         if (left == 0) break;
     }
 
-    /* Ask the IKBD for both joysticks. The reply lands in ikbd_packet on an interrupt, so the
-     * routine clears the word first — which is also why no poked reply can survive to end the wait.
-     * XBIOS Ikbdws(0, A_ikbd_cmd_joyread) follows and has no image effect. */
-    wr32(image + A_ikbd_packet, 0);
+    /* Ask the IKBD for both joysticks — the same prologue read_joysticks and the name entry's
+     * joystick poll open with, so it is src/input.c's request_ikbd_packet rather than a third copy.
+     * It is also why no poked reply survives into the wait below: the packet is cleared first. */
+    request_ikbd_packet(image);
     return TITLE_IKBD_WAIT;
-}
-
-/* The wait itself. `volatile` is what stops the compiler assuming this loop terminates and deleting
- * it: the reply is stored by an interrupt handler, which is exactly what volatile is for. Read as
- * four BYTES rather than through a wider type — the image is a byte array, `ikbd_packet` is not
- * longword-aligned, and a `tst.l` against zero does not care in which order the bytes are OR-ed. */
-static void wait_for_ikbd_packet(const uint8_t *image) {
-    const volatile uint8_t *packet = image + A_ikbd_packet;
-    while ((packet[0] | packet[1] | packet[2] | packet[3]) == 0)
-        ;
 }
 
 /* 0x10bb8..0x10bd7 — the wait, and what the reply says. */
@@ -572,7 +562,8 @@ static uint32_t title_ikbd_pass(uint8_t *image) {
     /* Either stick's fire button starts the game: the two joystick bytes are OR-ed and the branch
      * reads the SIGN of that byte, which is the IKBD's fire bit. */
     uint32_t packet = be32(image + A_ikbd_packet);
-    if ((int8_t)(image[packet] | image[packet + 1u]) >= 0) return TITLE_ATTRACT;
+    if ((int8_t)(image[packet + IKBD_JOYSTICK_0] | image[packet + IKBD_JOYSTICK_1]) >= 0)
+        return TITLE_ATTRACT;
 
     start_game(image, image[A_two_player_mode] != 0);   /* `tst.b`: whatever was chosen last */
     return TITLE_STARTED;
@@ -618,9 +609,11 @@ uint32_t title_screen(uint8_t *image) {
  * title_screen's, so it is recorded in ../STATUS.md and left for _start's next pass rather than
  * folded in here.
  *
- * The frame loop past the fifth call is blocked regardless: read_joysticks @ 0x11d9a is unported
- * and cannot be verified at all, and check_highscore @ 0x1437a — ported — does not come back once
- * a record is set.
+ * The frame loop past the fifth call is blocked regardless, and by the SAME wall rather than by a
+ * missing port — every function it calls is reconstructed now. read_joysticks @ 0x11d9a
+ * (src/player.c) is verified either side of an IKBD wait neither core can leave, so a forwarding
+ * frame loop would hang on it exactly as it would here; and check_highscore @ 0x1437a does not come
+ * back once a record is set.
  *
  * So what this proves is exactly: _start does nothing of its own before those two calls, and makes
  * them in that order.
@@ -684,11 +677,9 @@ uint32_t g_title_screen(uint8_t *image) {
  * neither reading is the original's. The reconstruction itself stays unguarded and faithful. */
 #define TITLE_PASS_REFUSED 4u   /* glue-only: the wait was refused, so it was never entered */
 
-/* Both packet bytes must be readable, so the last address the routine touches is packet + 1. */
-#define IKBD_PACKET_BYTES 2u
-
+/* Both refusals are one predicate, `ikbd_packet_readable` (input.h) — read_joysticks' glue asks the
+ * same question, and a bound with two implementations is a bound that drifts. */
 uint32_t g_title_ikbd_pass(uint8_t *image) {
-    uint32_t packet = be32(image + A_ikbd_packet);
-    if (packet == 0 || packet > OS_IMAGE_SIZE - IKBD_PACKET_BYTES) return TITLE_PASS_REFUSED;
+    if (!ikbd_packet_readable(image)) return TITLE_PASS_REFUSED;
     return title_ikbd_pass(image);
 }

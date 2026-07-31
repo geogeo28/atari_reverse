@@ -65,6 +65,15 @@
 
 #define GAME_OVER_SET  1u  /* `move.b #$1,game_over_flag` — check_highscore only runs when it is set */
 
+/* --- read_joysticks ----------------------------------------------------------------------------
+ * It propagates control_player's CONTROL_* result — the first call that restarts never comes back,
+ * so the second is never made. The two codes below are its GLUES' own, and are distinct from those
+ * so that a test cannot confuse a refusal with an outcome. */
+#define READ_JOYSTICKS_IKBD_WAIT  2u  /* glue-only: the prologue ran and the original is now spinning
+                                       * at 0x11db0, which is as far as any run gets from 0x11d9a */
+#define READ_JOYSTICKS_REFUSED    3u  /* glue-only: the staged packet is unreadable, so the rotated
+                                       * pass was not entered at all */
+
 /* --- the restart tail -------------------------------------------------------------------------- */
 #define PLAYERS_ALIVE_ONE   1u
 #define PLAYERS_ALIVE_TWO   2u
@@ -89,6 +98,11 @@
 #define BANNER_COLOR_P2         2u
 
 /* --- player.c ---------------------------------------------------------------------------------- */
+
+/* One frame's joystick input for both players. Reconstructed whole, but only verifiable in two
+ * pieces: the blocking prologue, and everything from the wait on (see src/player.c). */
+uint32_t read_joysticks(uint8_t *image);
+
 uint32_t control_player(uint8_t *image, uint32_t object, uint32_t stick);
 void restart_reset_players(uint8_t *image);
 void player_death(uint8_t *image, uint32_t object);

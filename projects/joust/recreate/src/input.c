@@ -28,20 +28,56 @@
  *     call, it does not invent the case. And it proves a guard is REACHED, not that it is the right
  *     guard, so a Bconstat/Fopen/Super gate in init_system or title_screen is still transcribed
  *     from the original and reasoned about.
- *   * THE IKBD PATH CANNOT BE VERIFIED AT ALL, and read_joysticks (0x11d9a) is therefore absent
- *     from this file. It sends the IKBD an "interrogate joysticks" command with XBIOS Ikbdws, which
- *     the model swallows (no image effect), and then spins on ikbd_packet until an interrupt
- *     handler stores the reply — the oracle runs no interrupts, and the routine CLEARS ikbd_packet
- *     on entry, so a harness-poked reply cannot survive to end the spin either. Only
- *     hiscore_joystick_input's body is recoverable, by entering the oracle AT the wait loop with a
- *     packet already staged (see below); read_joysticks additionally calls control_player
- *     (0x11dd6), which is not reconstructed.
+ *   * THE IKBD WAIT ITSELF CANNOT BE VERIFIED. The interrogate goes out with XBIOS Ikbdws, which
+ *     the model swallows (no image effect), and the reply lands in ikbd_packet on an interrupt the
+ *     oracle never runs — and the prologue CLEARS ikbd_packet, so a harness-poked reply cannot
+ *     survive to end the spin either. What IS recoverable is everything past the wait, by entering
+ *     the oracle AT the wait loop with a packet already staged: that is how hiscore_joystick_input
+ *     is verified below, and how read_joysticks (0x11d9a, src/player.c) and title_screen's joystick
+ *     start (0x10bb8, src/init.c) are. The prologue the three share is request_ikbd_packet /
+ *     wait_for_ikbd_packet, at the head of this file.
  */
 #include "machine.h"
 #include "os.h"
 
 #include "input.h"
 #include "sound.h"   /* g_dosound: the kit's XBIOS Dosound side-effect ledger */
+
+/* =================================================================================================
+ * The IKBD joystick interrogate — the six instructions three routines of the ORIGINAL share.
+ *
+ * read_joysticks (0x11d9a), hiscore_joystick_input (0x14538) and title_screen's attract pass
+ * (0x10ba2) each spell the same `clr.l` / Ikbdws / `tst.l` spin, byte for byte. TWO of the three
+ * reconstructions call the pair below — read_joysticks (src/player.c) and title_screen
+ * (src/init.c) — so a change to either half reaches both, and both batteries score it.
+ *
+ * THE THIRD DOES NOT, and that is not an oversight: hiscore_joystick_input is reconstructed from
+ * PAST its wait (see its own section), so it has no prologue to share. Its caller, the high-score
+ * entry loop, is the one that owes the interrogate on target.
+ * ============================================================================================= */
+
+void request_ikbd_packet(uint8_t *image) {
+    /* The slot the IKBD's interrupt handler stores into, emptied so last frame's reply cannot be
+     * read as this frame's. XBIOS Ikbdws(0, A_ikbd_cmd_joyread) follows and has no image effect
+     * (see include/input.h for what an on-target build still owes). */
+    wr32(image + A_ikbd_packet, 0);
+}
+
+/* `volatile` is what stops the compiler assuming this loop terminates and deleting it: the reply is
+ * stored by an interrupt handler, which is exactly what volatile is for. Read as four BYTES rather
+ * than through a wider type — the image is a byte array, ikbd_packet is not longword-aligned, and a
+ * `tst.l` against zero does not care in which order the bytes are OR-ed. */
+void wait_for_ikbd_packet(const uint8_t *image) {
+    const volatile uint8_t *packet = image + A_ikbd_packet;
+    while ((packet[0] | packet[1] | packet[2] | packet[3]) == 0)
+        ;
+}
+
+/* The one guard both wait-entering glues share; include/input.h carries the two reasons for it. */
+int ikbd_packet_readable(const uint8_t *image) {
+    uint32_t packet = be32(image + A_ikbd_packet);
+    return packet != 0 && packet <= OS_IMAGE_SIZE - IKBD_PACKET_BYTES;
+}
 
 /* =================================================================================================
  * poll_quit_key @ 0x11c24
@@ -300,8 +336,6 @@ uint32_t hiscore_key_input(uint8_t *image) {
 #define JOY_RIGHT      0x08u
 #define JOY_DIRECTIONS 0x0fu   /* `and.b #$f` — the four direction bits, tested in this order */
 
-#define IKBD_JOYSTICK_1 1u     /* the reply packet is joystick 0's byte then joystick 1's */
-
 #define REPEAT_DELAY_FIRST 6u  /* frames a held direction waits before it repeats... */
 #define REPEAT_DELAY_NEXT  2u  /* ...and between repeats after that */
 
@@ -330,7 +364,7 @@ uint32_t hiscore_joystick_input(uint8_t *image) {
 
     /* The stick belonging to the player entering the name: player 2 reads joystick 0, anyone else
      * joystick 1 — a FULL 32-bit `cmpi.l` against player 2's slot. */
-    uint8_t stick = image[packet];
+    uint8_t stick = image[packet + IKBD_JOYSTICK_0];
     if (be32(image + A_hiscore_stick) != A_player2) stick = image[packet + IKBD_JOYSTICK_1];
 
     if (stick & JOY_FIRE) return hiscore_finish(image);   /* fire before the flag below is set is

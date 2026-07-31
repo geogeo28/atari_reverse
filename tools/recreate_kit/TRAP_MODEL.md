@@ -361,9 +361,9 @@ that — `read_joysticks` (`0x11d9a`) and `hiscore_joystick_input` (`0x14538`) b
 ikbd_packet` before sending the "interrogate joysticks" command and spinning on the reply. A staged
 packet is therefore erased by the routine itself and the spin never ends. The only way in is to
 enter the oracle **at the wait loop** with the packet already staged, which is what
-`hiscore_joystick_input` does (verified from `0x1454e` onward) and what `read_joysticks` cannot do,
-since it goes on to call an unreconstructed function. So: check whether the routine writes its own
-poked input before assuming state-level modelling reaches it.
+`hiscore_joystick_input` does (verified from `0x1454e` onward) and what `read_joysticks` does too
+(rotated at `0x11db0`; the `control_player` it goes on to call is itself verified). So: check
+whether the routine writes its own poked input before assuming state-level modelling reaches it.
 
 **2. The `Fopen` → `Fcreate` fallback is unreachable by construction.** `os_fcreate` *is* `os_fopen`
 plus a truncation, so for any one name both succeed (staged) or both are refused (not staged) —
