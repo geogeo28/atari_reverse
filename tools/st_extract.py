@@ -173,10 +173,14 @@ class Fat12Image:
         """True if this cluster number really addresses data (not a reserved value)."""
         return FIRST_DATA_CLUSTER <= cluster <= self.bpb["max_data_cluster"]
 
+    def cluster_start_sector(self, cluster):
+        """The volume sector a cluster begins at (data clusters are numbered from 2)."""
+        return (self.bpb["data_start"]
+                + (cluster - FIRST_DATA_CLUSTER) * self.bpb["sectors_per_cluster"])
+
     def cluster_bytes(self, cluster):
-        spc = self.bpb["sectors_per_cluster"]
-        start = self.bpb["data_start"] + (cluster - FIRST_DATA_CLUSTER) * spc
-        return self.sectors(start, spc)
+        return self.sectors(self.cluster_start_sector(cluster),
+                            self.bpb["sectors_per_cluster"])
 
     def fat_entry(self, cluster):
         """FAT12 packs two entries into three bytes; odd clusters take the high nibbles."""

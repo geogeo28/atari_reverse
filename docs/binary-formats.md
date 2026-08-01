@@ -92,6 +92,131 @@ or a packed blob). It exits nonzero and prints a `WARNING` line per suspicious c
 or directory entry instead of silently truncating — treat a dirty exit as "this image is
 damaged", not as noise.
 
+### `.stx` / Pasti images (when the disk is copy-protected)
+
+A `.ST` can only hold what a normal FDC read returns: 512-byte sectors, numbered 1..N,
+that read cleanly. Copy protection lives in exactly what that throws away. A **Pasti
+(`.stx`)** image keeps it: per sector the raw **address field** (its claimed track/head/
+sector/size + CRC), the **FDC status** the dump got when reading it, the measured read
+time and bit position on the track, plus a **fuzzy-byte mask** for bits that read back
+differently every revolution, and the raw **MFM length** of each track. That is enough to
+re-create, in an emulator, a read that *fails in the specific way the original disk fails* —
+which is what the game's protection check is looking for.
+
+Layout: a 16-byte file header (`RSY\0`, LE `version`(=3) u16, `tool` u16, reserved u16,
+**`track_count` u8**, `revision` u8, reserved u32) followed by `track_count` variable-length
+track records, each walked by its leading `record_size` u32. A record is a 16-byte header
+(`record_size`, `fuzzy_size` u32, `sector_count` u16, `flags` u16, `mfm_size` u16,
+`track_number` u8 — side in bit 7, cylinder in bits 0..6 — and `track_type` u8), then, when
+`flags` bit 0 is set, `sector_count` × 16-byte sector descriptors, then the fuzzy mask, then
+the data area that the descriptors' `data_offset` fields index into. The last record must end
+**exactly** at EOF — that is the cheapest whole-file integrity check, and `stx_extract.py`
+refuses an image that fails it.
+
+Note `track_count` is a **u8**, not a u16: offset 11 is `revision`, which is `2` on these
+images, so a little-endian u16 read at offset 10 yields `0x0252` = 594 tracks, not 82. That
+fails loudly (the walk runs off EOF long before record 594) rather than quietly — but only
+because the exact-EOF rule is checked. Read the u8.
+
+Two-step pipeline — flux image to sectors to files:
+
+```bash
+python3 tools/stx_extract.py GAME.STX                  # header, per-track table, PROTECTION report
+python3 tools/stx_extract.py GAME.STX --to-st GAME.ST  # the clean FAT12 sector image
+python3 tools/stx_extract.py GAME.STX --to-st GAME.ST --strict   # ...placing clean reads only
+python3 tools/st_extract.py  GAME.ST -o extracted      # then as any .ST
+```
+
+**"Unreadable" is not "unrecorded" — the distinction is the whole game.** A Pasti image
+stores a sector's 512 bytes *and* the status the FDC returned for them. A CRC error can be
+one bad bit anywhere in the sector or in the CRC itself, so most of those bytes are usually
+the real content. `stx_extract.py` therefore **places** a status-flagged sector by default
+and emits a per-sector `WARNING` that its content is unverified (so the run still exits 1);
+`--strict` restores the conservative rule of placing nothing whose *content* a status bit
+questions (lost data, CRC error). Only a
+slot with no recorded bytes at all — no descriptor, an unformatted track, or a
+record-not-found status, where the FDC never reached a data field — is zero-filled, and that
+`WARNING` says so in different words. Three FDC bits do not disqualify a sector at all:
+Pasti's "variable read time" `0x01`, the deleted-data mark `0x20`, and Pasti's `0x80`, which
+is its own overload for *"a fuzzy mask exists for this sector"* and **not** a WD1772 read
+error — a sector carrying only `0x80` reads back fine on real hardware. All three are still
+reported as protection.
+
+Geometry — cylinders, sides, sectors/track — is derived from the recorded sectors rather
+than the BPB, because a protected disk need not carry a filesystem at all. Sectors/track is
+voted on the **count of `.ST`-shaped descriptors** per track — 512 bytes, wholly inside their
+own track record — and never on how many sectors read *cleanly*: how a track was formatted is
+a property of the disk, while how well it read is a property of one dump, and sectors/track is
+the LBA stride. Vote it on read quality and read damage across a bare majority of tracks
+silently shifts every track of the image; drop the shape test and one 1024-byte protection
+sector per track does the same. (A count past any real floppy format is refused outright,
+so a malformed record cannot inflate a small file into a gigabyte `.ST`.) Where a plausible
+boot sector exists its BPB cross-checks the result — and *plausible* means every field is
+bounds-checked before any of them is believed, or a custom loader that happens to hold
+`0x0200` at offset 11 gets its garbage trusted. A disagreeing sectors/track or head count is
+reported, and so is a declared volume that does not *fit* inside the derived geometry (that
+is the check that catches a wrong stride). The BPB's total sector count also decides whether
+a trailing unformatted track is ordinary drive padding or a hole in the filesystem — cylinder
+order alone cannot tell them apart. Both modes run the placement pass,
+so the verdict depends on the disk and not on whether you asked for the file. The protection
+findings themselves are *not* warnings, since a protected disk having them is the expected
+result.
+
+**The protection does not survive the conversion, and cannot.** Fuzzy bits, a CRC error, a
+sector claiming to live on another track, an extra sector 11/12 past a 10-sector format, a
+track with one sector deliberately unformatted — none of these are expressible in a raw
+sector dump, by construction. So a reconstruction that must run from a plain `.ST` (or from
+a GEMDOS hard-disk folder) has only two honest options: **satisfy** the check (emulate the
+drive at Pasti level, i.e. ship the `.stx` and a Pasti-aware emulator) or **bypass** it
+(patch the branch the check feeds). Which one is a project decision — but record in
+`STATUS.md` that the plain `.ST` is *not* a faithful copy of the disk.
+
+Worked example — the two 1989 Wonderboy in Monsterland disks, both single-sided
+82-cylinder × 10-sector formats (80 in the FAT12 volume, 2 unformatted spares):
+
+| finding | disk 1 | disk 2 |
+|---|---|---|
+| cylinders 0–4 carry 12 sectors; #11/#12 read FDC `0x88` (CRC error + fuzzy) with 1024 fuzzy bytes/track | yes | yes |
+| cylinder 12: 12 descriptors in the physical order 7, 11, 12, 3, 9, 10, 1, 2, 3, 4, 5, 6 — four unreadable (FDC `0x08`/`0x88`/`0x89`/`0x08`), three of them claiming `id_track=4`, sector ID 3 duplicated, and **no sector 8 at all** | — | yes |
+| cylinders 7–11 formatted with only **9** sectors — one deliberately absent per track (10, 8, 6, 4, 2: a descending diagonal) | — | yes |
+
+Disk 2's damage sits **inside allocated file clusters** — six `OVALAY*.RAD` files — and it
+has **two causes that must not be conflated**:
+
+- **Never formatted.** The 9-sector diagonal (cyl 7–11) and cylinder 12's missing sector 8
+  have no address field on the disk and therefore no descriptor and no bytes in the image.
+  Nothing can recover them: they were never written to the physical disk either, so a loader
+  reading them gets a read error on the original too, which is the point. The zero-filled
+  holes span one `.ST` sector each — 352 B of `OVALAY4B` (the file ends mid-sector), 512 B of
+  `OVALAY5B`, `OVALAY6A` and `OVALAY9A` — of which 316 / 470 / 479 / 483 bytes are actually
+  wrong, the rest being zeros in the real data too.
+- **Present but failed CRC.** Cylinder 12 **sector 7** (FDC `0x08`) *is* recorded — its 512
+  bytes are in the `.stx` — and they are demonstrably the real content: diffed against a
+  crack release of the same game, **481 of the 512 bytes match exactly**, including the
+  `0x0000044c` `.RAD` container magic that opens `OVALAY9A.RAD`. Only the last 31 bytes of
+  the sector are corrupt, which is presumably why the CRC failed. That is why the default is
+  to place such a sector and warn, not to throw it away.
+
+(`OVALAY3A` and `OVALAY7B` lose only cluster slack past their declared length.)
+
+**The damage is silent downstream.** The hole is *interior*: `stx_extract --to-st` zero-fills
+whatever it could not place, the directory entry still claims the full length, and
+`st_extract.py` then extracts a full-size file with a zero-filled middle and exits **0** — a
+`.ST` carries no marker for "this sector was never readable", and none either for "these
+bytes came from a sector that failed its CRC". The `WARNING` lines from `stx_extract` are the
+only place either fact exists, so keep them: re-deriving them later from the `.ST` alone is
+impossible. `projects/wonderboy/notes/crack_differential.py` is the harness that established
+the 481/512 figure above, by diffing the converted `.ST` against a crack release and
+attributing every wrong byte to the `.ST` sector and the *cause* it came from
+(`ZERO-FILLED` / `UNVERIFIED`, read out of the `.stx` beside it):
+
+```bash
+python3 projects/wonderboy/notes/crack_differential.py wb_disk2.st --crack CRACK.ST
+```
+
+`--crack` is required and has no default: that release is deliberately not in this repo, so
+the harness refuses to run rather than report green on nothing.
+
 **Expect packed files.** A cracked disk rarely holds plain `.PRG`s. On the Wonderboy disk
 only the `VAPOUR2` loader starts with `601a`; every other file carries a crack-group `LSD!`
 stamp, and the real executable exists only in memory — see
