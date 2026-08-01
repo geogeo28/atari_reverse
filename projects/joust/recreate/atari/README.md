@@ -18,6 +18,7 @@ has no host `render/` layer for it to sit under: there is no PNG renderer here, 
 | **M3** `HIGH.SCO` | a modified record goes in, the game reads it, the quit path writes it back out through real GEMDOS, and a reboot shows it on the title screen's HIGH SCORE line **and only there** | ✅ `smoke.py hiscore` |
 | **M3** side-by-side | our on-target title framebuffer is **byte-identical** to the shipped binary's, found at the original's own Physbase in a dump of its RAM | ✅ `smoke.py original` |
 | **M4** frame differential | the same equality carried through starting a game and **240 frames of play**: both binaries anchored on one Hatari, and at frames 1, 115, 150, 180, 210 and 240 **both halves of the picture compared** — the 32000 framebuffer bytes *and* the 16 hardware palette pens, read off the shifter on each side — **identical at every one**. Each depth is one where the screen is MOVING (the neighbouring frame differs by 25-287 bytes), so each detects a one-frame mis-anchor | ✅ `smoke.py framediff`, negative control `framediff-fault` |
+| **M5** displayed picture | the video base is 256-aligned at run time; every smoke mode that dumps stats asserts the alignment **and** the hardware read-back, and once per `framediff` the **rendered PNG** of both binaries is byte-identical — the only check that sees what the user sees | ✅ `smoke.py framediff`, control `framediff-skew` |
 | **M3** joystick | the IKBD path is live — ~1000 replies filed per run, and every wait loop in the game ends on one. Steering is a GUI check: headless Hatari has no stick to press (§11) | partial, by construction |
 
 Verified on **EmuTOS** (Hatari's bundled `tos.img`) and **TOS 1.04**, which produce byte-identical
@@ -388,6 +389,29 @@ repetitions of one measurement. A shim that had every pen right at each sampled 
 between would pass, and that is exactly the shape of a *flashing* pen. The control that does bite is
 a separate build (below).
 
+**The picture the shifter RENDERS is compared too, once.** `screenshot` drives the emulator's own
+video path, so what it captures is what the screen shows — the only artefact here that is not a
+memory dump. Both sides are photographed at the same frame anchor and the PNGs byte-compared:
+**identical at frame 60 — 6239 bytes on EmuTOS, and the same agreement on TOS 1.04**. One frame
+rather than six, because it costs two extra boots and the fault it catches — a displaced video base
+(§12) — is a *constant* displacement, visible at any frame or none.
+
+Three details make it stable rather than merely green. The frame is one from the **static band**:
+`screenshot` renders the display surface as it is built scanline by scanline, so a capture part-way
+down a *moving* frame mixes two frames and differed run to run before this was pinned. The anchor is
+therefore deliberately **not load-bearing** — frames 30, 60 and 100 give the identical PNG, so an
+anchor landing anywhere in that band is the same photograph. The status bar is turned **off**: it is
+emulator chrome that varies with the ROM and the drive LED, not part of the picture the game draws.
+And the anchor address comes from `STATS.BIN` — the binary reports `poll_quit_key`'s run-time address
+about *itself*, because `build/joust.elf` is overwritten by every build while the per-mode `.PRG`s
+persist, and a stale ELF once supplied an anchor four bytes out and the mode went green on the wrong
+breakpoint.
+
+Its control is `framediff-skew`: the same run with the screen two bytes off its 256-byte boundary.
+It is the sharpest demonstration in this project of what memory comparison cannot see —
+**every memory check still passes** (`frame 1 IDENTICAL`, `palette 1 IDENTICAL`) while the video-base
+read-back names the fault and the rendered PNGs differ.
+
 **And this check is what would have caught the bug that shipped in M1.** The
 `move.w (a0)+,(a0,d0.l)` off-by-one in "The bugs found on target" put every pen one register high —
 literally "the colours are shifted" — and it was found by a hang on one TOS version rather than by
@@ -418,6 +442,8 @@ Three guards and three controls, because a compare that cannot fail proves nothi
   comparison which is the failure. That is the check proving it can see the one thing it was added
   for, and it is a separate build because the in-mode controls structurally cannot reach the palette
   (above).
+- **A display fault.** `build.sh framediff-skew && python3 atari/smoke.py framediff-skew` misaligns
+  the screen by two bytes; the memory comparisons must still pass and the rendered picture must not.
 - **Sensitivity — a real injected fault.** The shipped side is re-run **anchored one frame late** and
   the comparison must FAIL. It does, at all six samples (25-287 bytes each, with the first differing
   byte and row named). An earlier version of this control compared `ours[early]` against
@@ -452,7 +478,43 @@ forty frames on a real 68000 against the real binary, and every sampled frame is
 sprite rather than a busy playfield — but it is a considerably stronger statement of the same limit,
 and it is on-target evidence rather than harness evidence.
 
-### 12. The joystick, as far as a headless run can go
+### 12. The video base, and why memory-equal is not display-equal
+
+Everything else in this build and its checks compares **memory** — file dumps, `savebin`, the frame
+differential. The user does not look at memory. Between the two sits one register, and it is where a
+whole class of "it looks wrong" hides:
+
+**An STF's video base register has no low byte.** `$ffff8201` and `$ffff8203` hold bits 23-16 and
+15-8; there is no `$ffff820d` (that is the STE's). So an address handed to `Setscreen` that is not
+256-byte aligned is **truncated**, and the shifter displays from up to 255 bytes below what the game
+is drawing at. Every byte we dump is still correct. ST low-res interleaves plane0..plane3 word by
+word, so the displacement's *remainder mod 8* is what you see: a multiple of 8 slides the picture by
+whole 4-plane cells, and anything else **permutes the bitplanes** — shapes intact, colours
+systematically remapped.
+
+**Section alignment cannot fix it, and the reason is worth being exact about.** The image array
+carried `__attribute__((aligned(256)))` and that attribute **worked** — it aligned the array inside
+`.bss`. It was simply **irrelevant**: GEMDOS loads a `.PRG` at whatever the TPA gives, and that is
+not 256-aligned (measured: `0x12596` under TOS 1.04, `0x1b018` under EmuTOS, for the shipped binary),
+so an offset aligned within the image says nothing about the absolute address. The misalignment we
+had was exactly the TPA base's own low byte — **24 bytes (a three-cell slide) under EmuTOS and 150
+bytes (a six-byte PLANE PERMUTATION, the user's screenshot) under TOS 1.04**. `tos.ld`'s
+`SUBALIGN(1)` is about where `.bss` *starts* relative to text+data, which GEMDOS requires; it is not
+what defeated the attribute and must not be removed in the belief that it was.
+
+**The fix is a run-time round-up.** The image storage carries 256 bytes of slack and the shim rounds
+its base up once, before anything touches it. The cores are untouched — they only ever compute
+`image + <Ghidra address>`, and `OS_SCREEN_BASE` stays the constant the host-side differential uses,
+so `screen_base` needs no seam.
+
+**And it is asserted every boot.** `Setscreen` is followed by a `Vsync` (TOS applies it from its own
+VBL) and then `Physbase()`, and the read-back goes into `STATS.BIN`: *what we asked for* against
+*what the hardware says it is displaying from*. Every mode that dumps stats checks they are equal,
+and the failure names the fault in its own terms —
+`asked the shifter for 0x2e302 but it displays from 0x2e300 — 2 bytes, i.e. 0 whole cells and 2
+bytes of PLANE PERMUTATION`.
+
+### 13. The joystick, as far as a headless run can go
 
 The IKBD path is proven **live**: `joy_handler` files a reply and chains the next interrogate, and
 `STATS.BIN` counts them — ~1000 per run, and every wait loop in the game (`read_joysticks`,

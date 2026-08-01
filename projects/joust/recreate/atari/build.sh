@@ -10,6 +10,7 @@
 #   build.sh restart      -> type '1', play, R (restart), then Ctrl-C from the new title screen
 #   build.sh framediff       -> pinned run for the frame-by-frame differential vs the shipped binary
 #   build.sh framediff-fault -> the same, one palette pen corrupted: that check's negative control
+#   build.sh framediff-skew  -> the same, screen 2 bytes off its 256 boundary: the DISPLAY control
 #
 # Each writes disk/JOUST.PRG *and* keeps build/JOUST-<mode>.PRG, so a check that needs two builds in
 # sequence (smoke.py hiscore) can have them without rebuilding.
@@ -51,6 +52,10 @@ RNG_PARK=0x1551a
 FRAME_SAMPLES=1,115,150,180,210,240
 FRAMEDIFF_LAST=241               # one past the last sample, so the run ends just after dumping it
 PALETTE_FAULT_PEN=5              # the pen framediff-fault corrupts en route to the shifter
+# How far framediff-skew pushes the image off its 256-byte boundary. Two bytes, not eight: ST
+# low-res interleaves plane0..plane3 word by word, so a displacement that is NOT a multiple of 8
+# permutes the bitplanes — shapes intact, colours remapped — which is the symptom being reproduced.
+SCREEN_MISALIGN=2
 
 MODE="${1:-play}"
 case "$MODE" in
@@ -66,17 +71,18 @@ case "$MODE" in
   # game starts after exactly one attract pass, as it does on the shipped side when the debugger
   # forces its Bconstat; the RNG cursor is parked where both programs' bytes are identical; and one
   # run dumps every sampled frame. See joust_main.c's "frame differential" section for the physics.
-  framediff|framediff-fault)
+  framediff|framediff-fault|framediff-skew)
              # framediff-fault is the same build with one pen deliberately corrupted on the way to
              # the shifter — the negative control for smoke.py framediff's palette compare.
              FAULT=""
              [ "$MODE" = framediff-fault ] && FAULT="-DSMOKE_PALETTE_FAULT=$PALETTE_FAULT_PEN"
+             [ "$MODE" = framediff-skew ] && FAULT="-DSMOKE_SCREEN_MISALIGN=$SCREEN_MISALIGN"
              DEF="-DSMOKE -DSMOKE_SCRIPT_KEYS=$KEY_ONE_PLAYER -DSMOKE_SCRIPT_WAIT=1 \
                   -DSMOKE_RNG_PTR=$RNG_PARK -DSMOKE_FRAME_DUMPS=$FRAME_SAMPLES \
                   -DSMOKE_FRAMES=$FRAMEDIFF_LAST $FAULT" ;;
   play)      DEF="" ;;
   *) echo "usage: build.sh [title | smoke [frames] | quit | quittitle | restart | framediff |"
-     echo "                 framediff-fault]"; exit 2 ;;
+     echo "                 framediff-fault | framediff-skew]"; exit 2 ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

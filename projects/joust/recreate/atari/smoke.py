@@ -53,7 +53,7 @@ INPUTS_ONLY = {"JOUST.PRG", "JOUST.IMG", "CMD.INI", "ACT.INI"}   # staged, never
 # "the longjmp restart is broken" instead of "you booted the wrong PRG".
 MODE_BUILD = {"title": "title", "frames": "smoke", "quit": "quit",
               "quittitle": "quittitle", "restart": "restart", "framediff": "framediff",
-              "framediff-fault": "framediff-fault"}
+              "framediff-fault": "framediff-fault", "framediff-skew": "framediff-skew"}
 
 
 def prg_for(mode):
@@ -91,10 +91,11 @@ HUD_BAR_CELL = bytes.fromhex("0000ffffffffffff")
 MIN_PLAYFIELD_BYTES = 500
 MIN_DISTINCT_BYTES = 32
 
-# STATS.BIN — sixteen big-endian longwords, written by joust_main.c's dump_stats() in this order.
+# STATS.BIN — twenty big-endian longwords, written by joust_main.c's dump_stats() in this order.
 STATS_FIELDS = ("frames", "console_polls", "dosound", "dosound_in_play", "first_sound_frame",
                 "psg_writes", "psg_writes_in_play", "ikbd_packets", "restarts",
-                "hiscore_bytes_written", "frame_bytes_written", "two_player_mode", "players_alive",
+                "hiscore_bytes_written", "frame_bytes_written", "screen_passed", "screen_physbase",
+                "text_probe", "poll_quit_key_pc", "two_player_mode", "players_alive",
                 "player_x", "player_y", "rng_ptr")
 SMOKE_FRAMES = 240          # build.sh's SMOKE_FRAMES_DEFAULT; the frames run must reach exactly this
 MIN_PSG_WRITES = 1000       # snd_tone_sweep alone issues ~14.4k
@@ -120,6 +121,18 @@ RUN_VBLS = "20000"          # ~11 s wall: TOS boot, the run, and a long tail aft
 SHORT_RUN_VBLS = "6000"     # ...for the modes that Pterm in the first few hundred: still ~100 s of
                             # emulated tail after the exit, which is what check_exit needs
 RUN_TIMEOUT = 180
+# Spare `c` lines fed to the debugger beyond the stops we schedule. Unread ones cost nothing; running
+# out stops the emulation dead at a prompt, which is the failure worth over-providing against.
+DEBUG_CONTINUE_SLACK = 8
+# The frame the DISPLAY check photographs. It is deliberately one from the STATIC band (the screen
+# does not change between about frame 2 and frame 110 with the sticks centred): `screenshot` renders
+# the emulator's current display surface, which is built scanline by scanline, so a capture taken
+# part-way down a frame mixes that frame with the one before. On a static screen that mix is the
+# same picture however the raster happens to be placed, and the two sides reach their frame anchors
+# at different raster positions. Photographing a MOVING frame is not wrong, it is unstable — it
+# differed run to run before this was pinned.
+SCREENSHOT_FRAME = 60
+
 ORIGINAL_DUMP_VBL = 2500    # by then the ORIGINAL is sitting on its title screen
 ORIGINAL_RUN_VBLS = "4000"
 # Enough for the shipped binary to boot, sit through one attract pass and play out the deepest
@@ -138,6 +151,9 @@ GHIDRA_TITLE_BCONIN_SKIP = 0x10be2 # the `adda.w #4,sp` after it, where the inje
 GHIDRA_POLL_QUIT_KEY = 0x11c24     # the frame anchor: one entry per frame, and nothing else calls it
 GHIDRA_RNG_PTR = 0x10dfe           # ../include/addrs.h A_rng_ptr
 
+# poll_quit_key is a reconstructed core compiled into our binary, so its address there is an ELF
+# symbol rather than a Ghidra address — read from the ELF, like our load base.
+
 # A relocation-free window in the shipped .PRG, used to find where GEMDOS loaded it: the bytes there
 # are the file's own, so the match is unique and its address gives the base directly. It sits at the
 # END of the reloc-free run rather than the start, because the start is the dead floppy loader's
@@ -150,6 +166,7 @@ PRG_HEADER = 28             # GEMDOS .PRG header, ahead of the text the signatur
 # The ST shifter's sixteen colour registers. `savebin` reads I/O space, so the SHIPPED binary's pens
 # can be read straight off the hardware at a frame anchor — which is the only way to compare colour
 # at all, the palette being off-image on both sides.
+IMAGE_ALIGN = 256           # joust_main.c IMAGE_ALIGN: the video base register's granularity
 ST_PALETTE_REGS = 0xffff8240
 PALETTE_PENS = 16
 PALETTE_BYTES = PALETTE_PENS * 2
@@ -188,6 +205,9 @@ def run(prg, files, trace=None, parse=None, run_vbls=RUN_VBLS, debug_continues=0
                                        if isinstance(data, str) else data)
         env = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}
         args = [hatari, "--sound", "off", "--fast-forward", "on", "--confirm-quit", "off",
+                # --statusbar off: it is emulator chrome, it differs with the ROM and the drive LED
+                # state, and it is not part of the picture the game draws.
+                "--statusbar", "off",
                 "--memsize", str(MEMSIZE_MB), "--monitor", "rgb", "--tos-res", "low", "--tos", rom,
                 "--run-vbls", run_vbls, "--harddrive", str(drive), "--auto", "C:\\JOUST.PRG"]
         if trace:
@@ -333,6 +353,36 @@ def check_frames(early, final):
     return ok
 
 
+def check_screen_base(stats):
+    """What we asked the shifter to display from, against what it says it IS displaying from.
+
+    THIS IS THE ONE CHECK THAT SEES PAST MEMORY. On an STF the video base register has no low byte
+    ($ffff8201/8203 only), so an address that is not 256-byte aligned is TRUNCATED and the picture is
+    displaced — while the framebuffer bytes, the palette and every dump in this file stay identical.
+    A displacement that is a multiple of 8 slides the image by whole 4-plane cells; one that is not
+    PERMUTES the bitplanes, because ST low-res interleaves plane0..plane3 word by word: shapes
+    intact, colours systematically remapped. That is a whole class of "it looks wrong" this project
+    was blind to, and the read-back is two instructions."""
+    passed, actual = stats["screen_passed"], stats["screen_physbase"]
+    # ALIGNMENT is the invariant; hardware agreement is only how an STF SHOWS a breach of it. An STE
+    # has $ffff820d and honours the low byte, so a misaligned base there displays exactly as asked
+    # and the read-back agrees — the check has to assert the property, not just the symptom.
+    aligned = passed % IMAGE_ALIGN == 0
+    if aligned and passed == actual:
+        print(f"video base {passed:#010x} ({IMAGE_ALIGN}-aligned; the hardware confirms it)")
+        return True
+    if not aligned:
+        print(f"FAIL: the video base {passed:#010x} is not {IMAGE_ALIGN}-aligned (low byte "
+              f"{passed % IMAGE_ALIGN:#04x}) — an STF cannot display from it")
+    if passed != actual:
+        lost = passed - actual
+        how = "TRUNCATED" if actual == passed & ~(IMAGE_ALIGN - 1) else "IGNORED"
+        print(f"FAIL: asked the shifter for {passed:#010x}, it displays from {actual:#010x} "
+              f"({how}) — {lost} bytes, i.e. {lost // 8} whole cells and {lost % 8} bytes of "
+              f"PLANE PERMUTATION")
+    return False
+
+
 def check_stats(stats, want, at_least=None):
     """What the game DID, read off the shim's own seams — the half no framebuffer can show.
 
@@ -356,7 +406,7 @@ def check_stats(stats, want, at_least=None):
         if stats[name] < floor:
             print(f"FAIL: {name} is {stats[name]}, expected at least {floor}")
             ok = False
-    return ok
+    return ok & check_screen_base(stats)
 
 
 def check_sound(log):
@@ -387,7 +437,10 @@ def mode_title():
     produced, markers, _, proc = run(prg_for("title"), drive_files(), run_vbls=SHORT_RUN_VBLS)
     print(f"beacons reached: {' '.join(markers) or 'none'}")
     ok = check_exit(proc)
-    require(produced, "SCREEN.BIN")
+    require(produced, "SCREEN.BIN", "STATS.BIN")
+    # The title mode's whole job is "the picture is right", so it is the last place that should be
+    # taking the video base on trust.
+    ok &= check_screen_base(stats_of(produced))
     return ok & check_title(produced["SCREEN.BIN"]), produced["SCREEN.BIN"]
 
 
@@ -458,8 +511,8 @@ def mode_hiscore():
     title_prg, quit_prg = prg_for("title"), prg_for("quit")
     print("--- phase 1: the title screen on the shipped record (baseline)")
     produced, _, _, proc = run(title_prg, drive_files())
-    require(produced, "SCREEN.BIN")
-    ok = check_exit(proc)
+    require(produced, "SCREEN.BIN", "STATS.BIN")
+    ok = check_exit(proc) & check_screen_base(stats_of(produced))
     _, _, baseline = title_bands(produced["SCREEN.BIN"])
 
     print("--- phase 2: play, then Ctrl-C, with a modified record staged")
@@ -474,8 +527,8 @@ def mode_hiscore():
 
     print("--- phase 3: the title screen on what the quit path wrote")
     produced, _, _, proc = run(title_prg, drive_files(written))
-    require(produced, "SCREEN.BIN")
-    ok &= check_exit(proc) & check_title(produced["SCREEN.BIN"])
+    require(produced, "SCREEN.BIN", "STATS.BIN")
+    ok &= check_exit(proc) & check_screen_base(stats_of(produced)) & check_title(produced["SCREEN.BIN"])
     _, _, bands = title_bands(produced["SCREEN.BIN"])
     changed = [i for i, (a, b) in enumerate(zip(baseline, bands)) if a != b]
     print(f"title text bands that changed with the record: {changed}")
@@ -742,6 +795,48 @@ def compare_frames(ours, theirs, samples, label="frame"):
     return ok
 
 
+def compare_displayed(stats, base, screen, frame, rng_park, build="framediff"):
+    """The picture the SHIFTER RENDERS, ours against the shipped binary's, at one matched frame.
+
+    Everything else in this file compares MEMORY, and memory-equal is not display-equal: the video
+    base register's missing low byte can displace the whole picture while every byte we dump stays
+    identical (check_screen_base). This is the only check that looks at what the user looks at. It
+    is one frame rather than six because it costs two extra boots and the failure it catches is a
+    CONSTANT displacement — visible at any frame or none. That frame is a STATIC one (see
+    SCREENSHOT_FRAME) so the capture does not depend on where the raster happens to be.
+
+    Both sides are photographed by the same emulator through the same video path, so the PNGs are
+    byte-comparable. THE FRAME ANCHOR IS DELIBERATELY NOT LOAD-BEARING HERE: SCREENSHOT_FRAME is one
+    where the picture is CONSTANT, so an anchor landing anywhere in roughly [3, 109] gives the same
+    photograph (measured: frames 30, 60 and 100 produce the identical PNG). That is a property this
+    check wants — it is looking for a constant displacement, and it must not be able to fail because
+    two runs sat at different raster positions."""
+    print("--- the displayed picture, both sides photographed at frame", frame)
+    mine, our_proc = our_screenshot(stats, frame, build)
+    ok = check_exit(our_proc)
+    with tempfile.TemporaryDirectory() as tmp:
+        script_dir = Path(tmp)
+        entry = base + GHIDRA_POLL_QUIT_KEY - IMAGE_LOAD_BASE
+        _, _, _, their_proc = run(
+            ORIGINAL_PRG, {"HIGH.SCO": SHIPPED_HISCORE.read_bytes()},
+            parse=(original_frame_script(script_dir, base, screen, [], rng_park)
+                   + screenshot_script(script_dir, entry, frame, "THEIRSHOT")),
+            run_vbls=FRAMEDIFF_RUN_VBLS, debug_continues=DEBUG_CONTINUE_SLACK + 4)
+        ok &= check_exit(their_proc)
+        shot = script_dir / "THEIRSHOT.png"
+        if not shot.exists():
+            raise RuntimeError("no screenshot from the shipped binary")
+        theirs = shot.read_bytes()
+    if mine == theirs:
+        print(f"  rendered frame {frame}: IDENTICAL ({len(mine)} bytes of PNG, same renderer both sides)")
+        return ok
+    del ok
+    print(f"  rendered frame {frame}: DIFFERS — ours {len(mine)} bytes, shipped {len(theirs)}. "
+          f"The memory compares above passed, so this is a DISPLAY fault: video base, resolution "
+          f"or palette latch, not the drawing.")
+    return False
+
+
 def framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens):
     """Two in-mode controls, because a compare that cannot fail proves nothing — and a third that
     has to be its own build (see the end of this docstring).
@@ -789,6 +884,38 @@ def framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens
     return ok
 
 
+def screenshot_script(script_dir, entry_pc, frame, name):
+    """A debugger script that photographs the SCREEN at a frame anchor.
+
+    `screenshot` renders through the emulator's own video path, so what it captures is what the
+    shifter is displaying — the only artefact in this whole project that is not a memory dump."""
+    action = script_dir / f"{name}.INI"
+    action.write_text(f"screenshot {script_dir / name}.png\n")
+    count = "" if frame == 1 else f":{frame} "
+    return f"b pc = ${entry_pc:x} {count}:once :quiet :file {action}\n"
+
+
+def our_screenshot(stats, frame, build="framediff"):
+    """Boot our build again, anchored on OUR poll_quit_key, and photograph frame `frame`.
+
+    The anchor address is the one the PREVIOUS run of this same binary reported about itself
+    (`poll_quit_key_pc` in STATS.BIN), not one read out of build/joust.elf. That ELF is overwritten
+    by every build while the per-mode .PRGs persist, so it is not necessarily the running program's:
+    a stale one once supplied an anchor four bytes out and the mode went green on the wrong
+    breakpoint. A binary reporting its own addresses cannot be the wrong binary."""
+    with tempfile.TemporaryDirectory() as tmp:
+        script_dir = Path(tmp)
+        entry = stats["poll_quit_key_pc"]
+        _, _, _, proc = run(prg_for(build), drive_files(),
+                            parse=screenshot_script(script_dir, entry, frame, "OURSHOT"),
+                            debug_continues=DEBUG_CONTINUE_SLACK)
+        shot = script_dir / "OURSHOT.png"
+        if not shot.exists():
+            raise RuntimeError(f"no screenshot from our side at frame {frame} — "
+                               f"the anchor {entry:#x} (load base {base:#x}) is wrong")
+        return shot.read_bytes(), proc
+
+
 def run_original_frames(base, screen, samples, rng_park):
     """Boot the SHIPPED binary pinned and anchored, and return its framebuffer per sample frame."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -797,8 +924,8 @@ def run_original_frames(base, screen, samples, rng_park):
         produced, _, _, proc = run(ORIGINAL_PRG, {"HIGH.SCO": SHIPPED_HISCORE.read_bytes()},
                                    parse=script, run_vbls=FRAMEDIFF_RUN_VBLS,
                                    # one `c` per expected stop: three pins plus one per sample,
-                                   # and a little slack for a debugger entry we did not schedule
-                                   debug_continues=len(samples) + 8)
+                                   # and slack for a debugger entry we did not schedule
+                                   debug_continues=len(samples) + DEBUG_CONTINUE_SLACK)
         # savebin writes to HOST paths, so the dumps land beside the script, not on the drive.
         frames, palettes = {}, {}
         for index in range(1, len(samples) + 1):
@@ -815,7 +942,34 @@ def run_original_frames(base, screen, samples, rng_park):
         return frames, palettes, proc
 
 
-def mode_framediff(build="framediff", expect_fail=False):
+# Which checks each negative-control build MUST fail, and which it must still pass. Naming both is
+# the point: a control that fails for the wrong reason proves nothing about the check it is for.
+INJECTED_FAULTS = {
+    "palette": {"fail": ("palette",), "pass": ("boot", "bitplanes")},
+    "display": {"fail": ("boot", "display"), "pass": ("bitplanes", "palette")},
+}
+
+
+def report_injected_fault(kind, checks):
+    """A negative control passes only if the RIGHT checks failed and the others did not."""
+    expected = INJECTED_FAULTS[kind]
+    ok = True
+    for name in expected["fail"]:
+        if checks.get(name, True):
+            print(f"FAIL: the injected {kind} fault did NOT trip the {name} check")
+            ok = False
+    for name in expected["pass"]:
+        if not checks.get(name, True):
+            print(f"FAIL: the injected {kind} fault also broke the {name} check — the control is "
+                  f"not isolating what it claims to")
+            ok = False
+    if ok:
+        print(f"the injected {kind} fault was caught by {'+'.join(expected['fail'])}, and "
+              f"{'+'.join(expected['pass'])} still pass — which is what this build is for")
+    return ok
+
+
+def mode_framediff(build="framediff", expect_fail=None):
     """Byte-compare the SHIPPED binary's framebuffer against this build's, frame for frame.
 
     The title screen already matches (mode `original`); this carries it through the start of a game
@@ -853,17 +1007,19 @@ def mode_framediff(build="framediff", expect_fail=False):
 
     theirs, their_pens, proc = run_original_frames(base, screen, samples, rng_park)
     ok &= check_exit(proc)
-    ok &= compare_frames(ours, theirs, samples)
-    ok &= compare_palettes(our_pens, their_pens, samples)
+    # Each check's verdict is kept SEPARATELY, because a negative control has to be caught by the
+    # RIGHT one: ORing them together and inverting would let `framediff-skew` pass on its boot-time
+    # alignment failure while the display compare it exists to exercise was blind.
+    checks = {"boot": ok,
+              "bitplanes": compare_frames(ours, theirs, samples),
+              "palette": compare_palettes(our_pens, their_pens, samples)}
+    if expect_fail != "palette":     # the pen fault is invisible in a screenshot of frame 60
+        checks["display"] = compare_displayed(stats, base, screen, SCREENSHOT_FRAME, rng_park, build)
+
     if expect_fail:
-        # The negative control build. Its whole job is to be caught, so the verdict is INVERTED and
-        # the two extra shipped-side boots the controls would cost are skipped: a run that is
-        # supposed to fail has nothing to learn from re-running the side that is not at fault.
-        if ok:
-            print("FAIL: the corrupted pen was NOT detected — the palette compare is not comparing")
-        else:
-            print("the injected palette fault was detected, which is what this build is for")
-        return not ok, ours[samples[-1]]
+        return report_injected_fault(expect_fail, checks), ours[samples[-1]]
+
+    ok = all(checks.values())
     ok &= framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens)
     return ok, ours[samples[-1]]
 
@@ -884,7 +1040,10 @@ MODES = {
     "framediff": mode_framediff,
     # The palette compare's negative control: the same build with one pen corrupted on its way to
     # the shifter. It must FAIL, and fail on the palette rather than on the bitplanes.
-    "framediff-fault": lambda: mode_framediff(build="framediff-fault", expect_fail=True),
+    "framediff-fault": lambda: mode_framediff(build="framediff-fault", expect_fail="palette"),
+    # ...and the DISPLAY check's control: the same run with the screen two bytes off its 256-byte
+    # boundary. Every memory comparison must still pass and the rendered picture must not.
+    "framediff-skew": lambda: mode_framediff(build="framediff-skew", expect_fail="display"),
     "original": mode_original,
 }
 

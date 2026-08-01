@@ -53,7 +53,7 @@ add a seam, the core/no-op side must have **no image effect** (or the oracle-mod
 differential test still holds; put the real trap/hardware poke only in the PRG override, and gate it
 on `hw_ready` if it touches supervisor-only I/O space (`$ffff8xxx`, `$fffffcxx`) before `Super(0)`.
 
-## Bug taxonomy (each one hit in a real build — 1-5 in BuggyBoy, 6-7 in Joust)
+## Bug taxonomy (each one hit in a real build — 1-5 in BuggyBoy, 6-8 in Joust)
 
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
@@ -212,6 +212,37 @@ the game then cannot be quit or restarted at all, and the loop simply carries on
 - **Working rule:** the reconstruction's honesty about not returning becomes the PRG's bug list.
   Every result code a caller drops is a feature the shim owes, and the shim's version of it is
   necessarily *later* than the original's — say where, and by how much.
+
+### 8. Memory-equal is not display-equal — the video base register's missing low byte
+
+Every comparison a differential harness makes is against MEMORY. The user looks at a SCREEN, and on
+this hardware one register sits between them. It is the most complete blind spot in the method: a
+byte-identical framebuffer, a byte-identical palette, and a wrong picture.
+
+- **The mechanism.** An STF's video base register has no low byte — `$ffff8201`/`$ffff8203` hold bits
+  23-16 and 15-8, and there is no `$ffff820d` (that is the STE's). An address handed to `Setscreen`
+  that is not 256-byte aligned is TRUNCATED, and the shifter displays from up to 255 bytes below
+  where the program draws. ST low-res interleaves plane0..plane3 word by word, so the remainder
+  mod 8 decides the symptom: a multiple of 8 slides the picture by whole 4-plane cells, anything
+  else PERMUTES THE BITPLANES — shapes intact, colours systematically remapped.
+- **Symptom:** a user says "the planes/colours are shifted" while every check you own is green.
+- **Why section alignment does not fix it:** GEMDOS loads a `.PRG` at whatever the TPA gives, and
+  that is not 256-aligned (measured for one game: `0x12596` under TOS 1.04, `0x1b018` under EmuTOS),
+  so alignment *inside* the image says nothing about the absolute address. An
+  `__attribute__((aligned(256)))` on the buffer is not ignored — it does align the buffer within its
+  section, and it is simply **irrelevant**, because the section's own base is unaligned at run time.
+  Do not go looking for a linker script to blame: if yours uses `SUBALIGN(1)` in `.bss` so that BSS
+  abuts text+data (which GEMDOS requires), that is doing a different and necessary job, and removing
+  it will break the load without fixing anything here.
+- **Fix:** reserve slack and round the buffer's base up at RUN TIME, then hand that to `Setscreen`.
+- **Assert it every boot, in two instructions:** `Setscreen`, a `Vsync` (TOS applies it from its own
+  VBL), then `Physbase()` — and compare the read-back with what you passed. They are equal only if
+  the address was aligned.
+- **And witness the rendered picture at least once.** Hatari's debugger `screenshot <file>` drives
+  the emulator's real video path, so a PNG of your run and one of the original at the same frame
+  anchor is a display-level comparison; the encoder is the same on both sides, so the files are
+  byte-comparable. Control it by deliberately misaligning the screen: every memory check must still
+  pass and the picture must not.
 
 ## Diagnostic toolkit
 

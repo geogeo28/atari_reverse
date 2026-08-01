@@ -85,9 +85,53 @@
 
 #define SETSCREEN_KEEP_REZ (-1)       /* XBIOS Setscreen: leave the resolution alone */
 
-/* The image itself. TOS zeroes .bss at load, and tos.ld aligns it to 256 so `image + OS_SCREEN_BASE`
- * is a legal ST video base (the shifter ignores the low 8 address bits). */
-static uint8_t image[IMAGE_SIZE] __attribute__((aligned(256)));
+/* The image itself, and it is ALIGNED AT RUNTIME rather than by the linker.
+ *
+ * `image + OS_SCREEN_BASE` is handed to XBIOS Setscreen as the video base, and on an STF the video
+ * base register HAS NO LOW BYTE — $ffff8201 and $ffff8203 only — so the shifter displays from that
+ * address TRUNCATED down to a 256-byte boundary. Nothing detects it: every dump, every savebin and
+ * the whole frame differential read MEMORY, which is correct; only the picture is wrong, displaced
+ * by the low byte. A displacement that is a multiple of 8 slides the image by whole 4-plane cells;
+ * one that is not PERMUTES THE PLANES, because ST low-res interleaves plane0..plane3 word by word —
+ * shapes intact, colours systematically remapped.
+ *
+ * SECTION ALIGNMENT CANNOT FIX THIS, and the reason is worth being exact about. The array used to
+ * carry __attribute__((aligned(256))) and that attribute WORKED — it aligned the array inside .bss,
+ * padding it to a 256-byte offset. It was simply IRRELEVANT: GEMDOS loads a .PRG at whatever the TPA
+ * gives, and that is not 256-aligned (measured: 0x12596 under TOS 1.04, 0x1b018 under EmuTOS for the
+ * shipped binary), so an offset aligned within the image says nothing about the absolute address.
+ * (tos.ld's SUBALIGN(1) is about where .bss STARTS relative to text+data, which GEMDOS requires; it
+ * is not what defeated the attribute and must not be removed in the belief that it was.)
+ *
+ * So the storage carries slack and the shim rounds up into it once, before anything touches the
+ * image. The cores are unaffected: they only ever compute `image + <Ghidra address>`, and
+ * OS_SCREEN_BASE stays the constant the host-side differential uses. */
+#define IMAGE_ALIGN 256u
+/* Aligning `image` only aligns the video base because the screen sits a whole number of boundaries
+ * into it. If OS_SCREEN_BASE ever moved off one, the round-up below would be silently pointless. */
+_Static_assert(OS_SCREEN_BASE % IMAGE_ALIGN == 0,
+               "OS_SCREEN_BASE must be a multiple of the video base's 256-byte granularity");
+
+#ifdef SMOKE_SCREEN_MISALIGN
+#define IMAGE_SLACK (IMAGE_ALIGN + SMOKE_SCREEN_MISALIGN)   /* the skew build pushes past the round-up */
+#else
+#define IMAGE_SLACK IMAGE_ALIGN
+#endif
+
+static uint8_t image_storage[IMAGE_SIZE + IMAGE_SLACK];
+static uint8_t *image;
+
+static void align_image(void) {
+    uintptr_t base = (uintptr_t)image_storage;
+    image = (uint8_t *)((base + (IMAGE_ALIGN - 1)) & ~(uintptr_t)(IMAGE_ALIGN - 1));
+#ifdef SMOKE_SCREEN_MISALIGN
+    /* smoke.py's negative control, and the reproduction of the bug this alignment fixes: push the
+     * image off the boundary by a few bytes. Every memory comparison stays green — the framebuffer
+     * bytes are identical, the palette is identical — and the PICTURE is displaced, by whole cells
+     * if the offset is a multiple of 8 and with the four bitplanes PERMUTED if it is not. */
+    image += SMOKE_SCREEN_MISALIGN;
+#endif
+}
 
 /* joy_handler is entered off an interrupt, not the C ABI, so what it needs are plain longwords. */
 unsigned char *joy_buf_addr;
@@ -156,7 +200,7 @@ static void beacon(int step) {
 static unsigned long frames;                  /* per-frame loop iterations (see shim_console_polled) */
 static unsigned long dosound_calls, dosound_calls_in_play, first_sound_frame;
 static unsigned long psg_writes, psg_writes_in_play;
-/* THESE TWO OUTLIVE A RESTART, and are the only ones that do: they are facts about the SESSION, not
+/* THE COUNTERS BELOW OUTLIVE A RESTART, and are the only ones that do: they are facts about the SESSION, not
  * about the game now being played. Everything above is run-scoped and shim_reset_run_state() below
  * zeroes it — as a block, so that adding a counter here cannot silently survive a restart. */
 static unsigned long restarts;                /* completed R-key restarts */
@@ -166,6 +210,10 @@ static unsigned long frame_bytes_written;     /* ...and the frame differential's
 #else
 #define frame_bytes_written 0uL               /* no sample dumps in this build, so nothing wrote */
 #endif
+/* What we handed XBIOS Setscreen, and what the hardware says it is actually displaying from. They
+ * are NOT the same if the address is not 256-byte aligned: an STF's video base register has no low
+ * byte ($ffff8201/8203 only), so the shifter truncates. Every build reports them. */
+static uint32_t screen_passed, screen_physbase;
 static int title_over;
 
 /* IKBD replies filed by joy_handler (declared in tos.h with the handler's other globals). It is the
@@ -541,6 +589,8 @@ static void dump_sampled_frame(void) {
 #define dump_sampled_frame() ((void)0)
 #endif
 
+void joust_main(void);   /* _start's entry, and the STATS probe smoke.py recovers our load base from */
+
 /* ---- the shim's hooks inside the cores' OS calls (shim_include/os.h explains each) ------------ */
 
 static unsigned long console_polls;   /* every Bconstat the game makes; `frames` above counts the
@@ -771,10 +821,16 @@ void shim_init_game_started(void) {
  *   STATS.BIN    the counters below — what the GAME asked for, which no framebuffer can show.
  * Then the machine goes back the way it was found and the process ends. */
 #ifdef SMOKE
-#define STATS_FIELDS 16
+#define STATS_FIELDS 20
 #define STATS_BYTES  (STATS_FIELDS * 4)
 
-/* The record smoke.py parses: sixteen big-endian longwords, in this order. The last six are read
+/* The record smoke.py parses: twenty big-endian longwords, in this order. Two of them are RUN-TIME
+ * ADDRESSES OUT OF THIS BINARY: joust_main's, and poll_quit_key's — the per-frame anchor smoke.py
+ * puts a debugger breakpoint on to photograph the screen. They are reported rather than looked up
+ * because build/joust.elf is overwritten by every build while the per-mode .PRGs persist, so an ELF
+ * symbol table is not necessarily the running program's: a stale ELF once supplied an anchor four
+ * bytes off and the run went green on the wrong breakpoint. An address the binary reports about
+ * itself cannot be the wrong binary's. The last six are read
  * out of the IMAGE, and are what proves things no framebuffer can show: that the scripted '1' drove
  * title_screen's ONE-player arm, and that a restart really happened.
  *
@@ -789,6 +845,8 @@ static void dump_stats(void) {
         dosound_calls, dosound_calls_in_play, first_sound_frame,
         psg_writes, psg_writes_in_play,
         ikbd_packets, restarts, hiscore_bytes_written, frame_bytes_written,
+        screen_passed, screen_physbase,
+        (unsigned long)(uintptr_t)joust_main, (unsigned long)(uintptr_t)poll_quit_key,
         image[A_two_player_mode], image[A_players_alive],
         be16(image + A_object_table + OBJ_X), be16(image + A_object_table + OBJ_Y),
         be32(image + A_rng_ptr),
@@ -871,6 +929,7 @@ static void smoke_finish(void) {
 /* ---- entry ------------------------------------------------------------------------------------ */
 
 void joust_main(void) {
+    align_image();
     BEACON(0);
     if (load_file("JOUST.IMG", IMAGE_LOAD_BASE, PROGRAM_BYTES) != PROGRAM_BYTES) return;
     BEACON(1);
@@ -884,12 +943,21 @@ void joust_main(void) {
 
     /* Point TOS at the in-image framebuffer instead of copying to its own every frame. Joust draws
      * straight into the displayed screen (no double buffer), and the cores' screen_base is an image
-     * OFFSET, so `image + OS_SCREEN_BASE` is exactly the buffer they paint — 256-aligned by tos.ld,
-     * which is all the shifter requires. Setscreen rather than a poke at $ffff8201/8203, because
+     * OFFSET, so `image + OS_SCREEN_BASE` is exactly the buffer they paint — and 256-aligned because
+     * align_image() rounded the image's base up at run time, which is the only place that can be
+     * decided (see the comment there). Setscreen rather than a poke at $ffff8201/8203, because
      * TOS's own VBL routine reloads the shifter from _v_bas_ad and would undo a bare poke. */
-    Setscreen(image + OS_SCREEN_BASE, image + OS_SCREEN_BASE, SETSCREEN_KEEP_REZ);
-    Vsync();               /* TOS latches the new base on the next vblank — let it, BEFORE the VBL
-                            * queue is swapped underneath it (a run without this hung once) */
+    screen_passed = (uint32_t)(image + OS_SCREEN_BASE);
+    Setscreen((void *)(uintptr_t)screen_passed, (void *)(uintptr_t)screen_passed,
+              SETSCREEN_KEEP_REZ);
+    /* TOS applies Setscreen from its own VBL, so the read-back below means nothing until one has
+     * passed — and the queue must not be swapped underneath it either (a run without this hung). */
+    Vsync();
+    /* What the HARDWARE says it is displaying from. Equal to what was passed only if that address
+     * was 256-aligned; otherwise this is the truncated value and the picture is displaced. Reported
+     * in STATS.BIN and asserted by smoke.py, because it is the one cheap witness of a fault that
+     * every memory comparison in this project is blind to by construction. */
+    screen_physbase = (uint32_t)Physbase();
     BEACON(4);
     install_vbl_handler();
     BEACON(5);
