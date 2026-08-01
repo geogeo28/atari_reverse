@@ -10,6 +10,7 @@ plane content) — proving the whole init + render pipeline works cross-compiled
 Usage: python render/atari/game_smoke.py
 """
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,45 @@ from extract_graphics import write_png                # noqa: E402
 DISK = HERE / "disk"
 SCREEN_BYTES = W * H * 4 // 8                          # 32000
 RUN_VBLS = "8000"                                     # init + unpack + 120 render frames, fast-forwarded
+
+# Every Hatari run prints this, and it is checked for before anything is parsed OUT of the log. The
+# stream is on STDERR — stdout is empty — so a scan of the unmerged stream reads nothing and passes
+# for ever; that exact detector was vacuous in Joust for four milestones. A check that can read
+# nothing and report success is worse than no check, so the banner is the tripwire on the plumbing.
+HATARI_BANNER = "INFO : Hatari"
+# TOS SIZES MEMORY BY FAULTING ON PURPOSE at boot. That is the one benign fault, and it is excused by
+# the EXACT PC of the probe, never by "the PC is somewhere in ROM": the faults worth catching reach
+# ROM code through a stale vector, so a range test over ROM would excuse the very thing being hunted.
+# The same two PCs projects/joust/recreate/atari/smoke.py pins — EmuTOS's `tst.b (a0)` sizing loop
+# and TOS 1.04's sizing write — so the two games excuse one identical, named set.
+BENIGN_ROM_PROBE = re.compile(r"PC=\$(e00d98|fc0174)\b")
+
+
+def check_machine(log):
+    """Did the machine fault or halt during this run?
+
+    THE SURFACE THIS RUNNER DID NOT HAVE. It captured Hatari's output into a pipe and never read a
+    byte of it, so a bus error, an address error or a CPU halt was reported by the emulator and
+    thrown away — measured: the SMOKE build's own teardown was bus-erroring on $454 straight after
+    the dump and every run still printed OK (docs/on-target-execution.md, "the observable surfaces").
+
+    Only the LOG half is asserted, not Hatari's exit status: run() kills the emulator the moment the
+    dump lands, so the status is always the kill. The other half — letting it run past the program's
+    own exit, which is the only way an incomplete hand-back shows up — needs that kill to go, and is
+    recorded as follow-up rather than folded in here."""
+    if HATARI_BANNER not in log:
+        raise RuntimeError(f"Hatari's output does not contain {HATARI_BANNER!r} "
+                           f"({len(log)} bytes captured): {log[:200]!r} — either the emulator did "
+                           f"not start, or this run's log is not being captured and the fault scan "
+                           f"below is vacuous. Check run()'s stdout/stderr plumbing.")
+    lines = log.splitlines()
+    faults = [line for line in lines
+              if ("Bus Error" in line or "Address Error" in line)
+              and not BENIGN_ROM_PROBE.search(line)]
+    halted = [line for line in lines if "halted" in line.lower()]
+    if faults or halted:
+        raise RuntimeError("the machine faulted or halted during this run:\n  "
+                           + "\n  ".join(line.strip() for line in faults + halted))
 
 
 def run(timeout=90):
@@ -63,6 +103,13 @@ def run(timeout=90):
                 proc.wait(timeout=5)
             except Exception:
                 pass
+        # Read the merged stream now the process is gone. Hatari's whole log — INFO/WARN/ERROR and
+        # the debugger's output — goes to STDERR, hence stderr=STDOUT above; before this it was
+        # piped and never read, which is a surface that exists and reports nothing.
+        log = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
+        # The machine first: "it faulted" is a sharper diagnosis than "there is no dump", and a
+        # fault AFTER the dump (the case that was invisible) has a dump to show for it.
+        check_machine(log)
         if not (out.exists() and out.stat().st_size >= SCREEN_BYTES):
             raise RuntimeError("BUGGY.PRG did not produce SCREEN.BIN (boot/build/render failure)")
         return out.read_bytes()

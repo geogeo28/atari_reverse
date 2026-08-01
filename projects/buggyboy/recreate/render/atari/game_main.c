@@ -28,9 +28,11 @@
 #define GRAPHICS_LEN 0x40000
 #define SCREEN_BYTES 32000
 
-/* Two 256-aligned draw buffers in free image regions (below STATIC, above the graphics), referenced
- * by physbase_tbl[flip_idx] (flip_idx = 0 or 4). The image itself is 256-aligned so image+offset is
- * a valid ST video base. */
+/* Two draw buffers in free image regions (below STATIC, above the graphics), referenced by
+ * physbase_tbl[flip_idx] (flip_idx = 0 or 4). These are the STARTING offsets only: `image` lands
+ * wherever GEMDOS put the TPA, which is not 256-aligned, so the `aligned(256)` on the array says
+ * nothing about the run-time address and each offset is rounded up against the real base in
+ * game_main (see docs/on-target-execution.md §8 — the shifter has no low video-base byte). */
 #define DRAW_BUF_0   0x00100
 #define DRAW_BUF_1   0x88000
 
@@ -382,7 +384,13 @@ void game_main(void) {
         long h = Fcreate("SCREEN.BIN", 0);
         if (h >= 0) { Fwrite((short)h, SCREEN_BYTES, image + buf); Fclose((short)h); }
     }
-    SYS_NVBLS = 0;                  /* detach the VBL handler before we terminate */
+    /* Detach the VBL handler before we terminate — but only if we ever attached one. The install
+     * above is `#ifndef SMOKE`, and SMOKE also skips Super(0), so in this build there is nothing to
+     * detach AND no right to touch $454: TOS low memory is supervisor-only, and a user-mode store
+     * there bus-errors (measured under EmuTOS: "Bus Error writing at address $454, PC=$1b77e"),
+     * right after the dump where no runner was looking. Gated on hw_ready like every other
+     * supervisor-only poke in this file. */
+    if (hw_ready) SYS_NVBLS = 0;
     return;
 #endif
 

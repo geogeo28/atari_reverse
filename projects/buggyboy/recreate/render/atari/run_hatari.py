@@ -104,6 +104,10 @@ def main():
     else:
         ndiff = sum(1 for a, b in zip(host_fb, fb) if a != b)
         print(f"DIFF: {ndiff}/{SCREEN_BYTES} bytes differ from the host render")
+        # A byte-compare that cannot fail its caller is not a check. game_smoke.py's legdump mode
+        # already exits 1 on a DIFF; this one printed and exited 0, so every script or eye that
+        # trusted the status read a red as a green.
+        sys.exit(1)
 
 
 if __name__ == "__main__":
