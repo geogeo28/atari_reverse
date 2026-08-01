@@ -208,14 +208,26 @@ only place either fact exists, so keep them: re-deriving them later from the `.S
 impossible. `projects/wonderboy/notes/crack_differential.py` is the harness that established
 the 481/512 figure above, by diffing the converted `.ST` against a crack release and
 attributing every wrong byte to the `.ST` sector and the *cause* it came from
-(`ZERO-FILLED` / `UNVERIFIED`, read out of the `.stx` beside it):
+(`ZERO-FILLED` / `UNVERIFIED`, read out of the `.stx` the `.ST` was converted from):
 
 ```bash
-python3 projects/wonderboy/notes/crack_differential.py wb_disk2.st --crack CRACK.ST
+python3 projects/wonderboy/notes/crack_differential.py wb_disk2.st --crack CRACK.ST \
+        --stx "Wonderboy … (Disk 2 of 2)[a][!].stx"        # sibling NAME.stx if omitted
 ```
 
 `--crack` is required and has no default: that release is deliberately not in this repo, so
-the harness refuses to run rather than report green on nothing.
+the harness refuses to run rather than report green on nothing. The `.stx` is the second
+dependency and the *only* authority on which sectors are holes, so it is never merely assumed:
+every sector the dump read cleanly must match the `.ST` byte for byte, or the run refuses
+rather than apply another disk's hole map. Exit status is `0` clean, `1` could not run (missing
+or untrusted input) or ran with a warning, `2` the output would have overwritten an input, `3`
+`--patch` refused bytes differing inside a cleanly-read sector, `4` `--patch` left a hole lost.
+
+**Two failure modes a differential like this must not confuse.** A sector the FDC flagged is
+still *placed*, so its bytes are present but unproven; a sector nothing could be placed into is
+gone. Reporting both as "missing" makes a clean run impossible on any protected disk, and
+reporting both as "fine" hides the real loss — so the harness's `--patch` ledger counts them
+apart, and only the second is an error.
 
 **Expect packed files.** A cracked disk rarely holds plain `.PRG`s. On the Wonderboy disk
 only the `VAPOUR2` loader starts with `601a`; every other file carries a crack-group `LSD!`
