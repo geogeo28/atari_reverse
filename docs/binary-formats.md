@@ -72,6 +72,31 @@ Prints header sizes, reloc count, embedded strings, and a first-pass disassembly
 Strings often reveal filenames the program loads, menu text, and author credits
 (BuggyBoy: `"coded by Martin W.Ward"`, `"COURSES.DAT"`, `"GRAPHICS.GRA"`).
 
+## `.ST` floppy images (the container a game arrives in)
+
+A `.ST` file is a **raw sector dump** of a floppy: no header, no compression, just
+`tracks × heads × sectors × 512` bytes in order (720 KB = 1440 sectors; ST-formatted disks
+often squeeze in more, e.g. 1640). Sector 0 is the boot sector, and TOS writes the standard
+DOS **BPB** there — little-endian fields, even on a big-endian CPU — so the filesystem is
+plain **FAT12**: `boot | FAT ×n | root directory | data clusters`. Never assume a geometry;
+read it from the BPB.
+
+```bash
+python3 tools/st_extract.py projects/<name>/bin/GAME.ST              # list the tree
+python3 tools/st_extract.py projects/<name>/bin/GAME.ST -o extracted # extract it
+```
+
+The lister prints the geometry it derived plus the first 4 bytes of every file, which is
+usually enough to classify it (`601a` = a GEMDOS executable, see above; anything else = data
+or a packed blob). It exits nonzero and prints a `WARNING` line per suspicious cluster chain
+or directory entry instead of silently truncating — treat a dirty exit as "this image is
+damaged", not as noise.
+
+**Expect packed files.** A cracked disk rarely holds plain `.PRG`s. On the Wonderboy disk
+only the `VAPOUR2` loader starts with `601a`; every other file carries a crack-group `LSD!`
+stamp, and the real executable exists only in memory — see
+[`packed-executables.md`](packed-executables.md) for getting at it.
+
 ## Building a `.PRG` (reverse direction: recompiling the reconstruction)
 
 Once functions are reconstructed in C, you can cross-compile them back into a runnable
