@@ -99,3 +99,22 @@ sprite-draw scratch globals and the sound/RNG state. Apply with `bash reapply.sh
 > Gotcha: the Ghidra project is stamped with its creator's username in
 > `ghidra_proj/Joust.rep/project.prp`; a different local user gets
 > `NotOwnerException` from `reapply.sh` until `OWNER` is updated.
+
+## README images
+
+`gen_readme_assets.py` renders the workspace README's `assets/joust-*.png` — the title screen,
+three frames of the game playing itself, the high-score name entry and a sprite sheet — by driving
+the verified cores host-side through ctypes and de-interleaving the framebuffer they paint. It
+needs `bin/JOUST.PRG` and a built `recreate/build/libjoust.so`; no Hatari and no TOS ROM. Every
+picture is a function of the binary alone (the high-score record staged is the blank one the `.PRG`
+carries, not `bin/HIGH.SCO`), so every run is byte-identical.
+
+```bash
+cd recreate && make venv && make && ./.venv/bin/python ../gen_readme_assets.py
+```
+
+**Its address and offset constants mirror `recreate/include/*.h` with nothing pinning them equal.**
+`make test` never imports the script, so a header address corrected later would leave it
+reading the old one and silently re-render a wrong picture. Closing that means a pin test in
+`recreate/test/` (the mechanism `test_constants.py` already provides) — deliberately not taken
+here, since it would change the differential suite.
