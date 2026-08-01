@@ -8,7 +8,7 @@ render pipeline); the static screens, track maps and buggy come from
 `recreate/render/render_screen.py`; the sprite pages come from the same RLE decode
 `g_unpack_graphics` performs.
 
-Output goes to the tracked `<workspace>/assets/` — a small curated set for the README.
+Output goes to the tracked `<workspace>/assets/buggyboy/` — a small curated set for the README.
 `gen_assets.py`'s much larger `docs/assets/` (the function-graph explorer's media) stays
 gitignored and reproducible. Re-run:
 
@@ -31,7 +31,7 @@ import capture_ref              # noqa: E402  the in-race render pipeline, in dr
 import extract_graphics as xg   # noqa: E402  GRAPHICS.GRA RLE decode
 import gen_assets               # noqa: E402  shared staging/palette helpers + atlas constants
 
-OUT = WORKSPACE / "assets"
+OUT = WORKSPACE / "assets" / "buggyboy"
 
 IN_ACCEL = 0x01                 # input_state's throttle bit (see recreate/include/addrs.h)
 

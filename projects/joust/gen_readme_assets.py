@@ -13,7 +13,7 @@ so the whole set renders host-side. It does need YOUR OWN copy of the game in
 `bin/JOUST.PRG` (depacked from `JOUSTS.CTE` by `tools/depack_gamex.py`) and a built
 candidate — no game code or data is distributed with this repository.
 
-Output goes to the tracked `<workspace>/assets/joust-*.png`, and every run is
+Output goes to the tracked `<workspace>/assets/joust/*.png`, and every run is
 byte-identical: the whole set is a function of `JOUST.PRG` alone (the high-score record is
 the blank one the binary carries, not the save file beside it), the play frames come from
 one seeded self-play chain, and nothing reads a clock. Re-run:
@@ -38,7 +38,7 @@ sys.path.insert(0, str(RECREATE / "test"))       # harness.py — binds the kit 
 import harness                     # noqa: E402  loads JOUST.PRG into the image, opens libjoust.so
 from extract_graphics import write_png   # noqa: E402
 
-OUT = WORKSPACE / "assets"
+OUT = WORKSPACE / "assets" / "joust"
 
 # ---- the ST low-res framebuffer: the four cell constants mirror recreate/include/joust.h ----
 SCREEN_WIDTH, SCREEN_HEIGHT = 320, 200
@@ -201,7 +201,7 @@ def _decode_interleaved(image, base):
 
 def _write_screen(name, image, palette_addr=A_GAME_PALETTE):
     """Decode the framebuffer the reconstruction just painted and write it out as a PNG."""
-    path = OUT / ("joust-%s.png" % name)
+    path = OUT / ("%s.png" % name)
     write_png(str(path), SCREEN_WIDTH, SCREEN_HEIGHT,
               _decode_interleaved(image, _screen_base(image)), _palette(image, palette_addr))
     print("  wrote", path.relative_to(WORKSPACE))
@@ -303,7 +303,7 @@ def render_play_frames():
         if lap not in wanted:
             return
         name, claim, holds = wanted[lap]
-        assert holds(image), f"lap {lap} no longer shows what joust-{name}.png claims: {claim}"
+        assert holds(image), f"lap {lap} no longer shows what {name}.png claims: {claim}"
         _write_screen(name, image)
 
     image, buf = _staged_image()

@@ -102,7 +102,7 @@ sprite-draw scratch globals and the sound/RNG state. Apply with `bash reapply.sh
 
 ## README images
 
-`gen_readme_assets.py` renders the workspace README's `assets/joust-*.png` — the title screen,
+`gen_readme_assets.py` renders the workspace README's `assets/joust/*.png` — the title screen,
 three frames of the game playing itself, the high-score name entry and a sprite sheet — by driving
 the verified cores host-side through ctypes and de-interleaving the framebuffer they paint. It
 needs `bin/JOUST.PRG` and a built `recreate/build/libjoust.so`; no Hatari and no TOS ROM. Every

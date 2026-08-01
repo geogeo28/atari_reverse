@@ -6,7 +6,7 @@ run that C back on a 68000. The tooling and the [documentation](docs/README.md) 
 point them at any GEMDOS `.PRG`. **Two games are solved with them.**
 
 <p align="center">
-  <img src="assets/race-leg1.png" width="640" alt="Buggy Boy in-race frame rendered by the C reconstruction">
+  <img src="assets/buggyboy/race-leg1.png" width="640" alt="Buggy Boy in-race frame rendered by the C reconstruction">
 </p>
 
 <p align="center"><em>Not a screenshot of the original program — this frame was drawn by the
@@ -73,7 +73,7 @@ then drawn by the verified render pipeline (road → scroll → objects → HUD)
 
 | `OFFROAD` | `NORTH` | `SOUTH` |
 |:---:|:---:|:---:|
-| ![](assets/race-leg0.png) | ![](assets/race-leg1.png) | ![](assets/race-leg4.png) |
+| ![](assets/buggyboy/race-leg0.png) | ![](assets/buggyboy/race-leg1.png) | ![](assets/buggyboy/race-leg4.png) |
 
 The course map in the top-left corner is built per leg by `init_leg_dash` out of `COURSES.DAT` and
 blitted every frame by `draw_dashboard`; the trace along it is the player's live progress.
@@ -82,7 +82,7 @@ blitted every frame by `draw_dashboard`; the trace along it is the player's live
 
 | Credits | Leg board | High scores |
 |:---:|:---:|:---:|
-| ![](assets/screen-credits.png) | ![](assets/screen-leg-select.png) | ![](assets/screen-highscore.png) |
+| ![](assets/buggyboy/screen-credits.png) | ![](assets/buggyboy/screen-leg-select.png) | ![](assets/buggyboy/screen-highscore.png) |
 
 ### Course data and sprites
 
@@ -91,13 +91,13 @@ time through a circular buffer. Walking it recovers each leg's shape:
 
 | `OFFROAD` | `WEST` |
 |:---:|:---:|
-| ![](assets/course-legmap-0.png) | ![](assets/course-legmap-3.png) |
+| ![](assets/buggyboy/course-legmap-0.png) | ![](assets/buggyboy/course-legmap-3.png) |
 
 `GRAPHICS.GRA` is a sprite table plus an RLE stream that unpacks to eight 320×200 four-plane atlases:
 
 | Gates & score markers | Roadside scenery |
 |:---:|:---:|
-| ![](assets/sprites-page3.png) | ![](assets/sprites-page4.png) |
+| ![](assets/buggyboy/sprites-page3.png) | ![](assets/buggyboy/sprites-page4.png) |
 
 [`projects/buggyboy/docs/function_graph.html`](projects/buggyboy/docs/function_graph.html) is a
 standalone call-graph explorer covering all 117 functions — open it in a browser, no server needed.
@@ -245,7 +245,7 @@ whole set is byte-identical every run.
 
 | Title screen | Wave 1 begins | A joust, and a loose egg |
 |:---:|:---:|:---:|
-| ![](assets/joust-title.png) | ![](assets/joust-wave1.png) | ![](assets/joust-eggs.png) |
+| ![](assets/joust/title.png) | ![](assets/joust/wave1.png) | ![](assets/joust/eggs.png) |
 
 `init_system` takes the machine over and loads `HIGH.SCO`; `title_screen` then paints the picture
 the `.PRG` itself carries, draws its three lines through `draw_string` — the middle one is the
@@ -262,7 +262,7 @@ is the loop's own seventeen calls: `draw_platforms`, `render_objects`, `update_e
 
 | The pterodactyl arrives | A new record, being typed | The cast |
 |:---:|:---:|:---:|
-| ![](assets/joust-pterodactyl.png) | ![](assets/joust-hiscore.png) | ![](assets/joust-sprites.png) |
+| ![](assets/joust/pterodactyl.png) | ![](assets/joust/hiscore.png) | ![](assets/joust/sprites.png) |
 
 On lap 1850 of that same self-played game `update_pterodactyl` has the bird over the middle of the
 playfield, drawn by `blit_mask_wide` and `blit_sprite_planes`. The middle picture ends the same
