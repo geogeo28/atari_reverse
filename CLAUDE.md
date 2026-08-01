@@ -33,6 +33,7 @@ reverse/
 │   ├── prg_dis.py            # stdlib GEMDOS .PRG analyzer + 68000 first-pass disassembler (prints entropy)
 │   ├── extract_graphics.py   # ST 4-plane / RLE graphics -> PNG
 │   ├── depack_gamex.py       # static depacker for the Gamex/"PP" LZSS cruncher (.CTE -> .PRG)
+│   ├── depack_lsd.py         # static depacker for the "LSD!" backwards-LZ cruncher
 │   ├── st_extract.py         # stdlib FAT12 .ST disk-image lister/extractor
 │   ├── ghidra_scripts/       # PrgLoader, AtariOsTrapAnnotate, ExportDecompC, ApplyNames, DumpNames, LoadDump
 │   ├── headless.sh           # bootstrap: import->load->analyze->annotate->export

@@ -92,6 +92,37 @@ bit6 = short/long offset). It auto-scans for the stream offset that yields a val
 python3 tools/depack_gamex.py projects/<name>/bin/GAME.CTE projects/<name>/bin/GAME.PRG
 ```
 
+`tools/depack_lsd.py` does the same for the **"LSD!" backwards-LZ** cruncher (Wonder Boy in
+Monsterland). Two things make that family different from Gamex-style forward LZ, and both
+generalise — expect them from any Pack-Ice-descended ST cruncher:
+
+- **The stream is consumed backwards**, from EOF down to the end of the header, and the output
+  is filled backwards too (a match copies from *above* the write pointer). The header's third
+  long is only there to walk the source pointer to EOF. Take EOF from that field, never from the
+  length of your buffer — the routine never learns that length, so bytes past EOF are slack, and
+  honouring that is what lets you depack a stream *sliced out of a larger file* (the 136,979-byte
+  payload embedded at VAPOUR2's text `$94c`) or one read back in whole sectors.
+- **The bitstream is byte-buffered with a self-carried marker**: `lsl.b #1,dn` shifts a bit out,
+  and the buffer is spent when the remainder hits 0, so each byte's *lowest set bit* is its end
+  marker; the refill's `roxl.b #1,dn` rotates that marker back in as the new byte's marker. Once
+  you see that `lsl.b / bne / move.b -(a0),dn / roxl.b` quartet you have found the bit reader,
+  and the tables it indexes right after it are the length/offset codes.
+
+Both containers on that disk share a 12-byte header shape, which is a trap: only the `LSD!` one
+is this cruncher, and the magic-less one is the game's own resource format (a *second*, unrelated
+cruncher). Detect on the magic, not on the shape.
+
+```bash
+python3 tools/depack_lsd.py IN [-o OUT]
+```
+
+Ground truth for a depacker written this way is cheap — see
+`projects/wonderboy/notes/lsd_differential.py`, which drops the original routine into a flat image
+and runs it under the recreate_kit Musashi oracle to diff its output buffer against the Python one,
+file by file. It needs that oracle built first (any project's kit.mk target will do:
+`make -C projects/joust/recreate oracle`), and it borrows nothing else from the kit — no
+`project.toml`, no candidate `.so`.
+
 Worked on Joust: `JOUSTS.CTE` (37 KB, entropy 6.95) → `JOUST.PRG` (114 KB, entropy 4.01,
 1227 relocations) — a standard PRG that then goes straight through the normal pipeline
 (`PrgLoader`, no memory dump needed). Use Hatari when the packer is unknown/complex or
