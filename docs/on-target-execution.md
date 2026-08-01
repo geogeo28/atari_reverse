@@ -244,6 +244,51 @@ byte-identical framebuffer, a byte-identical palette, and a wrong picture.
   byte-comparable. Control it by deliberately misaligning the screen: every memory check must still
   pass and the picture must not.
 
+## The observable surfaces
+
+An on-target run can be watched on exactly six surfaces, and no more. They are listed here because
+the useful question about any on-target change is not "is it right?" but **"which of these six would
+have shown me if it were wrong?"**
+
+| surface | what it is | what it cannot see |
+|---|---|---|
+| **memory** | framebuffers and image bytes, dumped by the program or by `savebin` | anything that never lands in RAM: the shifter, the PSG, the IKBD, TOS's own variables |
+| **the trap ledger** | which OS calls were made, with what arguments (Hatari `--trace xbios,gemdos`) | what the *device* did with them |
+| **the hardware-state vector** | the registers themselves, read back at a frame anchor — shifter pens, resolution, YM file, video base | the ORDER things reached them, and anything between two anchors |
+| **rendered pixels** | Hatari `screenshot`, i.e. the emulator's real video path | nothing about *why*; and it is only as reproducible as the emulator's frame rendering |
+| **timelines** | the ordered stream of hardware writes (`--trace video_color,psg_write`), reduced to a per-phase shape | values it does not sample; it is a shape, not a state |
+| **exit status and the log** | the emulator's own return code plus its bus/address-error and halt lines | anything the machine survives *and* does not log |
+
+**The rule: every on-target change names the surface that would catch its failure. If it names none,
+that is the finding** — not a reason to proceed carefully. Add the surface, or record in `STATUS.md`
+that the change is unpinned and why.
+
+Four escapes in this workspace are the evidence, and each one names a surface that did not exist yet:
+
+- **The EA pen shift.** A palette loop compiled to `move.w (%a0)+,(%a0,%d0.l)`; on the 68000 the
+  destination EA is computed *after* the source postincrement, so every pen landed one register high
+  and the sixteenth write hit the *resolution* register. Every memory check was green. → the
+  **hardware-state vector** (nothing was reading the shifter back).
+- **773 palette stomps.** The VBL handler re-armed `_colorptr` every vblank, so the palette was
+  loaded 773 times over a run where the original loads it four times. Every snapshot was green,
+  because all 773 loads wrote the same correct words. → **timelines** (every other surface is a
+  snapshot, and a wrong route to the right state is invisible to all of them).
+- **Video-base truncation.** An unaligned screen address is truncated by the shifter, which has no
+  low byte on an STF; the framebuffer, the pens and every dump stayed byte-identical while the
+  picture came out with its bitplanes permuted. → **rendered pixels**, plus the one read-back
+  (`Physbase`) that caught it in the end.
+- **The half-blind exit detector.** Hatari writes its log to *stderr* and the parser read *stdout*,
+  so the line scan for bus errors and halts had been reading an empty string for a year. The
+  emulator's *return code* still worked, which is why the blindness went unnoticed. → **exit status
+  and the log**, and the lesson that a surface can be present and vacuous.
+
+The practical form of the rule for the writes a shim makes: **read every one of them back.** A write
+to RAM (TOS variables, KBDVBASE, a VBL queue) reads back exactly; a write to a write-only device (the
+IKBD) gets the strongest available proxy — the next reply arriving, the transmitter draining — and
+the residual blindness gets written down next to it rather than assumed away. Record *which checks
+ran* as well as *which failed*: a check that silently stops running looks identical to a passing one,
+which is precisely how the exit detector survived a year.
+
 ## Diagnostic toolkit
 
 You cannot single-step a `.PRG` the way you diff a function. These techniques turn "it's wrong on

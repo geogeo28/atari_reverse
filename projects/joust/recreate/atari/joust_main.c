@@ -173,8 +173,17 @@ void *memset(void *dst, int c, unsigned long n) {
 
 /* ---- progress beacons: SMOKE only ------------------------------------------------------------
  * Drop a marker file B<n> on the GEMDOS drive at each startup step, so a headless run can pinpoint
- * a hang by the highest-numbered marker present. No debugger, no display. */
-#ifdef SMOKE
+ * a hang by the highest-numbered marker present. No debugger, no display.
+ *
+ * NOT IN THE BOOT-DUMP BUILD, and that exclusion is what makes smoke.py's `play` mode honest. That
+ * mode exists to assert the boot of the configuration people run, and its whole claim is that the
+ * code before the dump is the play build's code. A beacon is a GEMDOS Fcreate/Fclose pair — real
+ * disk I/O, interleaved with the very installs being read back, which `build.sh play` never
+ * performs. Nine of them would make the certified boot a different boot from the certified-about
+ * one; this project already has a recorded GEMDOS handle gotcha, exactly the class that would hide
+ * behind them. The boot dump itself is the one write that build leaves, and it happens after every
+ * install has run. */
+#if defined(SMOKE) && !defined(SMOKE_BOOT_DUMP)
 static void beacon(int step) {
     char name[4] = { 'B', (char)('0' + step), 0, 0 };
     long handle = Fcreate(name, 0);
@@ -219,7 +228,7 @@ static int title_over;
 /* IKBD replies filed by joy_handler (declared in tos.h with the handler's other globals). It is the
  * only evidence a headless run can give that the joystick path is LIVE: Hatari has no way to press
  * a stick without a keyboard, so what can be witnessed is that real packets keep arriving and that
- * the game's waits end on them. Steering itself is a GUI check (run.sh) — see README §11. */
+ * the game's waits end on them. Steering itself is a GUI check (run.sh) — see README §13. */
 volatile unsigned long ikbd_packets;
 
 void shim_quit_tail_running(void);
@@ -236,6 +245,69 @@ void g_dosound(uint8_t *img, uint32_t list_addr) {
         if (!dosound_calls_in_play++) first_sound_frame = frames;
     }
     Dosound(img + list_addr);
+}
+
+/* ---- read-backs: every hardware and OS-state write this shim makes is READ BACK ---------------
+ *
+ * WHY THERE IS A MECHANISM HERE AT ALL. Everything below writes somewhere the differential cannot
+ * see — TOS system variables, KBDVBASE, the IKBD, the shifter. Four bugs in this project reached a
+ * green harness precisely because nothing read the write back (README, "The bugs found on target"),
+ * and the one that did not was Setscreen, whose Physbase read-back caught the base truncation on the
+ * first run. This generalises that one pattern to every such write.
+ *
+ * TWO WORDS, NOT ONE. `readback_attempted` records which checks RAN and `readback_failed` which of
+ * them found the wrong value, and smoke.py asserts both: failed == 0 AND attempted == the full mask.
+ * A check that silently stops running is the failure mode a bare fault word cannot show — the same
+ * shape as the exit detector that scanned an empty string for a year.
+ *
+ * AND TWO PAIRS, ONE PER CONTEXT. The VBL handler records into its own pair, which dump_stats ORs
+ * into the main one. This is not tidiness: `x |= 1uL << bit` is NOT interrupt-atomic on the 68000
+ * unless GCC happens to emit a memory-destination `or.l`, and it is free to emit load/or/store
+ * instead. install_vbl_handler re-attaches the handler and then reads back — so the two halves DO
+ * overlap, and a vblank landing inside that window would drop whichever bit the other half had just
+ * set. Losing a bit from `attempted` is an intermittent red on a healthy run; losing one from
+ * `failed` is a real fault reading green. Separate storage removes the window rather than reasoning
+ * about it. Both pairs are `volatile`: the interrupt half is written behind the compiler's back,
+ * and the boot dump reads them immediately after a Vsync loop that GCC has no reason to think
+ * touches them.
+ *
+ * HONEST STRENGTH ONLY. A write to memory is read back from that memory. The IKBD is write-only, so
+ * what is asserted there is the strongest available PROXY and the residual blindness is named at
+ * each site rather than papered over. */
+#define RB_JOYVEC_INSTALLED    0
+#define RB_MOUSEVEC_INSTALLED  1
+#define RB_CONTERM_CLEARED     2
+#define RB_VBLQUEUE_INSTALLED  3
+#define RB_NVBLS_INSTALLED     4
+#define RB_VBL_SLOT0           5
+#define RB_IKBD_REPLYING       6
+#define RB_COLORPTR_ARMED      7
+#define RB_COLORPTR_CONSUMED   8
+#define RB_JOYVEC_RESTORED     9
+#define RB_MOUSEVEC_RESTORED  10
+#define RB_VBLQUEUE_RESTORED  11
+#define RB_NVBLS_RESTORED     12
+#define RB_CONTERM_RESTORED   13
+#define RB_IKBD_TX_DRAINED    14
+#define RB_BITS               15
+
+static volatile unsigned long readback_attempted, readback_failed;
+static volatile unsigned long vbl_readback_attempted, vbl_readback_failed;
+
+static void record_readback(volatile unsigned long *attempted, volatile unsigned long *failed,
+                            unsigned bit, int held) {
+    *attempted |= 1uL << bit;
+    if (!held) *failed |= 1uL << bit;
+}
+
+/* From the main thread... */
+static void readback(unsigned bit, int held) {
+    record_readback(&readback_attempted, &readback_failed, bit, held);
+}
+
+/* ...and from the VBL handler, into storage no main-thread instruction touches. */
+static void vbl_readback(unsigned bit, int held) {
+    record_readback(&vbl_readback_attempted, &vbl_readback_failed, bit, held);
 }
 
 /* ---- the VBL handler: palette + IKBD watchdog ------------------------------------------------
@@ -308,6 +380,8 @@ static const uint16_t *palette_to_push(void) { return pushed_palette; }
  * Two VBLs, because one would race a reply that is legitimately still in flight. */
 #define IKBD_IDLE_VBLS_BEFORE_REPRIME 2
 static int ikbd_idle_vbls;
+/* Set the vblank we hand TOS a palette, so the NEXT vblank can check TOS took it. */
+static int colorptr_armed;
 
 static void vbl_handler(void) {
     const uint8_t *table = image + palette_source;
@@ -318,12 +392,37 @@ static void vbl_handler(void) {
         pushed_palette[pen] = word;
         changed = 1;
     }
+    /* CONSUMED is checked BEFORE arming, and that order is the whole assertion: _colorptr is a
+     * handoff, and TOS ZEROES it once its own VBL has copied the sixteen words to the shifter. So
+     * finding it zero one vblank after we armed it is the proof that the palette actually reached
+     * the hardware — the strongest statement available without reading $ffff8240 back, which this
+     * handler must not do (a read there is fine, but the write that put the pens one register high
+     * is exactly the bug this route was adopted to avoid). RESIDUAL BLINDNESS: it witnesses that a
+     * load HAPPENED, not that the sixteen words were the right ones; the hardware-state vector in
+     * smoke.py is what compares the values. */
+    if (colorptr_armed) {
+        /* CLEARED AFTER CHECKING, so this asserts THE ARM WE JUST MADE rather than re-proving a
+         * latched bit on every vblank for the life of the program — which also kept a harness
+         * assertion running 50 times a second in the build people play. */
+        colorptr_armed = 0;
+        vbl_readback(RB_COLORPTR_CONSUMED, SYS_COLORPTR == 0);
+    }
+#ifdef SMOKE_PALETTE_REARM
+    /* smoke.py framediff-rearm's negative control: re-arm EVERY vblank, which is what this handler
+     * did before push-on-change. It writes the same sixteen words, so every other surface stays
+     * green — the pens, the vector, the picture, the framebuffers — and only the palette-load
+     * TIMELINE moves, from 4 loads to one per vblank. That is the shape of the 773-stomps bug. */
+    changed = 1;
+#endif
     if (changed) {
         palette_pushed = 1;
         /* _colorptr is aimed at OUR copy rather than at the image: the two hold the same bytes, but
          * a buffer of our own is where the fault below can live. TOS reads sixteen words from it on
          * the next vblank, which is all Setpalette does. */
-        SYS_COLORPTR = (uint32_t)palette_to_push();
+        uint32_t armed = (uint32_t)palette_to_push();
+        SYS_COLORPTR = armed;
+        vbl_readback(RB_COLORPTR_ARMED, SYS_COLORPTR == armed);
+        colorptr_armed = 1;
     }
 
     if (be32(image + A_ikbd_packet) != 0) {
@@ -410,6 +509,11 @@ static void install_ikbd_vectors(void) {
     saved_mousevec = *kbdv_vector(KBDVBASE_MOUSEVEC);
     *kbdv_vector(KBDVBASE_JOYVEC) = (uint32_t)joy_handler;
     *kbdv_vector(KBDVBASE_MOUSEVEC) = (uint32_t)null_handler;
+    /* KBDVBASE is a table in RAM, so both writes read back exactly. A ROM-resident or write-guarded
+     * KBDVBASE would take the write silently and leave TOS's handler in place — which is a live
+     * possibility on an accelerator or an emulated machine with a different keyboard shim. */
+    readback(RB_JOYVEC_INSTALLED, *kbdv_vector(KBDVBASE_JOYVEC) == (uint32_t)joy_handler);
+    readback(RB_MOUSEVEC_INSTALLED, *kbdv_vector(KBDVBASE_MOUSEVEC) == (uint32_t)null_handler);
     Super((void *)(uintptr_t)saved_ssp);
 }
 
@@ -421,6 +525,10 @@ static void quiet_conterm(void) {
     long saved_ssp = Super(0);
     saved_conterm = SYS_CONTERM;
     SYS_CONTERM &= CONTERM_KEEP;
+    /* The EXACT byte, not just "the three bits are gone": `SYS_CONTERM = 0` would pass a
+     * cleared-bits test while discarding the bits TOS keeps in there, and this sweep's own rule is
+     * that a write to memory is read back from that memory. Its restore twin already does this. */
+    readback(RB_CONTERM_CLEARED, SYS_CONTERM == (uint8_t)(saved_conterm & CONTERM_KEEP));
     Super((void *)(uintptr_t)saved_ssp);
 }
 
@@ -436,8 +544,19 @@ static void install_vbl_handler(void) {
     SYS_NVBLS = 0;                                    /* detach while the pointer is swapped */
     SYS_VBLQUEUE = (uint32_t)(uintptr_t)vbl_queue;
     SYS_NVBLS = (int16_t)(1 + tos_slots);
+    /* All three halves of the swap, because a partial one is what hangs the machine: the pointer,
+     * the length TOS walks, and OUR handler actually sitting in slot 0. These run with the handler
+     * already live — see the read-back header on why that is safe here (separate storage). */
+    readback(RB_VBLQUEUE_INSTALLED, SYS_VBLQUEUE == (uint32_t)(uintptr_t)vbl_queue);
+    readback(RB_NVBLS_INSTALLED, SYS_NVBLS == (int16_t)(1 + tos_slots));
+    readback(RB_VBL_SLOT0, vbl_queue[0] == vbl_handler);
     Super((void *)(uintptr_t)saved_ssp);
 }
+
+/* Bounded spins waiting for the IKBD ACIA transmitter to drain. One byte at 7812.5 baud is ~1.3 ms,
+ * i.e. a few hundred iterations of this loop on an 8 MHz 68000; the bound is far above that so that
+ * a machine whose ACIA never reports ready fails the read-back instead of hanging the quit. */
+#define ACIA_DRAIN_SPINS 100000L
 
 /* Hand the machine back, in the reverse of the order it was taken. It runs on EVERY exit path.
  *
@@ -470,11 +589,45 @@ static void shim_teardown(void) {
     *kbdv_vector(KBDVBASE_JOYVEC) = saved_joyvec;
     *kbdv_vector(KBDVBASE_MOUSEVEC) = saved_mousevec;
     SYS_CONTERM = saved_conterm;
+    /* THE HAND-BACK IS READ BACK TOO, and it is the half that matters most: an install that fails is
+     * a game that does not run, but a RESTORE that fails is a machine that dies a second after this
+     * process is gone, where nothing is left to notice. All five are plain RAM. */
+    readback(RB_VBLQUEUE_RESTORED, SYS_VBLQUEUE == saved_vblqueue);
+    readback(RB_NVBLS_RESTORED, SYS_NVBLS == saved_nvbls);
+    readback(RB_JOYVEC_RESTORED, *kbdv_vector(KBDVBASE_JOYVEC) == saved_joyvec);
+    readback(RB_MOUSEVEC_RESTORED, *kbdv_vector(KBDVBASE_MOUSEVEC) == saved_mousevec);
+    readback(RB_CONTERM_RESTORED, SYS_CONTERM == saved_conterm);
     Super((void *)(uintptr_t)saved_ssp);
 
     Setscreen(tos_logbase, tos_physbase, SETSCREEN_KEEP_REZ);
     Ikbdws(IKBD_TWO_BYTES, image + A_ikbd_cmd_reset);       /* $80 $01 */
     Ikbdws(IKBD_ONE_BYTE, image + A_ikbd_cmd_mouse_rel);    /* $14 */
+    /* THE WEAKEST ASSERTION IN THIS FILE, and it is named as such. The IKBD is write-only: there is
+     * no register that says "the keyboard is out of interrogation mode". What can be seen is that
+     * the ACIA's transmit data register emptied — nothing about the device having acted on the
+     * bytes. Its own Super pair: $fffffcxx is privileged and the one above has already been given
+     * back.
+     *
+     * AND IT WAITS. Measured the first time this assertion ran: TDRE is CLEAR when Ikbdws returns,
+     * every time. Ikbdws waits for room BEFORE each byte, so on return the last one has only just
+     * been handed to the ACIA. Sampling TDRE there tests nothing but timing, so the drain is waited
+     * for instead.
+     *
+     * RESIDUAL BLINDNESS, and it is two-deep:
+     *   1. TDRE IS ONE BYTE SHORT OF "SENT". On a 6850 it goes high when the transmit data register
+     *      is copied into the SHIFT register — the last byte is still being clocked out, ~1.28 ms
+     *      at 7812.5 baud. So what this proves is that every byte but the final one has left the
+     *      machine, and that the final one is on its way. Pterm can still be reached with that byte
+     *      in flight; the ACIA finishes it regardless, but this assertion does not witness it.
+     *   2. Even a byte that fully leaves says nothing about the keyboard OBEYING it. A reset the
+     *      controller ignores, or a mouse-reporting byte arriving while it is still resetting,
+     *      reads exactly like success here.
+     * The evidence that closes both is not in this process at all — it is the desktop having a
+     * mouse after the game exits, which is the GUI check in README §13. */
+    long acia_ssp = Super(0);
+    for (long spin = 0; spin < ACIA_DRAIN_SPINS && !(ACIA_STATUS & ACIA_TDRE); spin++) { }
+    readback(RB_IKBD_TX_DRAINED, (ACIA_STATUS & ACIA_TDRE) != 0);
+    Super((void *)(uintptr_t)acia_ssp);
     Setpalette(desktop_palette);
     /* AND WAIT FOR IT. Setpalette does not write the shifter: it parks the POINTER in _colorptr and
      * TOS's own VBL copies sixteen words out of it on the next vblank. desktop_palette is in this
@@ -484,6 +637,10 @@ static void shim_teardown(void) {
     Vsync();
 }
 
+/* Vblanks to wait for the IKBD's first reply before calling the interrogate dead. Generous: the
+ * controller answers within one or two, and this only runs once, at boot. */
+#define IKBD_FIRST_REPLY_VBLS 30
+
 /* Put the sticks in interrogation mode and get the first reply on its way. From there joy_handler
  * chains the next interrogate off each reply, so a wait never spins for more than one packet. */
 static void start_ikbd(void) {
@@ -492,6 +649,16 @@ static void start_ikbd(void) {
     Ikbdws(IKBD_ONE_BYTE, image + A_ikbd_cmd_joymode);   /* $15, the game's own command byte */
     install_ikbd_vectors();
     Ikbdws(IKBD_ONE_BYTE, image + A_ikbd_cmd_joyread);   /* $16, likewise */
+
+    /* THE PROXY FOR A WRITE-ONLY DEVICE. Neither command can be read back, so what is asserted is
+     * the only thing that proves both of them landed AND that the vector above is live: A REPLY
+     * ARRIVES. joy_handler files it and bumps ikbd_packets, so one non-zero count witnesses the
+     * whole chain — $15 accepted, $16 accepted, joyvec entered. A wrong $15 leaves the sticks out of
+     * interrogation mode and nothing ever replies; a dead vector means nothing ever counts.
+     * RESIDUAL BLINDNESS: it cannot tell a reply from a CORRECT reply — the packet's contents are
+     * the game's business, and a headless run has no stick to move (README §13). */
+    for (int waited = 0; waited < IKBD_FIRST_REPLY_VBLS && ikbd_packets == 0; waited++) Vsync();
+    readback(RB_IKBD_REPLYING, ikbd_packets != 0);
 }
 
 /* The one GEMDOS write/close in this file — the SMOKE dumps and the high-score write-back share it,
@@ -821,12 +988,13 @@ void shim_init_game_started(void) {
  *   STATS.BIN    the counters below — what the GAME asked for, which no framebuffer can show.
  * Then the machine goes back the way it was found and the process ends. */
 #ifdef SMOKE
-#define STATS_FIELDS 20
+#define STATS_FIELDS 23
 #define STATS_BYTES  (STATS_FIELDS * 4)
 
-/* The record smoke.py parses: twenty big-endian longwords, in this order. Two of them are RUN-TIME
- * ADDRESSES OUT OF THIS BINARY: joust_main's, and poll_quit_key's — the per-frame anchor smoke.py
- * puts a debugger breakpoint on to photograph the screen. They are reported rather than looked up
+/* The record smoke.py parses: STATS_FIELDS big-endian longwords, in this order. THREE of them are
+ * RUN-TIME ADDRESSES OUT OF THIS BINARY: joust_main's, poll_quit_key's — the per-frame anchor
+ * smoke.py puts a debugger breakpoint on to photograph the screen — and shim_console_polled's,
+ * which is the title screen's anchor. They are reported rather than looked up
  * because build/joust.elf is overwritten by every build while the per-mode .PRGs persist, so an ELF
  * symbol table is not necessarily the running program's: a stale ELF once supplied an anchor four
  * bytes off and the run went green on the wrong breakpoint. An address the binary reports about
@@ -835,9 +1003,13 @@ void shim_init_game_started(void) {
  * title_screen's ONE-player arm, and that a restart really happened.
  *
  * player_x/player_y are REPORTED, NOT ASSERTED, and are not evidence of steering — a headless run
- * has no stick to push (README §11), so they show the rider under gravity alone. They are also read
+ * has no stick to push (README §13), so they show the rider under gravity alone. They are also read
  * with be16, i.e. UNSIGNED, while the object layer treats both as int16_t: a rider at x = -4 comes
- * out as 65532, which any future range check here has to allow for. */
+ * out as 65532, which any future range check here has to allow for.
+ *
+ * The last three carry the READ-BACK SWEEP: which checks ran and which of them failed (the main
+ * thread's pair ORed with the VBL handler's), and shim_console_polled — so a build with no frame
+ * anchor (the play build) still has somewhere for the debugger to stop on the title screen. */
 static void dump_stats(void) {
     uint8_t record[STATS_BYTES];
     const unsigned long fields[STATS_FIELDS] = {
@@ -850,6 +1022,8 @@ static void dump_stats(void) {
         image[A_two_player_mode], image[A_players_alive],
         be16(image + A_object_table + OBJ_X), be16(image + A_object_table + OBJ_Y),
         be32(image + A_rng_ptr),
+        readback_attempted | vbl_readback_attempted, readback_failed | vbl_readback_failed,
+        (unsigned long)(uintptr_t)shim_console_polled,
     };
     for (unsigned i = 0; i < STATS_FIELDS; i++) wr32(record + 4u * i, (uint32_t)fields[i]);
     dump_file("STATS.BIN", record, STATS_BYTES);
@@ -907,9 +1081,18 @@ static void write_hiscore_file(void) {
  * being distinguishable (a build that never reaches the quit path must report zero bytes written). */
 static void shim_exit(int writing_back) {
     if (writing_back) write_hiscore_file();
-    dump_stats();
     dump_screen();
+    /* DUMPED TWICE, ONE FILE, AND THE SECOND ONE IS THE POINT. The teardown's own read-backs can
+     * only exist after it has run, so the record has to be written after it — but a teardown that
+     * does not RETURN would then take the whole record with it, and a hung hand-back is precisely
+     * what those bits exist to diagnose. (shim_teardown ends in Vsync, which depends on the VBL
+     * queue it has just restored: restore that wrongly and it can spin.) So the record is written
+     * once before, carrying the installs, and again after, carrying the hand-back as well. If the
+     * second write never happens, smoke.py finds the first and reports exactly which read-backs are
+     * MISSING — naming the step that did not finish — instead of "no STATS.BIN". */
+    dump_stats();
     shim_teardown();
+    dump_stats();
     Pterm(0);
 }
 
@@ -927,6 +1110,10 @@ static void smoke_finish(void) {
 #endif
 
 /* ---- entry ------------------------------------------------------------------------------------ */
+
+/* Vblanks the boot dump waits before writing, so the VBL handler has armed _colorptr and TOS has
+ * taken it. Three, for one spare. */
+#define BOOT_DUMP_SETTLE_VBLS 3
 
 void joust_main(void) {
     align_image();
@@ -961,6 +1148,18 @@ void joust_main(void) {
     BEACON(4);
     install_vbl_handler();
     BEACON(5);
+#ifdef SMOKE_BOOT_DUMP
+    /* THE PLAY BUILD'S ONLY DUMP. A build with no scripted keys and no frame limit never reaches
+     * shim_exit under a headless run — it sits on the title screen waiting for a stick that is not
+     * there — so the boot read-backs would otherwise be unobservable in the configuration a person
+     * actually plays. This writes the record here instead, after every install has run and settled.
+     * The three teardown bits are NOT in it and cannot be: this run does not tear down. smoke.py's
+     * `play` mode expects the boot mask exactly, and says plainly that exit health is not asserted
+     * for this build. Settling first, because the two _colorptr bits are set from the VBL handler:
+     * one vblank to arm, the next to see TOS take it. */
+    for (int settle = 0; settle < BOOT_DUMP_SETTLE_VBLS; settle++) Vsync();
+    dump_stats();
+#endif
 
     /* `start()` is the whole game and never returns; it leaves only through a shim seam. A quit
      * ends the process from there, so the only way back HERE is a restart's longjmp — which lands

@@ -19,6 +19,9 @@ has no host `render/` layer for it to sit under: there is no PNG renderer here, 
 | **M3** side-by-side | our on-target title framebuffer is **byte-identical** to the shipped binary's, found at the original's own Physbase in a dump of its RAM | ✅ `smoke.py original` |
 | **M4** frame differential | the same equality carried through starting a game and **240 frames of play**: both binaries anchored on one Hatari, and at frames 1, 115, 150, 180, 210 and 240 **both halves of the picture compared** — the 32000 framebuffer bytes *and* the 16 hardware palette pens, read off the shifter on each side — **identical at every one**. Each depth is one where the screen is MOVING (the neighbouring frame differs by 25-287 bytes), so each detects a one-frame mis-anchor | ✅ `smoke.py framediff`, negative control `framediff-fault` |
 | **M5** displayed picture | the video base is 256-aligned at run time; every smoke mode that dumps stats asserts the alignment **and** the hardware read-back; `framediff` diffs a **35-register hardware-state vector** at every anchor and the **rendered PNG** at frame 1 (the bound is measured — see §11) | ✅ `smoke.py framediff`, controls `framediff-fault` / `framediff-skew` |
+| **M6** read-backs | every write this shim makes to hardware or OS state is **read back** — 15 checks across the KBDVBASE vectors, `conterm`, the VBL queue, the `_colorptr` handoff and the IKBD — and both *which failed* and *which ran* are asserted from `STATS.BIN` | ✅ every stats-dumping mode; 4 mutations verified |
+| **M6** timeline | the ordered stream of palette loads and PSG writes reduced to a per-phase **shape** and compared against the shipped binary's: load counts per phase, zero redundant loads, and our PSG stream an exact prefix of theirs | ✅ `smoke.py framediff`, control `framediff-rearm` |
+| **M6** the play build | the build a person actually plays, booted headless: its boot read-backs and its hardware-state vector at the title screen. Its **exit** is not asserted and cannot be — see §16 | ✅ `smoke.py play` |
 | **M3** joystick | the IKBD path is live — ~1000 replies filed per run, and every wait loop in the game ends on one. Steering is a GUI check: headless Hatari has no stick to press (§11) | partial, by construction |
 
 Verified on **EmuTOS** (Hatari's bundled `tos.img`) and **TOS 1.04**, which produce byte-identical
@@ -66,7 +69,9 @@ bash atari/build.sh restart   && python3 atari/smoke.py restart    #     R resta
 bash atari/build.sh title && bash atari/build.sh quit
 python3 atari/smoke.py hiscore                                     # M3: HIGH.SCO round trip
 python3 atari/smoke.py title && python3 atari/smoke.py original     # M3: vs the shipped binary
-bash atari/build.sh framediff && python3 atari/smoke.py framediff   # M4: vs it frame by frame
+bash atari/build.sh framediff && python3 atari/smoke.py framediff   # M4/M6: frames, vector,
+                                                                   #   picture and timeline
+bash atari/build.sh play-smoke && python3 atari/smoke.py play      # M6: the PLAY build, booted
 
 bash atari/build.sh        && bash atari/run.sh                    # play it in the Hatari GUI
 bash atari/run.sh original                                         # the shipped binary, same setup
@@ -499,6 +504,11 @@ Three guards and three controls, because a compare that cannot fail proves nothi
   (above).
 - **A display fault.** `build.sh framediff-skew && python3 atari/smoke.py framediff-skew` misaligns
   the screen by two bytes; the memory comparisons must still pass and the rendered picture must not.
+- **A timeline fault.** `build.sh framediff-rearm && python3 atari/smoke.py framediff-rearm` re-arms
+  `_colorptr` **every vblank** — what this handler did before push-on-change. Measured: 15 title-phase
+  loads and 766 game-phase loads against the shipped binary's 1 and 1, with **778 redundant loads**,
+  while `frame`, `palette`, `hw vector` and `rendered` all still report IDENTICAL. That is the whole
+  argument for having a timeline compare, made as a control: it is the only surface that moves.
 - **Sensitivity — a real injected fault.** The shipped side is re-run **anchored one frame late** and
   the comparison must FAIL. It does, at all six samples (25-287 bytes each, with the first differing
   byte and row named). An earlier version of this control compared `ours[early]` against
@@ -583,6 +593,184 @@ it: 120 frames against the shipped binary, byte-identical. A *steered* different
 stronger still, and needs a deterministic way to press a stick on both sides; Hatari's debugger can
 force our side's IKBD packet but the shipped side reads TOS's own buffer, so that is future work
 rather than something this mode quietly skips.
+
+### 14. Every write to hardware or OS state is read back
+
+Everything §5 through §7 install lands somewhere the differential cannot see: TOS system variables,
+KBDVBASE, the VBL queue, the shifter, the IKBD. Three of the four bugs in "The bugs found on target"
+reached a green harness for exactly that reason, and the one that did not was `Setscreen`, whose
+`Physbase` read-back (§12) caught the base truncation on its first run. §14 generalises that one
+pattern to every such write.
+
+**Two words, not one.** `readback_failed` says a write did not take; `readback_attempted` says which
+checks *ran*, and `smoke.py` compares it against an **exact mask**, not a floor. A check that quietly
+stops executing is indistinguishable from a passing one in a bare fault word — which is how this
+project's exit detector spent a year scanning an empty string. The bit names are read out of
+`joust_main.c` by `smoke.py` (`readback_bits()`) rather than restated, and a bit the Python side has
+not classified as boot-or-teardown is a hard error, so a sixteenth check cannot be added in C and
+silently never asserted.
+
+| write site | what is written | assertion | residual blindness |
+|---|---|---|---|
+| `install_ikbd_vectors` | KBDVBASE joyvec ← `joy_handler` | read the vector back | none — it is RAM |
+| `install_ikbd_vectors` | KBDVBASE mousevec ← `null_handler` | read the vector back | none |
+| `quiet_conterm` | `conterm` low three bits cleared | read the **whole byte** back against `saved_conterm & CONTERM_KEEP` | none in the check; but `$484` is `0x07` on both ROMs, so a clobber of the byte is unreachable with real data — recorded in `../STATUS.md` |
+| `install_vbl_handler` | `_vblqueue` ← our queue | read the pointer back | none |
+| `install_vbl_handler` | `nvbls` ← 1 + displaced slots | read the count back | none |
+| `install_vbl_handler` | our handler in slot 0 | read the slot back | none |
+| `start_ikbd` | IKBD `$15` then `$16` (write-only device) | **proxy**: a reply arrives within 30 vblanks (`ikbd_packets != 0`), which witnesses `$15` accepted, `$16` accepted *and* the vector live | cannot tell a reply from a *correct* reply — the packet's contents are the game's business, and a headless run has no stick |
+| `vbl_handler` | `_colorptr` ← the pen table | read the pointer back, then check TOS **zeroed** it one vblank later | witnesses that a load happened, not that the words were right — the hardware-state vector (§11) compares the values |
+| `joust_main` | XBIOS `Setscreen` | `Physbase()` (§12) — the read-back this section generalises | none for alignment; an STE honours the low byte, so `smoke.py` asserts the *property*, not just the symptom |
+| `shim_teardown` | all five installs restored | read all five back | none |
+| `shim_teardown` | IKBD reset `$80 $01` and `$14` | **weakest in the file**: wait for the ACIA's transmit data register to drain, then assert TDRE | two-deep. TDRE means the last byte reached the **shift** register and is still going out (~1.28 ms), so this proves every byte *but the final one* has left; and a byte that does leave says nothing about the controller obeying it. Closed only by the desktop having a mouse afterwards (§13) |
+
+**The interrupt half keeps its own pair of words.** `x |= 1uL << bit` is not interrupt-atomic on the
+68000 unless GCC happens to emit a memory-destination `or.l`, and `install_vbl_handler` re-attaches
+the handler *before* its own three read-backs — so the two halves really do overlap. A vblank landing
+inside that window would drop whichever bit the other half had just set: from `attempted` that is an
+intermittent red on a healthy run, from `failed` it is a real fault reading green. The VBL handler
+records into `vbl_readback_*` and `dump_stats` ORs the pairs, which removes the window instead of
+reasoning about it. Both pairs are `volatile` — the boot dump reads them straight after a `Vsync`
+loop the compiler has no reason to think touches them.
+
+Measured on the first run of the sweep: **TDRE is clear when `Ikbdws` returns, every time.** `Ikbdws`
+waits for room *before* each byte, so on return the last one has only just been handed to the ACIA —
+sampling the flag there tested timing, not delivery. The drain is now waited for. Be precise about
+what that buys, though: on a 6850, TDRE goes high when the data register is copied into the **shift**
+register, so the final byte is still being clocked out for another ~1.28 ms. `Pterm` can still be
+reached with it in flight. The ACIA finishes it regardless, but this assertion does not witness it,
+and the limit is recorded in `../STATUS.md`.
+
+**Mutation-tested, because a check that cannot fail is not a check.** Six throwaway mutations, each
+rebuilt and re-run, then reverted:
+
+| mutation | caught by |
+|---|---|
+| joyvec installed with the wrong handler | `RB_JOYVEC_INSTALLED` **and** `RB_IKBD_REPLYING` — a dead vector files no packets |
+| `nvbls` restored one short | `RB_NVBLS_RESTORED` |
+| `conterm` cleared with the mask inverted | `RB_CONTERM_CLEARED` |
+| `_colorptr` never armed | `RB_COLORPTR_ARMED` |
+| mousevec left installed at teardown | `RB_MOUSEVEC_RESTORED` |
+| `conterm` clobbered to zero | **nothing — and the reason is measured.** `$484` is `0x07` at `joust_main`'s entry on *both* ROMs, so `saved_conterm & CONTERM_KEEP` is 0 and the clobber writes the same value the correct code does. The assertion is exact; the machine offers no data that reaches the difference. Recorded in `../STATUS.md` rather than papered over |
+
+The teardown bits force one ordering change, and it is a **double dump**: `shim_exit` writes
+`STATS.BIN` once before the hand-back and again after it. The teardown's read-backs can only exist
+after it has run — but a teardown that does not *return* would then take the whole record with it,
+and a hung hand-back is exactly what those bits exist to diagnose (`shim_teardown` ends in `Vsync`,
+which depends on the VBL queue it has just restored). With two writes, a teardown that never
+finishes leaves the first record standing and `smoke.py` reports precisely which read-backs are
+**missing**, naming the step that did not complete, instead of "no `STATS.BIN`".
+
+### 15. The timeline: what reached the hardware, in what order
+
+Every other check in this file is a **snapshot**. The framebuffers, the pens, the hardware-state
+vector and the rendered picture say what the machine looked like at six instants, and a program that
+arrives at the right state by a wildly wrong route passes all of them. **The 773-stomps bug was
+exactly that shape**: this handler re-armed `_colorptr` every vblank, 773 palette loads over a run
+where the original performs four, every load writing the same correct sixteen words. It was found by
+reading a trace by hand. §15 makes it a check.
+
+Both sides' `--trace video_color,psg_write` output is reduced to a **shape per phase**, never to raw
+vblank indices — the two binaries do not run at the same speed and are not meant to. Both phase
+boundaries are events the trace itself gives, and they are the same events on both sides: the program
+starts at its first palette load that is not the desktop's, and the game starts at the first
+sound-register write after that — `snd_tone_sweep`'s `reg8=0 reg9=0 reg10=0 reg7=$ff` preamble at the
+tail of `init_video`, which is the same event the shim's own `title_over` latches on. Registers 14
+and 15 are excluded: they are the **parallel ports**, and port A carries floppy drive select, so a run
+that loads a file writes it more than one that does not.
+
+| quantity | ours | shipped | comparable? |
+|---|---|---|---|
+| desktop palette loads | 1 (EmuTOS) / 2 (TOS 1.04) | same | **equal between the sides**, not pinned to a number |
+| title palette loads | 1 | 1 | **equal**, pinned |
+| game palette loads | 2 | 1 | **unequal by design** — pinned as the exact pair |
+| desktop-restore loads | 1 | 0 | **unequal by design** — pinned as the exact pair |
+| redundant loads after the program starts | 0 | 0 | **equal**, and this is the 773 detector |
+| game-phase palette TABLES, past our first | identical | identical | **equal**, in order |
+| PSG sound writes, `(reg, val)` in order | 14457 | 15237-15937 across runs | **ours is an exact PREFIX of theirs**, with a floor |
+
+The **desktop** row is not pinned to a number and that is measured, not laziness: those loads are
+TOS's own, made before either program runs, and EmuTOS loads its desktop palette once where TOS 1.04
+loads it twice. A pinned number would have pinned one ROM. The only thing about that phase which
+belongs to this comparison is that both sides saw the *same* boot, so that is what is asserted — and
+for the same reason redundant loads are counted only from the program's first load onward, since
+TOS 1.04's second desktop load is a repeat that neither binary performed.
+
+The two inequalities are disclosed rather than tolerated, and neither is a fudge. The extra **game**
+load is the documented one-vblank latency of push-on-change (§5): `cycle_palette` had already written
+the attract screen's cycled table into the image, our handler notices on the next vblank and delivers
+it just after `snd_tone_sweep` starts, while the shipped binary — pinned into starting a game on its
+first attract pass — never re-issues that one. The game palette that follows is identical on both
+sides and the hardware vector agrees at every anchor. The extra **restore** load is our run quitting
+and handing the desktop palette back; the shipped side is stopped by `--run-vbls` mid-game and never
+restores anything. Both are pinned as exact numbers rather than as an inequality, because both sides
+are deterministic here and a tolerance is where a regression hides.
+
+Counting loads is not enough on its own, so the **tables** are compared too: past our one extra
+load, our game-phase palettes must be the shipped binary's, in order. Without that, a regression
+that dropped the latency load and gained a stray re-arm somewhere else still counts 2 and reports
+"as pinned" — a green on the one surface built to catch exactly that. Naming *where* our extra load
+is (`OUR_EXTRA_GAME_LOADS = 1`, and it is the first) is what turns the `(2, 1)` pair from a count
+into a structure.
+
+Both phase boundaries are **asserted, not assumed**. The game boundary must be `snd_tone_sweep`'s
+literal preamble — `reg8=0 reg9=0 reg10=0 reg7=$ff` — so a stray mixer or port-direction write from
+disk I/O landing there fails loudly instead of silently reclassifying a title load as a game load.
+And every palette load before the program's first must carry the *same* table: TOS 1.04 loads its
+desktop palette twice, and if a boot ever loaded an intermediate first, the "first non-desktop load"
+anchor would latch onto TOS's second load and shift every count by one.
+
+The PSG comparison is a **prefix** for a structural reason, not as a slack: our `framediff` build
+stops itself at the last sample frame while the shipped side runs on to `--run-vbls`, so its stream
+is strictly longer. Every write we do make is the same write it made, at the same point in the
+sequence — all 14457 of them. A prefix alone is satisfied by a stream of length one, though, so
+there is a **floor**: fewer than `MIN_PSG_WRITES` fails. Nothing else in `framediff` looks at the
+PSG, and the shim's own counter measures what the game *asked for*, not what reached the chip.
+
+The traced run is given the **shipped side's vblank budget**, not the default 20000. At the default
+our build spends ~19,000 vblanks sitting on the TOS desktop after its own `Pterm`, and any palette
+load TOS makes in that tail lands in the `restore` phase this table pins at exactly one.
+
+### 16. The play build in the smoke matrix
+
+Everything else here runs a build with something *added* for the harness: a scripted key, a frame
+limit, an injected fault. `smoke.py play` runs the configuration a person actually plays — real
+console, real joysticks, no limit, no fault. The only difference from `build.sh play` is that it
+writes `STATS.BIN` once, at boot: a build with no scripted key and no frame limit never reaches
+`shim_exit` under a headless run, so its read-backs would otherwise be unobservable in the shape
+people run it in.
+
+That "only difference" is a claim, so it is made true rather than asserted: `SMOKE_BOOT_DUMP` also
+switches the **progress beacons off**. A beacon is a GEMDOS `Fcreate`/`Fclose` pair, and nine of them
+interleaved with the very installs being read back is real disk I/O `build.sh play` never performs.
+A boot fault that depends on *not* doing it — and this project already has a recorded GEMDOS handle
+gotcha — would hide behind them, which would make the certified boot a different boot from the one
+being certified about.
+
+It asserts the **boot** read-back sweep (nine of §14's fifteen — the six hand-back bits are absent,
+and the mask is exact, so a run that somehow *did* tear down here would also fail) and the
+**hardware-state vector at the title screen**, captured at a vblank boundary anchored on the 200th
+title-screen console poll: ST low resolution, and sixteen pens that are neither still the desktop's
+nor degenerate (all sixteen equal is what a blank screen looks like from here, and "not the
+desktop's" alone would call that a pass). That is a **shape** assertion, not a value one, and §14's
+table in `../STATUS.md` records it as such: the *right* pens are pinned for the `framediff` build by
+two surfaces at six anchors, and carrying that reference into this mode would need a second binary
+running beside it. The desktop's pens come from the **same boot** — a second anchor on `joust_main`
+itself, before any install — rather than from a second run or a written-down table: they differ
+between EmuTOS and TOS 1.04, and a reference from a different boot is only as good as that boot
+being identical, which is the assumption this whole file exists to stop making.
+
+**And then the run is killed, which is stated rather than glossed.** The program is sitting in
+`title_screen`'s console poll waiting for a key that will never come, so `--run-vbls` expires with it
+still resident and still hooked into TOS. The **exit status** is therefore not asserted — it would be
+asserting that a program we never let finish shut down cleanly. The **log scan** *is* applied, to
+both boots: `check_exit` was two independent assertions wearing one name, and only the return-code
+half is inapplicable here. The fault-and-halt scan applies to any run at all, and it is the surface
+that sees the class Hatari survives — leaving it out would have made this mode blind in exactly the
+way the half-blind exit detector was. **Boot health is asserted for this build; exit health is not,
+and cannot be without giving it a scripted key, at which point it is no longer the play build.** The
+exit path is covered by `quit`, `quittitle` and `restart`, which run the same `shim_teardown` through
+the same `shim_exit`.
 
 ## Known gaps
 

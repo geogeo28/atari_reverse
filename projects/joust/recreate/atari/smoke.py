@@ -25,6 +25,7 @@ What each mode asserts is in the `check_*` docstrings below. The rule they share
 GAME did, not on what a screenshot could plausibly look like. Hence `STATS.BIN` — counters the shim
 keeps at the seams the cores call — alongside the framebuffers.
 """
+import functools
 import os
 import re
 import struct
@@ -32,7 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections import Counter
+from collections import Counter, namedtuple
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -53,7 +54,8 @@ INPUTS_ONLY = {"JOUST.PRG", "JOUST.IMG", "CMD.INI", "ACT.INI"}   # staged, never
 # "the longjmp restart is broken" instead of "you booted the wrong PRG".
 MODE_BUILD = {"title": "title", "frames": "smoke", "quit": "quit",
               "quittitle": "quittitle", "restart": "restart", "framediff": "framediff",
-              "framediff-fault": "framediff-fault", "framediff-skew": "framediff-skew"}
+              "framediff-fault": "framediff-fault", "framediff-skew": "framediff-skew",
+              "framediff-rearm": "framediff-rearm", "play": "play-smoke"}
 
 
 def prg_for(mode):
@@ -91,12 +93,75 @@ HUD_BAR_CELL = bytes.fromhex("0000ffffffffffff")
 MIN_PLAYFIELD_BYTES = 500
 MIN_DISTINCT_BYTES = 32
 
-# STATS.BIN — twenty big-endian longwords, written by joust_main.c's dump_stats() in this order.
+# STATS.BIN — one big-endian longword per name below, written by joust_main.c's dump_stats() in
+# this order. The C side sizes its record from STATS_FIELDS and stats_of() checks the byte count, so
+# a field added on one side only is a loud parse failure rather than a silent re-indexing.
 STATS_FIELDS = ("frames", "console_polls", "dosound", "dosound_in_play", "first_sound_frame",
                 "psg_writes", "psg_writes_in_play", "ikbd_packets", "restarts",
                 "hiscore_bytes_written", "frame_bytes_written", "screen_passed", "screen_physbase",
                 "text_probe", "poll_quit_key_pc", "two_player_mode", "players_alive",
-                "player_x", "player_y", "rng_ptr")
+                "player_x", "player_y", "rng_ptr",
+                "readback_attempted", "readback_failed", "console_poll_pc")
+
+
+# The read-back sweep's bit names, READ OUT OF joust_main.c rather than restated here. The two
+# languages cannot import each other and a second spelling of a bit number is a silent
+# mis-assertion, so the C is the one source of truth — the same reason build.sh pins the jmp_buf
+# length by grepping both files instead of trusting a comment.
+
+
+@functools.lru_cache(maxsize=1)
+def readback_bits():
+    text = (Path(__file__).parent / "joust_main.c").read_text()
+    bits = {name: int(bit) for name, bit in re.findall(r"^#define (RB_[A-Z0-9_]+)\s+(\d+)$",
+                                                       text, re.M) if name != "RB_BITS"}
+    declared = re.search(r"^#define RB_BITS\s+(\d+)$", text, re.M)
+    count = int(declared.group(1)) if declared else -1
+    # DENSE AND DISTINCT, not merely the right count. Two `#define`s carrying the same number — the
+    # classic renumber slip — leaves the count right, and a mask built by summing would then CARRY
+    # into a neighbouring bit and assert a different set than the names it prints.
+    if sorted(bits.values()) != list(range(count)):
+        raise RuntimeError(f"joust_main.c declares RB_BITS={count if declared else '?'} and defines "
+                           f"{sorted(bits.items(), key=lambda kv: kv[1])} — the read-back bits must "
+                           f"be exactly 0..RB_BITS-1, each used once")
+    return bits
+
+
+def readback_mask(bits, names):
+    mask = 0
+    for name in names:
+        mask |= 1 << bits[name]
+    return mask
+
+
+# Which bits a run is expected to have ATTEMPTED. Not "however many it managed": a check that stops
+# running is the failure this pair of words exists to catch, so the mask is exact.
+#   BOOT — everything a startup performs. The two _colorptr bits are in it because the VBL handler
+#          has run by the time any dump happens (the boot dump waits for it deliberately).
+#   FULL — the above plus the hand-back, which only a run that EXITS performs.
+READBACK_BOOT_NAMES = ("RB_JOYVEC_INSTALLED", "RB_MOUSEVEC_INSTALLED", "RB_CONTERM_CLEARED",
+                       "RB_VBLQUEUE_INSTALLED", "RB_NVBLS_INSTALLED", "RB_VBL_SLOT0",
+                       "RB_IKBD_REPLYING", "RB_COLORPTR_ARMED", "RB_COLORPTR_CONSUMED")
+READBACK_TEARDOWN_NAMES = ("RB_JOYVEC_RESTORED", "RB_MOUSEVEC_RESTORED", "RB_VBLQUEUE_RESTORED",
+                           "RB_NVBLS_RESTORED", "RB_CONTERM_RESTORED", "RB_IKBD_TX_DRAINED")
+READBACK_ALL_NAMES = (*READBACK_BOOT_NAMES, *READBACK_TEARDOWN_NAMES)
+
+
+def check_readback_registry():
+    """The C-vs-Python half of the sweep, checked BEFORE anything boots.
+
+    It is a property of two source files and needs no emulator, so it belongs with the other
+    startup tripwires rather than inside a checker: raising from a `check_*` whose contract is a
+    verdict turns a red into a traceback and throws away every Hatari boot already paid for (see
+    run()). Here it costs nothing and fires before the first one."""
+    bits = readback_bits()
+    if set(bits) != set(READBACK_ALL_NAMES):
+        raise RuntimeError(f"joust_main.c defines {sorted(set(bits) - set(READBACK_ALL_NAMES))} "
+                           f"which smoke.py classifies nowhere, and smoke.py expects "
+                           f"{sorted(set(READBACK_ALL_NAMES) - set(bits))} which the C does not "
+                           f"define — every read-back must belong to a run's mask")
+    return bits
+
 SMOKE_FRAMES = 240          # build.sh's SMOKE_FRAMES_DEFAULT; the frames run must reach exactly this
 MIN_PSG_WRITES = 1000       # snd_tone_sweep alone issues ~14.4k
 # joy_handler files one per reply and the chain keeps them coming, so a run of any length sees
@@ -175,6 +240,9 @@ ST_RESOLUTION_REG = 0xffff8260   # the shifter's resolution; a stray write here 
 # The two capture sets' tag. It is load-bearing twice — it names the files on disk AND the `echo`
 # marker the log is split on — so it has one definition rather than a literal at each of six sites.
 OUR_TAG, THEIR_TAG = "OUR", "THEIR"
+# A third tag, for the play mode's second anchor in the same run: the capture files are named by
+# tag, so two anchors in one script need two tags to avoid overwriting each other.
+DESKTOP_TAG = "DESK"
 
 # How many registers the hardware-state vector must COMPARE: 16 shifter pens + 16 YM + resolution +
 # refresh rate + V-overscan. (VECTOR_REPORT_ONLY names are not compared, so they are not here.)
@@ -384,16 +452,35 @@ def check_exit(proc):
     `Detected double bus/address error => CPU halted!`, about a second after Pterm. (The vectors are
     only half of that bug; the interrogation mode is the half that makes it fire — see README §7.)
     The other class is a fault Hatari LOGS AND SURVIVES, finishing --run-vbls with status 0: only the
-    line scan sees it, and the line scan read an empty string until the streams were merged."""
-    text = proc.stdout
-    faults = [line for line in text.splitlines()
+    line scan sees it, and the line scan read an empty string until the streams were merged.
+
+    THE TWO HALVES ARE SEPARATE FUNCTIONS because only one of them is about the exit. check_faults
+    below reads the log and applies to ANY run, including one the harness deliberately kills; the
+    return-code test is what needs a run that was allowed to finish."""
+    healthy = check_faults(proc)
+    if proc.returncode != 0:
+        print(f"FAIL: Hatari did not finish cleanly (status {proc.returncode})")
+        return False
+    if healthy:
+        print("clean exit: Hatari ran to the end of --run-vbls, no fault but TOS's memory probe")
+    return healthy
+
+
+def check_faults(proc):
+    """The LOG half, on its own: did the machine fault or halt at any point in this run?
+
+    Applies to a killed run as much as to one that finished, which is why it is not folded into
+    check_exit — a mode that cannot assert the exit (smoke.py play) must still assert this, and the
+    one thing this project has learned twice is that a surface quietly not applied reads exactly
+    like a surface that passed."""
+    lines = proc.stdout.splitlines()
+    faults = [line for line in lines
               if ("Bus Error" in line or "Address Error" in line)
               and not BENIGN_ROM_PROBE.search(line)]
-    halted = [line for line in text.splitlines() if "halted" in line.lower()]
-    if proc.returncode == 0 and not faults and not halted:
-        print("clean exit: Hatari ran to the end of --run-vbls, no fault but TOS's memory probe")
+    halted = [line for line in lines if "halted" in line.lower()]
+    if not faults and not halted:
         return True
-    print(f"FAIL: unhealthy machine after the program exited (hatari status {proc.returncode})")
+    print("FAIL: the machine faulted or halted during this run")
     for line in faults + halted:
         print("  " + line.strip())
     return False
@@ -487,6 +574,44 @@ def check_screen_base(stats):
     return False
 
 
+def check_readbacks(stats, expected_names):
+    """The shim's own READ-BACK SWEEP: every write it makes to hardware or OS state, read back.
+
+    Two words, and both are asserted, because they fail differently. `readback_failed` says a write
+    did not take — the joystick vector that KBDVBASE would not accept, the VBL queue swapped by
+    halves, a _colorptr TOS never consumed. `readback_attempted` says which checks RAN, and it is
+    compared against an EXACT mask rather than a floor: a check that quietly stops executing is how
+    the exit detector spent a year scanning an empty string, and a fault word alone reads identically
+    whether every check passed or none of them ran.
+
+    The names come out of joust_main.c (readback_bits), so the two languages cannot drift; that
+    registry is validated once at startup by check_readback_registry, which is also what stops a
+    sixteenth check from being added in C and silently never asserted."""
+    bits = readback_bits()
+    expected = readback_mask(bits, expected_names)
+    attempted, failed = stats["readback_attempted"], stats["readback_failed"]
+
+    def named(mask):
+        return sorted(name for name, bit in bits.items() if mask >> bit & 1)
+
+    if attempted == expected and failed == 0:
+        print(f"read-backs: {len(expected_names)}/{len(expected_names)} held "
+              f"({', '.join(n[3:].lower() for n in sorted(expected_names))})")
+        return True
+    if failed:
+        print(f"FAIL: the shim wrote hardware or OS state that did not read back: {named(failed)}")
+    if attempted != expected:
+        print(f"FAIL: read-backs ran {named(attempted)}, expected exactly {named(expected)} — "
+              f"missing {named(expected & ~attempted)}, unexpected {named(attempted & ~expected)}")
+    return False
+
+
+def check_shim_state(stats, expected_names=READBACK_ALL_NAMES):
+    """Everything the shim can say about ITSELF: the video base the shifter confirms, and the
+    read-back sweep. Every mode that dumps stats comes through here."""
+    return check_screen_base(stats) & check_readbacks(stats, expected_names)
+
+
 def check_stats(stats, want, at_least=None):
     """What the game DID, read off the shim's own seams — the half no framebuffer can show.
 
@@ -510,7 +635,7 @@ def check_stats(stats, want, at_least=None):
         if stats[name] < floor:
             print(f"FAIL: {name} is {stats[name]}, expected at least {floor}")
             ok = False
-    return ok & check_screen_base(stats)
+    return ok & check_shim_state(stats)
 
 
 def check_sound(log):
@@ -544,7 +669,7 @@ def mode_title():
     require(produced, "SCREEN.BIN", "STATS.BIN")
     # The title mode's whole job is "the picture is right", so it is the last place that should be
     # taking the video base on trust.
-    ok &= check_screen_base(stats_of(produced))
+    ok &= check_shim_state(stats_of(produced))
     return ok & check_title(produced["SCREEN.BIN"]), produced["SCREEN.BIN"]
 
 
@@ -616,7 +741,7 @@ def mode_hiscore():
     print("--- phase 1: the title screen on the shipped record (baseline)")
     produced, _, _, proc = run(title_prg, drive_files())
     require(produced, "SCREEN.BIN", "STATS.BIN")
-    ok = check_exit(proc) & check_screen_base(stats_of(produced))
+    ok = check_exit(proc) & check_shim_state(stats_of(produced))
     _, _, baseline = title_bands(produced["SCREEN.BIN"])
 
     print("--- phase 2: play, then Ctrl-C, with a modified record staged")
@@ -632,7 +757,7 @@ def mode_hiscore():
     print("--- phase 3: the title screen on what the quit path wrote")
     produced, _, _, proc = run(title_prg, drive_files(written))
     require(produced, "SCREEN.BIN", "STATS.BIN")
-    ok &= check_exit(proc) & check_screen_base(stats_of(produced)) & check_title(produced["SCREEN.BIN"])
+    ok &= check_exit(proc) & check_shim_state(stats_of(produced)) & check_title(produced["SCREEN.BIN"])
     _, _, bands = title_bands(produced["SCREEN.BIN"])
     changed = [i for i, (a, b) in enumerate(zip(baseline, bands)) if a != b]
     print(f"title text bands that changed with the record: {changed}")
@@ -972,13 +1097,12 @@ def framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens
     to make. The vector's own sensitivity control is the separate framediff-fault build."""
     print("--- control 1: determinism, the shipped side run twice")
     with tempfile.TemporaryDirectory() as again_tmp:
-        again, again_pens, again_vectors, _ = run_original_frames(
-            base, screen, samples, rng_park, keep=Path(again_tmp))
-        ok = compare_frames(again, theirs, samples, label="rerun frame")
-        ok &= compare_palettes(again_pens, their_pens, samples)
+        again = run_original_frames(base, screen, samples, rng_park, keep=Path(again_tmp))
+        ok = compare_frames(again.frames, theirs, samples, label="rerun frame")
+        ok &= compare_palettes(again.palettes, their_pens, samples)
         # The vector is a surface like any other, so its reproducibility is asserted too — without
         # this the largest thing this change set adds would have no determinism control at all.
-        ok &= compare_vectors(again_vectors, their_vectors, samples)
+        ok &= compare_vectors(again.vectors, their_vectors, samples)
     if not ok:
         print("FAIL: the shipped side is not reproducible — the pins do not fully determine the run")
 
@@ -986,7 +1110,7 @@ def framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens
     shifted = [frame + 1 for frame in samples]
     with tempfile.TemporaryDirectory() as late_tmp:
         late_dir = Path(late_tmp)
-        late, _, _, _ = run_original_frames(base, screen, shifted, rng_park, keep=late_dir)
+        late = run_original_frames(base, screen, shifted, rng_park, keep=late_dir).frames
         print(f"    (both MUST fail: every depth has a moving neighbour, and the rendered compare "
               f"covers frame(s) {list(RENDER_ANCHORS)})")
         mis_frames = compare_frames(ours, {frame: late[frame + 1] for frame in samples}, samples,
@@ -1151,6 +1275,269 @@ def compare_vectors(ours, theirs, samples):
 # off around each capture made the run take longer than the whole suite. Asserting on those anchors
 # would be asserting on noise, so the compare stays where it is deterministic and the rest is an
 # open blocker recorded in the README rather than a green that means nothing.
+
+# ---- the TIMELINE: what reached the hardware, in what order ------------------------------------
+#
+# The surface every other check in this file is blind to. Memory dumps, the pens, the hardware-state
+# vector and the rendered picture are all SNAPSHOTS: they say what the machine looked like at six
+# instants, and a program that arrives at the right state by a wildly wrong route passes all of them.
+# THE 773-STOMPS BUG IS EXACTLY THAT SHAPE — the VBL handler re-armed _colorptr every single vblank,
+# 773 palette loads over a run where the original performs four, and every snapshot in this project
+# was green because each of those 773 loads wrote the same correct sixteen words. It was found by
+# reading a trace by hand. This makes it a check.
+TIMELINE_TRACE = "video_color,psg_write"
+# Hatari's own trace lines. `write col` is a real shifter write; `ym write data` is a PSG register
+# write with the value (the `ym write reg=` line beside it is only the register select).
+# Even addresses only: the pens are WORDS at $ffff8240, $8242 … $825e, so an odd address is the low
+# half of one, not a register of its own, and counting it would give a 17-write "load" that the
+# length guard below then silently discards — losing a real palette change.
+PEN_WRITE = re.compile(r"^write col addr=ff82([45][02468ace]) col=([0-9a-f]+)")
+YM_WRITE = re.compile(r"^ym write data reg=0x([0-9a-f]+) val=0x([0-9a-f]+)")
+# Registers 0..13 are the sound chip. 14 and 15 are the PARALLEL PORTS — port A carries floppy drive
+# select, so TOS and GEMDOS write it constantly and a run that loads a file writes it more than one
+# that does not. Counting them as sound made our side and the shipped side differ by pure disk I/O.
+YM_SOUND_REGS = 14
+PEN_FIRST_REG, PEN_LAST_REG = 0x40, 0x5e     # $ffff8240..$ffff825e, sixteen pens
+# snd_tone_sweep's opening, at the tail of init_video: silence all three channel volumes, then set
+# the mixer. It is what DEFINES the game-phase boundary, so it is asserted rather than assumed —
+# a stray mixer or port-direction write from disk I/O landing there would otherwise move the
+# boundary silently and reclassify a title-phase palette load as a game-phase one.
+SWEEP_PREAMBLE = ((8, 0x00), (9, 0x00), (10, 0x00), (7, 0xff))
+
+
+def timeline_events(log):
+    """Hatari's trace, reduced to the two event kinds this compares, in order."""
+    events = []
+    for line in log.splitlines():
+        line = line.strip()
+        pen = PEN_WRITE.match(line)
+        if pen:
+            events.append(("pen", int(pen.group(1), 16), int(pen.group(2), 16)))
+            continue
+        ym = YM_WRITE.match(line)
+        if ym and int(ym.group(1), 16) < YM_SOUND_REGS:
+            events.append(("ym", int(ym.group(1), 16), int(ym.group(2), 16)))
+    return events
+
+
+def palette_loads(events):
+    """Whole 16-pen loads, as (position in the event stream, the sixteen words).
+
+    A load is $ffff8240 through $ffff825e in order — which is what TOS's VBL routine emits when it
+    finds a table in _colorptr, and equally what an XBIOS Setpalette becomes. A partial burst is not
+    a load and is dropped: it would be some other program touching one pen, not a palette change."""
+    loads, pens, start = [], [], None
+    for position, (kind, reg, value) in enumerate(events):
+        if kind != "pen":
+            continue
+        if reg == PEN_FIRST_REG:
+            pens, start = [], position
+        elif start is None:
+            continue          # a burst that did not begin at pen 0 is not a load; ignore it
+        pens.append(value)
+        if reg == PEN_LAST_REG and len(pens) == PALETTE_PENS:
+            loads.append((start, tuple(pens)))
+            # START CLEARED WITH THE PENS. Leaving it set files any later burst that reaches pen 15
+            # without starting at pen 0 at the PREVIOUS load's stream position, which is how a
+            # game-phase load gets counted as a title-phase one.
+            pens, start = [], None
+    return loads
+
+
+def timeline_shape(log, label):
+    """One side's timeline, reduced to a SHAPE that can be compared across two different programs.
+
+    PHASES, not vblank indices — the two binaries do not run at the same speed and are not meant to.
+    Both boundaries are events the trace itself gives, and they are the same events on both sides:
+      * the program starts at its FIRST palette load that is not the desktop's (TOS boots one, and
+        neither binary touches the pens before it puts its own title palette up);
+      * the game starts at the first SOUND-register write after that — snd_tone_sweep's
+        `reg8=0 reg9=0 reg10=0 reg7=$ff` preamble at the tail of init_video, which is the same event
+        the shim's own `title_over` latches on.
+    A load in the game phase whose words are the DESKTOP's is counted as a restore, not as a game
+    load: that is the quit path handing the palette back, which only a run that exits performs.
+
+    RETURNS `(shape, problem)` — never raises. Every caller is inside a checker whose contract is a
+    verdict, and a negative control aborts before it can report anything if a parse failure comes
+    out as a traceback."""
+    events = timeline_events(log)
+    loads = palette_loads(events)
+    if not loads:
+        return None, (f"the {label} trace contains no palette load at all — `{TIMELINE_TRACE}` "
+                      f"produced {len(events)} events; the trace flags or Hatari's wording moved")
+    desktop = loads[0][1]
+    program_start = next((at for at, pens in loads if pens != desktop), None)
+    if program_start is None:
+        return None, (f"the {label} trace never leaves the desktop palette — the program did not "
+                      f"run, or it never put its own palette up")
+    # NOTE the guard that is NOT here. "Every pre-program load must be the same table" is a
+    # tautology: `loads` is in stream order and `desktop` IS loads[0], so everything before the
+    # first mismatch equals it by construction. A boot that loaded an intermediate palette FIRST
+    # would make that intermediate the "desktop", latch program_start onto TOS's real desktop load,
+    # and shift every count by one — with such a guard silent throughout. The check that catches it
+    # is cross-side and lives in compare_timelines: the two runs boot the same ROM the same way, so
+    # their desktop TABLES must be the same table, and an intermediate load on one side diverges it.
+    game_start = next((at for at, (kind, _, _) in enumerate(events)
+                       if kind == "ym" and at > program_start), None)
+    if game_start is None:
+        return None, (f"the {label} trace has no sound-register write after the program's first "
+                      f"palette load — the game never reached snd_tone_sweep")
+    # ...and the boundary must be the event it is documented to be. snd_tone_sweep opens by
+    # silencing the chip, so a moved boundary (a stray mixer or port-direction write from disk I/O)
+    # is loud here instead of quietly reclassifying a title load as a game load.
+    preamble = tuple((reg, value) for kind, reg, value in events[game_start:game_start + len(SWEEP_PREAMBLE)]
+                     if kind == "ym")
+    if preamble != SWEEP_PREAMBLE:
+        return None, (f"the {label} trace's first sound write after the program started is "
+                      f"{preamble}, not snd_tone_sweep's preamble {SWEEP_PREAMBLE} — the game-phase "
+                      f"boundary has moved and every count after it would be measured from the "
+                      f"wrong event")
+
+    phases = {"desktop": [], "title": [], "game": [], "restore": []}
+    for at, pens in loads:
+        if at < program_start:
+            phases["desktop"].append(pens)
+        elif at < game_start:
+            phases["title"].append(pens)
+        else:
+            phases["restore" if pens == desktop else "game"].append(pens)
+    # Redundancy is counted over the PROGRAM'S OWN loads only. TOS 1.04 loads its desktop palette
+    # TWICE while booting (measured; EmuTOS loads it once), which is a property of the ROM and
+    # happens identically on both sides — counting it would make this surface red for something
+    # neither binary did. The 773-stomps bug lives entirely after program_start, so nothing is lost.
+    program_loads = [pens for at, pens in loads if at >= program_start]
+    return {
+        "loads": {phase: len(pens) for phase, pens in phases.items()},
+        # The table the phase split is anchored on, so the two sides can be checked against each
+        # other for having identified the SAME one (see compare_timelines).
+        "desktop_table": desktop,
+        # The game-phase tables themselves, so the compare can assert WHICH loads the two sides
+        # share rather than only how many there are.
+        "game_tables": phases["game"],
+        # A load carrying the table already on the hardware. Zero on both sides, and the number the
+        # 773-stomps bug drove into the hundreds.
+        "redundant": sum(1 for before, after in zip(program_loads, program_loads[1:])
+                         if before == after),
+        "sound": [(reg, value) for kind, reg, value in events[game_start:] if kind == "ym"],
+    }, None
+
+
+# What the two sides' palette-load counts MUST be, per phase, as (ours, shipped). Exact numbers
+# rather than an inequality, because both sides are deterministic here and a tolerance is where a
+# regression hides. Two of the four are deliberately UNEQUAL, and neither is a fudge:
+#   * game +1 on our side. The shim pushes the palette ON CHANGE and TOS loads it the NEXT vblank,
+#     so the attract screen's colour-cycled table — which cycle_palette had already written into the
+#     image — is delivered one vblank late, just after snd_tone_sweep starts. The shipped binary
+#     re-issues Setpalette on its own attract schedule and, pinned into starting a game on the first
+#     pass, never issues that one. It is the documented one-vblank latency of push-on-change, not a
+#     wrong colour: the game palette that follows is identical on both sides and the hardware vector
+#     agrees at every anchor.
+#   * restore +1 on our side. Our run QUITS and hands the desktop palette back; the shipped side is
+#     stopped by --run-vbls mid-game and never restores anything.
+# The DESKTOP phase is not in this table, and that is measured rather than an omission: those loads
+# are TOS's, made before either program runs, and the count is a property of the ROM — EmuTOS loads
+# its desktop palette once, TOS 1.04 twice. Pinning a number there would have pinned one ROM. What is
+# asserted instead is that the two sides SAW THE SAME BOOT, which is the only thing about it that
+# belongs to this comparison.
+TIMELINE_LOADS = {"title": (1, 1), "game": (2, 1), "restore": (1, 0)}
+NO_REDUNDANT_LOADS = 0
+# How many game-phase loads our side makes that the shipped binary does not, and WHERE. One, and it
+# is the FIRST — the push-on-change delivery of the attract table described above. Naming the offset
+# is what turns the (2, 1) pair from a count into a structure: with it, the loads after the extra one
+# must be the shipped binary's own, table for table, so "dropped the latency load and gained a stray
+# re-arm elsewhere" can no longer add up to 2 and report green.
+OUR_EXTRA_GAME_LOADS = 1
+
+
+def compare_timelines(our_trace, their_trace):
+    """Assert the two sides' timelines against each other and against TIMELINE_LOADS."""
+    ours, problem = timeline_shape(our_trace, "our")
+    theirs, their_problem = timeline_shape(their_trace, "shipped")
+    if problem or their_problem:
+        print(f"  FAIL: the timeline could not be read — {problem or their_problem}")
+        return False
+    ok = True
+    desktop, their_desktop = ours["loads"]["desktop"], theirs["loads"]["desktop"]
+    if desktop == their_desktop:
+        print(f"  timeline desktop  loads {desktop} on both sides (TOS's own, before either "
+              f"program runs — ROM-dependent, so equality is the assertion)")
+    else:
+        ok = False
+        print(f"  FAIL: the two sides saw different boots — {desktop} desktop palette loads against "
+              f"{their_desktop}; they are supposed to be the same ROM booting the same way")
+    # THE TABLE, not just how many of them. Everything downstream is anchored on "the first load
+    # that is not the desktop's", so identifying the desktop wrongly on one side shifts that side's
+    # phases by a whole load while every count still looks plausible. The two runs boot the same ROM
+    # the same way, so the table they each took as the desktop's must be the same one — and a boot
+    # that slipped an intermediate palette in ahead of it is exactly what diverges them.
+    if ours["desktop_table"] != theirs["desktop_table"]:
+        ok = False
+        print(f"  FAIL: the two sides identified DIFFERENT desktop palettes — ours "
+              f"{' '.join(f'{pen:03x}' for pen in ours['desktop_table'])}, shipped "
+              f"{' '.join(f'{pen:03x}' for pen in theirs['desktop_table'])}. One of them anchored "
+              f"its phase split on the wrong load, so every count below it is measured from the "
+              f"wrong place")
+    for phase, (mine_want, their_want) in TIMELINE_LOADS.items():
+        mine, shipped = ours["loads"][phase], theirs["loads"][phase]
+        if (mine, shipped) == (mine_want, their_want):
+            print(f"  timeline {phase:<8} loads ours {mine}, shipped {shipped} — as pinned")
+            continue
+        ok = False
+        print(f"  FAIL: {phase} palette loads are ours {mine}, shipped {shipped}; pinned "
+              f"{mine_want}/{their_want}")
+    for label, shape in (("our side", ours), ("the shipped binary", theirs)):
+        if shape["redundant"] != NO_REDUNDANT_LOADS:
+            ok = False
+            print(f"  FAIL: {label} loads a palette it had already loaded {shape['redundant']} "
+                  f"time(s) — a re-arm that changes nothing reaches the hardware, which is the "
+                  f"773-stomps shape and no snapshot can see it")
+    shared = ours["game_tables"][OUR_EXTRA_GAME_LOADS:]
+    if shared == theirs["game_tables"]:
+        print(f"  timeline game     tables: our last {len(shared)} match the shipped binary's, in "
+              f"order (our extra {OUR_EXTRA_GAME_LOADS} is the first)")
+    else:
+        ok = False
+        print(f"  FAIL: past our {OUR_EXTRA_GAME_LOADS} extra load, the game-phase palettes are not "
+              f"the shipped binary's — {len(shared)} of ours against {len(theirs['game_tables'])} "
+              f"of theirs, and the tables differ")
+    ok &= compare_sound_streams(ours["sound"], theirs["sound"])
+    return ok
+
+
+def compare_sound_streams(ours, theirs):
+    """Our PSG writes must be an exact PREFIX of the shipped binary's, register and value in order.
+
+    A PREFIX and not an equality, and the asymmetry is structural rather than a tolerance: our
+    framediff build stops itself at the last sample frame while the shipped side runs on to
+    --run-vbls, so its stream is strictly longer. Every write we do make must be the same write it
+    made, at the same point in the sequence.
+
+    WITH A FLOOR, because "prefix" alone is satisfied by a stream of length one. A regression that
+    silenced the sound after its first register write would print IDENTICAL-looking success here,
+    and nothing else in framediff looks at the PSG at all — check_stats pins only the dump size, and
+    MIN_PSG_WRITES is asserted in `frames`, on the shim's own counter of what the game ASKED for
+    rather than on what the trace saw reach the chip."""
+    if len(ours) < MIN_PSG_WRITES:
+        print(f"  FAIL: our side issued only {len(ours)} PSG writes, fewer than the {MIN_PSG_WRITES} "
+              f"any run reaching gameplay makes — a prefix that short proves nothing")
+        return False
+    shared = min(len(ours), len(theirs))
+    diverged = next((i for i in range(shared) if ours[i] != theirs[i]), None)
+    if len(ours) > len(theirs):
+        print(f"  FAIL: our side issued {len(ours)} PSG writes, more than the shipped binary's "
+              f"{len(theirs)} — a prefix cannot be longer than what it is a prefix of")
+        return False
+    if diverged is None:
+        print(f"  timeline sound    ours {len(ours)} PSG writes, an exact prefix of the shipped "
+              f"binary's {len(theirs)}")
+        return True
+    reg, value = ours[diverged]
+    their_reg, their_value = theirs[diverged]
+    print(f"  FAIL: PSG write {diverged} differs — ours reg {reg} = {value:#04x}, shipped reg "
+          f"{their_reg} = {their_value:#04x}")
+    return False
+
+
 # FRAME NUMBERS, matched against FRAME_SAMPLES' values — not indices into it.
 RENDER_ANCHORS = (1,)
 
@@ -1198,7 +1585,13 @@ def our_captures(stats, samples, build, keep):
     return vectors, proc
 
 
-def run_original_frames(base, screen, samples, rng_park, keep=None):
+# NAMED, not a positional tuple: this grew from three values to five in one change set, and the
+# next addition would silently shift every `a, b, _, _, _ =` unpack at the call sites — handing a
+# log string to check_exit, or a proc to a comparison, with no error at the seam.
+OriginalRun = namedtuple("OriginalRun", "frames palettes vectors log proc")
+
+
+def run_original_frames(base, screen, samples, rng_park, keep=None, trace=None):
     """Boot the SHIPPED binary pinned and anchored, and return its framebuffer per sample frame.
 
     With `keep`, it also captures the hardware-state vector and a stop-then-shoot screenshot at every
@@ -1207,8 +1600,8 @@ def run_original_frames(base, screen, samples, rng_park, keep=None):
         script_dir = Path(tmp)
         script = original_frame_script(script_dir, base, screen, samples, rng_park,
                                        capture_dir=keep)
-        produced, _, _, proc = run(ORIGINAL_PRG, {"HIGH.SCO": SHIPPED_HISCORE.read_bytes()},
-                                   parse=script, run_vbls=FRAMEDIFF_RUN_VBLS,
+        produced, _, log, proc = run(ORIGINAL_PRG, {"HIGH.SCO": SHIPPED_HISCORE.read_bytes()},
+                                   parse=script, trace=trace, run_vbls=FRAMEDIFF_RUN_VBLS,
                                    # STOPS_PER_ANCHOR per anchor as everywhere, plus a whole extra
                                    # anchor's worth to cover the three one-shot pins this side sets
                                    # (RNG cursor, Bconstat, Bconin) and any debugger entry we did
@@ -1231,7 +1624,7 @@ def run_original_frames(base, screen, samples, rng_park, keep=None):
             palettes[samples[index - 1]] = pens.read_bytes()
         vectors = ({frame: hardware_vector(proc.stdout, keep, THEIR_TAG, index, frame)
                     for index, frame in enumerate(samples, 1)} if keep is not None else None)
-        return frames, palettes, vectors, proc
+        return OriginalRun(frames, palettes, vectors, log, proc)
 
 
 # Which checks each negative-control build MUST fail, and which it must still pass. Naming both is
@@ -1243,14 +1636,26 @@ INJECTED_FAULTS = {
     # NOT "display": the rendered compare only asserts at frame 1 (RENDER_ANCHORS), and pen 5 does
     # not appear in that frame's picture — measured, the PNGs match with the pen corrupted. Listing
     # it would make this control fail for a reason that is about coverage, not about the fault.
-    "palette": {"fail": ("palette", "vector"), "pass": ("boot", "bitplanes", "display")},
+    # TIMELINE fails here too, and that is correct rather than a leak: the timeline compares the
+    # game-phase palette TABLES between the sides, and this control corrupts a pen on its way to the
+    # shifter, so a surface that looks at pen values sees it. Three surfaces see the value; what the
+    # control proves is that the two that must NOT move — the bitplanes and the rendered picture —
+    # do not.
+    "palette": {"fail": ("palette", "vector", "timeline"),
+                "pass": ("boot", "bitplanes", "display")},
     # A misaligned screen is a DISPLAY fault: the boot assertion catches it, the picture differs,
     # and every memory surface still agrees. The hardware vector agrees too — the shifter's
     # registers are right; it is the base it fetches from that is not.
     # "vector" PASSES here and is listed rather than omitted: the shifter's registers are right, it
     # is the base the shifter fetches FROM that is not, and an unlisted check would be silently
     # unasserted (see report_injected_fault's totality check).
-    "display": {"fail": ("boot", "display"), "pass": ("bitplanes", "palette", "vector")},
+    "display": {"fail": ("boot", "display"),
+                "pass": ("bitplanes", "palette", "vector", "timeline")},
+    # Re-arming _colorptr every vblank writes the SAME sixteen words, so every snapshot surface is
+    # unmoved — the pens, the vector, the picture and the framebuffers all still agree — and only the
+    # timeline sees it. That is the whole argument for having a timeline compare, made as a control.
+    "timeline": {"fail": ("timeline",),
+                 "pass": ("boot", "bitplanes", "palette", "vector", "display")},
 }
 
 
@@ -1299,7 +1704,15 @@ def mode_framediff(build="framediff", expect_fail=None):
     print(f"sample frames {samples}; RNG cursor parked at {rng_park:#x} on both sides")
 
     print("--- ours: one run, every sample")
-    produced, _, _, proc = run(prg_for(build), drive_files())
+    # The trace rides along on the run that was happening anyway — it is what the TIMELINE compare
+    # below reads, and it costs a file on the host rather than a second boot. RUN FOR THE SAME
+    # NUMBER OF VBLANKS AS THE SIDE IT IS COMPARED AGAINST: at the default 20000 this build spends
+    # ~19,000 of them sitting on the TOS desktop after its own Pterm, and every palette load TOS
+    # makes in that tail lands in the `restore` phase the compare pins at exactly one. Matching the
+    # shipped side's budget cuts the trace to a third and removes the exposure; it still leaves
+    # thousands of vblanks of tail for the fault scan, more than `quittitle` runs with.
+    produced, _, our_trace, proc = run(prg_for(build), drive_files(), trace=TIMELINE_TRACE,
+                                       run_vbls=FRAMEDIFF_RUN_VBLS)
     ok = check_exit(proc)
     require(produced, "STATS.BIN",
             *[f"FRAME{i}.BIN" for i in range(1, len(samples) + 1)],
@@ -1319,9 +1732,10 @@ def mode_framediff(build="framediff", expect_fail=None):
 
     with tempfile.TemporaryDirectory() as their_tmp, tempfile.TemporaryDirectory() as our_tmp:
         their_dir, our_dir = Path(their_tmp), Path(our_tmp)
-        theirs, their_pens, their_vectors, proc = run_original_frames(
-            base, screen, samples, rng_park, keep=their_dir)
-        ok &= check_exit(proc)
+        shipped = run_original_frames(base, screen, samples, rng_park, keep=their_dir,
+                                      trace=TIMELINE_TRACE)
+        theirs, their_pens, their_vectors = shipped.frames, shipped.palettes, shipped.vectors
+        ok &= check_exit(shipped.proc)
 
         print("--- our side again, under the debugger: hardware vector and picture at every anchor")
         our_vectors, our_proc = our_captures(stats, samples, build, our_dir)
@@ -1334,7 +1748,8 @@ def mode_framediff(build="framediff", expect_fail=None):
                   "bitplanes": compare_frames(ours, theirs, samples),
                   "palette": compare_palettes(our_pens, their_pens, samples),
                   "vector": compare_vectors(our_vectors, their_vectors, samples),
-                  "display": compare_shots(our_dir, their_dir, samples)}
+                  "display": compare_shots(our_dir, their_dir, samples),
+                  "timeline": compare_timelines(our_trace, shipped.log)}
 
         if expect_fail:
             return report_injected_fault(expect_fail, checks), ours[samples[-1]]
@@ -1343,6 +1758,144 @@ def mode_framediff(build="framediff", expect_fail=None):
         ok &= framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens,
                                  their_vectors, our_dir)
     return ok, ours[samples[-1]]
+
+
+
+# How long the play build is left running before it is stopped. It has no scripted keys and no frame
+# limit, so this is a wall-clock budget for "boot, draw the title screen, sit there", not a pin.
+PLAY_RUN_VBLS = "3000"
+# The play mode's boot anchor: joust_main's FIRST entry, before any install has run.
+BOOT_ANCHOR = 1
+# Title-screen console polls to let go by before photographing. title_screen polls ~400 times per
+# attract pass, so this lands well inside the first pass, with the picture and its three text lines
+# painted and the colour cycle running.
+PLAY_ANCHOR_POLL = 200
+
+
+def mode_play():
+    """THE BUILD A PERSON ACTUALLY PLAYS, booted headless.
+
+    Everything else in this file runs a build with something added for the harness — a scripted key,
+    a frame limit, an injected fault. This one runs the play configuration: real console, real
+    joysticks, no limit, no fault, and no progress beacons (joust_main.c switches those off under
+    SMOKE_BOOT_DUMP, because nine GEMDOS Fcreate/Fclose pairs interleaved with the installs would
+    make the certified boot a different boot from the one being certified). The only difference from
+    `build.sh play` is the single STATS.BIN written after the installs have run.
+
+    WHAT IS ASSERTED: the boot read-back sweep (every install this shim performs, read back), the
+    hardware-state vector at the title screen, and — on both boots — that the machine did not fault
+    or halt.
+
+    WHAT IS NOT, AND THIS IS NOT A DETAIL: this run is KILLED. The program is sitting in
+    title_screen's console poll waiting for a key that will never come, so --run-vbls expires with it
+    still resident and still hooked into TOS. The EXIT STATUS is therefore not asserted — it would be
+    asserting that a program we never let finish shut down cleanly. The log scan IS asserted, because
+    it applies to any run at all and is the surface that sees the fault Hatari survives. Boot health
+    is asserted for this build; exit health is not, and cannot be without giving it a scripted key,
+    at which point it is no longer the play build. The exit path is covered by `quit`, `quittitle`
+    and `restart`, which run the same shim_teardown through the same shim_exit."""
+    print("--- the playable build, booted headless and stopped on the title screen")
+    produced, _, _, proc = run(prg_for("play"), drive_files(), run_vbls=PLAY_RUN_VBLS)
+    ok = check_faults(proc)
+    require(produced, "STATS.BIN")
+    stats = stats_of(produced)
+    print("stats: " + ", ".join(f"{name}={stats[name]}" for name in STATS_FIELDS))
+    # BOOT names only: this run does not tear down, so the six hand-back bits must be ABSENT. The
+    # mask is exact, so a build that somehow did tear down here would be a failure too.
+    ok &= check_shim_state(stats, READBACK_BOOT_NAMES)
+
+    print(f"--- the hardware-state vector, at boot and at title-screen console poll {PLAY_ANCHOR_POLL}")
+    desktop, title, capture_proc = play_vectors(stats)
+    ok &= check_faults(capture_proc)
+    ok &= check_title_vector(title, desktop)
+    print("NOTE: this run was KILLED by --run-vbls with the program still resident and still hooked "
+          "into TOS — it is waiting for a joystick. Its BOOT health is asserted above; its EXIT "
+          "status is not asserted here and is covered by quit/quittitle/restart.")
+    return ok, None
+
+
+def play_vectors(stats):
+    """The pens at two moments of ONE boot: before the shim installs anything, and at the title.
+
+    ONE RUN, TWO ANCHORS. The desktop's pens are the reference the title's are judged against, and a
+    reference taken from a DIFFERENT boot is only as good as that boot being identical — which is
+    the assumption this whole file exists to stop making. `one_breakpoint_per_anchor` already allows
+    distinct PCs in one script, so both captures ride the same emulator. `text_probe` is joust_main's
+    run-time address, i.e. before any install; the console poll is the title screen.
+
+    They are measured rather than written down because the desktop palette differs between EmuTOS
+    and TOS 1.04, and a hard-coded table would pass vacuously on whichever one it was not taken from.
+
+    Returns the two vectors and the ONE process both came from — one run, so one log to scan."""
+    with tempfile.TemporaryDirectory() as tmp:
+        capture_dir = Path(tmp)
+        script = (capture_script(capture_dir, stats["text_probe"], [BOOT_ANCHOR], DESKTOP_TAG)
+                  + capture_script(capture_dir, stats["console_poll_pc"], [PLAY_ANCHOR_POLL],
+                                   OUR_TAG))
+        anchors = 2
+        _, _, _, proc = run(prg_for("play"), drive_files(), parse=script, run_vbls=PLAY_RUN_VBLS,
+                            render=True,
+                            debug_continues=STOPS_PER_ANCHOR * anchors + DEBUG_CONTINUE_SLACK)
+        return (hardware_vector(proc.stdout, capture_dir, DESKTOP_TAG, 1, BOOT_ANCHOR),
+                hardware_vector(proc.stdout, capture_dir, OUR_TAG, 1, PLAY_ANCHOR_POLL),
+                proc)
+
+
+def vector_pens(vector):
+    """The sixteen pens out of a hardware-state vector, in order."""
+    return [vector[f"pen{pen:02d}"] for pen in range(PALETTE_PENS)]
+
+
+# The resolution the shifter must be in on the title screen: ST low, which is what the game draws
+# for and what Hatari is asked to boot into.
+#
+# SHIFTED BEFORE MASKING, and getting that wrong is what made this assertion unable to fail. The
+# vector carries the WORD `savebin` read from $ffff8260, and the register is the HIGH byte of it —
+# $ffff8261 is unimplemented and reads back as zero. So the word is 0xfc00 / 0xfd00 / 0xfe00 for
+# low / medium / high, and `word & 3` is 0 for ALL THREE: the first version of this check masked the
+# raw word and could not have caught any resolution. The rest of the high byte reads as ones, hence
+# the mask after the shift. The framediff compare still wants the raw word, since there both sides
+# are read identically and any difference is a difference.
+ST_RESOLUTION_BYTE_SHIFT = 8  # $ffff8260 is the high byte of the word savebin returns
+ST_RESOLUTION_MODE = 0x3      # ...and bits 0-1 of it: 0 = ST low, 1 = ST medium, 2 = ST high
+ST_LOW_RES = 0
+
+
+def resolution_mode(vector):
+    """The shifter's resolution, out of a hardware-state vector's raw register word."""
+    return (vector["resolution"] >> ST_RESOLUTION_BYTE_SHIFT) & ST_RESOLUTION_MODE
+
+
+def check_title_vector(title, desktop):
+    """The play build's hardware state at the title screen.
+
+    A SHAPE ASSERTION, AND SAYING SO IS THE POINT. What it can prove without a second binary to
+    compare against is that the shifter is in the mode the game draws for, and that a palette of the
+    game's OWN reached it: sixteen pens that are neither still the desktop's nor a degenerate table
+    (all sixteen equal is what a black screen looks like, and "not the desktop's" alone would call
+    that a pass). What it does NOT prove is that the pens are the RIGHT ones — the values are pinned
+    for the framediff build by two surfaces at six anchors, and carrying that reference here would
+    need a second binary in this mode. Recorded as unpinned in ../STATUS.md rather than implied."""
+    ok = True
+    pens = vector_pens(title)
+    resolution = resolution_mode(title)
+    if resolution != ST_LOW_RES:
+        print(f"FAIL: the shifter is in resolution mode {resolution} (register "
+              f"{title['resolution']:#06x}), expected ST low — the title screen is not being "
+              f"displayed as the game draws it")
+        ok = False
+    if pens == vector_pens(desktop):
+        print("FAIL: the pens at the title screen are still the DESKTOP's — the shim's palette "
+              "never reached the shifter in the build with no harness scaffolding")
+        ok = False
+    if len(set(pens)) == 1:
+        print(f"FAIL: all sixteen pens hold {pens[0]:#05x} — a degenerate table reached the "
+              f"shifter, which is what a blank screen looks like from here")
+        ok = False
+    if ok:
+        print(f"  play vector: ST low res, {PALETTE_PENS} pens loaded, neither the desktop's nor "
+              f"degenerate ({' '.join(f'{pen:03x}' for pen in pens)})")
+    return ok
 
 
 MODES = {
@@ -1365,6 +1918,10 @@ MODES = {
     # ...and the DISPLAY check's control: the same run with the screen two bytes off its 256-byte
     # boundary. Every memory comparison must still pass and the rendered picture must not.
     "framediff-skew": lambda: mode_framediff(build="framediff-skew", expect_fail="display"),
+    # ...and the TIMELINE check's control: the same run with _colorptr re-armed every vblank. Every
+    # snapshot surface must stay green and only the shape must move.
+    "framediff-rearm": lambda: mode_framediff(build="framediff-rearm", expect_fail="timeline"),
+    "play": mode_play,
     "original": mode_original,
 }
 
@@ -1373,6 +1930,9 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "title"
     if mode not in MODES:
         raise SystemExit(f"usage: smoke.py [{' | '.join(MODES)}]")
+    # BEFORE the first boot, not inside a checker: it is a property of two source files, costs
+    # nothing, and a mismatch found after ten minutes of emulation is ten minutes wasted.
+    check_readback_registry()
     started = time.time()
     ok, framebuffer = MODES[mode]()
     # Only on success: mode_original loads out/screen_title.bin as ground truth, so a framebuffer

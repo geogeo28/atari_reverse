@@ -189,6 +189,19 @@ project's `make test` links the same file. So the two `clean` targets are delibe
 compiled **without** the project's `include/` on the header path, so a stray include can never make
 the shared artifact game-specific — make's timestamps could not detect that across projects.
 
+## Beyond the differential: running the cores on target
+
+The differential proves the cores produce the original's **memory image**. It cannot prove the game
+runs, because everything the oracle models as a no-op — the palette, the shifter, the PSG, the IKBD,
+TOS's own variables — leaves no image bytes to compare, and a reconstruction can be byte-perfect
+under `make test` while displaying nothing. Building the verified cores into a real GEMDOS `.PRG`
+and running it under Hatari is a separate discipline with its own failure modes, and both worked
+examples (`projects/buggyboy/recreate/render/atari/`, `projects/joust/recreate/atari/`) are on the
+kit. Read [`docs/on-target-execution.md`](../../docs/on-target-execution.md) before starting one —
+in particular "The observable surfaces", which enumerates the six things an on-target run can be
+watched on and states the rule this workspace's pre-commit gate now carries: every on-target change
+names the surface that would catch its failure, and a change that names none has found something.
+
 ## The kit's own tests
 
 `make test` in this directory runs `test/` — checks that belong to `tools/` rather than to any

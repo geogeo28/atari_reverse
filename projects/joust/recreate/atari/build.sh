@@ -11,6 +11,10 @@
 #   build.sh framediff       -> pinned run for the frame-by-frame differential vs the shipped binary
 #   build.sh framediff-fault -> the same, one palette pen corrupted: that check's negative control
 #   build.sh framediff-skew  -> the same, screen 2 bytes off its 256 boundary: the DISPLAY control
+#   build.sh framediff-rearm -> the same, palette re-armed every vblank: the TIMELINE control
+#   build.sh play-smoke      -> the PLAYABLE build plus a boot-time dump (and no beacons), so a
+#                               headless run can assert its read-backs — it has no scripted keys,
+#                               no frame limit, and never exits on its own
 #
 # Each writes disk/JOUST.PRG *and* keeps build/JOUST-<mode>.PRG, so a check that needs two builds in
 # sequence (smoke.py hiscore) can have them without rebuilding.
@@ -71,18 +75,27 @@ case "$MODE" in
   # game starts after exactly one attract pass, as it does on the shipped side when the debugger
   # forces its Bconstat; the RNG cursor is parked where both programs' bytes are identical; and one
   # run dumps every sampled frame. See joust_main.c's "frame differential" section for the physics.
-  framediff|framediff-fault|framediff-skew)
+  framediff|framediff-fault|framediff-skew|framediff-rearm)
              # framediff-fault is the same build with one pen deliberately corrupted on the way to
              # the shifter — the negative control for smoke.py framediff's palette compare.
              FAULT=""
              [ "$MODE" = framediff-fault ] && FAULT="-DSMOKE_PALETTE_FAULT=$PALETTE_FAULT_PEN"
              [ "$MODE" = framediff-skew ] && FAULT="-DSMOKE_SCREEN_MISALIGN=$SCREEN_MISALIGN"
+             [ "$MODE" = framediff-rearm ] && FAULT="-DSMOKE_PALETTE_REARM=1"
              DEF="-DSMOKE -DSMOKE_SCRIPT_KEYS=$KEY_ONE_PLAYER -DSMOKE_SCRIPT_WAIT=1 \
                   -DSMOKE_RNG_PTR=$RNG_PARK -DSMOKE_FRAME_DUMPS=$FRAME_SAMPLES \
                   -DSMOKE_FRAMES=$FRAMEDIFF_LAST $FAULT" ;;
   play)      DEF="" ;;
+  # The play build's own configuration — no scripted keys, no frame limit, no injected fault — with
+  # the dump machinery switched on so a headless boot can be asserted. SMOKE_BOOT_DUMP also switches
+  # the progress BEACONS off (joust_main.c), so the difference from `play` really is the one thing
+  # claimed: this build writes STATS.BIN once, after the installs, and performs no other I/O the
+  # play build does not. The code that runs before that point is the same code, which is what makes
+  # the assertion worth anything.
+  play-smoke) DEF="-DSMOKE -DSMOKE_BOOT_DUMP" ;;
   *) echo "usage: build.sh [title | smoke [frames] | quit | quittitle | restart | framediff |"
-     echo "                 framediff-fault | framediff-skew]"; exit 2 ;;
+     echo "                 framediff-fault | framediff-skew | framediff-rearm | play-smoke]"
+     exit 2 ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

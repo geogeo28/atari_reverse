@@ -122,6 +122,10 @@ then fix what you find (or justify leaving it) before the docs gate:
   unlike the built-in `/code-review` (user-triggered only) an agent can invoke it itself. Drop to
   a lower level only when the change is genuinely small. Fix the real findings, and **keep
   out-of-scope findings out of the commit** (note them, don't fold them in).
+- **Name the surface that would catch it** for any change that runs on target (a `.PRG`, a shim, a
+  hardware or OS-state write): memory / trap ledger / hardware-state vector / rendered pixels /
+  timelines / exit status — see `docs/on-target-execution.md`, "The observable surfaces". **If the
+  change names no surface, that is the finding**: add one, or record it unpinned in `STATUS.md`.
 - **Mutation-test the gate's own coverage** on reconstructed code: flip a constant, delete a
   branch, off-by-one an index — rebuild and re-run. A mutation the suite does not catch is a
   coverage hole, and in port work it usually means a branch the game's own data never exercises.

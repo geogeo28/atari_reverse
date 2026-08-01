@@ -148,3 +148,56 @@ fabricated `0` read the guard exists to prevent (`tools/recreate_kit/TRAP_MODEL.
   a rectangle that overwrites its own argument block changes width mid-blit. `blit_from_args` in
   `src/blit.c` models that; `test_cols_is_reread_every_row` fails if it is hoisted.
 - **`fill_pattern_n`** counts with `subq.w`: a count of 0 fills 65536 cells (512 KiB).
+
+## Unpinned on target, and why
+
+`docs/on-target-execution.md` ("The observable surfaces") makes it a rule that every on-target
+change names the surface which would catch its failure, and that a change naming none is recorded
+here rather than left implied. These are the ones the `atari/` shim carries. None is a defect; each
+is a limit of what a headless run can witness, stated so a green is not read as more than it is.
+
+- **The IKBD teardown reset is confirmed neither SENT in full nor ACTED ON.** `shim_teardown` sends
+  the game's own `$80 $01` / `$14`, and the strongest available read-back is `RB_IKBD_TX_DRAINED` —
+  the ACIA's transmit data register emptied. That is *two* steps short of the claim one would like.
+  First, on a 6850 TDRE goes high when the data register is copied into the **shift** register, so
+  the last byte is still being clocked out for another ~1.28 ms at 7812.5 baud: what is proven is
+  that every byte but the final one has left the machine and the final one is on its way. `Pterm`
+  can still be reached with that byte in flight (the ACIA completes it regardless, but nothing here
+  witnesses that). Second, a byte that fully leaves still says nothing about the controller obeying
+  it — the keyboard has no readable "I am out of interrogation mode" state, and a reset it ignores
+  reads exactly like success. The evidence that closes both is outside the process: the desktop
+  having a mouse after the game exits, which is the GUI check in `atari/README.md` §13.
+- **`conterm`'s high bits are unpinned because no ROM sets them.** `RB_CONTERM_CLEARED` reads the
+  whole byte back against `saved_conterm & CONTERM_KEEP`, which is the exact assertion — but
+  measured at `joust_main`'s entry, `$484` is `0x07` on **both** EmuTOS and TOS 1.04, so that
+  expression is 0 and a mutation that clobbers the byte (`SYS_CONTERM = 0`) is indistinguishable
+  from the correct `&=`. The check is right; the machine provides no data that reaches the
+  difference. It would bite on a machine whose `conterm` carries a bit above the low three.
+- **The play build's title PALETTE is asserted for shape, not value.** `smoke.py play` proves the
+  shifter is in ST low and holds sixteen pens that are neither still the desktop's nor a degenerate
+  table. It does not prove they are the *right* pens: the values are pinned for the `framediff`
+  build by two surfaces at six anchors, and carrying that reference into this mode would need a
+  second binary running beside it.
+- **The play build's EXIT is not asserted at all.** That build has no scripted key and no frame
+  limit, so a headless run is killed by `--run-vbls` while it is still resident and still hooked
+  into TOS. Its log is scanned for faults and halts (`check_faults`), but the exit status is not —
+  the hand-back is covered by `quit`, `quittitle` and `restart`, which run the same `shim_teardown`.
+- **The rendered picture is compared at frame 1 only.** Hatari does not render every frame under
+  `--fast-forward`, and the shipped side's deep-anchor screenshots are not reproducible run to run
+  (`atari/README.md` §11 carries the measured table). Every other anchor is pinned by memory, the
+  pens and the hardware-state vector; only the *displayed* comparison stops at frame 1.
+- **The hand-back ORDER is unpinned — the sweep asserts final state, not sequence.** Every one of
+  the fifteen read-backs is a comparison made *after* the write, so a `shim_teardown` that restores
+  the same five values in a different order passes all of them. Measured, not supposed: dropping the
+  `SYS_NVBLS = 0` detach and restoring the queue **length before the pointer** is green on every
+  surface this project has — read-backs, memory, pens, hardware vector, rendered picture, timeline
+  and exit status. The order is load-bearing anyway (`atari/README.md` §7: the queue must go back
+  before the KBDVBASE vectors, or `joy_handler` keeps chaining `$16` while TOS walks a half-swapped
+  queue), and the window it opens is a handful of instructions wide, so a vblank has to land inside
+  it. Nothing here can witness that. Pinning it would need an ordered ledger of the writes —
+  Hatari's `--trace` over the system-variable addresses — which is the timeline surface applied to
+  memory rather than to hardware, and does not exist yet.
+- **The read-back sweep is Joust's, not the kit's.** `projects/buggyboy/recreate/render/atari/`
+  writes the same surfaces (KBDVBASE vectors, `conterm`, `_vblqueue`) and has no read-backs. The
+  mechanism — bit registry, two words, the exact-mask assertion, the C-source bridge — is
+  game-agnostic and belongs in `tools/recreate_kit/`; it is not there yet.
