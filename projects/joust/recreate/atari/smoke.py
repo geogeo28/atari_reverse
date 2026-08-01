@@ -124,15 +124,17 @@ RUN_TIMEOUT = 180
 # Spare `c` lines fed to the debugger beyond the stops we schedule. Unread ones cost nothing; running
 # out stops the emulation dead at a prompt, which is the failure worth over-providing against.
 DEBUG_CONTINUE_SLACK = 8
-# The frame the DISPLAY check photographs. It is deliberately one from the STATIC band (the screen
-# does not change between about frame 2 and frame 110 with the sticks centred): `screenshot` renders
-# the emulator's current display surface, which is built scanline by scanline, so a capture taken
-# part-way down a frame mixes that frame with the one before. On a static screen that mix is the
-# same picture however the raster happens to be placed, and the two sides reach their frame anchors
-# at different raster positions. Photographing a MOVING frame is not wrong, it is unstable — it
-# differed run to run before this was pinned.
-SCREENSHOT_FRAME = 60
-
+# Debugger stops each anchor costs, on BOTH sides: the anchor breakpoint, then the vblank breakpoint
+# its action file arms (write_capture_chain). The anchor's memory dump is not a third — it lives in
+# the SAME action file as the capture, which was the whole point of the one-breakpoint-per-anchor
+# fix. What the shipped side additionally pays for is its three one-shot pins (RNG cursor, Bconstat,
+# Bconin); provisioning them per-anchor is simply a generous over-count, and over-providing is free.
+STOPS_PER_ANCHOR = 2
+# Hatari's breakpoint hit counter is 1-based and it REJECTS an explicit `:1`, so the first frame's
+# anchor is spelled without a count (see anchor_breakpoint).
+FIRST_FRAME = 1
+# The shifter's resolution register is a WORD: `savebin` needs a byte count, not a register count.
+ST_RESOLUTION_BYTES = 2
 ORIGINAL_DUMP_VBL = 2500    # by then the ORIGINAL is sitting on its title screen
 ORIGINAL_RUN_VBLS = "4000"
 # Enough for the shipped binary to boot, sit through one attract pass and play out the deepest
@@ -168,12 +170,32 @@ PRG_HEADER = 28             # GEMDOS .PRG header, ahead of the text the signatur
 # at all, the palette being off-image on both sides.
 IMAGE_ALIGN = 256           # joust_main.c IMAGE_ALIGN: the video base register's granularity
 ST_PALETTE_REGS = 0xffff8240
+ST_RESOLUTION_REG = 0xffff8260   # the shifter's resolution; a stray write here changes the mode
+
+# The two capture sets' tag. It is load-bearing twice — it names the files on disk AND the `echo`
+# marker the log is split on — so it has one definition rather than a literal at each of six sites.
+OUR_TAG, THEIR_TAG = "OUR", "THEIR"
+
+# How many registers the hardware-state vector must COMPARE: 16 shifter pens + 16 YM + resolution +
+# refresh rate + V-overscan. (VECTOR_REPORT_ONLY names are not compared, so they are not here.)
+VECTOR_REGISTERS = 16 + 16 + 3
+# Captured at every anchor and PRINTED, but not compared: the two binaries legitimately draw from
+# different addresses. Named explicitly rather than spelled as a leading-underscore convention, so
+# what is exempt from the differential is a list one can read instead of a rule one must infer.
+VECTOR_REPORT_ONLY = {"video_base"}
+# The debugger artefacts one anchor's capture leaves behind, by file suffix.
+PENS_SUFFIX, RESOLUTION_SUFFIX, PICTURE_SUFFIX = "pens", "rez", "png"
 PALETTE_PENS = 16
 PALETTE_BYTES = PALETTE_PENS * 2
 
-# TOS's ROM probes its own hardware at boot and bus-errors doing it; those are expected and are the
-# only ones allowed. Anything faulting from RAM is ours.
-ROM_PC = re.compile(r"PC=\$(fc|e0)")
+# TOS SIZES MEMORY BY FAULTING ON PURPOSE at boot. That is the one benign fault, and it is excused
+# by the EXACT PC OF THE PROBE, not by "the PC is somewhere in ROM": the dangling-pointer class
+# check_exit exists for reaches ROM code through a stale vector, so a range test over ROM would
+# excuse the very faults being hunted. Measured on both ROMs, boot-only and address-varying on
+# EmuTOS: `Bus Error reading at address $4fffff, PC=$e00d98` (EmuTOS's `tst.b (a0)` sizing loop)
+# and `Bus Error writing at address $41fffe, PC=$fc0174` (TOS 1.04's sizing write). Every other
+# fault, ROM PC or not, is a failure.
+BENIGN_ROM_PROBE = re.compile(r"PC=\$(e00d98|fc0174)\b")
 
 
 def find_rom():
@@ -184,7 +206,41 @@ def find_rom():
     return str(local[-1]) if local else None
 
 
-def run(prg, files, trace=None, parse=None, run_vbls=RUN_VBLS, debug_continues=0):
+def anchor_breakpoint(pc, frame, action):
+    """One anchor's breakpoint line: stop at `pc` on the frame-th hit, once, and run `action`.
+
+    THE ONLY PLACE this line is spelled. Both script builders come through here and
+    one_breakpoint_per_anchor's regex is written against this one format, so the guard cannot fall
+    out of step with what it guards. Hatari counts hits from 1 and rejects `:1`, hence the bare
+    `:once` for the first frame."""
+    count = "" if frame == FIRST_FRAME else f":{frame} "
+    return f"b pc = ${pc:x} {count}:once :quiet {action}"
+
+
+def one_breakpoint_per_anchor(script):
+    """Refuse a debugger script that sets two breakpoints on the same PC AND hit count.
+
+    The invariant is per ANCHOR, not per PC: every sample set is deliberately N breakpoints on the
+    same address (poll_quit_key) told apart by `:<count>`, so keying on the PC alone would reject
+    the harness's own scripts. What must not recur is two breakpoints selecting the SAME hit — a
+    memory-dump set and a capture set both anchored at frame 240 disturbed each other's counters and
+    the captures fired at shallower frames than the dumps beside them, so the pictures and the
+    framebuffers came from different moments and the compare was quietly wrong rather than loudly.
+    One breakpoint per anchor, whose action file does BOTH.
+
+    It only sees TOP-LEVEL breakpoints. A second stop set from inside a chained action file — which
+    is how write_capture_chain reaches the next vblank — is invisible here, so this is a guard
+    against the duplication that already happened, not a proof that none can."""
+    anchors = re.findall(r"^b pc\s*=\s*(\$[0-9a-fA-F]+)\s*(:\d+)?", script, re.M)
+    repeated = {anchor for anchor in anchors if anchors.count(anchor) > 1}
+    if repeated:
+        raise RuntimeError(f"two or more breakpoints on the same PC and hit count "
+                           f"{sorted(repeated)} — their counters interfere; give each anchor ONE "
+                           f"breakpoint whose action file does all of that anchor's work")
+    return script
+
+
+def run(prg, files, trace=None, parse=None, run_vbls=RUN_VBLS, debug_continues=0, render=False):
     """Boot `prg` headless on a drive holding `files`, let Hatari run to the end of --run-vbls, and
     return everything it left behind: {filename: bytes}, the beacon names, Hatari's own output and
     its exit status.
@@ -210,18 +266,49 @@ def run(prg, files, trace=None, parse=None, run_vbls=RUN_VBLS, debug_continues=0
                 "--statusbar", "off",
                 "--memsize", str(MEMSIZE_MB), "--monitor", "rgb", "--tos-res", "low", "--tos", rom,
                 "--run-vbls", run_vbls, "--harddrive", str(drive), "--auto", "C:\\JOUST.PRG"]
+        if render:
+            # Only the runs that PHOTOGRAPH pay for this. `screenshot` grabs the display surface,
+            # and under --fast-forward Hatari skips RENDERING frames it still emulates, so a capture
+            # returns whichever frame was last drawn. Asking for every frame narrows the window but
+            # does NOT close it — see RENDER_ANCHORS for what is still not reproducible with it on.
+            args += ["--frameskips", "0"]
         if trace:
             args += ["--trace", trace, "--trace-file", str(drive / "TRACE.TXT")]
         if parse:
-            (drive / "CMD.INI").write_text(parse.format(drive=drive))
+            (drive / "CMD.INI").write_text(one_breakpoint_per_anchor(parse.format(drive=drive)))
             args += ["--parse", str(drive / "CMD.INI")]
         # Each breakpoint that runs an action file leaves the debugger at its prompt afterwards, and
         # a prompt with nothing to read stops the emulation dead — so a run with breakpoints is fed
-        # a supply of `c`. One per expected stop plus slack; unread lines cost nothing.
+        # a supply of `c`: one per expected stop (see STOPS_PER_ANCHOR) plus slack. Over-providing
+        # is free — unread lines are discarded — and under-providing hangs the run to its timeout.
         stdin_kw = ({"input": "c\n" * debug_continues} if debug_continues
                     else {"stdin": subprocess.DEVNULL})
-        proc = subprocess.run(args, env=env, capture_output=True, text=True,
-                              timeout=RUN_TIMEOUT, **stdin_kw)
+        # STDERR IS MERGED INTO STDOUT, and that is not tidiness. Hatari writes ALL of it —
+        # INFO/WARN/ERROR *and* the debugger's own output — to stderr; stdout is empty. Every parser
+        # here read proc.stdout, so all of them were reading nothing.
+        #
+        # BE PRECISE ABOUT WHAT THAT COST. check_exit has two halves, and only one was blind: its
+        # exit-status test was live from the start and did catch the halts that take Hatari down
+        # with it (re-measured against the old smoke.py — the M3 negative control failed there too,
+        # on status 1). What was vacuous since M1 is the LINE SCAN, and with it the sharper class it
+        # is for: a bus or address error Hatari LOGS AND SURVIVES, finishing --run-vbls with status
+        # 0. Measured on a stray write after teardown: the old code printed a clean exit and passed,
+        # this one fails. The debugger's own output — every capture in the hardware-state vector —
+        # arrives on the same stream, so nothing downstream works without the merge either.
+        proc = subprocess.run(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, timeout=RUN_TIMEOUT, **stdin_kw)
+        # The plumbing self-test lives HERE, once, where the stream is created — not at each read.
+        # Every reader is inside a checker whose contract is a verdict, so raising from there turns
+        # a red into a traceback and throws away the boots already paid for. Raising here fails at
+        # the first boot, before any check has run, and covers the trace-only runs too. The message
+        # carries the exit status and the head of what WAS captured, because a missing banner can
+        # also mean Hatari refused to start (a bad option or ROM), not only lost plumbing.
+        if HATARI_BANNER not in (proc.stdout or ""):
+            raise RuntimeError(
+                f"Hatari's output does not contain {HATARI_BANNER!r} (status {proc.returncode}, "
+                f"{len(proc.stdout or '')} bytes captured): {(proc.stdout or '')[:200]!r} — either "
+                f"the emulator did not start, or the run's log is not being captured and every "
+                f"check that greps it would be vacuous. Check run()'s stdout/stderr plumbing.")
         # HIGH.SCO is deliberately NOT excluded: it goes in as an input and comes back out as the
         # quit path's output, and reading it back is how the round trip is checked.
         produced = {p.name: p.read_bytes() for p in drive.iterdir() if p.name not in INPUTS_ONLY}
@@ -275,19 +362,36 @@ def require(produced, *names):
         raise RuntimeError(f"JOUST.PRG did not produce {missing} — it hung or crashed before the dump")
 
 
+# Every Hatari run prints this. It is checked for before anything is parsed OUT of a run's output,
+# because this detector was silently reading an EMPTY STRING for four milestones: Hatari writes all
+# of its logging AND all debugger output to stderr, and `capture_output=True` put that in
+# proc.stderr while every parser here read proc.stdout. The streams are merged now (see run()), and
+# this line is the tripwire that makes a future plumbing change fail loudly instead of re-muting the
+# detector. A checker that can read nothing and report success is the bug this slice exists to fix.
+HATARI_BANNER = "INFO : Hatari"
+
+
 def check_exit(proc):
     """Hatari must have reached the end of --run-vbls by itself and reported a healthy machine.
 
     This is the assertion that witnesses the SHUTDOWN, not the run: the program Pterms well before
-    --run-vbls expires, so everything after that is TOS on its own with whatever we left hooked. An
-    unrestored KBDVBASE joystick vector shows up here and nowhere else — measured, as
-    `Address Error reading at address $e69, PC=$12800` followed by
-    `Detected double bus/address error => CPU halted!`, exit status 1."""
-    faults = [line for line in proc.stdout.splitlines()
-              if ("Bus Error" in line or "Address Error" in line) and not ROM_PC.search(line)]
-    halted = [line for line in proc.stdout.splitlines() if "halted" in line.lower()]
+    --run-vbls expires, so everything after that is TOS on its own with whatever we left hooked.
+
+    TWO CLASSES, and they are not equally easy. A fault that takes the emulator down with it shows in
+    the RETURN CODE — that is how the incomplete hand-back was found: leave the KBDVBASE vector
+    installed while the IKBD is still in interrogation mode and `joy_handler` keeps chaining $16
+    from memory GEMDOS has reclaimed, `Address Error reading at address $e69, PC=$12800` then
+    `Detected double bus/address error => CPU halted!`, about a second after Pterm. (The vectors are
+    only half of that bug; the interrogation mode is the half that makes it fire — see README §7.)
+    The other class is a fault Hatari LOGS AND SURVIVES, finishing --run-vbls with status 0: only the
+    line scan sees it, and the line scan read an empty string until the streams were merged."""
+    text = proc.stdout
+    faults = [line for line in text.splitlines()
+              if ("Bus Error" in line or "Address Error" in line)
+              and not BENIGN_ROM_PROBE.search(line)]
+    halted = [line for line in text.splitlines() if "halted" in line.lower()]
     if proc.returncode == 0 and not faults and not halted:
-        print("clean exit: Hatari ran to the end of --run-vbls, no fault outside the TOS ROM")
+        print("clean exit: Hatari ran to the end of --run-vbls, no fault but TOS's memory probe")
         return True
     print(f"FAIL: unhealthy machine after the program exited (hatari status {proc.returncode})")
     for line in faults + halted:
@@ -639,7 +743,7 @@ def original_load_base(ram):
     return ram.find(signature) - BASE_SIGNATURE_OFF
 
 
-def original_frame_script(script_dir, base, screen, samples, rng_park):
+def original_frame_script(script_dir, base, screen, samples, rng_park, capture_dir=None):
     """The debugger script that makes the shipped binary comparable, and the files it calls.
 
     Three pins and one anchor, all at run-time addresses derived from `base`:
@@ -661,23 +765,26 @@ def original_frame_script(script_dir, base, screen, samples, rng_park):
         (script_dir / name).write_text("".join(command + "\n" for command in commands))
         return f":file {script_dir / name}"
 
+    # The three pins fire on their first hit, so each is FIRST_FRAME by construction.
     lines = [
-        f"b pc = ${runtime(GHIDRA_AFTER_INIT_GAME):x} :once :quiet "
-        + action("RNG.INI", f"w l ${runtime(GHIDRA_RNG_PTR):x} ${runtime(rng_park):x}"),
-        f"b pc = ${runtime(GHIDRA_TITLE_BCONSTAT):x} :once :quiet "
-        + action("STAT.INI", "r d0=$ff"),
-        f"b pc = ${runtime(GHIDRA_TITLE_BCONIN):x} :once :quiet "
-        + action("KEY.INI", f"r d0=${c_define('KEY_ONE_PLAYER'):x}",
-                 f"r pc=${runtime(GHIDRA_TITLE_BCONIN_SKIP):x}"),
+        anchor_breakpoint(runtime(GHIDRA_AFTER_INIT_GAME), FIRST_FRAME,
+                          action("RNG.INI", f"w l ${runtime(GHIDRA_RNG_PTR):x} "
+                                            f"${runtime(rng_park):x}")),
+        anchor_breakpoint(runtime(GHIDRA_TITLE_BCONSTAT), FIRST_FRAME,
+                          action("STAT.INI", "r d0=$ff")),
+        anchor_breakpoint(runtime(GHIDRA_TITLE_BCONIN), FIRST_FRAME,
+                          action("KEY.INI", f"r d0=${c_define('KEY_ONE_PLAYER'):x}",
+                                 f"r pc=${runtime(GHIDRA_TITLE_BCONIN_SKIP):x}")),
     ]
     for index, frame in enumerate(samples, 1):
-        count = "" if frame == 1 else f":{frame} "
-        lines.append(f"b pc = ${runtime(GHIDRA_POLL_QUIT_KEY):x} {count}:once :quiet "
-                     + action(f"F{index}.INI",
-                              f"savebin {script_dir / ('OPAL%d.BIN' % index)} "
-                              f"${ST_PALETTE_REGS:x} {PALETTE_BYTES}",
-                              f"savebin {script_dir / ('OFRAME%d.BIN' % index)} "
-                              f"${screen:x} {SCREEN_BYTES}"))
+        at_anchor = [f"savebin {script_dir / ('OPAL%d.BIN' % index)} "
+                     f"${ST_PALETTE_REGS:x} {PALETTE_BYTES}",
+                     f"savebin {script_dir / ('OFRAME%d.BIN' % index)} ${screen:x} {SCREEN_BYTES}"]
+        # With a capture directory the anchor's memory dump is chained AHEAD of the capture in one
+        # action file rather than given a breakpoint of its own — see one_breakpoint_per_anchor.
+        run_here = (action(f"F{index}.INI", *at_anchor) if capture_dir is None else
+                    f":file {write_capture_chain(capture_dir, THEIR_TAG, index, at_anchor)}")
+        lines.append(anchor_breakpoint(runtime(GHIDRA_POLL_QUIT_KEY), frame, run_here))
     return "\n".join(lines) + "\n"
 
 
@@ -795,137 +902,320 @@ def compare_frames(ours, theirs, samples, label="frame"):
     return ok
 
 
-def compare_displayed(stats, base, screen, frame, rng_park, build="framediff"):
-    """The picture the SHIFTER RENDERS, ours against the shipped binary's, at one matched frame.
+def capture_script(script_dir, entry_pc, frames, tag):
+    """Debugger script: at each frame anchor, STOP, run on to the next VBL, then capture.
 
-    Everything else in this file compares MEMORY, and memory-equal is not display-equal: the video
-    base register's missing low byte can displace the whole picture while every byte we dump stays
-    identical (check_screen_base). This is the only check that looks at what the user looks at. It
-    is one frame rather than six because it costs two extra boots and the failure it catches is a
-    CONSTANT displacement — visible at any frame or none. That frame is a STATIC one (see
-    SCREENSHOT_FRAME) so the capture does not depend on where the raster happens to be.
+    STOP-THEN-SHOOT is what makes a MOVING frame comparable. `screenshot` renders the emulator's
+    display surface, which is built scanline by scanline, so a capture taken where the anchor happens
+    to fire mixes that frame with the one before — deterministic only if the picture is static.
+    Breaking at the anchor and then setting `b VBL > VBL` (Hatari replaces the right-hand side with
+    the expression's CURRENT value, so this reads "the next vblank") holds the machine until a frame
+    boundary, where the surface holds one completed frame. That removes the MIXING at every depth —
+    but not the frame-skipping underneath it, so the rendered compare still only asserts where the
+    result is reproducible on both sides (RENDER_ANCHORS). The VECTOR below is taken at every anchor.
 
-    Both sides are photographed by the same emulator through the same video path, so the PNGs are
-    byte-comparable. THE FRAME ANCHOR IS DELIBERATELY NOT LOAD-BEARING HERE: SCREENSHOT_FRAME is one
-    where the picture is CONSTANT, so an anchor landing anywhere in roughly [3, 109] gives the same
-    photograph (measured: frames 30, 60 and 100 produce the identical PNG). That is a property this
-    check wants — it is looking for a constant displacement, and it must not be able to fail because
-    two runs sat at different raster positions."""
-    print("--- the displayed picture, both sides photographed at frame", frame)
-    mine, our_proc = our_screenshot(stats, frame, build)
-    ok = check_exit(our_proc)
-    with tempfile.TemporaryDirectory() as tmp:
-        script_dir = Path(tmp)
-        entry = base + GHIDRA_POLL_QUIT_KEY - IMAGE_LOAD_BASE
-        _, _, _, their_proc = run(
-            ORIGINAL_PRG, {"HIGH.SCO": SHIPPED_HISCORE.read_bytes()},
-            parse=(original_frame_script(script_dir, base, screen, [], rng_park)
-                   + screenshot_script(script_dir, entry, frame, "THEIRSHOT")),
-            run_vbls=FRAMEDIFF_RUN_VBLS, debug_continues=DEBUG_CONTINUE_SLACK + 4)
-        ok &= check_exit(their_proc)
-        shot = script_dir / "THEIRSHOT.png"
-        if not shot.exists():
-            raise RuntimeError("no screenshot from the shipped binary")
-        theirs = shot.read_bytes()
-    if mine == theirs:
-        print(f"  rendered frame {frame}: IDENTICAL ({len(mine)} bytes of PNG, same renderer both sides)")
-        return ok
-    del ok
-    print(f"  rendered frame {frame}: DIFFERS — ours {len(mine)} bytes, shipped {len(theirs)}. "
-          f"The memory compares above passed, so this is a DISPLAY fault: video base, resolution "
-          f"or palette latch, not the drawing.")
-    return False
+    At that boundary it takes the whole HARDWARE-STATE VECTOR as well as the picture: the shifter's
+    pens and resolution by `savebin`, and the video base and YM-2149 register file through the
+    debugger's `info` (see hardware_vector for what each of those really is). `echo` marks each
+    block so one run's stdout can be split per anchor."""
+    lines = [anchor_breakpoint(entry_pc, frame,
+                               f":file {write_capture_chain(script_dir, tag, index, [])}")
+             for index, frame in enumerate(frames, 1)]
+    return "\n".join(lines) + "\n"
 
 
-def framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens):
-    """Two in-mode controls, because a compare that cannot fail proves nothing — and a third that
-    has to be its own build (see the end of this docstring).
+def write_capture_chain(script_dir, tag, index, at_anchor):
+    """Write one anchor's action files and return the path of the first.
+
+    `at_anchor` runs where the anchor fires; the rest runs one vblank later. ONE breakpoint per
+    anchor per side, never two: twelve breakpoints on the same PC (a memory set and a capture set)
+    interleaved their hit counters and the captures fired at the wrong frames — the shipped side's
+    pictures came back from a shallower frame than the memory dump beside them."""
+    def shot(suffix):
+        return capture_path(script_dir, tag, index, suffix)
+
+    capture = script_dir / f"{tag}CAP{index}.INI"
+    capture.write_text(
+        f"echo {vector_marker(tag, index)}\n"
+        f"info video\n"
+        f"info ym\n"
+        f"savebin {shot(PENS_SUFFIX)} ${ST_PALETTE_REGS:x} {PALETTE_BYTES}\n"
+        f"savebin {shot(RESOLUTION_SUFFIX)} ${ST_RESOLUTION_REG:x} {ST_RESOLUTION_BYTES}\n"
+        f"screenshot {shot(PICTURE_SUFFIX)}\n"
+        "cont\n")
+    at_vbl = script_dir / f"{tag}VBL{index}.INI"
+    at_vbl.write_text("".join(line + "\n" for line in at_anchor)
+                      + f"b VBL > VBL :once :quiet :file {capture}\ncont\n")
+    return at_vbl
+
+
+def framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens, their_vectors,
+                       our_dir):
+    """Two in-mode controls, because a compare that cannot fail proves nothing — and two more that
+    have to be their own builds (framediff-fault, framediff-skew).
 
     DETERMINISM — the shipped side is run a second time with the identical script and must produce
-    identical dumps. It is the side with all the machinery (a discovered load base, four kinds of
-    debugger breakpoint, a skipped trap), so it is the side whose repeatability is worth asserting.
-
-    AND WHAT THESE TWO CANNOT DO IS EXERCISE THE PALETTE. The game's pens are one constant across
-    all six anchors, so a mis-anchor moves the bitplanes and leaves the colours exactly where they
-    were: the palette half of the comparison is six repetitions of one measurement. Its control is a
-    separate build — `framediff-fault`, which corrupts a pen on the way to the hardware — and its
-    limit is stated in the README: this compares the palette AT the anchors, so a shim that had the
-    pens right at every sampled frame and wrong in between would pass. That is precisely the shape
-    of a flashing pen.
+    identical dumps, pens AND hardware vectors. It is the side with all the machinery (a discovered
+    load base, four kinds of debugger breakpoint, a skipped trap), so it is the side whose
+    repeatability is worth asserting.
 
     SENSITIVITY — the shipped side is re-run ANCHORED ONE FRAME LATE and the comparison must FAIL.
-    This is a real injected fault, not a rearrangement of the numbers already in hand: an earlier
-    version compared ours[early] against theirs[late] and called that sensitivity, which is a
-    theorem once the main compare has passed (theirs[late] == ours[late]) — measured, it stayed
-    green while the main compare correctly failed. It is also deliberately not the RNG pin, which
-    perturbs nothing at these depths (see the README): that is a fact about the samples, not about
-    the compare."""
+    This is a real injected fault, not a rearrangement of numbers already in hand: an earlier version
+    compared ours[early] against theirs[late] and called that sensitivity, which is a theorem once
+    the main compare has passed — measured, it stayed green while the main compare correctly failed.
+    IT EXERCISES THE RENDERED PICTURE TOO, but only where that compare asserts at all: stop-then-shoot
+    made a vblank-boundary capture reproducible, and RENDER_ANCHORS explains why the assertion is
+    still limited to frame 1. It does NOT exercise the hardware vector — a mis-anchored run writes
+    the same pens and the same YM registers, so there is nothing there for a frame shift to move.
+    So the claim printed on success is exactly the two surfaces it checked, the bitplanes at every
+    sample and the picture at the one frame it covers — not the broader one it would be tempting
+    to make. The vector's own sensitivity control is the separate framediff-fault build."""
     print("--- control 1: determinism, the shipped side run twice")
-    again, again_pens, _ = run_original_frames(base, screen, samples, rng_park)
-    ok = compare_frames(again, theirs, samples, label="rerun frame")
-    ok &= compare_palettes(again_pens, their_pens, samples)
+    with tempfile.TemporaryDirectory() as again_tmp:
+        again, again_pens, again_vectors, _ = run_original_frames(
+            base, screen, samples, rng_park, keep=Path(again_tmp))
+        ok = compare_frames(again, theirs, samples, label="rerun frame")
+        ok &= compare_palettes(again_pens, their_pens, samples)
+        # The vector is a surface like any other, so its reproducibility is asserted too — without
+        # this the largest thing this change set adds would have no determinism control at all.
+        ok &= compare_vectors(again_vectors, their_vectors, samples)
     if not ok:
         print("FAIL: the shipped side is not reproducible — the pins do not fully determine the run")
 
     print("--- control 2: sensitivity, the shipped side deliberately MIS-ANCHORED by one frame")
     shifted = [frame + 1 for frame in samples]
-    late, _, _ = run_original_frames(base, screen, shifted, rng_park)
-    # Deliberately no palette comparison here: see the docstring. A mis-anchor cannot move a
-    # palette that does not change between the frames being confused.
-    print("    (the comparison below MUST fail; every sample depth was chosen to have a moving "
-          "neighbour, so all of them should)")
-    mis = compare_frames(ours, {frame: late[frame + 1] for frame in samples}, samples,
-                         label="mis-anchored")
-    if mis:
-        print("FAIL: the mode still passes with the shipped side a frame out — the anchor is not "
-              "anchoring and the equality above means nothing")
+    with tempfile.TemporaryDirectory() as late_tmp:
+        late_dir = Path(late_tmp)
+        late, _, _, _ = run_original_frames(base, screen, shifted, rng_park, keep=late_dir)
+        print(f"    (both MUST fail: every depth has a moving neighbour, and the rendered compare "
+              f"covers frame(s) {list(RENDER_ANCHORS)})")
+        mis_frames = compare_frames(ours, {frame: late[frame + 1] for frame in samples}, samples,
+                                    label="mis-anchored")
+        mis_shots = compare_shots(our_dir, late_dir, samples)
+    if mis_frames or mis_shots:
+        print("FAIL: a one-frame mis-anchor is not detected by "
+              + ("the bitplanes " if mis_frames else "")
+              + ("the rendered picture" if mis_shots else "")
+              + " — the anchor is not anchoring")
         return False
-    print("  control 2 passed: a one-frame mis-anchor is detected at every sample")
+    print(f"  control 2 passed: a one-frame mis-anchor is caught by the bitplanes at every sample "
+          f"and by the rendered picture at frame(s) {list(RENDER_ANCHORS)}")
     return ok
 
 
-def screenshot_script(script_dir, entry_pc, frame, name):
-    """A debugger script that photographs the SCREEN at a frame anchor.
-
-    `screenshot` renders through the emulator's own video path, so what it captures is what the
-    shifter is displaying — the only artefact in this whole project that is not a memory dump."""
-    action = script_dir / f"{name}.INI"
-    action.write_text(f"screenshot {script_dir / name}.png\n")
-    count = "" if frame == 1 else f":{frame} "
-    return f"b pc = ${entry_pc:x} {count}:once :quiet :file {action}\n"
+# The `echo` line that separates one anchor's `info` output from the next, and the pattern that
+# finds ANY anchor's. Writer and reader both build from these: the terminating '.' was once added to
+# the reader alone, and because `VECTOR-THEIR-1` no longer matched what the writer echoed, every
+# framediff mode died at the first anchor. One definition, no divergence.
+VECTOR_MARKER_PREFIX, VECTOR_MARKER_END = "VECTOR-", "."
+VECTOR_MARKER_RE = VECTOR_MARKER_PREFIX + r"[A-Z]+-\d+" + re.escape(VECTOR_MARKER_END)
 
 
-def our_screenshot(stats, frame, build="framediff"):
-    """Boot our build again, anchored on OUR poll_quit_key, and photograph frame `frame`.
+def vector_marker(tag, index):
+    """One anchor's vector marker. The terminator keeps `VECTOR-OUR-1` from matching `…-10`."""
+    return f"{VECTOR_MARKER_PREFIX}{tag}-{index}{VECTOR_MARKER_END}"
+
+
+def capture_path(capture_dir, tag, index, suffix):
+    """Where one anchor's capture of `suffix` lives. Same reason as vector_marker: the debugger
+    script that WRITES these and the compare that READS them are far apart, so they share the one
+    spelling instead of each carrying their own."""
+    return capture_dir / f"{tag}{index}.{suffix}"
+
+
+def read_capture(capture_dir, tag, index, suffix, frame):
+    """One capture artefact, or a failure that names the anchor rather than the filename.
+
+    The most likely failure of the whole capture path is an anchor that never fires or a chain that
+    never runs, and its symptom is a missing file. A bare FileNotFoundError points at a temp path;
+    this points at the anchor. (The guard is the one the deleted our_screenshot() carried — it was
+    lost by deleting the function that held it rather than by moving it.)"""
+    path = capture_path(capture_dir, tag, index, suffix)
+    if not path.exists():
+        raise RuntimeError(f"no {suffix} capture from the {tag} side at frame {frame} (anchor "
+                           f"{index}) — the anchor never fired or its capture chain did not run")
+    return path.read_bytes()
+
+
+def hardware_vector(stdout, pens_dir, tag, index, frame):
+    """One anchor's HARDWARE-STATE VECTOR, as a dict of named registers.
+
+    WHAT IS HONESTLY CAPTURABLE, and what each entry really is:
+      * the 16 shifter PENS and the RESOLUTION register are read out of I/O space by `savebin` —
+        genuine reads of the emulated hardware;
+      * the VIDEO BASE comes from `info video`, i.e. the address the shifter is fetching from —
+        which is the truncated one when the base is misaligned, and that is the point;
+      * the 16 YM-2149 registers come from `info ym`. This one is NOT a hardware read and must not
+        be described as one: the PSG's register file is not readable through $ffff8800 without
+        selecting a register first, which is itself a write with side effects. `info ym` reports
+        HATARI'S MODEL of the chip — the values it has been written. That is the honest capture, and
+        it is the right one for a differential: both sides are measured the same way, so a register
+        one program sets and the other does not still shows up. What it cannot witness is anything
+        the real chip would do that the model does not.
+    """
+    # The body is CUT AT THE NEXT MARKER. Without that cut it ran to the end of the whole run,
+    # `re.findall` over it collected every LATER anchor's `info ym` block as well, and the assignment
+    # loop left every anchor holding the LAST one's registers — sixteen of the compared registers
+    # were one measurement repeated six times, exactly the vacuity this surface was added to remove.
+    block = stdout.split(vector_marker(tag, index), 1)
+    if len(block) < 2:
+        raise RuntimeError(f"no hardware-state vector for anchor {index} ({tag}) — the capture "
+                           f"breakpoint never fired")
+    body = re.split(VECTOR_MARKER_RE, block[1], maxsplit=1)[0]
+    vector = {}
+    base = re.search(r"Video base\s*:\s*(0x[0-9a-fA-F]+)", body)
+    if base:
+        # Kept for reporting, NOT compared: the two sides legitimately draw at different addresses
+        # (ours inside the image, the shipped binary at its own Physbase). What matters about the
+        # base is per-side — that it is aligned and that the hardware agrees with what was asked —
+        # and check_screen_base asserts exactly that.
+        vector["video_base"] = int(base.group(1), 16)
+    for name, pattern in (("refresh_hz", r"Refresh rate\s*:\s*(\d+)"),
+                          ("v_overscan", r"V-overscan\s*:\s*(\S+)")):
+        found = re.search(pattern, body)
+        if found:
+            vector[name] = found.group(1)
+    for reg, value in re.findall(r"Reg \$([0-9A-F]{2}) : \$([0-9A-F]{2})", body):
+        vector[f"ym{int(reg, 16):02d}"] = int(value, 16)
+    for pen, word in enumerate(pen_words(read_capture(pens_dir, tag, index, PENS_SUFFIX, frame))):
+        vector[f"pen{pen:02d}"] = word
+    vector["resolution"] = int.from_bytes(
+        read_capture(pens_dir, tag, index, RESOLUTION_SUFFIX, frame), "big")
+    return vector
+
+
+def as_hex(value):
+    """Register values in hex, to read against the palette surface beside them; absent stays None."""
+    return f"{value:#x}" if isinstance(value, int) else repr(value)
+
+
+def compare_vectors(ours, theirs, samples):
+    """Diff the hardware-state vector like memory: a divergence names the register.
+
+    This is the surface the harness had no compare for at all — the palette lived here, and so does
+    every YM-2149 register the game sets. What is in it, and how each entry was obtained:
+
+      * pen00..pen15 and `resolution` — REAL READS of I/O space ($ffff8240.., $ffff8260) by the
+        debugger's `savebin`, masked to the three bits per gun the ST implements (pen_words);
+      * `refresh_hz`, `v_overscan` — the emulator's view of the video timing, from `info video`;
+      * ym00..ym15 — HATARI'S MODEL of the PSG, from `info ym`, NOT a hardware read. The register
+        file cannot be read through $ffff8800 without first writing a select, which has side
+        effects, so there is no honest read to take. Both sides are measured the same way, so a
+        register one program sets and the other does not still shows up; what this cannot witness is
+        anything the real chip would do that the model does not.
+      * `video_base` — REPORTED, NOT COMPARED (VECTOR_REPORT_ONLY is what excludes it). The two
+        sides legitimately draw at different addresses: ours inside the image, the shipped binary at
+        its own Physbase. The base's correctness is a per-side property — aligned, and agreeing with
+        what was asked of Setscreen — and check_screen_base asserts exactly that.
+
+    WHAT THE SUITE PINS, EXACTLY. `framediff-fault` corrupts ONE pen, so the standing sensitivity
+    control covers the shifter half and pen05 of it. The YM half was established by a one-off
+    MUTATION rather than by a build kept in the suite: a Giaccess write injected after start_ikbd
+    made the vector DIVERGE at all six anchors while frames, palette and the rendered picture stayed
+    green. Worth knowing when reading a green here — the YM registers are compared every run, but
+    nothing in the suite re-proves each run that they could go red."""
+    ok = True
+    for frame in samples:
+        mine, shipped = ours[frame], theirs[frame]
+        # The UNION of both sides' names: iterating the shipped side alone would never notice a
+        # register present in ours and missing from theirs.
+        names = sorted((set(mine) | set(shipped)) - VECTOR_REPORT_ONLY)
+        # A FLOOR on the compared set, because this whole surface can go quiet the way check_exit
+        # did: if Hatari's `info` wording changes, every regex misses, BOTH sides shrink to the
+        # savebin-derived entries and the compare prints IDENTICAL over a stump. The count is what
+        # the parsers are expected to yield, so a silently degraded vector is a red.
+        if len(names) < VECTOR_REGISTERS:
+            print(f"  hw vector {frame:<4} DEGRADED: {len(names)} registers compared, expected "
+                  f"{VECTOR_REGISTERS} — a capture or a parser stopped yielding, so this surface "
+                  f"is no longer comparing what it claims")
+            ok = False
+            continue
+        wrong = sorted(name for name in names if mine.get(name) != shipped.get(name))
+        if not wrong:
+            print(f"  hw vector {frame:<4} IDENTICAL ({len(names)} registers)")
+            continue
+        ok = False
+        print(f"  hw vector {frame:<4} DIVERGES on {len(wrong)} register(s):")
+        for name in wrong[:8]:
+            print(f"      {name}: shipped {as_hex(shipped.get(name))}, ours {as_hex(mine.get(name))}")
+    return ok
+
+
+# Which anchors the RENDERED compare asserts on. Not all of them, and the reason is measured rather
+# than assumed: stop-then-shoot fixed the scanline MIXING (a capture now happens at a vblank
+# boundary, so frame 1 matches byte for byte where before only a static frame could), but a second
+# effect remains — Hatari does not RENDER every frame under `--fast-forward`, and `screenshot` grabs
+# the rendered surface. Our side's captures are reproducible; the SHIPPED side's, whose run carries
+# far more debugger stops, are not: its deep-anchor PNGs came back at 3724 / 3869 / 3890 / 3933
+# bytes across runs for the same anchor. `--frameskips 0` did not settle it and turning fast-forward
+# off around each capture made the run take longer than the whole suite. Asserting on those anchors
+# would be asserting on noise, so the compare stays where it is deterministic and the rest is an
+# open blocker recorded in the README rather than a green that means nothing.
+# FRAME NUMBERS, matched against FRAME_SAMPLES' values — not indices into it.
+RENDER_ANCHORS = (1,)
+
+
+def compare_shots(ours_dir, theirs_dir, samples):
+    """The rendered picture, both sides photographed at a VBL boundary (see RENDER_ANCHORS)."""
+    # A frame in neither list compares nothing, and a loop that compares nothing returns True. That
+    # is how this surface would go quiet if FRAME_SAMPLES were ever retuned to start somewhere other
+    # than frame 1, so the overlap is required to be non-empty rather than merely hoped for.
+    rendered = [frame for frame in samples if frame in RENDER_ANCHORS]
+    if not rendered:
+        raise RuntimeError(f"RENDER_ANCHORS {list(RENDER_ANCHORS)} names no frame in the sample set "
+                           f"{list(samples)} — the rendered compare would assert on nothing and "
+                           f"report success; point it at a frame that is actually captured")
+    ok = True
+    for index, frame in enumerate(samples, 1):
+        if frame not in rendered:
+            continue
+        mine = read_capture(ours_dir, OUR_TAG, index, PICTURE_SUFFIX, frame)
+        shipped = read_capture(theirs_dir, THEIR_TAG, index, PICTURE_SUFFIX, frame)
+        if mine == shipped:
+            print(f"  rendered {frame:<4} IDENTICAL ({len(mine)} bytes of PNG)")
+            continue
+        ok = False
+        print(f"  rendered {frame:<4} DIFFERS — ours {len(mine)} bytes, shipped {len(shipped)}. "
+              f"Memory and the hardware vector are compared above; a divergence only here is the "
+              f"display path itself.")
+    return ok
+
+
+def our_captures(stats, samples, build, keep):
+    """Boot our build again under the debugger and capture every anchor's vector and picture.
 
     The anchor address is the one the PREVIOUS run of this same binary reported about itself
-    (`poll_quit_key_pc` in STATS.BIN), not one read out of build/joust.elf. That ELF is overwritten
-    by every build while the per-mode .PRGs persist, so it is not necessarily the running program's:
+    (`poll_quit_key_pc` in STATS.BIN), not one read out of build/joust.elf: that ELF is overwritten
+    by every build while the per-mode .PRGs persist, so it is not necessarily the running program's —
     a stale one once supplied an anchor four bytes out and the mode went green on the wrong
     breakpoint. A binary reporting its own addresses cannot be the wrong binary."""
-    with tempfile.TemporaryDirectory() as tmp:
-        script_dir = Path(tmp)
-        entry = stats["poll_quit_key_pc"]
-        _, _, _, proc = run(prg_for(build), drive_files(),
-                            parse=screenshot_script(script_dir, entry, frame, "OURSHOT"),
-                            debug_continues=DEBUG_CONTINUE_SLACK)
-        shot = script_dir / "OURSHOT.png"
-        if not shot.exists():
-            raise RuntimeError(f"no screenshot from our side at frame {frame} — "
-                               f"the anchor {entry:#x} (load base {base:#x}) is wrong")
-        return shot.read_bytes(), proc
+    script = capture_script(keep, stats["poll_quit_key_pc"], samples, OUR_TAG)
+    _, _, _, proc = run(prg_for(build), drive_files(), parse=script,
+                        debug_continues=STOPS_PER_ANCHOR * len(samples) + DEBUG_CONTINUE_SLACK,
+                        render=True)
+    vectors = {frame: hardware_vector(proc.stdout, keep, OUR_TAG, index, frame)
+               for index, frame in enumerate(samples, 1)}
+    return vectors, proc
 
 
-def run_original_frames(base, screen, samples, rng_park):
-    """Boot the SHIPPED binary pinned and anchored, and return its framebuffer per sample frame."""
+def run_original_frames(base, screen, samples, rng_park, keep=None):
+    """Boot the SHIPPED binary pinned and anchored, and return its framebuffer per sample frame.
+
+    With `keep`, it also captures the hardware-state vector and a stop-then-shoot screenshot at every
+    anchor, into that directory, and returns the vectors alongside."""
     with tempfile.TemporaryDirectory() as tmp:
         script_dir = Path(tmp)
-        script = original_frame_script(script_dir, base, screen, samples, rng_park)
+        script = original_frame_script(script_dir, base, screen, samples, rng_park,
+                                       capture_dir=keep)
         produced, _, _, proc = run(ORIGINAL_PRG, {"HIGH.SCO": SHIPPED_HISCORE.read_bytes()},
                                    parse=script, run_vbls=FRAMEDIFF_RUN_VBLS,
-                                   # one `c` per expected stop: three pins plus one per sample,
-                                   # and slack for a debugger entry we did not schedule
-                                   debug_continues=len(samples) + DEBUG_CONTINUE_SLACK)
+                                   # STOPS_PER_ANCHOR per anchor as everywhere, plus a whole extra
+                                   # anchor's worth to cover the three one-shot pins this side sets
+                                   # (RNG cursor, Bconstat, Bconin) and any debugger entry we did
+                                   # not schedule. Measured: 26 provided against ~12 prompt reads.
+                                   debug_continues=(STOPS_PER_ANCHOR + 1) * len(samples)
+                                                   + DEBUG_CONTINUE_SLACK,
+                                   render=True)
         # savebin writes to HOST paths, so the dumps land beside the script, not on the drive.
         frames, palettes = {}, {}
         for index in range(1, len(samples) + 1):
@@ -939,20 +1229,42 @@ def run_original_frames(base, screen, samples, rng_park):
                 raise RuntimeError(f"the shipped binary produced no palette dump for frame "
                                    f"{samples[index-1]} — savebin of the shifter failed")
             palettes[samples[index - 1]] = pens.read_bytes()
-        return frames, palettes, proc
+        vectors = ({frame: hardware_vector(proc.stdout, keep, THEIR_TAG, index, frame)
+                    for index, frame in enumerate(samples, 1)} if keep is not None else None)
+        return frames, palettes, vectors, proc
 
 
 # Which checks each negative-control build MUST fail, and which it must still pass. Naming both is
 # the point: a control that fails for the wrong reason proves nothing about the check it is for.
 INJECTED_FAULTS = {
-    "palette": {"fail": ("palette",), "pass": ("boot", "bitplanes")},
-    "display": {"fail": ("boot", "display"), "pass": ("bitplanes", "palette")},
+    # A corrupted pen is a PALETTE fault: it must trip the pen compare, the hardware vector (which
+    # carries the same pens read a different way) and the rendered picture — and must leave the
+    # bitplanes alone, because the drawing is untouched.
+    # NOT "display": the rendered compare only asserts at frame 1 (RENDER_ANCHORS), and pen 5 does
+    # not appear in that frame's picture — measured, the PNGs match with the pen corrupted. Listing
+    # it would make this control fail for a reason that is about coverage, not about the fault.
+    "palette": {"fail": ("palette", "vector"), "pass": ("boot", "bitplanes", "display")},
+    # A misaligned screen is a DISPLAY fault: the boot assertion catches it, the picture differs,
+    # and every memory surface still agrees. The hardware vector agrees too — the shifter's
+    # registers are right; it is the base it fetches from that is not.
+    # "vector" PASSES here and is listed rather than omitted: the shifter's registers are right, it
+    # is the base the shifter fetches FROM that is not, and an unlisted check would be silently
+    # unasserted (see report_injected_fault's totality check).
+    "display": {"fail": ("boot", "display"), "pass": ("bitplanes", "palette", "vector")},
 }
 
 
 def report_injected_fault(kind, checks):
     """A negative control passes only if the RIGHT checks failed and the others did not."""
     expected = INJECTED_FAULTS[kind]
+    # TOTAL over the checks, because `checks.get(name, True)` below treats anything unlisted as a
+    # pass: a sixth surface added later would be silently unasserted by both controls, and a typo'd
+    # name would read as a pass. Adding a check now forces both tables to classify it.
+    classified = set(expected["fail"]) | set(expected["pass"])
+    if classified != set(checks):
+        raise RuntimeError(f"the {kind} control classifies {sorted(classified)} but the run "
+                           f"produced {sorted(checks)} — every check must be listed as one this "
+                           f"fault trips or one it must leave alone, or it is asserted by neither")
     ok = True
     for name in expected["fail"]:
         if checks.get(name, True):
@@ -1005,22 +1317,31 @@ def mode_framediff(build="framediff", expect_fail=None):
     screen = int.from_bytes(ram[TOS_V_BAS_AD:TOS_V_BAS_AD + 4], "big")
     print(f"shipped binary loaded at {base:#x}, drawing at {screen:#x}")
 
-    theirs, their_pens, proc = run_original_frames(base, screen, samples, rng_park)
-    ok &= check_exit(proc)
-    # Each check's verdict is kept SEPARATELY, because a negative control has to be caught by the
-    # RIGHT one: ORing them together and inverting would let `framediff-skew` pass on its boot-time
-    # alignment failure while the display compare it exists to exercise was blind.
-    checks = {"boot": ok,
-              "bitplanes": compare_frames(ours, theirs, samples),
-              "palette": compare_palettes(our_pens, their_pens, samples)}
-    if expect_fail != "palette":     # the pen fault is invisible in a screenshot of frame 60
-        checks["display"] = compare_displayed(stats, base, screen, SCREENSHOT_FRAME, rng_park, build)
+    with tempfile.TemporaryDirectory() as their_tmp, tempfile.TemporaryDirectory() as our_tmp:
+        their_dir, our_dir = Path(their_tmp), Path(our_tmp)
+        theirs, their_pens, their_vectors, proc = run_original_frames(
+            base, screen, samples, rng_park, keep=their_dir)
+        ok &= check_exit(proc)
 
-    if expect_fail:
-        return report_injected_fault(expect_fail, checks), ours[samples[-1]]
+        print("--- our side again, under the debugger: hardware vector and picture at every anchor")
+        our_vectors, our_proc = our_captures(stats, samples, build, our_dir)
+        ok &= check_exit(our_proc)
 
-    ok = all(checks.values())
-    ok &= framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens)
+        # Each check's verdict is kept SEPARATELY, because a negative control has to be caught by
+        # the RIGHT one: ORing them together and inverting would let `framediff-skew` pass on its
+        # boot-time alignment failure while the display compare it exists to exercise was blind.
+        checks = {"boot": ok,
+                  "bitplanes": compare_frames(ours, theirs, samples),
+                  "palette": compare_palettes(our_pens, their_pens, samples),
+                  "vector": compare_vectors(our_vectors, their_vectors, samples),
+                  "display": compare_shots(our_dir, their_dir, samples)}
+
+        if expect_fail:
+            return report_injected_fault(expect_fail, checks), ours[samples[-1]]
+
+        ok = all(checks.values())
+        ok &= framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens,
+                                 their_vectors, our_dir)
     return ok, ours[samples[-1]]
 
 

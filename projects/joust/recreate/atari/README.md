@@ -18,7 +18,7 @@ has no host `render/` layer for it to sit under: there is no PNG renderer here, 
 | **M3** `HIGH.SCO` | a modified record goes in, the game reads it, the quit path writes it back out through real GEMDOS, and a reboot shows it on the title screen's HIGH SCORE line **and only there** | ✅ `smoke.py hiscore` |
 | **M3** side-by-side | our on-target title framebuffer is **byte-identical** to the shipped binary's, found at the original's own Physbase in a dump of its RAM | ✅ `smoke.py original` |
 | **M4** frame differential | the same equality carried through starting a game and **240 frames of play**: both binaries anchored on one Hatari, and at frames 1, 115, 150, 180, 210 and 240 **both halves of the picture compared** — the 32000 framebuffer bytes *and* the 16 hardware palette pens, read off the shifter on each side — **identical at every one**. Each depth is one where the screen is MOVING (the neighbouring frame differs by 25-287 bytes), so each detects a one-frame mis-anchor | ✅ `smoke.py framediff`, negative control `framediff-fault` |
-| **M5** displayed picture | the video base is 256-aligned at run time; every smoke mode that dumps stats asserts the alignment **and** the hardware read-back, and once per `framediff` the **rendered PNG** of both binaries is byte-identical — the only check that sees what the user sees | ✅ `smoke.py framediff`, control `framediff-skew` |
+| **M5** displayed picture | the video base is 256-aligned at run time; every smoke mode that dumps stats asserts the alignment **and** the hardware read-back; `framediff` diffs a **35-register hardware-state vector** at every anchor and the **rendered PNG** at frame 1 (the bound is measured — see §11) | ✅ `smoke.py framediff`, controls `framediff-fault` / `framediff-skew` |
 | **M3** joystick | the IKBD path is live — ~1000 replies filed per run, and every wait loop in the game ends on one. Steering is a GUI check: headless Hatari has no stick to press (§11) | partial, by construction |
 
 Verified on **EmuTOS** (Hatari's bundled `tos.img`) and **TOS 1.04**, which produce byte-identical
@@ -27,7 +27,27 @@ Hatari GEMDOS drive (not one beacon appears) — a Hatari/TOS hard-disk limitati
 this build.
 
 Every smoke **runs Hatari to the end of `--run-vbls` and asserts a clean exit** rather than killing
-the emulator once the dump lands. That is not tidiness: the program `Pterm`s long before the
+the emulator once the dump lands. That assertion has two halves, and only one of them was working.
+Hatari writes **all** of its logging — and all debugger output — to **stderr**, while every parser
+here read `stdout`, so `check_exit`'s **line scan** for bus errors and halts had been reading an
+empty string since M1. Its **exit-status** test was live throughout, and it is what caught the
+hand-back bug in §7: re-run against the old `smoke.py`, that negative control still fails, on
+Hatari's status 1.
+
+So the merge did not rescue a dead check; it added the sharper class the status cannot see — **a
+bus or address error Hatari logs and survives, finishing `--run-vbls` with status 0.** Measured on a
+stray write issued after teardown: the old code printed `clean exit` and passed, this one reports
+`FAIL: unhealthy machine after the program exited`. The streams are merged now, and a run whose
+captured output does not contain Hatari's own banner raises instead of being parsed, so the scan
+cannot go quiet again — and the same merge is what makes the hardware-state vector readable at all,
+since the debugger's `info` output arrives on that stream too.
+
+A related precision, because the check that reads this stream is only as good as its allowlist:
+faults are excused by the **exact PC of TOS's memory-sizing probe** (EmuTOS `PC=$e00d98`, TOS 1.04
+`PC=$fc0174`), not by "the PC is in ROM". A stale vector sends the CPU into ROM code, so a range
+test over ROM would excuse the very class this check is for.
+
+Running to the end rather than killing the emulator is not tidiness either: the program `Pterm`s long before the
 emulator stops, so everything after it is TOS running on its own with whatever the shim left hooked,
 and an incomplete hand-back is only visible *there* (see "The bugs found on target"). The
 assertion is Hatari's own exit status plus its log, filtered for faults whose PC is outside the TOS
@@ -389,6 +409,22 @@ repetitions of one measurement. A shim that had every pen right at each sampled 
 between would pass, and that is exactly the shape of a *flashing* pen. The control that does bite is
 a separate build (below).
 
+**The HARDWARE-STATE VECTOR is compared at every anchor.** Thirty-five registers compared (a
+thirty-sixth, the video base, is captured and printed only), taken from both
+binaries at the same frame anchors and diffed like memory, so a divergence names the register:
+the 16 shifter pens and the resolution register (real `savebin` reads of I/O space), the refresh
+rate and V-overscan, and the 16 YM-2149 registers. That last group comes from the debugger's
+`info ym` and is **Hatari's model of the chip, not a hardware read** — the PSG's file cannot be read
+through `$ffff8800` without a select write, which has side effects, so there is no honest read to
+take; both sides are measured identically, which is what makes the comparison meaningful. The video
+base is **reported, not compared**: the two sides legitimately draw at different addresses, and its
+correctness is the per-side property §12 asserts. The compare has a **floor**: if fewer than the
+expected 35 names come back it reports DEGRADED and fails, so a Hatari whose `info` wording moved
+cannot quietly shrink the vector and keep printing IDENTICAL over a stump — the `check_exit`
+failure mode, pre-empted. Its determinism control is control 1, which now re-runs the shipped side
+and diffs its vectors as well as its memory; its sensitivity control is the `framediff-fault` build.
+Result: `hw vector 1/115/150/180/210/240 IDENTICAL (35 registers)` on both ROMs.
+
 **The picture the shifter RENDERS is compared too, once.** `screenshot` drives the emulator's own
 video path, so what it captures is what the screen shows — the only artefact here that is not a
 memory dump. Both sides are photographed at the same frame anchor and the PNGs byte-compared:
@@ -396,16 +432,35 @@ memory dump. Both sides are photographed at the same frame anchor and the PNGs b
 rather than six, because it costs two extra boots and the fault it catches — a displaced video base
 (§12) — is a *constant* displacement, visible at any frame or none.
 
-Three details make it stable rather than merely green. The frame is one from the **static band**:
-`screenshot` renders the display surface as it is built scanline by scanline, so a capture part-way
-down a *moving* frame mixes two frames and differed run to run before this was pinned. The anchor is
-therefore deliberately **not load-bearing** — frames 30, 60 and 100 give the identical PNG, so an
-anchor landing anywhere in that band is the same photograph. The status bar is turned **off**: it is
-emulator chrome that varies with the ROM and the drive LED, not part of the picture the game draws.
-And the anchor address comes from `STATS.BIN` — the binary reports `poll_quit_key`'s run-time address
-about *itself*, because `build/joust.elf` is overwritten by every build while the per-mode `.PRG`s
-persist, and a stale ELF once supplied an anchor four bytes out and the mode went green on the wrong
-breakpoint.
+It is **stop-then-shoot**: the anchor breakpoint's action file sets `b VBL > VBL :once` (Hatari
+substitutes the expression's current value, so it reads "the next vblank") and the capture happens
+at that frame boundary, where the surface holds one completed frame. Without it a capture lands
+part-way down a frame and mixes two — deterministic only on a static screen.
+
+**It asserts at frame 1 only, and that bound is measured rather than assumed.** Stop-then-shoot
+fixed the mixing, but a second effect remains: Hatari does not *render* every frame under
+`--fast-forward`, and `screenshot` grabs the rendered surface. Our side's captures are reproducible;
+the shipped side's — whose run carries far more debugger stops — are not. Repeating the capture run
+and comparing each anchor against *itself*: **anchor 1 is byte-identical on 5/5 repeats on both
+ROMs**; on EmuTOS **anchors 3, 4 and 5 drift**, and on TOS 1.04 **anchors 3 and 6 drift**. A drifting
+anchor comes back at **3724 / 3869 / 3890 / 3933 bytes** for the *same* anchor across runs.
+`--frameskips 0` narrows the window but does not close it, and turning fast-forward off around
+each capture made one run longer than the whole suite. Which anchors drift is itself ROM-dependent,
+so the bound is drawn where **both** ROMs are reproducible on every repeat rather than where a given
+run happened to agree. Asserting on the rest would be asserting on noise: it stays an open blocker
+rather than a green that means nothing.
+
+Two more details. The status bar is turned **off**: it is emulator chrome that varies with the ROM
+and the drive LED, not part of the picture the game draws. And the anchor address comes from
+`STATS.BIN` — the binary reports `poll_quit_key`'s run-time address about *itself*, because
+`build/joust.elf` is overwritten by every build while the per-mode `.PRG`s persist, and a stale ELF
+once supplied an anchor four bytes out and the mode went green on the wrong breakpoint. Each anchor
+gets exactly **one** breakpoint, whose action file does all of that anchor's work: two breakpoints
+selecting the same hit disturb each other's counters, and the captures fired at shallower frames than
+the dumps beside them. `one_breakpoint_per_anchor()` asserts it — per `(pc, count)`, **not** per PC:
+every sample set is deliberately six breakpoints on the same address told apart by `:<count>`, so a
+per-PC rule would reject the harness's own scripts. It is guarded because that failure looks like a
+flaky picture rather than like a bug.
 
 Its control is `framediff-skew`: the same run with the screen two bytes off its 256-byte boundary.
 It is the sharpest demonstration in this project of what memory comparison cannot see —
