@@ -8,7 +8,8 @@
 #   build.sh quit         -> type '1', play, then Ctrl-C: the reconstruction's quit path, for real
 #   build.sh quittitle    -> Ctrl-C on the title screen instead
 #   build.sh restart      -> type '1', play, R (restart), then Ctrl-C from the new title screen
-#   build.sh framediff    -> pinned run for the frame-by-frame differential against the shipped binary
+#   build.sh framediff       -> pinned run for the frame-by-frame differential vs the shipped binary
+#   build.sh framediff-fault -> the same, one palette pen corrupted: that check's negative control
 #
 # Each writes disk/JOUST.PRG *and* keeps build/JOUST-<mode>.PRG, so a check that needs two builds in
 # sequence (smoke.py hiscore) can have them without rebuilding.
@@ -39,7 +40,7 @@ TITLE_POLLS=8                    # polls to leave for a real key before typing o
 PLAY_FRAMES=60                   # ...and frames of play before the next scripted key
 
 # The frame differential's two pins and its sample depths. RNG_PARK is a GHIDRA address inside the
-# 6906-byte relocation-free stretch at 0x1551a — the only kind of place where this build's image and
+# relocation-free stretch at 0x1551a — the only kind of place where this build's image and
 # the shipped binary's memory hold the same bytes (joust_main.c explains why that matters).
 RNG_PARK=0x1551a
 # EVERY sample depth has a MOVING neighbour — frame N differs from N+1 — which is what lets the
@@ -48,7 +49,8 @@ RNG_PARK=0x1551a
 # frame 2 to frame 110 (the rider settles, then nothing moves until the first enemy is on the
 # board), so evenly spaced depths would mostly have sampled the same painted frame.
 FRAME_SAMPLES=1,115,150,180,210,240
-FRAMEDIFF_LAST=241
+FRAMEDIFF_LAST=241               # one past the last sample, so the run ends just after dumping it
+PALETTE_FAULT_PEN=5              # the pen framediff-fault corrupts en route to the shifter
 
 MODE="${1:-play}"
 case "$MODE" in
@@ -64,11 +66,17 @@ case "$MODE" in
   # game starts after exactly one attract pass, as it does on the shipped side when the debugger
   # forces its Bconstat; the RNG cursor is parked where both programs' bytes are identical; and one
   # run dumps every sampled frame. See joust_main.c's "frame differential" section for the physics.
-  framediff) DEF="-DSMOKE -DSMOKE_SCRIPT_KEYS=$KEY_ONE_PLAYER -DSMOKE_SCRIPT_WAIT=1 \
+  framediff|framediff-fault)
+             # framediff-fault is the same build with one pen deliberately corrupted on the way to
+             # the shifter — the negative control for smoke.py framediff's palette compare.
+             FAULT=""
+             [ "$MODE" = framediff-fault ] && FAULT="-DSMOKE_PALETTE_FAULT=$PALETTE_FAULT_PEN"
+             DEF="-DSMOKE -DSMOKE_SCRIPT_KEYS=$KEY_ONE_PLAYER -DSMOKE_SCRIPT_WAIT=1 \
                   -DSMOKE_RNG_PTR=$RNG_PARK -DSMOKE_FRAME_DUMPS=$FRAME_SAMPLES \
-                  -DSMOKE_FRAMES=$FRAMEDIFF_LAST" ;;
+                  -DSMOKE_FRAMES=$FRAMEDIFF_LAST $FAULT" ;;
   play)      DEF="" ;;
-  *) echo "usage: build.sh [title | smoke [frames] | quit | quittitle | restart | framediff]"; exit 2 ;;
+  *) echo "usage: build.sh [title | smoke [frames] | quit | quittitle | restart | framediff |"
+     echo "                 framediff-fault]"; exit 2 ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

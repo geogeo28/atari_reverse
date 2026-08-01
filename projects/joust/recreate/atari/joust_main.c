@@ -72,6 +72,7 @@
 #define SYS_NVBLS        (*(volatile int16_t *)0x454ul)       /* VBL-queue length */
 #define SYS_VBLQUEUE     (*(volatile uint32_t *)0x456ul)      /* -> array of VBL routine pointers */
 #define SYS_COLORPTR     (*(volatile uint32_t *)0x45aul)      /* 16 pens for TOS's VBL to load */
+#define ST_PALETTE_REGS  0xffff8240ul                         /* ...where TOS's VBL loads them TO */
 #define SYS_CONTERM      (*(volatile uint8_t *)0x484ul)       /* TOS: bell / key click / scancode */
 
 /* The IKBD commands the shim issues on the reconstruction's behalf; both bytes are the GAME'S
@@ -214,6 +215,45 @@ void g_dosound(uint8_t *img, uint32_t list_addr) {
  * the RESOLUTION register — with pen 15's 0x0777 in it. TOS 1.04 hung on the spot; EmuTOS survived
  * it, which is exactly the shape of on-target bug docs/on-target-execution.md warns about. */
 static uint32_t palette_source = A_title_palette;
+/* What we last handed TOS. The pusher re-arms _colorptr only when the TABLE has changed.
+ *
+ * WHAT THAT FIXES IS A LATENT CONFLICT, not a wrong colour today: the original owns the palette
+ * hardware between its Setpalette calls, and re-arming every vblank stamped all sixteen pens back
+ * over anything it had done to one. Nothing in the reconstruction issues such a write yet —
+ * flash_hiscore_color computes the name-entry screen's flashing pen and returns it, because XBIOS
+ * Setcolor has no image effect for the differential to hold (../src/score.c) — so this removes the
+ * obstacle to implementing that flash rather than repairing a live break.
+ *
+ * It also brings the two shifter traces to the same shape. Measured with --trace video_color over
+ * the pinned framediff run: ours 6 full palette loads, the shipped binary 4. (Per-vblank re-arming
+ * made ours 773 on that same run. And "the original issues Setpalette at three moments" is true of
+ * its CALL SITES only — left free-running on the attract screen the shipped binary performs 6149
+ * loads in 20000 vblanks, because its attract loop re-issues Setpalette every pass.)
+ *
+ * ONE VBLANK OF LATENCY IS INTRODUCED, and it is invisible only as far as the harness looks: TOS
+ * used to read the game's own table at the vblank after Setpalette, and now reads OUR copy of it one
+ * vblank after the change is noticed. Every place the differential samples has a constant palette,
+ * so nothing shows; a game that changed pens per frame would be a frame behind. */
+static uint16_t pushed_palette[PALETTE_PENS];
+static int palette_pushed;
+
+/* What _colorptr is aimed at. Normally the cache above, verbatim.
+ *
+ * SMOKE_PALETTE_FAULT is smoke.py framediff-fault's negative control: one pen corrupted on the way
+ * to the hardware. It is applied to a SEPARATE buffer rather than to the cache, because corrupting
+ * the cache would make every vblank see a difference and re-arm — quietly turning push-on-change
+ * off, so the control would no longer be "the same run with one pen wrong". */
+#ifdef SMOKE_PALETTE_FAULT
+static uint16_t faulted_palette[PALETTE_PENS];
+
+static const uint16_t *palette_to_push(void) {
+    for (unsigned pen = 0; pen < PALETTE_PENS; pen++) faulted_palette[pen] = pushed_palette[pen];
+    faulted_palette[SMOKE_PALETTE_FAULT] ^= 0x0111u;
+    return faulted_palette;
+}
+#else
+static const uint16_t *palette_to_push(void) { return pushed_palette; }
+#endif
 
 /* Frames the IKBD reply slot has stayed empty. joy_handler chains the next interrogate itself, so
  * this only has to cover a chain that broke (a reply that arrived with the ACIA transmitter busy).
@@ -222,7 +262,21 @@ static uint32_t palette_source = A_title_palette;
 static int ikbd_idle_vbls;
 
 static void vbl_handler(void) {
-    SYS_COLORPTR = (uint32_t)(image + palette_source);
+    const uint8_t *table = image + palette_source;
+    int changed = !palette_pushed;
+    for (unsigned pen = 0; pen < PALETTE_PENS; pen++) {
+        uint16_t word = be16(table + 2u * pen);
+        if (pushed_palette[pen] == word) continue;
+        pushed_palette[pen] = word;
+        changed = 1;
+    }
+    if (changed) {
+        palette_pushed = 1;
+        /* _colorptr is aimed at OUR copy rather than at the image: the two hold the same bytes, but
+         * a buffer of our own is where the fault below can live. TOS reads sixteen words from it on
+         * the next vblank, which is all Setpalette does. */
+        SYS_COLORPTR = (uint32_t)palette_to_push();
+    }
 
     if (be32(image + A_ikbd_packet) != 0) {
         ikbd_idle_vbls = 0;
@@ -450,9 +504,31 @@ static const unsigned long FRAME_DUMPS[] = { SMOKE_FRAME_DUMPS };
 /* The filenames are FRAME1..FRAME9, one digit. */
 _Static_assert(FRAME_DUMP_COUNT <= 9, "SMOKE_FRAME_DUMPS holds at most nine sample frames");
 
+/* The SHIFTER's sixteen pens, read back out of the hardware — not the table we handed TOS. What the
+ * screen actually shows is the only thing worth comparing against the shipped binary: the two sides
+ * reach the registers by different routes (its Setpalette, our _colorptr), and a framebuffer compare
+ * cannot see colour at all. Privileged, so a balanced Super pair, and copied to a plain buffer so
+ * the GEMDOS write that follows happens back in user mode. */
+#define PALETTE_PENS_BYTES (PALETTE_PENS * 2u)
+
+static long dump_hardware_palette(const char *name) {
+    uint16_t pens[PALETTE_PENS];
+    long saved_ssp = Super(0);
+    const volatile uint16_t *shifter = (const volatile uint16_t *)ST_PALETTE_REGS;
+    for (unsigned pen = 0; pen < PALETTE_PENS; pen++) pens[pen] = shifter[pen];
+    Super((void *)(uintptr_t)saved_ssp);
+    return dump_file(name, pens, PALETTE_PENS_BYTES);
+}
+
 static void dump_sampled_frame(void) {
     for (unsigned index = 0; index < FRAME_DUMP_COUNT; index++) {
         if (FRAME_DUMPS[index] != frames) continue;
+        char pal[12] = { 'P', 'A', 'L', (char)('1' + index), '.', 'B', 'I', 'N', 0, 0, 0, 0 };
+        /* Tallied for the same reason the framebuffer's count is: a dump that silently wrote
+         * nothing leaves a file the comparison would read, and a short read compares equal as far
+         * as it goes. */
+        long pal_written = dump_hardware_palette(pal);
+        if (pal_written > 0) frame_bytes_written += (unsigned long)pal_written;
         char name[12] = { 'F', 'R', 'A', 'M', 'E', (char)('1' + index), '.', 'B', 'I', 'N', 0, 0 };
         long written = dump_file(name, image + OS_SCREEN_BASE, SCREEN_BYTES);
         /* Totalled and reported for the same reason hiscore_bytes_written is: a dump that failed or
@@ -633,6 +709,7 @@ static void shim_reset_run_state(void) {
     psg_writes = psg_writes_in_play = 0;
     title_over = 0;
     palette_source = A_title_palette;
+    palette_pushed = 0;          /* the next vblank re-arms, whatever the old table happened to hold */
     ikbd_idle_vbls = 0;
     /* Nothing is pending any more, so the seams go back to two instructions. Leaving this raised
      * would make the restarted init_video pay the ~1.9 M cycles of out-of-line hook calls that

@@ -52,7 +52,8 @@ INPUTS_ONLY = {"JOUST.PRG", "JOUST.IMG", "CMD.INI", "ACT.INI"}   # staged, never
 # `smoke.py restart` against the quit build and the run quits cleanly during play, which reads as
 # "the longjmp restart is broken" instead of "you booted the wrong PRG".
 MODE_BUILD = {"title": "title", "frames": "smoke", "quit": "quit",
-              "quittitle": "quittitle", "restart": "restart", "framediff": "framediff"}
+              "quittitle": "quittitle", "restart": "restart", "framediff": "framediff",
+              "framediff-fault": "framediff-fault"}
 
 
 def prg_for(mode):
@@ -145,6 +146,13 @@ GHIDRA_RNG_PTR = 0x10dfe           # ../include/addrs.h A_rng_ptr
 BASE_SIGNATURE_OFF = 0x55c0
 BASE_SIGNATURE_LEN = 64
 PRG_HEADER = 28             # GEMDOS .PRG header, ahead of the text the signature is taken from
+
+# The ST shifter's sixteen colour registers. `savebin` reads I/O space, so the SHIPPED binary's pens
+# can be read straight off the hardware at a frame anchor — which is the only way to compare colour
+# at all, the palette being off-image on both sides.
+ST_PALETTE_REGS = 0xffff8240
+PALETTE_PENS = 16
+PALETTE_BYTES = PALETTE_PENS * 2
 
 # TOS's ROM probes its own hardware at boot and bus-errors doing it; those are expected and are the
 # only ones allowed. Anything faulting from RAM is ours.
@@ -613,6 +621,8 @@ def original_frame_script(script_dir, base, screen, samples, rng_park):
         count = "" if frame == 1 else f":{frame} "
         lines.append(f"b pc = ${runtime(GHIDRA_POLL_QUIT_KEY):x} {count}:once :quiet "
                      + action(f"F{index}.INI",
+                              f"savebin {script_dir / ('OPAL%d.BIN' % index)} "
+                              f"${ST_PALETTE_REGS:x} {PALETTE_BYTES}",
                               f"savebin {script_dir / ('OFRAME%d.BIN' % index)} "
                               f"${screen:x} {SCREEN_BYTES}"))
     return "\n".join(lines) + "\n"
@@ -664,6 +674,47 @@ def check_rng_window(stats, rng_park):
     return False
 
 
+# The ST implements three bits per gun; the fourth bit of each nibble does not exist. A CPU read of
+# a shifter register returns those bits as whatever was last on the bus, so OUR dump (read by the
+# program) carries noise there while the shipped side's (read by the debugger, straight out of
+# Hatari's register model) does not. That is a measurement asymmetry, not a palette difference, and
+# masking it is the only way to compare the two reads honestly. Everything the ST can display is
+# inside the mask.
+ST_PEN_MASK = 0x0777
+
+
+def pen_words(dump):
+    return [int.from_bytes(dump[i:i + 2], "big") & ST_PEN_MASK for i in range(0, PALETTE_BYTES, 2)]
+
+
+def compare_palettes(ours, theirs, samples):
+    """The sixteen HARDWARE pens, at the same frames as the bitplanes.
+
+    This is the half the frame differential was blind to by construction: a framebuffer compare sees
+    bitplane indices, and the colour those indices resolve to lives in registers neither side's image
+    contains. Both sides are read off the shifter itself — ours by the shim in a Super pair, the
+    shipped binary's by `savebin` at the frame anchor — so what is compared is what the screen shows,
+    not what either program intended."""
+    ok = True
+    for frame in samples:
+        mine, shipped = ours.get(frame), theirs.get(frame)
+        if not mine or not shipped or len(mine) != PALETTE_BYTES or len(shipped) != PALETTE_BYTES:
+            print(f"  palette {frame:<4} UNUSABLE: ours {len(mine or b'')} bytes, "
+                  f"shipped {len(shipped or b'')}, expected {PALETTE_BYTES} each")
+            ok = False
+            continue
+        a, b = pen_words(mine), pen_words(shipped)
+        wrong = [pen for pen in range(PALETTE_PENS) if a[pen] != b[pen]]
+        if not wrong:
+            print(f"  palette {frame:<4} IDENTICAL  {' '.join('%03x' % v for v in b)}")
+            continue
+        ok = False
+        print(f"  palette {frame:<4} DIVERGES on pens {wrong}")
+        print(f"      shipped: {' '.join('%03x' % v for v in b)}")
+        print(f"      ours   : {' '.join('%03x' % v for v in a)}")
+    return ok
+
+
 def compare_frames(ours, theirs, samples, label="frame"):
     """Byte-equality at every sampled frame, reporting the FIRST divergence rather than a count.
 
@@ -691,12 +742,21 @@ def compare_frames(ours, theirs, samples, label="frame"):
     return ok
 
 
-def framediff_controls(base, screen, samples, rng_park, ours, theirs):
-    """Two controls, because a compare that cannot fail proves nothing.
+def framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens):
+    """Two in-mode controls, because a compare that cannot fail proves nothing — and a third that
+    has to be its own build (see the end of this docstring).
 
     DETERMINISM — the shipped side is run a second time with the identical script and must produce
     identical dumps. It is the side with all the machinery (a discovered load base, four kinds of
     debugger breakpoint, a skipped trap), so it is the side whose repeatability is worth asserting.
+
+    AND WHAT THESE TWO CANNOT DO IS EXERCISE THE PALETTE. The game's pens are one constant across
+    all six anchors, so a mis-anchor moves the bitplanes and leaves the colours exactly where they
+    were: the palette half of the comparison is six repetitions of one measurement. Its control is a
+    separate build — `framediff-fault`, which corrupts a pen on the way to the hardware — and its
+    limit is stated in the README: this compares the palette AT the anchors, so a shim that had the
+    pens right at every sampled frame and wrong in between would pass. That is precisely the shape
+    of a flashing pen.
 
     SENSITIVITY — the shipped side is re-run ANCHORED ONE FRAME LATE and the comparison must FAIL.
     This is a real injected fault, not a rearrangement of the numbers already in hand: an earlier
@@ -706,14 +766,17 @@ def framediff_controls(base, screen, samples, rng_park, ours, theirs):
     perturbs nothing at these depths (see the README): that is a fact about the samples, not about
     the compare."""
     print("--- control 1: determinism, the shipped side run twice")
-    again, _ = run_original_frames(base, screen, samples, rng_park)
+    again, again_pens, _ = run_original_frames(base, screen, samples, rng_park)
     ok = compare_frames(again, theirs, samples, label="rerun frame")
+    ok &= compare_palettes(again_pens, their_pens, samples)
     if not ok:
         print("FAIL: the shipped side is not reproducible — the pins do not fully determine the run")
 
     print("--- control 2: sensitivity, the shipped side deliberately MIS-ANCHORED by one frame")
     shifted = [frame + 1 for frame in samples]
-    late, _ = run_original_frames(base, screen, shifted, rng_park)
+    late, _, _ = run_original_frames(base, screen, shifted, rng_park)
+    # Deliberately no palette comparison here: see the docstring. A mis-anchor cannot move a
+    # palette that does not change between the frames being confused.
     print("    (the comparison below MUST fail; every sample depth was chosen to have a moving "
           "neighbour, so all of them should)")
     mis = compare_frames(ours, {frame: late[frame + 1] for frame in samples}, samples,
@@ -737,17 +800,22 @@ def run_original_frames(base, screen, samples, rng_park):
                                    # and a little slack for a debugger entry we did not schedule
                                    debug_continues=len(samples) + 8)
         # savebin writes to HOST paths, so the dumps land beside the script, not on the drive.
-        frames = {}
+        frames, palettes = {}, {}
         for index in range(1, len(samples) + 1):
             dump = script_dir / f"OFRAME{index}.BIN"
             if not dump.exists():
                 raise RuntimeError(f"the shipped binary produced no dump for frame {samples[index-1]}"
                                    f" — an anchor address is wrong or the game never started")
             frames[samples[index - 1]] = dump.read_bytes()
-        return frames, proc
+            pens = script_dir / f"OPAL{index}.BIN"
+            if not pens.exists():
+                raise RuntimeError(f"the shipped binary produced no palette dump for frame "
+                                   f"{samples[index-1]} — savebin of the shifter failed")
+            palettes[samples[index - 1]] = pens.read_bytes()
+        return frames, palettes, proc
 
 
-def mode_framediff():
+def mode_framediff(build="framediff", expect_fail=False):
     """Byte-compare the SHIPPED binary's framebuffer against this build's, frame for frame.
 
     The title screen already matches (mode `original`); this carries it through the start of a game
@@ -765,12 +833,16 @@ def mode_framediff():
     print(f"sample frames {samples}; RNG cursor parked at {rng_park:#x} on both sides")
 
     print("--- ours: one run, every sample")
-    produced, _, _, proc = run(prg_for("framediff"), drive_files())
+    produced, _, _, proc = run(prg_for(build), drive_files())
     ok = check_exit(proc)
-    require(produced, "STATS.BIN", *[f"FRAME{i}.BIN" for i in range(1, len(samples) + 1)])
+    require(produced, "STATS.BIN",
+            *[f"FRAME{i}.BIN" for i in range(1, len(samples) + 1)],
+            *[f"PAL{i}.BIN" for i in range(1, len(samples) + 1)])
     stats = stats_of(produced)
     ours = {frame: produced[f"FRAME{i}.BIN"] for i, frame in enumerate(samples, 1)}
-    ok &= check_stats(stats, {"frame_bytes_written": SCREEN_BYTES * len(samples)})
+    our_pens = {frame: produced[f"PAL{i}.BIN"] for i, frame in enumerate(samples, 1)}
+    ok &= check_stats(stats, {"frame_bytes_written":
+                              (SCREEN_BYTES + PALETTE_BYTES) * len(samples)})
     ok &= check_rng_window(stats, rng_park)
 
     print("--- the shipped binary: load base, then the pinned and anchored run")
@@ -779,10 +851,20 @@ def mode_framediff():
     screen = int.from_bytes(ram[TOS_V_BAS_AD:TOS_V_BAS_AD + 4], "big")
     print(f"shipped binary loaded at {base:#x}, drawing at {screen:#x}")
 
-    theirs, proc = run_original_frames(base, screen, samples, rng_park)
+    theirs, their_pens, proc = run_original_frames(base, screen, samples, rng_park)
     ok &= check_exit(proc)
     ok &= compare_frames(ours, theirs, samples)
-    ok &= framediff_controls(base, screen, samples, rng_park, ours, theirs)
+    ok &= compare_palettes(our_pens, their_pens, samples)
+    if expect_fail:
+        # The negative control build. Its whole job is to be caught, so the verdict is INVERTED and
+        # the two extra shipped-side boots the controls would cost are skipped: a run that is
+        # supposed to fail has nothing to learn from re-running the side that is not at fault.
+        if ok:
+            print("FAIL: the corrupted pen was NOT detected — the palette compare is not comparing")
+        else:
+            print("the injected palette fault was detected, which is what this build is for")
+        return not ok, ours[samples[-1]]
+    ok &= framediff_controls(base, screen, samples, rng_park, ours, theirs, their_pens)
     return ok, ours[samples[-1]]
 
 
@@ -800,6 +882,9 @@ MODES = {
                                  at_least={"ikbd_packets": MIN_IKBD_PACKETS}),
     "hiscore": mode_hiscore,
     "framediff": mode_framediff,
+    # The palette compare's negative control: the same build with one pen corrupted on its way to
+    # the shifter. It must FAIL, and fail on the palette rather than on the bitplanes.
+    "framediff-fault": lambda: mode_framediff(build="framediff-fault", expect_fail=True),
     "original": mode_original,
 }
 

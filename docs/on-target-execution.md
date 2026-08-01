@@ -274,6 +274,21 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   `shipped[late]`, which is guaranteed to differ once the main compare has passed, and it stayed
   green in a run where the main compare correctly failed. Check the dump LENGTHS too: `zip`-style
   comparison stops at the shorter side, so an empty dump reads as a perfect match.
+  * **Compare the PALETTE as well as the bitplanes, and read both off the HARDWARE.** A framebuffer
+    compare sees plane indices; the colour they resolve to lives in shifter registers that are in
+    neither program's image, so a byte-identical framebuffer says nothing about what the screen
+    looked like — and "the colours are shifted" is a whole bug class it cannot see (class 6 above put
+    every pen one register high). Dump the shipped side's pens with
+    `savebin <file> $ffff8240 32` at the same frame anchor and your own the same way, and mask to the
+    bits the machine implements — on the ST three per gun, because a CPU read returns the unused
+    fourth bit as bus noise while the debugger's read of the emulator's model does not. Know its
+    limit: it compares the pens AT the anchors, so a pen that is right there and wrong in between
+    still passes, which is exactly the shape of a flashing colour.
+  * **A shim that PUSHES a palette must push on CHANGE, not per vblank.** The game owns the hardware
+    between its own `Setpalette` calls; re-arming `_colorptr` every vblank stamps all sixteen pens
+    back over anything its `Setcolor` just did. Pushing on change also makes the two shifter traces
+    the same shape — ours went from 773 full loads to 6 against the original's 4 on the same pinned
+    run — at the cost of one vblank of latency worth stating.
   Finally, **say which pins turned out not to be load-bearing.** Ours was the RNG: parking both
   sides in a region where their bytes genuinely differ still matched at every sampled frame, so the
   stream is consulted but nothing it feeds is drawn that early. Reporting that is the difference

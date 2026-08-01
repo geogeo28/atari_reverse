@@ -17,7 +17,7 @@ has no host `render/` layer for it to sit under: there is no PNG renderer here, 
 | **M3** quit / restart | Ctrl-C runs the verified `quit_to_desktop`, hands the machine back and ends the process — from play *and* from the title screen; R restarts the game | ✅ `smoke.py quit` / `quittitle` / `restart` |
 | **M3** `HIGH.SCO` | a modified record goes in, the game reads it, the quit path writes it back out through real GEMDOS, and a reboot shows it on the title screen's HIGH SCORE line **and only there** | ✅ `smoke.py hiscore` |
 | **M3** side-by-side | our on-target title framebuffer is **byte-identical** to the shipped binary's, found at the original's own Physbase in a dump of its RAM | ✅ `smoke.py original` |
-| **M4** frame differential | the same equality carried through starting a game and **240 frames of play**: both binaries anchored on one Hatari, framebuffers byte-compared at frames 1, 115, 150, 180, 210 and 240 — **identical at every one**, and each of those depths is one where the screen is MOVING (the neighbouring frame differs by 25-287 bytes), so each detects a one-frame mis-anchor | ✅ `smoke.py framediff` |
+| **M4** frame differential | the same equality carried through starting a game and **240 frames of play**: both binaries anchored on one Hatari, and at frames 1, 115, 150, 180, 210 and 240 **both halves of the picture compared** — the 32000 framebuffer bytes *and* the 16 hardware palette pens, read off the shifter on each side — **identical at every one**. Each depth is one where the screen is MOVING (the neighbouring frame differs by 25-287 bytes), so each detects a one-frame mis-anchor | ✅ `smoke.py framediff`, negative control `framediff-fault` |
 | **M3** joystick | the IKBD path is live — ~1000 replies filed per run, and every wait loop in the game ends on one. Steering is a GUI check: headless Hatari has no stick to press (§11) | partial, by construction |
 
 Verified on **EmuTOS** (Hatari's bundled `tos.img`) and **TOS 1.04**, which produce byte-identical
@@ -141,10 +141,28 @@ memory, so the kit models it as a pure no-op and the differential could only eve
 argument the *original* pushed. Nothing in the reconstruction can put a colour on screen.
 
 So a 50 Hz VBL handler does it: one longword into TOS's `_colorptr` (0x45a), which TOS's own VBL
-loads into the 16 pens and clears — precisely what `Setpalette` does. It points at
-`image + title_palette` while the title screen is up (which is also what *animates* it:
-`cycle_palette` and the six-pen ring rewrite that table in the image every attract pass) and at
-`image + game_palette` afterwards.
+loads into the 16 pens and clears — precisely what `Setpalette` does. It points at the shim's own
+copy of `image + title_palette` while the title screen is up (which is also what *animates* it:
+`cycle_palette` and the six-pen ring rewrite that table in the image every attract pass) and at a
+copy of `image + game_palette` afterwards.
+
+**It re-arms `_colorptr` only when the TABLE HAS CHANGED.** What that fixes is a *latent* conflict,
+not a wrong colour today: the original owns the palette hardware between its `Setpalette` calls, and
+re-arming every vblank stamped all sixteen pens back over anything it had done to one. Nothing in the
+reconstruction issues such a write yet — `flash_hiscore_color` computes the name-entry screen's
+flashing pen and *returns* it, because XBIOS `Setcolor` has no image effect for the differential to
+hold — so this removes the obstacle to implementing that flash rather than repairing a live break.
+
+It also brings the two shifter traces to the same shape. Measured with `--trace video_color` over the
+pinned `framediff` run: **ours 6 full palette loads, the shipped binary 4** (per-vblank re-arming
+made ours 773 on that same run). Note that "the original issues `Setpalette` at three moments" is
+true of its *call sites* only — left free-running on the attract screen the shipped binary performs
+**6149** loads in 20000 vblanks, because its attract loop re-issues `Setpalette` every pass.
+
+**It introduces one vblank of latency**, and that is invisible only as far as the harness looks: TOS
+used to read the game's own table at the vblank after `Setpalette`, and now reads our copy one vblank
+after the change is noticed. Every place the differential samples has a constant palette, so nothing
+shows; a game that changed pens per frame would be a frame behind.
 
 The switch between the two is exact rather than a guess. `shim_psg_written()` fires on the **first
 Giaccess WRITE** of the run, and the only routine that writes the YM2149 through Giaccess is
@@ -349,8 +367,32 @@ debugger, at run-time addresses derived from the load base that run discovered:
   i.e. one title-screen poll plus 121 frames. If either reader ever became reachable in a sampled
   window the two sides would be counting different things.
 
-**Result: identical at frames 1, 115, 150, 180, 210 and 240, on EmuTOS and on TOS 1.04.** The
-comparison is bitplanes, which is the right thing: the palette is off-image on both sides (§5).
+**Result: identical at frames 1, 115, 150, 180, 210 and 240, on EmuTOS and on TOS 1.04** — and that
+is now both halves of a frame: the sixteen bitplanes *and* the sixteen hardware pens.
+
+**The palette is compared too, because bitplanes alone cannot see colour.** A framebuffer holds
+plane indices; what colour an index resolves to lives in registers neither side's image contains, so
+the original version of this mode was blind to the entire palette by construction and said so. Both
+sides are now read off the shifter itself at the same frame anchors — ours by the shim in a `Super`
+pair, the shipped binary's by `savebin $ffff8240` — so what is compared is what the screen shows,
+not what either program intended. The comparison masks to `0x0777`: the ST implements three bits per
+gun, and a CPU read of a shifter register returns the unused fourth bit of each nibble as whatever
+was last on the bus, so *our* read carries noise there where the debugger's read of Hatari's model
+does not. That is a measurement asymmetry, not a palette difference, and everything the ST can
+display is inside the mask.
+
+**It compares the pens AT the anchors, and that is its limit.** The game's palette is one constant
+across all six of them, so the mis-anchor control below cannot exercise this half at all — moving the
+frame moves the bitplanes and leaves the colours where they were, which makes the palette result six
+repetitions of one measurement. A shim that had every pen right at each sampled frame and wrong in
+between would pass, and that is exactly the shape of a *flashing* pen. The control that does bite is
+a separate build (below).
+
+**And this check is what would have caught the bug that shipped in M1.** The
+`move.w (a0)+,(a0,d0.l)` off-by-one in "The bugs found on target" put every pen one register high —
+literally "the colours are shifted" — and it was found by a hang on one TOS version rather than by
+any assertion. A per-pen comparison against the shipped binary catches that at every anchor, on
+every ROM, whether or not it happens to crash.
 
 **The sample depths are chosen, not spread.** With the sticks centred the screen is static from about
 frame 2 to frame 110 — the rider settles and then nothing moves until the first enemy is on the
@@ -358,7 +400,7 @@ board — so evenly spaced depths would mostly have re-sampled the same painted 
 has a *moving* neighbour (frame N differs from N+1 by 113, 25, 227, 281, 282 and 287 bytes), which is
 what makes every one of them able to detect a mis-anchor.
 
-Three guards and two controls, because a compare that cannot fail proves nothing:
+Three guards and three controls, because a compare that cannot fail proves nothing:
 
 - **Length.** `zip` stops at the shorter side, so a truncated — or empty — dump compares equal as far
   as it goes and would report IDENTICAL (demonstrated: a zero-byte shipped dump passed). Every
@@ -368,6 +410,14 @@ Three guards and two controls, because a compare that cannot fail proves nothing
 - **Determinism.** The shipped side is run a second time with the identical script and must produce
   identical dumps — it is the side carrying all the machinery, so it is the side whose repeatability
   is worth asserting.
+- **A palette fault.** `build.sh framediff-fault && python3 atari/smoke.py framediff-fault` builds
+  the identical run with **one pen corrupted on its way to the shifter** and the mode must fail. It
+  does, and it fails *on the palette* — `palette 1 DIVERGES on pens [5]`, with the two rows printed
+  beneath it showing `131` against `020` — while every bitplane frame still reports IDENTICAL. The
+  mode inverts its own verdict, so a detected fault reads as `OK`; it is the run that *passes* the
+  comparison which is the failure. That is the check proving it can see the one thing it was added
+  for, and it is a separate build because the in-mode controls structurally cannot reach the palette
+  (above).
 - **Sensitivity — a real injected fault.** The shipped side is re-run **anchored one frame late** and
   the comparison must FAIL. It does, at all six samples (25-287 bytes each, with the first differing
   byte and row named). An earlier version of this control compared `ours[early]` against
@@ -443,6 +493,18 @@ rather than something this mode quietly skips.
 - **The monochrome branch is dead code on target too.** `init_system` reads `Getrez` as the model's
   constant 0, so a mono machine gets the colour game rather than `MONO.ERR`.
 - **Joystick steering is only checked in the GUI** — see §11 for what the headless run does prove.
+- **One title-screen palette load the original never shows.** `title_attract_pass` rotates the six-pen
+  ring *before* its console poll, so with the key taken on the first poll our pusher hands TOS the
+  rotated table for one vblank. The shipped binary computes the same rotation but its `Setpalette` is
+  superseded within the same vblank and never latches, so its timeline goes straight from the raw
+  table to the game palette. One frame of slightly different title hues; the pinned timelines are
+  otherwise the same shape (ours 6 loads, its 4).
+- **The name-entry screen's colour flash is missing.** `flash_hiscore_color` computes the flashing
+  pen and *returns* it — XBIOS `Setcolor` writes hardware, so the kit models it as a no-op and the
+  reconstruction has nothing to issue. The shim does not re-issue it either, so pen 10 sits still
+  where the original pulses it. §5's push-on-change is what makes re-issuing it possible at all (the
+  old per-vblank stamp would have erased it), but the call itself is still owed — the same shape as
+  the `Ikbdws` and `Setpalette` omissions in §5/§6.
 
 ## Reviewed and deferred
 
