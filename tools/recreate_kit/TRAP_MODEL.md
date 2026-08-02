@@ -79,6 +79,59 @@ Two details:
 What it proves is narrow: that a guard is **reached**, not that it is the right guard. Transcribe
 guards from the original and reason about them; the tally only stops one from vanishing unnoticed.
 
+## The CPU configuration — a decision, not an inherited default
+
+Everything below is about traps. One thing about the **CPU underneath them** is a modelling
+decision too, and it lived nowhere until it was written here:
+
+> **`M68K_EMULATE_TRACE` is OFF.** The oracle's 68000 does not monitor the T bit and never takes a
+> trace exception.
+
+It is set by `-DM68K_EMULATE_TRACE=0` in `kit.mk`'s `OCFLAGS` — which `$(ORACLE)` lists as a
+prerequisite, so changing it actually relinks — and refused at compile time by an `#error` in
+`oracle/shim.c`, which sees the macro's *effective* value after `m68k.h` has pulled in `m68kconf.h`.
+Two halves, because they pin different things: the `#error` catches the value being ON however it
+got there (`make OCFLAGS=…`, a dropped continuation, an upstream header whose `#ifndef` guard went
+away), and the behavioural case named below catches Musashi not honouring it. That placement is the
+point.
+`oracle/musashi/` is **gitignored and cloned from upstream HEAD** by the `$(MUSASHI)/m68kcpu.c`
+rule, so `m68kconf.h` is not under version control: leaving the setting to that header's own
+`#define ... M68K_OPT_OFF` meant the CPU the entire workspace's ground truth runs on was untracked,
+unpinned, and asserted by no test — a fresh clone at a different upstream commit would have changed
+it silently. The header's `#ifndef` guard is what lets the `-D` win. (Verified when it landed: the
+rebuilt `liboracle.so` is **byte-identical** to the one the header's default produced, so the flag
+changed the provenance of the setting and nothing else.)
+
+**What it costs.** Self-modifying code that single-steps itself cannot run under the oracle. The
+gap is latent rather than live: sweeping all five shipped `.PRG`s (BuggyBoy, START, Joust, GXUT20,
+SWB) for the trace vector `$24` as an operand finds **one** instruction that writes it, Wonder Boy's
+`move.l a0,$24.l` at runtime `$ee0a` — the Copylock's own — and that blob is stubbed out rather than
+executed (`projects/wonderboy/recreate/PORTABILITY.md` §6.1). Every other occurrence of the value is
+table data or a `$24` struct displacement. The sweep's limit is the one every operand scan in this
+workspace has: a vector installed through a register (`lea $24.w,a0` + `move.l`) would not appear in
+it.
+
+**Why it is load-bearing rather than merely convenient.** That stub's witness — "did the protection
+execute?" — is a memory *difference* over the blob's own bytes. A trace decryptor decrypts and
+**re-encrypts** one longword at a time and restores the vectors it saved, so a blob that ran to
+COMPLETION would leave almost nothing behind to see. The witness is sound because the blob cannot
+complete, and it cannot complete because of this flag. Turning it on is therefore not a local
+change: pin it against
+`projects/wonderboy/recreate/test/test_copylock.py::test_the_oracles_cpu_takes_no_trace_exception`,
+which asserts the setting BEHAVIOURALLY (a probe arms the T bit and requires the trace vector never
+to be taken) rather than by reading the flag back. That case lives in a project rather than in the
+kit's own suite because the kit's suite deliberately builds no oracle.
+
+**STILL OPEN — this pins ONE of 25 CPU options.** `m68kconf.h` has 25 `#ifndef`-guarded settings
+(`M68K_EMULATE_ADDRESS_ERROR`, `M68K_EMULATE_PREFETCH`, `M68K_EMULATE_INT_ACK`, `M68K_SEPARATE_READS`
+and the rest), and every one of them is as untracked as the trace flag was, because the clone is
+`--depth 1` off upstream HEAD with **no commit pin** — which is the real root. The general fix
+Musashi itself offers is `-DMUSASHI_CNF='"<header>"'` (`m68k.h`), letting the kit supply one TRACKED
+config header stating every decision, reviewable in a diff and a natural `$(ORACLE)` prerequisite.
+Not built: nothing has needed a second option pinned, and the trace flag was pinned because a live
+mechanism depends on it. Until it is, a fresh clone at a later upstream commit can move the oracle's
+ground truth under every project at once with nothing red.
+
 ## The harness-poked model state
 
 Four regions of the image are inputs the harness pokes, not program memory. Both cores read the

@@ -37,6 +37,10 @@ test/harness.py            the kit-binding shim
 test/layout.py             include/wonderboy.h's constants, scraped from that header (one source of truth)
 test/test_layout.py        that scraper's own cases — it refuses a duplicate or an octal-ambiguous #define
 test/test_bootstrap.py     the foundation battery: the loader, the self-relocation, the trap inventory
+test/copylock.py           the Copylock stub — two mechanisms, and the memory-difference witness that
+                           refuses any run whose memory shows the protection executed after all
+test/test_copylock.py      that stub's battery: each mechanism over its own domain, the two guards on
+                           the witness's inputs, and the negative controls for an unstubbed run
 test/test_poked_input_guard.py  the kit waiver this project is the only user of, and its three guards
 ```
 

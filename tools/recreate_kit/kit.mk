@@ -22,7 +22,17 @@ GENDIR  := $(KIT)/oracle/build
 ORACLE  := $(GENDIR)/liboracle.so
 # Deliberately NOT -Iinclude: liboracle.so is shared by every project, so the *project's* headers
 # must not be reachable from it — make's timestamps could not detect such a leak across projects.
-OCFLAGS := -O2 -fPIC -I$(KIT)/include -I$(MUSASHI) -I$(GENDIR) -I$(MUSASHI)/softfloat
+#
+# The CPU's trace exception is DELIBERATELY OFF — a stated modelling decision, not an inherited
+# default (TRAP_MODEL.md, "The CPU configuration"). $(MUSASHI) is gitignored and cloned from upstream
+# HEAD by the rule below, so m68kconf.h is untracked and unpinned: were this left to the header's own
+# `#define M68K_EMULATE_TRACE M68K_OPT_OFF`, a fresh clone at a different upstream commit would change
+# the oracle's CPU silently. Its `#ifndef` guard is what lets this -D win. Turning it ON would make
+# the oracle single-step self-decrypting protection code (Wonder Boy's Copylock is the live case),
+# which is what its stub's "forgetting it is loud, not silent" property rests on NOT happening —
+# see projects/wonderboy/recreate/PORTABILITY.md §6.1.
+OCFLAGS := -O2 -fPIC -DM68K_EMULATE_TRACE=0 \
+           -I$(KIT)/include -I$(MUSASHI) -I$(GENDIR) -I$(MUSASHI)/softfloat
 
 $(CAND): $(SRC) $(wildcard include/*.h) $(wildcard $(KIT)/include/*.h)
 	@mkdir -p build
@@ -37,7 +47,10 @@ $(GENDIR)/m68kops.c: $(MUSASHI)/m68kmake.c $(MUSASHI)/m68k_in.c
 	$(CC) -O2 -o $(GENDIR)/m68kmake $(MUSASHI)/m68kmake.c
 	cd $(GENDIR) && ./m68kmake . ../musashi/m68k_in.c
 
-$(ORACLE): $(KIT)/oracle/shim.c $(KIT)/include/os.h $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c
+# $(KIT)/kit.mk is a prerequisite because OCFLAGS above configures the oracle's CPU: without it,
+# changing -DM68K_EMULATE_TRACE leaves make reporting "up to date" and the STALE .so re-running —
+# which would make the behavioural pin over that flag look non-vacuous when it was never rebuilt.
+$(ORACLE): $(KIT)/oracle/shim.c $(KIT)/include/os.h $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/kit.mk
 	$(CC) $(OCFLAGS) -shared \
 	  $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/oracle/shim.c \
 	  -o $(ORACLE)

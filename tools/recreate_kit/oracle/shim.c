@@ -7,6 +7,18 @@
  */
 #include <stdint.h>
 #include "m68k.h"
+/* The oracle's CPU takes no trace exception — a stated modelling decision (TRAP_MODEL.md, "The CPU
+ * configuration"), set by -DM68K_EMULATE_TRACE=0 in kit.mk's OCFLAGS. m68k.h pulls in m68kconf.h,
+ * so by here the macro holds its EFFECTIVE value however it was arrived at, and this refuses the
+ * build if that value is ever ON. It is the kit-wide half of the pin: the -D would otherwise be
+ * silently undone by a `make OCFLAGS=...`, a dropped continuation, or an upstream m68kconf.h whose
+ * #ifndef guard went away, and the only thing that would notice is one project's test suite
+ * (projects/wonderboy/recreate/test/test_copylock.py::test_the_oracles_cpu_takes_no_trace_exception,
+ * which stays as the behavioural half — it checks that Musashi HONOURS the setting). Same reasoning
+ * as OS_NO_REFUSAL_TALLY below: a build flag can be forgotten where an adjacent check cannot. */
+#if M68K_EMULATE_TRACE != M68K_OPT_OFF
+#error "the oracle requires M68K_EMULATE_TRACE OFF (kit.mk OCFLAGS); see TRAP_MODEL.md"
+#endif
 /* The oracle keeps its own refusal tally — g_unmodeled, below — so os.h must give it the no-op
  * os_refused() rather than the candidate-side counter in ../src/os_refusal.c, which the oracle does
  * not link. Declared here rather than as a -D in kit.mk because this is the only oracle translation

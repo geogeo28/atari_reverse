@@ -9,7 +9,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 method itself works.
 
 **Verified: 0/? — nothing is reconstructed yet.** The harness is stood up and proven against the
-original code (`make test`: 32 cases green), and `../decomp.c` and `../names.txt` exist, but no
+original code (`make test`: 77 cases green), and `../decomp.c` and `../names.txt` exist, but no
 function has been ported. The function table below is therefore empty rather than partial: a row
 appears when a function is reconstructed and green.
 
@@ -42,6 +42,23 @@ the original code running under the oracle:
   rewrites four bytes that could in principle create or destroy a `trap #N` encoding, so the scan is
   re-run over the loaded image rather than argued about. So the game drives the hardware directly,
   including the floppy: it loads its own overlays by name with no GEMDOS file call anywhere.
+- **The Copylock is stubbed, and every stubbed run proves it.** `test/copylock.py` offers two
+  mechanisms with different domains — poke `copylock_arm_flag := 0` (undone by the game's own
+  `move.w #$ffff` at `$e51e`/`$e6dc`, so it is valid only below an arming site) and poke `rts` over
+  `copylock_entry` (valid anywhere, because an arming site does not write code) — and applies both
+  by default. `copylock.run()` then refuses any result whose memory shows the protection ran, using
+  a **difference** witness rather than a write-set one: at this load base the relocator's identity
+  copy writes all 2,220 of the protection's bytes without changing any, so a write-set witness
+  reports a false "it executed" for a `move.l (a0)+,(a1)+` loop. The guarantee is exactly "any run
+  that COMPLETES the `movem.l d0-a7,(a6)` at `$ed4c`" — the five instructions before it are a blind
+  window, and a caller's own pokes could land on both sides of the comparison, so `run()` refuses a
+  `stop_pc` inside the blob and `stubbed_image()` refuses a poke overlapping the watched span. 40
+  cases in `test/test_copylock.py`, including the negative controls for what an unstubbed run does:
+  entered at the guard it reaches the decryptor at `$ee02` and **never returns** (the kit's Musashi
+  is built with `M68K_EMULATE_TRACE` off, so the blob cannot self-decrypt), while entered at an
+  arming site it **does** come back — to `$e7c8` in 184,997 instructions with 2,053 bytes of the
+  protection scrambled, which is the false green in its exact shape. What the stub is worth, and the
+  seven things it knowingly does not verify, are in [`PORTABILITY.md`](PORTABILITY.md) §6.1.
 
 ## The kit change this project required
 
@@ -171,6 +188,56 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   _three_relocated_longwords` covers `oracle/loader.py`'s fixup loop, which BuggyBoy and Joust also
   rest on, from inside one project's suite. The game-specific half (no fixup lands inside the copied
   body) belongs here; the arithmetic half belongs in `tools/recreate_kit/test/`.
+- **A reconstruction verified under the Copylock stub is verified for the game's DISARMED steady
+  state** — the second and subsequent resource loads — **and not for the first.** The protection's
+  own effects (the 96-byte register save area, the three vector installs, the decrypt cursor, the
+  key it returns in `d0`) never happen under the stub, and `disk_check_signature` (`$5e3e`), the
+  `$ecba` pointer table and the readers of `$f89a`/`$f89c` stay reachable only from inside the
+  ciphertext. `PORTABILITY.md` §6.1's "KNOWINGLY UNPINNED" list is the full register.
+- **All three of the Copylock module's protections stop at `copylock.run()`'s door, and
+  `recreate_kit.harness.differential()` is a second door**: it calls `emu.run` itself, so
+  `differential(entry, regs={"_pokes": copylock.stub_pokes()}, stop_pc=...)` gets no witness, no
+  poke vetting and no `stop_pc` vetting, and its author must call
+  `copylock.assert_did_not_execute()` by hand. Four things about that gap, so the next author
+  neither over- nor under-reacts to it:
+  * **Its reachability today is zero.** `src/` is empty and no Wonder Boy test calls
+    `differential()`. And under this build, forgetting the stub does not go green: it fails loudly
+    with `did not reach checkpoint`.
+  * **The identified fix is `differential()` returning its final image**, so a caller can run the
+    witness over it. Not built — nothing uses it yet, and CLAUDE.md §2 rules out speculative
+    features. It is the cheaper and safer of the two candidates, and the one to build the day a
+    boot-path differential is written. It closes the WITNESS half only; the two input guards would
+    still have to be reached through `copylock.stubbed_image`, i.e. `differential` would need to
+    take an image rather than build one.
+  * **A per-run forbidden-WRITE veto in the kit was REJECTED**, not deferred. It would fire on
+    `test_bootstrap.py`'s relocator runs, which write all 2,220 of the protection's bytes without
+    changing one of them — the exact false positive that forced the witness to be a memory
+    *difference* rather than a write set in the first place.
+  * **That rejection is about the write-set FORM, not about the kit hosting a veto at all.** A
+    difference-based veto over project-registered immutable ranges has no false positive on those
+    relocator runs — the identity copy changes nothing — and would be the general form of this
+    module's witness. It is also unbuilt, and it is the same change as returning the final image,
+    so do not read "rejected" as "the kit cannot host this".
+- **The Copylock witness's soundness rests on a kit-wide CPU setting**, `M68K_EMULATE_TRACE=0`. A
+  trace decryptor re-encrypts as it goes and restores the vectors it saved, so a blob that ran to
+  COMPLETION would leave the witness almost nothing to see; what stops it completing is that flag.
+  It is now pinned in `tools/recreate_kit/kit.mk`'s `OCFLAGS` (it used to be the vendored, gitignored
+  `m68kconf.h`'s own default — untracked, and asserted by no test), documented in
+  `TRAP_MODEL.md`, and asserted behaviourally by
+  `test_copylock.py::test_the_oracles_cpu_takes_no_trace_exception`.
+- **Three test helpers are now duplicated rather than shared, and the shared home is the kit.**
+  `test_copylock.py`'s `_image_writes` is the fourth copy of the `< emu.STACK_GUARD_LO` stack-band
+  filter in this workspace (`notes/portability_predictions.py`, two in `projects/joust`) and its
+  `_run_reaching` the second; `LONGWORD = 4` and the `rts` opcode literal are each a second/third
+  spelling inside this directory alone. All of them belong in `tools/recreate_kit/harness.py`
+  alongside the diff's own use of that band; folding them together is a kit change touching three
+  projects and was left out of this one as out of scope. Related: `_run_reaching` clears the
+  oracle's process-global coverage bitset, which is harmless only because this project has no
+  session-wide coverage `conftest.py` the way `projects/buggyboy` does. Two more found by the
+  review of the Copylock work and left alone for the same reason, both inside `test/`:
+  `test_copylock.py`'s even-aligned operand sweep re-implements `test_bootstrap.py`'s
+  `_even_aligned()`, and its `RELOCATOR_INSN_BUDGET` is a hand-rounded copy of that file's derived
+  `RELOCATOR_INSN_CAP` — the derived one tracks `WB_BODY_LONGS` and the copy does not.
 - **`test/layout.py`'s header scraper is the third copy** of the same idea (`joust`'s
   `test_constants.py`, `buggyboy`'s `test_course_ring.py`). It belongs in the kit; folding the three
   together was left out of this change as out of scope. It now has cases of its own

@@ -71,7 +71,10 @@ python3 tools/hw_portability.py projects/wonderboy/out/hw_scan.tsv \
         --exclude 0xed8e:0xf540:"Copylock ciphertext" --root 0x4a0 --root 0x400 \
         --subsystems projects/wonderboy/recreate/subsystems.tsv
 python3 projects/wonderboy/notes/portability_predictions.py    # 14 cases, must be green
+make -C projects/wonderboy/recreate test                       # 77 cases, must be green
 ```
+
+Add `--stub 0xecca` (and `--model psg:read` for the pair) to reproduce §6.1's numbers.
 
 **`reapply.sh` is part of the measurement, not setup.** Ghidra does not reach the background
 scroll blitter (`$83b6..$8dfe`, 16 functions) or `rng_1_to_4_masked` (`$51ac`) on its own — nothing
@@ -314,6 +317,13 @@ write (`$f91c` / `$e808`), checked through the oracle's PC coverage. Without it 
 zero image writes" is equally the signature of a function that did nothing — pointing the case at
 the bare `rts` at `$62fa` used to pass, and now fails.
 
+**There is no T5 case in this file, deliberately.** T5's oracle-checked behaviour — an unstubbed run
+never returning, a stubbed one crossing the guard in two instructions — lives in the *suite*
+(`test/test_copylock.py`, §6.1), which is a stronger place for it: it runs under `make test` rather
+than as a standalone script. Restating it here would mean either duplicating the Copylock addresses
+that `include/wonderboy.h` is the single source of, or importing the project's test harness (and so
+its compiled candidate `.so`) into a script that deliberately needs only the oracle.
+
 ### Correction 1 — a T3 read is not "the code hangs", it is "the code believes 0"
 
 `btst #5,$fffa01 / bne` loops *while the bit is set*. The MFP GPIP FDC line is **active low**, so a
@@ -413,7 +423,7 @@ Priced with `--model` / `--stub`, so the cost/benefit is a number:
 | capability | runnable fns | runnable bytes | false-green fns | false-green bytes |
 |---|---:|---:|---:|---:|
 | *(today)* | 220 | 21,534 | 28 | 3,348 |
-| Copylock stub (`$ecca` → `rts`, or force `$e7cc := 0`) | 223 (+3) | 21,770 (+236) | 28 | 3,348 |
+| **Copylock stub** (`$ecca` → `rts`, or force `$e7cc := 0`) — **BUILT**, §6.1 | 223 (+3) | 21,770 (+236) | 28 | 3,348 |
 | **PSG read model** | 238 (+18) | 24,228 (+2,694) | 28 | 3,348 |
 | PSG read model **+ Copylock stub** | 251 (+31) | 25,612 (+4,078) | 28 | 3,348 |
 | MFP read model | 220 | 21,534 | 22 (−6) | 2,934 (−414) |
@@ -454,7 +464,230 @@ Reading it:
   image writes**: without a ledger, a reconstruction of `set_palette` that writes nothing at all is
   indistinguishable from a correct one.
 * **The Copylock stub is cheap and mandatory before any boot-path work**, but on its own it moves
-  only 3 functions. Its real value is that it is the single edge making both roots close to T5.
+  only 3 functions — and only ONE of those is genuinely new boot-path code (§6.1 breaks the +236
+  bytes down). Its real value was claimed to be that it is the single edge making both roots close
+  to T5 — §6.1 re-runs the measurement with the stub actually built and finds that claim true but
+  worth less than it sounds. **Its value is superadditive with the PSG read model**: the two
+  together are worth 1,148 bytes more than the sum of their parts, which is ~83 % of everything the
+  stub will ever be worth.
+
+## 6.1 The Copylock stub, built — and what it turned out to be worth
+
+`recreate/test/copylock.py`, pinned by `test/test_copylock.py` (40 cases). Re-running the
+measurement with `--stub 0xecca` confirms this table's prediction **exactly**: **220 → 223
+functions, 21,534 → 21,770 bytes runnable (+3 / +236), and the false-green figures do not move at
+all.**
+
+**Read that headline down, though, because it over-states the stub twice.** Of the +236 bytes:
+
+| bytes | what | is it new boot-path code? |
+|---:|---|---|
+| 96 | `copylock_entry` itself | **no — tautological.** The stub replaced its body; "the stubbed function is now runnable" is a restatement of the stub |
+| 36 | `copylock_key_check` | **no — unreachable from either root**, and from anything: `out/hw_scan.tsv` gives it no incoming call edge at all |
+| **104** | **`load_resource_by_index`** | **yes — and it is the whole of it.** One function |
+
+So the honest headline is **+1 genuinely-newly-in-scope boot-path function, 104 bytes**, and both
+roots stay unrunnable — their T5 becomes T4, i.e. "there is no source text to port" becomes "the
+run is refused". What it does to those two roots is the part the earlier draft was optimistic about:
+
+| roots-restricted transitive tier | today | with the stub |
+|---|---|---|
+| T0 CLEAN | 95 / 10,440 B | 96 / 10,536 B |
+| T2 HW_WRITE_ONLY | 9 / 274 B | 9 / 274 B |
+| T3 HW_READ | 14 / 1,102 B | 15 / 1,206 B |
+| T4 HARD_REJECT | 12 / 1,874 B | **20 / 2,966 B** |
+| T5 UNMEASURABLE | 10 / 1,292 B | **0** |
+| **total** | **140 / 14,982 B** | **140 / 14,982 B** |
+
+**T5 vanishes from the roots and T4 absorbs almost all of it.** Of the 10 T5 functions, exactly one
+becomes clean (`copylock_entry` itself) and one becomes T3; the other **8 were never blocked only by
+the protection**, and the tool's own witness path for both roots changes subsystem:
+
+```
+game_main_loop -> FUN_0000053e -> show_data_disk_prompt -> snd_stub_00 -> FUN_00017b3a
+               -> FUN_00017af8 -> FUN_00017f24          ← the sound module's PSG read-modify-write
+```
+
+So the honest reading is: **the stub does not open the boot path, it exchanges one wall for the next
+one.** Both roots move from "cannot be measured" to "will be refused". The pair that opens them is
+the stub **plus** the PSG read model — with both, 251/252 functions and 25,612/25,696 bytes are
+runnable (99.7 %) and both roots land on T3 HW_READ, i.e. runnable-but-false-green, blocked only by
+`fdc_restore` and `ikbd_disable_mouse`. Anything that must cross `load_resource_by_index` needs the
+stub; anything that must cross `show_data_disk_prompt` needs both. Two subsystem rows also move:
+**copylock** direct-T0 goes 2/52 B → 3/148 B and runnable 1/16 B → 3/148 B, and the **resource
+loader** goes transitive-T5 → T3 with its one 104-byte function becoming runnable.
+
+### The stub's value is an INTERACTION TERM, not a row in the table
+
+The §6 table is read one row at a time, and that is exactly what makes it misread here. Compare the
+three rows:
+
+| built | runnable fns | runnable bytes |
+|---|---:|---:|
+| Copylock stub alone | +3 | **+236** |
+| PSG read model alone | +18 | **+2,694** |
+| both | +31 | **+4,078** |
+
+`4,078 − 236 − 2,694 = ` **+1,148 bytes** (and `31 − 3 − 18 = ` **+10 functions**) that neither
+capability delivers on its own. Those 10 functions are exactly the ones the stub converts T5 → T4:
+the stub is what makes them measurable at all, and only the PSG model can then release them. So
+**~83 % of the stub's eventual value (1,148 of 1,384 bytes) is locked behind the PSG read model** —
+which is why §7's recommendation is to do (a) and (c) together or neither, and why "the Copylock
+stub buys +236 bytes" is the wrong way to price it in both directions at once.
+
+Reproduce with the §"Reproducing it" command line plus `--stub 0xecca`, or add `--model psg:read`
+for the pair.
+
+### The two mechanisms, and why there are two
+
+**Clearing `$e7cc` is not universally sufficient**, and a stub that silently fails to apply is the
+false-green class this document exists to measure. There are exactly four `abs.l` references to
+`copylock_arm_flag` in the image (swept, not counted by eye — and `abs.w` cannot reach it and a
+68000 cannot write through pc-relative, so `abs.l` is the only encoding that could arm it) and
+exactly one to `copylock_entry`:
+
+| site | what it does |
+|---|---|
+| `$e51e` | `move.w #$ffff,$e7cc` — ARM, immediately before the TITLESCR.RAD load |
+| `$e6dc` | `move.w #$ffff,$e7cc` — ARM, immediately before the SPRITES.CRU load |
+| `$e7b2` | `tst.w $e7cc / beq.w $e7c8` — the guard, inside `load_resource_by_index` |
+| `$e7c2` | `clr.w $e7cc` — the game disarms it after the first call |
+| `$e7bc` | `jsr $ecca.l` — the image's only reference to the protection |
+
+* **Disarm** (`$e7cc := 0`) patches no code and is the game's own steady state: `$e7c2` puts the
+  flag there itself, so every resource load after the first takes exactly this path. It is valid
+  only for a run that cannot reach an arming site. Crossing `$e51e` or `$e6dc` re-arms the flag
+  before the guard reads it — **demonstrated**, in one run of the boot path's own shape, not argued.
+* **Stub the entry** (`$ecca := rts`) is valid for any run, because an arming site does not write
+  code. The `jsr` still executes, so the stack behaves as it really would, and nothing between the
+  return and the function's `rts` reads `d0` (`$e7c2` is a `clr.w`; the two arming call sites do not
+  read it either — `$e52a` is a `lea`, and `$e6e8` calls `$e87c`, whose second instruction pair
+  overwrites `d0`). Semantically it is "the protection passed", the branch a genuine disk takes.
+
+Both are applied by default. Choosing between them is a judgement about a run's entry point that a
+caller can get wrong silently, and there is no cost to belt-and-braces: under both, the guard skips,
+and if it somehow did not, the entry is an `rts` anyway. There is a second reason — the kit's
+`_attribution_check` poison pass inverts every byte the oracle wrote, and under disarm alone the
+game's own `clr.w $e7cc` puts the flag in that set, so the poisoned re-run would start **re-armed**.
+
+### The witness, and what an unstubbed run actually does
+
+No run is reported as stubbed on the strength of the poke. After every run, `copylock.run()`
+compares final memory against the memory the run started from, over the protection's own bytes
+(`$ecca..$f575`) and the three exception vectors it installs (`$10`, `$20`, `$24`). Three
+instructions into the blob's body comes `movem.l d0-a7,(a6)` into `copylock_reg_save`, and the two
+instructions before it are `moveq #0,d0 / move.l #$ffffffff,d1` — the blob loads that `d1` itself,
+so the saved `d1` differs from the zero-filled save area *whatever registers the run was entered
+with*.
+
+**State the guarantee precisely, because the loose version is false.** The witness fires on any run
+that **completes that `movem`** — not on any run that "reaches the protection" — and it is
+independent of the caller's inputs **because two guards enforce that**, not by construction. Both
+halves were demonstrated false against an earlier draft:
+
+* **A blind window at the blob's entrance, six checkpoints wide.** The five instructions before the
+  `movem` — `moveq #0,d0 / move.l #$ffffffff,d1 / bra.s $ed46 / move.l a6,-(a7) / lea $ecd4(pc),a6`
+  — write the STACK or nothing at all, so a `stop_pc` of `$ecca`, `$eccc`, `$ecd2`, `$ed46`, `$ed48`
+  or `$ed4c` came back green with an empty trespass list from a run that had executed the guard's
+  `jsr` and up to five instructions of the protection. `copylock.run()` now refuses a `stop_pc`
+  inside `[$ecca, $f576)` outright — sound, because a correctly stubbed run cannot reach one. (The
+  `bra.s` at `$ecd2` was itself missed by the first draft of the fix: the window is in two pieces,
+  and the test now resolves that branch to prove they are one run of execution.)
+* **Twelve caller-supplied poke bytes blinded it completely.** `stubbed_image(mechanism, pokes)`
+  wrote `pokes` into the image the witness then used as its own baseline, so a poke inside the
+  watched span landed on *both* sides of the comparison. The blob's entire durable delta at
+  `$ed50` is 12 bytes — the saved `d1` (`$ecd8..$ecdb`), `a0` (`$ecf5..$ecf7`), `a6`
+  (`$ed0e..$ed0f`) and `a7` (`$ed11..$ed13`) — and feeding exactly those back as pokes returned
+  green with the `movem` executed. Any poke overlapping the watched span is now refused.
+
+Both reproducers are kept as regression cases in `test/test_copylock.py`.
+
+**It is a memory difference and not a write set, and that was forced by a measurement.** At
+`load_base = 0x3f8` the relocator's copy of the program body to `$400` is an identity copy that
+*writes* every byte of the image — all 2,220 of the protection's, 96 of them in `copylock_reg_save`
+— so a write-set witness reports "the protection DID execute" for a `move.l (a0)+,(a1)+` loop. It
+also cannot overflow: `shim.c`'s write ledger silently drops writes past 1,048,576 entries.
+
+> #### The witness is sound only because the blob cannot COMPLETE
+>
+> This is a dependency, not a property, and it is stated nowhere else. **A Rob Northen trace
+> decryptor is built to leave no trace**: it decrypts and *re-encrypts* one longword at a time, and
+> it restores the exception vectors it saved. A blob that ran to completion would put the code span
+> and all three vectors back by construction, and the only evidence left inside the watched span
+> would be the 96-byte register save area.
+>
+> What stops it completing is the oracle's CPU setting, `M68K_EMULATE_TRACE=0`. That is now **pinned
+> in `tools/recreate_kit/kit.mk`'s `OCFLAGS`** as a stated modelling decision rather than inherited
+> from the vendored `m68kconf.h` — which matters because `oracle/musashi/` is gitignored and cloned
+> from upstream HEAD at build time, so the setting was untracked and unpinned. `TRAP_MODEL.md` has
+> the decision; `test_copylock.py::test_the_oracles_cpu_takes_no_trace_exception` asserts it
+> behaviourally (a probe arms the T bit and requires the trace vector never to be taken).
+
+Three negative controls, and what they measured:
+
+* **Stopping just inside the blob** (`$ed50`, past the `movem`) the witness fires and names the save
+  area; run on to `$ee1a` it names every range it watches, including all three vectors.
+* **Letting it run from the guard** — the oracle does **not** survive executing the Copylock. It
+  saves its registers, takes both anti-trace `illegal` exceptions, reaches the decryptor at `$ee02`,
+  and then never returns. The **shipped** case caps it at 1,000,000 instructions — that is the bound
+  under `make test`, and the bound any future claim should be read against; a one-off run to
+  20,000,000 also failed to reach the far side, but nothing pins that. The
+  reason is worth recording before anyone proposes modelling the protection instead of stubbing it.
+  The decryptor works by setting the T bit in the exception frame's SR and decrypting one longword
+  per single-step exception, so with trace emulation off it cannot even self-decrypt, and past the
+  second `illegal` the CPU is executing ciphertext as instructions. `notes/architecture.md` §2.5's
+  "Musashi can do this" is true of Musashi and false of this build of it.
+* **Letting it run from an ARMING SITE — and it comes back.** Disarmed and entered at `$e51e` or
+  `$e6dc`, the run re-arms the flag, enters the blob, and returns to the guard's far side `$e7c8`
+  in **184,997 instructions with 2,053 bytes of the protection scrambled behind it**. That is the
+  false green in its exact shape — a run that finishes and looks ordinary — and it is the case the
+  witness is for. "An unstubbed run never comes back" is true of the guard entry only.
+
+### KNOWINGLY UNPINNED — what the stub does not verify
+
+The stub buys runs; it does not buy verification of what it replaced. Everything here is a permanent
+or standing gap, not a to-do list:
+
+1. **The protection's own memory effects never happen.** The 96-byte register save area
+   (`$ecd4..$ed33`), the three vector installs (`$10`/`$20`/`$24`), the decrypt cursor at `$ed3e`,
+   and the key it returns in `d0` are all absent from every stubbed run. A reconstruction verified
+   under the stub is verified for the game's **disarmed steady state — the second and subsequent
+   resource loads — and not for the first.** The first load of a real boot runs 2,236 bytes of code
+   this measurement has never executed.
+2. **`d0` at the guard's exit is the stub's, not the protection's.** Under the stub it is whatever
+   `disk_load_file` left; on real hardware it is the Copylock key. Nothing between the return and
+   `load_resource_by_index`'s `rts` reads it, and neither arming call site does, but a caller beyond
+   those two has not been audited.
+3. **Three things stay reachable only from inside the ciphertext, and the stub does not change
+   that** — `disk_check_signature` (`$5e3e`), the `$ecba` pointer table with its four scanline-order
+   tables, and the readers of `$f89a`/`$f89c`. §7.5 still applies: there is no source text to port.
+4. **The witness is opt-in at the wrong layer.** It covers every run made through `copylock.run()`,
+   but `recreate_kit.harness.differential()` calls `emu.run` itself, so a future boot-path
+   differential written as `differential(entry, regs={"_pokes": copylock.stub_pokes()})` gets no
+   witness unless its author calls `assert_did_not_execute()` by hand. **Its reachability today is
+   zero** — `recreate/src/` is empty and no Wonder Boy test calls `differential()` — and under this
+   build forgetting the stub fails loudly (`did not reach checkpoint`) rather than going green. The
+   enabling fix is `differential()` returning its final image, which would let a caller run the
+   witness itself; it is recorded in `STATUS.md` and deliberately not built, since nothing uses it
+   yet. A per-run forbidden-write veto in the kit was considered and **rejected**: it would fire on
+   `test_bootstrap.py`'s relocator runs, which write all 2,220 protection bytes identically — the
+   exact false positive the difference witness was invented to avoid.
+5. **A register-indirect write to `copylock_arm_flag` would be invisible** to the four-reference
+   sweep the disarm mechanism's domain rests on, exactly as it is to every other operand scan here
+   (§2). So is a fifth arming site in the 22,984 bytes §8.1 says carry no disassembly at all. The
+   mirror claim on the other side of the witness — that only the Copylock changes `$10`/`$20`/`$24`
+   — is swept for `move.l <ea>,abs.l`, and the blob's own are the only hits: `$ed62`, `$ed6a` and
+   `$ed80` (→ `$10`), `$ee14` (→ `$20`), `$ee0a` (→ `$24`). If that is ever wrong the failure is
+   loud (a spurious "the protection DID execute"), not silent.
+6. **`WB_COPYLOCK_REG_SAVE_LEN`'s upper 32 bytes are pinned by reading, not by running.** The blob
+   copies vectors `$8..$27` into them, and those are zeros in a fresh image — zeros copied over
+   zeros, which a difference witness cannot see. The lower 64 are pinned from the `movem` mask.
+7. **The blob's own four wipe-table pointers sit OUTSIDE the watched span.** It starts at `$ecca`;
+   `$ecba..$ecc9` holds the four longwords pointing at the tables at `$f576`. Left outside
+   deliberately, and recorded rather than closed: they are read-only constants, so no run can make
+   them differ and widening the span would add witness unpinnable in exactly the way item 6's upper
+   32 bytes are. They are equally unpinned in the other direction — nothing proves plaintext code
+   never writes them.
 
 ## 7. Recommendation — what to reconstruct, in order
 
@@ -495,7 +728,9 @@ Reading it:
       `$6526/7`). Both are driven by the same zeroed `move.w $ff8604,d1` at `$6470`. So a
       differential of a reconstructed `disk_load_file` would be pinned against a driver that
       fails, retries, and mutates state — not against one that quietly succeeds.
-   c. **Copylock stub** — necessary for anything on the boot path, worth 3 functions on its own.
+   c. **Copylock stub** — **built** (§6.1). Worth exactly the 3 functions this table predicted, and
+      necessary for anything on the boot path; but it does not open the boot path on its own, it
+      hands both roots to the PSG wall in (a). Do (a) and (c) together or neither.
    d. **Hardware-write ledger**, the direct sibling of the existing Dosound ledger, to make the 14
       direct-T2 functions mean something.
 5. **Never**: the Copylock's fuzzy-byte check. `$ed8e..$f540` is ciphertext that only ever exists

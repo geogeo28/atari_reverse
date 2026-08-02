@@ -538,10 +538,23 @@ the boot.** It has exactly two options:
 1. **Model it.** That means a CPU with working `illegal` (vector `$10`), `trace`
    (`$24`) and `privilege violation` (`$20`) exceptions, an exception frame whose
    SR and PC the handler can *edit on the stack*, and correct T-bit semantics —
-   because the blob decrypts itself by single-stepping. Musashi can do this; a
-   simplified interpreter almost certainly cannot.
+   because the blob decrypts itself by single-stepping. Musashi can do this in
+   principle; **the kit's build of it cannot**, because `tools/recreate_kit/kit.mk`
+   sets `-DM68K_EMULATE_TRACE=0` — a stated modelling decision
+   (`tools/recreate_kit/TRAP_MODEL.md`), and one the Copylock stub's witness
+   depends on: a trace decryptor that ran to completion would cover its own
+   tracks. Run
+   unstubbed under the oracle, the blob gets as far as installing its decryptor
+   at `$ee02`, and then the trace exception it depends on never fires: past the
+   second `illegal` the CPU executes ciphertext as if it were instructions and
+   the run never returns (measured — `recreate/test/test_copylock.py`).
 2. **Stub it out.** Force `copylock_arm_flag` (`$e7cc`) to 0, or make `$ecca` an
    immediate `rts`. Cheap, and it is the right call for porting the *game*.
+   **This is built**: `recreate/test/copylock.py` offers both, defaults to
+   applying both, and refuses any run whose memory shows the protection ran.
+   The two are not interchangeable — the flag poke is undone by `$e51e`/`$e6dc`,
+   so only the `rts` survives the boot path. `recreate/PORTABILITY.md` §6 has
+   what the stub is worth and what it costs.
 
 Either way, record in `recreate/STATUS.md` that the fuzzy-byte check is
 **structurally unpinnable** — not merely because fuzzy bytes are
