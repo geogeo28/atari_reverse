@@ -57,6 +57,17 @@ def parse_header(d):
                 reloc_off=28 + tlen + dlen + slen)
 
 
+# DRI relocation stream: after the first fixup offset (a longword), one byte per step.
+# RELOC_SKIP is the trap — it advances the cursor and fixes up NOTHING, and a parser that adds a
+# fixup for it corrupts one longword every RELOC_SKIP_BYTES. That bug shipped in
+# tools/ghidra_scripts/PrgLoader.java and silently corrupted every project's Ghidra DB; see
+# docs/binary-formats.md. This function is the canonical implementation the Java one mirrors, and
+# tools/recreate_kit/test/test_reloc_table.py pins the two together.
+RELOC_END = 0
+RELOC_SKIP = 1
+RELOC_SKIP_BYTES = 254
+
+
 def parse_reloc(d, h):
     """Return set of image offsets (relative to text base = 0) needing relocation."""
     off = h["reloc_off"]
@@ -70,10 +81,10 @@ def parse_reloc(d, h):
     cur = first
     while off < len(d):
         b = d[off]; off += 1
-        if b == 0:
+        if b == RELOC_END:
             break
-        if b == 1:
-            cur += 254
+        if b == RELOC_SKIP:
+            cur += RELOC_SKIP_BYTES          # a gap wider than a byte, NOT a fixup
         else:
             cur += b
             fixes.add(cur)

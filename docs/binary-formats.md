@@ -63,6 +63,29 @@ why a constant that lands near the load base is worth checking against the fixup
 [`m68k-disassembly.md`](m68k-disassembly.md) for the disassembly consequences (Joust's
 `rng_advance` is the worked example).
 
+### The `1` byte advances the cursor and fixes up NOTHING — get it wrong and you silently corrupt the image
+
+`1` is a *span* marker, not a fixup. A parser that adds an offset for it too writes `+= load_base`
+into **one longword every 254 bytes** of a program it should never have touched. This really
+happened: `tools/ghidra_scripts/PrgLoader.java` had that bug, and it hit every project in this
+workspace — Wonder Boy's `SWB.PRG` has **3** real relocations and the loader applied **539**, so
+536 longwords from `$4fa` to `$217cc` were corrupted. BuggyBoy got 93 spurious fixups, Joust 44.
+
+The damage is invisible unless you look for it, and it goes both ways:
+
+* **an operand disappears** — `move.b #$7,$00ff8201` (a screen-base write) became
+  `move.b #$7,$04f78201`, no longer a hardware address, so a scan for hardware sites missed it;
+* **an operand is invented** — `move.b $00ff860d,d7` (a DMA address-counter read) became
+  `move.b $00ff8a05,d7`, i.e. a **blitter** reference in a game that has no blitter;
+* **an immediate quietly changes** — `btst #5,$fffa01` became `btst #-3,$fffa01`;
+* **an in-image address is pushed out of the image** and starts looking like I/O space.
+
+Nothing about it desyncs the disassembly or throws an error. The cheap check is arithmetic:
+count the fixups your parser produces and compare it against another implementation
+(`prg_dis.parse_reloc` is the reference here); if your count is far larger, you are counting the
+span markers. The cheaper check is structural — the spurious offsets are **exactly 254 bytes
+apart**, which no real relocation table ever is.
+
 ## A `.PRG` with almost no relocations is position-DEPENDENT — find its real base
 
 A game whose 136 KiB of text carries **three** relocation entries is not "unusually well written

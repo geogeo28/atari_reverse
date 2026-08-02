@@ -148,6 +148,14 @@ public class PrgLoader extends GhidraScript {
         return null;
     }
 
+    // DRI relocation table: a longword giving the first fixup offset, then one byte per step.
+    // 0 ends the table; RELOC_SKIP advances the cursor 254 bytes and fixes up NOTHING (it is how
+    // the format spans a gap wider than a byte); any other byte advances and marks a fixup.
+    // Getting RELOC_SKIP wrong corrupts one longword every 254 bytes — see docs/binary-formats.md.
+    private static final int RELOC_END = 0;
+    private static final int RELOC_SKIP = 1;
+    private static final int RELOC_SKIP_BYTES = 254;
+
     private List<Long> parseRelocs(byte[] d, long relocOff) {
         List<Long> fx = new ArrayList<>();
         if (relocOff >= d.length) {
@@ -163,10 +171,14 @@ public class PrgLoader extends GhidraScript {
         while (p < d.length) {
             int b = d[p] & 0xff;
             p++;
-            if (b == 0) {
+            if (b == RELOC_END) {
                 break;
             }
-            cur += (b == 1) ? 254 : b;
+            if (b == RELOC_SKIP) {
+                cur += RELOC_SKIP_BYTES;        // a gap, NOT a fixup
+                continue;
+            }
+            cur += b;
             fx.add(cur);
         }
         return fx;

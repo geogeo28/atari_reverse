@@ -11,15 +11,28 @@ interactive exploration in the GUI, see [`ghidra-gui.md`](ghidra-gui.md).
 - Homebrew ships `openjdk@21` keg-only; the shell scripts set `JAVA_HOME` to it. If your
   sandbox blocks a Bash call that sets env vars, run the `.sh` yourself with `!`.
 
-## The four scripts
+## The scripts
 
 | Script | Role |
 |--------|------|
-| `PrgLoader.java` | Rebuild memory: create TEXT at base (arg 2, default `0x10000`), apply **all** relocations in place, import DRI symbols as labels, set entry, disassemble. Args: `<prg-path> [base_hex]`. GUI: prompts for the file. |
+| `PrgLoader.java` | Rebuild memory: create TEXT at base (arg 2, default `0x10000`), apply **all** relocations in place (the DRI `1` byte is a 254-byte SPAN, not a fixup — getting that wrong corrupts one longword every 254 bytes, see [`binary-formats.md`](binary-formats.md)), import DRI symbols as labels, set entry, disassemble. Args: `<prg-path> [base_hex]`. GUI: prompts for the file. |
 | `AtariOsTrapAnnotate.java` | Comment every `trap` with its call name (GEMDOS/BIOS/XBIOS from the pushed selector; GEM AES/VDI from `d0`), and rename thin single-trap wrappers. |
 | `ExportDecompC.java` | Decompile every function to a text file (arg 1), with a function index. This is your reading material. |
 | `ApplyNames.java` | Apply a `names.txt` map (`fn`/`var`/`cmt`) back into the DB; disassembles+creates functions for jump-only handler stubs. Strips a trailing `# ctx` confidence tag on `fn`/`var` lines. |
 | `DumpNames.java` | The reverse: export the DB's current non-default function names, data labels, and plate comments **back** to `names.txt` format — use it to recover names made/edited in the GUI. |
+| `HwPortabilityScan.java` | Dump function bodies, the call graph, and every hardware/off-image memory access (with direction, size, and whether the read steers a branch) to a TSV. Args: `<out.tsv> [image_size_hex]`. Drive it with `tools/hw_scan.sh`; classify with `tools/hw_portability.py` — see [`on-target-execution.md`](on-target-execution.md), "Measure the blindness". |
+
+> ### If your DB predates the `PrgLoader` relocation fix, RE-BOOTSTRAP IT
+>
+> `PrgLoader` used to treat the DRI relocation table's `1` byte as a fixup instead of a 254-byte
+> span, corrupting one longword every 254 bytes of every program it loaded. Measured spurious
+> fixups: **BuggyBoy 93, Joust 44, Wonder Boy 536** (against 3 real ones). `reapply.sh` does *not*
+> re-import, so a DB built before the fix stays corrupt however many times you re-apply names, and
+> the corruption is silent — it deletes hardware operands, invents others, and shifts immediates.
+> Reconstructions are unaffected (the differential oracle always used `prg_dis.parse_reloc`, which
+> was correct), but every `decomp.c`, every disassembly read out of the GUI, and any name derived
+> from a corrupted operand are suspect. `ghidra_proj/` and `decomp.c` are gitignored, so the fix
+> costs only time: `bash projects/<name>/run.sh` then `bash projects/<name>/reapply.sh`.
 
 ## Bootstrap (once per game)
 
