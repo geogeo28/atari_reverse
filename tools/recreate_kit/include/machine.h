@@ -38,6 +38,17 @@ static inline void wr32(uint8_t *ptr, uint32_t value) {
 /* Sign-extend a 16-bit register word to a 32-bit address delta (68k adda.w / word EA). */
 static inline uint32_t sign_ext16(uint32_t value) { return (uint32_t)(int32_t)(int16_t)value; }
 
+/* Move an address by a delta THE WAY THE 68000's ADDRESS ALU DOES: in 32 bits, wrapping. A host
+ * pointer does not wrap, so `image + base + delta` walks off the image into host memory where the
+ * original goes round its own address space — which is undefined behaviour rather than a divergence
+ * the differential would report. So a reconstruction computes the whole address here first, and adds
+ * `image` only to the result.
+ *
+ * The delta is unsigned because the 68000's add is: a `d16(An)` displacement or an `adda.w` operand
+ * arrives already sign-extended to 32 bits (sign_ext16 above), and from there the wrap is the same
+ * bits whichever way the value is read. */
+static inline uint32_t addr_add(uint32_t base, uint32_t delta) { return base + delta; }
+
 /* 68k `.b` op on a word register: the result byte replaces the low byte, and the high byte is
  * left untouched (byte ops don't carry into it) — e.g. addq.b / asl.b applied to a data reg. */
 static inline uint16_t set_low_byte(uint16_t word, uint8_t byte) {

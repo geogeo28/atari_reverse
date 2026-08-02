@@ -206,6 +206,38 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
 #define MAGIC_BIOS   0x128
 #define MAGIC_XBIOS  0x12c
 
+/* The status register every run starts from: supervisor, interrupt mask 7, condition codes clear.
+ *
+ * IT IS FORCED, NOT INHERITED FROM THE RESET. A 68000 reset does not clear the condition codes, and
+ * Musashi is faithful about it: m68k_pulse_reset() touches T, the interrupt mask and S, and leaves
+ * FLAG_X/N/Z/V/C exactly as the PREVIOUS run left them. Without the force a run inherits the last
+ * one's CCR, and any routine that reads a condition code ON ENTRY — `abcd`/`sbcd` fold in X, `addx`
+ * and `roxl` likewise — answers differently depending on what ran before it in the same process.
+ *
+ * WHY THIS VALUE: the requirement is DETERMINISM — two identical runs must give identical answers
+ * whatever ran before them — and $2700 is the kit's convention for meeting it: the S bit and IPL the
+ * reset itself selects, with the CCR cleared. It is NOT a claim about the SR any game's own boot
+ * code leaves behind; nothing here reads one. A caller cannot ask for another entry condition either
+ * (emu.run has no entry-CCR parameter), so the entry CCR is guaranteed clear, and an original that
+ * the GAME reaches with X set is unreachable from a case.
+ *
+ * Pinned behaviourally on both sides, the same split as the M68K_EMULATE_TRACE #error above:
+ * kit-side by tools/recreate_kit/test/test_entry_state.py, whose probe runs one `abcd` three times
+ * in one process; game-side by projects/wonderboy/recreate/test/test_hud.py::
+ * test_the_oracle_enters_every_run_with_the_condition_codes_clear, over the packed-BCD accumulators
+ * that surfaced the defect. */
+#define ENTRY_SR 0x2700
+
+/* The CPU state EVERY run begins from. Both entry points go through this one place so that the reset
+ * and the ENTRY_SR force cannot drift apart — osh_run_bench once reset without forcing, and so
+ * inherited the condition codes of whatever had run before it. */
+static void enter_from_reset(void) {
+    m68k_init();
+    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
+    m68k_pulse_reset();
+    m68k_set_reg(M68K_REG_SR, ENTRY_SR);
+}
+
 static uint32_t g_heap;         /* Malloc bump pointer */
 static uint32_t g_malloc_n;     /* GEMDOS Malloc calls serviced this run (see osh_malloc_count) */
 static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT model (fabricated D0) */
@@ -356,9 +388,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
             uint32_t *out_regs) {
     g_mem = mem; g_size = size;
 
-    m68k_init();
-    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
-    m68k_pulse_reset();
+    enter_from_reset();
     for (int i = 0; i < 8; i++) {
         m68k_set_reg((m68k_register_t)(M68K_REG_D0 + i), dregs[i]);
         m68k_set_reg((m68k_register_t)(M68K_REG_A0 + i), aregs[i]);
@@ -432,9 +462,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
 int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
                   uint32_t sp, uint32_t sentinel, uint32_t max_insns, uint32_t *out_regs) {
     g_mem = mem; g_size = size;
-    m68k_init();
-    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
-    m68k_pulse_reset();
+    enter_from_reset();
     m68k_set_reg(M68K_REG_A7, sp);
     m68k_set_reg(M68K_REG_PC, entry);
     m68k_write_memory_32(sp, sentinel);       /* return address: rts -> sentinel */

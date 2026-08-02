@@ -132,6 +132,43 @@ Not built: nothing has needed a second option pinned, and the trace flag was pin
 mechanism depends on it. Until it is, a fresh clone at a later upstream commit can move the oracle's
 ground truth under every project at once with nothing red.
 
+### The entry state every run begins from
+
+A second decision about the same CPU, and the same kind: it is stated here because it is not an
+inherited default either.
+
+> **`osh_run` and `osh_run_bench` force `SR = $2700` after the reset** — supervisor, IPL 7, condition
+> codes clear. **The entry CCR is guaranteed clear**, and a caller cannot set it: `emu.run` has no
+> entry-CCR parameter, so no other entry condition is expressible.
+
+**Why it is forced rather than left to the reset.** `m68k_pulse_reset()` is faithful to a 68000
+reset, which does *not* clear the condition codes: it touches T, the interrupt mask and S, and leaves
+`FLAG_X`/`N`/`Z`/`V`/`C` exactly as the previous run left them. Both entry points therefore used to
+inherit the CCR of whatever had run before them **in the same process**, and any original that reads
+a condition code on entry answered differently depending on run order — `abcd`/`sbcd` fold in X,
+`addx` and `roxl` likewise. It surfaced as four Wonder Boy packed-BCD cases that reddened under
+`pytest -n auto` and passed on their own, each off by one unit in the lowest digit. Determinism is
+the requirement — two identical runs must give identical answers — and `$2700` is the kit's
+convention for meeting it, not a claim about any game's own boot SR.
+
+**What it costs.** An original the *game* enters with X set cannot be reproduced from a case. Wonder
+Boy has one (`$e058`'s `subq.w #1` sets X, and `$e064` calls a BCD accumulator two instructions
+later), registered as honestly unpinned in `projects/wonderboy/recreate/STATUS.md`. Modelling it
+means giving `emu.run` an entry-CCR parameter; nothing has needed one yet.
+
+**Pinned on both sides**, the same split as the trace flag above:
+
+* kit-side by [`test/test_entry_state.py`](test/test_entry_state.py), whose `entry_state_probe.c`
+  drives `osh_run` in C — one `abcd` three times in one process, with a middle run that wraps and
+  leaves X set — because this directory binds no project and so cannot reach the oracle from Python.
+  It compiles `shim.c` itself rather than linking the shared `liboracle.so`, so a reverted force
+  cannot hide behind a stale artifact;
+* game-side by
+  `projects/wonderboy/recreate/test/test_hud.py::test_the_oracle_enters_every_run_with_the_condition_codes_clear`,
+  over the reconstructions that surfaced it.
+
+Reverting the force reddens both.
+
 ## The harness-poked model state
 
 Four regions of the image are inputs the harness pokes, not program memory. Both cores read the
