@@ -10,7 +10,7 @@ compiled C on the same image, and diffs the result. Everything game-specific liv
 the method is differential rather than byte-matching, read the worked reference project,
 [`projects/buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md).
 
-**43 functions are reconstructed.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
+**62 functions are reconstructed.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
 game loads goes through, verified over the game's own resource corpus — the 41 `.RAD` files the two
 disks ship, plus the four protection-damaged overlays a second time in their authentic disk-2 bytes,
 so 45 streams in all. The first gameplay batch: 31 leaves with no callee and no hardware between
@@ -20,10 +20,13 @@ eleven leaves (`0xb372..0xbd26`): four packed-BCD accumulators over the score an
 it; five blits — the record bitmap, one meter cell, the panel's animation frame and the HUD-slot
 cell pair (copy and OR), of which the first three take their destination from whichever buffer
 `screen_back` points at and the pair are handed one by their caller; the meter's clamped add; and
-the table-select that ends the frame's panel pass. The rest is the binding plus a foundation battery
-that runs the original code under the oracle and pins how the program starts. Progress, the kit
-change this project required, the oracle defect the panel batch surfaced, and the blockers still
-ahead: [`STATUS.md`](STATUS.md).
+the table-select that ends the frame's panel pass. Then the two tiers above those leaves: the digit
+plotter and the field walks and fields it draws (`$b54c..$bd65`), and the pass's three table walks
+(`$b39c`, `$b8f0` and the region restore `$d93a` with its six blits), which leave
+`panel_refresh_frame` with **nine of its ten callees reconstructed**. The rest is the binding plus a
+foundation battery that runs the original code under the oracle and pins how the program starts.
+Progress, the kit change this project required, the oracle defect the panel batch surfaced, and the
+one blocker still ahead: [`STATUS.md`](STATUS.md).
 
 **Read [`PORTABILITY.md`](PORTABILITY.md) before choosing what to port.** It measures how much of
 this game a memory-only differential can actually verify — 83.8 % of the *recovered* code runs
@@ -41,15 +44,17 @@ Makefile                   three lines: KIT + GAME + include $(KIT)/kit.mk
 include/wonderboy.h        how SWB.PRG becomes a running image, as constants — the canonical copy
 include/rad.h              the .RAD/.CRU container and its bitstream, as constants
 include/effects.h          the 29 effect/state leaves at $10200..$103e7 — prototypes
-include/hud.h              the status panel's 20 routines — prototypes, and their register interfaces
+include/hud.h              the status panel's 30 routines — prototypes, and their register interfaces
 include/input.h            the two joystick-pipeline leaves
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
 src/effects.c              the effect handlers and the state stubs above them
 src/hud.c                  panel_refresh_frame ($b346) below its own entry: batch 2's eleven leaves
                            (the BCD score/counter accumulators, the panel blits, the meter's clamped
-                           add) and batch 3's second tier (the digit plotter — a leaf too — its
-                           three field walks, the four fields the pass draws, the meter's own pass)
+                           add), batch 3's second tier (the digit plotter — a leaf too — its three
+                           field walks, the four fields the pass draws, the meter's own pass) and
+                           batch 4's third (the pass's three table walks: the region restore and its
+                           six blits, the newest record's display, the six HUD slots)
 src/input.c                the joystick edge pipeline: latch a frame, then diff two frames
 test/harness.py            the kit-binding shim
 test/leaf.py               shared driver for LEAF routines: entry points looked up in ../names.txt,
@@ -72,8 +77,10 @@ test/test_effects.py       the effect/state leaves' differential: seeded destina
 test/test_hud.py           the status panel's differential: the game's own bitmaps blitted into both
                            of its screen buffers, the BCD accumulators against a decimal model, the
                            regression case for the oracle's entry condition codes, and — for the
-                           non-leaf tier — whole-body entry pins and a leading-zero model the drawn
-                           digits are checked against
+                           non-leaf tiers — whole-body entry pins, a leading-zero model the drawn
+                           digits are checked against, and (for the screen-to-screen restores) a
+                           seeded MARGIN around every region, without which an over-copy of zeros
+                           over zeros stays invisible
 test/test_input.py         the joystick pair's differential — memory for the latch, the whole
                            returned d0 for the edge
 ```

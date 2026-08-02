@@ -198,17 +198,39 @@ def read_int(info, addr, length, what=""):
     return int.from_bytes(read_bytes(info, addr, length, what), "big")
 
 
-def assert_rows(info, rows, expected, what):
+def assert_rows(info, rows, expected, what, skip=()):
     """Compare a blit's rows against the bytes the case says should have moved.
 
     ``rows`` is the [(address, length)] the run was allowed to write — the same list the caller hands
     ``run()`` — and ``expected`` the bytes for each of them. The rectangular blits all compare their
     result this way, so the row index and the differing bytes are named in one place.
+
+    ``skip`` is a set of addresses to leave out, for the case where a SECOND draw lands inside the
+    first one's rectangle and those bytes belong to that draw's own assert (test_hud.py's record
+    display stamps two digits into the bitmap it just blitted). A ``skip`` that swallowed the whole
+    rectangle would turn this into a no-op, so the bytes actually compared are counted and required
+    to be a majority of them — the row/length check above does not cover that on its own.
     """
     assert len(expected) == len(rows), (
         f"{what}: {len(expected)} expected rows against {len(rows)} written ones — a case whose two "
         f"geometries disagree would leave the surplus rows unchecked")
+    compared = 0
     for row, (addr, length) in enumerate(rows):
         actual = read_bytes(info, addr, length, what)
-        assert actual == expected[row], (
-            f"{what}: row {row} at {addr:#x} is {actual.hex()}, not {expected[row].hex()}")
+        # Per ROW as well as per row COUNT: `expected` is normally sliced out of the loaded image,
+        # and a slice that ran past the end comes back short — which would be an IndexError inside
+        # this loop rather than a failure naming the case.
+        assert len(expected[row]) == length, (
+            f"{what}: expected row {row} is {len(expected[row])} bytes against the {length} written "
+            f"— the case's source geometry and its destination geometry disagree")
+        for index in range(length):
+            if addr + index in skip:
+                continue
+            compared += 1
+            assert actual[index] == expected[row][index], (
+                f"{what}: row {row} byte {index} at {addr + index:#x} is {actual[index]:#04x}, not "
+                f"{expected[row][index]:#04x} (row is {actual.hex()}, not {expected[row].hex()})")
+    total = sum(length for _addr, length in rows)
+    assert compared * 2 > total, (
+        f"{what}: only {compared} of {total} bytes were compared — the skip set has swallowed the "
+        f"blit, so this assert is holding almost nothing")

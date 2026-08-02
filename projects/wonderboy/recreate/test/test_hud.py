@@ -1,20 +1,22 @@
-"""Differential test for the twenty status-panel routines of src/hud.c.
+"""Differential test for the thirty status-panel routines of src/hud.c.
 
 Every case runs the ORIGINAL routine under the Musashi oracle and the reconstruction on the same
 image, requires the two to agree byte for byte over the whole image, and bounds the original's write
 set to the bytes the case says it may touch. Where a routine returns a register a caller reads back
 (`hud_blit_meter_cell`'s and `hud_plot_digit`'s cursors) the case compares that too.
 
-TWELVE OF THEM ARE LEAVES and eight are not — the three field walks, the four fields above them and
-the meter's own pass. (`hud_plot_digit` came in with that second tier because the walks need it, but
-it calls nothing and is a leaf like the other eleven.) A non-leaf case is the same differential with
-one difference on each side: the original's `bsr` runs its callee under the oracle, and the C calls
-the ported C callee directly — so a case over `hud_draw_score_and_size_meter` also exercises
-`hud_draw_eight_digits` and `hud_plot_digit`, and a defect anywhere in that chain reddens it.
+EIGHTEEN OF THEM ARE LEAVES and twelve are not — the three field walks, the four fields above them,
+the meter's own pass, and the third tier's three table walks with the record's own two-digit walk
+under one of them. (`hud_plot_digit` came in with the second tier because the walks need it, but it
+calls nothing and is a leaf; so are the six region restores.) A non-leaf case is the same
+differential with one difference on each side: the original's `bsr` runs its callee under the
+oracle, and the C calls the ported C callee directly — so a case over
+`hud_draw_score_and_size_meter` also exercises `hud_draw_eight_digits` and `hud_plot_digit`, and a
+defect anywhere in that chain reddens it.
 
 These are not the effect handlers' shape, and three things follow from that:
 
-  * MOST OF THEM TAKE REGISTERS. Ghidra recovered `void FUN(void)` for all twenty; the register
+  * MOST OF THEM TAKE REGISTERS. Ghidra recovered `void FUN(void)` for all thirty; the register
     interfaces are read off the disassembly, `../names.txt` carries a `proto` line for each one it
     can express, and the C takes a `uint32_t` per register so that the operand size the original
     applies (`move.w d0,...` on a longword, `adda.w` on a 32-bit product) happens where a case can
@@ -59,6 +61,7 @@ import ctypes
 import pytest
 
 import harness
+import layout
 import leaf
 from leaf import (MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_IMM_ABS_L, RTS,
                   longword, word)
@@ -110,7 +113,30 @@ PANEL_FRAME_ROWS = wb("PANEL_FRAME_ROWS")
 METER_VALUE = wb("HUD_METER_VALUE")
 METER_MAX = wb("HUD_METER_MAX")
 WORD_LEN = wb("STATE_WORD_LEN")
-RECORD_LIST = leaf.entry_of("effect_record_list")
+RECORD_LIST = wb("EFFECT_RECORD_LIST")
+RECORD_WRITE_PTR = wb("EFFECT_RECORD_WRITE_PTR")
+RECORD_LEN = wb("EFFECT_RECORD_LEN")
+RECORD_FRESH_FLAG = wb("RECORD_FRESH_FLAG")
+RECORD_LOW_BYTE = wb("RECORD_LOW_BYTE")
+RECORD_NO_DIGITS = wb("RECORD_NO_DIGITS")
+RECORD_DIGITS_ORIGIN = wb("RECORD_DIGITS_ORIGIN")
+RECORD_DIGITS = wb("RECORD_DIGITS")
+
+SCREEN_FRONT = wb("SCREEN_FRONT")
+
+HUD_SLOTS = wb("HUD_SLOTS")
+HUD_SLOT_REQUEST = wb("HUD_SLOT_REQUEST")
+HUD_SLOT_BBC8_VARIANTS = wb("HUD_SLOT_BBC8_VARIANTS")
+
+PANEL_RESTORE_FLAGS = wb("PANEL_RESTORE_FLAGS")
+PANEL_RESTORE_FLAG_COUNT = wb("PANEL_RESTORE_FLAG_COUNT")
+PANEL_RESTORE_FLAG_DBB5 = wb("PANEL_RESTORE_FLAG_DBB5")
+RESTORE_ROW_BYTES_32 = wb("RESTORE_ROW_BYTES_32")
+RESTORE_ROW_BYTES_44 = wb("RESTORE_ROW_BYTES_44")
+RESTORE_ROWS_8 = wb("RESTORE_ROWS_8")
+RESTORE_ROWS_20 = wb("RESTORE_ROWS_20")
+RESTORE_ROWS_29 = wb("RESTORE_ROWS_29")
+RESTORE_MOVEM_REGISTERS = wb("RESTORE_MOVEM_REGISTERS")
 
 METER_CELL_UNITS = wb("METER_CELL_UNITS")
 METER_CELL_FULL = wb("METER_CELL_FULL")
@@ -291,9 +317,34 @@ SBCD_PREDEC = b"\x83\x08"           # sbcd -(a0),-(a1)  — nor the `or.b`
 ADD_W_D0_ABS_L = b"\xd1\x79"        # add.w d0,<abs>.l  — a read-modify-write ON MEMORY
 MOVE_W_ABS_L_D1 = b"\x32\x39"
 CMP_W_ABS_L_D1 = b"\xb2\x79"
-MOVEM_L_A0_INC_D0_D5 = b"\x4c\xd8\x00\x3f"   # movem.l (a0)+,d0-d5   (six longwords = 24 bytes)
-MOVEM_L_D0_D5_A1 = b"\x48\xd1\x00\x3f"       # movem.l d0-d5,(a1)
-MOVEM_L_D0_D5_D16_A1 = b"\x48\xe9\x00\x3f"   # movem.l d0-d5,d16(a1)
+# The `movem.l` forms, opcode and register mask apart, so that a mask is BUILT from the register
+# list a routine moves and its byte count comes out of the same place. `<mask>` is one extension
+# word whose bit N selects the Nth register of MOVEM_REGISTERS (the order the 68000 uses for every
+# addressing mode except pre-decrement, which none of these are).
+MOVEM_L_A0_INC = b"\x4c\xd8"        # movem.l (a0)+,<mask>
+MOVEM_L_A0 = b"\x4c\xd0"            # movem.l (a0),<mask>
+MOVEM_L_D16_A0 = b"\x4c\xe8"        # movem.l d16(a0),<mask>
+MOVEM_L_TO_A1 = b"\x48\xd1"         # movem.l <mask>,(a1)
+MOVEM_L_TO_D16_A1 = b"\x48\xe9"     # movem.l <mask>,d16(a1)
+
+MOVEM_REGISTERS = tuple(f"d{n}" for n in range(8)) + tuple(f"a{n}" for n in range(8))
+MOVEM_REGISTER_BYTES = 4            # `.l`: one longword per register in the list
+
+
+def _movem_mask(*registers):
+    return word(sum(1 << MOVEM_REGISTERS.index(name) for name in registers))
+
+
+def _movem_range(first, last):
+    """The consecutive registers `first`..`last`, e.g. `d0-d5` or `a2-a5`."""
+    lo, hi = MOVEM_REGISTERS.index(first), MOVEM_REGISTERS.index(last)
+    return MOVEM_REGISTERS[lo:hi + 1]
+
+
+PANEL_FRAME_MOVEM = _movem_range("d0", "d5")            # six longwords = 24 bytes
+MOVEM_L_A0_INC_D0_D5 = MOVEM_L_A0_INC + _movem_mask(*PANEL_FRAME_MOVEM)
+MOVEM_L_D0_D5_A1 = MOVEM_L_TO_A1 + _movem_mask(*PANEL_FRAME_MOVEM)
+MOVEM_L_D0_D5_D16_A1 = MOVEM_L_TO_D16_A1 + _movem_mask(*PANEL_FRAME_MOVEM)
 
 # ...and the second tier's.
 BSR_W = b"\x61\x00"
@@ -344,6 +395,20 @@ DBF_D1 = b"\x51\xc9"
 DBF_D2 = b"\x51\xca"
 DBF_D5 = b"\x51\xcd"
 
+# ...and the third tier's.
+BPL_W = b"\x6a\x00"
+MOVEQ_0_D7 = b"\x7e\x00"
+MOVEA_L_ABS_L_A0 = b"\x20\x79"      # movea.l <abs>.l,a0
+LEA_ABS_L_A6 = b"\x4d\xf9"
+TST_B_ABS_L = b"\x4a\x39"
+TST_B_A0 = b"\x4a\x10"
+TST_B_D16_A0 = b"\x4a\x28"
+TST_B_A6_INC = b"\x4a\x1e"          # tst.b (a6)+  — the flag walk's own step
+CLR_B_D16_A6 = b"\x42\x2e"          # clr.b d16(a6)
+CMPI_B_IMM_A0 = b"\x0c\x10"         # cmpi.b #imm,(a0)     — one arm of the variant chain
+CMPI_B_IMM_D16_A0 = b"\x0c\x28"     # cmpi.b #imm,d16(a0)
+MOVE_B_D16_A0_D7 = b"\x1e\x28"      # move.b d16(a0),d7
+
 # The 68000's shift/rotate-BY-IMMEDIATE encoding, `1110 ccc d ss i tt rrr`, with a count of 8 spelled
 # as 0. Built rather than transcribed so that the shift COUNTS come out of the geometry constants the
 # reconstruction uses: a 32-byte glyph stride IS the `asl.w #5`, a 2-byte table stride the `asr.w #1`
@@ -353,6 +418,7 @@ SHIFT_LEFT = 1 << 8
 SHIFT_SIZE_WORD = 1 << 6
 SHIFT_SIZE_LONG = 2 << 6
 SHIFT_ARITHMETIC = 0 << 3
+SHIFT_LOGICAL = 1 << 3
 SHIFT_ROTATE = 3 << 3
 SHIFT_COUNT_WIDTH = 8               # counts are 1..8, and 8 is encoded as 0
 
@@ -385,10 +451,18 @@ def _forward_branch(spanned_bytes):
     return word(spanned_bytes + BRANCH_EXTENSION)
 
 
-def _longword_blit_tail(moves, move_bytes, row_bytes):
-    """`lea (line - row_bytes)(a1),a1 / dbf d0` — the tail the three longword blits share."""
-    lea = LEA_D16_A1_A1 + word(SCREEN_LINE - row_bytes)
-    return lea + DBF_D0 + _dbf(moves * move_bytes + len(lea))
+def _dbf_loop(load_counter, dbf, count, body):
+    """`move.w #count-1,Dn / <body> / dbf Dn,<body>` — the shape every looping blit in this file
+    has. The `dbf` displacement comes out of the body's own length, so a builder cannot state its
+    row count one way and its branch another."""
+    return load_counter + word(count - 1) + body + dbf + _dbf(len(body))
+
+
+def _longword_blit_tail(row_bytes):
+    """`lea (line - row_bytes)(a1),a1` — the destination step of a blit reading a CONTIGUOUS bitmap,
+    whose source `(a0)+` has already advanced by the row. (`_longword_restore_entry` is the other
+    form: its source is a screen, so it steps both cursors.)"""
+    return LEA_D16_A1_A1 + word(SCREEN_LINE - row_bytes)
 
 
 def _select_table_entry():
@@ -402,16 +476,15 @@ def _select_table_entry():
 
 
 def _record_bitmap_entry():
-    moves = RECORD_BITMAP_BYTES // 4
+    body = (MOVE_L_A0_INC_A1_INC * (RECORD_BITMAP_BYTES // 4)
+            + _longword_blit_tail(RECORD_BITMAP_BYTES))
     return (MOVE_B_A0_D0
             + MULU_W_IMM_D0 + word(RECORD_BITMAP_LEN)
             + LEA_ABS_L_A0 + longword(RECORD_BITMAP_TABLE)
             + ADDA_W_D0_A0
             + MOVEA_L_ABS_W_A1 + word(SCREEN_BACK)
             + ADDA_W_IMM_A1 + word(RECORD_BITMAP_ORIGIN)
-            + MOVE_W_IMM_D0 + word(RECORD_BITMAP_ROWS - 1)
-            + MOVE_L_A0_INC_A1_INC * moves
-            + _longword_blit_tail(moves, len(MOVE_L_A0_INC_A1_INC), RECORD_BITMAP_BYTES)
+            + _dbf_loop(MOVE_W_IMM_D0, DBF_D0, RECORD_BITMAP_ROWS, body)
             + RTS)
 
 
@@ -449,11 +522,8 @@ def _meter_add_entry():
 
 
 def _cell_blit_entry(move):
-    moves = HUD_CELL_BYTES // 4
-    return (MOVE_W_IMM_D0 + word(HUD_CELL_ROWS - 1)
-            + move * moves
-            + _longword_blit_tail(moves, len(move), HUD_CELL_BYTES)
-            + RTS)
+    body = move * (HUD_CELL_BYTES // 4) + _longword_blit_tail(HUD_CELL_BYTES)
+    return _dbf_loop(MOVE_W_IMM_D0, DBF_D0, HUD_CELL_ROWS, body) + RTS
 
 
 def _panel_frame_entry():
@@ -682,6 +752,225 @@ def _meter_entry():
         DBF_D2 + _dbf(_CELL_DRAW_LEN), RTS])
 
 
+# --- the third tier's entry pins -----------------------------------------------------------------
+# The pass's three table walks. Each pin is built from the same table the reconstruction is: the
+# fifteen restore entries, the six slots and the sixth slot's variant chain. So a routine wired to
+# the wrong region, flag, cell or callee fails at its own address.
+
+# (record, restore flag, screen origin, blank cell, value-zero icon, value-nonzero icon) for the five
+# slots whose icon is a two-way test — include/wonderboy.h's constants, in the order $b8f0 walks.
+HUD_PLAIN_SLOTS = tuple(
+    dict(record=wb(f"HUD_SLOT_{slot}"), flag=wb(f"PANEL_RESTORE_FLAG_DBB{flag}"),
+         origin=wb(f"HUD_SLOT_ORIGIN_{slot}"), blank=wb(f"HUD_CELL_BLANK_{column}"),
+         icon_zero=wb(f"HUD_CELL_ZERO_{column}"), icon_value=wb(f"HUD_CELL_ICON_{slot}"))
+    for slot, flag, column in (("BBBE", "6", "LEFT"), ("BBC0", "7", "LEFT"), ("BBC2", "8", "LEFT"),
+                               ("BBC4", "9", "RIGHT"), ("BBC6", "A", "RIGHT")))
+
+# The sixth slot: the same shape with a six-armed `cmpi.b #1..#6` chain in place of the `tst.b`.
+# Arms 5 and 6 name the SAME cell, which is why this is five constants and six arms.
+HUD_SLOT_BBC8 = dict(record=wb("HUD_SLOT_BBC8"), flag=wb("PANEL_RESTORE_FLAG_DBBB"),
+                     origin=wb("HUD_SLOT_ORIGIN_BBC8"), blank=wb("HUD_CELL_BLANK_RIGHT"),
+                     icon_zero=wb("HUD_CELL_ZERO_RIGHT"))
+HUD_SLOT_BBC8_ICONS = tuple(wb(f"HUD_CELL_BBC8_{min(v, 5)}")
+                            for v in range(1, HUD_SLOT_BBC8_VARIANTS + 1))
+
+# $d93a's fifteen entries: (screen origin, the routine it `bsr`s, or None where it has no call).
+# Eleven of the origins are constants other routines in this file already use, which is the pairing
+# between a draw and the restore that puts the front buffer's pixels back over it.
+PANEL_RESTORE_ENTRIES = (
+    (SCORE_ORIGIN, None),
+    (wb("PANEL_REGION_A71"), None),
+    (HISCORE_ORIGIN, None),
+    (wb("PANEL_REGION_AA0"), "panel_restore_32x20"),
+    (COUNTER_ORIGIN, "panel_restore_none"),
+    (RECORD_BITMAP_ORIGIN, "panel_restore_32x29"),
+) + tuple((slot["origin"], "panel_restore_16x14") for slot in HUD_PLAIN_SLOTS) + (
+    (HUD_SLOT_BBC8["origin"], "panel_restore_16x14"),
+    (PANEL_FRAME_ORIGIN, "panel_restore_24x32"),
+    (wb("PANEL_REGION_520"), "panel_restore_44x8"),
+    (wb("PANEL_REGION_570"), "panel_restore_44x8"),
+)
+
+
+def _longword_restore_entry(row_bytes, rows):
+    """`move.w #rows-1,d0 / N x move.l (a0)+,(a1)+ / lea on BOTH cursors / dbf` — the three restores
+    that move their row as longwords. What separates them from the bitmap blits above is the SOURCE
+    `lea`: it advances to the next scanline, not to the next row of a contiguous bitmap."""
+    step = word(SCREEN_LINE - row_bytes)
+    body = (MOVE_L_A0_INC_A1_INC * (row_bytes // 4)
+            + LEA_D16_A0_A0 + step + LEA_D16_A1_A1 + step)
+    return _dbf_loop(MOVE_W_IMM_D0, DBF_D0, rows, body) + RTS
+
+
+def _restore_44x8_entry():
+    """$daf8 moves its row as ONE `movem.l` pair over eleven registers, so the source `lea` is
+    160 - 44 (the `movem` post-incremented it) and the destination's is a whole scanline."""
+    mask = _movem_mask(*(_movem_range("d1", "d7") + _movem_range("a2", "a5")))
+    body = (MOVEM_L_A0_INC + mask + MOVEM_L_TO_A1 + mask
+            + LEA_D16_A0_A0 + word(SCREEN_LINE - RESTORE_ROW_BYTES_44)
+            + LEA_D16_A1_A1 + word(SCREEN_LINE))
+    return _dbf_loop(MOVE_W_IMM_D0, DBF_D0, RESTORE_ROWS_8, body) + RTS
+
+
+def _restore_24x32_entry():
+    """$db72: the panel frame's geometry four rows at a time, and NEITHER `movem` post-increments —
+    both sides are indexed off the row's own displacement, so the two `lea`s are the same 640."""
+    mask = _movem_mask(*PANEL_FRAME_MOVEM)
+    body = MOVEM_L_A0 + mask + MOVEM_L_TO_A1 + mask
+    for row in range(1, PANEL_FRAME_ROWS_PER_PASS):
+        body += (MOVEM_L_D16_A0 + mask + word(row * SCREEN_LINE)
+                 + MOVEM_L_TO_D16_A1 + mask + word(row * SCREEN_LINE))
+    step = word(PANEL_FRAME_ROWS_PER_PASS * SCREEN_LINE)
+    body += LEA_D16_A0_A0 + step + LEA_D16_A1_A1 + step
+    return (MOVE_W_IMM_D7 + word(PANEL_FRAME_ROWS // PANEL_FRAME_ROWS_PER_PASS - 1)
+            + body + DBF_D7 + _dbf(len(body)) + RTS)
+
+
+# One entry of $d93a's walk, without its `bsr`: the test, the clear and the two offset cursors.
+def _restore_entry_head(origin, called):
+    tail = (CLR_B_D16_A6 + word(-1)
+            + MOVEA_L_ABS_W_A0 + word(SCREEN_FRONT)
+            + MOVEA_L_ABS_W_A1 + word(SCREEN_BACK)
+            + LEA_D16_A0_A0 + word(origin)
+            + LEA_D16_A1_A1 + word(origin))
+    call_len = len(BSR_W) + 2 if called else 0
+    return TST_B_A6_INC + BEQ_W + _forward_branch(len(tail) + call_len) + tail
+
+
+def _restore_entry(origin, called):
+    head = _restore_entry_head(origin, called)
+    if called is None:
+        return head
+    return lambda at: head + _bsr_to(called)(at + len(head))
+
+
+def _restore_regions_entry():
+    return _assemble(leaf.entry_of("panel_restore_dirty_regions"),
+                     [LEA_ABS_L_A6 + longword(PANEL_RESTORE_FLAGS)]
+                     + [_restore_entry(origin, called) for origin, called in PANEL_RESTORE_ENTRIES]
+                     + [RTS])
+
+
+def _record_digits_entry():
+    """$b3da: the record's low byte into d7's TOP byte, then two plots in the alternate font with
+    the latch forced between them."""
+    plot = _bsr_to("hud_plot_digit")
+    font = MOVE_W_IMM_D0 + word(DIGIT_FONT_ALT)
+    return _assemble(leaf.entry_of("hud_draw_record_digits"), [
+        MOVEQ_0_D7,
+        MOVE_B_D16_A0_D7 + word(RECORD_LOW_BYTE),
+        _shift(BITS_PER_BYTE, SHIFT_SIZE_WORD, SHIFT_LOGICAL, 7, left=True),
+        SWAP_D7,
+        MOVEA_L_ABS_W_A0 + word(SCREEN_BACK),
+        ADDA_W_IMM_A0 + word(RECORD_DIGITS_ORIGIN),
+        font, plot,
+        # `lea -1279(a0),a0` — the same net +1 step the other walks spell as `suba.l #$4ff`.
+        LEA_D16_A0_A0 + word(-DIGIT_REWIND_RIGHT_HALF),
+        font, _FORCE_LATCH,
+        plot, _CLEAR_LATCH, RTS])
+
+
+def _newest_record_entry():
+    reload_pointer = MOVEA_L_ABS_L_A0 + longword(RECORD_WRITE_PTR)
+    draw_bitmap = ST_ABS_L + longword(PANEL_RESTORE_FLAG_DBB5)
+    return _assemble(leaf.entry_of("hud_draw_newest_record"), [
+        TST_W_ABS_L + longword(RECORD_LIST),
+        BPL_W + _forward_branch(len(RTS)), RTS,
+        reload_pointer,
+        TST_B_ABS_L + longword(RECORD_FRESH_FLAG),
+        BEQ_W + _forward_branch(len(draw_bitmap) + len(BSR_W) + 2),
+        draw_bitmap, _bsr_to("hud_blit_record_bitmap"),
+        reload_pointer,
+        CMPI_B_IMM_D16_A0 + word(RECORD_NO_DIGITS) + word(RECORD_LOW_BYTE),
+        BNE_W + _forward_branch(len(RTS)), RTS,
+        _bsr_to("hud_draw_record_digits"), RTS])
+
+
+# The four instructions ahead of every one of $b8f0's eighteen blit sites: the cell in a0, the
+# destination resolved out of screen_back into a1, and the `bsr`. Its LENGTH is what the slot
+# blocks' own branch displacements are measured in.
+def _slot_blit_call(name, source, origin):
+    return [LEA_ABS_L_A0 + longword(source),
+            MOVEA_L_ABS_W_A1 + word(SCREEN_BACK),
+            ADDA_W_IMM_A1 + word(origin),
+            _bsr_to(name)]
+
+
+_SLOT_BLIT_LEN = len(LEA_ABS_L_A0) + 4 + len(MOVEA_L_ABS_W_A1) + 2 + len(ADDA_W_IMM_A1) + 2 \
+    + len(BSR_W) + 2
+_SLOT_RELOAD_LEN = len(LEA_ABS_L_A0) + 4 + len(TST_B_A0)
+_SLOT_VARIANT_ARM_LEN = len(CMPI_B_IMM_A0) + 2 + len(BNE_W) + 2 + len(LEA_ABS_L_A0) + 4 + _BRA_LEN
+_SLOT_VARIANT_LAST_LEN = (len(CMPI_B_IMM_A0) + 2 + len(BEQ_W) + 2 + len(RTS)
+                          + len(LEA_ABS_L_A0) + 4)
+
+
+def _plain_slot_block(slot):
+    """One of the five identical 94-byte blocks: take the request, raise the flag, blank the cell,
+    then OR whichever of two icons `tst.b (a0)` picks."""
+    zero_arm = _SLOT_BLIT_LEN
+    value_arm = _SLOT_BLIT_LEN + _BRA_LEN
+    dirty = (len(CLR_B_D16_A0) + 2 + len(ST_ABS_L) + 4 + _SLOT_BLIT_LEN + _SLOT_RELOAD_LEN
+             + len(BEQ_W) + 2 + value_arm + zero_arm)
+    return lambda at: _assemble(at, [
+        LEA_ABS_L_A0 + longword(slot["record"]),
+        TST_B_D16_A0 + word(HUD_SLOT_REQUEST),
+        BEQ_W + _forward_branch(dirty),
+        CLR_B_D16_A0 + word(HUD_SLOT_REQUEST),
+        ST_ABS_L + longword(slot["flag"]),
+    ] + _slot_blit_call("hud_blit_cell_copy", slot["blank"], slot["origin"]) + [
+        LEA_ABS_L_A0 + longword(slot["record"]),
+        TST_B_A0,
+        BEQ_W + _forward_branch(value_arm),
+    ] + _slot_blit_call("hud_blit_cell_or", slot["icon_value"], slot["origin"]) + [
+        BRA_W + _forward_branch(zero_arm),
+    ] + _slot_blit_call("hud_blit_cell_or", slot["icon_zero"], slot["origin"]))
+
+
+def _slot_bbc8_block():
+    """The sixth block: `bne` past an early `rts` instead of `beq` to the next slot, and a chain of
+    six `cmpi.b` arms — the last of which has no `bra`, since a value past it `rts`es with the cell
+    blanked and no icon on it."""
+    slot = HUD_SLOT_BBC8
+    tail = len(MOVEA_L_ABS_W_A1) + 2 + len(ADDA_W_IMM_A1) + 2 + len(BSR_W) + 2 + len(RTS)
+    chain = (HUD_SLOT_BBC8_VARIANTS - 1) * _SLOT_VARIANT_ARM_LEN + _SLOT_VARIANT_LAST_LEN
+    arms = []
+    for index, icon in enumerate(HUD_SLOT_BBC8_ICONS):
+        following = HUD_SLOT_BBC8_VARIANTS - index - 1
+        if not following:                     # the #6 arm: `beq` over an `rts`, and no `bra`
+            arms += [CMPI_B_IMM_A0 + word(index + 1),
+                     BEQ_W + _forward_branch(len(RTS)), RTS,
+                     LEA_ABS_L_A0 + longword(icon)]
+            break
+        arms += [CMPI_B_IMM_A0 + word(index + 1),
+                 BNE_W + _forward_branch(len(LEA_ABS_L_A0) + 4 + _BRA_LEN),
+                 LEA_ABS_L_A0 + longword(icon),
+                 BRA_W + _forward_branch((following - 1) * _SLOT_VARIANT_ARM_LEN
+                                         + _SLOT_VARIANT_LAST_LEN)]
+    return lambda at: _assemble(at, [
+        LEA_ABS_L_A0 + longword(slot["record"]),
+        TST_B_D16_A0 + word(HUD_SLOT_REQUEST),
+        BNE_W + _forward_branch(len(RTS)), RTS,
+        CLR_B_D16_A0 + word(HUD_SLOT_REQUEST),
+        ST_ABS_L + longword(slot["flag"]),
+    ] + _slot_blit_call("hud_blit_cell_copy", slot["blank"], slot["origin"]) + [
+        LEA_ABS_L_A0 + longword(slot["record"]),
+        TST_B_A0,
+        BEQ_W + _forward_branch(chain + tail),
+    ] + arms + [
+        MOVEA_L_ABS_W_A1 + word(SCREEN_BACK),
+        ADDA_W_IMM_A1 + word(slot["origin"]),
+        _bsr_to("hud_blit_cell_or"), RTS,
+        LEA_ABS_L_A0 + longword(slot["icon_zero"]),
+        MOVEA_L_ABS_W_A1 + word(SCREEN_BACK),
+        ADDA_W_IMM_A1 + word(slot["origin"]),
+        _bsr_to("hud_blit_cell_or"), RTS])
+
+
+def _dirty_slots_entry():
+    return _assemble(leaf.entry_of("hud_refresh_dirty_slots"),
+                     [_plain_slot_block(slot) for slot in HUD_PLAIN_SLOTS] + [_slot_bbc8_block()])
+
+
 ENTRY_BYTES = {
     "select_table_21e8c_and_tick_b39a": _select_table_entry(),
     "hud_blit_record_bitmap": _record_bitmap_entry(),
@@ -703,12 +992,22 @@ ENTRY_BYTES = {
     "hud_draw_score_and_size_meter": _score_entry(),
     "hud_draw_larger_score": _larger_score_entry(),
     "hud_draw_meter": _meter_entry(),
+    "panel_restore_44x8": _restore_44x8_entry(),
+    "panel_restore_32x20": _longword_restore_entry(RESTORE_ROW_BYTES_32, RESTORE_ROWS_20),
+    "panel_restore_32x29": _longword_restore_entry(RESTORE_ROW_BYTES_32, RESTORE_ROWS_29),
+    "panel_restore_16x14": _longword_restore_entry(HUD_CELL_BYTES, HUD_CELL_ROWS),
+    "panel_restore_24x32": _restore_24x32_entry(),
+    "panel_restore_none": RTS,
+    "panel_restore_dirty_regions": _restore_regions_entry(),
+    "hud_draw_record_digits": _record_digits_entry(),
+    "hud_draw_newest_record": _newest_record_entry(),
+    "hud_refresh_dirty_slots": _dirty_slots_entry(),
 }
 
-# The batch this file was written for: the eleven leaves of batch 2 and the nine of batch 3. Recorded
-# rather than derived from ENTRY_BYTES, so a routine dropped from a table shrinks the battery loudly
-# instead of silently.
-HUD_ROUTINE_COUNT = 20
+# The batch this file was written for: the eleven leaves of batch 2, the nine of batch 3 and the ten
+# of batch 4. Recorded rather than derived from ENTRY_BYTES, so a routine dropped from a table
+# shrinks the battery loudly instead of silently.
+HUD_ROUTINE_COUNT = 30
 
 # --- the glue ------------------------------------------------------------------------------------
 _select_table = leaf.image_glue("select_table_21e8c_and_tick_b39a")
@@ -744,6 +1043,17 @@ def _plot_digit(font_select, cursor, digits):
         register = ctypes.c_uint32(digits)
         return _plot_digit_fn(image, font_select, cursor, ctypes.byref(register))
     return with_registers
+
+
+# ...and the third tier's. The three walks read every input out of memory; the six restores take the
+# two whole addresses their caller resolved, exactly like the HUD-cell pair.
+_restore_regions = leaf.image_glue("panel_restore_dirty_regions")
+_newest_record = leaf.image_glue("hud_draw_newest_record")
+_dirty_slots = leaf.image_glue("hud_refresh_dirty_slots")
+_record_digits = leaf.register_glue("hud_draw_record_digits", [ctypes.c_uint32])
+_restore = {name: leaf.register_glue(name, [ctypes.c_uint32] * 2)
+            for name in ("panel_restore_44x8", "panel_restore_32x20", "panel_restore_32x29",
+                         "panel_restore_16x14", "panel_restore_24x32", "panel_restore_none")}
 
 
 def test_this_file_covers_the_whole_batch():
@@ -1706,3 +2016,589 @@ def test_the_meter_battery_draws_every_one_of_the_five_cells():
     the chain unpinned while staying green."""
     drawn = {cell for value, maximum, _why in METER_CASES for cell in _meter_plan(value, maximum)}
     assert drawn == set(METER_CELLS)
+
+
+# =================================================================================================
+# THE THIRD TIER — the pass's three table walks, and the six blits under one of them.
+#
+# `panel_restore_dirty_regions` ($d93a), `hud_draw_newest_record` ($b39c) and
+# `hud_refresh_dirty_slots` ($b8f0) all find their work by testing a REQUEST BYTE something else
+# raised. The first and the last CLEAR it in the same breath, and their cases assert that clear as
+# well as the pixels — the write set a case allows names those bytes explicitly, so a routine that
+# forgot one fails the value assert rather than only the diff. The record display is the exception:
+# nothing in the image clears `record_fresh_flag`, so its cases allow no write to that byte at all.
+#
+# `$d93a` also brings the FRONT buffer into the battery for the first time: it copies a region out
+# of `screen_front` into `screen_back`, so a case seeds both longwords, seeds the source screen with
+# filler offset from the destination's, and runs the pair BOTH WAYS ROUND — nothing here may assume
+# which buffer is which.
+# =================================================================================================
+
+# (name, row bytes, rows) for the five restores that blit. `panel_restore_none` is the sixth and has
+# no geometry: it is a bare `rts`.
+PANEL_RESTORES = (
+    ("panel_restore_44x8", RESTORE_ROW_BYTES_44, RESTORE_ROWS_8),
+    ("panel_restore_32x20", RESTORE_ROW_BYTES_32, RESTORE_ROWS_20),
+    ("panel_restore_32x29", RESTORE_ROW_BYTES_32, RESTORE_ROWS_29),
+    ("panel_restore_16x14", HUD_CELL_BYTES, HUD_CELL_ROWS),
+    ("panel_restore_24x32", PANEL_FRAME_BYTES, PANEL_FRAME_ROWS),
+)
+RESTORE_GEOMETRY = {name: (row_bytes, rows) for name, row_bytes, rows in PANEL_RESTORES}
+
+# The widest and tallest of the five, which is what an entry that should blit NOTHING is seeded to:
+# a stand-in that blitted any of the five would then be writing over filler.
+RESTORE_WIDEST = (max(row_bytes for _name, row_bytes, _rows in PANEL_RESTORES),
+                  max(rows for _name, _row_bytes, rows in PANEL_RESTORES))
+
+# The game's own buffers as (front, back), and the same pair swapped.
+SCREEN_PAIRS = (SCREEN_BUFFERS, SCREEN_BUFFERS[::-1])
+
+# THE MARGIN, and why every region case has one. A blit that ran one row too far, or one longword
+# too wide, lands in bytes outside its own geometry — and if a case seeded only that geometry, those
+# bytes are ZERO on both screens, so copying them moves nothing and both sides still agree. The
+# mutation sweep found exactly that: `panel_restore_32x29` moving the record bitmap's 32 rows
+# survived, and so did the bare `rts` blitting a whole cell. So a case seeds its region WIDENED by
+# the margin below, on both screens, and leaves the margin out of the write set the run may touch.
+REGION_MARGIN_ROWS = 4
+REGION_MARGIN_BYTES = 16
+
+# The two screens' filler differs everywhere, so an over-copy always moves a byte that is visibly
+# not the one the destination held. Keyed on the ADDRESS rather than on a row index: two regions of
+# the walk share rows (the slot cells sit side by side), and their widened bands must agree byte for
+# byte where they overlap or the later poke would silently rewrite the earlier one. It is `_filler`'s
+# own pattern, addressed — `_seeded_column` already spells that as `_filler(1, addr)`.
+SCREEN_SOURCE_SALT = 5
+SCREEN_DESTINATION_SALT = 0
+
+
+def _screen_byte(addr, salt):
+    return _filler(1, addr + salt)[0]
+
+
+def _screen_band(screen, origin, row_bytes, rows, salt):
+    """Filler for one region plus the margin, as one poke per row."""
+    width = row_bytes + REGION_MARGIN_BYTES
+    return {addr: bytes(_screen_byte(addr + index, salt) for index in range(width))
+            for addr, _width in _rows(screen + origin, width, rows + REGION_MARGIN_ROWS)}
+
+
+def _banded_rows(band, screen, origin, row_bytes, rows):
+    """The bytes ``band`` holds in the region's OWN rows — what a restore must have copied. Read
+    back out of the band the caller seeded rather than regenerated, so the seed and the expectation
+    cannot be two statements of the same pattern that drift apart."""
+    return [band[addr][:row_bytes] for addr, _len in _rows(screen + origin, row_bytes, rows)]
+
+# One restore is a prologue, `rows` iterations of (row_bytes/4 moves + 2 `lea` + a `dbf`) and an
+# `rts`. Stated from the LONGWORD shape, which bounds the two `movem` ones as well since a `movem`
+# moves a whole row in one instruction.
+RESTORE_ENTRY_INSNS = 8         # tst, beq, clr, two movea, two lea, bsr — one entry of the walk
+RESTORE_ROW_STEP_INSNS = 3      # the two `lea` and the `dbf` that end every row
+RESTORE_INSN_OVERHEAD = 8       # the `move.w` counter, the `rts`, and room for a caller's setup
+
+
+def _restore_insn_cap(row_bytes, rows):
+    return rows * (row_bytes // 4 + RESTORE_ROW_STEP_INSNS) + RESTORE_INSN_OVERHEAD
+
+
+def test_the_restores_row_widths_match_the_geometries_they_reuse():
+    """Two of the five restore the geometry a draw in this file already has — the HUD-slot cell and
+    the panel frame — which is what pairs those entries with those draws. Stated as an assert
+    because `include/wonderboy.h` deliberately does NOT restate the two row counts."""
+    assert RESTORE_GEOMETRY["panel_restore_16x14"] == (HUD_CELL_BYTES, HUD_CELL_ROWS)
+    assert RESTORE_GEOMETRY["panel_restore_24x32"] == (PANEL_FRAME_BYTES, PANEL_FRAME_ROWS)
+    assert RESTORE_MOVEM_REGISTERS * MOVEM_REGISTER_BYTES == RESTORE_ROW_BYTES_44
+
+
+def test_the_record_lists_address_agrees_with_the_name_map():
+    """`include/wonderboy.h` and `../names.txt` both carry the list's address; this is the pin that
+    keeps them one value (CLAUDE.md §5) rather than two that could drift apart."""
+    assert RECORD_LIST == leaf.entry_of("effect_record_list")
+
+
+def test_the_restore_flags_are_one_array_in_the_order_the_walk_reads_them():
+    """Every flag `../include/wonderboy.h` names individually must be the entry of `$dbb0` this
+    battery's table puts it at — otherwise a slot could raise one flag and be restored by another,
+    and both the pin and the differential would still pass."""
+    assert PANEL_RESTORE_FLAG_COUNT == len(PANEL_RESTORE_ENTRIES)
+    assert PANEL_RESTORE_FLAG == PANEL_RESTORE_FLAGS + 3       # the meter's, from batch 2
+    assert PANEL_RESTORE_FLAG_DBB5 == PANEL_RESTORE_FLAGS + 5
+    for index, slot in enumerate(HUD_PLAIN_SLOTS + (HUD_SLOT_BBC8,)):
+        assert slot["flag"] == PANEL_RESTORE_FLAGS + 6 + index
+
+
+# --- $daf8 / $db12 / $db34 / $db36 / $db58 / $db72: one region ------------------------------------
+
+# Every (restore, origin) pair the walk uses, deduplicated — so the sweep covers each of the eleven
+# live entries' own screen offset rather than one per routine.
+RESTORE_CASES = tuple(dict.fromkeys(
+    (called, origin) for origin, called in PANEL_RESTORE_ENTRIES
+    if called is not None and called != "panel_restore_none"))
+
+
+def _run_restore(name, origin, screens, what):
+    front, back = screens
+    row_bytes, rows = RESTORE_GEOMETRY[name]
+    source, destination = front + origin, back + origin
+    destination_rows = _rows(destination, row_bytes, rows)
+    band = _screen_band(front, origin, row_bytes, rows, SCREEN_SOURCE_SALT)
+    pokes = dict(band)
+    pokes.update(_screen_band(back, origin, row_bytes, rows, SCREEN_DESTINATION_SALT))
+    info = leaf.run(name, _restore[name](source, destination), destination_rows, what,
+                    regs={"a0": source, "a1": destination, "_pokes": pokes},
+                    max_insns=_restore_insn_cap(row_bytes, rows))
+    leaf.assert_rows(info, destination_rows,
+                     _banded_rows(band, front, origin, row_bytes, rows), what)
+
+
+@pytest.mark.parametrize("screens", SCREEN_PAIRS, ids=[f"front_{p[0]:05x}" for p in SCREEN_PAIRS])
+@pytest.mark.parametrize("name,origin", RESTORE_CASES,
+                         ids=[f"{c[0]}_at_{c[1]:04x}" for c in RESTORE_CASES])
+def test_a_region_restore_copies_its_rows_from_one_screen_to_the_other(name, origin, screens):
+    """Both cursors step a scanline here, unlike every blit above, whose source is a contiguous
+    bitmap — so a port that advanced the source by its row width instead reddens on row 1."""
+    _run_restore(name, origin, screens, f"{name} of {origin:#x}, front buffer {screens[0]:#x}")
+
+
+def test_the_two_screens_differ_at_every_seeded_byte():
+    """The guard on the seeds themselves: a source byte that happened to equal the destination byte
+    it replaces would let that byte's case pass over a blit that never ran — and, in the margin, let
+    an over-copy pass too. The two salts must differ at EVERY address, not on average."""
+    assert all(_screen_byte(addr, SCREEN_SOURCE_SALT) != _screen_byte(addr, SCREEN_DESTINATION_SALT)
+               for addr in range(SCREEN_BUFFERS[0], SCREEN_BUFFERS[0] + SCREEN_LINE))
+
+
+def test_the_bitmap_sources_are_non_zero_past_their_last_row():
+    """Why the BITMAP blits in this file need no margin, asserted rather than assumed.
+
+    The region restores needed one because both ends of an over-copy are unseeded zeros. A blit
+    whose source is a bitmap IN THE IMAGE does not: run it one row too far and it reads the bytes
+    after the bitmap, which are the next entry of the same table. That is a property of the game's
+    DATA, so if a source constant is ever re-pointed — or a new blit's source sits at the end of its
+    table — this fails and says the immunity was lost, instead of the next over-copy mutation
+    quietly surviving.
+    """
+    past = {"the record bitmap": (RECORD_BITMAP_TABLE, RECORD_BITMAP_BYTES * RECORD_BITMAP_ROWS,
+                                  RECORD_BITMAP_BYTES),
+            "the panel frame": (PANEL_FRAME_TABLE, PANEL_FRAME_BYTES * PANEL_FRAME_ROWS,
+                                PANEL_FRAME_BYTES)}
+    for tile in {slot["blank"] for slot in HUD_ALL_SLOTS} | {slot["icon_zero"]
+                                                             for slot in HUD_ALL_SLOTS}:
+        past[f"the cell at {tile:#x}"] = (tile, HUD_CELL_BYTES * HUD_CELL_ROWS, HUD_CELL_BYTES)
+    for what, (source, span, row_bytes) in past.items():
+        extra = bytes(harness.BASE_IMAGE[source + span:source + span + row_bytes])
+        assert any(extra), (
+            f"{what}: the row past its last one is all zeros, so a blit that copied it would be "
+            f"invisible to every case in this file — that blit needs a seeded margin now")
+
+
+def test_the_bare_rts_restore_writes_nothing():
+    """$db34 is two bytes. Its case is that BOTH sides leave the region alone — the entry pin says
+    it is an `rts`, and this says the reconstruction of it does not quietly blit. The band is seeded
+    the width of the WIDEST restore, so a stand-in that blitted any of the five would be caught."""
+    front, back = SCREEN_PAIRS[0]
+    source, destination = front + COUNTER_ORIGIN, back + COUNTER_ORIGIN
+    pokes = _screen_band(front, COUNTER_ORIGIN, *RESTORE_WIDEST, salt=SCREEN_SOURCE_SALT)
+    pokes.update(_screen_band(back, COUNTER_ORIGIN, *RESTORE_WIDEST,
+                              salt=SCREEN_DESTINATION_SALT))
+    info = leaf.run("panel_restore_none", _restore["panel_restore_none"](source, destination), [],
+                    "the bare-rts restore",
+                    regs={"a0": source, "a1": destination, "_pokes": pokes})
+    assert not leaf.stray_writes(info["writes"], []), "the bare `rts` wrote to the image"
+
+
+# --- $d93a: the walk over the fifteen flags -------------------------------------------------------
+
+def _restore_walk_cap(raised):
+    return PANEL_RESTORE_FLAG_COUNT * RESTORE_ENTRY_INSNS + sum(
+        _restore_insn_cap(*RESTORE_GEOMETRY[PANEL_RESTORE_ENTRIES[entry][1]])
+        for entry in raised if PANEL_RESTORE_ENTRIES[entry][1] in RESTORE_GEOMETRY)
+
+
+def _run_restore_walk(raised, screens, what):
+    """Run the walk with exactly ``raised`` (a set of entry indices) flagged, and require every one
+    of those regions to have been copied and every one of those flags to have been cleared.
+
+    ALL FIFTEEN ENTRIES ARE SEEDED, raised or not, blitting or not — the four that should draw
+    nothing at the WIDEST geometry of the five. Seeding only the entries that should be copied would
+    leave the other direction unpinned: a port that ignored a flag, or that gave one of the four
+    dead entries a blit, would copy unseeded zeros over unseeded zeros and both sides would still
+    agree (the same hole REGION_MARGIN_ROWS closes, one level up). Two bands on one screen share a
+    salt and `_screen_byte` is keyed on the address, so the fifteen overlap harmlessly.
+    """
+    front, back = screens
+    pokes = {SCREEN_FRONT: longword(front), SCREEN_BACK: longword(back)}
+    allowed, copied = [], []
+    for entry in range(PANEL_RESTORE_FLAG_COUNT):
+        flag = PANEL_RESTORE_FLAGS + entry
+        pokes[flag] = bytes([PANEL_RESTORE_FLAG_SET if entry in raised else 0])
+        if entry in raised:
+            allowed.append((flag, 1))
+        origin, called = PANEL_RESTORE_ENTRIES[entry]
+        row_bytes, rows = RESTORE_GEOMETRY.get(called, RESTORE_WIDEST)
+        band = _screen_band(front, origin, row_bytes, rows, SCREEN_SOURCE_SALT)
+        pokes.update(band)
+        pokes.update(_screen_band(back, origin, row_bytes, rows, SCREEN_DESTINATION_SALT))
+        if entry not in raised or called not in RESTORE_GEOMETRY:
+            continue
+        destination_rows = _rows(back + origin, row_bytes, rows)
+        allowed += destination_rows
+        copied.append((entry, destination_rows,
+                       _banded_rows(band, front, origin, row_bytes, rows)))
+
+    info = leaf.run("panel_restore_dirty_regions", _restore_regions, allowed, what,
+                    regs={"_pokes": pokes}, max_insns=_restore_walk_cap(raised))
+    for entry in raised:
+        cleared = leaf.read_int(info, PANEL_RESTORE_FLAGS + entry, 1, what)
+        assert cleared == 0, f"{what}: entry {entry}'s flag ended at {cleared:#04x}, not cleared"
+    for entry, destination_rows, expected in copied:
+        leaf.assert_rows(info, destination_rows, expected, f"{what}: entry {entry}")
+    return info
+
+
+@pytest.mark.parametrize("entry", range(PANEL_RESTORE_FLAG_COUNT))
+def test_one_raised_flag_restores_exactly_its_own_region(entry):
+    """One entry at a time, so a walk that restored the wrong region — or restored a neighbour's as
+    well — fails on the stray write and not only on the diff. The four entries with no blit
+    (`$a21`, `$a71`, `$a49` and the counter's bare `rts`) allow NO rows at all, which is what says
+    they really do nothing but clear a flag."""
+    _run_restore_walk({entry}, SCREEN_PAIRS[0], f"only entry {entry} raised")
+
+
+@pytest.mark.parametrize("screens", SCREEN_PAIRS, ids=[f"front_{p[0]:05x}" for p in SCREEN_PAIRS])
+def test_every_flag_raised_restores_every_region(screens):
+    _run_restore_walk(set(range(PANEL_RESTORE_FLAG_COUNT)), screens,
+                      f"all fifteen entries raised, front buffer {screens[0]:#x}")
+
+
+def test_a_walk_with_no_flag_raised_touches_nothing():
+    info = _run_restore_walk(set(), SCREEN_PAIRS[0], "no flag raised")
+    assert not leaf.stray_writes(info["writes"], []), (
+        "the walk wrote to the image with every flag down")
+
+
+def test_the_walk_covers_every_restore_and_both_kinds_of_dead_entry():
+    """A table that lost an entry, or that pointed two entries at one routine by accident, would
+    still pass every case above; this is the guard on the table itself."""
+    called = [name for _origin, name in PANEL_RESTORE_ENTRIES]
+    assert set(RESTORE_GEOMETRY) | {"panel_restore_none", None} == set(called)
+    assert called.count(None) == 3, "the three entries with no `bsr` at all"
+    assert called.count("panel_restore_none") == 1
+    assert called.count("panel_restore_16x14") == HUD_SLOTS, "one per HUD slot"
+
+
+# --- $b3da: the newest record's two digits --------------------------------------------------------
+
+# The walk steps once, between its two digits, and forces the latch there — so digit 0 blanks when
+# it is zero and digit 1 always prints.
+RECORD_DIGIT_REWINDS = (DIGIT_REWIND_RIGHT_HALF,)
+RECORD_DIGIT_FORCED_AT = 1
+RECORD_DIGIT_FONTS = (DIGIT_FONT_ALT,) * RECORD_DIGITS
+
+# (record low byte, why). $ff is the value $b39c refuses to draw at all, and is here because THIS
+# routine has no such test: entered directly it draws it like any other byte.
+RECORD_LOW_BYTES = (
+    (0x00, "both nibbles zero: a blank and a forced 0"),
+    (0x05, "a leading zero, blanked"),
+    (0x50, "significant first, so the second prints its zero anyway"),
+    (0x99, "the largest BCD pair"),
+    (0xab, "nibbles above 9, which index glyphs the game never asks for"),
+    (0xff, "the sentinel $b39c screens out, drawn here because nothing screens it"),
+)
+# The registers the record walk must not read: `moveq #0,d7` and a `move.w #1,d0` per digit.
+RECORD_ENTRY_REGISTERS = ({}, {"d0": 0, "d7": 0}, {"d0": 0xdead0000, "d7": 0xdeadbeef})
+
+
+def _run_record_digits(low_byte, screen, record, entry_regs, what):
+    cursor = screen + RECORD_DIGITS_ORIGIN
+    digits = low_byte << (BITS_PER_WORD + BITS_PER_BYTE)
+    _run_field("hud_draw_record_digits", _record_digits(record), cursor, digits,
+               RECORD_DIGIT_FONTS, RECORD_DIGIT_REWINDS, RECORD_DIGIT_FORCED_AT, what,
+               pokes={SCREEN_BACK: longword(screen),
+                      record + RECORD_LOW_BYTE: bytes([low_byte])},
+               regs=dict(entry_regs, a0=record))
+
+
+@pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])
+@pytest.mark.parametrize("low_byte,why", RECORD_LOW_BYTES,
+                         ids=[f"{c[0]:02x}" for c in RECORD_LOW_BYTES])
+def test_the_record_digits_draw_the_records_low_byte(low_byte, why, screen):
+    _run_record_digits(low_byte, screen, RECORD_LIST + RECORD_LEN, {},
+                       f"record digits {low_byte:02x} into screen_back {screen:#x} ({why})")
+
+
+@pytest.mark.parametrize("entry_regs", RECORD_ENTRY_REGISTERS,
+                         ids=[f"regs_{i}" for i in range(len(RECORD_ENTRY_REGISTERS))])
+def test_the_record_digits_ignore_the_callers_d0_and_d7(entry_regs):
+    """`move.w #1,d0` before EACH plot and `moveq #0,d7` before the byte is loaded, so all three
+    entry states must draw the same two glyphs in the same font — which only shows on a field with
+    a suppressed zero, since that is where the two fonts differ."""
+    _run_record_digits(0x05, SCREEN_BUFFERS[0], RECORD_LIST + RECORD_LEN, entry_regs,
+                       f"record digits 05 entered with {entry_regs}")
+
+
+@pytest.mark.parametrize("offset", (RECORD_LEN, 0x40, 0x100),
+                         ids=["first", "mid_list", "far_up"])
+def test_the_record_digits_read_only_the_byte_a0_points_at(offset):
+    _run_record_digits(0x34, SCREEN_BUFFERS[0], RECORD_LIST + offset, {},
+                       f"record digits 34 from the record at +{offset:#x}")
+
+
+# --- $b39c: the newest record's display -----------------------------------------------------------
+
+# The whole routine at once: the bitmap arm, the digit arm and the two tests that skip them. Its cap
+# is the widest blit above plus two digits.
+NEWEST_RECORD_INSN_CAP = PANEL_BLIT_INSN_CAP + _digit_insn_cap(RECORD_DIGITS)
+
+# (list word, fresh flag, record offset, record high byte, record low byte, why).
+NEWEST_RECORD_CASES = (
+    (0xffff, 0x00, 0, 0x00, 0x00, "the reset state: $ffff in the list's first word, so nothing runs"),
+    (0x8000, 0xff, RECORD_LEN, 0x06, 0x12, "the empty test is SIGNED — bit 15 alone returns"),
+    (0x0000, 0x00, RECORD_LEN, 0x06, 0x12, "a ZERO first word is not empty: `bpl` takes the work"),
+    (0x7fff, 0x00, RECORD_LEN, 0x05, 0x34, "the largest first word that is still not empty"),
+    (0x0605, 0xff, RECORD_LEN, 0x06, 0x05, "fresh: the bitmap arm and the digits both run"),
+    (0x0605, 0x01, RECORD_LEN, 0x07, 0xff, "fresh, but $ff in the low byte: bitmap and no digits"),
+    (0x0605, 0x00, 0x40, 0x08, 0xff, "neither arm — the flag stays down and nothing is drawn"),
+    (0x0605, 0x00, 0x40, 0x05, 0x00, "digits only, from a record far up the list"),
+)
+
+
+def _run_newest_record(list_word, fresh, offset, high, low, screen, what):
+    record = RECORD_LIST + offset
+    empty = _signed_word(list_word) < 0
+    draws_bitmap = not empty and fresh != 0
+    draws_digits = not empty and low != RECORD_NO_DIGITS
+
+    # The record's own bytes go in FIRST, so that the `offset 0` case — the reset state, where the
+    # write pointer still addresses the list's base — leaves `list_word` as the word actually there.
+    pokes = {record: bytes([high, low]), SCREEN_BACK: longword(screen),
+             RECORD_LIST: word(list_word), RECORD_WRITE_PTR: longword(record),
+             RECORD_FRESH_FLAG: bytes([fresh]), DIGIT_SIGNIFICANT_SEEN: word(0),
+             PANEL_RESTORE_FLAG_DBB5: b"\x00"}
+    allowed, bitmap_rows, digit_bytes = [], [], set()
+    columns = _field_columns(screen + RECORD_DIGITS_ORIGIN, RECORD_DIGIT_REWINDS)[:RECORD_DIGITS]
+    if draws_bitmap:
+        bitmap_rows = _rows(screen + RECORD_BITMAP_ORIGIN, RECORD_BITMAP_BYTES, RECORD_BITMAP_ROWS)
+        allowed += [(PANEL_RESTORE_FLAG_DBB5, 1)] + bitmap_rows
+        pokes.update(_screen_band(screen, RECORD_BITMAP_ORIGIN, RECORD_BITMAP_BYTES,
+                                  RECORD_BITMAP_ROWS, SCREEN_DESTINATION_SALT))
+    if draws_digits:
+        columns_allowed = [(DIGIT_SIGNIFICANT_SEEN, WORD_LEN)]
+        for column in columns:
+            columns_allowed += _plotted_column(column, DIGIT_ROWS)
+        allowed += columns_allowed
+        digit_bytes = {addr for addr, _len in columns_allowed[1:]}
+        # AFTER the band: the digits land INSIDE the bitmap's rectangle, so these per-byte seeds are
+        # the ones that must survive into the run.
+        pokes.update(_seeded_column(columns_allowed))
+
+    info = leaf.run("hud_draw_newest_record", _newest_record, allowed, what,
+                    regs={"_pokes": pokes}, max_insns=NEWEST_RECORD_INSN_CAP)
+    if draws_bitmap:
+        # THE DIGITS LAND INSIDE THE BITMAP. `$3490` is row 84 byte 16 and the bitmap covers rows
+        # 64..95 of bytes 0..31, so on a run that takes both arms the two digits are stamped ON TOP
+        # of the bitmap just blitted; those bytes belong to the digit assert below.
+        source = _indexed_bitmap(RECORD_BITMAP_TABLE, high, RECORD_BITMAP_LEN)
+        leaf.assert_rows(info, bitmap_rows,
+                         _source_rows(source, RECORD_BITMAP_BYTES, RECORD_BITMAP_ROWS), what,
+                         skip=digit_bytes)
+        assert leaf.read_int(info, PANEL_RESTORE_FLAG_DBB5, 1, what) == PANEL_RESTORE_FLAG_SET, (
+            f"{what}: the $2800 region's restore flag was not raised with the bitmap")
+    else:
+        assert PANEL_RESTORE_FLAG_DBB5 not in info["writes"], (
+            f"{what}: the restore flag was raised on a run that drew no bitmap")
+    if draws_digits:
+        digits = low << (BITS_PER_WORD + BITS_PER_BYTE)
+        expected = _field_expected(digits, RECORD_DIGIT_FONTS, False, RECORD_DIGIT_FORCED_AT)
+        for index, column in enumerate(columns):
+            _assert_column(info, column, DIGIT_ROWS, expected[index], f"{what}: digit {index}")
+    else:
+        # The walk forces the latch and clears it again, so a run that touched that word drew
+        # digits — and unlike the pixels, that word cannot be written by the bitmap arm.
+        assert DIGIT_SIGNIFICANT_SEEN not in info["writes"], (
+            f"{what}: the digit walk ran on a record the $ff sentinel should have screened out")
+    return info
+
+
+def test_the_record_digits_land_inside_the_record_bitmap():
+    """Stated as a geometry assert because it is the reason the bitmap's rows are compared with the
+    digit bytes left out: the display blits a 64 x 32 px bitmap and then stamps two digits into it,
+    rather than drawing them somewhere else on the panel."""
+    for column in _field_columns(RECORD_DIGITS_ORIGIN, RECORD_DIGIT_REWINDS)[:RECORD_DIGITS]:
+        for addr, _len in _plotted_column(column, DIGIT_ROWS):
+            row, byte = divmod(addr, SCREEN_LINE)
+            top, left = divmod(RECORD_BITMAP_ORIGIN, SCREEN_LINE)
+            assert top <= row < top + RECORD_BITMAP_ROWS
+            assert left <= byte < left + RECORD_BITMAP_BYTES
+
+
+@pytest.mark.parametrize("list_word,fresh,offset,high,low,why", NEWEST_RECORD_CASES,
+                         ids=[f"list_{c[0]:04x}_fresh_{c[1]:02x}_rec_{c[3]:02x}{c[4]:02x}"
+                              for c in NEWEST_RECORD_CASES])
+def test_the_newest_record_display_gates_its_two_arms_independently(list_word, fresh, offset, high,
+                                                                    low, why):
+    _run_newest_record(list_word, fresh, offset, high, low, SCREEN_BUFFERS[0],
+                       f"newest record: {why}")
+
+
+@pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])
+def test_the_newest_record_display_takes_both_origins_from_screen_back(screen):
+    _run_newest_record(0x0605, 0xff, RECORD_LEN, 0x06, 0x37, screen,
+                       f"the whole display into screen_back {screen:#x}")
+
+
+def test_the_newest_record_battery_reaches_every_combination_of_its_two_gates():
+    """Four arms — empty, fresh-or-not, sentinel-or-not — and a sweep that missed one would leave a
+    whole branch of the routine unpinned while staying green."""
+    reached = {(_signed_word(c[0]) < 0, c[1] != 0, c[4] == RECORD_NO_DIGITS)
+               for c in NEWEST_RECORD_CASES}
+    assert {(False, True, False), (False, True, True), (False, False, True), (False, False, False)} \
+        <= reached
+    assert any(empty for empty, _fresh, _sentinel in reached)
+
+
+# --- $b8f0: the six HUD slots ---------------------------------------------------------------------
+
+HUD_ALL_SLOTS = HUD_PLAIN_SLOTS + (HUD_SLOT_BBC8,)
+
+# `tst.b 1(a0)` reads the whole byte and the game only ever writes $ff, so the other two are what
+# say a port did not test one bit of it.
+SLOT_REQUESTS = (0xff, 0x01, 0x80)
+
+# One cell copy is a prologue, `rows` iterations of (4 moves + `lea` + `dbf`) and an `rts`; the OR is
+# the same with two instructions per longword. Each slot runs both, plus its own test/clear/`st` and
+# the address setup ahead of two `bsr`s — and the sixth adds its six-armed chain.
+CELL_COPY_INSNS = 2 + HUD_CELL_ROWS * (HUD_CELL_BYTES // 4 + 2)
+CELL_OR_INSNS = 2 + HUD_CELL_ROWS * (HUD_CELL_BYTES // 4 * 2 + 2)
+SLOT_OVERHEAD_INSNS = 24
+SLOT_PASS_INSN_CAP = HUD_SLOTS * (CELL_COPY_INSNS + CELL_OR_INSNS + SLOT_OVERHEAD_INSNS)
+
+
+def _slot_icon(index, value):
+    """The cell the OR lays over the blanked one, or None where the sixth slot's chain matches
+    nothing at all. Stated as the RULE the disassembly reads as, not as src/hud.c's table."""
+    if index < len(HUD_PLAIN_SLOTS):
+        slot = HUD_PLAIN_SLOTS[index]
+        return slot["icon_value"] if value else slot["icon_zero"]
+    if value == 0:
+        return HUD_SLOT_BBC8["icon_zero"]
+    if value > HUD_SLOT_BBC8_VARIANTS:
+        return None
+    return HUD_SLOT_BBC8_ICONS[value - 1]
+
+
+def _slot_expected_rows(index, value):
+    """A dirty slot ends as `blank OR icon`: the copy lays the blank tile down over whatever was
+    there, and the OR then combines the icon with THAT — which is why a blank tile that is not all
+    zeros is the thing separating this from two copies."""
+    slot = HUD_ALL_SLOTS[index]
+    blank = _source_rows(slot["blank"], HUD_CELL_BYTES, HUD_CELL_ROWS)
+    icon = _slot_icon(index, value)
+    if icon is None:
+        return blank
+    laid = _source_rows(icon, HUD_CELL_BYTES, HUD_CELL_ROWS)
+    return [bytes(a | b for a, b in zip(blank[row], laid[row])) for row in range(HUD_CELL_ROWS)]
+
+
+def _run_dirty_slots(seeds, screen, what):
+    """``seeds`` is {slot index: (request byte, value byte)}; every slot not in it is seeded clean,
+    so a pass that redrew a slot nobody asked for fails on the stray write."""
+    pokes = {SCREEN_BACK: longword(screen)}
+    allowed, drawn = [], []
+    for index, slot in enumerate(HUD_ALL_SLOTS):
+        request, value = seeds.get(index, (0, 0))
+        pokes[slot["record"]] = bytes([value, request])
+        pokes[slot["flag"]] = b"\x00"
+        if request == 0:
+            continue
+        rows = _rows(screen + slot["origin"], HUD_CELL_BYTES, HUD_CELL_ROWS)
+        # The band, not just the rows: a cell blitted one row too far would otherwise land in
+        # zeros on both sides and stay invisible (see REGION_MARGIN_ROWS).
+        pokes.update(_screen_band(screen, slot["origin"], HUD_CELL_BYTES, HUD_CELL_ROWS,
+                                  SCREEN_DESTINATION_SALT))
+        allowed += [(slot["record"] + HUD_SLOT_REQUEST, 1), (slot["flag"], 1)] + rows
+        drawn.append((index, value, rows))
+
+    info = leaf.run("hud_refresh_dirty_slots", _dirty_slots, allowed, what,
+                    regs={"_pokes": pokes}, max_insns=SLOT_PASS_INSN_CAP)
+    for index, value, rows in drawn:
+        slot = HUD_ALL_SLOTS[index]
+        leaf.assert_rows(info, rows, _slot_expected_rows(index, value), f"{what}: slot {index}")
+        assert leaf.read_int(info, slot["flag"], 1, what) == PANEL_RESTORE_FLAG_SET, (
+            f"{what}: slot {index} did not raise its restore flag")
+        assert leaf.read_int(info, slot["record"] + HUD_SLOT_REQUEST, 1, what) == 0, (
+            f"{what}: slot {index}'s request byte was not cleared")
+    return info
+
+
+# (value byte, why) for the five slots whose icon is a two-way test.
+PLAIN_SLOT_VALUES = ((0x00, "the zero arm"), (0x01, "the non-zero arm"),
+                     (0x80, "a value with only the high bit set — `tst.b` reads all eight"))
+
+
+@pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])
+@pytest.mark.parametrize("value,why", PLAIN_SLOT_VALUES, ids=[f"value_{c[0]:02x}" for c in
+                                                              PLAIN_SLOT_VALUES])
+@pytest.mark.parametrize("index", range(len(HUD_PLAIN_SLOTS)))
+def test_one_dirty_slot_is_blanked_and_given_its_icon(index, value, why, screen):
+    _run_dirty_slots({index: (0xff, value)}, screen,
+                     f"slot {index} dirty with value {value:#04x} into screen_back {screen:#x} "
+                     f"({why})")
+
+
+@pytest.mark.parametrize("requested", SLOT_REQUESTS,
+                         ids=[f"request_{r:02x}" for r in SLOT_REQUESTS])
+def test_any_non_zero_request_byte_redraws_the_slot(requested):
+    _run_dirty_slots({0: (requested, 0x01)}, SCREEN_BUFFERS[0],
+                     f"slot 0 requested with {requested:#04x}")
+
+
+# 0 takes the two-way test's zero arm, 1..6 the six chain arms (5 and 6 naming one cell), and 7 the
+# fall-through that leaves the cell blanked with NO icon over it.
+SLOT_BBC8_VALUES = tuple(range(HUD_SLOT_BBC8_VARIANTS + 2))
+
+
+@pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])
+@pytest.mark.parametrize("value", SLOT_BBC8_VALUES, ids=[f"variant_{v}" for v in SLOT_BBC8_VALUES])
+def test_the_sixth_slots_value_selects_one_of_six_icons_or_none(value, screen):
+    """The chain's every arm, both ends included: `$bb60` is an `rts` with the cell already blanked,
+    so a value past 6 really does leave a blank cell rather than the last icon."""
+    _run_dirty_slots({len(HUD_PLAIN_SLOTS): (0xff, value)}, screen,
+                     f"the sixth slot's variant {value} into screen_back {screen:#x}")
+
+
+def test_the_sixth_slots_last_two_arms_name_the_same_cell():
+    """Not a typo in the table: `$bb4e` and `$bb62` both `lea $152fc`, so values 5 and 6 draw one
+    icon. A table that had numbered them apart would pass every case above."""
+    assert HUD_SLOT_BBC8_ICONS[4] == HUD_SLOT_BBC8_ICONS[5]
+    assert len(set(HUD_SLOT_BBC8_ICONS)) == HUD_SLOT_BBC8_VARIANTS - 1
+
+
+@pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])
+def test_every_slot_dirty_at_once_redraws_all_six(screen):
+    """The pass as the game runs it. Each slot gets a different value so no two of the six can be
+    swapped without a case going red."""
+    seeds = {index: (0xff, index) for index in range(HUD_SLOTS)}
+    _run_dirty_slots(seeds, screen, f"all six slots dirty into screen_back {screen:#x}")
+
+
+def test_a_pass_with_no_request_touches_nothing():
+    info = _run_dirty_slots({}, SCREEN_BUFFERS[0], "no slot requesting a redraw")
+    assert not leaf.stray_writes(info["writes"], []), (
+        "the slot pass wrote to the image with every request byte clear")
+
+
+def test_the_slot_blanks_are_not_blank_so_the_or_is_observable():
+    """Both blank tiles carry non-zero bytes, which is what makes `blank OR icon` different from the
+    icon alone — without it every case above would agree with a port that skipped the copy."""
+    for tile in {slot["blank"] for slot in HUD_ALL_SLOTS}:
+        assert any(harness.BASE_IMAGE[tile:tile + HUD_CELL_BYTES * HUD_CELL_ROWS]), (
+            f"the blank tile at {tile:#x} is all zeros")
+
+
+def test_the_slot_battery_reaches_every_cell_the_pass_can_draw():
+    """A sweep that stopped reaching one of the fourteen cells would leave that `lea` unpinned."""
+    plain = {slot["blank"] for slot in HUD_ALL_SLOTS} | {slot["icon_zero"] for slot in HUD_ALL_SLOTS}
+    plain |= {slot["icon_value"] for slot in HUD_PLAIN_SLOTS}
+    cells = ("WB_HUD_CELL_BLANK", "WB_HUD_CELL_ZERO", "WB_HUD_CELL_ICON", "WB_HUD_CELL_BBC8")
+    assert plain | set(HUD_SLOT_BBC8_ICONS) == {
+        value for name, value in layout.DEFINES.items() if name.startswith(cells)}

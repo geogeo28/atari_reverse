@@ -8,13 +8,19 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 52/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
-panel's leaves (430 bytes) and the second tier above them (710 bytes).**
-`make test`: 651 cases green, of which 77 are the foundation battery below, 48 are the depacker's
-differential, 187 are the first gameplay batch's and 339 are the status panel's — that last figure
-was 169 before the second tier landed, and the whole of the growth is `test/test_hud.py`. A row
-appears in the table at the end when a function is reconstructed and green; everything else in
+**Verified: 62/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+panel's leaves (430 bytes), the second tier above them (710 bytes) and the third tier
+(1412 bytes).**
+`make test`: 793 cases green, of which 77 are the foundation battery below, 48 are the depacker's
+differential, 187 are the first gameplay batch's and 481 are the status panel's — that last figure
+was 169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py`. A
+row appears in the table at the end when a function is reconstructed and green; everything else in
 `../decomp.c` and `../names.txt` is still only *named*, not ported.
+
+**`panel_refresh_frame` ($b346) now has NINE of its ten callees reconstructed.** The tenth, `$bbca`,
+is the sound-module blocker batch 3 registered, and it is reached by an unconditional `bsr` — so
+`$b346` itself stays unported and no seeding can change that. The reasoning is in "The status
+panel's third tier" below.
 
 ## What the harness has established
 
@@ -402,6 +408,16 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0xb850` | `hud_plot_digit` | 160 | verified | 45 cases: all 16 nibbles x 2 fonts over a raised latch, 2 cursors (one even, one ODD) x 2 fonts, the two suppressed-zero forms, the two that raise the latch, and 5 entry `d0`s that pin the `cmpi.w` on d0's low word. Each compares all 32 plane bytes, bounds the write set to one byte per plane, and compares the advanced cursor against both the oracle's `a0` and the reconstruction's return value + entry pin |
 | `0xbd32` | `hud_draw_stage_number` | 24 | verified | 13 cases: 5 stage words x 2 fonts (the `swap`/`rol.l #8` must select the LOW byte — `$ff99` draws 9 and 9, not f and f), plus 3 entry `d7`s + entry pin |
 | `0xbd4a` | `hud_draw_two_digits` | 28 | verified | 8 cases: 4 fields x 2 fonts, including the all-zero field that draws TWO blanks — the case only this walk can produce, since it is the one that never forces the latch + entry pin |
+| `0xb39c` | `hud_draw_newest_record` | 62 | verified | 10 cases: 8 (list word, fresh flag, record) combinations reaching all four arms — the reset `$ffff`, the `$8000` that shows the empty test is SIGNED, the `$0000` that is NOT empty, fresh-with-digits, fresh-with-the-`$ff`-sentinel and neither arm — plus 2 screen buffers. Each asserts all 32 bitmap rows against the game's own data, the restore flag raised only on the bitmap arm, and the latch word untouched when the sentinel screens the digits out + entry pin |
+| `0xb3da` | `hud_draw_record_digits` | 54 | verified | 18 cases: 6 record low bytes (a blanked leading zero, a forced trailing one, nibbles above 9, and the `$ff` its caller screens out) x 2 screen buffers, plus 3 entry (`d0`, `d7`) pairs that must not reach the digits and 3 record addresses + entry pin |
+| `0xb8f0` | `hud_refresh_dirty_slots` | 666 | verified | 52 cases: 5 slots x 3 value bytes x 2 screen buffers for the two-way arm, the sixth slot's 8 values (its six chain arms, the zero arm and the fall-through that leaves the cell blanked) x 2 buffers, 3 request bytes, all six dirty at once x 2 buffers, and a pass with none dirty that must write nothing. Each asserts `blank OR icon` over all 14 rows, the restore flag raised and the request byte cleared + entry pin |
+| `0xd93a` | `panel_restore_dirty_regions` | 446 | verified | 18 cases: each of the 15 flags raised ALONE (so a walk that restored a neighbour's region fails on the stray write), all 15 raised x 2 screen orders, and none raised. Every case seeds both screen pointers and runs the pair both ways round + entry pin |
+| `0xdaf8` | `panel_restore_44x8` | 26 | verified | 4 cases: its 2 regions x 2 screen orders, all 8 rows of 44 bytes compared against the source screen + entry pin |
+| `0xdb12` | `panel_restore_32x20` | 34 | verified | 2 cases: its one region x 2 screen orders, all 20 rows + entry pin |
+| `0xdb34` | `panel_restore_none` | 2 | verified | 1 case: a bare `rts`, run over a band seeded the width of the WIDEST restore on both screens, which must be left untouched + entry pin |
+| `0xdb36` | `panel_restore_32x29` | 34 | verified | 2 cases: its one region (the record bitmap's own origin, 29 rows where the bitmap draws 32) x 2 screen orders + entry pin |
+| `0xdb58` | `panel_restore_16x14` | 26 | verified | 12 cases: its 6 regions — one per HUD slot, in the HUD-slot cell's own geometry — x 2 screen orders + entry pin |
+| `0xdb72` | `panel_restore_24x32` | 62 | verified | 2 cases: its one region (the panel frame's origin and geometry) x 2 screen orders, all 32 rows + entry pin |
 
 ### The .RAD depacker
 
@@ -704,10 +720,12 @@ of it.
   callees (`hud_blit_cell_copy`/`hud_blit_cell_or`) are already ported, so it is portable today; at
   666 bytes and 18 blit call sites it is a batch of its own. Now named and scoped in `../names.txt`
   (`hud_refresh_dirty_slots`): six slot records, a request byte each, blank-then-OR per slot.
+  *(Landed in batch 4.)*
 * **`$b346` itself cannot be ported until four more are.** It is ten calls and an `rts`; SIX of the
   ten are now reconstructed (`$b54c`, `$b74a`, `$b7c6`, `$b61e`, `$bd32`, `$b372`) and four are not
   — `$d93a` (446 bytes, the screen-region restore), `$b39c` (whose own `$b3da` is `$b850`'s other
-  caller), `$b8f0` and `$bbca`.
+  caller), `$b8f0` and `$bbca`. *(Batch 4 landed three of the four; `$bbca` remains, and the section
+  after this one records why it is a hard stop rather than a queue position.)*
 
 Six things a later reader should not have to re-derive:
 
@@ -801,3 +819,127 @@ set. And the rotate's 110 is lower than the 112 the same mutation gave before `r
 factored out of the two rotate sites: it now flips the stage number's `rol.l #8` as well, and a
 handful of stage cases come out identical under two flips that the nibble flip alone reddened. A
 shared helper makes that mutation COARSER, exactly as the leaves' `copy_rows` did to the stride one.
+
+### The status panel's third tier
+
+Ten routines, 1412 bytes, in the same file: `src/hud.c`. They are `panel_refresh_frame`'s three
+remaining table walks and the six blits under one of them — the region restore that opens the frame
+(`$d93a` and `$daf8`/`$db12`/`$db34`/`$db36`/`$db58`/`$db72`), the newest record's display (`$b39c`
+and `$b3da`) and the six HUD slots (`$b8f0`). With them the pass has **nine of its ten callees
+reconstructed**.
+
+**WHAT THE THREE WALKS HAVE IN COMMON is a REQUEST BYTE that is consumed rather than read.** Each
+finds its work by testing a byte something else raised and clearing it in the same breath: the
+fifteen restore flags at `$dbb0`, the fresh-record flag `$b54a` (which `$b39c` tests but never
+clears — see below), and the six slot request bytes at `$bbbf`/`$bbc1`/… So these are the first
+reconstructions here whose write set includes bytes they were *told about* as well as bytes they
+drew, and every case asserts the clear as well as the pixels.
+
+**`$d93a` IS THE OTHER HALF OF EVERY `st $dbbN` IN THIS SUBSYSTEM,** and its table is the strongest
+single piece of evidence the batch produced. Fifteen entries, each naming a screen offset; **eleven
+of those offsets are constants `include/wonderboy.h` already carried** for a draw in this file — the
+score, the high score, the counter, the record bitmap, the six slot cells and the panel frame — and
+two of the five blit geometries are geometries this file already had: `$db58` moves 16 bytes over 14
+rows, which *is* `hud_blit_cell_copy`'s cell, and `$db72` moves 24 over 32, which is the panel
+frame's. So an entry means "put the front buffer's pixels back over what that draw dirtied", and the
+header reuses the constants rather than restating them (a test asserts the two geometries are the
+same numbers, since nothing else would).
+
+**THE PAIRING IS NOT EXACT, and the port reproduces the original rather than the intent.** Five
+things a later reader should not have to re-derive:
+
+* the `$2800` entry restores **29 rows where `hud_blit_record_bitmap` draws 32**;
+* the `$aa0` entry (the meter's — `panel_restore_flag_dbb3` has exactly one writer in the image,
+  `hud_draw_meter`'s `st`) covers rows 17..36, and `meter_cell_offsets` starts at `$a01`, **row 16**,
+  so the restore misses the meter's top row;
+* the counter's entry `bsr`s **`$db34`, which is a bare `rts`** — a routine, not an absent call,
+  which is why it is reconstructed as one and has an entry pin of its own;
+* the **first three entries have no `bsr` at all**: they compute both cursors and fall through to the
+  next test. They clear their flag and draw nothing, exactly like the `$db34` entry, and the
+  difference between the two shapes is visible in the disassembly and nowhere else.
+* **three of the eleven blitting entries have no writer in the image at all.** A whole-image
+  `abs.l` scan for each of the fifteen flag bytes finds a writer for only eight — `$dbb3`, `$dbb5`
+  and `$dbb6..$dbbb` — so the other seven (`$dbb0`/`$dbb1`/`$dbb2`/`$dbb4`/`$dbbc`/`$dbbd`/`$dbbe`)
+  are never raised by anything a scan can see; four of those seven are dead entries anyway, and the
+  remaining three DO blit, **including the panel frame's own `$dbbc`**. Recorded on
+  `panel_restore_flags` in `../names.txt`; the differential enters `$d93a` directly, so the cases
+  reach every entry regardless.
+
+**THE RECORD'S DIGITS ARE DRAWN INSIDE THE RECORD'S BITMAP.** `$b3da` plots at `screen_back + $3490`,
+which is row 84 byte 16, and `hud_blit_record_bitmap` fills rows 64..95 of bytes 0..31 — so on a
+frame that takes both of `$b39c`'s arms the bitmap goes down first and the two digits are stamped
+into it. The battery pins that geometry as its own assert and compares the bitmap's rows with the
+digit bytes left out; without it the bitmap assert would have been red for the wrong reason. `$b3da`
+is also **a fourth digit-field walk**, beside `$b5ea`/`$b7ea`/`$bd4a`, and the only one that forces
+the ALTERNATE font (`move.w #1,d0` before *each* of its two plots) — which is why `hud_plot_digit`'s
+sixteen call sites are now all inside reconstructed code.
+
+**`record_fresh_flag` ($b54a) IS NEVER CLEARED.** It has exactly two operand references in the whole
+image — one `st` at `$1262`, inside the unrecovered list-walker at `$1208`, and `$b39c`'s `tst.b` —
+and no `clr` among them. So once something raises it the record's bitmap is redrawn every frame from
+then on. The claim is an `abs.l` scan and cannot see a writer that reaches the byte through an
+address register; stated that way in `../names.txt` rather than as "nothing clears it".
+
+**`$b346` IS STILL NOT PORTABLE, and the reason is now final rather than arithmetic.** Its one
+remaining callee is `$bbca`, the sound-module blocker batch 3 registered — and the `bsr.w $bbca` at
+`$b364` is one of ten UNCONDITIONAL calls, not a branch. So no seeding of the image can steer a run
+entered at `$b346` around it: the oracle would execute the `jsr 56(a1)` thunk into
+`snd_trigger_effect` whatever the timers hold. Porting `$b346` therefore means porting `$bbca`,
+and porting `$bbca` means either porting the sound module or shipping a reconstruction with a whole
+subsystem call silently missing on one side. Neither was done, and **`$bbca` remains the single
+blocker**; the `$bd2c > $a` branch inside it that skips the thunk is a seedable escape *if* that
+routine is ever ported on its own terms, which is a scoping decision for a sound batch and not for
+this one.
+
+Mutation-checked rather than assumed (each rebuilt with the `.so` deleted first, and the source
+restored and compared byte for byte against a pristine copy afterwards — 793 green each time):
+the restore's source **stepping a row instead of a scanline** reddens 35; the `32x29` restore moving
+the record bitmap's **32 rows** reddens 5; the bare `rts` **quietly blitting a cell** reddens 4; the
+walk restoring **front from back** reddens 13; the walk **leaving its flag raised** reddens 17; the
+walk **ignoring its flag entirely** reddens 16; a **dead entry given a blit** reddens 3; **two
+restore regions swapped** reddens 2; the record display's empty test made **unsigned** reddens 2; the
+record digits taking the record's **high byte** reddens 22; those digits drawn in the **default
+font** reddens 24; their **latch forced one digit early** reddens 9; the slot pass **ORing before the
+blank is laid down** reddens 35; the slot pass reading the **request byte as the value** reddens 25;
+the slot pass **leaving the request byte set** reddens 51; the sixth slot's **out-of-range variant
+drawing the last icon** reddens 2; and its **variant chain off by one** reddens 10.
+**18 mutations, 17 killed, 1 survivor.**
+
+**THE SURVIVOR IS DEAD DATA IN THE PORT, and it is registered rather than fixed.** Replacing
+`WB_SCORE_ORIGIN` with `0x1234` in `PANEL_RESTORE_REGIONS`' first row leaves all 793 green. The
+first three entries have no `bsr`, so their origin is never used for anything a case can observe —
+the ORIGINAL's `lea` operands for those entries ARE pinned, byte for byte, by `$d93a`'s whole-body
+entry pin, but the port's own copy of them is not, and no seeding can make it so. That is the
+CLAUDE.md rule for a branch the data cannot reach, applied to a constant: say so and leave it
+honestly unpinned. `src/hud.c` marks the three rows DOCUMENTARY at the table.
+
+**Four of the eighteen were survivors first, and the fixes are house patterns worth keeping.** The
+`32x29` restore moving 32 rows and the bare `rts` blitting a cell both survived the first sweep: the
+cases seeded exactly the region's own geometry, so an over-copy read ZEROS from the source screen
+and wrote them over ZEROS on the destination, and both sides still agreed. **A screen-to-screen blit
+is the shape that has this hole** — the bitmap blits do not, because their source is real image data
+(a probe confirms it: one row too many on the record bitmap, the HUD cell and the panel frame each
+redden, and `test_the_bitmap_sources_are_non_zero_past_their_last_row` now keeps that property from
+being lost silently). So every region case seeds its region WIDENED by a margin
+(`REGION_MARGIN_ROWS`/`_BYTES`) on both screens, with filler keyed on the ADDRESS rather than on a
+row index — the widened bands of two side-by-side slot cells overlap, and an index-keyed filler
+would have let the later poke silently rewrite the earlier one. The review then found the same hole
+ONE LEVEL UP, and the last two mutations are its measure: the walk's cases seeded a band only for
+the entries that WERE to be restored, so "flag down ⇒ region untouched" and "a dead entry stays
+dead" were pinned nowhere. `_run_restore_walk` now seeds all fifteen bands whatever the case, the
+four dead entries at the WIDEST of the five geometries. The general lesson is written up in
+[`docs/methodology.md`](../../../docs/methodology.md), "The seeding hole a mutation sweep finds".
+
+**One branch of the slot pass is unreachable from the game's own data, and is pinned only by
+fabricated bytes.** The sixth slot's variant chain has six arms; the recovered setters
+(`src/effects.c`) write 1, 2, 3, 4 and 6, so **arm 5 and the `> 6` fall-through are reached in this
+battery only by a value byte a case invents**. Both are pinned against the ORIGINAL (the differential
+runs the real chain on the same invented byte), which is a real pin — but read the STATUS row's
+"the sixth slot's 8 values" as eight *addressable* values, not eight the game produces.
+
+**Every one of the ten entry pins is the routine's WHOLE BODY and every one matched on the first
+run** (`panel_restore_none` included, all two bytes of it) — 1412 bytes, including `$b8f0`'s 666 and `$d93a`'s 446. Both of those are built from the same
+table the reconstruction is (the six slots and the fifteen restore entries), so a routine wired to
+the wrong region, flag, cell or callee fails at its own address rather than as a diff. The `movem`
+masks are now built from a register LIST rather than transcribed, which is what ties `$daf8`'s
+44-byte row to the eleven registers it moves.

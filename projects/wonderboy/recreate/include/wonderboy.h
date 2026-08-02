@@ -131,21 +131,24 @@
  * ../names.txt says so and names them for their mechanism — so the names here describe the SHAPE
  * each global is written and read with, and carry the address for the part that is still unknown.
  *
- * THE HUD SLOT ARRAY. $bbbe..$bbc9 is six 2-byte slots, each `{value, changed}`. `FUN_0000b8f0`
- * ($b8f0) walks the six `changed` bytes every frame: a nonzero one is cleared, a per-slot flag in
- * the $dbb6.. block is raised, the slot's cell is cleared ($bb8a) and — when `value` is nonzero —
- * an icon is OR-blitted over it ($bba0). So the setters' single `move.w #$Nff,slot.l` means "value
- * := N, and redraw me". The value's own meaning differs slot by slot and is NOT identified: $bbbe
- * and $bbc0 are counted DOWN one per use by the damage paths at $69fe/$6b46 (which, on reaching
- * zero, rearm the slot as $00ff and post a message), while $bbc8 is tested against 1..6 as an icon
- * variant. The sixth slot, $bbc4, is untouched by the handlers ported here — ../names.txt names it
- * and records its readers, but no reconstruction needs its address, so it gets no constant here.
+ * THE HUD SLOT ARRAY. $bbbe..$bbc9 is six 2-byte slots, each `{value, request}`. The pass at
+ * $b8f0 (`hud_refresh_dirty_slots`, src/hud.c) walks the six request bytes every frame: a nonzero
+ * one is cleared, a per-slot flag in the $dbb6.. block is raised, the slot's cell is cleared
+ * ($bb8a) and an icon is OR-blitted over it ($bba0). So the setters' single `move.w #$Nff,slot.l`
+ * means "value := N, and redraw me". The value's own meaning differs slot by slot and is NOT
+ * identified: $bbbe and $bbc0 are counted DOWN one per use by the damage paths at $69fe/$6b46
+ * (which, on reaching zero, rearm the slot as $00ff and post a message), while $bbc8 is tested
+ * against 1..6 as an icon variant. The fourth slot, $bbc4, is untouched by the handlers in
+ * src/effects.c; the slot pass draws it like the other five, which is why it has a constant.
  */
 #define WB_HUD_SLOT_BBBE     0xbbbeu  /* counted down at $69fe: the damage path spends it */
 #define WB_HUD_SLOT_BBC0     0xbbc0u  /* counted down at $6b46, likewise */
 #define WB_HUD_SLOT_BBC2     0xbbc2u  /* the one slot set to $80 rather than a small count */
+#define WB_HUD_SLOT_BBC4     0xbbc4u  /* no writer among the ported handlers (../names.txt) */
 #define WB_HUD_SLOT_BBC6     0xbbc6u
 #define WB_HUD_SLOT_BBC8     0xbbc8u  /* read as a 1..6 icon variant at $b8f0, not as a count */
+#define WB_HUD_SLOTS         6u       /* how many the pass at $b8f0 walks */
+#define WB_HUD_SLOT_REQUEST  1u       /* byte +1 of a slot: "redraw me", tested then cleared */
 
 /* The meter drawn in four-unit cells by `FUN_0000b61e` ($b61e): `value/4` filled cells then
  * `max/4 - value/4` empty ones, so both are consumed as counts and not as flags. `max` is set to
@@ -176,6 +179,7 @@
 /* The record list: a LONGWORD write pointer, advanced BEFORE the store, so the list grows upward
  * and the pointer addresses the newest record. The reset at $fe4a points it at $b444 (whose own
  * word it sets to $ffff), i.e. at the base of the 0x102 bytes that run up to the pointer itself. */
+#define WB_EFFECT_RECORD_LIST      0xb444u
 #define WB_EFFECT_RECORD_WRITE_PTR 0xb546u
 #define WB_EFFECT_RECORD_PTR_LEN   4u
 #define WB_EFFECT_RECORD_LEN       2u   /* one record is one word; its two byte fields are unknown */
@@ -193,6 +197,8 @@
  * src/rad.c's comment registers. Every case in test/test_hud.py seeds it inside the image.
  */
 #define WB_SCREEN_BACK       0x750u   /* longword: the buffer being drawn into (../names.txt) */
+#define WB_SCREEN_FRONT      0x74cu   /* longword: the buffer being displayed — the region restore
+                                       * at $d93a is the one routine here that reads it */
 #define WB_SCREEN_LINE       160u     /* ST low-res scanline: 320 px over 4 planes, 8 B per 16 px */
 #define WB_PLANE_STRIDE      2u       /* so one 8-px column's four plane bytes are +0/+2/+4/+6 */
 #define WB_PLANES            4u
@@ -248,8 +254,8 @@
 #define WB_METER_CELL_EMPTY      0x1477cu
 
 /* The byte $b61e raises before it draws. It is one entry of the flag array at $dbb0 that $d93a —
- * panel_refresh_frame's FIRST call, and not reconstructed — walks with `tst.b (a6)+ / clr.b -1(a6)`,
- * restoring one screen region from screen_front to screen_back per raised flag. `st` writes $ff. */
+ * panel_refresh_frame's FIRST call — walks with `tst.b (a6)+ / clr.b -1(a6)`, restoring one screen
+ * region from screen_front to screen_back per raised flag. `st` writes $ff. */
 #define WB_PANEL_RESTORE_FLAG_DBB3 0xdbb3u
 #define WB_PANEL_RESTORE_FLAG_SET  0xffu
 
@@ -319,5 +325,103 @@
 #define WB_METER_SIZE_MAX_4   0x24u
 #define WB_METER_SIZE_SCORE_5 0x400000u
 #define WB_METER_SIZE_MAX_5   0x28u
+
+/* ---- $b39c / $b3da: the newest record's display (RUNTIME addresses; src/hud.c) ----------------
+ *
+ * panel_refresh_frame's second call. `tst.w effect_record_list / bpl` is the empty test — the reset
+ * at $fe4a leaves $ffff in that first word — and everything after it works on the record
+ * `effect_record_write_ptr` points at, i.e. the newest one. Two things can come of it: the bitmap
+ * $b410 draws for the record's HIGH byte, gated on a fresh-record flag, and the two digits $b3da
+ * draws for its LOW byte, gated on that byte not being the $ff sentinel.
+ */
+#define WB_RECORD_FRESH_FLAG    0xb54au  /* `tst.b`: a byte one `st` in the image raises ($1262) */
+#define WB_PANEL_RESTORE_FLAG_DBB5 0xdbb5u /* the $2800 region's flag, which the bitmap arm raises */
+#define WB_RECORD_LOW_BYTE      1u       /* offset of the byte the digits and the sentinel read */
+#define WB_RECORD_NO_DIGITS     0xffu    /* `cmpi.b #$ff,1(a0)`: this record draws no digits */
+#define WB_RECORD_DIGITS_ORIGIN 0x3490u  /* row 84, byte 16 — INSIDE the record bitmap's own
+                                          * rectangle, so the digits are stamped over it */
+#define WB_RECORD_DIGITS        2u       /* `bsr $b850` twice, with one step between them. Like
+                                          * WB_METER_CELL_ENTRIES it is a layout fact only a CASE
+                                          * consumes — the C writes the two plots out */
+
+/* ---- $b8f0: the six HUD slots (RUNTIME addresses; src/hud.c) ----------------------------------
+ *
+ * One shape per slot: clear the request byte, raise the slot's restore flag, COPY a blank cell over
+ * the slot's 32 x 14 px and then OR an icon on top of it. The six cells sit in two columns of three
+ * rows (byte offsets 0 and 16 of screen rows 97, 112 and 127), which is why the two blanks and the
+ * two zero-value icons come in a LEFT and a RIGHT form. Every address below is `lea`d individually
+ * by the original — the fourteen cells are consecutive 224-byte blocks, but nothing indexes them.
+ */
+#define WB_HUD_SLOT_ORIGIN_BBBE 0x3ca0u  /* row 97, column 0 */
+#define WB_HUD_SLOT_ORIGIN_BBC0 0x4600u  /* row 112, column 0 */
+#define WB_HUD_SLOT_ORIGIN_BBC2 0x4f60u  /* row 127, column 0 */
+#define WB_HUD_SLOT_ORIGIN_BBC4 0x3cb0u  /* row 97, column 32 px */
+#define WB_HUD_SLOT_ORIGIN_BBC6 0x4610u  /* row 112, column 32 px */
+#define WB_HUD_SLOT_ORIGIN_BBC8 0x4f70u  /* row 127, column 32 px */
+
+#define WB_HUD_CELL_BLANK_LEFT  0x1479cu /* the COPY's source for the three left-column slots... */
+#define WB_HUD_CELL_ZERO_LEFT   0x1487cu /* ...and the icon their `value == 0` arm ORs over it */
+#define WB_HUD_CELL_ICON_BBBE   0x1495cu /* the `value != 0` icon, one per slot */
+#define WB_HUD_CELL_ICON_BBC0   0x14a3cu
+#define WB_HUD_CELL_ICON_BBC2   0x14b1cu
+#define WB_HUD_CELL_BLANK_RIGHT 0x14bfcu /* the same pair for the three right-column slots */
+#define WB_HUD_CELL_ZERO_RIGHT  0x14cdcu
+#define WB_HUD_CELL_ICON_BBC4   0x14dbcu
+#define WB_HUD_CELL_ICON_BBC6   0x14e9cu
+
+/* The sixth slot's value is an icon VARIANT matched by a `cmpi.b #1..#6` chain, not a two-way test.
+ * Arms 5 and 6 both `lea $152fc` — one icon under two values — so there are six arms and five
+ * addresses; a value outside 0..6 matches nothing and leaves the blanked cell alone. */
+#define WB_HUD_SLOT_BBC8_VARIANTS 6u
+#define WB_HUD_CELL_BBC8_1      0x14f7cu
+#define WB_HUD_CELL_BBC8_2      0x1505cu
+#define WB_HUD_CELL_BBC8_3      0x1513cu
+#define WB_HUD_CELL_BBC8_4      0x1521cu
+#define WB_HUD_CELL_BBC8_5      0x152fcu /* ...and the #6 arm's, which is the same address */
+
+/* One restore flag per slot, consecutive in the $dbb0 array $d93a walks (see the block below). */
+#define WB_PANEL_RESTORE_FLAG_DBB6 0xdbb6u
+#define WB_PANEL_RESTORE_FLAG_DBB7 0xdbb7u
+#define WB_PANEL_RESTORE_FLAG_DBB8 0xdbb8u
+#define WB_PANEL_RESTORE_FLAG_DBB9 0xdbb9u
+#define WB_PANEL_RESTORE_FLAG_DBBA 0xdbbau
+#define WB_PANEL_RESTORE_FLAG_DBBB 0xdbbbu
+
+/* ---- $d93a: the region restore (RUNTIME addresses; src/hud.c) ---------------------------------
+ *
+ * panel_refresh_frame's FIRST call, and the other half of every `st $dbbN` above: fifteen flag
+ * bytes walked with `tst.b (a6)+ / clr.b -1(a6)`, each one naming a screen offset and (for eleven
+ * of them) a blit that copies that region from screen_front to screen_back. So a routine that drew
+ * into the back buffer last frame raises its flag, and this pass puts the FRONT buffer's pixels
+ * back before the frame's drawing starts.
+ *
+ * ELEVEN of the fifteen offsets are constants this header already carries, which is the evidence
+ * that the entries pair up with the draws: the score, the high score, the counter, the record
+ * bitmap, the six slot cells and the panel frame. The other four have no draw in the recovered
+ * code and are named for their offset. THE PAIRING IS NOT EXACT, and the C reproduces the original rather than
+ * the intent: the $2800 entry restores 29 rows where the record bitmap draws 32, and the $1e08
+ * entry (the counter's) `bsr`s a bare `rts`.
+ */
+#define WB_PANEL_RESTORE_FLAGS      0xdbb0u /* `lea $dbb0.l,a6` — the array's base */
+#define WB_PANEL_RESTORE_FLAG_COUNT 15u     /* ...and how many entries the walk has */
+#define WB_PANEL_REGION_A71 0xa71u  /* row 16, byte 113 (an ODD byte, so the right half of the
+                                     * 16-px group at 224) — no draw in the recovered code */
+#define WB_PANEL_REGION_AA0 0xaa0u  /* row 17, column 0 — the entry panel_restore_flag_dbb3 drives */
+#define WB_PANEL_REGION_520 0x520u  /* row 8, column 64 px */
+#define WB_PANEL_REGION_570 0x570u  /* row 8, column 224 px */
+
+/* The five geometries the eleven live entries blit in: `rows` rows of `row_bytes` with BOTH cursors
+ * stepping one scanline (unlike every blit above, whose source is a contiguous bitmap). Two of the
+ * five are geometries this header already names — the HUD-slot cell (16 x 14) and the panel frame
+ * (24 x 32) — and are reused rather than restated, which is itself part of the pairing evidence. */
+#define WB_RESTORE_ROW_BYTES_32    32u
+#define WB_RESTORE_ROWS_20         20u  /* $db12, the $aa0 entry */
+#define WB_RESTORE_ROWS_29         29u  /* $db36, the $2800 entry */
+#define WB_RESTORE_ROW_BYTES_44    44u  /* $daf8, the $520 and $570 entries */
+#define WB_RESTORE_ROWS_8           8u
+#define WB_RESTORE_MOVEM_REGISTERS 11u  /* == WB_RESTORE_ROW_BYTES_44 / 4: $daf8 moves its row as
+                                         * one `movem.l` pair over d1-d7/a2-a5, not eight `move.l`.
+                                         * The C consumes only the byte count; this is what the
+                                         * entry pin builds that count's register mask from */
 
 #endif /* WONDERBOY_H */

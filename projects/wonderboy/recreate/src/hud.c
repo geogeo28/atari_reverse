@@ -1,13 +1,15 @@
 /* hud.c — the status panel pass at $b346, everywhere below its own entry.
  *
- * `panel_refresh_frame` ($b346) runs nine `bsr`s once a frame out of the game loop: the record
- * list's display ($b39c), the four-digit counter ($b54c), the score ($b74a), the high score ($b7c6),
- * the meter ($b61e), the six HUD slots ($b8f0), the panel's animation ($bbca), the stage number
- * ($bd32) and the table-select at $b372. This file holds twenty of the routines under it — the
- * ELEVEN LEAVES of batch 2 first, then THE SECOND TIER above them (see the banner further down; by
- * leaf and non-leaf the split is TWELVE and EIGHT, since the digit plotter calls nothing) — plus the
- * score and counter accumulators the rest of the game calls to move the numbers the pass draws.
- * $b346 itself is not here: four of its ten calls are still unported (../names.txt says which).
+ * `panel_refresh_frame` ($b346) runs one `jsr` and nine `bsr`s once a frame out of the game loop:
+ * the region restore ($d93a), the newest record's display ($b39c), the four-digit counter ($b54c),
+ * the score ($b74a), the high score ($b7c6), the meter ($b61e), the six HUD slots ($b8f0), the
+ * panel's animation ($bbca), the stage number ($bd32) and the table-select at $b372. This file
+ * holds thirty of the routines under it — the ELEVEN LEAVES of batch 2 first, then THE SECOND TIER
+ * above them and THE THIRD (see the banners further down) — plus the score and counter accumulators
+ * the rest of the game calls to move the numbers the pass draws.
+ * $b346 itself is not here: NINE of its ten calls are reconstructed and the tenth, $bbca, leaves
+ * this subsystem for the sound module — and it is an unconditional `bsr`, so no seeding can steer a
+ * run entered at $b346 around it (../STATUS.md, "The status panel's third tier").
  *
  * WHAT THE NAMES CLAIM. The mechanism, and no more — ../names.txt's rule for this whole region.
  * `bcd_add_score_bd70` says a packed-BCD longword is added to $bd70; that $bd70 is "the score" is a
@@ -43,6 +45,8 @@
  *     caller's high word in the low half, and no walk rotates it back up — so `>> 16` and
  *     `& 0xffff` are indistinguishable here. Faithful by reading, and no seeding can change that.
  */
+#include <stddef.h>
+
 #include "machine.h"
 #include "hud.h"
 #include "wonderboy.h"
@@ -72,19 +76,32 @@ static const uint8_t *indexed_bitmap(const uint8_t *image, uint32_t table, uint3
     return image + addr_add(table, sign_ext16(index * stride));
 }
 
-/* A rectangular blit of `rows` rows of `row_bytes`, moved as `move.l (a0)+,(a1)+`: the source runs
- * contiguously and the destination steps one scanline per row. Three of the four longword blits
- * below are exactly this and differ only in their geometry (the record bitmap, the HUD-slot copy and
- * the panel frame). `hud_blit_cell_or` is the fourth and stays separate: its combine has to READ the
- * destination, which is the whole difference between it and the copy. */
-static void copy_rows(uint8_t *destination, const uint8_t *source, unsigned row_bytes,
-                      unsigned rows) {
+/* A rectangular blit of `rows` rows of `row_bytes` moved as longwords, the destination stepping one
+ * scanline per row and the source `source_step`. Every longword blit in this file is this loop; the
+ * two steps are what separate them. `hud_blit_cell_or` is the exception and stays separate: its
+ * combine has to READ the destination, which is the whole difference between it and a copy. */
+static void blit_rows(uint8_t *destination, const uint8_t *source, unsigned row_bytes,
+                      unsigned rows, unsigned source_step) {
     for (unsigned row = 0; row < rows; row++) {
         for (unsigned i = 0; i < row_bytes; i += 4)
             wr32(destination + i, be32(source + i));
-        source += row_bytes;
+        source += source_step;
         destination += WB_SCREEN_LINE;
     }
+}
+
+/* A blit out of a BITMAP, whose rows run contiguously: the record bitmap, the HUD-slot copy and the
+ * panel frame. */
+static void copy_rows(uint8_t *destination, const uint8_t *source, unsigned row_bytes,
+                      unsigned rows) {
+    blit_rows(destination, source, row_bytes, rows, row_bytes);
+}
+
+/* ...and a blit out of the OTHER SCREEN, whose rows are a scanline apart like the destination's.
+ * The six region restores under $d93a are all of this shape and nothing else is. */
+static void copy_screen_rows(uint8_t *destination, const uint8_t *source, unsigned row_bytes,
+                             unsigned rows) {
+    blit_rows(destination, source, row_bytes, rows, WB_SCREEN_LINE);
 }
 
 /* One 8-pixel COLUMN: `rows` rows of the four plane bytes at +0/+2/+4/+6, stepping one scanline per
@@ -498,4 +515,242 @@ void hud_draw_meter(uint8_t *image) {
     uint16_t empty = (uint16_t)(asr_word(be16(image + WB_HUD_METER_MAX), 2) - drawn);
     for (uint16_t remaining = empty; remaining-- > 0; )
         cursor = hud_blit_meter_cell(image, cursor, WB_METER_CELL_EMPTY);
+}
+
+/* ================================================================================================
+ * THE THIRD TIER — the three routines panel_refresh_frame calls that are not fields.
+ *
+ * The pass's remaining calls, all of which walk a table of their own rather than drawing one thing:
+ * the region restore that OPENS the frame ($d93a), the newest record's display ($b39c) and the six
+ * HUD slots ($b8f0). With these the pass has nine of its ten callees reconstructed; the tenth,
+ * $bbca, leaves this subsystem (../STATUS.md says why) and $b346 itself stays unported.
+ *
+ * WHAT THE THREE HAVE IN COMMON is a REQUEST BYTE: each finds its work by testing a byte something
+ * else raised. That makes them the first reconstructions here whose write set can include bytes
+ * they were told about rather than bytes they drew. The region walk and the slot pass CLEAR that
+ * byte, and their cases assert the clear as well as the pixels; the record display does NOT — no
+ * `clr` of $b54a exists anywhere in the image, so once it is raised the bitmap is redrawn every
+ * frame, and its cases assert that the byte was left alone.
+ * ============================================================================================== */
+
+/* ---- $d93a: put the front buffer's pixels back ------------------------------------------------
+ *
+ * Fifteen flag bytes at $dbb0, walked with `tst.b (a6)+ / clr.b -1(a6)`. A raised one is cleared,
+ * both screen pointers are re-read, both are offset by the entry's own screen origin, and (for
+ * eleven of the fifteen) one blit copies that region from the FRONT buffer to the back one.
+ *
+ * FOUR of the fifteen are the original's own dead weight, in two shapes, reproduced because they
+ * are what the bytes say: the first THREE compute both cursors and then fall through to the next
+ * test with no `bsr` at all, and the fifth `bsr`s $db34, which is a bare `rts`. All four clear
+ * their flag and draw nothing; the difference between the two shapes is visible in the
+ * disassembly and in the entry pin, and nowhere else.
+ */
+static void panel_restore_row_pair(uint8_t *image, uint32_t source, uint32_t destination,
+                                   unsigned row_bytes, unsigned rows) {
+    copy_screen_rows(image + destination, image + source, row_bytes, rows);
+}
+
+void panel_restore_44x8(uint8_t *image, uint32_t source, uint32_t destination) {
+    /* One `movem.l (a0)+,d1-d7/a2-a5` per row — eleven registers, so 44 bytes. */
+    panel_restore_row_pair(image, source, destination,
+                           WB_RESTORE_ROW_BYTES_44, WB_RESTORE_ROWS_8);
+}
+
+void panel_restore_32x20(uint8_t *image, uint32_t source, uint32_t destination) {
+    panel_restore_row_pair(image, source, destination,
+                           WB_RESTORE_ROW_BYTES_32, WB_RESTORE_ROWS_20);
+}
+
+void panel_restore_32x29(uint8_t *image, uint32_t source, uint32_t destination) {
+    panel_restore_row_pair(image, source, destination,
+                           WB_RESTORE_ROW_BYTES_32, WB_RESTORE_ROWS_29);
+}
+
+void panel_restore_16x14(uint8_t *image, uint32_t source, uint32_t destination) {
+    /* The HUD-slot cell's own geometry, which is what pairs these six entries with $b8f0's six. */
+    panel_restore_row_pair(image, source, destination, WB_HUD_CELL_BYTES, WB_HUD_CELL_ROWS);
+}
+
+void panel_restore_24x32(uint8_t *image, uint32_t source, uint32_t destination) {
+    /* ...and the panel frame's, likewise. */
+    panel_restore_row_pair(image, source, destination,
+                           WB_PANEL_FRAME_BYTES, WB_PANEL_FRAME_ROWS);
+}
+
+void panel_restore_none(uint8_t *image, uint32_t source, uint32_t destination) {
+    /* $db34 is a bare `rts`. It is a routine and not an absent `bsr`, so it is reconstructed as one
+     * — the entry pin is what holds that reading. */
+    (void)image;
+    (void)source;
+    (void)destination;
+}
+
+static const struct {
+    uint32_t origin;             /* the `lea origin(a0)` / `lea origin(a1)` pair the entry shares */
+    panel_restore_fn *restore;   /* NULL where the entry has no `bsr` at all */
+} PANEL_RESTORE_REGIONS[WB_PANEL_RESTORE_FLAG_COUNT] = {
+    /* The first three origins are DOCUMENTARY: their entries blit nothing, so no case can tell a
+     * wrong constant here from a right one. The disassembly's own operands are pinned — by the
+     * whole-body entry pin over $d93a — but this table's copy of them is not, and ../STATUS.md
+     * registers that as the batch's one unkillable mutation. */
+    {WB_SCORE_ORIGIN,            NULL},
+    {WB_PANEL_REGION_A71,        NULL},
+    {WB_HISCORE_ORIGIN,          NULL},
+    {WB_PANEL_REGION_AA0,        panel_restore_32x20},
+    {WB_COUNTER_ORIGIN,          panel_restore_none},
+    {WB_RECORD_BITMAP_ORIGIN,    panel_restore_32x29},
+    {WB_HUD_SLOT_ORIGIN_BBBE,    panel_restore_16x14},
+    {WB_HUD_SLOT_ORIGIN_BBC0,    panel_restore_16x14},
+    {WB_HUD_SLOT_ORIGIN_BBC2,    panel_restore_16x14},
+    {WB_HUD_SLOT_ORIGIN_BBC4,    panel_restore_16x14},
+    {WB_HUD_SLOT_ORIGIN_BBC6,    panel_restore_16x14},
+    {WB_HUD_SLOT_ORIGIN_BBC8,    panel_restore_16x14},
+    {WB_PANEL_FRAME_ORIGIN,      panel_restore_24x32},
+    {WB_PANEL_REGION_520,        panel_restore_44x8},
+    {WB_PANEL_REGION_570,        panel_restore_44x8},
+};
+
+void panel_restore_dirty_regions(uint8_t *image) {
+    for (unsigned entry = 0; entry < WB_PANEL_RESTORE_FLAG_COUNT; entry++) {
+        uint32_t flag = WB_PANEL_RESTORE_FLAGS + entry;
+        if (image[flag] == 0)
+            continue;
+        image[flag] = 0;
+        /* Both pointers are re-read PER ENTRY, so a flag raised behind a buffer flip would follow
+         * the new buffers — which is the original's shape and not an optimisation to hoist. The two
+         * cursors are computed BEFORE the dead-entry test for the same reason: the three entries
+         * with no `bsr` compute them too, and then fall through. */
+        uint32_t origin = PANEL_RESTORE_REGIONS[entry].origin;
+        uint32_t source = addr_add(be32(image + WB_SCREEN_FRONT), origin);
+        uint32_t destination = addr_add(be32(image + WB_SCREEN_BACK), origin);
+        if (PANEL_RESTORE_REGIONS[entry].restore == NULL)
+            continue;
+        PANEL_RESTORE_REGIONS[entry].restore(image, source, destination);
+    }
+}
+
+/* ---- $b39c / $b3da: the newest record's display -----------------------------------------------
+ *
+ * `tst.w effect_record_list / bpl` reads the list's FIRST word as the empty test — $fe4a leaves
+ * $ffff there — and everything after it addresses the record `effect_record_write_ptr` points at,
+ * which is the NEWEST one (the four push handlers advance the pointer before storing). Two
+ * independent things can then happen, each gated on its own byte:
+ *
+ *   * the fresh-record flag $b54a raises the $2800 region's restore flag and draws the bitmap the
+ *     record's HIGH byte selects. The original never CLEARS $b54a — no `clr` of it exists in the
+ *     image (one `st` at $1262 and this `tst.b` are its only two operand references) — so once
+ *     something raises it the bitmap is redrawn every frame from then on;
+ *   * the record's LOW byte is drawn as two digits unless it is $ff.
+ */
+void hud_draw_record_digits(uint8_t *image, uint32_t record) {
+    /* `moveq #0,d7 / move.b 1(a0),d7 / lsl.w #8,d7 / swap d7` — the byte ends up in d7's TOP byte,
+     * so the two nibbles the plots rotate out are its high and low ones. The `moveq` clears the
+     * whole register first, which is why no caller value survives into the digits. */
+    uint32_t digits = (uint32_t)image[record + WB_RECORD_LOW_BYTE] << (BITS_PER_WORD + BITS_PER_BYTE);
+    uint32_t cursor = screen_cursor(image, WB_RECORD_DIGITS_ORIGIN);
+
+    /* A FOURTH field walk, and not one of the three above: it forces the ALTERNATE font before each
+     * of its two digits and forces the latch between them, so a leading zero blanks and the second
+     * digit always prints. */
+    const uint32_t font = WB_DIGIT_FONT_ALT;
+    cursor = plot_digit_then_step(image, font, cursor, &digits, WB_DIGIT_REWIND_RIGHT_HALF);
+    force_significant(image);
+    hud_plot_digit(image, font, cursor, &digits);
+    clear_significant(image);
+}
+
+void hud_draw_newest_record(uint8_t *image) {
+    if ((int16_t)be16(image + WB_EFFECT_RECORD_LIST) < 0)
+        return;
+    if (image[WB_RECORD_FRESH_FLAG] != 0) {
+        image[WB_PANEL_RESTORE_FLAG_DBB5] = WB_PANEL_RESTORE_FLAG_SET;
+        hud_blit_record_bitmap(image, be32(image + WB_EFFECT_RECORD_WRITE_PTR));
+    }
+    /* The pointer is re-read here: the blit above clobbers a0, so the original reloads it. */
+    uint32_t record = be32(image + WB_EFFECT_RECORD_WRITE_PTR);
+    if (image[record + WB_RECORD_LOW_BYTE] == WB_RECORD_NO_DIGITS)
+        return;
+    hud_draw_record_digits(image, record);
+}
+
+/* ---- $b8f0: the six HUD slots -----------------------------------------------------------------
+ *
+ * Six blocks of the same shape, five of them identical bar their constants. A slot whose request
+ * byte is set is cleared, has its restore flag raised, and is redrawn as a COPY of a blank cell
+ * with an icon OR-ed over it — which is why the OR form reads its destination: on a slot the
+ * blank is not all zeros, the icon lands on top of it, and a port that copied would agree only
+ * where the blank happens to be blank.
+ *
+ * Every one of the eighteen blit sites reloads both registers immediately before the `bsr`, so the
+ * addresses the two blits advance are dead and the C resolves the destination once per slot.
+ */
+static int hud_slot_take_request(uint8_t *image, uint32_t record, uint32_t restore_flag) {
+    if (image[record + WB_HUD_SLOT_REQUEST] == 0)
+        return 0;
+    image[record + WB_HUD_SLOT_REQUEST] = 0;
+    image[restore_flag] = WB_PANEL_RESTORE_FLAG_SET;
+    return 1;
+}
+
+/* Five of the six slots pick their icon with one `tst.b (a0)`; the sixth runs a six-armed
+ * `cmpi.b #1..#6` chain under the same test and is written out below, so only these five fit one
+ * table. */
+#define HUD_PLAIN_SLOTS (WB_HUD_SLOTS - 1u)
+
+static const struct {
+    uint32_t record;
+    uint32_t restore_flag;
+    uint32_t origin;
+    uint32_t blank;        /* the COPY's source */
+    uint32_t icon_zero;    /* the OR's, on the `tst.b (a0)` == 0 arm... */
+    uint32_t icon_value;   /* ...and on the other one */
+} HUD_SLOTS[HUD_PLAIN_SLOTS] = {
+    {WB_HUD_SLOT_BBBE, WB_PANEL_RESTORE_FLAG_DBB6, WB_HUD_SLOT_ORIGIN_BBBE,
+     WB_HUD_CELL_BLANK_LEFT, WB_HUD_CELL_ZERO_LEFT, WB_HUD_CELL_ICON_BBBE},
+    {WB_HUD_SLOT_BBC0, WB_PANEL_RESTORE_FLAG_DBB7, WB_HUD_SLOT_ORIGIN_BBC0,
+     WB_HUD_CELL_BLANK_LEFT, WB_HUD_CELL_ZERO_LEFT, WB_HUD_CELL_ICON_BBC0},
+    {WB_HUD_SLOT_BBC2, WB_PANEL_RESTORE_FLAG_DBB8, WB_HUD_SLOT_ORIGIN_BBC2,
+     WB_HUD_CELL_BLANK_LEFT, WB_HUD_CELL_ZERO_LEFT, WB_HUD_CELL_ICON_BBC2},
+    {WB_HUD_SLOT_BBC4, WB_PANEL_RESTORE_FLAG_DBB9, WB_HUD_SLOT_ORIGIN_BBC4,
+     WB_HUD_CELL_BLANK_RIGHT, WB_HUD_CELL_ZERO_RIGHT, WB_HUD_CELL_ICON_BBC4},
+    {WB_HUD_SLOT_BBC6, WB_PANEL_RESTORE_FLAG_DBBA, WB_HUD_SLOT_ORIGIN_BBC6,
+     WB_HUD_CELL_BLANK_RIGHT, WB_HUD_CELL_ZERO_RIGHT, WB_HUD_CELL_ICON_BBC6},
+};
+
+/* The sixth slot's `cmpi.b #1..#6` chain, in the order the original tests it. Arms 5 and 6 name the
+ * same cell — one icon under two values, which is the original's own shape and not a typo here. */
+static const uint32_t HUD_SLOT_BBC8_ICONS[WB_HUD_SLOT_BBC8_VARIANTS] = {
+    WB_HUD_CELL_BBC8_1, WB_HUD_CELL_BBC8_2, WB_HUD_CELL_BBC8_3,
+    WB_HUD_CELL_BBC8_4, WB_HUD_CELL_BBC8_5, WB_HUD_CELL_BBC8_5,
+};
+
+static void hud_refresh_slot_bbc8(uint8_t *image) {
+    if (!hud_slot_take_request(image, WB_HUD_SLOT_BBC8, WB_PANEL_RESTORE_FLAG_DBBB))
+        return;
+    uint32_t destination = screen_cursor(image, WB_HUD_SLOT_ORIGIN_BBC8);
+    hud_blit_cell_copy(image, WB_HUD_CELL_BLANK_RIGHT, destination);
+
+    unsigned variant = image[WB_HUD_SLOT_BBC8];
+    if (variant == 0) {
+        hud_blit_cell_or(image, WB_HUD_CELL_ZERO_RIGHT, destination);
+        return;
+    }
+    /* The chain's own fall-through: a value past the last `cmpi.b` `rts`es with the cell blanked
+     * and no icon on it. The recovered setters only ever write 1, 2, 3, 4 and 6 (src/effects.c). */
+    if (variant > WB_HUD_SLOT_BBC8_VARIANTS)
+        return;
+    hud_blit_cell_or(image, HUD_SLOT_BBC8_ICONS[variant - 1], destination);
+}
+
+void hud_refresh_dirty_slots(uint8_t *image) {
+    for (unsigned slot = 0; slot < HUD_PLAIN_SLOTS; slot++) {
+        if (!hud_slot_take_request(image, HUD_SLOTS[slot].record, HUD_SLOTS[slot].restore_flag))
+            continue;
+        uint32_t destination = screen_cursor(image, HUD_SLOTS[slot].origin);
+        hud_blit_cell_copy(image, HUD_SLOTS[slot].blank, destination);
+        hud_blit_cell_or(image, image[HUD_SLOTS[slot].record] ? HUD_SLOTS[slot].icon_value
+                                                              : HUD_SLOTS[slot].icon_zero,
+                         destination);
+    }
+    hud_refresh_slot_bbc8(image);
 }

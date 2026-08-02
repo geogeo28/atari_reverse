@@ -1,19 +1,24 @@
 /* hud.h — the status panel (src/hud.c).
  *
- * Twenty routines under `panel_refresh_frame` ($b346), the game loop's once-a-frame panel pass.
- * TWELVE LEAVES: four packed-BCD accumulators, five blits (three of which read the `screen_back`
+ * Thirty routines under `panel_refresh_frame` ($b346), the game loop's once-a-frame panel pass —
+ * NINE of its ten callees and everything below them. The tenth, $bbca, leaves this subsystem for
+ * the sound module, and is reached by an unconditional `bsr`, so $b346 itself is not here either
+ * (../STATUS.md has the argument).
+ * EIGHTEEN LEAVES: four packed-BCD accumulators, five blits (three of which read the `screen_back`
  * longword themselves, while the HUD-slot pair is handed a destination), the meter's clamped add,
- * the table-select / tick at the end of the pass, and the digit plotter — which calls nothing, and
- * is here rather than with the other eleven only because it landed with the tier that needs it.
- * EIGHT NON-LEAVES: the three digit-field walks above the plotter, the four routines $b346 itself
- * calls — the counter, the score, the high score and the stage number — and the meter's own pass.
+ * the table-select / tick at the end of the pass, the digit plotter — which calls nothing, and sits
+ * with the second tier below only because it landed with the tier that needs it — and the six
+ * region restores.
+ * TWELVE NON-LEAVES: the three digit-field walks above the plotter, the four routines $b346 itself
+ * calls that draw a field, the meter's own pass, and the three table walks at the bottom of this
+ * header (with the record's own two-digit walk under one of them).
  * Names are ../names.txt's, unchanged.
  *
  * Every ADDRESS they touch is a global named in wonderboy.h, which both languages read; nothing
  * here needs a constant of its own, which is why this header carries none.
  *
  * REGISTER ARGUMENTS. Unlike the effect handlers, most of these are entered with values in
- * registers. Ghidra recovered `void FUN(void)` for all twenty, so ../names.txt carries a `proto`
+ * registers. Ghidra recovered `void FUN(void)` for all thirty, so ../names.txt carries a `proto`
  * line committing the storage for each routine whose interface that directive can express. The two
  * it cannot are `hud_blit_meter_cell` and `hud_plot_digit`, whose results are in a1 and a0 — a
  * `proto` forces a void return — and whose d7 is IN AND OUT in the second case. The C takes those
@@ -91,5 +96,41 @@ void hud_draw_stage_number(uint8_t *image, uint32_t font_select, uint32_t digits
 
 /* $b61e — no registers at all: every input is a word in memory. */
 void hud_draw_meter(uint8_t *image);
+
+/* ---- the third tier: the pass's three table walks ----------------------------------------------
+ *
+ * `panel_refresh_frame`'s remaining callees. Each finds its work by testing a byte something else
+ * raised, so each one's write set can include bytes it was told about as well as the pixels it
+ * drew. TWO of the three then CLEAR that byte; `hud_draw_newest_record` does not — nothing in the
+ * image clears `record_fresh_flag`, which is the original's own shape and not an omission here.
+ */
+
+/* $d93a — no registers: the flag array, both screen pointers and every origin come out of memory.
+ * Copies one region from `screen_front` to `screen_back` per raised flag. */
+void panel_restore_dirty_regions(uint8_t *image);
+
+/* The six blits it dispatches to, named for their geometry (`<row bytes>x<rows>`) because what each
+ * region DEPICTS is only known for some of them — ../names.txt records which. a0 = the source in
+ * the front buffer, a1 = the destination in the back one; both are whole addresses their caller has
+ * already offset, as with the HUD-cell pair. `panel_restore_none` ($db34) is a bare `rts` and takes
+ * the same arguments so that one table can hold all six. */
+typedef void panel_restore_fn(uint8_t *image, uint32_t source, uint32_t destination);
+
+panel_restore_fn panel_restore_44x8;    /* $daf8 — one `movem` of eleven registers a row */
+panel_restore_fn panel_restore_32x20;   /* $db12 */
+panel_restore_fn panel_restore_32x29;   /* $db36 */
+panel_restore_fn panel_restore_16x14;   /* $db58 — the HUD-slot cell's geometry */
+panel_restore_fn panel_restore_24x32;   /* $db72 — the panel frame's */
+panel_restore_fn panel_restore_none;    /* $db34 */
+
+/* $b39c — no registers: the list, its write pointer and the fresh-record flag are all in memory. */
+void hud_draw_newest_record(uint8_t *image);
+
+/* $b3da — a0 = the record. d0 and d7 are both dead input (`move.w #1,d0` before each of the two
+ * plots, `moveq #0,d7` before the byte is loaded into it). */
+void hud_draw_record_digits(uint8_t *image, uint32_t record);
+
+/* $b8f0 — no registers: the six slot records and `screen_back` are all in memory. */
+void hud_refresh_dirty_slots(uint8_t *image);
 
 #endif /* WONDERBOY_HUD_H */

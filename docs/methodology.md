@@ -147,3 +147,32 @@ Lessons, now guardrails:
 - **The playable build is its own verification surface.** A cheap on-target smoke check ("does every
   subsystem produce output — sound triggers, palette, input?"), e.g. a PSG-write / border-colour probe,
   catches this class of gap that the differential suite is structurally blind to.
+## The seeding hole a mutation sweep finds: zeros copied over zeros
+
+A differential case seeds the bytes a routine is supposed to touch, and asserts on those. That is
+enough for a blit whose SOURCE is data in the image — an over-copy then moves real bytes into a
+destination the oracle left alone, and the whole-image diff catches it. It is **not** enough for a
+blit whose source is another region of the same seeded medium: a **screen-to-screen** copy that runs
+one row too far, or one longword too wide, reads ZEROS from the unseeded part of the source and
+writes them over ZEROS in the unseeded part of the destination. Both sides agree, the write-set
+check sees no stray write (the *oracle* did not make one either — the mutation is in the port), and
+the case stays green.
+
+Found on Wonder Boy's `$d93a` region restore (`projects/wonderboy/recreate/STATUS.md`, "The status
+panel's third tier"), where two mutations survived the first sweep for exactly this reason: a
+restore moving 32 rows instead of 29, and a routine that is a bare `rts` in the original quietly
+blitting a whole cell. The same probe on the *bitmap* blits in the same file kills them outright, so
+the shape — not the file — is what carries the hole.
+
+The fix, and the two parts of it that are not obvious:
+
+- **Seed a MARGIN.** Widen every region a case seeds by a few rows and bytes on BOTH media, and
+  leave the margin out of the write set the run may touch. An over-copy then lands on filler.
+- **Key the filler on the ADDRESS, not on a row index.** Widened regions overlap (two panel cells
+  side by side share rows), and two overlapping bands must produce the same byte at the same address
+  or the later poke silently rewrites the earlier one — turning the case's own expectation into
+  whatever the seeding order happened to be.
+
+More generally: **a mutation that survives is a question about the seeds before it is a question
+about the code.** Ask what the mutated code would have had to write, and whether any byte of the
+case could have told the difference.
