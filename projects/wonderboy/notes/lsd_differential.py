@@ -16,13 +16,6 @@ the colour flash is verified nowhere, and exists only as a transcription in lsd_
 
 Usage: lsd_differential.py [file ...]     (default: every LSD! file under bin/extracted/)
 Exit status: 0 all files matched · 1 a file failed, or there was nothing to check
-
-CORPUS: the LSD! cruncher is the crack release's wrapper, not the game's own format, and the
-project has since moved onto the original .stx disks — which carry no LSD! file at all. So this
-harness only runs against an extracted copy of the cracked .st, and reports "nothing to check"
-(exit 1) without one. The result it proved is recorded in lsd_depacker.asm; the surviving
-always-runnable regression is tools/recreate_kit/test/test_depack_lsd.py, whose fixture is
-embedded verbatim and needs no disk.
 """
 import pathlib
 import sys

@@ -321,11 +321,11 @@ reverse/
 │   ├── extract_graphics.py   ST 4-plane / RLE graphics → PNG
 │   ├── depack_gamex.py       static depacker for the Gamex/"PP" LZSS cruncher
 │   ├── depack_lsd.py         static depacker for the "LSD!" backwards-LZ cruncher
-│   ├── st_extract.py         FAT12 .ST disk-image lister/extractor
-│   ├── stx_extract.py        Pasti/.STX reader: protection report + clean .ST (--to-st)
 │   ├── ghidra_scripts/       PrgLoader · AtariOsTrapAnnotate · ExportDecompC · ApplyNames · …
+│   ├── hw_portability.py     how much of a game a memory-only differential can verify
 │   ├── headless.sh           bootstrap: import → load → analyze → annotate → export
 │   ├── reapply.sh            fast naming loop: apply names.txt → re-export
+│   ├── hw_scan.sh            dump bodies + call graph + hardware accesses → TSV
 │   ├── hatari_run.sh         run a game in Hatari (unpack in-place, then dump memory)
 │   ├── new_project.sh        scaffold projects/<name>/
 │   └── recreate_kit/         shared differential harness: PRG loader, Musashi oracle,
