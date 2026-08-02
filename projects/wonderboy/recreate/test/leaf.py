@@ -1,16 +1,18 @@
 """Shared driver for the game's LEAF routines — the ones with no callee, no hardware and a write
 set small enough to name.
 
-`test_effects.py`, `test_hud.py`, `test_input.py` and `test_scroll.py` are all batteries of such
-functions, so what they would otherwise each restate lives here: where a function starts (looked up
-in `../names.txt`, the workspace's source of truth for names, rather than restated as a number),
-what counts as a write it was not entitled to make, the operand encodings a battery pins its entry
-points against, and how a case reads a value back out of the oracle's write set.
+`test_effects.py`, `test_hud.py`, `test_input.py`, `test_scroll.py`, `test_actor.py` and
+`test_text.py` are all batteries of such functions, so what they would otherwise each restate lives
+here: where a function starts (looked up in `../names.txt`, the workspace's source of truth for
+names, rather than restated as a number), what counts as a write it was not entitled to make, the
+operand encodings a battery pins its entry points against, how a case seeds an image it can tell
+apart afterwards, and how it reads a value back out of the oracle's write set.
 
 NOT a general harness — the kit is that. This module assumes what a leaf gives it: a run short
 enough for a tight instruction cap, and a write set the caller can enumerate up front.
 """
 import ctypes
+import zlib
 
 import harness
 from harness import differential, report
@@ -122,6 +124,29 @@ def stray_writes(writes, allowed):
     return sorted(a for a in writes if not permitted(a))
 
 
+def program_writes(info):
+    """The oracle's write set with the MACHINE STACK left out.
+
+    A `bsr`'s pushed return address is not program output, and a battery that states its write set
+    EXACTLY compares against a model of what the routine draws. The band is `on_machine_stack`'s,
+    the same one `stray_writes` permits; this is the other side of it, for the cases that state the
+    write set rather than bound it. Its upper bound EXCLUDES the return slot at STACK_TOP, which IS
+    program output: it is what a scroll step rewrites to consume its caller's `bsr`.
+    """
+    return {addr: value for addr, value in info["writes"].items() if not on_machine_stack(addr)}
+
+
+def merge_bands(addresses):
+    """Adjacent addresses collapsed into (start, length) bands, for `run`'s `allowed`."""
+    bands = []
+    for addr in sorted(addresses):
+        if bands and addr == bands[-1][0] + bands[-1][1]:
+            bands[-1] = (bands[-1][0], bands[-1][1] + 1)
+        else:
+            bands.append((addr, 1))
+    return bands
+
+
 def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_CAP, stop_pc=0):
     """Run ``name``'s original under the oracle and the reconstruction on the same image.
 
@@ -177,6 +202,29 @@ def longword(value):
     return (value & LONGWORD_MASK).to_bytes(4, "big")
 
 
+def opcode(value):
+    """One 68000 opcode word, as the two bytes the instruction stream holds.
+
+    Every battery that builds its pins from numbers rather than from byte literals spells this;
+    it is here so the three of them cannot disagree about the width or the byte order.
+    """
+    return value.to_bytes(2, "big")
+
+
+def lea_abs_l(reg, addr):
+    """`lea <abs>.l,An` — how every one of these routines names a global."""
+    return opcode(0x41f9 | (reg << 9)) + longword(addr)
+
+
+def lea_d16(reg, displacement, source=None):
+    """`lea d16(As),Ad` — how every one of them steps a cursor.
+
+    Usually one register advancing itself, so the source defaults to it. The scroll's pre-shift is
+    the exception: it steps from one buffer copy to the next by `lea $5800(a0),a1`.
+    """
+    return opcode(0x41e8 | (reg << 9) | (reg if source is None else source)) + word(displacement)
+
+
 # A 68000 branch counts its displacement from the EXTENSION WORD, which sits two bytes after the
 # opcode the branch is written as — so a displacement is always the bytes the branch spans plus that
 # 2. Spelling it once is what lets a pin's displacements come out of the geometry of the pieces they
@@ -222,6 +270,36 @@ def assert_batch_is_complete(entry_bytes, recorded):
     assert len(entry_bytes) == recorded, (
         f"{len(entry_bytes)} routines are reconstructed here, not the recorded {recorded} — a table "
         f"lost an entry, or gained one nothing else knows about")
+
+
+# --- seeding an image a case can tell apart afterwards --------------------------------------------
+# Two arbitrary odd multipliers, so that neighbouring addresses and neighbouring salts diverge in
+# every bit rather than in the low ones. Nothing depends on their values, only on the mixing.
+ADDRESS_MULTIPLIER = 0x9d
+SALT_MULTIPLIER = 0x4f1b
+
+
+def keyed_byte(addr, salt):
+    """A byte derived from the ADDRESS, not from a row index.
+
+    Batch 4's restore walk learned this the hard way: two widened bands that overlap let an
+    index-keyed filler silently rewrite the earlier one, and the case then passes on bytes it did
+    not mean to seed. Keyed on the address, an over-run lands on a byte that is wrong for where it
+    was written.
+    """
+    mixed = (addr * ADDRESS_MULTIPLIER) ^ (addr >> 5) ^ (salt * SALT_MULTIPLIER)
+    return (mixed ^ (mixed >> 8)) & 0xff
+
+
+def case_salt(case):
+    """A salt derived from the case's NAME, and derived reproducibly.
+
+    Python's `hash()` of a string is randomised per process unless PYTHONHASHSEED is pinned, which
+    nothing here pins — seeding from it would give every run a different image, so a failure could
+    not be replayed from its case id and a mutation sweep's red count could move between sweeps
+    without the code changing. `crc32` is the same number in every process.
+    """
+    return zlib.crc32(case.encode()) & 0xff
 
 
 # --- reading a value back out of the oracle's write set -------------------------------------------

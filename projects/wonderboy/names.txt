@@ -27,6 +27,15 @@
 #
 # Untagged names were confirmed by reading the disassembled body.
 # "# ctx" marks a name inferred from call context only.
+#
+# Every address a cmt cites is the INSTRUCTION's address, never the offset of the
+# operand inside it -- so a cite can be looked up in out/wonderboy_dis.txt as it
+# stands. (`move.l #imm,$a098.l` at $ff14 carries its $a098 at $ff1a; the cite is
+# $ff14.)
+#
+# NEVER `proto` a register-returning routine: ApplyNames' `proto` forces a VOID
+# return, so a directive on a routine whose result is a register would record
+# something false. Put the register map in that routine's `cmt` instead.
 
 # ---------------------------------------------------------------------------
 # Bootstrap / startup  (see architecture.md "Startup sequence")
@@ -609,9 +618,6 @@ fn 0xdb72 panel_restore_24x32
 proto 0xdb72 panel_restore_24x32 source@A0 destination@A1
 cmt 0xdb72 62 bytes, reconstructed. 32 rows of 24 bytes -- hud_blit_panel_frame's geometry -- moved four rows per iteration as `movem.l {0,160,320,480}(a0),d0-d5 / movem.l d0-d5,{...}(a1)` with `lea 640` on both cursors, so unlike $daf8's the source `movem` is NOT post-incrementing. ONE caller, $dab6, the $5b40 entry.
 
-fn 0xbf4e text_glyph_source_from_d0
-cmt 0xbf4e NOT A LEAF, despite the hardware scan's T0/empty-callee classification, and NOT reconstructed -- it has no `rts`. Its 16 bytes are `lea $12c9c,a0 / subi.b #$20,d0 / lsl.l #5,d0 / lea (0,a0,d0.w),a0`, which turn a character code into a 32-byte glyph pointer, and it then FALLS THROUGH into $bf5e. The scan cut the function at $bf5e because $bf5e is entered directly by eight `bsr` of its own ($be2a, $be38, $be46, $be5e, $be6c, $be7e, $be8c, $be9a); $bf4e itself has one caller, $beca. So a differential entered here executes 226 bytes, not 16, and the 210 belong to a routine that is out of this batch. $bf5e is a fully unrolled plotter: 32 x `move.b (a0)+,(a1)` at +0/+2/+4/+6 over 8 rows, with `lea 82(a1),a1` between rows (a measured 88-byte row advance, which is NOT a 160-byte scanline -- unexplained, do not assume a screen buffer), and a tail that returns a1 at +1 or +7 depending on its parity, i.e. the next 8-pixel column.
-
 # ---------------------------------------------------------------------------
 # Pseudo-random number generator  (found by the portability measurement --
 # see recreate/PORTABILITY.md; it is the game logic's ONLY hardware access)
@@ -798,3 +804,61 @@ fn 0x8c0c bg_scroll_copy_x13
 fn 0x8cb2 bg_scroll_copy_x14
 fn 0x8d58 bg_scroll_copy_x15
 cmt 0x8d58 Last variant: 2 moves, `lea -128(a0),a0`, 28 moves. Its second half ends at $8dfc, so the family tiles $83b6..$8dfe with no gap -- asserted rather than eyeballed, against the sixteen table entries and the sixteen recorded body lengths (recreate/test/test_scroll.py).
+
+# ---------------------------------------------------------------------------
+# Actor records and the pass that projects them into screen coordinates.
+# The game keeps its moving objects as 19 records of 32 bytes in one of THREE
+# parallel tables ($996c / $9bd0 / $9e34) picked by the two mode flags $a30 and
+# $a32, and projects the chosen table into a parallel array of 19 SIX-byte
+# screen records at $98ec: map position minus the scroll, plus the sprite word.
+# $8f02 (the sprite pass, not reconstructed) is the array's only other reader.
+# Slot 12 of that array IS $9934/$9936 -- scroll_follow_x/_y, named above from
+# the scroll's side -- which is what fixes "the followed object" as slot 12 of
+# the actor table and makes $67e0 the routine that names it.
+# All five reconstructed in recreate/src/actor.c; reference counts are byte
+# scans of the whole image (abs.l, abs.w, d16(pc), both jsr forms and branches).
+# ---------------------------------------------------------------------------
+fn 0x67e0 followed_actor_record
+cmt 0x67e0 24 bytes, reconstructed. `tst.w $a32.w / bne` then `lea $9aec.l,a1` or `lea $9fb4.l,a1` -- the whole routine is a1. FIFTEEN references in the image and every one of them a call: two `jsr $67e0.l` ($50a, $5892), two `jsr $67e0.w` ($8e08 inside project_followed_actor, $10772), ten `bsr` ($30a6, $43a4, $4646, $67a6, $67c2, $67f8, $6840, $701c, $72c6, $7366) and one `bra.w` tail jump at $6d6c. Note the test is `bne` where project_actor_list's on the same word is `bpl`: the image only ever writes $a32 $0000 or $ffff (see state_flag_a32), so the two readings agree on every value the game produces and differ on a small positive one -- pinned from the other side by a case in recreate/test/test_actor.py. NO `proto`, deliberately, for the reason this file's header gives: it takes nothing and its whole result is a1, so the register map is this comment.
+fn 0x67c2 actor_set_side_flag
+proto 0x67c2 actor_set_side_flag actor@A0
+cmt 0x67c2 30 bytes, reconstructed. `bsr followed_actor_record`, then `cmp.w (a1),(a0)` as words and `bset #3,8(a0)` when the actor's x is STRICTLY greater, `bclr #3,8(a0)` otherwise -- i.e. bit 3 of the flag byte says the followed actor is to my LEFT. `bset`/`bclr` on memory are BYTE operations. THIRTY-FOUR `bsr` callers, all in $27da..$4d62 bar $72c2, which is what makes bit 3 an every-actor field rather than one routine's private state. Its only reader anywhere in the image is the `btst #3,8(a1)` at $51e -- inside the routine that starts at $50a -- which reads it on the FOLLOWED record itself.
+fn 0x67f8 actor_followed_x_within
+cmt 0x67f8 42 bytes, reconstructed. `bsr followed_actor_record`, then adds the caller's d0 to whichever of the two x words is BEHIND and compares again: returns 0 in d0's low word while the followed actor is within d0 of the actor horizontally, $ffff beyond it. Only the low word is written (`clr.w d0` / `move.w #$ffff,d0`), so the caller's own high half comes back -- and the ADD is a 16-bit one whose wrap the following `cmp.w` reads, while both compares are SIGNED comparisons of the operands (`bgt`/`blt` read N xor V). FIVE `bsr` callers: $23c4, $27e2, $2c48, $438e, $46c4. No `proto`, per this file's header: d0 is IN AND OUT, so the register map is this comment.
+fn 0x8dfe project_followed_actor
+cmt 0x8dfe 104 bytes, reconstructed. `tst.w $a30.w / bpl` -- `bpl` reads N alone, so this is the flag's own sign -- then `jsr $67e0.w` and one projection into $9934: `x - $20 - bg_scroll_pos_x`, `y - $40 - bg_scroll_pos_y`, and the record's sprite word unless bit 6 of its flag byte is set AND frame_toggle is nonzero, in which case a zero. ONE reference in the image, the `jsr $8dfe.l` at $4ca in game_main_loop, immediately before `jsr $7522.l` (bg_scroll_run_queue) -- which is exactly why it exists: it refreshes the one screen record the scroll steers on before the scroll reads it. $67e0 has no $a30 form, so in that mode slot 12 would be refreshed from a table project_actor_list is not projecting; the `bpl` gate is what stops it.
+fn 0x8e66 project_actor_list
+cmt 0x8e66 156 bytes, reconstructed. Publishes one of $9bd0 / $9e34 / $996c into $a098 -- `tst.w $a30.w / bpl` then `tst.w $a32.w / bpl`, both sign tests -- re-reads the longword it just wrote, and runs project_followed_actor's eleven-instruction projection over all nineteen records, ending on `cmpa.l #$995e,a1`. ONE reference, the `jsr $8e66.l` at $4d6 in game_main_loop, after bg_scroll_run_queue and before the sprite pass at $8f02.
+var 0xa30 state_flag_a30
+cmt 0xa30 Word flag, the sibling of state_flag_a32 and read the same way. TEN operand sites, one abs.l and nine abs.w. FIVE `tst.w` readers -- $4ec (the abs.l one), $8dfe, $8e66, $dbc0, $ff42 -- against FIVE writers: three `move.w #$ffff` ($1ae6, $1e96, $e0d0) and two `clr.w` ($e016, $ff0c). So like $a32 (thirteen readers, three writers) it only ever holds $0000 or $ffff, and every reader is a bare sign or zero test. WHICH mode it selects is not established, which is why the name carries the address.
+var 0x996c actor_table_default
+cmt 0x996c 19 records of 32 bytes, the table project_actor_list projects while neither mode flag is negative. Five abs.l references: $caa, $8e92 (the `move.l #$996c,$a098` here), $e710, $ff14, $101d2.
+var 0x9bd0 actor_table_a30
+cmt 0x9bd0 The table project_actor_list projects while state_flag_a30 is negative. Eight abs.l references, including $8e6e's `move.l #$9bd0,$a098`. followed_actor_record never returns a record from this table, which is what project_followed_actor's gate is about.
+var 0x9e34 actor_table_a32
+cmt 0x9e34 The table project_actor_list projects while state_flag_a30 is not negative and state_flag_a32 is. Four abs.l references, including $8e84's `move.l #$9e34,$a098`.
+var 0xa098 actor_table_selected
+cmt 0xa098 Longword: whichever of the three tables project_actor_list published. Twelve abs.l references -- four inside $8e66 itself ($8e6e, $8e84 and $8e92, the three `move.l #imm`, and $8e9c, the `movea.l` that reads it straight back) and eight elsewhere ($8d0, $1b68, $1b8e, $23d4, $267c, $ff14, $101d2, $101e0), so the published pointer is what the rest of the game walks the actor table through.
+var 0x9aec followed_actor_default
+cmt 0x9aec followed_actor_record's a1 while state_flag_a32 is zero, and $996c + 12 * 32 -- slot 12 of actor_table_default, the slot whose projection is scroll_follow_x. Nine abs.l references to the word itself, plus one to $9aed (its low byte); the pair at $51be and $51c6 are rng_1_to_4_masked's reads of this word's high and low byte, so the PRNG's non-hardware entropy is the followed actor's x.
+var 0x9fb4 followed_actor_a32
+cmt 0x9fb4 The same slot of actor_table_a32 ($9e34 + 12 * 32), and followed_actor_record's a1 while state_flag_a32 is nonzero. Five abs.l references.
+var 0x98ec actor_screen_records
+cmt 0x98ec 19 records of six bytes -- {screen x, screen y, sprite} -- that project_actor_list fills and the sprite pass at $8f02 reads. Exactly two abs.l references, $8ea2 (the `lea` here) and $8f02 (the sprite pass's own), and the same for its end $995e ($8ef8's `cmpa.l` and $8fc2). Record 12 is $9934, i.e. scroll_follow_x/_y and the word after them; no operand anywhere names $9938, which is reachable only by walking that record.
+
+# ---------------------------------------------------------------------------
+# The text plotter, $bf4e..$c030 -- two entry points into one routine.
+# Reconstructed in recreate/src/text.c.
+# ---------------------------------------------------------------------------
+fn 0xbf5e text_plot_glyph
+cmt 0xbf5e 210 bytes, reconstructed. A fully unrolled 8x8 glyph plot: 32 x `move.b (a0)+,(a1)` at +0/+2/+4/+6 over eight rows with `lea 82(a1),a1` between them, then `move.l a1,d7 / btst #0,d7` and one of two `lea`s. The 88-byte row advance (82 plus the six the four plane bytes walked) is NOT a screen scanline and is no longer unexplained: the destination is the off-screen message buffer at $c03a, 88 bytes wide, which $bd8a blits out 88 bytes at a time with a 72-byte skip -- 88 + 72 being the screen's own 160. The tail returns the cursor of the NEXT 8-pixel cell: two cells share each 8-byte plane group, so it is `lea -621(a1)` (start + 1) from an even cursor and `lea -615(a1)` (start + 7) from an odd one. EIGHT `bsr` callers, all inside $bd8a ($be2a, $be38, $be46, $be5e, $be6c, $be7e, $be8c, $be9a), each passing one of the eight 32-byte frame glyphs at $12b9c. It also clobbers d7, which no caller reads. No `proto`, per this file's header: a1 is IN AND OUT, so the register map is this comment.
+fn 0xbf4e text_plot_char
+cmt 0xbf4e 16 bytes, and NOT A LEAF despite the hardware scan's T0/empty-callee classification -- it has no `rts` and FALLS THROUGH into text_plot_glyph, whose `rts` returns to its caller. `lea $12c9c.l,a0 / subi.b #$20,d0 / lsl.l #5,d0 / lea (0,a0,d0.w),a0`: a character code becomes a 32-byte glyph pointer, and glyph 0 (char $20) is 32 zero bytes, which is what a space plots. Three semantics the reconstruction keeps: the `subi` is a BYTE op (d0's other three bytes survive), the `lsl` is a LONGWORD one, and the index is the low WORD SIGN-EXTENDED -- unreachable from the game, whose one caller does `moveq #0,d0 / move.b (a6)+,d0`, and reached from a case instead. ONE caller, the `bsr.w` at $beca. The whole routine is entered as $bf4e + $bf5e = 226 bytes, which is why the two are reconstructed as a prelude that calls the plotter and returns its result. Read the scan's "T0, no callees, 16 bytes" as a caveat on the scan: a fall-through target is invisible to it. No `proto`, per this file's header: d0 in, a1 in and out.
+var 0x12c9c text_glyph_table
+cmt 0x12c9c The font: 32 bytes per glyph from char $20 up, shipped in the .PRG (unlike the tile bitmaps, which are loaded at runtime). Two abs.l references, $1cf6 and text_plot_char's own `lea` at $bf4e.
+var 0x12b9c text_frame_glyphs
+cmt 0x12b9c The eight 32-byte glyphs immediately below the font, which $bd8a's eight `bsr text_plot_glyph` sites pass directly: the message box's corners, edges and fill. One abs.l reference for the first ($be24); the other seven are named only by their own `lea`s inside $bd8a.
+var 0xc03a text_buffer
+cmt 0xc03a The off-screen message buffer text_plot_glyph draws into: 88 bytes (176 px) x 4 planes, 6400 bytes in all, running from $c03a to exactly $d93a (panel_restore_dirty_regions). $bd8a clears it with `move.w #$63f,d0 / clr.l (a0)+ / dbf` and blits it to screen_back 88 bytes plus a 72-byte skip per scanline. Three abs.l references, all in $bd8a: $be12 (the clear), $be1e (the compose cursor) and $bef2 (the blit source).
+fn 0xbd8a text_compose_message_box
+cmt 0xbd8a 452 bytes, NOT reconstructed -- QUEUED, and named from a read of its body rather than from call context. Driven by two byte flags at $c030/$c031: it clears text_buffer, draws a box out of the eight text_frame_glyphs with eight `bsr text_plot_glyph` ($be2a..$be9a, the outer ones inside `dbf` loops sized from $c032/$c033), then walks a string through `bsr text_plot_char` at $beca stepping a row on every $0a and stopping at $ff, and on the other arm blits the buffer to screen_back. ONE caller, the `jsr $bd8a.l` at $4fc in game_main_loop. It is the tier above this batch: its closure is satisfied now that both plotter entry points are reconstructed, but $c030..$c039 -- ten bytes: FOUR byte fields ($c030/$c031, the two flags; $c032/$c033, the two cell counts) and THREE words ($c034/$c036/$c038, the timers) -- and the $a09c message-pointer table it indexes are not yet read.

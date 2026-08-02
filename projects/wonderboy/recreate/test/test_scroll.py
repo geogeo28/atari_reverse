@@ -45,13 +45,13 @@ KNOWINGLY NOT PINNED
     cells apart, not proved here.
 """
 import ctypes
-import zlib
 
 import pytest
 
 import harness
 import leaf
-from leaf import RTS, backward_branch, bsr_w, forward_branch, longword, word
+from leaf import (RTS, backward_branch, bsr_w, case_salt, forward_branch, keyed_byte, lea_abs_l,
+                  lea_d16, longword, merge_bands, opcode, program_writes, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -311,34 +311,11 @@ MAP_SEED_LEN = MAP_STRIDE_SEED * (BUFFER_TILE_ROWS + 2)
 BUFFER_MARGIN = BUFFER_LINE
 
 
-def _keyed_byte(addr, salt):
-    """A byte derived from the ADDRESS, not from a row index.
-
-    Batch 4's restore walk learned this the hard way: two widened bands that overlap let an
-    index-keyed filler silently rewrite the earlier one, and the case then passes on bytes it did
-    not mean to seed. Keyed on the address, an over-run lands on a byte that is wrong for where it
-    was written.
-    """
-    mixed = (addr * 0x9d) ^ (addr >> 5) ^ (salt * 0x4f1b)
-    return (mixed ^ (mixed >> 8)) & 0xff
-
-
 def _keyed_block(base, length, salt):
     """One seeded band, built per call rather than cached: every case salts from its own NAME, so a
     cache would mostly retain bands nothing asks for again (measured: it served under a third of the
     calls, all of them 8-bit salt collisions between unrelated cases, for 3% of the battery's time)."""
-    return bytes(_keyed_byte(base + i, salt) for i in range(length))
-
-
-def _case_salt(case):
-    """A salt derived from the case's NAME, and derived reproducibly.
-
-    Python's `hash()` of a string is randomised per process unless PYTHONHASHSEED is pinned, which
-    nothing here pins — seeding from it would give every run a different image, so a failure could
-    not be replayed from its case id and a mutation sweep's red count could move between sweeps
-    without the code changing. `crc32` is the same number in every process.
-    """
-    return zlib.crc32(case.encode()) & 0xff
+    return bytes(keyed_byte(base + i, salt) for i in range(length))
 
 
 def _scroll_pokes(phase, scroll_x, y_coarse, map_cursor=MAP_CURSOR_SEED, salt=0,
@@ -363,7 +340,7 @@ def _scroll_pokes(phase, scroll_x, y_coarse, map_cursor=MAP_CURSOR_SEED, salt=0,
         MAP_ROW_STRIDE: word(MAP_STRIDE_SEED),
         MAP_DATA: _keyed_block(MAP_DATA, MAP_SEED_LEN, salt + 1),
         TILE_INDEX_TABLE: b"".join(
-            word(TILE_SHIPPED_FIRST + _keyed_byte(TILE_INDEX_TABLE + i, salt + 2)
+            word(TILE_SHIPPED_FIRST + keyed_byte(TILE_INDEX_TABLE + i, salt + 2)
                  % TILE_SHIPPED_COUNT)
             for i in range(TILE_INDEX_ENTRIES)),
         band_lo: _keyed_block(band_lo, band_len, salt + 3),
@@ -499,111 +476,97 @@ A0, A1, A2, A3, A4, A5, A6 = range(7)
 D0, D1, D4, D5, D6, D7 = 0, 1, 4, 5, 6, 7
 
 
-def _op(value):
-    return value.to_bytes(2, "big")
-
-
-def lea_abs_l(reg, addr):
-    return _op(0x41f9 | (reg << 9)) + longword(addr)
-
-
-def lea_d16(reg, displacement, source=None):
-    """`lea d16(As),Ad` — usually one register advancing itself, so the source defaults to it. The
-    pre-shift is the exception: it steps from one buffer copy to the next by `lea $5800(a0),a1`."""
-    return _op(0x41e8 | (reg << 9) | (reg if source is None else source)) + word(displacement)
-
-
 def lea_indexed(reg, index, longword_index=False):
     """`lea (0,An,Dn.w),An` — likewise, and the extension word is the whole of the index encoding."""
-    return _op(0x41f0 | (reg << 9) | reg) + word((index << 12) | (0x800 if longword_index else 0))
+    return opcode(0x41f0 | (reg << 9) | reg) + word((index << 12) | (0x800 if longword_index else 0))
 
 
 def move_w_indexed_d0(base, index):
     """`move.w (0,An,Dn.w),d0` — how a fill reads a word out of a table it just indexed."""
-    return _op(0x3030 | base) + word(index << 12)
+    return opcode(0x3030 | base) + word(index << 12)
 
 
 def move_w_abs_l_dn(reg, addr):
-    return _op(0x3039 | (reg << 9)) + longword(addr)
+    return opcode(0x3039 | (reg << 9)) + longword(addr)
 
 
 def move_w_dn_abs_l(reg, addr):
-    return _op(0x33c0 | reg) + longword(addr)
+    return opcode(0x33c0 | reg) + longword(addr)
 
 
 def move_w_imm_dn(reg, value):
-    return _op(0x303c | (reg << 9)) + word(value)
+    return opcode(0x303c | (reg << 9)) + word(value)
 
 
 def andi_w_abs_l(value, addr):
-    return _op(0x0279) + word(value) + longword(addr)
+    return opcode(0x0279) + word(value) + longword(addr)
 
 
 def addi_w_dn(reg, value):
-    return _op(0x0640 | reg) + word(value)
+    return opcode(0x0640 | reg) + word(value)
 
 
 def andi_w_dn(reg, value):
-    return _op(0x0240 | reg) + word(value)
+    return opcode(0x0240 | reg) + word(value)
 
 
 def tst_w_abs_l(addr):
-    return _op(0x4a79) + longword(addr)
+    return opcode(0x4a79) + longword(addr)
 
 
 def clr_w_abs_l(addr):
-    return _op(0x4279) + longword(addr)
+    return opcode(0x4279) + longword(addr)
 
 
 def clr_b_abs_l(addr):
-    return _op(0x4239) + longword(addr)
+    return opcode(0x4239) + longword(addr)
 
 
 def cmpi_w_abs_l(value, addr):
-    return _op(0x0c79) + word(value) + longword(addr)
+    return opcode(0x0c79) + word(value) + longword(addr)
 
 
 def addq_w_abs_l(amount, addr):
-    return _op(0x5079 | ((amount & 7) << 9)) + longword(addr)
+    return opcode(0x5079 | ((amount & 7) << 9)) + longword(addr)
 
 
 def subq_w_abs_l(amount, addr):
-    return _op(0x5179 | ((amount & 7) << 9)) + longword(addr)
+    return opcode(0x5179 | ((amount & 7) << 9)) + longword(addr)
 
 
 def addq_l_ind_a7(amount):
-    return _op(0x5097 | ((amount & 7) << 9))
+    return opcode(0x5097 | ((amount & 7) << 9))
 
 
 # --- the encodings the vertical half and the queue above it add -----------------------------------
 
 def tst_b_abs_l(addr):
-    return _op(0x4a39) + longword(addr)
+    return opcode(0x4a39) + longword(addr)
 
 
 def tst_w_abs_w(addr):
     """`tst.w <abs>.w` — the queue's own gate is below $8000, so the original spells it short."""
-    return _op(0x4a78) + word(addr)
+    return opcode(0x4a78) + word(addr)
 
 
 def st_abs_l(addr):
-    return _op(0x50f9) + longword(addr)
+    return opcode(0x50f9) + longword(addr)
 
 
 def clr_l_abs_l(addr):
-    return _op(0x42b9) + longword(addr)
+    return opcode(0x42b9) + longword(addr)
 
 
 def move_l_imm_abs_l(value, addr):
-    return _op(0x23fc) + longword(value) + longword(addr)
+    return opcode(0x23fc) + longword(value) + longword(addr)
 
 
 def addi_l_imm_abs_l(value, addr):
-    return _op(0x06b9) + longword(value) + longword(addr)
+    return opcode(0x06b9) + longword(value) + longword(addr)
 
 
 def subi_l_imm_abs_l(value, addr):
-    return _op(0x04b9) + longword(value) + longword(addr)
+    return opcode(0x04b9) + longword(value) + longword(addr)
 
 
 def move_w_abs_l_abs_l(source, destination):
@@ -611,70 +574,70 @@ def move_w_abs_l_abs_l(source, destination):
 
 
 def movea_l_abs_l(reg, addr):
-    return _op(0x2079 | (reg << 9)) + longword(addr)
+    return opcode(0x2079 | (reg << 9)) + longword(addr)
 
 
 def move_w_ind_dn(reg, base, displacement=0):
     """`move.w (An),Dn` / `move.w d16(An),Dn` — how a fill reads its two `dbf` counts."""
     if displacement == 0:
-        return _op(0x3010 | (reg << 9) | base)
-    return _op(0x3028 | (reg << 9) | base) + word(displacement)
+        return opcode(0x3010 | (reg << 9) | base)
+    return opcode(0x3028 | (reg << 9) | base) + word(displacement)
 
 
 def subi_w_dn(reg, value):
-    return _op(0x0440 | reg) + word(value)
+    return opcode(0x0440 | reg) + word(value)
 
 
 def neg_w_dn(reg):
-    return _op(0x4440 | reg)
+    return opcode(0x4440 | reg)
 
 
 def moveq_0_dn(reg):
-    return _op(0x7000 | (reg << 9))
+    return opcode(0x7000 | (reg << 9))
 
 
 def mulu_w_imm_dn(reg, value):
-    return _op(0xc0fc | (reg << 9)) + word(value)
+    return opcode(0xc0fc | (reg << 9)) + word(value)
 
 
 def add_w_d1_abs_l(addr):
-    return _op(0xd379) + longword(addr)
+    return opcode(0xd379) + longword(addr)
 
 
 def sub_w_d1_abs_l(addr):
-    return _op(0x9379) + longword(addr)
+    return opcode(0x9379) + longword(addr)
 
 
 def move_w_postinc_dn(reg):
-    return _op(0x3018 | (reg << 9))
+    return opcode(0x3018 | (reg << 9))
 
 
 def move_w_dn_postinc_a1(reg):
-    return _op(0x32c0 | reg)
+    return opcode(0x32c0 | reg)
 
 
 def or_w_dn_postinc_a1(reg):
-    return _op(0x8159 | (reg << 9))
+    return opcode(0x8159 | (reg << 9))
 
 
 def shift_imm_dn(kind, count, reg):
     """`<shift>.<size> #count,Dn`. ``kind`` carries everything but the count and the register:
     direction, operand size, immediate-count, and which of ASL/LSL/ASR/ROL it is."""
-    return _op(kind | ((count & 7) << 9) | reg)
+    return opcode(kind | ((count & 7) << 9) | reg)
 
 
 def swap_dn(reg):
-    return _op(0x4840 | reg)
+    return opcode(0x4840 | reg)
 
 
 def move_l_d0_dn(reg):
-    return _op(0x2000 | (reg << 9))
+    return opcode(0x2000 | (reg << 9))
 
 
 def tst_w_dn(reg):
     """`tst.w Dn` — three routines here test a different register, which is what collapsed the two
     single-register constants this replaces (the third-user rule ../STATUS.md records)."""
-    return _op(0x4a40 | reg)
+    return opcode(0x4a40 | reg)
 
 
 # --- the encodings the consumer tier adds ---------------------------------------------------------
@@ -683,42 +646,42 @@ def tst_w_dn(reg):
 
 def movea_l_abs_w(reg, addr):
     """`movea.l <abs>.w,An` — the blit's screen pointer is below $8000, so it is spelt short."""
-    return _op(0x2078 | (reg << 9)) + word(addr)
+    return opcode(0x2078 | (reg << 9)) + word(addr)
 
 
 def movea_l_indexed(reg, base, index):
     """`movea.l (0,An,Dn.w),Am` — the jump table read, and the whole of the original's dispatch."""
-    return _op(0x2070 | (reg << 9) | base) + word(index << 12)
+    return opcode(0x2070 | (reg << 9) | base) + word(index << 12)
 
 
 def adda_w_imm_an(value, reg):
-    return _op(0xd0fc | (reg << 9)) + word(value)
+    return opcode(0xd0fc | (reg << 9)) + word(value)
 
 
 def addq_l_imm_an(amount, reg):
     """`addq.l #n,An` — `#8` encodes as 0, which is what makes the family's `addq.l #8,a0` a word."""
-    return _op(0x5088 | ((amount & 7) << 9) | reg)
+    return opcode(0x5088 | ((amount & 7) << 9) | reg)
 
 
 def subq_w_imm_dn(amount, reg):
-    return _op(0x5140 | ((amount & 7) << 9) | reg)
+    return opcode(0x5140 | ((amount & 7) << 9) | reg)
 
 
 def move_w_dn_dn(destination, source):
-    return _op(0x3000 | (destination << 9) | source)
+    return opcode(0x3000 | (destination << 9) | source)
 
 
 def sub_w_dn_dn(destination, source):
-    return _op(0x9040 | (destination << 9) | source)
+    return opcode(0x9040 | (destination << 9) | source)
 
 
 def sub_w_abs_l_dn(reg, addr):
     """`sub.w <abs>.l,Dn` — the other direction from sub_w_d1_abs_l above, which stores back."""
-    return _op(0x9040 | (reg << 9) | 0x39) + longword(addr)
+    return opcode(0x9040 | (reg << 9) | 0x39) + longword(addr)
 
 
 def jmp_ind(reg):
-    return _op(0x4ed0 | reg)
+    return opcode(0x4ed0 | reg)
 
 
 def _shift_for(multiplier):
@@ -774,23 +737,23 @@ def bra_s_over(spanned_bytes):
     assert -0x80 <= displacement < 0, (
         f"{displacement} does not fit a `bra.s` byte displacement — the original spells this jump "
         f"short, so a body that outgrew it would need a different opcode here")
-    return _op(BRA_S | (displacement & BYTE_MASK))
+    return opcode(BRA_S | (displacement & BYTE_MASK))
 
 
-def branch_w_over(opcode, spanned_bytes):
+def branch_w_over(condition, spanned_bytes):
     """`bcc.w` past ``spanned_bytes``, for the jumps whose target is known by LENGTH rather than by
     the pieces — a loop's own closing branch, or a `beq` over one `bsr`."""
-    return _op(opcode) + forward_branch(spanned_bytes)
+    return opcode(condition) + forward_branch(spanned_bytes)
 
 
-def branch_w(opcode, *over):
+def branch_w(condition, *over):
     """`bcc.w` past exactly ``over`` — leaf.forward_branch turns the pieces into the displacement."""
-    return branch_w_over(opcode, sum(len(piece) for piece in over))
+    return branch_w_over(condition, sum(len(piece) for piece in over))
 
 
 def dbf(reg, *body):
     """`dbf Dn,<start of body>`: the displacement runs back over the body and the opcode word."""
-    return _op(DBF_DN | reg) + backward_branch(sum(len(piece) for piece in body))
+    return opcode(DBF_DN | reg) + backward_branch(sum(len(piece) for piece in body))
 
 
 BNE_W, BEQ_W, BMI_W, BPL_W, BGT_W, BLT_W = 0x6600, 0x6700, 0x6b00, 0x6a00, 0x6e00, 0x6d00
@@ -806,28 +769,28 @@ LSL_L_7_D0 = shift_imm_dn(LSL_L_IMM, 7, D0)
 LSL_L_4_D0 = shift_imm_dn(LSL_L_IMM, 4, D0)
 LSL_W_2_D0 = shift_imm_dn(LSL_W_IMM, 2, D0)
 ASL_W_3_D0 = shift_imm_dn(ASL_W_IMM, 3, D0)
-MOVEQ_0_D0 = _op(0x7000)
-MULU_W_IMM_D0 = _op(0xc0fc)
-ADDA_L_D0_A0 = _op(0xd1c0)
-MOVEA_L_A0_A1, MOVEA_L_A0_A2 = _op(0x2248), _op(0x2448)
-MOVE_W_POSTINC_A5_D0 = _op(0x301d)
-MOVE_L_POSTINC_A5_ABS_L = _op(0x23dd)
-MOVE_L_POSTINC_A5_ABS_W = _op(0x21dd)
-MOVE_W_ABS_W_D7 = _op(0x3e38)
-SWAP_D6, NOT_L_D6 = _op(0x4846), _op(0x4686)
-MOVE_W_IND_A6_D6 = _op(0x3c16)
-MOVE_W_IMM_D5 = _op(0x3a3c)
-AND_L_D6_POSTINC_A0 = _op(0xcd98)
-MOVE_B_IND_A3_D0 = _op(0x1013)
-MOVE_B_POSTINC_A6_D0 = _op(0x101e)
-ADD_W_D0_D0 = _op(0xd040)
-ADD_W_D1_D0 = _op(0xd041)
-ADDQ_W_2_D0 = _op(0x5440)
-CMP_W_ABS_L_D0 = _op(0xb079)
-CLR_W_D0 = _op(0x4240)
-ADDA_W_D6_A0 = _op(0xd0c6)
-MOVE_L_POSTINC_A0_POSTINC_A1 = _op(0x22d8)
-MOVE_L_POSTINC_A0_D16_A1 = _op(0x2358)
+MOVEQ_0_D0 = opcode(0x7000)
+MULU_W_IMM_D0 = opcode(0xc0fc)
+ADDA_L_D0_A0 = opcode(0xd1c0)
+MOVEA_L_A0_A1, MOVEA_L_A0_A2 = opcode(0x2248), opcode(0x2448)
+MOVE_W_POSTINC_A5_D0 = opcode(0x301d)
+MOVE_L_POSTINC_A5_ABS_L = opcode(0x23dd)
+MOVE_L_POSTINC_A5_ABS_W = opcode(0x21dd)
+MOVE_W_ABS_W_D7 = opcode(0x3e38)
+SWAP_D6, NOT_L_D6 = opcode(0x4846), opcode(0x4686)
+MOVE_W_IND_A6_D6 = opcode(0x3c16)
+MOVE_W_IMM_D5 = opcode(0x3a3c)
+AND_L_D6_POSTINC_A0 = opcode(0xcd98)
+MOVE_B_IND_A3_D0 = opcode(0x1013)
+MOVE_B_POSTINC_A6_D0 = opcode(0x101e)
+ADD_W_D0_D0 = opcode(0xd040)
+ADD_W_D1_D0 = opcode(0xd041)
+ADDQ_W_2_D0 = opcode(0x5440)
+CMP_W_ABS_L_D0 = opcode(0xb079)
+CLR_W_D0 = opcode(0x4240)
+ADDA_W_D6_A0 = opcode(0xd0c6)
+MOVE_L_POSTINC_A0_POSTINC_A1 = opcode(0x22d8)
+MOVE_L_POSTINC_A0_D16_A1 = opcode(0x2358)
 
 # Both `bcc.w` and `bsr.w` are one opcode word and one displacement word, whatever they span — which
 # is what lets a loop's two branches be solved without solving each other.
@@ -849,12 +812,12 @@ def _clear_loop():
 def _tile_loop(or_takes_low_half):
     """The tile loop both fills spell twice: a map byte through the index table into a tile pointer,
     then sixteen scanlines of four plane words rotated left as longwords."""
-    move_to_a2 = b"".join(_op(0x34c0 | reg) for reg in range(PLANES))
+    move_to_a2 = b"".join(opcode(0x34c0 | reg) for reg in range(PLANES))
     or_to_a1 = b"".join(or_w_dn_postinc_a1(reg) for reg in range(PLANES))
     scanline = (
         _clear_plane_registers()
-        + b"".join(_op(0x301c | (reg << 9)) for reg in range(PLANES))  # move.w (a4)+,d0..d3
-        + b"".join(_op(0xebb8 | reg) for reg in range(PLANES))         # rol.l d5,d0..d3
+        + b"".join(opcode(0x301c | (reg << 9)) for reg in range(PLANES))  # move.w (a4)+,d0..d3
+        + b"".join(opcode(0xebb8 | reg) for reg in range(PLANES))         # rol.l d5,d0..d3
         + (or_to_a1 if or_takes_low_half else move_to_a2)
         + b"".join(swap_dn(reg) for reg in range(PLANES))
         + (move_to_a2 if or_takes_low_half else or_to_a1)
@@ -1327,18 +1290,6 @@ def _step_glue(name, seen):
     return call
 
 
-def _program_writes(info):
-    """The oracle's write set with the MACHINE STACK left out.
-
-    A `bsr`'s pushed return address is not program output, and the equality assertions below compare
-    against a model of what the routine draws. The band is leaf.on_machine_stack's, the same one
-    leaf.stray_writes permits; this is the other side of it, for the cases that state the write set
-    exactly rather than bound it. Its upper bound EXCLUDES the return slot at STACK_TOP, which is
-    program output: it is what a step rewrites to consume its caller's `bsr`.
-    """
-    return {addr: value for addr, value in info["writes"].items() if not leaf.on_machine_stack(addr)}
-
-
 def _oracle_skipped(info, skip):
     """Whether the ORIGINAL consumed its caller's `bsr`s, read off its own stack.
 
@@ -1461,13 +1412,13 @@ def _run_fill(edge, phase, scroll_x, coarse, salt):
     pokes = _scroll_pokes(phase, scroll_x, coarse, salt=salt)
     image = harness.make_image(pokes)
     expected = _model_fill(image, edge)
-    allowed = _merge(sorted(expected))
+    allowed = merge_bands(expected)
 
     what = f"{edge.routine} phase={phase} x={scroll_x} coarse={coarse}"
     info = leaf.run(edge.routine, _FILL[edge.routine], allowed, what,
                     regs={"_pokes": pokes}, max_insns=FILL_INSN_CAP)
 
-    written = _program_writes(info)
+    written = program_writes(info)
     assert set(written) == set(expected), (
         f"{what}: the original wrote {len(written)} bytes against the model's "
         f"{len(expected)} — first difference at {min(set(written) ^ set(expected)):#x}")
@@ -1477,22 +1428,11 @@ def _run_fill(edge, phase, scroll_x, coarse, salt):
     return info
 
 
-def _merge(addresses):
-    """Adjacent addresses collapsed into (start, length) bands, for leaf.run's `allowed`."""
-    bands = []
-    for addr in addresses:
-        if bands and addr == bands[-1][0] + bands[-1][1]:
-            bands[-1] = (bands[-1][0], bands[-1][1] + 1)
-        else:
-            bands.append((addr, 1))
-    return bands
-
-
 @pytest.mark.parametrize("edge", sorted(EDGES), ids=sorted(EDGES))
 @pytest.mark.parametrize("case,phase,scroll_x,coarse", FILL_CASES,
                          ids=[case[0] for case in FILL_CASES])
 def test_a_column_fill_draws_the_cells_the_geometry_names(edge, case, phase, scroll_x, coarse):
-    _run_fill(EDGES[edge], phase, scroll_x, coarse, salt=_case_salt(case))
+    _run_fill(EDGES[edge], phase, scroll_x, coarse, salt=case_salt(case))
 
 
 @pytest.mark.parametrize("edge", sorted(EDGES), ids=sorted(EDGES))
@@ -1501,7 +1441,7 @@ def test_a_column_fill_touches_exactly_one_buffers_worth_of_scanlines(edge):
     cursor that is ORed and one for the cursor that is overwritten, plus the count scratch."""
     phase = 8
     info = _run_fill(EDGES[edge], phase=phase, scroll_x=5, coarse=4, salt=7)
-    cells = sorted(a for a in _program_writes(info) if a >= BUFFER_BASE)
+    cells = sorted(a for a in program_writes(info) if a >= BUFFER_BASE)
     scanlines = BUFFER_TILE_ROWS * TILE_ROWS
     # TWO cells per scanline, not three: the clear walks the same cell the tile loop ORs into, and
     # only the overwritten one is a second address. That the two coincide is the whole reason the
@@ -1656,11 +1596,11 @@ def test_a_request_is_consumed_whether_or_not_the_step_moves(edge, armed):
     image = harness.make_image(pokes)
     expected = {}
     _model_serve_horizontal(bytearray(image), expected, served)
-    allowed = _merge(sorted(expected))
+    allowed = merge_bands(expected)
     what = f"{served.serve} armed={armed}"
     info = leaf.run(served.serve, _FILL[served.serve], allowed, what,
                     regs={"_pokes": pokes}, max_insns=SERVE_INSN_CAP)
-    written = _program_writes(info)
+    written = program_writes(info)
     assert set(written) == set(expected), (
         f"{what}: write set differs at {min(set(written) ^ set(expected)):#x}")
     for addr in sorted(expected):
@@ -1681,7 +1621,7 @@ def test_a_request_at_the_scrolls_boundary_clears_its_byte_and_draws_nothing(edg
     info = leaf.run(served.serve, _FILL[served.serve], [(served.request, 1)],
                     f"{served.serve} at the boundary", regs={"_pokes": pokes},
                     max_insns=SERVE_INSN_CAP)
-    written = _program_writes(info)
+    written = program_writes(info)
     assert set(written) == {served.request}
     assert written[served.request] == 0
 
@@ -2039,9 +1979,9 @@ def _run_modelled(name, glue, expected, what, max_insns, poison=True, regs=None)
     The shared body of every case below: the whole-image diff comes from leaf.run, and this adds the
     equality — both the address set and every byte in it — against the Python model.
     """
-    info = leaf.run(name, glue, _merge(sorted(expected)), what, regs=regs, max_insns=max_insns,
+    info = leaf.run(name, glue, merge_bands(expected), what, regs=regs, max_insns=max_insns,
                     poison=poison)
-    written = _program_writes(info)
+    written = program_writes(info)
     assert set(written) == set(expected), (
         f"{what}: the original wrote {len(written)} bytes against the model's {len(expected)} — "
         f"first difference at {min(set(written) ^ set(expected)):#x}")
@@ -2085,7 +2025,7 @@ def test_a_vertical_step_moves_both_ring_cursors_or_consumes_two_calls(name, dow
     seeded = dict(state)
     if skips and down:
         seeded["limit_y"] = seeded["pos_y"]
-    pokes = _vertical_pokes(salt=_case_salt(f"{name}-{case}"), **seeded)
+    pokes = _vertical_pokes(salt=case_salt(f"{name}-{case}"), **seeded)
     image = harness.make_image(pokes)
 
     expected = {}
@@ -2095,7 +2035,7 @@ def test_a_vertical_step_moves_both_ring_cursors_or_consumes_two_calls(name, dow
 
     seen = []
     skip = STEP_SKIP_BYTES[name]
-    allowed = _merge(sorted(expected)) + [(RETURN_SLOT, LONGWORD_LEN)]
+    allowed = merge_bands(expected) + [(RETURN_SLOT, LONGWORD_LEN)]
     info = leaf.run(name, _vertical_step_glue(name, seen), allowed, f"{name} {case}",
                     regs={"_pokes": pokes}, max_insns=VERTICAL_STEP_INSN_CAP,
                     stop_pc=emu.SENTINEL + skip)
@@ -2106,7 +2046,7 @@ def test_a_vertical_step_moves_both_ring_cursors_or_consumes_two_calls(name, dow
 
     # The rewritten return address is program output (it is the skip), and `_oracle_skipped` above
     # is what states its value — so it is not part of the write set the model predicts.
-    written = {addr: value for addr, value in _program_writes(info).items()
+    written = {addr: value for addr, value in program_writes(info).items()
                if not RETURN_SLOT <= addr < RETURN_SLOT + LONGWORD_LEN}
     assert set(written) == set(expected), (
         f"{name} {case}: write set differs at {min(set(written) ^ set(expected)):#x}")
@@ -2128,11 +2068,11 @@ def test_a_vertical_step_keeps_every_buffer_rows_pointer_on_its_own_ring_row():
     for name, down, seeded, expected_rows in (
             ("bg_scroll_step_up", False, dict(y=0, y_bottom=0), (SCROLL_Y_LAST, SCROLL_Y_LAST)),
             ("bg_scroll_step_down", True, dict(y=SCROLL_Y_LAST, y_bottom=SCROLL_Y_LAST), (0, 0))):
-        pokes = _vertical_pokes(salt=_case_salt(name + "-wrap"), **seeded)
+        pokes = _vertical_pokes(salt=case_salt(name + "-wrap"), **seeded)
         image = harness.make_image(pokes)
         expected = {}
         _model_vertical_step(bytearray(image), expected, down)
-        allowed = _merge(sorted(expected)) + [(RETURN_SLOT, LONGWORD_LEN)]
+        allowed = merge_bands(expected) + [(RETURN_SLOT, LONGWORD_LEN)]
         info = leaf.run(name, _vertical_step_glue(name, []), allowed, f"{name} wrap",
                         regs={"_pokes": pokes}, max_insns=VERTICAL_STEP_INSN_CAP,
                         stop_pc=emu.SENTINEL + STEP_SKIP_BYTES[name])
@@ -2164,7 +2104,7 @@ ROW_FILL_CASES = [
                          ids=[case[0] for case in ROW_FILL_CASES])
 def test_a_row_fill_copies_the_cells_the_geometry_names(bottom, case, tile_row, scroll_x):
     name = "bg_scroll_fill_bottom_row" if bottom else "bg_scroll_fill_top_row"
-    pokes = _vertical_pokes(salt=_case_salt(f"{name}-{case}"), tile_row=tile_row,
+    pokes = _vertical_pokes(salt=case_salt(f"{name}-{case}"), tile_row=tile_row,
                             scroll_x=scroll_x, row_offset=scroll_x * CELL_BYTES)
     image = harness.make_image(pokes)
     expected = {}
@@ -2189,7 +2129,7 @@ def test_a_row_fill_touches_exactly_one_row_pair(bottom):
     """The two halves cover the 128-byte row once over: ROW_FILL_SCANLINES scanlines of it, and
     nothing else in the buffer."""
     name = "bg_scroll_fill_bottom_row" if bottom else "bg_scroll_fill_top_row"
-    pokes = _vertical_pokes(salt=_case_salt(name + "-extent"))
+    pokes = _vertical_pokes(salt=case_salt(name + "-extent"))
     image = harness.make_image(pokes)
     expected = {}
     _model_row_fill(bytearray(image), expected, bottom)
@@ -2243,7 +2183,7 @@ def test_the_headers_derived_geometry_is_what_the_numbers_say():
 def test_the_preshift_walks_the_row_its_argument_names_through_every_copy(drawn, member):
     """`tst.w d0 / bmi` reads the LOW WORD only, so the tile offset a row fill leaves in the high
     half must not reach the choice — the two `under-a-tile-offset` cases are what says so."""
-    pokes = _vertical_pokes(salt=_case_salt(f"preshift-{drawn:#x}"))
+    pokes = _vertical_pokes(salt=case_salt(f"preshift-{drawn:#x}"))
     image = harness.make_image(pokes)
     expected = {}
     _model_preshift(bytearray(image), expected, drawn)
@@ -2253,7 +2193,7 @@ def test_the_preshift_walks_the_row_its_argument_names_through_every_copy(drawn,
                          regs={"_pokes": pokes, "d0": drawn})
 
     row = VERTICAL_STATE["y" if member == BUFFER_ROW_TOP else "y_bottom"]
-    touched = sorted(addr for addr in _program_writes(info) if addr >= BUFFER_BASE)
+    touched = sorted(addr for addr in program_writes(info) if addr >= BUFFER_BASE)
     assert min(touched) == _buffer_row(1, row), (
         f"the first byte written is {min(touched):#x}, not copy 1's own row {_buffer_row(1, row):#x}"
         f" — the pre-shift writes every copy ABOVE the drawn one and none of the drawn one itself")
@@ -2265,7 +2205,7 @@ def test_the_preshift_carries_the_rows_first_cell_round_to_its_last():
     """The wrap that makes a buffer row circular: cell 0's two rotated-out pixels are parked in
     bg_scroll_preshift_carry and ORed into cell 15. Read straight off the written bytes, so a port
     that dropped the carry (or ORed it into the wrong cell) fails here as well as on the diff."""
-    pokes = _vertical_pokes(salt=_case_salt("preshift-carry"))
+    pokes = _vertical_pokes(salt=case_salt("preshift-carry"))
     image = harness.make_image(pokes)
     expected = {}
     _model_preshift(bytearray(image), expected, ROW_DRAWN_TOP)
@@ -2305,7 +2245,7 @@ def test_a_vertical_request_is_consumed_whether_or_not_the_step_moves(down, at_b
     name = "bg_scroll_serve_down" if down else "bg_scroll_serve_up"
     request = REQUEST_DOWN if down else REQUEST_UP
     state = dict(pos_y=0, limit_y=0) if at_boundary else {}
-    pokes = _vertical_pokes(salt=_case_salt(f"{name}-{at_boundary}"), **state)
+    pokes = _vertical_pokes(salt=case_salt(f"{name}-{at_boundary}"), **state)
     pokes[request] = b"\xff"
     image = harness.make_image(pokes)
 
@@ -2317,7 +2257,7 @@ def test_a_vertical_request_is_consumed_whether_or_not_the_step_moves(down, at_b
 
     info = _run_modelled(name, _IMAGE_ONLY[name], expected, f"{name} boundary={at_boundary}",
                          VERTICAL_SERVE_INSN_CAP, poison=False, regs={"_pokes": pokes})
-    assert _program_writes(info)[request] == 0
+    assert program_writes(info)[request] == 0
 
 
 # --- the dispatch pass and the queue above it -----------------------------------------------------
@@ -2351,7 +2291,7 @@ def _dispatch_pokes(raised, salt, **overrides):
 def test_the_dispatch_pass_serves_exactly_the_requests_that_are_raised(case, raised):
     """Four `tst.b`/`beq`/`bsr` in line. The `all-four` case is what pins the ORDER — up, down,
     right, left — because each handler runs on the state the previous one left."""
-    pokes = _dispatch_pokes(raised, salt=_case_salt("dispatch-" + case))
+    pokes = _dispatch_pokes(raised, salt=case_salt("dispatch-" + case))
     image = harness.make_image(pokes)
     expected = {}
     _model_serve_requests(bytearray(image), expected)
@@ -2362,7 +2302,7 @@ def test_the_dispatch_pass_serves_exactly_the_requests_that_are_raised(case, rai
                          expected, f"bg_scroll_serve_requests {case}", SERVE_REQUESTS_INSN_CAP,
                          poison=False, regs={"_pokes": pokes})
     for request in raised:
-        assert _program_writes(info)[request] == 0
+        assert program_writes(info)[request] == 0
 
 
 # case -> (follow_x, follow_y, the raised bytes, the distance each axis returns). The distances are
@@ -2424,7 +2364,7 @@ def test_the_queue_drains_half_of_each_distance_in_two_pixel_steps(case, follow_
     """`asr.w #1` on each distance, then that many dispatch passes per axis — horizontal first.
     The two `frozen` cases are the gate: the raiser never runs, no count is written, and the pass
     is one bare dispatch."""
-    pokes = _dispatch_pokes(raised, salt=_case_salt("queue-" + case))
+    pokes = _dispatch_pokes(raised, salt=case_salt("queue-" + case))
     pokes.update({FOLLOW_X: word(follow_x), FOLLOW_Y: word(follow_y),
                   FOLLOW_FROZEN: word(frozen)})
     image = harness.make_image(pokes)
@@ -2811,7 +2751,7 @@ def test_every_copy_variant_moves_the_scanlines_its_own_seam_splits(column):
     the other fourteen rewind a whole source row mid-scanline, at a point that moves two longwords
     further along with every column — which is the only thing that distinguishes them."""
     _run_variant(column, VARIANT_FIRST_ROWS, VARIANT_SECOND_ROWS, VARIANT_START_ROW,
-                 salt=_case_salt(f"variant-{column}"))
+                 salt=case_salt(f"variant-{column}"))
 
 
 @pytest.mark.parametrize("column", [0, 1, 2, PHASE_MASK])
@@ -2819,7 +2759,7 @@ def test_a_copy_variant_stops_at_its_first_half_when_the_second_count_is_negativ
     """`tst.w d6 / bpl / rts`: the marker the dispatcher's non-wrapping arm loads ends the copy
     there, so the `lea -$5800(a0),a0` rewind never happens and no second half is drawn."""
     _run_variant(column, VARIANT_FIRST_ROWS, BLIT_NO_SECOND_HALF, 0x20,
-                 salt=_case_salt(f"variant-{column}-first-half-only"))
+                 salt=case_salt(f"variant-{column}-first-half-only"))
 
 
 def test_a_copy_variants_second_half_starts_one_whole_buffer_back():
@@ -2828,7 +2768,7 @@ def test_a_copy_variants_second_half_starts_one_whole_buffer_back():
     column = 5
     source = (BUFFER_BASE + VARIANT_PHASE * BUFFER_PHASE_STRIDE
               + VARIANT_START_ROW * BUFFER_LINE + column * CELL_BYTES)
-    pokes = _blit_pokes(VARIANT_PHASE, column, VARIANT_START_ROW, salt=_case_salt("variant-rewind"))
+    pokes = _blit_pokes(VARIANT_PHASE, column, VARIANT_START_ROW, salt=case_salt("variant-rewind"))
     image = harness.make_image(pokes)
     _writes, (read_lo, read_hi) = _model_blit_copy(image, column, source,
                                                    SCREEN_BUFFERS[0] + BLIT_SCREEN_ORIGIN,
@@ -2857,7 +2797,7 @@ BLIT_CASES = [
 
 
 def _run_blit(case, phase, scroll_x, row, screen=SCREEN_BUFFERS[0]):
-    pokes = _blit_pokes(phase, scroll_x, row, salt=_case_salt(case), screen=screen)
+    pokes = _blit_pokes(phase, scroll_x, row, salt=case_salt(case), screen=screen)
     image = harness.make_image(pokes)
     expected, span = _model_blit(image)
     _run_modelled("bg_scroll_blit", _BLIT, expected, f"bg_scroll_blit {case}", BLIT_INSN_CAP,
@@ -2916,7 +2856,7 @@ def test_a_blit_reads_only_the_buffer_its_phase_names(case, phase, scroll_x, row
     oracle reports what a run WROTE and has no read set to compare against, so a second oracle pass
     here would add nothing.
     """
-    image = harness.make_image(_blit_pokes(phase, scroll_x, row, salt=_case_salt(case)))
+    image = harness.make_image(_blit_pokes(phase, scroll_x, row, salt=case_salt(case)))
     _writes, (read_lo, read_hi) = _model_blit(image)
     buffer_lo = BUFFER_BASE + phase * BUFFER_PHASE_STRIDE
     assert buffer_lo <= read_lo and read_hi <= buffer_lo + BUFFER_LEN, (

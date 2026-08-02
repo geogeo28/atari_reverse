@@ -8,13 +8,15 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 95/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 102/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
-WHOLE background scroll engine (3398 bytes) and the WHOLE consumer tier that reads it (2742 bytes).**
-`make test`: 1024 cases green, of which 77 are the foundation battery below, 48 are the depacker's
+WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
+actor tier and its two projection passes (356 bytes) and the glyph plotter (226 bytes).**
+`make test`: 1193 cases green, of which 77 are the foundation battery below, 48 are the depacker's
 differential, 187 are the first gameplay batch's, 481 are the status panel's — that last figure was
-169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py` — and 231
-are the background scroll subsystem's (65 after batch 5, 148 after batch 6). A row appears in the
+169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py` — 231
+are the background scroll subsystem's (65 after batch 5, 148 after batch 6), 113 are the actor
+tier's and 56 the text plotter's. A row appears in the
 table at the end when a function is reconstructed and green; everything else in `../decomp.c` and
 `../names.txt` is still only *named*, not ported.
 
@@ -187,8 +189,14 @@ out of the 25,696 bytes Ghidra has put inside a function body, which is 46.8 % o
   the sound module is runnable now.
 * **The gameplay logic is portable now, as far as it has been recovered**: 136 of its 138 recovered
   functions touch no hardware at all (the two exceptions are the game's PRNGs), and 128 (12,070
-  bytes) are runnable end-to-end. **51 of them are ported** — the effect/state leaves, the joystick
-  edge pair, the status panel's leaves and the second tier above them, the table at the end. The
+  bytes) are runnable end-to-end. **51 of them were ported when this measurement was taken** — the
+  effect/state leaves, the joystick edge pair, the status panel's leaves and the second tier above
+  them, the table at the end. **That 51 is now STALE and is deliberately not patched**: batches 5–8
+  landed forty more functions that this file's `subsystems.tsv` also files under "game logic" (the
+  whole scroll cluster, the actor tier and the text plotter), and the boundary itself is the thing
+  the queued re-measurement is about — see the end of batch 7. Re-run
+  `tools/hw_portability.py` and restate the paragraph from what it prints, rather than adding to a
+  number whose denominator is known to be wrong. The
   measurement was right that every leaf's whole surface is memory, and right that they need no new
   harness capability in the sense it meant; the panel batch still cost `test/leaf.py` a
   register-argument glue and a per-routine instruction cap, and it surfaced a defect in the shared
@@ -382,12 +390,14 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   by `Dm mod 64` and a 32-bit rotate is cyclic mod 32 — so it is total for every count a caller can
   hand it, and costs a literal-count caller nothing after inlining. Being a kit file touching three
   projects, it lands as its own commit ahead of the batch.
-- **`set_low_word` is written twice, in two projects** — `src/scroll.c` and joust's
-  `recreate/src/object.c` — and the two bodies say the same thing: a `move.w`/`clr.w` on a longword
-  register replaces the low word and leaves the high one alone. Joust's copy predates this batch, so
-  collapsing them is not this diff's business. Registered on the terms the rotate above was: **trigger** = a
-  third user; **home** = the kit's `include/machine.h`, next to `set_low_byte`, which is the same
-  idea one size down.
+- **RESOLVED (batch 8: `actor_followed_x_within` was the third user; now `machine.h`'s
+  `set_low_word`).** It used to be written twice, in two projects — `src/scroll.c` and joust's
+  `recreate/src/object.c` — and the two bodies said the same thing: a `move.w`/`clr.w` on a longword
+  register replaces the low word and leaves the high one alone. `$67f8` returns its answer in d0's
+  low word with the caller's high half surviving, which is the registered trigger; the helper now
+  lives once in `tools/recreate_kit/include/machine.h` next to `set_low_byte`, and both projects
+  call it. Being a kit file touching three projects it lands as its own commit ahead of the batch,
+  as `rotate_left32` did, and BuggyBoy (292) and Joust (4368) were re-run green against it.
 - **`RAD_HDR_LEN` (`include/rad.h`) and `HDR_LEN` (`tools/depack_rad.py`) are the same 12 bytes in
   two languages, accepted as pinned BEHAVIOURALLY rather than textually.** CLAUDE.md §5 asks for one
   canonical definition with the other held equal by a test; here each side has its own differential
@@ -486,6 +496,13 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0xdb36` | `panel_restore_32x29` | 34 | verified | 2 cases: its one region (the record bitmap's own origin, 29 rows where the bitmap draws 32) x 2 screen orders + entry pin |
 | `0xdb58` | `panel_restore_16x14` | 26 | verified | 12 cases: its 6 regions — one per HUD slot, in the HUD-slot cell's own geometry — x 2 screen orders + entry pin |
 | `0xdb72` | `panel_restore_24x32` | 62 | verified | 2 cases: its one region (the panel frame's origin and geometry) x 2 screen orders, all 32 rows + entry pin |
+| `0x67e0` | `followed_actor_record` (`src/actor.c`) | 24 | verified | 5 flag words: the `$0000` and `$ffff` the image writes, plus `$0001`, `$7fff` and `$8000`. It writes NO memory, so its a1 is the whole surface — compared against the record the case names AND against the reconstruction's return value, with a case-level guard that nothing was written. The two small positives are what separate its `bne` from `project_actor_list`'s `bpl` on the same word + whole-body entry pin |
+| `0x67c2` | `actor_set_side_flag` | 30 | verified | 37 cases: 9 (followed x, actor x) pairs — both sides, equal, one apart either way, both negative, and both signed boundaries — x 4 flag-byte seeds (bit 3 already raised, already clear, and both with every neighbouring bit set, which a byte-wide `bset`/`bclr` must leave alone). Plus one against the a32 record, seeded so a port that hardcoded the other one answers the other way + whole-body entry pin |
+| `0x67f8` | `actor_followed_x_within` | 42 | verified | 27 cases: 13 (followed x, actor x, reach) triples — both arms of the `bgt`, both sides of each arm's boundary and the boundary itself, a zero reach, both actors negative, one either side of zero, and the two where the 16-bit ADD WRAPS out of the positive half (which an unbounded model answers the other way round on) — x 2 entry `d0` high halves, since only the low word is written. Plus one against the a32 record + whole-body entry pin |
+| `0x8dfe` | `project_followed_actor` | 104 | verified | 13 cases: 11 over the state the body reads — both records, the small-positive `$a32` its callee's `bne` picks and a `bpl` would not, the positive `$a30` its own `bpl` runs on and a `bne` would not, all four combinations of the flicker bit and the frame toggle, and positions that wrap both subtractions — plus 2 negative `$a30`s that must write NOTHING at all. Each states the write set exactly (the six bytes of screen record 12) and asserts the oracle's a0/a1 against the model + whole-body entry pin |
+| `0x8e66` | `project_actor_list` | 156 | verified | 17 cases: 7 (`$a30`, `$a32`) pairs reaching all three tables — including the sign boundary of each flag and the small positive `$a32` that separates this pass's `bpl` from `$67e0`'s `bne` — x 2 frame toggles, plus a stale published pointer the pass must ignore, a write set stated as the GEOMETRY (nineteen six-byte records back to back plus the published longword), and a guard that the address-keyed seed still arms the flicker bit on some records and not others + whole-body entry pin |
+| `0xbf5e` | `text_plot_glyph` (`src/text.c`) | 210 | verified | 31 cases: 5 glyph sources (both ends of the frame-glyph run, two of the font's own, and the all-zero space) x 6 cursors (the buffer's first cell and its odd twin, a mid-buffer pair, and the last full text row's pair), each stating the 32 written bytes exactly and comparing the returned cursor against both the oracle's a1 and the reconstruction's. Plus a four-step cell walk that shows the +1/+7 alternation lands two plane groups on + whole-body entry pin |
+| `0xbf4e` | `text_plot_char` | 16 | verified | 14 cases: 7 character codes x 2 cursors. The codes are the space the table starts at, two ordinary glyphs, the largest byte, one BELOW the first char (where the byte subtraction wraps), and two carrying rubbish in d0's high half — one harmless, one whose shifted low word is negative and indexes below the font. Each compares the indexed source against the oracle's a0 as well as the plotted bytes + whole-body entry pin |
 
 ### The .RAD depacker
 
@@ -668,7 +685,10 @@ what the 169 cases are shaped by:
 
 Five things a later reader should not have to re-derive:
 
-* **`$bf4e` was in the batch and is NOT ported. It is not a leaf.** The hardware scan calls it a
+* **`$bf4e` was in the batch and was NOT ported then. It is not a leaf.** *(Batch 8 ported it, with
+  `$bf5e`, as `text_plot_char` + `text_plot_glyph` — see "The actor tier and the text plotter"
+  below. What follows is the reading that deferred it, and it was right about every part of the
+  shape.)* The hardware scan calls it a
   16-byte T0 function with an empty callee set; its 16 bytes have no `rts`, and it FALLS THROUGH
   into `$bf5e`, a 210-byte unrolled glyph plotter with eight `bsr` callers of its own. A
   differential entered at `$bf4e` would execute 226 bytes and verify a routine outside this batch.
@@ -1389,7 +1409,10 @@ exist — the sweep found the hole and the case was written for it, rather than 
 **`$8dfe` IS QUEUED, NOT SKIPPED.** `game_main_loop` calls it immediately before `bg_scroll_run_queue`
 and it is 104 bytes with the same "read a position, subtract the scroll" shape as `$8e66` just after
 it — but it opens `jsr $67e0.w`, a callee this reconstruction does not have, so its closure is not
-satisfied and it is not in this batch. It is a `$67e0` batch, not a scroll one.
+satisfied and it is not in this batch. It is a `$67e0` batch, not a scroll one. **CLOSED by batch 8**,
+which ported `$67e0`, `$8dfe` and `$8e66` together — and the reading was right about more than it
+knew: `$8dfe` writes `scroll_follow_x`, i.e. the very word this batch's `bg_scroll_raise_requests`
+steers on, because that word is screen record 12 of `$8e66`'s array.
 
 **Still deferred, and now more visibly: `subsystems.tsv` calls the ENGINE "game logic".** Its
 `video (background scroll)` range is `$82f8..$8dfe` — exactly this batch — while `$7522..$8228` and
@@ -1399,3 +1422,152 @@ which is a measurement to re-run rather than a line to edit. Left as it is, and 
 **QUEUED, alongside the `$67e0` batch above: re-draw `subsystems.tsv`'s game-logic/video boundary and
 re-run `tools/hw_portability.py` over it, then restate `PORTABILITY.md` from what it prints** —
 trigger: now that `$7522..$8dfe` is closed, the game-logic/video split is measurably wrong.
+
+### The actor tier and the text plotter (batch 8): the queued small tiers, cleared
+
+Seven routines, 582 bytes, in two new files. `src/actor.c` takes the five-routine cluster batch 7
+queued as "a `$67e0` batch, not a scroll one"; `src/text.c` takes the two-entry-point plotter batch
+2 registered as "named and NOT ported, because porting it means porting `$bf5e` with it". Both
+queue entries are closed.
+
+**WHAT `$67e0` TURNED OUT TO BE, AND IT IS THE BATCH'S FINDING.** The scan calls it a 24-byte leaf
+with fifteen callers and nothing else. Reading it, and then the four routines above it, gives a
+whole subsystem: the game keeps its moving objects as **nineteen 32-byte records in one of three
+parallel tables** (`$996c` / `$9bd0` / `$9e34`) that two mode flags pick between, and once a frame
+it projects the chosen table into a parallel array of **nineteen SIX-byte screen records** at
+`$98ec` — map position minus the scroll, plus the sprite to draw. `$67e0` returns **slot 12** of
+that table (`$9aec` == `$996c + 12 * 32`, `$9fb4` == `$9e34 + 12 * 32`), and slot 12 of the screen
+array **is `$9934`** — `scroll_follow_x`, which `bg_scroll_raise_requests` already steers the camera
+by. So "the followed object", which batch 5 could only read off the scroll's own arithmetic, is
+slot 12 of the actor table, and `$8dfe` exists to refresh exactly that one record in
+`game_main_loop` immediately BEFORE `bg_scroll_run_queue` reads it. The arithmetic is a case
+(`test_the_scrolls_follow_words_are_screen_record_twelve`), not a remark.
+
+**THE SAME FLAG IS READ TWO DIFFERENT WAYS AND BOTH READINGS ARE KEPT.** `$67e0` tests
+`state_flag_a32` with `bne`; `$8e66` tests the same word with `bpl`. `../names.txt` records that
+the image only ever writes it `$0000` or `$ffff`, so **the game cannot tell the two apart** — a
+small positive word is the only input that does, and there is one per routine
+(`SELECTOR_CASES`' `one` / `largest-positive`, `FOLLOWED_CASES`' `a32-small-positive`,
+`LIST_CASES`' `a32-small-positive`). Without them the mutation "read the sign instead of nonzero"
+survives; with them it reddens 3.
+
+**`$8dfe`'s GATE IS WHAT KEEPS THE TIER CONSISTENT.** `$67e0` has no `$a30` form: in that mode
+`$8e66` projects `$9bd0`, whose slot 12 is an address `$67e0` never returns. `$8dfe`'s
+`tst.w $a30.w / bpl / rts` is what stops it refreshing slot 12 from the wrong table — and `bpl`
+reads N alone, so a positive `$a30` runs the body where a `bne` would return. That is the batch's
+one-case-per-claim mutation: reading the gate as a zero test reddens exactly 1.
+
+**THE TWO PROJECTION PASSES ARE ONE BLOCK.** `$8dfe`'s `$8e20..$8e64` and `$8e66`'s
+`$8eb4..$8ef8` are the same SIXTY-EIGHT BYTES, so `src/actor.c` reconstructs them as one
+`project_actor` helper and the two entry pins are built from one `_projection_block()`. That the
+two really are byte-identical is a case of its own
+(`test_the_projection_is_one_block_the_two_passes_share`), for batch 7's reason: a pattern that was
+wrong in the same way twice would pass two pins built from it.
+
+**THE TEXT TIER TURNED OUT TO BE ONE ROUTINE WITH TWO ENTRY POINTS, AND `$bd8a` EXPLAINS THE 88.**
+`$bf4e` has no `rts`: four instructions turn a character code into a glyph pointer and it FALLS
+THROUGH into `$bf5e`, whose `rts` returns to `$bf4e`'s caller. So the C is a prelude that CALLS the
+plotter and returns its result — exactly what the fall-through is — and `$bf5e` keeps a name of its
+own because eight `bsr` sites enter it directly with a pointer they already hold. `../names.txt`
+recorded the plotter's 88-byte row advance as "NOT a 160-byte scanline — unexplained, do not assume
+a screen buffer". It is now explained: the destination is the off-screen message buffer at `$c03a`,
+**88 bytes wide and 6400 long, ending exactly at `panel_restore_dirty_regions` (`$d93a`)**, which
+`$bd8a` clears, composes into, and then blits to `screen_back` 88 bytes plus a 72-byte skip per
+scanline — 88 + 72 being the screen's own 160. Both halves are cases
+(`test_the_row_advance_is_the_buffers_line_and_not_the_screens`), and the `cmt` on `$bf5e` is
+rewritten. The returned cursor's `+1` / `+7` alternation is the other half of the same geometry:
+two 8-pixel cells share each 8-byte plane group.
+
+**THE EIGHT `$be2a..$be9a` CALLERS ARE NOT A TIER — THEY ARE ONE FUNCTION.** The batch was scoped
+to consider them next; a whole-image scan says all eight `bsr` sites, and the ninth into `$bf4e`,
+lie INSIDE `$bd8a`, a single 452-byte routine. It is named
+(`text_compose_message_box`, from a read of its body) and **QUEUED, not skipped** — see below.
+
+**ONE NAME CORRECTED.** `$bf4e` was `text_glyph_source_from_d0`, which describes the prelude alone;
+now that the prelude and the plotter are reconstructed as what the fall-through makes them, it is
+`text_plot_char`. Its `cmt` is rewritten and the "NOT reconstructed" caveat replaced by the three
+semantics the port keeps: the `subi` is a BYTE op, the `lsl` a LONGWORD one, and the index is the
+low WORD SIGN-EXTENDED. Only the last is unreachable from the game, whose one caller enters with
+`moveq #0,d0 / move.b (a6)+,d0`; a case reaches it with a `d0` that indexes below the font and
+stays inside the image.
+
+**FOUR `proto` LINES WERE NOT WRITTEN, DELIBERATELY.** `ApplyNames`' `proto` forces a VOID return,
+so a directive on `followed_actor_record` (whose whole result is a1), `actor_followed_x_within`
+(d0 in and out), `text_plot_glyph` or `text_plot_char` (a1 in and out) would record something
+false — `hud_blit_meter_cell`'s reason, one tier on. Each carries its register map in its `cmt`
+instead. `actor_set_side_flag` is the one routine here that really returns nothing, and it has one.
+
+**Two kit/test hoists this batch's third users triggered**, both of them registered above rather
+than invented here:
+
+* **`set_low_word` is now `tools/recreate_kit/include/machine.h`'s**, beside `set_low_byte`.
+  `actor_followed_x_within` returns d0 with only its low word written, which was the registered
+  third user (`src/scroll.c` and joust's `recreate/src/object.c` were the first two); both now call
+  the kit's. Being a kit file touching three projects it lands as its own commit ahead of the
+  batch, exactly as `rotate_left32` did — **BuggyBoy (292) and Joust (4368) were re-run green
+  against it**.
+* **Seven helpers are now `test/leaf.py`'s.** Two new batteries needing the same pieces made each
+  of them a third user, and all three batteries import them rather than restating them:
+  `opcode()` and `lea_abs_l()` (the encoders every pin spells), `lea_d16()` (likewise — the only
+  other encoder all three batteries needed), `keyed_byte()` and `case_salt()` (address-keyed
+  seeding and its reproducible per-case salt, with the two mixing multipliers named where they
+  live), and `program_writes()` and `merge_bands()` (the oracle's write set minus the machine
+  stack, and the bands `leaf.run` wants). `test_scroll.py`'s local copies are deleted and it
+  imports them (its `branch_w(opcode, …)` parameter, which shadowed the new name, is now
+  `condition`); the shared `merge_bands()` sorts internally, so the `sorted()` its callers used to
+  wrap the argument in is gone.
+  **What deliberately stays local, and why:** every battery's own OPCODES (`tst_w_abs_w`,
+  `lea_indexed`, `subi_b_dn`, …), for batch 7's stated reason — that is where the batteries differ,
+  and a shared 68000 assembler is not what this is. And `_keyed_block()`, the one-line
+  `bytes(keyed_byte(…))` wrapper, which `test_scroll.py` and `test_actor.py` each still spell:
+  **registered** on the same terms as the two hoists above — **trigger** = a third user; **home** =
+  `test/leaf.py`, beside `keyed_byte()`. The two copies carry different docstrings (the scroll one
+  records a measured no-caching decision), which is the only reason it was not folded in here.
+
+Mutation-checked rather than assumed (each rebuilt with the `.so` DELETED first, since a
+same-second rebuild otherwise re-runs the stale library, and each source restored and byte-compared
+against a pristine copy afterwards, and the whole sweep re-run against the tree as it
+LANDED rather than against the draft it was written on — 1193 green each time it was restored): the selector reading the
+flag's **sign instead of nonzero** reddens 3; the side flag raised on **equal** as well reddens 4;
+the side flag moved to **bit 4** reddens 37; the reach test's ADD **not wrapping to 16 bits**
+reddens 4; the reach test returning **a whole longword instead of a low word** reddens 13; the
+projection using the **Y bias horizontally** reddens 27; the flicker arm needing **either condition
+instead of both** reddens 18; the followed projection's gate read as **a zero test** reddens 1; the
+list pass testing **a32 before a30** reddens 2; the list pass stepping the screen cursor by **an
+actor record** reddens 16; the plotter stepping **a SCREEN scanline** between rows reddens 45; the
+plotter's four plane bytes made **contiguous** reddens 45; the two cell advances **swapped** reddens
+45; the character subtraction made **a longword one** reddens 2; and the glyph index **not
+sign-extended** reddens 2. **16 mutations, 15 killed, 1 survivor.**
+
+**The survivor is an EQUIVALENCE, and it is now stated as one.** `$bf5e` reads the parity of the
+cursor its eight rows ENDED on; reading the STARTING cursor's instead survives, because the body
+spans 622 bytes and 622 is even. `src/text.c` keeps the original's reading and
+`test_the_parity_the_tail_reads_is_the_starting_cursors_own` asserts the evenness that makes the two
+the same bit — so the day a geometry constant turns the span odd, the equivalence fails loudly
+instead of the port quietly diverging.
+
+**What this batch does NOT pin:**
+
+* **THE REGISTERS THE TWO PROJECTIONS LEAVE BEHIND.** Both walk out with a0 one record past the
+  last one they read and a1 at the end of what they wrote; `game_main_loop` reloads everything
+  before its next `jsr`, so the C returns neither and the cases assert the ORACLE's against the
+  model. The same family as the column fills'.
+* **d7, WHICH THE PLOTTER CLOBBERS.** It parks the ended cursor there for the `btst`. The kit's
+  oracle reports d0/d1/a0/a1 only, so no case can compare it; no caller reads it either.
+* **A GLYPH POINTER OUTSIDE THE IMAGE.** `text_plot_char`'s sign-extended index can name a source
+  far below the font. The case that reaches that arithmetic keeps the source inside the image;
+  off-image is `src/rad.c`'s registered divergence class (the shim answers zeros, the C indexes a
+  host buffer) and bounding it would be a kit change.
+* **WHAT THE TWO MODE FLAGS SELECT.** `../names.txt` names each for its mechanism and nothing more:
+  `$a30` has ten operand sites — five writers of `$0000`/`$ffff` (three `move.w #$ffff` at `$1ae6`,
+  `$1e96`, `$e0d0` and two `clr.w`) against five bare `tst.w` readers (`$4ec`, `$8dfe`, `$8e66`,
+  `$dbc0`, `$ff42`) — and `$a32` has sixteen: three writers against thirteen bare `tst.w` readers.
+  That one of the three actor tables is "this level's actors" is not established.
+
+**QUEUED, and it is the tier directly above this one: `$bd8a` (`text_compose_message_box`, 452
+bytes).** Its closure is satisfied now — both plotter entry points are reconstructed and it calls
+nothing else — but it is not small, and it reads the TEN bytes at `$c030..$c039`: four BYTE fields
+(`$c030`/`$c031`, the two flags it runs on, and `$c032`/`$c033`, its two cell counts) and three
+WORDS (`$c034`/`$c036`/`$c038`, its timers). That band is `WB_TEXT_STATE_BYTES`, which this batch
+pins only by its EXTENT — what the fields mean, and the message-pointer table at `$a09c` that
+`$bd8a` indexes, are not read. Its one caller is `game_main_loop`'s `jsr $bd8a.l` at `$4fc`.

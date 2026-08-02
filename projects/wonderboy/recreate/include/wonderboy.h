@@ -667,4 +667,106 @@
                                            * scanline costs the copy, and so how much further into
                                            * the row each successive variant's seam falls */
 
+/* ---- the actor records and their screen projection (RUNTIME addresses; src/actor.c) -----------
+ *
+ * The game keeps its moving objects as WB_ACTOR_SCREEN_RECORD_COUNT records of
+ * WB_ACTOR_RECORD_BYTES, in one of THREE tables picked by the two mode flags, and once a frame it
+ * projects that table into a parallel array of WB_ACTOR_SCREEN_RECORD_BYTES records at
+ * WB_ACTOR_SCREEN_RECORDS: map position minus the scroll, plus the sprite to draw. $8f02 (the
+ * sprite pass, not reconstructed) is what reads the result.
+ *
+ * WHERE THE SCROLL'S OWN INPUT COMES FROM. WB_SCROLL_FOLLOW_X above IS screen record
+ * WB_ACTOR_FOLLOWED_SLOT — `WB_ACTOR_SCREEN_RECORDS + 12 * 6`, asserted in test/test_actor.py
+ * rather than restated here — so "the followed object" is that slot of the actor table, and $8dfe
+ * exists to refresh exactly that one record BEFORE bg_scroll_run_queue reads it. $8e66 then
+ * refreshes all nineteen (slot 12 included) after the scroll has moved.
+ */
+#define WB_STATE_FLAG_A30            0xa30u   /* the second mode flag, read like WB_STATE_FLAG_A32
+                                               * ($a32: thirteen `tst.w` readers, three writers).
+                                               * Ten operand sites of its own: five `tst.w` readers
+                                               * ($4ec, $8dfe, $8e66, $dbc0, $ff42) against two
+                                               * `clr.w` and three `move.w #$ffff` writers, so it
+                                               * only ever holds $0000 or $ffff */
+#define WB_ACTOR_TABLE_A30           0x9bd0u  /* the table $8e66 projects while A30 is negative */
+#define WB_ACTOR_TABLE_A32           0x9e34u  /* ...while A30 is not and A32 is */
+#define WB_ACTOR_TABLE_DEFAULT       0x996cu  /* ...and while neither is */
+#define WB_ACTOR_TABLE_SELECTED      0xa098u  /* longword: whichever of the three $8e66 published */
+#define WB_ACTOR_RECORD_BYTES        32u      /* `lea 32(a0),a0` between records */
+#define WB_ACTOR_FOLLOWED_DEFAULT    0x9aecu  /* $67e0's a1 while WB_STATE_FLAG_A32 is zero. It is
+                                               * WB_ACTOR_TABLE_DEFAULT + 12 * 32, i.e. slot
+                                               * WB_ACTOR_FOLLOWED_SLOT of that table */
+#define WB_ACTOR_FOLLOWED_A32        0x9fb4u  /* ...and slot 12 of WB_ACTOR_TABLE_A32 while it is
+                                               * not. There is no A30 form: $8dfe's `bpl` gate is
+                                               * what keeps $67e0 out of the A30 mode entirely */
+#define WB_ACTOR_X                   0u       /* word: map position */
+#define WB_ACTOR_Y                   2u
+#define WB_ACTOR_SPRITE              6u       /* word: what the sprite pass draws for this record */
+#define WB_ACTOR_FLAGS               8u       /* byte */
+#define WB_ACTOR_FLAG_SIDE_BIT       3u       /* $67c2 raises it while the followed actor is to the
+                                               * LEFT. Its only reader in the image is the
+                                               * `btst #3,8(a1)` at $51e, inside the routine at
+                                               * $50a, which reads it on the FOLLOWED record */
+#define WB_ACTOR_FLAG_FLICKER_BIT    6u       /* set -> the projection publishes no sprite on the
+                                               * frames WB_FRAME_TOGGLE is nonzero, i.e. the record
+                                               * is drawn every other frame */
+#define WB_ACTOR_OUT_OF_REACH        0xffffu  /* `move.w #$ffff,d0` — $67f8's "farther than d0" */
+#define WB_ACTOR_SCREEN_RECORDS      0x98ecu  /* the projection's destination array */
+#define WB_ACTOR_SCREEN_RECORDS_END  0x995eu  /* `cmpa.l #$995e,a1` — one past the last record */
+#define WB_ACTOR_SCREEN_RECORD_BYTES 6u
+#define WB_ACTOR_SCREEN_RECORD_COUNT 19u      /* == (END - RECORDS) / RECORD_BYTES (pinned). The
+                                               * ACTOR tables are read as 19 records as well, but
+                                               * only because the projection walks 19 of them —
+                                               * nothing bounds those tables independently */
+#define WB_ACTOR_FOLLOWED_SLOT       12u      /* the slot the scroll follows and $8dfe refreshes */
+#define WB_ACTOR_SCREEN_X            0u
+#define WB_ACTOR_SCREEN_Y            2u
+#define WB_ACTOR_SCREEN_SPRITE       4u
+#define WB_ACTOR_SCREEN_X_BIAS       0x20u    /* `subi.w #$20,d2` before the scroll is subtracted */
+#define WB_ACTOR_SCREEN_Y_BIAS       0x40u    /* `subi.w #$40,d2` */
+#define WB_ACTOR_SPRITE_HIDDEN       0u       /* `move.w #$0,(a1)` — the flicker arm's sprite word */
+#define WB_FRAME_TOGGLE              0x712u   /* word, inverted every frame by flip_screen
+                                               * (../names.txt) — read here as a boolean */
+
+/* ---- the text plotter, $bf4e..$c030 (RUNTIME addresses; src/text.c) ---------------------------
+ *
+ * An 8x8 glyph goes into an OFF-SCREEN 4-plane buffer WB_TEXT_BUFFER_LINE bytes wide, one byte per
+ * plane at +0/+2/+4/+6 and one WB_TEXT_BUFFER_LINE per row, and the plotter hands back the cursor
+ * for the NEXT 8-pixel cell. Two cells share each 8-byte plane group, so that advance alternates:
+ * one byte on from an even cursor and seven from an odd one.
+ *
+ * The buffer is the only thing that explains the 88: $bd8a (not reconstructed) clears exactly
+ * WB_TEXT_BUFFER_LEN bytes there, composes a message into it with eight `bsr $bf5e` and a string
+ * loop through $bf4e, and then blits it to WB_SCREEN_BACK as WB_TEXT_BUFFER_LINE bytes plus a
+ * 72-byte skip per scanline — 88 + 72 being WB_SCREEN_LINE exactly. So the row advance is the
+ * BUFFER's line and not the screen's, which ../names.txt used to record as unexplained.
+ */
+#define WB_TEXT_GLYPH_TABLE       0x12c9cu /* the font: 32 bytes per glyph from char $20 up. Two
+                                            * abs.l references, $1cf6 and $bf4e's own `lea` */
+#define WB_TEXT_FIRST_GLYPH_CHAR  0x20u    /* `subi.b #$20,d0` — and glyph 0 is 32 zero bytes,
+                                            * which is what a space plots */
+#define WB_TEXT_GLYPH_SHIFT       5u       /* `lsl.l #5,d0` */
+#define WB_TEXT_GLYPH_BYTES       32u      /* == 1 << SHIFT == ROWS * WB_PLANES */
+#define WB_TEXT_GLYPH_ROWS        8u
+#define WB_TEXT_FRAME_GLYPHS      0x12b9cu /* the eight glyphs the eight `bsr $bf5e` sites pass
+                                            * directly, immediately below the font: the message
+                                            * box's corners, edges and fill */
+#define WB_TEXT_FRAME_GLYPH_COUNT 8u       /* == (WB_TEXT_GLYPH_TABLE - WB_TEXT_FRAME_GLYPHS) / 32 */
+#define WB_TEXT_STATE_BYTES       10u      /* $c030..$c039, the band between the plotter's last
+                                            * byte and the buffer. FOUR bytes — $c030 and $c031,
+                                            * the two flags $bd8a runs on, and $c032/$c033, its
+                                            * two cell counts — then THREE words, $c034, $c036 and
+                                            * $c038. $bd8a is not reconstructed; what this band is
+                                            * pinned for here is only its EXTENT, which is where
+                                            * the plotter's own battery stops seeding */
+#define WB_TEXT_BUFFER            0xc03au  /* `lea $c03a.l,a1` in $bd8a. The plotter's own last
+                                            * byte is $c02f — the WB_TEXT_STATE_BYTES sit between,
+                                            * so this is NOT the byte after the plotter */
+#define WB_TEXT_BUFFER_LEN        6400u    /* `move.w #$63f,d0 / clr.l (a0)+ / dbf` = $640 * 4. It
+                                            * ends exactly at panel_restore_dirty_regions ($d93a) */
+#define WB_TEXT_BUFFER_LINE       88u      /* `lea 82(a1),a1` after the row's fourth plane byte,
+                                            * which has already walked (WB_PLANES - 1) * 2 */
+#define WB_TEXT_CELL_ADVANCE_EVEN 1u       /* the low byte of the same plane group */
+#define WB_TEXT_CELL_ADVANCE_ODD  7u       /* == WB_PLANES * WB_PLANE_STRIDE - 1: the high byte of
+                                            * the next one */
+
 #endif /* WONDERBOY_H */

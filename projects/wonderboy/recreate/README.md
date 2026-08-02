@@ -52,6 +52,10 @@ include/rad.h              the .RAD/.CRU container and its bitstream, as constan
 include/effects.h          the 29 effect/state leaves at $10200..$103e7 — prototypes
 include/hud.h              the status panel's 30 routines — prototypes, and their register interfaces
 include/input.h            the two joystick-pipeline leaves
+include/actor.h            the followed actor's record, the two tests over it, and the two passes
+                           that project actor records into screen coordinates
+include/text.h             the glyph plotter's two entry points, and why the prelude calls the
+                           plotter (the original has no `rts` in it — it falls through)
 include/scroll.h           the whole background scroll subsystem — prototypes, the queue's shape,
                            why a step returns a FLAG (the original returns it through its own
                            return address, and vertically it consumes TWO calls that way), and why
@@ -66,6 +70,13 @@ src/hud.c                  panel_refresh_frame ($b346) below its own entry: batc
                            batch 4's third (the pass's three table walks: the region restore and its
                            six blits, the newest record's display, the six HUD slots)
 src/input.c                the joystick edge pipeline: latch a frame, then diff two frames
+src/actor.c                the actor tier: $67e0, which names the record everything else is
+                           measured against, the two tests above it (which side the followed actor
+                           is on, and whether it is within reach horizontally), and the two passes
+                           that project actor records into the screen array the sprite pass reads —
+                           one record ($8dfe, the one the scroll steers on) and all nineteen ($8e66)
+src/text.c                 the glyph plotter, both entry points: 32 bytes into an 88-byte-wide
+                           4-plane message buffer, and the character-code prelude that falls into it
 src/scroll.c               the whole scroll subsystem, producer and consumer. The ENGINE ($7522..
                            $8228 + $d28): the frame queue and its dispatch pass, four request
                            handlers, four position steps, the two column fills that redraw the
@@ -78,12 +89,14 @@ src/scroll.c               the whole scroll subsystem, producer and consumer. Th
 test/harness.py            the kit-binding shim
 test/leaf.py               shared driver for LEAF routines: entry points looked up in ../names.txt,
                            the write set a routine is entitled to (which the depacker's battery
-                           calls too), the glue for one whose ENTRY REGISTERS are its arguments, and
-                           the entry-pin scaffolding two batteries share (operand encoders, the
-                           opcodes both spell, and the readers that take a value out of the write
-                           set), the game's own two screen buffers (two batteries draw into them),
-                           and the second stop PC a routine needs when it returns PAST its caller's
-                           next call by rewriting its own return address
+                           calls too) and its complement, the write set minus the machine stack, the
+                           glue for one whose ENTRY REGISTERS are its arguments, the entry-pin
+                           scaffolding the batteries share (operand encoders, the opcodes more than
+                           one of them spells, and the readers that take a value out of the write
+                           set), the address-keyed seeding they all build their images from, the
+                           game's own two screen buffers (two batteries draw into them), and the
+                           second stop PC a routine needs when it returns PAST its caller's next
+                           call by rewriting its own return address
 test/layout.py             include/wonderboy.h's constants, scraped from that header (one source of truth)
 test/test_layout.py        that scraper's own cases — it refuses a duplicate or an octal-ambiguous #define
 test/test_bootstrap.py     the foundation battery: the loader, the self-relocation, the trap inventory
@@ -118,6 +131,17 @@ test/test_scroll.py        the scroll subsystem's differential: whole-body entry
                            supplies the four registers the dispatcher would have — plus three
                            variants pinned against bytes transcribed from ../out/wonderboy_dis.txt,
                            so the pattern the other thirteen are built from cannot be what is wrong
+test/test_actor.py         the actor tier's differential: a routine whose WHOLE output is a register
+                           (every case compares the oracle's a1 against the reconstruction's return
+                           value), the small-positive flag words that separate the tier's `bne`
+                           reading of a mode flag from its `bpl` one, the 16-bit ADD whose wrap the
+                           reach test's compare reads, and an address-keyed seeding of all three
+                           actor tables and the screen array they project into
+test/test_text.py          the glyph plotter's differential: 32 bytes into the 4-plane buffer with
+                           the write set stated exactly, the returned cursor compared against both
+                           sides, a cell walk that shows the +1/+7 alternation lands on the next
+                           plane group, a scan of the eight `bsr` sites for the frame glyphs they
+                           pass, and the d0 whose shifted low word indexes BELOW the font
 ```
 
 ## Running
