@@ -203,9 +203,9 @@ WORD_MASK = leaf.WORD_MASK
 # which is 327 instructions with its prologue — so 400 still leaves no room for a second pass.
 PANEL_BLIT_INSN_CAP = 400
 
-# The game's own screen buffers (../names.txt: screen_back starts at $70000, screen_front $78000).
-# Both are used, because a blit's destination comes out of MEMORY and nothing may be hardcoded.
-SCREEN_BUFFERS = (0x70000, 0x78000)
+# The game's own screen buffers. Both are used, because a blit's destination comes out of MEMORY and
+# nothing may be hardcoded. Shared with test_scroll.py's blit, so leaf.py is where the pair lives.
+SCREEN_BUFFERS = leaf.SCREEN_BUFFERS
 
 
 # --- the shared reading helpers ------------------------------------------------------------------

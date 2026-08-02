@@ -1,5 +1,5 @@
 /* scroll.c — the background scroll engine, the whole cluster at $7522..$8228 plus the request
- * raiser at $d28 that drives it.
+ * raiser at $d28 that drives it, and the CONSUMER at $82f8..$8dfe that reads what it produces.
  *
  * WHAT THE CLUSTER IS. The game keeps EIGHT pre-shifted copies of the level background, $5800 bytes
  * each, tiling $44000..$70000. Copy N is the map drawn two pixels further left than copy N-1, so a
@@ -682,4 +682,118 @@ void bg_scroll_run_queue(uint8_t *image) {
     /* Two `clr.l`, each covering a PAIR: $7596/$7598 and $7592/$7594. */
     wr32(image + WB_BG_RAISED_V, 0);
     wr32(image + WB_BG_QUEUE_H_COUNT, 0);
+}
+
+
+/* ---- the consumer: $82f8 and the sixteen copy routines it jumps into ---------------------------
+ *
+ * Everything above PRODUCES the eight pre-shifted buffers; this reads one. Once a frame
+ * bg_scroll_blit copies the visible window out of the buffer WB_BG_SCROLL_PHASE names into
+ * WB_SCREEN_BACK, and BOTH of the rings the engine maintains surface here as a SPLIT rather than as
+ * arithmetic:
+ *
+ *   * VERTICALLY the window may run off the end of the 176-scanline buffer, so the copy is two
+ *     halves with a `lea -$5800(a0),a0` between them — d7 scanlines before the buffer's end and d6
+ *     after it, d6 negative meaning there is no second half.
+ *   * HORIZONTALLY each source ROW is a 128-byte ring whose seam sits at WB_BG_SCROLL_X, so a
+ *     SCANLINE is two runs of `move.l` with a `lea -128(a0),a0` between them.
+ *
+ * THE SECOND SPLIT IS THE ONLY THING SEPARATING THE SIXTEEN unrolled routines the jump table names,
+ * which is why one parametrised function is all sixteen of them: test/test_scroll.py assembles each
+ * variant from this same pattern and pins it against the image, so the collapse is verified rather
+ * than assumed.
+ *
+ * WHAT C CANNOT REPRODUCE, stated because it is the one place this port is narrower than the
+ * original: `movea.l (0,a2,d1.w),a2` indexes the table with WB_BG_SCROLL_X * 4 and bounds nothing,
+ * so a column outside 0..15 would make the original jump through whatever longword follows the
+ * table (which is WB_BG_SCROLL_X itself). A whole-image abs.l scan gives that word exactly three
+ * writers — the two horizontal steps, both ending in `andi.w #$f`, and the `clr.w` at $fb7e — so
+ * the domain really is 0..15; `column` outside it has no defined behaviour here and cannot have.
+ */
+
+/* One run of `move.l (a0)+,(a1)+`, which is the only instruction any of the sixteen bodies spends
+ * its length on. */
+static void copy_longwords(uint8_t *image, uint32_t *source, uint32_t *dest, unsigned longwords) {
+    for (unsigned at = 0; at < longwords; at++) {
+        wr32(image + *dest, be32(image + *source));
+        *source = addr_add(*source, sizeof(uint32_t));
+        *dest = addr_add(*dest, sizeof(uint32_t));
+    }
+}
+
+/* How much of the scanline comes out of the source row before the copy reaches the row's END. The
+ * column starts WB_BG_CELL_LONGWORDS * column into a row of WB_BG_ROW_LONGWORDS, so columns 0 and 1
+ * never reach it at all — which is why their two variants are the twelve bytes shorter ones. */
+static unsigned longwords_before_the_seam(uint32_t column) {
+    return WB_BG_ROW_LONGWORDS - WB_BG_CELL_LONGWORDS * column;
+}
+
+static void copy_one_scanline(uint8_t *image, uint32_t column, uint32_t *source, uint32_t *dest) {
+    unsigned before_seam = longwords_before_the_seam(column);
+    int wraps = before_seam < WB_BG_BLIT_LONGWORDS;
+
+    copy_longwords(image, source, dest, wraps ? before_seam : WB_BG_BLIT_LONGWORDS);
+    if (wraps) {
+        /* `lea -128(a0),a0` — back to the START of the same source row, not on to the next one. */
+        *source = addr_add(*source, (uint32_t)-(int32_t)WB_BG_BUFFER_LINE);
+        copy_longwords(image, source, dest, WB_BG_BLIT_LONGWORDS - before_seam);
+    }
+    /* `lea 40(a1),a1` on to the next SCREEN scanline, and `addq.l #8,a0` (or `lea 136(a0),a0`,
+     * which is that plus the row the wrap above rewound) on to the same column of the next source
+     * row. Both variants therefore leave a0 advanced by exactly one WB_BG_BUFFER_LINE. */
+    *dest = addr_add(*dest, WB_SCREEN_LINE - WB_BG_BLIT_ROW_BYTES);
+    *source = addr_add(*source, WB_BG_CELL_BYTES + (wraps ? WB_BG_BUFFER_LINE : 0));
+}
+
+/* One half of a variant: `rows + 1` scanlines under a single `dbf`, so a count that arrived
+ * NEGATIVE would run 65536 of them. Reproduced by construction (`uint16_t`, do/while) and out of
+ * reach through bg_scroll_blit, whose two counts always sum to WB_BG_BLIT_SCANLINES. */
+static void copy_scanlines(uint8_t *image, uint32_t column, uint32_t *source, uint32_t *dest,
+                           uint16_t rows) {
+    uint16_t remaining = rows;
+    do {
+        copy_one_scanline(image, column, source, dest);
+    } while (remaining-- != 0);
+}
+
+void bg_scroll_copy_column(uint8_t *image, uint32_t column, uint32_t source, uint32_t dest,
+                           uint32_t first_rows, uint32_t second_rows) {
+    copy_scanlines(image, column, &source, &dest, (uint16_t)first_rows);
+    if ((int16_t)(uint16_t)second_rows < 0)
+        return;
+    /* `lea -$5800(a0),a0`: the first half ran off the buffer's end, so the second starts one whole
+     * buffer back — the same column of the row 176 scanlines earlier, i.e. the buffer's own top. */
+    source = addr_add(source, (uint32_t)-(int32_t)WB_BG_BUFFER_LEN);
+    copy_scanlines(image, column, &source, &dest, (uint16_t)second_rows);
+}
+
+/* $82f8. Three position words become one source address, one screen address and the two `dbf`
+ * counts; the jump table then picks the variant WB_BG_SCROLL_X names, which here is `column`. */
+void bg_scroll_blit(uint8_t *image) {
+    uint16_t phase = be16(image + WB_BG_SCROLL_PHASE);
+    uint16_t row = be16(image + WB_BG_SCROLL_Y);
+    uint16_t column = be16(image + WB_BG_SCROLL_X);
+
+    uint32_t dest = addr_add(be32(image + WB_SCREEN_BACK), WB_BG_BLIT_SCREEN_ORIGIN);
+    /* `mulu.w` is a 32-bit product and its `lea` a longword index, but the row's `asl.w #7` and the
+     * column's `asl.w #3` are WORD shifts indexed a word at a time — so the buffer is picked in 32
+     * bits and the offset within it in 16, sign-extended. */
+    uint32_t source = addr_add(WB_BG_BUFFER_BASE, (uint32_t)phase * WB_BG_BUFFER_PHASE_STRIDE);
+    source = addr_add(source, sign_ext16((uint16_t)(row << WB_BG_BLIT_ROW_SHIFT)));
+    source = addr_add(source, sign_ext16((uint16_t)(column * WB_BG_CELL_BYTES)));
+
+    /* `subi.w #$10,d6 / bpl` — the sign of the WRAPPED difference, because `bpl` reads N alone. */
+    uint16_t first;
+    uint16_t second;
+    if ((int16_t)(uint16_t)(row - WB_BG_BLIT_WRAP_ROW) < 0) {
+        first = WB_BG_BLIT_SCANLINES - 1;
+        second = WB_BG_BLIT_NO_SECOND_HALF;
+    } else {
+        /* `move.w #$b0,d7 / sub.w $83a8,d7 / move.w #$9f,d6 / sub.w d7,d6 / subq.w #1,d7`: the two
+         * halves are "to the buffer's end" and "the rest", and they sum to the window's height. */
+        uint16_t to_the_end = (uint16_t)(WB_BG_BUFFER_SCANLINES - row);
+        second = (uint16_t)((WB_BG_BLIT_SCANLINES - 1) - to_the_end);
+        first = (uint16_t)(to_the_end - 1);
+    }
+    bg_scroll_copy_column(image, column, source, dest, first, second);
 }

@@ -172,6 +172,23 @@ first draft had this bug and whose `wrapped-at-the-lowest-position` case is what
 input also breaks the routine's *own* "the distance always comes back positive" property, since
 `neg.w $7fd0` is `$8030` — reproduce that too rather than tidying it.)
 
+**But `bpl`/`bmi` after the same `subi.w` are the exemption — there the wrapped difference's sign IS
+the reading.** `bpl` is `not N` and `bmi` is `N`: they test the RESULT's top bit and ignore V
+entirely, so rewriting them as a comparison of the operands is the error, the mirror image of the
+one above.
+
+```
+8340: subi.w  #$10,d6         ; d6 = bg_scroll_y, the ring row
+8344: bpl.w   $8352           ; `(int16_t)(row - $10) >= 0`, NOT `row >= $10`
+```
+
+The two readings agree on every row the game itself produces and part company from `$8000` up, where
+the difference wraps positive. Write it as the subtraction it is (`if ((int16_t)(row - WRAP) >= 0)`).
+This is not a hypothetical: the boundary-comparison rewrite of exactly this pair is the mutation that
+SURVIVED `bg_scroll_blit`'s first sweep, and it took a deliberately out-of-range `$fffe` row to kill
+it. Read the condition code, not the arithmetic around it — `subi`/`cmpi` says nothing on its own
+about which question the branch is asking.
+
 ## Idioms you'll see constantly
 
 - `dbf Dn,label` (a.k.a. `dbra`) — decrement-and-loop; the workhorse loop. `Dn` counts

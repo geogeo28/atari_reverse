@@ -8,28 +8,30 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 78/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
-panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes) and
-the WHOLE background scroll engine (3398 bytes).**
-`make test`: 941 cases green, of which 77 are the foundation battery below, 48 are the depacker's
+**Verified: 95/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
+WHOLE background scroll engine (3398 bytes) and the WHOLE consumer tier that reads it (2742 bytes).**
+`make test`: 1024 cases green, of which 77 are the foundation battery below, 48 are the depacker's
 differential, 187 are the first gameplay batch's, 481 are the status panel's — that last figure was
-169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py` — and 148
-are the scroll engine's (65 after batch 5). A row appears in the table at the end when a function is
-reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only *named*,
-not ported.
+169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py` — and 231
+are the background scroll subsystem's (65 after batch 5, 148 after batch 6). A row appears in the
+table at the end when a function is reconstructed and green; everything else in `../decomp.c` and
+`../names.txt` is still only *named*, not ported.
 
 **`panel_refresh_frame` ($b346) now has NINE of its ten callees reconstructed.** The tenth, `$bbca`,
 is the sound-module blocker batch 3 registered, and it is reached by an unconditional `bsr` — so
 `$b346` itself stays unported and no seeding can change that. The reasoning is in "The status
 panel's third tier" below.
 
-**THE BACKGROUND SCROLL ENGINE IS CLOSED.** All fifteen routines of the `$7522..$8228` cluster plus
-the request raiser at `$d28` that drives it — sixteen in all — are reconstructed and green: the
-queue, the dispatch pass, four request handlers, four position steps, four fills and the pre-shift
-make the fifteen, and the raiser makes the sixteenth. The only thing left in the region is
-`bg_scroll_blit` (`$82f8`) and its sixteen unrolled copy variants, which are the
-CONSUMER of these buffers rather than part of this engine, and which are reached through a `jmp (a2)`
-Ghidra cannot follow. See "The background scroll engine" and "Closing it" below.
+**THE WHOLE BACKGROUND-SCROLL STORY IS CLOSED, PRODUCER AND CONSUMER.** All fifteen routines of the
+`$7522..$8228` cluster plus the request raiser at `$d28` that drives it — sixteen in all — are the
+ENGINE that fills the eight pre-shifted buffers, and `bg_scroll_blit` (`$82f8`) plus the sixteen
+unrolled copy variants at `$83b6..$8dfe` are the CONSUMER that copies one of them to the screen.
+All thirty-three are reconstructed and green, 6,140 bytes. Nothing between `$7522` and `$8dfe` is
+left named-but-unported, and `subsystems.tsv`'s whole `video (background scroll)` range
+(`$82f8..$8dfe`, which `PORTABILITY.md` measures as 2,742 bytes inside a function) is now
+reconstructed to the byte. See "The background scroll engine", "Closing it" and "The consumer tier"
+below.
 
 ## What the harness has established
 
@@ -363,6 +365,11 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   and integers fed to `_op()` in the other, because that is where they differ. The whole-body entry
   pins are the proof the hoist changed nothing — 1590 bytes of scroll and every panel routine still
   match the shipped image byte for byte.
+- **`tst.w Dn` now has a user in each battery.** Batch 7 collapsed `test_scroll.py`'s own two
+  single-register spellings into the encoder `tst_w_dn(reg)` (four registers use it), and
+  `test_hud.py` still carries the byte constants `TST_W_D5` / `TST_W_D6`. Registered on the terms
+  the rotate above was: **trigger** = a third user; **home** = `test/leaf.py`, beside the branch
+  assemblers, in `tst_w_dn`'s parametrised form rather than as more per-register constants.
 - **RESOLVED (batch 6: the preshift was the third user; now `machine.h`'s `rotate_left32`).** `rol.l`
   used to be written twice on the C side — `src/hud.c`'s unguarded `rotate_left32(value, bits)` for
   its literal counts of 4 and 8, and `src/scroll.c`'s `rotate_left32_by_register(value, count)` for a
@@ -471,6 +478,8 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x759a` | `bg_scroll_serve_requests` | 58 | verified | 6 cases: each direction raised alone, all four at once (which is what pins the ORDER — up, down, right, left — since each handler runs on the state the previous one left), and a pass with nothing raised that must write nothing at all. Each compares the whole write set for equality against the four sub-models composed in that order + whole-body entry pin |
 | `0xd28` | `bg_scroll_raise_requests` | 78 | verified | 7 positions: centred (raising nothing), off-centre both ways on both axes, one pixel either side of the vertical centre, the origin, and `$8000` — the one position where the `subi.w`/`bgt` pair's OVERFLOW flag makes the branch disagree with the sign of the difference. Each states the distance the case expects, and compares the oracle's whole `d0`/`d1` against it, high halves included (they are the caller's and must survive) + whole-body entry pin |
 | `0x7522` | `bg_scroll_run_queue` | 112 | verified | 5 cases: the `scroll_follow_frozen` gate both with a request already raised and with none, a centred position that raises nothing, and one- and two-step drains on both axes at once. Each compares the whole write set for equality against a model that raises, halves, drains and clears — running the dispatch pass as many times as the queue owes + whole-body entry pin, whose two `bra.s` loop-closing displacements come out of the geometry |
+| `0x82f8` | `bg_scroll_blit` (`src/scroll.c`) | 110 | verified | 12 cases: 8 over the three position words (both phases at the ends of the eight buffers, four columns including the two that need no source-row wrap and the two that do, and five ring rows — 0, just below the wrap boundary, exactly ON it, one past it, mid-ring and the last row a vertical step can produce) x both screen buffers x a case that states the write set as the 240x160 window rather than as whatever the model produced, x one out-of-range ring row that separates the `bpl`'s wrapped-sign reading from a boundary comparison. Each compares the whole write set for EQUALITY against a Python model of the dispatcher and the variant together, and a further 8 assert the copy never read outside the buffer the phase named + whole-body entry pin |
+| `0x83b6` | `bg_scroll_copy_x0` … `0x8d58` `bg_scroll_copy_x15` | 16 x 154/166 | verified | ONE legend for sixteen regular variants. Each is entered AT its own address with the four registers the dispatcher hands over (a0/a1/d7/d6) and copies four scanlines to the source buffer's end plus two past the `lea -$5800(a0),a0` rewind, its whole write set compared for equality against the model; four more are run with the "no second half" marker so the rewind never happens, and one asserts the rewind lands on the buffer's own first scanline. Each variant's WHOLE body is pinned against the image, assembled from one pattern parametrised by the column — and three of them (`x0`, `x2`, `x15`) are pinned a second time against bytes transcribed straight out of `../out/wonderboy_dis.txt`, so the pattern itself cannot be what is wrong. The jump table, the sixteen lengths and the gaps between them are pinned as well: the family tiles `$83b6..$8dfe` exactly |
 | `0xdaf8` | `panel_restore_44x8` | 26 | verified | 4 cases: its 2 regions x 2 screen orders, all 8 rows of 44 bytes compared against the source screen + entry pin |
 | `0xdb12` | `panel_restore_32x20` | 34 | verified | 2 cases: its one region x 2 screen orders, all 20 rows + entry pin |
 | `0xdb34` | `panel_restore_none` | 2 | verified | 1 case: a bare `rts`, run over a band seeded the width of the WIDEST restore on both screens, which must be left untouched + entry pin |
@@ -1271,3 +1280,122 @@ this batch.
 `$7522..$8228` and `$d28` fall into the catch-all. Both are now known to be the same subsystem, but
 re-drawing the boundary moves every figure in [`PORTABILITY.md`](PORTABILITY.md), which is a
 measurement to re-run rather than a line to edit. Left as it is, and recorded here.
+
+### The consumer tier (batch 7): the blit, and sixteen routines that are one routine
+
+Seventeen routines, 2,742 bytes, into the same `src/scroll.c`. With batches 5 and 6 that is the
+**whole** background-scroll story — `$7522..$8228` and `$d28` produce the eight pre-shifted buffers,
+`$82f8..$8dfe` consumes one of them — 33 routines and 6,140 bytes, with nothing between `$7522` and
+`$8dfe` left named-but-unported and nothing STOPPED.
+
+**THE SIXTEEN VARIANTS ARE ONE ROUTINE WITH ONE NUMBER IN IT, AND THAT IS THE BATCH'S FINDING.**
+`$83b6..$8dfe` is sixteen unrolled copy routines a jump table names. They are byte-identical apart
+from where each splits its thirty `move.l (a0)+,(a1)+` about the source row's 128-byte ring seam,
+which is exactly what `bg_scroll_x` says: column 0 and 1 need no split at all (30 longwords from
+`8 * x` still fit the 32 a row holds), and every other column copies `32 - 2x` longwords, rewinds a
+whole row with `lea -128(a0),a0`, and copies the remaining `2x - 2`. That is why two bodies are 154
+bytes and fourteen are 166 — the twelve being the two extra `lea`s each of a variant's two halves
+costs. So `src/scroll.c` reconstructs all sixteen as ONE function taking the column as an argument,
+and the table collapses into that argument.
+
+**THE REGULARITY IS TESTED, NOT ASSUMED, AND IN THREE INDEPENDENT WAYS.** A parametrised pattern
+that was wrong in the same way sixteen times would pass sixteen pins built from it, so:
+
+* every variant's WHOLE body is assembled from the pattern and pinned against the image, and its
+  length against the size `../out/hw_scan.tsv` records (154, 154, then fourteen 166s);
+* **three of them are pinned a second time against bytes transcribed straight out of
+  `../out/wonderboy_dis.txt`** — `x0` (no seam), `x2` (the first that needs one) and `x15` (whose
+  seam is at the other end). These are what fix the pattern itself — and they are TRANSCRIBED rather
+  than computed for a concrete reason: a hand-computed `dbf` displacement for `x2` and `x15` came out
+  two short, and reading the bytes off the image is what settled it;
+* the sixteen table entries, the sixteen lengths and the gaps between them are asserted to tile
+  `$83b6..$8dfe` exactly, and a whole-image `abs.l` scan requires each variant address to occur
+  **exactly once** — in its own table entry — and the table itself exactly once, inside
+  `bg_scroll_blit`'s body. So the table is the only way in and `$832e`'s `lea` its only reader.
+
+**`bpl` READS N ALONE, AND THAT IS THE OTHER HALF OF BATCH 6'S FINDING.** The dispatcher decides
+whether the window runs off the buffer's end with `subi.w #$10,d6 / bpl`, which looks like the
+`subi.w`/`bgt` pair batch 6 got wrong. It is not the same: `bgt`/`blt` read `N xor V` and `bpl`/`bmi`
+read `N`, so here the wrapped difference's own sign really *is* the test, and the reconstruction says
+so. The two readings — the wrapped sign, and a comparison of the row against the boundary — agree on
+every ring row the game can produce and part company from `$8010` up. Most of that range is
+unrunnable, because the same word feeds `move.w #$b0,d7 / sub.w`: a row of `$8010` asks for 32,928
+scanlines and walks off the image. **A row of `$fffe` does not**, and the case that seeds it copies
+160 scanlines where the boundary reading would copy 178 — which is what turned the sweep's one
+survivor into a kill.
+
+**THE DIFFERENTIAL ENTERS BOTH WAYS, because either alone leaves half the mechanism unpinned.** A
+case entered at `$82f8` runs the dispatcher AND the variant its `jmp (a2)` reaches, so the table is
+exercised as the game exercises it; a case entered at a VARIANT supplies the four registers the
+dispatcher would have (a0 = source, a1 = destination, d7 and d6 the two `dbf` counts) and pins that
+body on its own, four scanlines to the buffer's end plus two past the rewind. Both kinds seed all
+eight source buffers AND both screen buffers, address-keyed with the same salt, so a copy that ran
+one scanline long, chained by the wrong stride or read the wrong buffer lands on bytes that are
+wrong *for where they were written* rather than on zeros.
+
+**ONE CORRECTION TO `../names.txt`, from re-reading the dispatcher.** Its `cmt` (and the block
+comment above it) said the blit "enters [the variant] twice, once per side of the source buffer's
+vertical wrap, through the `jmp (a2)` at `$8350`/`$8364`". It does not. Those two jumps are the two
+ARMS of the `bpl` — one loading `d6 = $ffff` outright (the window fits: no second half) and the other
+computing both counts from the ring row — and exactly one of them executes per call. The vertical
+split happens INSIDE the variant, at its own `tst.w d6 / bpl / rts`. Both texts are rewritten.
+
+**Every one of the seventeen entry pins is the routine's WHOLE BODY.** The dispatcher's 110 bytes end
+at `jmp (a2)`, which is its only exit and the reason it has no `rts`; the table begins in the very
+next word, which the pin asserts. The three shifts in it are spelt as the constants they scale BY
+rather than as the counts in the opcodes (`_shift_for`), so a header constant that moved fails the
+pin instead of quietly disagreeing with it.
+
+Mutation-checked rather than assumed (each rebuilt with the `.so` deleted first, and the source
+restored and byte-compared against a pristine copy afterwards — 1023 green each time, and the whole
+sweep re-run against the tree as it LANDED rather than against the draft it was written on; the
+batch's review then added the 1024th case, a static image scan that runs no reconstructed code and
+so moves no figure here): the
+scanline **never split at the seam** reddens 25; the seam rewind **one cell instead of one row**
+reddens 25; a wrapping scanline **not re-advanced past the row it rewound** reddens 25; the
+destination stepped **a whole screen line instead of the gap** reddens 32; the seam placed **one cell
+per column instead of one longword pair** reddens 25; a half running **its count instead of its count
+plus one** reddens 32; the second half rewound **one row instead of one buffer** reddens 23; the
+no-second-half marker read as **a zero test** reddens 9; the ring row scaled by **a cell instead of a
+scanline** reddens 10; the phase scaled by **a whole buffer instead of half of one** reddens 10; the
+two halves' counts **swapped** reddens 8; the first half **one scanline long** reddens 8; the window's
+origin within the screen **dropped** reddens 12; the variant picked by **the phase instead of the
+column** reddens 10; and the wrap test made **an unsigned comparison of the row against the boundary**
+reddens 1. **15 mutations, 15 killed, 0 survivors.**
+
+**That last one reddens 1 because it is one-case-per-claim, and it is the batch's coverage finding.**
+On the first sweep it was the only SURVIVOR: nothing in the battery could tell the wrapped-sign
+reading from the boundary one, because the two agree on every row the game produces. The `$fffe`
+case above is what closes it, and it is recorded this way round because that is how the case came to
+exist — the sweep found the hole and the case was written for it, rather than the other way about.
+
+**What is NOT pinned, and why:**
+
+* **A COLUMN OUTSIDE 0..15.** `movea.l (0,a2,d1.w),a2` bounds nothing, so the original would jump
+  through the longword after the table — which is `bg_scroll_x` itself. C has no such behaviour to
+  reproduce and `bg_scroll_copy_column` is undefined there. The domain is established instead rather
+  than asserted, and by a case rather than by prose: a whole-image `abs.l` scan
+  (`test_the_column_is_a_nibble_wherever_the_image_writes_it`) gives `bg_scroll_x` exactly three
+  writing sites — a `subq.w #1` and an `addq.w #1`, each immediately followed by its OWN
+  `andi.w #$f`, and the `clr.w` at `$fb7e`.
+* **THE REGISTERS THE COPY LEAVES BEHIND.** It walks out with a0/a1 far past where they started and
+  its one call site `rts`s immediately, so there is nothing to compare against — the same family as
+  the column fills'.
+* **THE 65536-ITERATION `dbf`.** Each half's count is a `dbf`, so a negative one would run 65,536
+  scanlines. Reproduced by construction (`uint16_t`, do/while) and out of reach through
+  `bg_scroll_blit`, whose two counts provably sum to the window's 160 scanlines for every ring row
+  the vertical steps can produce — asserted over all 88 of them.
+
+**`$8dfe` IS QUEUED, NOT SKIPPED.** `game_main_loop` calls it immediately before `bg_scroll_run_queue`
+and it is 104 bytes with the same "read a position, subtract the scroll" shape as `$8e66` just after
+it — but it opens `jsr $67e0.w`, a callee this reconstruction does not have, so its closure is not
+satisfied and it is not in this batch. It is a `$67e0` batch, not a scroll one.
+
+**Still deferred, and now more visibly: `subsystems.tsv` calls the ENGINE "game logic".** Its
+`video (background scroll)` range is `$82f8..$8dfe` — exactly this batch — while `$7522..$8228` and
+`$d28` fall into the catch-all. Both are now reconstructed, so the boundary is measurably wrong in a
+way that flatters neither side; re-drawing it moves every figure in [`PORTABILITY.md`](PORTABILITY.md),
+which is a measurement to re-run rather than a line to edit. Left as it is, and recorded here.
+**QUEUED, alongside the `$67e0` batch above: re-draw `subsystems.tsv`'s game-logic/video boundary and
+re-run `tools/hw_portability.py` over it, then restate `PORTABILITY.md` from what it prints** —
+trigger: now that `$7522..$8dfe` is closed, the game-logic/video split is measurably wrong.

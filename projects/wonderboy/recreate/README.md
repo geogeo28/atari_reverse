@@ -52,9 +52,10 @@ include/rad.h              the .RAD/.CRU container and its bitstream, as constan
 include/effects.h          the 29 effect/state leaves at $10200..$103e7 — prototypes
 include/hud.h              the status panel's 30 routines — prototypes, and their register interfaces
 include/input.h            the two joystick-pipeline leaves
-include/scroll.h           the whole background scroll engine — prototypes, the queue's shape, and
+include/scroll.h           the whole background scroll subsystem — prototypes, the queue's shape,
                            why a step returns a FLAG (the original returns it through its own
-                           return address, and vertically it consumes TWO calls that way)
+                           return address, and vertically it consumes TWO calls that way), and why
+                           the blit's sixteen jump-table variants are one function with a column
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
 src/effects.c              the effect handlers and the state stubs above them
@@ -65,19 +66,24 @@ src/hud.c                  panel_refresh_frame ($b346) below its own entry: batc
                            batch 4's third (the pass's three table walks: the region restore and its
                            six blits, the newest record's display, the six HUD slots)
 src/input.c                the joystick edge pipeline: latch a frame, then diff two frames
-src/scroll.c               the whole scroll engine: the frame queue and its dispatch pass, four
-                           request handlers, four position steps, the two column fills that redraw
-                           the uncovered edge into the pre-shifted buffer the phase names, the two
-                           row fills that redraw an uncovered scanline pair, and the pre-shift that
-                           walks a fresh row through the other seven copies
+src/scroll.c               the whole scroll subsystem, producer and consumer. The ENGINE ($7522..
+                           $8228 + $d28): the frame queue and its dispatch pass, four request
+                           handlers, four position steps, the two column fills that redraw the
+                           uncovered edge into the pre-shifted buffer the phase names, the two row
+                           fills that redraw an uncovered scanline pair, and the pre-shift that
+                           walks a fresh row through the other seven copies. The CONSUMER
+                           ($82f8..$8dfe): the per-frame blit and — as ONE parametrised function,
+                           because they are one pattern with one number in it — the sixteen unrolled
+                           copy routines its jump table names
 test/harness.py            the kit-binding shim
 test/leaf.py               shared driver for LEAF routines: entry points looked up in ../names.txt,
                            the write set a routine is entitled to (which the depacker's battery
                            calls too), the glue for one whose ENTRY REGISTERS are its arguments, and
                            the entry-pin scaffolding two batteries share (operand encoders, the
                            opcodes both spell, and the readers that take a value out of the write
-                           set), and the second stop PC a routine needs when it returns PAST its
-                           caller's next call by rewriting its own return address
+                           set), the game's own two screen buffers (two batteries draw into them),
+                           and the second stop PC a routine needs when it returns PAST its caller's
+                           next call by rewriting its own return address
 test/layout.py             include/wonderboy.h's constants, scraped from that header (one source of truth)
 test/test_layout.py        that scraper's own cases — it refuses a duplicate or an octal-ambiguous #define
 test/test_bootstrap.py     the foundation battery: the loader, the self-relocation, the trap inventory
@@ -99,14 +105,19 @@ test/test_hud.py           the status panel's differential: the game's own bitma
                            over zeros stays invisible
 test/test_input.py         the joystick pair's differential — memory for the latch, the whole
                            returned d0 for the edge
-test/test_scroll.py        the scroll engine's differential: whole-body entry pins for all sixteen
-                           (3398 bytes, every unrolled loop assembled from its own geometry and the
-                           call-carrying bodies from a cursor-tracking _Assembler), Python models of
-                           every routine that COMPOSE — a serve runs its fill on its step's output,
-                           the queue runs the dispatch pass as many times as it owes — with each
-                           case's write set compared against them for EQUALITY, an address-keyed
-                           seeding of all eight buffers plus a margin, and the skip decision read off
-                           the ORACLE's rewritten return address rather than inferred
+test/test_scroll.py        the scroll subsystem's differential: whole-body entry pins for all
+                           thirty-three (6140 bytes, every unrolled loop assembled from its own
+                           geometry and the call-carrying bodies from a cursor-tracking _Assembler),
+                           Python models of every routine that COMPOSE — a serve runs its fill on its
+                           step's output, the queue runs the dispatch pass as many times as it owes —
+                           with each case's write set compared against them for EQUALITY, an
+                           address-keyed seeding of all eight buffers and both screens plus a margin,
+                           and the skip decision read off the ORACLE's rewritten return address
+                           rather than inferred. The consumer tier adds two entry conventions: a case
+                           entered at $82f8 goes THROUGH the jump table, and one entered at a variant
+                           supplies the four registers the dispatcher would have — plus three
+                           variants pinned against bytes transcribed from ../out/wonderboy_dis.txt,
+                           so the pattern the other thirteen are built from cannot be what is wrong
 ```
 
 ## Running

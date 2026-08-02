@@ -78,4 +78,23 @@ void bg_scroll_raise_requests(uint8_t *image, uint32_t *vertical, uint32_t *hori
  * serves whatever is already raised. */
 void bg_scroll_run_queue(uint8_t *image);
 
+
+/* ---- the consumer: $82f8 and the sixteen copy routines it jumps into --------------------------
+ *
+ * Everything above PRODUCES the eight pre-shifted buffers; these two read one of them.
+ */
+
+/* $83b6..$8dfe — the sixteen unrolled copy routines the jump table at WB_BG_BLIT_TABLE names, as
+ * ONE function. They are byte-identical apart from where each splits its thirty `move.l` about the
+ * source row's 128-byte ring seam, which is exactly what `column` (WB_BG_SCROLL_X, 0..15) says — so
+ * the table collapses into an argument. `source` and `dest` are the a0/a1 the dispatcher hands
+ * over; `first_rows` and `second_rows` its d7 and d6, one `dbf` count each, the second negative
+ * when the window did not run off the source buffer's end. */
+void bg_scroll_copy_column(uint8_t *image, uint32_t column, uint32_t source, uint32_t dest,
+                           uint32_t first_rows, uint32_t second_rows);
+
+/* $82f8 — once a frame from game_main_loop: copy the visible window out of the pre-shifted buffer
+ * WB_BG_SCROLL_PHASE names into WB_SCREEN_BACK, in one or two halves about the buffer's own end. */
+void bg_scroll_blit(uint8_t *image);
+
 #endif /* WONDERBOY_SCROLL_H */

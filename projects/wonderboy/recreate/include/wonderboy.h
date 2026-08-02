@@ -429,7 +429,8 @@
  * The cluster keeps EIGHT pre-shifted copies of the level's background, $5800 bytes each, tiling
  * $44000..$70000 — the map project.toml records. Copy N holds the map drawn two pixels further
  * left than copy N-1, so a two-pixel horizontal scroll is a change of buffer and not a redraw;
- * `bg_scroll_blit` ($82f8, named but not ported) is what copies the chosen one to the screen.
+ * `bg_scroll_blit` ($82f8, the block at the end of this section) is what copies the chosen one to
+ * the screen.
  *
  * Each buffer is 176 scanlines of WB_BG_BUFFER_LINE bytes, addressed as a RING: the visible window
  * starts at WB_BG_SCROLL_Y_COARSE tile-rows down and wraps at the end, which is why every routine
@@ -621,5 +622,49 @@
 #define WB_BG_FILL_LEFT_MAP_OFF  2u       /* $7eb2: `addq.w #2,d0` on the map cursor */
 #define WB_BG_FILL_RIGHT_MAP_OFF 0x11u    /* $7c08: `addi.w #$11,d0` */
 #define WB_BG_FILL_RIGHT_X_BIAS  0xeu     /* $7c08: `addi.w #$e,d0` before the nibble mask */
+
+/* ---- $82f8..$8dfe: the CONSUMER of those buffers (RUNTIME addresses; src/scroll.c) ------------
+ *
+ * Everything above produces the eight pre-shifted buffers; `bg_scroll_blit` reads one. Once a frame
+ * it copies WB_BG_BLIT_SCANLINES scanlines of WB_BG_BLIT_ROW_BYTES out of the buffer
+ * WB_BG_SCROLL_PHASE names into WB_SCREEN_BACK, and BOTH of the rings the engine maintains surface
+ * here as a split rather than as arithmetic: the window may run off the buffer's 176th scanline
+ * (two halves, `lea -$5800(a0),a0` between them), and each source ROW is a 128-byte ring whose seam
+ * sits at WB_BG_SCROLL_X (two runs of `move.l`, `lea -128(a0),a0` between them).
+ *
+ * That second split is the ONLY thing separating the sixteen unrolled copy routines at
+ * $83b6..$8dfe, which the jump table below names and two `jmp (a2)` enter. So the reconstruction
+ * takes the column as a parameter and the table collapses into it — the claim test/test_scroll.py
+ * makes good by assembling all sixteen bodies from one pattern and pinning each against the image.
+ */
+#define WB_BG_BLIT_TABLE          0x8366u /* 16 longwords, the variants' entry addresses. A
+                                           * whole-image abs.l scan gives it ONE operand reference,
+                                           * the `lea $8366.l,a2` at $832e, and each variant address
+                                           * exactly one — its own entry here */
+#define WB_BG_BLIT_VARIANTS       16u     /* == WB_BG_SCROLL_X's whole range, which is also the
+                                           * table's whole extent: $8366..$83a6 runs into
+                                           * WB_BG_SCROLL_X itself */
+#define WB_BG_BLIT_SCREEN_ORIGIN  0x1420u /* `adda.w #$1420,a1`: byte offset into WB_SCREEN_BACK of
+                                           * the window's top-left corner — row 32, byte 32 */
+#define WB_BG_BLIT_SCANLINES      160u    /* `move.w #$9f,d7` plus one: the window's height */
+#define WB_BG_BLIT_LONGWORDS      30u     /* `move.l (a0)+,(a1)+` per scanline, in every variant */
+#define WB_BG_BLIT_ROW_BYTES      120u    /* == WB_BG_BLIT_LONGWORDS * 4: 240 px of the 320 */
+#define WB_BG_BUFFER_SCANLINES    176u    /* == WB_BG_BUFFER_LEN / WB_BG_BUFFER_LINE, and the `#$b0`
+                                           * the wrapping arm counts the first half down from */
+#define WB_BG_BLIT_WRAP_ROW       0x10u   /* == WB_BG_BUFFER_SCANLINES - WB_BG_BLIT_SCANLINES: the
+                                           * ring row at or above which the window runs off the
+                                           * buffer's end. `subi.w #$10,d6 / bpl` and `bpl` reads N
+                                           * ALONE — unlike the `bgt`/`blt` pair in
+                                           * bg_scroll_raise_requests, this one really is the
+                                           * wrapped difference's own sign */
+#define WB_BG_BLIT_NO_SECOND_HALF 0xffffu /* `move.w #$ffff,d6` — what the non-wrapping arm loads,
+                                           * and what the `tst.w d6 / bpl` after the first half
+                                           * reads as "there is no second half" */
+#define WB_BG_BLIT_ROW_SHIFT      7u      /* `asl.w #7`: WB_BG_SCROLL_Y into a byte offset, i.e. by
+                                           * WB_BG_BUFFER_LINE */
+#define WB_BG_ROW_LONGWORDS       32u     /* == WB_BG_BUFFER_LINE / 4 */
+#define WB_BG_CELL_LONGWORDS      2u      /* == WB_BG_CELL_BYTES / 4: what one tile column of one
+                                           * scanline costs the copy, and so how much further into
+                                           * the row each successive variant's seam falls */
 
 #endif /* WONDERBOY_H */

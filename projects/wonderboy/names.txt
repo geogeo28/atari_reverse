@@ -750,8 +750,13 @@ cmt 0x22092 The map, one byte per cell, immediately after its own stride word. B
 #   a2 = bg_scroll_blit_table[bg_scroll_x]            (0..15)
 # then splits the 160 destination scanlines around the source buffer's
 # vertical wrap: d7+1 rows before it and, if d6 >= 0, d6+1 rows after a
-# `lea -$5800(a0),a0` rewind. Both halves are the SAME 16 routines, entered
-# through the two `jmp (a2)` at $8350 and $8364.
+# `lea -$5800(a0),a0` rewind. BOTH HALVES RUN INSIDE THE VARIANT -- the two
+# `jmp (a2)` at $8350/$8364 are the two arms of `subi.w #$10,d6 / bpl`, one
+# loading d6 = $ffff outright (the window fits: no second half) and the other
+# computing d7 and d6 from the ring row, and exactly ONE of them executes per
+# call. An earlier reading of this block had them entering the variant twice;
+# they do not, and the `tst.w d6 / bpl / rts` inside every variant is what makes
+# the second half conditional.
 #
 # Each variant copies 30 longwords (120 bytes = 240 px of a 4-plane line) per
 # scanline out of a 128-byte-wide circular row, then `lea 40(a1),a1` to finish
@@ -763,9 +768,9 @@ cmt 0x22092 The map, one byte per cell, immediately after its own stride word. B
 # so the 16 bodies tile $83b6..$8dfe exactly, 2 x 154 + 14 x 166 = 2632 bytes.
 # ---------------------------------------------------------------------------
 fn 0x82f8 bg_scroll_blit
-cmt 0x82f8 Per-frame background scroll blit, called from game_main_loop. Reads the three scroll variables that live in the code hole just above the first variant, picks one of the 16 unrolled copy routines out of bg_scroll_blit_table, and enters it twice (once per side of the source buffer's vertical wrap) through the `jmp (a2)` at $8350/$8364. Ghidra cannot follow either jump, which is why $83b6..$8dfe was in no function until these names were added.
+cmt 0x82f8 Per-frame background scroll blit, called from game_main_loop -- an abs.l scan of the whole image gives $82f8 exactly ONE reference, the `jsr` at $4dc. Reads the three scroll variables that live in the code hole just above the first variant, picks one of the 16 unrolled copy routines out of bg_scroll_blit_table, and jumps into it. CORRECTED: it enters that routine ONCE, not once per half -- the two `jmp (a2)` at $8350/$8364 are the two arms of `subi.w #$10,d6 / bpl`, and the vertical split is done INSIDE the variant by its own `tst.w d6 / bpl / rts`. Note the `bpl` reads N alone, so that test really is the wrapped difference's sign, unlike the `bgt`/`blt` pair in bg_scroll_raise_requests. Ghidra cannot follow either jump, which is why $83b6..$8dfe was in no function until these names were added. Reconstructed in recreate/src/scroll.c.
 var 0x8366 bg_scroll_blit_table
-cmt 0x8366 16 longwords: $83b6 $8450 $84ea $8590 $8636 $86dc $8782 $8828 $88ce $8974 $8a1a $8ac0 $8b66 $8c0c $8cb2 $8d58 -- indexed by bg_scroll_x (0..15) via `movea.l (0,a2,d1.w),a2` at $8336 with d1 = bg_scroll_x * 4.
+cmt 0x8366 16 longwords: $83b6 $8450 $84ea $8590 $8636 $86dc $8782 $8828 $88ce $8974 $8a1a $8ac0 $8b66 $8c0c $8cb2 $8d58 -- indexed by bg_scroll_x (0..15) via `movea.l (0,a2,d1.w),a2` at $8336 with d1 = bg_scroll_x * 4. An abs.l scan of the image finds ONE reference to the table (the `lea $8366.l,a2` at $832e) and exactly ONE to each of the sixteen targets -- its own entry here -- so this table is the only way into the family and $832e is its only reader. The indexing is unbounded, so a bg_scroll_x outside 0..15 would jump through the longword AFTER the table, which is bg_scroll_x itself; the three writers of that word all keep it in a nibble, which is what makes the domain 0..15.
 var 0x83a6 bg_scroll_x
 cmt 0x83a6 Horizontal scroll position in 16-pixel cells, 0..15 (`addq/subq #1` then `andi.w #$f` at $79b6..$7a26). Selects the bg_scroll_blit_table entry AND, times 8, the source byte offset within a 128-byte row.
 var 0x83a8 bg_scroll_y
@@ -775,7 +780,7 @@ cmt 0x83aa The SECOND ring cursor, for the visible window's bottom scanline pair
 var 0x83ac bg_scroll_phase
 cmt 0x83ac Selects the source scroll buffer: even, 0..14 (`addq/subq #2` then `andi.w #$f`), scaled by $2c00 at $830c, i.e. eight $5800 buffers over $44000..$70000 -- the map recreate/project.toml records. Renamed from bg_scroll_buffer (which was tagged # ctx) once the routines that FILL those buffers were read: it is not only a buffer selector but the pre-shift in pixels, and the two column fills use it three ways at once -- to pick the buffer, to index bg_scroll_edge_masks, and as the `rol.l` count that shifts the tiles by that many pixels.
 fn 0x83b6 bg_scroll_copy_x0
-cmt 0x83b6 Variant 0 of 16. 30 x `move.l (a0)+,(a1)+` then `lea 40(a1),a1 / addq.l #8,a0 / dbf d7`; `tst.w d6 / bpl` then re-runs the same body from $8404 after `lea -$5800(a0),a0`, which is the source buffer's vertical wrap. All 16 variants have this two-half shape.
+cmt 0x83b6 Variant 0 of 16. 30 x `move.l (a0)+,(a1)+` then `lea 40(a1),a1 / addq.l #8,a0 / dbf d7`; `tst.w d6 / bpl` then re-runs the same body from $8404 under `dbf d6` after `lea -$5800(a0),a0`, which is the source buffer's vertical wrap. All 16 variants have this two-half shape, and the family is ONE PATTERN with one number in it: recreate/test/test_scroll.py assembles every one of the sixteen whole bodies from that pattern and pins each against the image, which is what lets recreate/src/scroll.c reconstruct all sixteen as a single function taking bg_scroll_x as an argument. Reconstructed there, with bg_scroll_blit.
 fn 0x8450 bg_scroll_copy_x1
 fn 0x84ea bg_scroll_copy_x2
 cmt 0x84ea First variant that needs the horizontal wrap: 28 moves, `lea -128(a0),a0` back to the start of the source row, 2 moves, then `lea 40(a1),a1 / lea 136(a0),a0`. x3..x15 shift the split point two moves further each time.
@@ -792,4 +797,4 @@ fn 0x8b66 bg_scroll_copy_x12
 fn 0x8c0c bg_scroll_copy_x13
 fn 0x8cb2 bg_scroll_copy_x14
 fn 0x8d58 bg_scroll_copy_x15
-cmt 0x8d58 Last variant: 2 moves, `lea -128(a0),a0`, 28 moves. Its second half ends at $8dfc, so the family tiles $83b6..$8dfe with no gap.
+cmt 0x8d58 Last variant: 2 moves, `lea -128(a0),a0`, 28 moves. Its second half ends at $8dfc, so the family tiles $83b6..$8dfe with no gap -- asserted rather than eyeballed, against the sixteen table entries and the sixteen recorded body lengths (recreate/test/test_scroll.py).

@@ -54,7 +54,8 @@ import leaf
 from leaf import RTS, backward_branch, bsr_w, forward_branch, longword, word
 from layout import wb
 
-import emu   # noqa: E402  (harness puts the kit's oracle on sys.path)
+import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
+import loader   # noqa: E402
 
 # --- the globals and the geometry, from the header both languages read ---------------------------
 PHASE = wb("BG_SCROLL_PHASE")
@@ -147,6 +148,28 @@ FILL_RIGHT_X_BIAS = wb("BG_FILL_RIGHT_X_BIAS")
 
 PLANES = wb("PLANES")
 PLANE_STRIDE = wb("PLANE_STRIDE")
+
+# --- the consumer tier: bg_scroll_blit and the sixteen copy variants it jumps into ---------------
+SCREEN_BUFFERS = leaf.SCREEN_BUFFERS
+SCREEN_BACK = wb("SCREEN_BACK")
+SCREEN_LINE = wb("SCREEN_LINE")
+BLIT_TABLE = wb("BG_BLIT_TABLE")
+BLIT_VARIANTS = wb("BG_BLIT_VARIANTS")
+BLIT_SCREEN_ORIGIN = wb("BG_BLIT_SCREEN_ORIGIN")
+BLIT_SCANLINES = wb("BG_BLIT_SCANLINES")
+BLIT_LONGWORDS = wb("BG_BLIT_LONGWORDS")
+BLIT_ROW_BYTES = wb("BG_BLIT_ROW_BYTES")
+BUFFER_SCANLINES = wb("BG_BUFFER_SCANLINES")
+BLIT_WRAP_ROW = wb("BG_BLIT_WRAP_ROW")
+BLIT_NO_SECOND_HALF = wb("BG_BLIT_NO_SECOND_HALF")
+BLIT_ROW_SHIFT = wb("BG_BLIT_ROW_SHIFT")
+ROW_LONGWORDS = wb("BG_ROW_LONGWORDS")
+CELL_LONGWORDS = wb("BG_CELL_LONGWORDS")
+
+# One past the last copy variant, and so the end of the whole consumer tier ($82f8..$8dfe). It is
+# also where the routine STATUS.md queues for a later batch begins, which is what makes it a
+# boundary the family is measured against rather than a number derived from the family itself.
+BLIT_FAMILY_END = 0x8dfe
 
 WORD_BITS = 16
 LONG_BITS = 32
@@ -648,6 +671,68 @@ def move_l_d0_dn(reg):
     return _op(0x2000 | (reg << 9))
 
 
+def tst_w_dn(reg):
+    """`tst.w Dn` — three routines here test a different register, which is what collapsed the two
+    single-register constants this replaces (the third-user rule ../STATUS.md records)."""
+    return _op(0x4a40 | reg)
+
+
+# --- the encodings the consumer tier adds ---------------------------------------------------------
+# bg_scroll_blit is the only routine here that addresses a longword through a table, jumps through a
+# register, or reads WB_SCREEN_BACK, so these are its own.
+
+def movea_l_abs_w(reg, addr):
+    """`movea.l <abs>.w,An` — the blit's screen pointer is below $8000, so it is spelt short."""
+    return _op(0x2078 | (reg << 9)) + word(addr)
+
+
+def movea_l_indexed(reg, base, index):
+    """`movea.l (0,An,Dn.w),Am` — the jump table read, and the whole of the original's dispatch."""
+    return _op(0x2070 | (reg << 9) | base) + word(index << 12)
+
+
+def adda_w_imm_an(value, reg):
+    return _op(0xd0fc | (reg << 9)) + word(value)
+
+
+def addq_l_imm_an(amount, reg):
+    """`addq.l #n,An` — `#8` encodes as 0, which is what makes the family's `addq.l #8,a0` a word."""
+    return _op(0x5088 | ((amount & 7) << 9) | reg)
+
+
+def subq_w_imm_dn(amount, reg):
+    return _op(0x5140 | ((amount & 7) << 9) | reg)
+
+
+def move_w_dn_dn(destination, source):
+    return _op(0x3000 | (destination << 9) | source)
+
+
+def sub_w_dn_dn(destination, source):
+    return _op(0x9040 | (destination << 9) | source)
+
+
+def sub_w_abs_l_dn(reg, addr):
+    """`sub.w <abs>.l,Dn` — the other direction from sub_w_d1_abs_l above, which stores back."""
+    return _op(0x9040 | (reg << 9) | 0x39) + longword(addr)
+
+
+def jmp_ind(reg):
+    return _op(0x4ed0 | reg)
+
+
+def _shift_for(multiplier):
+    """The `asl.w #n` count that multiplies by ``multiplier``.
+
+    The blit scales three different things by a shift, and spelling each as the constant it scales
+    BY — rather than as the count in the opcode — is what makes a header constant that moved fail
+    here instead of quietly disagreeing with the pin.
+    """
+    shift = multiplier.bit_length() - 1
+    assert multiplier == 1 << shift, f"{multiplier} is not a power of two, so no `asl.w` gives it"
+    return shift
+
+
 def _clear_plane_registers():
     """`moveq #0,d0 / move.l d0,d1 / d2 / d3` — how both the column fills and the pre-shift clear
     the four registers a scanline's plane words are read into, and what zero-extends them."""
@@ -731,7 +816,6 @@ MOVE_L_POSTINC_A5_ABS_W = _op(0x21dd)
 MOVE_W_ABS_W_D7 = _op(0x3e38)
 SWAP_D6, NOT_L_D6 = _op(0x4846), _op(0x4686)
 MOVE_W_IND_A6_D6 = _op(0x3c16)
-TST_W_D5 = _op(0x4a45)
 MOVE_W_IMM_D5 = _op(0x3a3c)
 AND_L_D6_POSTINC_A0 = _op(0xcd98)
 MOVE_B_IND_A3_D0 = _op(0x1013)
@@ -740,7 +824,6 @@ ADD_W_D0_D0 = _op(0xd040)
 ADD_W_D1_D0 = _op(0xd041)
 ADDQ_W_2_D0 = _op(0x5440)
 CMP_W_ABS_L_D0 = _op(0xb079)
-TST_W_D0 = _op(0x4a40)
 CLR_W_D0 = _op(0x4240)
 ADDA_W_D6_A0 = _op(0xd0c6)
 MOVE_L_POSTINC_A0_POSTINC_A1 = _op(0x22d8)
@@ -818,7 +901,7 @@ def _fill_column_body(edge, load_counts, load_first, load_second):
         + lea_indexed(A3, D0))
 
     if edge is RIGHT:
-        shift = (move_w_abs_l_dn(D5, PHASE) + TST_W_D5
+        shift = (move_w_abs_l_dn(D5, PHASE) + tst_w_dn(D5)
                  + branch_w(BNE_W, MOVE_W_IMM_D5 + word(FULL_CELL_ROTATION),
                             lea_d16(A3, -1))
                  + MOVE_W_IMM_D5 + word(FULL_CELL_ROTATION) + lea_d16(A3, -1))
@@ -876,7 +959,7 @@ STEP_BODIES = {
               + addq_w_abs_l(SCROLL_STEP, PHASE) + andi_w_abs_l(PHASE_MASK, PHASE)
               + branch_w(BEQ_W, RTS) + RTS
               + _STEP_CELL_TAIL_RIGHT),
-    "left": (move_w_abs_l_dn(D0, POS_X) + _op(0x4a40)                      # tst.w d0
+    "left": (move_w_abs_l_dn(D0, POS_X) + tst_w_dn(D0)
              + branch_w(BNE_W, _SKIP_AND_RETURN) + _SKIP_AND_RETURN
              + tst_w_abs_l(PENDING)
              + branch_w(BEQ_W, clr_w_abs_l(PENDING), RTS) + clr_w_abs_l(PENDING) + RTS
@@ -1044,7 +1127,7 @@ def _preshift_body():
     load_top = movea_l_abs_l(A0, BUFFER_ROWS + BUFFER_ROW_TOP)
     load_bottom = movea_l_abs_l(A0, BUFFER_ROWS + BUFFER_ROW_BOTTOM)
     to_next_copy = lea_d16(A1, BUFFER_LEN, source=A0)
-    head = (TST_W_D0 + branch_w(BMI_W, load_top, branch_w(BRA_W, load_bottom))
+    head = (tst_w_dn(D0) + branch_w(BMI_W, load_top, branch_w(BRA_W, load_bottom))
             + load_top + branch_w(BRA_W, load_bottom) + load_bottom
             + to_next_copy + move_w_imm_dn(D5, PRESHIFT_COPIES - 1))
     one_copy = move_w_imm_dn(D6, PRESHIFT_ROWS - 1) + row + dbf(D6, row)
@@ -1130,6 +1213,73 @@ def _run_queue_body():
     return gate + branch_w(BNE_W, main) + main + bypass.bytes()
 
 
+# --- the consumer tier's bodies -------------------------------------------------------------------
+# The sixteen copy variants are ONE pattern with one number in it, which is the claim src/scroll.c
+# rests on. It is not assumed: every variant's whole body is assembled from the pattern below and
+# pinned against the image, so a family member that differed anywhere would fail its own entry pin.
+
+def variant_name(column):
+    """../names.txt's name for the variant WB_BG_SCROLL_X == ``column`` selects."""
+    return f"bg_scroll_copy_x{column}"
+
+
+def _blit_variant_half(column, counter):
+    """One half of a copy variant: `dbf` scanlines of BLIT_LONGWORDS `move.l (a0)+,(a1)+`, split
+    about the source row's 128-byte ring seam wherever ``column`` puts it.
+
+    The two runs and their `lea`s are the ONLY thing that varies across the sixteen. A column whose
+    copy still fits the row (0 and 1) has no seam and closes with a bare `addq.l #8,a0`; every other
+    one rewinds a whole row mid-scanline and closes with the `lea 136(a0),a0` that is that rewind
+    plus the same 8.
+    """
+    before_seam = ROW_LONGWORDS - CELL_LONGWORDS * column
+    copy = MOVE_L_POSTINC_A0_POSTINC_A1
+    to_next_screen_row = lea_d16(A1, SCREEN_LINE - BLIT_ROW_BYTES)
+    if before_seam >= BLIT_LONGWORDS:
+        body = copy * BLIT_LONGWORDS + to_next_screen_row + addq_l_imm_an(CELL_BYTES, A0)
+    else:
+        body = (copy * before_seam
+                + lea_d16(A0, -BUFFER_LINE)
+                + copy * (BLIT_LONGWORDS - before_seam)
+                + to_next_screen_row
+                + lea_d16(A0, BUFFER_LINE + CELL_BYTES))
+    return body + dbf(counter, body)
+
+
+def _blit_variant_body(column):
+    """$83b6, $8450, $84ea ... $8d58 — one of the sixteen. Two halves about the source BUFFER's own
+    end, with the `tst.w d6 / bpl / rts` between them that is how "no second half" is spelt."""
+    between = (tst_w_dn(D6) + branch_w(BPL_W, RTS) + RTS + lea_d16(A0, -BUFFER_LEN))
+    return (_blit_variant_half(column, D7) + between + _blit_variant_half(column, D6) + RTS)
+
+
+def _blit_dispatcher_body():
+    """$82f8 — everything before the two `jmp (a2)`, which are its only exits.
+
+    One screen address, one source address, one table entry and the two `dbf` counts. The counts are
+    where the two arms part: below BLIT_WRAP_ROW the window fits the buffer and d6 is loaded with
+    the "no second half" marker outright; at or above it both halves are computed from the ring row.
+    """
+    fits = (move_w_imm_dn(D6, BLIT_NO_SECOND_HALF)
+            + move_w_imm_dn(D7, BLIT_SCANLINES - 1)
+            + jmp_ind(A2))
+    return (movea_l_abs_w(A1, SCREEN_BACK) + adda_w_imm_an(BLIT_SCREEN_ORIGIN, A1)
+            + lea_abs_l(A0, BUFFER_BASE)
+            + move_w_abs_l_dn(D0, PHASE) + mulu_w_imm_dn(D0, BUFFER_PHASE_STRIDE)
+            + lea_indexed(A0, D0, longword_index=True)
+            + move_w_abs_l_dn(D0, SCROLL_Y)
+            + shift_imm_dn(ASL_W_IMM, _shift_for(BUFFER_LINE), D0) + lea_indexed(A0, D0)
+            + move_w_abs_l_dn(D0, SCROLL_X) + move_w_dn_dn(D1, D0)
+            + shift_imm_dn(ASL_W_IMM, _shift_for(CELL_BYTES), D0) + lea_indexed(A0, D0)
+            + lea_abs_l(A2, BLIT_TABLE)
+            + shift_imm_dn(ASL_W_IMM, _shift_for(LONGWORD_LEN), D1) + movea_l_indexed(A2, A2, D1)
+            + move_w_abs_l_dn(D6, SCROLL_Y) + subi_w_dn(D6, BLIT_WRAP_ROW)
+            + branch_w(BPL_W, fits) + fits
+            + move_w_imm_dn(D7, BUFFER_SCANLINES) + sub_w_abs_l_dn(D7, SCROLL_Y)
+            + move_w_imm_dn(D6, BLIT_SCANLINES - 1) + sub_w_dn_dn(D6, D7)
+            + subq_w_imm_dn(1, D7) + jmp_ind(A2))
+
+
 VERTICAL_STEP_BODIES = {"up": _vertical_step_body(down=False),
                         "down": _vertical_step_body(down=True)}
 ROW_FILL_BODIES = {"top": _row_fill_body(bottom=False), "bottom": _row_fill_body(bottom=True)}
@@ -1154,8 +1304,10 @@ ENTRY_BYTES = {
     "bg_scroll_serve_requests": _serve_requests_body(),
     "bg_scroll_raise_requests": _raise_requests_body(),
     "bg_scroll_run_queue": _run_queue_body(),
+    "bg_scroll_blit": _blit_dispatcher_body(),
+    **{variant_name(column): _blit_variant_body(column) for column in range(BLIT_VARIANTS)},
 }
-RECONSTRUCTED_ROUTINES = 16
+RECONSTRUCTED_ROUTINES = 17 + BLIT_VARIANTS
 
 
 # --- glue -----------------------------------------------------------------------------------------
@@ -1232,6 +1384,23 @@ def test_the_whole_body_is_the_bytes_this_battery_reconstructs(name):
     ("bg_scroll_serve_requests", 58),
     ("bg_scroll_raise_requests", 78),
     ("bg_scroll_run_queue", 112),
+    ("bg_scroll_blit", 110),
+    ("bg_scroll_copy_x0", 154),
+    ("bg_scroll_copy_x1", 154),
+    ("bg_scroll_copy_x2", 166),
+    ("bg_scroll_copy_x3", 166),
+    ("bg_scroll_copy_x4", 166),
+    ("bg_scroll_copy_x5", 166),
+    ("bg_scroll_copy_x6", 166),
+    ("bg_scroll_copy_x7", 166),
+    ("bg_scroll_copy_x8", 166),
+    ("bg_scroll_copy_x9", 166),
+    ("bg_scroll_copy_x10", 166),
+    ("bg_scroll_copy_x11", 166),
+    ("bg_scroll_copy_x12", 166),
+    ("bg_scroll_copy_x13", 166),
+    ("bg_scroll_copy_x14", 166),
+    ("bg_scroll_copy_x15", 166),
 ], ids=lambda v: v if isinstance(v, str) else f"{v}B")
 def test_the_reconstructed_body_is_the_whole_routine(name, size):
     """The pins above would still pass on a PREFIX of a routine. These are the sizes the Ghidra
@@ -2273,3 +2442,483 @@ def test_the_queue_owes_no_more_steps_than_the_cases_cap():
     is the reading that keeps the cap a bound: the furthest case must still be within it."""
     furthest = 2 * QUEUE_MAX_STEPS * SCROLL_STEP
     assert (furthest // SCROLL_STEP) // 2 <= QUEUE_MAX_STEPS
+
+
+# ==================================================================================================
+# THE CONSUMER TIER: bg_scroll_blit ($82f8) AND ITS SIXTEEN COPY VARIANTS ($83b6..$8dfe)
+#
+# Everything above PRODUCES the eight pre-shifted buffers; this reads one of them and copies the
+# visible window into WB_SCREEN_BACK. Three things make it different from the engine's batteries:
+#
+#   * THE DISPATCH IS A JUMP TABLE GHIDRA CANNOT FOLLOW, which is why $83b6..$8dfe was in no
+#     function at all until ../names.txt named it (PORTABILITY.md §8.1). A case entered at $82f8
+#     runs the dispatcher AND the variant its `jmp (a2)` reaches, so the table is exercised as the
+#     original exercises it; a case entered at a VARIANT supplies the four registers the dispatcher
+#     would have and pins that body on its own. Both kinds are here, because either alone would
+#     leave one of the two halves of the mechanism unpinned.
+#   * THE SIXTEEN VARIANTS ARE ONE PATTERN, AND THAT IS TESTED RATHER THAN ASSUMED. Each one's
+#     WHOLE body is assembled from `_blit_variant_half` and pinned against the image, three of them
+#     are ALSO pinned against bytes transcribed straight out of ../out/wonderboy_dis.txt (so the
+#     pattern itself cannot be what is wrong), and the entry addresses, the lengths and the gaps
+#     between them are pinned against the jump table. That is what lets src/scroll.c be one
+#     parametrised function instead of sixteen copies.
+#   * BOTH SCREENS ARE SEEDED, AND THE SOURCE REGION TOO. The destination is 19,200 bytes with
+#     40-byte gaps between its rows and the source is a ring inside one of eight buffers, so a copy
+#     that ran one scanline long, chained by the wrong stride or read the wrong buffer must land on
+#     bytes that are wrong FOR WHERE THEY WERE WRITTEN rather than on zeros — the address-keyed
+#     seeding the engine's batteries use, extended over $70000..$80000.
+#
+# KNOWINGLY NOT PINNED
+#   * A COLUMN OUTSIDE 0..15. `movea.l (0,a2,d1.w),a2` bounds nothing, so the original would jump
+#     through whatever longword follows the table; C has no such behaviour to reproduce. The domain
+#     is established instead: WB_BG_SCROLL_X is written at exactly three places in the whole image,
+#     and every one of them leaves a nibble — a `subq.w #1` and an `addq.w #1`, each immediately
+#     followed by its own `andi.w #$f`, plus one `clr.w`
+#     (test_the_column_is_a_nibble_wherever_the_image_writes_it).
+#   * THE `bpl` ARM'S OWN OVERFLOW. `subi.w #$10,d6 / bpl` reads N alone, so it really is the
+#     wrapped difference's sign — the reading `bgt`/`blt` would NOT support (STATUS.md, batch 6).
+#     The two readings part company only for a ring row at or above $8000, and such a row also
+#     asks the first half for 32,944 scanlines, which walks off the image. Reproduced by
+#     construction and honestly unreached; the game's own writers of WB_BG_SCROLL_Y keep it on the
+#     0..$ae grid.
+#   * THE REGISTERS THE COPY LEAVES BEHIND. It walks out with a0/a1 far past where they started and
+#     its one call site `rts`s immediately, so there is nothing to compare against — the same
+#     family as the column fills'.
+# ==================================================================================================
+
+# A variant is thirty `move.l` and three instructions per scanline; the dispatcher adds twenty-odd
+# ahead of them. Doubled, so the cap fails a run that fell into a 65536-iteration `dbf` rather than
+# predicting the exact count.
+_BLIT_SCANLINE_INSNS = BLIT_LONGWORDS + 4
+_BLIT_ENTRY_INSNS = 24
+BLIT_INSN_CAP = 2 * (_BLIT_ENTRY_INSNS + BLIT_SCANLINES * _BLIT_SCANLINE_INSNS)
+
+# What the two screen buffers cost to seed, and where a blit's destination sits inside one.
+SCREEN_BYTES = 2 * (SCREEN_BUFFERS[1] - SCREEN_BUFFERS[0])
+
+
+def _blit_pokes(phase, scroll_x, row, salt, screen=SCREEN_BUFFERS[0]):
+    """The image a blit case runs on.
+
+    All eight source buffers are seeded (`whole_region=True`) rather than only the phase's own, so a
+    run that picked the wrong buffer lands on seeded-but-wrong bytes; both screens are seeded for the
+    same reason on the destination side, and with the SAME address key, so the two agree where a
+    case reads one and writes the other.
+    """
+    pokes = _scroll_pokes(phase, scroll_x, y_coarse=row >> Y_COARSE_SHIFT, salt=salt,
+                          whole_region=True)
+    pokes.update({
+        SCROLL_Y: word(row),
+        SCREEN_BACK: longword(screen),
+        SCREEN_BUFFERS[0]: _keyed_block(SCREEN_BUFFERS[0], SCREEN_BYTES, salt + 4),
+    })
+    return pokes
+
+
+# --- the model ------------------------------------------------------------------------------------
+# Written from ../out/wonderboy_dis.txt rather than from src/scroll.c, so it is a third statement of
+# the same geometry and the one that lets a case say WHICH bytes moved.
+
+def _blit_geometry(image):
+    """What $82f8 computes before its `jmp (a2)`: which variant, from where, to where, and the two
+    `dbf` counts. Returned separately from the copy so a case can assert the SPLIT on its own."""
+    phase = _u16(image, PHASE)
+    row = _u16(image, SCROLL_Y)
+    column = _u16(image, SCROLL_X)
+
+    source = (BUFFER_BASE + phase * BUFFER_PHASE_STRIDE
+              + _s16((row << BLIT_ROW_SHIFT) & 0xffff)
+              + _s16((column * CELL_BYTES) & 0xffff)) & 0xffffffff
+    dest = (_u32(image, SCREEN_BACK) + BLIT_SCREEN_ORIGIN) & 0xffffffff
+
+    if _s16((row - BLIT_WRAP_ROW) & 0xffff) < 0:
+        return column, source, dest, BLIT_SCANLINES - 1, BLIT_NO_SECOND_HALF
+    to_the_end = (BUFFER_SCANLINES - row) & 0xffff
+    return (column, source, dest,
+            (to_the_end - 1) & 0xffff, ((BLIT_SCANLINES - 1) - to_the_end) & 0xffff)
+
+
+def _model_blit_copy(image, column, source, dest, first_rows, second_rows):
+    """One of the sixteen copy variants, walked in Python. Returns ({address: final byte},
+    (lowest source address read, one past the highest)) — the span being what pins that the ring
+    walk never leaves the buffer the phase named."""
+    out = {}
+    before_seam = ROW_LONGWORDS - CELL_LONGWORDS * column
+    wraps = before_seam < BLIT_LONGWORDS
+    read_lo, read_hi = source, source
+
+    def run(longwords):
+        nonlocal source, dest, read_lo, read_hi
+        for _ in range(longwords):
+            for byte in range(LONGWORD_LEN):
+                at = (source + byte) & 0xffffffff
+                out[(dest + byte) & 0xffffffff] = out.get(at, image[at])
+            read_lo = min(read_lo, source)
+            read_hi = max(read_hi, source + LONGWORD_LEN)
+            source = (source + LONGWORD_LEN) & 0xffffffff
+            dest = (dest + LONGWORD_LEN) & 0xffffffff
+
+    def scanlines(rows):
+        nonlocal source, dest
+        for _ in range(rows + 1):
+            run(before_seam if wraps else BLIT_LONGWORDS)
+            if wraps:
+                # `lea -128(a0),a0` — back to the START of the same source row, not the next one.
+                source = (source - BUFFER_LINE) & 0xffffffff
+                run(BLIT_LONGWORDS - before_seam)
+            dest = (dest + SCREEN_LINE - BLIT_ROW_BYTES) & 0xffffffff
+            source = (source + CELL_BYTES + (BUFFER_LINE if wraps else 0)) & 0xffffffff
+
+    scanlines(first_rows)
+    if _s16(second_rows) >= 0:
+        source = (source - BUFFER_LEN) & 0xffffffff
+        scanlines(second_rows)
+    return out, (read_lo, read_hi)
+
+
+def _model_blit(image):
+    """$82f8 end to end, dispatcher and variant together."""
+    return _model_blit_copy(image, *_blit_geometry(image))
+
+
+# --- glue -------------------------------------------------------------------------------------------
+_BLIT = leaf.image_glue("bg_scroll_blit")
+_COPY_COLUMN = leaf.register_glue("bg_scroll_copy_column", [ctypes.c_uint32] * 5)
+
+
+# --- what the jump table is, and that the family really is one pattern ------------------------------
+
+def test_the_blit_table_names_the_sixteen_variants_and_they_tile_the_region():
+    """The table is DATA the original jumps through, so its sixteen longwords are read off the image
+    and required to be the sixteen entry points ../names.txt gives — and to tile $83b6..$8dfe with
+    no gap and no overlap, which is what makes "the family is exactly these sixteen" a reading
+    rather than a boundary someone chose."""
+    entries = [_u32(harness.BASE_IMAGE, BLIT_TABLE + column * LONGWORD_LEN)
+               for column in range(BLIT_VARIANTS)]
+    named = [leaf.entry_of(variant_name(column)) for column in range(BLIT_VARIANTS)]
+    assert entries == named, (
+        f"the table holds {[hex(a) for a in entries]}, not the {[hex(a) for a in named]} "
+        f"../names.txt names")
+
+    for column in range(BLIT_VARIANTS - 1):
+        body = len(ENTRY_BYTES[variant_name(column)])
+        assert entries[column] + body == entries[column + 1], (
+            f"variant {column} is {body} bytes from {entries[column]:#x} and variant {column + 1} "
+            f"starts at {entries[column + 1]:#x} — the family does not tile")
+
+    # The last variant has no successor to butt against, so its end is pinned against the address
+    # the family is documented to reach — not against itself, which no arrangement of bytes fails.
+    last = variant_name(BLIT_VARIANTS - 1)
+    family_end = entries[BLIT_VARIANTS - 1] + len(ENTRY_BYTES[last])
+    assert family_end == BLIT_FAMILY_END, (
+        f"{last} ends at {family_end:#x}, so the family is not the {BLIT_FAMILY_END:#x} region "
+        f"../names.txt and include/wonderboy.h both describe")
+
+    # ...and the table itself begins where the dispatcher's body ends, so nothing falls into it.
+    assert BLIT_TABLE == leaf.entry_of("bg_scroll_blit") + len(ENTRY_BYTES["bg_scroll_blit"])
+
+
+def test_the_table_is_the_only_thing_that_names_a_variant():
+    """A whole-image abs.l scan: each variant's address occurs exactly ONCE, in its own table entry,
+    and WB_BG_BLIT_TABLE itself exactly once, in the dispatcher's `lea`. Together those two readings
+    are why one `column` argument can stand in for the original's computed jump — there is no other
+    way into the family, and no other reader of the table."""
+    program = bytes(harness.BASE_IMAGE[:loader.PROGRAM_END])
+    wanted = {longword(leaf.entry_of(variant_name(column))): variant_name(column)
+              for column in range(BLIT_VARIANTS)}
+    wanted[longword(BLIT_TABLE)] = "the table itself"
+
+    sites = {name: [] for name in wanted.values()}
+    for at in range(0, len(program) - LONGWORD_LEN, STATE_WORD_LEN):
+        name = wanted.get(program[at:at + LONGWORD_LEN])
+        if name is not None:
+            sites[name].append(at)
+
+    for column in range(BLIT_VARIANTS):
+        name = variant_name(column)
+        assert sites[name] == [BLIT_TABLE + column * LONGWORD_LEN], (
+            f"{name} @ {leaf.entry_of(name):#x} is named at {[hex(a) for a in sites[name]]}, not "
+            f"only by its own table entry")
+    dispatcher = leaf.entry_of("bg_scroll_blit")
+    named_at = sites["the table itself"]
+    assert len(named_at) == 1 and dispatcher <= named_at[0] < dispatcher + len(
+        ENTRY_BYTES["bg_scroll_blit"]), (
+        f"the jump table is named at {[hex(a) for a in named_at]}, which is not the single "
+        f"reference inside bg_scroll_blit's own body that its `lea $8366.l,a2` is")
+
+
+# Everything the image does to WB_BG_SCROLL_X, read off ../out/wonderboy_dis.txt. The two `move.w`
+# forms are the two registers it is read into; the `cmpi.w` is the right-hand fill's wrap test and
+# the `tst.w` the left-hand one's, which is why the compared value comes from RIGHT rather than
+# from a literal here.
+SCROLL_X_STEPS = (subq_w_abs_l(1, SCROLL_X), addq_w_abs_l(1, SCROLL_X))
+SCROLL_X_MASK = andi_w_abs_l(PHASE_MASK, SCROLL_X)
+SCROLL_X_CLEAR = clr_w_abs_l(SCROLL_X)
+SCROLL_X_READS = (move_w_abs_l_dn(D0, SCROLL_X), move_w_abs_l_dn(D7, SCROLL_X),
+                  tst_w_abs_l(SCROLL_X), cmpi_w_abs_l(RIGHT.wrap_at_scroll_x, SCROLL_X))
+SCROLL_X_ENCODINGS = (*SCROLL_X_STEPS, SCROLL_X_MASK, SCROLL_X_CLEAR, *SCROLL_X_READS)
+
+# An `abs.w` operand is sign-extended, so a word can only name an address below this one.
+ABS_W_REACH = 0x8000
+
+
+def _scroll_x_instruction_ending_at(program, past_operand):
+    """(address, encoding) of whichever WB_BG_SCROLL_X instruction ends at `past_operand`, or None.
+
+    All of them carry the operand LAST, so the candidates are told apart by the words in FRONT of
+    it and at most one can match.
+    """
+    for encoding in SCROLL_X_ENCODINGS:
+        at = past_operand - len(encoding)
+        if program[at:past_operand] == encoding:
+            return at, encoding
+    return None
+
+
+def test_the_column_is_a_nibble_wherever_the_image_writes_it():
+    """The domain 0..15 that `bg_scroll_copy_column`'s `column` argument stands on, scanned for
+    rather than read off the two steps this battery happens to run.
+
+    `movea.l (0,a2,d1.w),a2` bounds nothing, so what keeps the dispatched jump inside the table is
+    WB_BG_SCROLL_X's own range — a claim about every writer in the IMAGE. Every even-aligned abs.l
+    reference to the word is found and matched against the encodings the disassembly shows, and the
+    ones that write it are required to be exactly three: a `subq.w #1` and an `addq.w #1`, each
+    immediately followed by its own `andi.w #$f`, and the `clr.w` at $fb7e.
+
+    The two limits test_copylock.py's sweep states apply here too. `abs.w` cannot reach the word at
+    all — it is above $8000, so a word operand would sign-extend into $ffffxxxx — which is asserted
+    rather than argued; and a register-indirect write would be invisible to this or to any operand
+    scan (PORTABILITY.md §2).
+    """
+    assert SCROLL_X >= ABS_W_REACH, (
+        f"{SCROLL_X:#x} is inside an abs.w's reach, so this abs.l-only scan is not the whole image")
+
+    program = bytes(harness.BASE_IMAGE[:loader.PROGRAM_END])
+    operand = longword(SCROLL_X)
+    writers = {}
+    for at in range(0, len(program) - LONGWORD_LEN, STATE_WORD_LEN):
+        if program[at:at + LONGWORD_LEN] != operand:
+            continue
+        found = _scroll_x_instruction_ending_at(program, at + LONGWORD_LEN)
+        assert found is not None, (
+            f"{SCROLL_X:#x} is named at {at:#x} by an instruction outside the ones "
+            f"../out/wonderboy_dis.txt shows, so what it can hold is no longer established")
+        site, encoding = found
+        if encoding not in SCROLL_X_READS:
+            writers[site] = encoding
+
+    stepped = {site: enc for site, enc in writers.items() if enc in SCROLL_X_STEPS}
+    masks = {site for site, enc in writers.items() if enc == SCROLL_X_MASK}
+    cleared = {site for site, enc in writers.items() if enc == SCROLL_X_CLEAR}
+
+    assert set(stepped.values()) == set(SCROLL_X_STEPS) and len(stepped) == len(SCROLL_X_STEPS), (
+        f"the word is stepped at {sorted(hex(a) for a in stepped)}, which is not one `subq.w #1` "
+        f"and one `addq.w #1`")
+    assert len(cleared) == 1, (
+        f"the word is cleared at {sorted(hex(a) for a in cleared)}, not at the one `clr.w` $fb7e")
+    assert masks == {site + len(enc) for site, enc in stepped.items()}, (
+        f"the `andi.w #${PHASE_MASK:x}`s are at {sorted(hex(a) for a in masks)} and the steps end "
+        f"at {sorted(hex(a + len(e)) for a, e in stepped.items())} — a step that is not masked "
+        f"immediately after can put the column outside 0..{PHASE_MASK}")
+
+
+@pytest.mark.parametrize("column,body", [
+    (0, "22d8" * 30 + "43e90028" + "5088" + "51cfffbc"
+        + "4a46" + "6a000004" + "4e75" + "41e8a800"
+        + "22d8" * 30 + "43e90028" + "5088" + "51ceffbc" + "4e75"),
+    (2, "22d8" * 28 + "41e8ff80" + "22d8" * 2 + "43e90028" + "41e80088" + "51cfffb6"
+        + "4a46" + "6a000004" + "4e75" + "41e8a800"
+        + "22d8" * 28 + "41e8ff80" + "22d8" * 2 + "43e90028" + "41e80088" + "51ceffb6" + "4e75"),
+    (15, "22d8" * 2 + "41e8ff80" + "22d8" * 28 + "43e90028" + "41e80088" + "51cfffb6"
+         + "4a46" + "6a000004" + "4e75" + "41e8a800"
+         + "22d8" * 2 + "41e8ff80" + "22d8" * 28 + "43e90028" + "41e80088" + "51ceffb6" + "4e75"),
+], ids=["x0", "x2", "x15"])
+def test_three_variants_are_the_bytes_the_disassembly_shows(column, body):
+    """Three of the sixteen transcribed straight out of ../out/wonderboy_dis.txt.
+
+    Every other pin in this battery is built from `_blit_variant_half`, so a pattern that was wrong
+    in the same way twice would pass them all. These are the ones that fix the pattern itself: the
+    first variant (no seam), the first that needs one, and the last, whose seam is at the other end.
+    """
+    assert ENTRY_BYTES[variant_name(column)].hex() == body
+
+
+def test_the_consumer_tiers_derived_geometry_is_what_the_numbers_say():
+    """The constants include/wonderboy.h states as literals with their derivation in a comment."""
+    assert BLIT_ROW_BYTES == BLIT_LONGWORDS * LONGWORD_LEN
+    assert ROW_LONGWORDS == BUFFER_LINE // LONGWORD_LEN
+    assert CELL_LONGWORDS == CELL_BYTES // LONGWORD_LEN
+    assert BUFFER_SCANLINES == BUFFER_LEN // BUFFER_LINE
+    assert BLIT_WRAP_ROW == BUFFER_SCANLINES - BLIT_SCANLINES
+    assert BLIT_ROW_SHIFT == _shift_for(BUFFER_LINE)
+    assert BLIT_VARIANTS == PHASE_MASK + 1, "the table's extent is not bg_scroll_x's whole range"
+    # ...and what an unbounded index would reach past the end of it: bg_scroll_x's own word.
+    assert BLIT_TABLE + BLIT_VARIANTS * LONGWORD_LEN == SCROLL_X
+    # The window fits the screen it is copied into: 240 px across from 64, 160 rows from row 32.
+    assert BLIT_SCREEN_ORIGIN % SCREEN_LINE + BLIT_ROW_BYTES <= SCREEN_LINE
+    assert BLIT_SCREEN_ORIGIN + BLIT_SCANLINES * SCREEN_LINE <= SCREEN_BUFFERS[1] - SCREEN_BUFFERS[0]
+
+
+def test_the_two_halves_always_copy_the_windows_own_height():
+    """Over EVERY ring row the game's own vertical steps can produce.
+
+    The `bpl` arm and the computed arm are different code, and the claim that binds them is that
+    both copy exactly WB_BG_BLIT_SCANLINES scanlines — which is also why no `dbf` count here can run
+    away. A statement about the MODEL, which every case below pins against the original byte for
+    byte; running eighty-eight more oracle passes would say nothing this does not.
+    """
+    image = bytearray(harness.make_image({PHASE: word(0), SCROLL_X: word(0),
+                                          SCREEN_BACK: longword(SCREEN_BUFFERS[0])}))
+    for row in range(0, SCROLL_Y_LAST + 1, SCROLL_STEP):
+        image[SCROLL_Y:SCROLL_Y + STATE_WORD_LEN] = word(row)
+        _column, _source, _dest, first, second = _blit_geometry(image)
+        copied = (first + 1) + (second + 1 if _s16(second) >= 0 else 0)
+        assert copied == BLIT_SCANLINES, (
+            f"ring row {row:#x} copies {copied} scanlines, not the window's {BLIT_SCANLINES}")
+        assert first < BLIT_SCANLINES and _s16(second) < BLIT_SCANLINES
+
+
+# --- one variant on its own, entered where the jump table would enter it ----------------------------
+# The registers the dispatcher hands over: a0 = source, a1 = destination, d7 = the first half's
+# count, d6 = the second's. Four scanlines to the source buffer's end and two past the rewind — the
+# real geometry in miniature, so every variant runs BOTH of its halves for a few hundred bytes.
+VARIANT_FIRST_ROWS = 3
+VARIANT_SECOND_ROWS = 1
+VARIANT_PHASE = 8
+VARIANT_START_ROW = BUFFER_SCANLINES - (VARIANT_FIRST_ROWS + 1)
+
+
+def _run_variant(column, first_rows, second_rows, start_row, salt):
+    pokes = _blit_pokes(VARIANT_PHASE, column, start_row, salt)
+    image = harness.make_image(pokes)
+    source = (BUFFER_BASE + VARIANT_PHASE * BUFFER_PHASE_STRIDE + start_row * BUFFER_LINE
+              + column * CELL_BYTES)
+    dest = SCREEN_BUFFERS[0] + BLIT_SCREEN_ORIGIN
+    expected, _span = _model_blit_copy(image, column, source, dest, first_rows, second_rows)
+
+    what = (f"{variant_name(column)} from row {start_row:#x}, {first_rows + 1} + "
+            f"{second_rows + 1 if _s16(second_rows) >= 0 else 0} scanlines")
+    return _run_modelled(variant_name(column), _COPY_COLUMN(column, source, dest, first_rows,
+                                                            second_rows),
+                         expected, what, BLIT_INSN_CAP,
+                         regs={"_pokes": pokes, "a0": source, "a1": dest,
+                               "d7": first_rows, "d6": second_rows})
+
+
+@pytest.mark.parametrize("column", range(BLIT_VARIANTS))
+def test_every_copy_variant_moves_the_scanlines_its_own_seam_splits(column):
+    """One case per variant, entered AT the variant. Columns 0 and 1 copy each scanline in one run;
+    the other fourteen rewind a whole source row mid-scanline, at a point that moves two longwords
+    further along with every column — which is the only thing that distinguishes them."""
+    _run_variant(column, VARIANT_FIRST_ROWS, VARIANT_SECOND_ROWS, VARIANT_START_ROW,
+                 salt=_case_salt(f"variant-{column}"))
+
+
+@pytest.mark.parametrize("column", [0, 1, 2, PHASE_MASK])
+def test_a_copy_variant_stops_at_its_first_half_when_the_second_count_is_negative(column):
+    """`tst.w d6 / bpl / rts`: the marker the dispatcher's non-wrapping arm loads ends the copy
+    there, so the `lea -$5800(a0),a0` rewind never happens and no second half is drawn."""
+    _run_variant(column, VARIANT_FIRST_ROWS, BLIT_NO_SECOND_HALF, 0x20,
+                 salt=_case_salt(f"variant-{column}-first-half-only"))
+
+
+def test_a_copy_variants_second_half_starts_one_whole_buffer_back():
+    """The rewind, stated as an address rather than inferred from the pixels: the first half ends
+    past the buffer's last scanline and the second resumes at the SAME column of its first."""
+    column = 5
+    source = (BUFFER_BASE + VARIANT_PHASE * BUFFER_PHASE_STRIDE
+              + VARIANT_START_ROW * BUFFER_LINE + column * CELL_BYTES)
+    pokes = _blit_pokes(VARIANT_PHASE, column, VARIANT_START_ROW, salt=_case_salt("variant-rewind"))
+    image = harness.make_image(pokes)
+    _writes, (read_lo, read_hi) = _model_blit_copy(image, column, source,
+                                                   SCREEN_BUFFERS[0] + BLIT_SCREEN_ORIGIN,
+                                                   VARIANT_FIRST_ROWS, VARIANT_SECOND_ROWS)
+    buffer_lo = BUFFER_BASE + VARIANT_PHASE * BUFFER_PHASE_STRIDE
+    assert read_lo == buffer_lo, (
+        f"the second half read from {read_lo:#x}, not the buffer's own first scanline "
+        f"{buffer_lo:#x} — the rewind is not one whole buffer")
+    assert read_hi <= buffer_lo + BUFFER_LEN
+
+
+# --- the whole thing, through the jump table --------------------------------------------------------
+# Each case names the three words that place the copy: the phase (which of the eight buffers), the
+# ring row (where the window starts, and so how the two halves split) and bg_scroll_x (which variant
+# the table reaches, and so where each scanline's seam falls).
+BLIT_CASES = [
+    ("phase0-x0-row0", 0, 0, 0),
+    ("phase14-x15-row0", PHASE_LAST, PHASE_MASK, 0),
+    ("x1-just-below-the-wrap", 8, 1, BLIT_WRAP_ROW - SCROLL_STEP),
+    ("x2-exactly-at-the-wrap", 8, 2, BLIT_WRAP_ROW),
+    ("x5-one-row-past-the-wrap", 8, 5, BLIT_WRAP_ROW + SCROLL_STEP),
+    ("x5-mid-ring", 8, 5, 0x40),
+    ("x15-at-the-last-ring-row", PHASE_LAST, PHASE_MASK, SCROLL_Y_LAST),
+    ("x0-at-the-last-ring-row", 0, 0, SCROLL_Y_LAST),
+]
+
+
+def _run_blit(case, phase, scroll_x, row, screen=SCREEN_BUFFERS[0]):
+    pokes = _blit_pokes(phase, scroll_x, row, salt=_case_salt(case), screen=screen)
+    image = harness.make_image(pokes)
+    expected, span = _model_blit(image)
+    _run_modelled("bg_scroll_blit", _BLIT, expected, f"bg_scroll_blit {case}", BLIT_INSN_CAP,
+                  regs={"_pokes": pokes})
+    return image, expected, span
+
+
+@pytest.mark.parametrize("case,phase,scroll_x,row", BLIT_CASES, ids=[c[0] for c in BLIT_CASES])
+def test_a_blit_copies_the_window_the_three_position_words_place(case, phase, scroll_x, row):
+    _run_blit(case, phase, scroll_x, row)
+
+
+@pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])
+def test_a_blit_draws_into_whichever_buffer_screen_back_names(screen):
+    """The destination comes out of MEMORY (`movea.l $750.w,a1`), so both buffers are run: a
+    reconstruction that hardcoded one would pass on the other's case and fail here."""
+    _run_blit(f"screen-{screen:#x}", phase=8, scroll_x=5, row=0x40, screen=screen)
+
+
+def test_the_wrap_test_reads_the_wrapped_signs_and_not_the_row_against_the_boundary():
+    """`subi.w #$10,d6 / bpl` tests the sign of the WRAPPED difference, because `bpl` reads N alone
+    — where bg_scroll_raise_requests' `bgt`/`blt` read N xor V (STATUS.md, batch 6). The two
+    readings of the same instruction pair agree on every row the game itself produces, and this is
+    the case that separates them.
+
+    WB_BG_SCROLL_Y has exactly three writers in the whole image — the two vertical steps, which keep
+    it on the 0..$ae grid, and the `clr.w` at $fb84 — so the range they part company over ($8010 and
+    up) is out of the game's reach. Most of it is out of the HARNESS's reach as well, since the same
+    word feeds `move.w #$b0,d7 / sub.w`: a row of $8010 asks for 32,928 scanlines and walks off the
+    image. A row of $fffe does not. The wrapped-sign reading copies the window's own 160 scanlines
+    from two scanlines before the buffer; the boundary reading takes the other arm and copies 178.
+    Seeded rather than argued about, and named for the out-of-range row it is.
+    """
+    _run_blit("ring-row-below-zero", phase=8, scroll_x=5, row=(0 - SCROLL_STEP) & 0xffff)
+
+
+def test_a_blit_writes_exactly_the_visible_window():
+    """The write set stated as a rectangle rather than as whatever the model produced: 160 scanlines
+    of 120 bytes, one WB_SCREEN_LINE apart, from WB_SCREEN_BACK + $1420 — so the 40 bytes between
+    the end of one row and the start of the next are pinned as NOT written."""
+    _image, expected, _span = _run_blit("window-geometry", phase=8, scroll_x=5, row=0x40)
+    window = {SCREEN_BUFFERS[0] + BLIT_SCREEN_ORIGIN + scanline * SCREEN_LINE + byte
+              for scanline in range(BLIT_SCANLINES) for byte in range(BLIT_ROW_BYTES)}
+    assert set(expected) == window, (
+        f"the blit wrote {len(expected)} bytes against the window's {len(window)} — first "
+        f"difference at {min(set(expected) ^ window):#x}")
+
+
+@pytest.mark.parametrize("case,phase,scroll_x,row", BLIT_CASES, ids=[c[0] for c in BLIT_CASES])
+def test_a_blit_reads_only_the_buffer_its_phase_names(case, phase, scroll_x, row):
+    """Both rings, from the source side: whatever the row and the column, the walk stays inside one
+    $5800 buffer. A copy that chained by the wrong stride, or rewound by a row where it should have
+    rewound by a buffer, leaves it.
+
+    Read off the MODEL, whose every written byte the case above pins against the original — the
+    oracle reports what a run WROTE and has no read set to compare against, so a second oracle pass
+    here would add nothing.
+    """
+    image = harness.make_image(_blit_pokes(phase, scroll_x, row, salt=_case_salt(case)))
+    _writes, (read_lo, read_hi) = _model_blit(image)
+    buffer_lo = BUFFER_BASE + phase * BUFFER_PHASE_STRIDE
+    assert buffer_lo <= read_lo and read_hi <= buffer_lo + BUFFER_LEN, (
+        f"{case}: the copy read ${read_lo:x}..${read_hi:x}, which is not inside the buffer "
+        f"${buffer_lo:x}..${buffer_lo + BUFFER_LEN:x} the phase names")

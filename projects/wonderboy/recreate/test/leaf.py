@@ -24,6 +24,13 @@ import emu                                                       # noqa: E402
 # derived from that routine's own geometry for the same reason.
 LEAF_INSN_CAP = 64
 
+# The game's own two screen buffers (../names.txt: screen_back starts at $70000, screen_front
+# $78000, and clear_both_screens clears $70000..$7fd00 — exactly the two back to back). Every
+# battery whose routines DRAW takes its destination from one of them, because a destination comes
+# out of memory and nothing may be hardcoded; it lives here rather than in one of them because two
+# files would otherwise carry the same pair and could disagree about it.
+SCREEN_BUFFERS = (0x70000, 0x78000)
+
 # Every address in ../names.txt that carries a name, inverted. Two functions sharing a name would
 # make `entry_of` ambiguous, so the inversion is checked rather than assumed.
 _ADDRS_BY_NAME = {}
