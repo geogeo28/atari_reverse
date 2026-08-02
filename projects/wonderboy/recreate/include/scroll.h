@@ -25,6 +25,15 @@
 
 #include <stdint.h>
 
+/* One run of `move.l (a0)+,(a1)+`, which is the only instruction any of the sixteen copy variants
+ * below spends its length on — and the same run the message box's blit is built out of, so
+ * src/text.c calls it too. `source` and `dest` are in/out: each comes back advanced by
+ * `longwords * 4` through the 68000's address ALU, which is what a caller then adds its own row
+ * skip to. It lives here rather than in the kit's machine.h because both callers are this game;
+ * ../STATUS.md registers a third one as the trigger to move it. */
+void copy_longwords(uint8_t *image, uint32_t *source, uint32_t *dest, unsigned longwords);
+
+
 /* $79d2 / $795e — advance WB_BG_SCROLL_POS_X by WB_BG_SCROLL_STEP towards WB_BG_SCROLL_LIMIT_X
  * (right) or towards zero (left), at half rate through WB_BG_SCROLL_PENDING.
  * Returns nonzero when the original consumed its caller's next `bsr` — see the note above. */

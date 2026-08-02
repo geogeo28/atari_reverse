@@ -8,15 +8,15 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 102/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 103/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
-actor tier and its two projection passes (356 bytes) and the glyph plotter (226 bytes).**
-`make test`: 1193 cases green, of which 77 are the foundation battery below, 48 are the depacker's
+actor tier and its two projection passes (356 bytes) and the WHOLE text subsystem (678 bytes).**
+`make test`: 1242 cases green, of which 77 are the foundation battery below, 48 are the depacker's
 differential, 187 are the first gameplay batch's, 481 are the status panel's — that last figure was
 169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py` — 231
 are the background scroll subsystem's (65 after batch 5, 148 after batch 6), 113 are the actor
-tier's and 56 the text plotter's. A row appears in the
+tier's and 105 the text subsystem's (56 after batch 8). A row appears in the
 table at the end when a function is reconstructed and green; everything else in `../decomp.c` and
 `../names.txt` is still only *named*, not ported.
 
@@ -191,9 +191,10 @@ out of the 25,696 bytes Ghidra has put inside a function body, which is 46.8 % o
   functions touch no hardware at all (the two exceptions are the game's PRNGs), and 128 (12,070
   bytes) are runnable end-to-end. **51 of them were ported when this measurement was taken** — the
   effect/state leaves, the joystick edge pair, the status panel's leaves and the second tier above
-  them, the table at the end. **That 51 is now STALE and is deliberately not patched**: batches 5–8
-  landed forty more functions that this file's `subsystems.tsv` also files under "game logic" (the
-  whole scroll cluster, the actor tier and the text plotter), and the boundary itself is the thing
+  them, the table at the end. **That 51 is now STALE and is deliberately not patched**: batches 5–9
+  landed forty-one more functions that this file's `subsystems.tsv` also files under "game logic"
+  (the whole scroll cluster, the actor tier and the whole text subsystem), and the boundary itself
+  is the thing
   the queued re-measurement is about — see the end of batch 7. Re-run
   `tools/hw_portability.py` and restate the paragraph from what it prints, rather than adding to a
   number whose denominator is known to be wrong. The
@@ -503,6 +504,7 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x8e66` | `project_actor_list` | 156 | verified | 17 cases: 7 (`$a30`, `$a32`) pairs reaching all three tables — including the sign boundary of each flag and the small positive `$a32` that separates this pass's `bpl` from `$67e0`'s `bne` — x 2 frame toggles, plus a stale published pointer the pass must ignore, a write set stated as the GEOMETRY (nineteen six-byte records back to back plus the published longword), and a guard that the address-keyed seed still arms the flicker bit on some records and not others + whole-body entry pin |
 | `0xbf5e` | `text_plot_glyph` (`src/text.c`) | 210 | verified | 31 cases: 5 glyph sources (both ends of the frame-glyph run, two of the font's own, and the all-zero space) x 6 cursors (the buffer's first cell and its odd twin, a mid-buffer pair, and the last full text row's pair), each stating the 32 written bytes exactly and comparing the returned cursor against both the oracle's a1 and the reconstruction's. Plus a four-step cell walk that shows the +1/+7 alternation lands two plane groups on + whole-body entry pin |
 | `0xbf4e` | `text_plot_char` | 16 | verified | 14 cases: 7 character codes x 2 cursors. The codes are the space the table starts at, two ordinary glyphs, the largest byte, one BELOW the first char (where the byte subtraction wraps), and two carrying rubbish in d0's high half — one harmless, one whose shifted low word is negative and indexes below the font. Each compares the indexed source against the oracle's a0 as well as the plotted bytes + whole-body entry pin |
+| `0xbd8a` | `text_run_message_box` | 452 | verified | 38 differential cases over the ten state bytes: an idle frame that must write NOTHING, 2 dismiss requests, 24 composes (6 shipped messages — the minimum height, the other top line, the maximum height and line count, the shortest string, the one whose line overruns the frame, and the table's last entry — x 4 lifetime phases, including the two the shipped data cannot produce), a compose that beats an already-active box, 8 blits (4 countdown phases x the table's two extreme geometries), a blit into the other screen buffer and one at a top line whose scanline offset SIGN-EXTENDS. Each states the write set exactly — the whole 6400-byte buffer plus the latched fields, or the blitted rectangle plus the countdown — against a model built from `_model_plot` and the game's own message records. Plus 4 structural pins on the $a09c table (self-bounding three ways), one that the seven state fields tile the band, one on the geometry constants' identities + whole-body entry pin |
 
 ### The .RAD depacker
 
@@ -1571,3 +1573,154 @@ nothing else — but it is not small, and it reads the TEN bytes at `$c030..$c03
 WORDS (`$c034`/`$c036`/`$c038`, its timers). That band is `WB_TEXT_STATE_BYTES`, which this batch
 pins only by its EXTENT — what the fields mean, and the message-pointer table at `$a09c` that
 `$bd8a` indexes, are not read. Its one caller is `game_main_loop`'s `jsr $bd8a.l` at `$4fc`.
+**CLOSED by batch 9**, which ported it, read all seven state fields and the `$a09c` table — and
+renamed it, because "compose" is one of its three arms.
+
+### The message box (batch 9): the text subsystem, CLOSED end to end
+
+One routine, 452 bytes, into the file batch 8 opened. It is the queue entry above, and closing it
+closes the whole `$bd8a..$c030` block: **every routine in the text subsystem is now reconstructed,
+its one caller is `game_main_loop`, and it calls nothing outside itself.**
+
+**WHAT THE "COMPOSER" TURNED OUT TO BE, AND IT IS THE BATCH'S FINDING: A LIFECYCLE, NOT A DRAW.**
+`$bd8a` runs once a frame and has THREE arms, picked by the two flag bytes:
+
+1. **`text_request` nonzero** — a message id was posted since the last frame. `$ff` dismisses (clear
+   both flags, draw nothing); otherwise the 1-based id indexes `text_message_table`, whose record
+   gives the box's height and top scanline and then the string. The box is composed into
+   `text_buffer` and **deliberately NOT blitted** — the arm `rts`s at `$bed0`, so the frame a
+   message is requested on shows nothing.
+2. **`text_request` zero and `text_box_active` nonzero** — tick the countdown and blit the
+   **already-composed** buffer to `screen_back`. This is the arm that runs on every frame of a
+   message's life but the first.
+3. **both zero** — `rts` having written not one byte (a case of its own).
+
+So `text_buffer` is a **CACHE, not a scratchpad**, and `$c032`/`$c033` exist to carry the composed
+box's geometry from the one compose frame to every blit frame after it. That is also why the 6400
+bytes are cleared and redrawn only on a request: composing costs ~16,000 instructions, blitting
+~1,800. `../names.txt` renames the routine `text_run_message_box` for it — the same correction batch
+8 made to `text_glyph_source_from_d0`, and for the same reason: the old name described one arm.
+
+**THE TABLE AT `$a09c` IS SELF-BOUNDING, AND NOTHING ELSE COULD HAVE BOUNDED IT.** A whole-image
+scan finds **exactly one** reference to `$a09c` — the routine's own `lea` — so no count is declared
+anywhere. The shipped data gives it three ways over, and all three are cases
+(`test_the_message_table_is_bounded_by_its_own_data`): pointer 0 names `$a270`, the first byte PAST
+the 117-pointer block; every record ends exactly where the next begins; and the last ends at
+`$b346`, which is `panel_refresh_frame`. A count one too small would leave a gap before that
+routine, one too large would read a "pointer" out of a record's text. A record is
+`{byte height in cell rows, byte top scanline, string}`, `$0a` newline and `$ff` terminator — the
+same shape as batch 5's split tables, established from the reader's own walk.
+
+**`$c036` IS A ONE-WAY LATCH, AND THE SCAN IS WHAT SAYS SO.** `text_lifetime_armed` has **exactly
+two** operand sites in the whole image, both inside `$bd8a`: the `move.w #$ffff` that sets it and
+the `tst.w` that reads it. Nothing ever clears it. So after the first message that posted a
+lifetime, every later box decrements `text_lifetime_left` each frame whether or not it asked for
+one — and since only an EXACT zero takes the box down, a box composed with no lifetime under an
+armed latch counts down from whatever the previous message left and usually wraps past zero rather
+than landing on it. Both of those phases are seeded cases (`no-lifetime-already-armed`,
+`armed-and-wrapping-past-zero`), and both are **live gameplay states, not dead branches** — the
+paragraph above is the argument that the game reaches them. What no shipped **record** encodes is a
+lifetime: it is posted by a caller alongside `text_request`, so the phases arise from the state
+history rather than from any record's data. That is exactly why seeding them is legitimate — the
+cases poke the ten bytes of plain RAM the arm reads, which is a reading of the instructions, and no
+record is fabricated.
+`$c032`, `$c033` and `$c038` have no site outside `$bd8a` either.
+
+**THE FRAME IS 22 CELLS WIDE, ALWAYS, AND THAT IS WHAT EXPLAINS THE BUFFER'S 88.** A corner, twenty
+`move.w #$13,d0 / dbf` edges and a corner is `WB_TEXT_BOX_CELLS` = the whole `WB_TEXT_BUFFER_LINE`;
+the blit moves exactly `WB_TEXT_BLIT_LONGWORDS` = the same 88 bytes. Only the HEIGHT varies, from
+`$c032`. Every one of the composer's step constants is that same geometry from another side — 616 is
+a cell row less a buffer line, 80 is the interior in cells, 704 is eight buffer lines — so
+`test_the_boxs_geometry_constants_are_one_set_of_numbers` asserts each against the others rather
+than transcribing them.
+
+**THE SHIPPED DATA OVERRUNS THE FRAME, AND THE CODE LETS IT.** Nothing clamps a text line to the
+twenty interior cells. Over all 117 records, heights run 3..9, top scanlines are only 50 or 60, and
+line counts never exceed height minus 2 — but **message 113 has a 21-character line** that plots
+over the frame's right edge. It is a case
+(`test_exactly_one_shipped_message_overruns_the_frames_right_edge`) and a compose case, and it also
+bounds the missing clamp: the overrun is exactly one cell, so every plot still lands inside the
+buffer's own row.
+
+**THE RUNAWAY THE SHIPPED TABLE CANNOT CAUSE.** `move.b $c032,d0 / subq.w #3,d0 / dbf` counts the
+interior rows in a WORD, so a height below 3 would draw 65,536 rows and walk far past the buffer.
+Reproduced by construction (`uint16_t`, do/while) and asserted unreachable over all 117 records —
+the same family as the scroll's `dbf` counts.
+
+Mutation-checked rather than assumed (each rebuilt with the `.so` DELETED first, and the source
+restored and byte-compared against a pristine copy afterwards — 1242 green each time it was
+restored): the two arms **swapped**, so an active box beats a new request, reddens 2; the **dismiss
+arm dropped**, so `$ff` is an ordinary id, reddens 2; the countdown expiring on **`<= 0`** instead
+of an exact zero reddens 2; the countdown **armed unconditionally** reddens 13; the expiring frame
+**not drawn** reddens 2; **one interior row too many** reddens 25; the interior skip made a **whole
+row advance** reddens 25; the text lines started at the buffer's **cell 0** reddens 25; the blit's
+top line **not sign-extended** reddens 1; the blit's rows made **contiguous** reddens 10; and the
+frame's bottom row drawn with the **top row's glyph triple** reddens 25. **13 mutations, 11 killed,
+2 survivors.**
+
+**Both survivors are EQUIVALENCES, and both are now stated as ones.**
+
+* **The blit arm's `clr.b $c030`.** It opens an arm reached only when `text_request` is ALREADY
+  zero, so the write changes no byte and dropping it from the reconstruction survives. The C keeps
+  it, because it is a write the ORIGINAL makes and the cases state the oracle's write set exactly —
+  the oracle making it is pinned even though the candidate omitting it cannot be.
+  `test_the_blit_arms_request_clear_is_a_write_of_a_byte_already_zero` says so.
+* **The order of the newline and terminator tests.** `$0a` and `$ff` are distinct, so no byte can
+  take both branches and swapping the two `cmp.b`s is an equivalence for every input.
+  `test_the_newline_and_the_terminator_cannot_be_the_same_byte` asserts the distinctness that makes
+  it one, so the day the two constants meet it fails loudly.
+
+**ONE MUTATION WAS A REAL HOLE AND IS NOW PINNED.** "The blit's top line is not sign-extended"
+survived the first sweep: `mulu.w #$a0,d0` is a 32-bit product but `lea 48(a1,d0.w),a1` takes its
+LOW WORD, sign-extended, and the shipped records only ask for 50 or 60 — neither reaches it.
+`$c033` is not re-read from the record on that arm, though: it is plain RAM the blit reads, so a
+case seeds it at 205 (the smallest top line that overflows the word) and the box lands BELOW
+`screen_back` instead of far past it. That is the same move batch 8 made with the small-positive
+mode flags, and it turns the survivor into 1 red.
+
+**TWO COLLAPSES THIS BATCH'S THIRD USERS TRIGGERED, one per language.**
+
+* **Thirteen more helpers are now `test/leaf.py`'s**, and `test_scroll.py` / `test_actor.py` /
+  `test_text.py` import them instead of restating them. The encoders `tst.b`/`tst.w`/`clr.b`/`clr.w`/
+  `st`/`subq.w` on an `<abs>.l`, `mulu.w #imm,Dn`, `movea.l <abs>.w,An`, `move.w #imm,Dn` and
+  `moveq #0,Dn` — every one of them spelt in two files, and `move.w #imm,Dn` in three. The two
+  branch assemblers went with them: `branch(condition, *over)` / `branch_over(condition, span)` and
+  `dbf(reg, *body)` / `dbf_over(reg, body_bytes)`, which is where the drift actually was —
+  `test_scroll.py` and `test_text.py` each had a `dbf` of its own with a DIFFERENT signature (one
+  taking the pieces, the other their length), and the same forward branch was `branch_w` in one file
+  and `_branch` in two others. Each shape now has one name, the pieces form and the length form named
+  apart, so a call site says which it is. **The registered `_keyed_block` entry is CLOSED** —
+  `test_text.py` was the third user batch 8 said would trigger it, and `keyed_block()` now lives once
+  in `leaf.py` beside `keyed_byte()`, carrying the scroll copy's measured no-caching note. `moveq`
+  kept the systematic `moveq_0_dn` spelling over `test_text.py`'s `moveq_zero`, matching
+  `move_w_imm_dn` / `clr_w_dn` / `tst_w_dn`. The whole-body entry pins are the proof the hoist
+  changed nothing: every routine in all three batteries still matches the shipped image byte for
+  byte.
+* **`copy_longwords` is shared between `src/scroll.c` and `src/text.c`**, declared in
+  `include/scroll.h` and defined where it already was. The message box's blit row is the same run of
+  `move.l (a0)+,(a1)+` the sixteen scroll copy variants spend their length on, down to the in/out
+  cursors, so `text.c`'s inner loop and its `TEXT_LONGWORD_BYTES` are gone. It stays project-local
+  rather than moving to the kit's `machine.h` because both users are this game: **registered** on the
+  usual terms — **trigger** = a third user, in this project or another; **home** =
+  `tools/recreate_kit/include/machine.h`, beside `addr_add` and `rotate_left32`.
+
+**What this batch does NOT pin:**
+
+* **WHAT `$bd8a` LEAVES IN d0/d1/a0/a1/d6/a6.** Each arm walks out with different rubbish — the
+  terminator byte and the last glyph's source, or the blit's two ended cursors — and
+  `game_main_loop` reloads everything before its next `jsr`. The C returns nothing; the cases assert
+  the ORACLE's against the model where the arm defines them. The same family as the projections'.
+* **THE ATTRIBUTION (POISON) PASS, ON THIS ROUTINE.** Every non-trivial arm WRITES `text_request`,
+  so poisoning the oracle's outputs turns a zero request into `$ff` and both cores then take the
+  DISMISS arm — the pass would agree, having tested the wrong arm. The driver's cases run with
+  `poison=False` and replace it with an address-keyed destination, an EXACT write set and a model
+  built from the game's own data. Registered here because it is a deviation from every other
+  battery in this project.
+* **AN ID PAST `WB_TEXT_MESSAGE_COUNT`.** `subi.b #$1,d0 / lsl.w #2,d0` indexes with a word, so ids
+  118..256 read a "pointer" out of the record bytes and walk wherever it names. Fifty-two writers
+  raise `$c030` and only their immediates are bounded (they top out at `$64`); the rest are
+  `move.b d0` / `move.b (a0)` and nothing read here bounds them. Reaching it from a case means
+  fabricating a pointer into a table the game ships, which is what CLAUDE.md's coverage rule
+  refuses. Left honestly unpinned.
+* **WHAT ANY GIVEN MESSAGE ID MEANS.** The 117 records are read as geometry and text; which game
+  event raises which id is a property of the 52 writers, none of which this batch read.

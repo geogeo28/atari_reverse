@@ -50,8 +50,10 @@ import pytest
 
 import harness
 import leaf
-from leaf import (RTS, backward_branch, bsr_w, case_salt, forward_branch, keyed_byte, lea_abs_l,
-                  lea_d16, longword, merge_bands, opcode, program_writes, word)
+from leaf import (RTS, branch, branch_over, bsr_w, case_salt, clr_b_abs_l, clr_w_abs_l, dbf,
+                  keyed_block, keyed_byte, lea_abs_l, lea_d16, longword, merge_bands,
+                  move_w_imm_dn, movea_l_abs_w, moveq_0_dn, mulu_w_imm_dn, opcode, program_writes,
+                  st_abs_l, subq_w_abs_l, tst_b_abs_l, tst_w_abs_l, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -311,13 +313,6 @@ MAP_SEED_LEN = MAP_STRIDE_SEED * (BUFFER_TILE_ROWS + 2)
 BUFFER_MARGIN = BUFFER_LINE
 
 
-def _keyed_block(base, length, salt):
-    """One seeded band, built per call rather than cached: every case salts from its own NAME, so a
-    cache would mostly retain bands nothing asks for again (measured: it served under a third of the
-    calls, all of them 8-bit salt collisions between unrelated cases, for 3% of the battery's time)."""
-    return bytes(keyed_byte(base + i, salt) for i in range(length))
-
-
 def _scroll_pokes(phase, scroll_x, y_coarse, map_cursor=MAP_CURSOR_SEED, salt=0,
                   whole_region=False):
     """The image a fill case runs on: the four position words, the map and its stride, the whole
@@ -338,12 +333,12 @@ def _scroll_pokes(phase, scroll_x, y_coarse, map_cursor=MAP_CURSOR_SEED, salt=0,
         Y_COARSE: word(y_coarse),
         MAP_CURSOR: word(map_cursor),
         MAP_ROW_STRIDE: word(MAP_STRIDE_SEED),
-        MAP_DATA: _keyed_block(MAP_DATA, MAP_SEED_LEN, salt + 1),
+        MAP_DATA: keyed_block(MAP_DATA, MAP_SEED_LEN, salt + 1),
         TILE_INDEX_TABLE: b"".join(
             word(TILE_SHIPPED_FIRST + keyed_byte(TILE_INDEX_TABLE + i, salt + 2)
                  % TILE_SHIPPED_COUNT)
             for i in range(TILE_INDEX_ENTRIES)),
-        band_lo: _keyed_block(band_lo, band_len, salt + 3),
+        band_lo: keyed_block(band_lo, band_len, salt + 3),
     }
     return pokes
 
@@ -494,10 +489,6 @@ def move_w_dn_abs_l(reg, addr):
     return opcode(0x33c0 | reg) + longword(addr)
 
 
-def move_w_imm_dn(reg, value):
-    return opcode(0x303c | (reg << 9)) + word(value)
-
-
 def andi_w_abs_l(value, addr):
     return opcode(0x0279) + word(value) + longword(addr)
 
@@ -510,18 +501,6 @@ def andi_w_dn(reg, value):
     return opcode(0x0240 | reg) + word(value)
 
 
-def tst_w_abs_l(addr):
-    return opcode(0x4a79) + longword(addr)
-
-
-def clr_w_abs_l(addr):
-    return opcode(0x4279) + longword(addr)
-
-
-def clr_b_abs_l(addr):
-    return opcode(0x4239) + longword(addr)
-
-
 def cmpi_w_abs_l(value, addr):
     return opcode(0x0c79) + word(value) + longword(addr)
 
@@ -530,27 +509,15 @@ def addq_w_abs_l(amount, addr):
     return opcode(0x5079 | ((amount & 7) << 9)) + longword(addr)
 
 
-def subq_w_abs_l(amount, addr):
-    return opcode(0x5179 | ((amount & 7) << 9)) + longword(addr)
-
-
 def addq_l_ind_a7(amount):
     return opcode(0x5097 | ((amount & 7) << 9))
 
 
 # --- the encodings the vertical half and the queue above it add -----------------------------------
 
-def tst_b_abs_l(addr):
-    return opcode(0x4a39) + longword(addr)
-
-
 def tst_w_abs_w(addr):
     """`tst.w <abs>.w` — the queue's own gate is below $8000, so the original spells it short."""
     return opcode(0x4a78) + word(addr)
-
-
-def st_abs_l(addr):
-    return opcode(0x50f9) + longword(addr)
 
 
 def clr_l_abs_l(addr):
@@ -590,14 +557,6 @@ def subi_w_dn(reg, value):
 
 def neg_w_dn(reg):
     return opcode(0x4440 | reg)
-
-
-def moveq_0_dn(reg):
-    return opcode(0x7000 | (reg << 9))
-
-
-def mulu_w_imm_dn(reg, value):
-    return opcode(0xc0fc | (reg << 9)) + word(value)
 
 
 def add_w_d1_abs_l(addr):
@@ -643,11 +602,6 @@ def tst_w_dn(reg):
 # --- the encodings the consumer tier adds ---------------------------------------------------------
 # bg_scroll_blit is the only routine here that addresses a longword through a table, jumps through a
 # register, or reads WB_SCREEN_BACK, so these are its own.
-
-def movea_l_abs_w(reg, addr):
-    """`movea.l <abs>.w,An` — the blit's screen pointer is below $8000, so it is spelt short."""
-    return opcode(0x2078 | (reg << 9)) + word(addr)
-
 
 def movea_l_indexed(reg, base, index):
     """`movea.l (0,An,Dn.w),Am` — the jump table read, and the whole of the original's dispatch."""
@@ -740,29 +694,12 @@ def bra_s_over(spanned_bytes):
     return opcode(BRA_S | (displacement & BYTE_MASK))
 
 
-def branch_w_over(condition, spanned_bytes):
-    """`bcc.w` past ``spanned_bytes``, for the jumps whose target is known by LENGTH rather than by
-    the pieces — a loop's own closing branch, or a `beq` over one `bsr`."""
-    return opcode(condition) + forward_branch(spanned_bytes)
-
-
-def branch_w(condition, *over):
-    """`bcc.w` past exactly ``over`` — leaf.forward_branch turns the pieces into the displacement."""
-    return branch_w_over(condition, sum(len(piece) for piece in over))
-
-
-def dbf(reg, *body):
-    """`dbf Dn,<start of body>`: the displacement runs back over the body and the opcode word."""
-    return opcode(DBF_DN | reg) + backward_branch(sum(len(piece) for piece in body))
-
-
 BNE_W, BEQ_W, BMI_W, BPL_W, BGT_W, BLT_W = 0x6600, 0x6700, 0x6b00, 0x6a00, 0x6e00, 0x6d00
 # `bra` is one opcode: a zero displacement byte means the WORD form follows, any other means the
 # short form is the whole instruction. BRA_S names the second reading of the same number.
 BRA_W = 0x6000
 BRA_S = BRA_W
 BYTE_MASK = 0xff
-DBF_DN = 0x51c8
 # The fixed half of a `#count,Dn` shift: direction, operand size, immediate count, and which shift.
 ASR_W_IMM, LSL_W_IMM, ASL_W_IMM, LSL_L_IMM, ROL_L_IMM = 0xe040, 0xe148, 0xe140, 0xe188, 0xe198
 LSL_L_7_D0 = shift_imm_dn(LSL_L_IMM, 7, D0)
@@ -838,14 +775,14 @@ def _fill_column_body(edge, load_counts, load_first, load_second):
     wrap = lea_d16(A2, edge.wrap_delta)
     if edge is RIGHT:
         cell_index = addi_w_dn(D0, edge.x_bias) + andi_w_dn(D0, PHASE_MASK)
-        second_cell_test = cmpi_w_abs_l(edge.wrap_at_scroll_x, SCROLL_X) + branch_w(BNE_W, wrap)
+        second_cell_test = cmpi_w_abs_l(edge.wrap_at_scroll_x, SCROLL_X) + branch(BNE_W, wrap)
         map_offset = addi_w_dn(D0, edge.map_offset)
         invert = b""
     else:
         cell_index = andi_w_dn(D0, PHASE_MASK)
-        second_cell_test = tst_w_abs_l(SCROLL_X) + branch_w(BNE_W, wrap)
+        second_cell_test = tst_w_abs_l(SCROLL_X) + branch(BNE_W, wrap)
         map_offset = ADDQ_W_2_D0
-        invert = tst_w_abs_l(PHASE) + branch_w(BEQ_W, NOT_L_D6) + NOT_L_D6
+        invert = tst_w_abs_l(PHASE) + branch(BEQ_W, NOT_L_D6) + NOT_L_D6
 
     head = (
         lea_abs_l(A0, BUFFER_BASE)
@@ -865,8 +802,8 @@ def _fill_column_body(edge, load_counts, load_first, load_second):
 
     if edge is RIGHT:
         shift = (move_w_abs_l_dn(D5, PHASE) + tst_w_dn(D5)
-                 + branch_w(BNE_W, MOVE_W_IMM_D5 + word(FULL_CELL_ROTATION),
-                            lea_d16(A3, -1))
+                 + branch(BNE_W, MOVE_W_IMM_D5 + word(FULL_CELL_ROTATION),
+                          lea_d16(A3, -1))
                  + MOVE_W_IMM_D5 + word(FULL_CELL_ROTATION) + lea_d16(A3, -1))
     else:
         shift = move_w_abs_l_dn(D5, PHASE)
@@ -876,7 +813,7 @@ def _fill_column_body(edge, load_counts, load_first, load_second):
               + lea_d16(A2, -BUFFER_LEN))
     second_half = _clear_loop() + load_second + tiles
     return (head + load_first + _clear_loop() + shift + load_first + tiles
-            + rewind + load_second + branch_w(BMI_W, second_half) + second_half + RTS)
+            + rewind + load_second + branch(BMI_W, second_half) + second_half + RTS)
 
 
 FILL_BODIES = {
@@ -896,13 +833,13 @@ FILL_BODIES = {
 _STEP_CELL_TAIL_RIGHT = (addq_w_abs_l(CELL_BYTES, ROW_BYTE_OFFSET)
                          + addq_w_abs_l(1, MAP_CURSOR)
                          + addq_w_abs_l(1, SCROLL_X) + andi_w_abs_l(PHASE_MASK, SCROLL_X)
-                         + branch_w(BEQ_W, RTS) + RTS
+                         + branch(BEQ_W, RTS) + RTS
                          + clr_w_abs_l(ROW_BYTE_OFFSET) + RTS)
 _STEP_CELL_TAIL_LEFT = (subq_w_abs_l(1, MAP_CURSOR)
                         + subq_w_abs_l(CELL_BYTES, ROW_BYTE_OFFSET)
                         + andi_w_abs_l(ROW_OFFSET_MASK, ROW_BYTE_OFFSET)
                         + subq_w_abs_l(1, SCROLL_X) + andi_w_abs_l(PHASE_MASK, SCROLL_X)
-                        + branch_w(BEQ_W, RTS) + RTS
+                        + branch(BEQ_W, RTS) + RTS
                         + clr_w_abs_l(ROW_BYTE_OFFSET) + RTS)
 
 def _skip_and_return(skip):
@@ -914,21 +851,21 @@ _SKIP_AND_RETURN = _skip_and_return(SKIP_ONE_CALL)
 
 STEP_BODIES = {
     "right": (move_w_abs_l_dn(D0, POS_X) + CMP_W_ABS_L_D0 + longword(LIMIT_X)
-              + branch_w(BNE_W, _SKIP_AND_RETURN) + _SKIP_AND_RETURN
+              + branch(BNE_W, _SKIP_AND_RETURN) + _SKIP_AND_RETURN
               + tst_w_abs_l(PENDING)
-              + branch_w(BMI_W, leaf.MOVE_W_IMM_ABS_L + word(PENDING_SET) + longword(PENDING), RTS)
+              + branch(BMI_W, leaf.MOVE_W_IMM_ABS_L + word(PENDING_SET) + longword(PENDING), RTS)
               + leaf.MOVE_W_IMM_ABS_L + word(PENDING_SET) + longword(PENDING) + RTS
               + addq_w_abs_l(SCROLL_STEP, POS_X)
               + addq_w_abs_l(SCROLL_STEP, PHASE) + andi_w_abs_l(PHASE_MASK, PHASE)
-              + branch_w(BEQ_W, RTS) + RTS
+              + branch(BEQ_W, RTS) + RTS
               + _STEP_CELL_TAIL_RIGHT),
     "left": (move_w_abs_l_dn(D0, POS_X) + tst_w_dn(D0)
-             + branch_w(BNE_W, _SKIP_AND_RETURN) + _SKIP_AND_RETURN
+             + branch(BNE_W, _SKIP_AND_RETURN) + _SKIP_AND_RETURN
              + tst_w_abs_l(PENDING)
-             + branch_w(BEQ_W, clr_w_abs_l(PENDING), RTS) + clr_w_abs_l(PENDING) + RTS
+             + branch(BEQ_W, clr_w_abs_l(PENDING), RTS) + clr_w_abs_l(PENDING) + RTS
              + subq_w_abs_l(SCROLL_STEP, POS_X)
              + subq_w_abs_l(SCROLL_STEP, PHASE)
-             + branch_w(BMI_W, andi_w_abs_l(PHASE_MASK, PHASE), RTS)
+             + branch(BMI_W, andi_w_abs_l(PHASE_MASK, PHASE), RTS)
              + andi_w_abs_l(PHASE_MASK, PHASE) + RTS
              + leaf.MOVE_W_IMM_ABS_L + word(PHASE_LAST) + longword(PHASE)
              + _STEP_CELL_TAIL_LEFT),
@@ -974,8 +911,8 @@ def _row_cursor_block(row_word, first_pointer, wrap_from, wrap_to, down):
                      for copy in range(BUFFERS))
     # ...and likewise `tst.w` where the wrap row is zero (the up step's) against `cmpi.w`.
     test = (tst_w_abs_l(row_word) if wrap_from == 0 else cmpi_w_abs_l(wrap_from, row_word))
-    return (test + branch_w(BNE_W, reload, branch_w(BRA_W, move))
-            + reload + branch_w(BRA_W, move) + move)
+    return (test + branch(BNE_W, reload, branch(BRA_W, move))
+            + reload + branch(BRA_W, move) + move)
 
 
 def _vertical_step_body(down):
@@ -984,11 +921,11 @@ def _vertical_step_body(down):
     skip = _skip_and_return(SKIP_TWO_CALLS)
     if down:
         boundary = (move_w_abs_l_dn(D0, POS_Y) + CMP_W_ABS_L_D0 + longword(LIMIT_Y)
-                    + branch_w(BNE_W, skip) + skip
+                    + branch(BNE_W, skip) + skip
                     + addq_w_abs_l(SCROLL_STEP, POS_Y))
         wrap_from, wrap_to = SCROLL_Y_LAST, 0
     else:
-        boundary = (tst_w_abs_l(POS_Y) + branch_w(BNE_W, skip) + skip
+        boundary = (tst_w_abs_l(POS_Y) + branch(BNE_W, skip) + skip
                     + subq_w_abs_l(SCROLL_STEP, POS_Y))
         wrap_from, wrap_to = 0, SCROLL_Y_LAST
     cursors = b"".join(
@@ -1028,7 +965,7 @@ def _row_fill_body(bottom):
         # The tile row steps AFTER the draw, and pushes the map cursor a row DOWN when it wraps.
         step_tile_row = (move_w_abs_l_dn(D0, TILE_ROW) + addi_w_dn(D0, TILE_ROW_STEP)
                          + andi_w_dn(D0, TILE_ROW_MASK)
-                         + branch_w(BNE_W, move_w_abs_l_dn(D1, MAP_ROW_STRIDE)
+                         + branch(BNE_W, move_w_abs_l_dn(D1, MAP_ROW_STRIDE)
                                     + add_w_d1_abs_l(MAP_CURSOR))
                          + move_w_abs_l_dn(D1, MAP_ROW_STRIDE) + add_w_d1_abs_l(MAP_CURSOR)
                          + move_w_dn_abs_l(D0, TILE_ROW))
@@ -1039,7 +976,7 @@ def _row_fill_body(bottom):
         map_row = move_w_abs_l_dn(D0, MAP_CURSOR)
         # ...and BEFORE it going up, pulling the cursor a row UP on the same wrap.
         head = (move_w_abs_l_dn(D0, TILE_ROW) + subi_w_dn(D0, TILE_ROW_STEP)
-                + branch_w(BPL_W, move_w_abs_l_dn(D1, MAP_ROW_STRIDE)
+                + branch(BPL_W, move_w_abs_l_dn(D1, MAP_ROW_STRIDE)
                            + sub_w_d1_abs_l(MAP_CURSOR))
                 + move_w_abs_l_dn(D1, MAP_ROW_STRIDE) + sub_w_d1_abs_l(MAP_CURSOR)
                 + andi_w_dn(D0, TILE_ROW_MASK) + move_w_dn_abs_l(D0, TILE_ROW))
@@ -1056,7 +993,7 @@ def _row_fill_body(bottom):
               + lea_abs_l(A0, ROW_SPLIT_TABLE) + count_lead + move_w_abs_l_dn(D7, SCROLL_X)
               + shift_imm_dn(LSL_W_IMM, 2, D7) + lea_indexed(A0, D7)
               + move_w_ind_dn(D7, A0, STATE_WORD_LEN)
-              + branch_w(BMI_W, cells))
+              + branch(BMI_W, cells))
     return head + cursors + first + cells + second + cells + tail + RTS
 
 
@@ -1090,8 +1027,8 @@ def _preshift_body():
     load_top = movea_l_abs_l(A0, BUFFER_ROWS + BUFFER_ROW_TOP)
     load_bottom = movea_l_abs_l(A0, BUFFER_ROWS + BUFFER_ROW_BOTTOM)
     to_next_copy = lea_d16(A1, BUFFER_LEN, source=A0)
-    head = (tst_w_dn(D0) + branch_w(BMI_W, load_top, branch_w(BRA_W, load_bottom))
-            + load_top + branch_w(BRA_W, load_bottom) + load_bottom
+    head = (tst_w_dn(D0) + branch(BMI_W, load_top, branch(BRA_W, load_bottom))
+            + load_top + branch(BRA_W, load_bottom) + load_bottom
             + to_next_copy + move_w_imm_dn(D5, PRESHIFT_COPIES - 1))
     one_copy = move_w_imm_dn(D6, PRESHIFT_ROWS - 1) + row + dbf(D6, row)
     advance = lea_d16(A0, -(PRESHIFT_ROWS * BUFFER_LINE), source=A1) + to_next_copy
@@ -1114,7 +1051,7 @@ def _serve_requests_body():
                              (REQUEST_DOWN, "bg_scroll_serve_down"),
                              (REQUEST_RIGHT, "bg_scroll_serve_right"),
                              (REQUEST_LEFT, "bg_scroll_serve_left")):
-        asm.emit(tst_b_abs_l(request), branch_w_over(BEQ_W, BSR_W_LEN)).call(handler)
+        asm.emit(tst_b_abs_l(request), branch_over(BEQ_W, BSR_W_LEN)).call(handler)
     return asm.emit(RTS).bytes()
 
 
@@ -1125,18 +1062,18 @@ def _raise_requests_body():
     first and joins through a third arm, the horizontal one tests `blt` first and returns outright."""
     up = st_abs_l(RAISED_V_UP) + neg_w_dn(D0)
     down = st_abs_l(RAISED_V_DOWN)
-    to_down = branch_w(BRA_W, down)
-    to_neither = branch_w(BRA_W, up, to_down, down)
-    to_up = branch_w(BLT_W, to_neither)
+    to_down = branch(BRA_W, down)
+    to_neither = branch(BRA_W, up, to_down, down)
+    to_up = branch(BLT_W, to_neither)
     vertical = (move_w_abs_l_dn(D0, FOLLOW_Y) + subi_w_dn(D0, CENTRE_Y)
-                + branch_w(BGT_W, to_up, to_neither, up, to_down)
+                + branch(BGT_W, to_up, to_neither, up, to_down)
                 + to_up + to_neither + up + to_down + down)
 
     left = st_abs_l(RAISED_H_LEFT) + neg_w_dn(D1) + RTS
     right = st_abs_l(RAISED_H_RIGHT) + RTS
-    to_right = branch_w(BGT_W, RTS, left)
+    to_right = branch(BGT_W, RTS, left)
     horizontal = (move_w_abs_l_dn(D1, FOLLOW_X) + subi_w_dn(D1, CENTRE_X)
-                  + branch_w(BLT_W, to_right, RTS) + to_right + RTS + left + right)
+                  + branch(BLT_W, to_right, RTS) + to_right + RTS + left + right)
     return vertical + horizontal
 
 
@@ -1150,7 +1087,7 @@ def _emit_drain(asm, count_word, raised, request):
     # makes the two branches solvable at all: each is fixed-width whatever it spans.
     call = bsr_w(asm.at + BRANCH_W_LEN + len(consume), leaf.entry_of("bg_scroll_serve_requests"))
     close = bra_s_over(len(test) + BRANCH_W_LEN + len(consume) + len(call))
-    asm.emit(branch_w(BEQ_W, consume, call, close), consume, call, close)
+    asm.emit(branch(BEQ_W, consume, call, close), consume, call, close)
 
 
 def _run_queue_main(at):
@@ -1173,7 +1110,7 @@ def _run_queue_body():
     main = _run_queue_main(entry + len(gate) + BRANCH_W_LEN)
     bypass = _Assembler(entry + len(gate) + BRANCH_W_LEN + len(main))
     bypass.call("bg_scroll_serve_requests").emit(RTS)
-    return gate + branch_w(BNE_W, main) + main + bypass.bytes()
+    return gate + branch(BNE_W, main) + main + bypass.bytes()
 
 
 # --- the consumer tier's bodies -------------------------------------------------------------------
@@ -1212,7 +1149,7 @@ def _blit_variant_half(column, counter):
 def _blit_variant_body(column):
     """$83b6, $8450, $84ea ... $8d58 — one of the sixteen. Two halves about the source BUFFER's own
     end, with the `tst.w d6 / bpl / rts` between them that is how "no second half" is spelt."""
-    between = (tst_w_dn(D6) + branch_w(BPL_W, RTS) + RTS + lea_d16(A0, -BUFFER_LEN))
+    between = (tst_w_dn(D6) + branch(BPL_W, RTS) + RTS + lea_d16(A0, -BUFFER_LEN))
     return (_blit_variant_half(column, D7) + between + _blit_variant_half(column, D6) + RTS)
 
 
@@ -1237,7 +1174,7 @@ def _blit_dispatcher_body():
             + lea_abs_l(A2, BLIT_TABLE)
             + shift_imm_dn(ASL_W_IMM, _shift_for(LONGWORD_LEN), D1) + movea_l_indexed(A2, A2, D1)
             + move_w_abs_l_dn(D6, SCROLL_Y) + subi_w_dn(D6, BLIT_WRAP_ROW)
-            + branch_w(BPL_W, fits) + fits
+            + branch(BPL_W, fits) + fits
             + move_w_imm_dn(D7, BUFFER_SCANLINES) + sub_w_abs_l_dn(D7, SCROLL_Y)
             + move_w_imm_dn(D6, BLIT_SCANLINES - 1) + sub_w_dn_dn(D6, D7)
             + subq_w_imm_dn(1, D7) + jmp_ind(A2))
@@ -2450,7 +2387,7 @@ def _blit_pokes(phase, scroll_x, row, salt, screen=SCREEN_BUFFERS[0]):
     pokes.update({
         SCROLL_Y: word(row),
         SCREEN_BACK: longword(screen),
-        SCREEN_BUFFERS[0]: _keyed_block(SCREEN_BUFFERS[0], SCREEN_BYTES, salt + 4),
+        SCREEN_BUFFERS[0]: keyed_block(SCREEN_BUFFERS[0], SCREEN_BYTES, salt + 4),
     })
     return pokes
 

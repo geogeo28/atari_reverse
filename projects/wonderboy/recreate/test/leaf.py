@@ -225,13 +225,57 @@ def lea_d16(reg, displacement, source=None):
     return opcode(0x41e8 | (reg << 9) | (reg if source is None else source)) + word(displacement)
 
 
+def movea_l_abs_w(reg, addr):
+    """`movea.l <abs>.w,An` — how a routine loads a pointer held BELOW $8000 (WB_SCREEN_BACK is,
+    so the scroll's blit and the message box's both name it short)."""
+    return opcode(0x2078 | (reg << 9)) + word(addr)
+
+
+def move_w_imm_dn(reg, value):
+    return opcode(0x303c | (reg << 9)) + word(value)
+
+
+def moveq_0_dn(reg):
+    return opcode(0x7000 | (reg << 9))
+
+
+def mulu_w_imm_dn(reg, value):
+    return opcode(0xc0fc | (reg << 9)) + word(value)
+
+
+def tst_b_abs_l(addr):
+    return opcode(0x4a39) + longword(addr)
+
+
+def tst_w_abs_l(addr):
+    return opcode(0x4a79) + longword(addr)
+
+
+def clr_b_abs_l(addr):
+    return opcode(0x4239) + longword(addr)
+
+
+def clr_w_abs_l(addr):
+    return opcode(0x4279) + longword(addr)
+
+
+def st_abs_l(addr):
+    """`st <abs>.l` — Scc with the always-true condition, which is how a flag byte is RAISED."""
+    return opcode(0x50f9) + longword(addr)
+
+
+def subq_w_abs_l(amount, addr):
+    return opcode(0x5179 | ((amount & 7) << 9)) + longword(addr)
+
+
 # A 68000 branch counts its displacement from the EXTENSION WORD, which sits two bytes after the
 # opcode the branch is written as — so a displacement is always the bytes the branch spans plus that
 # 2. Spelling it once is what lets a pin's displacements come out of the geometry of the pieces they
-# jump over instead of being transcribed. Each battery keeps its own branch OPCODES (they spell them
-# differently — byte constants in test_hud.py, built from an integer in test_scroll.py); `bsr.w` has
-# only the one encoding, so that one is assembled whole here.
+# jump over instead of being transcribed. Each battery still keeps its own branch OPCODES (they
+# spell them differently — byte constants in test_hud.py, built from an integer in test_scroll.py);
+# `bsr.w` and `dbf` have only the one encoding each, so those are assembled whole here.
 BRANCH_EXTENSION = 2
+DBF_DN = 0x51c8
 
 
 def forward_branch(spanned_bytes):
@@ -242,6 +286,27 @@ def forward_branch(spanned_bytes):
 def backward_branch(body_bytes):
     """The displacement word of a `dbf`/`bra.w` that jumps BACK over the ``body_bytes`` it tails."""
     return word(-(body_bytes + BRANCH_EXTENSION))
+
+
+def branch_over(condition, spanned_bytes):
+    """`bcc.w`/`bra.w` past ``spanned_bytes``, for a jump whose target is known by LENGTH rather
+    than by the pieces — a loop's own closing branch, or a `beq` over one `bsr`."""
+    return opcode(condition) + forward_branch(spanned_bytes)
+
+
+def branch(condition, *over):
+    """`bcc.w`/`bra.w` past exactly ``over`` — the pieces themselves give the displacement."""
+    return branch_over(condition, sum(len(piece) for piece in over))
+
+
+def dbf_over(reg, body_bytes):
+    """`dbf Dn,<back over ``body_bytes``>`, for a loop whose body is known by LENGTH."""
+    return opcode(DBF_DN | reg) + backward_branch(body_bytes)
+
+
+def dbf(reg, *body):
+    """`dbf Dn,<start of body>`: the displacement runs back over ``body`` and the opcode word."""
+    return dbf_over(reg, sum(len(piece) for piece in body))
 
 
 def bsr_w(here, target):
@@ -289,6 +354,14 @@ def keyed_byte(addr, salt):
     """
     mixed = (addr * ADDRESS_MULTIPLIER) ^ (addr >> 5) ^ (salt * SALT_MULTIPLIER)
     return (mixed ^ (mixed >> 8)) & 0xff
+
+
+def keyed_block(base, length, salt):
+    """One seeded band of ``keyed_byte``, built per call rather than cached: every case salts from
+    its own NAME, so a cache would mostly retain bands nothing asks for again (measured on the
+    scroll battery: it served under a third of the calls, all of them 8-bit salt collisions between
+    unrelated cases, for 3% of the battery's time)."""
+    return bytes(keyed_byte(base + offset, salt) for offset in range(length))
 
 
 def case_salt(case):

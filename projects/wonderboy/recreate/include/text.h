@@ -1,4 +1,4 @@
-/* text.h — the game's glyph plotter, $bf4e..$c030 (src/text.c).
+/* text.h — the game's message box: the driver at $bd8a and the glyph plotter below it (src/text.c).
  *
  * TWO ENTRY POINTS INTO ONE ROUTINE, which is how the original is built: $bf4e has no `rts` at all.
  * Its four instructions turn a character code into a glyph pointer and it then FALLS THROUGH into
@@ -20,5 +20,11 @@ uint32_t text_plot_glyph(uint8_t *image, uint32_t glyph, uint32_t cursor);
 
 /* $bf4e — the same, for a character `code` (the original's d0) indexed into WB_TEXT_GLYPH_TABLE. */
 uint32_t text_plot_char(uint8_t *image, uint32_t code, uint32_t cursor);
+
+/* $bd8a — the message box's whole per-frame lifecycle, and the plotter's only caller. Takes and
+ * returns nothing: its three arms are picked by WB_TEXT_REQUEST and WB_TEXT_BOX_ACTIVE, and it
+ * either composes a message into WB_TEXT_BUFFER or blits an already-composed one to
+ * WB_SCREEN_BACK. game_main_loop's `jsr $bd8a.l` at $4fc is its one caller in the image. */
+void text_run_message_box(uint8_t *image);
 
 #endif /* WONDERBOY_TEXT_H */

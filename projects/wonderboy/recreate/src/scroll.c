@@ -706,9 +706,8 @@ void bg_scroll_run_queue(uint8_t *image) {
  * the domain really is 0..15; `column` outside it has no defined behaviour here and cannot have.
  */
 
-/* One run of `move.l (a0)+,(a1)+`, which is the only instruction any of the sixteen bodies spends
- * its length on. */
-static void copy_longwords(uint8_t *image, uint32_t *source, uint32_t *dest, unsigned longwords) {
+/* Declared in scroll.h and shared with src/text.c — see the note there. */
+void copy_longwords(uint8_t *image, uint32_t *source, uint32_t *dest, unsigned longwords) {
     for (unsigned at = 0; at < longwords; at++) {
         wr32(image + *dest, be32(image + *source));
         *source = addr_add(*source, sizeof(uint32_t));

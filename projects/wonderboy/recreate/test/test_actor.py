@@ -34,8 +34,8 @@ import pytest
 
 import harness
 import leaf
-from leaf import (RTS, backward_branch, bsr_w, case_salt, forward_branch, keyed_byte, lea_abs_l,
-                  lea_d16, longword, merge_bands, opcode, program_writes, word)
+from leaf import (RTS, backward_branch, branch, bsr_w, case_salt, keyed_block, lea_abs_l, lea_d16,
+                  longword, merge_bands, move_w_imm_dn, opcode, program_writes, word)
 from layout import wb
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -95,11 +95,6 @@ BSR_S = 0x6100
 BYTE_MASK = 0xff
 
 
-def _branch(condition, *over):
-    """`bcc.w`/`bra.w` forward past exactly ``over``."""
-    return opcode(condition) + forward_branch(sum(len(piece) for piece in over))
-
-
 def _bsr_s(here, target):
     """`bsr.s target` as assembled AT ``here`` — $67f8 spells its call short where $67c2 spells the
     same call long, so the two encodings are part of what the pins say."""
@@ -148,10 +143,6 @@ def move_w_d16_ind(source, displacement, destination):
     return opcode(0x3080 | (destination << 9) | 0x28 | source) + word(displacement)
 
 
-def move_w_imm_dn(reg, value):
-    return opcode(0x303c | (reg << 9)) + word(value)
-
-
 def move_l_imm_abs_l(value, addr):
     return opcode(0x23fc) + longword(value) + longword(addr)
 
@@ -194,7 +185,7 @@ BSET_IMM, BCLR_IMM, BTST_IMM = 0x08c0, 0x0880, 0x0800
 
 def _followed_record_entry():
     default = lea_abs_l(A1, FOLLOWED_DEFAULT) + RTS
-    return (tst_w_abs_w(FLAG_A32) + _branch(BNE_W, default) + default
+    return (tst_w_abs_w(FLAG_A32) + branch(BNE_W, default) + default
             + lea_abs_l(A1, FOLLOWED_A32) + RTS)
 
 
@@ -205,7 +196,7 @@ def _side_flag_entry():
             + move_w_ind_dn(D0, A1, ACTOR_X)
             + move_w_ind_dn(D1, A0, ACTOR_X)
             + cmp_w_dn_dn(D1, D0)
-            + _branch(BLE_W, raise_bit) + raise_bit
+            + branch(BLE_W, raise_bit) + raise_bit
             + bit_op_d16(BCLR_IMM, SIDE_BIT, A0, ACTOR_FLAGS) + RTS)
 
 
@@ -214,14 +205,14 @@ def _within_entry():
     out_of_reach = move_w_imm_dn(D0, OUT_OF_REACH) + RTS
     in_reach = clr_w_dn(D0) + RTS
     followed_ahead = (add_w_dn_dn(D1, D0) + cmp_w_dn_dn(D2, D1)
-                      + _branch(BGT_W, in_reach) + in_reach)
+                      + branch(BGT_W, in_reach) + in_reach)
     followed_behind = (add_w_dn_dn(D2, D0) + cmp_w_dn_dn(D2, D1)
-                       + _branch(BLT_W, in_reach, followed_ahead) + in_reach)
+                       + branch(BLT_W, in_reach, followed_ahead) + in_reach)
     return (_bsr_s(here, leaf.entry_of("followed_actor_record"))
             + move_w_ind_dn(D1, A0, ACTOR_X)
             + move_w_ind_dn(D2, A1, ACTOR_X)
             + cmp_w_dn_dn(D2, D1)
-            + _branch(BGT_W, followed_behind) + followed_behind
+            + branch(BGT_W, followed_behind) + followed_behind
             + followed_ahead + out_of_reach)
 
 
@@ -240,15 +231,15 @@ def _projection_block():
             + move_w_ind_dn(D2, A0, ACTOR_Y) + subi_w_dn(D2, SCREEN_Y_BIAS) + sub_w_dn_dn(D2, D1)
             + move_w_dn_postinc(D2, A1)
             + bit_op_d16(BTST_IMM, FLICKER_BIT, A0, ACTOR_FLAGS)
-            + _branch(BEQ_W, tst_w_abs_w(FRAME_TOGGLE), _branch(BEQ_W, visible), hidden,
-                      _branch(BRA_W, visible))
-            + tst_w_abs_w(FRAME_TOGGLE) + _branch(BEQ_W, hidden, _branch(BRA_W, visible))
-            + hidden + _branch(BRA_W, visible)
+            + branch(BEQ_W, tst_w_abs_w(FRAME_TOGGLE), branch(BEQ_W, visible), hidden,
+                     branch(BRA_W, visible))
+            + tst_w_abs_w(FRAME_TOGGLE) + branch(BEQ_W, hidden, branch(BRA_W, visible))
+            + hidden + branch(BRA_W, visible)
             + visible)
 
 
 def _project_followed_entry():
-    return (tst_w_abs_w(FLAG_A30) + _branch(BPL_W, RTS) + RTS
+    return (tst_w_abs_w(FLAG_A30) + branch(BPL_W, RTS) + RTS
             + jsr_abs_w(leaf.entry_of("followed_actor_record"))
             + movea_l_an_an(A0, A1)
             + lea_abs_l(A1, FOLLOW_X)
@@ -259,13 +250,13 @@ def _project_followed_entry():
 def _project_list_entry():
     publish_a32 = move_l_imm_abs_l(TABLE_A32, TABLE_SELECTED)
     publish_default = move_l_imm_abs_l(TABLE_DEFAULT, TABLE_SELECTED)
-    a32_arm = (tst_w_abs_w(FLAG_A32) + _branch(BPL_W, publish_a32, _branch(BRA_W, publish_default))
-               + publish_a32 + _branch(BRA_W, publish_default) + publish_default)
+    a32_arm = (tst_w_abs_w(FLAG_A32) + branch(BPL_W, publish_a32, branch(BRA_W, publish_default))
+               + publish_a32 + branch(BRA_W, publish_default) + publish_default)
     body = _projection_block()
     tail = cmpa_l_imm(A1, SCREEN_RECORDS_END)
     return (tst_w_abs_w(FLAG_A30)
-            + _branch(BPL_W, move_l_imm_abs_l(TABLE_A30, TABLE_SELECTED), _branch(BRA_W, a32_arm))
-            + move_l_imm_abs_l(TABLE_A30, TABLE_SELECTED) + _branch(BRA_W, a32_arm)
+            + branch(BPL_W, move_l_imm_abs_l(TABLE_A30, TABLE_SELECTED), branch(BRA_W, a32_arm))
+            + move_l_imm_abs_l(TABLE_A30, TABLE_SELECTED) + branch(BRA_W, a32_arm)
             + a32_arm
             + movea_l_abs_l(A0, TABLE_SELECTED) + lea_abs_l(A1, SCREEN_RECORDS)
             + move_w_abs_l_dn(D0, POS_X) + move_w_abs_l_dn(D1, POS_Y)
@@ -351,14 +342,10 @@ SEED_LO = SCREEN_RECORDS - SEED_MARGIN
 SEED_HI = TABLE_A32 + TABLE_BYTES + SEED_MARGIN
 
 
-def _keyed_block(base, length, salt):
-    return bytes(keyed_byte(base + i, salt) for i in range(length))
-
-
 def _state_pokes(salt, words):
     """The seeded band, plus the state words a case names — `{address: value}`, since the addresses
     are numbers rather than keyword names."""
-    pokes = {SEED_LO: _keyed_block(SEED_LO, SEED_HI - SEED_LO, salt)}
+    pokes = {SEED_LO: keyed_block(SEED_LO, SEED_HI - SEED_LO, salt)}
     for addr, value in words.items():
         pokes[addr] = word(value)
     return pokes

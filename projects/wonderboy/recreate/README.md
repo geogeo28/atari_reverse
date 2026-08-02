@@ -54,8 +54,9 @@ include/hud.h              the status panel's 30 routines — prototypes, and th
 include/input.h            the two joystick-pipeline leaves
 include/actor.h            the followed actor's record, the two tests over it, and the two passes
                            that project actor records into screen coordinates
-include/text.h             the glyph plotter's two entry points, and why the prelude calls the
-                           plotter (the original has no `rts` in it — it falls through)
+include/text.h             the message box: the once-a-frame driver's three arms, the glyph
+                           plotter's two entry points, and why the prelude calls the plotter (the
+                           original has no `rts` in it — it falls through)
 include/scroll.h           the whole background scroll subsystem — prototypes, the queue's shape,
                            why a step returns a FLAG (the original returns it through its own
                            return address, and vertically it consumes TWO calls that way), and why
@@ -75,8 +76,11 @@ src/actor.c                the actor tier: $67e0, which names the record everyth
                            is on, and whether it is within reach horizontally), and the two passes
                            that project actor records into the screen array the sprite pass reads —
                            one record ($8dfe, the one the scroll steers on) and all nineteen ($8e66)
-src/text.c                 the glyph plotter, both entry points: 32 bytes into an 88-byte-wide
-                           4-plane message buffer, and the character-code prelude that falls into it
+src/text.c                 the WHOLE text subsystem. The driver ($bd8a): compose a message into
+                           the 88-byte-wide 4-plane buffer on the frame it is requested, then
+                           re-blit that buffer to screen_back every frame until its countdown ends.
+                           The plotter ($bf4e/$bf5e): 32 bytes into the buffer, and the
+                           character-code prelude that falls into it
 src/scroll.c               the whole scroll subsystem, producer and consumer. The ENGINE ($7522..
                            $8228 + $d28): the frame queue and its dispatch pass, four request
                            handlers, four position steps, the two column fills that redraw the
@@ -137,11 +141,15 @@ test/test_actor.py         the actor tier's differential: a routine whose WHOLE 
                            reading of a mode flag from its `bpl` one, the 16-bit ADD whose wrap the
                            reach test's compare reads, and an address-keyed seeding of all three
                            actor tables and the screen array they project into
-test/test_text.py          the glyph plotter's differential: 32 bytes into the 4-plane buffer with
-                           the write set stated exactly, the returned cursor compared against both
-                           sides, a cell walk that shows the +1/+7 alternation lands on the next
-                           plane group, a scan of the eight `bsr` sites for the frame glyphs they
-                           pass, and the d0 whose shifted low word indexes BELOW the font
+test/test_text.py          the text subsystem's differential. The plotter: 32 bytes into the
+                           4-plane buffer with the write set stated exactly, the returned cursor
+                           compared against both sides, a cell walk that shows the +1/+7 alternation
+                           lands on the next plane group, a scan of the eight `bsr` sites for the
+                           frame glyphs they pass, and the d0 whose shifted low word indexes BELOW
+                           the font. The driver: every phase of the ten state bytes seeded one at a
+                           time, six shipped messages composed with the whole 6400-byte buffer
+                           stated exactly, the blit's rectangle and countdown, and four structural
+                           pins that read the $a09c message table's extent off its own data
 ```
 
 ## Running

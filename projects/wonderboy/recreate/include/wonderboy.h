@@ -200,6 +200,10 @@
 #define WB_SCREEN_FRONT      0x74cu   /* longword: the buffer being displayed — the region restore
                                        * at $d93a is the one routine here that reads it */
 #define WB_SCREEN_LINE       160u     /* ST low-res scanline: 320 px over 4 planes, 8 B per 16 px */
+#define WB_SCREEN_SCANLINES  200u     /* ST low-res height, so a buffer HOLDS 32,000 bytes — 768
+                                       * fewer than the $8000 screen_back and screen_front are
+                                       * spaced by, which is what clear_both_screens' $70000..$7fd00
+                                       * measures out (../names.txt) */
 #define WB_PLANE_STRIDE      2u       /* so one 8-px column's four plane bytes are +0/+2/+4/+6 */
 #define WB_PLANES            4u
 
@@ -727,18 +731,18 @@
 #define WB_FRAME_TOGGLE              0x712u   /* word, inverted every frame by flip_screen
                                                * (../names.txt) — read here as a boolean */
 
-/* ---- the text plotter, $bf4e..$c030 (RUNTIME addresses; src/text.c) ---------------------------
+/* ---- the text subsystem, $bd8a..$c030 (RUNTIME addresses; src/text.c) -------------------------
  *
  * An 8x8 glyph goes into an OFF-SCREEN 4-plane buffer WB_TEXT_BUFFER_LINE bytes wide, one byte per
  * plane at +0/+2/+4/+6 and one WB_TEXT_BUFFER_LINE per row, and the plotter hands back the cursor
  * for the NEXT 8-pixel cell. Two cells share each 8-byte plane group, so that advance alternates:
  * one byte on from an even cursor and seven from an odd one.
  *
- * The buffer is the only thing that explains the 88: $bd8a (not reconstructed) clears exactly
- * WB_TEXT_BUFFER_LEN bytes there, composes a message into it with eight `bsr $bf5e` and a string
- * loop through $bf4e, and then blits it to WB_SCREEN_BACK as WB_TEXT_BUFFER_LINE bytes plus a
- * 72-byte skip per scanline — 88 + 72 being WB_SCREEN_LINE exactly. So the row advance is the
- * BUFFER's line and not the screen's, which ../names.txt used to record as unexplained.
+ * The buffer is the only thing that explains the 88: $bd8a clears exactly WB_TEXT_BUFFER_LEN bytes
+ * there, composes a message into it with eight `bsr $bf5e` and a string loop through $bf4e, and
+ * then blits it to WB_SCREEN_BACK as WB_TEXT_BUFFER_LINE bytes plus a WB_TEXT_BLIT_SKIP per
+ * scanline — 88 + 72 being WB_SCREEN_LINE exactly. So the row advance is the BUFFER's line and not
+ * the screen's, which ../names.txt used to record as unexplained.
  */
 #define WB_TEXT_GLYPH_TABLE       0x12c9cu /* the font: 32 bytes per glyph from char $20 up. Two
                                             * abs.l references, $1cf6 and $bf4e's own `lea` */
@@ -752,11 +756,8 @@
                                             * box's corners, edges and fill */
 #define WB_TEXT_FRAME_GLYPH_COUNT 8u       /* == (WB_TEXT_GLYPH_TABLE - WB_TEXT_FRAME_GLYPHS) / 32 */
 #define WB_TEXT_STATE_BYTES       10u      /* $c030..$c039, the band between the plotter's last
-                                            * byte and the buffer. FOUR bytes — $c030 and $c031,
-                                            * the two flags $bd8a runs on, and $c032/$c033, its
-                                            * two cell counts — then THREE words, $c034, $c036 and
-                                            * $c038. $bd8a is not reconstructed; what this band is
-                                            * pinned for here is only its EXTENT, which is where
+                                            * byte and the buffer: the seven fields below, which
+                                            * are the whole state $bd8a runs on. It is also where
                                             * the plotter's own battery stops seeding */
 #define WB_TEXT_BUFFER            0xc03au  /* `lea $c03a.l,a1` in $bd8a. The plotter's own last
                                             * byte is $c02f — the WB_TEXT_STATE_BYTES sit between,
@@ -768,5 +769,69 @@
 #define WB_TEXT_CELL_ADVANCE_EVEN 1u       /* the low byte of the same plane group */
 #define WB_TEXT_CELL_ADVANCE_ODD  7u       /* == WB_PLANES * WB_PLANE_STRIDE - 1: the high byte of
                                             * the next one */
+
+/* The seven fields of WB_TEXT_STATE_BYTES. $c030/$c031 are the two flags the frame arms on; the
+ * rest are latched FROM a message record or FROM $c034, and only $c030 and $c034 are ever written
+ * from outside $bd8a. A whole-image scan of the operand sites, by INSTRUCTION address: $c030 has
+ * 58, of which 52 are outside and every one of those a writer; $c034 has 44, of which 41 are
+ * outside and every one a writer; $c031 has 11, of which seven are outside — three `tst.b` readers
+ * ($bc6, $dc3e, $dc78) and four `clr.b` writers ($cf8, $6fce, $dc84, $dfd8) that take the box down
+ * early. $c032, $c033, $c036 and $c038 have NO site outside $bd8a at all, which is why "armed"
+ * below is a one-way latch. */
+#define WB_TEXT_REQUEST            0xc030u /* byte: the message id to compose next frame, 1-based */
+#define WB_TEXT_REQUEST_DISMISS    0xffu   /* ...or this, which takes the box down and composes
+                                            * nothing (`cmpi.b #$ff,$c030.l`) */
+#define WB_TEXT_BOX_ACTIVE         0xc031u /* byte: a composed box is up and is blitted every frame
+                                            * until this is cleared (`st $c031.l` raises it) */
+#define WB_TEXT_BOX_ACTIVE_SET     0xffu   /* what `st` writes */
+#define WB_TEXT_BOX_ROWS           0xc032u /* byte: the box's height in 8-pixel cell rows, from the
+                                            * record. Drives both the frame's interior loop and the
+                                            * blit's scanline count */
+#define WB_TEXT_BOX_TOP_LINE       0xc033u /* byte: the box's top SCANLINE on screen, from the
+                                            * record (`mulu.w #$a0,d0` = WB_SCREEN_LINE) */
+#define WB_TEXT_LIFETIME_REQUEST   0xc034u /* word: frames the next box should live for, posted
+                                            * with the request; latched and cleared on compose */
+#define WB_TEXT_LIFETIME_ARMED     0xc036u /* word: nonzero once any timed message has been
+                                            * composed. NOTHING in the image clears it */
+#define WB_TEXT_LIFETIME_ARMED_SET 0xffffu /* what the one `move.w #$ffff,$c036.l` writes */
+#define WB_TEXT_LIFETIME_LEFT      0xc038u /* word: frames still to run, `subq.w #1` per blit */
+
+/* The message table: WB_TEXT_MESSAGE_COUNT longword pointers, then the records they point at, back
+ * to back. One abs.l reference in the whole image — $bd8a's own `lea $a09c.l,a6` — so the table's
+ * extent is not declared anywhere; it is read off the data, which is self-bounding (see
+ * test/test_text.py: entry 0 points at the first byte PAST the pointers, the records are
+ * contiguous, and the last one ends exactly at panel_refresh_frame). */
+#define WB_TEXT_MESSAGE_TABLE      0xa09cu
+#define WB_TEXT_MESSAGE_COUNT      117u
+#define WB_TEXT_MESSAGE_PTR_SHIFT  2u      /* `lsl.w #2,d0`: a longword per entry */
+#define WB_TEXT_MESSAGE_FIRST_ID   1u      /* `subi.b #$1,d0`: WB_TEXT_REQUEST is 1-based */
+#define WB_TEXT_RECORD_ROWS        0u      /* record byte 0 -> WB_TEXT_BOX_ROWS */
+#define WB_TEXT_RECORD_TOP_LINE    1u      /* record byte 1 -> WB_TEXT_BOX_TOP_LINE */
+#define WB_TEXT_RECORD_STRING      2u      /* ...then the string, to WB_TEXT_STRING_END */
+#define WB_TEXT_NEWLINE            0x0au   /* `cmp.b #$a,d0` — tested BEFORE the terminator */
+#define WB_TEXT_STRING_END         0xffu   /* `cmp.b #$ff,d0` */
+
+/* The box's own geometry. Only the HEIGHT varies: the width is the 22 cells the unrolled top row
+ * spells, which is the whole of WB_TEXT_BUFFER_LINE, and the blit moves exactly that. */
+#define WB_TEXT_BOX_CELLS          22u     /* == 2 * WB_TEXT_BUFFER_LINE / WB_TEXT_CELL_GROUP */
+#define WB_TEXT_BOX_EDGE_CELLS     20u     /* == CELLS - 2: the `move.w #$13,d0 / dbf` runs */
+#define WB_TEXT_BOX_MIN_ROWS       3u      /* `subq.w #3,d0`: a top row, one interior, a bottom */
+#define WB_TEXT_CELL_GROUP         8u      /* == WB_PLANES * WB_PLANE_STRIDE, and it holds TWO
+                                            * 8-pixel cells */
+#define WB_TEXT_CELL_ROW_BYTES     704u    /* `mulu.w #$2c0,d1` == GLYPH_ROWS * BUFFER_LINE */
+#define WB_TEXT_ROW_ADVANCE        616u    /* `lea 616(a1),a1` == CELL_ROW_BYTES - BUFFER_LINE: the
+                                            * row's last glyph left the cursor at cell CELLS, i.e.
+                                            * BUFFER_LINE into the row */
+#define WB_TEXT_INTERIOR_SKIP      80u     /* `lea 80(a1),a1` == EDGE_CELLS / 2 * CELL_GROUP: from
+                                            * the left edge's cell straight to the right edge's */
+#define WB_TEXT_FIRST_TEXT_LINE    1u      /* `move.w #$1,d6`: line 0 is the frame's top row */
+#define WB_TEXT_TEXT_ORIGIN        0xc03bu /* `lea $c03b.l,a1` == BUFFER + CELL_ADVANCE_EVEN, i.e.
+                                            * cell 1 — one cell in, past the left edge */
+
+/* The blit out of the buffer, WB_TEXT_BLIT_LONGWORDS at a time. */
+#define WB_TEXT_BLIT_X_BYTES       48u     /* `lea 48(a1,d0.w),a1`: the box's left edge on screen */
+#define WB_TEXT_BLIT_LONGWORDS     22u     /* the unrolled `move.l (a0)+,(a1)+` == BUFFER_LINE / 4 */
+#define WB_TEXT_BLIT_SKIP          72u     /* `lea 72(a1),a1` == WB_SCREEN_LINE - BUFFER_LINE */
+#define WB_TEXT_BLIT_ROW_SHIFT     3u      /* `lsl.l #3,d0`: GLYPH_ROWS scanlines per cell row */
 
 #endif /* WONDERBOY_H */
