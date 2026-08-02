@@ -15,8 +15,10 @@
  * and equals the game's own absolute operands, and why ../names.txt is written at that base.
  * project.toml carries the full argument.
  *
- * Nothing includes this header yet: src/ is empty. It is Python's canonical source for now, and the
- * first reconstructed core's too.
+ * It is Python's canonical source (through test/layout.py) and the reconstruction's: the depacker
+ * block at the end — two runtime addresses and one failure status — is consumed by src/rad.c and by
+ * test/test_rad_depack.py. include/rad.h does NOT include this header: it holds the CONTAINER's own
+ * constants and nothing runtime-addressed, and its own comment states that split.
  */
 #ifndef WONDERBOY_H
 #define WONDERBOY_H
@@ -97,5 +99,17 @@
 #define WB_COPYLOCK_VEC_PRIVILEGE 0x20u
 #define WB_COPYLOCK_VEC_TRACE     0x24u
 #define WB_EXCEPTION_VECTOR_LEN   4u
+
+/* ---- the .RAD/.CRU resource depacker (RUNTIME addresses; ../notes/rad_depacker.asm) -----------
+ *
+ * Reconstructed in src/rad.c. The three values below are what BOTH languages need: C to build the
+ * routine, test/test_rad_depack.py to enter it under the oracle and to read its verdict. */
+#define WB_RAD_DEPACK        0x5d62u  /* rad_depack(a0 = packed file, a1 = destination) */
+#define WB_RAD_SAVED_SP      0x5e3au  /* `move.l a7,$5e3a.l`: where it parks the entry stack
+                                       * pointer, to restore on the success path only */
+#define WB_RAD_SAVED_SP_LEN  4u
+#define WB_RAD_BAD_CHECKSUM  0xffffffffu /* the ONE defined status: `moveq #$ff,d0` SIGN-EXTENDS, so
+                                          * the failure value is the whole longword, not $ff. On
+                                          * success d0 is only the spent bit buffer */
 
 #endif /* WONDERBOY_H */

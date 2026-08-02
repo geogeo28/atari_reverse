@@ -8,10 +8,10 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 0/? — nothing is reconstructed yet.** The harness is stood up and proven against the
-original code (`make test`: 77 cases green), and `../decomp.c` and `../names.txt` exist, but no
-function has been ported. The function table below is therefore empty rather than partial: a row
-appears when a function is reconstructed and green.
+**Verified: 1/? — the .RAD depacker (216 bytes), the first function ported.** `make test`: 125 cases
+green, of which 77 are the foundation battery below and 48 are the depacker's differential. A row
+appears in the table at the end when a function is reconstructed and green; everything else in
+`../decomp.c` and `../names.txt` is still only *named*, not ported.
 
 ## What the harness has established
 
@@ -153,7 +153,11 @@ the image at `0x21226`). Their **format is now established and pinned**: the dep
 game's own, at text `0x596a` / runtime `0x5d62`, transcribed in `notes/rad_depacker.asm`,
 reimplemented as `tools/depack_rad.py`, and diffed against the original under Musashi by
 `notes/rad_differential.py` — 41/41 intact streams byte-identical, plus the 4 protection-damaged
-overlays which both implementations refuse (`docs/binary-formats.md` has the format).
+overlays which both implementations refuse (`docs/binary-formats.md` has the format). The routine
+itself is now **reconstructed** as well (`src/rad.c`, the table at the end), on the same corpus but
+as a whole-image differential, so the format is pinned from both sides: a host reimplementation that
+refuses what it cannot safely decode, and a faithful port that reproduces what the 68000 does
+instead — garbage decode and all.
 
 The **destinations** are readable from the five call sites, all at runtime addresses: overlays
 depack to `0x217d8` (`0x3ce8` each), `TILEDATA.RAD` loads at `0x44000` and depacks to `0x4f000`
@@ -200,9 +204,11 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   poke vetting and no `stop_pc` vetting, and its author must call
   `copylock.assert_did_not_execute()` by hand. Four things about that gap, so the next author
   neither over- nor under-reacts to it:
-  * **Its reachability today is zero.** `src/` is empty and no Wonder Boy test calls
-    `differential()`. And under this build, forgetting the stub does not go green: it fails loudly
-    with `did not reach checkpoint`.
+  * **Nothing that calls `differential()` goes near the protection yet.** `test_rad_depack.py` is
+    the first caller, and `rad_depack` neither reaches the Copylock nor is reached from it: it is
+    entered directly, its whole run is inside its own two buffers, and its cases stub nothing. The
+    gap opens the day a differential runs a function on the boot path. And under this build,
+    forgetting the stub does not go green: it fails loudly with `did not reach checkpoint`.
   * **The identified fix is `differential()` returning its final image**, so a caller can run the
     witness over it. Not built — nothing uses it yet, and CLAUDE.md §2 rules out speculative
     features. It is the cheaper and safer of the two candidates, and the one to build the day a
@@ -237,7 +243,19 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   review of the Copylock work and left alone for the same reason, both inside `test/`:
   `test_copylock.py`'s even-aligned operand sweep re-implements `test_bootstrap.py`'s
   `_even_aligned()`, and its `RELOCATOR_INSN_BUDGET` is a hand-rounded copy of that file's derived
-  `RELOCATOR_INSN_CAP` — the derived one tracks `WB_BODY_LONGS` and the copy does not.
+  `RELOCATOR_INSN_CAP` — the derived one tracks `WB_BODY_LONGS` and the copy does not. The depacker
+  work added one more: `test_rad_depack.py`'s `_stray_writes` scratch-band predicate is a second
+  copy of `../notes/rad_differential.py`'s, deliberately TIGHTER than the registered
+  `< emu.STACK_GUARD_LO` family (it bounds the band above as well as below, since A7 enters at
+  `STACK_TOP` and grows down), and the buffer placement and corpus walk beside it are restated from
+  that same file. Shared home when they are consolidated: the kit, as above.
+- **`RAD_HDR_LEN` (`include/rad.h`) and `HDR_LEN` (`tools/depack_rad.py`) are the same 12 bytes in
+  two languages, accepted as pinned BEHAVIOURALLY rather than textually.** CLAUDE.md §5 asks for one
+  canonical definition with the other held equal by a test; here each side has its own differential
+  over the game's own corpus, so a drifted copy reddens its own suite on the first file it decodes.
+  `depack_rad.py` is a workspace tool that must run without this project, so it cannot scrape this
+  directory's headers the way `test/layout.py` does — which is why the equality is bought with
+  behaviour instead.
 - **`test/layout.py`'s header scraper is the third copy** of the same idea (`joust`'s
   `test_constants.py`, `buggyboy`'s `test_course_ring.py`). It belongs in the kit; folding the three
   together was left out of this change as out of scope. It now has cases of its own
@@ -247,7 +265,44 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 
 ## Functions (by address)
 
-None yet.
-
 | Addr | Name | Bytes | Status | Verification |
 |------|------|-------|--------|--------------|
+| `0x5d62` | `rad_depack` (`src/rad.c`) | 216 | verified | 45 differential cases: the 41 intact `.RAD` streams of the game's own corpus decode byte-for-byte identically (whole-image diff + `d0`), and the 4 protection-damaged overlays reproduce the garbage decode *and* the failure status. Plus a synthetic corrupted checksum, an attribution (poison) pass folded into the two smallest intact cases, and a per-case guard that the only bytes written are the destination and the scratch long |
+
+The 216 bytes are the whole routine, `0x5d62..0x5e3a`, which `../names.txt` splits into three:
+`rad_depack` plus the leaf helpers `rad_refill_bit_buffer` (`0x5e14`) and `rad_get_bits` (`0x5e20`).
+The C folds the first into `rad_bit` — the original's inline `lsr.l #1,d0` and the refill it falls
+into are paired at every call site — and keeps the second under its own name.
+
+Four things about this row that a later reader should not have to re-derive — the register of every
+way the port and the original are knowingly not the same:
+
+* **The scratch long at `0x5e3a` is written by the test's glue, not by the port.** The original
+  parks its CALLER's stack pointer there (`move.l a7,$5e3a.l`) to restore on the success path; a C
+  port has no such register, so `g_rad_depack` takes the stack pointer the oracle entered with and
+  writes it, and the byte-for-byte diff still covers the write. Nothing else in the image reads that
+  long (`../names.txt`, `rad_saved_a7`), so the port owes it nothing else.
+* **The failure path's 65536-iteration delay loop is not reproduced.** It is timing only, and this
+  differential's surfaces are memory and `d0`; the oracle counts the instructions and nothing
+  asserts on them. If a caller is ever found to depend on that stall, this is where it bites.
+* **On the failure path the original does not restore `a7` either.** Only the success path reloads
+  it (`movea.l $5e3a.l,a7`); the failure path falls through the delay loop straight to its `rts`.
+  That is a REGISTER-level asymmetry, outside this differential's memory + `d0` surface, and the C
+  port has no machine stack to reproduce it with. Already recorded in `../notes/rad_depacker.asm`'s
+  header, `include/wonderboy.h`'s `WB_RAD_SAVED_SP` and `../names.txt`'s `rad_saved_a7` comment;
+  noted here so the register of asymmetries is in one place.
+* **Two deviations are latent rather than pinned**, both stated in `src/rad.c`'s file comment. The
+  loop's end test is now the SIGNED compare the original's `cmpa.l a2,a1 / blt` is, but only a
+  header with bit 31 set in a length can tell a signed test from an unsigned one, and no corpus
+  stream has one — the form is faithful by reading, not by a case that went red then green, so that
+  divergence class stays UNPINNED. And an access that leaves the mapped image diverges by
+  construction: the kit's shim answers the read with zeros and drops the write, while the C indexes
+  a host buffer and is undefined behaviour. Every corpus case keeps both buffers and every oracle
+  write inside the image, so neither is reachable from this battery; bounding the C's accesses would
+  be a kit change, not a port one, and was not made.
+
+Mutation-checked rather than assumed (each rebuilt with the `.so` deleted first, since a same-second
+rebuild otherwise re-runs the stale library): dropping the checksum branch reddens exactly the 5
+cases that reach it (the 4 damaged files and the synthetic one), while an off-by-one in the match
+source, a literal-run base of 8 instead of 9, a shortest-match length of 3 instead of 2, and
+dropping the scratch-long write each redden all 46 cases that decode a stream.

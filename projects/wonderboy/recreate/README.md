@@ -10,9 +10,12 @@ compiled C on the same image, and diffs the result. Everything game-specific liv
 the method is differential rather than byte-matching, read the worked reference project,
 [`projects/buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md).
 
-**Nothing is reconstructed yet.** What exists is the binding plus a foundation battery that runs the
-original code under the oracle and pins how the program starts. Progress, the kit change this
-project required, and the three blockers between here and a first reconstructed function:
+**One function is reconstructed**: `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
+game loads goes through, verified over the game's own resource corpus — the 41 `.RAD` files the two
+disks ship, plus the four protection-damaged overlays a second time in their authentic disk-2 bytes,
+so 45 streams in all. The rest is the binding plus a foundation battery that runs the original code
+under the oracle and pins how the program starts. Progress, the kit change this project required,
+and the blockers still ahead:
 [`STATUS.md`](STATUS.md).
 
 **Read [`PORTABILITY.md`](PORTABILITY.md) before choosing what to port.** It measures how much of
@@ -29,10 +32,9 @@ subsystems.tsv             address ranges -> subsystem, for tools/hw_portability
 project.toml               binds this directory to the kit (paths, load base, image size, two waivers)
 Makefile                   three lines: KIT + GAME + include $(KIT)/kit.mk
 include/wonderboy.h        how SWB.PRG becomes a running image, as constants — the canonical copy
-src/                       the reconstruction's cores, one file per subsystem. EMPTY: there are none
-                           yet. The candidate .so still builds and links, out of the kit's own
-                           src/*.c alone (the Dosound ledger and the refused-os_*-call tally that
-                           every candidate must export)
+include/rad.h              the .RAD/.CRU container and its bitstream, as constants
+src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
+                           live here, one file per subsystem
 test/harness.py            the kit-binding shim
 test/layout.py             include/wonderboy.h's constants, scraped from that header (one source of truth)
 test/test_layout.py        that scraper's own cases — it refuses a duplicate or an octal-ambiguous #define
@@ -42,6 +44,8 @@ test/copylock.py           the Copylock stub — two mechanisms, and the memory-
 test/test_copylock.py      that stub's battery: each mechanism over its own domain, the two guards on
                            the witness's inputs, and the negative controls for an unstubbed run
 test/test_poked_input_guard.py  the kit waiver this project is the only user of, and its three guards
+test/test_rad_depack.py    the depacker's differential: the game's own .RAD corpus (41 files, 45
+                           streams), decoded by both sides, plus the failure branch
 ```
 
 ## Running
