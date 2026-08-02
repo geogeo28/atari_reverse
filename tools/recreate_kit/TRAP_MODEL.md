@@ -92,18 +92,70 @@ same bytes, so every one of them is an ordinary, differentially-verifiable test 
 | `0x608` | `OS_RANDOM_VALUE` | u32, what XBIOS `Random` returns (masked to 24 bits) |
 | `0x610` | `OS_PSG_REGS` | 16 bytes, the YM2149 register file XBIOS `Giaccess` reads/writes |
 
-They sit in the free low region — clear of the 68000 vector page, above TOS's documented
-system-variable area, and below every program (`load_base >= 0x10000`). `harness.py` mirrors the
-addresses, `test/test_os_memory_map.py` pins the two sets equal, and
-`harness.console_key()` / `harness.psg_regs()` build the pokes so the fields that must move
-together cannot be set half-way.
+They sit in the free low region — clear of the 68000 vector page and above TOS's documented
+system-variable area. `recreate_kit/os_map.py` mirrors the addresses (its own module, because
+`harness.py` and `oracle/emu.py` both guard the block and neither can import the other),
+`test/test_os_memory_map.py` pins the two sets equal, and `harness.console_key()` /
+`harness.psg_regs()` build the pokes so the fields that must move together cannot be set half-way.
 
-`harness._vet_os_memory_map()` refuses to run a project whose `load_base` is below `0x620`, so the
-"below every program" claim is checked rather than assumed. Two neighbouring regions are **still
-unvetted**, and nothing else in the repo tracks them: `OS_KBDVBASE` (`0x500`, whose KBDVBASE struct
-`install_handlers` patches) and `OS_SCREEN_BASE` (`0x8000`, what `Physbase`/`Logbase` return). Both
-rest on the same `load_base` argument, and the `load_base >= 0x10000` that the console block now
-enforces happens to cover them — but only incidentally, not by their own check.
+### They are no longer below every program
+
+They used to be: every project loaded at `0x10000`, and `harness._vet_os_memory_map()` enforced
+`load_base >= 0x620`. `projects/wonderboy` cannot obey it — its program relocates itself to the
+absolute address `0x400`, and everything below that is the 68000 vector page — so it loads at
+`0x3f8` and **the block sits inside its code**. A `project.toml` may now declare
+`tos_poked_input_unused = true`, the claim that the game reads none of this state, and get that
+layout. The claim is checked rather than assumed, from both directions the hazard has, and **both
+guards key on the overlap, never on the flag**:
+
+* **`harness.make_image()`** refuses any poke whose byte range lands in the block. It sits at the
+  layer pokes are *applied*, so a hand-written `{OS_RANDOM_VALUE: …}` dict — the only way to stage
+  an XBIOS `Random`, since the kit ships no builder for it — is seen exactly like a `console_key()`
+  one.
+* **`emu.run()`** refuses any run in which a trap *reached* the block (`_vet_no_poked_input_read`,
+  keyed on the shim's `osh_poked_input_calls` tally of `Bconstat` / `Bconin` / `Crawio` / `Random` /
+  `Giaccess` / `Kbdvbase`). Reached, not read: a `Giaccess` write stores into the register file and
+  `Bconin` clears the pending flag, and under the overlap those are writes over the game's own code.
+  `Crawio` is tallied for its **read** direction only (`OS_CRAWIO_READ`); printing a character
+  touches nothing and must not redden a run.
+
+Two limits of the tally, stated because neither is obvious. It is **oracle-side only**, unlike the
+refused-`os_*` tally: a candidate that calls `os_bconstat` where the original does not is caught by
+the image diff instead (`os_bconin` clears the pending flag, so the bytes differ) — but a candidate
+whose extra call is genuinely image-neutral is not. And it says a poked-input trap was *served*, not
+that the block it reached lies in the program; the guard's overlap question is asked about the poked
+block alone, which is why the `Kbdvbase` arm below is only covered when that block also overlaps.
+
+`harness.console_key()` / `harness.psg_regs()` refuse too, but as a friendlier early error naming
+what was staged; `make_image` is what makes the refusal unbypassable. The second guard is the one
+that matters most, and it is the sibling of the Malloc waiver's `_vet_no_malloc_over_program`: the
+dangerous reader is the **game**, not the test. A `Bconin` in code that only exists after a depack
+reads the program's own instruction bytes, which are nonzero, so the model reports a keystroke
+pending, hands back four bytes of code as the key, and **zeroes four bytes of code** at
+`OS_CON_PENDING` — identically on both sides, since both run the same `os.h`. The diff is clean and
+the case proves nothing.
+
+### Two regions this leaves unvetted
+
+`OS_KBDVBASE` (`0x500`, whose KBDVBASE struct `install_handlers` patches) and `OS_SCREEN_BASE`
+(`0x8000`, what `Physbase`/`Logbase` return) have never had a check of their own. They were covered
+*incidentally* by the `load_base >= 0x10000` every project happened to use, and the waiver removes
+exactly that incidental coverage: at Wonder Boy's `0x3f8`, `0x3f8 <= 0x500` and
+`0x8000 < 0x218d0`, so **both regions are now inside a live program** and no layout check looks at
+either. One of the two has a partial answer on the other side: `OS_KBDVBASE`'s only reader is XBIOS
+`Kbdvbase`, which *is* one of the six traps the tally above counts — so a program that reaches it
+reddens the run **whenever the poked block also overlaps** (Wonder Boy, the only waived project, is
+such a layout). A program covering `0x500` but not `0x600` would still not be seen, since the guard
+keyed on that tally asks about the poked block, not about `0x500`.
+
+`Physbase`/`Logbase` (XBIOS `0x02`/`0x03`) are tallied by nothing, so a program that takes the
+modeled screen base and draws into it scribbles its own code on both sides in silence. Closing it
+means what the poked block got: its own overlap predicate and its own tally, keyed on
+`OS_SCREEN_BASE` rather than on the poked block. It is deliberately **not** folded into the tally
+above — that guard's predicate is the wrong question for `0x8000`, and answering it with the poked
+block's overlap would be over-strict for one layout and blind for another.
+`tools/recreate_kit/test/test_os_memory_map.py::test_every_low_model_address_is_guarded_or_declared_unvetted`
+holds the list of two, so a third region cannot join it quietly.
 
 ---
 

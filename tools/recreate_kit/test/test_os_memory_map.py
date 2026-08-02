@@ -1,25 +1,33 @@
 """Cross-language pin: the TOS model's memory map must agree between C and Python.
 
-``tools/recreate_kit/include/os.h`` (compiled into both the oracle shim and every reconstruction's
-OS wrappers) and ``tools/recreate_kit/harness.py`` (which stages files into the image from Python)
-each declare the staged-file table layout and the modeled Malloc base. CLAUDE.md §5 requires one
-canonical definition with the other pinned equal by a test; C and Python cannot import each other,
-so this parses both sources textually.
+``tools/recreate_kit/include/os.h`` — compiled into both the oracle shim and every reconstruction's
+OS wrappers — is the canonical declaration of the staged-file table layout, the modeled Malloc base
+and the harness-poked input block. Its Python mirror is split across three files (``PY_MIRRORS``
+below says which holds what and why). CLAUDE.md §5 requires one canonical definition with the other
+pinned equal by a test; C and Python cannot import each other, so this parses both sources textually.
 
 Drift here is not loud on its own: os_fopen would simply look at a table address the harness never
 wrote and report "file not staged", or Malloc would hand out a block the harness thinks is free.
 Both sources are parsed rather than imported because ``harness`` needs a bound project and a built
-candidate ``.so``; this test must run in a bare checkout.
+candidate ``.so``; this test must run in a bare checkout. ``os_map`` is the one Python mirror with no
+such dependency, so the last case below can import it and check the *guarded* region against os.h
+rather than only the constants' values.
 """
 import re
+import sys
 from pathlib import Path
 
 KIT = Path(__file__).resolve().parents[1]
 OS_H = KIT / "include" / "os.h"
-# The Python mirror is split across two files: harness.py holds the file-staging map it pokes into
-# the image, and oracle/emu.py holds OS_HEAP_BASE, which its per-run Malloc guard needs. Each
-# constant must be defined in exactly one of them (asserted below) so there is still one source.
-PY_MIRRORS = (KIT / "harness.py", KIT / "oracle" / "emu.py")
+# The Python mirror is split across three files: harness.py holds the file-staging map it pokes into
+# the image, oracle/emu.py holds OS_HEAP_BASE (which its per-run Malloc guard needs), and os_map.py
+# holds the harness-poked input block (which harness.py and emu.py BOTH guard, so neither can own
+# it). Each constant must be defined in exactly one of them (asserted below) so there is still one
+# source; harness.py re-exports the other two files' names, and a re-export is not a definition.
+PY_MIRRORS = (KIT / "harness.py", KIT / "oracle" / "emu.py", KIT / "os_map.py")
+
+sys.path.insert(0, str(KIT.parent))                   # reverse/tools, so `recreate_kit` imports
+from recreate_kit import os_map   # noqa: E402  (importable with nothing built, unlike harness/emu)
 
 # Every constant that exists on both sides. os.h is the canonical definition.
 PINNED = ("OS_IMAGE_SIZE", "OS_HEAP_BASE", "OS_FS_TABLE", "OS_FS_STAGING", "OS_FS_ENTRY",
@@ -33,8 +41,15 @@ PINNED = ("OS_IMAGE_SIZE", "OS_HEAP_BASE", "OS_FS_TABLE", "OS_FS_STAGING", "OS_F
           "OS_PSG_WRITE", "OS_SUPER_TOKEN")
 
 
-def _c_defines(source, names):
-    """{name: value} for `#define <name> <int literal>` (an optional u/U suffix), for `names`."""
+def _c_defines(source, names=None):
+    """{name: value} for `#define <name> <int literal>` (an optional u/U suffix).
+
+    With ``names``, only those are looked up. Without, EVERY ``OS_*`` integer define is returned —
+    which is what lets the last case below notice a constant nobody remembered to classify.
+    """
+    if names is None:
+        return {name: int(value, 0) for name, value in
+                re.findall(r"^#define\s+(OS_\w+)\s+(0x[0-9a-fA-F]+|\d+)[uU]?\b", source, re.M)}
     found = {}
     for name in names:
         m = re.search(rf"^#define\s+{name}\s+(0x[0-9a-fA-F]+|\d+)[uU]?\b", source, re.M)
@@ -74,6 +89,46 @@ def test_python_mirror_matches_os_h():
         "os.h and the Python mirror disagree on the TOS model's memory map:\n"
         + "\n".join(f"  {n}: os.h={cv:#x} {home[n].name}={pv:#x}"
                     for n, (cv, pv) in drift.items()))
+
+
+def test_every_low_model_address_is_guarded_or_declared_unvetted():
+    """Every low-memory region os.h fixes is either inside the guarded poked-input block, or on the
+    short list of regions this workspace knows are unvetted.
+
+    A region below LOW_REGION_END can land inside a program that loads at a low base — which
+    projects/wonderboy does, at 0x3f8, because its game runs at the absolute address 0x400. The block
+    at [OS_CON_PENDING, OS_POKE_BLOCK_END) is guarded from both sides (harness.make_image refuses a
+    poke into it; emu.run refuses a run whose traps read it). The two below are not, and are recorded
+    as such in TRAP_MODEL.md — so this case exists to make a THIRD one impossible to add quietly:
+    a new `#define OS_JOYSTICK_STATE 0x630u` fails here until someone classifies it.
+
+    The scan cannot tell an address from a size or a selector, so it takes every `OS_*` integer in
+    [VECTOR_PAGE_END, LOW_REGION_END) — above the 68000 vector page, which no model region may sit
+    in, and below the workspace's default load_base, above which no program is low. Every other
+    constant in os.h is a small size, offset or selector well under 0x400. A new *large* non-address
+    constant would land here too and have to be classified; over-strict fails loudly.
+    """
+    VECTOR_PAGE_END = 0x400         # below this is the 68000's exception vector table
+    LOW_REGION_END = 0x10000        # the workspace's default load_base: above it, no program is low
+    UNVETTED = {
+        # 0x500, the KBDVBASE struct XBIOS Kbdvbase returns. Its only reader is that trap, which IS
+        # tallied by osh_poked_input_calls — but the guard keyed on that tally asks about the poked
+        # block, not about this address, so a layout covering 0x500 while clearing 0x600 is unseen.
+        "OS_KBDVBASE",
+        # 0x8000, what Physbase/Logbase return. Tallied by nothing at all: a program handed this and
+        # drawing into it scribbles its own code identically on both sides.
+        "OS_SCREEN_BASE",
+    }
+    low = {name: value for name, value in _c_defines(OS_H.read_text()).items()
+           if VECTOR_PAGE_END <= value < LOW_REGION_END and name not in UNVETTED}
+    unclassified = {name: value for name, value in low.items()
+                    if not os_map.OS_CON_PENDING <= value < os_map.OS_POKE_BLOCK_END}
+    assert not unclassified, (
+        f"os.h fixes {unclassified} below {LOW_REGION_END:#x}, outside the guarded block "
+        f"[{os_map.OS_CON_PENDING:#x}, {os_map.OS_POKE_BLOCK_END:#x}) and off the unvetted list. "
+        f"Either bring it inside the block, or add it to UNVETTED and to TRAP_MODEL.md's "
+        f"'Two regions this leaves unvetted'.")
+    assert low, "no low model addresses parsed at all — the scan is looking at the wrong file"
 
 
 def test_staged_file_table_fits_below_staging():

@@ -197,6 +197,13 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
 static uint32_t g_heap;         /* Malloc bump pointer */
 static uint32_t g_malloc_n;     /* GEMDOS Malloc calls serviced this run (see osh_malloc_count) */
 static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT model (fabricated D0) */
+/* Traps serviced this run that REACH the harness-poked model state (see osh_poked_input_calls). The
+ * six the project.toml waiver `tos_poked_input_unused` names: Bconstat, Bconin, Crawio, Random,
+ * Giaccess, Kbdvbase. Reaching it, not reading it: a Giaccess WRITE stores into the register file
+ * and Bconin clears the pending flag, and under the overlap those are writes over the game's own
+ * code — worse than a read, not better. Sibling of g_malloc_n: it is the per-run witness that lets
+ * emu.run() re-test a layout waiver's claim about the GAME instead of trusting it once at import. */
+static uint32_t g_poked_input_calls;
 static uint32_t g_min_a7;       /* lowest A7 (deepest stack pointer) reached this run */
 static uint32_t g_ninsns;       /* instructions executed in the last osh_run (perf profiling) */
 static uint64_t g_ncycles;      /* 68000 clock cycles executed in the last osh_run (perf profiling) */
@@ -265,18 +272,30 @@ static void handle_trap(int vec) {
             break;
         case 0x49: case 0x4a:                         /* Mfree / Mshrink -> success */
         case 0x02: case 0x09: break;                  /* Cconout / Cconws -> no image effect */
-        case 0x06:                                    /* Crawio(w): raw console I/O, either way */
-            d0 = os_crawio(g_mem, (uint16_t)m68k_read_memory_16(caller + 2));
+        case 0x06: {                                  /* Crawio(w): raw console I/O, either way */
+            uint16_t w = (uint16_t)m68k_read_memory_16(caller + 2);
+            /* Only the READ direction looks at the poked console state; the write direction is a
+             * character bound for the screen and touches nothing (os.h). Tallying it too would
+             * redden a legitimate run for printing a character. */
+            if (w == OS_CRAWIO_READ) g_poked_input_calls++;
+            d0 = os_crawio(g_mem, w);
             break;
+        }
         default: modeled = 0; break;                  /* Pterm, Dgetdrv, Pexec, unknown */
         }
     } else if (vec == 14) {                           /* XBIOS */
         switch (fn) {
         case 0x02: case 0x03: d0 = OS_SCREEN_BASE; break;   /* Physbase / Logbase */
-        case 0x22: d0 = OS_KBDVBASE; break;           /* Kbdvbase -> fixed in-image KBDVBASE struct */
-        case 0x11: d0 = os_random(g_mem); break;      /* Random -> the harness-poked 24-bit value */
+        /* Kbdvbase hands the program a POINTER to poked state rather than reading it, but the claim
+         * the tally serves is the same one: nothing in the game may reach that block. */
+        case 0x22: g_poked_input_calls++; d0 = OS_KBDVBASE; break;   /* -> in-image KBDVBASE struct */
+        case 0x11:                                    /* Random -> the harness-poked 24-bit value */
+            g_poked_input_calls++;
+            d0 = os_random(g_mem);
+            break;
         case 0x1c:                                    /* Giaccess(data, reg): YM2149 read/write */
             g_psg_giaccess_calls++;
+            g_poked_input_calls++;
             d0 = os_giaccess(g_mem, (uint16_t)m68k_read_memory_16(caller + 2),
                              (uint16_t)m68k_read_memory_16(caller + 4));
             break;
@@ -298,8 +317,8 @@ static void handle_trap(int vec) {
     } else if (vec == 13) {                           /* BIOS: console input only (os.h) */
         uint16_t dev = (uint16_t)m68k_read_memory_16(caller + 2);
         switch (fn) {
-        case 0x01: modeled = os_bconstat(g_mem, dev, &d0); break;   /* Bconstat(dev) */
-        case 0x02: modeled = os_bconin(g_mem, dev, &d0); break;     /* Bconin(dev) */
+        case 0x01: g_poked_input_calls++; modeled = os_bconstat(g_mem, dev, &d0); break;  /* Bconstat */
+        case 0x02: g_poked_input_calls++; modeled = os_bconin(g_mem, dev, &d0); break;    /* Bconin */
         default: modeled = 0; break;                  /* Bconout, Setexc, Kbshift, unknown */
         }
     } else {
@@ -346,6 +365,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     g_heap = OS_HEAP_BASE;
     g_malloc_n = 0;
     g_unmodeled = 0;
+    g_poked_input_calls = 0;
 
     g_wn = 0;                             /* write-set = the function's writes only */
     g_psgn = 0;                           /* PSG capture = this run's register writes only */
@@ -436,6 +456,11 @@ uint32_t        osh_heap(void)        { return g_heap; }
  * OS_HEAP_BASE without moving g_heap, so a pointer comparison would miss it. emu.run() keys the
  * heap-over-program guard on this count (see emu._vet_no_malloc_over_program). */
 uint32_t        osh_malloc_count(void) { return g_malloc_n; }
+/* How many traps the last osh_run serviced that reached the harness-poked model state. emu.run() keys
+ * the poked-input-over-program guard on this count (see emu._vet_no_poked_input_read), the same way
+ * it keys the heap guard on osh_malloc_count: both waivers claim something about the GAME, so both
+ * are re-tested per run rather than trusted once. */
+uint32_t        osh_poked_input_calls(void) { return g_poked_input_calls; }
 uint32_t        osh_num_insns(void)   { return g_ninsns; }
 uint64_t        osh_num_cycles(void)  { return g_ncycles; }
 uint32_t        osh_psg_count(void)   { return g_psgn; }

@@ -9,6 +9,7 @@ import ctypes
 from pathlib import Path
 
 import loader   # bound by recreate_kit.project.load() before this module is first imported
+from recreate_kit import os_map    # the poked-input block + the pure overlap arithmetic below
 from recreate_kit import project   # already imported: it is what bound `loader` above
 
 if loader.IMAGE_SIZE is None:
@@ -45,6 +46,18 @@ _LIB.osh_unmodeled.restype = ctypes.c_uint32
 _LIB.osh_min_a7.restype = ctypes.c_uint32
 _LIB.osh_heap.restype = ctypes.c_uint32
 _LIB.osh_malloc_count.restype = ctypes.c_uint32
+# The newest oracle export. liboracle.so is SHARED by every project and is rebuilt only by kit.mk's
+# $(ORACLE) rule, which several consumers never reach (projects/buggyboy/remaster's Makefile, the
+# standalone gen_image/bench/smoke scripts) — so a stale build is a normal state to be in, and a bare
+# ctypes dlsym failure names neither the file nor the fix. Say both, the way harness.py does for the
+# candidate's required ABI.
+if not hasattr(_LIB, "osh_poked_input_calls"):
+    raise RuntimeError(
+        "the shared oracle is stale: liboracle.so exports no osh_poked_input_calls, which "
+        "emu.run() needs to reject a run whose traps read the harness-poked input block over a "
+        "project's own program (see _vet_no_poked_input_read). Rebuild it with "
+        "`make -C tools/recreate_kit oracle` — or from any project, `make oracle`.")
+_LIB.osh_poked_input_calls.restype = ctypes.c_uint32
 _LIB.osh_num_insns.restype = ctypes.c_uint32
 _LIB.osh_num_cycles.restype = ctypes.c_uint64
 _u8p = ctypes.POINTER(ctypes.c_uint8)
@@ -146,6 +159,47 @@ def heap_overlaps_program():
     return loader.PROGRAM_END is not None and OS_HEAP_BASE < loader.PROGRAM_END
 
 
+def poked_input_overlaps_program():
+    """Does the harness-poked input block sit inside the loaded program? (os_map's predicate.)"""
+    return os_map.poked_input_overlaps_program(loader.LOAD_BASE, loader.PROGRAM_END)
+
+
+def _vet_no_poked_input_read(poked_input_calls):
+    """Reject a run in which a trap reached poked input that lies inside the program — a FALSE GREEN.
+
+    Reachable only under the ``tos_poked_input_unused`` waiver (see harness._vet_os_memory_map),
+    which claims the game reads NONE of that state — no Bconstat/Bconin/Crawio, no Random, no
+    Giaccess, no Kbdvbase. That claim is what lets the program cover the block, so it is re-tested
+    after every run rather than trusted once, exactly as the Malloc waiver's is above.
+
+    Without it the claim would only ever be checked at the point a TEST stages a poke, which is a
+    different claim: the game's own reads would go unwatched. They are the dangerous half. A
+    ``Bconin`` in code that exists only after a depack reads the block — i.e. the program's own
+    instruction bytes, which are nonzero — so the model reports a keystroke pending, hands back four
+    bytes of the game's code as the key, and CLEARS four bytes of code at OS_CON_PENDING. Both sides
+    do it identically from the same os.h, so the diff is clean and the case proves nothing.
+
+    ``poked_input_calls`` counts SERVICED traps rather than looking at the block's bytes: Bconstat
+    and a Giaccess read leave it untouched, and a poked-input read is no less fabricated for being
+    read-only. It counts the WRITING traps too — a Giaccess write stores into the register file,
+    Bconin clears the pending flag — because under the overlap those land on the game's code, which
+    is the worse half of the same hazard.
+    """
+    if not (poked_input_calls and poked_input_overlaps_program()):
+        return
+    cfg = project.current()
+    raise AssertionError(
+        f"the oracle served {poked_input_calls} trap(s) reaching the harness-poked input block "
+        f"({os_map.OS_CON_PENDING:#x}..{os_map.OS_POKE_BLOCK_END - 1:#x}) while that block lies "
+        f"inside {cfg.name}'s program, which loads at {loader.LOAD_BASE:#x} and ends at "
+        f"{loader.PROGRAM_END:#x}. The trap read — and Bconin/Crawio then cleared — the game's own "
+        f"code, and the candidate mirrors the same addresses through os.h, so BOTH sides mangle the "
+        f"same bytes and the diff comes back clean while proving nothing. {cfg.name}'s "
+        f"`tos_poked_input_unused = true` in {cfg.dir / project.CONFIG_NAME} is therefore false: "
+        f"drop it and move the block (include/os.h + its mirror in recreate_kit/os_map.py) above "
+        f"the program, or raise load_base.")
+
+
 def _vet_no_malloc_over_program(malloc_calls):
     """Reject a run that served a Malloc from a modeled heap overlapping the program — a FALSE GREEN.
 
@@ -228,10 +282,12 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     out_regs["min_a7"] = _LIB.osh_min_a7()   # deepest stack pointer; used to vet diff exclude bands
     out_regs["heap"] = _LIB.osh_heap()       # Malloc bump pointer at the end of the run (diagnostics)
     out_regs["malloc_calls"] = _LIB.osh_malloc_count()   # serviced GEMDOS Malloc traps this run
+    out_regs["poked_input_calls"] = _LIB.osh_poked_input_calls()  # ...and traps reading poked input
     out_regs["ninsns"] = _LIB.osh_num_insns()  # instructions executed (perf profiling)
     out_regs["cycles"] = _LIB.osh_num_cycles()  # 68000 clock cycles executed (perf profiling)
     dn, dargs = _LIB.osh_dosound_count(), _LIB.osh_dosound_args()
     out_regs["dosound"] = [dargs[i] for i in range(dn)]  # ordered XBIOS Dosound(A0) list pointers
 
     _vet_no_malloc_over_program(out_regs["malloc_calls"])
+    _vet_no_poked_input_read(out_regs["poked_input_calls"])
     return mem, writes, out_regs

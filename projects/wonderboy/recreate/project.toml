@@ -1,0 +1,101 @@
+# Binds the shared differential harness (tools/recreate_kit) to this game.
+# Read by recreate_kit.project.load(); paths are relative to this file's directory.
+name       = "wonderboy"
+prg        = "../bin/disk1/AUTO/SWB.PRG"   # the ORIGINAL, uncracked 1989 Activision release,
+                                           # extracted from the Pasti .stx of disk 1 (AUTO folder)
+names      = "../names.txt"
+lib        = "build/libwonderboy.so"
+
+# NOT the workspace default 0x10000 — this is the one project so far that cannot use it.
+#
+# SWB.PRG is position-DEPENDENT: 0x214d8 bytes of text carry three relocation entries, and the body
+# addresses itself with absolute long operands (`jsr $e032.l`, ...) that nothing fixes up. Its entry
+# is a trampoline into a relocator at the end of the text which copies the body from `load_base + 8`
+# to the FIXED ABSOLUTE address 0x400 and jumps there (the listing is in README.md). So the only
+# address space a reconstruction can be verified in is the 0x400-based RUNTIME one.
+#
+# 0x3f8 is what makes the two coincide: `load_base + 8 == 0x400`, so the loaded image IS the runtime
+# image and the relocator's copy is an identity copy. Three consequences, all pinned by
+# test/test_bootstrap.py:
+#   * no relocation fixup lands inside the copied body (they are at 0x3fc, 0x217da, 0x217f0, and the
+#     body is [0x400, 0x217d8)), so the loaded bytes are the file's own bytes where it matters;
+#   * ../names.txt — the source of truth for every name (CLAUDE.md) — is written at THIS base, and
+#     the harness reads it for its diff labels and its exclude-band vetting. At 0x10000 every label
+#     would name an address 0xfc08 away. Its own header says so, and records that Ghidra recovers
+#     186+ functions at 0x3f8 against 57 at 0x10000;
+#   * the entry trampoline's relocated `jmp` target is 0x217d8, which is exactly names.txt's
+#     `fn 0x217d8 startup_relocate_and_run`.
+# ../run.sh passes 0x3f8 too, so a re-bootstrap lands in the same address space as this file and as
+# names.txt. It still re-imports and wipes the DB, so iterate with ../reapply.sh.
+load_base  = 0x3f8
+
+# 1 MiB. Not a free choice: harness._vet_os_memory_map() requires image_size to equal os.h's
+# OS_IMAGE_SIZE (0x100000), which os_fread/os_fwrite bound their copies against, so changing it
+# means changing the kit for every game. It comfortably covers this game, whose ceiling is now
+# bounded by evidence at 0x80000 — the top of a 512 KB ST — from three independent readings that
+# agree: `movea.l #$80000,a7` in the boot code (../names.txt, hw_init_vectors); a screen clear
+# covering exactly 0x70000..0x7fd00; and no longword constant anywhere in the image at or above
+# 0x80000. The map below it: program 0x3f8..0x218d0, overlays depacking to 0x217d8 (immediately
+# after the body — a consistency check on the 0x3f8 model), SPRITES.CRU raw at 0x25298, TILEDATA.RAD
+# depacking to 0x44000..0x4f000, eight 0x5800 scroll buffers over 0x44000..0x70000, screens at
+# 0x70000 and 0x78000. The kit's staged-file table (0xbf000) and stack guard (0xff000) are clear of
+# all of it, as is the oracle's own A7 (STACK_TOP, 0xfff00) — note the game sets its own A7 to
+# 0x80000, so a run that reaches the boot code moves the stack into the diffed region.
+# STILL OPEN: the 0x80000 figure is a scan of the shipped image, and buffer addresses that only
+# exist after a depack, or are computed rather than encoded as a longword, would not appear in it.
+image_size = 0x100000
+
+# ---- waiver 1: the modeled Malloc heap may sit inside this program ----------------------------
+# os.h's OS_HEAP_BASE (0x20000) is inside the program (0x3f8..0x218d0), so a block the model handed
+# out would land on the game's own code. Waived because the game NEVER ALLOCATES — indeed it makes
+# essentially no OS calls at all. Established by an exhaustive BYTE SCAN of the text (there is no
+# data or bss segment), not by a disassembly listing, whose linear sweep silently drops trap sites
+# after desyncing on data (docs/m68k-disassembly.md):
+#   * of the sixteen `trap #N` encodings (0x4e40..0x4e4f), only FIVE occur at an even offset
+#     anywhere in the image, and four of those (`4e49` x3, `4e47`) fall inside ASCII message tables
+#     — "MYCO/NI/D MASTER!", "RED K/NI/GHT!", "GIANT CO/NG/!" — so they are text, not instructions;
+#   * the one real trap is the `trap #1` at file offset 0x213ea, immediately preceded by the in-line
+#     selector `3f3c 0020` = GEMDOS Super. Since that is the ONLY trap instruction in the image,
+#     there is no register-loaded selector to worry about either: the game issues EXACTLY ONE TOS
+#     call in its whole life and drives the hardware directly for everything else.
+# It is the trap COUNT that carries this, not the selector scan — a Malloc needs a `trap #1`, and
+# there is only one, and it is a Super. (test/test_bootstrap.py also scans for the `3f 3c 00 48` /
+# `3f 3c 00 4a` selector pushes at any alignment and finds none, but that is corroboration: it would
+# not see a selector built in a register.)
+# THE SCAN READS THE FILE; THE CPU RUNS THE RELOCATED IMAGE. Each of the three fixups rewrites four
+# bytes (0x213e0 -> 0x217d8, 0x214d8 -> 0x218d0, 0x8 -> 0x400), so one could in principle erase a
+# `trap #N` encoding or manufacture one. It does not: the identical scan over the loaded image finds
+# the same five hits at the same offsets (test_the_trap_inventory_survives_relocation). That is the
+# step that carries the argument from the file to what actually executes.
+# The honest summary is simpler and stronger than Joust's: THIS PROGRAM BARELY USES THE OS. Zero
+# BIOS traps, zero XBIOS traps, zero GEM traps, one GEMDOS trap, and no file I/O at all — it drives
+# the WD1772 FDC and the DMA chip itself, with its own FAT12 layer at runtime 0x6118..0x64f0.
+# LIMIT, stated because it is a claim about the game rather than about the kit: the scan covers the
+# shipped .PRG only. The game may depack code into memory, and a trap encoding that exists only
+# after depacking is invisible here. The claim is re-enforced per run by
+# emu._vet_no_malloc_over_program(), which fails any oracle run that actually services a Malloc
+# while the heap overlaps the program.
+tos_malloc_unused = true
+
+# ---- waiver 2: the harness-poked input block may sit inside this program ----------------------
+# load_base 0x3f8 is below os.h's OS_POKE_BLOCK_END (0x620), so the poked block (OS_CON_PENDING /
+# OS_CON_CHAR / OS_RANDOM_VALUE / OS_PSG_REGS at 0x600..0x61f, and OS_KBDVBASE at 0x500) lies inside
+# the program. It cannot be otherwise: the game runs at 0x400 and everything below that is the 68000
+# vector page.
+# Waived on the SAME evidence as waiver 1, and it is a stronger conclusion than "no Malloc": every
+# reader of that block is a TOS trap — Bconstat, Bconin, Crawio, Random, Giaccess, Kbdvbase — and
+# this image contains exactly one trap instruction, a Super. So nothing the game does can ever read
+# a poked input, and no test can usefully stage one. Enforced from BOTH directions rather than
+# trusted, and keyed on the overlap rather than on this flag:
+#   * emu._vet_no_poked_input_read() fails any oracle run in which a trap actually read the block —
+#     the half that watches the GAME, and the one that matters, since a trap that only exists after
+#     a depack is invisible to a scan of the shipped file (see waiver 1's LIMIT);
+#   * harness.make_image() refuses to APPLY any poke landing in the block, so a hand-written poke
+#     dict is refused exactly like a console_key() one. console_key()/psg_regs() refuse earlier,
+#     with a friendlier message.
+# ALSO INSIDE THE PROGRAM, and NOT covered by any check: os.h's OS_SCREEN_BASE (0x8000), what XBIOS
+# Physbase/Logbase return. The kit has never vetted it for any project (TRAP_MODEL.md says so), and
+# those two traps are not in the tally above either. It is inert here for the same reason as
+# everything else — one trap in the image, and it is a Super — but if the game ever reaches
+# Physbase, this is where it bites, and silently: both sides would draw over the same code bytes.
+tos_poked_input_unused = true

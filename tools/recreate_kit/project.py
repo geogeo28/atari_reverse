@@ -74,6 +74,13 @@ def load(recreate_dir):
         # Optional: the game issues no GEMDOS Malloc, so the modeled heap is never allocated from
         # and may sit inside its program. The project.toml declaring it must justify it there.
         tos_malloc_unused=_bool_flag(raw, "tos_malloc_unused", recreate_dir),
+        # Optional: the game reads none of the harness-poked input state (no console call, no
+        # Random, no Giaccess, no Kbdvbase), so the poked block may sit inside its program — which
+        # a load_base below OS_POKE_BLOCK_END forces. See harness._vet_os_memory_map. The claim is
+        # then enforced from both directions rather than trusted: harness.make_image refuses any
+        # poke landing in the block, and emu._vet_no_poked_input_read refuses any run in which the
+        # game's own code reads it.
+        tos_poked_input_unused=_bool_flag(raw, "tos_poked_input_unused", recreate_dir),
     )
 
     if str(ORACLE) not in sys.path:

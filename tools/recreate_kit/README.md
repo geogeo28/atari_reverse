@@ -13,6 +13,8 @@ tools/recreate_kit/
 ├── project.py        bind one recreate/ dir to the kit (reads its project.toml)
 ├── harness.py        the differential driver (differential/report/make_image/stage_files,
 │                     plus the model-state pokes console_key/psg_regs)
+├── os_map.py         the harness-poked input block + the overlap arithmetic its guards ask for
+│                     (shared by harness.py and oracle/emu.py; importable with nothing built)
 ├── kit.mk            shared make rules: candidate .so, Musashi oracle, `test`/`venv`/`oracle`/`clean`
 ├── include/          machine.h (big-endian image accessors)  os.h (deterministic TOS trap model)
 ├── src/              C linked into EVERY candidate .so: dosound_log.c (the Dosound ledger below)
@@ -122,10 +124,11 @@ hardware whose real value is time-varying still reaches both cores identically:
 
 `include/os.h` fixes the modeled Malloc heap (`OS_HEAP_BASE`), the staged-file table
 (`OS_FS_TABLE` / `OS_FS_STAGING`) and the poked-input block above at kit-wide addresses, mirrored
-in Python by `harness.py` —
-except `OS_HEAP_BASE`, which sits in `oracle/emu.py` where the per-run Malloc guard below needs it,
-and is re-exported as `harness.OS_HEAP_BASE`. `test/test_os_memory_map.py` pins every constant
-equal to `os.h` and refuses a second Python copy. They are **not** derived from `project.toml`, so the
+in Python by `harness.py` — except `OS_HEAP_BASE`, which sits in `oracle/emu.py` where the per-run
+Malloc guard below needs it, and the poked-input block, which sits in `os_map.py` because
+`harness.py` and `emu.py` both guard it. Both are re-exported (`harness.OS_HEAP_BASE`,
+`harness.OS_CON_PENDING`, …). `test/test_os_memory_map.py` pins every constant equal to `os.h` and
+refuses a second Python copy. They are **not** derived from `project.toml`, so the
 harness checks at import that they clear the bound project's program, stay below the stack guard,
 sit below its `load_base`, and that `OS_IMAGE_SIZE` matches its `image_size` — failing with a
 diagnostic naming `project.toml` when they do not. A game whose text+bss reaches `0x20000` (heap) or
@@ -156,6 +159,44 @@ truthy in Python and would silently waive the check). What it does *not* cover: 
 reaches `OS_HEAP_BASE` through some other route than the modeled `Malloc` — nothing here watches
 plain writes into that region. `projects/joust/recreate/test/test_heap_guard.py` exercises the whole
 guard, since Joust is the only project it is armed for.
+
+A **second waiver**, `tos_poked_input_unused`, exists for the poked-input block and is built the
+same way. `load_base >= OS_POKE_BLOCK_END` (`0x620`) is impossible for a program that runs at a
+fixed low address — `projects/wonderboy/` loads at `0x3f8`, because its `.PRG` relocates itself to
+absolute `0x400` and there is nothing below that but the 68000 vector page. A game that reads
+**none** of the poked state (no `Bconstat`/`Bconin`/`Crawio`, no `Random`, no `Giaccess`, no
+`Kbdvbase`) can declare the flag and let its program cover the block.
+
+Like the heap waiver it buys a layout and not a green run, and for the same reason: the claim is
+about the *game*, so it is re-tested rather than trusted. Two guards, covering the two directions
+the hazard has, both keyed on the **overlap** and never on the flag:
+
+* **`emu.run()`** refuses any run in which a trap reached the block — `_vet_no_poked_input_read()`,
+  keyed on the shim's `osh_poked_input_calls` tally exactly as the heap guard is keyed on
+  `osh_malloc_count` (and oracle-side only, unlike the refusal tally: see
+  [`TRAP_MODEL.md`](TRAP_MODEL.md) for the two limits that carries).
+  This is the direct sibling of the Malloc re-check, and the half that matters:
+  the dangerous reader is the game, not the test. A `Bconin` in code that only exists after a depack
+  reads the program's own (nonzero) instruction bytes, is told a keystroke is pending, gets four
+  bytes of code back as the key, and has four more bytes of code **zeroed** — identically on both
+  sides, since both run the same `os.h`, so the diff comes back clean.
+* **`harness.make_image()`** refuses any poke whose byte range lands in the block. It sits where
+  pokes are *applied*, which is the layer nothing can go round: the block holds three kinds of state
+  and the kit ships two builders, so hand-writing `{OS_RANDOM_VALUE: …}` into a poke dict is the
+  only way any project stages an XBIOS `Random` — an idiom already in use in Joust's suite — and it
+  is seen exactly like a `console_key()` one.
+
+`console_key()` / `psg_regs()` refuse as well (`_vet_poked_input_available()`), but only as a
+friendlier early error naming what was staged; they are not the guard. A project whose `load_base`
+already clears the block keeps both builders however its `project.toml` is written, because the
+overlap, not the flag, is what decides.
+
+The block's Python mirror lives in **`os_map.py`**, its own module: `harness.py` and `oracle/emu.py`
+both guard it and neither can import the other, and it must stay importable with nothing built so
+that the kit's own suite can pin the geometry (`test/test_os_map.py`). What that suite still cannot
+reach is the *wiring* — both guards live in modules that load a compiled `.so` at import — so that
+half stays pinned in `projects/wonderboy/recreate/test/test_poked_input_guard.py`, the only project
+the overlap exists for.
 
 ## Binding
 
@@ -207,8 +248,12 @@ names the surface that would catch its failure, and a change that names none has
 `make test` in this directory runs `test/` — checks that belong to `tools/` rather than to any
 one game: the cross-language pin between `prg_dis.py`'s and `AtariOsTrapAnnotate.java`'s XBIOS
 trap tables, `prg_dis`'s 68000 decoder (reference encodings + an opcode-space sweep for
-impossible instruction forms), the C-vs-Python pin on the TOS memory map above, and
-`project._bool_flag`'s refusal of a non-boolean waiver flag.
+impossible instruction forms), the C-vs-Python pin on the TOS memory map above,
+`project._bool_flag`'s refusal of a non-boolean waiver flag (for **every** waiver flag, checked
+against `project.load` itself so a new one cannot ship untested), and `os_map`'s overlap geometry.
+
+They must keep running in a bare checkout — no oracle build, no candidate `.so` — which is why the
+poked-input geometry was moved into `os_map.py` to be tested here at all.
 
 They need only pytest — but the kit has no venv of its own, so **`PY` defaults to BuggyBoy's**
 (`../../projects/buggyboy/recreate/.venv/bin/python`). That is a known wart: the game-agnostic kit

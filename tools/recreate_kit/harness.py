@@ -7,6 +7,7 @@ driven through ctypes.
 import ctypes
 import re
 
+from . import os_map
 from . import project
 
 _CFG = project.current()                 # bound by project.load(); it also put oracle/ on sys.path
@@ -75,8 +76,9 @@ def label(addr):
 # These addresses are KIT-WIDE (one set of C constants serves every game), while load_base /
 # image_size are per-project. tools/recreate_kit/test/test_os_memory_map.py pins this mirror equal
 # to os.h; _vet_os_memory_map() below checks the addresses actually fit the bound project's image.
-# OS_HEAP_BASE is the one piece of the mirror that lives in oracle/emu.py instead (the per-run
-# Malloc guard there needs it); re-exported so `harness.OS_HEAP_BASE` still reads as one map.
+# Two pieces of the mirror live elsewhere and are re-exported here, so `harness.*` still reads as one
+# map: OS_HEAP_BASE in oracle/emu.py (its per-run Malloc guard needs it) and the poked-input block in
+# os_map.py (harness.py and emu.py both guard it, and neither can import the other).
 OS_IMAGE_SIZE = 0x100000     # image length the C model bounds its copies against (vetted below)
 OS_HEAP_BASE = emu.OS_HEAP_BASE   # modeled Malloc bump-allocates upward from here
 OS_FS_TABLE = 0xBF000        # staged-file table base
@@ -95,16 +97,19 @@ OS_FS_OFF_CAPACITY = 32      # u32: staging bytes reserved; os_fwrite refuses to
 OS_FS_FIRST_HANDLE = 6
 OS_DOSOUND_LOG_MAX = 256     # ledger cap, on BOTH sides (shim.c's mirror and src/dosound_log.c)
 
-# The harness-poked model state (os.h, 0x600..0x61f): hardware whose real value is time-varying is
-# an ordinary in-image test input, so both cores read the same bytes. See TRAP_MODEL.md.
-OS_CON_PENDING = 0x600       # u32: nonzero = a character is waiting at the console (Bconstat)
-OS_CON_CHAR = 0x604          # u32: the longword Bconin returns (scancode << 16 | ascii)
-OS_RANDOM_VALUE = 0x608      # u32: what XBIOS Random returns (masked to 24 bits)
-OS_PSG_REGS = 0x610          # the YM2149 register file that XBIOS Giaccess reads and writes
-OS_PSG_NREGS = 16
-OS_PSG_WRITE = 0x80          # bit 7 of Giaccess's register argument selects write over read
 OS_SUPER_TOKEN = 0x00535550  # the cookie GEMDOS Super(0) returns; Super(cookie) restores
-OS_POKE_BLOCK_END = OS_PSG_REGS + OS_PSG_NREGS   # first address above the poked block (0x620)
+
+# The harness-poked model state (os.h, 0x600..0x61f). Re-exported rather than defined here: both
+# this module and oracle/emu.py guard the block, and emu cannot import harness (harness imports it),
+# so recreate_kit/os_map.py is its one home — which also keeps it importable with nothing built, for
+# the kit's own suite. `harness.OS_CON_PENDING` and friends keep working through these names.
+OS_CON_PENDING = os_map.OS_CON_PENDING
+OS_CON_CHAR = os_map.OS_CON_CHAR
+OS_RANDOM_VALUE = os_map.OS_RANDOM_VALUE
+OS_PSG_REGS = os_map.OS_PSG_REGS
+OS_PSG_NREGS = os_map.OS_PSG_NREGS
+OS_PSG_WRITE = os_map.OS_PSG_WRITE
+OS_POKE_BLOCK_END = os_map.OS_POKE_BLOCK_END
 
 
 # Does the modeled Malloc heap sit inside this project's own program? If so, any block the model
@@ -113,19 +118,36 @@ OS_POKE_BLOCK_END = OS_PSG_REGS + OS_PSG_NREGS   # first address above the poked
 # (emu._vet_no_malloc_over_program) — the waiver asserts something about the game, not about the kit.
 _HEAP_OVER_PROGRAM = emu.heap_overlaps_program()
 
+# The poked-input block's overlap is NOT cached the way the heap's is above: the three guards below
+# key on it, and _vet_os_memory_map() is re-runnable — projects/joust/recreate/test/test_os_traps.py
+# pins the import-time check by monkeypatching loader.LOAD_BASE and calling it again, which a value
+# frozen at import would silently ignore. It is emu.poked_input_overlaps_program(), read live, and
+# on make_image's hot path the cheap range test short-circuits ahead of it.
+
 
 def _overlap_error(name, addr, waiver=""):
     """The shared diagnostic for a TOS-model region that collides with the loaded program."""
     return RuntimeError(
         f"{name} ({addr:#x}, tools/recreate_kit/include/os.h) lies inside {_CFG.name}'s "
         f"program, which ends at {loader.PROGRAM_END:#x} — a Malloc block or a staged file "
-        f"would overwrite its own code/bss. Move that region (and its Python mirror, in harness.py "
-        f"or oracle/emu.py) above the program, or lower load_base in "
+        f"would overwrite its own code/bss. Move that region (and its Python mirror, in harness.py, "
+        f"os_map.py or oracle/emu.py) above the program, or lower load_base in "
         f"{_CFG.dir / project.CONFIG_NAME}." + waiver)
 
 
 def _vet_os_memory_map():
-    """Refuse to run if the kit-wide TOS-model regions don't fit this project's image.
+    """Refuse to run if OS_HEAP_BASE / OS_FS_TABLE / OS_FS_STAGING / the poked-input block, or
+    OS_IMAGE_SIZE, don't fit this project's image.
+
+    NOT every kit-wide region: os.h also fixes OS_KBDVBASE (0x500, the KBDVBASE struct XBIOS
+    Kbdvbase returns) and OS_SCREEN_BASE (0x8000, what Physbase/Logbase return), and neither is
+    checked here or anywhere else. Both used to be covered incidentally by the `load_base >= 0x620`
+    floor below — every project loaded at 0x10000, so both regions were necessarily below every
+    program — and the poked-input waiver removes exactly that coverage: at projects/wonderboy's
+    load_base of 0x3f8, 0x500 and 0x8000 are both inside a live program. The Kbdvbase READER is
+    caught per run by emu._vet_no_poked_input_read, but only while the poked block ALSO overlaps
+    (that guard's predicate is about the block, not about 0x500); Physbase/Logbase are caught by
+    nothing at all. See TRAP_MODEL.md, "Two regions this leaves unvetted".
 
     A program that reaches OS_HEAP_BASE or OS_FS_TABLE would have its own code/bss silently
     overwritten by a Malloc block or a staged file — nothing else would catch that, since both are
@@ -150,13 +172,19 @@ def _vet_os_memory_map():
             f"the stack guard {emu.STACK_GUARD_LO:#x} — staged file bytes would land in the band "
             f"the differential drops. Raise image_size in {_CFG.dir / project.CONFIG_NAME}, or "
             f"move the region down.")
-    if loader.LOAD_BASE < OS_POKE_BLOCK_END:
+    if emu.poked_input_overlaps_program() and not _CFG.tos_poked_input_unused:
         raise RuntimeError(
             f"the harness-poked input block ({OS_CON_PENDING:#x}..{OS_POKE_BLOCK_END - 1:#x}, "
             f"tools/recreate_kit/include/os.h) is not below {_CFG.name}'s program, which loads at "
             f"{loader.LOAD_BASE:#x} — a staged keystroke, Random value or PSG register would be "
             f"poked ON TOP of its own code with no diagnostic. Move that block (and its Python "
-            f"mirror above) down, or raise load_base in {_CFG.dir / project.CONFIG_NAME}.")
+            f"mirror, recreate_kit/os_map.py) down, or raise load_base in "
+            f"{_CFG.dir / project.CONFIG_NAME}. If the game reads NONE of that state — no "
+            f"Bconstat/Bconin/Crawio, no Random, no Giaccess, no Kbdvbase — "
+            f"`tos_poked_input_unused = true` in project.toml (which must justify it) waives this "
+            f"check. Two guards then enforce the claim instead of trusting it: make_image() refuses "
+            f"any poke landing in the block, and emu.run() refuses any run in which the GAME's own "
+            f"code reads it.")
     if OS_IMAGE_SIZE != loader.IMAGE_SIZE:
         raise RuntimeError(
             f"OS_IMAGE_SIZE ({OS_IMAGE_SIZE:#x}, tools/recreate_kit/include/os.h) is not "
@@ -170,6 +198,57 @@ def _vet_os_memory_map():
 _vet_os_memory_map()
 
 
+def _poked_input_waiver_error(subject):
+    """The shared diagnostic for staging poked input into a block that lies inside the program."""
+    return RuntimeError(
+        f"{_CFG.name} staged {subject}, but the harness-poked input block "
+        f"({OS_CON_PENDING:#x}..{OS_POKE_BLOCK_END - 1:#x}) lies INSIDE its program, which loads at "
+        f"{loader.LOAD_BASE:#x} and ends at {loader.PROGRAM_END:#x} — writing the poke would land "
+        f"on the game's own code, on both sides, and the diff would compare two identically "
+        f"corrupted runs. That layout is only permitted because its {project.CONFIG_NAME} declares "
+        f"`tos_poked_input_unused = true`, the claim that the game reads NONE of this state. Either "
+        f"the claim is wrong — drop the flag and move the block (include/os.h + its mirror, "
+        f"recreate_kit/os_map.py) above the program, or raise load_base — or this case does not "
+        f"need the poke. (Those addresses being the game's own code is exactly why this is refused: "
+        f"nothing here can tell a poke staging kit model state from one deliberately patching the "
+        f"program at the same place, so both are refused rather than one silently served.)")
+
+
+def _vet_poked_input_available(what):
+    """Refuse to BUILD a poked-input poke for a project whose program covers the block.
+
+    Keyed on the overlap, never on the ``tos_poked_input_unused`` flag: a project that sets the flag
+    while loading clear of the block (load_base >= OS_POKE_BLOCK_END) has nothing to collide with and
+    keeps console_key()/psg_regs(), and a project that loses the overlap later stops being refused
+    without anyone editing the flag. When the overlap IS present and the flag is not set,
+    _vet_os_memory_map() already refused to bind the project, so the flag adds nothing to test.
+
+    This is the friendly early error, not the guard: it names *what* was staged, at the line that
+    staged it, before an image exists. The guard that cannot be bypassed is in make_image(), which
+    sees every poke however it was built; the guard over the GAME's own reads of the block is
+    emu._vet_no_poked_input_read().
+    """
+    if emu.poked_input_overlaps_program():
+        raise _poked_input_waiver_error(what)
+
+
+def _vet_no_poke_into_poked_input(addr, length):
+    """Refuse one poke of ``length`` bytes at ``addr`` if it lands in the poked-input block while
+    that block lies inside the program. Called from make_image() for every poke.
+
+    The range test is two comparisons on an address that is almost always far above the block, and
+    it short-circuits, so for every project the hazard cannot reach this costs one call per poke on
+    make_image's hot path and never reaches the overlap question at all.
+
+    LIMIT: under the overlap those addresses ARE the game's code, and nothing here can tell a poke
+    that stages kit model state from one that deliberately patches the program's own bytes at the
+    same place (which test_bootstrap.py does elsewhere in the image). It refuses both. Over-strict
+    fails loudly, which is the right way round for this contract; the diagnostic says so.
+    """
+    if os_map.poke_hits_poked_input(addr, length) and emu.poked_input_overlaps_program():
+        raise _poked_input_waiver_error(f"a {length}-byte poke at {addr:#x}")
+
+
 def console_key(char, scancode=0):
     """Pokes staging ONE pending console keystroke, for Bconstat / Bconin / Crawio.
 
@@ -178,6 +257,7 @@ def console_key(char, scancode=0):
     The pending flag and the character are built together because a test that set only one would
     leave the console half-armed — armed with a NUL, or holding a character nothing reports.
     """
+    _vet_poked_input_available("a console keystroke")
     return {OS_CON_PENDING: (1).to_bytes(4, "big"),      # nonzero = a character is waiting
             OS_CON_CHAR: ((scancode << 16) | ord(char)).to_bytes(4, "big")}
 
@@ -189,6 +269,7 @@ def psg_regs(values):
     already has, since the model asserts nothing about the chip's power-on contents. The whole file
     is one poke, so a partially written file is not expressible.
     """
+    _vet_poked_input_available("the YM2149 register file")
     regfile = bytearray(OS_PSG_NREGS)
     for reg, value in values.items():
         assert 0 <= reg < OS_PSG_NREGS, f"YM2149 register {reg} is outside 0..{OS_PSG_NREGS - 1}"
@@ -232,9 +313,17 @@ def stage_files(files):
 
 
 def make_image(pokes=None):
-    """Fresh copy of the loaded image with {addr: bytes} written in."""
+    """Fresh copy of the loaded image with {addr: bytes} written in.
+
+    Every poke passes _vet_no_poke_into_poked_input() — the one layer no caller can go round, since
+    a poke that is never applied changes nothing. The two builders above check earlier and more
+    kindly, but they are not the whole surface: the block holds three kinds of state and the kit
+    ships two builders, so hand-writing {OS_RANDOM_VALUE: ...} into a poke dict is the ONLY way to
+    stage an XBIOS Random, and that idiom is in use (projects/joust/recreate/test/test_os_traps.py).
+    """
     img = bytearray(BASE_IMAGE)
     for addr, data in (pokes or {}).items():
+        _vet_no_poke_into_poked_input(addr, len(data))
         img[addr:addr + len(data)] = data
     return img
 
