@@ -106,7 +106,7 @@ void project_followed_actor(uint8_t *image) {
 /* Which of the three tables the two mode flags name. Both tests are `bpl` on the word's own sign. */
 static uint32_t selected_actor_table(const uint8_t *image) {
     if ((int16_t)be16(image + WB_STATE_FLAG_A30) < 0)
-        return WB_ACTOR_TA30;
+        return WB_ACTOR_TABLE_A30;
     if ((int16_t)be16(image + WB_STATE_FLAG_A32) < 0)
         return WB_ACTOR_TABLE_A32;
     return WB_ACTOR_TABLE_DEFAULT;
