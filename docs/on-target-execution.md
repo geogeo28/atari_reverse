@@ -32,6 +32,54 @@ effect is off-image is invisible to verification:
 on-target behaviour diverges from the harness-verified image, suspect one of these four dimensions
 before you suspect the reconstructed logic — the logic is the one part that *is* verified.
 
+### Measure the blindness BEFORE you choose what to reconstruct
+
+That blindness is not uniform across a program, and its distribution decides the reconstruction
+order. Measure it first, with `tools/hw_scan.sh` + `tools/hw_portability.py`: they read every
+hardware access out of the Ghidra DB, sort each function into a tier by what the oracle would do
+with it, and close the tiers over the call graph. Both are game-agnostic; the worked example is
+`projects/wonderboy/recreate/PORTABILITY.md`.
+
+The tiers are the shim's own behaviour, restated per function:
+
+| tier | the oracle's behaviour | what a green differential means |
+|---|---|---|
+| T0 | no off-image access | it means what you think |
+| T1 | the modelled write ledger (PSG bytes, `Dosound`) captures it | verified, including the off-image effect |
+| T2 | the write is silently dropped | the memory effect is verified; **the hardware effect is untested** |
+| T3 | the read returns 0, on BOTH sides | **falsely green** if a branch depends on it; merely incomplete if not |
+| T4 | the run is refused | not verifiable at all |
+| T5 | the code cannot be read statically (self-decrypting protection) | there is no source text to port |
+
+**T3-with-a-branch is the tier to hunt.** T4 announces itself — the run fails. T3 does not: the same
+wrong value reaches both sides and the diff agrees on a fiction. Telling "steers a branch" from
+"stored and ignored" needs dataflow from the read to the first conditional branch that consumes it,
+not a count of operands. Two measured examples of what it costs:
+
+* BuggyBoy's `$ffff820a` 50/60 Hz music-tempo branch was invisible to its **entire** differential and
+  only surfaced on real hardware.
+* Wonder Boy polls `btst #5,$fffa01 / bne` for FDC-done. That line is **active low**, so a permanent
+  0 reads as *"already finished"*: under the oracle the poll returns success on its first status
+  test, in 107 instructions, having moved not one byte. A reconstruction that does the same is
+  "verified". **Then measure the layer above before you generalise it** — the same game's *command*
+  entries reject that fabricated status and report hard failure (`$fffb` / `$fffd`) while mutating
+  driver state, so "the driver reports success" was true of the polls and false of the driver.
+  A T3 read makes the code believe a fiction; which fiction, and what each caller does with it, is
+  a separate measurement per entry point.
+
+Three rules the measurement itself has to follow:
+
+1. **Use the disassembler's reference model, not an operand scan.** In Wonder Boy 15 % of hardware
+   accesses are register-indirect (`lea $ff8240,a0` then `clr.l (a0)+`) and an operand scan sees
+   none of them. Cross-check the total against a linear sweep of the *whole* image and explain
+   every difference — a sweep sees code the disassembler never reached, and manufactures hits
+   inside data and ciphertext.
+2. **A tier is a property of the code, not of a run.** A T4 function comes back green on any run
+   whose data never reaches the offending access. Verify the tier empirically on a chosen case, and
+   say which case.
+3. **State the coverage of the measurement as loudly as its result.** If the disassembler only
+   reached 46 % of what you believe is code, every tier total is a statement about that 46 %.
+
 ## The seam pattern
 
 Cores that only make sense with real hardware are written as a **seam**: a no-op (or modelled)

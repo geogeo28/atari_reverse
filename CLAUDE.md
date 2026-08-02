@@ -38,10 +38,14 @@ reverse/
 │   ├── depack_common.py      # the command line + size cap the depackers above share
 │   ├── st_extract.py         # stdlib FAT12 .ST disk-image lister/extractor
 │   ├── stx_extract.py        # stdlib Pasti/.STX reader: protection report + clean .ST (--to-st)
-│   ├── ghidra_scripts/       # PrgLoader, AtariOsTrapAnnotate, ExportDecompC, ApplyNames, DumpNames, LoadDump
+│   ├── hw_portability.py     # how much of a game a memory-only differential can verify: tiers
+│   │                         # per function + transitive closure over the call graph
+│   ├── ghidra_scripts/       # PrgLoader, AtariOsTrapAnnotate, ExportDecompC, ApplyNames, DumpNames,
+│   │                         # LoadDump, HwPortabilityScan
 │   ├── headless.sh           # bootstrap: import->load->analyze->annotate->export
 │   ├── reapply.sh            # fast naming loop: apply names.txt -> re-export
 │   ├── dump_names.sh         # reverse: export DB names -> names.txt format (recover GUI edits)
+│   ├── hw_scan.sh            # dump function bodies + call graph + hardware accesses -> TSV
 │   ├── hatari_run.sh         # launch a game in Hatari (run depacker, then dump memory)
 │   ├── load_dump.sh          # analyze a raw memory dump (depacked game) — see docs/packed-executables.md
 │   ├── new_project.sh        # scaffold projects/<name>/

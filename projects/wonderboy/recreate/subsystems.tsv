@@ -1,0 +1,24 @@
+# SWB.PRG partitioned into subsystems, for tools/hw_portability.py --subsystems.
+# `lo<TAB>hi<TAB>name`, matched against a function's ENTRY address, FIRST MATCH WINS — so the
+# specific ranges come first and the catch-all last. Several disjoint ranges may share a name.
+# Boundaries follow the region table and the function clusters in ../notes/architecture.md;
+# every address is a RUNTIME address (base 0x3f8).
+0x3f8	0x420	boot
+0x694	0x716	video (screen / palette / mode)
+0x716	0x754	interrupt (VBL)
+0x754	0x88c	input (IKBD / ACIA)
+0x5d62	0x5e3e	resource depack (RAD)
+0x5e3e	0x6242	disk (FAT12 + file load)
+0x6242	0x64f0	disk (WD1772 FDC + DMA)
+0x82f8	0x8dfe	video (background scroll)
+0x8fce	0x989c	video (sprite blitters)
+0xe482	0xe782	boot
+0xe782	0xe7f4	resource loader
+0xe7f4	0xe80c	video (screen / palette / mode)
+0xe80c	0xecba	boot
+0xecba	0xf576	copylock (protection)
+0xf8bc	0xf906	boot
+0xf906	0xf95c	video (screen / palette / mode)
+0x17adc	0x1ab04	sound (YM2149)
+0x217d8	0x21810	boot
+0x0	0x21810	game logic

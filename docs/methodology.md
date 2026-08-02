@@ -64,6 +64,17 @@ block scores 14 `rts`. Practical rules:
   not by entry address. The Wonder Boy region was reported as having no function
   in it; `FUN_0000ecca` starts 36 bytes below the boundary and its body reaches
   well inside.
+* **A correct CODE verdict is not coverage.** The rule above fires on a *DATA*
+  verdict, and that is not enough: the same trap caught Wonder Boy a second time
+  3 KB away, inside a region the table had always called CODE. `$83b6..$8dfe` —
+  16 unrolled scroll blitters behind the longword table at `$8366` — sat in no
+  Ghidra function at all, because the only way in is
+  `movea.l (0,a2,d1.w),a2 / jmp (a2)`, and nothing in the region table was wrong.
+  So ask the *coverage* question separately from the classification one: **which
+  parts of a CODE region does the disassembler actually reach?** Subtract every
+  function body and every unattributed instruction run from the region and read
+  the holes; that one screen found 2,632 bytes of live blit code and is written
+  up in `projects/wonderboy/recreate/PORTABILITY.md` §8.1.
 
 ## Naming variables
 

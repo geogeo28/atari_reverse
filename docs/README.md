@@ -18,7 +18,7 @@ reference project, but written as general procedure for any Atari ST binary.
 | [hardware-map](hardware-map.md) | decode direct hardware access (video/sound/MFP/IKBD), interrupts, Line-A | hardware |
 | [graphics](graphics.md) | decode bitmaps: planar format, palettes, RLE, extract sprites to PNG | graphics |
 | [sound](sound.md) | find & read the YM2149 sound/music driver | audio |
-| [on-target-execution](on-target-execution.md) | **run the verified reconstruction on real hardware** — the seam pattern, the bug class the harness can't see (timing/endian/ABI/codegen), the diagnostic toolkit | on-target / perf |
+| [on-target-execution](on-target-execution.md) | **run the verified reconstruction on real hardware** — the seam pattern, the bug class the harness can't see (timing/endian/ABI/codegen), **measuring that blindness before you pick what to port** (`hw_scan.sh` / `hw_portability.py`), the diagnostic toolkit | on-target / perf |
 | [methodology](methodology.md) | actually name functions/variables: anchors→outward, verify, iterate | RE methodology |
 
 Cross-domain rule of thumb: **formats → disassembly/ghidra → OS+hardware (to anchor) →

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Locate Ghidra and a JDK 21, for the four headless entry points to source:
-#   headless.sh · reapply.sh · dump_names.sh · load_dump.sh
+# Locate Ghidra and a JDK 21, for the five headless entry points to source:
+#   headless.sh · reapply.sh · dump_names.sh · load_dump.sh · hw_scan.sh
 #
 # Both are overridable from the environment, so this works off a Homebrew macOS box:
 #   GHIDRA_HOME=/opt/ghidra JAVA_HOME=/usr/lib/jvm/java-21 bash tools/headless.sh ...

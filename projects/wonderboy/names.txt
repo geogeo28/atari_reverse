@@ -387,3 +387,70 @@ fn 0x103ca effect_push_record_0803
 cmt 0x10394 These four are identical bar the constant: `addq.l #2,$b546 / movea.l $b546,a1 / move.w #imm,(a1) / rts` -- a word pushed onto a growing list whose write pointer is $b546.
 fn 0x103dc effect_restore_b6fa_to_max
 cmt 0x103dc $b6fa := $b6f8 -- sets the counter straight to its maximum.
+
+# ---------------------------------------------------------------------------
+# Pseudo-random number generator  (found by the portability measurement --
+# see recreate/PORTABILITY.md; it is the game logic's ONLY hardware access)
+# ---------------------------------------------------------------------------
+fn 0x51ac rng_1_to_4_masked
+cmt 0x51ac Returns `((($ff8209 + $ff8207 + $9aec + $9aed) & 3) + 1) & d0` in d1 -- a 1..4 pick, then masked by the caller's d0. Called by `bsr.w $51ac` from $5184 and $544c. Like rng_next its only entropy is the SHIFTER'S VIDEO ADDRESS COUNTER ($ff8207/$ff8209), which the differential oracle answers 0, so under the harness the result depends solely on the two state bytes at $9aec/$9aed. Named here because Ghidra never reached this routine on its own (nothing it disassembled calls $5184 either), and an `fn` line is what makes it disassemble -- see recreate/PORTABILITY.md, which was counting these two hardware sites by hand until it was added.
+fn 0x68c6 rng_next
+cmt 0x68c6 The game's PRNG. Advances three free-running counters modulo $25/$17/$11 ($6932/$6934/$6936), then returns `($ff8209 ^ $b39a) + $6932 + $6934 + $6936` in d0. $ff8209 is the SHIFTER'S VIDEO ADDRESS COUNTER (low byte, the fastest-changing one -- $ff8205/8207/8209 are high/mid/low) -- the only genuine entropy in the mix, and the only hardware access anywhere in the game-logic subsystem. Under the differential oracle every off-image read returns 0, so that term vanishes on BOTH sides and the generator degenerates to a deterministic function of the three counters. The diff still comes back clean: this is a T3-DATA false green, not a T3-STEER one, but it silently removes the game's randomness.
+var 0x6932 rng_counter_mod37
+var 0x6934 rng_counter_mod23
+var 0x6936 rng_counter_mod17
+
+# ---------------------------------------------------------------------------
+# Background scroll blitter: the SECOND unrolled blit family, behind a jump
+# table -- exactly the failure docs/methodology.md records for $8fce..$989c.
+# Found by re-reading the coverage gap the portability measurement admits to
+# (recreate/PORTABILITY.md 8.1): $8366..$8dfe was in no Ghidra function at all,
+# because the only way in is `movea.l (0,a2,d1.w),a2 / jmp (a2)`.
+#
+# game_main_loop ($4a0) calls bg_scroll_blit once a frame. It builds
+#   a1 = screen_back + $1420                          (destination)
+#   a0 = $44000 + bg_scroll_buffer*$2c00 + bg_scroll_y*128 + bg_scroll_x*8
+#   a2 = bg_scroll_blit_table[bg_scroll_x]            (0..15)
+# then splits the 160 destination scanlines around the source buffer's
+# vertical wrap: d7+1 rows before it and, if d6 >= 0, d6+1 rows after a
+# `lea -$5800(a0),a0` rewind. Both halves are the SAME 16 routines, entered
+# through the two `jmp (a2)` at $8350 and $8364.
+#
+# Each variant copies 30 longwords (120 bytes = 240 px of a 4-plane line) per
+# scanline out of a 128-byte-wide circular row, then `lea 40(a1),a1` to finish
+# a 160-byte screen line. Variant x is the one whose unrolled `move.l (a0)+,(a1)+`
+# run is split where byte offset 8*x makes the source row wrap:
+#   x=0,1  30 moves, no wrap (8*x + 120 <= 128), then a0 += 8
+#   x>=2   (32-2x) moves, `lea -128(a0),a0`, (2x-2) moves, then a0 += 136
+#          (the two runs always sum to 30: x=2 -> 28+2, x=8 -> 16+14, x=15 -> 2+28)
+# so the 16 bodies tile $83b6..$8dfe exactly, 2 x 154 + 14 x 166 = 2632 bytes.
+# ---------------------------------------------------------------------------
+fn 0x82f8 bg_scroll_blit
+cmt 0x82f8 Per-frame background scroll blit, called from game_main_loop. Reads the three scroll variables that live in the code hole just above the first variant, picks one of the 16 unrolled copy routines out of bg_scroll_blit_table, and enters it twice (once per side of the source buffer's vertical wrap) through the `jmp (a2)` at $8350/$8364. Ghidra cannot follow either jump, which is why $83b6..$8dfe was in no function until these names were added.
+var 0x8366 bg_scroll_blit_table
+cmt 0x8366 16 longwords: $83b6 $8450 $84ea $8590 $8636 $86dc $8782 $8828 $88ce $8974 $8a1a $8ac0 $8b66 $8c0c $8cb2 $8d58 -- indexed by bg_scroll_x (0..15) via `movea.l (0,a2,d1.w),a2` at $8336 with d1 = bg_scroll_x * 4.
+var 0x83a6 bg_scroll_x
+cmt 0x83a6 Horizontal scroll position in 16-pixel cells, 0..15 (`addq/subq #1` then `andi.w #$f` at $79b6..$7a26). Selects the bg_scroll_blit_table entry AND, times 8, the source byte offset within a 128-byte row.
+var 0x83a8 bg_scroll_y
+cmt 0x83a8 Vertical scroll position as a row index into the 176-row source buffer, stepped +/-2 and wrapped at $ae/0 ($763a..$783a). Times 128 it is the source row offset; $8340 subtracts $10 from it to find where the visible 160-line window crosses the buffer's end.
+var 0x83ac bg_scroll_buffer # ctx
+cmt 0x83ac Selects the source scroll buffer: even, 0..14 (`addq/subq #2` then `andi.w #$f`), scaled by $2c00 at $830c, i.e. eight $5800 buffers over $44000..$70000 -- the map recreate/project.toml records. Tagged # ctx: read from its uses here and at $7986..$7a06, not from whatever fills the buffers.
+fn 0x83b6 bg_scroll_copy_x0
+cmt 0x83b6 Variant 0 of 16. 30 x `move.l (a0)+,(a1)+` then `lea 40(a1),a1 / addq.l #8,a0 / dbf d7`; `tst.w d6 / bpl` then re-runs the same body from $8404 after `lea -$5800(a0),a0`, which is the source buffer's vertical wrap. All 16 variants have this two-half shape.
+fn 0x8450 bg_scroll_copy_x1
+fn 0x84ea bg_scroll_copy_x2
+cmt 0x84ea First variant that needs the horizontal wrap: 28 moves, `lea -128(a0),a0` back to the start of the source row, 2 moves, then `lea 40(a1),a1 / lea 136(a0),a0`. x3..x15 shift the split point two moves further each time.
+fn 0x8590 bg_scroll_copy_x3
+fn 0x8636 bg_scroll_copy_x4
+fn 0x86dc bg_scroll_copy_x5
+fn 0x8782 bg_scroll_copy_x6
+fn 0x8828 bg_scroll_copy_x7
+fn 0x88ce bg_scroll_copy_x8
+fn 0x8974 bg_scroll_copy_x9
+fn 0x8a1a bg_scroll_copy_x10
+fn 0x8ac0 bg_scroll_copy_x11
+fn 0x8b66 bg_scroll_copy_x12
+fn 0x8c0c bg_scroll_copy_x13
+fn 0x8cb2 bg_scroll_copy_x14
+fn 0x8d58 bg_scroll_copy_x15
+cmt 0x8d58 Last variant: 2 moves, `lea -128(a0),a0`, 28 moves. Its second half ends at $8dfc, so the family tiles $83b6..$8dfe with no gap.

@@ -83,14 +83,52 @@ runs in supervisor mode, so an oracle run simply enters one instruction later, a
 `WB_RELOCATOR_COPY_OFF` — but any case that must cross that instruction is blocked until the model
 takes a third `Super` form.
 
-**2. The game's own I/O is all direct hardware, and the oracle models none of it.** With one trap in
-the whole image, everything the game does to the shifter, the PSG, the IKBD and the floppy
-controller is a raw register access. The kit rejects any direct PSG **read** outright
-(`TRAP_MODEL.md`, Phase 3), which is exactly what a floppy drive-select does — the same wall that
-put Joust's raw-floppy routine off its list. How much of this game sits behind that wall has **not
-been measured**; it should be, before a reconstruction order is chosen. It is the largest unknown
-here: with no OS calls to model, everything the differential can see is plain memory, and everything
-it cannot see is hardware.
+**2. The game's own I/O is all direct hardware, and the oracle models almost none of it — MEASURED,
+see [`PORTABILITY.md`](PORTABILITY.md).** With one trap in the whole image, everything the game does
+to the shifter, the PSG, the IKBD and the floppy controller is a raw register access: 126 accesses
+over 120 instructions, 31 reads and 95 writes, of which 18 are register-indirect and invisible to
+any operand scan.
+
+The measurement's answer, in the terms that decide a reconstruction order. **Every figure below is
+out of the 25,696 bytes Ghidra has put inside a function body, which is 46.8 % of the ~54,854 bytes
+`../notes/architecture.md` calls CODE** — the denominator is part of the finding, not a caveat:
+
+* **220 of 252 functions (21,534 of 25,696 bytes, 83.8 % of what is measured; 39.3 % of the
+  program's believed code) can be run end-to-end under the oracle today.** The blocker on the rest
+  is the kit's outright rejection of a direct PSG **read** (`TRAP_MODEL.md`, Phase 3) — the same
+  wall that put Joust's raw-floppy routine off its list. Here it is exactly three instructions: the
+  floppy drive-select's read-modify-write of port A, and two mixer read-modify-writes in the sound
+  module.
+* **28 functions (3,348 bytes, 13.0 %) are at FALSE-GREEN risk**, and that is a *lower* bound — a
+  conditional branch below them depends on a hardware read the shim answers `0` on both sides.
+  Proven, not argued: under the oracle this game's floppy *polls* report a flawless error-free
+  transfer on their first status test while moving nothing (the MFP FDC line is active low), the
+  *commands* above them then reject that fabricated status and report hard failure, and the music
+  replay tempo is chosen unconditionally by a zeroed `$fffa01` bit 7 / `$ff820a` bit 1 — BuggyBoy's
+  defect, present before a line is ported.
+* **T1 is empty**: every PSG writer in this game also reads the PSG, so no byte of the sound
+  subsystem is verifiable *through the modeled write ledger*. That is not the same as unverifiable
+  — `snd_trigger_effect` (`$1a48a`) is T0 with an exact closure and is diffable today, and 62 % of
+  the sound module is runnable now.
+* **The gameplay logic is portable now, as far as it has been recovered**: 136 of its 138 recovered
+  functions touch no hardware at all (the two exceptions are the game's PRNGs), and 128 (12,070
+  bytes) are runnable end-to-end. So is every sprite blitter, the background scroll blitter and the
+  RAD depacker. **But game logic is also the worst-measured subsystem that can be read at
+  all** (only the Copylock, which cannot, is below it) — those 14,028 bytes are 36 % of the 38,942
+  bytes of game-logic CODE believed to exist, against 56 % for boot and 69–100 % for sound, disk,
+  input and video.
+
+`PORTABILITY.md` also prices each missing harness capability in functions and bytes, and
+[`../notes/portability_predictions.py`](../notes/portability_predictions.py) re-runs thirteen of the
+classifications against the real oracle — three of the first nine were wrong on the first pass, and
+the corrections are recorded in both files — plus a fourteenth check pinning the 16
+background-scroll names to the jump table the game dispatches through.
+
+**A workspace-wide defect surfaced on the way**: `tools/ghidra_scripts/PrgLoader.java` mis-parsed
+the DRI relocation table's 254-byte span marker as a fixup, so **every** project's Ghidra DB was
+built over corrupted bytes (536 spurious fixups here, 93 in BuggyBoy, 44 in Joust). It is fixed and
+pinned by `tools/recreate_kit/test/test_reloc_table.py`; the reconstructions are unaffected because
+`oracle/loader.py` always used the correct parser, but the DBs and `decomp.c` need re-bootstrapping.
 
 **3. The overlays are decoded; the memory ceiling still is not.** `OVALAY*.RAD`, `TILEDATA.RAD`,
 `SPRITES.CRU`, `DATADISK.RAD` on disk 2 are packed data the game loads by name (the names are in

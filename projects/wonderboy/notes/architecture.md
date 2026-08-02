@@ -91,7 +91,7 @@ Method key:
 | `0x0003f8` | `0x000400` | 8 | **CODE** | F,R — the PRG entry `jmp`; relocation 1 points at it |
 | `0x000400` | `0x000412` | 18 | **CODE** | F — `cold_start`, jump target of the stub |
 | `0x000412` | `0x0004a0` | 142 | **DATA** | B — two ASCII strings (Psygnosis taunt, "Please insert data disk…") |
-| `0x0004a0` | `0x008fce` | 35630 | **CODE** | F,I — the bulk of the engine. I: 16.3 rts/kW, 781 `bsr`, 942 `lea` over `$400..$1009a`. Contains interleaved word-sized variables and small tables in the holes between routines (`$712`/`$714` flip flags, `$74a` screen pointers, `$876..$8cf` input state, `$64f0..$6526` floppy state) |
+| `0x0004a0` | `0x008fce` | 35630 | **CODE** | F,I — the bulk of the engine. I: 16.3 rts/kW, 781 `bsr`, 942 `lea` over `$400..$1009a`. Contains interleaved word-sized variables and small tables in the holes between routines (`$712`/`$714` flip flags, `$74a` screen pointers, `$876..$8cf` input state, `$64f0..$6526` floppy state), and at `$82f8`..`$8dfe` the **background scroll blitter** — a 16-entry jump table, three scroll variables and 16 unrolled copy routines that nothing reaches statically (see below) |
 | `0x008fce` | `0x00989c` | 2254 | **CODE** | F,I,R — **reclassified, see below.** 12 masked planar sprite blitters behind the three jump tables at `$989c`/`$98ac`/`$98bc`; 16 `rts` and 8 `dbf` in 1127 words |
 | `0x00989c` | `0x00a271` | 2517 | **DATA** | I,B — the three 4-longword jump tables then word-pair parameter data; 88.3% zero, 0 `rts`/`bsr`/`jsr`/`movem`/`dbf` |
 | `0x00a271` | `0x00b346` | 4309 | **DATA** | B — 55.9% printable ASCII; the in-game dialogue/shop strings, each with a one-byte layout prefix |
@@ -131,6 +131,17 @@ failures come from trusting one signal.
   construction. The signal that was right all along was `rts`: 16 in 1127 words
   = 14.2/kW, squarely in the CODE band. **The region that got misclassified is
   precisely the one the method is blind to.**
+* **The same trap caught this project a SECOND time, inside a row already
+  classified CODE.** `$83b6..$8dfe` sits in the `$4a0..$8fce` "bulk of the
+  engine" row, so the region table was never wrong about it — but Ghidra put
+  none of those 2,632 bytes in a function, because the only way in is
+  `movea.l (0,a2,d1.w),a2 / jmp (a2)` through the 16-entry longword table at
+  `$8366`. They are the background scroll blitter: 16 unrolled variants of a
+  30-longword-per-scanline copy, one per 16-pixel horizontal scroll offset,
+  tiling `$83b6..$8dfe` exactly. Named in `../names.txt` as `bg_scroll_blit` +
+  `bg_scroll_copy_x0..x15`; found by auditing the coverage gap in
+  `../recreate/PORTABILITY.md` §8.1. **A correct CODE verdict is not coverage** —
+  ask separately whether anything reaches each part of the region.
 * **`$a271..$b346` (the dialogue text) scores 78 `bsr`.** `$61xx` is `'a'`
   followed by any byte, and the block is 56 % ASCII. Judged on `bsr` alone it
   would be the densest "code" in the program.
@@ -154,9 +165,13 @@ region*, and always ask "could this be reached only through a pointer table?"
   claim, not a verified layout.
 * Inside the CODE regions the boundaries between routines and the
   variables sitting in the holes between them are **not** individually
-  classified. Ghidra now covers 238 functions there; the rest of those regions
-  is a mix of unreached routines and interleaved data, and separating them is
-  Stage 2 work.
+  classified. Ghidra now covers 252 functions / 25,696 bytes there — **46.8 % of
+  the 54,854 CODE bytes**. Of the 29,158 bytes it does not cover, 6,174 are
+  disassembled but sit in no function and 22,984, in 65 gaps, carry no
+  disassembly at all; a density screen puts roughly 16,800 of the latter
+  code-like against 6,200 data-like. Separating them is Stage 2 work, and
+  `../recreate/PORTABILITY.md` §8.1 measures it gap by gap (the largest,
+  `$3e2c..$501a`, is 96 bytes of word table then plain engine code from `$3e8c`).
 * `$ed8e..$f540` is CODE that **cannot be read at all** — see §2.5. Its size is
   known, its contents are not, and no static scan of this program (for
   addresses, traps, hardware registers or OS calls) covers those 2,000 bytes.
@@ -290,6 +305,20 @@ source text to port". Same class of exclusion as Joust's raw-floppy routine, one
 notch harder.
 
 ### 2.3 Other hardware registers
+
+> **Superseded as a census by [`recreate/PORTABILITY.md`](../recreate/PORTABILITY.md) §2**, which
+> counts the same registers out of Ghidra's reference model instead of a longword byte scan. Three
+> differences worth carrying back here: (a) the scan's `abs.w` caveat below is real and costs 3
+> sites; (b) it is also blind to **register-indirect** access, which is 18 more sites — the
+> 8-longword palette clear in `clear_palette`, the 8-longword `set_palette`, and the IKBD ACIA pair
+> reached through `lea $fc00.w,a1`; (c) the table below was built from a Ghidra DB whose loader
+> mis-applied 536 spurious relocations (see PORTABILITY.md's banner), which is why nothing in it
+> should be trusted to the last site. The totals that replace it, **counted as ACCESS RECORDS the
+> way PORTABILITY.md §2's census counts them**: PSG 35 (3 read), shifter 34 (4 read), FDC/DMA 32
+> (10 read), MFP 20 (10 read), ACIA 5 (4 read) = **126 records, 31 reads**. Those come from **120
+> instructions**: a read-modify-write (`bclr #6,$fffa11`, six of them here) is one instruction and
+> two accesses to the oracle — a read it answers 0 and a write it drops — so it is counted twice.
+> Quote whichever number you mean and say which. "No blitter, no STE" survives the recount.
 
 Scanned the whole relocated image for `$00ff8xxx`/`$ffff8xxx`/`$fffffaxx`/
 `$fffffcxx` longwords, then filtered to word-aligned sites inside code regions.

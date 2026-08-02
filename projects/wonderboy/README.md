@@ -8,6 +8,14 @@ Status: **Stage 1 done** (the binary is mapped and named at the right base) and 
 harness is bound** ([`recreate/`](recreate/)). No function is reconstructed yet — see
 [`recreate/STATUS.md`](recreate/STATUS.md).
 
+**How much of it can the harness actually verify?** Measured, in
+[`recreate/PORTABILITY.md`](recreate/PORTABILITY.md): 83.8 % of the **recovered** code runs
+end-to-end under the oracle today and the gameplay logic is portable now — but "recovered" is only
+46.8 % of the program's believed code, the gameplay logic is the least-covered subsystem that can
+be read at all (36 %, against 56-100 % for boot, sound, disk, input and video), and
+13 % of what is measured would come back *falsely* green because a branch below it depends on a
+hardware read the oracle answers `0`.
+
 > No game data is in this repository. `bin/` is gitignored; bring your own disks.
 
 ## The three things that shaped this project

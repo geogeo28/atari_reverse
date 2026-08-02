@@ -15,7 +15,17 @@ original code under the oracle and pins how the program starts. Progress, the ki
 project required, and the three blockers between here and a first reconstructed function:
 [`STATUS.md`](STATUS.md).
 
+**Read [`PORTABILITY.md`](PORTABILITY.md) before choosing what to port.** It measures how much of
+this game a memory-only differential can actually verify — 83.8 % of the *recovered* code runs
+end-to-end under the oracle, "recovered" is 46.8 % of the program's believed code, and 13 % of what
+is measured would come back *falsely* green — and gives the
+reconstruction order and the harness capabilities that follow from that. It also explains why
+every project's Ghidra DB needs re-bootstrapping.
+
 ```
+PORTABILITY.md             HOW MUCH OF THE GAME THE DIFFERENTIAL CAN SEE — the measurement that
+                           answers STATUS.md's blocker 2, with the reconstruction order it implies
+subsystems.tsv             address ranges -> subsystem, for tools/hw_portability.py --subsystems
 project.toml               binds this directory to the kit (paths, load base, image size, two waivers)
 Makefile                   three lines: KIT + GAME + include $(KIT)/kit.mk
 include/wonderboy.h        how SWB.PRG becomes a running image, as constants — the canonical copy
@@ -115,4 +125,5 @@ rather than as a silently different run.
 
 Direct hardware access is also where the harder wall is. The kit rejects any direct PSG *read*
 outright, which is what an ST floppy drive-select does — the wall that put Joust's raw-floppy
-routine off its list. How much of this game sits behind it has not been measured.
+routine off its list. How much of this game sits behind it is measured in
+[`PORTABILITY.md`](PORTABILITY.md).
