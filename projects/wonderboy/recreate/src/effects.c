@@ -116,7 +116,8 @@ void effect_restore_b6fa_to_max(uint8_t *image) {
  * here for the same reason (a `#define EFFECT_RECORD_0605 0x0605u` would restate its own value).
  */
 static void effect_push_record(uint8_t *image, uint16_t record) {
-    uint32_t write_ptr = be32(image + WB_EFFECT_RECORD_WRITE_PTR) + WB_EFFECT_RECORD_LEN;
+    /* addr_add, not `image + ptr + 2`: the advance wraps at 32 bits on the 68000 (machine.h). */
+    uint32_t write_ptr = addr_add(be32(image + WB_EFFECT_RECORD_WRITE_PTR), WB_EFFECT_RECORD_LEN);
     wr32(image + WB_EFFECT_RECORD_WRITE_PTR, write_ptr);
     wr16(image + write_ptr, record);
 }

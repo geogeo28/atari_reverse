@@ -180,4 +180,74 @@
 #define WB_EFFECT_RECORD_PTR_LEN   4u
 #define WB_EFFECT_RECORD_LEN       2u   /* one record is one word; its two byte fields are unknown */
 
+/* ---- the status panel and its leaves (RUNTIME addresses; src/hud.c) ---------------------------
+ *
+ * `FUN_0000b346` ($b346) is the game loop's once-a-frame panel pass: nine `bsr`s that redraw the
+ * record list, the four-digit counter, the score, the high score, the meter, the six HUD slots and
+ * the panel's animation frame, then select a table and tick a counter. The eleven reconstructed
+ * leaves below sit under it (and under the score/counter accumulators its display consumes). Every
+ * name is at the MECHANISM, the same rule the effect handlers above follow.
+ *
+ * All the drawing goes through `screen_back`, a LONGWORD in memory rather than an operand — so a
+ * blit's destination comes out of the image, and src/hud.c inherits the off-image divergence class
+ * src/rad.c's comment registers. Every case in test/test_hud.py seeds it inside the image.
+ */
+#define WB_SCREEN_BACK       0x750u   /* longword: the buffer being drawn into (../names.txt) */
+#define WB_SCREEN_LINE       160u     /* ST low-res scanline: 320 px over 4 planes, 8 B per 16 px */
+#define WB_PLANE_STRIDE      2u       /* so one 8-px column's four plane bytes are +0/+2/+4/+6 */
+#define WB_PLANES            4u
+
+/* $b372: `$21e8c := ($a32 ? $21e6a : $21c60)`, then `addq.w #1,$b39a`. $a32 is a word flag (three
+ * writers in the image, thirteen `tst.w` readers); $21e8c is a longword pointer seven other sites
+ * load into an address register; $b39a is the tick `rng_next` mixes into its entropy. */
+#define WB_STATE_FLAG_A32    0xa32u
+#define WB_TABLE_PTR_21E8C   0x21e8cu
+#define WB_TABLE_PTR_LEN     4u
+#define WB_TABLE_A32_CLEAR   0x21c60u /* the table published while the flag is zero */
+#define WB_TABLE_A32_SET     0x21e6au /* ...and while it is not */
+#define WB_FRAME_TICK_B39A   0xb39au
+
+/* $b410: the FIRST BYTE of a record selects a 0x400-byte bitmap, which lands at a fixed spot in
+ * `screen_back`. 32 bytes per row and 32 rows is 64 x 32 pixels in the ST's four planes. */
+#define WB_RECORD_BITMAP_TABLE  0x1079cu
+#define WB_RECORD_BITMAP_LEN    0x400u
+#define WB_RECORD_BITMAP_ORIGIN 0x2800u  /* byte offset into screen_back: row 64, column 0 */
+#define WB_RECORD_BITMAP_BYTES  32u
+#define WB_RECORD_BITMAP_ROWS   32u
+
+/* $b562/$b582/$b5a2/$b5c6: packed-BCD accumulators. The addend is staged at $bd78 (a scratch NO
+ * other instruction in the image reads or writes) and folded in from the lowest byte up. The
+ * counter is drawn as four digits by $b54c, the score as eight by $b74a — which also thresholds it
+ * to set hud_meter_max — and $b7c6 draws max(score, high score). */
+#define WB_BCD_COUNTER       0xbd6eu
+#define WB_BCD_COUNTER_LEN   2u
+#define WB_BCD_SCORE         0xbd70u
+#define WB_BCD_SCORE_LEN     4u
+#define WB_BCD_HISCORE       0xbd74u  /* the field immediately above the score, and NOT written by
+                                       * the four-byte accumulators: the case that proves it */
+#define WB_BCD_ADDEND        0xbd78u
+
+/* $b6c2: one meter cell — 8 rows of one 8-px column, its screen offset taken from a word table the
+ * caller walks with `(a1)+`. WB_METER_CELL_ENTRIES is the one constant in this header the C does not
+ * consume: the routine is handed a cursor and never bounds it, so the table's LENGTH is a fact only
+ * a case that walks it needs — and it is a layout fact, which is what this header is for. */
+#define WB_METER_CELL_TABLE  0xb6e4u
+#define WB_METER_CELL_ENTRIES 10u     /* the ten cell positions $b61e draws, ending at $b6f8 */
+#define WB_METER_CELL_OFFSET_LEN 2u
+#define WB_METER_CELL_ROWS   8u
+
+/* $bb8a/$bba0: one HUD-slot cell, 16 bytes over 14 rows (32 x 14 px). $b8f0 calls the copying form
+ * with a blank source to clear a cell and the OR-ing form to lay an icon over it. */
+#define WB_HUD_CELL_BYTES    16u
+#define WB_HUD_CELL_ROWS     14u
+
+/* $bcd6: the panel's animation frame, 24 bytes over 32 rows (48 x 32 px), selected by a word index
+ * $bbca cycles 0..12 off its own timers. */
+#define WB_PANEL_FRAME_INDEX  0xbd2cu
+#define WB_PANEL_FRAME_TABLE  0x153dcu
+#define WB_PANEL_FRAME_LEN    0x300u
+#define WB_PANEL_FRAME_ORIGIN 0x5b40u  /* byte offset into screen_back: row 146, column 0 */
+#define WB_PANEL_FRAME_BYTES  24u
+#define WB_PANEL_FRAME_ROWS   32u
+
 #endif /* WONDERBOY_H */

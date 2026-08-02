@@ -34,6 +34,7 @@ import pytest
 
 import harness
 import leaf
+from leaf import (MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, RTS, longword, word)
 from layout import wb
 
 # --- the globals, from the header both languages read (include/wonderboy.h) ---------------------
@@ -54,27 +55,16 @@ WRITE_PTR = wb("EFFECT_RECORD_WRITE_PTR")
 WRITE_PTR_LEN = wb("EFFECT_RECORD_PTR_LEN")
 RECORD_LEN = wb("EFFECT_RECORD_LEN")
 
-WORD_MASK = 0xffff
+WORD_MASK = leaf.WORD_MASK
 
-
-def _w(value):
-    return (value & WORD_MASK).to_bytes(2, "big")
-
-
-def _l(value):
-    return value.to_bytes(4, "big")
-
-
-# --- the encodings each battery reconstructs its entry from -------------------------------------
+# --- the encodings this battery reconstructs its entries from ------------------------------------
 # Named so the tables below read as instructions rather than as hex. Every one of these routines is
 # a move and an rts, which is why the entry pin can be built from the same (address, immediate) the
-# reconstruction uses: a wrong constant on either side fails at its own address.
-RTS = b"\x4e\x75"
+# reconstruction uses: a wrong constant on either side fails at its own address. The opcodes
+# test_hud.py also spells (RTS and the three `move.w` forms) are imported from leaf.py above, so the
+# two batteries cannot disagree about them; these are the ones only this file needs.
 MOVE_W_IMM_ABS_L = b"\x33\xfc"      # move.w #imm,<abs>.l
 MOVE_W_IMM_ABS_W = b"\x31\xfc"      # move.w #imm,<abs>.w  (a 16-bit operand, so 2 bytes shorter)
-MOVE_W_ABS_L_ABS_L = b"\x33\xf9"    # move.w <abs>.l,<abs>.l
-MOVE_W_ABS_L_D0 = b"\x30\x39"       # move.w <abs>.l,d0
-MOVE_W_D0_ABS_L = b"\x33\xc0"       # move.w d0,<abs>.l
 CMP_W_ABS_L_D0 = b"\xb0\x79"        # cmp.w <abs>.l,d0
 BGT_W_OVER_THE_STORE = b"\x6e\x00\x00\x0a"   # bgt.w +10 — past the `move.w d0,meter / rts` below
 ADDQ_L_2_ABS_L = b"\x54\xb9"        # addq.l #2,<abs>.l
@@ -171,36 +161,36 @@ RESTORE_CASES = ((0x0010, 0x0028), (0x0028, 0x0010), (0xffff, 0x0000), (0x0000, 
 
 def _setter_entry(destination, immediate, abs_long):
     op = MOVE_W_IMM_ABS_L if abs_long else MOVE_W_IMM_ABS_W
-    operand = _l(destination) if abs_long else _w(destination)
-    return op + _w(immediate) + operand + RTS
+    operand = longword(destination) if abs_long else word(destination)
+    return op + word(immediate) + operand + RTS
 
 
 def _clamped_entry(amount_opcode):
     """`move.w meter,d0 / addq.w #n,d0 / cmp.w max,d0 / bgt.w clamp / move.w d0,meter / rts` and
     then the clamp's own `move.w max,meter / rts` — all 38 bytes, since the branch target is part of
     what a reconstruction has to get right."""
-    return (MOVE_W_ABS_L_D0 + _l(METER_VALUE)
+    return (MOVE_W_ABS_L_D0 + longword(METER_VALUE)
             + amount_opcode
-            + CMP_W_ABS_L_D0 + _l(METER_MAX)
+            + CMP_W_ABS_L_D0 + longword(METER_MAX)
             + BGT_W_OVER_THE_STORE
-            + MOVE_W_D0_ABS_L + _l(METER_VALUE) + RTS
-            + MOVE_W_ABS_L_ABS_L + _l(METER_MAX) + _l(METER_VALUE) + RTS)
+            + MOVE_W_D0_ABS_L + longword(METER_VALUE) + RTS
+            + MOVE_W_ABS_L_ABS_L + longword(METER_MAX) + longword(METER_VALUE) + RTS)
 
 
 ENTRY_BYTES = {}
 ENTRY_BYTES.update({name: _setter_entry(dest, imm, abs_long)
                     for name, dest, imm, abs_long in WORD_SETTERS})
 ENTRY_BYTES.update({
-    name: (MOVE_W_IMM_ABS_W + _w(STATE_21E4_STAMP) + _w(STATE_21E4)
-           + MOVE_W_IMM_ABS_L + _w(variant) + _l(STATE_BD68) + RTS)
+    name: (MOVE_W_IMM_ABS_W + word(STATE_21E4_STAMP) + word(STATE_21E4)
+           + MOVE_W_IMM_ABS_L + word(variant) + longword(STATE_BD68) + RTS)
     for name, variant in BD68_SETTERS})
 ENTRY_BYTES.update({name: _clamped_entry(opcode) for name, _amount, opcode in CLAMPED_ADDS})
 ENTRY_BYTES.update({
-    name: (ADDQ_L_2_ABS_L + _l(WRITE_PTR) + MOVEA_L_ABS_L_A1 + _l(WRITE_PTR)
-           + MOVE_W_IMM_A1 + _w(record) + RTS)
+    name: (ADDQ_L_2_ABS_L + longword(WRITE_PTR) + MOVEA_L_ABS_L_A1 + longword(WRITE_PTR)
+           + MOVE_W_IMM_A1 + word(record) + RTS)
     for name, record in PUSH_RECORDS})
-ENTRY_BYTES["effect_restore_b6fa_to_max"] = (MOVE_W_ABS_L_ABS_L + _l(METER_MAX)
-                                             + _l(METER_VALUE) + RTS)
+ENTRY_BYTES["effect_restore_b6fa_to_max"] = (MOVE_W_ABS_L_ABS_L + longword(METER_MAX)
+                                             + longword(METER_VALUE) + RTS)
 
 # The batch this file was written for. Recorded rather than derived from ENTRY_BYTES, so that a
 # routine dropped from a table shrinks the battery loudly instead of silently.
@@ -210,9 +200,7 @@ GLUE = {name: leaf.image_glue(name) for name in ENTRY_BYTES}
 
 
 def test_this_file_covers_the_whole_batch():
-    assert len(ENTRY_BYTES) == EFFECT_LEAF_COUNT, (
-        f"{len(ENTRY_BYTES)} routines are reconstructed here, not the recorded "
-        f"{EFFECT_LEAF_COUNT} — a table lost an entry, or gained one nothing else knows about")
+    leaf.assert_batch_is_complete(ENTRY_BYTES, EFFECT_LEAF_COUNT)
 
 
 @pytest.mark.parametrize("name", sorted(ENTRY_BYTES))
@@ -224,26 +212,17 @@ def test_an_entry_is_the_instruction_this_battery_reconstructs(name):
 
 # --- the setters --------------------------------------------------------------------------------
 
-def _word_written(info, addr, what):
-    """The word the original left at ``addr``, read out of the oracle's write set.
-
-    Asserting on this as well as on the diff is what makes each case say WHICH value it expects
-    rather than only "both sides agree" — a table whose immediate drifted would otherwise stay green
-    while testing something else.
-    """
-    writes = info["writes"]
-    assert {addr, addr + 1} <= writes.keys(), (
-        f"{what}: the original wrote {sorted(hex(a) for a in writes)} — not both bytes at "
-        f"{addr:#x}")
-    return (writes[addr] << 8) | writes[addr + 1]
-
+# Each case below asserts on the word the original left as well as on the diff, which is what makes
+# it say WHICH value it expects rather than only "both sides agree" — a table whose immediate
+# drifted would otherwise stay green while testing something else. `leaf.read_int` takes that word
+# out of the oracle's write set (and fails if the original never wrote it).
 
 @pytest.mark.parametrize("seed", SEED_WORDS, ids=[f"was_{s:04x}" for s in SEED_WORDS])
 @pytest.mark.parametrize("name,dest,imm,_abs_long", WORD_SETTERS, ids=[s[0] for s in WORD_SETTERS])
 def test_a_word_setter_writes_its_word_and_nothing_else(name, dest, imm, _abs_long, seed):
     what = f"{name} over a destination holding {seed:#06x}"
-    info = leaf.run(name, GLUE[name], [(dest, WORD_LEN)], what, regs={"_pokes": {dest: _w(seed)}})
-    assert _word_written(info, dest, what) == imm, f"{what}: not the {imm:#06x} it is named for"
+    info = leaf.run(name, GLUE[name], [(dest, WORD_LEN)], what, regs={"_pokes": {dest: word(seed)}})
+    assert leaf.read_int(info, dest, WORD_LEN, what) == imm, f"{what}: not the {imm:#06x} it is named for"
 
 
 @pytest.mark.parametrize("seed", SEED_WORDS, ids=[f"was_{s:04x}" for s in SEED_WORDS])
@@ -251,20 +230,20 @@ def test_a_word_setter_writes_its_word_and_nothing_else(name, dest, imm, _abs_lo
 def test_the_bd68_trio_stamps_both_words(name, variant, seed):
     """Both destinations are seeded, and independently: a port that wrote only the variant, or
     stamped $21e4 with the variant instead of with its own constant, differs on one of them."""
-    pokes = {STATE_21E4: _w(seed), STATE_BD68: _w(seed ^ WORD_MASK)}
+    pokes = {STATE_21E4: word(seed), STATE_BD68: word(seed ^ WORD_MASK)}
     what = f"{name} (variant {variant}) over destinations holding {seed:#06x}"
     info = leaf.run(name, GLUE[name], [(STATE_21E4, WORD_LEN), (STATE_BD68, WORD_LEN)], what,
                     regs={"_pokes": pokes})
-    assert _word_written(info, STATE_21E4, what) == STATE_21E4_STAMP, f"{what}: wrong stamp"
-    assert _word_written(info, STATE_BD68, what) == variant, f"{what}: wrong variant"
+    assert leaf.read_int(info, STATE_21E4, WORD_LEN, what) == STATE_21E4_STAMP, f"{what}: wrong stamp"
+    assert leaf.read_int(info, STATE_BD68, WORD_LEN, what) == variant, f"{what}: wrong variant"
 
 
 # --- the clamps ---------------------------------------------------------------------------------
 
 def _run_meter_case(name, value, maximum, what, expected):
-    pokes = {METER_VALUE: _w(value), METER_MAX: _w(maximum)}
+    pokes = {METER_VALUE: word(value), METER_MAX: word(maximum)}
     info = leaf.run(name, GLUE[name], [(METER_VALUE, WORD_LEN)], what, regs={"_pokes": pokes})
-    ended_at = _word_written(info, METER_VALUE, what)
+    ended_at = leaf.read_int(info, METER_VALUE, WORD_LEN, what)
     assert ended_at == expected & WORD_MASK, (
         f"{what}: the meter ended at {ended_at:#06x}, not the {expected & WORD_MASK:#06x} this case "
         f"was written to reach")
@@ -326,11 +305,11 @@ def test_a_push_advances_the_pointer_then_stores_at_it(name, record, pointer):
     complement, so a reconstruction that advanced the pointer without storing still diverges.
     """
     destination = pointer + RECORD_LEN
-    pokes = {WRITE_PTR: _l(pointer)}
+    pokes = {WRITE_PTR: longword(pointer)}
     # The pointer's seed may BE the destination (the `WRITE_PTR - RECORD_LEN` case), in which case
     # it is already the complement's job: two pokes at one address would silently drop one.
     if not WRITE_PTR <= destination < WRITE_PTR + WRITE_PTR_LEN:
-        pokes[destination] = _w(record ^ WORD_MASK)
+        pokes[destination] = word(record ^ WORD_MASK)
     assert _word_after_pokes(pokes, destination) != record, (
         f"{name}'s destination {destination:#x} already holds {record:#06x} before the call — the "
         f"case could pass without the store happening at all")

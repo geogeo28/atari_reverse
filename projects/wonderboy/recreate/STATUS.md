@@ -8,11 +8,12 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 32/? — the .RAD depacker (216 bytes) and the first gameplay batch (434 bytes).**
-`make test`: 312 cases green, of which 77 are the foundation battery below, 48 are the depacker's
-differential and 187 are the gameplay batch's. A row appears in the table at the end when a function
-is reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only
-*named*, not ported.
+**Verified: 43/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes) and the
+status panel's leaves (430 bytes).**
+`make test`: 481 cases green, of which 77 are the foundation battery below, 48 are the depacker's
+differential, 187 are the first gameplay batch's and 169 are the status panel's. A row appears in
+the table at the end when a function is reconstructed and green; everything else in `../decomp.c`
+and `../names.txt` is still only *named*, not ported.
 
 ## What the harness has established
 
@@ -90,6 +91,44 @@ the wiring can only be pinned here; the geometry underneath is pinned kit-side i
 `tools/recreate_kit/test/test_os_map.py`. BuggyBoy (292 cases) and Joust (4368 cases) were re-run
 green after the change.
 
+## The oracle defect the status-panel batch surfaced
+
+**Every `emu.run` used to inherit the previous run's condition codes.** A 68000 reset does not clear
+the CCR and Musashi is faithful about it — `m68k_pulse_reset()` touches T, the interrupt mask and S,
+and leaves `FLAG_X`/`N`/`Z`/`V`/`C` exactly as the last run left them — while `osh_run` set every
+data and address register but not `SR`. So a routine that reads a condition code ON ENTRY answered
+differently depending on what had run before it, in the same process.
+
+The panel batch's four packed-BCD accumulators are the first reconstructions to read one: `abcd` and
+`sbcd` fold in the extend bit, and the two instructions ahead of the first one (`move.w d0,$bd78`
+and a `lea`) leave X alone, so entry X is live input. It showed up as four cases that reddened under
+`-n auto` and passed on their own, each off by exactly one unit in the lowest digit.
+
+`tools/recreate_kit/oracle/shim.c` now forces `ENTRY_SR` (`$2700`: supervisor, IPL 7, condition
+codes clear) after the reset, in **both** entry points: the reset and the force are one
+`enter_from_reset()` helper that `osh_run` and `osh_run_bench` share, so they cannot drift (the bench
+path was left un-forced when the fix first landed, and inherited the CCR just as `osh_run` had).
+Four things about that:
+
+* **it is a correctness fix, not a new capability** — two identical `emu.run` calls now give the
+  same answer, which is what a differential rests on. `emu.run` still has no way to SET the entry
+  CCR, so the X = 1 entry the game itself reaches stays unreachable from a case (registered below);
+* **the entry SR is a stated modelling decision now**, registered in
+  `tools/recreate_kit/TRAP_MODEL.md` ("The entry state every run begins from") beside the
+  `M68K_EMULATE_TRACE` one, with the same reasoning: `$2700` is the kit's convention for
+  determinism, not a claim about any game's own boot SR;
+* **it is pinned behaviourally on both sides.** Kit-side by
+  `tools/recreate_kit/test/test_entry_state.py`, whose `entry_state_probe.c` runs one `abcd` three
+  times in one process (the middle run wraps and leaves X set) — it compiles `shim.c` itself rather
+  than linking the shared `liboracle.so`, so a reverted force cannot hide behind a stale artifact.
+  Game-side by `test_hud.py::test_the_oracle_enters_every_run_with_the_condition_codes_clear`, over
+  the reconstructions that surfaced it. Reverting the shim line and rebuilding reddens 2 of the
+  kit's 5 probe cases and the game-side case with `assert 1 == 0`, so neither is vacuous;
+* **the other two projects were re-run against the rebuilt oracle at this tree state** — BuggyBoy
+  **292 green**, Joust **4368 green**, each with its candidate `.so` deleted first so `make` could
+  not re-run a stale library. Since the oracle is shared, that is what says neither depends on a
+  leaked flag, which was the risk.
+
 ## Blockers, in the order they will be hit
 
 **1. The game's one trap is refused by the kit's trap model.** It calls `Super(<end of program>)` —
@@ -130,9 +169,13 @@ out of the 25,696 bytes Ghidra has put inside a function body, which is 46.8 % o
   the sound module is runnable now.
 * **The gameplay logic is portable now, as far as it has been recovered**: 136 of its 138 recovered
   functions touch no hardware at all (the two exceptions are the game's PRNGs), and 128 (12,070
-  bytes) are runnable end-to-end. **The first 31 of them are ported** — the effect/state leaves and
-  the joystick edge pair, the table at the end — which cost nothing in harness capability: every one
-  is a T0 leaf whose whole surface is memory, exactly as the measurement predicted. So is every sprite blitter, the background scroll blitter and the
+  bytes) are runnable end-to-end. **42 of them are ported** — the effect/state leaves, the joystick
+  edge pair and the status panel's leaves, the table at the end. The measurement was right that
+  every one is a T0 leaf whose whole surface is memory, and right that they need no new harness
+  capability in the sense it meant; the panel batch still cost `test/leaf.py` a register-argument
+  glue and a per-routine instruction cap, and it surfaced a defect in the shared oracle (above) that
+  a batch of one-instruction setters could never have reached. So is every sprite blitter, the
+  background scroll blitter and the
   RAD depacker. **But game logic is also the worst-measured subsystem that can be read at
   all** (only the Copylock, which cannot, is below it) — those 14,028 bytes are 36 % of the 38,942
   bytes of game-logic CODE believed to exist, against 56 % for boot and 69–100 % for sound, disk,
@@ -191,6 +234,12 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   selector push and its relocated argument.
 - **`../run.sh` passes `0x3f8`**, so a re-bootstrap agrees with this directory and with
   `../names.txt`. It still re-imports and wipes the DB, so iterate with `../reapply.sh`.
+- **The status panel's eight new `proto` lines have not been through `ApplyNames` yet.** Their
+  storage is read off the disassembly and each one is pinned from the other side by a differential
+  case that feeds that register — but a `proto` commits CUSTOM_STORAGE in Ghidra, and wrong storage
+  breaks a decompile rather than failing loudly, so they are unverified in the DB. That is blocked
+  on the same thing as everything else in `../ghidra_proj`: the `PrgLoader` relocation defect below
+  means the DB has to be re-bootstrapped before any re-apply is meaningful.
 - **The kit's relocation arithmetic has no test of its own.** `test_the_loader_changed_exactly_the
   _three_relocated_longwords` covers `oracle/loader.py`'s fixup loop, which BuggyBoy and Joust also
   rest on, from inside one project's suite. The game-specific half (no fixup lands inside the copied
@@ -257,6 +306,20 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   shape the kit's version should take (an allowed-ranges list, with the two-sided stack band
   implicit), so folding it in is the same change. The buffer placement and corpus walk in
   `test_rad_depack.py` are still restated from `rad_differential.py`.
+- **The status-panel batch's own scaffolding is collapsed into `test/leaf.py`**, which
+  `test_effects.py` and `test_hud.py` now share one definition of each: the operand encoders `word()`
+  / `longword()` (both MASK to their width — the 68000's operand field holds exactly two or four
+  bytes, and without the mask a negative `dbf` displacement raises `OverflowError` instead of failing
+  readably); the four opcode encodings both batteries spell (`RTS` and the three `move.w` forms —
+  each keeps its own single-use encodings next to the routines that need them); the write-set readers
+  `read_bytes` / `read_int`, which replaced this directory's two spellings of "the value the original
+  left at an address" and fixed the one real defect in them (both sorted their failure message's
+  addresses as STRINGS, so `$b10` sorted before `$b9`); `assert_rows`, which collapsed the three
+  row-comparison idioms `test_hud.py` had; and `assert_batch_is_complete`. **What is left in this
+  family:** `test_hud.py`'s meter-cell battery still compares plane bytes with its own loop rather
+  than `assert_rows` (its "rows" are single bytes and its message names the plane index), and each
+  battery keeps its own `_filler`/`_rows`/`_seeded_rows` seeding helpers, which are geometry-specific
+  rather than shared.
 - **`RAD_HDR_LEN` (`include/rad.h`) and `HDR_LEN` (`tools/depack_rad.py`) are the same 12 bytes in
   two languages, accepted as pinned BEHAVIOURALLY rather than textually.** CLAUDE.md §5 asks for one
   canonical definition with the other held equal by a test; here each side has its own differential
@@ -307,6 +370,17 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x103b8` | `effect_push_record_0705` | 18 | verified | Same battery as `0x10394`, with the record `$0705` |
 | `0x103ca` | `effect_push_record_0803` | 18 | verified | Same battery as `0x10394`, with the record `$0803` |
 | `0x103dc` | `effect_restore_b6fa_to_max` | 12 | verified | 4 cases, including a maximum BELOW the counter (which this routine LOWERS it to, unlike the two clamped adds) + entry pin |
+| `0xb372` | `select_table_21e8c_and_tick_b39a` (`src/hud.c`) | 40 | verified | 12 cases: 4 flag words (including two whose LOW byte is zero, so a port that read a byte fails on one of them) x 3 tick seeds including the wrap, each asserting the published pointer and the ticked word, with the pointer pre-seeded to the other table + entry pin |
+| `0xb410` | `hud_blit_record_bitmap` | 52 | verified | 22 cases: 8 selectors (the four handlers' own 5..8, plus $00, the $20 whose product SIGN-EXTENDS below the table, the largest that still fits a word and the $40 that overflows it back to entry 0) x 2 screen buffers, each comparing all 32 rows against the game's own bitmap; plus 3 entry `d0`s x 2 record addresses, since `move.b` leaves d0's high byte alive and a0 is the only thing that says where the record is + entry pin |
+| `0xb562` | `bcd_add_counter_bd6e` | 32 | verified | 10 cases: 6 valid-BCD (nibble carry, byte carry, the four-digit wrap, the $4e56 call site's own +5 with a high word the `.w` staging must drop), 3 non-digit nibbles pinned against the oracle alone, and the 0 + 0 that holds the entry extend bit + entry pin |
+| `0xb582` | `bcd_sub_counter_bd6e` | 32 | verified | 9 cases: 6 valid-BCD (nibble borrow, byte borrow, the wrap through zero) and 3 non-digit nibbles + entry pin |
+| `0xb5a2` | `bcd_add_score_bd70` | 36 | verified | 9 cases: 6 valid-BCD over eight digits (both live call sites' addends, a carry across three bytes, the full wrap, every digit pair carrying at once) and 3 non-digit nibbles. Also the routine the oracle's entry-CCR regression case runs + entry pin |
+| `0xb5c6` | `bcd_sub_score_bd70` | 36 | verified | 7 cases: 4 valid-BCD and 3 non-digit nibbles. **Dead as shipped** — no reference anywhere in the image + entry pin |
+| `0xb6c2` | `hud_blit_meter_cell` | 34 | verified | 40 cases: the 5 cell bitmaps `$b61e` passes x 4 entries of the offset table (including odd ones) x both of the game's screen buffers, since this one takes its destination out of `screen_back` too; each comparing all 32 plane bytes, bounding the write set to one byte per plane so the bytes between them are proved untouched, and comparing the ADVANCED cursor against both the oracle's `a1` and the reconstruction's return value + entry pin |
+| `0xb6fe` | `hud_meter_add_clamped` | 36 | verified | 20 cases: a 5-point boundary sweep x 3 amounts carrying garbage above their low word, plus the 5 out-of-range cases that make the compare's SIGNEDNESS and the 16-bit wrap observable. Its `ble` clamps where the effect handlers' `bgt` stores; the strictness is unobservable either way (see below) + entry pin |
+| `0xbb8a` | `hud_blit_cell_copy` | 22 | verified | 8 cases: `$b8f0`'s own blank tile and three of its icons x 2 of its own destinations, all 14 rows compared against the game's data over a seeded destination + entry pin |
+| `0xbba0` | `hud_blit_cell_or` | 30 | verified | The same 8 cases, with the expected row stated as `seed OR source` — plus a guard that the seeds actually overlap an icon, without which every case would agree with a plain copy + entry pin |
+| `0xbcd6` | `hud_blit_panel_frame` | 80 | verified | 8 cases: 4 of the indices `$bbca` produces (its reset, 1, the $a it stamps and the $c it wraps at) x 2 screen buffers, all 32 rows compared + entry pin |
 
 ### The .RAD depacker
 
@@ -442,3 +516,115 @@ is the equivalence registered above, not a hole: at a raise landing exactly on t
 store the same word, so the mutant IS the original as far as any observer goes. "0 survivors" above
 therefore means *of the observable mutations*; a sweep that flips this comparison's strictness (or
 any other semantically inert bit) will report a survivor that no case can or should kill.
+
+### The status panel batch
+
+Eleven leaves of `panel_refresh_frame` (`$b346`), the game loop's once-a-frame status pass, in one
+file: `src/hud.c`, 430 bytes of code across `$b372..$bd26`. `$b346` itself is `jsr $d93a` plus nine
+`bsr`s and an `rts`, and that call list — the record list's display, the four-digit counter, the
+score, the high score, the meter, the six HUD slots, the panel animation, a text pass and the
+table-select — is the evidence for treating this region as one subsystem rather than as eleven
+unrelated addresses. `../names.txt` gained the whole region: the eleven names, `$b346` itself,
+`$bf4e` (which is NOT ported — see below), and eleven globals.
+
+**This batch is the first that is not "a `move` and an `rts`."** Three things follow, and they are
+what the 169 cases are shaped by:
+
+* **Nine of the eleven take REGISTERS**, which Ghidra recovered none of (`void FUN(void)` for all
+  eleven). The interfaces are read off the disassembly and `../names.txt` now carries a `proto` line
+  for each one the directive can express. `hud_blit_meter_cell` gets a `cmt` instead: it returns its
+  result in `a1`, and `ApplyNames`' `proto` forces a void return, so a `proto` there would record
+  something false. `test/leaf.py` gained `register_glue(name, argtypes, restype)` for this — the
+  shape `image_glue` already had for the register-less ones — and a `max_insns` argument: the
+  straight-line leaves run at most six instructions, so `leaf.LEAF_INSN_CAP` is 64, and a routine
+  that blits 32 rows needs a cap stated from its own geometry instead (400 here).
+* **Five of them DRAW**, and **three** take their destination from `screen_back` (`$750`), a
+  longword in MEMORY — `hud_blit_record_bitmap`, `hud_blit_meter_cell` and `hud_blit_panel_frame`.
+  So every one of their cases seeds it, and seeds it with BOTH of the game's own buffers, because a
+  reconstruction that hardcoded `$70000` would otherwise pass. (The remaining two,
+  `hud_blit_cell_copy` and `hud_blit_cell_or`, are handed an address their caller `$b8f0` already
+  resolved, in `a1`; there is no `$750` read to pin.) The expected bytes come from the game's own
+  bitmaps in the loaded image, so each case says WHICH bytes moved; the allowed write set is one
+  entry per row, which is what pins the 160-byte scanline stride as a stray write rather than only
+  as a diff. `src/hud.c` inherits `src/rad.c`'s **off-image divergence class** through that pointer,
+  and one more besides: an address computed as `base + adda.w delta` wraps at 32 bits on a 68000 and
+  does not on a host pointer, so every address in the file is built as a `uint32_t` first. That is
+  not decoration — the `$20` selector case reddened until it was. It is now the kit's
+  `addr_add(base, delta)` (`tools/recreate_kit/include/machine.h`), which `src/effects.c`'s record
+  pointer uses too; it was a `static` in `src/hud.c` until the second caller appeared.
+* **Four of them are packed-BCD accumulators** over the score (`$bd70`, eight digits) and the
+  counter below it (`$bd6e`, four). Their expected value is stated in DECIMAL and converted back,
+  which is a different statement from the nibble arithmetic in `src/hud.c` rather than a copy of it.
+  Three cases per routine deliberately feed a nibble above 9, which is not BCD: the decimal model
+  declines to predict those and the differential is their whole pin — worth stating, because the
+  68000's manual leaves `abcd` on such an operand UNDEFINED, so those twelve cases hold the port to
+  the ORACLE's model of it and not to hardware. The game cannot reach them (both fields start
+  cleared and only ever see BCD constants).
+
+Five things a later reader should not have to re-derive:
+
+* **`$bf4e` was in the batch and is NOT ported. It is not a leaf.** The hardware scan calls it a
+  16-byte T0 function with an empty callee set; its 16 bytes have no `rts`, and it FALLS THROUGH
+  into `$bf5e`, a 210-byte unrolled glyph plotter with eight `bsr` callers of its own. A
+  differential entered at `$bf4e` would execute 226 bytes and verify a routine outside this batch.
+  It is named and its shape recorded in `../names.txt`; porting it means porting `$bf5e` with it.
+  **Read this as a caveat on the scan, not on that one address**: "T0, no callees, N bytes" is a
+  claim about the bytes Ghidra put in the function, and a fall-through target is invisible to it.
+* **The disassembler in `../out/wonderboy_dis.txt` prints `abcd`/`sbcd` wrong.** `c308` and `8308`
+  come out as `and.b d1,a0` and `or.b d1,a0`, which would make the four accumulators read as
+  nonsense. Ghidra has them right (`bcdAdjust` and `in_XF` in `../decomp.c`), and so does the
+  entry-byte pin, which is built from the opcodes. `tools/prg_dis.py` is unfixed; `../names.txt`
+  records the trap on `$b562`.
+* **The BCD routines' entry X flag is live input and is NOT pinned beyond X = 0.** `abcd` folds in
+  the extend bit and nothing between the entry and the first one touches it. X = 0 is now the
+  oracle's guaranteed entry condition (see "The oracle defect..." above) and one case holds the port
+  to it — 0 + 0 comes out 1 if the port assumes otherwise — but the GAME reaches `$b5a2` with X = 1:
+  `$e058` does `subq.w #1,hud_meter_value`, which sets X when the meter was already zero, and
+  `$e064` calls it two instructions later. So a meter at zero scores one extra unit, and neither
+  `emu.run` nor this battery can express that. Honestly unpinned, and the first reconstruction in
+  this workspace whose entry condition is a CONDITION CODE rather than a register.
+* **`hud_meter_add_clamped` is the general form of the two effect handlers and not the same
+  comparison.** `$b6fe` does `add.w d0,$b6fa` — a read-modify-write on MEMORY, so the raised value
+  is stored before anything is tested — and its `ble` clamps where `$10296`'s `bgt` still stores.
+  The difference is unobservable for the same reason batch 1 registered: the two arms store the same
+  word at the boundary. The boundary sweep pins the comparison's POSITION, never its strictness.
+* **The registers the blits leave behind are dead, and that is checked rather than assumed.**
+  `hud_blit_meter_cell`'s advanced cursor IS read back (`$b61e` halves the distance it travelled to
+  count the cells it drew), so the C returns it and every case compares it against the oracle's `a1`.
+  The rest are not: all 18 `$bb8a`/`$bba0` call sites reload `a0` and `a1` immediately before the
+  `bsr`, and `$b6c2` has **five** call sites, all inside `$b61e` — `$b648` and `$b6b8` are `dbf`
+  loop bodies (the full cells and the empty ones), `$b660`/`$b676`/`$b68c` are the three arms of the
+  one-shot `cmpi.w`/`bne` chain that draws the single partial cell — every one of which `lea`s `a2`
+  in the instruction immediately before, the two loop sites doing so inside the loop body. The kit's
+  oracle reports `d0`/`d1`/`a0`/`a1` only, so `a2` could not have been compared in any case.
+
+Reference counts in `../names.txt` for this region are **byte scans of the whole image** for each
+address as an `abs.l` operand and, where it fits, as an `abs.w` one — not walks of the 252 recovered
+functions, which is the qualifier batch 1's notes had to keep attaching. **That method has one blind
+spot: a PC-RELATIVE operand.** `lea $b6e4(pc),a0` encodes as `41fa 0052`, a displacement with the
+target address nowhere in the bytes, so no scan for `$0000b6e4` can see it. A `d16(pc)` sweep (every
+even offset whose opcode carries EA mode 7 / reg 2, resolved to `pc + 2 + d16`) was run over all
+eight addresses this batch counts and found exactly one such reference in the image — `$b690`, now
+recorded under `meter_cell_offsets`, which therefore has two references and not one. Two results
+that survive the sweep and are worth having: `frame_tick_b39a` has exactly two references (this
+batch's `addq.w #1` and `rng_next`'s read), so the panel pass is the **only** writer of the PRNG's
+only non-hardware entropy; and `bcd_addend_bd78` has exactly four, all of them the accumulators' own
+staging writes, so that scratch longword is invisible to the rest of the program.
+
+Mutation-checked rather than assumed, re-measured at this tree state (each rebuilt with the `.so`
+deleted first, since a same-second rebuild otherwise re-runs the stale library — 481 green each time
+it was restored): the BCD decimal correction `+6` → `+5` reddens 19; **dropping the meter's clamp
+branch** reddens 11; **swapping the table-select's two arms** reddens 12; degrading the **OR blit to
+a copy** reddens 8; returning the **unadvanced cursor** from the meter cell reddens 40; dropping the
+**sign extension** in the indexed bitmap address reddens 6; and a **row stride of 158 instead of
+160** reddens 38. 8 mutations, 1 survivor.
+
+Two of those numbers moved since the batch first landed, both for stated reasons rather than for
+drift: the meter cursor's went 20 → 40 because its battery now runs over both screen buffers, and
+the stride's 22 → 38 because `src/hud.c`'s three identical row loops are now one `copy_rows`, so the
+mutation reaches the record bitmap, the HUD-cell copy and the panel frame at once instead of the
+record blit alone. The refactor made that mutation coarser; no per-blit stride survives it.
+
+That survivor is `<=` → **`<`** in `hud_meter_add_clamped`, and it is the equivalence above rather
+than a coverage hole: the two comparisons differ only where the raise lands exactly on the maximum,
+and there both arms store the maximum. It is the same inert bit batch 1's clamp has, mirrored.

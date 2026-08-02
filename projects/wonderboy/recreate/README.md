@@ -10,15 +10,20 @@ compiled C on the same image, and diffs the result. Everything game-specific liv
 the method is differential rather than byte-matching, read the worked reference project,
 [`projects/buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md).
 
-**32 functions are reconstructed.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
+**43 functions are reconstructed.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
 game loads goes through, verified over the game's own resource corpus — the 41 `.RAD` files the two
 disks ship, plus the four protection-damaged overlays a second time in their authentic disk-2 bytes,
-so 45 streams in all. And the first gameplay batch: 31 leaves with no callee and no hardware between
+so 45 streams in all. The first gameplay batch: 31 leaves with no callee and no hardware between
 them — the joystick edge pipeline (`0x682`, `0x88c`) and the 29 effect/state routines at
-`0x10200..0x103e7` that the game reaches only through a dispatch table. The rest is the binding plus
-a foundation battery that runs the original code under the oracle and pins how the program starts.
-Progress, the kit change this project required, and the blockers still ahead:
-[`STATUS.md`](STATUS.md).
+`0x10200..0x103e7` that the game reaches only through a dispatch table. And the status panel's own
+eleven leaves (`0xb372..0xbd26`): four packed-BCD accumulators over the score and the counter below
+it; five blits — the record bitmap, one meter cell, the panel's animation frame and the HUD-slot
+cell pair (copy and OR), of which the first three take their destination from whichever buffer
+`screen_back` points at and the pair are handed one by their caller; the meter's clamped add; and
+the table-select that ends the frame's panel pass. The rest is the binding plus a foundation battery
+that runs the original code under the oracle and pins how the program starts. Progress, the kit
+change this project required, the oracle defect the panel batch surfaced, and the blockers still
+ahead: [`STATUS.md`](STATUS.md).
 
 **Read [`PORTABILITY.md`](PORTABILITY.md) before choosing what to port.** It measures how much of
 this game a memory-only differential can actually verify — 83.8 % of the *recovered* code runs
@@ -36,15 +41,20 @@ Makefile                   three lines: KIT + GAME + include $(KIT)/kit.mk
 include/wonderboy.h        how SWB.PRG becomes a running image, as constants — the canonical copy
 include/rad.h              the .RAD/.CRU container and its bitstream, as constants
 include/effects.h          the 29 effect/state leaves at $10200..$103e7 — prototypes
+include/hud.h              the status panel's 11 leaves — prototypes, and their register interfaces
 include/input.h            the two joystick-pipeline leaves
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
 src/effects.c              the effect handlers and the state stubs above them
+src/hud.c                  the leaves of panel_refresh_frame ($b346): the BCD score/counter
+                           accumulators, the panel blits, the meter's clamped add
 src/input.c                the joystick edge pipeline: latch a frame, then diff two frames
 test/harness.py            the kit-binding shim
 test/leaf.py               shared driver for LEAF routines: entry points looked up in ../names.txt,
-                           and the write set a routine is entitled to (which the depacker's
-                           battery calls too)
+                           the write set a routine is entitled to (which the depacker's battery
+                           calls too), the glue for one whose ENTRY REGISTERS are its arguments, and
+                           the entry-pin scaffolding two batteries share (operand encoders, the
+                           opcodes both spell, and the readers that take a value out of the write set)
 test/layout.py             include/wonderboy.h's constants, scraped from that header (one source of truth)
 test/test_layout.py        that scraper's own cases — it refuses a duplicate or an octal-ambiguous #define
 test/test_bootstrap.py     the foundation battery: the loader, the self-relocation, the trap inventory
@@ -57,6 +67,9 @@ test/test_rad_depack.py    the depacker's differential: the game's own .RAD corp
                            streams), decoded by both sides, plus the failure branch
 test/test_effects.py       the effect/state leaves' differential: seeded destinations, both sides of
                            the meter clamp, and the record list's write pointer
+test/test_hud.py           the status panel's differential: the game's own bitmaps blitted into both
+                           of its screen buffers, the BCD accumulators against a decimal model, and
+                           the regression case for the oracle's entry condition codes
 test/test_input.py         the joystick pair's differential — memory for the latch, the whole
                            returned d0 for the edge
 ```

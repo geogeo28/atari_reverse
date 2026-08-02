@@ -422,6 +422,92 @@ var 0xb546 effect_record_write_ptr
 cmt 0xb546 A LONGWORD write pointer into effect_record_list. The four push handlers advance it by 2 BEFORE re-reading it, so the record lands at the NEW pointer, the list grows upward, and the pointer addresses the newest record rather than the next free slot. $fe4a resets it to $b444 and sets that word to $ffff, which $b39c reads as "empty" ($b444 < 0 -> return). Note the pointer sits at the far END of the list's own $102 bytes: the 129th push writes over the pointer's high word. A record is one word whose two byte fields are not identified.
 
 # ---------------------------------------------------------------------------
+# The status panel: panel_refresh_frame's once-a-frame pass and its leaves,
+# $b346..$bf5e. Eleven of the leaves are reconstructed in recreate/src/hud.c;
+# the addresses and the blit geometry are mirrored as constants in
+# recreate/include/wonderboy.h, which recreate/test/ scrapes. Every name here
+# is at the MECHANISM and carries its address, the same rule as the effect
+# block above -- see recreate/STATUS.md for what each one is pinned by.
+#
+# Reference counts below ("the only writer", "seven readers") are BYTE SCANS OF
+# THE WHOLE IMAGE for the address as an abs.l operand and, where the address
+# fits, as an abs.w one -- not a walk of the 252 recovered functions. Where the
+# claim is only over the recovered set it says so.
+#
+# THE BLIND SPOT IN THAT METHOD: an abs.l/abs.w byte scan cannot see a
+# PC-RELATIVE reference. `lea $b6e4(pc),a0` encodes as 41fa 0052 -- a
+# displacement from the instruction, with the target address nowhere in the
+# bytes -- so it is invisible to a scan for $0000b6e4. A d16(pc) sweep (every
+# even offset whose opcode carries EA mode 7 / reg 2, resolved to pc+2+d16) was
+# run over all eight addresses this block counts and found exactly ONE such
+# reference in the image: the $b690 one now recorded under $b6e4. The claims
+# that depend on completeness -- frame_tick_b39a's "only writer" / "only
+# entropy" ($b39a) and bcd_sub_score_bd70's "no reference anywhere" ($b5c6,
+# dead as shipped) -- survive it. Any count added here later needs the same
+# sweep.
+# ---------------------------------------------------------------------------
+fn 0xb346 panel_refresh_frame
+cmt 0xb346 44 bytes: ten calls and an rts, run once a frame from game_main_loop's $66e-gated block. `jsr $d93a` then bsr to $b39c (the record list's display), $b54c (the four digits of bcd_counter_bd6e), $b74a (the eight digits of bcd_score_bd70, which also sets hud_meter_max from thresholds on it), $b7c6 (draws max(score, high score)), $b61e (the meter), $b8f0 (the six HUD slots), $bbca (the panel animation's timers), $bd32 (a text pass over $bd88) and $b372. That call list is the evidence for treating $b346..$bf5e as one subsystem.
+
+fn 0xb372 select_table_21e8c_and_tick_b39a
+cmt 0xb372 Two unrelated halves, and the last thing panel_refresh_frame does. `tst.w $a32.w / bne` picks table_ptr_21e8c := $21e6a when state_flag_a32 is non-zero and $21c60 when it is zero (a `move.l #imm` either way, so the two addresses are immediates, not a table lookup); then `addq.w #1,$b39a` ticks frame_tick_b39a. No callee, no hardware, no register argument.
+var 0xa32 state_flag_a32
+cmt 0xa32 A word flag addressed as abs.w ($a32.w) at all 16 of its operand sites and never as abs.l. Three writers -- `move.w #$ffff` at $1f2a, `clr.w` at $e01a and at $ff10 -- and thirteen readers, every one of them a bare `tst.w`: the twelve the linear listing resolves are $a64, $10be, $118c, $11b6, $13d6, $54b4, $5c8c, $67e0, $6bb8, $8e7c, $b372 and $dbc8, and the thirteenth is at $69fe, inside a run the listing desyncs on. So it is consumed purely as a boolean; WHICH mode it selects is not established, which is why the name carries the address.
+var 0x21e8c table_ptr_21e8c
+cmt 0x21e8c A longword pointer with exactly nine operand references in the image: the two `move.l #imm` writes inside select_table_21e8c_and_tick_b39a, and seven `movea.l $21e8c.l,An` reads ($6828, $6a52, $6b58, $6bfa, $6c38, $ff4a, $1004c). Nothing else writes it, so whatever those seven walk is chosen once a frame by state_flag_a32. $21e6a is also loaded directly by `lea` at $704a; $21c60 has no other reference at all.
+var 0xb39a frame_tick_b39a
+cmt 0xb39a A word ticked once a frame by select_table_21e8c_and_tick_b39a -- its ONLY writer in the image. It has exactly two operand references (it is above $7fff, so an abs.w encoding is impossible): the `addq.w #1` at $b392 and `move.w $b39a.l,d1` at $6916, which is inside rng_next. So this counter is the PRNG's only entropy that is not the shifter's video address register -- and under the differential oracle, where $ff8209 reads 0, it is the ONLY entropy left (see the cmt at $68c6).
+
+fn 0xb410 hud_blit_record_bitmap
+proto 0xb410 hud_blit_record_bitmap record@A0
+cmt 0xb410 `move.b (a0),d0 / mulu.w #$400,d0 / lea $1079c,a0 / adda.w d0,a0` then 32 rows of 8 x `move.l (a0)+,(a1)+` with `lea 128(a1),a1` -- a 32-byte-wide (64 px), 32-row copy into screen_back + $2800. Called only from $b3be, with a0 = effect_record_write_ptr's value, so the byte it indexes on is the HIGH byte of the newest record (the 5/6/7/8 the four effect_push_record_* handlers push). Two operand-size details a port must keep: `move.b` leaves d0's high byte alive into the `mulu`, and `adda.w` then keeps only the product's low word, sign-extended -- so only the selector's low 6 bits reach the address at all, and a selector with bit 5 set addresses BELOW the table.
+var 0x1079c record_bitmap_table
+cmt 0x1079c $400 bytes per entry, indexed by a record's high byte. One operand reference in the whole image, the `lea` at $b416 inside hud_blit_record_bitmap.
+
+fn 0xb562 bcd_add_counter_bd6e
+proto 0xb562 bcd_add_counter_bd6e addend@D0
+fn 0xb582 bcd_sub_counter_bd6e
+proto 0xb582 bcd_sub_counter_bd6e subtrahend@D0
+fn 0xb5a2 bcd_add_score_bd70
+proto 0xb5a2 bcd_add_score_bd70 addend@D0
+fn 0xb5c6 bcd_sub_score_bd70
+proto 0xb5c6 bcd_sub_score_bd70 subtrahend@D0
+cmt 0xb562 Four packed-BCD accumulators of one shape: save a0/a1, stage d0 at bcd_addend_bd78, point a0 past the staged addend and a1 past the accumulator, then N x `abcd -(a0),-(a1)` (or `sbcd`) walking DOWN so the lowest digit pair goes first. $b562/$b582 stage a WORD and fold 2 bytes into bcd_counter_bd6e; $b5a2/$b5c6 stage a LONGWORD and fold 4 into bcd_score_bd70. NOTE the disassembler in out/wonderboy_dis.txt prints the `c308`/`8308` opcodes as `and.b d1,a0` / `or.b d1,a0`, which is wrong: they are `abcd -(a0),-(a1)` and `sbcd -(a0),-(a1)`. Ghidra gets them right (bcdAdjust + in_XF in decomp.c). THE FIRST DIGIT PAIR FOLDS IN THE CALLER'S X FLAG: `move.w d0,$bd78` and `lea` leave X alone, so entry X is live input. It is not always 0 -- $e058's `subq.w #1,hud_meter_value` sets it when the meter was already zero, and $e064 calls $b5a2 two instructions later, with only a `move.l #imm,d0` in between -- and the differential oracle cannot produce X=1 (its shim FORCES SR=$2700 after the reset -- a 68000 reset leaves the condition codes alone, so the force is what makes the entry CCR deterministic at all -- and emu.run has no entry-CCR parameter), so recreate/src/hud.c reproduces the X=0 entry only. Call sites: $b562 from $4e5a/$5188/$5450; $b582 from $4678 and (as `jsr`) $ddae/$de24; $b5a2 from eight sites; $b5c6 from NONE -- it has no reference anywhere in the image and is dead as shipped.
+var 0xbd6e bcd_counter_bd6e
+cmt 0xbd6e Two bytes of packed BCD, i.e. four digits, drawn by $b54c into screen_back + $1e08. Eight operand references in the image, among them the draw's own read at $b554 and the `clr.w` in the new-game reset at $fea6. The two accumulators that move it never name this address at all -- they reach it by pre-decrementing from $bd70 -- which is why a scan for writers of $bd6e misses them.
+var 0xbd70 bcd_score_bd70
+cmt 0xbd70 Four bytes of packed BCD, i.e. eight digits. Six operand references. Read as a LONGWORD by $b74a, which draws the eight digits at screen_back + $a21 and then thresholds it to set hud_meter_max ($30000 -> $18, $100000 -> $1c, $200000 -> $20, $300000 -> $24, $400000 -> $28); read again by $b7c6, which draws max($bd70, bcd_hiscore_bd74). Cleared by the new-game reset at $fea0. The other two references are the `lea $bd70,a1` inside the two COUNTER accumulators, for which this address is only the end marker of bcd_counter_bd6e's two bytes. That is the whole evidence for the word "score" in the name -- no display was followed to a rendered digit.
+var 0xbd74 bcd_hiscore_bd74
+cmt 0xbd74 The four bytes immediately above bcd_score_bd70, and the value $b7c6 compares the score against before drawing the larger of the two at screen_back + $a49. Four operand references: the two `lea $bd74,a1` that make it the END marker of the score's four bytes (so the score accumulators stop just below it, never writing it), and the `cmp.l` at $b7cc and the `move.l` at $b7d6 inside $b7c6. Nothing in the recovered code writes it.
+var 0xbd78 bcd_addend_bd78
+cmt 0xbd78 Four bytes of scratch: where the four accumulators park d0 so `abcd`/`sbcd` can read it from memory. Exactly four operand references in the image -- the `move.w`/`move.l d0,$bd78` at $b566, $b586, $b5a6 and $b5ca -- so nothing else in the program reads or writes it, and its contents between calls are dead. The word form writes only $bd78..$bd79 and leaves $bd7a..$bd7b holding the previous longword's low half.
+
+fn 0xb6c2 hud_blit_meter_cell
+cmt 0xb6c2 REGISTER INTERFACE (no `proto` line: the result is in a1, which the proto directive cannot express -- it forces a void return). a1 = a cursor into meter_cell_offsets, a2 = the cell's 32 bytes; returns a1 ADVANCED by 2, a2 advanced by 32, a0 and d0 clobbered. Body: `movea.l screen_back,a0 / adda.w (a1)+,a0` then 8 rows of `move.b (a2)+,(a0)` at +0/+2/+4/+6 with `lea 160(a0),a0` -- the four plane bytes of one 8-pixel column, 8 rows tall. The advanced a1 IS consumed: $b61e subtracts $b6e4 from it and halves the difference to count the cells it drew. The advanced a2 is not: FIVE `bsr` sites, all of them inside $b61e -- $b648 and $b6b8 are the bodies of `dbf` loops (over the full cells and over the empty ones), $b660/$b676/$b68c are the three arms of the one-shot `cmpi.w`/`bne` chain that draws the single partial cell -- and every one of the five is preceded IMMEDIATELY by its own `lea $146fc/$1471c/$1473c/$1475c/$1477c,a2`, including the two in loops, which reload inside the loop body. So a2 is dead on return at all five.
+var 0xb6e4 meter_cell_offsets
+cmt 0xb6e4 Ten words, $0a01 $0a08 $0a09 $0a10 $0a11 $0f01 $0f08 $0f09 $0f10 $0f11 -- the screen_back byte offsets of the meter's ten cells, walked with `(a1)+` by hud_blit_meter_cell. Half of them are ODD, which is why the cell is plotted with `move.b` and not a longword: an odd offset is the right-hand 8 pixels of a 16-pixel group. TWO operand references in the image, both inside $b61e: the `lea $b6e4.l,a1` at $b61e that opens it (the cursor the walk starts from) and the `lea $b6e4(pc),a0` at $b690 (41fa 0052), which reloads the base so the walk's distance can be turned into a cell count. The second is PC-RELATIVE and so invisible to the abs.l/abs.w byte scan the rest of these counts use -- see the block header. The array ends where hud_meter_max begins, at $b6f8.
+
+fn 0xb6fe hud_meter_add_clamped
+proto 0xb6fe hud_meter_add_clamped amount@D0
+cmt 0xb6fe `add.w d0,$b6fa` -- a read-modify-write ON MEMORY, so the raised value is STORED before anything is tested -- then `move.w $b6f8,d1 / cmp.w $b6fa,d1 / ble` overwrites it with hud_meter_max. The general form of effect_add4_clamped_b6fa/effect_add2_clamped_b6fa, and NOT the same comparison: those use `bgt` on the value in a register and store max only when the raise passes it, this one clamps when the raise REACHES it. Both are signed 16-bit and both wrap. One caller, $6bf0.
+
+fn 0xbb8a hud_blit_cell_copy
+proto 0xbb8a hud_blit_cell_copy source@A0 destination@A1
+fn 0xbba0 hud_blit_cell_or
+proto 0xbba0 hud_blit_cell_or source@A0 destination@A1
+cmt 0xbb8a The two HUD-slot cell blits, identical in geometry and different in combine: 14 rows of 16 bytes (32 x 14 px) with `lea 144(a1),a1` between rows, i.e. a 160-byte scanline. $bb8a is 4 x `move.l (a0)+,(a1)+`; $bba0 is 4 x `move.l (a0)+,d1 / or.l d1,(a1)+`, so it READS the destination and a port that copied would agree with it only over a blank cell. $b8f0 pairs them per slot -- the copy with a blank source to clear the cell, then the OR with the slot's icon -- across 18 call sites, every one of which reloads both a0 and a1 immediately before the `bsr`, so the advanced registers (a0 +224, a1 +2240) and the spent d0/d1 are dead.
+
+fn 0xbcd6 hud_blit_panel_frame
+cmt 0xbcd6 No arguments: `move.w $bd2c,d0 / mulu.w #$300,d0 / lea $153dc,a0 / lea (0,a0,d0.w),a0` then 32 rows of 24 bytes into screen_back + $5b40 (48 x 32 px), moved four rows per iteration as `movem.l (a0)+,d0-d5 / movem.l d0-d5,{0,160,320,480}(a1)` with `lea 640(a1),a1`. Same operand-size trap as hud_blit_record_bitmap: the `mulu` is 32-bit and the indexed `lea` keeps only d0's low word, sign-extended. Called from four sites inside $bbca, its own driver.
+var 0xbd2c panel_frame_index
+cmt 0xbd2c The word hud_blit_panel_frame indexes on. Eight operand references: six inside $bbca ($bc28 sets it to $a, $bc56 sets it to `($500 - $bd28) asr 7`, $bc8a compares it against $a, $bcb4 against $c, $bcc0 clears it, $bcce increments it), the read at $bcd6 that opens hud_blit_panel_frame, and the `clr.w` in the new-game reset at $fef4 -- so it cycles 0..$c under $bbca's own timers ($bd26/$bd28/$bd2a/$bd2e). What the 13 frames depict is not established.
+var 0x153dc panel_frame_bitmaps
+cmt 0x153dc $300 bytes per frame (24 bytes x 32 rows), indexed by panel_frame_index. One operand reference in the image, the `lea` at $bce0.
+
+fn 0xbf4e text_glyph_source_from_d0
+cmt 0xbf4e NOT A LEAF, despite the hardware scan's T0/empty-callee classification, and NOT reconstructed -- it has no `rts`. Its 16 bytes are `lea $12c9c,a0 / subi.b #$20,d0 / lsl.l #5,d0 / lea (0,a0,d0.w),a0`, which turn a character code into a 32-byte glyph pointer, and it then FALLS THROUGH into $bf5e. The scan cut the function at $bf5e because $bf5e is entered directly by eight `bsr` of its own ($be2a, $be38, $be46, $be5e, $be6c, $be7e, $be8c, $be9a); $bf4e itself has one caller, $beca. So a differential entered here executes 226 bytes, not 16, and the 210 belong to a routine that is out of this batch. $bf5e is a fully unrolled plotter: 32 x `move.b (a0)+,(a1)` at +0/+2/+4/+6 over 8 rows, with `lea 82(a1),a1` between rows (a measured 88-byte row advance, which is NOT a 160-byte scanline -- unexplained, do not assume a screen buffer), and a tail that returns a1 at +1 or +7 depending on its parity, i.e. the next 8-pixel column.
+
+# ---------------------------------------------------------------------------
 # Pseudo-random number generator  (found by the portability measurement --
 # see recreate/PORTABILITY.md; it is the game logic's ONLY hardware access)
 # ---------------------------------------------------------------------------

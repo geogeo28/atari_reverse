@@ -1,10 +1,11 @@
 """Shared driver for the game's LEAF routines — the ones with no callee, no hardware and a write
 set small enough to name.
 
-`test_effects.py` and `test_input.py` are both batteries of such functions, so the two things they
-would otherwise each restate live here: where a function starts (looked up in `../names.txt`, the
-workspace's source of truth for names, rather than restated as a number) and what counts as a write
-it was not entitled to make.
+`test_effects.py`, `test_hud.py` and `test_input.py` are all batteries of such functions, so what
+they would otherwise each restate lives here: where a function starts (looked up in `../names.txt`,
+the workspace's source of truth for names, rather than restated as a number), what counts as a write
+it was not entitled to make, the operand encodings a battery pins its entry points against, and how
+a case reads a value back out of the oracle's write set.
 
 NOT a general harness — the kit is that. This module assumes what a leaf gives it: a run short
 enough for a tight instruction cap, and a write set the caller can enumerate up front.
@@ -16,9 +17,11 @@ from harness import differential, report
 
 import emu                                                       # noqa: E402
 
-# These functions are 8 to 38 bytes long and execute at most six instructions. The cap is deliberately
-# far below the kit's default: a case that entered the wrong address and ran off into the game would
-# otherwise return a plausible-looking result instead of failing.
+# The straight-line leaves are 8 to 38 bytes long and execute at most six instructions. The cap is
+# deliberately far below the kit's default: a case that entered the wrong address and ran off into
+# the game would otherwise return a plausible-looking result instead of failing. A battery whose
+# routines LOOP (the panel blits move up to 32 rows) passes `run(..., max_insns=)` with its own cap,
+# derived from that routine's own geometry for the same reason.
 LEAF_INSN_CAP = 64
 
 # Every address in ../names.txt that carries a name, inverted. Two functions sharing a name would
@@ -65,6 +68,28 @@ def image_glue(name):
     return lambda _lib, image: fn(image)
 
 
+def register_glue(name, argtypes, restype=None):
+    """Glue factory for a leaf whose ENTRY REGISTERS are its arguments.
+
+    ``image_glue`` covers the routines that take only the image. These take the image plus the 68000
+    registers the original is entered with — a source pointer in a0, a packed-BCD addend in d0 — so
+    the symbol is bound once and each case supplies its own register values:
+
+        blit = leaf.register_glue("hud_blit_cell_or", [ctypes.c_uint32] * 2)
+        leaf.run("hud_blit_cell_or", blit(source, destination), ...)
+
+    The C takes one ``uint32_t`` per register whatever operand size the original uses, so the
+    truncation the original does (`move.w d0,...` on a longword register) happens in the
+    reconstruction where a case can pin it, and not in the glue where it could not.
+    """
+    fn = bind(name, IMAGE_ARG + list(argtypes), restype)
+
+    def with_registers(*values):
+        return lambda _lib, image: fn(image, *values)
+
+    return with_registers
+
+
 def stray_writes(writes, allowed):
     """Oracle writes outside ``allowed`` (an iterable of (addr, length) the function may touch).
 
@@ -81,17 +106,19 @@ def stray_writes(writes, allowed):
     return sorted(a for a in writes if not permitted(a))
 
 
-def run(name, glue, allowed, what, regs=None, poison=True):
+def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_CAP):
     """Run ``name``'s original under the oracle and the reconstruction on the same image.
 
     Requires the two to agree byte for byte over the whole image, and the original to have written
     nothing outside ``allowed``. Returns the differential's ``info`` so a caller can also assert on
     the returned d0. ``poison`` runs the kit's attribution pass, which is what stops a case passing
     because the destination already held the value the function writes; a caller turns it off only
-    when inverting an output would corrupt an ADDRESS the run then stores through.
+    when inverting an output would corrupt an ADDRESS the run then stores through. ``max_insns``
+    raises the cap for a routine that loops — state the number the routine's own geometry gives, so
+    it stays a cap and not a formality.
     """
     diffs, info = differential(entry_of(name), dict(regs or {}), glue,
-                               max_insns=LEAF_INSN_CAP, poison=poison)
+                               max_insns=max_insns, poison=poison)
     assert not diffs, f"{what}\n{report(diffs)}"
     stray = stray_writes(info["writes"], allowed)
     assert not stray, (
@@ -100,14 +127,87 @@ def run(name, glue, allowed, what, regs=None, poison=True):
     return info
 
 
+# --- building an entry pin -----------------------------------------------------------------------
+# The operand encoders and the opcodes MORE THAN ONE battery spells. A battery keeps its own
+# single-use encodings next to the routines that need them; these are here because two files would
+# otherwise carry the same four bytes and could disagree about them.
+#
+# Both encoders MASK to their width, which is the 68000's own behaviour: an operand field holds
+# exactly two or four bytes, so a caller passing a negative displacement (`word(-18)` for a `dbf`) or
+# a value with rubbish above the field gets what the instruction stream would hold. Without the mask
+# `to_bytes` would raise OverflowError on the negative case and hide the readable failure.
+WORD_MASK = 0xffff
+LONGWORD_MASK = 0xffffffff
+
+RTS = b"\x4e\x75"
+MOVE_W_ABS_L_D0 = b"\x30\x39"       # move.w <abs>.l,d0
+MOVE_W_D0_ABS_L = b"\x33\xc0"       # move.w d0,<abs>.l
+MOVE_W_ABS_L_ABS_L = b"\x33\xf9"    # move.w <abs>.l,<abs>.l
+
+
+def word(value):
+    return (value & WORD_MASK).to_bytes(2, "big")
+
+
+def longword(value):
+    return (value & LONGWORD_MASK).to_bytes(4, "big")
+
+
 def assert_entry_is(name, expected):
     """Pin the bytes at ``name``'s entry against the instruction(s) the battery believes are there.
 
-    This is what makes a wrong constant fail where it is wrong: the encodings below carry the
-    destination address and the immediate as operands, so one assert covers the entry point from
+    This is what makes a wrong constant fail where it is wrong: a battery builds ``expected`` out of
+    the encodings above and its own geometry constants, so one assert covers the entry point from
     ../names.txt, the global from include/wonderboy.h, the value, and the operand size all at once.
     """
     entry = entry_of(name)
     actual = bytes(harness.BASE_IMAGE[entry:entry + len(expected)])
     assert actual == expected, (
         f"{name} @ {entry:#x} is {actual.hex()}, not the {expected.hex()} this battery reconstructs")
+
+
+def assert_batch_is_complete(entry_bytes, recorded):
+    """Guard a battery's own scope: the entry-pin table must still hold the routines it was written
+    for. ``recorded`` is a number the battery states rather than derives, so a routine dropped from a
+    table shrinks the battery loudly instead of silently."""
+    assert len(entry_bytes) == recorded, (
+        f"{len(entry_bytes)} routines are reconstructed here, not the recorded {recorded} — a table "
+        f"lost an entry, or gained one nothing else knows about")
+
+
+# --- reading a value back out of the oracle's write set -------------------------------------------
+
+def read_bytes(info, addr, length, what=""):
+    """The bytes the original left at ``addr``, taken from the oracle's write set.
+
+    This is what lets a case say WHICH value it expects rather than only that both sides agree. A
+    byte the original never wrote is a failure and not a fallback to the image: the case would
+    otherwise pass on whatever was already there.
+    """
+    writes = info["writes"]
+    missing = [addr + i for i in range(length) if addr + i not in writes]
+    assert not missing, (
+        f"{what}: the original did not write {[hex(a) for a in missing]}; it wrote "
+        f"{[hex(a) for a in sorted(writes)][:8]}...")
+    return bytes(writes[addr + i] for i in range(length))
+
+
+def read_int(info, addr, length, what=""):
+    """``read_bytes`` as the big-endian number those bytes spell."""
+    return int.from_bytes(read_bytes(info, addr, length, what), "big")
+
+
+def assert_rows(info, rows, expected, what):
+    """Compare a blit's rows against the bytes the case says should have moved.
+
+    ``rows`` is the [(address, length)] the run was allowed to write — the same list the caller hands
+    ``run()`` — and ``expected`` the bytes for each of them. The rectangular blits all compare their
+    result this way, so the row index and the differing bytes are named in one place.
+    """
+    assert len(expected) == len(rows), (
+        f"{what}: {len(expected)} expected rows against {len(rows)} written ones — a case whose two "
+        f"geometries disagree would leave the surplus rows unchecked")
+    for row, (addr, length) in enumerate(rows):
+        actual = read_bytes(info, addr, length, what)
+        assert actual == expected[row], (
+            f"{what}: row {row} at {addr:#x} is {actual.hex()}, not {expected[row].hex()}")
