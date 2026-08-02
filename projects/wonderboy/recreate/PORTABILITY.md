@@ -12,9 +12,9 @@ the measurement.
 >
 > Ghidra has recovered 252 functions / **25,696 of the ~54,854 bytes** `notes/architecture.md`
 > calls CODE. Everything below is a statement about those 25,696 bytes and nothing else. Of the
-> 138 game-logic functions (14,028 B) inside them, 136 touch no hardware — the two exceptions are
-> the game's PRNGs, which seed from the video address counter. Transitively **128 of them
-> (12,070 B) run end-to-end under the oracle: 86 % of what is measured, but 31 % of the 38,942
+> 114 game-logic functions (9,596 B) inside them, 112 touch no hardware — the two exceptions are
+> the game's PRNGs, which seed from the video address counter. Transitively **104 of them
+> (7,638 B) run end-to-end under the oracle: 79.6 % of what is measured, but 22.1 % of the 34,496
 > bytes of game-logic code believed to exist.** Only 3 of them (372 B) carry any false-green risk,
 > and both blit families (16 background-scroll routines, 12 sprite blitters) and the RAD depacker
 > are completely clean.
@@ -26,35 +26,50 @@ the measurement.
 > places: the **WD1772/DMA floppy driver**, the **YM2149 replay path**, the **Copylock**, and the
 > **boot chain** that calls all three.
 >
-> But three of those four are measured *better* than the gameplay code the report calls portable —
-> only the Copylock, which cannot be read at all by construction, is measured worse:
+> **And "runnable" is no longer the strongest thing this report can say.** 105 of the 252 functions
+> / **10,376 bytes are reconstructed and green** against the oracle — 40.4 % of what is measured,
+> 18.9 % of believed code, and 48.2 % of everything the harness can run at all. That is the
+> right-hand column below, and it is concentrated in four subsystems.
+>
+> But three of the four unverifiable places are measured *better* than the gameplay code the report
+> calls portable — only the Copylock, which cannot be read at all by construction, is measured worse:
 
-| subsystem | CODE bytes | in a function | coverage |
-|---|---:|---:|---:|
-| **game logic** (the catch-all bucket) | **38,942** | **14,028** | **36.0 %** |
-| sound (YM2149) | 3,824 | 2,634 | 68.9 % |
-| video (background scroll) | 2,822 | 2,742 | 97.2 % |
-| video (sprite blitters) | 2,254 | 2,254 | 100.0 % |
-| copylock (protection) | 2,236 | 232 | 10.4 % |
-| boot | 2,114 | 1,184 | 56.0 % |
-| disk (FAT12 + file load) | 1,028 | 1,030 | 100.2 % |
-| disk (WD1772 FDC + DMA) | 686 | 684 | 99.7 % |
-| input (IKBD / ACIA) | 312 | 300 | 96.2 % |
-| video (screen / palette / mode) | 240 | 236 | 98.3 % |
-| resource depack (RAD) | 220 | 216 | 98.2 % |
-| resource loader | 114 | 104 | 91.2 % |
-| interrupt (VBL) | 62 | 52 | 83.9 % |
-| **TOTAL** | **54,854** | **25,696** | **46.8 %** |
+| subsystem | CODE bytes | in a function | coverage | reconstructed & green |
+|---|---:|---:|---:|---:|
+| **game logic** (the catch-all bucket) | **34,496** | **9,596** | **27.8 %** | **2,986 B** (61 fns) |
+| video (background scroll) | 6,234 | 6,140 | 98.5 % | **6,140 B** (33 fns) |
+| sound (YM2149) | 3,824 | 2,634 | 68.9 % | 0 |
+| video (sprite blitters) | 2,254 | 2,254 | 100.0 % | 0 |
+| copylock (protection) | 2,236 | 232 | 10.4 % | 0 |
+| boot | 2,114 | 1,184 | 56.0 % | 0 |
+| disk (FAT12 + file load) | 1,028 | 1,030 | 100.2 % | 0 |
+| disk (WD1772 FDC + DMA) | 686 | 684 | 99.7 % | 0 |
+| text (message box) | 678 | 678 | 100.0 % | **678 B** (3 fns) |
+| actor (table + projection) | 356 | 356 | 100.0 % | **356 B** (5 fns) |
+| input (IKBD / ACIA) | 312 | 300 | 96.2 % | 0 |
+| video (screen / palette / mode) | 240 | 236 | 98.3 % | 0 |
+| resource depack (RAD) | 220 | 216 | 98.2 % | **216 B** (3 fns) |
+| resource loader | 114 | 104 | 91.2 % | 0 |
+| interrupt (VBL) | 62 | 52 | 83.9 % | 0 |
+| **TOTAL** | **54,854** | **25,696** | **46.8 %** | **10,376 B** (105 fns) |
 
 Read that table before any percentage below it. It is the only table here not produced by
-`hw_portability.py`; it is the intersection of three files, and each column says which:
+`hw_portability.py`; it is the intersection of four files, and each column says which:
 **`CODE bytes`** = every address `notes/architecture.md`'s region table calls CODE, charged to the
 first `subsystems.tsv` range that claims it (so it sums to that table's own 54,854 total);
 **`in a function`** = the `F` records of `out/hw_scan.tsv`, by function ENTRY address, which is
-exactly the denominator `hw_portability.py` uses and therefore what every tier below is out of.
-The two columns are measured differently and do not have to agree: a function body may run a few
-bytes past a region boundary (which is why the FAT12 row reads 100.2 %), and a whole subsystem may
-sit mostly outside every function body (`game logic`, `boot`).
+exactly the denominator `hw_portability.py` uses and therefore what every tier below is out of;
+**`reconstructed & green`** = the `F` records whose function has a **verified** row in
+`STATUS.md`'s table, i.e. ported to C and pinned by a differential under `make test`.
+The first two columns are measured differently and do not have to agree: a function body may run a
+few bytes past a region boundary (which is why the FAT12 row reads 100.2 %), and a whole subsystem
+may sit mostly outside every function body (`game logic`, `boot`).
+
+**The verified column counts F records, and `STATUS.md` counts reconstructions — which is why it
+says 103 and this says 105.** The difference is the RAD depacker: `src/rad.c` is one reconstruction
+of what Ghidra splits into three functions (`rad_depack`, `rad_refill_bit_buffer`, `rad_get_bits`,
+216 B between them). Same code, two counting rules; this file uses the scan's, because the scan is
+what every other column here is out of.
 
 **"Game logic" is `subsystems.tsv`'s last row, `0x0–0x21810` — the catch-all.** It is not a
 positive classification; it is everything the specific ranges above it did not claim. So it is at
@@ -115,7 +130,66 @@ it does not produce is the coverage table in the answer box — see the note und
 
 ---
 
-## 1. The wall, verified against `oracle/shim.c`
+## 0. Re-measured 2026-08-02 — the game-logic/video boundary was wrong
+
+The original measurement (2026-08-01) is unchanged in method; what changed is `subsystems.tsv`.
+**Nothing about the program moved, and no tier moved.** A subsystem partition is a relabelling of
+the same 252 functions, so every whole-program figure in §3, §5 and §6 is byte-identical before and
+after — the two reports differ in exactly four rows of the subsystem table (checked by diffing
+them). What moved is *which bucket the measured bytes are charged to*, and that is what the
+headline claims about "game logic" rest on.
+
+**The trigger.** Reconstruction batches 5–7 established that `$7522..$8228` — fifteen routines the
+catch-all filed as "game logic" — is the background scroll **engine** that fills the eight
+pre-shifted buffers, and that `subsystems.tsv`'s `video (background scroll)` range
+(`$82f8..$8dfe`) is the **consumer** that copies one of them to the screen. Producer and consumer
+are one subsystem; the boundary ran through its middle. Batches 8–9 then established two more
+coherent subsystems inside the same catch-all: the actor table and its projection passes, and the
+message-box text subsystem.
+
+**What moved, and on what evidence** (each range is cited in `subsystems.tsv` itself):
+
+| range | from | to | evidence |
+|---|---|---|---|
+| `$7522..$8228` (15 fns, 3,320 B) | game logic | video (background scroll) | batches 5–6: the queue drain, four axis steps, two row fills and the pre-shift, all reconstructed and green |
+| `$d28..$d76` (1 fn, 78 B) | game logic | video (background scroll) | batch 5: the request raiser that drives the queue |
+| `$67c2..$6822` (3 fns, 96 B) | game logic | actor (table + projection) | batch 8: the entry tier over the three parallel 19×32-byte actor tables |
+| `$8dfe..$8f02` (2 fns, 260 B) | game logic | actor (table + projection) | batch 8: the two projection passes, which share 68 identical bytes |
+| `$bd8a..$c030` (3 fns, 678 B) | game logic | text (message box) | batches 8–9: the lifecycle plus the plotter's two entry points, tiling the range exactly, and `$c030` is `notes/architecture.md`'s own CODE/DATA boundary |
+
+**The `$a09c` message-pointer table is deliberately NOT in `subsystems.tsv`.** A range there is
+matched against a function ENTRY address, and that table is data — inside `architecture.md`'s DATA
+row `$989c..$a271`. Adding it would change no number in this file and would imply the partition
+covers data, which it does not. Same for the actor tables at `$996c`/`$9bd0`/`$9e34`.
+
+**Before → after:**
+
+| subsystem | fns | measured B | CODE B | coverage | runnable |
+|---|---|---|---|---|---|
+| game logic | 138 → **114** | 14,028 → **9,596** | 38,942 → **34,496** | 36.0 % → **27.8 %** | 128 / 12,070 B → **104 / 7,638 B** |
+| video (background scroll) | 17 → **33** | 2,742 → **6,140** | 2,822 → **6,234** | 97.2 % → **98.5 %** | 17 / 2,742 B → **33 / 6,140 B** |
+| text (message box) | — → **3** | — → **678** | — → **678** | — → **100.0 %** | — → **3 / 678 B** |
+| actor (table + projection) | — → **5** | — → **356** | — → **356** | — → **100.0 %** | — → **5 / 356 B** |
+
+**The catch-all got WORSE, and that is the result.** The obvious expectation is that carving three
+characterised subsystems out of "game logic" leaves a smaller but better-understood remainder. It
+does the opposite: game logic loses 4,432 *measured* bytes and only 14 unmeasured ones, so its
+coverage falls from 36.0 % to **27.8 %** and the CODE it holds outside every function body is
+24,900 bytes — **72.2 %** of it, up from 64 %. What the catch-all was hiding was not confusion, it
+was three subsystems that happened to be the best-measured code in it. The wall §8.1 describes is
+now the *dominant* fact about the bucket, not a caveat on it.
+
+**Two limitations of this re-measure, stated with it:**
+
+* **The Ghidra DB is stale relative to `../names.txt`** — batches 5–9's names, `cmt`s and `proto`s
+  have not been through `reapply.sh`, and the DB itself still wants the re-bootstrap the box above
+  describes. So `out/hw_scan.tsv` calls `$7522` `FUN_00007522`. **It does not affect a single
+  figure here**, and that was checked rather than assumed: every `fn` address in `names.txt` (171
+  of them) is already an `F` record in the scan, so naming since the scan created no function body
+  the scan lacks, and every column here is keyed on addresses and body extents, not names. A
+  re-scan would change only the name strings.
+* **The unmeasured bulk is unchanged.** 29,158 bytes are still in no function and so in no tier;
+  24,900 of them are now charged to game logic. Nothing in this re-measure reaches them.
 
 Confirmed by reading it, and then by running code through it (§4):
 
@@ -265,19 +339,26 @@ the *whole-program* number look bad; per-function it costs almost nothing (see �
 
 | subsystem | fns | bytes | direct worst | transitive worst | direct T0 | runnable | false-green |
 |---|---:|---:|---|---|---|---|---|
-| game logic | 138 | 14,028 | T3 | T5 | **136 / 13,876 B** | **128 / 12,070 B** | 3 / 372 B |
-| video (background scroll) | 17 | 2,742 | **T0** | **T0** | **17 / 2,742 B** | **17 / 2,742 B** | 0 |
+| game logic | 114 | 9,596 | T3 | T5 | **112 / 9,444 B** | **104 / 7,638 B** | 3 / 372 B |
+| video (background scroll) | 33 | 6,140 | **T0** | **T0** | **33 / 6,140 B** | **33 / 6,140 B** | 0 |
 | sound (YM2149) | 21 | 2,634 | **T4** | **T4** | 19 / 1,844 B | 13 / 1,622 B | 2 / 710 B |
 | video (sprite blitters) | 12 | 2,254 | **T0** | **T0** | **12 / 2,254 B** | **12 / 2,254 B** | 0 |
 | boot | 12 | 1,184 | T3 | T5 | 8 / 460 B | 5 / 408 B | 8 / 798 B |
 | disk (FAT12 + file load) | 11 | 1,030 | T3 | T3 | 10 / 870 B | 11 / 1,030 B | 6 / 630 B |
 | disk (WD1772 FDC + DMA) | 20 | 684 | **T4** | **T4** | 8 / 82 B | 18 / 640 B | 6 / 468 B |
+| text (message box) | 3 | 678 | **T0** | **T0** | **3 / 678 B** | **3 / 678 B** | 0 |
+| actor (table + projection) | 5 | 356 | **T0** | **T0** | **5 / 356 B** | **5 / 356 B** | 0 |
 | input (IKBD / ACIA) | 4 | 300 | T3 | T3 | 1 / 10 B | 4 / 300 B | 1 / 230 B |
 | video (screen / palette / mode) | 8 | 236 | T2 | T2 | 4 / 38 B | 8 / 236 B | 0 |
 | copylock (protection) | 4 | 232 | **T5** | **T5** | 2 / 52 B | 1 / 16 B | 1 / 36 B |
 | resource depack (RAD) | 3 | 216 | **T0** | **T0** | **3 / 216 B** | **3 / 216 B** | 0 |
 | resource loader | 1 | 104 | T2 | T5 | 0 | 0 | 1 / 104 B |
 | interrupt (VBL) | 1 | 52 | T0 | **T4** | 1 / 52 B | 0 | 0 |
+
+**Four of those rows are now 100 % reconstructed and green** — background scroll (33 fns, 6,140 B),
+text (3, 678 B), actor (5, 356 B) and the RAD depacker (3, 216 B). Every one of them is T0 direct
+*and* transitive, which is why they were reconstructable with no new harness capability at all: the
+answer box's right-hand column is what the §7 recommendation turned into.
 
 The two disk rows are the shape to notice. **The FDC driver runs almost entirely** — 18 of its 20
 functions, and all 11 of the FAT12 layer's. Between them those two subsystems hold **12
@@ -286,8 +367,9 @@ runs actually report is §4 and §7.4b: the polls succeed instantly, the command
 
 **So: yes, the gameplay logic is portable today — as far as it has been recovered.** The only
 game-logic functions that touch hardware are the two PRNGs, `rng_next` (`$68c6`) and
-`rng_1_to_4_masked` (`$51ac`), and both are T3-DATA reads, not steering ones. The 64 % of
-game-logic CODE that is in no function body is outside that claim entirely.
+`rng_1_to_4_masked` (`$51ac`), and both are T3-DATA reads, not steering ones. The **72.2 %** of
+game-logic CODE that is in no function body is outside that claim entirely — and after §0's
+re-measure that is the dominant fact about the bucket, not a footnote to it.
 
 ## 4. Proving the model — 14 checks run against the real oracle
 
@@ -691,7 +773,9 @@ or standing gap, not a to-do list:
 
 ## 7. Recommendation — what to reconstruct, in order
 
-1. **The two unrolled blit families** — the 12 sprite blitters (`$8fce..$989c`, 2,254 bytes) *and*
+1. **The two unrolled blit families** — **the scroll half is DONE** (batch 7), and doing it pulled
+   the whole `$7522..$8228` engine behind it (batches 5–6), which is what §0 re-drew the boundary
+   for. The 12 sprite blitters (`$8fce..$989c`, 2,254 bytes) *and*
    the 16-routine background scroll copier (`$83b6..$8dfe`, 2,632 bytes, 17 % larger), plus its
    dispatcher `bg_scroll_blit` (`$82f8`). 100 % T0 direct **and** transitive, driven entirely by
    their arguments, nothing needs to change in the harness. Start here. Two precision notes: four
@@ -699,13 +783,16 @@ or standing gap, not a to-do list:
    the right-edge prelude's shared body, which the scan records as `JUMPIN` edges; and
    `bg_scroll_blit`'s transitive T0 is over an empty callee set, because its jump table is a label
    and not decoded edges (§8.3). Both are harmless here: every target is itself T0.
-2. **The game-logic core** (128 functions, 12,070 bytes runnable today). 136 of its 138 recovered
-   functions touch no hardware. Avoid the 3 with a steering T3 below them until step 4; the two
+2. **The game-logic core** (104 functions, 7,638 bytes runnable today; 61 of them / 2,986 bytes are
+   already green). 112 of its 114 recovered functions touch no hardware. Avoid the 3 with a
+   steering T3 below them until step 4; the two
    PRNGs are portable but must be documented as *seeded from hardware the oracle zeroes*, so any
    test over a caller of one is exercising a single fixed pseudo-random stream. **Remember the
-   denominator**: this is 31 % of the game-logic code believed to exist, so a "done" here is not a
-   done subsystem.
-3. **The RAD depacker** (`$5d62`, 3 functions, 216 bytes). T0, and already independently proven by
+   denominator**: this is 22.1 % of the game-logic code believed to exist, so a "done" here is not a
+   done subsystem — and §0's re-measure lowered that denominator's coverage rather than raising it,
+   because the three subsystems carved out of the catch-all were the best-measured code in it.
+3. **The RAD depacker** (`$5d62`, 3 functions, 216 bytes) — **DONE** (`src/rad.c`). T0, and already
+   independently proven by
    `notes/rad_differential.py` — 45 files, 0 failures. This is a free win and a template for how a
    verified function's row should read.
 4. **Then, and only then, the harness work**, in the order the numbers give:

@@ -3,15 +3,42 @@
 # specific ranges come first and the catch-all last. Several disjoint ranges may share a name.
 # Boundaries follow the region table and the function clusters in ../notes/architecture.md;
 # every address is a RUNTIME address (base 0x3f8).
+#
+# Each `hi` is the `body_end` `../out/hw_scan.tsv` records for the LAST function in the range, so
+# a range ends exactly where the next function begins and no entry address is claimed twice.
+#
+# ONLY CODE BELONGS HERE. A range is matched against a function ENTRY, so a pure data block can
+# never be claimed by one: the message-pointer table at `$a09c` that `text_run_message_box` walks
+# (batch 9) sits inside ../notes/architecture.md's DATA row `$989c..$a271` and is deliberately
+# absent, as are the actor tables at `$996c`/`$9bd0`/`$9e34` and the screen array at `$98ec`.
 0x3f8	0x420	boot
 0x694	0x716	video (screen / palette / mode)
 0x716	0x754	interrupt (VBL)
 0x754	0x88c	input (IKBD / ACIA)
+# The scroll ENGINE's request raiser (batch 5): `$d28` reads the followed object's position and
+# raises the queue entries `bg_scroll_run_queue` ($7522) drains. One function, 78 bytes.
+0xd28	0xd76	video (background scroll)
 0x5d62	0x5e3e	resource depack (RAD)
 0x5e3e	0x6242	disk (FAT12 + file load)
 0x6242	0x64f0	disk (WD1772 FDC + DMA)
+# The actor tier (batch 8): nineteen 32-byte records in one of three parallel tables, projected
+# once a frame into nineteen 6-byte screen records. `$67c2`/`$67e0`/`$67f8` are the entry tier
+# (three F rows, `$67c2..$6822`); `$8dfe`/`$8e66` are the two projection passes (`$8dfe..$8f02`),
+# which share 68 identical bytes. Five functions, 356 bytes, all reconstructed and green.
+0x67c2	0x6822	actor (table + projection)
+# The background scroll ENGINE (batches 5-6): fifteen F rows tile `$7522..$8228` — the queue
+# drain, the four axis steps, the two row fills and the pre-shift — and fill the eight
+# pre-shifted buffers that `bg_scroll_blit` below then copies to the screen. Filed under the
+# "game logic" catch-all until this re-measure; producer and consumer are one subsystem.
+0x7522	0x8228	video (background scroll)
 0x82f8	0x8dfe	video (background scroll)
+0x8dfe	0x8f02	actor (table + projection)
 0x8fce	0x989c	video (sprite blitters)
+# The text subsystem (batches 8-9): `$bd8a` (the message-box lifecycle) plus the plotter's two
+# entry points `$bf4e`/`$bf5e`, which are one routine — `$bf4e` has no `rts` and falls through.
+# Three F rows tile `$bd8a..$c030` exactly, and `$c030` is architecture.md's own CODE/DATA
+# boundary. Its one caller is `game_main_loop` and it calls nothing outside itself.
+0xbd8a	0xc030	text (message box)
 0xe482	0xe782	boot
 0xe782	0xe7f4	resource loader
 0xe7f4	0xe80c	video (screen / palette / mode)

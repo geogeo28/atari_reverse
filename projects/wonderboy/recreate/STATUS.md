@@ -11,7 +11,8 @@ method itself works.
 **Verified: 103/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
-actor tier and its two projection passes (356 bytes) and the WHOLE text subsystem (678 bytes).**
+actor tier and its two projection passes (356 bytes) and the WHOLE text subsystem (678 bytes) —
+10,376 bytes in all, 40.4 % of everything [`PORTABILITY.md`](PORTABILITY.md) measures.**
 `make test`: 1242 cases green, of which 77 are the foundation battery below, 48 are the depacker's
 differential, 187 are the first gameplay batch's, 481 are the status panel's — that last figure was
 169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py` — 231
@@ -30,10 +31,11 @@ panel's third tier" below.
 ENGINE that fills the eight pre-shifted buffers, and `bg_scroll_blit` (`$82f8`) plus the sixteen
 unrolled copy variants at `$83b6..$8dfe` are the CONSUMER that copies one of them to the screen.
 All thirty-three are reconstructed and green, 6,140 bytes. Nothing between `$7522` and `$8dfe` is
-left named-but-unported, and `subsystems.tsv`'s whole `video (background scroll)` range
-(`$82f8..$8dfe`, which `PORTABILITY.md` measures as 2,742 bytes inside a function) is now
-reconstructed to the byte. See "The background scroll engine", "Closing it" and "The consumer tier"
-below.
+left named-but-unported, and **`subsystems.tsv` now draws the subsystem around both halves** —
+`$7522..$8228`, `$d28..$d76` and `$82f8..$8dfe` are one `video (background scroll)` range set,
+which `PORTABILITY.md` measures as 33 functions / 6,140 bytes inside a function body, 100 % of them
+reconstructed. See "The background scroll engine", "Closing it" and "The consumer tier" below, and
+"The portability re-measure" for what re-drawing that boundary moved.
 
 ## What the harness has established
 
@@ -187,17 +189,17 @@ out of the 25,696 bytes Ghidra has put inside a function body, which is 46.8 % o
   subsystem is verifiable *through the modeled write ledger*. That is not the same as unverifiable
   — `snd_trigger_effect` (`$1a48a`) is T0 with an exact closure and is diffable today, and 62 % of
   the sound module is runnable now.
-* **The gameplay logic is portable now, as far as it has been recovered**: 136 of its 138 recovered
-  functions touch no hardware at all (the two exceptions are the game's PRNGs), and 128 (12,070
-  bytes) are runnable end-to-end. **51 of them were ported when this measurement was taken** — the
-  effect/state leaves, the joystick edge pair, the status panel's leaves and the second tier above
-  them, the table at the end. **That 51 is now STALE and is deliberately not patched**: batches 5–9
-  landed forty-one more functions that this file's `subsystems.tsv` also files under "game logic"
-  (the whole scroll cluster, the actor tier and the whole text subsystem), and the boundary itself
-  is the thing
-  the queued re-measurement is about — see the end of batch 7. Re-run
-  `tools/hw_portability.py` and restate the paragraph from what it prints, rather than adding to a
-  number whose denominator is known to be wrong. The
+* **The gameplay logic is portable now, as far as it has been recovered**: 112 of its 114 recovered
+  functions touch no hardware at all (the two exceptions are the game's PRNGs), and 104 (7,638
+  bytes) are runnable end-to-end. **61 of them / 2,986 bytes are ported and green** — the
+  effect/state leaves, the joystick edge pair, and the whole status panel: its leaves, the second
+  tier above them and the third tier, the table at the end. **That figure was 51 out of 138 until
+  the 2026-08-02 re-measure**, and none of the movement is batches 5–9's doing: all forty-one of
+  their functions end up outside the catch-all (twenty-four moved by the boundary redraw, and the
+  seventeen consumer-tier blits were in the video range under either file). The +10 is batch 4's
+  status-panel third tier — ten functions / 1,412 bytes ($d93a, $daf8..$db72, $b39c, $b3da, $b8f0)
+  that landed after the 2026-08-01 measurement; 2,986 − 1,412 = 1,574 = 434 + 430 + 710, the old
+  51's exact composition (see "The portability re-measure"). The
   measurement was right that every leaf's whole surface is memory, and right that they need no new
   harness capability in the sense it meant; the panel batch still cost `test/leaf.py` a
   register-argument glue and a per-routine instruction cap, and it surfaced a defect in the shared
@@ -205,9 +207,11 @@ out of the 25,696 bytes Ghidra has put inside a function body, which is 46.8 % o
   cost nothing further: a non-leaf differential is the same call with the callees running under the
   oracle. So is every sprite blitter, the background scroll blitter and the
   RAD depacker. **But game logic is also the worst-measured subsystem that can be read at
-  all** (only the Copylock, which cannot, is below it) — those 14,028 bytes are 36 % of the 38,942
+  all, and the re-measure made it worse rather than better** (only the Copylock, which cannot be
+  read, is below it) — those 9,596 bytes are 27.8 % of the 34,496
   bytes of game-logic CODE believed to exist, against 56 % for boot and 69–100 % for sound, disk,
-  input and video.
+  input, text, actor and video. Carving the three characterised subsystems out took 4,432 measured
+  bytes with them and only 14 unmeasured ones.
 
 `PORTABILITY.md` also prices each missing harness capability in functions and bytes, and
 [`../notes/portability_predictions.py`](../notes/portability_predictions.py) re-runs thirteen of the
@@ -1302,6 +1306,8 @@ this batch.
 `$7522..$8228` and `$d28` fall into the catch-all. Both are now known to be the same subsystem, but
 re-drawing the boundary moves every figure in [`PORTABILITY.md`](PORTABILITY.md), which is a
 measurement to re-run rather than a line to edit. Left as it is, and recorded here.
+**CLOSED 2026-08-02 by the re-measure at the end of this file** — both ranges are
+`video (background scroll)` now.
 
 ### The consumer tier (batch 7): the blit, and sixteen routines that are one routine
 
@@ -1424,6 +1430,8 @@ which is a measurement to re-run rather than a line to edit. Left as it is, and 
 **QUEUED, alongside the `$67e0` batch above: re-draw `subsystems.tsv`'s game-logic/video boundary and
 re-run `tools/hw_portability.py` over it, then restate `PORTABILITY.md` from what it prints** —
 trigger: now that `$7522..$8dfe` is closed, the game-logic/video split is measurably wrong.
+**CLOSED 2026-08-02** — the re-measure is the last section of this file; background scroll went
+17 functions / 2,742 B to **33 / 6,140 B**, and game logic 138 / 14,028 B to **114 / 9,596 B**.
 
 ### The actor tier and the text plotter (batch 8): the queued small tiers, cleared
 
@@ -1724,3 +1732,54 @@ mode flags, and it turns the survivor into 1 red.
   refuses. Left honestly unpinned.
 * **WHAT ANY GIVEN MESSAGE ID MEANS.** The 117 records are read as geometry and text; which game
   event raises which id is a property of the 52 writers, none of which this batch read.
+
+### The portability re-measure (2026-08-02): the boundary the campaign proved wrong
+
+The queue entries batches 6 and 7 left open, closed together. No code changed and no test moved —
+`make test` is 1242 green before and after — because this is a **measurement**, not a
+reconstruction: `subsystems.tsv` was re-drawn and `tools/hw_portability.py` re-run over the same
+`../out/hw_scan.tsv`. [`PORTABILITY.md`](PORTABILITY.md) §0 records it in full.
+
+**What moved.** Five ranges left the "game logic" catch-all, each on evidence a batch established
+and each cited in `subsystems.tsv` itself: `$7522..$8228` and `$d28..$d76` (the scroll ENGINE, to
+join its consumer under `video (background scroll)`), `$67c2..$6822` and `$8dfe..$8f02` (a new
+`actor (table + projection)`), and `$bd8a..$c030` (a new `text (message box)`). The exact `hi` of
+each is the `body_end` the scan records for its last function, so the ranges tile and no entry is
+claimed twice. The `$a09c` message table is deliberately NOT in the file: ranges match a function
+ENTRY, and that is data.
+
+| | before | after |
+|---|---|---|
+| game logic | 138 fns / 14,028 B measured, 36.0 % of 38,942 B CODE | **114 / 9,596 B, 27.8 % of 34,496 B** |
+| video (background scroll) | 17 / 2,742 B, 97.2 % | **33 / 6,140 B, 98.5 %** |
+| text (message box) | — | **3 / 678 B, 100.0 %** |
+| actor (table + projection) | — | **5 / 356 B, 100.0 %** |
+| game logic, runnable end-to-end | 128 / 12,070 B | **104 / 7,638 B** |
+| game logic, ported and green | 51 fns | **61 / 2,986 B** |
+
+**Every whole-program figure is unchanged** — 220/252 functions and 21,534/25,696 bytes runnable,
+83.8 % of what is measured and 39.3 % of believed code, 28 functions / 3,348 B at false-green risk,
+and both tier tables byte-identical. A subsystem partition relabels the same 252 functions; the two
+reports differ in exactly four rows, which was checked by diffing them rather than argued.
+
+**THE CATCH-ALL GOT WORSE, AND THAT IS THE FINDING.** Carving three characterised subsystems out of
+"game logic" was expected to leave a smaller, better-understood remainder. It did the opposite: the
+bucket lost 4,432 **measured** bytes and only 14 unmeasured ones, so its coverage fell from 36.0 %
+to 27.8 % and the CODE it holds outside every function body is now 72.2 % of it. What the catch-all
+was hiding was not confusion — it was the three best-measured subsystems in it.
+
+**THE REPORT CAN NOW SAY "GREEN", NOT ONLY "RUNNABLE".** The campaign created a fact the original
+measurement had no column for: **105 functions / 10,376 bytes are reconstructed and pinned by a
+differential** — 40.4 % of what is measured, 18.9 % of believed code, and 48.2 % of everything the
+harness can run at all. `PORTABILITY.md`'s coverage table carries it as a column now. It reads 105
+where this file's header reads 103, and the difference is a counting rule, not a disagreement:
+`src/rad.c` is one reconstruction of what Ghidra splits into three functions.
+
+**The limitation to state with it: the Ghidra DB is stale.** Batches 5–9's names, `cmt`s and
+`proto`s have not been through `../reapply.sh`, and the DB still wants the re-bootstrap the
+`PrgLoader` defect forced. **It affects no figure here, and that was checked rather than assumed**:
+all 171 `fn` addresses in `../names.txt` are already `F` records in the scan, so naming since the
+scan created no function body the scan lacks, and every column is keyed on addresses and body
+extents. A re-scan would change only the name strings (`FUN_00007522` where `../names.txt` now says
+`bg_scroll_run_queue`). The 29,158 bytes in no function body are untouched by any of this — 24,900
+of them are now charged to game logic.
