@@ -8,10 +8,11 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 1/? — the .RAD depacker (216 bytes), the first function ported.** `make test`: 125 cases
-green, of which 77 are the foundation battery below and 48 are the depacker's differential. A row
-appears in the table at the end when a function is reconstructed and green; everything else in
-`../decomp.c` and `../names.txt` is still only *named*, not ported.
+**Verified: 32/? — the .RAD depacker (216 bytes) and the first gameplay batch (434 bytes).**
+`make test`: 312 cases green, of which 77 are the foundation battery below, 48 are the depacker's
+differential and 187 are the gameplay batch's. A row appears in the table at the end when a function
+is reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only
+*named*, not ported.
 
 ## What the harness has established
 
@@ -129,7 +130,9 @@ out of the 25,696 bytes Ghidra has put inside a function body, which is 46.8 % o
   the sound module is runnable now.
 * **The gameplay logic is portable now, as far as it has been recovered**: 136 of its 138 recovered
   functions touch no hardware at all (the two exceptions are the game's PRNGs), and 128 (12,070
-  bytes) are runnable end-to-end. So is every sprite blitter, the background scroll blitter and the
+  bytes) are runnable end-to-end. **The first 31 of them are ported** — the effect/state leaves and
+  the joystick edge pair, the table at the end — which cost nothing in harness capability: every one
+  is a T0 leaf whose whole surface is memory, exactly as the measurement predicted. So is every sprite blitter, the background scroll blitter and the
   RAD depacker. **But game logic is also the worst-measured subsystem that can be read at
   all** (only the Copylock, which cannot, is below it) — those 14,028 bytes are 36 % of the 38,942
   bytes of game-logic CODE believed to exist, against 56 % for boot and 69–100 % for sound, disk,
@@ -244,11 +247,16 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   `test_copylock.py`'s even-aligned operand sweep re-implements `test_bootstrap.py`'s
   `_even_aligned()`, and its `RELOCATOR_INSN_BUDGET` is a hand-rounded copy of that file's derived
   `RELOCATOR_INSN_CAP` — the derived one tracks `WB_BODY_LONGS` and the copy does not. The depacker
-  work added one more: `test_rad_depack.py`'s `_stray_writes` scratch-band predicate is a second
-  copy of `../notes/rad_differential.py`'s, deliberately TIGHTER than the registered
+  work added a scratch-band predicate deliberately TIGHTER than the registered
   `< emu.STACK_GUARD_LO` family (it bounds the band above as well as below, since A7 enters at
-  `STACK_TOP` and grows down), and the buffer placement and corpus walk beside it are restated from
-  that same file. Shared home when they are consolidated: the kit, as above.
+  `STACK_TOP` and grows down); the gameplay batch needed the same one for two more batteries, so it
+  now lives once in `test/leaf.py` as `stray_writes(writes, allowed)` and `test_rad_depack.py`,
+  `test_effects.py` and `test_input.py` all call it. **The in-directory copies are collapsed.** What
+  is left of this particular family is `../notes/rad_differential.py`'s copy — a frozen research
+  artifact that must run without this directory — and the kit consolidation above; `leaf.py` is the
+  shape the kit's version should take (an allowed-ranges list, with the two-sided stack band
+  implicit), so folding it in is the same change. The buffer placement and corpus walk in
+  `test_rad_depack.py` are still restated from `rad_differential.py`.
 - **`RAD_HDR_LEN` (`include/rad.h`) and `HDR_LEN` (`tools/depack_rad.py`) are the same 12 bytes in
   two languages, accepted as pinned BEHAVIOURALLY rather than textually.** CLAUDE.md §5 asks for one
   canonical definition with the other held equal by a test; here each side has its own differential
@@ -267,7 +275,40 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 
 | Addr | Name | Bytes | Status | Verification |
 |------|------|-------|--------|--------------|
+| `0x682` | `joy1_newly_pressed` | 18 | verified | 21 cases: 7 frame-pairs (idle / pressed / HELD / released / mixed / all bits) x 3 entry `d0`s. It writes no memory at all, so the returned `d0` is the whole surface — compared as a full longword, which is what pins the byte-op width |
+| `0x88c` | `joy1_latch_edge` | 20 | verified | 5 cases seeding all three pipeline bytes distinctly, plus a write-set assertion that each stage took its predecessor's byte (so a port that shifted the wrong way cannot pass) |
 | `0x5d62` | `rad_depack` (`src/rad.c`) | 216 | verified | 45 differential cases: the 41 intact `.RAD` streams of the game's own corpus decode byte-for-byte identically (whole-image diff + `d0`), and the 4 protection-damaged overlays reproduce the garbage decode *and* the failure status. Plus a synthetic corrupted checksum, an attribution (poison) pass folded into the two smallest intact cases, and a per-case guard that the only bytes written are the destination and the scratch long |
+| `0x10200` | `set_state_bbc8_1ff` | 10 | verified | 4 setter cases + entry pin |
+| `0x1020a` | `set_state_bbc8_2ff` | 10 | verified | 4 setter cases + entry pin |
+| `0x10214` | `set_state_bbc8_3ff` | 10 | verified | 4 setter cases + entry pin |
+| `0x1021e` | `set_state_bbc8_4ff` | 10 | verified | 4 setter cases + entry pin |
+| `0x10228` | `set_state_bbc8_6ff` | 10 | verified | 4 setter cases + entry pin |
+| `0x10232` | `set_state_6f9c_ffff` | 8 | verified | 4 setter cases + entry pin (the entry pin is what covers its SHORT operand) |
+| `0x10296` | `effect_add4_clamped_b6fa` | 38 | verified | 10 cases: a 5-point sweep of where `value + 4` lands relative to the maximum (-4, -1, 0, +1, +4 — which pins the comparison against a SHIFTED one, though not against a non-strict one: see the batch notes) and 5 more outside the meter's own range that make the compare's SIGNEDNESS and the 16-bit wrap observable. Each case also asserts the word the meter ended at |
+| `0x102bc` | `effect_add2_clamped_b6fa` | 38 | verified | Same battery as `0x10296`, with `value + 2` |
+| `0x102e2` | `effect_set_bd6a_1` | 10 | verified | 4 setter cases + entry pin |
+| `0x102ec` | `effect_set_bd6a_2` | 10 | verified | 4 setter cases + entry pin |
+| `0x102f6` | `effect_set_bd6a_3` | 10 | verified | 4 setter cases + entry pin |
+| `0x10300` | `effect_set_bd6a_4` | 10 | verified | 4 setter cases + entry pin |
+| `0x1030a` | `effect_set_bbc2_80ff` | 10 | verified | 4 setter cases + entry pin |
+| `0x10314` | `effect_set_bd66_1` | 10 | verified | 4 setter cases + entry pin |
+| `0x1031e` | `effect_set_bd66_2` | 10 | verified | 4 setter cases + entry pin |
+| `0x10328` | `effect_set_bd66_3` | 10 | verified | 4 setter cases + entry pin |
+| `0x10332` | `effect_set_bd66_4` | 10 | verified | 4 setter cases + entry pin |
+| `0x1033c` | `effect_set_bd66_5` | 10 | verified | 4 setter cases + entry pin |
+| `0x10346` | `effect_set_bbbe_05ff` | 10 | verified | 4 setter cases + entry pin |
+| `0x10350` | `effect_set_bd68_1` | 16 | verified | 4 cases, both destinations seeded independently, + entry pin |
+| `0x10360` | `effect_set_bd68_2` | 16 | verified | 4 cases, both destinations seeded independently, + entry pin |
+| `0x10370` | `effect_set_bd68_3` | 16 | verified | 4 cases, both destinations seeded independently, + entry pin |
+| `0x10380` | `effect_set_bbc0_05ff` | 10 | verified | 4 setter cases + entry pin |
+| `0x1038a` | `effect_set_bbc6_01ff` | 10 | verified | 4 setter cases + entry pin |
+| `0x10394` | `effect_push_record_0605` | 18 | verified | 4 write-pointer cases: the reset value, mid-list, one that makes the record land ON the pointer's own high word, and one far outside the list. Hand-seeded attribution instead of the poison pass — see below |
+| `0x103a6` | `effect_push_record_0508` | 18 | verified | Same battery as `0x10394`, with the record `$0508` |
+| `0x103b8` | `effect_push_record_0705` | 18 | verified | Same battery as `0x10394`, with the record `$0705` |
+| `0x103ca` | `effect_push_record_0803` | 18 | verified | Same battery as `0x10394`, with the record `$0803` |
+| `0x103dc` | `effect_restore_b6fa_to_max` | 12 | verified | 4 cases, including a maximum BELOW the counter (which this routine LOWERS it to, unlike the two clamped adds) + entry pin |
+
+### The .RAD depacker
 
 The 216 bytes are the whole routine, `0x5d62..0x5e3a`, which `../names.txt` splits into three:
 `rad_depack` plus the leaf helpers `rad_refill_bit_buffer` (`0x5e14`) and `rad_get_bits` (`0x5e20`).
@@ -306,3 +347,98 @@ rebuild otherwise re-runs the stale library): dropping the checksum branch redde
 cases that reach it (the 4 damaged files and the synthetic one), while an off-by-one in the match
 source, a literal-run base of 8 instead of 9, a shortest-match length of 3 instead of 2, and
 dropping the scratch-long write each redden all 46 cases that decode a stream.
+
+### The first gameplay batch
+
+31 leaves in two files: `src/input.c` (the two joystick routines, `0x682` and `0x88c`) and
+`src/effects.c` (the 29 at `0x10200..0x103e7` — the six `set_state_*` stubs and the 23 handlers of
+`effect_handler_table`). 434 bytes of code: 38 in the joystick pair and 396 in the 29 — whose
+`$10200..$103e7` span is 488 bytes, the difference being `effect_handler_table`'s 23 longwords,
+which sit inside the span between the stubs and the first handler. This is also the first *game
+logic* the project has ported: no hardware, no OS, no callee, every one entered directly by its
+case. `test/leaf.py` is the shared driver — it looks each entry point up in `../names.txt` rather
+than restating an address, and requires the original's write set to stay inside the words the case
+says it may touch.
+
+**"4 setter cases" in the table above means**: the destination word is pre-set to `$0000`, `$ffff`,
+`$1234` and `$a55a` in turn, the whole image is diffed, the kit's attribution (poison) pass runs on
+top, and the write set is bounded to that one word. The `$ffff` seed matters because one routine
+*writes* `$ffff`: on that case alone the plain diff proves nothing and the attribution pass is what
+holds it. Every row also carries an **entry pin** — the bytes at the entry compared against the
+instruction the battery reconstructs from the same address and immediate the C uses, so a wrong
+constant fails at its own address instead of surfacing as a puzzling diff.
+
+Six things a later reader should not have to re-derive:
+
+* **The names are at the MECHANISM, and the batch did not change that.** `effect_set_bd66_3` says a
+  3 goes into `$bd66`; what a 3 there means is still open. Reading the bodies *did* firm up the
+  shapes, and `../names.txt` now carries them: `$bbbe..$bbc9` is six 2-byte HUD slots
+  `{value, changed}` swept once a frame by `$b8f0`, so a handler's single `move.w #$Nff` means
+  "value := N, redraw me"; `$b6fa`/`$b6f8` are the value and maximum of a meter drawn in four-unit
+  cells by `$b61e`; `$b546` is a longword write pointer advanced *before* its store. The obvious
+  readings (a vitality bar, an item inventory) are still **not** verified — no cell's graphics were
+  followed to a meaning — and no name here asserts one.
+* **One `# ctx` tag came off**, the cluster comment at `0x10200`. Reading the six bodies also
+  corrected it: they are *not* "six 10-byte stubs". Five write `hud_slot_bbc8` through a long
+  absolute operand at 10 bytes each, and `set_state_6f9c_ffff` uses a **short** one and is 8 — which
+  is why `effect_handler_table` begins at `$1023a`. That was the only tagged line in the batch; the
+  other six tagged lines in `../names.txt` are on names nothing here ports.
+* **`$6f9c` has no reader among the recovered functions — but it does have one in the image.**
+  `set_state_6f9c_ffff` is its only writer of the 252, and none of them reads it. Unrecovered code
+  at `$6f84` does: `tst.w $6f9c.l / beq / clr.w $6f9c.l / move.w #$36,4(a0)`, i.e. it consumes the
+  word as a ONE-SHOT flag — tests it, clears it (so `$6f8e` is a second writer, outside the
+  recovered set) and stamps `$36` into an object field. That is more than the batch started with,
+  and `../names.txt` now records it; what the `$36` selects is still unknown, so the name stays at
+  the mechanism.
+* **The record pushes run WITHOUT the poison pass, deliberately.** Their output includes the write
+  pointer, and poisoning inverts an oracle-written byte — so the pass would hand the next store an
+  odd (or off-image) address and take an address error instead of producing a case. The attribution
+  it buys is done by hand: the destination word is seeded to the record's own complement, and the
+  case asserts that before it runs, so a port that advanced the pointer without storing still
+  diverges. `src/effects.c` also inherits the depacker's **off-image divergence class** through that
+  same pointer (the oracle's shim drops a write past the image; the C indexes a host buffer, which
+  is undefined behaviour) — every case seeds a pointer well inside the image, so the battery never
+  enters it, and bounding it would be a kit change.
+* **The clamp is signed and 16-bit, and only the tests reach the parts that show it.** The meter's
+  own range is `$18..$28`, so nothing the game does distinguishes `bgt` from an unsigned compare or
+  shows the `addq.w` wrapping — the five out-of-range cases per routine are synthetic on purpose,
+  and they are the reason the port's `(int16_t)` casts are pinned rather than merely plausible. The
+  batch's one genuinely unreachable-by-real-data note is that pair: `../names.txt` records it on
+  `0x10296`.
+* **The `bgt`'s STRICTNESS is faithful but unobservable, and that is an equivalence, not a coverage
+  hole.** The original stores when the raise lands exactly on the maximum, and `src/effects.c`'s `>`
+  reproduces it — but `>=` would store the same word on that very case, so the two implementations
+  are indistinguishable through memory, `d0`, or anything else a differential can see. No seeding
+  fixes this and none should be attempted: unlike the branches real data cannot reach (which better
+  data *would* pin), there is nothing here to pin. What the boundary sweep does pin is the
+  comparison's POSITION — a `> max+1` reddens at offset +1 and a `> max-2` at offset -1.
+
+Two register-level asymmetries, outside the memory surface and so outside most of this battery:
+
+* **`joy1_newly_pressed` returns in `d0`, and only its low byte is the answer** — every instruction
+  is a `.b` op, so the caller's top 24 bits survive. `g_joy1_newly_pressed` takes the `d0` the
+  oracle was entered with and reproduces the whole longword, which each case compares (the same
+  shape as `g_rad_depack`'s entry stack pointer). No `proto` line was added for it: Ghidra already
+  recovers `byte joy1_newly_pressed(void)`, which is correct, so the interface is recorded as a
+  `cmt` instead. **`d1` is clobbered and nothing checks it.**
+* **The two clamped adds leave their working value in `d0`**, and no case asserts on it. That is
+  safe at both dispatch sites and checked, not assumed: `$ddec` and `$de62` each `jsr (a0)` into the
+  handler and then execute `move.w #$3,d0` as their very next instruction, so a handler's `d0` is
+  dead the moment it returns. It would only bite if a handler were ever called from somewhere else,
+  and nothing in the image reaches these addresses except through `effect_handler_table`.
+
+Mutation-checked rather than assumed (each rebuilt with the `.so` deleted first, since a same-second
+rebuild otherwise re-runs the stale library — 312 green each time it was restored): a setter aimed at
+the **wrong address** and a setter with the **wrong immediate** each redden exactly that routine's 4
+cases; **dropping the clamp branch** reddens 8 (the clamping cases of both adds, and no others);
+`and` → **`or`** in `joy1_newly_pressed` reddens 12 of its 21; writing a HUD slot's **value byte
+only** reddens all 36 slot cases; and **storing before advancing** the record pointer reddens all 16
+push cases. A seventh, comparing **unsigned** instead of signed, reddens 18 — the 8 out-of-range
+cases as designed, and the whole boundary sweep as well, because the attribution pass inverts the
+meter's own bytes and so drives every one of those runs negative too. 7 mutations, 0 survivors.
+
+An eighth, `>` → **`>=`** in the clamp, **survives all 312** — and no seeding would change that. It
+is the equivalence registered above, not a hole: at a raise landing exactly on the maximum both arms
+store the same word, so the mutant IS the original as far as any observer goes. "0 survivors" above
+therefore means *of the observable mutations*; a sweep that flips this comparison's strictness (or
+any other semantically inert bit) will report a survivor that no case can or should kill.

@@ -31,6 +31,7 @@ import struct
 import pytest
 
 import harness
+import leaf
 from harness import differential, report
 from layout import wb
 
@@ -134,14 +135,10 @@ def _check_layout(packed_len, unpacked_size):
 
 
 def _stray_writes(writes, unpacked_size):
-    """Oracle writes the routine is not entitled to make: anything but the destination, the machine
-    stack (which the diff drops) and the one scratch long it parks the entry a7 in."""
-    return sorted(a for a in writes
-                  if not (DEST_AT <= a < DEST_AT + unpacked_size
-                          # Two-sided: A7 enters at STACK_TOP and the stack grows DOWN, so nothing
-                          # at or above STACK_TOP is a legitimate call frame.
-                          or emu.STACK_TOP - emu.STACK_SCRATCH <= a < emu.STACK_TOP
-                          or SAVED_SP <= a < SAVED_SP + SAVED_SP_LEN))
+    """Oracle writes the routine is not entitled to make: anything but the destination and the one
+    scratch long it parks the entry a7 in. The machine stack is leaf.stray_writes's own implicit
+    permission, and the diff drops it too."""
+    return leaf.stray_writes(writes, [(DEST_AT, unpacked_size), (SAVED_SP, SAVED_SP_LEN)])
 
 
 def _depack_case(packed, unpacked_size, what, poison=False):

@@ -69,7 +69,7 @@ cmt 0x879 The last raw IKBD scancode byte, stored by ikbd_acia_handler before th
 var 0x87a key_watch_scancodes
 cmt 0x87a 8 bytes, the scancodes ikbd_acia_handler folds into key_bits (index = bit number). All zero in the image and never written -- see key_bits.
 fn 0x682 joy1_newly_pressed
-cmt 0x682 `move.b joy1_prev,d0 / move.b joy1_current,d1 / eor.b d1,d0 / and.b d1,d0 / rts` -- returns in d0 the bits that are set in joy1_current and were NOT set last frame, i.e. a rising-edge mask over the joystick byte. Note it reads $8b3/$8cf, not key_bits.
+cmt 0x682 `move.b joy1_prev,d0 / move.b joy1_current,d1 / eor.b d1,d0 / and.b d1,d0 / rts` -- returns in d0 the bits that are set in joy1_current and were NOT set last frame, i.e. a rising-edge mask over the joystick byte. Note it reads $8b3/$8cf, not key_bits. REGISTER INTERFACE: no arguments, and the result is d0's LOW BYTE ONLY -- every instruction is a `.b` op, so the caller's own top 24 bits of d0 pass through untouched. Eight call sites reach it (bsr.w from $e6c/$ef0/$1220/$526e, jsr from $6fde/$dc00/$dc34/$dc6e); only the three inside FUN_0000dbc0 ($dc00/$dc34/$dc6e) are in recovered code, and those three take the result as a BYTE -- the other five are unexamined. The reconstruction reproduces the whole longword anyway (recreate/src/input.c, g_joy1_newly_pressed) because that is what the differential compares. d1 is clobbered.
 fn 0x88c joy1_latch_edge
 cmt 0x88c `move.b joy1_current,joy1_prev / move.b joy1_state,joy1_current` -- shifts the joystick byte one frame down the pipeline so joy1_newly_pressed can diff them. Called from $882 once per frame.
 var 0x8b3 joy1_prev
@@ -348,7 +348,7 @@ fn 0x10214 set_state_bbc8_3ff
 fn 0x1021e set_state_bbc8_4ff
 fn 0x10228 set_state_bbc8_6ff
 fn 0x10232 set_state_6f9c_ffff
-cmt 0x10200 Six 10-byte stubs, each `move.w #imm,$xxxx.l / rts`. Reached only indirectly, so Ghidra's flow analysis never created them. The variables they set are not yet identified, so these names describe the mechanism, not the meaning. # ctx
+cmt 0x10200 Six stubs, each one `move.w #imm,<abs>` and an rts. NOT six of a kind: the five that write hud_slot_bbc8 use a LONG absolute operand and are 10 bytes, while set_state_6f9c_ffff uses a SHORT one and is 8 -- which is why the table above it starts at $1023a and not $1023c. Reached only indirectly, so Ghidra's flow analysis never created them. Bodies now READ and ported (recreate/src/effects.c, differential in recreate/test/test_effects.py), which is what retired their call-context tag; the five are the same "value := N, redraw me" write as the effect_set_* handlers below (see hud_slot_bbbe). What the state MEANS is still open, so the names stay at the mechanism.
 
 # ---------------------------------------------------------------------------
 # Effect dispatch table -- 23 handlers, none of which Ghidra reached.
@@ -360,7 +360,7 @@ cmt 0x10200 Six 10-byte stubs, each `move.w #imm,$xxxx.l / rts`. Reached only in
 var 0x1023a effect_handler_table
 cmt 0x1023a 23 longword handler addresses, $10296..$103dc, indexed by a word field at offset 62 (and 64) of an object record. Both call sites also set $c030 (a message id) and $c034 := $32 (a 50-frame display timer) just before dispatching.
 fn 0x10296 effect_add4_clamped_b6fa
-cmt 0x10296 d0 := $b6fa + 4; if d0 > $b6f8 then $b6fa := $b6f8 else $b6fa := d0. A counter at $b6fa raised by 4 and clamped to the maximum held at $b6f8.
+cmt 0x10296 d0 := $b6fa + 4; if d0 > $b6f8 then $b6fa := $b6f8 else $b6fa := d0. hud_meter_value raised by 4 and clamped to the maximum in hud_meter_max. Two details a port has to keep, both read off the encoding: the `addq.w` wraps in 16 BITS, and the `bgt` is a SIGNED compare, so a value raised past $7fff comes out negative and is then stored rather than clamped. `bgt` is also strict, so a raise that lands EXACTLY on the maximum takes the store arm.
 fn 0x102bc effect_add2_clamped_b6fa
 cmt 0x102bc Same as effect_add4_clamped_b6fa but +2.
 fn 0x102e2 effect_set_bd6a_1
@@ -377,16 +377,49 @@ fn 0x10346 effect_set_bbbe_05ff
 fn 0x10350 effect_set_bd68_1
 fn 0x10360 effect_set_bd68_2
 fn 0x10370 effect_set_bd68_3
-cmt 0x10350 These three also set $21e4 := 2 before writing $bd68.
+cmt 0x10350 These three are 16 bytes, not 10: each stamps effect_state_21e4 := 2 (through a SHORT absolute operand) before writing its own ordinal into effect_state_bd68. The 2 is the same in all three, so the pair reads as "mode 2, variant n".
 fn 0x10380 effect_set_bbc0_05ff
 fn 0x1038a effect_set_bbc6_01ff
 fn 0x10394 effect_push_record_0605
 fn 0x103a6 effect_push_record_0508
 fn 0x103b8 effect_push_record_0705
 fn 0x103ca effect_push_record_0803
-cmt 0x10394 These four are identical bar the constant: `addq.l #2,$b546 / movea.l $b546,a1 / move.w #imm,(a1) / rts` -- a word pushed onto a growing list whose write pointer is $b546.
+cmt 0x10394 These four are identical bar the constant: `addq.l #2,$b546 / movea.l $b546,a1 / move.w #imm,(a1) / rts` -- a word pushed onto a growing list whose write pointer is effect_record_write_ptr. The pointer is advanced BEFORE it is re-read, so the record lands at the new pointer, not at the old one; see the cmt at $b546.
 fn 0x103dc effect_restore_b6fa_to_max
-cmt 0x103dc $b6fa := $b6f8 -- sets the counter straight to its maximum.
+cmt 0x103dc $b6fa := $b6f8 -- one memory-to-memory `move.w` with no test at all, so a maximum BELOW the counter LOWERS it. That is what separates it from the two clamped adds, which can only ever raise.
+
+# --- the state all 29 of the routines above write --------------------------
+# Read from the bodies of their WRITERS and of their readers, and mirrored as
+# constants in recreate/include/wonderboy.h (which test/ scrapes). Every name
+# here is at the mechanism and carries its address, because what the values
+# MEAN is still open -- see the section header above.
+var 0xbbbe hud_slot_bbbe
+var 0xbbbf hud_slot_bbbe_changed
+cmt 0xbbbe $bbbe..$bbc9 is SIX 2-byte HUD slots, each {value, changed}. $b8f0 walks the six `changed` bytes every frame: a nonzero one is cleared, a per-slot flag in the $dbb6.. block is raised, the slot's cell is cleared ($bb8a) and -- only when `value` is nonzero -- an icon is OR-blitted over it ($bba0). So one `move.w #$Nff,slot.l` from a handler means "value := N, and redraw me", and the low byte is always $ff. The VALUE's meaning differs slot by slot and is not identified: $bbbe and $bbc0 are counted DOWN one per use by the damage paths at $69fe/$6b46 (on reaching zero they rearm the slot as $00ff and post message $18/$19), while $bbc8 is tested against 1..6 as an icon variant. All six values are cleared together by the new-game reset at $fe4a.
+var 0xbbc0 hud_slot_bbc0
+var 0xbbc1 hud_slot_bbc0_changed
+var 0xbbc2 hud_slot_bbc2
+var 0xbbc3 hud_slot_bbc2_changed
+var 0xbbc4 hud_slot_bbc4
+var 0xbbc5 hud_slot_bbc4_changed
+cmt 0xbbc4 The one slot NO routine ported so far writes -- named only so that an address inside it is not labelled as its neighbour's. Read by `tst.b $bbc4.l` at $df7c (inside FUN_0000dbc0) and by `cmpi.b #1,$bbc4.l` at $1830; written only by unrecovered code ($1898 stores $00ff, $105e6 stores $01ff), cleared by the new-game reset at $fe74, and swept by $b8f0 like the other five.
+var 0xbbc6 hud_slot_bbc6
+var 0xbbc7 hud_slot_bbc6_changed
+var 0xbbc8 hud_slot_bbc8
+var 0xbbc9 hud_slot_bbc8_changed
+var 0xb6f8 hud_meter_max
+var 0xb6fa hud_meter_value
+cmt 0xb6fa The value and the maximum of a meter DRAWN IN FOUR-UNIT CELLS by $b61e: `value/4` filled cells (each an 8-row blit through $b6c2 into screen_back), then the remainder, then `max/4 - value/4` empty ones -- so both words are consumed as counts, not as flags. $b74a sets the maximum to $18..$28 off thresholds on $bd70; $69fe subtracts damage from the value and floors it at 0; $e032 ticks it by one each way; $fe4a resets both to $14. The three handlers here raise it by 4 or 2 (clamped, SIGNED) or restore it to the maximum. The "vitality bar" reading is the obvious one and is NOT verified -- nothing followed a cell's graphics to a meaning.
+var 0xbd66 effect_state_bd66
+var 0xbd68 effect_state_bd68
+var 0xbd6a effect_state_bd6a
+var 0x21e4 effect_state_21e4
+cmt 0xbd66 Three state words the handlers set to a small ordinal -- $bd66 to 1..5, $bd68 to 1..3, $bd6a to 1..4 -- plus effect_state_21e4, which only the three $bd68 handlers touch and always with the same 2. All four are cleared by the new-game reset at $fe4a. Only $bd66 has a reader among the recovered functions ($69fe, which turns it into `12 - 2*value` and stores that in an object field), so what the ordinals select is open.
+var 0x6f9c state_word_6f9c
+cmt 0x6f9c Written $ffff -- this game's usual "true" -- by set_state_6f9c_ffff, the only writer AMONG THE 252 RECOVERED FUNCTIONS, and read by none of them. It is NOT unread in the image: unrecovered code at $6f84 consumes it as a ONE-SHOT FLAG -- `tst.w $6f9c.l / beq $6f9a / clr.w $6f9c.l / move.w #$36,4(a0)` -- so it tests it, CLEARS it (a second writer, at $6f8e, outside the recovered set) and stamps $36 into the object field at 4(a0). Mechanism established: set here, consumed once there. What the $36 selects is not.
+var 0xb444 effect_record_list
+var 0xb546 effect_record_write_ptr
+cmt 0xb546 A LONGWORD write pointer into effect_record_list. The four push handlers advance it by 2 BEFORE re-reading it, so the record lands at the NEW pointer, the list grows upward, and the pointer addresses the newest record rather than the next free slot. $fe4a resets it to $b444 and sets that word to $ffff, which $b39c reads as "empty" ($b444 < 0 -> return). Note the pointer sits at the far END of the list's own $102 bytes: the 129th push writes over the pointer's high word. A record is one word whose two byte fields are not identified.
 
 # ---------------------------------------------------------------------------
 # Pseudo-random number generator  (found by the portability measurement --

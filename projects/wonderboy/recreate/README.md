@@ -10,12 +10,14 @@ compiled C on the same image, and diffs the result. Everything game-specific liv
 the method is differential rather than byte-matching, read the worked reference project,
 [`projects/buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md).
 
-**One function is reconstructed**: `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
+**32 functions are reconstructed.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
 game loads goes through, verified over the game's own resource corpus — the 41 `.RAD` files the two
 disks ship, plus the four protection-damaged overlays a second time in their authentic disk-2 bytes,
-so 45 streams in all. The rest is the binding plus a foundation battery that runs the original code
-under the oracle and pins how the program starts. Progress, the kit change this project required,
-and the blockers still ahead:
+so 45 streams in all. And the first gameplay batch: 31 leaves with no callee and no hardware between
+them — the joystick edge pipeline (`0x682`, `0x88c`) and the 29 effect/state routines at
+`0x10200..0x103e7` that the game reaches only through a dispatch table. The rest is the binding plus
+a foundation battery that runs the original code under the oracle and pins how the program starts.
+Progress, the kit change this project required, and the blockers still ahead:
 [`STATUS.md`](STATUS.md).
 
 **Read [`PORTABILITY.md`](PORTABILITY.md) before choosing what to port.** It measures how much of
@@ -33,9 +35,16 @@ project.toml               binds this directory to the kit (paths, load base, im
 Makefile                   three lines: KIT + GAME + include $(KIT)/kit.mk
 include/wonderboy.h        how SWB.PRG becomes a running image, as constants — the canonical copy
 include/rad.h              the .RAD/.CRU container and its bitstream, as constants
+include/effects.h          the 29 effect/state leaves at $10200..$103e7 — prototypes
+include/input.h            the two joystick-pipeline leaves
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
+src/effects.c              the effect handlers and the state stubs above them
+src/input.c                the joystick edge pipeline: latch a frame, then diff two frames
 test/harness.py            the kit-binding shim
+test/leaf.py               shared driver for LEAF routines: entry points looked up in ../names.txt,
+                           and the write set a routine is entitled to (which the depacker's
+                           battery calls too)
 test/layout.py             include/wonderboy.h's constants, scraped from that header (one source of truth)
 test/test_layout.py        that scraper's own cases — it refuses a duplicate or an octal-ambiguous #define
 test/test_bootstrap.py     the foundation battery: the loader, the self-relocation, the trap inventory
@@ -46,6 +55,10 @@ test/test_copylock.py      that stub's battery: each mechanism over its own doma
 test/test_poked_input_guard.py  the kit waiver this project is the only user of, and its three guards
 test/test_rad_depack.py    the depacker's differential: the game's own .RAD corpus (41 files, 45
                            streams), decoded by both sides, plus the failure branch
+test/test_effects.py       the effect/state leaves' differential: seeded destinations, both sides of
+                           the meter clamp, and the record list's write pointer
+test/test_input.py         the joystick pair's differential — memory for the latch, the whole
+                           returned d0 for the edge
 ```
 
 ## Running

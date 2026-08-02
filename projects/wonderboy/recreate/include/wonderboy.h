@@ -16,9 +16,10 @@
  * project.toml carries the full argument.
  *
  * It is Python's canonical source (through test/layout.py) and the reconstruction's: the depacker
- * block at the end — two runtime addresses and one failure status — is consumed by src/rad.c and by
- * test/test_rad_depack.py. include/rad.h does NOT include this header: it holds the CONTAINER's own
- * constants and nothing runtime-addressed, and its own comment states that split.
+ * block, and the game-state blocks after it, are consumed by src/ and by test/ alike. The rule for
+ * what lands here rather than in a module header is exactly that — BOTH languages need it. A value
+ * only the C needs stays in its module's own header (include/rad.h, effects.h, input.h), none of
+ * which include this one; rad.h's comment states that split for the container constants.
  */
 #ifndef WONDERBOY_H
 #define WONDERBOY_H
@@ -111,5 +112,72 @@
 #define WB_RAD_BAD_CHECKSUM  0xffffffffu /* the ONE defined status: `moveq #$ff,d0` SIGN-EXTENDS, so
                                           * the failure value is the whole longword, not $ff. On
                                           * success d0 is only the spent bit buffer */
+
+/* ---- the joystick edge pipeline (RUNTIME addresses; src/input.c) ------------------------------
+ *
+ * Three bytes, one per stage. The IKBD interrupt handler (`ikbd_joy1_byte_handler`, $858) drops the
+ * raw joystick-1 report into WB_JOY1_STATE; once a frame `joy1_latch_edge` ($88c) shifts it one
+ * stage down, and `joy1_newly_pressed` ($682) diffs the last two stages into a rising-edge mask.
+ * The two live stages sit on the NUL terminators of two filler strings — see ../names.txt.
+ */
+#define WB_JOY1_STATE        0x877u   /* what the IKBD handler last stored; bit 7 = fire */
+#define WB_JOY1_PREV         0x8b3u   /* the byte as of the PREVIOUS frame */
+#define WB_JOY1_CURRENT      0x8cfu   /* ...and as of this one */
+
+/* ---- game state the effect handlers write (RUNTIME addresses; src/effects.c) ------------------
+ *
+ * The 23 handlers of `effect_handler_table` ($1023a) and the six `set_state_*` stubs above it are
+ * one-instruction-deep writers of the globals below. What the effects MEAN is not established —
+ * ../names.txt says so and names them for their mechanism — so the names here describe the SHAPE
+ * each global is written and read with, and carry the address for the part that is still unknown.
+ *
+ * THE HUD SLOT ARRAY. $bbbe..$bbc9 is six 2-byte slots, each `{value, changed}`. `FUN_0000b8f0`
+ * ($b8f0) walks the six `changed` bytes every frame: a nonzero one is cleared, a per-slot flag in
+ * the $dbb6.. block is raised, the slot's cell is cleared ($bb8a) and — when `value` is nonzero —
+ * an icon is OR-blitted over it ($bba0). So the setters' single `move.w #$Nff,slot.l` means "value
+ * := N, and redraw me". The value's own meaning differs slot by slot and is NOT identified: $bbbe
+ * and $bbc0 are counted DOWN one per use by the damage paths at $69fe/$6b46 (which, on reaching
+ * zero, rearm the slot as $00ff and post a message), while $bbc8 is tested against 1..6 as an icon
+ * variant. The sixth slot, $bbc4, is untouched by the handlers ported here — ../names.txt names it
+ * and records its readers, but no reconstruction needs its address, so it gets no constant here.
+ */
+#define WB_HUD_SLOT_BBBE     0xbbbeu  /* counted down at $69fe: the damage path spends it */
+#define WB_HUD_SLOT_BBC0     0xbbc0u  /* counted down at $6b46, likewise */
+#define WB_HUD_SLOT_BBC2     0xbbc2u  /* the one slot set to $80 rather than a small count */
+#define WB_HUD_SLOT_BBC6     0xbbc6u
+#define WB_HUD_SLOT_BBC8     0xbbc8u  /* read as a 1..6 icon variant at $b8f0, not as a count */
+
+/* The meter drawn in four-unit cells by `FUN_0000b61e` ($b61e): `value/4` filled cells then
+ * `max/4 - value/4` empty ones, so both are consumed as counts and not as flags. `max` is set to
+ * $18..$28 from thresholds on $bd70 ($b74a); `value` is spent by the damage path, ticked by $e032,
+ * and — by the three handlers ported here — raised by 4 or 2 (clamped) or restored to `max`. */
+#define WB_HUD_METER_VALUE   0xb6fau
+#define WB_HUD_METER_MAX     0xb6f8u
+
+/* Three state words the handlers set to a small ordinal (1..4, 1..5, 1..3 respectively), and one
+ * more the three $bd68 handlers stamp with 2 on the way. All four are cleared together by the
+ * new-game reset at $fe4a; only $bd66 has a reader in the recovered code ($69fe, which turns it
+ * into `12 - 2*value`), so what the ordinals select is open. */
+#define WB_EFFECT_STATE_BD66 0xbd66u
+#define WB_EFFECT_STATE_BD68 0xbd68u
+#define WB_EFFECT_STATE_BD6A 0xbd6au
+#define WB_EFFECT_STATE_21E4 0x21e4u
+
+/* $6f9c has no reader and no other writer among the 252 recovered functions — the
+ * `set_state_6f9c_ffff` stub stores the game's usual all-ones "true" there. It is read outside them:
+ * $6f84 tests it, clears it and stamps $36 into an object field, i.e. consumes it as a ONE-SHOT
+ * flag (see ../names.txt). What that $36 selects is unknown, so the name stays at the mechanism. */
+#define WB_STATE_WORD_6F9C   0x6f9cu
+
+/* Every global in the two blocks above is written a WORD at a time (`move.w`), including the HUD
+ * slots — whose two bytes one `move.w` covers. */
+#define WB_STATE_WORD_LEN    2u
+
+/* The record list: a LONGWORD write pointer, advanced BEFORE the store, so the list grows upward
+ * and the pointer addresses the newest record. The reset at $fe4a points it at $b444 (whose own
+ * word it sets to $ffff), i.e. at the base of the 0x102 bytes that run up to the pointer itself. */
+#define WB_EFFECT_RECORD_WRITE_PTR 0xb546u
+#define WB_EFFECT_RECORD_PTR_LEN   4u
+#define WB_EFFECT_RECORD_LEN       2u   /* one record is one word; its two byte fields are unknown */
 
 #endif /* WONDERBOY_H */
