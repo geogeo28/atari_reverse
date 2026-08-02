@@ -441,12 +441,44 @@
  * nibbles of it the drawing actually reads — WB_BG_SCROLL_PHASE is POS_X's low nibble and
  * WB_BG_SCROLL_X the next one up.
  *
- * ONLY THE HORIZONTAL HALF IS RECONSTRUCTED, so only the constants it needs are here. The vertical
- * half's own state — $83a8/$83b0/$83b4, the request pair $8230/$8231, the tile-row cursor $8234,
- * its split table $8236 and the sixteen row pointers at $82a6 — is read, named and evidenced in
- * ../names.txt, and ../STATUS.md queues the routines. Nothing consumes it yet, so nothing declares
- * it yet.
+ * THE VERTICAL HALF SCROLLS BY MOVING POINTERS, not by moving pixels. Its own ring position is a
+ * ROW INDEX (WB_BG_SCROLL_Y, 0..WB_BG_SCROLL_Y_LAST in steps of WB_BG_SCROLL_STEP) plus sixteen
+ * cached row pointers at WB_BG_BUFFER_ROWS that a step keeps equal to
+ * `buffer + row * WB_BG_BUFFER_LINE`. There are TWO such cursors — the window's top scanline pair
+ * and its bottom one, WB_BG_SCROLL_Y and WB_BG_SCROLL_Y_BOTTOM — each with its own wrap test, and
+ * the eight pointers each owns are interleaved $8 apart. A step therefore uncovers one buffer ROW
+ * rather than one tile column, and the fill that follows copies a tile row into copy 0 unrotated;
+ * `bg_scroll_preshift_rows` then walks that row through the other seven, `rol.l #2` at a time.
  */
+#define WB_SCROLL_FOLLOW_FROZEN  0xd76u   /* word: while nonzero the scroll neither refreshes the two
+                                           * words below nor raises a request. NINE operand references
+                                           * in the image — five `move.w #$ffff`, two `clr.w` and two
+                                           * `tst.w`; `bg_scroll_run_queue` ($7522) and $f9a6 are the
+                                           * only two that TEST it, and the name is read off those.
+                                           * ../names.txt's `cmt 0xd76` itemizes all nine */
+#define WB_SCROLL_FOLLOW_X       0x9934u  /* word pair: the followed object's position ON SCREEN.
+                                           * $f9ae computes them as `object.x - $20 - POS_X` and
+                                           * `object.y - $40 - POS_Y`, which is what makes the two
+                                           * centres below screen coordinates rather than map ones */
+#define WB_SCROLL_FOLLOW_Y       0x9936u
+#define WB_SCROLL_CENTRE_X       0x5au    /* `subi.w #$5a,d1` / `subi.w #$30,d0` — where
+                                           * bg_scroll_raise_requests wants the followed object */
+#define WB_SCROLL_CENTRE_Y       0x30u
+#define WB_BG_QUEUE_H_COUNT      0x7592u  /* word: two-pixel HORIZONTAL steps bg_scroll_run_queue
+                                           * still owes. $7594 (the vertical one, below) is the
+                                           * second half of the `clr.l $7592` that ends the drain */
+#define WB_BG_QUEUE_V_COUNT      0x7594u
+#define WB_BG_RAISED_V           0x7596u  /* byte PAIR: what bg_scroll_raise_requests sets and
+                                           * bg_scroll_run_queue copies AS A WORD into
+                                           * WB_BG_REQUEST_UP. $7597/$7599 have no writer of their
+                                           * own anywhere in the image, so that word move is how
+                                           * down and right are raised at all */
+#define WB_BG_RAISED_V_UP        0x7596u
+#define WB_BG_RAISED_V_DOWN      0x7597u
+#define WB_BG_RAISED_H           0x7598u  /* the same pair for the horizontal axis */
+#define WB_BG_RAISED_H_LEFT      0x7598u
+#define WB_BG_RAISED_H_RIGHT     0x7599u
+#define WB_BG_RAISED_SET         0xffu    /* `st` — what raises one of those four bytes */
 #define WB_BG_SCROLL_PENDING     0x7a3cu  /* word: the half-rate latch the two steps share. A step
                                            * SETS it and moves nothing; the next one moves. The
                                            * opposite direction CLEARS it, cancelling the half-step */
@@ -455,11 +487,25 @@
                                            * whole out of WB_BG_COL_SPLIT_TABLE */
 #define WB_BG_FILL_COUNT_SECOND  0x7eb0u  /* == WB_BG_FILL_COUNTS + 2, read on its own as the
                                            * second half's count (negative => no second half) */
-#define WB_BG_REQUEST_LEFT       0x8232u  /* two of the four request bytes $759a dispatches on; the
-                                           * handler clears its own before doing anything. The
-                                           * vertical pair ($8230 up, $8231 down) belongs to the
-                                           * queued half and is recorded in ../names.txt */
+#define WB_BG_PRESHIFT_CARRY     0x8228u  /* WB_PLANES words, written and read only by
+                                           * bg_scroll_preshift_rows: the plane bits that rotate off
+                                           * the end of a buffer row and back round to its start */
+#define WB_BG_REQUEST_UP         0x8230u  /* the four request bytes $759a dispatches on, in the order
+                                           * it tests them: up, down, right ($8233), left ($8232).
+                                           * Each handler clears its own before doing anything */
+#define WB_BG_REQUEST_DOWN       0x8231u
+#define WB_BG_REQUEST_LEFT       0x8232u
 #define WB_BG_REQUEST_RIGHT      0x8233u
+#define WB_BG_TILE_ROW           0x8234u  /* word: byte offset into a 128-byte tile bitmap, 0..$7f in
+                                           * steps of WB_BG_TILE_ROW_STEP — the two scanlines a
+                                           * vertical step redraws. Both column fills add it to their
+                                           * tile pointer too */
+#define WB_BG_ROW_SPLIT_TABLE    0x8236u  /* 16 x two words indexed by WB_BG_SCROLL_X * 4. Entry k is
+                                           * (15-k, k-1), so a row fill's two halves always sum to
+                                           * WB_BG_ROW_CELLS cells and entry 0's second count is -1 =
+                                           * no second half. The horizontal counterpart of
+                                           * WB_BG_COL_SPLIT_TABLE */
+#define WB_BG_ROW_SPLIT_ENTRIES  16u      /* == WB_BG_ROW_CELLS: WB_BG_SCROLL_X's whole range */
 #define WB_BG_SCROLL_Y_COARSE    0x8276u  /* word: bg_scroll_y ($83a8) >> 4, i.e. the tile row
                                            * the visible window starts at. The vertical half
                                            * publishes it; the column fills below only read it */
@@ -470,6 +516,17 @@
 #define WB_BG_COL_SPLIT_ENTRIES  11u      /* == WB_BG_BUFFER_TILE_ROWS: Y_COARSE's whole range */
 #define WB_BG_ROW_BYTE_OFFSET    0x82a4u  /* word: byte offset of the seam within a 128-byte buffer
                                            * row, 0..120 in steps of WB_BG_CELL_BYTES */
+#define WB_BG_BUFFER_ROWS        0x82a6u  /* WB_BG_BUFFERS PAIRS of longwords, WB_BG_BUFFER_ROW_PAIR
+                                           * apart, one pair per pre-shifted copy: the two buffer
+                                           * rows the vertical half draws into and
+                                           * bg_scroll_preshift_rows propagates. A vertical step
+                                           * keeps pair member m equal to
+                                           * `WB_BG_BUFFER_BASE + copy * WB_BG_BUFFER_LEN + row_m *
+                                           * WB_BG_BUFFER_LINE`, which is why it moves all sixteen */
+#define WB_BG_BUFFER_ROW_TOP     0u       /* the pair member WB_BG_SCROLL_Y owns... */
+#define WB_BG_BUFFER_ROW_BOTTOM  4u       /* ...and the one WB_BG_SCROLL_Y_BOTTOM owns */
+#define WB_BG_BUFFER_ROW_PAIR    8u       /* == both members: the stride from one copy to the next */
+#define WB_BG_BUFFERS            8u       /* == the pre-shifted copies, WB_BG_BUFFER_LEN apart */
 #define WB_BG_MAP_CURSOR         0x82e6u  /* word: byte offset into the map of the visible window's
                                            * top-left cell. A horizontal step moves it by 1, a
                                            * vertical one by WB_MAP_ROW_STRIDE */
@@ -480,9 +537,16 @@
                                            * the $ffff the rule would give, so phase 0 clears the
                                            * whole cell and redraws it */
 #define WB_BG_SCROLL_X           0x83a6u  /* tile column 0..15 (../names.txt: bg_scroll_x) */
+#define WB_BG_SCROLL_Y           0x83a8u  /* row index of the window's TOP scanline pair within the
+                                           * 176-row ring, 0..WB_BG_SCROLL_Y_LAST step 2 */
+#define WB_BG_SCROLL_Y_BOTTOM    0x83aau  /* the same for its BOTTOM pair, wrapped independently.
+                                           * $fb96 starts it at $9e = WB_BG_SCROLL_Y + 158 rows, and
+                                           * only WB_BG_SCROLL_Y feeds WB_BG_SCROLL_Y_COARSE */
 #define WB_BG_SCROLL_PHASE       0x83acu  /* which pre-shifted buffer: 0..14, step 2 */
 #define WB_BG_SCROLL_POS_X       0x83aeu  /* absolute horizontal scroll, step 2 */
+#define WB_BG_SCROLL_POS_Y       0x83b0u  /* the vertical counterpart, bounded by 0 and _LIMIT_Y */
 #define WB_BG_SCROLL_LIMIT_X     0x83b2u  /* POS_X stops HERE, by `cmp.w` — the level's right edge */
+#define WB_BG_SCROLL_LIMIT_Y     0x83b4u
 #define WB_BG_STATE_WORD_LEN     2u       /* every scroll variable above is a word */
 
 /* The map and the tiles it names. Both live past the end of the program ($218d0) except the tile
@@ -502,6 +566,11 @@
                                            * range; the table ends exactly at WB_MAP_ROW_STRIDE */
 #define WB_MAP_ROW_STRIDE        0x22090u /* word: bytes per map row, added to walk down a column */
 #define WB_MAP_DATA              0x22092u /* the map itself, one byte per cell */
+#define WB_MAP_DATA_ROW          0x22094u /* == WB_MAP_DATA + 2. The same array as the column fills
+                                           * read, indexed from its THIRD byte: the two row fills
+                                           * spell their base this way and add the bare map cursor,
+                                           * where the left column fill spells WB_MAP_DATA and adds
+                                           * WB_BG_FILL_LEFT_MAP_OFF to the cursor */
 
 /* The eight pre-shifted buffers. */
 #define WB_BG_BUFFER_BASE        0x44000u
@@ -519,6 +588,32 @@
 #define WB_BG_PENDING_SET        0xffffu  /* what the RIGHT step arms WB_BG_SCROLL_PENDING with */
 #define WB_BG_ROW_OFFSET_MASK    0x7fu    /* ...and ROW_BYTE_OFFSET in seven bits, one step short of
                                            * WB_BG_BUFFER_LINE (only the LEFT step masks it) */
+#define WB_BG_ROW_CELLS          16u      /* == WB_BG_BUFFER_LINE / WB_BG_CELL_BYTES */
+#define WB_BG_SCROLL_Y_LAST      0xaeu    /* the highest ring row: the UP step reloads it there when
+                                           * the row hits 0, the DOWN step wraps it back to 0 from
+                                           * here. $ae * WB_BG_BUFFER_LINE = $5700, two scanlines
+                                           * short of WB_BG_BUFFER_LEN */
+#define WB_BG_Y_COARSE_SHIFT     4u       /* `asr.w #4`: WB_BG_SCROLL_Y -> WB_BG_SCROLL_Y_COARSE */
+
+/* The two ROW fills' own operands — the vertical counterparts of the column fills' below. */
+#define WB_BG_ROW_FILL_SCANLINES 2u       /* what one vertical step uncovers, and so what a row fill
+                                           * copies per cell: `move.l (a0)+,(a1)+` twice for the
+                                           * first, `move.l (a0)+,120(a1)` twice for the second */
+#define WB_BG_TILE_ROW_STEP      0x10u    /* == WB_BG_ROW_FILL_SCANLINES * WB_BG_CELL_BYTES, what a
+                                           * fill moves WB_BG_TILE_ROW by */
+#define WB_BG_TILE_ROW_MASK      0x7fu    /* ...wrapping inside one WB_TILE_BITMAP_LEN bitmap */
+#define WB_BG_BOTTOM_ROW_STRIDES 0xau     /* `mulu.w #$a,d1`: how many WB_MAP_ROW_STRIDE below the
+                                           * map cursor the BOTTOM row's map row sits */
+#define WB_BG_ROW_DRAWN_TOP      0u       /* `clr.w d0` / `move.w #$ffff,d0` — the low word each row
+                                           * fill returns, and the only thing
+                                           * bg_scroll_preshift_rows tests to pick its source row */
+#define WB_BG_ROW_DRAWN_BOTTOM   0xffffu
+
+/* bg_scroll_preshift_rows' own geometry: it walks the freshly drawn row pair through the seven
+ * copies above the one it was drawn into, two pixels further left each time. */
+#define WB_BG_PRESHIFT_COPIES    7u       /* == WB_BG_BUFFERS - 1: every copy but the drawn one */
+#define WB_BG_PRESHIFT_ROWS      2u       /* == WB_BG_ROW_FILL_SCANLINES: the pair just drawn */
+#define WB_BG_PRESHIFT_BITS      2u       /* `rol.l #2`: the two pixels one copy is ahead of the last */
 
 /* The two column fills' own operands: which map cell the fill starts from, and (for the right edge)
  * the bias applied to WB_BG_SCROLL_X before it becomes a byte offset. The offsets differ by 15 tile

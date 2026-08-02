@@ -117,7 +117,7 @@ those 832 encodings, so any *new* one fails the moment it appears.
 
 ## Semantics that silently change a reconstruction
 
-Three 68000 behaviours a C reconstruction has to model explicitly. None of them shows in the
+Four 68000 behaviours a C reconstruction has to model explicitly. None of them shows in the
 mnemonic — the listing reads as ordinary arithmetic — and each yields a *plausible wrong answer*
 rather than a crash, so nothing draws attention to them.
 
@@ -149,6 +149,28 @@ diverges on exactly the inputs the original leaves alone. Joust's `screen.c` the
 divides through one `divu_w()` helper that returns the dividend on overflow. Code that never tests
 V after the divide — most compiled code — silently carries the dividend forward as if it were a
 result, so this is a faithfulness question, not an error path.
+
+**A `subi.w`/`bgt` pair is a signed comparison of the OPERAND, not of the result.** The obvious C for
+
+```
+d28: move.w  $9936.l,d0
+d2e: subi.w  #$30,d0        ; the value the routine goes on to RETURN
+d32: bgt.w   $d4a           ; ...but the branch is not `result > 0`
+```
+
+is "take the difference, test its sign" — and that is wrong wherever the subtraction *overflows*.
+`bgt` is `not (Z or (N xor V))` and `blt` is `N xor V`, so the pair together mean `d0 > $30` as
+**signed 16-bit values**, which is not the same question as `d0 - $30 > 0` once the result has
+wrapped. At `d0 = $8000` the difference is `$7fd0`, which reads *positive*, while `blt` correctly
+takes the *negative* arm. Write the branch as a comparison of the two operands and keep the wrapped
+difference as the value: they are different things, and here they part company at exactly one input.
+The same reasoning applies to `cmp`/`cmpi` followed by any of the signed conditions — the unsigned
+ones (`bhi`/`bcc`/`bcs`/`bls`) read C instead of `N xor V` and have their own boundary. A case that
+only ever seeds small in-range values will never see it; seed the extremes deliberately.
+(Worked example: `bg_scroll_raise_requests` in `projects/wonderboy/recreate/src/scroll.c`, whose
+first draft had this bug and whose `wrapped-at-the-lowest-position` case is what found it. The same
+input also breaks the routine's *own* "the distance always comes back positive" property, since
+`neg.w $7fd0` is `$8030` — reproduce that too rather than tidying it.)
 
 ## Idioms you'll see constantly
 

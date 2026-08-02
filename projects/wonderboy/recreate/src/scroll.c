@@ -1,34 +1,47 @@
-/* scroll.c — the background scroll engine's horizontal half ($75fc, $760c and the four routines
- * under them), out of the cluster at $7522..$8228.
+/* scroll.c — the background scroll engine, the whole cluster at $7522..$8228 plus the request
+ * raiser at $d28 that drives it.
  *
  * WHAT THE CLUSTER IS. The game keeps EIGHT pre-shifted copies of the level background, $5800 bytes
  * each, tiling $44000..$70000. Copy N is the map drawn two pixels further left than copy N-1, so a
  * two-pixel scroll is a change of buffer rather than a redraw, and only the ONE tile column the
- * scroll uncovers has to be produced. That is what these six routines do: a request byte something
- * else raises picks a direction, a step routine moves the position words, and a fill routine draws
- * the new column into the buffer the position now names. wonderboy.h's scroll block has the layout.
+ * scroll uncovers has to be produced. That is what the horizontal half does: a request byte picks a
+ * direction, a step routine moves the position words, and a fill routine draws the new column into
+ * the buffer the position now names. wonderboy.h's scroll block has the layout.
  *
- * THE STEPS RETURN THROUGH THE STACK. A step with nothing to do does `addq.l #4,(a7)` and `rts`,
- * which returns PAST its caller's `bsr` to the fill — one act that means both "no movement" and
- * "skip the redraw". Ghidra does not model it (../decomp.c shows a bare `return` and no skip), so
- * it is read off the disassembly, and the C returns it as a flag because C has no other way to say
- * it. It is also the reason a differential case entered at a step needs a second stop PC: the
- * oracle's `rts` lands four bytes past its sentinel (see test/test_scroll.py).
+ * THE VERTICAL HALF IS THE OTHER SHAPE OF THE SAME SCHEME. There is nothing to pre-shift vertically,
+ * so its position is a ROW INDEX and the eight buffers' row pointers are simply moved; the fill then
+ * copies one tile row into copy 0 UNROTATED, and `bg_scroll_preshift_rows` walks that row through the
+ * remaining seven copies, `rol.l #2` at a time. That routine is the other half of the pre-shift
+ * scheme and the reason the horizontal half can be a buffer switch at all.
+ *
+ * THE STEPS RETURN THROUGH THE STACK. A step with nothing to do does `addq.l #4,(a7)` — `#8` in the
+ * vertical pair, which has TWO calls to consume — and `rts`, which returns PAST its caller's `bsr`s.
+ * One act means both "no movement" and "skip the redraw". Ghidra does not model it (../decomp.c
+ * shows a bare `return` and no skip), so it is read off the disassembly, and the C returns it as a
+ * flag because C has no other way to say it. It is also the reason a differential case entered at a
+ * step needs a second stop PC: the oracle's `rts` lands past its sentinel (see test/test_scroll.py).
  *
  * WHAT THE NAMES CLAIM is the mechanism, this region's rule. `bg_scroll_fill_right_column` says a
  * tile column is masked and rotated into the buffer at the map cursor plus WB_BG_FILL_RIGHT_MAP_OFF
  * cells; that the result is "the right-hand edge of the visible window" follows from that offset
  * being fifteen cells past the left fill's, not from anything this file proves.
  *
- * TWO THINGS THE DIFFERENTIAL CANNOT SEE, both registered in ../STATUS.md:
+ * THREE THINGS THE DIFFERENTIAL CANNOT SEE, all registered in ../STATUS.md:
  *
- *   * THE REGISTERS THE FILLS LEAVE BEHIND. Both walk out with a0/a1/a2/a3/a4/a6 and d0-d7 well
- *     past where they started; the oracle reports d0/d1/a0/a1 only, and the two call sites
- *     ($75fc/$760c) `rts` immediately after, so there is nothing to compare against anyway.
- *   * THE RUNAWAY COUNTS. Both `dbf` loops take their length from WB_BG_COL_SPLIT_TABLE, and a
- *     count of $ffff in the FIRST word would run 65536 tile rows and walk out of the buffers
- *     entirely. Reproduced by construction (the counters are `uint16_t` and the loops are
- *     do/while), and unreachable through the shipped table, whose first words are 10 down to 0.
+ *   * THE REGISTERS THE FILLS LEAVE BEHIND. Both column fills walk out with a0/a1/a2/a3/a4/a6 and
+ *     d0-d7 well past where they started; the oracle reports d0/d1/a0/a1 only, and the two call
+ *     sites ($75fc/$760c) `rts` immediately after, so there is nothing to compare against anyway.
+ *     The two ROW fills are the exception: their d0 IS an output, read by the routine after them.
+ *   * THE RUNAWAY COUNTS. Every `dbf` loop here takes its length from WB_BG_COL_SPLIT_TABLE or
+ *     WB_BG_ROW_SPLIT_TABLE, and a count of $ffff in the FIRST word would run 65536 iterations and
+ *     walk out of the buffers entirely. Reproduced by construction (the counters are `uint16_t` and
+ *     the loops are do/while), and unreachable through the shipped tables, whose first words count
+ *     down to 0. `bg_scroll_run_queue`'s two drains have the same SHAPE but not the same argument —
+ *     their count is a halved distance rather than a table entry, and $d28 can return a negative
+ *     one. See drain_requests.
+ *   * THE CALLERS' REGISTER HALVES. `bg_scroll_raise_requests` returns two distances in the LOW
+ *     WORDS of d0/d1 and never touches their high halves, so the caller's own are what come back.
+ *     They are arguments here for exactly that reason — see its comment.
  */
 #include <stdint.h>
 
@@ -36,15 +49,14 @@
 #include "scroll.h"
 #include "wonderboy.h"
 
-/* `rol.l d5,dn`. The count is a memory word here (a phase, 0..14) or the literal 16 the right edge
- * substitutes for a phase of zero — a RUNTIME value, unlike src/hud.c's rotate, whose count is
- * always the literal 4 or 8. So this one has to survive a count of 0, where the 68000 rotates by
- * nothing and C's `value >> 32` would be undefined. That guard is the whole difference between the
- * two, and the reason they are not one helper. */
-static uint32_t rotate_left32_by_register(uint32_t value, unsigned count) {
-    if (count == 0)
-        return value;
-    return (value << count) | (value >> (32 - count));
+/* `move.w #imm,d0` / `clr.w d0` on a longword register: the low word is replaced and the high word
+ * survives. Both row fills end that way, so what they hand `bg_scroll_preshift_rows` is a marker
+ * word sitting on top of the last tile's byte offset — and only the marker is ever tested. */
+#define LOW_WORD_MASK 0xffffu
+#define WORD_BITS     16u
+
+static uint32_t set_low_word(uint32_t value, uint16_t low) {
+    return (value & ~(uint32_t)LOW_WORD_MASK) | low;
 }
 
 /* The rotation the right edge uses in place of a phase of zero: `move.w #$10,d5` — a whole cell, so
@@ -171,7 +183,7 @@ static void draw_tiles(uint8_t *image, bg_cursors *at, unsigned shift, uint16_t 
         for (unsigned row = 0; row < WB_BG_TILE_ROWS; row++) {
             uint32_t rotated[WB_PLANES];
             for (unsigned plane = 0; plane < WB_PLANES; plane++)
-                rotated[plane] = rotate_left32_by_register(
+                rotated[plane] = rotate_left32(
                     be16(image + addr_add(tile, plane * WB_PLANE_STRIDE)), shift);
             tile = addr_add(tile, WB_BG_CELL_BYTES);
 
@@ -316,4 +328,358 @@ void bg_scroll_serve_left(uint8_t *image) {
     if (bg_scroll_step_left(image))
         return;
     bg_scroll_fill_left_column(image);
+}
+
+
+/* ---- the vertical half ------------------------------------------------------------------------
+ *
+ * Where the horizontal steps move a phase and let the buffer switch do the work, these move a ring
+ * ROW INDEX and the eight cached row pointers that must stay equal to
+ * `WB_BG_BUFFER_BASE + copy * WB_BG_BUFFER_LEN + row * WB_BG_BUFFER_LINE`. There are two such
+ * cursors — the visible window's top scanline pair and its bottom one — and each wraps on its own
+ * test, which is why the wrap reload writes a WHOLE set of pointers rather than adjusting them. */
+
+/* One cursor's step. `wrap_from` is the row at which it must reload instead of move, `wrap_to` what
+ * it reloads to, and `row_delta` the two rows it moves otherwise — the pointers follow at
+ * `row_delta * WB_BG_BUFFER_LINE`, which is the `$100` both directions spell as a literal. */
+static void step_row_cursor(uint8_t *image, uint32_t row_word, uint32_t first_pointer,
+                            uint16_t wrap_from, uint16_t wrap_to, int16_t row_delta) {
+    if (be16(image + row_word) == wrap_from) {
+        wr16(image + row_word, wrap_to);
+        for (unsigned copy = 0; copy < WB_BG_BUFFERS; copy++)
+            wr32(image + first_pointer + copy * WB_BG_BUFFER_ROW_PAIR,
+                 WB_BG_BUFFER_BASE + copy * WB_BG_BUFFER_LEN + wrap_to * WB_BG_BUFFER_LINE);
+        return;
+    }
+    wr16(image + row_word, (uint16_t)(be16(image + row_word) + (uint16_t)row_delta));
+    for (unsigned copy = 0; copy < WB_BG_BUFFERS; copy++) {
+        uint32_t at = first_pointer + copy * WB_BG_BUFFER_ROW_PAIR;
+        wr32(image + at,
+             addr_add(be32(image + at), (uint32_t)(row_delta * (int32_t)WB_BG_BUFFER_LINE)));
+    }
+}
+
+/* The whole of a vertical step below its boundary test: both cursors, then the coarse row. Each
+ * cursor takes the SAME wrap and delta but keeps its own row word, so a step that reached the wrap
+ * on one and not the other moves one and reloads the other.
+ *
+ * The coarse row (`asr.w #4,$83a8`) is read by the two COLUMN fills, which is the one place the two
+ * halves of the engine meet — and only the TOP cursor feeds it. */
+static void move_row_cursors(uint8_t *image, uint16_t wrap_from, uint16_t wrap_to,
+                             int16_t row_delta) {
+    step_row_cursor(image, WB_BG_SCROLL_Y, WB_BG_BUFFER_ROWS + WB_BG_BUFFER_ROW_TOP,
+                    wrap_from, wrap_to, row_delta);
+    step_row_cursor(image, WB_BG_SCROLL_Y_BOTTOM, WB_BG_BUFFER_ROWS + WB_BG_BUFFER_ROW_BOTTOM,
+                    wrap_from, wrap_to, row_delta);
+    wr16(image + WB_BG_SCROLL_Y_COARSE,
+         (uint16_t)((int16_t)be16(image + WB_BG_SCROLL_Y) >> WB_BG_Y_COARSE_SHIFT));
+}
+
+/* $761c / $77ba. Both return nonzero when the original consumed its caller's next TWO `bsr`s
+ * (`addq.l #8,(a7)`): the row fill AND the pre-shift are skipped together.
+ *
+ * The two boundary tests are NOT mirror images — up compares against 0 and down against
+ * WB_BG_SCROLL_LIMIT_Y — and neither is the ring wrap: up reloads when the row IS 0 (`tst.w`) and
+ * down when it IS WB_BG_SCROLL_Y_LAST (`cmpi.w`), so a row that starts off the 0..$ae grid wraps in
+ * one direction and runs away in the other. Both reproduced rather than tidied. */
+int bg_scroll_step_up(uint8_t *image) {
+    if (be16(image + WB_BG_SCROLL_POS_Y) == 0)
+        return 1;
+    wr16(image + WB_BG_SCROLL_POS_Y,
+         (uint16_t)(be16(image + WB_BG_SCROLL_POS_Y) - WB_BG_SCROLL_STEP));
+    move_row_cursors(image, 0, WB_BG_SCROLL_Y_LAST, -(int16_t)WB_BG_SCROLL_STEP);
+    return 0;
+}
+
+int bg_scroll_step_down(uint8_t *image) {
+    if (be16(image + WB_BG_SCROLL_POS_Y) == be16(image + WB_BG_SCROLL_LIMIT_Y))
+        return 1;
+    wr16(image + WB_BG_SCROLL_POS_Y,
+         (uint16_t)(be16(image + WB_BG_SCROLL_POS_Y) + WB_BG_SCROLL_STEP));
+    move_row_cursors(image, WB_BG_SCROLL_Y_LAST, 0, (int16_t)WB_BG_SCROLL_STEP);
+    return 0;
+}
+
+
+/* The two cursors a row fill's cell loop advances. Passed as one object because the second half of
+ * a fill resumes both where the first left them — the map pointer especially, which is NOT re-based
+ * between the halves the way the destination is. */
+typedef struct {
+    uint32_t dest;      /* a1 */
+    uint32_t map;       /* a6 */
+} bg_row_cursors;
+
+/* One half of a row fill: `cells + 1` map cells, each contributing WB_BG_ROW_FILL_SCANLINES
+ * scanlines of one WB_BG_CELL_BYTES cell, copied out of the tile bitmap UNROTATED. `tile_byte_offset`
+ * is WB_BG_TILE_ROW, the byte offset within the 128-byte bitmap that names which scanline pair.
+ *
+ * Returns the 68000's d0 as the loop leaves it: the LAST tile's byte offset (`move.w (0,a5,d0.w),d0
+ * / lsl.l #7,d0`). Both fills then stamp their marker into its low word and hand the whole longword
+ * to bg_scroll_preshift_rows, so the high half travels with it and is worth reproducing. */
+static uint32_t copy_row_cells(uint8_t *image, bg_row_cursors *at, uint16_t cells,
+                               uint16_t tile_byte_offset) {
+    uint32_t tile_offset = 0;
+    uint16_t remaining = cells;
+    do {
+        uint16_t tile = be16(image + WB_TILE_INDEX_TABLE + image[at->map] * sizeof(uint16_t));
+        at->map = addr_add(at->map, 1);
+        tile_offset = (uint32_t)tile * WB_TILE_BITMAP_LEN;
+        uint32_t source = addr_add(addr_add(WB_TILE_BITMAPS, tile_offset),
+                                   sign_ext16(tile_byte_offset));
+
+        for (unsigned scanline = 0; scanline < WB_BG_ROW_FILL_SCANLINES; scanline++) {
+            for (unsigned byte = 0; byte < WB_BG_CELL_BYTES; byte += sizeof(uint32_t)) {
+                uint32_t from = addr_add(source, scanline * WB_BG_CELL_BYTES + byte);
+                uint32_t to = addr_add(at->dest, scanline * WB_BG_BUFFER_LINE + byte);
+                wr32(image + to, be32(image + from));
+            }
+        }
+        at->dest = addr_add(at->dest, WB_BG_CELL_BYTES);
+    } while (remaining-- != 0);
+    return tile_offset;
+}
+
+/* The body both row fills share. Like the column fills it draws in TWO halves — the buffer row is a
+ * 128-byte RING and the seam sits at WB_BG_ROW_BYTE_OFFSET — but the wrap is horizontal, so between
+ * them only the destination steps back, by one whole scanline. A negative second count means the
+ * seam was at the row's start and there is no second half. */
+static uint32_t fill_buffer_row(uint8_t *image, uint32_t row_pointer, uint16_t map_offset) {
+    bg_row_cursors at = {
+        .dest = addr_add(be32(image + row_pointer),
+                         sign_ext16(be16(image + WB_BG_ROW_BYTE_OFFSET))),
+        .map = addr_add(WB_MAP_DATA_ROW, sign_ext16(map_offset)),
+    };
+    uint16_t index = (uint16_t)(be16(image + WB_BG_SCROLL_X) * sizeof(uint32_t));
+    uint32_t counts = addr_add(WB_BG_ROW_SPLIT_TABLE, sign_ext16(index));
+    uint16_t tile_byte_offset = be16(image + WB_BG_TILE_ROW);
+
+    uint32_t drawn = copy_row_cells(image, &at, be16(image + counts), tile_byte_offset);
+    at.dest = addr_add(at.dest, (uint32_t)-(int32_t)WB_BG_BUFFER_LINE);
+
+    uint16_t second = be16(image + addr_add(counts, WB_BG_STATE_WORD_LEN));
+    if ((int16_t)second < 0)
+        return drawn;
+    return copy_row_cells(image, &at, second, tile_byte_offset);
+}
+
+/* $7a3e. The tile row steps BACK first — and a step past the top of the bitmap pulls the map cursor
+ * back one map row — because the scanline pair being redrawn is the one the step just uncovered
+ * ABOVE the window. $7b1a is the mirror and does the same step AFTER its draw. */
+uint32_t bg_scroll_fill_top_row(uint8_t *image) {
+    uint16_t row = (uint16_t)(be16(image + WB_BG_TILE_ROW) - WB_BG_TILE_ROW_STEP);
+    if ((int16_t)row < 0)
+        wr16(image + WB_BG_MAP_CURSOR,
+             (uint16_t)(be16(image + WB_BG_MAP_CURSOR) - be16(image + WB_MAP_ROW_STRIDE)));
+    wr16(image + WB_BG_TILE_ROW, (uint16_t)(row & WB_BG_TILE_ROW_MASK));
+
+    uint32_t drawn = fill_buffer_row(image, WB_BG_BUFFER_ROWS + WB_BG_BUFFER_ROW_TOP,
+                                     be16(image + WB_BG_MAP_CURSOR));
+    return set_low_word(drawn, WB_BG_ROW_DRAWN_TOP);
+}
+
+uint32_t bg_scroll_fill_bottom_row(uint8_t *image) {
+    uint16_t map_offset = (uint16_t)(be16(image + WB_BG_MAP_CURSOR)
+                                     + WB_BG_BOTTOM_ROW_STRIDES * be16(image + WB_MAP_ROW_STRIDE));
+    uint32_t drawn = fill_buffer_row(image, WB_BG_BUFFER_ROWS + WB_BG_BUFFER_ROW_BOTTOM, map_offset);
+
+    uint16_t row = (uint16_t)((be16(image + WB_BG_TILE_ROW) + WB_BG_TILE_ROW_STEP)
+                              & WB_BG_TILE_ROW_MASK);
+    if (row == 0)
+        wr16(image + WB_BG_MAP_CURSOR,
+             (uint16_t)(be16(image + WB_BG_MAP_CURSOR) + be16(image + WB_MAP_ROW_STRIDE)));
+    wr16(image + WB_BG_TILE_ROW, row);
+    return set_low_word(drawn, WB_BG_ROW_DRAWN_BOTTOM);
+}
+
+
+/* $8144 — the pre-shift, and the other half of the eight-copy scheme.
+ *
+ * A cell's four plane words are rotated left as LONGWORDS by WB_BG_PRESHIFT_BITS, which puts the two
+ * pixels that leave the top of each word in the rotated longword's HIGH half. The low half is
+ * WRITTEN to the cell, the high half is ORed into the cell BEFORE it — so a whole row shifts two
+ * pixels left in one pass, and the bits that fall off the row's start come round to its end. That
+ * wrap is what WB_BG_PRESHIFT_CARRY parks: cell 0's carry, ORed into cell 15 when the row is done. */
+
+static void read_plane_words(const uint8_t *image, uint32_t at, uint16_t *words) {
+    for (unsigned plane = 0; plane < WB_PLANES; plane++)
+        words[plane] = be16(image + addr_add(at, plane * WB_PLANE_STRIDE));
+}
+
+static void write_plane_words(uint8_t *image, uint32_t at, const uint16_t *words) {
+    for (unsigned plane = 0; plane < WB_PLANES; plane++)
+        wr16(image + addr_add(at, plane * WB_PLANE_STRIDE), words[plane]);
+}
+
+static void or_plane_words(uint8_t *image, uint32_t at, const uint16_t *words) {
+    for (unsigned plane = 0; plane < WB_PLANES; plane++) {
+        uint32_t word_at = addr_add(at, plane * WB_PLANE_STRIDE);
+        wr16(image + word_at, (uint16_t)(be16(image + word_at) | words[plane]));
+    }
+}
+
+/* One cell read and rotated: `shifted` is what lands in the cell, `carried` what belongs to its
+ * left-hand neighbour. The 68000 reads all four planes into d0-d3 before storing any, and so does
+ * this — the two destinations are eight bytes apart, so only the read/write order can matter. */
+static void rotate_cell(const uint8_t *image, uint32_t cell, uint16_t *shifted, uint16_t *carried) {
+    read_plane_words(image, cell, shifted);
+    for (unsigned plane = 0; plane < WB_PLANES; plane++) {
+        uint32_t rotated = rotate_left32(shifted[plane], WB_BG_PRESHIFT_BITS);
+        shifted[plane] = (uint16_t)rotated;
+        carried[plane] = (uint16_t)(rotated >> WORD_BITS);
+    }
+}
+
+/* One 128-byte buffer row, shifted two pixels left into the copy above it. Advances both cursors to
+ * the next scanline, which is how the two rows of a pair run under one loop. */
+static void preshift_one_row(uint8_t *image, uint32_t *source, uint32_t *dest) {
+    uint16_t shifted[WB_PLANES];
+    uint16_t carried[WB_PLANES];
+
+    rotate_cell(image, *source, shifted, carried);
+    *source = addr_add(*source, WB_BG_CELL_BYTES);
+    write_plane_words(image, *dest, shifted);
+    write_plane_words(image, WB_BG_PRESHIFT_CARRY, carried);
+    *dest = addr_add(*dest, WB_BG_CELL_BYTES);
+
+    for (unsigned cell = 1; cell < WB_BG_ROW_CELLS; cell++) {
+        rotate_cell(image, *source, shifted, carried);
+        *source = addr_add(*source, WB_BG_CELL_BYTES);
+        or_plane_words(image, addr_add(*dest, (uint32_t)-(int32_t)WB_BG_CELL_BYTES), carried);
+        write_plane_words(image, *dest, shifted);
+        *dest = addr_add(*dest, WB_BG_CELL_BYTES);
+    }
+
+    read_plane_words(image, WB_BG_PRESHIFT_CARRY, carried);
+    or_plane_words(image, addr_add(*dest, (uint32_t)-(int32_t)WB_BG_CELL_BYTES), carried);
+}
+
+/* `drawn` is the row fills' d0: its LOW WORD's sign is the whole selector (`tst.w d0 / bmi`), which
+ * is exactly what WB_BG_ROW_DRAWN_TOP and WB_BG_ROW_DRAWN_BOTTOM are. */
+void bg_scroll_preshift_rows(uint8_t *image, uint32_t drawn) {
+    uint32_t pair_member = ((int16_t)(uint16_t)drawn < 0)
+                           ? WB_BG_BUFFER_ROW_BOTTOM : WB_BG_BUFFER_ROW_TOP;
+    uint32_t source = be32(image + WB_BG_BUFFER_ROWS + pair_member);
+    uint32_t dest = addr_add(source, WB_BG_BUFFER_LEN);
+
+    for (unsigned copy = 0; copy < WB_BG_PRESHIFT_COPIES; copy++) {
+        for (unsigned row = 0; row < WB_BG_PRESHIFT_ROWS; row++)
+            preshift_one_row(image, &source, &dest);
+        /* `lea -256(a1),a0 / lea $5800(a0),a1`: the copy just written becomes the next one's
+         * source, so nothing re-reads the row pointers and the walk is a chain. */
+        source = addr_add(dest, (uint32_t)-(int32_t)(WB_BG_PRESHIFT_ROWS * WB_BG_BUFFER_LINE));
+        dest = addr_add(source, WB_BG_BUFFER_LEN);
+    }
+}
+
+
+/* $75d4 / $75e8 — one vertical request served. Same shape as the horizontal pair, with one more
+ * call under the same skip: the row fill's d0 IS the pre-shift's argument. */
+void bg_scroll_serve_up(uint8_t *image) {
+    image[WB_BG_REQUEST_UP] = 0;
+    if (bg_scroll_step_up(image))
+        return;
+    bg_scroll_preshift_rows(image, bg_scroll_fill_top_row(image));
+}
+
+void bg_scroll_serve_down(uint8_t *image) {
+    image[WB_BG_REQUEST_DOWN] = 0;
+    if (bg_scroll_step_down(image))
+        return;
+    bg_scroll_preshift_rows(image, bg_scroll_fill_bottom_row(image));
+}
+
+
+/* ---- the tier above: raise, queue, dispatch ---------------------------------------------------- */
+
+/* $759a. Four `tst.b`/`beq`/`bsr` in line, not a dispatch table — and the order is the original's:
+ * up, down, RIGHT, left. Each handler consumes its own byte, so a pass can serve all four. */
+void bg_scroll_serve_requests(uint8_t *image) {
+    if (image[WB_BG_REQUEST_UP])
+        bg_scroll_serve_up(image);
+    if (image[WB_BG_REQUEST_DOWN])
+        bg_scroll_serve_down(image);
+    if (image[WB_BG_REQUEST_RIGHT])
+        bg_scroll_serve_right(image);
+    if (image[WB_BG_REQUEST_LEFT])
+        bg_scroll_serve_left(image);
+}
+
+/* $d28. Raises one horizontal and one vertical request byte from where the followed object sits
+ * relative to WB_SCROLL_CENTRE_X/_Y, and returns the two distances — negated, so both come back
+ * positive — in d0 (vertical) and d1 (horizontal).
+ *
+ * They are IN/OUT arguments because the original writes only the low words (`move.w`, `neg.w`), so
+ * each caller's own high half is what it gets back. Nothing observes that: the one caller does
+ * `asr.w` and `move.w` on both. Passing them makes the register interface exact anyway, which is
+ * what lets a case compare the oracle's whole d0/d1 rather than half of each.
+ *
+ * WHICH SIDE THE OBJECT IS ON IS NOT THE SIGN OF THE DIFFERENCE. `subi.w` sets the overflow flag and
+ * `bgt`/`blt` read it, so the test is a signed 16-bit comparison of the POSITION against the centre,
+ * not of the wrapped difference against zero. A position of $8000 gives a difference of $7fd0, which
+ * reads positive on its own and yet takes the `blt` arm. The DISTANCE returned is still the wrapped
+ * difference — value and flags part company here, which is exactly what the two are. */
+void bg_scroll_raise_requests(uint8_t *image, uint32_t *vertical, uint32_t *horizontal) {
+    int16_t follow_y = (int16_t)be16(image + WB_SCROLL_FOLLOW_Y);
+    uint16_t from_centre_y = (uint16_t)((uint16_t)follow_y - WB_SCROLL_CENTRE_Y);
+    if (follow_y > (int16_t)WB_SCROLL_CENTRE_Y) {
+        image[WB_BG_RAISED_V_DOWN] = WB_BG_RAISED_SET;
+    } else if (follow_y < (int16_t)WB_SCROLL_CENTRE_Y) {
+        image[WB_BG_RAISED_V_UP] = WB_BG_RAISED_SET;
+        from_centre_y = (uint16_t)-from_centre_y;
+    }
+    *vertical = set_low_word(*vertical, from_centre_y);
+
+    int16_t follow_x = (int16_t)be16(image + WB_SCROLL_FOLLOW_X);
+    uint16_t from_centre_x = (uint16_t)((uint16_t)follow_x - WB_SCROLL_CENTRE_X);
+    if (follow_x < (int16_t)WB_SCROLL_CENTRE_X) {
+        image[WB_BG_RAISED_H_LEFT] = WB_BG_RAISED_SET;
+        from_centre_x = (uint16_t)-from_centre_x;
+    } else if (follow_x > (int16_t)WB_SCROLL_CENTRE_X) {
+        image[WB_BG_RAISED_H_RIGHT] = WB_BG_RAISED_SET;
+    }
+    *horizontal = set_low_word(*horizontal, from_centre_x);
+}
+
+/* One of the two drains: serve the raised pair `count_word` times, two pixels each. The count word
+ * is re-read from the image every pass because the original re-reads it (`tst.w`/`subq.w` on
+ * memory), and a serve could in principle write it — nothing in the image does, but the loop's
+ * shape is the claim, not the outcome. A count that arrived NEGATIVE runs its own value in passes
+ * rather than none — 32,768 to 65,535 of them — because the loop tests against zero and counts DOWN.
+ * $d28 can produce one: a follow position of $8000 comes back as a distance of $8030, which the
+ * `asr.w #1` above turns into $c018, i.e. 49,176 passes. Reproduced by construction and left
+ * unreached — what keeps it unreached is the range of the game's own follow positions, which this
+ * batch did not establish, and NOT the range of what $d28 can return. */
+static void drain_requests(uint8_t *image, uint32_t count_word, uint32_t raised, uint32_t request) {
+    while (be16(image + count_word) != 0) {
+        wr16(image + count_word, (uint16_t)(be16(image + count_word) - 1));
+        /* A WORD move of a byte PAIR — which is how the down/right bytes are raised at all: neither
+         * has a writer of its own anywhere in the image. */
+        wr16(image + request, be16(image + raised));
+        bg_scroll_serve_requests(image);
+    }
+}
+
+/* $7522, once a frame from game_main_loop ($4d0, the image's only reference to it). */
+void bg_scroll_run_queue(uint8_t *image) {
+    if (be16(image + WB_SCROLL_FOLLOW_FROZEN) != 0) {
+        bg_scroll_serve_requests(image);
+        return;
+    }
+
+    /* Zero rather than the original's own entry d0/d1, which are whatever game_main_loop left: the
+     * only reads of either are the `asr.w` and `move.w` below, both word ops, so no high half the
+     * caller could supply is ever observed. */
+    uint32_t vertical = 0;
+    uint32_t horizontal = 0;
+    bg_scroll_raise_requests(image, &vertical, &horizontal);
+    /* `asr.w #1` on each: the distances are in pixels and a step is WB_BG_SCROLL_STEP of them. */
+    wr16(image + WB_BG_QUEUE_V_COUNT, (uint16_t)((int16_t)(uint16_t)vertical >> 1));
+    wr16(image + WB_BG_QUEUE_H_COUNT, (uint16_t)((int16_t)(uint16_t)horizontal >> 1));
+
+    drain_requests(image, WB_BG_QUEUE_H_COUNT, WB_BG_RAISED_H, WB_BG_REQUEST_LEFT);
+    drain_requests(image, WB_BG_QUEUE_V_COUNT, WB_BG_RAISED_V, WB_BG_REQUEST_UP);
+
+    /* Two `clr.l`, each covering a PAIR: $7596/$7598 and $7592/$7594. */
+    wr32(image + WB_BG_RAISED_V, 0);
+    wr32(image + WB_BG_QUEUE_H_COUNT, 0);
 }

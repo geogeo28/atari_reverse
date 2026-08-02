@@ -318,12 +318,6 @@ void hud_blit_panel_frame(uint8_t *image) {
  * cleared planes, under the default ones plane 1 is `st` to $ff — a solid bar, not nothing.
  */
 
-/* `rol.l #n,Dn` — a 32-bit ROTATE, not a shift: the bits that leave the top come back in at the
- * bottom, and both users depend on that. */
-static uint32_t rotate_left32(uint32_t value, unsigned bits) {
-    return (value << bits) | (value >> (32 - bits));
-}
-
 /* One nibble is what `rol.l #4,d7` brings to the top of the register, and one byte what `rol.l #8`
  * does in hud_draw_stage_number. */
 #define BITS_PER_NIBBLE 4u
