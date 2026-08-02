@@ -78,4 +78,12 @@ static inline uint16_t set_low_byte(uint16_t word, uint8_t byte) {
     return (uint16_t)((word & 0xFF00u) | byte);
 }
 
+/* The same idea one size up: a `.w` op on a LONGWORD register — `move.w`/`clr.w`/`move.w #imm,Dn`
+ * — replaces the low word and leaves the high one alone. It matters wherever the caller's own high
+ * half comes back out of a routine that only ever wrote words, which is how a 68000 routine returns
+ * "a word" in a register the differential compares as a longword. */
+static inline uint32_t set_low_word(uint32_t value, uint16_t low) {
+    return (value & 0xFFFF0000u) | low;
+}
+
 #endif /* RECREATE_KIT_MACHINE_H */

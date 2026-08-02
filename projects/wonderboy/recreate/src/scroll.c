@@ -49,15 +49,10 @@
 #include "scroll.h"
 #include "wonderboy.h"
 
-/* `move.w #imm,d0` / `clr.w d0` on a longword register: the low word is replaced and the high word
- * survives. Both row fills end that way, so what they hand `bg_scroll_preshift_rows` is a marker
- * word sitting on top of the last tile's byte offset — and only the marker is ever tested. */
-#define LOW_WORD_MASK 0xffffu
-#define WORD_BITS     16u
-
-static uint32_t set_low_word(uint32_t value, uint16_t low) {
-    return (value & ~(uint32_t)LOW_WORD_MASK) | low;
-}
+/* Both row fills end with `move.w #imm,d0`, so what they hand `bg_scroll_preshift_rows` is a marker
+ * word sitting on top of the last tile's byte offset — machine.h's set_low_word, and only the
+ * marker is ever tested. */
+#define WORD_BITS 16u
 
 /* The rotation the right edge uses in place of a phase of zero: `move.w #$10,d5` — a whole cell, so
  * every plane word crosses into the neighbouring cell and none of it stays. */

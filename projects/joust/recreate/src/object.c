@@ -386,12 +386,8 @@ void draw_egg_sprite(uint8_t *image, uint32_t object) {
 #define PTERO_PLATFORM_ABOVE  0xdu    /* rows above a platform that still count as blocked */
 #define PTERO_VERTICAL_STEP   4u      /* the climb/dive step handed back to the mover */
 
-/* `move.w`/`clr.w` into a data register: the low word is replaced and the HIGH half survives
- * untouched. Every write to D1 below is word-wide, which is the whole reason the caller gets its
- * own high half back on the clear exits. (machine.h models the byte-wide case as set_low_byte.) */
-static uint32_t set_low_word(uint32_t reg, uint16_t value) {
-    return (reg & 0xffff0000u) | value;
-}
+/* Every write to D1 below is word-wide, which is the whole reason the caller gets its own high half
+ * back on the clear exits — machine.h's set_low_word. */
 
 /* ptero_avoid_platform(pterodactyl = A0, scratch = D1 on entry) -> D1.
  *
