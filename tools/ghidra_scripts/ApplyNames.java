@@ -32,6 +32,7 @@ import ghidra.program.model.data.Undefined2DataType;
 import ghidra.program.model.data.Undefined4DataType;
 import ghidra.program.model.data.VoidDataType;
 import ghidra.program.model.lang.Register;
+import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Parameter;
 import ghidra.program.model.listing.ParameterImpl;
@@ -76,6 +77,15 @@ public class ApplyNames extends GhidraScript {
                     case "fn":
                         Function func = getFunctionAt(addr);
                         if (func == null) {
+                            // Auto-analysis sometimes lays a bogus data item (typically a
+                            // 4-byte pointer guessed from a zero-padding hole) across a real
+                            // entry point; disassemble() is then a no-op and createFunction
+                            // fails. An `fn` directive asserts this address is code, so drop
+                            // whatever data covers it first.
+                            Data stale = getDataContaining(addr);
+                            if (stale != null && stale.isDefined()) {
+                                clearListing(stale.getMinAddress(), stale.getMaxAddress());
+                            }
                             disassemble(addr);   // handlers reached only via jump tables
                             func = createFunction(addr, name);
                         }

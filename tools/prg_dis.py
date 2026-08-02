@@ -7,7 +7,13 @@ extension-word rules) so the linear sweep does not desync; mnemonic fidelity is
 longwords listed in the relocation table are flagged (they are absolute pointers,
 i.e. future labels).
 
-Usage: python3 prg_dis.py FILE.PRG [--data] [--start OFF] [--len N]
+Usage: python3 prg_dis.py FILE.PRG [--data] [--start OFF] [--len N] [--base ADDR]
+
+`--base` sets the address the image is loaded at, so printed addresses (and
+pc-relative targets) are RUNTIME addresses instead of image offsets. It matters for
+position-DEPENDENT programs that relocate themselves to a fixed address and then use
+absolute operands — a listing at the default base 0 is off by the load base on every
+line and silently mismatches the project's names.txt. See docs/m68k-disassembly.md.
 """
 import struct
 import sys
@@ -307,13 +313,15 @@ def decode(d, p, base):
     return 2, "dc.w $%04x" % w
 
 
-def disasm(d, h, start, length, fixes):
-    base = 0  # pc2 already maps file offset -> image address via (p - 28)
+def disasm(d, h, start, length, fixes, base=0):
+    # decode() maps file offset -> image address via (p - 28); `base` shifts that to
+    # the address the program actually runs at (0 = image offsets, the default).
     p, end = start, start + length
     prev_imm = None  # last "move.w #imm,-(sp)" value, for trap naming
     out = []
     while p < end:
-        addr = p - 28  # address within loaded image (text base = 0)
+        img_off = p - 28          # offset within the loaded image (what `fixes` indexes)
+        addr = img_off + base     # address the instruction runs at
         try:
             n, txt = decode(d, p, base)
         except Exception as e:
@@ -334,7 +342,7 @@ def disasm(d, h, start, length, fixes):
             pass
         # reloc flag: any of this insn's bytes at a fixed longword?
         relmark = ""
-        for off in range(addr, addr + n, 2):
+        for off in range(img_off, img_off + n, 2):
             if off in fixes:
                 relmark = "  <RELOC ptr>"
                 break
@@ -377,6 +385,7 @@ def main():
     h = parse_header(d)
     fixes = parse_reloc(d, h)
     code_start, code_len = 28, h["tlen"]
+    base = int(sys.argv[sys.argv.index("--base") + 1], 0) if "--base" in sys.argv else 0
     print("=" * 78)
     print("FILE %s  (%d bytes)" % (path, len(d)))
     print("text=0x%x data=0x%x bss=0x%x sym=0x%x  reloc entries=%d" %
@@ -385,6 +394,9 @@ def main():
     hint = "LIKELY PACKED (analyze the loader / dump from Hatari)" if ent > 6.7 \
         else "looks like plain code+data"
     print("text entropy=%.2f bits/byte  -> %s" % (ent, hint))
+    print("LOAD BASE = 0x%x  -> every address below is %s" %
+          (base, "a RUNTIME address (image offset + base)" if base
+           else "an IMAGE OFFSET (pass --base to get runtime addresses)"))
     print("=" * 78)
 
     if "--data" in sys.argv:
@@ -396,12 +408,12 @@ def main():
 
     print("\n--- strings anywhere in file ---")
     for off, st in show_strings(d, 0, len(d)):
-        print("  %06x  %r" % (off, st))
+        print("  %06x  %r" % (off + base, st))
 
     st = int(sys.argv[sys.argv.index("--start") + 1], 0) if "--start" in sys.argv else code_start
     ln = int(sys.argv[sys.argv.index("--len") + 1], 0) if "--len" in sys.argv else code_len
-    print("\n--- first-pass disassembly (text: addr 0x0..0x%x) ---" % code_len)
-    print(disasm(d, h, st, ln, fixes))
+    print("\n--- first-pass disassembly (text: addr 0x%x..0x%x) ---" % (base, base + code_len))
+    print(disasm(d, h, st, ln, fixes, base))
 
 
 if __name__ == "__main__":

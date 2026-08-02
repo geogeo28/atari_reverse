@@ -1,0 +1,389 @@
+# Wonder Boy in Monsterland (Activision/Sega, 1989) -- SWB.PRG name map
+#
+# ###########################################################################
+# ## LOAD BASE IS 0x3F8, *NOT* THE WORKSPACE DEFAULT 0x10000.              ##
+# ###########################################################################
+# SWB.PRG's entry stub copies the image from file offset 8 down to absolute
+# $400 and jumps there, so the program is position-DEPENDENT at run time and
+# its own absolute operands are "image offset + $3F8". Loading at 0x10000
+# leaves every absolute reference dangling, which is why Ghidra recovered only
+# 57 functions; at 0x3F8 it recovers 186+.
+#
+#   runtime = image_offset + 0x3F8          (image_offset = file_offset - 28)
+#   runtime = old_ghidra_addr - 0xFC08      (converting a 0x10000-based note)
+#
+# Bootstrap with:
+#   bash tools/headless.sh projects/wonderboy/ghidra_proj wonderboy \
+#        projects/wonderboy/bin/disk1/AUTO/SWB.PRG 0x3f8 projects/wonderboy/decomp.c
+# run.sh has been corrected to pass 0x3f8, so it is safe again -- but it still
+# re-imports and wipes the DB, so iterate with reapply.sh.
+#
+# See notes/architecture.md for the evidence, the region table and the memory map.
+#
+# The linear listing out/wonderboy_dis.txt is regenerated at the same base with
+#   python3 tools/prg_dis.py projects/wonderboy/bin/disk1/AUTO/SWB.PRG --base 0x3f8
+# (its banner states the base). Any listing produced WITHOUT --base is at base 0,
+# i.e. every address in it is runtime-0x3F8 and will not match this file.
+#
+# Untagged names were confirmed by reading the disassembled body.
+# "# ctx" marks a name inferred from call context only.
+
+# ---------------------------------------------------------------------------
+# Bootstrap / startup  (see architecture.md "Startup sequence")
+# ---------------------------------------------------------------------------
+cmt 0x3f8 GEMDOS entry. Only these first 8 bytes stay here; 0x3fa is `jmp startup_relocate_and_run` (one of the image's 3 relocations).
+fn 0x217d8 startup_relocate_and_run
+cmt 0x217d8 The only OS call in the whole program: GEMDOS Super($214d8+loadbase) to enter supervisor mode with a fresh SSP, then `move.w #$2700,sr` (IPL7), then copy $84f6 longwords (=$213d8 bytes) from image+8 down to absolute $400 and `jmp $400`. NOTE: this stub runs at the GEMDOS load address, so its address here ($217d8) is an artefact of the $3f8 base -- at run time it lives at basepage_text+$213e0.
+fn 0x400 cold_start
+cmt 0x400 First instruction executed at the final runtime address. move.w #$2700,sr; palette entry 15 := $077; jmp sys_save_tos_stack.
+fn 0xe482 sys_save_tos_stack
+cmt 0xe482 Stashes the TOS-supplied A7 at $f8b8 -- the only recorded way back to TOS -- then falls through to hw_init_vectors.
+fn 0xf8bc hw_init_vectors
+cmt 0xf8bc A7 := $80000 (top of a 512 KB ST); $70 (autovector 4 = VBL) := vbl_handler; $118 (MFP channel 6 = ACIA) := ikbd_acia_handler; MFP IERB/IMRB bit 6 set; sr := $2300 (IPL3, so VBL and ACIA get through); jmp init_ikbd.
+fn 0xe48c init_ikbd
+cmt 0xe48c 8-byte link in the boot chain: `bsr ikbd_disable_mouse` then `bra.w $e4e6` (boot_continue). That is its whole body -- the video/palette/screen-clear/MFP/VBL work the boot performs lives at 0xe4e6, which Ghidra folds into show_data_disk_prompt (0xe494), not into this function.
+fn 0xf8f0 ikbd_disable_mouse
+cmt 0xf8f0 Polls the ACIA status at $fffffc00 for TX-empty (bit 1) and writes IKBD command $12 ("disable mouse") to $fffffc02. Uses abs.w addressing ($fc00.w), which is why a longword scan for $fffffc00 does not see it.
+cmt 0xe4e6 Boot continuation (Ghidra folds this into the 632-byte function at 0xe494 because show_data_disk_prompt falls through into it at $e4e4; it is a separate entry point, reached by `bra.w` from init_ikbd). video_set_lowres_50hz, clear_palette, clear_both_screens, mask MFP timer A/B (IERA/IMRA := 0), install vbl_handler, sr := $2300, arm copylock_arm_flag ($e51e), then load_resource_by_index(0 = TITLESCR.RAD -> $49800).
+fn 0x4a0 game_main_loop
+cmt 0x4a0 The main game loop: an unconditional `do { ... jsr flip_screen } while(1)` -- $508 is `bra.s $4a0` and there is no exit. Entered by `jmp $4a0.w` from $e708 (after the boot's first stage load) and from $f8b4. Body: two leading bsr's, then a block that runs only when $66e == 0 (jsr $e032 / $b346 / $dbc0 / $882, and $882 is `joy1_latch_edge` + the object-list pass at $8d0), then $8dfe, $7522, $8e66, $82f8, $50a, $8f02, a block gated on $a30 ($ff42), $bd8a, and finally flip_screen.
+
+# ---------------------------------------------------------------------------
+# Interrupt handlers
+# ---------------------------------------------------------------------------
+fn 0x716 vbl_handler
+cmt 0x716 Vertical-blank handler (autovector 4, installed at $70 by hw_init_vectors and again at $e506). movem d0-a6; addq.w #1,vbl_counter; `lea snd_stub_00,a0 / jsr 14(a0)` = the music tick; then if floppy_idle_timer is non-zero, decrement it and call floppy_deselect_drives ($6268 -- NOT $6242) when it reaches 0. This is the only periodic tick in the program: MFP timers A and B are masked off at boot. (Earlier note said `fn 0x716` could not apply because Ghidra folded the bytes into flip_screen. That was wrong: flip_screen is [$694..$6f7]+[$702..$709] and getFunctionContaining($716) was empty. The real blocker was a bogus 4-byte `pointer` auto-defined at $714..$717 -- Ghidra read `0000 48e7` = $48e7, an in-image address -- which made disassemble() a no-op. ApplyNames now clears defined data under an `fn` address first.)
+fn 0x754 ikbd_acia_handler
+cmt 0x754 MFP channel 6 (ACIA) handler, installed at $118. Reads the IKBD byte from $fffffc02. $FE/$FF are the IKBD joystick-report headers: it re-vectors $118 to ikbd_joy0_byte_handler / ikbd_joy1_byte_handler so the NEXT interrupt captures the data byte, then returns. Anything else is a key scancode, decoded into the key bitmap at key_bits.
+fn 0x83a ikbd_joy0_byte_handler
+cmt 0x83a One-shot: stores the IKBD data byte in joy0_state, clears MFP ISRB bit 6, restores ikbd_acia_handler at $118, rte.
+fn 0x858 ikbd_joy1_byte_handler
+cmt 0x858 One-shot: stores the IKBD data byte in joy1_state, clears MFP ISRB bit 6, restores ikbd_acia_handler at $118, rte.
+var 0x876 joy0_state
+var 0x877 joy1_state
+cmt 0x877 IKBD joystick-1 report byte. Bit 7 = fire. The idiom `clr.b $877 / tst.b $877 / bpl.s * / tst.b $877 / bmi.s *` that appears all over the boot path is "wait for fire pressed, then released" -- it is the "press a key" wait, NOT a keyboard flag. (Naming it from position alone would have got this wrong.)
+var 0x878 key_bits
+cmt 0x878 One byte, 8 key flags. ikbd_acia_handler stores the raw scancode at key_last_scancode ($879), strips bit 7 (the key-release flag) and then compares the code against the 8 bytes of key_watch_scancodes ($87a..$881), bset'ing (press) or bclr'ing (release) the matching bit of THIS byte via `lea $879,a0 / lea -1(a0),a1`. Nothing in the image ever reads $878, and key_watch_scancodes is all zeroes in the image with no writer, so no scancode can ever match: the whole keyboard path is vestigial and the game is joystick-only. (Scanned for abs.l, abs.w and pc-relative d16 references to $878/$87a -- zero of each.)
+var 0x879 key_last_scancode
+cmt 0x879 The last raw IKBD scancode byte, stored by ikbd_acia_handler before the release bit is stripped. Unlike key_bits this IS read: `cmpi.b #imm,$879.l` at $560, $574, $5da, $5e6, $60e, $642, $64e...
+var 0x87a key_watch_scancodes
+cmt 0x87a 8 bytes, the scancodes ikbd_acia_handler folds into key_bits (index = bit number). All zero in the image and never written -- see key_bits.
+fn 0x682 joy1_newly_pressed
+cmt 0x682 `move.b joy1_prev,d0 / move.b joy1_current,d1 / eor.b d1,d0 / and.b d1,d0 / rts` -- returns in d0 the bits that are set in joy1_current and were NOT set last frame, i.e. a rising-edge mask over the joystick byte. Note it reads $8b3/$8cf, not key_bits.
+fn 0x88c joy1_latch_edge
+cmt 0x88c `move.b joy1_current,joy1_prev / move.b joy1_state,joy1_current` -- shifts the joystick byte one frame down the pipeline so joy1_newly_pressed can diff them. Called from $882 once per frame.
+var 0x8b3 joy1_prev
+cmt 0x8b3 The joystick-1 report byte as of the PREVIOUS frame. It physically occupies the NUL terminator of the "Wheres Saigon??????" filler string -- the filler is inert but this byte inside it is live.
+var 0x8cf joy1_current
+cmt 0x8cf The joystick-1 report byte latched for THIS frame (copied from joy1_state by joy1_latch_edge). Occupies the NUL terminator of the "I Dunno Im not Psychic!!!!!" filler string.
+
+# ---------------------------------------------------------------------------
+# Video / palette  (see architecture.md "Memory map")
+# ---------------------------------------------------------------------------
+fn 0x694 flip_screen
+cmt 0x694 Swaps screen_front/screen_back, then writes the new front buffer's bits 16-23 and 8-15 to $ffff8201/$ffff8203. Waits on vbl_counter and clears it. Then `not.w frame_toggle` -- a 0 <-> $ffff TOGGLE, not a decrement -- and, if flash_timer is non-zero, decrements it and writes $777 (white) to $ffff8240, or 0 (black) on the frame it reaches 0. So flip_screen paints colour 0 for the duration of the flash: a visible full-screen colour-0 flash the differential oracle cannot see (palette writes are off-image). READ THE LISTING, NOT decomp.c, FOR THIS ONE: Ghidra reports `pcode error at $6f8: Unable to resolve constructor` and emits only `do {} while (vbl_counter < 1); do {} while(true);` -- the whole toggle/flash tail is dropped. Pre-existing, not caused by the $714 retype.
+var 0x712 frame_toggle
+cmt 0x712 Word, inverted by flip_screen every frame ($0000 <-> $ffff). Read as a boolean at $4f08, $8e40, $8ed4.
+var 0x714 flash_timer
+cmt 0x714 Word countdown decremented by flip_screen; while non-zero colour 0 is forced to $777, and it is cleared to black on expiry. Read at $23b8. NOT a pointer -- auto-analysis typed $714..$717 as one, which is what used to block `fn 0x716`.
+fn 0x70a return_to_tos
+cmt 0x70a `movea.l tos_stack_save,a7 / rts` -- restores the A7 sys_save_tos_stack captured at boot and returns to GEMDOS. No jsr/jmp/bsr/bra anywhere in the image targets it and no longword or abs.w operand holds $70a, so as shipped it is unreachable: the game never exits.
+var 0x74a vbl_counter
+var 0x74c screen_front
+cmt 0x74c Longword = address of the buffer currently being displayed; $74d/$74e are its high/mid bytes, written straight to $ffff8201/$ffff8203. Initialised to $078000.
+var 0x750 screen_back
+cmt 0x750 Longword = address of the buffer being drawn into. Initialised to $070000.
+fn 0xf906 video_set_lowres_50hz
+cmt 0xf906 $ffff8260 := 0 (low res, 320x200x16); screen base := $070000; $ffff820a := 2 (50 Hz PAL).
+fn 0xf926 clear_both_screens
+cmt 0xf926 clr.l over $3f40 longwords from $70000 -- i.e. $70000..$7FD00, exactly the two 32000-byte screen buffers back to back.
+fn 0xf938 copy_screen
+cmt 0xf938 d0 := $1f3f then falls through to copy_longs: copies $1f40 longwords = 32000 bytes = one screen, a0 -> a1.
+fn 0xf93c copy_longs
+proto 0xf93c copy_longs src@A0 dst@A1 count_minus_1@D0
+cmt 0xf93c move.l (a0)+,(a1)+ / dbf d0. Copies d0+1 longwords. Entered directly by callers that preset d0.
+fn 0xf944 set_palette
+proto 0xf944 set_palette src@A0
+cmt 0xf944 Copies 8 longwords (16 ST palette words) from a0 to $ffff8240.
+fn 0xe7f4 clear_palette
+cmt 0xe7f4 clr.l over all 16 palette registers at $ffff8240.
+
+# ---------------------------------------------------------------------------
+# Masked planar sprite blitters, $8fce..$989c -- 12 routines behind 3 jump tables.
+# The earlier region table called $8fce..$a271 DATA on "0 bsr, 0 movem". That test
+# is the wrong one here: this block has 16 `rts` in 1127 words (14.2/kW, squarely in
+# the CODE band) and 8 `dbf`, but it is leaf code entered only through a pointer
+# table, so it contains no bsr and no movem at all. Correct split:
+#   CODE $8fce..$989c (2254 B)   DATA $989c..$a271 (2517 B, 88.3% zero, 0 idioms)
+# Dispatcher at $8f9a: `lea blit_table_mid,a2 / tst.w d4 / bmi -> blit_table_left /
+# cmp.w #$b0,d4 / bge -> blit_table_right / lsl.w #2,d2 / adda.w d2,a2 /
+# movea.l (a2),a2 / jsr (a2)`. d4 = X, d2 = width class 0..3.
+# All 12 bodies are unrolled `and.w mask,(a1) / or.w plane,(a1)+` x4 per word column,
+# `swap` for the second half-longword, then `lea <160 - bytes_advanced>(a1),a1` to
+# step one 320px 4-plane scanline, `dbf d7`. The lea constant gives the width:
+#   146 -> 2 words (32 px), 138 -> 3 (48 px), 130 -> 4 (64 px), 122 -> 5 (80 px).
+# ---------------------------------------------------------------------------
+var 0x989c blit_table_mid
+cmt 0x989c 4 longwords: $9594 $95f6 $9692 $9774 -- the unclipped blitters, widths 2/3/4/5 words. Selected when 0 <= d4 < $b0.
+var 0x98ac blit_table_left
+cmt 0x98ac 4 longwords: $8fce $908c $91be $936c -- the left-edge clip preludes, widths 2/3/4/5. Selected when d4 < 0.
+var 0x98bc blit_table_right
+cmt 0x98bc 4 longwords: $8fe4 $90b4 $91f8 $93b6 -- the right-edge clip preludes, widths 2/3/4/5. Selected when d4 >= $b0.
+var 0x9966 blit_clip_mask
+cmt 0x9966 Byte written by the eight clip preludes (values 1,2,3,7,...) and tested with `btst #n,$9966` inside the clipped blit bodies to skip individual 16-pixel word columns. 38 references, all inside $8fce..$989c.
+fn 0x8fce blit_clip_left_w2
+cmt 0x8fce Left-edge prelude for the 32-pixel blitter: if d4 < -16 the sprite is fully off-screen -- `subq.w #6,a5` (unwind the caller's object pointer) and rts; otherwise blit_clip_mask := 1 and `bra.w $900a`, the shared clipped 2-word body. blit_clip_right_w2 branches to the same body. The four `blit_clip_*_w2..w5` pairs are all built this way.
+fn 0x8fe4 blit_clip_right_w2
+cmt 0x8fe4 Right-edge prelude for the 32-pixel blitter: d4 >= $f0 -> fully off-screen, rts; $e0 <= d4 < $f0 -> blit_clip_mask := 2; d4 < $e0 -> blit_clip_mask := 3. Then `bra.w $900a` into the shared clipped 2-word body ($900a..$908a).
+fn 0x908c blit_clip_left_w3
+fn 0x90b4 blit_clip_right_w3
+cmt 0x90b4 Shared clipped 3-word body at $90ec..$91bc.
+fn 0x91be blit_clip_left_w4
+fn 0x91f8 blit_clip_right_w4
+cmt 0x91f8 Shared clipped 4-word body, ends at $936a.
+fn 0x936c blit_clip_left_w5
+fn 0x93b6 blit_clip_right_w5
+cmt 0x93b6 Shared clipped 5-word body, ends at $9592.
+fn 0x9594 blit_sprite_w2
+cmt 0x9594 Unclipped masked blit, 2 words = 32 pixels wide, d7+1 rows. Mask in d1, the four bitplanes in d2-d5, all pre-rotated by `ror.l d6,dn` for the sub-word X shift; `lea 146(a1),a1` per row.
+fn 0x95f6 blit_sprite_w3
+cmt 0x95f6 Unclipped masked blit, 3 words = 48 pixels; `lea 138(a1),a1` per row.
+fn 0x9692 blit_sprite_w4
+cmt 0x9692 Unclipped masked blit, 4 words = 64 pixels; `lea 130(a1),a1` per row.
+fn 0x9774 blit_sprite_w5
+cmt 0x9774 Unclipped masked blit, 5 words = 80 pixels; `lea 122(a1),a1` per row. Ends at $989a, immediately before blit_table_mid. KNOWN ISSUE: this is the only function in the program that ExportDecompC cannot emit -- Ghidra's decompiler process dies on it every run (not a timeout; the 60 s limit is never reached), so decomp.c carries `// <decompile failed: ... 00009774 ...>` here. The function itself is defined and named correctly in the DB; read it in the listing instead. The other 11 blitters decompile fine, so the trigger is probably its length (296 bytes of fully unrolled straight-line and/or-blitting).
+
+# ---------------------------------------------------------------------------
+# Raw floppy: WD1772 FDC + DMA driver.  NO GEMDOS/BIOS/XBIOS IS USED.
+# ---------------------------------------------------------------------------
+cmt 0x6118 --- Raw FDC/DMA driver. Real extent $5e3e..$64f0 (code) + $64f0..$6528 (state) -- NOT $6118..$64f0: disk_check_signature ($5e3e), disk_load_file ($5e7c) and its FAT helpers ($5f06, $5f76, $5fc4, $604a, $6068, $6092, $60da) all sit below $6118, and fdc_restore ($6408) calls $645e/$646c/$64ea above it. rad_depack ends at $5e3a, immediately below. Registers: $ffff8604 = FDC data/access, $ffff8606 = DMA mode/status, $ffff8609/860b/860d = DMA base address high/mid/low, $ffff8800/8802 = PSG (drive + side select via port A), $fffffa01 bit 5 = MFP GPIP FDC-done. Driving the controller directly is what lets the game read the protection sectors (IDs 11/12 on cylinders 0-4) that no GEMDOS/BIOS/XBIOS call can address. THIS function is the track-read core: $6120 computes the DMA end bound as `(11 - sector) * 512 + <DMA address counter read back>` into fdc_dma_end_track; $6164 writes a sector count of 13 to the DMA sector-count register ($ffff8606 := $90) and then FDC command $90 = Read Sector with m=1 (multiple record), so one command streams the track and fdc_wait_irq_bounded aborts it on the address bound -- i.e. 10 data sectors per track, which is exactly a disk whose sector IDs 11 and 12 are the extra protection sectors. Up to fdc_retry_count attempts; failure returns -3. (Ghidra also invented a misaligned FUN_0000615a two bytes inside the `move.w #$190,$ffff8606` at $6154 -- an artefact, ignore it.)
+fn 0x624c psg_set_drive_select
+proto 0x624c psg_set_drive_select bits@D0
+cmt 0x624c PSG register 14 (port A) read-modify-write: keeps bits 3-7, replaces bits 0-2 with d0. Bit 0 = side select, bit 1 = drive A select*, bit 2 = drive B select* (both active LOW).
+fn 0x6242 floppy_select_drive_a
+cmt 0x6242 d0 := 5 = %101 -> side 1, drive A SELECTED (bit 1 low), drive B deselected; clears floppy_idle_timer; falls through to psg_set_drive_select. This SELECTS a drive at the start of a disk operation -- it is not the idle routine. Two callers, both `bsr.w`: disk_check_signature ($5e48) and disk_load_file ($5e8e). vbl_handler calls floppy_deselect_drives instead.
+fn 0x6268 floppy_deselect_drives
+cmt 0x6268 Saves d0/d1, d0 := 7 = %111 -> both drive-select lines high = ALL DRIVES DESELECTED (motor off), calls psg_set_drive_select, restores. This is the real idle routine: its only caller is vbl_handler ($73e) once floppy_idle_timer expires.
+var 0x64f2 floppy_idle_timer
+cmt 0x64f2 Frame countdown, decremented by vbl_handler. floppy_unwind_return arms it with $96 (150 frames ~ 3 s at 50 Hz); on expiry vbl_handler calls floppy_deselect_drives.
+fn 0x6278 fdc_dma_read_addr
+cmt 0x6278 Reads the DMA address counter back out of $ffff8609/860b/860d into fdc_dma_addr_readback.
+var 0x64fc fdc_dma_addr_readback
+cmt 0x64fc Where fdc_dma_read_addr parks the hardware DMA address counter, so the transfer can be resumed from exactly where it stopped. Read at $6038 and by fdc_dma_restore_readback.
+fn 0x62c0 fdc_dma_restore_readback
+cmt 0x62c0 `move.l fdc_dma_addr_readback,d0 / bra fdc_dma_set_addr+2` -- reprograms the DMA address registers from the READ-BACK counter, as opposed to fdc_dma_restore_addr ($62c8) which uses the last address the driver PROGRAMMED (fdc_dma_addr).
+fn 0x6298 fdc_dma_set_addr
+proto 0x6298 fdc_dma_set_addr addr@A0
+cmt 0x6298 Stores a0 in fdc_dma_addr and writes it to $ffff8609 (bits 16-23), $ffff860b (8-15), $ffff860d (0-7).
+fn 0x62b8 fdc_dma_set_addr_to_dirbuf
+cmt 0x62b8 Same as fdc_dma_set_addr but with the address taken from fat_dir_buffer.
+fn 0x62c8 fdc_dma_restore_addr
+cmt 0x62c8 Re-writes the DMA address registers from the saved fdc_dma_addr.
+fn 0x62d0 fdc_wait_irq
+cmt 0x62d0 Spins up to 600000 iterations on $fffffa01 bit 5 (MFP GPIP, FDC/HDC done, active low). On timeout: fdc_deselect_regs then floppy_unwind_return.
+fn 0x6308 fdc_wait_irq_bounded
+cmt 0x6308 fdc_wait_irq plus a per-iteration read-back of the DMA address counter, aborting early once it reaches fdc_dma_end_transfer ($6504) or fdc_dma_end_track ($6508). This is how a transfer of unknown length is bounded. On the 600000-iteration timeout it issues fdc_force_interrupt and unwinds with -1.
+var 0x6504 fdc_dma_end_transfer
+cmt 0x6504 Longword: the DMA address at which the whole requested transfer is complete (programmed address + byte count). Written at $5fe4, $6016, $60ba, $60f8; tested by fdc_wait_irq_bounded.
+var 0x6508 fdc_dma_end_track
+cmt 0x6508 Longword: the DMA address at which the current TRACK's data run ends -- `(11 - sector) * 512` added to the live DMA counter at $6120. Tested by fdc_wait_irq_bounded so the multiple-record read stops before sector IDs 11/12.
+var 0x6526 fdc_retry_count
+cmt 0x6526 Word retry counter. Reloaded with 2 at $6118, $637e, $63c0 and $6488; decremented with `subq.w #1` at $61a8, $63a6, $63f8 and $64da, and the operation is abandoned when it hits 0.
+fn 0x63b6 fdc_delay
+cmt 0x63b6 `move.w #$2a,d7 / dbf d7,*` = 43 iterations (dbf runs until d7 = -1), not 42 -- the settle delay the WD1772 needs between selecting a register on $ffff8606 and accessing it on $ffff8604.
+fn 0x645e fdc_write_data_reg
+proto 0x645e fdc_write_data_reg value@D1
+cmt 0x645e fdc_delay; move.w d1,$ffff8604; fdc_delay.
+fn 0x646c fdc_read_data_reg
+cmt 0x646c fdc_delay; move.w $ffff8604,d1; fdc_delay. The read counterpart of fdc_write_data_reg; used to fetch the WD1772 status byte after a command.
+fn 0x647a fdc_force_interrupt
+cmt 0x647a $ffff8606 := $80 (select the FDC command register) then writes $D0 through fdc_write_data_reg. $D0 is WD1772 Type IV **Force Interrupt** with no interrupt condition, i.e. "abort whatever command is running" -- this terminates a transfer, it does not deselect anything.
+fn 0x6408 fdc_restore
+cmt 0x6408 d1 := $05 = WD1772 Type I **Restore with verify** (seek to track 0, V=1, 6 ms step): $ffff8606 := $80 then fdc_write_data_reg, then spin on $fffffa01 bit 5 with a $493e0 = 300000 timeout, read the status with fdc_read_data_reg, `bclr #6,d1`, and return it in d7. On timeout: d0 := -5 and floppy_unwind_return. Called by disk_check_signature ($5e4c), disk_load_file ($5e92, $5efe) and -- crucially -- by the Copylock failure path at $f56a. Ghidra's `/* WARNING: Instruction at 0x6436 overlaps instruction at 0x6434 */` here is a decode artefact of the `bsr.w` displacement word at $6436; there is no self-modifying code in this routine.
+fn 0x644e floppy_unwind_return
+cmt 0x644e Common exit for the whole floppy stack. Arms floppy_idle_timer with $96, restores the stack pointer disk_load_file saved in $64f8, and returns with d0 as the status -- effectively a longjmp, so an error deep in the driver returns straight to disk_load_file's caller. Error codes seen: -2, -3, -4, -5; d0 >= 0 is success (load_resource_by_index tests with `tst.w d0 / bpl`).
+
+# ---------------------------------------------------------------------------
+# FAT12 filesystem, implemented on top of the raw FDC driver
+# ---------------------------------------------------------------------------
+fn 0x5e7c disk_load_file
+proto 0x5e7c disk_load_file name@A0 dest@A1
+cmt 0x5e7c Open-and-read-whole-file. a0 = 12-byte "NNNNNNNN.EEE" name, a1 = destination. Saves A7 at $64f8 for floppy_unwind_return, reads the boot sector, computes the FAT/root/data geometry, finds the directory entry, then caches dir[26] (first cluster) at fat_file_first_cluster and dir[28] (file size) at fat_file_size -- the standard FAT12 directory-entry offsets, which is what pins this as a real FAT12 reader rather than a bespoke on-disk layout.
+fn 0x61b8 fat_find_dir_entry
+proto 0x61b8 fat_find_dir_entry name@A0
+cmt 0x61b8 Linear scan of the loaded root directory at fat_dir_buffer, fat_dir_entry_count entries, stride 32. Compares name[0..7] against entry[0..7] and name[9..11] against entry[8..10] -- it skips the '.' at index 8 of the search key, matching the space-padded 8.3 names in resource_file_table. Returns error -4 if not found.
+fn 0x5f06 fat_calc_data_start
+cmt 0x5f06 Decodes four BPB fields out of the boot sector in fat_dir_buffer: offset 0x10 (number of FATs) x offsets 0x16/0x17 (sectors per FAT) -> fat_area_sectors ($650c) and, x512, fat_area_bytes ($650e); offsets 0x18/0x19 (sectors per track) -> fat_sectors_per_track ($651a); offsets 0x11/0x12 (root directory entries) -> fat_dir_entry_count ($6518) and, >>4, fat_root_dir_sectors ($6512, = entries/16 since 512/32 = 16 entries per sector).
+var 0x650c fat_area_sectors
+var 0x650e fat_area_bytes
+var 0x6512 fat_root_dir_sectors
+var 0x651a fat_sectors_per_track
+fn 0x5e3e disk_check_signature
+cmt 0x5e3e Saves A7 for floppy_unwind_return, pushes the literal $face, floppy_select_drive_a, fdc_restore, requires the status byte to be $a6 or $a4, reads the boot sector ($6488), and compares the WORD at boot-sector offset 2 against $face; mismatch returns -2, match returns 0 via $644c. NOTE: no `jsr`/`jmp`/`bsr`/`bra` in the plaintext image targets $5e3e and no operand holds its address, so its only possible caller is the encrypted Copylock body -- see the copylock section. Neither shipped disk image carries $face at boot+2 (disk 1 has 'Lo' = $4c6f, the repaired disk 2 has $0000), so on the cracked disks this check would fail; that is consistent with it belonging to the protection rather than to the loader. # ctx
+var 0x64f4 fat_dir_buffer
+cmt 0x64f4 Pointer to the sector staging buffer. The boot sector, the FAT and the root directory are all read here; the cluster extent list is built at fat_dir_buffer+5120.
+var 0x64f0 floppy_preamble_flag
+cmt 0x64f0 Byte, $01 in the image. disk_load_file tests it at $5e86: non-zero means "do the full preamble" (select drive, restore, read boot sector, decode the BPB). Nothing in the image writes it, so the preamble always runs.
+var 0x64f1 floppy_restore_after_load_flag
+cmt 0x64f1 Byte, $01 in the image. disk_load_file tests it at $5ef4 and, when non-zero, issues a final fdc_restore before unwinding. Never written either.
+var 0x64f8 disk_load_saved_sp
+var 0x6500 fdc_dma_addr
+var 0x6518 fat_dir_entry_count
+var 0x651e fat_file_first_cluster
+var 0x6520 fat_file_size
+
+# ---------------------------------------------------------------------------
+# .RAD / .CRU resource cruncher (see notes/rad_depacker.asm, tools/depack_rad.py)
+# Contributed by the format agent; addresses rebased from 0x10000 to 0x3F8.
+# ---------------------------------------------------------------------------
+fn 0x5d62 rad_depack
+proto 0x5d62 rad_depack src@A0 dst@A1
+cmt 0x5d62 Depacks one .RAD container. a0 = file as read off disk (12-byte header included), a1 = destination. Backwards LZ77, longword-buffered bitstream, XOR checksum. On a checksum failure it spins a $ffff-iteration delay then `moveq #$ff,d0` -- which SIGN-EXTENDS, so d0 = $ffffffff, not $000000ff. d0 is meaningless on success. The header is `packed_size.l, unpacked_size.l, seed.l`; every OVALAY*.RAD unpacks to $3ce8 = 15592 bytes.
+fn 0x5e14 rad_refill_bit_buffer
+cmt 0x5e14 Reads the next stream longword into d0 backwards, XORs it into the checksum d5, and rotates a fresh marker into bit 31; returns the longword's bit 0 in C.
+fn 0x5e20 rad_get_bits
+cmt 0x5e20 Reads d1 stream bits into d2, MSB first. `clr.w d2` only clears the low word, which is why d1 must stay <= 16.
+var 0x5e3a rad_saved_a7
+cmt 0x5e3a rad_depack parks the entry a7 here and restores it on the success path only.
+
+# ---------------------------------------------------------------------------
+# Resource table, level sequence, and the loader that ties them together
+# ---------------------------------------------------------------------------
+fn 0xe782 load_resource_by_index
+proto 0xe782 load_resource_by_index index@D0 dest@A1
+cmt 0xe782 The single entry point for all disk loading. Saves d0/a1 at $e7ec/$e7f0 (for the retry path at $e7d8), computes resource_file_table + index*16, and calls disk_load_file. TWO things the earlier note omitted. (1) On success it tests copylock_arm_flag ($e7cc) and, if armed, does `jsr copylock_entry` ($e7bc) and clears the flag -- so the FIRST resource load of the boot runs the copy protection. (2) On d0 < 0 it sets colour 0 to $700 (red) and falls into $e7ce, which is `clr.b joy1_state / tst.b joy1_state / bpl.s *` = wait for FIRE, then restores d0/a1, clears colour 0 and retries the load. The error path is interactive ("disk error, press fire"), not a silent retry. Seven call sites -- see architecture.md for the full index/destination table.
+var 0x2143e resource_file_table
+cmt 0x2143e 40 entries x 16 bytes: a 12-byte space-padded 8.3 filename plus 4 bytes that are zero in the image AND are never written at run time (load_resource_by_index only reads the name field), so the 4 bytes are stride padding, not a runtime address slot. Index order -- this IS the ID space the level sequence uses: 0 TITLESCR.RAD, 1 CREDITS.RAD, 2..36 the 35 OVALAY*.RAD, 37 TILEDATA.RAD, 38 SPRITES.CRU, 39 DATADISK.RAD. OVALAY10.RAD and OVALAY11.RAD exist on disk 2 but are NOT in this table.
+var 0x216be level_seq_index
+cmt 0x216be Current index into level_seq_table; post-incremented on every stage load, cleared by the game-restart path at 0xfe4a. Its value in the shipped image is 1, not 0 -- the binary was saved after the sequence had already advanced once.
+var 0x216c0 level_seq_table
+cmt 0x216c0 35 entries x 8 bytes -- exactly the number of OVALAY* files in resource_file_table. Read by the dispatcher at 0xe5be. [0] = overlay ordinal; the loader does `addq.b #2,d0` on it to skip TITLESCR/CREDITS and index resource_file_table. [1] -> $e70c. [2] -> sets $e70e to $ffff/0. [3] -> $bd88, the stage/round number: sprites_cru_install subtracts 6 when it exceeds 9 and uses it to index a $40-byte-per-stage table at $e978. [4..7] are zero in every entry and have no reader I found -- UNVERIFIED.
+var 0xbd88 stage_number
+cmt 0xbd88 Set from level_seq_table[3] at 0xe61a.
+fn 0xe494 show_data_disk_prompt
+cmt 0xe494 clear_palette, screen base := $078000, load_resource_by_index($27 = DATADISK.RAD -> $49800), rad_depack to $77f80, set_palette from $77f84, then `clr.b joy1_state / wait for bit 7 set / wait for it clear` = press and release fire. The prompt is the DATADISK.RAD BITMAP -- str_insert_data_disk is NOT used here (nothing anywhere references it). Ghidra's function at this address is 632 bytes because the code falls through at $e4e4 into the boot continuation at $e4e6; only $e494..$e4e4 is the prompt. Entered by `jmp $e494.l` from $700e.
+fn 0xe87c sprites_cru_install
+cmt 0xe87c Consumes the raw SPRITES.CRU image loaded at $25298. First it copies $97a longwords from $25298 down to $24898 ($e88c) -- forward copy, dst < src, but afterwards $25298..$26e80 has been overwritten. Then it walks a bit-mask table at $e978 (stride $40 per stage, selected by stage_number with `if (n > 9) n -= 6`) and rebases the image's internal pointers with `adda.l #$252d8` / `suba.l #$248d8` -- the +64 in both constants is the .CRU header size, and the file confirms it: SPRITES.CRU is 279034 bytes with a header length field of $441ba = 278970, and 279034 - 278970 = 64. Never calls rad_depack (packed and unpacked sizes in the header are equal).
+var 0xe7ec load_resource_last_index
+var 0xe7f0 load_resource_last_dest
+var 0xf8b8 tos_stack_save
+cmt 0xf8b8 The TOS-supplied A7 stashed by sys_save_tos_stack at $e484 -- the only recorded route back to TOS. Read at $678 and by return_to_tos ($70c).
+
+# ---------------------------------------------------------------------------
+# THE COPY PROTECTION: a Rob Northen-style trace-decrypting Copylock, $ecba..$f574
+#
+# This is what the earlier pass filed as "UNKNOWN, entropy 7.73, probably packed".
+# It is not packed data. It is a self-decrypting protection blob that single-steps
+# itself: an `illegal` instruction vectors into a handler that decrypts exactly the
+# next longword before letting the CPU execute it, and re-encrypts it afterwards.
+# Consequences: (a) $ed8e..$f540 CANNOT be disassembled statically at all -- no
+# scan of this program for addresses, traps, hardware registers or OS calls can see
+# inside it; (b) a differential harness hits `jsr copylock_entry` on the FIRST
+# resource load of the boot and must either model the decryptor or stub $e7cc/$ecca.
+# ---------------------------------------------------------------------------
+var 0xe7cc copylock_arm_flag
+cmt 0xe7cc Word. `move.w #$ffff,$e7cc` arms it at $e51e (immediately before the TITLESCR.RAD load) and at $e6dc (immediately before the SPRITES.CRU load); load_resource_by_index tests it at $e7b2, calls copylock_entry and clears it at $e7c2. Zero in the image. Stubbing this to 0 is the cheap way to keep a harness out of the Copylock.
+var 0xecba copylock_table_ptrs
+cmt 0xecba Four longwords -- $f576, $f63f, $f708, $f7d1, the four screen_wipe_order tables. No plaintext instruction references this table or any of its four targets (checked abs.l, abs.w and pc-relative d16), so its reader is inside the encrypted body.
+fn 0xecca copylock_entry
+cmt 0xecca `moveq #0,d0 / move.l #$ffffffff,d1 / bra.s $ed46`. Called only from load_resource_by_index ($e7bc). Ghidra DID create a function here (FUN_0000ecca, ~96 bytes); the earlier pass concluded "Ghidra created no function in the region" because it filtered functions by START address and this one starts at $ecca, just below the region boundary at $ed2a, while its body reaches to about $ed8e inside it. At $ed46: push a6, `lea $ecd4(pc),a6`, `movem.l d0-a7,(a6)` (the 64-byte register save area), a6 += 64, patch the saved a6, then read the illegal-instruction vector $10, `pea $ed6a(pc)`, install that as $10, and execute `illegal` at $ed68 -- which "returns" to the very next instruction. Pure anti-trace. It then restores $10, saves vectors $8..$27 with `movem.l $8.l,d0-d7 / movem.l d0-d7,(a6)`, installs copylock_trace_decryptor at $10, primes the decrypt cursor, and executes a second `illegal` at $ed8c. Everything after that is ciphertext.
+var 0xecd4 copylock_reg_save
+cmt 0xecd4 96 bytes of zero-filled scratch: $ecd4..$ed13 = d0-a7 saved by `movem.l d0-a7,(a6)`, $ed14..$ed33 = exception vectors $8..$27 (bus error, address error, illegal, zero divide, CHK, TRAPV, privilege, trace) saved by `movem.l d0-d7,(a6)`. copylock_restore_state puts both back.
+var 0xed3e copylock_decrypt_cursor
+cmt 0xed3e Two longwords: [0] = the address of the longword currently decrypted in place, [4] = its original ciphertext. The trace handler re-encrypts [0] from [4] before decrypting the next one, so at most one instruction is ever plaintext in memory.
+fn 0xee02 copylock_illegal_handler
+cmt 0xee02 The smoking gun, and the whole mechanism in twenty instructions. Saves d0/a0/a1; installs $ee3c as the TRACE vector ($24) and copylock_key_check as the PRIVILEGE-VIOLATION vector ($20); then edits the exception frame ON THE STACK -- `addi.l #2,14(sp)` steps the return PC past the `illegal`, `ori.b #7,12(sp)` forces IPL7 in the saved SR so nothing can interrupt, `bchg #7,12(sp)` flips the saved T bit so the CPU returns in single-step mode. Then it takes the frame's PC into a0 and does `move.l -4(a0),d0 / not.l d0 / swap d0 / eor.l d0,(a0)` -- the next longword of the instruction stream is XORed with a key derived from the PREVIOUS (already executed) longword. rte. From here every instruction is decrypted one step ahead of the PC and re-encrypted one step behind it, by the trace handler at $ee3c which does the mirror-image `movea.l (a1),a0 / move.l 4(a1),(a0)` restore first.
+fn 0xf542 copylock_restore_state
+cmt 0xf542 The plaintext tail. `movem.l d0-d7,$8.l` puts exception vectors $8..$27 back, `movem.l $ecd4(pc),d0-a6` puts the entry registers back, rte.
+fn 0xf552 copylock_key_check
+cmt 0xf552 Installed at vector $20 (privilege violation) by copylock_illegal_handler. `cmp.l #$b472043f,d0 / beq.s $f562 / cmp.l #$8f25c241,d0 / bne.s $f564 / rts`: two accepted 32-bit key values, either of which returns. Anything else falls into the failure path at $f564 -- `jsr load_resource_by_index / jsr fdc_restore / jsr $6f9e / jmp $6bb8`. d0 is produced inside the encrypted body from the fuzzy protection sectors, so it can never be read statically, and it is not reproducible even dynamically (the fuzzy bytes read back differently on each revolution). This branch is STRUCTURALLY unpinnable: not merely non-deterministic, but written in code that cannot be disassembled at all.
+fn 0x6bb8 game_routine_6bb8 # ctx
+cmt 0x6bb8 NOT copylock-specific despite being the Copylock failure path's final `jmp` target: four `bra.w` sites in the gameplay code also tail-jump to it ($35c2, $3ff2, $5472, $54a6). Defined as a function only so Ghidra stops folding its 290 bytes into copylock_key_check's body (a `jmp` into unclaimed code is inlined). Structure only, meaning unidentified: `if ($a32 != 0 && a0 == $9e94) { snd_stub+28; $dfac := $ffff; snd_stub+56 with d0=$19; $b6fe(d0=4) } ; clr.b 18(a0); ...`.
+cmt 0xf564 The Copylock failure path. It is also the mystery "seventh call site" of load_resource_by_index that the earlier pass could not resolve: d0/a1 are set up inside the encrypted body, so the file index and destination are unreadable.
+var 0xf576 screen_wipe_order_even_odd
+cmt 0xf576 201 bytes: a permutation of 0..199 terminated by $ff -- all 100 even lines top-down, then all 100 odd lines bottom-up. One of four scanline orders reached through copylock_table_ptrs. **This block is why the region measured entropy 7.73 and got filed as "packed".** A permutation of 0..199 is maximally entropic BY CONSTRUCTION -- every byte value distinct -- so "high entropy therefore compressed" was never a valid inference here. Measured alone, $f576..$f89e is 7.65 bits/byte and it is a plaintext lookup table.
+var 0xf63f screen_wipe_order_converge
+cmt 0xf63f 201 bytes, permutation of 0..199 + $ff: 0,199,2,197,4,195... -- top and bottom converging on the middle.
+var 0xf708 screen_wipe_order_quarters
+cmt 0xf708 201 bytes, permutation of 0..199 + $ff: every 4th line in four descending/ascending passes (0,4,8..196, 197,193..1, 2,6..198, 199,195..3).
+var 0xf7d1 screen_wipe_order_bands
+cmt 0xf7d1 201 bytes, permutation of 0..199 + $ff: four interleaved 50-line bands (0,50,100,150, 2,52,102,152, ...).
+var 0xf89a copylock_flag_a
+cmt 0xf89a Word, `clr.w $f89a` at $fb8a. Written by plaintext code and read by nothing in the plaintext image -- like copylock_flag_b, its reader must be in the encrypted body.
+var 0xf89c copylock_flag_b
+cmt 0xf89c Word, `st $f89c` (:= $ff) at $fb90. Same story as copylock_flag_a.
+
+# ---------------------------------------------------------------------------
+# Strings
+# ---------------------------------------------------------------------------
+# A scan of every abs.l, abs.w and pc-relative-d16 operand in the image found ZERO
+# references to $412, $46e, $46f, $472, $8a0 or $8b4. All of these are dead text.
+var 0x412 str_psygnosis_taunt
+cmt 0x412 "If you keep running out, you soon run out of places to run!  Psygnosis!!   And so do I!!!!!!" -- inert filler in the hole after cold_start; nothing references it.
+var 0x46e str_insert_data_disk
+cmt 0x46e The run starts HERE, not at $46f: $46e/$46f are `1b 59` = VT52 ESC 'Y' (position cursor) and $470/$471 are the row/column bytes '+' ' '; the text "Please insert data disk and press a key." proper begins at $472 and is NUL-terminated at $49a. The VT52 prefix means it was written for GEMDOS Cconws -- and SWB.PRG makes no GEMDOS call but Super(). It is a leftover from a pre-raw-FDC version, exactly like the Psygnosis taunt. show_data_disk_prompt displays the DATADISK.RAD bitmap instead and never touches this string.
+var 0x8a0 str_wheres_saigon
+cmt 0x8a0 "Wheres Saigon??????", NUL at $8b3.
+var 0x8b4 str_not_psychic
+cmt 0x8b4 "I Dunno Im not Psychic!!!!!", NUL at $8cf. Developer filler in a hole between routines -- but see joy1_prev/joy1_current: the two NUL terminators at $8b3 and $8cf are live input variables, so this hole is not entirely dead.
+var 0xa271 dialogue_text_block
+cmt 0xa271 The in-game dialogue/shop/hint strings, each prefixed by a one-byte layout code ('<', '2', ...). Runs to about $b346. No direct reference either, but unlike the filler strings above that proves nothing: this block must be indexed through a table, and I did not trace the indexer. Several of the raw `4e4x` trap-opcode byte hits in this program are ASCII pairs inside this block ("NI", "NG") -- none of them are instructions, and the block also scores 78 false `bsr` hits ($61xx = 'a' + a byte), which is why idiom density alone cannot classify a region.
+
+# ---------------------------------------------------------------------------
+# Sound module (self-contained, PC-relative, runtime $17adc..$1ab04)
+# ---------------------------------------------------------------------------
+fn 0x17adc snd_stub_00
+cmt 0x17adc The sound module's entry vector: a run of movem-save/restore stubs at $17adc..$17b39, called as `lea snd_stub_00,a0 / jsr N(a0)` from 26 sites ($590 .. $f9fe) -- and stub +0 is also called directly ($6f9e, $e708-region boot, $fb06), which is why this address must be an `fn`, not a `var`. A `var` here silently RENAMED Ghidra's real 14-byte function and made decomp.c print `snd_stub_table();` in three places as though a table were being called. Corrected map, all read from the bodies: +0 -> $17b3a; +14 -> snd_music_tick (this is the one vbl_handler invokes with `jsr 14(a0)`); +28 -> $17f24; +42 -> $17f82; +56 -> snd_trigger_effect ($1a48a); +70 -> $1aaea; +84 -> $17f92. Not "seven 14-byte stubs" either: the +84 stub is 10 bytes (`move.l a3,-(a7)`), and the register sets differ -- +42 saves only a3, +70 saves only d1/d2, the rest save d0-a6. Everything below is reached only through this table, which is why Ghidra's flow analysis never entered most of the module.
+fn 0x17c74 snd_music_tick # ctx
+cmt 0x17c74 Reached from vbl_handler via snd_stub_00+14, so "the per-VBL music tick" is right about WHEN it runs -- but the body is a whole PC-relative replay engine, not a tick: it addresses everything off `lea $xxxx(pc),a3`, and it branches on the video sync mode at $17c7e/$17c90 (reading $ffff820a and the mono-monitor bit of $fffffa01) to pick a 50 Hz / 60 Hz / mono tempo. The name is category-true and refinable. Every $ffff8800/$ffff8802 write in the program outside the FDC driver is in this module ($17e46..$17f5a).
+fn 0x1a48a snd_trigger_effect
+cmt 0x1a48a Reached from snd_stub_00+56, the entry the gameplay code calls most often (it shows up as an indirect call through $17b14 in the decompilation). # ctx
+
+# ---------------------------------------------------------------------------
+# Parameterised stubs Ghidra never reached (entered only through a table)
+# ---------------------------------------------------------------------------
+fn 0x10200 set_state_bbc8_1ff
+fn 0x1020a set_state_bbc8_2ff
+fn 0x10214 set_state_bbc8_3ff
+fn 0x1021e set_state_bbc8_4ff
+fn 0x10228 set_state_bbc8_6ff
+fn 0x10232 set_state_6f9c_ffff
+cmt 0x10200 Six 10-byte stubs, each `move.w #imm,$xxxx.l / rts`. Reached only indirectly, so Ghidra's flow analysis never created them. The variables they set are not yet identified, so these names describe the mechanism, not the meaning. # ctx
+
+# ---------------------------------------------------------------------------
+# Effect dispatch table -- 23 handlers, none of which Ghidra reached.
+# Dispatcher (0xddec and 0xde62): moveq #0,d0 / move.w 62(a1),d0 / lsl.w #2 /
+# lea effect_handler_table,a0 / lea (a0,d0.w),a0 / movea.l (a0),a0.
+# The names below state exactly what each body does. What the effects MEAN in
+# the game (the "pick up an item" reading is the obvious one) is NOT verified.
+# ---------------------------------------------------------------------------
+var 0x1023a effect_handler_table
+cmt 0x1023a 23 longword handler addresses, $10296..$103dc, indexed by a word field at offset 62 (and 64) of an object record. Both call sites also set $c030 (a message id) and $c034 := $32 (a 50-frame display timer) just before dispatching.
+fn 0x10296 effect_add4_clamped_b6fa
+cmt 0x10296 d0 := $b6fa + 4; if d0 > $b6f8 then $b6fa := $b6f8 else $b6fa := d0. A counter at $b6fa raised by 4 and clamped to the maximum held at $b6f8.
+fn 0x102bc effect_add2_clamped_b6fa
+cmt 0x102bc Same as effect_add4_clamped_b6fa but +2.
+fn 0x102e2 effect_set_bd6a_1
+fn 0x102ec effect_set_bd6a_2
+fn 0x102f6 effect_set_bd6a_3
+fn 0x10300 effect_set_bd6a_4
+fn 0x1030a effect_set_bbc2_80ff
+fn 0x10314 effect_set_bd66_1
+fn 0x1031e effect_set_bd66_2
+fn 0x10328 effect_set_bd66_3
+fn 0x10332 effect_set_bd66_4
+fn 0x1033c effect_set_bd66_5
+fn 0x10346 effect_set_bbbe_05ff
+fn 0x10350 effect_set_bd68_1
+fn 0x10360 effect_set_bd68_2
+fn 0x10370 effect_set_bd68_3
+cmt 0x10350 These three also set $21e4 := 2 before writing $bd68.
+fn 0x10380 effect_set_bbc0_05ff
+fn 0x1038a effect_set_bbc6_01ff
+fn 0x10394 effect_push_record_0605
+fn 0x103a6 effect_push_record_0508
+fn 0x103b8 effect_push_record_0705
+fn 0x103ca effect_push_record_0803
+cmt 0x10394 These four are identical bar the constant: `addq.l #2,$b546 / movea.l $b546,a1 / move.w #imm,(a1) / rts` -- a word pushed onto a growing list whose write pointer is $b546.
+fn 0x103dc effect_restore_b6fa_to_max
+cmt 0x103dc $b6fa := $b6f8 -- sets the counter straight to its maximum.

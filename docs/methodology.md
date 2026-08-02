@@ -27,6 +27,44 @@ Position and size are hints, **not** evidence. In BuggyBoy: a function I assumed
 body and confirm what it touches** before committing a name. Wrong sticky names are worse
 than `FUN_`.
 
+## Classifying a region: two inferences that look like evidence and are not
+
+Before you can name anything you have to decide which bytes are code. Two habits
+cost Wonder Boy a whole region each, in opposite directions.
+
+**"High entropy ⇒ packed" is not an inference.** Shannon entropy answers exactly
+one question — *is the byte histogram flat?* — and plenty of plaintext answers
+"yes". `$ed2a..$f89e` in `SWB.PRG` measured **7.73 bits/byte** and was filed as
+UNKNOWN, "near-random, i.e. packed or compressed". The 808 bytes doing most of the
+work measure **7.65** on their own and are four **permutation tables**: 200
+scanline indices, `0..199`, each value occurring exactly once. A permutation is
+*maximally* entropic **by construction**. So are palette ramps, pixel-shift
+tables, delta-coded coordinates and anything else that enumerates a range. Entropy
+is a cheap *screen*, never a verdict: if it is high, go look at the bytes — the
+histogram being flat and the bytes being `00 02 04 06 08 …` are perfectly
+compatible. (What was actually in that region: a trace-decrypting Copylock. See
+`projects/wonderboy/notes/architecture.md` §2.5.)
+
+**Idiom density has a blind spot shaped exactly like a jump table.** The usual
+test — "code runs ~15 `rts` per 1000 words with hundreds of `bsr`/`lea`; data runs
+0" — classified `$8fce..$989c` as DATA on "0 `bsr`, 0 `movem`". It is twelve
+sprite blitters. **Leaf code entered only through a pointer table calls nothing
+and saves nothing**, so its `bsr`/`movem` counts are zero *by construction* — the
+one region the method mis-reads is precisely the one it is blind to. Its `rts`
+density (14.2/kW) said CODE all along. Meanwhile the same program's ASCII dialogue
+block scores **78 false `bsr`** (`$61xx` is `'a'` + any byte) and its graphics
+block scores 14 `rts`. Practical rules:
+
+* Score on **density per 1000 words**, not raw counts, and weight `rts`/`dbf`
+  (which leaf code still has) over `bsr`/`movem` (which it may not).
+* Ask "could this be reached only through a pointer table?" before believing a
+  DATA verdict. Decode any nearby longword table and check whether its entries
+  land inside the region — 12 in-range targets settled this one in a minute.
+* When you ask "did Ghidra create a function here?", filter by **function body**,
+  not by entry address. The Wonder Boy region was reported as having no function
+  in it; `FUN_0000ecca` starts 36 bytes below the boundary and its body reaches
+  well inside.
+
 ## Naming variables
 
 Name a global by how it's *used*, across functions:
