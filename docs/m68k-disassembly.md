@@ -172,6 +172,49 @@ Two shapes, both common in ST games:
 Ghidra's "Decompiler Switch Analysis" recovers many of these automatically after the
 relocation table is applied; the rest you decode from the raw words.
 
+## `addq.l #n,(a7)` — a callee that skips its caller's next call
+
+The other control flow a decompiler will not show you, and unlike a jump table it leaves
+no table to decode. A subroutine adds a constant to **its own return address** before the
+`rts`, so it returns *past* the instructions that follow the `bsr` that called it:
+
+```
+75fc: clr.b   $8233.l
+7602: bsr.w   $79d2          ; return address = $7606
+7606: bsr.w   $7c08          ; ...which this callee can decide to skip
+760a: rts
+...
+79d2: move.w  $83ae.l,d0
+79d8: cmp.w   $83b2.l,d0
+79de: bne.w   $79e6
+79e2: addq.l  #4,(a7)        ; $7606 -> $760a: the caller's second bsr never happens
+79e4: rts
+```
+
+One act means both "I had nothing to do" and "skip the work that would have followed me".
+Three consequences worth knowing before you meet one:
+
+- **Ghidra models none of it.** `decomp.c` shows a bare `return` for the arm that skips
+  and an unconditional pair of calls in the caller, so the reconstruction reads correct
+  and behaves wrong. The disassembly is the only place the fact exists.
+- **A hardware/leaf scan still classifies the callee correctly** (it has an `rts`, no
+  hidden callee, no hardware) — this is not a scan blind spot, it is a *decompiler* one.
+- **It breaks an oracle-style harness entered at the callee.** A differential runner stops
+  when the PC reaches a sentinel it pushed as the return address; the skipping arm returns
+  to *sentinel + n* and the run never stops. Give the runner that second stop PC, and read
+  the decision back off the stack the callee rewrote — which pins the skip on the original
+  as well as on the reconstruction. `projects/wonderboy/recreate/test/test_scroll.py` is
+  the worked example; in C the callee has to become a function that RETURNS the decision.
+
+Grep for it directly: `addq.l #n,(a7)` is `5x97` (`5097` = #8, `5897` = #4, `5297` = #1),
+and `addq.w`/`addi.l` forms exist too. **The encoding decides it, with no reading of the
+surrounding code.** The low byte is the destination's effective address: `97` is *memory
+at `(a7)`*, so a `5x97` REWRITES the longword sitting at the stack top — the return
+address, wherever A7 has not moved since the `bsr`. Argument cleanup is the other
+encoding, `5x8F` (`addq.l #n,a7`; `5x4F` for the word form, `4FEF` for `lea n(a7),a7`),
+which adjusts the POINTER and leaves the longword it points at untouched. A `5x97` is
+therefore never cleanup, and a `5x8F` never this idiom.
+
 ## Machine detection
 
 ST-family games often branch on machine type via `$ffff8007` (STE/MSTE bus) or the

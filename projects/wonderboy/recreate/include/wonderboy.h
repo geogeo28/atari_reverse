@@ -424,4 +424,107 @@
                                          * The C consumes only the byte count; this is what the
                                          * entry pin builds that count's register mask from */
 
+/* ---- the background scroll engine, $7522..$8228 (RUNTIME addresses; src/scroll.c) -------------
+ *
+ * The cluster keeps EIGHT pre-shifted copies of the level's background, $5800 bytes each, tiling
+ * $44000..$70000 — the map project.toml records. Copy N holds the map drawn two pixels further
+ * left than copy N-1, so a two-pixel horizontal scroll is a change of buffer and not a redraw;
+ * `bg_scroll_blit` ($82f8, named but not ported) is what copies the chosen one to the screen.
+ *
+ * Each buffer is 176 scanlines of WB_BG_BUFFER_LINE bytes, addressed as a RING: the visible window
+ * starts at WB_BG_SCROLL_Y_COARSE tile-rows down and wraps at the end, which is why every routine
+ * here draws in two halves whose lengths come out of a table. Horizontally the same trick runs on
+ * WB_BG_SCROLL_X, a tile column 0..15 that names where the ring's seam sits within a 128-byte row.
+ *
+ * The position words come in two pairs, one per axis: an absolute scroll stepped +/-2 and bounded
+ * by a limit (WB_BG_SCROLL_POS_X / _LIMIT_X here; $83b0 / $83b4 for the vertical half), and the two
+ * nibbles of it the drawing actually reads — WB_BG_SCROLL_PHASE is POS_X's low nibble and
+ * WB_BG_SCROLL_X the next one up.
+ *
+ * ONLY THE HORIZONTAL HALF IS RECONSTRUCTED, so only the constants it needs are here. The vertical
+ * half's own state — $83a8/$83b0/$83b4, the request pair $8230/$8231, the tile-row cursor $8234,
+ * its split table $8236 and the sixteen row pointers at $82a6 — is read, named and evidenced in
+ * ../names.txt, and ../STATUS.md queues the routines. Nothing consumes it yet, so nothing declares
+ * it yet.
+ */
+#define WB_BG_SCROLL_PENDING     0x7a3cu  /* word: the half-rate latch the two steps share. A step
+                                           * SETS it and moves nothing; the next one moves. The
+                                           * opposite direction CLEARS it, cancelling the half-step */
+#define WB_BG_FILL_COUNTS        0x7eaeu  /* longword scratch inside the code, between $7c08's rts
+                                           * and $7eb2's entry: the two halves' `dbf` counts, copied
+                                           * whole out of WB_BG_COL_SPLIT_TABLE */
+#define WB_BG_FILL_COUNT_SECOND  0x7eb0u  /* == WB_BG_FILL_COUNTS + 2, read on its own as the
+                                           * second half's count (negative => no second half) */
+#define WB_BG_REQUEST_LEFT       0x8232u  /* two of the four request bytes $759a dispatches on; the
+                                           * handler clears its own before doing anything. The
+                                           * vertical pair ($8230 up, $8231 down) belongs to the
+                                           * queued half and is recorded in ../names.txt */
+#define WB_BG_REQUEST_RIGHT      0x8233u
+#define WB_BG_SCROLL_Y_COARSE    0x8276u  /* word: bg_scroll_y ($83a8) >> 4, i.e. the tile row
+                                           * the visible window starts at. The vertical half
+                                           * publishes it; the column fills below only read it */
+#define WB_BG_COL_SPLIT_TABLE    0x8278u  /* == WB_BG_SCROLL_Y_COARSE + 2, and reached only that
+                                           * way (`lea $8276,a5 / move.w (a5)+,d0`): 11 x two words
+                                           * indexed by Y_COARSE * 4. Entry k is (10-k, k-1), so the
+                                           * two counts always sum to WB_BG_BUFFER_TILE_ROWS - 2 */
+#define WB_BG_COL_SPLIT_ENTRIES  11u      /* == WB_BG_BUFFER_TILE_ROWS: Y_COARSE's whole range */
+#define WB_BG_ROW_BYTE_OFFSET    0x82a4u  /* word: byte offset of the seam within a 128-byte buffer
+                                           * row, 0..120 in steps of WB_BG_CELL_BYTES */
+#define WB_BG_MAP_CURSOR         0x82e6u  /* word: byte offset into the map of the visible window's
+                                           * top-left cell. A horizontal step moves it by 1, a
+                                           * vertical one by WB_MAP_ROW_STRIDE */
+#define WB_BG_EDGE_MASK_TABLE    0x82e8u  /* 8 words indexed by WB_BG_SCROLL_PHASE (a BYTE index, so
+                                           * the phase's own 0/2/../14): $0000 $fffc $fff0 $ffc0
+                                           * $ff00 $fc00 $f000 $c000 — that is `0xffff << phase`
+                                           * for every entry but the first, which is $0000 and not
+                                           * the $ffff the rule would give, so phase 0 clears the
+                                           * whole cell and redraws it */
+#define WB_BG_SCROLL_X           0x83a6u  /* tile column 0..15 (../names.txt: bg_scroll_x) */
+#define WB_BG_SCROLL_PHASE       0x83acu  /* which pre-shifted buffer: 0..14, step 2 */
+#define WB_BG_SCROLL_POS_X       0x83aeu  /* absolute horizontal scroll, step 2 */
+#define WB_BG_SCROLL_LIMIT_X     0x83b2u  /* POS_X stops HERE, by `cmp.w` — the level's right edge */
+#define WB_BG_STATE_WORD_LEN     2u       /* every scroll variable above is a word */
+
+/* The map and the tiles it names. Both live past the end of the program ($218d0) except the tile
+ * bitmaps, which are shipped in the .PRG — so a differential case seeds the first two and gets the
+ * third for free. */
+#define WB_TILE_BITMAPS          0x1d43eu /* tile N's bitmap is here + N * WB_TILE_BITMAP_LEN */
+#define WB_TILE_BITMAP_LEN       128u     /* `lsl.l #7`: WB_BG_TILE_ROWS rows of WB_BG_CELL_BYTES */
+#define WB_TILE_SHIPPED_FIRST    120u     /* the region holds 148 tiles and only these sixteen are
+                                           * in the .PRG: tiles 0..119 and 136..147 are zero in the
+                                           * file and filled at runtime, like the map above them.
+                                           * A differential case draws from THESE, so its source is
+                                           * the game's own pixels (test/test_scroll.py pins the
+                                           * split, which is where the two numbers come from) */
+#define WB_TILE_SHIPPED_COUNT    16u
+#define WB_TILE_INDEX_TABLE      0x21e90u /* map byte -> tile number, as words (`add.w d0,d0`) */
+#define WB_TILE_INDEX_ENTRIES    256u     /* the index is a BYTE out of the map, so this is its full
+                                           * range; the table ends exactly at WB_MAP_ROW_STRIDE */
+#define WB_MAP_ROW_STRIDE        0x22090u /* word: bytes per map row, added to walk down a column */
+#define WB_MAP_DATA              0x22092u /* the map itself, one byte per cell */
+
+/* The eight pre-shifted buffers. */
+#define WB_BG_BUFFER_BASE        0x44000u
+#define WB_BG_BUFFER_LEN         0x5800u  /* one buffer: WB_BG_BUFFER_TILE_ROWS tile rows */
+#define WB_BG_BUFFER_PHASE_STRIDE 0x2c00u /* == WB_BG_BUFFER_LEN / 2, because PHASE steps by 2 */
+#define WB_BG_BUFFER_LINE        128u     /* one buffer scanline: 256 px over WB_PLANES planes */
+#define WB_BG_CELL_BYTES         8u       /* one 16-px tile column of one scanline, 4 planes */
+#define WB_BG_TILE_ROWS          16u      /* scanlines per tile, and tile columns per buffer row */
+#define WB_BG_TILE_BLOCK_LEN     2048u    /* == WB_BG_TILE_ROWS * WB_BG_BUFFER_LINE */
+#define WB_BG_BUFFER_TILE_ROWS   11u      /* == WB_BG_BUFFER_LEN / WB_BG_TILE_BLOCK_LEN */
+#define WB_BG_SCROLL_STEP        2u       /* what one horizontal step moves POS_X and PHASE */
+#define WB_BG_PHASE_MASK         0xfu     /* PHASE and SCROLL_X both wrap in a nibble */
+#define WB_BG_PHASE_LAST         0xeu     /* the highest phase, which the LEFT step writes outright
+                                           * (`move.w #$e`) where the right one lets the mask wrap */
+#define WB_BG_PENDING_SET        0xffffu  /* what the RIGHT step arms WB_BG_SCROLL_PENDING with */
+#define WB_BG_ROW_OFFSET_MASK    0x7fu    /* ...and ROW_BYTE_OFFSET in seven bits, one step short of
+                                           * WB_BG_BUFFER_LINE (only the LEFT step masks it) */
+
+/* The two column fills' own operands: which map cell the fill starts from, and (for the right edge)
+ * the bias applied to WB_BG_SCROLL_X before it becomes a byte offset. The offsets differ by 15 tile
+ * columns, which is what makes one the left edge of the window and the other the right. */
+#define WB_BG_FILL_LEFT_MAP_OFF  2u       /* $7eb2: `addq.w #2,d0` on the map cursor */
+#define WB_BG_FILL_RIGHT_MAP_OFF 0x11u    /* $7c08: `addi.w #$11,d0` */
+#define WB_BG_FILL_RIGHT_X_BIAS  0xeu     /* $7c08: `addi.w #$e,d0` before the nibble mask */
+
 #endif /* WONDERBOY_H */

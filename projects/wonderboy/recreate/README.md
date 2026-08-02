@@ -10,7 +10,7 @@ compiled C on the same image, and diffs the result. Everything game-specific liv
 the method is differential rather than byte-matching, read the worked reference project,
 [`projects/buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md).
 
-**62 functions are reconstructed.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
+**68 functions are reconstructed.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
 game loads goes through, verified over the game's own resource corpus — the 41 `.RAD` files the two
 disks ship, plus the four protection-damaged overlays a second time in their authentic disk-2 bytes,
 so 45 streams in all. The first gameplay batch: 31 leaves with no callee and no hardware between
@@ -23,7 +23,11 @@ cell pair (copy and OR), of which the first three take their destination from wh
 the table-select that ends the frame's panel pass. Then the two tiers above those leaves: the digit
 plotter and the field walks and fields it draws (`$b54c..$bd65`), and the pass's three table walks
 (`$b39c`, `$b8f0` and the region restore `$d93a` with its six blits), which leave
-`panel_refresh_frame` with **nine of its ten callees reconstructed**. The rest is the binding plus a
+`panel_refresh_frame` with **nine of its ten callees reconstructed**. And the background scroll
+engine's horizontal half (`$75fc..$7eb2`): the game keeps EIGHT pre-shifted copies of the level
+background over `$44000..$70000`, two pixels apart, so a scroll is a change of buffer and the only
+work per step is the one tile column it uncovers — two request handlers, the two position steps
+under them, and the two 670-byte column fills those steps gate. The rest is the binding plus a
 foundation battery that runs the original code under the oracle and pins how the program starts.
 Progress, the kit change this project required, the oracle defect the panel batch surfaced, and the
 one blocker still ahead: [`STATUS.md`](STATUS.md).
@@ -46,6 +50,8 @@ include/rad.h              the .RAD/.CRU container and its bitstream, as constan
 include/effects.h          the 29 effect/state leaves at $10200..$103e7 — prototypes
 include/hud.h              the status panel's 30 routines — prototypes, and their register interfaces
 include/input.h            the two joystick-pipeline leaves
+include/scroll.h           the background scroll engine's horizontal half — prototypes, and why a
+                           step returns a FLAG (the original returns it through its own return address)
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
 src/effects.c              the effect handlers and the state stubs above them
@@ -56,12 +62,17 @@ src/hud.c                  panel_refresh_frame ($b346) below its own entry: batc
                            batch 4's third (the pass's three table walks: the region restore and its
                            six blits, the newest record's display, the six HUD slots)
 src/input.c                the joystick edge pipeline: latch a frame, then diff two frames
+src/scroll.c               the scroll engine's horizontal half: the two request handlers, the two
+                           position steps and the two column fills that redraw the uncovered edge
+                           into the pre-shifted buffer the phase names
 test/harness.py            the kit-binding shim
 test/leaf.py               shared driver for LEAF routines: entry points looked up in ../names.txt,
                            the write set a routine is entitled to (which the depacker's battery
                            calls too), the glue for one whose ENTRY REGISTERS are its arguments, and
                            the entry-pin scaffolding two batteries share (operand encoders, the
-                           opcodes both spell, and the readers that take a value out of the write set)
+                           opcodes both spell, and the readers that take a value out of the write
+                           set), and the second stop PC a routine needs when it returns PAST its
+                           caller's next call by rewriting its own return address
 test/layout.py             include/wonderboy.h's constants, scraped from that header (one source of truth)
 test/test_layout.py        that scraper's own cases — it refuses a duplicate or an octal-ambiguous #define
 test/test_bootstrap.py     the foundation battery: the loader, the self-relocation, the trap inventory
@@ -83,6 +94,12 @@ test/test_hud.py           the status panel's differential: the game's own bitma
                            over zeros stays invisible
 test/test_input.py         the joystick pair's differential — memory for the latch, the whole
                            returned d0 for the edge
+test/test_scroll.py        the scroll engine's differential: whole-body entry pins for all six
+                           (1590 bytes, the two unrolled fills assembled from their own geometry), a
+                           Python model of a column fill that every case's write set is compared
+                           against for EQUALITY, an address-keyed seeding of the whole buffer plus a
+                           margin, and the skip decision read off the ORACLE's rewritten return
+                           address rather than inferred
 ```
 
 ## Running

@@ -1,11 +1,11 @@
 """Shared driver for the game's LEAF routines — the ones with no callee, no hardware and a write
 set small enough to name.
 
-`test_effects.py`, `test_hud.py` and `test_input.py` are all batteries of such functions, so what
-they would otherwise each restate lives here: where a function starts (looked up in `../names.txt`,
-the workspace's source of truth for names, rather than restated as a number), what counts as a write
-it was not entitled to make, the operand encodings a battery pins its entry points against, and how
-a case reads a value back out of the oracle's write set.
+`test_effects.py`, `test_hud.py`, `test_input.py` and `test_scroll.py` are all batteries of such
+functions, so what they would otherwise each restate lives here: where a function starts (looked up
+in `../names.txt`, the workspace's source of truth for names, rather than restated as a number),
+what counts as a write it was not entitled to make, the operand encodings a battery pins its entry
+points against, and how a case reads a value back out of the oracle's write set.
 
 NOT a general harness — the kit is that. This module assumes what a leaf gives it: a run short
 enough for a tight instruction cap, and a write set the caller can enumerate up front.
@@ -90,23 +90,32 @@ def register_glue(name, argtypes, restype=None):
     return with_registers
 
 
+def on_machine_stack(addr):
+    """Whether ``addr`` is inside the band the run's own call frames occupy.
+
+    The oracle enters with A7 at ``emu.STACK_TOP`` and the stack grows DOWN, so the band is bounded
+    on BOTH sides: a write at or above STACK_TOP is not a call frame however close to the stack it
+    looks — the longword AT STACK_TOP is the return address the runner planted, which a routine that
+    rewrites it (`addq.l #4,(a7)`) is being watched for rather than excused for.
+    """
+    return emu.STACK_TOP - emu.STACK_SCRATCH <= addr < emu.STACK_TOP
+
+
 def stray_writes(writes, allowed):
     """Oracle writes outside ``allowed`` (an iterable of (addr, length) the function may touch).
 
-    The machine stack is the one implicit permission: the oracle enters with A7 at
-    ``emu.STACK_TOP`` and the stack grows DOWN, so the band is bounded on BOTH sides — a write at or
-    above STACK_TOP is not a call frame however close to the stack it looks. (test_rad_depack.py
+    The machine stack is the one implicit permission, per ``on_machine_stack``. (test_rad_depack.py
     calls this as well; STATUS.md registers the family and the kit as its proper home.)
     """
     def permitted(addr):
-        if emu.STACK_TOP - emu.STACK_SCRATCH <= addr < emu.STACK_TOP:
+        if on_machine_stack(addr):
             return True
         return any(lo <= addr < lo + length for lo, length in allowed)
 
     return sorted(a for a in writes if not permitted(a))
 
 
-def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_CAP):
+def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_CAP, stop_pc=0):
     """Run ``name``'s original under the oracle and the reconstruction on the same image.
 
     Requires the two to agree byte for byte over the whole image, and the original to have written
@@ -116,9 +125,15 @@ def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_C
     when inverting an output would corrupt an ADDRESS the run then stores through. ``max_insns``
     raises the cap for a routine that loops — state the number the routine's own geometry gives, so
     it stays a cap and not a formality.
+
+    ``stop_pc`` is the kit's second stop condition, and one family of routine needs it: the scroll
+    steps ADD to their own return address (`addq.l #4,(a7)`) to skip the caller's next `bsr`, so
+    their `rts` lands past the oracle's sentinel and the run would otherwise never stop. A case
+    passes the sentinel plus that skip distance and both arms then terminate — see test_scroll.py,
+    which also reads the decision back out of the write set rather than inferring it from this.
     """
     diffs, info = differential(entry_of(name), dict(regs or {}), glue,
-                               max_insns=max_insns, poison=poison)
+                               max_insns=max_insns, poison=poison, stop_pc=stop_pc)
     assert not diffs, f"{what}\n{report(diffs)}"
     stray = stray_writes(info["writes"], allowed)
     assert not stray, (
@@ -128,9 +143,9 @@ def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_C
 
 
 # --- building an entry pin -----------------------------------------------------------------------
-# The operand encoders and the opcodes MORE THAN ONE battery spells. A battery keeps its own
-# single-use encodings next to the routines that need them; these are here because two files would
-# otherwise carry the same four bytes and could disagree about them.
+# The operand encoders, the branch displacements and the opcodes MORE THAN ONE battery spells. A
+# battery keeps its own single-use encodings next to the routines that need them; these are here
+# because two files would otherwise carry the same four bytes and could disagree about them.
 #
 # Both encoders MASK to their width, which is the 68000's own behaviour: an operand field holds
 # exactly two or four bytes, so a caller passing a negative displacement (`word(-18)` for a `dbf`) or
@@ -140,6 +155,7 @@ WORD_MASK = 0xffff
 LONGWORD_MASK = 0xffffffff
 
 RTS = b"\x4e\x75"
+BSR_W = b"\x61\x00"                 # bsr.w <d16>
 MOVE_W_ABS_L_D0 = b"\x30\x39"       # move.w <abs>.l,d0
 MOVE_W_D0_ABS_L = b"\x33\xc0"       # move.w d0,<abs>.l
 MOVE_W_ABS_L_ABS_L = b"\x33\xf9"    # move.w <abs>.l,<abs>.l
@@ -152,6 +168,31 @@ def word(value):
 
 def longword(value):
     return (value & LONGWORD_MASK).to_bytes(4, "big")
+
+
+# A 68000 branch counts its displacement from the EXTENSION WORD, which sits two bytes after the
+# opcode the branch is written as — so a displacement is always the bytes the branch spans plus that
+# 2. Spelling it once is what lets a pin's displacements come out of the geometry of the pieces they
+# jump over instead of being transcribed. Each battery keeps its own branch OPCODES (they spell them
+# differently — byte constants in test_hud.py, built from an integer in test_scroll.py); `bsr.w` has
+# only the one encoding, so that one is assembled whole here.
+BRANCH_EXTENSION = 2
+
+
+def forward_branch(spanned_bytes):
+    """The displacement word of a `bcc.w`/`bra.w` that skips forward over ``spanned_bytes``."""
+    return word(spanned_bytes + BRANCH_EXTENSION)
+
+
+def backward_branch(body_bytes):
+    """The displacement word of a `dbf`/`bra.w` that jumps BACK over the ``body_bytes`` it tails."""
+    return word(-(body_bytes + BRANCH_EXTENSION))
+
+
+def bsr_w(here, target):
+    """`bsr.w target` as assembled AT ``here`` — a call's displacement depends on where it sits, so
+    a pin aimed at the wrong callee (or built at the wrong offset) fails on the bytes."""
+    return BSR_W + word(target - (here + BRANCH_EXTENSION))
 
 
 def assert_entry_is(name, expected):

@@ -63,8 +63,8 @@ import pytest
 import harness
 import layout
 import leaf
-from leaf import (MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_IMM_ABS_L, RTS,
-                  longword, word)
+from leaf import (BSR_W, MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_IMM_ABS_L,
+                  RTS, backward_branch, bsr_w, forward_branch, longword, word)
 from layout import wb
 
 import emu   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -346,8 +346,7 @@ MOVEM_L_A0_INC_D0_D5 = MOVEM_L_A0_INC + _movem_mask(*PANEL_FRAME_MOVEM)
 MOVEM_L_D0_D5_A1 = MOVEM_L_TO_A1 + _movem_mask(*PANEL_FRAME_MOVEM)
 MOVEM_L_D0_D5_D16_A1 = MOVEM_L_TO_D16_A1 + _movem_mask(*PANEL_FRAME_MOVEM)
 
-# ...and the second tier's.
-BSR_W = b"\x61\x00"
+# ...and the second tier's (`BSR_W` itself comes from leaf.py, which assembles the call).
 BEQ_W = b"\x67\x00"
 BLT_W = b"\x6d\x00"
 BGT_W = b"\x6e\x00"
@@ -434,28 +433,15 @@ def _shift_count(stride):
     assert stride and not stride & (stride - 1), f"{stride} is not a power of two"
     return stride.bit_length() - 1
 
-# A 68000 branch counts from the word AFTER its opcode, so every displacement below is the bytes it
-# spans plus the 2 its own extension word occupies. Spelling that once is what lets the entry pins
-# be built out of the geometry constants instead of out of transcribed hex.
-BRANCH_EXTENSION = 2
-
 # The four `movem` stores $bcd6 makes between two `lea 640(a1)`.
 PANEL_FRAME_ROWS_PER_PASS = 4
-
-
-def _dbf(loop_body_bytes):
-    return word(-(loop_body_bytes + BRANCH_EXTENSION))
-
-
-def _forward_branch(spanned_bytes):
-    return word(spanned_bytes + BRANCH_EXTENSION)
 
 
 def _dbf_loop(load_counter, dbf, count, body):
     """`move.w #count-1,Dn / <body> / dbf Dn,<body>` — the shape every looping blit in this file
     has. The `dbf` displacement comes out of the body's own length, so a builder cannot state its
     row count one way and its branch another."""
-    return load_counter + word(count - 1) + body + dbf + _dbf(len(body))
+    return load_counter + word(count - 1) + body + dbf + backward_branch(len(body))
 
 
 def _longword_blit_tail(row_bytes):
@@ -467,9 +453,9 @@ def _longword_blit_tail(row_bytes):
 
 def _select_table_entry():
     store = MOVE_L_IMM_ABS_L + longword(TABLE_A32_CLEAR) + longword(TABLE_PTR)
-    bra = BRA_W + _forward_branch(len(store))
+    bra = BRA_W + forward_branch(len(store))
     return (TST_W_ABS_W + word(STATE_FLAG_A32)
-            + BNE_W + _forward_branch(len(store) + len(bra))
+            + BNE_W + forward_branch(len(store) + len(bra))
             + store + bra
             + MOVE_L_IMM_ABS_L + longword(TABLE_A32_SET) + longword(TABLE_PTR)
             + ADDQ_W_1_ABS_L + longword(FRAME_TICK) + RTS)
@@ -508,7 +494,7 @@ def _meter_cell_entry():
             + ADDA_W_A1_INC_A0
             + MOVE_W_IMM_D0 + word(METER_CELL_ROWS - 1)
             + plotted + lea
-            + DBF_D0 + _dbf(len(plotted) + len(lea))
+            + DBF_D0 + backward_branch(len(plotted) + len(lea))
             + RTS)
 
 
@@ -516,7 +502,7 @@ def _meter_add_entry():
     return (ADD_W_D0_ABS_L + longword(METER_VALUE)
             + MOVE_W_ABS_L_D1 + longword(METER_MAX)
             + CMP_W_ABS_L_D1 + longword(METER_VALUE)
-            + BLE_W + _forward_branch(len(RTS))
+            + BLE_W + forward_branch(len(RTS))
             + RTS
             + MOVE_W_ABS_L_ABS_L + longword(METER_MAX) + longword(METER_VALUE) + RTS)
 
@@ -540,7 +526,7 @@ def _panel_frame_entry():
             + ADDA_W_IMM_A1 + word(PANEL_FRAME_ORIGIN)
             + MOVE_W_IMM_D7 + word(PANEL_FRAME_ROWS // PANEL_FRAME_ROWS_PER_PASS - 1)
             + body
-            + DBF_D7 + _dbf(len(body))
+            + DBF_D7 + backward_branch(len(body))
             + RTS)
 
 
@@ -559,7 +545,7 @@ def _assemble(base, pieces):
 
 
 def _bsr_to(name):
-    return lambda at: BSR_W + word(leaf.entry_of(name) - (at + len(BSR_W)))
+    return lambda at: bsr_w(at, leaf.entry_of(name))
 
 
 # `move.w #$ffff,latch` and `clr.w latch`. Four routines spell the raise — $b850 itself when a
@@ -576,30 +562,30 @@ def _plot_digit_column(first_store, plane_store):
     body = first_store + b"".join(plane_store(plane) + word(plane * PLANE_STRIDE)
                                   for plane in range(1, PLANES))
     body += ADDA_L_IMM_A0 + longword(SCREEN_LINE)
-    return MOVE_W_IMM_D1 + word(DIGIT_ROWS - 1) + body + DBF_D1 + _dbf(len(body)) + RTS
+    return MOVE_W_IMM_D1 + word(DIGIT_ROWS - 1) + body + DBF_D1 + backward_branch(len(body)) + RTS
 
 
 def _plot_digit_entry():
     alt_lea = LEA_ABS_L_A1 + longword(DIGIT_GLYPHS_ALT)
-    bra = BRA_W + _forward_branch(len(LEA_ABS_L_A1) + 4)
+    bra = BRA_W + forward_branch(len(LEA_ABS_L_A1) + 4)
     blank_default = _plot_digit_column(
         CLR_B_A0, lambda plane: ST_D16_A0 if plane == DIGIT_BLANK_PLANE else CLR_B_D16_A0)
     blank_alt = _plot_digit_column(CLR_B_A0, lambda _plane: CLR_B_D16_A0)
     return (CMPI_W_IMM_D0 + word(DIGIT_FONT_ALT)
-            + BNE_W + _forward_branch(len(alt_lea) + len(bra))
+            + BNE_W + forward_branch(len(alt_lea) + len(bra))
             + alt_lea + bra
             + LEA_ABS_L_A1 + longword(DIGIT_GLYPHS)
             + _shift(NIBBLE_BITS, SHIFT_SIZE_LONG, SHIFT_ROTATE, 7, left=True)
             + MOVE_L_D7_D6
             + ANDI_L_IMM_D6 + longword(DIGIT_NIBBLE_MASK)
             + TST_W_ABS_L + longword(DIGIT_SIGNIFICANT_SEEN)
-            + BNE_W + _forward_branch(len(TST_W_D6) + 4 + len(CMPI_W_IMM_D0) + 2 + 4
+            + BNE_W + forward_branch(len(TST_W_D6) + 4 + len(CMPI_W_IMM_D0) + 2 + 4
                                       + len(blank_default) + len(blank_alt) + len(_FORCE_LATCH))
             + TST_W_D6
-            + BNE_W + _forward_branch(len(CMPI_W_IMM_D0) + 2 + 4
+            + BNE_W + forward_branch(len(CMPI_W_IMM_D0) + 2 + 4
                                       + len(blank_default) + len(blank_alt))
             + CMPI_W_IMM_D0 + word(DIGIT_FONT_ALT)
-            + BEQ_W + _forward_branch(len(blank_default))
+            + BEQ_W + forward_branch(len(blank_default))
             + blank_default + blank_alt + _FORCE_LATCH
             + _shift(_shift_count(DIGIT_GLYPH_LEN), SHIFT_SIZE_WORD, SHIFT_ARITHMETIC, 6, left=True)
             + ADDA_L_D6_A1
@@ -664,7 +650,7 @@ def _meter_size_step(score, maximum, last):
     its own — it falls through to the shared one, so its branch spans two bytes less."""
     store = MOVE_W_IMM_ABS_L + word(maximum) + longword(METER_MAX)
     return (CMP_L_IMM_D7 + longword(score)
-            + BLT_W + _forward_branch(len(store) if last else len(store) + len(RTS))
+            + BLT_W + forward_branch(len(store) if last else len(store) + len(RTS))
             + store + (b"" if last else RTS))
 
 
@@ -685,7 +671,7 @@ def _larger_score_entry():
     return _assemble(leaf.entry_of("hud_draw_larger_score"), [
         MOVE_L_ABS_L_D7 + longword(BCD_SCORE),
         CMP_L_ABS_L_D7 + longword(BCD_HISCORE),
-        BGT_W + _forward_branch(len(reload_hiscore)),
+        BGT_W + forward_branch(len(reload_hiscore)),
         reload_hiscore,
         MOVEA_L_ABS_W_A0 + word(SCREEN_BACK),
         LEA_D16_A0_A0 + word(HISCORE_ORIGIN),
@@ -709,10 +695,10 @@ def _meter_partial_chain(blit):
         following = len(cells) - index - 1
         bra_len = _BRA_LEN if following else 0
         pieces += [CMPI_W_IMM_D6 + word(remainder),
-                   BNE_W + _forward_branch(_CELL_DRAW_LEN + bra_len),
+                   BNE_W + forward_branch(_CELL_DRAW_LEN + bra_len),
                    LEA_ABS_L_A2 + longword(cell), blit]
         if following:
-            pieces.append(BRA_W + _forward_branch(following * _PARTIAL_ARM_LEN
+            pieces.append(BRA_W + forward_branch(following * _PARTIAL_ARM_LEN
                                                   + (following - 1) * _BRA_LEN))
     return pieces
 
@@ -734,10 +720,10 @@ def _meter_entry():
         MOVEQ_0_D6, MOVE_W_ABS_L_D6 + longword(METER_VALUE),
         DIVU_W_IMM_D6 + word(METER_CELL_UNITS),
         MOVE_W_D6_D5, TST_W_D5,
-        BEQ_W + _forward_branch(len(SUBI_W_IMM_D5) + 2 + _CELL_DRAW_LEN + len(DBF_D5) + 2),
+        BEQ_W + forward_branch(len(SUBI_W_IMM_D5) + 2 + _CELL_DRAW_LEN + len(DBF_D5) + 2),
         SUBI_W_IMM_D5 + word(1),
         LEA_ABS_L_A2 + longword(METER_CELL_FULL), blit,
-        DBF_D5 + _dbf(_CELL_DRAW_LEN),
+        DBF_D5 + backward_branch(_CELL_DRAW_LEN),
         SWAP_D6,
     ] + _meter_partial_chain(blit) + [
         table_base, MOVE_L_A0_D0, MOVE_L_A1_D1, SUB_L_D0_D1,
@@ -746,10 +732,10 @@ def _meter_entry():
         MOVEQ_0_D2, MOVE_W_ABS_L_D2 + longword(METER_MAX),
         _shift(_shift_count(METER_CELL_UNITS), SHIFT_SIZE_WORD, SHIFT_ARITHMETIC, 2, left=False),
         SUB_W_D1_D2,
-        BNE_W + _forward_branch(len(RTS)), RTS,
+        BNE_W + forward_branch(len(RTS)), RTS,
         SUBI_W_IMM_D2 + word(1),
         LEA_ABS_L_A2 + longword(METER_CELL_EMPTY), blit,
-        DBF_D2 + _dbf(_CELL_DRAW_LEN), RTS])
+        DBF_D2 + backward_branch(_CELL_DRAW_LEN), RTS])
 
 
 # --- the third tier's entry pins -----------------------------------------------------------------
@@ -823,7 +809,7 @@ def _restore_24x32_entry():
     step = word(PANEL_FRAME_ROWS_PER_PASS * SCREEN_LINE)
     body += LEA_D16_A0_A0 + step + LEA_D16_A1_A1 + step
     return (MOVE_W_IMM_D7 + word(PANEL_FRAME_ROWS // PANEL_FRAME_ROWS_PER_PASS - 1)
-            + body + DBF_D7 + _dbf(len(body)) + RTS)
+            + body + DBF_D7 + backward_branch(len(body)) + RTS)
 
 
 # One entry of $d93a's walk, without its `bsr`: the test, the clear and the two offset cursors.
@@ -834,7 +820,7 @@ def _restore_entry_head(origin, called):
             + LEA_D16_A0_A0 + word(origin)
             + LEA_D16_A1_A1 + word(origin))
     call_len = len(BSR_W) + 2 if called else 0
-    return TST_B_A6_INC + BEQ_W + _forward_branch(len(tail) + call_len) + tail
+    return TST_B_A6_INC + BEQ_W + forward_branch(len(tail) + call_len) + tail
 
 
 def _restore_entry(origin, called):
@@ -875,14 +861,14 @@ def _newest_record_entry():
     draw_bitmap = ST_ABS_L + longword(PANEL_RESTORE_FLAG_DBB5)
     return _assemble(leaf.entry_of("hud_draw_newest_record"), [
         TST_W_ABS_L + longword(RECORD_LIST),
-        BPL_W + _forward_branch(len(RTS)), RTS,
+        BPL_W + forward_branch(len(RTS)), RTS,
         reload_pointer,
         TST_B_ABS_L + longword(RECORD_FRESH_FLAG),
-        BEQ_W + _forward_branch(len(draw_bitmap) + len(BSR_W) + 2),
+        BEQ_W + forward_branch(len(draw_bitmap) + len(BSR_W) + 2),
         draw_bitmap, _bsr_to("hud_blit_record_bitmap"),
         reload_pointer,
         CMPI_B_IMM_D16_A0 + word(RECORD_NO_DIGITS) + word(RECORD_LOW_BYTE),
-        BNE_W + _forward_branch(len(RTS)), RTS,
+        BNE_W + forward_branch(len(RTS)), RTS,
         _bsr_to("hud_draw_record_digits"), RTS])
 
 
@@ -914,15 +900,15 @@ def _plain_slot_block(slot):
     return lambda at: _assemble(at, [
         LEA_ABS_L_A0 + longword(slot["record"]),
         TST_B_D16_A0 + word(HUD_SLOT_REQUEST),
-        BEQ_W + _forward_branch(dirty),
+        BEQ_W + forward_branch(dirty),
         CLR_B_D16_A0 + word(HUD_SLOT_REQUEST),
         ST_ABS_L + longword(slot["flag"]),
     ] + _slot_blit_call("hud_blit_cell_copy", slot["blank"], slot["origin"]) + [
         LEA_ABS_L_A0 + longword(slot["record"]),
         TST_B_A0,
-        BEQ_W + _forward_branch(value_arm),
+        BEQ_W + forward_branch(value_arm),
     ] + _slot_blit_call("hud_blit_cell_or", slot["icon_value"], slot["origin"]) + [
-        BRA_W + _forward_branch(zero_arm),
+        BRA_W + forward_branch(zero_arm),
     ] + _slot_blit_call("hud_blit_cell_or", slot["icon_zero"], slot["origin"]))
 
 
@@ -938,24 +924,24 @@ def _slot_bbc8_block():
         following = HUD_SLOT_BBC8_VARIANTS - index - 1
         if not following:                     # the #6 arm: `beq` over an `rts`, and no `bra`
             arms += [CMPI_B_IMM_A0 + word(index + 1),
-                     BEQ_W + _forward_branch(len(RTS)), RTS,
+                     BEQ_W + forward_branch(len(RTS)), RTS,
                      LEA_ABS_L_A0 + longword(icon)]
             break
         arms += [CMPI_B_IMM_A0 + word(index + 1),
-                 BNE_W + _forward_branch(len(LEA_ABS_L_A0) + 4 + _BRA_LEN),
+                 BNE_W + forward_branch(len(LEA_ABS_L_A0) + 4 + _BRA_LEN),
                  LEA_ABS_L_A0 + longword(icon),
-                 BRA_W + _forward_branch((following - 1) * _SLOT_VARIANT_ARM_LEN
+                 BRA_W + forward_branch((following - 1) * _SLOT_VARIANT_ARM_LEN
                                          + _SLOT_VARIANT_LAST_LEN)]
     return lambda at: _assemble(at, [
         LEA_ABS_L_A0 + longword(slot["record"]),
         TST_B_D16_A0 + word(HUD_SLOT_REQUEST),
-        BNE_W + _forward_branch(len(RTS)), RTS,
+        BNE_W + forward_branch(len(RTS)), RTS,
         CLR_B_D16_A0 + word(HUD_SLOT_REQUEST),
         ST_ABS_L + longword(slot["flag"]),
     ] + _slot_blit_call("hud_blit_cell_copy", slot["blank"], slot["origin"]) + [
         LEA_ABS_L_A0 + longword(slot["record"]),
         TST_B_A0,
-        BEQ_W + _forward_branch(chain + tail),
+        BEQ_W + forward_branch(chain + tail),
     ] + arms + [
         MOVEA_L_ABS_W_A1 + word(SCREEN_BACK),
         ADDA_W_IMM_A1 + word(slot["origin"]),

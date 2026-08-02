@@ -8,19 +8,26 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 62/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
-panel's leaves (430 bytes), the second tier above them (710 bytes) and the third tier
-(1412 bytes).**
-`make test`: 793 cases green, of which 77 are the foundation battery below, 48 are the depacker's
-differential, 187 are the first gameplay batch's and 481 are the status panel's — that last figure
-was 169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py`. A
-row appears in the table at the end when a function is reconstructed and green; everything else in
-`../decomp.c` and `../names.txt` is still only *named*, not ported.
+**Verified: 68/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes) and
+the background scroll engine's horizontal half (1590 bytes).**
+`make test`: 858 cases green, of which 77 are the foundation battery below, 48 are the depacker's
+differential, 187 are the first gameplay batch's, 481 are the status panel's — that last figure was
+169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py` — and 65
+are the scroll engine's. A row appears in the table at the end when a function is reconstructed and
+green; everything else in `../decomp.c` and `../names.txt` is still only *named*, not ported.
 
 **`panel_refresh_frame` ($b346) now has NINE of its ten callees reconstructed.** The tenth, `$bbca`,
 is the sound-module blocker batch 3 registered, and it is reached by an unconditional `bsr` — so
 `$b346` itself stays unported and no seeding can change that. The reasoning is in "The status
 panel's third tier" below.
+
+**The scroll engine's VERTICAL half is read, named and queued, not ported.** `$761c`, `$77ba`,
+`$7a3e`, `$7b1a`, `$8144` and the three routines above them (`$75d4`, `$75e8`, `$759a`, `$7522`)
+are all in `../names.txt` with the evidence, and none of them is blocked by anything — the split is
+a scoping choice, taken on the horizontal/vertical seam because the horizontal tier is dependency
+closed and the vertical one is not (both its serve routines need `$8144`). See "The background
+scroll engine" below.
 
 ## What the harness has established
 
@@ -312,7 +319,14 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   `< emu.STACK_GUARD_LO` family (it bounds the band above as well as below, since A7 enters at
   `STACK_TOP` and grows down); the gameplay batch needed the same one for two more batteries, so it
   now lives once in `test/leaf.py` as `stray_writes(writes, allowed)` and `test_rad_depack.py`,
-  `test_effects.py` and `test_input.py` all call it. **The in-directory copies are collapsed.** What
+  `test_effects.py` and `test_input.py` all call it. The scroll batch then arrived with a fifth
+  spelling of the band — `test_scroll.py`'s `_program_writes`, which subtracts the stack from a write
+  set instead of checking one against permissions — and it had drifted: its bound was `<= STACK_TOP`,
+  which excludes only the FIRST byte of the return slot and leaves the other three in. The band is
+  now one predicate, `leaf.on_machine_stack(addr)`, that both `stray_writes` and `_program_writes`
+  call, and its upper bound is `< STACK_TOP` for a stated reason: the longword AT the stack top is
+  the return address the runner planted, and a step that rewrites it (`addq.l #4,(a7)`) is program
+  output that a case reads, not a frame to excuse. **The in-directory copies are collapsed.** What
   is left of this particular family is `../notes/rad_differential.py`'s copy — a frozen research
   artifact that must run without this directory — and the kit consolidation above; `leaf.py` is the
   shape the kit's version should take (an allowed-ranges list, with the two-sided stack band
@@ -337,7 +351,26 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   8-row column. **The same collapse then happened on the C side**: `src/hud.c` carried the plane loop
   twice — once in `hud_blit_meter_cell` over a host pointer, once in `plot_column` over `addr_add` —
   and `plot_column` now takes a row count and serves both, so the meter's cell walks its destination
-  through the 68000's address ALU as well and a stride mutation reaches both routines.
+  through the 68000's address ALU as well and a stride mutation reaches both routines. **The scroll
+  batch added the branch assemblers to the same collapse**: `test_scroll.py` arrived with a third
+  spelling of the branch-displacement arithmetic (`branch_w` / `dbf` / `_bsr_w` against
+  `test_hud.py`'s `_forward_branch` / `_dbf` / `_bsr_to`), so `forward_branch(spanned)`,
+  `backward_branch(body)` and `bsr_w(here, target)` — plus the `BRANCH_EXTENSION` of 2 all three turn
+  on and the one `BSR_W` opcode — now live once in `leaf.py` and both batteries call them. Only the
+  displacements moved: each battery still spells its own branch OPCODES, byte constants in one file
+  and integers fed to `_op()` in the other, because that is where they differ. The whole-body entry
+  pins are the proof the hoist changed nothing — 1590 bytes of scroll and every panel routine still
+  match the shipped image byte for byte.
+- **`rol.l` is now written twice on the C side** — `src/hud.c`'s `rotate_left32(value, bits)` and
+  `src/scroll.c`'s `rotate_left32_by_register(value, count)` — and the guard is the whole delta. The
+  panel's count is always the literal 4 or 8, so its body is the bare `(v << n) | (v >> (32 - n))`;
+  the scroll's is a RUNTIME value (a phase word, 0..14, or the 16 the right edge substitutes for
+  phase 0) and must survive a count of 0, where the 68000 rotates by nothing and C's `value >> 32`
+  is undefined. One helper carrying the guard would serve both, and the proper home is the kit's
+  `include/machine.h` alongside `addr_add`/`sign_ext16` — a kit change touching three projects, the
+  same reason the stack-band and header-scraper consolidations above are deferred. **The trigger to
+  do it is the preshift batch**: `bg_scroll_preshift_rows` (`$8144`) rotates by `rol.l #2` and would
+  be the third caller, at which point two spellings become three.
 - **`RAD_HDR_LEN` (`include/rad.h`) and `HDR_LEN` (`tools/depack_rad.py`) are the same 12 bytes in
   two languages, accepted as pinned BEHAVIOURALLY rather than textually.** CLAUDE.md §5 asks for one
   canonical definition with the other held equal by a test; here each side has its own differential
@@ -412,6 +445,12 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0xb3da` | `hud_draw_record_digits` | 54 | verified | 18 cases: 6 record low bytes (a blanked leading zero, a forced trailing one, nibbles above 9, and the `$ff` its caller screens out) x 2 screen buffers, plus 3 entry (`d0`, `d7`) pairs that must not reach the digits and 3 record addresses + entry pin |
 | `0xb8f0` | `hud_refresh_dirty_slots` | 666 | verified | 52 cases: 5 slots x 3 value bytes x 2 screen buffers for the two-way arm, the sixth slot's 8 values (its six chain arms, the zero arm and the fall-through that leaves the cell blanked) x 2 buffers, 3 request bytes, all six dirty at once x 2 buffers, and a pass with none dirty that must write nothing. Each asserts `blank OR icon` over all 14 rows, the restore flag raised and the request byte cleared + entry pin |
 | `0xd93a` | `panel_restore_dirty_regions` | 446 | verified | 18 cases: each of the 15 flags raised ALONE (so a walk that restored a neighbour's region fails on the stray write), all 15 raised x 2 screen orders, and none raised. Every case seeds both screen pointers and runs the pair both ways round + entry pin |
+| `0x75fc` | `bg_scroll_serve_right` (`src/scroll.c`) | 16 | verified | 3 cases: the step moves and the fill runs, the step only arms the latch and the fill STILL runs, and the step at the scroll's limit consumes the `bsr` so the pass writes exactly one byte. Each compares the whole write set for EQUALITY against a model of the step followed by the fill ON ITS OUTPUT + whole-body entry pin built from the two callees' addresses in `../names.txt` |
+| `0x760c` | `bg_scroll_serve_left` | 16 | verified | The same 3 cases mirrored |
+| `0x79d2` | `bg_scroll_step_right` | 106 | verified | 8 cases: both sides of the limit test, three latch words (armed / disarmed / a small POSITIVE one, which the two directions treat differently), and three phase/cell carries — mid-cell, a carry into the next cell, and one that wraps `bg_scroll_x` and zeroes the row offset. Every case reads the skip decision off the ORACLE's own rewritten return address and requires the reconstruction's flag to match + whole-body entry pin |
+| `0x795e` | `bg_scroll_step_left` | 116 | verified | 9 cases: the same shape mirrored, plus a fourth borrow case that pins the `andi.w #$7f` this direction applies to `bg_scroll_row_byte_offset` and the right step does not |
+| `0x7c08` | `bg_scroll_fill_right_column` | 678 | verified | 13 cases over the three words that place the column: four phases (including 0, where the mask clears the whole cell and the rotation becomes a whole 16 with the map cursor pulled back), three `bg_scroll_x` (including 1, where the second cell leaves the 128-byte row), and four coarse rows (0 = no second half, 1 = a one-tile-row second half, 10, and mid). Each compares the write set for EQUALITY against a Python model of the fill and every written byte against that model's value; the destination is seeded address-keyed over the whole $5800 buffer plus a scanline either side + whole-body entry pin |
+| `0x7eb2` | `bg_scroll_fill_left_column` | 658 | verified | The same 13 cases mirrored, which pin the four differences: no `bg_scroll_x` bias, the map column fifteen cells to the left, the mask INVERTED while the phase is nonzero, and the two halves of the rotated longword swapped over + whole-body entry pin |
 | `0xdaf8` | `panel_restore_44x8` | 26 | verified | 4 cases: its 2 regions x 2 screen orders, all 8 rows of 44 bytes compared against the source screen + entry pin |
 | `0xdb12` | `panel_restore_32x20` | 34 | verified | 2 cases: its one region x 2 screen orders, all 20 rows + entry pin |
 | `0xdb34` | `panel_restore_none` | 2 | verified | 1 case: a bare `rts`, run over a band seeded the width of the WIDEST restore on both screens, which must be left untouched + entry pin |
@@ -943,3 +982,136 @@ table the reconstruction is (the six slots and the fifteen restore entries), so 
 the wrong region, flag, cell or callee fails at its own address rather than as a diff. The `movem`
 masks are now built from a register LIST rather than transcribed, which is what ties `$daf8`'s
 44-byte row to the eleven registers it moves.
+
+### The background scroll engine (batch 5), and what the cluster turned out to be
+
+Six routines, 1590 bytes, in a new file: `src/scroll.c`. The cluster at `$7522..$8228` was
+unexplored — the hw scan could say only that it was fifteen functions with no hardware access and
+every callee inside itself. **It is the level's SCROLLING ENGINE**, and the shape is worth stating
+before the batch notes because everything else follows from it.
+
+**THE GAME KEEPS EIGHT PRE-SHIFTED COPIES OF THE BACKGROUND.** `$5800` bytes each, tiling
+`$44000..$70000` — the map `project.toml` already recorded from a longword scan, now explained. Copy
+N is the same tile map drawn two pixels further left than copy N-1, so a two-pixel horizontal scroll
+is a change of BUFFER and not a redraw, and the only work per step is the ONE tile column the scroll
+uncovers. `bg_scroll_blit` (`$82f8`, named in a previous pass but not ported) is the consumer: it
+copies the chosen buffer to the screen. Three independent readings agree on the model:
+
+* `bg_scroll_phase` (`$83ac`) is used THREE ways in one routine — `mulu.w #$2c00` to pick the
+  buffer, as a byte index into `bg_scroll_edge_masks`, and as the `rol.l` count that shifts the
+  tiles. That is only coherent if the buffer index and the pixel offset are the same number. It was
+  named `bg_scroll_buffer # ctx` before this batch; the `# ctx` tag is now gone and the name is
+  `bg_scroll_phase`.
+* `bg_scroll_preshift_rows` (`$8144`, read but not ported) does nothing but walk a freshly drawn row
+  through the seven remaining copies, `rol.l #2` at a time — the other half of the same scheme.
+* The eight buffer addresses `bg_scroll_step_up`/`_down` reload are exactly `$44000 + N * $5800`.
+
+**THE STEPS RETURN THROUGH THE STACK, and that is the batch's transferable finding.** A step with
+nothing to do does `addq.l #4,(a7)` (or `#8`, in the vertical pair) and `rts`, returning PAST its
+caller's `bsr` to the fill. One act means both "no movement" and "skip the redraw". **Ghidra models
+none of it** — `../decomp.c` shows a bare `return` for that arm and an unconditional pair of calls
+in the caller, so a reconstruction written from the decompiler would read correct and behave wrong.
+It is not a hw-scan blind spot (the routines have an `rts`, no hidden callee, no hardware), it is a
+decompiler one, and it is now written up as general 68000 method in
+[`docs/m68k-disassembly.md`](../../../docs/m68k-disassembly.md).
+
+It also broke the harness, in the way that idiom always will: the kit stops a run when the PC
+reaches the sentinel it pushed as the return address, and the skipping arm returns to *sentinel + 4*
+instead. `test/leaf.py` gained a `stop_pc` passthrough for it, and — because a second stop PC on its
+own would let both arms pass the same case — every step case **reads the decision off the oracle's
+own stack**: `emu.run` writes the sentinel AT A7, so the skipping arm has rewritten that longword to
+sentinel + 4 and the other arm never wrote there at all. The reconstruction's returned flag is then
+required to agree with it. Neither side is trusted to report its own answer.
+
+**THE FILL CASES COMPARE A WRITE SET FOR EQUALITY, not for containment.** A column fill is a
+read-modify-write over a buffer — `and.l` a mask over the cell the scroll vacated, then `or.w` the
+rotated tiles back into it — which is the shape batch 4's mutation sweep found the seeding hole in.
+Two defences, from opposite directions: every case seeds the whole `$5800` buffer PLUS a scanline
+either side with a byte keyed on the ADDRESS (so an over-run writes something wrong, rather than
+zeros over zeros — with a per-case salt taken from the case NAME by `crc32`, not by `hash()`, whose
+randomisation per process would make a failure unreplayable and the red counts below unstable), and
+every case then requires the oracle's write set to be EXACTLY the address set
+a Python model of the fill produces, and every byte in it to be that model's value. The model is
+written from the disassembly rather than from `src/scroll.c`, so it is a third statement of the
+geometry and not a copy of the second.
+
+**THE TILE SOURCE IS THE GAME'S OWN PIXELS, and there are only sixteen of them in the .PRG.** The
+region `bg_tile_bitmaps` covers holds 148 bitmaps of 128 bytes; tiles 0..119 and 136..147 are ZERO
+in the shipped file and filled at runtime (as the map, the tile index and the row stride all are —
+they live past the program's end at `$218d0`). Only tiles **120..135** ship. Every case draws from
+those, so no rotation is a rotation of zeros, and
+`test_the_shipped_tile_bitmaps_are_the_sixteen_the_header_names` is the reading that fixes the two
+numbers in `include/wonderboy.h` rather than asserting them.
+
+**FOUR PIECES OF EVIDENCE CAME OUT OF THE READING that the batch did not need but the next one
+will.** All four are in `../names.txt`:
+
+* **`bg_scroll_raise_requests` (`$d28`) is what drives the whole cluster**, and it settles the
+  direction names independently. It compares two words at `$9934`/`$9936` against `$5a` and `$30`
+  and raises the request byte for the side the value falls on, returning the distances. So "left"
+  means the tracked object is left of centre, and the routine that request reaches is the one that
+  DECREMENTS `bg_scroll_pos_x` and fills the column at the map cursor's own cell — while "right"
+  decrements nothing and fills fifteen cells further on. The two namings were derived separately and
+  agree.
+* **Two of the four request bytes have no writer anywhere in the image.** An `abs.l` scan finds a
+  writer only for `$8230` and `$8232`, both inside `bg_scroll_run_queue` — and both are WORD moves
+  of a byte PAIR, so `$8231` and `$8233` are raised only as the low halves of them. Same family as
+  batch 4's "three of the eleven blitting entries have no writer": stated as what the scan sees, not
+  as "nothing raises them", because a write through an address register is invisible to it.
+* **The two split tables are the ring geometry, and both are pinned as data.**
+  `bg_scroll_col_split_table` entry k is `(10 - k, k - 1)` and `bg_scroll_row_split_table` entry k is
+  `(15 - k, k - 1)`, so a fill's two `dbf` halves always sum to exactly one buffer's worth of tile
+  rows and entry 0's second count is `-1` = no wrap needed. Neither table has an `abs.l` reference of
+  its own: both are reached only by a `lea` on the word before them, which is why
+  `bg_scroll_col_split_table`'s `var` line records that its justification is
+  `bg_scroll_y_coarse`'s `move.w (a5)+,d0`.
+* **`bg_scroll_edge_masks` is `$ffff << phase` for every entry but the first**, which is `$0000`
+  rather than the `$ffff` the rule would give — so phase 0 clears the whole cell and redraws it, and
+  the right-hand fill's `move.w #$10,d5` / `lea -1(a3),a3` special case exists to feed it a whole
+  fresh tile. Both are asserted against the shipped image.
+
+**Every one of the six entry pins is the routine's WHOLE BODY and every one matched on the first
+run** — 1590 bytes including two 670-byte routines of sixteen-times-unrolled loops. They are built
+from the same constants the reconstruction is (the buffer geometry, the masks, the map offsets, the
+callees' addresses out of `../names.txt`), and the loops are assembled programmatically so the `dbf`
+and `bcc.w` displacements come out of the pieces they jump over rather than being transcribed. A
+seventh case asserts each pin's LENGTH against the size `../out/hw_scan.tsv` records, because a
+whole-body pin that happened to be a prefix would otherwise pass.
+
+Mutation-checked rather than assumed (each rebuilt with the `.so` deleted first, and the source
+restored and byte-compared against a pristine copy afterwards — 858 green each time, re-measured
+against the tree as it landed rather than against the draft the sweep was first written on):
+the mask **inverted at every phase** reddens 3; the coarse row scaled by a **scanline instead of a
+tile block** reddens 26; the clear loop **one scanline short** reddens 30; the two halves of the
+rotated longword **swapped** reddens 30; the phase-zero redraw **without the map step-back** reddens
+3; the second half given the **first half's count** reddens 24; the latch test made **strict**
+reddens 3; the left step's row offset left **unmasked** reddens 3; the request byte **left raised**
+reddens 3; the rotate turned into a **rotate right** reddens 24; the tile index read as a **byte
+table** reddens 30; the split table indexed by the **word instead of the pair** reddens 26; the right
+edge given **no x bias** reddens 15; the no-second-half test made an **equality** reddens 6; the map
+walked by **one cell instead of a row** reddens 30; and the second cell taken from the **wrong side**
+reddens 15. **16 mutations, 16 killed, 0 survivors.**
+
+**One of the sixteen was a coverage finding, and the case that closes it is in the batch.** On the
+first sweep the no-second-half test (`(int16_t)second < 0`) made an equality reddened only 4 — the
+coarse-row-0 cases, where the count is `-1`. The count is exactly `0` at coarse row **1**, and no
+case used it, so the boundary between "one tile row in the second half" and "no second half" was
+pinned on one side only. `FILL_CASES` now carries `coarse1`, and the figure above is the 6 it
+reddens with that case present.
+
+**The four mutations that redden only 3 are the step and request-handler ones, and that is the
+battery's shape rather than a thin pin.** Those routines write six words between them, and the
+battery has one case per claim: the latch's three words, the phase carry's three positions, the
+borrow's four. A mutation to one of them reddens exactly the cases that address it — the same
+reading batch 2's "one case per claim" note records.
+
+**Two things this batch does NOT pin**, both by construction rather than by omission:
+
+* **The registers the fills leave behind.** Both walk out with every address register far past where
+  it started; the kit's oracle reports `d0`/`d1`/`a0`/`a1` only, and both call sites `rts`
+  immediately, so there is nothing a case could compare against. Same family as the panel blits'.
+* **The 65536-iteration `dbf`.** Both fills take their lengths from `bg_scroll_col_split_table`,
+  whose first words are 10 down to 0 — a negative first count would run 65536 tile rows and walk out
+  of the buffers, and no seeding through `bg_scroll_y_coarse` can produce one, because the table is
+  the game's own data and a case that rewrote it would be pinning an invented record. Reproduced by
+  construction in `src/scroll.c` (`uint16_t` counters and do/while loops) and honestly unreached.
