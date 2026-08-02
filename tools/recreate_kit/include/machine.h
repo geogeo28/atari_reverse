@@ -49,6 +49,29 @@ static inline uint32_t sign_ext16(uint32_t value) { return (uint32_t)(int32_t)(i
  * bits whichever way the value is read. */
 static inline uint32_t addr_add(uint32_t base, uint32_t delta) { return base + delta; }
 
+/* 68k `rol.l #n,Dn` / `rol.l Dm,Dn` — a 32-bit ROTATE, not a shift: the bits that leave the top come
+ * back in at the bottom. Total for EVERY count a caller can hand it, which C's own shifts are not:
+ *
+ *   * `count & 31` is the 68000's register form. `rol.l Dm,Dn` rotates by `Dm mod 64`, and a 32-bit
+ *     rotate is cyclic mod 32 — a rotate by 32 is the identity — so mod 64 and mod 32 give the same
+ *     VALUE for every count, and the mask is exact rather than a clamp. (Only the flags tell 0 from
+ *     32 apart, and the kit's differential does not compare them.) It also makes the count of 0 the
+ *     68000's own no-op instead of C's undefined `value >> 32`, so a caller whose count is a runtime
+ *     word — a phase, a distance — needs no guard of its own.
+ *   * THE IMMEDIATE FORM'S COUNT IS NOT THE FIELD. `rol.l #n,Dn` encodes n in three bits with 0
+ *     MEANING 8, so a caller transcribing the raw count field out of a disassembly must decode it
+ *     first; handing this the field would rotate by nothing where the original rotates by a byte.
+ *
+ * No reconstruction reaches a count >= 32 today: the wonderboy scroll's runtime count is a phase word
+ * the game masks to a nibble (plus the literal 16 the right edge substitutes for phase 0) and every
+ * other caller passes a literal, so the mask is totality rather than a pinned case. */
+static inline uint32_t rotate_left32(uint32_t value, unsigned count) {
+    count &= 31;
+    if (count == 0)
+        return value;
+    return (value << count) | (value >> (32 - count));
+}
+
 /* 68k `.b` op on a word register: the result byte replaces the low byte, and the high byte is
  * left untouched (byte ops don't carry into it) — e.g. addq.b / asl.b applied to a data reg. */
 static inline uint16_t set_low_byte(uint16_t word, uint8_t byte) {
