@@ -34,7 +34,8 @@ import pytest
 
 import harness
 import leaf
-from leaf import (MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, RTS, longword, word)
+from leaf import (MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_IMM_ABS_L, RTS,
+                  longword, word)
 from layout import wb
 
 # --- the globals, from the header both languages read (include/wonderboy.h) ---------------------
@@ -61,9 +62,8 @@ WORD_MASK = leaf.WORD_MASK
 # Named so the tables below read as instructions rather than as hex. Every one of these routines is
 # a move and an rts, which is why the entry pin can be built from the same (address, immediate) the
 # reconstruction uses: a wrong constant on either side fails at its own address. The opcodes
-# test_hud.py also spells (RTS and the three `move.w` forms) are imported from leaf.py above, so the
+# test_hud.py also spells (RTS and the four `move.w` forms) are imported from leaf.py above, so the
 # two batteries cannot disagree about them; these are the ones only this file needs.
-MOVE_W_IMM_ABS_L = b"\x33\xfc"      # move.w #imm,<abs>.l
 MOVE_W_IMM_ABS_W = b"\x31\xfc"      # move.w #imm,<abs>.w  (a 16-bit operand, so 2 bytes shorter)
 CMP_W_ABS_L_D0 = b"\xb0\x79"        # cmp.w <abs>.l,d0
 BGT_W_OVER_THE_STORE = b"\x6e\x00\x00\x0a"   # bgt.w +10 — past the `move.w d0,meter / rts` below

@@ -41,13 +41,15 @@ Makefile                   three lines: KIT + GAME + include $(KIT)/kit.mk
 include/wonderboy.h        how SWB.PRG becomes a running image, as constants — the canonical copy
 include/rad.h              the .RAD/.CRU container and its bitstream, as constants
 include/effects.h          the 29 effect/state leaves at $10200..$103e7 — prototypes
-include/hud.h              the status panel's 11 leaves — prototypes, and their register interfaces
+include/hud.h              the status panel's 20 routines — prototypes, and their register interfaces
 include/input.h            the two joystick-pipeline leaves
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
 src/effects.c              the effect handlers and the state stubs above them
-src/hud.c                  the leaves of panel_refresh_frame ($b346): the BCD score/counter
-                           accumulators, the panel blits, the meter's clamped add
+src/hud.c                  panel_refresh_frame ($b346) below its own entry: batch 2's eleven leaves
+                           (the BCD score/counter accumulators, the panel blits, the meter's clamped
+                           add) and batch 3's second tier (the digit plotter — a leaf too — its
+                           three field walks, the four fields the pass draws, the meter's own pass)
 src/input.c                the joystick edge pipeline: latch a frame, then diff two frames
 test/harness.py            the kit-binding shim
 test/leaf.py               shared driver for LEAF routines: entry points looked up in ../names.txt,
@@ -68,8 +70,10 @@ test/test_rad_depack.py    the depacker's differential: the game's own .RAD corp
 test/test_effects.py       the effect/state leaves' differential: seeded destinations, both sides of
                            the meter clamp, and the record list's write pointer
 test/test_hud.py           the status panel's differential: the game's own bitmaps blitted into both
-                           of its screen buffers, the BCD accumulators against a decimal model, and
-                           the regression case for the oracle's entry condition codes
+                           of its screen buffers, the BCD accumulators against a decimal model, the
+                           regression case for the oracle's entry condition codes, and — for the
+                           non-leaf tier — whole-body entry pins and a leading-zero model the drawn
+                           digits are checked against
 test/test_input.py         the joystick pair's differential — memory for the latch, the whole
                            returned d0 for the edge
 ```

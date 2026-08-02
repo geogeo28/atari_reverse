@@ -259,7 +259,7 @@ cmt 0x216be Current index into level_seq_table; post-incremented on every stage 
 var 0x216c0 level_seq_table
 cmt 0x216c0 35 entries x 8 bytes -- exactly the number of OVALAY* files in resource_file_table. Read by the dispatcher at 0xe5be. [0] = overlay ordinal; the loader does `addq.b #2,d0` on it to skip TITLESCR/CREDITS and index resource_file_table. [1] -> $e70c. [2] -> sets $e70e to $ffff/0. [3] -> $bd88, the stage/round number: sprites_cru_install subtracts 6 when it exceeds 9 and uses it to index a $40-byte-per-stage table at $e978. [4..7] are zero in every entry and have no reader I found -- UNVERIFIED.
 var 0xbd88 stage_number
-cmt 0xbd88 Set from level_seq_table[3] at 0xe61a.
+cmt 0xbd88 Set from level_seq_table[3] at 0xe61a. NINE operand references in the image ($1a02, $1c0e, $1c36, $5448, $bd3c, $e1d0, $e1f8, $e620, $e8a2), all abs.l and none PC-relative; $bd3c is hud_draw_stage_number's read, which draws the LOW BYTE of this word as two digits at screen_back + $7311.
 fn 0xe494 show_data_disk_prompt
 cmt 0xe494 clear_palette, screen base := $078000, load_resource_by_index($27 = DATADISK.RAD -> $49800), rad_depack to $77f80, set_palette from $77f84, then `clr.b joy1_state / wait for bit 7 set / wait for it clear` = press and release fire. The prompt is the DATADISK.RAD BITMAP -- str_insert_data_disk is NOT used here (nothing anywhere references it). Ghidra's function at this address is 632 bytes because the code falls through at $e4e4 into the boot continuation at $e4e6; only $e494..$e4e4 is the prompt. Entered by `jmp $e494.l` from $700e.
 fn 0xe87c sprites_cru_install
@@ -423,7 +423,9 @@ cmt 0xb546 A LONGWORD write pointer into effect_record_list. The four push handl
 
 # ---------------------------------------------------------------------------
 # The status panel: panel_refresh_frame's once-a-frame pass and its leaves,
-# $b346..$bf5e. Eleven of the leaves are reconstructed in recreate/src/hud.c;
+# $b346..$bf5e. Twenty of them are reconstructed in recreate/src/hud.c -- eleven
+# leaves plus the second tier above them (the digit plotter, its three field
+# walks, and the four fields panel_refresh_frame draws, plus the meter's pass);
 # the addresses and the blit geometry are mirrored as constants in
 # recreate/include/wonderboy.h, which recreate/test/ scrapes. Every name here
 # is at the MECHANISM and carries its address, the same rule as the effect
@@ -444,10 +446,17 @@ cmt 0xb546 A LONGWORD write pointer into effect_record_list. The four push handl
 # that depend on completeness -- frame_tick_b39a's "only writer" / "only
 # entropy" ($b39a) and bcd_sub_score_bd70's "no reference anywhere" ($b5c6,
 # dead as shipped) -- survive it. Any count added here later needs the same
-# sweep.
+# sweep; the second tier's eight new addresses were put through it and it
+# found nothing, so every count below rests on the abs.l/abs.w scan alone.
+#
+# A CALL-SITE count ("sixteen call sites", "one caller") is a separate scan and
+# covers a separate set of encodings: every even offset in $3f8..$218d0 decoded
+# as bsr.s/bsr.w/bsr.l, jsr/jmp abs.l, jsr/jmp abs.w and jsr d16(pc). It cannot
+# see a call through a register or a jump table -- which is not hypothetical
+# here, see $bbca.
 # ---------------------------------------------------------------------------
 fn 0xb346 panel_refresh_frame
-cmt 0xb346 44 bytes: ten calls and an rts, run once a frame from game_main_loop's $66e-gated block. `jsr $d93a` then bsr to $b39c (the record list's display), $b54c (the four digits of bcd_counter_bd6e), $b74a (the eight digits of bcd_score_bd70, which also sets hud_meter_max from thresholds on it), $b7c6 (draws max(score, high score)), $b61e (the meter), $b8f0 (the six HUD slots), $bbca (the panel animation's timers), $bd32 (a text pass over $bd88) and $b372. That call list is the evidence for treating $b346..$bf5e as one subsystem.
+cmt 0xb346 44 bytes: ten calls and an rts, run once a frame from game_main_loop's $66e-gated block. `jsr $d93a` then bsr to $b39c (the record list's display), $b54c (the four digits of bcd_counter_bd6e), $b74a (the eight digits of bcd_score_bd70, which also sets hud_meter_max from thresholds on it), $b7c6 (draws max(score, high score)), $b61e (the meter), $b8f0 (the six HUD slots), $bbca (the panel animation's timers), $bd32 (the two digits of stage_number) and $b372. That call list is the evidence for treating $b346..$bf5e as one subsystem. SIX of the ten are reconstructed ($b54c, $b74a, $b7c6, $b61e, $bd32, $b372); $b346 ITSELF is not, and cannot be until the other FOUR are -- $d93a (446 bytes, the screen-region restore), $b39c (whose own callee $b3da is $b850's other caller), $b8f0 (hud_refresh_dirty_slots, 666 bytes) and $bbca (which leaves the subsystem, see its own note). Note also that $b346 sets NEITHER d0 NOR d7 before any of its `bsr`s, so the font each field is drawn with is whatever the routine before it left behind.
 
 fn 0xb372 select_table_21e8c_and_tick_b39a
 cmt 0xb372 Two unrelated halves, and the last thing panel_refresh_frame does. `tst.w $a32.w / bne` picks table_ptr_21e8c := $21e6a when state_flag_a32 is non-zero and $21c60 when it is zero (a `move.l #imm` either way, so the two addresses are immediates, not a table lookup); then `addq.w #1,$b39a` ticks frame_tick_b39a. No callee, no hardware, no register argument.
@@ -463,6 +472,10 @@ proto 0xb410 hud_blit_record_bitmap record@A0
 cmt 0xb410 `move.b (a0),d0 / mulu.w #$400,d0 / lea $1079c,a0 / adda.w d0,a0` then 32 rows of 8 x `move.l (a0)+,(a1)+` with `lea 128(a1),a1` -- a 32-byte-wide (64 px), 32-row copy into screen_back + $2800. Called only from $b3be, with a0 = effect_record_write_ptr's value, so the byte it indexes on is the HIGH byte of the newest record (the 5/6/7/8 the four effect_push_record_* handlers push). Two operand-size details a port must keep: `move.b` leaves d0's high byte alive into the `mulu`, and `adda.w` then keeps only the product's low word, sign-extended -- so only the selector's low 6 bits reach the address at all, and a selector with bit 5 set addresses BELOW the table.
 var 0x1079c record_bitmap_table
 cmt 0x1079c $400 bytes per entry, indexed by a record's high byte. One operand reference in the whole image, the `lea` at $b416 inside hud_blit_record_bitmap.
+
+fn 0xb54c hud_draw_counter_bd6e
+proto 0xb54c hud_draw_counter_bd6e digits@D7
+cmt 0xb54c 22 bytes, the second thing panel_refresh_frame calls: `movea.l screen_back,a0 / adda.w #$1e08,a0 / move.w bcd_counter_bd6e,d7 / swap d7 / bsr $b5ea`. The `move.w` replaces only d7's LOW word and the `swap` then buries the caller's own high word beneath the counter, where four nibble rotations cannot reach it -- so entry d7 is live input that cannot change the display, which recreate/test/test_hud.py pins with a poisoned d7 instead of arguing. d0 is unread here (the four-digit walk forces its own). ONE caller, $b350; the count is the whole-image branch scan described on $b850.
 
 fn 0xb562 bcd_add_counter_bd6e
 proto 0xb562 bcd_add_counter_bd6e addend@D0
@@ -482,6 +495,19 @@ cmt 0xbd74 The four bytes immediately above bcd_score_bd70, and the value $b7c6 
 var 0xbd78 bcd_addend_bd78
 cmt 0xbd78 Four bytes of scratch: where the four accumulators park d0 so `abcd`/`sbcd` can read it from memory. Exactly four operand references in the image -- the `move.w`/`move.l d0,$bd78` at $b566, $b586, $b5a6 and $b5ca -- so nothing else in the program reads or writes it, and its contents between calls are dead. The word form writes only $bd78..$bd79 and leaves $bd7a..$bd7b holding the previous longword's low half.
 
+fn 0xb5ea hud_draw_four_digits
+proto 0xb5ea hud_draw_four_digits cursor@A0 digits@D7
+cmt 0xb5ea 52 bytes: `moveq #$0,d0`, then four `bsr $b850` separated by `suba.l #$4ff` (net +1 byte -- the right half of the same 16-pixel group) and `suba.l #$4f9` (net +7 -- the next group's left half), since $b850 leaves a0 1280 bytes lower and each subtraction is that minus a column step. `move.w #$ffff,digit_significant_seen_b84e` before the FOURTH digit, so an all-zero field still prints its last digit, and `clr.w` after it. The `moveq` means the caller's font never reaches any of the four, which is what separates this walk from $b7ea's and $bd4a's. ONE caller, $b55c.
+
+fn 0xb61e hud_draw_meter
+cmt 0xb61e 164 bytes and no register arguments -- every input is a word in memory. `st panel_restore_flag_dbb3`, then `moveq #$0,d6 / move.w hud_meter_value,d6 / divu.w #$4,d6` and three passes over meter_cell_offsets threaded on the cursor hud_blit_meter_cell returns: `value/4` full cells ($146fc) in a `dbf` loop, then ONE partial cell selected by the remainder the `swap d6` brings down ($1471c/$1473c/$1475c for 3/2/1 and none for 0), then `hud_meter_max/4` minus the cells already drawn -- recovered as `(a1 - $b6e4) asr 1`, which is the only reason $b6c2 returns its advanced a1 -- of the empty cell $1477c. EVERY step after the divide is 16-BIT (`asr.w`, `sub.w`, and a `dbf` whose counter is a word), so a maximum below the value drives the empty count NEGATIVE, the `bne` still takes the loop, and the `dbf` then runs it 65535 times, walking the cursor far past the table's ten entries and blitting off the end of the screen. No differential case reaches that and whether the game's own writers can produce it was NOT established -- registered unpinned in recreate/STATUS.md. ONE caller, $b35c.
+var 0x146fc meter_cell_full
+var 0x1471c meter_cell_partial_3
+var 0x1473c meter_cell_partial_2
+var 0x1475c meter_cell_partial_1
+var 0x1477c meter_cell_empty
+cmt 0x146fc The FULL cell, and the first of a block of five consecutive 32-byte cell bitmaps (8 rows x 4 planes, one 8-pixel column) that runs $146fc..$1479b. Each is reached by its OWN absolute `lea` inside hud_draw_meter and handed to hud_blit_meter_cell in a2 -- $146fc full, $1471c/$1473c/$1475c the partial cells for a remainder of 3/2/1, $1477c empty -- so the block is contiguous by measurement, not by indexing: nothing in the image steps through it. Each of the five is labelled here separately and mirrored as WB_METER_CELL_FULL/_PARTIAL_3/_2/_1/_EMPTY in recreate/include/wonderboy.h. Each has exactly ONE operand reference in the image -- $b644, $b65c, $b672, $b688, $b6b4, in that order -- and a d16(pc) sweep over the whole image finds no PC-relative reference to any of them. What a cell DEPICTS is not established; see $b6fa for why the meter's own reading is still open.
+
 fn 0xb6c2 hud_blit_meter_cell
 cmt 0xb6c2 REGISTER INTERFACE (no `proto` line: the result is in a1, which the proto directive cannot express -- it forces a void return). a1 = a cursor into meter_cell_offsets, a2 = the cell's 32 bytes; returns a1 ADVANCED by 2, a2 advanced by 32, a0 and d0 clobbered. Body: `movea.l screen_back,a0 / adda.w (a1)+,a0` then 8 rows of `move.b (a2)+,(a0)` at +0/+2/+4/+6 with `lea 160(a0),a0` -- the four plane bytes of one 8-pixel column, 8 rows tall. The advanced a1 IS consumed: $b61e subtracts $b6e4 from it and halves the difference to count the cells it drew. The advanced a2 is not: FIVE `bsr` sites, all of them inside $b61e -- $b648 and $b6b8 are the bodies of `dbf` loops (over the full cells and over the empty ones), $b660/$b676/$b68c are the three arms of the one-shot `cmpi.w`/`bne` chain that draws the single partial cell -- and every one of the five is preceded IMMEDIATELY by its own `lea $146fc/$1471c/$1473c/$1475c/$1477c,a2`, including the two in loops, which reload inside the loop body. So a2 is dead on return at all five.
 var 0xb6e4 meter_cell_offsets
@@ -491,11 +517,38 @@ fn 0xb6fe hud_meter_add_clamped
 proto 0xb6fe hud_meter_add_clamped amount@D0
 cmt 0xb6fe `add.w d0,$b6fa` -- a read-modify-write ON MEMORY, so the raised value is STORED before anything is tested -- then `move.w $b6f8,d1 / cmp.w $b6fa,d1 / ble` overwrites it with hud_meter_max. The general form of effect_add4_clamped_b6fa/effect_add2_clamped_b6fa, and NOT the same comparison: those use `bgt` on the value in a register and store max only when the raise passes it, this one clamps when the raise REACHES it. Both are signed 16-bit and both wrap. One caller, $6bf0.
 
+fn 0xb74a hud_draw_score_and_size_meter
+proto 0xb74a hud_draw_score_and_size_meter font_select@D0
+cmt 0xb74a 124 bytes: `movea.l screen_back,a0 / adda.w #$a21,a0 / move.l bcd_score_bd70,d7 / bsr $b7ea` draws the eight digits, and then the score is RE-READ from memory and thresholded to set hud_meter_max -- `cmp.l #$400000,d7 / blt` and so on down through $300000/$200000/$100000/$30000, storing $28/$24/$20/$1c/$18 and returning on the first match, with nothing stored below $30000. Those compares are SIGNED, so a score whose top nibble is 8 or 9 reads NEGATIVE, matches none of the five and leaves the maximum untouched. Entry d7 is dead (the `move.l` overwrites it); entry d0 is NOT -- it reaches $b7ea's first digit, and panel_refresh_frame's `bsr $b74a` never sets it. ONE caller, $b354.
+
+fn 0xb7c6 hud_draw_larger_score
+proto 0xb7c6 hud_draw_larger_score font_select@D0
+cmt 0xb7c6 36 bytes: `move.l bcd_score_bd70,d7 / cmp.l bcd_hiscore_bd74,d7 / bgt` keeps the score and otherwise reloads d7 with the high score, then `movea.l screen_back,a0 / lea 2633(a0),a0 / bsr $b7ea` draws eight digits at screen_back + $a49 (a `lea d16(a0)`, not the `adda.w` the other three fields use). The compare is SIGNED and STRICT: an EQUAL pair takes the high-score arm, which is unobservable because both fields then hold the same bytes, while a score with bit 31 set loses to any small high score. Entry d7 is dead; entry d0 reaches the first digit. ONE caller, $b358.
+
+fn 0xb7ea hud_draw_eight_digits
+proto 0xb7ea hud_draw_eight_digits font_select@D0 cursor@A0 digits@D7
+cmt 0xb7ea 100 bytes: eight `bsr $b850` with the cursor stepped between them, alternating `suba.l #$4f9` (net +7) and `#$4ff` (net +1) and STARTING with the +7 -- the field begins on an odd byte, the right half of a 16-pixel group. A `moveq #$0,d0` follows each of the first six steps, so ONLY THE FIRST DIGIT sees the caller's d0 and the other seven use the default glyphs. `move.w #$ffff,digit_significant_seen_b84e` before the SEVENTH digit, so the last two always print, and `clr.w` after the eighth. TWO callers, $b758 (hud_draw_score_and_size_meter) and $b7e4 (hud_draw_larger_score).
+
+fn 0xb850 hud_plot_digit
+cmt 0xb850 REGISTER INTERFACE, and no `proto` line for two reasons (hud_blit_meter_cell has the first): it returns the advanced cursor in a0, which the directive forces to void, and its d7 is IN AND OUT. d0 = the font select, a0 = the cursor, d7 = the digit register; on return a0 is 1280 bytes lower (8 rows x 160), d7 has been ROTATED LEFT BY ONE NIBBLE, and d1/d6/a1 are clobbered. Body: `rol.l #4,d7 / move.l d7,d6 / andi.l #$f,d6` comes FIRST, so the digit drawn is the nibble that was at the TOP of d7 on entry; then 8 rows of `move.b (a1)+,{0,2,4,6}(a0)` with `adda.l #$a0,a0` -- the four plane bytes of one 8-pixel column. digit_significant_seen_b84e gates it: while that word is zero a zero nibble is drawn BLANK and no glyph is fetched, and the first non-zero nibble raises it to $ffff. The blank is not the same under both fonts -- four cleared planes when d0 = 1, but `st 2(a0)` (a solid $ff in plane 1) otherwise -- and the glyph table differs too ($145bc vs $1447c), so d0 selects both. SIXTEEN call sites, every one inside a routine that walks a field of digits left to right: $b5ec/$b5f6/$b600/$b612 in $b5ea, $b7ea/$b7f6/$b802/$b80e/$b81a/$b826/$b838/$b842 in $b7ea, $bd4a/$bd54 in $bd4a, and $b3f0/$b404 in $b3da, which is NOT reconstructed. THE COUNT IS A WHOLE-IMAGE SCAN of every even offset in $3f8..$218d0 for bsr.s/bsr.w/bsr.l, jsr/jmp abs.l, jsr/jmp abs.w and jsr d16(pc); it cannot see a call made through a register or a jump table.
+var 0xb84e digit_significant_seen_b84e
+cmt 0xb84e The leading-zero latch hud_plot_digit reads: while it is zero a zero nibble is drawn as a blank instead of a glyph, and the first non-zero nibble sets it to $ffff so every digit after that prints. NINE operand references in the image, all abs.l (the address is above $7fff, so an abs.w encoding is impossible) and none PC-relative (a d16(pc) sweep over the whole image finds none): $b874 and $b8ca inside hud_plot_digit itself, then one raise and one `clr.w` in each of three of the field walks -- $b400/$b40a in $b3da, $b60e/$b618 in $b5ea, $b834/$b848 in $b7ea -- and $bd60 in $bd4a, which only CLEARS it. So every walk leaves it zero on exit, and nothing outside this cluster reads or writes it.
+var 0x1447c digit_glyphs_1447c
+cmt 0x1447c 32 bytes per glyph (8 rows x 4 planes, one 8-pixel column), indexed by the nibble hud_plot_digit draws -- so sixteen glyphs are addressable, of which the game can only ever reach 0..9, both fields it draws being packed BCD. ONE operand reference in the image, the `lea $1447c.l,a1` at $b862, i.e. the arm taken when d0 is not 1.
+var 0x145bc digit_glyphs_145bc
+cmt 0x145bc The glyphs hud_plot_digit uses when d0 = 1, and NOT a separate table: $145bc is $1447c + $140, exactly ten glyphs in, so this is the second ten of one twenty-glyph block. TWO operand references: the `lea` at $b858 inside hud_plot_digit and a `lea $145bc.l,a1` at $1d0a inside unrecovered code -- the only user of either table outside this cluster, and the reason the glyphs are named for their address rather than as "the digits".
+
+fn 0xb8f0 hud_refresh_dirty_slots
+cmt 0xb8f0 666 bytes, NOT reconstructed and QUEUED AS THE NEXT BATCH: its closure is clean and both callees are already ported, so the only thing against it is size. Six slots keyed on the two-byte records at $bbbe/$bbc0/$bbc2/$bbc4/$bbc6/$bbc8, each handled the same way -- `tst.b 1(a0)` on the request byte and skip the slot when it is zero, else `clr.b` it, `st` the slot's restore flag ($dbb6..$dbbb, one per slot, the same array panel_restore_flag_dbb3 sits in), then hud_blit_cell_copy from a fixed cell ($1479c for the first three slots, $14bfc for the last three) followed by hud_blit_cell_or laying a second cell over it. Which second cell is byte 0 of the record: a two-way `tst.b (a0)` in the first five slots, a seven-way `cmpi.b #1..#6` chain in the sixth ($bafe..$bb62, whose #5 and #6 arms both `lea $152fc`). Destinations are screen_back + $3ca0/$4600/$4f60/$3cb0/$4610/$4f70. EIGHTEEN call sites of the pair -- six copies and twelve ORs -- each with both a0 and a1 reloaded ahead of it, so the advanced registers are dead. ONE caller, $b360 in panel_refresh_frame; both counts are the whole-image branch scan described on $b850. What a slot DEPICTS is not established.
+
 fn 0xbb8a hud_blit_cell_copy
 proto 0xbb8a hud_blit_cell_copy source@A0 destination@A1
 fn 0xbba0 hud_blit_cell_or
 proto 0xbba0 hud_blit_cell_or source@A0 destination@A1
 cmt 0xbb8a The two HUD-slot cell blits, identical in geometry and different in combine: 14 rows of 16 bytes (32 x 14 px) with `lea 144(a1),a1` between rows, i.e. a 160-byte scanline. $bb8a is 4 x `move.l (a0)+,(a1)+`; $bba0 is 4 x `move.l (a0)+,d1 / or.l d1,(a1)+`, so it READS the destination and a port that copied would agree with it only over a blank cell. $b8f0 pairs them per slot -- the copy with a blank source to clear the cell, then the OR with the slot's icon -- across 18 call sites, every one of which reloads both a0 and a1 immediately before the `bsr`, so the advanced registers (a0 +224, a1 +2240) and the spent d0/d1 are dead.
+
+fn 0xbbca panel_frame_timers
+cmt 0xbbca 268 bytes, NOT reconstructed, and NOT the clean closure the hardware scan reports. The scan gives it ONE callee ($bcd6, four `bsr` sites) because it resolves no indirect call; besides those it does `move.w #$f,d0 / clr.w d1 / lea $17adc.l,a1 / jsr 56(a1)` at $bc96..$bca2, which is a FIXED call to $17b14 -- snd_stub_00 + 56, the movem-wrapped thunk into snd_trigger_effect ($1a48a). So a differential entered here runs the sound module on the oracle's side and would need it ported on the other, which puts $bbca in a different subsystem from the rest of this block. Read that as the general caveat: "N callees" from the scan is a claim about the calls Ghidra RESOLVED, the same way a fall-through target is (see $bf4e). But note that $bca2 is NOT a documented limit of the scan -- an unresolved indirect call is normally REPORTED as an `I` row (out/hw_scan.tsv's ledger opens with `I 0x716 0x726 jsr (0xe,A0)`, the same encoding), and this site produces neither an E edge nor an I row. WHY it was dropped is UNDIAGNOSED and marked for investigation in recreate/STATUS.md; do not read it as "jsr d16(An) is invisible". The rest of the body is the timer chain over $bd26/$bd28/$bd2a/$bd2c/$bd2e that drives panel_frame_index 0..$c, and it also spends hud_meter_value by 4 (floored at 0) on the arm at $bc30.
 
 fn 0xbcd6 hud_blit_panel_frame
 cmt 0xbcd6 No arguments: `move.w $bd2c,d0 / mulu.w #$300,d0 / lea $153dc,a0 / lea (0,a0,d0.w),a0` then 32 rows of 24 bytes into screen_back + $5b40 (48 x 32 px), moved four rows per iteration as `movem.l (a0)+,d0-d5 / movem.l d0-d5,{0,160,320,480}(a1)` with `lea 640(a1),a1`. Same operand-size trap as hud_blit_record_bitmap: the `mulu` is 32-bit and the indexed `lea` keeps only d0's low word, sign-extended. Called from four sites inside $bbca, its own driver.
@@ -503,6 +556,17 @@ var 0xbd2c panel_frame_index
 cmt 0xbd2c The word hud_blit_panel_frame indexes on. Eight operand references: six inside $bbca ($bc28 sets it to $a, $bc56 sets it to `($500 - $bd28) asr 7`, $bc8a compares it against $a, $bcb4 against $c, $bcc0 clears it, $bcce increments it), the read at $bcd6 that opens hud_blit_panel_frame, and the `clr.w` in the new-game reset at $fef4 -- so it cycles 0..$c under $bbca's own timers ($bd26/$bd28/$bd2a/$bd2e). What the 13 frames depict is not established.
 var 0x153dc panel_frame_bitmaps
 cmt 0x153dc $300 bytes per frame (24 bytes x 32 rows), indexed by panel_frame_index. One operand reference in the image, the `lea` at $bce0.
+
+fn 0xbd32 hud_draw_stage_number
+proto 0xbd32 hud_draw_stage_number font_select@D0 digits@D7
+cmt 0xbd32 24 bytes: `movea.l screen_back,a0 / adda.w #$7311,a0 / move.w stage_number,d7 / swap d7 / rol.l #8,d7 / bsr $bd4a`. The swap and the rotate together leave stage_number's LOW BYTE in d7's top two nibbles, so the two digits drawn are that byte and the high byte is never displayed; the caller's own d7 high word ends up below both and cannot reach either. d0 is passed straight through to BOTH digits, and panel_refresh_frame's `bsr $bd32` never sets it. ONE caller, $b368.
+
+fn 0xbd4a hud_draw_two_digits
+proto 0xbd4a hud_draw_two_digits font_select@D0 cursor@A0 digits@D7
+cmt 0xbd4a 28 bytes, and the odd one of the three field walks in two ways: it never forces digit_significant_seen_b84e (so a leading zero here is drawn BLANK, not as a `0`) and it never forces d0 (so both digits use the caller's font). Two `bsr $b850` with `suba.l #$4f9` between them, then `suba.l #$4ff` AFTER the last digit -- an advance nothing reads -- and `clr.w digit_significant_seen_b84e`. ONE caller, $bd44.
+
+var 0xdbb3 panel_restore_flag_dbb3
+cmt 0xdbb3 One byte of the flag array at $dbb0 that $d93a -- panel_refresh_frame's FIRST call, and not reconstructed -- walks with `tst.b (a6)+ / clr.b -1(a6)`, copying one screen region from screen_front to screen_back per raised flag; this is its fourth entry, whose region is the `lea 2720(a0)` pair at $d9a0/$d9a4. ONE operand reference in the whole image, the `st $dbb3.l` at $b626 inside hud_draw_meter, so within the recovered code the meter raises it and only $d93a consumes it. $b8f0 raises $dbb6..$dbbb the same way.
 
 fn 0xbf4e text_glyph_source_from_d0
 cmt 0xbf4e NOT A LEAF, despite the hardware scan's T0/empty-callee classification, and NOT reconstructed -- it has no `rts`. Its 16 bytes are `lea $12c9c,a0 / subi.b #$20,d0 / lsl.l #5,d0 / lea (0,a0,d0.w),a0`, which turn a character code into a 32-byte glyph pointer, and it then FALLS THROUGH into $bf5e. The scan cut the function at $bf5e because $bf5e is entered directly by eight `bsr` of its own ($be2a, $be38, $be46, $be5e, $be6c, $be7e, $be8c, $be9a); $bf4e itself has one caller, $beca. So a differential entered here executes 226 bytes, not 16, and the 210 belong to a routine that is out of this batch. $bf5e is a fully unrolled plotter: 32 x `move.b (a0)+,(a1)` at +0/+2/+4/+6 over 8 rows, with `lea 82(a1),a1` between rows (a measured 88-byte row advance, which is NOT a 160-byte scanline -- unexplained, do not assume a screen buffer), and a tail that returns a1 at +1 or +7 depending on its parity, i.e. the next 8-pixel column.

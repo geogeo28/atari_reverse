@@ -22,7 +22,14 @@
 //                                                   to a function ENTRY) / JUMPIN (a branch into
 //                                                   the MIDDLE of another function — this game's
 //                                                   boot chain is built out of those)
-//   I  fn     insn     text                         unresolved indirect call/jump (a blind spot)
+//   I  fn     insn     text                         unresolved indirect call/jump (a blind spot).
+//                                                   `jsr/jmp d16(An)` belongs HERE even when the
+//                                                   base register was loaded from an immediate, so
+//                                                   a fixed-base indirect call is expected in this
+//                                                   ledger and not in E. A call site that appears in
+//                                                   NEITHER E nor I is a scan DEFECT to investigate,
+//                                                   not a documented limit: measured once, on
+//                                                   wonderboy's `jsr 56(a1)` at $bca2, undiagnosed.
 //   H  fn insn hwaddr size dir mode steer stored text   one hardware/off-image access
 //   O  start  end  bytes                             a run of code outside any function.
 //                                                    start..end is the address SPAN (it can

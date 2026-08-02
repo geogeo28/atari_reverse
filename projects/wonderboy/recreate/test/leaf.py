@@ -143,6 +143,7 @@ RTS = b"\x4e\x75"
 MOVE_W_ABS_L_D0 = b"\x30\x39"       # move.w <abs>.l,d0
 MOVE_W_D0_ABS_L = b"\x33\xc0"       # move.w d0,<abs>.l
 MOVE_W_ABS_L_ABS_L = b"\x33\xf9"    # move.w <abs>.l,<abs>.l
+MOVE_W_IMM_ABS_L = b"\x33\xfc"      # move.w #imm,<abs>.l
 
 
 def word(value):

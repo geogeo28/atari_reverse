@@ -236,6 +236,23 @@
 #define WB_METER_CELL_OFFSET_LEN 2u
 #define WB_METER_CELL_ROWS   8u
 
+/* $b61e: the meter's own pass. It draws `value / 4` full cells, then ONE partial cell chosen by the
+ * remainder, then `max / 4 - (cells drawn)` empty ones, walking meter_cell_offsets with the cursor
+ * hud_blit_meter_cell returns. The five bitmaps are consecutive 32-byte blocks, named individually
+ * because the original `lea`s each address rather than indexing a base. */
+#define WB_METER_CELL_UNITS      4u        /* `divu.w #4,d6` — one cell is four meter units */
+#define WB_METER_CELL_FULL       0x146fcu
+#define WB_METER_CELL_PARTIAL_3  0x1471cu  /* remainder 3 */
+#define WB_METER_CELL_PARTIAL_2  0x1473cu  /* remainder 2 */
+#define WB_METER_CELL_PARTIAL_1  0x1475cu  /* remainder 1 */
+#define WB_METER_CELL_EMPTY      0x1477cu
+
+/* The byte $b61e raises before it draws. It is one entry of the flag array at $dbb0 that $d93a —
+ * panel_refresh_frame's FIRST call, and not reconstructed — walks with `tst.b (a6)+ / clr.b -1(a6)`,
+ * restoring one screen region from screen_front to screen_back per raised flag. `st` writes $ff. */
+#define WB_PANEL_RESTORE_FLAG_DBB3 0xdbb3u
+#define WB_PANEL_RESTORE_FLAG_SET  0xffu
+
 /* $bb8a/$bba0: one HUD-slot cell, 16 bytes over 14 rows (32 x 14 px). $b8f0 calls the copying form
  * with a blank source to clear a cell and the OR-ing form to lay an icon over it. */
 #define WB_HUD_CELL_BYTES    16u
@@ -249,5 +266,58 @@
 #define WB_PANEL_FRAME_ORIGIN 0x5b40u  /* byte offset into screen_back: row 146, column 0 */
 #define WB_PANEL_FRAME_BYTES  24u
 #define WB_PANEL_FRAME_ROWS   32u
+
+/* ---- $b850 and the four digit fields it draws (RUNTIME addresses; src/hud.c) ------------------
+ *
+ * `$b850` plots ONE packed-BCD digit: it rotates the digit register left by a nibble and draws the
+ * nibble that lands on top, 8 rows of one 8-px column (four plane bytes at +0/+2/+4/+6, one 160-byte
+ * scanline apart). Sixteen call sites in the image, every one inside a routine that walks a field of
+ * digits left to right: four in $b5ea (bcd_counter_bd6e), eight in $b7ea (bcd_score_bd70 and
+ * bcd_hiscore_bd74), two in $bd4a (stage_number) and two in $b3da, which is NOT reconstructed.
+ */
+#define WB_DIGIT_SIGNIFICANT_SEEN 0xb84eu  /* word: the leading-zero latch (see src/hud.c) */
+#define WB_DIGIT_SIGNIFICANT_SET  0xffffu  /* the `move.w #$ffff` that forces a digit to print */
+#define WB_DIGIT_GLYPHS           0x1447cu /* the glyphs for every font_select EXCEPT 1 */
+#define WB_DIGIT_GLYPHS_ALT       0x145bcu /* ...and the ones for font_select == 1 ($1d0a leas it
+                                            * too, so this table has a second, unrecovered user) */
+#define WB_DIGIT_FONT_ALT         1u       /* the `cmpi.w #1,d0` that chooses between them */
+#define WB_DIGIT_FONT_DEFAULT     0u       /* the `moveq #0,d0` $b5ea and $b7ea force */
+#define WB_DIGIT_GLYPH_LEN        32u      /* `asl.w #5,d6`: WB_DIGIT_ROWS rows x WB_PLANES planes */
+#define WB_DIGIT_ROWS             8u
+#define WB_DIGIT_NIBBLE_MASK      0xfu     /* `andi.l #$f,d6` */
+#define WB_DIGIT_BLANK_PLANE      1u       /* a suppressed zero fills THIS plane... */
+#define WB_DIGIT_BLANK_FILL       0xffu    /* ...with `st`, but only under the default glyphs */
+
+/* The two `suba.l` immediates every caller steps the cursor with. $b850 leaves it eight scanlines
+ * below where it started (WB_DIGIT_ROWS * WB_SCREEN_LINE = 1280), so each of these is that minus a
+ * net column step: +1 byte to the right half of the same 16-px group, or +7 to the next group's
+ * left half. test/test_hud.py derives the two net steps rather than restating them. */
+#define WB_DIGIT_REWIND_RIGHT_HALF 0x4ffu
+#define WB_DIGIT_REWIND_NEXT_GROUP 0x4f9u
+
+/* Where each field lands in screen_back. The counter's and the score's are `adda.w #imm,a0`; the
+ * high score's is a `lea 2633(a0),a0` — a different instruction for the same kind of offset. */
+#define WB_COUNTER_ORIGIN 0x1e08u  /* $b54c: four digits of bcd_counter_bd6e */
+#define WB_SCORE_ORIGIN   0xa21u   /* $b74a: eight digits of bcd_score_bd70 */
+#define WB_HISCORE_ORIGIN 0xa49u   /* $b7c6: eight digits of max(score, hiscore) */
+#define WB_STAGE_ORIGIN   0x7311u  /* $bd32: two digits of stage_number's LOW byte */
+
+#define WB_STAGE_NUMBER   0xbd88u  /* the word $bd32 draws; set from level_seq_table[3] at $e61a */
+
+/* The five (score threshold, hud_meter_max) steps $b74a applies after drawing the score, LOWEST
+ * first — the original tests them highest first and returns on the first match, which is the same
+ * table read the other way. The compare is `cmp.l #imm,d7 / blt`, i.e. SIGNED, so a score at or
+ * above $80000000 matches none of them and leaves the maximum alone (test/test_hud.py pins that). */
+#define WB_METER_SIZE_STEPS   5u
+#define WB_METER_SIZE_SCORE_1 0x30000u
+#define WB_METER_SIZE_MAX_1   0x18u
+#define WB_METER_SIZE_SCORE_2 0x100000u
+#define WB_METER_SIZE_MAX_2   0x1cu
+#define WB_METER_SIZE_SCORE_3 0x200000u
+#define WB_METER_SIZE_MAX_3   0x20u
+#define WB_METER_SIZE_SCORE_4 0x300000u
+#define WB_METER_SIZE_MAX_4   0x24u
+#define WB_METER_SIZE_SCORE_5 0x400000u
+#define WB_METER_SIZE_MAX_5   0x28u
 
 #endif /* WONDERBOY_H */

@@ -79,6 +79,32 @@ Three rules the measurement itself has to follow:
    say which case.
 3. **State the coverage of the measurement as loudly as its result.** If the disassembler only
    reached 46 % of what you believe is code, every tier total is a statement about that 46 %.
+4. **The CALL-GRAPH half is a claim about the calls Ghidra RESOLVED, not about the calls the code
+   makes.** The scan closes each tier over its call graph, so a missing edge understates a
+   function's closure exactly the way a missed operand understates its hardware use — and it
+   understates it *silently*, as "clean, one callee, port it". Two things follow, and the second is
+   the one that bites.
+   * **Read the `I` ledger before you read the `E` edges.** A call the scan could not resolve is not
+     dropped: it is emitted as an `I` record (function, instruction, text) and `hw_portability.py`
+     lists every one of them under "unresolved indirect call/jump site(s)", with the standing warning
+     that a transitive tier is a LOWER bound wherever one appears. `jsr d16(An)` lands there
+     NORMALLY, constant base or not — Wonder Boy's ledger opens with
+     `I 0x716 0x726 jsr (0xe,A0)`. A one-callee function whose `I` ledger is non-empty is not a
+     one-callee function, and that is visible without reading a byte of its body.
+   * **The dangerous site is the one that appears in NEITHER ledger** — no `E` edge, no `I` row. Then
+     nothing in the output says anything is missing. Wonder Boy has a measured instance: `$bbca` does
+     `lea $17adc.l,a1 / jsr 56(a1)` at `$bc9c`/`$bca2`, a fixed call into the **sound module**, and
+     the scan emits four `E` CALL edges for its four `bsr` and no `I` row for the `jsr`. **Why that
+     site was dropped when the identical encoding elsewhere is reported is not diagnosed** — treat it
+     as a scan defect to investigate, not as the rule for `jsr d16(An)`.
+   `$bf4e` is the same silence from a different cause: it is reported as a 16-byte function with no
+   callees, and its 16 bytes have no `rts` — they **fall through** into a 210-byte plotter with eight
+   `bsr` callers of its own. Neither miss is exotic, and both are cheap to catch: before porting
+   anything the scan calls a leaf or a one-callee non-leaf, read the body to its `rts` and resolve
+   every `jsr`/`jmp` in it by hand.
+   Where a count of call *sites* is recorded, say which encodings the scan covered — `bsr.s/w/l`,
+   `jsr`/`jmp` through `abs.l`/`abs.w`, `jsr d16(pc)` — and that a call through a register or a jump
+   table is outside all of them.
 
 ## The seam pattern
 
