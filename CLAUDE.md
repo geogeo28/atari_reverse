@@ -25,34 +25,10 @@ and variables until the program reads like source.
 
 ## Layout
 
-```
-reverse/
-├── CLAUDE.md                 # this file
-├── docs/                     # transferable knowledge, one file per expertise domain
-├── tools/                    # game-agnostic tooling
-│   ├── prg_dis.py            # stdlib GEMDOS .PRG analyzer + 68000 first-pass disassembler (prints entropy)
-│   ├── extract_graphics.py   # ST 4-plane / RLE graphics -> PNG
-│   ├── depack_gamex.py       # static depacker for the Gamex/"PP" LZSS cruncher (.CTE -> .PRG)
-│   ├── depack_lsd.py         # static depacker for the "LSD!" backwards-LZ cruncher
-│   ├── depack_rad.py         # static depacker for the .RAD/.CRU resource container (in-game cruncher)
-│   ├── depack_common.py      # the command line + size cap the depackers above share
-│   ├── st_extract.py         # stdlib FAT12 .ST disk-image lister/extractor
-│   ├── stx_extract.py        # stdlib Pasti/.STX reader: protection report + clean .ST (--to-st)
-│   ├── hw_portability.py     # how much of a game a memory-only differential can verify: tiers
-│   │                         # per function + transitive closure over the call graph
-│   ├── ghidra_scripts/       # PrgLoader, AtariOsTrapAnnotate, ExportDecompC, ApplyNames, DumpNames,
-│   │                         # LoadDump, HwPortabilityScan
-│   ├── headless.sh           # bootstrap: import->load->analyze->annotate->export
-│   ├── reapply.sh            # fast naming loop: apply names.txt -> re-export
-│   ├── dump_names.sh         # reverse: export DB names -> names.txt format (recover GUI edits)
-│   ├── hw_scan.sh            # dump function bodies + call graph + hardware accesses -> TSV
-│   ├── hatari_run.sh         # launch a game in Hatari (run depacker, then dump memory)
-│   ├── load_dump.sh          # analyze a raw memory dump (depacked game) — see docs/packed-executables.md
-│   ├── new_project.sh        # scaffold projects/<name>/
-│   └── recreate_kit/         # shared differential harness: PRG loader, Musashi oracle, TOS trap
-│                             # model, harness.py, kit.mk — bound to a game by its project.toml
-└── projects/<name>/          # per-game: bin/ names.txt decomp.c ghidra_proj/ out/ run.sh reapply.sh
-```
+- `docs/` — transferable knowledge, one file per expertise domain (see `docs/README.md`)
+- `tools/` — game-agnostic tooling; each script and `ghidra_scripts/*.java` has its own docstring
+- `tools/recreate_kit/` — shared differential harness (PRG loader, Musashi oracle, TOS trap model), bound to a game by its `project.toml`
+- `projects/<name>/` — per-game: `bin/ names.txt decomp.c ghidra_proj/ out/ run.sh reapply.sh`
 
 ## Conventions
 
@@ -90,6 +66,15 @@ reverse/
 ## Working conventions (code + commit hygiene)
 
 The docs gate points at this workspace's surfaces: `names.txt` / `STATUS.md` / `docs/`.
+
+### Model roles (Fable 5 sessions)
+When the session model is Fable 5, the main session is the **architect/orchestrator**, not the coder:
+- **Delegate coding to Opus subagents** (Agent tool, `model: "opus"`) — implementation,
+  reconstruction, and mechanical edits run in agents; the orchestrator scopes, reviews, and integrates.
+- **Code review also runs through agents** — the `my-code-review` gate (agent-based) stays the
+  pre-commit sweep; independent reviewer agents, not the author session, judge the diff.
+- **Only the Fable 5 orchestrator commits.** Subagents never run `git commit`; the orchestrator
+  stages and commits after the review + docs gates pass.
 
 ### Branch workflow
 - **`main`** — canonical history.
