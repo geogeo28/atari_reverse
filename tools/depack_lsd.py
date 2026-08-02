@@ -44,9 +44,7 @@ import collections
 import struct
 import sys
 
-USAGE = "usage: depack_lsd.py PACKED [-o OUT]"
-OUT_FLAG = "-o"
-DEFAULT_OUT_SUFFIX = ".out"
+import depack_common
 
 MAGIC = b"LSD!"
 HDR_LEN = 12          # magic + unpacked size + end-of-file field; the stream starts here
@@ -54,10 +52,7 @@ HDR_LEN = 12          # magic + unpacked size + end-of-file field; the stream st
 # so a file shorter than the header plus that word has no stream to seed from at all.
 SEED_LOOKBACK = 2
 MIN_FILE_LEN = HDR_LEN + SEED_LOOKBACK
-# Refuse a claimed unpacked size that cannot describe a real ST buffer, BEFORE allocating it: a
-# corrupt or misidentified header (be32 0xffffffff) would otherwise ask for a 4 GB bytearray. The
-# 68000 addresses 16 MB total, so nothing this routine ever wrote can be larger.
-MAX_UNPACKED = 16 << 20
+MAX_UNPACKED = depack_common.MAX_UNPACKED
 
 # Literal-run count: tiers tried from the last table entry down to 0; an all-ones value escapes
 # to the next tier.
@@ -206,57 +201,16 @@ def parse_header(data):
         return Header(unpacked, stream_end)
     if field0 == len(data) - HDR_LEN:
         raise DepackError("this is the magic-less .RAD/.CRU container (packed=%d unpacked=%d), "
-                       "which is a DIFFERENT cruncher from LSD! and is not implemented here"
+                       "which is a DIFFERENT cruncher from LSD! — use depack_rad.py"
                        % (field0, unpacked))
     raise DepackError("no 'LSD!' magic and no magic-less header (first longs %#x %#x) — "
                    "not a file this packer produced" % (field0, unpacked))
 
 
-def _parse_args(args):
-    """(packed path, output path) — or (None, None) after printing why the command line is unusable."""
-    if args[0].startswith("-"):
-        sys.stderr.write("%s\n" % USAGE)
-        return None, None
-    src = args[0]
-    dst = src + DEFAULT_OUT_SUFFIX
-    if OUT_FLAG in args:
-        flag = args.index(OUT_FLAG)
-        if flag + 1 >= len(args):
-            sys.stderr.write("%s needs an output file\n%s\n" % (OUT_FLAG, USAGE))
-            return None, None
-        dst = args[flag + 1]
-    return src, dst
-
-
-def main():
-    args = sys.argv[1:]
-    if not args or args[0] in ("-h", "--help"):
-        print(__doc__.strip())
-        return 0
-    src, dst = _parse_args(args)
-    if src is None:
-        return 2
-    try:
-        with open(src, "rb") as fh:
-            data = fh.read()
-    except OSError as err:
-        sys.stderr.write("cannot read %s: %s\n" % (src, err))
-        return 1
-    try:
-        out = depack(data, parse_header(data))
-    except DepackError as err:
-        sys.stderr.write("%s: %s\n" % (src, err))
-        return 1
-    try:
-        with open(dst, "wb") as fh:
-            fh.write(out)
-    except OSError as err:
-        sys.stderr.write("cannot write %s: %s\n" % (dst, err))
-        return 1
-    print("depacked %s -> %s" % (src, dst))
-    print("  %d packed -> %d bytes  |  first 16: %s" % (len(data), len(out), out[:16].hex()))
-    return 0
+def _decode(data):
+    """The whole file in, the inflated bytes out — what the shared command line drives."""
+    return depack(data, parse_header(data))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(depack_common.main("depack_lsd.py", __doc__, _decode, DepackError))

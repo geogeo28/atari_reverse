@@ -100,8 +100,9 @@ generalise — expect them from any Pack-Ice-descended ST cruncher:
   is filled backwards too (a match copies from *above* the write pointer). The header's third
   long is only there to walk the source pointer to EOF. Take EOF from that field, never from the
   length of your buffer — the routine never learns that length, so bytes past EOF are slack, and
-  honouring that is what lets you depack a stream *sliced out of a larger file* (the 136,979-byte
-  payload embedded at VAPOUR2's text `$94c`) or one read back in whole sectors.
+  honouring that is what lets you depack a stream *sliced out of a larger file* (the payload
+  embedded at VAPOUR2's text `$94c`, which inflates to 136,979 bytes) or one read back in whole
+  sectors.
 - **The bitstream is byte-buffered with a self-carried marker**: `lsl.b #1,dn` shifts a bit out,
   and the buffer is spent when the remainder hits 0, so each byte's *lowest set bit* is its end
   marker; the refill's `roxl.b #1,dn` rotates that marker back in as the new byte's marker. Once
@@ -110,7 +111,13 @@ generalise — expect them from any Pack-Ice-descended ST cruncher:
 
 Both containers on that disk share a 12-byte header shape, which is a trap: only the `LSD!` one
 is this cruncher, and the magic-less one is the game's own resource format (a *second*, unrelated
-cruncher). Detect on the magic, not on the shape.
+cruncher — `tools/depack_rad.py`, specified in
+[`binary-formats.md`](binary-formats.md#game-resource-containers-a-worked-example-rad--cru)).
+Detect on the magic, not on the shape. The two differ in every detail that matters: the game's
+own one buffers bits a **longword** at a time rather than a byte, injects its marker explicitly
+(`move #$10,ccr` + `roxr.l #1,dn` instead of `roxl.b`), spends its header's third long on a
+**checksum** rather than on locating EOF, and encodes its tokens with fixed inline fields
+instead of the tier tables the `LSD!` one indexes.
 
 ```bash
 python3 tools/depack_lsd.py IN [-o OUT]

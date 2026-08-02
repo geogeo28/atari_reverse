@@ -9,8 +9,8 @@ reference project, but written as general procedure for any Atari ST binary.
 |-----|---------------------------|-----------|
 | [agent-playbook](agent-playbook.md) | **go fast and prove it** — the meta-practices + the differential reconstruction/verification loop that ties the rest together | lead / methodology |
 | [00-overview](00-overview.md) | see the whole pipeline + "what is this file?" decision tree | lead / generalist |
-| [binary-formats](binary-formats.md) | parse a `.PRG`/`.TOS`/`.TTP`, its header, symbols, relocations | binary formats |
-| [packed-executables](packed-executables.md) | the entry is garbage / high-entropy — depack via Hatari before analyzing | packing / dynamic |
+| [binary-formats](binary-formats.md) | parse a `.PRG`/`.TOS`/`.TTP`, its header, symbols, relocations; read a disk image (`st_extract.py`, `stx_extract.py`); decode a game's own resource container (`depack_rad.py`) | binary formats |
+| [packed-executables](packed-executables.md) | the entry is garbage / high-entropy — depack via Hatari, or statically with `depack_gamex.py` / `depack_lsd.py` | packing / dynamic |
 | [m68k-disassembly](m68k-disassembly.md) | read 68000 asm, run `prg_dis.py`, avoid sweep desync, spot jump tables | assembly |
 | [ghidra-pipeline](ghidra-pipeline.md) | load into Ghidra correctly, run the headless pipeline, drive the naming loop | tooling |
 | [ghidra-gui](ghidra-gui.md) | explore interactively in the GUI: decompiler, xrefs, spot-renaming, syncing to names.txt | tooling |

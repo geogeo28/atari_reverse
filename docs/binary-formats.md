@@ -63,6 +63,51 @@ why a constant that lands near the load base is worth checking against the fixup
 [`m68k-disassembly.md`](m68k-disassembly.md) for the disassembly consequences (Joust's
 `rng_advance` is the worked example).
 
+## A `.PRG` with almost no relocations is position-DEPENDENT — find its real base
+
+A game whose 136 KiB of text carries **three** relocation entries is not "unusually well written
+position-independent code". It is a program that runs at a **fixed absolute address** and reaches
+itself with absolute long operands (`jsr $e032.l`, `lea $44000.l`) that the reloc table deliberately
+does not name. The few fixups it does have are the handful of pointers that must survive wherever
+GEMDOS happened to load it — typically just the self-relocating stub's own operands.
+
+The tell, and how to read the base straight out of the entry point (Wonder Boy's `SWB.PRG`):
+
+```
++0x00000  3000                 move.w  d0,d0
++0x00002  4ef9 000213e0        jmp     $213e0.l          <- RELOCATED (fixup at +4)
+...                            ; the stub at the END of the text:
++0x213f0  43f9 00000400        lea     $400.l,a1         ; NOT relocated -> the RUNTIME base
++0x213f6  41f9 00000008        lea     $8.l,a0           <- RELOCATED  -> the source offset
++0x213fc  203c 000084f6        move.l  #$84f6,d0         ; longwords to copy
++0x21402  22d8 5380 66fa       move.l (a0)+,(a1)+ ; subq.l #1,d0 ; bne
++0x2140a  4ef9 00000400        jmp     $400.l            ; NOT relocated
+```
+
+Read off `dest` (the unrelocated `lea`/`jmp` constant) and `src_off` (the relocated one), then
+
+> **`load_base = dest - src_off`**
+
+and the loaded image *is* the runtime image: the stub's copy becomes an identity copy, every
+absolute operand resolves, and no staging step is needed. Wonder Boy: `0x400 - 8 = 0x3f8`.
+
+Why it matters more than it looks:
+
+- **Ghidra's yield is the symptom.** The same binary at `0x10000` gave 57 functions; at `0x3f8`,
+  186. Absolute operands landing outside the loaded block break the call graph, and nothing
+  announces it — you just get a thin decompile.
+- **Pass the base everywhere.** `tools/headless.sh … <base>`, `names.txt` (whose addresses are then
+  *runtime* addresses), and `recreate/project.toml`'s `load_base` must all agree, or one address
+  means two things. Put the base in `names.txt`'s header so the next reader cannot miss it.
+- **A low base can collide with the harness.** `tools/recreate_kit` reserves fixed low addresses for
+  the TOS model; a program running at `0x400` covers them, and there is nothing below `0x400` to
+  move them to (that is the 68000 vector page). The kit's two `project.toml` waivers —
+  `tos_malloc_unused`, `tos_poked_input_unused` — exist for exactly that, and both are claims about
+  the *game* that have to be evidenced, not conveniences.
+- **Do not reach for the Hatari dump.** This is not a packed executable (see
+  [`packed-executables.md`](packed-executables.md)); the bytes are already plain, only the base is
+  wrong. Entropy tells the two apart: Wonder Boy's text is 4.96 bits/byte.
+
 ## Quick recon
 
 ```bash
@@ -193,7 +238,8 @@ has **two causes that must not be conflated**:
 - **Present but failed CRC.** Cylinder 12 **sector 7** (FDC `0x08`) *is* recorded — its 512
   bytes are in the `.stx` — and they are demonstrably the real content: diffed against a
   crack release of the same game, **481 of the 512 bytes match exactly**, including the
-  `0x0000044c` `.RAD` container magic that opens `OVALAY9A.RAD`. Only the last 31 bytes of
+  `0x0000044c` `.RAD` container header that opens `OVALAY9A.RAD` (that long is the file's
+  packed length, not a magic — the container has none; see below). Only the last 31 bytes of
   the sector are corrupt, which is presumably why the CRC failed. That is why the default is
   to place such a sector and warn, not to throw it away.
 
@@ -229,10 +275,99 @@ gone. Reporting both as "missing" makes a clean run impossible on any protected 
 reporting both as "fine" hides the real loss — so the harness's `--patch` ledger counts them
 apart, and only the second is an error.
 
-**Expect packed files.** A cracked disk rarely holds plain `.PRG`s. On the Wonderboy disk
-only the `VAPOUR2` loader starts with `601a`; every other file carries a crack-group `LSD!`
-stamp, and the real executable exists only in memory — see
-[`packed-executables.md`](packed-executables.md) for getting at it.
+**Expect packed files — but check *whose* packing.** A cracked disk rarely holds plain
+`.PRG`s: on the Wonderboy **crack** release only the `VAPOUR2` loader starts with `601a`,
+every other file carries a crack-group `LSD!` stamp, and the real executable exists only in
+memory — see [`packed-executables.md`](packed-executables.md) for getting at it. The
+**original** disks of the same game are the opposite: `AUTO/SWB.PRG` is a plain `601a`
+executable and no file carries the `LSD!` magic. Both disks then use the game's *own*
+container below. Establish which release you are holding before you attribute a format to
+the game, because the two crunchers wrap the same 12-byte header shape.
+
+## Game resource containers (a worked example: `.RAD` / `.CRU`)
+
+A game's data files usually go through a cruncher the game itself carries, and the depacker
+is therefore *in the binary* — which makes the format provable rather than guessable. Wonder
+Boy in Monsterland's `.RAD`/`.CRU` files are the worked example; the routine is transcribed in
+[`projects/wonderboy/notes/rad_depacker.asm`](../projects/wonderboy/notes/rad_depacker.asm)
+and reimplemented in `tools/depack_rad.py`.
+
+**Container** (no magic — the game reaches these files only through its own 40-entry file
+index table, so it never needs one):
+
+| offset | type | meaning |
+|---|---|---|
+| `+0` | be32 | packed length = filesize − 12 (the only thing that locates EOF) |
+| `+4` | be32 | unpacked length |
+| `+8` | be32 | checksum: XOR of every longword of the stream |
+| `+12` | … | packed stream, consumed **backwards** from EOF down to `+12` |
+
+**Compression**: backwards LZ77. Bits leave a *longword* buffer LSB-first, refilled from
+decreasing addresses; each longword carries its own end marker, so the refill (`move #$10,ccr`
++ `roxr.l #1,dn`) rotates a fresh 1 into bit 31 and every refilled longword yields exactly 32
+data bits. The seed longword gets no injected marker, so its own top set bit ends it. Tokens,
+with the output filled backwards too:
+
+| prefix | meaning |
+|---|---|
+| `00` | literal run, 3-bit count → 1..8 bytes, each 8 bits off the stream |
+| `01` | match, length 2, 8-bit offset |
+| `1 00` | match, length 3, 9-bit offset |
+| `1 01` | match, length 4, 10-bit offset |
+| `1 10` | match, 8-bit length field → 1..256, 12-bit offset |
+| `1 11` | literal run, 8-bit count → 9..264 bytes |
+
+A match copies from `offset` bytes **above** the write pointer (already-written output),
+one byte at a time, so an offset below the length repeats a run.
+
+Three things here generalise to other in-game containers:
+
+- **The length field is measured from the end of the header, not from the file.** The routine
+  never learns the size of the buffer the file was read into, so trailing slack — a
+  cluster-rounded read, a slice of a larger file — must not change the result. Take EOF from
+  the header field.
+- **A checksum field doubles as a decoder self-test.** This one is seeded into `d5` and XORed
+  with every longword read; a correct decode both fills the output exactly and returns `d5` to
+  0 with the stream pointer back at `+12`. Three independent invariants closing at once is
+  strong enough to confirm a format *before* you ever emulate the original routine. It also
+  gives the differential a *failure branch* to pin, using the disk's own damaged sectors — but
+  see the trap below, because it pins the branch on only one of the two sides.
+- **A packed length that must be a multiple of 4** is the tell that the stream is walked by
+  longwords. On the 68000 an unaligned one is an address error, not a wrong answer.
+
+```bash
+python3 tools/depack_rad.py IN [-o OUT]     # default output: IN.out
+```
+
+**The trap: "both sides refused it" is not "both sides took the same branch."** The original
+routine has *one* failure branch, the checksum; a host reimplementation grows a dozen guards the
+original does not have, because it must not read and write outside its buffers the way the 68000
+happily does. On real damage those host guards fire **earlier**, so a differential that only
+checks "the 68000 returned its failure status and my depacker raised" pins the original's branch
+and *nothing at all* on the reimplementation's — deleting its checksum test outright leaves the
+run green. Wonder Boy's four damaged overlays do exactly this: two refuse on a match sourced past
+the end of the output, two on a stream underrun, and none of them reach the Python checksum test.
+Two things fix it, and both are cheap: make each refusal carry the **name of the guard** that
+fired and assert that name per file, and, for whatever is then pinned nowhere, say so in the
+harness (`KNOWINGLY UNPINNED`) and pin it with a synthetic case instead. The general rule: a
+mutation test on the *reimplementation* is what tells you which side of a differential a green
+row is actually holding.
+
+**The stored form.** `SPRITES.CRU` carries the same two leading longs but they are *equal*
+(both filesize − 64): the container's uncompressed form. The game never passes it to the
+depack routine — the loader reads it to a buffer and the sprite setup indexes its body at
+load address + 64. Detect it on `packed == unpacked` and refuse, rather than decoding noise.
+Its 64-byte header is not all length fields either: `+$20..+$3f` is a 16-entry ST palette (every
+word ≤ `$777`), while the body at `+$40` is not — worth checking for, since a stored container's
+header is the natural place for a game to park the palette its data is drawn with.
+
+**Gotcha: a `.PRG` whose text is not position-independent.** `SWB.PRG` has only 3 relocation
+entries, yet its body is full of absolute references like `$5e3a` — because the entry stub
+does `Super()`, copies text `$8..` down to absolute `$400` and jumps there. Every absolute
+operand in the body therefore reads as *text offset + `$3f8`*. Two consequences: relocation
+count is not evidence of position-independence, and to enter one of its routines under an
+emulator you must reproduce the stub's copy (assert the stub's bytes, so a different build
+cannot be laid out at the wrong base) instead of loading the `.PRG` at a base of your own.
 
 ## Building a `.PRG` (reverse direction: recompiling the reconstruction)
 

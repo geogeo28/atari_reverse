@@ -212,15 +212,37 @@
 ; they are the game's own resource container, and the 37 LSD!-wrapped .RAD/.CRU
 ; files inflate to exactly that same container (so those are doubly packed):
 ;
-;   +0  be32  packed length = filesize - 12
-;   +4  be32  unpacked length ($3ce8 for every OVALAY*, $7d80 for the two
-;             screens, $14a80 for TILEDATA; SPRITES.CRU stores +0 == +4, i.e.
-;             stored-not-packed, and its body starts with 16-word ST palettes)
-;   +8  ..    stream
+;   +0   be32  packed length = filesize - 12  ; this is what locates EOF
+;   +4   be32  unpacked length ($3ce8 for every OVALAY*, $7d80 for the two
+;              screens, $14a80 for TILEDATA; SPRITES.CRU stores +0 == +4, i.e.
+;              stored-not-packed, and its header is 64 bytes, not 12 — see
+;              rad_depacker.asm, which also records the ST palette in it)
+;   +8   be32  CHECKSUM: XOR of every longword of the stream. NOT an EOF field
+;              like this cruncher's third long — that is the trap in the shape.
+;   +12  ..    stream, consumed BACKWARDS from EOF down to +12
 ;
 ; Feeding one to this routine never closes cleanly (the output under/overruns),
-; so it is a second, different cruncher. Its depacker is NOT in VAPOUR2.PRG:
-; neither the loader stub nor the 136,979-byte LSD!-packed payload embedded at
-; text $94c contains a backwards bit-reader (no `lsl.b #1,dn / roxl.b #1,dn`
-; pair anywhere in either). Unsolved — see the report in the session notes.
+; so it is a second, different cruncher. SOLVED — it lives in the GAME, at text
+; $596a of the ORIGINAL release's AUTO/SWB.PRG: see notes/rad_depacker.asm,
+; tools/depack_rad.py and notes/rad_differential.py.
+;
+; The earlier search result stands as recorded — no `lsl.b #1,dn / roxl.b #1,dn`
+; pair in VAPOUR2's loader stub, nor in the payload at its text $94c — but the
+; conclusion drawn from it ("so the routine is not in VAPOUR2.PRG") was wrong,
+; and how it was wrong is the part worth keeping:
+;   * VAPOUR2.PRG is 52,423 bytes and carries an LSD! stream at text $94c
+;     ('LSD!' = the `4c53 4421` there). That stream DEPACKS to 136,979 bytes of
+;     plain `601a` GEMDOS .PRG — the crack's patched copy of SWB.PRG, with the
+;     'cracked by zippy of the medway boys' string at its text $1a. The 136,979
+;     figure in the old note was that DEPACKED size, mislabelled as the size of
+;     the embedded stream.
+;   * so the routine IS carried by VAPOUR2, and byte-identical: all 216 bytes at
+;     text $596a of the depacked payload equal SWB.PRG's (89 of the 136,979
+;     bytes differ overall, none of them in this routine).
+;   * the signature search could not have found it either way. Packed, there are
+;     no instructions to match; depacked, it buffers bits a LONGWORD at a time
+;     (`lsr.l #1,d0` / `roxr.l #1,d0`), so the byte-buffered `lsl.b / roxl.b`
+;     pair is simply the wrong pattern to look for.
+; The lesson: a bit-reader signature is per-cruncher, not per-family. Searching
+; for one pattern proves the absence of that pattern, nothing more.
 ; ============================================================================

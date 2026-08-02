@@ -34,6 +34,8 @@ reverse/
 │   ├── extract_graphics.py   # ST 4-plane / RLE graphics -> PNG
 │   ├── depack_gamex.py       # static depacker for the Gamex/"PP" LZSS cruncher (.CTE -> .PRG)
 │   ├── depack_lsd.py         # static depacker for the "LSD!" backwards-LZ cruncher
+│   ├── depack_rad.py         # static depacker for the .RAD/.CRU resource container (in-game cruncher)
+│   ├── depack_common.py      # the command line + size cap the depackers above share
 │   ├── st_extract.py         # stdlib FAT12 .ST disk-image lister/extractor
 │   ├── stx_extract.py        # stdlib Pasti/.STX reader: protection report + clean .ST (--to-st)
 │   ├── ghidra_scripts/       # PrgLoader, AtariOsTrapAnnotate, ExportDecompC, ApplyNames, DumpNames, LoadDump
