@@ -106,6 +106,20 @@ The game finds its files through a 40-entry index table at runtime `$2143E` (12-
 `OVALAY10.RAD` and `OVALAY11.RAD` are on disk 2 and depack cleanly, but nothing in the table reaches
 them. Whether the game loads them by some other path is **unestablished**.
 
+## Seeing the artwork
+
+`tools/extract_gfx.py` decodes every piece of the game's art into PNGs, reading only `bin/` and
+`tools/depack_rad.py`: one RGBA file per SPRITES.CRU sprite (482, transparent where the mask says
+so) plus a contact sheet and a manifest of offsets and anchors, the 661 background tiles of
+TILEDATA.RAD, the three full 320x200 screens (TITLESCR / CREDITS / DATADISK), the eight in-PRG
+palettes as swatches and as `$0RGB` words, the text/frame/digit glyph sheet, and a HUD sheet of the
+record bitmaps, meter cells, slot cells and panel frames. Every table address and count it uses
+comes from `names.txt` / `recreate/include/wonderboy.h`, at the same `0x3F8` base, and it self-checks
+before it writes: the sprite descriptors must tile the CRU body exactly (482/482) or it prints the
+mismatches and exits nonzero. Run it with the workspace's python — `python3
+tools/extract_gfx.py [OUT_DIR]`, output defaulting to `out/gfx` (gitignored, like the rest of the
+game's data). It needs Pillow.
+
 ## The disks
 
 Both `.stx` images are the original release. `tools/stx_extract.py` reports the protection and
