@@ -119,6 +119,7 @@ cmt 0xf944 Copies 8 longwords (16 ST palette words) from a0 to $ffff8240.
 fn 0xe7f4 clear_palette
 cmt 0xe7f4 clr.l over all 16 palette registers at $ffff8240.
 
+
 # ---------------------------------------------------------------------------
 # Masked planar sprite blitters, $8fce..$989c -- 12 routines behind 3 jump tables.
 # The earlier region table called $8fce..$a271 DATA on "0 bsr, 0 movem". That test
@@ -126,9 +127,9 @@ cmt 0xe7f4 clr.l over all 16 palette registers at $ffff8240.
 # the CODE band) and 8 `dbf`, but it is leaf code entered only through a pointer
 # table, so it contains no bsr and no movem at all. Correct split:
 #   CODE $8fce..$989c (2254 B)   DATA $989c..$a271 (2517 B, 88.3% zero, 0 idioms)
-# Dispatcher at $8f9a: `lea blit_table_mid,a2 / tst.w d4 / bmi -> blit_table_left /
-# cmp.w #$b0,d4 / bge -> blit_table_right / lsl.w #2,d2 / adda.w d2,a2 /
-# movea.l (a2),a2 / jsr (a2)`. d4 = X, d2 = width class 0..3.
+# Dispatch tail of sprite_draw_pass ($8f02), at $8f9a: `lea blit_table_mid,a2 / tst.w d4 /
+# bpl (skips) -> blit_table_left / cmp.w #$b0,d4 / blt (skips) -> blit_table_right /
+# lsl.w #2,d2 / adda.w d2,a2 / movea.l (a2),a2 / jsr (a2)`. d4 = X, d2 = width class 0..3.
 # A body draws N 16-pixel columns from N-1 SOURCE CELLS. A cell is 5 words -- an AND mask then the
 # 4 bitplanes, 10 bytes -- so a row is (widthcode+1)*10 bytes. Every word is `ror.l d6,dn` as a
 # LONGWORD, which pushes the pixels past the 16-pixel boundary into the high half; the low half
@@ -142,12 +143,14 @@ cmt 0xe7f4 clr.l over all 16 palette registers at $ffff8240.
 # d2 (the width code) and d5 (y) are NOT read by any body -- the width is the entry point and the
 # y is already folded into a1. Reads a0/a1/d6/d7 (+d4/a5 in a prelude); clobbers d0-d5, a0, a1, d7.
 # ---------------------------------------------------------------------------
+fn 0x8f02 sprite_draw_pass
+cmt 0x8f02 204 bytes, reconstructed in recreate/src/blit.c. THE SPRITE PASS: game_main_loop's one `jsr $8f02.l`, and the only entry to the twelve blitters at $8fce..$989c. Walks the 19 actor_screen_records; a record whose sprite word is 0 is skipped. Otherwise the sprite word indexes resource_table -- `mulu.w #$14,d0 / adda.w d0,a4`, so only the SIGN-EXTENDED LOW WORD of the 32-bit product moves the cursor: an index past 3276 wraps, and one whose low word has bit 15 set moves the cursor BACKWARDS ($248d8 +-32 KB is the reachable band). From the descriptor: source pointer -> a0, height byte `ext.w`ed -> d7 (a NEGATIVE height is representable), width-code byte, x/y offsets. y = 2(a6) + 10(a4). Below 0: the clipped rows come off d7 (`add.w d1,d7`, `bmi` skips) and the source steps past them by (widthcode+1)*10*(-y) (`muls.w` gives a NEGATIVE product and `suba.l` therefore ADDS), then y := 0. Above $9f: skipped. Otherwise d7 = min(d7, $9f - y) by `cmp.w d7,d2 / bge` -- SIGNED against a count that is never negative, so a NEGATIVE d7 is KEPT and reaches a blitter: the two-column bodies refuse it, the three wider ones run 65,536 rows. x = (a6) + 8(a4): d6 = x & $f, a1 = screen_back + $1420 + ((x & $fff0) >> 1, SIGNED) + y*160, the offset built entirely in SIXTEEN BITS (y<<5 then <<2) and only then sign-extended by `adda.w`. Table by x: negative -> blit_table_left, $b0 and up -> blit_table_right, else blit_table_mid, both tests SIGNED. `move.w d1,d5` at $8f68 is DEAD -- nothing here or in the twelve reads d5 before writing it; it survives only through the two wholly-off-screen prelude arms. a5 passes straight through and each wholly-off-LEFT sprite takes 6 off it. `lea $248d8.l,a4` is INSIDE the loop, so no record's wrapped cursor carries into the next; the walk ends at $995e.
 var 0x989c blit_table_mid
-cmt 0x989c 4 longwords: $9594 $95f6 $9692 $9774 -- the unclipped blitters, widths 2/3/4/5 words. Selected when 0 <= d4 < $b0.
+cmt 0x989c 4 longwords: $9594 $95f6 $9692 $9774 -- the unclipped blitters, widths 2/3/4/5 words. Selected when 0 <= d4 < $b0. Indexed by the descriptor's width-code byte times four ($8fb6); a code outside 0..3 jsr's through whatever longword the arithmetic lands on -- the recreation refuses that input rather than reproducing it.
 var 0x98ac blit_table_left
-cmt 0x98ac 4 longwords: $8fce $908c $91be $936c -- the left-edge clip preludes, widths 2/3/4/5. Selected when d4 < 0.
+cmt 0x98ac 4 longwords: $8fce $908c $91be $936c -- the left-edge clip preludes, widths 2/3/4/5. Selected when d4 < 0. Indexed by the descriptor's width-code byte times four ($8fb6); a code outside 0..3 jsr's through whatever longword the arithmetic lands on -- the recreation refuses that input rather than reproducing it.
 var 0x98bc blit_table_right
-cmt 0x98bc 4 longwords: $8fe4 $90b4 $91f8 $93b6 -- the right-edge clip preludes, widths 2/3/4/5. Selected when d4 >= $b0.
+cmt 0x98bc 4 longwords: $8fe4 $90b4 $91f8 $93b6 -- the right-edge clip preludes, widths 2/3/4/5. Selected when d4 >= $b0. Indexed by the descriptor's width-code byte times four ($8fb6); a code outside 0..3 jsr's through whatever longword the arithmetic lands on -- the recreation refuses that input rather than reproducing it.
 var 0x9966 blit_clip_mask
 cmt 0x9966 Byte written by the eight clip preludes and tested with `btst #n,$9966` inside the clipped bodies to skip individual 16-pixel columns. The LEFTMOST column is the HIGHEST bit, so 1 draws the rightmost column alone. Complete value set: left ladders 1/3/7/$f, right ladders 3,2 (w2) 7,6,4 (w3) $f,$e,$c,8 (w4) $1f,$1e,$1c,$18,$10 (w5). 38 references (24 `move.b`, 14 `btst`), all inside $8fce..$989c.
 fn 0x8fce blit_clip_left_w2
@@ -167,7 +170,7 @@ cmt 0x936c Left-edge prelude, 80 pixels: d4 >= -16 -> $f; >= -32 -> 7; >= -48 ->
 fn 0x93b6 blit_clip_right_w5
 cmt 0x93b6 Right-edge prelude, 80 pixels: d4 < $b0 -> $1f; < $c0 -> $1e; < $d0 -> $1c; < $e0 -> $18; < $f0 -> $10; else rts. Shared clipped 5-word body $9412..$9592.
 fn 0x9594 blit_sprite_w2
-cmt 0x9594 Unclipped masked blit, 2 columns = 32 pixels wide, d7+1 rows; `lea 146(a1),a1` per row. THE ONLY WIDTH THAT COUNTS ITS ROWS UP FRONT: `addq.w #1,d7 / tst.w d7 / beq / bmi` and a `dbf` back to the `tst`, so a count that is zero or negative once bumped draws nothing and it exits with d7 = 0. The clipped 2-column body at $900a has the same guard (exiting through blit_clip_right_w2's own `rts` at $9008). $95f6/$9692/$9774 and their clipped bodies have NO such guard -- a bare `dbf`, exiting with d7 = $ffff, and an entry d7 of $ffff runs 65,537 rows. Also the only width that never touches d0: five source words fit in d1-d5.
+cmt 0x9594 Unclipped masked blit, 2 columns = 32 pixels wide, d7+1 rows; `lea 146(a1),a1` per row. THE ONLY WIDTH THAT COUNTS ITS ROWS UP FRONT: `addq.w #1,d7 / tst.w d7 / beq / bmi` and a `dbf` back to the `tst`, so a count that is zero or negative once bumped draws nothing and it exits with d7 = 0. The clipped 2-column body at $900a has the same guard (exiting through blit_clip_right_w2's own `rts` at $9008). $95f6/$9692/$9774 and their clipped bodies have NO such guard -- a bare `dbf`, exiting with d7 = $ffff, and an entry d7 of $ffff runs 65,536 rows (measured: a0 advances 65,536 rows' worth; the dbf exits when the counter is back at $ffff, one full 16-bit cycle). Also the only width that never touches d0: five source words fit in d1-d5.
 fn 0x95f6 blit_sprite_w3
 cmt 0x95f6 Unclipped masked blit, 3 words = 48 pixels; `lea 138(a1),a1` per row.
 fn 0x9692 blit_sprite_w4
@@ -862,7 +865,7 @@ cmt 0x8d58 Last variant: 2 moves, `lea -128(a0),a0`, 28 moves. Its second half e
 # parallel tables ($996c / $9bd0 / $9e34) picked by the two mode flags $a30 and
 # $a32, and projects the chosen table into a parallel array of 19 SIX-byte
 # screen records at $98ec: map position minus the scroll, plus the sprite word.
-# $8f02 (the sprite pass, not reconstructed) is the array's only other reader.
+# $8f02 (sprite_draw_pass, reconstructed in recreate/src/blit.c) is the array's only other reader.
 # Slot 12 of that array IS $9934/$9936 -- scroll_follow_x/_y, named above from
 # the scroll's side -- which is what fixes "the followed object" as slot 12 of
 # the actor table and makes $67e0 the routine that names it.
@@ -895,7 +898,7 @@ cmt 0x9aec followed_actor_record's a1 while state_flag_a32 is zero, and $996c + 
 var 0x9fb4 followed_actor_a32
 cmt 0x9fb4 The same slot of actor_table_a32 ($9e34 + 12 * 32), and followed_actor_record's a1 while state_flag_a32 is nonzero. Five abs.l references.
 var 0x98ec actor_screen_records
-cmt 0x98ec 19 records of six bytes -- {screen x, screen y, sprite} -- that project_actor_list fills and the sprite pass at $8f02 reads. Exactly two abs.l references, $8ea2 (the `lea` here) and $8f02 (the sprite pass's own), and the same for its end $995e ($8ef8's `cmpa.l` and $8fc2). Record 12 is $9934, i.e. scroll_follow_x/_y and the word after them; no operand anywhere names $9938, which is reachable only by walking that record.
+cmt 0x98ec 19 records of six bytes -- {screen x, screen y, sprite} -- that project_actor_list fills and the sprite pass at $8f02 reads. Exactly two abs.l references, $8ea2 (the `lea` here) and $8f02 (the sprite pass's own), and the same for its end $995e ($8ef8's `cmpa.l` and $8fc2). Record 12 is $9934, i.e. scroll_follow_x/_y and the word after them; no operand anywhere names $9938, which is reachable only by walking that record. The sprite pass reads each record as {screen x, screen y, sprite} in that order, skips one whose sprite word is 0, and adds the sprite descriptor's own x/y offsets to the first two.
 
 # ---------------------------------------------------------------------------
 # The actor table's LIFECYCLE (batch 10), reconstructed in recreate/src/actor.c.
@@ -1021,7 +1024,7 @@ cmt 0xfb06 320 bytes, reconstructed. Publishes the scroll state the engine at $7
 fn 0xfd46 bg_build_preshifted_copies
 cmt 0xfd46 198 bytes, reconstructed. Derives pre-shifted copies 1..7 from copy 0, two pixels at a time: seven passes of 176 scanlines, each scanline sixteen 8-byte cells rotated `rol.l #2` a plane word at a time. a0/a1 are `lea`d ONCE and never reloaded, so pass n reads copy n and writes copy n+1 and the cursors end one buffer on -- which is what makes the eight copies tile $44000..$70000. EACH SCANLINE CLOSES AS A RING: the first cell's shifted-out bits are held in bg_build_carry ($fe0c, four words of scratch between this routine's `rts` and stage_map_ptr) across the whole 128-byte row and ORed into the LAST cell, so a pixel leaving a row's left edge re-enters at its right. It is the whole-buffer form of bg_scroll_preshift_rows, which does the same thing to one freshly drawn row pair. Takes no register argument. ONE `bsr` caller, $f99c.
 fn 0xfe1e resource_table_relocate
-cmt 0xfe1e 44 bytes, reconstructed. `cmpi.b #$45,(a6)` on the byte at $24898: unless it already holds 'E', stamp it and then add $248d8 to the FIRST longword of each of `8(a6) + 1` twenty-byte records from $248d8 on, turning a relative offset into an absolute pointer. Not idempotent, which is what the signature exists for. The table and the count word are both past the program's last byte ($218d0) and loaded from disk, so a case seeds them. What the other sixteen bytes of a record hold is not established. $24898 has four operand sites ($e62a, $e64e, $e87e and this routine's) and $248d8 five ($1cc8, $8f0a, $e8d8 and this routine's two).
+cmt 0xfe1e 44 bytes, reconstructed. `cmpi.b #$45,(a6)` on the byte at $24898: unless it already holds 'E', stamp it and then add $248d8 to the FIRST longword of each of `8(a6) + 1` twenty-byte records from $248d8 on, turning a relative offset into an absolute pointer. Not idempotent, which is what the signature exists for. The table and the count word are both past the program's last byte ($218d0) and loaded from disk, so a case seeds them. The records are SPRITE DESCRIPTORS (see $248d8): the longword it fixes up is the cell data sprite_draw_pass hands a blitter in a0, and four more fields are now read; ten bytes per record remain unaccounted for. $24898 has four operand sites ($e62a, $e64e, $e87e and this routine's) and $248d8 five ($1cc8, $8f0a, $e8d8 and this routine's two).
 fn 0xfe4a game_restart_reset
 cmt 0xfe4a Ghidra's ONE 136-byte function here is TWO routines, and a whole-image scan is what says so: $fe4a has a single entrant (`bsr` at $e59e) and $fe8c has its own (`jsr $fe8c.l` at $c00, the instruction immediately after the `subq.w #1,lives` at $bfc). So game_restart_reset is the 66-byte HEAD, $fe4a..$fe8b, and it falls THROUGH into game_life_restart_reset. Reconstructed in recreate/src/stage.c. The head is what only a NEW GAME does: clears level_seq_index, sets lives to 3, clears effect_state_21e4, writes $ffff to effect_record_list's first word (which panel_refresh_record reads as "empty"), clears all six hud slot words and $bd6a.
 fn 0xfe8c game_life_restart_reset
@@ -1060,7 +1063,7 @@ cmt 0x22080 The last EIGHT entries of bg_tile_index ($21e90 + 496), written by s
 var 0x24898 resource_table_header
 cmt 0x24898 Past the program's last byte, so loaded from disk. Byte 0 is resource_table_relocate's 'E' signature and word 8 is its `dbf` count. Four operand sites: $e62a, $e64e, $e87e and $fe20.
 var 0x248d8 resource_table
-cmt 0x248d8 Twenty-byte records past the program, whose FIRST longword resource_table_relocate turns from an offset into an absolute pointer by adding this address. Five operand sites: $1cc8, $8f0a, $e8d8 and the relocator's two ($fe32, $fe3c). The other sixteen bytes of a record are neither read nor named here.
+cmt 0x248d8 Twenty-byte SPRITE DESCRIPTORS past the program, whose FIRST longword resource_table_relocate turns from an offset into an absolute pointer by adding this address. The sprite pass at $8f02 is the reader, and it reads ten of the twenty bytes in five fields: 0 = source cell data (longword, the relocated pointer, handed to a blitter in a0); 4 = width-code byte, `ext.w`ed (0..3 -> the three jump tables, i.e. 2..5 16-pixel columns; widthcode+1 is also the 10-byte source cells per row); 5 = height byte, `ext.w`ed, so a negative height is representable and reaches a blitter through the bottom clamp; 8 = x offset word and 10 = y offset word, each added to the screen record's own. The other ten bytes are read by nothing reconstructed. Five operand sites: $1cc8, $8f0a, $e8d8 and the relocator's two ($fe32, $fe3c).
 fn 0xe110 bg_plot_round_banner
 cmt 0xe110 48 bytes, reconstructed. `lea $e19a.l,a6 / bsr bg_plot_banner` draws "ROUND BONUS" into background buffer copy 0; then `move.w $b6fa.l,d0 / cmp.w $b6f8.l,d0 / bne` -- EQUALITY of hud_meter_value and hud_meter_max alone, so a meter above its own maximum takes the ordinary arm -- and on equality `move.l #$10000,d0 / bsr bcd_add_score_bd70` and a second banner, "PERFECT!  10000 PTS". ONE caller, $8287 in ../decomp.c's numbering.
 fn 0xe140 bg_plot_banner

@@ -8,33 +8,35 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 146/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 147/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
 actor table's LIFECYCLE (310 bytes), the COLLISION MAP the actors walk on, both probes and both
 settles and the tier above them (892 bytes), the STAGE LOADER that fills the scroll engine's
 eight buffers in the first place (1026 bytes), the SPAWN PASS that drives the lifecycle plus the
-two resets that start a game and a life (568 bytes), and the TWELVE SPRITE BLITTERS the sprite pass
-dispatches — four widths x unclipped/left-clip/right-clip, 2,254 bytes tiling `$8fce..$989c`
-exactly (batch 14) — 15,426 bytes in all, 59.8 % of everything
+two resets that start a game and a life (568 bytes), and the WHOLE SPRITE TIER — the twelve
+blitters plus `sprite_draw_pass`, the pass that clips, addresses and dispatches them, 2,458 bytes
+tiling `$8f02..$989c` exactly (batches 14–15) — 15,630 bytes in all, 60.6 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures.**
-`make test`: **2301 cases green in what this batch commits** — 2146 before it plus batch 14's 155
-(154 in the new `test/test_blit.py`, and 1 in `test/test_layout.py`: a name defined in two headers
-is refused, the guard the batch's `layout.py` scrape extension needs).
-Of the 2301: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
+`make test`: **2376 cases green in what this batch commits** — 2146 before batch 14, plus batch
+14's 155 (154 in the new `test/test_blit.py`, and 1 in `test/test_layout.py`: a name defined in
+two headers is refused, the guard that batch's `layout.py` scrape extension needs), plus batch
+15's 75 (all in `test/test_blit.py`, which stands at 229).
+Of the 2376: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
 first gameplay batch's, 496 are the status panel's — that last figure was 169 after batch 2, 339
 after batch 3, 481 after batch 10 and 485 after batch 12, and the whole of the growth is
 `test/test_hud.py` — 231 are the background scroll subsystem's (65 after batch 5, 148 after batch 6),
 755 are the actor tier's (113 after batch 8, 222 after batch 10), 105 the text subsystem's (56 after
 batch 8), 167 the collision map's, which is batch 10's new `test/test_map.py` (58 when it landed),
-80 the stage loader's (65 when batch 12 landed it), 154 the sprite blitters' (batch 14's
-`test/test_blit.py`), and the last is `test_layout.py`'s two-header refusal.
-**A `make test` run in a working tree may report MORE than 2301**, because `test/test_audio_capture.py`
+80 the stage loader's (65 when batch 12 landed it), 229 the sprite tier's (batch 14's
+`test/test_blit.py` at 154, grown by batch 15's pass cases), and the last is `test_layout.py`'s
+two-header refusal.
+**A `make test` run in a working tree may report MORE than 2376**, because `test/test_audio_capture.py`
 — which pins a KIT mode from this game's suite for `test_poked_input_guard.py`'s reason — is a
 concurrent session's battery, landing in its own commit and still growing; it is not part of this
-batch's count and nothing here rests on it (it stood at 13 while batch 14 was written, so a clean
-tree reports 2314). A row appears in the table at the end when a function is
+batch's count and nothing here rests on it (it stood at 13 while batch 15 was written, so a clean
+tree reports 2389). A row appears in the table at the end when a function is
 reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only *named*,
 not ported.
 
@@ -612,6 +614,7 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x9594` | `blit_sprite_w2` … `0x9774` `blit_sprite_w5` (`src/blit.c`) | 98/156/226/296 | verified | ONE battery for the whole family of twelve (`test/test_blit.py`, 154 cases): every case enters a blitter AT its jump-table address with the dispatcher's register file (a0 sprite cells, a1 screen, d6 shift, d7 rows, d4 x in a prelude) over seeded cell data, compares the WHOLE write set for equality against a Python model of the cell/seam walk, and asserts all fifteen reported registers plus the eleven the return struct carries — the register file is half the output here. A 192-combination sweep (4 widths x 3 clip cases x 16 shifts, each exactly once, rng only for x/y/rows), sharded in 6 chunks. The entry pins ASSEMBLE all 2,254 bytes from the battery's own statement of the geometry and require them to equal the shipped image; plus the tiling pin, the three jump tables, and a whole-image longword scan that each entry is named ONCE, in its own slot |
 | `0x8fce` | `blit_clip_left_w2` … `0x936c` `blit_clip_left_w5` | 22/40/58/74 | verified | The same battery: every left-ladder arm at its threshold and beside it (thresholds −16k, masks `(1<<(columns−k))−1`), and the fully-off-screen arm's `subq.w #6,a5` — a 32-BIT subtract, pinned with a5 seeded four bytes into a high word so a word-wide subtract is caught. Only the LEFT ladders unwind |
 | `0x8fe4` | `blit_clip_right_w2` … `0x93b6` `blit_clip_right_w5` | 168/266/372/478 | verified | The same battery: each right ladder's complete mask set (3,2 / 7,6,4 / $f,$e,$c,8 / $1f,$1e,$1c,$18,$10) and its off-screen arm returning having touched NOTHING; the shared clipped bodies both preludes branch into (one helper per width in `src/blit.c`); the w4 body's LATE `or.w d4,d3` merge reproduced and pinned from the skipping arms of BOTH ladders (pixels identical, d3 differs); and the two-column row-count guard from both exits ($ffff → beq, $fffe/$7fff → bmi) against the wider bodies' bare `dbf` |
+| `0x8f02` | `sprite_draw_pass` (`src/blit.c`) | 204 | verified | Batch 15, ~75 cases in the same battery: differentials entering the pass over seeded records + descriptors + `screen_back`, write set = the UNION of the rectangles the walk drew against a model that walks a MUTABLE image (each record sees what the last one drew), all reported registers + the pass's own a6/a4/a2 through `sprite_pass_regs`, and the a5 unwind accumulated across a walk. Every clip class reached FROM the x/y arithmetic; the top clip's `muls`/`suba.l` source advance; the $9f band's both edges; the sign-extended `adda.w` descriptor-index wrap run BOTH directions from the LAST slot; a skipped record's cursor observed from slot 18 (the review's mutation-confirmed hole, closed); the negative-height handoff through the guarded width AND the 65,536-row runaway RUN, pointed one byte past the image (1.37 s, 4.65 M instructions, both sides dropping every write — what batch 14's `os_in_image` was for); the dead d5 write pinned through the off-screen arms; seeded-band disjointness asserted + 204-byte whole-body entry pin assembled from the battery's own statement of the walk |
 
 ### The .RAD depacker
 
@@ -2774,7 +2777,8 @@ and a whole-image longword scan finds each entry address named ONCE, in its own 
 entering the twelve directly is the whole of their interface. `$8f02` itself — the dispatcher that
 computes the register file and picks the table — is NOT in this batch, and it is the natural next
 one: it closes the sprite story end to end and it is what decides whether the runaway row count
-below stays unreachable.
+below stays unreachable. *(Batch 15: done — and it decided REACHABLE, by a negative height byte.
+The count below is also off by one: 65,536, measured. See the batch-15 section.)*
 
 **THEY ARE ONE ALGORITHM, AND `src/blit.c` IS THAT ALGORITHM ONCE.** N columns are drawn from N−1
 source CELLS of `mask + 4 planes`; every word is rotated right as a longword by the sub-word shift,
@@ -2798,7 +2802,8 @@ possible at all.
 * **ONLY THE TWO-COLUMN BODIES COUNT THEIR ROWS UP FRONT.** `$9594` and the clipped `$900a` open
   with `addq.w #1,d7 / tst.w d7 / beq / bmi` and loop back to that test, so they refuse a count that
   is zero or negative once bumped and exit with d7 = 0. The wider three and their clipped bodies
-  just `dbf`: they exit with d7 = `$ffff`, and an entry count of `$ffff` would draw 65,537 rows.
+  just `dbf`: they exit with d7 = `$ffff`, and an entry count of `$ffff` would draw 65,537 rows
+  *(batch 15 measured it: 65,536 — one full 16-bit cycle, not one more)*.
   `$7fff` is the case that separates the signed test from an unsigned one.
 * **THE CLIPPED FOUR-COLUMN BODY MERGES ONE PLANE LATE.** `or.w d4,d3` sits at `$9324`, inside the
   arm the `btst #1` at `$9312` branches to, where every other body merges before the test. Skipping
@@ -2825,7 +2830,7 @@ Eight finder angles + verification; the C-vs-asm read came back clean. What the 
 
 * **The runaway-rows guard was defeated by the exact value it refuses.** `_rows_drawn` computed
   `(rows + 1) & $ffff`, so `$ffff` wrapped to "0 rows drawn" and got a 64-instruction cap — the one
-  input that runs 65,537 rows, admitted. Now refused for the unguarded widths (and the model runs
+  input that runs the runaway (65,536 rows — batch 15's measured count), admitted. Now refused for the unguarded widths (and the model runs
   only after the refusal). `test_the_battery_refuses_to_ask_a_wider_body_for_those_counts[ffff]`
   is the case that reddens if the wrap comes back.
 * **The late-merge pin was vacuous as first written** — its skip arm came from the right ladder
@@ -2863,11 +2868,14 @@ a third user, home = `test/leaf.py`): `cmp_w_imm_dn` (`test_actor.py`), `move_l_
 **What this batch does NOT pin:**
 
 * **THE 65,537-ROW `dbf`.** Reproduced by construction and left unreached; the battery refuses a
-  case that asks for it. The two-column guard IS reached, from both of its exits.
+  case that asks for it. The two-column guard IS reached, from both of its exits. *(Batch 15: the
+  count is 65,536, it IS reachable — a negative descriptor height survives the pass's signed
+  bottom clamp — and it is now RUN, pointed past the image.)*
 * **WHOSE POINTER `subq.w #6,a5` UNWINDS.** Six bytes is one screen-record, but the sprite pass
   walks that array in a6 and never touches a5.
 * **THE DISPATCHER AT `$8f02`**, and so a width code outside 0..3. The twelve are entered directly
-  at the addresses the tables hold; the tables themselves are pinned.
+  at the addresses the tables hold; the tables themselves are pinned. *(Batch 15: reconstructed;
+  only the out-of-table width code remains unpinned.)*
 * **WHAT THE SPRITES LOOK LIKE.** The bitmaps are in `SPRITES.CRU`, past the program and loaded
   from disk, so every case seeds its own cell data and nothing here establishes the shipped
   sprites' shifts, widths or heights — including whether the game ever reaches the narrowest clip
@@ -2885,3 +2893,146 @@ a third user, home = `test/leaf.py`): `cmp_w_imm_dn` (`test_actor.py`), `move_l_
   was judged the wrong trade. Registered here so the next author doesn't re-derive them.
 * **`test/test_stage.py` imports `forward_branch` and never uses it** — pre-existing, noticed by
   the fix pass, left alone per the surgical-changes rule.
+
+### Batch 15 — the sprite pass at `$8f02`: the story closes end to end
+
+**204 BYTES, AND THE SPRITE TIER IS NOW WHOLE.** `$8f02..$989c` is accounted for byte by byte: the
+pass tiles up to `blit_clip_left_w2` and the twelve tile from there to `blit_table_mid`. The pass
+is `game_main_loop`'s one `jsr $8f02.l`, and batch 14's whole-image scan already said the twelve
+have no other caller — so this batch closes both ends of the same story, and `subsystems.tsv` now
+draws `video (sprite blitters)` as `$8f02..$989c` (cited on the spot; the re-measure is queued as
+usual). Verified count 146 → 147; scope suite 2301 → 2376.
+
+**IT DECIDES WHAT AND WHERE; IT WRITES NOTHING.** Nineteen screen records, and for each one naming
+a sprite: a descriptor out of `resource_table`, a clip against the top and bottom of the 160-row
+band, a screen address, a sub-word shift, and a `jsr` through one of three tables picked by the
+screen x. Every byte the pass is responsible for goes through a blitter, which is why its battery's
+write set is the UNION of the rectangles its records drew — against a model that walks a MUTABLE
+image, so each record sees what the last one drew.
+
+**THE `$248d8` QUEUED QUESTION IS ANSWERED: THEY ARE SPRITE DESCRIPTORS.** The 2026-08-05
+re-measure registered "if that table turns out not to be the resource table, one row moves"; its
+records' layout is now read from their one reader: `0` = the cell data the relocator fixes up
+(handed to a blitter in a0), `4` = width code, `5` = height, `8`/`10` = x/y offsets added to the
+screen record's own. Ten bytes per record remain unread. `resource_table_relocate`'s job is
+thereby explained — it makes descriptor source pointers absolute — and `../names.txt` carries the
+superseding text on both `cmt`s.
+
+**FOUR SEMANTICS REPRODUCED RATHER THAN TIDIED, each with cases and mutations:**
+
+* **THE DESCRIPTOR CURSOR IS A WORD INDEX.** `mulu.w #$14,d0` builds a 32-bit product and
+  `adda.w d0,a4` takes its SIGN-EXTENDED LOW WORD, so an index past 3276 wraps and one whose low
+  word has bit 15 set moves the cursor BACKWARDS — the reachable band is `$248d8` ±32 KB. Same
+  class as batch 13's word-indexed `lea`. Both directions run, each from the LAST record slot,
+  because `lea $248d8.l,a4` is INSIDE the loop and rebuilds the cursor for every record — which a
+  review case now observes from a SKIPPED record too (below).
+* **`move.w d1,d5` IS DEAD**, and observable through exactly one kind of record: every blitter
+  buries d5, so only the two wholly-off-screen prelude arms let the pass's own write survive.
+  Both arms are run.
+* **THE SCREEN OFFSET IS BUILT IN SIXTEEN BITS** — `(x & $fff0) >> 1` SIGNED, `y*160` as `y<<5`
+  plus that `<<2` — and only then sign-extended by the `adda.w`.
+* **A NEGATIVE ROW COUNT SURVIVES THE BOTTOM CLAMP** — this batch's headline, below.
+
+**THE RUNAWAY IS REACHABLE BY DATA, AND BATCH 14'S COUNT WAS OFF BY ONE.** The height is a byte
+the pass `ext.w`s. The top clip can never hand a negative count on — its own `bmi` skips first,
+stated over every signed byte value. The BOTTOM CLAMP can: `cmp.w d7,d2 / bge` is signed against a
+rows-left count that is never negative, so it KEEPS a negative `d7`. That count reaches a blitter,
+where the two-column bodies refuse it (full differential, three heights, the next record still
+drawing) and the three wider ones `dbf` away. Measured, not argued: **65,536 rows, not 65,537** —
+`a0` advances 65,536 × 20 and `a1` 65,536 × 160; the `dbf` exits when the counter is back at
+`$ffff`, exactly one full 16-bit cycle. Batch 14's three statements of 65,537 are corrected in
+place above, and `../names.txt`'s `cmt 0x9594` carries the measured number.
+
+**AND IT IS RUN, POINTED SOMEWHERE THE HARNESS SURVIVES.** 10 MB of screen cursor walks straight
+through the band the oracle keeps its own machine stack in; the first measurement returned a
+correct-looking run only because one row ended a single byte short of the pushed return address.
+So the case points `screen_back` one byte past the image: all 65,536 rows are dropped by the same
+guard on both sides (4,653,254 instructions, 1.37 s of oracle — the suite's tail-setter now, a
+registered watch-item), and what it pins is the CONTROL FLOW — the two cursors to the row, `d7` at
+`$ffff`, whole-image byte equality and every struct register. Batch 14's `os_in_image` addressing
+is what makes it survivable, and this is the batch it was added for. Stated in the docstring: two
+implementations agreeing, not three — 65,536 rows of Python cost tens of seconds against the
+machines' 1.4. Whether `SPRITES.CRU`'s real descriptors carry a negative height is NOT
+establishable from the image; reachable-by-data, unpinned in fact.
+
+**THE MUTATION SWEEP: 36 mutations, 34 killed, both survivors argued or registered.** One is
+equivalent by construction (a redundant table-base assignment ADDED before the loop; removing the
+in-loop one IS killed, so "rebuilt every record" is pinned). The other is a real, registered
+unpinnable: **`ext.w d2` on the width-code byte** — the only byte the sign extension changes has
+bit 7 set, and every such byte is a width code outside the four-entry table, which always `jsr`s
+through garbage. The C refuses it, the battery refuses it, and the claim lives in `src/blit.c`'s
+dispatch comment and this list rather than in a test — the review found the test that claimed to
+guard it was a tautology, and it was deleted rather than kept for its name.
+
+**THE REVIEW GATE FOUND TEN; THE TWO THAT MATTERED MOST WERE COVERAGE, BOTH MUTATION-PROVEN.**
+Eight finder angles + verification; the C-vs-asm read came back exact (all 204 bytes and every
+branch displacement hand-checked). What the fixes changed:
+
+* **A SKIPPED RECORD'S CURSOR WAS UNOBSERVED.** Every skipping case sat in slot 0, where a later
+  record's in-loop `lea` rebuilds a4 — so resetting the descriptor cursor before the above-band
+  early return survived all 2,387 cases. A new case puts the skipped record in the LAST slot and
+  reads the cursor the skip left behind; the review's mutation now reddens exactly it. The
+  wholly-above-band case's docstring also stated the reading BACKWARDS (the cursor IS moved before
+  the `bmi`) and is corrected.
+* **THE NEGATIVE-X STEP-BACK CASE ASSERTED NOTHING** — `min(writes)` is always the clip-mask byte,
+  below every screen address. The ordered repair (`min` over the screen writes alone being below
+  the window origin) turned out UNSATISFIABLE — the left clip skips exactly the columns the
+  step-back covers, so a left-clipped blit never writes below the origin — and the shipped
+  assertion is the equality that is true and sharp: the lowest drawn byte IS the origin plus one
+  stepped-over column. Both halves reproven by executed mutations.
+* **The rest:** the model read the descriptor's source pointer at a hardcoded offset 0 instead of
+  `DESC_SOURCE`; two unobservable intermediate register stores (the clamp's d2, the cursor's first
+  d1) are deleted with the policy now stated in the C — the register FILE is modelled at
+  observation points, intermediates only where observable, the dead d5 being the observable one;
+  the runaway refusal no longer fires for wholly-off-screen records (whose preludes return before
+  any row loop); `WB_SPRITE_LAST_ROW` is pinned to `WB_BG_BLIT_SCANLINES - 1` in the geometry test
+  (a compound `#define` would fall out of the `layout.py` scrape — the reason is written beside the
+  literal); the wrap case's 20-byte poke — which lands inside `bg_tile_bitmaps` by luck — and the
+  descriptor filler's "must not reach `SPRITE_SOURCE`" bound are both ASSERTED now
+  (`test_the_bands_a_pass_case_seeds_do_not_overwrite_each_other`); the pass-call tuple became a
+  namedtuple, the 22 single-sprite sites a `_run_one` helper, the model's register writes a
+  `put()` helper; three C helpers narrowed to the blit half of the struct so `sprite_dispatch`
+  alone says it can move the walk's own cursors.
+
+**Encoder ledger — FOUR REGISTERED TRIGGERS HAD FIRED, AND THE FIX PASS HONOURED THEM.**
+`clr_w_dn`, `cmp_w_dn_dn`, `andi_w_dn` and `asr_w_imm_dn` were each parked at two users and this
+batch was the registered third — all four went to `test/leaf.py`, plus `asl_w_imm_dn`, which
+shares `asr`'s base opcode over one direction bit and would otherwise have re-split `0xe040`
+across files. test_actor's redundant `| (1 << 6)` spelling died in the hoist; every battery's
+whole-body entry pins prove no assembled byte moved. `adda_w_imm_an`'s two copies had OPPOSITE
+argument orders (the `or_w_dn_postinc` hazard again) — reconciled to `(reg, value)` in both
+files, parked at two users. `cmpa_l_imm_an` was test_actor's `cmpa_l_imm` under a second name —
+renamed to match, parked at two users, ALSO-IN docstrings both sides. Still single-user in
+`test_blit.py`: `ext_w_dn`, `movea_l_ind`, `add_w_d16_dn`, `cmpi_w_dn`, `muls_w_dn_dn`,
+`suba_l_dn_an`, `adda_w_dn_an`, `jsr_ind`, and `s8` (`ext.w` after a `move.b`; `leaf.s16` one size
+down). Usual terms throughout.
+
+**What this batch does NOT pin:**
+
+* **A WIDTH CODE OUTSIDE 0..3**, and with it the `ext.w` above. The original `jsr`s through the
+  longword past the table; the C returns, the battery refuses.
+* **THE RUNAWAY'S PIXELS.** The only way to make it draw is to point it into the image and let it
+  march over the harness's own stack.
+* **WHETHER THE GAME'S OWN DATA REACHES THE RUNAWAY.** The descriptors come off disk.
+* **THE OTHER TEN BYTES OF A DESCRIPTOR.**
+* **WHOSE POINTER `subq.w #6,a5` UNWINDS** — unchanged, and for a better reason: reading the pass
+  RULED THE OBVIOUS ANSWER OUT (it walks in a6) rather than leaving it open.
+
+**QUEUED, registered rather than half-done:**
+
+* **THE KIT HAS A STACK-BAND BLIND WINDOW.** Writes in the 1 KB call-frame scratch below
+  `STACK_TOP` are excused by `on_machine_stack` and excluded from the byte diff, so a case whose
+  DESTINATION walks through that band would compare the reconstruction against an oracle run that
+  corrupted its own frame, silently. The runaway case dodges it by pointing past the image;
+  **trigger** = a second case that runs with a destination outside a screen buffer, **home** =
+  `tools/recreate_kit/harness.py` beside the existing stray-write refusal (a kit change, in its
+  own commit, per convention).
+* **THE STRUCT-REGISTER-FILE GLUE IS AT ITS THIRD USER** (test_map's probe, `_blit_glue`,
+  `_pass_glue`) — the in-file machinery is single now (both glues share `_fill_blit_regs` /
+  `_read_blit_regs` parametrised by field map), and the cross-battery home is registered:
+  **trigger** = a fourth user (batch 16's caller being the likely one), **home** = `test/leaf.py`
+  beside `register_glue`.
+* **THE `video (sprite blitters)` SUBSYSTEM ROW re-measure** — now covering `$8f02..$989c`, 100 %
+  ported; a measurement, queued as one, folded with batch 14's identical entry.
+* **THE RUNAWAY CASE SETS THE SUITE'S TAIL** (1.71 s under `-n auto`). Fits today; a second long
+  pass case on the same worker is where wall time starts to move.

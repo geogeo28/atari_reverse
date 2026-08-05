@@ -685,7 +685,7 @@
  * WB_ACTOR_RECORD_BYTES, in one of THREE tables picked by the two mode flags, and once a frame it
  * projects that table into a parallel array of WB_ACTOR_SCREEN_RECORD_BYTES records at
  * WB_ACTOR_SCREEN_RECORDS: map position minus the scroll, plus the sprite to draw. $8f02 (the
- * sprite pass, not reconstructed) is what reads the result.
+ * sprite pass, reconstructed in src/blit.c as sprite_draw_pass) is what reads the result.
  *
  * WHERE THE SCROLL'S OWN INPUT COMES FROM. WB_SCROLL_FOLLOW_X above IS screen record
  * WB_ACTOR_FOLLOWED_SLOT — `WB_ACTOR_SCREEN_RECORDS + 12 * 6`, asserted in test/test_actor.py

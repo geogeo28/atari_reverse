@@ -1,5 +1,6 @@
-/* blit.c — the twelve masked planar sprite blitters at $8fce..$989c, which is every pixel the
- * sprite pass at $8f02 puts on the screen.
+/* blit.c — the SPRITE TIER, end to end: the pass at $8f02 that walks the screen records and the
+ * twelve masked planar sprite blitters at $8fce..$989c it dispatches to, which between them are
+ * every sprite pixel the game puts on the screen. The pass is at the bottom of this file.
  *
  * ONE ALGORITHM, TWELVE ENTRY POINTS. Four widths (2..5 columns of 16 pixels) times three clip
  * cases (none, left edge, right edge), and every one of them is the same walk: read a source cell,
@@ -18,8 +19,13 @@
  *   * ONLY THE TWO-COLUMN BODIES COUNT THEIR ROWS UP FRONT. $9594 and $900a open with
  *     `addq.w #1,d7 / tst.w d7 / beq / bmi` and loop back to that test, so they refuse a row count
  *     that is zero or negative once bumped — and leave d7 at 0. The three wider widths just `dbf`,
- *     so an entry count of $ffff runs 65,537 rows there and they leave d7 at $ffff. Same interface,
- *     two behaviours, and `counts_rows_up_front` is which.
+ *     so an entry count of $ffff runs the WHOLE 16-BIT RANGE of them there — 65,536 rows, not the
+ *     65,537 batch 14 stated — and they leave d7 at $ffff. The exit condition is the `dbf`'s own:
+ *     the counter has been decremented once per row and is back at $ffff. Same interface, two
+ *     behaviours, and `counts_rows_up_front` is which. THE PASS BELOW REACHES THAT COUNT: a
+ *     descriptor whose height byte is negative and whose y is inside the band comes out of the
+ *     bottom clamp still negative, so the runaway is reachable BY DATA and is pinned as such
+ *     (`test_a_negative_height_runs_a_wider_body_away`).
  *   * THE CLIPPED FOUR-COLUMN BODY MERGES ONE PLANE LATE. Every other body folds a cell's wrapped
  *     half into the next cell's word before testing whether the column is drawn; there the
  *     `or.w d4,d3` sits at $9324, INSIDE the arm the `btst` at $9312 branches to. Skipping the
@@ -275,8 +281,10 @@ static void blit_sprite_rows(uint8_t *image, sprite_blit_regs *regs, const blit_
         return;
     }
     /* `dbf d7,<top>` alone: the row is drawn BEFORE the count is looked at, so `rows` is a
-     * "one fewer than this many" and an entry value of $ffff draws 65,537 rows rather than none.
-     * Reproduced by construction and left unreached — see test/test_blit.py. */
+     * "one fewer than this many" and an entry value of $ffff draws 65,536 rows rather than none.
+     * REACHED, by a descriptor with a negative height — see the file comment and test/test_blit.py.
+     * `blit_read_word`/`blit_write_word`'s off-image guard is what lets both sides survive the
+     * 10 MB of screen this then walks. */
     do {
         blit_row(image, regs, width, clipped);
         regs->rows = set_low_word(regs->rows, (uint16_t)(regs->rows - 1u));
@@ -386,4 +394,245 @@ void blit_clip_right_w4(uint8_t *image, sprite_blit_regs *regs)
 void blit_clip_right_w5(uint8_t *image, sprite_blit_regs *regs)
 {
     blit_clip_right(image, regs, &BLIT_W5);
+}
+
+
+/* --- the sprite pass at $8f02 ------------------------------------------------------------------
+ *
+ * The twelve above draw; this decides WHAT and WHERE. Once per frame it walks the nineteen screen
+ * records project_actor_list left at WB_ACTOR_SCREEN_RECORDS and, for each one whose sprite word is
+ * not WB_ACTOR_SPRITE_HIDDEN, looks that sprite's descriptor up in WB_RESOURCE_TABLE, clips it to
+ * the band, builds the blitters' register file and calls one of them. It writes NOTHING itself:
+ * every byte the pass is responsible for goes through a blitter.
+ *
+ * FOUR THINGS ARE REPRODUCED RATHER THAN TIDIED, all of them read off the listing:
+ *
+ *   * THE DESCRIPTOR CURSOR IS A WORD INDEX. `mulu.w #$14,d0` builds a 32-bit product and
+ *     `adda.w d0,a4` then takes only its SIGN-EXTENDED LOW WORD, so a sprite index past 3276 wraps
+ *     the cursor rather than walking off the table, and one whose product's low word has bit 15 set
+ *     moves it BACKWARDS. The reachable band is therefore WB_RESOURCE_TABLE +- 32 KB and nothing
+ *     wider — which is why nothing here needs an in-image guard. Same class as the word-indexed
+ *     `lea` batch 13 pinned.
+ *   * A NEGATIVE ROW COUNT SURVIVES THE BOTTOM CLAMP. The height is a byte the original `ext.w`s,
+ *     so a descriptor may ask for -1 rows; the clamp is `cmp.w d7,d2 / bge` with d2 the rows left
+ *     in the band, which is never negative, so it always keeps a negative d7 rather than clamping
+ *     it. That count reaches a blitter, where the two-column bodies refuse it and the three wider
+ *     ones run away. THE TOP CLIP CANNOT PRODUCE ONE: its own `bmi` skips the record instead.
+ *   * `move.w d1,d5` IS DEAD. Nothing in the pass or in any of the twelve reads d5 before writing
+ *     it. It is reproduced because it is a register the caller gets back.
+ *   * THE SCREEN OFFSET IS BUILT IN SIXTEEN BITS and only then sign-extended into a1, so a large x
+ *     or y wraps inside the word instead of reaching where the arithmetic points.
+ */
+
+/* The twelve, in the order the three jump tables hold them: width code 0..3 is
+ * WB_BLIT_COLUMNS_MIN..WB_BLIT_COLUMNS_MAX columns. Calling them by that index is a READING of the
+ * image and not a shortcut — test/test_blit.py's `test_a_jump_table_names_the_four_widths_in_order`
+ * requires each table to hold exactly these four addresses in this order, and
+ * `test_the_three_tables_are_the_only_things_that_name_a_blitter` that nothing else in the program
+ * names any of them. The pass still reads the slot it would have `jsr`ed through, because that
+ * pointer is one of the registers it leaves behind. */
+typedef void (*sprite_blitter)(uint8_t *image, sprite_blit_regs *regs);
+
+/* One clip case: the table in the image, and this port's four entry points behind it. */
+typedef struct {
+    uint32_t table;
+    const sprite_blitter *blitters;
+} sprite_clip_case;
+
+static const sprite_blitter SPRITE_BLITTERS_MID[] = {
+    blit_sprite_w2, blit_sprite_w3, blit_sprite_w4, blit_sprite_w5,
+};
+static const sprite_blitter SPRITE_BLITTERS_LEFT[] = {
+    blit_clip_left_w2, blit_clip_left_w3, blit_clip_left_w4, blit_clip_left_w5,
+};
+static const sprite_blitter SPRITE_BLITTERS_RIGHT[] = {
+    blit_clip_right_w2, blit_clip_right_w3, blit_clip_right_w4, blit_clip_right_w5,
+};
+
+static const sprite_clip_case SPRITE_CLIP_MID   = {WB_BLIT_TABLE_MID, SPRITE_BLITTERS_MID};
+static const sprite_clip_case SPRITE_CLIP_LEFT  = {WB_BLIT_TABLE_LEFT, SPRITE_BLITTERS_LEFT};
+static const sprite_clip_case SPRITE_CLIP_RIGHT = {WB_BLIT_TABLE_RIGHT, SPRITE_BLITTERS_RIGHT};
+
+/* A `.w` write into one of d0..d5, which is every write the pass makes to that window. */
+static void set_scratch_word(sprite_blit_regs *blit, unsigned reg, uint16_t value)
+{
+    blit->scratch[reg] = set_low_word(blit->scratch[reg], value);
+}
+
+/* $8f36..$8f52 — the sprite starts ABOVE the band, so the rows that fall off the top come out of
+ * both the count and the SOURCE. `muls.w d1,d0` multiplies one row's bytes by the NEGATIVE y, so
+ * the product is negative and the `suba.l d0,a0` under it ADDS that magnitude to the source cursor,
+ * stepping it past the clipped rows. Returns 0 when nothing of the sprite is left to draw, which is
+ * the `bmi` that skips the record. */
+static int sprite_clip_top(const uint8_t *descriptor, sprite_blit_regs *blit, int16_t *y)
+{
+    int16_t rows = (int16_t)(uint16_t)((uint16_t)blit->rows + (uint16_t)*y);
+
+    blit->rows = set_low_word(blit->rows, (uint16_t)rows);
+    if (rows < 0)
+        return 0;
+
+    /* `move.b 4(a4),d0 / ext.w / addq.w #1` — the width code plus one IS the number of source cells
+     * in a row, since code 0 is WB_BLIT_COLUMNS_MIN columns and N columns come from N-1 cells. */
+    uint16_t cells = (uint16_t)((int16_t)(int8_t)descriptor[WB_SPRITE_DESC_WIDTH_CODE] + 1);
+    uint32_t row_bytes = (uint32_t)cells * (WB_BLIT_CELL_WORDS * WB_STATE_WORD_LEN);  /* mulu.w */
+    int32_t clipped = (int32_t)(int16_t)(uint16_t)row_bytes * (int32_t)*y;            /* muls.w */
+
+    blit->scratch[WB_SPRITE_WORK_REG] = (uint32_t)clipped;
+    blit->source = addr_add(blit->source, 0u - (uint32_t)clipped);
+    *y = 0;
+    set_scratch_word(blit, WB_SPRITE_Y_REG, 0);
+    return 1;
+}
+
+/* $8f5c..$8f66 — the sprite starts INSIDE the band, so the count is cut down to the rows left of
+ * it. The compare is signed and the rows left are never negative, which is the second bullet of the
+ * section comment: a negative count is kept, not clamped. The original builds the rows left IN d2
+ * (`move.w #$9f,d2 / sub.w d1,d2`); that write is not reproduced, per the register-file policy in
+ * sprite_draw_record's comment — the width code overwrites d2 before any exit from the pass. */
+static void sprite_clamp_rows_to_band(sprite_blit_regs *blit, int16_t y)
+{
+    int16_t rows_left = (int16_t)(WB_SPRITE_LAST_ROW - y);
+
+    if (rows_left < (int16_t)(uint16_t)blit->rows)
+        blit->rows = set_low_word(blit->rows, (uint16_t)rows_left);
+}
+
+/* $8f68..$8f98 — the screen cursor for (x, y): WB_SCREEN_BACK plus the window's origin plus a
+ * SIXTEEN-BIT offset, sign-extended by the `adda.w`. `y` is 0..WB_SPRITE_LAST_ROW on both paths in,
+ * so the two `asl.w`s never shift a negative; they leave the y register holding y << 7. */
+static void sprite_screen_cursor(const uint8_t *image, sprite_blit_regs *blit, uint16_t x, int16_t y)
+{
+    uint16_t column = (uint16_t)((int16_t)(uint16_t)(x & WB_SPRITE_COLUMN_MASK)
+                                 >> WB_SPRITE_X_BYTE_SHIFT);
+    uint16_t row = (uint16_t)((uint16_t)y << WB_SPRITE_ROW_SHIFT_LOW);
+    uint16_t offset;
+
+    blit->dest = addr_add(be32(image + WB_SCREEN_BACK), WB_BG_BLIT_SCREEN_ORIGIN);
+    set_scratch_word(blit, WB_SPRITE_Y_REG, row);
+    offset = (uint16_t)(column + row);
+
+    row = (uint16_t)(row << WB_SPRITE_ROW_SHIFT_HIGH);
+    set_scratch_word(blit, WB_SPRITE_Y_REG, row);
+    offset = (uint16_t)(offset + row);
+
+    set_scratch_word(blit, WB_SPRITE_WORK_REG, offset);
+    blit->dest = addr_add(blit->dest, sign_ext16(offset));
+}
+
+/* $8f9a..$8fbc — which table, which slot, and the call. Both tests are SIGNED and they run in this
+ * order, so a negative x reaches the left table and stays there: it is below the right threshold
+ * too. */
+static void sprite_dispatch(uint8_t *image, sprite_pass_regs *regs, int16_t x, int16_t width_code)
+{
+    sprite_blit_regs *blit = &regs->blit;
+    const sprite_clip_case *clip = &SPRITE_CLIP_MID;
+    uint16_t slot = (uint16_t)((uint16_t)width_code << WB_BLIT_TABLE_SLOT_SHIFT);
+
+    if (x < 0)
+        clip = &SPRITE_CLIP_LEFT;
+    if (x >= (int16_t)WB_SPRITE_RIGHT_CLIP_X)
+        clip = &SPRITE_CLIP_RIGHT;
+
+    /* `lsl.w #2,d2`, which is where the width code stops being the width code. */
+    set_scratch_word(blit, WB_SPRITE_WIDTH_REG, slot);
+
+    /* A width code outside 0..WB_BLIT_WIDTH_CODE_MAX indexes past the four-longword table and the
+     * original `jsr`s through whatever longword the arithmetic lands on. Nothing in this port can
+     * stand in for that, so it is the one input test/test_blit.py refuses; the guard is what keeps
+     * the C from indexing its own table out of bounds, and it declines the `movea.l (a2),a2` as
+     * well because that read is one address past the table for the same reason.
+     *
+     * IT IS ALSO WHY THE `ext.w d2` ABOVE CANNOT BE PINNED. A width code with bit 7 set is the only
+     * input the sign extension changes, and every such code lands here — so no case that RUNS can
+     * tell the signed reading from the unsigned one, and the mutation sweep records it as such. The
+     * signed reading is the instruction's, taken from the listing and from the entry pin's bytes. */
+    if ((unsigned)width_code > WB_BLIT_WIDTH_CODE_MAX)
+        return;
+
+    regs->blitter = be32(image + addr_add(clip->table, sign_ext16(slot)));
+    clip->blitters[width_code](image, blit);
+}
+
+/* One screen record, $8f0e..$8fbc. Every skip in the original is an early return here.
+ *
+ * Register map: WB_SPRITE_WORK_REG = d0 (the sprite index, then two products, then the screen
+ * offset), WB_SPRITE_Y_REG = d1, WB_SPRITE_WIDTH_REG = d2, WB_BLIT_X_REG = d4,
+ * WB_SPRITE_ECHO_Y_REG = d5, shift = d6, rows = d7, source = a0, dest = a1, descriptor = a4,
+ * record = a6.
+ *
+ * WHAT "THE REGISTER FILE" MEANS HERE. This models the file at the points a caller can OBSERVE it —
+ * every exit from the pass — and not the asm's intermediate temporal states, so a write a later
+ * instruction unconditionally overwrites before any exit is not reproduced (the rows-left value the
+ * bottom clamp builds in d2 is the one such write; the width code lands on top of it). An
+ * intermediate is kept only where it IS observable: `move.w d1,d5` below is dead to this pass and
+ * to all twelve blitters, but a wholly-off-screen sprite's prelude returns without touching a data
+ * register, so that copy is the last thing d5 saw and a case reads it back.
+ */
+static void sprite_draw_record(uint8_t *image, sprite_pass_regs *regs)
+{
+    sprite_blit_regs *blit = &regs->blit;
+    const uint8_t *record = image + regs->record;
+    const uint8_t *descriptor;
+    uint16_t sprite;
+    uint16_t x;
+    int16_t width_code;
+    int16_t y;
+
+    /* `clr.w d0 / clr.w d1` sit AHEAD of the sprite word's own test, so even a skipped record
+     * leaves the pair at zero. */
+    set_scratch_word(blit, WB_SPRITE_WORK_REG, 0);
+    set_scratch_word(blit, WB_SPRITE_Y_REG, 0);
+
+    sprite = be16(record + WB_ACTOR_SCREEN_SPRITE);
+    set_scratch_word(blit, WB_SPRITE_WORK_REG, sprite);
+    if (sprite == WB_ACTOR_SPRITE_HIDDEN)
+        return;
+
+    /* The word index and its wrap — the first bullet of the section comment. */
+    blit->scratch[WB_SPRITE_WORK_REG] = (uint32_t)sprite * WB_RESOURCE_RECORD_BYTES;
+    regs->descriptor = addr_add(regs->descriptor,
+                                sign_ext16(blit->scratch[WB_SPRITE_WORK_REG]));
+    descriptor = image + regs->descriptor;
+
+    blit->rows = set_low_word(blit->rows,
+                              (uint16_t)(int16_t)(int8_t)descriptor[WB_SPRITE_DESC_HEIGHT]);
+    blit->source = be32(descriptor + WB_SPRITE_DESC_SOURCE);
+
+    y = (int16_t)(uint16_t)(be16(record + WB_ACTOR_SCREEN_Y)
+                            + be16(descriptor + WB_SPRITE_DESC_Y_OFFSET));
+    set_scratch_word(blit, WB_SPRITE_Y_REG, (uint16_t)y);
+    if (y < 0) {
+        if (!sprite_clip_top(descriptor, blit, &y))
+            return;
+    } else {
+        if (y > (int16_t)WB_SPRITE_LAST_ROW)
+            return;
+        sprite_clamp_rows_to_band(blit, y);
+    }
+
+    set_scratch_word(blit, WB_SPRITE_ECHO_Y_REG, (uint16_t)y);
+    x = (uint16_t)(be16(record + WB_ACTOR_SCREEN_X)
+                   + be16(descriptor + WB_SPRITE_DESC_X_OFFSET));
+    set_scratch_word(blit, WB_SPRITE_WORK_REG, x);
+    set_scratch_word(blit, WB_BLIT_X_REG, x);
+
+    width_code = (int8_t)descriptor[WB_SPRITE_DESC_WIDTH_CODE];
+    set_scratch_word(blit, WB_SPRITE_WIDTH_REG, (uint16_t)width_code);
+    blit->shift = set_low_word(blit->shift, x & WB_SPRITE_SHIFT_MASK);
+
+    sprite_screen_cursor(image, blit, x, y);
+    sprite_dispatch(image, regs, (int16_t)x, width_code);
+}
+
+void sprite_draw_pass(uint8_t *image, sprite_pass_regs *regs)
+{
+    regs->record = WB_ACTOR_SCREEN_RECORDS;
+    do {
+        /* `lea $248d8.l,a4` is INSIDE the loop: every record indexes the table from its own base,
+         * so one record's wrapped cursor cannot carry into the next. */
+        regs->descriptor = WB_RESOURCE_TABLE;
+        sprite_draw_record(image, regs);
+        regs->record = addr_add(regs->record, WB_ACTOR_SCREEN_RECORD_BYTES);
+    } while ((int32_t)regs->record < (int32_t)WB_ACTOR_SCREEN_RECORDS_END);
 }

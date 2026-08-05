@@ -1,14 +1,15 @@
-/* blit.h — the twelve MASKED PLANAR SPRITE BLITTERS at $8fce..$989c: prototypes, the register file
- * they are entered with, and the geometry of one sprite row.
+/* blit.h — the SPRITE TIER: the pass at $8f02 that decides what to draw and where, and the twelve
+ * MASKED PLANAR SPRITE BLITTERS at $8fce..$989c that draw it. Prototypes, the register files the
+ * two are entered with, and the geometry of one sprite row.
  *
  * The sprite pass at $8f02 computes a screen address and a sub-word shift for one actor and then
  * `jsr`s through one of three four-entry jump tables — `blit_table_mid` ($989c) while the x is on
  * screen, `blit_table_left` ($98ac) while it is negative, `blit_table_right` ($98bc) from $b0 on —
  * each indexed by a WIDTH CODE 0..3, i.e. WB_BLIT_COLUMNS_MIN..WB_BLIT_COLUMNS_MAX 16-pixel
  * columns. So there are twelve entry points over four widths and three clip cases, and this file
- * names all of them; ../names.txt is where they and the tables are named in the image. THE PASS
- * ITSELF IS NOT RECONSTRUCTED HERE: what it computes is context for these twelve, and the register
- * interface below is read off the twelve bodies rather than off their one caller.
+ * names all of them; ../names.txt is where they and the tables are named in the image. The register
+ * interface below is read off the twelve BODIES rather than off their caller, and the pass's own
+ * section at the end of this file is read off the caller.
  *
  * WHAT A SPRITE LOOKS LIKE. Row-major, and pre-split for the rotate: per row there is one CELL per
  * column-minus-one, and a cell is WB_BLIT_CELL_WORDS words — an AND mask, then WB_PLANES
@@ -123,5 +124,90 @@ void blit_clip_right_w2(uint8_t *image, sprite_blit_regs *regs);
 void blit_clip_right_w3(uint8_t *image, sprite_blit_regs *regs);
 void blit_clip_right_w4(uint8_t *image, sprite_blit_regs *regs);
 void blit_clip_right_w5(uint8_t *image, sprite_blit_regs *regs);
+
+/* --- the sprite pass at $8f02 ------------------------------------------------------------------
+ *
+ * game_main_loop's one `jsr $8f02.l`, and the twelve above have no other caller. It walks the
+ * WB_ACTOR_SCREEN_RECORD_COUNT records project_actor_list left at WB_ACTOR_SCREEN_RECORDS and, for
+ * each one that names a sprite, reads that sprite's DESCRIPTOR out of WB_RESOURCE_TABLE, clips the
+ * sprite against the top and the bottom of the band, builds the screen address and the sub-word
+ * shift, and picks a table by the screen x.
+ *
+ * SO WB_RESOURCE_TABLE'S RECORDS ARE SPRITE DESCRIPTORS. resource_table_relocate ($fe1e, in
+ * src/stage.c — see ../names.txt) turns each record's first longword from an offset into an
+ * absolute pointer, and this is the routine that reads the result: ten of the twenty bytes, in the
+ * five fields below. What the other ten hold is still not established. The offsets live in THIS
+ * header rather than beside WB_RESOURCE_TABLE in wonderboy.h because the sprite pass is the only
+ * reader of the table that has been read.
+ */
+#define WB_SPRITE_DESC_SOURCE      0u    /* longword: the cell data, already an absolute pointer */
+#define WB_SPRITE_DESC_WIDTH_CODE  4u    /* byte, `ext.w`ed: the jump tables' index, 0..3 */
+#define WB_SPRITE_DESC_HEIGHT      5u    /* byte, `ext.w`ed — so a descriptor CAN ask for a
+                                          * NEGATIVE number of rows; see src/blit.c */
+#define WB_SPRITE_DESC_X_OFFSET    8u    /* word, added to the screen record's own x */
+#define WB_SPRITE_DESC_Y_OFFSET    10u   /* word, added to its y */
+
+/* The three jump tables as ADDRESSES, because the pass reads its blitter pointer out of the image
+ * rather than knowing it: `lea $989c.l,a2 / adda.w d2,a2 / movea.l (a2),a2 / jsr (a2)`. What each
+ * slot holds is pinned against ../names.txt by test/test_blit.py. */
+#define WB_BLIT_TABLE_MID          0x989cu
+#define WB_BLIT_TABLE_LEFT         0x98acu
+#define WB_BLIT_TABLE_RIGHT        0x98bcu
+#define WB_BLIT_TABLE_SLOT_SHIFT   2u    /* `lsl.w #2,d2`: one longword per slot */
+#define WB_BLIT_WIDTH_CODE_MAX     3u    /* the last slot of a four-entry table */
+
+/* The band the pass clips to, as ROWS of the visible window that starts WB_BG_BLIT_SCREEN_ORIGIN
+ * bytes into WB_SCREEN_BACK. One number in two instructions: the `cmpi.w #$9f,d1` that rejects a
+ * sprite starting below it and the `move.w #$9f,d2` the row count is clamped against. It is
+ * WB_BG_BLIT_SCANLINES - 1 — the same window the background blit fills — but it is spelt as the
+ * literal $9f the two instructions carry because test/layout.py scrapes plain integers only and an
+ * expression here would drop the constant out of the tests' reach; the identity is held instead by
+ * test_blit.py's `test_the_pass_geometry_is_what_the_numbers_say`. */
+#define WB_SPRITE_LAST_ROW         0x9fu
+
+/* `cmp.w #$b0,d4`: from this screen x on, the RIGHT table is selected. It is exactly
+ * WB_BLIT_SCREEN_EDGE_X - WB_BLIT_COLUMNS_MAX * WB_BLIT_COLUMN_PIXELS — the first x at which even
+ * the widest sprite could touch the right edge — which test/test_blit.py states as the identity it
+ * is rather than a coincidence. */
+#define WB_SPRITE_RIGHT_CLIP_X     0xb0u
+
+/* Splitting the screen x into a column and a sub-word shift: `andi.w #$f,d6` is the shift the
+ * blitters rotate by and `andi.w #$fff0,d0` the whole 16-pixel column, and the two masks partition
+ * the word. The rounded x then halves into a byte offset, because four interleaved planes put
+ * WB_BLIT_COLUMN_PIXELS pixels in WB_BLIT_COLUMN_BYTES — `asr.w #1,d0`, SIGNED, so a negative
+ * column steps the screen cursor back. */
+#define WB_SPRITE_SHIFT_MASK       0xfu
+#define WB_SPRITE_COLUMN_MASK      0xfff0u
+#define WB_SPRITE_X_BYTE_SHIFT     1u
+
+/* ...and the row, built out of one register by two `asl.w`s that leave it holding y << 7:
+ * (1 << 5) + (1 << (5 + 2)) == WB_SCREEN_LINE, which test/test_blit.py states. */
+#define WB_SPRITE_ROW_SHIFT_LOW    5u
+#define WB_SPRITE_ROW_SHIFT_HIGH   2u
+
+/* Which of d0..d5 the pass uses for what. d4 is WB_BLIT_X_REG above — the pass computes the screen
+ * x into the very register the clip preludes read it from. */
+#define WB_SPRITE_WORK_REG         0u    /* the sprite index, then two products, then the offset */
+#define WB_SPRITE_Y_REG            1u    /* the screen y, and afterwards y << 7 */
+#define WB_SPRITE_WIDTH_REG        2u    /* the width code, and afterwards its table offset */
+#define WB_SPRITE_ECHO_Y_REG       5u    /* `move.w d1,d5`, written and never read */
+
+/* The 68000 registers the pass reads and leaves behind: `blit` is exactly what it hands a blitter
+ * (and what a blitter hands back), plus the three address registers the walk itself uses.
+ * Register map: record = a6, descriptor = a4, blitter = a2.
+ *
+ * Every field is IN and OUT, as for a blitter. The pass has NO argument — a6, a4 and a2 are loaded
+ * from `lea`s and everything else it reads is memory — so the only field that is an input in the
+ * ordinary sense is `blit.unwind` (a5), which it never touches and each wholly-off-left sprite
+ * takes WB_BLIT_UNWIND_BYTES off. The rest are inputs only through their HIGH halves, which the
+ * pass's word operations leave alone. */
+typedef struct {
+    sprite_blit_regs blit;
+    uint32_t record;
+    uint32_t descriptor;
+    uint32_t blitter;
+} sprite_pass_regs;
+
+void sprite_draw_pass(uint8_t *image, sprite_pass_regs *regs);
 
 #endif /* WONDERBOY_BLIT_H */

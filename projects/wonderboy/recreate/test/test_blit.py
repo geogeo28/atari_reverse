@@ -29,27 +29,27 @@ THREE THINGS MAKE THIS BATTERY DIFFERENT FROM test_scroll.py's.
     CLIP_MASK_SEED, which draws NOTHING: an unclipped body that read it would blit an empty sprite,
     and a clipped one whose prelude failed to write it would too.
 
+THE PASS AT $8f02 IS THE SECOND HALF OF THIS FILE, added in batch 15 — the twelve above have no
+other caller, and the pass has no other callee. It shares this battery rather than starting one
+because the two are one story and the seam between them is what a case has to state: `_dest_for`
+below is the pass's own screen arithmetic, `model_blit`'s entry registers are what the pass
+computes, and the row count a wider body runs away on is a height byte the pass sign-extends. Two
+files would each have had half.
+
 KNOWINGLY NOT PINNED
-  * THE 65,537-ROW `dbf`. The three wider bodies decrement AFTER drawing, so an entry d7 of $ffff
-    draws 65,537 rows and walks 10 MB of screen. Reproduced by construction in src/blit.c and left
-    unreached: the sprite pass hands d7 a sprite HEIGHT read from a byte and then clamps it against
-    the screen ($8f24..$8f66), so the count it produces is small and non-negative. Not reached by
-    accident either — `_insn_cap` REFUSES any case whose entry count would run it, which is a
-    statement of the same reading (`test_the_battery_refuses_to_ask_a_wider_body_for_those_counts`).
-    The two-column bodies' own guard IS reached, from both ends
-    (`test_the_two_column_bodies_refuse_*`).
   * WHOSE POINTER `subq.w #6,a5` UNWINDS. Six bytes is one WB_ACTOR_SCREEN_RECORDS record, but the
-    sprite pass at $8f02 walks that array in a6 and never touches a5, so the caller this rewinds is
-    not established. The arithmetic is pinned (including that it is a LONGWORD subtract); what it
-    MEANS is not.
-  * A WIDTH CODE OUTSIDE 0..3, and the dispatcher generally. $8f02 is not part of this batch: these
-    twelve are entered directly, at the addresses the three jump tables hold, and those tables are
-    pinned against ../names.txt rather than exercised.
-  * THE SPRITE PASS'S OWN SCREEN ARITHMETIC. `_dest_for` mirrors it so that cases land where the
-    game would put them, but nothing here proves it — that belongs to $8f02's own batch.
+    sprite pass walks that array in a6 and never touches a5, so the caller this rewinds is still not
+    established — reading the pass RULED THE OBVIOUS ANSWER OUT rather than confirming it.
+  * A WIDTH CODE OUTSIDE 0..WB_BLIT_WIDTH_CODE_MAX. The original `jsr`s through whatever longword
+    sits past the four-entry table; nothing here can stand in for that, so the pass battery refuses
+    such a descriptor and src/blit.c's dispatch returns instead.
+  * WHAT THE SHIPPED DESCRIPTORS HOLD. SPRITES.CRU and the table at $248d8 both come off disk, so
+    every case seeds its own — including the negative height that reaches the runaway `dbf`. That
+    the runaway is reachable BY DATA is pinned; that the game's own data reaches it is not.
 """
 import ctypes
 import random
+from typing import NamedTuple
 
 import pytest
 
@@ -57,9 +57,12 @@ import harness
 import leaf
 from harness import make_image
 from layout import wb
-from leaf import (RTS, backward_branch, branch_over, case_salt, keyed_block, lea_d16, longword,
-                  merge_bands, move_b_imm_abs_l, move_w_postinc_dn, opcode, program_writes,
-                  rotate_left32, rotate_right32, s16, set_low_word, swap_dn, tst_w_dn, word)
+from leaf import (RTS, add_w_dn_dn, andi_w_dn, asl_w_imm_dn, asr_w_imm_dn, backward_branch,
+                  branch_over, case_salt, clr_w_dn, cmp_w_dn_dn, keyed_block, lea_abs_l, lea_d16,
+                  longword, lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_b_imm_abs_l,
+                  move_w_dn_dn, move_w_imm_dn, move_w_ind_dn, move_w_postinc_dn, movea_l_abs_w,
+                  mulu_w_imm_dn, opcode, program_writes, rotate_left32, rotate_right32, s16,
+                  set_low_word, sub_w_dn_dn, swap_dn, tst_w_dn, word)
 
 import emu                                                       # noqa: E402
 import loader                                                    # noqa: E402
@@ -106,9 +109,11 @@ SIDES = (MID, LEFT, RIGHT)
 
 # The registers this family names, by the number the encoders want them as: a0 the sprite, a1 the
 # screen, a5 the unwind, d6 the sub-word shift, d7 the row count and d4 the screen x a prelude
-# clips against. d0..d5 are the scratch window and are addressed by index. The x register is the one
-# of them include/blit.h has to name (it is scratch[4] under the body), so it is read from there.
-A0, A1, A5 = 0, 1, 5
+# clips against — plus the three the PASS's own walk uses, a6 the screen record, a4 the descriptor
+# and a2 the blitter it calls through. d0..d5 are the scratch window and are addressed by index. The
+# x register is the one of them include/blit.h has to name (it is scratch[4] under the body), so it
+# is read from there.
+A0, A1, A2, A4, A5, A6 = 0, 1, 2, 4, 5, 6
 SHIFT_REG, ROWS_REG = 6, 7
 X_REG = wb("BLIT_X_REG")
 
@@ -275,8 +280,10 @@ def subq_w_an(amount, reg):
 
 
 # The condition fields, as the whole opcode word of a WORD-displacement branch. The SHORT forms take
-# their displacement in the low byte of the same word.
+# their displacement in the low byte of the same word. The last two are the pass's alone — the
+# twelve never spell them.
 BRA, BEQ, BNE, BMI, BLT, BGE = 0x6000, 0x6700, 0x6600, 0x6b00, 0x6d00, 0x6c00
+BPL, BGT = 0x6a00, 0x6e00
 BRANCH_W_LEN = 4
 BRANCH_S_LEN = 2
 DBF_LEN = 4
@@ -737,11 +744,19 @@ SCREEN_BYTES = 2 * (SCREEN_BUFFERS[1] - SCREEN_BUFFERS[0])
 SCREEN_SALT = case_salt("screen")
 SCREEN_SEED = keyed_block(SCREEN_BUFFERS[0], SCREEN_BYTES, SCREEN_SALT)
 
-# `adda.w #$1420,a1` in the sprite pass at $8f6e: where the visible window starts inside a screen
-# buffer. Context for `_dest_for`, not a claim this batch proves.
+# THE SPRITE PASS'S OWN SCREEN ARITHMETIC ($8f6a..$8f98), which every blitter case's destination is
+# built from and which the pass battery at the end of this file PINS: the buffer WB_SCREEN_BACK
+# names, plus the window origin `adda.w #$1420,a1` adds, plus a SIXTEEN-BIT offset that the final
+# `adda.w` sign-extends. Stated once here because the two halves of this file must not disagree
+# about where a sprite goes.
 SCREEN_ORIGIN = wb("BG_BLIT_SCREEN_ORIGIN")
+COLUMN_ROUND_DOWN = wb("SPRITE_COLUMN_MASK")    # `andi.w #$fff0,d0`: the x, down to a whole column
+X_BYTE_SHIFT = wb("SPRITE_X_BYTE_SHIFT")        # `asr.w #1,d0`, SIGNED: four planes put
+                                                # COLUMN_PIXELS pixels in COLUMN_BYTES
+ROW_SHIFT_LOW = wb("SPRITE_ROW_SHIFT_LOW")      # `asl.w #5,d1`
+ROW_SHIFT_HIGH = wb("SPRITE_ROW_SHIFT_HIGH")    # ...and `asl.w #2,d1` over that, the two adding up
+                                                # to a whole SCREEN_LINE
 DEST_ROW = 60                       # mid-screen, with room above and below for any of these rows
-COLUMN_ROUND_DOWN = 0xfff0          # `andi.w #$fff0,d0`: the x, down to a whole 16-pixel column
 
 # Neither the fully-off-screen arm nor an unclipped body touches a5, so a case that seeded it as
 # zero could not tell "unchanged" from "cleared".
@@ -753,16 +768,20 @@ CLIP_MASK_SEED = 0
 
 # What a run is allowed to execute, from the geometry: per row, a load per cell, a draw (and in a
 # clipped body a `btst`) per column, and the `lea`/`dbf` that close it. Doubled, so the cap fails a
-# run that fell into the 65,537-row `dbf` rather than predicting the exact count.
+# run that fell into the runaway `dbf` rather than predicting the exact count.
 _INSNS_PER_CELL = 25
 _INSNS_PER_COLUMN = 13
 _INSNS_PER_ROW = 4
 _INSNS_ENTRY = 32
 
 # No case here draws more rows than this. The bound is on the BATTERY, not on the game: a case that
-# asked for the 65,537-row `dbf` would otherwise be given a cap large enough to run it.
+# asked for the runaway `dbf` would otherwise be given a cap large enough to run it.
 MAX_CASE_ROWS = 64
-RUNAWAY_ROWS = WORD_MASK + 2        # what an entry count of $ffff draws on a `dbf` body: 65,537
+# What an entry count of $ffff draws on a `dbf` body. The counter is decremented ONCE PER ROW and
+# the loop leaves when it is back at $ffff, so that is the whole 16-bit range and no more: 65,536,
+# where batch 14 stated 65,537. Measured, not argued — the runaway case below walks a0 forward by
+# exactly this many rows' worth of source and a1 by this many scanlines.
+RUNAWAY_ROWS = WORD_MASK + 1
 
 
 def _rows_drawn(width, rows):
@@ -771,8 +790,8 @@ def _rows_drawn(width, rows):
     d7 + 1, and the two shapes part company on the two ways that can fail to be a small number. A
     two-column body BUMPS AND TESTS, so a count that is zero or negative once bumped draws nothing.
     A wider one just `dbf`s, so the bump wrapping to zero is not a refusal but the runaway: $ffff
-    draws the whole 16-bit range and one more. Counting that as "0 rows drawn" is the hole this
-    closes — it handed the one entry count that runs 65,537 rows a 64-instruction cap.
+    draws the whole 16-bit range. Counting that as "0 rows drawn" is the hole this closes — it
+    handed the one entry count that runs RUNAWAY_ROWS of them a 64-instruction cap.
     """
     drawn = (rows + 1) & WORD_MASK
     if width.counts_rows_up_front:
@@ -780,21 +799,47 @@ def _rows_drawn(width, rows):
     return drawn if drawn else RUNAWAY_ROWS
 
 
-def _insn_cap(width, rows):
-    """The instruction cap for a case — and the battery's refusal to ask for the runaway `dbf`."""
+def _blit_insns(width, rows):
+    """What one blit that ENTERS A ROW LOOP may execute — and the battery's refusal to ask for the
+    runaway `dbf`.
+
+    Split from `_insn_cap` so that a PASS case, whose cap is the sum over the records it draws, can
+    both bound each blit and inherit the refusal without restating either. A record whose x leaves
+    no column on screen is not one of them: `_model_pass_record` budgets those for the prelude's
+    ladder alone, since no `dbf` ever sees their count.
+    """
     drawn = _rows_drawn(width, rows)
     assert drawn <= MAX_CASE_ROWS, (
-        f"a case asking for {drawn} rows is asking for the runaway `dbf` this battery states as "
-        f"unreached, not for a blit")
-    return 2 * (_INSNS_ENTRY + drawn * (width.cells * _INSNS_PER_CELL
-                                        + width.columns * _INSNS_PER_COLUMN + _INSNS_PER_ROW))
+        f"a case asking for {drawn} rows is asking for the runaway `dbf`, which only "
+        f"`test_a_negative_height_runs_a_wider_body_away` is set up to survive, not for a blit")
+    return _INSNS_ENTRY + drawn * (width.cells * _INSNS_PER_CELL
+                                   + width.columns * _INSNS_PER_COLUMN + _INSNS_PER_ROW)
+
+
+def _insn_cap(width, rows):
+    """The instruction cap for a case entering one of the twelve directly."""
+    return 2 * _blit_insns(width, rows)
+
+
+def _screen_offset(x, y):
+    """$8f84..$8f96: the SIXTEEN-BIT byte offset of (x, y) inside the window, and what the y
+    register is left holding.
+
+    Both a claim and a warning: the whole offset is a word, so a large x or y wraps inside it rather
+    than reaching where the arithmetic points, and the two `asl.w`s leave the y register at y << 7
+    and not at y.
+    """
+    column = s16(x & COLUMN_ROUND_DOWN) >> X_BYTE_SHIFT
+    row = (y << ROW_SHIFT_LOW) & WORD_MASK
+    offset = (column + row) & WORD_MASK
+    row = (row << ROW_SHIFT_HIGH) & WORD_MASK
+    return (offset + row) & WORD_MASK, row
 
 
 def _dest_for(x, y, screen):
-    """Where the sprite pass would put this sprite: `screen + $1420 + y * 160 + (x & $fff0) / 2`,
-    the `asr.w #1` being SIGNED so a negative x steps the cursor back."""
-    return (screen + SCREEN_ORIGIN + y * SCREEN_LINE
-            + (s16(x & COLUMN_ROUND_DOWN) >> 1)) & LONG_MASK
+    """Where the sprite pass puts a sprite at (x, y) in the buffer `screen`."""
+    offset, _row = _screen_offset(x, y)
+    return (screen + SCREEN_ORIGIN + s16(offset)) & LONG_MASK
 
 
 class BlitRegs(ctypes.Structure):
@@ -816,25 +861,44 @@ _BLIT_FNS = {blitter_name(columns, side):
              for columns, side in BLITTERS}
 
 
-def _blit_glue(name, entry):
-    """The reconstruction's result is an in/out register file rather than a returned d0.
+def _regs_glue(new_box, fn, entry):
+    """Differential glue for a reconstruction whose result is an in/out ctypes REGISTER FILE.
 
-    The struct is built FRESH inside the glue: the kit's attribution pass runs a candidate a second
-    time on a poisoned image, and a box carried over would start that run from the first one's
-    OUTPUT registers. What comes back is a plain dict, for the same reason — the box is about to be
-    written over.
+    ``new_box`` returns (the box the call is handed, the `BlitRegs` carrying d0..d5, the
+    [(owner, {register: field})] pairs that say which of its fields hold which named registers) —
+    one for a bare blitter and one for the pass, whose box adds the three the walk itself uses. Both
+    glues are then this function, so the fill and the read are one statement rather than two that
+    could disagree about a field.
+
+    The box is built FRESH per run: the kit's attribution pass runs a candidate a second time on a
+    poisoned image, and a box carried over would start that run from the first one's OUTPUT
+    registers. What comes back is a plain dict, for the same reason — the box is about to be written
+    over.
     """
     def glue(_lib, image):
-        box = BlitRegs()
+        box, blit, maps = new_box()
         for reg in range(SCRATCH_REGS):
-            box.scratch[reg] = entry[f"d{reg}"]
-        for reg, field in FIELD_BY_REG.items():
-            setattr(box, field, entry[reg])
-        _BLIT_FNS[name](image, ctypes.byref(box))
-        out = {f"d{reg}": box.scratch[reg] for reg in range(SCRATCH_REGS)}
-        out.update({reg: getattr(box, field) for reg, field in FIELD_BY_REG.items()})
+            blit.scratch[reg] = entry[f"d{reg}"]
+        for owner, field_by_reg in maps:
+            for reg, field in field_by_reg.items():
+                setattr(owner, field, entry[reg])
+
+        fn(image, ctypes.byref(box))
+
+        out = {f"d{reg}": blit.scratch[reg] for reg in range(SCRATCH_REGS)}
+        for owner, field_by_reg in maps:
+            out.update({reg: getattr(owner, field) for reg, field in field_by_reg.items()})
         return out
     return glue
+
+
+def _blit_box():
+    box = BlitRegs()
+    return box, box, [(box, FIELD_BY_REG)]
+
+
+def _blit_glue(name, entry):
+    return _regs_glue(_blit_box, _BLIT_FNS[name], entry)
 
 
 def _entry_registers(case, x, shift, rows, dest, unwind):
@@ -887,7 +951,8 @@ def _run_blit(case, columns, side, x=0, shift=0, rows=1, y=DEST_ROW, unwind=UNWI
     name = blitter_name(columns, side)
     dest = _dest_for(x, y, screen)
     # BEFORE the model runs: a row count that asks for the runaway `dbf` is refused here, and the
-    # Python walk would otherwise spin through all 65,537 of its rows before the cap was consulted.
+    # Python walk would otherwise spin through all RUNAWAY_ROWS of its rows before the cap was
+    # consulted.
     cap = _insn_cap(width, rows)
 
     pokes = _case_pokes(case)
@@ -1110,7 +1175,7 @@ def test_the_battery_refuses_to_ask_a_wider_body_for_those_counts(rows, runs):
     cap is where this battery declines to ask.
 
     $ffff is the one that has to be spelt out: a wider body `dbf`s, so it draws the whole 16-bit
-    range and one more — 65,537 rows, 10 MB of screen — where the BUMPED COUNTER alone says "zero".
+    range — RUNAWAY_ROWS rows, 10 MB of screen — where the BUMPED COUNTER alone says "zero".
     A cap taken from that bumped counter would have been 64 instructions, and the case would have
     failed as a cap overrun on a run that was behaving exactly as reproduced.
     """
@@ -1242,7 +1307,7 @@ def test_the_clipped_four_column_body_leaves_a_plane_unmerged_when_it_skips_a_co
 
 
 # --- a sweep over the geometry ------------------------------------------------------------------------
-# Sharded per the recipe in ../../buggyboy/recreate/README.md: one stream, generated in full by
+# Sharded per the recipe in ../../../buggyboy/recreate/README.md: one stream, generated in full by
 # every worker (microseconds) and RUN by the one whose chunk owns the iteration, so the coverage
 # is identical to the un-sharded loop.
 #
@@ -1299,3 +1364,1129 @@ def test_the_sweep_covers_every_width_shift_and_clip_case():
     sharded = sum(1 for index, *_rest in _fuzz_cases() for chunk in range(FUZZ_CHUNKS)
                   if index % FUZZ_CHUNKS == chunk)
     assert sharded == FUZZ_CASES, "the chunks do not partition the sweep"
+
+
+# ==================================================================================================
+# THE SPRITE PASS AT $8f02 — the caller of the twelve above (batch 15)
+# ==================================================================================================
+# 204 bytes, ONE caller (game_main_loop's `jsr $8f02.l`), and no other way into any of the twelve.
+# It walks the nineteen screen records project_actor_list left at WB_ACTOR_SCREEN_RECORDS and, for
+# each one naming a sprite, reads that sprite's descriptor out of WB_RESOURCE_TABLE, clips it to the
+# band, builds the register file the twelve are entered with, and calls one of them.
+#
+# WHAT MAKES THESE CASES DIFFERENT FROM THE TWELVE'S. A blitter case names its own entry registers;
+# a pass case names only MEMORY — records, descriptors, WB_SCREEN_BACK — and every register is
+# something the pass computed. So the model below is the pass's arithmetic followed by `model_blit`,
+# and a case's write set is the UNION of the rectangles the records it seeded drew.
+#
+# NOTHING THE PASS READS IS IN THE SHIPPED IMAGE either: the screen records are filled per frame,
+# WB_RESOURCE_TABLE is past the program's last byte and loaded from disk, and so is SPRITES.CRU. A
+# case therefore seeds all three, keyed on the address as everything else here is.
+
+PASS_NAME = "sprite_draw_pass"
+
+# The screen-record array, and the descriptor table it indexes. Every one of these is read through
+# `wb(...)`, so this battery and src/blit.c cannot disagree about a field's offset.
+RECORDS = wb("ACTOR_SCREEN_RECORDS")
+RECORDS_END = wb("ACTOR_SCREEN_RECORDS_END")
+RECORD_BYTES = wb("ACTOR_SCREEN_RECORD_BYTES")
+RECORD_COUNT = wb("ACTOR_SCREEN_RECORD_COUNT")
+RECORD_X = wb("ACTOR_SCREEN_X")
+RECORD_Y = wb("ACTOR_SCREEN_Y")
+RECORD_SPRITE = wb("ACTOR_SCREEN_SPRITE")
+SPRITE_HIDDEN = wb("ACTOR_SPRITE_HIDDEN")
+
+RESOURCE_TABLE = wb("RESOURCE_TABLE")
+RESOURCE_RECORD_BYTES = wb("RESOURCE_RECORD_BYTES")
+DESC_SOURCE = wb("SPRITE_DESC_SOURCE")
+DESC_WIDTH_CODE = wb("SPRITE_DESC_WIDTH_CODE")
+DESC_HEIGHT = wb("SPRITE_DESC_HEIGHT")
+DESC_X_OFFSET = wb("SPRITE_DESC_X_OFFSET")
+DESC_Y_OFFSET = wb("SPRITE_DESC_Y_OFFSET")
+
+SCREEN_BACK = wb("SCREEN_BACK")
+LAST_ROW = wb("SPRITE_LAST_ROW")             # `cmpi.w #$9f,d1` and `move.w #$9f,d2`
+RIGHT_CLIP_X = wb("SPRITE_RIGHT_CLIP_X")     # `cmp.w #$b0,d4`
+SHIFT_MASK = wb("SPRITE_SHIFT_MASK")         # `andi.w #$f,d6`
+SLOT_SHIFT = wb("BLIT_TABLE_SLOT_SHIFT")     # `lsl.w #2,d2`
+WIDTH_CODE_MAX = wb("BLIT_WIDTH_CODE_MAX")
+TABLE_ADDR_BY_SIDE = {MID: wb("BLIT_TABLE_MID"), LEFT: wb("BLIT_TABLE_LEFT"),
+                      RIGHT: wb("BLIT_TABLE_RIGHT")}
+
+# Which of d0..d5 the pass uses for what — include/blit.h's numbers, so a register renamed there
+# fails here as a missing key rather than as a silently different assert.
+WORK_REG = wb("SPRITE_WORK_REG")
+Y_REG = wb("SPRITE_Y_REG")
+WIDTH_REG = wb("SPRITE_WIDTH_REG")
+ECHO_Y_REG = wb("SPRITE_ECHO_Y_REG")
+
+def s8(value):
+    """`ext.w Dn` after a `move.b` — the byte just loaded, as the signed word it becomes.
+
+    leaf.s16 one size down. Local because the sprite pass is the only routine reconstructed so far
+    that reads a SIGNED byte field, and it reads two of them.
+    """
+    value &= 0xff
+    return value - 0x100 if value & 0x80 else value
+
+
+# --- the encodings the pass adds ------------------------------------------------------------------
+# `clr_w_dn`, `cmp_w_dn_dn`, `andi_w_dn` and the `asr.w`/`asl.w` pair MOVED INTO leaf.py when this
+# battery became their third user (test_actor.py and test_map.py had spelt the first, second and
+# fourth between them, test_map.py and test_scroll.py the third). What is left below stands at ONE
+# user apart from `adda_w_imm_an` (also test_scroll.py) and `cmpa_l_imm` (also test_actor.py), which
+# say so in their own docstrings; this batch's STATUS.md section is where that pair is registered as
+# the next hoist.
+
+def ext_w_dn(reg):
+    """`ext.w Dn` — sign-extend the low BYTE through the low word."""
+    return opcode(0x4880 | reg)
+
+
+def movea_l_ind(reg, base):
+    """`movea.l (An),Am` — how the pass loads a descriptor's source pointer and its blitter."""
+    return opcode(0x2050 | (reg << 9) | base)
+
+
+def add_w_d16_dn(reg, base, displacement):
+    """`add.w d16(An),Dn` — how a descriptor's x/y offset reaches the record's own."""
+    return opcode(0xd068 | (reg << 9) | base) + word(displacement)
+
+
+def cmpi_w_dn(reg, value):
+    """`cmpi.w #imm,Dn` — the band's lower edge."""
+    return opcode(0x0c40 | reg) + word(value)
+
+
+def muls_w_dn_dn(destination, source):
+    """`muls.w Dn,Dn` — a SIGNED 16x16 product into the whole 32-bit register, which is what makes
+    the top clip's source step come out negative."""
+    return opcode(0xc1c0 | (destination << 9) | source)
+
+
+def suba_l_dn_an(reg, source):
+    """`suba.l Dn,An` — and what then ADDS that step's magnitude to the source cursor."""
+    return opcode(0x91c0 | (reg << 9) | source)
+
+
+def adda_w_dn_an(reg, source):
+    """`adda.w Dn,An` — a WORD operand SIGN-EXTENDED into a 32-bit address. Three sites: the
+    descriptor cursor, the screen cursor and the table slot."""
+    return opcode(0xd0c0 | (reg << 9) | source)
+
+
+def adda_w_imm_an(reg, value):
+    """`adda.w #imm,An` — the window origin inside a screen buffer. ALSO IN test_scroll.py, in the
+    same DESTINATION-FIRST operand order (the two disagreed about it when this battery landed, which
+    two encoders of one instruction can do silently — each one's own byte pins pass either way)."""
+    return opcode(0xd0fc | (reg << 9)) + word(value)
+
+
+def cmpa_l_imm(reg, value):
+    """`cmpa.l #imm,An` — a LONGWORD compare, which is what ends the record walk. ALSO IN
+    test_actor.py, whose own record walk ends the same way; this battery had it under a second name
+    (`cmpa_l_imm_an`) until the review, and two names for one instruction is how two spellings of it
+    stay invisible to each other."""
+    return opcode(0xb1fc | (reg << 9)) + longword(value)
+
+
+def jsr_ind(reg):
+    """`jsr (An)` — the indirect call the three jump tables exist for."""
+    return opcode(0x4e90 | reg)
+
+
+# --- assembling the pass ---------------------------------------------------------------------------
+
+def _sprite_pass_bytes():
+    """All of $8f02, assembled from this battery's own statement of the walk.
+
+    Built in the same pieces src/blit.c is built in, and every branch displacement comes out of the
+    LENGTHS of those pieces — so a field offset, a threshold, a shift, a register or a skip that is
+    wrong there is wrong in these bytes here.
+    """
+    read_sprite = (lea_abs_l(A4, RESOURCE_TABLE) + clr_w_dn(WORK_REG) + clr_w_dn(Y_REG)
+                   + move_w_ind_dn(WORK_REG, A6, RECORD_SPRITE))
+    descriptor = (mulu_w_imm_dn(WORK_REG, RESOURCE_RECORD_BYTES) + adda_w_dn_an(A4, WORK_REG)
+                  + move_w_imm_dn(ROWS_REG, 0) + move_b_d16_dn(ROWS_REG, A4, DESC_HEIGHT)
+                  + ext_w_dn(ROWS_REG) + movea_l_ind(A0, A4)
+                  + move_w_ind_dn(Y_REG, A6, RECORD_Y) + add_w_d16_dn(Y_REG, A4, DESC_Y_OFFSET))
+
+    # $8f68..$8fbc: the screen cursor, the table and the call.
+    cursor = (move_w_dn_dn(ECHO_Y_REG, Y_REG)
+              + movea_l_abs_w(A1, SCREEN_BACK) + adda_w_imm_an(A1, SCREEN_ORIGIN)
+              + move_w_ind_dn(WORK_REG, A6, RECORD_X) + add_w_d16_dn(WORK_REG, A4, DESC_X_OFFSET)
+              + move_w_dn_dn(X_REG, WORK_REG)
+              + move_w_imm_dn(WIDTH_REG, 0) + move_b_d16_dn(WIDTH_REG, A4, DESC_WIDTH_CODE)
+              + ext_w_dn(WIDTH_REG)
+              + move_w_dn_dn(SHIFT_REG, WORK_REG) + andi_w_dn(SHIFT_REG, SHIFT_MASK)
+              + andi_w_dn(WORK_REG, COLUMN_ROUND_DOWN) + asr_w_imm_dn(X_BYTE_SHIFT, WORK_REG)
+              + asl_w_imm_dn(ROW_SHIFT_LOW, Y_REG) + add_w_dn_dn(WORK_REG, Y_REG)
+              + asl_w_imm_dn(ROW_SHIFT_HIGH, Y_REG) + add_w_dn_dn(WORK_REG, Y_REG)
+              + adda_w_dn_an(A1, WORK_REG))
+    pick_left = lea_abs_l(A2, TABLE_ADDR_BY_SIDE[LEFT])
+    pick_right = lea_abs_l(A2, TABLE_ADDR_BY_SIDE[RIGHT])
+    draw = (cursor + lea_abs_l(A2, TABLE_ADDR_BY_SIDE[MID])
+            + tst_w_dn(X_REG) + short_branch(BPL, len(pick_left)) + pick_left
+            + cmp_w_imm_dn(X_REG, RIGHT_CLIP_X) + short_branch(BLT, len(pick_right)) + pick_right
+            + lsl_w_imm_dn(SLOT_SHIFT, WIDTH_REG) + adda_w_dn_an(A2, WIDTH_REG)
+            + movea_l_ind(A2, A2) + jsr_ind(A2))
+
+    # $8f54..$8f66: the sprite starts inside the band, so the count is clamped to what is left of it.
+    clamp = move_w_dn_dn(ROWS_REG, WIDTH_REG)
+    bottom_tail = (move_w_imm_dn(WIDTH_REG, LAST_ROW) + sub_w_dn_dn(WIDTH_REG, Y_REG)
+                   + cmp_w_dn_dn(WIDTH_REG, ROWS_REG) + short_branch(BGE, len(clamp)) + clamp)
+    bottom = (cmpi_w_dn(Y_REG, LAST_ROW) + branch_over(BGT, len(bottom_tail) + len(draw))
+              + bottom_tail)
+
+    # $8f36..$8f52: it starts above the band, so the rows off the top come out of the count and the
+    # source, and the y becomes zero.
+    top_tail = (move_w_imm_dn(WORK_REG, 0) + move_b_d16_dn(WORK_REG, A4, DESC_WIDTH_CODE)
+                + ext_w_dn(WORK_REG) + addq_w_dn(1, WORK_REG)
+                + mulu_w_imm_dn(WORK_REG, CELL_BYTES) + muls_w_dn_dn(WORK_REG, Y_REG)
+                + suba_l_dn_an(A0, WORK_REG) + clr_w_dn(Y_REG) + short_branch(BRA, len(bottom)))
+    top = (add_w_dn_dn(ROWS_REG, Y_REG)
+           + branch_over(BMI, len(top_tail) + len(bottom) + len(draw)) + top_tail)
+
+    record = descriptor + short_branch(BPL, len(top)) + top + bottom + draw
+    walk = (read_sprite + branch_over(BEQ, len(record)) + record
+            + lea_d16(A6, RECORD_BYTES) + cmpa_l_imm(A6, RECORDS_END))
+    return (lea_abs_l(A6, RECORDS) + walk + opcode(BLT) + backward_branch(len(walk)) + RTS)
+
+
+SPRITE_PASS_BYTES = _sprite_pass_bytes()
+SPRITE_PASS_LEN = 204               # stated rather than derived, so an assembly that lost a
+                                    # piece shrinks the pin loudly (leaf.assert_batch_is_complete)
+
+
+def test_the_sprite_pass_is_the_bytes_the_image_holds():
+    """Every byte of $8f02, assembled from this battery's statement of the walk."""
+    leaf.assert_entry_is(PASS_NAME, SPRITE_PASS_BYTES)
+
+
+def test_the_sprite_pass_runs_up_to_the_first_blitter():
+    """...and stops exactly where blit_clip_left_w2 starts, so "the pass is these 204 bytes" is a
+    reading of the image and not a length someone chose. With the twelve's own tiling test above,
+    $8f02..$989c is now accounted for byte by byte."""
+    assert len(SPRITE_PASS_BYTES) == SPRITE_PASS_LEN
+    assert leaf.entry_of(PASS_NAME) + SPRITE_PASS_LEN == FAMILY_START
+
+
+def test_the_pass_geometry_is_what_the_numbers_say():
+    """The constants include/blit.h adds, checked against the ones it already had.
+
+    Each of these is a DERIVATION the header states in prose and declines to spell as an
+    expression — the scraper only reads plain integers — so this is where the two are held equal.
+    """
+    # The record walk covers exactly the nineteen records, and the terminator is one past the last.
+    assert RECORDS_END - RECORDS == RECORD_COUNT * RECORD_BYTES
+    # The band's last row is one below the window the background blit fills. The header spells it as
+    # the literal $9f its two instructions carry (test/layout.py scrapes plain integers only), so
+    # this is where the two numbers are held equal.
+    assert LAST_ROW == wb("BG_BLIT_SCANLINES") - 1
+    # The right table is selected from the first x at which even the widest sprite reaches the edge.
+    assert RIGHT_CLIP_X == SCREEN_EDGE_X - max(COLUMNS) * COLUMN_PIXELS
+    # The two masks that split the screen x partition the word between them.
+    assert SHIFT_MASK == COLUMN_PIXELS - 1
+    assert COLUMN_ROUND_DOWN == WORD_MASK & ~SHIFT_MASK
+    # ...and the halving turns a 16-pixel column into the eight bytes four planes hold it in.
+    assert COLUMN_PIXELS >> X_BYTE_SHIFT == COLUMN_BYTES
+    # The two `asl.w`s add up to one scanline.
+    assert (1 << ROW_SHIFT_LOW) + (1 << (ROW_SHIFT_LOW + ROW_SHIFT_HIGH)) == SCREEN_LINE
+    # A table slot is one longword, and there are four of them.
+    assert 1 << SLOT_SHIFT == LONGWORD_LEN
+    assert WIDTH_CODE_MAX == len(COLUMNS) - 1
+    # ...and include/blit.h's three table addresses are ../names.txt's.
+    assert TABLE_ADDR_BY_SIDE == TABLE_BY_SIDE
+
+
+# --- the model ------------------------------------------------------------------------------------
+# The pass's own arithmetic, written from the listing, followed by `model_blit` for the record it
+# decided to draw. It walks a MUTABLE image so that each record sees what the previous one drew —
+# the clip byte in particular, which one record writes and the next reads.
+
+class PassCall(NamedTuple):
+    """One handoff from the pass to one of the twelve: the width and clip case it picked, the entry
+    row count it handed over, and what that blit may execute. A case reads these to say WHICH
+    blitter a screen x reached rather than only that the pixels came out right."""
+    columns: int
+    side: str
+    rows: int
+    budget: int
+
+
+def _model_pass_record(mem, regs, written, calls):
+    """$8f0e..$8fbc for the record ``regs['a6']`` names. Every skip in the original is a return."""
+    def put(reg, value):
+        """One `.w` write into d0..d7: the low word replaced, the caller's own high half kept."""
+        regs[f"d{reg}"] = set_low_word(regs[f"d{reg}"], value)
+
+    record = regs["a6"]
+    regs["a4"] = descriptor = RESOURCE_TABLE
+    put(WORK_REG, 0)
+    put(Y_REG, 0)
+
+    sprite = leaf.u16(mem, record + RECORD_SPRITE)
+    put(WORK_REG, sprite)
+    if sprite == SPRITE_HIDDEN:
+        return
+
+    # `mulu.w #$14,d0` is a 32-bit product; `adda.w d0,a4` takes only its SIGN-EXTENDED low word.
+    regs[f"d{WORK_REG}"] = (sprite * RESOURCE_RECORD_BYTES) & LONG_MASK
+    regs["a4"] = descriptor = (descriptor + s16(regs[f"d{WORK_REG}"])) & LONG_MASK
+
+    put(ROWS_REG, s8(mem[descriptor + DESC_HEIGHT]))
+    source = descriptor + DESC_SOURCE
+    regs["a0"] = int.from_bytes(bytes(mem[source:source + LONGWORD_LEN]), "big")
+
+    y = s16(leaf.u16(mem, record + RECORD_Y) + leaf.u16(mem, descriptor + DESC_Y_OFFSET))
+    put(Y_REG, y)
+    if y < 0:
+        rows = s16(regs[f"d{ROWS_REG}"] + y)
+        put(ROWS_REG, rows)
+        if rows < 0:
+            return
+        # (width code + 1) cells per row, times ten bytes, times the NEGATIVE y — so the `suba.l`
+        # under it steps the source cursor FORWARD past the rows that fell off the top.
+        cells = (s8(mem[descriptor + DESC_WIDTH_CODE]) + 1) & WORD_MASK
+        clipped = s16(cells * CELL_BYTES) * y
+        regs[f"d{WORK_REG}"] = clipped & LONG_MASK
+        regs["a0"] = (regs["a0"] - clipped) & LONG_MASK
+        y = 0
+        put(Y_REG, 0)
+    else:
+        if y > LAST_ROW:
+            return
+        # The rows left in the band are built in d2 and that intermediate is NOT modelled: the width
+        # code below overwrites d2 before any exit, so it is unobservable — see src/blit.c.
+        rows_left = LAST_ROW - y
+        if rows_left < s16(regs[f"d{ROWS_REG}"]):             # SIGNED: a negative count is KEPT
+            put(ROWS_REG, rows_left)
+
+    put(ECHO_Y_REG, y)                                        # `move.w d1,d5`, dead
+    x = (leaf.u16(mem, record + RECORD_X) + leaf.u16(mem, descriptor + DESC_X_OFFSET)) & WORD_MASK
+    put(WORK_REG, x)
+    put(X_REG, x)
+    width_code = s8(mem[descriptor + DESC_WIDTH_CODE])
+    put(WIDTH_REG, width_code)
+    put(SHIFT_REG, x & SHIFT_MASK)
+
+    offset, row = _screen_offset(x, y)
+    put(Y_REG, row)
+    put(WORK_REG, offset)
+    screen = int.from_bytes(bytes(mem[SCREEN_BACK:SCREEN_BACK + LONGWORD_LEN]), "big")
+    regs["a1"] = (screen + SCREEN_ORIGIN + s16(offset)) & LONG_MASK
+
+    # Both tests are signed and they run in this order, so a negative x reaches the left table and
+    # stays there.
+    side = LEFT if s16(x) < 0 else (RIGHT if s16(x) >= RIGHT_CLIP_X else MID)
+    slot = (width_code << SLOT_SHIFT) & WORD_MASK
+    put(WIDTH_REG, slot)
+    assert 0 <= width_code <= WIDTH_CODE_MAX, (
+        f"a descriptor with width code {width_code} would `jsr` through the longword past "
+        f"blit_table_{side}, which this battery refuses to ask for")
+
+    table = TABLE_ADDR_BY_SIDE[side] + s16(slot)
+    regs["a2"] = int.from_bytes(bytes(mem[table:table + LONGWORD_LEN]), "big")
+
+    columns = COLUMNS[width_code]
+    width = WIDTHS[columns]
+    entry_rows = regs[f"d{ROWS_REG}"] & WORD_MASK
+    # A record whose x leaves no column on screen returns from its prelude WITHOUT entering a row
+    # loop, so its count never reaches a `dbf` and the runaway refusal is not its to fail — what it
+    # costs is the ladder alone. Scoped here rather than in `_blit_insns`, so that a case wanting an
+    # off-screen record with a negative height is not blocked by a bound on rows nothing draws.
+    enters_a_body = side == MID or clip_value(width, side, s16(x)) is not None
+    calls.append(PassCall(columns, side, entry_rows,
+                          _blit_insns(width, entry_rows) if enters_a_body else _INSNS_ENTRY))
+
+    blit_writes, after = model_blit(mem, width, side, dict(regs))
+    for addr, byte in blit_writes.items():
+        mem[addr] = byte
+        written[addr] = byte
+    regs.update(after)
+
+
+def model_sprite_pass(image, entry):
+    """({address: final byte}, {register: final value}, [PassCall]) for one whole pass."""
+    mem = bytearray(image)
+    regs = dict(entry)
+    written, calls = {}, []
+    record = RECORDS
+    while True:
+        regs["a6"] = record
+        _model_pass_record(mem, regs, written, calls)
+        record = (record + RECORD_BYTES) & LONG_MASK
+        regs["a6"] = record
+        if record >= RECORDS_END:
+            return written, regs, calls
+
+
+# --- running one case -------------------------------------------------------------------------------
+# A pass case states MEMORY: nineteen records, the descriptors they name, and the screen pointer.
+
+class PassRegs(ctypes.Structure):
+    """include/blit.h's `sprite_pass_regs` — a blitter's whole register file, plus the three address
+    registers the walk itself uses."""
+    _fields_ = [("blit", BlitRegs), ("record", ctypes.c_uint32),
+                ("descriptor", ctypes.c_uint32), ("blitter", ctypes.c_uint32)]
+
+
+PASS_FIELD_BY_REG = {"a6": "record", "a4": "descriptor", "a2": "blitter"}
+PASS_STRUCT_REGS = STRUCT_REGS + list(PASS_FIELD_BY_REG)
+
+_PASS_FN = leaf.bind(PASS_NAME, leaf.IMAGE_ARG + [ctypes.POINTER(PassRegs)])
+
+
+def _pass_box():
+    """A pass box: the blitter's own file lives in its `blit` member, the walk's three beside it."""
+    box = PassRegs()
+    return box, box.blit, [(box.blit, FIELD_BY_REG), (box, PASS_FIELD_BY_REG)]
+
+
+# The straight line one record costs, generously — the dispatcher's own longest path is about thirty
+# instructions. Doubled with everything else in `_pass_insn_cap`.
+_PASS_INSNS_PER_RECORD = 40
+
+# One filler over the descriptors a case may reach, keyed on the ADDRESS: a reconstruction reading
+# the wrong field offset, or the wrong record, lands on a byte that is wrong FOR WHERE IT IS rather
+# than on a zero. Wide enough for every index a case names and no wider — SPRITE_SOURCE sits above
+# it and must not be overwritten.
+DESCRIPTOR_SLOTS = 32
+DESCRIPTOR_SALT = case_salt("descriptors")
+
+# A descriptor a case does not otherwise care about: the narrowest width and a height that draws a
+# couple of rows, under the sprite index a single-record case names.
+PASS_COLUMNS = 3
+PASS_HEIGHT = 5
+PASS_MID_X = 0x40                    # a whole word in, and inside the window for every width
+PASS_SPRITE = 1                      # `_run_one`'s one sprite, and the index most cases seed
+
+
+def _seeded_bands():
+    """Every band a pass case pokes, as (what, start, length).
+
+    Stated once so that two claims can be read off it: that the bands do not overwrite each other
+    (the filler's width against SPRITE_SOURCE is the tight one), and that an EXTRA descriptor
+    planted wherever a wrapped cursor lands misses all of them.
+    """
+    return [("the screen records", RECORDS, RECORDS_END - RECORDS),
+            ("the clip byte", CLIP_MASK, 1),
+            ("the WB_SCREEN_BACK pointer", SCREEN_BACK, LONGWORD_LEN),
+            ("the descriptor filler", RESOURCE_TABLE, DESCRIPTOR_SLOTS * RESOURCE_RECORD_BYTES),
+            ("the sprite cells", SPRITE_SOURCE, SPRITE_BYTES),
+            ("the screen band", SCREEN_BUFFERS[0], SCREEN_BYTES)]
+
+
+def _assert_clear_of_the_seeded_image(what, base, length):
+    """``base``..``base + length`` overlaps nothing the case seeds — which is what makes a poke
+    placed by ARITHMETIC rather than by choice safe to place at all."""
+    for name, start, size in _seeded_bands():
+        assert base >= start + size or base + length <= start, (
+            f"{what} at {base:#x}+{length} overlaps {name} at {start:#x}+{size}, so the case is "
+            f"seeding over its own image")
+
+
+def test_the_bands_a_pass_case_seeds_do_not_overwrite_each_other():
+    """The seeding convention as a claim rather than as an arrangement that happens to hold. The
+    tight one is the descriptor filler, whose DESCRIPTOR_SLOTS is chosen to stop short of
+    SPRITE_SOURCE: a slot count large enough to reach it would silently blank the sprite every case
+    draws from, and the cases would still agree — on an empty sprite."""
+    bands = _seeded_bands()
+    for index, (name, start, size) in enumerate(bands):
+        for other, other_start, other_size in bands[index + 1:]:
+            assert start >= other_start + other_size or start + size <= other_start, (
+                f"{name} at {start:#x}+{size} overlaps {other} at {other_start:#x}+{other_size}")
+
+
+def _record_bytes(x, y, sprite):
+    return word(x) + word(y) + word(sprite)
+
+
+def _records(*filled):
+    """The nineteen screen records, ``filled`` being (slot, x, y, sprite) for the ones that are not
+    blank — so a case states only the records it means and the rest are the hidden ones the pass
+    skips."""
+    out = [(0, 0, SPRITE_HIDDEN)] * RECORD_COUNT
+    for slot, x, y, sprite in filled:
+        out[slot] = (x, y, sprite)
+    return out
+
+
+def _descriptor(columns=PASS_COLUMNS, height=PASS_HEIGHT, x_offset=0, y_offset=0,
+                source=SPRITE_SOURCE, width_code=None):
+    """One descriptor, stated by COLUMN COUNT because that is what a case means. The width CODE the
+    image holds is its index in COLUMNS; ``width_code`` overrides it for a case that wants to say
+    what the byte holds rather than what it means."""
+    return (source, COLUMNS.index(columns) if width_code is None else width_code,
+            height, x_offset, y_offset)
+
+
+def _descriptor_bytes(base, fields):
+    """...as the twenty bytes at ``base``: the five fields the pass reads, over the same keyed
+    filler the rest of the table carries, so the ten it does not read are not zeros."""
+    source, width_code, height, x_offset, y_offset = fields
+    out = bytearray(keyed_block(base, RESOURCE_RECORD_BYTES, DESCRIPTOR_SALT))
+    out[DESC_SOURCE:DESC_SOURCE + LONGWORD_LEN] = longword(source)
+    out[DESC_WIDTH_CODE] = width_code & 0xff
+    out[DESC_HEIGHT] = height & 0xff
+    out[DESC_X_OFFSET:DESC_X_OFFSET + WORD_LEN] = word(x_offset)
+    out[DESC_Y_OFFSET:DESC_Y_OFFSET + WORD_LEN] = word(y_offset)
+    return bytes(out)
+
+
+def _pass_pokes(case, records, descriptors, screen, extra=None):
+    """What a pass case seeds, on top of the sprite/screen/clip-byte trio every blitter case seeds.
+
+    ``descriptors`` is keyed by SPRITE INDEX; ``extra`` by ADDRESS, for the one case whose index
+    wraps the cursor to a slot the table's own filler does not cover. The order matters: the filler
+    goes down before the descriptors that overwrite parts of it.
+    """
+    pokes = dict(_case_pokes(case))
+    pokes[RECORDS] = b"".join(_record_bytes(*record) for record in records)
+    pokes[RESOURCE_TABLE] = keyed_block(RESOURCE_TABLE, DESCRIPTOR_SLOTS * RESOURCE_RECORD_BYTES,
+                                        DESCRIPTOR_SALT)
+    for index, fields in descriptors.items():
+        base = RESOURCE_TABLE + index * RESOURCE_RECORD_BYTES
+        pokes[base] = _descriptor_bytes(base, fields)
+    for base, fields in (extra or {}).items():
+        pokes[base] = _descriptor_bytes(base, fields)
+    pokes[SCREEN_BACK] = longword(screen)
+    return pokes
+
+
+def _pass_entry_registers(case, unwind=UNWIND_BASE):
+    """The fifteen longwords a pass case is entered with, all of them GARBAGE.
+
+    The pass has no argument: everything it reads is memory, so what a register comes back holding
+    is either the pass's own arithmetic or — for a `.w` write — the caller's own high half. Seeding
+    all fifteen is what makes both observable, and what makes "a3 is never touched" and "a2 is not
+    touched unless something was drawn" say something. a5 is the one a case names, because it is the
+    one the pass hands on and the left ladder unwinds.
+    """
+    salt = case_salt(case)
+
+    def garbage(reg):
+        return (leaf.keyed_byte(salt, reg) << 8) | leaf.keyed_byte(reg, salt)
+
+    entry = {f"d{reg}": (garbage(reg) << 16) | garbage(reg + 8) for reg in range(8)}
+    entry.update({f"a{reg}": (garbage(reg + 16) << 16) | garbage(reg + 24) for reg in range(7)})
+    entry["a5"] = unwind
+    return entry
+
+
+def _pass_insn_cap(calls):
+    """What a pass case may execute: the walk itself plus each blit's own budget."""
+    return 2 * (RECORD_COUNT * _PASS_INSNS_PER_RECORD + sum(call.budget for call in calls))
+
+
+def _pass_glue(entry):
+    return _regs_glue(_pass_box, _PASS_FN, entry)
+
+
+def _run_pass(case, records, descriptors, screen=SCREEN_BUFFERS[0], unwind=UNWIND_BASE, extra=None):
+    """One pass case: the model, the oracle and the reconstruction over one seeded image.
+
+    Returns (model writes, model registers, the blitter calls the model made, oracle info) once the
+    three have been required to agree on the whole write set and on all fifteen registers.
+    """
+    pokes = _pass_pokes(case, records, descriptors, screen, extra)
+    entry = _pass_entry_registers(case, unwind)
+    image = make_image(pokes)
+    expected_writes, expected_regs, calls = model_sprite_pass(image, entry)
+
+    what = f"{PASS_NAME} {case}"
+    info = leaf.run(PASS_NAME, _pass_glue(entry), merge_bands(expected_writes), what,
+                    regs=dict(entry, _pokes=pokes), max_insns=_pass_insn_cap(calls))
+
+    written = program_writes(info)
+    assert written == expected_writes, (
+        f"{what}: the original wrote {len(written)} bytes and the model {len(expected_writes)} — "
+        f"first difference at {min(set(written) ^ set(expected_writes), default=-1):#x}")
+    for reg in emu.REPORTED_REGS:
+        assert info["regs"][reg] == expected_regs[reg], (
+            f"{what}: the original left {reg}={info['regs'][reg]:#010x}, not the model's "
+            f"{expected_regs[reg]:#010x}")
+    for reg in PASS_STRUCT_REGS:
+        assert info["ret"][reg] == expected_regs[reg], (
+            f"{what}: the reconstruction left {reg}={info['ret'][reg]:#010x}, not the model's "
+            f"{expected_regs[reg]:#010x}")
+    return expected_writes, expected_regs, calls, info
+
+
+def _run_one(case, x, y, descriptor, slot=0, **kwargs):
+    """One record naming ONE descriptor, which is the shape most pass cases want.
+
+    The sprite index is PASS_SPRITE throughout: what those cases vary is the geometry, not which
+    slot of the table it came out of. A case with more than one record calls `_run_pass` itself, and
+    that call is then the signal that the WALK is what the case is about.
+    """
+    return _run_pass(case, _records((slot, x, y, PASS_SPRITE)), {PASS_SPRITE: descriptor}, **kwargs)
+
+
+def _drawn_rectangle(x, y, columns, rows, screen=SCREEN_BUFFERS[0]):
+    """The bytes one record's blit covers: `rows` runs of the width's own bytes, a scanline apart."""
+    dest = _dest_for(x, y, screen)
+    return {dest + row * SCREEN_LINE + byte
+            for row in range(rows) for byte in range(columns * COLUMN_BYTES)}
+
+
+# --- the walk -----------------------------------------------------------------------------------
+
+def test_the_pass_draws_nothing_when_no_record_names_a_sprite():
+    """`move.w 4(a6),d0 / beq` on all nineteen: no descriptor is read, no pixel is drawn, and the
+    walk still ends where it ends. d0 and d1 come back at zero because the two `clr.w`s sit AHEAD of
+    that test, and a2 comes back at the caller's own value because `lea $989c.l,a2` does not."""
+    case = "all-hidden"
+    writes, regs, calls, _info = _run_pass(case, _records(), {})
+    entry = _pass_entry_registers(case)
+
+    assert writes == {} and calls == []
+    assert regs["a6"] == RECORDS_END
+    assert regs["a4"] == RESOURCE_TABLE
+    assert regs["a5"] == UNWIND_BASE
+    assert regs[f"d{WORK_REG}"] & WORD_MASK == 0 and regs[f"d{Y_REG}"] & WORD_MASK == 0
+    for reg in ("a0", "a1", "a2", "a3"):
+        assert regs[reg] == entry[reg] != 0, f"{reg} was touched by a pass that drew nothing"
+
+
+def test_the_pass_visits_every_record_and_stops_at_the_end_of_the_array():
+    """One drawn sprite in EVERY slot, including the last: nineteen rectangles, no twentieth, and
+    the cursor stops at WB_ACTOR_SCREEN_RECORDS_END. A walk one record short or one long fails on
+    the write set rather than on the pointer alone."""
+    columns, rows = 2, 1
+    # One row per slot, eight scanlines apart, all at the same x — so the nineteen rectangles are
+    # disjoint and every one of them is inside the band and inside the middle table's x range.
+    slots = [(slot, PASS_MID_X, slot * 8, 1) for slot in range(RECORD_COUNT)]
+    writes, regs, calls, _info = _run_pass("every-slot", _records(*slots),
+                                           {1: _descriptor(columns, height=rows - 1)})
+    assert len(calls) == RECORD_COUNT
+    assert regs["a6"] == RECORDS_END
+    assert set(writes) == set().union(*(_drawn_rectangle(x, y, columns, rows)
+                                        for _slot, x, y, _sprite in slots))
+
+
+def test_a_pass_mixing_every_outcome_draws_only_what_survives():
+    """One walk with all of it at once: hidden records, a top clip, a bottom clamp, a sprite past
+    the bottom edge, one wholly off the left (which unwinds a5) and one wholly off the right (which
+    does not), and three plain draws of different widths."""
+    records = _records((0, PASS_MID_X, DEST_ROW, 1),                     # w2, plain
+                       (2, PASS_MID_X + 0x20, 4, 2),                     # w4, plain
+                       (5, PASS_MID_X, -4, 3),                           # w5, clipped at the top
+                       (7, PASS_MID_X, LAST_ROW - 2, 1),                 # w2, clamped at the bottom
+                       (9, PASS_MID_X, LAST_ROW + 1, 1),                 # past the bottom edge
+                       (11, -COLUMN_PIXELS * 5, DEST_ROW, 3),            # wholly off the left
+                       (13, SCREEN_EDGE_X - COLUMN_PIXELS, DEST_ROW, 2),  # wholly off the right
+                       (18, 0x30, 0x20, 4))                              # w3, a sub-word shift
+    descriptors = {1: _descriptor(2, height=3), 2: _descriptor(4, height=6),
+                   3: _descriptor(5, height=9), 4: _descriptor(3, height=4, x_offset=7)}
+    _writes, regs, calls, _info = _run_pass("mixed-walk", records, descriptors)
+
+    assert [(call.columns, call.side) for call in calls] == [
+        (2, MID), (4, MID), (5, MID), (2, MID), (5, LEFT), (4, RIGHT), (3, MID)]
+    assert regs["a5"] == UNWIND_BASE - UNWIND_BYTES, (
+        "only the wholly-off-LEFT record unwinds a5, and exactly once")
+
+
+# --- the clip cases, reached by ARITHMETIC ---------------------------------------------------------
+# Each of these states a screen x and lets the pass pick the table, which is the half batch 14 could
+# not: the twelve were entered directly at the addresses the tables hold.
+
+@pytest.mark.parametrize("columns", COLUMNS)
+@pytest.mark.parametrize("side", SIDES)
+def test_a_screen_x_reaches_the_clip_case_it_names(columns, side):
+    """`tst.w d4 / bpl` then `cmp.w #$b0,d4 / blt`, both SIGNED and in that order."""
+    x = {MID: PASS_MID_X, LEFT: -COLUMN_PIXELS, RIGHT: RIGHT_CLIP_X}[side]
+    _writes, _regs, calls, _info = _run_one(f"table-w{columns}-{side}", x, DEST_ROW,
+                                            _descriptor(columns))
+    assert [(call.columns, call.side) for call in calls] == [(columns, side)]
+
+
+@pytest.mark.parametrize("x,side", [(-1, LEFT), (0, MID), (RIGHT_CLIP_X - 1, MID),
+                                    (RIGHT_CLIP_X, RIGHT)],
+                         ids=["minus1", "zero", "below-b0", "at-b0"])
+def test_the_two_table_thresholds_are_where_they_are(x, side):
+    """Both boundaries from both sides: zero belongs to the middle table and $b0 to the right one,
+    so an x one below either falls to its neighbour."""
+    _writes, _regs, calls, _info = _run_one(f"threshold-{x:#x}", x, DEST_ROW, _descriptor())
+    assert [call.side for call in calls] == [side]
+
+
+def test_the_screen_x_is_the_record_and_the_descriptor_added():
+    """`move.w (a6),d0 / add.w 8(a4),d0` — an x that is on screen in the record alone and off the
+    LEFT once the descriptor's offset is added, so a reconstruction that dropped the field would
+    reach the wrong table and not merely the wrong column."""
+    x, offset = COLUMN_PIXELS, -COLUMN_PIXELS * 3
+    _writes, _regs, calls, _info = _run_one("x-offset", x, DEST_ROW,
+                                            _descriptor(x_offset=offset))
+    assert [call.side for call in calls] == [LEFT]
+
+
+def test_the_screen_y_is_the_record_and_the_descriptor_added():
+    """...and `move.w 2(a6),d1 / add.w 10(a4),d1` the same way: a y inside the band in the record
+    alone, and above it once the offset is added."""
+    y, offset = 2, -6
+    writes, _regs, calls, _info = _run_one("y-offset", PASS_MID_X, y,
+                                           _descriptor(height=PASS_HEIGHT, y_offset=offset))
+    columns, rows = PASS_COLUMNS, PASS_HEIGHT + (y + offset) + 1
+    assert len(calls) == 1
+    assert set(writes) == _drawn_rectangle(PASS_MID_X, 0, columns, rows), (
+        "a top-clipped sprite starts at row 0")
+
+
+# --- the top clip ----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("columns", COLUMNS)
+def test_the_top_clip_drops_rows_from_the_count_and_from_the_source(columns):
+    """`add.w d1,d7` takes the rows above the band out of the count, and `muls.w d1,d0 / suba.l
+    d0,a0` steps the source past exactly those rows.
+
+    The source cursor is where the whole claim lands: it ends where it would have ended if nothing
+    had been clipped, because the rows that were skipped were skipped IN THE DATA as well as on the
+    screen. The drawn rectangle starting at row 0 is the other half.
+    """
+    above, height = 4, 12
+    case = f"top-clip-w{columns}"
+    writes, regs, calls, _info = _run_one(case, PASS_MID_X, -above,
+                                          _descriptor(columns, height=height))
+    cells = WIDTHS[columns].cells
+    assert [call.rows for call in calls] == [height - above]
+    assert regs["a0"] - SPRITE_SOURCE == (height + 1) * cells * CELL_BYTES, (
+        "the source cursor did not end where an unclipped sprite of this height would have left it")
+    assert set(writes) == _drawn_rectangle(PASS_MID_X, 0, columns, height - above + 1)
+
+
+def test_a_sprite_wholly_above_the_band_is_skipped():
+    """`bmi.w $8fbe`: the height taken away by the clip leaves the count negative, so the record is
+    dropped before a screen address is ever built. Its neighbour still draws, which is what says the
+    walk continued rather than stopped."""
+    writes, regs, calls, _info = _run_pass(
+        "above-band",
+        _records((0, PASS_MID_X, -9, 1), (RECORD_COUNT - 1, PASS_MID_X, DEST_ROW, 2)),
+        {1: _descriptor(height=4), 2: _descriptor(2, height=0)})
+    assert [(call.columns, call.side) for call in calls] == [(2, MID)]
+    assert set(writes) == _drawn_rectangle(PASS_MID_X, DEST_ROW, 2, 1)
+    assert regs["a4"] == RESOURCE_TABLE + 2 * RESOURCE_RECORD_BYTES, (
+        "the descriptor cursor belongs to the record that was DRAWN — the skipped one moved its "
+        "own cursor first, and the `lea` at the top of the next record rebuilt it")
+
+
+def test_a_skipped_record_still_leaves_the_cursor_it_read_its_descriptor_through():
+    """...and where nothing rebuilds it, that cursor is what comes back.
+
+    The skip is the same `bmi.w $8fbe`, but in the LAST slot: no record follows to run
+    `lea $248d8.l,a4` again, so a4 at the `rts` is the SKIPPED record's own — moved by
+    `mulu.w #$14,d0 / adda.w d0,a4` BEFORE the height was ever looked at. d0 holds that same
+    32-bit product, which is the other half of saying the cursor moved and not merely that it was
+    left alone. Every other skipping case in this file sits in slot 0, where the next record's `lea`
+    hides the difference.
+    """
+    height, above = 4, 9                              # so the clip leaves the count negative
+    writes, regs, calls, _info = _run_one("skip-cursor", PASS_MID_X, -above,
+                                          _descriptor(height=height), slot=RECORD_COUNT - 1)
+    assert writes == {} and calls == []
+    assert regs["a4"] == RESOURCE_TABLE + PASS_SPRITE * RESOURCE_RECORD_BYTES, (
+        "the skipped record's descriptor cursor was not moved before the skip, or was rebuilt")
+    assert regs[f"d{WORK_REG}"] == PASS_SPRITE * RESOURCE_RECORD_BYTES, (
+        "`mulu.w #$14,d0` writes the whole 32-bit register, and the skip leaves it there")
+
+
+def test_the_top_clip_at_exactly_one_row_left_draws_that_row():
+    """The boundary of the same `bmi`: a count that comes out at zero is one row, not none."""
+    height, above = 6, 6
+    writes, _regs, calls, _info = _run_one("top-clip-edge", PASS_MID_X, -above,
+                                           _descriptor(height=height))
+    assert [call.rows for call in calls] == [0]
+    assert set(writes) == _drawn_rectangle(PASS_MID_X, 0, PASS_COLUMNS, 1)
+
+
+# --- the bottom clamp --------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("y", [0, 1, LAST_ROW - 1, LAST_ROW])
+def test_the_band_runs_from_zero_to_the_last_row(y):
+    """Both edges of `cmpi.w #$9f,d1 / bgt` and of the clamp under it: a sprite at the last row
+    draws exactly one row of itself, and one at row 0 draws all of itself."""
+    height = 8
+    writes, _regs, calls, _info = _run_one(f"band-y{y}", PASS_MID_X, y,
+                                           _descriptor(height=height))
+    rows = min(height, LAST_ROW - y) + 1
+    assert [call.rows for call in calls] == [rows - 1]
+    assert set(writes) == _drawn_rectangle(PASS_MID_X, y, PASS_COLUMNS, rows)
+
+
+def test_a_sprite_below_the_band_is_skipped():
+    """One row past the last: `bgt.w $8fbe`, and nothing is drawn at all."""
+    writes, _regs, calls, _info = _run_one("below-band", PASS_MID_X, LAST_ROW + 1,
+                                           _descriptor())
+    assert writes == {} and calls == []
+
+
+def test_the_clamp_keeps_the_shorter_of_the_two_counts():
+    """`cmp.w d7,d2 / bge`: a sprite that fits is not clamped and one that does not is, both at the
+    same y, so what the case pins is the compare and not the arithmetic either side of it."""
+    y = LAST_ROW - 4
+    for height, expected in ((2, 2), (40, 4)):
+        _writes, _regs, calls, _info = _run_one(f"clamp-h{height}", PASS_MID_X, y,
+                                                _descriptor(height=height))
+        assert [call.rows for call in calls] == [expected]
+
+
+# --- the descriptor cursor ---------------------------------------------------------------------------
+
+def _wrapped_descriptor_index(target_low_word):
+    """The smallest sprite index whose `mulu.w #$14` product OVERFLOWS a word and leaves
+    ``target_low_word`` in its low half — stated as a search rather than as a number, so the case
+    says WHAT it wants of the index instead of asserting a constant back to itself."""
+    for index in range(1, WORD_MASK + 1):
+        product = index * RESOURCE_RECORD_BYTES
+        if product > WORD_MASK and product & WORD_MASK == target_low_word:
+            return index
+    raise AssertionError(f"no sprite index reaches a low word of {target_low_word:#x}")
+
+
+WRAP_FORWARD = 0x4000               # a product past 16 bits whose low word is still positive
+WRAP_BACKWARD = 0x8c00              # ...and one whose low word has bit 15 set, so the cursor moves
+                                    # BACKWARDS off the front of the table
+
+
+@pytest.mark.parametrize("low_word", [WRAP_FORWARD, WRAP_BACKWARD],
+                         ids=["forward", "backward"])
+def test_a_large_sprite_index_wraps_the_descriptor_cursor(low_word):
+    """`mulu.w #$14,d0` builds a 32-bit product and `adda.w d0,a4` takes only its SIGN-EXTENDED LOW
+    WORD, so an index whose product does not fit in a word does not walk off the table — it lands
+    somewhere in +-32 KB of it, and for half the range that is BEHIND it.
+
+    The descriptor is seeded where the arithmetic says, so a reconstruction that used the whole
+    product, or the unsigned low word, reads a descriptor that is not there. WHERE that is, is the
+    arithmetic's business and not the case's: the backward one lands 29 KB below the table, inside
+    bg_tile_bitmaps, which nothing here reads — so the case says only that it misses everything the
+    case itself seeded, rather than choosing an address and calling it free.
+    """
+    index = _wrapped_descriptor_index(low_word)
+    base = (RESOURCE_TABLE + s16(low_word)) & LONG_MASK
+    _assert_clear_of_the_seeded_image("the wrapped descriptor", base, RESOURCE_RECORD_BYTES)
+    columns = 4
+    # The LAST slot, because `lea $248d8.l,a4` runs again for every record after it: a4 at the `rts`
+    # is the cursor of the last record the walk touched, drawn or not.
+    writes, regs, calls, _info = _run_pass(
+        f"wrap-{low_word:#x}", _records((RECORD_COUNT - 1, PASS_MID_X, DEST_ROW, index)), {},
+        extra={base: _descriptor(columns, height=1)})
+    assert regs["a4"] == base
+    assert [(call.columns, call.side) for call in calls] == [(columns, MID)]
+    assert set(writes) == _drawn_rectangle(PASS_MID_X, DEST_ROW, columns, 2)
+
+
+def test_the_descriptor_cursor_is_rebuilt_from_the_table_base_every_record():
+    """`lea $248d8.l,a4` sits INSIDE the loop, so one record's index cannot carry into the next.
+    Two records naming the same sprite must therefore read the same descriptor and draw the same
+    shape — where a cursor that accumulated would send the second one 20 bytes further on."""
+    columns, height = 5, 2
+    records = _records((0, PASS_MID_X, 0x10, 4), (RECORD_COUNT - 1, PASS_MID_X, 0x40, 4))
+    writes, regs, calls, _info = _run_pass("cursor-rebuilt", records,
+                                           {4: _descriptor(columns, height=height)})
+    assert regs["a4"] == RESOURCE_TABLE + 4 * RESOURCE_RECORD_BYTES
+    assert [(call.columns, call.side) for call in calls] == [(columns, MID)] * 2
+    assert set(writes) == (_drawn_rectangle(PASS_MID_X, 0x10, columns, height + 1)
+                           | _drawn_rectangle(PASS_MID_X, 0x40, columns, height + 1))
+
+
+# --- what the pass hands the twelve --------------------------------------------------------------------
+
+@pytest.mark.parametrize("shift", range(COLUMN_PIXELS))
+def test_the_sub_word_shift_is_the_low_nibble_of_the_screen_x(shift):
+    """`andi.w #$f,d6` — every one of the sixteen, each landing the sprite one pixel further into
+    the same 16-pixel column, and the drawn rectangle staying where the rounded x put it."""
+    x = PASS_MID_X + shift
+    writes, regs, _calls, _info = _run_one(f"shift-{shift}", x, DEST_ROW, _descriptor(height=0))
+    assert regs[f"d{SHIFT_REG}"] & WORD_MASK == shift
+    assert set(writes) == _drawn_rectangle(x, DEST_ROW, PASS_COLUMNS, 1)
+
+
+def test_a_negative_screen_x_steps_the_cursor_back_before_the_window():
+    """`asr.w #1,d0` is SIGNED, so a sprite hanging off the left edge is drawn from an address
+    BELOW the window's origin — which is also why the left ladder has anything left to clip.
+
+    A whole column below it, here, and the prelude then steps over exactly that column: so the one
+    column this width has left lands ON the origin, out of a cursor that was pointed COLUMN_BYTES
+    under it. Both halves are named, because the clip is what makes the step-back invisible in the
+    pixels — read the write set alone and a cursor that had not been stepped back looks the same.
+    An UNSIGNED shift would put the cursor 32 KB the other way instead.
+    """
+    x = -COLUMN_PIXELS
+    writes, _regs, calls, _info = _run_one("negative-x", x, DEST_ROW, _descriptor(2, height=0))
+    assert [call.side for call in calls] == [LEFT]
+
+    origin = _dest_for(0, DEST_ROW, SCREEN_BUFFERS[0])
+    drawn = set(writes) - {CLIP_MASK}
+    assert _dest_for(x, DEST_ROW, SCREEN_BUFFERS[0]) + COLUMN_BYTES == origin
+    assert drawn and min(drawn) == origin, (
+        f"the drawn column starts at {min(drawn, default=-1):#x}, not at the window origin "
+        f"{origin:#x} the stepped-back cursor and the skipped column add back up to")
+
+
+@pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])
+def test_the_pass_draws_into_whichever_buffer_screen_back_names(screen):
+    """`movea.l $750.w,a1` — the destination comes out of memory, so the same walk draws into the
+    other buffer when WB_SCREEN_BACK says so."""
+    writes, _regs, _calls, _info = _run_one(f"buffer-{screen:#x}", PASS_MID_X, DEST_ROW,
+                                            _descriptor(4, height=2), screen=screen)
+    assert set(writes) == _drawn_rectangle(PASS_MID_X, DEST_ROW, 4, 3, screen=screen)
+
+
+def test_every_sprite_wholly_off_the_left_takes_six_more_off_a5():
+    """a5 passes through the pass untouched and each wholly-off-left record's prelude takes
+    WB_BLIT_UNWIND_BYTES off it, so the accumulation over a walk is observable output — and it is
+    the only thing in the whole family that carries state from one record to the next."""
+    off_left = [(slot, -COLUMN_PIXELS * 6, DEST_ROW, 1) for slot in range(4)]
+    writes, regs, calls, _info = _run_pass("unwind-accumulates", _records(*off_left),
+                                           {1: _descriptor(5, height=1)})
+    assert len(calls) == len(off_left)
+    assert writes == {}, "a sprite wholly off the left draws nothing, not even the clip byte"
+    assert regs["a5"] == UNWIND_BASE - len(off_left) * UNWIND_BYTES
+
+
+def test_the_dead_y_copy_is_left_in_d5():
+    """`move.w d1,d5` at $8f68, written by the pass and read by nothing — not here and not in any of
+    the twelve.
+
+    It is observable through ONE kind of record: a sprite wholly off screen, whose prelude returns
+    without touching a data register at all, so the pass's own write is the last thing d5 saw.
+    Every other record's blitter walks d5 as part of its source window and the copy is buried. Both
+    off-screen arms are run, because the LEFT one also unwinds a5 and the right one does not.
+    """
+    y = 0x33
+    for side, x in ((LEFT, -COLUMN_PIXELS * 6), (RIGHT, SCREEN_EDGE_X - COLUMN_PIXELS)):
+        _writes, regs, calls, _info = _run_one(f"dead-d5-{side}", x, y, _descriptor(3, height=2))
+        assert [call.side for call in calls] == [side]
+        assert regs[f"d{ECHO_Y_REG}"] & WORD_MASK == y, (
+            f"the {side} off-screen arm did not leave the pass's own d5 behind")
+
+
+def test_the_pass_leaves_the_blitter_it_last_called_in_a2():
+    """`movea.l (a2),a2 / jsr (a2)`: the register the call went through is one of the fifteen the
+    caller gets back, and it holds the ENTRY ADDRESS of one of the twelve — read out of the image's
+    own table, which is what makes src/blit.c's dispatch by width code a reading of it."""
+    columns, side = 4, RIGHT
+    x = RIGHT_CLIP_X
+    _writes, regs, _calls, _info = _run_one("blitter-in-a2", x, DEST_ROW,
+                                            _descriptor(columns, height=0))
+    assert regs["a2"] == leaf.entry_of(blitter_name(columns, side))
+
+
+# --- the negative height, which is this batch's headline ------------------------------------------
+# The height is a BYTE the pass `ext.w`s, so a descriptor may ask for a negative number of rows. The
+# top clip cannot pass one on — its own `bmi` skips the record — but the BOTTOM CLAMP can: it is
+# `cmp.w d7,d2 / bge` against a rows-left count that is never negative, so it keeps a negative d7
+# rather than clamping it. That count reaches a blitter, and what happens there is the width's.
+
+NEGATIVE_HEIGHTS = (0xff, 0xfe, 0x80)      # -1, -2, and the deepest a signed byte reaches
+
+
+@pytest.mark.parametrize("height", NEGATIVE_HEIGHTS, ids=[f"{h:#x}" for h in NEGATIVE_HEIGHTS])
+def test_a_negative_height_reaches_a_guarded_body_which_refuses_it(height):
+    """The whole handoff, end to end, through the ONE width whose body guards its row count.
+
+    `$9594`'s `addq.w #1,d7 / tst.w d7 / beq / bmi` refuses every count that is not positive, so
+    this draws nothing and comes back with the counter at whatever the bump left — 0 for -1 and the
+    bumped value for the other two, which is how the two exits are told apart. The record after it
+    still draws, so what the case shows is that the pass CARRIED ON rather than that it crashed.
+    """
+    records = _records((0, PASS_MID_X, DEST_ROW, 1), (1, PASS_MID_X, 0x10, 2))
+    descriptors = {1: _descriptor(GUARDED_COLUMNS, height=height), 2: _descriptor(2, height=0)}
+    writes, regs, calls, _info = _run_pass(f"negative-height-{height:#x}", records, descriptors)
+
+    assert [(call.columns, call.rows) for call in calls] == [
+        (GUARDED_COLUMNS, height | (WORD_MASK ^ 0xff)), (2, 0)]
+    assert set(writes) == _drawn_rectangle(PASS_MID_X, 0x10, 2, 1), (
+        "the guarded body drew something, or the record after it did not")
+    assert regs["d7"] & WORD_MASK == 0, "the LAST record's own count, which was a proper one"
+
+
+def test_the_bottom_clamp_keeps_a_negative_count_rather_than_clamping_it():
+    """The reading the case above rests on, stated on its own: the clamp's compare is SIGNED and the
+    rows left in the band are never negative, so `bge` is always taken and d7 survives intact. The
+    model is the third statement of it, and the oracle is the referee."""
+    for y in (0, LAST_ROW):
+        _writes, _regs, calls, _info = _run_one(f"negative-kept-y{y}", PASS_MID_X, y,
+                                                _descriptor(GUARDED_COLUMNS, height=0xff))
+        assert [call.rows for call in calls] == [WORD_MASK], (
+            f"at y={y} the clamp changed a negative row count")
+
+
+def test_the_top_clip_can_never_hand_on_a_negative_count():
+    """...and the other path cannot: `add.w d1,d7 / bmi` drops the record instead.
+
+    Stated over EVERY height a signed byte can hold, against a y above the band: the model says
+    which of them reach a blitter and with what, and the claim is that none of those counts is
+    negative. Three of them are then run under the oracle — the deepest height, the last one that
+    is dropped and the first one that is not — so the reading is differentially anchored at its own
+    boundary rather than only in Python.
+    """
+    above = 3
+    reached = {height: s16(height - above) for height in range(-0x80, 0x80)
+               if s16(height - above) >= 0}
+    assert reached and all(rows >= 0 for rows in reached.values())
+    assert min(reached) == above, "the first height that survives a clip of three rows is three"
+
+    for height in (-0x80, above - 1, above):
+        _writes, _regs, calls, _info = _run_one(f"top-negative-{height:#x}", PASS_MID_X, -above,
+                                                _descriptor(GUARDED_COLUMNS, height=height))
+        assert [call.rows for call in calls] == ([] if height < above else [0]), (
+            f"height {height:#x} above the band reached the wrong count")
+
+
+# The one input that reaches the 65,536-row `dbf`, and the only case in this file that runs it.
+RUNAWAY_HEIGHT = 0xff
+RUNAWAY_COLUMNS = 3
+RUNAWAY_INSN_CAP = 12_000_000       # measured: 4,653,254, and the analytic bound is 6.1 M
+# WHERE THE RUNAWAY IS POINTED, and why it is not a screen buffer. 65,536 rows is 10 MB of screen
+# cursor, so a runaway starting anywhere inside the image walks THROUGH the band the oracle keeps
+# its own machine stack in and past the end of the image — and one row landing on the sentinel
+# return address would leave the "original" being compared against a run that had been derailed by
+# its own output. Pointed one byte past the image instead, every row of it is dropped by the same
+# guard on both sides, and what the case pins is the CONTROL FLOW: that all 65,536 rows ran.
+RUNAWAY_SCREEN = loader.IMAGE_SIZE
+
+
+def test_a_negative_height_runs_a_wider_body_away():
+    """THE RUNAWAY IS REACHABLE BY DATA, and this is the case that runs it.
+
+    A descriptor with a negative height and a y inside the band hands a width whose body does not
+    guard its count an entry d7 of $ffff, and `dbf` then draws the whole 16-bit range of rows:
+    RUNAWAY_ROWS of them over 4.65 M instructions. The source cursor and the screen cursor are what
+    say so, and they say it to the row.
+
+    Both sides survive the walk because both bound their accesses the same way — the oracle's shim
+    by construction, src/blit.c through `blit_read_word`/`blit_write_word`, which batch 14 added for
+    exactly this. Here that guard is the whole output: the destination is past the end of the image
+    (see RUNAWAY_SCREEN) so all 65,536 rows are dropped, and a reconstruction that walked a host
+    pointer instead would smash the ctypes buffer rather than agree.
+
+    WHAT THIS CASE DOES NOT PIN. Not the PIXELS of a runaway — nothing can, since the only way to
+    make it draw is to point it into the image and let it march over the harness's own stack. The
+    per-row drawing is pinned to exhaustion by the twelve's own cases; what is new here is the
+    count. And it is two implementations agreeing rather than three: `model_sprite_pass` is not run,
+    because 65,536 rows of Python cost tens of seconds against the machines' three.
+
+    WHETHER THE GAME'S OWN DATA REACHES IT is NOT establishable from the image — the descriptors are
+    in a table loaded from disk past the program's last byte. Reachable by data, unpinned in fact.
+    """
+    case = "runaway"
+    width = WIDTHS[RUNAWAY_COLUMNS]
+    pokes = _pass_pokes(case, _records((0, PASS_MID_X, DEST_ROW, 1)),
+                        {1: _descriptor(RUNAWAY_COLUMNS, height=RUNAWAY_HEIGHT)}, RUNAWAY_SCREEN)
+    entry = _pass_entry_registers(case)
+    # `poison` off: the run writes nothing, so there is no output to invert and nothing to attribute
+    # — and the pass would be run twice more for it.
+    diffs, info = harness.differential(leaf.entry_of(PASS_NAME), dict(entry, _pokes=pokes),
+                                       _pass_glue(entry), max_insns=RUNAWAY_INSN_CAP, poison=False)
+    assert not diffs, f"{PASS_NAME} {case}\n{harness.report(diffs)}"
+
+    dest = _dest_for(PASS_MID_X, DEST_ROW, RUNAWAY_SCREEN)
+    assert program_writes(info) == {}, (
+        "a destination past the end of the image should leave every row dropped")
+    assert info["regs"]["a0"] == SPRITE_SOURCE + RUNAWAY_ROWS * width.cells * CELL_BYTES, (
+        "the source cursor does not say RUNAWAY_ROWS rows were drawn")
+    assert info["regs"]["a1"] == dest + RUNAWAY_ROWS * SCREEN_LINE, (
+        "...and neither does the screen cursor")
+    assert info["regs"]["d7"] & WORD_MASK == WORD_MASK, "a `dbf` body exits with its counter at -1"
+    assert info["regs"]["a6"] == RECORDS_END and info["regs"]["a5"] == UNWIND_BASE
+
+    for reg in PASS_STRUCT_REGS:
+        assert info["ret"][reg] == info["regs"][reg], (
+            f"the reconstruction left {reg}={info['ret'][reg]:#010x} where the original left "
+            f"{info['regs'][reg]:#010x}")
+
+
+def test_the_battery_refuses_a_width_code_outside_the_table():
+    """A descriptor whose width code is not 0..WB_BLIT_WIDTH_CODE_MAX `jsr`s through the longword
+    past the four-entry table, which nothing here can stand in for — src/blit.c returns instead. So
+    the refusal is stated as a case rather than left to whichever assert happened to fire.
+
+    IT IS ALSO WHY `ext.w d2` IS NOT PINNED, which this states rather than leaves to the mutation
+    sweep to discover: the sign extension only changes a byte with bit 7 set, and every such byte is
+    a width code outside the table. So no case that RUNS can tell the signed reading from the
+    unsigned one — the `ext.w` is pinned as an INSTRUCTION by the entry pin and reproduced from the
+    listing, and its effect is unreachable. Unreachable is all this battery can say: it is stated
+    here and in src/blit.c, and there is no assertion to be had, since the width codes that would
+    tell the two readings apart are exactly the ones refused above.
+    """
+    for width_code in (-1, WIDTH_CODE_MAX + 1, 0x7f, -0x80):
+        pokes = _pass_pokes("bad-width", _records((0, PASS_MID_X, DEST_ROW, 1)),
+                            {1: _descriptor(width_code=width_code)}, SCREEN_BUFFERS[0])
+        with pytest.raises(AssertionError, match="refuses to ask for"):
+            model_sprite_pass(make_image(pokes), _pass_entry_registers("bad-width"))
+
+
+# --- a sweep over the pass's own geometry -----------------------------------------------------------
+# Sharded per the recipe in ../../../buggyboy/recreate/README.md: one stream, generated in full by every
+# worker and RUN by the one whose chunk owns the iteration.
+#
+# The GEOMETRY is enumerated rather than drawn — width x clip case x band position is every
+# combination that changes which arm of which routine runs — and what stays random inside each
+# combination is the sub-word shift, the height and the exact row.
+
+PASS_FUZZ_CHUNKS = 4
+BANDS = ("above", "top", "middle", "bottom", "below")
+PASS_MAX_HEIGHT = 12
+
+
+def _pass_fuzz_cases():
+    rng = random.Random(0x8F02)
+    combinations = [(columns, side, band)
+                    for columns in COLUMNS for side in SIDES for band in BANDS]
+    for index, (columns, side, band) in enumerate(combinations):
+        height = rng.randrange(0, PASS_MAX_HEIGHT + 1)
+        shift = rng.randrange(0, COLUMN_PIXELS)
+        if side == MID:
+            x = rng.randrange(0, RIGHT_CLIP_X - COLUMN_PIXELS)
+        elif side == LEFT:
+            x = -rng.randrange(1, COLUMN_PIXELS * columns + COLUMN_PIXELS)
+        else:
+            x = rng.randrange(RIGHT_CLIP_X, SCREEN_EDGE_X)
+        y = {"above": -rng.randrange(1, PASS_MAX_HEIGHT + 2),
+             "top": 0,
+             "middle": rng.randrange(1, LAST_ROW - PASS_MAX_HEIGHT),
+             "bottom": rng.randrange(LAST_ROW - PASS_MAX_HEIGHT, LAST_ROW + 1),
+             "below": LAST_ROW + rng.randrange(1, 0x40)}[band]
+        yield index, columns, side, (x & ~SHIFT_MASK) | shift, y, height
+
+
+PASS_FUZZ_CASES = len(list(_pass_fuzz_cases()))
+
+
+@pytest.mark.parametrize("chunk", range(PASS_FUZZ_CHUNKS))
+def test_a_sweep_of_the_pass_over_every_width_clip_case_and_band(chunk):
+    """All four widths against all three clip cases against all five ways a sprite can meet the
+    band, at a shift, a height and a row each case draws for itself."""
+    for index, columns, side, x, y, height in _pass_fuzz_cases():
+        if index % PASS_FUZZ_CHUNKS != chunk:
+            continue
+        _run_one(f"pass-sweep-{index}", x, y, _descriptor(columns, height=height),
+                 slot=index % RECORD_COUNT)
+
+
+def test_the_pass_sweep_covers_every_width_clip_case_and_band():
+    """The enumeration says what it covers, so this is what makes that a reading of the list rather
+    than of its docstring — and what fails if a chunk's slice ever stops partitioning it.
+
+    The BAND a case lands in is not carried out of the generator (it is a y), so it is recovered
+    here from that y — which also checks that each band's own range puts the sprite where its name
+    says, and that the five ranges do not overlap.
+    """
+    def band_of(y):
+        if y < 0:
+            return "above"
+        if y > LAST_ROW:
+            return "below"
+        if y == 0:
+            return "top"
+        return "middle" if y < LAST_ROW - PASS_MAX_HEIGHT else "bottom"
+
+    covered = {(columns, side, band_of(y))
+               for _index, columns, side, _x, y, _height in _pass_fuzz_cases()}
+    assert covered == {(columns, side, band) for columns in COLUMNS for side in SIDES
+                       for band in BANDS}
+    assert len(covered) == PASS_FUZZ_CASES, "the sweep runs a combination more than once"
+    sharded = sum(1 for index, *_rest in _pass_fuzz_cases() for chunk in range(PASS_FUZZ_CHUNKS)
+                  if index % PASS_FUZZ_CHUNKS == chunk)
+    assert sharded == PASS_FUZZ_CASES, "the chunks do not partition the sweep"

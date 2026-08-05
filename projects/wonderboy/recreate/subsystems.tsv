@@ -68,7 +68,9 @@
 0x7522	0x8228	video (background scroll)
 0x82f8	0x8dfe	video (background scroll)
 0x8dfe	0x8f02	actor (table + lifecycle)
-0x8fce	0x989c	video (sprite blitters)
+# 0x8f02 joined this range in batch 15: sprite_draw_pass is the twelve blitters' only caller and
+# the tier is one story end to end (recreate/STATUS.md, batch 15). Re-measure queued as usual.
+0x8f02	0x989c	video (sprite blitters)
 # The text subsystem (batches 8-9): `$bd8a` (the message-box lifecycle) plus the plotter's two
 # entry points `$bf4e`/`$bf5e`, which are one routine — `$bf4e` has no `rts` and falls through.
 # Three F rows tile `$bd8a..$c030` exactly, and `$c030` is architecture.md's own CODE/DATA

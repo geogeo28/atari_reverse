@@ -52,9 +52,10 @@ import pytest
 
 import harness
 import leaf
-from leaf import (RTS, addi_w_dn, branch, branch_over, bsr_w, case_salt, clr_b_abs_l, clr_w_abs_l,
-                  dbf, keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed, longword,
-                  merge_bands, move_l_imm_abs_l, move_w_abs_l_dn, move_w_dn_dn, move_w_imm_dn,
+from leaf import (RTS, addi_w_dn, andi_w_dn, branch, branch_over, bsr_w, case_salt, clr_b_abs_l,
+                  clr_w_abs_l, dbf, keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed,
+                  longword, merge_bands, move_l_imm_abs_l, move_w_abs_l_dn, move_w_dn_dn,
+                  move_w_imm_dn,
                   move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, movea_l_abs_w, moveq_0_dn,
                   mulu_w_imm_dn, opcode, program_writes, rotate_left32, s16, st_abs_l,
                   sub_w_dn_dn, subi_w_dn, subq_w_abs_l, swap_dn, tst_b_abs_l, tst_w_abs_l,
@@ -477,10 +478,6 @@ def andi_w_abs_l(value, addr):
     return opcode(0x0279) + word(value) + longword(addr)
 
 
-def andi_w_dn(reg, value):
-    return opcode(0x0240 | reg) + word(value)
-
-
 def cmpi_w_abs_l(value, addr):
     return opcode(0x0c79) + word(value) + longword(addr)
 
@@ -551,7 +548,10 @@ def movea_l_indexed(reg, base, index):
     return opcode(0x2070 | (reg << 9) | base) + word(index << 12)
 
 
-def adda_w_imm_an(value, reg):
+def adda_w_imm_an(reg, value):
+    """`adda.w #imm,An` — the window origin inside a screen buffer. ALSO IN test_blit.py, whose
+    sprite pass adds the same origin; the DESTINATION-FIRST argument order is this file's own for
+    every other `*_an` encoder, so both spell it that way."""
     return opcode(0xd0fc | (reg << 9)) + word(value)
 
 
@@ -1098,7 +1098,7 @@ def _blit_dispatcher_body():
     fits = (move_w_imm_dn(D6, BLIT_NO_SECOND_HALF)
             + move_w_imm_dn(D7, BLIT_SCANLINES - 1)
             + jmp_ind(A2))
-    return (movea_l_abs_w(A1, SCREEN_BACK) + adda_w_imm_an(BLIT_SCREEN_ORIGIN, A1)
+    return (movea_l_abs_w(A1, SCREEN_BACK) + adda_w_imm_an(A1, BLIT_SCREEN_ORIGIN)
             + lea_abs_l(A0, BUFFER_BASE)
             + move_w_abs_l_dn(D0, PHASE) + mulu_w_imm_dn(D0, BUFFER_PHASE_STRIDE)
             + lea_indexed(A0, D0, longword_index=True)

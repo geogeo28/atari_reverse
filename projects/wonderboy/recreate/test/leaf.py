@@ -305,6 +305,13 @@ def addi_w_dn(reg, value):
     return opcode(0x0640 | reg) + word(value)
 
 
+def andi_w_dn(reg, value):
+    """`andi.w #imm,Dn` — how a routine masks a register down to a field. THREE batteries
+    (test_scroll.py's phase and tile-row masks, test_map.py's cell mask, test_blit.py's two masks
+    that split the screen x)."""
+    return opcode(0x0240 | reg) + word(value)
+
+
 def tst_w_dn(reg):
     """`tst.w Dn`. THREE batteries (test_scroll.py, test_map.py, test_hud.py)."""
     return opcode(0x4a40 | reg)
@@ -334,6 +341,12 @@ def add_w_dn_dn(destination, source):
     return opcode(0xd040 | (destination << 9) | source)
 
 
+def cmp_w_dn_dn(destination, source):
+    """`cmp.w Dn,Dn` — a SIGNED compare of two registers. THREE batteries (test_actor.py's reach
+    tests, test_map.py's sub-cell tests, test_blit.py's bottom clamp)."""
+    return opcode(0xb040 | (destination << 9) | source)
+
+
 def move_w_dn_dn(destination, source):
     return opcode(0x3000 | (destination << 9) | source)
 
@@ -344,6 +357,12 @@ def move_w_imm_dn(reg, value):
 
 def moveq_0_dn(reg):
     return opcode(0x7000 | (reg << 9))
+
+
+def clr_w_dn(reg):
+    """`clr.w Dn` — a WORD clear, so the caller's high half survives it. THREE batteries
+    (test_actor.py, test_map.py, test_blit.py)."""
+    return opcode(0x4240 | reg)
 
 
 def swap_dn(reg):
@@ -362,6 +381,27 @@ def mulu_w_imm_dn(reg, value):
 def lsl_w_imm_dn(count, reg):
     """`lsl.w #n,Dn` — a count of 8 is encoded as 0, which is why the field is masked to three bits."""
     return opcode(0xe148 | ((count & 7) << 9) | reg)
+
+
+# `asr.w #n,Dn` and `asl.w #n,Dn`: one base opcode and the DIRECTION bit that separates them. The
+# pair is stated once because a battery that spells both (the sprite pass does) would otherwise be
+# able to get them the wrong way round and still assemble.
+_ASHIFT_W_IMM = 0xe040
+_ASHIFT_LEFT = 0x100
+
+
+def asr_w_imm_dn(count, reg):
+    """`asr.w #n,Dn` — an ARITHMETIC shift, so a negative word stays negative. THREE batteries
+    (test_actor.py, test_map.py, test_blit.py). test_actor.py's own copy `or`ed in a redundant
+    `1 << 6` over a base that already carries bit 6; all three emitted the same bytes, which is what
+    their entry pins were agreeing about."""
+    return opcode(_ASHIFT_W_IMM | ((count & 7) << 9) | reg)
+
+
+def asl_w_imm_dn(count, reg):
+    """...and the left one, which only test_blit.py's sprite pass spells. It lives beside its twin
+    rather than in that battery because the base opcode above must be a single statement."""
+    return opcode(_ASHIFT_W_IMM | _ASHIFT_LEFT | ((count & 7) << 9) | reg)
 
 
 def tst_b_abs_l(addr):
