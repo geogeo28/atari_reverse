@@ -114,6 +114,31 @@ Read it before reconstructing any function that traps. The one rule that outrank
 unmodeled call sets `modeled = 0` and `emu.run` **raises**, because a partially-modeled call that
 returns a plausible-looking wrong value turns a loud failure into a silent one.
 
+### Opt-in: audio capture
+
+A mode for a **different job** than the differential: driving a game's music replayer tick by tick
+and reading the YM2149 register stream out of `psg_writes()`, so an asset extractor can dump its
+songs. It serves a few hardware reads the oracle otherwise refuses or answers as 0 — the `$ff8800`
+register read-back a mixer read-modify-write needs, and the two bits of the 50 Hz colour-ST tempo
+profile (`$fffa01` bit 7, `$ff820a` bit 1) — each of which is the model's invention rather than the
+game's data. So it is **off by default, and `harness.differential()` refuses to run while it is
+armed**: a reconstruction verified against one of those answers would be verified against `shim.c`.
+
+| call | what it does |
+|---|---|
+| `emu.audio_capture(on)` | arm/disarm. A pure toggle — re-arming an armed capture keeps it. The argument is required. |
+| `emu.audio_reset()` | clear the modeled register file: where a new capture begins. Nothing else clears it, a `run()` included. |
+| `emu.audio_capturing()` | context manager: arm + reset on entry, disarm on exit. **Use this**; the mode is process-global and `-n auto` makes a leak unreproducible. |
+| `emu.audio_capture_on()` | is it armed? (What `differential()` vets.) |
+| `emu.audio_regfile()` | the modeled register file, for diagnostics. The data feed is `psg_writes()`. |
+
+The full contract — exactly which reads are served and which stay refused, why the register file and
+select latch span runs, and why none of it narrows the differential's guarantee — is in
+[`TRAP_MODEL.md`](TRAP_MODEL.md). Pinned by
+`projects/wonderboy/recreate/test/test_audio_capture.py` (the kit's own suite binds no project, so it
+has no 68000 code to run the mode against) plus one case in
+`projects/joust/recreate/test/test_os_traps.py` for the mixed-path guard.
+
 Three regions of the image are **harness-poked inputs** rather than program memory, so that
 hardware whose real value is time-varying still reaches both cores identically:
 `OS_CON_PENDING`/`OS_CON_CHAR` (the pending console keystroke — `harness.console_key()`),

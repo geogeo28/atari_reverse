@@ -386,6 +386,34 @@ def _vet_no_os_refusal(entry):
         f"candidate still makes. See tools/recreate_kit/TRAP_MODEL.md.")
 
 
+def _vet_audio_capture_off(entry):
+    """Reject a differential run made while the oracle's AUDIO-CAPTURE mode is armed — a FALSE GREEN.
+
+    The mode (``emu.audio_capture``, tools/recreate_kit/TRAP_MODEL.md) serves a handful of hardware
+    reads the oracle otherwise refuses: the ``$ff8800`` register read-back and the 50 Hz colour-ST
+    tempo bytes. Every one of those answers is ``shim.c``'s invention rather than the game's data, so
+    a reconstruction that agreed with the oracle across one would be verified against ``shim.c`` —
+    which is the exact class of false green the refusals exist to close. The mode is for an
+    extraction tool that runs the ORIGINAL only; it is never valid for a differential.
+
+    It is process-global oracle state, so nothing about the CASE says whether it is armed — an
+    extractor, or a case that raised before disarming, is enough. Hence a vet here rather than a
+    convention. It is deliberately NOT in ``emu.run()``: a bare ``run()`` with the mode on is exactly
+    what an extractor does, and is the whole point of the mode.
+    """
+    if not emu.audio_capture_on():
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: the oracle's opt-in AUDIO-CAPTURE mode is armed, so this "
+        f"differential would compare the candidate against reads shim.c FABRICATED — the $ff8800 "
+        f"register-file read-back and the 50 Hz colour-ST tempo bytes ($fffa01 bit 7 / $ff820a bit "
+        f"1) — instead of against the game's own data. A green result would mean the reconstruction "
+        f"agrees with tools/recreate_kit/oracle/shim.c, not that it agrees with the original. Turn "
+        f"the mode off before running a differential: `emu.audio_capture(False)`, or scope it with "
+        f"`with emu.audio_capturing():` so it cannot leak out of the block that needed it. See "
+        f"tools/recreate_kit/TRAP_MODEL.md.")
+
+
 def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
                        stop_pc, max_insns):
     """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
@@ -436,11 +464,14 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     pure C and never writes a machine stack, so excluding the oracle's stack band is sound.
     ``max_insns`` caps the oracle run (raise it for data-heavy functions like the unpacker).
     Raises before comparing anything if the candidate made an ``os_*`` call the TOS model refuses
-    (``_vet_no_os_refusal``) — such a case tests nothing, however clean its bytes look.
+    (``_vet_no_os_refusal``) — such a case tests nothing, however clean its bytes look — or if the
+    oracle's audio-capture mode is armed (``_vet_audio_capture_off``), which would verify the
+    candidate against reads ``shim.c`` fabricated.
     ``poison`` runs an extra attribution pass (``_attribution_check``): re-run both cores on an
     image whose oracle-written bytes are pre-poisoned, catching a candidate that matches by
     coincidence without actually writing a byte the oracle wrote. Opt-in (safe for leaf functions).
     """
+    _vet_audio_capture_off(entry)
     img = make_image(regs.pop("_pokes", None))
     o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc, max_insns=max_insns)
 

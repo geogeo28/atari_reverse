@@ -5,6 +5,7 @@ Ground truth for the differential test. Same interface the rest of the harness e
 68000 core (kstenerud/Musashi), which is faithful to real 68000 behavior — unlike
 Unicorn's ColdFire-derived core, which mis-handles byte memory read-modify-write.
 """
+import contextlib
 import ctypes
 from pathlib import Path
 
@@ -42,6 +43,22 @@ _AREG_NAMES = ("a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7")
 REPORTED_REGS = _DREG_NAMES + _AREG_NAMES[:-1]
 
 _LIB = ctypes.CDLL(str(Path(__file__).resolve().parent / "build" / "liboracle.so"))
+
+
+def _stale_oracle(sym, why):
+    """The error for a liboracle.so that predates ``sym``. ``why`` says what is lost without it.
+
+    liboracle.so is SHARED by every project and is rebuilt only by kit.mk's $(ORACLE) rule, which
+    several consumers never reach (projects/buggyboy/remaster's Makefile, the standalone
+    gen_image/bench/smoke scripts) — so a stale build is a normal state to be in, and a bare ctypes
+    dlsym failure names neither the file nor the fix. Say both, the way harness.py does for the
+    candidate's required ABI. One spelling, so every site names the same rebuild command.
+    """
+    return RuntimeError(
+        f"the shared oracle is stale: liboracle.so exports no {sym}, {why} Rebuild it with "
+        f"`make -C tools/recreate_kit oracle` — or from any project, `make oracle`.")
+
+
 _u32p = ctypes.POINTER(ctypes.c_uint32)
 _LIB.osh_run.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32,
                          _u32p, _u32p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
@@ -53,29 +70,21 @@ _LIB.osh_unmodeled.restype = ctypes.c_uint32
 _LIB.osh_min_a7.restype = ctypes.c_uint32
 _LIB.osh_heap.restype = ctypes.c_uint32
 _LIB.osh_malloc_count.restype = ctypes.c_uint32
-# The newest oracle export. liboracle.so is SHARED by every project and is rebuilt only by kit.mk's
-# $(ORACLE) rule, which several consumers never reach (projects/buggyboy/remaster's Makefile, the
-# standalone gen_image/bench/smoke scripts) — so a stale build is a normal state to be in, and a bare
-# ctypes dlsym failure names neither the file nor the fix. Say both, the way harness.py does for the
-# candidate's required ABI.
 if not hasattr(_LIB, "osh_poked_input_calls"):
-    raise RuntimeError(
-        "the shared oracle is stale: liboracle.so exports no osh_poked_input_calls, which "
-        "emu.run() needs to reject a run whose traps read the harness-poked input block over a "
-        "project's own program (see _vet_no_poked_input_read). Rebuild it with "
-        "`make -C tools/recreate_kit oracle` — or from any project, `make oracle`.")
+    raise _stale_oracle(
+        "osh_poked_input_calls",
+        "which emu.run() needs to reject a run whose traps read the harness-poked input block over "
+        "a project's own program (see _vet_no_poked_input_read).")
 _LIB.osh_poked_input_calls.restype = ctypes.c_uint32
-# The newest export, and the one whose absence is not merely a missing feature: run() sizes the
-# out_regs buffer from REPORTED_REGS above, so an .so built from a shim.c that reports a DIFFERENT
-# number of registers either leaves slots unwritten (silent zeros where a case expects an output) or
-# writes past the end of this process's buffer. Ask the .so rather than assume, for the same reason
-# the guard above does — a stale liboracle.so is a normal state to be in.
+# This one's absence is not merely a missing feature: run() sizes the out_regs buffer from
+# REPORTED_REGS above, so an .so built from a shim.c that reports a DIFFERENT number of registers
+# either leaves slots unwritten (silent zeros where a case expects an output) or writes past the end
+# of this process's buffer. Ask the .so rather than assume.
 if not hasattr(_LIB, "osh_out_regs"):
-    raise RuntimeError(
-        "the shared oracle is stale: liboracle.so exports no osh_out_regs, so it predates the "
-        "oracle reporting the full movem register set (d0-d7/a0-a6) and would leave every register "
-        "past d1/a1 unwritten. Rebuild it with `make -C tools/recreate_kit oracle` — or from any "
-        "project, `make oracle`.")
+    raise _stale_oracle(
+        "osh_out_regs",
+        "so it predates the oracle reporting the full movem register set (d0-d7/a0-a6) and would "
+        "leave every register past d1/a1 unwritten.")
 _LIB.osh_out_regs.restype = ctypes.c_uint32
 if _LIB.osh_out_regs() != len(REPORTED_REGS):
     raise RuntimeError(
@@ -89,6 +98,15 @@ _u8p = ctypes.POINTER(ctypes.c_uint8)
 _LIB.osh_psg_count.restype = ctypes.c_uint32
 _LIB.osh_psg_regs.restype = _u8p
 _LIB.osh_psg_vals.restype = _u8p
+# Required, not optional: without it a run whose PSG traffic overflowed the ledger reports a
+# truncated stream as a complete one, which is the whole hazard the counter closes (shim.c
+# g_psg_dropped). run() names it as a cause, so a missing symbol would silently reopen it.
+if not hasattr(_LIB, "osh_psg_dropped"):
+    raise _stale_oracle(
+        "osh_psg_dropped",
+        "so a run whose PSG writes overflowed the ledger cannot be told from one that fit, and "
+        "run() would report a truncated register stream as a complete capture.")
+_LIB.osh_psg_dropped.restype = ctypes.c_uint32
 _LIB.osh_dosound_count.restype = ctypes.c_uint32
 _LIB.osh_dosound_args.restype = _u32p
 _LIB.osh_psg_mixed_paths.restype = ctypes.c_int
@@ -101,6 +119,21 @@ _LIB.osh_cov_bytes.restype = ctypes.c_uint32
 _LIB.osh_prof_enable.argtypes = [ctypes.c_int]
 _LIB.osh_prof_data.restype = _u32p
 _LIB.osh_prof_slots.restype = ctypes.c_uint32
+# The opt-in audio-capture mode (see audio_capture below). Deliberately NOT a hard import-time error
+# the way osh_poked_input_calls is: nothing run() does needs it, so a .so predating it must still be
+# able to run a whole normal suite. audio_capture() names the rebuild when it is what is missing.
+_HAS_AUDIO_CAPTURE = hasattr(_LIB, "osh_audio_capture")
+AUDIO_NREGS = None       # the modeled YM2149 register file's size; None when the .so has no mode
+if _HAS_AUDIO_CAPTURE:
+    _LIB.osh_audio_capture.argtypes = [ctypes.c_int]
+    _LIB.osh_audio_capture_on.restype = ctypes.c_int
+    _LIB.osh_audio_regfile.restype = _u8p
+    _LIB.osh_audio_reg_count.restype = ctypes.c_uint32
+    _LIB.osh_audio_profile_unmodeled.restype = ctypes.c_uint32
+    # Bound ONCE, from the .so rather than from a second copy of the count here: audio_regfile() is
+    # then a single cast, and a shim.c that resized the file cannot leave this file reading past it.
+    AUDIO_NREGS = _LIB.osh_audio_reg_count()
+    _AudioRegfileP = ctypes.POINTER(ctypes.c_uint8 * AUDIO_NREGS)
 
 _LIB.osh_run_bench.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32,
                                ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
@@ -163,11 +196,111 @@ def prof_data():
     return list(ctypes.cast(_LIB.osh_prof_data(), ctypes.POINTER(ctypes.c_uint32 * n)).contents)
 
 
+def _require_audio_capture():
+    if not _HAS_AUDIO_CAPTURE:
+        raise _stale_oracle("osh_audio_capture", "so it predates the opt-in audio-capture mode.")
+
+
+def audio_capture(on):
+    """Arm or disarm the oracle's opt-in AUDIO-CAPTURE mode. **Off is the default and the
+    differential's contract; this is never valid for a differential run** — ``harness.differential``
+    refuses one outright while it is armed.
+
+    The argument is required: at a call site "audio_capture()" would read as *query* rather than as
+    *arm*, and arming this by accident is the failure mode the whole design is shaped around.
+
+    With it on, three hardware reads the oracle otherwise refuses or answers as 0 are served, so an
+    extraction tool can drive a game's music replayer tick by tick and read the YM2149 register
+    stream out of ``psg_writes()``:
+
+      * a BYTE read of ``$ff8800`` returns the modeled register file's currently latched register —
+        i.e. the last value written to it. That is what the chip does, and it is what a replayer's
+        mixer read-modify-write needs: served as 0 (or refused) the merge loses exactly the bits the
+        read-back exists to preserve.
+      * a BYTE read of ``$fffa01`` (MFP GPIP) or ``$ff820a`` (shifter sync) reports the 50 Hz
+        colour-ST tempo profile a replayer keys on: GPIP bit 7 set, sync bit 1 set. Both read 0
+        off-image, and 0/0 is the *monochrome* profile — a replayer taking it would render every
+        song at the wrong rate, silently. Only those two bits are modeled (plus the two idle,
+        active-low interrupt lines that share the GPIP byte); the rest of each byte is a fabricated
+        zero, which is why nothing wider is served — see below.
+
+    WHAT IS STILL REFUSED, in this mode exactly as out of it — every one of these counts unmodeled
+    and sinks the run in ``run()``:
+
+      * any read of the PSG data port ``$ff8802`` (on real hardware it is not the read-back port),
+        of an odd alias such as ``$ff8801``, or of any other address in the chip's ``$ff88xx`` block;
+      * any word- or long-wide access to the PSG block, in either direction;
+      * a word- or long-wide read taking in ``$fffa01`` or ``$ff820a``, which would fabricate the
+        neighbouring MFP/shifter registers as 0 (this one is refused only WHILE the mode is armed;
+        off it, it is an ordinary off-image read answered 0, as it has always been).
+
+    Why opt-in: each served answer is the MODEL's invention rather than the game's data, so a
+    reconstruction verified against one would be verified against ``shim.c``. Refusing them is the
+    differential's whole point (see ``TRAP_MODEL.md``), which is why the mode changes nothing at all
+    while it is off.
+
+    CONTRACT. The register file and the select latch both **persist across ``run()`` calls** while
+    the mode is on — an extractor calls ``run()`` once per VBL tick, feeding each run's image back
+    in, and tick N's read-back must see tick N-1's writes, exactly as the chip's own latch and
+    registers survive a VBL. The file is cleared by ``audio_reset()`` and by nothing else (bar
+    process start), so arming is IDEMPOTENT: re-arming an already-armed capture keeps it.
+    ``psg_writes()`` keeps its per-run scope unchanged: it is still exactly this tick's register
+    traffic, which is the extractor's data feed. ``audio_capturing()`` is the two together.
+    """
+    if not on and not _HAS_AUDIO_CAPTURE:
+        return                # off is the state an .so without the mode is already in, permanently
+    _require_audio_capture()
+    _LIB.osh_audio_capture(1 if on else 0)
+
+
+def audio_reset():
+    """Clear the modeled YM2149 register file — where a new capture begins.
+
+    Split from ``audio_capture(True)`` for the reason ``cov_reset`` is split from ``cov_enable``: an
+    arming that also cleared could not be issued defensively mid-capture without destroying it.
+    """
+    _require_audio_capture()
+    _LIB.osh_audio_reset()
+
+
+def audio_capture_on():
+    """Is the audio-capture mode armed? False on an .so predating the mode — it cannot be armed."""
+    return bool(_HAS_AUDIO_CAPTURE and _LIB.osh_audio_capture_on())
+
+
+@contextlib.contextmanager
+def audio_capturing():
+    """Arm audio capture over a block, on a freshly cleared register file, and disarm on the way out.
+
+    The mode is PROCESS-global state in the shared oracle, so a caller that left it armed would
+    change every later user of the same process — and under ``pytest -n auto`` which those are is not
+    stable between runs. This is the shape that cannot leak it, and the one every case should use.
+    """
+    audio_capture(True)
+    audio_reset()
+    try:
+        yield
+    finally:
+        audio_capture(False)
+
+
+def audio_regfile():
+    """The modeled YM2149 register file a ``$ff8800`` read-back answers from, as ``bytes``.
+
+    All zero at process start and after ``audio_reset()``; a run's register writes land in it while
+    the mode is armed. Diagnostics — the extractor's data feed is ``psg_writes()``.
+    """
+    _require_audio_capture()
+    return bytes(ctypes.cast(_LIB.osh_audio_regfile(), _AudioRegfileP).contents)
+
+
 def psg_writes():
     """(reg, val) YM2149 writes captured during the most recent ``run()``, in order.
 
     ``run()`` resets the capture each call, so this is exactly that call's PSG traffic —
-    one VBL frame's worth when ``run()`` drove the sound driver's ``REFRESH``.
+    one VBL frame's worth when ``run()`` drove the sound driver's ``REFRESH``. It is always the
+    WHOLE of that traffic: a run whose writes overflowed the shim's ledger is rejected by ``run()``
+    rather than reported truncated (see ``osh_psg_dropped``).
     """
     n = _LIB.osh_psg_count()
     regs, vals = _LIB.osh_psg_regs(), _LIB.osh_psg_vals()
@@ -280,9 +413,9 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
         where = f"checkpoint {stop_pc:#x}" if stop_pc else "rts"
         raise RuntimeError(f"function @ {entry:#x} did not reach {where} within {max_insns} "
                            f"instructions; final memory is mid-execution, not trustworthy")
-    # Three independent reasons a run's result may be fabricated. They are reported TOGETHER rather
+    # The independent reasons a run's result may be fabricated. They are reported TOGETHER rather
     # than as a first-match: a run can hit more than one, and naming only the first sends the reader
-    # off to fix that one and hit the identical message again. The two PSG causes are named
+    # off to fix that one and hit the identical message again. The PSG causes are named
     # specifically because otherwise they read as a puzzling "unmodeled OS call" on a run whose
     # every trap WAS modeled. See tools/recreate_kit/TRAP_MODEL.md, Phase 3.
     causes = []
@@ -297,6 +430,16 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
         causes.append("it accessed the PSG ports ($ff8800/$ff8802) in a way the model cannot serve "
                       "— a READ (the ledger records writes only, so the selected register cannot "
                       "be read back), or an access outside the byte select/data protocol")
+    dropped_psg_writes = _LIB.osh_psg_dropped()
+    if dropped_psg_writes:
+        causes.append(f"its PSG writes overflowed the ledger — {dropped_psg_writes} write(s) past "
+                      f"the shim's MAX_PSG cap were DROPPED, so psg_writes() is a truncated "
+                      f"register stream, not this run's whole one")
+    if _HAS_AUDIO_CAPTURE and _LIB.osh_audio_profile_unmodeled():
+        causes.append("under audio capture it read the machine-profile bytes ($fffa01 GPIP / "
+                      "$ff820a shifter sync) at 16 or 32 bits, and only a BYTE read of either is "
+                      "modeled — a wider one takes in neighbouring registers the model would have "
+                      "to fabricate as 0")
     if causes:
         raise RuntimeError(f"function @ {entry:#x} hit unmodeled OS behaviour: "
                            + "; also, ".join(causes)

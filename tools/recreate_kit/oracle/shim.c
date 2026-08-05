@@ -90,6 +90,11 @@ uint32_t        osh_prof_slots(void) { return PROF_SIZE / 2; }
 static uint8_t  g_psg_reg[MAX_PSG];
 static uint8_t  g_psg_val[MAX_PSG];
 static uint32_t g_psgn;        /* captured (reg,val) writes this run */
+/* Writes this run that did NOT fit in the ledger. The ledger is the audio-capture mode's PRIMARY
+ * DATA FEED (an extractor reads a whole song out of it, tick by tick), so a silent truncation would
+ * not merely lose diagnostics: it would read as a complete capture with a section of the song
+ * missing. emu.run names it as its own cause, the same way it names the two PSG refusals. */
+static uint32_t g_psg_dropped;
 static uint8_t  g_psg_latch;   /* register selected by the last $ff8800 write */
 
 /* Which of the two PSG paths this run used. The readable register file (os.h OS_PSG_REGS) is fed
@@ -120,6 +125,71 @@ int osh_psg_mixed_paths(void) { return g_psg_direct && g_psg_giaccess_calls; }
  *     the ports by `lea` + byte ops), so the guard no longer rests on that property of the inputs. */
 static uint32_t g_psg_unmodeled;
 
+/* --- optional AUDIO CAPTURE mode (off by default; osh_audio_capture turns it on) --------------
+ * An asset-extraction tool drives a game's music replayer tick by tick and reads the register
+ * stream back out of the PSG ledger above. That needs three hardware READS the differential
+ * deliberately refuses (g_psg_unmodeled) or answers as 0:
+ *
+ *   - reading back $ff8800. A replayer's mixer update is a read-modify-write — select register 7,
+ *     read it, merge in the channels this module owns, write it back — so a refused read has no
+ *     answer and a fabricated 0 silently clears exactly the bits the read-back exists to preserve.
+ *     A register-FILE model answers it exactly right: the chip returns the last value written to
+ *     the currently latched register, which is the ledger's own (reg,val) stream folded into the
+ *     register file.
+ *   - $fffa01 bit 7 (MFP GPIP: the monitor-detect line) and $ff820a bit 1 (the shifter's sync mode).
+ *     A replayer picks its tempo from those two. Both read 0 off-image, and 0/0 is the MONOCHROME
+ *     profile — so a capture ticked at 50 Hz would run the mono tick-drop rate and render every
+ *     song at the wrong tempo, silently. This mode reports the 50 Hz colour ST instead.
+ *
+ * WHY IT IS OPT-IN, AND MUST STAY SO. Every one of those answers is fabricated with respect to the
+ * differential: it is the model's invention, not the game's data, so a reconstruction "verified"
+ * against it would be verified against this file. That is the exact false green g_psg_unmodeled and
+ * emu.run's refusal exist to prevent. The mode is for a tool that runs the ORIGINAL only and wants
+ * its register stream; it is never valid for a differential run, and the default is unchanged.
+ *
+ * The register file and the select latch both PERSIST across osh_run calls while the mode is on —
+ * an extractor calls osh_run once per VBL tick, and tick N's read-back must see what tick N-1 wrote,
+ * exactly as the chip's own latch and registers survive a VBL. Neither is cleared by a run; only
+ * osh_audio_reset() clears the file, which is where a new capture begins. Arming is a pure toggle,
+ * so re-arming mid-capture keeps it (the cov_enable/cov_reset and prof_enable/prof_reset shape). */
+static uint8_t g_ym_regs[OS_PSG_NREGS];      /* os.h owns the YM2149's register count and its mask */
+static int     g_audio_capture;
+
+/* The machine profile the mode reports, and the ONLY bits of it that are modeled: a 50 Hz colour ST,
+ * the machine these games were written for. Mono would be GPIP bit 7 clear and 60 Hz sync bit 1
+ * clear — which is what an unmodeled read's 0 already says, hence the mode.
+ *
+ * GPIP bits 4 and 5 are the ACIA (keyboard/MIDI) and FDC/HDC interrupt lines. They are ACTIVE LOW,
+ * so IDLE is 1: serving bit 7 alone would report both devices as interrupting, which is a state no
+ * quiescent machine is in. Every OTHER bit of the byte is a fabricated 0 (the parallel-port busy and
+ * ring-indicator lines, the DMA/blitter line on an STE) — this is a two-bit answer for a tempo
+ * selector, not a machine model. */
+#define MFP_GPIP                0xfffa01   /* MFP GPIP (the 68000 aliases $fffffa01 here) */
+#define MFP_GPIP_COLOUR         0x80       /* bit 7 = monitor detect; SET = colour monitor */
+#define MFP_GPIP_IRQ_LINES_IDLE 0x30       /* bits 5/4 = FDC + ACIA interrupts, active low: idle */
+#define SHIFTER_SYNC            0xff820a   /* shifter sync mode (alias of $ffff820a) */
+#define SHIFTER_SYNC_50HZ       0x02       /* bit 1 SET = 50 Hz */
+
+/* A wide (16/32-bit) read that touched a machine-profile byte while the mode was armed. Only a BYTE
+ * read of either address is modeled; a wider one takes in neighbouring registers the model knows
+ * nothing about, so answering it would fabricate them as 0 — the same false green the mode exists
+ * NOT to introduce. Counted rather than served, so emu.run sinks the run loudly. */
+static uint32_t g_audio_profile_unmodeled;
+
+/* Arm or disarm audio capture. A PURE TOGGLE: it never clears the register file, so re-arming an
+ * already-armed capture is a no-op and a capture spanning many osh_run calls cannot be reset by an
+ * arming that was only meant to be defensive. osh_audio_reset() is the one thing that clears it. */
+void osh_audio_capture(int on) { g_audio_capture = on; }
+void osh_audio_reset(void)     { for (int i = 0; i < OS_PSG_NREGS; i++) g_ym_regs[i] = 0; }
+/* Is the mode armed? The differential must never run under it (every served read is fabricated with
+ * respect to one), and harness.differential vets this rather than trusting the caller. */
+int  osh_audio_capture_on(void) { return g_audio_capture; }
+const uint8_t *osh_audio_regfile(void)   { return g_ym_regs; }
+/* Pins the C array's size for Python, so emu.py sizes its cast from the .so it actually loaded
+ * rather than keeping a second copy of the count. */
+uint32_t       osh_audio_reg_count(void) { return OS_PSG_NREGS; }
+uint32_t       osh_audio_profile_unmodeled(void) { return g_audio_profile_unmodeled; }
+
 /* Does an access of `n` bytes at `a` fall in the YM2149's address block? */
 static int psg_block_touched(uint32_t a, uint32_t n) {
     uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff88xx to $ff88xx */
@@ -134,20 +204,38 @@ static void psg_note_unmodeled(uint32_t a, uint32_t n) {
     g_psg_unmodeled++;
 }
 
+/* Tally a WIDE read that took in a machine-profile byte while the mode was armed (see
+ * g_audio_profile_unmodeled). Off the mode this is a plain off-image read answered 0, unchanged. */
+static void audio_note_wide_profile(uint32_t a, uint32_t n) {
+    if (!g_audio_capture) return;
+    uint32_t lo = a & BUS_ADDR_MASK;
+    if ((lo <= MFP_GPIP && lo + n > MFP_GPIP) || (lo <= SHIFTER_SYNC && lo + n > SHIFTER_SYNC))
+        g_audio_profile_unmodeled++;
+}
+
 /* --- memory callbacks: big-endian, bounds-checked to the image --- */
 unsigned int m68k_read_memory_8(unsigned int a) {
     if (a < g_size) return g_mem[a];
     if ((a & BUS_ADDR_MASK) == IKBD_STATUS) return IKBD_TX_RDY;
+    if (g_audio_capture) {                         /* opt-in; see osh_audio_capture above */
+        switch (a & BUS_ADDR_MASK) {
+            case PSG_SELECT:   g_psg_direct++;     /* served, so NOT g_psg_unmodeled — but it is */
+                               return g_ym_regs[g_psg_latch];   /* still a use of the direct path */
+            case MFP_GPIP:     return MFP_GPIP_COLOUR | MFP_GPIP_IRQ_LINES_IDLE;
+            case SHIFTER_SYNC: return SHIFTER_SYNC_50HZ;
+        }
+    }
     psg_note_unmodeled(a, 1);
     return 0;                                      /* off-image, like any unmapped address */
 }
 unsigned int m68k_read_memory_16(unsigned int a) {
     if (a + 1 < g_size) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
     psg_note_unmodeled(a, 2);
+    audio_note_wide_profile(a, 2);
     return 0;
 }
 unsigned int m68k_read_memory_32(unsigned int a) {
-    if (a + 3 >= g_size) { psg_note_unmodeled(a, 4); return 0; }
+    if (a + 3 >= g_size) { psg_note_unmodeled(a, 4); audio_note_wide_profile(a, 4); return 0; }
     return (unsigned)(g_mem[a] << 24 | g_mem[a + 1] << 16 | g_mem[a + 2] << 8 | g_mem[a + 3]);
 }
 
@@ -167,13 +255,16 @@ const uint32_t *osh_dosound_args(void)  { return g_dosound_arg; }
 
 void m68k_write_memory_8(unsigned int a, unsigned int v) {
     switch (a & BUS_ADDR_MASK) {                   /* mask to the 68000's 24-bit address bus */
-        case PSG_SELECT: g_psg_direct++; g_psg_latch = (uint8_t)v & 0x0f; return;
+        case PSG_SELECT: g_psg_direct++; g_psg_latch = (uint8_t)v & OS_PSG_REG_SEL; return;
         case PSG_DATA:
             g_psg_direct++;                            /* see the mixed-path guard in osh_run */
+            if (g_audio_capture) g_ym_regs[g_psg_latch] = (uint8_t)v;  /* what a read-back answers from */
             if (g_psgn < MAX_PSG) {
                 g_psg_reg[g_psgn] = g_psg_latch;
                 g_psg_val[g_psgn] = (uint8_t)v;
                 g_psgn++;
+            } else {
+                g_psg_dropped++;                       /* see g_psg_dropped: never silently */
             }
             return;
     }
@@ -428,12 +519,18 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
 
     g_wn = 0;                             /* write-set = the function's writes only */
     g_psgn = 0;                           /* PSG capture = this run's register writes only */
-    g_psg_latch = 0;                      /* ... and its select latch, or run N's (reg,val) pairs
-                                           * would be attributed to run N-1's last selected
-                                           * register, making a -n auto suite order-dependent */
+    g_psg_dropped = 0;                    /* ... and so is its overflow tally */
+    /* The select latch is per-run OFF the audio-capture mode, or run N's (reg,val) pairs would be
+     * attributed to run N-1's last selected register, making a -n auto suite order-dependent. Under
+     * the mode the capture spans runs by contract — the extractor calls osh_run once per VBL tick
+     * and a tick may read back a register a previous tick selected, exactly as the chip's own latch
+     * survives a VBL — so the reset would break the thing the mode exists for. g_ym_regs is never
+     * reset here for the same reason; osh_audio_reset() is what clears it. */
+    if (!g_audio_capture) g_psg_latch = 0;
     g_psg_direct = 0;                     /* all three PSG tallies are per-run (the guards below) */
     g_psg_giaccess_calls = 0;
     g_psg_unmodeled = 0;
+    g_audio_profile_unmodeled = 0;        /* ... as is the audio mode's wide-profile-read tally */
     g_dosound_n = 0;                      /* Dosound ledger = this run's XBIOS Dosound calls only */
     g_min_a7 = sp;                        /* deepest stack pointer (for exclude-band sanity checks) */
     uint32_t n = 0;
@@ -526,6 +623,8 @@ uint32_t        osh_poked_input_calls(void) { return g_poked_input_calls; }
 uint32_t        osh_num_insns(void)   { return g_ninsns; }
 uint64_t        osh_num_cycles(void)  { return g_ncycles; }
 uint32_t        osh_psg_count(void)   { return g_psgn; }
+/* PSG writes this run that did not fit in the ledger (see g_psg_dropped) — emu.run names them. */
+uint32_t        osh_psg_dropped(void) { return g_psg_dropped; }
 /* Direct PSG accesses the model refused this run — emu.run names them in its diagnostic. */
 uint32_t        osh_psg_unmodeled(void) { return g_psg_unmodeled; }
 const uint8_t  *osh_psg_regs(void)    { return g_psg_reg; }

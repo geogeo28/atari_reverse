@@ -307,6 +307,31 @@ def test_a_direct_psg_read_is_rejected_on_its_own(port):
         _run(_ld_b(port) + _rts())
 
 
+def test_audio_capture_serves_a_read_back_without_disarming_the_mixed_path_guard():
+    """`emu.audio_capture` (tools/recreate_kit README, "Opt-in: audio capture") answers a direct
+    `$ff8800` read from a modeled register file, so that an extraction tool can run a music
+    replayer's mixer read-modify-write. That file is fed by the DIRECT path only — exactly as the
+    ledger it folds is — so a `Giaccess` alongside it would still be served from state that never
+    saw the direct writes, and serving the read must not stop it TALLYING as direct use.
+
+    Joust is the only project that reaches both paths at all, so this is the only place the arming
+    can be pinned. Two halves, because either alone would pass for the wrong reason: the read on its
+    own is now green (so the raise below is the guard, not a surviving refusal of the read), and the
+    read followed by a `Giaccess` still raises, naming `Giaccess` as the cause.
+
+    `audio_capturing()` scopes the mode: it is process-global oracle state and `make test` runs
+    `-n auto`, so leaving it armed would change other cases in the same worker — and which ones is
+    not stable between runs.
+    """
+    with emu.audio_capturing():
+        _run(_ld_b(PSG_SELECT_PORT) + _rts())
+
+        with pytest.raises(RuntimeError, match=r"Giaccess") as rejection:
+            _run(_ld_b(PSG_SELECT_PORT) + _giaccess(0, PSG_MIXER) + _rts())
+    assert "cannot serve" not in str(rejection.value), (
+        "the read was still counted unmodeled, so this case would pass without the guard arming")
+
+
 # One access per memory callback the byte path used to be alone in guarding — 16- and 32-bit, read
 # and write. `move.w #$0e00,$ff8800` is the idiom that motivates this; the rest keep each callback's
 # tap individually pinned, so removing any one of them fails a named case.

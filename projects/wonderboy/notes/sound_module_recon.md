@@ -323,6 +323,13 @@ zero-returning emulator does *not* silently land on 50 Hz.
 Note the operands are 32-bit absolutes `$00FFFA01` / `$00FF820A` (the `$00FFxxxx`
 I/O mirror), not `$FFFFxxxx` — the memory model must decode that alias.
 
+**The kit now serves both, opt-in.** `emu.audio_capture(True)` reports the 50 Hz colour
+profile on exactly these two reads and answers the `$ff8800` read-back from a modeled
+YM2149 register file, so an extractor can drive the replayer under the oracle. It is off
+by default and invalid for a differential (each answer is the model's invention, not the
+game's data) — see `tools/recreate_kit/README.md`, "Opt-in: audio capture", and the
+behaviour pinned in `recreate/test/test_audio_capture.py`.
+
 ---
 
 ## 5. PSG ACCESS INVENTORY

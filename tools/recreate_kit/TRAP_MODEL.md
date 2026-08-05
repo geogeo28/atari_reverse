@@ -445,6 +445,57 @@ must stay off the reconstruction list until then (marked as such in
 [`projects/joust/recreate/STATUS.md`](../../projects/joust/recreate/STATUS.md)). Narrowing either
 guard to let it pass would restore exactly the fabricated `0` the guards exist to prevent.
 
+**One opt-in exception, for a job that is not the differential: `emu.audio_capture(True)`.** An
+asset extractor drives a game's music replayer tick by tick and reads its register stream out of
+`psg_writes()`; that needs the `$ff8800` read-back, so the refusal above makes it impossible. With
+the mode on, `shim.c` maintains a YM2149 **register file** (`OS_PSG_NREGS` bytes, os.h's count) from
+the select/data writes it already taps and answers a byte read of `$ff8800` from the latched
+register — which is what the chip does, and is exactly the model the paragraph above says the oracle
+lacks. It also serves the two bits a replayer's tempo selector reads, `$fffa01` bit 7 (monitor
+detect) and `$ff820a` bit 1 (shifter sync), as the **50 Hz colour ST**: both read 0 off-image, 0/0 is
+the *monochrome* profile, and a capture that took it would drop 72/256 of every tick and render every
+song slow, silently.
+
+*Exactly what is served* is those two bits and nothing more — plus GPIP bits 5 and 4, the FDC and
+ACIA interrupt lines, which are **active low** and so are set because idle is 1: serving bit 7 alone
+would report both devices as interrupting, a state no quiescent machine is in. Every other bit of
+that byte is a fabricated 0. Because the answer is two named bits rather than a machine model, only a
+**byte** read of either address is served; a 16- or 32-bit read taking one in would have to fabricate
+the neighbouring MFP/shifter registers, so it is counted unmodeled and sinks the run — a refusal that
+exists only while the mode is armed (off it, the same read is an ordinary off-image `0`).
+
+This does **not** narrow the guard, because it does not apply to a differential — and that is
+enforced, not merely stated: `harness.differential()` vets `emu.audio_capture_on()` and refuses
+outright. Each served answer is still fabricated with respect to a differential — the model's
+invention, not the game's data, so a reconstruction verified against it would be verified against
+`shim.c` — which is why the mode is opt-in, off by default, and changes nothing at all while off.
+Joust's `0x152dc` stays blocked: the capture mode is not a licence to run it under a differential.
+Everything else about the direct path is unchanged in either state, including both refusals above for
+a mirror, an odd alias, a non-byte access, and a read of the write-only **data** port `$ff8802` (the
+chip reads back through the select port; answering `$ff8802` would invent a port the hardware does
+not have).
+
+**The capture spans runs.** The register file *and* the select latch persist across `osh_run` calls
+while the mode is on — an extractor calls `osh_run` once per VBL tick, and tick N may read back what
+tick N-1 wrote to a register tick N-1 selected, exactly as the chip's own latch and registers survive
+a VBL. Neither is reset by a run. Arming is a pure **toggle** and clearing is a separate
+`osh_audio_reset()` / `emu.audio_reset()` (the `cov_enable`/`cov_reset` shape): a fused
+enable-and-clear could not be issued defensively mid-capture without destroying it. Off the mode the
+latch keeps its per-run reset, or run N's `(reg,val)` pairs would be attributed to run N-1's last
+selected register and a `-n auto` suite would be order-dependent.
+
+Pinned by `projects/wonderboy/recreate/test/test_audio_capture.py`, whose replayer holds both a
+read-back and the tempo selector; the kit's own suite binds no project and so has no code to run it
+against. A served read-back still counts toward `g_psg_direct`, so it **arms the mixed-path guard**
+exactly as a direct write does — the register file is fed by the direct path only, so a `Giaccess`
+alongside it is as stale as before. That half is pinned in `projects/joust/recreate/test/
+test_os_traps.py`, Joust being the only project that reaches both paths at all.
+
+**The PSG ledger reports its own truncation.** `psg_writes()` is the capture's primary data feed, so
+a write past `shim.c`'s `MAX_PSG` cap is counted (`osh_psg_dropped`) and named by `emu.run()` as a
+cause of its own: a silently truncated register stream would read as a complete capture with a
+section of the song missing.
+
 **GEMDOS `Crawio` (0x06) reads the same console state** as `Bconstat`/`Bconin` (`os_crawio`), rather
 than being a second, disconnected model: one staged key is visible to every console call and is
 consumed once, as on real hardware. Unlike `Bconin` it never refuses — "no key"

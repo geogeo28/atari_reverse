@@ -196,7 +196,7 @@ Confirmed by reading it, and then by running code through it (§4):
 | tier | what the shim does | consequence |
 |---|---|---|
 | **modeled** | byte write to `$ff8800`/`$ff8802` → ordered `(reg, val)` ledger | diffable |
-| **hard reject** | ANY read of `$ff8800..$ff88ff` at any width; any 16/32-bit access to the block; a byte write to the odd aliases | `emu.run` raises; the run cannot complete |
+| **hard reject** | ANY read of `$ff8800..$ff88ff` at any width; any 16/32-bit access to the block; a byte write to the odd aliases | `emu.run` raises; the run cannot complete — unless the kit's opt-in audio-capture mode is armed, which serves the `$ff8800` byte read-back (`tools/recreate_kit/README.md`, "Opt-in: audio capture") |
 | **silent zero** | every other off-image read returns `0`, tallied by nothing | **both sides get the same wrong value: the diff is clean and proves nothing** |
 | **silent drop** | every other off-image write is discarded, logged nowhere | the hardware effect is invisible |
 

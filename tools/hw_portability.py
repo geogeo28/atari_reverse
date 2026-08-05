@@ -23,7 +23,11 @@ THE TIERS, and why they are the ones that matter (shim.c, "memory callbacks"):
                                   dangerous tier (BuggyBoy's $ffff820a music-tempo branch).
                         T3-DATA   the value is only stored or discarded: merely incomplete.
   T4 HARD_REJECT      an access to the PSG block the shim refuses outright — any read, any
-                      non-byte access, any odd-alias write. `emu.run` rejects the whole run.
+                      non-byte access, any odd-alias write. `emu.run` rejects the whole run,
+                      unless the kit's opt-in audio-capture mode is armed, which serves the
+                      $ff8800 byte read-back (tools/recreate_kit/README.md, "Opt-in: audio
+                      capture"). That mode is off for every differential, so a T4 tier still
+                      means "cannot be verified" — but a capture run is not a differential.
   T5 UNMEASURABLE     inside a region named by --exclude: code that cannot be read statically
                       at all (self-decrypting protection), so there is no source text to port.
 
