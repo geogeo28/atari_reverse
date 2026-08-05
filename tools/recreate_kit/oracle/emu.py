@@ -34,6 +34,13 @@ OS_HEAP_BASE = 0x20000
 _DREG_NAMES = ("d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7")
 _AREG_NAMES = ("a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7")
 
+# What a run REPORTS BACK, in shim.c's OSH_OUT_REGS order: every data register, then A0..A6. A7 is
+# excluded because it is the HARNESS's stack pointer, not the function's — run() forces it to
+# STACK_TOP on entry and the rts pops the sentinel frame back off it, so its final value states the
+# harness's own convention rather than anything the function computed; ``min_a7`` below is the one
+# fact about it a case can use. Pinned against shim.c by test/test_reported_regs.py.
+REPORTED_REGS = _DREG_NAMES + _AREG_NAMES[:-1]
+
 _LIB = ctypes.CDLL(str(Path(__file__).resolve().parent / "build" / "liboracle.so"))
 _u32p = ctypes.POINTER(ctypes.c_uint32)
 _LIB.osh_run.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32,
@@ -58,6 +65,24 @@ if not hasattr(_LIB, "osh_poked_input_calls"):
         "project's own program (see _vet_no_poked_input_read). Rebuild it with "
         "`make -C tools/recreate_kit oracle` — or from any project, `make oracle`.")
 _LIB.osh_poked_input_calls.restype = ctypes.c_uint32
+# The newest export, and the one whose absence is not merely a missing feature: run() sizes the
+# out_regs buffer from REPORTED_REGS above, so an .so built from a shim.c that reports a DIFFERENT
+# number of registers either leaves slots unwritten (silent zeros where a case expects an output) or
+# writes past the end of this process's buffer. Ask the .so rather than assume, for the same reason
+# the guard above does — a stale liboracle.so is a normal state to be in.
+if not hasattr(_LIB, "osh_out_regs"):
+    raise RuntimeError(
+        "the shared oracle is stale: liboracle.so exports no osh_out_regs, so it predates the "
+        "oracle reporting the full movem register set (d0-d7/a0-a6) and would leave every register "
+        "past d1/a1 unwritten. Rebuild it with `make -C tools/recreate_kit oracle` — or from any "
+        "project, `make oracle`.")
+_LIB.osh_out_regs.restype = ctypes.c_uint32
+if _LIB.osh_out_regs() != len(REPORTED_REGS):
+    raise RuntimeError(
+        f"liboracle.so reports {_LIB.osh_out_regs()} registers per run but this emu.py names "
+        f"{len(REPORTED_REGS)} ({', '.join(REPORTED_REGS)}) and sizes its buffer to match — the "
+        f"shim and its Python mirror have drifted, and the run would read unwritten slots or "
+        f"overrun the buffer. Rebuild with `make -C tools/recreate_kit oracle`.")
 _LIB.osh_num_insns.restype = ctypes.c_uint32
 _LIB.osh_num_cycles.restype = ctypes.c_uint64
 _u8p = ctypes.POINTER(ctypes.c_uint8)
@@ -236,7 +261,9 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     ``stop_pc`` is an optional checkpoint PC: with it set, the run stops when it reaches that
     address instead of only at rts — the way to diff a function that never returns (its final
     memory is trustworthy at the checkpoint). ``writes`` is {addr: byte} for every byte the
-    code stored (stack writes included). ``out_regs`` holds D0/D1/A0/A1 at return.
+    code stored (stack writes included). ``out_regs`` holds every register the run leaves —
+    ``REPORTED_REGS``, i.e. d0..d7 and a0..a6 at return (A7 is the harness's own; ``min_a7`` reports
+    the only thing about it a case can use) — plus the ledger entries appended below.
     """
     regs = regs or {}
     mem = bytearray(image)
@@ -245,7 +272,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
 
     dregs = (ctypes.c_uint32 * 8)(*[regs.get(n, 0) & 0xFFFFFFFF for n in _DREG_NAMES])
     aregs = (ctypes.c_uint32 * 8)(*[regs.get(n, 0) & 0xFFFFFFFF for n in _AREG_NAMES])
-    out = (ctypes.c_uint32 * 4)()
+    out = (ctypes.c_uint32 * len(REPORTED_REGS))()
 
     reached = _LIB.osh_run(buf, loader.IMAGE_SIZE, entry & 0xFFFFFFFF, dregs, aregs,
                            STACK_TOP, SENTINEL, stop_pc & 0xFFFFFFFF, max_insns, out)
@@ -278,7 +305,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     n = _LIB.osh_num_writes()
     waddr = _LIB.osh_write_addrs()
     writes = {waddr[i]: mem[waddr[i]] for i in range(n)}
-    out_regs = {"d0": out[0], "d1": out[1], "a0": out[2], "a1": out[3]}
+    out_regs = dict(zip(REPORTED_REGS, out))
     out_regs["min_a7"] = _LIB.osh_min_a7()   # deepest stack pointer; used to vet diff exclude bands
     out_regs["heap"] = _LIB.osh_heap()       # Malloc bump pointer at the end of the run (diagnostics)
     out_regs["malloc_calls"] = _LIB.osh_malloc_count()   # serviced GEMDOS Malloc traps this run

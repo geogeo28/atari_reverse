@@ -39,7 +39,9 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
 #define OPCODE_RTS 0x4e75u
 
 #define NREGS    8                 /* D0..D7 / A0..A7, as osh_run takes them */
-#define OUT_REGS 4                 /* osh_run reports {D0, D1, A0, A1} */
+#define OUT_REGS 15                /* osh_run reports D0..D7 then A0..A6 (shim.c's OSH_OUT_REGS,
+                                    * pinned by reported_regs_probe.c) — the buffer must hold them
+                                    * all even though this probe reads only D0 */
 
 static uint8_t *g_image;
 

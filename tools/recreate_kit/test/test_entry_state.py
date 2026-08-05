@@ -10,11 +10,10 @@ surfaced it — the same placement rule `test_os_map.py` follows. The obstacle i
 binds no project, and `harness`/`emu` both load a candidate `.so` at import, so the oracle cannot be
 reached from Python here at all. `entry_state_probe.c` drives `osh_run` in C instead.
 
-The build below compiles the oracle's own sources rather than linking the shared `liboracle.so`,
-which is what keeps this honest: `shim.c` is recompiled on every run, so a reverted force reddens
-immediately instead of being hidden behind an up-to-date-looking artifact (the mtime relink trap).
-The generated opcode table and the Musashi clone are gitignored build products; without them there is
-nothing to compile, so the suite skips rather than fails.
+`probe_build.compile_probe` builds it from the oracle's own sources rather than linking the shared
+`liboracle.so`, which is what keeps this honest: `shim.c` is recompiled on every run, so a reverted
+force reddens immediately instead of being hidden behind an up-to-date-looking artifact (the mtime
+relink trap), and a checkout with nothing built skips rather than fails.
 """
 import re
 import subprocess
@@ -23,13 +22,9 @@ import pytest
 
 from pathlib import Path
 
-KIT = Path(__file__).resolve().parents[1]
-PROBE_SRC = Path(__file__).with_name("entry_state_probe.c")
+from probe_build import compile_probe
 
-MUSASHI = KIT / "oracle" / "musashi"
-GENDIR = KIT / "oracle" / "build"
-ORACLE_SRC = (MUSASHI / "m68kcpu.c", GENDIR / "m68kops.c", MUSASHI / "softfloat" / "softfloat.c",
-              KIT / "oracle" / "shim.c")
+PROBE_SRC = Path(__file__).with_name("entry_state_probe.c")
 
 # run name -> the byte `abcd d1,d0` must leave in d0. The two zero adds bracket a run that leaves X
 # set, so they are the same question asked before and after; they must give the same answer.
@@ -39,19 +34,7 @@ EXPECTED = {"first_zero_add": 0, "arming_wrap": 0, "second_zero_add": 0}
 @pytest.fixture(scope="module")
 def results(tmp_path_factory):
     """Build and run the probe once; return {run name: the byte d0 held}."""
-    missing = [str(src) for src in ORACLE_SRC if not src.exists()]
-    if missing:
-        pytest.skip(f"the oracle's sources are not built here ({', '.join(missing)}) — "
-                    f"run a project's `make oracle` first")
-    binary = tmp_path_factory.mktemp("entry_state") / "probe"
-    # -O0 because this compiles ~800 KiB of generated opcode table on every run and the optimiser
-    # changes nothing the probe asks about; -DM68K_EMULATE_TRACE=0 mirrors kit.mk's OCFLAGS, which
-    # shim.c refuses to build without.
-    subprocess.run(
-        ["cc", "-O0", "-DM68K_EMULATE_TRACE=0",
-         f"-I{KIT / 'include'}", f"-I{MUSASHI}", f"-I{GENDIR}", f"-I{MUSASHI / 'softfloat'}",
-         *[str(src) for src in ORACLE_SRC], str(PROBE_SRC), "-o", str(binary)],
-        check=True, capture_output=True, text=True)
+    binary = compile_probe(PROBE_SRC, tmp_path_factory.mktemp("entry_state"))
     out = subprocess.run([str(binary)], check=True, capture_output=True, text=True).stdout
     return {name: int(value) for name, value in re.findall(r"^(\S+) (\d+)$", out, re.M)}
 

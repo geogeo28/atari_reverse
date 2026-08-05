@@ -376,12 +376,29 @@ static void handle_trap(int vec) {
     m68k_set_reg(M68K_REG_D0, d0);
 }
 
+/* What a run REPORTS BACK: D0..D7 at out_regs[0..7], then A0..A6 at out_regs[8..14]. A caller must
+ * size its buffer to OSH_OUT_REGS; nothing past it is written.
+ *
+ * A7 IS DELIBERATELY NOT REPORTED. It is not the function's register but the HARNESS's: osh_run
+ * forces it to `sp` on entry and the run's own rts pops the sentinel frame back off it, so what it
+ * holds at the end describes the frame the harness built, not anything the function computed. The
+ * one fact about it a case can use — how deep the run pushed — is osh_min_a7(), which the harness
+ * already vets its diff exclude bands against. Reporting it as if it were an output would invite a
+ * case to assert the harness's own convention (STACK_TOP + 4) and call it verified.
+ *
+ * The set is the full `movem` register set for a reason: a routine whose outputs live in registers
+ * the oracle does not report cannot be pinned by a differential at all, only by whatever memory it
+ * happens to touch. See TRAP_MODEL.md, "What a run reports back". */
+#define OSH_OUT_DREGS 8                              /* D0..D7 */
+#define OSH_OUT_AREGS 7                              /* A0..A6 — A7 excluded, see above */
+#define OSH_OUT_REGS  (OSH_OUT_DREGS + OSH_OUT_AREGS)
+
 /* Run `entry` until it returns to the sentinel (its rts) or reaches `stop_pc` — a checkpoint
  * PC that lets a never-returning function (e.g. _start, whose call to the game loop never
  * comes back) be diffed at a chosen point instead of at rts. Pass stop_pc = 0 to disable.
  * dregs/aregs are D0..D7 / A0..A7 inputs (aregs[7] overridden by sp). Returns 1 if it stopped
  * at the sentinel or the checkpoint, 0 if it hit the instruction cap first (a truncated run
- * whose memory must NOT be trusted as final). out_regs receives {D0, D1, A0, A1}. */
+ * whose memory must NOT be trusted as final). out_regs receives OSH_OUT_REGS values as above. */
 int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
             const uint32_t *dregs, const uint32_t *aregs,
             uint32_t sp, uint32_t sentinel, uint32_t stop_pc, uint32_t max_insns,
@@ -437,10 +454,10 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     /* The two PSG rejections are NOT folded into g_unmodeled: emu.run tests all three counters and
      * names every cause that applies, so a run that both mixes the PSG paths and makes an unmodeled
      * OS call reports both rather than sending the reader after one of them twice. */
-    out_regs[0] = m68k_get_reg(0, M68K_REG_D0);
-    out_regs[1] = m68k_get_reg(0, M68K_REG_D1);
-    out_regs[2] = m68k_get_reg(0, M68K_REG_A0);
-    out_regs[3] = m68k_get_reg(0, M68K_REG_A1);
+    for (int i = 0; i < OSH_OUT_DREGS; i++)
+        out_regs[i] = m68k_get_reg(0, (m68k_register_t)(M68K_REG_D0 + i));
+    for (int i = 0; i < OSH_OUT_AREGS; i++)
+        out_regs[OSH_OUT_DREGS + i] = m68k_get_reg(0, (m68k_register_t)(M68K_REG_A0 + i));
 
     uint32_t wn = g_wn;                              /* keep the restore writes out of the write-set */
     m68k_write_memory_32(TRAP_VEC_GEMDOS, save_g);   /* restore vectors */
@@ -485,6 +502,11 @@ int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
     return m68k_get_reg(0, M68K_REG_PC) == sentinel;
 }
 
+/* How many values osh_run writes into its out_regs buffer. A caller allocates that buffer, so a
+ * caller built against a different OSH_OUT_REGS than the .so it loads either reads slots the run
+ * never wrote or is overrun by it — the second corrupts the caller's memory. emu.py sizes its
+ * buffer from its own mirror and checks it against this before the first run. */
+uint32_t        osh_out_regs(void)    { return OSH_OUT_REGS; }
 uint32_t        osh_num_writes(void)  { return g_wn; }
 const uint32_t *osh_write_addrs(void) { return g_waddr; }
 uint32_t        osh_unmodeled(void)   { return g_unmodeled; }

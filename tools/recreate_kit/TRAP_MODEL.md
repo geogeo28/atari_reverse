@@ -169,6 +169,59 @@ means giving `emu.run` an entry-CCR parameter; nothing has needed one yet.
 
 Reverting the force reddens both.
 
+### What a run reports back
+
+A third decision about the same CPU, and the one that decides what a differential can see at all:
+
+> **`osh_run` reports `D0..D7` then `A0..A6`** — the full `movem` register set — at `out_regs[0..14]`
+> (`OSH_OUT_REGS` in `oracle/shim.c`, mirrored by `emu.REPORTED_REGS`, which is what `emu.run`'s
+> result dict is keyed by). **A7 is deliberately excluded**, and nothing past the set is written.
+
+**Why the full set.** The register report is the *observability window*: a routine whose outputs live
+in registers the oracle does not report cannot be pinned by a case at all — only by whatever memory
+it happens to touch on the way. Narrow it and the harness silently changes what "verified" means for
+register-passing code, which is most 68000 leaf code. The window used to be `D0/D1/A0/A1` — the four
+a Ghidra-style calling convention returns in — and that was inherited from the first function ported,
+not chosen. It cost real coverage: Wonder Boy stopped short of **three** reconstructions for
+observability rather than difficulty, each recorded and re-run when this landed
+(`projects/wonderboy/recreate/STATUS.md`, batches 3 and 10) — a five-instruction routine whose entire
+load-bearing output is `a6/d2/d3/d7`, a plotter's outgoing `d7`, and a mutation that survived only
+because the window hid the field it corrupts.
+
+**Why A7 is not in it.** A7 is not the function's register but the *harness's*: `osh_run` forces it to
+`sp` on entry and the run's own `rts` pops the sentinel frame back off it, so its final value states
+the harness's convention (`STACK_TOP + 4`) rather than anything the function computed. A case
+asserting it would be asserting the kit's own arithmetic and calling the function verified.
+`osh_min_a7()` — the deepest A7 the run reached, which `harness.differential` already vets its diff
+exclude bands against — is the one fact about the stack pointer a case can use.
+
+**What it still costs.** Three limits remain, and they are the same shape as the entry CCR's:
+
+* **the report is at `rts` (or the `stop_pc` checkpoint) only** — no intermediate register state is
+  visible, so a value a routine computes and then overwrites is unobservable;
+* **no condition codes** — a routine whose output is a flag can only be pinned through something that
+  reads the flag (Wonder Boy's scroll cases do it via the caller's rewritten return address);
+* **no FP/control registers** — irrelevant on a 68000 target, stated so the omission is a decision.
+
+**Pinned on both sides**, the same split as the two decisions above:
+
+* kit-side by [`test/test_reported_regs.py`](test/test_reported_regs.py), whose
+  `reported_regs_probe.c` drives `osh_run` in C: one `movem.l (table).l,d0-d7/a0-a6` puts a distinct
+  mark in every reported register, a second run leaves them all at their entry values, and a canary
+  one slot past the set catches a run that writes more than it declares. It compiles `shim.c` itself,
+  so a narrowed report cannot hide behind a stale `liboracle.so`. The same file pins `emu.py`'s
+  mirror against `shim.c` textually (CLAUDE.md §5: the C fills the buffer, the Python allocates it,
+  and neither can import the other);
+* game-side by every case that asserts a register past `d1`/`a1` — Wonder Boy's map probes
+  (`test/test_map.py`) are the first.
+
+**A stale `liboracle.so` is caught rather than tolerated.** The `.so` is shared by every project and
+rebuilt only by `kit.mk`'s `$(ORACLE)` rule, so building against an old one is a normal state to be
+in; here it would mean the Python side allocating fifteen slots the C side never fills (silent zeros
+where a case expects an output) or, in the other direction, the C overrunning the caller's buffer.
+`osh_out_regs()` exports the count and `emu.py` checks it against its own mirror at import, naming
+the rebuild.
+
 ## The harness-poked model state
 
 Four regions of the image are inputs the harness pokes, not program memory. Both cores read the

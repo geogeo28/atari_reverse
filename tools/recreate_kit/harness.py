@@ -423,8 +423,9 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
-    ``info`` carries {"writes", "regs", "ret"}: the oracle write-set, the oracle's D0/D1/A0/A1
-    at return, and whatever the candidate glue returned (its D0, or None for void glues).
+    ``info`` carries {"writes", "regs", "ret"}: the oracle write-set, the oracle's registers at
+    return (``emu.REPORTED_REGS`` — d0..d7 and a0..a6 — plus its ledger entries), and whatever the
+    candidate glue returned (its D0, or None for void glues).
     ``regs`` are the oracle's input registers; ``glue(lib, buf)`` runs the candidate on a
     mutable ctypes copy of the same image with the matching arguments.
 

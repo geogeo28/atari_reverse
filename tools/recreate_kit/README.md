@@ -252,8 +252,18 @@ impossible instruction forms), the C-vs-Python pin on the TOS memory map above,
 `project._bool_flag`'s refusal of a non-boolean waiver flag (for **every** waiver flag, checked
 against `project.load` itself so a new one cannot ship untested), and `os_map`'s overlap geometry.
 
-They must keep running in a bare checkout — no oracle build, no candidate `.so` — which is why the
-poked-input geometry was moved into `os_map.py` to be tested here at all.
+Two of them pin the **oracle's own CPU** and so need its sources, which a bare checkout does not have
+(`oracle/musashi/` is a gitignored clone): `test_entry_state.py` and `test_reported_regs.py` compile
+`shim.c` themselves and drive `osh_run` from C — `harness`/`emu` bind a project's candidate `.so` at
+import, and this directory binds no project, so the oracle is unreachable from Python here. Both
+**skip** rather than fail when those sources are absent, and both compile the shim rather than link
+the shared `liboracle.so` so that a reverted decision cannot hide behind a stale artifact — one
+build, in `test/probe_build.py`, so the two cannot disagree about the flags. What they
+pin is in [`TRAP_MODEL.md`](TRAP_MODEL.md): the forced entry SR, and the register set every run
+reports back (`D0..D7`/`A0..A6` — the observability window a differential sees through).
+
+Everything else must keep running in a bare checkout — no oracle build, no candidate `.so` — which is
+why the poked-input geometry was moved into `os_map.py` to be tested here at all.
 
 They need only pytest — but the kit has no venv of its own, so **`PY` defaults to BuggyBoy's**
 (`../../projects/buggyboy/recreate/.venv/bin/python`). That is a known wart: the game-agnostic kit
