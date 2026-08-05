@@ -19,8 +19,9 @@ the measurement.
 > and both blit families (16 background-scroll routines, 12 sprite blitters) and the RAD depacker
 > are completely clean.
 >
-> **21,624 bytes are runnable end-to-end: 83.9 % of what is measured, 39.4 % of the program's
-> believed code.** Of the rest, 4,162 bytes are measured and blocked (T4/T5), and **29,068 bytes
+> **21,334 bytes are runnable end-to-end: 82.7 % of what is measured** *(21,624 / 83.9 % until
+> §0d's scan fix surfaced ten dropped call edges and re-priced `game_routine_6bb8` behind the PSG
+> wall)* **, 38.9 % of the program's believed code.** Of the rest, 4,162 bytes are measured and blocked (T4/T5), and **29,068 bytes
 > are in no tier at all** because they are in no function body — mostly leaf routines reached only
 > through pointer tables (§8.1). What *is* measured and cannot be verified is concentrated in four
 > places: the **WD1772/DMA floppy driver**, the **YM2149 replay path**, the **Copylock**, and the
@@ -340,7 +341,7 @@ measurement moved by precisely the announced amounts:
 |---|---|---|
 | functions / function bytes | 252 / 25,696 | **256 / 25,786** |
 | disassembled bytes | 27,986 | **28,076** |
-| runnable end-to-end | 220 fns / 21,534 B (83.8 %) | **223 / 21,624 B (83.9 %)** |
+| runnable end-to-end | 220 fns / 21,534 B (83.8 %) | **223 / 21,624 B (83.9 %)** *(→ 222 / 21,334 B / 82.7 % after §0d)* |
 | false-green risk | 28 fns / 3,348 B (13.0 %) | **28 / 3,348 B (13.0 %)** |
 | actor (table + lifecycle) | 14 fns / 864 B, coverage 90.6 % | **16 / 954 B, 100.0 %** |
 | stage (load + reset) | 3 fns / 458 B, runnable 2 / 248 B | **4 / 458 B, runnable 3 / 248 B** |
@@ -378,6 +379,46 @@ rows, same ten `I` rows, still no row of either kind for the `jsr 56(a1)` at `$b
 candidate explanation is now eliminated: the jump-target thunk `$17b14` **is** an F record in both
 scans (14 B), so this is not `emitTransfers`' silent else-path (a resolved flow landing in no
 function). Still undiagnosed; the register entry in `STATUS.md` carries the narrowed state.
+*(Diagnosed and closed the same day — §0d below. The elimination above was itself wrong: it
+checked the wrong address, and the else-path WAS the drop site.)*
+
+## 0d. The `$bca2` diagnosis (2026-08-05, batch 16a): ten dropped edges, one sleigh defect
+
+**The mechanism.** Ghidra's 68000 language models `jsr/jmp (d16,An)` one dereference too deep:
+`68000.sinc`'s `addrRegD16` operand exports a *memory* varnode and the instruction is spelt
+`call [operand]`, so the pcode LOADs four bytes at the effective address and calls THOSE — a real
+68000 transfers control TO the EA and reads nothing. Constant propagation therefore "resolved"
+`$bca2` to `0x48e7fffe` — the `movem.l` opcode STORED AT the true target `$17b14` — which is in no
+function, so `emitTransfers`' no-target else-path dropped the site, and the non-empty flow list
+kept it out of the `I` ledger. In neither ledger, exactly as registered. **Ten of the image's
+eleven mode-5 indirect calls were dropped this way** (`$594 $a9e $1732 $67a2 $6aea $6b54 $6bd0
+$6be8 $bca2 $fa28`); the eleventh (`$726`) resolved nothing and was the one honest `I` row of its
+class. The ten pre-existing `I` rows were all mode-2 `jsr (An)`.
+
+**The fix** (`tools/ghidra_scripts/HwPortabilityScan.java`): when a computed transfer's pcode
+reaches its target through a `LOAD`, the EA the propagator really computed survives as the
+instruction's READ data reference — take that as the edge target; and emit `I` whenever a computed
+transfer produced no row at all. The invariant is now stated and kept: **every call/jump in
+exactly one ledger.** 68000-specific by design (an x86 `call [reg+d]` dereference is genuine).
+No test can live outside Ghidra; the pin is this before/after record, and the scan is idempotent.
+
+**What moved (old → new), every delta explained:** ten new `E` rows, none removed, the ten `I`
+rows byte-identical. Three of the new rows come from code in no F record (`$a9e`/`$1732`/`$67a2`)
+and enter `edge_kinds` but not the graph. Edges 233 → 240 (CALL 369 → 379).
+`panel_frame_timers` (`$bbca`) is now honestly `→ $17b14 → snd_trigger_effect` and **stays
+T0/runnable** — the subtree is clean, which the §6 probe (61 insns, empty PSG ledger) had already
+corroborated. `$69fe`/`$6b46` gained the same clean thunk edge, unchanged tiers. The one real
+casualty: **`game_routine_6bb8` (290 B), T3 → T4** — its `jsr 28(a1)` lands on `$17af8 → snd_stop
+→ snd_stop_all_sfx → snd_psg_silence`, whose `move.b $ff8800,d1` is a PSG read. So **runnable
+223 fns / 21,624 B (83.9 %) → 222 / 21,334 B (82.7 %)** — the scan was pricing a sound-walled
+routine as clean. Reachable +4 fns / +376 B, all T0 (`$17b14`, `$17b30`, `$17f92`, `$1a48a`),
+unreachable 116 → 112. False-green risk, the site census, the roots table's tiers and the steering
+table are unchanged — no `H` row moved. `portability_predictions.py`: 14/14 green, no case pinned
+the old behaviour.
+
+**§2–§8's figures move by exactly these deltas and no other.** The fall-through blind spot
+(`$fe4a`/`$fe8c`, `$bf4e`) is a different mechanism — no transfer instruction exists — and stays
+open above.
 
 Two checks that make the re-scan trustworthy as a baseline: the OLD-scan pin above, and a
 `dump_names.sh` round-trip — every one of the 212 `fn` and 202 `var` lines in `../names.txt` comes

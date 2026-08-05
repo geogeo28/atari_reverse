@@ -23,13 +23,13 @@
 //                                                   the MIDDLE of another function — this game's
 //                                                   boot chain is built out of those)
 //   I  fn     insn     text                         unresolved indirect call/jump (a blind spot).
-//                                                   `jsr/jmp d16(An)` belongs HERE even when the
-//                                                   base register was loaded from an immediate, so
-//                                                   a fixed-base indirect call is expected in this
-//                                                   ledger and not in E. A call site that appears in
-//                                                   NEITHER E nor I is a scan DEFECT to investigate,
-//                                                   not a documented limit: measured once, on
-//                                                   wonderboy's `jsr 56(a1)` at $bca2, undiagnosed.
+//                                                   An indirect site lands here only when nothing
+//                                                   resolved it: a fixed-base one that Ghidra DID
+//                                                   resolve (`lea $17adc,a1 / jsr (a1)`, and
+//                                                   `jsr d16(a1)` via effectiveAddresses() below)
+//                                                   is an E edge like any other. Every call/jump
+//                                                   instruction is in exactly one of the two
+//                                                   ledgers — a site in neither is a scan DEFECT.
 //   H  fn insn hwaddr size dir mode steer stored text   one hardware/off-image access
 //   O  start  end  bytes                             a run of code outside any function.
 //                                                    start..end is the address SPAN (it can
@@ -60,6 +60,7 @@ import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.Reference;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 
@@ -146,18 +147,19 @@ public class HwPortabilityScan extends GhidraScript {
         println("HwPortabilityScan -> " + out);
     }
 
-    /** A tail-call `jmp other_function` is an edge too, and an unresolved indirect one is a hole. */
+    /** A tail-call `jmp other_function` is an edge too, and an unresolved indirect one is a hole.
+     *  No call/jump instruction may leave here having emitted NOTHING: an indirect site whose
+     *  targets are unknown — or known only as addresses inside no function — is the `I` ledger's
+     *  whole purpose, and a silent drop is what made wonderboy's `jsr 56(a1)` at $bca2 invisible. */
     private void emitTransfers(PrintWriter w, Function f, Instruction in, String fn) {
         FlowType flow = in.getFlowType();
         if (!flow.isJump() && !flow.isCall()) {
             return;
         }
-        if (flow.isComputed() && in.getFlows().length == 0) {
-            emit(w, "I", fn, hex(in.getMinAddress()), in.toString());
-            return;
-        }
-        for (Address t : in.getFlows()) {
+        boolean emitted = false;
+        for (Address t : transferTargets(in, flow)) {
             if (f != null && f.getBody().contains(t)) {
+                emitted = true;
                 continue;                          // an internal branch is not a call-graph edge
             }
             Function target = getFunctionAt(t);
@@ -168,8 +170,64 @@ public class HwPortabilityScan extends GhidraScript {
             }                                        // transitive tier silently too optimistic
             if (target != null && (f == null || !target.getEntryPoint().equals(f.getEntryPoint()))) {
                 emit(w, "E", fn, hex(target.getEntryPoint()), kind);
+                emitted = true;
             }
         }
+        if (!emitted && flow.isComputed()) {
+            emit(w, "I", fn, hex(in.getMinAddress()), in.toString());
+        }
+    }
+
+    /** Where this transfer can go. Ghidra's own flow list, EXCEPT for the instructions whose
+     *  68000 semantics it models one dereference too deep.
+     *
+     *  68000.sinc gives `(d16,An)` and the indexed modes as memory operands
+     *  (`addrRegD16: ... export *[ram]:4 tmp`) and then spells `jsr`/`jmp` as `call [operand]` /
+     *  `goto [operand]` — so the pcode LOADs the four bytes AT the effective address and calls
+     *  THOSE, while a real 68000 transfers control TO the effective address and reads nothing.
+     *  When constant propagation then resolves such a site it records a flow to the instruction
+     *  bytes it found: wonderboy's `lea $17adc.l,a1 / jsr 56(a1)` resolved to `0x48e7fffe`, which
+     *  is the `movem.l #$fffe,-(a7)` sitting at the real target $17b14. That target is in no
+     *  function, so the edge loop dropped it and the site appeared in neither ledger.
+     *
+     *  The address the pcode LOADs from IS the effective address, and the propagator records it as
+     *  the instruction's READ data reference — so for these, the read references are the targets. */
+    private List<Address> transferTargets(Instruction in, FlowType flow) {
+        if (flow.isComputed() && transfersThroughMemory(in)) {
+            return effectiveAddresses(in);
+        }
+        return Arrays.asList(in.getFlows());
+    }
+
+    /** True when the pcode reaches its indirect target through a LOAD — the modelling above. */
+    private boolean transfersThroughMemory(Instruction in) {
+        Varnode indirectTarget = null;
+        for (PcodeOp op : in.getPcode()) {
+            if (op.getOpcode() == PcodeOp.CALLIND || op.getOpcode() == PcodeOp.BRANCHIND) {
+                indirectTarget = op.getInput(0);
+            }
+        }
+        if (indirectTarget == null) {
+            return false;
+        }
+        for (PcodeOp op : in.getPcode()) {
+            if (op.getOpcode() == PcodeOp.LOAD && indirectTarget.equals(op.getOutput())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The addresses constant propagation resolved the (phantom) target LOAD to. Empty when it
+     *  resolved nothing — which is an honest `I` row, not a dropped site. */
+    private List<Address> effectiveAddresses(Instruction in) {
+        List<Address> targets = new ArrayList<>();
+        for (Reference r : in.getReferencesFrom()) {
+            if (r.getReferenceType().isData() && r.getReferenceType().isRead()) {
+                targets.add(r.getToAddress());
+            }
+        }
+        return targets;
     }
 
     /** Every memory reference out of this instruction that leaves the oracle's flat image. */

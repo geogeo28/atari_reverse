@@ -87,16 +87,24 @@ Three rules the measurement itself has to follow:
    * **Read the `I` ledger before you read the `E` edges.** A call the scan could not resolve is not
      dropped: it is emitted as an `I` record (function, instruction, text) and `hw_portability.py`
      lists every one of them under "unresolved indirect call/jump site(s)", with the standing warning
-     that a transitive tier is a LOWER bound wherever one appears. `jsr d16(An)` lands there
-     NORMALLY, constant base or not — Wonder Boy's ledger opens with
-     `I 0x716 0x726 jsr (0xe,A0)`. A one-callee function whose `I` ledger is non-empty is not a
-     one-callee function, and that is visible without reading a byte of its body.
+     that a transitive tier is a LOWER bound wherever one appears. An unresolved `jsr d16(An)` lands
+     there — Wonder Boy's ledger opens with `I 0x716 0x726 jsr (0xe,A0)`. A one-callee function
+     whose `I` ledger is non-empty is not a one-callee function, and that is visible without reading
+     a byte of its body.
    * **The dangerous site is the one that appears in NEITHER ledger** — no `E` edge, no `I` row. Then
-     nothing in the output says anything is missing. Wonder Boy has a measured instance: `$bbca` does
-     `lea $17adc.l,a1 / jsr 56(a1)` at `$bc9c`/`$bca2`, a fixed call into the **sound module**, and
-     the scan emits four `E` CALL edges for its four `bsr` and no `I` row for the `jsr`. **Why that
-     site was dropped when the identical encoding elsewhere is reported is not diagnosed** — treat it
-     as a scan defect to investigate, not as the rule for `jsr d16(An)`.
+     nothing in the output says anything is missing. Wonder Boy had a measured instance — `$bbca`'s
+     `lea $17adc.l,a1 / jsr 56(a1)` at `$bca2` — and the 2026-08-05 diagnosis found TEN such drops
+     in one image, all the same mechanism: **Ghidra's 68000 sleigh models `jsr/jmp (d16,An)` one
+     dereference too deep** (`68000.sinc` exports the operand as a MEMORY varnode and spells the
+     instruction `call [operand]`), so constant propagation "resolves" the call to the four bytes
+     STORED AT the effective address — an opcode, in no function — and a scan that walks the flow
+     references drops the site silently, while `getFlows().length != 0` keeps it out of the `I`
+     ledger too. The EA the propagator really computed survives as the instruction's READ data
+     reference, which is how `HwPortabilityScan.java` now recovers the true target: when a computed
+     transfer's pcode reaches its target through a `LOAD`, take the READ reference as the edge, and
+     emit `I` whenever a computed transfer produced no row at all — **every call/jump in exactly one
+     ledger** is the invariant a scan of this class must keep. (68000-specific by design: on x86 a
+     `call [ebx+4]` dereference is genuine and this correction would be wrong.)
    `$bf4e` is the same silence from a different cause: it is reported as a 16-byte function with no
    callees, and its 16 bytes have no `rts` — they **fall through** into a 210-byte plotter with eight
    `bsr` callers of its own. Neither miss is exotic, and both are cheap to catch: before porting

@@ -904,24 +904,32 @@ of it.
   closure too. **Read this as a caveat on the scan, not on that one address**: "N callees" is a claim
   about the calls Ghidra RESOLVED — the same class of blind spot as the fall-through that made
   `$bf4e` not-a-leaf. Recorded on `$bbca` in `../names.txt`.
-  **UNRESOLVED, and not to be guessed at: why the scan dropped `$bca2` entirely.** An unresolved
-  indirect call is supposed to be *reported*, as an `I` record that `hw_portability.py` lists under
-  "unresolved indirect call/jump site(s)" — and `jsr d16(An)` does land there normally: the same
-  `../out/hw_scan.tsv` opens its ledger with `I 0x716 0x726 jsr (0xe,A0)`. For `$bbca` that file has
-  four `E 0xbbca 0xbcd6 CALL` rows, ten `I` rows in the whole image, and **no `I` row for `$bca2`**,
-  so this site is in neither ledger and nothing in the output flags it. Whether Ghidra never made the
-  instruction a call-flow reference, or the script's own filter dropped it, is **not diagnosed** —
-  the earlier reading "a `jsr d16(An)` off an immediate `lea` is invisible to the graph" is wrong as
-  a general rule and was replaced by this. Marked for investigation; until it is, treat *any* call
-  site absent from both ledgers as a scan defect, not as a known limit.
-  **2026-08-05 re-scan (fully named DB, after `../reapply.sh`): REPRODUCED byte-identically** —
-  still four `E 0xbbca 0xbcd6 CALL` rows, still ten `I` rows, still nothing for `$bca2`. One
-  candidate is eliminated: the target thunk `$17b14` IS an F record in both scans (`F 0x17b14 14`),
-  so this is not `emitTransfers`' silent else-path (a resolved flow whose target is in no
-  function — that path emits nothing by construction). What remains is that the instruction either
-  never entered the scan's walk or fell to the `!isJump() && !isCall()` early return; deciding
-  which needs a look at the DB's flow references at `$bca2`, and that is still the queued
-  investigation, not this note.
+  **DIAGNOSED AND CLOSED 2026-08-05 (batch 16a): Ghidra's 68000 sleigh models `jsr/jmp (d16,An)`
+  one dereference too deep**, and that — not a filter — is what dropped `$bca2`. `68000.sinc`
+  exports the `(d16,An)` operand as a *memory* varnode (`addrRegD16: … export *[ram]:4 tmp`) and
+  spells the instruction `call [operand]`, so the pcode LOADs four bytes at the effective address
+  and calls THOSE — while a 68000 transfers control TO the effective address and reads nothing.
+  Constant propagation duly resolved `$bca2` to `0x48e7fffe`, the `movem.l #$fffe,-(a7)` opcode
+  STORED AT the real target `$17b14`; that "address" is in no function, so the edge loop's
+  no-target else-path dropped it, and `getFlows().length != 0` kept it out of the `I` ledger. The
+  earlier elimination of that else-path had checked the wrong address (`$17b14` is an F record; the
+  flow never pointed there). **`$bca2` was one of TEN**: every mode-5 indirect call Ghidra resolved
+  was dropped the same way (`$594 $a9e $1732 $67a2 $6aea $6b54 $6bd0 $6be8 $bca2 $fa28`); the ten
+  `I` rows were all mode-2 (`jsr (An)`) sites Ghidra resolved nothing for.
+  `tools/ghidra_scripts/HwPortabilityScan.java` now takes the EA — which the propagator records as
+  the instruction's READ reference — as the target whenever a computed transfer's pcode reaches it
+  through a LOAD, and emits `I` whenever a computed transfer produced no row at all, so **every
+  call/jump is in exactly one ledger**. The header's old claim that a fixed-base indirect "belongs
+  in I, not E" was itself wrong (`lea $17adc,a1 / jsr (a1)` always produced E edges). Cost to the
+  measurement: **ten new `E` rows, none removed, the ten `I` rows byte-identical**; `$bbca` is now
+  honestly `→ $17b14 → snd_trigger_effect` and STAYS runnable (that subtree is T0 clean); the real
+  casualty is `game_routine_6bb8`, T3 → **T4** via `$17af8 → snd_stop → snd_stop_all_sfx →
+  snd_psg_silence`'s PSG read — runnable 223 / 21,624 B → **222 / 21,334 B (82.7 %)**, unreachable
+  116 → 112 (`$17b14`/`$17b30`/`$17f92`/`$1a48a`, 376 B, all T0), edges 233 → 240.
+  `portability_predictions.py` stays 14/14 green. [`PORTABILITY.md`](PORTABILITY.md) §0d is the
+  full record; `docs/on-target-execution.md` rule 4 carries the mechanism. The fall-through blind
+  spot (`$fe4a`/`$fe8c`, `$bf4e`) is a DIFFERENT mechanism — no transfer instruction exists there —
+  and remains open.
   (`docs/on-target-execution.md` rule 4 and `tools/ghidra_scripts/HwPortabilityScan.java`'s `I`
   record carry the short form.)
 * **`$b8f0` (the six HUD slots, 666 bytes) is in scope but oversized.** Its closure is clean and both
@@ -2757,14 +2765,17 @@ still green); what moved is the measurement, and it moved by exactly the predict
 * **`$bca2` REPRODUCES on the fully named DB** — in neither ledger, byte-identically. Newly
   eliminated: the target thunk `$17b14` is an F record in both scans, so the scan script's silent
   no-target else-path is not the mechanism. The register entry in batch 3 carries the narrowed
-  state; the diagnosis stays queued.
+  state; the diagnosis stays queued. *(Batch 16a: DIAGNOSED AND CLOSED — the "eliminated" step
+  above had checked the wrong address; the else-path WAS the drop site, fed garbage by Ghidra's
+  one-dereference-too-deep `jsr (d16,An)` sleigh. Ten sites, one mechanism. The batch-3 register
+  entry carries the full closure, `PORTABILITY.md` §0d the deltas.)*
 * **The names round-trip is clean.** `dump_names.sh` returns all 212 `fn` / 202 `var` lines
   verbatim (ctx tags stripped); its one extra line is `fn 0x3f8 _start`, the loader's own symbol.
   `names.txt` remains the source of truth with nothing to merge.
 
 Still stale after this: nothing in the scan pipeline. The unmeasured bulk (29,068 bytes in no
-function body) is a coverage limit, not staleness; the HUD-subsystem partition and the `$bca2`
-diagnosis remain queued above.
+function body) is a coverage limit, not staleness; the HUD-subsystem partition remains queued
+above, and the `$bca2` diagnosis was closed by batch 16a (the batch-3 register entry).
 
 ### The sprite blitters (batch 14): twelve routines that are one walk
 
