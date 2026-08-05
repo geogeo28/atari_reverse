@@ -120,6 +120,27 @@ mismatches and exits nonzero. Run it with the workspace's python — `python3
 tools/extract_gfx.py [OUT_DIR]`, output defaulting to `out/gfx` (gitignored, like the rest of the
 game's data). It needs Pillow.
 
+## Hearing the music
+
+`tools/extract_audio.py` is the audio twin — but where the art sits in data files, the music is a
+custom in-house replayer linked INTO the .PRG (`notes/sound_module_recon.md` maps all 4333 bytes of
+it), so this extractor captures rather than decodes: it runs the original 68000 driver under the
+recreate kit's Musashi oracle with the opt-in audio-capture mode armed (the mode exists because the
+differential deliberately refuses the PSG read-backs and tempo reads the replayer needs — see
+`tools/recreate_kit/README.md`), plays each of the 17 songs and 26 sound effects from a fresh
+image, ticks `snd_music_tick` once per 50 Hz frame, and folds the captured YM2149 register writes
+into per-frame register states. Out come `out/audio/songs/*.ym` + `sfx/*.ym` (YM6 register dumps,
+masked to the bits the chip decodes, real loop frame in the header), rendered `.wav`s from its own
+YM2149 synth, and a manifest of frames, durations and end reasons. Four songs end themselves via
+opcode `$8e`; four reach an exact whole-state loop; the other nine have an ODD speed byte, which
+puts an exact repeat out of reach, so they are captured to their MUSICAL loop instead — the same
+state hash with the fractional row-clock byte left out (`notes/sound_module_recon.md`'s post-recon
+addendum has the arithmetic, and the manifest header the caveat). The render answers to two checks:
+every `.wav` must clear an RMS floor, and song 0's spectrum must be explained by its own register
+stream — an FFT of a window of the render, each of whose strongest peaks has to be a partial of a
+tone period the capture actually wrote. Run it with the workspace's python —
+`python3 tools/extract_audio.py [OUT_DIR]`, output defaulting to `out/audio`. It needs numpy.
+
 ## The disks
 
 Both `.stx` images are the original release. `tools/stx_extract.py` reports the protection and

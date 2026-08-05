@@ -782,3 +782,43 @@ address `X` and have callers use `X` as the stub base; the internal
 `lea $1738c(pc),a3` will resolve to `X - $750`. No data below `a3 + $0c48` is ever read,
 so the `$750` bytes preceding the blob need to exist as address space but need not be
 copied.
+
+---
+
+## Post-recon addendum: what executing all 43 assets showed (extraction run, 2026-08-05)
+
+`tools/extract_audio.py` captured every song and SFX under the oracle (kit audio-capture
+mode). Everything above held under execution — regs 11-15 untouched across all 43 assets,
+volume bit 4 never set, tempo byte 0 on the 50 Hz path — with two refinements:
+
+* **The PRNG at `$1aae6` steps EVERY tick, unconditionally** — not only when a
+  descriptor-`+7` SFX is playing, which §7 could be read as implying. A loop detector
+  hashing the module's mutable state must exclude it *for a song* (no song reads it —
+  opcode `$97` occurs nowhere, §8) or no song ever repeats exactly. For an **SFX** it must
+  be *included*: 12, 20 and 21 do read it, and a hash that ignores it can call two frames
+  equal that will diverge on the next draw.
+* **Loop shapes.** Four songs self-end via opcode `$8e` (4, 6, 15, 16); four reach an
+  exact whole-state loop (0, 2, 3, 5); the other nine never repeat exactly within 15000
+  frames for an arithmetic reason, not a musical one: their speed byte is ODD
+  (`$27`/`$31`/`$19`), so the row-step accumulator's period is 256 ticks and the exact
+  state period is ~lcm(pattern period, 256).
+* **Those nine are now captured to their MUSICAL loop rather than capped**, on a second
+  hash that drops the accumulator byte (`$17c6a`) as well. Two guards make that safe, and
+  both were found by the data:
+  * The rule is armed only where the exact loop is *unaffordable* — the accumulator's own
+    period is `256/gcd(speed, 256)`, which is 4 or 16 for the four even-speed songs (they
+    reach their exact loop in 2049..7201 frames) and 256 for the nine odd ones. Without
+    that gate the musical rule pre-empts songs 2 and 3, whose musical period *equals* their
+    exact one, and doubles their files for nothing.
+  * A candidate must span at least one ROW. **The "song 12's musical period is 10 frames"
+    reading above is wrong**: at speed `$19` a row lasts 10.24 ticks, so over those 10
+    frames the accumulator never carries and no row steps — the state repeat is one held
+    chord of a three-chord jingle recurring with its 5-frame vibrato figure, and a `.ym`
+    built on it would loop over a fifth of a second of one note. With the row bar its real
+    loop is **1310 frames / 127 rows**; no other song moves. Song 1's 420 stands.
+  * The join is not sample-exact, and the extractor measures rather than promises it: how
+    much of the second period replays the first, allowing one frame of slip, comes out at
+    24-93% across the nine. The accumulator is also the phase of every per-tick effect, so
+    a row boundary landing one tick early leaves that row's arpeggio and volume ramp a tick
+    out of step — songs 11 and 14 replay their first period *exactly* for its first few
+    hundred frames and then hold the right notes with the wrong effect phase.
