@@ -33,13 +33,16 @@ tree reports 2159). A row appears in the table at the end when a function is
 reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only *named*,
 not ported.
 
-**`PORTABILITY.md`'s "reconstructed and pinned" column is twenty-one functions / 2,048 bytes stale**
-as of batch 13 — it is a MEASUREMENT (`tools/hw_portability.py` re-run over `../out/hw_scan.tsv`),
-like the 2026-08-02 re-measure at the end of this file, and it is queued as one rather than
-hand-edited here. `subsystems.tsv` is the same queued measurement: the eight collision-map routines,
-the eight stage-loader ones and now batch 13's eight sit in the "game logic" catch-all, and three of
-the stage loader's belong squarely with `video (background scroll)`. The 51.3 % above is the same
-denominator batch 12 measured, so it moves with that re-run too.
+**THAT QUEUE ENTRY IS CLOSED: the 2026-08-05 re-measure is at the end of this file** and
+[`PORTABILITY.md`](PORTABILITY.md) §0b records it in full. The "reconstructed and pinned" column now
+reads **133 F records / 13,082 bytes**, up from 105 / 10,376 — **twenty-eight functions / 2,706
+bytes**, where the hand estimate this header used to carry said twenty-one / 2,048. That gap is the
+argument for queueing it as a measurement rather than hand-editing the column: the counting rules
+disagree in three places (see `PORTABILITY.md`'s reconciliation table) and an estimate cannot see
+them. `subsystems.tsv` gained four subsystems' worth of ranges, so the collision map, the
+actor lifecycle, the stage tier and the three buffer builders are out of the "game logic" catch-all.
+The 51.3 % above is unchanged by it — a subsystem partition does not move the 25,696-byte
+denominator, and no whole-program figure in `PORTABILITY.md` moved either.
 
 **`panel_refresh_frame` ($b346) now has NINE of its ten callees reconstructed.** The tenth, `$bbca`,
 is the sound-module blocker batch 3 registered, and it is reached by an unconditional `bsr` — so
@@ -56,11 +59,16 @@ stage loader (batch 12)" at the end. `bg_build_buffer` ($fa30) draws the map's w
 ENGINE that fills the eight pre-shifted buffers, and `bg_scroll_blit` (`$82f8`) plus the sixteen
 unrolled copy variants at `$83b6..$8dfe` are the CONSUMER that copies one of them to the screen.
 All thirty-three are reconstructed and green, 6,140 bytes. Nothing between `$7522` and `$8dfe` is
-left named-but-unported, and **`subsystems.tsv` now draws the subsystem around both halves** —
-`$7522..$8228`, `$d28..$d76` and `$82f8..$8dfe` are one `video (background scroll)` range set,
-which `PORTABILITY.md` measures as 33 functions / 6,140 bytes inside a function body, 100 % of them
-reconstructed. See "The background scroll engine", "Closing it" and "The consumer tier" below, and
-"The portability re-measure" for what re-drawing that boundary moved.
+left named-but-unported, and **`subsystems.tsv` draws the subsystem around both halves** —
+`$7522..$8228`, `$d28..$d76` and `$82f8..$8dfe` are one `video (background scroll)` range set.
+**The 2026-08-05 re-measure added the third half**: batch 12's three buffer BUILDERS
+(`$fa30..$fc46`, `$fd46..$fe0c`) and its three banner plotters (`$e110..$e19a`) write the same eight
+buffers, so the subsystem now measures **39 functions / 7,010 bytes inside a function body, 100 % of
+them reconstructed and green** — the largest such row in the file. What is still NOT closed is the
+routine that calls the builders: `stage_load_window` (`$f95c`) ends in a `jsr` into the sound
+module, which is why it is filed under `stage (load + reset)` and is that row's only unrunnable
+function. See "The background scroll engine", "Closing it", "The consumer tier" and "The stage
+loader" below, and the two re-measure sections at the end for what re-drawing the boundaries moved.
 
 ## What the harness has established
 
@@ -222,17 +230,23 @@ out of the 25,696 bytes Ghidra has put inside a function body, which is 46.8 % o
   subsystem is verifiable *through the modeled write ledger*. That is not the same as unverifiable
   — `snd_trigger_effect` (`$1a48a`) is T0 with an exact closure and is diffable today, and 62 % of
   the sound module is runnable now.
-* **The gameplay logic is portable now, as far as it has been recovered**: 112 of its 114 recovered
-  functions touch no hardware at all (the two exceptions are the game's PRNGs), and 104 (7,638
-  bytes) are runnable end-to-end. **61 of them / 2,986 bytes are ported and green** — the
-  effect/state leaves, the joystick edge pair, and the whole status panel: its leaves, the second
-  tier above them and the third tier, the table at the end. **That figure was 51 out of 138 until
-  the 2026-08-02 re-measure**, and none of the movement is batches 5–9's doing: all forty-one of
-  their functions end up outside the catch-all (twenty-four moved by the boundary redraw, and the
-  seventeen consumer-tier blits were in the video range under either file). The +10 is batch 4's
-  status-panel third tier — ten functions / 1,412 bytes ($d93a, $daf8..$db72, $b39c, $b3da, $b8f0)
-  that landed after the 2026-08-01 measurement; 2,986 − 1,412 = 1,574 = 434 + 430 + 710, the old
-  51's exact composition (see "The portability re-measure"). The
+* **The gameplay logic is portable now, as far as it has been recovered**: 85 of its 87 recovered
+  functions touch no hardware at all (the two exceptions are the game's PRNGs), and 78 (5,156
+  bytes) are runnable end-to-end. **62 of them / 3,098 bytes are ported and green** — the
+  effect/state leaves, the joystick edge pair, the whole status panel (its leaves, the second tier
+  above them and the third tier, the table at the end) and now `hud_draw_lives`. **That figure was
+  51 out of 138 before the 2026-08-02 re-measure and 61 out of 114 after it**; the 2026-08-05
+  re-measure takes it to 62 out of 87, and the whole of the +112 bytes is `hud_draw_lives` ($e80c)
+  arriving **from** the `boot` bucket, where it never belonged. Every one of the thirty other
+  functions batches 10–13 added (27 green F records under PORTABILITY's counting) LEFT the
+  catch-all rather than joining it — the collision map, the
+  actor lifecycle, the stage tier and the buffer builders are all subsystems of their own now. Of
+  the earlier movement, none is batches 5–9's doing either: all forty-one of their functions end up
+  outside the catch-all (twenty-four moved by the 2026-08-02 boundary redraw, and the seventeen
+  consumer-tier blits were in the video range under either file). The +10 that got it to 61 is batch
+  4's status-panel third tier — ten functions / 1,412 bytes ($d93a, $daf8..$db72, $b39c, $b3da,
+  $b8f0) that landed after the 2026-08-01 measurement; 2,986 − 1,412 = 1,574 = 434 + 430 + 710, the
+  old 51's exact composition (see "The portability re-measure"). The
   measurement was right that every leaf's whole surface is memory, and right that they need no new
   harness capability in the sense it meant; the panel batch still cost `test/leaf.py` a
   register-argument glue and a per-routine instruction cap, and it surfaced a defect in the shared
@@ -240,11 +254,13 @@ out of the 25,696 bytes Ghidra has put inside a function body, which is 46.8 % o
   cost nothing further: a non-leaf differential is the same call with the callees running under the
   oracle. So is every sprite blitter, the background scroll blitter and the
   RAD depacker. **But game logic is also the worst-measured subsystem that can be read at
-  all, and the re-measure made it worse rather than better** (only the Copylock, which cannot be
-  read, is below it) — those 9,596 bytes are 27.8 % of the 34,496
-  bytes of game-logic CODE believed to exist, against 56 % for boot and 69–100 % for sound, disk,
-  input, text, actor and video. Carving the three characterised subsystems out took 4,432 measured
-  bytes with them and only 14 unmeasured ones.
+  all, and both re-measures made it worse rather than better** (only the Copylock, which cannot be
+  read, is below it) — those 6,904 bytes are 21.8 % of the 31,714
+  bytes of game-logic CODE believed to exist, against 53.5 % for boot and 69–100 % for sound, disk,
+  input, text, map, stage, actor and video. Carving three characterised subsystems out in 2026-08-02
+  took 4,432 measured bytes with them and only 14 unmeasured ones; carving four more out in
+  2026-08-05 took 2,692 measured bytes and only 90 unmeasured ones — and those 90 are two routines
+  that ARE reconstructed and green but sit in no Ghidra function at all.
 
 `PORTABILITY.md` also prices each missing harness capability in functions and bytes, and
 [`../notes/portability_predictions.py`](../notes/portability_predictions.py) re-runs thirteen of the
@@ -2000,6 +2016,9 @@ each battery's single-use encodings, for batch 7's stated reason.
   subsystem now and the lifecycle belongs with `actor (table + projection)`, but re-drawing the
   boundary means re-running `tools/hw_portability.py` over the scan — a measurement, like the
   2026-08-02 re-measure below, and queued as one rather than half-done here.
+  *(CLOSED by the 2026-08-05 re-measure at the end of this file: the collision map is its own
+  subsystem, `map (collision + settle)`, and the lifecycle joined the actor one — which is renamed
+  `actor (table + lifecycle)` because it is no longer just the table and the projections.)*
 
 **QUEUED, with the names and evidence already in `../names.txt` — ALL FOUR CLEARED BY BATCH 11:**
 
@@ -2238,7 +2257,8 @@ ties `test_map.py`'s copy to `../names.txt`'s address for the routine and to the
 * **`subsystems.tsv` AND `PORTABILITY.md`.** Eight collision-map routines now sit in the "game logic"
   catch-all, and the "reconstructed and pinned" column is five functions / 454 bytes stale. Re-drawing
   the boundary and re-running `tools/hw_portability.py` is a MEASUREMENT, queued as one — batch 10
-  made the same call for the same reason.
+  made the same call for the same reason. *(CLOSED by the 2026-08-05 re-measure at the end of this
+  file.)*
 
 ### The stage loader (batch 12): what fills the buffers the scroll engine maintains
 
@@ -2602,3 +2622,86 @@ two users because batch 13 spelt a second copy: `asr_w_imm_dn`, `cmp_w_d16_dn`, 
 * **WHY THE LIFE RESTART CLEARS THE SCORE.** `clr.l $bd70` is on the shared tail, so the path at
   `$c00` — which has just lost a life — zeroes `bcd_score_bd70`. The reconstruction reproduces it;
   whether `$bd70` is the *displayed total* is `../names.txt`'s open question, not this batch's.
+
+### The second portability re-measure (2026-08-05): four more subsystems out of the catch-all
+
+The queue entries batches 10, 11, 12 and 13 left open, closed together — and closed the same way the
+2026-08-02 one was, because it is the same kind of work. **No code changed and no test moved**:
+`make test` is 2159 green before and after. `subsystems.tsv` was re-drawn and
+`tools/hw_portability.py` re-run over the same `../out/hw_scan.tsv`.
+[`PORTABILITY.md`](PORTABILITY.md) §0b records it in full.
+
+**The tool was pinned before anything changed.** The first run reproduced every figure in
+`PORTABILITY.md` byte for byte off the unmodified `subsystems.tsv` — 252 functions, 25,696 bytes,
+both tier tables, the roots table, the 126-site census, 220/21,534 runnable, 28/3,348 at
+false-green risk and all fifteen subsystem rows. The re-run then differed **only in subsystem rows**,
+which is what a partition is allowed to move.
+
+**What moved.** Seven groups of ranges — 28 `F` records, 2,804 measured bytes — left the catch-all,
+and one function left `boot`, each cited in `subsystems.tsv` itself: the collision map (`$10a2..$1208`, `$1334..$1514`, `$1af0..$1b46`) became
+`map (collision + settle)`; the lifecycle and spawn tiers (`$1b68`, `$1f36`, `$2af2`, `$2b5a`,
+`$df9e`, `$ff42..$1009a`) joined the actor subsystem, which is renamed
+**`actor (table + lifecycle)`**; the three buffer builders (`$fa30`, `$fb06`, `$fd46`) and the three
+banner plotters (`$e110..$e19a`) joined `video (background scroll)`; `$f95c` and the two resets
+(`$fe4a`, `$fed2`) became **`stage (load + reset)`**; `resource_table_relocate` (`$fe1e`) joined
+`resource loader`; and `hud_draw_lives` (`$e80c`) left `boot`, which it was never part of.
+
+| | before | after |
+|---|---|---|
+| game logic | 114 fns / 9,596 B measured, 27.8 % of 34,496 B CODE | **87 / 6,904 B, 21.8 % of 31,714 B** |
+| video (background scroll) | 33 / 6,140 B, 98.5 % | **39 / 7,010 B, 98.7 %** |
+| actor (table + projection → lifecycle) | 5 / 356 B, 100.0 % | **14 / 864 B, 90.6 %** |
+| boot | 12 / 1,184 B, 56.0 % | **11 / 1,072 B, 53.5 %** |
+| resource loader | 1 / 104 B, 91.2 % | **2 / 148 B, 93.7 %** |
+| map (collision + settle) | — | **9 / 924 B, 100.0 %** |
+| stage (load + reset) | — | **3 / 458 B, 100.0 %** |
+| game logic, runnable end-to-end | 104 / 7,638 B | **78 / 5,156 B** |
+| game logic, ported and green | 88 fns / 5,580 B ¹ | **62 / 3,098 B** |
+| whole program, ported and green | 105 fns / 10,376 B ² | **133 / 13,082 B** |
+
+¹ The old partition evaluated with today's reconstructions (never previously published — the old
+doc predates batches 12–13). ² The previously PUBLISHED stale column; the world-state before this
+re-measure was already 133 / 13,082, since no code changed here. The two "before" conventions
+differ, which is why the per-subsystem deltas do not sum to the whole-program delta.
+
+**Every whole-program figure is unchanged**, and that was checked by diffing the two reports rather
+than argued. **THE CATCH-ALL GOT WORSE AGAIN**, and harder than last time: it lost 2,692 measured
+bytes and only **90** unmeasured ones, so its coverage fell 27.8 % → 21.8 % and the CODE it holds
+outside every function body is now 78.2 % of it. Two re-measures have taken the bucket from 36.0 %
+to 21.8 % without reaching one unmeasured byte — every subsystem this project has characterised was
+already inside the 46.8 % Ghidra recovered.
+
+**THE 90 BYTES ARE THE FINDING.** They are `actor_hop_or_flip_side` (`$2b5a`) and
+`actor_turn_and_launch` (`$2b8e`) — reconstructed, green, and in **no `F` record at all**, because
+Ghidra has one 20-byte function for the three-routine cluster and it is the middle one. So this is
+the first row in `PORTABILITY.md` whose coverage (90.6 %) is short because the MEASUREMENT
+under-counts the reconstruction, not the other way round.
+
+**AND THE STALENESS LIMITATION HAS TEETH NOW.** The 2026-08-02 re-measure could say the stale Ghidra
+DB changed no figure, because all 171 `fn` addresses in `../names.txt` were already `F` records.
+There are 212 today and **four are not** — `$2b5a`, `$2b8e`, `$fe8c` and `$17f30` — so `reapply.sh`
++ a re-scan **would** move the measurement, by roughly +4 functions and +90 bytes (actor +2 fns /
++90 B, stage +1 fn, sound +1 fn). Every one of those four addresses already falls inside a range
+this re-measure drew, so the re-scan would change the rows' contents and not the partition. Until it
+is run, the actor and stage rows are lower bounds by construction.
+
+**One surprise worth its own line: `stage (load + reset)` is T0 direct and T4 transitive** — the
+only row in the file with that shape. Nothing in it touches hardware; `stage_load_window` (`$f95c`)
+ends with `lea $17adc,a1` + `jsr (a1)` ($fa1e) / `jsr 28(a1)` ($fa28) into the sound module, so 210 of its 458 bytes are unrunnable
+behind the PSG wall. It is what stops the background-scroll story being closed end to end: the three
+builders are green, and the routine that calls them is not portable until the PSG read model exists.
+
+**QUEUED, and registered rather than half-done:**
+
+* **THE STATUS PANEL HAS NO SUBSYSTEM, and moving `$e80c` out of `boot` is what exposed it.** The
+  HUD is ~30 reconstructed functions spread over `$b346..$bd8a`, the restores at `$d93a..$db9x`, the
+  effect stubs at `$10200..$103ee` and now `$e80c` — and every one of them is in the catch-all. It
+  is the largest known mis-partition in the file. It is not drawn yet because a range here has to be
+  cited from a batch's own read that the cluster TILES, and `panel_refresh_frame` (`$b346`) is still
+  unported and blocked on `$bbca`. Same terms as every re-measure: it is a MEASUREMENT, and it is
+  queued as one.
+* **`$fe1e` IS FILED ON ITS CALLERS, NOT ITS DATA.** `resource_table_relocate` went to
+  `resource loader` because its one caller is `show_data_disk_prompt` and all nine operand sites of
+  its two addresses are on the boot resource-install path. What the 20-byte records at `$248d8`
+  actually hold is still not established, so if that table turns out not to be the resource table,
+  one row moves by 44 bytes.

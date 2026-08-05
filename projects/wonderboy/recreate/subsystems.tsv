@@ -6,11 +6,16 @@
 #
 # Each `hi` is the `body_end` `../out/hw_scan.tsv` records for the LAST function in the range, so
 # a range ends exactly where the next function begins and no entry address is claimed twice.
+# ONE range departs from that rule and says so on the spot: `0x2b5a..0x2bc8`, where Ghidra has no
+# function at all and the `hi` is read off the reconstructed bodies instead.
 #
 # ONLY CODE BELONGS HERE. A range is matched against a function ENTRY, so a pure data block can
 # never be claimed by one: the message-pointer table at `$a09c` that `text_run_message_box` walks
 # (batch 9) sits inside ../notes/architecture.md's DATA row `$989c..$a271` and is deliberately
 # absent, as are the actor tables at `$996c`/`$9bd0`/`$9e34` and the screen array at `$98ec`.
+# The same reasoning keeps three data blocks that sit INSIDE CODE regions out of the ranges below:
+# the eight 32-byte palettes at `$fc46..$fd46` that `stage_load_window` indexes, the scratch and
+# stage pointers at `$fe0c..$fe1e`, and the three tile-$33 words at `$1514..$151a`.
 0x3f8	0x420	boot
 0x694	0x716	video (screen / palette / mode)
 0x716	0x754	interrupt (VBL)
@@ -18,6 +23,36 @@
 # The scroll ENGINE's request raiser (batch 5): `$d28` reads the followed object's position and
 # raises the queue entries `bg_scroll_run_queue` ($7522) drains. One function, 78 bytes.
 0xd28	0xd76	video (background scroll)
+# The COLLISION MAP (batches 10-11): the two-dimensional tile grid the actors walk on, and every
+# routine that reads or writes it. Three disjoint ranges, each tiling its F rows exactly:
+#   `$10a2..$1208` — the two horizontal steps, `actor_step_left_against_map` / `_right_`, which
+#     refuse to enter a tile-$1 cell and retry a pixel at a time (mirrors, not a parametrisation);
+#   `$1334..$1514` — `actor_fall_and_settle` (the tier above the probes), the shared cell lookup
+#     `$13be`+`$13c8` (the first FALLS THROUGH into the second, no `rts` of its own), and the two
+#     settles `$1400` (tile $23) / `$1492` (tile $1 or $2). It also claims `$14d6`
+#     `actor_accelerate_fall`, which is an actor routine by role but is physically ENCLOSED in
+#     `$1492`'s body (`blt.w $14d6` at `$14c0` jumps into it, and Ghidra's body_end for `$1492` is
+#     `$1514`), so splitting it out would charge one function body to two subsystems;
+#   `$1af0..$1b46` — `map_stamp_block`, the only writer, stamping a 2x2 block of tile codes.
+# Nine F rows, 924 bytes, all reconstructed and green. `$1ab4` is deliberately outside: nothing
+# is established about it. `$1514..$151a` is the three tile-$33 words, i.e. data.
+0x10a2	0x1208	map (collision + settle)
+0x1334	0x1514	map (collision + settle)
+0x1af0	0x1b46	map (collision + settle)
+# The actor LIFECYCLE (batches 10 and 13), joining the entry tier and projections below:
+#   `$1b68..$1bb4` — the two slot allocators, byte-identical bar two operand words, whose pools
+#     (slots 3..11 and 13..18) meet either side of slot 12, the followed actor;
+#   `$1f36..$1f54` — `actor_table_reset`, all nineteen records of one table marked free;
+#   `$2af2..$2b0a` — `actor_start_motion_at_speed`, the launch (three flag bits and a speed byte);
+#   `$2b5a..$2bc8` — the three step-reaction routines, `actor_hop_or_flip_side` / `_toggle_side_flag`
+#     / `_turn_and_launch`, which read the map steps' own outcome byte and ground flags. GHIDRA HAS
+#     ONE FUNCTION HERE AND IT IS THE MIDDLE ONE (`F 0x2b82`, 20 bytes, folding in the shared tail
+#     at `$2b7a`); `$2b5a` and `$2b8e` are in no F record at all, so this `hi` is `$2b8e + 58`,
+#     read off the reconstructed bodies, and the range still claims exactly one ENTRY.
+0x1b68	0x1bb4	actor (table + lifecycle)
+0x1f36	0x1f54	actor (table + lifecycle)
+0x2af2	0x2b0a	actor (table + lifecycle)
+0x2b5a	0x2bc8	actor (table + lifecycle)
 0x5d62	0x5e3e	resource depack (RAD)
 0x5e3e	0x6242	disk (FAT12 + file load)
 0x6242	0x64f0	disk (WD1772 FDC + DMA)
@@ -25,27 +60,64 @@
 # once a frame into nineteen 6-byte screen records. `$67c2`/`$67e0`/`$67f8` are the entry tier
 # (three F rows, `$67c2..$6822`); `$8dfe`/`$8e66` are the two projection passes (`$8dfe..$8f02`),
 # which share 68 identical bytes. Five functions, 356 bytes, all reconstructed and green.
-0x67c2	0x6822	actor (table + projection)
+0x67c2	0x6822	actor (table + lifecycle)
 # The background scroll ENGINE (batches 5-6): fifteen F rows tile `$7522..$8228` — the queue
 # drain, the four axis steps, the two row fills and the pre-shift — and fill the eight
 # pre-shifted buffers that `bg_scroll_blit` below then copies to the screen. Filed under the
-# "game logic" catch-all until this re-measure; producer and consumer are one subsystem.
+# "game logic" catch-all until the 2026-08-02 re-measure; producer and consumer are one subsystem.
 0x7522	0x8228	video (background scroll)
 0x82f8	0x8dfe	video (background scroll)
-0x8dfe	0x8f02	actor (table + projection)
+0x8dfe	0x8f02	actor (table + lifecycle)
 0x8fce	0x989c	video (sprite blitters)
 # The text subsystem (batches 8-9): `$bd8a` (the message-box lifecycle) plus the plotter's two
 # entry points `$bf4e`/`$bf5e`, which are one routine — `$bf4e` has no `rts` and falls through.
 # Three F rows tile `$bd8a..$c030` exactly, and `$c030` is architecture.md's own CODE/DATA
 # boundary. Its one caller is `game_main_loop` and it calls nothing outside itself.
 0xbd8a	0xc030	text (message box)
+# `actor_slots_mark_free` (batch 10): the free-marker walk `actor_table_reset`'s callers use when
+# only the markers are to move. One function, 14 bytes, two `bsr` callers.
+0xdf9e	0xdfac	actor (table + lifecycle)
+# The banner plotters (batch 12): `bg_plot_round_banner` calls `bg_plot_banner` twice, which calls
+# `bg_plot_banner_glyph` per character — and all three write BACKGROUND BUFFER COPY 0 at `$44000`,
+# the same buffer `bg_build_buffer` fills and `bg_build_preshifted_copies` then derives the other
+# seven from. Three F rows tiling `$e110..$e19a` exactly.
+0xe110	0xe19a	video (background scroll)
 0xe482	0xe782	boot
 0xe782	0xe7f4	resource loader
 0xe7f4	0xe80c	video (screen / palette / mode)
-0xe80c	0xecba	boot
+# `$e80c..$e87c` IS NOT BOOT and used to be filed as it: it is `hud_draw_lives` (batch 13), whose
+# one caller is `game_life_restart_reset`. There is no status-panel subsystem in this file, so it
+# falls to the catch-all with the rest of the HUD rather than into a one-function bucket of its
+# own — see PORTABILITY.md §0b, which registers that as the largest remaining mis-partition.
+0xe87c	0xecba	boot
 0xecba	0xf576	copylock (protection)
 0xf8bc	0xf906	boot
 0xf906	0xf95c	video (screen / palette / mode)
+# The STAGE tier (batch 12), what runs when a stage or a game starts:
+#   `$f95c..$fa2e` — `stage_load_window`, the loader's top: it latches the map and start pointers,
+#     calls the three builders below back to back, sets the palette and starts the stage's tune
+#     (the last two are why it is not reconstructed);
+#   `$fe4a..$ff42` — `game_restart_reset` falling through into `game_life_restart_reset` (one F
+#     row, two routines with an entrant each) and `stage_reset_state`, the per-stage state reset.
+0xf95c	0xfa2e	stage (load + reset)
+# The three routines that FILL the buffers the scroll engine then maintains (batch 12), which is
+# why they are background scroll and not stage: `bg_build_buffer` draws the map's window into
+# copy 0, `stage_publish_scroll_state` writes the very limits, cursors, position words and sixteen
+# row pointers `$7522`'s engine steps, and `bg_build_preshifted_copies` derives copies 1..7.
+# Two ranges, not one: `$fc46..$fd46` between them is the eight 32-byte palettes, i.e. data.
+0xfa30	0xfc46	video (background scroll)
+0xfd46	0xfe0c	video (background scroll)
+# `resource_table_relocate` (batch 12): turns the leading offset of each 20-byte record of the
+# disk-loaded table at `$248d8` into an absolute pointer, once, behind its own `'E'` signature
+# byte. Its single caller is `show_data_disk_prompt`, the same boot routine that drives
+# `load_resource_by_index` above, and its two operand addresses are touched only from that path.
+0xfe1e	0xfe4a	resource loader
+0xfe4a	0xff42	stage (load + reset)
+# The spawn tier (batch 13): `actor_spawn_pass` walks the published template table and spawns from
+# it, `actor_spawn_from_template` turns a 32-byte template into an actor record, and
+# `actor_template_set_hitpoints` writes the difficulty ramp back into the template. Three F rows
+# tiling `$ff42..$1009a` exactly, and `$1009a` is architecture.md's own CODE/DATA boundary.
+0xff42	0x1009a	actor (table + lifecycle)
 0x17adc	0x1ab04	sound (YM2149)
 0x217d8	0x21810	boot
 0x0	0x21810	game logic
