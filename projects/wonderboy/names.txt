@@ -129,10 +129,18 @@ cmt 0xe7f4 clr.l over all 16 palette registers at $ffff8240.
 # Dispatcher at $8f9a: `lea blit_table_mid,a2 / tst.w d4 / bmi -> blit_table_left /
 # cmp.w #$b0,d4 / bge -> blit_table_right / lsl.w #2,d2 / adda.w d2,a2 /
 # movea.l (a2),a2 / jsr (a2)`. d4 = X, d2 = width class 0..3.
-# All 12 bodies are unrolled `and.w mask,(a1) / or.w plane,(a1)+` x4 per word column,
-# `swap` for the second half-longword, then `lea <160 - bytes_advanced>(a1),a1` to
-# step one 320px 4-plane scanline, `dbf d7`. The lea constant gives the width:
-#   146 -> 2 words (32 px), 138 -> 3 (48 px), 130 -> 4 (64 px), 122 -> 5 (80 px).
+# A body draws N 16-pixel columns from N-1 SOURCE CELLS. A cell is 5 words -- an AND mask then the
+# 4 bitplanes, 10 bytes -- so a row is (widthcode+1)*10 bytes. Every word is `ror.l d6,dn` as a
+# LONGWORD, which pushes the pixels past the 16-pixel boundary into the high half; the low half
+# draws its own column and the high half (exposed by `swap`) is `and`/`or`ed into the next one.
+# So column 0 is cell 0's low half alone, column N-1 is cell N-2's high half alone, and every
+# column between is a SEAM of two cells. The register window walks DOWN one register per cell:
+# the masks land in d1, d0, d5, d4 for cells 0..3, the four planes following each mask upward.
+# Per column: `and.w mask,(a1) / or.w plane,(a1)+` x4, the row's LAST `or.w` with no
+# post-increment -- then `lea <162 - 8*columns>(a1),a1` steps one 320px 4-plane scanline.
+# The lea constant gives the width: 146 -> 2 columns (32 px), 138 -> 3, 130 -> 4, 122 -> 5.
+# d2 (the width code) and d5 (y) are NOT read by any body -- the width is the entry point and the
+# y is already folded into a1. Reads a0/a1/d6/d7 (+d4/a5 in a prelude); clobbers d0-d5, a0, a1, d7.
 # ---------------------------------------------------------------------------
 var 0x989c blit_table_mid
 cmt 0x989c 4 longwords: $9594 $95f6 $9692 $9774 -- the unclipped blitters, widths 2/3/4/5 words. Selected when 0 <= d4 < $b0.
@@ -141,22 +149,25 @@ cmt 0x98ac 4 longwords: $8fce $908c $91be $936c -- the left-edge clip preludes, 
 var 0x98bc blit_table_right
 cmt 0x98bc 4 longwords: $8fe4 $90b4 $91f8 $93b6 -- the right-edge clip preludes, widths 2/3/4/5. Selected when d4 >= $b0.
 var 0x9966 blit_clip_mask
-cmt 0x9966 Byte written by the eight clip preludes (values 1,2,3,7,...) and tested with `btst #n,$9966` inside the clipped blit bodies to skip individual 16-pixel word columns. 38 references, all inside $8fce..$989c.
+cmt 0x9966 Byte written by the eight clip preludes and tested with `btst #n,$9966` inside the clipped bodies to skip individual 16-pixel columns. The LEFTMOST column is the HIGHEST bit, so 1 draws the rightmost column alone. Complete value set: left ladders 1/3/7/$f, right ladders 3,2 (w2) 7,6,4 (w3) $f,$e,$c,8 (w4) $1f,$1e,$1c,$18,$10 (w5). 38 references (24 `move.b`, 14 `btst`), all inside $8fce..$989c.
 fn 0x8fce blit_clip_left_w2
-cmt 0x8fce Left-edge prelude for the 32-pixel blitter: if d4 < -16 the sprite is fully off-screen -- `subq.w #6,a5` (unwind the caller's object pointer) and rts; otherwise blit_clip_mask := 1 and `bra.w $900a`, the shared clipped 2-word body. blit_clip_right_w2 branches to the same body. The four `blit_clip_*_w2..w5` pairs are all built this way.
+cmt 0x8fce Left-edge prelude for the 32-pixel blitter: if d4 < -16 the sprite is fully off-screen -- `subq.w #6,a5` (a 32-BIT subtract: a `.w` mnemonic on an address register is a full-width operation) and rts; otherwise blit_clip_mask := 1 and `bra.w $900a`, the shared clipped 2-word body. blit_clip_right_w2 branches to the same body. WHOSE pointer a5 is is NOT established: the sprite pass at $8f02 walks actor_screen_records in a6 and never touches a5. The four `blit_clip_*_w2..w5` pairs are all built this way, and only the LEFT ones unwind -- the right ladders' off-screen arm is a bare `rts`.
 fn 0x8fe4 blit_clip_right_w2
 cmt 0x8fe4 Right-edge prelude for the 32-pixel blitter: d4 >= $f0 -> fully off-screen, rts; $e0 <= d4 < $f0 -> blit_clip_mask := 2; d4 < $e0 -> blit_clip_mask := 3. Then `bra.w $900a` into the shared clipped 2-word body ($900a..$908a).
 fn 0x908c blit_clip_left_w3
+cmt 0x908c Left-edge prelude, 48 pixels: d4 >= -16 -> blit_clip_mask := 3; d4 >= -32 -> 1; else `subq.w #6,a5` and rts. Then `bra.w $90ec`, the shared clipped 3-word body.
 fn 0x90b4 blit_clip_right_w3
-cmt 0x90b4 Shared clipped 3-word body at $90ec..$91bc.
+cmt 0x90b4 Right-edge prelude, 48 pixels: d4 < $d0 -> blit_clip_mask := 7; < $e0 -> 6; < $f0 -> 4; else rts (no a5 unwind). Shared clipped 3-word body at $90ec..$91bc.
 fn 0x91be blit_clip_left_w4
+cmt 0x91be Left-edge prelude, 64 pixels: d4 >= -16 -> 7; >= -32 -> 3; >= -48 -> 1; else unwind and rts. Then `bra.w $9242`.
 fn 0x91f8 blit_clip_right_w4
-cmt 0x91f8 Shared clipped 4-word body, ends at $936a.
+cmt 0x91f8 Right-edge prelude, 64 pixels: d4 < $c0 -> $f; < $d0 -> $e; < $e0 -> $c; < $f0 -> 8; else rts. Shared clipped 4-word body $9242..$936a. ODDITY: its third column's merge, `or.w d4,d3`, sits at $9324 INSIDE the arm the `btst #1` at $9312 branches to, where every other body merges before the test. A skipped column 2 therefore leaves d3 unmerged -- invisible in the pixels (that low word is only ever drawn by the arm that merges it) but visible in the d3 returned. Reproduced, not tidied.
 fn 0x936c blit_clip_left_w5
+cmt 0x936c Left-edge prelude, 80 pixels: d4 >= -16 -> $f; >= -32 -> 7; >= -48 -> 3; >= -64 -> 1; else unwind and rts. Then $9412 -- the -48 arm reaches it with a `bra.s` ($939e, 6072) where its three neighbours use `bra.w`, an assembler inconsistency with no behavioural effect (the -64 arm's target is nearer still and is long anyway).
 fn 0x93b6 blit_clip_right_w5
-cmt 0x93b6 Shared clipped 5-word body, ends at $9592.
+cmt 0x93b6 Right-edge prelude, 80 pixels: d4 < $b0 -> $1f; < $c0 -> $1e; < $d0 -> $1c; < $e0 -> $18; < $f0 -> $10; else rts. Shared clipped 5-word body $9412..$9592.
 fn 0x9594 blit_sprite_w2
-cmt 0x9594 Unclipped masked blit, 2 words = 32 pixels wide, d7+1 rows. Mask in d1, the four bitplanes in d2-d5, all pre-rotated by `ror.l d6,dn` for the sub-word X shift; `lea 146(a1),a1` per row.
+cmt 0x9594 Unclipped masked blit, 2 columns = 32 pixels wide, d7+1 rows; `lea 146(a1),a1` per row. THE ONLY WIDTH THAT COUNTS ITS ROWS UP FRONT: `addq.w #1,d7 / tst.w d7 / beq / bmi` and a `dbf` back to the `tst`, so a count that is zero or negative once bumped draws nothing and it exits with d7 = 0. The clipped 2-column body at $900a has the same guard (exiting through blit_clip_right_w2's own `rts` at $9008). $95f6/$9692/$9774 and their clipped bodies have NO such guard -- a bare `dbf`, exiting with d7 = $ffff, and an entry d7 of $ffff runs 65,537 rows. Also the only width that never touches d0: five source words fit in d1-d5.
 fn 0x95f6 blit_sprite_w3
 cmt 0x95f6 Unclipped masked blit, 3 words = 48 pixels; `lea 138(a1),a1` per row.
 fn 0x9692 blit_sprite_w4

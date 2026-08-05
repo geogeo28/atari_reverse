@@ -346,6 +346,15 @@ def moveq_0_dn(reg):
     return opcode(0x7000 | (reg << 9))
 
 
+def swap_dn(reg):
+    """`swap Dn` — how a routine gets at the half of a longword register a rotate pushed up. THREE
+    batteries (test_scroll.py's tile loop and its pre-shift, test_stage.py's derived copies,
+    test_blit.py's every column seam), which is why it moved here. The register field is masked to
+    three bits like its neighbours': without it a register out of range would silently encode a
+    different instruction (`bkpt`) rather than fail."""
+    return opcode(0x4840 | (reg & 7))
+
+
 def mulu_w_imm_dn(reg, value):
     return opcode(0xc0fc | (reg << 9)) + word(value)
 
@@ -509,6 +518,42 @@ def s16(value):
     """``value``'s low word as the SIGNED number a word operand spells."""
     value &= WORD_MASK
     return value - (WORD_MASK + 1) if value & 0x8000 else value
+
+
+# --- the register arithmetic a model restates -----------------------------------------------------
+# The reconstruction does these through tools/recreate_kit/include/machine.h; a model that spelt one
+# of them differently would agree with the reconstruction only by luck, so they live here under
+# machine.h's own names. Three batteries rotate a longword (test_blit.py's sub-word shift,
+# test_scroll.py's tile loop, test_hud.py's digit register) and two write a word into one
+# (test_blit.py's row counter, test_map.py's probe fields).
+LONG_BITS = 32
+HIGH_WORD_MASK = LONGWORD_MASK - WORD_MASK   # 0xffff0000: the half a `.w` write leaves alone
+
+
+def rotate_left32(value, count):
+    """68k `rol.l Dm,Dn` — a 32-bit ROTATE: the bits that leave the top come back in at the bottom.
+
+    The `& 31` is machine.h's and the 68000's: it rotates by the count mod 64, and a 32-bit rotate
+    is cyclic mod 32, so the mask is exact rather than a clamp — and it makes a count of 0 the
+    machine's own no-op instead of Python's `value >> 32`, which is 0 and not the identity.
+    """
+    count &= LONG_BITS - 1
+    if count == 0:
+        return value & LONGWORD_MASK
+    return ((value << count) | (value >> (LONG_BITS - count))) & LONGWORD_MASK
+
+
+def rotate_right32(value, count):
+    """68k `ror.l Dm,Dn`, DERIVED from the left one rather than written twice: a 32-bit rotate is
+    cyclic, so rotating right by n is rotating left by 32 - n."""
+    return rotate_left32(value, LONG_BITS - (count & (LONG_BITS - 1)))
+
+
+def set_low_word(value, low):
+    """A `.w` write into a longword register: the low word is replaced and the caller's HIGH half
+    survives it. This is how a 68000 routine returns "a word" in a register the differential
+    compares as a longword."""
+    return (value & HIGH_WORD_MASK) | (low & WORD_MASK)
 
 
 # --- reading a value back out of the oracle's write set -------------------------------------------

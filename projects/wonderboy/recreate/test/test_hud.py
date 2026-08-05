@@ -63,7 +63,7 @@ import layout
 import leaf
 from leaf import (BSR_W, MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_IMM_ABS_L,
                   RTS, backward_branch, bsr_w, forward_branch, longword, move_l_imm_postinc,
-                  tst_w_dn, word)
+                  rotate_left32, tst_w_dn, word)
 from layout import wb
 
 import emu   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -220,14 +220,6 @@ def _signed_long(value):
     """What a `cmp.l` reads a longword as. The score, the high score and the five meter thresholds
     are all compared this way, so a field whose top nibble is 8 or 9 is NEGATIVE."""
     return value - 0x100000000 if value & 0x80000000 else value
-
-
-def _rotate_left32(value, bits):
-    """`rol.l #n,d7` — the digit register's only arithmetic. $b850 rotates by a nibble per plot,
-    $bd32 by a byte before its walk, and the outgoing register every case below compares against the
-    oracle is this applied as many times as the routine plots."""
-    bits %= 32
-    return ((value << bits) | (value >> (32 - bits))) & LONGWORD_MASK if bits else value
 
 
 def _indexed_bitmap(table, index, stride):
@@ -1643,7 +1635,7 @@ def _outgoing_digits(entry_digits, plots):
     """The d7 a routine leaves at its `rts`: `rol.l #4,d7` once per plot, and nothing else in $b850
     or in any walk above it touches the register — which the whole-body entry pins are what hold.
     Four plots therefore come to a `swap`, and eight to the identity."""
-    return _rotate_left32(entry_digits, NIBBLE_BITS * plots)
+    return rotate_left32(entry_digits, NIBBLE_BITS * plots)
 
 
 def _assert_outgoing_digits(info, entry_digits, plots, candidate, what):
@@ -1954,7 +1946,7 @@ def test_a_word_field_buries_the_callers_high_word_and_hands_it_back_in_d7(entry
     rather than by rotating, so it is a different sentence from `_outgoing_digits`."""
     counter, stage = 0x0100, 0x0012
     buried = (entry_d7 >> BITS_PER_WORD) << BITS_PER_WORD
-    assert _rotate_left32(entry_d7, BURIED_HALF_ROTATION) != entry_d7, (
+    assert rotate_left32(entry_d7, BURIED_HALF_ROTATION) != entry_d7, (
         "an entry value whose two halves agree cannot tell the two readings apart")
 
     info = _run_counter(counter, SCREEN_BUFFERS[0], entry_d7,
@@ -1972,7 +1964,8 @@ def test_a_word_field_buries_the_callers_high_word_and_hands_it_back_in_d7(entry
 
 def _run_stage_number(stage, font_select, screen, entry_d7, what):
     cursor = screen + STAGE_ORIGIN
-    digits = _rotate_left32(_staged_word(stage, entry_d7), BITS_PER_BYTE)
+    # $bd32's `rol.l #8,d7` before the walk — leaf.rotate_left32 is the 68000's own rotate.
+    digits = rotate_left32(_staged_word(stage, entry_d7), BITS_PER_BYTE)
     return _run_field("hud_draw_stage_number", _stage_number(font_select, entry_d7), cursor, digits,
                       (font_select,) * TWO_DIGITS, TWO_DIGIT_REWINDS, TWO_DIGIT_FORCED_AT, what,
                       pokes={SCREEN_BACK: longword(screen), STAGE_NUMBER: word(stage)},

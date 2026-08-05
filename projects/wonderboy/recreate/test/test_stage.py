@@ -57,7 +57,8 @@ from leaf import (RTS, add_w_dn_dn, branch, branch_over, bsr_w, btst_imm_dn, cas
                   dbf_over, forward_branch, keyed_block, lea_abs_l, lea_d16, lea_indexed, longword,
                   lsl_w_imm_dn, merge_bands, move_l_imm_abs_l, move_l_imm_postinc, move_w_abs_l_dn,
                   move_w_dn_dn, move_w_imm_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn,
-                  opcode, program_writes, st_abs_l, subi_w_dn, tst_w_abs_l, u16, s16, word)
+                  opcode, program_writes, st_abs_l, subi_w_dn, swap_dn, tst_w_abs_l, u16, s16,
+                  word)
 from layout import wb
 # `game_life_restart_reset` CALLS hud_draw_lives, so its write set CONTAINS that routine's.
 # The geometry and the model are imported from the battery that owns them rather than
@@ -246,10 +247,6 @@ def rol_l_imm_dn(count, reg):
     return opcode(0xe198 | ((count & 7) << 9) | reg)
 
 
-def swap_dn(reg):
-    return opcode(0x4840 | reg)
-
-
 def move_l_postinc_postinc(source, destination):
     return opcode(0x2000 | (destination << 9) | (3 << 6) | (3 << 3) | source)
 
@@ -262,8 +259,13 @@ def move_w_dn_postinc(an, dn):
     return opcode(0x3000 | (an << 9) | (3 << 6) | dn)
 
 
-def or_w_dn_postinc(an, dn):
-    """`or.w Dn,(An)+` — how a cell takes the carry its right-hand neighbour shifted out."""
+def or_w_dn_postinc(dn, an):
+    """`or.w Dn,(An)+` — how a cell takes the carry its right-hand neighbour shifted out.
+
+    ALSO IN test_blit.py, in the SAME operand order: data register then address register, the way
+    the mnemonic reads. (The two disagreed about it when that battery landed — each one's own byte
+    pins pass either way, so two encoders of one instruction can differ silently.)
+    """
     return opcode(0x8100 | (dn << 9) | (1 << 6) | (3 << 3) | an)
 
 
@@ -416,12 +418,12 @@ def _preshift_entry():
                 + b"".join(move_w_dn_abs_l(D4 + p, BUILD_CARRY + p * STATE_WORD_LEN)
                            for p in planes))
     body = (lea_d16(A1, -CELL_BYTES) + shift + swap_all
-            + b"".join(or_w_dn_postinc(A1, D4 + p) for p in planes) + swap_all
+            + b"".join(or_w_dn_postinc(D4 + p, A1) for p in planes) + swap_all
             + b"".join(move_w_dn_postinc(A1, D4 + p) for p in planes))
     epilogue = (lea_d16(A1, -CELL_BYTES)
                 + b"".join(move_w_abs_l_dn(D4 + p, BUILD_CARRY + p * STATE_WORD_LEN)
                            for p in planes)
-                + b"".join(or_w_dn_postinc(A1, D4 + p) for p in planes))
+                + b"".join(or_w_dn_postinc(D4 + p, A1) for p in planes))
 
     scanline = (move_w_imm_dn(D2, BUILD_CELLS_AFTER - 1) + prologue
                 + body + dbf_over(D2, len(body)) + epilogue)

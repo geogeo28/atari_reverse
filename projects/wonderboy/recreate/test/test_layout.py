@@ -48,13 +48,22 @@ def test_a_leading_zero_decimal_is_refused_and_names_the_header():
     assert "WB_OCTALISH" in message
 
 
+def test_a_name_defined_in_two_headers_is_refused_as_well():
+    """The scrape spans more than one header, so "defined twice" has to mean across them too — one
+    namespace with two canonical values would be the drift this module exists to prevent."""
+    defines = layout._scrape("#define WB_SHARED 1\n", layout._HEADERS[0])
+    with pytest.raises(ValueError, match="WB_SHARED"):
+        layout._scrape("#define WB_SHARED 2\n", layout._HEADERS[1], defines)
+
+
 def test_wb_names_the_constant_it_could_not_find():
     with pytest.raises(AssertionError, match="WB_NOT_A_REAL_CONSTANT"):
         wb("NOT_A_REAL_CONSTANT")
 
 
-def test_the_real_header_scrapes_and_wb_reaches_it():
-    """One case against include/wonderboy.h itself, so a header that stopped parsing fails here
-    rather than as a puzzling missing key in test_bootstrap.py."""
-    assert layout.DEFINES, f"nothing scraped out of {layout._HEADER}"
-    assert wb("RUNTIME_BASE") == 0x400
+def test_the_real_headers_scrape_and_wb_reaches_them():
+    """One case against each real header, so a header that stopped parsing fails here rather than
+    as a puzzling missing key in test_bootstrap.py or test_blit.py."""
+    assert layout.DEFINES, f"nothing scraped out of {[str(h) for h in layout._HEADERS]}"
+    assert wb("RUNTIME_BASE") == 0x400          # include/wonderboy.h
+    assert wb("BLIT_COLUMN_PIXELS") == 16       # include/blit.h

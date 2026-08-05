@@ -89,7 +89,8 @@ from leaf import (BRANCH_EXTENSION, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16, bra
                   case_salt, cmpi_b_dn, keyed_block, lea_abs_l, lea_indexed, longword,
                   lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_w_abs_l_dn, move_w_dn_dn,
                   move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode,
-                  program_writes, s16, sub_w_dn_dn, subi_w_dn, tst_w_abs_w, tst_w_dn, u16, word)
+                  program_writes, s16, set_low_word, sub_w_dn_dn, subi_w_dn, tst_w_abs_w,
+                  tst_w_dn, u16, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -841,8 +842,9 @@ def _word_write(addr, value):
 
 def _over_high_half(entry, low):
     """A WORD write into a longword register: the low word is replaced and the caller's high half
-    survives it — machine.h's `set_low_word`, in the model's own language."""
-    return (entry & ~WORD_MASK) | (low & WORD_MASK)
+    survives it. Kept under this battery's own name — it is what the probes DO to their fields —
+    over leaf.py's spelling of machine.h's `set_low_word`, which is the operation itself."""
+    return set_low_word(entry, low)
 
 
 def _over_high_bytes(entry, low):

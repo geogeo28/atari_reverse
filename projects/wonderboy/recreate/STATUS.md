@@ -8,28 +8,33 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 134/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 146/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
 actor table's LIFECYCLE (310 bytes), the COLLISION MAP the actors walk on, both probes and both
 settles and the tier above them (892 bytes), the STAGE LOADER that fills the scroll engine's
-eight buffers in the first place (1026 bytes), and the SPAWN PASS that drives the lifecycle plus the
-two resets that start a game and a life (568 bytes) — 13,172 bytes in all, 51.1 % of everything
+eight buffers in the first place (1026 bytes), the SPAWN PASS that drives the lifecycle plus the
+two resets that start a game and a life (568 bytes), and the TWELVE SPRITE BLITTERS the sprite pass
+dispatches — four widths x unclipped/left-clip/right-clip, 2,254 bytes tiling `$8fce..$989c`
+exactly (batch 14) — 15,426 bytes in all, 59.8 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures.**
-`make test`: **2146 cases green in what this batch commits** — 1587 before it plus batch 13's 559.
-Of the 2146: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
+`make test`: **2301 cases green in what this batch commits** — 2146 before it plus batch 14's 155
+(154 in the new `test/test_blit.py`, and 1 in `test/test_layout.py`: a name defined in two headers
+is refused, the guard the batch's `layout.py` scrape extension needs).
+Of the 2301: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
 first gameplay batch's, 496 are the status panel's — that last figure was 169 after batch 2, 339
 after batch 3, 481 after batch 10 and 485 after batch 12, and the whole of the growth is
 `test/test_hud.py` — 231 are the background scroll subsystem's (65 after batch 5, 148 after batch 6),
 755 are the actor tier's (113 after batch 8, 222 after batch 10), 105 the text subsystem's (56 after
 batch 8), 167 the collision map's, which is batch 10's new `test/test_map.py` (58 when it landed),
-and 80 the stage loader's (65 when batch 12 landed it).
-**A `make test` run in a working tree may report MORE than 2146**, because `test/test_audio_capture.py`
+80 the stage loader's (65 when batch 12 landed it), 154 the sprite blitters' (batch 14's
+`test/test_blit.py`), and the last is `test_layout.py`'s two-header refusal.
+**A `make test` run in a working tree may report MORE than 2301**, because `test/test_audio_capture.py`
 — which pins a KIT mode from this game's suite for `test_poked_input_guard.py`'s reason — is a
 concurrent session's battery, landing in its own commit and still growing; it is not part of this
-batch's count and nothing here rests on it (it stood at 13 while batch 13 was written, so a clean
-tree reports 2159). A row appears in the table at the end when a function is
+batch's count and nothing here rests on it (it stood at 13 while batch 14 was written, so a clean
+tree reports 2314). A row appears in the table at the end when a function is
 reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only *named*,
 not ported.
 
@@ -604,6 +609,9 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0xe80c` | `hud_draw_lives` (`src/hud.c`) | 112 | verified | 11 cases: 8 lives counts — 0 through 4, and $8000/$ffff/$7fff, where a `tst.w`/`bne` fills every slot and a sign test would blank them — each stating the write set exactly across BOTH screen buffers against a model that steps the two cursors as the routine does. Plus the geometry identities (4 + the row skip is one scanline; 16 rows less the rewind is one cell; the two destinations are the same offset into the two buffers) and a case that the shipped icon is not the blank pattern, without which the two arms would be indistinguishable + whole-body entry pin |
 | `0xfe4a` | `game_restart_reset` (`src/stage.c`) | 66 | verified | 4 cases: the head's eleven words, and the fall-through — it sets `WB_LIVES` to 3 BEFORE the tail draws them, so however many lives a case seeds the display comes out at three. Its write set CONTAINS `hud_draw_lives`', modelled once in `test_hud.py` and imported + whole-body entry pin |
 | `0xfe8c` | `game_life_restart_reset` | 70 | verified | 6 cases: 5 lives counts taken as they stand (its own caller at `$c00` has already decremented one), plus one that the record LIST's empty word is the head's alone while the write POINTER is reset by both. A structural case requires the two halves to be adjacent, to add back up to Ghidra's single 136, and the head to end in something other than an `rts` + whole-body entry pin |
+| `0x9594` | `blit_sprite_w2` … `0x9774` `blit_sprite_w5` (`src/blit.c`) | 98/156/226/296 | verified | ONE battery for the whole family of twelve (`test/test_blit.py`, 154 cases): every case enters a blitter AT its jump-table address with the dispatcher's register file (a0 sprite cells, a1 screen, d6 shift, d7 rows, d4 x in a prelude) over seeded cell data, compares the WHOLE write set for equality against a Python model of the cell/seam walk, and asserts all fifteen reported registers plus the eleven the return struct carries — the register file is half the output here. A 192-combination sweep (4 widths x 3 clip cases x 16 shifts, each exactly once, rng only for x/y/rows), sharded in 6 chunks. The entry pins ASSEMBLE all 2,254 bytes from the battery's own statement of the geometry and require them to equal the shipped image; plus the tiling pin, the three jump tables, and a whole-image longword scan that each entry is named ONCE, in its own slot |
+| `0x8fce` | `blit_clip_left_w2` … `0x936c` `blit_clip_left_w5` | 22/40/58/74 | verified | The same battery: every left-ladder arm at its threshold and beside it (thresholds −16k, masks `(1<<(columns−k))−1`), and the fully-off-screen arm's `subq.w #6,a5` — a 32-BIT subtract, pinned with a5 seeded four bytes into a high word so a word-wide subtract is caught. Only the LEFT ladders unwind |
+| `0x8fe4` | `blit_clip_right_w2` … `0x93b6` `blit_clip_right_w5` | 168/266/372/478 | verified | The same battery: each right ladder's complete mask set (3,2 / 7,6,4 / $f,$e,$c,8 / $1f,$1e,$1c,$18,$10) and its off-screen arm returning having touched NOTHING; the shared clipped bodies both preludes branch into (one helper per width in `src/blit.c`); the w4 body's LATE `or.w d4,d3` merge reproduced and pinned from the skipping arms of BOTH ladders (pixels identical, d3 differs); and the two-column row-count guard from both exits ($ffff → beq, $fffe/$7fff → bmi) against the wider bodies' bare `dbf` |
 
 ### The .RAD depacker
 
@@ -2754,3 +2762,126 @@ still green); what moved is the measurement, and it moved by exactly the predict
 Still stale after this: nothing in the scan pipeline. The unmeasured bulk (29,068 bytes in no
 function body) is a coverage limit, not staleness; the HUD-subsystem partition and the `$bca2`
 diagnosis remain queued above.
+
+### The sprite blitters (batch 14): twelve routines that are one walk
+
+**THE WHOLE DRAWING TIER OF THE SPRITE PASS, 2,254 bytes.** Four widths (2..5 columns of 16 pixels)
+times three clip cases (none, left edge, right edge), behind the three four-longword jump tables the
+pass at `$8f02` indexes by a width code. `test_the_twelve_tile_the_region_the_jump_tables_close` is
+what makes "the family is exactly these twelve" a reading rather than a boundary someone chose: the
+twelve tile `$8fce..$989c` with no gap and no overlap and end exactly where `blit_table_mid` begins,
+and a whole-image longword scan finds each entry address named ONCE, in its own table slot — so
+entering the twelve directly is the whole of their interface. `$8f02` itself — the dispatcher that
+computes the register file and picks the table — is NOT in this batch, and it is the natural next
+one: it closes the sprite story end to end and it is what decides whether the runaway row count
+below stays unreachable.
+
+**THEY ARE ONE ALGORITHM, AND `src/blit.c` IS THAT ALGORITHM ONCE.** N columns are drawn from N−1
+source CELLS of `mask + 4 planes`; every word is rotated right as a longword by the sub-word shift,
+the low half draws its own column and the half pushed past the 16-pixel boundary is `and`/`or`ed
+into the next one. So the first column is a cell's low half alone, the last a cell's high half
+alone, and every column between is a SEAM of two cells. What separates the twelve is a column
+count, a clip ladder and one `lea`. The same choice the consumer tier's sixteen copy variants got
+in batch 7, made safe the same way: **the battery ASSEMBLES all 2,254 bytes** out of its own
+statement of that geometry and requires them to equal the shipped image, so a width, a threshold, a
+clip-mask value, a `btst` bit or a rotate that is wrong in the C is wrong in those bytes too.
+
+**THE REGISTERS ARE HALF THE OUTPUT HERE**, which is new. A blitter walks out with a0 past the
+sprite, a1 a scanline past the last row, d7 at its width's own exit value and d0–d5 holding the
+last row's window — and one of the twelve leaves a DIFFERENT d3 depending on which column it
+skipped. So every case is three-way: the model against all fifteen registers the oracle reports,
+and against the eleven the return struct carries. The batch-11 oracle window is what makes that
+possible at all.
+
+**FOUR SEMANTICS REPRODUCED RATHER THAN TIDIED, each with a case and a mutation:**
+
+* **ONLY THE TWO-COLUMN BODIES COUNT THEIR ROWS UP FRONT.** `$9594` and the clipped `$900a` open
+  with `addq.w #1,d7 / tst.w d7 / beq / bmi` and loop back to that test, so they refuse a count that
+  is zero or negative once bumped and exit with d7 = 0. The wider three and their clipped bodies
+  just `dbf`: they exit with d7 = `$ffff`, and an entry count of `$ffff` would draw 65,537 rows.
+  `$7fff` is the case that separates the signed test from an unsigned one.
+* **THE CLIPPED FOUR-COLUMN BODY MERGES ONE PLANE LATE.** `or.w d4,d3` sits at `$9324`, inside the
+  arm the `btst #1` at `$9312` branches to, where every other body merges before the test. Skipping
+  column 2 therefore leaves that plane unmerged. It moves NO pixel — the low word it would have
+  merged is only ever drawn by the arm that merges it — and the case proves exactly that, from the
+  skipping arms of BOTH ladders: same bytes, different d3.
+* **THE ROW'S LAST `or.w` DOES NOT POST-INCREMENT**, so a drawn row stops two bytes short of its own
+  width and the `lea` that closes it is two larger than the arithmetic suggests — 146/138/130/122.
+  A clipped-out column is stepped over by exactly what drawing it would have cost, so where a row
+  ends does not depend on what was clipped out of it.
+* **ONLY THE LEFT LADDER UNWINDS.** A sprite wholly off the left edge does `subq.w #6,a5` — a
+  32-BIT subtract, pinned with a5 seeded four bytes into a high word so a word-wide one would be
+  caught — and one wholly off the right edge returns having touched nothing at all. WHOSE pointer
+  a5 is is NOT established: the sprite pass walks its records in a6 (see `../names.txt`).
+
+**THE MUTATION SWEEP: 26 mutations, 26 killed, no survivors** — each deleting the `.so` before the
+rebuild. The two sharpest: **the unwind made a word subtract reddens 1** (the seeded-high-word a5
+case, and nothing else), and the late merge made punctual reddens 10, all register comparisons.
+The full per-mutation table is in the batch log; the families: row loops (5), the rotate/seam walk
+(6), clip ladders and masks (6), merge and post-increment shape (5), guards and thresholds (4).
+
+**THE REVIEW GATE FOUND TEN, AND THE THREE THAT MATTERED WERE ALL IN THE BATTERY, NOT THE C.**
+Eight finder angles + verification; the C-vs-asm read came back clean. What the fixes changed:
+
+* **The runaway-rows guard was defeated by the exact value it refuses.** `_rows_drawn` computed
+  `(rows + 1) & $ffff`, so `$ffff` wrapped to "0 rows drawn" and got a 64-instruction cap — the one
+  input that runs 65,537 rows, admitted. Now refused for the unguarded widths (and the model runs
+  only after the refusal). `test_the_battery_refuses_to_ask_a_wider_body_for_those_counts[ffff]`
+  is the case that reddens if the wrap comes back.
+* **The late-merge pin was vacuous as first written** — its skip arm came from the right ladder
+  (mask `$c`), which skips columns 2 AND 3, so d3 was never read and "the late merge changed a
+  pixel, which it must not" could not fail. It now runs the skipping arms of both ladders,
+  including the left's mask 1 where the claim is actually exercised.
+* **The whole-image reference scan stopped one longword short** of the program's end — the bound
+  every scan in `test_bootstrap.py` gets right.
+* **The C's off-image addressing now mirrors the shim** (`os_in_image`: off-image word reads answer
+  0, off-image writes are dropped, same `addr+1 < size` boundary), applied to the source read and
+  both write sites. This is a stated DEPARTURE from `src/rad.c`/`src/effects.c`, which register the
+  off-image divergence class instead of closing it: here the runaway `dbf` makes the class
+  reachable by a single bad register from batch 15's dispatcher, and a ~10 MB host write past the
+  ctypes buffer is a heap smash the differential cannot report. In-image behaviour is untouched
+  (the suite pins it).
+* The rest: `include/blit.h` now sources `WB_PLANES`/`WB_STATE_WORD_LEN` from `wonderboy.h` instead
+  of shadowing them, and `layout.py` scrapes module headers too, with a `test_layout.py` case
+  refusing a name defined twice — so every simple-literal constant is stated once and the battery
+  reads it through `wb(...)`; the two same-name-different-quantity `MASK_FILL`s are renamed apart;
+  `or_w_dn_postinc`'s two copies now agree on argument order (`(dn, an)`, the mnemonic's own);
+  the 32-bit rotate and `set_low_word` models were hoisted to `test/leaf.py` on their registered
+  third-user trigger (batteries: hud, scroll, map, blit); the screen seed is built once at module
+  scope (measured: 26 % of the battery's runtime was rebuilding it per case); `blit_rows` was
+  renamed `blit_sprite_rows` (hud.c owns a different-shaped `blit_rows`); and the sweep's docstring
+  now states coverage the generator actually delivers.
+
+**Encoder ledger.** `swap_dn` was hoisted to `test/leaf.py` on batch 12's registered trigger (third
+user; test_scroll and test_stage import it). NEW at two users, parked on the usual terms (trigger =
+a third user, home = `test/leaf.py`): `cmp_w_imm_dn` (`test_actor.py`), `move_l_imm_dn`
+(`test_stage.py`), `or_w_dn_postinc` (`test_stage.py`, orders now reconciled), `addq_w_dn`
+(`test_map.py`). New and single-user in `test_blit.py`: `clr_l_dn`, `ror_l_dn_dn`, `and_w_dn_dn`,
+`or_w_dn_dn`, `and_w_dn_ind`, `or_w_dn_ind`, `btst_imm_abs_l`, `subq_w_an`, `short_branch`,
+`short_branch_back`.
+
+**What this batch does NOT pin:**
+
+* **THE 65,537-ROW `dbf`.** Reproduced by construction and left unreached; the battery refuses a
+  case that asks for it. The two-column guard IS reached, from both of its exits.
+* **WHOSE POINTER `subq.w #6,a5` UNWINDS.** Six bytes is one screen-record, but the sprite pass
+  walks that array in a6 and never touches a5.
+* **THE DISPATCHER AT `$8f02`**, and so a width code outside 0..3. The twelve are entered directly
+  at the addresses the tables hold; the tables themselves are pinned.
+* **WHAT THE SPRITES LOOK LIKE.** The bitmaps are in `SPRITES.CRU`, past the program and loaded
+  from disk, so every case seeds its own cell data and nothing here establishes the shipped
+  sprites' shifts, widths or heights — including whether the game ever reaches the narrowest clip
+  arms.
+
+**QUEUED, registered rather than half-done:**
+
+* **The `video (sprite blitters)` subsystem row now measures 100 % ported** — at the next
+  `tools/hw_portability.py` re-run. A measurement, queued as one, per the house rule.
+* **`SCREEN_BYTES` stands at three users with TWO meanings** — `test_blit.py`/`test_scroll.py`
+  derive both-buffers, `test_text.py` carries the same name at half the value. Reconciling it is a
+  cross-battery rename with its own blast radius, left out of this batch deliberately.
+* **Sub-second efficiency findings left as-is** (redundant boundary re-runs ~0.55 s, closed-form
+  register re-runs ~0.4 s, a re-run baseline ~0.09 s): dropping pinned cases to save under a second
+  was judged the wrong trade. Registered here so the next author doesn't re-derive them.
+* **`test/test_stage.py` imports `forward_branch` and never uses it** — pre-existing, noticed by
+  the fix pass, left alone per the surgical-changes rule.

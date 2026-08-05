@@ -56,8 +56,9 @@ from leaf import (RTS, addi_w_dn, branch, branch_over, bsr_w, case_salt, clr_b_a
                   dbf, keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed, longword,
                   merge_bands, move_l_imm_abs_l, move_w_abs_l_dn, move_w_dn_dn, move_w_imm_dn,
                   move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, movea_l_abs_w, moveq_0_dn,
-                  mulu_w_imm_dn, opcode, program_writes, s16, st_abs_l, sub_w_dn_dn, subi_w_dn,
-                  subq_w_abs_l, tst_b_abs_l, tst_w_abs_l, tst_w_abs_w, tst_w_dn, u16, word)
+                  mulu_w_imm_dn, opcode, program_writes, rotate_left32, s16, st_abs_l,
+                  sub_w_dn_dn, subi_w_dn, subq_w_abs_l, swap_dn, tst_b_abs_l, tst_w_abs_l,
+                  tst_w_abs_w, tst_w_dn, u16, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -178,7 +179,6 @@ CELL_LONGWORDS = wb("BG_CELL_LONGWORDS")
 BLIT_FAMILY_END = 0x8dfe
 
 WORD_BITS = 16
-LONG_BITS = 32
 LONGWORD_LEN = 4
 
 # The rotation the right edge substitutes for a phase of zero: a whole 16-pixel cell.
@@ -285,14 +285,10 @@ EDGES = {edge.name: edge for edge in (RIGHT, LEFT)}
 
 
 # --- reading the image the same way the 68000 does ------------------------------------------------
-# `u16` and `s16` are leaf.py's, imported above: three batteries model their routine's arithmetic
-# this way and one spelling of the sign extension is what keeps them agreeing about it.
-
-def _rol32(value, count):
-    if count == 0:
-        return value
-    return ((value << count) | (value >> (LONG_BITS - count))) & 0xffffffff
-
+# `u16`, `s16` and `rotate_left32` are leaf.py's, imported above: three batteries model their
+# routine's arithmetic this way, and one spelling of the sign extension — and of the 68000's
+# `rol.l`, which this file's own copy left a count of 0 as a special case in — is what keeps them
+# agreeing about it.
 
 # --- seeding --------------------------------------------------------------------------------------
 # The map is a rectangle wide enough for either fill's column offset and BUFFER_TILE_ROWS rows deep,
@@ -428,7 +424,7 @@ def _model_fill(image, edge):
             tile = (TILE_BITMAPS + tile_number * TILE_BITMAP_LEN) & 0xffffffff
             map_at = (map_at + stride) & 0xffffffff
             for _row in range(TILE_ROWS):
-                rotated = [_rol32(u16(image, tile + plane * PLANE_STRIDE), shift)
+                rotated = [rotate_left32(u16(image, tile + plane * PLANE_STRIDE), shift)
                            for plane in range(PLANES)]
                 tile = (tile + CELL_BYTES) & 0xffffffff
                 for plane, value in enumerate(rotated):
@@ -540,10 +536,6 @@ def shift_imm_dn(kind, count, reg):
     """`<shift>.<size> #count,Dn`. ``kind`` carries everything but the count and the register:
     direction, operand size, immediate-count, and which of ASL/LSL/ASR/ROL it is."""
     return opcode(kind | ((count & 7) << 9) | reg)
-
-
-def swap_dn(reg):
-    return opcode(0x4840 | reg)
 
 
 def move_l_d0_dn(reg):
@@ -1720,7 +1712,8 @@ def _model_preshift_row(staged, out, source, dest):
     def rotate(cell):
         shifted, carried = [], []
         for plane in range(PLANES):
-            rotated = _rol32(u16(staged, (cell + plane * PLANE_STRIDE) & 0xffffffff), PRESHIFT_BITS)
+            at = (cell + plane * PLANE_STRIDE) & 0xffffffff
+            rotated = rotate_left32(u16(staged, at), PRESHIFT_BITS)
             shifted.append(rotated & 0xffff)
             carried.append(rotated >> WORD_BITS)
         return shifted, carried
