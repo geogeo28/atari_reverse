@@ -32,6 +32,10 @@
  * are the same family: only the two allocators have a result worth returning (their a1), and the
  * rest walk out with a cursor nothing reads.
  *
+ * AND THE PASS THAT DRIVES ALL OF IT is $ff42, at the bottom of this file: the once-a-frame spawn
+ * driver, its hit-point seeder ($1006a), and the three routines that turn a map step's two result
+ * registers into a flag flip, a hop or a launch ($2b5a, $2b82, $2b8e).
+ *
  * WHAT THE LIFECYCLE TURNS OUT TO BE. A table is nineteen records; `actor_table_reset` marks every
  * one of them free, `actor_slots_mark_free` marks a RUN of them free again, and the two allocators
  * hand back the first free record of one of two POOLS — WB_ACTOR_ALLOC_LOW_FIRST..+LOW_SLOTS and
@@ -272,4 +276,182 @@ void actor_accelerate_fall(uint8_t *image, uint32_t actor) {
      * larger byte keeps climbing — and `addq.b` wraps rather than saturating. */
     if (*speed != WB_ACTOR_FALL_SPEED_MAX)
         *speed = (uint8_t)(*speed + 1);
+}
+
+/* --- the per-frame spawn pass ($ff42, $1006a) ---------------------------------------------------
+ *
+ * The lifecycle above CREATES records; this is what decides when. The template table's four-word
+ * header carries a capacity, a live count, a cursor and a "the cursor has been all the way round"
+ * flag, and the pass runs one of two arms off them: while the cursor is still walking, spawn the
+ * ONE template it names and step it on; afterwards, sweep the whole table and spawn every template
+ * whose countdown has reached zero.
+ */
+
+/* `move.w -8(a6),d0` and its three neighbours, as offsets from one header base — so a field that
+ * moves fails in one place rather than in four `-N(a6)` literals. */
+static uint32_t spawn_header(uint32_t table) {
+    return addr_add(table, (uint32_t)-(int32_t)WB_SPAWN_HEADER_BYTES);
+}
+
+static uint16_t spawn_header_word(const uint8_t *image, uint32_t table, unsigned field) {
+    return be16(image + addr_add(spawn_header(table), field));
+}
+
+static void spawn_header_set(uint8_t *image, uint32_t table, unsigned field, uint16_t value) {
+    wr16(image + addr_add(spawn_header(table), field), value);
+}
+
+/* One spawn, as both arms spell it: raise the live count, take a slot, fill it in, seed the
+ * template's hit points.
+ *
+ * THE ALLOCATOR'S RESULT IS NOT TESTED, and that is behaviour rather than an omission here: the
+ * two `jsr $1b68.w` sites in this routine hand a1 straight to `actor_spawn_from_template`, so a
+ * FULL POOL spawns over WB_ACTOR_ALLOC_NONE and its stores land on the 68000 vector page. The
+ * third site in the image, $101dc, is the only one that does test it. */
+static void spawn_one(uint8_t *image, uint32_t table, uint32_t template_record) {
+    spawn_header_set(image, table, WB_SPAWN_HEADER_LIVE,
+                     (uint16_t)(spawn_header_word(image, table, WB_SPAWN_HEADER_LIVE) + 1));
+    actor_spawn_from_template(image, template_record, actor_alloc_slot_low(image));
+    actor_template_set_hitpoints(image, template_record);
+}
+
+/* Both walks close the same way — `lea 32(a0),a0 / cmpi.w #$ffff,(a0) / bne` — so the terminator is
+ * tested only AFTER a record has been handled, and the first record is handled unconditionally. */
+static int spawn_table_ends_at(const uint8_t *image, uint32_t record) {
+    return be16(image + record) == WB_SPAWN_TERMINATOR;
+}
+
+void actor_spawn_pass(uint8_t *image) {
+    /* `tst.w $a30.w / bne`: a NONZERO test, unlike the `bpl` the projections read the same word
+     * with (src/actor.c's header) — the whole pass is skipped in the A30 mode. */
+    if (be16(image + WB_STATE_FLAG_A30) != 0)
+        return;
+
+    uint32_t table = be32(image + WB_TABLE_PTR_21E8C);
+
+    /* The countdown walk, and it runs on EVERY frame — before the capacity test below can return.
+     * `subq.b #1` WRAPS rather than sticking at zero. In the sweep arm that never shows, because the
+     * sweep disarms the record on the frame the byte reaches 0; in the cursor arm, where no sweep
+     * runs, an armed record really does count down past zero and round again. */
+    uint32_t record = table;
+    do {
+        if (image[addr_add(record, WB_SPAWN_ARMED)] != 0)
+            image[addr_add(record, WB_SPAWN_COUNTDOWN)] -= 1;
+        record = addr_add(record, WB_SPAWN_RECORD_BYTES);
+    } while (!spawn_table_ends_at(image, record));
+
+    if (spawn_header_word(image, table, WB_SPAWN_HEADER_MAX_LIVE)
+        == spawn_header_word(image, table, WB_SPAWN_HEADER_LIVE))
+        return;
+
+    if (spawn_header_word(image, table, WB_SPAWN_HEADER_WRAPPED) != WB_SPAWN_WRAPPED_SET) {
+        /* `lsl.l #5,d0` builds the byte offset as a LONGWORD and `lea 0(a0,d0.w),a0` then indexes
+         * with its SIGN-EXTENDED LOW WORD — the extension word is $0000, not the $0800 the size
+         * table's lookup carries. So a cursor of 1024 names a template 32 KB BELOW the table and
+         * one of 2048 names the table itself: the shift's own long result never reaches the sum. */
+        uint16_t cursor = spawn_header_word(image, table, WB_SPAWN_HEADER_CURSOR);
+        spawn_header_set(image, table, WB_SPAWN_HEADER_CURSOR, (uint16_t)(cursor + 1));
+
+        uint32_t next = addr_add(table,
+                                 sign_ext16((uint16_t)(cursor * WB_SPAWN_RECORD_BYTES)));
+        if (spawn_table_ends_at(image, addr_add(next, WB_SPAWN_RECORD_BYTES)))
+            spawn_header_set(image, table, WB_SPAWN_HEADER_WRAPPED, WB_SPAWN_WRAPPED_SET);
+        spawn_one(image, table, next);
+        return;
+    }
+
+    /* ...and once it has been round, every armed template whose countdown has run out. The capacity
+     * test above ran ONCE, so this arm can raise the live count past WB_SPAWN_HEADER_MAX_LIVE in a
+     * single pass. */
+    record = table;
+    do {
+        if (image[addr_add(record, WB_SPAWN_ARMED)] != 0
+            && image[addr_add(record, WB_SPAWN_COUNTDOWN)] == 0) {
+            image[addr_add(record, WB_SPAWN_ARMED)] = 0;
+            spawn_one(image, table, record);
+        }
+        record = addr_add(record, WB_SPAWN_RECORD_BYTES);
+    } while (!spawn_table_ends_at(image, record));
+}
+
+void actor_template_set_hitpoints(uint8_t *image, uint32_t template_record) {
+    /* `moveq #0,d0 / move.w 6(a0),d0 / asr.w #1,d0` — a SIGNED WORD shift in a register whose high
+     * half a `moveq` cleared, and every add below is a `.w`, so the whole sum is one word wide. */
+    int16_t kills = (int16_t)be16(image + addr_add(template_record, WB_SPAWN_KILL_COUNT));
+    uint16_t type = be16(image + addr_add(template_record, WB_SPAWN_TYPE));
+    uint16_t hitpoints = (uint16_t)(kills >> 1);
+
+    if (type == WB_SPAWN_HITPOINT_TYPE_FIXED) {
+        hitpoints = (uint16_t)(hitpoints + WB_SPAWN_HITPOINT_FIXED_BASE);
+    } else {
+        /* `add.w d1,d1` on a zero-extended type, then `adda.l d1,a2`: the index is a WORD — it
+         * wraps for a type from $8000 up — and the address arithmetic that consumes it is long. */
+        uint16_t index = (uint16_t)(type + type);
+        hitpoints = (uint16_t)(hitpoints
+                               + be16(image + addr_add(WB_SPAWN_HITPOINT_TABLE, index)));
+    }
+
+    wr16(image + addr_add(template_record, WB_SPAWN_HITPOINTS), hitpoints);
+}
+
+/* --- what an actor does when a map step reports back ($2b5a, $2b82, $2b8e) ----------------------
+ *
+ * All three are entered with the pair actor_step_left_against_map / _right leave behind: d0's low
+ * BYTE is the step's outcome and d1's low word the ground flags. They share the eight bytes at
+ * $2b7a, which four branches reach and no call does — `flip_side_flag` below is those eight bytes,
+ * and test_actor.py pins all three whole bodies including it.
+ */
+static void flip_side_flag(uint8_t *image, uint32_t actor) {
+    image[addr_add(actor, WB_ACTOR_FLAGS)] ^= (uint8_t)(1u << WB_ACTOR_FLAG_SIDE_BIT);
+}
+
+/* `tst.b d0` — only the LOW BYTE decides, so a caller's high bits are invisible to all three. */
+static int step_was_blocked(uint32_t step_outcome) {
+    return (uint8_t)step_outcome == WB_ACTOR_STEP_BLOCKED;
+}
+
+/* `btst #n,d1` on a data register is a LONGWORD test; every bit these three read is in the low
+ * word, so the two readings agree, and this is the register-wide one the instruction does. */
+static int ground_flag(uint32_t ground_flags, unsigned bit) {
+    return (ground_flags & (1u << bit)) != 0;
+}
+
+void actor_hop_or_flip_side(uint8_t *image, uint32_t actor, uint32_t step_outcome,
+                            uint32_t ground_flags) {
+    if (!step_was_blocked(step_outcome)) {
+        /* The step went through: the only thing that turns the actor round is a two-cell drop. */
+        if (ground_flag(ground_flags, WB_ACTOR_GROUND_DROP_TWO_BIT))
+            flip_side_flag(image, actor);
+        return;
+    }
+    if (ground_flag(ground_flags, WB_ACTOR_GROUND_STEP_UP_BIT))
+        actor_start_motion_at_speed(image, actor, WB_ACTOR_HOP_SPEED);
+    else
+        flip_side_flag(image, actor);
+}
+
+void actor_toggle_side_flag(uint8_t *image, uint32_t actor, uint32_t step_outcome,
+                            uint32_t ground_flags) {
+    if (step_was_blocked(step_outcome) || ground_flag(ground_flags, WB_ACTOR_GROUND_DROP_ONE_BIT))
+        flip_side_flag(image, actor);
+}
+
+void actor_turn_and_launch(uint8_t *image, uint32_t actor, uint32_t step_outcome,
+                           uint32_t ground_flags) {
+    uint8_t *flags = image + addr_add(actor, WB_ACTOR_FLAGS);
+
+    if (!step_was_blocked(step_outcome) && !ground_flag(ground_flags, WB_ACTOR_GROUND_DROP_ONE_BIT))
+        return;
+
+    /* `btst #2,8(a0) / beq`: a record that is not SUPPORTED is left entirely alone — the side flip
+     * included, which is the whole difference between this and actor_toggle_side_flag's head. */
+    if (!(*flags & (1u << WB_ACTOR_FLAG_SUPPORTED_BIT)))
+        return;
+
+    /* The rest is `bchg #3` over exactly what actor_start_motion_at_speed writes, with the speed a
+     * literal rather than a register — which is why it is spelt out here instead of calling it. */
+    flip_side_flag(image, actor);
+    *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
+    *flags |= (uint8_t)((1u << WB_ACTOR_FLAG_MOVING_BIT) | (1u << WB_ACTOR_FLAG_LAUNCHED_BIT));
+    image[addr_add(actor, WB_ACTOR_SPEED)] = WB_ACTOR_TURN_LAUNCH_SPEED;
 }

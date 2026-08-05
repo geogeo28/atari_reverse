@@ -85,11 +85,11 @@ import pytest
 
 import harness
 import leaf
-from leaf import (BRANCH_EXTENSION, RTS, add_w_dn_dn, addq_b_d16, branch, branch_over, case_salt,
-                  cmpi_b_dn, keyed_block, lea_abs_l, lea_indexed, longword, lsl_w_imm_dn,
-                  merge_bands, move_b_d16_dn, move_w_abs_l_dn, move_w_dn_dn, move_w_ind_dn,
-                  move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode, program_writes, s16,
-                  sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
+from leaf import (BRANCH_EXTENSION, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16, branch, branch_over,
+                  case_salt, cmpi_b_dn, keyed_block, lea_abs_l, lea_indexed, longword,
+                  lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_w_abs_l_dn, move_w_dn_dn,
+                  move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode,
+                  program_writes, s16, sub_w_dn_dn, subi_w_dn, tst_w_abs_w, tst_w_dn, u16, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -253,10 +253,6 @@ def neg_w_dn(reg):
     return opcode(0x4440 | reg)
 
 
-def tst_w_dn(reg):
-    return opcode(0x4a40 | reg)
-
-
 def clr_w_dn(reg):
     return opcode(0x4240 | reg)
 
@@ -267,10 +263,6 @@ def clr_b_d16(base, displacement):
 
 def andi_w_dn(reg, value):
     return opcode(0x0240 | reg) + word(value)
-
-
-def addi_w_dn(reg, value):
-    return opcode(0x0640 | reg) + word(value)
 
 
 def ori_w_dn(reg, value):

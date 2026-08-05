@@ -169,7 +169,9 @@ test/test_hud.py           the status panel's differential: the game's own bitma
                            non-leaf tiers — whole-body entry pins, a leading-zero model the drawn
                            digits are checked against, and (for the screen-to-screen restores) a
                            seeded MARGIN around every region, without which an over-copy of zeros
-                           over zeros stays invisible
+                           over zeros stays invisible. It also holds the LIVES display, the one
+                           routine here that writes both screen buffers at ABSOLUTE addresses
+                           rather than through `screen_back`, and exports its model to test_stage.py
 test/test_input.py         the joystick pair's differential — memory for the latch, the whole
                            returned d0 for the edge
 test/test_scroll.py        the scroll subsystem's differential: whole-body entry pins for all
@@ -201,14 +203,23 @@ test/test_actor.py         the actor tier's differential: a routine whose WHOLE 
                            value), the small-positive flag words that separate the tier's `bne`
                            reading of a mode flag from its `bpl` one, the 16-bit ADD whose wrap the
                            reach test's compare reads, and an address-keyed seeding of all three
-                           actor tables and the screen array they project into
-test/test_stage.py         the stage loader's differential: whole-body entry pins for all eight
+                           actor tables and the screen array they project into. It also holds the
+                           SPAWN PASS, whose model replays the whole routine on a mutable copy
+                           because its arms are sequential, and the case that pins the vector-page
+                           stamp a full pool produces
+test/test_stage.py         the stage loader's differential: whole-body entry pins for all ten
                            routines, the sixteen published row pointers derived from the scroll
                            engine's own invariant and required to equal the shipped instruction
                            bytes, a map band seeded at every cursor $fa30's own arithmetic lands on
                            (never off a coordinate the case has to hand), the whole 22,528-byte
                            copy 0 compared against a model, the seven derived copies and the ring
-                           their carry word closes, and the banner cursor compared three ways
+                           their carry word closes, the banner cursor compared three ways, and the
+                           two resets Ghidra reports as one function -- split at the second entrant
+                           a whole-image scan found, and required to add back up to its 136 bytes.
+                           It is the ONE battery here that imports another (`model_lives_draw` and
+                           `lives_pokes` from test_hud.py): $fe8c CALLS $e80c, so its write set
+                           contains that routine's, and two copies of the geometry could disagree
+                           while both batteries stayed green
 test/test_text.py          the text subsystem's differential. The plotter: 32 bytes into the
                            4-plane buffer with the write set stated exactly, the returned cursor
                            compared against both sides, a cell walk that shows the +1/+7 alternation

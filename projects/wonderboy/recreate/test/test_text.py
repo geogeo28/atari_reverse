@@ -63,10 +63,11 @@ import pytest
 
 import harness
 import leaf
-from leaf import (RTS, branch, branch_over, case_salt, clr_b_abs_l, clr_w_abs_l, dbf, dbf_over,
-                  forward_branch, keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed,
-                  longword, merge_bands, move_w_imm_dn, movea_l_abs_w, moveq_0_dn, mulu_w_imm_dn,
-                  opcode, program_writes, st_abs_l, subq_w_abs_l, tst_b_abs_l, tst_w_abs_l, word)
+from leaf import (RTS, branch, branch_over, btst_imm_dn, case_salt, clr_b_abs_l, clr_w_abs_l, dbf,
+                  dbf_over, forward_branch, keyed_block, keyed_byte, lea_abs_l, lea_d16,
+                  lea_indexed, longword, merge_bands, move_w_imm_dn, movea_l_abs_w, moveq_0_dn,
+                  mulu_w_imm_dn, opcode, program_writes, st_abs_l, subq_w_abs_l, tst_b_abs_l,
+                  tst_w_abs_l, word)
 from layout import wb
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -262,10 +263,6 @@ def bra_s(here, target):
     displacement = target - (here + WORD_LEN)
     assert -0x80 <= displacement < 0, f"{displacement} does not fit a `bra.s` byte displacement"
     return opcode(BRA_S | (displacement & BYTE_MASK))
-
-
-def btst_imm_dn(bit, reg):
-    return opcode(0x0800 | reg) + word(bit)
 
 
 # --- the entry pins -------------------------------------------------------------------------------

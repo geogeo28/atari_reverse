@@ -300,6 +300,27 @@ def subi_w_dn(reg, value):
     return opcode(0x0440 | reg) + word(value)
 
 
+def addi_w_dn(reg, value):
+    """`addi.w #imm,Dn`. THREE batteries (test_scroll.py, test_map.py, test_actor.py)."""
+    return opcode(0x0640 | reg) + word(value)
+
+
+def tst_w_dn(reg):
+    """`tst.w Dn`. THREE batteries (test_scroll.py, test_map.py, test_hud.py)."""
+    return opcode(0x4a40 | reg)
+
+
+def btst_imm_dn(bit, reg):
+    """`btst #n,Dn` — a LONGWORD test, unlike the byte one `bit_op_d16` assembles against memory.
+    THREE batteries (test_stage.py, test_text.py, test_actor.py)."""
+    return opcode(0x0800 | reg) + word(bit)
+
+
+def move_l_imm_postinc(reg, value):
+    """`move.l #imm,(An)+`. THREE batteries (test_actor.py, test_stage.py, test_hud.py)."""
+    return opcode(0x20fc | (reg << 9)) + longword(value)
+
+
 def cmpi_b_dn(reg, value):
     """`cmpi.b #imm,Dn` — the immediate is a WORD in the stream even for a byte compare."""
     return opcode(0x0c00 | reg) + word(value)

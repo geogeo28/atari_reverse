@@ -332,3 +332,49 @@ void bg_plot_round_banner(uint8_t *image) {
     bcd_add_score_bd70(image, WB_BG_BANNER_BONUS);
     bg_plot_banner(image, WB_BG_BANNER_PERFECT);
 }
+
+/* --- $fe4a and $fe8c: the two resets that share one tail -----------------------------------------
+ *
+ * Ghidra records ONE 136-byte function at $fe4a, and the whole-image scan says it is two: $fe4a has
+ * a single `bsr` caller ($e59e) and $fe8c a single `jsr $fe8c.l` one ($c00, the instruction
+ * immediately after the `subq.w #1,$be2.w` at $bfc). So the head is what only a NEW GAME clears —
+ * the level cursor, the lives count, the effect record list, the six HUD slots — and the tail is
+ * what both entrants run.
+ *
+ * It is in this file rather than in src/hud.c because it is the sibling of `stage_reset_state`
+ * immediately below it in the image and resets the same tier of state; it reaches into the panel
+ * only through `hud_draw_lives`.
+ */
+
+/* The six `clr.w`s, in the original's own order. There is no stride constant in the instruction
+ * stream — six separate absolute operands — so the six names are spelt out rather than stepped. */
+static const uint32_t GAME_RESET_HUD_SLOTS[WB_HUD_SLOTS] = {
+    WB_HUD_SLOT_BBBE, WB_HUD_SLOT_BBC0, WB_HUD_SLOT_BBC2,
+    WB_HUD_SLOT_BBC4, WB_HUD_SLOT_BBC6, WB_HUD_SLOT_BBC8,
+};
+
+void game_life_restart_reset(uint8_t *image) {
+    hud_draw_lives(image);
+    wr16(image + WB_HUD_METER_VALUE, WB_HUD_METER_ON_RESTART);
+    wr16(image + WB_HUD_METER_MAX, WB_HUD_METER_ON_RESTART);
+    wr32(image + WB_BCD_SCORE, 0);              /* `clr.l` — the score is a LONGWORD */
+    wr16(image + WB_BCD_COUNTER, 0);
+    wr16(image + WB_EFFECT_STATE_BD66, 0);
+    wr16(image + WB_EFFECT_STATE_BD68, 0);
+    wr16(image + WB_EFFECT_STATE_BD6C, 0);
+    image[WB_STAGE_TUNE_LATCH] = WB_STAGE_TUNE_LATCH_RESET;
+    /* Back to the list's own base, where the head has just left WB_EFFECT_RECORD_EMPTY — so a game
+     * restarted this way reads as empty, while a life restarted this way does not. */
+    wr32(image + WB_EFFECT_RECORD_WRITE_PTR, WB_EFFECT_RECORD_LIST);
+}
+
+void game_restart_reset(uint8_t *image) {
+    wr16(image + WB_LEVEL_SEQ_INDEX, 0);
+    wr16(image + WB_LIVES, WB_LIVES_ON_RESTART);
+    wr16(image + WB_EFFECT_STATE_21E4, 0);
+    wr16(image + WB_EFFECT_RECORD_LIST, WB_EFFECT_RECORD_EMPTY);
+    for (unsigned slot = 0; slot < WB_HUD_SLOTS; slot++)
+        wr16(image + GAME_RESET_HUD_SLOTS[slot], 0);
+    wr16(image + WB_EFFECT_STATE_BD6A, 0);
+    game_life_restart_reset(image);             /* the head's last `clr.w` FALLS THROUGH to $fe8c */
+}

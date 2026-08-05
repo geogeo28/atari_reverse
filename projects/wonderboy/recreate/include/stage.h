@@ -59,4 +59,15 @@ uint32_t bg_plot_banner(uint8_t *image, uint32_t record);
 /* $e110 — the round banner, plus the perfect-bonus one and its score when the meter is full. */
 void bg_plot_round_banner(uint8_t *image);
 
+/* $fe4a — the NEW-GAME reset: WB_LEVEL_SEQ_INDEX cleared, WB_LIVES set to WB_LIVES_ON_RESTART, the
+ * effect record list emptied and the six HUD slots cleared, and then the tail below, which it falls
+ * through into. One `bsr` caller ($e59e). */
+void game_restart_reset(uint8_t *image);
+
+/* $fe8c — the tail both entrants run: redraw the lives, reseed the meter, clear the score and the
+ * small state words, reset WB_STAGE_TUNE_LATCH and point WB_EFFECT_RECORD_WRITE_PTR back at the
+ * list's base. Its own caller is the `jsr $fe8c.l` at $c00, on the path that has just decremented
+ * WB_LIVES — which is why Ghidra's single 136-byte function at $fe4a is two routines here. */
+void game_life_restart_reset(uint8_t *image);
+
 #endif /* WONDERBOY_STAGE_H */

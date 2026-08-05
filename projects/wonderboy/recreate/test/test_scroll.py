@@ -52,12 +52,12 @@ import pytest
 
 import harness
 import leaf
-from leaf import (RTS, branch, branch_over, bsr_w, case_salt, clr_b_abs_l, clr_w_abs_l, dbf,
-                  keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed, longword, merge_bands,
-                  move_l_imm_abs_l, move_w_abs_l_dn, move_w_dn_dn, move_w_imm_dn, move_w_ind_dn,
-                  move_w_postinc_dn, movea_l_abs_l, movea_l_abs_w, moveq_0_dn, mulu_w_imm_dn,
-                  opcode, program_writes, s16, st_abs_l, sub_w_dn_dn, subi_w_dn, subq_w_abs_l,
-                  tst_b_abs_l, tst_w_abs_l, tst_w_abs_w, u16, word)
+from leaf import (RTS, addi_w_dn, branch, branch_over, bsr_w, case_salt, clr_b_abs_l, clr_w_abs_l,
+                  dbf, keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed, longword,
+                  merge_bands, move_l_imm_abs_l, move_w_abs_l_dn, move_w_dn_dn, move_w_imm_dn,
+                  move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, movea_l_abs_w, moveq_0_dn,
+                  mulu_w_imm_dn, opcode, program_writes, s16, st_abs_l, sub_w_dn_dn, subi_w_dn,
+                  subq_w_abs_l, tst_b_abs_l, tst_w_abs_l, tst_w_abs_w, tst_w_dn, u16, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -481,10 +481,6 @@ def andi_w_abs_l(value, addr):
     return opcode(0x0279) + word(value) + longword(addr)
 
 
-def addi_w_dn(reg, value):
-    return opcode(0x0640 | reg) + word(value)
-
-
 def andi_w_dn(reg, value):
     return opcode(0x0240 | reg) + word(value)
 
@@ -552,12 +548,6 @@ def swap_dn(reg):
 
 def move_l_d0_dn(reg):
     return opcode(0x2000 | (reg << 9))
-
-
-def tst_w_dn(reg):
-    """`tst.w Dn` — three routines here test a different register, which is what collapsed the two
-    single-register constants this replaces (the third-user rule ../STATUS.md records)."""
-    return opcode(0x4a40 | reg)
 
 
 # --- the encodings the consumer tier adds ---------------------------------------------------------

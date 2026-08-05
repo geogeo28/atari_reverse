@@ -823,6 +823,64 @@
                                                * the index is a WORD and wraps at 0x4000 */
 #define WB_ACTOR_TEMPLATE_SLOT_SHIFT 5u       /* `asr.l #5` == log2(WB_SPAWN_RECORD_BYTES) */
 
+/* ---- the per-frame spawn pass ($ff42) and the rest of a TEMPLATE's fields (src/actor.c) -------
+ *
+ * THE TEMPLATE TABLE HAS A FOUR-WORD HEADER, immediately BELOW the pointer WB_TABLE_PTR_21E8C
+ * holds: $ff42 reads it as `-8(a6)`..`-2(a6)`, so the header base is the table minus
+ * WB_SPAWN_HEADER_BYTES. What each word is comes from the pair of routines that move it — $ff42
+ * raises WB_SPAWN_HEADER_LIVE on every spawn and $6c38 lowers it on every death, and $ff42's own
+ * `move.w -8(a6),d0 / cmp.w -6(a6),d0 / beq` is the capacity test that pairs with it.
+ *
+ * WB_SPAWN_ARMED / WB_SPAWN_COUNTDOWN sit at the same two offsets as WB_ACTOR_FIELD_30 / _31, and
+ * both records are WB_SPAWN_RECORD_BYTES long — but they are fields of DIFFERENT records: $ffe4
+ * clears the ACTOR's pair while $ff42 walks the TEMPLATE's, and $6c4e re-arms the template's with
+ * $ff each. That the two layouts agree here is not established by anything.
+ */
+#define WB_SPAWN_HEADER_BYTES        8u       /* four words below the table pointer */
+#define WB_SPAWN_HEADER_MAX_LIVE     0u       /* -8(a6): what the live count is compared against */
+#define WB_SPAWN_HEADER_LIVE         2u       /* -6(a6): raised per spawn here, lowered at $6c38 */
+#define WB_SPAWN_HEADER_CURSOR       4u       /* -4(a6): the next template, post-incremented */
+#define WB_SPAWN_HEADER_WRAPPED      6u       /* -2(a6): once the cursor has reached the last record
+                                               * — after which spawns come from the sweep */
+#define WB_SPAWN_WRAPPED_SET         0xffffu  /* `move.w #$ffff,-2(a6)`, and the `cmpi.w #$ffff` that
+                                               * reads it. Numerically WB_SPAWN_TERMINATOR, but a
+                                               * different field of a different record */
+#define WB_SPAWN_ARMED               30u      /* byte: nonzero -> this template is counting down */
+#define WB_SPAWN_COUNTDOWN           31u      /* byte, decremented once a frame while armed */
+#define WB_SPAWN_HITPOINTS           4u       /* word: the pool $6b46's `sub.w d0,4(a1)` spends, and
+                                               * on whose zero-or-negative it raises bit 3 of the
+                                               * actor's WB_ACTOR_FLAGS2. $1006a seeds it */
+#define WB_SPAWN_KILL_COUNT          6u       /* word: `addq.w #1,6(a1)` at $6bfa, and the template
+                                               * retires once `cmpi.w #$2,6(a1)` stops being `ble` */
+#define WB_SPAWN_HITPOINT_TABLE      0x1011au /* word per type, immediately after WB_ACTOR_SIZE_TABLE
+                                               * and the same 32 types wide. Indexed `add.w d1,d1`
+                                               * on a zero-extended type, then `adda.l` — so the
+                                               * index is a word and the ADD is a longword */
+#define WB_SPAWN_HITPOINT_TABLE_ENTRIES 32u   /* == (0x1011a - 0x1009a) / 4: what pins the count is
+                                               * the SIZE table BELOW, whose 32 longwords end where
+                                               * this table starts. Above it there is room for 33 —
+                                               * the next table's 4-byte records begin at 0x1015c
+                                               * (`lea $1015c.l,a0` at $1a82), so the zero word at
+                                               * 0x1015a belongs to neither table. The CODE bounds
+                                               * the index at neither end */
+#define WB_SPAWN_HITPOINT_TYPE_FIXED 0x3bu    /* `cmp.w #$3b,d1 / bne`: the one type that skips the
+                                               * table for a constant */
+#define WB_SPAWN_HITPOINT_FIXED_BASE 0x1eu    /* `addi.w #$1e,d0` on that arm */
+
+/* ---- what an actor does when a map step reports back ($2b5a, $2b82, $2b8e; src/actor.c) -------
+ *
+ * All three are entered with the two registers actor_step_left_against_map / _right leave: d0's low
+ * BYTE is the step's outcome and d1's low word the ground flags. They differ only in which flag
+ * they read and what they do about it, and all three share the `bchg #3,8(a0)` tail at $2b7a.
+ */
+#define WB_ACTOR_STEP_BLOCKED        0u       /* `tst.b d0`: the outcome byte is $0 when the step was
+                                               * blocked and $ff when the first probe was clear */
+#define WB_ACTOR_GROUND_STEP_UP_BIT  0u       /* $1 — the cell ahead is a block, the one above is not */
+#define WB_ACTOR_GROUND_DROP_TWO_BIT 1u       /* $2 — two rows down is neither $1 nor $2 */
+#define WB_ACTOR_GROUND_DROP_ONE_BIT 2u       /* $4 — one row down is neither */
+#define WB_ACTOR_HOP_SPEED           4u       /* `move.w #$4,d0 / bsr $2af2` — $2b5a's step-up arm */
+#define WB_ACTOR_TURN_LAUNCH_SPEED   7u       /* `move.b #$7,11(a0)` — $2b8e's, written inline */
+
 /* ---- the collision map the actors walk on (RUNTIME addresses; src/map.c) ----------------------
  *
  * A SECOND map, laid out exactly like the background one (WB_MAP_ROW_STRIDE): a word of bytes per
@@ -1161,5 +1219,50 @@
 #define WB_BG_BANNER_END           0x80u   /* `tst.b (a6) / bpl` — the terminator is the SIGN BIT,
                                             * so any byte from $80 up ends the string */
 #define WB_BG_BANNER_BONUS         0x10000u /* `move.l #$10000,d0 / bsr $b5a2`: packed BCD 10000 */
+
+/* ---- the game-restart reset ($fe4a) and the life it redraws ($e80c) ---------------------------
+ *
+ * $fe4a is entered by one `bsr` (from $e59e) and its TAIL by one `jsr $fe8c.l` (from $c00, the path
+ * that has just decremented WB_LIVES). So the 136 bytes are two routines: the head clears what only
+ * a NEW GAME clears — the level cursor, the lives count, the effect record list, the six HUD slots
+ * — and the tail, which both entrants run, redraws the lives and reseeds the meter, the score and
+ * the effect-record write pointer.
+ */
+#define WB_LIVES                   0xbe2u   /* word. FOUR operand sites: `move.w #$3` here, the
+                                             * `subq.w #1` at $bfc, `tst.w` at $b4e and the
+                                             * `move.w $be2.w,d1` $e80c counts icons down from */
+#define WB_LIVES_ON_RESTART        3u       /* `move.w #$3,$be2.w` */
+#define WB_LEVEL_SEQ_INDEX         0x216beu /* word: ../names.txt's level_seq_index, cleared here */
+#define WB_EFFECT_STATE_BD6C       0xbd6cu  /* the fourth of the small state words, cleared with
+                                             * WB_EFFECT_STATE_BD66/_BD68 and having no reader among
+                                             * the recovered functions */
+#define WB_EFFECT_RECORD_EMPTY     0xffffu  /* `move.w #$ffff,$b444.l` — the negative first word
+                                             * panel_refresh_record returns on */
+#define WB_HUD_METER_ON_RESTART    0x14u    /* `move.w #$14` into BOTH WB_HUD_METER_VALUE and _MAX */
+#define WB_STAGE_TUNE_LATCH        0xfa2eu  /* byte inside the code, between $fa2c's `rts` and
+                                             * bg_build_buffer. stage_load_window compares
+                                             * 8(WB_STAGE_START_PTR) against it and returns without
+                                             * calling the sound module when they match
+                                             * (../names.txt: sound_last_tune) */
+#define WB_STAGE_TUNE_LATCH_RESET  0x20u    /* `move.b #$20,$fa2e.l` */
+
+/* $e80c: WB_LIVES_ICON_SLOTS cells drawn into BOTH screen buffers at once, at a fixed absolute
+ * address in each rather than through WB_SCREEN_BACK. A slot below the lives count gets the bitmap;
+ * the rest get WB_LIVES_ICON_BLANK. `tst.w d1 / bne` is a NONZERO test, not a sign one, so a
+ * negative lives word fills every slot with the bitmap. */
+#define WB_LIVES_ICON_BACK         0x704d8u /* `lea $704d8.l,a1` — screen 0 + 0x4d8 */
+#define WB_LIVES_ICON_FRONT        0x784d8u /* `lea $784d8.l,a2` — screen 1, the same offset */
+#define WB_LIVES_ICON_BITMAP       0xec38u  /* `lea $ec38.l,a0`, re-loaded for EVERY slot, so all
+                                             * three draw the same cell */
+#define WB_LIVES_ICON_SLOTS        3u       /* `move.w #$2,d0` + `dbf` */
+#define WB_LIVES_ICON_ROWS         16u      /* `move.w #$f,d2` + `dbf` */
+#define WB_LIVES_ICON_BYTES        8u       /* 16 px over WB_PLANES planes, as two longwords */
+#define WB_LIVES_ICON_ROW_SKIP     156u     /* `lea 156(a1),a1` after ONE post-incremented longword:
+                                             * 4 + 156 == WB_SCREEN_LINE */
+#define WB_LIVES_ICON_REWIND       2552u    /* `lea -2552(a1),a1` — ROWS * WB_SCREEN_LINE less this
+                                             * is WB_LIVES_ICON_BYTES, i.e. the next slot */
+#define WB_LIVES_ICON_BLANK_HIGH   0xffffu  /* `move.l #$ffff,(a1)+`: plane 0 clear, plane 1 solid */
+#define WB_LIVES_ICON_BLANK_LOW    0u       /* `move.l #$0,(a1)`: planes 2 and 3 clear, so the empty
+                                             * slot is 16 pixels of colour 2 */
 
 #endif /* WONDERBOY_H */

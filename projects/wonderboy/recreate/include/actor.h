@@ -69,4 +69,44 @@ void actor_start_motion_at_speed(uint8_t *image, uint32_t actor, uint32_t speed)
  * $14c0, inside the routine at $1492. */
 void actor_accelerate_fall(uint8_t *image, uint32_t actor);
 
+/* --- the per-frame spawn pass -------------------------------------------------------------------
+ *
+ * $ff42 is game_main_loop's one call site for all of the above: it counts the template table's
+ * countdowns down, and then either spawns the ONE template its cursor names or sweeps the table for
+ * every armed one whose countdown has run out. Both arms hand the allocator's result on UNTESTED.
+ */
+
+/* $ff42 — no registers: WB_STATE_FLAG_A30, WB_TABLE_PTR_21E8C and the table's own four-word header
+ * are all in memory. One caller, game_main_loop's block gated on that flag. */
+void actor_spawn_pass(uint8_t *image);
+
+/* $1006a — seed `template_record`'s WB_SPAWN_HITPOINTS from its WB_SPAWN_KILL_COUNT and its type.
+ * `template_record` is the original's a0, which is still the template the spawn above just read.
+ * Two `bsr` callers, both inside $ff42. */
+void actor_template_set_hitpoints(uint8_t *image, uint32_t template_record);
+
+/* --- what an actor does when a map step reports back --------------------------------------------
+ *
+ * `step_outcome` is the original's d0 and `ground_flags` its d1 — the pair
+ * actor_step_left_against_map / actor_step_right_against_map leave behind. Only d0's low BYTE and
+ * the three low bits of d1 are read, and all three routines share the `bchg` at $2b7a.
+ */
+
+/* $2b5a — blocked with a step up ahead: launch at WB_ACTOR_HOP_SPEED. Blocked without one, or clear
+ * with a two-cell drop ahead: flip the side flag. Otherwise nothing. Two `bsr` callers ($2a56,
+ * $2a6c), one either side of a `btst #3,8(a0)`; $2b70 is its second arm and not an entry point. */
+void actor_hop_or_flip_side(uint8_t *image, uint32_t actor, uint32_t step_outcome,
+                            uint32_t ground_flags);
+
+/* $2b82 — flip the side flag when the step was blocked or a ONE-cell drop lies ahead. Ten `bsr`
+ * callers. Ghidra records 20 bytes for it; the true extent is 12 plus the shared tail. */
+void actor_toggle_side_flag(uint8_t *image, uint32_t actor, uint32_t step_outcome,
+                            uint32_t ground_flags);
+
+/* $2b8e — $2b82's test over a longer tail, and only for a SUPPORTED record: flip the side flag and
+ * launch at WB_ACTOR_TURN_LAUNCH_SPEED, which is actor_start_motion_at_speed's three writes with
+ * the speed spelt inline. Two `bsr` callers ($37c8, $37de); Ghidra has no function here at all. */
+void actor_turn_and_launch(uint8_t *image, uint32_t actor, uint32_t step_outcome,
+                           uint32_t ground_flags);
+
 #endif /* WONDERBOY_ACTOR_H */

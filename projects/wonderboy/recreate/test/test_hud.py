@@ -62,7 +62,8 @@ import harness
 import layout
 import leaf
 from leaf import (BSR_W, MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_IMM_ABS_L,
-                  RTS, backward_branch, bsr_w, forward_branch, longword, word)
+                  RTS, backward_branch, bsr_w, forward_branch, longword, move_l_imm_postinc,
+                  tst_w_dn, word)
 from layout import wb
 
 import emu   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -964,6 +965,69 @@ def _dirty_slots_entry():
                      [_plain_slot_block(slot) for slot in HUD_PLAIN_SLOTS] + [_slot_bbc8_block()])
 
 
+# --- $e80c: the lives display ---------------------------------------------------------------------
+# The one routine in this file that is not part of `panel_refresh_frame`'s pass, and the one that
+# writes BOTH screen buffers: `lea $704d8.l,a1 / lea $784d8.l,a2` are absolute, so it does not read
+# `screen_back` at all. Its caller is `game_life_restart_reset` (src/stage.c), whose own battery
+# imports `model_lives_draw` below rather than restating it.
+LIVES = wb("LIVES")
+LIVES_ICON_BACK = wb("LIVES_ICON_BACK")
+LIVES_ICON_FRONT = wb("LIVES_ICON_FRONT")
+LIVES_ICON_BITMAP = wb("LIVES_ICON_BITMAP")
+LIVES_ICON_SLOTS = wb("LIVES_ICON_SLOTS")
+LIVES_ICON_ROWS = wb("LIVES_ICON_ROWS")
+LIVES_ICON_BYTES = wb("LIVES_ICON_BYTES")
+LIVES_ICON_ROW_SKIP = wb("LIVES_ICON_ROW_SKIP")
+LIVES_ICON_REWIND = wb("LIVES_ICON_REWIND")
+LIVES_ICON_BLANK_HIGH = wb("LIVES_ICON_BLANK_HIGH")
+LIVES_ICON_BLANK_LOW = wb("LIVES_ICON_BLANK_LOW")
+
+# The three registers $e80c drives, for the shared encoders in leaf.py — which take a register
+# number rather than carrying one per register the way the byte literals below do.
+A1, A2 = 1, 2
+D1 = 1
+
+MOVE_W_ABS_W_D1 = b"\x32\x38"       # move.w <abs>.w,d1
+MOVE_W_IMM_D0 = b"\x30\x3c"
+MOVE_W_IMM_D2 = b"\x34\x3c"
+LEA_ABS_L_A1 = b"\x43\xf9"
+LEA_ABS_L_A2 = b"\x45\xf9"
+LEA_D16_A1 = b"\x43\xe9"
+LEA_D16_A2 = b"\x45\xea"
+SUBQ_W_1_D1 = b"\x53\x41"
+MOVE_L_IMM_A1 = b"\x22\xbc"         # move.l #imm,(a1)
+MOVE_L_IMM_A2 = b"\x24\xbc"
+MOVE_L_A0_A1_INC = b"\x22\xd0"      # move.l (a0),(a1)+
+MOVE_L_A0_INC_A2_INC = b"\x24\xd8"  # move.l (a0)+,(a2)+
+MOVE_L_A0_A1 = b"\x22\x90"          # move.l (a0),(a1)
+MOVE_L_A0_INC_A2 = b"\x24\x98"      # move.l (a0)+,(a2)
+DBF_D0 = b"\x51\xc8"
+DBF_D2 = b"\x51\xca"
+
+
+def _draw_lives_entry():
+    """$e80c's whole 112 bytes. The two arms are one `dbf` loop each and the outer `dbf` jumps back
+    to the `lea` that RELOADS the bitmap, which is what says all three slots draw the same cell."""
+    row_step = LEA_D16_A1 + word(LIVES_ICON_ROW_SKIP) + LEA_D16_A2 + word(LIVES_ICON_ROW_SKIP)
+    blank_row = (move_l_imm_postinc(A1, LIVES_ICON_BLANK_HIGH)
+                 + MOVE_L_IMM_A1 + longword(LIVES_ICON_BLANK_LOW)
+                 + move_l_imm_postinc(A2, LIVES_ICON_BLANK_HIGH)
+                 + MOVE_L_IMM_A2 + longword(LIVES_ICON_BLANK_LOW) + row_step)
+    icon_row = (MOVE_L_A0_A1_INC + MOVE_L_A0_INC_A2_INC + MOVE_L_A0_A1 + MOVE_L_A0_INC_A2
+                + row_step)
+    blank_arm = blank_row + DBF_D2 + backward_branch(len(blank_row))
+    icon_arm = SUBQ_W_1_D1 + icon_row + DBF_D2 + backward_branch(len(icon_row))
+    rewind = (LEA_D16_A1 + word(-LIVES_ICON_REWIND) + LEA_D16_A2 + word(-LIVES_ICON_REWIND))
+    slot = (LEA_ABS_L_A0 + longword(LIVES_ICON_BITMAP) + MOVE_W_IMM_D2 + word(LIVES_ICON_ROWS - 1)
+            + tst_w_dn(D1) + BNE_W + forward_branch(len(blank_arm) + len(BRA_W) + 2)
+            + blank_arm + BRA_W + forward_branch(len(icon_arm))
+            + icon_arm + rewind)
+    return (MOVE_W_ABS_W_D1 + word(LIVES) + MOVE_W_IMM_D0 + word(LIVES_ICON_SLOTS - 1)
+            + LEA_ABS_L_A1 + longword(LIVES_ICON_BACK)
+            + LEA_ABS_L_A2 + longword(LIVES_ICON_FRONT)
+            + slot + DBF_D0 + backward_branch(len(slot)) + RTS)
+
+
 ENTRY_BYTES = {
     "select_table_21e8c_and_tick_b39a": _select_table_entry(),
     "hud_blit_record_bitmap": _record_bitmap_entry(),
@@ -995,12 +1059,13 @@ ENTRY_BYTES = {
     "hud_draw_record_digits": _record_digits_entry(),
     "hud_draw_newest_record": _newest_record_entry(),
     "hud_refresh_dirty_slots": _dirty_slots_entry(),
+    "hud_draw_lives": _draw_lives_entry(),
 }
 
-# The batch this file was written for: the eleven leaves of batch 2, the nine of batch 3 and the ten
-# of batch 4. Recorded rather than derived from ENTRY_BYTES, so a routine dropped from a table
-# shrinks the battery loudly instead of silently.
-HUD_ROUTINE_COUNT = 30
+# The batch this file was written for: the eleven leaves of batch 2, the nine of batch 3, the ten of
+# batch 4 and batch 13's lives display. Recorded rather than derived from ENTRY_BYTES, so a routine
+# dropped from a table shrinks the battery loudly instead of silently.
+HUD_ROUTINE_COUNT = 31
 
 # --- the glue ------------------------------------------------------------------------------------
 _select_table = leaf.image_glue("select_table_21e8c_and_tick_b39a")
@@ -2676,3 +2741,117 @@ def test_the_slot_battery_reaches_every_cell_the_pass_can_draw():
     cells = ("WB_HUD_CELL_BLANK", "WB_HUD_CELL_ZERO", "WB_HUD_CELL_ICON", "WB_HUD_CELL_BBC8")
     assert plain | set(HUD_SLOT_BBC8_ICONS) == {
         value for name, value in layout.DEFINES.items() if name.startswith(cells)}
+
+
+# --- $e80c: the lives display ---------------------------------------------------------------------
+# One longword is the unit both arms move; named here because the row step is built from it.
+LIVES_LONGWORD = 4
+# Both destinations are absolute, so a case seeds BOTH buffers — address-keyed, with a scanline and
+# a cell of margin on each side, so a draw that ran a row long or a cell wide lands on bytes that are
+# wrong for where they were written rather than on the zeros a fresh image holds there.
+LIVES_ROW_STEP = LIVES_LONGWORD + LIVES_ICON_ROW_SKIP        # == WB_SCREEN_LINE (pinned below)
+LIVES_SLOT_STEP = LIVES_ICON_ROWS * LIVES_ROW_STEP - LIVES_ICON_REWIND
+LIVES_INSN_PER_ROW = 12
+LIVES_INSN_CAP = LIVES_ICON_SLOTS * (LIVES_ICON_ROWS * LIVES_INSN_PER_ROW + 16) + 32
+LIVES_SEED_MARGIN_ROWS = 1
+LIVES_SEED_MARGIN_BYTES = LIVES_ICON_BYTES
+
+_draw_lives = leaf.image_glue("hud_draw_lives")
+
+
+def model_lives_draw(image):
+    """$e80c's write set as {address: byte}, with both cursors stepped exactly as the routine steps
+    them — 4 post-incremented bytes, 4 more at the new cursor, WB_LIVES_ICON_ROW_SKIP, and a
+    WB_LIVES_ICON_REWIND at the end of each slot. src/stage.c's battery imports this, because
+    `game_life_restart_reset` calls the routine and its write set has to contain this one."""
+    out = {}
+    remaining = int.from_bytes(bytes(image[LIVES:LIVES + WORD_LEN]), "big")
+    cursors = [LIVES_ICON_BACK, LIVES_ICON_FRONT]
+    blank = longword(LIVES_ICON_BLANK_HIGH) + longword(LIVES_ICON_BLANK_LOW)
+
+    for _slot in range(LIVES_ICON_SLOTS):
+        bitmap = LIVES_ICON_BITMAP                  # re-`lea`d per slot: all three are one cell
+        occupied = remaining != 0                   # `tst.w d1 / bne` — NONZERO, not a sign test
+        if occupied:
+            remaining = (remaining - 1) & WORD_MASK
+        for _row in range(LIVES_ICON_ROWS):
+            if occupied:
+                source = bytes(image[bitmap:bitmap + LIVES_ICON_BYTES])
+                bitmap += LIVES_ICON_BYTES
+            else:
+                source = blank
+            for index, cursor in enumerate(cursors):
+                for offset, value in enumerate(source):
+                    out[cursor + offset] = value
+                cursors[index] = cursor + LIVES_ROW_STEP
+        cursors = [cursor - LIVES_ICON_REWIND for cursor in cursors]
+    return out
+
+
+def _lives_seed(salt):
+    """The two screen bands and the bitmap, all keyed on the ADDRESS."""
+    pokes = {}
+    span = (LIVES_ICON_ROWS + 2 * LIVES_SEED_MARGIN_ROWS) * LIVES_ROW_STEP
+    for base in (LIVES_ICON_BACK, LIVES_ICON_FRONT):
+        lo = base - LIVES_SEED_MARGIN_ROWS * LIVES_ROW_STEP - LIVES_SEED_MARGIN_BYTES
+        pokes[lo] = leaf.keyed_block(lo, span, salt)
+    pokes[LIVES_ICON_BITMAP - LIVES_ICON_BYTES] = leaf.keyed_block(
+        LIVES_ICON_BITMAP - LIVES_ICON_BYTES,
+        LIVES_ICON_ROWS * LIVES_ICON_BYTES + 2 * LIVES_ICON_BYTES, salt)
+    return pokes
+
+
+def lives_pokes(salt, lives):
+    pokes = _lives_seed(salt)
+    pokes[LIVES] = word(lives)
+    return pokes
+
+
+@pytest.mark.parametrize("lives", [0, 1, 2, 3, 4, 0x7fff, 0x8000, 0xffff],
+                         ids=lambda v: f"lives{v:#06x}")
+def test_the_lives_display_draws_one_icon_per_life_and_blanks_the_rest(lives):
+    """`tst.w d1 / bne` is a NONZERO test, so $8000 and $ffff fill every slot with the icon where a
+    sign test would blank all three; 4 and above are what says only WB_LIVES_ICON_SLOTS are drawn.
+    The write set is stated exactly, which is what pins the row skip and the per-slot rewind."""
+    what = f"hud_draw_lives lives={lives:#06x}"
+    pokes = lives_pokes(leaf.case_salt(what), lives)
+    image = harness.make_image(pokes)
+    expected = model_lives_draw(image)
+
+    info = leaf.run("hud_draw_lives", _draw_lives, leaf.merge_bands(expected), what,
+                    regs={"_pokes": pokes}, max_insns=LIVES_INSN_CAP)
+    written = leaf.program_writes(info)
+    assert set(written) == set(expected), (
+        f"{what}: the original wrote {len(written)} bytes against the model's {len(expected)}")
+    for addr in sorted(expected):
+        assert written[addr] == expected[addr], (
+            f"{what}: {addr:#x} is {written[addr]:#04x}, not the model's {expected[addr]:#04x}")
+
+    # Every slot is written whichever arm it took, so the byte count is fixed: a run that drew one
+    # slot fewer would still agree with a model that had made the same mistake, and this does not.
+    assert len(expected) == len(SCREEN_BUFFERS) * LIVES_ICON_SLOTS * LIVES_ICON_ROWS * (
+        LIVES_ICON_BYTES), (
+        f"{what}: {len(expected)} bytes is not {LIVES_ICON_SLOTS} slots of {LIVES_ICON_ROWS} rows "
+        f"in {len(SCREEN_BUFFERS)} buffers")
+
+
+def test_the_lives_cursor_steps_a_scanline_a_row_and_a_cell_a_slot():
+    """Both `lea`s the routine carries, as arithmetic over the header's own constants: the row skip
+    plus the post-incremented longword is exactly one WB_SCREEN_LINE, and the rewind leaves the
+    cursor exactly WB_LIVES_ICON_BYTES along — which is the next slot and nothing else."""
+    assert LIVES_ROW_STEP == SCREEN_LINE, (
+        f"a row steps {LIVES_ROW_STEP} bytes, which is not the {SCREEN_LINE}-byte scanline")
+    assert LIVES_SLOT_STEP == LIVES_ICON_BYTES, (
+        f"a slot steps {LIVES_SLOT_STEP} bytes, which is not the {LIVES_ICON_BYTES} of one cell")
+    assert LIVES_ICON_FRONT - LIVES_ICON_BACK == SCREEN_BUFFERS[1] - SCREEN_BUFFERS[0], (
+        "the two destinations are not the same offset into the two screen buffers")
+
+
+def test_the_lives_bitmap_is_not_blank_so_the_two_arms_are_observable():
+    """Every case above would agree with a port that drew the blank pattern for a full slot if the
+    shipped cell happened to BE that pattern. It is not, and this is where that is stated."""
+    blank = longword(LIVES_ICON_BLANK_HIGH) + longword(LIVES_ICON_BLANK_LOW)
+    cell = bytes(harness.BASE_IMAGE[LIVES_ICON_BITMAP:
+                                    LIVES_ICON_BITMAP + LIVES_ICON_ROWS * LIVES_ICON_BYTES])
+    assert any(cell[row * LIVES_ICON_BYTES:(row + 1) * LIVES_ICON_BYTES] != blank
+               for row in range(LIVES_ICON_ROWS)), "the shipped icon IS the blank pattern"

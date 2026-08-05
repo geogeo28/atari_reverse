@@ -6,7 +6,8 @@
  * panel's animation ($bbca), the stage number ($bd32) and the table-select at $b372. This file
  * holds thirty of the routines under it — the ELEVEN LEAVES of batch 2 first, then THE SECOND TIER
  * above them and THE THIRD (see the banners further down) — plus the score and counter accumulators
- * the rest of the game calls to move the numbers the pass draws.
+ * the rest of the game calls to move the numbers the pass draws, and `hud_draw_lives` at the end,
+ * which is not under the pass at all (its caller is the reset in src/stage.c).
  * $b346 itself is not here: NINE of its ten calls are reconstructed and the tenth, $bbca, leaves
  * this subsystem for the sound module — and it is an unconditional `bsr`, so no seeding can steer a
  * run entered at $b346 around it (../STATUS.md, "The status panel's third tier").
@@ -763,4 +764,60 @@ void hud_refresh_dirty_slots(uint8_t *image) {
                          destination);
     }
     hud_refresh_slot_bbc8(image);
+}
+
+/* --- $e80c: the lives display -------------------------------------------------------------------
+ *
+ * NOT part of `panel_refresh_frame`'s pass — its one caller is the reset in src/stage.c, so the
+ * icons are redrawn when a game starts and when a life is lost and at no other time. It is here
+ * because it draws a panel field, and because it is the one routine in this file that writes BOTH
+ * screen buffers: `lea $704d8.l,a1 / lea $784d8.l,a2` are absolute, so unlike every blit above it
+ * this one does not read WB_SCREEN_BACK and does not care which buffer is on show.
+ */
+
+/* One WB_LIVES_ICON_BYTES row into both screens, with the cursors left a scanline further on.
+ * The original interleaves four stores across a1 and a2 (`(a1)+`, `(a2)+`, `(a1)`, `(a2)`); the
+ * four addresses are distinct, so the order is not observable and the row is written as a row. */
+static void draw_lives_row(uint8_t *image, uint32_t *back, uint32_t *front,
+                           uint32_t high, uint32_t low) {
+    wr32(image + *back, high);
+    wr32(image + *front, high);
+    *back = addr_add(*back, sizeof(uint32_t));           /* the two post-increments */
+    *front = addr_add(*front, sizeof(uint32_t));
+    wr32(image + *back, low);
+    wr32(image + *front, low);
+    *back = addr_add(*back, WB_LIVES_ICON_ROW_SKIP);     /* 4 + this == WB_SCREEN_LINE */
+    *front = addr_add(*front, WB_LIVES_ICON_ROW_SKIP);
+}
+
+void hud_draw_lives(uint8_t *image) {
+    uint32_t back = WB_LIVES_ICON_BACK;
+    uint32_t front = WB_LIVES_ICON_FRONT;
+    uint16_t remaining = be16(image + WB_LIVES);
+
+    for (unsigned slot = 0; slot < WB_LIVES_ICON_SLOTS; slot++) {
+        /* `lea $ec38.l,a0` sits INSIDE the outer loop, so every slot draws the same cell. */
+        uint32_t bitmap = WB_LIVES_ICON_BITMAP;
+
+        /* `tst.w d1 / bne` is a nonzero test rather than a sign one, and the `subq.w #1` behind it
+         * is a word — so a lives count of $ffff fills every slot and leaves $fffc behind. */
+        int occupied = remaining != 0;
+        if (occupied)
+            remaining = (uint16_t)(remaining - 1);
+
+        for (unsigned row = 0; row < WB_LIVES_ICON_ROWS; row++) {
+            if (occupied) {
+                draw_lives_row(image, &back, &front, be32(image + bitmap),
+                               be32(image + addr_add(bitmap, sizeof(uint32_t))));
+                bitmap = addr_add(bitmap, WB_LIVES_ICON_BYTES);
+            } else {
+                draw_lives_row(image, &back, &front,
+                               WB_LIVES_ICON_BLANK_HIGH, WB_LIVES_ICON_BLANK_LOW);
+            }
+        }
+
+        /* WB_LIVES_ICON_ROWS scanlines less this is exactly one cell, which is the next slot. */
+        back = addr_add(back, (uint32_t)-(int32_t)WB_LIVES_ICON_REWIND);
+        front = addr_add(front, (uint32_t)-(int32_t)WB_LIVES_ICON_REWIND);
+    }
 }

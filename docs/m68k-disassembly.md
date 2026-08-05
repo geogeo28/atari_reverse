@@ -115,9 +115,15 @@ extension word, so the length is right and the sweep stays in sync: `ABCD`/`SBCD
 above sweeps all 65536 opcode words for this impossible-destination tell and allowlists exactly
 those 832 encodings, so any *new* one fails the moment it appears.
 
+One more, and it is an *operand*-rendering gap rather than a mnemonic one: an **indexed EA prints
+as `idx(An)`** — no index register, no index size, no scale. The extension word IS consumed, so the
+length and the sweep are right; what is lost is the whole difference between `0(a0,d0.w)` and
+`0(a0,d0.l)`, which is exactly the class that bit Wonder Boy's spawn pass below. Read the bytes
+whenever a listing shows `idx(An)` and the index's width matters.
+
 ## Semantics that silently change a reconstruction
 
-Four 68000 behaviours a C reconstruction has to model explicitly. None of them shows in the
+Five 68000 behaviours a C reconstruction has to model explicitly. None of them shows in the
 mnemonic — the listing reads as ordinary arithmetic — and each yields a *plausible wrong answer*
 rather than a crash, so nothing draws attention to them.
 
@@ -188,6 +194,32 @@ This is not a hypothetical: the boundary-comparison rewrite of exactly this pair
 SURVIVED `bg_scroll_blit`'s first sweep, and it took a deliberately out-of-range `$fffe` row to kill
 it. Read the condition code, not the arithmetic around it — `subi`/`cmpi` says nothing on its own
 about which question the branch is asking.
+
+**An INDEXED address's index size lives in the extension word, and no disassembler prints it the
+same way twice.** `lea 0(An,Dn.w),An` and `lea 0(An,Dn.l),An` differ in ONE bit — bit 11 of the
+extension word — and a listing that renders both as `lea idx(a0),a0` hides the whole difference.
+`tools/prg_dis.py` does exactly that today: it prints `idx(An)` for every indexed EA and shows
+neither the index register, nor its size, nor the scale. So read the BYTES:
+
+```
+ff8c: 41f0 0000        lea 0(a0,d0.w),a0     ; the SIGN-EXTENDED LOW WORD of d0
+1002e: 2372 0800 000e  move.l 0(a2,d0.l),14(a1)  ; the whole longword
+```
+
+Wonder Boy has both, and *not* side by side: `$ff8c` is in the spawn pass (`$ff42`) and `$1002e` in
+`actor_spawn_from_template` (`$ffe4`) — different routines with 40 instructions between them in the
+listing and a `bsr` between them at run time, so a reading taken from one does not carry to the
+other. The pass does `lsl.l #5,d0` before the first — so the shift's long result is built and then
+thrown away, and a cursor of 1024 indexes 32 KB *below* the table instead of 32 KB above it. Neither reading crashes
+and both look like "table + index * 32" in C. Rules:
+
+* **Read the extension word, not the mnemonic.** `$0800` set = `.l`; clear = `.w`, and `.w` is
+  **sign-extended**, not truncated — the same trap as `ADDA.W` above, one addressing mode along.
+* A `lsl`/`asl` *before* an indexed access tells you nothing about the index size. The two are
+  independent, and a routine that shifts long and indexes word is not a mistake to tidy.
+* The same extension word carries an 8-bit displacement in its low byte and (on the 68020+) a scale
+  in bits 9–10; on a plain 68000 the scale field must be zero, which is a free sanity check that you
+  are looking at an extension word at all.
 
 ## Idioms you'll see constantly
 

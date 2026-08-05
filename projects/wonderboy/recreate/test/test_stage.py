@@ -52,12 +52,17 @@ import pytest
 
 import harness
 import leaf
-from leaf import (RTS, add_w_dn_dn, branch, branch_over, case_salt, clr_w_abs_l, dbf_over,
-                  forward_branch, keyed_block, lea_abs_l, lea_d16, lea_indexed, longword,
-                  lsl_w_imm_dn, merge_bands, move_l_imm_abs_l, move_w_abs_l_dn, move_w_dn_dn,
-                  move_w_imm_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode,
-                  program_writes, st_abs_l, subi_w_dn, tst_w_abs_l, u16, s16, word)
+from leaf import (RTS, add_w_dn_dn, branch, branch_over, bsr_w, btst_imm_dn, case_salt,
+                  clr_w_abs_l,
+                  dbf_over, forward_branch, keyed_block, lea_abs_l, lea_d16, lea_indexed, longword,
+                  lsl_w_imm_dn, merge_bands, move_l_imm_abs_l, move_l_imm_postinc, move_w_abs_l_dn,
+                  move_w_dn_dn, move_w_imm_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn,
+                  opcode, program_writes, st_abs_l, subi_w_dn, tst_w_abs_l, u16, s16, word)
 from layout import wb
+# `game_life_restart_reset` CALLS hud_draw_lives, so its write set CONTAINS that routine's.
+# The geometry and the model are imported from the battery that owns them rather than
+# restated here: two copies could disagree and both batteries would still pass.
+from test_hud import LIVES_INSN_CAP, lives_pokes, model_lives_draw   # noqa: E402
 
 # --- the geometry, from the header both languages read -------------------------------------------
 BUFFER_BASE = wb("BG_BUFFER_BASE")
@@ -165,6 +170,30 @@ BCD_SCORE = wb("BCD_SCORE")
 BCD_SCORE_LEN = wb("BCD_SCORE_LEN")
 BCD_ADDEND = wb("BCD_ADDEND")   # bcd_add_score_bd70 stages its LONGWORD addend here
 
+# ...and the two RESETS' own (batch 13)
+LEVEL_SEQ_INDEX = wb("LEVEL_SEQ_INDEX")
+LIVES = wb("LIVES")
+LIVES_ON_RESTART = wb("LIVES_ON_RESTART")
+EFFECT_STATE_21E4 = wb("EFFECT_STATE_21E4")
+EFFECT_STATE_BD66 = wb("EFFECT_STATE_BD66")
+EFFECT_STATE_BD68 = wb("EFFECT_STATE_BD68")
+EFFECT_STATE_BD6A = wb("EFFECT_STATE_BD6A")
+EFFECT_STATE_BD6C = wb("EFFECT_STATE_BD6C")
+EFFECT_RECORD_LIST = wb("EFFECT_RECORD_LIST")
+EFFECT_RECORD_WRITE_PTR = wb("EFFECT_RECORD_WRITE_PTR")
+EFFECT_RECORD_PTR_LEN = wb("EFFECT_RECORD_PTR_LEN")
+EFFECT_RECORD_EMPTY = wb("EFFECT_RECORD_EMPTY")
+HUD_METER_ON_RESTART = wb("HUD_METER_ON_RESTART")
+BCD_COUNTER = wb("BCD_COUNTER")
+STAGE_TUNE_LATCH = wb("STAGE_TUNE_LATCH")
+STAGE_TUNE_LATCH_RESET = wb("STAGE_TUNE_LATCH_RESET")
+HUD_SLOT_BBBE = wb("HUD_SLOT_BBBE")
+HUD_SLOT_BBC0 = wb("HUD_SLOT_BBC0")
+HUD_SLOT_BBC2 = wb("HUD_SLOT_BBC2")
+HUD_SLOT_BBC4 = wb("HUD_SLOT_BBC4")
+HUD_SLOT_BBC6 = wb("HUD_SLOT_BBC6")
+HUD_SLOT_BBC8 = wb("HUD_SLOT_BBC8")
+
 WORD_MASK = 0xffff
 LONGWORD_MASK = 0xffffffff
 BYTE_MASK = 0xff
@@ -238,10 +267,6 @@ def or_w_dn_postinc(an, dn):
     return opcode(0x8100 | (dn << 9) | (1 << 6) | (3 << 3) | an)
 
 
-def move_l_imm_postinc(an, value):
-    return opcode(0x2000 | (an << 9) | (3 << 6) | 0x3c) + longword(value)
-
-
 def move_l_imm_dn(reg, value):
     return opcode(0x203c | (reg << 9)) + longword(value)
 
@@ -264,6 +289,18 @@ def clr_l_abs_w(addr):
 
 def clr_w_abs_w(addr):
     return opcode(0x4278) + word(addr)
+
+
+def clr_l_abs_l(addr):
+    return opcode(0x42b9) + longword(addr)
+
+
+def move_w_imm_abs_w(value, addr):
+    return opcode(0x31fc) + word(value) + word(addr)
+
+
+def move_w_imm_abs_l(value, addr):
+    return opcode(0x33fc) + word(value) + longword(addr)
 
 
 def cmpi_b_ind(an, value):
@@ -292,10 +329,6 @@ def move_b_postinc_d16(source, destination, displacement):
 
 def tst_b_ind(an):
     return opcode(0x4a10 | an)
-
-
-def btst_imm_dn(bit, reg):
-    return opcode(0x0800 | reg) + word(bit)
 
 
 def cmp_w_abs_l_dn(reg, addr):
@@ -478,6 +511,36 @@ def _subi_b_dn(reg, value):
 # makes a wrong transcription fail on the shipped bytes.
 TILE_INDEX_TAIL_VALUES = (0x00460047, 0x00480049, 0x004a004b, 0x0040004d)
 
+# The six `clr.w`s of the head, in the original's own order — the same six src/stage.c spells, and
+# the reason both are lists rather than a stride: the instruction stream has six absolute operands.
+GAME_RESET_HUD_SLOTS = [HUD_SLOT_BBBE, HUD_SLOT_BBC0, HUD_SLOT_BBC2,
+                        HUD_SLOT_BBC4, HUD_SLOT_BBC6, HUD_SLOT_BBC8]
+
+
+def _restart_reset_entry():
+    """$fe4a's 66-byte HEAD. It has no `rts`: it falls through into the tail below, which is why the
+    two sizes are asserted against Ghidra's single 136 rather than against the scan directly."""
+    return (clr_w_abs_l(LEVEL_SEQ_INDEX)
+            + move_w_imm_abs_w(LIVES_ON_RESTART, LIVES)
+            + clr_w_abs_w(EFFECT_STATE_21E4)
+            + move_w_imm_abs_l(EFFECT_RECORD_EMPTY, EFFECT_RECORD_LIST)
+            + b"".join(clr_w_abs_l(slot) for slot in GAME_RESET_HUD_SLOTS)
+            + clr_w_abs_l(EFFECT_STATE_BD6A))
+
+
+def _life_restart_reset_entry():
+    """$fe8c's 70-byte tail, the part both entrants run."""
+    at = leaf.entry_of("game_life_restart_reset")
+    return (bsr_w(at, leaf.entry_of("hud_draw_lives"))
+            + move_w_imm_abs_l(HUD_METER_ON_RESTART, HUD_METER_VALUE)
+            + move_w_imm_abs_l(HUD_METER_ON_RESTART, HUD_METER_MAX)
+            + clr_l_abs_l(BCD_SCORE) + clr_w_abs_l(BCD_COUNTER)
+            + clr_w_abs_l(EFFECT_STATE_BD66) + clr_w_abs_l(EFFECT_STATE_BD68)
+            + clr_w_abs_l(EFFECT_STATE_BD6C)
+            + leaf.move_b_imm_abs_l(STAGE_TUNE_LATCH_RESET, STAGE_TUNE_LATCH)
+            + move_l_imm_abs_l(EFFECT_RECORD_LIST, EFFECT_RECORD_WRITE_PTR) + RTS)
+
+
 ENTRY_BYTES = {
     "bg_build_buffer": _build_buffer_entry(),
     "stage_publish_scroll_state": _publish_scroll_state_entry(),
@@ -487,6 +550,8 @@ ENTRY_BYTES = {
     "bg_plot_banner_glyph": _plot_banner_glyph_entry(),
     "bg_plot_banner": _plot_banner_entry(leaf.entry_of("bg_plot_banner")),
     "bg_plot_round_banner": _plot_round_banner_entry(leaf.entry_of("bg_plot_round_banner")),
+    "game_restart_reset": _restart_reset_entry(),
+    "game_life_restart_reset": _life_restart_reset_entry(),
 }
 
 # What ../out/hw_scan.tsv records for each, stated rather than derived so that a routine whose body
@@ -500,9 +565,15 @@ SIZES = {
     "bg_plot_banner_glyph": 48,
     "bg_plot_banner": 42,
     "bg_plot_round_banner": 48,
+    # NOT the scan's numbers: it records ONE 136-byte function at $fe4a and a whole-image scan says
+    # it is two, because $fe8c has an entrant of its own (`jsr $fe8c.l` at $c00). The two halves are
+    # required to add back up to that 136 by the test below.
+    "game_restart_reset": 66,
+    "game_life_restart_reset": 70,
 }
+GHIDRA_RESET_FUNCTION_BYTES = 136
 
-RECONSTRUCTED_ROUTINES = 8
+RECONSTRUCTED_ROUTINES = 10
 
 
 def test_the_battery_covers_every_routine_it_was_written_for():
@@ -1285,3 +1356,141 @@ def test_a_full_meter_scores_the_bonus_and_plots_the_second_banner():
                          ids=["below", "above", "empty"])
 def test_anything_but_equality_plots_the_round_banner_alone(value, maximum):
     _run_round(f"meter-{value}-{maximum}", value, maximum)
+
+
+# --- $fe4a and $fe8c: the new-game reset and the tail a lost life shares with it -------------------
+# Every address either writes is seeded ADDRESS-KEYED with a margin either side, so a clear one word
+# long or one word short lands on a byte that is wrong for where it was written. Several of the words
+# are neighbours ($bd66..$bd70, $bbbe..$bbc8), so their margins overlap — which is exactly why the
+# filler is keyed on the address and not on an index.
+RESET_BAND_MARGIN = 4
+GAME_RESET_INSN_CAP = LIVES_INSN_CAP + 64
+
+_RESTART_RESET = leaf.image_glue("game_restart_reset")
+_LIFE_RESET = leaf.image_glue("game_life_restart_reset")
+
+LIFE_RESET_WORDS = [(HUD_METER_VALUE, HUD_METER_ON_RESTART), (HUD_METER_MAX, HUD_METER_ON_RESTART),
+                    (BCD_COUNTER, 0), (EFFECT_STATE_BD66, 0), (EFFECT_STATE_BD68, 0),
+                    (EFFECT_STATE_BD6C, 0)]
+RESTART_RESET_WORDS = ([(LEVEL_SEQ_INDEX, 0), (LIVES, LIVES_ON_RESTART), (EFFECT_STATE_21E4, 0),
+                        (EFFECT_RECORD_LIST, EFFECT_RECORD_EMPTY)]
+                       + [(slot, 0) for slot in GAME_RESET_HUD_SLOTS]
+                       + [(EFFECT_STATE_BD6A, 0)])
+RESET_BANDS = ([(addr, STATE_WORD_LEN) for addr, _value in LIFE_RESET_WORDS + RESTART_RESET_WORDS]
+               + [(BCD_SCORE, BCD_SCORE_LEN), (EFFECT_RECORD_WRITE_PTR, EFFECT_RECORD_PTR_LEN),
+                  (STAGE_TUNE_LATCH, 1)])
+
+
+def _put_word(out, addr, value):
+    out[addr] = (value >> 8) & BYTE_MASK
+    out[addr + 1] = value & BYTE_MASK
+
+
+def _put_long(out, addr, value):
+    _put_word(out, addr, (value >> 16) & WORD_MASK)
+    _put_word(out, addr + 2, value & WORD_MASK)
+
+
+def _life_reset_writes(image):
+    """$fe8c's write set: the lives redraw, then the eight fields it reseeds."""
+    out = dict(model_lives_draw(image))
+    for addr, value in LIFE_RESET_WORDS:
+        _put_word(out, addr, value)
+    _put_long(out, BCD_SCORE, 0)                    # `clr.l` — the score is a LONGWORD
+    out[STAGE_TUNE_LATCH] = STAGE_TUNE_LATCH_RESET  # ...and a BYTE, not the word beside it
+    _put_long(out, EFFECT_RECORD_WRITE_PTR, EFFECT_RECORD_LIST)
+    return out
+
+
+def _restart_reset_writes(image):
+    """$fe4a's: the head's own eleven words, and then the tail's — run against an image in which
+    WB_LIVES ALREADY HOLDS WB_LIVES_ON_RESTART, because the head sets it before falling through."""
+    out = {}
+    for addr, value in RESTART_RESET_WORDS:
+        _put_word(out, addr, value)
+    after_head = bytearray(image)
+    for addr, value in out.items():
+        after_head[addr] = value
+    out.update(_life_reset_writes(after_head))
+    return out
+
+
+def _reset_pokes(salt, lives):
+    pokes = {}
+    for addr, length in RESET_BANDS:
+        lo = addr - RESET_BAND_MARGIN
+        pokes[lo] = keyed_block(lo, length + 2 * RESET_BAND_MARGIN, salt)
+    # ...and the screens, the icon and WB_LIVES itself, whose poke must land AFTER the band above
+    # it so a case's own lives count survives the filler.
+    pokes.update(lives_pokes(salt, lives))
+    return pokes
+
+
+def _run_game_reset(name, glue, model, lives, case):
+    what = f"{name} {case}"
+    pokes = _reset_pokes(case_salt(what), lives)
+    image = harness.make_image(pokes)
+    expected = model(image)
+
+    info = leaf.run(name, glue, merge_bands(expected), what, regs={"_pokes": pokes},
+                    max_insns=GAME_RESET_INSN_CAP)
+    written = leaf.program_writes(info)
+    assert set(written) == set(expected), (
+        f"{what}: the original wrote {len(written)} bytes against the model's {len(expected)}; "
+        f"only in one of them: "
+        f"{sorted(hex(a) for a in set(written) ^ set(expected))[:8]}")
+    for addr in sorted(expected):
+        assert written[addr] == expected[addr], (
+            f"{what}: {addr:#x} is {written[addr]:#04x}, not the model's {expected[addr]:#04x}")
+    return expected
+
+
+@pytest.mark.parametrize("lives", [0, 1, 3, 5, 0xffff], ids=lambda v: f"lives{v:#06x}")
+def test_the_life_restart_reset_redraws_the_lives_it_finds(lives):
+    """$fe8c takes WB_LIVES as it stands — its caller at $c00 has already decremented it — so the
+    number of icons is the case's own seed and not a constant."""
+    _run_game_reset("game_life_restart_reset", _LIFE_RESET, _life_reset_writes, lives,
+                    f"lives {lives:#06x}")
+
+
+@pytest.mark.parametrize("lives", [0, 1, 5, 0xffff], ids=lambda v: f"lives{v:#06x}")
+def test_the_new_game_reset_sets_the_lives_before_the_tail_draws_them(lives):
+    """The head's `move.w #$3,$be2.w` runs BEFORE the fall-through, so however many lives the case
+    seeds the display comes out at WB_LIVES_ON_RESTART. A port that drew first, or that called the
+    tail with the old count, differs on the icons rather than on the count."""
+    expected = _run_game_reset("game_restart_reset", _RESTART_RESET, _restart_reset_writes, lives,
+                               f"lives {lives:#06x}")
+    assert (expected[LIVES] << 8 | expected[LIVES + 1]) == LIVES_ON_RESTART
+
+
+def test_the_new_game_reset_empties_the_record_list_and_the_life_one_does_not():
+    """The one thing only the head does to the effect list: it writes WB_EFFECT_RECORD_EMPTY into
+    the first word while BOTH halves point the write pointer back at the base. So a life restarted
+    this way keeps whatever record was there, which is behaviour and not an omission."""
+    head_only = {addr for addr, _value in RESTART_RESET_WORDS}
+    assert EFFECT_RECORD_LIST in head_only
+    assert EFFECT_RECORD_LIST not in {addr for addr, _value in LIFE_RESET_WORDS}
+
+    life = _run_game_reset("game_life_restart_reset", _LIFE_RESET, _life_reset_writes, 2, "list intact")
+    assert EFFECT_RECORD_LIST not in life, (
+        "the life reset wrote the record list's first word, which only the new-game head does")
+    assert EFFECT_RECORD_WRITE_PTR in life, "the life reset left the write pointer alone"
+
+
+def test_the_two_resets_are_ghidras_one_function_split_at_its_second_entrant():
+    """The claim ../names.txt makes, as arithmetic: the two bodies are adjacent and add back up to
+    the 136 bytes ../out/hw_scan.tsv records for the single function at $fe4a. A split at the wrong
+    instruction fails here as well as on the two entry pins."""
+    head = leaf.entry_of("game_restart_reset")
+    tail = leaf.entry_of("game_life_restart_reset")
+    assert head + SIZES["game_restart_reset"] == tail, (
+        f"the head ends at {head + SIZES['game_restart_reset']:#x}, not at the tail's {tail:#x}")
+    assert SIZES["game_restart_reset"] + SIZES["game_life_restart_reset"] == (
+        GHIDRA_RESET_FUNCTION_BYTES), (
+        f"the two halves are {SIZES['game_restart_reset']} + "
+        f"{SIZES['game_life_restart_reset']} bytes, which is not the scan's "
+        f"{GHIDRA_RESET_FUNCTION_BYTES}")
+    # The head has no `rts` of its own: the byte pair where one would be is the tail's first
+    # instruction, which is what "falls through" means on the bytes.
+    assert bytes(harness.BASE_IMAGE[tail - len(RTS):tail]) != RTS, (
+        "the head ends in an `rts`, so it does not fall through and the split is wrong")

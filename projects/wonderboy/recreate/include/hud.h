@@ -1,5 +1,8 @@
 /* hud.h — the status panel (src/hud.c).
  *
+ * Thirty-ONE routines: the thirty below, and `hud_draw_lives` at the end, which is the one
+ * that is NOT under the frame pass — its caller is src/stage.c's reset.
+ *
  * Thirty routines under `panel_refresh_frame` ($b346), the game loop's once-a-frame panel pass —
  * NINE of its ten callees and everything below them. The tenth, $bbca, leaves this subsystem for
  * the sound module, and is reached by an unconditional `bsr`, so $b346 itself is not here either
@@ -143,5 +146,11 @@ void hud_draw_record_digits(uint8_t *image, uint32_t record);
 
 /* $b8f0 — no registers: the six slot records and `screen_back` are all in memory. */
 void hud_refresh_dirty_slots(uint8_t *image);
+
+/* $e80c — draw WB_LIVES_ICON_SLOTS cells at WB_LIVES_ICON_BACK / _FRONT, the first WB_LIVES of them
+ * from WB_LIVES_ICON_BITMAP and the rest blank. No registers, and no `screen_back`: both
+ * destinations are absolute, so this writes the buffer being displayed as well as the one being
+ * drawn. Its one caller is `game_life_restart_reset` (src/stage.c). */
+void hud_draw_lives(uint8_t *image);
 
 #endif /* WONDERBOY_HUD_H */

@@ -8,34 +8,38 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 126/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 134/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
 actor table's LIFECYCLE (310 bytes), the COLLISION MAP the actors walk on, both probes and both
-settles and the tier above them (892 bytes), and the STAGE LOADER that fills the scroll engine's
-eight buffers in the first place (1026 bytes) — 12,604 bytes in all, 49.1 % of everything
+settles and the tier above them (892 bytes), the STAGE LOADER that fills the scroll engine's
+eight buffers in the first place (1026 bytes), and the SPAWN PASS that drives the lifecycle plus the
+two resets that start a game and a life (568 bytes) — 13,172 bytes in all, 51.3 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures.**
-`make test`: **1587 cases green in what this batch commits** — 1522 before it plus the 65 of
-`test/test_stage.py`. Of the 1522: 77 are the foundation battery below, 48 are the depacker's
-differential, 187 are the first gameplay batch's, 485 are the status panel's — that last figure was
-169 after batch 2, 339 after batch 3 and 481 after batch 10, and the whole of the growth is
+`make test`: **2146 cases green in what this batch commits** — 1587 before it plus batch 13's 559.
+Of the 2146: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
+first gameplay batch's, 496 are the status panel's — that last figure was 169 after batch 2, 339
+after batch 3, 481 after batch 10 and 485 after batch 12, and the whole of the growth is
 `test/test_hud.py` — 231 are the background scroll subsystem's (65 after batch 5, 148 after batch 6),
-222 are the actor tier's (113 after batch 8), 105 the text subsystem's (56 after batch 8), and 167
-the collision map's, which is batch 10's new `test/test_map.py` (58 when it landed).
-**A `make test` run in a working tree may report MORE than 1587**, because `test/test_audio_capture.py`
+755 are the actor tier's (113 after batch 8, 222 after batch 10), 105 the text subsystem's (56 after
+batch 8), 167 the collision map's, which is batch 10's new `test/test_map.py` (58 when it landed),
+and 80 the stage loader's (65 when batch 12 landed it).
+**A `make test` run in a working tree may report MORE than 2146**, because `test/test_audio_capture.py`
 — which pins a KIT mode from this game's suite for `test_poked_input_guard.py`'s reason — is a
 concurrent session's battery, landing in its own commit and still growing; it is not part of this
-batch's count and nothing here rests on it. A row appears in the table at the end when a function is
+batch's count and nothing here rests on it (it stood at 13 while batch 13 was written, so a clean
+tree reports 2159). A row appears in the table at the end when a function is
 reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only *named*,
 not ported.
 
-**`PORTABILITY.md`'s "reconstructed and pinned" column is thirteen functions / 1,480 bytes stale**
-as of batch 12 — it is a MEASUREMENT (`tools/hw_portability.py` re-run over `../out/hw_scan.tsv`),
+**`PORTABILITY.md`'s "reconstructed and pinned" column is twenty-one functions / 2,048 bytes stale**
+as of batch 13 — it is a MEASUREMENT (`tools/hw_portability.py` re-run over `../out/hw_scan.tsv`),
 like the 2026-08-02 re-measure at the end of this file, and it is queued as one rather than
-hand-edited here. `subsystems.tsv` is the same queued measurement: the eight collision-map routines
-and now the eight stage-loader ones sit in the "game logic" catch-all, and three of the latter
-belong squarely with `video (background scroll)`.
+hand-edited here. `subsystems.tsv` is the same queued measurement: the eight collision-map routines,
+the eight stage-loader ones and now batch 13's eight sit in the "game logic" catch-all, and three of
+the stage loader's belong squarely with `video (background scroll)`. The 51.3 % above is the same
+denominator batch 12 measured, so it moves with that re-run too.
 
 **`panel_refresh_frame` ($b346) now has NINE of its ten callees reconstructed.** The tenth, `$bbca`,
 is the sound-module blocker batch 3 registered, and it is reached by an unconditional `bsr` — so
@@ -573,6 +577,14 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0xe16a` | `bg_plot_banner_glyph` | 48 | verified | 6 cases: 4 characters of the game's own second font x the two cursor parities, each stating the 32 written bytes exactly and comparing the advanced cursor THREE ways — model, the oracle's a1, and the reconstruction's return + whole-body entry pin |
 | `0xe140` | `bg_plot_banner` | 42 | verified | 3 cases: both shipped records plotted glyph by glyph with the write set stated exactly, the a6 that comes back pointing AT the terminator (a `tst.b`/`bpl` does not consume it), and a registration case for the reading no shipped record can distinguish — see the batch-12 section + whole-body entry pin |
 | `0xe110` | `bg_plot_round_banner` | 48 | verified | 5 cases: a meter exactly at its maximum (which scores `WB_BG_BANNER_BONUS` through `bcd_add_score_bd70` and plots the second banner) against 3 that are not, plus a structural read of the two `lea`s that name the records. Each separates the plotted bytes from the score's own band and requires the score to move if and only if the compare was an EQUALITY + whole-body entry pin |
+| `0xff42` | `actor_spawn_pass` (`src/actor.c`) | 162 | verified | 20 cases against a model that REPLAYS the whole pass on a mutable copy (the record one spawn fills is no longer free when the next allocation looks): 4 gate values including the two that tell its `bne` from the `bpl` the projections read the same word with, the countdown walk running at capacity, a countdown byte that WRAPS rather than sticking, an EMPTY table (the terminator handled before it is tested — the sweep's mutation survivor), 3 cursor positions, the wrapped flag raised on the last record, a cursor past the sign boundary (`lsl.l #5` then a WORD-indexed `lea`, so it names a template 32 KB BELOW the table), 4 sweeps — none/three/all eight of the records ready, the last raising the live count to EXACTLY the maximum, plus one seeded to CROSS it mid-pass (the capacity test is read once, above both arms) against a pool of three free records that runs out partway, so the later spawns land on the vector page — the walk-before-sweep ordering, the published-table case, and 2 that pin the VECTOR-PAGE stamp + whole-body entry pin |
+| `0x1006a` | `actor_template_set_hitpoints` | 48 | verified | 81 cases: 10 types x 8 kill counts, each keyed off `hitpoint_entry(type)` — the routine's own `add.w d1,d1 / adda.l` — rather than off the type, plus the table-adjacency pin that gives its 32 entries. The types cover the fixed-constant arm and both its neighbours, the last entry, one PAST it and two that wrap the word index; the kill counts cover both signs of the `asr.w #1`. Each asserts the stored word, the d0 the `moveq` leaves as a whole longword, and the d1 the table arm DOUBLES + whole-body entry pin |
+| `0x2b5a` | `actor_hop_or_flip_side` | 40 | verified | Shares a 420-case grid with the two below: 4 flag seeds x 5 outcome bytes x 7 ground words x 3 routines. The outcome seeds include two whose LOW byte is zero under a nonzero register, which is the only thing that tells `tst.b` from `tst.w`. Each states the write set exactly, asserts a0/d1 unmoved, and asserts the d0 this routine alone clobbers — `move.w #$4,d0` writes the LOW WORD, so the caller's high half survives + whole-body entry pin, whose 40 bytes INCLUDE the tail at `$2b7a` |
+| `0x2b82` | `actor_toggle_side_flag` | 12 | verified | The same grid. Its pin is 12 bytes where Ghidra records 20, and a case reads both short branch displacements out of the image and requires them to land on `$2b7a` — the tail Ghidra folded in + whole-body entry pin |
+| `0x2b8e` | `actor_turn_and_launch` | 58 | verified | The same grid, plus a case stating that its inline three bits and speed byte ARE `actor_start_motion_at_speed`'s writes with a different literal — which is why `src/actor.c` spells them out rather than calling it. Ghidra has no function here at all + whole-body entry pin |
+| `0xe80c` | `hud_draw_lives` (`src/hud.c`) | 112 | verified | 11 cases: 8 lives counts — 0 through 4, and $8000/$ffff/$7fff, where a `tst.w`/`bne` fills every slot and a sign test would blank them — each stating the write set exactly across BOTH screen buffers against a model that steps the two cursors as the routine does. Plus the geometry identities (4 + the row skip is one scanline; 16 rows less the rewind is one cell; the two destinations are the same offset into the two buffers) and a case that the shipped icon is not the blank pattern, without which the two arms would be indistinguishable + whole-body entry pin |
+| `0xfe4a` | `game_restart_reset` (`src/stage.c`) | 66 | verified | 4 cases: the head's eleven words, and the fall-through — it sets `WB_LIVES` to 3 BEFORE the tail draws them, so however many lives a case seeds the display comes out at three. Its write set CONTAINS `hud_draw_lives`', modelled once in `test_hud.py` and imported + whole-body entry pin |
+| `0xfe8c` | `game_life_restart_reset` | 70 | verified | 6 cases: 5 lives counts taken as they stand (its own caller at `$c00` has already decremented one), plus one that the record LIST's empty word is the head's alone while the write POINTER is reset by both. A structural case requires the two halves to be adjacent, to add back up to Ghidra's single 136, and the head to end in something other than an `rts` + whole-body entry pin |
 
 ### The .RAD depacker
 
@@ -1845,11 +1857,13 @@ empty-handed. The two bodies are byte-identical bar two operand words, so `src/a
 
 **AN ALLOCATION FAILURE IS NOT CHECKED, AND THE SPAWN WRITES THROUGH IT.** `$1b68` returns `$0` for
 a full pool. Of its three call sites only `$101dc` tests it (`cmpa.l #$0,a1`); the two inside
-`$ff42` hand it straight to `actor_spawn_from_template`, which writes 32 bytes through a1
+`$ff42` hand it straight to `actor_spawn_from_template`, which writes through a1
 unconditionally — over absolute `$0..$1f`, the 68000 vector page. Recorded in `../names.txt` on
 `$1b68` as behaviour, not reproduced as a case: `$ffe4`'s a1 is its caller's argument, so a case
 handing it `$0` would be testing the spawn at address zero rather than the pair's interaction —
-which is `$ff42`'s to pin when that routine is ported.
+which is `$ff42`'s to pin when that routine is ported. **BATCH 13 PORTED IT AND PINNED THIS, and
+correcting "32 bytes" to EIGHTEEN was the pin's own finding** — see "The spawn pass and the two
+resets" at the end of this file.
 
 **THE COLLISION MAP IS A SECOND MAP WITH THE BACKGROUND MAP'S LAYOUT.** A word of bytes per row,
 then one byte per 16x16 cell from base + 4 — the same +4 `WB_MAP_DATA_ROW` sits at above
@@ -2396,16 +2410,18 @@ and `rotate_left32`.
   no reader among the recovered functions; `$a34` has eleven operand sites and none inside anything
   reconstructed. The names carry the addresses, in `state_flag_a32`'s voice.
 
-**QUEUED, read but deliberately not ported:**
+**QUEUED, read but deliberately not ported — ALL FOUR OF THESE ARE BATCH 13'S, AND ARE CLOSED:**
 
 * **`$fe4a` (`game_restart_reset`, 136 bytes)** — the new-game reset the panel batches' `cmt`s keep
   citing. Everything in it is plain memory except one `bsr $e80c`, which is unported: `$e80c` writes
   `$704d8`/`$784d8` (both screen buffers) under `$be2`, the lives count this routine sets to 3.
-  Porting the pair is a two-function batch of its own.
+  Porting the pair is a two-function batch of its own. *(Batch 13: it is three routines, not two —
+  see below.)*
 * **`$ff42` (`actor_spawn_pass`, 162 bytes)** — the per-frame spawn driver gated on `state_flag_a30`,
   and the routine that would pin batch 10's registered finding that an allocation FAILURE is not
   checked (a full pool hands `actor_spawn_from_template` `a1 = $0` and stamps 32 bytes over the
   68000 vector page). Two of its three callees are reconstructed; the third, `$1006a`, is not.
+  *(Batch 13: pinned — and the stamp is eighteen bytes, not 32.)*
 * **`$2b82` (`actor_toggle_side_flag`, 12 bytes, plus the 8-byte tail at `$2b7a`)** — batch 10
   rejected it for branching backwards out of Ghidra's boundary, and the true extent is now read:
   `tst.b d0 / beq $2b7a / btst #2,d1 / bne $2b7a / rts` over `bchg #3,8(a0) / rts`, which flips the
@@ -2442,3 +2458,147 @@ and `rotate_left32`.
   nothing at all, so seeding it buys a differential over an empty write set. There is still no
   branch worth registering. Both now carry `fn`/`cmt` entries in `../names.txt`, bodies and callers
   included, so the read is not lost when the sound module opens.
+
+### The spawn pass and the two resets (batch 13): what makes the lifecycle run
+
+**BATCH 10 REGISTERED A FINDING AND THIS BATCH PINS IT.** `actor_alloc_slot_low` returns
+`WB_ACTOR_ALLOC_NONE` on a full pool, and neither of `$ff42`'s two `jsr $1b68.w` sites tests the
+result — so a full pool spawns over absolute `$0`, the 68000 vector page. That was recorded as
+behaviour on `$1b68`'s `cmt` and nothing ran it. `test_a_full_pool_stamps_the_spawn_over_the_vector_page`
+now does, from BOTH arms, with both pools seeded full so that the claim does not rest on which
+allocator was called — and it **states the write set exactly, which corrected the registration**:
+the stamp is **EIGHTEEN bytes, not 32**. `actor_spawn_from_template` writes ten fields, not a whole
+record, so `$0..$9`, `$e..$13` and `$1e..$1f` move (both reset vectors, the bus-error vector's high
+word, the address-error vector's low word, the whole illegal-instruction vector and TRAPV's low
+word) while `$a..$d` and `$14..$1d` are untouched. `../names.txt` carries the corrected sentence.
+This is the reproduce-not-tidy rule at its sharpest: a port that checked the allocator's result
+would be *better code* and would fail this case.
+
+**THE TEMPLATE TABLE HAS A FOUR-WORD HEADER, AND ITS FIELDS ARE READABLE FROM THEIR OTHER USERS.**
+`$ff42` reads `-8(a6)`..`-2(a6)` off the pointer `table_ptr_21e8c` holds. What each is comes from the
+routine that moves it the other way: `$6c3e` does `subq.w #1,-6(a6)` on a death against this
+routine's `addq.w #1` per spawn, so `-6` is the LIVE COUNT and the `move.w -8(a6),d0 / cmp.w -6(a6),d0
+/ beq` above it is a capacity test; `-4` is the cursor, post-incremented; `-2` goes to `$ffff` once
+the cursor reaches the last record, and `$6c4e` re-arms a dead template's `30`/`31` only while it is
+set. The same two other routines make the TEMPLATE's own fields readable: `$6b46`'s
+`sub.w d0,4(a1)` spends offset 4 (so `$1006a` seeds a HIT-POINT POOL) and `$6bfa`'s
+`addq.w #1,6(a1)` with `cmpi.w #$2,6(a1) / ble` raises offset 6 (a KILL COUNT, and the template
+retires past two). So `$1006a` is "half the times you have already killed this thing, plus a
+per-type base" — a difficulty ramp — and neither field could have been named from `$ff42` alone.
+
+**FOUR SEMANTICS REPRODUCED RATHER THAN TIDIED, each with a case and a mutation:**
+
+* **THE CURSOR'S `lea` INDEXES WITH A WORD.** `lsl.l #5,d0` builds the byte offset as a longword and
+  `lea 0(a0,d0.w),a0` then takes its SIGN-EXTENDED LOW WORD — the extension word is `$0000`, not the
+  `$0800` that `actor_spawn_from_template`'s own size-table lookup carries. The two are not
+  neighbours: the `lea` is at `$ff8c` in THIS routine and the `move.l` at `$1002e` in that one, with
+  40 instructions between them in the listing and a `bsr` between them at run time. A cursor of
+  1024 therefore names a template 32 KB BELOW the table. Both readings were written before the
+  bytes were checked, which is why the extension word is now quoted in `src/actor.c` and in
+  `../names.txt`: `41f0 0000` and `2372 0800` are two different instructions.
+* **THE COUNTDOWN WALK RUNS BEFORE THE CAPACITY TEST CAN RETURN**, so a table at capacity still
+  counts down; and its `subq.b` WRAPS rather than sticking at zero. The two interact: an armed
+  record seeded at zero is stepped to `$ff` by the walk and the sweep below then skips it, so the
+  ready state cannot be reached from below and a case that wants a spawn seeds 1.
+* **BOTH WALKS ARE `do`/`while`.** `lea 32(a0),a0 / cmpi.w #$ffff,(a0) / bne` tests the terminator
+  only AFTER a record has been handled, so a table whose FIRST word is the terminator still has that
+  record's byte 31 stepped. See the sweep below — this is the one hole it found.
+* **THE SWEEP CAN OVERSHOOT THE CAPACITY.** The `cmp.w -6(a6),d0` runs once, above both arms, while
+  the sweep raises the live count per spawn — so one pass over an all-ready table carries it well
+  past `-8(a6)`, and later spawns in the same pass hit the full pool.
+
+**GHIDRA'S ONE FUNCTION AT `$fe4a` IS TWO ROUTINES, AND A WHOLE-IMAGE SCAN IS WHAT SAYS SO.**
+`$fe4a` has a single entrant (`bsr` at `$e59e`); `$fe8c`, 66 bytes into it, has one of its own —
+`jsr $fe8c.l` at `$c00`, the instruction immediately after the `subq.w #1,lives` at `$bfc`. So the
+head is what only a NEW GAME does (the level cursor, the lives count, the effect record list's
+`$ffff` "empty" word, the six HUD slots) and the tail is what a lost life shares with it (redraw the lives, reseed the meter, clear
+the score and the small state words, re-arm the tune latch, point the record write pointer back at
+the list's base). Two consequences a case each states: **the head sets `lives` to 3 BEFORE falling
+through**, so a new game always draws three icons however many the caller had; and **the write
+pointer is restored on both paths while the `$ffff` is written only by the head**, so a life
+restarted this way keeps whatever record the list already held.
+
+**`test_stage.py` IMPORTS `test_hud.py`'s LIVES MODEL RATHER THAN RESTATING IT.** `$fe8c` calls
+`$e80c`, so its write set CONTAINS that routine's 768 bytes across both screen buffers. Two copies of
+the geometry could disagree and both batteries would still pass, so `model_lives_draw` and
+`lives_pokes` are defined once, in the battery that owns the routine, and imported by the caller's.
+That is the first cross-battery import in this project and it is deliberate: the alternative is the
+duplication CLAUDE.md §6 forbids.
+
+**THE MUTATION SWEEP: 39 mutations, 38 killed, 1 survivor — and the survivor list moved twice.**
+Each mutation deleted the `.so` before the rebuild and restored the source afterwards (the rebuild
+trap the workspace memory records). The first sweep of 35 left TWO alive:
+
+* **The `do`/`while` written as a `while`** survived, and that was a real coverage hole: every case
+  seeded a table with records in front of the terminator, where the two loops agree. The fix is a
+  case seeding an EMPTY table — a second terminator at slot 0, which is the format's own degenerate
+  shape and not a fabricated record — whose only write is the terminating record's countdown byte.
+  It now **reddens 1**.
+* **`clr.w $bd6a` moved to AFTER the fall-through** survived and is an EQUIVALENCE, not a hole: the
+  tail never touches `$bd6a`, the two writes are disjoint, and a byte-for-byte diff of final memory
+  cannot see the order of disjoint writes. Where ordering IS observable it is pinned — moving the
+  `move.w #$3,$be2.w` past the same call **reddens 4**, because the icons drawn change.
+
+Final sweep, with what each reddens: the countdown counting up 7; the walk ignoring the armed byte
+13; the capacity test made an inequality 8; the walk moved below that test 1; the cursor index taken
+as the long the shift produced 8; zero-extended instead of sign-extended 8; the cursor not advanced
+8; the wrapped flag read as the opposite arm 13; raised off this record rather than the next 1; the
+terminator read one short of `$ffff` 14; the sweep's countdown test inverted 4; the sweep leaving the
+armed byte raised 3; the live count not raised 11; **the allocator's result tested before the spawn
+2** (the vector-page pin, from both arms); the hit-point seed taking the whole kill count 61; its
+shift made unsigned 31; its table indexed by the type rather than twice it 75; the fixed-type arm
+taken for its neighbour 16; the step-outcome test widened from a byte to a word 96; the side flag set
+rather than flipped 117; the clear-step arm reading the one-cell drop 16; the hop speed off by one
+36; the toggle's two conditions ANDed 72; the turn-and-launch's supported test dropped 54; its speed
+taken from the hop 54; the lives count read as a sign test 3; the icon re-loaded once rather than per
+slot 14; the row step made a whole scanline past the post-increment 18; the per-slot rewind dropped
+18; the blank slot's two longwords swapped 6; the lives count decremented for every slot 4; both
+screens drawn from the same cursor 18; the lives word set after the tail 4; the score cleared as a
+word 10; the tune latch written as a word 10; the record list emptied by the tail as well 6; the
+meter maximum left alone 10; the empty-table `while` 1.
+
+**FOUR ENCODERS WENT TO `test/leaf.py`, AND ALL FOUR TRIGGERS FIRED AS REGISTERED.** Batch 12's
+two-user list named `addi_w_dn`, `tst_w_dn`, `btst_imm_dn` and `move_l_imm_postinc` with
+**trigger** = a third user and **home** = `test/leaf.py`. This batch is that third user for each, so
+all four now live once and the five batteries that had them (`test_map.py`, `test_scroll.py`,
+`test_stage.py`, `test_text.py`, `test_actor.py`) import them. `move_l_imm_postinc` had two
+DIFFERENT spellings of the same four bytes (`0x20fc | reg << 9` against
+`0x2000 | an << 9 | 3 << 6 | 0x3c`); the simpler one survived. **The whole-body entry pins are the
+proof the hoist changed nothing** — every battery still matches the shipped image byte for byte.
+
+**What is STILL at two users, restated with this batch's additions.** From batch 12, unchanged:
+`mulu_w_dn_dn`, `move_l_dn_dn`, `cmpi_b_ind`, `move_b_imm_ind`, `swap_dn`, `move_w_dn_abs_l`,
+`clr_l_postinc`, `movea_l_an_an`, `move_w_dn_postinc`, `bit_op_d16`, `clr_b_d16`, `clr_w_dn`,
+`cmp_w_dn_dn`, `move_w_d16_ind`, `andi_w_dn`, `neg_w_dn`, `move_w_abs_l_abs_l`. New to the list, at
+two users because batch 13 spelt a second copy: `asr_w_imm_dn`, `cmp_w_d16_dn`, `cmpi_w_d16`
+(`test_map.py` + `test_actor.py`); `lsl_l_imm_dn` (`test_stage.py` + `test_actor.py`);
+`move_w_imm_abs_l` (`test_text.py` + `test_stage.py`); `clr_l_abs_l` (`test_scroll.py` +
+`test_stage.py`). Usual terms — **trigger** = a third user; **home** = `test/leaf.py`.
+
+**What this batch does NOT pin:**
+
+* **WHAT THE TEMPLATE'S OTHER FIELDS HOLD.** Offsets 0, 8, 10, 18–23 and 28–29 of a 32-byte template
+  are neither read nor written by anything reconstructed. Offset 0 is only ever compared against the
+  terminator, and every case seeds it away from `$ffff` so the address-keyed filler cannot end a walk
+  by accident.
+* **WHERE THE TABLE AND ITS HEADER COME FROM.** `table_ptr_21e8c` is one of two immediates
+  `select_table_21e8c_and_tick_b39a` publishes, and both (`$21e6a`, `$21c60`) are past the program's
+  last byte — so the header, the records and their terminator are all loaded from disk, and every
+  case seeds them as plain RAM. Whether the SHIPPED data can reach the sign-extended cursor, the
+  wrapping hit-point index or a full pool is therefore not established by anything here.
+* **`WB_SPAWN_HITPOINT_TABLE`'s LENGTH.** The code bounds the index at neither end, and what pins
+  the 32 entries the header states is the table BELOW: `actor_size_table`'s 32 longwords end exactly
+  where this one starts. Above it there is room for 33 — the next table's 4-byte records begin at
+  `$1015c` (`lea $1015c.l,a0` at `$1a82`), so the zero word at `$1015a` belongs to neither table and
+  whether it is a 33rd entry or padding is not established.
+  `test_the_hitpoint_table_sits_immediately_above_the_size_table` states the size table's half of
+  that; the boundary above is a read of the bytes and is not asserted anywhere.
+* **WHETHER `WB_SPAWN_ARMED`/`_COUNTDOWN` REALLY SHARE THE ACTOR RECORD'S LAYOUT.** They sit at the
+  same two offsets as `WB_ACTOR_FIELD_30`/`_31` and both records are 32 bytes, but `$ffe4` clears the
+  ACTOR's pair while `$ff42` walks the TEMPLATE's. That the two layouts agree here is a coincidence
+  as far as anything reconstructed can tell, and `include/wonderboy.h` says so.
+* **WHAT `$e80c`'s ICON DEPICTS**, and what the blank slot's colour-2 block is over. The bitmap at
+  `$ec38` has exactly one reference in the image, this routine's own `lea`.
+* **WHY THE LIFE RESTART CLEARS THE SCORE.** `clr.l $bd70` is on the shared tail, so the path at
+  `$c00` — which has just lost a life — zeroes `bcd_score_bd70`. The reconstruction reproduces it;
+  whether `$bd70` is the *displayed total* is `../names.txt`'s open question, not this batch's.
