@@ -15,7 +15,7 @@ actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (
 actor table's LIFECYCLE (310 bytes), the COLLISION MAP the actors walk on, both probes and both
 settles and the tier above them (892 bytes), the STAGE LOADER that fills the scroll engine's
 eight buffers in the first place (1026 bytes), and the SPAWN PASS that drives the lifecycle plus the
-two resets that start a game and a life (568 bytes) — 13,172 bytes in all, 51.3 % of everything
+two resets that start a game and a life (568 bytes) — 13,172 bytes in all, 51.1 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures.**
 `make test`: **2146 cases green in what this batch commits** — 1587 before it plus batch 13's 559.
 Of the 2146: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
@@ -41,8 +41,11 @@ argument for queueing it as a measurement rather than hand-editing the column: t
 disagree in three places (see `PORTABILITY.md`'s reconciliation table) and an estimate cannot see
 them. `subsystems.tsv` gained four subsystems' worth of ranges, so the collision map, the
 actor lifecycle, the stage tier and the three buffer builders are out of the "game logic" catch-all.
-The 51.3 % above is unchanged by it — a subsystem partition does not move the 25,696-byte
-denominator, and no whole-program figure in `PORTABILITY.md` moved either.
+The 51.3 % this header carried was unchanged by it — a subsystem partition does not move the
+25,696-byte denominator, and no whole-program figure in `PORTABILITY.md` moved either. *(The
+same-day reapply + re-scan DID move them — denominator 25,786, verified column 136 F records /
+13,172 B, header now 51.1 % — see the re-scan section at the end of this file and
+`PORTABILITY.md` §0c.)*
 
 **`panel_refresh_frame` ($b346) now has NINE of its ten callees reconstructed.** The tenth, `$bbca`,
 is the sound-module blocker batch 3 registered, and it is reached by an unconditional `bsr` — so
@@ -900,6 +903,14 @@ of it.
   the earlier reading "a `jsr d16(An)` off an immediate `lea` is invisible to the graph" is wrong as
   a general rule and was replaced by this. Marked for investigation; until it is, treat *any* call
   site absent from both ledgers as a scan defect, not as a known limit.
+  **2026-08-05 re-scan (fully named DB, after `../reapply.sh`): REPRODUCED byte-identically** —
+  still four `E 0xbbca 0xbcd6 CALL` rows, still ten `I` rows, still nothing for `$bca2`. One
+  candidate is eliminated: the target thunk `$17b14` IS an F record in both scans (`F 0x17b14 14`),
+  so this is not `emitTransfers`' silent else-path (a resolved flow whose target is in no
+  function — that path emits nothing by construction). What remains is that the instruction either
+  never entered the scan's walk or fell to the `!isJump() && !isCall()` early return; deciding
+  which needs a look at the DB's flow references at `$bca2`, and that is still the queued
+  investigation, not this note.
   (`docs/on-target-execution.md` rule 4 and `tools/ghidra_scripts/HwPortabilityScan.java`'s `I`
   record carry the short form.)
 * **`$b8f0` (the six HUD slots, 666 bytes) is in scope but oversized.** Its closure is clean and both
@@ -2683,7 +2694,9 @@ There are 212 today and **four are not** — `$2b5a`, `$2b8e`, `$fe8c` and `$17f
 + a re-scan **would** move the measurement, by roughly +4 functions and +90 bytes (actor +2 fns /
 +90 B, stage +1 fn, sound +1 fn). Every one of those four addresses already falls inside a range
 this re-measure drew, so the re-scan would change the rows' contents and not the partition. Until it
-is run, the actor and stage rows are lower bounds by construction.
+is run, the actor and stage rows are lower bounds by construction. *(RUN 2026-08-05 — see the
+re-scan section at the end of this file; the prediction was exact and the limitation is
+discharged.)*
 
 **One surprise worth its own line: `stage (load + reset)` is T0 direct and T4 transitive** — the
 only row in the file with that shape. Nothing in it touches hardware; `stage_load_window` (`$f95c`)
@@ -2705,3 +2718,39 @@ builders are green, and the routine that calls them is not portable until the PS
   its two addresses are on the boot resource-install path. What the 20-byte records at `$248d8`
   actually hold is still not established, so if that table turns out not to be the resource table,
   one row moves by 44 bytes.
+
+## The reapply + re-scan (2026-08-05): the staleness limitation, discharged
+
+The queue entry the re-measure above registered — `../reapply.sh` + `tools/hw_scan.sh`, the first
+since this file's figures were taken — is CLOSED. No code changed and no test moved (`make test`
+still green); what moved is the measurement, and it moved by exactly the predicted amounts.
+[`PORTABILITY.md`](PORTABILITY.md) §0c is the full record; what belongs here:
+
+* **Pinned before touching anything:** the OLD `out/hw_scan.tsv` (snapshotted first), classified
+  with today's `subsystems.tsv`, reproduces every committed figure bit-for-bit. Then the reapply
+  (212 `fn`, 202 `var`, 325 `cmt`, 36 `proto` applied; `../decomp.c` re-exported at 256/256
+  functions) and the re-scan.
+* **THE FOUR-ADDRESS PREDICTION WAS EXACT: 252 → 256 functions, 25,696 → 25,786 bytes.**
+  `$2b5a`/`$2b8e` (the 90 bytes in no F record) are measured at last — actor reads 16 fns / 954 B /
+  100.0 % and is no longer a lower bound; `$fe8c` split out of `$fe4a` (stage +1 fn, same bytes);
+  `$17f30` (`snd_psg_silence`) split out of `$17f24` and took all nine PSG accesses with it, so
+  `snd_stop` is direct-T0 / transitive-T4 now. Runnable 220 / 21,534 B → 223 / 21,624 B; the
+  PORTABILITY.md answer box counts **136 F records / 13,172 B verified — the byte figure now agrees
+  with this file's 134 / 13,172**, and the only remaining reconciliation row is the rad split.
+* **The `$fe4a` split surfaced a graph blind spot of the `$bca2` class: a fall-through between two
+  functions is no `E` edge.** `game_restart_reset` falls straight into `game_life_restart_reset`
+  (no `rts` between), and `$fe8c`'s other caller (`jsr $fe8c.l` at `$c00`) sits outside every F
+  record — so `$fe8c` and `hud_draw_lives` (`$e80c`) now count as UNREACHABLE (112 → 116 fns)
+  although the game reaches both. Tier- and runnable-neutral (the subtree is all T0); it
+  under-counts only the reachability column.
+* **`$bca2` REPRODUCES on the fully named DB** — in neither ledger, byte-identically. Newly
+  eliminated: the target thunk `$17b14` is an F record in both scans, so the scan script's silent
+  no-target else-path is not the mechanism. The register entry in batch 3 carries the narrowed
+  state; the diagnosis stays queued.
+* **The names round-trip is clean.** `dump_names.sh` returns all 212 `fn` / 202 `var` lines
+  verbatim (ctx tags stripped); its one extra line is `fn 0x3f8 _start`, the loader's own symbol.
+  `names.txt` remains the source of truth with nothing to merge.
+
+Still stale after this: nothing in the scan pipeline. The unmeasured bulk (29,068 bytes in no
+function body) is a coverage limit, not staleness; the HUD-subsystem partition and the `$bca2`
+diagnosis remain queued above.

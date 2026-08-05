@@ -10,8 +10,8 @@ the measurement.
 > portable today. The wall is a boot-time, disk-time and sound-time problem — but the gameplay code
 > is also the part this measurement covers least.**
 >
-> Ghidra has recovered 252 functions / **25,696 of the ~54,854 bytes** `notes/architecture.md`
-> calls CODE. Everything below is a statement about those 25,696 bytes and nothing else. Of the
+> Ghidra has recovered 256 functions / **25,786 of the ~54,854 bytes** `notes/architecture.md`
+> calls CODE. Everything below is a statement about those 25,786 bytes and nothing else. Of the
 > 87 game-logic functions (6,904 B) inside them, 85 touch no hardware — the two exceptions are
 > the game's PRNGs, which seed from the video address counter. Transitively **78 of them
 > (5,156 B) run end-to-end under the oracle: 74.7 % of what is measured, but 16.3 % of the 31,714
@@ -19,18 +19,18 @@ the measurement.
 > and both blit families (16 background-scroll routines, 12 sprite blitters) and the RAD depacker
 > are completely clean.
 >
-> **21,534 bytes are runnable end-to-end: 83.8 % of what is measured, 39.3 % of the program's
-> believed code.** Of the rest, 4,162 bytes are measured and blocked (T4/T5), and **29,158 bytes
+> **21,624 bytes are runnable end-to-end: 83.9 % of what is measured, 39.4 % of the program's
+> believed code.** Of the rest, 4,162 bytes are measured and blocked (T4/T5), and **29,068 bytes
 > are in no tier at all** because they are in no function body — mostly leaf routines reached only
 > through pointer tables (§8.1). What *is* measured and cannot be verified is concentrated in four
 > places: the **WD1772/DMA floppy driver**, the **YM2149 replay path**, the **Copylock**, and the
 > **boot chain** that calls all three.
 >
-> **And "runnable" is no longer the strongest thing this report can say.** 133 of the 252 functions
-> / **13,082 bytes are reconstructed and green** against the oracle — 50.9 % of what is measured,
-> 23.8 % of believed code, and 60.8 % of everything the harness can run at all. That is the
-> right-hand column below, and after §0b it is concentrated in seven subsystems, five of which are
-> complete.
+> **And "runnable" is no longer the strongest thing this report can say.** 136 of the 256 functions
+> / **13,172 bytes are reconstructed and green** against the oracle — 51.1 % of what is measured,
+> 24.0 % of believed code, and 60.9 % of everything the harness can run at all. That is the
+> right-hand column below, and after §0b–§0c it is concentrated in seven subsystems, five of which
+> are complete.
 >
 > But three of the four unverifiable places are measured *better* than the gameplay code the report
 > calls portable — only the Copylock, which cannot be read at all by construction, is measured worse:
@@ -44,17 +44,17 @@ the measurement.
 | copylock (protection) | 2,236 | 232 | 10.4 % | 0 |
 | boot | 2,002 | 1,072 | 53.5 % | 0 |
 | disk (FAT12 + file load) | 1,028 | 1,030 | 100.2 % | 0 |
-| actor (table + lifecycle) | 954 | 864 | 90.6 % | **864 B** (14 fns) |
+| actor (table + lifecycle) | 954 | 954 | 100.0 % | **954 B** (16 fns) |
 | map (collision + settle) | 924 | 924 | 100.0 % | **924 B** (9 fns) |
 | disk (WD1772 FDC + DMA) | 686 | 684 | 99.7 % | 0 |
 | text (message box) | 678 | 678 | 100.0 % | **678 B** (3 fns) |
-| stage (load + reset) | 458 | 458 | 100.0 % | **248 B** (2 fns) |
+| stage (load + reset) | 458 | 458 | 100.0 % | **248 B** (3 fns) |
 | input (IKBD / ACIA) | 312 | 300 | 96.2 % | 0 |
 | video (screen / palette / mode) | 240 | 236 | 98.3 % | 0 |
 | resource depack (RAD) | 220 | 216 | 98.2 % | **216 B** (3 fns) |
 | resource loader | 158 | 148 | 93.7 % | **44 B** (1 fn) |
 | interrupt (VBL) | 62 | 52 | 83.9 % | 0 |
-| **TOTAL** | **54,854** | **25,696** | **46.8 %** | **13,082 B** (133 fns) |
+| **TOTAL** | **54,854** | **25,786** | **47.0 %** | **13,172 B** (136 fns) |
 
 Read that table before any percentage below it. It is the only table here not produced by
 `hw_portability.py`; it is the intersection of four files, and each column says which:
@@ -69,22 +69,20 @@ few bytes past a region boundary (which is why the FAT12 row reads 100.2 %), and
 may sit mostly outside every function body (`game logic`, `boot`).
 
 **The verified column counts F records, and `STATUS.md` counts reconstructions — which is why it
-says 134 / 13,172 B and this says 133 / 13,082 B.** Same code, two counting rules; this file uses
-the scan's, because the scan is what every other column here is out of. The reconciliation is three
-entries long and each one is a place where Ghidra's function boundaries and the reconstruction's
-disagree:
+says 134 / 13,172 B and this says 136 / 13,172 B.** Same code, two counting rules; this file uses
+the scan's, because the scan is what every other column here is out of. Since the §0c re-scan the
+two rules agree on the BYTES, and the reconciliation is one entry long:
 
 | | reconstructions | F records | bytes |
 |---|---:|---:|---:|
 | `src/rad.c` — one reconstruction Ghidra splits into three (`rad_depack`, `rad_refill_bit_buffer`, `rad_get_bits`) | 1 | 3 | same 216 |
-| `$fe4a` — two routines with an entrant each (`game_restart_reset` falling through into `game_life_restart_reset`) that Ghidra folds into one | 2 | 1 | same 136 |
-| `$2b5a`/`$2b82`/`$2b8e` — three routines Ghidra has **one** function for, and not even a containing one: `F 0x2b82` is 20 bytes (its 12 plus the shared tail at `$2b7a`) against 110 bytes of code | 3 | 1 | 110 → **20** |
-| **net** | **134** | **133** | **13,172 → 13,082** |
+| **net** | **134** | **136** | **13,172 = 13,172** |
 
-So the whole 90-byte gap is the last row: `actor_hop_or_flip_side` and `actor_turn_and_launch` are
-reconstructed and green and sit in **no function body**, which is why the actor row's coverage reads
-90.6 % rather than 100 %. It is §8.1's blind spot appearing inside code this project has already
-ported, and it is the one place where "reconstructed and green" is an **under**-count.
+The other two rows this table used to carry — `$fe4a` folded over `$fe8c`, and the
+`$2b5a`/`$2b82`/`$2b8e` cluster reduced to one 20-byte function — were the Ghidra DB's staleness,
+not a boundary disagreement, and §0c's reapply + re-scan discharged them: all five routines are
+their own F records now, and the 90 bytes of reconstructed-and-green code that sat in **no function
+body** are measured. The actor row reads 100 % because of it.
 
 **"Game logic" is `subsystems.tsv`'s last row, `0x0–0x21810` — the catch-all.** It is not a
 positive classification; it is everything the specific ranges above it did not claim. So it is at
@@ -284,6 +282,9 @@ routine that calls them is not portable until (a) in §7 is built.
   `subsystems.tsv` already contains all four addresses, so the re-scan would change these rows'
   contents and not the partition. Until it is run, this file's actor and stage rows are **lower
   bounds by construction** and the 90 bytes above are the whole of the error.
+  *(Discharged 2026-08-05 — §0c ran the reapply + re-scan and it landed exactly on this
+  prediction: 256 functions, 25,786 bytes, actor +2 fns / +90 B, stage +1 fn and sound +1 fn at
+  unchanged bytes.)*
 * **The HUD has no subsystem, and that is now the largest known mis-partition.** Moving `$e80c` out
   of `boot` exposed it: the status panel is ~30 reconstructed functions spread over `$b346..$bd8a`,
   the restore routines at `$d93a..$db9x`, the effect stubs at `$10200..$103ee` and now `$e80c`, and
@@ -322,6 +323,73 @@ Two details of that table are load-bearing and easy to get wrong:
 The mixed-path guard (`osh_psg_mixed_paths`, direct PSG + XBIOS `Giaccess` in one run) is
 **inert here** as expected: the image contains one trap instruction and it is a `Super`, so there
 is no XBIOS call anywhere to arm it.
+
+## 0c. Re-scanned 2026-08-05 — the reapply + re-scan; the staleness limitation discharged
+
+This one is not a re-partition: `subsystems.tsv` did not change, no code changed, no test moved.
+`../reapply.sh` pushed `../names.txt` (212 `fn`, 202 `var`, 325 `cmt`, 36 `proto`) into the Ghidra
+DB and `tools/hw_scan.sh` re-dumped `out/hw_scan.tsv` — the first re-scan since the figures in this
+file were taken. **Pinned first:** the OLD scan, re-classified with today's `subsystems.tsv`,
+reproduces every committed figure above bit-for-bit (252 fns / 25,696 B / 220 / 21,534 runnable /
+28 / 3,348 at risk), so everything that moved below is the re-scan and nothing else.
+
+**§0b's prediction was exact.** `ApplyNames` created the four missing functions, and the
+measurement moved by precisely the announced amounts:
+
+| | before | after |
+|---|---|---|
+| functions / function bytes | 252 / 25,696 | **256 / 25,786** |
+| disassembled bytes | 27,986 | **28,076** |
+| runnable end-to-end | 220 fns / 21,534 B (83.8 %) | **223 / 21,624 B (83.9 %)** |
+| false-green risk | 28 fns / 3,348 B (13.0 %) | **28 / 3,348 B (13.0 %)** |
+| actor (table + lifecycle) | 14 fns / 864 B, coverage 90.6 % | **16 / 954 B, 100.0 %** |
+| stage (load + reset) | 3 fns / 458 B, runnable 2 / 248 B | **4 / 458 B, runnable 3 / 248 B** |
+| sound (YM2149) | 21 fns / 2,634 B, direct-T0 19 / 1,844 B | **22 / 2,634 B, direct-T0 20 / 1,856 B** |
+| verified column (answer box) | 133 F records / 13,082 B | **136 / 13,172 B** |
+
+The four F records, by what each did to the measurement:
+
+* **`$2b5a` `actor_hop_or_flip_side` (40 B) and `$2b8e` `actor_turn_and_launch` (58 B)** — the 90
+  bytes of reconstructed-and-green code that were in no function body. Both T0, both runnable; the
+  actor row is no longer a lower bound and "reconstructed & green" no longer under-counts.
+  (`$2b82` shrank 20 → 12 B: its F record loses the shared `$2b7a` tail, which now sits — and is
+  measured — inside `$2b5a`'s body, where the code lays it out.)
+* **`$fe8c` `game_life_restart_reset` (70 B)**, split out of `$fe4a` (136 → 66 B). Both T0 and
+  runnable, so the stage row gains a function at unchanged bytes.
+* **`$17f30` `snd_psg_silence` (82 B)**, split out of `$17f24` (94 → 12 B), and it takes **all
+  nine PSG accesses** of the old blob with it. `$17f24` (`snd_stop`) becomes direct-T0 — the sound
+  row's direct-T0 +12 B — but stays transitive-T4: its `bra.w` tail runs to `snd_stop_all_sfx`
+  (`$1aaea`), whose own tail-jump now resolves to `$17f30`'s entry (a `JUMP` edge where the old
+  scan had a `JUMPIN` into the middle of the blob).
+
+**One new blind spot surfaced by the split, stated with the result: a fall-through between two
+functions is no instruction, so it is no `E` edge.** `game_restart_reset` (`$fe4a`) ends with
+`clr.w $bd6a.l` and falls straight into `$fe8c` — real control flow in neither ledger, the same
+class as the `$bca2` drop (`STATUS.md`, batch 3). While the two shared one F record the graph hid
+it; split, `$fe8c` has **no incoming edge at all** (its other caller, `jsr $fe8c.l` at `$c00`, sits
+in code outside every F record and contributes nothing), so `$fe8c` and its callee `hud_draw_lives`
+(`$e80c`, 112 B) moved to the UNREACHABLE side of the roots table — 112 fns / 10,714 B → 116 /
+10,986 B — even though the game reaches both. Tier-neutral today (that whole subtree is T0), and
+the runnable/false-green columns are unaffected; it is the reachability column that now
+under-counts. `$2b5a` is NOT this case — it ends in `rts` before `$2b82`.
+
+**And the `$bca2` anomaly REPRODUCES on a fully named DB** — same four `E 0xbbca 0xbcd6 CALL`
+rows, same ten `I` rows, still no row of either kind for the `jsr 56(a1)` at `$bca2`. One
+candidate explanation is now eliminated: the jump-target thunk `$17b14` **is** an F record in both
+scans (14 B), so this is not `emitTransfers`' silent else-path (a resolved flow landing in no
+function). Still undiagnosed; the register entry in `STATUS.md` carries the narrowed state.
+
+Two checks that make the re-scan trustworthy as a baseline: the OLD-scan pin above, and a
+`dump_names.sh` round-trip — every one of the 212 `fn` and 202 `var` lines in `../names.txt` comes
+back verbatim (`# ctx` tags stripped, as specified); the dump's only extra line is `fn 0x3f8
+_start`, the loader's own entry symbol.
+
+**§2–§8 below still print the 2026-08-02 report.** Every figure they quote differs from today's
+scan by exactly the deltas in this section and no other — no tier boundary moved, no hardware site
+appeared or vanished (126 classified accesses before and after; the nine PSG sites merely
+re-attributed from `FUN_00017f24` to `snd_psg_silence`), and the name strings are now
+`../names.txt`'s. The remaining limitation is unchanged from §0b: 29,068 bytes are still in no
+function body, and nothing here reached one of them.
 
 ## 2. Method, and what it can and cannot see
 
