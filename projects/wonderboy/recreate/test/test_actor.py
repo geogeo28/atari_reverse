@@ -34,11 +34,11 @@ import pytest
 
 import harness
 import leaf
-from leaf import (BRANCH_EXTENSION, RTS, addq_b_d16, backward_branch, branch, branch_over, bsr_w,
-                  case_salt, cmpi_b_dn, dbf, dbf_over, keyed_block, lea_abs_l, lea_d16, longword,
-                  lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_w_abs_l_dn, move_w_imm_dn,
-                  move_w_ind_dn, moveq_0_dn, opcode, program_writes, s16, sub_w_dn_dn, subi_w_dn,
-                  tst_w_abs_w, u16, word)
+from leaf import (BRANCH_EXTENSION, RTS, add_w_dn_dn, addq_b_d16, backward_branch, branch,
+                  branch_over, bsr_w, case_salt, cmpi_b_dn, dbf, dbf_over, keyed_block, lea_abs_l,
+                  lea_d16, longword, lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_l_imm_abs_l,
+                  move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn, movea_l_abs_l, moveq_0_dn, opcode,
+                  program_writes, s16, sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
 from layout import wb
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -145,10 +145,6 @@ def movea_l_an_an(destination, source):
     return opcode(0x2048 | (destination << 9) | source)
 
 
-def movea_l_abs_l(reg, addr):
-    return opcode(0x2079 | (reg << 9)) + longword(addr)
-
-
 def move_w_dn_postinc(reg, destination):
     return opcode(0x30c0 | (destination << 9) | reg)
 
@@ -160,14 +156,6 @@ def move_w_imm_ind(reg, value):
 def move_w_d16_ind(source, displacement, destination):
     """`move.w d16(As),(Ad)` — the projection's sprite arm."""
     return opcode(0x3080 | (destination << 9) | 0x28 | source) + word(displacement)
-
-
-def move_l_imm_abs_l(value, addr):
-    return opcode(0x23fc) + longword(value) + longword(addr)
-
-
-def add_w_dn_dn(destination, source):
-    return opcode(0xd040 | (destination << 9) | source)
 
 
 def cmp_w_dn_dn(destination, source):

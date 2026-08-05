@@ -231,6 +231,19 @@ def movea_l_abs_w(reg, addr):
     return opcode(0x2078 | (reg << 9)) + word(addr)
 
 
+def movea_l_abs_l(reg, addr):
+    """`movea.l <abs>.l,An` — the long form, for a pointer held at or above $8000. FOUR batteries
+    spelt this (test_actor.py, test_scroll.py, test_map.py, test_stage.py), which is the most any
+    encoding here was duplicated."""
+    return opcode(0x2079 | (reg << 9)) + longword(addr)
+
+
+def move_l_imm_abs_l(value, addr):
+    """`move.l #imm,<abs>.l` — how a routine plants a whole pointer, and how $fb06 plants all
+    sixteen of the scroll engine's buffer row cursors."""
+    return opcode(0x23fc) + longword(value) + longword(addr)
+
+
 def lea_indexed(reg, index, displacement=0, longword_index=False):
     """`lea d8(An,Dn.w),An` — the extension word is the whole of the index encoding.
 
@@ -250,6 +263,13 @@ def move_w_ind_dn(reg, base, displacement=0):
     return opcode(0x3028 | (reg << 9) | base) + word(displacement)
 
 
+def move_w_postinc_dn(reg, base):
+    """`move.w (An)+,Dn` — how every one of these routines walks a word cursor. The base register is
+    always spelt out: test_scroll.py's own copy took it as read (it only ever steps a0), which is a
+    constant hidden in an encoder rather than in the call that knows it."""
+    return opcode(0x3018 | (reg << 9) | base)
+
+
 def move_b_d16_dn(reg, base, displacement):
     """`move.b d16(An),Dn` — how the collision probes read a map byte out of a record."""
     return opcode(0x1028 | (reg << 9) | base) + word(displacement)
@@ -257,6 +277,17 @@ def move_b_d16_dn(reg, base, displacement):
 
 def move_w_abs_l_dn(reg, addr):
     return opcode(0x3039 | (reg << 9)) + longword(addr)
+
+
+def move_b_abs_l_dn(reg, addr):
+    """`move.b <abs>.l,Dn` — how a routine reads a hardware port (the PSG read-back, an MFP byte)."""
+    return opcode(0x1039 | (reg << 9)) + longword(addr)
+
+
+def move_b_imm_abs_l(value, addr):
+    """`move.b #imm,<abs>.l` — the immediate occupies a WORD in the stream even for a byte move, so
+    the byte travels in its low half."""
+    return opcode(0x13fc) + word(value & 0xff) + longword(addr)
 
 
 def tst_w_abs_w(addr):
@@ -276,6 +307,14 @@ def cmpi_b_dn(reg, value):
 
 def sub_w_dn_dn(destination, source):
     return opcode(0x9040 | (destination << 9) | source)
+
+
+def add_w_dn_dn(destination, source):
+    return opcode(0xd040 | (destination << 9) | source)
+
+
+def move_w_dn_dn(destination, source):
+    return opcode(0x3000 | (destination << 9) | source)
 
 
 def move_w_imm_dn(reg, value):

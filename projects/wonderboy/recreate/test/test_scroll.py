@@ -54,9 +54,10 @@ import harness
 import leaf
 from leaf import (RTS, branch, branch_over, bsr_w, case_salt, clr_b_abs_l, clr_w_abs_l, dbf,
                   keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed, longword, merge_bands,
-                  move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn, movea_l_abs_w, moveq_0_dn,
-                  mulu_w_imm_dn, opcode, program_writes, s16, st_abs_l, sub_w_dn_dn, subi_w_dn,
-                  subq_w_abs_l, tst_b_abs_l, tst_w_abs_l, tst_w_abs_w, u16, word)
+                  move_l_imm_abs_l, move_w_abs_l_dn, move_w_dn_dn, move_w_imm_dn, move_w_ind_dn,
+                  move_w_postinc_dn, movea_l_abs_l, movea_l_abs_w, moveq_0_dn, mulu_w_imm_dn,
+                  opcode, program_writes, s16, st_abs_l, sub_w_dn_dn, subi_w_dn, subq_w_abs_l,
+                  tst_b_abs_l, tst_w_abs_l, tst_w_abs_w, u16, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -507,10 +508,6 @@ def clr_l_abs_l(addr):
     return opcode(0x42b9) + longword(addr)
 
 
-def move_l_imm_abs_l(value, addr):
-    return opcode(0x23fc) + longword(value) + longword(addr)
-
-
 def addi_l_imm_abs_l(value, addr):
     return opcode(0x06b9) + longword(value) + longword(addr)
 
@@ -523,10 +520,6 @@ def move_w_abs_l_abs_l(source, destination):
     return leaf.MOVE_W_ABS_L_ABS_L + longword(source) + longword(destination)
 
 
-def movea_l_abs_l(reg, addr):
-    return opcode(0x2079 | (reg << 9)) + longword(addr)
-
-
 def neg_w_dn(reg):
     return opcode(0x4440 | reg)
 
@@ -537,10 +530,6 @@ def add_w_d1_abs_l(addr):
 
 def sub_w_d1_abs_l(addr):
     return opcode(0x9379) + longword(addr)
-
-
-def move_w_postinc_dn(reg):
-    return opcode(0x3018 | (reg << 9))
 
 
 def move_w_dn_postinc_a1(reg):
@@ -591,10 +580,6 @@ def addq_l_imm_an(amount, reg):
 
 def subq_w_imm_dn(amount, reg):
     return opcode(0x5140 | ((amount & 7) << 9) | reg)
-
-
-def move_w_dn_dn(destination, source):
-    return opcode(0x3000 | (destination << 9) | source)
 
 
 def sub_w_abs_l_dn(reg, addr):
@@ -970,7 +955,7 @@ def _preshift_cell():
     zero-extended into longwords and rotated, so the two pixels that leave the top of each word end
     up in the longword's high half."""
     return (_clear_plane_registers()
-            + b"".join(move_w_postinc_dn(reg) for reg in range(PLANES))
+            + b"".join(move_w_postinc_dn(reg, A0) for reg in range(PLANES))
             + b"".join(shift_imm_dn(ROL_L_IMM, PRESHIFT_BITS, reg) for reg in range(PLANES)))
 
 

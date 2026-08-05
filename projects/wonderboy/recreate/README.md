@@ -75,6 +75,9 @@ include/actor.h            the followed actor's record, the two tests over it, t
 include/text.h             the message box: the once-a-frame driver's three arms, the glyph
                            plotter's two entry points, and why the prelude calls the plotter (the
                            original has no `rts` in it — it falls through)
+include/stage.h            the STAGE LOADER — prototypes, and why it is not scroll.h: the scroll
+                           engine maintains the eight pre-shifted buffers a frame at a time, this
+                           tier BUILDS them once when a stage is entered
 include/scroll.h           the whole background scroll subsystem — prototypes, the queue's shape,
                            why a step returns a FLAG (the original returns it through its own
                            return address, and vertically it consumes TWO calls that way), and why
@@ -113,6 +116,17 @@ src/text.c                 the WHOLE text subsystem. The driver ($bd8a): compose
                            re-blit that buffer to screen_back every frame until its countdown ends.
                            The plotter ($bf4e/$bf5e): 32 bytes into the buffer, and the
                            character-code prelude that falls into it
+src/stage.c                the stage loader. bg_build_buffer ($fa30) draws the map's visible
+                           window into pre-shifted copy 0 out of a tile bank;
+                           bg_build_preshifted_copies ($fd46) derives the other seven from it two
+                           pixels at a time, each 128-byte scanline closing as a ring;
+                           stage_publish_scroll_state ($fb06) writes the limits, the map cursor and
+                           the sixteen buffer row pointers src/scroll.c then steps.
+                           stage_reset_state ($fed2) is the per-stage state reset (and an overwrite
+                           of the last eight entries of WB_TILE_INDEX_TABLE, which the .PRG ships
+                           no part of — it lies past the image and is loaded from disk),
+                           resource_table_relocate ($fe1e) the one-time fixup of a loaded table,
+                           and $e110's three routines the banners plotted into copy 0
 src/scroll.c               the whole scroll subsystem, producer and consumer. The ENGINE ($7522..
                            $8228 + $d28): the frame queue and its dispatch pass, four request
                            handlers, four position steps, the two column fills that redraw the
@@ -142,6 +156,9 @@ test/copylock.py           the Copylock stub — two mechanisms, and the memory-
 test/test_copylock.py      that stub's battery: each mechanism over its own domain, the two guards on
                            the witness's inputs, and the negative controls for an unstubbed run
 test/test_poked_input_guard.py  the kit waiver this project is the only user of, and its three guards
+test/test_audio_capture.py  the kit's opt-in audio-capture mode, pinned from this game's suite for
+                           test_poked_input_guard.py's reason: the sound module's mixer read-back
+                           serves as the 68000 code the kit itself cannot carry
 test/test_rad_depack.py    the depacker's differential: the game's own .RAD corpus (41 files, 45
                            streams), decoded by both sides, plus the failure branch
 test/test_effects.py       the effect/state leaves' differential: seeded destinations, both sides of
@@ -185,6 +202,13 @@ test/test_actor.py         the actor tier's differential: a routine whose WHOLE 
                            reading of a mode flag from its `bpl` one, the 16-bit ADD whose wrap the
                            reach test's compare reads, and an address-keyed seeding of all three
                            actor tables and the screen array they project into
+test/test_stage.py         the stage loader's differential: whole-body entry pins for all eight
+                           routines, the sixteen published row pointers derived from the scroll
+                           engine's own invariant and required to equal the shipped instruction
+                           bytes, a map band seeded at every cursor $fa30's own arithmetic lands on
+                           (never off a coordinate the case has to hand), the whole 22,528-byte
+                           copy 0 compared against a model, the seven derived copies and the ring
+                           their carry word closes, and the banner cursor compared three ways
 test/test_text.py          the text subsystem's differential. The plotter: 32 bytes into the
                            4-plane buffer with the write set stated exactly, the returned cursor
                            compared against both sides, a cell walk that shows the +1/+7 alternation

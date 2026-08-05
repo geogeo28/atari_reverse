@@ -8,30 +8,44 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 118/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 126/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
-actor table's LIFECYCLE (310 bytes) and the COLLISION MAP the actors walk on, both probes and both
-settles and the tier above them (892 bytes) — 11,578 bytes in all, 45.1 % of everything
+actor table's LIFECYCLE (310 bytes), the COLLISION MAP the actors walk on, both probes and both
+settles and the tier above them (892 bytes), and the STAGE LOADER that fills the scroll engine's
+eight buffers in the first place (1026 bytes) — 12,604 bytes in all, 49.1 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures.**
-`make test`: 1522 cases green, of which 77 are the foundation battery below, 48 are the depacker's
+`make test`: **1587 cases green in what this batch commits** — 1522 before it plus the 65 of
+`test/test_stage.py`. Of the 1522: 77 are the foundation battery below, 48 are the depacker's
 differential, 187 are the first gameplay batch's, 485 are the status panel's — that last figure was
 169 after batch 2, 339 after batch 3 and 481 after batch 10, and the whole of the growth is
 `test/test_hud.py` — 231 are the background scroll subsystem's (65 after batch 5, 148 after batch 6),
-222 are the actor tier's (113 after batch 8), 105 the text subsystem's (56 after batch 8) and 167 the
-collision map's, which is batch 10's new `test/test_map.py` (58 when it landed). A row appears in the
-table at the end when a function is reconstructed and green; everything else in `../decomp.c` and
-`../names.txt` is still only *named*, not ported.
+222 are the actor tier's (113 after batch 8), 105 the text subsystem's (56 after batch 8), and 167
+the collision map's, which is batch 10's new `test/test_map.py` (58 when it landed).
+**A `make test` run in a working tree may report MORE than 1587**, because `test/test_audio_capture.py`
+— which pins a KIT mode from this game's suite for `test_poked_input_guard.py`'s reason — is a
+concurrent session's battery, landing in its own commit and still growing; it is not part of this
+batch's count and nothing here rests on it. A row appears in the table at the end when a function is
+reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only *named*,
+not ported.
 
-**`PORTABILITY.md`'s "reconstructed and pinned" column is five functions / 454 bytes stale** as of
-batch 11 — it is a MEASUREMENT (`tools/hw_portability.py` re-run over `../out/hw_scan.tsv`), like the
-2026-08-02 re-measure at the end of this file, and it is queued as one rather than hand-edited here.
+**`PORTABILITY.md`'s "reconstructed and pinned" column is thirteen functions / 1,480 bytes stale**
+as of batch 12 — it is a MEASUREMENT (`tools/hw_portability.py` re-run over `../out/hw_scan.tsv`),
+like the 2026-08-02 re-measure at the end of this file, and it is queued as one rather than
+hand-edited here. `subsystems.tsv` is the same queued measurement: the eight collision-map routines
+and now the eight stage-loader ones sit in the "game logic" catch-all, and three of the latter
+belong squarely with `video (background scroll)`.
 
 **`panel_refresh_frame` ($b346) now has NINE of its ten callees reconstructed.** The tenth, `$bbca`,
 is the sound-module blocker batch 3 registered, and it is reached by an unconditional `bsr` — so
 `$b346` itself stays unported and no seeding can change that. The reasoning is in "The status
 panel's third tier" below.
+
+**AND THE TIER THAT FILLS THOSE BUFFERS BEFORE THE ENGINE EVER RUNS IS BATCH 12'S** — see "The
+stage loader (batch 12)" at the end. `bg_build_buffer` ($fa30) draws the map's window into copy 0,
+`bg_build_preshifted_copies` ($fd46) derives the other seven, and `stage_publish_scroll_state`
+($fb06) writes the very row pointers and position words the engine then steps.
 
 **THE WHOLE BACKGROUND-SCROLL STORY IS CLOSED, PRODUCER AND CONSUMER.** All fifteen routines of the
 `$7522..$8228` cluster plus the request raiser at `$d28` that drives it — sixteen in all — are the
@@ -551,6 +565,14 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x1170` | `actor_step_right_against_map` | 152 | verified | 32 cases: 5 walks mirroring `$10a2`'s (clear, blocked then clear, blocked across two cells, a zero step, and a block it cannot back out of), the player-only byte clear and a type that must not get it, 8 about the CLAMP alone (the park, the literal-`$0` byte over a `d6` that still says CLEAR, the A32/default limit pair, a `bge` boundary triple, the signed compare a wrapped probe reads, and a bias add that wraps the word), 3 that separate what d0's low word carries per exit (the limit, the column, the parked x), 4 of the shared tail entered from this body including the ASYMMETRY case, 2 step high halves, the entry high halves, and the probe row on a cell boundary — the mutation sweep's finding, and the one case that pins `subq.w #1,d1` for BOTH probes. Plus 3 whole-image scans (41 `bsr` callers and no `jsr`, the three `bra`s into `$10a2`'s tail with no `rts` in this body, and `$83b2`'s three operand sites with the `$fb18` bias the limit was built with). Every case states all seven registers the original leaves against a model, not just the two the reconstruction owes + whole-body entry pin |
 | `0x1492` | `actor_settle_on_tile_1_or_2` | 98 | verified | 16 cases: 7 footprint scans reaching the ground at 0, 1 and 2 cells along and through the sub-cell test, each in BOTH accepted tile codes (which is the `cmpi.b #$2,(a6)` a port carrying $1400's single test would fail), `$23` under the whole footprint refused, the landing arm's `andi.w #$fff0` on a mid-cell y, a flag seed asserting `9(a0)` is absent from the write set entirely, BOTH ways into the enclosed `actor_accelerate_fall` (the `blt.w` at $14c0 and the fall-through at $14d2), the terminal speed that leaves the byte unwritten, a negative span that must still reach the sub-cell test, a span high half and the entry high halves. Every case states the write set exactly and all fifteen reported registers against the model + a whole-body entry pin of 130 bytes, of which the enclosed 32 are asserted as `actor_accelerate_fall`'s own address, length and bytes (130 = 98 + 32) |
 | `0x1334` | `actor_fall_and_settle` | 138 | verified | 17 cases, against a model that COMPOSES its five callees' models over one shared memory: the head's cell taken from the record's own x at its pre-step y (a different column AND row from the settles'), the type test, the three `clr.w`s each with its word seeded nonzero, the `tst.w $1516.l` early exit whose write set is the flag word ALONE, the same mode word off the tile, the moving-bit return that happens after the head has run, the step over 4 speeds including `$ff`, a 3-point sweep of `cmp.w d1,d0 / ble` (one short, exactly on, one past) told apart by the speed byte's value, the landed bit bypassing that test, the accelerate arm still running the platform scan, the second `bsr $13be` starting that scan over (asserted on a6), and the settle cells keyed to the MOVED y in a different row from the seeded one. Plus scans: 46 `bsr` callers and no other entrance, the closing `bra.w $1400` and exactly two `rts` of its own, both absolute encodings of all three globals it touches with the data spellings classified, and the two sites in the image that compare a map byte against `$33` |
+| `0xfa30` | `bg_build_buffer` (`src/stage.c`) | 214 | verified | 10 cases over a map seeded at every cursor the routine's OWN arithmetic lands on: the indexed walk and the RAW one (which skips the index table, so the same bytes name different tiles), 4 start cells, a start row whose WORD index SIGN-EXTENDS below the map, a tile whose `number * 128` does not fit a word (the `lsl.l`/long index), a stride BELOW the 16 columns just walked — where `subi.w`/`adda.l` advance the cursor ~64 KB instead of stepping it back — and a stride of exactly 16, where all eleven rows read the same cells. Each states the write set as copy 0 EXACTLY and compares all 22,528 bytes against a model + whole-body entry pin |
+| `0xfb06` | `stage_publish_scroll_state` | 320 | verified | 9 cases: 4 map headers — one EXACTLY on `WB_BG_LIMIT_X_BIAS` / `_Y_BIAS` (both limits land on zero, which a clamping port also produces) and one a cell BELOW each, where the limits wrap to `$fff0` and a clamping port does not — then 4 start cells, then the `st`/`clr.w` pair that shows a Scc writes ONE byte. Every case seeds `WB_MAP_ROW_STRIDE` APART from the header's own width — the cursor reads the global and the limits read the header, and while the two shared an address a mutation swapping them survived. States the write set exactly and derives all sixteen row pointers from `WB_BG_BUFFER_ROWS`' invariant; a structural case requires the SHIPPED instruction bytes to spell those same sixteen + whole-body entry pin |
+| `0xfd46` | `bg_build_preshifted_copies` | 198 | verified | 3 cases, each seeding all eight buffers address-keyed and comparing 157,696 derived bytes against a model that walks the same 7 x 176 scanlines: the chain (a0/a1 never reloaded, so pass n reads copy n and writes copy n+1), the RING each 128-byte row closes through `WB_BG_BUILD_CARRY`, and the carry band as the only write outside the buffers + whole-body entry pin |
+| `0xfe1e` | `resource_table_relocate` | 44 | verified | 5 cases: the relocation itself (each record's leading offset plus the table's own base), a stamped signature that must write NOTHING at all, and 3 `dbf` counts including 0 — which relocates ONE record, since no value of the word can make the walk skip the first + whole-body entry pin |
+| `0xfed2` | `stage_reset_state` | 112 | verified | 4 cases (2 salts plus 2 structural): the 18-byte block, the panel's four timer words with `WB_PANEL_FRAME_DELAY` seeded rather than cleared, `clr.l $1514.w` covering BOTH tile-33 words, the three mode flags and the scroll's follow gate, `actor_table_selected` back to the default table, and the eight `WB_TILE_INDEX_TAIL` entries — an OVERWRITE of the last eight of a table the .PRG ships no part of (`$21e90` is past the image and the whole 256 entries are loaded from disk), so what the disk holds there beforehand is unpinned. Every band seeded address-keyed WITH a margin either side + whole-body entry pin |
+| `0xe16a` | `bg_plot_banner_glyph` | 48 | verified | 6 cases: 4 characters of the game's own second font x the two cursor parities, each stating the 32 written bytes exactly and comparing the advanced cursor THREE ways — model, the oracle's a1, and the reconstruction's return + whole-body entry pin |
+| `0xe140` | `bg_plot_banner` | 42 | verified | 3 cases: both shipped records plotted glyph by glyph with the write set stated exactly, the a6 that comes back pointing AT the terminator (a `tst.b`/`bpl` does not consume it), and a registration case for the reading no shipped record can distinguish — see the batch-12 section + whole-body entry pin |
+| `0xe110` | `bg_plot_round_banner` | 48 | verified | 5 cases: a meter exactly at its maximum (which scores `WB_BG_BANNER_BONUS` through `bcd_add_score_bd70` and plots the second banner) against 3 that are not, plus a structural read of the two `lea`s that name the records. Each separates the plotted bytes from the score's own band and requires the score to move if and only if the compare was an EQUALITY + whole-body entry pin |
 
 ### The .RAD depacker
 
@@ -2203,3 +2225,220 @@ ties `test_map.py`'s copy to `../names.txt`'s address for the routine and to the
   catch-all, and the "reconstructed and pinned" column is five functions / 454 bytes stale. Re-drawing
   the boundary and re-running `tools/hw_portability.py` is a MEASUREMENT, queued as one — batch 10
   made the same call for the same reason.
+
+### The stage loader (batch 12): what fills the buffers the scroll engine maintains
+
+**THE $fxxx CLUSTER IS THE OTHER HALF OF THE BACKGROUND-SCROLL STORY, AND THAT IS THE BATCH'S
+FINDING.** Batches 5–7 closed the engine that MAINTAINS the eight pre-shifted buffers — one
+uncovered tile column or one row pair per frame — and the consumer that blits one of them to the
+screen. Nothing had read the tier that fills them in the first place. It is `$f95c`'s three callees,
+back to back:
+
+* **`$fa30` (`bg_build_buffer`, 214 bytes)** draws the map's visible window — eleven tile rows of
+  sixteen cells — into copy 0 at `$44000`, one 128-byte tile bitmap per cell laid down a
+  `WB_BG_BUFFER_LINE` at a time.
+* **`$fd46` (`bg_build_preshifted_copies`, 198 bytes)** derives copies 1..7 from it, `rol.l #2` a
+  plane word at a time. `a0` and `a1` are `lea`d ONCE and never reloaded, so pass n reads copy n and
+  writes copy n+1 — which is what makes the eight copies tile `$44000..$70000` at all, and it is the
+  whole-buffer form of `bg_scroll_preshift_rows`, which does the same thing to one fresh row pair.
+* **`$fb06` (`stage_publish_scroll_state`, 320 bytes)** writes the two limits, the map cursor, the
+  position words, the cleared ring cursors and the SIXTEEN `WB_BG_BUFFER_ROWS` longwords the engine
+  then steps. **The seam is asserted from both sides**: `test_stage.py` derives all sixteen from
+  `WB_BG_BUFFER_BASE + copy * WB_BG_BUFFER_LEN + row * WB_BG_BUFFER_LINE` — the invariant
+  `src/scroll.c`'s vertical steps preserve — and requires the SHIPPED instruction bytes to spell
+  exactly those. So this batch and the scroll batch cannot disagree about a buffer address without
+  failing on the .PRG's own bytes.
+
+**THE MAP HEADER IS TWO WORDS, WHICH IS WHAT THE `+4` WAS.** `WB_MAP_DATA_ROW` sat four bytes above
+`WB_MAP_ROW_STRIDE` with only "indexed from its THIRD byte" to explain it, and batch 10 found the
+same 4 on the collision map three more times (`WB_COLLISION_MAP_CELLS`, `map_stamp_block`'s
+`addi.w #$4`). `$fb06` reads BOTH header words — `move.w (a0)+,d0` twice, each `<< 4` and biased
+into `WB_BG_SCROLL_LIMIT_X` / `_LIMIT_Y` — so the header is {cells across, cells down} and the cell
+data starts past it. `test_the_map_header_is_the_collision_maps_own_cell_bias` states the four
+spellings as one number.
+
+**THE OTHER FOUR ARE THE SAME TIER'S HOUSEKEEPING.** `$fed2` (`stage_reset_state`) clears the
+per-stage state block and — the find — writes the LAST EIGHT entries of `WB_TILE_INDEX_TABLE`
+itself. **The .PRG ships NONE of that table**: `$21e90` is past the program's last byte (`$218d0`),
+so all 256 entries are loaded from disk at run time and this reset OVERWRITES the last eight of
+them — what the disk holds there beforehand is pinned by nothing, here or anywhere (an earlier
+reading of this, that the shipped table was "248 entries of truth", was wrong on both surfaces and
+is corrected in `../names.txt` and `include/wonderboy.h` too). It also `clr.l $1514.w`,
+the one site in the image that clears batch 11's `tile_33_flag` and `tile_33_mode` together.
+`$fe1e` (`resource_table_relocate`) turns each 20-byte record's leading offset into an absolute
+pointer, ONCE, behind an `'E'` signature byte — the conversion is in place and is not idempotent,
+which is the whole reason the byte exists. And `$e110`'s three routines plot "ROUND BONUS" and, when
+the meter is exactly at its maximum, "PERFECT!  10000 PTS" into copy 0 out of a **second font** at
+`$1387c`, which a whole-image scan of both absolute encodings finds exactly ONE operand site for —
+`$e156`, inside `bg_plot_banner`. The cell layout is `src/text.c`'s (32-byte glyphs, one byte per
+plane, the +1/+7 alternation) over a 128-byte line rather than an 88-byte one, so the two plotters
+are two routines over one layout: the constants are shared and the code is not.
+
+**THREE SEMANTICS REPRODUCED RATHER THAN TIDIED, each with a case and a mutation:**
+
+* **The per-row map skip is UNSIGNED.** `moveq #0,d7 / move.w d2,d7 / subi.w #$10,d7 / adda.l d7,a0`
+  subtracts the sixteen columns just walked from the row stride in a WORD, in a register whose high
+  half is zero, and then adds the whole LONGWORD — so a stride below 16 advances the cursor by
+  nearly 64 KB where a signed reading steps it back.
+* **The cell index is a WORD and the `lea` SIGN-EXTENDS it**, so a start row past `$7fff` names a
+  cell BELOW the map; while **`lsl.l #7,d7 / lea 0(a1,d7.l),a1` is a LONG shift and a LONG index**,
+  so a tile number past 511 names a bitmap more than 64 KB above the bank rather than a wrapped one.
+* **Each pre-shifted scanline closes as a RING.** The first cell's shifted-out bits are held in
+  `bg_build_carry` (`$fe0c`, four words of scratch between `$fd46`'s `rts` and `stage_map_ptr`)
+  across the whole 128-byte row and ORed into the LAST cell, so a pixel leaving a row's left edge
+  re-enters at its right. That is the same ring the horizontal scroll reads, and it is why the
+  routine cannot be written as a plain left shift.
+
+**THE MUTATION SWEEP FOUND THREE HOLES AND THEY WERE ALL THE SAME HOLE.** 22 mutations, each with
+the `.so` DELETED before the rebuild and the source restored and byte-compared afterwards. The
+restored run reads 1585 green for the early mutations and 1586 for the later ones: the suite GREW BY
+ONE mid-sweep, when the sweep's own finding about the terminator became
+`test_the_terminator_is_a_sign_test_and_the_records_cannot_say_so`. (Both figures are the
+committed-scope count of the time; the batch closes at 1587 after the below-the-bias limits case.)
+Three survived the first sweep, and every one of them was a case
+seeded in the wrong PLACE — batch 10's finding for the third time:
+
+* **The level map was `WB_MAP_ROW_STRIDE` itself.** `$fb06` reads the header off the level map and
+  the cursor's stride off the GLOBAL, and while the two were one address no case could tell them
+  apart: a mutation reading the header where the routine reads the global reddened NOTHING. The map
+  moved to a band of its own and every case now seeds the two APART (`reddens 6`).
+* **The tile numbers were all shipped ones**, so `number * 128` never left 16 bits and shifting it
+  as a word was invisible. A case now seeds an index entry past 511 and the bitmaps beside it
+  (`reddens 1`).
+* **The map band was keyed off `MAP + 4` rather than off the cursor the routine computes.** So the
+  negative-index case read UNSEEDED zeros at both the right address and the wrong one, and the two
+  agreed — the "zeros over zeros" shape, arrived at from the geometry side. `build_cursors()` now
+  transcribes the routine's own arithmetic and yields all ELEVEN cursors, and a band is seeded at
+  each with a cell of margin (`reddens 1`). This is the third batch in a row where a mutation, not a
+  review, is what said the geometry was wrong; the rule is already written up in
+  [`docs/methodology.md`](../../../docs/methodology.md).
+
+**Final sweep: 22 mutations, 21 killed, 1 survivor.** The row skip read as a signed step back
+reddens 1; the start cell index zero-extended 1; the tile number shifted as a word 1; the tile's
+last row stepping like the fifteen above it 10; the raw-tile test inverted 10; the map header read
+as one word 10; the horizontal limit built with the vertical bias 8; the bottom row pointer
+published at row 0 8; the `st` written as a word 8; the map cursor taking the level map's own stride
+6; the pre-shift's ring carry dropped 3; rotating by one pixel 3; its cell loop one cell long 3; the
+carry taken from the shifted word's LOW half 3; the relocation running the count rather than the
+count plus one 3; its signature check dropped 1; the panel delay reset to zero 4; the tile-33 pair
+cleared as a word 4; the glyph's two advances swapped 12; its planes written one byte apart 12; the
+meter compare made an inequality 1.
+
+**THE ONE SURVIVOR IS A COVERAGE LIMIT OF THE GAME'S OWN DATA, AND IT IS REGISTERED AS ONE.**
+`$e164` is `tst.b (a6)` and `$e166` a `bpl`, so ANY byte from `$80` up ends a banner string — but
+both records the image ships end with exactly `$ff`, and `$e140`'s only two callers are `$e110`'s,
+which pass exactly those two. Reading the terminator as `== $ff` therefore cannot be told apart
+from the sign test without fabricating a record, which is what CLAUDE.md's coverage rule refuses.
+What IS pinned is the instruction: the whole-body entry pin spells the `tst.b`/`bpl`, and
+`test_the_terminator_is_a_sign_test_and_the_records_cannot_say_so` states the data that makes the
+difference unobservable and fails if a shipped record ever stops ending in `$ff`.
+
+**FIVE ENCODERS WENT TO `test/leaf.py`, AND THE PARAGRAPH THAT SAID OTHERWISE WAS FALSE.** This
+section first claimed `test_stage.py` spelt `move_w_postinc_dn`, `movea_l_abs_l`, `mulu_w_dn_dn`,
+`add_w_dn_dn` and `move_l_dn_dn` "for the FIRST time in this directory". It did not: every one of
+them already existed elsewhere, and the third-user trigger had already fired on four of them —
+`movea_l_abs_l` was defined identically in **four** batteries (`test_actor.py`, `test_scroll.py`,
+`test_map.py`, `test_stage.py`) and `add_w_dn_dn`, `move_w_postinc_dn`, `move_l_imm_abs_l` and
+`move_w_dn_dn` in **three** each. All five now live once in `test/leaf.py` and all four batteries
+import them. `move_w_postinc_dn` took the two-argument `(reg, base)` form on the way: `test_scroll.py`
+alone spelt it `(reg)` with `a0` baked into the opcode, which is a constant hidden in an encoder, and
+its one call site now names `A0`. **The whole-body entry pins are the proof the hoist changed
+nothing** — all 684 cases of the four batteries still match the shipped image byte for byte.
+
+**What is STILL at two users is registered, and it is a longer list than one battery's.** Spelt
+identically in exactly two batteries: `mulu_w_dn_dn`, `move_l_dn_dn`, `cmpi_b_ind`, `move_b_imm_ind`
+(`test_map.py` + `test_stage.py`); `swap_dn`, `move_w_dn_abs_l` (`test_scroll.py` + `test_stage.py`);
+`clr_l_postinc`, `move_l_imm_postinc`, `movea_l_an_an`, `move_w_dn_postinc` (`test_actor.py` +
+`test_stage.py`); `bit_op_d16`, `clr_b_d16`, `clr_w_dn`, `cmp_w_dn_dn`, `move_w_d16_ind`
+(`test_actor.py` + `test_map.py`); `addi_w_dn`, `andi_w_dn`, `neg_w_dn`, `tst_w_dn`
+(`test_scroll.py` + `test_map.py`); `btst_imm_dn` (`test_stage.py` + `test_text.py`);
+`move_w_abs_l_abs_l` (`test_scroll.py` + `test_text.py`). Usual terms — **trigger** = a third user;
+**home** = `test/leaf.py` — the same line `_put_word`, `_assert_writes` and `_accelerate_fall_entry`
+are held at.
+
+`WB_TEXT_CELL_ADVANCE_EVEN` / `_ODD` and `WB_TEXT_GLYPH_ROWS` are REUSED by `src/stage.c`
+rather than respelt: they are properties of `WB_PLANES * WB_PLANE_STRIDE`, not of the message
+buffer, and a second spelling is exactly what CLAUDE.md §5 forbids — but their names now say TEXT in
+a file that is not text, which is a rename the day a third user appears.
+
+**AND `copy_longwords`' OWN THIRD USER FIRED IN THIS BATCH.** `bg_build_buffer`'s `draw_tile` had
+the run of `move.l (a0)+,(a1)+` inlined a third time; it now CALLS the function `src/scroll.c`
+defines and `include/scroll.h` declares, joining `src/scroll.c` and `src/text.c`. **The batch-8
+registration above named the trigger as "a third user, in this project or another" and the home as
+the kit's `machine.h`, so the trigger has fired as written — and the function is NOT moving.** The
+REASON that registration gave for keeping it project-local was that every user is this game, and
+three users later that is still true; a helper in `machine.h` that only Wonder Boy calls buys the
+kit nothing. The registration is therefore restated on its reason rather than its count: **trigger**
+= a user in another project; **home** = `tools/recreate_kit/include/machine.h`, beside `addr_add`
+and `rotate_left32`.
+
+**What this batch does NOT pin, beyond the terminator above:**
+
+* **`$f95c`, THE CALLER (210 bytes), IS NAMED AND REJECTED.** It latches `stage_map_ptr` /
+  `stage_start_ptr`, calls the three builders, computes `scroll_follow_x/_y`, and then does two
+  things the harness cannot follow, both on the unconditional path: `bsr set_palette` (a write to
+  the shifter at `$ffff8240`) and `lea $17adc.l,a1` + `jsr (a1)` / `jsr 28(a1)` into the sound
+  module, de-duplicated through the byte at `$fa2e`. So the hand-over from `$f95c` to the three is
+  stated by their own entry conventions, not by a run through it.
+* **WHAT THE BUILDERS LEAVE IN THEIR REGISTERS.** `$fa30` walks out with a0/a1/a2/a5/a6 and d0–d7
+  well past where they started and `$fd46` the same; `$f95c` reloads everything it needs from
+  `stage_start_ptr`. The oracle reports them all since batch 11 — what is missing is a
+  reconstruction that models them, not an observer — so this is openable, one routine at a time,
+  rather than blocked. The banner pair is the exception and its cursor is asserted three ways.
+* **WHAT `$fe1e`'s RECORDS HOLD.** Only the first longword of each twenty bytes is touched; the
+  other sixteen are neither read nor named. Its table, its count and its signature all lie past the
+  program and are loaded from disk, so every case seeds them as plain RAM.
+* **WHAT `$fb06`'s TWO COPYLOCK FLAGS ARE FOR.** `$f89a` and `$f89c` have EXACTLY ONE operand site
+  each in the plaintext image — the `clr.w` and the `st` in this routine. Their readers are
+  reachable only from inside the protection's ciphertext, which is the other side of
+  `PORTABILITY.md` §6.1's "KNOWINGLY UNPINNED" list.
+* **WHAT MOST OF `$fed2`'s BLOCK MEANS.** `$b08..$b19` and three of the four panel timer words have
+  no reader among the recovered functions; `$a34` has eleven operand sites and none inside anything
+  reconstructed. The names carry the addresses, in `state_flag_a32`'s voice.
+
+**QUEUED, read but deliberately not ported:**
+
+* **`$fe4a` (`game_restart_reset`, 136 bytes)** — the new-game reset the panel batches' `cmt`s keep
+  citing. Everything in it is plain memory except one `bsr $e80c`, which is unported: `$e80c` writes
+  `$704d8`/`$784d8` (both screen buffers) under `$be2`, the lives count this routine sets to 3.
+  Porting the pair is a two-function batch of its own.
+* **`$ff42` (`actor_spawn_pass`, 162 bytes)** — the per-frame spawn driver gated on `state_flag_a30`,
+  and the routine that would pin batch 10's registered finding that an allocation FAILURE is not
+  checked (a full pool hands `actor_spawn_from_template` `a1 = $0` and stamps 32 bytes over the
+  68000 vector page). Two of its three callees are reconstructed; the third, `$1006a`, is not.
+* **`$2b82` (`actor_toggle_side_flag`, 12 bytes, plus the 8-byte tail at `$2b7a`)** — batch 10
+  rejected it for branching backwards out of Ghidra's boundary, and the true extent is now read:
+  `tst.b d0 / beq $2b7a / btst #2,d1 / bne $2b7a / rts` over `bchg #3,8(a0) / rts`, which flips the
+  bit `actor_set_side_flag` sets and clears. It is verifiable today (the write set is one byte of the
+  actor record and the inputs are a0/d0/d1), and it is left out only because it belongs with
+  `src/actor.c`'s flag family rather than with this cluster. **`$2b70` is NOT a sibling routine**,
+  which an earlier reading here had wrong: it is the second arm (`btst #1,d1 / bne.w $2b7a / rts`) of
+  the 40-byte routine at `$2b5a`, reached only by that routine's own `bne.w` at `$2b5c` and by no
+  call anywhere. `$2b8e` (`actor_turn_and_launch`, 58 bytes, two `bsr` callers) IS a routine of its
+  own and repeats `$2b82`'s head over a longer tail — the side flip plus exactly the flag bits and
+  speed byte `actor_start_motion_at_speed` writes, at a fixed speed of 7. All four addresses now
+  carry `fn`/`cmt` entries in `../names.txt`.
+
+**RE-CHECKED AND STILL REJECTED, with the reason sharpened:**
+
+* **`$638` (`game_unpause_on_key_release`, 54 bytes)** — `tst.w $66e.l` and `cmpi.b #$19,$879.l`
+  both return at once, and the routine's whole payload (`clr.b $879`, `clr.w $66e`,
+  `move.b #$ff,$c030.l` — unpause, and dismiss the message box) sits behind
+  `cmpi.b #$99,$879.l / bne.s` — a spin on `key_last_scancode` waiting for the RELEASE code
+  (`$19 | $80`) that only `ikbd_acia_handler` ever stores, and which no instruction in this routine
+  writes. The pause is SET by the mirror-image arm at `$60e` inside `$53e`, which spins the same way.
+  A wider register window does not help and neither does a `stop_pc`: the oracle never REACHES the
+  checkpoint, because nothing changes memory while a run is in flight. **Registered with terms**:
+  **trigger** = a kit capability to schedule a memory poke at an instruction count or a PC;
+  **home** = `tools/recreate_kit`, in `emu.run`. Until then the two returning arms are portable and
+  the payload is not, which is not worth a partial reconstruction.
+* **`$69fe` (`damage_path_69fe`, 266 bytes) and `$6b46` (`damage_path_6b46`, 114 bytes)** — the
+  damage paths. Batch 10 rejected both for a `jsr 56(a5)` into the sound module at `$17adc`, and
+  re-reading confirms the call is unavoidable in each: `$69fe` funnels all four of its arms
+  (`$6a44`, `$6a7a`, `$6a96`, `$6ab0`) through `$6aba` into `$6ade` and the `lea`/`jsr` pair at
+  `$6ae4`, and `$6b46`'s first four instructions ARE that pair. **`$69fe` does have one arm that
+  returns before the call** — the `btst #4,9(a1) / beq.w` at `$6a16` falling into the `rts` at
+  `$6a20` — but it is the arm for a record that already carries that bit and therefore writes
+  nothing at all, so seeding it buys a differential over an empty write set. There is still no
+  branch worth registering. Both now carry `fn`/`cmt` entries in `../names.txt`, bodies and callers
+  included, so the read is not lost when the sound module opens.

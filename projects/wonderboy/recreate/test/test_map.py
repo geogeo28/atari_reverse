@@ -85,10 +85,11 @@ import pytest
 
 import harness
 import leaf
-from leaf import (BRANCH_EXTENSION, RTS, addq_b_d16, branch, branch_over, case_salt, cmpi_b_dn,
-                  keyed_block, lea_abs_l, lea_indexed, longword, lsl_w_imm_dn, merge_bands,
-                  move_b_d16_dn, move_w_abs_l_dn, move_w_ind_dn, moveq_0_dn, opcode, program_writes,
-                  s16, sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
+from leaf import (BRANCH_EXTENSION, RTS, add_w_dn_dn, addq_b_d16, branch, branch_over, case_salt,
+                  cmpi_b_dn, keyed_block, lea_abs_l, lea_indexed, longword, lsl_w_imm_dn,
+                  merge_bands, move_b_d16_dn, move_w_abs_l_dn, move_w_dn_dn, move_w_ind_dn,
+                  move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode, program_writes, s16,
+                  sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -196,18 +197,10 @@ def move_b_dn_dn(destination, source):
     return opcode(0x1000 | (destination << 9) | source)
 
 
-def move_w_dn_dn(destination, source):
-    return opcode(0x3000 | (destination << 9) | source)
-
-
 def move_l_dn_dn(destination, source):
     """`move.l Dn,Dn` — $13be's second instruction, and the reason its two cleared registers reach
     $13c8 as LONGS rather than as words over the caller's high halves."""
     return opcode(0x2000 | (destination << 9) | source)
-
-
-def move_w_postinc_dn(reg, base):
-    return opcode(0x3018 | (reg << 9) | base)
 
 
 def move_w_d16_ind(source, displacement, destination):
@@ -216,10 +209,6 @@ def move_w_d16_ind(source, displacement, destination):
 
 def move_w_abs_l_d16(addr, base, displacement):
     return opcode(0x3179 | (base << 9)) + longword(addr) + word(displacement)
-
-
-def movea_l_abs_l(reg, addr):
-    return opcode(0x2079 | (reg << 9)) + longword(addr)
 
 
 def sub_w_d16_dn(reg, base, displacement):
@@ -236,10 +225,6 @@ def add_w_d16_dn(reg, base, displacement):
 
 def add_w_dn_ind(reg, base):
     return opcode(0xd150 | (reg << 9) | base)
-
-
-def add_w_dn_dn(destination, source):
-    return opcode(0xd040 | (destination << 9) | source)
 
 
 def move_w_dn_ind(source, base):

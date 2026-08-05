@@ -693,6 +693,12 @@
  * exists to refresh exactly that one record BEFORE bg_scroll_run_queue reads it. $8e66 then
  * refreshes all nineteen (slot 12 included) after the scroll has moved.
  */
+#define WB_STATE_FLAG_A34            0xa34u   /* the THIRD word of the same band, and the least
+                                               * established: eleven operand sites (one abs.l at
+                                               * $8d8, ten abs.w), none of them read by a routine
+                                               * reconstructed so far. stage_reset_state clears it
+                                               * beside A30 and A32, which is all this project
+                                               * knows about it — the name carries the address */
 #define WB_STATE_FLAG_A30            0xa30u   /* the second mode flag, read like WB_STATE_FLAG_A32
                                                * ($a32: thirteen `tst.w` readers, three writers).
                                                * Ten operand sites of its own: five `tst.w` readers
@@ -1012,5 +1018,148 @@
 #define WB_TEXT_BLIT_LONGWORDS     22u     /* the unrolled `move.l (a0)+,(a1)+` == BUFFER_LINE / 4 */
 #define WB_TEXT_BLIT_SKIP          72u     /* `lea 72(a1),a1` == WB_SCREEN_LINE - BUFFER_LINE */
 #define WB_TEXT_BLIT_ROW_SHIFT     3u      /* `lsl.l #3,d0`: GLYPH_ROWS scanlines per cell row */
+
+/* ---- the stage loader, $fa30..$ff42 and $e110..$e19a (RUNTIME addresses; src/stage.c) ---------
+ *
+ * WHAT THIS TIER IS. Everything in the background-scroll block above MAINTAINS the eight
+ * pre-shifted buffers one tile column or one row pair at a time, once a frame. This tier BUILDS
+ * them, once a stage: `bg_build_buffer` draws the whole visible map into copy 0 out of the tile
+ * bitmaps, `bg_build_preshifted_copies` derives the other seven from it two pixels at a time, and
+ * `stage_publish_scroll_state` writes the position words and the sixteen row pointers the engine
+ * then steps. The three run back to back from $f95c, which is this batch's one unported caller.
+ *
+ * The two `lea`s that name the buffers are the SAME numbers WB_BG_BUFFER_BASE / _LEN carry, and
+ * the sixteen published pointers are `base + copy * LEN + row * LINE` for rows 0 and
+ * WB_BG_SCROLL_Y_BOTTOM_INIT — so nothing here restates a buffer address; test_stage.py derives
+ * all sixteen and requires the image's own longwords to equal them.
+ *
+ * THE MAP HEADER IS TWO WORDS, AND THAT IS THIS BATCH'S READING OF THE +4. WB_MAP_DATA_ROW sat
+ * four bytes above WB_MAP_ROW_STRIDE with only "indexed from its THIRD byte" to explain it.
+ * `stage_publish_scroll_state` reads BOTH header words off the level's own map (`move.w (a0)+,d0`
+ * twice) and turns them into WB_BG_SCROLL_LIMIT_X / _LIMIT_Y, so the header is {cells across,
+ * cells down} and the cell data starts at WB_MAP_HEADER_BYTES. It is the same bias
+ * WB_COLLISION_MAP_CELLS and WB_STAMP_CELL_BIAS name on the other map.
+ */
+#define WB_MAP_HEADER_BYTES        4u      /* `lea 4(a0,d1.w),a0`: the two header words below */
+#define WB_MAP_HEADER_WIDTH        0u      /* cells across — ALSO the row stride, one byte per cell,
+                                            * which is why WB_MAP_ROW_STRIDE is the word at +0 */
+#define WB_MAP_HEADER_HEIGHT       2u      /* cells down */
+
+#define WB_STAGE_MAP_PTR           0xfe16u /* longword: the level's map, as $f95c latched a0. Two
+                                            * operand sites — that `move.l` and the `movea.l` at
+                                            * $fb06 that reads it back */
+#define WB_STAGE_START_PTR         0xfe1au /* longword: the start-position record, as $f95c latched
+                                            * a1. Its first two words are the map cell the window
+                                            * opens on; 4/6 are the followed object's position and
+                                            * 8/9 the palette and tune $f95c picks */
+#define WB_STAGE_RAW_TILE_INDEX    0xfe14u /* word: NONZERO when the map's bytes ARE tile numbers.
+                                            * $f95c raises it for any tile bank other than
+                                            * WB_TILE_BITMAPS and clears it for that one, and
+                                            * bg_build_buffer is its only reader — so the index
+                                            * table is a property of the SHIPPED bank alone */
+#define WB_BG_BUILD_CARRY          0xfe0cu /* WB_PLANES words of scratch between $fd46's `rts` and
+                                            * WB_STAGE_MAP_PTR: the first cell's shifted-out bits,
+                                            * held until the row's LAST cell is written so the
+                                            * 128-byte row closes as a ring. The band's four
+                                            * addresses are the routine's only write outside the
+                                            * buffers, and it is a SECOND scratch of the same shape
+                                            * as WB_BG_PRESHIFT_CARRY, which the row-at-a-time
+                                            * pre-shift uses */
+
+#define WB_BG_BUILD_TILE_COLUMNS   16u     /* `move.w #$f,d6` — == WB_BG_ROW_CELLS, one buffer row */
+#define WB_BG_BUILD_TILE_ROWS      11u     /* `move.w #$a,d5` — == WB_BG_BUFFER_TILE_ROWS */
+#define WB_BG_BUILD_ROW_SKIP       120u    /* `lea 120(a2),a2` after the row's two longwords, i.e.
+                                            * WB_BG_BUFFER_LINE - WB_BG_CELL_BYTES */
+#define WB_BG_BUILD_CELL_REWIND    1920u   /* what the SIXTEENTH row's `lea -1920(a2),a2` takes back
+                                            * == (WB_BG_TILE_ROWS - 1) * WB_BG_BUFFER_LINE, leaving
+                                            * the cursor one WB_BG_CELL_BYTES on */
+#define WB_BG_BUILD_ROW_ADVANCE    1920u   /* ...and the `lea 1920(a2),a2` after the sixteenth CELL,
+                                            * which with those cells' 128 bytes is one
+                                            * WB_BG_TILE_BLOCK_LEN */
+#define WB_BG_BUILD_MAP_SKIP       0x10u   /* `subi.w #$10,d7` on the stride before `adda.l d7,a0`:
+                                            * the columns just walked. The subtraction is a WORD one
+                                            * and the add a LONG one over a register whose high half
+                                            * is zero, so a stride BELOW this advances the cursor by
+                                            * ~64 KB instead of stepping back — reproduced, not
+                                            * tidied */
+#define WB_BG_BUILD_TILE_SHIFT     7u      /* `lsl.l #7,d7` == WB_TILE_BITMAP_LEN, and a LONG shift
+                                            * over a 16-bit index, so the whole table range reaches */
+#define WB_BG_BUILD_PASSES         7u      /* `move.w #$6,d0` — == WB_BG_PRESHIFT_COPIES: copy k+1 is
+                                            * built from copy k, so a0/a1 are never reloaded */
+#define WB_BG_BUILD_SCANLINES      176u    /* `move.w #$af,d1` — == WB_BG_BUFFER_LEN / _LINE, and
+                                            * == WB_BG_BUILD_TILE_ROWS * WB_BG_TILE_ROWS */
+#define WB_BG_BUILD_CELLS_AFTER    15u     /* `move.w #$e,d2` — the cells the OR/write loop covers,
+                                            * == WB_BG_ROW_CELLS - 1, the first being the prologue's */
+
+#define WB_BG_SCROLL_Y_BOTTOM_INIT 0x9eu   /* `move.w #$9e,$83aa.l`: 158 scanlines below the top
+                                            * cursor, which is the visible window's other end */
+#define WB_BG_LIMIT_X_BIAS         0xf0u   /* `subi.w #$f0,d0` on (cells << 4) at $fb18 — IS
+                                            * WB_BG_SCROLL_LIMIT_BIAS, whose own note names this
+                                            * site as one of its two. The literal is repeated only
+                                            * because layout.py deliberately refuses a compound
+                                            * #define; the identity is pinned in test_stage.py's
+                                            * limits case instead of stated here */
+#define WB_BG_LIMIT_Y_BIAS         0xa0u   /* `subi.w #$a0,d0`, the vertical counterpart: 160
+                                            * scanlines, the scrolled window's own height */
+/* The `lsl.w #4` that turns each header word, and each start cell, into pixels is WB_MAP_CELL_SHIFT
+ * run the other way — one cell is WB_MAP_CELL_PIXELS square on both maps — so it is not respelt. */
+
+/* The state $fed2 resets, in the order it writes it. Everything here is plain RAM; what each field
+ * MEANS is mostly established elsewhere (../names.txt) or not at all, and the names say only what
+ * this routine does with them. */
+#define WB_STAGE_RESET_BLOCK       0xb08u  /* `lea $b08.w,a0` then four `clr.l (a0)+` and a
+                                            * `clr.w (a0)+` — 18 bytes cleared as one run */
+#define WB_STAGE_RESET_BLOCK_LONGS 4u
+#define WB_STAGE_RESET_BLOCK_WORDS 1u
+#define WB_PANEL_FRAME_TIMER       0xbd26u /* the four words around panel_frame_index ($bd2c) that
+                                            * $bbca's own timers run on */
+#define WB_PANEL_FRAME_DELAY       0xbd28u /* ...and the one this reset seeds rather than clears */
+#define WB_PANEL_FRAME_DELAY_INIT  0x500u  /* `move.w #$500,$bd28.l`, the same $500 $bc56 measures
+                                            * panel_frame_index back off */
+#define WB_PANEL_FRAME_PHASE       0xbd2au
+#define WB_PANEL_FRAME_SPARE       0xbd2eu
+
+/* The two flags $fb06 writes and NOTHING in the plaintext image reads. A whole-image scan of both
+ * absolute encodings gives each exactly ONE operand site — the `clr.w` at $fb8a and the `st` at
+ * $fb90 below — which is the other side of PORTABILITY.md §6.1's note that their readers are
+ * reachable only from inside the Copylock's ciphertext. */
+#define WB_COPYLOCK_FLAG_A         0xf89au /* `clr.w` — a WORD */
+#define WB_COPYLOCK_FLAG_B         0xf89cu /* `st` — a Scc, so ONE byte and not the word beside it */
+
+/* The last eight entries of WB_TILE_INDEX_TABLE, written by the reset: `lea $21e90.l,a1 /
+ * lea 496(a1),a1` then four `move.l #imm,(a1)+`. So map bytes $f8..$ff name tiles $46..$4b, $40 and
+ * $4d. The .PRG ships NONE of that table — $21e90 lies past the program's last byte ($218d0), so
+ * the whole 256 entries are loaded from disk at run time and this reset overwrites the last 8 of
+ * them. What the DISK holds there before the overwrite is not established by anything here. */
+#define WB_TILE_INDEX_TAIL         0x22080u /* == WB_TILE_INDEX_TABLE + 496 */
+#define WB_TILE_INDEX_TAIL_LONGS   4u       /* four `move.l #imm,(a1)+` == 8 entries */
+
+/* $fe1e: the one-time relocation of a table loaded past the program. Each record's FIRST longword
+ * arrives as an offset from the table's own base and is turned into an absolute pointer in place,
+ * which is why it must not run twice — hence the signature byte. */
+#define WB_RESOURCE_HEADER         0x24898u /* the signature byte, and the base the count is read
+                                            * from: `lea $24898.l,a6 / cmpi.b #$45,(a6)` */
+#define WB_RESOURCE_RELOCATED      0x45u    /* 'E' — what the routine stamps once it has run */
+#define WB_RESOURCE_COUNT_OFF      8u       /* `move.w 8(a6),d7`: a `dbf` count, so the table holds
+                                             * that word plus one records. The word itself is past
+                                             * the program and loaded from disk, so a case seeds it */
+#define WB_RESOURCE_TABLE          0x248d8u /* `lea $248d8.l,a5`, and the base ADDED to each record's
+                                            * first longword — the two are the same number */
+#define WB_RESOURCE_RECORD_BYTES   20u      /* `lea 20(a5),a5` */
+
+/* $e110..$e198: two banners plotted into buffer copy 0, out of a SECOND font — WB_BG_BANNER_FONT
+ * below, which a whole-image scan reaches from $e156 alone and which is not the panel's
+ * WB_TEXT_GLYPH_TABLE. Only the GLYPH GEOMETRY is shared with the message box's plotter.
+ * A record is {word: byte offset into the buffer} followed by characters, ended by any byte with
+ * bit 7 set. The glyph geometry is WB_TEXT_'s — 32 bytes, 8 rows, one byte per plane — over the
+ * BACKGROUND buffer's 128-byte line rather than the message box's 88. */
+#define WB_BG_BANNER_ROUND         0xe19au /* "ROUND BONUS" at buffer offset $c28 */
+#define WB_BG_BANNER_PERFECT       0xe1a8u /* "PERFECT!  10000 PTS" at $1418, drawn only when the
+                                           * meter is at its maximum */
+#define WB_BG_BANNER_FONT          0x1387cu /* `lea $1387c.l,a0` — a SECOND 32-byte-per-glyph font,
+                                            * not WB_TEXT_GLYPH_TABLE, and reached from here alone */
+#define WB_BG_BANNER_END           0x80u   /* `tst.b (a6) / bpl` — the terminator is the SIGN BIT,
+                                            * so any byte from $80 up ends the string */
+#define WB_BG_BANNER_BONUS         0x10000u /* `move.l #$10000,d0 / bsr $b5a2`: packed BCD 10000 */
 
 #endif /* WONDERBOY_H */
