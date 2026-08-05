@@ -731,6 +731,142 @@
 #define WB_FRAME_TOGGLE              0x712u   /* word, inverted every frame by flip_screen
                                                * (../names.txt) — read here as a boolean */
 
+/* ---- the actor table's LIFECYCLE, and the rest of a record's fields (src/actor.c) -------------
+ *
+ * The projection above reads four fields of a record. These are the rest, and the routines that
+ * create and destroy records: a table is reset to WB_ACTOR_FREE_MARKER records, a run of slots is
+ * marked free again, an allocator hands back the first free slot of ONE OF TWO POOLS, and a spawn
+ * fills that slot in from a 32-byte template.
+ *
+ * THE TWO POOLS ARE WHAT EXPLAINS SLOT WB_ACTOR_FOLLOWED_SLOT. $1b68 searches
+ * WB_ACTOR_ALLOC_LOW_FIRST..+WB_ACTOR_ALLOC_LOW_SLOTS and $1b8e
+ * WB_ACTOR_ALLOC_HIGH_FIRST..+WB_ACTOR_ALLOC_HIGH_SLOTS, and the two runs meet EXACTLY either side
+ * of slot 12 — 3..11 and 13..18 — so the followed actor's slot is the one gap no allocator can
+ * hand out. Slots 0..2 are below both pools and are equally reserved. The arithmetic is
+ * test/test_actor.py's, not a remark here.
+ */
+#define WB_ACTOR_FREE_MARKER         0xffbeu  /* word at WB_ACTOR_X: "this slot holds no actor".
+                                               * $1f36 stamps it, $df9e stamps it, and both
+                                               * allocators `cmpi.w #$ffbe,(a1)` for it */
+#define WB_ACTOR_TYPE                4u       /* word: what the record IS. $ffe4 copies it out of
+                                               * the template and the map probes compare it
+                                               * against WB_ACTOR_TYPE_PLAYER */
+#define WB_ACTOR_TYPE_PLAYER         1u       /* `cmpi.w #$1,4(a0)` — the only value anything
+                                               * reconstructed here tests for */
+#define WB_ACTOR_FLAGS2              9u       /* the SECOND flag byte; `bset`/`bclr` reach it with
+                                               * their own bit numbers, and `clr.w 8(a1)` clears
+                                               * WB_ACTOR_FLAGS and this one together */
+#define WB_ACTOR_SPEED               11u      /* byte: the fall step $14d6 accelerates, $2af2 sets
+                                               * from d0 and the landing arm of $1400 clears */
+#define WB_ACTOR_FIELD_18            18u      /* byte, cleared by the spawn; no reader in anything
+                                               * reconstructed here */
+#define WB_ACTOR_TEMPLATE_SLOT       19u      /* byte: which template of WB_TABLE_PTR_21E8C's table
+                                               * spawned this record — `(a0 - table) asr.l #5`, so
+                                               * a SIGNED shift of the whole longword */
+#define WB_ACTOR_FIELD_22            22u      /* byte, cleared by $10a2's player arm */
+#define WB_ACTOR_FIELD_30            30u      /* two bytes the spawn clears; $ff42 reads 30 as a
+                                               * flag and counts 31 down */
+#define WB_ACTOR_FIELD_31            31u
+#define WB_ACTOR_HALF_WIDTH          14u      /* word: half the footprint, in pixels. The map probes
+                                               * measure from `x - half_width` and $13c8 hands
+                                               * $1400 twice this as the span to scan */
+#define WB_ACTOR_SIZE_SECOND         16u      /* word: the other half of the longword the spawn
+                                               * stamps at WB_ACTOR_HALF_WIDTH. Nothing
+                                               * reconstructed here reads it */
+#define WB_ACTOR_FLAG_MOVING_BIT     0u       /* $2af2 raises both of these; the `btst #0,8(a0) /
+                                               * bne / rts` at $1376 is bit 0's one reader in the
+                                               * tier above, and $1400's landing arm clears bit 1 */
+#define WB_ACTOR_FLAG_LAUNCHED_BIT   1u
+#define WB_ACTOR_FLAG_SUPPORTED_BIT  2u       /* raised by $1400's landing arm; $2af2 and $14d6
+                                               * clear it, and $1400 reads it to decide whether to
+                                               * start a fall */
+#define WB_ACTOR_FLAG_FALLING_BIT    4u       /* raised by $14d6 and by $1400's unsupported arm,
+                                               * cleared by the landing */
+#define WB_ACTOR_FLAGS2_LANDED_BIT   1u       /* $1400 raises it on the landing arm and clears it on
+                                               * both unsupported ones */
+#define WB_ACTOR_FLAGS2_SPAWNED_BIT  2u       /* the one bit the spawn raises */
+#define WB_ACTOR_FALL_SPEED_MAX      8u       /* `cmpi.b #$8,d0 / beq` — $14d6 stops accelerating
+                                               * ON this value, so it is reached and never passed */
+#define WB_ACTOR_ALLOC_LOW_FIRST     3u       /* `lea 96(a1),a1` == 3 * WB_ACTOR_RECORD_BYTES */
+#define WB_ACTOR_ALLOC_LOW_SLOTS     9u       /* `move.w #$8,d0` + `dbf` */
+#define WB_ACTOR_ALLOC_HIGH_FIRST    13u      /* `lea 416(a1),a1` */
+#define WB_ACTOR_ALLOC_HIGH_SLOTS    6u       /* `move.w #$5,d0` + `dbf` */
+#define WB_ACTOR_ALLOC_NONE          0u       /* `movea.l #$0,a1` — the allocators' "table full".
+                                               * $ffe4's two call sites do NOT test it */
+
+/* The spawn template: 32-byte records in the table WB_TABLE_PTR_21E8C points at, terminated by
+ * WB_SPAWN_TERMINATOR in their first word. $ffe4 turns one into an actor record. */
+#define WB_SPAWN_RECORD_BYTES        32u
+#define WB_SPAWN_TERMINATOR          0xffffu  /* `cmpi.w #$ffff,(a0)` closes $ff42's walk */
+#define WB_SPAWN_TYPE                12u      /* word: becomes WB_ACTOR_TYPE, and selects the size */
+#define WB_SPAWN_SIZE                14u      /* the two words $ffe4 copies for the five types that
+                                               * carry their own, at 14 and 16 */
+#define WB_SPAWN_X                   24u      /* word: becomes WB_ACTOR_X */
+#define WB_SPAWN_Y                   26u      /* ...and 26 becomes WB_ACTOR_Y */
+#define WB_ACTOR_SIZE_TABLE          0x1009au /* longword per type: the {half width, second word}
+                                               * pair the spawn stamps for every type that does not
+                                               * carry its own. Indexed `lsl.w #2` on the type, so
+                                               * the index is a WORD and wraps at 0x4000 */
+#define WB_ACTOR_TEMPLATE_SLOT_SHIFT 5u       /* `asr.l #5` == log2(WB_SPAWN_RECORD_BYTES) */
+
+/* ---- the collision map the actors walk on (RUNTIME addresses; src/map.c) ----------------------
+ *
+ * A SECOND map, laid out exactly like the background one (WB_MAP_ROW_STRIDE): a word of bytes per
+ * row, then one byte per cell, and a cell is WB_MAP_CELL_PIXELS square. WB_STATE_FLAG_A32 picks
+ * between two of them — the same flag that picks the actor table — and both probes spell the same
+ * five instructions to turn an actor's pixel position into a cell pointer.
+ *
+ * WHICH MAP IS WHICH, AND THE ONE PLACE THE PAIR IS NOT SYMMETRIC. WB_COLLISION_MAP_A32 lies
+ * INSIDE the image (it is zero there and filled at run time); WB_COLLISION_MAP_DEFAULT lies past
+ * the program's last byte and is loaded from disk. $10a2 selects between them for the cell lookup
+ * and then reads its ROW STRIDE from WB_COLLISION_MAP_DEFAULT unconditionally — see src/map.c.
+ */
+#define WB_COLLISION_MAP_A32         0x1d338u /* the map while WB_STATE_FLAG_A32 is NONZERO — a
+                                               * `beq` over it, so this is the `bne` reading $67e0
+                                               * uses and not $8e66's `bpl` */
+#define WB_COLLISION_MAP_DEFAULT     0x23494u /* ...and while it is zero */
+#define WB_COLLISION_MAP_CELLS       4u       /* `lea 2(a6,d3.w),a6` AFTER `move.w (a6)+,d3`: the
+                                               * stride word plus two, so cell 0 is base + 4 —
+                                               * WB_MAP_DATA_ROW's own bias off WB_MAP_ROW_STRIDE */
+#define WB_MAP_CELL_SHIFT            4u       /* `asr.w #4` — a SIGNED shift of the pixel position */
+#define WB_MAP_CELL_PIXELS           16u      /* == 1 << WB_MAP_CELL_SHIFT; `cmpi.w #$10,d7` and
+                                               * `subi.w #$10,d7` walk the footprint by whole cells */
+#define WB_MAP_CELL_MASK             0xfu     /* `andi.w #$f` — the position WITHIN a cell */
+#define WB_MAP_TILE_BLOCK            1u       /* the tile code $10a2 refuses to walk into */
+#define WB_MAP_TILE_LEDGE            2u       /* ...and the second code its ground test accepts */
+#define WB_MAP_TILE_PLATFORM         0x23u    /* the tile code $1400 scans the footprint for */
+#define WB_MAP_STEP_CLEAR            0xffu    /* `move.b #$ff,d6` — $10a2's d0 when the very first
+                                               * probe was already clear */
+#define WB_MAP_STEP_BLOCKED          0u       /* ...and when it had to back off, or ran off the
+                                               * left edge */
+#define WB_MAP_GROUND_HEAD_BIT       0x1u     /* $10a2's d1: the cell IS a block and the one above
+                                               * it is not */
+#define WB_MAP_GROUND_NEAR_BIT       0x4u     /* one row down is neither block nor ledge */
+#define WB_MAP_GROUND_FAR_BIT        0x2u     /* ...and nor is two rows down */
+
+/* $1400's platform: the word it lands the actor on, and the three constants around it. */
+#define WB_PLATFORM_Y                0x9a6eu  /* word, exactly two operand sites in the image and
+                                               * both are $1400's. It is WB_ACTOR_TABLE_DEFAULT +
+                                               * 8 * WB_ACTOR_RECORD_BYTES + WB_ACTOR_Y, i.e. slot
+                                               * 8's own y — asserted in test/test_map.py */
+#define WB_PLATFORM_Y_ABOVE          0x12u    /* `subi.w #$12,d0`: how far ABOVE the platform the
+                                               * actor may already be and still land on it */
+#define WB_PLATFORM_Y_BAND           6u       /* `addq.w #6,d0`: ...and the band's other end */
+#define WB_PLATFORM_STAND_OFFSET     0x10u    /* `subi.w #$10,2(a0)` — where the actor is parked */
+
+/* $1af0: four map cells stamped as one 2x2 block, out of the record WB_RECORD_PTR_10420 names. */
+#define WB_RECORD_PTR_10420          0x10420u /* longword pointer, written once in the image
+                                               * (`move.l a1,$10420.l` at $163a) and read by twenty
+                                               * sites: fourteen `movea.l` and six that copy it to
+                                               * its neighbour $10424 */
+#define WB_RECORD_10420_VARIANT      2u       /* word: `cmpi.w #$4,2(a1)` picks the second tile set */
+#define WB_RECORD_10420_CELL         24u      /* word: the map cell the block is stamped at */
+#define WB_STAMP_VARIANT_SELECTOR    4u       /* the value 2(a1) must hold for the second set */
+#define WB_STAMP_CELL_BIAS           4u       /* `addi.w #$4,d0` — the same WB_COLLISION_MAP_CELLS
+                                               * bias, applied to WB_MAP_ROW_STRIDE's own address */
+#define WB_STAMP_TILES_FIRST         0x78u    /* $78,$79 on the top row and $7a,$7b below it */
+#define WB_STAMP_TILES_SECOND        0x7cu    /* ...and $7c..$7f for the variant */
+
 /* ---- the text subsystem, $bd8a..$c030 (RUNTIME addresses; src/text.c) -------------------------
  *
  * An 8x8 glyph goes into an OFF-SCREEN 4-plane buffer WB_TEXT_BUFFER_LINE bytes wide, one byte per

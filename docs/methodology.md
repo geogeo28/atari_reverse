@@ -176,3 +176,31 @@ The fix, and the two parts of it that are not obvious:
 More generally: **a mutation that survives is a question about the seeds before it is a question
 about the code.** Ask what the mutated code would have had to write, and whether any byte of the
 case could have told the difference.
+
+## The second seeding hole: a case keyed to the wrong place
+
+The margin above catches a routine that touches bytes PAST where a case seeded. It does not catch a
+case that seeded the right bytes in the WRONG PLACE. A differential case whose expected values are
+**computed from the same image bytes it seeds** is self-consistent wherever those seeds landed: the
+model reads the byte the routine will read, the oracle reads it, the reconstruction agrees, and the
+case is green — while testing nothing it claims to be about.
+
+Found on Wonder Boy's `$10a2`, the collision-map step probe
+(`projects/wonderboy/recreate/STATUS.md`, batch 10). The routine probes the cell at
+`(x - half_width - STEP) asr.w #4`; the battery keyed its map pokes off `x - half_width` alone. So
+every tile a case planted sat one cell from where the routine actually looks, and each case passed
+on whatever the address-keyed filler happened to hold at the real probe. All cases green, all of
+them named after a tile they were not testing — until a mutation (the ground test stepping by the
+wrong map's stride) SURVIVED, which is the only thing that said so.
+
+The rule is about the KEY, not about the extent:
+
+- **Derive the probe geometry from the ROUTINE's own arithmetic**, transcribed from the
+  disassembly, and put it in one named function (`probe_cell()`, here). Key every seeded byte off
+  that function's answer as an OFFSET from it (`{(column, row): tile}`), never off a coordinate the
+  case happens to have to hand.
+- **A margin does not help here.** Widening a seeded band makes an over-run land on filler; it does
+  nothing for a case whose whole expectation sits one cell left of the truth.
+- **Only a mutation asks the question.** A wrongly keyed case still asserts, still names a tile and
+  still reads correctly. Mutate the geometry the case is about — the shift, the stride, the sign —
+  and see whether anything reddens. Nothing reddening is the finding.

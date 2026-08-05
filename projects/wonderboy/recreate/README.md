@@ -10,7 +10,7 @@ compiled C on the same image, and diffs the result. Everything game-specific liv
 the method is differential rather than byte-matching, read the worked reference project,
 [`projects/buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md).
 
-**78 functions are reconstructed.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
+**88 functions are reconstructed.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
 game loads goes through, verified over the game's own resource corpus — the 41 `.RAD` files the two
 disks ship, plus the four protection-damaged overlays a second time in their authentic disk-2 bytes,
 so 45 streams in all. The first gameplay batch: 31 leaves with no callee and no hardware between
@@ -28,7 +28,15 @@ scroll engine** (`$7522..$8228` plus `$d28`, sixteen routines and 3398 bytes): t
 pre-shifted copies of the level background over `$44000..$70000`, two pixels apart, so a horizontal
 scroll is a change of buffer and the only work per step is the one tile column it uncovers — while a
 VERTICAL scroll moves row pointers, copies one map row in unrotated, and pre-shifts it through the
-other seven copies. A request queue drained once a frame sits above all of it. The rest is the
+other seven copies. A request queue drained once a frame sits above all of it. And the **actor
+table's own lifecycle** plus the **collision map** the actors walk on (ten routines, 748 bytes): a
+table is reset to free markers, a run of slots is freed again, and two allocators hand back the
+first free record of one of two pools — 3..11 and 13..18, which meet EXACTLY either side of the
+followed actor's slot 12, so the record the scroll steers on is the one gap no allocation can reach.
+A spawn then fills a slot in from a 32-byte template. The map underneath them is a second one laid
+out like the background map, one byte per 16x16 cell, with a probe that walks an actor left until a
+cell blocks it, a scan that lands one on a platform tile, and a stamp that writes four tiles into it
+as a 2x2 block. The rest is the
 binding plus a foundation battery that runs the original code under the oracle and pins how the
 program starts.
 Progress, the kit change this project required, the oracle defect the panel batch surfaced, and the
@@ -52,8 +60,11 @@ include/rad.h              the .RAD/.CRU container and its bitstream, as constan
 include/effects.h          the 29 effect/state leaves at $10200..$103e7 — prototypes
 include/hud.h              the status panel's 30 routines — prototypes, and their register interfaces
 include/input.h            the two joystick-pipeline leaves
-include/actor.h            the followed actor's record, the two tests over it, and the two passes
-                           that project actor records into screen coordinates
+include/map.h              the collision map's three routines — prototypes, and why $10a2's result
+                           is two registers rather than one
+include/actor.h            the followed actor's record, the two tests over it, the two passes
+                           that project actor records into screen coordinates, and the table's
+                           lifecycle — reset, free, the two pool allocators and the spawn
 include/text.h             the message box: the once-a-frame driver's three arms, the glyph
                            plotter's two entry points, and why the prelude calls the plotter (the
                            original has no `rts` in it — it falls through)
@@ -75,7 +86,17 @@ src/actor.c                the actor tier: $67e0, which names the record everyth
                            measured against, the two tests above it (which side the followed actor
                            is on, and whether it is within reach horizontally), and the two passes
                            that project actor records into the screen array the sprite pass reads —
-                           one record ($8dfe, the one the scroll steers on) and all nineteen ($8e66)
+                           one record ($8dfe, the one the scroll steers on) and all nineteen ($8e66).
+                           Then the table's LIFECYCLE: reset ($1f36), free a run ($df9e), the two
+                           pool allocators ($1b68/$1b8e, one function here because the originals are
+                           byte-identical bar two operands), the spawn ($ffe4) and the two routines
+                           that move a record between standing and falling ($2af2, $14d6)
+src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
+                           map's layout, one byte per 16x16 cell, and which of the two
+                           state_flag_a32 names. The leftward step probe ($10a2, forty-one callers),
+                           the platform settle ($1400) and the 2x2 tile stamp ($1af0). Its header
+                           records the one place the pair of maps is not symmetric, which $10a2
+                           reproduces rather than tidies
 src/text.c                 the WHOLE text subsystem. The driver ($bd8a): compose a message into
                            the 88-byte-wide 4-plane buffer on the frame it is requested, then
                            re-blit that buffer to screen_back every frame until its countdown ends.
@@ -97,10 +118,11 @@ test/leaf.py               shared driver for LEAF routines: entry points looked 
                            glue for one whose ENTRY REGISTERS are its arguments, the entry-pin
                            scaffolding the batteries share (operand encoders, the opcodes more than
                            one of them spells, and the readers that take a value out of the write
-                           set), the address-keyed seeding they all build their images from, the
-                           game's own two screen buffers (two batteries draw into them), and the
-                           second stop PC a routine needs when it returns PAST its caller's next
-                           call by rewriting its own return address
+                           set), the word read and the sign extension every Python model of a
+                           routine does, the address-keyed seeding they all build their images
+                           from, the game's own two screen buffers (two batteries draw into them),
+                           and the second stop PC a routine needs when it returns PAST its caller's
+                           next call by rewriting its own return address
 test/layout.py             include/wonderboy.h's constants, scraped from that header (one source of truth)
 test/test_layout.py        that scraper's own cases — it refuses a duplicate or an octal-ambiguous #define
 test/test_bootstrap.py     the foundation battery: the loader, the self-relocation, the trap inventory
@@ -135,6 +157,13 @@ test/test_scroll.py        the scroll subsystem's differential: whole-body entry
                            supplies the four registers the dispatcher would have — plus three
                            variants pinned against bytes transcribed from ../out/wonderboy_dis.txt,
                            so the pattern the other thirteen are built from cannot be what is wrong
+test/test_map.py           the collision map's differential: an address-keyed window of each map
+                           with the two ROW STRIDES seeded apart (which is what makes the asymmetry
+                           observable at all), whole-body entry pins for all three, Python models
+                           the write set is compared against for EQUALITY, a probe whose two results
+                           are both partial register writes over something else, and case tiles
+                           keyed to the cell the probe ACTUALLY lands in rather than to the actor's
+                           own edge — the mutation sweep's finding
 test/test_actor.py         the actor tier's differential: a routine whose WHOLE output is a register
                            (every case compares the oracle's a1 against the reconstruction's return
                            value), the small-positive flag words that separate the tier's `bne`

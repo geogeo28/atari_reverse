@@ -8,16 +8,18 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 103/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 113/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
-actor tier and its two projection passes (356 bytes) and the WHOLE text subsystem (678 bytes) —
-10,376 bytes in all, 40.4 % of everything [`PORTABILITY.md`](PORTABILITY.md) measures.**
-`make test`: 1242 cases green, of which 77 are the foundation battery below, 48 are the depacker's
+actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
+actor table's LIFECYCLE (310 bytes) and the COLLISION MAP the actors walk on (438 bytes) —
+11,124 bytes in all, 43.3 % of everything [`PORTABILITY.md`](PORTABILITY.md) measures.**
+`make test`: 1409 cases green, of which 77 are the foundation battery below, 48 are the depacker's
 differential, 187 are the first gameplay batch's, 481 are the status panel's — that last figure was
 169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py` — 231
-are the background scroll subsystem's (65 after batch 5, 148 after batch 6), 113 are the actor
-tier's and 105 the text subsystem's (56 after batch 8). A row appears in the
+are the background scroll subsystem's (65 after batch 5, 148 after batch 6), 222 are the actor
+tier's (113 after batch 8), 105 the text subsystem's (56 after batch 8) and 58 the collision map's,
+which is batch 10's new `test/test_map.py`. A row appears in the
 table at the end when a function is reconstructed and green; everything else in `../decomp.c` and
 `../names.txt` is still only *named*, not ported.
 
@@ -509,6 +511,16 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0xbf5e` | `text_plot_glyph` (`src/text.c`) | 210 | verified | 31 cases: 5 glyph sources (both ends of the frame-glyph run, two of the font's own, and the all-zero space) x 6 cursors (the buffer's first cell and its odd twin, a mid-buffer pair, and the last full text row's pair), each stating the 32 written bytes exactly and comparing the returned cursor against both the oracle's a1 and the reconstruction's. Plus a four-step cell walk that shows the +1/+7 alternation lands two plane groups on + whole-body entry pin |
 | `0xbf4e` | `text_plot_char` | 16 | verified | 14 cases: 7 character codes x 2 cursors. The codes are the space the table starts at, two ordinary glyphs, the largest byte, one BELOW the first char (where the byte subtraction wraps), and two carrying rubbish in d0's high half — one harmless, one whose shifted low word is negative and indexes below the font. Each compares the indexed source against the oracle's a0 as well as the plotted bytes + whole-body entry pin |
 | `0xbd8a` | `text_run_message_box` | 452 | verified | 38 differential cases over the ten state bytes: an idle frame that must write NOTHING, 2 dismiss requests, 24 composes (6 shipped messages — the minimum height, the other top line, the maximum height and line count, the shortest string, the one whose line overruns the frame, and the table's last entry — x 4 lifetime phases, including the two the shipped data cannot produce), a compose that beats an already-active box, 8 blits (4 countdown phases x the table's two extreme geometries), a blit into the other screen buffer and one at a top line whose scanline offset SIGN-EXTENDS. Each states the write set exactly — the whole 6400-byte buffer plus the latched fields, or the blitted rectangle plus the countdown — against a model built from `_model_plot` and the game's own message records. Plus 4 structural pins on the $a09c table (self-bounding three ways), one that the seven state fields tile the band, one on the geometry constants' identities + whole-body entry pin |
+| `0x1f36` | `actor_table_reset` (`src/actor.c`) | 30 | verified | 3 cases: one per actor table, each seeded address-keyed across all three back to back so a walk that overran one lands in the next. Every case states the write set EXACTLY — nineteen records of the marker word plus thirty zero bytes — and asserts the a0 the original walks out with |
+| `0xdf9e` | `actor_slots_mark_free` | 14 | verified | 13 cases: 4 `dbf` counts (0, 1, 5 and the whole table) x 3 starting slots, each stating the write set as marker words ONLY — the whole difference between this routine and the reset above — plus one entering with rubbish in d7's high half, which a `dbf` must not see |
+| `0x1b68` | `actor_alloc_slot_low` | 38 | verified | Shares a battery with `0x1b8e`: each free slot of the pool taken alone (9 + 6 cases), several free at once, a full pool, every slot OUTSIDE the pool free at once, the followed slot free alone, and 2 tables x each pool published through `actor_table_selected` while the other two hold no free record. It writes no memory, so a1 is the whole surface — compared against the case's own answer AND the reconstruction's return + entry pin |
+| `0x1b8e` | `actor_alloc_slot_high` | 38 | verified | The same battery, and the pin is built from ONE `_alloc_entry(first, slots)` — the two bodies are byte-identical bar two operand words, which is what lets `src/actor.c` have one function behind both names |
+| `0xffe4` | `actor_spawn_from_template` | 134 | verified | 22 cases: the 5 types that carry their own footprint (all five `cmp.w` arms) and 6 that take it from `actor_size_table` — including the two either side of the $36..$38 run, so a compare written as a RANGE fails — plus the type whose `lsl.w #2` index WRAPS at $4000, 3 template slots, a template BELOW the published pointer (the `asr.l` is signed and only its low byte is stored) and 3 destination records. Each states the write set exactly against a model built from the seeded template + entry pin |
+| `0x2af2` | `actor_start_motion_at_speed` | 24 | verified | 20 cases: 4 flag seeds — the supported bit already raised, already clear, and both with every NEIGHBOURING bit set, which a byte-wide `bset`/`bclr` must leave alone — x 5 speeds including one carrying rubbish above its low byte + entry pin |
+| `0x14d6` | `actor_accelerate_fall` | 32 | verified | 24 cases: the same 4 flag seeds x 6 speeds — both sides of the `cmpi.b #$8`, the value itself, one ABOVE it (which keeps climbing, since the test is an equality and not a ceiling) and the $ff that wraps to 0. Each also asserts the pre-increment byte the original leaves in d0 + entry pin |
+| `0x10a2` | `actor_step_left_against_map` (`src/map.c`) | 206 | verified | 20 cases over a seeded collision map: 5 walks (clear, blocked then clear, blocked across two cells, a zero step, and a block the actor cannot back out of, which runs the step down to an EXACT zero and commits a move of nothing), the probe that goes off the map's left edge, the player-only byte clear on a retry and a record type that must not get it, all 7 arms of the ground test, the ASYMMETRY case (the cell looked up in one map and the ground stepped by the other's stride), 2 step high halves, a column above $ff and a row product above $ffff — the two cases that show d0 and d1 are each a partial write over something else + whole-body entry pin |
+| `0x1400` | `actor_settle_on_platform` | 146 | verified | 17 cases: 4 footprint scans reaching the platform at 0, 1 and 2 cells along and through the sub-cell test, its refusal one pixel short, a 5-point sweep of the landing band (both ends and both sides of each, plus the band itself), a platform word whose `subi.w` WRAPS, 3 flag seeds over the unsupported arm, a span whose HIGH half must not reach either word operation that reads it, and both readings of a negative span — one that must not enter the scan and one that must still reach the sub-cell test + whole-body entry pin |
+| `0x1af0` | `map_stamp_block` | 86 | verified | 11 cases: 4 map cells (including an odd one) x both tile sets, each asserting the four bytes are the consecutive run `src/map.c` writes; plus a variant word whose LOW byte alone matches (the test is a word), a cell offset that SIGN-EXTENDS below the map's base, and a row stride whose top bit is set, which puts the block's second row above its first + whole-body entry pin |
 
 ### The .RAD depacker
 
@@ -1732,6 +1744,172 @@ mode flags, and it turns the survivor into 1 red.
   refuses. Left honestly unpinned.
 * **WHAT ANY GIVEN MESSAGE ID MEANS.** The 117 records are read as geometry and text; which game
   event raises which id is a property of the 52 writers, none of which this batch read.
+
+### The actor table's lifecycle and the collision map (batch 10)
+
+Ten routines, 748 bytes, in the file batch 8 opened and one new one. Seven are the actor table's own
+LIFECYCLE (`src/actor.c`); three are the **collision map** the actors walk on, which is a subsystem
+nothing before this batch had touched and so gets `src/map.c` and `include/map.h` of its own.
+
+**THE TWO ALLOCATORS EXPLAIN SLOT 12, AND IT IS THE BATCH'S FINDING.** Batch 8 established that the
+followed actor is slot `WB_ACTOR_FOLLOWED_SLOT` of the actor table by reading `$67e0`'s two
+constants. From the other side: `$1b68` searches slots **3..11** of the published table for the
+free marker and `$1b8e` searches **13..18**, and the two runs meet EXACTLY either side of slot 12.
+So no allocation can ever hand out the record the scroll steers on — the followed actor's slot is
+the one gap in the free list, and slots 0..2 are below both pools and equally reserved. The
+arithmetic is a case (`test_the_pools_tile_the_table_around_the_followed_slot`), and one case per
+pool plants a free record in the followed slot ALONE and requires both allocators to come back
+empty-handed. The two bodies are byte-identical bar two operand words, so `src/actor.c` has ONE
+`actor_alloc_slot(first, slots)` behind both names and both entry pins come out of one
+`_alloc_entry(first, slots)` — batch 7's reason.
+
+**AN ALLOCATION FAILURE IS NOT CHECKED, AND THE SPAWN WRITES THROUGH IT.** `$1b68` returns `$0` for
+a full pool. Of its three call sites only `$101dc` tests it (`cmpa.l #$0,a1`); the two inside
+`$ff42` hand it straight to `actor_spawn_from_template`, which writes 32 bytes through a1
+unconditionally — over absolute `$0..$1f`, the 68000 vector page. Recorded in `../names.txt` on
+`$1b68` as behaviour, not reproduced as a case: `$ffe4`'s a1 is its caller's argument, so a case
+handing it `$0` would be testing the spawn at address zero rather than the pair's interaction —
+which is `$ff42`'s to pin when that routine is ported.
+
+**THE COLLISION MAP IS A SECOND MAP WITH THE BACKGROUND MAP'S LAYOUT.** A word of bytes per row,
+then one byte per 16x16 cell from base + 4 — the same +4 `WB_MAP_DATA_ROW` sits at above
+`WB_MAP_ROW_STRIDE`, and `map_stamp_block`'s own `addi.w #$4` is a third spelling of it
+(`test_the_cell_lookups_bias_is_the_background_maps_own`). `WB_STATE_FLAG_A32` picks between two of
+them, the same flag that picks the actor table: `WB_COLLISION_MAP_A32` lies inside the .PRG (zero
+below its stride word, filled at run time) and `WB_COLLISION_MAP_DEFAULT` past the program's last
+byte, loaded from disk. Neither carries shipped data, so every case seeds a window of each
+address-keyed and pokes the cells it means to test — plain RAM the game fills, not a fabricated
+record.
+
+**THE ONE PLACE THE PAIR OF MAPS IS NOT SYMMETRIC, AND IT IS REPRODUCED.** `$10a2` selects its map
+with `tst.w $a32.w` for the CELL LOOKUP and then reads the row stride its ground test walks by from
+`move.w $23494.l,d7` — `WB_COLLISION_MAP_DEFAULT`'s word, unconditionally. In the A32 mode the
+"one row down" and "two rows down" cells are therefore taken at the OTHER map's pitch. The two
+strides are seeded to DIFFERENT numbers in every case for exactly this reason, and
+`test_the_ground_test_walks_by_the_default_maps_stride` plants blocks one and two A32 rows below the
+cell and requires the tail to report open ground both times — a tidied port fails it.
+
+**$13c8 IS NAMED AND DELIBERATELY NOT PORTED, AND THE REASON IS THE HARNESS.** The five instructions
+that turn an actor's pixel position into a cell pointer are a routine of their own, entered by
+`bsr` at `$1344` and fallen into from `$13be`. It writes NO memory, so everything a case could
+compare is in registers — and the kit's oracle reports d0/d1/a0/a1 only. **Two of those it does
+leave**: d0 comes back as the probe's own column and d1 as its row, so the window is not shut
+completely. But both are BY-PRODUCTS of the lookup. The routine's LOAD-BEARING output — the map it
+selected, the cell pointer, the sub-cell and the span, in **a6, d2, d3 and d7** — is exactly what
+the oracle does not report, and no caller reads d0 or d1. A reconstruction pinned on those two alone
+would be a green function whose whole job is unchecked, so the stop decision stands. `src/map.c`
+inlines the same block inside `actor_step_left_against_map`, where the write set makes it
+observable, and `actor_settle_on_platform` takes a6/d7/d2 as arguments.
+
+**And it is REGISTERED rather than argued each time, because it is the third thing this project has
+stopped short of for OBSERVABILITY rather than for difficulty** — both of the others are batch 3's
+(the status panel's second tier): `hud_plot_digit`'s outgoing `d7`, and the staged-field mutation
+that survives only because the same window hides it. The usual terms: **trigger** = the kit's
+oracle reporting the full `movem` register set instead of `d0`/`d1`/`a0`/`a1`; **home** =
+`tools/recreate_kit`, in the oracle's own result dict. When it fires, all three are re-run against
+it — `$13c8` becomes a reconstruction, `hud_plot_digit`'s `d7` becomes a per-case assert, and the
+staged-field mutation should die (if it does not, that reading was wrong). **`$1334` in the queue
+below hits the same wall from the tier above**: it is what supplies `$13c8`'s and `$1400`'s
+register arguments, so porting it means either porting `$13c8` with it or reproducing that
+hand-over unobserved.
+
+**THE PLATFORM IS AN ACTOR RECORD.** `$1400` lands a record on `platform_y` (`$9a6e`), a word with
+exactly two operand sites in the whole image — both its own — and NO writer anywhere. It is
+`actor_table_default + 8 * 32 + 2`, i.e. slot 8's own y, which
+`test_the_platform_word_is_actor_slot_eights_own_y` states as arithmetic over the header's
+constants. What puts an actor in slot 8 is not established and the name says only what the routine
+does with it.
+
+Mutation-checked rather than assumed (each rebuilt with the `.so` DELETED first, and each source
+restored and byte-compared against a pristine copy afterwards — 1409 green each time it was
+restored): the allocator pool starting at slot 0 reddens 7; walking one slot too many reddens 2; the
+reset stamping the marker in the record's SECOND word reddens 3; the free run stopping one record
+short reddens 10; the spawn's size index not masked to a word reddens 1; the terminal fall speed
+read as a ceiling instead of an equality reddens 20; the launch leaving the supported bit alone
+reddens 20; the ground test stepping by the map it WALKED reddens 1; the off-the-edge test read as a
+zero test instead of a sign test reddens 1; the footprint scan comparing the span unsigned reddens
+1; the landing band's top end made non-strict reddens 7; the stamp's row step not sign-extended
+reddens 1; the step's result returned as the outcome byte alone reddens 2; the ground word returned
+as the flags alone reddens 1; the sub-cell test skipping the extra cell one pixel early reddens 1;
+and the retry loop clearing the player's byte for every record type reddens 4. **17 mutations, 16
+killed, 1 survivor.**
+
+**THREE OF THOSE REDS WERE HOLES THE FIRST SWEEP FOUND, AND THE THIRD WAS A CASE-GEOMETRY BUG.**
+"the ground test steps by the map it walked", "the footprint scan compares the span unsigned" and
+"the ground word is the flags alone" all SURVIVED the first sweep:
+
+* **The asymmetry case was planting its tiles in the wrong column.** The probe lands at
+  `(x - half_width - STEP) asr.w #4` and the case keyed its map pokes off `x - half_width` alone, so
+  every tile it planted sat one cell away from where the routine looks — and the case passed on the
+  seeded bytes that happened to be there instead. `probe_cell()` now computes the cell the first
+  probe lands in and every `tiles` key is an offset from it. This is the batch's methodology
+  finding: a differential case whose model is computed from the same image it seeds stays
+  self-consistent while testing nothing, and only a mutation says so. Written up transferably in
+  [`docs/methodology.md`](../../../docs/methodology.md), "The second seeding hole: a case keyed to
+  the wrong place" — beside batch 4's margin hole, which does NOT catch this one.
+* **The span comparison** needed a negative span that still LANDS: one that leaves the scan where it
+  started and reaches the platform through the sub-cell test, where an unsigned reading walks 2,049
+  cells first.
+* **The ground word's high half** needed a row times a stride that overflows sixteen bits; every
+  earlier case had a product under $10000, where dropping `set_low_word` is invisible.
+
+**The one survivor is an EQUIVALENCE and is now stated as one.** The spawn's `asr.l #5` on the
+template's byte offset differs from a logical shift only in the result's top five bits, and only the
+LOW BYTE is stored — bits 5..12 of the difference either way. No input can tell them apart, and
+`test_the_slot_bytes_signed_shift_is_an_equivalence_at_the_byte` asserts that over the boundary
+values rather than leaving a red mutation unexplained.
+
+**SIX ENCODERS AND THE TWO WORD READERS ARE NOW `test/leaf.py`'s**, on the registered third-user
+terms: `lea_indexed`,
+`move_w_ind_dn`, `move_w_abs_l_dn`, `tst_w_abs_w`, `subi_w_dn` and `sub_w_dn_dn` were each spelt in
+TWO batteries already and this batch's are the third. `lea_indexed` is the interesting one — the
+scroll's copy took a `longword_index` flag and the text plotter's took a `displacement`, and the map
+probes need both, so the merged signature is what makes the three one spelling. `test_scroll.py`,
+`test_text.py` and `test_actor.py` delete their copies and import them; the whole-body entry pins
+are the proof the hoist changed nothing, since every routine in five batteries still matches the
+shipped image byte for byte. `u16()` and `s16()` — how a Python model reads a word out of the image
+and sign-extends it — went the same way for the same reason: `test_scroll.py`, `test_actor.py` and
+this battery were three spellings of one sign extension, which is three places to get it wrong.
+
+**What stays local is REGISTERED rather than argued:** `_put_word()` and `_assert_writes()` are
+spelt identically in `test_actor.py` and here, which is TWO users — the line `_keyed_block` and
+`copy_longwords` were both held at. Usual terms: **trigger** = a third user; **home** =
+`test/leaf.py`, beside `program_writes()`, which `_assert_writes` is a stricter reading of. Plus
+each battery's single-use encodings, for batch 7's stated reason.
+
+**What this batch does NOT pin:**
+
+* **THE REGISTERS THE LIFECYCLE ROUTINES WALK OUT WITH.** `actor_table_reset` leaves a0 one record
+  past the last (asserted against the model, not pinned on the reconstruction) and d0 at `$ffff`;
+  `actor_slots_mark_free` leaves a6 and d7 the same way; the spawn clobbers d0/d1. The same family
+  as the projections'. Only `actor_accelerate_fall`'s d0 — the pre-increment speed byte — is
+  asserted per case, and no caller reads any of them.
+* **WHAT THE FLAG BITS AND TILE CODES MEAN.** `WB_ACTOR_FLAG_SUPPORTED_BIT` and
+  `WB_ACTOR_FLAG_FALLING_BIT` are named for the routines that raise and clear them, and
+  `WB_MAP_TILE_BLOCK`/`_LEDGE`/`_PLATFORM` for the tests that read them. Bits 0 and 1 of the flag
+  byte are named `MOVING`/`LAUNCHED` from the one reader above them (`btst #0,8(a0)` at `$1376`) and
+  no further.
+* **WHAT `WB_RECORD_PTR_10420` POINTS AT.** The stamp reads two of its fields; nothing here bounds
+  the record or says whether its twenty readers — fourteen `movea.l` sites and six that copy the
+  pointer to its neighbour `$10424` — agree about its shape. (21 operand sites in all: those twenty
+  and the single writer at `$163a`.)
+* **`subsystems.tsv` STILL PUTS ALL TEN IN THE CATCH-ALL.** The collision map is a characterised
+  subsystem now and the lifecycle belongs with `actor (table + projection)`, but re-drawing the
+  boundary means re-running `tools/hw_portability.py` over the scan — a measurement, like the
+  2026-08-02 re-measure below, and queued as one rather than half-done here.
+
+**QUEUED, with the names and evidence already in `../names.txt`:**
+
+* **`$1170` (`actor_step_right_against_map`, 152 bytes)** — `$10a2`'s mirror, the same head with
+  both signs flipped, but its own tail reads `bg_scroll_limit_x` under `WB_STATE_FLAG_A32` rather
+  than clamping at the actor's half-width, so it is not a parametrisation of the left one.
+* **`$1492` (`actor_settle_on_tile_1_or_2`, 98 bytes)** — `$1400`'s sibling, walking the same
+  footprint for tiles $1/$2. Its body ENCLOSES `actor_accelerate_fall` (`blt.w $14d6` at `$14c0`
+  jumps into it), so porting it means deciding how to represent that overlap.
+* **`$13be` + `$13c8` (66 bytes)** — named, and blocked on the oracle's register set as above.
+* **`$1334` (138 bytes)** — the tier directly above the map probes: it calls `$13c8`, `$14d6`,
+  `$13be` twice and falls into `$1400` by `bra.w`, and it is what supplies their register
+  arguments.
 
 ### The portability re-measure (2026-08-02): the boundary the campaign proved wrong
 

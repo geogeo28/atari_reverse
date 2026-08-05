@@ -34,8 +34,10 @@ import pytest
 
 import harness
 import leaf
-from leaf import (RTS, backward_branch, branch, bsr_w, case_salt, keyed_block, lea_abs_l, lea_d16,
-                  longword, merge_bands, move_w_imm_dn, opcode, program_writes, word)
+from leaf import (BRANCH_EXTENSION, RTS, backward_branch, branch, branch_over, bsr_w, case_salt,
+                  dbf, dbf_over, keyed_block, lea_abs_l, lea_d16, longword, merge_bands,
+                  move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn, moveq_0_dn, opcode,
+                  program_writes, s16, sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
 from layout import wb
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -73,6 +75,37 @@ FOLLOW_X = wb("SCROLL_FOLLOW_X")
 POS_X = wb("BG_SCROLL_POS_X")
 POS_Y = wb("BG_SCROLL_POS_Y")
 
+# ...and the lifecycle's own
+FREE_MARKER = wb("ACTOR_FREE_MARKER")
+ACTOR_TYPE = wb("ACTOR_TYPE")
+FLAGS2 = wb("ACTOR_FLAGS2")
+SPEED = wb("ACTOR_SPEED")
+FIELD_18 = wb("ACTOR_FIELD_18")
+TEMPLATE_SLOT = wb("ACTOR_TEMPLATE_SLOT")
+FIELD_30 = wb("ACTOR_FIELD_30")
+FIELD_31 = wb("ACTOR_FIELD_31")
+HALF_WIDTH = wb("ACTOR_HALF_WIDTH")
+SIZE_SECOND = wb("ACTOR_SIZE_SECOND")
+MOVING_BIT = wb("ACTOR_FLAG_MOVING_BIT")
+LAUNCHED_BIT = wb("ACTOR_FLAG_LAUNCHED_BIT")
+SUPPORTED_BIT = wb("ACTOR_FLAG_SUPPORTED_BIT")
+FALLING_BIT = wb("ACTOR_FLAG_FALLING_BIT")
+SPAWNED_BIT = wb("ACTOR_FLAGS2_SPAWNED_BIT")
+FALL_SPEED_MAX = wb("ACTOR_FALL_SPEED_MAX")
+ALLOC_LOW_FIRST = wb("ACTOR_ALLOC_LOW_FIRST")
+ALLOC_LOW_SLOTS = wb("ACTOR_ALLOC_LOW_SLOTS")
+ALLOC_HIGH_FIRST = wb("ACTOR_ALLOC_HIGH_FIRST")
+ALLOC_HIGH_SLOTS = wb("ACTOR_ALLOC_HIGH_SLOTS")
+ALLOC_NONE = wb("ACTOR_ALLOC_NONE")
+SPAWN_TYPE = wb("SPAWN_TYPE")
+SPAWN_SIZE = wb("SPAWN_SIZE")
+SPAWN_X = wb("SPAWN_X")
+SPAWN_Y = wb("SPAWN_Y")
+SPAWN_RECORD_BYTES = wb("SPAWN_RECORD_BYTES")
+SIZE_TABLE = wb("ACTOR_SIZE_TABLE")
+TEMPLATE_SLOT_SHIFT = wb("ACTOR_TEMPLATE_SLOT_SHIFT")
+TABLE_PTR = wb("TABLE_PTR_21E8C")
+
 WORD_LEN = 2
 LONGWORD_LEN = 4
 TABLE_BYTES = SCREEN_RECORD_COUNT * RECORD_BYTES
@@ -82,8 +115,8 @@ TABLE_BYTES = SCREEN_RECORD_COUNT * RECORD_BYTES
 LIST_INSN_CAP = 64 * SCREEN_RECORD_COUNT
 
 # --- register numbers, and the opcodes only this battery spells -----------------------------------
-A0, A1 = 0, 1
-D0, D1, D2 = 0, 1, 2
+A0, A1, A2, A6 = 0, 1, 2, 6
+D0, D1, D2, D7 = 0, 1, 2, 7
 
 BNE_W, BEQ_W, BPL_W, BLE_W, BLT_W, BGT_W, BRA_W = (0x6600, 0x6700, 0x6a00, 0x6f00,
                                                    0x6d00, 0x6e00, 0x6000)
@@ -103,10 +136,6 @@ def _bsr_s(here, target):
     return opcode(BSR_S | (displacement & BYTE_MASK))
 
 
-def tst_w_abs_w(addr):
-    return opcode(0x4a78) + word(addr)
-
-
 def jsr_abs_w(addr):
     return opcode(0x4eb8) + word(addr)
 
@@ -117,17 +146,6 @@ def movea_l_an_an(destination, source):
 
 def movea_l_abs_l(reg, addr):
     return opcode(0x2079 | (reg << 9)) + longword(addr)
-
-
-def move_w_abs_l_dn(reg, addr):
-    return opcode(0x3039 | (reg << 9)) + longword(addr)
-
-
-def move_w_ind_dn(reg, base, displacement=0):
-    """`move.w (An),Dn` and its `d16(An)` form — the original uses both."""
-    if displacement == 0:
-        return opcode(0x3010 | (reg << 9) | base)
-    return opcode(0x3028 | (reg << 9) | base) + word(displacement)
 
 
 def move_w_dn_postinc(reg, destination):
@@ -145,14 +163,6 @@ def move_w_d16_ind(source, displacement, destination):
 
 def move_l_imm_abs_l(value, addr):
     return opcode(0x23fc) + longword(value) + longword(addr)
-
-
-def subi_w_dn(reg, value):
-    return opcode(0x0440 | reg) + word(value)
-
-
-def sub_w_dn_dn(destination, source):
-    return opcode(0x9040 | (destination << 9) | source)
 
 
 def add_w_dn_dn(destination, source):
@@ -177,6 +187,98 @@ def bit_op_d16(op, bit, reg, displacement):
 
 
 BSET_IMM, BCLR_IMM, BTST_IMM = 0x08c0, 0x0880, 0x0800
+
+
+# ...and the encodings only the LIFECYCLE routines use.
+def move_l_imm_postinc(reg, value):
+    return opcode(0x20fc | (reg << 9)) + longword(value)
+
+
+def clr_l_postinc(reg):
+    return opcode(0x4298 | reg)
+
+
+def cmpi_w_ind(reg, value):
+    return opcode(0x0c50 | reg) + word(value)
+
+
+def movea_l_imm(reg, value):
+    return opcode(0x207c | (reg << 9)) + longword(value)
+
+
+def clr_w_d16(reg, displacement):
+    return opcode(0x4268 | reg) + word(displacement)
+
+
+def clr_b_d16(reg, displacement):
+    return opcode(0x4228 | reg) + word(displacement)
+
+
+def move_w_d16_d16(source, source_displacement, destination, destination_displacement):
+    """`move.w d16(As),d16(Ad)` — how the spawn copies a template field into a record.
+
+    The destination's register and mode sit in the HIGH half of the opcode word but its extension
+    word comes SECOND: a `move` emits the source EA's extensions first. The spawn's own arm copying
+    14(a0) to 14(a1) has the two displacements equal and so cannot tell the order apart; the two
+    that copy 26(a0) to 2(a1) and 12(a0) to 4(a1) can, and the entry pin is where they do.
+    """
+    return (opcode(0x3168 | (destination << 9) | source)
+            + word(source_displacement) + word(destination_displacement))
+
+
+def cmp_w_imm_dn(reg, value):
+    return opcode(0xb07c | (reg << 9)) + word(value)
+
+
+def lsl_w_imm_dn(count, reg):
+    return opcode(0xe148 | ((count & 7) << 9) | reg)
+
+
+def move_l_indexed_d16(base, index, destination, displacement):
+    """`move.l (0,Ab,Dn.l),d16(Ad)` — the size table's lookup, with a LONGWORD index."""
+    return (opcode(0x2170 | (destination << 9) | base) + word((index << 12) | 0x800)
+            + word(displacement))
+
+
+def move_l_an_dn(reg, source):
+    return opcode(0x2008 | (reg << 9) | source)
+
+
+def move_l_abs_l_dn(reg, addr):
+    return opcode(0x2039 | (reg << 9)) + longword(addr)
+
+
+def sub_l_dn_dn(destination, source):
+    return opcode(0x9080 | (destination << 9) | source)
+
+
+def asr_l_imm_dn(count, reg):
+    return opcode(0xe080 | ((count & 7) << 9) | reg)
+
+
+def move_b_dn_d16(reg, base, displacement):
+    return opcode(0x1140 | (base << 9) | reg) + word(displacement)
+
+
+def move_b_d16_dn(reg, base, displacement):
+    return opcode(0x1028 | (reg << 9) | base) + word(displacement)
+
+
+def cmpi_b_dn(reg, value):
+    return opcode(0x0c00 | reg) + word(value)
+
+
+def addq_b_d16(amount, base, displacement):
+    return opcode(0x5028 | ((amount & 7) << 9) | base) + word(displacement)
+
+
+def bra_s_back(spanned_bytes):
+    """`bra.s` back over ``spanned_bytes`` — the spawn's own-size arm rejoins the common tail.
+
+    BRA_W and BRA_S are the same opcode word read two ways, exactly as BNE_S is above."""
+    displacement = -(spanned_bytes + BRANCH_EXTENSION)
+    assert -0x80 <= displacement < 0, f"{displacement} does not fit a `bra.s` byte displacement"
+    return opcode(BRA_W | (displacement & BYTE_MASK))
 
 
 # --- the entry pins -------------------------------------------------------------------------------
@@ -265,14 +367,101 @@ def _project_list_entry():
             + RTS)
 
 
+def _table_reset_entry():
+    """A `move.l` of the marker plus enough `clr.l`s to finish the record — the count comes out of
+    WB_ACTOR_RECORD_BYTES, so a record that changed size fails here rather than under-clearing."""
+    record = (move_l_imm_postinc(A0, FREE_MARKER << 16)
+              + clr_l_postinc(A0) * (RECORD_BYTES // LONGWORD_LEN - 1))
+    return (move_w_imm_dn(D0, SCREEN_RECORD_COUNT - 1) + record + dbf(D0, record) + RTS)
+
+
+def _mark_free_entry():
+    record = move_w_imm_ind(A6, FREE_MARKER) + lea_d16(A6, RECORD_BYTES)
+    return record + dbf(D7, record) + RTS
+
+
+def _alloc_entry(first, slots):
+    """The thirty-eight bytes both allocators spell, parametrised by the two operands that differ.
+    src/actor.c makes the same claim by having one function behind both names, and
+    `test_the_two_allocators_are_one_routine_with_two_operands` is what makes that legitimate."""
+    probe = cmpi_w_ind(A1, FREE_MARKER)
+    step = lea_d16(A1, RECORD_BYTES)
+    close = dbf_over(D0, 0)          # the loop's own `dbf`; only its LENGTH is wanted here
+    empty = movea_l_imm(A1, ALLOC_NONE)
+    body = probe + branch_over(BEQ_W, len(step) + len(close) + len(empty)) + step
+    return (movea_l_abs_l(A1, TABLE_SELECTED)
+            + lea_d16(A1, first * RECORD_BYTES)
+            + move_w_imm_dn(D0, slots - 1)
+            + body + dbf(D0, body)
+            + empty + RTS)
+
+
+# `cmp.w #$36/$37/$38/$3b/$3c,d0`, in the original's own order: the types whose footprint comes
+# out of the TEMPLATE rather than out of WB_ACTOR_SIZE_TABLE. src/actor.c carries the same list.
+SPAWN_TYPES_WITH_OWN_SIZE = (0x36, 0x37, 0x38, 0x3b, 0x3c)
+SPAWN_SIZE_SHIFT = 2       # `lsl.w #2`: WB_ACTOR_SIZE_TABLE is one LONGWORD per type
+
+
+def _spawn_entry():
+    tail = (clr_w_d16(A1, ACTOR_SPRITE)
+            + clr_b_d16(A1, FIELD_30) + clr_b_d16(A1, FIELD_31) + clr_b_d16(A1, FIELD_18)
+            + bit_op_d16(BSET_IMM, SPAWNED_BIT, A1, FLAGS2)
+            + move_l_an_dn(D0, A0) + move_l_abs_l_dn(D1, TABLE_PTR) + sub_l_dn_dn(D0, D1)
+            + asr_l_imm_dn(TEMPLATE_SLOT_SHIFT, D0)
+            + move_b_dn_d16(D0, A1, TEMPLATE_SLOT) + RTS)
+    own_size = (move_w_d16_d16(A0, SPAWN_SIZE, A1, HALF_WIDTH)
+                + move_w_d16_d16(A0, SPAWN_SIZE + WORD_LEN, A1, SIZE_SECOND))
+    from_table = (lsl_w_imm_dn(SPAWN_SIZE_SHIFT, D0) + lea_abs_l(A2, SIZE_TABLE)
+                  + move_l_indexed_d16(A2, D0, A1, HALF_WIDTH))
+
+    # Every one of the five `beq`s lands on the same arm, so each spans the compares still to come
+    # plus the table lookup and the whole tail.
+    selectors = b""
+    for index, spawn_type in enumerate(SPAWN_TYPES_WITH_OWN_SIZE):
+        remaining = (len(SPAWN_TYPES_WITH_OWN_SIZE) - 1 - index) * (
+            len(cmp_w_imm_dn(D0, 0)) + len(branch(BEQ_W, b"")))
+        selectors += cmp_w_imm_dn(D0, spawn_type) + branch_over(
+            BEQ_W, remaining + len(from_table) + len(tail))
+
+    return (clr_w_d16(A1, ACTOR_FLAGS)
+            + move_w_d16_ind(A0, SPAWN_X, A1)
+            + move_w_d16_d16(A0, SPAWN_Y, A1, ACTOR_Y)
+            + move_w_d16_d16(A0, SPAWN_TYPE, A1, ACTOR_TYPE)
+            + moveq_0_dn(D0) + move_w_ind_dn(D0, A0, SPAWN_TYPE)
+            + selectors + from_table + tail
+            + own_size + bra_s_back(len(own_size) + len(tail)))
+
+
+def _start_motion_entry():
+    return (bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS)
+            + bit_op_d16(BSET_IMM, MOVING_BIT, A0, ACTOR_FLAGS)
+            + bit_op_d16(BSET_IMM, LAUNCHED_BIT, A0, ACTOR_FLAGS)
+            + move_b_dn_d16(D0, A0, SPEED) + RTS)
+
+
+def _accelerate_fall_entry():
+    step = addq_b_d16(1, A0, SPEED)
+    return (bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS)
+            + bit_op_d16(BSET_IMM, FALLING_BIT, A0, ACTOR_FLAGS)
+            + moveq_0_dn(D0) + move_b_d16_dn(D0, A0, SPEED)
+            + cmpi_b_dn(D0, FALL_SPEED_MAX) + branch(BEQ_W, step) + step + RTS)
+
+
 ENTRY_BYTES = {
     "followed_actor_record": _followed_record_entry(),
     "actor_set_side_flag": _side_flag_entry(),
     "actor_followed_x_within": _within_entry(),
     "project_followed_actor": _project_followed_entry(),
     "project_actor_list": _project_list_entry(),
+    "actor_table_reset": _table_reset_entry(),
+    "actor_slots_mark_free": _mark_free_entry(),
+    "actor_alloc_slot_low": _alloc_entry(ALLOC_LOW_FIRST, ALLOC_LOW_SLOTS),
+    "actor_alloc_slot_high": _alloc_entry(ALLOC_HIGH_FIRST, ALLOC_HIGH_SLOTS),
+    "actor_spawn_from_template": _spawn_entry(),
+    "actor_start_motion_at_speed": _start_motion_entry(),
+    "actor_accelerate_fall": _accelerate_fall_entry(),
 }
-RECONSTRUCTED_ROUTINES = 5
+RECONSTRUCTED_ROUTINES = 12
 
 
 def test_the_battery_covers_every_routine_it_was_written_for():
@@ -290,6 +479,13 @@ def test_the_whole_body_is_the_bytes_this_battery_reconstructs(name):
     ("actor_followed_x_within", 42),
     ("project_followed_actor", 104),
     ("project_actor_list", 156),
+    ("actor_table_reset", 30),
+    ("actor_slots_mark_free", 14),
+    ("actor_alloc_slot_low", 38),
+    ("actor_alloc_slot_high", 38),
+    ("actor_spawn_from_template", 134),
+    ("actor_start_motion_at_speed", 24),
+    ("actor_accelerate_fall", 32),
 ], ids=lambda v: v if isinstance(v, str) else f"{v}B")
 def test_the_reconstructed_body_is_the_whole_routine(name, size):
     """The pins above would still pass on a PREFIX of a routine. These are the sizes the Ghidra
@@ -351,15 +547,6 @@ def _state_pokes(salt, words):
     return pokes
 
 
-def _u16(image, addr):
-    return int.from_bytes(bytes(image[addr:addr + WORD_LEN]), "big")
-
-
-def _s16(value):
-    value &= 0xffff
-    return value - 0x10000 if value & 0x8000 else value
-
-
 def _put_word(out, addr, value):
     for offset, byte in enumerate(word(value)):
         out[addr + offset] = byte
@@ -373,15 +560,15 @@ def _put_long(out, addr, value):
 def _model_projection(image, record, screen):
     """One actor record into one screen record: {address: byte}."""
     out = {}
-    scroll_x = _u16(image, POS_X)
-    scroll_y = _u16(image, POS_Y)
+    scroll_x = u16(image, POS_X)
+    scroll_y = u16(image, POS_Y)
     _put_word(out, screen + SCREEN_X,
-              _u16(image, record + ACTOR_X) - SCREEN_X_BIAS - scroll_x)
+              u16(image, record + ACTOR_X) - SCREEN_X_BIAS - scroll_x)
     _put_word(out, screen + SCREEN_Y,
-              _u16(image, record + ACTOR_Y) - SCREEN_Y_BIAS - scroll_y)
-    flickering = (image[record + ACTOR_FLAGS] & (1 << FLICKER_BIT)) and _u16(image, FRAME_TOGGLE)
+              u16(image, record + ACTOR_Y) - SCREEN_Y_BIAS - scroll_y)
+    flickering = (image[record + ACTOR_FLAGS] & (1 << FLICKER_BIT)) and u16(image, FRAME_TOGGLE)
     _put_word(out, screen + SCREEN_SPRITE,
-              SPRITE_HIDDEN if flickering else _u16(image, record + ACTOR_SPRITE))
+              SPRITE_HIDDEN if flickering else u16(image, record + ACTOR_SPRITE))
     return out
 
 
@@ -466,7 +653,7 @@ def test_the_side_flag_says_which_way_the_followed_actor_is(case, followed_x, ac
     info = leaf.run("actor_set_side_flag", _SIDE_FLAG(actor), [(actor + ACTOR_FLAGS, 1)], what,
                     regs={"a0": actor, "_pokes": pokes})
 
-    raised = _s16(actor_x) > _s16(followed_x)
+    raised = s16(actor_x) > s16(followed_x)
     expected = flag_seed | (1 << SIDE_BIT) if raised else flag_seed & ~(1 << SIDE_BIT)
     _assert_writes(info, {actor + ACTOR_FLAGS: expected}, what)
 
@@ -527,11 +714,11 @@ def test_the_reach_test_answers_for_the_wrapped_sum(case, followed_x, actor_x, r
     info = leaf.run("actor_followed_x_within", _WITHIN(actor, high | reach), [], what,
                     regs={"a0": actor, "d0": high | reach, "_pokes": pokes})
 
-    here, followed = _s16(actor_x), _s16(followed_x)
+    here, followed = s16(actor_x), s16(followed_x)
     if followed > here:
-        outside = followed > _s16(here + reach)
+        outside = followed > s16(here + reach)
     else:
-        outside = _s16(followed + reach) < here
+        outside = s16(followed + reach) < here
     expected = high | (OUT_OF_REACH if outside else 0)
 
     assert not program_writes(info), f"{what}: it wrote memory, which this routine does not"
@@ -739,3 +926,361 @@ def test_the_selector_is_called_and_never_read_as_data():
              if program[at:at + WORD_LEN] == word(entry)
              and program[at - WORD_LEN:at] == opcode(0x4eb8)]
     assert len(abs_w) == 2, f"{len(abs_w)} `jsr $67e0.w` sites, not the two the scan records"
+
+
+# --- the table's lifecycle ------------------------------------------------------------------------
+# Every case seeds all three tables address-keyed with `_state_pokes`, so a walk that ran one record
+# long, took the wrong stride or read the wrong table lands on bytes that are wrong FOR WHERE THEY
+# WERE WRITTEN. What each case adds on top is only the records it is about.
+#
+# The instruction caps come from each routine's own loop geometry.
+RESET_INSN_PER_RECORD = 10
+MARK_FREE_INSN_PER_RECORD = 4
+ALLOC_INSN_PER_SLOT = 4
+LOOP_INSN_TAIL = 16
+
+_TABLE_RESET = leaf.register_glue("actor_table_reset", [ctypes.c_uint32])
+_MARK_FREE = leaf.register_glue("actor_slots_mark_free", [ctypes.c_uint32] * 2)
+_ALLOC_LOW = leaf.register_glue("actor_alloc_slot_low", [], ctypes.c_uint32)
+_ALLOC_HIGH = leaf.register_glue("actor_alloc_slot_high", [], ctypes.c_uint32)
+_SPAWN = leaf.register_glue("actor_spawn_from_template", [ctypes.c_uint32] * 2)
+_START_MOTION = leaf.register_glue("actor_start_motion_at_speed", [ctypes.c_uint32] * 2)
+_ACCELERATE_FALL = leaf.register_glue("actor_accelerate_fall", [ctypes.c_uint32])
+
+
+def _model_table_reset(table):
+    """{address: byte} — the marker in each record's first word and zero over the rest of it."""
+    out = {}
+    for slot in range(SCREEN_RECORD_COUNT):
+        record = table + slot * RECORD_BYTES
+        _put_word(out, record + ACTOR_X, FREE_MARKER)
+        for offset in range(WORD_LEN, RECORD_BYTES):
+            out[record + offset] = 0
+    return out
+
+
+@pytest.mark.parametrize("table", [TABLE_DEFAULT, TABLE_A30, TABLE_A32],
+                         ids=lambda v: f"table{v:#x}")
+def test_the_reset_marks_every_record_free_and_zeroes_the_rest(table):
+    """All three tables, since a0 is the only thing that says which one — and the seeded band
+    covers all three back to back, so a walk that overran one lands in the next."""
+    expected = _model_table_reset(table)
+    what = f"actor_table_reset {table:#x}"
+    info = leaf.run("actor_table_reset", _TABLE_RESET(table), merge_bands(expected), what,
+                    regs={"a0": table, "_pokes": _state_pokes(case_salt(what), {})},
+                    max_insns=RESET_INSN_PER_RECORD * SCREEN_RECORD_COUNT + LOOP_INSN_TAIL)
+    _assert_writes(info, expected, what)
+    assert info["regs"]["a0"] == table + SCREEN_RECORD_COUNT * RECORD_BYTES, (
+        f"{what}: a0 walked out at {info['regs']['a0']:#x}, not one record past the last")
+
+
+@pytest.mark.parametrize("count", [0, 1, 5, SCREEN_RECORD_COUNT - 1],
+                         ids=lambda v: f"dbf{v}")
+@pytest.mark.parametrize("first_slot", [0, 3, 13], ids=lambda v: f"from{v}")
+def test_marking_a_run_free_touches_only_the_marker_words(first_slot, count):
+    """A `dbf` count of N marks N + 1 records, and NOTHING but their first words — which is the
+    whole difference between this routine and the reset above."""
+    first = TABLE_DEFAULT + first_slot * RECORD_BYTES
+    expected = {}
+    for slot in range(count + 1):
+        _put_word(expected, first + slot * RECORD_BYTES + ACTOR_X, FREE_MARKER)
+
+    what = f"actor_slots_mark_free from slot {first_slot}, dbf {count}"
+    info = leaf.run("actor_slots_mark_free", _MARK_FREE(first, count), merge_bands(expected), what,
+                    regs={"a6": first, "d7": count, "_pokes": _state_pokes(case_salt(what), {})},
+                    max_insns=MARK_FREE_INSN_PER_RECORD * (count + 1) + LOOP_INSN_TAIL)
+    _assert_writes(info, expected, what)
+
+
+def test_the_free_run_reads_only_the_low_word_of_its_count():
+    """`dbf d7` counts in a WORD, so a caller's rubbish above it must not reach the loop."""
+    first = TABLE_DEFAULT + 3 * RECORD_BYTES
+    expected = {}
+    for slot in range(3):
+        _put_word(expected, first + slot * RECORD_BYTES + ACTOR_X, FREE_MARKER)
+    what = "actor_slots_mark_free with a high half in d7"
+    info = leaf.run("actor_slots_mark_free", _MARK_FREE(first, 0xdead0002), merge_bands(expected),
+                    what, regs={"a6": first, "d7": 0xdead0002,
+                                "_pokes": _state_pokes(case_salt(what), {})},
+                    max_insns=MARK_FREE_INSN_PER_RECORD * 3 + LOOP_INSN_TAIL)
+    _assert_writes(info, expected, what)
+
+
+# A word that is NOT the free marker, stamped into every record a pool case does not want free —
+# the address-keyed seed could in principle spell $ffbe by itself, and a case that silently found
+# an extra free slot would be testing nothing.
+OCCUPIED = 0x1234
+
+
+def _pool_pokes(salt, table, free_slots):
+    """All three tables seeded, `table`'s records all occupied, and `free_slots` of it marked."""
+    pokes = _state_pokes(salt, {})
+    for slot in range(SCREEN_RECORD_COUNT):
+        pokes[table + slot * RECORD_BYTES + ACTOR_X] = word(
+            FREE_MARKER if slot in free_slots else OCCUPIED)
+    pokes[TABLE_SELECTED] = longword(table)
+    return pokes
+
+
+POOLS = {
+    "low": (_ALLOC_LOW, "actor_alloc_slot_low", ALLOC_LOW_FIRST, ALLOC_LOW_SLOTS),
+    "high": (_ALLOC_HIGH, "actor_alloc_slot_high", ALLOC_HIGH_FIRST, ALLOC_HIGH_SLOTS),
+}
+
+
+def _run_alloc(pool, case, free_slots, expected, table=TABLE_DEFAULT):
+    glue, name, first, slots = POOLS[pool]
+    what = f"{name} {case}"
+    pokes = _pool_pokes(case_salt(what), table, free_slots)
+    info = leaf.run(name, glue(), [], what, regs={"_pokes": pokes},
+                    max_insns=ALLOC_INSN_PER_SLOT * slots + LOOP_INSN_TAIL)
+    assert not program_writes(info), f"{what}: it wrote memory, which this routine does not"
+    assert info["regs"]["a1"] == expected, (
+        f"{what}: the original returned a1={info['regs']['a1']:#x}, not {expected:#x}")
+    assert info["ret"] == info["regs"]["a1"], (
+        f"{what}: the reconstruction returned {info['ret']:#x} against the original's "
+        f"{info['regs']['a1']:#x}")
+
+
+@pytest.mark.parametrize("pool", sorted(POOLS), ids=sorted(POOLS))
+def test_an_allocator_hands_back_the_first_free_slot_of_its_own_pool(pool):
+    _glue, _name, first, slots = POOLS[pool]
+    for offset in range(slots):
+        _run_alloc(pool, f"only slot {first + offset} free", {first + offset},
+                   TABLE_DEFAULT + (first + offset) * RECORD_BYTES)
+
+
+@pytest.mark.parametrize("pool", sorted(POOLS), ids=sorted(POOLS))
+def test_an_allocator_takes_the_lowest_of_several_free_slots(pool):
+    _glue, _name, first, slots = POOLS[pool]
+    free = {first, first + 1, first + slots - 1}
+    _run_alloc(pool, "several free", free, TABLE_DEFAULT + first * RECORD_BYTES)
+
+
+@pytest.mark.parametrize("pool", sorted(POOLS), ids=sorted(POOLS))
+def test_a_full_pool_comes_back_empty_handed(pool):
+    _run_alloc(pool, "nothing free", set(), ALLOC_NONE)
+
+
+@pytest.mark.parametrize("pool", sorted(POOLS), ids=sorted(POOLS))
+def test_no_allocator_can_reach_the_followed_actors_slot(pool):
+    """THE case the two pools exist for: slot WB_ACTOR_FOLLOWED_SLOT is free and it is the ONLY
+    free record, and neither allocator returns it — the low pool stops one short of it and the high
+    one starts one past it. Slots 0..2 are equally out of reach, which the next case covers."""
+    _run_alloc(pool, "only the followed slot free", {FOLLOWED_SLOT}, ALLOC_NONE)
+
+
+@pytest.mark.parametrize("pool", sorted(POOLS), ids=sorted(POOLS))
+def test_an_allocator_ignores_every_free_slot_outside_its_pool(pool):
+    """Every slot the pool does not own, free at once. A `lea` with the wrong first record or a
+    `dbf` with the wrong count returns one of them instead of nothing."""
+    _glue, _name, first, slots = POOLS[pool]
+    outside = set(range(SCREEN_RECORD_COUNT)) - set(range(first, first + slots))
+    _run_alloc(pool, "only slots outside the pool free", outside, ALLOC_NONE)
+
+
+def test_the_pools_tile_the_table_around_the_followed_slot():
+    """The claim src/actor.c's header makes, as arithmetic over the header's own constants: the two
+    runs are 3..11 and 13..18, so they meet either side of slot 12 and cover everything above it."""
+    assert ALLOC_LOW_FIRST + ALLOC_LOW_SLOTS == FOLLOWED_SLOT
+    assert ALLOC_HIGH_FIRST == FOLLOWED_SLOT + 1
+    assert ALLOC_HIGH_FIRST + ALLOC_HIGH_SLOTS == SCREEN_RECORD_COUNT
+
+
+@pytest.mark.parametrize("pool", sorted(POOLS), ids=sorted(POOLS))
+@pytest.mark.parametrize("table", [TABLE_A30, TABLE_A32], ids=lambda v: f"table{v:#x}")
+def test_an_allocator_walks_whichever_table_was_published(pool, table):
+    """`movea.l $a098.l,a1` — the pool is an offset into the table `project_actor_list` last
+    published, not into a table of its own. The other two tables are seeded with no free record at
+    all, so a port that hardcoded one comes back empty-handed."""
+    _glue, _name, first, _slots = POOLS[pool]
+    what = f"{_name} against the table at {table:#x}"
+    pokes = _pool_pokes(case_salt(what), table, {first})
+    for other in (TABLE_DEFAULT, TABLE_A30, TABLE_A32):
+        if other != table:
+            for slot in range(SCREEN_RECORD_COUNT):
+                pokes[other + slot * RECORD_BYTES + ACTOR_X] = word(OCCUPIED)
+    info = leaf.run(_name, _glue(), [], what, regs={"_pokes": pokes},
+                    max_insns=ALLOC_INSN_PER_SLOT * SCREEN_RECORD_COUNT + LOOP_INSN_TAIL)
+    assert info["regs"]["a1"] == table + first * RECORD_BYTES
+    assert info["ret"] == info["regs"]["a1"]
+
+
+# --- $ffe4: the spawn -----------------------------------------------------------------------------
+# The template table and the size table both live outside the actor band, so a spawn case seeds
+# three regions: the actor tables (for the destination record), a template table in plain RAM, and
+# a window of WB_ACTOR_SIZE_TABLE, which is program data the game overwrites at run time.
+SPAWN_INSN_CAP = 48
+TEMPLATE_TABLE = 0x31000                 # plain RAM, clear of everything else a case seeds
+TEMPLATE_SLOTS = 8
+SIZE_TABLE_ENTRIES = 0x100
+SPAWN_TYPES_FROM_TABLE = (0, 1, 0x35, 0x39, 0x3d, 0xff)
+
+
+def _spawn_pokes(salt, template_slot, spawn_type, table_base=TEMPLATE_TABLE):
+    pokes = _state_pokes(salt, {})
+    pokes[table_base] = keyed_block(table_base, TEMPLATE_SLOTS * SPAWN_RECORD_BYTES, salt)
+    pokes[SIZE_TABLE] = keyed_block(SIZE_TABLE, SIZE_TABLE_ENTRIES * LONGWORD_LEN, salt)
+    pokes[TABLE_PTR] = longword(table_base)
+    pokes[table_base + template_slot * SPAWN_RECORD_BYTES + SPAWN_TYPE] = word(spawn_type)
+    return pokes
+
+
+def _model_spawn(image, template, record):
+    out = {}
+    spawn_type = u16(image, template + SPAWN_TYPE)
+    _put_word(out, record + ACTOR_FLAGS, 0)
+    _put_word(out, record + ACTOR_X, u16(image, template + SPAWN_X))
+    _put_word(out, record + ACTOR_Y, u16(image, template + SPAWN_Y))
+    _put_word(out, record + ACTOR_TYPE, spawn_type)
+    if spawn_type in SPAWN_TYPES_WITH_OWN_SIZE:
+        _put_word(out, record + HALF_WIDTH, u16(image, template + SPAWN_SIZE))
+        _put_word(out, record + SIZE_SECOND, u16(image, template + SPAWN_SIZE + WORD_LEN))
+    else:
+        index = (spawn_type << SPAWN_SIZE_SHIFT) & 0xffff
+        _put_long(out, record + HALF_WIDTH, int.from_bytes(
+            bytes(image[SIZE_TABLE + index:SIZE_TABLE + index + LONGWORD_LEN]), "big"))
+    _put_word(out, record + ACTOR_SPRITE, 0)
+    out[record + FIELD_30] = 0
+    out[record + FIELD_31] = 0
+    out[record + FIELD_18] = 0
+    # `clr.w 8(a1)` cleared both flag bytes before the `bset`, so the raised bit is the only one.
+    out[record + FLAGS2] = 1 << SPAWNED_BIT
+    delta = template - int.from_bytes(bytes(image[TABLE_PTR:TABLE_PTR + LONGWORD_LEN]), "big")
+    if delta >= 0x80000000:
+        delta -= 0x100000000
+    out[record + TEMPLATE_SLOT] = (delta >> TEMPLATE_SLOT_SHIFT) & 0xff
+    return out
+
+
+def _run_spawn(case, template_slot, spawn_type, record_slot=5, table_base=TEMPLATE_TABLE):
+    what = f"actor_spawn_from_template {case}"
+    pokes = _spawn_pokes(case_salt(what), template_slot, spawn_type, table_base)
+    template = table_base + template_slot * SPAWN_RECORD_BYTES
+    record = TABLE_DEFAULT + record_slot * RECORD_BYTES
+
+    image = harness.make_image(pokes)
+    expected = _model_spawn(image, template, record)
+    info = leaf.run("actor_spawn_from_template", _SPAWN(template, record), merge_bands(expected),
+                    what, regs={"a0": template, "a1": record, "_pokes": pokes},
+                    max_insns=SPAWN_INSN_CAP)
+    _assert_writes(info, expected, what)
+    return info
+
+
+@pytest.mark.parametrize("spawn_type", SPAWN_TYPES_WITH_OWN_SIZE, ids=lambda v: f"own{v:#04x}")
+def test_the_five_types_that_carry_their_own_size_copy_it_from_the_template(spawn_type):
+    """All five `cmp.w` arms. Each takes the template's own pair rather than the size table's, and
+    the seeded size table holds different bytes, so an arm that fell through fails."""
+    _run_spawn(f"own-size type {spawn_type:#x}", 2, spawn_type)
+
+
+@pytest.mark.parametrize("spawn_type", SPAWN_TYPES_FROM_TABLE, ids=lambda v: f"table{v:#04x}")
+def test_every_other_type_takes_its_size_from_the_table(spawn_type):
+    """Including the two types either side of the $36..$38 run and the two either side of $3b/$3c,
+    so a compare written as a RANGE rather than as five equalities fails."""
+    _run_spawn(f"table-size type {spawn_type:#x}", 2, spawn_type)
+
+
+def test_the_size_index_is_a_word_and_wraps():
+    """`lsl.w #2` on a word: a type from $4000 up indexes back to the start of the size table
+    instead of past its end. Unreachable from the shipped templates, which is why it is a seeded
+    case and not a claim about the data."""
+    _run_spawn("wrapping size index", 2, 0x4000)
+
+
+@pytest.mark.parametrize("template_slot", [0, 1, TEMPLATE_SLOTS - 1],
+                         ids=lambda v: f"slot{v}")
+def test_the_spawn_records_which_template_it_came_from(template_slot):
+    _run_spawn(f"template slot {template_slot}", template_slot, 0x10)
+
+
+def test_the_slot_bytes_signed_shift_is_an_equivalence_at_the_byte():
+    """`asr.l #5` is arithmetic and `lsr.l #5` is not, but only their top five bits differ — and the
+    spawn stores the LOW BYTE, which is bits 5..12 of the difference either way. So a reconstruction
+    that used an unsigned shift cannot be told apart by any input, and the mutation sweep's survivor
+    is stated here as the equivalence it is rather than left as a coverage hole."""
+    for delta in (0, 32, -32, -1, 1 << 31, (1 << 31) + 96, -(1 << 20) - 64):
+        signed = (delta >> TEMPLATE_SLOT_SHIFT) & 0xff
+        unsigned = ((delta & 0xffffffff) >> TEMPLATE_SLOT_SHIFT) & 0xff
+        assert signed == unsigned, (
+            f"the two shifts differ at delta={delta}, so the survivor is a real hole after all")
+
+
+def test_the_slot_byte_is_a_signed_shift_of_the_whole_longword():
+    """The pointer is moved a record ABOVE the template, so the difference is negative and the
+    stored byte is the low byte of `-1`."""
+    what = "actor_spawn_from_template with the pointer above the template"
+    pokes = _spawn_pokes(case_salt(what), 0, 0x10)
+    pokes[TABLE_PTR] = longword(TEMPLATE_TABLE + SPAWN_RECORD_BYTES)
+    template = TEMPLATE_TABLE
+    record = TABLE_DEFAULT + 5 * RECORD_BYTES
+
+    image = harness.make_image(pokes)
+    expected = _model_spawn(image, template, record)
+    assert expected[record + TEMPLATE_SLOT] == 0xff, (
+        "this case is meant to reach the negative shift, and its model says otherwise")
+    info = leaf.run("actor_spawn_from_template", _SPAWN(template, record), merge_bands(expected),
+                    what, regs={"a0": template, "a1": record, "_pokes": pokes},
+                    max_insns=SPAWN_INSN_CAP)
+    _assert_writes(info, expected, what)
+
+
+@pytest.mark.parametrize("record_slot", [0, FOLLOWED_SLOT, SCREEN_RECORD_COUNT - 1],
+                         ids=lambda v: f"into{v}")
+def test_the_spawn_fills_in_whichever_record_it_is_handed(record_slot):
+    """a1 is the only thing that says where the record is, and the seeded band puts different bytes
+    in every one of them."""
+    _run_spawn(f"into slot {record_slot}", 2, 0x10, record_slot=record_slot)
+
+
+# --- $2af2 and $14d6: the two state steps ----------------------------------------------------------
+# The flag seeds are the same four the side-flag battery uses: the bits this routine touches already
+# raised, already clear, and both with every NEIGHBOURING bit set, which a byte-wide `bset`/`bclr`
+# must leave alone.
+STATE_INSN_CAP = 16
+STATE_FLAG_SEEDS = (0x00, 0xff, 1 << SUPPORTED_BIT, 0xff ^ (1 << SUPPORTED_BIT))
+LAUNCH_SPEEDS = (0, 1, FALL_SPEED_MAX, 0xff, 0xdeadbe07)
+
+
+@pytest.mark.parametrize("speed", LAUNCH_SPEEDS, ids=lambda v: f"d0{v:#x}")
+@pytest.mark.parametrize("flags", STATE_FLAG_SEEDS, ids=lambda v: f"flags{v:#04x}")
+def test_the_launch_clears_the_supported_bit_and_stores_the_speed_byte(flags, speed):
+    """`move.b d0,11(a0)` takes ONE byte of d0, which the last seed is what pins."""
+    actor = TABLE_DEFAULT + 4 * RECORD_BYTES
+    what = f"actor_start_motion_at_speed flags={flags:#04x} d0={speed:#x}"
+    pokes = _state_pokes(case_salt(what), {})
+    pokes[actor + ACTOR_FLAGS] = bytes([flags])
+
+    expected = {
+        actor + ACTOR_FLAGS: (flags & ~(1 << SUPPORTED_BIT)
+                              | (1 << MOVING_BIT) | (1 << LAUNCHED_BIT)) & 0xff,
+        actor + SPEED: speed & 0xff,
+    }
+    info = leaf.run("actor_start_motion_at_speed", _START_MOTION(actor, speed),
+                    merge_bands(expected), what,
+                    regs={"a0": actor, "d0": speed, "_pokes": pokes}, max_insns=STATE_INSN_CAP)
+    _assert_writes(info, expected, what)
+
+
+@pytest.mark.parametrize("speed", [0, 1, FALL_SPEED_MAX - 1, FALL_SPEED_MAX, FALL_SPEED_MAX + 1,
+                                   0xff], ids=lambda v: f"speed{v:#04x}")
+@pytest.mark.parametrize("flags", STATE_FLAG_SEEDS, ids=lambda v: f"flags{v:#04x}")
+def test_the_fall_accelerates_up_to_an_exact_terminal_speed(flags, speed):
+    """Both sides of the `cmpi.b #$8` and the two cases that show it is an EQUALITY: a record
+    already ABOVE the terminal speed keeps climbing, and $ff wraps to 0 rather than saturating."""
+    actor = TABLE_DEFAULT + 4 * RECORD_BYTES
+    what = f"actor_accelerate_fall flags={flags:#04x} speed={speed:#04x}"
+    pokes = _state_pokes(case_salt(what), {})
+    pokes[actor + ACTOR_FLAGS] = bytes([flags])
+    pokes[actor + SPEED] = bytes([speed])
+
+    expected = {actor + ACTOR_FLAGS: (flags & ~(1 << SUPPORTED_BIT)
+                                      | (1 << FALLING_BIT)) & 0xff}
+    if speed != FALL_SPEED_MAX:
+        expected[actor + SPEED] = (speed + 1) & 0xff
+    info = leaf.run("actor_accelerate_fall", _ACCELERATE_FALL(actor), merge_bands(expected), what,
+                    regs={"a0": actor, "_pokes": pokes}, max_insns=STATE_INSN_CAP)
+    _assert_writes(info, expected, what)
+    assert info["regs"]["d0"] == speed, (
+        f"{what}: the original left d0={info['regs']['d0']:#x}, not the pre-increment {speed:#x}")

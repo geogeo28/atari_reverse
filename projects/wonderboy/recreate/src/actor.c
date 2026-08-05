@@ -1,5 +1,7 @@
-/* actor.c — the followed actor's record ($67e0), the two tests above it ($67c2, $67f8) and the two
- * passes that project actor records into screen coordinates ($8dfe, $8e66).
+/* actor.c — the followed actor's record ($67e0), the two tests above it ($67c2, $67f8), the two
+ * passes that project actor records into screen coordinates ($8dfe, $8e66), and the table's own
+ * LIFECYCLE: reset ($1f36), free ($df9e), allocate ($1b68, $1b8e), spawn ($ffe4) and the two
+ * routines that move a record between standing and falling ($2af2, $14d6).
  *
  * WHAT TIES THE FIVE TOGETHER. The game's moving objects live in three parallel tables of
  * WB_ACTOR_SCREEN_RECORD_COUNT records; two mode flags pick one, and slot WB_ACTOR_FOLLOWED_SLOT of
@@ -26,7 +28,18 @@
  * WHAT THE DIFFERENTIAL CANNOT SEE, registered in ../STATUS.md: the registers the two projections
  * leave behind. Both walk out with a0 one record on and a1 one screen record on, and their one
  * caller (game_main_loop) reloads everything before its next call, so the C returns neither —
- * test/test_actor.py asserts the ORACLE's against a model instead.
+ * test/test_actor.py asserts the ORACLE's against a model instead. The lifecycle routines below
+ * are the same family: only the two allocators have a result worth returning (their a1), and the
+ * rest walk out with a cursor nothing reads.
+ *
+ * WHAT THE LIFECYCLE TURNS OUT TO BE. A table is nineteen records; `actor_table_reset` marks every
+ * one of them free, `actor_slots_mark_free` marks a RUN of them free again, and the two allocators
+ * hand back the first free record of one of two POOLS — WB_ACTOR_ALLOC_LOW_FIRST..+LOW_SLOTS and
+ * WB_ACTOR_ALLOC_HIGH_FIRST..+HIGH_SLOTS, which meet either side of WB_ACTOR_FOLLOWED_SLOT and so
+ * can never hand out the followed actor's own slot. `actor_spawn_from_template` then fills the slot
+ * in from a 32-byte template. The two allocators are BYTE-IDENTICAL apart from their first slot and
+ * their count, so they are one function here — test/test_actor.py asserts that, for batch 7's
+ * reason: a pattern that was wrong in the same way twice would pass two pins built from it.
  */
 #include <stdint.h>
 
@@ -128,4 +141,135 @@ void project_actor_list(uint8_t *image) {
         record = addr_add(record, WB_ACTOR_RECORD_BYTES);
         screen = addr_add(screen, WB_ACTOR_SCREEN_RECORD_BYTES);
     } while (screen != WB_ACTOR_SCREEN_RECORDS_END);
+}
+
+/* --- the table's lifecycle ---------------------------------------------------------------------
+ *
+ * A `dbf Dn` runs its body Dn + 1 times and leaves Dn at $ffff, so every count below is spelt as
+ * the original's own operand and the loop as a do/while: `remaining-- != 0` is exactly the
+ * decrement-and-test the instruction does, wrap included.
+ */
+
+void actor_table_reset(uint8_t *image, uint32_t table) {
+    uint32_t record = table;
+    uint16_t remaining = WB_ACTOR_SCREEN_RECORD_COUNT - 1;      /* `move.w #$12,d0` */
+
+    do {
+        /* `move.l #$ffbe0000,(a0)+` then seven `clr.l (a0)+`: the marker sits in WB_ACTOR_X and the
+         * rest of the record — WB_ACTOR_Y included — goes to zero. */
+        wr32(image + record, (uint32_t)WB_ACTOR_FREE_MARKER << 16);
+        for (unsigned offset = sizeof(uint32_t); offset < WB_ACTOR_RECORD_BYTES;
+             offset += sizeof(uint32_t))
+            wr32(image + addr_add(record, offset), 0);
+        record = addr_add(record, WB_ACTOR_RECORD_BYTES);
+    } while (remaining-- != 0);
+}
+
+void actor_slots_mark_free(uint8_t *image, uint32_t first, uint32_t count) {
+    uint32_t record = first;
+    uint16_t remaining = (uint16_t)count;                       /* d7, a `dbf` count */
+
+    /* Only the marker word: unlike the reset above, this leaves every other field of the freed
+     * records exactly as the actor that occupied them left it. */
+    do {
+        wr16(image + addr_add(record, WB_ACTOR_X), WB_ACTOR_FREE_MARKER);
+        record = addr_add(record, WB_ACTOR_RECORD_BYTES);
+    } while (remaining-- != 0);
+}
+
+/* The thirty-eight bytes $1b68 and $1b8e spell identically bar two operand words. Both walk the
+ * table WB_ACTOR_TABLE_SELECTED publishes, not a table of their own — so an allocation follows
+ * whichever table `project_actor_list` last named. */
+static uint32_t actor_alloc_slot(const uint8_t *image, unsigned first, unsigned slots) {
+    uint32_t record = addr_add(be32(image + WB_ACTOR_TABLE_SELECTED),
+                               first * WB_ACTOR_RECORD_BYTES);
+    uint16_t remaining = (uint16_t)(slots - 1);
+
+    do {
+        if (be16(image + addr_add(record, WB_ACTOR_X)) == WB_ACTOR_FREE_MARKER)
+            return record;
+        record = addr_add(record, WB_ACTOR_RECORD_BYTES);
+    } while (remaining-- != 0);
+
+    return WB_ACTOR_ALLOC_NONE;
+}
+
+uint32_t actor_alloc_slot_low(const uint8_t *image) {
+    return actor_alloc_slot(image, WB_ACTOR_ALLOC_LOW_FIRST, WB_ACTOR_ALLOC_LOW_SLOTS);
+}
+
+uint32_t actor_alloc_slot_high(const uint8_t *image) {
+    return actor_alloc_slot(image, WB_ACTOR_ALLOC_HIGH_FIRST, WB_ACTOR_ALLOC_HIGH_SLOTS);
+}
+
+/* `cmp.w #$36/$37/$38/$3b/$3c,d0` — five separate compares, in this order. These are the types
+ * whose footprint comes out of the TEMPLATE; every other type's comes out of WB_ACTOR_SIZE_TABLE. */
+static const uint16_t SPAWN_TYPES_WITH_OWN_SIZE[] = {0x36, 0x37, 0x38, 0x3b, 0x3c};
+
+static int spawn_type_carries_its_own_size(uint16_t type) {
+    for (unsigned i = 0; i < sizeof SPAWN_TYPES_WITH_OWN_SIZE / sizeof *SPAWN_TYPES_WITH_OWN_SIZE;
+         i++)
+        if (type == SPAWN_TYPES_WITH_OWN_SIZE[i])
+            return 1;
+    return 0;
+}
+
+void actor_spawn_from_template(uint8_t *image, uint32_t template_record, uint32_t record) {
+    uint16_t type = be16(image + addr_add(template_record, WB_SPAWN_TYPE));
+
+    /* `clr.w 8(a1)` reaches BOTH flag bytes, which is why the `bset` below is the record's only
+     * raised bit however the slot's previous occupant left it. */
+    wr16(image + addr_add(record, WB_ACTOR_FLAGS), 0);
+    wr16(image + addr_add(record, WB_ACTOR_X),
+         be16(image + addr_add(template_record, WB_SPAWN_X)));
+    wr16(image + addr_add(record, WB_ACTOR_Y),
+         be16(image + addr_add(template_record, WB_SPAWN_Y)));
+    wr16(image + addr_add(record, WB_ACTOR_TYPE), type);
+
+    if (spawn_type_carries_its_own_size(type)) {
+        wr16(image + addr_add(record, WB_ACTOR_HALF_WIDTH),
+             be16(image + addr_add(template_record, WB_SPAWN_SIZE)));
+        wr16(image + addr_add(record, WB_ACTOR_SIZE_SECOND),
+             be16(image + addr_add(template_record, WB_SPAWN_SIZE + sizeof(uint16_t))));
+    } else {
+        /* `lsl.w #2` on a d0 whose high half a `moveq #0` cleared: the index is a WORD, so a type
+         * from $4000 up wraps back into the table rather than running past it. */
+        uint16_t index = (uint16_t)(type << 2);
+        wr32(image + addr_add(record, WB_ACTOR_HALF_WIDTH),
+             be32(image + addr_add(WB_ACTOR_SIZE_TABLE, index)));
+    }
+
+    wr16(image + addr_add(record, WB_ACTOR_SPRITE), 0);
+    image[addr_add(record, WB_ACTOR_FIELD_30)] = 0;
+    image[addr_add(record, WB_ACTOR_FIELD_31)] = 0;
+    image[addr_add(record, WB_ACTOR_FIELD_18)] = 0;
+    image[addr_add(record, WB_ACTOR_FLAGS2)] |= (uint8_t)(1u << WB_ACTOR_FLAGS2_SPAWNED_BIT);
+
+    /* `move.l a0,d0 / sub.l $21e8c,d0 / asr.l #5 / move.b d0,19(a1)`: a SIGNED longword shift, and
+     * only its low byte is stored — a template past record 127 of the table records a slot number
+     * that has wrapped. */
+    image[addr_add(record, WB_ACTOR_TEMPLATE_SLOT)] =
+        (uint8_t)((int32_t)(template_record - be32(image + WB_TABLE_PTR_21E8C))
+                  >> WB_ACTOR_TEMPLATE_SLOT_SHIFT);
+}
+
+void actor_start_motion_at_speed(uint8_t *image, uint32_t actor, uint32_t speed) {
+    uint8_t *flags = image + addr_add(actor, WB_ACTOR_FLAGS);
+
+    *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
+    *flags |= (uint8_t)((1u << WB_ACTOR_FLAG_MOVING_BIT) | (1u << WB_ACTOR_FLAG_LAUNCHED_BIT));
+    image[addr_add(actor, WB_ACTOR_SPEED)] = (uint8_t)speed;    /* `move.b d0,11(a0)` */
+}
+
+void actor_accelerate_fall(uint8_t *image, uint32_t actor) {
+    uint8_t *flags = image + addr_add(actor, WB_ACTOR_FLAGS);
+    uint8_t *speed = image + addr_add(actor, WB_ACTOR_SPEED);
+
+    *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
+    *flags |= (uint8_t)(1u << WB_ACTOR_FLAG_FALLING_BIT);
+
+    /* `cmpi.b #$8,d0 / beq`: the terminal speed is reached EXACTLY, so a record already carrying a
+     * larger byte keeps climbing — and `addq.b` wraps rather than saturating. */
+    if (*speed != WB_ACTOR_FALL_SPEED_MAX)
+        *speed = (uint8_t)(*speed + 1);
 }

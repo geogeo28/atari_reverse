@@ -1,9 +1,9 @@
 """Shared driver for the game's LEAF routines — the ones with no callee, no hardware and a write
 set small enough to name.
 
-`test_effects.py`, `test_hud.py`, `test_input.py`, `test_scroll.py`, `test_actor.py` and
-`test_text.py` are all batteries of such functions, so what they would otherwise each restate lives
-here: where a function starts (looked up in `../names.txt`, the workspace's source of truth for
+`test_effects.py`, `test_hud.py`, `test_input.py`, `test_scroll.py`, `test_actor.py`, `test_map.py`
+and `test_text.py` are all batteries of such functions, so what they would otherwise each restate
+lives here: where a function starts (looked up in `../names.txt`, the workspace's source of truth for
 names, rather than restated as a number), what counts as a write it was not entitled to make, the
 operand encodings a battery pins its entry points against, how a case seeds an image it can tell
 apart afterwards, and how it reads a value back out of the oracle's write set.
@@ -231,6 +231,43 @@ def movea_l_abs_w(reg, addr):
     return opcode(0x2078 | (reg << 9)) + word(addr)
 
 
+def lea_indexed(reg, index, displacement=0, longword_index=False):
+    """`lea d8(An,Dn.w),An` — the extension word is the whole of the index encoding.
+
+    ONE spelling for what test_scroll.py and test_text.py each had half of: the scroll needs the
+    LONGWORD index bit (a tile offset it has already shifted into the high half), the text plotter
+    and the map probes need the 8-bit DISPLACEMENT, and no caller needs a base register other than
+    the destination. A displacement is masked to its byte because that is the field's width.
+    """
+    return opcode(0x41f0 | (reg << 9) | reg) + word(
+        (index << 12) | (0x800 if longword_index else 0) | (displacement & 0xff))
+
+
+def move_w_ind_dn(reg, base, displacement=0):
+    """`move.w (An),Dn` and its `d16(An)` form — how every one of these routines reads a field."""
+    if displacement == 0:
+        return opcode(0x3010 | (reg << 9) | base)
+    return opcode(0x3028 | (reg << 9) | base) + word(displacement)
+
+
+def move_w_abs_l_dn(reg, addr):
+    return opcode(0x3039 | (reg << 9)) + longword(addr)
+
+
+def tst_w_abs_w(addr):
+    """`tst.w <abs>.w` — the mode flags and the scroll's gate are all below $8000, so the original
+    spells them short."""
+    return opcode(0x4a78) + word(addr)
+
+
+def subi_w_dn(reg, value):
+    return opcode(0x0440 | reg) + word(value)
+
+
+def sub_w_dn_dn(destination, source):
+    return opcode(0x9040 | (destination << 9) | source)
+
+
 def move_w_imm_dn(reg, value):
     return opcode(0x303c | (reg << 9)) + word(value)
 
@@ -373,6 +410,25 @@ def case_salt(case):
     without the code changing. `crc32` is the same number in every process.
     """
     return zlib.crc32(case.encode()) & 0xff
+
+
+# --- reading the image the same way the 68000 does ------------------------------------------------
+# A battery that states its write set EXACTLY models the routine's own arithmetic in Python, and
+# every such model reads words out of the image and sign-extends them. Three batteries spelt these
+# (test_scroll.py, test_actor.py, test_map.py), which is a third place the sign extension could have
+# been got wrong.
+WORD_BYTES = 2
+
+
+def u16(image, addr):
+    """The word at ``addr``, as the big-endian number a `move.w` reads there."""
+    return int.from_bytes(bytes(image[addr:addr + WORD_BYTES]), "big")
+
+
+def s16(value):
+    """``value``'s low word as the SIGNED number a word operand spells."""
+    value &= WORD_MASK
+    return value - (WORD_MASK + 1) if value & 0x8000 else value
 
 
 # --- reading a value back out of the oracle's write set -------------------------------------------

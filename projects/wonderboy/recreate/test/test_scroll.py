@@ -51,9 +51,10 @@ import pytest
 import harness
 import leaf
 from leaf import (RTS, branch, branch_over, bsr_w, case_salt, clr_b_abs_l, clr_w_abs_l, dbf,
-                  keyed_block, keyed_byte, lea_abs_l, lea_d16, longword, merge_bands,
-                  move_w_imm_dn, movea_l_abs_w, moveq_0_dn, mulu_w_imm_dn, opcode, program_writes,
-                  st_abs_l, subq_w_abs_l, tst_b_abs_l, tst_w_abs_l, word)
+                  keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed, longword, merge_bands,
+                  move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn, movea_l_abs_w, moveq_0_dn,
+                  mulu_w_imm_dn, opcode, program_writes, s16, st_abs_l, sub_w_dn_dn, subi_w_dn,
+                  subq_w_abs_l, tst_b_abs_l, tst_w_abs_l, tst_w_abs_w, u16, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -281,15 +282,8 @@ EDGES = {edge.name: edge for edge in (RIGHT, LEFT)}
 
 
 # --- reading the image the same way the 68000 does ------------------------------------------------
-
-def _u16(image, addr):
-    return int.from_bytes(bytes(image[addr:addr + STATE_WORD_LEN]), "big")
-
-
-def _s16(value):
-    value &= 0xffff
-    return value - 0x10000 if value & 0x8000 else value
-
+# `u16` and `s16` are leaf.py's, imported above: three batteries model their routine's arithmetic
+# this way and one spelling of the sign extension is what keeps them agreeing about it.
 
 def _rol32(value, count):
     if count == 0:
@@ -383,12 +377,12 @@ def _model_fill(image, edge):
     Written from the disassembly rather than from src/scroll.c: it is the third statement of the
     same geometry, and the one that lets a case say WHICH bytes moved.
     """
-    phase = _u16(image, PHASE)
-    scroll_x = _u16(image, SCROLL_X)
-    coarse = _u16(image, Y_COARSE)
+    phase = u16(image, PHASE)
+    scroll_x = u16(image, SCROLL_X)
+    coarse = u16(image, Y_COARSE)
 
     cleared = (BUFFER_BASE + phase * BUFFER_PHASE_STRIDE + coarse * TILE_BLOCK_LEN
-               + _s16(((scroll_x + edge.x_bias) & PHASE_MASK) * CELL_BYTES)) & 0xffffffff
+               + s16(((scroll_x + edge.x_bias) & PHASE_MASK) * CELL_BYTES)) & 0xffffffff
     ored = cleared
     written = (cleared + edge.second_cell) & 0xffffffff
     if scroll_x == edge.wrap_at_scroll_x:
@@ -399,12 +393,12 @@ def _model_fill(image, edge):
     first = int.from_bytes(counts[:STATE_WORD_LEN], "big")
     second = int.from_bytes(counts[STATE_WORD_LEN:], "big")
 
-    half = _u16(image, EDGE_MASK_TABLE + phase)
+    half = u16(image, EDGE_MASK_TABLE + phase)
     mask = (half << WORD_BITS) | half
     if edge.invert_mask and phase != 0:
         mask ^= 0xffffffff
 
-    map_cursor = (MAP_DATA + _s16(_u16(image, MAP_CURSOR) + edge.map_offset)) & 0xffffffff
+    map_cursor = (MAP_DATA + s16(u16(image, MAP_CURSOR) + edge.map_offset)) & 0xffffffff
 
     def read(addr, length):
         return int.from_bytes(bytes(out.get(addr + i, image[addr + i]) for i in range(length)),
@@ -425,13 +419,13 @@ def _model_fill(image, edge):
 
     def draw(cursors, shift, tile_rows):
         ored_at, written_at, map_at = cursors
-        stride = _s16(_u16(image, MAP_ROW_STRIDE))
+        stride = s16(u16(image, MAP_ROW_STRIDE))
         for _ in range(tile_rows + 1):
-            tile_number = _u16(image, TILE_INDEX_TABLE + image[map_at] * STATE_WORD_LEN)
+            tile_number = u16(image, TILE_INDEX_TABLE + image[map_at] * STATE_WORD_LEN)
             tile = (TILE_BITMAPS + tile_number * TILE_BITMAP_LEN) & 0xffffffff
             map_at = (map_at + stride) & 0xffffffff
             for _row in range(TILE_ROWS):
-                rotated = [_rol32(_u16(image, tile + plane * PLANE_STRIDE), shift)
+                rotated = [_rol32(u16(image, tile + plane * PLANE_STRIDE), shift)
                            for plane in range(PLANES)]
                 tile = (tile + CELL_BYTES) & 0xffffffff
                 for plane, value in enumerate(rotated):
@@ -455,7 +449,7 @@ def _model_fill(image, edge):
 
     cleared = (cleared - BUFFER_LEN) & 0xffffffff
     cursors = tuple((c - BUFFER_LEN) & 0xffffffff for c in cursors[:2]) + (cursors[2],)
-    if _s16(second) < 0:
+    if s16(second) < 0:
         return out
     clear(cleared, second)
     draw(cursors, shift, second)
@@ -471,18 +465,9 @@ A0, A1, A2, A3, A4, A5, A6 = range(7)
 D0, D1, D4, D5, D6, D7 = 0, 1, 4, 5, 6, 7
 
 
-def lea_indexed(reg, index, longword_index=False):
-    """`lea (0,An,Dn.w),An` — likewise, and the extension word is the whole of the index encoding."""
-    return opcode(0x41f0 | (reg << 9) | reg) + word((index << 12) | (0x800 if longword_index else 0))
-
-
 def move_w_indexed_d0(base, index):
     """`move.w (0,An,Dn.w),d0` — how a fill reads a word out of a table it just indexed."""
     return opcode(0x3030 | base) + word(index << 12)
-
-
-def move_w_abs_l_dn(reg, addr):
-    return opcode(0x3039 | (reg << 9)) + longword(addr)
 
 
 def move_w_dn_abs_l(reg, addr):
@@ -515,10 +500,6 @@ def addq_l_ind_a7(amount):
 
 # --- the encodings the vertical half and the queue above it add -----------------------------------
 
-def tst_w_abs_w(addr):
-    """`tst.w <abs>.w` — the queue's own gate is below $8000, so the original spells it short."""
-    return opcode(0x4a78) + word(addr)
-
 
 def clr_l_abs_l(addr):
     return opcode(0x42b9) + longword(addr)
@@ -542,17 +523,6 @@ def move_w_abs_l_abs_l(source, destination):
 
 def movea_l_abs_l(reg, addr):
     return opcode(0x2079 | (reg << 9)) + longword(addr)
-
-
-def move_w_ind_dn(reg, base, displacement=0):
-    """`move.w (An),Dn` / `move.w d16(An),Dn` — how a fill reads its two `dbf` counts."""
-    if displacement == 0:
-        return opcode(0x3010 | (reg << 9) | base)
-    return opcode(0x3028 | (reg << 9) | base) + word(displacement)
-
-
-def subi_w_dn(reg, value):
-    return opcode(0x0440 | reg) + word(value)
 
 
 def neg_w_dn(reg):
@@ -623,10 +593,6 @@ def subq_w_imm_dn(amount, reg):
 
 def move_w_dn_dn(destination, source):
     return opcode(0x3000 | (destination << 9) | source)
-
-
-def sub_w_dn_dn(destination, source):
-    return opcode(0x9040 | (destination << 9) | source)
 
 
 def sub_w_abs_l_dn(reg, addr):
@@ -1305,8 +1271,8 @@ def test_the_split_tables_are_the_pairs_the_fills_assume():
     eleven tile rows exactly once."""
     for index in range(COL_SPLIT_ENTRIES):
         at = COL_SPLIT_TABLE + index * LONGWORD_LEN
-        first = _u16(harness.BASE_IMAGE, at)
-        second = _s16(_u16(harness.BASE_IMAGE, at + STATE_WORD_LEN))
+        first = u16(harness.BASE_IMAGE, at)
+        second = s16(u16(harness.BASE_IMAGE, at + STATE_WORD_LEN))
         assert first == BUFFER_TILE_ROWS - 1 - index, f"entry {index}'s first count is {first}"
         assert second == index - 1, f"entry {index}'s second count is {second}"
         assert (first + 1) + (second + 1) == BUFFER_TILE_ROWS, (
@@ -1316,11 +1282,11 @@ def test_the_split_tables_are_the_pairs_the_fills_assume():
 
 def test_the_edge_masks_are_the_shifts_the_phase_names():
     """The eight words at bg_scroll_edge_masks, which decide how much of a cell a fill keeps."""
-    assert _u16(harness.BASE_IMAGE, EDGE_MASK_TABLE) == 0, (
+    assert u16(harness.BASE_IMAGE, EDGE_MASK_TABLE) == 0, (
         "phase 0's mask is not $0000 — src/scroll.c's whole-cell redraw depends on it")
     for phase in range(SCROLL_STEP, PHASE_MASK + 1, SCROLL_STEP):
         expected = (0xffff << phase) & 0xffff
-        assert _u16(harness.BASE_IMAGE, EDGE_MASK_TABLE + phase) == expected, (
+        assert u16(harness.BASE_IMAGE, EDGE_MASK_TABLE + phase) == expected, (
             f"phase {phase}'s mask is not {expected:#06x}")
 
 
@@ -1431,7 +1397,7 @@ def _final(image, pokes, info, addr):
     seeded image when it did not, so a case can state the value either way."""
     if all(addr + i in info["writes"] for i in range(STATE_WORD_LEN)):
         return leaf.read_int(info, addr, STATE_WORD_LEN, "a scroll word")
-    return _u16(image, addr)
+    return u16(image, addr)
 
 
 @pytest.mark.parametrize("name,pokes_kw,skips", [
@@ -1571,35 +1537,35 @@ def _model_horizontal_step(staged, out, edge):
     written outright the other, and only the left step masks the row offset.
     """
     if edge is RIGHT:
-        if _u16(staged, POS_X) == _u16(staged, LIMIT_X):
+        if u16(staged, POS_X) == u16(staged, LIMIT_X):
             return True
-        if _s16(_u16(staged, PENDING)) >= 0:
+        if s16(u16(staged, PENDING)) >= 0:
             _put(out, staged, PENDING, PENDING_SET)
             return False
-        _put(out, staged, POS_X, (_u16(staged, POS_X) + SCROLL_STEP) & 0xffff)
-        phase = (_u16(staged, PHASE) + SCROLL_STEP) & PHASE_MASK
+        _put(out, staged, POS_X, (u16(staged, POS_X) + SCROLL_STEP) & 0xffff)
+        phase = (u16(staged, PHASE) + SCROLL_STEP) & PHASE_MASK
         _put(out, staged, PHASE, phase)
         if phase != 0:
             return False
-        _put(out, staged, ROW_BYTE_OFFSET, (_u16(staged, ROW_BYTE_OFFSET) + CELL_BYTES) & 0xffff)
-        _put(out, staged, MAP_CURSOR, (_u16(staged, MAP_CURSOR) + 1) & 0xffff)
-        column = (_u16(staged, SCROLL_X) + 1) & PHASE_MASK
+        _put(out, staged, ROW_BYTE_OFFSET, (u16(staged, ROW_BYTE_OFFSET) + CELL_BYTES) & 0xffff)
+        _put(out, staged, MAP_CURSOR, (u16(staged, MAP_CURSOR) + 1) & 0xffff)
+        column = (u16(staged, SCROLL_X) + 1) & PHASE_MASK
     else:
-        if _u16(staged, POS_X) == 0:
+        if u16(staged, POS_X) == 0:
             return True
-        if _u16(staged, PENDING) != 0:
+        if u16(staged, PENDING) != 0:
             _put(out, staged, PENDING, 0)
             return False
-        _put(out, staged, POS_X, (_u16(staged, POS_X) - SCROLL_STEP) & 0xffff)
-        phase = (_u16(staged, PHASE) - SCROLL_STEP) & 0xffff
-        if _s16(phase) >= 0:
+        _put(out, staged, POS_X, (u16(staged, POS_X) - SCROLL_STEP) & 0xffff)
+        phase = (u16(staged, PHASE) - SCROLL_STEP) & 0xffff
+        if s16(phase) >= 0:
             _put(out, staged, PHASE, phase & PHASE_MASK)
             return False
         _put(out, staged, PHASE, PHASE_LAST)
-        _put(out, staged, MAP_CURSOR, (_u16(staged, MAP_CURSOR) - 1) & 0xffff)
+        _put(out, staged, MAP_CURSOR, (u16(staged, MAP_CURSOR) - 1) & 0xffff)
         _put(out, staged, ROW_BYTE_OFFSET,
-             (_u16(staged, ROW_BYTE_OFFSET) - CELL_BYTES) & ROW_OFFSET_MASK)
-        column = (_u16(staged, SCROLL_X) - 1) & PHASE_MASK
+             (u16(staged, ROW_BYTE_OFFSET) - CELL_BYTES) & ROW_OFFSET_MASK)
+        column = (u16(staged, SCROLL_X) - 1) & PHASE_MASK
 
     _put(out, staged, SCROLL_X, column)
     if column == 0:
@@ -1693,13 +1659,13 @@ def _model_row_cursor(staged, out, row_word, first_pointer, down):
     """One of the two ring cursors a vertical step moves, with its eight buffer-row pointers."""
     wrap_from, wrap_to = (SCROLL_Y_LAST, 0) if down else (0, SCROLL_Y_LAST)
     step = SCROLL_STEP if down else -SCROLL_STEP
-    if _u16(staged, row_word) == wrap_from:
+    if u16(staged, row_word) == wrap_from:
         _put(out, staged, row_word, wrap_to)
         for copy in range(BUFFERS):
             _put32(out, staged, first_pointer + copy * BUFFER_ROW_PAIR,
                    _buffer_row(copy, wrap_to))
         return
-    _put(out, staged, row_word, (_u16(staged, row_word) + step) & 0xffff)
+    _put(out, staged, row_word, (u16(staged, row_word) + step) & 0xffff)
     for copy in range(BUFFERS):
         at = first_pointer + copy * BUFFER_ROW_PAIR
         _put32(out, staged, at, (_u32(staged, at) + step * BUFFER_LINE) & 0xffffffff)
@@ -1707,14 +1673,14 @@ def _model_row_cursor(staged, out, row_word, first_pointer, down):
 
 def _model_vertical_step(staged, out, down):
     """$761c / $77ba. Returns True when the step consumed its caller's two `bsr`s."""
-    boundary = _u16(staged, LIMIT_Y) if down else 0
-    if _u16(staged, POS_Y) == boundary:
+    boundary = u16(staged, LIMIT_Y) if down else 0
+    if u16(staged, POS_Y) == boundary:
         return True
     step = SCROLL_STEP if down else -SCROLL_STEP
-    _put(out, staged, POS_Y, (_u16(staged, POS_Y) + step) & 0xffff)
+    _put(out, staged, POS_Y, (u16(staged, POS_Y) + step) & 0xffff)
     _model_row_cursor(staged, out, SCROLL_Y, BUFFER_ROWS + BUFFER_ROW_TOP, down)
     _model_row_cursor(staged, out, SCROLL_Y_BOTTOM, BUFFER_ROWS + BUFFER_ROW_BOTTOM, down)
-    _put(out, staged, Y_COARSE, (_s16(_u16(staged, SCROLL_Y)) >> Y_COARSE_SHIFT) & 0xffff)
+    _put(out, staged, Y_COARSE, (s16(u16(staged, SCROLL_Y)) >> Y_COARSE_SHIFT) & 0xffff)
     return False
 
 
@@ -1725,30 +1691,30 @@ def _model_row_fill(staged, out, bottom):
         # The tile row steps BACK first, and a step past the top of the bitmap pulls the map cursor
         # a whole map row up. The SIGN is tested before the mask, so the wrap and the pull are the
         # same test read two ways.
-        row = (_u16(staged, TILE_ROW) - TILE_ROW_STEP) & 0xffff
-        if _s16(row) < 0:
+        row = (u16(staged, TILE_ROW) - TILE_ROW_STEP) & 0xffff
+        if s16(row) < 0:
             _put(out, staged, MAP_CURSOR,
-                 (_u16(staged, MAP_CURSOR) - _u16(staged, MAP_ROW_STRIDE)) & 0xffff)
+                 (u16(staged, MAP_CURSOR) - u16(staged, MAP_ROW_STRIDE)) & 0xffff)
         _put(out, staged, TILE_ROW, row & TILE_ROW_MASK)
-        map_offset = _u16(staged, MAP_CURSOR)
+        map_offset = u16(staged, MAP_CURSOR)
         pointer = BUFFER_ROWS + BUFFER_ROW_TOP
     else:
-        map_offset = (_u16(staged, MAP_CURSOR)
-                      + BOTTOM_ROW_STRIDES * _u16(staged, MAP_ROW_STRIDE)) & 0xffff
+        map_offset = (u16(staged, MAP_CURSOR)
+                      + BOTTOM_ROW_STRIDES * u16(staged, MAP_ROW_STRIDE)) & 0xffff
         pointer = BUFFER_ROWS + BUFFER_ROW_BOTTOM
 
-    dest = (_u32(staged, pointer) + _s16(_u16(staged, ROW_BYTE_OFFSET))) & 0xffffffff
-    map_at = (MAP_DATA_ROW + _s16(map_offset)) & 0xffffffff
-    counts = (ROW_SPLIT_TABLE + _s16((_u16(staged, SCROLL_X) * LONGWORD_LEN) & 0xffff)) & 0xffffffff
-    tile_byte = _u16(staged, TILE_ROW)
+    dest = (_u32(staged, pointer) + s16(u16(staged, ROW_BYTE_OFFSET))) & 0xffffffff
+    map_at = (MAP_DATA_ROW + s16(map_offset)) & 0xffffffff
+    counts = (ROW_SPLIT_TABLE + s16((u16(staged, SCROLL_X) * LONGWORD_LEN) & 0xffff)) & 0xffffffff
+    tile_byte = u16(staged, TILE_ROW)
 
     def half(dest, map_at, cells):
         drawn = 0
         for _ in range(cells + 1):
-            tile = _u16(staged, TILE_INDEX_TABLE + staged[map_at] * STATE_WORD_LEN)
+            tile = u16(staged, TILE_INDEX_TABLE + staged[map_at] * STATE_WORD_LEN)
             map_at = (map_at + 1) & 0xffffffff
             drawn = tile * TILE_BITMAP_LEN
-            source = (TILE_BITMAPS + drawn + _s16(tile_byte)) & 0xffffffff
+            source = (TILE_BITMAPS + drawn + s16(tile_byte)) & 0xffffffff
             for scanline in range(ROW_FILL_SCANLINES):
                 for byte in range(0, CELL_BYTES, LONGWORD_LEN):
                     _put32(out, staged, (dest + scanline * BUFFER_LINE + byte) & 0xffffffff,
@@ -1756,18 +1722,18 @@ def _model_row_fill(staged, out, bottom):
             dest = (dest + CELL_BYTES) & 0xffffffff
         return dest, map_at, drawn
 
-    dest, map_at, drawn = half(dest, map_at, _u16(staged, counts))
+    dest, map_at, drawn = half(dest, map_at, u16(staged, counts))
     dest = (dest - BUFFER_LINE) & 0xffffffff
-    second = _u16(staged, counts + STATE_WORD_LEN)
-    if _s16(second) >= 0:
+    second = u16(staged, counts + STATE_WORD_LEN)
+    if s16(second) >= 0:
         dest, map_at, drawn = half(dest, map_at, second)
 
     if bottom:
         # ...and AFTER the draw going down, pushing the cursor a row the other way on the same wrap.
-        row = (_u16(staged, TILE_ROW) + TILE_ROW_STEP) & TILE_ROW_MASK
+        row = (u16(staged, TILE_ROW) + TILE_ROW_STEP) & TILE_ROW_MASK
         if row == 0:
             _put(out, staged, MAP_CURSOR,
-                 (_u16(staged, MAP_CURSOR) + _u16(staged, MAP_ROW_STRIDE)) & 0xffff)
+                 (u16(staged, MAP_CURSOR) + u16(staged, MAP_ROW_STRIDE)) & 0xffff)
         _put(out, staged, TILE_ROW, row)
     return (drawn & ~0xffff) | (ROW_DRAWN_BOTTOM if bottom else ROW_DRAWN_TOP)
 
@@ -1777,7 +1743,7 @@ def _model_preshift_row(staged, out, source, dest):
     def rotate(cell):
         shifted, carried = [], []
         for plane in range(PLANES):
-            rotated = _rol32(_u16(staged, (cell + plane * PLANE_STRIDE) & 0xffffffff), PRESHIFT_BITS)
+            rotated = _rol32(u16(staged, (cell + plane * PLANE_STRIDE) & 0xffffffff), PRESHIFT_BITS)
             shifted.append(rotated & 0xffff)
             carried.append(rotated >> WORD_BITS)
         return shifted, carried
@@ -1789,7 +1755,7 @@ def _model_preshift_row(staged, out, source, dest):
     def bitwise_or(at, words):
         for plane, value in enumerate(words):
             addr = (at + plane * PLANE_STRIDE) & 0xffffffff
-            _put(out, staged, addr, _u16(staged, addr) | value)
+            _put(out, staged, addr, u16(staged, addr) | value)
 
     shifted, carried = rotate(source)
     source = (source + CELL_BYTES) & 0xffffffff
@@ -1804,14 +1770,14 @@ def _model_preshift_row(staged, out, source, dest):
         write(dest, shifted)
         dest = (dest + CELL_BYTES) & 0xffffffff
 
-    parked = [_u16(staged, PRESHIFT_CARRY + plane * PLANE_STRIDE) for plane in range(PLANES)]
+    parked = [u16(staged, PRESHIFT_CARRY + plane * PLANE_STRIDE) for plane in range(PLANES)]
     bitwise_or((dest - CELL_BYTES) & 0xffffffff, parked)
     return source, dest
 
 
 def _model_preshift(staged, out, drawn):
     """$8144. Only the LOW WORD's sign of ``drawn`` picks the source row (`tst.w d0 / bmi`)."""
-    member = BUFFER_ROW_BOTTOM if _s16(drawn & 0xffff) < 0 else BUFFER_ROW_TOP
+    member = BUFFER_ROW_BOTTOM if s16(drawn & 0xffff) < 0 else BUFFER_ROW_TOP
     source = _u32(staged, BUFFER_ROWS + member)
     dest = (source + BUFFER_LEN) & 0xffffffff
     for _copy in range(PRESHIFT_COPIES):
@@ -1849,7 +1815,7 @@ def _model_raise_requests(staged, out, entry_d0, entry_d1):
     sign of the wrapped difference: `subi.w` sets the overflow flag and `bgt`/`blt` read it. The two
     part company at a position of $8000, and the distance returned is still the wrapped difference.
     """
-    follow_y = _s16(_u16(staged, FOLLOW_Y))
+    follow_y = s16(u16(staged, FOLLOW_Y))
     vertical = (follow_y - CENTRE_Y) & 0xffff
     if follow_y > CENTRE_Y:
         _put8(out, staged, RAISED_V_DOWN, RAISED_SET)
@@ -1857,7 +1823,7 @@ def _model_raise_requests(staged, out, entry_d0, entry_d1):
         _put8(out, staged, RAISED_V_UP, RAISED_SET)
         vertical = -vertical & 0xffff
 
-    follow_x = _s16(_u16(staged, FOLLOW_X))
+    follow_x = s16(u16(staged, FOLLOW_X))
     horizontal = (follow_x - CENTRE_X) & 0xffff
     if follow_x < CENTRE_X:
         _put8(out, staged, RAISED_H_LEFT, RAISED_SET)
@@ -1869,17 +1835,17 @@ def _model_raise_requests(staged, out, entry_d0, entry_d1):
 
 def _model_run_queue(staged, out):
     """$7522 — raise, halve, drain each axis, clear both pairs."""
-    if _u16(staged, FOLLOW_FROZEN) != 0:
+    if u16(staged, FOLLOW_FROZEN) != 0:
         _model_serve_requests(staged, out)
         return
     vertical, horizontal = _model_raise_requests(staged, out, 0, 0)
-    _put(out, staged, QUEUE_V_COUNT, (_s16(vertical & 0xffff) >> 1) & 0xffff)
-    _put(out, staged, QUEUE_H_COUNT, (_s16(horizontal & 0xffff) >> 1) & 0xffff)
+    _put(out, staged, QUEUE_V_COUNT, (s16(vertical & 0xffff) >> 1) & 0xffff)
+    _put(out, staged, QUEUE_H_COUNT, (s16(horizontal & 0xffff) >> 1) & 0xffff)
     for count_word, raised, request in ((QUEUE_H_COUNT, RAISED_H, REQUEST_LEFT),
                                         (QUEUE_V_COUNT, RAISED_V, REQUEST_UP)):
-        while _u16(staged, count_word) != 0:
-            _put(out, staged, count_word, (_u16(staged, count_word) - 1) & 0xffff)
-            _put(out, staged, request, _u16(staged, raised))
+        while u16(staged, count_word) != 0:
+            _put(out, staged, count_word, (u16(staged, count_word) - 1) & 0xffff)
+            _put(out, staged, request, u16(staged, raised))
             _model_serve_requests(staged, out)
     _put32(out, staged, RAISED_V, 0)
     _put32(out, staged, QUEUE_H_COUNT, 0)
@@ -2085,8 +2051,8 @@ def test_the_row_split_table_is_the_pairs_the_row_fills_assume():
     sixteen cells exactly once."""
     for index in range(ROW_SPLIT_ENTRIES):
         at = ROW_SPLIT_TABLE + index * LONGWORD_LEN
-        first = _u16(harness.BASE_IMAGE, at)
-        second = _s16(_u16(harness.BASE_IMAGE, at + STATE_WORD_LEN))
+        first = u16(harness.BASE_IMAGE, at)
+        second = s16(u16(harness.BASE_IMAGE, at + STATE_WORD_LEN))
         assert first == ROW_CELLS - 1 - index, f"entry {index}'s first count is {first}"
         assert second == index - 1, f"entry {index}'s second count is {second}"
         assert (first + 1) + (second + 1) == ROW_CELLS, (
@@ -2399,16 +2365,16 @@ def _blit_pokes(phase, scroll_x, row, salt, screen=SCREEN_BUFFERS[0]):
 def _blit_geometry(image):
     """What $82f8 computes before its `jmp (a2)`: which variant, from where, to where, and the two
     `dbf` counts. Returned separately from the copy so a case can assert the SPLIT on its own."""
-    phase = _u16(image, PHASE)
-    row = _u16(image, SCROLL_Y)
-    column = _u16(image, SCROLL_X)
+    phase = u16(image, PHASE)
+    row = u16(image, SCROLL_Y)
+    column = u16(image, SCROLL_X)
 
     source = (BUFFER_BASE + phase * BUFFER_PHASE_STRIDE
-              + _s16((row << BLIT_ROW_SHIFT) & 0xffff)
-              + _s16((column * CELL_BYTES) & 0xffff)) & 0xffffffff
+              + s16((row << BLIT_ROW_SHIFT) & 0xffff)
+              + s16((column * CELL_BYTES) & 0xffff)) & 0xffffffff
     dest = (_u32(image, SCREEN_BACK) + BLIT_SCREEN_ORIGIN) & 0xffffffff
 
-    if _s16((row - BLIT_WRAP_ROW) & 0xffff) < 0:
+    if s16((row - BLIT_WRAP_ROW) & 0xffff) < 0:
         return column, source, dest, BLIT_SCANLINES - 1, BLIT_NO_SECOND_HALF
     to_the_end = (BUFFER_SCANLINES - row) & 0xffff
     return (column, source, dest,
@@ -2447,7 +2413,7 @@ def _model_blit_copy(image, column, source, dest, first_rows, second_rows):
             source = (source + CELL_BYTES + (BUFFER_LINE if wraps else 0)) & 0xffffffff
 
     scanlines(first_rows)
-    if _s16(second_rows) >= 0:
+    if s16(second_rows) >= 0:
         source = (source - BUFFER_LEN) & 0xffffffff
         scanlines(second_rows)
     return out, (read_lo, read_hi)
@@ -2649,10 +2615,10 @@ def test_the_two_halves_always_copy_the_windows_own_height():
     for row in range(0, SCROLL_Y_LAST + 1, SCROLL_STEP):
         image[SCROLL_Y:SCROLL_Y + STATE_WORD_LEN] = word(row)
         _column, _source, _dest, first, second = _blit_geometry(image)
-        copied = (first + 1) + (second + 1 if _s16(second) >= 0 else 0)
+        copied = (first + 1) + (second + 1 if s16(second) >= 0 else 0)
         assert copied == BLIT_SCANLINES, (
             f"ring row {row:#x} copies {copied} scanlines, not the window's {BLIT_SCANLINES}")
-        assert first < BLIT_SCANLINES and _s16(second) < BLIT_SCANLINES
+        assert first < BLIT_SCANLINES and s16(second) < BLIT_SCANLINES
 
 
 # --- one variant on its own, entered where the jump table would enter it ----------------------------
@@ -2674,7 +2640,7 @@ def _run_variant(column, first_rows, second_rows, start_row, salt):
     expected, _span = _model_blit_copy(image, column, source, dest, first_rows, second_rows)
 
     what = (f"{variant_name(column)} from row {start_row:#x}, {first_rows + 1} + "
-            f"{second_rows + 1 if _s16(second_rows) >= 0 else 0} scanlines")
+            f"{second_rows + 1 if s16(second_rows) >= 0 else 0} scanlines")
     return _run_modelled(variant_name(column), _COPY_COLUMN(column, source, dest, first_rows,
                                                             second_rows),
                          expected, what, BLIT_INSN_CAP,

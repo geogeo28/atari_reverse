@@ -64,9 +64,9 @@ import pytest
 import harness
 import leaf
 from leaf import (RTS, branch, branch_over, case_salt, clr_b_abs_l, clr_w_abs_l, dbf, dbf_over,
-                  forward_branch, keyed_block, keyed_byte, lea_abs_l, lea_d16, longword,
-                  merge_bands, move_w_imm_dn, movea_l_abs_w, moveq_0_dn, mulu_w_imm_dn, opcode,
-                  program_writes, st_abs_l, subq_w_abs_l, tst_b_abs_l, tst_w_abs_l, word)
+                  forward_branch, keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed,
+                  longword, merge_bands, move_w_imm_dn, movea_l_abs_w, moveq_0_dn, mulu_w_imm_dn,
+                  opcode, program_writes, st_abs_l, subq_w_abs_l, tst_b_abs_l, tst_w_abs_l, word)
 from layout import wb
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -212,11 +212,6 @@ MOVE_L_D6_D1 = opcode(0x2206)
 
 # The 68000 operand-size field, as `lsl` and `subq`/`addq` both spell it.
 SIZE_WORD, SIZE_LONG = 1, 2
-
-
-def lea_indexed(reg, index, displacement=0):
-    """`lea d8(An,Dn.w),An` — the extension word carries the index register and the displacement."""
-    return opcode(0x41f0 | (reg << 9) | reg) + word((index << 12) | (displacement & BYTE_MASK))
 
 
 def subi_b_dn(reg, value):
