@@ -34,10 +34,11 @@ import pytest
 
 import harness
 import leaf
-from leaf import (BRANCH_EXTENSION, RTS, backward_branch, branch, branch_over, bsr_w, case_salt,
-                  dbf, dbf_over, keyed_block, lea_abs_l, lea_d16, longword, merge_bands,
-                  move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn, moveq_0_dn, opcode,
-                  program_writes, s16, sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
+from leaf import (BRANCH_EXTENSION, RTS, addq_b_d16, backward_branch, branch, branch_over, bsr_w,
+                  case_salt, cmpi_b_dn, dbf, dbf_over, keyed_block, lea_abs_l, lea_d16, longword,
+                  lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_w_abs_l_dn, move_w_imm_dn,
+                  move_w_ind_dn, moveq_0_dn, opcode, program_writes, s16, sub_w_dn_dn, subi_w_dn,
+                  tst_w_abs_w, u16, word)
 from layout import wb
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -230,10 +231,6 @@ def cmp_w_imm_dn(reg, value):
     return opcode(0xb07c | (reg << 9)) + word(value)
 
 
-def lsl_w_imm_dn(count, reg):
-    return opcode(0xe148 | ((count & 7) << 9) | reg)
-
-
 def move_l_indexed_d16(base, index, destination, displacement):
     """`move.l (0,Ab,Dn.l),d16(Ad)` — the size table's lookup, with a LONGWORD index."""
     return (opcode(0x2170 | (destination << 9) | base) + word((index << 12) | 0x800)
@@ -258,18 +255,6 @@ def asr_l_imm_dn(count, reg):
 
 def move_b_dn_d16(reg, base, displacement):
     return opcode(0x1140 | (base << 9) | reg) + word(displacement)
-
-
-def move_b_d16_dn(reg, base, displacement):
-    return opcode(0x1028 | (reg << 9) | base) + word(displacement)
-
-
-def cmpi_b_dn(reg, value):
-    return opcode(0x0c00 | reg) + word(value)
-
-
-def addq_b_d16(amount, base, displacement):
-    return opcode(0x5028 | ((amount & 7) << 9) | base) + word(displacement)
 
 
 def bra_s_back(spanned_bytes):
