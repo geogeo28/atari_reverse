@@ -551,6 +551,14 @@
 #define WB_BG_SCROLL_POS_X       0x83aeu  /* absolute horizontal scroll, step 2 */
 #define WB_BG_SCROLL_POS_Y       0x83b0u  /* the vertical counterpart, bounded by 0 and _LIMIT_Y */
 #define WB_BG_SCROLL_LIMIT_X     0x83b2u  /* POS_X stops HERE, by `cmp.w` — the level's right edge */
+#define WB_BG_SCROLL_LIMIT_BIAS  0xf0u    /* what separates WB_BG_SCROLL_LIMIT_X from the level's
+                                           * right edge IN PIXELS, and the only two operand sites
+                                           * the word has besides the scroll's own compare go one
+                                           * each way: $fb18 SUBTRACTS it from `(cells << 4)` to
+                                           * build the limit, and $11ca ADDS it back to get the
+                                           * pixel x $1170 will not let a right edge pass. What the
+                                           * 240 measures beyond that (the scrolled window's own
+                                           * width) is not established */
 #define WB_BG_SCROLL_LIMIT_Y     0x83b4u
 #define WB_BG_STATE_WORD_LEN     2u       /* every scroll variable above is a word */
 
@@ -835,6 +843,13 @@
 #define WB_MAP_TILE_BLOCK            1u       /* the tile code $10a2 refuses to walk into */
 #define WB_MAP_TILE_LEDGE            2u       /* ...and the second code its ground test accepts */
 #define WB_MAP_TILE_PLATFORM         0x23u    /* the tile code $1400 scans the footprint for */
+#define WB_MAP_TILE_33               0x33u    /* the tile code $1334 tests the PLAYER's own cell
+                                               * against, and the only other `cmpi.b #$33` on a map
+                                               * byte in the image is $1554's, inside $151a — both
+                                               * of them raise WB_TILE_33_FLAG and nothing else in
+                                               * the image compares a cell against it. WHAT THE
+                                               * TILE IS is not established, so the name carries
+                                               * the code, exactly as $1/$2/$23's do */
 #define WB_MAP_STEP_CLEAR            0xffu    /* `move.b #$ff,d6` — $10a2's d0 when the very first
                                                * probe was already clear */
 #define WB_MAP_STEP_BLOCKED          0u       /* ...and when it had to back off, or ran off the
@@ -853,6 +868,34 @@
                                                * actor may already be and still land on it */
 #define WB_PLATFORM_Y_BAND           6u       /* `addq.w #6,d0`: ...and the band's other end */
 #define WB_PLATFORM_STAND_OFFSET     0x10u    /* `subi.w #$10,2(a0)` — where the actor is parked */
+
+/* $1334's three globals — the words immediately above $1492's last byte, and the only state the
+ * fall pass keeps outside the actor record. Named for what the code DOES with them; what the mode
+ * they gate IS is not established, so each name carries the tile code that raises it.
+ *
+ * The ledger is a whole-image operand scan (test/test_map.py runs it): every site that names one of
+ * the three does so as a four-byte abs.l operand or as the two-byte abs.w form, and the only other
+ * byte pairs in the image that spell $1514/$1516/$1518 lie in the graphics data past $18000.
+ */
+#define WB_TILE_33_FLAG              0x1514u  /* word. RAISED while the player's own map cell holds
+                                               * WB_MAP_TILE_33: `move.w #$ffff` at $1350 and `st`
+                                               * (a BYTE) at $155c; cleared by `clr.w` at $1370,
+                                               * `clr.b` at $179e and the `clr.l` at $ff00 that
+                                               * takes WB_TILE_33_MODE with it. Two readers, both
+                                               * bare `tst.w`: $d84 and $1208 */
+#define WB_TILE_33_MODE              0x1516u  /* word. Raised only by the two arms below $d84's
+                                               * WB_TILE_33_FLAG test, which write DIFFERENT
+                                               * nonzero values ($ff at $db2, $ffff at $dea);
+                                               * cleared at $107c, at $1364 and by $ff00's `clr.l`.
+                                               * All five readers ($d78, $fa8, $1014, $1358, $208e)
+                                               * are bare `tst.w`, so nothing in the image can tell
+                                               * its two nonzero values apart. While it is set,
+                                               * $1334 returns before touching the record at all */
+#define WB_TILE_33_STEP              0x1518u  /* word. Raised $ffff by those same two arms ($da4,
+                                               * $ddc), cleared at $dfe, $e06 and $136a. ONE
+                                               * reader, the bare `tst.w` at $20ae, which uses it
+                                               * to step an animation phase byte */
+#define WB_TILE_33_FLAG_RAISED       0xffffu  /* `move.w #$ffff,$1514.l` — the value $1334 raises */
 
 /* $1af0: four map cells stamped as one 2x2 block, out of the record WB_RECORD_PTR_10420 names. */
 #define WB_RECORD_PTR_10420          0x10420u /* longword pointer, written once in the image

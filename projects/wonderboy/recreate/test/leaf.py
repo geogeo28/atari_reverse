@@ -250,6 +250,11 @@ def move_w_ind_dn(reg, base, displacement=0):
     return opcode(0x3028 | (reg << 9) | base) + word(displacement)
 
 
+def move_b_d16_dn(reg, base, displacement):
+    """`move.b d16(An),Dn` — how the collision probes read a map byte out of a record."""
+    return opcode(0x1028 | (reg << 9) | base) + word(displacement)
+
+
 def move_w_abs_l_dn(reg, addr):
     return opcode(0x3039 | (reg << 9)) + longword(addr)
 
@@ -262,6 +267,11 @@ def tst_w_abs_w(addr):
 
 def subi_w_dn(reg, value):
     return opcode(0x0440 | reg) + word(value)
+
+
+def cmpi_b_dn(reg, value):
+    """`cmpi.b #imm,Dn` — the immediate is a WORD in the stream even for a byte compare."""
+    return opcode(0x0c00 | reg) + word(value)
 
 
 def sub_w_dn_dn(destination, source):
@@ -278,6 +288,11 @@ def moveq_0_dn(reg):
 
 def mulu_w_imm_dn(reg, value):
     return opcode(0xc0fc | (reg << 9)) + word(value)
+
+
+def lsl_w_imm_dn(count, reg):
+    """`lsl.w #n,Dn` — a count of 8 is encoded as 0, which is why the field is masked to three bits."""
+    return opcode(0xe148 | ((count & 7) << 9) | reg)
 
 
 def tst_b_abs_l(addr):
@@ -303,6 +318,11 @@ def st_abs_l(addr):
 
 def subq_w_abs_l(amount, addr):
     return opcode(0x5179 | ((amount & 7) << 9)) + longword(addr)
+
+
+def addq_b_d16(amount, base, displacement):
+    """`addq.b #n,d16(An)` — how a pass bumps a byte field of the actor record in place."""
+    return opcode(0x5028 | ((amount & 7) << 9) | base) + word(displacement)
 
 
 # A 68000 branch counts its displacement from the EXTENSION WORD, which sits two bytes after the

@@ -2,8 +2,9 @@
 
 Every case runs the ORIGINAL routine under the Musashi oracle and the reconstruction on the same
 image, requires the two to agree byte for byte over the whole image, and bounds the original's write
-set to the bytes the case says it may touch. Where a routine returns a register a caller reads back
-(`hud_blit_meter_cell`'s and `hud_plot_digit`'s cursors) the case compares that too.
+set to the bytes the case says it may touch. Where a routine leaves a register behind — the two
+advanced cursors (`hud_blit_meter_cell`'s and `hud_plot_digit`'s) and the DIGIT REGISTER every field
+walk rotates — the case compares that too, on both sides.
 
 EIGHTEEN OF THEM ARE LEAVES and twelve are not — the three field walks, the four fields above them,
 the meter's own pass, and the third tier's three table walks with the record's own two-digit walk
@@ -42,13 +43,10 @@ KNOWINGLY NOT PINNED
   * `hud_meter_add_clamped`'s comparison STRICTNESS, for the reason batch 1 registered the effect
     handlers': at a raise landing exactly on the maximum both arms store the same word, so `<=` and
     `<` are indistinguishable from outside. What the sweep pins is the comparison's POSITION.
-  * THE REGISTERS THE BLITS LEAVE BEHIND, except `hud_blit_meter_cell`'s and `hud_plot_digit`'s
-    cursors. The kit's oracle reports d0/d1/a0/a1 only, and every call site in the game reloads them
-    (`../names.txt`), so a case would be pinning a value nothing reads.
-  * `hud_plot_digit`'s OUTGOING d7. It rotates the register left by a nibble and its caller keeps the
-    result, but d7 is not one of the four registers the oracle reports, so no case can read it back.
-    What every case DOES pin is the rotation's effect on the digit selected, and the three field
-    walks above it pin the carry-over: a wrong rotation there draws the wrong digits.
+  * THE SOURCE AND DESTINATION THE FIVE BLITS ADVANCE. The oracle reports them now, but every call
+    site in the game reloads both registers before the next `bsr` (`../names.txt`), so the C does
+    not model what nothing reads and a case would have no candidate value to compare against. The
+    two advanced cursors a caller DOES read (`hud_blit_meter_cell`'s, `hud_plot_digit`'s) are pinned.
   * THE EMPTY-CELL LOOP OF `hud_draw_meter` WHEN THE MAXIMUM IS BELOW THE VALUE. The count goes
     negative, the `dbf` runs it down through 65535 iterations and the cursor leaves
     meter_cell_offsets entirely. Reproduced by construction (`../src/hud.c`), reached by no case,
@@ -196,6 +194,7 @@ EIGHT_DIGIT_FORCED_AT = EIGHT_DIGITS - 2
 TWO_DIGIT_FORCED_AT = None
 
 WORD_MASK = leaf.WORD_MASK
+LONGWORD_MASK = leaf.LONGWORD_MASK
 
 # The panel blits LOOP, so leaf.py's default cap (LEAF_INSN_CAP = 64, sized for the straight-line
 # leaves, whose runs are at most six instructions) does not fit them. Stated from the widest one's
@@ -220,6 +219,14 @@ def _signed_long(value):
     """What a `cmp.l` reads a longword as. The score, the high score and the five meter thresholds
     are all compared this way, so a field whose top nibble is 8 or 9 is NEGATIVE."""
     return value - 0x100000000 if value & 0x80000000 else value
+
+
+def _rotate_left32(value, bits):
+    """`rol.l #n,d7` — the digit register's only arithmetic. $b850 rotates by a nibble per plot,
+    $bd32 by a byte before its walk, and the outgoing register every case below compares against the
+    oracle is this applied as many times as the routine plots."""
+    bits %= 32
+    return ((value << bits) | (value >> (32 - bits))) & LONGWORD_MASK if bits else value
 
 
 def _indexed_bitmap(table, index, stride):
@@ -1008,11 +1015,13 @@ _bcd = {name: leaf.register_glue(name, [ctypes.c_uint32])
                      "bcd_add_score_bd70", "bcd_sub_score_bd70")}
 
 _meter = leaf.image_glue("hud_draw_meter")
-_four_digits = leaf.register_glue("hud_draw_four_digits", [ctypes.c_uint32] * 2)
-_eight_digits = leaf.register_glue("hud_draw_eight_digits", [ctypes.c_uint32] * 3)
-_two_digits = leaf.register_glue("hud_draw_two_digits", [ctypes.c_uint32] * 3)
-_counter = leaf.register_glue("hud_draw_counter_bd6e", [ctypes.c_uint32])
-_stage_number = leaf.register_glue("hud_draw_stage_number", [ctypes.c_uint32] * 2)
+# The five that hand back the digit register the original leaves in d7 (see include/hud.h): each
+# glue's return value IS that register, which is what `_run_field` compares against the oracle's.
+_four_digits = leaf.register_glue("hud_draw_four_digits", [ctypes.c_uint32] * 2, ctypes.c_uint32)
+_eight_digits = leaf.register_glue("hud_draw_eight_digits", [ctypes.c_uint32] * 3, ctypes.c_uint32)
+_two_digits = leaf.register_glue("hud_draw_two_digits", [ctypes.c_uint32] * 3, ctypes.c_uint32)
+_counter = leaf.register_glue("hud_draw_counter_bd6e", [ctypes.c_uint32], ctypes.c_uint32)
+_stage_number = leaf.register_glue("hud_draw_stage_number", [ctypes.c_uint32] * 2, ctypes.c_uint32)
 _score = leaf.register_glue("hud_draw_score_and_size_meter", [ctypes.c_uint32])
 _larger_score = leaf.register_glue("hud_draw_larger_score", [ctypes.c_uint32])
 
@@ -1025,9 +1034,14 @@ _plot_digit_fn = leaf.bind("hud_plot_digit",
 
 
 def _plot_digit(font_select, cursor, digits):
+    """The glue returns BOTH of the routine's outputs as a pair — the advanced cursor it hands back
+    in a0 and the rotated digit register it hands back in d7 — so a case can compare each against
+    the oracle's own. `info["ret"]` is passed through untouched by the kit, which is what lets a
+    two-output routine be compared without a mutable cell the attribution pass would rewrite."""
     def with_registers(_lib, image):
         register = ctypes.c_uint32(digits)
-        return _plot_digit_fn(image, font_select, cursor, ctypes.byref(register))
+        advanced = _plot_digit_fn(image, font_select, cursor, ctypes.byref(register))
+        return advanced, register.value
     return with_registers
 
 
@@ -1560,10 +1574,40 @@ def _field_expected(digits, fonts, latch, forced_at):
     return expected
 
 
+def _outgoing_digits(entry_digits, plots):
+    """The d7 a routine leaves at its `rts`: `rol.l #4,d7` once per plot, and nothing else in $b850
+    or in any walk above it touches the register — which the whole-body entry pins are what hold.
+    Four plots therefore come to a `swap`, and eight to the identity."""
+    return _rotate_left32(entry_digits, NIBBLE_BITS * plots)
+
+
+def _assert_outgoing_digits(info, entry_digits, plots, candidate, what):
+    """The three-way comparison the oracle's widened register set made possible: the MODEL above,
+    the ORACLE's own d7, and the value the RECONSTRUCTION hands back. Only the last of the three can
+    catch a wrong C — a model checked against the oracle is two statements about the original and
+    none about the port.
+
+    ``candidate`` is None for the three routines that hand d7 to nobody and so do not return it
+    ($b74a, $b7c6, $b3da). $b74a is also the one whose agreement with the model is a COINCIDENCE: it
+    re-reads the score into d7 after the walk (`move.l $bd70.l,d7` at $b75c), and an eight-nibble
+    rotation is the identity, so the two readings meet on the same value for different reasons."""
+    expected = _outgoing_digits(entry_digits, plots)
+    assert info["regs"]["d7"] == expected, (
+        f"{what}: the oracle left d7 at {info['regs']['d7']:#010x}, not the {expected:#010x} that "
+        f"{plots} nibble rotation(s) of {entry_digits:#010x} give")
+    if candidate is None:
+        return
+    assert candidate == expected, (
+        f"{what}: the reconstruction left the digit register at {candidate:#010x}, "
+        f"not the {expected:#010x} the original leaves in d7")
+
+
 def _run_field(name, glue, cursor, digits, fonts, rewinds, forced_at, what,
-               pokes=(), regs=(), entry_latch=0, extra_allowed=()):
-    """Run one field walk: check every column, that it left the latch clear, and that nothing else
-    moved. ``pokes``/``regs`` are the caller's own (screen_back, the field, the entry registers)."""
+               pokes=(), regs=(), entry_latch=0, extra_allowed=(), returns_digits=True):
+    """Run one field walk: check every column, the digit register it leaves in d7, that it left the
+    latch clear, and that nothing else moved. ``pokes``/``regs`` are the caller's own (screen_back,
+    the field, the entry registers). ``returns_digits`` is False for the three whose C returns
+    nothing, per `_assert_outgoing_digits`."""
     columns = _field_columns(cursor, rewinds)[:len(fonts)]
     allowed = [(DIGIT_SIGNIFICANT_SEEN, WORD_LEN)] + list(extra_allowed)
     for column in columns:
@@ -1575,6 +1619,7 @@ def _run_field(name, glue, cursor, digits, fonts, rewinds, forced_at, what,
     expected = _field_expected(digits, fonts, entry_latch != 0, forced_at)
     for index, column in enumerate(columns):
         _assert_column(info, column, DIGIT_ROWS, expected[index], f"{what}: digit {index}")
+    _assert_outgoing_digits(info, digits, len(fonts), info["ret"] if returns_digits else None, what)
     assert leaf.read_int(info, DIGIT_SIGNIFICANT_SEEN, WORD_LEN, what) == 0, (
         f"{what}: the walk did not leave digit_significant_seen_b84e clear")
     return info
@@ -1605,9 +1650,11 @@ def _run_plot_digit(nibble, font_select, cursor, latch, what):
     prints = latch != 0 or nibble != 0
     _assert_column(info, cursor, DIGIT_ROWS, _digit_bytes(nibble, font_select, prints), what)
     advanced = cursor + DIGIT_ROWS * SCREEN_LINE
+    returned_cursor, returned_digits = info["ret"]
     assert info["regs"]["a0"] == advanced, (
         f"{what}: the oracle left a0 at {info['regs']['a0']:#x}, not {advanced:#x}")
-    assert info["ret"] == advanced, f"{what}: the reconstruction returned {info['ret']:#x}"
+    assert returned_cursor == advanced, f"{what}: the reconstruction returned {returned_cursor:#x}"
+    _assert_outgoing_digits(info, digits, 1, returned_digits, what)
     return info
 
 
@@ -1785,6 +1832,11 @@ def test_the_two_digit_walk_starts_from_the_latch_it_is_given():
 # What the caller left in d7. Its high word ends up BELOW the digits drawn and must not reach them.
 FIELD_ENTRY_D7 = (0x00000000, 0xdeadbeef, 0xffffffff)
 
+# ...and the same input read the other way. Every one of these has two DIFFERENT halves, which is
+# what makes WHICH of them a `move.w field,d7 / swap d7` buries observable at all — a value whose
+# halves match (the first and third of FIELD_ENTRY_D7) reads the same either way.
+FIELD_BURIED_HALF_D7 = (0xdeadbeef, 0xffff0000, 0x0000ffff, 0x12345678)
+
 COUNTER_FIELDS = (0x0000, 0x0001, 0x0900, 0x1234, 0x9999)
 STAGE_FIELDS = (0x0000, 0x0001, 0x0010, 0x1234, 0xff99)
 
@@ -1798,10 +1850,11 @@ def _staged_word(field, entry_d7):
 def _run_counter(counter, screen, entry_d7, what):
     cursor = screen + COUNTER_ORIGIN
     digits = _staged_word(counter, entry_d7)
-    _run_field("hud_draw_counter_bd6e", _counter(entry_d7), cursor, digits,
-               (DIGIT_FONT_DEFAULT,) * FOUR_DIGITS, FOUR_DIGIT_REWINDS, FOUR_DIGIT_FORCED_AT, what,
-               pokes={SCREEN_BACK: longword(screen), BCD_COUNTER: word(counter)},
-               regs={"d7": entry_d7})
+    return _run_field("hud_draw_counter_bd6e", _counter(entry_d7), cursor, digits,
+                      (DIGIT_FONT_DEFAULT,) * FOUR_DIGITS, FOUR_DIGIT_REWINDS,
+                      FOUR_DIGIT_FORCED_AT, what,
+                      pokes={SCREEN_BACK: longword(screen), BCD_COUNTER: word(counter)},
+                      regs={"d7": entry_d7})
 
 
 @pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])
@@ -1813,19 +1866,52 @@ def test_the_counter_draw_takes_its_origin_from_screen_back(counter, screen):
 @pytest.mark.parametrize("entry_d7", FIELD_ENTRY_D7, ids=[f"d7_{d:08x}" for d in FIELD_ENTRY_D7])
 def test_the_counter_draw_buries_the_callers_d7_below_the_digits(entry_d7):
     """`move.w`/`swap` leave the caller's high word in d7's LOW half, where four rotations cannot
-    reach it — so all three entry values must draw the same four digits."""
+    bring it back under a digit — so all three entry values must draw the same four digits."""
     _run_counter(0x0100, SCREEN_BUFFERS[0], entry_d7,
                  f"counter 0100 entered with d7 {entry_d7:#010x}")
 
 
+# The counter's four plots rotate d7 by 16 in total, and the stage number's `rol.l #8` plus its two
+# plots come to the same — so both routines' buried half is back in d7's HIGH word at the `rts`.
+BURIED_HALF_ROTATION = BITS_PER_WORD
+
+
+@pytest.mark.parametrize("entry_d7", FIELD_BURIED_HALF_D7,
+                         ids=[f"d7_{d:08x}" for d in FIELD_BURIED_HALF_D7])
+def test_a_word_field_buries_the_callers_high_word_and_hands_it_back_in_d7(entry_d7):
+    """WHICH half of the caller's d7 goes under the field — the claim no drawn pixel can settle.
+
+    `move.w field,d7 / swap d7` buries the caller's HIGH word; a routine that buried its LOW word
+    instead would rotate exactly the same nibbles out from under the field and draw the same image,
+    which is why this survived every case in the battery until the kit's oracle grew d7. It is
+    observable in one place only: the register at the `rts`, where the walk's own 16 bits of
+    rotation have lifted the buried half back to the top. Stated here by NAMING the two halves
+    rather than by rotating, so it is a different sentence from `_outgoing_digits`."""
+    counter, stage = 0x0100, 0x0012
+    buried = (entry_d7 >> BITS_PER_WORD) << BITS_PER_WORD
+    assert _rotate_left32(entry_d7, BURIED_HALF_ROTATION) != entry_d7, (
+        "an entry value whose two halves agree cannot tell the two readings apart")
+
+    info = _run_counter(counter, SCREEN_BUFFERS[0], entry_d7,
+                        f"counter {counter:04x} entered with d7 {entry_d7:#010x}")
+    assert info["regs"]["d7"] == buried | counter, (
+        f"the counter draw left d7 at {info['regs']['d7']:#010x}: the caller's HIGH word should be "
+        f"back on top with the counter below it")
+
+    info = _run_stage_number(stage, DIGIT_FONT_DEFAULT, SCREEN_BUFFERS[1], entry_d7,
+                             f"stage {stage:04x} entered with d7 {entry_d7:#010x}")
+    assert info["regs"]["d7"] == buried | stage, (
+        f"the stage draw left d7 at {info['regs']['d7']:#010x}: the caller's HIGH word should be "
+        f"back on top with stage_number below it")
+
+
 def _run_stage_number(stage, font_select, screen, entry_d7, what):
     cursor = screen + STAGE_ORIGIN
-    staged = _staged_word(stage, entry_d7)
-    digits = ((staged << BITS_PER_BYTE) | (staged >> (32 - BITS_PER_BYTE))) & 0xffffffff
-    _run_field("hud_draw_stage_number", _stage_number(font_select, entry_d7), cursor, digits,
-               (font_select,) * TWO_DIGITS, TWO_DIGIT_REWINDS, TWO_DIGIT_FORCED_AT, what,
-               pokes={SCREEN_BACK: longword(screen), STAGE_NUMBER: word(stage)},
-               regs={"d0": font_select, "d7": entry_d7})
+    digits = _rotate_left32(_staged_word(stage, entry_d7), BITS_PER_BYTE)
+    return _run_field("hud_draw_stage_number", _stage_number(font_select, entry_d7), cursor, digits,
+                      (font_select,) * TWO_DIGITS, TWO_DIGIT_REWINDS, TWO_DIGIT_FORCED_AT, what,
+                      pokes={SCREEN_BACK: longword(screen), STAGE_NUMBER: word(stage)},
+                      regs={"d0": font_select, "d7": entry_d7})
 
 
 @pytest.mark.parametrize("font_select", DIGIT_FONTS, ids=[f"font_{f}" for f in DIGIT_FONTS])
@@ -1874,7 +1960,8 @@ def test_the_score_draw_sizes_the_meter_from_its_thresholds(score):
         (DIGIT_FONT_DEFAULT,) * EIGHT_DIGITS, EIGHT_DIGIT_REWINDS, EIGHT_DIGIT_FORCED_AT, what,
         pokes={SCREEN_BACK: longword(screen), BCD_SCORE: longword(score),
                METER_MAX: word(METER_MAX_SEED)},
-        regs={"d0": DIGIT_FONT_DEFAULT}, extra_allowed=[(METER_MAX, WORD_LEN)])
+        regs={"d0": DIGIT_FONT_DEFAULT}, extra_allowed=[(METER_MAX, WORD_LEN)],
+        returns_digits=False)
     expected = _meter_max_for(score, METER_MAX_SEED)
     if expected == METER_MAX_SEED:
         assert METER_MAX not in info["writes"], (
@@ -1900,7 +1987,8 @@ def test_the_score_draw_takes_its_origin_from_screen_back(screen, font_select):
                EIGHT_DIGIT_FORCED_AT, f"score {score:08x} into screen_back {screen:#x}",
                pokes={SCREEN_BACK: longword(screen), BCD_SCORE: longword(score),
                       METER_MAX: word(METER_MAX_SEED)},
-               regs={"d0": font_select}, extra_allowed=[(METER_MAX, WORD_LEN)])
+               regs={"d0": font_select}, extra_allowed=[(METER_MAX, WORD_LEN)],
+               returns_digits=False)
 
 
 # --- $b7c6: whichever of the two fields is larger -------------------------------------------------
@@ -1924,7 +2012,7 @@ def _run_larger_score(score, hiscore, font_select, screen, what):
                EIGHT_DIGIT_FORCED_AT, what,
                pokes={SCREEN_BACK: longword(screen), BCD_SCORE: longword(score),
                       BCD_HISCORE: longword(hiscore)},
-               regs={"d0": font_select})
+               regs={"d0": font_select}, returns_digits=False)
 
 
 @pytest.mark.parametrize("score,hiscore,why", LARGER_SCORE_CASES,
@@ -2301,7 +2389,7 @@ def _run_record_digits(low_byte, screen, record, entry_regs, what):
                RECORD_DIGIT_FONTS, RECORD_DIGIT_REWINDS, RECORD_DIGIT_FORCED_AT, what,
                pokes={SCREEN_BACK: longword(screen),
                       record + RECORD_LOW_BYTE: bytes([low_byte])},
-               regs=dict(entry_regs, a0=record))
+               regs=dict(entry_regs, a0=record), returns_digits=False)
 
 
 @pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])

@@ -10,7 +10,9 @@ compiled C on the same image, and diffs the result. Everything game-specific liv
 the method is differential rather than byte-matching, read the worked reference project,
 [`projects/buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md).
 
-**88 functions are reconstructed.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
+**[`STATUS.md`](STATUS.md)'s ledger is the count of what is reconstructed — 118 functions as of
+batch 11; this paragraph names the GROUPS rather than counting them, and had drifted several batches
+behind that table before batch 11 removed its stale figure.** `rad_depack` (`0x5d62`), the resource depacker every `.RAD` the
 game loads goes through, verified over the game's own resource corpus — the 41 `.RAD` files the two
 disks ship, plus the four protection-damaged overlays a second time in their authentic disk-2 bytes,
 so 45 streams in all. The first gameplay batch: 31 leaves with no callee and no hardware between
@@ -36,7 +38,12 @@ followed actor's slot 12, so the record the scroll steers on is the one gap no a
 A spawn then fills a slot in from a 32-byte template. The map underneath them is a second one laid
 out like the background map, one byte per 16x16 cell, with a probe that walks an actor left until a
 cell blocks it, a scan that lands one on a platform tile, and a stamp that writes four tiles into it
-as a 2x2 block. The rest is the
+as a 2x2 block. Batch 11 then closed that map (five more routines, 454 bytes): the RIGHTWARD probe,
+which shares the leftward one's ground test by branching into it and clamps at the level's own width
+instead of at the actor's half-width; the cell lookup both probes spell, which writes no memory at
+all and became portable only when the kit's oracle began reporting the whole `movem` register set;
+the second settle, whose body physically encloses `actor_accelerate_fall`; and the fall pass above
+all of them. The rest is the
 binding plus a foundation battery that runs the original code under the oracle and pins how the
 program starts.
 Progress, the kit change this project required, the oracle defect the panel batch surfaced, and the
@@ -93,10 +100,14 @@ src/actor.c                the actor tier: $67e0, which names the record everyth
                            that move a record between standing and falling ($2af2, $14d6)
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
-                           state_flag_a32 names. The leftward step probe ($10a2, forty-one callers),
-                           the platform settle ($1400) and the 2x2 tile stamp ($1af0). Its header
-                           records the one place the pair of maps is not symmetric, which $10a2
-                           reproduces rather than tidies
+                           state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
+                           each), the cell lookup below them ($13be/$13c8), the two settles ($1400
+                           onto a platform tile and $1492 onto a block or ledge), the FALL PASS
+                           above them ($1334, forty-six callers: the record's speed added to its y,
+                           then both settles) and the 2x2 tile stamp ($1af0). Its header records the
+                           one place the pair of maps is not symmetric, which $10a2 reproduces
+                           rather than tidies — and why $1492, whose body physically encloses
+                           actor_accelerate_fall's 32 bytes, is written as a routine that CALLS it
 src/text.c                 the WHOLE text subsystem. The driver ($bd8a): compose a message into
                            the 88-byte-wide 4-plane buffer on the frame it is requested, then
                            re-blit that buffer to screen_back every frame until its countdown ends.
@@ -159,11 +170,15 @@ test/test_scroll.py        the scroll subsystem's differential: whole-body entry
                            so the pattern the other thirteen are built from cannot be what is wrong
 test/test_map.py           the collision map's differential: an address-keyed window of each map
                            with the two ROW STRIDES seeded apart (which is what makes the asymmetry
-                           observable at all), whole-body entry pins for all three, Python models
+                           observable at all), whole-body entry pins for all eight, Python models
                            the write set is compared against for EQUALITY, a probe whose two results
                            are both partial register writes over something else, and case tiles
                            keyed to the cell the probe ACTUALLY lands in rather than to the actor's
-                           own edge — the mutation sweep's finding
+                           own edge — the mutation sweep's finding. The two tiers above add a pin
+                           130 bytes long over a routine the scan records as 98 (the 32 in the
+                           middle being another routine's, asserted as its own), a model that
+                           COMPOSES its five callees' models over one shared memory, and the whole
+                           operand scan behind the three globals $1334 raises and clears
 test/test_actor.py         the actor tier's differential: a routine whose WHOLE output is a register
                            (every case compares the oracle's a1 against the reconstruction's return
                            value), the small-positive flag words that separate the tier's `bne`

@@ -24,6 +24,12 @@
  * `proto` forces a void return — and whose d7 is IN AND OUT in the second case. The C takes those
  * registers as parameters, one `uint32_t` each (a pointer for d7), so that the operand size
  * the original applies to them is applied HERE where a differential case can pin it.
+ *
+ * THE DIGIT REGISTER AT THE `rts`. The three field walks and the two fields loaded as a word return
+ * a `uint32_t` as well — the d7 their last plot leaves. No call site in the image reads it, so it
+ * is not an output the game uses and their `proto` lines still describe the entry storage right;
+ * it is returned because the oracle now reports d7, which makes it the only observer of which half
+ * of the caller's own d7 a `move.w field,d7 / swap d7` buries (../src/hud.c has the argument).
  */
 #ifndef WONDERBOY_HUD_H
 #define WONDERBOY_HUD_H
@@ -75,24 +81,29 @@ uint32_t hud_plot_digit(uint8_t *image, uint32_t font_select, uint32_t cursor, u
 
 /* $b5ea / $b7ea / $bd4a — one field of digits, left to right, from the top nibble of `digits` down.
  * Only the four-digit form forces the glyphs (`moveq #0,d0`); the other two pass the caller's d0
- * through, the eight-digit one to its FIRST digit only. */
-void hud_draw_four_digits(uint8_t *image, uint32_t cursor, uint32_t digits);
-void hud_draw_eight_digits(uint8_t *image, uint32_t font_select, uint32_t cursor, uint32_t digits);
-void hud_draw_two_digits(uint8_t *image, uint32_t font_select, uint32_t cursor, uint32_t digits);
+ * through, the eight-digit one to its FIRST digit only.
+ * Each RETURNS the digit register the original leaves in d7 — one nibble rotation per plot. */
+uint32_t hud_draw_four_digits(uint8_t *image, uint32_t cursor, uint32_t digits);
+uint32_t hud_draw_eight_digits(uint8_t *image, uint32_t font_select, uint32_t cursor,
+                               uint32_t digits);
+uint32_t hud_draw_two_digits(uint8_t *image, uint32_t font_select, uint32_t cursor,
+                             uint32_t digits);
 
 /* $b54c — d7's LOW word is the dead half: `move.w bcd_counter_bd6e,d7` overwrites it and the `swap`
  * then lifts the counter into the high half, leaving the caller's own HIGH word below the digits —
- * live input, but buried where no rotation reaches it. d0 is unread, since the four-digit form
- * forces its own. */
-void hud_draw_counter_bd6e(uint8_t *image, uint32_t digits);
+ * live input, but buried where no rotation brings it back under a drawn nibble. d0 is unread, since
+ * the four-digit form forces its own. Returns d7 as the `rts` leaves it: the walk's four rotations
+ * come to a `swap`, so the buried half is back on top and the counter is below it. */
+uint32_t hud_draw_counter_bd6e(uint8_t *image, uint32_t digits);
 
 /* $b74a / $b7c6 — d7 is dead at both (each reloads it from memory); d0 reaches the first digit. */
 void hud_draw_score_and_size_meter(uint8_t *image, uint32_t font_select);
 void hud_draw_larger_score(uint8_t *image, uint32_t font_select);
 
 /* $bd32 — d0 reaches BOTH digits; d7's LOW word is the dead half and its high word survives buried,
- * as in hud_draw_counter_bd6e. */
-void hud_draw_stage_number(uint8_t *image, uint32_t font_select, uint32_t digits);
+ * as in hud_draw_counter_bd6e. Its `rol.l #8` plus the two-digit walk's two nibbles come to 16 as
+ * well, so the returned register carries the buried half back in its high word too. */
+uint32_t hud_draw_stage_number(uint8_t *image, uint32_t font_select, uint32_t digits);
 
 /* $b61e — no registers at all: every input is a word in memory. */
 void hud_draw_meter(uint8_t *image);

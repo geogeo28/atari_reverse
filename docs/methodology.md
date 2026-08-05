@@ -204,3 +204,11 @@ The rule is about the KEY, not about the extent:
 - **Only a mutation asks the question.** A wrongly keyed case still asserts, still names a tile and
   still reads correctly. Mutate the geometry the case is about — the shift, the stride, the sign —
   and see whether anything reddens. Nothing reddening is the finding.
+- **A derived key is necessary and not sufficient: seed each TERM of the arithmetic at a boundary
+  where it matters.** The same hole recurred one layer up in batch 11 (same file, the collision-map
+  batch): `probe_cell()` was in place and every case keyed off it, yet dropping the `subq.w #1` that
+  makes the probe row the pixel ABOVE the actor's y reddened NOTHING — every case had put the actor
+  one pixel INSIDE its row, where `y` and `y - 1` name the same cell, so that term of the derived
+  expression never changed the answer. What killed the mutation was a case standing the actor
+  EXACTLY on a cell boundary. Read the arithmetic term by term and ask, for each, which seed value
+  makes it observable at all.

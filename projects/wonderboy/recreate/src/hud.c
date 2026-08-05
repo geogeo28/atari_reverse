@@ -36,14 +36,14 @@
  *     $bb8a/$bba0 sites in $b8f0 reload both registers immediately before the `bsr`, and all five
  *     $b6c2 sites in $b61e ($b648, $b660, $b676, $b68c, $b6b8 — two of them inside a `dbf` loop and
  *     three the arms of a one-shot branch chain) `lea` a2 in the instruction immediately before.
- *   * THE DIGIT REGISTER `hud_plot_digit` LEAVES BEHIND. d7 is that routine's other output — every
- *     plot rotates it left by a nibble and the caller keeps the result — and d7 is not one of the
- *     four registers the oracle reports. The rotation is pinned through what it SELECTS (all sixteen
- *     nibbles) and through the three field walks, which draw the wrong digits if it is wrong; only
- *     the register's value at the `rts` is unobservable.
- *   * WHICH HALF OF THE CALLER'S d7 ENDS UP UNDER A WORD FIELD. `move.w field,d7 / swap d7` puts the
- *     caller's high word in the low half, and no walk rotates it back up — so `>> 16` and
- *     `& 0xffff` are indistinguishable here. Faithful by reading, and no seeding can change that.
+ * TWO MORE WERE INVISIBLE UNTIL THE ORACLE GREW ITS FULL REGISTER SET, and are now pinned rather
+ * than registered: the digit register `hud_plot_digit` leaves behind (`rol.l #4,d7` is that
+ * routine's other output, and nothing after it on either arm touches d7), and WHICH HALF OF d7
+ * ENDS UP UNDER A WORD FIELD. The second is why the routines that walk a field hand their digit
+ * register back: `move.w field,d7 / swap d7` buries the caller's high word in d7's low half, four
+ * nibble rotations lift it back into the high one, and it is sitting there at the `rts` — so
+ * `>> 16` and `& 0xffff` in `staged_word_field` are told apart by the returned register, though
+ * never by a drawn pixel.
  */
 #include <stddef.h>
 
@@ -354,6 +354,12 @@ uint32_t hud_plot_digit(uint8_t *image, uint32_t font_select, uint32_t cursor, u
  * where they force the latch, in which digits get the caller's font, and in whether the cursor is
  * stepped after the LAST digit — differences a shared loop would have to carry as three flags.
  * `rewind` is the caller's own `suba.l`, applied to the cursor $b850 left eight scanlines down.
+ *
+ * Each RETURNS the digit register the original leaves in d7 — one nibble rotation per plot, so the
+ * four-digit walk hands back its argument rotated by 16, the two-digit one by 8 and the eight-digit
+ * one unchanged. The cursor is the output they do not hand back: no caller reads a0 after a walk
+ * ($b54c and $bd32 `rts` on the next instruction, $b74a reloads d7 and tests it, $b7c6/$b3da
+ * `rts`).
  */
 static uint32_t plot_digit_then_step(uint8_t *image, uint32_t font_select, uint32_t cursor,
                                      uint32_t *digits, uint32_t rewind) {
@@ -368,7 +374,7 @@ static void clear_significant(uint8_t *image) {
     wr16(image + WB_DIGIT_SIGNIFICANT_SEEN, 0);
 }
 
-void hud_draw_four_digits(uint8_t *image, uint32_t cursor, uint32_t digits) {
+uint32_t hud_draw_four_digits(uint8_t *image, uint32_t cursor, uint32_t digits) {
     /* `moveq #0,d0` before the first plot, and nothing touches d0 after it. */
     const uint32_t font = WB_DIGIT_FONT_DEFAULT;
     cursor = plot_digit_then_step(image, font, cursor, &digits, WB_DIGIT_REWIND_RIGHT_HALF);
@@ -377,9 +383,11 @@ void hud_draw_four_digits(uint8_t *image, uint32_t cursor, uint32_t digits) {
     force_significant(image);           /* so the LAST digit prints even when the field is zero */
     hud_plot_digit(image, font, cursor, &digits);
     clear_significant(image);
+    return digits;
 }
 
-void hud_draw_eight_digits(uint8_t *image, uint32_t font_select, uint32_t cursor, uint32_t digits) {
+uint32_t hud_draw_eight_digits(uint8_t *image, uint32_t font_select, uint32_t cursor,
+                               uint32_t digits) {
     /* Only the first plot sees the caller's d0: a `moveq #0,d0` follows each of the next five
      * steps, and the last two run on the 0 the sixth left. */
     cursor = plot_digit_then_step(image, font_select, cursor, &digits, WB_DIGIT_REWIND_NEXT_GROUP);
@@ -395,22 +403,30 @@ void hud_draw_eight_digits(uint8_t *image, uint32_t font_select, uint32_t cursor
     cursor = plot_digit_then_step(image, font, cursor, &digits, WB_DIGIT_REWIND_NEXT_GROUP);
     hud_plot_digit(image, font, cursor, &digits);
     clear_significant(image);
+    return digits;
 }
 
-void hud_draw_two_digits(uint8_t *image, uint32_t font_select, uint32_t cursor, uint32_t digits) {
+uint32_t hud_draw_two_digits(uint8_t *image, uint32_t font_select, uint32_t cursor,
+                             uint32_t digits) {
     /* The odd one out twice over: the caller's d0 reaches BOTH digits, nothing forces the latch (so
      * a zero high digit is drawn blank), and the cursor is stepped again after the last one. */
     cursor = plot_digit_then_step(image, font_select, cursor, &digits, WB_DIGIT_REWIND_NEXT_GROUP);
     plot_digit_then_step(image, font_select, cursor, &digits, WB_DIGIT_REWIND_RIGHT_HALF);
     clear_significant(image);
+    return digits;
 }
 
 /* ---- $b54c / $b74a / $b7c6 / $bd32: the four fields panel_refresh_frame draws -------------------
  *
  * Each resolves its own origin in `screen_back` and hands a field of packed BCD to the walk above.
  * The two that load a WORD (`move.w field,d7 / swap d7`) leave the caller's own high word in d7's
- * low half, where the rotations cannot reach it — the cases feed a poisoned d7 to pin that rather
- * than argue it. The two that load a LONGWORD overwrite d7 outright.
+ * low half, where no rotation of theirs can bring it back under a digit — the cases feed a poisoned
+ * d7 to pin that rather than argue it. The two that load a LONGWORD overwrite d7 outright.
+ *
+ * The two WORD ones return their digit register, because the buried half IS observable there even
+ * though it never reaches a pixel: their walks rotate by 16 in total, which lifts the caller's own
+ * high word back into d7's high word by the `rts`. That is what tells `staged_word_field`'s two
+ * halves apart.
  */
 /* `move.w field,d7 / swap d7`: the field becomes d7's HIGH word, i.e. the first nibble the walk
  * rotates out, and the caller's high word lands harmlessly below it. */
@@ -420,17 +436,17 @@ static uint32_t staged_word_field(const uint8_t *image, uint32_t field, uint32_t
     return ((uint32_t)be16(image + field) << BITS_PER_WORD) | (entry_digits >> BITS_PER_WORD);
 }
 
-void hud_draw_counter_bd6e(uint8_t *image, uint32_t digits) {
-    hud_draw_four_digits(image, screen_cursor(image, WB_COUNTER_ORIGIN),
-                         staged_word_field(image, WB_BCD_COUNTER, digits));
+uint32_t hud_draw_counter_bd6e(uint8_t *image, uint32_t digits) {
+    return hud_draw_four_digits(image, screen_cursor(image, WB_COUNTER_ORIGIN),
+                                staged_word_field(image, WB_BCD_COUNTER, digits));
 }
 
-void hud_draw_stage_number(uint8_t *image, uint32_t font_select, uint32_t digits) {
+uint32_t hud_draw_stage_number(uint8_t *image, uint32_t font_select, uint32_t digits) {
     uint32_t staged = staged_word_field(image, WB_STAGE_NUMBER, digits);
     /* `rol.l #8,d7`: the two digits drawn are the stage word's LOW byte, since the walk takes the
      * top nibble first and this rotation puts that byte's high nibble there. */
     staged = rotate_left32(staged, BITS_PER_BYTE);
-    hud_draw_two_digits(image, font_select, screen_cursor(image, WB_STAGE_ORIGIN), staged);
+    return hud_draw_two_digits(image, font_select, screen_cursor(image, WB_STAGE_ORIGIN), staged);
 }
 
 /* The steps of `cmp.l #imm,d7 / blt / move.w #max,hud_meter_max`, in the order the original tests

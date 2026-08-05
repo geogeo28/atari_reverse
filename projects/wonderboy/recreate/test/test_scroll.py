@@ -30,8 +30,10 @@ THREE THINGS MAKE THIS BATTERY DIFFERENT FROM test_hud.py's.
 
 KNOWINGLY NOT PINNED
   * THE REGISTERS THE COLUMN FILLS LEAVE BEHIND. Both walk out with every address register far past
-    where it started; the oracle reports d0/d1/a0/a1 only, and both call sites `rts` immediately
-    after. The two ROW fills are the exception: their d0 is an output and every case compares it.
+    where it started, and both call sites `rts` immediately after, so nothing reads them. The kit's
+    oracle REPORTS them all now (batch 11 widened it to d0-d7/a0-a6), so what is missing is no
+    longer an observer but a reconstruction that models them — openable, not blocked. The two ROW
+    fills are the exception: their d0 is an output and every case compares it.
   * THE 65536-ITERATION `dbf`. Every fill takes its two lengths from a split table whose first
     words count down to 0 — no seeding through bg_scroll_y_coarse or bg_scroll_x can produce a
     negative first count, because the tables are the game's own data and a case that rewrote one

@@ -8,20 +8,25 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 113/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 118/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
-actor table's LIFECYCLE (310 bytes) and the COLLISION MAP the actors walk on (438 bytes) —
-11,124 bytes in all, 43.3 % of everything [`PORTABILITY.md`](PORTABILITY.md) measures.**
-`make test`: 1409 cases green, of which 77 are the foundation battery below, 48 are the depacker's
-differential, 187 are the first gameplay batch's, 481 are the status panel's — that last figure was
-169 after batch 2 and 339 after batch 3, and the whole of the growth is `test/test_hud.py` — 231
-are the background scroll subsystem's (65 after batch 5, 148 after batch 6), 222 are the actor
-tier's (113 after batch 8), 105 the text subsystem's (56 after batch 8) and 58 the collision map's,
-which is batch 10's new `test/test_map.py`. A row appears in the
+actor table's LIFECYCLE (310 bytes) and the COLLISION MAP the actors walk on, both probes and both
+settles and the tier above them (892 bytes) — 11,578 bytes in all, 45.1 % of everything
+[`PORTABILITY.md`](PORTABILITY.md) measures.**
+`make test`: 1522 cases green, of which 77 are the foundation battery below, 48 are the depacker's
+differential, 187 are the first gameplay batch's, 485 are the status panel's — that last figure was
+169 after batch 2, 339 after batch 3 and 481 after batch 10, and the whole of the growth is
+`test/test_hud.py` — 231 are the background scroll subsystem's (65 after batch 5, 148 after batch 6),
+222 are the actor tier's (113 after batch 8), 105 the text subsystem's (56 after batch 8) and 167 the
+collision map's, which is batch 10's new `test/test_map.py` (58 when it landed). A row appears in the
 table at the end when a function is reconstructed and green; everything else in `../decomp.c` and
 `../names.txt` is still only *named*, not ported.
+
+**`PORTABILITY.md`'s "reconstructed and pinned" column is five functions / 454 bytes stale** as of
+batch 11 — it is a MEASUREMENT (`tools/hw_portability.py` re-run over `../out/hw_scan.tsv`), like the
+2026-08-02 re-measure at the end of this file, and it is queued as one rather than hand-edited here.
 
 **`panel_refresh_frame` ($b346) now has NINE of its ten callees reconstructed.** The tenth, `$bbca`,
 is the sound-module blocker batch 3 registered, and it is reached by an unconditional `bsr` — so
@@ -86,7 +91,7 @@ the original code running under the oracle:
   protection scrambled, which is the false green in its exact shape. What the stub is worth, and the
   seven things it knowingly does not verify, are in [`PORTABILITY.md`](PORTABILITY.md) §6.1.
 
-## The kit change this project required
+## The kit changes this project required
 
 `load_base` **must** be below the kit's `OS_POKE_BLOCK_END` floor (`0x620`): the game runs at the
 fixed absolute address `0x400`, and everything below that is the 68000 vector page. So the kit
@@ -114,6 +119,14 @@ pending, and zeroing four bytes of code). Wonder Boy is the only project the ove
 the wiring can only be pinned here; the geometry underneath is pinned kit-side in
 `tools/recreate_kit/test/test_os_map.py`. BuggyBoy (292 cases) and Joust (4368 cases) were re-run
 green after the change.
+
+**The second: the oracle reports the whole `movem` register set (batch 11).** `emu.run`'s result
+dict used to hold `d0`/`d1`/`a0`/`a1`; it is keyed by `emu.REPORTED_REGS` now — `d0..d7` and
+`a0..a6`, `a7` deliberately absent — because three reconstructions here had stopped short of that
+window rather than of any difficulty. Decided in `TRAP_MODEL.md`, "What a run reports back", pinned
+kit-side by `tools/recreate_kit/test/test_reported_regs.py`, and written up in full (the `a7`
+exclusion, the three limits the report leaves, and what the widened window closed) in the batch-11
+section at the end of this file.
 
 ## The oracle defect the status-panel batch surfaced
 
@@ -379,7 +392,19 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
   displacements moved: each battery still spells its own branch OPCODES, byte constants in one file
   and integers fed to `_op()` in the other, because that is where they differ. The whole-body entry
   pins are the proof the hoist changed nothing — 1590 bytes of scroll and every panel routine still
-  match the shipped image byte for byte.
+  match the shipped image byte for byte. **Batch 11 hoisted four more encoders on evidence rather
+  than on the two-user rule**: `test_map.py` arrived spelling `move_b_d16_dn`, `cmpi_b_dn`,
+  `addq_b_d16` and `lsl_w_imm_dn`, all four already in `test_actor.py`, and one of the pairs had
+  ALREADY drifted textually — `addq.b`'s opcode written `0x5028 | ((amount & 7) << 9)` in one file
+  and `0x5000 | ((amount & 7) << 9) | 0x28` in the other, the same value spelt two ways. So they
+  went to `leaf.py` at two users instead of being registered for a third, and the batteries' entry
+  pins are again the proof nothing moved.
+- **`rol.l` on the PYTHON side is written twice.** `test_hud.py`'s `_rotate_left32(value, bits)` (the
+  digit register's nibble and byte rotates) and `test_scroll.py`'s `_rol32(value, count)` (the
+  preshift's) are the same four lines over the same 32-bit mask — the C side's own pair of these is
+  the RESOLVED entry below, and this is its Python mirror, left alone because the two batteries model
+  different routines with it. Usual terms: **trigger** = a third battery user; **home** =
+  `test/leaf.py`, beside `u16`/`s16`, in the guarded form that takes a count of 0.
 - **`tst.w Dn` now has a user in each battery.** Batch 7 collapsed `test_scroll.py`'s own two
   single-register spellings into the encoder `tst_w_dn(reg)` (four registers use it), and
   `test_hud.py` still carries the byte constants `TST_W_D5` / `TST_W_D6`. Registered on the terms
@@ -521,6 +546,11 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x10a2` | `actor_step_left_against_map` (`src/map.c`) | 206 | verified | 20 cases over a seeded collision map: 5 walks (clear, blocked then clear, blocked across two cells, a zero step, and a block the actor cannot back out of, which runs the step down to an EXACT zero and commits a move of nothing), the probe that goes off the map's left edge, the player-only byte clear on a retry and a record type that must not get it, all 7 arms of the ground test, the ASYMMETRY case (the cell looked up in one map and the ground stepped by the other's stride), 2 step high halves, a column above $ff and a row product above $ffff — the two cases that show d0 and d1 are each a partial write over something else + whole-body entry pin |
 | `0x1400` | `actor_settle_on_platform` | 146 | verified | 17 cases: 4 footprint scans reaching the platform at 0, 1 and 2 cells along and through the sub-cell test, its refusal one pixel short, a 5-point sweep of the landing band (both ends and both sides of each, plus the band itself), a platform word whose `subi.w` WRAPS, 3 flag seeds over the unsupported arm, a span whose HIGH half must not reach either word operation that reads it, and both readings of a negative span — one that must not enter the scan and one that must still reach the sub-cell test + whole-body entry pin |
 | `0x1af0` | `map_stamp_block` | 86 | verified | 11 cases: 4 map cells (including an odd one) x both tile sets, each asserting the four bytes are the consecutive run `src/map.c` writes; plus a variant word whose LOW byte alone matches (the test is a word), a cell offset that SIGN-EXTENDS below the map's base, and a row stride whose top bit is set, which puts the block's second row above its first + whole-body entry pin |
+| `0x13be` | `actor_map_cell_from_actor_x` | 10 | verified | 5 cases: 4 left edges — inside the map, on a cell boundary, one that goes past the origin and one whose `sub.w` WRAPS the word — plus a case that seeds rubbish above every register and requires d0/d1 to come back CLEARED (the `move.l`) while d2 and d7 keep theirs. Its pin ends at the FALL-THROUGH rather than at an `rts`, and a case asserts that: $13be + 10 == $13c8, with no `rts` in the ten bytes + whole-body entry pin |
+| `0x13c8` | `actor_map_cell_lookup` | 56 | verified | 18 cases, every one of them comparing SIX registers three ways — the oracle's, a Python model's and the reconstruction's `map_cell_probe` fields: both maps selected with their strides seeded apart, a negative column and a negative row (the arithmetic shifts), a row multiplied UNSIGNED as $ffff, a product past $ffff whose high half a wrapping column add must not carry into, an index of $8000 that addresses BELOW the map, entry high halves in d0/d1/d2/d7 that must survive against a d3 the `mulu.w` must wipe, 6 sub-cell values and 5 spans including one whose doubling wraps. Plus a whole-image `bsr` scan: exactly three callers, and which entry each takes + whole-body entry pin |
+| `0x1170` | `actor_step_right_against_map` | 152 | verified | 32 cases: 5 walks mirroring `$10a2`'s (clear, blocked then clear, blocked across two cells, a zero step, and a block it cannot back out of), the player-only byte clear and a type that must not get it, 8 about the CLAMP alone (the park, the literal-`$0` byte over a `d6` that still says CLEAR, the A32/default limit pair, a `bge` boundary triple, the signed compare a wrapped probe reads, and a bias add that wraps the word), 3 that separate what d0's low word carries per exit (the limit, the column, the parked x), 4 of the shared tail entered from this body including the ASYMMETRY case, 2 step high halves, the entry high halves, and the probe row on a cell boundary — the mutation sweep's finding, and the one case that pins `subq.w #1,d1` for BOTH probes. Plus 3 whole-image scans (41 `bsr` callers and no `jsr`, the three `bra`s into `$10a2`'s tail with no `rts` in this body, and `$83b2`'s three operand sites with the `$fb18` bias the limit was built with). Every case states all seven registers the original leaves against a model, not just the two the reconstruction owes + whole-body entry pin |
+| `0x1492` | `actor_settle_on_tile_1_or_2` | 98 | verified | 16 cases: 7 footprint scans reaching the ground at 0, 1 and 2 cells along and through the sub-cell test, each in BOTH accepted tile codes (which is the `cmpi.b #$2,(a6)` a port carrying $1400's single test would fail), `$23` under the whole footprint refused, the landing arm's `andi.w #$fff0` on a mid-cell y, a flag seed asserting `9(a0)` is absent from the write set entirely, BOTH ways into the enclosed `actor_accelerate_fall` (the `blt.w` at $14c0 and the fall-through at $14d2), the terminal speed that leaves the byte unwritten, a negative span that must still reach the sub-cell test, a span high half and the entry high halves. Every case states the write set exactly and all fifteen reported registers against the model + a whole-body entry pin of 130 bytes, of which the enclosed 32 are asserted as `actor_accelerate_fall`'s own address, length and bytes (130 = 98 + 32) |
+| `0x1334` | `actor_fall_and_settle` | 138 | verified | 17 cases, against a model that COMPOSES its five callees' models over one shared memory: the head's cell taken from the record's own x at its pre-step y (a different column AND row from the settles'), the type test, the three `clr.w`s each with its word seeded nonzero, the `tst.w $1516.l` early exit whose write set is the flag word ALONE, the same mode word off the tile, the moving-bit return that happens after the head has run, the step over 4 speeds including `$ff`, a 3-point sweep of `cmp.w d1,d0 / ble` (one short, exactly on, one past) told apart by the speed byte's value, the landed bit bypassing that test, the accelerate arm still running the platform scan, the second `bsr $13be` starting that scan over (asserted on a6), and the settle cells keyed to the MOVED y in a different row from the seeded one. Plus scans: 46 `bsr` callers and no other entrance, the closing `bra.w $1400` and exactly two `rts` of its own, both absolute encodings of all three globals it touches with the data spellings classified, and the two sites in the image that compare a map byte against `$33` |
 
 ### The .RAD depacker
 
@@ -869,23 +899,10 @@ Six things a later reader should not have to re-derive:
   reaches with `$99999999`, a value the game's own BCD accumulator can produce. `$b7c6` has the same
   signedness: a score with bit 31 set loses to any small high score.
 
-Three things this battery knowingly does not pin, all of them registered rather than argued:
+**One** thing this battery knowingly does not pin. Two more were registered here and are **now
+pinned** — both were blocked on the oracle's register set, both were re-run against it by batch 11
+below, and the paragraph after the mutation register records what happened to each:
 
-* **`hud_plot_digit`'s OUTGOING `d7`.** The rotation is the routine's other output and the oracle
-  reports `d0`/`d1`/`a0`/`a1` only. What the cases do pin is the rotation's effect on the digit
-  *selected* (all sixteen nibbles), and the three walks pin the carry-over from one digit to the next
-  — a port that rotated the wrong way reddens 110 cases (the figure the mutation register below
-  measures on this tree; it was 112 before `rotate_left32` was shared, and the paragraph after that
-  register says why sharing it LOWERED the count, and why batch 6 makes it a FLOOR rather than the
-  count). Only the value in the register at the instant of the `rts` is unobservable.
-* **WHICH HALF OF THE CALLER'S `d7` ENDS UP UNDER THE FIELD.** `move.w field,d7 / swap d7` leaves the
-  caller's own high word in the low half, and neither the four-digit walk (four rotations) nor the
-  two-digit one (two, after a `rol.l #8`) can rotate it back up. So `entry_digits >> 16` and
-  `entry_digits & 0xffff` are indistinguishable through memory *and* through the four reported
-  registers — a mutation swapping them survives all 651 (re-measured on this tree). The port is
-  faithful by reading; no seeding
-  would change that, because the bits never reach an observer. Same family as "the registers the
-  blits leave behind".
 * **`hud_draw_meter`'s RUNAWAY LOOP.** Every step after the `divu` is 16-bit, so a maximum below the
   value makes the empty-cell count negative, the `bne` still takes the loop and the `dbf` runs it
   down through 65535 iterations, walking the cursor far past `meter_cell_offsets`' ten entries and
@@ -907,15 +924,56 @@ digit late** reddens 7; the two-digit walk **forcing the latch** like the other 
 score's threshold compare made **strict** reddens 5; the score compared **unsigned** reddens 1; the
 meter's partial cells for **remainders 3 and 1 swapped** reddens 4; the empty count dividing the
 maximum by **2 instead of 4** reddens 18; and the stage number's **`rol.l #8` cut to a nibble**
-reddens 11. **12 mutations, 10 killed, 2 survivors — one equivalence and one ORACLE BLIND SPOT.**
-The equivalence is the `>` → `>=` in `hud_draw_larger_score`: at equality the two fields hold the
-same bytes, so both arms draw the same digits — the same inert bit batch 1's and batch 2's clamps
-have. **The staged-field half above is NOT an equivalence and should not be filed as one**: `>> 16`
-and `& 0xffff` put *different words in d7*, i.e. different machine state, and the two are
-indistinguishable only through the `d0`/`d1`/`a0`/`a1` window the kit's oracle reports. It is the
-same family as "the registers the blits leave behind" and "`hud_plot_digit`'s outgoing `d7`" — a
-missing observer, not an inert bit. **Re-run this mutation if the oracle ever grows `d7` reporting**;
-it should die then, and if it does not, the reading was wrong.
+reddens 11. **12 mutations, 10 killed, 2 survivors as measured — and only ONE of the two is still a
+survivor.** The equivalence is the `>` → `>=` in `hud_draw_larger_score`: at equality the two fields
+hold the same bytes, so both arms draw the same digits — the same inert bit batch 1's and batch 2's
+clamps have. The other, the staged-field half, **was an ORACLE BLIND SPOT and is now dead**: `>> 16`
+and `& 0xffff` put *different words in d7*, i.e. different machine state, and the two were
+indistinguishable only through the `d0`/`d1`/`a0`/`a1` window the kit's oracle then reported — a
+missing observer, not an inert bit, which is why this register said "re-run this mutation if the
+oracle ever grows `d7` reporting". Batch 11 grew it and ran it: **it reddens 6**, and the entry is
+discharged rather than left standing.
+
+**BOTH OF THIS TIER'S REGISTERED BLIND SPOTS ARE CLOSED (batch 11), and the trigger fired exactly as
+written.** The kit's oracle now reports the whole `movem` set (`emu.REPORTED_REGS`: `d0..d7`,
+`a0..a6`; `a7` is the harness's own), and the two things this battery stopped short of for
+OBSERVABILITY rather than difficulty were re-run against it.
+
+* **`hud_plot_digit`'s outgoing `d7` is a per-case assert now.** `rol.l #4,d7` at `$b868` is the only
+  instruction in the whole 160-byte body that touches the register, so all three `rts` — `$b8a6` and
+  `$b8c4` (the two blank arms) and `$b8ee` (the glyph one) — leave the entry value rotated by one
+  nibble, and they do NOT differ, which was checked rather than assumed. All 45 cases now compare
+  three values instead of two: a rotate MODEL, the ORACLE's `d7`, and the value the reconstruction
+  leaves in its `uint32_t *digits` out-parameter. Only the third can catch a wrong C, which is the
+  whole reason the exposure was worth a signature change.
+* **The staged-field mutation DIED, and the batch-3 reading of it was right about the pixels and
+  wrong about the register.** Four `rol.l #4` come to a `swap`, so the half `move.w field,d7 /
+  swap d7` buries is back in `d7`'s HIGH word by `$b560` / `$bd48`. It never reaches a drawn nibble —
+  that part of the reading stands, and is why 651 cases could not see it — but it is sitting in the
+  register at the `rts`. `$b54c` leaves `(entry d7 & $ffff0000) | bcd_counter_bd6e` and `$bd32`
+  leaves `(entry d7 & $ffff0000) | stage_number`, which
+  `test_a_word_field_buries_the_callers_high_word_and_hands_it_back_in_d7` states by NAMING the two
+  halves rather than by rotating.
+* **The cost was five signatures**, and it is the price of an observer rather than a tidy-up: the
+  three field walks and the two fields loaded as a word now return the digit register the original
+  leaves in `d7`, the way `hud_plot_digit` already took a pointer to it and `hud_blit_meter_cell`
+  already returned its cursor. An assert of the oracle's `d7` against a Python model would have
+  pinned the ORIGINAL twice and the port not at all. `$b74a`, `$b7c6` and `$b3da` stay `void`:
+  nothing reads their `d7`, so their cases assert the oracle's only — and `$b74a`'s agreement with
+  the model is a COINCIDENCE, since it re-reads the score into `d7` at `$b75c` and an eight-nibble
+  rotation is the identity.
+
+Re-measured on the widened oracle (each with the `.so` deleted before the rebuild and the source
+byte-compared against a pristine copy afterwards): the **staged-field half** reddens **6** — exactly
+the cases whose entry `d7` has two different halves; a **pixel-neutral corruption of the register
+`hud_plot_digit` hands back** (clearing the nibble it just drew, which cannot rotate back to the
+bottom within eight plots and so draws an identical image everywhere) reddens **90**, of which 36 are
+`$b850`'s own — before the widening that mutation was invisible in every one of the 651; the counter
+returning its staged value instead of the walk's reddens 15 and the stage number doing the same 15;
+the four-digit walk's last plot not advancing the register it returns reddens 30; `hud_plot_digit`
+rotating by a **byte** reddens 148; `staged_word_field` dropping the `<< 16` reddens 26; the stage
+number rotating by a **word** reddens 15; the blank filling the wrong plane's font reddens 81; and
+`plot_digit_then_step` **adding** its rewind reddens 120. **10 mutations, 10 killed, 0 survivors.**
 
 Three of those numbers are worth reading rather than skimming. The **font-on-the-longword** mutation
 reddens exactly ONE case — the `d0 = $dead0001` blank — because that is the only case whose `d0` has
@@ -1789,7 +1847,11 @@ strides are seeded to DIFFERENT numbers in every case for exactly this reason, a
 `test_the_ground_test_walks_by_the_default_maps_stride` plants blocks one and two A32 rows below the
 cell and requires the tail to report open ground both times — a tidied port fails it.
 
-**$13c8 IS NAMED AND DELIBERATELY NOT PORTED, AND THE REASON IS THE HARNESS.** The five instructions
+**$13c8 WAS NAMED AND DELIBERATELY NOT PORTED, AND THE REASON WAS THE HARNESS — batch 11 below
+closed it, together with the whole queue at the end of this section.** What this batch wrote at the
+time, kept as written because the registration is the point:
+
+**The five instructions
 that turn an actor's pixel position into a cell pointer are a routine of their own, entered by
 `bsr` at `$1344` and fallen into from `$13be`. It writes NO memory, so everything a case could
 compare is in registers — and the kit's oracle reports d0/d1/a0/a1 only. **Two of those it does
@@ -1812,6 +1874,11 @@ staged-field mutation should die (if it does not, that reading was wrong). **`$1
 below hits the same wall from the tier above**: it is what supplies `$13c8`'s and `$1400`'s
 register arguments, so porting it means either porting `$13c8` with it or reproducing that
 hand-over unobserved.
+
+**The trigger fired on 2026-08-04 and all three were re-run against it** — the widening is in
+`tools/recreate_kit` (`TRAP_MODEL.md`, "What a run reports back") and the results are in "The oracle
+window, and the tier it unblocked (batch 11)" at the end of this file. `$13c8` and `$13be` are
+reconstructions, `hud_plot_digit`'s `d7` is a per-case assert, and the staged-field mutation died.
 
 **THE PLATFORM IS AN ACTOR RECORD.** `$1400` lands a record on `platform_y` (`$9a6e`), a word with
 exactly two operand sites in the whole image — both its own — and NO writer anywhere. It is
@@ -1898,7 +1965,7 @@ each battery's single-use encodings, for batch 7's stated reason.
   boundary means re-running `tools/hw_portability.py` over the scan — a measurement, like the
   2026-08-02 re-measure below, and queued as one rather than half-done here.
 
-**QUEUED, with the names and evidence already in `../names.txt`:**
+**QUEUED, with the names and evidence already in `../names.txt` — ALL FOUR CLEARED BY BATCH 11:**
 
 * **`$1170` (`actor_step_right_against_map`, 152 bytes)** — `$10a2`'s mirror, the same head with
   both signs flipped, but its own tail reads `bg_scroll_limit_x` under `WB_STATE_FLAG_A32` rather
@@ -1961,3 +2028,178 @@ scan created no function body the scan lacks, and every column is keyed on addre
 extents. A re-scan would change only the name strings (`FUN_00007522` where `../names.txt` now says
 `bg_scroll_run_queue`). The 29,158 bytes in no function body are untouched by any of this — 24,900
 of them are now charged to game logic.
+
+### The oracle window, and the tier it unblocked (batch 11)
+
+**A REGISTERED TRIGGER FIRED, AND IT WAS A KIT CHANGE RATHER THAN A READ.** Three times this project
+had stopped short of a reconstruction for OBSERVABILITY rather than for difficulty — `hud_plot_digit`'s
+outgoing `d7` and the staged-field mutation (batch 3, the status panel's second tier) and `$13c8`
+(batch 10) — and all three were registered on the same terms: **trigger** = the kit's oracle
+reporting the full `movem` register set instead of `d0`/`d1`/`a0`/`a1`; **home** = `tools/recreate_kit`,
+in the oracle's own result dict. The window was never chosen: `d0`/`d1`/`a0`/`a1` are what a
+Ghidra-style calling convention returns in, inherited from the first function ported. It is now
+`d0..d7` and `a0..a6` (`emu.REPORTED_REGS`), with **`a7` deliberately excluded** — the harness forces
+it to `STACK_TOP` on entry and the run's own `rts` pops the sentinel frame back off it, so its final
+value states the kit's convention rather than anything the function computed, and `min_a7` already
+reports the one fact about it a case can use. The dict GREW and nothing indexes it positionally, so
+no existing case in any project changed; that was checked rather than assumed, by re-running all
+three suites with each candidate `.so` deleted first (**BuggyBoy 292, Joust 4368**, and the kit's own
+131). `TRAP_MODEL.md`, "What a run reports back", is the decision's home, and
+`tools/recreate_kit/test/test_reported_regs.py` pins it from C the way `test_entry_state.py` pins the
+entry SR — a `movem` planting a distinct mark in every reported register, a second run leaving them
+all at their entry values, a canary one slot past the set, and a textual pin of `emu.py`'s mirror
+against `shim.c`, because the C fills the buffer and the Python allocates it.
+
+**ALL THREE BLIND SPOTS ARE CLOSED, AND ONE OF THE THREE READINGS WAS WRONG IN AN INSTRUCTIVE WAY.**
+The two status-panel entries are written up where they were registered (see the second tier's
+mutation register above): `hud_plot_digit`'s `d7` is now a three-way per-case assert — model, oracle,
+and the reconstruction's own out-parameter — and the staged-field mutation, which had survived all
+651 cases, **reddens 6**. What batch 3 got wrong was not the pixels but the register: four `rol.l #4`
+come to a `swap`, so the caller's buried half is back in `d7`'s HIGH word at the `rts`. It genuinely
+never reaches a drawn nibble, which is why the memory differential could not see it — and it was
+sitting in a register the oracle simply was not reporting. **The lesson is the one the registration
+was designed to produce**: an unobservable is a property of the HARNESS, not of the code, and saying
+so in writing with a trigger is what let it be discharged three batches later instead of hardening
+into folklore.
+
+**THE COLLISION MAP IS NOW EIGHT ROUTINES, AND BATCH 10's WHOLE QUEUE IS CLEARED.** 454 more bytes:
+`$13be` + `$13c8` (the cell lookup and its prelude), `$1170` (the rightward probe), `$1492` (the
+second settle) and `$1334` (the tier above all of them). `test/test_map.py` goes 58 → 167 cases.
+
+* **`$13c8` writes no memory at all, so it is the batch's clearest demonstration of what the window
+  is worth.** Every case states all six of its outputs — `a6` (the cell), `d2` (the sub-cell), `d3`
+  (the row × stride product over the cell index), `d7` (the span) and the `d0`/`d1` coordinates —
+  three ways, with the write set required to be EMPTY rather than merely bounded. Four semantics the
+  inline copy inside `actor_step_left_against_map` could only half-show, because that routine clears
+  or overwrites the registers carrying them: `mulu.w` is UNSIGNED (a row of `$ffff` multiplies as
+  65,535, not as −1) and writes all 32 bits, so `d3`'s ENTRY value never survives at all; the `add.w`
+  after it never carries into the product's high half; `lea 2(a6,d3.w)` sign-extends after the
+  `(a6)+` has already stepped past the stride word, so an index past `$7fff` addresses BELOW the map;
+  and every other write here is a WORD write into a longword register, so the ENTRY high halves of
+  `d0`/`d1`/`d2`/`d7` come back untouched — which is exactly what `$13be`'s `moveq`/`move.l` pair
+  exists to clear. **No second spelling of the arithmetic**: both routines go through the one
+  `collision_map`/`cell_pointer`/`pixel_to_cell` trio the step probe already inlined, and the block
+  stays inline there because that routine's write set is what makes it observable.
+* **`$1170` IS NOT `$10a2` WITH A SIGN IN IT, AND THE PROOF IS THAT IT SHARES ONLY THE TAIL.** It has
+  no `rts`: both exits `bra.w $111a`, thirteen instructions inside `$10a2`, and a whole-image scan
+  finds exactly three branches there (`$1112`, `$11fc`, `$1204`) and no `bsr`/`jsr` — so the ground
+  test is not a copy, and `src/map.c` now has one `map_ground_under_cell()` that both probes call.
+  The left routine's cases stayed green through the extraction and its whole-body pin is
+  byte-identical, which is what says the refactor changed nothing. The collision-map stride asymmetry
+  comes with it: `$1170` branches INTO `move.w $23494.l,d7`, so its ground test walks at
+  `WB_COLLISION_MAP_DEFAULT`'s pitch too, with a case per body seeding the two strides apart. What is
+  NOT shared is the clear arm, and deliberately: `$10a2` tests the probe's own SIGN and parks at the
+  half-width, while `$1170` builds a limit — `bg_scroll_limit_x + $f0`, or `$f0` ALONE under
+  `WB_STATE_FLAG_A32`, that mode having no limit word (`$11b6` is a SECOND read of the same flag) —
+  compares it against the UNSHIFTED probe and parks the actor's right EDGE on it. **`$f0` is not this
+  routine's own number**: `$83b2` has three operand sites, and its one WRITER at `$fb1c` is preceded
+  by `move.w (a0)+,d0 / lsl.w #4,d0 / subi.w #$f0,d0`, so `limit + $f0` recovers the level's width in
+  pixels and `WB_BG_SCROLL_LIMIT_BIAS` is named for that pair rather than for a guess. **`d0` means
+  three different things at the `rts`** — the probe's map column when the step ran out (`$11e4`), the
+  clamp LIMIT when the compare committed the move (`$11d0`), and the PARKED x when the clamp fired
+  (`$11f8`), where the byte is a literal `$0` rather than `d6`, so a first probe that was clear still
+  reports blocked. Three cases are about nothing else.
+* **`$1492`'s BODY ENCLOSES `actor_accelerate_fall`, AND THE ENCLOSURE IS REPRESENTED AS WHAT IT IS.**
+  Those 32 bytes sit inside `$1492..$1513`, reached both by the `blt.w $14d6` at `$14c0` and by the
+  not-taken `beq.w $14f6` at `$14d2` falling straight in, and that routine's `rts` at `$14f4` is one
+  of `$1492`'s two exits. It is not two routines sharing bytes — it is a routine whose not-found arm
+  IS another routine, so both arms are written as a call, the same way `$13be` is a prelude calling
+  `$13c8` and `text_plot_char` falls into `text_plot_glyph`. The pin spans all **130** bytes and the
+  size table asserts the RELATIONSHIP rather than a number — **130 = 98 + 32** — with the enclosed
+  block tied to `actor_accelerate_fall`'s own address, length and bytes, so the pin cannot silently
+  become a prefix and neither number can move alone. Against `$1400` it differs in more than a
+  constant: it accepts a PAIR of tile codes at each of its three sites, parks the actor by MASKING
+  its own y rather than on `platform_y`, and never touches `9(a0)` — the two settles accept disjoint
+  code sets, and a case seeds `$23` under the whole footprint to say so.
+* **`$1334`'s CLOSURE IS CLEAN BECAUSE ITS FIVE CALLEES ARE ALL RECONSTRUCTED, AND THAT WAS SCANNED
+  RATHER THAN ASSUMED.** 138 bytes, **forty-six `bsr` callers** by whole-image scan where Ghidra's
+  function table recorded four, no `jsr`/`jmp`/`bra` in, and four exits: its own two `rts`, `$1400`'s
+  (it ends `bra.w $1400`) and — through `$1492` — `actor_accelerate_fall`'s. Its battery's model
+  **composes**: the models of `$13c8`, `$13be`, `$1492`, `$1400` and `$14d6` run in the body's own
+  order over one shared memory, which is the only way the two cell lookups take their row from the y
+  the pass has just moved. That composition is what exposed **why `$13be` is called twice** —
+  `$1492`'s scan CONSUMES `a6` and `d7`, so a port handing `$1400` what `$1492` left would start it
+  partway through the footprint; a case puts the ground two cells in and the platform back at cell 0
+  and reads the oracle's `a6`.
+* **THREE GLOBALS AND A TILE CODE GOT THEIR FIRST NAMES, FROM SCANS RATHER THAN FROM POSITION.**
+  `$1514`/`$1516`/`$1518` sit between `$1492`'s last byte and the routine at `$151a` and had no `var`
+  or `cmt` anywhere. The scan runs **both** absolute encodings — all three lie below `$8000`, so a
+  long-form-only scan reports a fraction of the sites — and classifies each short-form hit by whether
+  the word below it really carries the abs.w effective address, which separates the real references
+  from five byte pairs in the graphics data that spell the same numbers. `tile_33_flag` is raised
+  while the player's own cell holds tile `$33`; `tile_33_mode`, while set, returns `$1334` at `$1362`
+  before it touches the record; `tile_33_step_flag` has one reader, `$20ae`. `WB_MAP_TILE_33` is
+  named for the tests that read it, like `$1`/`$2`/`$23`: exactly two sites compare a map byte
+  against it (`$1348` and `$1554`) and both raise the flag. The mechanism around them reads as a
+  climbable tile — `$d84` gates on the flag, snaps x to `(x & $fff1) + 8`, moves y by ∓2 under two
+  bits of `joy1_current`, and walking dismounts through `$107c` — but **the bit assignment of
+  `joy1_current` is not established anywhere in this workspace**, so that stays a reading and the
+  names carry the tile code, in `state_flag_a32`'s voice. Two limits recorded honestly: `$1516` is
+  written two DIFFERENT nonzero values (`$ff` at `$db2`, `$ffff` at `$dea`) and all five of its
+  readers are bare `tst.w`, so nothing in the image can tell them apart; and `$1514` is written as a
+  word by `$1334` but as a BYTE by `$155c`/`$179e`.
+
+**THE MUTATION SWEEPS FOUND A HOLE THAT WAS NOT THIS BATCH'S, AND IT IS THE METHODOLOGY FINDING.**
+Dropping the `subq.w #1` that makes the probe row the pixel ABOVE the actor's y reddened NOTHING on
+the first sweep — because every case in `test_map.py`, `$10a2`'s included since batch 10, put the
+actor one pixel inside its row, where `y` and `y - 1` name the same cell. `probe_cell` /
+`right_probe_cell` now derive the row from the y a case seeds, and
+`test_the_probe_row_is_the_pixel_above_the_actors_own_y` stands an actor exactly on a cell boundary.
+This is batch 10's own finding recurring one layer up — a case whose geometry is computed from the
+same image it seeds stays self-consistent while testing nothing — and it is the second time a
+mutation, not a review, is what said so.
+
+Mutation-checked as usual, each with the `.so` DELETED before the rebuild and each source restored
+and byte-compared against a pristine copy afterwards, green each time it was restored. **51
+mutations across the batch, 51 killed, 0 survivors**: 13 on the cell lookup and its prelude (the
+span left undoubled reddens 22, the cell index dropped from the pointer helper 19, the sub-cell taken
+after the shift 10, the sub-cell written as a longword 8, the span doubled as a long 7, the column
+shift read as logical 5, the column added to the product as a long 5 — one of them a `$10a2` case,
+the shared helper answering for itself — the left edge added instead of subtracted 5, the row taken
+from `y - 1` 4, the index zero-extended 4, the prelude keeping the left edge's high half 2, the map
+selection ignored 1, the prelude leaving the caller's row alone 1); 14 on the rightward probe (the
+probe subtracting the half-width 13, subtracting the step 8, a strict clamp compare 1, an unsigned
+one 1, the A32 arm reading the limit word 2, the clamp reporting `d6` instead of its literal 5,
+parking the wrong side 5, not writing x 5, committing the column where the limit belongs 23, an
+off-by-one retry 4, stepping the wrong way 11, the shared tail walking by the map it looked up 2 —
+one case per body, the extraction answering for itself — the bias dropped 8, the probe row's `subq`
+1); 14 on the two settles and the tier above (the ground test losing the LEDGE code 4, the span test
+made strict 4, the y mask losing a bit 1, the landing keeping LAUNCHED 1, the extra cell never tested
+3, the not-found arm doing nothing 6, the SHARED sub-cell edge made strict 3 — which fires in BOTH
+settles, and is the evidence that `footprint_reaches_next_cell` is one piece of code rather than a
+forced abstraction — the crossing test made strict 1, the landed-bit test inverted 4, the first
+lookup reused for the platform scan 2, the head reading the left edge instead of the record's x 2,
+the mode test inverted 2, the step-flag clear dropped 1, the pass gated on SUPPORTED instead of
+MOVING 1); and 10 re-measured on the status panel, listed with the second tier above.
+
+**REGISTERED, rather than argued each time:** `test_actor.py::_accelerate_fall_entry` and
+`test_map.py::_accelerate_fall_body` are independent assemblies of `actor_accelerate_fall`'s six
+instructions, which is TWO users — the line `_keyed_block`, `copy_longwords`, `_put_word` and
+`_assert_writes` were all held at. Usual terms: **trigger** = a third user; **home** = `test/leaf.py`.
+The duplication is bounded meanwhile by `test_the_enclosed_routine_is_actor_accelerate_fall`, which
+ties `test_map.py`'s copy to `../names.txt`'s address for the routine and to the length
+`test_actor.py` records, so the two cannot drift apart silently.
+
+**What this batch does NOT pin:**
+
+* **THE CONDITION CODES.** The widened window reports registers, not the CCR, so a routine whose
+  output is a flag is still only pinnable through something that reads the flag — and the report is
+  taken at the `rts` (or a `stop_pc` checkpoint) alone, so a value computed and then overwritten
+  remains invisible. Both limits are stated in `TRAP_MODEL.md` beside the decision itself.
+* **THE HAND-OVER FROM `$13c8` TO `$1400`, END TO END THROUGH A CALLER.** `$1334`'s battery composes
+  the five models over one memory, which is the strongest statement available from outside; that the
+  ORIGINAL's `$13c8` leaves exactly the registers the ORIGINAL's `$1400` is entered with is stated by
+  the two batteries separately, not by one run through both.
+* **WHAT TILE `$33` IS.** Named for its two readers, as above; the `joy1_current` bits that would
+  settle it are not established.
+* **THE REGISTERS EVERY EARLIER BATCH LEFT BEHIND.** The status panel's five blits, the scroll's two
+  column fills, the text plotter's `d7`, `$bd8a`'s six — each was registered as unobservable, and
+  each is now merely UNMODELLED: the window is open, the reconstructions have nothing to compare, and
+  every call site reloads what it needs. The claims in `src/scroll.c`, `test/test_scroll.py` and
+  `test/test_text.py` that named the oracle as the reason were corrected in this batch (a stale
+  statement about the HARNESS is worse than an open item); the items themselves are honestly
+  openable, one reconstruction at a time, rather than closed here.
+* **`subsystems.tsv` AND `PORTABILITY.md`.** Eight collision-map routines now sit in the "game logic"
+  catch-all, and the "reconstructed and pinned" column is five functions / 454 bytes stale. Re-drawing
+  the boundary and re-running `tools/hw_portability.py` is a MEASUREMENT, queued as one — batch 10
+  made the same call for the same reason.

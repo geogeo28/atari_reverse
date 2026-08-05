@@ -36,9 +36,9 @@ WHAT MAKES THIS BATTERY DIFFERENT FROM THE OTHERS HERE.
     properties of the shipped bytes instead.
 
 KNOWINGLY NOT PINNED
-  * d7, WHICH THE PLOTTER CLOBBERS. It parks the ENDED cursor there for the `btst`; the kit's oracle
-    reports d0/d1/a0/a1 only, so no case can compare it. No caller reads it either ($bd8a's own d0/
-    d6/a6 are what its loops carry).
+  * d7, WHICH THE PLOTTER CLOBBERS. It parks the ENDED cursor there for the `btst`. No caller reads
+    it ($bd8a's own d0/d6/a6 are what its loops carry) and the C models nothing to compare — the
+    kit's oracle does report it since batch 11, so this is openable rather than blocked.
   * WHAT $bd8a LEAVES IN d0/d1/a0/a1/d6/a6. Each of the three arms walks out with different rubbish
     — the terminator byte and the last glyph's source, or the blit's two ended cursors — and
     game_main_loop's next `jsr` reloads everything. The C returns nothing; the driver cases assert

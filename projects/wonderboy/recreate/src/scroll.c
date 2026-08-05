@@ -29,8 +29,9 @@
  * THREE THINGS THE DIFFERENTIAL CANNOT SEE, all registered in ../STATUS.md:
  *
  *   * THE REGISTERS THE FILLS LEAVE BEHIND. Both column fills walk out with a0/a1/a2/a3/a4/a6 and
- *     d0-d7 well past where they started; the oracle reports d0/d1/a0/a1 only, and the two call
- *     sites ($75fc/$760c) `rts` immediately after, so there is nothing to compare against anyway.
+ *     d0-d7 well past where they started, and the two call sites ($75fc/$760c) `rts` immediately
+ *     after, so nothing reads them. (The oracle reports every one of them since batch 11 widened
+ *     its window; what is missing is a reconstruction that models them, not an observer.)
  *     The two ROW fills are the exception: their d0 IS an output, read by the routine after them.
  *   * THE RUNAWAY COUNTS. Every `dbf` loop here takes its length from WB_BG_COL_SPLIT_TABLE or
  *     WB_BG_ROW_SPLIT_TABLE, and a count of $ffff in the FIRST word would run 65536 iterations and
