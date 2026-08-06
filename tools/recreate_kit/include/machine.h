@@ -38,6 +38,13 @@ static inline void wr32(uint8_t *ptr, uint32_t value) {
 /* Sign-extend a 16-bit register word to a 32-bit address delta (68k adda.w / word EA). */
 static inline uint32_t sign_ext16(uint32_t value) { return (uint32_t)(int32_t)(int16_t)value; }
 
+/* ...and the same one size down: 68k `ext.w Dn` after a `move.b`, which is how a signed BYTE field
+ * — a sprite descriptor's height or width code, a sound effect's id — becomes an index. The whole
+ * register is extended rather than only its low word, so the result is usable as an address delta
+ * directly; a caller that wants the `ext.w` behaviour exactly (low word replaced, high half left
+ * alone) composes this with set_low_word. */
+static inline uint32_t sign_ext8(uint32_t value) { return (uint32_t)(int32_t)(int8_t)value; }
+
 /* Move an address by a delta THE WAY THE 68000's ADDRESS ALU DOES: in 32 bits, wrapping. A host
  * pointer does not wrap, so `image + base + delta` walks off the image into host memory where the
  * original goes round its own address space — which is undefined behaviour rather than a divergence
