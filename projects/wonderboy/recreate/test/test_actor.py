@@ -34,13 +34,13 @@ import pytest
 
 import harness
 import leaf
-from leaf import (BRANCH_EXTENSION, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16, asr_w_imm_dn,
-                  backward_branch, branch, branch_over, bsr_w, btst_imm_dn, case_salt, clr_w_dn,
-                  cmp_w_dn_dn, cmpi_b_dn, dbf, dbf_over, keyed_block, lea_abs_l, lea_d16,
-                  lea_indexed, longword, lsl_w_imm_dn, merge_bands, move_b_d16_dn,
-                  move_l_imm_abs_l, move_l_imm_postinc, move_w_abs_l_dn, move_w_imm_dn,
-                  move_w_ind_dn, movea_l_abs_l, moveq_0_dn, opcode, program_writes, s16,
-                  sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
+from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16,
+                  asr_w_imm_dn, backward_branch, branch, branch_over, bsr_w, btst_imm_dn,
+                  case_salt, clr_w_dn, cmp_w_dn_dn, cmpi_b_dn, dbf, dbf_over, keyed_block,
+                  lea_abs_l, lea_d16, lea_indexed, longword, lsl_w_imm_dn, merge_bands,
+                  move_b_d16_dn, move_b_imm_d16, move_l_imm_abs_l, move_l_imm_postinc,
+                  move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn, movea_l_abs_l, moveq_0_dn, opcode,
+                  program_writes, s16, sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
 from layout import wb
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -291,10 +291,6 @@ def move_w_imm_d16(base, value, displacement):
     """`move.w #imm,d16(An)` — the immediate comes FIRST and the destination's displacement second,
     the same extension order `move_w_d16_d16` above documents."""
     return opcode(0x317c | (base << 9)) + word(value) + word(displacement)
-
-
-def move_b_imm_d16(base, value, displacement):
-    return opcode(0x117c | (base << 9)) + word(value & BYTE_MASK) + word(displacement)
 
 
 def lsl_l_imm_dn(count, reg):
@@ -1126,7 +1122,7 @@ def test_the_selector_is_called_and_never_read_as_data():
     # Every longword spelling the address must be the operand of one of the two `jsr` forms, i.e.
     # preceded by that opcode — a bare pointer to it in a table would fail here.
     for at in as_data:
-        assert program[at - WORD_LEN:at] == opcode(0x4eb9), (
+        assert program[at - WORD_LEN:at] == opcode(JSR_ABS_L), (
             f"{entry:#x} appears as a longword at {at:#x} that is not a `jsr $67e0.l` operand")
     assert len(as_data) == 2, f"{len(as_data)} `jsr $67e0.l` sites, not the two the scan records"
 

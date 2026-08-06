@@ -61,8 +61,8 @@ from leaf import (RTS, add_w_dn_dn, andi_w_dn, asl_w_imm_dn, asr_w_imm_dn, backw
                   branch_over, case_salt, clr_w_dn, cmp_w_dn_dn, keyed_block, lea_abs_l, lea_d16,
                   longword, lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_b_imm_abs_l,
                   move_w_dn_dn, move_w_imm_dn, move_w_ind_dn, move_w_postinc_dn, movea_l_abs_w,
-                  mulu_w_imm_dn, opcode, program_writes, rotate_left32, rotate_right32, s16,
-                  set_low_word, sub_w_dn_dn, swap_dn, tst_w_dn, word)
+                  mulu_w_imm_dn, opcode, program_writes, rotate_left32, rotate_right32, s8,
+                  s16, set_low_word, sub_w_dn_dn, swap_dn, tst_w_dn, word)
 
 import emu                                                       # noqa: E402
 import loader                                                    # noqa: E402
@@ -222,7 +222,8 @@ def move_l_imm_dn(reg, value):
 
 
 def clr_l_dn(reg):
-    """`clr.l Dn` — the whole longword, which is what leaves a plane's wrapped half at zero."""
+    """`clr.l Dn` — the whole longword, which is what leaves a plane's wrapped half at zero.
+    ALSO IN test_hud.py, where $bbca spells it over a register nothing reads."""
     return opcode(0x4280 | reg)
 
 
@@ -1420,23 +1421,14 @@ Y_REG = wb("SPRITE_Y_REG")
 WIDTH_REG = wb("SPRITE_WIDTH_REG")
 ECHO_Y_REG = wb("SPRITE_ECHO_Y_REG")
 
-def s8(value):
-    """`ext.w Dn` after a `move.b` — the byte just loaded, as the signed word it becomes.
-
-    leaf.s16 one size down. Local because the sprite pass is the only routine reconstructed so far
-    that reads a SIGNED byte field, and it reads two of them.
-    """
-    value &= 0xff
-    return value - 0x100 if value & 0x80 else value
-
-
 # --- the encodings the pass adds ------------------------------------------------------------------
 # `clr_w_dn`, `cmp_w_dn_dn`, `andi_w_dn` and the `asr.w`/`asl.w` pair MOVED INTO leaf.py when this
 # battery became their third user (test_actor.py and test_map.py had spelt the first, second and
-# fourth between them, test_map.py and test_scroll.py the third). What is left below stands at ONE
-# user apart from `adda_w_imm_an` (also test_scroll.py) and `cmpa_l_imm` (also test_actor.py), which
-# say so in their own docstrings; this batch's STATUS.md section is where that pair is registered as
-# the next hoist.
+# fourth between them, test_map.py and test_scroll.py the third); `s8` above went the same way when
+# test_sound.py's signed SFX id became its second reader and machine.h grew `sign_ext8` for the C.
+# What is left below stands at ONE user apart from three that stand at two and say so in their own
+# docstrings — `adda_w_imm_an` (also test_scroll.py), `cmpa_l_imm` (also test_actor.py) and
+# `clr_l_dn` (also test_hud.py); this batch's STATUS.md section registers them as the next hoist.
 
 def ext_w_dn(reg):
     """`ext.w Dn` — sign-extend the low BYTE through the low word."""

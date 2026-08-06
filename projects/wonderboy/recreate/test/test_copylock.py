@@ -29,6 +29,7 @@ import harness  # noqa: F401  — binds the kit; the imports below only work aft
 import emu
 import loader
 import copylock
+from leaf import jsr_abs_l   # the one 68000 encoding this file BUILDS rather than scans
 from copylock import ARM_FLAG, ARM_FLAG_LEN, ARM_INSN_LEN, ARM_SITES, ARMED, DISARMED, Stub
 from copylock import CALL, CODE_END, ENTRY, GUARD, REG_SAVE, REG_SAVE_LEN, REGS_SAVED, SKIPPED
 from copylock import DECRYPT_CURSOR, VECTORS, VECTORS_INSTALLED
@@ -48,7 +49,6 @@ MOVE_W_IMM_OPERAND_OFF = 4  # `move.w #imm,abs.l`: opcode word, immediate word, 
 # drifts fails as a mismatched instruction naming its own address.
 TST_W_ABS_L = b"\x4a\x79"
 BEQ_W = b"\x67\x00"
-JSR_ABS_L = b"\x4e\xb9"
 CLR_W_ABS_L = b"\x42\x79"
 MOVE_W_IMM_ABS_L = b"\x33\xfc"
 JMP_ABS_W = b"\x4e\xf8"                           # the blob's last instruction, `jmp $6bb8.w`
@@ -200,7 +200,7 @@ def test_the_guard_is_the_instruction_sequence_both_mechanisms_assume():
     skip_disp = (SKIPPED - (beq_at + BRANCH_W_BASE_OFF)).to_bytes(WORD, "big")
     for addr, encoding in ((GUARD, TST_W_ABS_L + flag),
                            (beq_at, BEQ_W + skip_disp),
-                           (CALL, JSR_ABS_L + ENTRY.to_bytes(LONGWORD, "big")),
+                           (CALL, jsr_abs_l(ENTRY)),
                            (disarm_at, CLR_W_ABS_L + flag),
                            (SKIPPED, MOVEA_L_POSTINC_A7_A0_RTS)):
         assert bytes(harness.BASE_IMAGE[addr:addr + len(encoding)]) == encoding, (

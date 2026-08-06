@@ -1,12 +1,12 @@
 /* hud.h — the status panel (src/hud.c).
  *
- * Thirty-ONE routines: the thirty below, and `hud_draw_lives` at the end, which is the one
+ * Thirty-THREE routines: the thirty-two below, and `hud_draw_lives` at the end, which is the one
  * that is NOT under the frame pass — its caller is src/stage.c's reset.
  *
- * Thirty routines under `panel_refresh_frame` ($b346), the game loop's once-a-frame panel pass —
- * NINE of its ten callees and everything below them. The tenth, $bbca, leaves this subsystem for
- * the sound module, and is reached by an unconditional `bsr`, so $b346 itself is not here either
- * (../STATUS.md has the argument).
+ * `panel_refresh_frame` ($b346) is the game loop's once-a-frame panel pass, and the other
+ * thirty-one are its ten callees and everything below them. It arrived thirteen batches after the
+ * leaves under it: the tenth callee, $bbca, calls the SOUND MODULE, and by an unconditional `jsr`
+ * that no seeding steers a run around — so the pass waited on src/sound.c (../STATUS.md).
  * EIGHTEEN LEAVES: four packed-BCD accumulators, five blits (three of which read the `screen_back`
  * longword themselves, while the HUD-slot pair is handed a destination), the meter's clamped add,
  * the table-select / tick at the end of the pass, the digit plotter — which calls nothing, and sits
@@ -62,8 +62,10 @@ void hud_meter_add_clamped(uint8_t *image, uint32_t amount);
 void hud_blit_cell_copy(uint8_t *image, uint32_t source, uint32_t destination);
 void hud_blit_cell_or(uint8_t *image, uint32_t source, uint32_t destination);
 
-/* $bcd6 — no arguments: the frame index comes out of memory. */
-void hud_blit_panel_frame(uint8_t *image);
+/* $bcd6 — no arguments: the frame index comes out of memory. RETURNS the d0 its last `movem` leaves
+ * (the panel frame's last row, first longword), because `panel_frame_timers` hands that on and
+ * `panel_refresh_frame` spends it as the stage number's font select. */
+uint32_t hud_blit_panel_frame(uint8_t *image);
 
 /* ---- the second tier: the four routines panel_refresh_frame calls, and their two helpers -------
  *
@@ -146,6 +148,23 @@ void hud_draw_record_digits(uint8_t *image, uint32_t record);
 
 /* $b8f0 — no registers: the six slot records and `screen_back` are all in memory. */
 void hud_refresh_dirty_slots(uint8_t *image);
+
+/* ---- $bbca and $b346: the panel's animation, and the pass itself ------------------------------
+ *
+ * The last two of the subsystem. `panel_frame_timers` is the one routine of the thirty-two that
+ * leaves this file for another (src/sound.c), which is what kept it — and therefore $b346 — out of
+ * batches 3, 4 and 13; see ../STATUS.md.
+ */
+
+/* $bbca — no registers in: five timer words and the frame index are all in memory. RETURNS the d0
+ * it leaves, which is `hud_blit_panel_frame`'s: every one of its arms ends with that call, and
+ * $bd32 is entered with it two instructions later. */
+uint32_t panel_frame_timers(uint8_t *image);
+
+/* $b346 — no registers either way. It sets neither d0 nor d7 before any of its ten calls, so what
+ * flows between them is whatever each one left; src/hud.c reads the ten bodies and shows that only
+ * one of those values can reach a drawn byte. */
+void panel_refresh_frame(uint8_t *image);
 
 /* $e80c — draw WB_LIVES_ICON_SLOTS cells at WB_LIVES_ICON_BACK / _FRONT, the first WB_LIVES of them
  * from WB_LIVES_ICON_BITMAP and the rest blank. No registers, and no `screen_back`: both

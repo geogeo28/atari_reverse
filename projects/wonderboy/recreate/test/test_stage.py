@@ -140,12 +140,12 @@ RESOURCE_RECORD_BYTES = wb("RESOURCE_RECORD_BYTES")
 RESET_BLOCK = wb("STAGE_RESET_BLOCK")
 RESET_BLOCK_LONGS = wb("STAGE_RESET_BLOCK_LONGS")
 RESET_BLOCK_WORDS = wb("STAGE_RESET_BLOCK_WORDS")
-PANEL_FRAME_TIMER = wb("PANEL_FRAME_TIMER")
+PANEL_FRAME_HOLD = wb("PANEL_FRAME_HOLD")
 PANEL_FRAME_DELAY = wb("PANEL_FRAME_DELAY")
 PANEL_FRAME_DELAY_INIT = wb("PANEL_FRAME_DELAY_INIT")
 PANEL_FRAME_PHASE = wb("PANEL_FRAME_PHASE")
 PANEL_FRAME_INDEX = wb("PANEL_FRAME_INDEX")
-PANEL_FRAME_SPARE = wb("PANEL_FRAME_SPARE")
+PANEL_FRAME_DWELL = wb("PANEL_FRAME_DWELL")
 TILE_33_FLAG = wb("TILE_33_FLAG")
 STATE_FLAG_A34 = wb("STATE_FLAG_A34")
 STATE_FLAG_A30 = wb("STATE_FLAG_A30")
@@ -449,10 +449,10 @@ def _reset_state_entry():
     tail = b"".join(move_l_imm_postinc(A1, value) for value in TILE_INDEX_TAIL_VALUES)
     return (lea_abs_w(A0, RESET_BLOCK)
             + clr_l_postinc(A0) * RESET_BLOCK_LONGS + clr_w_postinc(A0) * RESET_BLOCK_WORDS
-            + clr_w_abs_l(PANEL_FRAME_TIMER)
+            + clr_w_abs_l(PANEL_FRAME_HOLD)
             + leaf.MOVE_W_IMM_ABS_L + word(PANEL_FRAME_DELAY_INIT) + longword(PANEL_FRAME_DELAY)
             + clr_w_abs_l(PANEL_FRAME_PHASE) + clr_w_abs_l(PANEL_FRAME_INDEX)
-            + clr_w_abs_l(PANEL_FRAME_SPARE)
+            + clr_w_abs_l(PANEL_FRAME_DWELL)
             + clr_l_abs_w(TILE_33_FLAG)
             + clr_w_abs_w(STATE_FLAG_A34) + clr_w_abs_w(SCROLL_FOLLOW_FROZEN)
             + clr_w_abs_w(STATE_FLAG_A30) + clr_w_abs_w(STATE_FLAG_A32)
@@ -1082,7 +1082,7 @@ def test_the_count_is_a_dbf_count_so_zero_relocates_one_record(count):
 RESET_INSN_CAP = 128
 _RESET = leaf.image_glue("stage_reset_state")
 
-RESET_CLEARED_WORDS = [PANEL_FRAME_TIMER, PANEL_FRAME_PHASE, PANEL_FRAME_INDEX, PANEL_FRAME_SPARE,
+RESET_CLEARED_WORDS = [PANEL_FRAME_HOLD, PANEL_FRAME_PHASE, PANEL_FRAME_INDEX, PANEL_FRAME_DWELL,
                        STATE_FLAG_A34, SCROLL_FOLLOW_FROZEN, STATE_FLAG_A30, STATE_FLAG_A32]
 
 
@@ -1100,7 +1100,7 @@ def _run_reset(case):
     # Every band the reset writes, seeded address-keyed WITH a margin either side, so a clear one
     # word long or one word short lands on a byte that is wrong for its address.
     pokes = {}
-    for base, span in ((RESET_BLOCK, 0x30), (PANEL_FRAME_TIMER - 8, 0x20), (TILE_33_FLAG - 8, 0x18),
+    for base, span in ((RESET_BLOCK, 0x30), (PANEL_FRAME_HOLD - 8, 0x20), (TILE_33_FLAG - 8, 0x18),
                        (STATE_FLAG_A30 - 8, 0x20), (ACTOR_TABLE_SELECTED - 8, 0x18),
                        (TILE_INDEX_TAIL - 8, 0x28)):
         pokes[base] = keyed_block(base, span, salt)

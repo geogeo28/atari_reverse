@@ -4,13 +4,14 @@
  * the region restore ($d93a), the newest record's display ($b39c), the four-digit counter ($b54c),
  * the score ($b74a), the high score ($b7c6), the meter ($b61e), the six HUD slots ($b8f0), the
  * panel's animation ($bbca), the stage number ($bd32) and the table-select at $b372. This file
- * holds thirty of the routines under it — the ELEVEN LEAVES of batch 2 first, then THE SECOND TIER
- * above them and THE THIRD (see the banners further down) — plus the score and counter accumulators
- * the rest of the game calls to move the numbers the pass draws, and `hud_draw_lives` at the end,
- * which is not under the pass at all (its caller is the reset in src/stage.c).
- * $b346 itself is not here: NINE of its ten calls are reconstructed and the tenth, $bbca, leaves
- * this subsystem for the sound module — and it is an unconditional `bsr`, so no seeding can steer a
- * run entered at $b346 around it (../STATUS.md, "The status panel's third tier").
+ * holds the pass and everything under it — the ELEVEN LEAVES of batch 2 first, then THE SECOND TIER
+ * above them, THE THIRD, and $bbca and $b346 themselves (see the banners further down) — plus the
+ * score and counter accumulators the rest of the game calls to move the numbers the pass draws, and
+ * `hud_draw_lives` at the end, which is not under the pass at all (its caller is the reset in
+ * src/stage.c).
+ * $bbca AND $b346 CAME LAST, thirteen batches after the leaves under them, because $bbca calls the
+ * SOUND MODULE by an unconditional `jsr` that no seeding can steer a run around — so the pass could
+ * not be entered at all until $1a48a was ported too (src/sound.c, ../STATUS.md).
  *
  * WHAT THE NAMES CLAIM. The mechanism, and no more — ../names.txt's rule for this whole region.
  * `bcd_add_score_bd70` says a packed-BCD longword is added to $bd70; that $bd70 is "the score" is a
@@ -50,6 +51,7 @@
 
 #include "machine.h"
 #include "hud.h"
+#include "sound.h"
 #include "wonderboy.h"
 
 /* EVERY address below goes through machine.h's `addr_add`, which moves a base by a delta in 32 bits
@@ -281,12 +283,18 @@ void hud_blit_cell_or(uint8_t *image, uint32_t source, uint32_t destination) {
  * The original moves each row as `movem.l (a0)+,d0-d5 / movem.l d0-d5,offset(a1)`, six longwords at
  * a time and four rows per iteration — a speed shape, not a semantic one, so the C is one row loop.
  * The index is a word in memory that $bbca cycles 0..12; no register reaches this routine.
+ *
+ * IT LEAVES ONE BEHIND, THOUGH, and `panel_refresh_frame` spends it: the last `movem.l (a0)+,d0-d5`
+ * of the pass loads the final row, so d0 comes out holding that row's FIRST longword — and the pass
+ * runs $bbca (which always ends here) immediately before $bd32, whose font select IS d0. That is
+ * why this returns a value it did not used to; the argument is in panel_refresh_frame.
  */
-void hud_blit_panel_frame(uint8_t *image) {
+uint32_t hud_blit_panel_frame(uint8_t *image) {
     const uint8_t *source = indexed_bitmap(image, WB_PANEL_FRAME_TABLE,
                                            be16(image + WB_PANEL_FRAME_INDEX), WB_PANEL_FRAME_LEN);
     copy_rows(screen_at(image, WB_PANEL_FRAME_ORIGIN), source,
               WB_PANEL_FRAME_BYTES, WB_PANEL_FRAME_ROWS);
+    return be32(source + (WB_PANEL_FRAME_ROWS - 1) * WB_PANEL_FRAME_BYTES);
 }
 
 /* ================================================================================================
@@ -764,6 +772,127 @@ void hud_refresh_dirty_slots(uint8_t *image) {
                          destination);
     }
     hud_refresh_slot_bbc8(image);
+}
+
+/* ================================================================================================
+ * $bbca AND $b346 — the panel's animation timers, and the pass itself.
+ *
+ * $bbca is `panel_refresh_frame`'s ONE remaining callee, and the reason the pass sat unported for
+ * thirteen batches: besides four `bsr`s to `hud_blit_panel_frame` it does
+ * `move.w #$f,d0 / clr.w d1 / lea $17adc.l,a1 / jsr 56(a1)`, a fixed call into the sound module.
+ * With $1a48a and its stub reconstructed (src/sound.c) that call is C calling C, and the pass closes.
+ *
+ * WHAT THE TIMERS DO, read off the body and no further. Five words drive `panel_frame_index` 0..$c:
+ * a REWIND flag that winds the delay back up to $500 in steps of $14, a DELAY that counts down while
+ * a HOLD flag is clear, a PHASE flag that says which of the two halves is running, and a DWELL that
+ * holds each index for four frames once it is. While the phase is clear the index is MEASURED off
+ * the delay (`($500 - delay) >> 7`); once the delay reaches zero the phase is raised, the index is
+ * planted at $a, the meter is charged 4, and from there the index STEPS to $c and the whole thing
+ * shuts down. What the thirteen frames depict is not established (../names.txt).
+ */
+
+/* The index-stepping half ($bc74): a dwell countdown, and on its last frame one step of the index.
+ * Returns the d0 its `hud_blit_panel_frame` leaves, which is what $bd32 is entered with. */
+static uint32_t panel_frame_step_index(uint8_t *image) {
+    uint16_t dwell = be16(image + WB_PANEL_FRAME_DWELL);
+    if (dwell != 0) {
+        wr16(image + WB_PANEL_FRAME_DWELL, (uint16_t)(dwell - 1));
+        return hud_blit_panel_frame(image);
+    }
+
+    /* `cmpi.w #$a,$bd2c / bgt` — SIGNED and strict, so the effect fires on every index up to and
+     * including the $a the other half plants, and on any index the measure arm drove negative. */
+    if ((int16_t)be16(image + WB_PANEL_FRAME_INDEX) <= (int16_t)WB_PANEL_FRAME_INDEX_START)
+        snd_call_trigger_effect(image, WB_PANEL_FRAME_SFX, WB_SND_CHANNEL_A);
+
+    wr16(image + WB_PANEL_FRAME_DWELL, WB_PANEL_FRAME_DWELL_RELOAD);
+    /* `clr.l d0` sits here in the original and is dead: hud_blit_panel_frame takes no register, and
+     * the d0 it LEAVES is what the pass goes on to spend. */
+    uint32_t left_in_d0 = hud_blit_panel_frame(image);
+
+    if (be16(image + WB_PANEL_FRAME_INDEX) == WB_PANEL_FRAME_INDEX_LAST) {
+        wr16(image + WB_PANEL_FRAME_INDEX, 0);
+        wr16(image + WB_PANEL_FRAME_PHASE, 0);
+        return left_in_d0;
+    }
+    wr16(image + WB_PANEL_FRAME_INDEX, (uint16_t)(be16(image + WB_PANEL_FRAME_INDEX) + 1));
+    return left_in_d0;
+}
+
+/* The other half ($bbfc), which runs while the phase is clear: either measure the index off the
+ * delay and tick the delay down, or — with the delay already at zero — start the stepping half. */
+static uint32_t panel_frame_start_or_measure(uint8_t *image) {
+    if (be16(image + WB_PANEL_FRAME_DELAY) == 0) {
+        wr16(image + WB_PANEL_FRAME_PHASE, WB_PANEL_FRAME_PHASE_ACTIVE);
+        wr16(image + WB_PANEL_FRAME_DWELL, WB_PANEL_FRAME_DWELL_RELOAD);
+        wr16(image + WB_PANEL_FRAME_DELAY, WB_PANEL_FRAME_DELAY_INIT);
+        wr16(image + WB_PANEL_FRAME_INDEX, WB_PANEL_FRAME_INDEX_START);
+        /* `subq.w #4,d0 / bpl / clr.w d0` — the branch tests the RESULT, so only a borrow past zero
+         * is floored. A meter value already negative comes back $7ffc instead. The floor's own
+         * STRICTNESS is invisible: a charge landing exactly on zero stores zero either way, so `<= 0`
+         * survives the mutation sweep (../STATUS.md) — what the cases pin is its position. */
+        uint16_t charged = (uint16_t)(be16(image + WB_HUD_METER_VALUE) - WB_PANEL_FRAME_METER_COST);
+        wr16(image + WB_HUD_METER_VALUE, (int16_t)charged < 0 ? 0 : charged);
+        return hud_blit_panel_frame(image);
+    }
+
+    uint16_t elapsed = (uint16_t)(WB_PANEL_FRAME_DELAY_INIT - be16(image + WB_PANEL_FRAME_DELAY));
+    wr16(image + WB_PANEL_FRAME_INDEX, asr_word(elapsed, WB_PANEL_FRAME_INDEX_SHIFT));
+    uint32_t left_in_d0 = hud_blit_panel_frame(image);
+    if (be16(image + WB_PANEL_FRAME_HOLD) == 0)
+        wr16(image + WB_PANEL_FRAME_DELAY, (uint16_t)(be16(image + WB_PANEL_FRAME_DELAY) - 1));
+    return left_in_d0;
+}
+
+uint32_t panel_frame_timers(uint8_t *image) {
+    if (be16(image + WB_PANEL_FRAME_REWIND) != 0) {
+        uint16_t delay = (uint16_t)(be16(image + WB_PANEL_FRAME_DELAY) + WB_PANEL_FRAME_REWIND_STEP);
+        wr16(image + WB_PANEL_FRAME_DELAY, delay);
+        /* `cmpi.w #$500,$bd28 / blt` re-reads the word it just stored and compares it SIGNED, so a
+         * delay wound past $7fff wraps negative and is wound on rather than clamped. */
+        if ((int16_t)delay >= (int16_t)WB_PANEL_FRAME_DELAY_INIT) {
+            wr16(image + WB_PANEL_FRAME_DELAY, WB_PANEL_FRAME_DELAY_INIT);
+            wr16(image + WB_PANEL_FRAME_HOLD, 0);
+            wr16(image + WB_PANEL_FRAME_REWIND, 0);
+        }
+    }
+    if (be16(image + WB_PANEL_FRAME_PHASE) != 0)
+        return panel_frame_step_index(image);
+    return panel_frame_start_or_measure(image);
+}
+
+/* $b346: one `jsr`, nine `bsr`s and an `rts`.
+ *
+ * THE PASS SETS NEITHER d0 NOR d7 BEFORE ANY OF THEM, so each callee is entered with whatever the
+ * one before it left — and both registers therefore have to be accounted for here rather than
+ * assumed dead. Reading the ten bodies settles it:
+ *
+ *   * d7 CANNOT REACH A PIXEL. The two routines that read it ($b54c, $bd32) each load their own word
+ *     into d7 and `swap`, which buries the caller's half below every nibble the walk draws — pinned
+ *     from the other side by test_hud.py's "buries the caller's d7" cases. So PANEL_PASS_DEAD_DIGITS
+ *     is passed, and a case entering the oracle with a poisoned d7 says so.
+ *   * d0 REACHES THREE OF THEM, and two are settled by the chain itself: $b5ea opens with
+ *     `moveq #0,d0`, so $b54c hands the score draw a zero font select however the pass was entered,
+ *     and $b7ea forces the same zero after its first digit, so the high-score draw gets one too.
+ *   * THE THIRD IS NOT. $bd32's font select is whatever $bbca left, which is whatever the
+ *     `hud_blit_panel_frame` every arm of $bbca ends with left — the first longword of the panel
+ *     frame's last row. So the stage number is drawn in the alternate font on any frame whose
+ *     bitmap happens to hold $0001 there, and this pass has to carry that value through.
+ */
+#define PANEL_PASS_DEAD_DIGITS 0u    /* d7, buried by both readers before a nibble is drawn */
+#define PANEL_PASS_FONT_ZERO   0u    /* the `moveq #0,d0` in $b5ea, which $b74a and $b7c6 inherit */
+
+void panel_refresh_frame(uint8_t *image) {
+    panel_restore_dirty_regions(image);
+    hud_draw_newest_record(image);
+    hud_draw_counter_bd6e(image, PANEL_PASS_DEAD_DIGITS);
+    hud_draw_score_and_size_meter(image, PANEL_PASS_FONT_ZERO);
+    hud_draw_larger_score(image, PANEL_PASS_FONT_ZERO);
+    hud_draw_meter(image);
+    hud_refresh_dirty_slots(image);
+    uint32_t stage_font = panel_frame_timers(image);
+    hud_draw_stage_number(image, stage_font, PANEL_PASS_DEAD_DIGITS);
+    select_table_21e8c_and_tick_b39a(image);
 }
 
 /* --- $e80c: the lives display -------------------------------------------------------------------

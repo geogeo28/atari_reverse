@@ -24,8 +24,10 @@ cell pair (copy and OR), of which the first three take their destination from wh
 `screen_back` points at and the pair are handed one by their caller; the meter's clamped add; and
 the table-select that ends the frame's panel pass. Then the two tiers above those leaves: the digit
 plotter and the field walks and fields it draws (`$b54c..$bd65`), and the pass's three table walks
-(`$b39c`, `$b8f0` and the region restore `$d93a` with its six blits), which leave
-`panel_refresh_frame` with **nine of its ten callees reconstructed**. And the **whole background
+(`$b39c`, `$b8f0` and the region restore `$d93a` with its six blits), which left
+`panel_refresh_frame` with nine of its ten callees reconstructed — **the tenth ($bbca) and the
+pass itself landed in batch 16b, once `src/sound.c` opened the sound module** (`snd_trigger_effect`
+plus its register-preserving stub is what $bbca's one outward call needed on the candidate side). And the **whole background
 scroll engine** (`$7522..$8228` plus `$d28`, sixteen routines and 3398 bytes): the game keeps EIGHT
 pre-shifted copies of the level background over `$44000..$70000`, two pixels apart, so a horizontal
 scroll is a change of buffer and the only work per step is the one tile column it uncovers — while a
@@ -85,6 +87,11 @@ include/scroll.h           the whole background scroll subsystem — prototypes,
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
 src/effects.c              the effect handlers and the state stubs above them
+src/sound.c                the sound module's RAM-only routine: snd_trigger_effect ($1a48a) and the
+                           register-preserving stub snd_call_trigger_effect ($17b14) — the module's
+                           first ported bytes; everything that touches the PSG stays unported behind
+                           the differential wall (test/test_sound.py owns the write-set model that
+                           test/test_hud.py imports)
 src/hud.c                  panel_refresh_frame ($b346) below its own entry: batch 2's eleven leaves
                            (the BCD score/counter accumulators, the panel blits, the meter's clamped
                            add), batch 3's second tier (the digit plotter — a leaf too — its three

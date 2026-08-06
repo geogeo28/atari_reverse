@@ -277,6 +277,19 @@
 #define WB_PANEL_FRAME_BYTES  24u
 #define WB_PANEL_FRAME_ROWS   32u
 
+/* $bbca: the timers that cycle that index, and the two immediates the animation spends elsewhere.
+ * The five words themselves are named with the reset that clears them, further down. The pass runs
+ * in three arms — rewind the delay, measure the index off it, or step the index on a dwell — and
+ * every number below is one arm's own immediate. */
+#define WB_PANEL_FRAME_REWIND_STEP  0x14u  /* `addi.w #$14,$bd28` while WB_PANEL_FRAME_REWIND is up */
+#define WB_PANEL_FRAME_INDEX_SHIFT  7u     /* `asr.w #7,d0` — ($500 - delay) >> 7 gives 0..$a */
+#define WB_PANEL_FRAME_INDEX_START  0xau   /* `move.w #$a,$bd2c` where the stepping arm takes over */
+#define WB_PANEL_FRAME_INDEX_LAST   0xcu   /* `cmpi.w #$c,$bd2c` — the index the cycle ends on */
+#define WB_PANEL_FRAME_DWELL_RELOAD 4u     /* `move.w #$4,$bd2e` — frames held per index step */
+#define WB_PANEL_FRAME_PHASE_ACTIVE 0xffffu /* `move.w #$ffff,$bd2a` — the stepping arm is running */
+#define WB_PANEL_FRAME_METER_COST   4u     /* `subq.w #4,d0` off WB_HUD_METER_VALUE when it starts */
+#define WB_PANEL_FRAME_SFX          0xfu   /* `move.w #$f,d0` — the SFX id the step arm triggers */
+
 /* ---- $b850 and the four digit fields it draws (RUNTIME addresses; src/hud.c) ------------------
  *
  * `$b850` plots ONE packed-BCD digit: it rotates the digit register left by a nibble and draws the
@@ -1169,13 +1182,20 @@
                                             * `clr.w (a0)+` — 18 bytes cleared as one run */
 #define WB_STAGE_RESET_BLOCK_LONGS 4u
 #define WB_STAGE_RESET_BLOCK_WORDS 1u
-#define WB_PANEL_FRAME_TIMER       0xbd26u /* the four words around panel_frame_index ($bd2c) that
-                                            * $bbca's own timers run on */
+/* The five words $bbca's timers run around panel_frame_index ($bd2c). Batch 16 read that body, so
+ * each one is now named for what it DOES there rather than for being near the others; only $bd30 is
+ * outside the run this reset clears. WB_PANEL_FRAME_HOLD was WB_PANEL_FRAME_TIMER and
+ * WB_PANEL_FRAME_DWELL was WB_PANEL_FRAME_SPARE — the second was demonstrably wrong, since $bd2e is
+ * the live frames-per-index countdown and not spare at all. */
+#define WB_PANEL_FRAME_HOLD        0xbd26u /* nonzero freezes the delay countdown ($bc60's `tst.w`) */
 #define WB_PANEL_FRAME_DELAY       0xbd28u /* ...and the one this reset seeds rather than clears */
 #define WB_PANEL_FRAME_DELAY_INIT  0x500u  /* `move.w #$500,$bd28.l`, the same $500 $bc56 measures
                                             * panel_frame_index back off */
-#define WB_PANEL_FRAME_PHASE       0xbd2au
-#define WB_PANEL_FRAME_SPARE       0xbd2eu
+#define WB_PANEL_FRAME_PHASE       0xbd2au /* nonzero = the index is stepping, not being measured */
+#define WB_PANEL_FRAME_DWELL       0xbd2eu /* frames left on the current index */
+#define WB_PANEL_FRAME_REWIND      0xbd30u /* nonzero winds WB_PANEL_FRAME_DELAY back up to _INIT.
+                                            * Raised at $5218 one instruction before _HOLD, and the
+                                            * only word of the five this reset does NOT touch */
 
 /* The two flags $fb06 writes and NOTHING in the plaintext image reads. A whole-image scan of both
  * absolute encodings gives each exactly ONE operand site — the `clr.w` at $fb8a and the `st` at
@@ -1219,6 +1239,63 @@
 #define WB_BG_BANNER_END           0x80u   /* `tst.b (a6) / bpl` — the terminator is the SIGN BIT,
                                             * so any byte from $80 up ends the string */
 #define WB_BG_BANNER_BONUS         0x10000u /* `move.l #$10000,d0 / bsr $b5a2`: packed BCD 10000 */
+
+/* ---- the sound module's SFX trigger ($1a48a; src/sound.c) -------------------------------------
+ *
+ * The module ($17adc..$1abc8) is SELF-CONTAINED AND PC-RELATIVE: every routine in it opens with
+ * `lea $1738c(pc),a3` and reaches its own tables through that base, so the absolute addresses below
+ * are what those PC-relative operands resolve to in the image the harness loads. Only the state
+ * `snd_trigger_effect` touches is named here; the rest of the module's map is in
+ * ../notes/sound_module_recon.md and ../names.txt.
+ *
+ * THREE CHANNELS, ONE BODY. $1a48a's arms at $1a494 (A), $1a504 (B) and $1a56e (C) are the same
+ * fifteen instructions with the channel's own offsets, and all four of the blocks they address step
+ * by a CONSTANT — which is why each is a base plus a stride here rather than three addresses. The
+ * noise byte is the exception and really is shared: all three arms write the one address. */
+#define WB_SND_MODULE_BASE         0x1738cu /* `lea $1738c(pc),a3` — the module's own base */
+#define WB_SND_SFX_PTR_TABLE       0x1a830u /* WB_SND_SFX_IDS a3-relative WORDS -> the descriptors */
+#define WB_SND_SFX_IDS             26u      /* self-proving: entry 0 resolves to the byte past the
+                                             * table, and IDS * DESCRIPTOR_LEN lands exactly on
+                                             * WB_SND_SFX_VOLUME_PTRS. The trigger BOUNDS-CHECKS
+                                             * NOTHING, so this is the table's extent and not a
+                                             * limit the code enforces */
+#define WB_SND_SFX_DESCRIPTORS     0x1a864u
+#define WB_SND_SFX_DESCRIPTOR_LEN  14u      /* `moveq #$d,d0` + `dbf` — the record the trigger copies */
+#define WB_SND_SFX_VOLUME_PTRS     0x1a9d0u /* 10 a3-relative words -> the volume-envelope streams */
+#define WB_SND_SFX_VOLUME_STREAMS  10u
+#define WB_SND_TABLE_ENTRY_LEN     2u       /* both of the tables above hold a3-relative WORDS, which
+                                             * is the `add.w d0,d0` an index goes through */
+
+#define WB_SND_CHANNELS            3u
+#define WB_SND_CHANNEL_A           0u       /* `clr.w d1` — the only channel any call site passes */
+#define WB_SND_SFX_ACTIVE_FLAGS    0x17c5au /* a3+2254: one byte per channel, polled by the tick */
+#define WB_SND_SFX_ACTIVE          1u       /* `move.b #$1` at the end; `sf` clears it at the start */
+#define WB_SND_SFX_STATE           0x1aa7cu /* a3+14064: three channel states, MUTABLE image bytes */
+#define WB_SND_SFX_STATE_LEN       26u
+#define WB_SND_SFX_MIX_PERIOD      0x18360u /* a3+4052: the channel's tone period, one WORD each */
+#define WB_SND_SFX_MIX_PERIOD_LEN  2u
+#define WB_SND_SFX_MIX_NOISE       0x18366u /* a3+4058: ONE byte, written by whichever arm ran */
+#define WB_SND_SFX_MIX_VOLUME      0x18368u /* a3+4060: one byte per channel */
+
+/* The descriptor's fields, as the trigger reads them (roles: ../notes/sound_module_recon.md). Each
+ * is read back out of the COPY the trigger just made, not out of the descriptor. */
+#define WB_SND_DESC_PERIOD_STEP    1u
+#define WB_SND_DESC_TONE_PERIOD    2u  /* a word */
+#define WB_SND_DESC_NOISE_PERIOD   3u  /* the tone period's LOW byte, read a second time as this */
+#define WB_SND_DESC_MIXER_BITS     6u
+#define WB_SND_DESC_VOLUME_INDEX   10u
+#define WB_SND_DESC_VOLUME_STEP    11u
+#define WB_SND_DESC_SECOND_RELOAD  13u
+#define WB_SND_MIXER_NOISE_OFF     0x08u /* `btst #3` — PSG polarity: set means noise off, and then
+                                          * the noise period is NOT written */
+
+/* ...and the runtime fields past the copy that the trigger seeds. +17 is the one byte of the state
+ * it never writes, which is what separates its two write bands. */
+#define WB_SND_STATE_PERIOD_COUNT  14u
+#define WB_SND_STATE_VOLUME_COUNT  15u
+#define WB_SND_STATE_SECOND_COUNT  16u
+#define WB_SND_STATE_STREAM_BASE   18u /* a long — the stream to loop back to */
+#define WB_SND_STATE_STREAM_CURSOR 22u /* a long — and where it is now */
 
 /* ---- the game-restart reset ($fe4a) and the life it redraws ($e80c) ---------------------------
  *

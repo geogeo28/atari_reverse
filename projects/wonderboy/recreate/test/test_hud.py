@@ -62,9 +62,18 @@ import harness
 import layout
 import leaf
 from leaf import (BSR_W, MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_IMM_ABS_L,
-                  RTS, backward_branch, bsr_w, forward_branch, longword, move_l_imm_postinc,
-                  rotate_left32, tst_w_dn, word)
+                  RTS, backward_branch, bsr_w, clr_w_dn, forward_branch, jsr_abs_l, longword,
+                  move_l_imm_postinc, opcode, rotate_left32, subq_w_abs_l, subq_w_dn, tst_w_dn,
+                  word)
 from layout import wb
+
+# $bbca calls the SOUND MODULE, so the battery that owns $1a48a owns its write set too — imported
+# here rather than restated, the way test_stage.py imports this file's lives model. The stub TABLE's
+# address comes from there for the same reason: $bbca reaches the trigger through it, and the two
+# batteries must not look it up separately.
+from test_sound import (STUB_INSN_CAP, STUB_TRIGGER_OFFSET,                # noqa: E402
+                        STUB_TABLE_BASE as SND_STUB_TABLE,
+                        assert_written as assert_sfx_written, expected_writes, write_bands)
 
 import emu   # noqa: E402  (harness puts the kit's oracle on sys.path)
 
@@ -109,9 +118,29 @@ PANEL_FRAME_ORIGIN = wb("PANEL_FRAME_ORIGIN")
 PANEL_FRAME_BYTES = wb("PANEL_FRAME_BYTES")
 PANEL_FRAME_ROWS = wb("PANEL_FRAME_ROWS")
 
+# $bbca's five timer words and the immediates its three arms carry.
+PANEL_FRAME_HOLD = wb("PANEL_FRAME_HOLD")
+PANEL_FRAME_DELAY = wb("PANEL_FRAME_DELAY")
+PANEL_FRAME_DELAY_INIT = wb("PANEL_FRAME_DELAY_INIT")
+PANEL_FRAME_PHASE = wb("PANEL_FRAME_PHASE")
+PANEL_FRAME_DWELL = wb("PANEL_FRAME_DWELL")
+PANEL_FRAME_REWIND = wb("PANEL_FRAME_REWIND")
+PANEL_FRAME_REWIND_STEP = wb("PANEL_FRAME_REWIND_STEP")
+PANEL_FRAME_INDEX_SHIFT = wb("PANEL_FRAME_INDEX_SHIFT")
+PANEL_FRAME_INDEX_START = wb("PANEL_FRAME_INDEX_START")
+PANEL_FRAME_INDEX_LAST = wb("PANEL_FRAME_INDEX_LAST")
+PANEL_FRAME_DWELL_RELOAD = wb("PANEL_FRAME_DWELL_RELOAD")
+PANEL_FRAME_PHASE_ACTIVE = wb("PANEL_FRAME_PHASE_ACTIVE")
+PANEL_FRAME_METER_COST = wb("PANEL_FRAME_METER_COST")
+PANEL_FRAME_SFX = wb("PANEL_FRAME_SFX")
+SND_CHANNEL_A = wb("SND_CHANNEL_A")
+
 METER_VALUE = wb("HUD_METER_VALUE")
 METER_MAX = wb("HUD_METER_MAX")
 WORD_LEN = wb("STATE_WORD_LEN")
+# The unit `movem.l` moves, the width of the d0 $bcd6 leaves, and the longword both arms of $e80c
+# step by — one spelling for all three, from leaf.py because test_sound.py needs it too.
+LONGWORD_LEN = leaf.LONGWORD_BYTES
 RECORD_LIST = wb("EFFECT_RECORD_LIST")
 RECORD_WRITE_PTR = wb("EFFECT_RECORD_WRITE_PTR")
 RECORD_LEN = wb("EFFECT_RECORD_LEN")
@@ -280,8 +309,15 @@ def _seeded_column(allowed):
 # --- the encodings each entry is pinned against --------------------------------------------------
 # Named so the builders below read as instructions. Every operand is one of the constants above, so
 # a wrong address, immediate, row count or stride fails at its own entry point rather than surfacing
-# as a puzzling diff somewhere in a 1 MiB image. The five test_effects.py also spells (RTS and the
-# four `move.w` forms) are imported from leaf.py instead, so the two batteries cannot disagree.
+# as a puzzling diff somewhere in a 1 MiB image.
+#
+# THE LEDGER. This battery spells an instruction as a BYTE LITERAL with its registers baked in,
+# where leaf.py's builders take a register NUMBER — leaf.py's own note on the branch opcodes records
+# that as the standing state, so a literal here and a builder there are two spellings of one
+# encoding rather than one duplicated. What comes from leaf.py above is what a builder can express
+# with this file's own constants as its operands: RTS and the four `move.w` forms test_effects.py
+# also spells, plus `clr.w Dn`, `subq.w #n,Dn`, `jsr <abs>.l` and `move.l #imm,(An)+`. The three
+# below that test_sound.py's ledger also names say so beside themselves.
 TST_W_ABS_W = b"\x4a\x78"           # tst.w <abs>.w
 BNE_W = b"\x66\x00"
 BRA_W = b"\x60\x00"
@@ -309,6 +345,7 @@ LEA_D16_A0_A0 = b"\x41\xe8"         # lea d16(a0),a0
 LEA_D16_A1_A1 = b"\x43\xe9"         # lea d16(a1),a1
 DBF_D0 = b"\x51\xc8"
 DBF_D7 = b"\x51\xcf"
+# ...whose opcode words test_sound.py builds its stubs' `movem` pair from.
 MOVEM_L_SAVE_A0_A1 = b"\x48\xe7\x00\xc0"     # movem.l a0/a1,-(a7)   (pre-decrement mask order)
 MOVEM_L_RESTORE_A0_A1 = b"\x4c\xdf\x03\x00"  # movem.l (a7)+,a0/a1
 MOVE_L_D0_ABS_L = b"\x23\xc0"
@@ -389,7 +426,9 @@ SUB_L_D0_D1 = b"\x92\x80"
 SUB_W_D1_D2 = b"\x94\x41"
 DIVU_W_IMM_D6 = b"\x8c\xfc"
 LEA_ABS_L_A2 = b"\x45\xf9"
-LEA_D16_PC_A0 = b"\x41\xfa"         # lea d16(pc),a0 — invisible to an abs.l scan (../names.txt)
+# lea d16(pc),a0 — invisible to an abs.l scan (../names.txt). ALSO IN test_sound.py, whose whole
+# module addresses itself this way.
+LEA_D16_PC_A0 = b"\x41\xfa"
 DBF_D1 = b"\x51\xc9"
 DBF_D2 = b"\x51\xca"
 DBF_D5 = b"\x51\xcd"
@@ -407,6 +446,21 @@ CLR_B_D16_A6 = b"\x42\x2e"          # clr.b d16(a6)
 CMPI_B_IMM_A0 = b"\x0c\x10"         # cmpi.b #imm,(a0)     — one arm of the variant chain
 CMPI_B_IMM_D16_A0 = b"\x0c\x28"     # cmpi.b #imm,d16(a0)
 MOVE_B_D16_A0_D7 = b"\x1e\x28"      # move.b d16(a0),d7
+
+# ...and $bbca's and $b346's. The three that read or write a WORD IN MEMORY are the timer chain's
+# whole vocabulary; `JSR_D16_A1` is the one call in this subsystem that leaves it.
+ADDI_W_IMM_ABS_L = b"\x06\x79"      # addi.w #imm,<abs>.l  — the rewind step, ON MEMORY
+CMPI_W_IMM_ABS_L = b"\x0c\x79"      # cmpi.w #imm,<abs>.l  — and the clamp it is compared against
+SUB_W_ABS_L_D0 = b"\x90\x79"        # sub.w <abs>.l,d0
+JSR_D16_A1 = b"\x4e\xa9"            # jsr d16(a1) — into the sound module's stub table
+D0, D1 = 0, 1                       # the two registers $bbca's arms compute in
+
+
+def _clr_l_dn(reg):
+    """`clr.l Dn` — the WHOLE longword, unlike the `clr.w` two instructions above it. Dead where
+    $bbca spells it: $bcd6 takes no register. ALSO IN test_blit.py (`clr_l_dn`), which is two users
+    and so short of leaf.py's three."""
+    return opcode(0x4280 | reg)
 
 # The 68000's shift/rotate-BY-IMMEDIATE encoding, `1110 ccc d ss i tt rrr`, with a count of 8 spelled
 # as 0. Built rather than transcribed so that the shift COUNTS come out of the geometry constants the
@@ -536,12 +590,7 @@ def _panel_frame_entry():
 # and `_bsr_to` builds each displacement out of the two entry points ../names.txt gives, so a
 # reconstruction aimed at the wrong callee fails here rather than as a diff.
 
-def _assemble(base, pieces):
-    """Concatenate ``pieces``; a callable piece is handed the address it starts at."""
-    body = b""
-    for piece in pieces:
-        body += piece(base + len(body)) if callable(piece) else piece
-    return body
+_assemble = leaf.assemble       # position-dependent operands; shared with test_sound.py
 
 
 def _bsr_to(name):
@@ -957,6 +1006,115 @@ def _dirty_slots_entry():
                      [_plain_slot_block(slot) for slot in HUD_PLAIN_SLOTS] + [_slot_bbc8_block()])
 
 
+# --- $bbca and $b346: the animation's timers, and the pass itself ---------------------------------
+# The pin on $bbca is where the sound call is nailed down as a FIXED one: the stub table's address,
+# the `jsr d16(a1)` offset and the two immediates the effect is triggered with are all operands
+# here, so a reconstruction calling the wrong stub — or the right one with the wrong id — fails on
+# the bytes rather than on a puzzling divergence inside the sound module. (`SND_STUB_TABLE` is
+# imported from test_sound.py, which owns the table.)
+
+
+def _rewind_block():
+    """`addi.w #$14,delay / cmpi.w #$500,delay / blt over the clamp` — the clamp CLEARS two flags,
+    which is what ends the rewind."""
+    clamp = (MOVE_W_IMM_ABS_L + word(PANEL_FRAME_DELAY_INIT) + longword(PANEL_FRAME_DELAY)
+             + CLR_W_ABS_L + longword(PANEL_FRAME_HOLD)
+             + CLR_W_ABS_L + longword(PANEL_FRAME_REWIND))
+    return (ADDI_W_IMM_ABS_L + word(PANEL_FRAME_REWIND_STEP) + longword(PANEL_FRAME_DELAY)
+            + CMPI_W_IMM_ABS_L + word(PANEL_FRAME_DELAY_INIT) + longword(PANEL_FRAME_DELAY)
+            + BLT_W + forward_branch(len(clamp)) + clamp)
+
+
+def _restart_arm(blit):
+    """The arm that starts the animation: four timers planted, the meter charged, one frame drawn."""
+    charge = (MOVE_W_ABS_L_D0 + longword(METER_VALUE)
+              + subq_w_dn(PANEL_FRAME_METER_COST, D0)
+              + BPL_W + forward_branch(len(clr_w_dn(D0))) + clr_w_dn(D0)
+              + MOVE_W_D0_ABS_L + longword(METER_VALUE))
+    plant = b"".join(MOVE_W_IMM_ABS_L + word(value) + longword(field) for field, value in (
+        (PANEL_FRAME_PHASE, PANEL_FRAME_PHASE_ACTIVE),
+        (PANEL_FRAME_DWELL, PANEL_FRAME_DWELL_RELOAD),
+        (PANEL_FRAME_DELAY, PANEL_FRAME_DELAY_INIT),
+        (PANEL_FRAME_INDEX, PANEL_FRAME_INDEX_START)))
+    return lambda at: plant + charge + blit(at + len(plant) + len(charge)) + RTS
+
+
+def _measure_arm(blit):
+    """`($500 - delay) asr 7` into the index, one frame drawn, and the delay ticked down unless the
+    hold flag is up — the `beq` skips the `rts`, so a RAISED hold is what returns early."""
+    head = (MOVE_W_IMM_D0 + word(PANEL_FRAME_DELAY_INIT)
+            + SUB_W_ABS_L_D0 + longword(PANEL_FRAME_DELAY)
+            + _shift(PANEL_FRAME_INDEX_SHIFT, SHIFT_SIZE_WORD, SHIFT_ARITHMETIC, D0, left=False)
+            + MOVE_W_D0_ABS_L + longword(PANEL_FRAME_INDEX))
+    tail = (TST_W_ABS_L + longword(PANEL_FRAME_HOLD) + BEQ_W + forward_branch(len(RTS)) + RTS
+            + subq_w_abs_l(1, PANEL_FRAME_DELAY) + RTS)
+    return lambda at: head + blit(at + len(head)) + tail
+
+
+def _dwell_arm(blit):
+    """One frame of the countdown between index steps."""
+    countdown = subq_w_abs_l(1, PANEL_FRAME_DWELL)
+    return lambda at: countdown + blit(at + len(countdown)) + RTS
+
+
+def _step_arm(blit):
+    """The dwell countdown, the sound call on an index at or below its start, and the index step
+    that ends the cycle at $c."""
+    dwell = _dwell_arm(blit)
+    trigger = (MOVE_W_IMM_D0 + word(PANEL_FRAME_SFX) + clr_w_dn(D1)
+               + LEA_ABS_L_A1 + longword(SND_STUB_TABLE)
+               + JSR_D16_A1 + word(STUB_TRIGGER_OFFSET))
+    finish = (CLR_W_ABS_L + longword(PANEL_FRAME_INDEX)
+              + CLR_W_ABS_L + longword(PANEL_FRAME_PHASE) + RTS)
+
+    return lambda at: _assemble(at, [
+        TST_W_ABS_L + longword(PANEL_FRAME_DWELL),
+        BEQ_W + forward_branch(len(dwell(at))), dwell,
+        CMPI_W_IMM_ABS_L + word(PANEL_FRAME_INDEX_START) + longword(PANEL_FRAME_INDEX),
+        BGT_W + forward_branch(len(trigger)), trigger,
+        MOVE_W_IMM_ABS_L + word(PANEL_FRAME_DWELL_RELOAD) + longword(PANEL_FRAME_DWELL),
+        _clr_l_dn(D0), blit,
+        CMPI_W_IMM_ABS_L + word(PANEL_FRAME_INDEX_LAST) + longword(PANEL_FRAME_INDEX),
+        BNE_W + forward_branch(len(finish)), finish,
+        ADDQ_W_1_ABS_L + longword(PANEL_FRAME_INDEX), RTS])
+
+
+def _measure_half(blit):
+    """The half that runs while the phase is clear: restart the animation, or measure the index."""
+    restart, measure = _restart_arm(blit), _measure_arm(blit)
+    return lambda at: _assemble(at, [
+        TST_W_ABS_L + longword(PANEL_FRAME_DELAY),
+        BNE_W + forward_branch(len(restart(at))), restart, measure])
+
+
+def _panel_timers_entry():
+    blit = _bsr_to("hud_blit_panel_frame")
+    measure_half, rewind = _measure_half(blit), _rewind_block()
+    return _assemble(leaf.entry_of("panel_frame_timers"), [
+        TST_W_ABS_L + longword(PANEL_FRAME_REWIND),
+        BEQ_W + forward_branch(len(rewind)), rewind,
+        TST_W_ABS_L + longword(PANEL_FRAME_PHASE),
+        BNE_W + forward_branch(len(measure_half(0))), measure_half, _step_arm(blit)])
+
+
+# The ten calls $b346 makes, in order — a `jsr` to the region restore and nine `bsr`s. This tuple is
+# the pass's whole body, so it is also what the call-ORDER case reads.
+PANEL_PASS_CALLS = ("panel_restore_dirty_regions", "hud_draw_newest_record",
+                    "hud_draw_counter_bd6e", "hud_draw_score_and_size_meter",
+                    "hud_draw_larger_score", "hud_draw_meter", "hud_refresh_dirty_slots",
+                    "panel_frame_timers", "hud_draw_stage_number",
+                    "select_table_21e8c_and_tick_b39a")
+PANEL_PASS_CALL_COUNT = 10          # ../names.txt's own count for the 44 bytes of $b346
+
+
+def _panel_refresh_entry():
+    """One `jsr <abs>.l` and nine `bsr.w`, and NOTHING between them: no register is set up for any
+    callee, which is the encoding behind src/hud.c's argument about what flows between them."""
+    return _assemble(leaf.entry_of("panel_refresh_frame"),
+                     [jsr_abs_l(leaf.entry_of(PANEL_PASS_CALLS[0]))]
+                     + [_bsr_to(name) for name in PANEL_PASS_CALLS[1:]] + [RTS])
+
+
 # --- $e80c: the lives display ---------------------------------------------------------------------
 # The one routine in this file that is not part of `panel_refresh_frame`'s pass, and the one that
 # writes BOTH screen buffers: `lea $704d8.l,a1 / lea $784d8.l,a2` are absolute, so it does not read
@@ -974,10 +1132,10 @@ LIVES_ICON_REWIND = wb("LIVES_ICON_REWIND")
 LIVES_ICON_BLANK_HIGH = wb("LIVES_ICON_BLANK_HIGH")
 LIVES_ICON_BLANK_LOW = wb("LIVES_ICON_BLANK_LOW")
 
-# The three registers $e80c drives, for the shared encoders in leaf.py — which take a register
-# number rather than carrying one per register the way the byte literals below do.
+# The two address registers $e80c drives, for the shared encoders in leaf.py — which take a register
+# number rather than carrying one per register the way the byte literals below do. (Its d1 is the
+# `D1` the timer block above already names.)
 A1, A2 = 1, 2
-D1 = 1
 
 MOVE_W_ABS_W_D1 = b"\x32\x38"       # move.w <abs>.w,d1
 MOVE_W_IMM_D0 = b"\x30\x3c"
@@ -1051,17 +1209,24 @@ ENTRY_BYTES = {
     "hud_draw_record_digits": _record_digits_entry(),
     "hud_draw_newest_record": _newest_record_entry(),
     "hud_refresh_dirty_slots": _dirty_slots_entry(),
+    "panel_frame_timers": _panel_timers_entry(),
+    "panel_refresh_frame": _panel_refresh_entry(),
     "hud_draw_lives": _draw_lives_entry(),
 }
 
 # The batch this file was written for: the eleven leaves of batch 2, the nine of batch 3, the ten of
-# batch 4 and batch 13's lives display. Recorded rather than derived from ENTRY_BYTES, so a routine
-# dropped from a table shrinks the battery loudly instead of silently.
-HUD_ROUTINE_COUNT = 31
+# batch 4, batch 13's lives display and batch 16's two — $bbca and the pass itself. Recorded rather
+# than derived from ENTRY_BYTES, so a routine dropped from a table shrinks the battery loudly
+# instead of silently.
+HUD_ROUTINE_COUNT = 33
 
 # --- the glue ------------------------------------------------------------------------------------
 _select_table = leaf.image_glue("select_table_21e8c_and_tick_b39a")
-_panel_frame = leaf.image_glue("hud_blit_panel_frame")
+# The two that hand back the d0 the original leaves — the panel frame's last row, first longword —
+# because `panel_refresh_frame` spends it as the stage number's font select (see src/hud.c).
+_panel_frame = leaf.image_glue("hud_blit_panel_frame", ctypes.c_uint32)
+_panel_timers = leaf.image_glue("panel_frame_timers", ctypes.c_uint32)
+_panel_refresh = leaf.image_glue("panel_refresh_frame")
 _record_bitmap = leaf.register_glue("hud_blit_record_bitmap", [ctypes.c_uint32])
 _meter_add = leaf.register_glue("hud_meter_add_clamped", [ctypes.c_uint32])
 _meter_cell = leaf.register_glue("hud_blit_meter_cell", [ctypes.c_uint32] * 2, ctypes.c_uint32)
@@ -1522,10 +1687,33 @@ def test_the_or_blit_is_seeded_with_something_to_combine_with():
 PANEL_FRAME_INDICES = (0, 1, 0x0a, 0x0c)
 
 
+def _panel_frame_source(index):
+    """Where the blit reads its 32 rows from — the same word truncation `_indexed_bitmap` states for
+    every other indexed bitmap in this file."""
+    return _indexed_bitmap(PANEL_FRAME_TABLE, index, PANEL_FRAME_LEN)
+
+
+def _panel_frame_last_row(index):
+    """The frame's FINAL row, which the blit's last `movem.l (a0)+,d0-d5` loads — so its first
+    longword is the d0 the routine leaves behind. Named once because two things need it: the model
+    of that d0 below, and the case further down that POKES the row to steer the font select."""
+    return _panel_frame_source(index) + (PANEL_FRAME_ROWS - 1) * PANEL_FRAME_BYTES
+
+
+def _panel_frame_left_in_d0(image, index):
+    """The d0 `hud_blit_panel_frame` leaves. $bbca hands it on and $bd32 spends it as a font select,
+    which is why it is a value this battery states rather than a register it ignores."""
+    last_row = _panel_frame_last_row(index)
+    return int.from_bytes(bytes(image[last_row:last_row + LONGWORD_LEN]), "big")
+
+
 @pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])
 @pytest.mark.parametrize("index", PANEL_FRAME_INDICES,
                          ids=[f"frame_{i}" for i in PANEL_FRAME_INDICES])
 def test_the_panel_frame_blit_copies_the_frame_its_index_selects(index, screen):
+    """The RETURN is pinned here as well as the pixels, and it is pinned at every index the battery
+    draws: the routine's other output is the last row's first longword, and only a case that names
+    which longword tells it from any other one the blit's `movem` pair passed through."""
     destination = screen + PANEL_FRAME_ORIGIN
     rows = _rows(destination, PANEL_FRAME_BYTES, PANEL_FRAME_ROWS)
     pokes = {SCREEN_BACK: longword(screen), PANEL_FRAME_INDEX: word(index)}
@@ -1533,9 +1721,12 @@ def test_the_panel_frame_blit_copies_the_frame_its_index_selects(index, screen):
     what = f"panel frame {index} into screen_back {screen:#x}"
     info = leaf.run("hud_blit_panel_frame", _panel_frame, rows, what,
                     regs={"_pokes": pokes}, max_insns=PANEL_BLIT_INSN_CAP)
-    source = _indexed_bitmap(PANEL_FRAME_TABLE, index, PANEL_FRAME_LEN)
-    expected = _source_rows(source, PANEL_FRAME_BYTES, PANEL_FRAME_ROWS)
+    expected = _source_rows(_panel_frame_source(index), PANEL_FRAME_BYTES, PANEL_FRAME_ROWS)
     leaf.assert_rows(info, rows, expected, what)
+    in_d0 = _panel_frame_left_in_d0(harness.BASE_IMAGE, index)
+    assert info["regs"]["d0"] == in_d0 and info["ret"] == in_d0, (
+        f"{what}: d0 is oracle={info['regs']['d0']:#010x} cand={info['ret']:#010x}, not the "
+        f"{in_d0:#010x} the frame's last row gives")
 
 
 # =================================================================================================
@@ -2736,13 +2927,421 @@ def test_the_slot_battery_reaches_every_cell_the_pass_can_draw():
         value for name, value in layout.DEFINES.items() if name.startswith(cells)}
 
 
+# =================================================================================================
+# $bbca AND $b346 — the animation's timers, and the pass itself.
+#
+# $bbca is the callee that kept `panel_refresh_frame` unported for thirteen batches: it calls the
+# SOUND MODULE, so its cases run $1a48a on the oracle's side and the ported C on ours, and the write
+# set they allow is this file's plus the one test_sound.py owns — imported, not restated.
+#
+# $b346's own case is the WHOLE TIER: ten callees, and a write set composed from the geometry each
+# battery above already states. Its own body writes nothing at all, so what a case over it holds is
+# the COMPOSITION — that the ten ran, in that order, each with what the one before it left.
+
+# One $bbca is the rewind block, one arm, and the panel-frame blit every arm ends with — plus, on
+# the arm that fires it, a whole SOUND STUB: `jsr 56(a1)` enters $17b14, whose `movem` pair and
+# `bsr` sit around $1a48a, so the cap is the stub's and not the trigger's. The blit's own is
+# PANEL_BLIT_INSN_CAP.
+PANEL_TIMER_CHAIN_INSNS = 30
+PANEL_TIMERS_INSN_CAP = PANEL_BLIT_INSN_CAP + STUB_INSN_CAP + PANEL_TIMER_CHAIN_INSNS
+
+# The five timer words and the index. A case seeds all six, so no arm is ever entered on a value the
+# case did not choose.
+PANEL_TIMER_FIELDS = (PANEL_FRAME_REWIND, PANEL_FRAME_HOLD, PANEL_FRAME_PHASE, PANEL_FRAME_DELAY,
+                      PANEL_FRAME_DWELL, PANEL_FRAME_INDEX)
+
+
+def _asr_word(value, bits):
+    """`asr.w #n,Dn` — an ARITHMETIC shift of the low word, so a negative elapsed count stays
+    negative and drives the frame index below zero."""
+    return (_signed_word(value) >> bits) & WORD_MASK
+
+
+def _panel_timers_model(seed):
+    """One pass of $bbca, restated from the body rather than from src/hud.c's branches.
+
+    ``seed`` is {address: word} over PANEL_TIMER_FIELDS and METER_VALUE. Returns the state after,
+    the index the BLIT saw (which the step arm changes only afterwards), the addresses the pass
+    WROTE — the write set, so a port that stored a word it should have left alone fails as a stray
+    write and not only as a diff — and whether the sound effect fired.
+    """
+    after, written, fired = dict(seed), [], False
+
+    if after[PANEL_FRAME_REWIND]:
+        after[PANEL_FRAME_DELAY] = (after[PANEL_FRAME_DELAY] + PANEL_FRAME_REWIND_STEP) & WORD_MASK
+        written.append(PANEL_FRAME_DELAY)
+        # `cmpi.w #$500 / blt` re-reads the word just stored and compares it SIGNED.
+        if _signed_word(after[PANEL_FRAME_DELAY]) >= PANEL_FRAME_DELAY_INIT:
+            after[PANEL_FRAME_DELAY] = PANEL_FRAME_DELAY_INIT
+            after[PANEL_FRAME_HOLD] = 0
+            after[PANEL_FRAME_REWIND] = 0
+            written += [PANEL_FRAME_DELAY, PANEL_FRAME_HOLD, PANEL_FRAME_REWIND]
+
+    if after[PANEL_FRAME_PHASE]:
+        if after[PANEL_FRAME_DWELL]:
+            after[PANEL_FRAME_DWELL] = (after[PANEL_FRAME_DWELL] - 1) & WORD_MASK
+            return after, after[PANEL_FRAME_INDEX], written + [PANEL_FRAME_DWELL], fired
+        # `cmpi.w #$a / bgt` — SIGNED and strict, so an index the measure arm drove negative fires
+        # the effect just as the $a the restart arm plants does.
+        fired = _signed_word(after[PANEL_FRAME_INDEX]) <= PANEL_FRAME_INDEX_START
+        after[PANEL_FRAME_DWELL] = PANEL_FRAME_DWELL_RELOAD
+        drawn = after[PANEL_FRAME_INDEX]
+        written.append(PANEL_FRAME_DWELL)
+        if drawn == PANEL_FRAME_INDEX_LAST:
+            after[PANEL_FRAME_INDEX] = 0
+            after[PANEL_FRAME_PHASE] = 0
+            written += [PANEL_FRAME_INDEX, PANEL_FRAME_PHASE]
+        else:
+            after[PANEL_FRAME_INDEX] = (drawn + 1) & WORD_MASK
+            written.append(PANEL_FRAME_INDEX)
+        return after, drawn, written, fired
+
+    if after[PANEL_FRAME_DELAY] == 0:
+        after[PANEL_FRAME_PHASE] = PANEL_FRAME_PHASE_ACTIVE
+        after[PANEL_FRAME_DWELL] = PANEL_FRAME_DWELL_RELOAD
+        after[PANEL_FRAME_DELAY] = PANEL_FRAME_DELAY_INIT
+        after[PANEL_FRAME_INDEX] = PANEL_FRAME_INDEX_START
+        # `subq.w #4,d0 / bpl / clr.w d0` — the branch tests the RESULT, so a meter already negative
+        # comes back $7ffc rather than floored.
+        charged = (after[METER_VALUE] - PANEL_FRAME_METER_COST) & WORD_MASK
+        after[METER_VALUE] = 0 if charged & 0x8000 else charged
+        written += [PANEL_FRAME_PHASE, PANEL_FRAME_DWELL, PANEL_FRAME_DELAY, PANEL_FRAME_INDEX,
+                    METER_VALUE]
+        return after, PANEL_FRAME_INDEX_START, written, fired
+
+    elapsed = (PANEL_FRAME_DELAY_INIT - after[PANEL_FRAME_DELAY]) & WORD_MASK
+    after[PANEL_FRAME_INDEX] = _asr_word(elapsed, PANEL_FRAME_INDEX_SHIFT)
+    written.append(PANEL_FRAME_INDEX)
+    if not after[PANEL_FRAME_HOLD]:
+        after[PANEL_FRAME_DELAY] = (after[PANEL_FRAME_DELAY] - 1) & WORD_MASK
+        written.append(PANEL_FRAME_DELAY)
+    return after, after[PANEL_FRAME_INDEX], written, fired
+
+
+def _panel_frame_expected(image, index):
+    """The frame's rows as the blit's caller's own image holds them — `_source_rows` over an image a
+    case may have poked, rather than over the loaded one."""
+    base = _panel_frame_source(index)
+    return [bytes(image[base + row * PANEL_FRAME_BYTES:base + (row + 1) * PANEL_FRAME_BYTES])
+            for row in range(PANEL_FRAME_ROWS)]
+
+
+def _run_panel_timers(seed, screen, what):
+    after, drawn, written, fired = _panel_timers_model(seed)
+    rows = _rows(screen + PANEL_FRAME_ORIGIN, PANEL_FRAME_BYTES, PANEL_FRAME_ROWS)
+    sound = expected_writes(harness.BASE_IMAGE, PANEL_FRAME_SFX, SND_CHANNEL_A) if fired else {}
+    allowed = [(field, WORD_LEN) for field in dict.fromkeys(written)] + rows + write_bands(sound)
+
+    pokes = {SCREEN_BACK: longword(screen)}
+    pokes.update({field: word(value) for field, value in seed.items()})
+    pokes.update(_seeded_rows(rows))
+    info = leaf.run("panel_frame_timers", _panel_timers, allowed, what,
+                    regs={"_pokes": pokes}, max_insns=PANEL_TIMERS_INSN_CAP)
+
+    for field in dict.fromkeys(written):
+        left = leaf.read_int(info, field, WORD_LEN, what)
+        assert left == after[field], (
+            f"{what}: {field:#x} is {left:#06x}, not the {after[field]:#06x} the arm gives")
+    leaf.assert_rows(info, rows, _panel_frame_expected(harness.BASE_IMAGE, drawn),
+                     f"{what}: frame {drawn:#x}")
+    if fired:
+        assert_sfx_written(info, sound, f"{what}: the effect it triggers")
+    in_d0 = _panel_frame_left_in_d0(harness.BASE_IMAGE, drawn)
+    assert info["regs"]["d0"] == in_d0 and info["ret"] == in_d0, (
+        f"{what}: d0 is oracle={info['regs']['d0']:#010x} cand={info['ret']:#010x}, not the "
+        f"{in_d0:#010x} the blit's last row gives")
+    return info
+
+
+# What a case seeds the meter at when the meter is not the thing it is testing: the value $fe4a
+# resets it to, which is well clear of zero and of the restart arm's own charge. Only the arm that
+# CHARGES the meter reads it, so every other case wants one number and no reason to vary it.
+PANEL_TIMER_IDLE_METER = 0x14
+
+
+def _timers(rewind=0, hold=0, phase=0, delay=0, dwell=0, index=0, meter=PANEL_TIMER_IDLE_METER):
+    """The six words $bbca steers on plus the meter it charges — ONE seed, because the meter is an
+    input of the same pass and a case that named it separately could seed the two inconsistently."""
+    return {PANEL_FRAME_REWIND: rewind, PANEL_FRAME_HOLD: hold, PANEL_FRAME_PHASE: phase,
+            PANEL_FRAME_DELAY: delay, PANEL_FRAME_DWELL: dwell, PANEL_FRAME_INDEX: index,
+            METER_VALUE: meter}
+
+
+# (seed, why) — one per branch of the body, and both sides of every test in it.
+PANEL_TIMER_CASES = (
+    (_timers(delay=0x200), "the measure arm: the index off the delay, and a tick down"),
+    (_timers(delay=1), "...one frame from the delay running out"),
+    (_timers(delay=PANEL_FRAME_DELAY_INIT), "a full delay, so the index measures 0"),
+    (_timers(delay=0x200, hold=1), "the hold flag freezes the tick, not the measure"),
+    (_timers(delay=PANEL_FRAME_DELAY_INIT + 1),
+     "a delay ABOVE $500, so the elapsed count and the index it shifts go negative"),
+    (_timers(delay=0), "the restart arm: four timers planted and the meter charged"),
+    (_timers(delay=0, meter=PANEL_FRAME_METER_COST), "...a meter charged to exactly zero"),
+    (_timers(delay=0, meter=PANEL_FRAME_METER_COST - 1), "...and one the charge floors at zero"),
+    (_timers(delay=0, meter=0x8000), "...a NEGATIVE meter, which the `bpl` does not floor"),
+    (_timers(phase=1, dwell=PANEL_FRAME_DWELL_RELOAD, index=5),
+     "the dwell countdown, which draws and writes nothing else"),
+    (_timers(phase=1, dwell=1, index=5), "...its last frame"),
+    (_timers(phase=1, dwell=0, index=PANEL_FRAME_INDEX_START),
+     "the step arm at the index the restart plants: the effect fires"),
+    (_timers(phase=1, dwell=0, index=PANEL_FRAME_INDEX_START + 1),
+     "...one past it, where the `bgt` skips the effect"),
+    (_timers(phase=1, dwell=0, index=PANEL_FRAME_INDEX_LAST),
+     "...the last index, which clears the index and the phase"),
+    (_timers(phase=1, dwell=0, index=WORD_MASK),
+     "...a NEGATIVE index, which the SIGNED `bgt` still fires the effect on"),
+    (_timers(rewind=1, delay=0x100), "the rewind step, well below the clamp"),
+    (_timers(rewind=1, hold=1, delay=PANEL_FRAME_DELAY_INIT - PANEL_FRAME_REWIND_STEP),
+     "...landing exactly on the clamp, which clears the hold and the rewind"),
+    (_timers(rewind=1, hold=1, delay=PANEL_FRAME_DELAY_INIT), "...already past it"),
+    (_timers(rewind=1, delay=0x7ffc),
+     "...a rewind that wraps the word NEGATIVE, which the signed `blt` does not clamp"),
+)
+
+
+@pytest.mark.parametrize("screen", SCREEN_BUFFERS, ids=[f"screen_{s:05x}" for s in SCREEN_BUFFERS])
+@pytest.mark.parametrize("seed,why", PANEL_TIMER_CASES,
+                         ids=[f"case_{n}" for n in range(len(PANEL_TIMER_CASES))])
+def test_the_panel_timers_take_one_arm_and_draw_one_frame(seed, why, screen):
+    _run_panel_timers(seed, screen, f"$bbca with {why}, screen_back {screen:#x}")
+
+
+def test_the_panel_timer_cases_reach_every_arm_and_both_sides_of_every_test():
+    """The guard on the table above: a sweep that never fired the effect, never clamped the rewind
+    or never floored the meter would leave whole branches unpinned while staying green."""
+    outcomes = [_panel_timers_model(seed) for seed, _why in PANEL_TIMER_CASES]
+    written = [set(fields) for _after, _drawn, fields, _fired in outcomes]
+    stepping = [(seed, fired) for (seed, _why), (_a, _d, _w, fired)
+                in zip(PANEL_TIMER_CASES, outcomes)
+                if seed[PANEL_FRAME_PHASE] and not seed[PANEL_FRAME_DWELL]]
+    assert any(fired for _seed, fired in stepping), "the effect never fires"
+    assert any(not fired for _seed, fired in stepping), "the `bgt` never skips the effect"
+    assert any(PANEL_FRAME_REWIND in fields for fields in written), "the rewind never clamps"
+    assert any(METER_VALUE in fields for fields in written), "the restart arm is never taken"
+    assert any(PANEL_FRAME_PHASE in fields and METER_VALUE not in fields for fields in written), (
+        "the cycle never ends")
+    charged = [after[METER_VALUE] for after, _d, fields, _f in outcomes if METER_VALUE in fields]
+    assert 0 in charged and max(charged) > PANEL_FRAME_METER_COST, (
+        "the meter charge never floors and never survives")
+
+
+def test_the_panel_timers_write_nothing_the_arm_did_not_ask_for():
+    """The dwell countdown is the narrowest arm — one word and a blit — so it is the one that says
+    the write set is the arm's own and not the union of all of them."""
+    seed = _timers(phase=1, dwell=PANEL_FRAME_DWELL_RELOAD, index=3)
+    info = _run_panel_timers(seed, SCREEN_BUFFERS[0], "the dwell countdown alone")
+    for field in PANEL_TIMER_FIELDS:
+        if field != PANEL_FRAME_DWELL:
+            assert field not in info["writes"], f"{field:#x} was written by the dwell countdown"
+
+
+# --- $b346: the whole tier ------------------------------------------------------------------------
+# Every arm the pass can reach is seeded so the write set can be composed EXACTLY: no restore flag
+# raised, no record to display, no slot dirty. What is left is the four digit fields, the meter, the
+# animation and the table select — the pass on an ordinary frame.
+#
+# POISONING IS OFF, and for the reason a COMPOSED pass has and its callees do not: the attribution
+# pass inverts every byte the oracle wrote and re-runs, and here the bytes one callee wrote are the
+# next callee's INPUTS. Inverting hud_meter_value drives $b61e through some 16,000 full-cell blits;
+# inverting a timer word sends $bbca down a different arm than the one the case seeded, so the
+# re-run is measuring a different pass rather than the same one twice. (hud_meter_max is written by
+# $b74a and read by $b61e in the same way, but the case asserts it, so the inversion would be caught
+# rather than merely disruptive.) Every callee is attribution-checked by its own battery above; what
+# this case checks is the composition.
+PANEL_PASS_OVERHEAD_INSNS = 32
+PANEL_PASS_INSN_CAP = (_restore_walk_cap(set()) + _digit_insn_cap(FOUR_DIGITS)
+                       + 2 * _digit_insn_cap(EIGHT_DIGITS) + METER_INSN_CAP + SLOT_PASS_INSN_CAP
+                       + PANEL_TIMERS_INSN_CAP + _digit_insn_cap(TWO_DIGITS)
+                       + PANEL_PASS_OVERHEAD_INSNS)
+
+# A record list whose word is NEGATIVE — `tst.w / bpl` — so $b39c returns before it draws anything.
+PANEL_PASS_NO_RECORD = 0x8000
+# The entry registers the pass must be indifferent to: a d0 that WOULD select the alternate font and
+# a d7 full of nibbles that would all print.
+PANEL_PASS_POISONED_REGS = {"d0": DIGIT_FONT_ALT, "d7": DIGIT_REGISTER_JUNK}
+
+
+def _pass_field_columns(screen, origin, rewinds, digits):
+    return _field_columns(screen + origin, rewinds)[:digits]
+
+
+def _pass_quiet_pokes(screen, front):
+    """Everything the pass must find idle: fifteen restore flags down, no fresh record, six clean
+    slots. Each is the seed the battery that owns that callee already uses for its own "nothing to
+    do" case, so this states no geometry of its own."""
+    pokes = {SCREEN_BACK: longword(screen), SCREEN_FRONT: longword(front),
+             RECORD_LIST: word(PANEL_PASS_NO_RECORD)}
+    pokes.update({PANEL_RESTORE_FLAGS + entry: b"\x00"
+                  for entry in range(PANEL_RESTORE_FLAG_COUNT)})
+    pokes.update({slot["record"]: b"\x00\x00" for slot in HUD_ALL_SLOTS})
+    return pokes
+
+
+def _run_panel_pass(screen, front, counter, score, hiscore, stage, seed, what,
+                    frame_pokes=(), entry_regs=()):
+    """The whole tier: ten callees under the oracle, the ported C on the same image.
+
+    The write set is composed from the batteries above — the digit walks' columns, the meter's
+    cells, the animation's timers and frame, the table select — and the ORDER shows up in two of
+    the values: the meter is DRAWN at the value $bbca then charges, and the stage number is drawn in
+    the font $bbca's own blit left in d0. ``seed`` is `_timers`', the meter it charges included.
+    """
+    image = bytearray(harness.BASE_IMAGE)
+    for addr, value in dict(frame_pokes).items():
+        image[addr:addr + len(value)] = value
+
+    meter = seed[METER_VALUE]
+    after, drawn, timer_writes, fired = _panel_timers_model(seed)
+    maximum = _meter_max_for(score, 0)
+    cells = _meter_plan(meter, maximum)
+    font = _panel_frame_left_in_d0(image, drawn)
+
+    fields = ((COUNTER_ORIGIN, FOUR_DIGIT_REWINDS, FOUR_DIGITS),
+              (SCORE_ORIGIN, EIGHT_DIGIT_REWINDS, EIGHT_DIGITS),
+              (HISCORE_ORIGIN, EIGHT_DIGIT_REWINDS, EIGHT_DIGITS),
+              (STAGE_ORIGIN, TWO_DIGIT_REWINDS, TWO_DIGITS))
+    allowed = [(DIGIT_SIGNIFICANT_SEEN, WORD_LEN), (METER_MAX, WORD_LEN),
+               (TABLE_PTR, TABLE_PTR_LEN), (FRAME_TICK, WORD_LEN), (PANEL_RESTORE_FLAG, 1)]
+    for origin, rewinds, digits in fields:
+        for column in _pass_field_columns(screen, origin, rewinds, digits):
+            allowed += _plotted_column(column, DIGIT_ROWS)
+    for cell in range(len(cells)):
+        offset = leaf.u16(harness.BASE_IMAGE, METER_CELL_TABLE + cell * METER_CELL_OFFSET_LEN)
+        allowed += _plotted_column(screen + offset, METER_CELL_ROWS)
+    allowed += [(field, WORD_LEN) for field in dict.fromkeys(timer_writes)]
+    frame_rows = _rows(screen + PANEL_FRAME_ORIGIN, PANEL_FRAME_BYTES, PANEL_FRAME_ROWS)
+    allowed += frame_rows
+    sound = expected_writes(image, PANEL_FRAME_SFX, SND_CHANNEL_A) if fired else {}
+    allowed += write_bands(sound)
+
+    # The filler goes down FIRST and the pass's own inputs over it: `allowed` names
+    # panel_restore_flag_dbb3, which $b61e raises and $d93a reads, and a filler byte there would
+    # send the walk off restoring a region the case never asked for.
+    pokes = dict(_seeded_column(allowed))
+    pokes.update(_seeded_rows(frame_rows))
+    pokes.update(_pass_quiet_pokes(screen, front))
+    pokes.update({BCD_COUNTER: word(counter), BCD_SCORE: longword(score),
+                  BCD_HISCORE: longword(hiscore), STAGE_NUMBER: word(stage),
+                  METER_MAX: word(0), DIGIT_SIGNIFICANT_SEEN: word(0), FRAME_TICK: word(0)})
+    pokes.update({field: word(value) for field, value in seed.items()})
+    pokes.update(dict(frame_pokes))
+
+    # ...and only NOW are the bands merged. Every plotted byte above is its own (address, 1) entry
+    # because `_seeded_column` reads exactly that to decide what to fill, so the merge cannot happen
+    # before it. `leaf.run` then checks each of the original's writes against every band: the 1,711
+    # bytes this pass allows collapse into 303 contiguous ones, and a case's run measured 77 ms
+    # before the merge against 17 ms after.
+    allowed = leaf.merge_bands({addr + index for addr, length in allowed
+                                for index in range(length)})
+
+    info = leaf.run("panel_refresh_frame", _panel_refresh, allowed, what,
+                    regs=dict(entry_regs, _pokes=pokes), max_insns=PANEL_PASS_INSN_CAP,
+                    poison=False)
+
+    # $b74a sizes the meter, $b61e draws it at the seeded value and $bbca charges it afterwards —
+    # three callees and one observable order.
+    assert leaf.read_int(info, METER_MAX, WORD_LEN, what) == maximum
+    if METER_VALUE in timer_writes:
+        assert leaf.read_int(info, METER_VALUE, WORD_LEN, what) == after[METER_VALUE]
+    else:
+        assert METER_VALUE not in info["writes"], f"{what}: the meter was charged off its own arm"
+    leaf.assert_rows(info, frame_rows, _panel_frame_expected(image, drawn), f"{what}: the frame")
+    if fired:
+        assert_sfx_written(info, sound, f"{what}: the effect $bbca triggers")
+
+    # ...and the stage number is drawn in the font $bbca's blit left in d0, which is the other value
+    # the pass carries from one callee to the next.
+    staged = rotate_left32(_staged_word(stage, 0), BITS_PER_BYTE)
+    expected = _field_expected(staged, [font] * TWO_DIGITS, False, TWO_DIGIT_FORCED_AT)
+    for index, column in enumerate(_pass_field_columns(screen, STAGE_ORIGIN, TWO_DIGIT_REWINDS,
+                                                       TWO_DIGITS)):
+        _assert_column(info, column, DIGIT_ROWS, expected[index], f"{what}: stage digit {index}")
+
+    assert leaf.read_int(info, FRAME_TICK, WORD_LEN, what) == 1, (
+        f"{what}: $b372 did not tick the frame counter")
+    return info, font
+
+
+# (counter, score, hiscore, stage, timers, why) — the pass on one ordinary frame, once per arm of
+# the animation, since that is the callee whose arm changes what the others see. The meter each case
+# draws is `_timers`' own, because $bbca charges the same word the meter pass draws.
+PANEL_PASS_CASES = (
+    (0x1234, 0x120000, 0x340000, 0x0107, _timers(delay=0x200, meter=0x0d),
+     "the measure arm, a part-filled meter and a high score above the score"),
+    (0x0000, 0x400000, 0x000000, 0x0012, _timers(delay=0, meter=0x28),
+     "the restart arm, which charges the meter AFTER it is drawn"),
+    (0x9999, 0x030000, 0x030000, 0x0000,
+     _timers(phase=1, index=PANEL_FRAME_INDEX_START, meter=0x00),
+     "the step arm, which fires the sound effect from inside the pass"),
+)
+
+# The one frame every case that is not about a particular arm runs: the measure arm on a part-filled
+# meter, which is PANEL_PASS_CASES' first row without its screens.
+PANEL_PASS_ORDINARY_FRAME = dict(
+    counter=0x1234, score=0x120000, hiscore=0x340000, stage=0x0107,
+    seed=_timers(delay=0x200, meter=0x0d))
+
+
+@pytest.mark.parametrize("screens", SCREEN_PAIRS, ids=[f"front_{p[0]:05x}" for p in SCREEN_PAIRS])
+@pytest.mark.parametrize("counter,score,hiscore,stage,seed,why", PANEL_PASS_CASES,
+                         ids=[f"case_{n}" for n in range(len(PANEL_PASS_CASES))])
+def test_the_panel_pass_runs_its_ten_callees_on_one_image(counter, score, hiscore, stage,
+                                                          seed, why, screens):
+    front, back = screens
+    _run_panel_pass(back, front, counter, score, hiscore, stage, seed,
+                    f"$b346 with {why}, screen_back {back:#x}")
+
+
+def test_the_panel_pass_cases_reach_all_three_of_the_animations_arms():
+    arms = {(bool(seed[PANEL_FRAME_PHASE]), seed[PANEL_FRAME_DELAY] == 0)
+            for _c, _s, _h, _st, seed, _why in PANEL_PASS_CASES}
+    assert len(arms) == len(PANEL_PASS_CASES), f"two cases share an arm: {arms}"
+
+
+def test_the_panel_pass_draws_the_stage_number_in_the_font_its_animation_left_behind():
+    """The one register value the pass CARRIES that reaches a drawn byte. No shipped frame puts a
+    $0001 in the longword $bcd6 leaves in d0, so the alternate font is unreachable on the game's own
+    data — the frame is poked here instead, which is what makes the flow observable rather than
+    argued. Every case above is the default-font half of it."""
+    _after, drawn, _written, _fired = _panel_timers_model(PANEL_PASS_ORDINARY_FRAME["seed"])
+    _info, font = _run_panel_pass(
+        screen=SCREEN_BUFFERS[0], front=SCREEN_BUFFERS[1], **PANEL_PASS_ORDINARY_FRAME,
+        what="$b346 with the frame poked to select the alternate font",
+        frame_pokes={_panel_frame_last_row(drawn): longword(DIGIT_FONT_ALT)})
+    assert font & WORD_MASK == DIGIT_FONT_ALT, (
+        f"the poked frame left d0 at {font:#010x}, which does not select the alternate font")
+
+
+def test_the_pass_ignores_the_registers_it_is_entered_with():
+    """$b346 sets neither d0 nor d7 before any of its ten calls, so both arrive from whatever ran
+    before it. src/hud.c argues that neither can reach a drawn byte — $b5ea's `moveq #0,d0` forces
+    the font select before the first reader, and both fields that take d7 bury it — and this is the
+    case that holds the argument: an entry d0 that WOULD select the alternate font, and a d7 whose
+    nibbles would all print, must leave the image exactly as a run entered at zero does."""
+    frame = dict(screen=SCREEN_BUFFERS[0], front=SCREEN_BUFFERS[1], **PANEL_PASS_ORDINARY_FRAME)
+    clean, _clean_font = _run_panel_pass(what="$b346 entered with cleared registers", **frame)
+    poisoned, _poisoned_font = _run_panel_pass(what="$b346 entered with poisoned d0 and d7",
+                                               entry_regs=PANEL_PASS_POISONED_REGS, **frame)
+    assert clean["writes"] == poisoned["writes"], (
+        "the pass's write set changed with the registers it was entered with, so one of them "
+        "reaches a drawn byte after all")
+
+
+def test_the_pass_calls_ten_distinct_callees_all_of_them_reconstructed():
+    """The entry pin already fixes the ten `bsr` targets and their order; this is the guard on the
+    LIST it is built from, so a callee dropped from it — or two entries naming one routine — cannot
+    pass unnoticed."""
+    assert len(PANEL_PASS_CALLS) == len(set(PANEL_PASS_CALLS)) == PANEL_PASS_CALL_COUNT
+    assert PANEL_PASS_CALLS[0] == "panel_restore_dirty_regions", "the `jsr` comes first"
+    assert PANEL_PASS_CALLS[-1] == "select_table_21e8c_and_tick_b39a", "and the tick last"
+    assert set(PANEL_PASS_CALLS) <= set(ENTRY_BYTES), "every callee is reconstructed in this file"
+
+
 # --- $e80c: the lives display ---------------------------------------------------------------------
-# One longword is the unit both arms move; named here because the row step is built from it.
-LIVES_LONGWORD = 4
 # Both destinations are absolute, so a case seeds BOTH buffers — address-keyed, with a scanline and
 # a cell of margin on each side, so a draw that ran a row long or a cell wide lands on bytes that are
 # wrong for where they were written rather than on the zeros a fresh image holds there.
-LIVES_ROW_STEP = LIVES_LONGWORD + LIVES_ICON_ROW_SKIP        # == WB_SCREEN_LINE (pinned below)
+LIVES_ROW_STEP = LONGWORD_LEN + LIVES_ICON_ROW_SKIP        # == WB_SCREEN_LINE (pinned below)
 LIVES_SLOT_STEP = LIVES_ICON_ROWS * LIVES_ROW_STEP - LIVES_ICON_REWIND
 LIVES_INSN_PER_ROW = 12
 LIVES_INSN_CAP = LIVES_ICON_SLOTS * (LIVES_ICON_ROWS * LIVES_INSN_PER_ROW + 16) + 32

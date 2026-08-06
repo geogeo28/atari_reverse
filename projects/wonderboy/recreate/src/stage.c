@@ -264,11 +264,11 @@ void stage_reset_state(uint8_t *image) {
         cursor = addr_add(cursor, WB_BG_STATE_WORD_LEN);
     }
 
-    wr16(image + WB_PANEL_FRAME_TIMER, 0);
+    wr16(image + WB_PANEL_FRAME_HOLD, 0);
     wr16(image + WB_PANEL_FRAME_DELAY, WB_PANEL_FRAME_DELAY_INIT);
     wr16(image + WB_PANEL_FRAME_PHASE, 0);
     wr16(image + WB_PANEL_FRAME_INDEX, 0);
-    wr16(image + WB_PANEL_FRAME_SPARE, 0);
+    wr16(image + WB_PANEL_FRAME_DWELL, 0);
 
     /* `clr.l $1514.w` — ONE longword over WB_TILE_33_FLAG and WB_TILE_33_MODE together. */
     wr32(image + WB_TILE_33_FLAG, 0);

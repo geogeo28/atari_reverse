@@ -58,8 +58,8 @@ from leaf import (RTS, addi_w_dn, andi_w_dn, branch, branch_over, bsr_w, case_sa
                   move_w_imm_dn,
                   move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, movea_l_abs_w, moveq_0_dn,
                   mulu_w_imm_dn, opcode, program_writes, rotate_left32, s16, st_abs_l,
-                  sub_w_dn_dn, subi_w_dn, subq_w_abs_l, swap_dn, tst_b_abs_l, tst_w_abs_l,
-                  tst_w_abs_w, tst_w_dn, u16, word)
+                  sub_w_dn_dn, subi_w_dn, subq_w_abs_l, subq_w_dn, swap_dn, tst_b_abs_l,
+                  tst_w_abs_l, tst_w_abs_w, tst_w_dn, u16, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -558,10 +558,6 @@ def adda_w_imm_an(reg, value):
 def addq_l_imm_an(amount, reg):
     """`addq.l #n,An` — `#8` encodes as 0, which is what makes the family's `addq.l #8,a0` a word."""
     return opcode(0x5088 | ((amount & 7) << 9) | reg)
-
-
-def subq_w_imm_dn(amount, reg):
-    return opcode(0x5140 | ((amount & 7) << 9) | reg)
 
 
 def sub_w_abs_l_dn(reg, addr):
@@ -1112,7 +1108,7 @@ def _blit_dispatcher_body():
             + branch(BPL_W, fits) + fits
             + move_w_imm_dn(D7, BUFFER_SCANLINES) + sub_w_abs_l_dn(D7, SCROLL_Y)
             + move_w_imm_dn(D6, BLIT_SCANLINES - 1) + sub_w_dn_dn(D6, D7)
-            + subq_w_imm_dn(1, D7) + jmp_ind(A2))
+            + subq_w_dn(1, D7) + jmp_ind(A2))
 
 
 VERTICAL_STEP_BODIES = {"up": _vertical_step_body(down=False),

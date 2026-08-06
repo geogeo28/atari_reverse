@@ -474,7 +474,7 @@ static int sprite_clip_top(const uint8_t *descriptor, sprite_blit_regs *blit, in
 
     /* `move.b 4(a4),d0 / ext.w / addq.w #1` — the width code plus one IS the number of source cells
      * in a row, since code 0 is WB_BLIT_COLUMNS_MIN columns and N columns come from N-1 cells. */
-    uint16_t cells = (uint16_t)((int16_t)(int8_t)descriptor[WB_SPRITE_DESC_WIDTH_CODE] + 1);
+    uint16_t cells = (uint16_t)(sign_ext8(descriptor[WB_SPRITE_DESC_WIDTH_CODE]) + 1u);
     uint32_t row_bytes = (uint32_t)cells * (WB_BLIT_CELL_WORDS * WB_STATE_WORD_LEN);  /* mulu.w */
     int32_t clipped = (int32_t)(int16_t)(uint16_t)row_bytes * (int32_t)*y;            /* muls.w */
 
@@ -596,7 +596,7 @@ static void sprite_draw_record(uint8_t *image, sprite_pass_regs *regs)
     descriptor = image + regs->descriptor;
 
     blit->rows = set_low_word(blit->rows,
-                              (uint16_t)(int16_t)(int8_t)descriptor[WB_SPRITE_DESC_HEIGHT]);
+                              (uint16_t)sign_ext8(descriptor[WB_SPRITE_DESC_HEIGHT]));
     blit->source = be32(descriptor + WB_SPRITE_DESC_SOURCE);
 
     y = (int16_t)(uint16_t)(be16(record + WB_ACTOR_SCREEN_Y)
@@ -617,7 +617,7 @@ static void sprite_draw_record(uint8_t *image, sprite_pass_regs *regs)
     set_scratch_word(blit, WB_SPRITE_WORK_REG, x);
     set_scratch_word(blit, WB_BLIT_X_REG, x);
 
-    width_code = (int8_t)descriptor[WB_SPRITE_DESC_WIDTH_CODE];
+    width_code = (int16_t)sign_ext8(descriptor[WB_SPRITE_DESC_WIDTH_CODE]);
     set_scratch_word(blit, WB_SPRITE_WIDTH_REG, (uint16_t)width_code);
     blit->shift = set_low_word(blit->shift, x & WB_SPRITE_SHIFT_MASK);
 

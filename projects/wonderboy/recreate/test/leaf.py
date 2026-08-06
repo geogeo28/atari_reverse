@@ -66,14 +66,20 @@ def bind(name, argtypes, restype=None):
 IMAGE_ARG = [ctypes.POINTER(ctypes.c_uint8)]
 
 
-def image_glue(name):
+def image_glue(name, restype=None):
     """Differential glue for a reconstruction whose only argument is the image.
 
     The kit calls glue as ``glue(lib, image)`` and most leaves take the image and nothing else, so
     binding one is the same line every time. The bound symbol is captured by this call rather than
     by a comprehension's loop variable, which is the idiom this replaces.
+
+    ``restype`` is for the ones that also hand a REGISTER back — `hud_blit_panel_frame` leaves the
+    d0 its caller spends as a font select — so a case can compare ``info["ret"]`` against the
+    oracle's own register without the glue being hand-rolled. (test_scroll.py's returning routines
+    are NOT these: each of its steps records what came back into a list the case reads afterwards,
+    so their glue does more than call and return and stays hand-written.)
     """
-    fn = bind(name, IMAGE_ARG)
+    fn = bind(name, IMAGE_ARG, restype)
     return lambda _lib, image: fn(image)
 
 
@@ -244,6 +250,20 @@ def move_l_imm_abs_l(value, addr):
     return opcode(0x23fc) + longword(value) + longword(addr)
 
 
+# `jsr <abs>.l` — a call that names its callee by ADDRESS rather than by displacement, so unlike
+# `bsr_w` it assembles the same wherever it sits. The opcode word is exported as well as the
+# assembled form because two batteries only ever compare against it: test_map.py and test_actor.py
+# scan the program for calls rather than building one.
+JSR_ABS_L = 0x4eb9
+
+
+def jsr_abs_l(addr):
+    """`jsr <abs>.l`. FOUR batteries (test_copylock.py's stub call, test_hud.py's one non-`bsr` call
+    in the panel pass, and test_map.py's and test_actor.py's call scans, which use the opcode word
+    above on its own)."""
+    return opcode(JSR_ABS_L) + longword(addr)
+
+
 def lea_indexed(reg, index, displacement=0, longword_index=False):
     """`lea d8(An,Dn.w),An` — the extension word is the whole of the index encoding.
 
@@ -290,6 +310,13 @@ def move_b_imm_abs_l(value, addr):
     return opcode(0x13fc) + word(value & 0xff) + longword(addr)
 
 
+def move_b_imm_d16(base, value, displacement):
+    """`move.b #imm,d16(An)` — the same immediate-in-a-word rule against a based operand. THREE
+    batteries (test_actor.py's launch speed, test_map.py's stamped tile, test_sound.py's active
+    flag, which reaches its field through the module base in a3)."""
+    return opcode(0x117c | (base << 9)) + word(value & 0xff) + word(displacement)
+
+
 def tst_w_abs_w(addr):
     """`tst.w <abs>.w` — the mode flags and the scroll's gate are all below $8000, so the original
     spells them short."""
@@ -298,6 +325,13 @@ def tst_w_abs_w(addr):
 
 def subi_w_dn(reg, value):
     return opcode(0x0440 | reg) + word(value)
+
+
+def subq_w_dn(amount, reg):
+    """`subq.w #n,Dn` — a 3-bit count, so it is masked like the shifts'. THREE batteries
+    (test_map.py's step counters, test_scroll.py's queue walk, test_hud.py's meter charge), which
+    spelt it under three names and two argument orders until they met here."""
+    return opcode(0x5140 | ((amount & 7) << 9) | reg)
 
 
 def addi_w_dn(reg, value):
@@ -355,8 +389,16 @@ def move_w_imm_dn(reg, value):
     return opcode(0x303c | (reg << 9)) + word(value)
 
 
+def moveq(value, reg):
+    """`moveq #n,Dn` — an 8-bit immediate SIGN-EXTENDED into the whole longword register, which is
+    why the immediate is masked to a byte rather than checked against the register's width."""
+    return opcode(0x7000 | (reg << 9) | (value & 0xff))
+
+
 def moveq_0_dn(reg):
-    return opcode(0x7000 | (reg << 9))
+    """`moveq #0,Dn`, the one immediate the walks in test_actor.py and test_map.py ever use — spelt
+    for it because "clear the register before a word load" is what those sites mean."""
+    return moveq(0, reg)
 
 
 def clr_w_dn(reg):
@@ -436,7 +478,9 @@ def addq_b_d16(amount, base, displacement):
 
 # A 68000 branch counts its displacement from the EXTENSION WORD, which sits two bytes after the
 # opcode the branch is written as — so a displacement is always the bytes the branch spans plus that
-# 2. Spelling it once is what lets a pin's displacements come out of the geometry of the pieces they
+# 2. The same 2 is what a `d16(pc)` OPERAND counts from, which is how test_sound.py's PC-relative
+# module names every one of its own fields — one constant, because the two are the same rule.
+# Spelling it once is what lets a pin's displacements come out of the geometry of the pieces they
 # jump over instead of being transcribed. Each battery still keeps its own branch OPCODES (they
 # spell them differently — byte constants in test_hud.py, built from an integer in test_scroll.py);
 # `bsr.w` and `dbf` have only the one encoding each, so those are assembled whole here.
@@ -479,6 +523,19 @@ def bsr_w(here, target):
     """`bsr.w target` as assembled AT ``here`` — a call's displacement depends on where it sits, so
     a pin aimed at the wrong callee (or built at the wrong offset) fails on the bytes."""
     return BSR_W + word(target - (here + BRANCH_EXTENSION))
+
+
+def assemble(base, pieces):
+    """Concatenate ``pieces``; a callable piece is handed the address it starts at.
+
+    Every pin whose operands are POSITION-DEPENDENT needs this — a `bsr.w` displacement, a
+    `d16(pc)` operand — because such an operand cannot be built until the running address is known.
+    test_hud.py's second tier spelt it first and test_sound.py's whole entry pin is one call to it,
+    which is what moved it here."""
+    body = b""
+    for piece in pieces:
+        body += piece(base + len(body)) if callable(piece) else piece
+    return body
 
 
 def assert_entry_is(name, expected):
@@ -548,6 +605,12 @@ def case_salt(case):
 # been got wrong.
 WORD_BYTES = 2
 
+# ...and the longword, which every battery that reads a pointer or a `movem` slot out of the image
+# needs. test_hud.py and test_sound.py take it from here; test_actor.py, test_blit.py, test_map.py
+# and test_scroll.py still spell a `LONGWORD_LEN = 4` of their own and are the next conversion —
+# stated rather than left silent, the way an encoding parked at two users says so in its docstring.
+LONGWORD_BYTES = 4
+
 
 def u16(image, addr):
     """The word at ``addr``, as the big-endian number a `move.w` reads there."""
@@ -558,6 +621,17 @@ def s16(value):
     """``value``'s low word as the SIGNED number a word operand spells."""
     value &= WORD_MASK
     return value - (WORD_MASK + 1) if value & 0x8000 else value
+
+
+def s8(value):
+    """``s16`` one size down: ``value``'s low BYTE as the signed number `ext.w Dn` makes of it.
+
+    TWO batteries (test_blit.py's sprite descriptor, whose height and width-code fields are signed
+    bytes, and test_sound.py's SFX id and volume index) — and the reconstruction spells it once too,
+    as `sign_ext8` in tools/recreate_kit/include/machine.h.
+    """
+    value &= 0xff
+    return value - 0x100 if value & 0x80 else value
 
 
 # --- the register arithmetic a model restates -----------------------------------------------------

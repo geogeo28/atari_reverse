@@ -85,12 +85,13 @@ import pytest
 
 import harness
 import leaf
-from leaf import (BRANCH_EXTENSION, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16, andi_w_dn,
+from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16, andi_w_dn,
                   asr_w_imm_dn, branch, branch_over, case_salt, clr_w_dn, cmp_w_dn_dn, cmpi_b_dn,
                   keyed_block, lea_abs_l, lea_indexed, longword, lsl_w_imm_dn, merge_bands,
-                  move_b_d16_dn, move_w_abs_l_dn, move_w_dn_dn, move_w_ind_dn, move_w_postinc_dn,
-                  movea_l_abs_l, moveq_0_dn, opcode, program_writes, s16, set_low_word,
-                  sub_w_dn_dn, subi_w_dn, tst_w_abs_w, tst_w_dn, u16, word)
+                  move_b_d16_dn, move_b_imm_d16, move_w_abs_l_dn, move_w_dn_dn, move_w_ind_dn,
+                  move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode, program_writes, s16,
+                  set_low_word, sub_w_dn_dn, subi_w_dn, subq_w_dn, tst_w_abs_w, tst_w_dn, u16,
+                  word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -262,10 +263,6 @@ def subi_w_d16(base, value, displacement):
     return opcode(0x0468 | base) + word(value) + word(displacement)
 
 
-def subq_w_dn(amount, reg):
-    return opcode(0x5140 | ((amount & 7) << 9) | reg)
-
-
 def addq_w_dn(amount, reg):
     return opcode(0x5040 | ((amount & 7) << 9) | reg)
 
@@ -305,10 +302,6 @@ def move_b_imm_ind(base, value):
 
 def move_b_imm_postinc(base, value):
     return opcode(0x10fc | (base << 9)) + word(value)
-
-
-def move_b_imm_d16(base, value, displacement):
-    return opcode(0x117c | (base << 9)) + word(value) + word(displacement)
 
 
 def adda_w_abs_l(reg, addr):
@@ -843,7 +836,10 @@ def _over_high_bytes(entry, low):
 BSR_HIGH_BYTE = 0x61
 BRA_HIGH_BYTE = 0x60
 BSR_LONG_DISPLACEMENT = 0xff        # the 68020 `bsr.l`/`bra.l` encoding; none in this image
-JSR_ABS_L = 0x4eb9
+
+# The two absolute forms a call site can take. `JSR_ABS_L` is leaf.py's — the scan below only ever
+# compares against the opcode word, but a battery that BUILDS the instruction must get the same two
+# bytes, so there is one definition of them.
 JMP_ABS_L = 0x4ef9
 
 

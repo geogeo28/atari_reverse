@@ -17,26 +17,30 @@ settles and the tier above them (892 bytes), the STAGE LOADER that fills the scr
 eight buffers in the first place (1026 bytes), the SPAWN PASS that drives the lifecycle plus the
 two resets that start a game and a life (568 bytes), and the WHOLE SPRITE TIER — the twelve
 blitters plus `sprite_draw_pass`, the pass that clips, addresses and dispatches them, 2,458 bytes
-tiling `$8f02..$989c` exactly (batches 14–15) — 15,630 bytes in all, 60.6 % of everything
+tiling `$8f02..$989c` exactly (batches 14–15), and now the PANEL'S THIRD-TIER DRIVER pair plus the
+SOUND MODULE'S FIRST PORTED BYTES — `panel_frame_timers` + `panel_refresh_frame` and
+`snd_trigger_effect` + its register-preserving stub, 660 bytes that close the status panel end to
+end (batch 16b) — 16,290 bytes in all, 63.2 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures.**
-`make test`: **2376 cases green in what this batch commits** — 2146 before batch 14, plus batch
+`make test`: **2565 cases green in what this batch commits** — 2146 before batch 14, plus batch
 14's 155 (154 in the new `test/test_blit.py`, and 1 in `test/test_layout.py`: a name defined in
 two headers is refused, the guard that batch's `layout.py` scrape extension needs), plus batch
-15's 75 (all in `test/test_blit.py`, which stands at 229).
-Of the 2376: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
-first gameplay batch's, 496 are the status panel's — that last figure was 169 after batch 2, 339
-after batch 3, 481 after batch 10 and 485 after batch 12, and the whole of the growth is
-`test/test_hud.py` — 231 are the background scroll subsystem's (65 after batch 5, 148 after batch 6),
+15's 75 (all in `test/test_blit.py`, which stands at 229), plus batch 16b's 189 — 137 in the new
+`test/test_sound.py` and 52 in `test/test_hud.py`.
+Of the 2565: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
+first gameplay batch's, 548 are the status panel's — that last figure was 169 after batch 2, 339
+after batch 3, 481 after batch 10, 485 after batch 12 and 496 after batch 13, and the whole of the
+growth is `test/test_hud.py` — 137 the sound module's (batch 16b's `test/test_sound.py`), 231 are the background scroll subsystem's (65 after batch 5, 148 after batch 6),
 755 are the actor tier's (113 after batch 8, 222 after batch 10), 105 the text subsystem's (56 after
 batch 8), 167 the collision map's, which is batch 10's new `test/test_map.py` (58 when it landed),
 80 the stage loader's (65 when batch 12 landed it), 229 the sprite tier's (batch 14's
 `test/test_blit.py` at 154, grown by batch 15's pass cases), and the last is `test_layout.py`'s
 two-header refusal.
-**A `make test` run in a working tree may report MORE than 2376**, because `test/test_audio_capture.py`
+**A `make test` run in a working tree may report MORE than 2565**, because `test/test_audio_capture.py`
 — which pins a KIT mode from this game's suite for `test_poked_input_guard.py`'s reason — is a
 concurrent session's battery, landing in its own commit and still growing; it is not part of this
-batch's count and nothing here rests on it (it stood at 13 while batch 15 was written, so a clean
-tree reports 2389). A row appears in the table at the end when a function is
+batch's count and nothing here rests on it (it stood at 13 while batch 16 was written, so a clean
+tree reports 2578). A row appears in the table at the end when a function is
 reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only *named*,
 not ported.
 
@@ -57,7 +61,9 @@ same-day reapply + re-scan DID move them — denominator 25,786, verified column
 **`panel_refresh_frame` ($b346) now has NINE of its ten callees reconstructed.** The tenth, `$bbca`,
 is the sound-module blocker batch 3 registered, and it is reached by an unconditional `bsr` — so
 `$b346` itself stays unported and no seeding can change that. The reasoning is in "The status
-panel's third tier" below.
+panel's third tier" below. *(Batch 16b: ALL TEN — the blocker fell the only way it could, by
+porting the callee: `src/sound.c` opened with `snd_trigger_effect`, and $bbca and $b346 landed
+behind it. The panel subsystem is CLOSED; see the batch-16 section at the end.)*
 
 **AND THE TIER THAT FILLS THOSE BUFFERS BEFORE THE ENGINE EVER RUNS IS BATCH 12'S** — see "The
 stage loader (batch 12)" at the end. `bg_build_buffer` ($fa30) draws the map's window into copy 0,
@@ -615,6 +621,10 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x8fce` | `blit_clip_left_w2` … `0x936c` `blit_clip_left_w5` | 22/40/58/74 | verified | The same battery: every left-ladder arm at its threshold and beside it (thresholds −16k, masks `(1<<(columns−k))−1`), and the fully-off-screen arm's `subq.w #6,a5` — a 32-BIT subtract, pinned with a5 seeded four bytes into a high word so a word-wide subtract is caught. Only the LEFT ladders unwind |
 | `0x8fe4` | `blit_clip_right_w2` … `0x93b6` `blit_clip_right_w5` | 168/266/372/478 | verified | The same battery: each right ladder's complete mask set (3,2 / 7,6,4 / $f,$e,$c,8 / $1f,$1e,$1c,$18,$10) and its off-screen arm returning having touched NOTHING; the shared clipped bodies both preludes branch into (one helper per width in `src/blit.c`); the w4 body's LATE `or.w d4,d3` merge reproduced and pinned from the skipping arms of BOTH ladders (pixels identical, d3 differs); and the two-column row-count guard from both exits ($ffff → beq, $fffe/$7fff → bmi) against the wider bodies' bare `dbf` |
 | `0x8f02` | `sprite_draw_pass` (`src/blit.c`) | 204 | verified | Batch 15, ~75 cases in the same battery: differentials entering the pass over seeded records + descriptors + `screen_back`, write set = the UNION of the rectangles the walk drew against a model that walks a MUTABLE image (each record sees what the last one drew), all reported registers + the pass's own a6/a4/a2 through `sprite_pass_regs`, and the a5 unwind accumulated across a walk. Every clip class reached FROM the x/y arithmetic; the top clip's `muls`/`suba.l` source advance; the $9f band's both edges; the sign-extended `adda.w` descriptor-index wrap run BOTH directions from the LAST slot; a skipped record's cursor observed from slot 18 (the review's mutation-confirmed hole, closed); the negative-height handoff through the guarded width AND the 65,536-row runaway RUN, pointed one byte past the image (1.37 s, 4.65 M instructions, both sides dropping every write — what batch 14's `os_in_image` was for); the dead d5 write pinned through the off-screen arms; seeded-band disjointness asserted + 204-byte whole-body entry pin assembled from the battery's own statement of the walk |
+| `0x17b14` | `snd_call_trigger_effect` (`src/sound.c`) | 14 | verified | Batch 16b, 14 cases: the register-preservation pin (all fifteen reported registers seeded distinctly and required back, WITH the effect's writes landing), 12 shipped ids through the stub, and a 7-entry pin on the stub TABLE's shape — six `movem` thunks and the 10-byte a3 push, each `bsr` displacement rebuilt from `../names.txt` |
+| `0x1a48a` | `snd_trigger_effect` | 334 | verified | 123 cases: all 26 shipped ids on channel A, 12 call-site ids x channels B/C, 6 out-of-range ids (both sides of the sign extension) x 3 channels, 3 ids whose descriptor sits INSIDE the mix block (order), 2 whose descriptor sits inside the STATE band (the copy DIRECTION — a memmove reddens exactly these, over a keyed-seeded band, with the model SIMULATING the byte-by-byte copy), 5 seeded descriptors x 3 channels through a poked pointer-table entry, a d1 sweep over the third arm bracketing the last channel's own number, d0/d1 high-byte pins, table self-bounding + noise-arm coverage guards + entry pin over all three arms and the orphan `rts` |
+| `0xbbca` | `panel_frame_timers` (`src/hud.c`) | 268 | verified | 41 cases: 19 timer seeds x 2 screen buffers reaching every arm and both sides of every test in the body (the rewind clamp signed and exact, the meter floor and its non-floored negative, the effect's SIGNED `bgt`, the index wrap at $c), each asserting the arm's exact write set, the frame it drew and the d0 it hands on; the effect-firing arm's writes asserted through `test_sound.py`'s own model (imported, not restated) + entry pin assembling the `jsr 56(a1)` from `entry_of("snd_stub_00")` — batch 16a's `$bca2` edge confirmed by construction |
+| `0xb346` | `panel_refresh_frame` | 44 | verified | 11 cases: 3 animation arms x 2 screen-buffer pairs over the whole ten-callee tier (write set composed from the batteries that own each callee), the poked-frame case that reaches the alternate stage font through the LIVE d0 the blit's last `movem` leaves, the entry-register indifference case, and the call-list guard + entry pin. Attribution off for a stated reason: a composed pass's outputs are its later callees' inputs (the poisoned meter value would drive $b61e's 16k-blit runaway) |
 
 ### The .RAD depacker
 
@@ -1137,7 +1147,9 @@ and porting `$bbca` means either porting the sound module or shipping a reconstr
 subsystem call silently missing on one side. Neither was done, and **`$bbca` remains the single
 blocker**; the `$bd2c > $a` branch inside it that skips the thunk is a seedable escape *if* that
 routine is ever ported on its own terms, which is a scoping decision for a sound batch and not for
-this one.
+this one. *(Batch 16b did exactly that scoping the other way: `snd_trigger_effect` itself proved
+RAM-only — the one routine in the module the differential can see whole — so the sound batch was
+this batch, and $bbca and $b346 are ported. See the batch-16 section.)*
 
 Mutation-checked rather than assumed (each rebuilt with the `.so` deleted first, and the source
 restored and compared byte for byte against a pristine copy afterwards — 793 green each time):
@@ -3047,3 +3059,94 @@ down). Usual terms throughout.
   ported; a measurement, queued as one, folded with batch 14's identical entry.
 * **THE RUNAWAY CASE SETS THE SUITE'S TAIL** (1.71 s under `-n auto`). Fits today; a second long
   pass case on the same worker is where wall time starts to move.
+
+### Batch 16: the sound module opens, and the status panel CLOSES end to end
+
+Two commits, because half of it was a tool defect: **16a** (its own commit) diagnosed and fixed the
+`$bca2` scan gap — the batch-3 register entry above carries the closure, `PORTABILITY.md` §0d the
+deltas, and the headline is that Ghidra's 68000 sleigh models `jsr (d16,An)` one dereference too
+deep and TEN resolved call edges were being dropped image-wide. **16b** is the port the diagnosis
+unblocked: `snd_trigger_effect` ($1a48a, 334 B) + its stub `snd_call_trigger_effect` ($17b14,
+14 B) into the new `src/sound.c`, then `panel_frame_timers` ($bbca, 268 B) and
+`panel_refresh_frame` ($b346, 44 B) — **verified 151, 16,290 bytes, and the thirteen-batch panel
+story is CLOSED: all ten of the pass's callees green, entered at the top, one composed
+differential.**
+
+**THE SOUND MODULE IS OPEN, AND NARROWLY — BY DESIGN.** $1a48a is the one routine in
+`$17adc..$1abc8` that touches nothing but RAM, so it is the one the differential can see whole. A
+green suite here says the right bytes landed in the right module fields and NOTHING about audio:
+the sound is made by the per-VBL tick at `$17c74` (PSG ports, supervisor mode), which stays
+unported behind the differential PSG wall. What the read established: THREE arms, not two (0 = A,
+1 = B, anything else = C, only d1's low byte compared, the third arm with no test of its own), the
+same fifteen instructions over four base-plus-stride blocks, the noise byte SHARED across channels,
+the five field stores reading their sources BACK OUT OF THE COPY, and state+17 never written.
+`../names.txt`'s sound block carries the corrections, six new `var` lines, and the five timer
+words' true names — including `panel_frame_rewind` ($bd30), the one word `stage_reset_state` does
+not touch.
+
+**THE PASS CARRIES ONE LIVE REGISTER BETWEEN TWO CALLEES, AND IT IS DATA.** $b346 sets neither d0
+nor d7 before any of its ten calls. d7 is buried by both readers; d0 is forced to zero by $b5ea's
+`moveq` before the score draws — but $bd32's font select is whatever $bbca left, which is
+`hud_blit_panel_frame`'s last `movem`: the panel frame's LAST ROW, FIRST LONGWORD.
+`hud_blit_panel_frame` and `panel_frame_timers` therefore RETURN that value. All thirteen shipped
+frames hold `$1000e000` there, so the alternate font is unreachable on the game's own data; a
+poked frame reaches it, which is what makes the flow observable rather than argued.
+
+**THE MUTATION SWEEP: 30 of 33 killed**, one real coverage hole found and closed during it (the
+channel clamp — no case passed a d1 of 2 or 3 until the selector sweep), and three survivors
+argued equivalent and commented where they live: a record copy one byte LONG (the next store
+overwrites state+14 unconditionally), the `sf` that disarms the channel (the flag ends at 1 either
+way — that store exists for the VBL tick, an interrupt the harness does not model), and the meter
+floor's strictness (a charge landing exactly on zero stores zero on both arms).
+
+**THE REVIEW GATE FOUND TEN; TWO WERE MUTATION-PROVEN COVERAGE HOLES, BOTH NOW CLOSED:**
+
+* **THE FORWARD COPY'S DIRECTION WAS UNPINNED — `memmove` survived all 693 cases.** The
+  self-overlap cases pinned the copy's ORDER against the mix stores, never its direction, and the
+  20 ids whose descriptor sits inside the state band landed in bytes the pristine image zero-fills.
+  The fix seeds the band and adds the propagating class (ids $8f/$9f on channel C, source 11 and 4
+  bytes below their own destination), with the model SIMULATING the byte-by-byte copy — a
+  `memmove` now reddens exactly those cases. The model also gained a self-check that no case's
+  volume stream lands inside a band the arm writes.
+* **THE BLIT'S NEW RETURN WAS UNPINNED BY ITS OWN BATTERY** — mutating the returned longword left
+  all 8 of its cases green and reddened only the tiers above. Its battery now asserts the return
+  (and its d0 equality) for every index it draws.
+* The rest: the `poison=False` justification named a byte that cannot cause the hazard (the meter
+  MAX is rewritten before it is read; the true driver is the poisoned meter VALUE running $b61e
+  16,374 blits) — reworded to the general truth, a composed pass's outputs are its later callees'
+  inputs; a provably no-op `sign_ext16` under a comment claiming all three extensions load-bearing
+  — deleted, comment now names the two that are; the encoder ledger's second regression in two
+  batches repaired (leaf.py gains `jsr_abs_l`, `subq_w_dn`, `move_b_imm_d16` — a third-user found
+  by the audit itself — `moveq`, `s8`, `LONGWORD_BYTES`, `image_glue(restype=)`; `clr_w_dn`'s
+  re-forked byte literals deleted ONE batch after its hoist; six pairs parked at two users with
+  ALSO-IN docstrings both ways; both files' false single-user ledger comments corrected);
+  `WB_SND_TABLE_ENTRY_LEN` pinned through the header scrape (it was the batch's one unpinned
+  cross-language constant); `sign_ext8` to the kit's `machine.h` beside `sign_ext16` (its own
+  commit; blit.c's three inline spellings converted); the composed case's 1,711 allowed bytes
+  pre-merged to 303 bands (77 → 17 ms measured); the channel sweep's duplicated dozen dropped
+  (−12 cases, the sweep's claim is about B and C).
+
+**What this batch does NOT pin:**
+
+* **EVERYTHING THE TRIGGER ARMS.** Sound is made by `$17c74`; nothing here hears it.
+* **The rest of the module's mutable state** — the music channel states, `snd_psg_shadow`, the
+  PRNG. Deliberately unmodelled: $1a48a touches none of them, so a port that reached one reddens
+  as a stray write rather than being covered by a model that does not exist.
+* **The `sf` store's ordering purpose and the meter floor's strictness** (two of the three
+  survivors) — invisible to memory.
+* **`$bbca`'s d7 at the `rts`** — nothing reads it; the C returns only d0.
+* **What the 13 frames depict**, what the meter means, and what the game DOES with the alternate
+  font a poked frame reaches.
+
+**QUEUED, registered rather than half-done:**
+
+* **THE HUD-SUBSYSTEM PARTITION IS UNBLOCKED** — the condition its queue entry named ($b346
+  ported) is met; a `subsystems.tsv` redraw + re-measure, folded with the two already queued.
+* **THE DAMAGE PATHS ARE HONESTLY PORTABLE NOW.** `$69fe`/`$6b46` were rejected in batches 10 and
+  13 for their invisible `jsr 56(a5)`; 16a made the edge visible and 16b ported its target, so
+  their whole closure is green — the natural batch 17, alongside `$6bb8` whose T4 re-pricing
+  (16a's one casualty) honestly needs the PSG-read model instead.
+* **`LONGWORD_LEN` still has three out-of-batch spellings** (test_actor/test_blit/test_map/
+  test_scroll, ~40 sites) — parked in `leaf.py`'s note beside `LONGWORD_BYTES`.
+* **The `$17c74` per-VBL tick is the module's next wall** — supervisor-mode PSG writes; blocked on
+  the seeded-PSG-read model the audio-capture work opened the door to.
