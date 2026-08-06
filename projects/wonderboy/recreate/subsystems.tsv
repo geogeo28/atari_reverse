@@ -75,6 +75,17 @@
 # entry points `$bf4e`/`$bf5e`, which are one routine — `$bf4e` has no `rts` and falls through.
 # Three F rows tile `$bd8a..$c030` exactly, and `$c030` is architecture.md's own CODE/DATA
 # boundary. Its one caller is `game_main_loop` and it calls nothing outside itself.
+# The HUD partition (batch 18, the measurement queued since batch 15 and unblocked by 16b): the
+# status panel is one subsystem, cited from the batches' own reads that the cluster TILES — the
+# pass and its ten callees plus every tier under them ($b346..$bd66, batches 2-4/13/16b; the range
+# ends at hud_draw_two_digits' body end, $bd66..$bd8a being the panel's own state words), the
+# region-restore family the pass opens with ($d93a..$dbb0, batch 4; NOT $dbc0, unported game
+# logic), the effect/state stubs that WRITE the panel's slots, meter and state words
+# ($10200..$103e8, batch 1 — the queue entry's own list), and hud_draw_lives ($e80c, batch 13).
+0xb346	0xbd66	hud (status panel)
+0xd93a	0xdbb0	hud (status panel)
+0x10200	0x103e8	hud (status panel)
+0xe80c	0xe87c	hud (status panel)
 0xbd8a	0xc030	text (message box)
 # `actor_slots_mark_free` (batch 10): the free-marker walk `actor_table_reset`'s callers use when
 # only the markers are to move. One function, 14 bytes, two `bsr` callers.

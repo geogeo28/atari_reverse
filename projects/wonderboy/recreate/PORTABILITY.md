@@ -420,6 +420,34 @@ the old behaviour.
 (`$fe4a`/`$fe8c`, `$bf4e`) is a different mechanism — no transfer instruction exists — and stays
 open above.
 
+## 0e. The HUD partition (2026-08-05, batch 18): the largest mis-partition, drawn
+
+The measurement queued since batch 15's re-measure ("THE STATUS PANEL HAS NO SUBSYSTEM") and
+unblocked by 16b ($b346 ported). **No code changed and no test moved**; `subsystems.tsv` gained
+four `hud (status panel)` ranges, cited on the spot: `$b346..$bd66` (the pass, its ten callees and
+every tier under them — ending at `hud_draw_two_digits`' body end, the panel's own state words
+filling `$bd66..$bd8a`), `$d93a..$dbb0` (the region-restore family; NOT `$dbc0`, which is unported
+game logic), `$10200..$103e8` (the effect/state stubs that write the panel's slots, meter and
+state words), and `$e80c` (`hud_draw_lives`).
+
+**Pinned before touching anything**: the unmodified partition reproduces every §0d figure —
+222/256 runnable, 21,334 B, 82.7 %, false-green 28/3,348, all fifteen subsystem rows. The re-run
+then differs in EXACTLY ONE hunk of the subsystem table:
+
+| | before | after |
+|---|---|---|
+| hud (status panel) | — | **62 fns / 3,372 B, T0 CLEAN direct AND transitive, runnable 62/62, 100 % reconstructed** |
+| game logic | 86 / 6,700 B, runnable 76 / 4,662 B | **24 / 3,328 B, runnable 14 / 1,290 B** |
+
+Every whole-program figure is unchanged (diffed, not argued). The HUD row is the file's cleanest:
+the only whole subsystem that is simultaneously 100 % measured-runnable and 100 % reconstructed
+across four disjoint address ranges. The catch-all — 138 functions before the first re-measure —
+is down to 24, of which `FUN_0000dbc0` (932 B, unported, unnamed) is the largest single remainder.
+
+**Also discharged here**: batch 15's queued `video (sprite blitters)` row re-measure — §0d's run
+already used the redrawn `$8f02..$989c` range (13 fns / 2,458 B, 100 %), and today's baseline pin
+makes that explicit; the row is byte-identical in both of this section's runs.
+
 Two checks that make the re-scan trustworthy as a baseline: the OLD-scan pin above, and a
 `dump_names.sh` round-trip — every one of the 212 `fn` and 202 `var` lines in `../names.txt` comes
 back verbatim (`# ctx` tags stripped, as specified); the dump's only extra line is `fn 0x3f8

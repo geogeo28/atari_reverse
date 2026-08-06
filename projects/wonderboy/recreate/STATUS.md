@@ -3153,6 +3153,7 @@ floor's strictness (a charge landing exactly on zero stores zero on both arms).
 
 * **THE HUD-SUBSYSTEM PARTITION IS UNBLOCKED** — the condition its queue entry named ($b346
   ported) is met; a `subsystems.tsv` redraw + re-measure, folded with the two already queued.
+  *(Batch 18: RUN — see the batch-18 section and `PORTABILITY.md` §0e.)*
 * **THE DAMAGE PATHS ARE HONESTLY PORTABLE NOW.** `$69fe`/`$6b46` were rejected in batches 10 and
   13 for their invisible `jsr 56(a5)`; 16a made the edge visible and 16b ported its target, so
   their whole closure is green — the natural batch 17, alongside `$6bb8` whose T4 re-pricing
@@ -3237,3 +3238,27 @@ as `effect_record_list`'s emptiness sign (`../names.txt` addendum); `21(a1)` is 
 flicker/invulnerability countdown `$f14` runs down; `test_stage.py`'s unused `forward_branch`
 import (pre-existing, noted by two consecutive fix passes — next touch of that file should drop
 it).
+
+
+### Batch 18: the HUD partition — the largest mis-partition, drawn and measured
+
+The measurement queued since batch 15 and unblocked by 16b, run per the house discipline: the
+unmodified partition reproduces every committed §0d figure first, then `subsystems.tsv` gains four
+`hud (status panel)` ranges cited on the spot, and the re-run differs in EXACTLY ONE hunk. **No
+code changed, no test moved** (`make test` 2742 before and after); [`PORTABILITY.md`](PORTABILITY.md)
+§0e is the full record.
+
+**THE HUD ROW IS THE FILE'S CLEANEST: 62 functions / 3,372 bytes, T0 CLEAN direct AND transitive,
+100 % runnable, 100 % reconstructed** — the pass and its ten callees with every tier under them
+(`$b346..$bd66`), the region-restore family (`$d93a..$dbb0`), the effect/state stubs that write
+the panel's slots and state words (`$10200..$103e8`), and `hud_draw_lives` (`$e80c`). Sixteen
+batches of panel work, one row.
+
+**THE CATCH-ALL IS DOWN TO 24 FUNCTIONS / 3,328 BYTES** (from 138 before the first re-measure),
+runnable 14 / 1,290 B — and its largest single remainder is now `FUN_0000dbc0` (932 B, unported,
+unnamed, the routine after the panel restores), which is thereby the natural next READ. All three
+queued measurement entries are closed: this partition, batch 15's sprite-row re-measure
+(discharged — §0d had already measured the redrawn range), and batch 14's folded copy.
+
+**What a partition cannot move, it did not move**: every whole-program figure is byte-identical
+across the two runs, diffed rather than argued.
