@@ -111,6 +111,35 @@ _LIB.osh_dosound_count.restype = ctypes.c_uint32
 _LIB.osh_dosound_args.restype = _u32p
 _LIB.osh_psg_mixed_paths.restype = ctypes.c_int
 _LIB.osh_psg_unmodeled.restype = ctypes.c_uint32
+# The seeded PSG read model (TRAP_MODEL.md, Phase 6). Required, not probed: run() installs the seed
+# before EVERY run — an empty one included, so a seed cannot leak from the previous run — and reads
+# the unseeded-read refusal mask afterwards. An .so without it does not merely lack a feature; it
+# would refuse every direct $ff8800 read the way it did before the model existed, while this file
+# reported the case as seeded.
+_PSG_MODEL_ABI = ("osh_psg_seed", "osh_psg_file", "osh_psg_known", "osh_psg_unseeded",
+                  "osh_psg_no_select", "osh_psg_direct", "osh_psg_giaccess", "osh_psg_kinds",
+                  "osh_psg_nregs")
+_missing_psg_model = [sym for sym in _PSG_MODEL_ABI if not hasattr(_LIB, sym)]
+if _missing_psg_model:
+    # All six or none, and named together rather than one at a time: they ship in one shim.c, and a
+    # bare ctypes AttributeError on the second of them would name neither the file nor the rebuild.
+    raise _stale_oracle(
+        "/".join(_missing_psg_model),
+        "so it predates the seeded PSG read model: a direct $ff8800 read-back would be refused "
+        "however the case seeds it, and no read-modify-write of the chip could be verified.")
+_LIB.osh_psg_seed.argtypes = [_u8p, ctypes.c_uint32]
+_LIB.osh_psg_file.restype = _u8p
+_LIB.osh_psg_known.restype = ctypes.c_uint32
+_LIB.osh_psg_unseeded.restype = ctypes.c_uint32
+_LIB.osh_psg_no_select.restype = ctypes.c_uint32
+_LIB.osh_psg_direct.restype = ctypes.c_uint32
+_LIB.osh_psg_giaccess.restype = ctypes.c_uint32
+_LIB.osh_psg_kinds.restype = _u8p
+_LIB.osh_psg_nregs.restype = ctypes.c_uint32
+# Bound ONCE, from the .so rather than from a second copy of the count here, so a shim.c that resized
+# the file cannot leave this file reading past it.
+PSG_NREGS = _LIB.osh_psg_nregs()
+_PsgFileP = ctypes.POINTER(ctypes.c_uint8 * PSG_NREGS)
 _LIB.osh_cov_enable.argtypes = [ctypes.c_int]
 _LIB.osh_cov_visited.argtypes = [ctypes.c_uint32]
 _LIB.osh_cov_visited.restype = ctypes.c_int
@@ -119,21 +148,13 @@ _LIB.osh_cov_bytes.restype = ctypes.c_uint32
 _LIB.osh_prof_enable.argtypes = [ctypes.c_int]
 _LIB.osh_prof_data.restype = _u32p
 _LIB.osh_prof_slots.restype = ctypes.c_uint32
-# The opt-in audio-capture mode (see audio_capture below). Deliberately NOT a hard import-time error
-# the way osh_poked_input_calls is: nothing run() does needs it, so a .so predating it must still be
-# able to run a whole normal suite. audio_capture() names the rebuild when it is what is missing.
-_HAS_AUDIO_CAPTURE = hasattr(_LIB, "osh_audio_capture")
-AUDIO_NREGS = None       # the modeled YM2149 register file's size; None when the .so has no mode
-if _HAS_AUDIO_CAPTURE:
-    _LIB.osh_audio_capture.argtypes = [ctypes.c_int]
-    _LIB.osh_audio_capture_on.restype = ctypes.c_int
-    _LIB.osh_audio_regfile.restype = _u8p
-    _LIB.osh_audio_reg_count.restype = ctypes.c_uint32
-    _LIB.osh_audio_profile_unmodeled.restype = ctypes.c_uint32
-    # Bound ONCE, from the .so rather than from a second copy of the count here: audio_regfile() is
-    # then a single cast, and a shim.c that resized the file cannot leave this file reading past it.
-    AUDIO_NREGS = _LIB.osh_audio_reg_count()
-    _AudioRegfileP = ctypes.POINTER(ctypes.c_uint8 * AUDIO_NREGS)
+# The opt-in audio-capture mode (see audio_capture below). No probe: the mode is a documented
+# RELAXATION of the seeded read model, and ships in the same shim.c as the symbols required above —
+# so an .so that has those and not these does not exist, and a `if _HAS_AUDIO_CAPTURE:` branch here
+# would be a claim about a build that cannot occur, dead in every direction a test could push it.
+_LIB.osh_audio_capture.argtypes = [ctypes.c_int]
+_LIB.osh_audio_capture_on.restype = ctypes.c_int
+_LIB.osh_audio_profile_unmodeled.restype = ctypes.c_uint32
 
 _LIB.osh_run_bench.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32,
                                ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
@@ -196,9 +217,12 @@ def prof_data():
     return list(ctypes.cast(_LIB.osh_prof_data(), ctypes.POINTER(ctypes.c_uint32 * n)).contents)
 
 
-def _require_audio_capture():
-    if not _HAS_AUDIO_CAPTURE:
-        raise _stale_oracle("osh_audio_capture", "so it predates the opt-in audio-capture mode.")
+# How many `audio_capturing()` blocks are open. The mode is an oracle-global toggle, so "is it
+# armed?" cannot say whether THIS caller meant to arm it — and a run made under someone else's
+# capture reads answers shim.c invented (see run()'s one-sided-capture guard). The context manager
+# is the one thing that can say "yes, deliberately", so it is what run() asks. A depth rather than a
+# bool so the bookkeeping stays exact however the blocks nest.
+_capture_scopes = 0
 
 
 def audio_capture(on):
@@ -209,14 +233,16 @@ def audio_capture(on):
     The argument is required: at a call site "audio_capture()" would read as *query* rather than as
     *arm*, and arming this by accident is the failure mode the whole design is shaped around.
 
-    With it on, three hardware reads the oracle otherwise refuses or answers as 0 are served, so an
+    With it on, the seeded PSG read model is RELAXED and two machine-profile bytes are served, so an
     extraction tool can drive a game's music replayer tick by tick and read the YM2149 register
     stream out of ``psg_writes()``:
 
-      * a BYTE read of ``$ff8800`` returns the modeled register file's currently latched register —
-        i.e. the last value written to it. That is what the chip does, and it is what a replayer's
-        mixer read-modify-write needs: served as 0 (or refused) the merge loses exactly the bits the
-        read-back exists to preserve.
+      * a BYTE read of ``$ff8800`` returns the modeled register file's currently latched register
+        even when nothing declared or wrote it, answering **0** where the default model refuses (see
+        ``run``'s ``psg_seed``). A capture cannot declare a seed per tick and a refusal would end it
+        at the replayer's first mixer read-back — but that 0 is this mode's own invention, and is
+        the reason a differential may not run under it. The register file also SPANS runs here,
+        where the default model re-seeds it per run.
       * a BYTE read of ``$fffa01`` (MFP GPIP) or ``$ff820a`` (shifter sync) reports the 50 Hz
         colour-ST tempo profile a replayer keys on: GPIP bit 7 set, sync bit 1 set. Both read 0
         off-image, and 0/0 is the *monochrome* profile — a replayer taking it would render every
@@ -242,30 +268,33 @@ def audio_capture(on):
     CONTRACT. The register file and the select latch both **persist across ``run()`` calls** while
     the mode is on — an extractor calls ``run()`` once per VBL tick, feeding each run's image back
     in, and tick N's read-back must see tick N-1's writes, exactly as the chip's own latch and
-    registers survive a VBL. The file is cleared by ``audio_reset()`` and by nothing else (bar
-    process start), so arming is IDEMPOTENT: re-arming an already-armed capture keeps it.
+    registers survive a VBL. Both are cleared by ``audio_reset()``, and mid-capture by nothing else,
+    so arming is IDEMPOTENT: re-arming an already-armed capture keeps it. Arming from OFF *does*
+    clear them — the register file is shared with the differential's seeded model, so a capture armed
+    bare would otherwise inherit whatever the last ordinary ``run()`` left in it.
     ``psg_writes()`` keeps its per-run scope unchanged: it is still exactly this tick's register
-    traffic, which is the extractor's data feed. ``audio_capturing()`` is the two together.
+    traffic, which is the extractor's data feed. ``audio_capturing()`` is the two together, and is
+    also what ``run()`` requires before it will run under the mode at all.
     """
-    if not on and not _HAS_AUDIO_CAPTURE:
-        return                # off is the state an .so without the mode is already in, permanently
-    _require_audio_capture()
     _LIB.osh_audio_capture(1 if on else 0)
 
 
 def audio_reset():
-    """Clear the modeled YM2149 register file — where a new capture begins.
+    """Clear the modeled YM2149 register file **and the select latch** — where a new capture begins.
 
     Split from ``audio_capture(True)`` for the reason ``cov_reset`` is split from ``cov_enable``: an
     arming that also cleared could not be issued defensively mid-capture without destroying it.
+
+    The latch goes with the file because it is the other half of the same chip state a capture
+    carries across runs: clearing one and keeping the other would start the next capture selecting
+    the register the previous one last named, and a bare data write would land there.
     """
-    _require_audio_capture()
     _LIB.osh_audio_reset()
 
 
 def audio_capture_on():
-    """Is the audio-capture mode armed? False on an .so predating the mode — it cannot be armed."""
-    return bool(_HAS_AUDIO_CAPTURE and _LIB.osh_audio_capture_on())
+    """Is the audio-capture mode armed?"""
+    return bool(_LIB.osh_audio_capture_on())
 
 
 @contextlib.contextmanager
@@ -275,36 +304,96 @@ def audio_capturing():
     The mode is PROCESS-global state in the shared oracle, so a caller that left it armed would
     change every later user of the same process — and under ``pytest -n auto`` which those are is not
     stable between runs. This is the shape that cannot leak it, and the one every case should use.
+
+    It is also the only way to declare that a ``run()`` under the mode is DELIBERATE: the toggle
+    alone cannot say whose capture it is, so ``run()`` refuses a run made while the mode is armed
+    from outside a block like this one.
     """
+    global _capture_scopes
     audio_capture(True)
     audio_reset()
+    _capture_scopes += 1
     try:
         yield
     finally:
+        _capture_scopes -= 1
         audio_capture(False)
 
 
-def audio_regfile():
+def psg_file():
     """The modeled YM2149 register file a ``$ff8800`` read-back answers from, as ``bytes``.
 
-    All zero at process start and after ``audio_reset()``; a run's register writes land in it while
-    the mode is armed. Diagnostics — the extractor's data feed is ``psg_writes()``.
+    Off the audio-capture mode this is per-run state: ``run()`` starts it from the case's
+    ``psg_seed`` and the run's own ``$ff8802`` writes update it, so this is the chip's contents at
+    the end of the last run (also reported as ``out_regs["psg_file"]``, which is what
+    ``harness.differential`` compares against the candidate's). Under the mode it is the extractor's
+    view of the chip and spans runs until ``audio_reset()``.
     """
-    _require_audio_capture()
-    return bytes(ctypes.cast(_LIB.osh_audio_regfile(), _AudioRegfileP).contents)
+    return bytes(ctypes.cast(_LIB.osh_psg_file(), _PsgFileP).contents)
+
+
+def psg_known():
+    """Bitmask of the registers whose contents are known (seeded, or written by the last run).
+
+    A register outside it cannot be read: the model refuses rather than invent what the chip held.
+    """
+    return _LIB.osh_psg_known()
+
+
+def psg_seed_bytes(psg_seed):
+    """``{register: value}`` -> ``(bytes(PSG_NREGS), known-mask)``: the encoding BOTH sides take.
+
+    One implementation because the two must start from identical contents — ``run()`` installs the
+    pair in the oracle, ``harness.differential`` hands the same pair to the candidate's
+    ``g_psg_reset``. A register outside the chip's file or a value outside a byte is refused rather
+    than masked: either means the case meant something the model would silently change.
+    """
+    values = bytearray(PSG_NREGS)
+    known = 0
+    for reg, value in (psg_seed or {}).items():
+        if not 0 <= reg < PSG_NREGS:
+            raise ValueError(f"YM2149 register {reg} is outside 0..{PSG_NREGS - 1}")
+        if not 0 <= value <= 0xFF:
+            raise ValueError(f"psg_seed[{reg}] = {value!r} is not a byte")
+        values[reg] = value
+        known |= 1 << reg
+    return bytes(values), known
+
+
+def psg_events():
+    """The direct path's whole ordered access stream from the most recent ``run()``.
+
+    A list of ``(kind, reg, value)``, ``kind`` being ``os_map.OS_PSG_EVENT_WRITE`` or
+    ``OS_PSG_EVENT_READ``; ``value`` is what a write stored, or what a read was served. This — not
+    ``psg_writes()`` below — is what ``harness.differential`` compares against the candidate's,
+    because a reconstruction that reads the WRONG register still writes the right one: its write
+    stream and the register file it leaves are identical to a correct one's, and only the read
+    entries separate them.
+    """
+    n = _LIB.osh_psg_count()
+    kinds, regs, vals = _LIB.osh_psg_kinds(), _LIB.osh_psg_regs(), _LIB.osh_psg_vals()
+    return [(kinds[i], regs[i], vals[i]) for i in range(n)]
+
+
+def _psg_write_projection(events):
+    """The ``(reg, value)`` writes of an access stream, in order — see ``psg_writes``."""
+    return [(reg, value) for kind, reg, value in events
+            if kind == os_map.OS_PSG_EVENT_WRITE]
 
 
 def psg_writes():
-    """(reg, val) YM2149 writes captured during the most recent ``run()``, in order.
+    """(reg, val) YM2149 **writes** captured during the most recent ``run()``, in order.
+
+    The write-only projection of ``psg_events()``, and an unchanged contract: it is the audio
+    extractor's data feed and every project's ``psg_writes()`` consumer rests on it holding writes
+    and nothing else.
 
     ``run()`` resets the capture each call, so this is exactly that call's PSG traffic —
     one VBL frame's worth when ``run()`` drove the sound driver's ``REFRESH``. It is always the
-    WHOLE of that traffic: a run whose writes overflowed the shim's ledger is rejected by ``run()``
+    WHOLE of that traffic: a run whose accesses overflowed the shim's ledger is rejected by ``run()``
     rather than reported truncated (see ``osh_psg_dropped``).
     """
-    n = _LIB.osh_psg_count()
-    regs, vals = _LIB.osh_psg_regs(), _LIB.osh_psg_vals()
-    return [(regs[i], vals[i]) for i in range(n)]
+    return _psg_write_projection(psg_events())
 
 
 def heap_overlaps_program():
@@ -387,7 +476,7 @@ def _vet_no_malloc_over_program(malloc_calls):
         f"load_base.")
 
 
-def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
+def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None):
     """Run ``entry`` on a copy of ``image``. Return (final_image, writes, out_regs).
 
     ``regs`` maps register name -> value (e.g. {"a1": 0x1e000}); A7 is forced to STACK_TOP.
@@ -397,8 +486,46 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     code stored (stack writes included). ``out_regs`` holds every register the run leaves —
     ``REPORTED_REGS``, i.e. d0..d7 and a0..a6 at return (A7 is the harness's own; ``min_a7`` reports
     the only thing about it a case can use) — plus the ledger entries appended below.
+
+    ``psg_seed`` is ``{register: value}``, the contents the case declares the YM2149 held on entry —
+    an ordinary test input, exactly like a poked keystroke, and the ONLY way a direct ``$ff8800``
+    read-back of a register this run has not written can be served. A read of any other register
+    refuses the run and names the registers to declare, because a read-modify-write preserves
+    precisely the bits nothing wrote and inventing them is a false green (TRAP_MODEL.md, Phase 6).
+    Registers are re-seeded before every run, so a seed never leaks into the next case.
     """
     regs = regs or {}
+    if audio_capture_on():
+        # ONE-SIDED CAPTURE. The mode is oracle-global, so a run can be made under someone else's
+        # capture — an extractor in the same process, a block that raised on its way out — and every
+        # read it answers is then shim.c's invention rather than the game's data. `audio_capturing()`
+        # is the only thing that can say the run MEANT to be there, so a run outside one is refused
+        # rather than served fabricated bytes it never asked for. (harness.differential's
+        # _vet_audio_capture_off is the same refusal one level up; this one also covers the direct
+        # emu.run callers, which is most of a project's PSG cases.)
+        if not _capture_scopes:
+            raise RuntimeError(
+                f"function @ {entry:#x} was run while the AUDIO-CAPTURE mode is armed, but this run "
+                f"did not opt into it. Under the mode a $ff8800 read of a register nothing declared "
+                f"is answered 0 and the register file spans runs, so the result is the shim's "
+                f"invention — valid for an extractor reading the ORIGINAL's register stream, never "
+                f"for anything being verified. Scope the capture with `with emu.audio_capturing():` "
+                f"if this run is part of one, or disarm it (emu.audio_capture(False)) — most likely "
+                f"an earlier block left it armed.")
+        if psg_seed is not None:
+            raise RuntimeError(
+                "a psg_seed was passed while the audio-capture mode is armed. The two make opposite "
+                "claims about an unknown register — the seeded model refuses to read one, the "
+                "capture mode serves it as 0 — and the capture's register file spans runs, so the "
+                "seed would be ignored. Disarm the mode (emu.audio_capture(False), or scope it with "
+                "`with emu.audio_capturing():`) or drop the seed.")
+    # Deliberately unconditional, seed or none: leaving the previous run's seed installed would make
+    # a case that declares nothing readable through another case's declaration, under -n auto
+    # unpredictably. (Under audio capture the shim ignores it — the file spans runs there by contract
+    # — which is why passing one under the mode is refused outright, just above.)
+    seed_values, seed_known = psg_seed_bytes(psg_seed)
+    _LIB.osh_psg_seed((ctypes.c_uint8 * PSG_NREGS)(*seed_values), seed_known)
+
     mem = bytearray(image)
     Buf = ctypes.c_uint8 * loader.IMAGE_SIZE
     buf = Buf.from_buffer(mem)
@@ -428,14 +555,40 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
                       "be stale")
     if _LIB.osh_psg_unmodeled():
         causes.append("it accessed the PSG ports ($ff8800/$ff8802) in a way the model cannot serve "
-                      "— a READ (the ledger records writes only, so the selected register cannot "
-                      "be read back), or an access outside the byte select/data protocol")
+                      "— a READ of the write-only data port $ff8802 (the chip reads back through "
+                      "$ff8800), a SELECT of a register number above 15 (the chip requires the "
+                      "select byte's upper nibble to be zero), or an access outside the byte "
+                      "select/data protocol")
+    if _LIB.osh_psg_no_select():
+        causes.append(
+            f"it accessed the PSG ports ($ff8800/$ff8802) to READ back a register before anything "
+            f"SELECTED one, which the model cannot serve: a $ff8800 read answers the LATCHED "
+            f"register, and with no `move.b #<reg>,$ff8800` before it there is no latched register "
+            f"to answer from — the 0 the model would otherwise start at is this file's convention, "
+            f"not the chip's state. Enter the routine at (or past) its own select, or run the "
+            f"caller that performs it. Unlike an undeclared register this is NOT seedable: the "
+            f"select is an instruction the run either executes or does not")
+    unseeded = _LIB.osh_psg_unseeded()
+    if unseeded:
+        undeclared = [reg for reg in range(PSG_NREGS) if unseeded & (1 << reg)]
+        # The wording keeps BOTH phrases the older cause had — "accessed the PSG ports" and "cannot
+        # serve" — because a refused PSG read is matched by substring outside this file
+        # (projects/wonderboy/notes/portability_predictions.py, projects/joust's trap battery), and a
+        # rename would silently stop those matching rather than fail loudly.
+        causes.append(
+            f"it accessed the PSG ports ($ff8800/$ff8802) to READ register(s) "
+            f"{', '.join(str(reg) for reg in undeclared)}, which the model cannot serve as this "
+            f"case is written: nothing declared their contents — no psg_seed set them and no write "
+            f"in this run did — and it will not invent what the chip held on entry, because a "
+            f"read-modify-write preserves exactly the bits nothing wrote. Declare them as the input "
+            f"they are, with the byte the chip really held: "
+            f"psg_seed={{{', '.join(f'{reg}: <byte>' for reg in undeclared)}}}")
     dropped_psg_writes = _LIB.osh_psg_dropped()
     if dropped_psg_writes:
-        causes.append(f"its PSG writes overflowed the ledger — {dropped_psg_writes} write(s) past "
-                      f"the shim's MAX_PSG cap were DROPPED, so psg_writes() is a truncated "
+        causes.append(f"its PSG accesses overflowed the ledger — {dropped_psg_writes} access(es) "
+                      f"past os.h's OS_PSG_LOG_MAX cap were DROPPED, so psg_writes() is a truncated "
                       f"register stream, not this run's whole one")
-    if _HAS_AUDIO_CAPTURE and _LIB.osh_audio_profile_unmodeled():
+    if _LIB.osh_audio_profile_unmodeled():
         causes.append("under audio capture it read the machine-profile bytes ($fffa01 GPIP / "
                       "$ff820a shifter sync) at 16 or 32 bits, and only a BYTE read of either is "
                       "modeled — a wider one takes in neighbouring registers the model would have "
@@ -457,6 +610,19 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0):
     out_regs["cycles"] = _LIB.osh_num_cycles()  # 68000 clock cycles executed (perf profiling)
     dn, dargs = _LIB.osh_dosound_count(), _LIB.osh_dosound_args()
     out_regs["dosound"] = [dargs[i] for i in range(dn)]  # ordered XBIOS Dosound(A0) list pointers
+    # The direct PSG path's off-image surfaces: the ordered access stream (reads included), its
+    # write-only projection for the consumers that want just that, and the register file the writes
+    # left behind. harness.differential compares the stream and the file against the candidate's
+    # (src/psg.c) — nothing here is in the image, so nothing else could catch a divergence.
+    events = psg_events()                # read the ledger ONCE; the write list is its projection
+    out_regs["psg_events"] = events
+    out_regs["psg"] = _psg_write_projection(events)
+    out_regs["psg_file"] = psg_file()
+    out_regs["psg_known"] = psg_known()
+    # Direct-path accesses, READS INCLUDED — "did this run use the chip?" — and Giaccess traps, the
+    # OTHER door to it. harness.differential's seed-door guard tests a case's psg_seed against both.
+    out_regs["psg_direct"] = _LIB.osh_psg_direct()
+    out_regs["psg_giaccess"] = _LIB.osh_psg_giaccess()
 
     _vet_no_malloc_over_program(out_regs["malloc_calls"])
     _vet_no_poked_input_read(out_regs["poked_input_calls"])

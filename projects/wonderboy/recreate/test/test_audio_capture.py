@@ -3,22 +3,27 @@
 A kit behaviour tested in a game's suite, for the same reason `test_poked_input_guard.py` is: the
 kit's own `make test` binds no project, so it has no 68000 code to run the mode against. Wonder Boy
 is the game the mode was built for — its replayer holds both of the PSG read-backs (`snd_psg_silence`
-at `$17f3e`, `snd_music_tick` at `$17f08`) and the two-byte tempo selector the mode answers — so it
-is where the wiring can be exercised at all. `../notes/sound_module_recon.md` has the full module.
+at `$17f30`, reading at `$17f3e`; `snd_music_tick` at `$17c74`, reading at `$17f08`) and the two-byte
+tempo selector the mode answers — so it is where the wiring can be exercised at all.
+`../notes/sound_module_recon.md` has the full module.
 
-THE MODE'S CONTRACT IS TWO CLAIMS, AND BOTH ARE LOAD-BEARING:
+WHAT THE MODE IS, SINCE THE SEEDED READ MODEL LANDED (`tools/recreate_kit/TRAP_MODEL.md`, Phase 6).
+The `$ff8800` read-back is no longer the mode's own invention: the differential models it too, from
+a register file the CASE seeds, and refuses only a register nothing declared and nothing wrote. The
+mode is a documented RELAXATION of that one model over that one register file — not a second model —
+and its contract is two claims, both load-bearing:
 
-  * ON, a few reads the oracle otherwise refuses or fabricates as 0 are served — the `$ff8800`
-    read-back from a modeled register file, and the 50 Hz colour-ST tempo bytes on `$fffa01` bit 7 /
-    `$ff820a` bit 1. Without them an extraction tool cannot run the replayer at all (the read-back
-    sinks the run), and with them fabricated as 0 it would run it WRONG and silently: a zero
-    read-back collapses the mixer merge and clears the port A/B direction bits, and 0/0 on the tempo
-    pair is the MONOCHROME profile, which drops 72/256 of all ticks.
-  * OFF — the default, and every other test in this suite — nothing changes. That is not a nicety:
-    each served read is the model's invention rather than the game's data, so a reconstruction
-    "verified" against one would be verified against `shim.c`. The refusal is the differential's
-    whole point, so the cases below check that it is intact by default AND that it comes back when
-    the mode is switched off, rather than only that the mode works when on.
+  * ON, an undeclared register reads **0** instead of refusing, the register file and the select
+    latch SPAN runs instead of being re-seeded per run, and the 50 Hz colour-ST tempo bytes on
+    `$fffa01` bit 7 / `$ff820a` bit 1 are served. Without the first an extraction tool cannot run the
+    replayer at all — it cannot declare a seed per tick, so the first mixer read-back sinks the run —
+    and without the tempo bytes it would run it WRONG and silently: 0/0 there is the MONOCHROME
+    profile, which drops 72/256 of all ticks.
+  * OFF — the default, and every other test in this suite — none of that applies. That is not a
+    nicety: each relaxation is the model's invention rather than the game's data, so a reconstruction
+    "verified" under one would be verified against `shim.c`. The refusal is the differential's whole
+    point, so the cases below check that it is intact by default AND that it comes back when the mode
+    is switched off, rather than only that the mode works when on.
 
 The register file and the select latch surviving `run()` are the third thing pinned here, because
 they are the property an extractor rests on and the one a per-run reset would break invisibly: it
@@ -116,12 +121,15 @@ def _assert_snd_stop_writes(expected_mixer):
 
 
 def test_the_mixer_read_back_is_refused_when_the_mode_is_off():
-    """The default, and the differential's contract: `snd_stop` cannot be run at all.
+    """The default, and the differential's contract: `snd_stop` cannot be run AS THIS CASE IS WRITTEN.
 
-    Its `move.b $ff8800,d1` at `$17f3e` has no correct answer in a model that records writes only,
-    and serving 0 would let a reconstruction of the read-modify-write be "verified" against a value
-    shim.c invented. The cause is matched, not merely `RuntimeError`, so a run that fails for an
-    unrelated reason cannot pass this case.
+    Its `move.b $ff8800,d1` at `$17f3e` reads mixer register 7, and nothing here declares what the
+    chip held there — no `psg_seed`, and no earlier write in the run — so the model refuses rather
+    than invent it, and serving 0 would let a reconstruction of the read-modify-write be "verified"
+    against a value shim.c fabricated. The remedy off the mode is `psg_seed={7: <byte>}`, which is
+    what a differential of that routine will use; what this case pins is that the refusal is the
+    DEFAULT. The cause is matched, not merely `RuntimeError`, so a run that fails for an unrelated
+    reason cannot pass this case.
     """
     with pytest.raises(RuntimeError, match=PSG_REFUSAL):
         emu.run(harness.make_image(), leaf.entry_of("snd_stop"))
@@ -130,14 +138,15 @@ def test_the_mixer_read_back_is_refused_when_the_mode_is_off():
 def test_the_mode_serves_the_mixer_read_back_from_the_register_file():
     """ON, the same run completes and its whole PSG stream is captured.
 
-    From a freshly cleared register file the read-back is 0, so `ori.b #$3f` yields $3f — which is
-    why this case cannot tell a real read-back from a fabricated zero, and why the seeded case below
-    exists. What it does pin is that the run is no longer refused and `psg_writes()` — the
-    extractor's data feed — still reports every write, unchanged by the mode.
+    From a freshly cleared register file the read-back is 0 — the mode's relaxation — so `ori.b #$3f`
+    yields $3f, which is why this case cannot tell a real read-back from a fabricated zero and why
+    the seeded case below exists. What it does pin is that the run is no longer refused and
+    `psg_writes()` — the extractor's data feed, the WRITE projection of the access ledger — still
+    reports every write and only writes, unchanged by the mode.
     """
     with emu.audio_capturing():
         _assert_snd_stop_writes(MIXER_ALL_OFF)
-        assert emu.audio_regfile()[PSG_MIXER_REG] == MIXER_ALL_OFF
+        assert emu.psg_file()[PSG_MIXER_REG] == MIXER_ALL_OFF
 
 
 def test_the_read_back_keeps_the_bits_the_register_file_holds_across_runs():
@@ -169,16 +178,18 @@ def test_the_select_latch_survives_a_run_in_capture_mode():
 
 
 def test_audio_reset_clears_the_register_file():
-    """Where a new capture begins. The file survives every `run()` AND every re-arm, so `audio_reset`
-    is the only point at which "forget the previous capture" can be expressed — an extractor that
-    reloads a pristine image between songs would otherwise carry the last song's mixer into the next.
+    """Where a new capture begins. Mid-capture the file survives every `run()` AND every re-arm, so
+    `audio_reset` is the only point at which "forget the previous capture" can be expressed — an
+    extractor that reloads a pristine image between songs would otherwise carry the last song's mixer
+    into the next. (Arming from OFF clears it too, since the file is shared with the differential's
+    seeded model; that half is pinned kit-side, in tools/recreate_kit/test/test_psg_model.py.)
     """
     with emu.audio_capturing():
         _seed_mixer_register(PSG_PORT_DIR_BITS)
-        assert emu.audio_regfile()[PSG_MIXER_REG] == PSG_PORT_DIR_BITS
+        assert emu.psg_file()[PSG_MIXER_REG] == PSG_PORT_DIR_BITS
 
         emu.audio_reset()
-        assert emu.audio_regfile() == bytes(emu.AUDIO_NREGS)
+        assert emu.psg_file() == bytes(emu.PSG_NREGS)
 
 
 def test_re_arming_the_mode_leaves_the_register_file_alone():
@@ -191,11 +202,11 @@ def test_re_arming_the_mode_leaves_the_register_file_alone():
     """
     with emu.audio_capturing():
         _seed_mixer_register(PSG_PORT_DIR_BITS)
-        seeded = emu.audio_regfile()
-        assert seeded != bytes(emu.AUDIO_NREGS), "nothing was seeded, so re-arming cannot lose it"
+        seeded = emu.psg_file()
+        assert seeded != bytes(emu.PSG_NREGS), "nothing was seeded, so re-arming cannot lose it"
 
         emu.audio_capture(True)
-        assert emu.audio_regfile() == seeded
+        assert emu.psg_file() == seeded
 
 
 def test_the_mode_reports_the_50hz_colour_machine_profile():
@@ -231,10 +242,11 @@ def test_switching_the_mode_off_restores_the_refusal():
 
 @pytest.mark.parametrize("what", sorted(UNMODELED_PSG_READS))
 def test_a_psg_read_outside_the_byte_protocol_is_still_refused_in_capture_mode(what):
-    """The mode serves ONE read of the chip — a byte read of the canonical select port — and widens
-    nothing else. A word-wide access, the odd alias `$ff8801` and the write-only data port `$ff8802`
-    all depend on decoding the model does not have, so answering them would be fabrication again, of
-    exactly the kind the mode's register file is careful not to be.
+    """Only ONE read of the chip is modeled at all — a byte read of the canonical select port — and
+    the mode widens nothing. A word-wide access, the odd alias `$ff8801` and the write-only data port
+    `$ff8802` all depend on decoding the model does not have, so answering them would be fabrication
+    of a kind the mode's relaxations are careful not to be: those relax what a KNOWN read answers,
+    never which accesses exist.
     """
     with emu.audio_capturing():
         with pytest.raises(RuntimeError, match=PSG_REFUSAL):

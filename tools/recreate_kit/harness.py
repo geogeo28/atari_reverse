@@ -33,6 +33,27 @@ if _has_dosound_ledger:
     _lib.g_dosound_log_count.restype = ctypes.c_uint32
     _lib.g_dosound_log_args.restype = ctypes.POINTER(ctypes.c_uint32)
 
+# The direct-PSG surfaces (src/psg.c) are optional in the same way and for the same reason: a game
+# that never touches $ff8800/$ff8802 has nothing to record, and the ORACLE's own traffic is the
+# witness that says when the group was needed — _vet_psg_state raises the moment the oracle uses the
+# path against a candidate that cannot answer for it. The MISSING members are kept, not just the
+# yes/no: a candidate exporting five of the six is the likely real failure (a half-updated src/psg.c,
+# a stale build), and "exports no PSG ledger, here are all six" would send the reader hunting for the
+# five that are already there.
+_PSG_LEDGER_ABI = ("g_psg_reset", "g_psg_log_count", "g_psg_log_kinds", "g_psg_log_regs",
+                   "g_psg_log_vals", "g_psg_file", "g_psg_file_known")
+_missing_psg_ledger = [sym for sym in _PSG_LEDGER_ABI if not hasattr(_lib, sym)]
+_has_psg_ledger = not _missing_psg_ledger
+if _has_psg_ledger:
+    _u8p = ctypes.POINTER(ctypes.c_uint8)
+    _lib.g_psg_reset.argtypes = [_u8p, ctypes.c_uint32]
+    _lib.g_psg_log_count.restype = ctypes.c_uint32
+    _lib.g_psg_log_kinds.restype = _u8p
+    _lib.g_psg_log_regs.restype = _u8p
+    _lib.g_psg_log_vals.restype = _u8p
+    _lib.g_psg_file.restype = _u8p
+    _lib.g_psg_file_known.restype = ctypes.c_uint32
+
 # The refused-os_*-call tally (see _vet_no_os_refusal) is REQUIRED ABI, unlike the ledger above.
 # The Dosound ledger can be served without: the oracle's own Dosound stream says when it was needed,
 # so its absence fails loudly at the moment it matters. The refusal tally has no such witness — the
@@ -96,6 +117,7 @@ OS_FS_OFF_OPEN = 28          # u32: nonzero while a handle is open on this slot
 OS_FS_OFF_CAPACITY = 32      # u32: staging bytes reserved; os_fwrite refuses to exceed it
 OS_FS_FIRST_HANDLE = 6
 OS_DOSOUND_LOG_MAX = 256     # ledger cap, on BOTH sides (shim.c's mirror and src/dosound_log.c)
+OS_PSG_LOG_MAX = 4096        # ...and the direct-PSG ledger's, likewise on both (shim.c, src/psg.c)
 
 OS_SUPER_TOKEN = 0x00535550  # the cookie GEMDOS Super(0) returns; Super(cookie) restores
 
@@ -110,6 +132,9 @@ OS_PSG_REGS = os_map.OS_PSG_REGS
 OS_PSG_NREGS = os_map.OS_PSG_NREGS
 OS_PSG_WRITE = os_map.OS_PSG_WRITE
 OS_POKE_BLOCK_END = os_map.OS_POKE_BLOCK_END
+# The direct-PSG ledger's event kinds, likewise re-exported from their one home (see os_map).
+OS_PSG_EVENT_WRITE = os_map.OS_PSG_EVENT_WRITE
+OS_PSG_EVENT_READ = os_map.OS_PSG_EVENT_READ
 
 
 # Does the modeled Malloc heap sit inside this project's own program? If so, any block the model
@@ -268,6 +293,11 @@ def psg_regs(values):
     ``values`` = {register: byte}. Every register not listed reads 0 — the value a fresh image
     already has, since the model asserts nothing about the chip's power-on contents. The whole file
     is one poke, so a partially written file is not expressible.
+
+    NOT the direct path's seed, though the argument looks identical: this stages the file XBIOS
+    ``Giaccess`` reads, which lives IN the image. A routine that reaches the chip through
+    ``$ff8800``/``$ff8802`` instead is seeded by ``differential(..., psg_seed=…)`` — one chip, two
+    modeled files, and a run that touches both is refused (TRAP_MODEL.md, Phases 3 and 6).
     """
     _vet_poked_input_available("the YM2149 register file")
     regfile = bytearray(OS_PSG_NREGS)
@@ -369,7 +399,9 @@ def _vet_no_os_refusal(entry):
 
     The oracle's own tally is necessarily zero here: a refused trap sets ``g_unmodeled`` and
     ``emu.run()`` raises long before the diff. So any candidate-side refusal is an asymmetry, and it
-    is the one that hides a missing guard (include/os.h, "refusing a call, on BOTH sides").
+    is the one that hides a missing guard (include/os.h, "refusing a call, on BOTH sides"). The
+    seeded PSG model's refusal routes here too (``psg_port_read`` of an undeclared register), where
+    the oracle's lives in its own counter — same asymmetry, and the remedy is named below.
     """
     refusals = _lib.g_os_refusal_count()
     if not refusals:
@@ -381,9 +413,10 @@ def _vet_no_os_refusal(entry):
         f"sentinel and touches neither the out-param nor the image, so the candidate is free to "
         f"differ exactly where the oracle declines to look. Three causes: the candidate is missing a "
         f"guard the original has (the Bconstat gate before Bconin, a test of Fopen's handle); or "
-        f"this case needs the state staged (harness.console_key(), harness.stage_files()) so BOTH "
-        f"sides execute the call; or a stop_pc checkpoint ended the oracle before a call the "
-        f"candidate still makes. See tools/recreate_kit/TRAP_MODEL.md.")
+        f"this case needs the state staged (harness.console_key(), harness.stage_files(), "
+        f"psg_seed={{reg: value}} for a PSG register the candidate reads back) so BOTH sides execute "
+        f"the call; or a stop_pc checkpoint ended the oracle before a call the candidate still "
+        f"makes. See tools/recreate_kit/TRAP_MODEL.md.")
 
 
 def _vet_audio_capture_off(entry):
@@ -414,8 +447,148 @@ def _vet_audio_capture_off(entry):
         f"tools/recreate_kit/TRAP_MODEL.md.")
 
 
+def _seed_candidate_psg(psg_seed):
+    """Install the case's PSG seed in the candidate and clear its ledger — before EVERY candidate
+    run, the poison re-run included, exactly as ``emu.run`` re-seeds the oracle before every run.
+
+    A candidate left holding the previous case's registers could read one it never declared and stay
+    green on it, which is the whole false green the model closes; and a ledger left holding the
+    previous run's writes would be compared against this run's oracle stream. The seed is encoded by
+    ``emu.psg_seed_bytes``, the same call the oracle's side goes through, so the two cannot disagree
+    about what ``{register: value}`` means.
+    """
+    if not _has_psg_ledger:
+        return
+    values, known = emu.psg_seed_bytes(psg_seed)
+    _lib.g_psg_reset((ctypes.c_uint8 * len(values))(*values), known)
+
+
+def _psg_event_text(events):
+    """One ledger's events as readable text: ``r7=0xc0`` for a write, ``r7->0xc0`` for a read."""
+    return [f"r{reg}{'=' if kind == OS_PSG_EVENT_WRITE else '->'}{value:#04x}"
+            for kind, reg, value in events]
+
+
+def _vet_psg_seed_reaches_the_path(entry, psg_seed, pokes, o_regs):
+    """Refuse a case whose ``psg_seed`` declares state the run it describes never reads.
+
+    ONE chip, TWO doors, and the seed only opens one of them (TRAP_MODEL.md, "One chip, three
+    files"). ``psg_seed=`` declares the DIRECT path's off-image register file; ``psg_regs()`` stages
+    the file XBIOS ``Giaccess`` reads, which lives in the image. The two arguments look identical at
+    a call site — both are ``{register: byte}`` — and picking the wrong one is silent: the seed is
+    installed, nothing reads it, and the case passes while testing the read-back it meant to stage
+    not at all. Two shapes of that mistake, refused here because nothing downstream can see them:
+
+    * **both doors at once.** A case that seeds AND pokes ``OS_PSG_REGS`` is describing one chip's
+      contents twice, in two models that never see each other's stores — and a run that actually
+      reached both would be refused by the mixed-path guard anyway.
+    * **the seed goes unread while ``Giaccess`` runs.** The run made no direct access at all, so the
+      seed cannot have been read by anything; that it also called ``Giaccess`` says which door the
+      routine really uses.
+
+    A seed unread by a run that touches NEITHER path is left alone: an over-declared input is
+    ordinary (a case that seeds a register the branch it takes never reads), and refusing it would
+    make the seed a claim about control flow rather than about the chip.
+    """
+    if psg_seed is None:
+        return
+    psg_file_end = OS_PSG_REGS + OS_PSG_NREGS
+    overlapping = sorted(addr for addr, value in (pokes or {}).items()
+                         if OS_PSG_REGS < addr + len(value) and addr < psg_file_end)
+    if overlapping:
+        raise AssertionError(
+            f"function @ {entry:#x}: this case passes psg_seed={psg_seed} AND pokes the "
+            f"Giaccess register file at {', '.join(hex(a) for a in overlapping)} "
+            f"(harness.psg_regs / OS_PSG_REGS {OS_PSG_REGS:#x}). Those are the YM2149's TWO "
+            f"doors and they are separate models: psg_seed declares the direct $ff8800/$ff8802 "
+            f"path's off-image register file, psg_regs() stages the in-image file the XBIOS trap "
+            f"reads, and neither sees the other's stores. Declare the one the routine actually uses "
+            f"— a run that reached both would be refused by the mixed-path guard (TRAP_MODEL.md, "
+            f"Phases 3 and 6).")
+    if not o_regs["psg_direct"] and o_regs["psg_giaccess"]:
+        raise AssertionError(
+            f"function @ {entry:#x}: this case passes psg_seed={psg_seed}, but the run "
+            f"made no direct $ff8800/$ff8802 access at all — so nothing read the seed — while "
+            f"issuing {o_regs['psg_giaccess']} XBIOS Giaccess call(s). This routine reaches the chip "
+            f"through the TRAP path, whose register file is staged with harness.psg_regs() and lives "
+            f"IN the image; psg_seed is the direct path's, and here it declares state no instruction "
+            f"in the run can see. Stage the other door (TRAP_MODEL.md, Phases 3 and 6).")
+
+
+def _vet_psg_state(entry, o_regs):
+    """Compare the direct PSG path's two off-image surfaces against the candidate's (src/psg.c).
+
+    Neither is in the image, so neither is covered by the byte diff: a reconstruction could skip a
+    register access, write the wrong value, order them wrongly, ignore a read-back it should have
+    merged, or READ THE WRONG REGISTER, and the memory comparison would see nothing. The LEDGER
+    catches all of those — which is why it carries reads as well as writes. A transposed
+    read-modify-write is the case that forced it: read register 8, merge, write register 7, where
+    register 8 happens to hold what 7 did. Its write stream is a correct run's, byte for byte, and so
+    is the register file it leaves; only the read entry separates the two.
+
+    The FILE is a CROSS-CHECK of the two implementations rather than extra coverage of the
+    reconstruction: both sides store into it on exactly the writes they log, so under equal seeds an
+    equal ledger already implies an equal file. What it can catch is the two model implementations
+    themselves drifting — a register-width mask added on one side, capture-mode state leaking into a
+    differential — which is the one thing the ledger comparison cannot see. It is compared with the
+    known-register mask, since "written 0" and "never written" are different chips.
+
+    The group is optional ABI (see ``_has_psg_ledger``) with the oracle's own traffic as the witness:
+    a candidate without it is served only while the oracle never touches the path, exactly as for the
+    Dosound ledger. The witness is the oracle's direct-ACCESS tally rather than its ledger's write
+    projection, because a run that only READS the chip writes no register — and a candidate that
+    hardcoded what it should have read is exactly what this exists to catch.
+    """
+    o_psg = o_regs["psg_events"]
+    if not _has_psg_ledger:
+        if o_regs["psg_direct"]:
+            raise AssertionError(
+                f"the oracle made {o_regs['psg_direct']} direct PSG access(es) but {_CFG.name}'s "
+                f"candidate exports no {'/'.join(_missing_psg_ledger)} — neither the register "
+                f"stream nor the chip state can be compared, so a divergence in either would pass "
+                f"unnoticed. That is tools/recreate_kit/src/psg.c's ABI: build the candidate "
+                f"through kit.mk, whose SRC sweeps $(KIT)/src/*.c")
+        return
+
+    count = _lib.g_psg_log_count()
+    kinds, regs, vals = _lib.g_psg_log_kinds(), _lib.g_psg_log_regs(), _lib.g_psg_log_vals()
+    c_psg = [(kinds[i], regs[i], vals[i]) for i in range(count)]
+    # Both ledgers stop logging SILENTLY at the cap, so two streams that diverge only past it
+    # truncate to the same list and compare equal. Fail loudly instead (the Dosound ledger above
+    # keeps a bare `assert` for the same check; it predates this and is left alone deliberately —
+    # changing it is not this change's business).
+    # Deliberately over-strict at exactly the cap: an oracle ledger of exactly OS_PSG_LOG_MAX entries
+    # is complete (its own osh_psg_dropped would already have raised in emu.run), but the candidate
+    # has no dropped-counter and genuinely cannot tell full from truncated, so both take the same
+    # bound. The cost is a loud false red on a run with exactly 4096 register accesses. A bare
+    # `assert` would vanish under `python -O`, taking the guard with it; this is a raise.
+    if not (len(o_psg) < OS_PSG_LOG_MAX and count < OS_PSG_LOG_MAX):
+        raise AssertionError(
+            f"the direct-PSG ledger hit its cap ({OS_PSG_LOG_MAX}): oracle={len(o_psg)} "
+            f"cand={count} — the compare beyond it would be blind; shorten the run or raise "
+            f"OS_PSG_LOG_MAX in include/os.h (its mirror in harness.py is pinned to it)")
+    if o_psg != c_psg:
+        raise AssertionError(
+            f"function @ {entry:#x}: direct-PSG access stream mismatch — "
+            f"oracle={_psg_event_text(o_psg)} cand={_psg_event_text(c_psg)} "
+            f"(`rN=v` wrote v to register N, `rN->v` read v back from it). The $ff8800/$ff8802 "
+            f"ports are outside the image, so this divergence is invisible to the byte diff")
+
+    # Sized from the oracle's own file, so the two casts cannot disagree about the register count.
+    nregs = len(o_regs["psg_file"])
+    c_file = bytes(ctypes.cast(_lib.g_psg_file(),
+                               ctypes.POINTER(ctypes.c_uint8 * nregs)).contents)
+    c_known = _lib.g_psg_file_known()
+    if (o_regs["psg_file"], o_regs["psg_known"]) != (c_file, c_known):
+        raise AssertionError(
+            f"function @ {entry:#x}: the modeled YM2149 register file diverged — "
+            f"oracle={o_regs['psg_file'].hex()} (known {o_regs['psg_known']:#06x}) "
+            f"cand={c_file.hex()} (known {c_known:#06x}). That file is what a read-back answers "
+            f"from, so the next run of this driver would be served different bytes on the two sides")
+
+
 def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
-                       stop_pc, max_insns):
+                       stop_pc, max_insns, psg_seed):
     """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
     never actually writing some byte the oracle wrote — because that byte already held the oracle's
     value (an output landing in a zeroed/base region). Re-run both cores on a copy of the input in
@@ -427,15 +600,22 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     for a in o_writes:
         if a < guard_lo:                     # only the diffed region matters; stack canaries are moot
             poisoned[a] = o_final[a] ^ 0xff
-    po_final, _, _ = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns)
+    po_final, _, po_regs = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
+                                   psg_seed=psg_seed)
     buf = (ctypes.c_uint8 * IMAGE_SIZE).from_buffer(bytearray(poisoned))
     # This is a SECOND candidate run, so it needs the same per-run bookkeeping the first one got:
     # poisoning inverts oracle-written bytes, which can steer the candidate down a path the plain
-    # run never took — including into a refused os_* call. Reset before, vet after, or that refusal
-    # is tallied into a count nobody reads and the pass reports a clean attribution.
+    # run never took — including into a refused os_* call, or into PSG traffic. Reset before, vet
+    # after, or that refusal is tallied into a count nobody reads and the pass reports a clean
+    # attribution.
     _lib.g_os_refusal_reset()
+    _seed_candidate_psg(psg_seed)
     glue(_lib, buf)
     _vet_no_os_refusal(entry)
+    # ...and the same off-image PSG comparison the plain pass got, against the POISONED run's own
+    # oracle surfaces. Poisoning can steer either core into different register traffic, and that
+    # traffic is invisible to the byte compare below — which is the whole reason this pass exists.
+    _vet_psg_state(entry, po_regs)
     pc_final = bytes(buf)
     bad = [a for a in range(guard_lo) if po_final[a] != pc_final[a] and not excluded(a)]
     if bad:
@@ -447,7 +627,8 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
             f"coincidence")
 
 
-def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, poison=False):
+def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, poison=False,
+                 psg_seed=None):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
@@ -470,18 +651,28 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     ``poison`` runs an extra attribution pass (``_attribution_check``): re-run both cores on an
     image whose oracle-written bytes are pre-poisoned, catching a candidate that matches by
     coincidence without actually writing a byte the oracle wrote. Opt-in (safe for leaf functions).
+    ``psg_seed`` is ``{register: value}``, the contents the case declares the YM2149 held on entry —
+    an ordinary input, given identically to both sides, and what makes a read-modify-write of the
+    chip runnable (``emu.run``; TRAP_MODEL.md, Phase 6). It is the DIRECT ``$ff8800``/``$ff8802``
+    path's state, not the ``Giaccess`` file ``psg_regs()`` stages, and a case that confuses the two
+    is refused (``_vet_psg_seed_reaches_the_path``). Both sides' register file and access ledger are
+    compared afterwards, seed or none (``_vet_psg_state``).
     """
     _vet_audio_capture_off(entry)
-    img = make_image(regs.pop("_pokes", None))
-    o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc, max_insns=max_insns)
+    pokes = regs.pop("_pokes", None)
+    img = make_image(pokes)
+    o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
+                                        psg_seed=psg_seed)
 
     _vet_exclude_bands(exclude, o_regs["min_a7"])
+    _vet_psg_seed_reaches_the_path(entry, psg_seed, pokes, o_regs)
 
     Buf = ctypes.c_uint8 * IMAGE_SIZE
     buf = Buf.from_buffer(bytearray(img))
     if _has_dosound_ledger:
         _lib.g_dosound_log_reset()       # fresh Dosound ledger for this candidate run (see below)
     _lib.g_os_refusal_reset()            # ...and a fresh refused-os_*-call tally (see below)
+    _seed_candidate_psg(psg_seed)        # ...and the same PSG entry state the oracle just ran on
     cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
 
@@ -542,9 +733,11 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
             f"candidate exports no Dosound ledger ({'/'.join(_DOSOUND_LEDGER_ABI)}) — the command "
             f"lists cannot be compared, so a divergence here would pass unnoticed")
 
+    _vet_psg_state(entry, o_regs)
+
     if poison and not diffs:
         _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
-                           stop_pc, max_insns)
+                           stop_pc, max_insns, psg_seed)
 
     return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
 

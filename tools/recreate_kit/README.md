@@ -57,7 +57,7 @@ tools/recreate_kit/
 ### What the candidate `.so` must export
 
 `differential(entry, regs, glue, …)` only calls what the project's own `glue` callbacks name, so
-there is no required symbol — with two groups the kit supplies for you:
+there is no required symbol — with three groups the kit supplies for you:
 
 | symbol | signature | purpose |
 | --- | --- | --- |
@@ -73,11 +73,11 @@ which `kit.mk` links into every candidate — the ledger is one implementation s
 rather than a copy per project, and its cap is `os.h`'s `OS_DOSOUND_LOG_MAX`, the same one the
 oracle's mirror ledger truncates at.
 
-The Dosound ledger is one of the two things the model keeps **off-image**, which is exactly what a
+The Dosound ledger is one of the things the model keeps **off-image**, which is exactly what a
 candidate has to mirror by hand — everything else the trap model touches is plain image state that
-`include/os.h`'s `os_*` helpers write identically on both sides. The other is the direct
-`$ff8800`/`$ff8802` PSG write stream, compared as an ordered `(reg, val)` list (BuggyBoy's
-`g_REFRESH` emits it through out-params). See [`TRAP_MODEL.md`](TRAP_MODEL.md).
+`include/os.h`'s `os_*` helpers write identically on both sides. The others are the direct
+`$ff8800`/`$ff8802` PSG write stream and the register contents a read of that port returns, which are
+the next group. See [`TRAP_MODEL.md`](TRAP_MODEL.md).
 
 The harness still treats the group as *optional* at import (it probes the three accessors once), so
 a candidate built outside `kit.mk` keeps working: it is then served without the ledger while the
@@ -106,6 +106,33 @@ Absence is a hard error there rather than a graceful degrade, because the tally 
 witness the way the Dosound ledger does: the oracle's own count is zero by construction, so a
 missing symbol would reopen the false-green class on a suite that stays entirely green.
 
+The third group is the **direct-PSG surfaces**, from `src/psg.c` + `include/psg.h` (likewise linked
+into every candidate by `kit.mk`). Optional in the same way as the Dosound ledger, and for the same
+reason — a game that never touches `$ff8800`/`$ff8802` has nothing to record, and the ORACLE's own
+traffic is the witness that says when the group was needed:
+
+| symbol | signature | purpose |
+| --- | --- | --- |
+| `psg_port_write` | `void(unsigned, uint8_t)` | what a reconstruction calls where the original writes a register |
+| `psg_port_read`  | `uint8_t(unsigned)` | ...and where it reads one back (`move.b $ff8800,dn`) |
+| `g_psg_reset`    | `void(const uint8_t *, uint32_t)` | seed the register file + clear the ledger, before each candidate run |
+| `g_psg_log_count` / `g_psg_log_kinds` / `g_psg_log_regs` / `g_psg_log_vals` | | the ordered access stream: one `(kind, reg, value)` per write **and per read** |
+| `g_psg_file` / `g_psg_file_known` | | the register contents those writes left, and which are known |
+
+The ports are outside the image, so a missing, extra, reordered or wrong register access is invisible
+to the byte diff — and so is the chip's own state, which every read-modify-write of it preserves bits
+of. `harness.differential()` seeds both sides from the case's `psg_seed=` and compares both surfaces.
+
+**Reads are in the ledger, not just writes**, because a reconstruction that reads the *wrong*
+register still writes the right one: its write stream and the register file it leaves can be a
+correct run's exactly, and only the read entry separates them. `emu.psg_writes()` is the write-only
+projection of the same stream, with its contract unchanged.
+
+A read of a register nothing declared or wrote — or of one the chip does not have — is refused on
+**both** sides: the oracle's run is rejected, and `psg_port_read` routes its refusal through
+`os_refused()` above. The whole contract, including the YM2149 edge semantics this models and those
+it refuses, is [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 6".
+
 ### The modeled TOS traps
 
 Which GEMDOS/BIOS/XBIOS calls are serviced, with what semantics, and — just as important — what
@@ -126,11 +153,17 @@ armed**: a reconstruction verified against one of those answers would be verifie
 
 | call | what it does |
 |---|---|
-| `emu.audio_capture(on)` | arm/disarm. A pure toggle — re-arming an armed capture keeps it. The argument is required. |
-| `emu.audio_reset()` | clear the modeled register file: where a new capture begins. Nothing else clears it, a `run()` included. |
-| `emu.audio_capturing()` | context manager: arm + reset on entry, disarm on exit. **Use this**; the mode is process-global and `-n auto` makes a leak unreproducible. |
+| `emu.audio_capture(on)` | arm/disarm. Re-arming an *armed* capture keeps it; arming from *off* clears (the chip state is shared with the differential's model). The argument is required. |
+| `emu.audio_reset()` | clear the modeled register file **and the select latch**. Nothing clears them mid-capture but this — a `run()` under the mode included. |
+| `emu.audio_capturing()` | context manager: arm + reset on entry, disarm on exit. **Required**, not merely advised — `emu.run()` refuses a run made under the mode outside one, since the mode is process-global and `-n auto` makes a leak unreproducible. |
 | `emu.audio_capture_on()` | is it armed? (What `differential()` vets.) |
-| `emu.audio_regfile()` | the modeled register file, for diagnostics. The data feed is `psg_writes()`. |
+| `emu.psg_file()` | the modeled register file, for diagnostics. The data feed is `psg_writes()`. |
+
+Since the seeded read model landed (`TRAP_MODEL.md`, "Phase 6") the mode is a **relaxation** of it
+rather than a model of its own: it shares the one register file and select latch, and what it adds is
+answering an *undeclared* register (or an *unselected* latch) as `0`, which a differential refuses,
+and letting both span runs, which a differential re-seeds per run. That is why it stays opt-in,
+vetted off by `differential()`, and refused by `run()` unless the run says it meant to be there.
 
 The full contract — exactly which reads are served and which stay refused, why the register file and
 select latch span runs, and why none of it narrows the differential's guarantee — is in
@@ -277,15 +310,26 @@ impossible instruction forms), the C-vs-Python pin on the TOS memory map above,
 `project._bool_flag`'s refusal of a non-boolean waiver flag (for **every** waiver flag, checked
 against `project.load` itself so a new one cannot ship untested), and `os_map`'s overlap geometry.
 
-Two of them pin the **oracle's own CPU** and so need its sources, which a bare checkout does not have
-(`oracle/musashi/` is a gitignored clone): `test_entry_state.py` and `test_reported_regs.py` compile
-`shim.c` themselves and drive `osh_run` from C — `harness`/`emu` bind a project's candidate `.so` at
-import, and this directory binds no project, so the oracle is unreachable from Python here. Both
-**skip** rather than fail when those sources are absent, and both compile the shim rather than link
-the shared `liboracle.so` so that a reverted decision cannot hide behind a stale artifact — one
-build, in `test/probe_build.py`, so the two cannot disagree about the flags. What they
-pin is in [`TRAP_MODEL.md`](TRAP_MODEL.md): the forced entry SR, and the register set every run
-reports back (`D0..D7`/`A0..A6` — the observability window a differential sees through).
+Three of them pin the **oracle's own behaviour** and so need its sources, which a bare checkout does
+not have (`oracle/musashi/` is a gitignored clone): `test_entry_state.py`, `test_reported_regs.py`
+and `test_psg_model.py` compile `shim.c` themselves and drive `osh_run` from C — `harness`/`emu` bind
+a project's candidate `.so` at import, and this directory binds no project, so the oracle is
+unreachable from Python here. All **skip** rather than fail when those sources are absent, and all
+compile the shim rather than link the shared `liboracle.so` so that a reverted decision cannot hide
+behind a stale artifact — one build, in `test/probe_build.py`, so the three cannot disagree about the
+flags. What they pin is in [`TRAP_MODEL.md`](TRAP_MODEL.md): the forced entry SR; the register set
+every run reports back (`D0..D7`/`A0..A6` — the observability window a differential sees through);
+and the seeded PSG read model, whose probe also links `src/psg.c` so it can run the **candidate**
+side of that model against the oracle's — a miniature differential, with three mutant
+reconstructions as its negative control.
+
+A fourth, `test_psg_differential.py`, goes one step further and runs the **real harness**: it builds
+a throwaway project in a temp directory — a hand-assembled `.PRG`, and a candidate `.so` from
+`test/kit_candidate.c` plus `src/` — binds the kit to it, and makes actual `harness.differential()`
+calls. That is the only way to exercise the code that *compares* the two sides, since it lives in
+`harness`. It **skips** without the shared `liboracle.so` or a C compiler, and it is the one module
+here that may import `harness`: `project.load` freezes the binding process-wide, which is also why
+this directory's `make test` runs serially.
 
 Everything else must keep running in a bare checkout — no oracle build, no candidate `.so` — which is
 why the poked-input geometry was moved into `os_map.py` to be tested here at all.

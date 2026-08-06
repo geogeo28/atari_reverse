@@ -26,8 +26,11 @@ ORACLE_SRC = (MUSASHI / "m68kcpu.c", GENDIR / "m68kops.c", MUSASHI / "softfloat"
               SHIM)
 
 
-def compile_probe(probe_src, tmpdir):
+def compile_probe(probe_src, tmpdir, extra_src=()):
     """Compile `probe_src` against the oracle's sources into `tmpdir`; return the binary's path.
+
+    ``extra_src`` adds kit sources the probe needs beyond the oracle's — the candidate-side files in
+    ``src/``, for a probe that drives BOTH sides of a model in one process (test_psg_model.py).
 
     Skips the calling suite when a source is absent — the build products are gitignored, so a bare
     checkout is the only way that happens.
@@ -43,6 +46,7 @@ def compile_probe(probe_src, tmpdir):
     subprocess.run(
         ["cc", "-O0", "-DM68K_EMULATE_TRACE=0",
          f"-I{KIT / 'include'}", f"-I{MUSASHI}", f"-I{GENDIR}", f"-I{MUSASHI / 'softfloat'}",
-         *[str(src) for src in ORACLE_SRC], str(probe_src), "-o", str(binary)],
+         *[str(src) for src in ORACLE_SRC], *[str(src) for src in extra_src],
+         str(probe_src), "-o", str(binary)],
         check=True, capture_output=True, text=True)
     return binary

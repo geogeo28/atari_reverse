@@ -413,9 +413,11 @@ touch disjoint registers (14 vs 0–10), so a finer guard keyed on the register 
 a run through; the coarse one was chosen because being over-strict fails loudly while being
 under-strict fails silently, which is the wrong way round for this contract.
 
-**The direct path serves only byte writes; everything else about it raises.** `g_psg_unmodeled`
-counts, and `osh_run` rejects, two kinds of direct access — the same "refuse rather than
-fabricate" answer the trap dispatch gives an unmodeled selector:
+**The direct path serves only byte writes; everything else about it raises.** *(Superseded in part
+by Phase 6 below, which gives `$ff8800` a real read model — the second bullet stands unchanged, and
+the first is why the read had to be seeded rather than simply served.)* `g_psg_unmodeled` counts,
+and `osh_run` rejects, two kinds of direct access — the same "refuse rather than fabricate" answer
+the trap dispatch gives an unmodeled selector:
 
 - **any read of either port.** Reading `$ff8800` reads back the selected register on real hardware,
   and the ledger records writes only, so there is nothing correct to return. It used to be served
@@ -425,6 +427,9 @@ fabricate" answer the trap dispatch gives an unmodeled selector:
   trips the mixed-path guard — a reconstruction of that routine could be marked verified against the
   fabricated read. BuggyBoy never reads the ports (`lea` + `move.b`/`clr.b` writes only, and
   Musashi's `clr` does not emit the 68000's dummy read), so raising costs nothing.
+  **Phase 6 narrows this to the DATA port `$ff8802`**: `$ff8800` is answered from a register file the
+  case seeds, and a register nothing declared is still refused — the ledger's emptiness was never the
+  real obstacle, the chip's *prior contents* were.
 - **any other access to the chip's address block.** The ST decodes the YM2149 incompletely, so it
   answers across `$ff8800..$ff88ff` (`PSG_BLOCK_END`); of that, only the byte
   select-latch-then-data sequence on the canonical pair is modeled — not the odd-address decoding
@@ -436,22 +441,26 @@ fabricate" answer the trap dispatch gives an unmodeled selector:
   soundness was an unenforced property of the two input binaries. Now every callback width tallies
   any overlap with the block, so a third game cannot silently disarm it.
 
-**Consequence — Joust's raw-floppy routine (`0x152dc`) is unverifiable under this oracle.** Not just
-its `Super` sites (Phase 2): the *whole* routine. Because a direct port read is rejected **on its
-own**, the `move.b $ff8800,d1` at `0x15544` sinks any run that reaches it, with or without a
-`Giaccess` alongside — so no `emu.run` covering `0x152dc` can ever be green. It is therefore **not
-pending reconstruction work**; it is blocked until the oracle gains a real PSG read model, and it
-must stay off the reconstruction list until then (marked as such in
-[`projects/joust/recreate/STATUS.md`](../../projects/joust/recreate/STATUS.md)). Narrowing either
-guard to let it pass would restore exactly the fabricated `0` the guards exist to prevent.
+**Consequence — Joust's raw-floppy routine (`0x152dc`) was unverifiable under this oracle.** Not just
+its `Super` sites (Phase 2): the *whole* routine. Because a direct port read was rejected **on its
+own**, the `move.b $ff8800,d1` at `0x15544` sank any run that reached it, with or without a
+`Giaccess` alongside — so no `emu.run` covering `0x152dc` could ever be green.
+**Phase 6 is the "real PSG read model" that sentence was waiting for**: a case that declares port A's
+contents (`psg_seed={14: …}`) can now run the drive-select, and the read is served from the declared
+value rather than from a fabricated `0`. Two of its other blockers are unaffected — the routine's
+`Super` sites stay unreachable while the model never leaves supervisor mode, and a run that also
+reached `Giaccess` would still trip the mixed-path guard — so this lifts the PSG wall, not the whole
+routine. `projects/joust/recreate/STATUS.md`'s row says exactly that now.
 
 **One opt-in exception, for a job that is not the differential: `emu.audio_capture(True)`.** An
 asset extractor drives a game's music replayer tick by tick and reads its register stream out of
-`psg_writes()`; that needs the `$ff8800` read-back, so the refusal above makes it impossible. With
-the mode on, `shim.c` maintains a YM2149 **register file** (`OS_PSG_NREGS` bytes, os.h's count) from
-the select/data writes it already taps and answers a byte read of `$ff8800` from the latched
-register — which is what the chip does, and is exactly the model the paragraph above says the oracle
-lacks. It also serves the two bits a replayer's tempo selector reads, `$fffa01` bit 7 (monitor
+`psg_writes()`; that needs the `$ff8800` read-back, so the refusal above made it impossible. With
+the mode on, `shim.c` answers a byte read of `$ff8800` from the YM2149 **register file** — which is
+what the chip does, and was, before Phase 6, the model the paragraph above says the oracle lacks.
+Since Phase 6 that file is the *shared* one and the mode is a **relaxation** of it rather than a
+second copy: an undeclared register reads `0` here instead of refusing, an unselected latch likewise,
+and the file and latch span runs instead of being re-seeded per run. It also serves the two bits a
+replayer's tempo selector reads, `$fffa01` bit 7 (monitor
 detect) and `$ff820a` bit 1 (shifter sync), as the **50 Hz colour ST**: both read 0 off-image, 0/0 is
 the *monochrome* profile, and a capture that took it would drop 72/256 of every tick and render every
 song slow, silently.
@@ -480,21 +489,27 @@ while the mode is on — an extractor calls `osh_run` once per VBL tick, and tic
 tick N-1 wrote to a register tick N-1 selected, exactly as the chip's own latch and registers survive
 a VBL. Neither is reset by a run. Arming is a pure **toggle** and clearing is a separate
 `osh_audio_reset()` / `emu.audio_reset()` (the `cov_enable`/`cov_reset` shape): a fused
-enable-and-clear could not be issued defensively mid-capture without destroying it. Off the mode the
-latch keeps its per-run reset, or run N's `(reg,val)` pairs would be attributed to run N-1's last
-selected register and a `-n auto` suite would be order-dependent.
+enable-and-clear could not be issued defensively mid-capture without destroying it. Off the mode both
+are per-run: the latch, or run N's `(reg,val)` pairs would be attributed to run N-1's last selected
+register and a `-n auto` suite would be order-dependent; the file, because a differential run must
+start from the contents its own case declares (Phase 6).
 
 Pinned by `projects/wonderboy/recreate/test/test_audio_capture.py`, whose replayer holds both a
-read-back and the tempo selector; the kit's own suite binds no project and so has no code to run it
-against. A served read-back still counts toward `g_psg_direct`, so it **arms the mixed-path guard**
+read-back and the tempo selector, and — for the relaxations and the arm-from-off clear, which are
+properties of the shared model rather than of a game — by the kit's own `test/test_psg_model.py`.
+**A run made under the mode must opt into it**: `emu.run` refuses one that was not scoped by
+`emu.audio_capturing()`, since the mode is oracle-global and a run can otherwise be served the mode's
+fabricated answers without ever asking for them (a block that raised on its way out, an extractor in
+the same process). A served read-back still counts toward `g_psg_direct`, so it **arms the mixed-path guard**
 exactly as a direct write does — the register file is fed by the direct path only, so a `Giaccess`
 alongside it is as stale as before. That half is pinned in `projects/joust/recreate/test/
 test_os_traps.py`, Joust being the only project that reaches both paths at all.
 
 **The PSG ledger reports its own truncation.** `psg_writes()` is the capture's primary data feed, so
-a write past `shim.c`'s `MAX_PSG` cap is counted (`osh_psg_dropped`) and named by `emu.run()` as a
-cause of its own: a silently truncated register stream would read as a complete capture with a
-section of the song missing.
+an access past `os.h`'s `OS_PSG_LOG_MAX` cap is counted (`osh_psg_dropped`) and named by `emu.run()`
+as a cause of its own: a silently truncated register stream would read as a complete capture with a
+section of the song missing. Reads occupy ledger entries too since Phase 6, so the cap now counts
+accesses rather than writes — the tally is what makes that change loud instead of silent.
 
 **GEMDOS `Crawio` (0x06) reads the same console state** as `Bconstat`/`Bconin` (`os_crawio`), rather
 than being a second, disconnected model: one staged key is visible to every console call and is
@@ -517,12 +532,16 @@ harness last put there. A "wait until the sound finishes" loop therefore termina
 mixer is staged to say so. And `Giaccess`'s return value for a *write* is modeled as 0; TOS does
 not define it, so no caller may rely on it.
 
-Finally, the register file records only each register's **final value**, not the ordered stream of
-writes — unlike the direct path's ledger. A `Giaccess`-driven driver is therefore verified more
-weakly than a direct-write one: two orderings that end in the same 16 bytes are indistinguishable.
-Closing that would mean one shared `os_psg_write()` feeding both a register file and an ordered
-ledger, with BuggyBoy's `g_REFRESH` out-params replaced by it — a worthwhile change, but one that
-reshapes a verified game's candidate ABI, so it is noted here rather than taken.
+Finally, the `Giaccess` register file records only each register's **final value**, not the ordered
+stream of writes — unlike the direct path's ledger. A `Giaccess`-driven driver is therefore verified
+more weakly than a direct-write one: two orderings that end in the same 16 bytes are
+indistinguishable. Phase 6 built "one write feeding both a register file and an ordered ledger" for
+the **direct** path; doing the same for `Giaccess` would mean appending to a ledger from
+`os_giaccess()`, which both sides share — so the two ledgers would agree by construction and prove
+nothing unless the oracle's were fed from the trap instead. Not taken. BuggyBoy's `g_REFRESH`
+out-params could likewise be replaced by `psg.h` now that it exists, but that reshapes a verified
+game's candidate ABI for no new coverage (its stream is already compared, frame by frame, by
+`projects/buggyboy/recreate/test/test_sound.py`), so it is noted here rather than taken.
 
 ## Phase 4 — GEMDOS `Fcreate` (0x3c) / `Fwrite` (0x40)
 
@@ -579,6 +598,235 @@ would have been a *second* cross-side ABI to mirror for one call site (Joust's i
 have been "leave it raising"; it is modeled because the failure mode of getting it wrong is a
 raise, never a wrong image.
 
+## Phase 6 — the SEEDED PSG READ MODEL (the direct `$ff8800`/`$ff8802` path)
+
+Phase 3 left the direct path write-only: the ledger recorded the *order* of the writes and nothing
+recorded their *effect*, so a `move.b $ff8800,dn` had no correct answer and raised. This gives it
+one. It is the capability three projects' remaining sound and floppy work stands behind.
+
+### Why a write-ledger replay is the wrong model — the finding this is built on
+
+The obvious implementation is "hand back the last value written to the selected register", folding
+the ledger into a file that starts at zero. **That recreates the exact false-green class it was
+meant to fix**, and the evidence is in every binary this workspace has:
+
+The **routine** column is the function's entry; the **read** column is the `move.b $ff8800,dn` inside
+it. They are different addresses, and an earlier revision of this table quoted the read site under
+the function's name for three of the four rows — enough to send a reader to the wrong instruction.
+
+| routine | the read | what it preserves | what a fabricated `0` does |
+| --- | --- | --- | --- |
+| Wonder Boy `snd_psg_silence` `$17f30` | `$17f3e` — `move.b $ff8800,d1; ori.b #$3f,d1` | mixer bits 6–7, the port A/B **I/O direction** lines | writes `$3f`: port A flips to input and the floppy drive-select lines float |
+| Wonder Boy `snd_music_tick` `$17c74` | `$17f08`, merged at `$17f12` — `eor.b d0,d3; and.b d2,d3; eor.b d0,d3` | every mixer bit outside this module's `d2` mask | collapses to `shadow & d2`, clearing bits 6–7 as above |
+| Wonder Boy `psg_set_drive_select` `$624c` | `$6254`, merged at `$625a` — `andi.b #$f8,d1; or.b d0,d1` | port A bits 3–7 (side select and the rest) | forces them to zero |
+| Joust drive-select `0x15536` | `0x15544` — `move.b d1,d2; and.b #$f8,d1; or.b d0,d1` | the same port A bits | the same |
+
+Every one of them preserves bits **the game never writes**, so on the first read a replayed ledger
+has no value for them and answers `0` — a value TOS never leaves there. A reconstruction merging the
+same fabricated `0` agrees with the oracle byte for byte and is verified against `shim.c`. Worse, the
+class hides: `projects/wonderboy/recreate/PORTABILITY.md` §3 records that **T1 is empty** — every
+PSG *writer* in that game also *reads* — so not one byte of its sound is verifiable through the
+ledger alone, and §4's Correction 2 records a `snd_music_tick` case that came back green only because
+control flow never reached the read.
+
+> **So the chip's contents on entry are an INPUT of the run, not a consequence of it** — the same
+> kind of thing as a poked keystroke or `OS_RANDOM_VALUE`, and subject to the same governing rule:
+> the harness supplies it identically to both sides, or the model refuses to run.
+
+### Modeled
+
+**A 16-byte register file, off-image, fed by the direct path only**, plus a `known` bitmask saying
+which of its registers have contents at all, plus a `latch-known` flag saying whether anything has
+selected a register yet. Four rules:
+
+* **a byte write to `$ff8800`** latches the register number, and marks the latch known. A value
+  above `$0f` is **refused** rather than masked down — see the edge table;
+* **a byte write to `$ff8802`** stores into the latched register **and** appends a `WRITE` event to
+  the ordered ledger. One write, both surfaces: the ledger is what catches a missing, extra or
+  reordered access, the file is what a read-back answers from. The register becomes *known*;
+* **a byte read of `$ff8800`** returns the latched register's contents **if it is known** — declared
+  by the case's seed, or written earlier in the same run — and appends a `READ` event to the same
+  ledger. Otherwise the run is **refused**: `osh_psg_unseeded()` returns a bitmask of the registers
+  read while unknown and `emu.run` raises, naming them and the `psg_seed=` that would declare them;
+* **a byte read of `$ff8800` with nothing selected** is refused in its own tally
+  (`osh_psg_no_select()`). A read answers the *latched* register, and the `0` the latch would
+  otherwise start from is `shim.c`'s convention rather than the chip's state — on a real ST it holds
+  whatever the last driver to touch the chip left there. **The latch is deliberately NOT seedable.**
+  A seed declares what a register *contains*, which the routine cannot compute; the select is an
+  *instruction*, which the run either executes or does not, and every PSG driver in every input
+  binary selects immediately before it reads (`$17f36` before `$17f3e`, `$624c` before `$6254`,
+  `0x1553c` before `0x15544`). A seedable latch would let a case declare that an instruction ran.
+  The remedy is to enter at or before the routine's own select — so the refusal names that, not a
+  `psg_seed=`. If an input binary ever *does* read a latch it inherited, that is a new claim about
+  entry state and it should arrive with the evidence, not with a keyword argument already in place.
+
+**Reads are part of the compared stream**, and that is not bookkeeping. A reconstruction that reads
+the WRONG register still writes the right one: given a decoy register holding the byte the real one
+held, its write stream *and* the register file it leaves are a correct run's, byte for byte. Only the
+read entry separates them. `emu.psg_writes()` is the **write-only projection** of the same stream and
+keeps its contract unchanged — it is the audio extractor's data feed and every existing consumer's.
+
+**The seed is the case's, and it is per-run.** `emu.run(..., psg_seed={7: 0xc0})` /
+`harness.differential(..., psg_seed=…)` install it before **every** run — an empty one included, so a
+seed cannot leak from the previous case — and the file is rebuilt from it at the top of each
+`osh_run`. A register another case wrote is therefore not readable here, for the reason `ENTRY_SR`
+forces the condition codes: two identical runs must give identical answers whatever ran between them,
+and under `pytest -n auto` "whatever ran between them" is not stable.
+
+**The final state is part of the observable surface.** `emu.run` reports `psg_events` (the ordered
+stream, reads included), `psg` (its write-only projection), `psg_file` and `psg_known`;
+`harness.differential` compares the stream and the file against the candidate's after every run. They
+live outside the memory image, so nothing else could catch a divergence in them — which is the whole
+reason they are exported rather than left as diagnostics.
+
+Their relation is worth stating plainly, because it decides what each one is *for*. The **ledger** is
+the net under the reconstruction: it catches an access missing, extra, wrong, out of order, or aimed
+at the wrong register — the last of those being why it carries reads, and being invisible to every
+other surface there is. The **file** adds no coverage of the game code on top of that: under equal
+seeds an equal ledger implies an equal file, since both sides store on exactly the writes they log.
+It is compared as a cross-check of the two model *implementations* against each other — a
+register-width mask added on one side, capture state leaking into a differential — which is the one
+thing the ledger comparison cannot see.
+
+### The candidate side
+
+`include/psg.h` + `src/psg.c` — linked into every candidate by `kit.mk`, exactly like the Dosound
+ledger and the refusal tally:
+
+```c
+void    psg_port_write(unsigned reg, uint8_t value);   /* select, then data */
+uint8_t psg_port_read(unsigned reg);                   /* select, then read back $ff8800 */
+```
+
+Named for the **ports** rather than for the chip because Joust's `src/sound.c` already has
+`psg_read`/`psg_write` meaning *the `Giaccess` path*; the two are precisely what the mixed-path guard
+keeps apart, and a header declaring a clashing name would be a compile error waiting for the first
+file that includes both. A read of an undeclared register on this side — or a call naming a register
+number the chip does not have — tallies through the existing **`os_refused()`**, not a new counter,
+so `harness.differential`'s unconditional `_vet_no_os_refusal` already throws the case away. That
+closes the model's refusals on **both** sides, which is the property "Refusing on ONE side is a false
+green" (above) exists to state: the oracle's run is rejected, and a candidate that sails past on an
+invented value is rejected too.
+
+The candidate has no select of its own — it selects and accesses in one call — so the *latch*
+refusal has no mirror here, and needs none: a reconstruction cannot express a read of a register it
+did not name.
+
+### The YM2149 edge semantics: what is modeled, what is refused, what is not modeled
+
+| the access | answer | why |
+| --- | --- | --- |
+| byte write `$ff8800` (select), value `0x00..0x0f` | latch it; mark the latch known | the ST decodes four bits into a register number |
+| byte write `$ff8800` (select), value **above `0x0f`** | **REFUSED** (`osh_psg_unmodeled`), latch untouched | this used to mask the value down to four bits, on the claim that "the upper bits are ignored — Hatari's model". That claim does not survive checking: the YM2149 requires the select byte's upper nibble to be **zero**, and the ST's incomplete decoding is about the *address*, not the *value*. Masking is also asymmetric — the oracle would silently select register 14 for `move.b #$1e,$ff8800` while the candidate's `psg_port_write(0x1e, …)` refuses the same call — so both sides refuse. No input binary writes one; the day one does it needs a model, not a mask |
+| byte write `$ff8802` (data) | store + log a `WRITE` event | |
+| byte read `$ff8800`, register **known** | its contents; log a `READ` event | what the chip does: the select port reads the selected register back |
+| byte read `$ff8800`, register **unknown** | **REFUSED** (`osh_psg_unseeded`) | the value is an input; inventing it is the false green above |
+| byte read `$ff8800`, **nothing selected yet** | **REFUSED** (`osh_psg_no_select`) | there is no latched register to answer from, and the latch's initial `0` is `shim.c`'s convention rather than the chip's state. Not seedable — see "Modeled" above |
+| byte read `$ff8802` | **REFUSED** (`osh_psg_unmodeled`) | the data port is write-only; the chip reads back through `$ff8800`. Answering it would invent a port the hardware does not have |
+| any 16/32-bit access to the block, either direction | **REFUSED** | only the byte protocol is modeled; a wide access also decodes odd addresses the model does not |
+| any odd alias (`$ff8801`/`$ff8803`) or mirror up to `$ff88ff` | **REFUSED** | the ST decodes the chip incompletely; the mirrors are not modeled, and tallying them is what stops one from silently disarming the mixed-path guard |
+| register **widths** (R1/R3/R5/R13 are 4-bit, R6/R8/R9/R10 5-bit) | **NOT modeled** — a read-back returns the whole byte that was written | the real chip returns 0 in the unimplemented bits. Storing the byte unmasked is the choice that cannot silently corrupt a reconstruction: for every value a game actually writes the two agree, and a case that wants the chip's answer can seed it. A register-width table would be a second model to get wrong, and no input binary exercises the difference |
+| ports A/B (R14/R15) read-back | the last value written | on the ST both ports are **outputs** (port A = floppy drive/side select, port B = printer data), and an output port reads back its own latch. That is what both drive-select routines depend on. A port configured as an INPUT would read pin state, which this models not at all — and nothing sets R7's direction bits to make one |
+| the select latch itself | not compared between the sides | the candidate's API selects and accesses in one call, so a select with no access is not expressible there. A driver whose *only* effect were leaving a register selected would be unmodeled |
+| a data write with **nothing selected** | stored into register 0 (the latch's placeholder), logged as such | unlike a *read*, this has an unambiguous comparable answer on both sides: the candidate names its register explicitly, so a reconstruction that meant a different one diverges in the ledger. It is a fabrication about the real chip and is recorded here as one — no game does it, and refusing it would buy a guard with no witness |
+
+### One chip, three files — how they relate
+
+* **`OS_PSG_REGS` (`0x610`, in the image)** — the `Giaccess` path's file, Phase 3. Unchanged and
+  **not merged** with this one. It is in the image on purpose: `os_giaccess()` is shared verbatim by
+  the shim and by a reconstruction, so its writes are ordinary diffed memory and cost no ABI at all.
+  Merging the two would take that state off-image and turn a free property into a mirrored one.
+* **the direct file (this phase, off-image)** — fed by `$ff8802` writes only.
+* Because neither sees the other's stores, **the mixed-path guard stays exactly as it was**: a run
+  that uses both is refused. This phase gives the direct file readable contents, which is a different
+  question from the two files agreeing. Merging them is what would retire the guard, at the cost
+  above; that trade is recorded here and not taken.
+* **the audio-capture file** — was a third copy; it is now **the same array**, and the mode is a
+  documented *relaxation* of this model (an unknown register reads `0`, an unselected latch likewise,
+  and the file and latch span runs).
+  Every pin the mode had holds unchanged (`projects/wonderboy/recreate/test/test_audio_capture.py`,
+  13 cases, and Joust's arming case): the read-back, the cross-run persistence,
+  `audio_reset()` as the only clear *mid-capture*, re-arming an armed capture as a no-op, a served
+  read still arming the mixed-path guard, and `osh_psg_dropped`'s truncation report. Two consequences
+  of sharing the array had to be closed rather than documented:
+
+  * a run made while the mode is OFF leaves its own registers **and its own select latch** behind, so
+    **arming from off now clears both** — otherwise a capture armed bare would start on whatever the
+    last differential left, and under `pytest -n auto` on which case that was is not reproducible.
+    The latch half was measured, not theorised: select register 10 in a run, arm, write the data port
+    bare, and the byte landed in 10 — a capture writing a register it had never named.
+    `emu.audio_capturing()` resets anyway; this makes structural what was a convention, and leaves
+    the idempotent-re-arm pin untouched (that one re-arms an *already-armed* capture);
+  * the mode being oracle-global means a run can be served its fabricated answers without asking, so
+    **`emu.run` refuses a run made under the mode that did not opt in** — `emu.audio_capturing()` is
+    what declares the intent, and every existing capture already goes through it. Without that, a
+    block that raised on its way out, or an extractor sharing the process, silently turns later runs
+    into capture runs; `harness.differential`'s `_vet_audio_capture_off` covers only the cases that
+    go through the harness, and most PSG cases call `emu.run` directly.
+
+### Why the model is always on and only the SEED is opt-in
+
+The seed follows `stop_pc`/`poison`: a per-run keyword on `emu.run` and `harness.differential`. The
+*model* is not switchable, and deliberately:
+
+* with no seed it behaves exactly as Phase 3 did — every read of a register nothing wrote is refused
+  — so there is no second behaviour for the same instruction stream, and nothing to forget to arm;
+* the one thing it adds unconditionally is a read-back of a register **this run wrote**, which no
+  case can be wrong about: the chip returns the last value written, and both sides compute it from
+  the same write;
+* a flag would have to be threaded through every case that merely *might* reach the PSG, and the
+  cost of forgetting it is a refused run either way — so the flag would buy nothing and could only be
+  set wrongly.
+* A `project.toml` waiver was considered and is not needed: nothing about the model is a claim about
+  the game, so there is no claim to enforce per run.
+
+### What is pinned, and what is not
+
+**The model** is pinned kit-side by [`test/test_psg_model.py`](test/test_psg_model.py) and its
+`psg_model_probe.c`, which drives **both** implementations in one process: a seeded read served; an
+undeclared read refused **on both sides**; a read with nothing selected refused in its own tally, and
+a seed shown not to help it; a select above `$0f` refused on both sides; a read-modify-write reading
+back its own write; the ordered ledger byte-identical over a recorded write-only sequence — and its
+write projection asserted separately per case, which is the regression pin every `psg_writes()`
+consumer rests on; the file **not** surviving a run; the capture mode's relaxations plus the
+arm-from-off clear of **both** the register file and the select latch. And the negative control the
+house style demands — three mutant candidates, each caught while touching no image byte at all:
+
+* one that **skips the write**, caught by both off-image surfaces;
+* one that **ignores the read-back**, likewise. This is what a fabricated `0` would have hidden:
+  `0 | $3f` and `read | $3f` agree, so it would have been green;
+* one that **reads the wrong register** — the transposed RMW. Its register file, its known mask and
+  its whole *write* stream are a correct run's, exactly; the ledger's read entry is the only thing
+  that separates them, which is the case that put reads in the compared stream.
+
+**The plumbing** — `harness.differential`'s own PSG code, which the kit could not previously reach at
+all — is pinned by [`test/test_psg_differential.py`](test/test_psg_differential.py). It builds a
+miniature project in a temp directory (a `.PRG` holding the same RMW in 68000 code, and a candidate
+`.so` from `test/kit_candidate.c` plus `src/`) and runs real `differential()` calls through it: the
+green case, then `_vet_psg_state` and `_seed_candidate_psg` each stubbed out via `monkeypatch` and
+shown to be load-bearing (with the comparison gone, the skips-the-write mutant passes the entire
+differential clean), the missing-ABI arm refusing **by name**, and both arms of the two-doors guard.
+
+**Mutation sweep.** The four load-bearing model lines (serve an unknown register; skip the per-run
+re-seed; drop the candidate's known check; stop storing writes into the file) redden 4/4.
+
+**Not pinned.** The ledger's **cap** arm — a run of `OS_PSG_LOG_MAX` accesses — has no case: reaching
+it needs 4,096 register accesses in one run, and nothing that exists does that. Ports A/B read back as
+outputs because nothing configures them as inputs, so the input-pin behaviour the table calls "not
+modeled at all" is unreachable rather than untested. The register-**width** masks are likewise
+unexercised: no input binary writes a value the real chip would truncate.
+
+**One trap for the next game, stated because nothing enforces it.** `_vet_psg_state` runs on every
+`differential()` call and compares the candidate's `psg.h` ledger — so a candidate that emits its
+register stream through a *project-specific* ABI has an empty one. BuggyBoy is exactly that
+(`g_REFRESH`'s out-params), and it stays green only because its PSG-reaching cases drive `emu.run`
+plus the out-params by hand rather than going through `differential()`. Converting them would fail
+with a stream mismatch that is about the ABI, not the reconstruction. The fix, when someone does it,
+is to move that candidate onto `psg_port_write()` — not to add a waiver. The same warning is
+recorded where a BuggyBoy session will meet it, in
+[`projects/buggyboy/recreate/README.md`](../../projects/buggyboy/recreate/README.md)'s "Harness gaps"
+section.
+
 ## What a candidate must mirror (cross-side ABI)
 
 Everything the model reads or writes in the image is shared by construction — a reconstruction that
@@ -589,7 +837,8 @@ nothing to mirror by hand. Two things are **not** in the image and must be match
 | what | where the oracle keeps it | what the candidate must do |
 | --- | --- | --- |
 | XBIOS `Dosound(A0)` list pointers | `shim.c`'s `g_dosound_arg` ledger | export the `g_dosound*` ledger ABI (README.md); `harness.differential` compares them |
-| direct `$ff8800`/`$ff8802` PSG writes | `shim.c`'s `g_psg_reg`/`g_psg_val` ledger | emit the same ordered `(reg, val)` stream (BuggyBoy: `g_REFRESH` out-params) |
+| direct `$ff8800`/`$ff8802` PSG accesses, **reads included** | `shim.c`'s `g_psg_kind`/`g_psg_reg`/`g_psg_val` ledger | emit the same ordered `(kind, reg, val)` stream — call `psg_port_write()` / `psg_port_read()` from `psg.h` (BuggyBoy predates it and emits through `g_REFRESH` out-params instead) |
+| the YM2149's register contents, which a read-back returns | `shim.c`'s `g_psg_file` + its known mask | `psg_port_read()`/`psg_port_write()` keep the same file; `harness.differential` compares it, and the case seeds both sides with `psg_seed=` (Phase 6) |
 
 `OS_SUPER_TOKEN` is not off-image state but it is still a shared value: a reconstruction of a
 function that calls `Super` must return the same constant, since the program can store it into the

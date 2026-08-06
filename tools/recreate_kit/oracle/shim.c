@@ -77,65 +77,115 @@ uint32_t        osh_prof_slots(void) { return PROF_SIZE / 2; }
 /* --- PSG (YM2149) capture -----------------------------------------------------------
  * The sound driver talks to the PSG by writing a register number to $ff8800 (select
  * latch) then the value to $ff8802 (data). Those addresses sit above the 1 MiB image, so
- * the writes would otherwise vanish. Tap them here into an ordered (reg,val) log the sound
+ * the accesses would otherwise vanish. Tap them here into an ordered event log the sound
  * tools read after each REFRESH run — the register stream that drives a Python YM2149. */
-#define PSG_SELECT 0xff8800   /* register-select latch (68000's 24-bit bus aliases $ffff8800) */
-#define PSG_DATA   0xff8802   /* data port */
-/* The ST decodes the YM2149 incompletely: it answers across the whole $ff8800..$ff88ff block, of
- * which the two addresses above are the canonical pair. The guards below cover the BLOCK, not the
- * pair — a driver reaching the chip through a mirror is using the direct path just as much, and
- * guarding only the pair would let it disarm the mixed-path check. */
+/* The canonical pair is os.h's OS_PSG_PORT_SELECT / OS_PSG_PORT_DATA — one definition, because
+ * test/psg_model_probe.c plants 68000 code that must reach the same two addresses this decodes.
+ * (The 68000's 24-bit bus aliases $ffff8800 onto $ff8800; BUS_ADDR_MASK above is what makes the
+ * comparison see both.)
+ *
+ * The ST decodes the YM2149 incompletely: it answers across the whole $ff8800..$ff88ff block, of
+ * which those two are the canonical pair. The guards below cover the BLOCK, not the pair — a driver
+ * reaching the chip through a mirror is using the direct path just as much, and guarding only the
+ * pair would let it disarm the mixed-path check. */
 #define PSG_BLOCK_END 0xff8900
-#define MAX_PSG    4096
-static uint8_t  g_psg_reg[MAX_PSG];
-static uint8_t  g_psg_val[MAX_PSG];
-static uint32_t g_psgn;        /* captured (reg,val) writes this run */
-/* Writes this run that did NOT fit in the ledger. The ledger is the audio-capture mode's PRIMARY
+/* The ledger's cap is os.h's OS_PSG_LOG_MAX — ONE cap for both sides, like OS_DOSOUND_LOG_MAX:
+ * harness.differential compares this ledger against the candidate's (src/psg.c), and were the two
+ * caps to differ a long run would drop entries on one side only and diverge for a reason that has
+ * nothing to do with the reconstruction. */
+static uint8_t  g_psg_kind[OS_PSG_LOG_MAX];   /* OS_PSG_EVENT_WRITE / OS_PSG_EVENT_READ (os.h) */
+static uint8_t  g_psg_reg[OS_PSG_LOG_MAX];
+static uint8_t  g_psg_val[OS_PSG_LOG_MAX];
+static uint32_t g_psgn;        /* captured direct accesses this run — READS INCLUDED */
+/* Accesses this run that did NOT fit in the ledger. The ledger is the audio-capture mode's PRIMARY
  * DATA FEED (an extractor reads a whole song out of it, tick by tick), so a silent truncation would
  * not merely lose diagnostics: it would read as a complete capture with a section of the song
- * missing. emu.run names it as its own cause, the same way it names the two PSG refusals. */
+ * missing. emu.run names it as its own cause, the same way it names the PSG refusals. */
 static uint32_t g_psg_dropped;
 static uint8_t  g_psg_latch;   /* register selected by the last $ff8800 write */
+/* Has ANYTHING selected a register yet? A read of $ff8800 answers the LATCHED register, so with no
+ * select the model would be answering a register the run never named — g_psg_latch's initial 0 is
+ * this file's convention, not the chip's state, and on a real ST the latch holds whatever the last
+ * driver to touch the chip left there. That is the same "the value is an input, do not invent it"
+ * argument the register file rests on, so it gets the same answer: refuse, and name the missing
+ * select. It is NOT seedable, deliberately — see TRAP_MODEL.md, Phase 6. */
+static int      g_psg_latch_known;
 
-/* Which of the two PSG paths this run used. The readable register file (os.h OS_PSG_REGS) is fed
- * by XBIOS Giaccess only — a direct $ff8800/$ff8802 access goes to the off-image ledger above (or,
- * for a read, is not modeled at all) and leaves the file stale — so a run that uses BOTH cannot be
- * served a correct Giaccess read. Rather than answer from a register file we know is out of date,
- * count the run unmodeled and let emu.run reject it with the diagnostic osh_psg_mixed_paths backs.
- * Joust reaches both (its sound driver calls Giaccess; its floppy routine at image 0x1553c selects
- * and rewrites PSG port A directly), so this is a live guard, not a hypothetical one. */
+/* --- the modeled YM2149 register file (the direct path's READABLE state) ---------------------
+ * The ledger above records the ORDER of the writes; this records their EFFECT — what the chip hands
+ * back to a `move.b $ff8800,dn` read of the currently selected register. It is what makes a
+ * read-modify-write ("select the mixer, read it, merge in this module's channels, write it back")
+ * runnable at all, and every PSG writer in Wonder Boy is one.
+ *
+ * THE CASE DECLARES THE CHIP'S PRIOR CONTENTS; THE MODEL NEVER INVENTS THEM. An RMW preserves
+ * exactly the bits the game does NOT write — `ori.b #$3f,d1` on register 7 keeps the two port
+ * DIRECTION bits, the floppy drive-select keeps port A's upper five — so the value the chip held on
+ * entry steers the result and is an INPUT of the run, like a poked keystroke. Answering 0, or
+ * replaying a ledger that is empty on the first read, would verify a reconstruction against a value
+ * no real machine ever holds. So a register is readable only once it is KNOWN: declared by the case
+ * (osh_psg_seed) or written earlier in the same run. A read of an unknown register is REFUSED —
+ * g_psg_unseeded records which registers, and emu.run rejects the run and names them. */
+static uint8_t  g_psg_file[OS_PSG_NREGS];   /* os.h owns the count, its mask, and the uint16_t check */
+static uint16_t g_psg_known;       /* bit R set = register R's contents are known this run */
+static uint8_t  g_psg_seed[OS_PSG_NREGS];   /* the contents the case declares each run STARTS from */
+static uint16_t g_psg_seed_known;           /* ...and which registers it declared */
+static uint16_t g_psg_unseeded;    /* registers this run read while UNKNOWN (see emu.run's cause) */
+static uint32_t g_psg_no_select;   /* reads this run made before ANYTHING selected a register */
+
+/* Which of the two PSG paths this run used. ONE chip, TWO modeled register files: the trap path's
+ * lives in the image (os.h OS_PSG_REGS) and is fed by XBIOS Giaccess only; the direct path's is
+ * g_psg_file above and is fed by $ff8802 writes only. Neither sees the other's stores, so a run
+ * that uses BOTH would be served a read from a file it knows is stale — whichever way round. Rather
+ * than answer from it, count the run unmodeled and let emu.run reject it with the diagnostic
+ * osh_psg_mixed_paths backs. Joust reaches both (its sound driver calls Giaccess; its floppy
+ * routine at image 0x1553c selects and rewrites PSG port A directly), so this is a live guard, not
+ * a hypothetical one — and the seeded read model does not retire it: it gives the direct file
+ * readable contents, which is a different question from the two files agreeing. */
 static uint32_t g_psg_direct;          /* direct $ff8800/$ff8802 accesses this run (any width) */
 static uint32_t g_psg_giaccess_calls;  /* XBIOS Giaccess traps served this run */
 int osh_psg_mixed_paths(void) { return g_psg_direct && g_psg_giaccess_calls; }
 
 /* Direct PSG accesses the model cannot serve at all (counted separately from g_psg_direct, which
  * merely arms the mixed-path guard). osh_run rejects the whole run on either, rather than let it be
- * verified against a fabricated value. Two kinds:
- *   - ANY read of either port. Reading $ff8800 reads back the selected register on real hardware,
- *     and the ledger records writes only, so there is nothing correct to return: serving 0 forces a
- *     read-modify-write's preserved bits to zero (Joust's drive-select at image 0x15544 does
- *     exactly `move.b $ff8800,d1; move.b d1,d2; and.b #$f8,d1`) and a reconstruction of it could be
- *     "verified" against that fabricated 0. That rejection stands ALONE, so the enclosing floppy
- *     routine at 0x152dc can never be differentially verified — see TRAP_MODEL.md.
+ * verified against a fabricated value. Three kinds:
+ *   - a read of the DATA port $ff8802. The chip reads back through the SELECT port; $ff8802 is
+ *     write-only, and answering it would invent a port the hardware does not have. (A read of
+ *     $ff8800 IS modeled, from g_psg_file above — but only for a register whose contents are known;
+ *     an unknown one is refused through g_psg_unseeded, which is a different cause with a different
+ *     remedy, so it is counted separately rather than folded in here.)
+ *   - a SELECT of a register number outside 0..15. The YM2149 requires the upper nibble of the
+ *     select byte to be zero; the ST's port is not a "the top bits are ignored" register but one
+ *     whose behaviour with them set this does not model. Masking the value down (which this file
+ *     used to do) would silently turn `move.b #$1e,$ff8800` into a select of register 14 here while
+ *     the candidate's psg_port_write refuses the same call — so both sides refuse instead. No input
+ *     binary writes one; the day one does it needs a model, not a mask.
  *   - ANY OTHER access to the chip's address block. Only the BYTE protocol on the canonical pair
  *     (select latch, then data) is modeled — not the odd-address decoding a `move.w #$0e00,$ff8800`
  *     relies on, and not the mirrors. Tallying these is also what stops such an idiom from slipping
- *     past the byte callback's equality test and silently DISARMING the mixed-path guard. Neither
- *     game does it (Joust's three direct accesses are byte-sized and port-aligned; BuggyBoy reaches
- *     the ports by `lea` + byte ops), so the guard no longer rests on that property of the inputs. */
+ *     past the byte callback's equality test and silently DISARMING the mixed-path guard. No game
+ *     does it (Joust's three direct accesses are byte-sized and port-aligned; BuggyBoy reaches the
+ *     ports by `lea` + byte ops; Wonder Boy's 35 are all byte-sized on the canonical pair), so the
+ *     guard no longer rests on that property of the inputs. */
 static uint32_t g_psg_unmodeled;
 
 /* --- optional AUDIO CAPTURE mode (off by default; osh_audio_capture turns it on) --------------
  * An asset-extraction tool drives a game's music replayer tick by tick and reads the register
- * stream back out of the PSG ledger above. That needs three hardware READS the differential
- * deliberately refuses (g_psg_unmodeled) or answers as 0:
+ * stream back out of the PSG ledger above. It runs the ORIGINAL only — there is no candidate and no
+ * diff — so it needs answers the differential will not give, and it gets them by RELAXING the
+ * seeded model above rather than by keeping a second register file of its own. Three relaxations
+ * and two extra bytes:
  *
- *   - reading back $ff8800. A replayer's mixer update is a read-modify-write — select register 7,
- *     read it, merge in the channels this module owns, write it back — so a refused read has no
- *     answer and a fabricated 0 silently clears exactly the bits the read-back exists to preserve.
- *     A register-FILE model answers it exactly right: the chip returns the last value written to
- *     the currently latched register, which is the ledger's own (reg,val) stream folded into the
- *     register file.
+ *   - an UNKNOWN register reads 0 instead of being refused. A capture cannot declare a seed per
+ *     tick, and a refusal would end the extraction at the replayer's first mixer read-back; the
+ *     0 is the mode's own fabrication, and is precisely why a differential may not run under it.
+ *     A register the capture has already written reads back its own value, exactly as before.
+ *   - an UNSELECTED latch likewise reads register 0 rather than refusing. Same argument, and the
+ *     same fabrication: a replayer selects before it reads, so this only affects a capture whose
+ *     first tick does not — but refusing there would be a refusal the extractor cannot answer.
+ *   - the register file and the select latch PERSIST across osh_run calls. An extractor calls
+ *     osh_run once per VBL tick, and tick N's read-back must see what tick N-1 wrote, exactly as the
+ *     chip's own latch and registers survive a VBL. Off the mode both are reset per run from the
+ *     case's seed, which is what makes a differential deterministic (see psg_enter_run).
  *   - $fffa01 bit 7 (MFP GPIP: the monitor-detect line) and $ff820a bit 1 (the shifter's sync mode).
  *     A replayer picks its tempo from those two. Both read 0 off-image, and 0/0 is the MONOCHROME
  *     profile — so a capture ticked at 50 Hz would run the mono tick-drop rate and render every
@@ -143,16 +193,14 @@ static uint32_t g_psg_unmodeled;
  *
  * WHY IT IS OPT-IN, AND MUST STAY SO. Every one of those answers is fabricated with respect to the
  * differential: it is the model's invention, not the game's data, so a reconstruction "verified"
- * against it would be verified against this file. That is the exact false green g_psg_unmodeled and
+ * against it would be verified against this file. That is the exact false green g_psg_unseeded and
  * emu.run's refusal exist to prevent. The mode is for a tool that runs the ORIGINAL only and wants
  * its register stream; it is never valid for a differential run, and the default is unchanged.
  *
- * The register file and the select latch both PERSIST across osh_run calls while the mode is on —
- * an extractor calls osh_run once per VBL tick, and tick N's read-back must see what tick N-1 wrote,
- * exactly as the chip's own latch and registers survive a VBL. Neither is cleared by a run; only
- * osh_audio_reset() clears the file, which is where a new capture begins. Arming is a pure toggle,
- * so re-arming mid-capture keeps it (the cov_enable/cov_reset and prof_enable/prof_reset shape). */
-static uint8_t g_ym_regs[OS_PSG_NREGS];      /* os.h owns the YM2149's register count and its mask */
+ * osh_audio_reset() clears the register file AND the select latch, which is where a new capture
+ * begins; nothing else does while the mode is on. Arming is a pure toggle, so re-arming mid-capture
+ * keeps it (the cov_enable/cov_reset and prof_enable/prof_reset shape) — but arming from OFF clears,
+ * because the chip state is shared with the differential's model (see osh_audio_capture). */
 static int     g_audio_capture;
 
 /* The machine profile the mode reports, and the ONLY bits of it that are modeled: a 50 Hz colour ST,
@@ -176,24 +224,83 @@ static int     g_audio_capture;
  * NOT to introduce. Counted rather than served, so emu.run sinks the run loudly. */
 static uint32_t g_audio_profile_unmodeled;
 
-/* Arm or disarm audio capture. A PURE TOGGLE: it never clears the register file, so re-arming an
- * already-armed capture is a no-op and a capture spanning many osh_run calls cannot be reset by an
- * arming that was only meant to be defensive. osh_audio_reset() is the one thing that clears it. */
-void osh_audio_capture(int on) { g_audio_capture = on; }
-void osh_audio_reset(void)     { for (int i = 0; i < OS_PSG_NREGS; i++) g_ym_regs[i] = 0; }
+/* Clear the modeled chip state — where a new capture begins.
+ *
+ * The SELECT LATCH goes with the register file, and that is not cosmetic: it is the other half of
+ * the chip state a capture carries across runs, so a reset that cleared the file and left the latch
+ * would start the next capture selecting the previous one's last register. That leak was measured —
+ * select register 10, arm, write the data port bare, and the byte landed in register 10 of a capture
+ * that had never named it. Every clear takes both. */
+void osh_audio_reset(void) {
+    for (int i = 0; i < OS_PSG_NREGS; i++) g_psg_file[i] = 0;
+    g_psg_known = 0;                 /* the three move together: a cleared chip knows nothing, */
+    g_psg_latch = 0;                 /* and has no register selected — 0 is a placeholder, not a */
+    g_psg_latch_known = 0;           /* claim, which is exactly what g_psg_latch_known records */
+}
+
+/* Arm or disarm audio capture.
+ *
+ * Re-arming an ALREADY-ARMED capture is a no-op: an extractor that arms defensively before each
+ * tick, or a caller that nests the mode, must not silently wipe the capture it is in the middle of
+ * (the cov_enable/cov_reset shape). osh_audio_reset() is what clears the file mid-capture.
+ *
+ * But arming from OFF starts a fresh one, because the chip state is now SHARED with the
+ * differential's seeded model: a run made while the mode was off leaves its own registers AND its
+ * own select latch behind, so without this a capture armed bare would inherit whatever the last
+ * differential left — under `pytest -n auto`, an unrelated case's mixer and an unrelated case's
+ * selected register, unreproducibly. (The latch half was measured, not theorised: select register 10
+ * in a run, arm, write the data port bare, and the byte landed in 10.) Every caller goes through
+ * emu.audio_capturing(), which resets anyway; this makes structural what was otherwise a
+ * convention. */
+void osh_audio_capture(int on) {
+    if (on && !g_audio_capture) osh_audio_reset();
+    g_audio_capture = on;
+}
 /* Is the mode armed? The differential must never run under it (every served read is fabricated with
  * respect to one), and harness.differential vets this rather than trusting the caller. */
 int  osh_audio_capture_on(void) { return g_audio_capture; }
-const uint8_t *osh_audio_regfile(void)   { return g_ym_regs; }
+uint32_t       osh_audio_profile_unmodeled(void) { return g_audio_profile_unmodeled; }
+
+/* Declare the register contents every FOLLOWING run starts from — the case's seed, and the only way
+ * a register becomes readable before this run writes it. `known` is a bitmask of the registers
+ * `values` declares; a register outside it stays unknown and reading it refuses the run.
+ *
+ * The seed is stored rather than installed here: osh_run copies it into the live file, so a seed set
+ * between runs cannot reach a run already in flight, and two runs given the same seed start
+ * identical whatever ran between them (the ENTRY_SR determinism argument). */
+void osh_psg_seed(const uint8_t *values, uint32_t known) {
+    g_psg_seed_known = (uint16_t)known;
+    for (int i = 0; i < OS_PSG_NREGS; i++)
+        g_psg_seed[i] = (known & (1u << i)) ? values[i] : 0;   /* `values` is read only where declared */
+}
+/* The modeled register file after the last run, and which of it is known — the differential's
+ * off-image PSG state surface (harness.differential compares both against the candidate's). Under
+ * audio capture the same file is the extractor's view of the chip. */
+const uint8_t *osh_psg_file(void)  { return g_psg_file; }
+uint32_t       osh_psg_known(void) { return g_psg_known; }
+/* Registers this run READ while their contents were unknown — a refusal mask, not a count: emu.run
+ * names the registers a case must seed, which is the whole remedy. */
+uint32_t       osh_psg_unseeded(void) { return g_psg_unseeded; }
+/* Reads this run made before any $ff8800 write selected a register (see g_psg_latch_known). Its own
+ * cause because its remedy is its own: the case is missing a SELECT, not a seed. */
+uint32_t       osh_psg_no_select(void) { return g_psg_no_select; }
+/* Direct-path accesses this run made, READS INCLUDED. It is what "did this run use the chip?" means
+ * — a run that only READS writes no register, so the ledger's write projection cannot answer it —
+ * so harness.differential keys on this when deciding whether a candidate that exports no PSG ABI may
+ * be served, and emu.run reports it as the witness the seed-door guard tests. */
+uint32_t       osh_psg_direct(void) { return g_psg_direct; }
+/* XBIOS Giaccess traps this run served — the OTHER door to the same chip. harness.differential reads
+ * it to catch a case that seeded the direct path while the routine drove the trap path (see
+ * _vet_psg_seed_reaches_the_path); osh_psg_mixed_paths above is the same pair, ANDed. */
+uint32_t       osh_psg_giaccess(void) { return g_psg_giaccess_calls; }
 /* Pins the C array's size for Python, so emu.py sizes its cast from the .so it actually loaded
  * rather than keeping a second copy of the count. */
-uint32_t       osh_audio_reg_count(void) { return OS_PSG_NREGS; }
-uint32_t       osh_audio_profile_unmodeled(void) { return g_audio_profile_unmodeled; }
+uint32_t       osh_psg_nregs(void) { return OS_PSG_NREGS; }
 
 /* Does an access of `n` bytes at `a` fall in the YM2149's address block? */
 static int psg_block_touched(uint32_t a, uint32_t n) {
     uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff88xx to $ff88xx */
-    return lo < PSG_BLOCK_END && lo + n > PSG_SELECT;
+    return lo < PSG_BLOCK_END && lo + n > OS_PSG_PORT_SELECT;
 }
 
 /* Tally a PSG access the model cannot serve (see g_psg_unmodeled). Callers reach this only after
@@ -213,14 +320,60 @@ static void audio_note_wide_profile(uint32_t a, uint32_t n) {
         g_audio_profile_unmodeled++;
 }
 
+/* Append one direct-path event to the ordered ledger. Reads are recorded alongside writes so that
+ * "this run read register 7" is a comparable fact: a reconstruction that reads the WRONG register
+ * still writes the right one, leaving the write stream AND the register file identical on both
+ * sides. Overflow is counted, never silent — the ledger is also the capture mode's data feed. */
+static void psg_log(uint8_t kind, uint8_t reg, uint8_t value) {
+    if (g_psgn >= OS_PSG_LOG_MAX) {
+        g_psg_dropped++;                           /* see g_psg_dropped: never silently */
+        return;
+    }
+    g_psg_kind[g_psgn] = kind;
+    g_psg_reg[g_psgn] = reg;
+    g_psg_val[g_psgn] = value;
+    g_psgn++;
+}
+
+/* What a byte read of $ff8800 answers: the contents of the currently latched register.
+ *
+ * It is always a USE of the direct path, served or not, so it arms the mixed-path guard exactly as a
+ * write does — the file it answers from never saw a Giaccess store. Two things must be known for an
+ * answer to exist: WHICH register (something must have selected one this capture/run — see
+ * g_psg_latch_known) and WHAT IT HOLDS (seeded by the case or written earlier). Either missing is
+ * refused, in its own tally, because the remedies differ: add the select, or add the seed.
+ *
+ * Under audio capture both refusals relax — a capture cannot declare a seed per tick, and a refusal
+ * would end the extraction at the replayer's first read-back — and the answer becomes the file's
+ * byte, 0 where nothing wrote it. That is the mode's own fabrication, and why no differential may
+ * run under it. */
+static unsigned int psg_read_back(void) {
+    g_psg_direct++;
+    unsigned int served = 0;
+    if (g_audio_capture) {
+        /* Both refusals relaxed at once: an unselected latch reads register 0 (its placeholder) and
+         * an unknown register reads whatever the file holds, which is 0 after a clear. Exactly the
+         * answer this gave before the seeded model existed, so a capture is unchanged by it. */
+        served = g_psg_file[g_psg_latch];
+    } else if (!g_psg_latch_known) {
+        g_psg_no_select++;                         /* refused; emu.run rejects the whole run */
+    } else if (!(g_psg_known & (uint16_t)(1u << g_psg_latch))) {
+        g_psg_unseeded |= (uint16_t)(1u << g_psg_latch);   /* likewise refused, other remedy */
+    } else {
+        served = g_psg_file[g_psg_latch];
+    }
+    psg_log(OS_PSG_EVENT_READ, g_psg_latch, (uint8_t)served);
+    return served;
+}
+
 /* --- memory callbacks: big-endian, bounds-checked to the image --- */
 unsigned int m68k_read_memory_8(unsigned int a) {
     if (a < g_size) return g_mem[a];
-    if ((a & BUS_ADDR_MASK) == IKBD_STATUS) return IKBD_TX_RDY;
+    uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff88xx to $ff88xx */
+    if (lo == IKBD_STATUS) return IKBD_TX_RDY;
+    if (lo == OS_PSG_PORT_SELECT) return psg_read_back();
     if (g_audio_capture) {                         /* opt-in; see osh_audio_capture above */
-        switch (a & BUS_ADDR_MASK) {
-            case PSG_SELECT:   g_psg_direct++;     /* served, so NOT g_psg_unmodeled — but it is */
-                               return g_ym_regs[g_psg_latch];   /* still a use of the direct path */
+        switch (lo) {
             case MFP_GPIP:     return MFP_GPIP_COLOUR | MFP_GPIP_IRQ_LINES_IDLE;
             case SHIFTER_SYNC: return SHIFTER_SYNC_50HZ;
         }
@@ -255,17 +408,23 @@ const uint32_t *osh_dosound_args(void)  { return g_dosound_arg; }
 
 void m68k_write_memory_8(unsigned int a, unsigned int v) {
     switch (a & BUS_ADDR_MASK) {                   /* mask to the 68000's 24-bit address bus */
-        case PSG_SELECT: g_psg_direct++; g_psg_latch = (uint8_t)v & OS_PSG_REG_SEL; return;
-        case PSG_DATA:
+        case OS_PSG_PORT_SELECT:
+            g_psg_direct++;
+            /* Not masked to four bits: a select with a non-zero upper nibble is refused, on both
+             * sides, rather than quietly turned into a register this model does have (g_psg_unmodeled
+             * above says why). The latch is left as it was, so a read that follows is refused too —
+             * two causes for one mistake, which is the right count. */
+            if ((unsigned)v > OS_PSG_REG_SEL) { g_psg_unmodeled++; return; }
+            g_psg_latch = (uint8_t)v;
+            g_psg_latch_known = 1;
+            return;
+        case OS_PSG_PORT_DATA:
             g_psg_direct++;                            /* see the mixed-path guard in osh_run */
-            if (g_audio_capture) g_ym_regs[g_psg_latch] = (uint8_t)v;  /* what a read-back answers from */
-            if (g_psgn < MAX_PSG) {
-                g_psg_reg[g_psgn] = g_psg_latch;
-                g_psg_val[g_psgn] = (uint8_t)v;
-                g_psgn++;
-            } else {
-                g_psg_dropped++;                       /* see g_psg_dropped: never silently */
-            }
+            /* Both surfaces, from the one write: the file is what a read-back answers from (so an
+             * RMW sees its own store), the ledger is the ORDER the chip was accessed in. */
+            g_psg_file[g_psg_latch] = (uint8_t)v;
+            g_psg_known |= (uint16_t)(1u << g_psg_latch);
+            psg_log(OS_PSG_EVENT_WRITE, g_psg_latch, (uint8_t)v);
             return;
     }
     if (a < g_size) { g_mem[a] = (uint8_t)v; logw(a); return; }
@@ -322,11 +481,44 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
 /* The CPU state EVERY run begins from. Both entry points go through this one place so that the reset
  * and the ENTRY_SR force cannot drift apart — osh_run_bench once reset without forcing, and so
  * inherited the condition codes of whatever had run before it. */
+/* Put the modeled YM2149 back to this run's declared entry state, and clear its per-run tallies.
+ *
+ * It lives with the CPU reset, and is reached by osh_run_bench as well as osh_run, because "the
+ * chip's contents at entry" is exactly as much a per-run input as the entry SR: a bench issued
+ * after a seeded differential must not read that case's registers, and its own PSG traffic must not
+ * be attributed to the run before it.
+ *
+ * Off the audio-capture mode the file and the latch are rebuilt from the case's seed — a run must
+ * start from the contents its own case declares and nothing else, which is the same determinism
+ * defect ENTRY_SR closed for the condition codes, and under `pytest -n auto` "whatever ran before"
+ * is not stable. Under the mode the capture spans runs BY CONTRACT (an extractor calls osh_run once
+ * per VBL tick and a tick reads back what an earlier tick wrote to a register it selected, exactly
+ * as the chip's own latch and registers survive a VBL), so the file and latch are left alone there;
+ * osh_audio_reset() is what clears them. The ledger and the refusal tallies are per-run in BOTH
+ * modes — an extractor reads one tick's register stream at a time. */
+static void psg_enter_run(void) {
+    if (!g_audio_capture) {
+        for (int i = 0; i < OS_PSG_NREGS; i++) g_psg_file[i] = g_psg_seed[i];
+        g_psg_known = g_psg_seed_known;
+        g_psg_latch = 0;
+        g_psg_latch_known = 0;
+    }
+    g_psgn = 0;                       /* the ledger is this run's accesses only... */
+    g_psg_dropped = 0;                /* ...and so is its overflow tally */
+    g_psg_unseeded = 0;               /* the three refusal tallies are per-run in either mode */
+    g_psg_no_select = 0;
+    g_psg_unmodeled = 0;
+    g_psg_direct = 0;                 /* ...as are the two the mixed-path guard is built from */
+    g_psg_giaccess_calls = 0;
+    g_audio_profile_unmodeled = 0;    /* ...and the audio mode's wide-profile-read tally */
+}
+
 static void enter_from_reset(void) {
     m68k_init();
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
     m68k_pulse_reset();
     m68k_set_reg(M68K_REG_SR, ENTRY_SR);
+    psg_enter_run();
 }
 
 static uint32_t g_heap;         /* Malloc bump pointer */
@@ -518,19 +710,8 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     g_poked_input_calls = 0;
 
     g_wn = 0;                             /* write-set = the function's writes only */
-    g_psgn = 0;                           /* PSG capture = this run's register writes only */
-    g_psg_dropped = 0;                    /* ... and so is its overflow tally */
-    /* The select latch is per-run OFF the audio-capture mode, or run N's (reg,val) pairs would be
-     * attributed to run N-1's last selected register, making a -n auto suite order-dependent. Under
-     * the mode the capture spans runs by contract — the extractor calls osh_run once per VBL tick
-     * and a tick may read back a register a previous tick selected, exactly as the chip's own latch
-     * survives a VBL — so the reset would break the thing the mode exists for. g_ym_regs is never
-     * reset here for the same reason; osh_audio_reset() is what clears it. */
-    if (!g_audio_capture) g_psg_latch = 0;
-    g_psg_direct = 0;                     /* all three PSG tallies are per-run (the guards below) */
-    g_psg_giaccess_calls = 0;
-    g_psg_unmodeled = 0;
-    g_audio_profile_unmodeled = 0;        /* ... as is the audio mode's wide-profile-read tally */
+    /* The whole PSG model's per-run state is reset by psg_enter_run(), which enter_from_reset()
+     * above already called — so osh_run_bench gets it too. */
     g_dosound_n = 0;                      /* Dosound ledger = this run's XBIOS Dosound calls only */
     g_min_a7 = sp;                        /* deepest stack pointer (for exclude-band sanity checks) */
     uint32_t n = 0;
@@ -548,9 +729,11 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
         else                         g_ncycles += (uint32_t)m68k_execute(1);   /* one insn; tally its cycles */
     }
     g_ninsns = n;                                   /* instruction count for perf profiling */
-    /* The two PSG rejections are NOT folded into g_unmodeled: emu.run tests all three counters and
-     * names every cause that applies, so a run that both mixes the PSG paths and makes an unmodeled
-     * OS call reports both rather than sending the reader after one of them twice. */
+    /* The four PSG rejections (mixed paths, an unservable access, an unseeded read, a read with no
+     * select) are NOT folded into g_unmodeled: emu.run tests every counter and names every cause
+     * that applies, so a run that both mixes the PSG paths and makes an unmodeled OS call reports
+     * both rather than sending the reader after one of them twice. They also have four different
+     * remedies. */
     for (int i = 0; i < OSH_OUT_DREGS; i++)
         out_regs[i] = m68k_get_reg(0, (m68k_register_t)(M68K_REG_D0 + i));
     for (int i = 0; i < OSH_OUT_AREGS; i++)
@@ -623,10 +806,11 @@ uint32_t        osh_poked_input_calls(void) { return g_poked_input_calls; }
 uint32_t        osh_num_insns(void)   { return g_ninsns; }
 uint64_t        osh_num_cycles(void)  { return g_ncycles; }
 uint32_t        osh_psg_count(void)   { return g_psgn; }
-/* PSG writes this run that did not fit in the ledger (see g_psg_dropped) — emu.run names them. */
+/* PSG accesses this run that did not fit in the ledger (see g_psg_dropped) — emu.run names them. */
 uint32_t        osh_psg_dropped(void) { return g_psg_dropped; }
 /* Direct PSG accesses the model refused this run — emu.run names them in its diagnostic. */
 uint32_t        osh_psg_unmodeled(void) { return g_psg_unmodeled; }
+const uint8_t  *osh_psg_kinds(void)   { return g_psg_kind; }     /* OS_PSG_EVENT_* per entry */
 const uint8_t  *osh_psg_regs(void)    { return g_psg_reg; }
 const uint8_t  *osh_psg_vals(void)    { return g_psg_val; }
 const uint8_t  *osh_cov_data(void)    { return g_cov; }          /* the visited-PC bitset (for merge) */

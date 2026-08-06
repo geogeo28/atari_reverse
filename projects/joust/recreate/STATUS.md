@@ -18,7 +18,8 @@ reconstruction's, and each is recorded on the row it belongs to rather than summ
 IKBD wait no run on either core can leave (`read_joysticks`, `title_screen`, `check_highscore`'s
 entry loop and `_start`'s ninth call all stand on it); the traps whose whole effect is off-image
 (Setpalette, Setcolor, Setscreen, Ikbdws, Kbdvbase — read back off the oracle's own stack, never
-diffed); and the raw-floppy routine below, which is off the list entirely. `_start` also carries the
+diffed); and the raw-floppy routine below, which is off the list entirely — now on its `Super` sites
+alone, its PSG read having been unblocked by the kit's seeded read model. `_start` also carries the
 one **fidelity** gap in the project — a register hand-off no C reconstruction can make — which its
 row states in full.
 
@@ -40,14 +41,26 @@ is no post-state to diff, and `Dgetdrv` (0x19) asks about a machine the harness 
 
 ## Off the list: the raw-floppy routine at `0x152dc`
 
-**Unverifiable under the current oracle — not pending work.** It is not one of the 75 rows below
-(it is absent from `../decomp.c`'s inventory), and it must stay unreconstructed. Its drive-select
-subroutine reads the PSG select port directly (`move.b $ff8800,d1` at `0x15544`), and the kit
-rejects **any** direct PSG read *on its own* — independently of the mixed-path guard — because the
-ledger records writes only and there is nothing correct to return. So no `emu.run` reaching that
-instruction can ever be green, and reconstructing the routine cannot be verified. It unblocks only
-when the oracle gains a real PSG read model. Narrowing a guard to make it pass would restore the
-fabricated `0` read the guard exists to prevent (`tools/recreate_kit/TRAP_MODEL.md`, Phase 3).
+**The PSG wall is gone; the `Super` wall is not.** It is still not one of the 75 rows below (it is
+absent from `../decomp.c`'s inventory) and it is still unreconstructed — but the reason has changed,
+so the remaining blocker is worth stating precisely rather than leaving the old blanket in place.
+
+* **PSG read — UNBLOCKED.** Its drive-select subroutine (`0x15536`) selects PSG port A at `0x1553c`
+  and reads it back at `0x15544` (`move.b $ff8800,d1`), then merges the drive bits into what it read.
+  The kit used to reject **any** direct PSG read on its own, because the ledger recorded writes only
+  and there was nothing correct to return. The kit's **seeded PSG read model** now serves it
+  (`tools/recreate_kit/TRAP_MODEL.md`, Phase 6): a case declares the byte the chip held with
+  `psg_seed={14: <byte>}` — an ordinary test input, given identically to both sides — and the
+  read-back is answered from the declaration rather than from a fabricated `0`. The bits the routine
+  *preserves* (port A bits 3–7, side select and the rest) are exactly what that declaration is for.
+* **`Super` — STILL BLOCKED.** Its `Super` sites (Phase 2) stay unreachable while the model never
+  leaves supervisor mode, and that is what keeps the routine off the list.
+* **`Giaccess` alongside — still refused.** A run that reached both doors to the chip would trip the
+  mixed-path guard, which Phase 6 does not retire: it gives the direct file readable contents, which
+  is a different question from the two register files agreeing.
+
+The old note said "it unblocks only when the oracle gains a real PSG read model". That model has
+landed; what it bought is the drive-select read, not the enclosing routine.
 
 ## Functions (by address)
 

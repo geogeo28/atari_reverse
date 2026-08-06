@@ -31,8 +31,10 @@ THE TWO HARDWARE READS THAT MAKE IT POSSIBLE are what `emu.audio_capture` exists
 are silent failures without it (see tools/recreate_kit/TRAP_MODEL.md):
 
   * `$ff8800` read-back. `snd_music_tick` merges its mixer bits into register 7 with a
-    read-modify-write ($17f08), so a model that records writes only cannot run the tick at all.
-    The mode answers from a modeled register file, which is what the chip does.
+    read-modify-write ($17f08). The oracle models that read from a register file either way, but a
+    differential refuses one of a register the CASE has not declared — and a capture cannot declare a
+    seed per tick, so the first tick would sink the run. The mode relaxes exactly that: an undeclared
+    register reads 0, and the file spans runs so each tick sees the last one's writes.
   * `$fffa01` bit 7 (monitor detect) and `$ff820a` bit 1 (shifter sync), the driver's tempo
     selector ($17c7e..$17c9a). Read as 0 -- which is what unmodeled hardware returns -- they mean
     MONOCHROME, and the driver then drops 72/256 of every tick: every song would come out 28% slow
@@ -279,10 +281,11 @@ WAV_RMS_FLOOR = 0.01                                          # below this a ren
 # The oracle's shim models the chip's register file for the read-modify-write on register 7, and the
 # .ym frames are snapshots of the SAME file. Two different numbers here would mean the shim and this
 # tool disagree about what a YM2149 is, and the frames would be silently short or padded.
-if emu.AUDIO_NREGS != YM_REGISTERS:
-    raise SystemExit("the oracle models %s YM2149 registers, not the %d a YM6 frame carries — a "
-                     "None means liboracle.so predates the audio-capture mode entirely (rebuild it "
-                     "with `make -C tools/recreate_kit oracle`)" % (emu.AUDIO_NREGS, YM_REGISTERS))
+if emu.PSG_NREGS != YM_REGISTERS:
+    raise SystemExit("the oracle models %d YM2149 registers, not the %d a YM6 frame carries, so "
+                     "every frame written here would be short or padded. emu.PSG_NREGS is read from "
+                     "liboracle.so itself, so this is a real disagreement about what a YM2149 is, "
+                     "not a stale build." % (emu.PSG_NREGS, YM_REGISTERS))
 
 # ---- YM6 container ------------------------------------------------------------------------------
 # "YM6!" + "LeOnArD!", a fixed header, three NUL-terminated strings, the frames INTERLEAVED

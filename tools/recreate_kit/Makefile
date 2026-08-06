@@ -1,13 +1,23 @@
-# The kit's own regression tests — game-agnostic checks that need no project (no oracle build,
-# no candidate .so), so they run standalone. A project's `make test` runs its differential suite
-# via kit.mk; this runs the kit's.
+# The kit's own regression tests — game-agnostic checks that run standalone. Most need no
+# project artifacts; `test_psg_differential.py` (batch 21a) needs the SHARED liboracle.so, so
+# `test` builds it first (via the ORACLE_VIA delegation below) — without that, a fresh tree or a
+# swept build/ dir SKIPS the harness-plumbing smoke and the gate under-runs by its 7 cases + 1
+# skip marker. A project's `make test` runs its differential suite via kit.mk; this runs the kit's.
 #
 # The kit has no venv of its own; PY defaults to a project venv that already pins pytest.
 PY ?= ../../projects/buggyboy/recreate/.venv/bin/python
+# ...and it has no build of its own either: kit.mk's $(ORACLE) rule needs the KIT/GAME binding a
+# project supplies. `oracle` delegates through one, so that `make -C tools/recreate_kit oracle` —
+# which oracle/emu.py's stale-.so diagnostic tells every caller to run, including the standalone
+# scripts that import `emu` without going through a project — is a command that exists.
+ORACLE_VIA ?= ../../projects/buggyboy/recreate
 
-.PHONY: test clean
-test:
+.PHONY: test clean oracle
+test: oracle
 	$(PY) -m pytest -q test
+
+oracle:
+	$(MAKE) -C $(ORACLE_VIA) oracle
 
 # The SHARED build artifacts: the generated Musashi opcode tables and liboracle.so, which every
 # project's `make test` links against. A project's own `make clean` deliberately leaves them alone

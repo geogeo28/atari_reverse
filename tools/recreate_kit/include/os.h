@@ -101,12 +101,42 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
 #define OS_RANDOM_VALUE 0x608u   /* u32: the value XBIOS Random returns (masked to 24 bits) */
 #define OS_PSG_REGS     0x610u   /* the YM2149 register file, OS_PSG_NREGS bytes (see os_giaccess) */
 #define OS_PSG_NREGS    16       /* the YM2149 has 16 registers, selected by 4 bits */
+/* Both sides of the direct-PSG model (oracle/shim.c, src/psg.c) carry a bit per register in a
+ * uint16_t — which registers are seeded, known, or were read while unknown. The check lives here,
+ * once, beside the count it is about: a copy in each file is a copy that can be updated in one. */
+#if OS_PSG_NREGS > 16
+#error "the direct-PSG known/seed masks are uint16_t: OS_PSG_NREGS registers no longer fit"
+#endif
 
 /* XBIOS Dosound(A0) writes the chip, not the image, so both sides record their calls in a ledger the
  * harness compares (src/dosound_log.c on the candidate side, shim.c's g_dosound_arg on the oracle's).
  * ONE cap for both: were they to differ, a run past the smaller one would drop entries on that side
  * only and diverge the comparison for a reason that has nothing to do with the reconstruction. */
 #define OS_DOSOUND_LOG_MAX 256
+
+/* ---- the direct $ff8800/$ff8802 PSG path (TRAP_MODEL.md, "Phase 6") --------------------------
+ * The two ports the YM2149 answers on. They sit outside the image, so a reconstruction that drives
+ * the chip does it through psg.h rather than by storing here; the oracle taps these addresses in its
+ * memory callbacks. Defined once because BOTH sides need them — shim.c decodes them and
+ * test/psg_model_probe.c plants 68000 code that reaches them — and two copies could drift into a
+ * probe that no longer tests the guard it names. */
+#define OS_PSG_PORT_SELECT 0xff8800u  /* register-select latch; also the chip's READ-BACK port */
+#define OS_PSG_PORT_DATA   0xff8802u  /* data port: write-only on the real chip */
+
+/* The direct path writes the chip, not the image, so it is the SECOND thing both sides record in a
+ * ledger the harness compares (src/psg.c on the candidate side, shim.c's g_psg_reg/g_psg_val on the
+ * oracle's). ONE cap for both, for the reason above — and it is far larger than Dosound's because
+ * this ledger is also the audio-capture mode's data feed, one VBL tick's whole register stream at a
+ * time. */
+#define OS_PSG_LOG_MAX 4096
+
+/* What one ledger entry IS. A READ is recorded alongside the writes, in the one ordered stream, so
+ * that "this run read register 7" is a comparable fact rather than an invisible one: a
+ * reconstruction that reads the WRONG register still writes the right one, leaving the write stream
+ * and the register file identical on both sides (see TRAP_MODEL.md's transposed-RMW case). The
+ * write-only PROJECTION of the stream is what emu.psg_writes() reports, unchanged. */
+#define OS_PSG_EVENT_WRITE 0
+#define OS_PSG_EVENT_READ  1
 
 /* ---- GEM trap #2 (AES / VDI) --------------------------------------------------------
  * A trap #2 selects the subsystem by D0 and points D1 at a parameter block of array

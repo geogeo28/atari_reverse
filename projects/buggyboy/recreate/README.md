@@ -342,6 +342,27 @@ The durable fix is to give these calls **capture ledgers** like the sound path a
   add a ledger-diff test over the real course — companion to `test_game_update_real_course.py`,
   which only guards the *image* side. That closes the bug class whole-image diffing can't see.
 
+### A latent trap in this project's PSG path — read before converting a sound case
+
+The kit now ships its own direct-PSG ledger (`tools/recreate_kit/include/psg.h` + `src/psg.c`), and
+`harness.differential()` compares it against the oracle's on **every** call — the ordered
+`$ff8800`/`$ff8802` access stream and the register file it leaves. **This project's candidate does
+not use it.** `g_REFRESH` predates it and emits its register stream through project-specific
+out-params instead, so as far as the kit's ledger is concerned this candidate's PSG traffic is empty.
+
+Nothing is wrong today, and `make test` is green, for one reason only: every PSG-reaching case here
+drives `emu.run` plus those out-params **by hand** (`test/test_sound.py`) rather than going through
+`differential()`. The stream is genuinely compared, frame by frame — just not by the kit's mechanism.
+
+**The trap: converting one of those cases to `differential()` will fail**, with a stream mismatch
+that is about the ABI rather than about the reconstruction — the oracle will report the register
+writes it made and the candidate's kit-side ledger will be empty. The fix is to move `sound.c` onto
+`psg_port_write()` / `psg_port_read()`, **not** to add a waiver or to skip the comparison. Until
+someone does, keep new PSG cases in the existing hand-driven shape.
+
+The whole model, including why the read-back needs the case to declare the chip's prior contents, is
+[`tools/recreate_kit/TRAP_MODEL.md`](../../../tools/recreate_kit/TRAP_MODEL.md), "Phase 6".
+
 ## Oracle note
 
 The oracle is **Musashi** (kstenerud/Musashi, MAME's 68000 core) — faithful to real 68000

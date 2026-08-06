@@ -32,6 +32,12 @@ from recreate_kit import os_map   # noqa: E402  (importable with nothing built, 
 # Every constant that exists on both sides. os.h is the canonical definition.
 PINNED = ("OS_IMAGE_SIZE", "OS_HEAP_BASE", "OS_FS_TABLE", "OS_FS_STAGING", "OS_FS_ENTRY",
           "OS_FS_SLOTS", "OS_FS_NAME", "OS_FS_FIRST_HANDLE", "OS_DOSOUND_LOG_MAX",
+          # the two off-image ledger caps: both sides truncate at the SAME entry, or two streams
+          # that diverge past the cap would compare equal (harness.differential asserts below them)
+          "OS_PSG_LOG_MAX",
+          # ...and that ledger's event kinds. The C tags each entry and the Python compares them, so
+          # a value changed on one side alone would make every read compare as a write, silently.
+          "OS_PSG_EVENT_WRITE", "OS_PSG_EVENT_READ",
           # the staged-file entry's field offsets: harness.stage_files writes each field by name,
           # so a field REORDERED in os.h drifts silently unless both sides are pinned too
           "OS_FS_OFF_STAGING", "OS_FS_OFF_SIZE", "OS_FS_OFF_CURSOR", "OS_FS_OFF_OPEN",
@@ -104,12 +110,19 @@ def test_every_low_model_address_is_guarded_or_declared_unvetted():
 
     The scan cannot tell an address from a size or a selector, so it takes every `OS_*` integer in
     [VECTOR_PAGE_END, LOW_REGION_END) — above the 68000 vector page, which no model region may sit
-    in, and below the workspace's default load_base, above which no program is low. Every other
-    constant in os.h is a small size, offset or selector well under 0x400. A new *large* non-address
-    constant would land here too and have to be classified; over-strict fails loudly.
+    in, and below the workspace's default load_base, above which no program is low. Most other
+    constants in os.h are small sizes, offsets or selectors well under 0x400; the few LARGE ones that
+    are not addresses at all are named in NOT_ADDRESSES, which is the classification this case
+    demands rather than an escape from it — over-strict fails loudly, which is the right way round.
     """
     VECTOR_PAGE_END = 0x400         # below this is the 68000's exception vector table
     LOW_REGION_END = 0x10000        # the workspace's default load_base: above it, no program is low
+    NOT_ADDRESSES = {
+        # 4096 entries — the direct-PSG ledger's cap on both sides, not a place in the image. It is
+        # this large because that ledger is also the audio-capture mode's data feed (a whole VBL
+        # tick's register stream), which is what puts it in this range at all.
+        "OS_PSG_LOG_MAX",
+    }
     UNVETTED = {
         # 0x500, the KBDVBASE struct XBIOS Kbdvbase returns. Its only reader is that trap, which IS
         # tallied by osh_poked_input_calls — but the guard keyed on that tally asks about the poked
@@ -120,14 +133,21 @@ def test_every_low_model_address_is_guarded_or_declared_unvetted():
         "OS_SCREEN_BASE",
     }
     low = {name: value for name, value in _c_defines(OS_H.read_text()).items()
-           if VECTOR_PAGE_END <= value < LOW_REGION_END and name not in UNVETTED}
+           if VECTOR_PAGE_END <= value < LOW_REGION_END
+           and name not in UNVETTED and name not in NOT_ADDRESSES}
+    assert not (NOT_ADDRESSES & UNVETTED), (
+        f"{sorted(NOT_ADDRESSES & UNVETTED)} is on both lists — a constant is either an address "
+        f"this workspace knows is unvetted or not an address at all, and listing it twice lets a "
+        f"real region hide in the wrong one")
     unclassified = {name: value for name, value in low.items()
                     if not os_map.OS_CON_PENDING <= value < os_map.OS_POKE_BLOCK_END}
     assert not unclassified, (
         f"os.h fixes {unclassified} below {LOW_REGION_END:#x}, outside the guarded block "
-        f"[{os_map.OS_CON_PENDING:#x}, {os_map.OS_POKE_BLOCK_END:#x}) and off the unvetted list. "
-        f"Either bring it inside the block, or add it to UNVETTED and to TRAP_MODEL.md's "
-        f"'Two regions this leaves unvetted'.")
+        f"[{os_map.OS_CON_PENDING:#x}, {os_map.OS_POKE_BLOCK_END:#x}) and off both lists. If it is "
+        f"an ADDRESS: bring it inside the block, or add it to UNVETTED and to TRAP_MODEL.md's 'Two "
+        f"regions this leaves unvetted'. If it is a large COUNT or SIZE that merely lands in this "
+        f"range: add it to NOT_ADDRESSES, with the comment saying why it is not a place in the "
+        f"image — filing a size under UNVETTED would register it as a low-memory region.")
     assert low, "no low model addresses parsed at all — the scan is looking at the wrong file"
 
 
