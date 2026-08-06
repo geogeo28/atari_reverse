@@ -223,9 +223,11 @@ sfx 25 $1a9c2 50 09 00 60 00 04 fe 00 01 63 08 08 00 00
 
 ## 3. CALL SITES — the game's actual id inventory
 
-`lea $17adc.l,aN` appears at **exactly 25 sites**, and a scan of the whole disassembly
+`lea $17adc.l,aN` appears at **exactly 26 sites**, and a scan of the whole disassembly
 confirms **`$17adc` is the only address in `$1738c..$1abd0` referenced from outside the
-module**. Nothing else pokes the driver's data.
+module**. Nothing else pokes the driver's data. (The table below is restated in
+`recreate/test/test_sound.py` as `SFX_CALL_SITES` + `NON_TRIGGER_CALL_SITES`, where a case
+scans the program for these 26 `lea`s and requires the two lists to agree.)
 
 | Site | Stub | `d0` | `d1` | Meaning |
 |---|---|---|---|---|
@@ -248,6 +250,7 @@ module**. Nothing else pokes the driver's data.
 | `$00678c` | +56 (`jmp`) | `$09` | 0 | SFX 9, ch A |
 | `$00679c` | +56 | `$08` | 0 | SFX 8, ch A |
 | `$006ae4` | +56 | `$0b` | 0 | SFX 11, ch A |
+| `$006b4e` | +56 | `$13` (19) | **1** | **SFX 19, ch B** (in `$6b46`) — the one non-A site |
 | `$006bca` | +28 | — | — | stop (in `$6bb8`) |
 | `$006be2` | +56 | `$19` (25) | 0 | SFX 25, ch A (in `$6bb8`) |
 | `$006fb0` | +0  | `$0e` (14) | 0 | **song 14** |
@@ -255,8 +258,16 @@ module**. Nothing else pokes the driver's data.
 | `$00e54a` | +0  | `$08` | — | **song 8** |
 | `$00f9fc` | +0 / +28 | **data-driven** | — | see below |
 
-**Every SFX call site passes `d1 = 0`** (`clr.w d1`) — the game only ever uses channel A
-for effects; the ch-B and ch-C paths of `$1a48a` are dead in this build.
+**Every SFX call site but one passes `d1 = 0`** (`clr.w d1`). The exception is `$006b4e`,
+inside `actor_damage_template_hitpoints` (`$6b46`), whose second instruction is
+`move.w #$1,d1` — so **the ch-B path of `$1a48a` is LIVE code reached from the shipped
+game**, and only the ch-C path is dead in this build. (This paragraph read "every SFX call
+site passes `d1 = 0` … the ch-B and ch-C paths are dead" until batch 17 ported `$6b46` and
+pinned the channel from that caller's own entry bytes; the `$006b4e` row was missing from
+the table above, which is how the claim survived.)
+
+Nothing in the shipped data reaches ch-C either: the one thing that could is pattern opcode
+`$97` (`$17fd4`), which calls the stub without ever setting `d1`, and it occurs zero times.
 
 `$00f9fc` is the level-music dispatcher:
 ```
@@ -275,7 +286,8 @@ for effects; the ch-B and ch-C paths of `$1a48a` are dead in this build.
 So the full song inventory is data (17 songs, ids 0..16); `$fa2e` is the "currently
 playing song" cache, and byte `+8` of each level record holds the id.
 
-Direct SFX ids observed as immediates: **0, 1, 3, 4, 5, 6, 8, 9, 11, 15, 22, 25**.
+Direct SFX ids observed as immediates: **0, 1, 3, 4, 5, 6, 8, 9, 11, 15, 19, 22, 25**
+(19 is `$6b46`'s, and the only one passed on a channel other than A).
 Direct song ids as immediates: **8, 14, 15, 16** — the rest come from level data.
 
 ---

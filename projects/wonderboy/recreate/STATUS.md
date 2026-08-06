@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 147/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 153/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -20,27 +20,33 @@ blitters plus `sprite_draw_pass`, the pass that clips, addresses and dispatches 
 tiling `$8f02..$989c` exactly (batches 14–15), and now the PANEL'S THIRD-TIER DRIVER pair plus the
 SOUND MODULE'S FIRST PORTED BYTES — `panel_frame_timers` + `panel_refresh_frame` and
 `snd_trigger_effect` + its register-preserving stub, 660 bytes that close the status panel end to
-end (batch 16b) — 16,290 bytes in all, 63.2 % of everything
-[`PORTABILITY.md`](PORTABILITY.md) measures.**
-`make test`: **2565 cases green in what this batch commits** — 2146 before batch 14, plus batch
+end (batch 16b) — and the TWO DAMAGE PATHS, `actor_damage_followed` + `actor_damage_template_hitpoints`
+(380 bytes, batch 17: the pair rejected twice for a call 16a made visible and 16b made portable) —
+16,670 bytes in all, 64.6 % of everything
+[`PORTABILITY.md`](PORTABILITY.md) measures.** *(The batch-16 commit's header said 147 — an
+oversight; its own section records 151, and this header now carries batch 17's 153.)*
+`make test`: **2729 cases green in what this batch commits** — 2146 before batch 14, plus batch
 14's 155 (154 in the new `test/test_blit.py`, and 1 in `test/test_layout.py`: a name defined in
 two headers is refused, the guard that batch's `layout.py` scrape extension needs), plus batch
 15's 75 (all in `test/test_blit.py`, which stands at 229), plus batch 16b's 189 — 137 in the new
-`test/test_sound.py` and 52 in `test/test_hud.py`.
-Of the 2565: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
+`test/test_sound.py` and 52 in `test/test_hud.py` — plus batch 17's 164 net: 204 damage-path cases
+less the 44 a measured review trim removed (two grids re-making already-made claims), +3 in
+`test/test_sound.py` (the id-19 completeness work) and +1 in `test/test_effects.py` (the
+two-headers slot-byte pin).
+Of the 2729: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
 first gameplay batch's, 548 are the status panel's — that last figure was 169 after batch 2, 339
 after batch 3, 481 after batch 10, 485 after batch 12 and 496 after batch 13, and the whole of the
-growth is `test/test_hud.py` — 137 the sound module's (batch 16b's `test/test_sound.py`), 231 are the background scroll subsystem's (65 after batch 5, 148 after batch 6),
-755 are the actor tier's (113 after batch 8, 222 after batch 10), 105 the text subsystem's (56 after
+growth is `test/test_hud.py` — 140 the sound module's (batch 16b's `test/test_sound.py`, +3 in batch 17), 231 are the background scroll subsystem's (65 after batch 5, 148 after batch 6),
+915 are the actor tier's (113 after batch 8, 222 after batch 10, 755 after batch 13), 105 the text subsystem's (56 after
 batch 8), 167 the collision map's, which is batch 10's new `test/test_map.py` (58 when it landed),
 80 the stage loader's (65 when batch 12 landed it), 229 the sprite tier's (batch 14's
 `test/test_blit.py` at 154, grown by batch 15's pass cases), and the last is `test_layout.py`'s
 two-header refusal.
-**A `make test` run in a working tree may report MORE than 2565**, because `test/test_audio_capture.py`
+**A `make test` run in a working tree may report MORE than 2729**, because `test/test_audio_capture.py`
 — which pins a KIT mode from this game's suite for `test_poked_input_guard.py`'s reason — is a
 concurrent session's battery, landing in its own commit and still growing; it is not part of this
-batch's count and nothing here rests on it (it stood at 13 while batch 16 was written, so a clean
-tree reports 2578). A row appears in the table at the end when a function is
+batch's count and nothing here rests on it (it stood at 13 while batch 17 was written, so a clean
+tree reports 2742). A row appears in the table at the end when a function is
 reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only *named*,
 not ported.
 
@@ -625,6 +631,8 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x1a48a` | `snd_trigger_effect` | 334 | verified | 123 cases: all 26 shipped ids on channel A, 12 call-site ids x channels B/C, 6 out-of-range ids (both sides of the sign extension) x 3 channels, 3 ids whose descriptor sits INSIDE the mix block (order), 2 whose descriptor sits inside the STATE band (the copy DIRECTION — a memmove reddens exactly these, over a keyed-seeded band, with the model SIMULATING the byte-by-byte copy), 5 seeded descriptors x 3 channels through a poked pointer-table entry, a d1 sweep over the third arm bracketing the last channel's own number, d0/d1 high-byte pins, table self-bounding + noise-arm coverage guards + entry pin over all three arms and the orphan `rts` |
 | `0xbbca` | `panel_frame_timers` (`src/hud.c`) | 268 | verified | 41 cases: 19 timer seeds x 2 screen buffers reaching every arm and both sides of every test in the body (the rewind clamp signed and exact, the meter floor and its non-floored negative, the effect's SIGNED `bgt`, the index wrap at $c), each asserting the arm's exact write set, the frame it drew and the d0 it hands on; the effect-firing arm's writes asserted through `test_sound.py`'s own model (imported, not restated) + entry pin assembling the `jsr 56(a1)` from `entry_of("snd_stub_00")` — batch 16a's `$bca2` edge confirmed by construction |
 | `0xb346` | `panel_refresh_frame` | 44 | verified | 11 cases: 3 animation arms x 2 screen-buffer pairs over the whole ten-callee tier (write set composed from the batteries that own each callee), the poked-frame case that reaches the alternate stage font through the LIVE d0 the blit's last `movem` leaves, the entry-register indifference case, and the call-list guard + entry pin. Attribution off for a stated reason: a composed pass's outputs are its later callees' inputs (the poisoned meter value would drive $b61e's 16k-blit runaway) |
+| `0x69fe` | `actor_damage_followed` (`src/actor.c`) | 266 | verified | Batch 17, ~110 cases after the review trim: 7 mode-flag seeds pinning `tst.b` against the `tst.w` every other reader uses ($0001/$00ff answer the OTHER record), the invulnerable arm as a differential over an EMPTY write set with all entry registers required back, all four funnel arms by exact write set, the helmet-slot boundary both ways, a 10-point meter sweep incl. a negative carried back positive and STORED, one damage-table type per distinct shipped word (6) + 6 out-of-range types (the index is unsigned and LONGWORD: $4000 reads above the table, $8000 wraps to entry 0) + 7 seeded + the 4-case inline sign-bit arm, a 9x4 x-compare grid (inclusive where $67c2's is strict), per-arm register model via leaf.set_low_word. SFX writes asserted through `test_sound.py`'s model, imported |
+| `0x6b46` | `actor_damage_template_hitpoints` | 114 | verified | Batch 17, ~90 cases: the three gauntlet arms (the doubling runs on BOTH that spend a charge — batch 13's read had it inverted), 12 list-byte seeds over the `addq.b` wrap, the pool/flags2 axes split per the measured trim (9 pool cases + the 4-seed axis on one killing and one surviving case), 6 template slots, both table pointers, and the registers incl. d1's entered high half over the CHANNEL-B selector — every case drives snd_trigger_effect's B arm from this caller's own registers, and a B-arm stride mutation reddens 39 of them plus test_sound's new id-19 case |
 
 ### The .RAD depacker
 
@@ -2510,7 +2518,10 @@ and `rotate_left32`.
   **trigger** = a kit capability to schedule a memory poke at an instruction count or a PC;
   **home** = `tools/recreate_kit`, in `emu.run`. Until then the two returning arms are portable and
   the payload is not, which is not worth a partial reconstruction.
-* **`$69fe` (`damage_path_69fe`, 266 bytes) and `$6b46` (`damage_path_6b46`, 114 bytes)** — the
+* *(Batch 17: BOTH PORTED — `actor_damage_followed` / `actor_damage_template_hitpoints`, see the
+  batch-17 section. The rejection below was right when written and fell in two stages: 16a made the
+  invisible call an honest edge, 16b ported its target.)*
+  **`$69fe` (`damage_path_69fe`, 266 bytes) and `$6b46` (`damage_path_6b46`, 114 bytes)** — the
   damage paths. Batch 10 rejected both for a `jsr 56(a5)` into the sound module at `$17adc`, and
   re-reading confirms the call is unavoidable in each: `$69fe` funnels all four of its arms
   (`$6a44`, `$6a7a`, `$6a96`, `$6ab0`) through `$6aba` into `$6ade` and the `lea`/`jsr` pair at
@@ -3150,3 +3161,79 @@ floor's strictness (a charge landing exactly on zero stores zero on both arms).
   test_scroll, ~40 sites) — parked in `leaf.py`'s note beside `LONGWORD_BYTES`.
 * **The `$17c74` per-VBL tick is the module's next wall** — supervisor-mode PSG writes; blocked on
   the seeded-PSG-read model the audio-capture work opened the door to.
+
+### Batch 17: the two damage paths, and the arm that was never dead
+
+`$69fe` (266 B) + `$6b46` (114 B) into `src/actor.c` — the pair rejected in batches 10 and 13 for a
+`jsr 56(a5)` that batch 16a made visible and 16b made portable. **Verified 153, 16,670 bytes,
+64.6 %; `make test` 2729 in scope (clean tree 2742).**
+
+**THE FIRST GAME RULE THIS PROJECT HAS READ, not just a mechanism.** Each path spends a HUD slot
+one charge at a time and falls back on a second pool when the slot is empty — and the message each
+posts as its slot empties NAMES it. Resolving the ids through the message table in the image:
+id $18 (record $17) = `"   Helmet is Broken"`, id $19 (record $18) = `" Gauntlet is Broken"`. So
+`$bbbe` is the HELMET, absorbing hits instead of `hud_meter_value`, and `$bbc0` the GAUNTLET,
+doubling the damage `$6b46` takes off the enemy's template pool. Both were "meaning not
+identified" in `../names.txt` for fifteen batches; the string resolutions are pinned by a case,
+and the slot identification is the reading those pins support — stated at that strength
+everywhere it appears.
+
+**THE B ARM WAS NEVER DEAD.** Batch 16b recorded `snd_trigger_effect`'s B and C arms dead on
+"every call site passes d1 = 0" — inherited from `notes/sound_module_recon.md`, whose call-site
+table was missing exactly the `$6b46` row (the same indirect call the hardware scan dropped until
+16a). `$6b46`'s second instruction is `move.w #$1,d1`, reached from 25 control-flow sites. Every
+surface is corrected — `../names.txt`, `sound.h`, `test_sound.py`, `wonderboy.h`, the note itself —
+and `SHIPPED_CALL_IDS` is now DERIVED from a stated 26-site call-site table that a whole-program
+`lea $17adc.l,aN` scan must equal (the guard that would have caught the missing row), which also
+surfaced that id 19 on channel B — the one shipped (id, channel≠A) pair — had no case in the
+owning battery. It does now, and a one-stride mutation of the B arm reddens it plus 39 actor cases
+while every channel-C case stays green.
+
+**FOUR CORRECTIONS TO BATCH 13'S PRE-PORT READ, all from the bytes:** `$69fe` reads the mode flag
+ONE SIZE DOWN (`tst.b $a32.w` — the word's HIGH byte, where all twelve other readers are `tst.w`;
+$0001/$00ff pick the OPPOSITE record from `followed_actor_record`'s `bne`, and `cmt 0xa32`'s
+"thirteen `tst.w` readers" was wrong); `$6b46`'s doubling was INVERTED (it runs on both arms that
+spend a charge; only a slot already empty on entry skips it); the caller counts were `bsr`-only
+(38 and 25 control-flow sites — the tail jumps are how the per-type actor routines end); and
+`19(a0)`'s SIGN BIT is a discriminator (a byte >= $80 carries the damage in its own low seven
+bits, no table read at all).
+
+**THE DAMAGE TABLE FIXES BOTH EXTENTS.** `$6b08..$6b45` is 31 words of DATA between the two
+bodies — one `lea` reference, 25 entry sites landing on its far end, six distinct shipped values,
+unbounded from either end (the type index is a sixteen-bit-wrapped LONGWORD, so $4000 reads 64 KB
+above the table). `../names.txt` carries its plate.
+
+**THE MUTATION SWEEP: 36 of 37 killed** (+ the reviewer's independent 19, 17 killed 2 equivalent).
+The one survivor is the meter floor's strictness — the same `subq/bpl/clr` equivalence
+`panel_frame_timers` registered in batch 16. The sweep also caught its own seeding weakness
+(one seeded template record; the $7f slot outside the band) and fixed it before the final run.
+
+**THE REVIEW GATE FOUND TEN; the C-vs-asm read came back exact twice** (the batch's own sweep and
+Angle A's independent 19-mutation pass). What the fixes changed: the id-19 coverage above; the
+three stale dead-arm surfaces; the two encoder hoists COMPLETED across all four batteries (they
+had landed additive-only — three live definitions per encoding with docstrings claiming
+migration — the third ledger regression in three batches, now with the completeness-scan pattern
+as the countermeasure); `WB_ACTOR_FLAGS2_STRUCK_BIT` renamed `WB_ACTOR_FLAGS2_BIT_0` per the
+offset+role convention for unestablished semantics (its own $709a caller's raise-across-call /
+clear-on-return shape reads as a guard, which is evidence AGAINST "struck"; the site count is 49
+bset, the 49th being this batch's own a1 site); the slot-rearm twin pinned
+(`layout.py` scrapes `effects.h` as a third header and
+`test_the_two_headers_spell_one_slot_byte` holds `WB_HUD_SLOT_REARM & $ff == WB_HUD_SLOT_CHANGED`);
+the gauntlet cases' expectation computed from the override alone (it agreed with default+override
+only because the default is zero); two dead runner parameters removed; three inline high-half
+masks routed through `leaf.set_low_word`; the record-vs-id numbering comment fixed (id $18 is the
+helmet's ID and the gauntlet's RECORD — both bases now spelt out, each constant beside its own
+string); and the two measured grid trims (−44 runs re-making already-made claims, all 44 image
+classes verified distinct first).
+
+**What this batch does NOT pin:** what a helmet/gauntlet charge or a meter unit DOES (the
+consuming tier is unported); `WB_ACTOR_FLAGS2_BIT_0`'s purpose — the busiest bit in the image (49
+bset / 36 bclr / 33 btst against 9(An)); `WB_ACTOR_FIELD_31`'s meaning; and whether the game's
+own data can reach the out-of-range damage-table types (the template table is disk-loaded; every
+type in those cases is seeded).
+
+**Registered rather than folded in:** `$b444`'s first byte is a 0..4 attack level that ALSO serves
+as `effect_record_list`'s emptiness sign (`../names.txt` addendum); `21(a1)` is the
+flicker/invulnerability countdown `$f14` runs down; `test_stage.py`'s unused `forward_branch`
+import (pre-existing, noted by two consecutive fix passes — next touch of that file should drop
+it).

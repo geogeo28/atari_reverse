@@ -6,16 +6,20 @@ nothing here restates a value: the headers are canonical and this module scrapes
 renamed or retyped there fails as a missing key naming the constant, rather than drifting quietly.
 
 ``include/wonderboy.h`` carries the image's own layout; ``include/blit.h`` carries the sprite
-blitters' geometry, which is theirs alone. Both are scraped into ONE namespace — every name is
-already prefixed (WB_BLIT_*), and a name defined in both headers is raised on rather than resolved,
-for the same reason a name defined twice in one header is.
+blitters' geometry, which is theirs alone; ``include/effects.h`` carries the one HUD-slot byte that
+is a module's own rather than the image's. All three are scraped into ONE namespace — every name is
+already prefixed (WB_BLIT_*), and a name defined in two of them is raised on rather than resolved,
+for the same reason a name defined twice in one header is. That shared namespace is what lets a
+case PIN two headers' spellings of the same byte against each other (test_effects.py's
+`test_the_two_headers_spell_one_slot_byte`), which is the substitute for a `#define` that cannot
+derive from another one — the scraper reads plain literals only.
 """
 import re
 from pathlib import Path
 
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
 _HEADER = _INCLUDE / "wonderboy.h"
-_HEADERS = (_HEADER, _INCLUDE / "blit.h")
+_HEADERS = (_HEADER, _INCLUDE / "blit.h", _INCLUDE / "effects.h")
 
 # `#define WB_NAME 0x1234u` / `#define WB_NAME 3u` — a plain integer literal and nothing else. The
 # trailing lookahead makes the literal the WHOLE definition, so a compound expression is skipped

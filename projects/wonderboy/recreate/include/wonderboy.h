@@ -149,6 +149,17 @@
 #define WB_HUD_SLOT_BBC8     0xbbc8u  /* read as a 1..6 icon variant at $b8f0, not as a count */
 #define WB_HUD_SLOTS         6u       /* how many the pass at $b8f0 walks */
 #define WB_HUD_SLOT_REQUEST  1u       /* byte +1 of a slot: "redraw me", tested then cleared */
+#define WB_HUD_SLOT_REARM    0x00ffu  /* `move.w #$ff,slot.l` — the whole WORD both damage paths
+                                       * write on the frame a slot's last charge is spent: the
+                                       * value back to zero and the request byte below it raised.
+                                       * The setters in src/effects.c write the same word with a
+                                       * value above it, so this word's LOW BYTE is that file's
+                                       * WB_HUD_SLOT_CHANGED under another name. Neither can derive
+                                       * from the other (test/layout.py scrapes plain literals only,
+                                       * so a computed #define would vanish from the Python side);
+                                       * test_effects.py's
+                                       * `test_the_two_headers_spell_one_slot_byte` is the pin that
+                                       * stands in for the derivation */
 
 /* The meter drawn in four-unit cells by `FUN_0000b61e` ($b61e): `value/4` filled cells then
  * `max/4 - value/4` empty ones, so both are consumed as counts and not as flags. `max` is set to
@@ -790,6 +801,13 @@
 #define WB_ACTOR_TEMPLATE_SLOT       19u      /* byte: which template of WB_TABLE_PTR_21E8C's table
                                                * spawned this record — `(a0 - table) asr.l #5`, so
                                                * a SIGNED shift of the whole longword */
+#define WB_ACTOR_FLICKER_COUNTDOWN   21u      /* byte: how many frames of
+                                               * WB_ACTOR_FLAG_FLICKER_BIT are left. FIVE operand
+                                               * sites in the image and only one reader — $f14's
+                                               * `subq.b #1,21(a0) / bne`, which on reaching zero
+                                               * clears the flicker bit AND
+                                               * WB_ACTOR_FLAGS2_INVULNERABLE_BIT. $69fe seeds it
+                                               * with WB_ACTOR_DAMAGE_FLICKER_FRAMES */
 #define WB_ACTOR_FIELD_22            22u      /* byte, cleared by $10a2's player arm */
 #define WB_ACTOR_FIELD_30            30u      /* two bytes the spawn clears; $ff42 reads 30 as a
                                                * flag and counts 31 down */
@@ -809,9 +827,29 @@
                                                * start a fall */
 #define WB_ACTOR_FLAG_FALLING_BIT    4u       /* raised by $14d6 and by $1400's unsupported arm,
                                                * cleared by the landing */
+#define WB_ACTOR_FLAGS2_BIT_0        0u       /* the busiest bit in the image — 49 `bset`, 36 `bclr`
+                                               * and 33 `btst` sites against 9(An), the 49th being
+                                               * $6a22, the `bset #0,9(a1)` inside $69fe (every
+                                               * other site is on a0). WHAT IT GATES IS NOT
+                                               * ESTABLISHED, hence offset+role rather than a
+                                               * meaning: $69fe raises it on the record it damages,
+                                               * which alone would read as "struck" — but $6b46's
+                                               * one `bsr` caller raises it at $7090, calls, and
+                                               * CLEARS it at $709e on return, which is the shape of
+                                               * a guard or a re-entry lock and is evidence against
+                                               * that reading */
 #define WB_ACTOR_FLAGS2_LANDED_BIT   1u       /* $1400 raises it on the landing arm and clears it on
                                                * both unsupported ones */
 #define WB_ACTOR_FLAGS2_SPAWNED_BIT  2u       /* the one bit the spawn raises */
+#define WB_ACTOR_FLAGS2_DEFEATED_BIT 3u       /* $6b46's `bset #3,9(a0)` is its ONE writer in the
+                                               * image, on the frame the template's hit-point pool
+                                               * reaches zero or goes negative. 35 `btst #3,9(a0)`
+                                               * read it and four routines clear it */
+#define WB_ACTOR_FLAGS2_INVULNERABLE_BIT 4u   /* raised at $10782 beside a flicker of $ff frames,
+                                               * cleared at $f22 when WB_ACTOR_FLICKER_COUNTDOWN
+                                               * runs out, and read at $6a16 and $6dfa. $69fe
+                                               * returns without writing anything at all while a
+                                               * record carries it */
 #define WB_ACTOR_FALL_SPEED_MAX      8u       /* `cmpi.b #$8,d0 / beq` — $14d6 stops accelerating
                                                * ON this value, so it is reached and never passed */
 #define WB_ACTOR_ALLOC_LOW_FIRST     3u       /* `lea 96(a1),a1` == 3 * WB_ACTOR_RECORD_BYTES */
@@ -893,6 +931,37 @@
 #define WB_ACTOR_GROUND_DROP_ONE_BIT 2u       /* $4 — one row down is neither */
 #define WB_ACTOR_HOP_SPEED           4u       /* `move.w #$4,d0 / bsr $2af2` — $2b5a's step-up arm */
 #define WB_ACTOR_TURN_LAUNCH_SPEED   7u       /* `move.b #$7,11(a0)` — $2b8e's, written inline */
+
+/* ---- the two damage paths ($69fe, $6b46; src/actor.c) -----------------------------------------
+ *
+ * $69fe spends the hit ON the followed record: a charge off WB_HUD_SLOT_BBBE if it has one, else
+ * WB_HUD_METER_VALUE. $6b46 spends it on the TEMPLATE's WB_SPAWN_HITPOINTS pool, doubled while
+ * WB_HUD_SLOT_BBC0 has a charge. The two messages the emptied slots post name both slots — see
+ * WB_TEXT_MSG_HELMET_BROKEN.
+ */
+#define WB_ACTOR_DAMAGE_TABLE        0x6b08u  /* `lea $6b08.l,a2` at $6a60: one word per spawn type,
+                                               * how much the attacker takes off. It sits between
+                                               * the two damage paths' bodies, and that `lea` is its
+                                               * ONLY reference in the image */
+#define WB_ACTOR_DAMAGE_TABLE_ENTRIES 31u     /* == ($6b46 - $6b08) / 2: the table runs from its own
+                                               * `lea` to the first byte of $6b46, which 25 control
+                                               * -flow sites enter. The CODE bounds the index at
+                                               * neither end */
+#define WB_ACTOR_DAMAGE_INLINE_MASK  0x7fu    /* `bclr #7,d0`: a WB_ACTOR_TEMPLATE_SLOT byte with its
+                                               * sign bit set carries the damage in these bits
+                                               * itself, and no table is read at all */
+#define WB_ACTOR_DAMAGE_FIELD_31_BASE 0xcu    /* `move.w #$c,d1 / sub.w d0,d1` — WB_ACTOR_FIELD_31
+                                               * becomes this minus twice WB_EFFECT_STATE_BD66 */
+#define WB_ACTOR_DAMAGE_FLICKER_FRAMES 0x64u  /* into WB_ACTOR_FLICKER_COUNTDOWN, and only on the arm
+                                               * that spends the meter */
+#define WB_ACTOR_DAMAGE_FIELD_30_SET 0xffu    /* into WB_ACTOR_FIELD_30 on the side the x compare
+                                               * raises WB_ACTOR_FLAG_SIDE_BIT for; the other arm
+                                               * clears the byte */
+#define WB_ACTOR_DAMAGE_KNOCKBACK_SPEED 5u    /* `move.b #$5,11(a1)` — the speed the hit launches the
+                                               * record at, spelt inline as $2b8e's is */
+#define WB_ACTOR_DAMAGE_FOLLOWED_SFX 0xbu     /* `move.w #$b,d0 / clr.w d1` */
+#define WB_ACTOR_DAMAGE_TEMPLATE_SFX 0x13u    /* `move.w #$13,d0 / move.w #$1,d1` — and that d1 is
+                                               * WB_SND_CHANNEL_B */
 
 /* ---- the collision map the actors walk on (RUNTIME addresses; src/map.c) ----------------------
  *
@@ -1047,6 +1116,13 @@
                                             * record (`mulu.w #$a0,d0` = WB_SCREEN_LINE) */
 #define WB_TEXT_LIFETIME_REQUEST   0xc034u /* word: frames the next box should live for, posted
                                             * with the request; latched and cleared on compose */
+#define WB_TEXT_LIFETIME_DEFAULT   0x32u   /* 50 frames — what almost every one of $c034's 41
+                                            * outside writers posts, both damage paths included */
+#define WB_TEXT_MSG_HELMET_BROKEN  0x18u   /* posted by $69fe when WB_HUD_SLOT_BBBE's last charge
+                                            * goes. Message record $17 of the table below reads
+                                            * "   Helmet is Broken", which is what identifies that
+                                            * slot — see ../STATUS.md */
+#define WB_TEXT_MSG_GAUNTLET_BROKEN 0x19u  /* ...and $6b46's, " Gauntlet is Broken" */
 #define WB_TEXT_LIFETIME_ARMED     0xc036u /* word: nonzero once any timed message has been
                                             * composed. NOTHING in the image clears it */
 #define WB_TEXT_LIFETIME_ARMED_SET 0xffffu /* what the one `move.w #$ffff,$c036.l` writes */
@@ -1267,7 +1343,10 @@
                                              * is the `add.w d0,d0` an index goes through */
 
 #define WB_SND_CHANNELS            3u
-#define WB_SND_CHANNEL_A           0u       /* `clr.w d1` — the only channel any call site passes */
+#define WB_SND_CHANNEL_A           0u       /* `clr.w d1` — what all but one call site passes */
+#define WB_SND_CHANNEL_B           1u       /* `move.w #$1,d1` at $6b46, the ONE site in the image
+                                             * that asks for a channel other than A. It is what
+                                             * makes the trigger's B arm live code (../STATUS.md) */
 #define WB_SND_SFX_ACTIVE_FLAGS    0x17c5au /* a3+2254: one byte per channel, polled by the tick */
 #define WB_SND_SFX_ACTIVE          1u       /* `move.b #$1` at the end; `sf` clears it at the start */
 #define WB_SND_SFX_STATE           0x1aa7cu /* a3+14064: three channel states, MUTABLE image bytes */

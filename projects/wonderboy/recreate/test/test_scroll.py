@@ -55,8 +55,8 @@ import leaf
 from leaf import (RTS, addi_w_dn, andi_w_dn, branch, branch_over, bsr_w, case_salt, clr_b_abs_l,
                   clr_w_abs_l, dbf, keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed,
                   longword, merge_bands, move_l_imm_abs_l, move_w_abs_l_dn, move_w_dn_dn,
-                  move_w_imm_dn,
-                  move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, movea_l_abs_w, moveq_0_dn,
+                  move_w_imm_dn, move_w_ind_dn, move_w_indexed_dn, move_w_postinc_dn,
+                  movea_l_abs_l, movea_l_abs_w, moveq_0_dn,
                   mulu_w_imm_dn, opcode, program_writes, rotate_left32, s16, st_abs_l,
                   sub_w_dn_dn, subi_w_dn, subq_w_abs_l, subq_w_dn, swap_dn, tst_b_abs_l,
                   tst_w_abs_l, tst_w_abs_w, tst_w_dn, u16, word)
@@ -465,11 +465,6 @@ A0, A1, A2, A3, A4, A5, A6 = range(7)
 D0, D1, D4, D5, D6, D7 = 0, 1, 4, 5, 6, 7
 
 
-def move_w_indexed_d0(base, index):
-    """`move.w (0,An,Dn.w),d0` — how a fill reads a word out of a table it just indexed."""
-    return opcode(0x3030 | base) + word(index << 12)
-
-
 def move_w_dn_abs_l(reg, addr):
     return opcode(0x33c0 | reg) + longword(addr)
 
@@ -695,7 +690,7 @@ def _tile_loop(or_takes_low_half):
     head = (lea_abs_l(A4, TILE_BITMAPS)
             + MOVEQ_0_D0 + MOVE_B_IND_A3_D0
             + lea_abs_l(A5, TILE_INDEX_TABLE) + ADD_W_D0_D0
-            + move_w_indexed_d0(A5, D0) + LSL_L_7_D0 + lea_indexed(A4, D0, longword_index=True)
+            + move_w_indexed_dn(D0, A5, D0) + LSL_L_7_D0 + lea_indexed(A4, D0, longword_index=True)
             + move_w_abs_l_dn(D0, MAP_ROW_STRIDE) + lea_indexed(A3, D0))
     return head + inner + dbf(D7, head + inner)
 
@@ -878,7 +873,7 @@ def _row_fill_cell_loop(lea_before_moveq):
     body = (head
             + MOVE_B_POSTINC_A6_D0
             + lea_abs_l(A5, TILE_INDEX_TABLE) + ADD_W_D0_D0
-            + move_w_indexed_d0(A5, D0) + LSL_L_7_D0 + lea_indexed(A0, D0, longword_index=True)
+            + move_w_indexed_dn(D0, A5, D0) + LSL_L_7_D0 + lea_indexed(A0, D0, longword_index=True)
             + ADDA_W_D6_A0
             + MOVE_L_POSTINC_A0_POSTINC_A1 * (CELL_BYTES // LONGWORD_LEN)
             + b"".join(MOVE_L_POSTINC_A0_D16_A1

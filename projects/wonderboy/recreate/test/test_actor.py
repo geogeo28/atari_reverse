@@ -41,7 +41,16 @@ from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq
                   move_b_d16_dn, move_b_imm_d16, move_l_imm_abs_l, move_l_imm_postinc,
                   move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn, movea_l_abs_l, moveq_0_dn, opcode,
                   program_writes, s16, sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
+from leaf import (WORD_MASK, clr_w_abs_l, move_b_abs_l_dn, move_b_imm_abs_l,
+                  move_w_imm_abs_l, move_w_indexed_dn, tst_b_abs_l)
 from layout import wb
+
+# The two damage paths call the SOUND MODULE, so the battery that owns $1a48a owns that half of
+# their write set too — imported rather than restated, exactly as test_hud.py imports it for $bbca.
+from test_sound import (STUB_INSN_CAP, STUB_TRIGGER_OFFSET,                 # noqa: E402
+                        STUB_TABLE_BASE as SND_STUB_TABLE,
+                        assert_written as assert_sfx_written,
+                        expected_writes as sfx_expected_writes)
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
 
@@ -132,6 +141,40 @@ GROUND_DROP_ONE_BIT = wb("ACTOR_GROUND_DROP_ONE_BIT")
 HOP_SPEED = wb("ACTOR_HOP_SPEED")
 TURN_LAUNCH_SPEED = wb("ACTOR_TURN_LAUNCH_SPEED")
 
+# ...and the two damage paths' own (batch 17)
+FIELD_22 = wb("ACTOR_FIELD_22")
+FLICKER_COUNTDOWN = wb("ACTOR_FLICKER_COUNTDOWN")
+FLAGS2_BIT_0 = wb("ACTOR_FLAGS2_BIT_0")
+FLAGS2_DEFEATED_BIT = wb("ACTOR_FLAGS2_DEFEATED_BIT")
+FLAGS2_INVULNERABLE_BIT = wb("ACTOR_FLAGS2_INVULNERABLE_BIT")
+DAMAGE_TABLE = wb("ACTOR_DAMAGE_TABLE")
+DAMAGE_TABLE_ENTRIES = wb("ACTOR_DAMAGE_TABLE_ENTRIES")
+DAMAGE_INLINE_MASK = wb("ACTOR_DAMAGE_INLINE_MASK")
+DAMAGE_FIELD_31_BASE = wb("ACTOR_DAMAGE_FIELD_31_BASE")
+DAMAGE_FLICKER_FRAMES = wb("ACTOR_DAMAGE_FLICKER_FRAMES")
+DAMAGE_FIELD_30_SET = wb("ACTOR_DAMAGE_FIELD_30_SET")
+DAMAGE_KNOCKBACK_SPEED = wb("ACTOR_DAMAGE_KNOCKBACK_SPEED")
+DAMAGE_FOLLOWED_SFX = wb("ACTOR_DAMAGE_FOLLOWED_SFX")
+DAMAGE_TEMPLATE_SFX = wb("ACTOR_DAMAGE_TEMPLATE_SFX")
+SLOT_BBBE = wb("HUD_SLOT_BBBE")
+SLOT_BBC0 = wb("HUD_SLOT_BBC0")
+SLOT_REQUEST = wb("HUD_SLOT_REQUEST")
+SLOT_REARM = wb("HUD_SLOT_REARM")
+METER_VALUE = wb("HUD_METER_VALUE")
+TEXT_REQUEST = wb("TEXT_REQUEST")
+TEXT_LIFETIME_REQUEST = wb("TEXT_LIFETIME_REQUEST")
+TEXT_LIFETIME_DEFAULT = wb("TEXT_LIFETIME_DEFAULT")
+TEXT_MESSAGE_TABLE = wb("TEXT_MESSAGE_TABLE")
+TEXT_MESSAGE_FIRST_ID = wb("TEXT_MESSAGE_FIRST_ID")
+TEXT_RECORD_STRING = wb("TEXT_RECORD_STRING")
+TEXT_STRING_END = wb("TEXT_STRING_END")
+MSG_HELMET_BROKEN = wb("TEXT_MSG_HELMET_BROKEN")
+MSG_GAUNTLET_BROKEN = wb("TEXT_MSG_GAUNTLET_BROKEN")
+EFFECT_STATE_BD66 = wb("EFFECT_STATE_BD66")
+EFFECT_RECORD_LIST = wb("EFFECT_RECORD_LIST")
+SND_CHANNEL_A = wb("SND_CHANNEL_A")
+SND_CHANNEL_B = wb("SND_CHANNEL_B")
+
 WORD_LEN = 2
 LONGWORD_LEN = 4
 TABLE_BYTES = SCREEN_RECORD_COUNT * RECORD_BYTES
@@ -141,11 +184,12 @@ TABLE_BYTES = SCREEN_RECORD_COUNT * RECORD_BYTES
 LIST_INSN_CAP = 64 * SCREEN_RECORD_COUNT
 
 # --- register numbers, and the opcodes only this battery spells -----------------------------------
-A0, A1, A2, A6 = 0, 1, 2, 6
+A0, A1, A2, A5, A6 = 0, 1, 2, 5, 6
 D0, D1, D2, D7 = 0, 1, 2, 7
 
 BNE_W, BEQ_W, BPL_W, BLE_W, BLT_W, BGT_W, BRA_W = (0x6600, 0x6700, 0x6a00, 0x6f00,
                                                    0x6d00, 0x6e00, 0x6000)
+BMI_W = 0x6b00
 # A branch is ONE opcode: a zero displacement byte means the word form follows, any other byte means
 # the short form is the whole instruction. BNE_S and BSR_S name that second reading of the same two
 # numbers — $8e66 closes its loop short and $67f8 calls short, where their neighbours spell both long.
@@ -307,6 +351,55 @@ def add_w_ind_dn(reg, base):
 
 def move_w_dn_d16(reg, base, displacement):
     return opcode(0x3140 | (base << 9) | reg) + word(displacement)
+
+
+# ...and the encodings only the two DAMAGE PATHS use (batch 17). Each is the one member of a family
+# leaf.py already carries that no other battery has needed yet, so each stands at ONE user and stays
+# here: `tst.b <abs>.w` beside leaf's `tst_w_abs_w`, `subq.b <abs>.l` beside its `subq_w_abs_l`,
+# and the `sub.w Dn,<ea>` pair beside its register-to-register `sub_w_dn_dn`. (The two this batch
+# found at THREE users — `move_w_indexed_dn` and `move_w_imm_abs_l` — went to leaf.py instead and
+# are imported above.)
+def tst_b_abs_w(addr):
+    """`tst.b <abs>.w` — $69fe reads WB_STATE_FLAG_A32 one size DOWN from every other reader of it
+    in the image, so this encoding is the whole difference the battery is here to pin."""
+    return opcode(0x4a38) + word(addr)
+
+
+def subq_b_abs_l(amount, addr):
+    """`subq.b #n,<abs>.l` — one charge off a HUD slot."""
+    return opcode(0x5139 | ((amount & 7) << 9)) + longword(addr)
+
+
+def addq_b_dn(amount, reg):
+    """`addq.b #n,Dn` — a BYTE add, so $ff comes back 0."""
+    return opcode(0x5000 | ((amount & 7) << 9) | reg)
+
+
+def sub_w_dn_abs_l(reg, addr):
+    """`sub.w Dn,<abs>.l` — a read-modify-write on the meter word itself."""
+    return opcode(0x9179 | (reg << 9)) + longword(addr)
+
+
+def sub_w_dn_d16(reg, base, displacement):
+    """...and its based form, which spends the template's hit-point pool."""
+    return opcode(0x9168 | (reg << 9) | base) + word(displacement)
+
+
+def jsr_d16_an(reg, displacement):
+    """`jsr d16(An)` — how everything outside the sound module reaches its stub table. test_hud.py
+    spells the a1 form as a two-byte literal (`JSR_D16_A1`) for $bbca's call; both damage paths use
+    the a5 one, so the pair stands at two users and each says so."""
+    return opcode(0x4ea8 | reg) + word(displacement)
+
+
+def bclr_imm_dn(bit, reg):
+    """`bclr #n,Dn` — a LONGWORD operation on a register, where `bit_op_d16` above is a BYTE one
+    against memory. $69fe strips bit 7 off the damage byte with it.
+
+    Only the `bclr` of the register family is spelt here: `btst #n,Dn` is leaf.btst_imm_dn, which
+    three batteries import, and nothing in this battery assembles `bset #n,Dn` at all — so an `op`
+    parameter like `bit_op_d16`'s would be a family with one member."""
+    return opcode(BCLR_IMM | reg) + word(bit)
 
 
 def bra_s_back(spanned_bytes):
@@ -612,6 +705,113 @@ def _turn_and_launch_entry():
             + supported)
 
 
+# --- the two damage paths' bodies ($69fe, $6b46) --------------------------------------------------
+# Both are one straight run with a handful of forward branches, and both END in a call into the
+# sound module's stub table — so each pin also states the stub OFFSET and the table's own address,
+# which test_sound.py owns. The `lea $6b08.l,a2` inside the first one names the WORD TABLE that sits
+# between the two bodies, which is what fixes both boundaries at once.
+
+def _slot_rearm(slot, message_id):
+    """`move.w #$ff,slot / move.b #id,$c030 / move.w #$32,$c034` — the three stores both paths make
+    on the frame a slot's last charge goes.
+
+    This is the only part of the two spend blocks that is common CODE rather than a common shape:
+    $69fe's `bne` lands past its whole fallback arm and $6b46's lands on the doubling in front of
+    the beq's own target, so the two blocks' branches are different instructions. src/actor.c's one
+    `hud_slot_spend_charge` behind both is a claim about the WRITES, which the cases below make.
+    """
+    return (move_w_imm_abs_l(SLOT_REARM, slot)
+            + move_b_imm_abs_l(message_id, TEXT_REQUEST)
+            + move_w_imm_abs_l(TEXT_LIFETIME_DEFAULT, TEXT_LIFETIME_REQUEST))
+
+
+def _damage_followed_entry():
+    """$69fe's whole 266 bytes, ending exactly where WB_ACTOR_DAMAGE_TABLE begins."""
+    # The tail every arm that does any work funnels into: the x compare, the SFX, the knock-back.
+    trigger = (move_w_imm_dn(D0, DAMAGE_FOLLOWED_SFX) + clr_w_dn(D1)
+               + lea_abs_l(A5, SND_STUB_TABLE) + jsr_d16_an(A5, STUB_TRIGGER_OFFSET))
+    knockback = (bit_op_d16(BSET_IMM, MOVING_BIT, A1, ACTOR_FLAGS)
+                 + bit_op_d16(BSET_IMM, LAUNCHED_BIT, A1, ACTOR_FLAGS)
+                 + bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A1, ACTOR_FLAGS)
+                 + move_b_imm_d16(A1, DAMAGE_KNOCKBACK_SPEED, SPEED) + RTS)
+    attacker_right = bit_op_d16(BCLR_IMM, SIDE_BIT, A1, ACTOR_FLAGS) + clr_b_d16(A1, FIELD_30)
+    attacker_left = (bit_op_d16(BSET_IMM, SIDE_BIT, A1, ACTOR_FLAGS)
+                     + move_b_imm_d16(A1, DAMAGE_FIELD_30_SET, FIELD_30))
+    tail = (move_w_ind_dn(D0, A1, ACTOR_X) + move_w_ind_dn(D1, A0, ACTOR_X) + cmp_w_dn_dn(D1, D0)
+            + branch(BGT_W, attacker_left, branch(BRA_W, attacker_right))
+            + attacker_left + branch(BRA_W, attacker_right)
+            + attacker_right + trigger + knockback)
+
+    # The meter arm, which is what the slot spend falls back on...
+    meter = (sub_w_dn_abs_l(D0, METER_VALUE) + branch(BPL_W, clr_w_abs_l(METER_VALUE))
+             + clr_w_abs_l(METER_VALUE)
+             + move_b_imm_d16(A1, DAMAGE_FLICKER_FRAMES, FLICKER_COUNTDOWN))
+
+    # ...and the `bclr #7` arm, which rejoins the slot test FROM BELOW. Its `bra.s` spans the whole
+    # spend block bar its own opcode word, so the block is assembled once for its length and once
+    # with the displacement that length gives.
+    rearm = _slot_rearm(SLOT_BBBE, MSG_HELMET_BROKEN)
+
+    def spend(inline_arm):
+        join = branch(BRA_W, inline_arm)      # `bra.w` past the inline arm, into the funnel
+        charge = (subq_b_abs_l(1, SLOT_BBBE)
+                  + branch(BNE_W, rearm, branch(BRA_W, meter, join), meter, join, inline_arm)
+                  + rearm + branch(BRA_W, meter, join, inline_arm))
+        return (tst_b_abs_l(SLOT_BBBE) + branch(BEQ_W, charge) + charge
+                + meter + join + inline_arm)
+
+    inline_head = bclr_imm_dn(DAMAGE_INLINE_MASK.bit_length(), D0)
+    spend_block = spend(inline_head + bra_s_back(len(spend(inline_head + RTS)) - WORD_LEN))
+
+    # The damage word: the type of the template WB_ACTOR_TEMPLATE_SLOT names, into the word table.
+    lookup = (movea_l_abs_l(A6, TABLE_PTR) + lsl_l_imm_dn(TEMPLATE_SLOT_SHIFT, D0)
+              + move_w_indexed_dn(D0, A6, D0, SPAWN_TYPE) + add_w_dn_dn(D0, D0)
+              + lea_abs_l(A2, DAMAGE_TABLE)
+              # ...and the SAME encoder with the extension word's longword bit, which is
+              # the one bit that separates the two lookups.
+              + move_w_indexed_dn(D0, A2, D0, longword_index=True))
+    # The `bmi` lands on the inline arm, i.e. past everything but the last six bytes of the spend.
+    inline_arm_bytes = len(inline_head) + WORD_LEN
+    cost = (moveq_0_dn(D0) + move_b_d16_dn(D0, A0, TEMPLATE_SLOT)
+            + branch_over(BMI_W, len(lookup) + len(spend_block) - inline_arm_bytes)
+            + lookup + spend_block)
+
+    default_record = (lea_abs_l(A1, FOLLOWED_DEFAULT)
+                      + branch(BRA_W, lea_abs_l(A1, FOLLOWED_A32)))
+    return (tst_b_abs_w(FLAG_A32) + branch(BNE_W, default_record) + default_record
+            + lea_abs_l(A1, FOLLOWED_A32)
+            + bit_op_d16(BTST_IMM, FLAGS2_INVULNERABLE_BIT, A1, FLAGS2)
+            + branch(BEQ_W, RTS) + RTS
+            + bit_op_d16(BSET_IMM, FLAGS2_BIT_0, A1, FLAGS2)
+            + move_w_abs_l_dn(D0, EFFECT_STATE_BD66) + add_w_dn_dn(D0, D0)
+            + move_w_imm_dn(D1, DAMAGE_FIELD_31_BASE) + sub_w_dn_dn(D1, D0)
+            + move_b_dn_d16(D1, A1, FIELD_31) + clr_b_d16(A1, FIELD_22)
+            + bit_op_d16(BSET_IMM, FLICKER_BIT, A1, ACTOR_FLAGS) + branch(BNE_W, cost)
+            + cost + tail)
+
+
+def _damage_template_entry():
+    """$6b46's whole 114 bytes. Its FIRST FOUR INSTRUCTIONS are the sound call — and the d1 they
+    pass is WB_SND_CHANNEL_B, the one site in the image that is not channel A."""
+    kill = bit_op_d16(BSET_IMM, FLAGS2_DEFEATED_BIT, A0, FLAGS2) + RTS
+    double = add_w_dn_dn(D0, D0)
+    rearm = _slot_rearm(SLOT_BBC0, MSG_GAUNTLET_BROKEN)
+    charge = subq_b_abs_l(1, SLOT_BBC0) + branch(BNE_W, rearm) + rearm
+    # The `beq` clears the doubling and the `bne` does NOT, which is what says the doubling runs on
+    # both arms that spent a charge and only on those.
+    spend = tst_b_abs_l(SLOT_BBC0) + branch(BEQ_W, charge, double) + charge + double
+    return (move_w_imm_dn(D0, DAMAGE_TEMPLATE_SFX) + move_w_imm_dn(D1, SND_CHANNEL_B)
+            + lea_abs_l(A5, SND_STUB_TABLE) + jsr_d16_an(A5, STUB_TRIGGER_OFFSET)
+            + movea_l_abs_l(A1, TABLE_PTR)
+            + moveq_0_dn(D0) + move_b_d16_dn(D0, A0, TEMPLATE_SLOT)
+            + lsl_l_imm_dn(TEMPLATE_SLOT_SHIFT, D0) + lea_indexed(A1, D0)
+            + moveq_0_dn(D0) + move_b_abs_l_dn(D0, EFFECT_RECORD_LIST) + addq_b_dn(1, D0)
+            + spend
+            + sub_w_dn_d16(D0, A1, SPAWN_HITPOINTS)
+            + branch(BEQ_W, branch(BMI_W, RTS), RTS) + branch(BMI_W, RTS) + RTS
+            + kill)
+
+
 ENTRY_BYTES = {
     "followed_actor_record": _followed_record_entry(),
     "actor_set_side_flag": _side_flag_entry(),
@@ -630,8 +830,10 @@ ENTRY_BYTES = {
     "actor_hop_or_flip_side": _hop_or_flip_entry(),
     "actor_toggle_side_flag": _toggle_side_entry(),
     "actor_turn_and_launch": _turn_and_launch_entry(),
+    "actor_damage_followed": _damage_followed_entry(),
+    "actor_damage_template_hitpoints": _damage_template_entry(),
 }
-RECONSTRUCTED_ROUTINES = 17
+RECONSTRUCTED_ROUTINES = 19
 
 
 def test_the_battery_covers_every_routine_it_was_written_for():
@@ -665,6 +867,11 @@ def test_the_whole_body_is_the_bytes_this_battery_reconstructs(name):
     ("actor_hop_or_flip_side", 40),
     ("actor_toggle_side_flag", 12),
     ("actor_turn_and_launch", 58),
+    # ...and the two damage paths, whose extents are the DATA either side of them rather than a
+    # Ghidra function: $69fe ends where its own `lea $6b08.l,a2` names, and $6b46 begins where that
+    # word table stops (test_the_damage_table_is_the_data_between_the_two_bodies).
+    ("actor_damage_followed", 266),
+    ("actor_damage_template_hitpoints", 114),
 ], ids=lambda v: v if isinstance(v, str) else f"{v}B")
 def test_the_reconstructed_body_is_the_whole_routine(name, size):
     """The pins above would still pass on a PREFIX of a routine. These are the sizes the Ghidra
@@ -2056,3 +2263,807 @@ def test_the_first_record_is_walked_before_the_terminator_is_tested():
     assert set(expected) == {SPAWN_TABLE + SPAWN_COUNTDOWN}, (
         f"{case}: the pass wrote {[hex(a) for a in sorted(expected)]}, not the terminating "
         f"record's countdown byte alone")
+
+
+# =================================================================================================
+# $69fe AND $6b46 — the two damage paths (batch 17).
+#
+# TWO ROUTINES, ONE SHAPE: an SFX through the sound module's stub, a HUD slot spent one charge at a
+# time, and a SECOND pool taken from when that slot is empty. $69fe pays for a hit ON the followed
+# record (the helmet, else WB_HUD_METER_VALUE); $6b46 deals one (the gauntlet DOUBLES what comes off
+# the attacker's template pool). Both were rejected in batches 10 and 13 for the `jsr 56(a5)` that
+# batch 16b's port made C-calling-C, so the cases below run the ORIGINAL over the real sound module
+# and compare its writes against test_sound.py's model — imported, never restated.
+#
+# WHAT THE CASES HOLD THAT NOTHING ELSE DOES
+#   * THE MODE FLAG READ AS A BYTE. `tst.b $a32.w` looks at the word's HIGH byte alone, where all
+#     twelve other readers in the image are `tst.w`. A flag of $0001 or $00ff therefore picks the
+#     DEFAULT record here and the A32 one in `followed_actor_record` — opposite answers from the
+#     same word, and the only thing that tells the two encodings apart.
+#   * THE ARM THAT WRITES NOTHING. A record already carrying WB_ACTOR_FLAGS2_INVULNERABLE_BIT is
+#     returned from before any store, so its case is a differential over an EMPTY write set plus the
+#     registers the body never got as far as loading.
+#   * CHANNEL B, FROM A REAL CALLER'S REGISTERS. $6b46's `move.w #$1,d1` is the one site in the
+#     image that asks for a channel other than A, so these cases are what makes the trigger's B arm
+#     live code rather than the dead arm batch 16b took it for.
+#   * THE DAMAGE TABLE FROM BOTH SIDES. WB_ACTOR_DAMAGE_TABLE is DATA between the two bodies, so a
+#     case can read the words the game ships AND poke one of its own; and the index that reaches it
+#     is an unsigned doubled word taken as a LONGWORD, which a type from $4000 up sends off the end.
+#
+# KNOWINGLY NOT PINNED
+#   * WHAT THE TWO SLOTS AND THE METER ARE FOR beyond the messages that name them. The strings the
+#     posted ids resolve to are read out of the image below; what a charge or a meter unit DOES is
+#     the tier above these two, and unported.
+#   * THE REGISTERS, for the reconstruction. As everywhere in this file the C returns none of them;
+#     the cases assert the ORACLE's against a model.
+
+# The chain either body runs, plus the whole SOUND STUB one of them enters: `jsr 56(a5)` reaches
+# $17b14, whose `movem` pair and `bsr` sit around $1a48a. STUB_INSN_CAP is test_sound.py's, so a
+# change to the trigger's own geometry moves this cap with it.
+DAMAGE_CHAIN_INSNS = 45
+DAMAGE_INSN_CAP = DAMAGE_CHAIN_INSNS + STUB_INSN_CAP
+
+_DAMAGE_FOLLOWED = leaf.register_glue("actor_damage_followed", [ctypes.c_uint32])
+_DAMAGE_TEMPLATE = leaf.register_glue("actor_damage_template_hitpoints", [ctypes.c_uint32])
+
+# Entry values for every register neither routine takes as an argument, each distinct: a register a
+# body never touches has to come back, and one it writes only a WORD of has to keep its high half.
+DAMAGE_ENTRY_REGS = {"d0": 0xfeed1234, "d1": 0xbeef5678, "a2": 0x40000, "a5": 0x40100,
+                     "a6": 0x40200}
+
+# Which records a case uses: the attacker is any slot but the followed one, and the two followed
+# records are the routine's own choice rather than a case's.
+DAMAGE_ATTACKER = TABLE_DEFAULT + 3 * RECORD_BYTES
+
+# The state both paths read, all of it seeded — neither may be entered on a byte a case did not
+# choose. `bbbe`/`bbc0` are whole SLOTS (value byte, request byte) so the rearm's second byte is a
+# write a case can see land.
+DAMAGE_STATE = dict(
+    a32=0x0000, bd66=0x0000, meter=0x0028, bbbe=0x0000, bbc0=0x0000,
+    request=0x00, lifetime=0x0000, record_list=0x0000, pool=0x0040,
+    record_x=0x0140, record_flags=0x00, record_flags2=0x00,
+    attacker_x=0x0100, template_slot=2, spawn_type=4, damage_entry=None,
+)
+
+# A slot's request byte, seeded away from what the rearm writes so the store is a change and not a
+# coincidence, and a lifetime word likewise.
+SLOT_REQUEST_SEED = 0x5a
+LIFETIME_SEED = 0x1111
+
+
+def _u32(image, addr):
+    """The longword at ``addr`` — WB_TABLE_PTR_21E8C is the only one either path reads."""
+    return int.from_bytes(bytes(image[addr:addr + LONGWORD_LEN]), "big")
+
+
+def _damage_pokes(what, **overrides):
+    state = dict(DAMAGE_STATE, **overrides)
+    salt = case_salt(what)
+    pokes = _state_pokes(salt, {FLAG_A32: state["a32"], EFFECT_STATE_BD66: state["bd66"],
+                                METER_VALUE: state["meter"],
+                                SLOT_BBBE: (state["bbbe"] << 8) | SLOT_REQUEST_SEED,
+                                SLOT_BBC0: (state["bbc0"] << 8) | SLOT_REQUEST_SEED,
+                                TEXT_LIFETIME_REQUEST: LIFETIME_SEED,
+                                EFFECT_RECORD_LIST: state["record_list"] << 8})
+    pokes[TEXT_REQUEST] = bytes([state["request"]])
+
+    # EVERY template in the band carries the case's type and pool, not just the one the slot byte
+    # names: the two paths index it differently ($6b46 with the whole byte, $69fe with the seven
+    # bits below its sign), so seeding one record would leave a wrongly-indexed port reading keyed
+    # noise instead of a number the case chose. The cases that need the records to DIFFER override
+    # them afterwards, and a slot past this band seeds its own record.
+    _template_band(salt, TEMPLATE_TABLE, TEMPLATE_SLOTS, pokes)
+    pokes[TABLE_PTR] = longword(TEMPLATE_TABLE)
+    for slot in range(TEMPLATE_SLOTS):
+        record = TEMPLATE_TABLE + slot * SPAWN_RECORD_BYTES
+        pokes[record + SPAWN_TYPE] = word(state["spawn_type"])
+        pokes[record + SPAWN_HITPOINTS] = word(state["pool"])
+    if state["damage_entry"] is not None:
+        pokes[_damage_table_entry(state["spawn_type"])] = word(state["damage_entry"])
+
+    pokes[DAMAGE_ATTACKER + ACTOR_X] = word(state["attacker_x"])
+    pokes[DAMAGE_ATTACKER + TEMPLATE_SLOT] = bytes([state["template_slot"]])
+    for record in (FOLLOWED_DEFAULT, FOLLOWED_A32):
+        pokes[record + ACTOR_X] = word(state["record_x"])
+        pokes[record + ACTOR_FLAGS] = bytes([state["record_flags"]])
+        pokes[record + FLAGS2] = bytes([state["record_flags2"]])
+    return pokes
+
+
+def _damage_table_entry(spawn_type):
+    """WHERE the second lookup goes: `add.w d0,d0` wraps the type in SIXTEEN BITS and
+    `move.w 0(a2,d0.l)` then takes the whole longword, so the offset is unsigned and a type from
+    $4000 up reads ABOVE the table rather than below it."""
+    return DAMAGE_TABLE + ((2 * spawn_type) & WORD_MASK)
+
+
+# --- the model both runners compare against -------------------------------------------------------
+
+def _model_damage_word(image, attacker):
+    """`moveq #0,d0 / move.b 19(a0),d0 / bmi` — the slot byte's SIGN BIT picks the arm, and on the
+    table arm the byte indexes WB_TABLE_PTR_21E8C and that template's type indexes the word table."""
+    slot = image[attacker + TEMPLATE_SLOT]
+    if slot > DAMAGE_INLINE_MASK:
+        return slot & DAMAGE_INLINE_MASK
+    template = _u32(image, TABLE_PTR) + slot * SPAWN_RECORD_BYTES
+    return u16(image, _damage_table_entry(u16(image, template + SPAWN_TYPE)))
+
+
+def _model_slot_spend(image, out, slot, message_id):
+    """One charge off a slot, extending ``out`` with what that wrote. Answers whether the slot HELD
+    one, which is what each path hangs its other arm off."""
+    if image[slot] == 0:
+        return False
+    left = (image[slot] - 1) & BYTE_MASK
+    out[slot] = left
+    if left == 0:
+        _put_word(out, slot, SLOT_REARM)
+        out[TEXT_REQUEST] = message_id
+        _put_word(out, TEXT_LIFETIME_REQUEST, TEXT_LIFETIME_DEFAULT)
+    return True
+
+
+def _model_damage_followed(image, attacker):
+    """(the record it damages, {address: byte})."""
+    record = FOLLOWED_A32 if image[FLAG_A32] else FOLLOWED_DEFAULT
+    if image[record + FLAGS2] & (1 << FLAGS2_INVULNERABLE_BIT):
+        return record, {}
+
+    out = {record + FLAGS2: image[record + FLAGS2] | (1 << FLAGS2_BIT_0),
+           record + FIELD_31: (DAMAGE_FIELD_31_BASE
+                               - 2 * u16(image, EFFECT_STATE_BD66)) & BYTE_MASK,
+           record + FIELD_22: 0}
+
+    flags = image[record + ACTOR_FLAGS]
+    if not flags & (1 << FLICKER_BIT):
+        damage = _model_damage_word(image, attacker)
+        if not _model_slot_spend(image, out, SLOT_BBBE, MSG_HELMET_BROKEN):
+            left = (u16(image, METER_VALUE) - damage) & WORD_MASK
+            _put_word(out, METER_VALUE, 0 if s16(left) < 0 else left)
+            out[record + FLICKER_COUNTDOWN] = DAMAGE_FLICKER_FRAMES
+    flags |= 1 << FLICKER_BIT
+
+    if s16(u16(image, attacker + ACTOR_X)) > s16(u16(image, record + ACTOR_X)):
+        flags &= ~(1 << SIDE_BIT)
+        out[record + FIELD_30] = 0
+    else:
+        flags |= 1 << SIDE_BIT
+        out[record + FIELD_30] = DAMAGE_FIELD_30_SET
+
+    out[record + ACTOR_FLAGS] = (flags | (1 << MOVING_BIT) | (1 << LAUNCHED_BIT)
+                                 ) & ~(1 << SUPPORTED_BIT) & BYTE_MASK
+    out[record + SPEED] = DAMAGE_KNOCKBACK_SPEED
+    return record, out
+
+
+def _model_damage_template(image, actor):
+    """(the template record it spends, the damage it spent, {address: byte})."""
+    template = _u32(image, TABLE_PTR) + image[actor + TEMPLATE_SLOT] * SPAWN_RECORD_BYTES
+    out = {}
+    damage = (image[EFFECT_RECORD_LIST] + 1) & BYTE_MASK        # `addq.b`, so $ff wraps to 0
+    if _model_slot_spend(image, out, SLOT_BBC0, MSG_GAUNTLET_BROKEN):
+        damage = (damage + damage) & WORD_MASK
+
+    left = (u16(image, template + SPAWN_HITPOINTS) - damage) & WORD_MASK
+    _put_word(out, template + SPAWN_HITPOINTS, left)
+    if s16(left) <= 0:
+        out[actor + FLAGS2] = image[actor + FLAGS2] | (1 << FLAGS2_DEFEATED_BIT)
+    return template, damage, out
+
+
+def _sfx_bytes(image, effect_id, channel):
+    """test_sound.py's model of the trigger's writes, flattened to this battery's {address: byte} —
+    so the EXACT write-set compare covers the sound module too, and a port that reached a field the
+    trigger does not touch reddens here as well as in that battery."""
+    return {addr + index: value[index]
+            for addr, value in sfx_expected_writes(image, effect_id, channel).items()
+            for index in range(len(value))}
+
+
+# --- the two runners --------------------------------------------------------------------------------
+# Both enter on DAMAGE_ATTACKER, which is the record `_damage_pokes` seeds and the only one either
+# routine is ever handed here: a case that wants a different record moves the SEEDS under this one
+# rather than passing another address, so neither runner takes the record as a parameter.
+
+def _run_damage_followed(case, pokes):
+    what = f"actor_damage_followed {case}"
+    image = harness.make_image(pokes)
+    record, expected = _model_damage_followed(image, DAMAGE_ATTACKER)
+    sound = {}
+    if expected:                       # the invulnerable arm never reaches the trigger either
+        sound = sfx_expected_writes(image, DAMAGE_FOLLOWED_SFX, SND_CHANNEL_A)
+        expected.update(_sfx_bytes(image, DAMAGE_FOLLOWED_SFX, SND_CHANNEL_A))
+
+    info = leaf.run("actor_damage_followed", _DAMAGE_FOLLOWED(DAMAGE_ATTACKER),
+                    merge_bands(expected), what,
+                    regs={"a0": DAMAGE_ATTACKER, "_pokes": pokes, **DAMAGE_ENTRY_REGS},
+                    max_insns=DAMAGE_INSN_CAP)
+    _assert_writes(info, expected, what)
+    if sound:
+        assert_sfx_written(info, sound, f"{what}: the effect it triggers")
+    assert info["regs"]["a0"] == DAMAGE_ATTACKER, f"{what}: a0 moved, which this routine does not"
+    assert info["regs"]["a1"] == record, (
+        f"{what}: the original left a1={info['regs']['a1']:#x}, not the {record:#x} the mode flag "
+        f"picks")
+    return info, record, expected
+
+
+def _run_damage_template(case, pokes):
+    what = f"actor_damage_template_hitpoints {case}"
+    image = harness.make_image(pokes)
+    template, damage, expected = _model_damage_template(image, DAMAGE_ATTACKER)
+    sound = sfx_expected_writes(image, DAMAGE_TEMPLATE_SFX, SND_CHANNEL_B)
+    expected.update(_sfx_bytes(image, DAMAGE_TEMPLATE_SFX, SND_CHANNEL_B))
+
+    info = leaf.run("actor_damage_template_hitpoints", _DAMAGE_TEMPLATE(DAMAGE_ATTACKER),
+                    merge_bands(expected), what,
+                    regs={"a0": DAMAGE_ATTACKER, "_pokes": pokes, **DAMAGE_ENTRY_REGS},
+                    max_insns=DAMAGE_INSN_CAP)
+    _assert_writes(info, expected, what)
+    assert_sfx_written(info, sound, f"{what}: the effect it triggers")
+    assert info["regs"]["a0"] == DAMAGE_ATTACKER, f"{what}: a0 moved, which this routine does not"
+    assert info["regs"]["a1"] == template, (
+        f"{what}: the original left a1={info['regs']['a1']:#x}, not the template {template:#x}")
+    assert info["regs"]["d0"] == damage, (
+        f"{what}: the original left d0={info['regs']['d0']:#x}, not the {damage:#x} it spent — "
+        f"`moveq #0,d0` clears the high half, so the whole register is the damage")
+    return info, template, expected
+
+
+# --- what the two paths' own data says ---------------------------------------------------------------
+
+def test_the_damage_table_is_the_data_between_the_two_bodies():
+    """Neither body has a Ghidra function, so both extents rest on the word table between them: it
+    starts where $69fe's last `rts` does and ends where the twenty-five sites that enter $6b46 land.
+    Its `lea` is also its ONLY reference in the image — a second reader would mean a second reading
+    of where it stops."""
+    followed = leaf.entry_of("actor_damage_followed")
+    template = leaf.entry_of("actor_damage_template_hitpoints")
+    assert followed + len(ENTRY_BYTES["actor_damage_followed"]) == DAMAGE_TABLE, (
+        f"$69fe's body ends at {followed + len(ENTRY_BYTES['actor_damage_followed']):#x}, not at "
+        f"the table {DAMAGE_TABLE:#x} its own `lea` names")
+    assert DAMAGE_TABLE + DAMAGE_TABLE_ENTRIES * WORD_LEN == template, (
+        f"{DAMAGE_TABLE_ENTRIES} words from {DAMAGE_TABLE:#x} end at "
+        f"{DAMAGE_TABLE + DAMAGE_TABLE_ENTRIES * WORD_LEN:#x}, not at {template:#x}")
+
+    program = bytes(harness.BASE_IMAGE[:loader.PROGRAM_END])
+    # WHERE the pin puts that `lea`'s operand, so the scan is checked against the reconstruction
+    # rather than against a transcribed address.
+    naming = lea_abs_l(A2, DAMAGE_TABLE)
+    operand = followed + ENTRY_BYTES["actor_damage_followed"].index(naming) + len(naming) \
+        - LONGWORD_LEN
+    inside = [at for at in range(0, len(program) - LONGWORD_LEN, WORD_LEN)
+              if DAMAGE_TABLE <= int.from_bytes(program[at:at + LONGWORD_LEN], "big") < template]
+    assert inside == [operand], (
+        f"the table is named as a longword at {[hex(a) for a in inside]}, which is not the one "
+        f"`lea $6b08.l,a2` operand at {operand:#x} that this battery reconstructs")
+
+
+def test_the_two_slots_are_named_by_the_messages_their_paths_post():
+    """WHY the constants can say "helmet" and "gauntlet" at all: each path posts a message id as its
+    slot empties, and the string that id resolves to is in the image. This resolves both through the
+    message table's own arithmetic (1-based, a longword per entry), so a table that moved would fail
+    here rather than leaving two names resting on a transcription."""
+    image = harness.BASE_IMAGE
+    for message_id, expected in ((MSG_HELMET_BROKEN, b"Helmet is Broken"),
+                                 (MSG_GAUNTLET_BROKEN, b"Gauntlet is Broken")):
+        entry = TEXT_MESSAGE_TABLE + (message_id - TEXT_MESSAGE_FIRST_ID) * LONGWORD_LEN
+        record = _u32(image, entry)
+        text = bytes(image[record + TEXT_RECORD_STRING:record + TEXT_RECORD_STRING + 0x40])
+        assert expected in text.split(bytes([TEXT_STRING_END]))[0], (
+            f"message {message_id:#04x} at {record:#x} is {text[:32]!r}, which does not name "
+            f"{expected!r}")
+
+
+def test_the_sound_module_is_clear_of_the_game_state_both_paths_write():
+    """The composed expectation is one dict, so a case would silently lose a claim if the trigger's
+    bands and the damage paths' overlapped. Checked against BOTH channels, since the two paths use
+    different ones."""
+    state = {SLOT_BBBE, SLOT_BBBE + SLOT_REQUEST, SLOT_BBC0, SLOT_BBC0 + SLOT_REQUEST,
+             TEXT_REQUEST, METER_VALUE, METER_VALUE + 1,
+             TEXT_LIFETIME_REQUEST, TEXT_LIFETIME_REQUEST + 1}
+    state |= set(range(FOLLOWED_DEFAULT, FOLLOWED_DEFAULT + RECORD_BYTES))
+    state |= set(range(FOLLOWED_A32, FOLLOWED_A32 + RECORD_BYTES))
+    state |= set(range(TEMPLATE_TABLE, TEMPLATE_TABLE + TEMPLATE_SLOTS * SPAWN_RECORD_BYTES))
+    for effect_id, channel in ((DAMAGE_FOLLOWED_SFX, SND_CHANNEL_A),
+                               (DAMAGE_TEMPLATE_SFX, SND_CHANNEL_B)):
+        assert not state & set(_sfx_bytes(harness.BASE_IMAGE, effect_id, channel)), (
+            f"sfx {effect_id:#x} on channel {channel} writes bytes this battery also models")
+
+
+def test_the_enemy_path_asks_for_a_channel_the_rest_of_the_image_never_does():
+    """The correction batch 17 carries. `snd_trigger_effect`'s B and C arms were recorded as dead
+    code on the strength of "every call site passes d1 = 0"; $6b46's second instruction is
+    `move.w #$1,d1`, so the B arm is reached from the shipped game. Stated as arithmetic over the
+    entry pin rather than as prose, so a rebuilt pin cannot quietly lose it."""
+    assert SND_CHANNEL_B != SND_CHANNEL_A
+    body = ENTRY_BYTES["actor_damage_template_hitpoints"]
+    assert body.startswith(move_w_imm_dn(D0, DAMAGE_TEMPLATE_SFX)
+                           + move_w_imm_dn(D1, SND_CHANNEL_B)), (
+        "the enemy path no longer opens by loading the channel-B selector")
+
+
+# --- $69fe: the mode flag, read one size down -------------------------------------------------------
+# `tst.b $a32.w` sees the word's HIGH byte alone. $0001 and $00ff are the two values a `tst.w` port
+# — which is what every other reader of this word is — answers the other way round on.
+BYTE_FLAG_CASES = [
+    ("clear", 0x0000, FOLLOWED_DEFAULT),
+    ("all-ones", 0xffff, FOLLOWED_A32),
+    ("low-byte-one", 0x0001, FOLLOWED_DEFAULT),
+    ("low-byte-only", 0x00ff, FOLLOWED_DEFAULT),
+    ("high-byte-one", 0x0100, FOLLOWED_A32),
+    ("largest-positive", 0x7fff, FOLLOWED_A32),
+    ("sign-boundary", 0x8000, FOLLOWED_A32),
+]
+
+
+@pytest.mark.parametrize("case,flag,expected", BYTE_FLAG_CASES, ids=[c[0] for c in BYTE_FLAG_CASES])
+def test_the_damage_path_reads_the_mode_flag_as_a_byte(case, flag, expected):
+    what = f"a32={flag:#06x}"
+    _info, record, _writes = _run_damage_followed(what, _damage_pokes(
+        f"actor_damage_followed {what}", a32=flag))
+    assert record == expected, f"{what}: the flag picked {record:#x}, not {expected:#x}"
+
+
+def test_the_byte_flag_cases_disagree_with_the_word_reading_the_rest_of_the_image_uses():
+    """The guard on the sweep above: without a value whose two readings differ, every case there
+    would pass against a `tst.w` port too."""
+    differing = [flag for _case, flag, expected in BYTE_FLAG_CASES
+                 if (FOLLOWED_A32 if flag else FOLLOWED_DEFAULT) != expected]
+    assert differing, "no seed tells `tst.b` from `tst.w`, so the sweep pins only the addresses"
+
+
+# --- $69fe: the arm that writes nothing --------------------------------------------------------------
+# WB_ACTOR_FLAGS2_INVULNERABLE_BIT alone, and beside every neighbour: a byte-wide `btst` must read
+# that bit and no other.
+INVULNERABLE_SEEDS = (1 << FLAGS2_INVULNERABLE_BIT, 0xff, 0xff ^ (1 << FLAGS2_BIT_0),
+                      (1 << FLAGS2_INVULNERABLE_BIT) | (1 << FLAGS2_DEFEATED_BIT))
+VULNERABLE_SEEDS = (0x00, 0xff ^ (1 << FLAGS2_INVULNERABLE_BIT), 1 << FLAGS2_BIT_0,
+                    1 << FLAGS2_DEFEATED_BIT)
+
+
+@pytest.mark.parametrize("flags2", INVULNERABLE_SEEDS, ids=lambda v: f"flags2{v:#04x}")
+def test_a_record_already_invulnerable_is_left_completely_alone(flags2):
+    """The one path out that writes NOTHING — no slot, no meter, no SFX, not even the flicker. The
+    registers say as much as the empty write set does: the body returns before it has loaded any of
+    them, so every one but a1 has to come back exactly as it was entered."""
+    what = f"invulnerable flags2={flags2:#04x}"
+    info, _record, expected = _run_damage_followed(what, _damage_pokes(
+        f"actor_damage_followed {what}", record_flags2=flags2, bbbe=3, meter=0x28))
+    assert not expected, f"{what}: the model expected writes on a path that makes none"
+    for name, entered in DAMAGE_ENTRY_REGS.items():
+        assert info["regs"][name] == entered, (
+            f"{what}: {name} came back {info['regs'][name]:#010x}, not the {entered:#010x} it was "
+            f"entered with — the body got further than the `btst`")
+
+
+@pytest.mark.parametrize("flags2", VULNERABLE_SEEDS, ids=lambda v: f"flags2{v:#04x}")
+def test_a_record_without_that_bit_takes_the_hit_and_keeps_its_other_flags2_bits(flags2):
+    """The other side, and what says the `bset #0,9(a1)` is a bit and not a byte store."""
+    what = f"vulnerable flags2={flags2:#04x}"
+    _info, record, expected = _run_damage_followed(what, _damage_pokes(
+        f"actor_damage_followed {what}", record_flags2=flags2))
+    assert expected[record + FLAGS2] == flags2 | (1 << FLAGS2_BIT_0), (
+        f"{what}: the second flag byte came back {expected[record + FLAGS2]:#04x}")
+
+
+# --- $69fe: the four arms that funnel into the tail ---------------------------------------------------
+# (flicker seed, slot seed, which arm, why). Each is a different branch INTO the funnel at $6aba,
+# and the model's write set is what tells them apart: only the meter arm touches WB_HUD_METER_VALUE,
+# only the two slot arms touch the slot, and only the emptying one posts a message.
+FUNNEL_ARMS = [
+    ("flicker-already-up", 1 << FLICKER_BIT, 3, "the `bne` at $6a44: the cost is skipped outright"),
+    ("slot-decremented", 0x00, 3, "the `bne` at $6a7a: a charge off the slot and nothing else"),
+    ("slot-emptied", 0x00, 1, "the `bra` at $6a96: the rearm and the message"),
+    ("meter-spent", 0x00, 0, "the `bra` at $6ab0: the slot was empty, so the meter pays"),
+]
+
+
+@pytest.mark.parametrize("case,flicker,slot,why", FUNNEL_ARMS, ids=[c[0] for c in FUNNEL_ARMS])
+def test_each_arm_of_the_funnel_pays_for_the_hit_its_own_way(case, flicker, slot, why):
+    what = f"{case} ({why})"
+    _info, record, expected = _run_damage_followed(what, _damage_pokes(
+        f"actor_damage_followed {what}", record_flags=flicker, bbbe=slot, damage_entry=4))
+
+    paid_meter = METER_VALUE in expected
+    paid_slot = SLOT_BBBE in expected
+    posted = TEXT_REQUEST in expected
+    assert (paid_meter, paid_slot, posted) == (case == "meter-spent",
+                                               case.startswith("slot"),
+                                               case == "slot-emptied"), (
+        f"{what}: meter={paid_meter} slot={paid_slot} message={posted}")
+    # Every arm reaches the funnel, so the knock-back and the SFX land whatever paid.
+    assert expected[record + SPEED] == DAMAGE_KNOCKBACK_SPEED, f"{what}: no knock-back"
+    # The flicker countdown is the meter arm's alone — nothing else in the body writes it.
+    assert (record + FLICKER_COUNTDOWN in expected) == paid_meter, (
+        f"{what}: the flicker countdown moved on an arm that does not write it")
+
+
+@pytest.mark.parametrize("slot", [1, 2, 3, 0x80, 0xff], ids=lambda v: f"slot{v:#04x}")
+def test_a_slot_with_a_charge_loses_exactly_one_and_rearms_only_at_zero(slot):
+    """The slot boundary from both sides. `subq.b #1` on a 1 reaches zero and the whole rearm runs;
+    on anything else only the count byte moves, and the request byte beside it must not."""
+    what = f"slot at {slot:#04x}"
+    _info, _record, expected = _run_damage_followed(what, _damage_pokes(
+        f"actor_damage_followed {what}", bbbe=slot, damage_entry=4))
+    assert expected[SLOT_BBBE] == (slot - 1) & BYTE_MASK
+    if slot == 1:
+        assert expected[SLOT_BBBE + SLOT_REQUEST] == SLOT_REARM & BYTE_MASK
+        assert expected[TEXT_REQUEST] == MSG_HELMET_BROKEN
+        assert leaf.read_int(_info, TEXT_LIFETIME_REQUEST, WORD_LEN, what) == TEXT_LIFETIME_DEFAULT
+    else:
+        assert SLOT_BBBE + SLOT_REQUEST not in expected, (
+            f"{what}: the request byte moved on a slot that did not empty")
+        assert TEXT_REQUEST not in expected, f"{what}: a message was posted early"
+
+
+# --- $69fe: the meter, and its floor ------------------------------------------------------------------
+# (meter, damage, why). `sub.w d0,$b6fa / bpl / clr.w` reads the RESULT, so a meter already negative
+# that the subtraction carries back into the positive half is STORED rather than floored.
+METER_CASES = [
+    (0x0028, 0x0004, "an ordinary hit"),
+    (0x0004, 0x0004, "exactly to zero, which both readings of the floor store as zero"),
+    (0x0003, 0x0004, "one past zero: the `bpl` fails and the `clr.w` fires"),
+    (0x0000, 0x0000, "nothing off nothing"),
+    (0x0000, 0x0001, "straight into the negative half"),
+    (0x8000, 0x0001, "a meter already NEGATIVE, carried back positive and kept"),
+    (0x8000, 0x8000, "...and one carried exactly to zero"),
+    (0xffff, 0xffff, "two negatives that cancel"),
+    (0x0001, 0xffff, "a damage word the `sub.w` reads as -1, so the meter goes UP"),
+    (0x7fff, 0x0001, "the largest positive meter"),
+]
+
+
+@pytest.mark.parametrize("meter,damage,why", METER_CASES,
+                         ids=[f"meter{c[0]:04x}_dmg{c[1]:04x}" for c in METER_CASES])
+def test_the_meter_arm_floors_only_a_result_that_went_negative(meter, damage, why):
+    what = f"meter {meter:#06x} less {damage:#06x} ({why})"
+    _info, _record, expected = _run_damage_followed(what, _damage_pokes(
+        f"actor_damage_followed {what}", meter=meter, bbbe=0, damage_entry=damage))
+    left = (meter - damage) & WORD_MASK
+    stored = (expected[METER_VALUE] << 8) | expected[METER_VALUE + 1]
+    assert stored == (0 if s16(left) < 0 else left), (
+        f"{what}: the meter came back {stored:#06x}")
+
+
+def test_the_meter_sweep_reaches_both_sides_of_the_floor_and_the_case_it_cannot_see():
+    """A sweep that only ever went negative would pass a port with no floor at all, and one that
+    never started negative would pass a port whose floor tested the OPERAND instead of the result."""
+    results = [s16((meter - damage) & WORD_MASK) for meter, damage, _why in METER_CASES]
+    assert any(r < 0 for r in results) and any(r > 0 for r in results) and 0 in results
+    assert any(s16(meter) < 0 <= s16((meter - damage) & WORD_MASK)
+               for meter, damage, _why in METER_CASES), (
+        "no case starts negative and ends positive, so the floor's position is unpinned")
+
+
+# --- $69fe: where the damage word comes from -----------------------------------------------------------
+
+# One type per DISTINCT word the shipped table holds, chosen off the image rather than listed: the
+# 31 entries carry six numbers between them, so sweeping all of them was 31 differentials over six
+# values. The table's LENGTH is not what this sweep holds — that is
+# test_the_damage_table_is_the_data_between_the_two_bodies, whose arithmetic ends exactly on $6b46.
+_FIRST_TYPE_PER_WORD = {}
+for _spawn_type in range(DAMAGE_TABLE_ENTRIES):
+    _FIRST_TYPE_PER_WORD.setdefault(u16(harness.BASE_IMAGE, _damage_table_entry(_spawn_type)),
+                                    _spawn_type)
+SHIPPED_DAMAGE_TYPES = tuple(sorted(_FIRST_TYPE_PER_WORD.values()))
+
+
+@pytest.mark.parametrize("spawn_type", SHIPPED_DAMAGE_TYPES, ids=lambda v: f"type{v:#04x}")
+def test_every_word_the_shipped_damage_table_holds_is_taken_off_the_meter(spawn_type):
+    """The table is program data, so these run the game's OWN numbers — one type for each distinct
+    word in it, which is every value the meter arm can be driven with without poking anything."""
+    what = f"shipped damage word for type {spawn_type:#x}"
+    _run_damage_followed(what, _damage_pokes(f"actor_damage_followed {what}",
+                                             spawn_type=spawn_type, bbbe=0, meter=0x7f00))
+
+
+# Types whose doubled index leaves the table. The offset is UNSIGNED and taken as a longword, so
+# these read above the table rather than below it, and $8000 is where the `add.w` wraps to zero.
+OUT_OF_RANGE_TYPES = (
+    (DAMAGE_TABLE_ENTRIES, "the first type past the table — its word is $6b46's own first"),
+    (0x0100, "well past it"),
+    (0x3fff, "the largest index that still fits a signed word once doubled"),
+    (0x4000, "...and the first that does not, which a SIGNED index would send 32 KB below"),
+    (0x8000, "the `add.w` wraps to zero, so this reads entry 0"),
+    (0xffff, "the last index the wrap allows, two bytes below the table's end + 64 KB"),
+)
+
+
+@pytest.mark.parametrize("spawn_type,why", OUT_OF_RANGE_TYPES,
+                         ids=[f"type{c[0]:04x}" for c in OUT_OF_RANGE_TYPES])
+def test_a_type_outside_the_damage_table_indexes_it_anyway(spawn_type, why):
+    what = f"type {spawn_type:#06x} ({why})"
+    _run_damage_followed(what, _damage_pokes(f"actor_damage_followed {what}",
+                                             spawn_type=spawn_type, bbbe=0, meter=0x7f00))
+
+
+def test_the_out_of_range_types_really_do_leave_the_table_and_one_wraps_to_its_start():
+    """The guard: a sweep whose entries all landed back inside the table would pin nothing about the
+    index, and one with no wrap would agree with a port that took the index as a longword."""
+    entries = [_damage_table_entry(spawn_type) for spawn_type, _why in OUT_OF_RANGE_TYPES]
+    end = DAMAGE_TABLE + DAMAGE_TABLE_ENTRIES * WORD_LEN
+    assert any(entry >= end for entry in entries), entries
+    assert DAMAGE_TABLE in entries, "no case exercises the `add.w`'s wrap back to entry 0"
+    assert all(entry < loader.PROGRAM_END for entry in entries), (
+        "an out-of-range type reads past the program, where the model would be reading a byte the "
+        "oracle does not have")
+
+
+@pytest.mark.parametrize("damage", [0x0000, 0x0001, 0x0007, 0x00ff, 0x7fff, 0x8000, 0xffff],
+                         ids=lambda v: f"seeded{v:04x}")
+def test_a_seeded_damage_word_is_reached_through_the_template_the_slot_byte_names(damage):
+    """The shipped table's own words are small, so only a poked entry drives the subtraction with a
+    value that wraps — and poking it is also what says the routine reaches the table THROUGH
+    WB_TABLE_PTR_21E8C and the template's type, rather than off the slot byte directly."""
+    what = f"a seeded damage word of {damage:#06x}"
+    _run_damage_followed(what, _damage_pokes(f"actor_damage_followed {what}",
+                                             bbbe=0, meter=0x4000, damage_entry=damage))
+
+
+# The type every template but the one under test carries, and the damage word it selects — both
+# different from the case's own, so a port that indexed the wrong record answers with the wrong
+# number instead of with the same one.
+NEIGHBOUR_TYPE, NEIGHBOUR_DAMAGE = 7, 0x0022
+SLOT_UNDER_TEST_TYPE, SLOT_UNDER_TEST_DAMAGE = 6, 0x0011
+
+
+@pytest.mark.parametrize("template_slot", [0, 1, 2, TEMPLATE_SLOTS - 1, DAMAGE_INLINE_MASK],
+                         ids=lambda v: f"slot{v:#04x}")
+def test_the_table_arm_indexes_the_template_the_slot_byte_names(template_slot):
+    """`lsl.l #5,d0 / move.w 12(a6,d0.w),d0` — a whole template's stride per slot, and the type it
+    lands on is what selects the damage word. WB_ACTOR_DAMAGE_INLINE_MASK is the largest slot this
+    arm can see, and it is past the default band, so the band is widened to reach it."""
+    what = f"template slot {template_slot:#04x}"
+    salt = case_salt(f"actor_damage_followed {what}")
+    pokes = _damage_pokes(f"actor_damage_followed {what}", template_slot=template_slot, bbbe=0,
+                          spawn_type=NEIGHBOUR_TYPE, damage_entry=NEIGHBOUR_DAMAGE)
+    _template_band(salt, TEMPLATE_TABLE, template_slot + 1, pokes)
+    for slot in range(template_slot + 1):
+        pokes[TEMPLATE_TABLE + slot * SPAWN_RECORD_BYTES + SPAWN_TYPE] = word(NEIGHBOUR_TYPE)
+    pokes[TEMPLATE_TABLE + template_slot * SPAWN_RECORD_BYTES + SPAWN_TYPE] = word(
+        SLOT_UNDER_TEST_TYPE)
+    pokes[_damage_table_entry(SLOT_UNDER_TEST_TYPE)] = word(SLOT_UNDER_TEST_DAMAGE)
+    _run_damage_followed(what, pokes)
+
+
+@pytest.mark.parametrize("template_slot", [0x80, 0x81, 0xc4, 0xff], ids=lambda v: f"slot{v:#04x}")
+def test_a_slot_byte_with_its_sign_bit_set_carries_the_damage_itself(template_slot):
+    """`bmi` then `bclr #7,d0`: no table is read at all, and the seven bits left ARE the damage. The
+    case seeds the template table with a type whose word is large, so a port that took the table arm
+    anyway comes out with a different number rather than the same small one."""
+    what = f"inline damage from slot {template_slot:#04x}"
+    pokes = _damage_pokes(f"actor_damage_followed {what}", template_slot=template_slot, bbbe=0,
+                          meter=0x4000, spawn_type=9, damage_entry=0x4321)
+    _run_damage_followed(what, pokes)
+
+
+# --- $69fe: the x compare, and what it writes ------------------------------------------------------
+# (record x, attacker x): both arms, the EQUAL case — inclusive here where actor_set_side_flag's
+# `ble` on the same comparison is strict — and the pairs that make it a SIGNED compare.
+DAMAGE_SIDE_CASES = [
+    ("attacker-right", 0x0100, 0x0140),
+    ("attacker-left", 0x0140, 0x0100),
+    ("level", 0x0120, 0x0120),
+    ("one-apart", 0x0120, 0x0121),
+    ("one-apart-other-way", 0x0121, 0x0120),
+    ("attacker-negative", 0x0010, 0xffff),
+    ("record-negative", 0xffff, 0x0010),
+    ("sign-boundary", 0x7fff, 0x8000),
+    ("sign-boundary-other-way", 0x8000, 0x7fff),
+]
+
+
+@pytest.mark.parametrize("flags", STATE_FLAG_SEEDS, ids=lambda v: f"flags{v:#04x}")
+@pytest.mark.parametrize("case,record_x,attacker_x", DAMAGE_SIDE_CASES,
+                         ids=[c[0] for c in DAMAGE_SIDE_CASES])
+def test_the_hit_turns_the_record_towards_whatever_struck_it(case, record_x, attacker_x, flags):
+    what = f"{case} record={record_x:#06x} attacker={attacker_x:#06x} flags={flags:#04x}"
+    _info, record, expected = _run_damage_followed(what, _damage_pokes(
+        f"actor_damage_followed {what}", record_x=record_x, attacker_x=attacker_x,
+        record_flags=flags, bbbe=0))
+
+    raised = not s16(attacker_x) > s16(record_x)
+    assert bool(expected[record + ACTOR_FLAGS] & (1 << SIDE_BIT)) == raised, what
+    assert expected[record + FIELD_30] == (DAMAGE_FIELD_30_SET if raised else 0), what
+
+
+def test_the_side_compare_is_inclusive_where_the_other_reading_of_it_is_strict():
+    """$67c2's `ble` and $69fe's `bgt` are the same comparison read two ways, and they differ on
+    EXACTLY the equal case — which is why src/actor.c spells this one out instead of calling
+    `actor_set_side_flag` on the record."""
+    level = [case for case, record_x, attacker_x in DAMAGE_SIDE_CASES if record_x == attacker_x]
+    assert level, "no case has the two level, so the two readings are indistinguishable here"
+
+
+# --- $69fe: the countdown field, and the registers each arm leaves ---------------------------------
+
+@pytest.mark.parametrize("bd66", [0x0000, 0x0001, 0x0005, 0x0006, 0x0007, 0x8000, 0xffff],
+                         ids=lambda v: f"bd66{v:04x}")
+def test_the_field_31_seed_is_twelve_less_twice_the_state_word(bd66):
+    """`move.w #$c,d1 / sub.w d0,d1 / move.b d1,31(a1)` — a WORD subtraction of which only the LOW
+    BYTE is stored, so a state word past 6 stores a byte that has gone round."""
+    what = f"bd66={bd66:#06x}"
+    _info, record, expected = _run_damage_followed(what, _damage_pokes(
+        f"actor_damage_followed {what}", bd66=bd66))
+    assert expected[record + FIELD_31] == (DAMAGE_FIELD_31_BASE - 2 * bd66) & BYTE_MASK, what
+
+
+@pytest.mark.parametrize("case,flicker", [("table-arm", 0x00),
+                                          ("flicker-arm", 1 << FLICKER_BIT)],
+                         ids=["table-arm", "flicker-arm"])
+def test_the_two_arms_leave_different_registers_behind(case, flicker):
+    """What separates the arms in the REGISTERS rather than in memory. The table arm clears d0's
+    high half with a `moveq` and loads a2 and a6; the arm that skips the cost never touches any of
+    the three, so the caller's own values survive — including d0's high half, which the `move.w
+    #$b,d0` before the SFX call cannot reach."""
+    what = f"registers on the {case}"
+    pokes = _damage_pokes(f"actor_damage_followed {what}", record_flags=flicker, bbbe=0)
+    info, _record, _writes = _run_damage_followed(what, pokes)
+
+    took_table = not flicker
+    # `moveq #0,d0` on the table arm clears the WHOLE register, so the SFX id is all that is left in
+    # it; on the other arm only the `move.w` lands and the caller's high half survives.
+    expected_d0 = (DAMAGE_FOLLOWED_SFX if took_table
+                   else leaf.set_low_word(DAMAGE_ENTRY_REGS["d0"], DAMAGE_FOLLOWED_SFX))
+    assert info["regs"]["a5"] == SND_STUB_TABLE, f"{what}: a5 is not the stub table"
+    assert info["regs"]["d0"] == expected_d0, (
+        f"{what}: d0 came back {info['regs']['d0']:#010x}, not {expected_d0:#010x}")
+    assert info["regs"]["d1"] == leaf.set_low_word(DAMAGE_ENTRY_REGS["d1"], 0), (
+        f"{what}: `clr.w d1` reached the high half")
+    assert info["regs"]["a2"] == (DAMAGE_TABLE if took_table else DAMAGE_ENTRY_REGS["a2"]), what
+    assert info["regs"]["a6"] == (TEMPLATE_TABLE if took_table else DAMAGE_ENTRY_REGS["a6"]), what
+
+
+# --- $6b46: the gauntlet, the pool and the kill bit ---------------------------------------------------
+# (slot, whether the damage doubles, why). The `beq` at the top of the slot test is the ONLY thing
+# that skips the `add.w`, so both arms that spend a charge double and only an empty slot does not.
+GAUNTLET_ARMS = [
+    ("empty", 0, False, "the `beq` at $6b7a jumps PAST the doubling"),
+    ("decremented", 3, True, "the `bne` at $6b84 lands ON it"),
+    ("emptied", 1, True, "...and so does the fall-through from the rearm"),
+]
+
+# The list byte these three run at, and a pool deep enough that none of them empties it.
+GAUNTLET_RECORD_LIST = 4
+GAUNTLET_POOL = 0x0100
+
+
+@pytest.mark.parametrize("case,slot,doubles,why", GAUNTLET_ARMS, ids=[c[0] for c in GAUNTLET_ARMS])
+def test_a_gauntlet_charge_doubles_the_damage_on_both_arms_that_spend_one(case, slot, doubles, why):
+    what = f"gauntlet {case} ({why})"
+    info, _template, expected = _run_damage_template(what, _damage_pokes(
+        f"actor_damage_template_hitpoints {what}", bbc0=slot, record_list=GAUNTLET_RECORD_LIST,
+        pool=GAUNTLET_POOL))
+    # `addq.b #1,d0` over the OVERRIDE alone — the same arithmetic the sweep below states, and not
+    # DAMAGE_STATE's default plus it, which happens to agree only because that default is zero.
+    base = (GAUNTLET_RECORD_LIST + 1) & BYTE_MASK
+    spent = base * 2 if doubles else base
+    assert info["regs"]["d0"] == spent, (
+        f"{what}: the damage came out {info['regs']['d0']:#x}, not the {spent:#x} this arm gives")
+    assert (TEXT_REQUEST in expected) == (case == "emptied"), what
+
+
+@pytest.mark.parametrize("record_list", [0x00, 0x01, 0x7f, 0x80, 0xfe, 0xff],
+                         ids=lambda v: f"list{v:#04x}")
+@pytest.mark.parametrize("slot", [0, 2], ids=["gauntlet-empty", "gauntlet-charged"])
+def test_the_damage_is_the_list_byte_plus_one_added_in_a_byte(record_list, slot):
+    """`addq.b #1,d0` — a BYTE add over a `moveq`-cleared register, so a list byte of $ff comes back
+    0 and the whole hit does nothing to the pool, doubled or not."""
+    what = f"list byte {record_list:#04x} with slot {slot}"
+    info, _template, _writes = _run_damage_template(what, _damage_pokes(
+        f"actor_damage_template_hitpoints {what}", record_list=record_list, bbc0=slot,
+        pool=0x0400))
+    expected = (record_list + 1) & BYTE_MASK
+    assert info["regs"]["d0"] == (expected * 2 if slot else expected), (
+        f"{what}: d0 came back {info['regs']['d0']:#x}")
+
+
+# (pool, list byte, whether the kill bit goes up, why). `beq` then `bmi`, both on the WORD result.
+POOL_CASES = [
+    (0x0040, 0x04, False, "an ordinary hit"),
+    (0x0005, 0x04, True, "exactly to zero, which the `beq` catches"),
+    (0x0006, 0x04, False, "one above it"),
+    (0x0004, 0x04, True, "one past it, which the `bmi` catches"),
+    (0x0000, 0xff, True, "a damage of zero on a pool of zero: the `beq` again"),
+    (0x0001, 0xff, False, "a damage of zero on a pool of one"),
+    (0x8000, 0x00, False, "a NEGATIVE pool carried back into the positive half and left alive"),
+    (0x8000, 0xff, True, "...and the same pool with a damage of zero, still negative"),
+    (0xffff, 0x00, True, "a pool already at -1"),
+]
+
+
+# The flags2 seeds: the bit alone, every neighbour but it, all of them and none, which is what says
+# `bset #3,9(a0)` is a BIT and not a byte store. They are a SEPARATE case from the pool sweep rather
+# than a second axis over it — the arithmetic that decides whether the store happens and the shape
+# of the store itself are independent, so the product of the two was 36 runs of the same routine
+# where 17 hold the same claims.
+DEFEATED_FLAGS2_SEEDS = (0x00, 0xff, 1 << FLAGS2_DEFEATED_BIT, 0xff ^ (1 << FLAGS2_DEFEATED_BIT))
+POOL_SWEEP_FLAGS2 = 0x00
+
+# One case either side of the store, taken from the sweep's own table so the two cannot drift apart.
+KILLING_POOL_CASE = next(case for case in POOL_CASES if case[2])
+SURVIVING_POOL_CASE = next(case for case in POOL_CASES if not case[2])
+
+
+def _run_pool_case(pool, record_list, killed, flags2, what):
+    """One hit on a seeded pool, checked for whether the defeated bit went up and for what the whole
+    flag byte came back as."""
+    pokes = _damage_pokes(f"actor_damage_template_hitpoints {what}", pool=pool, bbc0=0,
+                          record_list=record_list)
+    pokes[DAMAGE_ATTACKER + FLAGS2] = bytes([flags2])
+    _info, _template, expected = _run_damage_template(what, pokes)
+
+    assert (DAMAGE_ATTACKER + FLAGS2 in expected) == killed, (
+        f"{what}: the defeated bit {'did not go' if killed else 'went'} up")
+    if killed:
+        assert expected[DAMAGE_ATTACKER + FLAGS2] == flags2 | (1 << FLAGS2_DEFEATED_BIT), what
+
+
+@pytest.mark.parametrize("pool,record_list,killed,why", POOL_CASES,
+                         ids=[f"pool{c[0]:04x}_list{c[1]:02x}" for c in POOL_CASES])
+def test_a_pool_that_reaches_zero_or_goes_negative_raises_the_defeated_bit(pool, record_list,
+                                                                          killed, why):
+    """The signed test on the pool: `beq` then `bmi`, both on the word the subtraction left."""
+    _run_pool_case(pool, record_list, killed, POOL_SWEEP_FLAGS2,
+                   f"pool {pool:#06x} list {record_list:#04x} ({why})")
+
+
+@pytest.mark.parametrize("flags2", DEFEATED_FLAGS2_SEEDS, ids=lambda v: f"flags2{v:#04x}")
+@pytest.mark.parametrize("pool,record_list,killed,why", (KILLING_POOL_CASE, SURVIVING_POOL_CASE),
+                         ids=["killing", "surviving"])
+def test_the_defeated_bit_is_a_bit_and_leaves_its_neighbours_alone(pool, record_list, killed, why,
+                                                                   flags2):
+    """The flag seeds run beside every neighbour, so a byte store would show — and on BOTH sides of
+    the test, since a port that stored the byte unconditionally would only fail on the arm that is
+    supposed to write nothing."""
+    _run_pool_case(pool, record_list, killed, flags2,
+                   f"flags2 {flags2:#04x} on a pool of {pool:#06x} ({why})")
+
+
+@pytest.mark.parametrize("template_slot", [0, 1, 2, DAMAGE_INLINE_MASK, 0x80, 0xff],
+                         ids=lambda v: f"slot{v:#04x}")
+def test_the_pool_is_the_one_in_the_template_the_slot_byte_names(template_slot):
+    """No sign discriminator here: `lea 0(a1,d0.w),a1` takes the whole BYTE, so a slot of $ff names
+    template 255 and not a negative one. The table is seeded that far up so the record exists."""
+    what = f"pool of template {template_slot:#04x}"
+    salt = case_salt(f"actor_damage_template_hitpoints {what}")
+    pokes = _damage_pokes(f"actor_damage_template_hitpoints {what}", template_slot=template_slot,
+                          bbc0=0)
+    _template_band(salt, TEMPLATE_TABLE, template_slot + 1, pokes)
+    pokes[TEMPLATE_TABLE + template_slot * SPAWN_RECORD_BYTES + SPAWN_HITPOINTS] = word(0x0080)
+    _run_damage_template(what, pokes)
+
+
+def test_the_enemy_path_leaves_the_stub_table_and_the_channel_it_asked_for():
+    """The registers, and the half of the channel-B claim memory cannot show on its own: d1's low
+    word is the selector the trigger read and its HIGH half is still the caller's."""
+    what = "registers"
+    info, template, _writes = _run_damage_template(what, _damage_pokes(
+        f"actor_damage_template_hitpoints {what}", bbc0=2))
+    assert info["regs"]["a5"] == SND_STUB_TABLE, f"{what}: a5 is not the stub table"
+    assert info["regs"]["a1"] == template
+    assert info["regs"]["d1"] == leaf.set_low_word(DAMAGE_ENTRY_REGS["d1"], SND_CHANNEL_B), (
+        f"{what}: d1 came back {info['regs']['d1']:#010x}, not the caller's high half over "
+        f"channel {SND_CHANNEL_B}")
+
+
+@pytest.mark.parametrize("table_base", [TEMPLATE_TABLE, TEMPLATE_TABLE + 0x2000],
+                         ids=["table-a", "table-b"])
+def test_both_paths_follow_whichever_template_table_the_pointer_names(table_base):
+    """WB_TABLE_PTR_21E8C is what `select_table_21e8c_and_tick_b39a` publishes off
+    WB_STATE_FLAG_A32, so both paths read a table chosen once a frame rather than a fixed one. A
+    port that hardcoded either address passes half of these."""
+    what = f"table at {table_base:#x}"
+    for name, runner, extra in (("actor_damage_followed", _run_damage_followed, dict(bbbe=0)),
+                                ("actor_damage_template_hitpoints", _run_damage_template,
+                                 dict(bbc0=0))):
+        case = f"{what} for {name}"
+        salt = case_salt(f"{name} {case}")
+        pokes = _damage_pokes(f"{name} {case}", spawn_type=5, damage_entry=0x0013, **extra)
+        _template_band(salt, table_base, TEMPLATE_SLOTS, pokes)
+        pokes[TABLE_PTR] = longword(table_base)
+        template = table_base + DAMAGE_STATE["template_slot"] * SPAWN_RECORD_BYTES
+        pokes[template + SPAWN_TYPE] = word(5)
+        pokes[template + SPAWN_HITPOINTS] = word(DAMAGE_STATE["pool"])
+        runner(case, pokes)

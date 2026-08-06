@@ -67,3 +67,4 @@ def test_the_real_headers_scrape_and_wb_reaches_them():
     assert layout.DEFINES, f"nothing scraped out of {[str(h) for h in layout._HEADERS]}"
     assert wb("RUNTIME_BASE") == 0x400          # include/wonderboy.h
     assert wb("BLIT_COLUMN_PIXELS") == 16       # include/blit.h
+    assert wb("HUD_SLOT_CHANGED") == 0xff       # include/effects.h

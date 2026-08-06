@@ -25,9 +25,10 @@ WHAT THE CASES HOLD
     tells that apart from a block move, and the state block is seeded so the propagated bytes are
     not the zeros the shipped image leaves there.
   * THE THREE CHANNELS. $1a494, $1a504 and $1a56e are the same fifteen instructions with the
-    channel's own offsets. Nothing in this build passes d1 != 0, so B and C are dead code — pinned
-    anyway, because the entry pin CLAIMS the three arms are one base-plus-stride and only a case
-    shows they behave that way.
+    channel's own offsets. $6b46 (actor_damage_template_hitpoints, `move.w #$1,d1`) is the one call
+    site in the image that does not ask for A, so the B arm is LIVE code reached from the shipped
+    game and only C is dead — pinned anyway, because the entry pin CLAIMS the three arms are one
+    base-plus-stride and only a case shows they behave that way.
   * THE STUB'S REGISTER PRESERVATION. $17b14 is `movem.l d0-a6,-(a7) / bsr / movem.l (a7)+ / rts`.
     Memory cannot show that, so the case enters the oracle with a distinct value in every register
     the oracle reports and requires all fifteen back, WITH the effect's writes landing.
@@ -51,7 +52,8 @@ import leaf
 from leaf import BRANCH_EXTENSION, RTS, add_w_dn_dn, bsr_w, moveq, opcode, word
 from layout import wb
 
-import emu   # noqa: E402  (harness puts the kit's oracle on sys.path)
+import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
+import loader   # noqa: E402
 
 # --- the module's layout, from the header both languages read ------------------------------------
 MODULE_BASE = wb("SND_MODULE_BASE")
@@ -91,6 +93,7 @@ STATE_STREAM_CURSOR = wb("SND_STATE_STREAM_CURSOR")
 
 LONGWORD_MASK = leaf.LONGWORD_MASK
 LONGWORD_LEN = leaf.LONGWORD_BYTES
+WORD_LEN = leaf.WORD_BYTES
 
 # The 334 bytes ../names.txt gives $1a48a, stated so the entry pin cannot pass on a body of any
 # other length, and so that the three arms' own lengths have to add up to it.
@@ -477,9 +480,29 @@ def test_the_three_channels_address_three_disjoint_sets_of_bytes():
 
 # --- $1a48a over the game's own data --------------------------------------------------------------
 
-# The twelve ids the game passes as immediates (../notes/sound_module_recon.md's call-site table).
-# Named because a sweep over 0..25 that happened to skip one of them would still look complete.
-SHIPPED_CALL_IDS = (0, 1, 3, 4, 5, 6, 8, 9, 11, 15, 22, 25)
+# EVERY `lea $17adc.l,aN` in the program — the stub table is the module's only entry point from
+# outside it, so this is the whole of the game's traffic with the driver. The sites that go on to
+# the TRIGGER carry the (id, channel) pair they load; the rest play a song, stop, tick, fade or poll
+# a flag. ../notes/sound_module_recon.md holds the same table with the stub offset each one calls.
+SFX_CALL_SITES = {
+    0x000a98: (22, 0), 0x000c42: (5, 0), 0x000ca0: (5, 0), 0x000e82: (0, 0),
+    0x00169c: (1, 0), 0x001726: (3, 0), 0x0017bc: (3, 0), 0x001982: (4, 0),
+    0x0020ee: (6, 0), 0x00542c: (9, 0), 0x00678c: (9, 0), 0x00679c: (8, 0),
+    0x006ae4: (11, 0), 0x006b4e: (19, 1), 0x006be2: (25, 0), 0x00bc9c: (15, 0),
+}
+NON_TRIGGER_CALL_SITES = (0x00058e, 0x000720, 0x000ae2, 0x000c90, 0x00191e, 0x00192c,
+                          0x006bca, 0x006fb0, 0x00e54a, 0x00f9fc)
+
+# ...and the ids the sweeps run, DERIVED from those sites rather than listed beside them: a list of
+# its own could omit one the game passes and still look complete, which is exactly what happened to
+# id 19 ($6b46's, the one channel-B site) until batch 17.
+SHIPPED_CALL_IDS = tuple(sorted({effect_id for effect_id, _channel in SFX_CALL_SITES.values()}))
+
+# `lea $17adc.l,aN` for every one of the 68000's eight address registers — what the scan below looks
+# for. Built with leaf's own encoder, so the scan and the entry pins spell the instruction once.
+ADDRESS_REGISTERS = 8
+LEA_STUB_TABLE = {leaf.lea_abs_l(reg, STUB_TABLE_BASE) for reg in range(ADDRESS_REGISTERS)}
+LEA_ABS_L_BYTES = len(next(iter(LEA_STUB_TABLE)))
 
 
 @pytest.mark.parametrize("effect_id", range(SFX_IDS))
@@ -488,15 +511,33 @@ def test_a_shipped_effect_arms_channel_a_from_its_descriptor(effect_id):
 
 
 def test_the_sweep_covers_every_id_the_game_actually_passes():
-    assert set(SHIPPED_CALL_IDS) <= set(range(SFX_IDS))
+    """COMPLETENESS rather than containment. The old form of this case asserted only that the ids
+    were a SUBSET of 0..25, which an id the game passes but the table omits satisfies while being
+    absent — and one was: 19, from $6b46's channel-B site.
+
+    So the table above is required to name EVERY `lea $17adc.l,aN` in the program, which is every
+    way anything outside $17adc..$1abc8 reaches the module at all, and SHIPPED_CALL_IDS is derived
+    from it. A new call site then either appears in the table or reddens here.
+    """
+    program = bytes(harness.BASE_IMAGE[:loader.PROGRAM_END])
+    scanned = {at for at in range(0, len(program) - LEA_ABS_L_BYTES, WORD_LEN)
+               if program[at:at + LEA_ABS_L_BYTES] in LEA_STUB_TABLE}
+    stated = set(SFX_CALL_SITES) | set(NON_TRIGGER_CALL_SITES)
+    assert scanned == stated, (
+        f"the program names the stub table at {sorted(hex(a) for a in scanned - stated)} as well, "
+        f"and not at {sorted(hex(a) for a in stated - scanned)}")
+    assert set(SHIPPED_CALL_IDS) <= set(range(SFX_IDS)), (
+        f"a shipped site passes an id outside the table: {SHIPPED_CALL_IDS}")
 
 
 @pytest.mark.parametrize("channel", range(CHANNEL_A + 1, CHANNELS))
 @pytest.mark.parametrize("effect_id", SHIPPED_CALL_IDS)
 def test_every_channel_arm_uses_its_own_offsets(effect_id, channel):
-    """The B and C arms are dead in this build — no call site passes d1 != 0 — so these are the only
-    cases that say their offsets are the ones the entry pin claims. Channel A is left out because
-    the sweep above already runs every one of these ids on it."""
+    """The B arm is LIVE — $6b46 passes d1 = 1 (test_actor.py's
+    `test_the_enemy_path_asks_for_a_channel_the_rest_of_the_image_never_does` pins that from its
+    entry bytes) — and C is the dead one. Both are swept here, because the entry pin CLAIMS the
+    three arms are one base plus a stride and only a case shows they behave that way. Channel A is
+    left out because the sweep above already runs every one of these ids on it."""
     _run_trigger(effect_id, channel, f"sfx {effect_id} on channel {channel}")
 
 

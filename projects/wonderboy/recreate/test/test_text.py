@@ -65,7 +65,8 @@ import harness
 import leaf
 from leaf import (RTS, branch, branch_over, btst_imm_dn, case_salt, clr_b_abs_l, clr_w_abs_l, dbf,
                   dbf_over, forward_branch, keyed_block, keyed_byte, lea_abs_l, lea_d16,
-                  lea_indexed, longword, merge_bands, move_w_imm_dn, movea_l_abs_w, moveq_0_dn,
+                  lea_indexed, longword, merge_bands, move_w_imm_abs_l, move_w_imm_dn,
+                  movea_l_abs_w, moveq_0_dn,
                   mulu_w_imm_dn, opcode, program_writes, st_abs_l, subq_w_abs_l, tst_b_abs_l,
                   tst_w_abs_l, word)
 from layout import wb
@@ -103,6 +104,10 @@ LIFETIME_REQUEST = wb("TEXT_LIFETIME_REQUEST")
 LIFETIME_ARMED = wb("TEXT_LIFETIME_ARMED")
 LIFETIME_ARMED_SET = wb("TEXT_LIFETIME_ARMED_SET")
 LIFETIME_LEFT = wb("TEXT_LIFETIME_LEFT")
+# What every poster of a timed message puts in WB_TEXT_LIFETIME_REQUEST — the two damage paths in
+# src/actor.c included. The cases below seed it rather than 50, so a driver read at another value
+# is the header's to change and not three literals'.
+LIFETIME_DEFAULT = wb("TEXT_LIFETIME_DEFAULT")
 
 MESSAGE_TABLE = wb("TEXT_MESSAGE_TABLE")
 MESSAGE_COUNT = wb("TEXT_MESSAGE_COUNT")
@@ -244,10 +249,6 @@ def move_b_postinc_abs_l(source, addr):
 
 def move_w_abs_l_abs_l(source, destination):
     return leaf.MOVE_W_ABS_L_ABS_L + longword(source) + longword(destination)
-
-
-def move_w_imm_abs_l(value, addr):
-    return leaf.MOVE_W_IMM_ABS_L + word(value) + longword(addr)
 
 
 def subq_dn(reg, value, size):
@@ -891,7 +892,7 @@ def test_the_dismiss_request_clears_both_flags_and_draws_nothing(case, active):
     it is the only value of the request byte that does not name a message."""
     pokes = dict(_buffer_pokes(case_salt(case)))
     pokes.update(_state_pokes(request=REQUEST_DISMISS, active=active,
-                              lifetime=50, armed=LIFETIME_ARMED_SET, left=5))
+                              lifetime=LIFETIME_DEFAULT, armed=LIFETIME_ARMED_SET, left=5))
     expected = _state_writes(request=0, active=0)
     # The two `clr.b` are the whole arm: the lifetime fields it walks past are left standing.
     _run_driver(pokes, expected, f"text_run_message_box {case}", PLOT_INSN_CAP)
@@ -972,8 +973,8 @@ COMPOSE_MESSAGES = [
 COMPOSE_LIFETIMES = [
     ("no-lifetime", 0, 0),
     ("no-lifetime-already-armed", 0, LIFETIME_ARMED_SET),
-    ("posts-a-lifetime", 50, 0),
-    ("posts-a-lifetime-already-armed", 50, LIFETIME_ARMED_SET),
+    ("posts-a-lifetime", LIFETIME_DEFAULT, 0),
+    ("posts-a-lifetime-already-armed", LIFETIME_DEFAULT, LIFETIME_ARMED_SET),
 ]
 
 

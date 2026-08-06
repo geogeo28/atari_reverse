@@ -295,6 +295,27 @@ def move_b_d16_dn(reg, base, displacement):
     return opcode(0x1028 | (reg << 9) | base) + word(displacement)
 
 
+def move_w_indexed_dn(reg, base, index, displacement=0, longword_index=False):
+    """`move.w d8(An,Dm.?),Dn` — how a routine reads a word out of a table it has just indexed.
+
+    THREE batteries import this: test_scroll.py's fills (which spelt it `move_w_indexed_d0`, base
+    only), test_stage.py's index-table lookup, and test_actor.py's damage lookup, which is the one
+    that needs the other two fields — its two reads differ in exactly the extension word's LONGWORD
+    bit. Same argument order as `lea_indexed` above, with the base register split out because it is
+    not the destination here.
+    """
+    return opcode(0x3030 | (reg << 9) | base) + word(
+        (index << 12) | (0x800 if longword_index else 0) | (displacement & 0xff))
+
+
+def move_w_imm_abs_l(value, addr):
+    """`move.w #imm,<abs>.l` — the whole instruction behind `MOVE_W_IMM_ABS_L`. THREE batteries
+    import this (test_text.py, test_stage.py, test_actor.py), which spelt it under one name and two
+    different bodies — test_stage.py's built the opcode word from an integer where the other two
+    took it from the constant above."""
+    return MOVE_W_IMM_ABS_L + word(value) + longword(addr)
+
+
 def move_w_abs_l_dn(reg, addr):
     return opcode(0x3039 | (reg << 9)) + longword(addr)
 

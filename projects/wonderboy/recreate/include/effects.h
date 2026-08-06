@@ -14,7 +14,12 @@
 
 #include <stdint.h>
 
-#define WB_HUD_SLOT_CHANGED  0xffu    /* the low byte every HUD setter stamps: "this slot changed" */
+/* The low byte every HUD setter stamps: "this slot changed". It is also the low byte of
+ * wonderboy.h's WB_HUD_SLOT_REARM, which the two damage paths write as a whole word — one byte
+ * spelt in two headers because neither #define can be built from the other and stay visible to
+ * test/layout.py, which scrapes plain integer literals. test_effects.py's
+ * `test_the_two_headers_spell_one_slot_byte` pins the two together in place of that derivation. */
+#define WB_HUD_SLOT_CHANGED  0xffu
 
 /* $10200..$10239 — the six stubs Ghidra never reached. Five write one HUD slot; the sixth is the
  * odd one out in both its target and its encoding (abs.w, and 8 bytes rather than 10). */

@@ -56,7 +56,8 @@ from leaf import (RTS, add_w_dn_dn, branch, branch_over, bsr_w, btst_imm_dn, cas
                   clr_w_abs_l,
                   dbf_over, forward_branch, keyed_block, lea_abs_l, lea_d16, lea_indexed, longword,
                   lsl_w_imm_dn, merge_bands, move_l_imm_abs_l, move_l_imm_postinc, move_w_abs_l_dn,
-                  move_w_dn_dn, move_w_imm_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn,
+                  move_w_dn_dn, move_w_imm_abs_l, move_w_imm_dn, move_w_indexed_dn,
+                  move_w_postinc_dn, movea_l_abs_l, moveq_0_dn,
                   opcode, program_writes, st_abs_l, subi_w_dn, swap_dn, tst_w_abs_l, u16, s16,
                   word)
 from layout import wb
@@ -234,11 +235,6 @@ def adda_l_dn_an(an, dn):
     return opcode(0xd1c0 | (an << 9) | dn)
 
 
-def move_w_indexed_dn(reg, base, index):
-    """`move.w 0(An,Dn.w),Dm` — the index table's one lookup."""
-    return opcode(0x3030 | (reg << 9) | base) + word(index << 12)
-
-
 def lsl_l_imm_dn(count, reg):
     return opcode(0xe188 | ((count & 7) << 9) | reg)
 
@@ -299,10 +295,6 @@ def clr_l_abs_l(addr):
 
 def move_w_imm_abs_w(value, addr):
     return opcode(0x31fc) + word(value) + word(addr)
-
-
-def move_w_imm_abs_l(value, addr):
-    return opcode(0x33fc) + word(value) + longword(addr)
 
 
 def cmpi_b_ind(an, value):

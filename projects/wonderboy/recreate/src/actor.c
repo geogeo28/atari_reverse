@@ -32,9 +32,12 @@
  * are the same family: only the two allocators have a result worth returning (their a1), and the
  * rest walk out with a cursor nothing reads.
  *
- * AND THE PASS THAT DRIVES ALL OF IT is $ff42, at the bottom of this file: the once-a-frame spawn
- * driver, its hit-point seeder ($1006a), and the three routines that turn a map step's two result
- * registers into a flag flip, a hop or a launch ($2b5a, $2b82, $2b8e).
+ * AND THE PASS THAT DRIVES ALL OF IT is $ff42: the once-a-frame spawn driver, its hit-point seeder
+ * ($1006a), and the three routines that turn a map step's two result registers into a flag flip, a
+ * hop or a launch ($2b5a, $2b82, $2b8e).
+ *
+ * AT THE BOTTOM, THE TWO DAMAGE PATHS ($69fe, $6b46) — where a hit is actually paid for, and the
+ * only routines in this file that call out of the actor tier at all (into src/sound.c).
  *
  * WHAT THE LIFECYCLE TURNS OUT TO BE. A table is nineteen records; `actor_table_reset` marks every
  * one of them free, `actor_slots_mark_free` marks a RUN of them free again, and the two allocators
@@ -49,6 +52,7 @@
 
 #include "actor.h"
 #include "machine.h"
+#include "sound.h"
 #include "wonderboy.h"
 
 uint32_t followed_actor_record(const uint8_t *image) {
@@ -454,4 +458,171 @@ void actor_turn_and_launch(uint8_t *image, uint32_t actor, uint32_t step_outcome
     *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
     *flags |= (uint8_t)((1u << WB_ACTOR_FLAG_MOVING_BIT) | (1u << WB_ACTOR_FLAG_LAUNCHED_BIT));
     image[addr_add(actor, WB_ACTOR_SPEED)] = WB_ACTOR_TURN_LAUNCH_SPEED;
+}
+
+/* --- $69fe and $6b46: the two damage paths ------------------------------------------------------
+ *
+ * ONE SHAPE, TWO POOLS. Both are entered with the actor record in a0, both trigger an SFX through
+ * src/sound.c's stub, and both spend a HUD slot one charge at a time — and each has a SECOND pool
+ * it falls back on when its slot is empty. $69fe takes the hit ON the followed record: a charge off
+ * WB_HUD_SLOT_BBBE if it has one, otherwise WB_HUD_METER_VALUE. $6b46 deals one: it spends
+ * WB_HUD_SLOT_BBC0 to DOUBLE the damage it takes off the attacker's template pool.
+ *
+ * WHAT NAMES THE TWO SLOTS is the message each posts as it empties, resolved through the message
+ * table rather than transcribed — and TWO NUMBERING BASES meet here, so both are spelt out. A
+ * message ID is 1-BASED (`subi.b #$1,d0`, WB_TEXT_MESSAGE_FIRST_ID), while the table's RECORDS are
+ * indexed from 0, so record N holds message id N+1:
+ *
+ *   WB_TEXT_MSG_HELMET_BROKEN   = id $18 = record $17, "   Helmet is Broken"  ($69fe's)
+ *   WB_TEXT_MSG_GAUNTLET_BROKEN = id $19 = record $18, " Gauntlet is Broken"  ($6b46's)
+ *
+ * $18 is therefore BOTH the helmet's id and the gauntlet's record index, which is why each constant
+ * is written beside its own string. test/test_actor.py's
+ * `test_the_two_slots_are_named_by_the_messages_their_paths_post` pins the id-to-string resolution
+ * against the image; that the string then names the SLOT the path spends is the reading it
+ * supports, not something the battery proves.
+ *
+ * THE ONE CALL SITE IN THE IMAGE THAT IS NOT CHANNEL A is $6b46's first two instructions
+ * (`move.w #$13,d0 / move.w #$1,d1`), so the trigger's B arm is live code and not the dead arm
+ * batch 16b took it for. It runs BEFORE any state is read, which is why the two routines sat
+ * unportable until $1a48a was.
+ */
+
+/* `tst.b slot / beq` then `subq.b #1,slot / bne`: one charge off a HUD slot, and on the frame it
+ * empties, the slot is rearmed and its message posted. The answer is what BOTH paths branch on —
+ * each does something different when the slot had nothing to give.
+ *
+ * The rearm is the same word src/effects.c's `hud_slot_set(image, slot, 0)` composes, and is NOT
+ * routed through it: that helper is `static` to effects.c, and the originals are unrelated code —
+ * `move.w #$ff,slot.l` inside this body against a whole separate dispatch-table leaf there. Making
+ * it shared would export a symbol across two modules to save one `wr16`. */
+static int hud_slot_spend_charge(uint8_t *image, uint32_t slot, uint8_t message_id) {
+    if (image[slot] == 0)
+        return 0;
+
+    image[slot] = (uint8_t)(image[slot] - 1);
+    if (image[slot] == 0) {
+        wr16(image + slot, WB_HUD_SLOT_REARM);
+        image[WB_TEXT_REQUEST] = message_id;
+        wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+    }
+    return 1;
+}
+
+/* How much the record `attacker` takes off, from its WB_ACTOR_TEMPLATE_SLOT byte.
+ *
+ * `moveq #0,d0 / move.b 19(a0),d0 / bmi` — the byte's SIGN BIT is a discriminator, not part of a
+ * slot number: a byte of $80 or more carries the damage in its own low seven bits and no table is
+ * read at all. */
+static uint16_t actor_damage_word(const uint8_t *image, uint32_t attacker) {
+    uint8_t slot = image[addr_add(attacker, WB_ACTOR_TEMPLATE_SLOT)];
+
+    if (slot & (uint8_t)~WB_ACTOR_DAMAGE_INLINE_MASK)
+        return slot & WB_ACTOR_DAMAGE_INLINE_MASK;
+
+    /* `lsl.l #5,d0 / move.w 12(a6,d0.w),d0`: the shift is a longword one and the index that
+     * consumes it a SIGN-EXTENDED word, but this arm's slot is at most
+     * WB_ACTOR_DAMAGE_INLINE_MASK, so the product cannot leave the positive half and the sign
+     * extension is provably a no-op here. */
+    uint32_t template_record = addr_add(be32(image + WB_TABLE_PTR_21E8C),
+                                        (uint32_t)slot * WB_SPAWN_RECORD_BYTES);
+    uint16_t type = be16(image + addr_add(template_record, WB_SPAWN_TYPE));
+
+    /* ...and the second index is NOT sign-extended: `add.w d0,d0` wraps in sixteen bits over a
+     * register whose high half the `moveq` cleared, and `move.w 0(a2,d0.l),d0` then takes the whole
+     * longword. So a type from $4000 up reads up to 64 KB ABOVE the table rather than below it. */
+    return be16(image + addr_add(WB_ACTOR_DAMAGE_TABLE, (uint16_t)(type + type)));
+}
+
+/* The arm the flicker test guards: the helmet if it has a charge, the meter if it has not. */
+static void actor_charge_damage(uint8_t *image, uint32_t record, uint16_t damage) {
+    if (hud_slot_spend_charge(image, WB_HUD_SLOT_BBBE, WB_TEXT_MSG_HELMET_BROKEN))
+        return;
+
+    /* `sub.w d0,$b6fa / bpl / clr.w $b6fa` — a read-modify-write ON MEMORY whose branch reads the
+     * RESULT, so a meter already NEGATIVE that the subtraction carries back into the positive half
+     * is stored rather than floored. The floor's own strictness is invisible: landing exactly on
+     * zero stores zero on either arm. */
+    uint16_t left = (uint16_t)(be16(image + WB_HUD_METER_VALUE) - damage);
+    wr16(image + WB_HUD_METER_VALUE, (int16_t)left < 0 ? 0 : left);
+    image[addr_add(record, WB_ACTOR_FLICKER_COUNTDOWN)] = WB_ACTOR_DAMAGE_FLICKER_FRAMES;
+}
+
+void actor_damage_followed(uint8_t *image, uint32_t attacker) {
+    /* `tst.b $a32.w` — the mode word's HIGH BYTE, where every other reader of it in the image is a
+     * `tst.w` (../names.txt). The game only ever writes $0000 or $ffff, so the two readings agree
+     * on its own data and part company on a small positive word — in the OPPOSITE direction from
+     * `followed_actor_record`, whose `bne` on the same word picks the A32 record for a $0001 this
+     * one leaves on the default. */
+    uint32_t record = image[WB_STATE_FLAG_A32] != 0 ? WB_ACTOR_FOLLOWED_A32
+                                                    : WB_ACTOR_FOLLOWED_DEFAULT;
+    uint8_t *flags = image + addr_add(record, WB_ACTOR_FLAGS);
+    uint8_t *flags2 = image + addr_add(record, WB_ACTOR_FLAGS2);
+
+    /* The one path out that writes NOTHING AT ALL. */
+    if (*flags2 & (1u << WB_ACTOR_FLAGS2_INVULNERABLE_BIT))
+        return;
+
+    *flags2 |= (uint8_t)(1u << WB_ACTOR_FLAGS2_BIT_0);
+    image[addr_add(record, WB_ACTOR_FIELD_31)] = (uint8_t)(
+        WB_ACTOR_DAMAGE_FIELD_31_BASE - 2 * be16(image + WB_EFFECT_STATE_BD66));
+    image[addr_add(record, WB_ACTOR_FIELD_22)] = 0;
+
+    /* `bset #6,8(a1) / bne`: the flicker goes up either way, and the whole COST of the hit is
+     * skipped when it was already up — a record still flickering from the last one is knocked back
+     * again but pays nothing. */
+    int was_flickering = *flags & (1u << WB_ACTOR_FLAG_FLICKER_BIT);
+    *flags |= (uint8_t)(1u << WB_ACTOR_FLAG_FLICKER_BIT);
+    if (!was_flickering)
+        actor_charge_damage(image, record, actor_damage_word(image, attacker));
+
+    /* `move.w (a1),d0 / move.w (a0),d1 / cmp.w d0,d1 / bgt` — the same signed comparison
+     * `actor_set_side_flag` makes, read the other way round (the bit lands on the record being
+     * damaged, not on the attacker) and INCLUSIVE where that one's `ble` is strict: an attacker
+     * exactly level with the record raises the bit here and would clear it there. */
+    if (actor_x(image, attacker) > actor_x(image, record)) {
+        *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SIDE_BIT);
+        image[addr_add(record, WB_ACTOR_FIELD_30)] = 0;
+    } else {
+        *flags |= (uint8_t)(1u << WB_ACTOR_FLAG_SIDE_BIT);
+        image[addr_add(record, WB_ACTOR_FIELD_30)] = WB_ACTOR_DAMAGE_FIELD_30_SET;
+    }
+
+    snd_call_trigger_effect(image, WB_ACTOR_DAMAGE_FOLLOWED_SFX, WB_SND_CHANNEL_A);
+
+    /* The three flag bits and the speed byte `actor_start_motion_at_speed` writes, reached here as
+     * `bset #0 / bset #1 / bclr #2` against $2af2's `bclr #2 / bset #0 / bset #1`. One byte and one
+     * final value, so the two orders are indistinguishable in the image; the instruction stream is
+     * what test/test_actor.py's entry pin carries. */
+    actor_start_motion_at_speed(image, record, WB_ACTOR_DAMAGE_KNOCKBACK_SPEED);
+}
+
+void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor) {
+    /* FIRST, before a byte of state is read — which is why no seeding could ever avoid this call. */
+    snd_call_trigger_effect(image, WB_ACTOR_DAMAGE_TEMPLATE_SFX, WB_SND_CHANNEL_B);
+
+    /* `lsl.l #5,d0 / lea 0(a1,d0.w),a1` — the same long-shift/word-index pair `actor_damage_word`
+     * documents, and here too the slot is a BYTE, so the product stays inside the positive half. */
+    uint32_t template_record = addr_add(
+        be32(image + WB_TABLE_PTR_21E8C),
+        (uint32_t)image[addr_add(actor, WB_ACTOR_TEMPLATE_SLOT)] * WB_SPAWN_RECORD_BYTES);
+
+    /* `moveq #0,d0 / move.b $b444.l,d0 / addq.b #1,d0` — the list's first BYTE, and a BYTE add, so
+     * a $ff there comes back 0 rather than $100. */
+    uint16_t damage = (uint8_t)(image[WB_EFFECT_RECORD_LIST] + 1);
+
+    /* The `beq` at the top of the slot test jumps PAST the `add.w d0,d0`, so the doubling runs on
+     * both arms that spent a charge — the one that only decremented and the one that emptied the
+     * slot — and is skipped only when the slot was already empty on entry. */
+    if (hud_slot_spend_charge(image, WB_HUD_SLOT_BBC0, WB_TEXT_MSG_GAUNTLET_BROKEN))
+        damage = (uint16_t)(damage + damage);
+
+    uint32_t pool = addr_add(template_record, WB_SPAWN_HITPOINTS);
+    uint16_t left = (uint16_t)(be16(image + pool) - damage);
+    wr16(image + pool, left);
+
+    /* `beq` then `bmi`, so a pool landing EXACTLY on zero is spent too — and the test is signed, so
+     * a pool of $8000 that the subtraction carries into the positive half is not. */
+    if ((int16_t)left <= 0)
+        image[addr_add(actor, WB_ACTOR_FLAGS2)] |= (uint8_t)(1u << WB_ACTOR_FLAGS2_DEFEATED_BIT);
 }

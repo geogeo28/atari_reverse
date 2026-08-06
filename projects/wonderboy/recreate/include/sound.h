@@ -27,8 +27,9 @@
 
 /* $1a48a — d0's low BYTE is the SFX id and d1's low byte the channel (0 = A, 1 = B, anything else
  * = C). Both are sign-extended, and NEITHER is bounds-checked: an id outside 0..WB_SND_SFX_IDS-1
- * indexes the pointer table past its end, and a NEGATIVE one indexes it backwards. Every call site
- * in this build passes d1 = 0, so the B and C arms are dead code that is reproduced anyway. */
+ * indexes the pointer table past its end, and a NEGATIVE one indexes it backwards. $6b46
+ * (actor_damage_template_hitpoints) passes d1 = 1, so the B arm is LIVE code reached from the
+ * shipped game; every other call site passes 0, so only C is dead, and it is reproduced anyway. */
 void snd_trigger_effect(uint8_t *image, uint32_t effect_id, uint32_t channel);
 
 /* $17b14 — stub +56, and the only way anything outside the module reaches the trigger. It exists to

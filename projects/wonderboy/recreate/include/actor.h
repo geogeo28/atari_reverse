@@ -109,4 +109,25 @@ void actor_toggle_side_flag(uint8_t *image, uint32_t actor, uint32_t step_outcom
 void actor_turn_and_launch(uint8_t *image, uint32_t actor, uint32_t step_outcome,
                            uint32_t ground_flags);
 
+/* --- the two damage paths -----------------------------------------------------------------------
+ *
+ * Both take the original's a0 and nothing else, and both call into src/sound.c — the only routines
+ * in this file that leave the actor tier at all. Neither returns anything: what they leave in d0/d1
+ * and a1/a2/a5/a6 differs by ARM and is asserted against a model in test/test_actor.py rather than
+ * returned, the way the two projections' cursors are.
+ */
+
+/* $69fe — pay for a hit ON the followed record: a charge off WB_HUD_SLOT_BBBE (the helmet) if it
+ * has one, else WB_ACTOR_DAMAGE_TABLE's word for `attacker`'s type off WB_HUD_METER_VALUE. Then
+ * knock the record back, whichever pool paid. A record already carrying
+ * WB_ACTOR_FLAGS2_INVULNERABLE_BIT is left completely alone. Thirty-eight control-flow sites: ten
+ * `bsr.w` and twenty-eight tail jumps. */
+void actor_damage_followed(uint8_t *image, uint32_t attacker);
+
+/* $6b46 — deal one: WB_EFFECT_RECORD_LIST's first byte plus one, DOUBLED while WB_HUD_SLOT_BBC0
+ * (the gauntlet) has a charge, off the WB_SPAWN_HITPOINTS pool of `actor`'s own template. On a pool
+ * that reaches zero or goes negative, WB_ACTOR_FLAGS2_DEFEATED_BIT goes up on `actor`. Twenty-five
+ * control-flow sites: one `bsr.w` ($709a) and twenty-four `bra.w`. */
+void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor);
+
 #endif /* WONDERBOY_ACTOR_H */

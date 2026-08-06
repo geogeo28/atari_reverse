@@ -39,6 +39,10 @@ from leaf import (MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_I
 from layout import wb
 
 # --- the globals, from the header both languages read (include/wonderboy.h) ---------------------
+SLOT_CHANGED = wb("HUD_SLOT_CHANGED")     # include/effects.h; every other constant here is
+SLOT_REARM = wb("HUD_SLOT_REARM")         # include/wonderboy.h's
+BYTE_MASK = 0xff
+SLOT_VALUE_SHIFT = 8                      # a slot is {value, changed}: the value in the HIGH byte
 HUD_SLOT_BBBE = wb("HUD_SLOT_BBBE")
 HUD_SLOT_BBC0 = wb("HUD_SLOT_BBC0")
 HUD_SLOT_BBC2 = wb("HUD_SLOT_BBC2")
@@ -208,6 +212,22 @@ def test_an_entry_is_the_instruction_this_battery_reconstructs(name):
     """One assert per routine covering four things at once: the address ../names.txt gives it, the
     global include/wonderboy.h gives that address, the immediate, and the operand size."""
     leaf.assert_entry_is(name, ENTRY_BYTES[name])
+
+
+def test_the_two_headers_spell_one_slot_byte():
+    """WB_HUD_SLOT_CHANGED (include/effects.h) and the low byte of WB_HUD_SLOT_REARM
+    (include/wonderboy.h) are the SAME byte of the same word: the "redraw me" flag every writer of a
+    HUD slot stamps below the value. The setters here compose it (`value << 8 | changed`) and the
+    two damage paths in src/actor.c write the whole word with a value of zero, so the two headers
+    hold two spellings of it and C cannot derive either from the other — the scraper reads plain
+    literals, and a `#define` built from another one would drop out of layout.py entirely. This is
+    the pin that stands in for that derivation: change one and the other has to follow."""
+    assert SLOT_REARM & BYTE_MASK == SLOT_CHANGED, (
+        f"WB_HUD_SLOT_REARM is {SLOT_REARM:#06x}, whose low byte is not the "
+        f"{SLOT_CHANGED:#04x} WB_HUD_SLOT_CHANGED gives")
+    assert SLOT_REARM >> SLOT_VALUE_SHIFT == 0, (
+        f"WB_HUD_SLOT_REARM is {SLOT_REARM:#06x}, so the rearm no longer puts the slot's VALUE "
+        f"back to zero — which is what the damage paths' `move.w #$ff,slot.l` means")
 
 
 # --- the setters --------------------------------------------------------------------------------
