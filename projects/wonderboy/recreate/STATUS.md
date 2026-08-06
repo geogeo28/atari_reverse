@@ -3336,6 +3336,19 @@ and discards; the register file at exit; what the three shop spots (`$33`/`$be`/
 the shipped shops themselves.
 
 **QUEUED, registered rather than half-done:** a `scene (dialogue + shop)` `subsystems.tsv` row —
-a measurement, queued as one; the shim reporting `final_pc` (home registered, trigger = a third
+a measurement, queued as one *(batch 20: RUN — §0f; the first row where reconstructed exceeds
+runnable, which is the boundary convention priced honestly)*; the shim reporting `final_pc` (home registered, trigger = a third
 checkpoint battery); `$17c74` (the per-VBL tick) and `stage_load_window` remain the PSG wall's
 two faces, and they are now what stands between the scene tier's tails and a full close.
+
+
+### Batch 20: the scene row — reconstructed exceeds runnable, and that is the finding
+
+The measurement batch 19 queued, run per the house discipline (baseline pinned, two cited rows,
+one diff hunk, whole-program figures byte-identical). [`PORTABILITY.md`](PORTABILITY.md) §0f is
+the record. **`scene (dialogue + shop)`: 3 fns / 1,094 B, direct T0 CLEAN, transitive T4,
+runnable 0 — with 2 of 3 reconstructed and green.** No scene function touches hardware; none can
+run WHOLE under the oracle (every one reaches `stage_load_window`'s sound call through the exit
+tails); and the batch-19 boundary convention is exactly what porting does about that gap. The
+catch-all falls to **21 fns / 2,234 B**, its runnable column unmoved — the three departures were
+already in its unrunnable residue. `make test` 2925 before and after; no code changed.

@@ -82,6 +82,14 @@
 # region-restore family the pass opens with ($d93a..$dbb0, batch 4; NOT $dbc0, unported game
 # logic), the effect/state stubs that WRITE the panel's slots, meter and state words
 # ($10200..$103e8, batch 1 — the queue entry's own list), and hud_draw_lives ($e80c, batch 13).
+# The SCENE tier (batch 20, the measurement batch 19 queued): scene_run_frame + its budget helper
+# ($dbc0..$df9e, ending at actor_slots_mark_free's entry — batch 19's read is the citation) and
+# scene_exit_and_reload ($dfbe..$e026, read+named, unported: its stage_load_window call is the PSG
+# wall). NOTE the expected shape: the tier is 2/3 RECONSTRUCTED (to a stop_pc boundary) while the
+# whole-function measurement prices $dbc0 T4-transitive through those very tails — the first row
+# where the boundary convention makes "reconstructed" exceed "runnable".
+0xdbc0	0xdf9e	scene (dialogue + shop)
+0xdfbe	0xe026	scene (dialogue + shop)
 0xb346	0xbd66	hud (status panel)
 0xd93a	0xdbb0	hud (status panel)
 0x10200	0x103e8	hud (status panel)

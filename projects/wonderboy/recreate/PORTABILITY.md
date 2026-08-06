@@ -448,6 +448,28 @@ is down to 24, of which `FUN_0000dbc0` (932 B, unported, unnamed) is the largest
 already used the redrawn `$8f02..$989c` range (13 fns / 2,458 B, 100 %), and today's baseline pin
 makes that explicit; the row is byte-identical in both of this section's runs.
 
+## 0f. The scene row (2026-08-06, batch 20): the first subsystem where RECONSTRUCTED exceeds RUNNABLE
+
+The measurement batch 19 queued. Baseline pinned (every §0e figure reproduces), two rows drawn
+with their citation (`$dbc0..$df9e` ending at `actor_slots_mark_free`'s entry, and
+`$dfbe..$e026`), and the re-run differs in one table hunk:
+
+| | before | after |
+|---|---|---|
+| scene (dialogue + shop) | — | **3 fns / 1,094 B, direct T0 CLEAN, transitive T4, runnable 0** |
+| game logic | 24 / 3,328 B, runnable 14 / 1,290 B | **21 / 2,234 B, runnable 14 / 1,290 B** |
+
+**The shape is the finding.** No scene function touches hardware (direct T0), and none can be run
+WHOLE under the oracle (transitive T4): every one reaches `stage_load_window`'s sound call through
+the exit tails. Yet two of the three are RECONSTRUCTED and green — 990 of 1,094 bytes — because
+batch 19 ported them to a `stop_pc` boundary with the kit's coverage bitset witnessing the
+transfer. So this row is the first where the reconstructed column exceeds the runnable one, and
+that is not a contradiction: "runnable" prices what the oracle can execute end-to-end, and the
+boundary convention is what porting does when the answer is "not quite". The catch-all's runnable
+column did not move — all three departures were already in its unrunnable residue.
+
+Every whole-program figure is unchanged (diffed, not argued).
+
 Two checks that make the re-scan trustworthy as a baseline: the OLD-scan pin above, and a
 `dump_names.sh` round-trip — every one of the 212 `fn` and 202 `var` lines in `../names.txt` comes
 back verbatim (`# ctx` tags stripped, as specified); the dump's only extra line is `fn 0x3f8
