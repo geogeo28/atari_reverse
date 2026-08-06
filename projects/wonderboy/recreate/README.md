@@ -254,6 +254,37 @@ in this directory was instead made the way Joust's was,
 environment rather than installing its own copies. Either form works; `requirements.txt` is the
 canonical list of what has to be reachable.
 
+### Running a mutation sweep
+
+The gate's coverage claim is only worth what a sweep says: flip a constant, delete a branch,
+off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A sweep **lies** in two
+ways, and both have been measured here, so run one this way:
+
+```bash
+for m in mutants/*.patch; do
+  git apply "$m"
+  rm -f build/*.so                       # 1. FORCE the relink...
+  make build/libwonderboy.so | tee cc.log
+  grep -q clang cc.log || { echo "NO REBUILD — the sweep would be measuring the clean .so"; break; }
+  .venv/bin/python -m pytest -q -n auto test   # 2. NO pipe: read the RETURNCODE
+  echo "$m -> $?"                              #    (0 = SURVIVED, nonzero = caught)
+  git apply -R "$m"                            # 3. restore, and re-green before the next one
+done
+```
+
+1. **`make` can skip the rebuild.** `.so` mtimes have ~1s granularity, so a mutation applied within
+   the same second re-runs the *unmutated* library and reports phantom survivors (BuggyBoy's sweep
+   reported 8; the real result was 17/17). `rm -f build/*.so` and check the compiler line actually
+   ran.
+2. **A piped `pytest` hides its exit status.** `pytest … | tail` reports the *pipe's* status, so
+   every mutant "survives". Batch 19's first sweep came back 0/37 caught for exactly this reason.
+   Take the returncode from the unpiped run.
+
+Restore and re-green after each mutant — a sweep left half-applied is worse than none. Its sibling
+recipe, [writing a fuzz test so it shards across
+workers](../../buggyboy/recreate/README.md#writing-a-fuzz-test-so-it-parallelizes), is in BuggyBoy's
+README.
+
 ## The binary, and the one thing that makes it unusual
 
 `../bin/disk1/AUTO/SWB.PRG` is the ORIGINAL, uncracked release, extracted from the Pasti `.stx`

@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 153/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 155/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -21,19 +21,22 @@ tiling `$8f02..$989c` exactly (batches 14–15), and now the PANEL'S THIRD-TIER 
 SOUND MODULE'S FIRST PORTED BYTES — `panel_frame_timers` + `panel_refresh_frame` and
 `snd_trigger_effect` + its register-preserving stub, 660 bytes that close the status panel end to
 end (batch 16b) — and the TWO DAMAGE PATHS, `actor_damage_followed` + `actor_damage_template_hitpoints`
-(380 bytes, batch 17: the pair rejected twice for a call 16a made visible and 16b made portable) —
-16,670 bytes in all, 64.6 % of everything
+(380 bytes, batch 17: the pair rejected twice for a call 16a made visible and 16b made portable),
+and the SCENE TIER — `scene_run_frame` + `scene_spend_visit_budget`, the game's dialogue and shop
+engine, 990 bytes ported to an honest stop_pc boundary (batch 19) —
+17,660 bytes in all, 68.5 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures.** *(The batch-16 commit's header said 147 — an
 oversight; its own section records 151, and this header now carries batch 17's 153.)*
-`make test`: **2729 cases green in what this batch commits** — 2146 before batch 14, plus batch
+`make test`: **2912 cases green in what this batch commits** — 2146 before batch 14, plus batch
 14's 155 (154 in the new `test/test_blit.py`, and 1 in `test/test_layout.py`: a name defined in
 two headers is refused, the guard that batch's `layout.py` scrape extension needs), plus batch
 15's 75 (all in `test/test_blit.py`, which stands at 229), plus batch 16b's 189 — 137 in the new
 `test/test_sound.py` and 52 in `test/test_hud.py` — plus batch 17's 164 net: 204 damage-path cases
 less the 44 a measured review trim removed (two grids re-making already-made claims), +3 in
 `test/test_sound.py` (the id-19 completeness work) and +1 in `test/test_effects.py` (the
-two-headers slot-byte pin).
-Of the 2729: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
+two-headers slot-byte pin) — plus batch 19's 183 net: the new `test/test_scene.py` at 183 after
+its own review trim and coverage additions.
+Of the 2912: 77 are the foundation battery below, 48 are the depacker's differential, 187 are the
 first gameplay batch's, 548 are the status panel's — that last figure was 169 after batch 2, 339
 after batch 3, 481 after batch 10, 485 after batch 12 and 496 after batch 13, and the whole of the
 growth is `test/test_hud.py` — 140 the sound module's (batch 16b's `test/test_sound.py`, +3 in batch 17), 231 are the background scroll subsystem's (65 after batch 5, 148 after batch 6),
@@ -42,11 +45,11 @@ batch 8), 167 the collision map's, which is batch 10's new `test/test_map.py` (5
 80 the stage loader's (65 when batch 12 landed it), 229 the sprite tier's (batch 14's
 `test/test_blit.py` at 154, grown by batch 15's pass cases), and the last is `test_layout.py`'s
 two-header refusal.
-**A `make test` run in a working tree may report MORE than 2729**, because `test/test_audio_capture.py`
+**A `make test` run in a working tree may report MORE than 2912**, because `test/test_audio_capture.py`
 — which pins a KIT mode from this game's suite for `test_poked_input_guard.py`'s reason — is a
 concurrent session's battery, landing in its own commit and still growing; it is not part of this
-batch's count and nothing here rests on it (it stood at 13 while batch 17 was written, so a clean
-tree reports 2742). A row appears in the table at the end when a function is
+batch's count and nothing here rests on it (it stood at 13 while batch 19 was written, so a clean
+tree reports 2925). A row appears in the table at the end when a function is
 reconstructed and green; everything else in `../decomp.c` and `../names.txt` is still only *named*,
 not ported.
 
@@ -633,6 +636,8 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0xb346` | `panel_refresh_frame` | 44 | verified | 11 cases: 3 animation arms x 2 screen-buffer pairs over the whole ten-callee tier (write set composed from the batteries that own each callee), the poked-frame case that reaches the alternate stage font through the LIVE d0 the blit's last `movem` leaves, the entry-register indifference case, and the call-list guard + entry pin. Attribution off for a stated reason: a composed pass's outputs are its later callees' inputs (the poisoned meter value would drive $b61e's 16k-blit runaway) |
 | `0x69fe` | `actor_damage_followed` (`src/actor.c`) | 266 | verified | Batch 17, ~110 cases after the review trim: 7 mode-flag seeds pinning `tst.b` against the `tst.w` every other reader uses ($0001/$00ff answer the OTHER record), the invulnerable arm as a differential over an EMPTY write set with all entry registers required back, all four funnel arms by exact write set, the helmet-slot boundary both ways, a 10-point meter sweep incl. a negative carried back positive and STORED, one damage-table type per distinct shipped word (6) + 6 out-of-range types (the index is unsigned and LONGWORD: $4000 reads above the table, $8000 wraps to entry 0) + 7 seeded + the 4-case inline sign-bit arm, a 9x4 x-compare grid (inclusive where $67c2's is strict), per-arm register model via leaf.set_low_word. SFX writes asserted through `test_sound.py`'s model, imported |
 | `0x6b46` | `actor_damage_template_hitpoints` | 114 | verified | Batch 17, ~90 cases: the three gauntlet arms (the doubling runs on BOTH that spend a charge — batch 13's read had it inverted), 12 list-byte seeds over the `addq.b` wrap, the pool/flags2 axes split per the measured trim (9 pool cases + the 4-seed axis on one killing and one surviving case), 6 template slots, both table pointers, and the registers incl. d1's entered high half over the CHANNEL-B selector — every case drives snd_trigger_effect's B arm from this caller's own registers, and a B-arm stride mutation reddens 39 of them plus test_sound's new id-19 case |
+| `0xdbc0` | `scene_run_frame` (`src/scene.c`) | 932 | verified | Batch 19, the bulk of `test_scene.py`'s 183 cases: both mode gates (incl. the exclusivity row a fall-through port fails), the kind ladder pinned in bytes, the speech script (edge gating, cursor, terminator, lifetime-0 post), the whole shop (request ladder, signed price compare on packed BCD, first/repeat messages, dispatch through the 23-entry effect table — shipped AND seeded — the a1-clobber spend landing in effect_record_list for exactly the four push handlers), the boss-fragment arm, the two shipped vector-page slips reached by seeding the vector page, and the four exit tails each pinned by stop_pc + the kit's positive cov_visited witness (which transfer fired, one run) |
+| `0xde80` | `scene_spend_visit_budget` | 58 | verified | The borrow (word subtract, sign = borrow), the marker cell's twin pair in order, the map stamp against a NONZERO keyed seed, and the stage-reset tail — through the DRIVER from all four spending arms (the review's four surviving mutants, killed) as well as directly |
 
 ### The .RAD depacker
 
@@ -3262,3 +3267,75 @@ queued measurement entries are closed: this partition, batch 15's sprite-row re-
 
 **What a partition cannot move, it did not move**: every whole-program figure is byte-identical
 across the two runs, diffed rather than argued.
+
+
+### Batch 19: the SCENE tier — the dialogue engine, ported to its boundary
+
+`$dbc0` (932 B) + `$de80` (58 B) into a new `src/scene.c` — the catch-all's largest remainder,
+batch 18's nominated next read. **Verified 155, 17,660 bytes, 68.5 %; `make test` 2912 in scope
+(clean tree 2925).** `$dfbe` (`scene_exit_and_reload`) is read, named and NOT ported — three
+independent reasons, below.
+
+**BOTH MODE FLAGS FINALLY SELECT SOMETHING.** `state_flag_a30` hands the routine the scene
+descriptor `record_ptr_10420` names — kind 1 a speech script, kind 2 the SHOP — and
+`state_flag_a32` hands it kind 4, the eight fragments a defeated boss leaves. Fifteen batches of
+"it is a boolean and WHICH mode it selects is not established" close here. THE READING IS PINNED
+BY THE MESSAGE TABLE, batch 17's method: the farewell arm's hardcoded ids resolve to
+`" Please come again."` and `"  Never Come Back!!"`, and speech script 0 to the game's opening
+four lines. What any shop SELLS is not pinned — descriptor and records are disk-loaded; every
+case seeds them.
+
+**PORTED TO A BOUNDARY, AND THE CONVENTION SURVIVED ITS REVIEW STRONGER.** Four exits transfer to
+`$dfbe` and one to `$1ab4`; both end in `jsr stage_load_window`, whose palette write the oracle
+silently drops — so the C returns WHICH tail it reached, a case runs the oracle with `stop_pc` at
+that address, and the tail is witnessed POSITIVELY by the kit's coverage bitset on the transfer
+instruction itself (`run_reaching` — one run, and it says which transfer fired). The review killed
+the first witness (a raises-any inference satisfiable by any unrelated fault) and registered the
+real home: the shim reporting `final_pc`, trigger = a third battery. Unblocking the tails needs
+`$f95c` → `set_palette` + the module's song start — the PSG wall. `$101be` (exit-action entry 1)
+is read by nothing and is a third independent reason `$dfbe` stays unported.
+
+**THREE SHIPPED DEFECTS, reproduced:** the vector-page slips (`cmpi.w #$1,$2c.l`/`$28.l` where the
+sibling reads a record field — the encodings differ by exactly a lost `(a1)`; dead on hardware,
+and at `$dd42` it costs the shop its second greeting), the SIGNED `bgt` price compare on a packed
+BCD purse (from 8000 gold every priced item is refused — reachable on the game's own data), and
+the four push handlers' a1 clobber landing the visit spend 32 bytes into `effect_record_list`
+(it broke the first reconstruction and the differential caught it).
+
+**THE REVIEW GATE EARNED ITS KEEP FOUR WAYS, all executed:** (1) the stage-reset exit never left
+the driver in any case — FOUR mutants survived (the ternary and all three arm-swallows); one
+parametrized borrow-with-no-twin case through every spending arm kills them all. (2) The kind
+ladder's exclusivity — the `rts` at `$dbec`, all that keeps the a30 arm out of the boss arm — was
+outside the entry pin and untested; a fall-through port survived the suite and now fails one
+case. (3) The collision-map seed band was silently DISCARDED by a dict-key collision, breaking
+the poison-off argument's stated property exactly where the borrow path writes; re-keyed, with
+the poke builder now refusing colliding bands. (4) The witness replacement above. Plus: the
+descriptor word the map tier and scene tier had named twice with contradicting vocabulary is one
+name now (`WB_SCENE_KIND`, `src/map.c` converted); `branch_w_to` hoisted (two users);
+the ITEM tuples became NamedTuples (killing an identity-comparison trap); 23 redundant full-shop
+runs folded; and **the mutation-runner recipe is finally IN THE REPO** (`README.md`, beside a
+citation of this batch's own 0/37 piped-pytest defect — the sweep first scored `tail`'s exit
+status, reported zero survivors having compared nothing, and was rebuilt unpiped; the fifth
+scratchpad copy of the correct runner shape is the last).
+
+**THE MUTATION SWEEP: 39 designed, 39 killed** (after the runner fix), plus the review's
+independent mutants (4 exit-propagation + 1 ladder fall-through, all now killed; its control
+mutant killed on the first run). The one genuine first-pass survivor (`a32 >= 0` vs `> 0`) was a
+real hole and its case is in the battery.
+
+**EFFICIENCY, measured and exonerated:** the battery is 1.15 ms/case — the CHEAPEST in the suite,
++0.38 s total — and the apparent wall-time doubling my clean rebuild saw was a concurrent Blender
+render at 736 % CPU, proven by reproducing the slowdown on a HEAD worktree with none of this
+batch in it. Two suite facts recorded: `-n auto` is non-monotonic under external load (check
+`uptime` before diagnosing a timing anomaly), and the suite's real cost center is
+`test_blit.py`'s 76.6 ms/case sweeps.
+
+**What this batch does NOT pin:** anything past a boundary; `$101be`; an effect index outside
+0..22 (refused, sprite-dispatch precedent); the three farewell record words the original loads
+and discards; the register file at exit; what the three shop spots (`$33`/`$be`/`$78`) are; and
+the shipped shops themselves.
+
+**QUEUED, registered rather than half-done:** a `scene (dialogue + shop)` `subsystems.tsv` row —
+a measurement, queued as one; the shim reporting `final_pc` (home registered, trigger = a third
+checkpoint battery); `$17c74` (the per-VBL tick) and `stage_load_window` remain the PSG wall's
+two faces, and they are now what stands between the scene tier's tails and a full close.

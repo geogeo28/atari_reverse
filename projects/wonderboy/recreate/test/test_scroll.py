@@ -53,10 +53,10 @@ import pytest
 import harness
 import leaf
 from leaf import (RTS, addi_w_dn, andi_w_dn, branch, branch_over, bsr_w, case_salt, clr_b_abs_l,
-                  clr_w_abs_l, dbf, keyed_block, keyed_byte, lea_abs_l, lea_d16, lea_indexed,
-                  longword, merge_bands, move_l_imm_abs_l, move_w_abs_l_dn, move_w_dn_dn,
-                  move_w_imm_dn, move_w_ind_dn, move_w_indexed_dn, move_w_postinc_dn,
-                  movea_l_abs_l, movea_l_abs_w, moveq_0_dn,
+                  clr_w_abs_l, cmpi_w_abs_l, dbf, keyed_block, keyed_byte, lea_abs_l, lea_d16,
+                  lea_indexed, longword, merge_bands, move_l_imm_abs_l, move_w_abs_l_dn,
+                  move_w_dn_dn, move_w_imm_dn, move_w_ind_dn, move_w_indexed_dn,
+                  move_w_postinc_dn, movea_l_abs_l, movea_l_abs_w, moveq_0_dn,
                   mulu_w_imm_dn, opcode, program_writes, rotate_left32, s16, st_abs_l,
                   sub_w_dn_dn, subi_w_dn, subq_w_abs_l, subq_w_dn, swap_dn, tst_b_abs_l,
                   tst_w_abs_l, tst_w_abs_w, tst_w_dn, u16, word)
@@ -471,10 +471,6 @@ def move_w_dn_abs_l(reg, addr):
 
 def andi_w_abs_l(value, addr):
     return opcode(0x0279) + word(value) + longword(addr)
-
-
-def cmpi_w_abs_l(value, addr):
-    return opcode(0x0c79) + word(value) + longword(addr)
 
 
 def addq_w_abs_l(amount, addr):

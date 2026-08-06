@@ -1048,9 +1048,12 @@
                                                * (`move.l a1,$10420.l` at $163a) and read by twenty
                                                * sites: fourteen `movea.l` and six that copy it to
                                                * its neighbour $10424 */
-#define WB_RECORD_10420_VARIANT      2u       /* word: `cmpi.w #$4,2(a1)` picks the second tile set */
 #define WB_RECORD_10420_CELL         24u      /* word: the map cell the block is stamped at */
-#define WB_STAMP_VARIANT_SELECTOR    4u       /* the value 2(a1) must hold for the second set */
+/* The word at +2 that `cmpi.w #$4,2(a1)` reads to pick the second tile set is the SAME word the
+ * scene driver branches on — one field, two readings: WB_SCENE_KIND below. The stamp is asking
+ * whether this scene is a boss defeat (WB_SCENE_KIND_BOSS_DEFEAT), which is why there is no
+ * WB_STAMP_VARIANT_* pair here: a second name for the same offset and the same value could drift
+ * from this one, and layout.py's literal-only scrape cannot derive one from the other. */
 #define WB_STAMP_CELL_BIAS           4u       /* `addi.w #$4,d0` — the same WB_COLLISION_MAP_CELLS
                                                * bias, applied to WB_MAP_ROW_STRIDE's own address */
 #define WB_STAMP_TILES_FIRST         0x78u    /* $78,$79 on the top row and $7a,$7b below it */
@@ -1420,5 +1423,174 @@
 #define WB_LIVES_ICON_BLANK_HIGH   0xffffu  /* `move.l #$ffff,(a1)+`: plane 0 clear, plane 1 solid */
 #define WB_LIVES_ICON_BLANK_LOW    0u       /* `move.l #$0,(a1)`: planes 2 and 3 clear, so the empty
                                              * slot is 16 pixels of colour 2 */
+
+/* ---- the SCENE tier ($dbc0, $de80 — src/scene.c) -----------------------------------------------
+ *
+ * A SCENE DESCRIPTOR is the 32-byte record WB_RECORD_PTR_10420 points into (the table it is built
+ * from lies past the shipped image and is loaded from disk, so nothing here is a shipped value).
+ * Its word at WB_SCENE_KIND is what $dbc0 branches on.
+ */
+#define WB_SCENE_KIND              2u       /* word: `cmpi.w #$1,2(a0)` / `#$2` / `#$4`. src/map.c
+                                             * reads the same word as the stamp's tile-set select
+                                             * (`cmpi.w #$4,2(a1)` at $1af0) — one field, two
+                                             * readings, and this is the canonical name for it */
+#define WB_SCENE_KIND_SPEECH       1u       /* an NPC's script of message ids, advanced on fire */
+#define WB_SCENE_KIND_SHOP         2u       /* the shop counter — the driver's largest arm */
+#define WB_SCENE_KIND_BOSS_DEFEAT  4u       /* the arm WB_STATE_FLAG_A32 selects — and the value the
+                                             * 2x2 stamp above tests for its second tile set */
+#define WB_SCENE_VARIANT           4u       /* word: 0 = spawn nothing, else picks the fragment
+                                             * type below */
+/* The descriptor's word 18 is which WB_SCENE_EXIT_ACTION_TABLE entry $dfbe calls on the way out.
+ * It has no #define: $dfbe is not ported, so nothing here reads it; ../names.txt records it. */
+#define WB_SCENE_EXIT_ACTION_TABLE 0x1019cu /* eight longwords, $1019c..$101bb, bounded by the first
+                                             * of its own targets ($101bc, a bare `rts`). Entries
+                                             * 2..7 are the six effects.h `set_state_*` stubs;
+                                             * entry 1 ($101be) is a routine nothing has read */
+#define WB_SCENE_EXIT_ACTION_COUNT 8u
+
+/* The message the driver posts is always posted the same way: an id into WB_TEXT_REQUEST and a
+ * lifetime into WB_TEXT_LIFETIME_REQUEST. The SPEECH arm posts a lifetime of zero (the box waits
+ * for the player); every shop arm posts WB_TEXT_LIFETIME_DEFAULT. */
+#define WB_SPEECH_LIFETIME         0u       /* `clr.w $c034.l` at $dc1c */
+
+/* $1017c — a longword CURSOR into a script of one-byte message ids. $dc00 posts the byte under it
+ * and advances by one; a byte with its SIGN BIT set ends the scene. The scripts are shipped:
+ * WB_SPEECH_SCRIPT_TABLE holds eight pointers into WB_SPEECH_SCRIPTS, and the ids resolve through
+ * the message table (script 0 = ids 4,5,6,7 = the opening "Hey brave man, listen carefully..."). */
+#define WB_SPEECH_SCRIPT_CURSOR    0x1017cu
+#define WB_SPEECH_SCRIPT_TABLE     0x1015cu /* eight longwords, $1015c..$1017b, bounded by the
+                                             * cursor itself and by its own first target */
+#define WB_SPEECH_SCRIPT_COUNT     8u
+#define WB_SPEECH_SCRIPTS          0x10180u /* the id bytes the eight pointers name */
+
+/* ---- the SHOP record ---------------------------------------------------------------------------
+ *
+ * WB_SHOP_RECORD_PTR holds one of the eight pointers in WB_SHOP_RECORD_TABLE; the eight are
+ * WB_SHOP_RECORD_BYTES apart, which is what gives the record its length. They too lie past the
+ * shipped image. Field roles below are read off the driver's own use of them.
+ */
+#define WB_SHOP_RECORD_PTR         0x10448u /* longword, planted at $1bcc from the table below */
+#define WB_SHOP_RECORD_TABLE       0x10428u /* eight longwords, $10428..$10447, bounded by the
+                                             * pointer itself */
+#define WB_SHOP_RECORD_COUNT       8u
+#define WB_SHOP_RECORD_BYTES       0x46u    /* the shipped pointers' stride: $21a28, $21a6e, ... */
+#define WB_SHOP_ITEM1_MSG_FIRST    0u       /* word: the message id the first purchase of item 1
+                                             * posts... */
+#define WB_SHOP_ITEM1_MSG_REPEAT   2u       /* ...and every later one */
+#define WB_SHOP_ITEM2_MSG_FIRST    4u
+#define WB_SHOP_ITEM2_MSG_REPEAT   6u
+#define WB_SHOP_GREET_MSG_FIRST    14u      /* the greeting arm's three ids, selected by
+                                             * WB_SHOP_GREET_COUNT and by the vector-page word
+                                             * below */
+#define WB_SHOP_GREET_MSG_SECOND   16u
+#define WB_SHOP_GREET_MSG_LATER    18u
+/* Words 26, 28 and 30 are the three the farewell arm LOADS AND DISCARDS — it posts two hardcoded
+ * ids instead (see WB_SHOP_FAREWELL_ID_FIRST). No #define: a register the next instruction
+ * overwrites is not program output, so nothing here can read them; ../names.txt records them. */
+#define WB_SHOP_VISIT_BUDGET       32u      /* word: `sub.w d0,32(a1)` — every message costs
+                                             * WB_SHOP_MESSAGE_COST and every purchase
+                                             * WB_SHOP_PURCHASE_COST, and the BORROW ends the visit */
+#define WB_SHOP_ITEM1_COUNT        34u      /* word: purchases of item 1 so far */
+#define WB_SHOP_ITEM2_COUNT        36u
+#define WB_SHOP_GREET_COUNT        40u      /* word: greetings posted so far */
+#define WB_SHOP_LEAVE_CHARGED      42u      /* word: `tst.w 42(a1)` — zero leaves the shop for
+                                             * nothing, nonzero spends WB_SHOP_MESSAGE_COST first */
+#define WB_SHOP_FAREWELL_COUNT     44u      /* word: farewells posted so far */
+#define WB_SHOP_ITEM1_PRICE        58u      /* word, compared against WB_BCD_COUNTER and then
+                                             * subtracted from it by bcd_sub_counter_bd6e */
+#define WB_SHOP_ITEM2_PRICE        60u
+#define WB_SHOP_ITEM1_EFFECT       62u      /* word: which WB_EFFECT_HANDLER_TABLE entry the
+                                             * purchase runs */
+#define WB_SHOP_ITEM2_EFFECT       64u
+#define WB_SHOP_MESSAGE_COST       2u       /* `move.w #$2,d0` before three of the four `bsr $de80` */
+#define WB_SHOP_PURCHASE_COST      3u       /* `move.w #$3,d0` — what a purchase costs instead */
+#define WB_SHOP_FAREWELL_ID_FIRST  9u       /* `move.b #$9,$c030.l` — message 9, " Please come
+                                             * again.", posted the first time */
+#define WB_SHOP_FAREWELL_ID_REPEAT 0x12u    /* `move.b #$12,$c030.l` — message $12, "  Never Come
+                                             * Back!!", posted by BOTH later arms */
+
+/* The driver's own state words, all four of them cleared or seeded outside it. */
+#define WB_SCENE_MESSAGE_PENDING   0xe026u  /* word: a message is up and the driver is waiting.
+                                             * $ffff from every arm that posts one; $e020 (inside
+                                             * $dfbe) and $1dc8 also write it */
+#define WB_SCENE_MESSAGE_PENDING_SET 0xffffu
+#define WB_SHOP_REQUEST            0xe028u  /* word: WHAT the player asked for — 1 = item 1,
+                                             * 2 = item 2, 3 = leave. Set at $5308/$531a/$532c off
+                                             * the spawn type of the record stood on ($33/$be/$78) */
+#define WB_SHOP_REQUEST_ITEM1      1u
+#define WB_SHOP_REQUEST_ITEM2      2u
+#define WB_SHOP_REQUEST_FAREWELL   3u
+#define WB_SCENE_ACK_WAIT          0xe02au  /* word: the driver is waiting for the player to
+                                             * acknowledge the box before anything else runs */
+#define WB_SHOP_GREET_COUNTDOWN    0xe02cu  /* word, `subq.w #1` per frame; the greeting fires when
+                                             * it reaches zero. Seeded $fa at $1e9c */
+#define WB_SCENE_MARKER_CELL_PTR   0xe02eu  /* longword: the collision-map cell the exhausted visit
+                                             * clears, planted `move.l a6,$e02e.l` at $1964 */
+#define WB_SCENE_EXIT_REQUEST      0x1079au /* word: raised $ffff at $10768, one instruction after
+                                             * message $63 " Offensive Power Increased." — the
+                                             * boss-defeat arm leaves the scene when it is set */
+
+/* ---- the eight fragments a defeated boss leaves ------------------------------------------------
+ *
+ * $6bd4 raises WB_BOSS_DEFEAT_FLAG when the record at WB_BOSS_FRAGMENT_ORIGIN dies while
+ * WB_STATE_FLAG_A32 is up; the next frame this arm frees ten slots and, unless the descriptor's
+ * variant is zero, fills eight of them in from WB_BOSS_FRAGMENT_PARAMS. The parameter pairs are
+ * SYMMETRIC — (8,$f) ($a,$c) ($c,8) ($e,4) and then the same four backwards — and the loop raises
+ * WB_ACTOR_FLAG_SIDE_BIT for the first four and clears it for the last four, so the eight leave in
+ * mirrored pairs.
+ */
+#define WB_BOSS_DEFEAT_FLAG        0xdfacu  /* word, INSIDE the code: it sits between $df9e's `rts`
+                                             * and the parameter table below */
+#define WB_BOSS_FRAGMENT_PARAMS    0xdfaeu  /* 16 bytes, $dfae..$dfbd, ending exactly where $dfbe
+                                             * begins — two per fragment */
+#define WB_BOSS_FRAGMENT_PARAM_LEN 2u
+#define WB_BOSS_FRAGMENT_SLOTS     0x9eb4u  /* == WB_ACTOR_TABLE_A32 + 4 records */
+#define WB_BOSS_FRAGMENT_COUNT     8u       /* `move.w #$7,d6` + `dbf`, and `move.w #$7,d7` for the
+                                             * free that precedes it */
+#define WB_BOSS_HEAD_SLOT_COUNT    2u       /* `move.w #$1,d7` over WB_ACTOR_TABLE_A32 */
+#define WB_BOSS_FRAGMENT_ORIGIN    0x9e94u  /* `move.l $9e94.l,d0` — slot 3's X/Y longword, copied
+                                             * into all eight fragments, so they start where it did */
+#define WB_BOSS_FRAGMENT_TYPE_1    0x1cu    /* WB_ACTOR_TYPE when the variant is 1... */
+#define WB_BOSS_FRAGMENT_TYPE_2    0x1du    /* ...and for every other nonzero variant */
+#define WB_BOSS_FRAGMENT_SIZE      0x80008u /* `move.l #$80008,14(a1)`: WB_ACTOR_HALF_WIDTH and
+                                             * WB_ACTOR_SIZE_SECOND in one store */
+#define WB_BOSS_FRAGMENT_FIELD_12  0xc8u    /* `move.b #$c8,12(a1)` — a byte field nothing
+                                             * reconstructed here reads */
+#define WB_BOSS_FRAGMENT_FIELD_30  8u       /* `move.b #$8,30(a1)` */
+#define WB_BOSS_FRAGMENT_MIRROR_AT 3u       /* `cmp.w #$3,d6 / ble` — the counter at or below which
+                                             * the side bit is CLEARED rather than set */
+#define WB_ACTOR_FIELD_10          10u      /* byte: takes the SAME parameter byte as
+                                             * WB_ACTOR_SPEED, which is written immediately after it */
+#define WB_ACTOR_FIELD_12          12u
+
+/* ---- the effect handler table ------------------------------------------------------------------
+ *
+ * The 23 longwords at $1023a, indexed by WB_SHOP_ITEM1_EFFECT / WB_SHOP_ITEM2_EFFECT and holding
+ * exactly the 23 effects.h handlers at $10296..$103dc. The count is bounded by the table's own
+ * first target, the way WB_SCENE_EXIT_ACTION_TABLE's is; test/test_scene.py pins every entry.
+ */
+#define WB_EFFECT_HANDLER_TABLE    0x1023au
+#define WB_EFFECT_HANDLER_COUNT    23u
+#define WB_EFFECT_HANDLER_SHIFT    2u       /* `lsl.w #2,d0` — the index is scaled to a longword */
+#define WB_EFFECT_HANDLER_PUSH_FIRST 18u    /* the four PUSH handlers, which are the only ones that
+                                             * touch an ADDRESS register: `movea.l $b546,a1` leaves
+                                             * a1 on the record they pushed, and the dispatcher's
+                                             * next `sub.w d0,32(a1)` spends through THAT */
+#define WB_EFFECT_HANDLER_PUSH_COUNT 4u
+
+/* ---- two absolute operands that are NOT record fields -------------------------------------------
+ *
+ * `cmpi.w #$1,$2c.l` at $dcd4 and `cmpi.w #$1,$28.l` at $dd42 read the 68000 VECTOR PAGE — the
+ * high words of the Line-F and Line-A exception vectors. Both sit exactly where the sibling test
+ * one branch above them reads a RECORD field at the same displacement (`cmpi.w #$0,44(a1)` and
+ * `cmpi.w #$0,40(a1)`), and the encodings differ only by the lost `(a1)`: `0c69 0001 002c` is what
+ * was meant and `0c79 0001 0000002c` is what shipped. So these are one source-level slip, twice.
+ * Under TOS both vectors point into ROM and neither word can be 1, which makes the middle arm of
+ * each pair DEAD ON HARDWARE; test/test_scene.py reaches it by seeding the vector page, since that
+ * is the only thing the instruction actually reads.
+ */
+#define WB_VECTOR_LINE_A           0x28u
+#define WB_VECTOR_LINE_F           0x2cu
+#define WB_VECTOR_ARM_SELECTOR     1u       /* the `#$1` both compare against */
 
 #endif /* WONDERBOY_H */

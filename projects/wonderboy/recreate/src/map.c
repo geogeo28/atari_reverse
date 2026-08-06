@@ -452,8 +452,10 @@ void map_stamp_block(uint8_t *image) {
     /* The base is WB_MAP_ROW_STRIDE's own address — the stride word — and the bias above is what
      * carries the cursor past it onto cell 0, exactly as WB_COLLISION_MAP_CELLS does. */
     uint32_t at = addr_add(WB_MAP_ROW_STRIDE, sign_ext16(cell));
-    uint8_t tile = (be16(image + addr_add(record, WB_RECORD_10420_VARIANT))
-                    == WB_STAMP_VARIANT_SELECTOR) ? WB_STAMP_TILES_SECOND : WB_STAMP_TILES_FIRST;
+    /* The tile-set select reads the descriptor's KIND word: the second set is the one a boss-defeat
+     * scene stamps. src/scene.c branches on the same word — see WB_SCENE_KIND. */
+    uint8_t tile = (be16(image + addr_add(record, WB_SCENE_KIND)) == WB_SCENE_KIND_BOSS_DEFEAT)
+                   ? WB_STAMP_TILES_SECOND : WB_STAMP_TILES_FIRST;
 
     image[at] = tile;
     image[addr_add(at, 1)] = (uint8_t)(tile + 1);

@@ -36,11 +36,12 @@ import harness
 import leaf
 from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16,
                   asr_w_imm_dn, backward_branch, branch, branch_over, bsr_w, btst_imm_dn,
-                  case_salt, clr_w_dn, cmp_w_dn_dn, cmpi_b_dn, dbf, dbf_over, keyed_block,
-                  lea_abs_l, lea_d16, lea_indexed, longword, lsl_w_imm_dn, merge_bands,
-                  move_b_d16_dn, move_b_imm_d16, move_l_imm_abs_l, move_l_imm_postinc,
-                  move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn, movea_l_abs_l, moveq_0_dn, opcode,
-                  program_writes, s16, sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
+                  case_salt, clr_w_dn, cmp_w_dn_dn, cmpi_b_dn, cmpi_w_d16, dbf, dbf_over,
+                  keyed_block, lea_abs_l, lea_d16, lea_indexed, longword, lsl_w_imm_dn,
+                  merge_bands, move_b_d16_dn, move_b_imm_d16, move_l_imm_abs_l,
+                  move_l_imm_postinc, move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn,
+                  movea_l_abs_l, moveq_0_dn, opcode, program_writes, s16, sub_w_dn_d16,
+                  sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
 from leaf import (WORD_MASK, clr_w_abs_l, move_b_abs_l_dn, move_b_imm_abs_l,
                   move_w_imm_abs_l, move_w_indexed_dn, tst_b_abs_l)
 from layout import wb
@@ -323,10 +324,6 @@ def addq_w_d16(amount, base, displacement):
     return opcode(0x5068 | ((amount & 7) << 9) | base) + word(displacement)
 
 
-def cmpi_w_d16(base, value, displacement):
-    return opcode(0x0c68 | base) + word(value) + word(displacement)
-
-
 def cmp_w_d16_dn(reg, base, displacement):
     return opcode(0xb068 | (reg << 9) | base) + word(displacement)
 
@@ -378,11 +375,6 @@ def addq_b_dn(amount, reg):
 def sub_w_dn_abs_l(reg, addr):
     """`sub.w Dn,<abs>.l` — a read-modify-write on the meter word itself."""
     return opcode(0x9179 | (reg << 9)) + longword(addr)
-
-
-def sub_w_dn_d16(reg, base, displacement):
-    """...and its based form, which spends the template's hit-point pool."""
-    return opcode(0x9168 | (reg << 9) | base) + word(displacement)
 
 
 def jsr_d16_an(reg, displacement):

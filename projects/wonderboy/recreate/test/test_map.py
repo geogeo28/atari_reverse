@@ -86,12 +86,12 @@ import pytest
 import harness
 import leaf
 from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16, andi_w_dn,
-                  asr_w_imm_dn, branch, branch_over, case_salt, clr_w_dn, cmp_w_dn_dn, cmpi_b_dn,
-                  keyed_block, lea_abs_l, lea_indexed, longword, lsl_w_imm_dn, merge_bands,
-                  move_b_d16_dn, move_b_imm_d16, move_w_abs_l_dn, move_w_dn_dn, move_w_ind_dn,
-                  move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode, program_writes, s16,
-                  set_low_word, sub_w_dn_dn, subi_w_dn, subq_w_dn, tst_w_abs_w, tst_w_dn, u16,
-                  word)
+                  asr_w_imm_dn, branch, branch_over, branch_w_to, case_salt, clr_w_dn, cmp_w_dn_dn,
+                  cmpi_b_dn, cmpi_w_d16, keyed_block, lea_abs_l, lea_indexed, longword,
+                  lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_b_imm_d16, move_w_abs_l_dn,
+                  move_w_dn_dn, move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode,
+                  program_writes, s16, set_low_word, sub_w_dn_dn, subi_w_dn, subq_w_dn,
+                  tst_w_abs_w, tst_w_dn, u16, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -123,9 +123,12 @@ PLATFORM_Y_ABOVE = wb("PLATFORM_Y_ABOVE")
 PLATFORM_Y_BAND = wb("PLATFORM_Y_BAND")
 PLATFORM_STAND_OFFSET = wb("PLATFORM_STAND_OFFSET")
 RECORD_PTR = wb("RECORD_PTR_10420")
-RECORD_VARIANT = wb("RECORD_10420_VARIANT")
+# The word the stamp's tile-set select reads is the SCENE DESCRIPTOR's kind word, and the value it
+# tests for is the boss-defeat kind — one field and one value, named where src/scene.c names them
+# (include/wonderboy.h, WB_SCENE_KIND) rather than a second time here.
+RECORD_KIND = wb("SCENE_KIND")
+KIND_BOSS_DEFEAT = wb("SCENE_KIND_BOSS_DEFEAT")
 RECORD_CELL = wb("RECORD_10420_CELL")
-STAMP_VARIANT_SELECTOR = wb("STAMP_VARIANT_SELECTOR")
 STAMP_CELL_BIAS = wb("STAMP_CELL_BIAS")
 STAMP_TILES_FIRST = wb("STAMP_TILES_FIRST")
 STAMP_TILES_SECOND = wb("STAMP_TILES_SECOND")
@@ -182,13 +185,6 @@ def branch_w_back(condition, spanned_bytes):
     assert displacement < -0x80, (
         f"{displacement} fits a byte displacement, which is the form the original would then use")
     return opcode(condition) + word(displacement)
-
-
-def branch_w_to(condition, here, target):
-    """A word branch assembled AT ``here`` and aimed at an absolute ``target`` — how $1170's two
-    exits leave their own body: they jump INTO $10a2, so the displacement is the distance between
-    two routines rather than a length inside one."""
-    return opcode(condition) + word(target - (here + BRANCH_EXTENSION))
 
 
 def move_b_imm_dn(reg, value):
@@ -286,10 +282,6 @@ def cmpi_b_indexed(base, index, value):
 
 def cmpi_w_dn(reg, value):
     return opcode(0x0c40 | reg) + word(value)
-
-
-def cmpi_w_d16(base, value, displacement):
-    return opcode(0x0c68 | base) + word(value) + word(displacement)
 
 
 def bit_op_d16(op, bit, reg, displacement):
@@ -639,7 +631,7 @@ def _stamp_entry():
     return (movea_l_abs_l(A1, RECORD_PTR)
             + move_w_ind_dn(D0, A1, RECORD_CELL) + addi_w_dn(D0, STAMP_CELL_BIAS)
             + lea_abs_l(A2, MAP_ROW_STRIDE) + lea_indexed(A2, D0)
-            + cmpi_w_d16(A1, STAMP_VARIANT_SELECTOR, RECORD_VARIANT)
+            + cmpi_w_d16(A1, KIND_BOSS_DEFEAT, RECORD_KIND)
             + branch(BEQ_W, _stamp_arm(STAMP_TILES_FIRST))
             + _stamp_arm(STAMP_TILES_FIRST) + _stamp_arm(STAMP_TILES_SECOND))
 
@@ -2852,7 +2844,7 @@ def _model_stamp(image):
     cell = (u16(image, record + RECORD_CELL) + STAMP_CELL_BIAS) & WORD_MASK
     at = (MAP_ROW_STRIDE + s16(cell)) & 0xffffffff
     tile = (STAMP_TILES_SECOND
-            if u16(image, record + RECORD_VARIANT) == STAMP_VARIANT_SELECTOR
+            if u16(image, record + RECORD_KIND) == KIND_BOSS_DEFEAT
             else STAMP_TILES_FIRST)
     below = (at + s16(u16(image, MAP_ROW_STRIDE))) & 0xffffffff
     return {at: tile, at + 1: tile + 1, below: tile + 2, below + 1: tile + 3}
@@ -2867,7 +2859,7 @@ def _run_stamp(case, cell, variant):
         STAMP_RECORD: keyed_block(STAMP_RECORD, RECORD_CELL + WORD_LEN, salt),
         RECORD_PTR: longword(STAMP_RECORD),
         STAMP_RECORD + RECORD_CELL: word(cell),
-        STAMP_RECORD + RECORD_VARIANT: word(variant),
+        STAMP_RECORD + RECORD_KIND: word(variant),
     }
     image = harness.make_image(pokes)
     expected = _model_stamp(image)
@@ -2880,7 +2872,7 @@ def _run_stamp(case, cell, variant):
 
 
 @pytest.mark.parametrize("variant,tile", [(0, STAMP_TILES_FIRST),
-                                          (STAMP_VARIANT_SELECTOR, STAMP_TILES_SECOND)],
+                                          (KIND_BOSS_DEFEAT, STAMP_TILES_SECOND)],
                          ids=["first-tile-set", "second-tile-set"])
 @pytest.mark.parametrize("cell", [0, 1, DEFAULT_STRIDE, 2 * DEFAULT_STRIDE + 3],
                          ids=lambda v: f"cell{v}")
@@ -2895,8 +2887,8 @@ def test_the_stamp_writes_two_by_two_a_row_apart(cell, variant, tile):
 
 def test_the_stamps_variant_test_is_a_word():
     """`cmpi.w #$4,2(a1)` — a record whose LOW byte alone matches must take the first arm."""
-    info = _run_stamp("variant-high-half", 0, (STAMP_VARIANT_SELECTOR << 8)
-                      | STAMP_VARIANT_SELECTOR)
+    info = _run_stamp("variant-high-half", 0, (KIND_BOSS_DEFEAT << 8)
+                      | KIND_BOSS_DEFEAT)
     assert min(program_writes(info).values()) == STAMP_TILES_FIRST, (
         "a variant word whose high half is set took the second arm, so the test read a byte")
 
@@ -2921,7 +2913,7 @@ def test_the_row_step_is_sign_extended_too():
         STAMP_RECORD: keyed_block(STAMP_RECORD, RECORD_CELL + WORD_LEN, salt),
         RECORD_PTR: longword(STAMP_RECORD),
         STAMP_RECORD + RECORD_CELL: word(DEFAULT_STRIDE * 2),
-        STAMP_RECORD + RECORD_VARIANT: word(0),
+        STAMP_RECORD + RECORD_KIND: word(0),
     }
     image = harness.make_image(pokes)
     expected = _model_stamp(image)

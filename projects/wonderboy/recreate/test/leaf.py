@@ -164,11 +164,23 @@ def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_C
     raises the cap for a routine that loops — state the number the routine's own geometry gives, so
     it stays a cap and not a formality.
 
-    ``stop_pc`` is the kit's second stop condition, and one family of routine needs it: the scroll
-    steps ADD to their own return address (`addq.l #4,(a7)`) to skip the caller's next `bsr`, so
-    their `rts` lands past the oracle's sentinel and the run would otherwise never stop. A case
-    passes the sentinel plus that skip distance and both arms then terminate — see test_scroll.py,
-    which also reads the decision back out of the write set rather than inferring it from this.
+    ``stop_pc`` is the kit's second stop condition, and TWO families of routine need it.
+
+      * A routine that returns to the WRONG PLACE. The scroll steps ADD to their own return address
+        (`addq.l #4,(a7)`) to skip the caller's next `bsr`, so their `rts` lands past the oracle's
+        sentinel and the run would otherwise never stop. A case passes the sentinel plus that skip
+        distance and both arms then terminate — see test_scroll.py, which also reads the decision
+        back out of the write set rather than inferring it from this.
+      * A routine that TRANSFERS to a tail the reconstruction declines to follow. The scene driver's
+        exits `bra`/`jmp` into two routines that end in an unverifiable `jsr`, so the C returns WHICH
+        tail it reached and the case sets ``stop_pc`` to that tail's address, diffing the whole
+        prefix at the instant control arrives there — see test_scene.py.
+
+    THE SECOND FAMILY OWES A WITNESS. A checkpointed run stops at EITHER the checkpoint or the
+    `rts`, and emu.run reports only that one of them was reached — so a case that merely set
+    ``stop_pc`` would pass whether or not the tail was taken. Such a case must carry its own
+    POSITIVE evidence of which stop fired: test_scene.py runs with the oracle's executed-PC coverage
+    on and requires the transfer instruction itself to have executed.
     """
     diffs, info = differential(entry_of(name), dict(regs or {}), glue,
                                max_insns=max_insns, poison=poison, stop_pc=stop_pc)
@@ -383,6 +395,27 @@ def move_l_imm_postinc(reg, value):
     return opcode(0x20fc | (reg << 9)) + longword(value)
 
 
+def cmpi_w_d16(base, value, displacement):
+    """`cmpi.w #imm,d16(An)` — how a routine tests a WORD FIELD of a record against a constant.
+    THREE batteries (test_actor.py's and test_map.py's, which spelt it identically, and
+    test_scene.py's shop counts). It is also the instruction the $dcd4/$dd42 slip was meant to be,
+    which is why that pin spells this one beside `cmpi_w_abs_l` below."""
+    return opcode(0x0c68 | base) + word(value) + word(displacement)
+
+
+def cmpi_w_abs_l(value, addr):
+    """`cmpi.w #imm,<abs>.l` — the same test against a GLOBAL. TWO batteries (test_scroll.py and
+    test_scene.py); test_hud.py spells the opcode word alone as `CMPI_W_IMM_ABS_L` and composes the
+    rest itself, so it is a third half-user rather than a fourth."""
+    return opcode(0x0c79) + word(value) + longword(addr)
+
+
+def sub_w_dn_d16(reg, base, displacement):
+    """`sub.w Dn,d16(An)` — a word subtracted straight off a record field, leaving the BORROW in N.
+    TWO batteries: test_actor.py's template hit-point pool and test_scene.py's visit budget."""
+    return opcode(0x9168 | (reg << 9) | base) + word(displacement)
+
+
 def cmpi_b_dn(reg, value):
     """`cmpi.b #imm,Dn` — the immediate is a WORD in the stream even for a byte compare."""
     return opcode(0x0c00 | reg) + word(value)
@@ -544,6 +577,18 @@ def bsr_w(here, target):
     """`bsr.w target` as assembled AT ``here`` — a call's displacement depends on where it sits, so
     a pin aimed at the wrong callee (or built at the wrong offset) fails on the bytes."""
     return BSR_W + word(target - (here + BRANCH_EXTENSION))
+
+
+def branch_w_to(condition, here, target):
+    """`bcc.w`/`bra.w` aimed at an ABSOLUTE ``target``, as assembled AT ``here``.
+
+    `branch_over` above is for a jump whose target is known by LENGTH; this is for one whose target
+    is an address the battery already names — test_map.py's $1170 exits, which jump into another
+    routine's tail, and every transfer test_scene.py pins out of the scene driver into a tail it
+    declines to follow. Both spelt it identically under two names (`branch_w_to`, `branch_to`), so a
+    displacement transcribed one instruction out fails on the bytes in either.
+    """
+    return opcode(condition) + word(target - (here + BRANCH_EXTENSION))
 
 
 def assemble(base, pieces):
