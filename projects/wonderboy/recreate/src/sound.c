@@ -1,4 +1,5 @@
-/* sound.c — $1a48a, the sound module's SFX trigger, and $17b14, the stub that calls it.
+/* sound.c — $1a48a, the sound module's SFX trigger, $17b14, the stub that calls it, and the STOP
+ * CHAIN below them ($17f24 -> $1aaea -> $17f30).
  *
  * THE MODULE IS PC-RELATIVE, so every address it names is an offset from `lea $1738c(pc),a3` rather
  * than an absolute operand. In the image the harness loads that base IS WB_SND_MODULE_BASE, so this
@@ -21,6 +22,7 @@
  * a 32-bit base, so the descriptor always lands within 32 KiB either side of the module.
  */
 #include "machine.h"
+#include "psg.h"
 #include "sound.h"
 #include "wonderboy.h"
 
@@ -94,4 +96,49 @@ void snd_trigger_effect(uint8_t *image, uint32_t effect_id, uint32_t channel) {
 void snd_call_trigger_effect(uint8_t *image, uint32_t effect_id, uint32_t channel) {
     /* The `movem` pair either side of this call has no C analogue; see sound.h. */
     snd_trigger_effect(image, effect_id, channel);
+}
+
+/* ---- the stop chain: $17f24 -> $1aaea -> $17f30 -----------------------------------------------
+ *
+ * Three routines, joined by `bra.w` rather than by `bsr` — so to a caller reaching stub +28 there is
+ * one stop, and to a reader there are three entry points into one tail. Each is a function here
+ * because each is separately reachable: +28 is snd_stop, +70 is snd_stop_all_sfx, and $17f30 is what
+ * both of them end in.
+ */
+
+/* $17f30. THE READ-MODIFY-WRITE IS THE POINT. `ori.b #$3f,d1` sets the six tone/noise enable bits
+ * (active low) and leaves bits 6-7 — the chip's port A/B I/O DIRECTION — exactly as it found them,
+ * which is why the value the chip held on entry has to be an input of the run rather than something
+ * this code computes. A port that ignored the read-back would write $3f, flip port A to input and
+ * float the floppy drive-select lines; it is also the kit's own mutant class, since `0 | $3f` and
+ * `read | $3f` agree whenever the read is fabricated as 0 (TRAP_MODEL.md, "Phase 6"). */
+void snd_psg_silence(void) {
+    psg_port_write(WB_PSG_REG_MIXER,
+                   (uint8_t)(psg_port_read(WB_PSG_REG_MIXER) | WB_PSG_MIXER_ALL_OFF));
+    psg_port_write(WB_PSG_REG_VOLUME_A, WB_PSG_VOLUME_SILENT);
+    psg_port_write(WB_PSG_REG_VOLUME_B, WB_PSG_VOLUME_SILENT);
+    psg_port_write(WB_PSG_REG_VOLUME_C, WB_PSG_VOLUME_SILENT);
+}
+
+/* $1aaea. The four shadow stores mirror snd_psg_silence's four chip accesses — same registers, same
+ * values, `clr.w` covering the two adjacent volume shadows in one instruction — because the shadow
+ * is indexed by register number (wonderboy.h). The mixer shadow takes the mask FLAT rather than
+ * `ori`ed: the module's own copy has no port-direction bits to preserve. */
+void snd_stop_all_sfx(uint8_t *image) {
+    /* `clr.l 2254(a3)` — ONE longword store, which is why the unnamed fourth byte past the three
+     * channel flags goes too (WB_SND_SFX_ACTIVE_FLAGS_LEN is 4, not 3). */
+    wr32(image + WB_SND_SFX_ACTIVE_FLAGS, 0);
+
+    image[WB_SND_PSG_SHADOW + WB_PSG_REG_MIXER] = WB_PSG_MIXER_ALL_OFF;
+    image[WB_SND_PSG_SHADOW + WB_PSG_REG_VOLUME_A] = WB_PSG_VOLUME_SILENT;
+    image[WB_SND_PSG_SHADOW + WB_PSG_REG_VOLUME_B] = WB_PSG_VOLUME_SILENT;
+    image[WB_SND_PSG_SHADOW + WB_PSG_REG_VOLUME_C] = WB_PSG_VOLUME_SILENT;
+
+    snd_psg_silence();
+}
+
+/* $17f24. */
+void snd_stop(uint8_t *image) {
+    image[WB_SND_ENGINE_ENABLED] = WB_SND_ENGINE_DISABLED;
+    snd_stop_all_sfx(image);
 }

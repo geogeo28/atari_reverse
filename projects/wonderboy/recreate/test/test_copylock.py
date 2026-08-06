@@ -29,7 +29,8 @@ import harness  # noqa: F401  — binds the kit; the imports below only work aft
 import emu
 import loader
 import copylock
-from leaf import jsr_abs_l   # the one 68000 encoding this file BUILDS rather than scans
+from leaf import jsr_abs_l, pc_coverage   # the one 68000 encoding this file BUILDS, and the
+                                          # arm/reset/disarm of the oracle's PC coverage
 from copylock import ARM_FLAG, ARM_FLAG_LEN, ARM_INSN_LEN, ARM_SITES, ARMED, DISARMED, Stub
 from copylock import CALL, CODE_END, ENTRY, GUARD, REG_SAVE, REG_SAVE_LEN, REGS_SAVED, SKIPPED
 from copylock import DECRYPT_CURSOR, VECTORS, VECTORS_INSTALLED
@@ -116,14 +117,12 @@ def _run_reaching(entry, witness_pc, **kwargs):
 
     The stubbed runs below turn on absences — no writes, no protection — and an absence is also what
     a run that never got started produces, so each one carries the instruction that proves the body
-    really ran.
+    really ran. It ASKS whether the witness fired rather than requiring it (two cases below expect
+    the answer to be no), which is why this is not `leaf.run_reaching`; the arming and resetting the
+    two share is `leaf.pc_coverage`.
     """
-    emu.cov_enable()
-    emu.cov_reset()
-    try:
+    with pc_coverage():
         mem, writes, out = copylock.run(entry, **kwargs)
-    finally:
-        emu.cov_enable(False)
     return mem, writes, out, emu.cov_visited(witness_pc)
 
 

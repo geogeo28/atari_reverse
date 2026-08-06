@@ -35,8 +35,11 @@ import pytest
 import harness
 import leaf
 from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16,
-                  asr_w_imm_dn, backward_branch, branch, branch_over, bsr_w, btst_imm_dn,
-                  case_salt, clr_w_dn, cmp_w_dn_dn, cmpi_b_dn, cmpi_w_d16, dbf, dbf_over,
+                  asr_w_imm_dn, backward_branch, branch, branch_over, branch_w_to, bsr_w,
+                  btst_imm_dn,
+                  case_salt, clr_b_d16, clr_w_d16, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, cmpi_b_dn,
+                  cmpi_w_d16,
+                  dbf, dbf_over,
                   keyed_block, lea_abs_l, lea_d16, lea_indexed, longword, lsl_w_imm_dn,
                   merge_bands, move_b_d16_dn, move_b_imm_d16, move_l_imm_abs_l,
                   move_l_imm_postinc, move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn,
@@ -48,10 +51,17 @@ from layout import wb
 
 # The two damage paths call the SOUND MODULE, so the battery that owns $1a48a owns that half of
 # their write set too — imported rather than restated, exactly as test_hud.py imports it for $bbca.
-from test_sound import (STUB_INSN_CAP, STUB_TRIGGER_OFFSET,                 # noqa: E402
+from test_sound import (STOP_INSN_CAP, STOP_WRITES, STUB_INSN_CAP,          # noqa: E402
+                        STUB_TRIGGER_OFFSET, PSG_REG_MIXER,
                         STUB_TABLE_BASE as SND_STUB_TABLE,
                         assert_written as assert_sfx_written,
+                        assert_psg_state as assert_stop_chain_psg_state,
                         expected_writes as sfx_expected_writes)
+
+# ...and $6bb8's boss arm pays a score and raises the meter, so the two models the PANEL battery owns
+# come from there for the same reason: two copies of "what packed BCD does" could disagree while both
+# batteries stayed green.
+from test_hud import bcd_expected, meter_add_expected                       # noqa: E402
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
 
@@ -162,6 +172,7 @@ SLOT_BBC0 = wb("HUD_SLOT_BBC0")
 SLOT_REQUEST = wb("HUD_SLOT_REQUEST")
 SLOT_REARM = wb("HUD_SLOT_REARM")
 METER_VALUE = wb("HUD_METER_VALUE")
+METER_MAX = wb("HUD_METER_MAX")
 TEXT_REQUEST = wb("TEXT_REQUEST")
 TEXT_LIFETIME_REQUEST = wb("TEXT_LIFETIME_REQUEST")
 TEXT_LIFETIME_DEFAULT = wb("TEXT_LIFETIME_DEFAULT")
@@ -255,14 +266,6 @@ def movea_l_imm(reg, value):
     return opcode(0x207c | (reg << 9)) + longword(value)
 
 
-def clr_w_d16(reg, displacement):
-    return opcode(0x4268 | reg) + word(displacement)
-
-
-def clr_b_d16(reg, displacement):
-    return opcode(0x4228 | reg) + word(displacement)
-
-
 def move_w_d16_d16(source, source_displacement, destination, destination_displacement):
     """`move.w d16(As),d16(Ad)` — how the spawn copies a template field into a record.
 
@@ -273,10 +276,6 @@ def move_w_d16_d16(source, source_displacement, destination, destination_displac
     """
     return (opcode(0x3168 | (destination << 9) | source)
             + word(source_displacement) + word(destination_displacement))
-
-
-def cmp_w_imm_dn(reg, value):
-    return opcode(0xb07c | (reg << 9)) + word(value)
 
 
 def move_l_indexed_d16(base, index, destination, displacement):
@@ -804,6 +803,90 @@ def _damage_template_entry():
             + kill)
 
 
+# --- $6bb8: paying for a defeat -------------------------------------------------------------------
+# The routine's own 164 bytes end at WB_SPAWN_SCORE_TABLE, which is its own data — so the entry pin
+# and the table's extent bound each other. The `ble.w` at DEFEAT_TRANSFER leaves for a respawn
+# continuation this project does not port (include/actor.h), and DEFEAT_RESPAWN_PC is where it goes.
+DEFEAT_RETIRED = wb("ACTOR_DEFEAT_RETIRED")
+DEFEAT_RESPAWN = wb("ACTOR_DEFEAT_RESPAWN")
+DEFEAT_RESPAWN_PC = 0x6cdc
+TYPE_UNSCORED = wb("ACTOR_TYPE_UNSCORED")
+SCORE_TABLE = wb("SPAWN_SCORE_TABLE")
+SCORE_TABLE_ENTRIES = wb("SPAWN_SCORE_TABLE_ENTRIES")
+SCORE_LEN = wb("SPAWN_SCORE_LEN")
+SCORE_SHIFT = wb("SPAWN_SCORE_SHIFT")
+KILL_RESPAWN_LIMIT = wb("SPAWN_KILL_RESPAWN_LIMIT")
+SPAWN_REARM = wb("SPAWN_REARM")
+BOSS_ORIGIN = wb("BOSS_FRAGMENT_ORIGIN")
+BOSS_DEFEAT_FLAG = wb("BOSS_DEFEAT_FLAG")
+BOSS_DEFEAT_SET = wb("BOSS_DEFEAT_SET")
+BOSS_DEFEAT_SFX = wb("BOSS_DEFEAT_SFX")
+BOSS_DEFEAT_METER_BONUS = wb("BOSS_DEFEAT_METER_BONUS")
+STUB_STOP_OFFSET = 28           # `jsr 28(a1)`: the stub that silences the chip
+FIELD_18_SEED = 0x5a            # a byte the `clr.b` has to change
+
+
+def subq_w_d16(amount, base, displacement):
+    """`subq.w #n,d16(An)` — the mirror of `addq_w_d16` above, and the one instruction that lowers
+    the template table's live count."""
+    return opcode(0x5168 | ((amount & 7) << 9) | base) + word(displacement)
+
+
+def tst_w_d16(base, displacement):
+    return opcode(0x4a68 | base) + word(displacement)
+
+
+def move_l_indexed_dn(reg, base, index):
+    """`move.l 0(An,Dm.l),Dn` — the score-table read, whose extension word's LONGWORD bit is what
+    lets the shifted type address the whole 64 KiB above the table."""
+    return opcode(0x2030 | (reg << 9) | base) + word((index << 12) | 0x800)
+
+
+def _defeat_entry():
+    """$6bb8, whole. Its three branch displacements come out of the pieces they skip, so the boss
+    block's length, the score block's and the re-arm's are each part of the claim."""
+    base = leaf.entry_of("actor_defeat_and_score")
+
+    def boss_block(at):
+        return leaf.assemble(at, [
+            lea_abs_l(A1, SND_STUB_TABLE), jsr_d16_an(A1, STUB_STOP_OFFSET),
+            move_w_imm_abs_l(BOSS_DEFEAT_SET, BOSS_DEFEAT_FLAG),
+            move_w_imm_dn(D0, BOSS_DEFEAT_SFX), clr_w_dn(D1),
+            lea_abs_l(A1, SND_STUB_TABLE), jsr_d16_an(A1, STUB_TRIGGER_OFFSET),
+            move_w_imm_dn(D0, BOSS_DEFEAT_METER_BONUS),
+            lambda site: bsr_w(site, leaf.entry_of("hud_meter_add_clamped")),
+        ])
+
+    def score_block(at):
+        return leaf.assemble(at, [
+            moveq_0_dn(D2), lea_abs_l(A2, SCORE_TABLE), move_w_ind_dn(D2, A1, SPAWN_TYPE),
+            lsl_w_imm_dn(SCORE_SHIFT, D2), move_l_indexed_dn(D0, A2, D2),
+            lambda site: bsr_w(site, leaf.entry_of("bcd_add_score_bd70")),
+            addq_w_d16(1, A1, SPAWN_KILL_COUNT),
+            cmpi_w_d16(A1, KILL_RESPAWN_LIMIT, SPAWN_KILL_COUNT),
+            lambda site: branch_w_to(BLE_W, site, DEFEAT_RESPAWN_PC),
+        ])
+
+    rearm = (move_b_imm_d16(A1, SPAWN_REARM, SPAWN_ARMED)
+             + move_b_imm_d16(A1, SPAWN_REARM, SPAWN_COUNTDOWN))
+    gate_skips = cmpa_l_imm(A0, BOSS_ORIGIN) + opcode(BNE_W) + word(0) + boss_block(0)
+
+    return leaf.assemble(base, [
+        tst_w_abs_w(FLAG_A32), branch(BEQ_W, gate_skips),
+        cmpa_l_imm(A0, BOSS_ORIGIN), lambda at: branch(BNE_W, boss_block(at)), boss_block,
+        clr_b_d16(A0, FIELD_18), moveq_0_dn(D0), movea_l_abs_l(A1, TABLE_PTR),
+        move_b_d16_dn(D0, A0, TEMPLATE_SLOT), lsl_l_imm_dn(TEMPLATE_SLOT_SHIFT, D0),
+        lea_indexed(A1, D0),
+        cmpi_w_d16(A0, TYPE_UNSCORED, ACTOR_TYPE),
+        lambda at: branch(BEQ_W, score_block(at)), score_block,
+        movea_l_abs_l(A6, TABLE_PTR),
+        subq_w_d16(1, A6, -SPAWN_HEADER_BYTES + HEADER_LIVE),
+        move_w_imm_ind(A0, FREE_MARKER),
+        tst_w_d16(A6, -SPAWN_HEADER_BYTES + HEADER_WRAPPED),
+        branch(BEQ_W, rearm), rearm, RTS,
+    ])
+
+
 ENTRY_BYTES = {
     "followed_actor_record": _followed_record_entry(),
     "actor_set_side_flag": _side_flag_entry(),
@@ -824,8 +907,9 @@ ENTRY_BYTES = {
     "actor_turn_and_launch": _turn_and_launch_entry(),
     "actor_damage_followed": _damage_followed_entry(),
     "actor_damage_template_hitpoints": _damage_template_entry(),
+    "actor_defeat_and_score": _defeat_entry(),
 }
-RECONSTRUCTED_ROUTINES = 19
+RECONSTRUCTED_ROUTINES = 20
 
 
 def test_the_battery_covers_every_routine_it_was_written_for():
@@ -3059,3 +3143,452 @@ def test_both_paths_follow_whichever_template_table_the_pointer_names(table_base
         pokes[template + SPAWN_TYPE] = word(5)
         pokes[template + SPAWN_HITPOINTS] = word(DAMAGE_STATE["pool"])
         runner(case, pokes)
+
+
+# --- $6bb8: what a defeat costs ---------------------------------------------------------------------
+# THE FIRST GAME-LOGIC CASE IN THIS PROJECT WHOSE RUN DRIVES THE CHIP. Its boss arm calls stub +28,
+# which is snd_stop -> snd_stop_all_sfx -> snd_psg_silence, so a case declares the mixer with
+# `psg_seed` and test_sound.py's models say what the module state and the access ledger must be. It
+# also calls the panel's score accumulator and its meter clamp, and the SFX trigger — five ported
+# callees in one routine, every one of them compared through the battery that owns it.
+#
+# THE ATTRIBUTION (POISON) PASS IS OFF, for test_scene.py's reason. The pass inverts every
+# oracle-written byte and re-runs, and here two of those bytes STEER the routine: the kill count is
+# written and then read back for the `ble` that decides the exit — so a poisoned re-run of a respawn
+# case takes the retire arm and never reaches the checkpoint — and the packed-BCD score, inverted,
+# stops being digits at all and the model has nothing to say about it. What stands in for it is the
+# address-keyed seeding every case here uses plus `_assert_writes`, which compares the oracle's write
+# set against the model for EQUALITY rather than bounding it.
+#
+# WHAT THIS DELIBERATELY DOES NOT COVER: the respawn continuation at $6cdc. `ble.w` leaves for it and
+# the port reports the exit instead of following, so everything past DEFEAT_RESPAWN_PC — including
+# both stage_random_kind draws (test_rng.py holds one) — is out of scope here.
+
+_DEFEAT = leaf.register_glue("actor_defeat_and_score", [ctypes.c_uint32], ctypes.c_uint32)
+
+# The `ble.w` itself: the witness that a checkpointed run really left through the tail rather than
+# returning. Its address is the score block's own end, so the entry pin above puts it here.
+BRANCH_W_BYTES = 4
+
+
+def _transfer_site():
+    """SEARCHED for rather than transcribed: the one address in the body at which the four bytes are
+    a `ble.w` aimed at DEFEAT_RESPAWN_PC. A displacement depends on where it sits, so a wrong address
+    cannot match — and a second match would mean the routine has two exits, which is the thing worth
+    failing on."""
+    entry = leaf.entry_of("actor_defeat_and_score")
+    body = ENTRY_BYTES["actor_defeat_and_score"]
+    sites = [entry + at for at in range(0, len(body), WORD_LEN)
+             if body[at:at + BRANCH_W_BYTES] == branch_w_to(BLE_W, entry + at, DEFEAT_RESPAWN_PC)]
+    assert len(sites) == 1, f"the body has {len(sites)} `ble.w {DEFEAT_RESPAWN_PC:#x}` site(s)"
+    return sites[0]
+
+
+DEFEAT_TRANSFER = _transfer_site()
+
+# The body's own instruction count on the longest path (gate 4, boss block 9, the record and template
+# setup 6, the type test 2, the score block 9, the retire tail 8), plus the three chains it calls and
+# the ONE sentinel the whole run ends on.
+#
+# THE STOP CHAIN IS REACHED THROUGH A STUB, so its cost is stub +28's own four instructions on top of
+# `snd_stop`'s cap — and that cap already carries a sentinel of its own, for a run that entered
+# `snd_stop` directly. Here it does not: `osh_run` counts one instruction past the OUTERMOST `rts`
+# and no other, so the chain's sentinel is subtracted and one is added for this routine instead.
+# `STUB_INSN_CAP` needs no such correction — the trigger's cap never had one.
+DEFEAT_BODY_INSNS = 4 + 9 + 6 + 2 + 9 + 8
+STUB_INSNS = 4                  # `movem.l d0-a6,-(a7) / bsr.w / movem.l (a7)+,d0-a6 / rts`
+METER_ADD_INSNS = 6
+BCD_ADD_INSNS = 12
+STOP_CHAIN_INSNS = STUB_INSNS + STOP_INSN_CAP - leaf.RUNNER_SENTINEL_INSN
+DEFEAT_INSN_CAP = (DEFEAT_BODY_INSNS + STOP_CHAIN_INSNS + STUB_INSN_CAP
+                   + METER_ADD_INSNS + BCD_ADD_INSNS + leaf.RUNNER_SENTINEL_INSN)
+
+# Where a case puts the record that died. The boss arm needs the ONE address the `cmpa.l` accepts;
+# every other case uses an ordinary slot of the default table, so "which record" is a case's choice.
+DEFEAT_ACTOR = TABLE_DEFAULT + 5 * RECORD_BYTES
+
+# The mixer the chip is declared to hold. TOS leaves both port-direction bits set, and they are what
+# `ori.b #$3f` must carry through — test_sound.py sweeps the rest.
+DEFEAT_MIXER = {PSG_REG_MIXER: 0xc0}
+
+# Every byte of state the routine reads, seeded: none of the five callees may be entered on a value a
+# case did not choose. The module state is seeded AWAY from what the stop chain writes, so each of
+# its clears is a change rather than a coincidence.
+DEFEAT_STATE = dict(
+    a32=0x0000, actor_type=4, template_slot=2, spawn_type=5, kills=0x0005,
+    live=0x0007, wrapped=0x0000, score=0x00123400, meter=0x0028, meter_max=0x0064,
+    armed=0x11, countdown=0x22, engine=0xff, sfx_flags=b"\x01\x02\x03\x04",
+    shadow=b"\x11\x22\x33\x44", score_entry=None,
+)
+BCD_SCORE = wb("BCD_SCORE")
+BCD_SCORE_LEN = wb("BCD_SCORE_LEN")
+BCD_ADDEND = wb("BCD_ADDEND")
+BCD_ADDEND_SEED = 0x87654321      # not a score any case adds, so the staging store is visible
+SND_ENGINE_ENABLED = wb("SND_ENGINE_ENABLED")
+SND_SFX_ACTIVE_FLAGS = wb("SND_SFX_ACTIVE_FLAGS")
+SND_PSG_SHADOW = wb("SND_PSG_SHADOW")
+SND_SHADOW_SEED_LEN = 4           # the four bytes snd_stop_all_sfx rewrites, from the mixer shadow on
+PSG_REG_MIXER_SHADOW = SND_PSG_SHADOW + PSG_REG_MIXER
+
+
+# `lsl.w #2,d2` shifts the type twice inside the word, so the LAST bit to leave it — the one the
+# 68000 leaves in X — is bit 14. That is the entry state `bcd_add_score_bd70` cannot be given here.
+SCORE_INDEX_EXTEND_BIT = 1 << 14
+
+
+def _score_table_entry(spawn_type):
+    """WHERE the read goes: `lsl.w #2,d2` wraps the scaled type inside SIXTEEN BITS and
+    `move.l 0(a2,d2.l),d0` then takes the whole longword, so a type from $4000 up reads ABOVE the
+    table rather than off its end. Every case keys its seed off this rather than off the type."""
+    return SCORE_TABLE + ((spawn_type << SCORE_SHIFT) & WORD_MASK)
+
+
+def _defeat_pokes(what, **overrides):
+    state = {**DEFEAT_STATE, **overrides}
+    salt = case_salt(f"actor_defeat_and_score {what}")
+    actor = state.pop("actor", DEFEAT_ACTOR)
+    # THE REGISTERED UNPINNABLE, enforced where a case chooses its value rather than tallied after
+    # the fact: `lsl.w #2,d2` leaves X holding the spawn type's bit 14, and src/hud.c reproduces the
+    # X = 0 entry only (emu.run has no entry-CCR parameter). A case with that bit set would be red
+    # for a reason that is not the reconstruction's, so it is refused here.
+    assert not state["spawn_type"] & SCORE_INDEX_EXTEND_BIT, (
+        f"{what}: spawn type {state['spawn_type']:#06x} carries bit 14, so `lsl.w #2` enters "
+        f"bcd_add_score_bd70 with X set — an entry state the oracle cannot be given")
+
+    pokes = _state_pokes(salt, {FLAG_A32: state["a32"], METER_VALUE: state["meter"],
+                                METER_MAX: state["meter_max"]})
+    pokes[BCD_SCORE] = longword(state["score"])
+    pokes[BCD_ADDEND] = longword(BCD_ADDEND_SEED)
+    pokes[SND_ENGINE_ENABLED] = bytes([state["engine"]])
+    pokes[SND_SFX_ACTIVE_FLAGS] = state["sfx_flags"]
+    pokes[PSG_REG_MIXER_SHADOW] = state["shadow"]
+
+    _template_band(salt, TEMPLATE_TABLE, TEMPLATE_SLOTS, pokes)
+    pokes[TABLE_PTR] = longword(TEMPLATE_TABLE)
+    template = TEMPLATE_TABLE + state["template_slot"] * SPAWN_RECORD_BYTES
+    pokes[template + SPAWN_TYPE] = word(state["spawn_type"])
+    pokes[template + SPAWN_KILL_COUNT] = word(state["kills"])
+    pokes[template + SPAWN_ARMED] = bytes([state["armed"]])
+    pokes[template + SPAWN_COUNTDOWN] = bytes([state["countdown"]])
+    header = TEMPLATE_TABLE - SPAWN_HEADER_BYTES
+    pokes[header + HEADER_LIVE] = word(state["live"])
+    pokes[header + HEADER_WRAPPED] = word(state["wrapped"])
+    if state["score_entry"] is not None:
+        pokes[_score_table_entry(state["spawn_type"])] = longword(state["score_entry"])
+
+    pokes[actor + ACTOR_TYPE] = word(state["actor_type"])
+    pokes[actor + TEMPLATE_SLOT] = bytes([state["template_slot"]])
+    pokes[actor + FIELD_18] = bytes([FIELD_18_SEED])
+    return actor, pokes
+
+
+def _stop_chain_bytes():
+    """test_sound.py's statement of what the stop chain writes, flattened to {address: byte} — the
+    same flattening `_sfx_bytes` does for the trigger, and for the same reason."""
+    return {addr + index: value[index]
+            for addr, value in STOP_WRITES.items() for index in range(len(value))}
+
+
+def _model_defeat(image, actor):
+    """(the exit it reports, {address: byte}). The arms are SEQUENTIAL and only one address is both
+    written and read (the kill count), so the model composes its callees' models over one dict in
+    the order the instructions run — the SFX trigger's ACTIVE flag lands on a byte the stop chain
+    cleared two calls earlier, which is exactly what that ordering says."""
+    out = {}
+    if u16(image, FLAG_A32) != 0 and actor == BOSS_ORIGIN:
+        out.update(_stop_chain_bytes())
+        _put_word(out, BOSS_DEFEAT_FLAG, BOSS_DEFEAT_SET)
+        out.update(_sfx_bytes(image, BOSS_DEFEAT_SFX, SND_CHANNEL_A))
+        _put_word(out, METER_VALUE, meter_add_expected(u16(image, METER_VALUE),
+                                                       u16(image, METER_MAX),
+                                                       BOSS_DEFEAT_METER_BONUS))
+    out[actor + FIELD_18] = 0
+
+    table = _u32(image, TABLE_PTR)
+    # `lsl.l #5,d0 / lea 0(a1,d0.w),a1`: a LONG shift indexed by a sign-extended WORD.
+    template = (table + s16((image[actor + TEMPLATE_SLOT] << TEMPLATE_SLOT_SHIFT) & WORD_MASK)
+                ) & 0xffffffff
+    if u16(image, actor + ACTOR_TYPE) != TYPE_UNSCORED:
+        addend = _u32(image, _score_table_entry(u16(image, template + SPAWN_TYPE)))
+        _put_long(out, BCD_ADDEND, addend)
+        _put_long(out, BCD_SCORE,
+                  bcd_expected(_u32(image, BCD_SCORE), addend, BCD_SCORE_LEN, False))
+        kills = (u16(image, template + SPAWN_KILL_COUNT) + 1) & WORD_MASK
+        _put_word(out, template + SPAWN_KILL_COUNT, kills)
+        if s16(kills) <= KILL_RESPAWN_LIMIT:
+            return DEFEAT_RESPAWN, out
+
+    header = table - SPAWN_HEADER_BYTES
+    _put_word(out, header + HEADER_LIVE, (u16(image, header + HEADER_LIVE) - 1) & WORD_MASK)
+    _put_word(out, actor + ACTOR_X, FREE_MARKER)
+    if u16(image, header + HEADER_WRAPPED) != 0:
+        out[template + SPAWN_ARMED] = SPAWN_REARM
+        out[template + SPAWN_COUNTDOWN] = SPAWN_REARM
+    return DEFEAT_RETIRED, out
+
+
+def _run_defeat(case, actor, pokes, psg_seed=None):
+    """One defeat differential. A checkpointed run also carries the witness that the `ble.w` fired:
+    a `stop_pc` run stops at EITHER the checkpoint or the `rts` and reports only that one did."""
+    what = f"actor_defeat_and_score {case}"
+    image = harness.make_image(pokes)
+    expected_exit, expected = _model_defeat(image, actor)
+    seed = DEFEAT_MIXER if psg_seed is None else psg_seed
+
+    how = dict(regs={"a0": actor, "_pokes": pokes, **DAMAGE_ENTRY_REGS},
+               max_insns=DEFEAT_INSN_CAP, poison=False, psg_seed=seed)
+    if expected_exit == DEFEAT_RESPAWN:
+        info = leaf.run_reaching("actor_defeat_and_score", _DEFEAT(actor), merge_bands(expected),
+                                 what, DEFEAT_TRANSFER, stop_pc=DEFEAT_RESPAWN_PC, **how)
+    else:
+        info = leaf.run("actor_defeat_and_score", _DEFEAT(actor), merge_bands(expected), what, **how)
+
+    _assert_writes(info, expected, what)
+    assert info["ret"] == expected_exit, (
+        f"{what}: the reconstruction reported exit {info['ret']}, not the {expected_exit} this "
+        f"case expects")
+    assert info["regs"]["a0"] == actor, f"{what}: a0 moved, which this routine does not do"
+    return info, expected
+
+
+# The spawn types a scoring case uses, and what the shipped table pays for each — read off the image
+# rather than tabulated, so the sweep follows the data. Chosen for DISTINCT scores, so a port that
+# indexed the table one entry out fails on the digits and not only on a branch.
+SCORING_TYPES = (2, 4, 11, 25, 26)
+
+
+def test_the_scoring_sweep_reaches_distinct_scores():
+    """The guard on SCORING_TYPES: types whose table entries agreed would make the sweep one case
+    repeated, and the table really does repeat ($200 and $2000 each appear several times)."""
+    paid = [_u32(harness.BASE_IMAGE, _score_table_entry(t)) for t in SCORING_TYPES]
+    assert len(set(paid)) == len(paid), f"the sweep pays {[hex(p) for p in paid]}"
+    assert all(paid), "a zero entry would make the BCD add a no-op and pin nothing"
+
+
+@pytest.mark.parametrize("spawn_type", SCORING_TYPES, ids=[f"type_{t}" for t in SCORING_TYPES])
+def test_a_defeat_pays_its_templates_score_frees_the_slot_and_lowers_the_live_count(spawn_type):
+    """The ordinary path, with the kill count above its limit so the routine runs to its `rts`."""
+    case = f"an ordinary defeat, spawn type {spawn_type}"
+    actor, pokes = _defeat_pokes(case, spawn_type=spawn_type)
+    _run_defeat(case, actor, pokes)
+
+
+# (seeded kill count, the exit it produces, why). The compare is `cmpi.w #2 / ble` on the value the
+# `addq` left IN MEMORY, and it is SIGNED — so $7fff, raised, is a negative count and respawns.
+KILL_COUNT_CASES = (
+    (0x0000, DEFEAT_RESPAWN, "raised to 1, well under the limit"),
+    (0x0001, DEFEAT_RESPAWN, "raised to exactly the limit, which `ble` accepts"),
+    (0x0002, DEFEAT_RETIRED, "raised one PAST it — the first count that retires"),
+    (0x0005, DEFEAT_RETIRED, "well past it"),
+    (0x7fff, DEFEAT_RESPAWN, "raised into the NEGATIVE half, which a signed `ble` accepts"),
+    (0xffff, DEFEAT_RESPAWN, "wrapped to 0"),
+    (0x8000, DEFEAT_RESPAWN, "the most negative count there is"),
+)
+
+
+@pytest.mark.parametrize("kills,expected_exit,why", KILL_COUNT_CASES,
+                         ids=[f"kills_{c[0]:04x}" for c in KILL_COUNT_CASES])
+def test_the_kill_count_decides_between_freeing_the_slot_and_the_respawn_tail(kills, expected_exit,
+                                                                              why):
+    case = f"a kill count of {kills:#06x} ({why})"
+    actor, pokes = _defeat_pokes(case, kills=kills)
+    info, _expected = _run_defeat(case, actor, pokes)
+    assert info["ret"] == expected_exit
+
+
+def test_the_kill_count_sweep_brackets_the_limit_and_reaches_both_exits():
+    """A sweep that never sat exactly ON the limit would pass a `blt` written for a `ble`, and one
+    that never crossed the sign would pass an UNSIGNED compare."""
+    counts = [(kills + 1) & WORD_MASK for kills, _exit, _why in KILL_COUNT_CASES]
+    assert KILL_RESPAWN_LIMIT in counts and KILL_RESPAWN_LIMIT + 1 in counts
+    assert any(s16(count) < 0 for count in counts)
+    assert {exit_code for _kills, exit_code, _why in KILL_COUNT_CASES} == {DEFEAT_RETIRED,
+                                                                          DEFEAT_RESPAWN}
+
+
+def test_the_unscored_type_pays_nothing_counts_nothing_and_always_frees_the_slot():
+    """`cmpi.w #$26,4(a0) / beq` jumps PAST the score, the kill count AND the `ble`, so this type
+    can never respawn however low its template's count is."""
+    case = "the unscored type, with a kill count that would otherwise respawn"
+    actor, pokes = _defeat_pokes(case, actor_type=TYPE_UNSCORED, kills=0)
+    info, expected = _run_defeat(case, actor, pokes)
+    assert info["ret"] == DEFEAT_RETIRED
+    assert not any(addr in expected for addr in (BCD_SCORE, BCD_ADDEND)), (
+        "the unscored arm must not reach the score accumulator at all")
+
+
+def test_the_type_test_is_a_word_compare_against_that_value_alone():
+    """The neighbours of $26 have to take the ordinary arm, or a port that tested a BYTE or a range
+    would pass. $0026 is also what the low byte of $1026 is, which is the other half of it."""
+    for actor_type in (TYPE_UNSCORED - 1, TYPE_UNSCORED + 1, 0x1000 | TYPE_UNSCORED):
+        case = f"actor type {actor_type:#06x}, one the unscored test must not catch"
+        actor, pokes = _defeat_pokes(case, actor_type=actor_type, kills=5)
+        info, expected = _run_defeat(case, actor, pokes)
+        assert BCD_SCORE in expected, f"{case}: the score arm was skipped"
+        assert info["ret"] == DEFEAT_RETIRED
+
+
+# (wrapped word, whether the template is re-armed, why). `tst.w -2(a6) / beq` reads ANY nonzero,
+# where $ff42's own test of the same word is `cmpi.w #$ffff` — so a small positive value is where
+# the two readings part company, and this routine's is the looser one.
+WRAPPED_CASES = (
+    (0x0000, False, "the cursor has not been round: the template retires"),
+    (0xffff, True, "WB_SPAWN_WRAPPED_SET, the only value the image itself writes"),
+    (0x0001, True, "a small positive value — `tst.w` takes it where `cmpi.w #$ffff` would not"),
+    (0x8000, True, "a negative one"),
+)
+
+
+@pytest.mark.parametrize("wrapped,rearms,why", WRAPPED_CASES,
+                         ids=[f"wrapped_{c[0]:04x}" for c in WRAPPED_CASES])
+def test_the_wrapped_flag_decides_whether_the_template_is_re_armed(wrapped, rearms, why):
+    case = f"a wrapped flag of {wrapped:#06x} ({why})"
+    actor, pokes = _defeat_pokes(case, wrapped=wrapped)
+    _info, expected = _run_defeat(case, actor, pokes)
+    template = TEMPLATE_TABLE + DEFEAT_STATE["template_slot"] * SPAWN_RECORD_BYTES
+    armed = expected.get(template + SPAWN_ARMED)
+    assert (armed == SPAWN_REARM) == rearms, (
+        f"{case}: WB_SPAWN_ARMED ended {armed}, and the case expects rearms={rearms}")
+
+
+# Spawn types whose SCALED index is not what an unwrapped one would be. $8000 scales to zero inside
+# the word (so it reads the table's FIRST entry), $2000 to $8000 and $bfff to $fffc, which read 32
+# and 64 KiB above the table — all inside the image, none anywhere near the 32 entries the data has.
+# Every one of them has BIT 14 CLEAR, which the extend-bit guard below is what enforces.
+SCORE_INDEX_WRAP_TYPES = (0x8000, 0x2000, 0xbfff)
+WRAP_SCORE = 0x00007700         # a valid packed-BCD score to plant where each one lands
+
+
+@pytest.mark.parametrize("spawn_type", SCORE_INDEX_WRAP_TYPES,
+                         ids=[f"type_{t:04x}" for t in SCORE_INDEX_WRAP_TYPES])
+def test_the_score_index_wraps_inside_a_word_and_reads_wherever_that_lands(spawn_type):
+    """No bounds check anywhere: the type is scaled by a `lsl.w`, so the index wraps at $10000 and
+    the LONGWORD read can name anything in the 64 KiB above the table."""
+    case = f"a spawn type of {spawn_type:#06x}, whose scaled index wraps"
+    actor, pokes = _defeat_pokes(case, spawn_type=spawn_type, score_entry=WRAP_SCORE)
+    _run_defeat(case, actor, pokes)
+
+
+def test_the_wrap_sweep_lands_outside_the_tables_own_entries():
+    """The guard: a sweep whose types all landed inside the 32 shipped entries would be measuring
+    the ordinary path under another name."""
+    table_end = SCORE_TABLE + SCORE_TABLE_ENTRIES * SCORE_LEN
+    reached = [_score_table_entry(t) for t in SCORE_INDEX_WRAP_TYPES]
+    assert any(at >= table_end for at in reached), [hex(at) for at in reached]
+    assert any(at < table_end for at in reached), (
+        "the wrap that lands back INSIDE the table is the one a port using a longword index misses")
+
+
+def test_no_case_reaches_the_extend_bit_the_score_accumulator_cannot_reproduce():
+    """THE ONE UNPINNED EDGE, stated as a sweep-wide fact. `lsl.w #2,d2` leaves X holding the spawn
+    type's BIT 14 and bcd_add_score_bd70's first `abcd` folds the caller's X into the lowest digit
+    pair (../names.txt's cmt at $b5a2); src/hud.c reproduces the X = 0 entry only, because emu.run
+    has no entry-CCR parameter. `_defeat_pokes` REFUSES such a case as it is seeded, so this names
+    the type lists that refusal protects rather than leaving a reader to find the assert."""
+    types = set(SCORING_TYPES) | set(SCORE_INDEX_WRAP_TYPES) | {DEFEAT_STATE["spawn_type"]}
+    reaching = sorted(t for t in types if t & SCORE_INDEX_EXTEND_BIT)
+    assert not reaching, (
+        f"spawn type(s) {[hex(t) for t in reaching]} carry bit 14, so `lsl.w #2` enters "
+        f"bcd_add_score_bd70 with X set — an entry state the oracle cannot be given")
+
+
+# --- the boss block ---------------------------------------------------------------------------------
+
+def test_the_boss_record_is_slot_three_of_the_table_the_flag_selects():
+    """The `cmpa.l` accepts ONE address, and this is what it is: the same slot src/scene.c's
+    fragment arm copies all eight fragments' starting position out of."""
+    assert BOSS_ORIGIN == TABLE_A32 + 3 * RECORD_BYTES
+
+
+def test_a_boss_defeat_stops_the_music_raises_the_flag_fires_the_effect_and_pays_the_meter():
+    """The whole gated block at once, and the only case in this battery that reaches the chip. The
+    stop chain's module state and its PSG ledger are test_sound.py's models, the trigger's writes
+    are that battery's too, and the meter's word is test_hud.py's."""
+    case = "a boss defeat with the mode flag up"
+    actor, pokes = _defeat_pokes(case, a32=0xffff, actor=BOSS_ORIGIN)
+    info, expected = _run_defeat(case, actor, pokes)
+
+    assert_stop_chain_psg_state(info, DEFEAT_MIXER, f"{case}: the chip the stop chain silences")
+    assert leaf.read_int(info, BOSS_DEFEAT_FLAG, WORD_LEN, case) == BOSS_DEFEAT_SET, (
+        "the flag src/scene.c's fragment arm reads next frame")
+    assert expected[SND_ENGINE_ENABLED] == 0, "the engine flag is part of stub +28's own writes"
+    for offset in range(SND_SHADOW_SEED_LEN):
+        assert PSG_REG_MIXER_SHADOW + offset in expected, (
+            "the module's shadow of the four silenced registers must be rewritten too")
+
+
+# (mode flag, the record that died, why) — the two halves of the gate, each failing on its own.
+BOSS_GATE_CASES = (
+    (0x0000, BOSS_ORIGIN, "the boss record, but the mode flag is down"),
+    (0xffff, DEFEAT_ACTOR, "the flag is up, but an ordinary record died"),
+    (0x0000, DEFEAT_ACTOR, "neither"),
+)
+
+
+@pytest.mark.parametrize("a32,actor_hint,why", BOSS_GATE_CASES,
+                         ids=["flag-down", "wrong-record", "neither"])
+def test_the_boss_block_needs_both_the_mode_flag_and_that_one_record(a32, actor_hint, why):
+    """Each half of `tst.w $a32.w / beq` and `cmpa.l #$9e94,a0 / bne`. Nothing sounds, nothing is
+    flagged and the meter is untouched — and the run makes NO PSG access at all, which is what the
+    empty ledger says."""
+    case = f"the boss gate: {why}"
+    actor, pokes = _defeat_pokes(case, a32=a32, actor=actor_hint)
+    info, expected = _run_defeat(case, actor, pokes)
+    assert BOSS_DEFEAT_FLAG not in expected, f"{case}: the boss flag was raised"
+    assert SND_ENGINE_ENABLED not in expected, f"{case}: the sound module was stopped"
+    assert METER_VALUE not in expected, f"{case}: the meter was paid"
+    assert info["regs"]["psg_events"] == [], f"{case}: the chip was touched"
+
+
+def test_the_boss_gate_sweep_covers_both_halves_of_the_test():
+    """A sweep that only ever lowered the flag would pass a port that dropped the `cmpa.l`."""
+    flags = {a32 for a32, _actor, _why in BOSS_GATE_CASES}
+    records = {actor for _a32, actor, _why in BOSS_GATE_CASES}
+    assert flags == {0x0000, 0xffff} and records == {BOSS_ORIGIN, DEFEAT_ACTOR}
+
+
+# The gate's flag is read by `tst.w`, and $0000/$ffff — the only two values the game itself writes,
+# and the only two the cases above use — agree with a reader of EITHER byte. These are the words that
+# do not: $0100's low byte is zero and $00ff's high byte is, so between them they separate the word
+# read from both halves it could have been.
+BOSS_FLAG_HALF_ZERO_WORDS = (0x0100, 0x00ff)
+
+
+@pytest.mark.parametrize("a32", BOSS_FLAG_HALF_ZERO_WORDS,
+                         ids=[f"a32_{f:04x}" for f in BOSS_FLAG_HALF_ZERO_WORDS])
+def test_the_mode_flag_is_read_as_a_word_and_not_as_either_of_its_bytes(a32):
+    case = f"a boss defeat with the mode flag at {a32:#06x}"
+    actor, pokes = _defeat_pokes(case, a32=a32, actor=BOSS_ORIGIN)
+    _info, expected = _run_defeat(case, actor, pokes)
+    assert BOSS_DEFEAT_FLAG in expected, (
+        f"{case}: the boss block did not fire, so the gate read one byte of the flag word")
+
+
+def test_the_word_read_sweep_zeroes_each_half_of_the_flag_in_turn():
+    """The guard: either value alone pins only the half it happens to zero."""
+    assert any(value & 0xff == 0 for value in BOSS_FLAG_HALF_ZERO_WORDS), (
+        "no case zeroes the LOW byte, so a gate reading that byte alone stays unpinned")
+    assert any(value >> 8 == 0 for value in BOSS_FLAG_HALF_ZERO_WORDS), (
+        "no case zeroes the HIGH byte, so a gate reading that byte alone stays unpinned")
+    assert all(value != 0 for value in BOSS_FLAG_HALF_ZERO_WORDS), (
+        "each word must be nonzero, or the block it is meant to fire would not fire at all")
+
+
+def test_the_body_ends_where_its_own_score_table_begins():
+    """The two bound each other: `lea $6c5c.l,a2` names the table from inside the body, so the
+    entry pin's length and the table's base are one claim. Ghidra's 290 bytes is neither — it folds
+    the table in and stops two bytes short of its end."""
+    entry = leaf.entry_of("actor_defeat_and_score")
+    assert entry + len(ENTRY_BYTES["actor_defeat_and_score"]) == SCORE_TABLE
+    assert SCORE_TABLE + SCORE_TABLE_ENTRIES * SCORE_LEN == DEFEAT_RESPAWN_PC, (
+        "the table's 32 entries must end exactly on the respawn continuation")
+
+
+def test_the_checkpointed_exit_is_the_branch_the_entry_pin_assembles():
+    """DEFEAT_TRANSFER is searched for in the bytes this battery ASSEMBLES, so it is worth checking
+    the same address holds that `ble.w` in the loaded IMAGE — which is what the checkpointed runs
+    actually execute."""
+    expected = branch_w_to(BLE_W, DEFEAT_TRANSFER, DEFEAT_RESPAWN_PC)
+    actual = bytes(harness.BASE_IMAGE[DEFEAT_TRANSFER:DEFEAT_TRANSFER + len(expected)])
+    assert actual == expected, (
+        f"{DEFEAT_TRANSFER:#x} is {actual.hex()}, not the {expected.hex()} the tail's `ble.w` is")

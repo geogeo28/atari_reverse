@@ -1,11 +1,26 @@
-"""Differential test for src/sound.c — the sound module's SFX trigger and the stub that calls it.
+"""Differential test for src/sound.c — the sound module's SFX trigger, the stub that calls it, and
+the STOP CHAIN that drives the chip.
 
 THE FIRST BATTERY INSIDE THE SOUND MODULE. Everything at $17adc..$1abc8 is one PC-relative replayer
 the game reaches only through the stub table at its head, and $1a48a is the one routine in it that
-touches nothing but RAM: no PSG port, no supervisor mode, no call out. So a case here is the same
-whole-image differential as everywhere else, and what it proves is narrow and worth stating — that
-the right bytes landed in the right module fields. WHAT IS HEARD is the per-VBL tick at $17c74,
+touches nothing but RAM: no PSG port, no supervisor mode, no call out. So a trigger case here is the
+same whole-image differential as everywhere else, and what it proves is narrow and worth stating —
+that the right bytes landed in the right module fields. WHAT IS HEARD is the per-VBL tick at $17c74,
 which reads this state and writes $ff8800, and nothing here says anything about it.
+
+...AND THE FIRST BATTERY ANYWHERE THAT DRIVES THE YM2149. `snd_stop` -> `snd_stop_all_sfx` ->
+`snd_psg_silence` end in four chip accesses, and the first of them is a READ: `ori.b #$3f,d1` sets
+the six tone/noise enables and LEAVES BITS 6-7, the port A/B I/O direction lines. Those bits are an
+INPUT of the run — nothing in the routine computes them — so every case here declares them with
+`psg_seed={7: …}`, both cores are served the same byte, and the ordered access ledger plus the
+register file the run leaves are compared alongside the image (tools/recreate_kit/TRAP_MODEL.md,
+"Phase 6"; none of it is IN the image, so nothing else could see a divergence). One case declares
+NOTHING and requires the oracle to refuse the run, which is the guard those cases rest on.
+
+WHY THAT MATTERS MORE THAN IT LOOKS. Before the seeded model the read had no correct answer and was
+served 0 — and `0 | $3f` and `read | $3f` agree, so a reconstruction that ignored the read-back
+would have been GREEN while writing $3f, flipping port A to input and floating the floppy
+drive-select lines. That mutant is one of the sweep's, and it is caught by the ledger alone.
 
 WHAT THE CASES HOLD
 
@@ -33,13 +48,24 @@ WHAT THE CASES HOLD
     Memory cannot show that, so the case enters the oracle with a distinct value in every register
     the oracle reports and requires all fifteen back, WITH the effect's writes landing.
 
+  * THE STOP CHAIN'S THREE ENTRY POINTS. `snd_stop` and `snd_stop_all_sfx` are stub-table entries
+    (+28 and +70) and `snd_psg_silence` is the tail both `bra.w` into, so each is run on its own and
+    each case states the module state that entrant is entitled to write — which is what says the
+    engine flag belongs to the outer one and the shadow bytes to the middle one.
+
 KNOWINGLY NOT PINNED
   * EVERYTHING THE TRIGGER ARMS. It sets a channel's state and returns; the sound is made by the
     tick, which is not ported. A green suite here says nothing about audio.
-  * THE MODULE'S OTHER MUTABLE STATE — the music channel states, the PSG shadow, the PRNG and the
-    globals besides the SFX-active flags. $1a48a touches none of them and nothing here models them:
-    the write set each case allows is exactly the trigger's, so a port that reached one of them
-    reddens as a stray write rather than being covered by a model that does not exist.
+  * THE MODULE'S OTHER MUTABLE STATE — the music channel states, the PRNG and the globals besides
+    the engine flag, the SFX-active flags and the four PSG shadow bytes the stop chain clears.
+    Nothing here models the rest: the write set each case allows is exactly its routine's, so a port
+    that reached one of them reddens as a stray write rather than being covered by a model that does
+    not exist.
+  * THE SUPERVISOR WINDOW. `snd_psg_silence` masks interrupts around its chip writes
+    (`move sr,d2 / move #$2700,sr … move d2,sr`) so the per-VBL tick cannot write the chip mid
+    sequence. The reconstruction makes no attempt at it — there is no C analogue and no interrupt to
+    keep out — and the oracle enters every run at SR = $2700 anyway, so the mask is a no-op there.
+    What IS observable is the saved SR arriving in d2, and one case asserts it.
   * WHAT AN SFX SOUNDS LIKE, or what a descriptor field means beyond the role
     ../notes/sound_module_recon.md read off the tick.
 """
@@ -49,7 +75,8 @@ import pytest
 
 import harness
 import leaf
-from leaf import BRANCH_EXTENSION, RTS, add_w_dn_dn, bsr_w, moveq, opcode, word
+from leaf import (BRANCH_EXTENSION, RTS, add_w_dn_dn, branch_w_to, bsr_w, clr_b_d16, clr_w_d16,
+                  longword, move_b_abs_l_dn, move_b_imm_abs_l, move_b_imm_d16, moveq, opcode, word)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -90,6 +117,19 @@ STATE_VOLUME_COUNT = wb("SND_STATE_VOLUME_COUNT")
 STATE_SECOND_COUNT = wb("SND_STATE_SECOND_COUNT")
 STATE_STREAM_BASE = wb("SND_STATE_STREAM_BASE")
 STATE_STREAM_CURSOR = wb("SND_STATE_STREAM_CURSOR")
+
+# ...and the stop chain's own: the module state it clears, and the chip registers it drives.
+ENGINE_ENABLED = wb("SND_ENGINE_ENABLED")
+ENGINE_DISABLED = wb("SND_ENGINE_DISABLED")
+ACTIVE_FLAGS_LEN = wb("SND_SFX_ACTIVE_FLAGS_LEN")
+PSG_SHADOW = wb("SND_PSG_SHADOW")
+PSG_REG_MIXER = wb("PSG_REG_MIXER")
+PSG_REG_VOLUME_A = wb("PSG_REG_VOLUME_A")
+PSG_REG_VOLUME_B = wb("PSG_REG_VOLUME_B")
+PSG_REG_VOLUME_C = wb("PSG_REG_VOLUME_C")
+PSG_MIXER_ALL_OFF = wb("PSG_MIXER_ALL_OFF")
+PSG_VOLUME_SILENT = wb("PSG_VOLUME_SILENT")
+SILENCED_VOLUMES = (PSG_REG_VOLUME_A, PSG_REG_VOLUME_B, PSG_REG_VOLUME_C)
 
 LONGWORD_MASK = leaf.LONGWORD_MASK
 LONGWORD_LEN = leaf.LONGWORD_BYTES
@@ -362,15 +402,115 @@ def _stub(offset, called, save, restore):
             + opcode(MOVEM_L_FROM_POSTINC_A7) + word(restore) + RTS)
 
 
+# --- the stop chain's own encodings --------------------------------------------------------------
+# `clr.w`/`clr.b d16(An)` are leaf's (three batteries spell the byte form); the LONG form has one
+# user and stays here, beside the instruction it belongs to. The three SR moves have one user each
+# and are this file's alone — nothing else in the reconstruction touches the status register.
+CLR_L_D16_AN = 0x42a8           # clr.l d16(An)
+MOVE_SR_DN = 0x40c0             # move sr,Dn — NOT privileged on a 68000 (it is from the 68010 on)
+MOVE_DN_SR = 0x46c0             # move Dn,sr
+MOVE_IMM_SR = 0x46fc            # move #imm,sr
+ORI_B_IMM_DN = 0x0000           # ori.b #imm,Dn — the immediate travels in a WORD
+MOVE_B_DN_ABS_L = 0x13c0        # move.b Dn,<abs>.l — the SOURCE register is the low three bits (a
+                                # `move`'s source EA), where the destination's sit at bits 6-11
+BRA_W = 0x6000
+
+D2 = 2                          # d1 takes the mixer read-back; d2 holds the saved SR
+# The two ports are leaf.py's: test_audio_capture.py spells the select one too, so leaf's rule (an
+# encoding or address more than one battery names lives there) applies.
+PSG_SELECT = leaf.PSG_SELECT    # the port a register number is latched into, and read back from
+PSG_DATA = leaf.PSG_DATA        # ...and the write-only data port
+
+SUPERVISOR_SR = 0x2700          # `move.w #$2700,sr`: supervisor, IPL 7, condition codes clear —
+                                # numerically the SR the oracle enters every run at, which is why
+                                # the mask is a no-op there (TRAP_MODEL.md, "The entry state")
+BYTE_MASK = 0xff
+
+
+def _clr_l_d16(base, displacement):
+    return opcode(CLR_L_D16_AN | base) + word(displacement)
+
+
+def _psg_select(register):
+    """`move.b #<reg>,$ff8800.l` — the latch write every access begins with."""
+    return move_b_imm_abs_l(register, PSG_SELECT)
+
+
+def _psg_write_imm(register, value):
+    """...and select-then-data for a constant, which is how the three volumes are zeroed."""
+    return _psg_select(register) + move_b_imm_abs_l(value, PSG_DATA)
+
+
+def _silence_entry():
+    """$17f30: save the SR and mask interrupts, read-modify-write the mixer, zero the three volume
+    registers, restore the SR. The `ori` is the whole claim — a mask of anything but
+    WB_PSG_MIXER_ALL_OFF, or a `move.b` where the `ori` is, fails on these bytes."""
+    return (opcode(MOVE_SR_DN | D2) + opcode(MOVE_IMM_SR) + word(SUPERVISOR_SR)
+            + _psg_select(PSG_REG_MIXER)
+            + move_b_abs_l_dn(D1, PSG_SELECT)
+            + opcode(ORI_B_IMM_DN | D1) + word(PSG_MIXER_ALL_OFF)
+            + opcode(MOVE_B_DN_ABS_L | D1) + longword(PSG_DATA)
+            + b"".join(_psg_write_imm(reg, PSG_VOLUME_SILENT) for reg in SILENCED_VOLUMES)
+            + opcode(MOVE_DN_SR | D2) + RTS)
+
+
+def _stop_all_entry():
+    """$1aaea: the four shadow stores mirror the four chip accesses above — same registers, same
+    values, `clr.w` covering two adjacent volume shadows — which is the claim that the shadow is
+    indexed by REGISTER NUMBER. Ends in a `bra.w`, not a `bsr`."""
+    base = leaf.entry_of("snd_stop_all_sfx")
+    return leaf.assemble(base, [
+        _lea_pc(A3, MODULE_BASE),
+        _clr_l_d16(A3, _module_displacement(ACTIVE_FLAGS)),
+        clr_w_d16(A3, _module_displacement(PSG_SHADOW + PSG_REG_VOLUME_A)),
+        clr_b_d16(A3, _module_displacement(PSG_SHADOW + PSG_REG_VOLUME_C)),
+        move_b_imm_d16(A3, PSG_MIXER_ALL_OFF, _module_displacement(PSG_SHADOW + PSG_REG_MIXER)),
+        lambda at: branch_w_to(BRA_W, at, leaf.entry_of("snd_psg_silence")),
+    ])
+
+
+def _stop_entry():
+    """$17f24: `sf` the engine flag and `bra.w` on. Twelve bytes."""
+    base = leaf.entry_of("snd_stop")
+    return leaf.assemble(base, [
+        _lea_pc(A3, MODULE_BASE),
+        opcode(SF_D16_AN | A3) + _module_offset(ENGINE_ENABLED),
+        lambda at: branch_w_to(BRA_W, at, leaf.entry_of("snd_stop_all_sfx")),
+    ])
+
+
 ENTRY_BYTES = {
     "snd_trigger_effect": _trigger_entry(),
     "snd_call_trigger_effect": _stub(*_TRIGGER_STUB),
+    "snd_psg_silence": _silence_entry(),
+    "snd_stop_all_sfx": _stop_all_entry(),
+    "snd_stop": _stop_entry(),
 }
-SOUND_ROUTINE_COUNT = 2
+SOUND_ROUTINE_COUNT = 5
+
+# The caps, from the bodies, each the body's own instruction count plus the one instruction osh_run
+# counts past its `rts` (leaf.RUNNER_SENTINEL_INSN — measured here first, hoisted there once three
+# batteries derived caps from instruction counts). Silence is 2 SR moves + 4 for the mixer
+# read-modify-write + 2 per volume register + the restore and the `rts`; each entrant above it adds
+# its own stores and its `bra.w` (stop_all: `lea`, three clears, the shadow mixer store, the branch;
+# stop: `lea`, `sf`, branch).
+SILENCE_INSN_CAP = 2 + 4 + 2 * len(SILENCED_VOLUMES) + 2 + leaf.RUNNER_SENTINEL_INSN
+STOP_ALL_INSN_CAP = SILENCE_INSN_CAP + 6
+STOP_INSN_CAP = STOP_ALL_INSN_CAP + 3
 
 # --- the glue ------------------------------------------------------------------------------------
 _trigger = leaf.register_glue("snd_trigger_effect", [ctypes.c_uint32] * 2)
 _stub_call = leaf.register_glue("snd_call_trigger_effect", [ctypes.c_uint32] * 2)
+_stop = leaf.image_glue("snd_stop")
+_stop_all = leaf.image_glue("snd_stop_all_sfx")
+
+# snd_psg_silence takes NO image argument — it writes no image byte, and its whole output is the
+# access ledger — so its glue is the one here that cannot come out of leaf's two factories.
+_silence_fn = leaf.bind("snd_psg_silence", [])
+
+
+def _silence(_lib, _image):
+    return _silence_fn()
 
 
 def _run(name, glue, image, effect_id, channel, what, regs, poison=True, insns=None):
@@ -819,3 +959,205 @@ def test_the_stub_lands_the_effects_writes(effect_id):
     _run("snd_call_trigger_effect", _stub_call(effect_id, CHANNEL_A), harness.BASE_IMAGE,
          effect_id, CHANNEL_A, f"sfx {effect_id} through the stub",
          regs={"d0": effect_id, "d1": CHANNEL_A}, insns=STUB_INSN_CAP)
+
+
+# --- the stop chain: $17f24 -> $1aaea -> $17f30 ---------------------------------------------------
+# Three routines, two of them stub-table entries and the third the tail both `bra.w` into. Each is
+# run on its own, and each case states the module state THAT entrant is entitled to write — which is
+# what says the engine flag belongs to the outer one and the four shadow bytes to the middle one.
+#
+# THE MODELS BELOW ARE EXPORTED. test_actor.py's $6bb8 cases reach this chain through stub +28, so
+# they need the same three statements; two copies of them could disagree while both batteries stayed
+# green, which is the reason test_stage.py imports test_hud.py.
+
+PSG_WRITE = harness.OS_PSG_EVENT_WRITE
+PSG_READ = harness.OS_PSG_EVENT_READ
+PSG_NREGS = harness.OS_PSG_NREGS
+
+
+def silence_events(mixer_on_entry):
+    """The ordered access ledger `snd_psg_silence` leaves: read the mixer back, write it merged, then
+    three volume writes. The READ entry is what separates this from a reconstruction that read the
+    WRONG register — such a run's writes, and the file it leaves, can be a correct one's exactly."""
+    silenced = mixer_on_entry | PSG_MIXER_ALL_OFF
+    return ([(PSG_READ, PSG_REG_MIXER, mixer_on_entry), (PSG_WRITE, PSG_REG_MIXER, silenced)]
+            + [(PSG_WRITE, reg, PSG_VOLUME_SILENT) for reg in SILENCED_VOLUMES])
+
+
+def silence_file(psg_seed):
+    """...and the register file plus its known mask afterwards, as (bytes, mask).
+
+    Built from the SEED rather than from the ledger, so it is a second statement of the same run and
+    not a restatement of the first: a register the case declared and the routine never touches has to
+    come back holding what it was given.
+    """
+    values = bytearray(PSG_NREGS)
+    known = 0
+    for reg, value in psg_seed.items():
+        values[reg] = value
+        known |= 1 << reg
+    values[PSG_REG_MIXER] = psg_seed[PSG_REG_MIXER] | PSG_MIXER_ALL_OFF
+    for reg in SILENCED_VOLUMES:
+        values[reg] = PSG_VOLUME_SILENT
+        known |= 1 << reg
+    return bytes(values), known | (1 << PSG_REG_MIXER)
+
+
+# What each entrant of the chain writes to the IMAGE, cumulatively: the tail writes nothing at all
+# (its whole output is the ledger), the middle one clears the SFX flags and rewrites the module's own
+# shadow of the four registers it is about to silence, and the outer one adds the engine flag.
+SILENCE_WRITES = {}
+STOP_ALL_WRITES = {
+    **SILENCE_WRITES,
+    ACTIVE_FLAGS: bytes(ACTIVE_FLAGS_LEN),
+    PSG_SHADOW + PSG_REG_MIXER: bytes([PSG_MIXER_ALL_OFF]),
+    PSG_SHADOW + PSG_REG_VOLUME_A: bytes([PSG_VOLUME_SILENT]),
+    PSG_SHADOW + PSG_REG_VOLUME_B: bytes([PSG_VOLUME_SILENT]),
+    PSG_SHADOW + PSG_REG_VOLUME_C: bytes([PSG_VOLUME_SILENT]),
+}
+STOP_WRITES = {**STOP_ALL_WRITES, ENGINE_ENABLED: bytes([ENGINE_DISABLED])}
+
+STOP_CHAIN = {
+    "snd_psg_silence": (SILENCE_WRITES, SILENCE_INSN_CAP),
+    "snd_stop_all_sfx": (STOP_ALL_WRITES, STOP_ALL_INSN_CAP),
+    "snd_stop": (STOP_WRITES, STOP_INSN_CAP),
+}
+_STOP_CHAIN_GLUE = {
+    "snd_psg_silence": _silence,
+    "snd_stop_all_sfx": _stop_all,
+    "snd_stop": _stop,
+}
+
+# The bytes ../names.txt gives each routine, stated so the entry pins cannot pass on a body of any
+# other length — and so that the three have to tile the addresses the module map claims.
+STOP_CHAIN_BODY_BYTES = {"snd_stop": 12, "snd_psg_silence": 82, "snd_stop_all_sfx": 26}
+
+
+def assert_psg_state(info, psg_seed, what):
+    """The two off-image surfaces, against the models above. Nothing in the image can show either:
+    a run that silenced the wrong register, or none at all, writes exactly the same memory."""
+    events = info["regs"]["psg_events"]
+    expected = silence_events(psg_seed[PSG_REG_MIXER])
+    assert events == expected, (
+        f"{what}: the chip saw {events}, not {expected} "
+        f"(each entry is (kind, register, value); kind {PSG_READ} is a read-back)")
+    values, known = silence_file(psg_seed)
+    assert (info["regs"]["psg_file"], info["regs"]["psg_known"]) == (values, known), (
+        f"{what}: the register file ended {info['regs']['psg_file'].hex()} "
+        f"(known {info['regs']['psg_known']:#06x}), not {values.hex()} (known {known:#06x})")
+
+
+def run_stop_chain(name, psg_seed, what, regs=None):
+    """One stop-chain differential: the image diff and the write set leaf.run makes, this routine's
+    own written bytes stated by value, and both PSG surfaces."""
+    written, cap = STOP_CHAIN[name]
+    info = leaf.run(name, _STOP_CHAIN_GLUE[name], write_bands(written), what,
+                    regs=dict(regs or {}), max_insns=cap, psg_seed=psg_seed)
+    assert_written(info, written, what)
+    assert_psg_state(info, psg_seed, what)
+    return info
+
+
+# Every mixer byte a case declares the chip held. The first is what TOS leaves (both ports OUTPUT),
+# and the reason bits 6-7 are the point: `ori.b #$3f` must carry them through untouched.
+MIXER_SEEDS = (
+    (0xc0, "both port-direction bits set — what TOS leaves, and what the floppy depends on"),
+    (0x40, "port A output, port B input"),
+    (0x80, "...and the other way round, so the two bits are told apart"),
+    (0x00, "no bits at all: exactly the value a FABRICATED read would have invented"),
+    (0xff, "every bit, so the `ori` has nothing left to set"),
+    (PSG_MIXER_ALL_OFF, "already silent, with both direction bits clear"),
+    (0x9c, "port B only, three of the six enables clear — an ordinary mid-tune mixer"),
+)
+MIXER_DIRECTION_BITS = 0xc0     # bits 6-7: the port A/B I/O direction lines the `ori` preserves
+
+
+@pytest.mark.parametrize("name", sorted(STOP_CHAIN))
+@pytest.mark.parametrize("mixer,why", MIXER_SEEDS, ids=[f"mixer_{s[0]:02x}" for s in MIXER_SEEDS])
+def test_the_stop_chain_silences_the_chip_from_the_mixer_the_case_declares(name, mixer, why):
+    run_stop_chain(name, {PSG_REG_MIXER: mixer}, f"{name} over a mixer of {mixer:#04x} ({why})")
+
+
+def test_the_mixer_seeds_reach_all_four_states_of_the_preserved_bits():
+    """The guard on the sweep above: bits 6-7 are the two the `ori` must NOT touch, so a sweep that
+    never varied them would agree with a port that cleared them in three cases out of four."""
+    seen = {mixer & MIXER_DIRECTION_BITS for mixer, _why in MIXER_SEEDS}
+    assert seen == {0x00, 0x40, 0x80, 0xc0}, f"the sweep only reaches {sorted(hex(s) for s in seen)}"
+
+
+@pytest.mark.parametrize("mixer,why", MIXER_SEEDS, ids=[f"mixer_{s[0]:02x}" for s in MIXER_SEEDS])
+def test_the_mixer_write_keeps_the_port_direction_bits_it_read_back(mixer, why):
+    """Stated as its own claim rather than left inside the ledger comparison, because it is the one
+    thing the seeded read model exists for: a port that ignored the read-back writes $3f, port A
+    flips to input, and the floppy drive-select lines float."""
+    what = f"the preserved bits of a mixer of {mixer:#04x} ({why})"
+    info = run_stop_chain("snd_psg_silence", {PSG_REG_MIXER: mixer}, what)
+    written = [value for kind, reg, value in info["regs"]["psg_events"]
+               if kind == PSG_WRITE and reg == PSG_REG_MIXER]
+    assert written == [mixer | PSG_MIXER_ALL_OFF], f"{what}: the mixer was written {written}"
+    assert written[0] & MIXER_DIRECTION_BITS == mixer & MIXER_DIRECTION_BITS, (
+        f"{what}: the direction bits came out {written[0] & MIXER_DIRECTION_BITS:#04x}")
+
+
+# A register the routine never touches, declared alongside the mixer. Register 14 is PSG port A —
+# the floppy drive/side select — which is exactly what the preserved direction bits are ABOUT.
+UNTOUCHED_SEED = {PSG_REG_MIXER: 0xc0, 14: 0x07, 0: 0x5a}
+
+
+def test_a_register_the_chain_never_names_comes_back_holding_what_the_case_declared():
+    """The other half of the ledger comparison: the chain writes four registers and only four, so a
+    port that silenced the chip by rewriting the whole file would leave these two changed."""
+    info = run_stop_chain("snd_stop", UNTOUCHED_SEED, "a seed declaring two registers besides the "
+                                                      "mixer")
+    file_after = info["regs"]["psg_file"]
+    for reg, value in UNTOUCHED_SEED.items():
+        if reg == PSG_REG_MIXER:
+            continue
+        assert file_after[reg] == value, (
+            f"register {reg} ended {file_after[reg]:#04x}, not the {value:#04x} the case declared")
+
+
+def test_a_case_that_declares_nothing_is_refused_rather_than_served_a_fabricated_mixer():
+    """THE GUARD EVERY CASE ABOVE RESTS ON. Without the seed the oracle has no correct byte for the
+    read-back and must refuse the run — if it invented one instead, a port that ignored the
+    read-back would agree with it and this whole battery would be measuring `shim.c`."""
+    with pytest.raises(RuntimeError, match=r"psg_seed=\{7: <byte>\}"):
+        leaf.run("snd_psg_silence", _silence, [], "snd_psg_silence with nothing declared",
+                 max_insns=SILENCE_INSN_CAP)
+
+
+# The registers the tail leaves behind. d1 takes the read-back through a BYTE move and a BYTE `ori`,
+# so its upper three bytes are the caller's; d2 takes the SR, a WORD move, so its high half is too.
+SILENCE_ENTRY_REGS = {"d1": 0x11223344, "d2": 0x55667788}
+SILENCE_MIXER = 0xc0
+
+
+def test_the_tail_leaves_the_read_back_in_d1_as_a_byte_and_the_saved_sr_in_d2_as_a_word():
+    """Neither register is reproduced — the C returns nothing and has no status register — so this
+    asserts the ORACLE's, the way src/actor.c's passes do with their walked-out cursors. It is what
+    says `move.b`/`ori.b` and `move sr` are byte and word operations rather than longword ones."""
+    what = "the tail's outgoing registers"
+    info = run_stop_chain("snd_psg_silence", {PSG_REG_MIXER: SILENCE_MIXER}, what,
+                          regs=dict(SILENCE_ENTRY_REGS))
+    merged = SILENCE_MIXER | PSG_MIXER_ALL_OFF
+    assert info["regs"]["d1"] == (SILENCE_ENTRY_REGS["d1"] & ~BYTE_MASK) | merged, (
+        f"{what}: d1 is {info['regs']['d1']:#010x} — the read-back is a BYTE move")
+    assert info["regs"]["d2"] == leaf.set_low_word(SILENCE_ENTRY_REGS["d2"], SUPERVISOR_SR), (
+        f"{what}: d2 is {info['regs']['d2']:#010x}, not the entry SR in its low word")
+
+
+def test_the_stop_chain_bodies_are_the_lengths_the_module_map_claims():
+    """Without this the entry pins would pass on a body of any length. The three also have to TILE:
+    $17f24's twelve bytes end where the tail begins, and the tail ends where snd_resume does."""
+    for name, expected in sorted(STOP_CHAIN_BODY_BYTES.items()):
+        assert len(ENTRY_BYTES[name]) == expected, (
+            f"{name} assembles to {len(ENTRY_BYTES[name])} bytes, not the {expected} claimed")
+    assert leaf.entry_of("snd_stop") + STOP_CHAIN_BODY_BYTES["snd_stop"] \
+        == leaf.entry_of("snd_psg_silence"), "$17f24's twelve bytes must abut the tail"
+    assert leaf.entry_of("snd_psg_silence") + STOP_CHAIN_BODY_BYTES["snd_psg_silence"] \
+        == leaf.entry_of("snd_resume"), "...and the tail must end where snd_resume begins"
+
+
+# That the two are the stub table's +28 and +70 needs no case of its own: the shape test above builds
+# each stub's `bsr` displacement from leaf.entry_of(called), so a reconstruction sitting anywhere
+# else fails there, on the bytes at the stub's own address.

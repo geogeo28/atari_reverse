@@ -72,14 +72,19 @@ include/input.h            the two joystick-pipeline leaves
 include/map.h              the collision map's three routines — prototypes, and why $10a2's result
                            is two registers rather than one
 include/actor.h            the followed actor's record, the two tests over it, the two passes
-                           that project actor records into screen coordinates, and the table's
-                           lifecycle — reset, free, the two pool allocators and the spawn
+                           that project actor records into screen coordinates, the table's
+                           lifecycle — reset, free, the two pool allocators and the spawn — and
+                           the two EXIT CODES $6bb8 reports in place of the respawn continuation
+                           it declines to follow
 include/text.h             the message box: the once-a-frame driver's three arms, the glyph
                            plotter's two entry points, and why the prelude calls the plotter (the
                            original has no `rts` in it — it falls through)
 include/stage.h            the STAGE LOADER — prototypes, and why it is not scroll.h: the scroll
                            engine maintains the eight pre-shifted buffers a frame at a time, this
                            tier BUILDS them once when a stage is entered
+include/rng.h              the game's PRNG and the per-stage draw over it — and the false green
+                           the generator carries under this oracle: its one hardware term reads 0
+                           on both sides, so the randomness is gone and the diff stays clean
 include/scroll.h           the whole background scroll subsystem — prototypes, the queue's shape,
                            why a step returns a FLAG (the original returns it through its own
                            return address, and vertically it consumes TWO calls that way), and why
@@ -87,11 +92,13 @@ include/scroll.h           the whole background scroll subsystem — prototypes,
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
 src/effects.c              the effect handlers and the state stubs above them
-src/sound.c                the sound module's RAM-only routine: snd_trigger_effect ($1a48a) and the
+src/sound.c                the sound module: snd_trigger_effect ($1a48a) and the
                            register-preserving stub snd_call_trigger_effect ($17b14) — the module's
-                           first ported bytes; everything that touches the PSG stays unported behind
-                           the differential wall (test/test_sound.py owns the write-set model that
-                           test/test_hud.py imports)
+                           first ported bytes — plus the STOP CHAIN, $17f24 -> $1aaea -> $17f30,
+                           three routines joined by `bra.w` that end in the first ported code in
+                           this project to drive the YM2149. test/test_sound.py owns the write-set
+                           model test/test_hud.py and test/test_actor.py import, and the PSG access
+                           ledger the latter imports too
 src/hud.c                  panel_refresh_frame ($b346) below its own entry: batch 2's eleven leaves
                            (the BCD score/counter accumulators, the panel blits, the meter's clamped
                            add), batch 3's second tier (the digit plotter — a leaf too — its three
@@ -107,7 +114,10 @@ src/actor.c                the actor tier: $67e0, which names the record everyth
                            Then the table's LIFECYCLE: reset ($1f36), free a run ($df9e), the two
                            pool allocators ($1b68/$1b8e, one function here because the originals are
                            byte-identical bar two operands), the spawn ($ffe4) and the two routines
-                           that move a record between standing and falling ($2af2, $14d6)
+                           that move a record between standing and falling ($2af2, $14d6). At the
+                           bottom, what a DEFEAT costs ($6bb8): the score its template's type is
+                           worth, the kill counted, the slot freed and the template re-armed — plus
+                           the boss block above all of it, which stops the music and fires an effect
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -134,6 +144,10 @@ src/stage.c                the stage loader. bg_build_buffer ($fa30) draws the m
                            no part of — it lies past the image and is loaded from disk),
                            resource_table_relocate ($fe1e) the one-time fixup of a loaded table,
                            and $e110's three routines the banners plotted into copy 0
+src/rng.c                  the game's PRNG (rng_next, $68c6, ten callers) and stage_random_kind8
+                           ($e1f0), the draw over it that picks one of eight candidates per stage.
+                           One module because the draw's whole result is the generator's low three
+                           bits, so a battery that pinned them apart would pin neither
 src/scroll.c               the whole scroll subsystem, producer and consumer. The ENGINE ($7522..
                            $8228 + $d28): the frame queue and its dispatch pass, four request
                            handlers, four position steps, the two column fills that redraw the
@@ -181,6 +195,15 @@ test/test_hud.py           the status panel's differential: the game's own bitma
                            rather than through `screen_back`, and exports its model to test_stage.py
 test/test_input.py         the joystick pair's differential — memory for the latch, the whole
                            returned d0 for the edge
+test/test_rng.py           the PRNG's differential, and the one battery here whose module
+                           docstring OPENS with what it cannot pin: the generator's only hardware
+                           term is off-image, so both cores read 0 and the randomness is gone. What
+                           it does pin — each counter on both sides of its own wrap (cleared when it
+                           REACHES its limit, not modulo it), the entropy XOR over a whole word, the
+                           `clr.w` that leaves the caller's high half in the result — and the draw
+                           above it: a packed-BCD stage number decoded by one tens carry, all eight
+                           candidates of a row reached by choosing the seeds that land on them, and
+                           the entry d2 whose high half the `add.l` folds into the table index
 test/test_scroll.py        the scroll subsystem's differential: whole-body entry pins for all
                            thirty-three (6140 bytes, every unrolled loop assembled from its own
                            geometry and the call-carrying bodies from a cursor-tracking _Assembler),
@@ -205,7 +228,11 @@ test/test_map.py           the collision map's differential: an address-keyed wi
                            middle being another routine's, asserted as its own), a model that
                            COMPOSES its five callees' models over one shared memory, and the whole
                            operand scan behind the three globals $1334 raises and clears
-test/test_actor.py         the actor tier's differential: a routine whose WHOLE output is a register
+test/test_actor.py         the actor tier's differential, and the battery that imports the most —
+                           the SFX trigger's write set and the stop chain's PSG ledger from
+                           test_sound.py, the packed-BCD and meter models from test_hud.py, because
+                           $6bb8 calls five reconstructed routines and each is compared through the
+                           battery that owns it. A routine whose WHOLE output is a register
                            (every case compares the oracle's a1 against the reconstruction's return
                            value), the small-positive flag words that separate the tier's `bne`
                            reading of a mode flag from its `bpl` one, the 16-bit ADD whose wrap the
@@ -257,10 +284,12 @@ canonical list of what has to be reachable.
 ### Running a mutation sweep
 
 The gate's coverage claim is only worth what a sweep says: flip a constant, delete a branch,
-off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A sweep **lies** in two
-ways, and both have been measured here, so run one this way:
+off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A sweep **lies** in
+three ways, all three measured here, so run one this way:
 
 ```bash
+.venv/bin/python -m pytest -q -n auto test     # 0. GREEN FIRST: a red or uncollectable tree
+echo "pre-sweep: $?"                           #    reports every mutant as caught
 for m in mutants/*.patch; do
   git apply "$m"
   rm -f build/*.so                       # 1. FORCE the relink...
@@ -279,6 +308,12 @@ done
 2. **A piped `pytest` hides its exit status.** `pytest … | tail` reports the *pipe's* status, so
    every mutant "survives". Batch 19's first sweep came back 0/37 caught for exactly this reason.
    Take the returncode from the unpiped run.
+3. **A tree that does not COLLECT reports every mutant as caught.** The returncode is nonzero either
+   way, and "nonzero = caught" cannot tell a failing case from a failing import. Batch 21b hit this:
+   an encoder hoisted out of two batteries without being added to their import lists broke
+   collection, and three real survivors came back "caught" until the tree was green again. **Verify
+   green immediately before the sweep, not merely before the batch** — the run at step 0 — and again
+   after each restore.
 
 Restore and re-green after each mutant — a sweep left half-applied is worse than none. Its sibling
 recipe, [writing a fuzz test so it shards across

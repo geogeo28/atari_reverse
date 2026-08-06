@@ -58,7 +58,8 @@ import leaf
 from harness import make_image
 from layout import wb
 from leaf import (RTS, add_w_dn_dn, andi_w_dn, asl_w_imm_dn, asr_w_imm_dn, backward_branch,
-                  branch_over, case_salt, clr_w_dn, cmp_w_dn_dn, keyed_block, lea_abs_l, lea_d16,
+                  branch_over, case_salt, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, keyed_block,
+                  lea_abs_l, lea_d16,
                   longword, lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_b_imm_abs_l,
                   move_w_dn_dn, move_w_imm_dn, move_w_ind_dn, move_w_postinc_dn, movea_l_abs_w,
                   mulu_w_imm_dn, opcode, program_writes, rotate_left32, rotate_right32, s8,
@@ -210,11 +211,6 @@ def clip_value(width, side, x):
 # `swap_dn` MOVED INTO leaf.py when this battery became its third user (test_scroll.py and
 # test_stage.py had both spelt it). The rest are new here, and the ones that now stand at two users
 # say so in their own docstring — this batch's STATUS.md section is where that list is registered.
-
-def cmp_w_imm_dn(reg, value):
-    """`cmp.w #imm,Dn` — every clip threshold in the family. ALSO IN test_actor.py."""
-    return opcode(0xb07c | (reg << 9)) + word(value)
-
 
 def move_l_imm_dn(reg, value):
     """`move.l #imm,Dn` — the all-ones a mask word is moved into. ALSO IN test_stage.py."""

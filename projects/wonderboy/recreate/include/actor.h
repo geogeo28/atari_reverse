@@ -4,7 +4,10 @@
  * `followed_actor_record` is the bottom of the tier: fifteen call sites in the image, three of them
  * the routines below. Everything here takes and returns 68000 REGISTERS — a record address in a0, a
  * reach in d0 — because that is the whole interface the originals have; every address is a global
- * named in wonderboy.h, which both languages read, so this header carries no constant of its own.
+ * named in wonderboy.h, which both languages read. The two `#define`s below are the exception, and
+ * they are the same exception scene.h makes: they are not image state at all but the two exits
+ * `actor_defeat_and_score` reports in place of a transfer it declines to follow, and test/layout.py
+ * scrapes this header so that a case names the same two the C does.
  */
 #ifndef WONDERBOY_ACTOR_H
 #define WONDERBOY_ACTOR_H
@@ -129,5 +132,37 @@ void actor_damage_followed(uint8_t *image, uint32_t attacker);
  * that reaches zero or goes negative, WB_ACTOR_FLAGS2_DEFEATED_BIT goes up on `actor`. Twenty-five
  * control-flow sites: one `bsr.w` ($709a) and twenty-four `bra.w`. */
 void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor);
+
+/* --- and what happens when one of them wins ------------------------------------------------------
+ *
+ * $6bb8 is where a defeated actor is PAID FOR: the score its template's type is worth, the kill
+ * counted against that template, the live count lowered, the slot freed and — if the spawn cursor
+ * has already been round once — the template re-armed for another one. Above all of that sits one
+ * gated block: if the record that died is WB_BOSS_FRAGMENT_ORIGIN while WB_STATE_FLAG_A32 is up,
+ * the music stops, WB_BOSS_DEFEAT_FLAG goes up for src/scene.c's fragment arm to find next frame,
+ * SFX WB_BOSS_DEFEAT_SFX fires and the meter is raised.
+ *
+ * IT IS NOT ONLY THE COPYLOCK'S TAIL, AND IT IS NOT RARE. ../names.txt records that the protection's
+ * failure path `jmp`s here, which is how Ghidra came to fold the routine into `copylock_key_check`.
+ * But the image holds TWENTY-NINE control-flow sites aimed at $6bb8: that one `jmp` ($f572), four
+ * unconditional `bra.w` ($35c2, $3ff2, $5472, $54a6) and TWENTY-FOUR conditional `bne.w` — $2556,
+ * $272c, $70aa and twenty-one more. Every one of the twenty-four is the same three instructions: a
+ * per-monster state routine ends `bclr`/`btst #3,9(a0)` and branches here when the bit was set, and
+ * bit 3 of WB_ACTOR_FLAGS2 is the DEFEATED bit `actor_damage_template_hitpoints` raises. So this
+ * routine runs on EVERY monster death in the game, not on a protection failure — which is also what
+ * makes the respawn continuation at $6cdc (below) hot code rather than a corner.
+ *
+ * THE RECONSTRUCTION STOPS AT A BOUNDARY, the same shape src/scene.c's does. `ble.w $6cdc` leaves
+ * these 164 bytes for a RESPAWN continuation that rebuilds the slot as a new creature — it calls
+ * $e1c8/$e1f0 (src/rng.c holds the second) and then rewrites six of the record's fields — and that
+ * continuation is not reconstructed. So instead of following it this function returns WHICH exit it
+ * reached, and a case runs the original with the kit's `stop_pc` set to $6cdc.
+ */
+#define WB_ACTOR_DEFEAT_RETIRED  0u  /* the original `rts`d: the slot is free and the pass is done */
+#define WB_ACTOR_DEFEAT_RESPAWN  1u  /* it `ble.w $6cdc`'d — the template is under its kill limit */
+
+/* $6bb8 — `actor` is the original's a0, the record that just died. Returns one of the two exits
+ * above. Twenty-nine control-flow sites: 24 `bne.w`, 4 `bra.w` and the Copylock's `jmp`. */
+uint32_t actor_defeat_and_score(uint8_t *image, uint32_t actor);
 
 #endif /* WONDERBOY_ACTOR_H */

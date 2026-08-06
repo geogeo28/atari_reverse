@@ -66,8 +66,8 @@ TEMPO_SKIP_MONO = 0x48
 
 # The chip's register-select latch (shim.c's `#define PSG_SELECT`). Its odd alias is +1 and the data
 # port +2, spelled as offsets from this one address rather than as literals of their own so that the
-# three cannot drift apart.
-PSG_SELECT = 0xff8800
+# three cannot drift apart — and the address itself is leaf.py's, since test_sound.py names it too.
+PSG_SELECT = leaf.PSG_SELECT
 # The shifter's sync-mode byte (shim.c's `#define SHIFTER_SYNC`), half of the tempo pair.
 SHIFTER_SYNC = 0xff820a
 

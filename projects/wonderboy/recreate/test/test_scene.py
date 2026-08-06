@@ -12,7 +12,7 @@ would come back GREEN. The C therefore RETURNS which tail it reached, and a case
 runs the oracle with the kit's `stop_pc` set to that tail's address, which diffs the whole prefix at
 the instant control arrives there. That the tail really was taken is not inferred from the C: every
 such case names the TRANSFER INSTRUCTION it expects to leave through and requires the oracle's
-executed-PC coverage to hold it (`run_reaching`), which distinguishes the two stops a checkpointed
+executed-PC coverage to hold it (`leaf.run_reaching`), which distinguishes the two stops a checkpointed
 run can make and says which transfer fired. The transfer instructions themselves are pinned by their
 bytes at their own addresses, so a checkpoint that stopped somewhere else would fail there.
 
@@ -43,7 +43,7 @@ import leaf
 import emu
 from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, assert_entry_is, branch_w_to, bsr_w, case_salt,
                   cmpi_w_abs_l, cmpi_w_d16, keyed_block, longword, merge_bands, movea_l_abs_l,
-                  opcode, program_writes, s16, sub_w_dn_d16, tst_w_abs_w, word)
+                  opcode, program_writes, run_reaching, s16, sub_w_dn_d16, tst_w_abs_w, word)
 from layout import wb
 
 # --- the exits, from include/scene.h -------------------------------------------------------------
@@ -378,36 +378,6 @@ EVERYTHING = STATE_BAND + RECORD_BAND + MAP_BAND + SLOT_BAND + EFFECT_BAND
 # --- glue ----------------------------------------------------------------------------------------
 _RUN_FRAME = leaf.image_glue("scene_run_frame", ctypes.c_uint32)
 _SPEND = leaf.register_glue("scene_spend_visit_budget", [ctypes.c_uint32] * 2, ctypes.c_uint32)
-
-
-def run_reaching(name, glue, allowed, case, transfer, **kwargs):
-    """`leaf.run`, plus the witness that a checkpointed run really did take its tail: the TRANSFER
-    INSTRUCTION at ``transfer`` executed.
-
-    A `stop_pc` run stops at EITHER the checkpoint or the `rts`, and emu.run reports only that one
-    of them was reached — so a case that merely set a checkpoint would pass whether or not the tail
-    was taken. The oracle marks each PC as it executes it and stops BEFORE marking the checkpoint,
-    so "the `bra`/`jmp` into the tail ran" is exactly the missing fact, and it names WHICH transfer
-    fired rather than only that something did.
-
-    THIS BELONGS IN THE KIT. The shim already knows which of its two stops fired (`final_pc`) and
-    reporting it would make the witness exact and free; test/test_copylock.py's `_run_reaching` is
-    the other coverage user here, and a third would be the trigger to hoist both.
-
-    The coverage bitset is GLOBAL and accumulates across runs, so this resets it per call and turns
-    tracking back off afterwards. Nothing in this battery accumulates a corpus, so there is no
-    measurement for the reset to destroy — the caveat test_copylock.py's copy carries.
-    """
-    emu.cov_enable()
-    emu.cov_reset()
-    try:
-        info = leaf.run(name, glue, allowed, case, **kwargs)
-    finally:
-        emu.cov_enable(False)
-    assert emu.cov_visited(transfer), (
-        f"{case}: the run reached its checkpoint without executing the transfer at {transfer:#x}, "
-        f"so it RETURNED rather than taking the tail this case is about")
-    return info
 
 
 def run_frame(case, seeds, expected_exit, allowed=None, cap=SHOP_CAP, via=None):

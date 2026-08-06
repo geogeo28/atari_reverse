@@ -52,7 +52,8 @@ import pytest
 
 import harness
 import leaf
-from leaf import (RTS, addi_w_dn, andi_w_dn, branch, branch_over, bsr_w, case_salt, clr_b_abs_l,
+from leaf import (RTS, addi_w_dn, addq_w_abs_l, andi_w_dn, branch, branch_over, bsr_w,
+                  case_salt, clr_b_abs_l,
                   clr_w_abs_l, cmpi_w_abs_l, dbf, keyed_block, keyed_byte, lea_abs_l, lea_d16,
                   lea_indexed, longword, merge_bands, move_l_imm_abs_l, move_w_abs_l_dn,
                   move_w_dn_dn, move_w_imm_dn, move_w_ind_dn, move_w_indexed_dn,
@@ -471,10 +472,6 @@ def move_w_dn_abs_l(reg, addr):
 
 def andi_w_abs_l(value, addr):
     return opcode(0x0279) + word(value) + longword(addr)
-
-
-def addq_w_abs_l(amount, addr):
-    return opcode(0x5079 | ((amount & 7) << 9)) + longword(addr)
 
 
 def addq_l_ind_a7(amount):

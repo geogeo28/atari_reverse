@@ -1388,9 +1388,13 @@ def _decimal_to_packed(value, length):
     return int(f"{value % 10 ** (length * 2):0{length * 2}d}", 16)
 
 
-def _bcd_expected(accumulated, operand, length, subtract):
+def bcd_expected(accumulated, operand, length, subtract):
     """The result stated in DECIMAL — the reading "packed BCD" means — rather than as src/hud.c's
-    nibble arithmetic, so the two are independent statements. None where a nibble is not a digit."""
+    nibble arithmetic, so the two are independent statements. None where a nibble is not a digit.
+
+    EXPORTED: test_actor.py's $6bb8 cases add a defeat's score through this accumulator, so they
+    need the same statement of what the digits do, and two copies of it could disagree while both
+    batteries stayed green (test_stage.py imports `model_lives_draw` for the same reason)."""
     left = _packed_to_decimal(accumulated, length)
     right = _packed_to_decimal(operand & (2 ** (length * 8) - 1), length)
     if left is None or right is None:
@@ -1453,7 +1457,7 @@ BCD_ROUTINES = (
 # case, and the battery shards across xdist workers.
 BCD_VALID_CASES = tuple(
     (name, accumulator, length, accumulated, operand,
-     _bcd_expected(accumulated, operand, length, subtract), why)
+     bcd_expected(accumulated, operand, length, subtract), why)
     for name, accumulator, length, subtract, cases in BCD_ROUTINES
     for accumulated, operand, why in cases)
 
@@ -1600,16 +1604,27 @@ METER_SIGNED_CASES = (
 )
 
 
+def meter_add_expected(value, maximum, amount):
+    """The word `hud_meter_add_clamped` leaves: a 16-bit raise, then a SIGNED compare that clamps
+    when the raise REACHES the maximum (`ble`, not `bgt` — see the effect handlers).
+
+    EXPORTED, like `bcd_expected` above: $6bb8's boss arm raises the meter through this routine, so
+    test_actor.py states the result with the same three lines rather than a second copy of them.
+    """
+    raised = (value + amount) & WORD_MASK
+    return maximum if _signed_word(maximum) <= _signed_word(raised) else raised
+
+
 def _run_meter_add(amount, value, maximum, what):
     """Runs one case and returns whether the clamp fired, so a caller can assert on the branch as
-    well as on the word. The expected word is derived here from the two seeds rather than tabulated,
+    well as on the word. The expected word is derived from the two seeds rather than tabulated,
     which is what keeps the boundary sweep readable."""
     pokes = {METER_VALUE: word(value), METER_MAX: word(maximum)}
     info = leaf.run("hud_meter_add_clamped", _meter_add(amount), [(METER_VALUE, WORD_LEN)], what,
                     regs={"d0": amount, "_pokes": pokes})
     raised = (value + amount) & WORD_MASK
     clamps = _signed_word(maximum) <= _signed_word(raised)
-    expected = maximum if clamps else raised
+    expected = meter_add_expected(value, maximum, amount)
     ended = leaf.read_int(info, METER_VALUE, WORD_LEN, what)
     assert ended == expected, f"{what}: the meter ended at {ended:#06x}, not {expected:#06x}"
     return clamps

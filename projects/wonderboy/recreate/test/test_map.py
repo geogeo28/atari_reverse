@@ -87,7 +87,7 @@ import harness
 import leaf
 from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16, andi_w_dn,
                   asr_w_imm_dn, branch, branch_over, branch_w_to, case_salt, clr_w_dn, cmp_w_dn_dn,
-                  cmpi_b_dn, cmpi_w_d16, keyed_block, lea_abs_l, lea_indexed, longword,
+                  clr_b_d16, cmpi_b_dn, cmpi_w_d16, keyed_block, lea_abs_l, lea_indexed, longword,
                   lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_b_imm_d16, move_w_abs_l_dn,
                   move_w_dn_dn, move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode,
                   program_writes, s16, set_low_word, sub_w_dn_dn, subi_w_dn, subq_w_dn,
@@ -245,10 +245,6 @@ def mulu_w_dn_dn(destination, source):
 
 def neg_w_dn(reg):
     return opcode(0x4440 | reg)
-
-
-def clr_b_d16(base, displacement):
-    return opcode(0x4228 | base) + word(displacement)
 
 
 def ori_w_dn(reg, value):

@@ -11,6 +11,7 @@ apart afterwards, and how it reads a value back out of the oracle's write set.
 NOT a general harness — the kit is that. This module assumes what a leaf gives it: a run short
 enough for a tight instruction cap, and a write set the caller can enumerate up front.
 """
+import contextlib
 import ctypes
 import zlib
 
@@ -25,6 +26,20 @@ import emu                                                       # noqa: E402
 # routines LOOP (the panel blits move up to 32 rows) passes `run(..., max_insns=)` with its own cap,
 # derived from that routine's own geometry for the same reason.
 LEAF_INSN_CAP = 64
+
+# `osh_run` counts ONE instruction past the routine's own `rts` — the sentinel it returns to — so a
+# cap of exactly the body's instruction count reports "did not reach rts". It is a property of THE
+# RUNNER, not of any routine, which is why it lives here rather than in whichever battery measured
+# it first (test_sound.py did); three batteries now derive their caps from instruction counts and
+# would otherwise each absorb it as unexplained slack.
+RUNNER_SENTINEL_INSN = 1
+
+# The YM2149's two ports, as the 68000 addresses them. The data port is spelt as an OFFSET from the
+# select latch rather than as a literal of its own — the ST decodes the chip incompletely and
+# test_audio_capture.py names its odd alias at +1 the same way, so the three cannot drift apart.
+# shim.c holds the same pair (`PSG_SELECT`/`PSG_DATA`); the differential is what pins them equal.
+PSG_SELECT = 0xff8800
+PSG_DATA = PSG_SELECT + 2
 
 # The game's own two screen buffers (../names.txt: screen_back starts at $70000, screen_front
 # $78000, and clear_both_screens clears $70000..$7fd00 — exactly the two back to back). Every
@@ -153,7 +168,8 @@ def merge_bands(addresses):
     return bands
 
 
-def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_CAP, stop_pc=0):
+def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_CAP, stop_pc=0,
+        psg_seed=None):
     """Run ``name``'s original under the oracle and the reconstruction on the same image.
 
     Requires the two to agree byte for byte over the whole image, and the original to have written
@@ -179,16 +195,66 @@ def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_C
     THE SECOND FAMILY OWES A WITNESS. A checkpointed run stops at EITHER the checkpoint or the
     `rts`, and emu.run reports only that one of them was reached — so a case that merely set
     ``stop_pc`` would pass whether or not the tail was taken. Such a case must carry its own
-    POSITIVE evidence of which stop fired: test_scene.py runs with the oracle's executed-PC coverage
-    on and requires the transfer instruction itself to have executed.
+    POSITIVE evidence of which stop fired: ``run_reaching`` below is that witness.
+
+    ``psg_seed`` is ``{register: byte}``, the contents the case declares the YM2149 held on ENTRY —
+    the direct ``$ff8800``/``$ff8802`` path's off-image register file, seeded identically into both
+    cores (tools/recreate_kit/TRAP_MODEL.md, "Phase 6"). A routine that READS a register back has to
+    have it declared or the oracle refuses the whole run, because the bits it preserves are an input
+    and inventing them is a false green: `snd_psg_silence`'s `ori.b #$3f` over the mixer is this
+    project's case, and test_sound.py holds it. Seed or none, the harness compares both sides' access
+    ledger and register file afterwards — neither is in the image, so nothing else could.
     """
     diffs, info = differential(entry_of(name), dict(regs or {}), glue,
-                               max_insns=max_insns, poison=poison, stop_pc=stop_pc)
+                               max_insns=max_insns, poison=poison, stop_pc=stop_pc,
+                               psg_seed=psg_seed)
     assert not diffs, f"{what}\n{report(diffs)}"
     stray = stray_writes(info["writes"], allowed)
     assert not stray, (
         f"{what}: {len(stray)} write(s) outside {[(hex(a), n) for a, n in allowed]}, e.g. "
         f"{harness.label(stray[0])} @ {stray[0]:#x}")
+    return info
+
+
+@contextlib.contextmanager
+def pc_coverage():
+    """The oracle's executed-PC tracking, armed for the block and disarmed afterwards.
+
+    The bitset is GLOBAL and accumulates across runs, so a caller that wants to ask about ONE run
+    has to reset it first and stop tracking after — three lines that were spelt twice here
+    (test_scene.py's `run_reaching`, test_copylock.py's `_run_reaching`) before a third user asked
+    for them. The reset DESTROYS any corpus being accumulated, which is the caveat both copies
+    carried; no battery here accumulates one.
+    """
+    emu.cov_enable()
+    emu.cov_reset()
+    try:
+        yield
+    finally:
+        emu.cov_enable(False)
+
+
+def run_reaching(name, glue, allowed, what, transfer, **kwargs):
+    """``run``, plus the witness that a checkpointed run really did take its tail: the TRANSFER
+    INSTRUCTION at ``transfer`` executed.
+
+    A ``stop_pc`` run stops at EITHER the checkpoint or the `rts`, and emu.run reports only that one
+    of them was reached — so a case that merely set a checkpoint would pass whether or not the tail
+    was taken. The oracle marks each PC as it executes it and stops BEFORE marking the checkpoint, so
+    "the `bra`/`ble` into the tail ran" is exactly the missing fact, and it names WHICH transfer
+    fired rather than only that something did.
+
+    THIS BELONGS IN THE KIT. The shim already knows which of its two stops fired (`final_pc`) and
+    reporting it would make the witness exact and free. It lives here instead because two batteries
+    (test_scene.py, test_actor.py) need it and neither may own it; test_copylock.py is the third
+    coverage user and shares `pc_coverage` above rather than this, since it drives its own runner and
+    ASKS whether the witness fired instead of requiring it.
+    """
+    with pc_coverage():
+        info = run(name, glue, allowed, what, **kwargs)
+    assert emu.cov_visited(transfer), (
+        f"{what}: the run reached its checkpoint without executing the transfer at {transfer:#x}, "
+        f"so it RETURNED rather than taking the tail this case is about")
     return info
 
 
@@ -429,6 +495,14 @@ def add_w_dn_dn(destination, source):
     return opcode(0xd040 | (destination << 9) | source)
 
 
+def cmp_w_imm_dn(reg, value):
+    """`cmp.w #imm,Dn` — CMP with an IMMEDIATE source EA, which is a different instruction from
+    `cmpi.w #imm,Dn` meaning the same thing; both appear in this image. THREE batteries
+    (test_blit.py's clip thresholds, test_actor.py's, test_rng.py's BCD ladder), which spelt it
+    identically under one name."""
+    return opcode(0xb07c | (reg << 9)) + word(value)
+
+
 def cmp_w_dn_dn(destination, source):
     """`cmp.w Dn,Dn` — a SIGNED compare of two registers. THREE batteries (test_actor.py's reach
     tests, test_map.py's sub-cell tests, test_blit.py's bottom clamp)."""
@@ -508,6 +582,21 @@ def tst_w_abs_l(addr):
     return opcode(0x4a79) + longword(addr)
 
 
+def clr_w_d16(base, displacement):
+    """`clr.w d16(An)` — how a routine zeroes a WORD field of a record it holds a pointer to. TWO
+    batteries (test_actor.py's spawn and reset, test_sound.py's stop chain)."""
+    return opcode(0x4268 | base) + word(displacement)
+
+
+def clr_b_d16(base, displacement):
+    """...and the BYTE form. THREE batteries (test_actor.py, test_map.py, test_sound.py), which
+    spelt it identically under one name and two argument names. test_hud.py is a fourth HALF-user:
+    it carries whole assembled instructions as byte literals (`CLR_B_D16_A0`, `CLR_B_D16_A6`) inside
+    larger composites rather than calling an encoder, so converting it is a change to that battery's
+    style and not to this one's coverage."""
+    return opcode(0x4228 | base) + word(displacement)
+
+
 def clr_b_abs_l(addr):
     return opcode(0x4239) + longword(addr)
 
@@ -521,7 +610,14 @@ def st_abs_l(addr):
     return opcode(0x50f9) + longword(addr)
 
 
+def addq_w_abs_l(amount, addr):
+    """`addq.w #n,<abs>.l` — how a free-running global counter is stepped. TWO batteries
+    (test_scroll.py, test_rng.py's three PRNG counters)."""
+    return opcode(0x5079 | ((amount & 7) << 9)) + longword(addr)
+
+
 def subq_w_abs_l(amount, addr):
+    """...and its twin, which lives beside it so the two cannot be got the wrong way round."""
     return opcode(0x5179 | ((amount & 7) << 9)) + longword(addr)
 
 

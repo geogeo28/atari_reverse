@@ -789,6 +789,12 @@
 #define WB_ACTOR_TYPE                4u       /* word: what the record IS. $ffe4 copies it out of
                                                * the template and the map probes compare it
                                                * against WB_ACTOR_TYPE_PLAYER */
+#define WB_ACTOR_TYPE_UNSCORED       0x26u    /* `cmpi.w #$26,4(a0)` at $6c0a — the one type whose
+                                               * defeat pays no score, does not count a kill and
+                                               * never respawns; it goes straight to freeing the
+                                               * slot. WHICH creature it is is not established, and
+                                               * it is outside the 0..31 range both the damage and
+                                               * the hit-point tables cover */
 #define WB_ACTOR_TYPE_PLAYER         1u       /* `cmpi.w #$1,4(a0)` — the only value anything
                                                * reconstructed here tests for */
 #define WB_ACTOR_FLAGS2              9u       /* the SECOND flag byte; `bset`/`bclr` reach it with
@@ -901,8 +907,28 @@
 #define WB_SPAWN_HITPOINTS           4u       /* word: the pool $6b46's `sub.w d0,4(a1)` spends, and
                                                * on whose zero-or-negative it raises bit 3 of the
                                                * actor's WB_ACTOR_FLAGS2. $1006a seeds it */
-#define WB_SPAWN_KILL_COUNT          6u       /* word: `addq.w #1,6(a1)` at $6bfa, and the template
-                                               * retires once `cmpi.w #$2,6(a1)` stops being `ble` */
+#define WB_SPAWN_KILL_COUNT          6u       /* word: `addq.w #1,6(a1)` at $6c2a, and the template
+                                               * retires once `cmpi.w #$2,6(a1)` stops being `ble`.
+                                               * (This comment used to say $6bfa, which is the
+                                               * `movea.l` that loads the record — batch 21b read
+                                               * the routine and moved it to the `addq` itself) */
+#define WB_SPAWN_KILL_RESPAWN_LIMIT  2u       /* `cmpi.w #$2,6(a1) / ble` — at or below this the
+                                               * defeat RESPAWNS the slot instead of freeing it */
+#define WB_SPAWN_REARM               0xffu    /* `move.b #$ff` into BOTH WB_SPAWN_ARMED and
+                                               * WB_SPAWN_COUNTDOWN, the longest countdown a byte
+                                               * holds */
+#define WB_SPAWN_SCORE_TABLE         0x6c5cu  /* one packed-BCD LONGWORD per WB_SPAWN_TYPE, the score
+                                               * a defeat pays. It sits inside $6bb8's own bytes,
+                                               * between that routine's `rts` and the continuation
+                                               * at $6cdc, and is `lea $6c5c.l,a2`'s only reference
+                                               * in the image */
+#define WB_SPAWN_SCORE_TABLE_ENTRIES 32u      /* == ($6cdc - $6c5c) / WB_SPAWN_SCORE_LEN, the same
+                                               * 32 types WB_SPAWN_HITPOINT_TABLE_ENTRIES has. The
+                                               * CODE bounds the index at NEITHER end: the type is
+                                               * scaled by a `lsl.w`, so it wraps at $10000 and can
+                                               * name any longword in the 64 KiB above the table */
+#define WB_SPAWN_SCORE_LEN           4u
+#define WB_SPAWN_SCORE_SHIFT         2u       /* `lsl.w #2,d2` == log2(WB_SPAWN_SCORE_LEN) */
 #define WB_SPAWN_HITPOINT_TABLE      0x1011au /* word per type, immediately after WB_ACTOR_SIZE_TABLE
                                                * and the same 32 types wide. Indexed `add.w d1,d1`
                                                * on a zero-extended type, then `adda.l` — so the
@@ -1379,6 +1405,43 @@
 #define WB_SND_STATE_STREAM_BASE   18u /* a long — the stream to loop back to */
 #define WB_SND_STATE_STREAM_CURSOR 22u /* a long — and where it is now */
 
+/* ---- the YM2149 as the DIRECT path names it ($ff8800 select, $ff8802 data) ---------------------
+ *
+ * REGISTER NUMBERS, not addresses. The reconstruction never writes the two ports: it calls
+ * `psg_port_read`/`psg_port_write` from tools/recreate_kit/include/psg.h, which take the number the
+ * `move.b #n,$ff8800` select carries, and both the oracle's ledger and the candidate's are keyed by
+ * it (TRAP_MODEL.md, "Phase 6"). WB_SND_PSG_SHADOW below is indexed by exactly these numbers, which
+ * is what makes the module's own shadow of the mixer and the chip's mixer the same register.
+ */
+#define WB_PSG_REG_MIXER           7u
+#define WB_PSG_REG_VOLUME_A        8u
+#define WB_PSG_REG_VOLUME_B        9u
+#define WB_PSG_REG_VOLUME_C        10u
+#define WB_PSG_VOLUME_SILENT       0u    /* `move.b #$0,$ff8802.l`, once per volume register */
+#define WB_PSG_MIXER_ALL_OFF       0x3fu /* `ori.b #$3f,d1` — the six tone/noise enables, which are
+                                          * ACTIVE LOW, so setting all six is silence. The `ori` is
+                                          * what LEAVES bits 6-7 (the port A/B I/O direction lines,
+                                          * which the floppy drive-select depends on) as the chip
+                                          * held them — so the read-back at $17f3e is an INPUT of
+                                          * the run, and a case must declare it with `psg_seed` */
+
+/* The module's own state that snd_stop / snd_stop_all_sfx clear. The globals block is mapped in
+ * ../names.txt (`snd_engine_enabled`); only what these two routines touch is named here. */
+#define WB_SND_ENGINE_ENABLED      0x17c56u /* a3+2250, byte: `sf` here is snd_stop's whole state
+                                             * change, `st` is snd_resume's. It does NOT clear the
+                                             * "song loaded" byte at $17c63, which is why a stop is
+                                             * a PAUSE and snd_resume can restart the same song */
+#define WB_SND_ENGINE_DISABLED     0u       /* `sf 2250(a3)` — Scc's false byte */
+#define WB_SND_SFX_ACTIVE_FLAGS_LEN 4u      /* `clr.l 2254(a3)` — the three WB_SND_SFX_ACTIVE_FLAGS
+                                             * bytes AND the byte after them, which nothing else in
+                                             * the module names. A `clr.l`, so all four go */
+#define WB_SND_PSG_SHADOW          0x18352u /* a3+4038: the PSG registers 0..10 as the tick last
+                                             * meant to write them, INDEXED BY REGISTER NUMBER — so
+                                             * the mixer shadow is + WB_PSG_REG_MIXER and the three
+                                             * volume shadows + WB_PSG_REG_VOLUME_A..C. That is why
+                                             * snd_stop_all_sfx's four stores mirror
+                                             * snd_psg_silence's four chip writes exactly */
+
 /* ---- the game-restart reset ($fe4a) and the life it redraws ($e80c) ---------------------------
  *
  * $fe4a is entered by one `bsr` (from $e59e) and its TAIL by one `jsr $fe8c.l` (from $c00, the path
@@ -1541,6 +1604,13 @@
  */
 #define WB_BOSS_DEFEAT_FLAG        0xdfacu  /* word, INSIDE the code: it sits between $df9e's `rts`
                                              * and the parameter table below */
+#define WB_BOSS_DEFEAT_SET         0xffffu  /* `move.w #$ffff,$dfac.l` at $6bd4 — what actor_defeat
+                                             * raises when the record at WB_BOSS_FRAGMENT_ORIGIN is
+                                             * the one that died */
+#define WB_BOSS_DEFEAT_SFX         0x19u    /* `move.w #$19,d0` beside a `clr.w d1`: SFX 25 on
+                                             * WB_SND_CHANNEL_A, the highest id the table holds */
+#define WB_BOSS_DEFEAT_METER_BONUS 4u       /* `move.w #$4,d0 / bsr $b6fe` — hud_meter_add_clamped's
+                                             * ONE caller in the image */
 #define WB_BOSS_FRAGMENT_PARAMS    0xdfaeu  /* 16 bytes, $dfae..$dfbd, ending exactly where $dfbe
                                              * begins — two per fragment */
 #define WB_BOSS_FRAGMENT_PARAM_LEN 2u
@@ -1592,5 +1662,62 @@
 #define WB_VECTOR_LINE_A           0x28u
 #define WB_VECTOR_LINE_F           0x2cu
 #define WB_VECTOR_ARM_SELECTOR     1u       /* the `#$1` both compare against */
+
+/* ---- the game's PRNG ($68c6) and the one draw over it this batch ports ($e1f0; src/rng.c) ------
+ *
+ * Three free-running counters, each incremented and CLEARED WHEN IT REACHES its own limit. LIMIT
+ * rather than modulus, and the difference is the whole reading: `addq.w #1 / cmpi.w #N / bne /
+ * clr.w` tests for EQUALITY, so a counter seeded above N never meets it again and runs on to $ffff
+ * instead of wrapping. The result is the three summed onto one entropy term.
+ */
+#define WB_RNG_COUNTER_A           0x6932u  /* three words immediately past rng_next's own `rts` */
+#define WB_RNG_COUNTER_B           0x6934u
+#define WB_RNG_COUNTER_C           0x6936u
+#define WB_RNG_COUNTER_LEN         2u
+#define WB_RNG_LIMIT_A             0x25u    /* `cmpi.w #$25,$6932.l / bne / clr.w` */
+#define WB_RNG_LIMIT_B             0x17u
+#define WB_RNG_LIMIT_C             0x11u
+#define WB_SHIFTER_VIDEO_COUNTER_LOW 0xff8209u /* `move.b $ff8209.l,d0` — the shifter's video-address
+                                             * counter, low (fastest) byte, and the ONLY hardware
+                                             * address the game-logic subsystem reads. It is OFF the
+                                             * image, so both cores are served 0 and the generator
+                                             * degenerates to its three counters XOR
+                                             * WB_FRAME_TICK_B39A: a registered T3-DATA false green
+                                             * (../STATUS.md, ../names.txt's cmt at $68c6) */
+
+/* $e1f0: the one consumer of rng_next this batch ports. WB_STAGE_NUMBER is PACKED BCD — which is
+ * what `cmp.w #9 / ble / subq.w #6` is: subtracting 6 turns $10..$19 into 10..19, and
+ * hud_draw_stage_number drawing that word's LOW BYTE as two digits is the other half of the reading.
+ * The 0-based row then indexes WB_STAGE_KIND_ROW bytes, one of which an rng draw picks. */
+#define WB_BUS_ADDR_MASK           0xffffffu /* The 68000's ADDRESS BUS is 24 bits wide: the top byte
+                                             * of a computed effective address is not wired to
+                                             * anything, so $0100e3a3 and $0000e3a3 are one location.
+                                             * The indexed read below is the one place a
+                                             * reconstruction here can compute an address that far up
+                                             * (an entry d2 whose high half `add.l` folds into the
+                                             * index), and the mask is what makes the C reach the
+                                             * byte the 68000 does instead of falling through its
+                                             * off-image guard. The kit's shim.c holds the same
+                                             * constant as BUS_ADDR_MASK but does not export it; the
+                                             * test/test_rng.py case that runs an address past the
+                                             * bus IS the pin between the two spellings */
+#define WB_STAGE_KIND_TABLE        0xe382u  /* `lea $e382.l,a2`, its only reference in the image */
+#define WB_STAGE_KIND_TABLE_ROWS   22u      /* == ($e432 - $e382) / WB_STAGE_KIND_ROW. Self-bounding
+                                             * at BOTH ends: $e222's sibling table (32 per stage,
+                                             * $e1c8's) ends exactly on this one's base, and this one
+                                             * ends exactly on the three longword handler pointers at
+                                             * $e432, whose first entry is the code at $e43e. The
+                                             * CODE bounds the row at neither end — a stage number of
+                                             * 0 indexes row -1 */
+#define WB_STAGE_KIND_ROW          8u       /* `lsl.w #3,d2` + `andi.l #$7,d0`: eight candidates per
+                                             * stage, one drawn at random */
+#define WB_STAGE_KIND_ROW_SHIFT    3u       /* == log2(WB_STAGE_KIND_ROW) */
+#define WB_STAGE_KIND_DRAW_MASK    7u       /* `andi.l #$7,d0` — the whole LONGWORD is masked, so
+                                             * rng_next's untouched high half cannot reach the sum */
+#define WB_STAGE_KIND_MASK         0x1fu    /* `andi.l #$1f,d0` on the way out: five bits, so the
+                                             * table's own $10..$14 bytes pass through unchanged */
+#define WB_STAGE_NUMBER_BCD_LIMIT  9u       /* `cmp.w #$9,d2 / ble` — at or below this the number is
+                                             * already its own decimal value */
+#define WB_STAGE_NUMBER_BCD_CARRY  6u       /* `subq.w #6,d2` — one BCD tens carry */
 
 #endif /* WONDERBOY_H */

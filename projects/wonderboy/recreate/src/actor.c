@@ -51,6 +51,7 @@
 #include <stdint.h>
 
 #include "actor.h"
+#include "hud.h"
 #include "machine.h"
 #include "sound.h"
 #include "wonderboy.h"
@@ -625,4 +626,72 @@ void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor) {
      * a pool of $8000 that the subtraction carries into the positive half is not. */
     if ((int16_t)left <= 0)
         image[addr_add(actor, WB_ACTOR_FLAGS2)] |= (uint8_t)(1u << WB_ACTOR_FLAGS2_DEFEATED_BIT);
+}
+
+/* ---- $6bb8: paying for a defeat ---------------------------------------------------------------
+ *
+ * What the routine is, where it stops and why, are in actor.h. Three things about the BODY:
+ *
+ * THE BOSS BLOCK CALLS THE SOUND MODULE TWICE, through two different stubs — +28 (snd_stop, which
+ * silences the chip) and +56 (the trigger). Both are `lea $17adc.l,a1 / jsr N(a1)` and both stubs
+ * restore every register, so a0 survives them; the reconstruction gets that for free and the
+ * differential pins it, since a0 is what every store below addresses.
+ *
+ * THE SCORE-TABLE INDEX IS A `lsl.w`, so a spawn type at or above $4000 wraps the index inside the
+ * word and reads a longword up to 64 KiB above the table. Reproduced: the table's own 32 entries are
+ * where the shipped data lands, not where the instruction can.
+ *
+ * ...AND THAT SHIFT SETS THE X FLAG, which the very next call reads. `lsl.w #2,d2` leaves X holding
+ * the type's BIT 14, and `bcd_add_score_bd70`'s first `abcd` folds the caller's X into the lowest
+ * digit pair (../names.txt's cmt at $b5a2). src/hud.c reproduces the X = 0 entry only — the oracle
+ * cannot be entered with X set — so this call is faithful exactly while bit 14 of the spawn type is
+ * clear, which every shipped type is. ../STATUS.md registers the other half as unpinned, and
+ * test/test_actor.py refuses a case that would reach it rather than letting one pass silently.
+ */
+uint32_t actor_defeat_and_score(uint8_t *image, uint32_t actor) {
+    if (be16(image + WB_STATE_FLAG_A32) != 0 && actor == WB_BOSS_FRAGMENT_ORIGIN) {
+        snd_stop(image);
+        wr16(image + WB_BOSS_DEFEAT_FLAG, WB_BOSS_DEFEAT_SET);
+        snd_call_trigger_effect(image, WB_BOSS_DEFEAT_SFX, WB_SND_CHANNEL_A);
+        hud_meter_add_clamped(image, WB_BOSS_DEFEAT_METER_BONUS);
+    }
+    image[addr_add(actor, WB_ACTOR_FIELD_18)] = 0;
+
+    /* `lsl.l #5,d0 / lea 0(a1,d0.w),a1` — a LONG shift indexed by a WORD, the pair
+     * actor_damage_template_hitpoints spells too: the slot is a byte, so the product stays inside
+     * the positive half of the word and the sign extension never bites. */
+    uint32_t table = be32(image + WB_TABLE_PTR_21E8C);
+    uint32_t template_record = addr_add(table, sign_ext16(
+        (uint32_t)image[addr_add(actor, WB_ACTOR_TEMPLATE_SLOT)] << WB_ACTOR_TEMPLATE_SLOT_SHIFT));
+
+    if (be16(image + addr_add(actor, WB_ACTOR_TYPE)) != WB_ACTOR_TYPE_UNSCORED) {
+        uint16_t index = (uint16_t)(be16(image + addr_add(template_record, WB_SPAWN_TYPE))
+                                    << WB_SPAWN_SCORE_SHIFT);
+        bcd_add_score_bd70(image, be32(image + addr_add(WB_SPAWN_SCORE_TABLE, index)));
+
+        uint32_t kill_count = addr_add(template_record, WB_SPAWN_KILL_COUNT);
+        uint16_t kills = (uint16_t)(be16(image + kill_count) + 1);
+        wr16(image + kill_count, kills);
+        /* `cmpi.w #$2,6(a1) / ble` — signed, and read back out of MEMORY rather than off the
+         * register the `addq` raised, so a count that wrapped past $7fff retires the template. */
+        if ((int16_t)kills <= (int16_t)WB_SPAWN_KILL_RESPAWN_LIMIT)
+            return WB_ACTOR_DEFEAT_RESPAWN;
+    }
+
+    /* `movea.l $21e8c.l,a6` — the pointer is loaded a SECOND time here, after the score add. It
+     * cannot have moved (only $b372 writes it), so this is the original's shape rather than a
+     * dependency, and reproducing it costs one read. */
+    uint32_t retire_table = be32(image + WB_TABLE_PTR_21E8C);
+    spawn_header_set(image, retire_table, WB_SPAWN_HEADER_LIVE,
+                     (uint16_t)(spawn_header_word(image, retire_table, WB_SPAWN_HEADER_LIVE) - 1));
+    wr16(image + addr_add(actor, WB_ACTOR_X), WB_ACTOR_FREE_MARKER);
+
+    /* `tst.w -2(a6) / beq` — ANY nonzero wrapped flag re-arms, not only WB_SPAWN_WRAPPED_SET, which
+     * is what $ff42's own `cmpi.w #$ffff` on the same word tests for. The two readings agree on
+     * every value the image can hold and part company on a small positive one. */
+    if (spawn_header_word(image, retire_table, WB_SPAWN_HEADER_WRAPPED) != 0) {
+        image[addr_add(template_record, WB_SPAWN_ARMED)] = WB_SPAWN_REARM;
+        image[addr_add(template_record, WB_SPAWN_COUNTDOWN)] = WB_SPAWN_REARM;
+    }
+    return WB_ACTOR_DEFEAT_RETIRED;
 }
