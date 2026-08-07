@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 161/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 166/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -29,12 +29,19 @@ plus the first game-logic routine that runs it, the game's PRNG and the draw ove
 `stage_random_kind8`, 442 bytes, batch 21b: the seeded PSG read model's first consumer, and the
 first ported code here that drives the YM2149) — and the RESPAWN CONTINUATION plus the 32-candidate
 draw it calls (`actor_respawn_as_new_kind` + `stage_random_kind32`, 166 bytes, batch 22: batch 21b's
-$6cdc boundary is GONE — the defeat path runs end to end to the original's own `rts`) —
-18,268 bytes in all, 70.8 % of everything
+$6cdc boundary is GONE — the defeat path runs end to end to the original's own `rts`) — and the
+sound module's TICK TIER under `$17c74` (`snd_sfx_tick` + `snd_prng_step` +
+`snd_channel_period_and_volume`, 958 bytes, batch 23: everything the per-VBL tick calls, pinned
+whole with no boundary) —
+19,226 bytes in all, 74.6 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures.** *(The batch-16 commit's header said 147 — an
-oversight; its own section records 151, and batch 17 corrected the header to 153. It now carries
-batch 22's 163.)*
-`make test`: **3133 cases green in what this batch commits** (3052 before batch 22, plus its 81
+oversight; its own section records 151, and batch 17 corrected the header to 153. Batch 22's edit
+left this leading count at 161 while its own section and parenthetical said 163 — the same
+oversight, found by batch 23's port agent and corrected here. It now carries batch 23's 166.)*
+`make test`: **3333 cases green in what this batch commits** (3133 before batch 23, plus its 200
+net, all in `test/test_sound.py`, which stands at 376 — three measured trims inside that figure,
+recorded in the batch-23 section at the end).
+`make test` at batch 22: **3133 cases** (3052 before batch 22, plus its 81
 net: +49 in `test/test_rng.py`, which stands at 103, and +32 in `test/test_actor.py`, which stands
 at 984 — three measured trims inside those figures, recorded in the batch-22 section at the end).
 `make test` at batch 21b: **3052 cases green in what that batch committed** (2925 before batch 21b, plus its
@@ -646,7 +653,7 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x8fe4` | `blit_clip_right_w2` … `0x93b6` `blit_clip_right_w5` | 168/266/372/478 | verified | The same battery: each right ladder's complete mask set (3,2 / 7,6,4 / $f,$e,$c,8 / $1f,$1e,$1c,$18,$10) and its off-screen arm returning having touched NOTHING; the shared clipped bodies both preludes branch into (one helper per width in `src/blit.c`); the w4 body's LATE `or.w d4,d3` merge reproduced and pinned from the skipping arms of BOTH ladders (pixels identical, d3 differs); and the two-column row-count guard from both exits ($ffff → beq, $fffe/$7fff → bmi) against the wider bodies' bare `dbf` |
 | `0x8f02` | `sprite_draw_pass` (`src/blit.c`) | 204 | verified | Batch 15, ~75 cases in the same battery: differentials entering the pass over seeded records + descriptors + `screen_back`, write set = the UNION of the rectangles the walk drew against a model that walks a MUTABLE image (each record sees what the last one drew), all reported registers + the pass's own a6/a4/a2 through `sprite_pass_regs`, and the a5 unwind accumulated across a walk. Every clip class reached FROM the x/y arithmetic; the top clip's `muls`/`suba.l` source advance; the $9f band's both edges; the sign-extended `adda.w` descriptor-index wrap run BOTH directions from the LAST slot; a skipped record's cursor observed from slot 18 (the review's mutation-confirmed hole, closed); the negative-height handoff through the guarded width AND the 65,536-row runaway RUN, pointed one byte past the image (1.37 s, 4.65 M instructions, both sides dropping every write — what batch 14's `os_in_image` was for); the dead d5 write pinned through the off-screen arms; seeded-band disjointness asserted + 204-byte whole-body entry pin assembled from the battery's own statement of the walk |
 | `0x17b14` | `snd_call_trigger_effect` (`src/sound.c`) | 14 | verified | Batch 16b, 14 cases: the register-preservation pin (all fifteen reported registers seeded distinctly and required back, WITH the effect's writes landing), 12 shipped ids through the stub, and a 7-entry pin on the stub TABLE's shape — six `movem` thunks and the 10-byte a3 push, each `bsr` displacement rebuilt from `../names.txt` |
-| `0x1a48a` | `snd_trigger_effect` | 334 | verified | 123 cases: all 26 shipped ids on channel A, 12 call-site ids x channels B/C, 6 out-of-range ids (both sides of the sign extension) x 3 channels, 3 ids whose descriptor sits INSIDE the mix block (order), 2 whose descriptor sits inside the STATE band (the copy DIRECTION — a memmove reddens exactly these, over a keyed-seeded band, with the model SIMULATING the byte-by-byte copy), 5 seeded descriptors x 3 channels through a poked pointer-table entry, a d1 sweep over the third arm bracketing the last channel's own number, d0/d1 high-byte pins, table self-bounding + noise-arm coverage guards + entry pin over all three arms and the orphan `rts` |
+| `0x1a48a` | `snd_trigger_effect` | 334 | verified | 123 cases: all 26 shipped ids on channel A, 12 call-site ids x channels B/C, 6 out-of-range ids (both sides of the sign extension) x 3 channels, 3 ids whose descriptor sits INSIDE the mix block (order), 2 whose descriptor sits inside the STATE band (the copy DIRECTION — a memmove reddens exactly these, over a keyed-seeded band, with the model SIMULATING the byte-by-byte copy), 5 seeded descriptors x 3 channels through a poked pointer-table entry, a d1 sweep over the third arm bracketing the last channel's own number, d0/d1 high-byte pins, table self-bounding + noise-arm coverage guards + entry pin over all three arms and the `rts` past them *(batch 23: NOT an orphan — it is `snd_sfx_tick`'s shared `rts`, reached by that routine's own backward branches; see its row)* |
 | `0xbbca` | `panel_frame_timers` (`src/hud.c`) | 268 | verified | 41 cases: 19 timer seeds x 2 screen buffers reaching every arm and both sides of every test in the body (the rewind clamp signed and exact, the meter floor and its non-floored negative, the effect's SIGNED `bgt`, the index wrap at $c), each asserting the arm's exact write set, the frame it drew and the d0 it hands on; the effect-firing arm's writes asserted through `test_sound.py`'s own model (imported, not restated) + entry pin assembling the `jsr 56(a1)` from `entry_of("snd_stub_00")` — batch 16a's `$bca2` edge confirmed by construction |
 | `0xb346` | `panel_refresh_frame` | 44 | verified | 11 cases: 3 animation arms x 2 screen-buffer pairs over the whole ten-callee tier (write set composed from the batteries that own each callee), the poked-frame case that reaches the alternate stage font through the LIVE d0 the blit's last `movem` leaves, the entry-register indifference case, and the call-list guard + entry pin. Attribution off for a stated reason: a composed pass's outputs are its later callees' inputs (the poisoned meter value would drive $b61e's 16k-blit runaway) |
 | `0x69fe` | `actor_damage_followed` (`src/actor.c`) | 266 | verified | Batch 17, ~110 cases after the review trim: 7 mode-flag seeds pinning `tst.b` against the `tst.w` every other reader uses ($0001/$00ff answer the OTHER record), the invulnerable arm as a differential over an EMPTY write set with all entry registers required back, all four funnel arms by exact write set, the helmet-slot boundary both ways, a 10-point meter sweep incl. a negative carried back positive and STORED, one damage-table type per distinct shipped word (6) + 6 out-of-range types (the index is unsigned and LONGWORD: $4000 reads above the table, $8000 wraps to entry 0) + 7 seeded + the 4-case inline sign-bit arm, a 9x4 x-compare grid (inclusive where $67c2's is strict), per-arm register model via leaf.set_low_word. SFX writes asserted through `test_sound.py`'s model, imported |
@@ -661,6 +668,9 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0xde80` | `scene_spend_visit_budget` | 58 | verified | The borrow (word subtract, sign = borrow), the marker cell's twin pair in order, the map stamp against a NONZERO keyed seed, and the stage-reset tail — through the DRIVER from all four spending arms (the review's four surviving mutants, killed) as well as directly |
 | `0x6cdc` | `actor_respawn_as_new_kind` (`src/actor.c`) | 126 | verified | Batch 22, ~32 cases: the arm split at the kill limit pinned from kills {1, 2, 3} PLUS $0102 — the word-width case a `cmp.b` port passes and the `cmp.w` fails; both forced-kind fields, each run seeding the other field 0 so a field-swap mutant draws instead and fails; negative forced kinds through BOTH C entrances of the retire tail (the `bmi.w $6c38` at $6d0a is a THIRD entrance nothing had recorded); the index edges — row 21, row 22, a negative index, the word wrap at $1000 and $7fff — with the table read carrying NEITHER bus mask nor off-image guard because a case COMPUTES over all 32,768 kinds that the row window `[table-$8000, table+$7ff0]` never leaves the image; the nine field writes (ten offsets — the plate's "six" was a pre-port miscount) as an exact write set; entry-d2 forwarding pinned on BOTH draw arms — the review gate's one live-mutant hole, found empirically and closed; and the 126-byte entry pin, `bmi` target derived from the `ble.w` rather than transcribed |
 | `0xe1c8` | `stage_random_kind32` (`src/rng.c`) | 40 | verified | Batch 22, inside `test_rng.py`'s parametrized draw section (the whole battery stands at 103): every draw claim re-made over this descriptor's own operands — the packed-BCD stage ladder, all 32 candidates of a row, the closing mask, and its ELEVEN-row table (half the sibling's 22) walking off its own end onto `stage_kind_table` on the game's shipped bytes; the shared fourteen-byte tail ($e214..$e221) now pinned from THIS side's `bra.w` as well; ONE static C body serves both draws (three parameters where the original changed three operands), which is why the d2/bus quartet stays on the DRAW8 side alone — the sibling's runs execute the identical instruction on the identical operand; entry pin started at $e1c8 exactly, where objdump misaligns |
+| `0x1aaca` | `snd_prng_step` (`src/sound.c`) | 28 | verified | Batch 23: the module's OWN PRNG, distinct from the game's ($68c6) — a 32-bit shift through the X flag (`lsl.b #2` sets X, two `roxl.w` on memory chain it), pinned across the carry in both directions; a3 is INHERITED, not derived (the differential found it — the first case ran against a base of zero and wrote $375b), so every case seeds it; the four state bytes abut the routine's own last instruction, a self-bounding check |
+| `0x1a5da` | `snd_sfx_tick` | 600 | verified | Batch 23: the SFX engine the tick calls FIRST (at $17cb6, before any music — the old plate order was backwards), three 186-byte arms as ONE parametrized C body entered at each arm's own address; its shared `rts` at $1a5d8 is the "orphan" cmt 0x1a48a disproved; each arm reads a DIFFERENT PRNG byte ($1aae6/7/8 — a sixth base-plus-stride block, stride 1, previously unrecorded); the pitch delta moves the period by delta×257 (`add.b` + `addx.b`); the volume-stream $80 loop, negative hold, AND the reload's unconditional store of a negative first byte (the review's mutant-confirmed hole, closed); ids 12/20/21 drive the PRNG path with $1aae6 seeded — the state is never reset by song start |
+| `0x18208` | `snd_channel_period_and_volume` | 330 | verified | Batch 23: six arms over one music channel's 48-byte record — envelope, transpose+detune, arpeggio, table lookup, portamento, vibrato — returning d0 = period, d1.b = volume (d1's second byte carries portamento scratch); writes two module globals; note-table read proved in-image for all 256 notes (`add.b d0,d0` bounds the byte index — notes ≥96 ALIAS onto snd_arpeggio_ptr_table, ≥128 wrap to its start, both cases); the trim to one record + two named mask-pinning cases rests on the measured mutant (mask hardcoded to $09 passes record 0, fails 1 and 2); GLOBAL_DEFAULTS pins all four globals it reads, with a guard that fails if the C grows a fifth |
 
 ### The .RAD depacker
 
@@ -3759,3 +3769,170 @@ purge it per run; §0g records the trap beside the README's relink trap, same fa
 cases live tool-side). **Still queued:** 22b's steps (2) re-scan + re-baseline and (3) the
 partition edit — now unblocked, sequenced after batch 23 lands so the re-scan captures its names
 too.
+
+### Batch 23: the sound module's TICK TIER — the SFX engine, the module PRNG and the period/volume pass
+
+Three functions, 958 bytes, and every one of them is what `snd_music_tick` calls rather than the
+tick itself: the SFX engine it runs **first**, the PRNG that engine steps, and the pass that turns a
+music channel's record into a period and a volume. **Verified 166, 19,226 bytes, 74.6 %;
+`make test` 3333** (3133 before the batch, plus its 200 net, all in `test/test_sound.py`, which
+stands at 376 — three measured trims inside that figure, below. `test_actor.py`, `test_hud.py` and
+`test_stage.py` are converted to two encoders hoisted into `leaf.py` and their counts do not move:
+984, 548 and 80.)
+
+| address | name | bytes | what it is |
+| --- | --- | --- | --- |
+| `$1aaca` | `snd_prng_step` | 28 | the module's OWN PRNG — a 32-bit shift through the X flag |
+| `$1a5da` | `snd_sfx_tick` | 600 | the SFX engine, one 186-byte arm per channel (+ its shared `rts`) |
+| `$18208` | `snd_channel_period_and_volume` | 330 | six arms over one music channel's 48-byte record |
+
+**Three plate corrections and two structural findings, all read off the bytes.**
+
+* **`$1a5d8` IS NOT AN ORPHAN.** `cmt 0x1a48a` called the `rts` past the trigger's body "an orphan
+  no arm reaches". It is **`snd_sfx_tick`'s shared `rts`** — the target of that routine's `bmi.s` at
+  `$1a5e6` and its `bra.s` at `$1a600`, exactly as `$17c72` serves `snd_music_tick` — and a
+  whole-image branch/jump scan finds nothing else referencing it. So the tick is 600 bytes
+  (`$1a5d8..$1a82f`), the entry pin's two backward branches assert it from inside, and
+  `test_the_tick_tiles_the_module_between_the_trigger_and_the_pointer_table` asserts it from both
+  sides.
+* **The tick calls the SFX engine FIRST.** `$17cb6` is `bsr.w $1a5da`, before the fade countdown,
+  before `snd_channel_step` and before `$18208`. `cmt 0x17c74` had it the other way round and now
+  carries the verified order, the callee list and the **non-local exit**: `$18016` clears "song
+  loaded" and `bra.w`s to stub +28, so the stop's `rts` returns to the *tick's* caller and the rest
+  of the tick never runs — and opcode `$8e` enters two bytes earlier at `$18014`, whose
+  `addq.l #4,sp` unwinds `snd_channel_step`'s frame first. Units 4 and 5 will need both.
+* **`$1aaca` and `$18208` have no `lea $1738c(pc),a3` of their own.** Every routine reached through
+  the stub table opens with one; these two are internal `bsr` targets and inherit a3 from their
+  caller. **The differential found it** — the first PRNG case ran the two `roxl.w`s against a base
+  of zero and wrote `$375b` — and every case now seeds a3.
+* **Each SFX channel reads a DIFFERENT byte of the PRNG state**: A takes `$1aae6`, B `$1aae7`, C
+  `$1aae8`. That is the sixth base-plus-stride block of the three arms and the only one whose stride
+  is 1 rather than the size of a block; nothing had recorded it.
+* **The pitch delta moves the period by `delta * 257`.** `add.b d0,lo` then `addx.b d0,hi` puts the
+  same byte into both halves, carry included. With descriptor `+7` clear the delta is 0 and the tone
+  period is copied verbatim; ids 12, 20 and 21 are the three that set it.
+
+**All 958 bytes are pinned WHOLE.** The three entry pins assemble every instruction of every body
+from `include/wonderboy.h`'s constants and `../names.txt`'s addresses — 28 + 600 + 330 — and each
+arm of the tick is built from `channel` alone, so an arm wired to a neighbour's offset fails on the
+bytes at its own address. The differential still enters each arm at ITS address, through the entry's
+own three `bsr`s. Three self-bounding checks fall out: the PRNG's four mutable bytes sit immediately
+past its last instruction, the tick's last arm ends exactly on `snd_sfx_ptr_table`, and `$18208`
+ends exactly on `snd_psg_shadow`.
+
+**Nothing here trusts an image byte.** All four mutable bands the tier reads ship **dirty** — the
+`.PRG` was saved after a run at a load base of about `$2d360` — so every case seeds them with
+`leaf.keyed_block` or fills them through `expected_writes`, the trigger's own model. Two cases now
+guard that claim per band, and they exist because **the review pass found it false**: the poke dicts
+merged key by key, so the trigger's fourteen-byte state write replaced the seventy-eight-byte state
+seed and its two-byte mix write replaced the eleven-byte mix seed. Most of both bands ran on residue
+and every case stayed green, because both cores read the same residue. `_overlay` merges byte by
+byte and `_assert_bands_are_seeded` is what says so.
+
+**Where the bus mask is.** `module_byte` masks with `WB_BUS_ADDR_MASK` before its off-image guard —
+batch 21b's lesson — and it is the only place these routines need it: three cursors come out of the
+dirty image (the envelope's, the arpeggio's and the volume stream's) and nothing bounds them. The
+period-table read carries neither, and that is computed rather than assumed: `add.b d0,d0` bounds
+the index to `$00..$fe` and the base is a constant, so the read is inside the image for every one of
+the 256 notes — which is also why a note from 96 up ALIASES onto `snd_arpeggio_ptr_table` instead of
+faulting, and a note from 128 up wraps to the table's start. Both are cases.
+
+**Not pinned, honestly.**
+
+* **The tick body itself (`$17c74`), `snd_channel_step` (`$18106`) and the 24 opcode handlers** —
+  units 4 and 5, and the reason the tier stops where it does. Nothing here strays into them: the
+  three routines call only each other, verified by a whole-image scan for every branch and jump
+  target, so this batch needs no `stop_pc` and has no boundary.
+* **The PSG wall is unmoved.** `$17c74`'s two hardware reads (`$fffa01` bit 7, `$ff820a` bit 1) and
+  its whole output block are still what a memory differential cannot see. A green suite here says
+  the right bytes landed in the right module fields and says nothing about what is heard.
+* **The music channel records have no shipped initial state.** The band is residue, so every case
+  seeds it; the one exception is `+47`, the constant mixer mask, which nothing in the module ever
+  writes — a case requires the three shipped bytes to be `$09`/`$12`/`$24` in order.
+* **A negative SFX-active flag** is reachable only from a seeded state (the trigger `sf`s the byte
+  to 0 and stores 1), and so is a **slide direction of zero** — all 26 shipped descriptors carry
+  `$01` or `$ff` at `+8`, which a case asserts so the seeded arm cannot quietly become redundant.
+* **What a descriptor field MEANS** past the role the tick gives it.
+
+**Mutation sweep: 44 mutants across three passes, per README.md's recipe** (forced relink, unpiped
+returncode, `__pycache__` purged before each run, green tree immediately before each). **43
+non-equivalent, all 43 caught; one equivalent.** The first pass caught 36 of 40 and its four
+survivors are the batch's most useful finding:
+
+* the `$1a62c` early exit — a countdown spent with neither a sustain flag nor a slide step left —
+  was reached by no case built from a freshly armed descriptor, so a port that fell through into the
+  countdown survived the whole battery. Closed by `PITCH_GATE_CASES`, five seeded states over three
+  channels;
+* an envelope countdown of exactly **one**, the tick before the borrow, which is the only value that
+  tells `subq.b #1 / bcc` from a `<= 1` test apart;
+* a portamento landing **exactly** on its limit, which `bcs` clamps and a `>` does not;
+* and the **equivalent** one: `bclr #7` on the arpeggio byte clears a bit the routine then throws
+  away, because the stripped byte's only use is `add.b d1,d0` and d0 is doubled as a BYTE — so bit 7
+  becomes bit 8 of the index and is masked off. Proved for all 256 notes as a case rather than left
+  for a reader. The `bclr` earns its place through the Z it sets, not through the value.
+
+Three more were added by the independent review round and each was RUN before its case was written.
+**The volume stream's loop reload does not re-test the sign of the byte it takes** — a port that
+re-applied the `bpl` after the reload survived the whole battery, because no seeded or shipped
+stream begins with a negative byte (all ten shipped ones open in `$00..$7f`, which a guard now
+states). **The mixer mask hardcoded to channel A's `$09`** is the mutant the period/volume grid's
+trim rests on, and it was measured rather than argued: it passes every one of the 45 rows on record
+0 and fails on records 1 and 2. And **`bus_read_byte` without its 24-bit mask**, which the promoted
+helper now carries for both of its callers.
+
+**Three measured trims, batch-17's bar** (each removed run named the mutant it does NOT uniquely
+catch, checked at the mutant level before cutting). The 45-row period/volume grid fell from three
+records to ONE plus two named mask-pinning cases on the other two — 86 runs — because `$18208` is
+channel-agnostic: a0 is its argument and the body has no per-channel code, unlike the tick's three
+arms, which are three copies. The PRNG-pitch grid dropped its effect-id axis (12 runs): the reload
+reads descriptor `+7` as a FLAG and nothing in it distinguishes one non-zero value from another, and
+the `{12, 20, 21}` set is pinned by its own completeness guard. And `PITCH_GATE_CASES` lost the
+`(0, 1, 1)` row, whose own label conceded it was the same arm by the first test alone.
+
+**The review gate found three defects the suite could not.** The seeding collision above; a global
+transpose left to the keyed seed, so 39 of the 40 period/volume cases ran at a salt-derived
+transpose and the two boundary cases *inverted* on one channel (the "last note the table holds" case
+was reading past the table and the "first note past it" case inside it) — `GLOBAL_DEFAULTS` pins it
+and `_effective_note` makes both coverage guards compute the note the routine actually looks up; and
+a `_branch_s_to` that accepted a displacement of 0, which is not a short branch at all but the
+opcode's `.w` form. Also applied: `_overlay`, `_Memory.decrement` (five spellings of one
+read-modify-write), every placeholder instruction in the pins replaced by the run it stood for, a
+`X ^ TOGGLE ^ TOGGLE` case row that was a duplicate replaced by the fourth state of the flag pair
+the noise arm reads, `WB_SND_MUSIC_CHANNELS` dropped for the `WB_SND_CHANNELS` it duplicated,
+`_shift_imm`'s word form dropped for `leaf.lsl_w_imm_dn`, and `$18208`'s a0 parameter renamed
+`record` — it is an ADDRESS where the SFX half's `channel` is an index 0..2.
+
+**Four hoists landed, complete rather than additive.** `overlay`, `seeded_bytes` and
+`assert_bands_are_seeded` are now `leaf.py`'s — the layered-seed hazard has fired *twice*
+(`test_scene.py`'s `_poke` docstring records the identical failure, and this battery had it twice
+before its review), so the third battery to build one does not have to find it a third time. The
+guarded 24-bit-bus byte read is `include/bus.h`'s, with `src/rng.c` and `src/sound.c` as its two
+callers — a project header and not the kit's `machine.h`, because it pairs a 68000 fact with an
+os.h one that only a game's own reconstruction has an opinion about. `tst_b_d16` went to `leaf.py`
+on its third speller and **all three** were converted (`test_actor.py`'s local copy deleted,
+`test_hud.py`'s byte literal replaced); `move_b_postinc_dn` went with it and `test_stage.py`'s copy
+is gone. `subq_b_d16` and the shift base opcode stand at two spellers and are annotated on both
+sides.
+
+**QUEUED, registered rather than half-done.**
+
+* **Four batteries still merge their seeds KEY BY KEY** and are the queued consolidation onto
+  `leaf.overlay`: `test_actor.py`'s `_defeat_pokes` (~3366) and `_state_pokes` (~1139),
+  `test_map.py`'s `_map_pokes` (~776), and `test_scene.py`'s `_poke` (~303), whose mechanism
+  *diverges* — it REFUSES a colliding key rather than overlaying it, so it cannot express a byte
+  poked inside a seeded band at all. Deliberately not converted here.
+* **`src/blit.c`'s `state_word`/`state_word_write`** are the WORD variant of the guarded read, but
+  they guard a FIXED address and never mask, because nothing computes them. Noted, not folded in.
+* **Promoting `bus_read_byte` to the kit's `machine.h`** once a second game needs it.
+* **`_branch_s_to` is the third speller of a short-branch encoder** (`test_actor.py`'s `_branch_s`,
+  `test_stage.py`'s `bpl_s`), and the three disagree about their guard. leaf.py already hosts the
+  `.w` twin and its own rule says hoist; `_bytes_of` is its natural companion.
+* **The kit's attribution pass has no fast path.** Measured under cProfile: of this battery's ~37 s
+  single-process, **35 s** is `harness._attribution_check`'s per-byte Python walk of a 1 MiB image,
+  once per poisoned run. `differential` itself already carries the `bytes(...) == bytes(...)`
+  prefix comparison the check is missing. Kit scope, and worth more than any in-diff change: the
+  in-diff copies it would be tempting to optimise (`_poked_image`, `_Memory.__init__`) total 60 ms.
+* **`$17c74` and `stage_load_window` remain the PSG wall's two faces**, unmoved by this batch —
+  but the tick's callee list and its non-local exit are now recorded against the day one of them
+  moves.
+

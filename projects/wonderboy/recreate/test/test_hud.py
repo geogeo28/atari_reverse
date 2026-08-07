@@ -63,8 +63,8 @@ import layout
 import leaf
 from leaf import (BSR_W, MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_IMM_ABS_L,
                   RTS, backward_branch, bsr_w, clr_w_dn, forward_branch, jsr_abs_l, longword,
-                  move_l_imm_postinc, opcode, rotate_left32, subq_w_abs_l, subq_w_dn, tst_w_dn,
-                  word)
+                  move_l_imm_postinc, opcode, rotate_left32, subq_w_abs_l, subq_w_dn, tst_b_d16,
+                  tst_w_dn, word)
 from layout import wb
 
 # $bbca calls the SOUND MODULE, so the battery that owns $1a48a owns its write set too — imported
@@ -438,9 +438,9 @@ BPL_W = b"\x6a\x00"
 MOVEQ_0_D7 = b"\x7e\x00"
 MOVEA_L_ABS_L_A0 = b"\x20\x79"      # movea.l <abs>.l,a0
 LEA_ABS_L_A6 = b"\x4d\xf9"
+HUD_A0 = 0                          # a0's register number, for leaf's encoders
 TST_B_ABS_L = b"\x4a\x39"
 TST_B_A0 = b"\x4a\x10"
-TST_B_D16_A0 = b"\x4a\x28"
 TST_B_A6_INC = b"\x4a\x1e"          # tst.b (a6)+  — the flag walk's own step
 CLR_B_D16_A6 = b"\x42\x2e"          # clr.b d16(a6)
 CMPI_B_IMM_A0 = b"\x0c\x10"         # cmpi.b #imm,(a0)     — one arm of the variant chain
@@ -466,7 +466,8 @@ def _clr_l_dn(reg):
 # as 0. Built rather than transcribed so that the shift COUNTS come out of the geometry constants the
 # reconstruction uses: a 32-byte glyph stride IS the `asl.w #5`, a 2-byte table stride the `asr.w #1`
 # and a 4-unit cell the `asr.w #2`. A transcribed `\xeb\x46` would pin none of those.
-SHIFT_OPCODE = 0xe000
+SHIFT_OPCODE = 0xe000                # ALSO IN test_sound.py (`LSHIFT_IMM_DN`), which is
+                                     # the second speller of this base opcode
 SHIFT_LEFT = 1 << 8
 SHIFT_SIZE_WORD = 1 << 6
 SHIFT_SIZE_LONG = 2 << 6
@@ -948,7 +949,7 @@ def _plain_slot_block(slot):
              + len(BEQ_W) + 2 + value_arm + zero_arm)
     return lambda at: _assemble(at, [
         LEA_ABS_L_A0 + longword(slot["record"]),
-        TST_B_D16_A0 + word(HUD_SLOT_REQUEST),
+        tst_b_d16(HUD_A0, HUD_SLOT_REQUEST),
         BEQ_W + forward_branch(dirty),
         CLR_B_D16_A0 + word(HUD_SLOT_REQUEST),
         ST_ABS_L + longword(slot["flag"]),
@@ -983,7 +984,7 @@ def _slot_bbc8_block():
                                          + _SLOT_VARIANT_LAST_LEN)]
     return lambda at: _assemble(at, [
         LEA_ABS_L_A0 + longword(slot["record"]),
-        TST_B_D16_A0 + word(HUD_SLOT_REQUEST),
+        tst_b_d16(HUD_A0, HUD_SLOT_REQUEST),
         BNE_W + forward_branch(len(RTS)), RTS,
         CLR_B_D16_A0 + word(HUD_SLOT_REQUEST),
         ST_ABS_L + longword(slot["flag"]),

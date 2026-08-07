@@ -3,6 +3,7 @@
  */
 #include <stdint.h>
 
+#include "bus.h"
 #include "machine.h"
 #include "os.h"
 #include "rng.h"
@@ -63,9 +64,8 @@ static uint32_t stage_random_kind(uint8_t *image, uint32_t entry_d2, uint32_t ta
      * the machine. What is left off the bus is guarded like src/blit.c's off-image words — the shim
      * answers a read past the image with zeros, and only a caller with rubbish above d2's low word
      * can get there at all. */
-    uint32_t at = addr_add(table, addr_add(rng_next(image, 0) & draw_mask, row)) & WB_BUS_ADDR_MASK;
-    uint8_t kind = os_in_image(at, 1) ? image[at] : (uint8_t)0;
-    return kind & WB_STAGE_KIND_MASK;
+    uint32_t at = addr_add(table, addr_add(rng_next(image, 0) & draw_mask, row));
+    return bus_read_byte(image, at) & WB_STAGE_KIND_MASK;
 }
 
 uint32_t stage_random_kind8(uint8_t *image, uint32_t entry_d2) {

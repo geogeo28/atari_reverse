@@ -35,6 +35,7 @@ import pytest
 import harness
 import leaf
 from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16,
+                  tst_b_d16,
                   asr_w_imm_dn, backward_branch, branch, branch_over, branch_w_to, bsr_w,
                   btst_imm_dn,
                   case_salt, clr_b_d16, clr_w_d16, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, cmpi_b_dn,
@@ -317,12 +318,10 @@ def tst_b_dn(reg):
     return opcode(0x4a00 | reg)
 
 
-def tst_b_d16(base, displacement):
-    return opcode(0x4a28 | base) + word(displacement)
-
-
 def subq_b_d16(amount, base, displacement):
-    """`subq.b #n,d16(An)` — addq_b_d16's other direction; the countdown walk's whole payload."""
+    """`subq.b #n,d16(An)` — addq_b_d16's other direction; the countdown walk's whole payload.
+    ALSO IN test_sound.py (`SUBQ_B_D16_AN`), which is the second speller — annotated on both sides
+    rather than hoisted, per leaf.py's rule that an encoding moves there on its THIRD."""
     return opcode(0x5128 | ((amount & 7) << 9) | base) + word(displacement)
 
 

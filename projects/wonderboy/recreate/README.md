@@ -98,7 +98,12 @@ src/sound.c                the sound module: snd_trigger_effect ($1a48a) and the
                            three routines joined by `bra.w` that end in the first ported code in
                            this project to drive the YM2149. test/test_sound.py owns the write-set
                            model test/test_hud.py and test/test_actor.py import, and the PSG access
-                           ledger the latter imports too
+                           ledger the latter imports too. Then the TICK TIER — what the per-VBL tick
+                           calls, in the order it calls them: snd_sfx_tick ($1a5da), which the tick
+                           runs FIRST, before a single music byte; snd_prng_step ($1aaca), the
+                           module's own PRNG, distinct from src/rng.c's and stepped every tick;
+                           and snd_channel_period_and_volume ($18208), the six-armed pass that turns
+                           one music channel's record into a period and a volume
 src/hud.c                  panel_refresh_frame ($b346) below its own entry: batch 2's eleven leaves
                            (the BCD score/counter accumulators, the panel blits, the meter's clamped
                            add), batch 3's second tier (the digit plotter — a leaf too — its three

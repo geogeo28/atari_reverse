@@ -449,8 +449,8 @@ pointer resolving exactly onto the next region's first byte):
 | `$18480..$18507` | 136 | **song directory — 17 records × 8 bytes** |
 | `$18508..$18523` | 28 | per-song per-channel sequence tables (word offsets, `0000`-terminated) |
 | `$18524..$1a489` | 8038 | **pattern data — 106 distinct patterns** |
-| `$1a48a..$1a5d9` | 336 | `snd_trigger_effect` (3 channel paths) |
-| `$1a5da..$1a82f` | 598 | SFX tick engine (`$1a602` chA, `$1a6bc` chB, `$1a776` chC) |
+| `$1a48a..$1a5d7` | 334 | `snd_trigger_effect` (3 channel paths) — **corrected, see addendum 2** |
+| `$1a5d8..$1a82f` | 600 | SFX tick engine (`$1a602` chA, `$1a6bc` chB, `$1a776` chC) **— corrected, see addendum 2: the `rts` at `$1a5d8` is THIS routine's, not the trigger's orphan** |
 | `$1a830..$1a863` | 52 | SFX pointer table (26 words) |
 | `$1a864..$1a9cf` | 364 | 26 SFX descriptors × 14 |
 | `$1a9d0..$1a9e3` | 20 | SFX volume-stream pointers (10 words) |
@@ -656,7 +656,7 @@ stub+0 (or restore the mutable ranges) and must never trust the image values.
 * **Self-modifying data.** All state lives inside the code image (`$17bc6`, `$17c56`,
   `$18352`, `$18360`, `$1aa7c`, `$1aae6`), so the module needs a writable text segment
   and is not re-entrant or shareable.
-* **Fully PC-relative.** Every routine begins `lea $1738c(pc),a3` and every internal
+* **Fully PC-relative.** *(**Corrected — see addendum 2**: `$1aaca` and `$18208` do NOT begin with the `lea`; they are internal `bsr` targets and inherit a3 from their caller. The claim holds for every routine reachable through the stub table.)* Every routine begins `lea $1738c(pc),a3` and every internal
   reference is `(pc)` or `d16(a3)` / `(a3,Xn.w)`. Only the *callers* use an absolute
   `lea $17adc.l`. The module is therefore relocatable as a blob.
 * **Stateful PRNG** at `$1aae6` (`$1aaca` rotates a 32-bit value through X), consumed by
@@ -834,3 +834,46 @@ volume bit 4 never set, tempo byte 0 on the 50 Hz path — with two refinements:
     a row boundary landing one tick early leaves that row's arpeggio and volume ramp a tick
     out of step — songs 11 and 14 replay their first period *exactly* for its first few
     hundred frames and then hold the right notes with the wrong effect phase.
+
+---
+
+## Post-recon addendum 2: what porting the tick tier showed (batch 23, 2026-08-07)
+
+`$1aaca`, `$1a5da` and `$18208` are reconstructed in `recreate/src/sound.c` and pinned whole
+(entry pins over all 958 bytes) in `recreate/test/test_sound.py`. Four corrections and one
+addition to the sections above, every one read off the bytes:
+
+* **`$1a5d8` is not an orphan.** §6's map and `names.txt` both had the `rts` at `$1a5d8` as a
+  stray two bytes after `snd_trigger_effect`. It is **`snd_sfx_tick`'s shared `rts`**, the target
+  of that routine's `bmi.s` at `$1a5e6` and its `bra.s` at `$1a600` — exactly as `$17c72` serves
+  `snd_music_tick`. A whole-image branch/jump scan finds no other reference to it. So the SFX
+  tick is `$1a5d8..$1a82f`, 600 bytes, and §6's "`$1a5da..$1a82f` 598" row starts one word late.
+
+* **The tick calls the SFX engine FIRST.** `$17cb6` is `bsr.w $1a5da`, before the fade countdown,
+  before `snd_channel_step` and before `$18208`. §1's table ("music + SFX + PSG out") reads the
+  other way round.
+
+* **`$1aaca` and `$18208` have no `lea $1738c(pc),a3` of their own.** §7's "Fully PC-relative —
+  every routine begins `lea $1738c(pc),a3`" is true of every routine reachable through the stub
+  table and false of these two: they are internal `bsr` targets and inherit a3 from their caller.
+  A differential entering either directly must seed a3, which is how this was found.
+
+* **Each SFX channel reads a DIFFERENT byte of the PRNG state.** Channel A takes `$1aae6`, B
+  `$1aae7`, C `$1aae8` — the sixth base-plus-stride block of the three arms, and the only one whose
+  stride is 1 rather than the size of a block. §7's "consumed by SFX whose descriptor +7 is
+  non-zero" is right about *which* effects read it and silent about which byte.
+
+* **The pitch delta moves the period by `delta * 257`, not by `delta`.** `$1a642..$1a652` is
+  `move.b state+3,d1 / add.b d0,d1 / move.b d1,lo` then `move.b state+2,d1 / addx.b d0,d1 /
+  move.b d1,hi` — the same delta byte into both halves of the word, the second time with the
+  carry. With descriptor +7 clear the delta is 0 and the tone period is copied verbatim.
+
+* **`$18208`'s vibrato speed is a DELAY, not a divider.** `move.b 25(a0),d4 / subq.b #1,d4 / bne`
+  stores the decremented value only when it is NON-zero, so the field sticks at its last non-zero
+  value and the accumulator steps on every tick from then on.
+
+* **The non-local exit out of the tick.** `$18016` clears "song loaded" and `bra.w`s to stub +28,
+  so the stop's `rts` returns to the *tick's* caller and the rest of the tick never runs; the fade
+  path enters there from `$17ccc`/`$17cda`. Opcode `$8e` enters two bytes earlier at `$18014`,
+  whose `addq.l #4,sp` unwinds `snd_channel_step`'s frame first. Whatever ports `$17c74` or
+  `$18106` has to model both.

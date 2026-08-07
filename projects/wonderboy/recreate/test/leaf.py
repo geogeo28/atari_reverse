@@ -373,6 +373,24 @@ def move_b_d16_dn(reg, base, displacement):
     return opcode(0x1028 | (reg << 9) | base) + word(displacement)
 
 
+def tst_b_d16(base, displacement):
+    """`tst.b d16(An)` — how a routine tests a BYTE FIELD of a record it holds a pointer to. THREE
+    batteries spelt it (test_actor.py's spawn countdown, test_hud.py's slot request as a byte
+    literal, test_sound.py's SFX flags through the module base in a3), which is the count that moves
+    an encoding here."""
+    return opcode(0x4a28 | base) + word(displacement)
+
+
+def move_b_postinc_dn(reg, base):
+    """`move.b (An)+,Dn` — how a routine walks a BYTE cursor, and the sibling of
+    `move_w_postinc_dn` above. Its base register is spelt out for that one's reason: test_scroll.py
+    and test_text.py each carry a `0x101e` byte literal with the register pair taken as read, which
+    is a constant hidden in a name rather than in a call. TWO batteries spell the generic form
+    (test_stage.py, test_sound.py) and those two are converted; the fixed-register pair is noted here
+    rather than rewritten, since converting them is a change to those batteries' style."""
+    return opcode(0x1018 | (reg << 9) | base)
+
+
 def move_w_indexed_dn(reg, base, index, displacement=0, longword_index=False):
     """`move.w d8(An,Dm.?),Dn` — how a routine reads a word out of a table it has just indexed.
 
@@ -747,6 +765,50 @@ def keyed_block(base, length, salt):
     scroll battery: it served under a third of the calls, all of them 8-bit salt collisions between
     unrelated cases, for 3% of the battery's time)."""
     return bytes(keyed_byte(base + offset, salt) for offset in range(length))
+
+
+def overlay(*layers):
+    """Poke dicts merged BYTE by byte, later layers winning, and re-banded into {start: bytes}.
+
+    A poke dict is {address: bytes} and `dict.update` replaces a WHOLE entry — so a two-byte poke at
+    the same address as an eleven-byte seed silently shortens the seed to two bytes and the other
+    nine revert to whatever the .PRG ships there, with both cores reading the same wrong thing and
+    every case staying green. THE HAZARD HAS FIRED TWICE: test_scene.py's `_poke` carries a comment
+    about a band it lost to exactly this (the collision map "read as zeros for a batch"), and
+    test_sound.py's tick tier had it twice before its review pass. It lives here so the third battery
+    to build a layered seed does not have to find it a third time.
+
+    ../STATUS.md registers the batteries that still merge by key (test_actor.py's `_defeat_pokes` and
+    `_state_pokes`, test_map.py's `_map_pokes`, and test_scene.py's own divergent refusal mechanism)
+    as a queued consolidation rather than converting them here.
+    """
+    flat = {}
+    for layer in layers:
+        for addr, value in layer.items():
+            for offset, byte in enumerate(value):
+                flat[addr + offset] = byte
+    return {start: bytes(flat[start + index] for index in range(length))
+            for start, length in merge_bands(flat)}
+
+
+def seeded_bytes(pokes):
+    """Every ADDRESS a poke dict covers — the set `assert_bands_are_seeded` asks its question of."""
+    return {addr + index for addr, value in pokes.items() for index in range(len(value))}
+
+
+def assert_bands_are_seeded(pokes, bands, what):
+    """Require ``pokes`` to cover every byte of each (base, length) in ``bands``.
+
+    The other half of `overlay`: a battery whose routines read a MUTABLE image band has to state
+    which bands those are, or a seeding bug leaves them on the shipped bytes and says nothing. The
+    covered set is built ONCE rather than per band — it is the whole poke dict either way.
+    """
+    covered = seeded_bytes(pokes)
+    for base, length in bands:
+        missing = sorted(a for a in range(base, base + length) if a not in covered)
+        assert not missing, (
+            f"{what}: {len(missing)} byte(s) of the band at {base:#x} are NOT seeded, e.g. "
+            f"{missing[0]:#x} — that byte runs on the .PRG's own residue")
 
 
 def case_salt(case):

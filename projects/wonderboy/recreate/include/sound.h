@@ -71,4 +71,80 @@ void snd_stop_all_sfx(uint8_t *image);
  * and the `bra.w` is why the module's stop is one routine to a caller and three to a reader. */
 void snd_stop(uint8_t *image);
 
+/* ---- THE TICK TIER: what snd_music_tick ($17c74) calls, in the order it calls them --------------
+ *
+ * The tick's own body is NOT here. What is, is the three routines below it that touch no port and
+ * make no call of their own — the SFX engine it runs FIRST (before any music, which the $17c74 plate
+ * had backwards until this batch), the PRNG that engine steps, and the per-channel pass that turns a
+ * music channel's record into the period and volume the tick hands the chip.
+ *
+ * ALL THREE RUN ON MUTABLE IMAGE THAT THE .PRG SHIPS DIRTY. $17bc6..$17c71, $18352..$1836a,
+ * $1aa7c..$1aac9 and $1aae6..$1aae9 hold residue from a run at another load base (the stale pointer
+ * at $17bc6+2 is the clearest one), so nothing here may be entered on the image's own bytes: a
+ * caller seeds the band, or reaches it through snd_play_song / snd_trigger_effect.
+ */
+
+/* $1aaca — the SOUND MODULE's PRNG, which is not the game's (src/rng.c owns that one). One 32-bit
+ * shift left through the X flag, with bit 3 XOR bit 6 of the top byte entering at the bottom.
+ *
+ * Returns the BYTE the original leaves in d0's low byte — the state's new top byte. d0's upper three
+ * bytes are the caller's and are not reproduced here (a `uint8_t` cannot carry them): every
+ * operation in the body is a `.b` one, and test_sound.py asserts that on the ORACLE's d0. The one
+ * caller, snd_sfx_tick, ignores the value — each arm re-reads WB_SND_PRNG_STATE + its own channel
+ * number instead, so the three channels take three DIFFERENT bytes of the same state.
+ *
+ * IT IS STEPPED EVERY TICK, unconditionally, and snd_play_song does not reset it. Any case that
+ * compares two ticks therefore seeds WB_SND_PRNG_STATE itself. */
+uint8_t snd_prng_step(uint8_t *image);
+
+/* $1a5da — stub +14's FIRST callee: step the PRNG, then run each of the three SFX channels whose
+ * WB_SND_SFX_ACTIVE_FLAGS byte is set.
+ *
+ * CHANNEL A'S FLAG IS TESTED TWICE. `tst.b / bmi` returns from the WHOLE routine when it is
+ * negative — so B and C do not run either — and only then does `beq` skip A alone. B and C get the
+ * `beq` and no sign test, so a negative flag runs their arm. Nothing in the shipped code writes a
+ * negative flag (the trigger `sf`s it to 0 and `move.b #1`s it to 1), which is why the `bmi` is
+ * reached only from a seeded state.
+ *
+ * The three arms at $1a602/$1a6bc/$1a776 are 186 bytes each and identical bar their offsets, so they
+ * are one parametrised body here exactly as snd_trigger_effect's are — and the differential still
+ * enters each at its own address. `rts` for all of them, and for the entry, is the ONE at $1a5d8
+ * that ../names.txt used to call an orphan. */
+void snd_sfx_tick(uint8_t *image);
+
+/* The two registers $18208 hands back. Both are read by the tick as PARTS of a register, so both
+ * carry bits the routine never wrote. */
+typedef struct {
+    uint32_t period;   /* d0. IN as well as out: every write to it is a `.w` or a `.b`, so the
+                        * caller's HIGH WORD comes back untouched. Its low word is the note period
+                        * the tick splits across two PSG registers. */
+    uint32_t volume;   /* d1. A pure OUTPUT — `moveq #0,d1` destroys the entry value. Its low byte is
+                        * WB_SND_CH_VOLUME and its SECOND byte is the portamento's own leftover
+                        * scratch, which the caller's `sub.b` never reads and the differential
+                        * compares anyway; above that it is always zero, because nothing in the body
+                        * writes d1 wider than a word. */
+} snd_channel_mix;
+
+/* $18208 — turn one music channel's 48-byte record into a period and a volume.
+ *
+ * `record` is the original's a0: the ADDRESS of one channel's 48-byte block, which the tick supplies
+ * as WB_SND_MUSIC_CHANNEL_STATE + n * WB_SND_MUSIC_CHANNEL_LEN. It is an ADDRESS and not a channel
+ * NUMBER — unlike the `channel` the SFX half of src/sound.c indexes its blocks by — because that is
+ * what a0 carries. `mix` is d0/d1, in and out.
+ *
+ * Six arms over one channel, in the order the body runs them: the volume ENVELOPE (a peeked byte,
+ * so a negative one holds the last value and moves no cursor), the note plus the global TRANSPOSE
+ * and the channel's DETUNE, the ARPEGGIO byte and its loop, the period-table lookup, PORTAMENTO
+ * (whose offset is doubled once per octave the note sits below the table's reference index), and
+ * VIBRATO. It ends by publishing the noise period and merging this channel's bits into the module's
+ * shadow of the PSG mixer — so it writes module globals as well as the record, and is not a pure
+ * function of its argument.
+ *
+ * THE PERIOD TABLE ALIASES. The index is `add.b d0,d0`, a BYTE double, and nothing bounds it to the
+ * WB_SND_NOTE_PERIOD_ENTRIES the table holds: a note from 96 to 127 reads the 32 ENTRIES — 64 bytes
+ * — past the table (the arpeggio pointer table and the first arpeggio streams) as though they were
+ * periods, and a note from 128 up wraps back to the table's start. Reproduced; the read stays inside
+ * the image by construction, since the base is a constant and the index is a byte. */
+void snd_channel_period_and_volume(uint8_t *image, uint32_t record, snd_channel_mix *mix);
+
 #endif /* WONDERBOY_SOUND_H */

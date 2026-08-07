@@ -57,7 +57,7 @@ from leaf import (RTS, add_w_dn_dn, branch, branch_over, bsr_w, btst_imm_dn, cas
                   dbf_over, forward_branch, keyed_block, lea_abs_l, lea_d16, lea_indexed, longword,
                   lsl_w_imm_dn, merge_bands, move_l_imm_abs_l, move_l_imm_postinc, move_w_abs_l_dn,
                   move_w_dn_dn, move_w_imm_abs_l, move_w_imm_dn, move_w_indexed_dn,
-                  move_w_postinc_dn, movea_l_abs_l, moveq_0_dn,
+                  move_b_postinc_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn,
                   opcode, program_writes, st_abs_l, subi_w_dn, swap_dn, tst_w_abs_l, u16, s16,
                   word)
 from layout import wb
@@ -208,10 +208,6 @@ A0, A1, A2, A5, A6 = 0, 1, 2, 5, 6
 D0, D1, D2, D4, D5, D6, D7 = 0, 1, 2, 4, 5, 6, 7
 BNE_W, BEQ_W = 0x6600, 0x6700
 BPL_S = 0x6a00
-
-
-def move_b_postinc_dn(reg, base):
-    return opcode(0x1018 | (reg << 9) | base)
 
 
 def move_w_dn_abs_l(reg, addr):

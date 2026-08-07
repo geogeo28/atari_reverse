@@ -1411,11 +1411,17 @@
 
 /* ---- the sound module's SFX trigger ($1a48a; src/sound.c) -------------------------------------
  *
- * The module ($17adc..$1abc8) is SELF-CONTAINED AND PC-RELATIVE: every routine in it opens with
- * `lea $1738c(pc),a3` and reaches its own tables through that base, so the absolute addresses below
- * are what those PC-relative operands resolve to in the image the harness loads. Only the state
- * `snd_trigger_effect` touches is named here; the rest of the module's map is in
- * ../notes/sound_module_recon.md and ../names.txt.
+ * The module ($17adc..$1abc8) is SELF-CONTAINED AND PC-RELATIVE: it reaches its own tables through
+ * the base in a3, so the absolute addresses below are what those PC-relative operands resolve to in
+ * the image the harness loads. Only the state `snd_trigger_effect` touches is named here; the rest
+ * of the module's map is in ../notes/sound_module_recon.md and ../names.txt.
+ *
+ * WHERE a3 COMES FROM IS NOT UNIFORM, and an earlier reading of this that said it was cost a batch
+ * an afternoon. Every routine reachable through the STUB TABLE opens with `lea $1738c(pc),a3` and
+ * needs nothing from its caller. The two internal `bsr` targets ported so far — $1aaca
+ * (snd_prng_step) and $18208 (snd_channel_period_and_volume) — do NOT: they inherit a3, and a
+ * differential entering either directly must seed it or the routine writes at $375b instead of
+ * $1aae6. Assume nothing about $18106 or the opcode handlers; read the first instruction.
  *
  * THREE CHANNELS, ONE BODY. $1a48a's arms at $1a494 (A), $1a504 (B) and $1a56e (C) are the same
  * fifteen instructions with the channel's own offsets, and all four of the blocks they address step
@@ -1505,6 +1511,119 @@
                                              * volume shadows + WB_PSG_REG_VOLUME_A..C. That is why
                                              * snd_stop_all_sfx's four stores mirror
                                              * snd_psg_silence's four chip writes exactly */
+
+/* ---- the module's TICK TIER: the PRNG ($1aaca), the SFX tick ($1a5da) and the music channel's
+ *      period/volume pass ($18208) — src/sound.c ---------------------------------------------------
+ *
+ * EVERY BAND BELOW IS MUTABLE IMAGE, and the shipped .PRG carries LIVE RESIDUE in all of it: it was
+ * saved after a run at a load base of about $2d360, so $17bc6+2 holds a stale pointer and $1aa7c
+ * holds a copy of SFX descriptor 9 (../notes/sound_module_recon.md §6). Nothing may read an initial
+ * value out of $17bc6..$17c71, $18352..$1836a, $1aa7c..$1aac9 or $1aae6..$1aae9 — a case seeds it,
+ * or drives it through snd_play_song / snd_trigger_effect.
+ */
+
+/* The module's own PRNG, which is NOT src/rng.c's — that one is the game's ($68c6) and this one is
+ * read by the SFX engine alone. `andi.b #$48 / addi.b #$38 / lsl.b #2` puts bit 3 XOR bit 6 of the
+ * top byte into X, and two `roxl.w` on memory then chain that X through the low word and into the
+ * high one — so it is a 32-bit shift left with the feedback bit entering at the bottom. The step
+ * runs EVERY tick, unconditionally, and snd_play_song does not reset it. */
+#define WB_SND_PRNG_STATE          0x1aae6u /* a3+14170, the HIGH word */
+#define WB_SND_PRNG_STATE_LEN      4u
+#define WB_SND_PRNG_LOW_WORD       2u       /* a3+14172, and the word the FIRST `roxl.w` turns */
+#define WB_SND_PRNG_TAP_MASK       0x48u    /* `andi.b #$48,d0` — bits 3 and 6 of the top byte */
+#define WB_SND_PRNG_TAP_BIAS       0x38u    /* `addi.b #$38,d0`, which is what turns those two bits
+                                             * into their XOR in the bit the shift pushes out */
+#define WB_SND_PRNG_FEEDBACK_BIT   6u       /* `lsl.b #2,d0` leaves the LAST bit shifted out in X,
+                                             * which for a count of 2 on a byte is bit 6 */
+
+/* The SFX tick's own view of the descriptor copy the trigger left in the channel state. The fields
+ * WB_SND_DESC_PERIOD_STEP/_TONE_PERIOD/_MIXER_BITS/_VOLUME_STEP/_SECOND_RELOAD above are the same
+ * bytes; these are the six the tick reads and the trigger does not. */
+#define WB_SND_DESC_DURATION       0u  /* counted down every tick; zero with no sustain ends it */
+#define WB_SND_DESC_SLIDE_AMOUNT   4u  /* a word, added to or subtracted from the mix period */
+#define WB_SND_DESC_USE_PRNG       7u  /* non-zero: take the pitch delta from WB_SND_PRNG_STATE */
+#define WB_SND_DESC_SLIDE_DIRECTION 8u /* `tst.b / beq / bpl` — 0 none, positive down, NEGATIVE up */
+#define WB_SND_DESC_SLIDE_COUNT    9u  /* counted down by the pitch step */
+#define WB_SND_DESC_SUSTAIN        12u /* non-zero: the effect holds past its duration */
+
+#define WB_SND_SFX_INACTIVE        0u  /* `sf 2254(a3)` when an effect ends — Scc's false byte */
+#define WB_SND_MIX_PERIOD_LOW      1u  /* the LOW byte of a channel's mix period word, which is what
+                                        * the tick copies into the shared noise byte */
+#define WB_SND_VOLUME_STREAM_LOOP  0x80u /* `cmp.b #-128,d0` — the one negative byte that means "go
+                                          * back to WB_SND_STATE_STREAM_BASE"; any other negative
+                                          * byte HOLDS, writing neither the cursor nor the volume */
+
+/* ---- the MUSIC channel state ($17bc6, three of them) and the pass that reads it ($18208) --------
+ *
+ * $18208 is handed one channel's record in a0 and hands back a period in d0 and a volume in d1. It
+ * is image-only — it drives no port — but it is not a pure function either: it steps the envelope,
+ * the arpeggio, the portamento and the vibrato in place, and it publishes the noise period and the
+ * module's shadow of the PSG mixer.
+ */
+#define WB_SND_MUSIC_CHANNEL_STATE 0x17bc6u /* A/B/C at $17bc6/$17bf6/$17c26. There are
+                                             * WB_SND_CHANNELS of them and not a count of their own:
+                                             * the music and the SFX engines keep separate state for
+                                             * the SAME three PSG channels */
+#define WB_SND_MUSIC_CHANNEL_LEN   48u      /* `adda.w #$30,a1` in snd_play_song */
+
+#define WB_SND_CH_FLAGS            0u
+#define WB_SND_CH_VIBRATO_ACC      14u /* a word */
+#define WB_SND_CH_ARPEGGIO_BASE    16u /* a long — the stream to loop back to */
+#define WB_SND_CH_ARPEGGIO_CURSOR  20u /* a long — and where it is now */
+#define WB_SND_CH_VIBRATO_DEPTH    24u /* a SIGNED byte, added to the accumulator each step */
+#define WB_SND_CH_VIBRATO_SPEED    25u
+#define WB_SND_CH_ENVELOPE_SPEED   26u /* the byte the instrument's data is preceded by */
+#define WB_SND_CH_NOTE             29u
+#define WB_SND_CH_VOLUME           30u /* what the caller reads back out of d1 */
+#define WB_SND_CH_ENVELOPE_COUNT   31u
+#define WB_SND_CH_ENVELOPE_CURSOR  32u /* a long */
+#define WB_SND_CH_ENVELOPE_LAST    40u /* the last value taken off the envelope, held at its end */
+#define WB_SND_CH_PORTA_LIMIT      41u /* HALVED: the code `lsl.b #1`s it before every use */
+#define WB_SND_CH_PORTA_STEP       42u
+#define WB_SND_CH_PORTA_CURRENT    43u
+#define WB_SND_CH_PORTA_CONTROL    44u
+#define WB_SND_CH_YIELD            45u /* bit 7 set: this channel has been handed to the SFX engine */
+#define WB_SND_CH_DETUNE           46u /* added to the note, like the global transpose */
+#define WB_SND_CH_MIXER_MASK       47u /* CONSTANT per channel: $09 (A), $12 (B), $24 (C) */
+
+#define WB_SND_CH_FLAG_TOGGLE      0x01u /* `eori.b #1,d7` — flipped on every call, so it is the
+                                          * pass's own every-other-tick phase */
+#define WB_SND_CH_FLAG_VIBRATO     0x04u /* bit 2 */
+#define WB_SND_CH_FLAG_ENVELOPE    0x20u /* bit 5 */
+#define WB_SND_CH_NOISE_ROUTE_FLAGS 0x03u /* `eori.b #$ff,d7 / andi.b #3,d7 / bne` — the noise arm
+                                           * runs only when BOTH bit 0 and bit 1 are SET */
+#define WB_SND_CH_PORTA_ENABLED    0x40u /* `btst #6` — what opcode $82 writes */
+#define WB_SND_CH_PORTA_HELD       0x80u /* `btst #7`: with it set the slide advances only on the
+                                          * ticks whose WB_SND_CH_FLAG_TOGGLE is clear */
+#define WB_SND_CH_PORTA_AT_LIMIT   0x20u /* `bset/bclr #5` — which end the slide is running towards */
+#define WB_SND_CH_YIELD_TAKEN      0x80u /* `move.b 45(a0),d1 / bpl` — the SIGN bit */
+#define WB_SND_CH_YIELD_MASK       0x7fu /* `andi.b #$7f,45(a0)` — the hand-over happens once */
+
+#define WB_SND_ARPEGGIO_END        0x80u /* `bclr #7,d1` — the terminator, cleared before the byte is
+                                          * used, so the last entry's own offset is applied on the
+                                          * tick that loops */
+
+#define WB_SND_NOTE_PERIOD_TABLE   0x1836eu /* 96 words, equal temperament (../names.txt) */
+#define WB_SND_NOTE_PERIOD_ENTRIES 96u      /* the table's extent; `add.b d0,d0` bounds the byte
+                                             * index to 0..254 and NOTHING bounds it to this, so a
+                                             * note from 96 up reads past the table's end */
+#define WB_SND_GLOBAL_TRANSPOSE    0x17c64u /* a3+2264, added to every channel's note (opcode $89) */
+#define WB_SND_NOISE_PERIOD_BASE   0x17c6bu /* a3+2271 */
+#define WB_SND_NOISE_PERIOD_OUT    0x17c6cu /* a3+2272 — what the tick writes to PSG register 6 */
+#define WB_SND_NOISE_ROUTE_MASK    0x17c6du /* a3+2273 */
+#define WB_SND_NOISE_PERIOD_XOR    0x08u    /* `eori.b #8,d3` on the base before it is published */
+#define WB_SND_NOISE_TONE_BITS     0x07u    /* `move.b #7,d3` — the three TONE enables, merged into
+                                             * the shadow mixer when this channel drives the noise */
+#define WB_SND_NOISE_ROUTE_YIELDED 0x01u    /* `move.b #1,2272(a3)` on the yield path */
+#define WB_SND_MIXER_NOISE_BITS    0x38u    /* `andi.b #$38,d1` — the three NOISE enables, which a
+                                             * yielded channel gives up for this tick */
+
+#define WB_SND_PORTA_OCTAVE_BIAS   0xa0u /* `addi.b #-96,d5` — an ADD, so its CARRY says the note's
+                                          * byte index has reached 96, i.e. the table entry the
+                                          * slide's units are expressed in */
+#define WB_SND_PORTA_OCTAVE_STEP   24u   /* `addi.b #24,d5` — twelve semitones of table, one octave;
+                                          * the delta doubles once per octave because the period
+                                          * table halves once per octave */
 
 /* ---- the game-restart reset ($fe4a) and the life it redraws ($e80c) ---------------------------
  *
