@@ -1,4 +1,4 @@
-"""Differential test for src/rng.c — the game's PRNG ($68c6) and the per-stage draw over it ($e1f0).
+"""Differential test for src/rng.c — the game's PRNG ($68c6) and the two draws over it ($e1f0, $e1c8).
 
 THE REGISTERED FALSE GREEN, STATED HERE BECAUSE THIS IS WHERE A READER OF THE CASES MEETS IT.
 `rng_next`'s entropy term is `$ff8209 ^ $b39a` — the shifter's video-address counter (its low, fastest
@@ -27,23 +27,34 @@ And the XOR is unobservable AS AN OPERATOR: `0 ^ tick` is `0 + tick`, so a port 
 original XORs is green. That is the batch's one surviving mutant (../STATUS.md), and it is a
 consequence rather than a missing case.
 
-$e1f0 ON TOP OF IT. It is one of only two routines in the image whose whole body is "advance the
-generator and index a table with the result" — so its cases are the generator's plus a table read:
-WB_STAGE_NUMBER decoded from packed BCD (`cmp.w #9 / ble / subq.w #6` is one tens carry), scaled to a
-row of WB_STAGE_KIND_ROW, and one of the eight drawn by the generator's low three bits. Both sides of
-the BCD ladder AND its signedness (a stage number with its top bit set is BELOW the limit, where an
-unsigned compare would carry it), the row that reads BELOW the table (stage 0), the entry d2 whose
-high half the `add.l` folds into the INDEX — including one that pushes the index past the 68000's
-24-BIT ADDRESS BUS, where it wraps back round into the image — and the shipped table's own extent.
+THE TWO DRAWS ON TOP OF IT, $e1f0 and $e1c8. They are THE only two routines in the image whose whole
+body is "advance the generator and index a table with the result", and they are one routine with
+three operands changed — the table, the row shift and the draw mask — with $e1c8 ending in a `bra.w`
+into $e1f0's last fourteen bytes rather than carrying a tail of its own. So they get ONE set of cases
+over two descriptors (`DRAW8` / `DRAW32`), because a claim proved for only one of them would be a
+claim about an operand rather than about the routine; what cannot be shared is the seeds, since each
+table's own bytes decide which stage and which draw make a reading observable, and every one of those
+carries a guard that computes why it was chosen.
+
+Those cases are the generator's plus a table read: WB_STAGE_NUMBER decoded from packed BCD
+(`cmp.w #9 / ble / subq.w #6` is one tens carry), scaled to a row, and one candidate of that row
+drawn by the generator's low three (resp. five) bits. Both sides of the BCD ladder AND its signedness
+(a stage number with its top bit set is BELOW the limit, where an unsigned compare would carry it),
+the row that reads BELOW the table (stage 0), the row that walks off the END of the 32-wide table onto
+the 8-wide one, the entry d2 whose high half the `add.l` folds into the INDEX — including one that
+pushes the index past the 68000's 24-BIT ADDRESS BUS, where it wraps back round into the image, and
+one on the bus's own top bit that separates 24 bits from 23 — and both shipped tables' extents, which
+bound each other. The entry-d2 block is the ONE that runs a single descriptor: what it exercises is
+the `add.l d2,d0 / move.b 0(a2,d0.l),d0` the two routines literally SHARE, so a second copy of those
+runs certifies nothing (the comment above them says which descriptor and why).
 
 KNOWINGLY NOT PINNED
-  * THE SIBLING DRAW at $e1c8 (32 candidates, table $e222) is not reconstructed. It branches INTO
-    $e1f0's tail, so a case here pins the shared fourteen bytes — that is all this battery says about
-    it.
-  * WHAT A KIND IS. $e1f0's one caller stores the result at offset 20 of an actor record and indexes
-    a table at $1044c with it; that caller is the respawn continuation `actor_defeat_and_score`
-    branches to, and it is not ported.
+  * WHAT A KIND IS. The draws' one caller (`actor_respawn_as_new_kind`, test_actor.py) stores the
+    result at WB_ACTOR_KIND and indexes WB_ACTOR_KIND_TABLE with it for a record's new type and
+    sprite. That the value NAMES a creature is a reading of the data, not something either battery
+    proves.
 """
+import collections
 import ctypes
 
 import pytest
@@ -74,6 +85,11 @@ KIND_ROW = wb("STAGE_KIND_ROW")
 KIND_ROW_SHIFT = wb("STAGE_KIND_ROW_SHIFT")
 KIND_DRAW_MASK = wb("STAGE_KIND_DRAW_MASK")
 KIND_MASK = wb("STAGE_KIND_MASK")
+KIND32_TABLE = wb("STAGE_KIND32_TABLE")
+KIND32_TABLE_ROWS = wb("STAGE_KIND32_TABLE_ROWS")
+KIND32_ROW = wb("STAGE_KIND32_ROW")
+KIND32_ROW_SHIFT = wb("STAGE_KIND32_ROW_SHIFT")
+KIND32_DRAW_MASK = wb("STAGE_KIND32_DRAW_MASK")
 BCD_LIMIT = wb("STAGE_NUMBER_BCD_LIMIT")
 BCD_CARRY = wb("STAGE_NUMBER_BCD_CARRY")
 BUS_ADDR_MASK = wb("BUS_ADDR_MASK")
@@ -89,6 +105,7 @@ COUNTERS = ((COUNTER_A, LIMIT_A, "a"), (COUNTER_B, LIMIT_B, "b"), (COUNTER_C, LI
 # other length.
 RNG_BODY_BYTES = 108        # $68c6..$6931, the three counter words immediately past it
 KIND_BODY_BYTES = 50        # $e1f0..$e221
+KIND32_BODY_BYTES = 40      # $e1c8..$e1ef — no tail of its own; it ends in the `bra.w` into $e1f0's
 
 # The instruction caps, from the bodies. rng_next is three 4-instruction counter steps (one arm of
 # each is skipped) plus the seven-instruction tail; the draw adds its own eight and the `bsr`.
@@ -96,9 +113,11 @@ KIND_BODY_BYTES = 50        # $e1f0..$e221
 COUNTER_STEP_INSNS = 4
 RNG_TAIL_INSNS = 8              # `clr.w / move.b / move.w / eor.w` + one `add.w` per counter + `rts`
 KIND_BODY_INSNS = 13            # its own thirteen, of which the `bsr` is the generator's whole run
+KIND32_BODY_INSNS = 14          # ...and the sibling's own ten plus the four it branches into
 RNG_INSN_CAP = (COUNTER_STEP_INSNS * len(COUNTERS) + RNG_TAIL_INSNS
                 + leaf.RUNNER_SENTINEL_INSN)
 KIND_INSN_CAP = KIND_BODY_INSNS + RNG_INSN_CAP
+KIND32_INSN_CAP = KIND32_BODY_INSNS + RNG_INSN_CAP
 
 
 # --- the encodings the two entries are pinned against ----------------------------------------------
@@ -141,30 +160,68 @@ def _rng_entry():
     return steps + tail
 
 
-def _kind_entry():
-    """$e1f0. Its `bsr.w` displacement comes out of ../names.txt's two addresses, so a pin aimed at
-    anything but rng_next fails on the bytes."""
-    base = leaf.entry_of("stage_random_kind8")
+def _kind_head(base, table, row_shift, draw_mask):
+    """The nine instructions BOTH draws are, and the three operands that are the whole difference
+    between them. The `bsr.w` displacement comes out of ../names.txt's two addresses, so a pin aimed
+    at anything but rng_next fails on the bytes."""
     carry = subq_w_dn(BCD_CARRY, D2)
     return leaf.assemble(base, [
-        lea_abs_l(A2, KIND_TABLE), move_w_abs_l_dn(D2, STAGE_NUMBER),
+        lea_abs_l(A2, table), move_w_abs_l_dn(D2, STAGE_NUMBER),
         cmp_w_imm_dn(D2, BCD_LIMIT), branch(BLE_W, carry), carry,
-        subq_w_dn(1, D2), lsl_w_imm_dn(KIND_ROW_SHIFT, D2),
+        subq_w_dn(1, D2), lsl_w_imm_dn(row_shift, D2),
         lambda at: bsr_w(at, leaf.entry_of("rng_next")),
-        _andi_l_dn(D0, KIND_DRAW_MASK),
-        opcode(ADD_L_DN_DN | (D0 << 9) | D2),
-        opcode(MOVE_B_INDEXED_DN | (D0 << 9) | A2) + word((D0 << 12) | 0x800),
-        _andi_l_dn(D0, KIND_MASK),
-        RTS,
+        _andi_l_dn(D0, draw_mask),
     ])
 
 
-ENTRY_BYTES = {"rng_next": _rng_entry(), "stage_random_kind8": _kind_entry()}
-RNG_ROUTINE_COUNT = 2
+# The tail the two draws share: `add.l d2,d0 / move.b 0(a2,d0.l),d0 / andi.l #$1f,d0 / rts` —
+# 2 + 4 + 6 + 2, the last fourteen bytes of $e1f0's body and the whole of $e1c8's.
+SHARED_TAIL_BYTES = 14
+SHARED_TAIL = leaf.entry_of("stage_random_kind8") + KIND_BODY_BYTES - SHARED_TAIL_BYTES
+
+
+def _kind_entry():
+    """$e1f0: the shared head over the 8-wide table, and then the tail $e1c8 branches into."""
+    base = leaf.entry_of("stage_random_kind8")
+    return _kind_head(base, KIND_TABLE, KIND_ROW_SHIFT, KIND_DRAW_MASK) + leaf.assemble(
+        SHARED_TAIL, [
+            opcode(ADD_L_DN_DN | (D0 << 9) | D2),
+            opcode(MOVE_B_INDEXED_DN | (D0 << 9) | A2) + word((D0 << 12) | 0x800),
+            _andi_l_dn(D0, KIND_MASK),
+            RTS,
+        ])
+
+
+def _kind32_entry():
+    """$e1c8: the same head over the 32-wide table, and NO tail — a `bra.w` into $e1f0's."""
+    base = leaf.entry_of("stage_random_kind32")
+    head = _kind_head(base, KIND32_TABLE, KIND32_ROW_SHIFT, KIND32_DRAW_MASK)
+    return head + branch_w_to(BRA_W, base + len(head), SHARED_TAIL)
+
+
+ENTRY_BYTES = {"rng_next": _rng_entry(), "stage_random_kind8": _kind_entry(),
+               "stage_random_kind32": _kind32_entry()}
+RNG_ROUTINE_COUNT = 3
 
 # --- the glue ---------------------------------------------------------------------------------------
 _RNG = leaf.register_glue("rng_next", [ctypes.c_uint32], ctypes.c_uint32)
 _KIND = leaf.register_glue("stage_random_kind8", [ctypes.c_uint32], ctypes.c_uint32)
+_KIND32 = leaf.register_glue("stage_random_kind32", [ctypes.c_uint32], ctypes.c_uint32)
+
+# --- the two draws, as the three operands that are the whole difference between them ---------------
+# $e1f0 and $e1c8 are one routine over two tables, so they are one set of cases over two descriptors:
+# a claim that held for only one of them would be a claim about an operand rather than about the
+# routine. The per-case SEEDS differ (each table's own bytes decide which stage and draw make a
+# reading observable) and live beside the test that chooses them, keyed by descriptor.
+KindDraw = collections.namedtuple(
+    "KindDraw", "short name table rows row row_shift draw_mask body_bytes insn_cap glue")
+
+DRAW8 = KindDraw("kind8", "stage_random_kind8", KIND_TABLE, KIND_TABLE_ROWS, KIND_ROW,
+                 KIND_ROW_SHIFT, KIND_DRAW_MASK, KIND_BODY_BYTES, KIND_INSN_CAP, _KIND)
+DRAW32 = KindDraw("kind32", "stage_random_kind32", KIND32_TABLE, KIND32_TABLE_ROWS, KIND32_ROW,
+                  KIND32_ROW_SHIFT, KIND32_DRAW_MASK, KIND32_BODY_BYTES, KIND32_INSN_CAP, _KIND32)
+DRAWS = (DRAW8, DRAW32)
+DRAW_IDS = [draw.short for draw in DRAWS]
 
 
 # --- the model both runners compare against ---------------------------------------------------------
@@ -193,27 +250,31 @@ def _model_rng(image, entry_d0):
     return leaf.set_low_word(entry_d0, total), out
 
 
-def _stage_row(image, entry_d2):
+def _stage_row(draw, image, entry_d2):
     """The scaled 0-based row, IN THE LOW WORD of the caller's d2: the BCD ladder, `subq.w #1` and
-    `lsl.w #3` are every one of them `.w` ops, so d2's high half comes through untouched."""
+    `lsl.w #3` (`#5` for the sibling) are every one of them `.w` ops, so d2's high half comes through
+    untouched."""
     stage = u16(image, STAGE_NUMBER)
     if s16(stage) > BCD_LIMIT:
         stage = (stage - BCD_CARRY) & WORD_MASK
-    return leaf.set_low_word(entry_d2, ((stage - 1) << KIND_ROW_SHIFT) & WORD_MASK)
+    return leaf.set_low_word(entry_d2, ((stage - 1) << draw.row_shift) & WORD_MASK)
 
 
-def _kind_read_address(image, drawn, entry_d2):
+def _kind_read_address(draw, image, drawn, entry_d2):
     """WHERE `move.b 0(a2,d0.l),d0` reads — table + masked draw + row, the last of which carries the
     caller's high half — and then masked to the 68000's 24-bit ADDRESS BUS, which is what brings a
     sum above $ffffff back round into the machine rather than off it. Shared with the guards below,
     so a case cannot assert about a different address from the one the model reads."""
-    return (KIND_TABLE + (drawn & KIND_DRAW_MASK) + _stage_row(image, entry_d2)) & BUS_ADDR_MASK
+    return (draw.table + (drawn & draw.draw_mask) + _stage_row(draw, image, entry_d2)) & BUS_ADDR_MASK
 
 
-def _model_kind(image, entry_d2):
-    """(the byte it returns, {address: byte}) — the draw over `_model_rng`, on the same image."""
+def model_kind(draw, image, entry_d2):
+    """(the byte it returns, {address: byte}) — the draw over `_model_rng`, on the same image.
+
+    PUBLIC because test_actor.py's respawn continuation calls both draws: its model composes this one
+    over the same memory, the way it composes test_hud.py's BCD accumulator."""
     drawn, out = _model_rng(image, 0)
-    at = _kind_read_address(image, drawn, entry_d2)
+    at = _kind_read_address(draw, image, drawn, entry_d2)
     # The shim answers a read past the image with zeros, and src/rng.c goes through `os_in_image`
     # for exactly that; only an entry d2 with rubbish above its low word can get there.
     drawn_byte = image[at] if at < harness.IMAGE_SIZE else 0
@@ -262,12 +323,12 @@ def _run_rng(case, pokes, entry_d0=RNG_ENTRY_D0):
     return info, expected_d0
 
 
-def _run_kind(case, pokes, entry_d2=KIND_ENTRY_D2):
-    what = f"stage_random_kind8 {case}"
+def _run_kind(draw, case, pokes, entry_d2=KIND_ENTRY_D2):
+    what = f"{draw.name} {case}"
     image = harness.make_image(pokes)
-    expected_kind, expected = _model_kind(image, entry_d2)
-    info = leaf.run("stage_random_kind8", _KIND(entry_d2), merge_bands(expected), what,
-                    regs={"d2": entry_d2, "_pokes": pokes}, max_insns=KIND_INSN_CAP)
+    expected_kind, expected = model_kind(draw, image, entry_d2)
+    info = leaf.run(draw.name, draw.glue(entry_d2), merge_bands(expected), what,
+                    regs={"d2": entry_d2, "_pokes": pokes}, max_insns=draw.insn_cap)
     _assert_writes(info, expected, what)
     assert info["regs"]["d0"] == expected_kind, (
         f"{what}: the original left d0={info['regs']['d0']:#010x}, not {expected_kind:#04x} — the "
@@ -292,7 +353,10 @@ def test_the_bodies_are_the_lengths_names_txt_claims_and_the_counters_follow_the
     """The generator's three counter WORDS sit immediately past its own `rts`, which is what bounds
     the body — there is no other statement of where it ends."""
     assert len(ENTRY_BYTES["rng_next"]) == RNG_BODY_BYTES
-    assert len(ENTRY_BYTES["stage_random_kind8"]) == KIND_BODY_BYTES
+    for draw in DRAWS:
+        assert len(ENTRY_BYTES[draw.name]) == draw.body_bytes
+    assert leaf.entry_of("stage_random_kind32") + KIND32_BODY_BYTES == leaf.entry_of(
+        "stage_random_kind8"), "the sibling's body must end exactly where this one's begins"
     assert leaf.entry_of("rng_next") + RNG_BODY_BYTES == COUNTER_A, (
         "the counters must abut the body they belong to")
     for index, (counter, _limit, _name) in enumerate(COUNTERS):
@@ -411,142 +475,194 @@ def test_the_generators_result_carries_whatever_high_half_it_was_entered_with(hi
     _run_rng(f"an entry d0 of {high:#010x}", _rng_pokes(counters=(2, 4, 6)), entry_d0=high)
 
 
-# --- $e1f0: the per-stage draw -----------------------------------------------------------------------
+
+# --- $e1f0 / $e1c8: the two per-stage draws ----------------------------------------------------------
+# ONE SET OF CASES OVER TWO DESCRIPTORS. The routines are the same instructions over two tables, so a
+# claim proved for only one of them would be a claim about an operand rather than about the routine.
+# What cannot be shared is the SEEDS: which stage number and which draw make a reading observable is
+# decided by each table's own bytes, so every seed below is keyed by descriptor and every one of them
+# carries a guard that COMPUTES why it was chosen.
+#
 # Both sides of the BCD ladder, and the row that reads below the table. A stage number is packed BCD,
 # so $10 is stage ten and `subq.w #6` is the tens carry that decodes it.
-#
-# NEGATIVE_STAGE is the far side of the ladder, and it is what says `cmp.w #$9,d2 / ble` is a SIGNED
-# compare: a number with its top bit set is BELOW the limit and keeps its own value, where an
-# unsigned compare would send it through the tens carry to a row 48 bytes away. $8001 rather than the
-# $8000 that "the most negative" would suggest, because at $8000 BOTH candidate rows lie in a run of
-# zero bytes and the two readings are indistinguishable — the guard below computes that rather than
-# trusting it.
-NEGATIVE_STAGE = 0x8001
 
-STAGE_CASES = (
-    (0x0001, "stage 1 — row 0, the first row of the table"),
-    (0x0009, "stage 9, the last number the `ble` takes as its own decimal value"),
-    (0x0010, "stage 10 in BCD: the first number the tens carry decodes"),
-    (0x0019, "stage 19, the last of the tens"),
-    (0x0022, "stage 22 — the LAST row the table has"),
-    (0x0000, "stage 0, which indexes row -1 and reads BELOW the table"),
-    (NEGATIVE_STAGE, "the sign bit set, which only a SIGNED `ble` takes as its own value"),
-)
+# (stage, why) per draw. The 32-wide table has ELEVEN rows where the 8-wide has twenty-two, so its
+# sweep walks off the end onto its neighbour rather than to a last row of its own.
+STAGE_CASES = {
+    DRAW8: (
+        (0x0001, "stage 1 — row 0, the first row of the table"),
+        (0x0009, "stage 9, the last number the `ble` takes as its own decimal value"),
+        (0x0010, "stage 10 in BCD: the first number the tens carry decodes"),
+        (0x0019, "stage 19, the last of the tens"),
+        (0x0022, "stage 22 — the LAST row the table has"),
+        (0x0000, "stage 0, which indexes row -1 and reads BELOW the table"),
+    ),
+    DRAW32: (
+        (0x0001, "stage 1 — row 0, the first row of the table"),
+        (0x0009, "stage 9, the last number the `ble` takes as its own decimal value"),
+        (0x0010, "stage 10 in BCD: the first number the tens carry decodes"),
+        (0x0011, "stage 11 — the LAST row this table has, where the 8-wide one has eleven more"),
+        (0x0012, "stage 12: one row PAST the end, onto stage_kind_table's own first row"),
+        (0x0000, "stage 0, which indexes row -1 and reads BELOW the table"),
+    ),
+}
+STAGE_SWEEP_SEED = dict(tick=0x0005, counters=(1, 2, 3))
 
+# The far side of the ladder, and what says `cmp.w #$9,d2 / ble` is a SIGNED compare: a number with
+# its top bit set is BELOW the limit and keeps its own value, where an unsigned compare would send it
+# through the tens carry to a different row. Neither value is "the most negative" — at $8000 the
+# 8-wide table's two candidate rows both lie in a run of zeros, and for the 32-wide one only a few
+# negative stages put EVERY draw on a pair of bytes that differ. The guard below computes that rather
+# than trusting it.
+NEGATIVE_STAGE = {DRAW8: 0x8001, DRAW32: 0x800c}
 
-@pytest.mark.parametrize("stage,why", STAGE_CASES, ids=[f"stage_{c[0]:04x}" for c in STAGE_CASES])
-def test_the_draw_decodes_a_bcd_stage_number_into_a_row_of_the_table(stage, why):
-    _run_kind(f"{why}", _rng_pokes(stage=stage, tick=0x0005, counters=(1, 2, 3)))
-
-
-# The BCD ladder's own boundary, and the two rows that tell a `>` from a `>=` apart: stage 9 takes
-# its own value (row 8) where a non-strict compare would carry it (row 2). Those two rows agree on
-# SIX of their eight bytes, so the case has to land on one of the two that differ — which is what
-# the tick below is for, and what the guard beneath it computes rather than assumes.
-BCD_LIMIT_STAGE = 0x0009
-BCD_LIMIT_COUNTERS = (0, 0, 0)      # stepped to (1, 1, 1), so the draw is (tick + 3) & 7
-BCD_LIMIT_TICK = 0x0007             # ...which puts it on 2, a draw the two rows disagree about
-
-
-def test_the_bcd_ladder_takes_its_own_limit_as_a_decimal_value():
-    """`cmp.w #9 / ble` — 9 is the LAST number that is already its own decimal value, so a `>=`
-    written for the `>` would send it through the tens carry to a different row entirely."""
-    _run_kind(f"stage {BCD_LIMIT_STAGE:#06x}, the ladder's own limit, on a draw the two candidate "
-              f"rows disagree about",
-              _rng_pokes(stage=BCD_LIMIT_STAGE, tick=BCD_LIMIT_TICK, counters=BCD_LIMIT_COUNTERS))
+STAGE_PARAMS = [(draw, stage, why) for draw in DRAWS for stage, why in STAGE_CASES[draw]]
 
 
-def test_the_ladder_limit_case_lands_where_its_two_candidate_rows_differ():
-    """The guard, and the reason that case has a tick of its own: the strict reading puts stage 9 on
-    row 8 and the non-strict on row 2, and those rows hold the same byte at six of eight draws — so
-    over the wrong draw the case would pass either way and pin nothing."""
-    image = harness.make_image(_rng_pokes(stage=BCD_LIMIT_STAGE, tick=BCD_LIMIT_TICK,
-                                          counters=BCD_LIMIT_COUNTERS))
-    drawn, _writes = _model_rng(image, 0)
-    draw = drawn & KIND_DRAW_MASK
-    strict = KIND_TABLE + (BCD_LIMIT_STAGE - 1) * KIND_ROW + draw
-    carried = KIND_TABLE + (BCD_LIMIT_STAGE - BCD_CARRY - 1) * KIND_ROW + draw
-    assert image[strict] != image[carried], (
-        f"draw {draw} reads {image[strict]:#04x} from both candidate rows, so the ladder's "
-        f"strictness is unobservable in that case")
+@pytest.mark.parametrize("draw,stage,why", STAGE_PARAMS,
+                         ids=[f"{d.short}-stage_{s:04x}" for d, s, _w in STAGE_PARAMS])
+def test_the_draw_decodes_a_bcd_stage_number_into_a_row_of_the_table(draw, stage, why):
+    _run_kind(draw, f"{why}", _rng_pokes(stage=stage, **STAGE_SWEEP_SEED))
 
 
-def test_the_negative_stage_separates_a_signed_compare_from_an_unsigned_one_at_every_draw():
-    """The guard on NEGATIVE_STAGE, and the reason it is $8001. The signed reading keeps the number
-    (row 0, the table's own first row) and the unsigned one carries it (a row 48 bytes below the
-    table); ALL EIGHT draws disagree there, so the case pins the compare whichever one the degenerate
-    generator lands on."""
-    assert NEGATIVE_STAGE > BCD_LIMIT and s16(NEGATIVE_STAGE) <= BCD_LIMIT, (
+@pytest.mark.parametrize("draw", DRAWS, ids=DRAW_IDS)
+def test_the_sign_bit_of_a_stage_number_is_taken_as_a_value_and_not_as_a_carry(draw):
+    stage = NEGATIVE_STAGE[draw]
+    _run_kind(draw, f"stage {stage:#06x}, whose sign bit only a SIGNED `ble` takes as its own value",
+              _rng_pokes(stage=stage, **STAGE_SWEEP_SEED))
+
+
+@pytest.mark.parametrize("draw", DRAWS, ids=DRAW_IDS)
+def test_the_negative_stage_separates_a_signed_compare_from_an_unsigned_one_at_every_draw(draw):
+    """The guard on NEGATIVE_STAGE. The signed reading keeps the number and the unsigned one carries
+    it to a row a whole tens-carry away; ALL of that row's draws must disagree, so the case pins the
+    compare whichever one the degenerate generator lands on."""
+    stage = NEGATIVE_STAGE[draw]
+    assert stage > BCD_LIMIT and s16(stage) <= BCD_LIMIT, (
         "this stage must be above the limit unsigned and below it signed, or it pins no signedness")
-    signed_row = ((NEGATIVE_STAGE - 1) << KIND_ROW_SHIFT) & WORD_MASK
-    carried_row = ((NEGATIVE_STAGE - BCD_CARRY - 1) << KIND_ROW_SHIFT) & WORD_MASK
-    agree = [draw for draw in range(KIND_ROW)
-             if (harness.BASE_IMAGE[KIND_TABLE + signed_row + draw] & KIND_MASK)
-             == (harness.BASE_IMAGE[KIND_TABLE + carried_row + draw] & KIND_MASK)]
+    signed_row = ((stage - 1) << draw.row_shift) & WORD_MASK
+    carried_row = ((stage - BCD_CARRY - 1) << draw.row_shift) & WORD_MASK
+    agree = [index for index in range(draw.row)
+             if (harness.BASE_IMAGE[draw.table + signed_row + index] & KIND_MASK)
+             == (harness.BASE_IMAGE[draw.table + carried_row + index] & KIND_MASK)]
     assert not agree, (
         f"draws {agree} read the same byte from rows {signed_row:#x} and {carried_row:#x}, so this "
         f"case is silent about the compare whenever the generator lands on one of them")
 
 
-# WHERE THE CLOSING MASK IS OBSERVABLE AT ALL. Every byte of the table's own 176 is at or below
-# WB_STAGE_KIND_MASK (a case above asserts it), so over the table the `andi.l #$1f` is a no-op and a
-# port that dropped it agrees everywhere — a mutation sweep found exactly that. It becomes observable
-# only where the UNBOUNDED index leaves the table, which the instruction does freely: this stage
-# number puts the row on the game's own code at $e6a2, whose eight bytes are all above the mask, so
-# whichever draw the (degenerate) generator lands on the mask has something to do.
-ABOVE_MASK_STAGE = 0x006b
-
-
-def test_the_closing_mask_is_observable_only_where_the_index_leaves_the_table():
-    _run_kind(f"stage {ABOVE_MASK_STAGE:#06x}, whose row is code rather than table",
-              _rng_pokes(stage=ABOVE_MASK_STAGE, tick=0x0004, counters=(2, 3, 5)))
-
-
-def test_the_above_mask_row_really_is_above_the_mask_at_every_draw():
-    """The guard: if that row ever stopped holding bytes the mask changes, the case above would
-    quietly become one more ordinary out-of-table read."""
-    row = KIND_TABLE + (ABOVE_MASK_STAGE - BCD_CARRY - 1) * KIND_ROW
-    band = bytes(harness.BASE_IMAGE[row:row + KIND_ROW])
-    assert all(byte > KIND_MASK for byte in band), (
-        f"the row at {row:#x} is {band.hex()} — the mask must change every byte in it")
-    table_end = KIND_TABLE + KIND_TABLE_ROWS * KIND_ROW
-    assert not KIND_TABLE <= row < table_end, "this row must lie OUTSIDE the table's own extent"
-
-
-def test_the_stage_sweep_reaches_both_sides_of_the_bcd_ladder():
+@pytest.mark.parametrize("draw", DRAWS, ids=DRAW_IDS)
+def test_the_stage_sweep_reaches_both_sides_of_the_bcd_ladder(draw):
     """A sweep confined to stages 1..9 would pass a port that dropped the `subq.w #6` outright."""
-    stages = [stage for stage, _why in STAGE_CASES]
+    stages = [stage for stage, _why in STAGE_CASES[draw]]
     assert any(s16(s) > BCD_LIMIT for s in stages) and any(s16(s) <= BCD_LIMIT for s in stages)
     assert 0 in stages, "the row that reads below the table is what says the row is not clamped"
 
 
-# The eight draws a row holds. The generator is degenerate, so a case picks its draw by choosing the
-# counters and tick that make the sum land on it — which is the only way to reach all eight.
-DRAW_SEEDS = tuple((0x0000, (draw, 0, 0)) for draw in range(KIND_ROW))
+# The BCD ladder's own boundary, and the two rows that tell a `>` from a `>=` apart: stage 9 takes its
+# own value where a non-strict compare would carry it. Those two rows agree on most of their bytes, so
+# the case has to land on one of the few that differ — which is what each draw's own tick is for, and
+# what the guard beneath computes rather than assumes.
+BCD_LIMIT_STAGE = 0x0009
+BCD_LIMIT_SEED = {
+    DRAW8: dict(tick=0x0007, counters=(0, 0, 0)),        # stepped to (1,1,1): draw (7+3) & 7 == 2
+    DRAW32: dict(tick=0x001e, counters=(0, 0, 0)),       # ...and (30+3) & $1f == 1
+}
 
 
-@pytest.mark.parametrize("tick,counters", DRAW_SEEDS, ids=[f"draw_{d}" for d in range(KIND_ROW)])
-def test_every_candidate_of_a_row_is_reachable(tick, counters):
-    """`andi.l #$7,d0 / add.l d2,d0` picks one of WB_STAGE_KIND_ROW bytes; a sweep that only ever hit
-    one of them would agree with a port that ignored the draw."""
-    pokes = _rng_pokes(stage=0x0005, tick=tick, counters=counters)
-    _run_kind(f"draw {counters[0]} of stage 5's row", pokes)
+@pytest.mark.parametrize("draw", DRAWS, ids=DRAW_IDS)
+def test_the_bcd_ladder_takes_its_own_limit_as_a_decimal_value(draw):
+    """`cmp.w #9 / ble` — 9 is the LAST number that is already its own decimal value, so a `>=`
+    written for the `>` would send it through the tens carry to a different row entirely."""
+    _run_kind(draw,
+              f"stage {BCD_LIMIT_STAGE:#06x}, the ladder's own limit, on a draw the two candidate "
+              f"rows disagree about",
+              _rng_pokes(stage=BCD_LIMIT_STAGE, **BCD_LIMIT_SEED[draw]))
 
 
-def test_the_draw_sweep_really_reaches_all_eight_offsets():
-    """The guard on the sweep above, and it has to compute the draws rather than trust the seeds:
-    the counters are STEPPED before they are summed, so the offset a case reaches is not the number
-    it seeded."""
+@pytest.mark.parametrize("draw", DRAWS, ids=DRAW_IDS)
+def test_the_ladder_limit_case_lands_where_its_two_candidate_rows_differ(draw):
+    """The guard, and the reason that case has a tick of its own: over the wrong draw the two rows
+    hold the same byte and the case would pass either way, pinning nothing."""
+    pokes = _rng_pokes(stage=BCD_LIMIT_STAGE, **BCD_LIMIT_SEED[draw])
+    image = harness.make_image(pokes)
+    drawn, _writes = _model_rng(image, 0)
+    index = drawn & draw.draw_mask
+    strict = draw.table + (BCD_LIMIT_STAGE - 1) * draw.row + index
+    carried = draw.table + (BCD_LIMIT_STAGE - BCD_CARRY - 1) * draw.row + index
+    assert image[strict] != image[carried], (
+        f"draw {index} reads {image[strict]:#04x} from both candidate rows, so the ladder's "
+        f"strictness is unobservable in that case")
+
+
+# WHERE THE CLOSING MASK IS OBSERVABLE AT ALL. Every byte of either table is at or below
+# WB_STAGE_KIND_MASK (a case below asserts it), so over the tables the `andi.l #$1f` is a no-op and a
+# port that dropped it agrees everywhere — a mutation sweep found exactly that. It becomes observable
+# only where the UNBOUNDED index leaves the table, which the instruction does freely: these stage
+# numbers put the row on the game's own code, whose bytes are all above the mask, so whichever draw
+# the (degenerate) generator lands on the mask has something to do.
+ABOVE_MASK_STAGE = {DRAW8: 0x006b, DRAW32: 0x0040}
+ABOVE_MASK_SEED = dict(tick=0x0004, counters=(2, 3, 5))
+
+
+@pytest.mark.parametrize("draw", DRAWS, ids=DRAW_IDS)
+def test_the_closing_mask_is_observable_only_where_the_index_leaves_the_table(draw):
+    stage = ABOVE_MASK_STAGE[draw]
+    _run_kind(draw, f"stage {stage:#06x}, whose row is code rather than table",
+              _rng_pokes(stage=stage, **ABOVE_MASK_SEED))
+
+
+@pytest.mark.parametrize("draw", DRAWS, ids=DRAW_IDS)
+def test_the_above_mask_row_really_is_above_the_mask_at_every_draw(draw):
+    """The guard: if that row ever stopped holding bytes the mask changes, the case above would
+    quietly become one more ordinary out-of-table read."""
+    row = draw.table + (ABOVE_MASK_STAGE[draw] - BCD_CARRY - 1) * draw.row
+    band = bytes(harness.BASE_IMAGE[row:row + draw.row])
+    assert all(byte > KIND_MASK for byte in band), (
+        f"the row at {row:#x} is {band.hex()} — the mask must change every byte in it")
+    table_end = draw.table + draw.rows * draw.row
+    assert not draw.table <= row < table_end, "this row must lie OUTSIDE the table's own extent"
+
+
+# The candidates a row holds. The generator is degenerate, so a case picks its draw by choosing the
+# frame tick that makes the sum land on it — which is the only way to reach every one of them.
+DRAW_SWEEP_STAGE = 0x0005
+DRAW_PARAMS = [(draw, tick) for draw in DRAWS for tick in range(draw.row)]
+
+
+@pytest.mark.parametrize("draw,tick", DRAW_PARAMS,
+                         ids=[f"{d.short}-tick_{t}" for d, t in DRAW_PARAMS])
+def test_every_candidate_of_a_row_is_reachable(draw, tick):
+    """`andi.l #$7,d0 / add.l d2,d0` (`#$1f` for the sibling) picks one of the row's bytes; a sweep
+    that only ever hit one of them would agree with a port that ignored the draw."""
+    _run_kind(draw, f"the draw a tick of {tick} lands on",
+              _rng_pokes(stage=DRAW_SWEEP_STAGE, tick=tick, counters=(0, 0, 0)))
+
+
+@pytest.mark.parametrize("draw", DRAWS, ids=DRAW_IDS)
+def test_the_draw_sweep_really_reaches_every_offset(draw):
+    """The guard on the sweep above, and it has to compute the draws rather than trust the ticks: the
+    counters are STEPPED before they are summed, so the offset a case reaches is not the tick it
+    seeded."""
     reached = set()
-    for tick, counters in DRAW_SEEDS:
-        image = harness.make_image(_rng_pokes(stage=0x0005, tick=tick, counters=counters))
+    for _draw, tick in (param for param in DRAW_PARAMS if param[0] == draw):
+        image = harness.make_image(_rng_pokes(stage=DRAW_SWEEP_STAGE, tick=tick, counters=(0, 0, 0)))
         drawn, _writes = _model_rng(image, 0)
-        reached.add(drawn & KIND_DRAW_MASK)
-    assert reached == set(range(KIND_ROW)), f"the sweep reaches {sorted(reached)}"
+        reached.add(drawn & draw.draw_mask)
+    assert reached == set(range(draw.row)), f"the sweep reaches {sorted(reached)}"
 
 
-# What the caller passes (0) and what the instruction would let it: every step on the row is a `.w`,
-# so d2's high half is untouched, and `add.l d2,d0` then folds it into the INDEX.
+# --- the entry d2 whose high half addresses the read -------------------------------------------------
+# What the caller passes (an effective 0) and what the instruction would let it: every step on the row
+# is a `.w`, so d2's high half is untouched, and `add.l d2,d0` then folds it into the INDEX.
+#
+# ONE DESCRIPTOR ONLY, and DRAW8 is the one, because the whole of what these cases exercise lives in
+# the FOURTEEN BYTES THE TWO ROUTINES SHARE: `add.l d2,d0 / move.b 0(a2,d0.l),d0` at $e214 is $e1f0's
+# own tail, and $e1c8 reaches it by `bra.w` rather than carrying a copy. The candidate side is one
+# static body too. So the sibling's six runs execute the same instruction on the same operand and
+# certify nothing the ones below do not — measured in both directions before they were dropped — and
+# these are batch 21b's own seeds for the wrap and the width, which is one reason not to move them.
+BUS_DRAW = DRAW8
+BUS_SEED = dict(stage=0x0005, tick=0x0003, counters=(1, 1, 1))
 KIND_ENTRY_D2_CASES = (
     (0x00000000, "what the one caller reaches here with"),
     (0x00010000, "a high half that pushes the read 64 KiB past the table"),
@@ -556,33 +672,33 @@ D2_OFF_IMAGE = 0xffff0000       # a high half whose read leaves the image entire
 
 
 @pytest.mark.parametrize("entry_d2,why", KIND_ENTRY_D2_CASES,
-                         ids=[f"d2_{c[0]:08x}" for c in KIND_ENTRY_D2_CASES])
+                         ids=[f"d2_{v:08x}" for v, _w in KIND_ENTRY_D2_CASES])
 def test_the_draws_table_index_carries_the_high_half_of_the_caller_s_d2(entry_d2, why):
     """`add.l d2,d0` is a LONGWORD add over a register only ever written a word at a time, so the
     caller's high half addresses the read as much as the stage does. Every one of these still lands
     inside the image; src/rng.c guards the read the way src/blit.c guards its off-image words, for
     the ones that would not."""
-    _run_kind(f"an entry d2 of {entry_d2:#010x} ({why})",
-              _rng_pokes(stage=0x0005, tick=0x0003, counters=(1, 1, 1)), entry_d2=entry_d2)
+    _run_kind(BUS_DRAW, f"an entry d2 of {entry_d2:#010x} ({why})", _rng_pokes(**BUS_SEED),
+              entry_d2=entry_d2)
 
 
 def test_a_high_half_that_sends_the_read_off_the_image_is_served_zero_on_both_sides():
     """The OTHER side of the cases above, and the one that pins src/rng.c's guard: with a negative
     high half the indexed read leaves the image altogether, where the shim answers zeros — so the
     draw comes back 0 and the C must reach the same answer without indexing outside its buffer."""
-    _info, kind = _run_kind(f"an entry d2 of {D2_OFF_IMAGE:#010x}, whose read is off-image",
-                            _rng_pokes(stage=0x0005, tick=0x0003, counters=(1, 1, 1)),
-                            entry_d2=D2_OFF_IMAGE)
+    _info, kind = _run_kind(BUS_DRAW,
+                            f"an entry d2 of {D2_OFF_IMAGE:#010x}, whose read is off-image",
+                            _rng_pokes(**BUS_SEED), entry_d2=D2_OFF_IMAGE)
     assert kind == 0, "an off-image read is served zeros, so the masked draw is 0"
 
 
 def test_every_high_half_case_still_reads_inside_the_image():
     """The guard: a case whose read left the image would be measuring the off-image guard rather
     than the index arithmetic — that one is the case immediately above, and stated as such."""
-    image = harness.make_image(_rng_pokes(stage=0x0005, tick=0x0003, counters=(1, 1, 1)))
+    image = harness.make_image(_rng_pokes(**BUS_SEED))
     drawn, _writes = _model_rng(image, 0)
     for entry_d2, _why in KIND_ENTRY_D2_CASES:
-        at = _kind_read_address(image, drawn, entry_d2)
+        at = _kind_read_address(BUS_DRAW, image, drawn, entry_d2)
         assert at < harness.IMAGE_SIZE, f"d2 = {entry_d2:#010x} reads {at:#x}, outside the image"
 
 
@@ -594,10 +710,11 @@ D2_ABOVE_THE_BUS = 0x01000000
 
 
 def test_a_high_half_past_the_24_bit_address_bus_wraps_back_onto_the_table():
-    pokes = _rng_pokes(stage=0x0005, tick=0x0003, counters=(1, 1, 1))
-    _info, kind = _run_kind(f"an entry d2 of {D2_ABOVE_THE_BUS:#010x}, one bit past the address bus",
+    pokes = _rng_pokes(**BUS_SEED)
+    _info, kind = _run_kind(BUS_DRAW,
+                            f"an entry d2 of {D2_ABOVE_THE_BUS:#010x}, one bit past the address bus",
                             pokes, entry_d2=D2_ABOVE_THE_BUS)
-    unwrapped, _writes = _model_kind(harness.make_image(pokes), 0)
+    unwrapped, _writes = model_kind(BUS_DRAW, harness.make_image(pokes), 0)
     assert kind == unwrapped, (
         f"the wrapped read gave {kind:#04x} where a d2 of 0 gives {unwrapped:#04x} — bit 24 must "
         f"make no difference at all")
@@ -609,34 +726,36 @@ def test_a_high_half_past_the_24_bit_address_bus_wraps_back_onto_the_table():
 def test_the_bus_wrap_case_really_leaves_the_bus():
     """The guard: without the mask the same sum is far outside the image, which is what makes the
     two readings disagree — and what the 24-bit mask in src/rng.c is there to reconcile."""
-    image = harness.make_image(_rng_pokes(stage=0x0005, tick=0x0003, counters=(1, 1, 1)))
+    image = harness.make_image(_rng_pokes(**BUS_SEED))
     drawn, _writes = _model_rng(image, 0)
-    unmasked = KIND_TABLE + (drawn & KIND_DRAW_MASK) + _stage_row(image, D2_ABOVE_THE_BUS)
+    unmasked = (BUS_DRAW.table + (drawn & BUS_DRAW.draw_mask)
+                + _stage_row(BUS_DRAW, image, D2_ABOVE_THE_BUS))
     assert unmasked > BUS_ADDR_MASK, f"{unmasked:#x} is on the bus, so nothing here wraps"
-    assert _kind_read_address(image, drawn, D2_ABOVE_THE_BUS) < harness.IMAGE_SIZE, (
+    assert _kind_read_address(BUS_DRAW, image, drawn, D2_ABOVE_THE_BUS) < harness.IMAGE_SIZE, (
         "the wrapped address must land back inside the image, or this case is the off-image one")
 
 
 # ...and the WIDTH of that mask, which "present or absent" does not pin: a bus a bit too narrow
 # reproduces every case above. This d2 is what separates 24 from 23 — masked to 24 the sum is off the
 # image and served 0, masked to 23 it would come back round ONTO the table and read a real byte.
-# (Found by the batch's mutation sweep: `& WB_BUS_ADDR_MASK >> 1` survived everything else.)
+# (Found by batch 21b's mutation sweep: `& WB_BUS_ADDR_MASK >> 1` survived everything else.)
 D2_ONE_BIT_NARROWER = 0x00800000
 
 
 def test_the_address_bus_is_twenty_four_bits_wide_and_not_twenty_three():
-    pokes = _rng_pokes(stage=0x0005, tick=0x0003, counters=(1, 1, 1))
-    _info, kind = _run_kind(f"an entry d2 of {D2_ONE_BIT_NARROWER:#010x}, on the bus's top bit",
-                            pokes, entry_d2=D2_ONE_BIT_NARROWER)
+    _info, kind = _run_kind(BUS_DRAW,
+                            f"an entry d2 of {D2_ONE_BIT_NARROWER:#010x}, on the bus's top bit",
+                            _rng_pokes(**BUS_SEED), entry_d2=D2_ONE_BIT_NARROWER)
     assert kind == 0, "masked to 24 bits this read is off the image, where the shim answers zeros"
 
 
 def test_the_bus_width_case_would_read_a_nonzero_byte_through_a_narrower_mask():
     """The guard, and the whole point of that case: if a 23-bit mask landed on a zero byte too, the
     two widths would agree and the case would pin nothing."""
-    image = harness.make_image(_rng_pokes(stage=0x0005, tick=0x0003, counters=(1, 1, 1)))
+    image = harness.make_image(_rng_pokes(**BUS_SEED))
     drawn, _writes = _model_rng(image, 0)
-    unmasked = KIND_TABLE + (drawn & KIND_DRAW_MASK) + _stage_row(image, D2_ONE_BIT_NARROWER)
+    unmasked = (BUS_DRAW.table + (drawn & BUS_DRAW.draw_mask)
+                + _stage_row(BUS_DRAW, image, D2_ONE_BIT_NARROWER))
     narrower = unmasked & (BUS_ADDR_MASK >> 1)
     assert narrower < harness.IMAGE_SIZE, "a narrower mask has to land back INSIDE the image"
     assert image[narrower] & KIND_MASK != 0, (
@@ -646,28 +765,33 @@ def test_the_bus_width_case_would_read_a_nonzero_byte_through_a_narrower_mask():
         "...while the CORRECT width must stay off the image, or this is the wrap case again")
 
 
-# --- the table, read off the image --------------------------------------------------------------------
+# --- the two tables, read off the image ---------------------------------------------------------------
 
-def test_the_kind_table_is_self_bounding_and_holds_only_values_the_mask_passes():
-    """Nothing in the image declares the table's length. It is bounded by its neighbours — the
-    sibling draw's 32-wide table ends on its base, and the three longword handler pointers at $e432
-    begin where it ends — and by the mask: every byte in it survives `andi.l #$1f` unchanged, which
-    a run of bytes that did not would not."""
-    end = KIND_TABLE + KIND_TABLE_ROWS * KIND_ROW
-    table = bytes(harness.BASE_IMAGE[KIND_TABLE:end])
+@pytest.mark.parametrize("draw", DRAWS, ids=DRAW_IDS)
+def test_a_kind_table_holds_only_values_the_closing_mask_passes(draw):
+    """Which is half of what bounds them: a run of bytes above the mask would not be candidates."""
+    end = draw.table + draw.rows * draw.row
+    table = bytes(harness.BASE_IMAGE[draw.table:end])
     assert all(byte == byte & KIND_MASK for byte in table), (
         f"a table byte is above the mask: {sorted(set(table))}")
+
+
+def test_the_two_kind_tables_bound_each_other_and_their_neighbours():
+    """Nothing in the image declares either length. They are bounded by their neighbours: the 32-wide
+    table begins where stage_random_kind8's BODY ends, the 8-wide one begins where the 32-wide one
+    ends, and the three longword handler pointers at $e432 begin where THAT ends."""
+    assert leaf.entry_of("stage_random_kind8") + KIND_BODY_BYTES == KIND32_TABLE, (
+        "the 32-wide table must begin on the byte after $e1f0's `rts`")
+    assert KIND32_TABLE + KIND32_TABLE_ROWS * KIND32_ROW == KIND_TABLE, (
+        "...and end exactly on the 8-wide table's base")
+    end = KIND_TABLE + KIND_TABLE_ROWS * KIND_ROW
     following = int.from_bytes(bytes(harness.BASE_IMAGE[end:end + leaf.LONGWORD_BYTES]), "big")
     assert end < following < harness.IMAGE_SIZE, (
         f"the longword at the table's end is {following:#x}, which is not the handler pointer this "
         f"extent rests on")
 
 
-# The tail the two draws share: `add.l d2,d0 / move.b 0(a2,d0.l),d0 / andi.l #$1f,d0 / rts` —
-# 2 + 4 + 6 + 2, the last fourteen bytes of $e1f0's body.
-SHARED_TAIL_BYTES = 14
-SHARED_TAIL = leaf.entry_of("stage_random_kind8") + KIND_BODY_BYTES - SHARED_TAIL_BYTES
-
+# --- the fourteen bytes that belong to both -----------------------------------------------------------
 
 def _sibling_transfer_site():
     """SEARCHED for in the image rather than transcribed, the way test_actor.py's `_transfer_site`
@@ -688,14 +812,15 @@ def _sibling_transfer_site():
 SIBLING_TRANSFER = _sibling_transfer_site()
 
 
-def test_the_sibling_draw_ends_in_a_branch_into_this_ones_tail():
-    """$e1c8 is not reconstructed, and this is the whole of what this battery says about it: it ENDS
-    in a `bra.w` into the middle of $e1f0, so the fourteen bytes from that target on belong to BOTH
-    routines and porting the sibling later must not move them."""
+def test_the_sibling_draw_ends_in_a_branch_into_the_other_ones_tail():
+    """The fourteen bytes from SHARED_TAIL on belong to BOTH routines, so neither port may move them
+    — which is why both entry pins above are assembled out of the same four instructions."""
     transfer = branch_w_to(BRA_W, SIBLING_TRANSFER, SHARED_TAIL)
     assert SIBLING_TRANSFER + len(transfer) == leaf.entry_of("stage_random_kind8"), (
         f"the `bra.w` at {SIBLING_TRANSFER:#x} is not $e1c8's LAST instruction, so the sibling's "
         f"body does not end where this routine's begins")
+    assert ENTRY_BYTES["stage_random_kind32"][-len(transfer):] == transfer, (
+        "the sibling's own entry pin must end in that same `bra.w`")
     shared = bytes(harness.BASE_IMAGE[SHARED_TAIL:SHARED_TAIL + SHARED_TAIL_BYTES])
     assert shared == ENTRY_BYTES["stage_random_kind8"][-SHARED_TAIL_BYTES:], (
         f"the shared tail at {SHARED_TAIL:#x} is {shared.hex()}, not the bytes this battery's own "

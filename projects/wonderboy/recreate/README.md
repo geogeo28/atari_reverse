@@ -118,6 +118,10 @@ src/actor.c                the actor tier: $67e0, which names the record everyth
                            bottom, what a DEFEAT costs ($6bb8): the score its template's type is
                            worth, the kill counted, the slot freed and the template re-armed — plus
                            the boss block above all of it, which stops the music and fires an effect
+                           — and the RESPAWN CONTINUATION ($6cdc) it branches to, which draws the
+                           slot's new kind through src/rng.c and rebuilds nine of the dead record's
+                           fields out of it, or frees the slot when the template forces a negative
+                           one
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -144,10 +148,13 @@ src/stage.c                the stage loader. bg_build_buffer ($fa30) draws the m
                            no part of — it lies past the image and is loaded from disk),
                            resource_table_relocate ($fe1e) the one-time fixup of a loaded table,
                            and $e110's three routines the banners plotted into copy 0
-src/rng.c                  the game's PRNG (rng_next, $68c6, ten callers) and stage_random_kind8
-                           ($e1f0), the draw over it that picks one of eight candidates per stage.
-                           One module because the draw's whole result is the generator's low three
-                           bits, so a battery that pinned them apart would pin neither
+src/rng.c                  the game's PRNG (rng_next, $68c6, ten callers) and BOTH draws over it —
+                           stage_random_kind8 ($e1f0, eight candidates per stage) and
+                           stage_random_kind32 ($e1c8, thirty-two), which are one routine with three
+                           operands changed and are written here as one static body with three
+                           parameters. One module because a draw's whole result is the generator's
+                           low three (resp. five) bits, so a battery that pinned them apart would
+                           pin neither
 src/scroll.c               the whole scroll subsystem, producer and consumer. The ENGINE ($7522..
                            $8228 + $d28): the frame queue and its dispatch pass, four request
                            handlers, four position steps, the two column fills that redraw the
@@ -201,9 +208,13 @@ test/test_rng.py           the PRNG's differential, and the one battery here who
                            it does pin — each counter on both sides of its own wrap (cleared when it
                            REACHES its limit, not modulo it), the entropy XOR over a whole word, the
                            `clr.w` that leaves the caller's high half in the result — and the draw
-                           above it: a packed-BCD stage number decoded by one tens carry, all eight
-                           candidates of a row reached by choosing the seeds that land on them, and
-                           the entry d2 whose high half the `add.l` folds into the table index
+                           TWO draws above it, as ONE set of cases over two descriptors because the
+                           routines are one routine over two tables: a packed-BCD stage number
+                           decoded by one tens carry, every candidate of a row reached by choosing
+                           the seeds that land on it, and the entry d2 whose high half the `add.l`
+                           folds into the table index — including the one that leaves the 68000's
+                           24-bit address bus, and the one on the bus's own top bit that separates
+                           24 bits from 23
 test/test_scroll.py        the scroll subsystem's differential: whole-body entry pins for all
                            thirty-three (6140 bytes, every unrolled loop assembled from its own
                            geometry and the call-carrying bodies from a cursor-tracking _Assembler),

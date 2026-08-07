@@ -6,8 +6,8 @@
  * reach in d0 — because that is the whole interface the originals have; every address is a global
  * named in wonderboy.h, which both languages read. The two `#define`s below are the exception, and
  * they are the same exception scene.h makes: they are not image state at all but the two exits
- * `actor_defeat_and_score` reports in place of a transfer it declines to follow, and test/layout.py
- * scrapes this header so that a case names the same two the C does.
+ * `actor_defeat_and_score` reports for which of its two tails ran, and test/layout.py scrapes this
+ * header so that a case names the same two the C does.
  */
 #ifndef WONDERBOY_ACTOR_H
 #define WONDERBOY_ACTOR_H
@@ -152,17 +152,31 @@ void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor);
  * routine runs on EVERY monster death in the game, not on a protection failure — which is also what
  * makes the respawn continuation at $6cdc (below) hot code rather than a corner.
  *
- * THE RECONSTRUCTION STOPS AT A BOUNDARY, the same shape src/scene.c's does. `ble.w $6cdc` leaves
- * these 164 bytes for a RESPAWN continuation that rebuilds the slot as a new creature — it calls
- * $e1c8/$e1f0 (src/rng.c holds the second) and then rewrites six of the record's fields — and that
- * continuation is not reconstructed. So instead of following it this function returns WHICH exit it
- * reached, and a case runs the original with the kit's `stop_pc` set to $6cdc.
+ * THE BOUNDARY IS GONE. Batch 21b stopped at `ble.w $6cdc` and reported which exit it reached;
+ * batch 22 followed the branch, so both exits now run to the original's own `rts` and the two
+ * `#define`s below report which of the two the run TOOK rather than where it stopped. They are still
+ * C-only — not image state — which is why test/layout.py scrapes this header for them.
+ *
+ * WHAT $6cdc IS. 126 bytes ($6cdc..$6d59), reached from `$6bb8` and from nowhere else, ending in the
+ * `rts` that returns to $6bb8's own caller. It picks a KIND — the template's forced one, or a
+ * stage_random_kind draw when that is zero — and rebuilds the dead record out of it: NINE writes
+ * over ten offsets, not the six an earlier reading of this plate counted. The `bmi.w $6c38` on a
+ * negative kind takes it back into $6bb8's retire tail, which is why that tail is a helper in
+ * src/actor.c with three entrances rather than a block with one.
  */
-#define WB_ACTOR_DEFEAT_RETIRED  0u  /* the original `rts`d: the slot is free and the pass is done */
-#define WB_ACTOR_DEFEAT_RESPAWN  1u  /* it `ble.w $6cdc`'d — the template is under its kill limit */
+#define WB_ACTOR_DEFEAT_RETIRED  0u  /* the slot was freed and the template possibly re-armed */
+#define WB_ACTOR_DEFEAT_RESPAWN  1u  /* the slot came back as a new kind ($6cdc ran to its `rts`) */
 
 /* $6bb8 — `actor` is the original's a0, the record that just died. Returns one of the two exits
  * above. Twenty-nine control-flow sites: 24 `bne.w`, 4 `bra.w` and the Copylock's `jmp`. */
 uint32_t actor_defeat_and_score(uint8_t *image, uint32_t actor);
+
+/* $6cdc — rebuild `actor` (a0) as a new kind, drawn for `template_record` (a1) unless that template
+ * forces one. `entry_d2` is the caller's d2, handed straight to whichever draw runs because its HIGH
+ * half addresses that draw's table read (rng.h); $6bb8 reaches here with the scaled spawn type in
+ * the low word and zero above it. Returns WB_ACTOR_DEFEAT_RESPAWN, or WB_ACTOR_DEFEAT_RETIRED when a
+ * forced kind is negative and the `bmi.w $6c38` frees the slot instead. */
+uint32_t actor_respawn_as_new_kind(uint8_t *image, uint32_t actor, uint32_t template_record,
+                                   uint32_t entry_d2);
 
 #endif /* WONDERBOY_ACTOR_H */

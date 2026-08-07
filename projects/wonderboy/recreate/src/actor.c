@@ -53,6 +53,7 @@
 #include "actor.h"
 #include "hud.h"
 #include "machine.h"
+#include "rng.h"
 #include "sound.h"
 #include "wonderboy.h"
 
@@ -262,11 +263,20 @@ void actor_spawn_from_template(uint8_t *image, uint32_t template_record, uint32_
                   >> WB_ACTOR_TEMPLATE_SLOT_SHIFT);
 }
 
-void actor_start_motion_at_speed(uint8_t *image, uint32_t actor, uint32_t speed) {
+/* THE THREE-BIT MOTION CONTRACT, spelt at three sites in the image ($2af2, $2b8e's tail and $6cdc)
+ * with the two `bset`s and the `bclr` in two different orders. The bits are disjoint and the
+ * differential compares the byte the run ENDS on, so the order is not observable and the three sites
+ * are one helper here; each caller keeps the comment that says how its own bytes read. */
+static void actor_set_moving_unsupported(uint8_t *image, uint32_t actor) {
     uint8_t *flags = image + addr_add(actor, WB_ACTOR_FLAGS);
 
-    *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
     *flags |= (uint8_t)((1u << WB_ACTOR_FLAG_MOVING_BIT) | (1u << WB_ACTOR_FLAG_LAUNCHED_BIT));
+    *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
+}
+
+void actor_start_motion_at_speed(uint8_t *image, uint32_t actor, uint32_t speed) {
+    /* `bclr #2 / bset #0 / bset #1` — the clear first here, the two raises first at $6cdc. */
+    actor_set_moving_unsupported(image, actor);
     image[addr_add(actor, WB_ACTOR_SPEED)] = (uint8_t)speed;    /* `move.b d0,11(a0)` */
 }
 
@@ -456,8 +466,7 @@ void actor_turn_and_launch(uint8_t *image, uint32_t actor, uint32_t step_outcome
     /* The rest is `bchg #3` over exactly what actor_start_motion_at_speed writes, with the speed a
      * literal rather than a register — which is why it is spelt out here instead of calling it. */
     flip_side_flag(image, actor);
-    *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
-    *flags |= (uint8_t)((1u << WB_ACTOR_FLAG_MOVING_BIT) | (1u << WB_ACTOR_FLAG_LAUNCHED_BIT));
+    actor_set_moving_unsupported(image, actor);
     image[addr_add(actor, WB_ACTOR_SPEED)] = WB_ACTOR_TURN_LAUNCH_SPEED;
 }
 
@@ -628,9 +637,9 @@ void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor) {
         image[addr_add(actor, WB_ACTOR_FLAGS2)] |= (uint8_t)(1u << WB_ACTOR_FLAGS2_DEFEATED_BIT);
 }
 
-/* ---- $6bb8: paying for a defeat ---------------------------------------------------------------
+/* ---- $6bb8 + $6cdc: paying for a defeat, and what comes back ----------------------------------
  *
- * What the routine is, where it stops and why, are in actor.h. Three things about the BODY:
+ * What the two routines are is in actor.h. Three things about $6bb8's BODY:
  *
  * THE BOSS BLOCK CALLS THE SOUND MODULE TWICE, through two different stubs — +28 (snd_stop, which
  * silences the chip) and +56 (the trigger). Both are `lea $17adc.l,a1 / jsr N(a1)` and both stubs
@@ -648,6 +657,87 @@ void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor) {
  * clear, which every shipped type is. ../STATUS.md registers the other half as unpinned, and
  * test/test_actor.py refuses a case that would reach it rather than letting one pass silently.
  */
+/* $6c38 — the retire tail, and it has THREE entrances: the unscored type's `beq`, the kill count's
+ * `ble` falling through, and the respawn continuation's `bmi` on a negative kind. One helper here
+ * for the same reason it is one block there. */
+static uint32_t retire_slot(uint8_t *image, uint32_t actor, uint32_t template_record) {
+    /* `movea.l $21e8c.l,a6` — the pointer is loaded a SECOND time here, after the score add. It
+     * cannot have moved (only $b372 writes it), so this is the original's shape rather than a
+     * dependency, and reproducing it costs one read. */
+    uint32_t table = be32(image + WB_TABLE_PTR_21E8C);
+
+    spawn_header_set(image, table, WB_SPAWN_HEADER_LIVE,
+                     (uint16_t)(spawn_header_word(image, table, WB_SPAWN_HEADER_LIVE) - 1));
+    wr16(image + addr_add(actor, WB_ACTOR_X), WB_ACTOR_FREE_MARKER);
+
+    /* `tst.w -2(a6) / beq` — ANY nonzero wrapped flag re-arms, not only WB_SPAWN_WRAPPED_SET, which
+     * is what $ff42's own `cmpi.w #$ffff` on the same word tests for. The two readings agree on
+     * every value the image can hold and part company on a small positive one. */
+    if (spawn_header_word(image, table, WB_SPAWN_HEADER_WRAPPED) != 0) {
+        image[addr_add(template_record, WB_SPAWN_ARMED)] = WB_SPAWN_REARM;
+        image[addr_add(template_record, WB_SPAWN_COUNTDOWN)] = WB_SPAWN_REARM;
+    }
+    return WB_ACTOR_DEFEAT_RETIRED;
+}
+
+/* ---- $6cdc: what the slot comes back as -------------------------------------------------------
+ *
+ * The continuation actor.h describes, and the reason `entry_d2` is a parameter: it is handed
+ * straight to whichever draw runs, whose `add.l d2,d0` folds its high half into a table index.
+ *
+ * THE TABLE READ CANNOT LEAVE THE IMAGE, which is why there is no off-image guard on it. `bmi` has
+ * already refused a negative kind, `lsl.w #4` scales it inside the WORD and `lea 0(a2,d0.w),a2`
+ * sign-extends that word, so the read lands in [table - $8000, table + $7ff0] — wonderboy.h states
+ * the bound and test/test_actor.py computes it from the same two operands rather than trusting it.
+ * That is also why WB_BUS_ADDR_MASK does not appear here where src/rng.c needs it: nothing in this
+ * arithmetic can reach $01000000 in the first place.
+ */
+uint32_t actor_respawn_as_new_kind(uint8_t *image, uint32_t actor, uint32_t template_record,
+                                   uint32_t entry_d2) {
+    /* `moveq #0,d0` and then a `.w` read of ONE of the two forced-kind fields, so d0's high half is
+     * zero on every arm — and a nonzero field skips the draw entirely. Which field, and so which
+     * draw, is `cmpi.w #$2,6(a1) / beq`: an equality test on the count the `addq` just raised, so
+     * only the LAST respawn a template is allowed takes the 8-wide table. */
+    uint16_t kills = be16(image + addr_add(template_record, WB_SPAWN_KILL_COUNT));
+    uint16_t kind;
+    if (kills == WB_SPAWN_KILL_RESPAWN_LIMIT) {
+        kind = be16(image + addr_add(template_record, WB_SPAWN_FINAL_KIND));
+        if (kind == 0)
+            kind = (uint16_t)stage_random_kind8(image, entry_d2);
+    } else {
+        kind = be16(image + addr_add(template_record, WB_SPAWN_RESPAWN_KIND));
+        if (kind == 0)
+            kind = (uint16_t)stage_random_kind32(image, entry_d2);
+    }
+
+    /* `tst.w d0 / bmi.w $6c38` — a forced kind with its top bit set frees the slot instead. A drawn
+     * one never can: WB_STAGE_KIND_MASK bounds it to 0..31. */
+    if ((int16_t)kind < 0)
+        return retire_slot(image, actor, template_record);
+
+    image[addr_add(actor, WB_ACTOR_KIND)] = (uint8_t)kind;   /* `move.b d0,20(a0)` — the LOW byte */
+
+    /* `bset #0 / bset #1 / bclr #2` on WB_ACTOR_FLAGS: actor_start_motion_at_speed's three writes in
+     * a different order, over a speed this routine spells inline rather than taking in d0. */
+    actor_set_moving_unsupported(image, actor);
+
+    image[addr_add(actor, WB_ACTOR_FIELD_10)] = WB_ACTOR_RESPAWN_FIELD_10;
+    image[addr_add(actor, WB_ACTOR_SPEED)] = WB_ACTOR_RESPAWN_SPEED;
+    image[addr_add(actor, WB_ACTOR_FIELD_12)] = WB_ACTOR_RESPAWN_FIELD_12;
+    image[addr_add(actor, WB_ACTOR_FIELD_30)] = WB_ACTOR_RESPAWN_FIELD_30;
+
+    /* The two `move.w (a2)+` are read-then-write IN ORDER, not two reads and two writes: an actor
+     * record overlapping the table would see its own first store in the second read. */
+    uint32_t row = addr_add(WB_ACTOR_KIND_TABLE,
+                            sign_ext16((uint16_t)(kind << WB_ACTOR_KIND_RECORD_SHIFT)));
+    wr16(image + addr_add(actor, WB_ACTOR_TYPE),
+         be16(image + addr_add(row, WB_ACTOR_KIND_TYPE)));
+    wr16(image + addr_add(actor, WB_ACTOR_SPRITE),
+         be16(image + addr_add(row, WB_ACTOR_KIND_SPRITE)));
+    wr32(image + addr_add(actor, WB_ACTOR_HALF_WIDTH), WB_ACTOR_RESPAWN_SIZE);
+    return WB_ACTOR_DEFEAT_RESPAWN;
+}
+
 uint32_t actor_defeat_and_score(uint8_t *image, uint32_t actor) {
     if (be16(image + WB_STATE_FLAG_A32) != 0 && actor == WB_BOSS_FRAGMENT_ORIGIN) {
         snd_stop(image);
@@ -673,25 +763,13 @@ uint32_t actor_defeat_and_score(uint8_t *image, uint32_t actor) {
         uint16_t kills = (uint16_t)(be16(image + kill_count) + 1);
         wr16(image + kill_count, kills);
         /* `cmpi.w #$2,6(a1) / ble` — signed, and read back out of MEMORY rather than off the
-         * register the `addq` raised, so a count that wrapped past $7fff retires the template. */
+         * register the `addq` raised, so a count that wrapped past $7fff retires the template.
+         * `index` IS the d2 the continuation carries into its draw: the `moveq #0,d2` above zeroed
+         * the high half and the `lsl.w #2` left the scaled type in the low word, and nothing between
+         * here and the `bsr` writes either. */
         if ((int16_t)kills <= (int16_t)WB_SPAWN_KILL_RESPAWN_LIMIT)
-            return WB_ACTOR_DEFEAT_RESPAWN;
+            return actor_respawn_as_new_kind(image, actor, template_record, index);
     }
 
-    /* `movea.l $21e8c.l,a6` — the pointer is loaded a SECOND time here, after the score add. It
-     * cannot have moved (only $b372 writes it), so this is the original's shape rather than a
-     * dependency, and reproducing it costs one read. */
-    uint32_t retire_table = be32(image + WB_TABLE_PTR_21E8C);
-    spawn_header_set(image, retire_table, WB_SPAWN_HEADER_LIVE,
-                     (uint16_t)(spawn_header_word(image, retire_table, WB_SPAWN_HEADER_LIVE) - 1));
-    wr16(image + addr_add(actor, WB_ACTOR_X), WB_ACTOR_FREE_MARKER);
-
-    /* `tst.w -2(a6) / beq` — ANY nonzero wrapped flag re-arms, not only WB_SPAWN_WRAPPED_SET, which
-     * is what $ff42's own `cmpi.w #$ffff` on the same word tests for. The two readings agree on
-     * every value the image can hold and part company on a small positive one. */
-    if (spawn_header_word(image, retire_table, WB_SPAWN_HEADER_WRAPPED) != 0) {
-        image[addr_add(template_record, WB_SPAWN_ARMED)] = WB_SPAWN_REARM;
-        image[addr_add(template_record, WB_SPAWN_COUNTDOWN)] = WB_SPAWN_REARM;
-    }
-    return WB_ACTOR_DEFEAT_RETIRED;
+    return retire_slot(image, actor, template_record);
 }

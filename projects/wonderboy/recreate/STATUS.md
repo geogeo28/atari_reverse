@@ -27,12 +27,17 @@ engine, 990 bytes ported to an honest stop_pc boundary (batch 19) — and the SO
 plus the first game-logic routine that runs it, the game's PRNG and the draw over it
 (`snd_psg_silence` + `snd_stop_all_sfx` + `snd_stop`, `actor_defeat_and_score`, `rng_next` +
 `stage_random_kind8`, 442 bytes, batch 21b: the seeded PSG read model's first consumer, and the
-first ported code here that drives the YM2149) —
-18,102 bytes in all, 70.2 % of everything
+first ported code here that drives the YM2149) — and the RESPAWN CONTINUATION plus the 32-candidate
+draw it calls (`actor_respawn_as_new_kind` + `stage_random_kind32`, 166 bytes, batch 22: batch 21b's
+$6cdc boundary is GONE — the defeat path runs end to end to the original's own `rts`) —
+18,268 bytes in all, 70.8 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures.** *(The batch-16 commit's header said 147 — an
 oversight; its own section records 151, and batch 17 corrected the header to 153. It now carries
-batch 21b's 161.)*
-`make test`: **3052 cases green in what this batch commits** (2925 before batch 21b, plus its
+batch 22's 163.)*
+`make test`: **3133 cases green in what this batch commits** (3052 before batch 22, plus its 81
+net: +49 in `test/test_rng.py`, which stands at 103, and +32 in `test/test_actor.py`, which stands
+at 984 — three measured trims inside those figures, recorded in the batch-22 section at the end).
+`make test` at batch 21b: **3052 cases green in what that batch committed** (2925 before batch 21b, plus its
 127: +36 in `test/test_sound.py`, +37 in `test/test_actor.py` and the new `test/test_rng.py` at 54).
 The figures below are batch 19's and are left as that batch wrote them.
 `make test` at batch 19: **2912 cases green in what that batch committed** — 2146 before batch 14, plus batch
@@ -650,10 +655,12 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x17f30` | `snd_psg_silence` (`src/sound.c`) | 82 | verified | Batch 21b, 22 cases: 7 mixer seeds (reaching all four states of the preserved direction bits) x 3 entrants of the stop chain, each comparing the ORDERED PSG access ledger — reads included — and the register file the run leaves, neither of which is in the image; plus the preserved-bits claim stated on its own, the d1 the read-back lands in as a BYTE and the d2 the saved SR lands in as a WORD, a seed declaring two registers the chain must NOT touch, and the case that declares NOTHING and requires the oracle to REFUSE the run — the guard every other one rests on + entry pin |
 | `0x1aaea` | `snd_stop_all_sfx` | 26 | verified | The same sweep, plus the write set stated exactly: the three SFX-active flags AND the unnamed fourth byte (a `clr.l`), and the four snd_psg_shadow bytes that MIRROR the four chip accesses — which is what says the shadow is indexed by PSG register number and not the `$18360` mix block an earlier plate claimed |
 | `0x17f24` | `snd_stop` | 12 | verified | The same sweep over the whole chain, plus the engine flag its own twelve bytes add. The three bodies are required to tile: `$17f24 + 12` is the tail's entry and the tail's 82 end where `snd_resume` begins |
-| `0x6bb8` | `actor_defeat_and_score` (`src/actor.c`) | 164 | verified | Batch 21b, ~33 cases: 5 spawn types with distinct shipped scores, a 7-point kill-count sweep bracketing the limit on both sides AND across the sign (the compare is signed, and read back out of MEMORY), the unscored type `$26` and its two neighbours, 4 wrapped-flag values incl. the small positive one where its `tst.w` and `$ff42`'s `cmpi.w #$ffff` part company, 3 spawn types whose `lsl.w`-scaled score index WRAPS inside the word, the whole boss block (music stopped, flag raised, SFX fired, meter paid — each compared through the battery that owns the callee) and its gate's three failing halves, each requiring an EMPTY PSG ledger, plus the two flag words with a zero BYTE in them ($0100, $00ff) that separate its `tst.w` from a read of either half. The respawn exit is a `stop_pc` checkpoint at `$6cdc` with `leaf.run_reaching`'s witness that the `ble.w` fired; the `ble.w`'s own address is SEARCHED for in the assembled body rather than transcribed + 164-byte entry pin, which meets the score table's base |
+| `0x6bb8` | `actor_defeat_and_score` (`src/actor.c`) | 164 | verified | Batch 21b, ~33 cases: 5 spawn types with distinct shipped scores, a 7-point kill-count sweep bracketing the limit on both sides AND across the sign (the compare is signed, and read back out of MEMORY), the unscored type `$26` and its two neighbours, 4 wrapped-flag values incl. the small positive one where its `tst.w` and `$ff42`'s `cmpi.w #$ffff` part company, 3 spawn types whose `lsl.w`-scaled score index WRAPS inside the word, the whole boss block (music stopped, flag raised, SFX fired, meter paid — each compared through the battery that owns the callee) and its gate's three failing halves, each requiring an EMPTY PSG ledger, plus the two flag words with a zero BYTE in them ($0100, $00ff) that separate its `tst.w` from a read of either half. The respawn exit is a `stop_pc` checkpoint at `$6cdc` with `leaf.run_reaching`'s witness that the `ble.w` fired; the `ble.w`'s own address is SEARCHED for in the assembled body rather than transcribed + 164-byte entry pin, which meets the score table's base *(batch 22: the checkpoint is GONE — the continuation is ported and every arm runs to the original's `rts`; the `run_reaching` witness stays)* |
 | `0x68c6` | `rng_next` (`src/rng.c`) | 108 | verified | Batch 21b, 33 cases: 6 seeds per counter x 3 counters (rest, either side of the wrap, AT the limit — where a `% limit` reading diverges — past it, and the 16-bit wrap), all three stepping in one run, 6 frame ticks whose bits reach the whole word and make the three word adds wrap, 3 entry `d0` high halves the `clr.w` must leave alone, and the d1 the tick lands in. **The result is a DEGENERATE generator**: its `$ff8209` term is off-image and reads 0 on both sides, so a case states that explicitly and the whole battery is green about a PRNG with no randomness in it — a registered T3-DATA false green |
 | `0xe1f0` | `stage_random_kind8` | 50 | verified | Batch 21b, 17 cases: 7 stage numbers spanning both sides of the packed-BCD ladder (incl. stage 0, which indexes row −1 and reads BELOW the table, and $8001, whose sign bit says the `cmp.w`/`ble` is SIGNED) and all 8 candidates of a row, reached by choosing the counters and tick whose sum lands on each; 3 entry `d2` high halves the `add.l` folds into the table INDEX, one that sends the read off the image entirely (served 0 on both sides, which is what pins `src/rng.c`'s guard), and two ACROSS THE 68000'S 24-BIT ADDRESS BUS — one past it, which wraps back round onto the very byte a `d2` of 0 reads, and one ON its top bit, which separates a 24-bit mask from a 23-bit one; the table's self-bounding extent and the mask every byte in it survives; and the sibling `$e1c8`'s `bra.w` INTO this routine's tail |
 | `0xde80` | `scene_spend_visit_budget` | 58 | verified | The borrow (word subtract, sign = borrow), the marker cell's twin pair in order, the map stamp against a NONZERO keyed seed, and the stage-reset tail — through the DRIVER from all four spending arms (the review's four surviving mutants, killed) as well as directly |
+| `0x6cdc` | `actor_respawn_as_new_kind` (`src/actor.c`) | 126 | verified | Batch 22, ~32 cases: the arm split at the kill limit pinned from kills {1, 2, 3} PLUS $0102 — the word-width case a `cmp.b` port passes and the `cmp.w` fails; both forced-kind fields, each run seeding the other field 0 so a field-swap mutant draws instead and fails; negative forced kinds through BOTH C entrances of the retire tail (the `bmi.w $6c38` at $6d0a is a THIRD entrance nothing had recorded); the index edges — row 21, row 22, a negative index, the word wrap at $1000 and $7fff — with the table read carrying NEITHER bus mask nor off-image guard because a case COMPUTES over all 32,768 kinds that the row window `[table-$8000, table+$7ff0]` never leaves the image; the nine field writes (ten offsets — the plate's "six" was a pre-port miscount) as an exact write set; entry-d2 forwarding pinned on BOTH draw arms — the review gate's one live-mutant hole, found empirically and closed; and the 126-byte entry pin, `bmi` target derived from the `ble.w` rather than transcribed |
+| `0xe1c8` | `stage_random_kind32` (`src/rng.c`) | 40 | verified | Batch 22, inside `test_rng.py`'s parametrized draw section (the whole battery stands at 103): every draw claim re-made over this descriptor's own operands — the packed-BCD stage ladder, all 32 candidates of a row, the closing mask, and its ELEVEN-row table (half the sibling's 22) walking off its own end onto `stage_kind_table` on the game's shipped bytes; the shared fourteen-byte tail ($e214..$e221) now pinned from THIS side's `bra.w` as well; ONE static C body serves both draws (three parameters where the original changed three operands), which is why the d2/bus quartet stays on the DRAW8 side alone — the sibling's runs execute the identical instruction on the identical operand; entry pin started at $e1c8 exactly, where objdump misaligns |
 
 ### The .RAD depacker
 
@@ -3425,7 +3432,8 @@ for a respawn continuation that rebuilds the slot as a new creature; that contin
 reconstructed, so the C returns WHICH exit it reached (`WB_ACTOR_DEFEAT_RETIRED` /
 `_RESPAWN`, in `include/actor.h` as `include/scene.h`'s three are) and a case runs the original with
 `stop_pc = $6cdc` **plus the witness** that the `ble.w` executed — `leaf.run_reaching`, hoisted out
-of test_scene.py this batch because a second battery needed it.
+of test_scene.py this batch because a second battery needed it. *(Batch 22: the boundary is gone —
+the continuation is ported, the exit codes now report which tail RAN, and the witness stays.)*
 
 **It is also the battery that imports the most.** `$6bb8` calls five reconstructed routines, and each
 is compared through the battery that owns it: the SFX trigger's write set and the stop chain's PSG
@@ -3467,7 +3475,8 @@ pins them against the sibling's `bra.w`.
   analogue and no interrupt to keep out, and the oracle enters every run at `$2700` already. What IS
   observable is the saved SR arriving in d2, and one case asserts it.
 * **The respawn continuation** at `$6cdc`, and with it `$e1c8`, `$e1f0`'s one real caller, and what a
-  "kind" means past the record fields it fills.
+  "kind" means past the record fields it fills. *(Batch 22: both are ported and green — see its
+  section below; what a "kind" MEANS past the fields it fills is still open.)*
 * **`snd_psg_silence`'s select latch.** The candidate selects and accesses in one call, so a driver
   whose only effect were leaving a register selected is not expressible — the kit's own limitation,
   restated because this is its first game-side consumer.
@@ -3544,3 +3553,133 @@ sweep, not merely before the batch.**
 * **`osh_run` counts one instruction past the routine's own `rts`.** A cap of exactly the body's
   length reports "did not reach rts". Measured here and named (`RUNNER_SENTINEL_INSN`) rather than
   absorbed as slack, because three batteries now derive caps from instruction counts.
+
+### Batch 22: the respawn continuation — the defeat path, end to end
+
+Two functions, 166 bytes, and the point of them is that batch 21b's boundary is **gone**:
+`actor_defeat_and_score` now runs to the original's own `rts` on every arm, and the two
+`WB_ACTOR_DEFEAT_*` codes report WHICH tail ran rather than where the run stopped. **Verified 163,
+18,268 bytes, 70.8 %; `make test` 3133** (3052 before the batch, plus its 81 net: +49 in
+`test/test_rng.py`, which stands at 103, and +32 in `test/test_actor.py`, which stands at 984 —
+three measured trims inside those figures, below).
+
+| address | name | bytes | what it is |
+| --- | --- | --- | --- |
+| `$6cdc` | `actor_respawn_as_new_kind` | 126 | draw a kind, rebuild the dead record out of it |
+| `$e1c8` | `stage_random_kind32` | 40 | one of thirty-two candidates for the current stage |
+
+**`$6c38` HAS THREE ENTRANCES, which nothing had recorded.** The unscored type's `beq`, the kill
+count's `ble` falling through — and the continuation's own `bmi.w $6c38` at `$6d0a`, taken when the
+template FORCES a negative kind. So a defeat under the kill limit can still free the slot, which is
+exactly why the C keeps reporting an exit code instead of deriving one from the kill count. The tail
+is a `retire_slot` helper in `src/actor.c` for the same reason it is one block there — and after the
+review pass the helper RETURNS `WB_ACTOR_DEFEAT_RETIRED`, so tail-and-code is one fact spelled once.
+
+**The two draws are ONE routine, and now one C body.** `$e1c8` is `$e1f0` with three operands
+changed — the table, the row shift, the draw mask — and no tail of its own: it `bra.w`s into
+`$e1f0`'s last fourteen bytes. `src/rng.c` spells that as one static body with three parameters, and
+`test_rng.py`'s whole draw section became ONE set of cases over two descriptors: a claim proved for
+only one of them would be a claim about an operand rather than about the routine. The seeds cannot
+be shared — each table's own bytes decide which stage and which draw make a reading observable — so
+every seed is keyed by descriptor and carries a guard that COMPUTES why it was chosen. `$e1c8`'s
+table has ELEVEN rows where `$e1f0`'s has twenty-two, so a stage past 11 walks off its end onto its
+neighbour, which is now a case on the game's own bytes.
+
+**Four plate corrections, all read off the bytes.**
+
+* `cmt 0x6bb8` said the continuation "rewrites six of the record's fields". It is **nine writes over
+  ten offsets**: the kind byte, the three bit ops on `WB_ACTOR_FLAGS`, four literal bytes, the two
+  words out of `actor_kind_table` and the size longword.
+* `cmt 0x6bb8` recorded only two ways into the retire tail. There are **three** (above).
+* `cmt 0xe1f0` said its one caller "reaches here behind a `moveq #0,d2`". The `moveq` is fourteen
+  instructions earlier at `$6c14` and a `lsl.w #2,d2` runs after it, so the entry d2's LOW word is
+  the scaled spawn type and only its HIGH half is zero. The conclusion survives; the reason did not.
+  It is also the LAST of a template's respawns that reaches `$e1f0` — the earlier ones go to `$e1c8`.
+* The body is **126 bytes, `$6cdc..$6d59`** — the first draft of this batch's own plates said 125
+  ending `$6d58`, an odd length no 68000 body can have; the closing `rts` is `$6d58..$6d59`. Caught
+  by the review gate against the binary; the entry pin had assembled the correct 126 all along, and
+  a body-size row now pins the figure rather than leaving it prose.
+
+**Two new data labels.** `actor_kind_table` (`$1044c`): 22 rows of 16 bytes, bounded above by twelve
+longword CODE pointers at `$105ac`, of which only the first two words are read — the record's new
+type and sprite. **Rows 0..20 all carry `actor_type_unscored`** and row 21 carries `$3d` — so a slot
+that has come back once pays no score, counts no kill and never respawns again when it next dies —
+and the case asserts that ORDERED shape, not membership (a review find: the set-membership form
+passed on any table with one `$26` in it). And `stage_kind32_table` (`$e222`), self-bounding at both
+ends: `$e1f0`'s body ends on its base and `stage_kind_table` begins where it ends.
+
+**Where the bus mask is, and where it deliberately is not.** `src/rng.c` masks with
+`WB_BUS_ADDR_MASK` before its off-image guard — batch 21b's transferable lesson — and the sibling's
+`add.l d2,d0` is pinned the same way from ITS side, wrap AND width. The respawn's own table read
+carries neither, and that is computed rather than assumed: the `bmi` bounds the kind to
+`$0000..$7fff`, `lsl.w #4` bounds the scaled word to `$0000..$fff0` and the `lea`'s sign extension
+bounds the row to `[table - $8000, table + $7ff0]`, inside the image at both ends. A case walks all
+32,768 kinds and requires exactly that window.
+
+**Nothing here stops at a boundary.** The continuation reaches only the two draws and `rng_next`;
+no sound call, no hardware write, no trap. What it inherits is the generator's registered T3-DATA
+false green, which now covers `$e1c8` as well — it is the same degenerate generator. **One surface
+narrowed, stated rather than hidden**: the deleted `stop_pc` runs diffed whole memory at the instant
+control reached `$6cdc`; end-to-end runs compare final state, so a pre-boundary stray write at one
+of the ~15 bytes the continuation constant-overwrites identically on both sides would no longer be
+seen. No modeled write overlaps those bytes today (the pre-boundary and continuation write sets are
+address-disjoint, and `WB_ACTOR_FLAGS` is an RMW that would still diverge); closing it for real
+needs a candidate-side write ledger, which is kit scope and registered as such.
+
+**THE REVIEW GATE FOUND A LIVE MUTANT, and the empirical verify earned its keep.** Eight finder
+angles, seven verifiers, three of them running code: `stage_random_kind8(image, 0)` at the kind8
+call site SURVIVED all 3,139 pre-review cases — the only nonzero-high-half entry-d2 case took the
+kind32 arm, and every kind8-arm case's default d2 was an effective 0. Closed by parametrizing the
+forwarding test over BOTH arms, each with its own moved-vs-unmoved guard on that draw's table; the
+mutant is re-run and caught. The rest of the review, all verified before applied: the 126-byte
+correction above; the kind-table guard strengthened to the ordered shape; the retire arm's
+instruction cap restored (`DEFEAT_RETIRE_INSN_CAP` — folding the respawn allowance into one cap had
+loosened the retire arm's enforced bound by exactly 59 instructions); `retire_slot` returning its
+code; the motion-flag triple's THIRD spelling collapsed into `actor_set_moving_unsupported()` (three
+callers, per-site asm-order comments kept); `KIND32_INSN_CAP` imported whole instead of rebuilt from
+parts; the respawn helpers' template/d2 derivations each spelled ONCE (`_defeat_template`,
+`_scaled_spawn_type`) where three spellings and an uncoupled twin invited silent desync;
+`_run_respawn` returning its image (three 1 MiB rebuilds gone) and dropping two never-overridden
+parameters; a dead dict copy and a 1 MiB model-side `bytearray` copy removed; `BSR_W_BYTES` derived
+from `BRANCH_W_BYTES`; one inline longword read routed through `_u32`. **Three candidates REFUTED
+and not applied, for the record:** no encoder hoist into `leaf.py` (the house precedent hoists on
+the second SPELLER of the same encoder, and these have one each); the 40-run per-offset candidate
+sweep stays whole (the proposed boundary-offset trim loses the ONLY killers of the kind32
+`andi.l #$1b` mask-bit mutant — offsets {5,6,7,14,22,23,28,30} — because the stage-5 row's bytes
+coincide at every boundary fold pair); and the sweep-coverage guard keeps its `DRAW_PARAMS`
+coupling, which is a deliberate tripwire against exactly that trim.
+
+**Three measured trims, batch-17's bar** (each removed run named the mutant it does NOT uniquely
+catch): `RESPAWN_ARM_CASES` dropped kills `$0000` (re-makes `$0001`'s discrimination) and `$ffff`
+(equality is sign-blind) and GAINED `$0102`, the word-width case — a `cmp.b` port of the kill-limit
+compare passed all five original cases and fails this one; the forced-kind grid fell 14 → 8 runs
+(the six index-boundary kinds on one arm — the two arms share every instruction from the `tst.w`
+on — plus one nonzero forced kind per arm, each seeding the other field 0); and the d2/bus quartet
+runs on DRAW8 alone, the sibling's six runs and three guard builds being strict duplicates at the
+mutant level in both directions (checked by a model-level kill matrix, not argued).
+
+**Not pinned, honestly.**
+
+* **The template's two forced-kind fields have no shipped bytes.** The template table is loaded from
+  disk and only `$b372` publishes `$21e8c`, so every case seeds them; there is no "real data" arm.
+* **The d2 `$6bb8` hands the continuation.** `index` and `0` are the same input at that call: the
+  draw's `move.w $bd88.l,d2` destroys the low word and `$6bb8`'s score arm — the only arm that
+  branches here — opens with `moveq #0,d2`. The sweep's mutant for it survives and is EQUIVALENT,
+  which a case now states rather than leaving a reader to find
+  (`test_the_defeat_reaches_this_routine_with_d2s_high_half_already_zeroed`).
+* **What a "kind" MEANS** past the record fields it fills — which creature each of the 32 values is.
+
+**Mutation sweep: 34 mutants across three passes, per README.md's recipe** (forced relink, unpiped
+returncode, green tree immediately before each). **32 non-equivalent, all 32 caught; two
+equivalent** — one discarded as literally the same code (`sign_ext16` already truncates, so
+dropping a redundant cast changes nothing; replaced by a real wrap+sign mutant, caught) and the d2
+above, provable and stated as a case. The review pass's own finding is in that tally: the 8-wide
+arm's d2 mutant survived a battery that had a case for the 32-wide arm alone, which is why the
+forwarding test is parametrized over both — and the review's two refactor mutants (`retire_slot`
+returning RESPAWN, the motion helper dropping its `bclr`) were run and caught before landing.
+
+**QUEUED, registered rather than half-done:** the `subsystems.tsv` rows this batch touches — the
+respawn continuation belongs beside the actor lifecycle, `$e1c8` beside the stage tier — a
+re-measure, queued as one per the house rule; the candidate-side write ledger (kit scope, the
+narrowed-surface note above); and `$17c74` (the per-VBL tick) and `stage_load_window` remain the
+PSG wall's two faces, unmoved by this batch.

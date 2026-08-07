@@ -800,8 +800,23 @@
 #define WB_ACTOR_FLAGS2              9u       /* the SECOND flag byte; `bset`/`bclr` reach it with
                                                * their own bit numbers, and `clr.w 8(a1)` clears
                                                * WB_ACTOR_FLAGS and this one together */
+#define WB_ACTOR_FIELD_10            10u      /* byte: a per-record COUNTDOWN. Ten operand sites in
+                                               * the image, of which $5092's `subq.b #1,10(a0)` is
+                                               * the decrement and $e16's `move.b d0,10(a0)` a
+                                               * second seeding; two sites ($1e1a, $1801e) read it
+                                               * as a WORD, i.e. together with WB_ACTOR_SPEED —
+                                               * which $dbc0's fragment arm and $6d24's respawn both
+                                               * write immediately after it, from the same
+                                               * parameter byte in the fragment arm's case. What it
+                                               * counts is not established */
 #define WB_ACTOR_SPEED               11u      /* byte: the fall step $14d6 accelerates, $2af2 sets
                                                * from d0 and the landing arm of $1400 clears */
+#define WB_ACTOR_FIELD_12            12u      /* byte: a second COUNTDOWN, and the busier of the
+                                               * pair — eighteen operand sites, seeded $14 or $ff
+                                               * and decremented by both `subq.b #1,12(a0)` and
+                                               * `subq.w #1,12(a0)` at different sites, so the WORD
+                                               * at 12 is read as one value too. Not established
+                                               * either */
 #define WB_ACTOR_FIELD_18            18u      /* byte, cleared by the spawn; no reader in anything
                                                * reconstructed here */
 #define WB_ACTOR_TEMPLATE_SLOT       19u      /* byte: which template of WB_TABLE_PTR_21E8C's table
@@ -814,6 +829,10 @@
                                                * clears the flicker bit AND
                                                * WB_ACTOR_FLAGS2_INVULNERABLE_BIT. $69fe seeds it
                                                * with WB_ACTOR_DAMAGE_FLICKER_FRAMES */
+#define WB_ACTOR_KIND                20u      /* byte: WHICH CREATURE this slot currently is, as an
+                                               * index into WB_ACTOR_KIND_TABLE. $6d0e is its one
+                                               * writer in the image — the respawn continuation,
+                                               * storing the low byte of a stage_random_kind draw */
 #define WB_ACTOR_FIELD_22            22u      /* byte, cleared by $10a2's player arm */
 #define WB_ACTOR_FIELD_30            30u      /* two bytes the spawn clears; $ff42 reads 30 as a
                                                * flag and counts 31 down */
@@ -917,6 +936,17 @@
 #define WB_SPAWN_REARM               0xffu    /* `move.b #$ff` into BOTH WB_SPAWN_ARMED and
                                                * WB_SPAWN_COUNTDOWN, the longest countdown a byte
                                                * holds */
+#define WB_SPAWN_RESPAWN_KIND        8u       /* word: the kind the slot is FORCED to come back as
+                                               * on a respawn before the last (`move.w 8(a1),d0` at
+                                               * $6ce8). Zero means "draw one", which is
+                                               * stage_random_kind32's one call site */
+#define WB_SPAWN_FINAL_KIND          10u      /* word: the same, for the respawn whose kill count is
+                                               * exactly WB_SPAWN_KILL_RESPAWN_LIMIT (`move.w
+                                               * 10(a1),d0` at $6cfa). Zero draws through
+                                               * stage_random_kind8 instead — the 8-wide table, not
+                                               * the 32-wide one. NEITHER field has shipped bytes to
+                                               * read: the template table is loaded from disk and
+                                               * only $b372 publishes WB_TABLE_PTR_21E8C */
 #define WB_SPAWN_SCORE_TABLE         0x6c5cu  /* one packed-BCD LONGWORD per WB_SPAWN_TYPE, the score
                                                * a defeat pays. It sits inside $6bb8's own bytes,
                                                * between that routine's `rts` and the continuation
@@ -929,6 +959,40 @@
                                                * name any longword in the 64 KiB above the table */
 #define WB_SPAWN_SCORE_LEN           4u
 #define WB_SPAWN_SCORE_SHIFT         2u       /* `lsl.w #2,d2` == log2(WB_SPAWN_SCORE_LEN) */
+
+/* WHAT A RESPAWNED SLOT COMES BACK AS ($6cdc..$6d59). The continuation picks a KIND — the template's
+ * own forced one, or a stage_random_kind draw when that is zero — stores it at WB_ACTOR_KIND and
+ * reads the record's new WB_ACTOR_TYPE and WB_ACTOR_SPRITE out of the 16-byte table below. Every
+ * other field it writes is a LITERAL, which is why they are all named here.
+ *
+ * THE INDEX IS BOUNDED BY ITS OWN ARITHMETIC AND BY NOTHING ELSE. `tst.w d0 / bmi` has already
+ * refused a negative kind, `lsl.w #4,d0` scales it INSIDE the word (so a kind at or above $1000
+ * wraps) and `lea 0(a2,d0.w),a2` then SIGN-EXTENDS that word — so the read lands anywhere in
+ * [table - $8000, table + $7ff0], which is inside the image at both ends and can never reach the
+ * 24-bit bus wrap. A kind drawn by either stage_random_kind is 0..31 and stays inside the 22 rows. */
+#define WB_ACTOR_KIND_TABLE          0x1044cu /* `lea $1044c.l,a2` at $6d3c, its one reference */
+#define WB_ACTOR_KIND_RECORD_BYTES   16u
+#define WB_ACTOR_KIND_RECORD_SHIFT   4u       /* `lsl.w #4,d0` == log2(WB_ACTOR_KIND_RECORD_BYTES) */
+#define WB_ACTOR_KIND_TABLE_ROWS     22u      /* == (0x105ac - 0x1044c) / WB_ACTOR_KIND_RECORD_BYTES.
+                                               * Bounded ABOVE by the twelve longword code pointers
+                                               * at 0x105ac (the first is 0x105e4, the code just
+                                               * past them); the code bounds the index at neither
+                                               * end. Rows 0..20 all carry WB_ACTOR_TYPE_UNSCORED in
+                                               * their type word — so a slot that has respawned once
+                                               * pays no score the next time it dies — and row 21
+                                               * carries $3d */
+#define WB_ACTOR_KIND_TYPE           0u       /* word: `move.w (a2)+,4(a0)` -> WB_ACTOR_TYPE */
+#define WB_ACTOR_KIND_SPRITE         2u       /* word: `move.w (a2)+,6(a0)` -> WB_ACTOR_SPRITE */
+#define WB_ACTOR_RESPAWN_FIELD_10    0x0au    /* `move.b #$a,10(a0)` */
+#define WB_ACTOR_RESPAWN_SPEED       0x08u    /* `move.b #$8,11(a0)` — numerically
+                                               * WB_ACTOR_FALL_SPEED_MAX, but a seeding rather than
+                                               * a limit */
+#define WB_ACTOR_RESPAWN_FIELD_12    0xc8u    /* `move.b #$c8,12(a0)` */
+#define WB_ACTOR_RESPAWN_FIELD_30    0x08u    /* `move.b #$8,30(a0)` — WB_ACTOR_FIELD_30 alone; the
+                                               * spawn clears the PAIR, this writes only the flag */
+#define WB_ACTOR_RESPAWN_SIZE        0x40006u /* `move.l #$40006,14(a0)`: WB_ACTOR_HALF_WIDTH 4 and
+                                               * WB_ACTOR_SIZE_SECOND 6, spelt inline where $ffe4
+                                               * reads them out of WB_ACTOR_SIZE_TABLE */
 #define WB_SPAWN_HITPOINT_TABLE      0x1011au /* word per type, immediately after WB_ACTOR_SIZE_TABLE
                                                * and the same 32 types wide. Indexed `add.w d1,d1`
                                                * on a zero-extended type, then `adda.l` — so the
@@ -1629,9 +1693,9 @@
 #define WB_BOSS_FRAGMENT_FIELD_30  8u       /* `move.b #$8,30(a1)` */
 #define WB_BOSS_FRAGMENT_MIRROR_AT 3u       /* `cmp.w #$3,d6 / ble` — the counter at or below which
                                              * the side bit is CLEARED rather than set */
-#define WB_ACTOR_FIELD_10          10u      /* byte: takes the SAME parameter byte as
-                                             * WB_ACTOR_SPEED, which is written immediately after it */
-#define WB_ACTOR_FIELD_12          12u
+/* WB_ACTOR_FIELD_10 / _12 used to be defined here, where $dbc0's fragment arm needed them. Batch 22
+ * made the respawn continuation a second writer of both, so they moved up into the actor record's
+ * own field block with every other WB_ACTOR_* offset. */
 
 /* ---- the effect handler table ------------------------------------------------------------------
  *
@@ -1715,7 +1779,23 @@
 #define WB_STAGE_KIND_DRAW_MASK    7u       /* `andi.l #$7,d0` — the whole LONGWORD is masked, so
                                              * rng_next's untouched high half cannot reach the sum */
 #define WB_STAGE_KIND_MASK         0x1fu    /* `andi.l #$1f,d0` on the way out: five bits, so the
-                                             * table's own $10..$14 bytes pass through unchanged */
+                                             * table's own $10..$14 bytes pass through unchanged.
+                                             * SHARED with $e1c8, whose last fourteen bytes are
+                                             * these */
+
+/* $e1c8, the SIBLING DRAW: the same routine with three operands changed and a `bra.w` into the tail
+ * above instead of a tail of its own. Its table ends exactly where WB_STAGE_KIND_TABLE begins and
+ * BEGINS exactly where stage_random_kind8's body ends, so the two bound each other at both ends. */
+#define WB_STAGE_KIND32_TABLE      0xe222u  /* `lea $e222.l,a2`, its only reference in the image */
+#define WB_STAGE_KIND32_TABLE_ROWS 11u      /* == ($e382 - $e222) / WB_STAGE_KIND32_ROW — HALF the
+                                             * rows the 8-wide table has, so a stage number past 11
+                                             * indexes off the end of this one while still inside
+                                             * the other. The code bounds it at neither end */
+#define WB_STAGE_KIND32_ROW        32u      /* `lsl.w #5,d2` + `andi.l #$1f,d0`: 32 candidates */
+#define WB_STAGE_KIND32_ROW_SHIFT  5u       /* == log2(WB_STAGE_KIND32_ROW) */
+#define WB_STAGE_KIND32_DRAW_MASK  0x1fu    /* `andi.l #$1f,d0` on the DRAW — numerically
+                                             * WB_STAGE_KIND_MASK, and a different instruction at a
+                                             * different address doing a different job */
 #define WB_STAGE_NUMBER_BCD_LIMIT  9u       /* `cmp.w #$9,d2 / ble` — at or below this the number is
                                              * already its own decimal value */
 #define WB_STAGE_NUMBER_BCD_CARRY  6u       /* `subq.w #6,d2` — one BCD tens carry */

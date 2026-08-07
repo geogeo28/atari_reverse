@@ -44,7 +44,7 @@ from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq
                   merge_bands, move_b_d16_dn, move_b_imm_d16, move_l_imm_abs_l,
                   move_l_imm_postinc, move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn,
                   movea_l_abs_l, moveq_0_dn, opcode, program_writes, s16, sub_w_dn_d16,
-                  sub_w_dn_dn, subi_w_dn, tst_w_abs_w, u16, word)
+                  sub_w_dn_dn, subi_w_dn, tst_w_abs_w, tst_w_dn, u16, word)
 from leaf import (WORD_MASK, clr_w_abs_l, move_b_abs_l_dn, move_b_imm_abs_l,
                   move_w_imm_abs_l, move_w_indexed_dn, tst_b_abs_l)
 from layout import wb
@@ -62,6 +62,13 @@ from test_sound import (STOP_INSN_CAP, STOP_WRITES, STUB_INSN_CAP,          # no
 # come from there for the same reason: two copies of "what packed BCD does" could disagree while both
 # batteries stayed green.
 from test_hud import bcd_expected, meter_add_expected                       # noqa: E402
+
+# ...and the respawn continuation draws its new kind through both of them, so the RNG battery's model
+# and instruction counts come from there rather than being restated: a second copy of the generator's
+# three counter steps could disagree with src/rng.c while test_rng.py stayed green.
+from test_rng import (COUNTERS as RNG_COUNTERS, DRAW8, DRAW32,             # noqa: E402
+                      FRAME_TICK, KIND32_INSN_CAP, STAGE_NUMBER,
+                      model_kind as model_stage_kind)
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
 
@@ -803,13 +810,33 @@ def _damage_template_entry():
             + kill)
 
 
-# --- $6bb8: paying for a defeat -------------------------------------------------------------------
+# --- $6bb8 + $6cdc: paying for a defeat, and what comes back --------------------------------------
 # The routine's own 164 bytes end at WB_SPAWN_SCORE_TABLE, which is its own data — so the entry pin
-# and the table's extent bound each other. The `ble.w` at DEFEAT_TRANSFER leaves for a respawn
-# continuation this project does not port (include/actor.h), and DEFEAT_RESPAWN_PC is where it goes.
+# and the table's extent bound each other. The `ble.w` at DEFEAT_TRANSFER leaves for the respawn
+# continuation at DEFEAT_RESPAWN_PC, which batch 22 reconstructed: there is no checkpoint here any
+# more, both exits run to an `rts`, and the two codes report which of them the run TOOK.
 DEFEAT_RETIRED = wb("ACTOR_DEFEAT_RETIRED")
 DEFEAT_RESPAWN = wb("ACTOR_DEFEAT_RESPAWN")
 DEFEAT_RESPAWN_PC = 0x6cdc
+BRANCH_W_BYTES = 4
+BSR_W_BYTES = BRANCH_W_BYTES    # opcode + displacement word, the same shape as a `bcc.w`
+KIND = wb("ACTOR_KIND")
+FIELD_10 = wb("ACTOR_FIELD_10")
+FIELD_12 = wb("ACTOR_FIELD_12")
+KIND_TABLE = wb("ACTOR_KIND_TABLE")
+KIND_TABLE_ROWS = wb("ACTOR_KIND_TABLE_ROWS")
+KIND_RECORD_BYTES = wb("ACTOR_KIND_RECORD_BYTES")
+KIND_RECORD_SHIFT = wb("ACTOR_KIND_RECORD_SHIFT")
+KIND_TYPE = wb("ACTOR_KIND_TYPE")
+KIND_TABLE_LAST_TYPE = 0x3d      # row 21 alone; every other row is WB_ACTOR_TYPE_UNSCORED
+KIND_SPRITE = wb("ACTOR_KIND_SPRITE")
+RESPAWN_FIELD_10 = wb("ACTOR_RESPAWN_FIELD_10")
+RESPAWN_SPEED = wb("ACTOR_RESPAWN_SPEED")
+RESPAWN_FIELD_12 = wb("ACTOR_RESPAWN_FIELD_12")
+RESPAWN_FIELD_30 = wb("ACTOR_RESPAWN_FIELD_30")
+RESPAWN_SIZE = wb("ACTOR_RESPAWN_SIZE")
+SPAWN_RESPAWN_KIND = wb("SPAWN_RESPAWN_KIND")
+SPAWN_FINAL_KIND = wb("SPAWN_FINAL_KIND")
 TYPE_UNSCORED = wb("ACTOR_TYPE_UNSCORED")
 SCORE_TABLE = wb("SPAWN_SCORE_TABLE")
 SCORE_TABLE_ENTRIES = wb("SPAWN_SCORE_TABLE_ENTRIES")
@@ -840,6 +867,26 @@ def move_l_indexed_dn(reg, base, index):
     """`move.l 0(An,Dm.l),Dn` — the score-table read, whose extension word's LONGWORD bit is what
     lets the shifted type address the whole 64 KiB above the table."""
     return opcode(0x2030 | (reg << 9) | base) + word((index << 12) | 0x800)
+
+
+# The two destination modes the respawn continuation adds, and the only site of each in the image.
+_MOVE_TO_D16 = 5 << 6           # the DESTINATION mode field of a `move`: d16(An)
+_MOVE_FROM_POSTINC = 3 << 3     # ...and its SOURCE mode: (An)+
+_MOVE_FROM_IMM = 0x3c           # ...or mode 7 reg 4, an immediate in the stream
+
+
+def move_w_postinc_d16(destination, source, displacement):
+    """`move.w (An)+,d16(Am)` — how the kind table's two words land in the record. The SOURCE is a
+    post-increment cursor, which is what makes the pair one walk rather than two indexed reads."""
+    return opcode(0x3000 | (destination << 9) | _MOVE_TO_D16 | _MOVE_FROM_POSTINC | source) + word(
+        displacement)
+
+
+def move_l_imm_d16(base, value, displacement):
+    """`move.l #imm,d16(An)` — the SOURCE longword comes first in the stream and the destination
+    displacement after it, which is the order the bytes at $6d50 are in."""
+    return opcode(0x2000 | (base << 9) | _MOVE_TO_D16 | _MOVE_FROM_IMM) + longword(value) + word(
+        displacement)
 
 
 def _defeat_entry():
@@ -887,6 +934,67 @@ def _defeat_entry():
     ])
 
 
+DEFEAT_BODY = _defeat_entry()
+
+
+def _transfer_site():
+    """SEARCHED for rather than transcribed: the one address in the body at which the four bytes are
+    a `ble.w` aimed at DEFEAT_RESPAWN_PC. A displacement depends on where it sits, so a wrong address
+    cannot match — and a second match would mean the routine has two exits, which is the thing worth
+    failing on."""
+    entry = leaf.entry_of("actor_defeat_and_score")
+    sites = [entry + at for at in range(0, len(DEFEAT_BODY), WORD_LEN)
+             if DEFEAT_BODY[at:at + BRANCH_W_BYTES] == branch_w_to(BLE_W, entry + at,
+                                                                   DEFEAT_RESPAWN_PC)]
+    assert len(sites) == 1, f"the body has {len(sites)} `ble.w {DEFEAT_RESPAWN_PC:#x}` site(s)"
+    return sites[0]
+
+
+# The `ble.w` itself: the witness that a run really left through the tail rather than returning. Its
+# address is the score block's own end, so the entry pin above puts it here — and the RETIRE TAIL is
+# the instruction immediately after it, which is where the continuation's `bmi.w` comes back to.
+DEFEAT_TRANSFER = _transfer_site()
+RETIRE_TAIL_PC = DEFEAT_TRANSFER + BRANCH_W_BYTES
+
+
+def _respawn_entry():
+    """$6cdc, whole. Its four LOCAL branch displacements come out of the pieces they skip, and the
+    one that is not local — the `bmi.w` back into $6bb8's retire tail — is derived from the `ble.w`
+    the body above assembles rather than transcribed."""
+    base = DEFEAT_RESPAWN_PC
+
+    def drawn(field, routine):
+        """`move.w N(a1),d0 / tst.w d0 / bne <past the bsr> / bsr.w <draw>` — a nonzero forced kind
+        skips the draw, which is the whole of what the two template fields are for. The `bsr.w`'s
+        displacement needs its own address, so an arm is a list of pieces rather than bytes."""
+        return [move_w_ind_dn(D0, A1, field), tst_w_dn(D0), branch_over(BNE_W, BSR_W_BYTES),
+                lambda at: bsr_w(at, leaf.entry_of(routine))]
+
+    final_arm = drawn(SPAWN_FINAL_KIND, "stage_random_kind8")
+    final_bytes = len(leaf.assemble(base, final_arm))
+    early_arm = drawn(SPAWN_RESPAWN_KIND, "stage_random_kind32") + [
+        branch_over(BRA_W, final_bytes)]
+    early_bytes = len(leaf.assemble(base, early_arm))
+
+    return leaf.assemble(base, [
+        moveq_0_dn(D0), cmpi_w_d16(A1, KILL_RESPAWN_LIMIT, SPAWN_KILL_COUNT),
+        branch_over(BEQ_W, early_bytes), *early_arm, *final_arm,
+        tst_w_dn(D0), lambda at: branch_w_to(BMI_W, at, RETIRE_TAIL_PC),
+        move_b_dn_d16(D0, A0, KIND),
+        bit_op_d16(BSET_IMM, MOVING_BIT, A0, ACTOR_FLAGS),
+        bit_op_d16(BSET_IMM, LAUNCHED_BIT, A0, ACTOR_FLAGS),
+        bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        move_b_imm_d16(A0, RESPAWN_FIELD_10, FIELD_10),
+        move_b_imm_d16(A0, RESPAWN_SPEED, SPEED),
+        move_b_imm_d16(A0, RESPAWN_FIELD_12, FIELD_12),
+        move_b_imm_d16(A0, RESPAWN_FIELD_30, FIELD_30),
+        lea_abs_l(A2, KIND_TABLE), lsl_w_imm_dn(KIND_RECORD_SHIFT, D0), lea_indexed(A2, D0),
+        move_w_postinc_d16(A0, A2, ACTOR_TYPE), move_w_postinc_d16(A0, A2, ACTOR_SPRITE),
+        move_l_imm_d16(A0, RESPAWN_SIZE, HALF_WIDTH),
+        RTS,
+    ])
+
+
 ENTRY_BYTES = {
     "followed_actor_record": _followed_record_entry(),
     "actor_set_side_flag": _side_flag_entry(),
@@ -907,9 +1015,10 @@ ENTRY_BYTES = {
     "actor_turn_and_launch": _turn_and_launch_entry(),
     "actor_damage_followed": _damage_followed_entry(),
     "actor_damage_template_hitpoints": _damage_template_entry(),
-    "actor_defeat_and_score": _defeat_entry(),
+    "actor_defeat_and_score": DEFEAT_BODY,
+    "actor_respawn_as_new_kind": _respawn_entry(),
 }
-RECONSTRUCTED_ROUTINES = 20
+RECONSTRUCTED_ROUTINES = 21
 
 
 def test_the_battery_covers_every_routine_it_was_written_for():
@@ -948,6 +1057,9 @@ def test_the_whole_body_is_the_bytes_this_battery_reconstructs(name):
     # word table stops (test_the_damage_table_is_the_data_between_the_two_bodies).
     ("actor_damage_followed", 266),
     ("actor_damage_template_hitpoints", 114),
+    # ...and $6cdc, which Ghidra has no function for at all: its extent runs from the one
+    # `ble.w` aimed at it to the `rts` at $6d58, whose second byte is the last of the body.
+    ("actor_respawn_as_new_kind", 126),
 ], ids=lambda v: v if isinstance(v, str) else f"{v}B")
 def test_the_reconstructed_body_is_the_whole_routine(name, size):
     """The pins above would still pass on a PREFIX of a routine. These are the sizes the Ghidra
@@ -3160,31 +3272,13 @@ def test_both_paths_follow_whichever_template_table_the_pointer_names(table_base
 # address-keyed seeding every case here uses plus `_assert_writes`, which compares the oracle's write
 # set against the model for EQUALITY rather than bounding it.
 #
-# WHAT THIS DELIBERATELY DOES NOT COVER: the respawn continuation at $6cdc. `ble.w` leaves for it and
-# the port reports the exit instead of following, so everything past DEFEAT_RESPAWN_PC — including
-# both stage_random_kind draws (test_rng.py holds one) — is out of scope here.
+# AND SINCE BATCH 22 IT RUNS TO THE ORIGINAL'S OWN `rts` ON EVERY ARM. `ble.w` leaves for the respawn
+# continuation at DEFEAT_RESPAWN_PC, which is reconstructed below, so a defeat case is a whole defeat
+# — including whichever stage_random_kind draw the continuation makes, whose model comes from
+# test_rng.py the way the BCD accumulator's comes from test_hud.py.
 
 _DEFEAT = leaf.register_glue("actor_defeat_and_score", [ctypes.c_uint32], ctypes.c_uint32)
-
-# The `ble.w` itself: the witness that a checkpointed run really left through the tail rather than
-# returning. Its address is the score block's own end, so the entry pin above puts it here.
-BRANCH_W_BYTES = 4
-
-
-def _transfer_site():
-    """SEARCHED for rather than transcribed: the one address in the body at which the four bytes are
-    a `ble.w` aimed at DEFEAT_RESPAWN_PC. A displacement depends on where it sits, so a wrong address
-    cannot match — and a second match would mean the routine has two exits, which is the thing worth
-    failing on."""
-    entry = leaf.entry_of("actor_defeat_and_score")
-    body = ENTRY_BYTES["actor_defeat_and_score"]
-    sites = [entry + at for at in range(0, len(body), WORD_LEN)
-             if body[at:at + BRANCH_W_BYTES] == branch_w_to(BLE_W, entry + at, DEFEAT_RESPAWN_PC)]
-    assert len(sites) == 1, f"the body has {len(sites)} `ble.w {DEFEAT_RESPAWN_PC:#x}` site(s)"
-    return sites[0]
-
-
-DEFEAT_TRANSFER = _transfer_site()
+_RESPAWN = leaf.register_glue("actor_respawn_as_new_kind", [ctypes.c_uint32] * 3, ctypes.c_uint32)
 
 # The body's own instruction count on the longest path (gate 4, boss block 9, the record and template
 # setup 6, the type test 2, the score block 9, the retire tail 8), plus the three chains it calls and
@@ -3200,8 +3294,16 @@ STUB_INSNS = 4                  # `movem.l d0-a6,-(a7) / bsr.w / movem.l (a7)+,d
 METER_ADD_INSNS = 6
 BCD_ADD_INSNS = 12
 STOP_CHAIN_INSNS = STUB_INSNS + STOP_INSN_CAP - leaf.RUNNER_SENTINEL_INSN
-DEFEAT_INSN_CAP = (DEFEAT_BODY_INSNS + STOP_CHAIN_INSNS + STUB_INSN_CAP
-                   + METER_ADD_INSNS + BCD_ADD_INSNS + leaf.RUNNER_SENTINEL_INSN)
+
+# ...and the continuation's own longest path: the split 3, the forced-kind arm 4, the sign test 2 and
+# the sixteen instructions that rebuild the record. The DRAW it calls is the wider of the two, whose
+# cost is test_rng.py's cap for the sibling less that battery's own sentinel.
+RESPAWN_BODY_INSNS = 3 + 4 + 2 + 16
+RESPAWN_DRAW_INSNS = KIND32_INSN_CAP - leaf.RUNNER_SENTINEL_INSN
+RESPAWN_INSN_CAP = RESPAWN_BODY_INSNS + RESPAWN_DRAW_INSNS + leaf.RUNNER_SENTINEL_INSN
+DEFEAT_RETIRE_INSN_CAP = (DEFEAT_BODY_INSNS + STOP_CHAIN_INSNS + STUB_INSN_CAP
+                          + METER_ADD_INSNS + BCD_ADD_INSNS + leaf.RUNNER_SENTINEL_INSN)
+DEFEAT_INSN_CAP = DEFEAT_RETIRE_INSN_CAP + RESPAWN_BODY_INSNS + RESPAWN_DRAW_INSNS
 
 # Where a case puts the record that died. The boss arm needs the ONE address the `cmpa.l` accepts;
 # every other case uses an ordinary slot of the default table, so "which record" is a case's choice.
@@ -3214,11 +3316,18 @@ DEFEAT_MIXER = {PSG_REG_MIXER: 0xc0}
 # Every byte of state the routine reads, seeded: none of the five callees may be entered on a value a
 # case did not choose. The module state is seeded AWAY from what the stop chain writes, so each of
 # its clears is a change rather than a coincidence.
+#
+# The last five are the RESPAWN continuation's inputs: the two forced-kind words a template can carry
+# (zero here, so the default is a DRAWN kind) and the generator's whole state, which decides which
+# candidate the draw lands on. Stage 5 with an idle generator draws candidate 3 of that stage's row —
+# kind 2 out of the 8-wide table and kind 13 out of the 32-wide one, two different rows of
+# WB_ACTOR_KIND_TABLE, so the two arms cannot be confused for one another.
 DEFEAT_STATE = dict(
     a32=0x0000, actor_type=4, template_slot=2, spawn_type=5, kills=0x0005,
     live=0x0007, wrapped=0x0000, score=0x00123400, meter=0x0028, meter_max=0x0064,
     armed=0x11, countdown=0x22, engine=0xff, sfx_flags=b"\x01\x02\x03\x04",
     shadow=b"\x11\x22\x33\x44", score_entry=None,
+    respawn_kind=0x0000, final_kind=0x0000, stage=0x0005, tick=0x0000, counters=(0, 0, 0),
 )
 BCD_SCORE = wb("BCD_SCORE")
 BCD_SCORE_LEN = wb("BCD_SCORE_LEN")
@@ -3236,11 +3345,23 @@ PSG_REG_MIXER_SHADOW = SND_PSG_SHADOW + PSG_REG_MIXER
 SCORE_INDEX_EXTEND_BIT = 1 << 14
 
 
+def _scaled_spawn_type(spawn_type):
+    """`lsl.w #2,d2` — the score index, and (because nothing writes d2 between that shift and the
+    `ble.w`) the very d2 the respawn continuation carries into its draw. ONE derivation, so a
+    correction to either reading lands on both."""
+    return (spawn_type << SCORE_SHIFT) & WORD_MASK
+
+
+def _defeat_template(slot):
+    """Which record of the seeded template table a slot names."""
+    return TEMPLATE_TABLE + slot * SPAWN_RECORD_BYTES
+
+
 def _score_table_entry(spawn_type):
     """WHERE the read goes: `lsl.w #2,d2` wraps the scaled type inside SIXTEEN BITS and
     `move.l 0(a2,d2.l),d0` then takes the whole longword, so a type from $4000 up reads ABOVE the
     table rather than off its end. Every case keys its seed off this rather than off the type."""
-    return SCORE_TABLE + ((spawn_type << SCORE_SHIFT) & WORD_MASK)
+    return SCORE_TABLE + _scaled_spawn_type(spawn_type)
 
 
 def _defeat_pokes(what, **overrides):
@@ -3265,9 +3386,16 @@ def _defeat_pokes(what, **overrides):
 
     _template_band(salt, TEMPLATE_TABLE, TEMPLATE_SLOTS, pokes)
     pokes[TABLE_PTR] = longword(TEMPLATE_TABLE)
-    template = TEMPLATE_TABLE + state["template_slot"] * SPAWN_RECORD_BYTES
+    pokes[STAGE_NUMBER] = word(state["stage"])
+    pokes[FRAME_TICK] = word(state["tick"])
+    for (counter, _limit, _name), value in zip(RNG_COUNTERS, state["counters"]):
+        pokes[counter] = word(value)
+
+    template = _defeat_template(state["template_slot"])
     pokes[template + SPAWN_TYPE] = word(state["spawn_type"])
     pokes[template + SPAWN_KILL_COUNT] = word(state["kills"])
+    pokes[template + SPAWN_RESPAWN_KIND] = word(state["respawn_kind"])
+    pokes[template + SPAWN_FINAL_KIND] = word(state["final_kind"])
     pokes[template + SPAWN_ARMED] = bytes([state["armed"]])
     pokes[template + SPAWN_COUNTDOWN] = bytes([state["countdown"]])
     header = TEMPLATE_TABLE - SPAWN_HEADER_BYTES
@@ -3289,11 +3417,72 @@ def _stop_chain_bytes():
             for addr, value in STOP_WRITES.items() for index in range(len(value))}
 
 
+def _model_retire(image, actor, template):
+    """$6c38's own writes: the live count down, the slot marked free and — on ANY nonzero wrapped
+    flag — the template re-armed. Three entrances reach it, so it is one model, as it is one helper
+    in src/actor.c."""
+    out = {}
+    table = _u32(image, TABLE_PTR)
+    header = table - SPAWN_HEADER_BYTES
+    _put_word(out, header + HEADER_LIVE, (u16(image, header + HEADER_LIVE) - 1) & WORD_MASK)
+    _put_word(out, actor + ACTOR_X, FREE_MARKER)
+    # `tst.w -2(a6) / beq` — ANY nonzero re-arms, where $ff42's own test of the same word is
+    # `cmpi.w #$ffff`; the two part company on a small positive value.
+    if u16(image, header + HEADER_WRAPPED) != 0:
+        out[template + SPAWN_ARMED] = SPAWN_REARM
+        out[template + SPAWN_COUNTDOWN] = SPAWN_REARM
+    return out
+
+
+def _kind_row(kind):
+    """WHERE `lea $1044c.l,a2 / lsl.w #4,d0 / lea 0(a2,d0.w),a2` lands: the shift wraps INSIDE the
+    word and the index is then SIGN-EXTENDED, so a kind at or above $0800 reads BELOW the table.
+    Shared with the guard that bounds it, so no case can assert about a different address."""
+    return KIND_TABLE + s16((kind << KIND_RECORD_SHIFT) & WORD_MASK)
+
+
+def _model_respawn(image, actor, template, entry_d2, kills=None):
+    """(the exit it reports, {address: byte}) for $6cdc — its own cases' model, and the one
+    `_model_defeat` composes onto the end of its respawn arm.
+
+    `kills` is the one byte pair the continuation reads that its CALLER has already rewritten: the
+    count `addq.w #1,6(a1)` raised. A case entered at $6cdc leaves it None and the model reads
+    memory, which is what the routine does; `_model_defeat` passes the raised value instead of
+    handing this a mutated copy of the whole image."""
+    out = {}
+    if kills is None:
+        kills = u16(image, template + SPAWN_KILL_COUNT)
+    final = kills == KILL_RESPAWN_LIMIT
+    draw = DRAW8 if final else DRAW32
+    kind = u16(image, template + (SPAWN_FINAL_KIND if final else SPAWN_RESPAWN_KIND))
+    if kind == 0:
+        kind, drawn_writes = model_stage_kind(draw, image, entry_d2)
+        out.update(drawn_writes)
+
+    # `tst.w d0 / bmi.w $6c38` — a forced kind with its top bit set frees the slot instead.
+    if s16(kind) < 0:
+        out.update(_model_retire(image, actor, template))
+        return DEFEAT_RETIRED, out
+
+    out[actor + KIND] = kind & 0xff             # `move.b d0,20(a0)` — the LOW byte alone
+    out[actor + ACTOR_FLAGS] = (image[actor + ACTOR_FLAGS]
+                                | (1 << MOVING_BIT) | (1 << LAUNCHED_BIT)) & ~(1 << SUPPORTED_BIT)
+    out[actor + FIELD_10] = RESPAWN_FIELD_10
+    out[actor + SPEED] = RESPAWN_SPEED
+    out[actor + FIELD_12] = RESPAWN_FIELD_12
+    out[actor + FIELD_30] = RESPAWN_FIELD_30
+    row = _kind_row(kind)
+    _put_word(out, actor + ACTOR_TYPE, u16(image, row + KIND_TYPE))
+    _put_word(out, actor + ACTOR_SPRITE, u16(image, row + KIND_SPRITE))
+    _put_long(out, actor + HALF_WIDTH, RESPAWN_SIZE)
+    return DEFEAT_RESPAWN, out
+
+
 def _model_defeat(image, actor):
-    """(the exit it reports, {address: byte}). The arms are SEQUENTIAL and only one address is both
-    written and read (the kill count), so the model composes its callees' models over one dict in
-    the order the instructions run — the SFX trigger's ACTIVE flag lands on a byte the stop chain
-    cleared two calls earlier, which is exactly what that ordering says."""
+    """(the exit it reports, whether the `ble.w` fired, {address: byte}). The arms are SEQUENTIAL and
+    only one address is both written and read (the kill count), so the model composes its callees'
+    models over one dict in the order the instructions run — the SFX trigger's ACTIVE flag lands on a
+    byte the stop chain cleared two calls earlier, which is exactly what that ordering says."""
     out = {}
     if u16(image, FLAG_A32) != 0 and actor == BOSS_ORIGIN:
         out.update(_stop_chain_bytes())
@@ -3309,39 +3498,41 @@ def _model_defeat(image, actor):
     template = (table + s16((image[actor + TEMPLATE_SLOT] << TEMPLATE_SLOT_SHIFT) & WORD_MASK)
                 ) & 0xffffffff
     if u16(image, actor + ACTOR_TYPE) != TYPE_UNSCORED:
+        scaled_type = _scaled_spawn_type(u16(image, template + SPAWN_TYPE))
         addend = _u32(image, _score_table_entry(u16(image, template + SPAWN_TYPE)))
         _put_long(out, BCD_ADDEND, addend)
         _put_long(out, BCD_SCORE,
                   bcd_expected(_u32(image, BCD_SCORE), addend, BCD_SCORE_LEN, False))
         kills = (u16(image, template + SPAWN_KILL_COUNT) + 1) & WORD_MASK
         _put_word(out, template + SPAWN_KILL_COUNT, kills)
+        # `cmpi.w #$2,6(a1) / ble` — signed, and read back out of MEMORY. The d2 the continuation
+        # carries into its draw is what the `moveq #0,d2` and `lsl.w #2,d2` above left: the scaled
+        # spawn type in the low word, nothing above it.
         if s16(kills) <= KILL_RESPAWN_LIMIT:
-            return DEFEAT_RESPAWN, out
+            exit_code, continued = _model_respawn(image, actor, template, scaled_type, kills=kills)
+            out.update(continued)
+            return exit_code, True, out
 
-    header = table - SPAWN_HEADER_BYTES
-    _put_word(out, header + HEADER_LIVE, (u16(image, header + HEADER_LIVE) - 1) & WORD_MASK)
-    _put_word(out, actor + ACTOR_X, FREE_MARKER)
-    if u16(image, header + HEADER_WRAPPED) != 0:
-        out[template + SPAWN_ARMED] = SPAWN_REARM
-        out[template + SPAWN_COUNTDOWN] = SPAWN_REARM
-    return DEFEAT_RETIRED, out
+    out.update(_model_retire(image, actor, template))
+    return DEFEAT_RETIRED, False, out
 
 
 def _run_defeat(case, actor, pokes, psg_seed=None):
-    """One defeat differential. A checkpointed run also carries the witness that the `ble.w` fired:
-    a `stop_pc` run stops at EITHER the checkpoint or the `rts` and reports only that one did."""
+    """One defeat differential, run to the original's own `rts` on every arm. A run whose kill count
+    let the `ble.w` fire also carries the WITNESS that it did — the transfer instruction executed —
+    so "which tail ran" is a fact about the run and not only about the write set."""
     what = f"actor_defeat_and_score {case}"
     image = harness.make_image(pokes)
-    expected_exit, expected = _model_defeat(image, actor)
+    expected_exit, took_tail, expected = _model_defeat(image, actor)
     seed = DEFEAT_MIXER if psg_seed is None else psg_seed
 
     how = dict(regs={"a0": actor, "_pokes": pokes, **DAMAGE_ENTRY_REGS},
-               max_insns=DEFEAT_INSN_CAP, poison=False, psg_seed=seed)
-    if expected_exit == DEFEAT_RESPAWN:
-        info = leaf.run_reaching("actor_defeat_and_score", _DEFEAT(actor), merge_bands(expected),
-                                 what, DEFEAT_TRANSFER, stop_pc=DEFEAT_RESPAWN_PC, **how)
-    else:
-        info = leaf.run("actor_defeat_and_score", _DEFEAT(actor), merge_bands(expected), what, **how)
+               max_insns=DEFEAT_INSN_CAP if took_tail else DEFEAT_RETIRE_INSN_CAP,
+               poison=False, psg_seed=seed)
+    runner = leaf.run_reaching if took_tail else leaf.run
+    extra = (DEFEAT_TRANSFER,) if took_tail else ()
+    info = runner("actor_defeat_and_score", _DEFEAT(actor), merge_bands(expected), what,
+                  *extra, **how)
 
     _assert_writes(info, expected, what)
     assert info["ret"] == expected_exit, (
@@ -3445,7 +3636,7 @@ def test_the_wrapped_flag_decides_whether_the_template_is_re_armed(wrapped, rear
     case = f"a wrapped flag of {wrapped:#06x} ({why})"
     actor, pokes = _defeat_pokes(case, wrapped=wrapped)
     _info, expected = _run_defeat(case, actor, pokes)
-    template = TEMPLATE_TABLE + DEFEAT_STATE["template_slot"] * SPAWN_RECORD_BYTES
+    template = _defeat_template(DEFEAT_STATE["template_slot"])
     armed = expected.get(template + SPAWN_ARMED)
     assert (armed == SPAWN_REARM) == rearms, (
         f"{case}: WB_SPAWN_ARMED ended {armed}, and the case expects rearms={rearms}")
@@ -3584,11 +3775,328 @@ def test_the_body_ends_where_its_own_score_table_begins():
         "the table's 32 entries must end exactly on the respawn continuation")
 
 
-def test_the_checkpointed_exit_is_the_branch_the_entry_pin_assembles():
+def test_the_respawn_exit_is_the_branch_the_entry_pin_assembles():
     """DEFEAT_TRANSFER is searched for in the bytes this battery ASSEMBLES, so it is worth checking
-    the same address holds that `ble.w` in the loaded IMAGE — which is what the checkpointed runs
-    actually execute."""
+    the same address holds that `ble.w` in the loaded IMAGE — which is what the runs that reach the
+    continuation actually execute, and what RETIRE_TAIL_PC is measured from."""
     expected = branch_w_to(BLE_W, DEFEAT_TRANSFER, DEFEAT_RESPAWN_PC)
     actual = bytes(harness.BASE_IMAGE[DEFEAT_TRANSFER:DEFEAT_TRANSFER + len(expected)])
     assert actual == expected, (
         f"{DEFEAT_TRANSFER:#x} is {actual.hex()}, not the {expected.hex()} the tail's `ble.w` is")
+
+
+# --- $6cdc: what the slot comes back as ---------------------------------------------------------------
+# The continuation the `ble.w` above leaves for, entered on its own so that its two arms, its forced
+# kinds and its table index can be reached without going through a whole defeat first. Its entry
+# registers are a0 (the record that died), a1 (that record's template) and the d2 whose HIGH half
+# `stage_random_kind`'s `add.l` folds into the draw's own table index — test_rng.py owns that half of
+# it, so what this battery passes is the value $6bb8 reaches here with.
+#
+# ITS `bmi` GOES BACK INTO $6bb8, so a case whose forced kind is negative runs the retire tail too and
+# the write set it states is that tail's. That is why RETIRE_TAIL_PC is derived from the `ble.w`
+# rather than transcribed: one wrong address and the run would fall into the score table.
+
+RESPAWN_TEMPLATE = _defeat_template(DEFEAT_STATE["template_slot"])
+
+# What $6bb8 leaves in d2 by the time it branches here: `moveq #0,d2` zeroed the whole register and
+# `lsl.w #2,d2` then put the scaled spawn type in its LOW word, which the draw's own
+# `move.w $bd88.l,d2` overwrites. So the half that survives is zero, and that is what the game passes.
+RESPAWN_ENTRY_D2 = _scaled_spawn_type(DEFEAT_STATE["spawn_type"])
+
+
+def _run_respawn(case, pokes, entry_d2=RESPAWN_ENTRY_D2):
+    """One continuation differential — `(info, the image it ran on, the write-set model)`. Every case
+    uses DEFEAT_ACTOR and its template, so those are not parameters; the IMAGE comes back because a
+    case that wants to say which kind was drawn has to ask the same bytes the run did, and rebuilding
+    it from the pokes is a second megabyte for the same answer.
+
+    `poison` is off for `_run_defeat`'s reason — the kill count it reads STEERS which arm runs, so a
+    poisoned re-run is a different case."""
+    what = f"actor_respawn_as_new_kind {case}"
+    image = harness.make_image(pokes)
+    expected_exit, expected = _model_respawn(image, DEFEAT_ACTOR, RESPAWN_TEMPLATE, entry_d2)
+    info = leaf.run("actor_respawn_as_new_kind", _RESPAWN(DEFEAT_ACTOR, RESPAWN_TEMPLATE, entry_d2),
+                    merge_bands(expected), what,
+                    regs={"a0": DEFEAT_ACTOR, "a1": RESPAWN_TEMPLATE, "d2": entry_d2,
+                          "_pokes": pokes, **DAMAGE_ENTRY_REGS},
+                    max_insns=RESPAWN_INSN_CAP, poison=False)
+    _assert_writes(info, expected, what)
+    assert info["ret"] == expected_exit, (
+        f"{what}: the reconstruction reported exit {info['ret']}, not the {expected_exit} this "
+        f"case expects")
+    return info, image, expected
+
+
+# (kill count, which draw it takes, why). `cmpi.w #$2,6(a1) / beq` is an EQUALITY test on the count
+# the `addq` already raised, so only the last respawn a template is allowed takes the 8-wide table —
+# a count PAST the limit, which $6bb8 could never branch here with, takes the 32-wide one like any
+# other. The two arms land on different rows of WB_ACTOR_KIND_TABLE, which is what makes them tellable
+# apart at all (a guard below computes that rather than trusting it).
+RESPAWN_ARM_CASES = (
+    (0x0001, DRAW32, "under the limit: the 32-wide table"),
+    (0x0002, DRAW8, "EXACTLY the limit — the last respawn, and the only 8-wide draw"),
+    (0x0003, DRAW32, "past the limit, which the `beq` does not catch"),
+    # ...and the one that says the compare is a WORD. A `cmp.b` reading sees $02 against the limit's
+    # own low byte and takes the 8-wide arm; the `cmpi.w` the bytes spell sees $0102 and does not.
+    # (A byte-wide port passed the three above; this is the case that reddens it.)
+    (0x0102, DRAW32, "a count whose LOW BYTE is the limit, which only a WORD compare keeps off it"),
+)
+
+
+@pytest.mark.parametrize("kills,draw,why", RESPAWN_ARM_CASES,
+                         ids=[f"kills_{c[0]:04x}" for c in RESPAWN_ARM_CASES])
+def test_the_kill_count_picks_which_of_the_two_draws_names_the_new_kind(kills, draw, why):
+    case = f"a kill count of {kills:#06x} ({why})"
+    _actor, pokes = _defeat_pokes(case, kills=kills)
+    info, image, expected = _run_respawn(case, pokes)
+    # The expected kind comes from the arm the CASE declares, not from the model's own choice, so a
+    # model that picked the wrong table could not agree with itself here.
+    kind, _writes = model_stage_kind(draw, image, RESPAWN_ENTRY_D2)
+    assert expected[DEFEAT_ACTOR + KIND] == kind, (
+        f"{case}: the slot came back as kind {expected[DEFEAT_ACTOR + KIND]}, not the {kind} the "
+        f"{draw.name} draw gives")
+    assert info["ret"] == DEFEAT_RESPAWN
+
+
+def test_the_two_arms_draw_from_different_tables_in_the_state_every_case_shares():
+    """The guard on RESPAWN_ARM_CASES: if the two draws happened to agree in the seeded generator
+    state, every case above would pass with the arms swapped and the `beq` would be unpinned."""
+    case = "the arm guard"
+    _actor, pokes = _defeat_pokes(case)
+    image = harness.make_image(pokes)
+    kinds = {draw.name: model_stage_kind(draw, image, RESPAWN_ENTRY_D2)[0] for draw in (DRAW8,
+                                                                                       DRAW32)}
+    assert len(set(kinds.values())) == 2, f"both arms draw {kinds} — the `beq` is unobservable"
+    rows = {_kind_row(kind) for kind in kinds.values()}
+    assert len(rows) == 2, "the two kinds must also name different rows of the kind table"
+    counts = {kills for kills, _draw, _why in RESPAWN_ARM_CASES}
+    assert counts >= {KILL_RESPAWN_LIMIT, KILL_RESPAWN_LIMIT + 1}, (
+        "the sweep must sit exactly ON the limit and one past it, or the `beq` could be a `ble`")
+    assert any(kills & 0xff == KILL_RESPAWN_LIMIT and kills != KILL_RESPAWN_LIMIT
+               for kills in counts), (
+        "no case separates a `cmp.w` from a `cmp.b`, so the compare's WIDTH would be unpinned")
+
+
+# A forced kind skips the draw entirely, and it is the ONLY way a kind above WB_STAGE_KIND_MASK, or a
+# negative one, can reach the rest of the routine. `0x0105` is the one that separates the byte STORED
+# at WB_ACTOR_KIND from the word that INDEXES the table: `move.b d0,20(a0)` keeps $05 while
+# `lsl.w #4,d0` scales the whole $0105.
+FORCED_KIND_CASES = (
+    (0x0015, "row 21 — the LAST row the table has"),
+    (0x0016, "row 22: one PAST the end, onto the longword code pointers that bound it"),
+    (0x0105, "a kind whose stored BYTE and whose table index are different numbers"),
+    (0x0800, "the smallest kind whose scaled index is NEGATIVE and reads below the table"),
+    (0x1000, "a kind whose `lsl.w #4` wraps the word to zero, so it reads row 0"),
+    (0x7fff, "the largest kind the `bmi` lets through at all"),
+)
+
+
+@pytest.mark.parametrize("kind,why", FORCED_KIND_CASES,
+                         ids=[f"kind_{c[0]:04x}" for c in FORCED_KIND_CASES])
+def test_a_template_can_force_the_kind_and_the_index_is_bounded_by_nothing(kind, why):
+    """ONE arm is enough for the index: the two share every instruction from the `tst.w` on, and the
+    arms themselves are the case below. (Both arms were run over this whole grid until a measured
+    trim showed the second copy killed no mutant the first did not.)"""
+    case = f"a forced kind of {kind:#06x} ({why})"
+    _actor, pokes = _defeat_pokes(case, kills=0x0001, respawn_kind=kind)
+    info, _image, expected = _run_respawn(case, pokes)
+    assert info["ret"] == DEFEAT_RESPAWN
+    assert expected[DEFEAT_ACTOR + KIND] == (kind & 0xff), (
+        f"{case}: WB_ACTOR_KIND took {expected[DEFEAT_ACTOR + KIND]:#04x}, not the low byte")
+
+
+# (kill count, which field it fills, the arm it is on). Each case leaves the OTHER field zero, so a
+# port that read the wrong one would draw a kind instead of taking this one and land on a different
+# row — which is what makes the two forced-kind fields tellable apart.
+FORCED_FIELD_CASES = (
+    (0x0001, "respawn_kind", "the 32-wide arm"),
+    (KILL_RESPAWN_LIMIT, "final_kind", "the 8-wide arm"),
+)
+FORCED_FIELD_KIND = 0x0007      # a row the seeded generator never draws (a guard below says so)
+
+
+@pytest.mark.parametrize("kills,field,arm", FORCED_FIELD_CASES, ids=[c[1] for c in
+                                                                    FORCED_FIELD_CASES])
+def test_each_arm_takes_its_own_forced_field(kills, field, arm):
+    case = f"a forced kind of {FORCED_FIELD_KIND:#06x} in {field}, on {arm}"
+    _actor, pokes = _defeat_pokes(case, kills=kills, **{field: FORCED_FIELD_KIND})
+    info, _image, expected = _run_respawn(case, pokes)
+    assert info["ret"] == DEFEAT_RESPAWN
+    assert expected[DEFEAT_ACTOR + KIND] == FORCED_FIELD_KIND, (
+        f"{case}: the slot came back as {expected[DEFEAT_ACTOR + KIND]:#04x} — the other field was "
+        f"read, or the draw ran")
+
+
+def test_the_forced_field_kind_is_one_neither_draw_produces():
+    """The guard: if FORCED_FIELD_KIND happened to equal what the seeded generator draws, a port
+    that read the wrong (zero) field would draw that very kind and the case would pass."""
+    _actor, pokes = _defeat_pokes("the forced-field guard")
+    image = harness.make_image(pokes)
+    drawn = {model_stage_kind(draw, image, RESPAWN_ENTRY_D2)[0] for draw in (DRAW8, DRAW32)}
+    assert FORCED_FIELD_KIND not in drawn, f"the draws give {sorted(drawn)}, which includes it"
+
+
+def test_the_forced_kind_sweep_reaches_both_sides_of_the_tables_own_extent():
+    """The guard: a sweep confined to the 22 shipped rows would be silent about an index the
+    instruction bounds at neither end, which is what `lsl.w`-then-sign-extend means."""
+    rows = [_kind_row(kind) for kind, _why in FORCED_KIND_CASES]
+    table_end = KIND_TABLE + KIND_TABLE_ROWS * KIND_RECORD_BYTES
+    assert any(row < KIND_TABLE for row in rows), "no case reads BELOW the table"
+    assert any(row >= table_end for row in rows), "no case reads past its last row"
+    assert any(KIND_TABLE <= row < table_end for row in rows), "no case reads a shipped row"
+
+
+def test_every_index_the_routine_can_compute_stays_inside_the_image():
+    """WHY src/actor.c carries no off-image guard and no bus mask on this read, computed rather than
+    asserted: the `bmi` bounds the kind to $0000..$7fff, `lsl.w #4` bounds the scaled word to
+    $0000..$fff0, and the sign extension of THAT bounds the row to one 64 KiB window around the
+    table — which lies inside the image at both ends, nowhere near the 24-bit bus."""
+    rows = [_kind_row(kind) for kind in range(0x8000)]
+    lowest, highest = min(rows), max(rows)
+    assert lowest == KIND_TABLE - 0x8000 and highest == KIND_TABLE + 0x7ff0, (
+        f"the index window is [{lowest:#x}, {highest:#x}], not the one the two shifts bound")
+    assert 0 <= lowest and highest + KIND_RECORD_BYTES <= harness.IMAGE_SIZE, (
+        "an index this routine can compute leaves the image, so the read needs a guard after all")
+
+
+# (forced kind, why) — the far side of `tst.w d0 / bmi.w $6c38`, which no DRAWN kind can reach because
+# both draws close with `andi.l #$1f`. It frees the slot instead, which is $6bb8's retire tail run from
+# a third entrance.
+NEGATIVE_KIND_CASES = (
+    (0xffff, "the least negative kind there is"),
+    (0x8000, "the most negative"),
+    (0x8001, "one whose LOW BYTE is a perfectly ordinary kind, so a byte test would let it through"),
+)
+
+
+@pytest.mark.parametrize("kind,why", NEGATIVE_KIND_CASES,
+                         ids=[f"kind_{c[0]:04x}" for c in NEGATIVE_KIND_CASES])
+def test_a_negative_forced_kind_frees_the_slot_through_the_retire_tail(kind, why):
+    case = f"a forced kind of {kind:#06x} ({why})"
+    _actor, pokes = _defeat_pokes(case, kills=0x0001, respawn_kind=kind)
+    info, _image, expected = _run_respawn(case, pokes)
+    assert info["ret"] == DEFEAT_RETIRED
+    assert expected[DEFEAT_ACTOR + ACTOR_X] == FREE_MARKER >> 8, "the slot was not marked free"
+    assert DEFEAT_ACTOR + KIND not in expected, "the record was rebuilt on a kind the `bmi` refused"
+
+
+def test_a_negative_kind_reached_through_a_whole_defeat_retires_the_slot():
+    """The same branch, but through $6bb8: a template UNDER its kill limit — which by itself means a
+    respawn — still frees the slot when the kind it forces is negative. That is the third entrance to
+    the retire tail, and the reason `actor_defeat_and_score` reports its exit rather than deriving it
+    from the kill count."""
+    case = "a defeat under the kill limit whose forced kind is negative"
+    actor, pokes = _defeat_pokes(case, kills=0x0000, respawn_kind=0x8000)
+    info, expected = _run_defeat(case, actor, pokes)
+    assert info["ret"] == DEFEAT_RETIRED
+    assert expected[actor + ACTOR_X] == FREE_MARKER >> 8
+
+
+def test_the_rebuilt_record_takes_its_type_and_sprite_from_the_kind_tables_own_row():
+    """The nine writes, stated once against the row the kind names — and the row read off the shipped
+    table rather than tabulated here, so the case follows the data."""
+    case = "the rebuilt record's whole field set"
+    actor, pokes = _defeat_pokes(case, kills=0x0001)
+    info, image, expected = _run_respawn(case, pokes)
+    kind, _writes = model_stage_kind(DRAW32, image, RESPAWN_ENTRY_D2)
+    row = _kind_row(kind)
+
+    assert leaf.read_int(info, actor + ACTOR_TYPE, WORD_LEN, case) == u16(image, row + KIND_TYPE)
+    assert leaf.read_int(info, actor + ACTOR_SPRITE, WORD_LEN, case) == u16(image,
+                                                                           row + KIND_SPRITE)
+    assert leaf.read_int(info, actor + HALF_WIDTH, LONGWORD_LEN, case) == RESPAWN_SIZE
+    assert expected[actor + FIELD_10] == RESPAWN_FIELD_10
+    assert expected[actor + SPEED] == RESPAWN_SPEED
+    assert expected[actor + FIELD_12] == RESPAWN_FIELD_12
+    assert expected[actor + FIELD_30] == RESPAWN_FIELD_30
+    assert actor + FIELD_31 not in expected, (
+        "only WB_ACTOR_FIELD_30 is written here — the spawn clears the PAIR, this does not")
+
+
+# The three flag bits, over seeds that make each one a change in one direction or the other: the two
+# `bset`s must not clear their neighbours and the `bclr` must not set any.
+RESPAWN_FLAG_SEEDS = (0x00, 0xff, 1 << SUPPORTED_BIT, 0xff ^ ((1 << MOVING_BIT) | (1 << LAUNCHED_BIT)))
+
+
+@pytest.mark.parametrize("flags", RESPAWN_FLAG_SEEDS, ids=[f"flags_{f:#04x}" for f in
+                                                           RESPAWN_FLAG_SEEDS])
+def test_the_two_motion_bits_go_up_the_supported_bit_goes_down_and_nothing_else_moves(flags):
+    case = f"an entry WB_ACTOR_FLAGS of {flags:#04x}"
+    actor, pokes = _defeat_pokes(case, kills=0x0001)
+    pokes[actor + ACTOR_FLAGS] = bytes([flags])
+    _info, _image, expected = _run_respawn(case, pokes)
+    ended = expected[actor + ACTOR_FLAGS]
+    assert ended & (1 << MOVING_BIT) and ended & (1 << LAUNCHED_BIT)
+    assert not ended & (1 << SUPPORTED_BIT)
+    untouched = ~((1 << MOVING_BIT) | (1 << LAUNCHED_BIT) | (1 << SUPPORTED_BIT)) & 0xff
+    assert ended & untouched == flags & untouched, f"{case}: a neighbouring bit moved"
+
+
+def test_the_flag_seed_sweep_makes_each_bit_move_in_both_directions():
+    """The guard: a sweep that only ever entered with the two motion bits down would pass a port that
+    wrote the whole byte, and one that never entered with the supported bit UP would pass a port that
+    dropped the `bclr`."""
+    raised = (1 << MOVING_BIT) | (1 << LAUNCHED_BIT)
+    assert any(seed & raised != raised for seed in RESPAWN_FLAG_SEEDS), "the `bset`s never change"
+    assert any(seed & (1 << SUPPORTED_BIT) for seed in RESPAWN_FLAG_SEEDS), "the `bclr` never does"
+
+
+def test_the_kind_table_is_bounded_by_the_code_pointers_that_follow_it():
+    """Nothing in the image declares the table's length; what bounds it is that the twelve longwords
+    at its end are addresses of the code immediately past them, which 16-byte creature records are
+    not. Its 22 rows also all carry a type the mask a draw applies could never produce."""
+    end = KIND_TABLE + KIND_TABLE_ROWS * KIND_RECORD_BYTES
+    following = _u32(harness.BASE_IMAGE, end)
+    assert end < following < harness.IMAGE_SIZE, (
+        f"the longword at the table's end is {following:#x}, not the code pointer this extent "
+        f"rests on")
+    types = [u16(harness.BASE_IMAGE, KIND_TABLE + row * KIND_RECORD_BYTES + KIND_TYPE)
+             for row in range(KIND_TABLE_ROWS)]
+    assert types[:-1] == [TYPE_UNSCORED] * (KIND_TABLE_ROWS - 1), (
+        f"every row but the last must carry WB_ACTOR_TYPE_UNSCORED — the rows are {types} — which "
+        f"is what makes a respawned slot pay no score the next time it dies")
+    assert types[-1] == KIND_TABLE_LAST_TYPE, (
+        f"the last row's type is {types[-1]:#06x}, not the one value that is not $26")
+
+
+# The entry d2 this routine does nothing with itself and hands STRAIGHT to the draw, whose `add.l`
+# folds its high half into a table index (test_rng.py owns that half). $6bb8 can only ever arrive here
+# with the half zeroed — its `moveq #0,d2` runs on the one arm that branches here — so a case is what
+# says the value is FORWARDED rather than replaced by a 0.
+RESPAWN_ENTRY_D2_HIGH = 0x00010000
+
+
+# ...and BOTH arms have to say so: they are two `bsr`s to two routines, so a case on one of them is
+# silent about the other. (A mutant that replaced only the 8-wide arm's d2 with a 0 survived a sweep
+# that had only the 32-wide case.)
+ENTRY_D2_ARM_CASES = ((0x0001, DRAW32), (KILL_RESPAWN_LIMIT, DRAW8))
+
+
+@pytest.mark.parametrize("kills,draw", ENTRY_D2_ARM_CASES,
+                         ids=[c[1].short for c in ENTRY_D2_ARM_CASES])
+def test_the_entry_d2_is_handed_to_the_draw_rather_than_replaced(kills, draw):
+    case = (f"an entry d2 of {RESPAWN_ENTRY_D2_HIGH:#010x} on the {draw.short} arm, whose high half "
+            f"moves that draw's read")
+    actor, pokes = _defeat_pokes(case, kills=kills)
+    _info, image, expected = _run_respawn(case, pokes, entry_d2=RESPAWN_ENTRY_D2_HIGH)
+    moved, _writes = model_stage_kind(draw, image, RESPAWN_ENTRY_D2_HIGH)
+    unmoved, _writes = model_stage_kind(draw, image, RESPAWN_ENTRY_D2)
+    assert moved != unmoved, (
+        f"both entry halves draw kind {moved} from {draw.name}'s table, so this case is silent "
+        f"about what is forwarded")
+    assert expected[actor + KIND] == moved
+
+
+def test_the_defeat_reaches_this_routine_with_d2s_high_half_already_zeroed():
+    """WHY the sweep's `hand it a d2 of 0` mutant is equivalent rather than a hole: $6bb8's score arm
+    — the only one that branches here — opens with `moveq #0,d2`, which clears the WHOLE register,
+    and every write to d2 after it is a `.w`. So the half that reaches the draw is zero however the
+    scaled type below it is spelt, and no case can tell `index` from `0` at that call."""
+    body = ENTRY_BYTES["actor_defeat_and_score"]
+    entry = leaf.entry_of("actor_defeat_and_score")
+    clear = body.index(moveq_0_dn(D2))
+    scale = body.index(lsl_w_imm_dn(SCORE_SHIFT, D2))
+    assert clear < scale < DEFEAT_TRANSFER - entry, (
+        "the `moveq #0,d2` must precede the `lsl.w #2,d2`, which must precede the `ble.w`")
+    assert body.count(moveq_0_dn(D2)) == 1 and body.count(lsl_w_imm_dn(SCORE_SHIFT, D2)) == 1, (
+        "a second writer of d2 in this body would break the argument")

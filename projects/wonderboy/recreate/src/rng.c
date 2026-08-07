@@ -1,4 +1,4 @@
-/* rng.c — the game's PRNG ($68c6) and the per-stage draw over it ($e1f0). What ties the two
+/* rng.c — the game's PRNG ($68c6) and the two per-stage draws over it ($e1f0, $e1c8). What ties them
  * together, and the false green the generator carries under this oracle, are in rng.h.
  */
 #include <stdint.h>
@@ -40,17 +40,21 @@ uint32_t rng_next(uint8_t *image, uint32_t entry_d0) {
     return set_low_word(entry_d0, (uint16_t)(entropy + counter_a + counter_b + counter_c));
 }
 
-uint32_t stage_random_kind8(uint8_t *image, uint32_t entry_d2) {
+/* THE BODY BOTH DRAWS ARE. $e1c8 and $e1f0 are the same instructions with three operands changed —
+ * the table, the row shift and the draw mask — and $e1c8 has no tail of its own at all: it `bra.w`s
+ * into $e1f0's last fourteen bytes, so `add.l d2,d0 / move.b 0(a2,d0.l),d0 / andi.l #$1f,d0 / rts`
+ * is literally shared code in the image as well as here. */
+static uint32_t stage_random_kind(uint8_t *image, uint32_t entry_d2, uint32_t table,
+                                  unsigned row_shift, uint32_t draw_mask) {
     /* `cmp.w #$9,d2 / ble / subq.w #6,d2` — a SIGNED word compare, and WB_STAGE_NUMBER is packed
      * BCD, so one tens carry is exactly 6. Then `subq.w #1` makes the row 0-based and `lsl.w #3`
-     * scales it, all in the WORD half: a stage of 0 gives row -1 and reads BELOW the table, which is
-     * what the original does. Every one of those is a `.w` op, so `entry_d2`'s HIGH half is never
-     * written — and the `add.l` below is what lets it back in. */
+     * (`#5` for the sibling) scales it, all in the WORD half: a stage of 0 gives row -1 and reads
+     * BELOW the table, which is what the original does. Every one of those is a `.w` op, so
+     * `entry_d2`'s HIGH half is never written — and the `add.l` below is what lets it back in. */
     uint16_t stage = be16(image + WB_STAGE_NUMBER);
     if ((int16_t)stage > (int16_t)WB_STAGE_NUMBER_BCD_LIMIT)
         stage = (uint16_t)(stage - WB_STAGE_NUMBER_BCD_CARRY);
-    uint32_t row = set_low_word(entry_d2,
-                                (uint16_t)((uint16_t)(stage - 1) << WB_STAGE_KIND_ROW_SHIFT));
+    uint32_t row = set_low_word(entry_d2, (uint16_t)((uint16_t)(stage - 1) << row_shift));
 
     /* `andi.l #$7,d0 / add.l d2,d0 / move.b 0(a2,d0.l),d0` — the draw is masked before it is added,
      * and both the add and the index are LONGWORD, so `row`'s inherited high half addresses the read
@@ -59,9 +63,17 @@ uint32_t stage_random_kind8(uint8_t *image, uint32_t entry_d2) {
      * the machine. What is left off the bus is guarded like src/blit.c's off-image words — the shim
      * answers a read past the image with zeros, and only a caller with rubbish above d2's low word
      * can get there at all. */
-    uint32_t at = addr_add(WB_STAGE_KIND_TABLE,
-                           addr_add(rng_next(image, 0) & WB_STAGE_KIND_DRAW_MASK, row))
-                  & WB_BUS_ADDR_MASK;
+    uint32_t at = addr_add(table, addr_add(rng_next(image, 0) & draw_mask, row)) & WB_BUS_ADDR_MASK;
     uint8_t kind = os_in_image(at, 1) ? image[at] : (uint8_t)0;
     return kind & WB_STAGE_KIND_MASK;
+}
+
+uint32_t stage_random_kind8(uint8_t *image, uint32_t entry_d2) {
+    return stage_random_kind(image, entry_d2, WB_STAGE_KIND_TABLE, WB_STAGE_KIND_ROW_SHIFT,
+                             WB_STAGE_KIND_DRAW_MASK);
+}
+
+uint32_t stage_random_kind32(uint8_t *image, uint32_t entry_d2) {
+    return stage_random_kind(image, entry_d2, WB_STAGE_KIND32_TABLE, WB_STAGE_KIND32_ROW_SHIFT,
+                             WB_STAGE_KIND32_DRAW_MASK);
 }

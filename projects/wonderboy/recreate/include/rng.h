@@ -1,12 +1,12 @@
-/* rng.h — the game's pseudo-random generator ($68c6) and the per-stage draw over it ($e1f0);
- * src/rng.c.
+/* rng.h — the game's pseudo-random generator ($68c6) and the two per-stage draws over it ($e1f0,
+ * $e1c8); src/rng.c.
  *
- * WHY THESE TWO ARE ONE MODULE. `rng_next` has ten `bsr` callers spread across the whole program and
- * belongs to no subsystem; `stage_random_kind8` is a draw over it, and one of only two routines in
- * the image whose entire body is "advance the generator and index a table with the result". Putting
- * the draw beside the generator is what lets the battery pin the two together — the draw's result is
- * the generator's low three bits and nothing else, so a case that got the generator wrong and the
- * table right would still be red.
+ * WHY THESE ARE ONE MODULE. `rng_next` has ten `bsr` callers spread across the whole program and
+ * belongs to no subsystem; the two draws over it are THE only two routines in the image whose entire
+ * body is "advance the generator and index a table with the result". Putting them beside the
+ * generator is what lets the battery pin them together — a draw's result is the generator's low
+ * three (resp. five) bits and nothing else, so a case that got the generator wrong and the table
+ * right would still be red.
  *
  * THE GENERATOR IS DEGENERATE UNDER THE ORACLE, and this is the one thing to know before trusting a
  * green result here. Its entropy term is `$ff8209 ^ $b39a` — the shifter's video-address counter
@@ -35,29 +35,38 @@
  * oracle's d1 against a model instead, the way src/actor.c's passes do with their cursors. */
 uint32_t rng_next(uint8_t *image, uint32_t entry_d0);
 
-/* $e1f0 — draw one of the WB_STAGE_KIND_ROW candidates WB_STAGE_KIND_TABLE holds for the current
- * WB_STAGE_NUMBER, masked to WB_STAGE_KIND_MASK. Its one caller is $6d04, inside the respawn
- * continuation `actor_defeat` branches to and this project does not port: it stores the result at
- * offset 20 of the actor record and indexes a 16-byte record table at $1044c with it for the
- * record's new WB_ACTOR_TYPE and WB_ACTOR_SPRITE — so the value is which creature the slot comes
- * back as. A NEGATIVE result would make that caller free the slot instead; the mask makes one
+/* $e1f0 / $e1c8 — draw one of the WB_STAGE_KIND_ROW (resp. WB_STAGE_KIND32_ROW) candidates the
+ * matching table holds for the current WB_STAGE_NUMBER, masked to WB_STAGE_KIND_MASK.
+ *
+ * THEY ARE ONE ROUTINE with three operands changed — the table, the row shift and the draw mask —
+ * and $e1c8 has no tail of its own: it `bra.w`s into $e1f0's last fourteen bytes, which therefore
+ * belong to both. src/rng.c spells that as one static body with three parameters, the way
+ * src/actor.c's two pool allocators are one function; test/test_rng.py pins the shared tail from
+ * BOTH sides, so neither port can move it without reddening the other.
+ *
+ * BOTH ARE CALLED FROM `actor_respawn_as_new_kind` AND NOWHERE ELSE: $6cf2 takes the 32-wide draw
+ * while the template still has respawns to spare, $6d04 the 8-wide one on the last. That caller
+ * stores the result at WB_ACTOR_KIND and indexes WB_ACTOR_KIND_TABLE with it for the record's new
+ * WB_ACTOR_TYPE and WB_ACTOR_SPRITE — so the value is which creature the slot comes back as. A
+ * NEGATIVE result would make that caller free the slot instead; the closing mask makes one
  * impossible, which is a claim test/test_rng.py pins rather than assumes.
  *
  * `entry_d2` is the caller's d2, and it is load-bearing where the generator's d0 is not: EVERY
  * arithmetic step on the row is a `.w`, so d2's high half is never written, and then `add.l d2,d0`
- * folds it into the table INDEX. Its one caller reaches here with a `moveq #0,d2` behind it, so the
- * game only ever passes 0 — but the instruction reads the whole register and a case can show it.
+ * folds it into the table INDEX. The one caller reaches here with d2's HIGH HALF zeroed by the
+ * `moveq #0,d2` at $6c14 — its low word by then is the scaled spawn type, which `move.w $bd88.l,d2`
+ * overwrites — so the game only ever passes an effective 0. The instruction reads the whole
+ * register, and a case can show it.
  * That index then goes onto a 24-BIT ADDRESS BUS: the 68000 does not wire the top byte of an
  * effective address to anything, so a d2 of $01000000 reads the same byte a d2 of 0 does. The
  * reconstruction masks with WB_BUS_ADDR_MASK before its off-image guard, because the guard would
  * otherwise answer 0 for an address the 68000 brings back round into the image; test/test_rng.py
  * pins both the wrap and the mask's WIDTH (a 23-bit bus reproduces the wrap case but not the one
- * seeded on the bus's top bit).
- * There is no `entry_d0`, unlike the generator this calls: `andi.l #$7,d0` masks the whole longword
- * two instructions after the `bsr`, so the high half the generator hands back cannot reach the
- * result. The SIBLING draw at $e1c8 (32 candidates, table $e222) is the same routine with three
- * different operands and BRANCHES INTO this one's tail at $e214; it is not reconstructed here, and
- * test/test_rng.py pins the shared tail so that porting it later cannot silently change this one. */
+ * seeded on the bus's top bit) for EACH draw, since each computes its own address.
+ * There is no `entry_d0`, unlike the generator these call: `andi.l #$7,d0` (`#$1f` for the sibling)
+ * masks the whole longword two instructions after the `bsr`, so the high half the generator hands
+ * back cannot reach the result. */
 uint32_t stage_random_kind8(uint8_t *image, uint32_t entry_d2);
+uint32_t stage_random_kind32(uint8_t *image, uint32_t entry_d2);
 
 #endif /* WONDERBOY_RNG_H */
