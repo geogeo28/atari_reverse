@@ -4,6 +4,11 @@
 none of it, and that **how much of the game sits behind that wall had not been measured.** This is
 the measurement.
 
+> *Tier numbers in every section written before §0g are the OLD six-tier lattice, and two of them
+> changed MEANING rather than just position (old `T3 HW_READ` vs new `T3 HW_WRITE_ONLY`; old
+> `T4 HARD_REJECT` vs new `T4 HW_READ`). §0g has the old→new mapping table — read it before
+> comparing any number in §0–§0f or §2–§8 against a report generated after 2026-08-07.*
+
 > ## The answer
 >
 > **Measured over the 47 % of the game's code Ghidra has recovered so far, the gameplay logic is
@@ -101,6 +106,7 @@ python3 tools/hw_portability.py projects/wonderboy/out/hw_scan.tsv \
         --subsystems projects/wonderboy/recreate/subsystems.tsv
 python3 projects/wonderboy/notes/portability_predictions.py    # 14 cases, must be green
 make -C projects/wonderboy/recreate test                       # 77 cases, must be green
+pytest tools/test_hw_portability.py                            # 37 cases, the classifier's own pins (§0g)
 ```
 
 Add `--stub 0xecca` (and `--model psg:read` for the pair) to reproduce §6.1's numbers.
@@ -481,6 +487,187 @@ appeared or vanished (126 classified accesses before and after; the nine PSG sit
 re-attributed from `FUN_00017f24` to `snd_psg_silence`), and the name strings are now
 `../names.txt`'s. The remaining limitation is unchanged from §0b: 29,068 bytes are still in no
 function body, and nothing here reached one of them.
+
+## 0g. The classifier repaired against kit Phase 6 (2026-08-07, batch 22c): the PSG wall is gone
+
+Batch 22b's blocked re-measure, discharged. **No game code changed, no test moved, no scan was
+re-generated, `subsystems.tsv` untouched** — the only edited file is `tools/hw_portability.py`,
+run read-only over the *same* committed `out/hw_scan.tsv` §0e/§0f were measured on, so every
+number below is a pure re-pricing of unchanged evidence.
+
+### What broke, and the repair
+
+Two defects, fixed and validated in that order.
+
+**1. The constants pin named the wrong file.** `check_shim_agreement()` looked for `PSG_SELECT`
+and `PSG_DATA` in `oracle/shim.c`; kit Phase 6 (`bd86412`) deleted both and moved the canonical
+pair to `include/os.h` as `OS_PSG_PORT_SELECT` / `OS_PSG_PORT_DATA`, same values. The pin is now
+**per-file** — `PINNED_CONSTANTS` maps each kit file to the constants that file owns — so a
+constant that MOVES again fails with the instruction to re-point its entry rather than to delete
+it. Verified by mutation on a throwaway copy of the kit, repo untouched: renaming
+`OS_PSG_PORT_SELECT` exits 1 (the Phase 6 break, replayed), changing `OS_PSG_PORT_DATA`'s value
+exits 1, changing shim.c's `PSG_BLOCK_END` exits 1, and a checkout with **no** kit still
+classifies (exit 0) — the one case that must not fail.
+
+**2. The T4 read rule had drifted, and it was the expensive one.** The rule said *any* PSG-block
+access that is not a modeled byte write is a hard reject. Phase 6 made that false for one access
+class: `shim.c`'s `psg_read_back()` **serves** a byte read of `$ff8800` from the seeded register
+file and records it in the same ordered ledger as the writes, refusing only when the case declared
+no seed (`psg_seed={reg: byte}`) or nothing selected a register. That is a *case obligation*, not a
+fidelity hole — which is a tier of its own, and the tool had no such tier.
+
+### The rule, now
+
+A new **`T2 PSG_SEEDED_READ`** sits between `T1 PSG_WRITE_ONLY` and the hardware-write tier, and
+everything above it renumbers. The report's own prose now derives those numbers from `TIER_NAMES`,
+so the next insertion cannot leave stale citations behind.
+
+> ### The old→new tier mapping — READ THIS BEFORE COMPARING ANY NUMBER ABOVE
+>
+> **Every section of this file above §0g uses the old numbering** — not only §2–§8 (the 2026-08-02
+> report), but §0, §0b, §0c, §0d, §0e and §0f, which quote tiers throughout (§0's "transitive-T4",
+> §0b's and §0d's "T3 → T4", §0f's "transitive T4"). Nothing up there is wrong; it is stated in the
+> vocabulary of its day. **Two numbers changed MEANING rather than merely position**, so a careless
+> read silently inverts them:
+>
+> | old | new | note |
+> |---|---|---|
+> | `T0 CLEAN` | `T0 CLEAN` | unchanged |
+> | `T1 PSG_WRITE_ONLY` | `T1 PSG_WRITE_ONLY` | unchanged |
+> | — | **`T2 PSG_SEEDED_READ`** | **new** |
+> | `T2 HW_WRITE_ONLY` | `T3 HW_WRITE_ONLY` | ⚠ old `T3` meant HW_READ; new `T3` means HW_WRITE_ONLY |
+> | `T3 HW_READ` | `T4 HW_READ` | ⚠ old `T4` meant HARD_REJECT; new `T4` means HW_READ |
+> | `T4 HARD_REJECT` | `T5 HARD_REJECT` | where §0–§0f's "T4" walls live |
+> | `T5 UNMEASURABLE` | `T6 UNMEASURABLE` | the Copylock exclusion |
+>
+> So §0d's "`$bca2` is T4" and §0f's "transitive T4" both mean **HARD_REJECT**, today's `T5` — and
+> §0g's tables below restate exactly those facts in the new labels. History is not rewritten here;
+> the bridge is.
+
+It ranks **below** the write-drop and
+fabricated-read tiers because the ordering is *how much a differential still verifies*, not how
+much work a run costs: nothing about a seeded read is invisible or invented — the byte is declared
+by the case and both sides see it — and an undeclared one is refused loudly, so the tier can never
+be a silent green, only a red until seeded. **Hard-reject keeps everything that still
+hard-rejects**: a read of the write-only data port `$ff8802`, a read of any block mirror, ANY
+16/32-bit transfer touching the block (including one starting at `$ff8800`, and one straddling in
+from below), any odd-alias write, and any access Ghidra could not size.
+
+**All of it is pinned by a committed suite: `tools/test_hw_portability.py`, 37 cases, standalone
+`pytest tools/test_hw_portability.py`.** It lives beside the tool rather than under any project's
+`recreate/test/` because the tool is game-agnostic — it pins `tools/recreate_kit`'s model, not this
+game's behaviour — and it is deliberately **not** wired into any `make test`, which builds an
+oracle `.so` the suite never needs. Three groups: the 16 lattice shapes above, the 8 tripwire
+mutations against throwaway copies of the kit, and the whole-program arithmetic off the committed
+scan. **Mutation-tested against itself**: eight deliberate defects reintroduced into the tool (the
+tier rule, the size check, the false-green exclusion, the lattice order, and each of the four pin
+weaknesses the review found) — all eight caught, none survived. One caveat worth carrying: two of
+those mutations are byte-length-preserving, and a same-length edit restored within the filesystem's
+mtime granularity makes Python reuse cached bytecode and report a phantom survivor. Purge
+`__pycache__` between mutation runs.
+
+**The silent-zero class was checked and is NOT drifted.** Reads of `$fffa01` (MFP GPIP) and
+`$ff820a` (shifter sync) price as `T4 HW_READ` — the false-green class — which is the truth:
+Phase 6 gave them real answers only under the opt-in audio-capture mode, and off that mode
+`m68k_read_memory_8` still falls through to `return 0`. No differential runs under capture, so
+they were never rejects and are not clean.
+
+### Before → after, every moved figure named
+
+**Stage 1, the constants fix alone, changed nothing.** Pinned before touching the tier rule: the
+classifier reproduces every committed §0e/§0f figure byte-for-byte — 222/256 runnable,
+21,334 / 25,786 B, 82.7 %, false-green 28 / 3,348 B, all nineteen subsystem rows.
+
+**Stage 2, the tier re-derivation**, moves exactly 20 functions, all in one direction:
+
+| | before | after |
+|---|---|---|
+| Runnable end-to-end | 222 / 256 fns, 21,334 / 25,786 B, **82.7 %** | **242 / 256 fns, 24,318 / 25,786 B, 94.3 %** (+20 / +2,984 B) |
+| False-green risk | 28 fns / 3,348 B | **28 fns / 3,348 B — unchanged** |
+| Direct `HARD_REJECT` | 3 fns / 806 B | **0 — the row is gone from every table** |
+
+Nothing moved the other way, and the steering set is identical function-for-function: a PSG read is
+excluded from the false-green count under both rules, and since Phase 6 for two different reasons —
+a refused one never completes the run, a served one is steered by a *declared* input.
+
+**Three functions moved by their own access** (direct tier):
+
+| fn | bytes | before | after | why |
+|---|---:|---|---|---|
+| `$624c` `psg_set_drive_select` | 28 | T5 HARD_REJECT | **T2** | its `$6254` `move.b $ff8800,d1` is the served read-back; its two writes are the modeled pair |
+| `$17f30` `snd_psg_silence` | 82 | T5 HARD_REJECT | **T2** | batch 21b's mixer RMW at `$17f3e` — reconstructed and GREEN, and the classifier now agrees |
+| `$17c74` `snd_music_tick` | 696 | T5 HARD_REJECT | **T4 HW_READ** | its `$17f08` read-back is served, so what prices it is no longer the PSG at all but its own `mfp-R!` + `shifter-R!` — it stays in the false-green 28 |
+
+**Seventeen more moved through the call graph.** To T2, behind a seeded read: `$716`
+`vbl_handler` (52 B, via `floppy_deselect_drives`→`psg_set_drive_select`), `$6268`
+`floppy_deselect_drives` (16 B), and six behind `snd_psg_silence` — `$17adc` `snd_stub_00` (14 B),
+`$17af8` (14 B), `$17b22` (14 B), `$17b3a` `snd_play_song` (140 B), `$17f24` `snd_stop` (12 B),
+`$1aaea` `snd_stop_all_sfx` (26 B). To T4, behind `snd_music_tick`: `$17aea` (14 B). To T3
+HW_WRITE_ONLY, behind `stage_load_window`→`set_palette`: `$f95c` `stage_load_window` (210 B),
+`$dbc0` (932 B), `$de80` (58 B), `$dfbe` (104 B), plus `$1ab4` (60 B), `$e032` (118 B) and `$e0a8`
+(104 B).
+
+**One witness path changed, and it is the interesting one.** `$6bb8` `game_routine_6bb8` — batch
+21b/22's `actor_defeat_and_score`, 290 B, 29 callers — was priced hard-reject *behind
+`snd_psg_silence`* in §0d. Its sound callee is now T2, so its verdict is re-derived from a
+different edge entirely: **T4 HW_READ, witness `game_routine_6bb8 → FUN_0000e1f0 → rng_next`**, the
+video-counter read. Runnable, and not in the false-green set (that `shifter-R` does not steer).
+
+**Six subsystem rows move; the other thirteen change only their tier LABEL:**
+
+| subsystem | before | after |
+|---|---|---|
+| sound (YM2149) | worst T5 HARD_REJECT direct **and** transitive, runnable 13 / 1,622 B | **T4 HW_READ / T4 HW_READ, runnable 22 / 2,634 B — the whole subsystem** (+9 / +1,012) |
+| scene (dialogue + shop) | direct T0, transitive T5 HARD_REJECT, runnable **0** | **transitive T3 HW_WRITE_ONLY, runnable 3 / 1,094 B** (+3 / +1,094) |
+| game logic | runnable 14 / 1,290 B | **18 / 1,862 B** (+4 / +572) |
+| disk (WD1772 FDC + DMA) | worst T5 HARD_REJECT, runnable 18 / 640 B | **T4 HW_READ, runnable 20 / 684 B** (+2 / +44) |
+| stage (load + reset) | transitive T5 HARD_REJECT, runnable 3 / 248 B | **T3 HW_WRITE_ONLY, runnable 4 / 458 B** (+1 / +210) |
+| interrupt (VBL) | transitive T5 HARD_REJECT, runnable **0** | **T2 PSG_SEEDED_READ, runnable 1 / 52 B** (+1 / +52) |
+
+**§0f's headline shape is dissolved.** The scene row was "the first subsystem where RECONSTRUCTED
+exceeds RUNNABLE" — 990 of 1,094 bytes ported against 0 runnable — precisely because all three
+functions reached `stage_load_window`'s sound call. Under the re-derived rule all three are
+runnable whole. The observation §0f made was true of the classifier as it then stood, not of the
+oracle as it then behaved; Phase 6 had already landed when §0f was written.
+
+**One table shrank.** The three PSG rows left "Hardware reads whose fabricated value is STORED"
+(`$6254`, `$17f08`, `$17f3e`). A served read-back is a **declared** input, not a fabricated one,
+and a refused one never reaches the store — listing either under that heading was the opposite of
+what happens. They read as `psg-R` in the hardware-functions table, where the tier says which.
+
+### §6's biggest predicted lever has been built
+
+§6 priced a hypothetical "PSG read model" as the single largest lever for *can it run at all*, and
+warned that a write-ledger replay would not do — the game needs "a **seeded post-TOS PSG register
+file** that the write ledger then updates". That is exactly what Phase 6 built. Measured, not
+argued: the re-derived rule with **no flags** produces the identical figure to the OLD rule run
+with `--model psg:read` on this scan — **242 fns / 24,318 B, both**. The hypothetical is now the
+default, and `--model psg:read` on top of it buys nothing further.
+
+### Still queued (orchestrator's next steps, not this batch's)
+
+1. `../reapply.sh` + `tools/hw_scan.sh`, **re-baselined in its own section** — batch 22b's
+   two-stage pin, unchanged: the re-scan moves whole-program figures by itself (256 → ~258 F
+   records, `$6bb8` re-cut).
+2. **Then** the `subsystems.tsv` partition edit batch 22 queued (`0x6cdc 0x6d5a` → actor lifecycle,
+   `0xe1c8 0xe222` → stage tier), which changes nothing against the *committed* scan.
+3. **§6 / §6.1's capability table is now stale** and needs re-pricing: its baseline row is the
+   2026-08-02 scan, and its "PSG read model" row prices a capability that ships. More broadly,
+   **every section above this one states tiers in the old numbering** — bridged, not rewritten, by
+   the mapping table in "The rule, now" and by the pointer at the top of this file. Re-stating them
+   in place is a separate pass, and should happen only when a section is being re-measured anyway;
+   editing a historical record's numbers without re-running its measurement would make it claim
+   something nothing verified.
+4. `notes/portability_predictions.py` needs a prose pass — **its assertions were checked by reading,
+   not re-run here** (a concurrent port session owns `recreate/`, and the script builds the oracle
+   `.so`). Its header describes the old six tiers. More substantively, its two `T4` cases
+   (`case_t4_psg_set_drive_select`, `case_t4_sound_psg_read`) match `emu.run`'s refusal with the
+   regex `accessed the PSG ports .* cannot serve` — which batch 21b's Phase 6 wording deliberately
+   preserved on the **unseeded** cause, so both cases still pass **for a different reason than they
+   claim**: those runs are refused because the case declares no `psg_seed`, not because the read is
+   unservable. The docstrings ("the shim refuses outright — so the whole floppy stack above it can
+   never run") are now false, and the honest rewrite is a pair of cases that assert BOTH halves: the
+   refusal without a seed, and a green run WITH one.
 
 ## 2. Method, and what it can and cannot see
 

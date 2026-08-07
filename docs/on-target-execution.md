@@ -44,17 +44,25 @@ The tiers are the shim's own behaviour, restated per function:
 
 | tier | the oracle's behaviour | what a green differential means |
 |---|---|---|
-| T0 | no off-image access | it means what you think |
-| T1 | the modelled write ledger (PSG bytes, `Dosound`) captures it | verified, including the off-image effect |
-| T2 | the write is silently dropped | the memory effect is verified; **the hardware effect is untested** |
-| T3 | the read returns 0, on BOTH sides | **falsely green** if a branch depends on it; merely incomplete if not |
-| T4 | the run is refused | not verifiable at all |
-| T5 | the code cannot be read statically (self-decrypting protection) | there is no source text to port |
+| T0 CLEAN | no off-image access | it means what you think |
+| T1 PSG_WRITE_ONLY | the modelled write ledger (PSG bytes, `Dosound`) captures it | verified, including the off-image effect |
+| T2 PSG_SEEDED_READ | the PSG read-back is **served** from a register file the case seeds, and ledgered | verified — the value is a declared input, and an undeclared one is refused, never guessed |
+| T3 HW_WRITE_ONLY | the write is silently dropped | the memory effect is verified; **the hardware effect is untested** |
+| T4 HW_READ | the read returns 0, on BOTH sides | **falsely green** if a branch depends on it; merely incomplete if not |
+| T5 HARD_REJECT | the run is refused, and no mode lifts it | not verifiable at all |
+| T6 UNMEASURABLE | the code cannot be read statically (self-decrypting protection) | there is no source text to port |
 
-**T3-with-a-branch is the tier to hunt.** T4 announces itself — the run fails. T3 does not: the same
-wrong value reaches both sides and the diff agrees on a fiction. Telling "steers a branch" from
-"stored and ignored" needs dataflow from the read to the first conditional branch that consumes it,
-not a count of operands. Two measured examples of what it costs:
+> Tier NUMBERS changed on 2026-08-07 when `T2 PSG_SEEDED_READ` was inserted (kit Phase 6 made the
+> PSG read-back servable; see `projects/wonderboy/recreate/PORTABILITY.md` §0g for the old→new
+> mapping). **Any report generated before that date uses the old six-tier numbering**, in which
+> today's T3/T4/T5/T6 were T2/T3/T4/T5.
+
+**T4-with-a-branch is the tier to hunt.** T5 announces itself — the run fails, loudly, and so does a
+T2 whose seed the case forgot to declare. T4 does not: the same wrong value reaches both sides and
+the diff agrees on a fiction. That asymmetry is the whole point of the lattice — a tier that *stops*
+you has already done its job, and the dangerous tier is the one that lets the run finish. Telling
+"steers a branch" from "stored and ignored" needs dataflow from the read to the first conditional
+branch that consumes it, not a count of operands. Two measured examples of what it costs:
 
 * BuggyBoy's `$ffff820a` 50/60 Hz music-tempo branch was invisible to its **entire** differential and
   only surfaced on real hardware.
@@ -64,7 +72,7 @@ not a count of operands. Two measured examples of what it costs:
   "verified". **Then measure the layer above before you generalise it** — the same game's *command*
   entries reject that fabricated status and report hard failure (`$fffb` / `$fffd`) while mutating
   driver state, so "the driver reports success" was true of the polls and false of the driver.
-  A T3 read makes the code believe a fiction; which fiction, and what each caller does with it, is
+  A T4 read makes the code believe a fiction; which fiction, and what each caller does with it, is
   a separate measurement per entry point.
 
 Three rules the measurement itself has to follow:
@@ -74,7 +82,7 @@ Three rules the measurement itself has to follow:
    none of them. Cross-check the total against a linear sweep of the *whole* image and explain
    every difference — a sweep sees code the disassembler never reached, and manufactures hits
    inside data and ciphertext.
-2. **A tier is a property of the code, not of a run.** A T4 function comes back green on any run
+2. **A tier is a property of the code, not of a run.** A T5 function comes back green on any run
    whose data never reaches the offending access. Verify the tier empirically on a chosen case, and
    say which case.
 3. **State the coverage of the measurement as loudly as its result.** If the disassembler only

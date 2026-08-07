@@ -3718,9 +3718,44 @@ catch-all today (21 members).
 **No code changed, no test moved, `subsystems.tsv` and `PORTABILITY.md` untouched**; `make test`
 3133 green on a forced relink after the attempt. **QUEUED, unchanged and now with a named
 prerequisite chain:** (1) repair `tools/hw_portability.py` against Phase 6 — the constants pin
-AND the T4 read rule; (2) `../reapply.sh` + `tools/hw_scan.sh`, re-baselined in its own section;
+AND the T4 read rule *(batch 22c: DISCHARGED — see the next section and PORTABILITY.md §0g)*;
+(2) `../reapply.sh` + `tools/hw_scan.sh`, re-baselined in its own section;
 (3) then the partition edit this entry always was. The rows, ready for that day, with citations:
 `0x6cdc 0x6d5a` → the actor lifecycle's subsystem (126 B, reached only from `$6c34`'s `ble.w`, a
 continuation not a subroutine), and `0xe1c8 0xe222` → the stage tier's, ONE range covering both
 draws (they share the last fourteen bytes and one C body — splitting them at `$e1f0` would draw a
 subsystem boundary through the middle of an instruction sequence both routines execute).
+
+### Batch 22c: the classifier repaired against Phase 6 — the priced wall was a year of the tool's, not the game's
+
+Prerequisite (1) of batch 22b's chain, discharged. [`PORTABILITY.md`](PORTABILITY.md) **§0g is the
+full record**; what belongs here is the headline and what it changes about planning. **Runnable:
+222 fns / 21,334 B / 82.7 % → 242 / 24,318 / 94.3 %. Direct hard-rejects: 3 → 0 — the row is gone
+from every table. False-green: 28 fns / 3,348 B, unchanged function-for-function.** The re-pricing
+is Phase 6 stated honestly: a byte read of `$ff8800` is a **seeded, ledgered, diffable** input (a
+new `T2 PSG_SEEDED_READ` tier — it costs a case obligation, not fidelity), which is what batch
+21b's `snd_psg_silence` had already proven function-by-function. `$17c74`'s price is now its OWN
+steering reads (`$fffa01`/`$ff820a`, the false-green class) — exactly the batch-23 scout's
+inventory, converged on independently. The cross-check pins the §6 prediction: the new default
+equals the old rule's `--model psg:read` projection, 242 / 24,318 both ways.
+
+**The tool now carries its own committed pins** — `tools/test_hw_portability.py`, 37 cases,
+standalone pytest, not wired into any project's `make test`: the 16 lattice shapes (the T5
+boundary: `$ff8802` reads, mirrors, wide and straddling transfers, odd-alias writes), 8 tripwire
+mutations on throwaway kit copies (constants renamed/revalued, the behavioural pin's
+comment-bypass, BOTH file-level deletions — a present kit with a missing pinned file now exits 1,
+the hole the review found by test), and the committed-figure reproduction as a regression case.
+The review gate's other finds, all landed: the behavioural pin matches a **definition shape**, not
+a substring (a changelog comment mentioning `psg_read_back` no longer satisfies it); the
+`PINNED_CONSTANTS[0][0]` positional coupling replaced by named path constants; each pinned file
+read once; `docs/on-target-execution.md`'s tier table rewritten to the seven-tier lattice (it was
+teaching the OLD numbers against the new reports — "T4-with-a-branch is the tier to hunt" is the
+new phrasing); and §0g's bridge widened to say plainly that EVERYTHING above it (§0–§0f and §2–§8)
+speaks the old numbering, with the mapping stated once. A sweep caveat worth its line: two
+byte-length-preserving mutations first reported phantom SURVIVED off stale `__pycache__` bytecode —
+purge it per run; §0g records the trap beside the README's relink trap, same family.
+
+**No game code changed, no suite case moved** (`make test` untouched by construction; the 37 new
+cases live tool-side). **Still queued:** 22b's steps (2) re-scan + re-baseline and (3) the
+partition edit — now unblocked, sequenced after batch 23 lands so the re-scan captures its names
+too.
