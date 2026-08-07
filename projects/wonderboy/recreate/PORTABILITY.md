@@ -648,9 +648,11 @@ default, and `--model psg:read` on top of it buys nothing further.
 
 1. `../reapply.sh` + `tools/hw_scan.sh`, **re-baselined in its own section** — batch 22b's
    two-stage pin, unchanged: the re-scan moves whole-program figures by itself (256 → ~258 F
-   records, `$6bb8` re-cut).
+   records, `$6bb8` re-cut). *(DISCHARGED — §0h. 258 F records as predicted; the `$6bb8` re-cut
+   moved no bytes, and the reason is a correction §0h states.)*
 2. **Then** the `subsystems.tsv` partition edit batch 22 queued (`0x6cdc 0x6d5a` → actor lifecycle,
    `0xe1c8 0xe222` → stage tier), which changes nothing against the *committed* scan.
+   *(DISCHARGED — §0h, stage 2.)*
 3. **§6 / §6.1's capability table is now stale** and needs re-pricing: its baseline row is the
    2026-08-02 scan, and its "PSG read model" row prices a capability that ships. More broadly,
    **every section above this one states tiers in the old numbering** — bridged, not rewritten, by
@@ -668,6 +670,145 @@ default, and `--model psg:read` on top of it buys nothing further.
    unservable. The docstrings ("the shim refuses outright — so the whole floppy stack above it can
    never run") are now false, and the honest rewrite is a pair of cases that assert BOTH halves: the
    refusal without a seed, and a green run WITH one.
+
+## 0h. The re-scan and the partition edit (2026-08-07, batch 22b steps 2–3): two functions appear, and the score table was never counted
+
+Batch 22b's remaining two steps, run as the two-stage pin it specified. **No game code changed and
+no test moved**; the edited files are `subsystems.tsv` (two ranges) and this section, and
+`../reapply.sh` + `tools/hw_scan.sh` regenerated `../decomp.c` and `../out/hw_scan.tsv`.
+
+**Stage 0, the floor.** The repaired classifier over the **old** scan reproduces every §0g figure
+byte-for-byte — 242/256 runnable, 24,318 / 25,786 B, 94.3 %, false-green 28 / 3,348 B, all nineteen
+subsystem rows — so everything below is the re-scan and the partition edit, and nothing else.
+
+### Stage 1 — the re-scan, and the prediction that was half wrong
+
+`ApplyNames` pushed `../names.txt` (227 `fn`, 237 `var`, 377 `cmt`, 36 `proto`) into the DB and the
+re-scan re-dumped the TSV. **Exactly two `F` records appear, one changes size, and not one
+pre-existing function moves tier, steering or reachability** (checked function-by-function against
+the old scan, not argued):
+
+| | before (2026-08-05 scan) | after |
+|---|---|---|
+| functions / function bytes | 256 / 25,786 | **258 / 25,826** (+40) |
+| disassembled bytes | 28,076 | **28,116** (+40) |
+| call-graph edges | 240 (379 CALL, 8 JUMP, 21 JUMPIN) | **245 (381 CALL, 9 JUMP, 23 JUMPIN)** |
+| hardware accesses (`H` rows) | 126 | **126 — byte-identical, every row** |
+| direct `T0 CLEAN` | 225 / 22,598 B | **227 / 22,638 B** |
+| transitive `T4 HW_READ` | 24 / 2,658 B | **26 / 2,698 B** |
+| runnable end-to-end | 242 / 21,334→24,318 B, 94.3 % | **244 / 258 fns, 24,358 / 25,826 B, 94.3 %** |
+| false-green risk | 28 fns / 3,348 B | **28 / 3,348 B — the identical function set** |
+| unreachable from the roots | 112 / 10,610 B | **114 / 10,650 B** |
+| `game logic` (catch-all) | 21 fns / 2,234 B | **23 / 2,274 B** |
+
+**The two new `F` records, and the `names.txt` entry that creates each:**
+
+* **`$6cdc` `actor_respawn_as_new_kind` (126 B)** — batch 22's respawn continuation, until now folded
+  inside `$6bb8`'s body. Direct `T0`, transitive `T4 HW_READ`, runnable, not steering.
+* **`$e1c8` `stage_random_kind32` (40 B)** — batch 22's 32-wide draw, which the old scan had **no
+  entry for at all**: it sat in no function body, so its bytes were in no tier and its edges in no
+  ledger. Direct `T0`, transitive `T4 HW_READ`, runnable, not steering. It is the whole +40.
+* **`$6bb8` `actor_defeat_and_score` 290 → 164 B**, the only size change in the program.
+
+Nothing else moved. The other 2026-08-06/07 names — batch 21b's and batch 23's `$17b14`
+`snd_call_trigger_effect`, `$18106` `snd_channel_step`, `$18208` `snd_channel_period_and_volume`,
+`$1a5da` `snd_sfx_tick`, `$1a602`/`$1a6bc`/`$1a776` `snd_sfx_tick_channel_a/b/c`, `$1aaca`
+`snd_prng_step`, and batch 19/20's `$8f02` `sprite_draw_pass`, `$dbc0` `scene_run_frame`, `$de80`
+`scene_spend_visit_budget`, `$dfbe` `scene_exit_and_reload`, plus `$69fe`/`$6b46`'s rename from
+`damage_path_*` — **name existing `F` records and change no figure**. Their data neighbours
+(`$1aae6` `snd_prng_state`, `$1a830` `snd_sfx_ptr_table`, `$18352` `snd_psg_shadow`) are `var`
+lines, so they correctly produce no `F` record and enter no denominator, exactly as this file's
+"ONLY CODE BELONGS HERE" rule requires.
+
+**The five new edges are the re-cut spelt out** (one removed, six added):
+
+| edge | why |
+|---|---|
+| − `0x6bb8 → 0xe1f0 CALL` | the `bsr` at `$6d04` now sits inside `$6cdc`, not `$6bb8` |
+| + `0x6cdc → 0xe1f0 CALL` | the same instruction, re-attributed |
+| + `0x6cdc → 0xe1c8 CALL` | the `bsr.w` at `$6cf2`, previously an intra-body branch |
+| + `0x6bb8 → 0x6cdc JUMP` | the `ble.w $6cdc` at `$6c34` — the continuation edge |
+| + `0x6cdc → 0x6bb8 JUMPIN` | the `bmi.w $6c38` at `$6d0a`, the retire tail's **third** entrance |
+| + `0xe1c8 → 0x68c6 CALL` | `stage_random_kind32`'s own `bsr rng_next` — in no ledger before, because its code was in no `F` record |
+| + `0xe1c8 → 0xe1f0 JUMPIN` | the `bra.w $e214` into `stage_random_kind8`'s shared fourteen-byte tail |
+
+That last pair is why `$6cdc` and `$e1c8` price `T4 HW_READ` rather than `T0`: both reach `rng_next`
+and its `$ff8209` video-counter read. `$6bb8` is unchanged at `T4 HW_READ` — §0g's witness path
+(`game_routine_6bb8 → FUN_0000e1f0 → rng_next`) is now `actor_defeat_and_score → actor_respawn_as_new_kind
+→ stage_random_kind8 → rng_next`, one hop longer and the same verdict.
+
+**The score-table prediction was wrong, and the correction is worth carrying.** Batch 22b and §0g
+both expected the re-cut to move whole-program bytes because `$6bb8`'s 290 "folds in the 128-byte
+score table at `$6c5c`". It does not, and never did: **Ghidra's `F` size is the cardinality of a
+function's address SET, not `body_end − entry`.** The old record was `0x6bb8 / 290 / body_end
+0x6d5a` over a 418-byte span — already discontiguous, already skipping the table's 128 bytes.
+164 + 126 = 290, so the re-cut splits one body into two at unchanged total bytes and merely makes
+the hole explicit (`$6bb8` drops off the scan's discontiguous list, which is now nine records:
+`$53e`, `$1492`, `$5e3e`, `$dbc0`, `$e782`, `$ecca`, `$ee02`, `$17c74`, `$1a5da`). **The whole
++40 is `$e1c8` alone.** Anywhere this file reasons about a body's extent from `body_end − entry`,
+that is the trap; `$1a5da` is the mirror case — 42 bytes over a 40-byte span, because its address
+set includes the shared `rts` at `$1a5d8`, two bytes *below* its entry.
+
+### Stage 1 sanity — the verified-and-green column against `STATUS.md`'s 166
+
+`STATUS.md` records **166 verified reconstructions / 19,226 bytes**; expanding its four family
+legends (16 scroll copies, 4 sprite blitters, 4 clip-left, 4 clip-right) over its 142 verified rows
+reproduces that 166 exactly. Against the new scan those map to **171 `F` records / 19,226 bytes** —
+the bytes agree to the byte, as they have since §0c, and the count differs by the two counting
+rules §1 already documents. The reconciliation gains **one** entry, batch 23's:
+
+| | reconstructions | F records | bytes |
+|---|---:|---:|---:|
+| `src/rad.c` — one reconstruction Ghidra splits into three (`rad_depack`, `rad_refill_bit_buffer`, `rad_get_bits`) | 1 | 3 | same 216 |
+| `snd_sfx_tick` (`$1a5da`) — one reconstruction Ghidra splits into four: the 42-byte head plus the three 186-byte channel arms `$1a602`/`$1a6bc`/`$1a776` | 1 | 4 | same 600 |
+| **net** | **166** | **171** | **19,226 = 19,226** |
+
+Those two rows are the *only* per-row disagreements between `STATUS.md`'s byte column and the scan's
+`F` sizes — checked row by row, all 142.
+
+**Two stale figures this surfaces, flagged and NOT edited here.** `STATUS.md`'s "74.6 % of
+everything `PORTABILITY.md` measures" is 19,226 / 25,786, the old denominator; against 25,826 it is
+**74.4 %**. And §1's answer box still prints the 2026-08-02 scan (256 fns / 25,786 B / 47.0 %
+coverage / 136 fns / 13,172 B reconstructed-and-green) — §0g left it stale too. Re-stating it means
+recomputing its `CODE bytes` column against `notes/architecture.md` as well, which is a measurement
+of its own and not this section's.
+
+### Stage 2 — the partition edit
+
+With stage 1 pinned as the baseline, `subsystems.tsv` gains the two ranges batch 22b drafted, cited
+on the spot in the file itself: **`0x6cdc..0x6d5a` → `actor (table + lifecycle)`** and
+**`0xe1c8..0xe222` → `stage (load + reset)`**, ONE range over both draws rather than a split at
+`$e1f0`, because `$e1c8` has no tail of its own and `bra.w`s into `$e1f0`'s. **`$e1f0` was checked
+first and was in no subsystem range** — it sat in the catch-all, so nothing had to be extended or
+adjusted; the range claims two catch-all members rather than moving an existing boundary. The re-run
+differs from stage 1 in **exactly three rows of the subsystem table, and no whole-program figure
+moves** (diffed, not argued):
+
+| subsystem | before | after |
+|---|---|---|
+| actor (table + lifecycle) | 16 fns / 954 B, transitive **T0 CLEAN**, runnable 16 / 954 B | **17 / 1,080 B, transitive T4 HW_READ, runnable 17 / 1,080 B** |
+| stage (load + reset) | 4 fns / 458 B, transitive T3 HW_WRITE_ONLY, runnable 4 / 458 B | **6 / 548 B, transitive T4 HW_READ, runnable 6 / 548 B** |
+| game logic (catch-all) | 23 fns / 2,274 B, direct T0 21 / 2,122 B, runnable 20 / 1,902 B | **20 / 2,058 B, direct T0 18 / 1,906 B, runnable 17 / 1,686 B** |
+
+Both receiving rows stay fully runnable and carry no false-green risk, so the −216 bytes the
+catch-all loses are 216 bytes of *verified* code leaving the least-characterised bucket. **The actor
+row's cost is a label**: it was one of the six subsystems that were `T0 CLEAN` transitively, and
+`$6cdc`'s path to `rng_next` ends that. The tier is honest — the row's runnable column is
+unchanged at 100 % — but "clean end to end" is now five subsystems, not six.
+
+**Declined, with the reason: the three batch-23 sound bodies need no range.** `$1aaca`
+`snd_prng_step`, `$1a5da` `snd_sfx_tick` and `$18208` `snd_channel_period_and_volume` — and the
+three channel arms `$1a602`/`$1a6bc`/`$1a776` with them — are **already inside** the existing
+`0x17adc..0x1ab04` `sound (YM2149)` range, which covers the whole module in one span. Extending or
+splitting it would move no function and change no figure, and the file's convention is that a range
+exists to *claim* entries, not to annotate ones already claimed.
+
+**Also observed and NOT folded in** (it is a partition question of its own, not batch 22b's drafted
+edit): `$6bb8` `actor_defeat_and_score` (164 B) and its two damage-path callers `$69fe`
+`actor_damage_followed` (266 B) and `$6b46` `actor_damage_template_hitpoints` (114 B) remain in the
+catch-all while the continuation `$6cdc` they run into is now `actor (table + lifecycle)` — 544
+bytes of verified defeat-path code split across two buckets by a boundary nothing has argued for.
+That is the largest remaining actor-shaped remainder in a catch-all now down to 20 functions.
 
 ## 2. Method, and what it can and cannot see
 

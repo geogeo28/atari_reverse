@@ -276,9 +276,9 @@ def test_the_committed_scan_reproduces_its_published_figures():
 
     runnable = [a for a in scan.funcs if tier[a] < hp.T_HARD_REJECT]
     at_risk = [a for a in scan.funcs if steers[a]]
-    assert len(scan.funcs) == 256
-    assert sum(f.size for f in scan.funcs.values()) == 25786
-    assert (len(runnable), sum(scan.funcs[a].size for a in runnable)) == (242, 24318)
+    assert len(scan.funcs) == 258
+    assert sum(f.size for f in scan.funcs.values()) == 25826
+    assert (len(runnable), sum(scan.funcs[a].size for a in runnable)) == (244, 24358)
     assert (len(at_risk), sum(scan.funcs[a].size for a in at_risk)) == (28, 3348)
     # No function hard-rejects on its own access any more: Phase 6 removed the last PSG read wall.
     assert not [a for a in scan.funcs if direct_tier[a] == hp.T_HARD_REJECT]
@@ -309,7 +309,7 @@ def test_the_tool_runs_end_to_end_as_a_script():
     if WONDERBOY_SUBSYSTEMS.exists():
         argv += ["--subsystems", str(WONDERBOY_SUBSYSTEMS)]
     done = subprocess.run(argv, capture_output=True, text=True, check=True)
-    assert "242/256 functions, 24318/25786 bytes = 94.3 %" in done.stdout
+    assert "244/258 functions, 24358/25826 bytes = 94.3 %" in done.stdout
     assert "| T2 PSG_SEEDED_READ |" in done.stdout
 
 

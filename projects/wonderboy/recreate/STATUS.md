@@ -33,8 +33,9 @@ $6cdc boundary is GONE — the defeat path runs end to end to the original's own
 sound module's TICK TIER under `$17c74` (`snd_sfx_tick` + `snd_prng_step` +
 `snd_channel_period_and_volume`, 958 bytes, batch 23: everything the per-VBL tick calls, pinned
 whole with no boundary) —
-19,226 bytes in all, 74.6 % of everything
-[`PORTABILITY.md`](PORTABILITY.md) measures.** *(The batch-16 commit's header said 147 — an
+19,226 bytes in all, 74.4 % of everything
+[`PORTABILITY.md`](PORTABILITY.md) measures *(74.6 % when batch 23 wrote it; the §0h re-scan grew
+the denominator to 25,826 — see "Batch 22b (steps 2–3)" at the end)*.** *(The batch-16 commit's header said 147 — an
 oversight; its own section records 151, and batch 17 corrected the header to 153. Batch 22's edit
 left this leading count at 161 while its own section and parenthetical said 163 — the same
 oversight, found by batch 23's port agent and corrected here. It now carries batch 23's 166.)*
@@ -3730,7 +3731,9 @@ catch-all today (21 members).
 prerequisite chain:** (1) repair `tools/hw_portability.py` against Phase 6 — the constants pin
 AND the T4 read rule *(batch 22c: DISCHARGED — see the next section and PORTABILITY.md §0g)*;
 (2) `../reapply.sh` + `tools/hw_scan.sh`, re-baselined in its own section;
-(3) then the partition edit this entry always was. The rows, ready for that day, with citations:
+(3) then the partition edit this entry always was *(steps 2–3: RUN after batch 23 — see "Batch
+22b (steps 2–3)" at the end and PORTABILITY.md §0h; the score-table prediction below was WRONG,
+and the correction is that section's finding)*. The rows, ready for that day, with citations:
 `0x6cdc 0x6d5a` → the actor lifecycle's subsystem (126 B, reached only from `$6c34`'s `ble.w`, a
 continuation not a subroutine), and `0xe1c8 0xe222` → the stage tier's, ONE range covering both
 draws (they share the last fourteen bytes and one C body — splitting them at `$e1f0` would draw a
@@ -3936,3 +3939,45 @@ sides.
   but the tick's callee list and its non-local exit are now recorded against the day one of them
   moves.
 
+
+### Batch 22b (steps 2–3): the re-scan, and the score table that was never counted
+
+Batch 22b's chain closed. [`PORTABILITY.md`](PORTABILITY.md) **§0h is the full record**; the
+headline is that the re-scan moved almost nothing and the one figure everyone expected to move
+did not. **256 → 258 functions, 25,786 → 25,826 bytes, runnable 242 → 244 / 24,358 B (94.3 %),
+false-green 28 / 3,348 B — the identical function set.** Exactly two F records appear
+(`actor_respawn_as_new_kind` $6cdc, 126 B, previously folded into `$6bb8`; `stage_random_kind32`
+$e1c8, 40 B, previously in no function body at all) and **not one pre-existing function moves
+tier, steering or reachability** — checked function-by-function against the old scan. The whole
++40 bytes is `$e1c8`.
+
+**The prediction this batch and 22c both carried was wrong, and the correction is the finding.**
+`$6bb8`'s 290-byte body was said to "fold in the 128-byte score table at `$6c5c`". It never did:
+Ghidra's F `size` is the cardinality of a function's ADDRESS SET, not `body_end − entry`, and the
+old record already spanned 418 bytes while counting 290. 164 + 126 = 290, so the re-cut split one
+body in two at unchanged total bytes. `$1a5da` is the mirror case — 42 bytes over a 40-byte span,
+because its set includes `snd_sfx_tick`'s shared `rts` two bytes BELOW its entry.
+
+**The partition edit then landed against that baseline** and differs in exactly three subsystem
+rows with no whole-program figure moving: `0x6cdc..0x6d5a` → actor (16 → 17 fns / 954 → 1,080 B)
+and `0xe1c8..0xe222` → stage (4 → 6 / 458 → 548 B), one range over both draws because `$e1c8`
+`bra.w`s into `$e1f0`'s shared fourteen-byte tail. `$e1f0` was checked first and was in the
+catch-all, so nothing had to be adjusted. The catch-all is down to **20 functions / 2,058 B**.
+One cost, named: the actor row was `T0 CLEAN` transitively and now prices `T4 HW_READ`, because
+`$6cdc` reaches `rng_next`'s `$ff8209`. Runnable stays 100 %. The three batch-23 sound bodies
+needed no range — the `sound (YM2149)` span already covers them.
+
+**Sanity, reconciled:** the verified column is **171 F records / 19,226 bytes** against this
+scan, and the bytes agree with the 166 reconstructions above to the byte. The gap is two counting
+rules and gains one entry — `snd_sfx_tick` is one reconstruction Ghidra splits into four (the
+42-byte head plus three 186-byte channel arms). Those two are the only per-row disagreements out
+of 142 verified rows.
+
+**No game code changed and no test moved**; `make test` 3333 on a forced relink, and
+`tools/test_hw_portability.py`'s two literal-figure pins moved WITH the baseline in this same
+commit (the scan they read is the working file, which §0h re-baselined — 37 cases green after).
+**One stale figure flagged, deliberately not edited:** PORTABILITY.md §1's answer box still
+prints the 2026-08-02 scan; re-stating it needs its CODE-bytes column recomputed, a measurement
+of its own. **Observed, registered:** `$6bb8`/`$69fe`/`$6b46` (544 B of verified defeat-path
+code) stay in the catch-all while their continuation `$6cdc` is now actor's — a partition
+question for a future pass, recorded in §0h.

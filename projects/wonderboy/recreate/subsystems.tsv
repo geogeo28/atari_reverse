@@ -61,6 +61,13 @@
 # (three F rows, `$67c2..$6822`); `$8dfe`/`$8e66` are the two projection passes (`$8dfe..$8f02`),
 # which share 68 identical bytes. Five functions, 356 bytes, all reconstructed and green.
 0x67c2	0x6822	actor (table + lifecycle)
+# The respawn continuation (batch 22, the row batch 22b drafted): `actor_respawn_as_new_kind`
+# ($6cdc..0x6d5a, 126 B) is what a defeated slot comes back as -- reached from ONE place, the
+# `ble.w $6cdc` at $6c34 inside `actor_defeat_and_score`, so it is a continuation rather than a
+# subroutine, and it ends in the `rts` that returns to THAT routine's caller. It became its own
+# F record only when `../names.txt` named it: the pre-2026-08-07 scan folded it into $6bb8's
+# 290-byte body. Its caller $6bb8 is deliberately NOT here -- see PORTABILITY.md §0h.
+0x6cdc	0x6d5a	actor (table + lifecycle)
 # The background scroll ENGINE (batches 5-6): fifteen F rows tile `$7522..$8228` — the queue
 # drain, the four axis steps, the two row fills and the pre-shift — and fill the eight
 # pre-shifted buffers that `bg_scroll_blit` below then copies to the screen. Filed under the
@@ -103,6 +110,15 @@
 # the same buffer `bg_build_buffer` fills and `bg_build_preshifted_copies` then derives the other
 # seven from. Three F rows tiling `$e110..$e19a` exactly.
 0xe110	0xe19a	video (background scroll)
+# The two stage kind DRAWS (batch 22, the row batch 22b drafted): `stage_random_kind32` ($e1c8,
+# 40 B) and `stage_random_kind8` ($e1f0, 50 B) pick which creature a respawned slot comes back as,
+# out of the current stage_number's candidate table. ONE range covering both, deliberately NOT
+# split at $e1f0: $e1c8 has no tail of its own and `bra.w $e214` INTO $e1f0's, so the fourteen
+# bytes $e214..$e221 belong to both routines and recreate/src/rng.c spells them once. Splitting
+# here would draw a subsystem boundary through the middle of an instruction sequence both
+# routines execute. `hi` is $e1f0's body_end, per this file's rule. $e1c8 became its own F record
+# only when `../names.txt` named it -- the pre-2026-08-07 scan had no entry for it at all.
+0xe1c8	0xe222	stage (load + reset)
 0xe482	0xe782	boot
 0xe782	0xe7f4	resource loader
 0xe7f4	0xe80c	video (screen / palette / mode)
