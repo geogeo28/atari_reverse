@@ -3680,6 +3680,47 @@ returning RESPAWN, the motion helper dropping its `bclr`) were run and caught be
 
 **QUEUED, registered rather than half-done:** the `subsystems.tsv` rows this batch touches — the
 respawn continuation belongs beside the actor lifecycle, `$e1c8` beside the stage tier — a
-re-measure, queued as one per the house rule; the candidate-side write ledger (kit scope, the
-narrowed-surface note above); and `$17c74` (the per-VBL tick) and `stage_load_window` remain the
-PSG wall's two faces, unmoved by this batch.
+re-measure, queued as one per the house rule *(batch 22b: ATTEMPTED and BLOCKED at the baseline
+gate — see the next section; the prerequisite is named there)*; the candidate-side write ledger
+(kit scope, the narrowed-surface note above); and `$17c74` (the per-VBL tick) and
+`stage_load_window` remain the PSG wall's two faces, unmoved by this batch.
+
+### Batch 22b: the queued re-measure — BLOCKED at the baseline gate, and the tripwire is why
+
+The `subsystems.tsv` re-measure batch 22 queued could not be run, and the reason is a finding
+rather than an obstacle. `tools/hw_portability.py` **exits before classifying anything**: its
+`check_shim_agreement()` pins `shim.c`'s `PSG_SELECT`/`PSG_DATA`, which the kit's Phase 6
+(`bd86412`) deleted, moving the canonical pair to `include/os.h` as
+`OS_PSG_PORT_SELECT`/`OS_PSG_PORT_DATA` (same values). The pin did exactly its job; nothing had
+re-run the tool since, so §0f (batch 20) is the last measurement that predates the break.
+**Verified with a throwaway copy, repo untouched**: drop the two dead pins and the classifier
+reproduces every committed §0e/§0f figure byte-for-byte off the committed scan — 222/256 runnable,
+21,334 / 25,786 B, 82.7 %, false-green 28 / 3,348 B, all nineteen rows. The logic and the
+partition are intact; only the constants pin is broken.
+
+**The rename is not the whole repair.** `hw_portability.py`'s tier rule says *any* PSG-block read
+is a hard reject; Phase 6 made a byte read of `$ff8800` **served** from the seeded register file
+and logged into the ordered event ledger — diffable, not a reject — which is precisely what batch
+21b's `snd_psg_silence` does and why it is green. Renaming the constants alone would print numbers
+that silently understate runnability: the T4 read rule must be re-derived against Phase 6 before
+any figure is trusted. (Batch 21b had already queued this as "hw_portability re-pricing"; the
+baseline gate has now turned that queue entry into a prerequisite.)
+
+**A third floor moves.** `out/hw_scan.tsv` predates batches 21b/22, so `$6cdc` is still inside
+`$6bb8`'s 290-byte Ghidra body and `$e1c8` is in no function body at all; ranges match on ENTRY,
+so the two proposed rows change NOTHING against the committed scan (verified empirically, not
+argued). They become entries only after `../reapply.sh` re-cuts the DB — and that re-scan moves
+whole-program figures itself (256 → ~258 F records, `$6bb8` re-cut from a 290 that folds in the
+`$6c5c` score table), so the one-diff-hunk property needs a TWO-STAGE pin: re-scan and re-baseline
+in its own section first, then the partition edit. `$68c6` and `$e1f0` are confirmed in the
+catch-all today (21 members).
+
+**No code changed, no test moved, `subsystems.tsv` and `PORTABILITY.md` untouched**; `make test`
+3133 green on a forced relink after the attempt. **QUEUED, unchanged and now with a named
+prerequisite chain:** (1) repair `tools/hw_portability.py` against Phase 6 — the constants pin
+AND the T4 read rule; (2) `../reapply.sh` + `tools/hw_scan.sh`, re-baselined in its own section;
+(3) then the partition edit this entry always was. The rows, ready for that day, with citations:
+`0x6cdc 0x6d5a` → the actor lifecycle's subsystem (126 B, reached only from `$6c34`'s `ble.w`, a
+continuation not a subroutine), and `0xe1c8 0xe222` → the stage tier's, ONE range covering both
+draws (they share the last fourteen bytes and one C body — splitting them at `$e1f0` would draw a
+subsystem boundary through the middle of an instruction sequence both routines execute).
