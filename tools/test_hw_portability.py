@@ -14,10 +14,11 @@ Run it standalone:
 THREE GROUPS, and the failure each exists to catch:
 
   * the LATTICE — the tier every access shape earns. The rule was re-derived against kit Phase 6
-    (see `projects/wonderboy/recreate/PORTABILITY.md` §0g); before that it priced every PSG read as
-    a hard reject, understating what the harness could verify by 20 functions on one real program.
-    What matters most here is the T5 BOUNDARY: Phase 6 serves exactly one shape, and each case
-    below is a shape it does NOT serve.
+    (see `projects/wonderboy/recreate/PORTABILITY.md` §0g), which stopped it pricing every PSG read
+    as a hard reject, and again against Phase 7 (§0i), which folded the two modeled hardware bytes
+    into the same seeded tier. What matters most here are the two BOUNDARIES of that tier: each
+    model serves exactly one shape at exactly one set of addresses, and most cases below are a
+    shape or an address it does NOT serve.
   * the TRIPWIRES — `check_shim_agreement()`, exercised by mutating throwaway copies of the kit.
     Every case is a drift that was measured to slip past an earlier version of the check.
   * the ARITHMETIC — one end-to-end reproduction against a committed scan, so a refactor of the
@@ -63,9 +64,9 @@ def access(addr, size, direction):
 # (address, size, direction, expected tier, what the kit does with it). Sizes are the scan's:
 # an int for a sized transfer, "?" where Ghidra could not size the operand.
 LATTICE_CASES = [
-    (0xFF8800, 1, "READ", "T_PSG_SEEDED_READ",
+    (0xFF8800, 1, "READ", "T_SEEDED_READ",
      "psg_read_back() serves it from the seeded register file and ledgers it"),
-    (0xFFFF8800, 1, "READ", "T_PSG_SEEDED_READ",
+    (0xFFFF8800, 1, "READ", "T_SEEDED_READ",
      "the same port through the 68000's 24-bit bus alias, which BUS_ADDR_MASK folds"),
     (0xFF8802, 1, "READ", "T_HARD_REJECT",
      "the data port is write-only on the chip; the model refuses rather than invent a value"),
@@ -82,12 +83,44 @@ LATTICE_CASES = [
     (0xFF8800, 2, "WRITE", "T_HARD_REJECT", "a wide write over the port pair"),
     (0xFF8800, "?", "READ", "T_HARD_REJECT",
      "an operand Ghidra could not size is NOT assumed to be the modeled byte protocol"),
-    (0xFFFA01, 1, "READ", "T_HW_READ",
-     "MFP GPIP: served a real byte ONLY under audio capture, silently 0 for every differential"),
-    (0xFF820A, 1, "READ", "T_HW_READ", "shifter sync: the same silent zero, BuggyBoy's tempo branch"),
+    # Phase 7's modeled set, and the boundary around it. A BYTE read of a named address is served
+    # from the case's `hw_seed`; every other shape and every other address is as it was.
+    (0xFFFA01, 1, "READ", "T_SEEDED_READ",
+     "MFP GPIP: a declared case input since Phase 7, ledgered, and refused when undeclared"),
+    (0xFF820A, 1, "READ", "T_SEEDED_READ",
+     "shifter sync: the same, and BuggyBoy's tempo branch is why the address is in the set"),
+    (0xFFFFFA01, 1, "READ", "T_SEEDED_READ",
+     "the GPIP through the 24-bit bus alias os.h names explicitly; BUS_ADDR_MASK folds it"),
+    (0xFF820A, 2, "READ", "T_HARD_REJECT",
+     "a WIDE read AT a modeled byte takes in the shifter register beside it, which the model would "
+     "have to fabricate as 0 — recorded, never served, and a differential refuses it"),
+    (0xFF8209, 2, "READ", "T_HARD_REJECT",
+     "the same read straddling INTO $ff820a from below — os_hw_slots_touched() is a span test, so "
+     "a start-address test would miss exactly this one"),
+    (0xFFFA01, "?", "READ", "T_HARD_REJECT",
+     "an operand Ghidra could not size is NOT assumed to be the modeled byte shape, as at the PSG"),
+    (0xFF8209, 1, "READ", "T_HW_READ",
+     "one address BELOW the modeled byte: the video counter `rng_next` reads, still a silent 0"),
+    (0xFF820A, 1, "WRITE", "T_HW_WRITE",
+     "Wonder Boy's own `move.b #2,$ff820a` at $f91c: Phase 7 models what the address ANSWERS, so a "
+     "write to it is dropped like any other and tiers no worse"),
+    (0xFF8609, 1, "READ", "T_HW_READ",
+     "the FDC DMA counter, Phase 7's explicit NON-GOAL — it answers a per-access sequence a per-run "
+     "seed cannot express, so it stays outside the set and stays a silent 0"),
     (0xFFFC00, 1, "READ", "T_HW_READ",
      "the IKBD status is the one non-zero answer, but a fabricated constant is still a read"),
     (0xFF8240, 2, "WRITE", "T_HW_WRITE", "a palette write: dropped, so the run completes blind"),
+    # The one edge the tool does NOT close, pinned in both models so their treatment cannot diverge:
+    # an unsized operand counts as ONE byte, so one sitting just below a modeled address is judged
+    # not to reach it — while a real word/long there straddles in and every differential refuses.
+    # Widening would mean assuming a transfer width nobody could read, i.e. inventing a refusal, so
+    # the report NAMES every unsized operand in "What this method cannot see" instead. These two
+    # cases pin today's answer together with that caveat; change them only alongside that section.
+    (0xFF87FF, "?", "READ", "T_HW_READ",
+     "unsized one byte below the PSG block: priced as not straddling in — the OPTIMISTIC half of "
+     "the unsized edge (the pessimistic half is the $ff8800 `?` row above)"),
+    (0xFF8209, "?", "READ", "T_HW_READ",
+     "unsized one byte below $ff820a: the identical edge at the Phase 7 model, priced identically"),
 ]
 
 
@@ -98,36 +131,45 @@ def test_access_earns_its_tier(addr, size, direction, tier_name, why):
     assert access(addr, size, direction).tier == getattr(hp, tier_name), why
 
 
-def test_a_psg_read_is_never_counted_as_false_green():
-    """Neither shape can fabricate a branch: a served read is a DECLARED input, a refused one never
-    completes the run. The false-green count is the report's most consequential number."""
-    for addr, size, direction in ((0xFF8800, 1, "READ"), (0xFF8802, 1, "READ")):
-        steering = hp.Access(hp.UNATTRIBUTED_FN, 0, addr, str(size), direction, "ABS",
-                             hp.STEER_VERDICT, "-", "synthetic")
-        assert not steering.steers
+def steering_access(addr, size):
+    return hp.Access(hp.UNATTRIBUTED_FN, 0, addr, str(size), "READ", "ABS", hp.STEER_VERDICT, "-",
+                     "synthetic")
 
 
-def test_a_steering_non_psg_read_is_counted():
-    """The positive control for the test above — otherwise it would pass on a broken `steers`."""
-    steering = hp.Access(hp.UNATTRIBUTED_FN, 0, 0xFFFA01, "1", "READ", "ABS",
-                         hp.STEER_VERDICT, "-", "synthetic")
-    assert steering.steers
+@pytest.mark.parametrize("addr,size", [(0xFF8800, 1), (0xFF8802, 1),
+                                       (0xFFFA01, 1), (0xFF820A, 1), (0xFF820A, 2)])
+def test_a_seeded_read_is_never_counted_as_false_green(addr, size):
+    """No shape at a seeded address can fabricate a branch: a served read is a DECLARED input, a
+    refused one never completes the differential. That holds for both models and for the shapes each
+    refuses. The false-green count is the report's most consequential number."""
+    assert not steering_access(addr, size).steers
+
+
+def test_a_steering_unmodeled_read_is_counted():
+    """The positive control for the test above — otherwise it would pass on a broken `steers`.
+
+    It has to be an address BOTH models leave alone, so it moved here when Phase 7 took $fffa01: the
+    FDC DMA address counter `fdc_wait_irq_bounded` polls at `$6314` (`out/hw_scan.tsv`, a real
+    STEER). Phase 7 rules those registers out structurally, not by oversight — a status byte that
+    must change between two reads is not something a per-run seed can express (TRAP_MODEL.md, "the
+    explicit NON-GOAL") — so it will not quietly become modeled the way $fffa01 did."""
+    assert steering_access(0xFF8609, 1).steers
 
 
 def test_tier_names_and_order_agree():
     """The lattice is compared with `<` and `max()` throughout, so its ORDER is load-bearing, and
     `tier_num()` reads the numbers out of these strings for the report's prose."""
-    assert hp.TIER_NAMES == ["T0 CLEAN", "T1 PSG_WRITE_ONLY", "T2 PSG_SEEDED_READ",
+    assert hp.TIER_NAMES == ["T0 CLEAN", "T1 PSG_WRITE_ONLY", "T2 SEEDED_READ",
                              "T3 HW_WRITE_ONLY", "T4 HW_READ", "T5 HARD_REJECT", "T6 UNMEASURABLE"]
-    assert hp.T_CLEAN < hp.T_PSG_WRITE < hp.T_PSG_SEEDED_READ < hp.T_HW_WRITE
+    assert hp.T_CLEAN < hp.T_PSG_WRITE < hp.T_SEEDED_READ < hp.T_HW_WRITE
     assert hp.T_HW_WRITE < hp.T_HW_READ < hp.T_HARD_REJECT < hp.T_UNMEASURABLE
-    assert hp.tier_num(hp.T_PSG_SEEDED_READ) == "T2"
+    assert hp.tier_num(hp.T_SEEDED_READ) == "T2"
 
 
 def test_a_seeded_read_is_runnable_and_a_rejected_one_is_not():
     """`runnable` is defined as `tier < T_HARD_REJECT` in two places; this pins which side of that
     line the new tier falls on, which is the whole point of inserting it below the hardware tiers."""
-    assert hp.T_PSG_SEEDED_READ < hp.T_HARD_REJECT
+    assert hp.T_SEEDED_READ < hp.T_HARD_REJECT
     assert not hp.T_HARD_REJECT < hp.T_HARD_REJECT
 
 
@@ -183,6 +225,28 @@ def test_a_changed_constant_value_fails(kit_copy):
     assert "0xff8806" in str(exit_info.value)
 
 
+def test_a_renamed_seeded_hardware_address_fails(kit_copy):
+    """The Phase 7 half of the same pin. `$fffa01` moved tier when the kit modeled it; the tool
+    cannot notice the kit UN-modeling it, or renaming the table out from under this module, unless
+    the constant is pinned by name like the PSG ports."""
+    rewrite(kit_copy / "include" / "os.h", "#define OS_HW_MFP_GPIP", "#define OS_MFP_GPIP_BYTE")
+    with pytest.raises(SystemExit) as exit_info:
+        hp.check_shim_agreement()
+    assert "OS_HW_MFP_GPIP" in str(exit_info.value)
+
+
+def test_a_third_modeled_hardware_address_fails(kit_copy):
+    """The drift the two address pins do NOT catch, and the expensive direction: the kit ADDS a
+    modeled byte, every pinned name still matches, and this module goes on pricing the new address
+    as a silent-zero T4 — under-counting what a differential verifies, exactly as the pre-§0g rule
+    under-counted the PSG. Pinning the slot COUNT is what makes that loud."""
+    rewrite(kit_copy / "include" / "os.h", "#define OS_HW_NSLOTS            2",
+            "#define OS_HW_NSLOTS            3")
+    with pytest.raises(SystemExit) as exit_info:
+        hp.check_shim_agreement()
+    assert "OS_HW_NSLOTS" in str(exit_info.value)
+
+
 def test_a_changed_block_end_fails(kit_copy):
     """PSG_BLOCK_END decides which accesses are tested against the PSG protocol at all."""
     rewrite(kit_copy / "oracle" / "shim.c", "#define PSG_BLOCK_END 0xff8900",
@@ -211,6 +275,17 @@ def test_a_renamed_seeded_read_fails(kit_copy):
     with pytest.raises(SystemExit) as exit_info:
         hp.check_shim_agreement()
     assert "psg_read_back" in str(exit_info.value)
+
+
+def test_a_renamed_seeded_hardware_read_fails(kit_copy):
+    """The Phase 7 half of the behavioural pin. Renaming only the DEFINITION leaves every call site
+    spelling `hw_read`, so a substring check would pass — which is the whole reason the pin matches a
+    definition. Without this case the hardware half of T2 rests on nothing."""
+    rewrite(kit_copy / "oracle" / "shim.c", "static unsigned int hw_read(int slot) {",
+            "static unsigned int hw_serve_slot(int slot) {")
+    with pytest.raises(SystemExit) as exit_info:
+        hp.check_shim_agreement()
+    assert "hw_read" in str(exit_info.value)
 
 
 def test_a_seeded_read_named_only_in_a_comment_fails(kit_copy):
@@ -260,26 +335,47 @@ def test_no_kit_at_all_still_classifies(tmp_path, monkeypatch):
 
 # --- the arithmetic ---------------------------------------------------------------------------
 
+def closed_scan(modeled=frozenset()):
+    """The committed scan, excluded and closed over the call graph — the four calls every case below
+    used to repeat. Returns `(scan, direct_tier, tier, steers)`.
+
+    Written once because the pipeline IS the thing under test: three private copies of it could each
+    be right about the totals while disagreeing about which steps the published figures came from.
+    """
+    scan = hp.parse_scan(WONDERBOY_SCAN, set(modeled))
+    excluded = hp.apply_exclusions(scan, [COPYLOCK_EXCLUSION])
+    direct_tier, direct_steers = hp.direct_tiers(scan, excluded)
+    tier, steers = hp.close_over_call_graph(scan, direct_tier, direct_steers)
+    return scan, direct_tier, tier, steers
+
+
+def runnable_set(modeled=frozenset()):
+    scan, _, tier, _ = closed_scan(modeled)
+    return sorted(a for a in scan.funcs if tier[a] < hp.T_HARD_REJECT)
+
+
+def at_risk_set(modeled=frozenset()):
+    scan, _, _, steers = closed_scan(modeled)
+    return sorted(a for a in scan.funcs if steers[a])
+
+
 @pytest.mark.skipif(not WONDERBOY_SCAN.exists(), reason="no committed hw_scan.tsv to pin against")
 def test_the_committed_scan_reproduces_its_published_figures():
     """The end-to-end regression: one real scan, the closure, the published totals.
 
-    The tier LATTICE moved in §0g and these numbers moved with it — deliberately, and accounted for
-    function by function there. What this case pins is that nothing moves them AGAIN by accident: a
-    refactor of the fixed-point closure or of the exclusion handling would otherwise shift a
-    published figure with no diff to show for it.
+    The tier LATTICE moved in §0g and again in §0i, and these numbers moved with it — deliberately,
+    and accounted for function by function there. What this case pins is that nothing moves them
+    AGAIN by accident: a refactor of the fixed-point closure or of the exclusion handling would
+    otherwise shift a published figure with no diff to show for it.
     """
-    scan = hp.parse_scan(WONDERBOY_SCAN, set())
-    excluded = hp.apply_exclusions(scan, [COPYLOCK_EXCLUSION])
-    direct_tier, direct_steers = hp.direct_tiers(scan, excluded)
-    tier, steers = hp.close_over_call_graph(scan, direct_tier, direct_steers)
-
-    runnable = [a for a in scan.funcs if tier[a] < hp.T_HARD_REJECT]
-    at_risk = [a for a in scan.funcs if steers[a]]
+    scan, direct_tier, _, _ = closed_scan()
+    runnable, at_risk = runnable_set(), at_risk_set()
     assert len(scan.funcs) == 258
     assert sum(f.size for f in scan.funcs.values()) == 25826
     assert (len(runnable), sum(scan.funcs[a].size for a in runnable)) == (244, 24358)
-    assert (len(at_risk), sum(scan.funcs[a].size for a in at_risk)) == (28, 3348)
+    # §0i: the false-green set lost the 8 functions whose only steer was one of the two bytes
+    # Phase 7 models. Runnable is UNCHANGED — a seeded read was already runnable under §0g's rule.
+    assert (len(at_risk), sum(scan.funcs[a].size for a in at_risk)) == (20, 2224)
     # No function hard-rejects on its own access any more: Phase 6 removed the last PSG read wall.
     assert not [a for a in scan.funcs if direct_tier[a] == hp.T_HARD_REJECT]
 
@@ -288,29 +384,74 @@ def test_the_committed_scan_reproduces_its_published_figures():
 def test_the_realised_model_equals_the_capability_it_was_priced_at():
     """`--model psg:read` prices the HYPOTHETICAL "harness gains a PSG read model" (PORTABILITY.md
     §6, its largest predicted lever). Phase 6 built it, so the default run must now reach the same
-    place the flag used to — and the flag must buy nothing further on top."""
-    def runnable_totals(modeled):
-        scan = hp.parse_scan(WONDERBOY_SCAN, modeled)
-        excluded = hp.apply_exclusions(scan, [COPYLOCK_EXCLUSION])
-        direct_tier, direct_steers = hp.direct_tiers(scan, excluded)
-        tier, _ = hp.close_over_call_graph(scan, direct_tier, direct_steers)
-        keys = [a for a in scan.funcs if tier[a] < hp.T_HARD_REJECT]
-        return len(keys), sum(scan.funcs[a].size for a in keys)
+    place the flag used to — and the flag must buy nothing further on top.
 
-    assert runnable_totals(set()) == runnable_totals({("psg", "read")})
+    Compared as function SETS, not as totals: §0g's claim is that the same functions are runnable,
+    and two different sets can share a count and a byte total."""
+    assert runnable_set() == runnable_set({("psg", "read")})
+
+
+@pytest.mark.skipif(not WONDERBOY_SCAN.exists(), reason="no committed hw_scan.tsv to pin against")
+def test_the_two_modeled_bytes_carry_the_whole_block_capability():
+    """The §6 lever Phase 7 built, on the false-green axis: `--model mfp:read --model shifter:read`
+    priced a model for those WHOLE BLOCKS, and Phase 7 shipped exactly two BYTES of them. On this
+    program the two are the same measurement — every steering read in either block is one of the two
+    — so the flags must now buy nothing further. If a future scan reaches a steering read elsewhere
+    in the MFP or the shifter, this case goes red and says so, which is the point.
+
+    §0i states this as "the same 20 functions", so it is pinned as a SET: equal counts and equal
+    bytes would also hold if the flag swapped one function for another of the same size."""
+    assert at_risk_set() == at_risk_set({("mfp", "read"), ("shifter", "read")})
+
+
+def run_tool(*extra):
+    """`main()` over the committed scan, as the documented command plus whatever `extra` adds."""
+    argv = [sys.executable, str(TOOL), str(WONDERBOY_SCAN),
+            "--exclude", "0x%x:0x%x:%s" % COPYLOCK_EXCLUSION, "--root", "0x4a0", "--root", "0x400"]
+    if WONDERBOY_SUBSYSTEMS.exists():
+        argv += ["--subsystems", str(WONDERBOY_SUBSYSTEMS)]
+    return subprocess.run(argv + list(extra), capture_output=True, text=True, check=True).stdout
 
 
 @pytest.mark.skipif(not WONDERBOY_SCAN.exists(), reason="no committed hw_scan.tsv to pin against")
 def test_the_tool_runs_end_to_end_as_a_script():
     """Everything above imports the module; this is the only case that proves `main()` — argument
     parsing, the report sections, the exit status — still works as the documented command."""
-    argv = [sys.executable, str(TOOL), str(WONDERBOY_SCAN),
-            "--exclude", "0x%x:0x%x:%s" % COPYLOCK_EXCLUSION, "--root", "0x4a0", "--root", "0x400"]
-    if WONDERBOY_SUBSYSTEMS.exists():
-        argv += ["--subsystems", str(WONDERBOY_SUBSYSTEMS)]
-    done = subprocess.run(argv, capture_output=True, text=True, check=True)
-    assert "244/258 functions, 24358/25826 bytes = 94.3 %" in done.stdout
-    assert "| T2 PSG_SEEDED_READ |" in done.stdout
+    stdout = run_tool()
+    assert "244/258 functions, 24358/25826 bytes = 94.3 %" in stdout
+    assert "| T2 SEEDED_READ |" in stdout
+    # The one Phase 7 refusal no tier can carry — a read of an address THIS RUN wrote — is REPORTED
+    # instead, naming the site. Dropping that paragraph would leave the limit stated nowhere.
+    assert "write(s) to a SEEDED hardware byte" in stdout
+    assert "`0xf91c` in `video_set_lowres_50hz`" in stdout
+
+
+@pytest.mark.skipif(not WONDERBOY_SCAN.exists(), reason="no committed hw_scan.tsv to pin against")
+def test_a_modelled_write_leaves_the_report_self_consistent():
+    """`--model shifter:write` prices `$f91c` CLEAN in every tier table. The stale-write bullet must
+    then NOT still list it as a dropped write, or one report would say both things at once."""
+    stdout = run_tool("--model", "shifter:write")
+    assert "write(s) to a SEEDED hardware byte" not in stdout
+    assert "`0xf91c`" not in stdout
+
+
+@pytest.mark.skipif(not WONDERBOY_SCAN.exists(), reason="no committed hw_scan.tsv to pin against")
+def test_orphan_and_unsized_sites_reach_the_blind_spot_sweeps(tmp_path):
+    """Both sweeps are LATENT on this scan — Wonder Boy has no unsized operand and no seeded-byte
+    write outside a function — so without a synthetic row they would pass while sweeping nothing.
+    `--extra-hw` is the documented way to fold a site in, and a site inside no function lands in
+    `scan.unattributed`, which is exactly the container a functions-only sweep misses.
+    """
+    extra = tmp_path / "extra_hw.tsv"
+    extra.write_text(
+        "# insn\thwaddr\tsize\tdir\tsteer\tnote\n"
+        "0x2fffe\t0xff820a\t1\tWRITE\t-\tsynthetic orphan write to a seeded byte\n"
+        "0x2fff0\t0xff8209\t?\tREAD\t-\tsynthetic unsized read just below a seeded byte\n")
+    stdout = run_tool("--extra-hw", str(extra))
+    assert "2 write(s) to a SEEDED hardware byte" in stdout          # $f91c AND the orphan
+    assert "`0x2fffe` in `code in no function`" in stdout
+    assert "1 off-image access(es) Ghidra could not SIZE" in stdout
+    assert "`0x2fff0` in `code in no function`" in stdout
 
 
 def test_an_empty_scan_is_refused(tmp_path):

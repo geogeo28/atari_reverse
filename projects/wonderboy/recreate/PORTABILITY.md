@@ -7,7 +7,9 @@ the measurement.
 > *Tier numbers in every section written before §0g are the OLD six-tier lattice, and two of them
 > changed MEANING rather than just position (old `T3 HW_READ` vs new `T3 HW_WRITE_ONLY`; old
 > `T4 HARD_REJECT` vs new `T4 HW_READ`). §0g has the old→new mapping table — read it before
-> comparing any number in §0–§0f or §2–§8 against a report generated after 2026-08-07.*
+> comparing any number in §0–§0f or §2–§8 against a report generated after 2026-08-07. **§0i then
+> renamed `T2 PSG_SEEDED_READ` to `T2 SEEDED_READ`** — the same tier, widened to cover the two
+> hardware bytes kit Phase 7 seeds; the position and the numbering are unchanged.*
 
 > ## The answer
 >
@@ -104,12 +106,19 @@ bash tools/hw_scan.sh projects/wonderboy/ghidra_proj wonderboy SWB.PRG \
 python3 tools/hw_portability.py projects/wonderboy/out/hw_scan.tsv \
         --exclude 0xed8e:0xf540:"Copylock ciphertext" --root 0x4a0 --root 0x400 \
         --subsystems projects/wonderboy/recreate/subsystems.tsv
-python3 projects/wonderboy/notes/portability_predictions.py    # 14 cases, must be green
+python3 projects/wonderboy/notes/portability_predictions.py    # 14 cases, must be green — see caveat
 make -C projects/wonderboy/recreate test                       # 77 cases, must be green
-pytest tools/test_hw_portability.py                            # 37 cases, the classifier's own pins (§0g)
+pytest tools/test_hw_portability.py                            # 56 cases, the classifier's own pins (§0g, §0i)
 ```
 
 Add `--stub 0xecca` (and `--model psg:read` for the pair) to reproduce §6.1's numbers.
+
+**Caveat on line 4 — `portability_predictions.py` has not been re-run since kit Phase 6.** "14
+cases, must be green" is the last state anyone observed, not a step this file's most recent
+revisions checked: §0g read its assertions rather than running it (and found two passing for the
+wrong reason), and §0i did not run it either — a concurrent port session owns `recreate/`, and the
+script builds the oracle `.so`. It is queued in §0g's item 4 and §0i's item 2. Run it, but treat a
+green as unconfirmed until that pass lands.
 
 **`reapply.sh` is part of the measurement, not setup.** Ghidra does not reach the background
 scroll blitter (`$83b6..$8dfe`, 16 functions) or `rng_1_to_4_masked` (`$51ac`) on its own — nothing
@@ -554,7 +563,12 @@ hard-rejects**: a read of the write-only data port `$ff8802`, a read of any bloc
 from below), any odd-alias write, and any access Ghidra could not size.
 
 **All of it is pinned by a committed suite: `tools/test_hw_portability.py`, 37 cases, standalone
-`pytest tools/test_hw_portability.py`.** It lives beside the tool rather than under any project's
+`pytest tools/test_hw_portability.py`.** *(Marked in place — §0i: **56 cases** now, and the
+`$fffa01` lattice row and the false-green positive control both moved there. The three groups below
+still describe its shape, with the per-group counts restated so they reconcile: the lattice group is
+**33** cases — **25 access shapes** (was 16), 5 parametrized false-green exclusions, the positive
+control, and the tier order/runnability assertions; the tripwire group is **16** cases from
+**11 mutations** (was 8); the arithmetic-and-report group is **7**. 33 + 16 + 7 = 56.)* It lives beside the tool rather than under any project's
 `recreate/test/` because the tool is game-agnostic — it pins `tools/recreate_kit`'s model, not this
 game's behaviour — and it is deliberately **not** wired into any `make test`, which builds an
 oracle `.so` the suite never needs. Three groups: the 16 lattice shapes above, the 8 tripwire
@@ -571,6 +585,13 @@ mtime granularity makes Python reuse cached bytecode and report a phantom surviv
 Phase 6 gave them real answers only under the opt-in audio-capture mode, and off that mode
 `m68k_read_memory_8` still falls through to `return 0`. No differential runs under capture, so
 they were never rejects and are not clean.
+
+> *(RETIRED — §0i. This paragraph was true of kit Phase 6 and is **false as of Phase 7**: those two
+> bytes are now a seeded model of their own, served from the case's `hw_seed=` on both cores off any
+> mode, ledgered, and REFUSED by a differential when undeclared. They price as `T2 SEEDED_READ`
+> today, and the audio-capture mode is a seed installed over that model rather than a switch of its
+> own. §0i re-derives the rule and names every figure it moved; the tables below are left as the
+> measurement of their day.)*
 
 ### Before → after, every moved figure named
 
@@ -596,7 +617,7 @@ a refused one never completes the run, a served one is steered by a *declared* i
 |---|---:|---|---|---|
 | `$624c` `psg_set_drive_select` | 28 | T5 HARD_REJECT | **T2** | its `$6254` `move.b $ff8800,d1` is the served read-back; its two writes are the modeled pair |
 | `$17f30` `snd_psg_silence` | 82 | T5 HARD_REJECT | **T2** | batch 21b's mixer RMW at `$17f3e` — reconstructed and GREEN, and the classifier now agrees |
-| `$17c74` `snd_music_tick` | 696 | T5 HARD_REJECT | **T4 HW_READ** | its `$17f08` read-back is served, so what prices it is no longer the PSG at all but its own `mfp-R!` + `shifter-R!` — it stays in the false-green 28 *(marked in place — batch 25: the two `mfp-R!`/`shifter-R!` sites are now DECLARED case inputs and a differential of them that names no machine is refused, so the false-green membership is stale. The FIGURE is a measurement and is left as the scan produced it; re-pricing the tier is the `tools/hw_portability.py` pass §7 already queues.)* |
+| `$17c74` `snd_music_tick` | 696 | T5 HARD_REJECT | **T4 HW_READ** | its `$17f08` read-back is served, so what prices it is no longer the PSG at all but its own `mfp-R!` + `shifter-R!` — it stays in the false-green 28 *(marked in place — batch 25: the two `mfp-R!`/`shifter-R!` sites are now DECLARED case inputs and a differential of them that names no machine is refused, so the false-green membership is stale. The FIGURE is a measurement and is left as the scan produced it; re-pricing the tier is the `tools/hw_portability.py` pass §7 already queues.)* **(DISCHARGED — §0i: that pass ran. `$17c74` is `T2 SEEDED_READ` today, direct and transitive, and it is out of the false-green set along with 7 others.)** |
 
 **Seventeen more moved through the call graph.** To T2, behind a seeded read: `$716`
 `vbl_handler` (52 B, via `floppy_deselect_drives`→`psg_set_drive_select`), `$6268`
@@ -810,6 +831,269 @@ catch-all while the continuation `$6cdc` they run into is now `actor (table + li
 bytes of verified defeat-path code split across two buckets by a boundary nothing has argued for.
 That is the largest remaining actor-shaped remainder in a catch-all now down to 20 functions.
 
+## 0i. The classifier re-priced against kit Phase 7 (2026-08-07): the two steering bytes are declared inputs now
+
+Batch 25's queued re-pricing, discharged. **No game code changed, no test in `recreate/` moved, no
+scan was re-generated, `subsystems.tsv` untouched** — the edited files are `tools/hw_portability.py`,
+`tools/test_hw_portability.py` and this section, run read-only over the *same* committed
+`../out/hw_scan.tsv` §0h was measured on. Every number below is a pure re-pricing of unchanged
+evidence, exactly as §0g was.
+
+### What Phase 7 changed, and what the classifier was still claiming
+
+Kit Phase 7 (`ca05c87`; `tools/recreate_kit/TRAP_MODEL.md`, "Phase 7") makes a **byte read of
+`$fffa01` (MFP GPIP) or `$ff820a` (shifter sync) a SEEDED CASE INPUT**: served on both cores from a
+file the case declares with `hw_seed=`, recorded in an ordered read ledger `harness.differential`
+compares, and — when the case declared nothing — **refused** by the differential rather than served
+in silence. A 16/32-bit read taking one of those bytes in is recorded and never served, and refused
+too. A write is dropped and tallied, and a read of an address *this run wrote* is refused as stale.
+
+The classifier's `T4 HW_READ` rule still priced those two addresses as the silent-zero false-green
+class, in as many words: *"Phase 6 gave them real answers, but ONLY under the opt-in audio-capture
+mode, and no differential runs under it. Off that mode they still fall through to a silent 0."* That
+sentence is **false for exactly those two bytes** as of Phase 7, and it was load-bearing three times
+over — in the tool's tier rule, in `tools/test_hw_portability.py`'s `LATTICE_CASES` (which also used
+`$fffa01` as the *positive control* for the false-green counter), and in §0g's prose above. All three
+moved together.
+
+### Stage 1 — the floor, and the Phase 6 pin break did NOT recur
+
+Pinned before touching the tier rule, because §0g's first defect was a pin that Phase 6 had silently
+broken: **`pytest tools/test_hw_portability.py` was green at 37/37 on the unmodified tool**, and the
+report over the committed scan reproduced every §0h figure byte-for-byte — 258 functions / 25,826 B,
+runnable **244 / 24,358 = 94.3 %**, false-green **28 / 3,348**, all nineteen subsystem rows.
+
+The reason it did not recur is worth recording rather than being lucky twice: Phase 7 **added**
+constants to `include/os.h` and added functions to `oracle/shim.c`; it moved nothing. A pin that
+names a file the constant left is the break §0g repaired, and only a *move* can cause it. Phase 7's
+own capture-profile rework, which did move code inside `shim.c`, touched no pinned `#define` and
+kept `psg_read_back()` where it was.
+
+### The rule, now — folded into T2, not given a tier of its own
+
+`T2 PSG_SEEDED_READ` is renamed **`T2 SEEDED_READ`** and now covers a byte read of the PSG read-back
+port *or* of a modeled hardware byte. The modeled set is drawn from the kit's canonical table —
+`os.h`'s `OS_HW_MFP_GPIP` / `OS_HW_SHIFTER_SYNC`, pinned by name exactly as the PSG ports are, plus
+`OS_HW_NSLOTS` pinned against the tool's own set SIZE (see the tripwire note below). Everything
+outside that set is unchanged: a hardware read stays `T4 HW_READ`, silently 0.
+
+**Why a fold and not a new tier.** The lattice's ordering principle (§0g) is *how much a differential
+still verifies* — not what mechanism the kit uses, not what a run costs. Measured against that
+question, a Phase 6 PSG read and a Phase 7 hardware read are the **same** thing: the byte is a
+declaration of the case's, both sides see it, it is compared as an ordered ledger entry, and an
+undeclared one is refused rather than guessed. A separate tier would have to sit somewhere in the
+order, and there is no criterion to place it — which is the definition of a distinction the lattice
+cannot express. Folding says the true thing; a seventh tier would have implied a difference in
+verification strength that does not exist.
+
+The one real asymmetry between the two halves was checked and is **not** an ordering difference: the
+PSG refusal fires inside `emu.run` for every caller, the hardware refusal only inside
+`harness.differential` (a bare run — the relocator, the Copylock, the bootstrap — is served the old
+`0` and merely records it). That changes **who notices** an undeclared read, not what a differential
+verifies, and this lattice orders by the latter. It is stated in the tier list rather than encoded.
+
+**What stays refused, and is therefore `T5 HARD_REJECT`:** a 16/32-bit read taking a modeled byte in,
+including one straddling into `$ff820a` from `$ff8209` below it — the model would have to fabricate
+the neighbouring MFP/shifter register as `0`, which is the false green one address over, so it is
+recorded and never served and no `hw_seed=` can lift it. The overlap test is a span test, mirroring
+`os.h`'s `os_hw_slots_touched()`. An operand Ghidra could not size gets the same answer as at the PSG
+— it is not assumed to be the modeled byte shape.
+
+**A write to a modeled byte stays `T3 HW_WRITE_ONLY`**, because it is still dropped: Phase 7 models
+what those addresses *answer*, not what storing to them does.
+
+### The one Phase 7 refusal this classifier cannot price — stated, not invented
+
+A read of an address **this run already wrote** is refused as stale (`osh_hw_stale()`), and no
+declaration can fix it. Wonder Boy has a live instance: `video_set_lowres_50hz` writes
+`move.b #2,$ff820a` at `$f91c` and `snd_music_tick` reads bit 1 of the same address at `$17c90`, so
+any whole-frame run covers both.
+
+**`hw_portability.py` cannot see that, and it is not made to pretend it can.** The refusal is a
+property of a **run** — which addresses this run has written, in what order — while the classifier is
+static and per-function, taking the worst of a function's own accesses and closing that over the call
+graph. A subtree containing both a writer and a reader does not mean one run does both, and it
+certainly does not mean it does them in that order; pricing it would manufacture a claim. So the tool
+**reports** it instead: the "What this method cannot see" section now names every write to a seeded
+byte, with the reason a case has to be read against them. That paragraph is pinned by the end-to-end
+script case, so it cannot be dropped in silence.
+
+Two properties of that sweep are load-bearing enough to state. It walks **every** access, including
+the ones the scan attributed to no function — those live outside `scan.funcs`, so a functions-only
+walk would quietly break the word "every" the bullet uses. And it skips a write the run was given a
+`--model` for: under `--model shifter:write` the tier tables price `$f91c` CLEAN, and a report that
+priced it clean and listed it as a dropped write in the same breath would contradict itself. Both are
+cases.
+
+### Before → after, every moved figure named
+
+Runnable is **unchanged** — a seeded read was already runnable under §0g's rule, so nothing crossed
+the `T5` line. The whole movement is on the false-green axis and in the tier labels.
+
+| | before (§0h) | after |
+|---|---|---|
+| Runnable end-to-end | 244 / 258 fns, 24,358 / 25,826 B, 94.3 % | **unchanged**, function for function |
+| False-green risk | 28 fns / 3,348 B, 13.0 % | **20 fns / 2,224 B, 8.6 %** (−8 / −1,124 B) |
+| Steering sites | 10 sites in 6 functions | **5 sites in 3 functions** |
+| Direct `T2` | 2 fns / 110 B | **3 / 806 B** |
+| Direct `T3` | 14 / 1,290 B | **16 / 1,414 B** |
+| Direct `T4` | 13 / 1,608 B | **10 / 788 B** |
+| Transitive `T2` | 10 / 398 B | **12 / 1,108 B** |
+| Transitive `T4` | 26 / 2,698 B | **24 / 1,988 B** |
+
+**Three functions moved by their own access** (direct tier), and they are the only three:
+
+| fn | bytes | before | after | why |
+|---|---:|---|---|---|
+| `$62d0` `fdc_wait_irq` | 56 | T4 HW_READ | **T3 HW_WRITE_ONLY** | its only read was the `$62da` `btst #5,$fffa01` FDC-done poll; what prices it now is the `$ff8606` mode-word write left behind |
+| `$6408` `fdc_restore` | 68 | T4 HW_READ | **T3 HW_WRITE_ONLY** | same shape at `$6422`, with two `$ff8606` writes left |
+| `$17c74` `snd_music_tick` | 696 | T4 HW_READ | **T2 SEEDED_READ** | batch 25's consumer proof, priced: its `$17c7e` GPIP and `$17c90` sync reads join its `$17f08` PSG read-back as declared inputs, and its 22 PSG writes are T1 — nothing it touches is fabricated any more |
+
+**Two functions moved transitively**, and one of them is `$17c74` itself: `$17aea`
+`FUN_00017aea` (14 B) T4 HW_READ → **T2 SEEDED_READ**, purely inherited from `$17c74`, the same edge
+§0g moved it along. **`$62d0` and `$6408` did NOT move transitively** — both still witness
+`fdc_wait_irq → fdc_read_data_reg`, whose `$ff8604` read is nobody's modeled set.
+
+**The false-green set lost exactly eight functions, and no function joined it:**
+
+| fn | bytes | why it left |
+|---|---:|---|
+| `$62d0` `fdc_wait_irq` | 56 | its own `$fffa01` steer is now a declared input |
+| `$6408` `fdc_restore` | 68 | its own `$fffa01` steer, likewise |
+| `$17c74` `snd_music_tick` | 696 | its own `$fffa01` **and** `$ff820a` steers — the pair the Phase 7 model was built from |
+| `$5e3e` `disk_check_signature` | 64 | transitive, witness `disk_check_signature → fdc_restore` |
+| `$637e` `FUN_0000637e` | 56 | transitive, witness `→ fdc_wait_irq` |
+| `$63c0` `FUN_000063c0` | 72 | transitive, witness `→ fdc_wait_irq` |
+| `$6488` `FUN_00006488` | 98 | transitive, witness `→ fdc_wait_irq` |
+| `$17aea` `FUN_00017aea` | 14 | transitive, witness `→ snd_music_tick` |
+
+**Four of the nineteen subsystem rows change at all; the other fifteen are byte-identical:**
+
+| subsystem | before | after |
+|---|---|---|
+| sound (YM2149) | direct **and** transitive worst T4 HW_READ, false-green 2 fns / 710 B | **T2 SEEDED_READ / T2 SEEDED_READ, false-green 0 / 0 B** — the whole subsystem is now declared-input-or-cleaner |
+| disk (WD1772 FDC + DMA) | false-green 6 fns / 468 B | **1 / 118 B** (−5 / −350) |
+| disk (FAT12 + file load) | false-green 6 fns / 630 B | **5 / 566 B** (−1 / −64) |
+| interrupt (VBL) | transitive T2 PSG_SEEDED_READ | **T2 SEEDED_READ** — label only |
+
+**What is left in the false-green 20 / 2,224 B, and it is now a two-source list.** Only three
+functions steer on a read of their own: `$754` `ikbd_acia_handler` (`$fffc02`, the IKBD byte),
+`$f8f0` `ikbd_disable_mouse` (`$fffc00`, transmit-ready) and `$6308` `fdc_wait_irq_bounded`
+(`$ff8609`/`$860b`/`$860d`, the DMA address counter — **it keeps its `$633c` `$fffa01` poll too, but
+that one no longer counts; the DMA reads are what hold it**). The other 17 are transitive: the boot
+chain and the disk stack above those three.
+
+### The new positive control for the false-green counter
+
+The suite's positive control — the case proving `steers` still *fires* — was `$fffa01`, which is now
+exactly the wrong address for the job. It is **`$ff8609`**, the FDC DMA address counter
+`fdc_wait_irq_bounded` polls at `$6314` (a real `STEER` row in `../out/hw_scan.tsv`, not a synthetic
+address). It is the right choice rather than merely an available one: Phase 7 rules the FDC/DMA
+registers out **structurally** — a status byte that must *change* between two reads of the same
+address cannot be expressed by a per-run constant, and `TRAP_MODEL.md` says so under "the explicit
+NON-GOAL" — so it will not quietly become modeled the way `$fffa01` did while still standing as a
+control.
+
+### §6's MFP lever has been built too, and the two named bytes carry all of it
+
+§0g measured Phase 6 against §6's largest predicted lever. The same measurement for Phase 7, on this
+scan: the re-derived rule with **no flags** produces the identical false-green figure to the OLD rule
+run with `--model mfp:read --model shifter:read` — **20 fns / 2,224 B, and the same 20 functions** —
+and those flags on top of the new rule buy **nothing further**. §6 priced a model for those two whole
+BLOCKS; Phase 7 shipped two BYTES of them, and on this program that is the same thing, because every
+steering read in either block is one of the two. Pinned as a case, so a future scan that reaches a
+steering read elsewhere in the MFP or the shifter goes red and says so.
+
+§6's own table is not restated here — its baseline is the 2026-08-02 scan and re-pricing it is the
+separate pass §0g queued as item 3. Its `MFP read model` row (−6 fns / −414 B against that scan) is
+marked in place below as delivered.
+
+### What is pinned
+
+**`tools/test_hw_portability.py`, 56 cases** (was 37), standalone `pytest tools/test_hw_portability.py`:
+
+* the **lattice** grew from 16 shapes to 25 — the two modeled bytes as `T2`, the `$fffffa01` bus
+  alias, a wide read *at* `$ff820a` and one straddling in from `$ff8209`, an unsized read of a
+  modeled address, the byte read of `$ff8209` one address below the set (still `T4`), the
+  `$ff820a` **write** (still `T3`, Wonder Boy's own `$f91c`), `$ff8609` as an unmodeled read, and
+  the two unsized-just-below-a-boundary rows described under "the edge left open" below;
+* the **false-green exclusion** is parametrized over five shapes at seeded addresses, with the new
+  `$ff8609` positive control;
+* the **tripwires** grew by three mutations: a renamed `OS_HW_MFP_GPIP` fails; a kit that grows the
+  set to a THIRD modeled byte fails on `OS_HW_NSLOTS` — the drift the two address pins cannot catch,
+  and the expensive direction, since every pinned name would still match while the tool went on
+  pricing the new address as a silent-zero `T4`; and `shim.c` renaming `hw_read()` fails, the Phase 7
+  half of the behavioural pin that `psg_read_back()` already carried;
+* the **arithmetic** case moves to `(20, 2224)`; both capability pins compare sorted function
+  **sets** rather than `(count, bytes)` totals, so "the same 20 functions" is what is actually
+  pinned; and the script case asserts the new tier label, the stale-write paragraph and its `$f91c`
+  site, that `--model shifter:write` removes that paragraph rather than contradicting the tier
+  tables, and — via a synthetic `--extra-hw` pair — that both new blind-spot sweeps reach code
+  attributed to no function.
+
+### The edge left open, deliberately, in both models
+
+An operand Ghidra could not SIZE is priced as one byte. That decides two things it cannot decide: it
+is priced as **not** the modeled byte shape (pessimistic, so it hard-rejects at a modeled address)
+and as **not** straddling into the PSG block or a seeded byte from just below (optimistic, so an
+unsized read at `$ff8209` or `$ff87ff` prices `T4`-runnable where a real word there would be
+refused). Widening it means assuming a maximum transfer width for an operand nobody could read —
+inventing a refusal rather than measuring one — so the tool **names every unsized operand** in "What
+this method cannot see" instead, and two lattice rows pin today's answer at both models together
+with that caveat. Wonder Boy's scan has **no** unsized operand, so the sweep is silent here; the
+end-to-end case plants one to prove it is not silent by accident. The edge is pre-existing at the
+PSG and was previously unstated; Phase 7 reproduced it exactly, and stating both together is what
+keeps the two models' treatment consistent.
+
+**Mutation-tested against itself, twice** — once on the tier re-derivation and again after the
+review pass moved the sweeps. Twelve deliberate defects: dropping `$ff820a` from the set, a
+start-address test instead of the span test, serving any width at a modeled address, collapsing the
+seeded-surface predicate to its PSG half, a modeled size of 2, unpinning `OS_HW_NSLOTS`, pricing a
+modeled-byte *write* as seeded, deleting the stale-write paragraph, assuming an unsized operand is
+4 bytes wide, making `all_accesses()` skip code attributed to no function, dropping the
+`--model` filter from the stale list, and deleting the unsized sweep. **All twelve caught, none
+survived**, with `__pycache__` purged between runs (§0g's byte-length caveat).
+
+One methodological note worth carrying, because it cost a false result here: a mutation written as
+`old_list and new_list` is a **no-op** in Python — the truthy first operand is discarded and the
+original expression is returned. It reported SURVIVED for a sweep that is in fact covered. Mutate the
+function the sweep calls, not the call site's expression, and re-read any survivor's diff before
+believing it.
+
+### §-consistency: what this falsifies above, marked in place
+
+Nothing above is rewritten. Marked in place where a reader would otherwise carry a stale fact
+forward: the header note (the `T2` rename), §0g's "silent-zero class was checked and is NOT drifted"
+paragraph (**the claim this section retires**), §0g's `$17c74` row and its 37-case count, §3's
+false-green bullet (28 / 3,348 held from the original measurement through §0g and §0h, and moves for
+the first time here), §5's "10 sites in 6 functions", and §6's `MFP read model` / `shifter read
+model` rows plus the `MFP + FDC/DMA` reading beneath them.
+
+**Outside this file, one live doc was falsified and is corrected rather than marked**:
+`docs/on-target-execution.md`'s tier table is the transferable statement of this lattice, so its `T2`
+row now names both models and the seed contract, its `T3` row carries the stale-read consequence, its
+`T4` row is scoped to addresses **outside** the modeled sets, and its change-note distinguishes the
+two same-day moves (§0g renumbered; §0i renamed `T2` without renumbering, so only the label separates
+a report written between them). Its two worked T4 examples — BuggyBoy's `$ffff820a` and Wonder Boy's
+`$fffa01` FDC poll — are both `T2` today; the measurements stand and are marked as the defects the
+tier was named from, with the FDC/DMA status registers named as the live instances.
+
+**Also corrected, and it is a method note rather than a number**: §0's reproduce block listed
+`portability_predictions.py` as a checked step. It has not been re-run since kit Phase 6 — §0g read
+it, §0i could not run it — so the block now says so and points at the queue.
+
+### Still queued (not this pass)
+
+1. **§6 / §6.1's capability table re-priced** — §0g's item 3, now with a second delivered row. Its
+   baseline is still the 2026-08-02 scan.
+2. `notes/portability_predictions.py` — §0g's item 4 is unchanged and now has a second half: its
+   `T4`-tier docstrings describe `$fffa01`/`$ff820a` as unservable. A concurrent port session owns
+   `recreate/`, so the script (which builds the oracle `.so`) was **not** re-run here.
+3. **A `T2` case is only as good as its case's declaration.** `TRAP_MODEL.md`'s "honest limit"
+   applies verbatim to every function this section moved: `snd_music_tick` is now runnable *given* a
+   case that says which machine it means. That `$fffa01 = $b0` / `$ff820a` bit 1 is what a 50 Hz
+   colour ST answers is a documented hardware claim, not a differential result.
+
 ## 2. Method, and what it can and cannot see
 
 `tools/ghidra_scripts/HwPortabilityScan.java` reads Ghidra's **reference model**, not a linear
@@ -925,7 +1209,10 @@ from whether a root reaches it.
 * **At false-green risk** (a control-flow-steering T3 in the subtree):
   **28 / 252 functions, 3,348 / 25,696 bytes = 13.0 %.** A **lower** bound, twice over: §8.5's
   intra-procedural walk misses steers that cross a call, and §5 documents two it demonstrably
-  missed here.
+  missed here. *(Marked in place — §0i. This figure survived §0d, §0g and §0h unchanged and moves
+  for the first time there: kit Phase 7 makes `$fffa01` and `$ff820a` declared case inputs, which
+  takes 8 functions / 1,124 bytes out. Today's measurement is **20 / 258 functions, 2,224 /
+  25,826 bytes = 8.6 %**, and it is still a lower bound for both reasons above.)*
 
 Both roots close to T5, for the same reason: `game_main_loop → FUN_0000053e →
 show_data_disk_prompt → load_resource_by_index → copylock_entry`. That single edge is what makes
@@ -1076,6 +1363,15 @@ honest limit: that a real ST answers `$b0`/`$02`. `tools/recreate_kit/TRAP_MODEL
 
 The classifier reports **10 sites in 6 functions**:
 
+> *(Marked in place — §0i. **5 sites in 3 functions** today. The five `$fffa01`/`$ff820a` rows below
+> — `$62da`, `$633c`, `$6422`, `$17c7e`, `$17c90` — are no longer part of this surface: kit Phase 7
+> serves those two bytes from the case's own `hw_seed=` and refuses a differential that declares
+> neither, so a branch on them is steered by a declared input. The rows are left as the measurement
+> of their day; what each read DECIDES is unchanged and still worth reading, and the "reads as
+> 'done' always" / "always 0" annotations now describe what an UNDECLARED case gets — which a
+> differential refuses rather than runs. The under-count below is unaffected: both `WINDOW` reads it
+> names are FDC registers, outside the modeled set.)*
+
 | insn | in | register | what it decides |
 |---|---|---|---|
 | `$62da` | `fdc_wait_irq` | `$fffa01` bit 5 | FDC done — **reads as "done" always** |
@@ -1130,11 +1426,11 @@ Priced with `--model` / `--stub`, so the cost/benefit is a number:
 | **Copylock stub** (`$ecca` → `rts`, or force `$e7cc := 0`) — **BUILT**, §6.1 | 223 (+3) | 21,770 (+236) | 28 | 3,348 |
 | **PSG read model** | 238 (+18) | 24,228 (+2,694) | 28 | 3,348 |
 | PSG read model **+ Copylock stub** | 251 (+31) | 25,612 (+4,078) | 28 | 3,348 |
-| MFP read model | 220 | 21,534 | 22 (−6) | 2,934 (−414) |
+| MFP read model — **BUILT**, §0i | 220 | 21,534 | 22 (−6) | 2,934 (−414) |
 | FDC/DMA read model | 220 | 21,534 | 28 | 3,348 |
 | **MFP + FDC/DMA read model** | 220 | 21,534 | **10 (−18)** | **1,106 (−2,242)** |
 | ACIA read model | 220 | 21,534 | 26 (−2) | 3,096 (−252) |
-| shifter read model | 220 | 21,534 | 28 | 3,348 |
+| shifter read model — **BUILT**, §0i | 220 | 21,534 | 28 | 3,348 |
 | hardware-WRITE ledger (all blocks) | 220 | 21,534 | 28 | 3,348 |
 | everything above | 251 (+31) | 25,612 (+4,078) | **0** | **0** |
 
@@ -1159,6 +1455,11 @@ Reading it:
 * **An MFP + FDC/DMA read model is the single biggest lever for "is the green real"** — it removes
   18 of the 28 at-risk functions and 2,242 of the 3,348 at-risk bytes. Neither register block alone
   does much; the driver polls both, and one alone leaves the other steering.
+  *(Marked in place — §0i: the MFP and shifter halves are BUILT, as a named set of two BYTES rather
+  than as whole blocks, and on the current scan the two bytes are worth every function the two whole
+  blocks were. The FDC/DMA half is Phase 7's explicit NON-GOAL — a status byte that must change
+  between two reads cannot be expressed by a per-run seed — so this row's remaining value is a
+  transaction model nobody has built, and the whole `−18` was never available from one phase.)*
 * **A hardware-write ledger buys nothing on these two axes** (writes never block a run and never
   steer a branch) but it is what turns the 14 direct-T2 functions / 1,290 bytes from "runs, proves
   nothing about the hardware" into genuinely verified. Those 14 are **not** all video: 6 are FDC/DMA

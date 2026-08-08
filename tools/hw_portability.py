@@ -13,37 +13,57 @@ how much work it costs to run one (shim.c, "memory callbacks"):
   T0 CLEAN            no off-image access at all. The differential sees everything it does.
   T1 PSG_WRITE_ONLY   only byte writes to the PSG's two canonical ports. The shim captures those
                       into an ordered (reg, val) ledger, so they ARE diffable.
-  T2 PSG_SEEDED_READ  also byte-READS the PSG's read-back port. Since the kit's Phase 6
-                      (TRAP_MODEL.md, "Phase 6") shim.c's psg_read_back() SERVES such a read from a
-                      seeded register file and records it in the same ordered ledger, so the value
-                      is declared by the case rather than fabricated, and both sides see it. Ranks
-                      below T3/T4 because nothing about the access is invisible or invented: what
-                      it costs is a CASE OBLIGATION, not fidelity. A case that does not declare the
-                      register — via the harness's `psg_seed=` argument — is REFUSED, loudly,
-                      naming the registers to declare; so this tier can never be a silent green,
-                      only a red until seeded. (Under audio capture both refusals relax and the
-                      file answers 0 where nothing wrote it. No differential runs under capture.)
+  T2 SEEDED_READ      also byte-READS one of the addresses the kit SEEDS: the PSG's read-back port
+                      (Phase 6) or one of the modeled hardware bytes of HW_SEEDED_ADDRS (Phase 7 —
+                      the MFP GPIP $fffa01 and the shifter sync $ff820a). Such a read is served
+                      from a file the CASE declares and recorded in an ordered ledger both sides
+                      keep, so the value is a declared input rather than a fabrication, and both
+                      sides see it. Ranks below T3/T4 because nothing about the access is invisible
+                      or invented: what it costs is a CASE OBLIGATION, not fidelity. A case that
+                      declares neither the register (`psg_seed=`) nor the byte (`hw_seed=`) is
+                      REFUSED, loudly, naming what to declare; so this tier can never be a silent
+                      green, only a red until seeded.
+                      One asymmetry between the two halves, and it does NOT split the tier: the PSG
+                      refusal fires inside `emu.run` for every caller, the hardware one only inside
+                      `harness.differential` (a bare run — a relocator, a Copylock — is served the
+                      old 0 and merely records it). That changes WHO notices an undeclared read,
+                      not what a DIFFERENTIAL verifies, and this lattice orders by the latter.
+                      (Under audio capture both models relax: the PSG file answers 0 where nothing
+                      wrote it, and the hardware bytes are seeded from a fixed capture profile. No
+                      differential runs under capture.)
   T3 HW_WRITE_ONLY    writes other hardware and never reads any. Every such write is silently
                       DROPPED, so the run completes and its memory effects are verifiable while
-                      the hardware effect is invisible: verifiable-but-incomplete.
-  T4 HW_READ          reads non-PSG hardware. The shim answers every such read 0 — with exactly
-                      one exception, the IKBD ACIA status, answered a fixed "ready to send" — and
-                      it answers identically on BOTH sides of a differential, so the diff agrees on
-                      whatever that fabricated value implies. This is where the MFP GPIP ($fffa01)
-                      and shifter sync ($ff820a) bytes land: Phase 6 gave them real answers, but
-                      ONLY under the opt-in audio-capture mode, and no differential runs under it.
-                      Off that mode they still fall through to a silent 0. Split by what consumes
+                      the hardware effect is invisible: verifiable-but-incomplete. A write to a
+                      MODELED byte is dropped too — Phase 7 models what those addresses answer, not
+                      what storing to them does — so it lands here like any other. It does have a
+                      consequence no tier can carry, because it is a property of a RUN rather than
+                      of a function: a later read of an address this run WROTE is refused as stale.
+                      See blind_spots_section(), which names such writes instead of pricing them.
+  T4 HW_READ          reads hardware that neither model covers. The shim answers every such read
+                      0 — with exactly one exception, the IKBD ACIA status, answered a fixed "ready
+                      to send" — and it answers identically on BOTH sides of a differential, so the
+                      diff agrees on whatever that fabricated value implies. Split by what consumes
                       the value:
                         T4-STEER  a conditional branch depends on it: FALSELY GREEN, the
-                                  dangerous tier (BuggyBoy's $ffff820a music-tempo branch).
+                                  dangerous tier. BuggyBoy's $ffff820a music-tempo branch is the
+                                  defect this class was named from, and it is exactly why that
+                                  address is a T2 today; the live example is an FDC status poll,
+                                  which Phase 7 rules out of its set on purpose (TRAP_MODEL.md,
+                                  "the explicit NON-GOAL") because a per-run seed cannot express a
+                                  register that must CHANGE between two reads.
                         T4-DATA   the value is only stored or discarded: merely incomplete.
-  T5 HARD_REJECT      an access to the PSG block the shim refuses outright, whatever the case
-                      declares: a read of the write-only data port or of any mirror, ANY non-byte
-                      access to the block, any odd-alias write. `emu.run` rejects the whole run,
-                      and NOTHING lifts it — not even the audio-capture mode, whose relaxations
-                      reach only the T2 read-back and the two T4 profile bytes. shim.c's
-                      psg_note_unmodeled() has no capture guard at all. "Cannot be verified" here
-                      means by any mode the kit has.
+  T5 HARD_REJECT      an access to a modeled block that is refused whatever the case declares, so
+                      no differential can verify the function. Two sources:
+                        - the PSG block: a read of the write-only data port or of any mirror, ANY
+                          non-byte access to the block, any odd-alias write. `emu.run` rejects the
+                          whole run and NOTHING lifts it — not even the audio-capture mode, whose
+                          relaxations reach only the T2 read-back; shim.c's psg_note_unmodeled()
+                          has no capture guard at all;
+                        - a 16/32-bit read taking in one of HW_SEEDED_ADDRS (including one
+                          straddling in from below): the transfer also takes in the neighbouring
+                          MFP/shifter registers, which the model would have to fabricate as 0, so
+                          it is recorded and never served and `harness.differential` refuses it.
+                          No `hw_seed=` can lift that one either.
   T6 UNMEASURABLE     inside a region named by --exclude: code that cannot be read statically
                       at all (self-decrypting protection), so there is no source text to port.
 
@@ -74,6 +94,12 @@ Usage:
                 block+direction, so `psg:read` also clears shapes no real model could serve (a
                 read of the write-only data port, a wide transfer) — read such a result as an
                 upper bound, and check the hardware-functions table for those shapes first.
+                THREE of these capabilities are BUILT and are already in the default numbers:
+                `psg:read` (kit Phase 6) and the two bytes of `mfp:read`/`shifter:read` the kit's
+                Phase 7 seeds. Passing one now prices only the REST of that block — every OTHER
+                MFP or shifter register — and prices it at the same upper bound, because
+                `is_covered` short-circuits ahead of every refusal: under the flag a wide read over
+                a modeled byte reads as CLEAN, which no model would give it.
 
 Writes a Markdown report to stdout. Exits non-zero if the scan classified nothing.
 """
@@ -106,22 +132,31 @@ PSG_BLOCK_END = 0xFF8900
 PSG_MODELED_PORTS = (PSG_SELECT, PSG_DATA)
 PSG_READBACK_PORT = PSG_SELECT
 PSG_MODELED_SIZE = 1
-# shim.c's seeded read-back — the function whose existence IS the T2 tier (see the tier list above
-# and check_seeded_read_model()). Named once so the pin and the failure message cannot disagree.
+# shim.c's two seeded reads — the functions whose existence IS the T2 tier (see the tier list above
+# and check_seeded_read_model()): the PSG register file's read-back (Phase 6) and the modeled
+# hardware bytes' (Phase 7). Named once each so the pin and the failure message cannot disagree.
 #
 # Matched as a DEFINITION, never as a bare substring. A substring check was measured to pass on a
 # shim that had RENAMED the function and merely kept the old name in a comment — which ships the T2
 # over-count, the worst failure this pin exists to prevent. A C definition at file scope starts in
 # column 0 with its return type, so requiring that shape rejects both a comment line (starts with
 # `/` or ` *`) and a call site (indented).
-SEEDED_READ_FN = "psg_read_back"
-SEEDED_READ_DEF = re.compile(r"^[A-Za-z_][A-Za-z_0-9 \t*]*\b%s\s*\(" % SEEDED_READ_FN, re.MULTILINE)
+SEEDED_READ_FNS = ("psg_read_back", "hw_read")
+SEEDED_READ_DEF = r"^[A-Za-z_][A-Za-z_0-9 \t*]*\b%s\s*\("
+# The kit's Phase 7 SEEDED HARDWARE READ set: the hardware bytes outside the PSG that a case may
+# DECLARE, exactly as Phase 6 lets it declare the chip's registers. os.h owns the table (os_hw_addrs)
+# because both sides decode it; these are the same addresses in the 24-bit form BUS_ADDR_MASK folds
+# an access to. Only a BYTE read of one is served — a wider transfer takes in the neighbouring
+# MFP/shifter registers the model knows nothing about, so it is refused instead (see T5).
+HW_MFP_GPIP, HW_SHIFTER_SYNC = 0xFFFA01, 0xFF820A
+HW_SEEDED_ADDRS = (HW_MFP_GPIP, HW_SHIFTER_SYNC)
+HW_SEEDED_SIZE = 1
 # The one off-image READ shim.c does not answer 0: the IKBD ACIA status reads back "transmit
 # register empty" so a send loop terminates. Still a fabricated constant, so still a T4 read —
 # named here because a reader who believes "every read returns 0" will mis-explain that loop.
 IKBD_STATUS = 0xFFFC00
 
-# The kit is the authority for all five constants above. CLAUDE.md §5: a value that must agree
+# The kit is the authority for every constant above. CLAUDE.md §5: a value that must agree
 # across a language boundary gets ONE canonical definition and the other is pinned equal by a
 # test. This module cannot import C, so it re-reads the #defines instead — see
 # check_shim_agreement(), called from main().
@@ -137,7 +172,13 @@ OS_H = KIT / "include" / "os.h"
 PINNED_CONSTANTS = (
     (SHIM_C, {"BUS_ADDR_MASK": BUS_ADDR_MASK, "PSG_BLOCK_END": PSG_BLOCK_END,
               "IKBD_STATUS": IKBD_STATUS}),
-    (OS_H, {"OS_PSG_PORT_SELECT": PSG_SELECT, "OS_PSG_PORT_DATA": PSG_DATA}),
+    (OS_H, {"OS_PSG_PORT_SELECT": PSG_SELECT, "OS_PSG_PORT_DATA": PSG_DATA,
+            "OS_HW_MFP_GPIP": HW_MFP_GPIP, "OS_HW_SHIFTER_SYNC": HW_SHIFTER_SYNC,
+            # The set's SIZE, not just its members: pinning only the two addresses would let the
+            # kit add a third modeled byte while this module went on pricing it T4 HW_READ —
+            # under-counting what a differential verifies, and silently, since every pinned name
+            # still matched. os.h keeps the count as a slot total, so that is what is compared.
+            "OS_HW_NSLOTS": len(HW_SEEDED_ADDRS)}),
 )
 # The value a pinned `#define` must have, anchored at BOTH ends: an unanchored group happily reads
 # `0xff8800` out of `0xff8800 | SOMETHING_ELSE` and pins a constant the kit does not actually have.
@@ -145,9 +186,9 @@ PINNED_CONSTANTS = (
 # trailing comment is ordinary too; anything else ends the pin loudly rather than quietly.
 PINNED_DEFINE = r"^#define\s+%s\s+(0x[0-9a-fA-F]+|\d+)[uUlL]*[^\S\n]*(?:/[/*].*)?$"
 
-(T_CLEAN, T_PSG_WRITE, T_PSG_SEEDED_READ, T_HW_WRITE, T_HW_READ, T_HARD_REJECT,
+(T_CLEAN, T_PSG_WRITE, T_SEEDED_READ, T_HW_WRITE, T_HW_READ, T_HARD_REJECT,
  T_UNMEASURABLE) = range(7)
-TIER_NAMES = ["T0 CLEAN", "T1 PSG_WRITE_ONLY", "T2 PSG_SEEDED_READ", "T3 HW_WRITE_ONLY",
+TIER_NAMES = ["T0 CLEAN", "T1 PSG_WRITE_ONLY", "T2 SEEDED_READ", "T3 HW_WRITE_ONLY",
               "T4 HW_READ", "T5 HARD_REJECT", "T6 UNMEASURABLE"]
 STEER_VERDICT = "STEER"
 UNATTRIBUTED_FN = "-"          # the scan's marker for code inside no function
@@ -202,21 +243,23 @@ def check_shim_agreement():
 
 
 def check_seeded_read_model(shim_text):
-    """Fail loudly if shim.c no longer carries the seeded read-back that T2 is priced on.
+    """Fail loudly if shim.c no longer carries the seeded reads that T2 is priced on.
 
-    T2 says a byte read of the PSG read-back port is SERVED rather than refused. That is a
-    BEHAVIOUR, not a value, so no `#define` pins it; what pins it is the DEFINITION of the function
-    implementing it (SEEDED_READ_DEF — a substring would also match the name left behind in a
-    comment, which was measured to let a rename through). A kit that dropped or renamed it would
-    leave this module pricing those reads as runnable while the oracle had gone back to refusing
-    them — the same class of silent drift Phase 6 already caused once, and the worse direction of
-    it: an over-count reads as progress.
+    T2 says a byte read of the PSG read-back port, or of a modeled hardware byte, is SERVED from a
+    declaration rather than refused or fabricated. That is a BEHAVIOUR, not a value, so no `#define`
+    pins it; what pins it is the DEFINITION of each function implementing it (SEEDED_READ_DEF — a
+    substring would also match the name left behind in a comment, which was measured to let a rename
+    through). A kit that dropped or renamed one would leave this module pricing those reads as
+    declared while the oracle had gone back to refusing or fabricating them — the same class of
+    silent drift Phase 6 already caused once, and the worse direction of it: an over-count reads as
+    progress.
     """
-    if SEEDED_READ_DEF.search(shim_text):
-        return
-    sys.exit("%s no longer defines %s(), which is the whole basis of %s — re-derive that tier "
-             "against the kit's current PSG read model before trusting any number this prints."
-             % (SHIM_C, SEEDED_READ_FN, TIER_NAMES[T_PSG_SEEDED_READ]))
+    for name in SEEDED_READ_FNS:
+        if re.search(SEEDED_READ_DEF % name, shim_text, re.MULTILINE):
+            continue
+        sys.exit("%s no longer defines %s(), which is half the basis of %s — re-derive that tier "
+                 "against the kit's current seeded read models before trusting any number this "
+                 "prints." % (SHIM_C, name, TIER_NAMES[T_SEEDED_READ]))
 
 
 def hw_block(addr):
@@ -248,44 +291,78 @@ class Access:
         return (self.block, "read" if self.is_read else "write") in self.modeled
 
     @property
+    def span(self):
+        """Bytes the transfer covers. An operand Ghidra could not size counts as ONE, which is the
+        blind edge both span tests below share: an unsized access sitting just BELOW a modeled
+        address is judged not to reach it, while a real word/long there would straddle in and be
+        refused. It is stated rather than widened — widening means assuming a maximum transfer
+        width for an operand nobody could read, which invents a refusal instead of measuring one.
+        `unsized_accesses()` names every such operand in the report so the edge is never silent."""
+        return self.size or 1
+
+    @property
     def in_psg_block(self):
         """Does the TRANSFER touch the PSG block? shim.c's psg_block_touched() tests the whole
         access, not its first byte, so a long read straddling into $ff8800 from below is refused
         too — testing only the start address would call such a function runnable."""
-        span = self.size or 1
-        return self.masked < PSG_BLOCK_END and self.masked + span > PSG_SELECT
+        return self.masked < PSG_BLOCK_END and self.masked + self.span > PSG_SELECT
+
+    @property
+    def touches_seeded_hw(self):
+        """Does the TRANSFER take in one of the Phase 7 modeled bytes? A span test, mirroring
+        os.h's os_hw_slots_touched(), so a word read straddling INTO $ff820a from $ff8209 is caught
+        the way the oracle catches it — testing only the start address would price such a read as
+        ordinary hardware and hide a refusal."""
+        return any(self.masked <= addr < self.masked + self.span for addr in HW_SEEDED_ADDRS)
+
+    @property
+    def at_seeded_surface(self):
+        """Does the access touch an address one of the kit's two seeded models owns, in ANY shape?
+
+        Both the false-green count and the fabricated-STORE list turn on this one question, and they
+        must answer it identically: a shape the model SERVES is a declared input and a shape it
+        REFUSES never completes a differential, so neither is a fabrication either list may claim.
+        Spelling it twice was how the two could drift apart."""
+        return self.in_psg_block or self.touches_seeded_hw
 
     @property
     def tier(self):
         """The tier this ONE access forces. A function takes the worst of its accesses."""
         if self.is_covered:
             return T_CLEAN
-        if not self.in_psg_block:
-            return T_HW_READ if self.is_read else T_HW_WRITE
-        # Inside the PSG block only the BYTE protocol is modeled at all. A wider transfer takes in
-        # neighbouring registers the model knows nothing about, so shim.c refuses it whatever
-        # address it starts at — check the size before the address, or a 16-bit access at the
-        # select port would be priced as if it were the modeled one.
-        if self.size != PSG_MODELED_SIZE:
-            return T_HARD_REJECT
-        if self.is_read:
-            return T_PSG_SEEDED_READ if self.masked == PSG_READBACK_PORT else T_HARD_REJECT
-        return T_PSG_WRITE if self.masked in PSG_MODELED_PORTS else T_HARD_REJECT
+        if self.in_psg_block:
+            # Inside the PSG block only the BYTE protocol is modeled at all. A wider transfer takes
+            # in neighbouring registers the model knows nothing about, so shim.c refuses it whatever
+            # address it starts at — check the size before the address, or a 16-bit access at the
+            # select port would be priced as if it were the modeled one.
+            if self.size != PSG_MODELED_SIZE:
+                return T_HARD_REJECT
+            if self.is_read:
+                return T_SEEDED_READ if self.masked == PSG_READBACK_PORT else T_HARD_REJECT
+            return T_PSG_WRITE if self.masked in PSG_MODELED_PORTS else T_HARD_REJECT
+        # Phase 7 seeds a READ of a modeled byte; a WRITE to one is dropped like any other hardware
+        # write, so it falls through to the tiers below. Same size-before-address order as the PSG:
+        # a wide read over a modeled address is refused, not served, and an operand Ghidra could not
+        # size is not assumed to be the byte shape either.
+        if self.is_read and self.touches_seeded_hw:
+            return T_SEEDED_READ if self.size == HW_SEEDED_SIZE else T_HARD_REJECT
+        return T_HW_READ if self.is_read else T_HW_WRITE
 
     @property
     def steers(self):
         """A read a branch depends on — the false-green case. A --model capability that answers
         the read correctly takes it out of the count.
 
-        A PSG-block read is never counted, and since Phase 6 that holds for two different reasons.
-        A read the model REFUSES (T5) cannot be falsely green because the run does not complete. A
-        read it SERVES (T2) cannot either: the byte comes from the case's own `psg_seed` or from a
-        write this run already made, so a branch on it is steered by a declared input rather than
-        by a fabrication — and an undeclared one is refused, not guessed.
+        A read of a SEEDED address is never counted, for the two reasons that hold on both halves of
+        that model. A shape it REFUSES (T5) cannot be falsely green because the differential does
+        not complete. A shape it SERVES (T2) cannot either: the byte comes from the case's own
+        `psg_seed`/`hw_seed`, so a branch on it is steered by a declared input rather than by a
+        fabrication — and an undeclared one is refused, not guessed. That covers the whole PSG block
+        and the whole Phase 7 modeled set, refused shapes included.
         """
         if self.is_covered:
             return False
-        return self.is_read and not self.in_psg_block and self.steer == STEER_VERDICT
+        return self.is_read and self.steer == STEER_VERDICT and not self.at_seeded_surface
 
 
 class Function:
@@ -490,9 +567,9 @@ def headline_numbers(scan, tier, steers):
     total_n, total_b = len(scan.funcs), sum(f.size for f in scan.funcs.values())
     return ["### The two numbers that decide a reconstruction order", "",
             "- **Runnable end-to-end under the oracle** (no %s/%s anywhere in the subtree; a %s "
-            "subtree is runnable only from a case that declares its `psg_seed`): "
+            "subtree is runnable only from a case that declares its `psg_seed`/`hw_seed`): "
             "**%d/%d functions, %d/%d bytes = %.1f %%**."
-            % (tier_num(T_HARD_REJECT), tier_num(T_UNMEASURABLE), tier_num(T_PSG_SEEDED_READ),
+            % (tier_num(T_HARD_REJECT), tier_num(T_UNMEASURABLE), tier_num(T_SEEDED_READ),
                len(runnable), total_n, sum(scan.funcs[a].size for a in runnable), total_b,
                100.0 * sum(scan.funcs[a].size for a in runnable) / total_b),
             "- **At false-green risk** (a control-flow-steering %s in the subtree): "
@@ -583,15 +660,23 @@ def stored_reads_section(scan):
     """T4-DATA reads whose value reaches a memory write: incomplete rather than falsely green,
     but the value that lands in the image is fabricated, so it is worth naming separately.
 
-    PSG-block reads are left out, which is the whole point of the section's title. A served one is a
-    DECLARED input (the case's `psg_seed`, or a write this run already made), and a refused one
-    never reaches the store at all; listing either as a fabricated value that landed in the image
-    would be the opposite of what happens. They are visible instead as the `psg-R` column of the
-    hardware-functions table, where their tier says which of the two they are.
+    SEEDED reads are left out, which is the whole point of the section's title. A served one is a
+    DECLARED input — the case's `psg_seed`/`hw_seed`, or, at the PSG only, a write this run already
+    made — and a refused one never reaches the store at all; listing either as a fabricated value
+    that landed in the image would be the opposite of what happens. (The two models differ exactly
+    there: a PSG register the run wrote reads back as what it wrote, while a MODELED HARDWARE byte
+    the run wrote is refused as STALE, because the model drops hardware writes and the seed then
+    describes a machine the program has already changed.)
+
+    Which of the two a given site is, this section cannot say and does not: it is per-ACCESS, while
+    a tier is per-FUNCTION and reports the worst access, so a function holding both a served read
+    and a refused one shows one tier for both. Read the site's own address and size against the
+    lattice in this module's header. The hardware-functions table's `psg-R` / `mfp-R` / `shifter-R`
+    columns say only that such a site exists.
     """
     rows = [(a, scan.funcs[addr]) for addr in sorted(scan.funcs)
             for a in scan.funcs[addr].accesses
-            if a.is_read and a.stored and not a.steers and not a.in_psg_block]
+            if a.is_read and a.stored and not a.steers and not a.at_seeded_surface]
     if not rows:
         return []
     out = ["### Hardware reads whose fabricated value is STORED (%s-DATA, not falsely green)"
@@ -600,6 +685,20 @@ def stored_reads_section(scan):
     for a, f in rows:
         out.append("| `%#x` | %s | `%#x` %s | `%s` |" % (a.insn, f.name, a.masked, a.block, a.text))
     return out + [""]
+
+
+def all_accesses(scan):
+    """Every access the scan produced, each with a label for the code holding it.
+
+    Includes the accesses attributed to NO function — they live outside `scan.funcs`, so a sweep
+    that walks functions alone silently omits them, and a report claiming to name EVERY site of some
+    kind must not be built that way.
+    """
+    for f in sorted(scan.funcs.values(), key=lambda f: f.entry):
+        for a in f.accesses:
+            yield a, f.name
+    for a in scan.unattributed:
+        yield a, "code in no function"
 
 
 def blind_spots_section(scan, exclusions, roots, reach):
@@ -620,6 +719,38 @@ def blind_spots_section(scan, exclusions, roots, reach):
             out.append("  - `%#x` -> `%#x` %s %s%s: `%s`"
                        % (a.insn, a.masked, a.block or "no known block",
                           "READ" if a.is_read else "WRITE", " (STEERS)" if a.steers else "", a.text))
+    # The one Phase 7 refusal a per-function tier cannot express. Emitted only when the program
+    # really writes a modeled byte, and naming the sites, so it reads as a measured hazard rather
+    # than a standing disclaimer. Swept over EVERY access, orphan code included — a write sitting in
+    # one of the runs above is exactly as able to make a later read stale, and the claim this bullet
+    # makes is "every write to a seeded byte". A --model'd write is left out: the tier tables price
+    # it CLEAN under that flag, and a report that priced it clean and listed it as dropped in the
+    # same breath would contradict itself.
+    stale = [(a, where) for a, where in all_accesses(scan)
+             if not a.is_read and a.touches_seeded_hw and not a.is_covered]
+    if stale:
+        out.append("- **%d write(s) to a SEEDED hardware byte**, which are dropped like any other "
+                   "hardware write (%s above) — but a later read of an address THIS RUN wrote is "
+                   "served the byte the case declared the machine held on entry, and a differential "
+                   "refuses that as stale, unfixable by any declaration. Whether one run does both "
+                   "is a property of the RUN, not of a function, so it is in no tier here; these "
+                   "are the sites a case has to be read against:" % (len(stale),
+                                                                     tier_num(T_HW_WRITE)))
+        for a, where in stale:
+            out.append("  - `%#x` in `%s` -> `%#x`: `%s`" % (a.insn, where, a.masked, a.text))
+    # The blind edge of both span tests (Access.span), named where it can be acted on: an operand
+    # nobody could size is assumed ONE byte, so one sitting just below a modeled address is judged
+    # not to reach it while a real word/long there would straddle in and be refused.
+    unsized = [(a, where) for a, where in all_accesses(scan) if a.size is None]
+    if unsized:
+        out.append("- **%d off-image access(es) Ghidra could not SIZE.** Each is priced as if it "
+                   "were one byte wide, which decides two things it cannot actually decide: whether "
+                   "it is the modeled BYTE shape (it is priced as not, pessimistically) and whether "
+                   "it STRADDLES into the PSG block or a seeded hardware byte from below (it is "
+                   "priced as not, optimistically). Read the operand before trusting either:"
+                   % len(unsized))
+        for a, where in unsized:
+            out.append("  - `%#x` in `%s` -> `%#x`: `%s`" % (a.insn, where, a.masked, a.text))
     unknown = [a for f in scan.funcs.values() for a in f.accesses if a.block is None]
     if unknown:
         out.append("- **%d off-image access(es) that decode to NO known hardware block.** Each is "

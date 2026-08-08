@@ -46,16 +46,27 @@ The tiers are the shim's own behaviour, restated per function:
 |---|---|---|
 | T0 CLEAN | no off-image access | it means what you think |
 | T1 PSG_WRITE_ONLY | the modelled write ledger (PSG bytes, `Dosound`) captures it | verified, including the off-image effect |
-| T2 PSG_SEEDED_READ | the PSG read-back is **served** from a register file the case seeds, and ledgered | verified — the value is a declared input, and an undeclared one is refused, never guessed |
-| T3 HW_WRITE_ONLY | the write is silently dropped | the memory effect is verified; **the hardware effect is untested** |
-| T4 HW_READ | the read returns 0, on BOTH sides | **falsely green** if a branch depends on it; merely incomplete if not |
+| T2 SEEDED_READ | a byte read of an address either seeded model owns — the PSG read-back port, or one of the hardware bytes `$fffa01` / `$ff820a` — is **served** from a file the case declares (`psg_seed=` / `hw_seed=`) and recorded in an ordered ledger both sides keep | verified — the value is a declared input, and an undeclared one is refused, never guessed. What it costs is a **case obligation**: the case must say which machine it means |
+| T3 HW_WRITE_ONLY | the write is silently dropped, seeded bytes included | the memory effect is verified; **the hardware effect is untested**. A later read of an address the run WROTE is refused as stale, which no declaration can fix |
+| T4 HW_READ | the read returns 0, on BOTH sides — for every address **outside** the two modeled sets | **falsely green** if a branch depends on it; merely incomplete if not |
 | T5 HARD_REJECT | the run is refused, and no mode lifts it | not verifiable at all |
 | T6 UNMEASURABLE | the code cannot be read statically (self-decrypting protection) | there is no source text to port |
 
-> Tier NUMBERS changed on 2026-08-07 when `T2 PSG_SEEDED_READ` was inserted (kit Phase 6 made the
-> PSG read-back servable; see `projects/wonderboy/recreate/PORTABILITY.md` §0g for the old→new
-> mapping). **Any report generated before that date uses the old six-tier numbering**, in which
-> today's T3/T4/T5/T6 were T2/T3/T4/T5.
+> The table above moved **twice on 2026-08-07**, and the two changes are different in kind — a
+> report has to be read against the right one:
+>
+> 1. **Tier NUMBERS changed** when `T2 PSG_SEEDED_READ` was inserted (kit Phase 6 made the PSG
+>    read-back servable; `projects/wonderboy/recreate/PORTABILITY.md` §0g has the old→new mapping).
+>    **Any report generated before that uses the old six-tier numbering**, in which today's
+>    T3/T4/T5/T6 were T2/T3/T4/T5.
+> 2. **Then T2 was RENAMED, not renumbered** — `PSG_SEEDED_READ` → `SEEDED_READ` — when kit Phase 7
+>    made `$fffa01` and `$ff820a` seeded bytes of the same kind (§0i). Numbering is unchanged, so
+>    only the LABEL distinguishes a report from between the two changes; in one of those, those two
+>    addresses read as T4. They are T2 today, and the eight functions that left the false-green
+>    count with them are named in §0i.
+>
+> A 16/32-bit read taking a seeded byte in is **T5**, not T2: the model would have to fabricate the
+> register beside it, so it is recorded and refused, and no seed lifts it.
 
 **T4-with-a-branch is the tier to hunt.** T5 announces itself — the run fails, loudly, and so does a
 T2 whose seed the case forgot to declare. T4 does not: the same wrong value reaches both sides and
@@ -74,6 +85,14 @@ branch that consumes it, not a count of operands. Two measured examples of what 
   driver state, so "the driver reports success" was true of the polls and false of the driver.
   A T4 read makes the code believe a fiction; which fiction, and what each caller does with it, is
   a separate measurement per entry point.
+
+> Both examples above are **T2 today**, and they are why: kit Phase 7 put exactly those two
+> addresses in the seeded set, so a differential that declares neither is now refused instead of run
+> (§0i). The measurements stand — what a `0` in those bytes DOES is unchanged, and a case is free to
+> declare a `0` — but the fiction is now written down in the case rather than invented by the shim.
+> Read them as the defects the tier was named from, not as live instances of it; the live ones are
+> the FDC/DMA status registers, which Phase 7 deliberately leaves unmodeled because a per-run seed
+> cannot express a register that must CHANGE between two reads.
 
 Three rules the measurement itself has to follow:
 

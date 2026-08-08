@@ -278,6 +278,11 @@ out of the 25,696 bytes Ghidra has put inside a function body, which is 46.8 % o
   module.
 * **28 functions (3,348 bytes, 13.0 %) are at FALSE-GREEN risk**, and that is a *lower* bound — a
   conditional branch below them depends on a hardware read the shim answers `0` on both sides.
+  *(This figure held from the original measurement through §0g/§0h and moved for the FIRST time in
+  PORTABILITY.md §0i, 2026-08-07: kit Phase 7 made `$fffa01`/`$ff820a` seeded case inputs, so the
+  count is now **20 functions / 2,224 bytes** — the leavers are the tempo tier and the two
+  `$fffa01`-polling FDC waits, each named in §0i. The paragraph below stays as the record of WHY
+  those addresses were the class's worked examples.)*
   Proven, not argued: under the oracle this game's floppy *polls* report a flawless error-free
   transfer on their first status test while moving nothing (the MFP FDC line is active low), the
   *commands* above them then reject that fabricated status and report hard failure, and the music
