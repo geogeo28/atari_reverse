@@ -44,6 +44,7 @@ import harness  # noqa: F401  — binds the kit; the imports below only work aft
 import emu
 import leaf
 import loader
+from layout import wb
 
 # snd_psg_silence's PSG traffic: `select reg 7 / read it back / ori.b #$3f / write it back`, then
 # the three volume registers zeroed. MIXER_ALL_OFF is the mask it ORs in — all six tone+noise bits.
@@ -58,18 +59,23 @@ PSG_SILENCE_VOLUME_WRITES = [(reg, 0) for reg in PSG_VOLUME_REGS]
 # case tells a real read-back apart from a zero one: $3f alone is what BOTH produce.
 PSG_PORT_DIR_BITS = 0xc0
 
-# What the tempo selector writes at `snd_tick_drop_value`, per ../notes/sound_module_recon.md §4:
-# the fraction of ticks dropped, out of 256. The mono value is what unmodeled (0-returning) hardware
-# reads select, and it is 28% of every tick silently discarded.
-TEMPO_SKIP_50HZ_COLOUR = 0x00
-TEMPO_SKIP_MONO = 0x48
+# What the tempo selector writes at `snd_tick_drop_value` (../notes/sound_module_recon.md §4): the
+# fraction of ticks dropped, out of 256. The mono value is what unmodeled (0-returning) hardware
+# reads select, and it is 28% of every tick silently discarded. From the header src/sound.c reads,
+# since batch 25 ported the selector — restating them here would let the mode's claim and the port's
+# constants drift.
+TEMPO_SKIP_50HZ_COLOUR = wb("SND_TICK_DROP_50HZ")
+TEMPO_SKIP_MONO = wb("SND_TICK_DROP_MONO")
 
 # The chip's register-select latch (shim.c's `#define PSG_SELECT`). Its odd alias is +1 and the data
 # port +2, spelled as offsets from this one address rather than as literals of their own so that the
 # three cannot drift apart — and the address itself is leaf.py's, since test_sound.py names it too.
 PSG_SELECT = leaf.PSG_SELECT
-# The shifter's sync-mode byte (shim.c's `#define SHIFTER_SYNC`), half of the tempo pair.
-SHIFTER_SYNC = 0xff820a
+# The shifter's sync-mode byte, half of the tempo pair. leaf.py's, for PSG_SELECT's reason — and it
+# is no longer shim.c's `#define SHIFTER_SYNC` (deleted when Phase 7 folded the mode into the seeded
+# model): the address the model serves is os.h's OS_HW_SHIFTER_SYNC, and test_sound.py pins leaf's
+# pair equal to `emu.HW_ADDRS` so the two cannot drift.
+SHIFTER_SYNC = leaf.SHIFTER_SYNC
 
 # The data register every snippet below reads a port into; `emu.run` reports it back by name.
 READ_BACK_REG = 1
@@ -271,9 +277,14 @@ def test_a_wide_read_of_a_machine_profile_byte_is_refused_in_capture_mode():
     """The tempo bytes are served as BYTES and only as bytes.
 
     `move.w $ff820a,d1` takes in the shifter register next door, which the model knows nothing about
-    and would have to fabricate as 0 — the mode answers two named bits, not a machine. Off the mode
-    this same read is an ordinary off-image read answered 0 (the T3 tier in
-    `../PORTABILITY.md`), so the refusal is the mode's own and has to be pinned under it.
+    and would have to fabricate as 0 — the model answers named bytes, not a machine.
+
+    WHAT IS CAPTURE-ONLY IS THE RAISE, NOT THE REFUSAL, and this docstring said otherwise until batch
+    25. Since Phase 7 the wide-read mask (`osh_hw_wide()`) is recorded on EVERY run and
+    `harness.differential` refuses on it in every differential; off the mode a bare `emu.run` still
+    serves the ordinary off-image 0, because a bare run verifies nothing and so cannot be falsely
+    green. `emu.run` raises here because an extractor has no diff to catch it and no second chance —
+    which is why this case has to be pinned under the mode.
     """
     with emu.audio_capturing():
         with pytest.raises(RuntimeError, match=PROFILE_REFUSAL):

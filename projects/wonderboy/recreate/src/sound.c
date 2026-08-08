@@ -22,6 +22,7 @@
  * a 32-bit base, so the descriptor always lands within 32 KiB either side of the module.
  */
 #include "bus.h"
+#include "hw.h"
 #include "machine.h"
 #include "os.h"
 #include "psg.h"
@@ -822,10 +823,11 @@ snd_step_result snd_channel_step(uint8_t *image, uint32_t record, uint32_t sfx_c
     return SND_STEP_RETURNED;
 }
 
-/* ---- $17ca0: the tick body ----------------------------------------------------------------------
+/* ---- $17ca0: the tick body, and $17c74's tempo selector below it ---------------------------------
  *
- * Everything above this line is what it calls. The 44 bytes ABOVE it are the tempo selector, which
- * reads two hardware registers and is not ported (sound.h).
+ * Everything above this line is what the tick calls. The 44 bytes ABOVE $17ca0 in the image are the
+ * tempo selector; they are at the BOTTOM of this file, because they read two hardware bytes and so
+ * are the one thing here that needs the body already written to fall into (sound.h).
  */
 
 /* `rol.b #n,Dn` — and for channel A, no instruction at all, which is a rotate by zero. The tick's
@@ -1025,4 +1027,27 @@ void snd_music_tick_body(uint8_t *image) {
     if (!mix_sfx_into_shadow(image))
         return;
     write_shadow_to_psg(image);
+}
+
+/* $17c78..$17c9f — the tempo selector's THREE-WAY CHOICE, as the value it settles on.
+ *
+ * The original stores WB_SND_TICK_DROP_50HZ unconditionally at $17c78 and overwrites it on the two
+ * arms that do not want it; a value returned here and stored once by the caller leaves the same
+ * byte, and says which of the three the machine chose.
+ *
+ * THE READ COUNT IS OBSERVABLE and is the point of the shape: the sync register is read only on the
+ * colour arm, exactly as the `bne.s $17c90` at $17c86 skips over it. Both sides' ordered read stream
+ * is compared, so a port that read both bytes every time — or read them in the other order — is
+ * separable from this one by nothing else, since neither read touches the image. */
+static uint8_t tempo_drop_value(void) {
+    if (!(hw_read8(OS_HW_MFP_GPIP) & WB_MFP_GPIP_COLOUR_MONITOR))
+        return WB_SND_TICK_DROP_MONO;
+    if (!(hw_read8(OS_HW_SHIFTER_SYNC) & WB_SHIFTER_SYNC_50HZ))
+        return WB_SND_TICK_DROP_60HZ;
+    return WB_SND_TICK_DROP_50HZ;
+}
+
+void snd_music_tick(uint8_t *image) {
+    image[WB_SND_TICK_DROP_VALUE] = tempo_drop_value();
+    snd_music_tick_body(image);            /* $17c8e/$17c98 `bra.s`/`bne.s` and the fall-through */
 }

@@ -69,8 +69,10 @@ the SFX mixdown and the chip write. Two things about it are worth stating before
     — with the PSG ledger as the proof that the rest of the tick never ran.
 
 KNOWINGLY NOT PINNED
-  * EVERYTHING THE TRIGGER ARMS. It sets a channel's state and returns; the sound is made by the
-    tick, which is not ported. A green suite here says nothing about audio.
+  * WHAT IS HEARD. The tick and everything it calls ARE ported now, and the chip surface is a real
+    one — an ordered ledger of up to fifteen accesses per tick and a register file — but it is
+    register values, not sound. A green suite says the right bytes reached the right PSG registers
+    in the right order and says nothing about the audio.
   * THE MODULE'S OTHER MUTABLE STATE — the music channel states, the PRNG and the globals besides
     the engine flag, the SFX-active flags and the four PSG shadow bytes the stop chain clears.
     Nothing here models the rest: the write set each case allows is exactly its routine's, so a port
@@ -83,9 +85,11 @@ KNOWINGLY NOT PINNED
     What IS observable is the saved SR arriving in d2, and one case asserts it.
   * WHAT AN SFX SOUNDS LIKE, or what a descriptor field means beyond the role
     ../notes/sound_module_recon.md read off the tick.
-  * THE 44-BYTE TEMPO HEAD at $17c74, which reads $fffa01 and $ff820a. No memory differential can
-    answer either; all it can hand the body is the one drop byte at $17c6e, and a case pokes all
-    three of the values it can write. No case enters at $17c74.
+  * THAT A REAL ST ANSWERS $fffa01 AND $ff820a THE WAY A CASE DECLARES. The 44-byte tempo head at
+    $17c74 branches on both, and the cases declare them with `hw_seed=` (TRAP_MODEL.md, "Phase 7")
+    — so what is pinned is "given these bytes, both cores agree", never "the machine holds them".
+    `hw_seed={$fffa01: $b0, $ff820a: $02}` is a claim about a 50 Hz colour ST, documented rather
+    than measured, and it is the kit's own honest limit rather than this battery's.
   * $98..$b7, the one branch of the ported code that is not reproduced: the dispatch reads a word of
     the handlers' own instruction stream as a jump target. No shipped pattern byte is one.
 """
@@ -260,6 +264,11 @@ PERIOD_SCRATCH = wb("SND_PERIOD_SCRATCH")
 SPEED_ACC = wb("SND_SPEED_ACC")
 TICK_DROP_VALUE = wb("SND_TICK_DROP_VALUE")
 TICK_DROP_ACC = wb("SND_TICK_DROP_ACC")
+TICK_DROP_50HZ = wb("SND_TICK_DROP_50HZ")
+TICK_DROP_60HZ = wb("SND_TICK_DROP_60HZ")
+TICK_DROP_MONO = wb("SND_TICK_DROP_MONO")
+GPIP_COLOUR_MONITOR = wb("MFP_GPIP_COLOUR_MONITOR")   # $fffa01 bit 7, the tempo head's first test
+SYNC_50HZ = wb("SHIFTER_SYNC_50HZ")                   # $ff820a bit 1, its second
 MASTER_VOLUME_MASK = wb("SND_MASTER_VOLUME_MASK")
 MASTER_VOLUME_FULL = wb("SND_MASTER_VOLUME_FULL")
 MIXER_CHANNEL_A_BITS = wb("SND_MIXER_CHANNEL_A_BITS")
@@ -415,6 +424,7 @@ MOVE_B_D16_PC_DN = 0x103a
 MOVE_L_AN_D16_AM = 0x2148
 MOVE_B_IND_AN_D16_AM = 0x1150
 BTST_IMM_D16_AN = 0x0828
+BTST_IMM_ABS_L = 0x0839         # btst #imm,<abs>.l — the tempo head's two machine tests
 CMP_B_IMM_DN = 0xb03c           # cmp.b #imm,Dn.  ALSO IN test_text.py (`cmp_b_imm_dn`)
 BNE_S = 0x6600
 MOVEM_L_TO_PREDEC_A7 = 0x48e7   # ALSO IN test_hud.py, inside `MOVEM_L_SAVE_A0_A1`'s literal
@@ -749,6 +759,16 @@ def _shift_imm(count, reg, left):
 def _immediate_b(base_opcode, reg, value):
     """`andi.b`/`addi.b`/`eori.b #imm,Dn` — the byte immediate occupies a whole word."""
     return opcode(base_opcode | reg) + word(value & BYTE_MASK)
+
+
+def _btst_imm_abs_l(bit, address):
+    """`btst #n,<abs>.l` — the tempo head's two machine tests, and this battery's alone.
+
+    Eight bytes: the opcode word with the absolute-long effective address already in it, the BIT
+    NUMBER in an extension word of its own, and the 24-bit bus address as a longword. `btst_imm_dn`
+    next door is the register form and shares neither field layout nor length.
+    """
+    return opcode(BTST_IMM_ABS_L) + word(bit) + longword(address)
 
 
 def _tst_b(address):
@@ -1195,7 +1215,7 @@ INDEX_IS_ADDRESS_REG = 0x8000   # bit 15 of an extension word: the index is An a
 SHIFT_TYPE_ROTATE = 0x18        # the type field at bits 4-3, where LSHIFT_LOGICAL is 01 and this 11
 ST_D16_AN = 0x50e8              # st d16(An) — Scc with the always-true condition, SF_D16_AN's twin
 
-TEMPO_HEAD_BYTES = 44           # $17c74..$17c9f, the two hardware reads this batch does NOT port
+TEMPO_HEAD_BYTES = 44           # $17c74..$17c9f, the two hardware reads and the byte they choose
 CHANNEL_STEP_BODY_BYTES = 258   # $18106..$18207
 PATTERN_HANDLER_BYTES = 306     # $17fd4..$18105 — the 24 handlers, BELOW the routine they belong to
 TICK_BODY_BYTES = 644           # $17ca0..$17f23
@@ -1617,7 +1637,31 @@ def _tick_body_entry():
     ])
 
 
+def _tempo_head_entry():
+    """$17c74: the module base, the DEFAULT drop value, and the two hardware tests that overwrite it.
+
+    Both `btst`s carry their bit number in an extension word and their address as an absolute LONG,
+    so this pin is over the bit AND the address at once — a port reading the neighbouring MFP
+    register, or testing bit 6, fails here before any case runs. Both branch displacements come from
+    the length of the arm they skip, so the three-way shape is the pin's claim and not a transcribed
+    number.
+    """
+    base = leaf.entry_of("snd_music_tick")
+    sixty_hz = [leaf.move_b_imm_d16(A3, TICK_DROP_60HZ, _module_displacement(TICK_DROP_VALUE))]
+    colour_arm = [_btst_imm_abs_l(SYNC_50HZ.bit_length() - 1, leaf.SHIFTER_SYNC),
+                  _branch_s(BNE_S, sixty_hz)] + sixty_hz
+    mono_arm = [leaf.move_b_imm_d16(A3, TICK_DROP_MONO, _module_displacement(TICK_DROP_VALUE)),
+                _branch_s(BRA_S, colour_arm)]
+    return leaf.assemble(base, [
+        _lea_pc(A3, MODULE_BASE),
+        leaf.move_b_imm_d16(A3, TICK_DROP_50HZ, _module_displacement(TICK_DROP_VALUE)),
+        _btst_imm_abs_l(GPIP_COLOUR_MONITOR.bit_length() - 1, leaf.MFP_GPIP),
+        _branch_s(BNE_S, mono_arm),
+    ] + mono_arm + colour_arm)
+
+
 ENTRY_BYTES = {
+    "snd_music_tick": _tempo_head_entry(),
     "snd_trigger_effect": _trigger_entry(),
     "snd_call_trigger_effect": _stub(*_TRIGGER_STUB),
     "snd_psg_silence": _silence_entry(),
@@ -1629,7 +1673,7 @@ ENTRY_BYTES = {
     "snd_channel_step": _channel_step_entry(),
     "snd_music_tick_body": _tick_body_entry(),
 }
-SOUND_ROUTINE_COUNT = 10
+SOUND_ROUTINE_COUNT = 11
 
 # The caps, from the bodies, each the body's own instruction count plus the one instruction osh_run
 # counts past its `rts` (leaf.RUNNER_SENTINEL_INSN — measured here first, hoisted there once three
@@ -2630,9 +2674,10 @@ def _armed_pokes(effect_id, channels, prng, salt, flags=None, overrides=None):
                     overrides or {})
 
 
-def _run_tick_sequence(name, glue, model, cap, what, pokes, ticks, regs=None, psg_seed=None):
+def _run_tick_sequence(name, glue, model, cap, what, pokes, ticks, regs=None, psg_seed=None,
+                       hw_seed=None, hw_events=()):
     """``ticks`` consecutive differentials of one per-VBL routine, each entered on the state the last
-    one left. BOTH routines this file ticks go through here — $1a5da and $17ca0.
+    one left. All three routines this file ticks go through here — $1a5da, $17ca0 and $17c74.
 
     A single tick reaches almost nothing — a freshly armed effect spends its first ticks counting
     down — so the sequence is what walks the volume stream, empties the duration and reaches the
@@ -2648,6 +2693,16 @@ def _run_tick_sequence(name, glue, model, cap, what, pokes, ticks, regs=None, ps
     continuous chip timeline: what carries between ticks is memory, and what the mixer merge sees at
     each tick is the seed. Stated because it bounds what these cases can claim.
 
+    ...AND NEITHER IS THE MACHINE, for the same reason and with the same shape: ``hw_seed`` declares
+    what $fffa01 and $ff820a held on ENTRY to each run, re-installed per run on both sides, so a
+    sequence is N ticks of ONE declared machine rather than a machine that could change under the
+    replayer. Which is what a real frame is, so the limit costs nothing here.
+
+    ``hw_events`` is the ordered ``(address, byte)`` stream that declaration IMPLIES, and a case
+    passing ``hw_seed`` states it. ``harness.differential`` compares the two sides' streams to each
+    other; nothing there says the oracle read anything at all, so without this a case whose entry
+    point never reached a `btst` would compare two empty streams and pass.
+
     ``model(memory, psg_seed)`` steps the model in place and returns the off-image surfaces to
     compare, or None for a routine that touches no port.
     """
@@ -2657,10 +2712,16 @@ def _run_tick_sequence(name, glue, model, cap, what, pokes, ticks, regs=None, ps
         memory = _Memory(_poked_image(pokes))
         surfaces = model(memory, psg_seed)
         info = leaf.run(name, glue, write_bands(memory.written), label,
-                        regs={**(regs or {}), "_pokes": pokes}, max_insns=cap, psg_seed=psg_seed)
+                        regs={**(regs or {}), "_pokes": pokes}, max_insns=cap, psg_seed=psg_seed,
+                        hw_seed=hw_seed)
         assert_written(info, memory.written, label)
         if surfaces is not None:
             assert_psg_surfaces(info, surfaces.events, surfaces.values, surfaces.known, label)
+        if hw_seed is not None:
+            assert info["regs"]["hw_events"] == list(hw_events), (
+                f"{label}: the oracle's modeled hardware reads were "
+                f"{info['regs']['hw_events']}, not the {list(hw_events)} this case's declaration "
+                f"implies — that stream is the whole of what a hardware branch leaves behind")
         pokes = overlay(pokes, memory.written)
     return pokes, info
 
@@ -4458,17 +4519,19 @@ def test_the_hand_over_case_that_is_refused_leaves_the_flag_as_it_found_it():
 # reads register 7 back and the merge keeps the bits the module does not own, so the byte the chip
 # held is an INPUT of the run and inventing it would be a false green.
 #
-# THE TEMPO HEAD IS NOT PORTED. $17c74..$17c9f reads $fffa01 and $ff820a and writes one byte from
-# them, so a case POKES WB_SND_TICK_DROP_VALUE — all three of the values the head can write — and
-# enters below it. Nothing here reaches the head, and ../STATUS.md records the boundary.
+# THE CASES HERE ENTER BELOW THE TEMPO HEAD, and that is now a case-design choice rather than a
+# boundary: they POKE WB_SND_TICK_DROP_VALUE, so all three of the values the head can write are
+# reached with no machine to declare. The head itself is the section after next, entered at $17c74
+# with `hw_seed=` — and a tiling case there is what says the byte these poke is the byte it writes.
 
 TICK_BODY_INSNS = 160           # $17ca0's own instruction count, 644 bytes at ~4 bytes each
 TICK_INSN_CAP = (TICK_BODY_INSNS + SFX_TICK_INSN_CAP + CHANNELS * CHANNEL_STEP_INSN_CAP
                  + CHANNELS * PERIOD_VOLUME_INSN_CAP + STOP_INSN_CAP + leaf.RUNNER_SENTINEL_INSN)
 _tick = leaf.image_glue("snd_music_tick_body")
 
-# The three values the tempo selector can leave in WB_SND_TICK_DROP_VALUE, and nothing else can.
-TICK_DROP_VALUES = (0, 0x2b, 0x48)      # 50 Hz colour, 60 Hz colour, mono
+# The three values the tempo selector can leave in WB_SND_TICK_DROP_VALUE, and nothing else can —
+# from the header the reconstruction reads, so this file cannot state a value the port does not.
+TICK_DROP_VALUES = (TICK_DROP_50HZ, TICK_DROP_60HZ, TICK_DROP_MONO)
 TICK_MIXER = MIXER_DIRECTION_BITS   # what TOS leaves: both port-direction bits set,
                                 # which is the same byte and the same meaning as the
                                 # stop chain's own MIXER_SEEDS[0]
@@ -4696,8 +4759,9 @@ def _tick_body_model(memory, psg_seed):
 
 def _run_tick(what, pokes, mixer=TICK_MIXER, ticks=1):
     """A3 IS AN ENTRY REGISTER HERE. $17ca0's first instruction is `tst.b 2250(a3)` — the `lea` is in
-    the TEMPO HEAD, which this batch does not port — so the body inherits the module base exactly as
-    $18106, $18208 and $1aaca do."""
+    the TEMPO HEAD above it — so the body inherits the module base exactly as $18106, $18208 and
+    $1aaca do. `_run_whole_tick` below is the one runner that does NOT seed it, because entering at
+    $17c74 runs that `lea`."""
     return _run_tick_sequence("snd_music_tick_body", _tick, _tick_body_model, TICK_INSN_CAP,
                               what, pokes, ticks, regs={"a3": MODULE_BASE},
                               psg_seed={PSG_REG_MIXER: mixer})[1]
@@ -4750,7 +4814,7 @@ def test_the_gate_admits_the_tick_on_the_engine_flag_or_any_of_the_four_sfx_byte
     _tick_case(f"the tick's gate: {why}", globals_=globals_)
 
 
-# --- the tick DROPPER, which is what the unported tempo head feeds ---------------------------------
+# --- the tick DROPPER, which is what the tempo head feeds ------------------------------------------
 # Both sides of the wrap for each of the three values the head can write. The mutants: a carry test
 # inverted, an `add.w` where the `add.b` is (the wrap would never happen), and a drop value read from
 # the accumulator's own address.
@@ -4776,8 +4840,12 @@ def test_the_drop_accumulator_skips_a_whole_tick_on_its_carry(drop, accumulator,
 
 
 def test_the_drop_sweep_covers_the_three_values_the_tempo_head_can_write():
-    """The guard on the sweep, and the whole of what the unported head contributes: it writes ONE
-    byte, and these are its three values."""
+    """The guard on the sweep: the head writes ONE byte, and these are its three values.
+
+    The rows above keep the literals while `TICK_DROP_VALUES` comes from the header, so the two sides
+    stay independent statements. That the head really WRITES each of them, and to this address, is
+    the tempo section's own tiling cases — this one is about the sweep's coverage of the body.
+    """
     assert {drop for drop, _acc, _why in TICK_DROP_CASES} == set(TICK_DROP_VALUES)
 
 
@@ -5015,11 +5083,265 @@ def test_five_ticks_of_an_armed_effect_run_both_engines_at_once():
                armed={1: 1}, globals_={SPEED_ACC: 0xc0}, ticks=TICK_SEQUENCE_TICKS)
 
 
+# --- $17c74: the TEMPO HEAD, and with it the whole tick ---------------------------------------------
+#
+# THE MODULE'S ONLY HARDWARE-STEERED CODE, and the first consumer anywhere of the kit's SEEDED
+# HARDWARE READ model (TRAP_MODEL.md, "Phase 7"). 44 bytes that read two bytes outside the image and
+# write one byte inside it, and the reason they were the sound module's last unported ones: before
+# Phase 7 both reads answered a fabricated 0 on BOTH sides, so a port of this could not be wrong.
+# `../PORTABILITY.md` §4 records what that looked like — a green run in 12 instructions, and the
+# `$ffff820a` defect BuggyBoy shipped to real hardware, present here before a line was ported.
+#
+# THE CASES DECLARE A BIT, NOT A MACHINE. Each profile below is the tested bit alone and its
+# COMPLEMENT — $80/$7f for the GPIP, $02/$fd for the sync — so every other bit of the byte carries
+# the opposite value and a port testing bit 6 or bit 0 instead reads the branch backwards. The
+# machine's real bytes are one further case, taken from `emu.hw_capture_profile()` rather than
+# restated, and the kit's own suite makes the same choice for the same reason.
+#
+# THE MUTANTS, named before the grid: the three drop values swapped or wrong (each row carries one
+# value, so each dies on its own row); either `btst` off by one (the complement bytes are what make
+# that visible); either branch sense inverted (`bne` read as `beq` sends every row to the wrong arm);
+# the sync register read UNCONDITIONALLY, which no image byte can show and which the mono row's read
+# stream is the only witness to; and the two reads in the other order, which the stream catches
+# because the two addresses carry different declared bytes.
+
+# The bit's CLEAR meaning, as the byte with every OTHER bit set. The bit's SET meaning is the mask
+# itself, spelt as the header's own name below. GPIP bit 7 is the mono-monitor detect line and is
+# ACTIVE LOW — SET means a COLOUR monitor — so GPIP_MONO is the one with bit 7 clear.
+GPIP_MONO = GPIP_COLOUR_MONITOR ^ BYTE_MASK
+SYNC_AT_60HZ = SYNC_50HZ ^ BYTE_MASK
+
+# The three machines the selector can be on, each as the declaration that puts it there.
+TEMPO_MACHINES = {
+    "mono": {leaf.MFP_GPIP: GPIP_MONO, leaf.SHIFTER_SYNC: SYNC_50HZ},
+    "colour_60hz": {leaf.MFP_GPIP: GPIP_COLOUR_MONITOR, leaf.SHIFTER_SYNC: SYNC_AT_60HZ},
+    "colour_50hz": {leaf.MFP_GPIP: GPIP_COLOUR_MONITOR, leaf.SHIFTER_SYNC: SYNC_50HZ},
+}
+# The mono row declares the sync byte it must NOT read, and declares it to the arm that would write a
+# DIFFERENT drop value — so a port that fell through to the sync test reds on the image as well as on
+# the read stream. Over-declaring is ordinary and the kit leaves it alone (its own case says so).
+
+# The head's longest arm — `lea`, the default store, `btst`, `bne`, `btst`, `bne`, the 60 Hz store.
+# The mono arm is six (`lea`, store, `btst`, `bne`, store, `bra`) and the 50 Hz arm six.
+TEMPO_HEAD_INSNS = 7
+WHOLE_TICK_INSN_CAP = TICK_INSN_CAP + TEMPO_HEAD_INSNS
+_whole_tick = leaf.image_glue("snd_music_tick")
+
+
+def _tempo_drop_value(hw_seed):
+    """The selector, as the two `btst`+`bne` pairs read — the model's own statement of it, so a
+    reconstruction that got the polarity backwards is contradicted rather than agreed with.
+
+    A CLEAR GPIP bit 7 is a monochrome monitor (the line is active low); a CLEAR sync bit 1 is 60 Hz.
+    Both branches are `bne`, so both arms below are the bit's CLEAR meaning.
+    """
+    if not hw_seed[leaf.MFP_GPIP] & GPIP_COLOUR_MONITOR:
+        return TICK_DROP_MONO
+    if not hw_seed[leaf.SHIFTER_SYNC] & SYNC_50HZ:
+        return TICK_DROP_60HZ
+    return TICK_DROP_50HZ
+
+
+def _tempo_hw_events(hw_seed):
+    """...and the ordered read stream that same walk makes. DERIVED from the value above rather than
+    re-deciding the branch: the sync byte is read exactly when the mono arm was not taken."""
+    events = [(leaf.MFP_GPIP, hw_seed[leaf.MFP_GPIP])]
+    if _tempo_drop_value(hw_seed) != TICK_DROP_MONO:
+        events.append((leaf.SHIFTER_SYNC, hw_seed[leaf.SHIFTER_SYNC]))
+    return events
+
+
+def _whole_tick_model(hw_seed):
+    """$17c74: the selector's byte into WB_SND_TICK_DROP_VALUE, and then the whole of $17ca0.
+
+    Writing the byte THROUGH `_Memory` is what makes the tiling real — the model does not hand the
+    value to the body, it stores it where the head stores it and lets the body's own accumulator read
+    it back, so a head writing the right value to the wrong address reds on the body's arithmetic.
+    """
+    def model(memory, psg_seed):
+        memory.byte(TICK_DROP_VALUE, _tempo_drop_value(hw_seed))
+        psg = _Psg(psg_seed)
+        _model_tick(memory, psg)
+        return psg
+    return model
+
+
+def _whole_tick_case(what, hw_seed, ticks=1, **kwargs):
+    """One whole-tick differential, entered at $17c74 on the machine `hw_seed` declares.
+
+    A3 IS NOT AN ENTRY REGISTER HERE, and this is the one routine of the tier where it is not:
+    $17c74's first instruction is the `lea $1738c(pc),a3` that every other entry inherits. So no case
+    below seeds a3, and a port that expected one would run the tick against a base of whatever the
+    runner left. The mixer is `TICK_MIXER` and not a parameter: no case here is about a mixer other
+    than the one TOS leaves, and the body's own runner already sweeps that.
+    """
+    return _run_tick_sequence("snd_music_tick", _whole_tick, _whole_tick_model(hw_seed),
+                              WHOLE_TICK_INSN_CAP, what, _tick_pokes(leaf.case_salt(what), **kwargs),
+                              ticks, psg_seed={PSG_REG_MIXER: TICK_MIXER}, hw_seed=hw_seed,
+                              hw_events=_tempo_hw_events(hw_seed))[1]
+
+
+@pytest.mark.parametrize("machine", sorted(TEMPO_MACHINES))
+def test_the_tempo_selector_picks_the_drop_value_the_declared_machine_gives(machine):
+    """One whole tick per machine, entered at $17c74 and run to the `rts` — the first time any case
+    in this project has run the tick end to end.
+
+    What each proves beyond the body's own cases: the drop byte the head writes is the byte the
+    body's accumulator adds, the two hardware reads happened in the right order and no others did,
+    and the module base came from the head's own `lea`.
+    """
+    hw_seed = TEMPO_MACHINES[machine]
+    info = _whole_tick_case(f"a whole tick on a {machine} machine", hw_seed)
+    assert leaf.read_bytes(info, TICK_DROP_VALUE, 1) == bytes([_tempo_drop_value(hw_seed)]), (
+        f"{machine}: the selector left the wrong drop value in {TICK_DROP_VALUE:#x}")
+
+
+def test_the_three_machines_are_the_three_drop_values_and_nothing_else():
+    """The guard on the grid above: three declarations, three DISTINCT outcomes, and they are exactly
+    the three the header says the head can write. A grid two of whose rows landed on the same value
+    would pin one arm twice and the third not at all."""
+    chosen = [_tempo_drop_value(hw_seed) for hw_seed in TEMPO_MACHINES.values()]
+    assert sorted(chosen) == sorted(TICK_DROP_VALUES)
+
+
+def test_the_mono_arms_expected_read_stream_stops_at_the_gpip():
+    """The GUARD on the one claim here that NO image byte can carry: `bra.s $17ca0` at $17c8e skips
+    the sync test, so a mono machine never touches the shifter. A port that read both bytes every
+    time writes the same drop value and leaves the same image; only the stream is one entry longer.
+
+    The DIFFERENTIAL proof is the mono rows above and below — every `_whole_tick_case` compares the
+    oracle's stream against `_tempo_hw_events`. What no run can check is whether that expectation is
+    self-fulfilling, so this states the model's own answer, which is the only thing left to get
+    wrong. (Measured: the both-reads mutant is caught by the mono rows and by nothing else.)
+    """
+    assert _tempo_hw_events(TEMPO_MACHINES["mono"]) == [(leaf.MFP_GPIP, GPIP_MONO)]
+
+
+def test_the_capture_profile_is_a_fifty_hertz_colour_machine():
+    """THE MACHINE'S REAL BYTES, and the reconciliation the audio extraction rests on.
+
+    `emu.hw_capture_profile()` declares $fffa01 = $b0 and $ff820a = $02. $b0 has bit 7 SET — and
+    because the mono-detect line is ACTIVE LOW that means a COLOUR monitor, not a monochrome one —
+    while its bits 5 and 4 are the FDC and ACIA interrupt lines, also active low and so set because
+    idle. $02 has sync bit 1 set: 50 Hz. So the profile selects WB_SND_TICK_DROP_50HZ, no tick is
+    dropped, and the captured songs play at the speed the composer wrote — which is what
+    ../out/audio was extracted under.
+
+    Asserted through a real differential rather than by reading the bytes, because the claim is about
+    what the SELECTOR does with them. The bytes themselves come from the kit, not restated here.
+
+    IT IS ALSO A PIN ON THE TWO MASKS ACROSS FILES. `WB_MFP_GPIP_COLOUR_MONITOR` and
+    `WB_SHIFTER_SYNC_50HZ` are the game's own `btst` operands, and the kit names only the addresses,
+    so this is the one case that runs the selector on the machine the KIT declares. It is a partial
+    pin and says so: $b0 carries bits 7, 5 and 4, so a GPIP mask drifting onto 5 or 4 still reaches
+    the colour arm here — caught instead by the entry pin (which assembles the bit NUMBER from the
+    mask) and by GPIP_MONO, which is $7f and has both of them set.
+    """
+    profile = emu.hw_capture_profile()
+    assert _tempo_drop_value(profile) == TICK_DROP_50HZ
+    _whole_tick_case("a whole tick on the audio-capture profile's own machine", profile)
+
+
+def test_a_tick_entered_at_the_head_declaring_no_machine_is_refused():
+    """THE FALSE GREEN, stated from this project's side — the psg_seed case's twin one model over.
+
+    Undeclared, both cores read 0 for both bytes, both take the MONO arm, both write $48 and the
+    differential agrees with itself: green, and wrong on every colour ST the game shipped for. So the
+    refusal is what this port's honesty rests on, exactly as `snd_psg_silence`'s is.
+
+    IT IS A DIFFERENT REFUSAL FROM THE PSG MODEL'S, and the difference is the point. An undeclared
+    PSG read sinks `emu.run` itself and raises RuntimeError for every caller; an undeclared hardware
+    read is SERVED and merely recorded, and only `harness.differential` refuses — so this arrives as
+    an AssertionError, and a bare `emu.run` of the same entry (test_audio_capture.py's) still works.
+
+    The MIXER is declared, because it must be: an undeclared register-7 read-back would sink the run
+    inside `emu.run` first and this case would pass for the other model's reason.
+
+    THE REFUSAL NAMES ONE ADDRESS, NOT TWO, and that is the defect drawn from life: the fabricated 0
+    took the mono arm, so the shifter was never reached and the run has no undeclared read of it to
+    report. A reader who declares only what the message asks for gets the sync byte's refusal on the
+    next run. Matched exactly, because "it named both" would mean the branch did not steer.
+    """
+    what = "a whole tick declaring no machine at all"
+    with pytest.raises(AssertionError, match=r"hw_seed=\{0xfffa01: <byte>\} "):
+        leaf.run("snd_music_tick", _whole_tick, [], what,
+                 regs={"_pokes": _tick_pokes(leaf.case_salt(what))},
+                 max_insns=WHOLE_TICK_INSN_CAP, psg_seed={PSG_REG_MIXER: TICK_MIXER})
+
+
+# The drop value each machine gives, against an accumulator ONE BELOW its wrap and AT it. This is the
+# TILING CASE: the head writes $17c6e, the body reads it one instruction later, and an accumulator
+# chosen from the head's own arithmetic is what says the two meet on that byte rather than on two.
+TEMPO_TILING_CASES = tuple(
+    (machine, accumulator, carries)
+    for machine, hw_seed in sorted(TEMPO_MACHINES.items())
+    if _tempo_drop_value(hw_seed)                       # a drop of 0 can never carry — its own case
+    for accumulator, carries in ((BYTE_LIMIT - _tempo_drop_value(hw_seed) - 1, False),
+                                 (BYTE_LIMIT - _tempo_drop_value(hw_seed), True)))
+
+
+@pytest.mark.parametrize("machine,accumulator,carries", TEMPO_TILING_CASES,
+                         ids=[f"{c[0]}_acc_{c[1]:02x}" for c in TEMPO_TILING_CASES])
+def test_the_drop_byte_the_head_writes_is_the_byte_the_body_accumulates(machine, accumulator,
+                                                                        carries):
+    """Either side of the wrap the DECLARED MACHINE puts the accumulator on.
+
+    The accumulator is derived from the machine, not stated: $ff - $2b for a 60 Hz one, $ff - $48 for
+    a mono one. So a head that wrote its value to the wrong address, or wrote the other machine's
+    value, lands on the other side of the carry and the whole tick runs when it should have been
+    dropped — visible as the SFX engine's writes, the chip's fifteen accesses and the row step, none
+    of which a case entering at $17ca0 on a poked byte could attribute to the head.
+    """
+    hw_seed = TEMPO_MACHINES[machine]
+    outcome = "the tick is dropped whole" if carries else "the tick runs"
+    info = _whole_tick_case(f"a {machine} tick over an accumulator of {accumulator:#04x} — "
+                            f"{outcome}", hw_seed, globals_={TICK_DROP_ACC: accumulator})
+    assert bool(info["regs"]["psg_events"]) != carries, (
+        f"{machine}: the carry decides whether the chip is written at all, and it did not")
+
+
+def test_the_fifty_hertz_machine_never_drops_a_tick():
+    """The third machine's own tiling claim, which the grid above cannot make: its drop value is 0, so
+    an accumulator of $ff still does not carry and the tick always runs."""
+    info = _whole_tick_case("a 50 Hz colour tick over an accumulator of $ff",
+                            TEMPO_MACHINES["colour_50hz"], globals_={TICK_DROP_ACC: BYTE_MASK})
+    assert leaf.read_bytes(info, TICK_DROP_ACC, 1) == bytes([BYTE_MASK]), (
+        "the accumulator moved, so the head did not leave the 50 Hz value in the drop byte")
+    assert info["regs"]["psg_events"], "the tick was dropped, which a drop value of 0 cannot do"
+
+
+@pytest.mark.parametrize("machine", sorted(TEMPO_MACHINES))
+def test_five_whole_ticks_of_a_song_on_each_machine(machine):
+    """The tick end to end, five frames deep, on each of the three machines at once — the head, the
+    dropper, the SFX engine, the fade, the row step, the period pass, the mixdown and the chip.
+
+    Multi-tick is what makes the DROPPER's effect cumulative rather than incidental: at $2b the
+    accumulator wraps once in every 5.95 ticks and at $48 once in every 3.56, so five ticks of the
+    mono machine drop one and five of the 60 Hz one drop none — different frames of the same song,
+    reached from nothing but the declared bytes.
+    """
+    _whole_tick_case(f"five whole ticks of a song on a {machine} machine", TEMPO_MACHINES[machine],
+                     records={index: {CH_DURATION: 2, CH_FLAGS: CH_FLAG_ENVELOPE | CH_FLAG_VIBRATO}
+                              for index in range(CHANNELS)},
+                     ticks=TICK_SEQUENCE_TICKS)
+
+
+def test_the_two_declared_addresses_are_the_ones_the_model_serves():
+    """leaf.py spells the pair as literals — a fact about the GAME's `btst` operands, checkable
+    against the disassembly — and the kit owns the set the model actually serves. Pin them equal
+    here, the way the kit's own smoke project does, so a slot renumbered in os.h fails as a drift
+    rather than as "the tick did not read the tempo pair"."""
+    assert (leaf.MFP_GPIP, leaf.SHIFTER_SYNC) == emu.HW_ADDRS
+
+
 # --- the tier's own geometry ------------------------------------------------------------------------
 
 def test_the_tick_body_begins_where_the_tempo_selector_ends_and_ends_where_the_stop_does():
-    """Self-bounding at both ends, which is what says the 44 bytes this batch does NOT port are
-    exactly the head: $17c74 plus them is the body's entry, and the body plus its 644 is snd_stop."""
+    """Self-bounding at all three joints, which is what says the head and the body TILE $17c74..$17f23
+    between them: the head's own 44 assembled bytes end at the body's entry, and the body plus its
+    644 is snd_stop. Nothing between them is unaccounted for, and neither pin can pass on a body of
+    the wrong length."""
+    assert len(ENTRY_BYTES["snd_music_tick"]) == TEMPO_HEAD_BYTES
     assert leaf.entry_of("snd_music_tick") + TEMPO_HEAD_BYTES \
         == leaf.entry_of("snd_music_tick_body")
     assert len(ENTRY_BYTES["snd_music_tick_body"]) == TICK_BODY_BYTES

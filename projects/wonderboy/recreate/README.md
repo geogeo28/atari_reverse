@@ -108,10 +108,13 @@ src/sound.c                the sound module: snd_trigger_effect ($1a48a) and the
                            below it ($17fd4..$18105) — one flow graph, since the stepper's last
                            instruction is the `jmp` that enters a handler and every handler but one
                            branches back into its body — and snd_music_tick_body ($17ca0), which is
-                           snd_music_tick under its 44-byte tempo head. That head is the module's
-                           last unported piece below stub +14: it reads $fffa01 and $ff820a, which
-                           no memory differential can answer, and all it writes is the one drop byte
-                           a case pokes
+                           snd_music_tick under its 44-byte tempo head. And that HEAD, snd_music_tick
+                           ($17c74) itself: the module's last unported bytes and the only code in
+                           this project steered by hardware. It branches on $fffa01 bit 7 and
+                           $ff820a bit 1, so a case DECLARES both with leaf.run(..., hw_seed=) — the
+                           kit's seeded hardware read model (TRAP_MODEL.md, "Phase 7"), whose first
+                           consumer anywhere this is — and one that declares nothing is refused
+                           rather than served the fabricated 0 both cores used to agree on
 src/hud.c                  panel_refresh_frame ($b346) below its own entry: batch 2's eleven leaves
                            (the BCD score/counter accumulators, the panel blits, the meter's clamped
                            add), batch 3's second tier (the digit plotter — a leaf too — its three
@@ -188,7 +191,11 @@ test/leaf.py               shared driver for LEAF routines: entry points looked 
                            routine does, the address-keyed seeding they all build their images
                            from, the game's own two screen buffers (two batteries draw into them),
                            and the second stop PC a routine needs when it returns PAST its caller's
-                           next call by rewriting its own return address
+                           next call by rewriting its own return address. It also forwards the two
+                           OFF-IMAGE declarations a case can make — psg_seed (the YM2149's register
+                           contents) and hw_seed ($fffa01/$ff820a, whose addresses it names) — since
+                           a capability the kit grows is unreachable from a leaf case until this
+                           file threads it
 test/layout.py             include/wonderboy.h's constants, scraped from that header (one source of truth)
 test/test_layout.py        that scraper's own cases — it refuses a duplicate or an octal-ambiguous #define
 test/test_bootstrap.py     the foundation battery: the loader, the self-relocation, the trap inventory

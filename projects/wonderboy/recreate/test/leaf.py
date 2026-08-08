@@ -41,6 +41,16 @@ RUNNER_SENTINEL_INSN = 1
 PSG_SELECT = 0xff8800
 PSG_DATA = PSG_SELECT + 2
 
+# The two hardware bytes the kit's SEEDED READ model serves (TRAP_MODEL.md, "Phase 7"), as the
+# 24-bit bus addresses the game's own `btst`s carry — $17c7e reads the first, $17c90 the second.
+# Spelt here rather than unpacked from `emu.HW_ADDRS` because they are a fact about the GAME's
+# operands, which the disassembly can be checked against, and because unpacking would silently
+# assume which slot is which; test_sound.py pins the pair equal to the model's own table, so a slot
+# renumbered in os.h cannot leave a battery declaring an address the model no longer names.
+# test_audio_capture.py reads them from here for PSG_SELECT's reason.
+MFP_GPIP = 0xfffa01
+SHIFTER_SYNC = 0xff820a
+
 # The game's own two screen buffers (../names.txt: screen_back starts at $70000, screen_front
 # $78000, and clear_both_screens clears $70000..$7fd00 — exactly the two back to back). Every
 # battery whose routines DRAW takes its destination from one of them, because a destination comes
@@ -169,7 +179,7 @@ def merge_bands(addresses):
 
 
 def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_CAP, stop_pc=0,
-        psg_seed=None):
+        psg_seed=None, hw_seed=None):
     """Run ``name``'s original under the oracle and the reconstruction on the same image.
 
     Requires the two to agree byte for byte over the whole image, and the original to have written
@@ -204,10 +214,21 @@ def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_C
     and inventing them is a false green: `snd_psg_silence`'s `ori.b #$3f` over the mixer is this
     project's case, and test_sound.py holds it. Seed or none, the harness compares both sides' access
     ledger and register file afterwards — neither is in the image, so nothing else could.
+
+    ``hw_seed`` is ``{address: byte}`` over the modeled hardware set (``MFP_GPIP``/``SHIFTER_SYNC``
+    above), the bytes the case declares those addresses held on ENTRY, seeded identically into both
+    cores (TRAP_MODEL.md, "Phase 7"). Same rule as ``psg_seed`` and a sharper one: these bytes STEER
+    a branch, so an undeclared read is not merely uncompared — both cores are served a fabricated 0,
+    take the same wrong arm, and agree. `snd_music_tick`'s tempo selector is this project's case, and
+    test_sound.py holds it. The refusal differs from the PSG model's in WHERE it fires: an undeclared
+    PSG read sinks `emu.run` itself, while an undeclared hardware read is served and recorded and
+    only ``differential`` refuses — so this one surfaces as an AssertionError, not a RuntimeError.
+    Both sides' ordered read stream and declared-byte file are compared afterwards; neither is in the
+    image, so a port that skipped a read or read the WRONG modeled address has no other surface.
     """
     diffs, info = differential(entry_of(name), dict(regs or {}), glue,
                                max_insns=max_insns, poison=poison, stop_pc=stop_pc,
-                               psg_seed=psg_seed)
+                               psg_seed=psg_seed, hw_seed=hw_seed)
     assert not diffs, f"{what}\n{report(diffs)}"
     stray = stray_writes(info["writes"], allowed)
     assert not stray, (

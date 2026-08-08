@@ -1673,12 +1673,12 @@
 #define WB_SND_INSTRUMENT_PTR_TABLE 0x1ab04u/* 16 a3-relative words, opcodes $d0..$df. The envelope
                                              * SPEED is the byte BEFORE the stream (`move.b -(a2)`) */
 
-/* ---- the TICK BODY ($17ca0..$17f23) — src/sound.c ------------------------------------------------
+/* ---- the TICK ($17c74..$17f23) — src/sound.c -----------------------------------------------------
  *
- * The module globals the body reads and writes that no routine below it names, and the two PSG
- * register groups it drives. The 44-byte TEMPO SELECTOR above it ($17c74..$17c9f) is NOT ported: it
- * reads $fffa01 and $ff820a, which no memory differential can answer, and all it does is write
- * WB_SND_TICK_DROP_VALUE — so a case pokes that byte and enters at $17ca0.
+ * The module globals the tick reads and writes that no routine below it names, the two PSG register
+ * groups it drives, and the machine bits its 44-byte TEMPO SELECTOR ($17c74..$17c9f) branches on.
+ * Batch 25 ported that head over the kit's seeded hardware read model, so a case DECLARES the two
+ * bytes with `hw_seed=` instead of poking the drop byte and entering below them.
  */
 #define WB_SND_MASTER_VOLUME       0x17c57u /* a3+2251, 0..15 */
 #define WB_SND_SONG_SPEED          0x17c58u /* a3+2252, a FRACTIONAL row rate added to the
@@ -1700,6 +1700,28 @@
 #define WB_SND_TICK_DROP_VALUE     0x17c6eu /* a3+2274: 0 (50 Hz), $2b (60 Hz) or $48 (mono) */
 #define WB_SND_TICK_DROP_ACC       0x17c6fu /* a3+2275 — the whole tick is SKIPPED on its carry, so
                                              * the pair is a fractional tick DROPPER, not a scaler */
+
+/* THE TEMPO SELECTOR'S THREE OUTCOMES, and the two machine bits that choose between them. The
+ * fraction is out of 256: $2b drops 43 ticks in every 256 and $48 drops 72, which is what makes a
+ * mono machine's music ~28 % slow and a 60 Hz one's ~17 %.
+ *
+ * BOTH TESTS ARE `btst`+`bne`, so the branch is taken when the bit is SET and the immediate below
+ * names the bit's SET meaning — which is the opposite of the register's name in each case, and is
+ * why a machine whose hardware reads answer 0 lands on the MONO branch:
+ *
+ *   $17c7e  btst #7,$fffa01 / bne  — GPIP bit 7 is the mono-monitor detect line and is ACTIVE LOW,
+ *                                    so SET means a COLOUR monitor and the branch skips $48;
+ *   $17c90  btst #1,$ff820a / bne  — sync bit 1 SET means 50 Hz and the branch skips $2b.
+ */
+#define WB_SND_TICK_DROP_50HZ      0x00u /* `move.b #0,2274(a3)` — a colour ST at 50 Hz drops none */
+#define WB_SND_TICK_DROP_60HZ      0x2bu /* `move.b #$2b,2274(a3)` — 43/256 */
+#define WB_SND_TICK_DROP_MONO      0x48u /* `move.b #$48,2274(a3)` — 72/256 */
+/* The two MASKS the `btst`s carry. The ADDRESSES they are tested at are os.h's OS_HW_MFP_GPIP and
+ * OS_HW_SHIFTER_SYNC — the kit owns those, since both sides of the model decode them; these are the
+ * game's own operands, and test_sound.py pins them by running the selector on the kit's declared
+ * 50 Hz colour profile, which either mask drifting would send down the wrong arm. */
+#define WB_MFP_GPIP_COLOUR_MONITOR 0x80u /* bit 7 of the byte at OS_HW_MFP_GPIP */
+#define WB_SHIFTER_SYNC_50HZ       0x02u /* bit 1 of the byte at OS_HW_SHIFTER_SYNC */
 
 #define WB_SND_MASTER_VOLUME_MASK  0x0fu /* `andi.b #15,2251(a3)` after the fade has stepped it */
 #define WB_SND_MASTER_VOLUME_FULL  15u   /* `eori.b #15,d0` turns the volume into the ATTENUATION the

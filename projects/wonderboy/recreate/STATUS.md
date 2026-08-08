@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 168/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 169/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -34,15 +34,19 @@ sound module's TICK TIER under `$17c74` (`snd_sfx_tick` + `snd_prng_step` +
 `snd_channel_period_and_volume`, 958 bytes, batch 23: everything the per-VBL tick calls, pinned
 whole with no boundary) — and the TICK ITSELF (`snd_channel_step` + its 24 opcode handlers +
 `snd_music_tick_body`, 1,208 bytes, batch 24: the sound module is now WHOLE except its 44-byte
-tempo head) —
-20,434 bytes in all, 79.1 % of everything
+tempo head) — and now that HEAD (`snd_music_tick`'s tempo selector, 44 bytes, batch 25: the sound
+module's last unported bytes, and the first code in this workspace verified across a DECLARED
+machine rather than a fabricated one) —
+20,478 bytes in all, 79.3 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0h's 25,826 — see "Batch 22b
 (steps 2–3)" at the end)*.** *(The batch-16 commit's header said 147 — an
 oversight; its own section records 151, and batch 17 corrected the header to 153. Batch 22's edit
 left this leading count at 161 while its own section and parenthetical said 163 — the same
-oversight, found by batch 23's port agent and corrected here. It now carries batch 23's 166.)*
-`make test`: **3466 cases green in what this batch commits** (3333 before batch 24, plus its 133
-net, all in `test/test_sound.py`, which stands at 509 — five measured trims inside that figure,
+oversight, found by batch 23's port agent and corrected here. It now carries batch 25's 169.)*
+`make test`: **3483 cases green in what this batch commits** (3466 before batch 25, plus its 17,
+all in `test/test_sound.py`, which stands at 526).
+`make test` at batch 24: **3466 cases** (3333 before batch 24, plus its 133
+net, all in `test/test_sound.py`, which stood at 509 — five measured trims inside that figure,
 recorded in the batch-24 section at the end).
 `make test` at batch 23: **3333 cases** (3133 before batch 23, plus its 200
 net, all in `test/test_sound.py`, which stood at 376 — three measured trims inside that figure,
@@ -679,6 +683,7 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x18208` | `snd_channel_period_and_volume` | 330 | verified | Batch 23: six arms over one music channel's 48-byte record — envelope, transpose+detune, arpeggio, table lookup, portamento, vibrato — returning d0 = period, d1.b = volume (d1's second byte carries portamento scratch); writes two module globals; note-table read proved in-image for all 256 notes (`add.b d0,d0` bounds the byte index — notes ≥96 ALIAS onto snd_arpeggio_ptr_table, ≥128 wrap to its start, both cases); the trim to one record + two named mask-pinning cases rests on the measured mutant (mask hardcoded to $09 passes record 0, fails 1 and 2); GLOBAL_DEFAULTS pins all four globals it reads, with a guard that fails if the C grows a fifth |
 | `0x18106` | `snd_channel_step` (`src/sound.c`) | 258 | verified | Batch 24: one channel's pattern step — countdown, pitch slide, the read loop and the range decoder (`addi.b`+`bcs` chain whose command range ends at $b8, NOT the $97 the notes said) — ending in the `jmp (a3,a2.w)` handler dispatch; the two handler return addresses ($18116/$18148) are DERIVED from the stepper's own runs so stepper and handlers cannot disagree; a3 inherited; the $18036 read-BEFORE-store on the sequence entry is the batch's found-and-fixed ordering divergence, pinned by a case that solves the aliasing offset so the table names the record's own index word |
 | `0x17fd4` | the 24 pattern-opcode handlers | 306 | verified | Batch 24: 23 distinct bodies below the stepper, each entered by its `jmp` and all but $8e branching back INTO the stepper's body; the opcode census is DERIVED by a walk the battery runs (658/95/88/51/48/16/11/5/4/3/2 over all 106 patterns of all 17 songs, self-proving 95+11=106, $93 retargets closure-guarded) — eleven of twenty-four reached by shipped data, each grid row saying which; $97's latent bug (sets d0, never d1) REPRODUCED not fixed; $98..$b7 (a dispatch through the handlers' own instruction stream) has no C and REFUSES by construction via os_refused, proven unreachable from shipped data |
+| `0x17c74` | `snd_music_tick` (`src/sound.c`) | 44 | verified | Batch 25: the TEMPO SELECTOR, the sound module's last unported bytes and the kit's Phase 7 seeded-hardware-read model's first consumer anywhere — `btst #7,$fffa01` (mono detect, ACTIVE LOW, so SET = colour) and `btst #1,$ff820a` (SET = 50 Hz) choose the drop byte at $17c6e, 0/$2b/$48, and the run falls into `snd_music_tick_body`; three machines declared with `hw_seed=` as the tested BIT and its complement, plus the capture profile's own $b0/$02; the mono arm's `bra.s` over the sync test means a mono machine never reads $ff820a, an ordering only the ordered read stream can witness; a case declaring no machine is REFUSED (AssertionError from `differential`, not `emu.run` — the one place Phase 7 differs from Phase 6); this is also the routine that ESTABLISHES a3, so no case here seeds it; head + body now tile $17c74..$17f23 |
 | `0x17ca0` | `snd_music_tick_body` | 644 | verified | Batch 24: the tick below its 44-byte tempo head — engine/SFX gate, the drop accumulator over a POKED $17c6e (all three drop values 0/$2b/$48 differentiable without the head), the fade with its NON-LOCAL exit into the ported stop chain, 3× row step, 3× period/volume, the 54/52/52 mixdown arms (A alone carries the abandon `bmi`, B/C alone the `rol.b`), and the PSG output block over psg_seed — ordered ledger + register file compared, the reg-7 RMW's preserved direction bits pinned, outgoing d1 = $2700 stated as the oracle's SR fact; multi-tick sequences are N runs from one declared chip state, NOT a continuous chip timeline (the harness reseeds per run — stated in the driver) |
 
 ### The .RAD depacker
@@ -4139,6 +4144,9 @@ comment that put the `$b8..$bf` arpeggio overrun at "16 to 31 entries past" when
   hardware-seed phase; everything it can hand the body is `$17c6e`, and the battery pokes all three
   of its values. No case enters at `$17c74`. The `rts` at `$17c72` belongs to neither the head's 44
   bytes nor the body's 644 and is reached by four of the body's exits.
+  *(RESOLVED — batch 25. The hardware-seed phase landed as the kit's Phase 7 and this head is its
+  first consumer: it is reconstructed, cases enter at `$17c74` with `hw_seed=`, and one declaring no
+  machine is refused. The `rts` sentence still stands.)*
 * **`$98..$b7`, the one branch of the ported code that is not reproduced — and it now REFUSES rather
   than being merely documented.** The dispatch reads a word of the handlers' own instruction stream
   as a jump target; there is no C for that, and the first draft returned "read the next byte" and
@@ -4197,3 +4205,154 @@ are ordinary image work above a tier that is now whole.
   they can still drift on what they expect, which is the right place for two statements.
 * **The `$98..$b7` refusal has no on-target story.** This project has no Atari build today; one would
   need `OS_NO_REFUSAL_TALLY` (os.h) and would then walk on silently. Noted where the branch is.
+
+### Batch 25: the tempo head — the sound module's last bytes, and the first DECLARED machine
+
+**44 bytes**, and what they close is the whole sound module: everything at `$17adc..$1abc8` that
+Ghidra recovered is now reconstructed except the three stub entries above the tick. `snd_music_tick`
+is WHOLE — its 44-byte head and batch 24's 644-byte body tile `$17c74..$17f23` with nothing between
+them, and a case asserts both joints. **Verified 169, 20,478 bytes, 79.3 %; `make test` 3483** (3466
+before the batch, plus its 17, all in `test/test_sound.py`, which stands at 526). The verified count
+moves by ONE and the byte total by 44.
+
+**The count needs a word, because `$17c74` was already an `F` record whose body batch 24 ported.**
+Ghidra's function at `$17c74` is one record; this project counts C FUNCTIONS and their bytes, and
+batch 24 split the record into two of them so the body could be entered below the wall. So batch 24
+counted `snd_music_tick_body` (644 B) and batch 25 counts `snd_music_tick` (44 B); the two together
+are the record, no byte is counted twice, and the denominator is unchanged at §0h's 25,826.
+
+| address | name | bytes | what it is |
+| --- | --- | --- | --- |
+| `$17c74` | `snd_music_tick` | 44 | the tempo selector: two hardware reads, one image byte, and the fall into the body |
+
+**The bytes, read rather than taken from the plate — and the plate was right about the values and
+silent about the polarity, which is the whole of what a port has to get right:**
+
+```
+$17c74  lea   $1738c(pc),a3        ; the module base — THIS routine establishes it
+$17c78  move.b #$0,2274(a3)        ; the 50 Hz value goes in FIRST, unconditionally
+$17c7e  btst  #7,$fffa01           ; GPIP bit 7: mono-monitor detect, ACTIVE LOW
+$17c86  bne.s $17c90               ; SET = a COLOUR monitor -> skip the mono store
+$17c88  move.b #$48,2274(a3)       ; mono: drop 72/256
+$17c8e  bra.s $17ca0               ; ...and NEVER read the shifter
+$17c90  btst  #1,$ff820a           ; sync bit 1: SET = 50 Hz
+$17c98  bne.s $17ca0               ; 50 Hz -> keep the 0 already stored
+$17c9a  move.b #$2b,2274(a3)       ; 60 Hz: drop 43/256
+```
+
+**Both branches are `bne`, so both immediate stores are the bit's CLEAR meaning** — which is why an
+emulator answering 0 for both lands on MONO, and why a port written from the register NAMES rather
+than from the bytes gets both arms backwards. The C is a selector returning the value and one store
+by the caller: the original's unconditional `move.b #0` and the two overwrites leave exactly the byte
+a single store of the chosen value leaves, and the shape says which of the three the machine chose.
+
+**The read COUNT is program behaviour, not an implementation detail.** The mono arm `bra.s`es over
+the sync test, so a mono machine never touches `$ff820a`. No image byte can show that — the drop
+value, the write set and every register are a correct run's exactly — and the differential's ordered
+read stream is the only witness. It is a case, and the mutant that reads both bytes every time is
+caught by the mono rows and by nothing else in the suite.
+
+**Three machines, declared as the BIT and its COMPLEMENT.** `$80`/`$7f` for the GPIP and `$02`/`$fd`
+for the sync, so every other bit of the byte carries the opposite value and either `btst` off by one
+reads the branch backwards on one of the two rows. A fourth case declares the machine's REAL bytes,
+taken from `emu.hw_capture_profile()` rather than restated — and reconciles them: **`$b0` has bit 7
+SET, which because the detect line is active low means a COLOUR monitor**, with bits 5 and 4 the FDC
+and ACIA lines (also active low, so set because idle); `$02` is 50 Hz. The profile therefore selects
+drop 0, no tick is dropped, and `out/audio`'s 17 songs were captured at the speed they were written
+— which is what the extraction's correctness rested on, unstated until now.
+
+**The false green this closes had SHIPPED, in this repository, documented.** `PORTABILITY.md` §4's
+prediction table carried `snd_music_tick $17c74 — completed green in 12 insns` against a prediction
+of "rejected", and §4's last subsection reproduced the nine instructions above and said in as many
+words that nothing in a memory differential can tell. That row is now RETIRED in place with a marker
+citing this batch, and the two prose paragraphs carry markers of their own: the general claims stand,
+the example does not, because a differential of `$17c74` that declares no machine is refused. A case
+here states the refusal from this project's side — and it names ONE address, not two, because the
+fabricated 0 already steered away from the second read.
+
+**The refusal is a different shape from the PSG model's, and the case says so.** An undeclared PSG
+read sinks `emu.run` itself (`RuntimeError`, every caller); an undeclared hardware read is served and
+merely recorded, and only `harness.differential` refuses (`AssertionError`). That asymmetry is
+deliberate kit design — a bare `emu.run` drives this project's relocator, Copylock and bootstrap, and
+verifies nothing, so it cannot be falsely green — and `test_audio_capture.py` still runs `$17c74`
+under a bare `emu.run` on the very next line of the suite.
+
+**`test/leaf.py` threads `hw_seed`**, which is the registered follow-up from batch 21b repeated one
+model over: that batch found `leaf.run` had no `psg_seed` parameter, so the kit's newest capability
+was unreachable from a leaf case. `hw_seed` is threaded the same way — through `run`, and so through
+`run_reaching`, which forwards `**kwargs` — with the docstring naming the difference from `psg_seed`
+(where the refusal fires, and why). `leaf.py` also gains `MFP_GPIP`/`SHIFTER_SYNC`, spelt as literals
+because they are a fact about the GAME's `btst` operands, and pinned equal to `emu.HW_ADDRS` by a
+case, exactly as `PSG_SELECT` is shared and pinned. `test_audio_capture.py` now takes the sync
+address from there instead of restating it, and its two tick-drop constants from `wonderboy.h`
+instead of duplicating the port's.
+
+**Two stale comments in `test_audio_capture.py`, both retired.** One cited `shim.c`'s
+`#define SHIFTER_SYNC`, deleted when Phase 7 folded the capture mode into the seeded model. The other
+said a wide read of a tempo byte is "an ordinary off-image 0" off the mode — false since Phase 7,
+which records the wide-read mask on EVERY run and refuses on it in EVERY differential; what is
+capture-only is where `emu.run` *raises*, because an extractor has no diff to catch it.
+
+**Mutation sweep: 14 mutants, per README.md's recipe** (forced relink per mutant, `__pycache__`
+purged, unpiped returncode, green verified immediately before and after). **14 non-equivalent, all 14
+caught, none uncompilable, no second pass needed.** The three worth naming, each caught by a
+different row:
+
+* **the sync register read unconditionally** — caught by the mono rows ALONE (five of them), on the
+  read stream, with the image and the write set identical to a correct run's;
+* **either `btst` off by one** — caught because the complement bytes carry every other bit set;
+* **`leaf.run` dropping the `hw_seed` forward** — caught as the undeclared refusal, which is what
+  says the threading is load-bearing rather than decorative.
+
+**The observable surface this change is caught by**: the modeled hardware READ LEDGER (an ordered
+`(address, byte)` stream both cores keep, compared by `harness.differential`), plus the image diff
+and the PSG ledger the tick already had. The read ledger is new to this project and is the only
+surface that can see any of the head's behaviour except the one byte it writes.
+
+**Not pinned, honestly.**
+
+* **That a real ST serves these bytes.** `hw_seed={$fffa01: $b0, $ff820a: $02}` is the case's CLAIM
+  about the machine — "a 50 Hz colour ST with the FDC and ACIA lines idle" — and what the
+  differential pins is "given those bytes, both cores agree". This is the kit's own stated limit
+  (`TRAP_MODEL.md`, "Phase 7 — the honest limit"), not this batch's, and it is not closable by any
+  differential: it is a documented hardware fact, re-checkable only on hardware. What HAS changed is
+  that the claim is now written down and shared instead of fabricated as 0 on both sides.
+* **The FDC/DMA registers**, which stay outside the modeled set by design: an FDC status byte answers
+  a per-access SEQUENCE, not a per-run constant, so `fdc_wait_irq`'s poll on `$fffa01` bit 5 and
+  `fdc_wait_irq_bounded`'s on `$ff8609`+ cannot be seeded. `$fffa01` being IN the set for bit 7 does
+  not help them: a case declaring bit 5 set spins to `max_insns`, which is loud rather than silent.
+* **What is HEARD**, unchanged from batch 24: an ordered ledger of PSG accesses and a register file
+  are register values, not sound.
+
+**QUEUED, registered rather than half-done.**
+
+* **`src/sound.c` now has an OFF-TARGET-ONLY dependency, and this project has no on-target build to
+  test it against.** `hw.h` states the rule — a real Atari build reads the address itself and does
+  not compile `src/hw.c` — so an on-target `snd_music_tick` needs `hw_read8` replaced by a
+  `*(volatile uint8_t *)0xfffffa01` read, exactly as BuggyBoy's remaster does. The hazard if that is
+  missed is not a link error but a **silent one**: linking `src/hw.c` into a target build with no
+  seed installed serves 0, takes the mono arm, and plays every song 28 % slow on hardware — the very
+  defect this batch closes off-target. Registered beside the `$98..$b7` refusal's identical gap.
+* **`tools/recreate_kit/TRAP_MODEL.md`'s Phase 7 section says "No project passes a `hw_seed` yet —
+  Wonder Boy's `$17c74` head is the consumer this was built for, and porting it is the next step".**
+  This batch is that step; the sentence is now stale. The kit is outside this commit's pathspec, so
+  it is registered here rather than edited.
+* **Nothing asserts a DECLARED hardware seed was actually read**, at the level `leaf.run` threads it:
+  two empty streams compare equal, so a case whose entry point never reached a `btst` would pass.
+  This batch closes it inside `_run_tick_sequence` (every whole-tick case states its expected
+  stream), which is right for one consumer. The depth-correct home is the kit — `harness.py` already
+  has `_vet_psg_seed_reaches_the_path` for exactly this on the PSG model and no hardware twin.
+* **`PORTABILITY.md` §0g's classifier row for `$17c74` still ends "it stays in the false-green 28".**
+  Marked in place; the FIGURE is a measurement and is not edited without re-running the scan, which
+  is the `tools/hw_portability.py` re-pricing pass already queued below.
+* **`$17c6f` has no `var` line in `../names.txt`.** The drop ACCUMULATOR is a module global the
+  reconstruction names (`WB_SND_TICK_DROP_ACC`) and its neighbour `$17c6e` is named; it belongs to
+  batch 24's body rather than to this head, so it is noted here rather than folded in.
+* **`tools/hw_portability.py` still prices `$fffa01`/`$ff820a` as "served a real byte ONLY under
+  audio capture".** That was already registered by the kit's Phase 7 as a follow-up and is now
+  doubly stale: this batch's cases are served those bytes under an ordinary differential. Re-pricing
+  the tier is a measurement pass, not a comment edit.
+* **`../notes/portability_predictions.py`'s two `T4` cases** still match `emu.run`'s refusal by a
+  regex that passes for the wrong reason (§7's registered item). A third is now available and would
+  be the honest replacement for the `snd_music_tick` row this batch retired: the refusal WITHOUT a
+  `hw_seed` and a green run WITH one.

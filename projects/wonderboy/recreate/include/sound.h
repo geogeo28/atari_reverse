@@ -206,12 +206,12 @@ snd_step_result snd_channel_step(uint8_t *image, uint32_t record, uint32_t sfx_c
 
 /* $17ca0 — the per-VBL tick, entered BELOW its tempo selector.
  *
- * WHAT IS NOT HERE, and why the entry is $17ca0 rather than $17c74. The 44 bytes above it read
- * `btst #7,$fffa01` (the MFP's mono-monitor line) and `btst #1,$ff820a` (the shifter's sync mode) and
- * write one byte from them: WB_SND_TICK_DROP_VALUE, 0 for 50 Hz colour, $2b for 60 Hz, $48 for mono.
- * No memory differential can answer those two reads, so the head stays behind the kit's hardware-seed
- * phase and a case POKES the byte it would have written — all three of its values, which is the whole
- * of what the head can hand the body.
+ * WHY THE BODY IS A FUNCTION OF ITS OWN. The 44 bytes above it are the tempo selector, and they are
+ * the module's ONLY hardware-steered code: `snd_music_tick` below reads the two machine bytes and
+ * writes WB_SND_TICK_DROP_VALUE, then falls straight into this. Split so a case can enter here on a
+ * POKED drop byte — all three of the values the head can write, with no declaration to make — and
+ * enter the head with `hw_seed=` to run the whole tick. Both halves are pinned, and the tiling case
+ * in test_sound.py is what says the head's write and this body's read meet on the same byte.
  *
  * The body in order: the gate (the engine flag, or ANY of the four bytes the `tst.l` covers at
  * WB_SND_SFX_ACTIVE_FLAGS), the drop accumulator (whose CARRY skips the entire tick, SFX and chip
@@ -226,5 +226,26 @@ snd_step_result snd_channel_step(uint8_t *image, uint32_t record, uint32_t sfx_c
  * IT DRIVES THE CHIP, so a case must declare the mixer with `psg_seed`: $17f08 reads register 7 back
  * and merges only the bits the unlocked channels own, exactly as snd_psg_silence's `ori` does. */
 void snd_music_tick_body(uint8_t *image);
+
+/* $17c74 — the whole per-VBL tick: the 44-byte TEMPO SELECTOR, and then the body above.
+ *
+ * THE TWO READS ARE INPUTS OF THE RUN, not consequences of it. `btst #7,$fffa01` asks whether a
+ * MONOCHROME monitor is attached and `btst #1,$ff820a` whether the shifter is running at 50 Hz, and
+ * between them they pick how many of every 256 ticks the body drops. Both addresses are outside the
+ * memory image, so nothing in an image differential can see them and a fabricated 0 would steer BOTH
+ * cores down the mono arm together — the `$ffff820a` defect BuggyBoy shipped green to real hardware.
+ * So the reconstruction reads them through the kit's seeded model (`hw_read8`, TRAP_MODEL.md
+ * "Phase 7") and a case DECLARES the machine it means with `hw_seed=`; one that declares nothing is
+ * refused rather than served.
+ *
+ * IT ESTABLISHES a3. `lea $1738c(pc),a3` is this routine's first instruction — the one place in the
+ * tick tier where the module base is set rather than inherited — so a differential entering here
+ * seeds no a3 where one entering $17ca0, $18106, $18208 or $1aaca must.
+ *
+ * WHAT IS STILL NOT PINNED, and cannot be by a differential: that a real ST answers these bytes the
+ * way a case declares. `hw_seed={$fffa01: $b0, $ff820a: $02}` states "a 50 Hz colour ST with the FDC
+ * and ACIA lines idle" — the kit's own audio-capture profile, and a documented claim about hardware
+ * rather than a differential result. */
+void snd_music_tick(uint8_t *image);
 
 #endif /* WONDERBOY_SOUND_H */

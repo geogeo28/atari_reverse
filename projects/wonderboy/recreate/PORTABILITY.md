@@ -596,7 +596,7 @@ a refused one never completes the run, a served one is steered by a *declared* i
 |---|---:|---|---|---|
 | `$624c` `psg_set_drive_select` | 28 | T5 HARD_REJECT | **T2** | its `$6254` `move.b $ff8800,d1` is the served read-back; its two writes are the modeled pair |
 | `$17f30` `snd_psg_silence` | 82 | T5 HARD_REJECT | **T2** | batch 21b's mixer RMW at `$17f3e` — reconstructed and GREEN, and the classifier now agrees |
-| `$17c74` `snd_music_tick` | 696 | T5 HARD_REJECT | **T4 HW_READ** | its `$17f08` read-back is served, so what prices it is no longer the PSG at all but its own `mfp-R!` + `shifter-R!` — it stays in the false-green 28 |
+| `$17c74` `snd_music_tick` | 696 | T5 HARD_REJECT | **T4 HW_READ** | its `$17f08` read-back is served, so what prices it is no longer the PSG at all but its own `mfp-R!` + `shifter-R!` — it stays in the false-green 28 *(marked in place — batch 25: the two `mfp-R!`/`shifter-R!` sites are now DECLARED case inputs and a differential of them that names no machine is refused, so the false-green membership is stale. The FIGURE is a measurement and is left as the scan produced it; re-pricing the tier is the `tools/hw_portability.py` pass §7 already queues.)* |
 
 **Seventeen more moved through the call graph.** To T2, behind a seeded read: `$716`
 `vbl_handler` (52 B, via `floppy_deselect_drives`→`psg_set_drive_select`), `$6268`
@@ -1000,7 +1000,7 @@ What they corrected is the **prose** — what a tier was claimed to *mean* once 
 | T3 | `ikbd_disable_mouse` `$f8f0` | poll exits at once via `IKBD_TX_RDY` | ✅ 8 insns, command byte dropped |
 | T4 | `psg_set_drive_select` `$624c` | rejected with the PSG diagnostic | ✅ rejected |
 | T4 | `FUN_00017f24` `$17f24` | rejected with the PSG diagnostic | ✅ rejected |
-| T4 | `snd_music_tick` `$17c74` | rejected with the PSG diagnostic | ❌ **completed green in 12 insns** |
+| T4 | `snd_music_tick` `$17c74` | rejected with the PSG diagnostic | ❌ **completed green in 12 insns** *(RETIRED — batch 25. That green is no longer reachable: `$17c74` is reconstructed, and a differential of it whose case declares no `hw_seed` is REFUSED. See the two markers below.)* |
 
 Both T2 cases carry a **positive control** now: the run must reach the function's last hardware
 write (`$f91c` / `$e808`), checked through the oracle's PC coverage. Without it "completes with
@@ -1039,6 +1039,12 @@ image's own initial state, because the music-playing test two instructions after
 early and execution never reaches the PSG. A case selection that misses the offending access gets
 a green that proves nothing. (Its PSG ledger was empty, which is how the test now pins this.)
 
+*(Marked in place — batch 25. The correction above still stands as written; what has moved is the
+example. `$17c74` is now reconstructed, and its 44-byte head runs under the kit's SEEDED HARDWARE
+READ model, so the run this paragraph describes is refused rather than green whenever a case fails to
+declare the machine. The general point — "T4 means cannot be verified ACROSS ITS INPUTS, not every
+run is refused" — is unchanged and is exactly why a per-case declaration was the fix.)*
+
 ### And the BuggyBoy defect, demonstrated concretely
 
 `snd_music_tick` opens by choosing the music replay tempo from **two** hardware reads:
@@ -1057,6 +1063,14 @@ written `$48` on every run. On a colour ST, GPIP bit 7 is high and that branch i
 test asserts the byte comes back `$48`; nothing in a memory differential can tell, because both
 sides store the same wrong value. **This is the `$ffff820a` defect that was invisible to BuggyBoy's
 entire differential and only surfaced on real hardware, present here before a line is ported.**
+
+*(CLOSED — batch 25, and this is the section the kit's Phase 7 was built from. The two reads are now
+DECLARED inputs: `harness.differential` refuses a case that does not name what the machine holds, so
+"both sides store the same wrong value" is no longer a green a case can reach. The three arms are
+reconstructed and pinned one machine each, and the mono row's ordered read stream is what says the
+sync register is not even touched. What is still **not** pinned is unchanged and is the model's own
+honest limit: that a real ST answers `$b0`/`$02`. `tools/recreate_kit/TRAP_MODEL.md`, "Phase 7", and
+`../STATUS.md`'s batch-25 section.)*
 
 ## 5. The false-green surface — every steering hardware read
 
