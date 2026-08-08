@@ -952,3 +952,28 @@ def assert_rows(info, rows, expected, what, skip=()):
     assert compared * 2 > total, (
         f"{what}: only {compared} of {total} bytes were compared — the skip set has swallowed the "
         f"blit, so this assert is holding almost nothing")
+
+
+# --- the two off-image surfaces the DIRECT PSG path leaves ----------------------------------------
+
+def assert_psg_surfaces(info, events, values, known, what):
+    """The ordered access ledger and the register file a run leaves, against what a case states.
+
+    HERE BECAUSE NOTHING IN THE IMAGE CAN SHOW EITHER. A run that drove the wrong register, or none
+    at all, writes exactly the same memory (tools/recreate_kit/TRAP_MODEL.md, "Phase 6"), so a second
+    spelling of this pair is a battery that can go on asserting a strictly weaker surface than the
+    first while both stay green. test_sound.py had exactly two — the stop chain's, whose expectation
+    is computed from the seed, and the tick's, which RECORDS its ledger as the model runs — which is
+    what moved it here.
+
+    ``events`` is the expected ``[(kind, register, value)]``, ``values`` the whole register file and
+    ``known`` its bit-per-register mask. QUEUED, not done: test_actor.py asserts one of the two
+    piecemeal (`psg_events == []` for a path that must not touch the chip) and is the third caller
+    this wants; converting it is registered in ../STATUS.md rather than folded in here.
+    """
+    assert info["regs"]["psg_events"] == events, (
+        f"{what}: the chip saw {info['regs']['psg_events']}, not {events} "
+        f"(each entry is (kind, register, value); a read-back is kind {harness.OS_PSG_EVENT_READ})")
+    assert (info["regs"]["psg_file"], info["regs"]["psg_known"]) == (bytes(values), known), (
+        f"{what}: the register file ended {info['regs']['psg_file'].hex()} "
+        f"(known {info['regs']['psg_known']:#06x}), not {bytes(values).hex()} (known {known:#06x})")

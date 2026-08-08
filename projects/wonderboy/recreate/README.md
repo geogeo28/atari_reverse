@@ -103,7 +103,15 @@ src/sound.c                the sound module: snd_trigger_effect ($1a48a) and the
                            runs FIRST, before a single music byte; snd_prng_step ($1aaca), the
                            module's own PRNG, distinct from src/rng.c's and stepped every tick;
                            and snd_channel_period_and_volume ($18208), the six-armed pass that turns
-                           one music channel's record into a period and a volume
+                           one music channel's record into a period and a volume. And now the TICK
+                           ITSELF: snd_channel_step ($18106) with the 24 pattern-opcode handlers
+                           below it ($17fd4..$18105) — one flow graph, since the stepper's last
+                           instruction is the `jmp` that enters a handler and every handler but one
+                           branches back into its body — and snd_music_tick_body ($17ca0), which is
+                           snd_music_tick under its 44-byte tempo head. That head is the module's
+                           last unported piece below stub +14: it reads $fffa01 and $ff820a, which
+                           no memory differential can answer, and all it writes is the one drop byte
+                           a case pokes
 src/hud.c                  panel_refresh_frame ($b346) below its own entry: batch 2's eleven leaves
                            (the BCD score/counter accumulators, the panel blits, the meter's clamped
                            add), batch 3's second tier (the digit plotter — a leaf too — its three

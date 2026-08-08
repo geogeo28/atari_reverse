@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 166/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 168/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -32,15 +32,20 @@ draw it calls (`actor_respawn_as_new_kind` + `stage_random_kind32`, 166 bytes, b
 $6cdc boundary is GONE — the defeat path runs end to end to the original's own `rts`) — and the
 sound module's TICK TIER under `$17c74` (`snd_sfx_tick` + `snd_prng_step` +
 `snd_channel_period_and_volume`, 958 bytes, batch 23: everything the per-VBL tick calls, pinned
-whole with no boundary) —
-19,226 bytes in all, 74.4 % of everything
-[`PORTABILITY.md`](PORTABILITY.md) measures *(74.6 % when batch 23 wrote it; the §0h re-scan grew
-the denominator to 25,826 — see "Batch 22b (steps 2–3)" at the end)*.** *(The batch-16 commit's header said 147 — an
+whole with no boundary) — and the TICK ITSELF (`snd_channel_step` + its 24 opcode handlers +
+`snd_music_tick_body`, 1,208 bytes, batch 24: the sound module is now WHOLE except its 44-byte
+tempo head) —
+20,434 bytes in all, 79.1 % of everything
+[`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0h's 25,826 — see "Batch 22b
+(steps 2–3)" at the end)*.** *(The batch-16 commit's header said 147 — an
 oversight; its own section records 151, and batch 17 corrected the header to 153. Batch 22's edit
 left this leading count at 161 while its own section and parenthetical said 163 — the same
 oversight, found by batch 23's port agent and corrected here. It now carries batch 23's 166.)*
-`make test`: **3333 cases green in what this batch commits** (3133 before batch 23, plus its 200
-net, all in `test/test_sound.py`, which stands at 376 — three measured trims inside that figure,
+`make test`: **3466 cases green in what this batch commits** (3333 before batch 24, plus its 133
+net, all in `test/test_sound.py`, which stands at 509 — five measured trims inside that figure,
+recorded in the batch-24 section at the end).
+`make test` at batch 23: **3333 cases** (3133 before batch 23, plus its 200
+net, all in `test/test_sound.py`, which stood at 376 — three measured trims inside that figure,
 recorded in the batch-23 section at the end).
 `make test` at batch 22: **3133 cases** (3052 before batch 22, plus its 81
 net: +49 in `test/test_rng.py`, which stands at 103, and +32 in `test/test_actor.py`, which stands
@@ -672,6 +677,9 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x1aaca` | `snd_prng_step` (`src/sound.c`) | 28 | verified | Batch 23: the module's OWN PRNG, distinct from the game's ($68c6) — a 32-bit shift through the X flag (`lsl.b #2` sets X, two `roxl.w` on memory chain it), pinned across the carry in both directions; a3 is INHERITED, not derived (the differential found it — the first case ran against a base of zero and wrote $375b), so every case seeds it; the four state bytes abut the routine's own last instruction, a self-bounding check |
 | `0x1a5da` | `snd_sfx_tick` | 600 | verified | Batch 23: the SFX engine the tick calls FIRST (at $17cb6, before any music — the old plate order was backwards), three 186-byte arms as ONE parametrized C body entered at each arm's own address; its shared `rts` at $1a5d8 is the "orphan" cmt 0x1a48a disproved; each arm reads a DIFFERENT PRNG byte ($1aae6/7/8 — a sixth base-plus-stride block, stride 1, previously unrecorded); the pitch delta moves the period by delta×257 (`add.b` + `addx.b`); the volume-stream $80 loop, negative hold, AND the reload's unconditional store of a negative first byte (the review's mutant-confirmed hole, closed); ids 12/20/21 drive the PRNG path with $1aae6 seeded — the state is never reset by song start |
 | `0x18208` | `snd_channel_period_and_volume` | 330 | verified | Batch 23: six arms over one music channel's 48-byte record — envelope, transpose+detune, arpeggio, table lookup, portamento, vibrato — returning d0 = period, d1.b = volume (d1's second byte carries portamento scratch); writes two module globals; note-table read proved in-image for all 256 notes (`add.b d0,d0` bounds the byte index — notes ≥96 ALIAS onto snd_arpeggio_ptr_table, ≥128 wrap to its start, both cases); the trim to one record + two named mask-pinning cases rests on the measured mutant (mask hardcoded to $09 passes record 0, fails 1 and 2); GLOBAL_DEFAULTS pins all four globals it reads, with a guard that fails if the C grows a fifth |
+| `0x18106` | `snd_channel_step` (`src/sound.c`) | 258 | verified | Batch 24: one channel's pattern step — countdown, pitch slide, the read loop and the range decoder (`addi.b`+`bcs` chain whose command range ends at $b8, NOT the $97 the notes said) — ending in the `jmp (a3,a2.w)` handler dispatch; the two handler return addresses ($18116/$18148) are DERIVED from the stepper's own runs so stepper and handlers cannot disagree; a3 inherited; the $18036 read-BEFORE-store on the sequence entry is the batch's found-and-fixed ordering divergence, pinned by a case that solves the aliasing offset so the table names the record's own index word |
+| `0x17fd4` | the 24 pattern-opcode handlers | 306 | verified | Batch 24: 23 distinct bodies below the stepper, each entered by its `jmp` and all but $8e branching back INTO the stepper's body; the opcode census is DERIVED by a walk the battery runs (658/95/88/51/48/16/11/5/4/3/2 over all 106 patterns of all 17 songs, self-proving 95+11=106, $93 retargets closure-guarded) — eleven of twenty-four reached by shipped data, each grid row saying which; $97's latent bug (sets d0, never d1) REPRODUCED not fixed; $98..$b7 (a dispatch through the handlers' own instruction stream) has no C and REFUSES by construction via os_refused, proven unreachable from shipped data |
+| `0x17ca0` | `snd_music_tick_body` | 644 | verified | Batch 24: the tick below its 44-byte tempo head — engine/SFX gate, the drop accumulator over a POKED $17c6e (all three drop values 0/$2b/$48 differentiable without the head), the fade with its NON-LOCAL exit into the ported stop chain, 3× row step, 3× period/volume, the 54/52/52 mixdown arms (A alone carries the abandon `bmi`, B/C alone the `rol.b`), and the PSG output block over psg_seed — ordered ledger + register file compared, the reg-7 RMW's preserved direction bits pinned, outgoing d1 = $2700 stated as the oracle's SR fact; multi-tick sequences are N runs from one declared chip state, NOT a continuous chip timeline (the harness reseeds per run — stated in the driver) |
 
 ### The .RAD depacker
 
@@ -3845,7 +3853,8 @@ faulting, and a note from 128 up wraps to the table's start. Both are cases.
 * **The tick body itself (`$17c74`), `snd_channel_step` (`$18106`) and the 24 opcode handlers** —
   units 4 and 5, and the reason the tier stops where it does. Nothing here strays into them: the
   three routines call only each other, verified by a whole-image scan for every branch and jump
-  target, so this batch needs no `stop_pc` and has no boundary.
+  target, so this batch needs no `stop_pc` and has no boundary. *(Batch 24: BOTH UNITS PORTED —
+  see its section below; only the 44-byte tempo head `$17c74..$17c9f` remains, behind Phase 7.)*
 * **The PSG wall is unmoved.** `$17c74`'s two hardware reads (`$fffa01` bit 7, `$ff820a` bit 1) and
   its whole output block are still what a memory differential cannot see. A green suite here says
   the right bytes landed in the right module fields and says nothing about what is heard.
@@ -3981,3 +3990,210 @@ prints the 2026-08-02 scan; re-stating it needs its CODE-bytes column recomputed
 of its own. **Observed, registered:** `$6bb8`/`$69fe`/`$6b46` (544 B of verified defeat-path
 code) stay in the catch-all while their continuation `$6cdc` is now actor's — a partition
 question for a future pass, recorded in §0h.
+
+### Batch 24: the tick, whole — the pattern stepper, its 24 opcodes and the body that drives them
+
+Two routines and the handler block one of them is inseparable from, **1,208 bytes**, and what they
+close is the SOUND MODULE'S per-VBL tick: everything `snd_music_tick` calls was batch 23's, and this
+is the tick itself. **Verified 168, 20,434 bytes, 79.1 %; `make test` 3466** (3333 before the batch,
+plus its 133, all in `test/test_sound.py`, which stands at 509 — five measured trims inside that
+figure, recorded below). The verified COUNT moves by two —
+the two C functions — while the byte total moves by 1,208, because the 306-byte handler block is not
+a routine of its own: it is `snd_channel_step`'s tail, entered by that routine's `jmp` and branching
+back into its body. It gets a table row of its own anyway, because it is 306 bytes at their own
+address and the pin checks them there.
+
+| address | name | bytes | what it is |
+| --- | --- | --- | --- |
+| `$18106` | `snd_channel_step` | 258 | one channel's pattern step: the countdown, the pitch slide, the read loop and the range decoder |
+| `$17fd4` | the 24 opcode handlers | 306 | 23 bodies below the stepper, reached by its own `jmp` and branching back INTO it |
+| `$17ca0` | `snd_music_tick_body` | 644 | `snd_music_tick` below its tempo head: the gate, the dropper, the fade, the rows, the mixdown and the chip |
+
+**Unit 4 and unit 5 are one flow graph and are pinned as three blocks.** `$18106`'s last instruction
+is the `jmp (a3,a2.w)` that enters a handler, and every handler but one `bra`s back into `$18106`'s
+own body — at `$18116` for another pattern byte or at `$18148` to close the row. So the C is a read
+loop with a three-valued exit, and the pins are the stepper's 258 bytes, the handler block's 306 at
+its own base, and the tick's 644. **The two addresses the handlers branch back to are DERIVED** from
+the runs above them, so the block and the stepper cannot disagree about either.
+
+**Eight corrections, all read off the bytes** (`../names.txt`'s plates and
+`../notes/sound_module_recon.md`'s addendum 3 carry them, and the three superseded lines in §6 now
+carry in-place markers pointing at it):
+
+* **The command range ends at `$b8`, not at `$97`.** `$181a6` is `cmp.b #$b8,d0 / bcs`, so
+  everything below `$b8` goes to a table with 24 entries: `$98..$b7` index PAST it, read a word of
+  the handlers' own instruction stream as a table entry and `jmp` through it. `$b8..$bf` fall the
+  other way into the ARPEGGIO arm with a decoded index of `$f8..$ff` — entry 248 to 255 of a table
+  that holds SIXTEEN. Both halves were "out of range" in the notes; they behave differently, and only
+  the second is portable.
+* **The opcode census, re-derived and self-proving.** The notes' counts do not tile — `$87`×92 plus
+  `$8e`×11 is 103 against 106 patterns, every one of which ends in one or the other. The walk this
+  battery RUNS gives `$80`×658, `$87`×95, `$8f`×88, `$8a`×51, `$88`×48, `$92`×16, `$8e`×11, `$89`×5,
+  `$81`×4, `$93`×3, `$82`×2, and 95 + 11 = 106 exactly. **Eleven of the 24 opcodes are reached and
+  thirteen are not**, and every row of the opcode grid says which it is, from the walk rather than
+  from a table.
+* **Thirteen instruments, not fifteen**: `$d0`, `$d1` and `$d4..$de`. The notes stated the range.
+* **`$18106` and `$17ca0` inherit a3**, joining `$1aaca` and `$18208`. The stepper opens
+  `subq.b #1,27(a0)` and the tick body `tst.b 2250(a3)` — the `lea` is in the tempo head above it.
+* **The mixdown's three arms are 54 / 52 / 52 bytes, not three of a kind.** Channel A's alone
+  carries a `bmi.w $17c72`: a NEGATIVE SFX-active flag abandons the whole tick, the mixer mask and
+  the chip write included — the same double test of the same byte that opens `snd_sfx_tick`. B's and
+  C's alone carry the `rol.b #1`/`#2`. The three `ori.b` immediates `$09`/`$12`/`$24` are ONE
+  constant rotated by the channel number, and are also the three records' constant `+47`, which a
+  case asserts.
+* **Two `tst.l`s read a fourth byte each.** The gate covers `$17c5a..$17c5d`, so the unnamed pad byte
+  keeps the tick alive; the chip block's covers `$17c5e..$17c61`, so a set pad byte suppresses the
+  NOISE register while all three channels are still written. Both are cases.
+* **The 51 sequence tables are NOT one band.** §6's map row shows 28 bytes at `$18508`, which is
+  song 0's three; all 51 span `$18508..$1a42a` in **seventeen disjoint runs**, interleaved with the
+  pattern data. The independent gate found this stated as fact on three surfaces. The load-bearing
+  conclusion survives and now rests on the true span — no shipped table names a byte of the music
+  channel records at `$17bc6..$17c55`, and a case walks all 51 and says so.
+* **Opcode `$88` takes two operand bytes and writes three fields** — `+42` from the first and the
+  second into BOTH `+41` (read without advancing) and `+43` — and then falls into `$82`'s control
+  store. Opcode `$87`'s restart takes entry **0 itself**, because the reset reloads the sequence
+  offset without the index it had just added to it, and it **re-reads the entry at `$18036` BEFORE
+  storing the new index at `$1803c`** — see the review-gate finding below.
+
+**The census is CLOSED, not just self-proving.** The tiling (`$87`×95 + `$8e`×11 = 106) passes just
+as happily on a walk that missed half the data, because both sides of it shrink together. Opcode
+`$93` re-points a channel's sequence table from two pattern bytes, so a pattern can send the
+replayer at a table the walk never visited — and the walk starts from the song directory alone. The
+three shipped `$93`s (patterns `$1872c`/`$1877b`/`$187c6`) name `$1871c`/`$18722`/`$18728`, mid-table
+tails of tables already walked, so the set really is closed; a case asserts that every retargeting
+operand lands inside a walked span rather than assuming it. It was verified to BITE: restricted to
+song 0's three tables, all three retargets escape.
+
+**And the operand lengths the census walks on are DERIVED from the model**, not a third hand-written
+table. The entry pin checks each handler's `move.b (a1)+` instructions against the image, the
+differential checks the model against the original, and `_derived_operand_lengths` reads the count
+back out of the model's own cursor — so the published reachability column rests on the run. The
+construction that motivated it: transcribe `$89` as taking no operand and its operand byte decodes
+as a note with the census set unchanged. The arpeggio and instrument tails are the walk's claims too
+now (bytes at or above `$b8` are counted by range): **only `$cf`, twice**, **thirteen** instruments,
+and **no shipped byte anywhere in `$b8..$bf`** — which is what makes that whole range's case a seeded
+one.
+
+**The three case-design facts the batch was handed, and what they became.** The drop byte `$17c6e`
+is an image byte, so a case pokes it: all three of the values the unported head can write, each on
+both sides of its wrap. The `$17f08` mixer read is Phase 6's case: every tick case declares register
+7 with `psg_seed`, and the ordered ledger and the register file are compared alongside the image —
+`MIXER_SEEDS` and its four-direction-state guard are the stop chain's own tuple, reused. And **the
+non-local exit is pinned from the TICK and never standalone**: `snd_channel_step` returns a status,
+the tick acts on it, and the `$8e` case runs the whole tail from `$17ca0` — where the stack holds
+the frame `addq.l #4,sp` is written for — with the PSG ledger as the proof that the rest of the tick
+never ran (four accesses, silence's, and not the output block's fifteen).
+
+**Mutation sweep: 62 mutants across three passes, per README.md's recipe** (forced relink per
+mutant, unpiped returncode, `__pycache__` purged before each run, green immediately before). **62
+non-equivalent, all 62 caught, none uncompilable.** The first pass ran 60 and left THREE survivors,
+and all three were holes in the CASE DESIGN rather than in the port:
+
+* **the hand-over ladder read one mixer byte for all three rungs.** Every row of the grid gave the
+  three SFX channels the SAME descriptor `+6`, so a ladder that read channel A's state block for
+  every rung agreed with all five. The rows now carry three different bytes and name which channel's
+  block can see the difference.
+* **...and every noisy channel in that grid was also ARMED**, so a ladder that dropped the `tst.b`
+  on the flag passed too. Two rows now arm nothing and leave the noise bits on.
+* **the mixdown's sign test was only ever exercised on channel A.** A `bmi` on all three arms passed
+  the whole grid, because no row gave B or C a negative flag — for which a negative flag is merely
+  non-zero and the arm RUNS. That row is now there.
+
+The last two mutants came from the reviews: the sequence walk's store order (below) and the
+`$98..$b7` refusal. **The final sweep was re-run whole rather than over the changed lines** — the
+independent gate's trims and the folded tick driver touch every tick and SFX case, so a subset would
+have measured the wrong thing.
+
+**Five measured trims, batch-17's bar** (each removed run named the mutant it does NOT uniquely
+catch, checked at the mutant level before the cut). The tick-drop grid lost the `$48` pair either
+side of its own wrap — two runs re-making the claim the `$2b` pair makes, since every mutant that
+grid is for dies on `$2b` — and kept the `$48` row the three-value guard needs. The tick's mixer
+sweep took ONE row per state of the preserved bits instead of the stop chain's seven, three runs
+fewer, and it is thinned FROM that tuple rather than re-tupled, so there is still one source; its own
+guard says all four states survive the thinning.
+
+**The pre-commit review gate found a REAL DIVERGENCE the suite could not see.** `movea.w
+0(a3,a2.w),a1` at `$18036` re-reads the sequence entry and `move.w d0,10(a0)` at `$1803c` stores the
+new index — **in that order** — and the port had them the other way round. It is invisible to every
+ordinary walk, because a sequence table only ever names a place outside the record; it becomes
+visible the moment the table names the record's own index WORD, which opcode `$93` can arrange from
+two pattern bytes. Fixed in both the reconstruction and the model, and pinned by a case that SOLVES
+`(offset + index) & $ffff` for the aliasing offset rather than transcribing one — plus a guard that
+the alias really is one and that the two notes a store-first port would tell apart differ. The
+mutant is in the sweep and is caught.
+
+Five more findings were fixed and none of them was a divergence: a parameter that shadowed the
+file's own `trigger_channel` helper (renamed `sfx_channel`), the channel-to-tone-register arithmetic
+spelt twice in one twenty-line span (the REGISTER NUMBER is now the primitive and the shadow address
+is derived from it, which is also what the test model does), `_module_address` and `assert_psg_state`
+each written twice in the battery (one speller now, and `_Memory.set_bits` joins `decrement` as the
+second read-modify-write the models had said four times), the hand-over cases hand-rolling
+`_run_channel_step`'s whole run protocol (they call it, with the poke layer it now takes), and a
+comment that put the `$b8..$bf` arpeggio overrun at "16 to 31 entries past" when the decoded index is
+248 to 255 of a table holding sixteen.
+
+**Not pinned, honestly.**
+
+* **The 44-byte tempo head `$17c74..$17c9f`.** It reads `$fffa01` bit 7 and `$ff820a` bit 1 and
+  writes one byte from them. No memory differential can answer either, so it stays behind the kit's
+  hardware-seed phase; everything it can hand the body is `$17c6e`, and the battery pokes all three
+  of its values. No case enters at `$17c74`. The `rts` at `$17c72` belongs to neither the head's 44
+  bytes nor the body's 644 and is reached by four of the body's exits.
+* **`$98..$b7`, the one branch of the ported code that is not reproduced — and it now REFUSES rather
+  than being merely documented.** The dispatch reads a word of the handlers' own instruction stream
+  as a jump target; there is no C for that, and the first draft returned "read the next byte" and
+  said so in a comment, which is indistinguishable from an ordinary opcode to everything that is not
+  a differential. It now goes through the kit's own refusal helper (`os_refused`, `os.h`), so
+  `harness.differential()` throws away any run that reaches it, and two cases — `$98` and `$b7`, the
+  first past the table and the last the `cmp.b` keeps — drive the candidate ALONE (there is no oracle
+  run to pair them with) and require the tally, with a third requiring an in-range opcode to leave it
+  at zero. It is still unreachable from the game's data; this is what happens if that is ever wrong.
+* **What is HEARD.** The chip surface is now a real one — an ordered ledger of up to fifteen accesses
+  per tick and a register file — but it is still register values, not sound. A green suite says the
+  right bytes reached the right PSG registers in the right order and says nothing about the audio.
+* **The thirteen unreachable opcodes' semantics.** `$83`/`$8d` set a flag bit nothing in the ported
+  tier reads; `$84`/`$85`/`$86`/`$90`/`$91` write fields `$18208` and `$18106` do read, so their
+  effect is pinned, but no shipped song ever asks for it. Their behaviour is reproduced; what they
+  are FOR is not established.
+* **d1 at the tick's three calls into `$18106`.** Only opcode `$97` reads it, and it occurs zero
+  times in the shipped data, so the tick hands the stepper a value of its own
+  (`SND_TRIGGER_CHANNEL_UNMODELLED`) and a case guards that no tick-entered stream contains a `$97`.
+  The defect itself IS pinned, from the stepper's own entry, over all four of the trigger's
+  selectors.
+* **The supervisor window.** `move.w sr,d1 / move.w #$2700,sr … move.w d1,sr` has no C analogue and
+  the oracle enters at `$2700` already. What IS observable is that the SR save destroys the channel
+  volume d1 was carrying — the outgoing d1 is exactly `$2700`, its high half zero because `$18208`'s
+  own `moveq #0,d1` cleared it — and a case asserts that on the ORACLE, the precedent being the stop
+  chain's saved SR in d2.
+
+**What a multi-tick sequence can and cannot claim.** Both tick drivers are now one
+(`_run_tick_sequence`, shared by `$1a5da` and `$17ca0`), and folding them surfaced a real asymmetry:
+the image carries between ticks because the pokes do, and the **chip does not**. That is the
+harness's rule rather than a shortcut — `differential()` calls `g_psg_reset(seed, known)` at the head
+of every run on both sides, so a model that carried its own register file forward would expect a
+read-back the oracle is never served and the case would redden on the harness instead of on the
+game. A multi-tick sequence here is therefore N runs from one declared chip state and **not a
+continuous chip timeline**; the driver says so where a reader would otherwise assume otherwise.
+
+**Two mechanisms went to `docs/m68k-disassembly.md`**, in the same commit and grounded in this
+batch's addresses: *the table with no bound, and the range decode that is wider than it* (the port
+stance — refuse, don't approximate — and the closure guard a "the data never gets there" claim owes),
+and *the other frame rewrite: a callee that pops its caller's return address* (why the pin can only
+be written from the caller's entry, and why the off-image surface is the witness). Both sit under the
+existing jump-table and `addq.l #n,(a7)` sections they extend.
+
+**The sound module is now ported from stub +14 down.** `snd_play_song` (+0), `snd_resume` (+42) and
+`snd_start_fadeout` (+84) are the three stub entries left, and none of them is behind a wall: they
+are ordinary image work above a tier that is now whole.
+
+**QUEUED, registered rather than half-done.**
+
+* **`test_actor.py`'s PSG assert is `leaf.assert_psg_surfaces`'s third caller.** The helper was
+  hoisted out of `test_sound.py` this batch (it had two spellings, and its own docstring names the
+  hazard); `test_actor.py` asserts one of the two surfaces piecemeal — `psg_events == []` for a path
+  that must not touch the chip — and converting it is deliberately not folded in here.
+* **`assert_psg_state` still computes the stop chain's expectation from the seed** while the tick's
+  records it. Both go through the hoisted helper now, so they cannot drift apart on the COMPARISON;
+  they can still drift on what they expect, which is the right place for two statements.
+* **The `$98..$b7` refusal has no on-target story.** This project has no Atari build today; one would
+  need `OS_NO_REFUSAL_TALLY` (os.h) and would then walk on silently. Noted where the branch is.

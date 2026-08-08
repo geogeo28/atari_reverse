@@ -53,6 +53,21 @@ WHAT THE CASES HOLD
     each case states the module state that entrant is entitled to write — which is what says the
     engine flag belongs to the outer one and the shadow bytes to the middle one.
 
+...AND NOW THE TICK ITSELF. $18106 walks one channel's pattern stream through 24 opcode handlers
+that live BELOW it and branch back INTO it, and $17ca0 is snd_music_tick under its tempo head: the
+gate, the fractional tick DROPPER, the SFX engine, the fade, the row step, the period/volume pass,
+the SFX mixdown and the chip write. Two things about it are worth stating before the cases:
+
+  * THE OPCODE GRID'S REACHABILITY COLUMN IS DERIVED. `_shipped_pattern_census` decodes every pattern
+    the 17 songs reach and counts what it finds, so "the shipped data reaches this handler" is the
+    DATA's claim per row. Eleven of the 24 are reached; thirteen are pinned from a seeded stream and
+    say so. The walk self-proves: every one of the 106 patterns ends in $87 or $8e, so those two
+    counts have to add up to the pattern count exactly.
+  * THE NON-LOCAL EXIT IS PINNED FROM THE TICK AND NEVER STANDALONE. Opcode $8e's `addq.l #4,sp`
+    unwinds snd_channel_step's frame, so entered at $18106 it would pop the runner's own sentinel.
+    The C reports it as a status, the tick acts on it, and the case runs the whole tail from $17ca0
+    — with the PSG ledger as the proof that the rest of the tick never ran.
+
 KNOWINGLY NOT PINNED
   * EVERYTHING THE TRIGGER ARMS. It sets a channel's state and returns; the sound is made by the
     tick, which is not ported. A green suite here says nothing about audio.
@@ -68,16 +83,22 @@ KNOWINGLY NOT PINNED
     What IS observable is the saved SR arriving in d2, and one case asserts it.
   * WHAT AN SFX SOUNDS LIKE, or what a descriptor field means beyond the role
     ../notes/sound_module_recon.md read off the tick.
+  * THE 44-BYTE TEMPO HEAD at $17c74, which reads $fffa01 and $ff820a. No memory differential can
+    answer either; all it can hand the body is the one drop byte at $17c6e, and a case pokes all
+    three of the values it can write. No case enters at $17c74.
+  * $98..$b7, the one branch of the ported code that is not reproduced: the dispatch reads a word of
+    the handlers' own instruction stream as a jump target. No shipped pattern byte is one.
 """
 import ctypes
 import pathlib
+import re
 
 import pytest
 
 import harness
 import leaf
-from leaf import (BRANCH_EXTENSION, RTS, add_w_dn_dn, addi_w_dn, branch_w_to, bsr_w, btst_imm_dn,
-                  assert_bands_are_seeded, clr_b_d16, clr_w_d16, clr_w_dn, longword, lsl_w_imm_dn,
+from leaf import (BRANCH_EXTENSION, RTS, add_w_dn_dn, addi_w_dn, assert_psg_surfaces,
+                  branch_w_to, bsr_w, btst_imm_dn, assert_bands_are_seeded, clr_b_d16, clr_w_d16, clr_w_dn, longword, lsl_w_imm_dn,
                   move_b_abs_l_dn, move_b_d16_dn, move_b_imm_abs_l, move_b_imm_d16,
                   move_b_postinc_dn, move_w_ind_dn, moveq, opcode, overlay, subi_w_dn, tst_b_d16,
                   word)
@@ -198,6 +219,54 @@ MIXER_NOISE_BITS = wb("SND_MIXER_NOISE_BITS")
 PORTA_OCTAVE_BIAS = wb("SND_PORTA_OCTAVE_BIAS")
 PORTA_OCTAVE_STEP = wb("SND_PORTA_OCTAVE_STEP")
 
+# ...and the PATTERN STEPPER's ($18106 plus its 24 handlers) and the TICK BODY's ($17ca0): the rest
+# of the music channel record, the opcode table and its range decoder, and the module globals no
+# routine below the tick names.
+CH_NOISE_TRACKS_NOTE = wb("SND_CH_NOISE_TRACKS_NOTE")
+CH_TRACKS_NOTE_SET = wb("SND_CH_TRACKS_NOTE_SET")
+CH_PATTERN_CURSOR = wb("SND_CH_PATTERN_CURSOR")
+CH_SEQUENCE_OFFSET = wb("SND_CH_SEQUENCE_OFFSET")
+CH_SEQUENCE_INDEX = wb("SND_CH_SEQUENCE_INDEX")
+CH_DURATION = wb("SND_CH_DURATION")
+CH_DURATION_RELOAD = wb("SND_CH_DURATION_RELOAD")
+CH_ENVELOPE_BASE = wb("SND_CH_ENVELOPE_BASE")
+CH_FLAG_MARK = wb("SND_CH_FLAG_MARK")
+CH_FLAG_SLIDE = wb("SND_CH_FLAG_SLIDE")
+CH_FLAG_SLIDE_UP = wb("SND_CH_FLAG_SLIDE_UP")
+CH_YIELD_ASKED = wb("SND_CH_YIELD_ASKED")
+
+PATTERN_JUMP_TABLE = wb("SND_PATTERN_JUMP_TABLE")
+PATTERN_OPCODES = wb("SND_PATTERN_OPCODES")
+PATTERN_NOTE_LIMIT = wb("SND_PATTERN_NOTE_LIMIT")
+PATTERN_CMD_LIMIT = wb("SND_PATTERN_CMD_LIMIT")
+PATTERN_CMD_INDEX_MASK = wb("SND_PATTERN_CMD_INDEX_MASK")
+PATTERN_DURATION_BIAS = wb("SND_PATTERN_DURATION_BIAS")
+PATTERN_INSTRUMENT_BIAS = wb("SND_PATTERN_INSTRUMENT_BIAS")
+PATTERN_ARPEGGIO_BIAS = wb("SND_PATTERN_ARPEGGIO_BIAS")
+PATTERN_DURATION_MIN = wb("SND_PATTERN_DURATION_MIN")
+ARPEGGIO_PTR_TABLE = wb("SND_ARPEGGIO_PTR_TABLE")
+INSTRUMENT_PTR_TABLE = wb("SND_INSTRUMENT_PTR_TABLE")
+
+MASTER_VOLUME = wb("SND_MASTER_VOLUME")
+SONG_SPEED = wb("SND_SONG_SPEED")
+SONG_SPEED_COPY = wb("SND_SONG_SPEED_COPY")
+CHANNEL_LOCKS = wb("SND_CHANNEL_LOCKS")
+CHANNEL_LOCKS_LEN = wb("SND_CHANNEL_LOCKS_LEN")
+SONG_LOADED = wb("SND_SONG_LOADED")
+SONG_UNLOADED = wb("SND_SONG_UNLOADED")
+FADE_RATE = wb("SND_FADE_RATE")
+FADE_COUNTDOWN = wb("SND_FADE_COUNTDOWN")
+PERIOD_SCRATCH = wb("SND_PERIOD_SCRATCH")
+SPEED_ACC = wb("SND_SPEED_ACC")
+TICK_DROP_VALUE = wb("SND_TICK_DROP_VALUE")
+TICK_DROP_ACC = wb("SND_TICK_DROP_ACC")
+MASTER_VOLUME_MASK = wb("SND_MASTER_VOLUME_MASK")
+MASTER_VOLUME_FULL = wb("SND_MASTER_VOLUME_FULL")
+MIXER_CHANNEL_A_BITS = wb("SND_MIXER_CHANNEL_A_BITS")
+PSG_REG_TONE_A = wb("PSG_REG_TONE_A")
+PSG_REG_TONE_LEN = wb("PSG_REG_TONE_LEN")
+PSG_REG_NOISE_PERIOD = wb("PSG_REG_NOISE_PERIOD")
+
 LONGWORD_MASK = leaf.LONGWORD_MASK
 LONGWORD_LEN = leaf.LONGWORD_BYTES
 WORD_LEN = leaf.WORD_BYTES
@@ -218,12 +287,19 @@ STUB_INSN_CAP = TRIGGER_INSN_CAP + 4
 # `leaf.s8` is the `ext.w Dn` that sends an id of $80 or more backwards off the table it indexes;
 # machine.h's `sign_ext8` is the reconstruction's own spelling of the same thing.
 
+def _module_address(offset):
+    """`adda.l a3,An` over a SIGNED word — the module naming a place inside itself. The window is the
+    base plus or minus 32 KiB, all of which is inside the loaded image, which is why the reads that
+    go through one need no bus guard where the reads through a stored CURSOR do."""
+    return (MODULE_BASE + leaf.s16(offset)) & LONGWORD_MASK
+
+
 def _module_pointer(image, table, byte_index):
     """One entry of an a3-relative WORD table, resolved as `movea.w 0(An,Dn.w),An / adda.l a3,An`
     does: a signed byte doubled into the index, and the ENTRY itself sign-extended before the module
     base is added to it."""
     entry = (table + TABLE_ENTRY_LEN * leaf.s8(byte_index)) & LONGWORD_MASK
-    return (MODULE_BASE + leaf.s16(leaf.u16(image, entry))) & LONGWORD_MASK
+    return _module_address(leaf.u16(image, entry))
 
 
 def _descriptor_of(image, effect_id):
@@ -232,6 +308,11 @@ def _descriptor_of(image, effect_id):
 
 def _channel_state(channel):
     return STATE + channel * STATE_LEN
+
+
+def _music_channel(index):
+    """One music channel record's ADDRESS — the a0 the tick hands $18106 and $18208 alike."""
+    return MUSIC_CHANNEL_STATE + index * MUSIC_CHANNEL_LEN
 
 
 def _mix_period(channel):
@@ -344,7 +425,7 @@ MOVEA_L_POSTINC_A7_AN = 0x205f  # ALSO IN test_copylock.py's `MOVEA_L_POSTINC_A7
 # The registers the arms use, named once so a builder cannot pin one and the reconstruction read
 # another: a3 is the module base, a0 the descriptor cursor, a1 the state cursor, a2 the stream.
 D0, D1 = 0, 1
-A0, A1, A2, A3 = 0, 1, 2, 3
+A0, A1, A2, A3, A7 = 0, 1, 2, 3, 7
 
 # `move.b d16(pc),d16(a3)`: an opcode word and two displacement words. The `bne.s` over the noise
 # store needs this before the store can be built at its own address, and a test below requires the
@@ -1088,6 +1169,454 @@ def _period_volume_entry():
     ])
 
 
+# --- the pattern stepper, its opcode handlers and the tick body: their own encodings --------------
+# Every one of these has ONE user (this file); the shared ones come from leaf.py as everywhere above.
+# A `bcc.w` and a `bcc.s` SHARE their opcode word — the short form carries its displacement in the low
+# byte, which is zero for the word form — so the constants above serve both and the FORM is which
+# builder is used: `_branch_s`/`_branch_s_to` for the byte displacement, `_branch_w`/`branch_w_to`
+# for the word one.
+ADDQ_B_DN = 0x5000              # addq.b #n,Dn — the count in bits 11-9, 0 meaning 8
+ADDQ_L_AN = 0x5088              # addq.l #n,An — `addq.l #4,sp`, opcode $8e's frame unwind
+ADDQ_W_DN = 0x5040
+CLR_B_DN = 0x4200
+TST_L_D16_AN = 0x4aa8           # tst.l d16(An) — the LONG form, which is what makes a pad byte count
+ADD_B_DN_D16_AN = 0xd128        # add.b Dn,d16(An): a memory read-modify-write, and the CARRY after it
+AND_B_DN_D16_AN = 0xc128
+ORI_B_IMM_D16_AN = 0x0028
+MOVE_B_POSTINC_D16_AN = 0x1158  # move.b (An)+,d16(Am) — one operand byte out of the pattern stream
+MOVE_B_PREDEC_D16_AN = 0x1160   # move.b -(An),d16(Am) — the envelope SPEED, one byte BELOW its stream
+MOVE_W_IMM_D16_AN = 0x317c
+MOVEA_W_D16_AN_AM = 0x3068
+MOVE_B_D16_PC_ABS_L = 0x13fa    # move.b d16(pc),<abs>.l — one shadow byte to the PSG data port
+TST_W_D8_AN_XN = 0x4a70
+MOVEA_W_D8_AN_XN_AM = 0x3070    # movea.w d8(An,Xn.w),Am, with the BASE register in the low three
+JMP_D8_AN_XN = 0x4ef0           # jmp d8(An,Xn.w) — $18106's last instruction, and the dispatch
+INDEX_IS_ADDRESS_REG = 0x8000   # bit 15 of an extension word: the index is An and not Dn
+SHIFT_TYPE_ROTATE = 0x18        # the type field at bits 4-3, where LSHIFT_LOGICAL is 01 and this 11
+ST_D16_AN = 0x50e8              # st d16(An) — Scc with the always-true condition, SF_D16_AN's twin
+
+TEMPO_HEAD_BYTES = 44           # $17c74..$17c9f, the two hardware reads this batch does NOT port
+CHANNEL_STEP_BODY_BYTES = 258   # $18106..$18207
+PATTERN_HANDLER_BYTES = 306     # $17fd4..$18105 — the 24 handlers, BELOW the routine they belong to
+TICK_BODY_BYTES = 644           # $17ca0..$17f23
+PATTERN_HANDLER_BASE = leaf.entry_of("snd_pattern_op_97_trigger_sfx")
+
+# The `rts` snd_music_tick's four exits share, and $1a5d8's twin: the two bytes BELOW the tick's own
+# entry, derived from it rather than transcribed.
+TICK_SHARED_RTS = leaf.entry_of("snd_music_tick") - len(RTS)
+# ...and the tail both endings of a song enter. Opcode $8e's handler is `addq.l #4,sp` and then this,
+# so the address the FADE branches to is the handler's entry plus that one instruction.
+ADDQ_L_SP_BYTES = 2
+END_SONG_TAIL = leaf.entry_of("snd_pattern_op_8e_end_song") + ADDQ_L_SP_BYTES
+
+
+def _branch_w(condition, spanned):
+    """`_branch_s`'s twin for the distances the tick's body is too long to say in a byte. No size
+    assertion: the original spells `bne.w $18188` over 122 bytes, which a `.s` would have fitted."""
+    return leaf.branch_over(condition, spanned if isinstance(spanned, int) else _bytes_of(spanned))
+
+
+def _bra_shortest(target):
+    """`bra` to ``target`` in the form the original's assembler picked — `.s` where the displacement
+    fits in a byte and `.w` where it does not. Computed from the distance rather than transcribed,
+    which is what makes a handler that moved fail on its own bytes rather than on a flag."""
+    def build(at):
+        displacement = target - (at + WORD_LEN)
+        if -0x80 <= displacement < 0x80 and displacement not in (0, -1):
+            return _branch_s_to(BRA_S, at, target)
+        return branch_w_to(BRA_W, at, target)
+    return build
+
+
+def _rol_b(count, reg):
+    """`rol.b #n,Dn` — the same base opcode as the shifts with the ROTATE type ORed in."""
+    return opcode(LSHIFT_IMM_DN | ((count & 7) << 9) | LSHIFT_LEFT | SHIFT_TYPE_ROTATE | reg)
+
+
+def _shadow_tone(channel):
+    """The PSG register NUMBER of a channel's fine tone period, which is also its shadow's offset."""
+    return PSG_REG_TONE_A + channel * PSG_REG_TONE_LEN
+
+
+def _rol_byte(value, count):
+    """`rol.b #n,Dn`, and for channel A no instruction at all — which is a rotate by zero."""
+    wide = value << count
+    return (wide | (wide >> 8)) & BYTE_MASK
+
+
+def _channel_mixer_bits(channel):
+    """$09, $12, $24 — one constant rotated by the channel number, which is the claim the `ori.b`
+    immediates and the `rol.b` counts make together."""
+    return _rol_byte(MIXER_CHANNEL_A_BITS, channel)
+
+
+def _move_b_postinc_record(offset):
+    return opcode(MOVE_B_POSTINC_D16_AN | (A0 << 9) | A1) + word(offset)
+
+
+def _move_b_postinc_module(address):
+    return opcode(MOVE_B_POSTINC_D16_AN | (A3 << 9) | A1) + _module_offset(address)
+
+
+def _table_read(register, table):
+    """`lea table(pc),An / movea.w 0(An,d0.w),An / adda.l a3,An` — the stepper's three word tables,
+    read the same way the trigger's two are but WITHOUT the `ext.w` above them."""
+    return [_lea_pc(register, table),
+            opcode(MOVEA_W_D8_AN_XN_AM | (register << 9) | register) + word(D0 << 12),
+            opcode(ADDA_L_AN_AM | (register << 9) | A3)]
+
+
+def _channel_step_runs():
+    """$18106's own 258 bytes, as the named runs its branches take their displacements from.
+
+    Returned rather than assembled so the two addresses the OPCODE HANDLERS branch back into — the
+    `moveq #0,d0` that reads the next pattern byte and the reload that closes the row — can be
+    derived from the runs above them instead of transcribed, and the handler block and the stepper
+    cannot then disagree about either.
+    """
+    noise_tracks = [_move_b_dn_module(D0, NOISE_PERIOD_BASE)]
+    note = [
+        _move_b_dn_record(D0, CH_NOTE),
+        tst_b_d16(A0, CH_NOISE_TRACKS_NOTE),
+        _branch_s(BEQ_S, noise_tracks),
+        *noise_tracks,
+        opcode(MOVEA_L_D16_AN_AM | (A2 << 9) | A0) + word(CH_ENVELOPE_BASE),
+        opcode(MOVE_L_AN_D16_AM | (A0 << 9) | A2) + word(CH_ENVELOPE_CURSOR),
+        # The two reads of `(a2)` the original really does, one per field. The only store between
+        # them is the cursor's, which is why src/sound.c fetches once.
+        opcode(MOVE_B_IND_AN_D16_AM | (A0 << 9) | A2) + word(CH_ENVELOPE_LAST),
+        opcode(MOVE_B_IND_AN_D16_AM | (A0 << 9) | A2) + word(CH_VOLUME),
+        _move_b_record(CH_ENVELOPE_SPEED, CH_ENVELOPE_COUNT),
+        opcode(BSET_IMM_D16_AN | A0) + word(CH_FLAG_ENVELOPE.bit_length() - 1) + word(CH_FLAGS),
+    ]
+
+    # $18152 — the hand-over ladder. Built from the BOTTOM, because each channel's second `beq` jumps
+    # over everything that is left, which is exactly the run assembled so far.
+    ladder = [opcode(ST_D16_AN | A0) + word(CH_YIELD)]
+    for channel in reversed(range(CHANNELS)):
+        probe = [opcode(BTST_IMM_D16_AN | A3) + word(MIXER_NOISE_OFF.bit_length() - 1)
+                 + _module_offset(_channel_state(channel) + DESC_MIXER_BITS)]
+        ladder = [
+            _tst_b(ACTIVE_FLAGS + channel),
+            _branch_s(BEQ_S, _bytes_of(probe) + SHORT_BRANCH_BYTES),
+            *probe,
+            _branch_s(BEQ_S, ladder),
+        ] + ladder
+    end_row = [
+        _move_b_record(CH_DURATION_RELOAD, CH_DURATION),
+        opcode(MOVE_L_AN_D16_AM | (A0 << 9) | A1) + word(CH_PATTERN_CURSOR),
+        tst_b_d16(A0, CH_YIELD),
+        _branch_s(BEQ_S, ladder),
+        *ladder,
+        RTS,
+    ]
+
+    slide_up = [leaf.addq_b_d16(1, A0, CH_NOTE), RTS]
+    slide = [
+        opcode(BTST_IMM_D16_AN | A0) + word(CH_FLAG_SLIDE.bit_length() - 1) + word(CH_FLAGS),
+        _branch_s(BNE_S, [RTS]),
+        RTS,
+        opcode(BTST_IMM_D16_AN | A0) + word(CH_FLAG_SLIDE_UP.bit_length() - 1) + word(CH_FLAGS),
+        _branch_s(BEQ_S, slide_up),
+        *slide_up,
+        _subq_b_record(CH_NOTE),
+        RTS,
+    ]
+
+    head = [_subq_b_record(CH_DURATION)]
+    prologue = [clr_b_d16(A0, CH_FLAGS),
+                opcode(MOVEA_L_D16_AN_AM | (A1 << 9) | A0) + word(CH_PATTERN_CURSOR)]
+    read_next = leaf.entry_of("snd_channel_step") + _bytes_of(head) + BRANCH_EXTENSION * 2 \
+        + _bytes_of(prologue)
+    end_row_at = read_next + _bytes_of([moveq(0, D0), move_b_postinc_dn(D0, A1)]) \
+        + BRANCH_EXTENSION * 2 + _bytes_of(note)
+
+    arpeggio = _table_read(A2, ARPEGGIO_PTR_TABLE) + [
+        opcode(MOVE_L_AN_D16_AM | (A0 << 9) | A2) + word(CH_ARPEGGIO_CURSOR),
+        opcode(MOVE_L_AN_D16_AM | (A0 << 9) | A2) + word(CH_ARPEGGIO_BASE),
+        lambda at: branch_w_to(BRA_W, at, read_next),
+    ]
+    arpeggio = [add_w_dn_dn(D0, D0)] + arpeggio
+    duration = [
+        opcode(ADDQ_B_DN | (1 << 9) | D0),
+        _move_b_dn_record(D0, CH_DURATION_RELOAD),
+        lambda at: branch_w_to(BRA_W, at, read_next),
+    ]
+    instrument = [add_w_dn_dn(D0, D0)] + _table_read(A2, INSTRUMENT_PTR_TABLE) + [
+        opcode(MOVE_L_AN_D16_AM | (A0 << 9) | A2) + word(CH_ENVELOPE_BASE),
+        opcode(MOVE_B_PREDEC_D16_AN | (A0 << 9) | A2) + word(CH_ENVELOPE_SPEED),
+        lambda at: branch_w_to(BRA_W, at, read_next),
+    ]
+    dispatch = [
+        leaf.andi_w_dn(D0, PATTERN_CMD_INDEX_MASK),
+        add_w_dn_dn(D0, D0),
+        _lea_pc(A2, PATTERN_JUMP_TABLE),
+        opcode(MOVEA_W_D8_AN_XN_AM | (A2 << 9) | A2) + word(D0 << 12),
+        opcode(JMP_D8_AN_XN | A3) + word(INDEX_IS_ADDRESS_REG | (A2 << 12)),
+    ]
+    # The range chain, built bottom-up so each `bcs` spans exactly the pieces between it and its arm.
+    add_arpeggio = [_immediate_b(ADDI_B_IMM_DN, D0, PATTERN_ARPEGGIO_BIAS)]
+    to_instrument = add_arpeggio + arpeggio + duration
+    add_instrument = [_immediate_b(ADDI_B_IMM_DN, D0, PATTERN_INSTRUMENT_BIAS),
+                      _branch_s(BCS_S, to_instrument)]
+    to_duration = add_instrument + add_arpeggio + arpeggio
+    add_duration = [_immediate_b(ADDI_B_IMM_DN, D0, PATTERN_DURATION_BIAS),
+                    _branch_s(BCS_S, to_duration)]
+    to_dispatch = add_duration + add_instrument + add_arpeggio + arpeggio + duration + instrument
+    decode = [opcode(CMP_B_IMM_DN | D0) + word(PATTERN_CMD_LIMIT),
+              _branch_s(BCS_S, to_dispatch)] + to_dispatch + dispatch
+
+    read = [moveq(0, D0), move_b_postinc_dn(D0, A1), _branch_w(BMI_S, note + end_row + slide)]
+    # The opening `bne.w` reaches the SLIDE, so it spans the read loop and the row but not the arms
+    # below it — which is also the only reason the pattern walk is unreachable while a row runs.
+    to_slide = prologue + read + note + end_row
+    body = to_slide + slide + decode
+    return {"pieces": [*head, _branch_w(BNE_S, to_slide), *body],
+            "read_next": read_next, "end_row": end_row_at}
+
+
+_CHANNEL_STEP = _channel_step_runs()
+# The two addresses inside $18106 that a handler `bra`s back to — $18116 and $18148 — DERIVED.
+PATTERN_READ_NEXT = _CHANNEL_STEP["read_next"]
+PATTERN_END_ROW = _CHANNEL_STEP["end_row"]
+
+
+def _channel_step_entry():
+    """$18106, whole: the countdown, the pitch slide, the pattern read loop, the range decoder and
+    the `jmp` through the opcode table, which is its LAST instruction."""
+    return leaf.assemble(leaf.entry_of("snd_channel_step"), _CHANNEL_STEP["pieces"])
+
+
+def _noise_route_handler(bits, tracks_note):
+    """$18044 and $18064 — opcodes $8b and $8a, one body with two masks and two flag values."""
+    return [
+        move_b_d16_dn(D0, A0, CH_MIXER_MASK),
+        opcode(MOVE_B_DN_DN | (D1 << 9) | D0),
+        _immediate_b(ANDI_B_IMM_DN, D0, bits),
+        _move_b_pc_dn(D2, NOISE_ROUTE_MASK),
+        opcode(EOR_B_DN_EA | (D2 << 9) | D0),
+        opcode(AND_B_EA_DN | (D0 << 9) | D1),
+        opcode(EOR_B_DN_EA | (D2 << 9) | D0),
+        _move_b_dn_module(D0, NOISE_ROUTE_MASK),
+        opcode((ST_D16_AN if tracks_note else SF_D16_AN) | A0) + word(CH_NOISE_TRACKS_NOTE),
+        _bra_shortest(PATTERN_READ_NEXT),
+    ]
+
+
+# The twenty-four handlers in ADDRESS order — which is not the table's order — each named for the
+# opcode whose table entry points at it. Two of the entries share $180e4, and two handlers FALL INTO
+# the one below them ($86 into $85's `bset`, $88 into $82's control store), so the block is 23 runs.
+def _pattern_handler_runs():
+    set_flag = lambda bit: opcode(BSET_IMM_D16_AN | A0) + word(bit) + word(CH_FLAGS)  # noqa: E731
+    return (
+        # $97 — one operand byte into d0, then stub +56, WITHOUT ever setting d1 (../names.txt).
+        [move_b_postinc_dn(D0, A1),
+         lambda at: bsr_w(at, leaf.entry_of("snd_call_trigger_effect")),
+         _bra_shortest(PATTERN_READ_NEXT)],
+        [_move_b_postinc_module(MASTER_VOLUME), _bra_shortest(PATTERN_READ_NEXT)],           # $96
+        [_move_b_postinc_module(FADE_RATE), _move_b_pc(FADE_RATE, FADE_COUNTDOWN),
+         _bra_shortest(PATTERN_READ_NEXT)],                                                  # $95
+        [_move_b_postinc_module(SONG_SPEED), _move_b_pc(SONG_SPEED, SONG_SPEED_COPY),
+         _bra_shortest(PATTERN_READ_NEXT)],                                                  # $94
+        [_move_b_postinc_record(CH_SEQUENCE_OFFSET),
+         _move_b_postinc_record(CH_SEQUENCE_OFFSET + 1),
+         opcode(MOVE_W_IMM_D16_AN | A0) + word(0) + word(CH_SEQUENCE_INDEX),
+         _bra_shortest(PATTERN_READ_NEXT)],                                                  # $93
+        # $8e — the frame unwind, and then the tail the FADE enters two bytes later.
+        [opcode(ADDQ_L_AN | (4 << 9) | A7),
+         opcode(SF_D16_AN | A3) + _module_offset(SONG_LOADED),
+         lambda at: branch_w_to(BRA_W, at, STUB_TABLE_BASE + STUB_STOP_OFFSET)],
+        [move_w_ind_dn(D0, A0, CH_SEQUENCE_INDEX),                                           # $87
+         opcode(MOVEA_W_D16_AN_AM | (A2 << 9) | A0) + word(CH_SEQUENCE_OFFSET),
+         opcode(ADDA_W_DN_AN | (A2 << 9) | D0),
+         opcode(ADDQ_W_DN | (WORD_LEN << 9) | D0),
+         opcode(TST_W_D8_AN_XN | A3) + word(INDEX_IS_ADDRESS_REG | (A2 << 12)),
+         _branch_s(BNE_S, [opcode(MOVEA_W_D16_AN_AM | (A2 << 9) | A0) + word(CH_SEQUENCE_OFFSET),
+                           moveq(WORD_LEN, D0)]),
+         opcode(MOVEA_W_D16_AN_AM | (A2 << 9) | A0) + word(CH_SEQUENCE_OFFSET),
+         moveq(WORD_LEN, D0),
+         opcode(MOVEA_W_D8_AN_XN_AM | (A1 << 9) | A3) + word(INDEX_IS_ADDRESS_REG | (A2 << 12)),
+         opcode(ADDA_L_AN_AM | (A1 << 9) | A3),
+         opcode(MOVE_W_DN_D16_AN | (A0 << 9) | D0) + word(CH_SEQUENCE_INDEX),
+         _bra_shortest(PATTERN_READ_NEXT)],
+        _noise_route_handler(NOISE_TONE_BITS, tracks_note=True),                             # $8b
+        _noise_route_handler(MIXER_NOISE_BITS, tracks_note=False),                           # $8a
+        [move_b_d16_dn(D0, A0, CH_MIXER_MASK),                                               # $8c
+         _immediate_b(EORI_B_IMM_DN, D0, BYTE_MASK),
+         _move_b_pc_dn(D2, NOISE_ROUTE_MASK),
+         opcode(AND_B_EA_DN | (D0 << 9) | D2),
+         opcode(AND_B_DN_D16_AN | (D0 << 9) | A3) + _module_offset(NOISE_ROUTE_MASK),
+         opcode(ST_D16_AN | A0) + word(CH_NOISE_TRACKS_NOTE),
+         _bra_shortest(PATTERN_READ_NEXT)],
+        [clr_w_d16(A0, CH_VIBRATO_ACC), set_flag(CH_FLAG_VIBRATO.bit_length() - 1),          # $84
+         _move_b_postinc_record(CH_VIBRATO_DEPTH), _move_b_postinc_record(CH_VIBRATO_SPEED),
+         _bra_shortest(PATTERN_READ_NEXT)],
+        [_move_b_postinc_module(GLOBAL_TRANSPOSE), _bra_shortest(PATTERN_READ_NEXT)],        # $89
+        [_move_b_postinc_record(CH_DETUNE), _bra_shortest(PATTERN_READ_NEXT)],               # $92
+        [set_flag(CH_FLAG_SLIDE_UP.bit_length() - 1)],                                       # $86 ->
+        [set_flag(CH_FLAG_SLIDE.bit_length() - 1), _bra_shortest(PATTERN_READ_NEXT)],        # $85
+        [_move_b_postinc_record(CH_PORTA_STEP),                                              # $88 ->
+         opcode(MOVE_B_IND_AN_D16_AM | (A0 << 9) | A1) + word(CH_PORTA_LIMIT),
+         _move_b_postinc_record(CH_PORTA_CURRENT)],
+        [move_b_imm_d16(A0, CH_PORTA_ENABLED, CH_PORTA_CONTROL),                             # $82
+         _bra_shortest(PATTERN_READ_NEXT)],
+        [clr_b_d16(A0, CH_PORTA_CONTROL), _bra_shortest(PATTERN_READ_NEXT)],                 # $81
+        [set_flag(CH_FLAG_MARK.bit_length() - 1), _bra_shortest(PATTERN_READ_NEXT)],         # $83/$8d
+        [clr_b_d16(A0, CH_VOLUME), _bra_shortest(PATTERN_END_ROW)],                          # $80
+        [set_flag(CH_FLAG_ENVELOPE.bit_length() - 1), _bra_shortest(PATTERN_END_ROW)],       # $8f
+        [opcode(ST_D16_AN | A0) + word(CH_YIELD), _bra_shortest(PATTERN_READ_NEXT)],         # $90
+        [opcode(SF_D16_AN | A0) + word(CH_YIELD), _bra_shortest(PATTERN_READ_NEXT)],         # $91
+    )
+
+
+PATTERN_HANDLER_NAMES = (
+    "snd_pattern_op_97_trigger_sfx", "snd_pattern_op_96_master_volume",
+    "snd_pattern_op_95_fade_rate", "snd_pattern_op_94_song_speed",
+    "snd_pattern_op_93_set_sequence", "snd_pattern_op_8e_end_song",
+    "snd_pattern_op_87_next_pattern", "snd_pattern_op_8b_route_tone",
+    "snd_pattern_op_8a_route_noise", "snd_pattern_op_8c_route_off",
+    "snd_pattern_op_84_vibrato_on", "snd_pattern_op_89_transpose", "snd_pattern_op_92_detune",
+    "snd_pattern_op_86_slide_up", "snd_pattern_op_85_slide_on",
+    "snd_pattern_op_88_portamento_set", "snd_pattern_op_82_portamento_on",
+    "snd_pattern_op_81_portamento_off", "snd_pattern_op_83_set_flag_bit1",
+    "snd_pattern_op_80_rest", "snd_pattern_op_8f_envelope_on",
+    "snd_pattern_op_90_yield_to_sfx", "snd_pattern_op_91_reclaim_channel",
+)
+# Where in the table each of those handlers is named from — the opcode's own index, and $180e4 twice.
+PATTERN_OPCODE_OF_HANDLER = (0x17, 0x16, 0x15, 0x14, 0x13, 0x0e, 0x07, 0x0b, 0x0a, 0x0c, 0x04, 0x09,
+                             0x12, 0x06, 0x05, 0x08, 0x02, 0x01, 0x03, 0x00, 0x0f, 0x10, 0x11)
+PATTERN_ALIASED_OPCODE = 0x0d       # $8d, whose table entry is $83's handler
+STUB_STOP_OFFSET = 28               # stub +28, which opcode $8e's tail `bra.w`s into
+
+
+def _pattern_handlers():
+    """$17fd4..$18105 — the twenty-three handler bodies, laid out end to end at the block's base."""
+    return leaf.assemble(PATTERN_HANDLER_BASE,
+                         [piece for run in _pattern_handler_runs() for piece in run])
+
+
+def _psg_write_shadow(register, shadow_reg):
+    """`move.b #reg,$ff8800.l / move.b d16(pc),$ff8802.l` — select, then one SHADOW byte."""
+    select = _psg_select(register)
+    return lambda at: (select + opcode(MOVE_B_D16_PC_ABS_L)
+                       + _pc_relative(at + len(select), PSG_SHADOW + shadow_reg) + longword(PSG_DATA))
+
+
+def _tick_body_entry():
+    """$17ca0, whole. The gate, the drop accumulator, the three calls, the SFX mixdown and the chip
+    write, with every module address, every stride and both non-local exits at once."""
+    base = leaf.entry_of("snd_music_tick_body")
+
+    fade_reload = [_move_b_pc(FADE_RATE, FADE_COUNTDOWN)]
+    volume_step = [_subq_b_module(MASTER_VOLUME),
+                   lambda at: branch_w_to(BEQ_S, at, END_SONG_TAIL)] + fade_reload
+    fade_rest = [_tst_b(MASTER_VOLUME),
+                 lambda at: branch_w_to(BEQ_S, at, END_SONG_TAIL),
+                 _subq_b_module(FADE_COUNTDOWN),
+                 _branch_s(BNE_S, volume_step)] + volume_step
+    fade = [_move_b_pc_dn(D0, FADE_RATE), _branch_s(BEQ_S, fade_rest)] + fade_rest
+
+    reseed = [_move_b_pc(NOISE_PERIOD_BASE, NOISE_PERIOD_OUT)]
+
+    row_calls = []
+    for channel in range(CHANNELS):
+        row_calls += [_lea_pc(A0, _music_channel(channel)),
+                      lambda at: bsr_w(at, leaf.entry_of("snd_channel_step"))]
+    rows = [_move_b_pc_dn(D0, SONG_SPEED),
+            opcode(ADD_B_DN_D16_AN | (D0 << 9) | A3) + _module_offset(SPEED_ACC),
+            _branch_s(BCC_S, row_calls)] + row_calls
+
+    publish = [opcode(ANDI_B_IMM_D16_AN | A3) + word(MASTER_VOLUME_MASK)
+               + _module_offset(MASTER_VOLUME)]
+    for channel in range(CHANNELS):
+        clamp = [moveq(0, D1)]
+        publish += [
+            _lea_pc(A0, _music_channel(channel)),
+            lambda at: bsr_w(at, leaf.entry_of("snd_channel_period_and_volume")),
+            opcode(MOVE_W_DN_D16_AN | (A3 << 9) | D0) + _module_offset(PERIOD_SCRATCH),
+            _move_b_dn_module(D0, PSG_SHADOW + _shadow_tone(channel)),
+            _move_b_pc(PERIOD_SCRATCH, PSG_SHADOW + _shadow_tone(channel) + 1),
+            _move_b_pc_dn(D0, MASTER_VOLUME),
+            _immediate_b(EORI_B_IMM_DN, D0, MASTER_VOLUME_FULL),
+            opcode(SUB_B_EA_DN | (D1 << 9) | D0),
+            _branch_s(BCC_S, clamp),
+            *clamp,
+            _move_b_dn_module(D1, PSG_SHADOW + PSG_REG_VOLUME_A + channel),
+        ]
+    publish += [_move_b_pc(NOISE_PERIOD_OUT, PSG_SHADOW + PSG_REG_NOISE_PERIOD)]
+
+    mixdown = []
+    for channel in range(CHANNELS):
+        noise_store = [_move_b_pc(MIX_NOISE, PSG_SHADOW + PSG_REG_NOISE_PERIOD)]
+        arm = [
+            _move_b_pc(_mix_period(channel) + MIX_PERIOD_LOW, PSG_SHADOW + _shadow_tone(channel)),
+            _move_b_pc(_mix_period(channel), PSG_SHADOW + _shadow_tone(channel) + 1),
+            _move_b_pc_dn(D0, _channel_state(channel) + DESC_MIXER_BITS),
+            btst_imm_dn(MIXER_NOISE_OFF.bit_length() - 1, D0),
+            _branch_s(BNE_S, noise_store),
+            *noise_store,
+            opcode(ORI_B_IMM_D16_AN | A3) + word(_channel_mixer_bits(channel))
+            + _module_offset(PSG_SHADOW + PSG_REG_MIXER),
+            *([] if channel == CHANNEL_A else [_rol_b(channel, D0)]),
+            opcode(AND_B_DN_D16_AN | (D0 << 9) | A3)
+            + _module_offset(PSG_SHADOW + PSG_REG_MIXER),
+            _move_b_pc(MIX_VOLUME + channel, PSG_SHADOW + PSG_REG_VOLUME_A + channel),
+        ]
+        # Channel A alone can abandon the tick, exactly as it alone can end snd_sfx_tick.
+        abandon = ([lambda at: branch_w_to(BMI_S, at, TICK_SHARED_RTS)]
+                   if channel == CHANNEL_A else [])
+        mixdown += [_tst_b(ACTIVE_FLAGS + channel), _branch_s(BEQ_S, abandon + arm)] + abandon + arm
+    mixdown += [opcode(ANDI_B_IMM_D16_AN | A3) + word(PSG_MIXER_ALL_OFF)
+                + _module_offset(PSG_SHADOW + PSG_REG_MIXER)]
+
+    noise_write = [_psg_write_shadow(PSG_REG_NOISE_PERIOD, PSG_REG_NOISE_PERIOD)]
+    chip = [
+        opcode(MOVE_SR_DN | D1),
+        opcode(MOVE_IMM_SR) + word(SUPERVISOR_SR),
+        opcode(CLR_B_DN | D2),
+        opcode(TST_L_D16_AN | A3) + _module_offset(CHANNEL_LOCKS),
+        _branch_s(BNE_S, noise_write),
+        *noise_write,
+    ]
+    for channel in range(CHANNELS):
+        writes = [
+            _psg_write_shadow(_shadow_tone(channel), _shadow_tone(channel)),
+            _psg_write_shadow(_shadow_tone(channel) + 1, _shadow_tone(channel) + 1),
+            _psg_write_shadow(PSG_REG_VOLUME_A + channel, PSG_REG_VOLUME_A + channel),
+            _immediate_b(ORI_B_IMM_DN, D2, _channel_mixer_bits(channel)),
+        ]
+        chip += [_tst_b(CHANNEL_LOCKS + channel), _branch_s(BNE_S, writes)] + writes
+    chip += [
+        _psg_select(PSG_REG_MIXER),
+        move_b_abs_l_dn(D0, PSG_SELECT),
+        _move_b_pc_dn(D3, PSG_SHADOW + PSG_REG_MIXER),
+        opcode(EOR_B_DN_EA | (D0 << 9) | D3),
+        opcode(AND_B_EA_DN | (D3 << 9) | D2),
+        opcode(EOR_B_DN_EA | (D0 << 9) | D3),
+        opcode(MOVE_B_DN_ABS_L | D3) + longword(PSG_DATA),
+        opcode(MOVE_DN_SR | D1),
+        lambda at: branch_w_to(BRA_W, at, TICK_SHARED_RTS),
+    ]
+
+    gate_flags = [opcode(TST_L_D16_AN | A3) + _module_offset(ACTIVE_FLAGS)]
+    gate_tail = gate_flags + [lambda at: _branch_s_to(BEQ_S, at, TICK_SHARED_RTS)]
+    music = fade + reseed + rows + publish
+    return leaf.assemble(base, [
+        _tst_b(ENGINE_ENABLED),
+        _branch_s(BNE_S, _bytes_of(gate_flags) + SHORT_BRANCH_BYTES),
+        *gate_tail,
+        _move_b_pc_dn(D0, TICK_DROP_VALUE),
+        opcode(ADD_B_DN_D16_AN | (D0 << 9) | A3) + _module_offset(TICK_DROP_ACC),
+        lambda at: _branch_s_to(BCS_S, at, TICK_SHARED_RTS),
+        lambda at: bsr_w(at, leaf.entry_of("snd_sfx_tick")),
+        _tst_b(ENGINE_ENABLED),
+        _branch_w(BEQ_S, music),
+        *music,
+        *mixdown,
+        *chip,
+    ])
+
+
 ENTRY_BYTES = {
     "snd_trigger_effect": _trigger_entry(),
     "snd_call_trigger_effect": _stub(*_TRIGGER_STUB),
@@ -1097,8 +1626,10 @@ ENTRY_BYTES = {
     "snd_prng_step": _prng_entry(),
     "snd_sfx_tick": _sfx_tick_entry(),
     "snd_channel_period_and_volume": _period_volume_entry(),
+    "snd_channel_step": _channel_step_entry(),
+    "snd_music_tick_body": _tick_body_entry(),
 }
-SOUND_ROUTINE_COUNT = 8
+SOUND_ROUTINE_COUNT = 10
 
 # The caps, from the bodies, each the body's own instruction count plus the one instruction osh_run
 # counts past its `rts` (leaf.RUNNER_SENTINEL_INSN — measured here first, hoisted there once three
@@ -1654,17 +2185,9 @@ STOP_CHAIN_BODY_BYTES = {"snd_stop": 12, "snd_psg_silence": 82, "snd_stop_all_sf
 
 
 def assert_psg_state(info, psg_seed, what):
-    """The two off-image surfaces, against the models above. Nothing in the image can show either:
-    a run that silenced the wrong register, or none at all, writes exactly the same memory."""
-    events = info["regs"]["psg_events"]
-    expected = silence_events(psg_seed[PSG_REG_MIXER])
-    assert events == expected, (
-        f"{what}: the chip saw {events}, not {expected} "
-        f"(each entry is (kind, register, value); kind {PSG_READ} is a read-back)")
+    """...and the stop chain's own view of it, whose two surfaces are computed from the SEED."""
     values, known = silence_file(psg_seed)
-    assert (info["regs"]["psg_file"], info["regs"]["psg_known"]) == (values, known), (
-        f"{what}: the register file ended {info['regs']['psg_file'].hex()} "
-        f"(known {info['regs']['psg_known']:#06x}), not {values.hex()} (known {known:#06x})")
+    assert_psg_surfaces(info, silence_events(psg_seed[PSG_REG_MIXER]), values, known, what)
 
 
 def run_stop_chain(name, psg_seed, what, regs=None):
@@ -1829,6 +2352,12 @@ class _Memory:
     def long(self, at, value):
         for index in range(LONGWORD_LEN):
             self.byte(at + index, value >> (8 * (LONGWORD_LEN - 1 - index)))
+
+    def set_bits(self, at, mask):
+        """`bset #n,<ea>` — the read-modify-write the models say four times over the flags byte.
+        Named for _Memory.decrement's reason: spelling the address once per statement is what stops a
+        paste reading one field and writing its NEIGHBOUR."""
+        self.byte(at, self.read(at) | mask)
 
     def decrement(self, at):
         """`subq.b #1,<ea>` — the store, and the value the `bne`/`bcc` after it reads. Spelt here
@@ -2049,15 +2578,21 @@ def _model_sfx_volume(memory, state, channel):
     memory.byte(MIX_VOLUME + channel, value)
 
 
-def _model_sfx_tick(image):
+def _model_sfx_tick_into(memory):
     """The whole of $1a5da: the PRNG step, then one arm per armed channel."""
-    memory = _Memory(image)
     _model_prng(memory)
     if memory.read(ACTIVE_FLAGS + CHANNEL_A) & SIGN_BIT_B:
-        return memory                                       # `bmi` — B and C do not run either
+        return                                              # `bmi` — B and C do not run either
     for channel in range(CHANNELS):
         if memory.read(ACTIVE_FLAGS + channel) != 0:
             _model_sfx_arm(memory, channel)
+
+
+def _model_sfx_tick(image):
+    """...entered on its own, which is how this battery runs it and how the TICK does not: the tick
+    body's model steps the same memory it is already holding."""
+    memory = _Memory(image)
+    _model_sfx_tick_into(memory)
     return memory
 
 
@@ -2095,22 +2630,50 @@ def _armed_pokes(effect_id, channels, prng, salt, flags=None, overrides=None):
                     overrides or {})
 
 
-def _run_ticks(what, pokes, ticks):
-    """``ticks`` consecutive tick differentials, each entered on the state the last one left.
+def _run_tick_sequence(name, glue, model, cap, what, pokes, ticks, regs=None, psg_seed=None):
+    """``ticks`` consecutive differentials of one per-VBL routine, each entered on the state the last
+    one left. BOTH routines this file ticks go through here — $1a5da and $17ca0.
 
     A single tick reaches almost nothing — a freshly armed effect spends its first ticks counting
     down — so the sequence is what walks the volume stream, empties the duration and reaches the
     end-of-effect arm from the game's own descriptors. Each tick is its own whole-image differential;
     the state is carried forward through the POKES, so nothing is taken on trust from the run before.
+
+    THE CHIP IS NOT CARRIED FORWARD, AND THAT IS THE HARNESS'S RULE RATHER THAN A SHORTCUT. The image
+    carries because the pokes do; the YM2149's register file does not, because ``differential()``
+    calls ``g_psg_reset(seed, known)`` at the head of EVERY run on both sides. There is no way to
+    hand the oracle a chip that tick N left — a model that carried its own file forward would expect
+    a read-back the oracle is never served, and the case would redden on the harness rather than on
+    the game. So a multi-tick sequence here is N runs from one declared chip state and NOT a
+    continuous chip timeline: what carries between ticks is memory, and what the mixer merge sees at
+    each tick is the seed. Stated because it bounds what these cases can claim.
+
+    ``model(memory, psg_seed)`` steps the model in place and returns the off-image surfaces to
+    compare, or None for a routine that touches no port.
     """
+    info = None
     for tick in range(ticks):
-        label = f"{what}, tick {tick}"
-        memory = _model_sfx_tick(_poked_image(pokes))
-        info = leaf.run("snd_sfx_tick", _sfx_tick, write_bands(memory.written), label,
-                        regs={"_pokes": pokes}, max_insns=SFX_TICK_INSN_CAP)
+        label = f"{what}, tick {tick}" if ticks > 1 else what
+        memory = _Memory(_poked_image(pokes))
+        surfaces = model(memory, psg_seed)
+        info = leaf.run(name, glue, write_bands(memory.written), label,
+                        regs={**(regs or {}), "_pokes": pokes}, max_insns=cap, psg_seed=psg_seed)
         assert_written(info, memory.written, label)
+        if surfaces is not None:
+            assert_psg_surfaces(info, surfaces.events, surfaces.values, surfaces.known, label)
         pokes = overlay(pokes, memory.written)
-    return pokes
+    return pokes, info
+
+
+def _sfx_tick_model(memory, _psg_seed):
+    """$1a5da drives no port, so it has no off-image surfaces to compare."""
+    _model_sfx_tick_into(memory)
+    return None
+
+
+def _run_ticks(what, pokes, ticks):
+    return _run_tick_sequence("snd_sfx_tick", _sfx_tick, _sfx_tick_model, SFX_TICK_INSN_CAP,
+                              what, pokes, ticks)[0]
 
 
 # Every mutable band an SFX-tick case must cover, as (base, length). Stated so the guard below can
@@ -2500,10 +3063,13 @@ GLOBALS_BLOCK_LEN = 28          # $17c56..$17c71, the whole a3+2250..2277 band (
 
 # Each named field's WIDTH, so a case can write one by name and the record's layout is stated once.
 RECORD_FIELD_WIDTH = {
-    CH_FLAGS: 1, CH_VIBRATO_ACC: WORD_LEN, CH_ARPEGGIO_BASE: LONGWORD_LEN,
+    CH_FLAGS: 1, CH_NOISE_TRACKS_NOTE: 1, CH_PATTERN_CURSOR: LONGWORD_LEN,
+    CH_SEQUENCE_OFFSET: WORD_LEN, CH_SEQUENCE_INDEX: WORD_LEN,
+    CH_VIBRATO_ACC: WORD_LEN, CH_ARPEGGIO_BASE: LONGWORD_LEN,
     CH_ARPEGGIO_CURSOR: LONGWORD_LEN, CH_VIBRATO_DEPTH: 1, CH_VIBRATO_SPEED: 1,
-    CH_ENVELOPE_SPEED: 1, CH_NOTE: 1, CH_VOLUME: 1, CH_ENVELOPE_COUNT: 1,
-    CH_ENVELOPE_CURSOR: LONGWORD_LEN, CH_ENVELOPE_LAST: 1, CH_PORTA_LIMIT: 1, CH_PORTA_STEP: 1,
+    CH_ENVELOPE_SPEED: 1, CH_DURATION: 1, CH_DURATION_RELOAD: 1, CH_NOTE: 1, CH_VOLUME: 1,
+    CH_ENVELOPE_COUNT: 1, CH_ENVELOPE_CURSOR: LONGWORD_LEN, CH_ENVELOPE_BASE: LONGWORD_LEN,
+    CH_ENVELOPE_LAST: 1, CH_PORTA_LIMIT: 1, CH_PORTA_STEP: 1,
     CH_PORTA_CURRENT: 1, CH_PORTA_CONTROL: 1, CH_YIELD: 1, CH_DETUNE: 1, CH_MIXER_MASK: 1,
 }
 # What every case starts from before its own overrides. Deliberately unremarkable — a mid-range note,
@@ -2551,8 +3117,8 @@ RECORD_DEFAULTS = {
 }
 # The one field the module never writes: a per-channel CONSTANT, so the shipped bytes are the link
 # time ones and not residue. Read off the image rather than restated, and pinned below.
-SHIPPED_MIXER_MASKS = tuple(harness.BASE_IMAGE[MUSIC_CHANNEL_STATE + index * MUSIC_CHANNEL_LEN
-                                               + CH_MIXER_MASK] for index in range(CHANNELS))
+SHIPPED_MIXER_MASKS = tuple(harness.BASE_IMAGE[_music_channel(index) + CH_MIXER_MASK]
+                            for index in range(CHANNELS))
 
 
 class SndChannelMix(ctypes.Structure):
@@ -2578,10 +3144,6 @@ def _period_volume_glue(channel, entry_period, entry_volume, results):
         _period_volume_fn(image, channel, ctypes.byref(mix))
         results.append({"d0": mix.period, "d1": mix.volume})
     return call
-
-
-def _music_channel(index):
-    return MUSIC_CHANNEL_STATE + index * MUSIC_CHANNEL_LEN
 
 
 def _model_envelope(memory, channel):
@@ -2706,15 +3268,20 @@ def _model_period_volume(memory, channel, entry_period):
             "d1": (scratch & ~BYTE_MASK & WORD_MASK) | memory.read(channel + CH_VOLUME)}
 
 
-def _record_bytes(index, salt, fields):
+def _record_bytes(index, salt, fields, defaults=RECORD_DEFAULTS):
     """One 48-byte music channel record: ADDRESS-KEYED bytes with the case's own fields over them.
 
     Keyed rather than zeroed because the band ships dirty and a zero would be indistinguishable from
     a field the routine cleared; keyed on the address so a read at the wrong offset lands on a byte
     that is wrong for where it was written.
+
+    ``defaults`` picks WHICH tier's unremarkable starting record this is: RECORD_DEFAULTS covers the
+    fields $18208 reads and STEP_RECORD_DEFAULTS extends it with the stepper's (the countdown, the
+    pattern cursor and the sequence pair). Every key must be in RECORD_FIELD_WIDTH — a missing one
+    is a KeyError here rather than a silently unwritten field.
     """
     record = bytearray(leaf.keyed_block(_music_channel(index), MUSIC_CHANNEL_LEN, salt))
-    fields = {**RECORD_DEFAULTS, CH_MIXER_MASK: SHIPPED_MIXER_MASKS[index], **fields}
+    fields = {**defaults, CH_MIXER_MASK: SHIPPED_MIXER_MASKS[index], **fields}
     for offset, value in fields.items():
         width = RECORD_FIELD_WIDTH[offset]
         record[offset:offset + width] = value.to_bytes(width, "big")
@@ -2994,3 +3561,1508 @@ def test_the_pass_is_called_three_times_by_the_tick_and_by_nothing_else():
              if program[at:at + len(call)] == call
              and at + BRANCH_EXTENSION + leaf.s16(leaf.u16(program, at + len(call))) == target]
     assert sites == [0x17d16, 0x17d3e, 0x17d66], f"its callers are {[hex(a) for a in sites]}"
+
+
+# --- $18106 and its 24 opcode handlers: the pattern stepper ---------------------------------------
+#
+# THE STEPPER IS RECORD-AGNOSTIC, exactly as $18208 is: a0 is its argument and the body has no
+# per-channel code (the tick's three `bsr`s are what supply the three addresses, and the tick's own
+# battery below runs them). So the opcode grid runs on ONE record and two named cases run the base
+# case on the other two — the mutant that buys is a stepper wired to channel A's address, which
+# passes every row of the grid on record 0 and fails on records 1 and 2.
+
+# Where a case's own pattern stream, sequence table and follow-on pattern go: past the module's data,
+# inside the 32 KiB an a3-relative word can name, and clear of every band anything here writes.
+SEEDED_PATTERN = MODULE_BASE + 0x4800
+SEEDED_PATTERN_STRIDE = 0x40        # one stream per music channel, so a tick case can walk all three
+SEEDED_SEQUENCE_OFFSET = 0x4900     # the a3-relative word the record's +6 holds
+SEEDED_SEQUENCE = MODULE_BASE + SEEDED_SEQUENCE_OFFSET
+SEEDED_NEXT_PATTERN_OFFSET = 0x4a00
+SEEDED_NEXT_PATTERN = MODULE_BASE + SEEDED_NEXT_PATTERN_OFFSET
+
+# A two-entry sequence table and its 0000 terminator. Entry 0 and entry 1 name DIFFERENT patterns, so
+# a walk that took the wrong one lands on a different note.
+SEEDED_SEQUENCE_BYTES = (SEEDED_NEXT_PATTERN_OFFSET.to_bytes(WORD_LEN, "big")
+                         + (SEEDED_NEXT_PATTERN_OFFSET + 4).to_bytes(WORD_LEN, "big")
+                         + bytes(WORD_LEN))
+SEEDED_NEXT_PATTERN_BYTES = bytes([0x21, 0x00, 0x00, 0x00, 0x42, 0x00, 0x00, 0x00])
+FOLLOWING_NOTE = 0x30               # what every opcode stream ends with, so a handler that closed the
+                                    # row where it should read on writes no note and reddens
+
+STEP_RECORD_DEFAULTS = {
+    **RECORD_DEFAULTS,
+    CH_NOISE_TRACKS_NOTE: 0,
+    CH_SEQUENCE_OFFSET: SEEDED_SEQUENCE_OFFSET,
+    CH_SEQUENCE_INDEX: WORD_LEN,
+    CH_DURATION: 4,
+    CH_DURATION_RELOAD: 6,          # different from the countdown, so a reload from the wrong field
+                                    # cannot look like a countdown that simply did not move
+    CH_ENVELOPE_BASE: SEEDED_ENVELOPE,
+    CH_YIELD: 0,
+}
+# EVERY MODULE GLOBAL the stepper reads, pinned rather than left to the keyed seed — the same hazard
+# GLOBAL_DEFAULTS exists for one tier down. The three SFX-active flags are the hand-over ladder's
+# whole input and sit INSIDE the globals band, so a salt-derived byte there decides the ladder.
+STEP_GLOBAL_DEFAULTS = {
+    NOISE_ROUTE_MASK: GLOBAL_DEFAULTS[NOISE_ROUTE_MASK],
+    **{ACTIVE_FLAGS + channel: 0 for channel in range(CHANNELS)},
+}
+
+# The caps, from the bodies' geometry: one pass through $18106 itself, plus the most a single pattern
+# byte can cost (the three-instruction read, the four-instruction range decoder and the longest
+# handler, $87's sequence walk), plus the stub-and-trigger call opcode $97 makes.
+STEP_ROW_INSNS = 40
+PATTERN_BYTE_INSNS = 24
+STEP_PATTERN_BYTES = 8              # the longest stream any case here walks before a row closes
+CHANNEL_STEP_INSN_CAP = (STEP_ROW_INSNS + STEP_PATTERN_BYTES * PATTERN_BYTE_INSNS + STUB_INSN_CAP
+                         + leaf.RUNNER_SENTINEL_INSN)
+
+# include/sound.h's `snd_step_result`, restated here because ctypes hands the value back as an int.
+# Both members are pinned against the header below, for TICK_D1's reason: sound.h is not scraped.
+STEP_RETURNED = 0
+STEP_SONG_ENDED = 1
+_channel_step = leaf.register_glue("snd_channel_step", [ctypes.c_uint32] * 2, ctypes.c_uint32)
+
+# ...and src/sound.c's `pattern_exit`, which is the three endings the handlers have.
+EXIT_READ_NEXT, EXIT_ROW_DONE, EXIT_SONG_ENDED = range(3)
+
+
+def _module_table_entry(memory, table, index):
+    """`add.w d0,d0 / movea.w 0(An,d0.w),An / adda.l a3,An` — one a3-relative word table entry,
+    indexed WITHOUT the `ext.w` the two SFX tables are read through."""
+    return _module_address(memory.read_word(table + index * TABLE_ENTRY_LEN))
+
+
+def _seeded_pattern(channel):
+    return SEEDED_PATTERN + channel * SEEDED_PATTERN_STRIDE
+
+
+def _model_next_pattern(memory, record):
+    """$1801e — the sequence walk. The reset reloads the table offset WITHOUT the index it had just
+    added, so the restarted read takes entry 0 itself and the index is left at 2."""
+    table = memory.read_word(record + CH_SEQUENCE_OFFSET)
+    index = memory.read_word(record + CH_SEQUENCE_INDEX)
+    entry = (table + index) & WORD_MASK
+    next_index = (index + TABLE_ENTRY_LEN) & WORD_MASK
+    if memory.read_word(_module_address(entry)) == 0:
+        entry, next_index = table, TABLE_ENTRY_LEN
+    # THE RE-READ COMES FIRST: `movea.w 0(a3,a2.w),a1` at $18036, and only then `move.w d0,10(a0)` at
+    # $1803c. A table that names the index field itself therefore reads the OLD index.
+    pattern = _module_address(memory.read_word(_module_address(entry)))
+    memory.word(record + CH_SEQUENCE_INDEX, next_index)
+    return pattern
+
+
+def _model_noise_route(memory, record, bits, tracks_note):
+    """$18044/$18064 — opcodes $8b and $8a, one `eor/and/eor` merge with two masks."""
+    mask = memory.read(record + CH_MIXER_MASK)
+    routing = memory.read(NOISE_ROUTE_MASK)
+    memory.byte(NOISE_ROUTE_MASK, (((mask & bits) ^ routing) & mask) ^ routing)
+    memory.byte(record + CH_NOISE_TRACKS_NOTE, tracks_note)
+
+
+def _model_pattern_opcode(memory, record, index, cursor, trigger_channel):
+    """One handler, keyed by the jump table's own index. Returns (exit, cursor)."""
+    def operand(at):
+        return memory.read_through_pointer(at), (at + 1) & LONGWORD_MASK
+
+    if index == 0x00:                                       # $80 — rest
+        memory.byte(record + CH_VOLUME, 0)
+        return EXIT_ROW_DONE, cursor
+    if index == 0x01:                                       # $81
+        memory.byte(record + CH_PORTA_CONTROL, 0)
+    elif index == 0x02:                                     # $82
+        memory.byte(record + CH_PORTA_CONTROL, CH_PORTA_ENABLED)
+    elif index in (0x03, 0x0d):                             # $83 and $8d, one handler
+        memory.set_bits(record + CH_FLAGS, CH_FLAG_MARK)
+    elif index == 0x04:                                     # $84 — vibrato on
+        memory.word(record + CH_VIBRATO_ACC, 0)
+        memory.set_bits(record + CH_FLAGS, CH_FLAG_VIBRATO)
+        depth, cursor = operand(cursor)
+        memory.byte(record + CH_VIBRATO_DEPTH, depth)
+        speed, cursor = operand(cursor)
+        memory.byte(record + CH_VIBRATO_SPEED, speed)
+    elif index in (0x05, 0x06):                             # $86 falls into $85
+        if index == 0x06:
+            memory.set_bits(record + CH_FLAGS, CH_FLAG_SLIDE_UP)     # $86 FALLS INTO $85's `bset`
+        memory.set_bits(record + CH_FLAGS, CH_FLAG_SLIDE)
+    elif index == 0x07:                                     # $87
+        cursor = _model_next_pattern(memory, record)
+    elif index == 0x08:                                     # $88, which falls into $82
+        step, cursor = operand(cursor)
+        memory.byte(record + CH_PORTA_STEP, step)
+        memory.byte(record + CH_PORTA_LIMIT, memory.read_through_pointer(cursor))
+        current, cursor = operand(cursor)
+        memory.byte(record + CH_PORTA_CURRENT, current)
+        memory.byte(record + CH_PORTA_CONTROL, CH_PORTA_ENABLED)
+    elif index == 0x09:                                     # $89
+        value, cursor = operand(cursor)
+        memory.byte(GLOBAL_TRANSPOSE, value)
+    elif index == 0x0a:                                     # $8a
+        _model_noise_route(memory, record, MIXER_NOISE_BITS, 0)
+    elif index == 0x0b:                                     # $8b
+        _model_noise_route(memory, record, NOISE_TONE_BITS, CH_TRACKS_NOTE_SET)
+    elif index == 0x0c:                                     # $8c
+        mask = memory.read(record + CH_MIXER_MASK)
+        routing = memory.read(NOISE_ROUTE_MASK)
+        memory.byte(NOISE_ROUTE_MASK, routing & (~mask & routing) & BYTE_MASK)
+        memory.byte(record + CH_NOISE_TRACKS_NOTE, CH_TRACKS_NOTE_SET)
+    elif index == 0x0e:                                     # $8e
+        return EXIT_SONG_ENDED, cursor
+    elif index == 0x0f:                                     # $8f
+        memory.set_bits(record + CH_FLAGS, CH_FLAG_ENVELOPE)
+        return EXIT_ROW_DONE, cursor
+    elif index == 0x10:                                     # $90
+        memory.byte(record + CH_YIELD, CH_YIELD_ASKED)
+    elif index == 0x11:                                     # $91
+        memory.byte(record + CH_YIELD, 0)
+    elif index == 0x12:                                     # $92
+        value, cursor = operand(cursor)
+        memory.byte(record + CH_DETUNE, value)
+    elif index == 0x13:                                     # $93 — two BYTES over one word field
+        for offset in range(WORD_LEN):
+            value, cursor = operand(cursor)
+            memory.byte(record + CH_SEQUENCE_OFFSET + offset, value)
+        memory.word(record + CH_SEQUENCE_INDEX, 0)
+    elif index == 0x14:                                     # $94
+        value, cursor = operand(cursor)
+        memory.byte(SONG_SPEED, value)
+        memory.byte(SONG_SPEED_COPY, memory.read(SONG_SPEED))
+    elif index == 0x15:                                     # $95
+        value, cursor = operand(cursor)
+        memory.byte(FADE_RATE, value)
+        memory.byte(FADE_COUNTDOWN, memory.read(FADE_RATE))
+    elif index == 0x16:                                     # $96
+        value, cursor = operand(cursor)
+        memory.byte(MASTER_VOLUME, value)
+    elif index == 0x17:                                     # $97 — on WHATEVER CHANNEL d1 HOLDS
+        effect_id, cursor = operand(cursor)
+        selector = trigger_channel & BYTE_MASK
+        channel = selector if selector < CHANNELS else CHANNELS - 1
+        for at, value in expected_writes(memory.mem, effect_id, channel).items():
+            for offset, byte in enumerate(value):
+                memory.byte(at + offset, byte)
+    else:
+        raise AssertionError(f"opcode index {index:#x} jumps past the table — no case may reach it")
+    return EXIT_READ_NEXT, cursor
+
+
+def _model_decode_pattern_byte(memory, record, byte, cursor, trigger_channel):
+    """$181a6 — the range decoder, whose boundary is $b8 and whose third carry is never tested."""
+    if byte < PATTERN_CMD_LIMIT:
+        return _model_pattern_opcode(memory, record, byte & PATTERN_CMD_INDEX_MASK, cursor,
+                                     trigger_channel)
+    decoded = byte + PATTERN_DURATION_BIAS
+    if decoded >> 8:
+        memory.byte(record + CH_DURATION_RELOAD, (decoded & BYTE_MASK) + PATTERN_DURATION_MIN)
+        return EXIT_READ_NEXT, cursor
+    decoded = (decoded & BYTE_MASK) + PATTERN_INSTRUMENT_BIAS
+    if decoded >> 8:
+        stream = _module_table_entry(memory, INSTRUMENT_PTR_TABLE, decoded & BYTE_MASK)
+        memory.long(record + CH_ENVELOPE_BASE, stream)
+        memory.byte(record + CH_ENVELOPE_SPEED,
+                    memory.read_through_pointer((stream - 1) & LONGWORD_MASK))
+        return EXIT_READ_NEXT, cursor
+    stream = _module_table_entry(memory, ARPEGGIO_PTR_TABLE,
+                                 ((decoded & BYTE_MASK) + PATTERN_ARPEGGIO_BIAS) & BYTE_MASK)
+    memory.long(record + CH_ARPEGGIO_CURSOR, stream)
+    memory.long(record + CH_ARPEGGIO_BASE, stream)
+    return EXIT_READ_NEXT, cursor
+
+
+def _model_channel_step(memory, record, trigger_channel):
+    """The whole of $18106, and which of its two endings it took."""
+    if memory.decrement(record + CH_DURATION) != 0:
+        flags = memory.read(record + CH_FLAGS)
+        if flags & CH_FLAG_SLIDE:
+            note = memory.read(record + CH_NOTE)
+            memory.byte(record + CH_NOTE, note + (1 if flags & CH_FLAG_SLIDE_UP else -1))
+        return STEP_RETURNED
+
+    memory.byte(record + CH_FLAGS, 0)
+    cursor = memory.read_long(record + CH_PATTERN_CURSOR)
+    for _byte in range(STEP_PATTERN_BYTES + 1):
+        byte = memory.read_through_pointer(cursor)
+        cursor = (cursor + 1) & LONGWORD_MASK
+        if byte < PATTERN_NOTE_LIMIT:
+            _model_start_note(memory, record, byte)
+            break
+        exit_kind, cursor = _model_decode_pattern_byte(memory, record, byte, cursor,
+                                                       trigger_channel)
+        if exit_kind == EXIT_SONG_ENDED:
+            return STEP_SONG_ENDED
+        if exit_kind == EXIT_ROW_DONE:
+            break
+    else:
+        raise AssertionError("the stream never closed its row inside STEP_PATTERN_BYTES")
+
+    memory.byte(record + CH_DURATION, memory.read(record + CH_DURATION_RELOAD))
+    memory.long(record + CH_PATTERN_CURSOR, cursor)
+    _model_take_yield(memory, record)
+    return STEP_RETURNED
+
+
+def _model_start_note(memory, record, note):
+    """$1811e — the note, and the instrument restart that comes with it."""
+    memory.byte(record + CH_NOTE, note)
+    if memory.read(record + CH_NOISE_TRACKS_NOTE) != 0:
+        memory.byte(NOISE_PERIOD_BASE, note)
+    envelope = memory.read_long(record + CH_ENVELOPE_BASE)
+    memory.long(record + CH_ENVELOPE_CURSOR, envelope)
+    first = memory.read_through_pointer(envelope)
+    memory.byte(record + CH_ENVELOPE_LAST, first)
+    memory.byte(record + CH_VOLUME, first)
+    memory.byte(record + CH_ENVELOPE_COUNT, memory.read(record + CH_ENVELOPE_SPEED))
+    memory.set_bits(record + CH_FLAGS, CH_FLAG_ENVELOPE)
+
+
+def _model_take_yield(memory, record):
+    """$18152 — the hand-over, blocked by any ARMED SFX channel whose noise is on."""
+    if memory.read(record + CH_YIELD) == 0:
+        return
+    for channel in range(CHANNELS):
+        if (memory.read(ACTIVE_FLAGS + channel) != 0
+                and not memory.read(_channel_state(channel) + DESC_MIXER_BITS) & MIXER_NOISE_OFF):
+            return
+    memory.byte(record + CH_YIELD, CH_YIELD_ASKED)
+
+
+
+
+def _step_pokes(salt, fields_by_record, globals_, streams, extra=None):
+    """The module state a stepper case runs on: every mutable band it reads, seeded, then the three
+    records, then the case's own streams and globals. The record's pattern CURSOR is injected here
+    rather than left to STEP_RECORD_DEFAULTS, because each record walks a stream of its own."""
+    records = {}
+    for index in range(CHANNELS):
+        fields = {CH_PATTERN_CURSOR: _seeded_pattern(index), **fields_by_record.get(index, {})}
+        records[_music_channel(index)] = _record_bytes(index, salt, fields, STEP_RECORD_DEFAULTS)
+    every_stream = {index: streams.get(index, bytes([FOLLOWING_NOTE])) for index in range(CHANNELS)}
+    return overlay(
+        {MUSIC_CHANNEL_STATE: leaf.keyed_block(MUSIC_CHANNEL_STATE, MUSIC_STATE_BLOCK_LEN, salt),
+         GLOBALS_BLOCK: leaf.keyed_block(GLOBALS_BLOCK, GLOBALS_BLOCK_LEN, salt),
+         STATE: leaf.keyed_block(STATE, SFX_STATE_BLOCK_LEN, salt),
+         SEEDED_ENVELOPE: SEEDED_ENVELOPE_BYTES,
+         SEEDED_ARPEGGIO: SEEDED_ARPEGGIO_BYTES,
+         SEEDED_SEQUENCE: SEEDED_SEQUENCE_BYTES,
+         SEEDED_NEXT_PATTERN: SEEDED_NEXT_PATTERN_BYTES},
+        records,
+        {_seeded_pattern(index): stream for index, stream in every_stream.items()},
+        {addr: bytes([value]) for addr, value in STEP_GLOBAL_DEFAULTS.items()},
+        {addr: bytes([value]) for addr, value in (globals_ or {}).items()},
+        extra or {})
+
+
+def _run_channel_step(index, what, fields=None, globals_=None, stream=None,
+                      trigger_channel=0, extra=None):
+    """One $18106 differential.
+
+    A3 IS AN ENTRY REGISTER, as it is for $1aaca and $18208: the routine's first instruction is
+    `subq.b #1,27(a0)` and not a `lea`, so it inherits the module base from its caller. So is d1,
+    which nothing in the routine writes and only opcode $97 reads.
+    """
+    salt = leaf.case_salt(what)
+    streams = {index: bytes([FOLLOWING_NOTE]) if stream is None else stream}
+    pokes = _step_pokes(salt, {index: fields or {}}, globals_, streams, extra)
+    record = _music_channel(index)
+
+    memory = _Memory(_poked_image(pokes))
+    status = _model_channel_step(memory, record, trigger_channel)
+    info = leaf.run("snd_channel_step", _channel_step(record, trigger_channel),
+                    write_bands(memory.written), what,
+                    regs={"a3": MODULE_BASE, "a0": record, "d1": trigger_channel, "_pokes": pokes},
+                    max_insns=CHANNEL_STEP_INSN_CAP)
+    assert_written(info, memory.written, what)
+    assert info["ret"] == status, (
+        f"{what}: the reconstruction reported {info['ret']}, not the {status} the model gives")
+    return memory
+
+
+STEP_SEEDED_BANDS = ((MUSIC_CHANNEL_STATE, MUSIC_STATE_BLOCK_LEN),
+                     (GLOBALS_BLOCK, GLOBALS_BLOCK_LEN),
+                     (STATE, SFX_STATE_BLOCK_LEN))
+
+
+def test_a_stepper_case_seeds_every_mutable_byte_it_reads():
+    """The same guard the tick tier's own cases carry: all three bands ship DIRTY, and the hand-over
+    ladder in particular reads the SFX state — so a case that left it on the residue would be
+    deciding the ladder from a previous run's leftovers."""
+    pokes = _step_pokes(0, {}, None, {0: bytes([FOLLOWING_NOTE])})
+    assert_bands_are_seeded(pokes, STEP_SEEDED_BANDS, "a pattern-stepper case")
+
+
+# --- the countdown and the pitch slide, which is everything a row that is still running does -------
+# The mutants these rows buy: a countdown tested BEFORE the decrement rather than after (`bne`
+# reads the result), a slide applied with the flag clear, and the two directions swapped.
+STEP_COUNTDOWN_CASES = (
+    ("a row still running with no slide armed", {CH_DURATION: 4}),
+    ("a row still running with the slide armed DOWN", {CH_DURATION: 4, CH_FLAGS: CH_FLAG_SLIDE}),
+    ("...and armed UP, which is bit 7 over the same bit 3",
+     {CH_DURATION: 4, CH_FLAGS: CH_FLAG_SLIDE | CH_FLAG_SLIDE_UP}),
+    ("bit 7 set WITHOUT bit 3, which slides nothing at all", {CH_DURATION: 4,
+                                                              CH_FLAGS: CH_FLAG_SLIDE_UP}),
+    ("a countdown of exactly TWO, the tick before the row closes", {CH_DURATION: 2,
+                                                                    CH_FLAGS: CH_FLAG_SLIDE}),
+    ("a countdown of ZERO, which the `subq` WRAPS to $ff rather than closing the row on",
+     {CH_DURATION: 0, CH_FLAGS: CH_FLAG_SLIDE}),
+    ("a note of $ff sliding UP, which wraps the note byte", {CH_DURATION: 4, CH_NOTE: 0xff,
+                                                             CH_FLAGS: CH_FLAG_SLIDE
+                                                             | CH_FLAG_SLIDE_UP}),
+)
+
+
+@pytest.mark.parametrize("why,fields", STEP_COUNTDOWN_CASES,
+                         ids=[case[0][:40] for case in STEP_COUNTDOWN_CASES])
+def test_a_row_that_is_still_running_only_spends_its_countdown_and_slides(why, fields):
+    _run_channel_step(CHANNEL_A, why, fields=fields)
+
+
+@pytest.mark.parametrize("index", range(CHANNEL_A + 1, CHANNELS))
+def test_the_stepper_walks_whichever_record_it_is_handed(index):
+    """The trim's own justification: $18106 has no per-channel code, so the grids above and below run
+    on record 0 alone — and a body that had hardcoded record A's address passes every one of them and
+    fails these two, which is the mutant this pair is here to buy."""
+    _run_channel_step(index, f"a closing row on record {index}", fields={CH_DURATION: 1})
+
+
+# --- the note range, and the instrument restart that comes with a note ----------------------------
+# The mutants these rows buy: a noise base written whether or not +1 says so (rows 1 and 2 disagree),
+# an envelope countdown reloaded from the wrong field, and an envelope cursor left where it was
+# rather than reset to the instrument's base — a note RESTARTS the instrument.
+STEP_NOTE_CASES = (
+    ("a note byte with the noise NOT tracking it", {CH_DURATION: 1}, 0x30),
+    ("a note byte with the noise TRACKING it, which also writes the module's noise base",
+     {CH_DURATION: 1, CH_NOISE_TRACKS_NOTE: 1}, 0x2a),
+    ("note $00, the lowest byte there is", {CH_DURATION: 1, CH_NOISE_TRACKS_NOTE: 1}, 0x00),
+    ("note $7f, the last byte the `bmi` calls a note rather than a command",
+     {CH_DURATION: 1}, 0x7f),
+    ("a note whose envelope stream begins with a NEGATIVE byte, which is taken as the volume anyway "
+     "because only $18208's own peek tests the sign", {CH_DURATION: 1,
+                                                       CH_ENVELOPE_BASE: SEEDED_ENVELOPE + 4}, 0x40),
+)
+
+
+@pytest.mark.parametrize("why,fields,note", STEP_NOTE_CASES,
+                         ids=[f"note_{case[2]:02x}" for case in STEP_NOTE_CASES])
+def test_a_note_byte_closes_the_row_and_restarts_the_instrument(why, fields, note):
+    _run_channel_step(CHANNEL_A, why, fields=fields, stream=bytes([note]))
+
+
+# --- the twenty-four opcodes ----------------------------------------------------------------------
+#
+# THE CENSUS BELOW IS DERIVED, not transcribed: `_shipped_pattern_census` decodes every pattern the 17
+# songs reach and counts what it finds, so the "shipped data reaches this handler" column on each row
+# is the DATA's claim and not a note's. Eleven of the twenty-four are reached; the other thirteen are
+# pinned from a seeded stream and each says so.
+
+SONG_DIRECTORY = leaf.entry_of("snd_song_directory")
+SONG_RECORD_LEN = 8                 # `mulu.w #8,d0` in snd_play_song
+SONG_SEQUENCE_FIELD = 2             # the first of the three per-channel sequence offsets
+SONGS = 17                          # 17 records; the 18th address is already sequence data
+SHIPPED_PATTERNS = 106              # what the walk must find, and what ../notes says it finds
+SHIPPED_SEQUENCE_TABLES = CHANNELS * SONGS  # one per song per channel, and all 51 distinct
+END_SONG_OPCODE = PATTERN_NOTE_LIMIT + PATTERN_OPCODE_OF_HANDLER[
+    PATTERN_HANDLER_NAMES.index("snd_pattern_op_8e_end_song")]
+NEXT_PATTERN_OPCODE = PATTERN_NOTE_LIMIT + PATTERN_OPCODE_OF_HANDLER[
+    PATTERN_HANDLER_NAMES.index("snd_pattern_op_87_next_pattern")]
+SET_SEQUENCE_OPCODE = PATTERN_NOTE_LIMIT + PATTERN_OPCODE_OF_HANDLER[
+    PATTERN_HANDLER_NAMES.index("snd_pattern_op_93_set_sequence")]
+TRIGGER_SFX_OPCODE = PATTERN_NOTE_LIMIT + PATTERN_OPCODE_OF_HANDLER[
+    PATTERN_HANDLER_NAMES.index("snd_pattern_op_97_trigger_sfx")]
+
+# The three range floors, DERIVED from the decoder's own biases rather than transcribed: each
+# `addi.b` carries exactly when the byte has reached $100 minus the biases still to come.
+PATTERN_DURATION_MIN_BYTE = BYTE_LIMIT - PATTERN_DURATION_BIAS
+PATTERN_INSTRUMENT_MIN_BYTE = PATTERN_DURATION_MIN_BYTE - PATTERN_INSTRUMENT_BIAS
+PATTERN_ARPEGGIO_MIN_BYTE = PATTERN_INSTRUMENT_MIN_BYTE - PATTERN_ARPEGGIO_BIAS
+
+
+def _shipped_sequence_tables():
+    """Every sequence table the 17 songs reach, as {start: end} with `end` one past the 0000
+    terminator, plus every pattern address they name.
+
+    THE TABLES ARE NOT ONE BAND. ../notes/sound_module_recon.md's map shows 28 bytes at $18508, which
+    is song 0's three; the 51 of them are interleaved with the pattern data and span $18508..$1a42a.
+    Their extents are returned because the census's own closure guard needs them.
+    """
+    image = harness.BASE_IMAGE
+    tables, patterns = {}, set()
+    for song in range(SONGS):
+        record = SONG_DIRECTORY + song * SONG_RECORD_LEN
+        for channel in range(CHANNELS):
+            table = _module_address(leaf.u16(image, record + SONG_SEQUENCE_FIELD
+                                             + channel * TABLE_ENTRY_LEN))
+            index = 0
+            while leaf.u16(image, table + index) != 0:
+                patterns.add(_module_address(leaf.u16(image, table + index)))
+                index += TABLE_ENTRY_LEN
+            tables[table] = table + index + TABLE_ENTRY_LEN
+    return tables, patterns
+
+
+SHIPPED_TABLES, SHIPPED_PATTERN_ADDRESSES = _shipped_sequence_tables()
+
+
+def _derived_operand_lengths():
+    """How many bytes each opcode takes out of the pattern stream, DERIVED from the MODEL's own
+    cursor rather than transcribed.
+
+    That closes the loop the census would otherwise dangle on: the entry pin checks each handler's
+    `move.b (a1)+` instructions against the image, the differential checks the model against the
+    original, and this reads the count back out of the model — so the published reachability column
+    rests on the run and not on a third hand-written table. The finder's construction was $89
+    transcribed as taking no operand: its operand byte then decodes as a NOTE and the census set
+    comes out unchanged.
+
+    A handler that REPLACES the cursor consumed nothing from the stream ($87's sequence walk is the
+    only one), which the window test below is what says — not a name.
+    """
+    lengths = {}
+    window = _seeded_pattern(CHANNEL_A)
+    pokes = _step_pokes(0, {}, None, {CHANNEL_A: bytes([SHIPPED_CALL_IDS[0]]) * SEEDED_OPERAND_BYTES})
+    for index in range(PATTERN_OPCODES):
+        memory = _Memory(_poked_image(pokes))
+        _exit, after = _model_pattern_opcode(memory, _music_channel(CHANNEL_A), index, window, 0)
+        lengths[PATTERN_NOTE_LIMIT + index] = (after - window
+                                               if window <= after < window + SEEDED_PATTERN_STRIDE
+                                               else 0)
+    return lengths
+
+
+SEEDED_OPERAND_BYTES = 4            # more than any handler takes, so the derivation never runs off
+PATTERN_OPCODE_OPERAND_LEN = _derived_operand_lengths()
+
+
+def _shipped_pattern_census():
+    """What the shipped patterns decode to: {opcode: count}, {arpeggio byte: count}, {instrument
+    byte: count}, and every place opcode $93 RE-POINTS a channel's sequence table.
+
+    A pattern's byte stream ends on whichever of $87 and $8e it reaches, since both leave it. Bytes
+    at or above $b8 are counted by RANGE rather than skipped, so the plate's arpeggio and instrument
+    tails are the walk's claims too.
+    """
+    image = harness.BASE_IMAGE
+    census, arpeggios, instruments, aliased, retargets = {}, {}, {}, {}, []
+    for pattern in SHIPPED_PATTERN_ADDRESSES:
+        at = pattern
+        while True:
+            byte = image[at]
+            at += 1
+            if byte < PATTERN_NOTE_LIMIT:
+                continue                                            # a note
+            if byte >= PATTERN_CMD_LIMIT:
+                bucket = (aliased if byte < PATTERN_ARPEGGIO_MIN_BYTE else
+                          arpeggios if byte < PATTERN_INSTRUMENT_MIN_BYTE else
+                          instruments if byte < PATTERN_DURATION_MIN_BYTE else None)
+                if bucket is not None:
+                    bucket[byte] = bucket.get(byte, 0) + 1
+                continue                                            # ...or a duration
+            census[byte] = census.get(byte, 0) + 1
+            if byte == SET_SEQUENCE_OPCODE:
+                retargets.append(_module_address(leaf.u16(image, at)))
+            at += PATTERN_OPCODE_OPERAND_LEN.get(byte, 0)
+            if byte in (NEXT_PATTERN_OPCODE, END_SONG_OPCODE):
+                break
+    return census, arpeggios, instruments, aliased, retargets
+
+
+(SHIPPED_OPCODE_CENSUS, SHIPPED_ARPEGGIOS, SHIPPED_INSTRUMENTS, SHIPPED_ALIASED_ARPEGGIOS,
+ SHIPPED_RETARGETS) = _shipped_pattern_census()
+TESTABLE_OPCODES = tuple(op for op in range(PATTERN_NOTE_LIMIT, PATTERN_NOTE_LIMIT + PATTERN_OPCODES)
+                         if op != END_SONG_OPCODE)
+# One stream per opcode that takes operands. The values are unremarkable except where the field is
+# read straight back — $93's two bytes are the seeded sequence table's own offset, so the record
+# stays walkable, and $97's is an id the game itself passes.
+PATTERN_OPCODE_OPERANDS = {
+    0x84: bytes([0x03, 0x05]),
+    0x88: bytes([0x06, 0x40]),
+    0x89: bytes([0x0c]),
+    0x92: bytes([0xf8]),
+    0x93: SEEDED_SEQUENCE_OFFSET.to_bytes(WORD_LEN, "big"),
+    0x94: bytes([0x31]),
+    0x95: bytes([0x0a]),
+    0x96: bytes([0x0b]),
+}
+
+
+def _opcode_stream(opcode_byte):
+    """The opcode, its operands, and a NOTE behind them — so a handler that closed the row where it
+    should have read on writes no note at all and reddens on the record's own bytes."""
+    operands = PATTERN_OPCODE_OPERANDS.get(opcode_byte, b"")
+    if opcode_byte == TRIGGER_SFX_OPCODE:                    # $97's operand is an SFX id
+        operands = bytes([SHIPPED_CALL_IDS[0]])
+    return bytes([opcode_byte]) + operands + bytes([FOLLOWING_NOTE])
+
+
+@pytest.mark.parametrize("opcode_byte", TESTABLE_OPCODES,
+                         ids=[f"op_{op:02x}" for op in TESTABLE_OPCODES])
+def test_every_pattern_opcode_runs_the_handler_its_table_entry_names(opcode_byte):
+    """One row per table entry, $8d included — it is a SECOND entry pointing at $83's handler, and
+    running both is what says the table aliases rather than that the battery believes it does.
+
+    $8e is the one opcode with no row here and cannot have one: its `addq.l #4,sp` pops the runner's
+    own sentinel, so a standalone run would `rts` into nothing. It is pinned from the TICK's entry
+    instead, where the stack holds the frame the instruction expects.
+    """
+    reached = SHIPPED_OPCODE_CENSUS.get(opcode_byte, 0)
+    seeded = "" if reached else " (SEEDED: no shipped pattern contains this byte)"
+    what = f"pattern opcode {opcode_byte:#04x}, reached {reached} times by the shipped data{seeded}"
+    _run_channel_step(CHANNEL_A, what, fields={CH_DURATION: 1}, stream=_opcode_stream(opcode_byte))
+
+
+# The two bytes the `cmp.b #$b8` keeps that the 24-entry table does not have: the first past it and
+# the last before the arpeggio range. The original `jmp`s through a word of its own instruction
+# stream for both, so neither can be a differential — what CAN be pinned is the refusal.
+OUT_OF_RANGE_OPCODES = (PATTERN_NOTE_LIMIT + PATTERN_OPCODES, PATTERN_CMD_LIMIT - 1)
+_channel_step_fn = leaf.bind("snd_channel_step", leaf.IMAGE_ARG + [ctypes.c_uint32] * 2,
+                             ctypes.c_uint32)
+
+
+def _refusals_stepping(stream):
+    """Drive the CANDIDATE alone over ``stream`` and return its refusal tally.
+
+    Alone, because there is no oracle run to pair it with: the original's answer to a $98 is a `jmp`
+    through a word of the handlers' own code, which is not a run any differential can hold. The kit
+    already has the mechanism for exactly this — `os_refused` tallies and harness.differential()
+    raises on a non-zero candidate tally (tools/recreate_kit/include/os.h) — so all this has to show
+    is that the reconstruction reaches it.
+    """
+    pokes = _step_pokes(0, {CHANNEL_A: {CH_DURATION: 1}}, None, {CHANNEL_A: stream})
+    buffer = bytearray(_poked_image(pokes))
+    image = (ctypes.c_uint8 * len(buffer)).from_buffer(buffer)
+    harness._lib.g_os_refusal_reset()
+    _channel_step_fn(image, _music_channel(CHANNEL_A), 0)
+    return harness._lib.g_os_refusal_count()
+
+
+@pytest.mark.parametrize("opcode_byte", OUT_OF_RANGE_OPCODES,
+                         ids=[f"op_{op:02x}" for op in OUT_OF_RANGE_OPCODES])
+def test_an_out_of_range_pattern_opcode_is_REFUSED_rather_than_walked_past(opcode_byte):
+    """THE ALTITUDE THE `default:` ARM NEEDED. Returning PATTERN_READ_NEXT there and documenting it
+    made an unported branch indistinguishable from an ordinary opcode to everything that is not a
+    differential; `os_refused` makes it distinguishable to the harness, so a case that ever seeded
+    such a byte is thrown away instead of compared against a fall-through the original does not do.
+
+    The reachability claim is the census's ($98..$b7 occurs nowhere in the shipped patterns); this is
+    what happens if it is ever wrong.
+    """
+    assert _refusals_stepping(bytes([opcode_byte, FOLLOWING_NOTE])) == 1, (
+        f"a pattern byte of {opcode_byte:#04x} walked on instead of refusing")
+
+
+def test_an_in_range_opcode_leaves_the_refusal_tally_alone():
+    """The guard that keeps the pair above from passing on a tally something else raised — and the
+    reason the whole suite is not one long refusal: every differential run in this file goes through
+    a harness that clears the tally first and RAISES on a non-zero one afterwards."""
+    assert _refusals_stepping(bytes([END_SONG_OPCODE - 1, FOLLOWING_NOTE])) == 0
+
+
+def test_the_opcode_grid_covers_every_entry_the_jump_table_holds():
+    """The guard on the grid: 24 entries, one row each bar $8e, whose reason is in the docstring."""
+    assert len(TESTABLE_OPCODES) == PATTERN_OPCODES - 1
+    assert END_SONG_OPCODE not in TESTABLE_OPCODES
+    assert set(TESTABLE_OPCODES) | {END_SONG_OPCODE} == set(
+        range(PATTERN_NOTE_LIMIT, PATTERN_NOTE_LIMIT + PATTERN_OPCODES))
+
+
+def test_the_shipped_song_data_reaches_eleven_of_the_twenty_four_opcodes():
+    """The census, and its own self-proof: every one of the 106 patterns ends in $87 or $8e, so those
+    two counts have to add up to the pattern count exactly. That is what says the walk decoded the
+    operand lengths right — a wrong one would desynchronise and land on rubbish."""
+    assert len(SHIPPED_PATTERN_ADDRESSES) == SHIPPED_PATTERNS
+    assert (SHIPPED_OPCODE_CENSUS[NEXT_PATTERN_OPCODE] + SHIPPED_OPCODE_CENSUS[END_SONG_OPCODE]
+            == SHIPPED_PATTERNS), f"the census does not tile the patterns: {SHIPPED_OPCODE_CENSUS}"
+    assert set(SHIPPED_OPCODE_CENSUS) == {0x80, 0x81, 0x82, 0x87, 0x88, 0x89, 0x8a, 0x8e, 0x8f,
+                                          0x92, 0x93}, (
+        f"the shipped data reaches {sorted(hex(op) for op in SHIPPED_OPCODE_CENSUS)}")
+    # ...and the claim src/sound.c's unported `default:` rests on: the walk counts EVERY byte in
+    # $80..$b7, so an out-of-range command anywhere in the data would appear here as an opcode above
+    # the table's last entry. None does.
+    assert max(SHIPPED_OPCODE_CENSUS) < PATTERN_NOTE_LIMIT + PATTERN_OPCODES, (
+        f"a shipped pattern byte indexes past the jump table: {sorted(SHIPPED_OPCODE_CENSUS)}")
+
+
+def test_the_census_walk_is_CLOSED_under_the_retargets_opcode_93_makes():
+    """THE GUARD THE WALK'S 106 RESTS ON, and the one thing the tiling above cannot say.
+
+    Opcode $93 re-points a channel's sequence table from two pattern bytes, so a pattern can send the
+    replayer at a table the walk never visited — and the walk starts from the song directory alone.
+    Today's three $93s all name mid-table tails of tables the walk already has, so the set really is
+    closed; without this, a fresh-table $93 in different data would shrink the reachable set silently
+    while 95 + 11 = 106 still passed, because both sides of the tiling would shrink together.
+    """
+    assert len(SHIPPED_RETARGETS) == SHIPPED_OPCODE_CENSUS[SET_SEQUENCE_OPCODE]
+    for retarget in SHIPPED_RETARGETS:
+        assert any(start <= retarget < end for start, end in SHIPPED_TABLES.items()), (
+            f"opcode $93 re-points at {retarget:#x}, which is inside no table the walk visited — the "
+            f"census is no longer closed and its 106 is a floor, not a count")
+
+
+def test_the_shipped_sequence_tables_are_not_one_band_and_clear_every_music_record():
+    """The corrected span, and the conclusion that rests on it. ../notes' module map shows 28 bytes
+    at $18508, which is song 0's THREE tables; the 51 of them are interleaved with the pattern data.
+    What the aliasing case above needs is only the second half — that none of them can name a byte of
+    a music channel record — and that survives the correction with room to spare."""
+    assert len(SHIPPED_TABLES) == SHIPPED_SEQUENCE_TABLES
+    starts, ends = sorted(SHIPPED_TABLES), sorted(SHIPPED_TABLES.values())
+    assert (starts[0], ends[-1]) == (0x18508, 0x1a42a), (
+        f"the tables span {starts[0]:#x}..{ends[-1]:#x}")
+    runs = leaf.merge_bands({at for start, end in SHIPPED_TABLES.items() for at in range(start, end)})
+    assert len(runs) > 1, "the tables must not be one contiguous band — the map's row implies they are"
+    assert sum(length for _start, length in runs) < ends[-1] - starts[0], (
+        "...and the gaps between the runs are the pattern data they are interleaved with")
+    records = (MUSIC_CHANNEL_STATE, MUSIC_CHANNEL_STATE + MUSIC_STATE_BLOCK_LEN)
+    for start, end in SHIPPED_TABLES.items():
+        assert start >= records[1] or end <= records[0], (
+            f"the table at {start:#x} overlaps the music channel records")
+
+
+def test_the_arpeggio_and_instrument_bytes_the_shipped_data_selects():
+    """The plate's two tail claims, made by the WALK: the census counts bytes at or above $b8 by
+    range, so `only $cf, twice` and `thirteen instruments, not the fifteen the range spans` are the
+    data's statements. It also says NO shipped byte falls in $b8..$bf, which is what makes that whole
+    range's case a seeded one."""
+    assert SHIPPED_ARPEGGIOS == {0xcf: 2}, f"the arpeggio bytes are {SHIPPED_ARPEGGIOS}"
+    assert SHIPPED_ALIASED_ARPEGGIOS == {}, (
+        f"a shipped byte falls in the aliased arpeggio range: {SHIPPED_ALIASED_ARPEGGIOS}")
+    assert set(SHIPPED_INSTRUMENTS) == {0xd0, 0xd1} | set(range(0xd4, 0xdf)), (
+        f"the instrument bytes are {sorted(hex(b) for b in SHIPPED_INSTRUMENTS)}")
+    assert len(SHIPPED_INSTRUMENTS) == 13, "thirteen distinct instruments, not the range's fifteen"
+
+
+def test_the_three_range_floors_come_out_of_the_decoders_own_biases():
+    """...and the ranges the census sorts by are the DECODER's, derived from the three `addi.b`
+    immediates rather than transcribed as $c0/$d0/$e0."""
+    assert (PATTERN_ARPEGGIO_MIN_BYTE, PATTERN_INSTRUMENT_MIN_BYTE,
+            PATTERN_DURATION_MIN_BYTE) == (0xc0, 0xd0, 0xe0)
+    assert PATTERN_CMD_LIMIT < PATTERN_ARPEGGIO_MIN_BYTE, (
+        "the command range must end BELOW the arpeggio floor — that gap is $b8..$bf")
+
+
+def test_the_operand_lengths_the_census_uses_come_out_of_the_model():
+    """The guard on `_derived_operand_lengths`: the model is what the differential pins, so a length
+    read back out of it is pinned too — but only if the derivation actually found some. A dict of
+    all-zeroes would desynchronise the walk, which the tiling would then catch; a dict with ONE wrong
+    zero is the case that motivated it, and this says which opcodes take operands at all."""
+    taking = {op for op, count in PATTERN_OPCODE_OPERAND_LEN.items() if count}
+    assert taking == {0x84, 0x88, 0x89, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97}
+    assert PATTERN_OPCODE_OPERAND_LEN[NEXT_PATTERN_OPCODE] == 0, (
+        "$87 REPLACES the cursor and consumes nothing from the stream")
+    assert max(PATTERN_OPCODE_OPERAND_LEN.values()) < SEEDED_OPERAND_BYTES
+
+
+# --- opcode $97, the module's one latent defect ---------------------------------------------------
+# It sets d0 and never d1, so the effect lands on whatever channel the caller left there. Every one of
+# these is SYNTHETIC: the byte occurs nowhere in the shipped data, so nothing has ever heard it.
+TRIGGER_SELECTORS = (0, 1, 2, 0xff)
+
+
+@pytest.mark.parametrize("selector", TRIGGER_SELECTORS, ids=[f"d1_{s:02x}" for s in
+                                                             TRIGGER_SELECTORS])
+def test_opcode_97_arms_whichever_channel_the_entry_d1_happens_to_hold(selector):
+    """REPRODUCED, NOT FIXED. The four selectors are snd_trigger_effect's own three arms plus the
+    `anything else is C` one, so a port that had quietly passed channel A fails on three of them."""
+    what = (f"pattern opcode $97 entered with d1 = {selector:#04x} — the latent defect, and a "
+            f"SEEDED stream: $97 occurs zero times in the shipped patterns")
+    _run_channel_step(CHANNEL_A, what, fields={CH_DURATION: 1},
+                      stream=_opcode_stream(TRIGGER_SFX_OPCODE), trigger_channel=selector)
+
+
+# --- the range decoder past the command range -----------------------------------------------------
+STEP_RANGE_CASES = (
+    (0xb8, "the FIRST byte the `cmp.b #$b8` sends past the command range: its decoded arpeggio index "
+           "is $f8, sixteen entries PAST the 16-word table the $c0 arm reads"),
+    (0xbf, "...and the last of them, at index $ff"),
+    (0xc0, "arpeggio 0, the first index the table really holds"),
+    (0xcf, "arpeggio 15 — the ONLY arpeggio byte anywhere in the shipped data, twice"),
+    (0xd0, "instrument 0, whose envelope SPEED is the byte below its stream"),
+    (0xde, "instrument 14, the last one the shipped data selects"),
+    (0xdf, "instrument 15, which no shipped pattern selects"),
+    (0xe0, "a duration byte of $e0, which is ONE row"),
+    (0xff, "...and $ff, which is 32 — the two ends of the last range"),
+)
+
+
+@pytest.mark.parametrize("byte,why", STEP_RANGE_CASES, ids=[f"byte_{c[0]:02x}" for c in
+                                                            STEP_RANGE_CASES])
+def test_a_pattern_byte_above_the_command_range_decodes_by_its_range(byte, why):
+    """The chain of `addi.b`+`bcs`, each boundary from both sides. The mutant the $b8/$c0 pair buys is
+    a decoder written as a MASK (`byte & $0f`), which agrees with the adds on $c0..$ff and sends
+    $b8..$bf to arpeggio 8..15 instead of past the table."""
+    _run_channel_step(CHANNEL_A, f"a pattern byte of {byte:#04x} — {why}", fields={CH_DURATION: 1},
+                      stream=bytes([byte, FOLLOWING_NOTE]))
+
+
+def test_the_range_sweep_reaches_both_sides_of_all_three_boundaries():
+    """The guard on the sweep above: each of the decoder's three carries has to be produced AND not
+    produced, or a boundary written one off would agree with every row."""
+    seen = {byte for byte, _why in STEP_RANGE_CASES}
+    for boundary in (0xc0, 0xd0, 0xe0):
+        assert boundary in seen and any(boundary - 0x10 <= byte < boundary for byte in seen), (
+            f"the sweep does not bracket {boundary:#04x} from both sides")
+    # $b8's own lower side is the OPCODE grid, every row of which is a byte the `cmp.b` keeps.
+    assert PATTERN_CMD_LIMIT in seen and max(TESTABLE_OPCODES) < PATTERN_CMD_LIMIT
+
+
+# --- opcode $87: the sequence walk ----------------------------------------------------------------
+SEQUENCE_CASES = (
+    (WORD_LEN, "the second entry, which the walk takes and then leaves the index at 4"),
+    (2 * WORD_LEN, "the 0000 TERMINATOR, which restarts at entry 0 and leaves the index at 2 — and "
+                   "takes entry 0 itself, because the reset reloads the table offset without the "
+                   "index it had just added to it"),
+)
+
+
+@pytest.mark.parametrize("index,why", SEQUENCE_CASES, ids=["entry_1", "terminator"])
+def test_the_sequence_walk_advances_and_restarts(index, why):
+    """The mutant the terminator row buys is a restart that took entry 0 PLUS one — the `moveq #2,d0`
+    sets the index the walk leaves, not the entry it reads."""
+    _run_channel_step(CHANNEL_A, f"opcode $87 with the sequence index at {index} — {why}",
+                      fields={CH_DURATION: 1, CH_SEQUENCE_INDEX: index},
+                      stream=bytes([NEXT_PATTERN_OPCODE]))
+
+
+# A sequence table whose entry IS the record's own index word, which is what tells $18036's re-read
+# apart from $1803c's store. Solve `(offset + index) & $ffff` for the a3-relative offset of the index
+# field, so that the entry the walk resolves is the index it is about to overwrite: the entry it must
+# read is the OLD index, and the module offset that index names is the case's own seeded pattern.
+# The index names SEEDED_NEXT_PATTERN and NOT the case's own stream: the stream still has to be the
+# $87 that starts the walk, so the pattern the walk RESOLVES has to be a different one.
+SELF_NAMING_INDEX = SEEDED_NEXT_PATTERN_OFFSET
+SELF_NAMING_OFFSET = (_module_displacement(_music_channel(CHANNEL_A) + CH_SEQUENCE_INDEX)
+                      - SELF_NAMING_INDEX) & WORD_MASK
+
+
+def test_the_sequence_entry_is_re_read_before_the_new_index_is_stored():
+    """THE REVIEW GATE'S FINDING, and the only shape that can show it: `movea.w 0(a3,a2.w),a1` at
+    $18036 fetches the entry again and `move.w d0,10(a0)` at $1803c stores the new index AFTER it, so
+    a table that names the index field itself resolves the OLD index.
+
+    A port that stored first resolves the index PLUS two and starts the row two bytes into the
+    pattern — a different note. Only a SEEDED table can reach it: the 51 shipped tables span
+    $18508..$1a42a in seventeen disjoint runs (interleaved with the pattern data, not one band), and
+    the lowest byte any of them names is $18508 — above every record.
+    """
+    _run_channel_step(CHANNEL_A,
+                      "opcode $87 over a sequence table that names the index word it is about to "
+                      "write",
+                      fields={CH_DURATION: 1, CH_SEQUENCE_OFFSET: SELF_NAMING_OFFSET,
+                              CH_SEQUENCE_INDEX: SELF_NAMING_INDEX},
+                      stream=bytes([NEXT_PATTERN_OPCODE]))
+
+
+def test_the_self_naming_sequence_table_really_does_alias_the_index_word():
+    """The guard on the case above: without the alias it is an ordinary walk and proves nothing."""
+    entry = (SELF_NAMING_OFFSET + SELF_NAMING_INDEX) & WORD_MASK
+    assert _module_address(entry) == _music_channel(CHANNEL_A) + CH_SEQUENCE_INDEX
+    assert _module_address(SELF_NAMING_INDEX) == SEEDED_NEXT_PATTERN
+    assert SEEDED_NEXT_PATTERN_BYTES[0] != SEEDED_NEXT_PATTERN_BYTES[TABLE_ENTRY_LEN], (
+        "the two notes a store-first port would tell apart must differ")
+
+
+# Every value this battery restates from include/sound.h, which layout.py does not scrape (none of
+# them carries a WB_ prefix and none is a game constant, so `wb()` cannot reach them). CLAUDE.md's
+# cross-language rule asks for one canonical definition or a test that pins the copy; the header is
+# canonical and this is the test.
+SOUND_H_CONSTANTS = {
+    "SND_TRIGGER_CHANNEL_UNMODELLED": lambda: TICK_D1,
+    "SND_STEP_RETURNED": lambda: STEP_RETURNED,
+    "SND_STEP_SONG_ENDED": lambda: STEP_SONG_ENDED,
+}
+
+
+@pytest.mark.parametrize("name", sorted(SOUND_H_CONSTANTS))
+def test_a_value_this_battery_restates_from_sound_h_is_the_headers_own(name):
+    """A divergence here is silent in both directions: the enum comes back through ctypes as a bare
+    int, and the unmodelled d1 is only ever read by an opcode no case may reach."""
+    header = (pathlib.Path(__file__).resolve().parents[1] / "include" / "sound.h").read_text()
+    declared = re.search(rf"\b{name}\s*=?\s*(\d+)", header)
+    assert declared, f"include/sound.h no longer declares {name}"
+    assert int(declared.group(1)) == SOUND_H_CONSTANTS[name](), (
+        f"the header says {declared.group(1)} and this battery says "
+        f"{SOUND_H_CONSTANTS[name]()}")
+
+
+# --- the hand-over ladder at $18152 ---------------------------------------------------------------
+# Three `tst`/`btst` pairs whose only shared exit is the `rts`, so ONE armed SFX channel with its
+# noise on blocks the hand-over. The mutants: a ladder that tested only channel A (rows 1..3 differ),
+# and one that read a neighbour's state block (the per-channel rows differ from each other).
+NOISE_ON = 0x00                     # descriptor +6 bit 3 CLEAR is noise ON, in PSG polarity
+NOISE_OFF = MIXER_NOISE_OFF
+
+
+def _sfx_mixer_bytes(per_channel):
+    """The three SFX channel states' descriptor +6, as a poke layer — the one byte per channel the
+    hand-over ladder and the tick's mixdown both read."""
+    return {_channel_state(channel) + DESC_MIXER_BITS: bytes([per_channel[channel]])
+            for channel in range(CHANNELS)}
+
+
+# The mixer byte is two-valued here, so the axis is not "three different bytes": it is that in every
+# DECIDING row the channel whose noise is on DISAGREES with channel A's byte, and that two rows leave
+# a noise bit on with nothing armed. Both shapes are the first sweep pass's findings and each names
+# its mutant. Rows 5 and 6 kill "every rung reads channel A's state block" — A holds NOISE_OFF while
+# the deciding channel holds NOISE_ON, so a ladder that read A's block never blocks. ROW 2 IS NOT
+# TRIMMABLE: it is the only row where a noise bit is on and no flag is set, so it alone kills "the
+# `tst.b` on the flag dropped", which every other row agrees with.
+YIELD_LADDER_CASES = (
+    ((), (NOISE_OFF, NOISE_OFF, NOISE_OFF),
+     "nothing armed: the ladder falls all the way through and the channel is taken"),
+    ((), (NOISE_ON, NOISE_ON, NOISE_ON),
+     "nothing armed but every descriptor's noise ON — the `tst.b` on the flag is the whole of what "
+     "keeps the hand-over"),
+    ((0, 1, 2), (NOISE_OFF, NOISE_OFF, NOISE_OFF),
+     "all three armed with their noise OFF, which does not block it"),
+    ((0,), (NOISE_ON, NOISE_OFF, NOISE_OFF),
+     "channel A armed with its noise ON — refused on the first rung"),
+    ((1,), (NOISE_OFF, NOISE_ON, NOISE_OFF),
+     "channel B armed with its noise ON, which ONLY B's own state block can say"),
+    ((2,), (NOISE_OFF, NOISE_OFF, NOISE_ON),
+     "channel C armed with its noise ON, the last rung"),
+    ((0,), (NOISE_OFF, NOISE_ON, NOISE_ON),
+     "channel A armed with its noise OFF while the two SILENT channels have theirs ON — taken"),
+)
+
+
+@pytest.mark.parametrize("armed,mixer_bits,why", YIELD_LADDER_CASES,
+                         ids=[f"armed_{''.join(str(c) for c in case[0]) or 'none'}_"
+                              f"{''.join(f'{b:02x}' for b in case[1])}"
+                              for case in YIELD_LADDER_CASES])
+def test_the_hand_over_ladder_is_blocked_by_any_armed_sfx_channel_with_its_noise_on(armed,
+                                                                                    mixer_bits, why):
+    _run_channel_step(CHANNEL_A, f"a yielding channel with {why}",
+                      fields={CH_DURATION: 1, CH_YIELD: 1},
+                      globals_={ACTIVE_FLAGS + channel: (ACTIVE if channel in armed else 0)
+                                for channel in range(CHANNELS)},
+                      extra=_sfx_mixer_bytes(mixer_bits))
+
+
+def test_the_hand_over_case_that_is_refused_leaves_the_flag_as_it_found_it():
+    """Stated as its own claim, because the ladder's refusal writes NOTHING — a port that stored the
+    flag back unchanged would leave the same image and the same write set."""
+    what = "a hand-over refused by channel B's armed noise"
+    pokes = _step_pokes(leaf.case_salt(what), {CHANNEL_A: {CH_DURATION: 1, CH_YIELD: 1}},
+                        {ACTIVE_FLAGS + 1: ACTIVE}, {CHANNEL_A: bytes([FOLLOWING_NOTE])},
+                        _sfx_mixer_bytes((NOISE_OFF, NOISE_ON, NOISE_OFF)))
+    record = _music_channel(CHANNEL_A)
+    memory = _Memory(_poked_image(pokes))
+    _model_channel_step(memory, record, 0)
+    assert record + CH_YIELD not in memory.written, (
+        "the refusal must write nothing at all: the model stored the yield flag back")
+
+
+# --- $17ca0: the tick body ------------------------------------------------------------------------
+#
+# THE TOP OF THE TIER, and the only routine here that drives the chip on a path other than silence.
+# Every case declares the mixer with `psg_seed` for the same reason snd_psg_silence's do: $17f08
+# reads register 7 back and the merge keeps the bits the module does not own, so the byte the chip
+# held is an INPUT of the run and inventing it would be a false green.
+#
+# THE TEMPO HEAD IS NOT PORTED. $17c74..$17c9f reads $fffa01 and $ff820a and writes one byte from
+# them, so a case POKES WB_SND_TICK_DROP_VALUE — all three of the values the head can write — and
+# enters below it. Nothing here reaches the head, and ../STATUS.md records the boundary.
+
+TICK_BODY_INSNS = 160           # $17ca0's own instruction count, 644 bytes at ~4 bytes each
+TICK_INSN_CAP = (TICK_BODY_INSNS + SFX_TICK_INSN_CAP + CHANNELS * CHANNEL_STEP_INSN_CAP
+                 + CHANNELS * PERIOD_VOLUME_INSN_CAP + STOP_INSN_CAP + leaf.RUNNER_SENTINEL_INSN)
+_tick = leaf.image_glue("snd_music_tick_body")
+
+# The three values the tempo selector can leave in WB_SND_TICK_DROP_VALUE, and nothing else can.
+TICK_DROP_VALUES = (0, 0x2b, 0x48)      # 50 Hz colour, 60 Hz colour, mono
+TICK_MIXER = MIXER_DIRECTION_BITS   # what TOS leaves: both port-direction bits set,
+                                # which is the same byte and the same meaning as the
+                                # stop chain's own MIXER_SEEDS[0]
+ENGINE_ENABLED_SET = 0xff       # `st 2250(a3)` in snd_play_song
+SONG_LOADED_SET = 0xff
+TICK_SONG_SPEED = 0x30          # song 0's own speed byte — a row every 5.3 ticks
+TICK_D1 = 0                     # include/sound.h's SND_TRIGGER_CHANNEL_UNMODELLED
+
+# EVERY MODULE GLOBAL the tick reads, pinned rather than left to the keyed seed — GLOBAL_DEFAULTS'
+# hazard one tier up, and with more to lose: the gate, the dropper, the fade and the row rate are all
+# bytes of the same dirty band, so a salt-derived one would decide which arms a case ran.
+TICK_GLOBAL_DEFAULTS = {
+    **GLOBAL_DEFAULTS,
+    **STEP_GLOBAL_DEFAULTS,
+    ACTIVE_FLAGS + CHANNELS: 0,             # the pad byte the gate's `tst.l` also reads
+    ENGINE_ENABLED: ENGINE_ENABLED_SET,
+    MASTER_VOLUME: MASTER_VOLUME_FULL,
+    SONG_SPEED: TICK_SONG_SPEED,
+    SONG_SPEED_COPY: TICK_SONG_SPEED,
+    SONG_LOADED: SONG_LOADED_SET,
+    FADE_RATE: 0,
+    FADE_COUNTDOWN: 0,
+    SPEED_ACC: 0,
+    NOISE_PERIOD_OUT: 0,
+    PERIOD_SCRATCH: 0,
+    PERIOD_SCRATCH + 1: 0,
+    TICK_DROP_VALUE: 0,
+    TICK_DROP_ACC: 0,
+    **{CHANNEL_LOCKS + byte: 0 for byte in range(CHANNEL_LOCKS_LEN)},
+}
+# ...and the header names those addresses are reached by, so the guard below can say WHICH global the
+# body reads that no default pins.
+TICK_GLOBAL_NAMES = {
+    "SND_ENGINE_ENABLED": ENGINE_ENABLED, "SND_MASTER_VOLUME": MASTER_VOLUME,
+    "SND_SONG_SPEED": SONG_SPEED, "SND_SONG_SPEED_COPY": SONG_SPEED_COPY,
+    "SND_SONG_LOADED": SONG_LOADED, "SND_FADE_RATE": FADE_RATE,
+    "SND_FADE_COUNTDOWN": FADE_COUNTDOWN, "SND_SPEED_ACC": SPEED_ACC,
+    "SND_TICK_DROP_VALUE": TICK_DROP_VALUE, "SND_TICK_DROP_ACC": TICK_DROP_ACC,
+    "SND_NOISE_PERIOD_BASE": NOISE_PERIOD_BASE, "SND_NOISE_PERIOD_OUT": NOISE_PERIOD_OUT,
+    "SND_PERIOD_SCRATCH": PERIOD_SCRATCH, "SND_CHANNEL_LOCKS": CHANNEL_LOCKS,
+    "SND_SFX_ACTIVE_FLAGS": ACTIVE_FLAGS,
+}
+
+
+def test_the_tick_defaults_pin_every_module_global_its_body_names():
+    """The guard on the table above, and the same shape as the period/volume pass's: a global that
+    appears in the tick's own source but not in the defaults would be running on a salt-derived byte
+    and the case naming it would be about something else."""
+    body = pathlib.Path(__file__).resolve().parents[1] / "src" / "sound.c"
+    tick_source = body.read_text().split("---- $17ca0:")[1]
+    for name, address in sorted(TICK_GLOBAL_NAMES.items()):
+        if f"WB_{name}" in tick_source:
+            assert address in TICK_GLOBAL_DEFAULTS, (
+                f"WB_{name} is read by the tick body and pinned by no default")
+
+
+class _Psg:
+    """The chip as the tick's output block leaves it: the ordered access ledger and the register
+    file, which are the two surfaces the image cannot show. `silence_events`/`silence_file` state the
+    stop chain's by hand; the tick's are long enough that they are RECORDED as the model runs."""
+
+    def __init__(self, seed):
+        self.values = bytearray(PSG_NREGS)
+        self.known = 0
+        for reg, value in seed.items():
+            self.values[reg] = value
+            self.known |= 1 << reg
+        self.events = []
+
+    def write(self, reg, value):
+        self.values[reg] = value & BYTE_MASK
+        self.known |= 1 << reg
+        self.events.append((PSG_WRITE, reg, value & BYTE_MASK))
+
+    def read(self, reg):
+        self.events.append((PSG_READ, reg, self.values[reg]))
+        return self.values[reg]
+
+
+def _model_end_song(memory, psg):
+    """$18016 — clear "song loaded", then the whole stop chain, whose `rts` returns to the tick's
+    OWN caller. Spelt from the chain's constants rather than by calling its models, so the write set
+    it contributes is stated in the tick's terms and the two are separate statements."""
+    memory.byte(SONG_LOADED, SONG_UNLOADED)
+    memory.byte(ENGINE_ENABLED, ENGINE_DISABLED)
+    memory.long(ACTIVE_FLAGS, 0)
+    memory.byte(PSG_SHADOW + PSG_REG_MIXER, PSG_MIXER_ALL_OFF)
+    for reg in SILENCED_VOLUMES:
+        memory.byte(PSG_SHADOW + reg, PSG_VOLUME_SILENT)
+    psg.write(PSG_REG_MIXER, psg.read(PSG_REG_MIXER) | PSG_MIXER_ALL_OFF)
+    for reg in SILENCED_VOLUMES:
+        psg.write(reg, PSG_VOLUME_SILENT)
+
+
+def _model_fade(memory):
+    """$17cc2. A rate of zero disables it; a master volume already spent ends the song on the spot."""
+    rate = memory.read(FADE_RATE)
+    if rate == 0:
+        return STEP_RETURNED
+    if memory.read(MASTER_VOLUME) == 0:
+        return STEP_SONG_ENDED
+    if memory.decrement(FADE_COUNTDOWN) != 0:
+        return STEP_RETURNED
+    if memory.decrement(MASTER_VOLUME) == 0:
+        return STEP_SONG_ENDED
+    memory.byte(FADE_COUNTDOWN, rate)
+    return STEP_RETURNED
+
+
+def _model_rows(memory):
+    """$17cea — the fractional row rate, and the three steps its carry runs."""
+    total = memory.read(SPEED_ACC) + memory.read(SONG_SPEED)
+    memory.byte(SPEED_ACC, total)
+    if not total >> 8:
+        return STEP_RETURNED
+    for channel in range(CHANNELS):
+        if _model_channel_step(memory, _music_channel(channel), TICK_D1) == STEP_SONG_ENDED:
+            return STEP_SONG_ENDED
+    return STEP_RETURNED
+
+
+def _model_publish(memory):
+    """$17d0c — three period/volume passes into the PSG shadow, the period split through the scratch
+    word and the volume reduced by the master volume read as an ATTENUATION."""
+    memory.byte(MASTER_VOLUME, memory.read(MASTER_VOLUME) & MASTER_VOLUME_MASK)
+    for channel in range(CHANNELS):
+        mix = _model_period_volume(memory, _music_channel(channel), 0)
+        memory.word(PERIOD_SCRATCH, mix["d0"] & WORD_MASK)
+        memory.byte(PSG_SHADOW + _shadow_tone(channel), mix["d0"])
+        memory.byte(PSG_SHADOW + _shadow_tone(channel) + 1, memory.read(PERIOD_SCRATCH))
+
+        attenuation = memory.read(MASTER_VOLUME) ^ MASTER_VOLUME_FULL
+        volume = mix["d1"] & BYTE_MASK
+        memory.byte(PSG_SHADOW + PSG_REG_VOLUME_A + channel,
+                    volume - attenuation if volume >= attenuation else 0)
+    memory.byte(PSG_SHADOW + PSG_REG_NOISE_PERIOD, memory.read(NOISE_PERIOD_OUT))
+
+
+def _model_mixdown(memory):
+    """$17d90 — an armed SFX channel overrides the shadow. Channel A's flag is tested TWICE, exactly
+    as it is in snd_sfx_tick: a NEGATIVE one abandons the tick before the mask and the chip write."""
+    for channel in range(CHANNELS):
+        flag = memory.read(ACTIVE_FLAGS + channel)
+        if flag == 0:
+            continue
+        if channel == CHANNEL_A and flag & SIGN_BIT_B:
+            return False
+        mix_period = _mix_period(channel)
+        memory.byte(PSG_SHADOW + _shadow_tone(channel), memory.read(mix_period + MIX_PERIOD_LOW))
+        memory.byte(PSG_SHADOW + _shadow_tone(channel) + 1, memory.read(mix_period))
+
+        bits = memory.read(_channel_state(channel) + DESC_MIXER_BITS)
+        if not bits & MIXER_NOISE_OFF:
+            memory.byte(PSG_SHADOW + PSG_REG_NOISE_PERIOD, memory.read(MIX_NOISE))
+        merged = memory.read(PSG_SHADOW + PSG_REG_MIXER) | _channel_mixer_bits(channel)
+        memory.byte(PSG_SHADOW + PSG_REG_MIXER, merged)
+        memory.byte(PSG_SHADOW + PSG_REG_MIXER, merged & _rol_byte(bits, channel))
+        memory.byte(PSG_SHADOW + PSG_REG_VOLUME_A + channel, memory.read(MIX_VOLUME + channel))
+    memory.byte(PSG_SHADOW + PSG_REG_MIXER,
+                memory.read(PSG_SHADOW + PSG_REG_MIXER) & PSG_MIXER_ALL_OFF)
+    return True
+
+
+def _model_chip(memory, psg):
+    """$17e34 — and a LOCKED channel is neither written nor allowed to vote in the mixer merge, so
+    whatever the chip already held in its bits survives. The NOISE register needs all four lock bytes
+    clear, because one noise generator is shared by the three channels."""
+    owned = 0
+    if memory.read_long(CHANNEL_LOCKS) == 0:
+        psg.write(PSG_REG_NOISE_PERIOD, memory.read(PSG_SHADOW + PSG_REG_NOISE_PERIOD))
+    for channel in range(CHANNELS):
+        if memory.read(CHANNEL_LOCKS + channel) != 0:
+            continue
+        fine = _shadow_tone(channel)
+        psg.write(fine, memory.read(PSG_SHADOW + fine))
+        psg.write(fine + 1, memory.read(PSG_SHADOW + fine + 1))
+        psg.write(PSG_REG_VOLUME_A + channel, memory.read(PSG_SHADOW + PSG_REG_VOLUME_A + channel))
+        owned |= _channel_mixer_bits(channel)
+    chip = psg.read(PSG_REG_MIXER)
+    shadow = memory.read(PSG_SHADOW + PSG_REG_MIXER)
+    psg.write(PSG_REG_MIXER, ((chip ^ shadow) & owned) ^ chip)
+
+
+def _model_tick(memory, psg):
+    """The whole of $17ca0."""
+    if memory.read(ENGINE_ENABLED) == ENGINE_DISABLED and memory.read_long(ACTIVE_FLAGS) == 0:
+        return
+    total = memory.read(TICK_DROP_ACC) + memory.read(TICK_DROP_VALUE)
+    memory.byte(TICK_DROP_ACC, total)
+    if total >> 8:
+        return                                  # the carry abandons the WHOLE tick
+
+    _model_sfx_tick_into(memory)
+    if memory.read(ENGINE_ENABLED) != ENGINE_DISABLED:
+        if _model_fade(memory) == STEP_SONG_ENDED:
+            return _model_end_song(memory, psg)
+        memory.byte(NOISE_PERIOD_OUT, memory.read(NOISE_PERIOD_BASE))
+        if _model_rows(memory) == STEP_SONG_ENDED:
+            return _model_end_song(memory, psg)
+        _model_publish(memory)
+    if _model_mixdown(memory):
+        _model_chip(memory, psg)
+
+
+def _tick_pokes(salt, records=None, globals_=None, streams=None, armed=None):
+    """The module state a tick case runs on: every mutable band the tier reads, then the three music
+    records, then whatever `snd_trigger_effect` leaves for each ARMED channel (its own model, already
+    proven against the original above), then the case's globals."""
+    pokes = overlay(_mutable_seed(salt),
+                    _step_pokes(salt, records or {}, None, streams or {}),
+                    {PRNG_STATE: SFX_TICK_SEED.to_bytes(PRNG_STATE_LEN, "big")},
+                    {addr: bytes([value]) for addr, value in TICK_GLOBAL_DEFAULTS.items()})
+    for channel, effect_id in sorted((armed or {}).items()):
+        pokes = overlay(pokes, expected_writes(_poked_image(pokes), effect_id, channel))
+    return overlay(pokes, {addr: bytes([value]) for addr, value in (globals_ or {}).items()})
+
+
+def _tick_body_model(memory, psg_seed):
+    """...where $17ca0 has both, and RECORDS its ledger as the model runs rather than stating it: an
+    unlocked tick leaves twelve accesses and an ended song five, which no by-hand list would keep."""
+    psg = _Psg(psg_seed)
+    _model_tick(memory, psg)
+    return psg
+
+
+def _run_tick(what, pokes, mixer=TICK_MIXER, ticks=1):
+    """A3 IS AN ENTRY REGISTER HERE. $17ca0's first instruction is `tst.b 2250(a3)` — the `lea` is in
+    the TEMPO HEAD, which this batch does not port — so the body inherits the module base exactly as
+    $18106, $18208 and $1aaca do."""
+    return _run_tick_sequence("snd_music_tick_body", _tick, _tick_body_model, TICK_INSN_CAP,
+                              what, pokes, ticks, regs={"a3": MODULE_BASE},
+                              psg_seed={PSG_REG_MIXER: mixer})[1]
+
+
+def _tick_case(what, **kwargs):
+    mixer = kwargs.pop("mixer", TICK_MIXER)
+    ticks = kwargs.pop("ticks", 1)
+    return _run_tick(what, _tick_pokes(leaf.case_salt(what), **kwargs), mixer=mixer, ticks=ticks)
+
+
+TICK_SEEDED_BANDS = STEP_SEEDED_BANDS + ((MIX_PERIOD, MIX_BLOCK_LEN), (PSG_SHADOW, PSG_SHADOW_LEN),
+                                         (PRNG_STATE, PRNG_STATE_LEN))
+
+
+def test_a_tick_case_seeds_every_mutable_byte_the_whole_tier_reads():
+    """The tick reaches all five bands — its own three plus the SFX mix block and the PSG shadow —
+    and every one of them ships dirty."""
+    assert_bands_are_seeded(_tick_pokes(0), TICK_SEEDED_BANDS, "a tick case")
+
+
+def test_no_tick_case_puts_the_latent_sfx_opcode_in_a_pattern():
+    """THE BOUNDARY include/sound.h's SND_TRIGGER_CHANNEL_UNMODELLED rests on. Opcode $97 hands the
+    trigger the d1 snd_sfx_tick left, and snd_sfx_tick's outgoing registers are not reconstructed —
+    so a tick case that reached $97 would be comparing against a register nothing models. None can:
+    the byte occurs nowhere in the shipped patterns, and every stream this file seeds is checked."""
+    assert TRIGGER_SFX_OPCODE not in SHIPPED_OPCODE_CENSUS
+    for index in range(CHANNELS):
+        assert TRIGGER_SFX_OPCODE not in _tick_pokes(0)[_seeded_pattern(index)]
+
+
+# --- the gate: the engine flag, and the FOUR bytes the `tst.l` reads -------------------------------
+# The mutants: a gate written with `||` where the `bne`/`beq` pair is an OR of two admissions (row 1
+# against row 4), and one reading three flag bytes where the `tst.l` reads four (row 3 alone).
+TICK_GATE_CASES = (
+    ({ENGINE_ENABLED: ENGINE_DISABLED}, "engine off and every SFX flag clear: the `rts` at $17c72, "
+                                        "and not one byte written"),
+    ({ENGINE_ENABLED: ENGINE_DISABLED, ACTIVE_FLAGS + CHANNEL_A: ACTIVE},
+     "engine off but channel A armed: the SFX half runs and the music half does not"),
+    ({ENGINE_ENABLED: ENGINE_DISABLED, ACTIVE_FLAGS + CHANNELS: 1},
+     "engine off and only the PAD byte past the three flags set — the `tst.l` reads it, so the tick "
+     "runs; three `tst.b` would not"),
+    ({}, "engine on with nothing armed: the whole music path"),
+)
+
+
+@pytest.mark.parametrize("globals_,why", TICK_GATE_CASES,
+                         ids=[f"gate_{index}" for index in range(len(TICK_GATE_CASES))])
+def test_the_gate_admits_the_tick_on_the_engine_flag_or_any_of_the_four_sfx_bytes(globals_, why):
+    _tick_case(f"the tick's gate: {why}", globals_=globals_)
+
+
+# --- the tick DROPPER, which is what the unported tempo head feeds ---------------------------------
+# Both sides of the wrap for each of the three values the head can write. The mutants: a carry test
+# inverted, an `add.w` where the `add.b` is (the wrap would never happen), and a drop value read from
+# the accumulator's own address.
+TICK_DROP_CASES = (
+    (0x00, 0xff, "the 50 Hz colour value: an accumulator of $ff plus 0 never carries, so no tick is "
+                 "ever dropped"),
+    (0x2b, 0xd4, "the 60 Hz value one below its wrap — $d4 + $2b is exactly $ff"),
+    (0x2b, 0xd5, "...and AT it, which drops the whole tick"),
+    (0x48, 0x00, "the mono value from a cleared accumulator, which is the first tick after a reset"),
+)
+# TRIMMED, batch-17's bar: the $48 pair either side of ITS wrap ($b7/$b8) was two more runs re-making
+# the claim the $2b pair makes — every mutant this grid is for (the carry inverted, the accumulator
+# added to itself, an `add.w` where the `add.b` is, the value read from the wrong address) dies on
+# $2b already, checked at the mutant level before the rows were cut. The $48 row that stays is the
+# one the three-value guard below needs.
+
+
+@pytest.mark.parametrize("drop,accumulator,why", TICK_DROP_CASES,
+                         ids=[f"drop_{c[0]:02x}_acc_{c[1]:02x}" for c in TICK_DROP_CASES])
+def test_the_drop_accumulator_skips_a_whole_tick_on_its_carry(drop, accumulator, why):
+    _tick_case(f"a tick-drop value of {drop:#04x} over an accumulator of {accumulator:#04x} ({why})",
+               globals_={TICK_DROP_VALUE: drop, TICK_DROP_ACC: accumulator})
+
+
+def test_the_drop_sweep_covers_the_three_values_the_tempo_head_can_write():
+    """The guard on the sweep, and the whole of what the unported head contributes: it writes ONE
+    byte, and these are its three values."""
+    assert {drop for drop, _acc, _why in TICK_DROP_CASES} == set(TICK_DROP_VALUES)
+
+
+# --- the fade, and the first of the two non-local exits --------------------------------------------
+TICK_FADE_RATE = 5
+TICK_FADE_CASES = (
+    ({FADE_RATE: 0}, "a fade rate of ZERO, which disables the arm entirely"),
+    ({FADE_RATE: TICK_FADE_RATE, MASTER_VOLUME: 0, FADE_COUNTDOWN: 3},
+     "a fade started at SILENCE: the volume is already 0 and the song ends before the countdown is "
+     "even touched"),
+    ({FADE_RATE: TICK_FADE_RATE, MASTER_VOLUME: 8, FADE_COUNTDOWN: 3},
+     "a countdown still turning, which spends one tick and nothing else"),
+    ({FADE_RATE: TICK_FADE_RATE, MASTER_VOLUME: 8, FADE_COUNTDOWN: 1},
+     "a countdown of ONE, the tick the volume steps on and the countdown reloads"),
+    ({FADE_RATE: TICK_FADE_RATE, MASTER_VOLUME: 1, FADE_COUNTDOWN: 1},
+     "the LAST step: the volume reaches 0 and the song ends through $18016"),
+)
+
+
+@pytest.mark.parametrize("globals_,why", TICK_FADE_CASES,
+                         ids=[f"fade_{index}" for index in range(len(TICK_FADE_CASES))])
+def test_the_fade_spends_the_countdown_and_ends_the_song_at_silence(globals_, why):
+    """Two of these rows take the non-local exit at $18016 — "song loaded" cleared and the stop chain
+    run, whose `rts` returns to the TICK's caller — so the PSG ledger they leave is silence's four
+    accesses and NOT the twelve an unlocked output block leaves."""
+    _tick_case(f"the tick's fade: {why}", globals_=globals_)
+
+
+# --- the row rate, and the three steps its carry runs ----------------------------------------------
+# The mutants: a carry ignored, so every tick steps a row (rows 1 and 2 disagree), and the end-of-song
+# status not acted on by the tick — which row 3 reaches, since all three channels walk a pattern byte.
+TICK_ROW_CASES = (
+    ({SPEED_ACC: 0}, {}, "an accumulator that does not carry: no channel steps at all"),
+    ({SPEED_ACC: 0xd0}, {}, "an accumulator that CARRIES, so all three channels spend a countdown"),
+    ({SPEED_ACC: 0xd0}, {index: {CH_DURATION: 1} for index in range(CHANNELS)},
+     "...with all three countdowns at ONE, so all three walk a pattern byte in the same tick"),
+    ({SPEED_ACC: 0xff, SONG_SPEED: 1}, {}, "the smallest speed byte that can carry, from $ff"),
+)
+
+
+@pytest.mark.parametrize("globals_,records,why", TICK_ROW_CASES,
+                         ids=[f"rows_{index}" for index in range(len(TICK_ROW_CASES))])
+def test_the_row_rate_steps_every_channel_on_its_carry(globals_, records, why):
+    _tick_case(f"the tick's row step: {why}", globals_=globals_, records=records)
+
+
+# --- the master volume as an ATTENUATION -----------------------------------------------------------
+# The mutants: the volume read as a LEVEL rather than through `eori.b #15` (rows 1 and 2 invert), the
+# borrow WRAPPING instead of clamping at silence (row 2 alone), and the `andi.b #15` dropped (row 4).
+TICK_VOLUME_CASES = (
+    (MASTER_VOLUME_FULL, "full volume, whose attenuation is 0 and which subtracts nothing"),
+    (0, "silence, whose attenuation is 15 — every channel clamps to 0 rather than wrapping"),
+    (9, "a mid volume, so the subtraction is neither identity nor a clamp"),
+    (0x1f, "a volume with rubbish above the nibble, which the `andi.b #15` masks BEFORE the "
+           "attenuation is computed"),
+)
+
+
+@pytest.mark.parametrize("volume,why", TICK_VOLUME_CASES,
+                         ids=[f"volume_{c[0]:02x}" for c in TICK_VOLUME_CASES])
+def test_the_master_volume_attenuates_every_channel_and_clamps_at_silence(volume, why):
+    _tick_case(f"a master volume of {volume:#04x} ({why})", globals_={MASTER_VOLUME: volume})
+
+
+# --- the SFX mixdown -------------------------------------------------------------------------------
+# Which shipped descriptors sit on either side of the noise test, derived rather than named: the arm
+# copies the shared noise byte only when descriptor +6 bit 3 is CLEAR.
+NOISE_ON_EFFECT = next(effect for effect in range(SFX_IDS)
+                       if not harness.BASE_IMAGE[DESCRIPTORS + effect * DESCRIPTOR_LEN
+                                                 + DESC_MIXER_BITS] & MIXER_NOISE_OFF)
+NOISE_OFF_EFFECT = next(effect for effect in range(SFX_IDS)
+                        if harness.BASE_IMAGE[DESCRIPTORS + effect * DESCRIPTOR_LEN
+                                              + DESC_MIXER_BITS] & MIXER_NOISE_OFF)
+
+SFX_FLAG_NEGATIVE = 0xff        # what only a seeded state can hold: the trigger `sf`s the byte
+                                # to 0 and stores 1, so no shipped path ever writes a negative one
+
+TICK_MIXDOWN_CASES = (
+    ({CHANNEL_A: NOISE_ON_EFFECT}, {},
+     "channel A armed with a descriptor whose noise is ON, so the shared noise byte reaches the "
+     "shadow"),
+    ({CHANNEL_A: NOISE_OFF_EFFECT}, {},
+     "...and one whose noise is OFF, which is the `btst #3` from the other side"),
+    ({1: NOISE_ON_EFFECT}, {}, "channel B alone, whose mixer byte is ROTATED one place"),
+    ({2: NOISE_ON_EFFECT}, {}, "channel C alone, rotated two"),
+    ({CHANNEL_A: 0, 1: 1, 2: 2}, {}, "all three armed with three different effects, so the shared "
+                                     "noise byte belongs to whichever arm ran last"),
+    ({CHANNEL_A: NOISE_ON_EFFECT}, {ACTIVE_FLAGS + CHANNEL_A: SFX_FLAG_NEGATIVE},
+     "channel A's flag NEGATIVE, which abandons the tick before the mixer mask and before the chip "
+     "is written at all — B and C are never even looked at"),
+    ({1: NOISE_ON_EFFECT}, {ACTIVE_FLAGS + 1: SFX_FLAG_NEGATIVE},
+     "channel B's flag NEGATIVE, which for B is merely NON-ZERO: its arm runs and the chip is "
+     "written. The sign test is channel A's alone, and this row is the sweep's finding — without it "
+     "a `bmi` on all three arms passed the whole grid"),
+)
+
+
+@pytest.mark.parametrize("armed,globals_,why", TICK_MIXDOWN_CASES,
+                         ids=[f"mixdown_{index}" for index in range(len(TICK_MIXDOWN_CASES))])
+def test_an_armed_sfx_channel_overrides_the_music_in_the_psg_shadow(armed, globals_, why):
+    _tick_case(f"the SFX mixdown: {why}", armed=armed, globals_=globals_)
+
+
+def test_the_mixdown_sweep_reaches_both_arms_of_the_noise_test():
+    """The guard on the pair above: the two effect ids have to disagree about descriptor +6 bit 3, or
+    a port that stored the noise byte unconditionally would pass both."""
+    for effect, expected in ((NOISE_ON_EFFECT, 0), (NOISE_OFF_EFFECT, MIXER_NOISE_OFF)):
+        bits = harness.BASE_IMAGE[DESCRIPTORS + effect * DESCRIPTOR_LEN + DESC_MIXER_BITS]
+        assert bits & MIXER_NOISE_OFF == expected, f"sfx {effect} is on the wrong side of the test"
+
+
+# --- the chip write, and the channel locks ---------------------------------------------------------
+# The mutants: the NOISE register gated on one lock byte rather than on the `tst.l`'s four (row 5
+# alone), and a locked channel still voting in the mixer merge (rows 2..4, each on its own bits).
+TICK_LOCK_CASES = (
+    ({}, "no channel locked: all ten registers written and all three sets of bits owned"),
+    ({CHANNEL_LOCKS + 0: 1}, "channel A locked — its three registers are skipped AND its bits stay "
+                             "out of the mixer merge, so the chip's own survive"),
+    ({CHANNEL_LOCKS + 1: 1}, "channel B locked"),
+    ({CHANNEL_LOCKS + 2: 1}, "channel C locked"),
+    ({CHANNEL_LOCKS + 3: 1}, "only the unnamed FOURTH lock byte set: the `tst.l` sees it and the "
+                             "NOISE register is skipped, but all three channels are still written"),
+    ({CHANNEL_LOCKS + n: 1 for n in range(CHANNELS)},
+     "all three locked, which leaves the merge with no bits to take from the shadow at all"),
+)
+
+
+@pytest.mark.parametrize("globals_,why", TICK_LOCK_CASES,
+                         ids=[f"locks_{index}" for index in range(len(TICK_LOCK_CASES))])
+def test_a_locked_channel_is_neither_written_nor_allowed_to_vote_in_the_mixer_merge(globals_, why):
+    _tick_case(f"the chip write: {why}", globals_=globals_)
+
+
+def _one_seed_per_direction_state(seeds):
+    """The stop chain's own MIXER_SEEDS, thinned to one row per state of bits 6-7.
+
+    TRIMMED rather than re-tupled: the tick's merge can own only the six enables, so what a row here
+    buys is a direction-bit combination and nothing else — and the stop chain's seven rows carry only
+    four of those. Taking them FROM that tuple keeps one source and keeps its guard.
+    """
+    chosen = {}
+    for mixer, why in seeds:
+        chosen.setdefault(mixer & MIXER_DIRECTION_BITS, (mixer, why))
+    return tuple(chosen[state] for state in sorted(chosen))
+
+
+TICK_MIXER_SEEDS = _one_seed_per_direction_state(MIXER_SEEDS)
+
+
+def test_the_tick_mixer_sweep_still_reaches_all_four_states_of_the_preserved_bits():
+    """The guard the trim above rests on — and it is not the stop chain's, which covers the tuple it
+    thinned FROM."""
+    assert {mixer & MIXER_DIRECTION_BITS for mixer, _why in TICK_MIXER_SEEDS} == {0x00, 0x40, 0x80,
+                                                                                  0xc0}
+    assert len(TICK_MIXER_SEEDS) < len(MIXER_SEEDS)
+
+
+@pytest.mark.parametrize("mixer,why", TICK_MIXER_SEEDS,
+                         ids=[f"mixer_{seed[0]:02x}" for seed in TICK_MIXER_SEEDS])
+def test_the_mixer_read_back_keeps_every_bit_the_module_does_not_own(mixer, why):
+    """The same claim the stop chain's `ori` makes, over the tick's own `eor/and/eor`: bits 6-7 are
+    the port A/B direction lines and NOTHING in the tick can own them, so they come back from the
+    chip whatever the shadow holds."""
+    info = _tick_case(f"the tick's mixer merge over a chip mixer of {mixer:#04x} ({why})",
+                      mixer=mixer)
+    written = [value for kind, reg, value in info["regs"]["psg_events"]
+               if kind == PSG_WRITE and reg == PSG_REG_MIXER]
+    assert len(written) == 1 and written[0] & MIXER_DIRECTION_BITS == mixer & MIXER_DIRECTION_BITS, (
+        f"the mixer was written {written}, whose direction bits are not the chip's {mixer:#04x}")
+
+
+# --- the second non-local exit: pattern opcode $8e -------------------------------------------------
+
+def test_pattern_opcode_8e_ends_the_song_from_inside_a_row_and_the_tick_never_comes_back():
+    """THE ONE PLACE $8e CAN BE PINNED. Entered at $18106 its `addq.l #4,sp` pops the runner's own
+    sentinel; entered here the stack holds the frame the instruction is written for, so it unwinds
+    snd_channel_step, clears "song loaded" and runs the stop chain — and the tick's remaining two
+    channel steps, its whole period/volume pass, its mixdown and its chip write never run.
+
+    The PSG ledger is the proof: the FIVE entries `silence_events` states — a read of the mixer and
+    four writes — and not the twelve the output block leaves (one per unlocked channel's three
+    registers, the noise period, and the mixer's read and write)."""
+    info = _tick_case("a pattern whose first byte is $8e, reached through a row step",
+                      globals_={SPEED_ACC: 0xd0},
+                      records={CHANNEL_A: {CH_DURATION: 1}},
+                      streams={CHANNEL_A: bytes([END_SONG_OPCODE])})
+    assert info["regs"]["psg_events"] == silence_events(TICK_MIXER), (
+        "the end-of-song tail must leave silence's ledger and nothing else")
+
+
+def test_the_fade_and_the_opcode_reach_the_same_tail_two_bytes_apart():
+    """$18014 is `addq.l #4,sp` and $18016 is where the fade's two `beq.w`s aim — so the opcode's
+    handler IS the tail plus one instruction, which is why the two endings write the same bytes."""
+    entry = leaf.entry_of("snd_pattern_op_8e_end_song")
+    assert END_SONG_TAIL == entry + ADDQ_L_SP_BYTES
+    assert bytes(harness.BASE_IMAGE[entry:END_SONG_TAIL]) == opcode(ADDQ_L_AN | (4 << 9) | A7), (
+        "opcode $8e's handler must be the frame unwind and then the tail the fade branches into")
+
+
+# --- what the run LEAVES that no image byte can show ------------------------------------------------
+
+def test_the_supervisor_save_destroys_the_channel_volume_d1_was_carrying():
+    """A documented ORACLE fact, the precedent being the stop chain's saved SR in d2.
+
+    d1 leaves $18208 holding the channel's volume in its low byte and the portamento's leftover in
+    its second — and then `move.w sr,d1` at $17e34 overwrites the whole low WORD with the SR. The
+    oracle enters every run at $2700, so the outgoing d1 is exactly that: the high half is zero
+    because `moveq #0,d1` inside $18208 cleared it, which is the half of this the reconstruction
+    could not fake even if it tried.
+    """
+    info = _tick_case("the registers the chip write leaves", globals_={SPEED_ACC: 0xd0})
+    assert info["regs"]["d1"] == SUPERVISOR_SR, (
+        f"d1 is {info['regs']['d1']:#010x}, not the saved SR over a d1 that $18208 had cleared")
+
+
+# --- several ticks in a row -------------------------------------------------------------------------
+TICK_SEQUENCE_TICKS = 5
+
+
+def test_a_song_ticks_forward_over_several_frames():
+    """Five ticks carried on one image, which is the only shape that reaches what a single tick
+    cannot: the row accumulator carrying part-way through, the PRNG advancing (it steps EVERY tick and
+    snd_play_song does not reset it), the envelope and vibrato counters turning, and a pattern byte
+    being consumed on the tick the countdown finally expires."""
+    _tick_case("five consecutive ticks of a song at speed $30",
+               records={index: {CH_DURATION: 2, CH_FLAGS: CH_FLAG_ENVELOPE | CH_FLAG_VIBRATO}
+                        for index in range(CHANNELS)},
+               ticks=TICK_SEQUENCE_TICKS)
+
+
+def test_five_ticks_of_an_armed_effect_run_both_engines_at_once():
+    """...and the same with an SFX armed, which is the only case where the mixdown overrides a shadow
+    the music half has just written in the SAME tick."""
+    _tick_case("five ticks with a song playing and sfx 1 on channel B",
+               armed={1: 1}, globals_={SPEED_ACC: 0xc0}, ticks=TICK_SEQUENCE_TICKS)
+
+
+# --- the tier's own geometry ------------------------------------------------------------------------
+
+def test_the_tick_body_begins_where_the_tempo_selector_ends_and_ends_where_the_stop_does():
+    """Self-bounding at both ends, which is what says the 44 bytes this batch does NOT port are
+    exactly the head: $17c74 plus them is the body's entry, and the body plus its 644 is snd_stop."""
+    assert leaf.entry_of("snd_music_tick") + TEMPO_HEAD_BYTES \
+        == leaf.entry_of("snd_music_tick_body")
+    assert len(ENTRY_BYTES["snd_music_tick_body"]) == TICK_BODY_BYTES
+    assert leaf.entry_of("snd_music_tick_body") + TICK_BODY_BYTES == leaf.entry_of("snd_stop")
+    assert TICK_SHARED_RTS + len(RTS) == leaf.entry_of("snd_music_tick"), (
+        "the `rts` the tick's four exits share must be the two bytes below its own entry")
+
+
+def test_the_stepper_and_its_handlers_tile_the_module_from_the_jump_table_to_the_period_pass():
+    """...and so is unit 4: the 24-word table abuts the handlers, the handlers abut the stepper, and
+    the stepper abuts $18208. Without this the entry pins would pass on bodies of any length."""
+    assert PATTERN_JUMP_TABLE + PATTERN_OPCODES * TABLE_ENTRY_LEN == PATTERN_HANDLER_BASE
+    assert PATTERN_HANDLER_BASE + PATTERN_HANDLER_BYTES == leaf.entry_of("snd_channel_step")
+    assert len(ENTRY_BYTES["snd_channel_step"]) == CHANNEL_STEP_BODY_BYTES
+    assert leaf.entry_of("snd_channel_step") + CHANNEL_STEP_BODY_BYTES \
+        == leaf.entry_of("snd_channel_period_and_volume")
+
+
+def test_the_twenty_four_opcode_handlers_are_the_bytes_below_the_stepper():
+    """The 306 bytes as one assert: every field offset, every module address, every operand count and
+    every `bra` target, checked against the image at the block's own base."""
+    handlers = _pattern_handlers()
+    assert len(handlers) == PATTERN_HANDLER_BYTES
+    actual = bytes(harness.BASE_IMAGE[PATTERN_HANDLER_BASE:PATTERN_HANDLER_BASE + len(handlers)])
+    assert actual == handlers, (
+        f"the handler block at {PATTERN_HANDLER_BASE:#x} is {actual.hex()}, not {handlers.hex()}")
+
+
+def test_every_jump_table_entry_resolves_to_the_handler_the_name_map_gives():
+    """The table itself, read out of the image and resolved the way the `jmp` does. This is what says
+    the opcode -> handler column of ../names.txt's plate is the DATA's and not a reading of it — and
+    that $8d really is a second entry pointing at $83's handler."""
+    resolved = [_module_address(leaf.u16(harness.BASE_IMAGE,
+                                         PATTERN_JUMP_TABLE + index * TABLE_ENTRY_LEN))
+                for index in range(PATTERN_OPCODES)]
+    for name, index in zip(PATTERN_HANDLER_NAMES, PATTERN_OPCODE_OF_HANDLER):
+        assert resolved[index] == leaf.entry_of(name), (
+            f"table entry {index:#04x} resolves to {resolved[index]:#x}, not {name}")
+    assert resolved[PATTERN_ALIASED_OPCODE] == leaf.entry_of("snd_pattern_op_83_set_flag_bit1")
+    assert len(set(resolved)) == PATTERN_OPCODES - 1, "exactly one pair of entries may share a target"
+
+
+def test_the_three_mixdown_arms_carry_the_three_rotations_of_one_mixer_mask():
+    """$09, $12, $24 — the `ori.b` immediates, the `rol.b` counts and the three records' own constant
+    +47 are the same three bytes, which is why the reconstruction rotates one constant."""
+    assert tuple(_channel_mixer_bits(channel) for channel in range(CHANNELS)) == SHIPPED_MIXER_MASKS

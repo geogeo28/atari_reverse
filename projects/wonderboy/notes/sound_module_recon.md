@@ -447,7 +447,7 @@ pointer resolving exactly onto the next region's first byte):
 | `$1842e..$1844d` | 32 | arpeggio pointer table (16 words, a3-relative) |
 | `$1844e..$1847f` | 50 | arpeggio streams (`$1844e` = the null/default one) |
 | `$18480..$18507` | 136 | **song directory — 17 records × 8 bytes** |
-| `$18508..$18523` | 28 | per-song per-channel sequence tables (word offsets, `0000`-terminated) |
+| `$18508..$18523` | 28 | song 0's three sequence tables (word offsets, `0000`-terminated) — **the other 48 are NOT here**: all 51 span `$18508..$1a42a` in seventeen disjoint runs interleaved with the pattern data below (addendum 3) |
 | `$18524..$1a489` | 8038 | **pattern data — 106 distinct patterns** |
 | `$1a48a..$1a5d7` | 334 | `snd_trigger_effect` (3 channel paths) — **corrected, see addendum 2** |
 | `$1a5d8..$1a82f` | 600 | SFX tick engine (`$1a602` chA, `$1a6bc` chB, `$1a776` chC) **— corrected, see addendum 2: the `rts` at `$1a5d8` is THIS routine's, not the trigger's orphan** |
@@ -503,8 +503,8 @@ The speed byte is a fractional row-rate: `$17cea` adds it to an 8-bit accumulato
 | Byte | Meaning |
 |---|---|
 | `$00..$7f` | note number (index into the 96-entry period table) |
-| `$80..$97` | command — `(b & $7f) * 2` indexes the jump table at `$17fa4`, `jmp (a3,offset.w)` |
-| `$98..$bf` | **out of range** — would index past the 24-word table into code |
+| `$80..$b7` | command — `(b & $7f) * 2` indexes the jump table at `$17fa4`, `jmp (a3,offset.w)`. **CORRECTED in addendum 3**: the `cmp.b #$b8` at `$181a6` is the boundary, so `$98..$b7` reach the dispatch too and index PAST the 24 entries |
+| `$b8..$bf` | **CORRECTED in addendum 3**: not "out of range" with `$98..$b7` — these fall through all three `addi.b`s into the ARPEGGIO arm at index `$f8..$ff` |
 | `$c0..$cf` | select arpeggio 0..15 (table `$1842e`) |
 | `$d0..$df` | select instrument 0..15 (table `$1ab04`; the byte *before* the data is the envelope speed) |
 | `$e0..$ff` | set note duration = `b - $e0 + 1` (1..32) |
@@ -545,9 +545,11 @@ below `$1a48a`, where `snd_trigger_effect`'s code begins. The pattern region and
 next code region abut exactly. That is a strong end-to-end confirmation of the whole
 decoding.
 
-Opcode census across the real data: `$80`×653, `$8f`×88, `$87`×92, `$8a`×51, `$88`×48,
-`$92`×16, `$8e`×11, `$89`×5, `$81`×4, `$93`×3, `$82`×2. Arpeggio: only `$cf`, twice.
-Instruments: `$d0..$de` (15 of the 16 used). **Opcode `$97` is never used** — see §8.
+Opcode census across the real data — **SUPERSEDED by addendum 3**, whose walk tiles the 106
+patterns exactly where these counts do not (`$87`×92 + `$8e`×11 = 103): `$80`×653, `$8f`×88,
+`$87`×92, `$8a`×51, `$88`×48, `$92`×16, `$8e`×11, `$89`×5, `$81`×4, `$93`×3, `$82`×2. Arpeggio: only
+`$cf`, twice. Instruments: `$d0..$de` (**CORRECTED in addendum 3**: that is the RANGE — thirteen
+distinct values occur, not fifteen). **Opcode `$97` is never used** — see §8.
 
 ### Sequences
 `ch+6` is a word offset (a3-relative) to a table of word pattern-offsets;
@@ -877,3 +879,73 @@ addition to the sections above, every one read off the bytes:
   path enters there from `$17ccc`/`$17cda`. Opcode `$8e` enters two bytes earlier at `$18014`,
   whose `addq.l #4,sp` unwinds `snd_channel_step`'s frame first. Whatever ports `$17c74` or
   `$18106` has to model both.
+
+---
+
+## Post-recon addendum 3: what porting the tick BODY and the stepper showed (batch 24, 2026-08-07)
+
+`$18106` with its 24 opcode handlers (`$17fd4..$18105`) and `$17ca0` — `snd_music_tick` below its
+tempo head — are reconstructed in `recreate/src/sound.c` and pinned whole (entry pins over all
+258 + 306 + 644 bytes) in `recreate/test/test_sound.py`. Seven corrections and one new boundary,
+every one read off the bytes:
+
+* **The command range ends at `$b8`, not at `$97`.** §6's pattern-byte format table ("`$98..$bf` **out of range**") is half
+  right, and the two halves behave differently. `$181a6` is `cmp.b #$b8,d0 / bcs $181f6`, so **everything below
+  `$b8` goes to the jump table** — which has only 24 entries, so `$98..$b7` index PAST it, read a
+  word of the handlers' own instruction stream as a table entry and `jmp` through it. `$b8..$bf` fall
+  the other way, through all three `addi.b`s (the third's carry is never tested) into the **arpeggio**
+  arm with a decoded index of `$f8..$ff` — entry 248 to 255 of the SIXTEEN-word table at `$1842e`,
+  i.e. 232 to 239 entries past its end. The port reproduces `$b8..$bf` and declines `$98..$b7`; no pattern byte in the shipped
+  data is either (below).
+
+* **The opcode census, re-derived and self-proving.** The counts in §6's "Opcode census across the real data" do not tile: `$87`×92 plus
+  `$8e`×11 is 103, and there are 106 patterns, every one of which ends in one or the other. A walk
+  that decodes each opcode's operand length gives **`$80`×658, `$87`×95, `$8f`×88, `$8a`×51,
+  `$88`×48, `$92`×16, `$8e`×11, `$89`×5, `$81`×4, `$93`×3, `$82`×2** — and 95 + 11 = 106 exactly,
+  which is what says the operand lengths are right (a wrong one desynchronises and lands on
+  rubbish). **Eleven of the twenty-four opcodes are reached; thirteen are not**, and the battery says
+  so per handler. `recreate/test/test_sound.py` runs this walk rather than quoting it — and GUARDS ITS CLOSURE, which the tiling alone cannot: opcode `$93` re-points a channel's sequence table from two pattern bytes, so a pattern can send the replayer at a table the walk never visited. The three shipped `$93`s (in the patterns at `$1872c`, `$1877b` and `$187c6`) name `$1871c`, `$18722` and `$18728` — mid-table tails of tables the walk already has — so the set really is closed; a case asserts that rather than assuming it, because a fresh-table `$93` would shrink the reachable set silently while both sides of the tiling shrank together.
+
+* **Thirteen instruments, not fifteen.** §6's census line, "`$d0..$de` (15 of the 16 used)", states the RANGE: the
+  distinct bytes are `$d0`, `$d1` and `$d4..$de`, so `$d2`, `$d3` and `$df` never occur.
+
+* **The 51 sequence tables are not one band.** §6's map row shows 28 bytes at `$18508`, which is song 0's
+  three; all 51 span `$18508..$1a42a` in **seventeen disjoint runs**, interleaved with the pattern
+  data. The load-bearing conclusion is unchanged and now rests on the true span: no shipped table
+  names a byte of the music channel records at `$17bc6..$17c55`, and the lowest byte any of them
+  names is `$18508`.
+
+* **`$18106` and `$17ca0` inherit a3 too**, joining addendum 2's `$1aaca` and `$18208`. `$18106`
+  opens `subq.b #1,27(a0)`; `$17ca0` opens `tst.b 2250(a3)` — the `lea` is in the tempo head above
+  it. Every routine reachable through the stub table has its own; no internal entry does.
+
+* **The SFX mixdown's three arms are 54 / 52 / 52 bytes, not three of a kind.** Channel A's alone
+  carries a `bmi.w $17c72` — a NEGATIVE SFX-active flag abandons the whole tick, the mixer mask and
+  the chip write included — which is the same double test of the same byte that opens `snd_sfx_tick`.
+  B's and C's alone carry the `rol.b #1`/`#2` that rotates the descriptor's mixer byte into their own
+  bit positions. The three `ori.b` immediates `$09`/`$12`/`$24` are ONE constant rotated by the
+  channel number, and are also the three music records' constant field `+47`.
+
+* **Two `tst.l`s read a fourth byte each.** The gate at `$17ca6` covers `$17c5a..$17c5d`, so the
+  unnamed pad byte past the three SFX-active flags keeps the tick alive; the PSG block's at `$17e3c`
+  covers `$17c5e..$17c61`, so a set pad byte suppresses the NOISE register while the three channels
+  are still written. Neither is three byte tests.
+
+* **Opcode `$88` takes two operand bytes and writes three fields**: `+42` from the first, and the
+  second into BOTH `+41` (read without advancing) and `+43`. It then falls into `$82`'s
+  `move.b #64,44(a0)`. Opcode `$87`'s restart takes entry **0 itself** — the reset reloads the
+  sequence-table offset without the index it had just added to it — and leaves the index at 2.
+
+* **`$87` re-reads the entry BEFORE it stores the new index.** `movea.w 0(a3,a2.w),a1` is at `$18036`
+  and `move.w d0,10(a0)` at `$1803c`, in that order — so a sequence table whose entry address IS the
+  record's own index word resolves the OLD index and not the one the call is about to leave. Found by
+  the batch's review gate against a port that had the two the other way round; unreachable from the
+  shipped data — the 51 tables span `$18508..$1a42a` and none of them reaches the records at
+  `$17bc6..$17c55` — and pinned by a case that solves `(offset + index) & $ffff` for the aliasing offset.
+
+**The one branch this batch does not port** is `$98..$b7`'s dispatch past the table: there is no C
+for reading an instruction stream as a jump target. It is unreachable from the shipped data (the
+census above finds no opcode byte above `$97`) and `recreate/STATUS.md` records it. The 44-byte
+tempo head `$17c74..$17c9f` is unported for the older reason — two hardware reads a memory
+differential cannot answer — and everything it can hand the body is the one byte `$17c6e`, which the
+battery pokes at all three of its values.

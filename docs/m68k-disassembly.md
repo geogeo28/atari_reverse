@@ -243,6 +243,49 @@ Two shapes, both common in ST games:
 Ghidra's "Decompiler Switch Analysis" recovers many of these automatically after the
 relocation table is applied; the rest you decode from the raw words.
 
+### The table with no bound, and the range decode that is wider than it
+
+Decoding the entries is only half of it. **Ask what the index can be**, because a dispatch
+of this shape carries no bound of its own and the code that computes the index is usually
+a *range* decode written for a different boundary. Wonder Boy's sound module is the worked
+example: a pattern byte reaches the table through
+
+```
+181a6: cmp.b   #$b8,d0        ; "is this a command?"  -- the boundary is $b8
+181aa: bcs.s   $181f6         ;   yes -> dispatch
+...
+181f6: andi.w  #$7f,d0
+181fa: add.w   d0,d0
+181fc: lea     $17fa4(pc),a2  ; a table of TWENTY-FOUR words
+18200: movea.w (a2,d0.w),a2
+18204: jmp     (a3,a2.w)
+```
+
+The table holds 24 entries — opcodes `$80..$97` — and the `cmp.b` admits everything below
+`$b8`. So `$98..$b7` index **past the table**, read a word of the handlers' own instruction
+stream as a table entry, and `jmp` wherever it points: byte `$98` reads the `1019` that is
+the first handler's `move.b (a1)+,d0` and transfers to base + `$1019`. There is no error
+path; the shape simply has a mouth wider than its throat.
+
+Two things follow, and the second is the one that gets skipped.
+
+- **A port cannot express it, and should refuse rather than approximate.** There is no C
+  for "read my own instruction stream as a jump target". Reproducing the *nearest* thing —
+  falling through as though the opcode did nothing — is worse than not porting it, because
+  the fabricated arm is indistinguishable from a real one to everything except a
+  differential. Route it through the kit's refusal helper (`os_refused`, `os.h`) so a run
+  that reaches it is thrown away, and pin a case that the refusal fires.
+- **"The data never gets there" is a claim about the data, and it needs a CLOSURE guard.**
+  Walk the shipped data and show no index escapes the table — but a walk is only sound if
+  it can reach everything the machine can. Wonder Boy's walk starts from the song directory
+  and follows sequence tables; opcode `$93` *re-points a sequence table from two bytes of
+  pattern data*, so a pattern can send the replayer at a table the walk never visited. The
+  three shipped `$93`s happen to name tails of tables already walked, so the set is closed —
+  but nothing said so until a case asserted it, and a self-proving-looking tiling ("every
+  pattern ends in $87 or $8e, and those counts sum to the pattern count") passes just as
+  happily on a walk that missed half the data, because both sides of it shrink together.
+  Assert that every retargeting operand lands inside a span the walk covered.
+
 ## `addq.l #n,(a7)` — a callee that skips its caller's next call
 
 The other control flow a decompiler will not show you, and unlike a jump table it leaves
@@ -276,6 +319,40 @@ Three consequences worth knowing before you meet one:
   the decision back off the stack the callee rewrote — which pins the skip on the original
   as well as on the reconstruction. `projects/wonderboy/recreate/test/test_scroll.py` is
   the worked example; in C the callee has to become a function that RETURNS the decision.
+
+### The other frame rewrite: a callee that pops its caller's return address
+
+`addq.l #n,(a7)` adjusts the return address in place. The sharper variant **discards a
+frame**: `addq.l #4,sp` at the head of a routine that then `bra`s somewhere, so the `rts`
+at the end of that somewhere returns to the caller's *caller*. Wonder Boy's music driver
+ends a song this way — pattern opcode `$8e` is
+
+```
+18014: addq.l  #4,sp          ; throw snd_channel_step's return address away
+18016: sf      $17c63(a3)     ; "song loaded" := 0
+1801a: bra.w   $17af8         ; ...and tail-jump into the stop chain, whose rts
+                              ;    lands in snd_music_tick's caller
+```
+
+so the pattern step, the two channel steps after it, and the whole of the rest of the tick
+never run. The fade path enters the same tail two bytes later, at `$18016`, where there is
+no frame to unwind.
+
+**The pin can only be written from the CALLER's entry.** A differential runner pushes a
+sentinel return address and stops when the PC reaches it; enter the *callee* directly and
+the `addq.l #4,sp` pops that sentinel, so the `rts` goes to whatever was underneath and the
+run ends in nothing you can compare. Enter the caller and the stack holds exactly the frame
+the instruction was written for. So:
+
+- in C, the callee **returns a status** and the caller acts on it — there is no portable
+  unwind, and inventing one would put the fabrication in the callee where no case can see
+  it;
+- the case that exercises it enters at the caller, never at the callee, and the battery says
+  why in the place a reader would otherwise add one;
+- the *proof* it took the tail is an off-image surface the abandoned work would have
+  touched. Wonder Boy's is the PSG access ledger: an ended song leaves silence's five
+  accesses and not the twelve the tick's output block leaves, which no memory diff could
+  distinguish from an ordinary tick.
 
 Grep for it directly: `addq.l #n,(a7)` is `5x97` (`5097` = #8, `5897` = #4, `5297` = #1),
 and `addq.w`/`addi.l` forms exist too. **The encoding decides it, with no reading of the

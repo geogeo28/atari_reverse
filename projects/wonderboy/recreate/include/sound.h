@@ -147,4 +147,84 @@ typedef struct {
  * the image by construction, since the base is a constant and the index is a byte. */
 void snd_channel_period_and_volume(uint8_t *image, uint32_t record, snd_channel_mix *mix);
 
+/* ---- THE TICK ITSELF: the pattern stepper ($18106) and the body that drives it ($17ca0) ---------
+ *
+ * These two close the tier. $18106 walks one channel's pattern byte stream; $17ca0 is the per-VBL
+ * tick minus its 44-byte tempo head, and it calls everything above.
+ */
+
+/* How a TICK SUB-PHASE ended. Both `snd_channel_step` and the tick's own fade return it, and the
+ * fade reaches SND_STEP_SONG_ENDED without any channel having stepped — so it is not a property of
+ * the pattern walk but of the two places the module can decide a song is over.
+ *
+ * The pattern walk's own reason is that one of the twenty-four opcodes does not return.
+ *
+ * Opcode $8e is `addq.l #4,sp / sf $17c63 / bra.w stub+28` at $18014: it throws the stepper's OWN
+ * return address away and tail-jumps into the stop chain, so the stop's `rts` lands in the TICK's
+ * caller and neither the rest of the row nor the rest of the tick ever runs. There is no C for
+ * unwinding a frame, so the stepper reports it and the tick acts on it — which is also why a
+ * differential may enter $18106 directly only on a stream with no $8e in it: entered there the
+ * `addq.l #4,sp` pops the runner's own sentinel and the `rts` goes to nothing. test_sound.py pins
+ * the propagation from the TICK's entry, where the stack has the frame the instruction expects.
+ */
+typedef enum {
+    SND_STEP_RETURNED = 0,      /* a `rts` ($18186, $18190, $1819e, $181a4) or a fade with more to run */
+    SND_STEP_SONG_ENDED = 1,    /* opcode $8e, or the fade's two `beq.w $18016` — see above */
+} snd_step_result;
+
+/* d1 at each of the tick's three `bsr.w $18106`, which this reconstruction does not model.
+ *
+ * The ONLY thing that reads it is pattern opcode $97, which hands it to snd_trigger_effect as a
+ * CHANNEL without ever setting it — the module's one latent defect (../notes/sound_module_recon.md
+ * §8). At the tick's call sites d1 holds whatever snd_sfx_tick left, and snd_sfx_tick's outgoing
+ * registers are not reconstructed, so the tick passes this instead. It is sound because $97 occurs
+ * ZERO times in all 106 patterns of all 17 songs: the tick can never reach the read. A case that
+ * seeded a $97 into a pattern the TICK walks would be comparing against a register nothing models,
+ * and none does — the defect is pinned from snd_channel_step's own entry, where d1 is the case's.
+ */
+#define SND_TRIGGER_CHANNEL_UNMODELLED 0u
+
+/* $18106 — one channel's pattern step. `record` is the original's a0 (an ADDRESS, like $18208's) and
+ * `sfx_channel` its d1.
+ *
+ * Two paths and nothing between them. While the note-duration countdown at +27 is still turning, the
+ * step applies the PITCH SLIDE to the current note and returns. On the tick it reaches zero it clears
+ * the flags, picks the pattern cursor up out of +2 and reads bytes until one ends the row: $00..$7f
+ * is a note (which reloads the envelope), $80..$b7 dispatches through the 24-entry jump table at
+ * $17fa4, $b8..$cf selects an arpeggio, $d0..$df an instrument and $e0..$ff a duration. Only two
+ * opcodes end the row on their own ($80 and $8f); the rest loop back for another byte.
+ *
+ * IT INHERITS a3. Like $1aaca and $18208 — and unlike everything the stub table reaches — its first
+ * instruction is not a `lea`, so a differential entering it must seed the module base.
+ *
+ * THE JUMP TABLE IS NOT BOUNDS-CHECKED and the range decoder's own boundary is $b8, not $98: a byte
+ * from $98 to $b7 indexes PAST the 24 entries, reads a word of the handlers' own code as a table
+ * entry and jumps wherever it points. src/sound.c reproduces the 24 the table holds and nothing
+ * else; no pattern byte in the shipped data is one (all 106 patterns decode with zero out-of-range
+ * opcodes), and ../STATUS.md records it as this batch's one unported branch. */
+snd_step_result snd_channel_step(uint8_t *image, uint32_t record, uint32_t sfx_channel);
+
+/* $17ca0 — the per-VBL tick, entered BELOW its tempo selector.
+ *
+ * WHAT IS NOT HERE, and why the entry is $17ca0 rather than $17c74. The 44 bytes above it read
+ * `btst #7,$fffa01` (the MFP's mono-monitor line) and `btst #1,$ff820a` (the shifter's sync mode) and
+ * write one byte from them: WB_SND_TICK_DROP_VALUE, 0 for 50 Hz colour, $2b for 60 Hz, $48 for mono.
+ * No memory differential can answer those two reads, so the head stays behind the kit's hardware-seed
+ * phase and a case POKES the byte it would have written — all three of its values, which is the whole
+ * of what the head can hand the body.
+ *
+ * The body in order: the gate (the engine flag, or ANY of the four bytes the `tst.l` covers at
+ * WB_SND_SFX_ACTIVE_FLAGS), the drop accumulator (whose CARRY skips the entire tick, SFX and chip
+ * included), snd_sfx_tick, the fade, the row step through snd_channel_step, the per-channel period
+ * and volume through snd_channel_period_and_volume, the SFX mixdown over the module's PSG shadow,
+ * and the chip write.
+ *
+ * IT CAN END THE SONG AND NOT COME BACK. Both the fade reaching zero and pattern opcode $8e enter
+ * $18016, which clears WB_SND_SONG_LOADED and tail-jumps to stub +28 — so `snd_stop` runs and its
+ * `rts` returns to the tick's caller with the rest of the tick unrun. Reproduced as an early return.
+ *
+ * IT DRIVES THE CHIP, so a case must declare the mixer with `psg_seed`: $17f08 reads register 7 back
+ * and merges only the bits the unlocked channels own, exactly as snd_psg_silence's `ori` does. */
+void snd_music_tick_body(uint8_t *image);
+
 #endif /* WONDERBOY_SOUND_H */

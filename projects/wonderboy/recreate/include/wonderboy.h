@@ -1625,6 +1625,96 @@
                                           * the delta doubles once per octave because the period
                                           * table halves once per octave */
 
+/* ---- the PATTERN STEPPER ($18106) and its 24 opcode handlers ($17fd4..$18105) — src/sound.c -----
+ *
+ * The rest of the music channel record: what the stepper walks rather than what the period/volume
+ * pass reads. Every field here is MUTABLE image in the same dirty band as the ones above.
+ */
+#define WB_SND_CH_NOISE_TRACKS_NOTE 1u  /* `tst.b 1(a0)` — set, the note byte is ALSO published as
+                                         * WB_SND_NOISE_PERIOD_BASE. Opcodes $8b/$8c set it, $8a
+                                         * clears it */
+#define WB_SND_CH_TRACKS_NOTE_SET  0xffu /* `st 1(a0)` — Scc's true byte, what $8b and $8c store */
+#define WB_SND_CH_PATTERN_CURSOR   2u   /* a long — where in the pattern byte stream this channel is */
+#define WB_SND_CH_SEQUENCE_OFFSET  6u   /* a WORD, a3-relative: the channel's sequence table */
+#define WB_SND_CH_SEQUENCE_INDEX   10u  /* a WORD: the BYTE index into it, and 2 after a restart,
+                                         * because entry 0 has already been taken */
+#define WB_SND_CH_DURATION         27u  /* `subq.b #1,27(a0)` opens the stepper; a row runs while it
+                                         * is non-zero */
+#define WB_SND_CH_DURATION_RELOAD  28u  /* what opcode $e0+n writes and what +27 reloads from */
+#define WB_SND_CH_ENVELOPE_BASE    36u  /* a long — the instrument stream, whose FIRST byte a new
+                                         * note takes as both WB_SND_CH_ENVELOPE_LAST and the volume */
+
+#define WB_SND_CH_FLAG_MARK        0x02u /* bit 1 — `bset #1,0(a0)`, opcodes $83 and $8d, which share
+                                          * one handler. Nothing in the ported tier reads it */
+#define WB_SND_CH_FLAG_SLIDE       0x08u /* bit 3 — `btst #3,0(a0)` off the row-step path: with it
+                                          * clear the stepper returns without touching the note */
+#define WB_SND_CH_FLAG_SLIDE_UP    0x80u /* bit 7 — set, the note is ADDED to; clear, subtracted from */
+#define WB_SND_CH_YIELD_ASKED      0xffu /* `st 45(a0)` — Scc's true byte, which opcode $90 and the
+                                          * hand-over at $18182 both store */
+
+/* The opcode table and the RANGE DECODER at $181a6 that reaches it. The ranges are not a mask: a
+ * `cmp.b` and then a chain of `addi.b`+`bcs`, each carry saying the byte was at or above that bias'
+ * complement. $b8 is the one the `cmp.b` names, and it is BELOW the arpeggio range — so $b8..$bf
+ * decode as an arpeggio with an index past the 16-word table. */
+#define WB_SND_PATTERN_JUMP_TABLE  0x17fa4u /* 24 a3-relative WORDS, opcodes $80..$97 */
+#define WB_SND_PATTERN_OPCODES     24u
+#define WB_SND_PATTERN_NOTE_LIMIT  0x80u    /* `bmi` — $00..$7f is a note and everything else decodes */
+#define WB_SND_PATTERN_CMD_LIMIT   0xb8u    /* `cmp.b #-72,d0 / bcs` — BELOW this is a jump-table
+                                             * dispatch, and the table has only 24 entries, so
+                                             * $98..$b7 index PAST it (see src/sound.c) */
+#define WB_SND_PATTERN_CMD_INDEX_MASK 0x7fu /* `andi.w #$7f,d0` before the `add.w d0,d0` */
+#define WB_SND_PATTERN_DURATION_BIAS 0x20u  /* `addi.b #32`: carry means the byte was $e0 or above */
+#define WB_SND_PATTERN_INSTRUMENT_BIAS 0x10u/* `addi.b #16`: ...and then $d0 or above */
+#define WB_SND_PATTERN_ARPEGGIO_BIAS 0x10u  /* `addi.b #16` once more, whose carry is NOT tested —
+                                             * so $c0..$cf arrive as 0..15 and $b8..$bf as $f8..$ff */
+#define WB_SND_PATTERN_DURATION_MIN 1u      /* `addq.b #1,d0` — a duration byte of $e0 means ONE row */
+
+#define WB_SND_ARPEGGIO_PTR_TABLE  0x1842eu /* 16 a3-relative words, opcodes $c0..$cf */
+#define WB_SND_INSTRUMENT_PTR_TABLE 0x1ab04u/* 16 a3-relative words, opcodes $d0..$df. The envelope
+                                             * SPEED is the byte BEFORE the stream (`move.b -(a2)`) */
+
+/* ---- the TICK BODY ($17ca0..$17f23) — src/sound.c ------------------------------------------------
+ *
+ * The module globals the body reads and writes that no routine below it names, and the two PSG
+ * register groups it drives. The 44-byte TEMPO SELECTOR above it ($17c74..$17c9f) is NOT ported: it
+ * reads $fffa01 and $ff820a, which no memory differential can answer, and all it does is write
+ * WB_SND_TICK_DROP_VALUE — so a case pokes that byte and enters at $17ca0.
+ */
+#define WB_SND_MASTER_VOLUME       0x17c57u /* a3+2251, 0..15 */
+#define WB_SND_SONG_SPEED          0x17c58u /* a3+2252, a FRACTIONAL row rate added to the
+                                             * accumulator each tick; the channels step on its carry */
+#define WB_SND_SONG_SPEED_COPY     0x17c59u /* a3+2253 — opcodes $94 and snd_play_song write both */
+#define WB_SND_CHANNEL_LOCKS       0x17c5eu /* a3+2258: one byte per channel, "do not write this PSG
+                                             * channel". Tested as a LONG first (all three plus the
+                                             * unnamed fourth byte) to decide the NOISE register */
+#define WB_SND_CHANNEL_LOCKS_LEN   4u       /* `tst.l 2258(a3)` — the fourth byte counts */
+#define WB_SND_SONG_LOADED         0x17c63u /* a3+2263: `sf`d by the end-of-song tail at $18016 and by
+                                             * nothing else in this tier, which is what makes a stop a
+                                             * PAUSE and an END an unload */
+#define WB_SND_SONG_UNLOADED       0u       /* `sf 2263(a3)` — Scc's false byte */
+#define WB_SND_FADE_RATE           0x17c65u /* a3+2265, 0 = no fade */
+#define WB_SND_FADE_COUNTDOWN      0x17c66u /* a3+2266, reloaded from the rate */
+#define WB_SND_PERIOD_SCRATCH      0x17c68u /* a3+2268, a WORD: the period is stored here and its two
+                                             * halves read back out of it one byte at a time */
+#define WB_SND_SPEED_ACC           0x17c6au /* a3+2270 */
+#define WB_SND_TICK_DROP_VALUE     0x17c6eu /* a3+2274: 0 (50 Hz), $2b (60 Hz) or $48 (mono) */
+#define WB_SND_TICK_DROP_ACC       0x17c6fu /* a3+2275 — the whole tick is SKIPPED on its carry, so
+                                             * the pair is a fractional tick DROPPER, not a scaler */
+
+#define WB_SND_MASTER_VOLUME_MASK  0x0fu /* `andi.b #15,2251(a3)` after the fade has stepped it */
+#define WB_SND_MASTER_VOLUME_FULL  15u   /* `eori.b #15,d0` turns the volume into the ATTENUATION the
+                                          * channel's own volume is reduced by, so 15 subtracts 0 */
+#define WB_SND_MIXER_CHANNEL_A_BITS 0x09u /* `ori.b #9,d2` — channel A's tone and noise enables. B and
+                                           * C are this ROTATED left by their channel number ($12,
+                                           * $24), which is also WB_SND_CH_MIXER_MASK's three values */
+
+#define WB_PSG_REG_TONE_A          0u  /* registers 0/1 are channel A fine/coarse, and each channel's
+                                        * pair is WB_PSG_REG_TONE_LEN further on */
+#define WB_PSG_REG_TONE_LEN        2u
+#define WB_PSG_REG_TONE_COARSE     1u  /* the second register of each channel's pair, and the byte
+                                        * the module reads back out of WB_SND_PERIOD_SCRATCH */
+#define WB_PSG_REG_NOISE_PERIOD    6u  /* written only when NO channel is locked */
+
 /* ---- the game-restart reset ($fe4a) and the life it redraws ($e80c) ---------------------------
  *
  * $fe4a is entered by one `bsr` (from $e59e) and its TAIL by one `jsr $fe8c.l` (from $c00, the path
