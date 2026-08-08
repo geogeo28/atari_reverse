@@ -54,6 +54,22 @@ if _has_psg_ledger:
     _lib.g_psg_file.restype = _u8p
     _lib.g_psg_file_known.restype = ctypes.c_uint32
 
+# The seeded-hardware surfaces (src/hw.c) are optional in exactly the same way and for the same
+# reason: a game that branches on no modeled hardware byte has nothing to record, and the ORACLE's
+# own read stream is the witness that says when the group was needed — _vet_hw_state raises the
+# moment the oracle reads one against a candidate that cannot answer for it.
+_HW_LEDGER_ABI = ("g_hw_reset", "g_hw_log_count", "g_hw_log_slots", "g_hw_log_vals", "g_hw_file",
+                  "g_hw_file_known")
+_missing_hw_ledger = [sym for sym in _HW_LEDGER_ABI if not hasattr(_lib, sym)]
+_has_hw_ledger = not _missing_hw_ledger
+if _has_hw_ledger:
+    _lib.g_hw_reset.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
+    _lib.g_hw_log_count.restype = ctypes.c_uint32
+    _lib.g_hw_log_slots.restype = ctypes.POINTER(ctypes.c_uint8)
+    _lib.g_hw_log_vals.restype = ctypes.POINTER(ctypes.c_uint8)
+    _lib.g_hw_file.restype = ctypes.POINTER(ctypes.c_uint8)
+    _lib.g_hw_file_known.restype = ctypes.c_uint32
+
 # The refused-os_*-call tally (see _vet_no_os_refusal) is REQUIRED ABI, unlike the ledger above.
 # The Dosound ledger can be served without: the oracle's own Dosound stream says when it was needed,
 # so its absence fails loudly at the moment it matters. The refusal tally has no such witness — the
@@ -118,6 +134,7 @@ OS_FS_OFF_CAPACITY = 32      # u32: staging bytes reserved; os_fwrite refuses to
 OS_FS_FIRST_HANDLE = 6
 OS_DOSOUND_LOG_MAX = 256     # ledger cap, on BOTH sides (shim.c's mirror and src/dosound_log.c)
 OS_PSG_LOG_MAX = 4096        # ...and the direct-PSG ledger's, likewise on both (shim.c, src/psg.c)
+OS_HW_LOG_MAX = 4096         # ...and the seeded-hardware read ledger's (shim.c, src/hw.c)
 
 OS_SUPER_TOKEN = 0x00535550  # the cookie GEMDOS Super(0) returns; Super(cookie) restores
 
@@ -391,6 +408,34 @@ def _vet_exclude_bands(exclude, min_a7):
             + " — refusing to drop a known global from the diff")
 
 
+def _hw_refusal_hint():
+    """Name the modeled hardware addresses the CANDIDATE was just refused, as a sentence, or ``""``.
+
+    ``os_refused()`` is ONE tally shared by every refusing helper, so a candidate that called
+    ``hw_read8()`` on an address this case never declared reds through ``_vet_no_os_refusal`` with a
+    bare count and a list of causes that do not mention hardware at all — the reader is sent to look
+    for a missing Bconstat gate. The candidate's own read ledger can say which address it was: a slot
+    it read whose declared bit is clear was served a refusal, not a byte.
+
+    An address OUTSIDE the modeled set is refused WITHOUT a ledger entry (shim.c records nothing for
+    one either), so there is no slot to name — it is described instead, since a reconstruction
+    calling ``hw_read8(0xff8604)`` is the other way to arrive here.
+    """
+    if not _has_hw_ledger:
+        return ""
+    known, count, slots = _lib.g_hw_file_known(), _lib.g_hw_log_count(), _lib.g_hw_log_slots()
+    undeclared = sorted({emu.HW_ADDRS[slots[i]] for i in range(count)
+                         if not known & (1 << slots[i])})
+    if not undeclared:
+        return ""
+    return (f" THE CANDIDATE READ MODELED HARDWARE THIS CASE DOES NOT DECLARE: "
+            f"{', '.join(f'{addr:#x}' for addr in undeclared)}. Either the case is missing "
+            f"hw_seed={{{', '.join(f'{addr:#x}: <byte>' for addr in undeclared)}}}, or the "
+            f"reconstruction reads an address the original does not (TRAP_MODEL.md, Phase 7). "
+            f"An hw_read8() of an address outside the modeled set refuses here too, and leaves no "
+            f"ledger entry to name.")
+
+
 def _vet_no_os_refusal(entry):
     """Reject a run in which the CANDIDATE made an os_* call the TOS model refuses — a FALSE GREEN.
 
@@ -416,7 +461,8 @@ def _vet_no_os_refusal(entry):
         f"this case needs the state staged (harness.console_key(), harness.stage_files(), "
         f"psg_seed={{reg: value}} for a PSG register the candidate reads back) so BOTH sides execute "
         f"the call; or a stop_pc checkpoint ended the oracle before a call the candidate still "
-        f"makes. See tools/recreate_kit/TRAP_MODEL.md.")
+        f"makes. See tools/recreate_kit/TRAP_MODEL.md."
+        + _hw_refusal_hint())
 
 
 def _vet_audio_capture_off(entry):
@@ -447,20 +493,76 @@ def _vet_audio_capture_off(entry):
         f"tools/recreate_kit/TRAP_MODEL.md.")
 
 
-def _seed_candidate_psg(psg_seed):
-    """Install the case's PSG seed in the candidate and clear its ledger — before EVERY candidate
-    run, the poison re-run included, exactly as ``emu.run`` re-seeds the oracle before every run.
+def _seed_candidate(reset, encode, seed, available):
+    """Install one model's seed in the candidate and clear its ledger — the shape BOTH use.
 
-    A candidate left holding the previous case's registers could read one it never declared and stay
-    green on it, which is the whole false green the model closes; and a ledger left holding the
-    previous run's writes would be compared against this run's oracle stream. The seed is encoded by
-    ``emu.psg_seed_bytes``, the same call the oracle's side goes through, so the two cannot disagree
-    about what ``{register: value}`` means.
+    Called before EVERY candidate run, the poison re-run included, exactly as ``emu.run`` re-seeds
+    the oracle before every run. A candidate left holding the previous case's state could read
+    something it never declared and stay green on it, which is the whole false green these models
+    close; and a ledger left holding the previous run's entries would be compared against this run's
+    oracle stream. ``encode`` is the oracle's own encoder (``emu.psg_seed_bytes`` /
+    ``emu.hw_seed_bytes``), so the two sides cannot disagree about what the case's dict means.
+
+    ``available`` is the optional-ABI flag: a candidate without the group is left alone here and
+    refused later, by the vet that has the oracle's own traffic as its witness.
     """
-    if not _has_psg_ledger:
+    if not available:
         return
-    values, known = emu.psg_seed_bytes(psg_seed)
-    _lib.g_psg_reset((ctypes.c_uint8 * len(values))(*values), known)
+    values, known = encode(seed)
+    reset((ctypes.c_uint8 * len(values))(*values), known)
+
+
+def _seed_candidate_psg(psg_seed):
+    """Install the case's PSG seed (``{register: value}``) in the candidate. See _seed_candidate."""
+    _seed_candidate(_lib.g_psg_reset if _has_psg_ledger else None,
+                    emu.psg_seed_bytes, psg_seed, _has_psg_ledger)
+
+
+def _vet_declared_state_matches(entry, what, oracle_bytes, oracle_known, cand_file, cand_known, why):
+    """Compare one model's off-image byte file (and its known-mask) against the candidate's.
+
+    Shared by both seeded models, because the comparison is one rule: given equal seeds both sides
+    hold equal bytes BY CONSTRUCTION, so what this can catch is not the reconstruction but the two
+    model IMPLEMENTATIONS drifting — a register-width mask added on one side, a slot numbering
+    changed, capture state leaking into a differential. The known-mask travels with the bytes since
+    "declared 0" and "never declared" are different chips.
+
+    ``cand_file`` is read through a cast sized from the ORACLE's own file, so the two sides cannot
+    disagree about the length; ``why`` is the model-specific consequence, which is the half of the
+    message a reader acts on.
+    """
+    if (oracle_bytes, oracle_known) == (cand_file, cand_known):
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: {what} diverged — oracle={oracle_bytes.hex()} "
+        f"(known {oracle_known:#06x}) cand={cand_file.hex()} (known {cand_known:#06x}). {why}")
+
+
+def _candidate_bytes(accessor, length):
+    """``length`` bytes from a candidate ``const uint8_t *`` export, sized by its caller."""
+    return bytes(ctypes.cast(accessor(), ctypes.POINTER(ctypes.c_uint8 * length)).contents)
+
+
+def _vet_ledger_below_cap(what, oracle_entries, cand_entries, cap, const_name):
+    """Refuse a comparison of two off-image ledgers that reached their shared cap.
+
+    Both sides stop logging SILENTLY there, so two streams that diverge only past it truncate to the
+    same list and compare EQUAL — a green that means "we stopped looking". One rule for both models
+    (Phases 6 and 7), because it is a property of the ledger protocol rather than of either chip.
+
+    Deliberately over-strict AT the cap: an oracle ledger of exactly `cap` entries is complete (its
+    own dropped-counter would already have raised in emu.run), but the candidate has no such counter
+    and genuinely cannot tell full from truncated, so both take the same bound. The cost is a loud
+    false red on a run with exactly `cap` accesses. A bare `assert` would vanish under `python -O`,
+    taking the guard with it; this is a raise. (The Dosound ledger keeps its own bare `assert` —
+    it predates this and is deliberately left alone.)
+    """
+    if oracle_entries < cap and cand_entries < cap:
+        return
+    raise AssertionError(
+        f"the {what} ledger hit its cap ({cap}): oracle={oracle_entries} cand={cand_entries} — the "
+        f"compare beyond it would be blind; shorten the run or raise {const_name} in include/os.h "
+        f"(its mirror in harness.py is pinned to it)")
 
 
 def _psg_event_text(events):
@@ -553,20 +655,7 @@ def _vet_psg_state(entry, o_regs):
     count = _lib.g_psg_log_count()
     kinds, regs, vals = _lib.g_psg_log_kinds(), _lib.g_psg_log_regs(), _lib.g_psg_log_vals()
     c_psg = [(kinds[i], regs[i], vals[i]) for i in range(count)]
-    # Both ledgers stop logging SILENTLY at the cap, so two streams that diverge only past it
-    # truncate to the same list and compare equal. Fail loudly instead (the Dosound ledger above
-    # keeps a bare `assert` for the same check; it predates this and is left alone deliberately —
-    # changing it is not this change's business).
-    # Deliberately over-strict at exactly the cap: an oracle ledger of exactly OS_PSG_LOG_MAX entries
-    # is complete (its own osh_psg_dropped would already have raised in emu.run), but the candidate
-    # has no dropped-counter and genuinely cannot tell full from truncated, so both take the same
-    # bound. The cost is a loud false red on a run with exactly 4096 register accesses. A bare
-    # `assert` would vanish under `python -O`, taking the guard with it; this is a raise.
-    if not (len(o_psg) < OS_PSG_LOG_MAX and count < OS_PSG_LOG_MAX):
-        raise AssertionError(
-            f"the direct-PSG ledger hit its cap ({OS_PSG_LOG_MAX}): oracle={len(o_psg)} "
-            f"cand={count} — the compare beyond it would be blind; shorten the run or raise "
-            f"OS_PSG_LOG_MAX in include/os.h (its mirror in harness.py is pinned to it)")
+    _vet_ledger_below_cap("direct-PSG", len(o_psg), count, OS_PSG_LOG_MAX, "OS_PSG_LOG_MAX")
     if o_psg != c_psg:
         raise AssertionError(
             f"function @ {entry:#x}: direct-PSG access stream mismatch — "
@@ -575,20 +664,151 @@ def _vet_psg_state(entry, o_regs):
             f"ports are outside the image, so this divergence is invisible to the byte diff")
 
     # Sized from the oracle's own file, so the two casts cannot disagree about the register count.
-    nregs = len(o_regs["psg_file"])
-    c_file = bytes(ctypes.cast(_lib.g_psg_file(),
-                               ctypes.POINTER(ctypes.c_uint8 * nregs)).contents)
-    c_known = _lib.g_psg_file_known()
-    if (o_regs["psg_file"], o_regs["psg_known"]) != (c_file, c_known):
+    _vet_declared_state_matches(
+        entry, "the modeled YM2149 register file", o_regs["psg_file"], o_regs["psg_known"],
+        _candidate_bytes(_lib.g_psg_file, len(o_regs["psg_file"])), _lib.g_psg_file_known(),
+        "That file is what a read-back answers from, so the next run of this driver would be served "
+        "different bytes on the two sides")
+
+
+def _seed_candidate_hw(hw_seed):
+    """Install the case's hardware seed (``{address: byte}``) in the candidate. See _seed_candidate."""
+    _seed_candidate(_lib.g_hw_reset if _has_hw_ledger else None,
+                    emu.hw_seed_bytes, hw_seed, _has_hw_ledger)
+
+
+def _hw_event_text(events):
+    """One ledger's reads as readable text: ``0xfffa01->0xb0``."""
+    return [f"{addr:#x}->{value:#04x}" for addr, value in events]
+
+
+def _hw_seed_text(hw_seed):
+    """A case's ``hw_seed`` as a reader would type it: ``{0xfffa01: 0xb0}``, or a prescription when
+    there is none.
+
+    Python renders a dict of ints in DECIMAL, so the raw form of a hardware seed comes out
+    ``{16775681: 176}`` — a reader cannot match that against the address in the disassembly, which is
+    the one thing a refusal message exists to let them do. And an absent seed rendered as ``None``
+    puts "hw_seed=None declares what the machine held on entry" in a message whose whole point is
+    that it does not.
+    """
+    if not hw_seed:
+        return "no hw_seed was given, and a seed is what declares"
+    body = ", ".join(f"{addr:#x}: {value:#04x}" for addr, value in sorted(hw_seed.items()))
+    return f"hw_seed={{{body}}} declares"
+
+
+def _vet_hw_reads_are_declared(entry, hw_seed, o_regs):
+    """Refuse a differential whose ORACLE read a modeled hardware byte the case never declared.
+
+    **THIS IS PHASE 7'S REFUSAL, AND IT LIVES HERE RATHER THAN IN ``emu.run``** — the one place its
+    contract differs from Phase 6's, deliberately. An undeclared PSG read sinks the run inside
+    ``emu.run``, so it is refused for every caller. An undeclared *hardware* read is served the 0 it
+    has always been served there, and only a DIFFERENTIAL refuses it. Two reasons, and they are the
+    whole design:
+
+    * a bare ``emu.run`` is how this workspace drives a game's relocator, its Copylock and its
+      bootstrap (``test_copylock.py``, ``test_bootstrap.py``). Those touch hardware nobody has
+      enumerated, and an always-on refusal would sink runs that verify nothing and so cannot be
+      falsely green;
+    * a false green needs something being VERIFIED. That is exactly what a differential is: the
+      candidate and the oracle agreeing on a branch that a fabricated 0 chose for both of them,
+      which is the ``$ffff820a`` defect BuggyBoy shipped green.
+
+    Three shapes are refused, each with its own remedy, and they are tested NARROWEST FIRST:
+
+    * **stale** — the run WROTE the address and then read it back. The seed declares what the
+      machine held on ENTRY, and an instruction of this very run has replaced it, so the served byte
+      contradicts the program. Not seedable: end the case before the write, or start after it.
+      One read can be stale *and* undeclared, and reporting that as "declare it" sends the reader to
+      add a ``hw_seed`` and hit the un-seedable refusal on the next run — so stale is diagnosed
+      first, being the strictly narrower answer;
+    * **wide** — a 16- or 32-bit read took the byte in along with neighbouring registers the model
+      knows nothing about, which it would have to fabricate as 0. Also not seedable, and also
+      possible alongside an undeclared byte-read of the same address;
+    * **undeclared** — nothing said what the byte holds. Declare it with ``hw_seed=``.
+    """
+    if o_regs["hw_stale"]:
+        written = o_regs["hw_stale"]
         raise AssertionError(
-            f"function @ {entry:#x}: the modeled YM2149 register file diverged — "
-            f"oracle={o_regs['psg_file'].hex()} (known {o_regs['psg_known']:#06x}) "
-            f"cand={c_file.hex()} (known {c_known:#06x}). That file is what a read-back answers "
-            f"from, so the next run of this driver would be served different bytes on the two sides")
+            f"function @ {entry:#x}: the oracle WROTE the modeled hardware byte(s) "
+            f"{', '.join(f'{addr:#x}' for addr in written)} and then READ one back. "
+            f"{_hw_seed_text(hw_seed)} what the machine held on ENTRY, and an instruction of this "
+            f"run has replaced it — the model drops hardware writes, so the read would be served "
+            f"the entry byte and contradict the program. Adding one cannot fix it: run the case up "
+            f"to the write, or enter past it with the seed describing what the write left "
+            f"(TRAP_MODEL.md, Phase 7).")
+    if o_regs["hw_wide"]:
+        wide = o_regs["hw_wide"]
+        raise AssertionError(
+            f"function @ {entry:#x}: the oracle read the modeled hardware byte(s) "
+            f"{', '.join(f'{addr:#x}' for addr in wide)} as part of a 16- or 32-bit access. Only a "
+            f"BYTE read of one is served — a wider one takes in the neighbouring MFP/shifter "
+            f"registers, which the model would have to fabricate as 0, and the case would be "
+            f"verified against that fabrication. Not seedable either: the width is an instruction.")
+    if o_regs["hw_unseeded"]:
+        undeclared = o_regs["hw_unseeded"]
+        raise AssertionError(
+            f"function @ {entry:#x}: the oracle READ the modeled hardware byte(s) "
+            f"{', '.join(f'{addr:#x}' for addr in undeclared)}, which this case does not declare — "
+            f"so both sides were served a fabricated 0 and would agree on whatever branch it "
+            f"chooses. That agreement is the false green this model exists to close (the $ffff820a "
+            f"music-tempo branch BuggyBoy shipped, invisible to its whole differential). Declare "
+            f"the byte the machine really holds, as the input it is: "
+            f"hw_seed={{{', '.join(f'{addr:#x}: <byte>' for addr in undeclared)}}} "
+            f"(TRAP_MODEL.md, Phase 7).")
+
+
+def _vet_hw_state(entry, o_regs):
+    """Compare the seeded hardware model's ordered READ stream — and its declared bytes — against
+    the candidate's (``src/hw.c``).
+
+    Nothing here is in the image, so nothing else could catch a divergence. A reconstruction that
+    read the WRONG modeled address, read one it should not have, or skipped a read the original
+    makes, writes exactly the same bytes as a correct one whenever the branch happens to land the
+    same way — and the byte diff sees nothing either way. The ordered stream is the only witness.
+
+    The FILE is a cross-check of the two implementations rather than extra coverage: under equal
+    seeds both sides hold the same declared bytes by construction, so what it can catch is the two
+    models drifting — a slot numbering changed on one side, the capture profile leaking into a
+    differential. It is compared with the known-mask, since "declared 0" and "never declared" are
+    different machines.
+
+    Optional ABI (``_has_hw_ledger``) with the oracle's own read stream as the witness, exactly as
+    for the PSG ledger: a candidate without it is served only while the oracle reads no modeled
+    address at all.
+    """
+    o_hw = o_regs["hw_events"]
+    if not _has_hw_ledger:
+        if o_hw:
+            raise AssertionError(
+                f"the oracle read {len(o_hw)} modeled hardware byte(s) but {_CFG.name}'s candidate "
+                f"exports no {'/'.join(_missing_hw_ledger)} — neither the read stream nor the "
+                f"declared bytes can be compared, so a reconstruction reading the wrong one, or "
+                f"none, would pass unnoticed. That is tools/recreate_kit/src/hw.c's ABI: build the "
+                f"candidate through kit.mk, whose SRC sweeps $(KIT)/src/*.c")
+        return
+
+    count = _lib.g_hw_log_count()
+    slots, vals = _lib.g_hw_log_slots(), _lib.g_hw_log_vals()
+    c_hw = [(emu.HW_ADDRS[slots[i]], vals[i]) for i in range(count)]
+    _vet_ledger_below_cap("seeded-hardware read", len(o_hw), count, OS_HW_LOG_MAX, "OS_HW_LOG_MAX")
+    if o_hw != c_hw:
+        raise AssertionError(
+            f"function @ {entry:#x}: modeled hardware read stream mismatch — "
+            f"oracle={_hw_event_text(o_hw)} cand={_hw_event_text(c_hw)} "
+            f"(`0xfffa01->0xb0` read 0xb0 from 0xfffa01). These addresses are outside the image, "
+            f"and so is the branch they steer, so this divergence is invisible to the byte diff")
+
+    _vet_declared_state_matches(
+        entry, "the declared hardware bytes", o_regs["hw_file"], o_regs["hw_known"],
+        _candidate_bytes(_lib.g_hw_file, len(o_regs["hw_file"])), _lib.g_hw_file_known(),
+        "The two sides were handed the same hw_seed, so this is the two model implementations "
+        "disagreeing, not the reconstruction")
 
 
 def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
-                       stop_pc, max_insns, psg_seed):
+                       stop_pc, max_insns, psg_seed, hw_seed):
     """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
     never actually writing some byte the oracle wrote — because that byte already held the oracle's
     value (an output landing in a zeroed/base region). Re-run both cores on a copy of the input in
@@ -601,7 +821,10 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
         if a < guard_lo:                     # only the diffed region matters; stack canaries are moot
             poisoned[a] = o_final[a] ^ 0xff
     po_final, _, po_regs = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
-                                   psg_seed=psg_seed)
+                                   psg_seed=psg_seed, hw_seed=hw_seed)
+    # Poisoning can steer the ORACLE into a modeled hardware read the plain run never made, and one
+    # the case does not declare would be served a fabricated 0 on this pass too.
+    _vet_hw_reads_are_declared(entry, hw_seed, po_regs)
     buf = (ctypes.c_uint8 * IMAGE_SIZE).from_buffer(bytearray(poisoned))
     # This is a SECOND candidate run, so it needs the same per-run bookkeeping the first one got:
     # poisoning inverts oracle-written bytes, which can steer the candidate down a path the plain
@@ -610,12 +833,14 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     # attribution.
     _lib.g_os_refusal_reset()
     _seed_candidate_psg(psg_seed)
+    _seed_candidate_hw(hw_seed)
     glue(_lib, buf)
     _vet_no_os_refusal(entry)
     # ...and the same off-image PSG comparison the plain pass got, against the POISONED run's own
     # oracle surfaces. Poisoning can steer either core into different register traffic, and that
     # traffic is invisible to the byte compare below — which is the whole reason this pass exists.
     _vet_psg_state(entry, po_regs)
+    _vet_hw_state(entry, po_regs)
     pc_final = bytes(buf)
     bad = [a for a in range(guard_lo) if po_final[a] != pc_final[a] and not excluded(a)]
     if bad:
@@ -628,7 +853,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
 
 
 def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, poison=False,
-                 psg_seed=None):
+                 psg_seed=None, hw_seed=None):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
@@ -657,15 +882,24 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     path's state, not the ``Giaccess`` file ``psg_regs()`` stages, and a case that confuses the two
     is refused (``_vet_psg_seed_reaches_the_path``). Both sides' register file and access ledger are
     compared afterwards, seed or none (``_vet_psg_state``).
+    ``hw_seed`` is ``{address: value}`` over the modeled hardware set (``emu.HW_ADDRS``: the MFP
+    GPIP byte and the shifter's sync byte), the same kind of declared input for a byte that steers a
+    branch (TRAP_MODEL.md, Phase 7). **A run whose oracle read one of them without a declaration is
+    REFUSED here** — that refusal is a differential's, not ``emu.run``'s, and
+    ``_vet_hw_reads_are_declared`` says why. Both sides' ordered read stream is compared afterwards,
+    seed or none (``_vet_hw_state``).
     """
     _vet_audio_capture_off(entry)
     pokes = regs.pop("_pokes", None)
     img = make_image(pokes)
     o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
-                                        psg_seed=psg_seed)
+                                        psg_seed=psg_seed, hw_seed=hw_seed)
 
     _vet_exclude_bands(exclude, o_regs["min_a7"])
     _vet_psg_seed_reaches_the_path(entry, psg_seed, pokes, o_regs)
+    # Before the candidate runs at all: a case whose oracle was served a fabricated hardware byte
+    # cannot be made honest by anything the candidate does, and the remedy names the seed to add.
+    _vet_hw_reads_are_declared(entry, hw_seed, o_regs)
 
     Buf = ctypes.c_uint8 * IMAGE_SIZE
     buf = Buf.from_buffer(bytearray(img))
@@ -673,6 +907,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
         _lib.g_dosound_log_reset()       # fresh Dosound ledger for this candidate run (see below)
     _lib.g_os_refusal_reset()            # ...and a fresh refused-os_*-call tally (see below)
     _seed_candidate_psg(psg_seed)        # ...and the same PSG entry state the oracle just ran on
+    _seed_candidate_hw(hw_seed)          # ...and the same declared hardware bytes
     cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
 
@@ -734,10 +969,11 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
             f"lists cannot be compared, so a divergence here would pass unnoticed")
 
     _vet_psg_state(entry, o_regs)
+    _vet_hw_state(entry, o_regs)
 
     if poison and not diffs:
         _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
-                           stop_pc, max_insns, psg_seed)
+                           stop_pc, max_insns, psg_seed, hw_seed)
 
     return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
 

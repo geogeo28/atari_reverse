@@ -35,6 +35,10 @@ PINNED = ("OS_IMAGE_SIZE", "OS_HEAP_BASE", "OS_FS_TABLE", "OS_FS_STAGING", "OS_F
           # the two off-image ledger caps: both sides truncate at the SAME entry, or two streams
           # that diverge past the cap would compare equal (harness.differential asserts below them)
           "OS_PSG_LOG_MAX",
+          # ...and the seeded-hardware read ledger's (Phase 7), for the same reason. The modeled
+          # ADDRESSES need no entry here: emu.py reads them from the .so (osh_hw_addr_table), so
+          # there is no second copy in Python that could drift from os.h's table.
+          "OS_HW_LOG_MAX",
           # ...and that ledger's event kinds. The C tags each entry and the Python compares them, so
           # a value changed on one side alone would make every read compare as a write, silently.
           "OS_PSG_EVENT_WRITE", "OS_PSG_EVENT_READ",
@@ -122,6 +126,10 @@ def test_every_low_model_address_is_guarded_or_declared_unvetted():
         # this large because that ledger is also the audio-capture mode's data feed (a whole VBL
         # tick's register stream), which is what puts it in this range at all.
         "OS_PSG_LOG_MAX",
+        # 4096 entries — the seeded-hardware read ledger's cap on both sides. Sized like the PSG's
+        # because these addresses are POLLED (an FDC wait loop reads $fffa01 once per iteration), so
+        # a modest cap would truncate an ordinary run. Not a place in the image either.
+        "OS_HW_LOG_MAX",
     }
     UNVETTED = {
         # 0x500, the KBDVBASE struct XBIOS Kbdvbase returns. Its only reader is that trap, which IS
@@ -149,6 +157,32 @@ def test_every_low_model_address_is_guarded_or_declared_unvetted():
         f"range: add it to NOT_ADDRESSES, with the comment saying why it is not a place in the "
         f"image — filing a size under UNVETTED would register it as a low-memory region.")
     assert low, "no low model addresses parsed at all — the scan is looking at the wrong file"
+
+
+def test_every_modeled_hardware_address_is_above_the_image():
+    """The off-image models are reached only AFTER the image bounds check, so an image that grew
+    over their addresses would silently swallow them.
+
+    ``m68k_read_memory_8`` opens with ``if (a < g_size) return g_mem[a];`` and only then decodes the
+    PSG ports and the Phase 7 hardware set. Raise ``OS_IMAGE_SIZE`` past ``$ff820a`` and every read
+    of the shifter's sync byte becomes an ordinary RAM read: no ledger entry, no ``hw_unseeded``, no
+    refusal, no comparison — both models evaporate and every differential goes green, which is
+    exactly the silent false green they exist to close.
+
+    Nothing else covers this: the low-address scan above deliberately stops at ``0x10000``, and no
+    project has moved ``OS_IMAGE_SIZE`` yet, so the day one does the failure would be a suite that
+    got *quieter*. One assertion over both models' addresses, since the exposure is identical.
+    """
+    c = _c_defines(OS_H.read_text())
+    modeled = {name: value for name, value in c.items()
+               if name in ("OS_PSG_PORT_SELECT", "OS_PSG_PORT_DATA",
+                           "OS_HW_MFP_GPIP", "OS_HW_SHIFTER_SYNC")}
+    assert len(modeled) == 4, f"os.h is missing/unparsable for one of the modeled addresses: {modeled}"
+    swallowed = {name: value for name, value in modeled.items() if value < c["OS_IMAGE_SIZE"]}
+    assert not swallowed, (
+        f"OS_IMAGE_SIZE ({c['OS_IMAGE_SIZE']:#x}) covers {swallowed} — those addresses are decoded "
+        f"only after shim.c's image bounds check, so an access to one would be served from the "
+        f"image and neither model would ever see it")
 
 
 def test_staged_file_table_fits_below_staging():

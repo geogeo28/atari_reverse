@@ -140,6 +140,41 @@ _LIB.osh_psg_nregs.restype = ctypes.c_uint32
 # the file cannot leave this file reading past it.
 PSG_NREGS = _LIB.osh_psg_nregs()
 _PsgFileP = ctypes.POINTER(ctypes.c_uint8 * PSG_NREGS)
+# The seeded HARDWARE read model (TRAP_MODEL.md, Phase 7). Required, not probed, for the seeded PSG
+# model's reason: run() installs the seed before EVERY run — an empty one included, so a seed cannot
+# leak from the previous run. An .so without these would answer every modeled hardware read with a
+# silent 0 while this file reported the case as having declared them, which is precisely the false
+# green the model closes.
+_HW_MODEL_ABI = ("osh_hw_seed", "osh_hw_file", "osh_hw_known", "osh_hw_unseeded", "osh_hw_stale",
+                 "osh_hw_wide", "osh_hw_count", "osh_hw_log_slots", "osh_hw_log_vals",
+                 "osh_hw_dropped", "osh_hw_nslots", "osh_hw_addr_table", "osh_hw_capture_profile")
+_missing_hw_model = [sym for sym in _HW_MODEL_ABI if not hasattr(_LIB, sym)]
+if _missing_hw_model:
+    # Named together rather than one at a time, for _PSG_MODEL_ABI's reason: they ship in one
+    # shim.c, and a bare ctypes AttributeError on the second would name neither the file nor the
+    # rebuild.
+    raise _stale_oracle(
+        "/".join(_missing_hw_model),
+        "so it predates the seeded hardware read model: $fffa01 and $ff820a would answer a silent "
+        "0 on both sides, and a branch steered by one could not be verified at all.")
+_LIB.osh_hw_seed.argtypes = [_u8p, ctypes.c_uint32]
+_LIB.osh_hw_file.restype = _u8p
+_LIB.osh_hw_known.restype = ctypes.c_uint32
+_LIB.osh_hw_unseeded.restype = ctypes.c_uint32
+_LIB.osh_hw_stale.restype = ctypes.c_uint32
+_LIB.osh_hw_wide.restype = ctypes.c_uint32
+_LIB.osh_hw_count.restype = ctypes.c_uint32
+_LIB.osh_hw_log_slots.restype = _u8p
+_LIB.osh_hw_log_vals.restype = _u8p
+_LIB.osh_hw_dropped.restype = ctypes.c_uint32
+_LIB.osh_hw_nslots.restype = ctypes.c_uint32
+_LIB.osh_hw_addr_table.restype = _u32p
+_LIB.osh_hw_capture_profile.restype = _u8p
+# The modeled set, read from the .so rather than kept as a second copy of os.h's table here — so a
+# shim.c that adds an address cannot leave this file naming the old set (PSG_NREGS's argument).
+HW_NSLOTS = _LIB.osh_hw_nslots()
+HW_ADDRS = tuple(_LIB.osh_hw_addr_table()[slot] for slot in range(HW_NSLOTS))
+_HwFileP = ctypes.POINTER(ctypes.c_uint8 * HW_NSLOTS)
 _LIB.osh_cov_enable.argtypes = [ctypes.c_int]
 _LIB.osh_cov_visited.argtypes = [ctypes.c_uint32]
 _LIB.osh_cov_visited.restype = ctypes.c_int
@@ -154,7 +189,6 @@ _LIB.osh_prof_slots.restype = ctypes.c_uint32
 # would be a claim about a build that cannot occur, dead in every direction a test could push it.
 _LIB.osh_audio_capture.argtypes = [ctypes.c_int]
 _LIB.osh_audio_capture_on.restype = ctypes.c_int
-_LIB.osh_audio_profile_unmodeled.restype = ctypes.c_uint32
 
 _LIB.osh_run_bench.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32,
                                ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
@@ -245,10 +279,13 @@ def audio_capture(on):
         where the default model re-seeds it per run.
       * a BYTE read of ``$fffa01`` (MFP GPIP) or ``$ff820a`` (shifter sync) reports the 50 Hz
         colour-ST tempo profile a replayer keys on: GPIP bit 7 set, sync bit 1 set. Both read 0
-        off-image, and 0/0 is the *monochrome* profile — a replayer taking it would render every
-        song at the wrong rate, silently. Only those two bits are modeled (plus the two idle,
-        active-low interrupt lines that share the GPIP byte); the rest of each byte is a fabricated
-        zero, which is why nothing wider is served — see below.
+        when no case declares them, and 0/0 is the *monochrome* profile — a replayer taking it would
+        render every song at the wrong rate, silently. Only those two bits are modeled (plus the two
+        idle, active-low interrupt lines that share the GPIP byte); the rest of each byte is a
+        fabricated zero, which is why nothing wider is served — see below. Since Phase 7 the mode
+        serves them by INSTALLING A SEED over the same model a case seeds (``hw_capture_profile()``
+        is that seed), so this is one code path rather than a second answer beside it — and passing
+        a ``hw_seed`` under the mode is refused, since the profile would silently win.
 
     WHAT IS STILL REFUSED, in this mode exactly as out of it — every one of these counts unmodeled
     and sinks the run in ``run()``:
@@ -358,6 +395,78 @@ def psg_seed_bytes(psg_seed):
         values[reg] = value
         known |= 1 << reg
     return bytes(values), known
+
+
+def hw_seed_bytes(hw_seed):
+    """``{address: value}`` -> ``(bytes(HW_NSLOTS), known-mask)``: the encoding BOTH sides take.
+
+    One implementation, for ``psg_seed_bytes``'s reason — ``run()`` installs the pair in the oracle
+    and ``harness.differential`` hands the same pair to the candidate's ``g_hw_reset``, so the two
+    cannot disagree about what ``{address: byte}`` means. An address outside the modeled set
+    (``HW_ADDRS``) or a value outside a byte is refused rather than dropped: a case that declares
+    ``$ff8609`` is describing hardware this model does not serve, and silently ignoring it would
+    leave the run reading a fabricated 0 while the case says otherwise.
+    """
+    values = bytearray(HW_NSLOTS)
+    known = 0
+    for addr, value in (hw_seed or {}).items():
+        if addr not in HW_ADDRS:
+            raise ValueError(
+                f"hw_seed[{addr:#x}] declares an address the seeded hardware model does not serve. "
+                f"It models exactly {', '.join(f'{a:#x}' for a in HW_ADDRS)} — every other off-image "
+                f"read still answers 0, invisibly. Adding one is a change to os.h's OS_HW_* table on "
+                f"both sides, and it belongs with the evidence for what the address really answers "
+                f"(TRAP_MODEL.md, Phase 7)")
+        if not 0 <= value <= 0xFF:
+            raise ValueError(f"hw_seed[{addr:#x}] = {value!r} is not a byte")
+        slot = HW_ADDRS.index(addr)
+        values[slot] = value
+        known |= 1 << slot
+    return bytes(values), known
+
+
+def hw_capture_profile():
+    """``{address: byte}``: the machine the AUDIO-CAPTURE mode declares (50 Hz colour ST).
+
+    Read from the shim rather than restated here, so a test can pin "the mode serves this" against
+    "a case that declares this serves the same" without either side holding a copy of the constants.
+    """
+    profile = _LIB.osh_hw_capture_profile()
+    return {addr: profile[slot] for slot, addr in enumerate(HW_ADDRS)}
+
+
+def hw_events():
+    """The modeled hardware bytes' whole ordered READ stream from the most recent ``run()``.
+
+    A list of ``(address, value)`` in the order the run read them, an UNDECLARED read included (it
+    is served 0 and recorded in ``hw_unseeded``). This is the entire observable effect of such a
+    read: it touches no image byte, and the branch it steers may leave no trace either, so
+    ``harness.differential`` compares this stream against the candidate's (``src/hw.c``).
+    """
+    n = _LIB.osh_hw_count()
+    slots, vals = _LIB.osh_hw_log_slots(), _LIB.osh_hw_log_vals()
+    return [(HW_ADDRS[slots[i]], vals[i]) for i in range(n)]
+
+
+def _hw_addrs_of(mask):
+    """The modeled addresses a slot mask names — the shape every hardware refusal reports in."""
+    return [addr for slot, addr in enumerate(HW_ADDRS) if mask & (1 << slot)]
+
+
+def hw_unseeded_addrs():
+    """The modeled addresses the last ``run()`` read while nothing had declared them.
+
+    Deliberately NOT a raise: see ``run()``. A bare ``run()`` drives a game's relocator, its Copylock
+    and its bootstrap, whose hardware reads are nobody's enumerated list — so the refusal lives in
+    ``harness.differential``, where a fabricated byte could produce a false green, and this is what
+    it reads.
+    """
+    return _hw_addrs_of(_LIB.osh_hw_unseeded())
+
+
+def hw_file():
+    """The declared hardware bytes a modeled read is served from, as ``bytes`` indexed by slot."""
+    return bytes(ctypes.cast(_LIB.osh_hw_file(), _HwFileP).contents)
 
 
 def psg_events():
@@ -476,7 +585,7 @@ def _vet_no_malloc_over_program(malloc_calls):
         f"load_base.")
 
 
-def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None):
+def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw_seed=None):
     """Run ``entry`` on a copy of ``image``. Return (final_image, writes, out_regs).
 
     ``regs`` maps register name -> value (e.g. {"a1": 0x1e000}); A7 is forced to STACK_TOP.
@@ -493,6 +602,15 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None):
     refuses the run and names the registers to declare, because a read-modify-write preserves
     precisely the bits nothing wrote and inventing them is a false green (TRAP_MODEL.md, Phase 6).
     Registers are re-seeded before every run, so a seed never leaks into the next case.
+
+    ``hw_seed`` is ``{address: value}`` over the modeled hardware set (``HW_ADDRS`` — the MFP GPIP
+    byte and the shifter's sync byte), the same kind of declared input for a byte that steers a
+    branch (TRAP_MODEL.md, Phase 7). It too is re-installed before every run. **An UNDECLARED
+    modeled read does not raise here**, unlike an undeclared PSG register: it is served the 0 it has
+    always been served, and reported in ``out_regs["hw_unseeded"]`` for ``harness.differential`` to
+    refuse the case on. A bare ``run()`` drives relocators, Copylock and bootstrap code whose
+    hardware reads are nobody's enumerated list, and a false green needs something being verified —
+    which a bare run is not.
     """
     regs = regs or {}
     if audio_capture_on():
@@ -519,12 +637,24 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None):
                 "capture mode serves it as 0 — and the capture's register file spans runs, so the "
                 "seed would be ignored. Disarm the mode (emu.audio_capture(False), or scope it with "
                 "`with emu.audio_capturing():`) or drop the seed.")
+        if hw_seed is not None:
+            raise RuntimeError(
+                "a hw_seed was passed while the audio-capture mode is armed. The mode DECLARES the "
+                "modeled hardware bytes itself — the 50 Hz colour-ST profile a replayer picks its "
+                "tempo from — and installs that profile over this seed, so the case's declaration "
+                "would be silently ignored (emu.hw_capture_profile() is what the run would really "
+                "read). Disarm the mode (emu.audio_capture(False), or scope it with "
+                "`with emu.audio_capturing():`) or drop the seed.")
     # Deliberately unconditional, seed or none: leaving the previous run's seed installed would make
     # a case that declares nothing readable through another case's declaration, under -n auto
     # unpredictably. (Under audio capture the shim ignores it — the file spans runs there by contract
     # — which is why passing one under the mode is refused outright, just above.)
     seed_values, seed_known = psg_seed_bytes(psg_seed)
     _LIB.osh_psg_seed((ctypes.c_uint8 * PSG_NREGS)(*seed_values), seed_known)
+    # ...and the modeled hardware bytes, unconditionally for the same reason (under audio capture the
+    # shim installs its own profile over this, which is why passing one under the mode is refused).
+    hw_values, hw_known = hw_seed_bytes(hw_seed)
+    _LIB.osh_hw_seed((ctypes.c_uint8 * HW_NSLOTS)(*hw_values), hw_known)
 
     mem = bytearray(image)
     Buf = ctypes.c_uint8 * loader.IMAGE_SIZE
@@ -588,7 +718,21 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None):
         causes.append(f"its PSG accesses overflowed the ledger — {dropped_psg_writes} access(es) "
                       f"past os.h's OS_PSG_LOG_MAX cap were DROPPED, so psg_writes() is a truncated "
                       f"register stream, not this run's whole one")
-    if _LIB.osh_audio_profile_unmodeled():
+    # A wide read of a modeled hardware byte is recorded on every run, but it is only a CAUSE here
+    # under audio capture — where the extractor has no second chance and no diff to catch it. Off
+    # the mode it stays what it has always been for a bare run (an off-image 0), and
+    # harness._vet_hw_reads_are_declared is what refuses it in a differential, which is where a
+    # fabricated neighbour could produce a false green. Same split as the undeclared read above.
+    # The hardware read ledger's OWN truncation, however, is a cause for EVERY caller — the split
+    # above is about a fabricated byte, and this is about hw_events() reporting a truncated stream as
+    # a complete one. A bare emu.run reader has no diff to notice it, which is precisely why the PSG
+    # ledger's sibling counter is a cause too. Reachable: a poll loop on $fffa01 does 4,096 reads.
+    dropped_hw_reads = _LIB.osh_hw_dropped()
+    if dropped_hw_reads:
+        causes.append(f"its modeled hardware reads overflowed the ledger — {dropped_hw_reads} "
+                      f"read(s) past os.h's OS_HW_LOG_MAX cap were DROPPED, so hw_events() is a "
+                      f"truncated read stream, not this run's whole one")
+    if audio_capture_on() and _LIB.osh_hw_wide():
         causes.append("under audio capture it read the machine-profile bytes ($fffa01 GPIP / "
                       "$ff820a shifter sync) at 16 or 32 bits, and only a BYTE read of either is "
                       "modeled — a wider one takes in neighbouring registers the model would have "
@@ -623,6 +767,15 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None):
     # OTHER door to it. harness.differential's seed-door guard tests a case's psg_seed against both.
     out_regs["psg_direct"] = _LIB.osh_psg_direct()
     out_regs["psg_giaccess"] = _LIB.osh_psg_giaccess()
+    # The seeded hardware model's off-image surfaces (TRAP_MODEL.md, Phase 7). Every one of them is
+    # reported rather than raised on, because the refusal lives in harness.differential — see the
+    # docstring. harness._vet_hw_reads_are_declared reads the first three, _vet_hw_state the rest.
+    out_regs["hw_unseeded"] = hw_unseeded_addrs()   # modeled addresses read while undeclared
+    out_regs["hw_stale"] = _hw_addrs_of(_LIB.osh_hw_stale())     # ...written, then read back
+    out_regs["hw_wide"] = _hw_addrs_of(_LIB.osh_hw_wide())       # ...taken in by a 16/32-bit read
+    out_regs["hw_events"] = hw_events()             # the ordered (address, value) read stream
+    out_regs["hw_file"] = hw_file()
+    out_regs["hw_known"] = _LIB.osh_hw_known()
 
     _vet_no_malloc_over_program(out_regs["malloc_calls"])
     _vet_no_poked_input_read(out_regs["poked_input_calls"])

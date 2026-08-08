@@ -1,8 +1,10 @@
 # The kit's own regression tests — game-agnostic checks that run standalone. Most need no
-# project artifacts; `test_psg_differential.py` (batch 21a) needs the SHARED liboracle.so, so
+# project artifacts; the two harness-plumbing suites (`test_psg_differential.py`,
+# `test_hw_differential.py`) need the SHARED liboracle.so through `test/kit_smoke_project.py`, so
 # `test` builds it first (via the ORACLE_VIA delegation below) — without that, a fresh tree or a
-# swept build/ dir SKIPS the harness-plumbing smoke and the gate under-runs by its 7 cases + 1
-# skip marker. A project's `make test` runs its differential suite via kit.mk; this runs the kit's.
+# swept build/ dir SKIPS both and the gate under-runs by their 25 cases (8 + 17, as pytest
+# collects them). A project's `make test`
+# runs its differential suite via kit.mk; this runs the kit's.
 #
 # The kit has no venv of its own; PY defaults to a project venv that already pins pytest.
 PY ?= ../../projects/buggyboy/recreate/.venv/bin/python

@@ -138,6 +138,81 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
 #define OS_PSG_EVENT_WRITE 0
 #define OS_PSG_EVENT_READ  1
 
+/* ---- the SEEDED HARDWARE READ model (TRAP_MODEL.md, "Phase 7") -------------------------------
+ * A small NAMED SET of hardware bytes outside the PSG whose contents a case may DECLARE, exactly as
+ * Phase 6 lets it declare the YM2149's registers. Everything else off-image still reads 0 and is
+ * still invisible; these two are singled out because a conditional branch depends on them, which is
+ * the one shape where a fabricated 0 produces a green run whose behaviour is wrong on the machine
+ * (the `$ffff820a` defect that survived BuggyBoy's entire differential and only appeared on real
+ * hardware — see PORTABILITY.md's "the BuggyBoy defect, demonstrated concretely").
+ *
+ * DELIBERATELY NOT HERE: the FDC/DMA registers at $ff8604+. Those answer a per-ACCESS SEQUENCE (a
+ * status byte that must change between two reads of the same address for a poll loop to terminate,
+ * a DMA counter that advances), and a per-run constant cannot express one. Phase 7 does not model
+ * them; TRAP_MODEL.md says so in as many words rather than leaving the omission to be inferred.
+ *
+ * Defined here, not in shim.c, for psg.h's reason: BOTH sides need them — shim.c decodes the
+ * addresses, test/hw_model_probe.c plants 68000 code that reaches them, and a reconstruction calls
+ * hw.h's hw_read8() with them. The 24-bit forms are canonical (the 68000's bus aliases $fffffa01
+ * onto $fffa01, and shim.c's BUS_ADDR_MASK folds an access before it is decoded). */
+#define OS_HW_MFP_GPIP     0xfffa01u  /* MFP GPIP: bit 7 = colour/mono monitor detect, 5/4 = FDC/ACIA */
+#define OS_HW_SHIFTER_SYNC 0xff820au  /* shifter sync mode: bit 1 SET = 50 Hz */
+
+/* Both sides index the modeled set by SLOT rather than by address — the seed is an array, the
+ * known-mask is a bit per slot, and the ledger records a slot per entry — so the slot numbers are
+ * as much a part of the shared contract as the addresses, and os_hw_addrs() below is the one table
+ * that maps between them. */
+#define OS_HW_SLOT_MFP_GPIP     0
+#define OS_HW_SLOT_SHIFTER_SYNC 1
+#define OS_HW_NSLOTS            2
+#if OS_HW_NSLOTS > 32
+#error "the seeded-hardware known/seed masks are uint32_t: OS_HW_NSLOTS slots no longer fit"
+#endif
+
+/* The ordered READ ledger's cap, on BOTH sides (shim.c's g_hw_log_* and src/hw.c's), for
+ * OS_PSG_LOG_MAX's reason: were the two to differ, a long run would drop entries on one side only
+ * and the streams would diverge for a reason that has nothing to do with the reconstruction. Sized
+ * like the PSG's rather than like Dosound's because these addresses are POLLED — an FDC wait loop
+ * reads $fffa01 once per iteration — so a modest cap would truncate an ordinary run. */
+#define OS_HW_LOG_MAX 4096
+
+/* The modeled addresses, by slot. A function-local table rather than a file-scope one so that a
+ * translation unit which includes this header without using the model draws no unused-variable
+ * warning, and so that both directions of the mapping are derived from ONE list. */
+static inline const uint32_t *os_hw_addrs(void) {
+    static const uint32_t addrs[OS_HW_NSLOTS] = {
+        [OS_HW_SLOT_MFP_GPIP]     = OS_HW_MFP_GPIP,
+        [OS_HW_SLOT_SHIFTER_SYNC] = OS_HW_SHIFTER_SYNC,
+    };
+    return addrs;
+}
+
+/* Which slot `addr` is, or -1 for an address the model does not name. Takes a 24-bit bus address:
+ * the oracle masks before it decodes, and hw.h's contract is that a reconstruction passes the
+ * canonical constant above. */
+static inline int os_hw_slot(uint32_t addr) {
+    for (int slot = 0; slot < OS_HW_NSLOTS; slot++)
+        if (os_hw_addrs()[slot] == addr)
+            return slot;
+    return -1;
+}
+
+/* Bitmask of the slots an access of `n` bytes at `addr` takes in — the WIDE form of os_hw_slot,
+ * and what the oracle's write and wide-read tallies are built from. It lives here rather than in
+ * shim.c so that the whole address decode is in the ONE file that owns the table: with half of it
+ * next to the table and half beside the tallies, adding a third modeled address would leave byte
+ * reads decoding it while wide reads and writes silently did not — and a wide read of it would then
+ * be served a fabricated 0 with no tally, which is the class this model exists to close. */
+static inline uint32_t os_hw_slots_touched(uint32_t addr, uint32_t n) {
+    uint32_t touched = 0;
+    for (int slot = 0; slot < OS_HW_NSLOTS; slot++) {
+        uint32_t modeled = os_hw_addrs()[slot];
+        if (addr <= modeled && addr + n > modeled)
+            touched |= 1u << slot;
+    }
+    return touched;
+}
+
 /* ---- GEM trap #2 (AES / VDI) --------------------------------------------------------
  * A trap #2 selects the subsystem by D0 and points D1 at a parameter block of array
  * pointers. AES: apb = {contrl, global, intin, intout, addrin, addrout}; VDI:

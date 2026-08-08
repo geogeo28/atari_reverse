@@ -27,28 +27,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ../oracle/shim.c ships no header — Python binds it by ctypes — so the entry points this probe
- * uses are declared here. They must match shim.c's definitions; a drift is a compile error, since
- * both translation units are linked together by the test's own build. */
-int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
-            const uint32_t *dregs, const uint32_t *aregs,
-            uint32_t sp, uint32_t sentinel, uint32_t stop_pc, uint32_t max_insns,
-            uint32_t *out_regs);
-uint32_t osh_out_regs(void);
+#include "probe_common.h"   /* the oracle's entry points, the image geometry, plant_word/plant_long */
 
-#define PROBE_IMAGE_SIZE 0x10000u  /* room for the routine, its table, the stack and the vector page */
-#define PROBE_ENTRY      0x1000u   /* even, clear of the vector page and of shim.c's magic trap PCs */
 #define PROBE_TABLE      0x1400u   /* the 15 longwords the movem loads (above the routine) */
-#define PROBE_SP         0x8000u   /* the machine stack, well above the routine and its table */
-#define PROBE_SENTINEL   0x2000u   /* the return address osh_run stops at */
 #define PROBE_MAX_INSNS  8u        /* the routines are two instructions; an overrun is a bug */
 
 #define MOVEM_L_ABSL_TO_REGS 0x4cf9u /* movem.l (xxx).l,<mask> */
 #define MOVEM_MASK_D0_A6     0x7fffu /* bit 0 = d0 .. bit 7 = d7, bit 8 = a0 .. bit 14 = a6 */
-#define OPCODE_RTS           0x4e75u
 
-#define NREGS    8                 /* D0..D7 / A0..A7, as osh_run takes them */
-#define OUT_REGS 15                /* what shim.c's OSH_OUT_REGS must be; checked against it below */
+/* OUT_REGS is probe_common.h's — and what shim.c's OSH_OUT_REGS must be, checked against it below.
+ * This probe REPORTS the count for its Python side to assert rather than calling
+ * probe_require_out_regs(), because the count is the thing under test here, not a precondition. */
 #define CANARY   0xdeadbeefu       /* parked one slot past the reported set */
 
 /* Two ranges wide apart, so a reported value says WHICH of the two it is at a glance and a register
@@ -63,20 +52,8 @@ static const char *const REG_NAMES[OUT_REGS] = {
     "a0", "a1", "a2", "a3", "a4", "a5", "a6",
 };
 
-static uint8_t *g_image;
-
 static uint32_t mark_for(int slot)  { return MARK_BASE + (uint32_t)(slot + 1) * VALUE_STEP; }
 static uint32_t entry_for(int slot) { return ENTRY_BASE + (uint32_t)(slot + 1) * VALUE_STEP; }
-
-static void plant_word(uint32_t addr, uint16_t opcode) {
-    g_image[addr] = (uint8_t)(opcode >> 8);
-    g_image[addr + 1] = (uint8_t)opcode;
-}
-
-static void plant_long(uint32_t addr, uint32_t value) {
-    plant_word(addr, (uint16_t)(value >> 16));
-    plant_word(addr + 2, (uint16_t)value);
-}
 
 /* Run one planted routine over entry values from entry_for(), and print what came back. `expected`
  * gives the value each slot must hold afterwards. */
@@ -105,8 +82,7 @@ int main(void) {
                 osh_out_regs(), OUT_REGS);
         return 1;
     }
-    g_image = calloc(PROBE_IMAGE_SIZE, 1);
-    if (!g_image) return 1;
+    probe_alloc_image();
 
     uint32_t expected[OUT_REGS], canary_written = 0, canary_passthrough = 0;
 
@@ -115,7 +91,7 @@ int main(void) {
     plant_word(PROBE_ENTRY, MOVEM_L_ABSL_TO_REGS);
     plant_word(PROBE_ENTRY + 2, MOVEM_MASK_D0_A6);
     plant_long(PROBE_ENTRY + 4, PROBE_TABLE);
-    plant_word(PROBE_ENTRY + 8, OPCODE_RTS);
+    plant_rts(PROBE_ENTRY + 8);
     for (int i = 0; i < OUT_REGS; i++) {
         expected[i] = mark_for(i);
         plant_long(PROBE_TABLE + 4u * (uint32_t)i, expected[i]);

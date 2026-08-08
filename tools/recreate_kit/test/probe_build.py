@@ -1,4 +1,4 @@
-"""Build a kit-side C probe against the oracle's OWN SOURCES.
+"""Build a kit-side C probe against the oracle's OWN SOURCES, and read back what it printed.
 
 Two suites here reach the oracle from C rather than from Python (`test_entry_state.py`,
 `test_reported_regs.py`): this directory deliberately binds no project, and `harness`/`emu` both
@@ -11,6 +11,7 @@ instead of hiding behind an up-to-date-looking artifact (the mtime relink trap).
 opcode table and the Musashi clone are gitignored build products; without them there is nothing to
 compile, so a suite skips rather than fails.
 """
+import re
 import subprocess
 
 from pathlib import Path
@@ -50,3 +51,42 @@ def compile_probe(probe_src, tmpdir, extra_src=()):
          str(probe_src), "-o", str(binary)],
         check=True, capture_output=True, text=True)
     return binary
+
+
+# The line protocol every model probe prints (psg_model_probe.c, hw_model_probe.c), and the one
+# parser for it. The two suites had a copy each, differing only in how many fields an `L` line
+# carries — which is the sort of near-duplicate that quietly drifts: a probe growing a field would
+# leave one parser silently dropping every ledger entry, and a ledger that parses as EMPTY compares
+# equal to an expectation of `[]` on every case that has one.
+#
+#   K <case> <key> <value>      a scalar (a value a register held, a mask, a count)
+#   L <case> <index> <field>... one ordered ledger entry; the fields are the model's own
+#   F <case> <index> <value>    one byte of the model's file, by register or slot
+#
+# `<index>` on an `L` line is the entry's position, printed so a truncated stream is visible in the
+# raw output; it is dropped here because the list's own order carries it.
+_SCALAR_LINE = re.compile(r"^K (\S+) (\S+) (\d+)$", re.M)
+_LEDGER_LINE = re.compile(r"^L (\S+) (\d+)((?: \d+)+)$", re.M)
+_FILE_LINE = re.compile(r"^F (\S+) (\d+) (\d+)$", re.M)
+
+
+def run_probe(binary):
+    """Run a built model probe and return ``{case: {"scalars", "ledger", "file"}}``.
+
+    ``ledger`` entries are tuples of whatever fields the probe printed, in order — three for the PSG
+    model's ``(kind, reg, value)``, two for the hardware model's ``(slot, value)`` — so the shape is
+    the model's own and this parser does not have to know which model it is reading.
+    """
+    out = subprocess.run([str(binary)], check=True, capture_output=True, text=True).stdout
+    cases = {}
+
+    def case(name):
+        return cases.setdefault(name, {"scalars": {}, "ledger": [], "file": {}})
+
+    for name, key, value in _SCALAR_LINE.findall(out):
+        case(name)["scalars"][key] = int(value)
+    for name, _index, fields in _LEDGER_LINE.findall(out):
+        case(name)["ledger"].append(tuple(int(field) for field in fields.split()))
+    for name, index, value in _FILE_LINE.findall(out):
+        case(name)["file"][int(index)] = int(value)
+    return cases

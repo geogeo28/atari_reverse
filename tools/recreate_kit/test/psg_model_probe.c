@@ -24,16 +24,12 @@
 
 #include "os.h"      /* the refusal tally's ABI (src/os_refusal.c), and OS_PSG_* */
 #include "psg.h"     /* the CANDIDATE side of the model (src/psg.c) */
+#include "probe_common.h"   /* osh_run, the image geometry, the code planters */
 
 /* ../oracle/shim.c ships no header — Python binds it by ctypes — so the entry points this probe
- * uses are declared here. They must match shim.c's definitions; a drift is a compile error, since
- * both translation units are linked together by the test's own build. */
-int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
-            const uint32_t *dregs, const uint32_t *aregs,
-            uint32_t sp, uint32_t sentinel, uint32_t stop_pc, uint32_t max_insns,
-            uint32_t *out_regs);
-int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
-                  uint32_t sp, uint32_t sentinel, uint32_t max_insns, uint32_t *out_regs);
+ * uses come from probe_common.h, which also carries the image geometry and the code planters, and
+ * says exactly what that shared declaration does and does not guarantee. The model-specific exports
+ * this probe reads are declared below. */
 void            osh_psg_seed(const uint8_t *values, uint32_t known);
 void            osh_audio_capture(int on);
 void            osh_audio_reset(void);
@@ -48,14 +44,7 @@ const uint8_t  *osh_psg_kinds(void);
 const uint8_t  *osh_psg_regs(void);
 const uint8_t  *osh_psg_vals(void);
 
-#define PROBE_IMAGE_SIZE 0x10000u  /* room for the routine, the stack and the vector page */
-#define PROBE_ENTRY      0x1000u   /* even, clear of the vector page and of shim.c's magic trap PCs */
-#define PROBE_SP         0x8000u   /* the machine stack, well above the routine */
-#define PROBE_SENTINEL   0x2000u   /* the return address osh_run stops at */
 #define PROBE_MAX_INSNS  32u       /* the routines are a handful of instructions */
-
-#define NREGS    8                 /* D0..D7 / A0..A7, as osh_run takes them */
-#define OUT_REGS 15                /* osh_run reports D0..D7 then A0..A6 (shim.c's OSH_OUT_REGS) */
 
 /* The ports come from os.h — one definition shared with shim.c, so this probe cannot plant code at
  * an address the oracle no longer decodes and still look like it tested the guard. */
@@ -89,19 +78,6 @@ const uint8_t  *osh_psg_vals(void);
 #define UNSELECTED_REG   0u
 #define LEAK_PROBE_REG   10u       /* the register the arm-from-off leak case selects, then must lose */
 
-static uint8_t *g_image;
-
-static void plant_word(uint32_t addr, uint16_t opcode) {
-    g_image[addr] = (uint8_t)(opcode >> 8);
-    g_image[addr + 1] = (uint8_t)opcode;
-}
-
-static uint32_t plant_long(uint32_t addr, uint32_t value) {
-    plant_word(addr, (uint16_t)(value >> 16));
-    plant_word(addr + 2, (uint16_t)value);
-    return addr + 4;
-}
-
 /* Each emitter plants one instruction at `addr` and returns the address after it. */
 static uint32_t emit_select(uint32_t addr, uint8_t reg) {
     plant_word(addr, MOVE_B_IMM_TO_ABSL);
@@ -130,8 +106,6 @@ static uint32_t emit_write_d1(uint32_t addr) {
     plant_word(addr, MOVE_B_D1_TO_ABSL);
     return plant_long(addr + 2, PSG_DATA);
 }
-
-static void emit_rts(uint32_t addr) { plant_word(addr, OPCODE_RTS); }
 
 /* Install a seed declaring MIXER_REG and, when `known` names it, DECOY_REG — both holding
  * MIXER_SEED, which is what makes the transposed-read case's two surfaces identical to a correct
@@ -181,7 +155,7 @@ static void run_and_report(const char *name) {
  * leftovers. osh_run_bench writes only out[0], so the read-back is reported as 0. */
 static void bench_and_report(const char *name) {
     uint32_t out[OUT_REGS] = {0};
-    emit_rts(PROBE_ENTRY);
+    plant_rts(PROBE_ENTRY);
     if (!osh_run_bench(g_image, PROBE_IMAGE_SIZE, PROBE_ENTRY, 0,
                        PROBE_SP, PROBE_SENTINEL, PROBE_MAX_INSNS, out)) {
         fprintf(stderr, "%s: the bench's routine did not return to the sentinel\n", name);
@@ -263,8 +237,8 @@ static void cand_body_out_of_range_register(uint32_t *read_value) {
 }
 
 int main(void) {
-    g_image = calloc(PROBE_IMAGE_SIZE, 1);
-    if (!g_image) return 1;
+    probe_require_out_regs();
+    probe_alloc_image();
 
     const uint16_t SEED_MIXER = 1u << MIXER_REG;
     const uint16_t SEED_MIXER_AND_DECOY = (1u << MIXER_REG) | (1u << DECOY_REG);
@@ -272,7 +246,7 @@ int main(void) {
     /* --- a read of a register the case DECLARED, and of one it did not --- */
     uint32_t pc = emit_select(PROBE_ENTRY, MIXER_REG);
     pc = emit_read_back(pc, PSG_SELECT);
-    emit_rts(pc);
+    plant_rts(pc);
     seed(SEED_MIXER);
     run_and_report("seeded_read");
     run_and_report("seeded_read_again");        /* the seed is not consumed by one run */
@@ -281,13 +255,13 @@ int main(void) {
 
     /* --- a read with nothing selected: the latch is not seedable, so this is its own refusal --- */
     pc = emit_read_back(PROBE_ENTRY, PSG_SELECT);
-    emit_rts(pc);
+    plant_rts(pc);
     seed(SEED_MIXER);                           /* seeded, and still refused: the SELECT is missing */
     run_and_report("read_before_any_select");
 
     /* --- a select the chip cannot decode: refused, not masked down to register 14 --- */
     pc = emit_select(PROBE_ENTRY, BAD_SELECT);
-    emit_rts(pc);
+    plant_rts(pc);
     run_and_report("high_nibble_select");
 
     /* --- the read-modify-write the whole model exists for --- */
@@ -295,7 +269,7 @@ int main(void) {
     pc = emit_read_back(pc, PSG_SELECT);
     pc = emit_ori_d1(pc, SILENCE_MASK);
     pc = emit_write_d1(pc);
-    emit_rts(pc);
+    plant_rts(pc);
     seed(SEED_MIXER);
     run_and_report("rmw");
 
@@ -319,7 +293,7 @@ int main(void) {
     pc = emit_select(PROBE_ENTRY, MIXER_REG);
     pc = emit_write_data(pc, WRITE_ONLY_VALUE);
     pc = emit_read_back(pc, PSG_SELECT);
-    emit_rts(pc);
+    plant_rts(pc);
     run_and_report("write_then_read");
 
     /* --- the ordered ledger, unchanged: a write-only run's (reg,val) stream --- */
@@ -331,13 +305,13 @@ int main(void) {
     pc = emit_write_data(pc, 0x0f);
     pc = emit_select(pc, 10);
     pc = emit_write_data(pc, 0x00);             /* a zero write: "written 0" is not "never written" */
-    emit_rts(pc);
+    plant_rts(pc);
     run_and_report("write_only");
 
     /* --- what stays refused: the data port is write-only on the chip --- */
     pc = emit_select(PROBE_ENTRY, MIXER_REG);
     pc = emit_read_back(pc, PSG_DATA);
-    emit_rts(pc);
+    plant_rts(pc);
     seed(SEED_MIXER);
     run_and_report("data_port_read");
 
@@ -346,7 +320,7 @@ int main(void) {
      * the relaxation itself, because that is a property of the shared model rather than of a game. */
     pc = emit_select(PROBE_ENTRY, LEAK_PROBE_REG);   /* a differential run SELECTS register 10... */
     pc = emit_write_data(pc, WRITE_ONLY_VALUE);      /* ...and leaves $0a in it */
-    emit_rts(pc);
+    plant_rts(pc);
     seed(SEED_MIXER);
     run_and_report("before_capture");
 
@@ -355,22 +329,22 @@ int main(void) {
      * data write below landed in register 10, in a capture that never named it. */
     osh_audio_capture(1);
     pc = emit_write_data(PROBE_ENTRY, WRITE_ONLY_VALUE);   /* bare data write, nothing selected */
-    emit_rts(pc);
+    plant_rts(pc);
     run_and_report("capture_bare_write_after_arming");
 
     osh_audio_reset();                           /* back to an empty capture for the reads below */
     pc = emit_select(PROBE_ENTRY, MIXER_REG);
     pc = emit_read_back(pc, PSG_SELECT);
-    emit_rts(pc);
+    plant_rts(pc);
     run_and_report("capture_unknown_reads_zero");   /* the relaxation: 0, not a refusal */
 
     pc = emit_select(PROBE_ENTRY, MIXER_REG);
     pc = emit_write_data(pc, WRITE_ONLY_VALUE);
-    emit_rts(pc);
+    plant_rts(pc);
     run_and_report("capture_write_tick");           /* one "VBL tick" writes the register... */
     pc = emit_select(PROBE_ENTRY, MIXER_REG);
     pc = emit_read_back(pc, PSG_SELECT);
-    emit_rts(pc);
+    plant_rts(pc);
     run_and_report("capture_next_tick_reads_it");   /* ...and the next one reads it back */
     osh_audio_capture(0);
 

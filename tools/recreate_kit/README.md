@@ -57,7 +57,7 @@ tools/recreate_kit/
 ### What the candidate `.so` must export
 
 `differential(entry, regs, glue, …)` only calls what the project's own `glue` callbacks name, so
-there is no required symbol — with three groups the kit supplies for you:
+there is no required symbol — with four groups the kit supplies for you:
 
 | symbol | signature | purpose |
 | --- | --- | --- |
@@ -133,6 +133,29 @@ A read of a register nothing declared or wrote — or of one the chip does not h
 `os_refused()` above. The whole contract, including the YM2149 edge semantics this models and those
 it refuses, is [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 6".
 
+The fourth group is the **seeded hardware reads**, from `src/hw.c` + `include/hw.h` (likewise linked
+into every candidate by `kit.mk`, and optional in the same way, with the oracle's own reads as the
+witness):
+
+| symbol | signature | purpose |
+| --- | --- | --- |
+| `hw_read8` | `uint8_t(uint32_t)` | what a reconstruction calls where the original reads a modeled hardware byte |
+| `g_hw_reset` | `void(const uint8_t *, uint32_t)` | install the declared bytes + clear the ledger, before each candidate run |
+| `g_hw_log_count` / `g_hw_log_slots` / `g_hw_log_vals` | | the ordered read stream: one `(slot, value)` per read |
+| `g_hw_file` / `g_hw_file_known` | | the declared bytes those reads are served from, and which are declared |
+
+The modeled set is exactly `$fffa01` (MFP GPIP) and `$ff820a` (shifter sync) — `os.h`'s `OS_HW_*`
+constants, which is what `hw_read8` takes. Both **steer a branch**, so the `0` every other off-image
+read answers is not merely incomplete: it makes the reconstruction and the original take the same
+wrong path and the diff agree with itself. That is the `$ffff820a` defect BuggyBoy shipped green.
+
+`harness.differential(..., hw_seed={0xfffa01: 0xb0})` declares the bytes to both sides and compares
+the read streams. **A differential whose oracle read one of them without a declaration is refused**,
+naming the addresses — but a bare `emu.run` is served the `0` unchanged, because a bare run verifies
+nothing and is how relocator/Copylock/bootstrap code is driven. The whole contract, including that
+divergence, the audio-capture fold and the FDC non-goal, is
+[`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 7".
+
 ### The modeled TOS traps
 
 Which GEMDOS/BIOS/XBIOS calls are serviced, with what semantics, and — just as important — what
@@ -164,6 +187,12 @@ rather than a model of its own: it shares the one register file and select latch
 answering an *undeclared* register (or an *unselected* latch) as `0`, which a differential refuses,
 and letting both span runs, which a differential re-seeds per run. That is why it stays opt-in,
 vetted off by `differential()`, and refused by `run()` unless the run says it meant to be there.
+
+The two tempo bytes are the same story one model over: since "Phase 7" the mode serves them by
+**installing a seed** over the seeded hardware read model — `emu.hw_capture_profile()` is that seed —
+rather than by a switch of its own. It is installed per run, so disarming the mode is enough to get
+the case's own declaration back; while armed the profile wins, which is why `emu.run` refuses a
+`hw_seed` passed under the mode instead of silently ignoring it.
 
 The full contract — exactly which reads are served and which stay refused, why the register file and
 select latch span runs, and why none of it narrows the differential's guarantee — is in
@@ -310,26 +339,27 @@ impossible instruction forms), the C-vs-Python pin on the TOS memory map above,
 `project._bool_flag`'s refusal of a non-boolean waiver flag (for **every** waiver flag, checked
 against `project.load` itself so a new one cannot ship untested), and `os_map`'s overlap geometry.
 
-Three of them pin the **oracle's own behaviour** and so need its sources, which a bare checkout does
-not have (`oracle/musashi/` is a gitignored clone): `test_entry_state.py`, `test_reported_regs.py`
-and `test_psg_model.py` compile `shim.c` themselves and drive `osh_run` from C — `harness`/`emu` bind
-a project's candidate `.so` at import, and this directory binds no project, so the oracle is
-unreachable from Python here. All **skip** rather than fail when those sources are absent, and all
-compile the shim rather than link the shared `liboracle.so` so that a reverted decision cannot hide
-behind a stale artifact — one build, in `test/probe_build.py`, so the three cannot disagree about the
-flags. What they pin is in [`TRAP_MODEL.md`](TRAP_MODEL.md): the forced entry SR; the register set
-every run reports back (`D0..D7`/`A0..A6` — the observability window a differential sees through);
-and the seeded PSG read model, whose probe also links `src/psg.c` so it can run the **candidate**
-side of that model against the oracle's — a miniature differential, with three mutant
-reconstructions as its negative control.
+Four of them pin the **oracle's own behaviour** and so need its sources, which a bare checkout does
+not have (`oracle/musashi/` is a gitignored clone): `test_entry_state.py`, `test_reported_regs.py`,
+`test_psg_model.py` and `test_hw_model.py` compile `shim.c` themselves and drive `osh_run` from C —
+`harness`/`emu` bind a project's candidate `.so` at import, and this directory binds no project, so
+the oracle is unreachable from Python here. All **skip** rather than fail when those sources are
+absent, and all compile the shim rather than link the shared `liboracle.so` so that a reverted
+decision cannot hide behind a stale artifact — one build, in `test/probe_build.py`, so the four
+cannot disagree about the flags. What they pin is in [`TRAP_MODEL.md`](TRAP_MODEL.md): the forced
+entry SR; the register set every run reports back (`D0..D7`/`A0..A6` — the observability window a
+differential sees through); and the two seeded read models, whose probes also link `src/psg.c` /
+`src/hw.c` so they can run the **candidate** side against the oracle's — a miniature differential,
+with mutant reconstructions as its negative control.
 
-A fourth, `test_psg_differential.py`, goes one step further and runs the **real harness**: it builds
-a throwaway project in a temp directory — a hand-assembled `.PRG`, and a candidate `.so` from
-`test/kit_candidate.c` plus `src/` — binds the kit to it, and makes actual `harness.differential()`
-calls. That is the only way to exercise the code that *compares* the two sides, since it lives in
-`harness`. It **skips** without the shared `liboracle.so` or a C compiler, and it is the one module
-here that may import `harness`: `project.load` freezes the binding process-wide, which is also why
-this directory's `make test` runs serially.
+Two more, `test_psg_differential.py` and `test_hw_differential.py`, go one step further and run the
+**real harness**: `test/kit_smoke_project.py` builds a throwaway project in a temp directory — a
+hand-assembled `.PRG`, and a candidate `.so` from `test/kit_candidate.c` plus `src/` — binds the kit
+to it, and both suites make actual `harness.differential()` calls through it. That is the only way to
+exercise the code that *compares* the two sides, since it lives in `harness`. They **skip** without
+the shared `liboracle.so` or a C compiler, and they share ONE binding: `project.load` freezes it
+process-wide, so `kit_smoke_project.bind()` is memoized and whichever suite asks first builds it —
+which is also why this directory's `make test` runs serially.
 
 Everything else must keep running in a bare checkout — no oracle build, no candidate `.so` — which is
 why the poked-input geometry was moved into `os_map.py` to be tested here at all.

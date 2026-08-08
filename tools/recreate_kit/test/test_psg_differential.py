@@ -5,10 +5,10 @@ What it cannot reach is the layer between them — `_seed_candidate_psg`, `_vet_
 `_vet_psg_seed_reaches_the_path` — because those live in `harness`, which binds a project's compiled
 candidate at import, and this directory deliberately binds no project.
 
-So this file BUILDS one: a miniature "project" in a temp directory, whose `.PRG` is a hand-assembled
-read-modify-write of the YM2149 mixer and whose candidate `.so` is `kit_candidate.c` plus the kit's
-own `src/`. That is enough to run a real `harness.differential()` end to end, which is the one thing
-the kit's suite has never been able to do.
+So this file uses one: `kit_smoke_project.bind()` builds a miniature "project" in a temp directory,
+whose `.PRG` holds a hand-assembled read-modify-write of the YM2149 mixer and whose candidate `.so`
+is `kit_candidate.c` plus the kit's own `src/`. That is enough to run a real `harness.differential()`
+end to end, which is the one thing the kit's suite could not otherwise do.
 
 WHAT IT PINS. The green case first — a correct reconstruction of an RMW passes with every surface
 compared — and then the three things that would make that green meaningless:
@@ -26,135 +26,16 @@ The module skips whole when the shared oracle or a C compiler is absent — `ora
 gitignored, so a bare checkout is a normal state to be in (`test_entry_state.py`'s convention).
 
 BINDING IS PROCESS-WIDE AND ONE-SHOT: `recreate_kit.project.load` refuses a second project in one
-process, so this is the only module in the kit's suite that may import `harness`, and the kit's own
-`make test` runs serially for that reason.
+process, which is why the project lives in `kit_smoke_project` rather than here — `bind()` is
+memoized and `test_hw_differential.py` shares the same one. The kit's own `make test` runs serially
+for that reason.
 """
-import atexit
-import shutil
-import struct
-import subprocess
-import sys
-import tempfile
-
-from pathlib import Path
-
 import pytest
 
-KIT = Path(__file__).resolve().parents[1]
-ORACLE_SO = KIT / "oracle" / "build" / "liboracle.so"
-CANDIDATE_SRC = Path(__file__).with_name("kit_candidate.c")
+from kit_smoke_project import (GIACCESS_ENTRY, GIACCESS_REG, MIXER_REG, PORT_DIR_BITS, RMW_ENTRY,
+                               SILENCED, SILENCE_MASK, bind)
 
-# The miniature project's geometry. image_size must equal os.h's OS_IMAGE_SIZE (harness vets it) and
-# load_base must clear the poked-input block and leave the modeled heap and file-staging regions
-# above the program — the ordinary layout every real project uses.
-LOAD_BASE = 0x10000
-IMAGE_SIZE = 0x100000
-
-# The routine, in the form Wonder Boy's snd_psg_silence has it at $17f36 (TRAP_MODEL.md, Phase 6):
-# select the mixer, read it back, merge the silence mask, write it back. `>H` words, big-endian.
-PSG_SELECT = 0xFF8800
-PSG_DATA = 0xFF8802
-MIXER_REG = 7
-SILENCE_MASK = 0x3F
-PORT_DIR_BITS = 0xC0                  # what the case declares the chip held: port A/B direction
-SILENCED = PORT_DIR_BITS | SILENCE_MASK
-GIACCESS_REG = 14                     # PSG port A — the register Joust's floppy routine drives
-
-_RMW_CODE = (struct.pack(">HHI", 0x13FC, MIXER_REG, PSG_SELECT)      # move.b #7,$ff8800.l
-             + struct.pack(">HI", 0x1239, PSG_SELECT)                # move.b $ff8800.l,d1
-             + struct.pack(">HH", 0x0001, SILENCE_MASK)              # ori.b #$3f,d1
-             + struct.pack(">HI", 0x13C1, PSG_DATA)                  # move.b d1,$ff8802.l
-             + struct.pack(">H", 0x4E75))                            # rts
-
-# ...and a routine that reaches the SAME chip through the other door: XBIOS Giaccess(data, reg),
-# pushed right to left so the shim reads data at caller+2 and reg at caller+4.
-XBIOS_GIACCESS = 0x1C
-_GIACCESS_CODE = (struct.pack(">HH", 0x3F3C, GIACCESS_REG)           # move.w #14,-(sp)   (reg)
-                  + struct.pack(">HH", 0x3F3C, 0)                    # move.w #0,-(sp)    (data)
-                  + struct.pack(">HH", 0x3F3C, XBIOS_GIACCESS)       # move.w #$1c,-(sp)  (fn)
-                  + struct.pack(">H", 0x4E4E)                        # trap #14
-                  + struct.pack(">HH", 0x4FEF, 6)                    # lea 6(sp),sp
-                  + struct.pack(">H", 0x4E75))                       # rts
-
-RMW_ENTRY = LOAD_BASE
-GIACCESS_ENTRY = LOAD_BASE + len(_RMW_CODE)
-
-PRG_MAGIC = 0x601A
-PRG_HEADER = 28
-
-
-def _build_prg(text):
-    """A minimal GEMDOS .PRG carrying `text` and nothing else — no data, no bss, no relocations.
-
-    The relocation table is one zero longword, which `prg_dis.parse_reloc` reads as "no fixups": the
-    routines below are position-independent (absolute hardware addresses only), so there is nothing
-    to relocate and the loader places the text verbatim at load_base.
-    """
-    header = struct.pack(">HIIIIIIH", PRG_MAGIC, len(text), 0, 0, 0, 0, 0, 0)
-    return header + text + struct.pack(">I", 0)
-
-
-def _write_project(root):
-    """Lay out the miniature project: its .PRG, an empty name map, and a project.toml."""
-    (root / "smoke.prg").write_bytes(_build_prg(_RMW_CODE + _GIACCESS_CODE))
-    (root / "names.txt").write_text("")     # harness reads it for diff labels; nothing to name
-    (root / "project.toml").write_text(
-        'name = "kit_psg_smoke"\n'
-        'prg = "smoke.prg"\n'
-        'names = "names.txt"\n'
-        'lib = "libkitsmoke.so"\n'
-        f"load_base = {LOAD_BASE}\n"
-        f"image_size = {IMAGE_SIZE}\n")
-
-
-def _build_candidate(root):
-    """Compile kit_candidate.c + the kit's own src/ into the project's candidate .so.
-
-    Exactly what kit.mk builds for a real project (its SRC sweeps `$(KIT)/src/*.c`), so the ABI this
-    exercises is the ABI a game gets — including the refusal tally and the Dosound ledger the harness
-    requires or probes at import.
-    """
-    sources = sorted((KIT / "src").glob("*.c")) + [CANDIDATE_SRC]
-    subprocess.run(
-        ["cc", "-std=c11", "-O0", "-fPIC", "-shared", f"-I{KIT / 'include'}",
-         *[str(src) for src in sources], "-o", str(root / "libkitsmoke.so")],
-        check=True, capture_output=True, text=True)
-
-
-def _bind():
-    """Build and bind the miniature project, then import the harness against it.
-
-    Module scope on purpose: `project.load` freezes the binding for the whole process, and `harness`
-    derives module-level constants from it at import.
-    """
-    if not ORACLE_SO.exists():
-        pytest.skip(f"{ORACLE_SO} is not built (gitignored) — "
-                    f"run `make -C tools/recreate_kit oracle`", allow_module_level=True)
-    if shutil.which("cc") is None:
-        pytest.skip("no C compiler, so the miniature candidate cannot be built",
-                    allow_module_level=True)
-    root = Path(tempfile.mkdtemp(prefix="kit_psg_smoke_"))
-    atexit.register(shutil.rmtree, root, ignore_errors=True)
-    _write_project(root)
-    try:
-        _build_candidate(root)
-    except subprocess.CalledProcessError as exc:
-        pytest.skip(f"the miniature candidate did not compile: {exc.stderr}",
-                    allow_module_level=True)
-
-    sys.path.insert(0, str(KIT.parent))          # reverse/tools, so `recreate_kit` imports
-    from recreate_kit import project             # noqa: E402
-    project.load(root)
-    # `recreate_kit.harness`, not a bare `import harness`: the kit's own module uses relative
-    # imports, and each project's test/harness.py is the thin shim that re-exports it after binding
-    # (projects/<game>/recreate/test/harness.py). This module IS that shim, for one throwaway
-    # project — so it imports the package module directly rather than growing a second copy.
-    from recreate_kit import harness as kit_harness   # noqa: E402  (importable only once bound)
-    return kit_harness
-
-
-harness = _bind()
-
+harness = bind()
 
 def _rmw(glue_name, psg_seed=None, **kwargs):
     """Run the .PRG's read-modify-write against one of kit_candidate.c's glue functions."""

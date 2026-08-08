@@ -470,8 +470,25 @@ ACIA interrupt lines, which are **active low** and so are set because idle is 1:
 would report both devices as interrupting, a state no quiescent machine is in. Every other bit of
 that byte is a fabricated 0. Because the answer is two named bits rather than a machine model, only a
 **byte** read of either address is served; a 16- or 32-bit read taking one in would have to fabricate
-the neighbouring MFP/shifter registers, so it is counted unmodeled and sinks the run — a refusal that
-exists only while the mode is armed (off it, the same read is an ordinary off-image `0`).
+the neighbouring MFP/shifter registers, so it is recorded rather than served and sinks the run.
+
+> **Superseded in two ways by Phase 7, and read that section for the current rule.** Since Phase 7
+> these two addresses are a *seeded model of their own*, and this mode no longer answers them with a
+> switch of its own — it **installs a seed** over that model, per run (`hw_enter_run`). Two claims
+> this paragraph used to make are therefore no longer true:
+>
+> * the wide-read refusal is **not** "armed only under capture". The wide-read mask
+>   (`osh_hw_wide()`) is recorded on **every** run, and `harness.differential` refuses on it in every
+>   differential. What is still capture-only is where `emu.run` *raises* on it — an extractor has no
+>   diff to catch it and no second chance;
+> * these bytes are **not** fabricated-only-under-capture. Off the mode a case declares them with
+>   `hw_seed=`, and a differential whose oracle reads one undeclared is refused.
+>
+> **The hazard this note exists to prevent**, spelled out because it is the plausible next edit:
+> re-gating `shim.c`'s `hw_note_wide_read()` on `g_audio_capture` to make it agree with the sentence
+> above. That would restore the paragraph and silently reopen the hole — off the mode, a
+> `move.w $ff820a,d1` in a differential would be an unrecorded, unrefused fabrication of the register
+> beside it. Correct the *prose* against Phase 7, never the code against this prose.
 
 This does **not** narrow the guard, because it does not apply to a differential — and that is
 enforced, not merely stated: `harness.differential()` vets `emu.audio_capture_on()` and refuses
@@ -827,6 +844,276 @@ recorded where a BuggyBoy session will meet it, in
 [`projects/buggyboy/recreate/README.md`](../../projects/buggyboy/recreate/README.md)'s "Harness gaps"
 section.
 
+## Phase 7 — the SEEDED HARDWARE READ MODEL (a named set of I/O bytes)
+
+Phase 6 established the distinction this phase extends: **a seed is a declared case input, not a
+fabrication.** There it was the YM2149's register contents. Here it is a small named set of hardware
+BYTES outside the chip — `$fffa01` (the MFP GPIP) and `$ff820a` (the shifter's sync mode) — served
+from a file the case declares, recorded in an ordered ledger both sides keep, and refused when
+nothing declared them.
+
+### The defect it is built on, which shipped
+
+Every other off-image read answers `0`, identically on both sides, so the differential agrees with
+itself on whatever that `0` implies. For a value that is merely *stored*, that is incompleteness. For
+a value that **steers a branch**, it is a green run whose behaviour is wrong on the machine — and
+this workspace has shipped one. `projects/wonderboy/recreate/PORTABILITY.md` records the pattern
+verbatim, in the game's own code at `$17c74`:
+
+```
+$17c7e  btst.b #7,$fffa01     ; MFP GPIP bit 7 = monochrome-monitor detect
+$17c86  bne.s  $17c90
+$17c88  move.b #$48,2274(a3)  ; -> tempo := $48   (the MONO branch)
+$17c90  btst.b #1,$ff820a     ; the 50/60 Hz sync register — BuggyBoy's exact register
+$17c98  bne.s  $17ca0
+$17c9a  move.b #$2b,2274(a3)  ; -> tempo := $2b
+```
+
+Both bytes read `0`, so bit 7 clear says *monochrome* and bit 1 clear says *60 Hz*: the mono branch
+is taken unconditionally, and both sides store `$48`. **This is the `$ffff820a` defect that was
+invisible to BuggyBoy's entire differential and only surfaced on real hardware** (see the memory note
+"BuggyBoy real-hardware TOS gotcha": a hardware READ the oracle answers `0` for is invisible to the
+whole differential, by construction). It is present in Wonder Boy before a line is ported.
+
+> **So the byte a branch reads is an INPUT of the run, not a consequence of it** — the same governing
+> rule as Phase 6's register contents and as a poked keystroke: the harness supplies it identically
+> to both sides, or the model refuses to run.
+
+### Modeled
+
+**A file of bytes, one per modeled address**, plus a `known` mask saying which of them the case
+declared. `include/os.h` owns the set — `OS_HW_MFP_GPIP`, `OS_HW_SHIFTER_SYNC`, their slot numbers
+and `os_hw_slot()` — because both sides decode it: `shim.c` from a bus address, `src/hw.c` from the
+constant a reconstruction spells. Four rules:
+
+* **a byte read of a modeled address, declared** → the declared byte, plus a `READ` entry in the
+  ordered ledger. `harness.differential` compares that stream against the candidate's;
+* **a byte read of a modeled address, UNDECLARED** → served `0` — exactly what it was served before
+  this phase existed — recorded in `osh_hw_unseeded()`, and **still ledgered**, since a read that
+  happened is a fact both sides must report the same way. The *refusal* is a differential's, not
+  `emu.run`'s; the next section is entirely about that;
+* **a 16/32-bit read taking a modeled address in** → recorded (`osh_hw_wide()`), never served. A
+  wider read also takes in the neighbouring MFP/shifter registers, which the model would have to
+  fabricate as `0` — the same false green one address over. The overlap test is a span test
+  (`os_hw_slots_touched()`, in `os.h` beside the table so the whole decode has one home), so a long
+  read straddling *into* the byte from below is caught too. It is a slot MASK, like the two above
+  and for their reason: the refusal has to name the address, not the whole set;
+* **a WRITE to a modeled address** → **dropped**, exactly as every other hardware write off the PSG
+  ports is dropped. Phase 7 models what these addresses *answer*, not what storing to them does, so
+  there is nothing for a reconstruction to mirror and `hw.h` has no `hw_write8()`. What *is* recorded
+  is that the write happened, because a later READ of the same address is then served the byte the
+  case declared the machine held **on entry** while an instruction of this very run has replaced it.
+  That combination — `osh_hw_stale()` — is refused, with its own message, because no declaration can
+  fix it. This is a live case, not a hypothetical: Wonder Boy writes `move.b #2,$ff820a` at `$f91c`
+  and reads bit 1 of the same address at `$17c90`, so any whole-frame run covers both.
+
+**The seed is the case's, and it is per-run.** `emu.run(..., hw_seed={0xfffa01: 0xb0})` /
+`harness.differential(..., hw_seed=…)` install it before **every** run — an empty one included, so a
+seed cannot leak from the previous case — and the file is rebuilt from it at the top of each
+`osh_run` *and* each `osh_run_bench` (both go through `enter_from_reset`). Declaring an address
+outside the modeled set is a `ValueError` rather than a silent no-op: a case that seeds `$ff8609`
+would otherwise install nothing, read a fabricated `0`, and pass while testing the read it meant to
+declare not at all.
+
+### The divergence from Phase 6: the refusal fires in `differential()`, not in `emu.run`
+
+Phase 6's model is **always on**: an undeclared PSG read sinks the run inside `emu.run`, for every
+caller. Phase 7's does not. An undeclared hardware read is *served and recorded*, and only
+`harness.differential` refuses. **This is deliberate, and it is the one asymmetry between the two
+phases.** Two reasons:
+
+* **a bare `emu.run` is not a verification.** It is how this workspace drives a game's relocator, its
+  Copylock and its bootstrap (`projects/wonderboy/recreate/test/test_copylock.py`,
+  `test_bootstrap.py`) — code whose hardware reads are nobody's enumerated list, and which no
+  reconstruction is being compared against. An always-on refusal would sink those runs to close a
+  false green they cannot have: nothing is being verified, so nothing can be falsely verified.
+  Zero regression for them was a requirement of this phase, not a hope;
+* **a false green needs something being verified.** That is exactly what a differential is: the
+  candidate and the oracle agreeing on a branch that a fabricated `0` chose for both of them. The
+  refusal is placed precisely where that can happen, and nowhere else.
+
+The split has a second consequence worth stating: the **wide-read** mask is recorded on every run
+but raised on in two different places — under audio capture by `emu.run` (an extractor has no diff to
+catch it and no second chance), and in a differential by `_vet_hw_reads_are_declared`. Off both, it
+stays the ordinary off-image `0` a bare run has always been given.
+
+One thing the split does **not** cover, and deliberately: the read ledger's own **truncation**.
+`osh_hw_dropped()` is a cause in `emu.run` for *every* caller, exactly like the PSG ledger's, because
+that is not a question of a fabricated byte — it is `hw_events()` reporting a truncated stream as a
+complete one, and a bare-run reader has no diff to notice. It is reachable: a poll loop on `$fffa01`
+does 4,096 reads in a few thousand instructions.
+
+**The three refusals are tested narrowest first** — stale, then wide, then undeclared. One read can
+set two masks at once (a read of an address the run wrote *and* never declared sets both), and
+reporting that one as "declare it" sends the reader to add a `hw_seed` and hit the un-seedable
+refusal on the next run. That ordering is a case, not a comment.
+
+### The audio-capture mode is now a SEED over this model
+
+The mode used to answer these two addresses from a `switch` of its own in `m68k_read_memory_8`. It no
+longer has one: `hw_enter_run()` installs the **capture profile** — a 50 Hz colour ST, GPIP bit 7 set
+with the two active-low interrupt lines idle, sync bit 1 set — through the same code path that
+installs a case's seed. So "what the mode serves" is by construction "what a case declaring those
+bytes serves", and the two cannot drift.
+
+Three properties follow, and each is a case in `test/test_hw_model.py`:
+
+* the profile is installed **per run**, not at arming — so disarming the mode is enough: the very
+  next run is back on the case's own declaration, with no reset call, and the profile cannot leak
+  into a differential;
+* while armed, the profile **wins** over a case's declaration — which is why `emu.run` refuses a
+  `hw_seed` passed under the mode outright rather than installing one that would be silently ignored;
+* `harness.differential`'s veto on the mode (`_vet_audio_capture_off`) is **unchanged and still
+  load-bearing**: under the mode a green would mean the reconstruction agrees with `shim.c`'s
+  declared machine, not with the game's.
+
+The fold is inert with respect to the extraction it exists for: re-running
+`projects/wonderboy/tools/extract_audio.py` after it produces all 87 files (17 songs + 26 SFX, `.ym`
+and `.wav`, plus the manifest) **byte-identical** to the committed `out/audio`.
+
+### The candidate side
+
+`include/hw.h` + `src/hw.c` — linked into every candidate by `kit.mk`, exactly like `psg.h` and the
+refusal tally:
+
+```c
+uint8_t hw_read8(uint32_t addr);   /* addr is an os.h OS_HW_* constant */
+```
+
+A read of a declared address is served and ledgered. An **undeclared** one, or an address outside the
+modeled set, tallies through the existing **`os_refused()`** — not a new counter — so
+`harness.differential`'s unconditional `_vet_no_os_refusal` already throws the case away. That closes
+the refusal on **both** sides, which is the property "Refusing on ONE side is a false green" exists
+to state.
+
+One asymmetry inside the candidate, deliberate: an *undeclared modeled* address is logged (the oracle
+logs its own, so a stream missing it would diverge for the wrong reason), while an address **outside
+the set** is not (the oracle records nothing for it either).
+
+There is no masking to the 24-bit bus on this side. The oracle masks because it decodes a real 68000
+access; a reconstruction spells the address itself, and `0xfffffa01` reaching `hw_read8` is a mistake
+worth a refusal rather than a silent equivalence.
+
+### The edge semantics: what is modeled, what is refused, what is not modeled
+
+| the access | answer | why |
+| --- | --- | --- |
+| byte read of `$fffa01`/`$ff820a`, **declared** | the declared byte; log a `READ` entry | the byte is the case's input, exactly as a PSG register's contents are |
+| byte read of `$fffa01`/`$ff820a`, **undeclared** | `0`, recorded in `osh_hw_unseeded()`, still logged | served so a bare `emu.run` is unchanged; recorded so `harness.differential` can refuse. See the divergence above |
+| byte read after **this run wrote** the address | `0`/the declared byte, recorded in `osh_hw_stale()` | the model drops hardware writes, so the seed describes a machine the program has already changed. Refused in a differential; **not seedable** |
+| 16/32-bit read taking one in | **REFUSED** in a differential (`osh_hw_wide()`, naming the address); under capture `emu.run` sinks the run | the neighbouring MFP/shifter registers would have to be fabricated as `0` |
+| **write** to `$fffa01`/`$ff820a` | dropped, noted | a hardware write has always been invisible; making it visible would mean every already-ported reconstruction that writes the address had to mirror it, for a value nothing reads back |
+| any **other** hardware address, read or write | unchanged: `0` / dropped, silently | the model is a NAMED SET. Serving an address nobody declared would be the fabrication over again under a new name |
+| the rest of the GPIP byte (parallel busy, ring indicator, the STE DMA line) | **whatever the case declares** | the model serves a byte, not a machine. A case declaring `$b0` is declaring those bits `0`; the two bits games branch on are the reason the address is in the set at all |
+
+### The explicit NON-GOAL: the FDC/DMA registers (`$ff8604`+)
+
+They are **not** in the modeled set and Phase 7 does not put them there. The reason is structural
+rather than a matter of effort: an FDC status byte answers a **per-access SEQUENCE**, not a per-run
+constant. `fdc_wait_irq` (`$62da`) polls `$fffa01` bit 5 *until it changes*; `fdc_wait_irq_bounded`
+polls the DMA address counter at `$ff8609`/`$860b`/`$860d` *until it advances*. A seed declares one
+byte for the whole run, so declaring a status register either terminates the loop immediately (which
+is what a `0` already does) or hangs it forever. Modeling those needs a *transaction* model — what
+the drive is doing between accesses — which is a different thing from this one, and it should arrive
+with the evidence for what the sequence really is.
+
+Note the consequence for `$fffa01`, since it is in the set: a case *may* declare it with bit 5 set,
+and an FDC wait loop given that will spin until `max_insns`. That failure is loud (`emu.run` raises
+"did not reach rts"), not silent, so the address earns its place for the bit-7 branch it was added
+for.
+
+### The honest limit
+
+**What this pins is "given byte X, both cores agree", not "a real ST serves X".** The declaration is
+the case's claim about the machine, and the model's whole contribution is to make that claim
+*explicit and shared* instead of implicit and fabricated. A case that declares `$fffa01 = 0xb0` has
+stated "a 50 Hz colour ST"; whether the machine the game shipped on was one is a documented claim
+about hardware, not a differential result.
+
+That is the same standing arrangement BuggyBoy's remaster runs under — its colour engine and its
+50/60 Hz music branch are pinned by the differential *given* the machine's answers, and the answers
+themselves are documented facts re-checked on real hardware. Phase 7 does not close that gap; it
+moves the fabrication out of `shim.c` and into a place a reader can see, argue with, and correct.
+Before it, the wrong branch was taken silently on both sides. After it, a case that does not say
+which machine it means is **refused**, and one that says the wrong thing is wrong *in writing*.
+
+### What is pinned, and what is not
+
+**The model** is pinned kit-side by [`test/test_hw_model.py`](test/test_hw_model.py) and its
+`hw_model_probe.c`, which drives **both** implementations in one process (69 cases, as pytest
+collects them): a declared read
+served and ledgered; a declaration not consumed by one run and not surviving one either; an
+undeclared read served `0` **and recorded** on both sides; declaring one address not declaring the
+other; two reads compared **in order**; the three wide-read shapes recorded by SLOT and unledgered;
+the write-then-read case recorded separately from a missing declaration, and a write nothing reads
+back left alone; the bench starting from the case's declaration with its own empty ledger; the
+capture fold measured against `osh_hw_capture_profile()` rather than against restated constants, plus
+its override and its non-survival. Every wide-read case uses an address a 68000 can really execute a
+word/long read at — the kit builds Musashi with `M68K_EMULATE_ADDRESS_ERROR` off, so a case planted
+at an odd address would stop measuring the refusal the day that moved. And the negative controls,
+each caught while touching no image byte:
+
+* a candidate that **reads the wrong modeled address**, declared to the same byte — its value, its
+  declared file and its (empty) image effect are a correct run's exactly;
+* a candidate that **never reads and hardcodes the answer**, which is what a port written against a
+  fabricated `0` looks like once the byte is declared;
+* a candidate that **serves an address outside the set**, which must refuse *and* stay out of the
+  ledger.
+
+**The plumbing** is pinned by [`test/test_hw_differential.py`](test/test_hw_differential.py) (17
+cases), through the shared miniature project in `test/kit_smoke_project.py` — whose `.PRG` holds the
+tempo selector's two reads as real 68000 code: the green case; the undeclared refusal naming both
+addresses and the `hw_seed=` to add; **the same run through `emu.run` served rather than refused**,
+which is the divergence stated as a case so a "fix" cannot regress the probe suites; `_vet_hw_state`
+and `_seed_candidate_hw` each stubbed out via `monkeypatch` and shown load-bearing (with the
+comparison gone, the wrong-order mutant passes the entire differential clean); the declared-byte
+comparison shown to catch what the read stream cannot — a candidate handed a *different declaration*
+from the oracle's (through the REAL `_seed_candidate_hw`, captured before the patch, so the control
+cannot drift from the plumbing), whose streams still match entry for entry; the missing-ABI arm
+refusing **by name**; the stale and wide refusals, each naming its address, and stale winning over
+undeclared when one read is both; a declaration the run never reads left alone; a case touching the
+model not at all left green; the smoke `.PRG`'s address literals pinned equal to `emu.HW_ADDRS`; and
+both guards around the capture fold.
+
+Two properties of the *diagnostics* are cases rather than conventions, because a remedy string is
+this phase's whole surface for the reader. The stale refusal renders the case's seed as a reader
+would type it (`{0xfffa01: 0xb0}`, not Python's decimal `{16775681: 176}`) and prescribes rather than
+contradicts when there is no seed at all; and a CANDIDATE-side refusal names the hardware address,
+since `os_refused()` is one tally shared by every refusing helper and the bare count sends the reader
+hunting for a missing `Bconstat` gate.
+
+**The suite's own seed is deliberately not the capture profile's bytes.** Seeded with `$b0`/`$02`,
+every green case would stay green if the mode's declaration leaked into a disarmed run; seeded with
+`0`, if the seed were never installed at all. The only two cases that involve the profile read it
+from `emu.hw_capture_profile()` — the same rule `hw_model_probe.c` states for its own
+`DECLARED_BYTE`.
+
+**Mutation sweep — 18/18 caught**, each with the oracle force-relinked (the `.so` removed, never
+merely touched): serve-without-logging; log-without-serving; the seed not reinstalled per run; the
+capture profile diverging from the fold, and its known-mask widened to every slot; the undeclared,
+stale, wide and write masks each dropped; the span test off by one; the refusals reordered so
+"declare it" wins over the un-seedable one; the declared-byte comparison deleted; the candidate-side
+refusal losing the address it names; a key dropped from a table row; the candidate serving an
+undeclared byte, not resetting its ledger, logging an unmodeled address, and dropping a refused read
+from its ledger.
+
+That last one is why the narrative tests here are a short list. Seven of them re-asserted a table row
+in prose and were deleted, their arguments moved into the row's own comment; the sweep is what says
+the rows still carry the coverage, and it does. What survives pins a relation BETWEEN cases (the two
+sides agreeing; a mutant separated from a correct run; what a capture was served, against the profile
+it installs) or a fact about the SOURCE rather than about a run (the slot numbers against `os.h`, the
+capture profile's known-mask against the bytes it has) — plus one that closes the table's own blind
+spot, since a case may claim a SUBSET of the keys the probe prints and a key claimed by nothing would
+otherwise be measured by nothing.
+
+**Not pinned.** The ledger's **cap** arm has no case, for `OS_PSG_LOG_MAX`'s reason: it needs 4,096
+modeled reads in one run, and nothing that exists does that (an FDC poll loop could, which is why the
+cap is sized like the PSG's rather than like Dosound's). No project passes a `hw_seed` yet — Wonder
+Boy's `$17c74` head is the consumer this was built for, and porting it is the next step, not this
+one. And `tools/hw_portability.py` still prices `$fffa01`/`$ff820a` as **T4 HW_READ**, describing
+them as "served a real byte ONLY under audio capture": that is now stale, and re-pricing it against
+this phase is a registered follow-up rather than part of it.
+
 ## What a candidate must mirror (cross-side ABI)
 
 Everything the model reads or writes in the image is shared by construction — a reconstruction that
@@ -839,6 +1126,7 @@ nothing to mirror by hand. Two things are **not** in the image and must be match
 | XBIOS `Dosound(A0)` list pointers | `shim.c`'s `g_dosound_arg` ledger | export the `g_dosound*` ledger ABI (README.md); `harness.differential` compares them |
 | direct `$ff8800`/`$ff8802` PSG accesses, **reads included** | `shim.c`'s `g_psg_kind`/`g_psg_reg`/`g_psg_val` ledger | emit the same ordered `(kind, reg, val)` stream — call `psg_port_write()` / `psg_port_read()` from `psg.h` (BuggyBoy predates it and emits through `g_REFRESH` out-params instead) |
 | the YM2149's register contents, which a read-back returns | `shim.c`'s `g_psg_file` + its known mask | `psg_port_read()`/`psg_port_write()` keep the same file; `harness.differential` compares it, and the case seeds both sides with `psg_seed=` (Phase 6) |
+| reads of the modeled hardware bytes `$fffa01`/`$ff820a` | `shim.c`'s `g_hw_log_slot`/`g_hw_log_val` ledger + `g_hw_file` | emit the same ordered `(slot, val)` stream — call `hw_read8()` from `hw.h` with an `OS_HW_*` constant; the case declares both sides' bytes with `hw_seed=` (Phase 7) |
 
 `OS_SUPER_TOKEN` is not off-image state but it is still a shared value: a reconstruction of a
 function that calls `Super` must return the same constant, since the program can store it into the

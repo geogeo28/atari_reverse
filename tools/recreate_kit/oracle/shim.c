@@ -189,7 +189,10 @@ static uint32_t g_psg_unmodeled;
  *   - $fffa01 bit 7 (MFP GPIP: the monitor-detect line) and $ff820a bit 1 (the shifter's sync mode).
  *     A replayer picks its tempo from those two. Both read 0 off-image, and 0/0 is the MONOCHROME
  *     profile — so a capture ticked at 50 Hz would run the mono tick-drop rate and render every
- *     song at the wrong tempo, silently. This mode reports the 50 Hz colour ST instead.
+ *     song at the wrong tempo, silently. This mode reports the 50 Hz colour ST instead. Since
+ *     Phase 7 it does that by INSTALLING A SEED over the seeded-hardware model below — the same
+ *     door a case uses — rather than by keeping a switch of its own in the read callback, so the
+ *     mode's answers and a case's travel one code path and cannot diverge (see hw_enter_run).
  *
  * WHY IT IS OPT-IN, AND MUST STAY SO. Every one of those answers is fabricated with respect to the
  * differential: it is the model's invention, not the game's data, so a reconstruction "verified"
@@ -203,26 +206,70 @@ static uint32_t g_psg_unmodeled;
  * because the chip state is shared with the differential's model (see osh_audio_capture). */
 static int     g_audio_capture;
 
-/* The machine profile the mode reports, and the ONLY bits of it that are modeled: a 50 Hz colour ST,
- * the machine these games were written for. Mono would be GPIP bit 7 clear and 60 Hz sync bit 1
- * clear — which is what an unmodeled read's 0 already says, hence the mode.
+/* --- the SEEDED HARDWARE READ model (TRAP_MODEL.md, "Phase 7") -------------------------------
+ * os.h names the modeled set (OS_HW_MFP_GPIP, OS_HW_SHIFTER_SYNC) and says why those two and not
+ * the rest of the I/O map. This is the state behind it, and it is Phase 6's shape exactly: a file
+ * of bytes, a mask saying which of them the CASE DECLARED, a per-run reinstall from the declared
+ * seed, and an ordered ledger of every read the run made — because the byte a `btst #7,$fffa01`
+ * answers steers a branch, so it is an INPUT of the run and the model must not invent it.
+ *
+ * ONE DIVERGENCE FROM PHASE 6, deliberate: an undeclared read is NOT refused here. It is served 0 —
+ * the answer the shim gave before this model existed — and recorded in g_hw_unseeded, and the
+ * refusal fires one level up, in harness.differential. emu.run is what drives a game's relocator,
+ * its Copylock and its bootstrap, whose hardware reads are nobody's enumerated list; refusing there
+ * would sink those runs for a false-green class that only exists where something is being VERIFIED.
+ * TRAP_MODEL.md, "Phase 7", argues it at length. */
+static uint8_t  g_hw_file[OS_HW_NSLOTS];   /* what a byte read of each modeled address answers */
+static uint32_t g_hw_known;                /* bit S = slot S's contents were declared this run */
+static uint8_t  g_hw_seed[OS_HW_NSLOTS];   /* the bytes the case declares each run STARTS from */
+static uint32_t g_hw_seed_known;           /* ...and which slots it declared */
+static uint32_t g_hw_unseeded;             /* slots this run read while UNDECLARED */
+static uint32_t g_hw_written;              /* slots this run WROTE (see hw_note_write) */
+static uint32_t g_hw_stale;                /* ...and then READ: the seed no longer describes them */
+/* Slots taken in by a wide (16/32-bit) read. Only a BYTE read of a modeled address is served; a
+ * wider one takes in neighbouring MFP/shifter registers the model knows nothing about, so answering
+ * it would fabricate them as 0. Recorded rather than served — under audio capture emu.run sinks the
+ * run on it (an extractor has no second chance), and in a differential
+ * harness._vet_hw_reads_are_declared does.
+ *
+ * A MASK, like the two above and for their reason: the refusal has to name the address the case
+ * must do something about, and "you read one of these N wide" is a refusal a reader has to bisect. */
+static uint32_t g_hw_wide;
+/* The ordered READ stream, slot + value per entry, compared against the candidate's (src/hw.c).
+ * Reads only: a WRITE to one of these addresses is dropped, not modeled — see hw_note_write. */
+static uint8_t  g_hw_log_slot[OS_HW_LOG_MAX];
+static uint8_t  g_hw_log_val[OS_HW_LOG_MAX];
+static uint32_t g_hw_log_n;
+static uint32_t g_hw_dropped;              /* reads past the cap: never silently truncated */
+
+/* The machine profile the AUDIO-CAPTURE mode declares, and the ONLY bits of it that are modeled: a
+ * 50 Hz colour ST, the machine these games were written for. Mono would be GPIP bit 7 clear and
+ * 60 Hz sync bit 1 clear — which is what an undeclared read's 0 already says, hence the mode.
  *
  * GPIP bits 4 and 5 are the ACIA (keyboard/MIDI) and FDC/HDC interrupt lines. They are ACTIVE LOW,
  * so IDLE is 1: serving bit 7 alone would report both devices as interrupting, which is a state no
  * quiescent machine is in. Every OTHER bit of the byte is a fabricated 0 (the parallel-port busy and
  * ring-indicator lines, the DMA/blitter line on an STE) — this is a two-bit answer for a tempo
- * selector, not a machine model. */
-#define MFP_GPIP                0xfffa01   /* MFP GPIP (the 68000 aliases $fffffa01 here) */
+ * selector, not a machine model.
+ *
+ * It is a SEED over the model above, not a switch beside it: hw_enter_run installs it exactly where
+ * it installs a case's, so "what the mode serves" and "what a case that declared the same bytes
+ * serves" are the same code answering the same file. osh_hw_capture_profile() exports it so a test
+ * can pin those two against each other instead of against a copy of the constants. */
 #define MFP_GPIP_COLOUR         0x80       /* bit 7 = monitor detect; SET = colour monitor */
 #define MFP_GPIP_IRQ_LINES_IDLE 0x30       /* bits 5/4 = FDC + ACIA interrupts, active low: idle */
-#define SHIFTER_SYNC            0xff820a   /* shifter sync mode (alias of $ffff820a) */
 #define SHIFTER_SYNC_50HZ       0x02       /* bit 1 SET = 50 Hz */
-
-/* A wide (16/32-bit) read that touched a machine-profile byte while the mode was armed. Only a BYTE
- * read of either address is modeled; a wider one takes in neighbouring registers the model knows
- * nothing about, so answering it would fabricate them as 0 — the same false green the mode exists
- * NOT to introduce. Counted rather than served, so emu.run sinks the run loudly. */
-static uint32_t g_audio_profile_unmodeled;
+static const uint8_t g_hw_capture_profile[OS_HW_NSLOTS] = {
+    [OS_HW_SLOT_MFP_GPIP]     = MFP_GPIP_COLOUR | MFP_GPIP_IRQ_LINES_IDLE,
+    [OS_HW_SLOT_SHIFTER_SYNC] = SHIFTER_SYNC_50HZ,
+};
+/* Which slots the profile DECLARES — named one by one rather than "all of them". The array above is
+ * a designated initializer, so a slot added to os.h's table gets a silent 0 here; declaring it too
+ * would mark that fabricated 0 as a real answer, which is the mono-profile failure the mode exists
+ * to close, one address over. Spelled this way, adding a slot leaves it UNDECLARED under capture —
+ * which reads 0 exactly as before and lands in g_hw_unseeded, where it is visible. */
+#define HW_CAPTURE_PROFILE_KNOWN \
+    ((1u << OS_HW_SLOT_MFP_GPIP) | (1u << OS_HW_SLOT_SHIFTER_SYNC))
 
 /* Clear the modeled chip state — where a new capture begins.
  *
@@ -259,7 +306,38 @@ void osh_audio_capture(int on) {
 /* Is the mode armed? The differential must never run under it (every served read is fabricated with
  * respect to one), and harness.differential vets this rather than trusting the caller. */
 int  osh_audio_capture_on(void) { return g_audio_capture; }
-uint32_t       osh_audio_profile_unmodeled(void) { return g_audio_profile_unmodeled; }
+
+/* ---- the seeded-hardware model's ABI (see g_hw_file above; emu.py binds every one) ---- */
+/* Declare the bytes every FOLLOWING run starts from. `known` is a bitmask of the SLOTS `values`
+ * declares (os.h's OS_HW_SLOT_*); a slot outside it stays undeclared, and a read of it is served 0
+ * and recorded in g_hw_unseeded. Stored rather than installed, for osh_psg_seed's reason: a seed set
+ * between runs cannot reach a run already in flight, and two runs given the same seed start
+ * identical whatever ran between them. */
+void osh_hw_seed(const uint8_t *values, uint32_t known) {
+    g_hw_seed_known = known;
+    for (int slot = 0; slot < OS_HW_NSLOTS; slot++)
+        g_hw_seed[slot] = (known & (1u << slot)) ? values[slot] : 0;   /* read only where declared */
+}
+const uint8_t  *osh_hw_file(void)      { return g_hw_file; }
+uint32_t        osh_hw_known(void)     { return g_hw_known; }
+/* Slots this run read while UNDECLARED — a refusal mask, not a count, so harness.differential can
+ * name the addresses a case must seed. NOT raised by emu.run: see g_hw_file's header. */
+uint32_t        osh_hw_unseeded(void)  { return g_hw_unseeded; }
+/* Slots this run WROTE and then READ. The seed declares the byte the chip held ON ENTRY, and the
+ * run's own store has replaced it — so the served byte contradicts an instruction that ran. */
+uint32_t        osh_hw_stale(void)     { return g_hw_stale; }
+/* Slots a wide read took in — a mask, so the refusal names the address rather than the whole set. */
+uint32_t        osh_hw_wide(void)      { return g_hw_wide; }
+uint32_t        osh_hw_count(void)     { return g_hw_log_n; }
+const uint8_t  *osh_hw_log_slots(void) { return g_hw_log_slot; }
+const uint8_t  *osh_hw_log_vals(void)  { return g_hw_log_val; }
+uint32_t        osh_hw_dropped(void)   { return g_hw_dropped; }
+/* The modeled set itself, so Python names the addresses from the .so it actually loaded rather than
+ * from a second copy of os.h's table (osh_psg_nregs's argument). */
+uint32_t        osh_hw_nslots(void)    { return OS_HW_NSLOTS; }
+const uint32_t *osh_hw_addr_table(void) { return os_hw_addrs(); }
+/* The bytes the audio-capture mode declares, by slot — what a test pins the mode against. */
+const uint8_t  *osh_hw_capture_profile(void) { return g_hw_capture_profile; }
 
 /* Declare the register contents every FOLLOWING run starts from — the case's seed, and the only way
  * a register becomes readable before this run writes it. `known` is a bitmask of the registers
@@ -311,13 +389,53 @@ static void psg_note_unmodeled(uint32_t a, uint32_t n) {
     g_psg_unmodeled++;
 }
 
-/* Tally a WIDE read that took in a machine-profile byte while the mode was armed (see
- * g_audio_profile_unmodeled). Off the mode this is a plain off-image read answered 0, unchanged. */
-static void audio_note_wide_profile(uint32_t a, uint32_t n) {
-    if (!g_audio_capture) return;
-    uint32_t lo = a & BUS_ADDR_MASK;
-    if ((lo <= MFP_GPIP && lo + n > MFP_GPIP) || (lo <= SHIFTER_SYNC && lo + n > SHIFTER_SYNC))
-        g_audio_profile_unmodeled++;
+/* Record a WIDE read that took in a modeled hardware byte (see g_hw_wide). Unlike the byte path it
+ * serves nothing: the caller returns its ordinary off-image 0, and the mask is what makes the
+ * fabrication visible to emu.run (under capture) and to harness._vet_hw_reads_are_declared (in a
+ * differential). */
+static void hw_note_wide_read(uint32_t a, uint32_t n) {
+    g_hw_wide |= os_hw_slots_touched(a & BUS_ADDR_MASK, n);   /* the 68000 aliases $fffffa01 here */
+}
+
+/* Note a write of `n` bytes at `a` that landed on a modeled hardware byte.
+ *
+ * The write itself is DROPPED, exactly as every other hardware write off the PSG ports is dropped —
+ * Phase 7 models what these addresses ANSWER, not what storing to them does, and a game's
+ * `move.b #2,$ff820a` has no readable effect this model claims to reproduce. What is recorded is
+ * that it happened, because a later READ of the same address is then served the case's seed — the
+ * byte the chip held on ENTRY — while an instruction of this very run has replaced it. That
+ * combination is refused rather than served (g_hw_stale); a write nothing reads back is the
+ * ordinary invisible hardware write it has always been. */
+static void hw_note_write(uint32_t a, uint32_t n) {
+    g_hw_written |= os_hw_slots_touched(a & BUS_ADDR_MASK, n);
+}
+
+/* Append one read to the ordered ledger. Overflow is counted, never silent: two ledgers that
+ * diverge only past the cap would truncate to the same stream and compare equal. */
+static void hw_log(int slot, uint8_t value) {
+    if (g_hw_log_n >= OS_HW_LOG_MAX) {
+        g_hw_dropped++;
+        return;
+    }
+    g_hw_log_slot[g_hw_log_n] = (uint8_t)slot;
+    g_hw_log_val[g_hw_log_n] = value;
+    g_hw_log_n++;
+}
+
+/* What a BYTE read of a modeled hardware address answers: the byte the case declared.
+ *
+ * An UNDECLARED slot answers 0 — the same 0 every unmodeled off-image read has always answered, so
+ * a run that was green before this model existed is green after it — and is recorded in
+ * g_hw_unseeded so that a differential can refuse it. The read is ledgered EITHER WAY: it happened,
+ * the candidate's side ledgers its own refused read too, and a stream missing it on one side would
+ * diverge for the wrong reason. */
+static unsigned int hw_read(int slot) {
+    unsigned int served = 0;
+    if (g_hw_known & (1u << slot)) served = g_hw_file[slot];
+    else                           g_hw_unseeded |= 1u << slot;
+    if (g_hw_written & (1u << slot)) g_hw_stale |= 1u << slot;
+    hw_log(slot, (uint8_t)served);
+    return served;
 }
 
 /* Append one direct-path event to the ordered ledger. Reads are recorded alongside writes so that
@@ -372,23 +490,21 @@ unsigned int m68k_read_memory_8(unsigned int a) {
     uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff88xx to $ff88xx */
     if (lo == IKBD_STATUS) return IKBD_TX_RDY;
     if (lo == OS_PSG_PORT_SELECT) return psg_read_back();
-    if (g_audio_capture) {                         /* opt-in; see osh_audio_capture above */
-        switch (lo) {
-            case MFP_GPIP:     return MFP_GPIP_COLOUR | MFP_GPIP_IRQ_LINES_IDLE;
-            case SHIFTER_SYNC: return SHIFTER_SYNC_50HZ;
-        }
-    }
+    /* The seeded-hardware model (Phase 7). Ahead of the audio-capture mode, which no longer has a
+     * switch of its own here: it arms this same model with a seed (see hw_enter_run). */
+    int hw_slot = os_hw_slot(lo);
+    if (hw_slot >= 0) return hw_read(hw_slot);
     psg_note_unmodeled(a, 1);
     return 0;                                      /* off-image, like any unmapped address */
 }
 unsigned int m68k_read_memory_16(unsigned int a) {
     if (a + 1 < g_size) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
     psg_note_unmodeled(a, 2);
-    audio_note_wide_profile(a, 2);
+    hw_note_wide_read(a, 2);
     return 0;
 }
 unsigned int m68k_read_memory_32(unsigned int a) {
-    if (a + 3 >= g_size) { psg_note_unmodeled(a, 4); audio_note_wide_profile(a, 4); return 0; }
+    if (a + 3 >= g_size) { psg_note_unmodeled(a, 4); hw_note_wide_read(a, 4); return 0; }
     return (unsigned)(g_mem[a] << 24 | g_mem[a + 1] << 16 | g_mem[a + 2] << 8 | g_mem[a + 3]);
 }
 
@@ -429,13 +545,15 @@ void m68k_write_memory_8(unsigned int a, unsigned int v) {
     }
     if (a < g_size) { g_mem[a] = (uint8_t)v; logw(a); return; }
     psg_note_unmodeled(a, 1);   /* the odd aliases $ff8801/$ff8803, whose decoding is not modeled */
+    hw_note_write(a, 1);        /* dropped like any hardware write, but it makes a seed stale */
 }
 void m68k_write_memory_16(unsigned int a, unsigned int v) {
     if (a + 1 < g_size) { g_mem[a] = (uint8_t)(v >> 8); g_mem[a + 1] = (uint8_t)v; logw(a); logw(a + 1); return; }
     psg_note_unmodeled(a, 2);                      /* only the byte PSG protocol is modeled */
+    hw_note_write(a, 2);
 }
 void m68k_write_memory_32(unsigned int a, unsigned int v) {
-    if (a + 3 >= g_size) { psg_note_unmodeled(a, 4); return; }
+    if (a + 3 >= g_size) { psg_note_unmodeled(a, 4); hw_note_write(a, 4); return; }
     g_mem[a] = (uint8_t)(v >> 24); g_mem[a + 1] = (uint8_t)(v >> 16);
     g_mem[a + 2] = (uint8_t)(v >> 8); g_mem[a + 3] = (uint8_t)v;
     logw(a); logw(a + 1); logw(a + 2); logw(a + 3);
@@ -510,7 +628,33 @@ static void psg_enter_run(void) {
     g_psg_unmodeled = 0;
     g_psg_direct = 0;                 /* ...as are the two the mixed-path guard is built from */
     g_psg_giaccess_calls = 0;
-    g_audio_profile_unmodeled = 0;    /* ...and the audio mode's wide-profile-read tally */
+}
+
+/* Put the modeled HARDWARE BYTES back to this run's declared entry state, and clear the per-run
+ * ledger and tallies. Sibling of psg_enter_run, reached from the same place and for the same reason:
+ * what `btst #7,$fffa01` answers is as much a per-run input as the chip's register contents, so a
+ * run must start from the bytes its OWN case declared and never from the previous run's.
+ *
+ * THE AUDIO-CAPTURE FOLD. Under the mode the installed seed is the 50 Hz colour-ST profile instead
+ * of the case's — one code path, so "what the mode serves" is by construction "what a case that
+ * declared those bytes serves", and the mode cannot drift away from the model it relaxes. It is
+ * installed per RUN rather than at arming, which is what stops it leaking: disarm the mode and the
+ * very next run reinstalls the case's seed, with no reset call required. (emu.run refuses an
+ * explicit hw_seed under the mode for the same reason it refuses a psg_seed: the mode's profile
+ * would silently win.) Unlike the PSG file this one does NOT span runs — a machine's monitor and
+ * sync mode are constants of the capture, not state a tick accumulates. */
+static void hw_enter_run(void) {
+    const uint8_t *seed = g_audio_capture ? g_hw_capture_profile : g_hw_seed;
+    uint32_t known = g_audio_capture ? HW_CAPTURE_PROFILE_KNOWN : g_hw_seed_known;
+    for (int slot = 0; slot < OS_HW_NSLOTS; slot++)
+        g_hw_file[slot] = (known & (1u << slot)) ? seed[slot] : 0;
+    g_hw_known = known;
+    g_hw_unseeded = 0;
+    g_hw_written = 0;
+    g_hw_stale = 0;
+    g_hw_wide = 0;
+    g_hw_log_n = 0;
+    g_hw_dropped = 0;
 }
 
 static void enter_from_reset(void) {
@@ -519,6 +663,7 @@ static void enter_from_reset(void) {
     m68k_pulse_reset();
     m68k_set_reg(M68K_REG_SR, ENTRY_SR);
     psg_enter_run();
+    hw_enter_run();
 }
 
 static uint32_t g_heap;         /* Malloc bump pointer */

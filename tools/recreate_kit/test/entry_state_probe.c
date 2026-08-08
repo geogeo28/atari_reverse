@@ -19,42 +19,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ../oracle/shim.c ships no header — Python binds it by ctypes — so the one entry point this probe
- * uses is declared here. It must match shim.c's definition; a drift is a compile error, since both
- * translation units are linked together by the test's own build. */
-int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
-            const uint32_t *dregs, const uint32_t *aregs,
-            uint32_t sp, uint32_t sentinel, uint32_t stop_pc, uint32_t max_insns,
-            uint32_t *out_regs);
+#include "probe_common.h"   /* the oracle's entry points, the image geometry, plant_word */
 
-/* A 64 KiB image: room for the planted routine, the machine stack, and the vector page osh_run
- * writes its transient trap vectors into. The probe executes no trap, so nothing else is needed. */
-#define PROBE_IMAGE_SIZE 0x10000u
-#define PROBE_ENTRY      0x1000u   /* even, clear of the vector page and of shim.c's magic trap PCs */
-#define PROBE_SP         0x8000u   /* the machine stack, well above the routine */
-#define PROBE_SENTINEL   0x2000u   /* the return address osh_run stops at */
 #define PROBE_MAX_INSNS  8u        /* the routine is two instructions; a run that overruns is a bug */
-
 #define ABCD_D1_D0 0xc101u         /* abcd d1,d0 — the one 68000 op whose result IS the entry X */
-#define OPCODE_RTS 0x4e75u
-
-#define NREGS    8                 /* D0..D7 / A0..A7, as osh_run takes them */
-#define OUT_REGS 15                /* osh_run reports D0..D7 then A0..A6 (shim.c's OSH_OUT_REGS,
-                                    * pinned by reported_regs_probe.c) — the buffer must hold them
-                                    * all even though this probe reads only D0 */
-
-static uint8_t *g_image;
-
-static void plant_word(uint32_t addr, uint16_t opcode) {
-    g_image[addr] = (uint8_t)(opcode >> 8);
-    g_image[addr + 1] = (uint8_t)opcode;
-}
 
 /* Run `abcd d1,d0` once and return the byte it left in d0. */
 static uint32_t abcd_run(uint8_t accumulator, uint8_t addend) {
     memset(g_image, 0, PROBE_IMAGE_SIZE);
     plant_word(PROBE_ENTRY, ABCD_D1_D0);
-    plant_word(PROBE_ENTRY + 2, OPCODE_RTS);
+    plant_rts(PROBE_ENTRY + 2);
 
     uint32_t dregs[NREGS] = {0}, aregs[NREGS] = {0}, out[OUT_REGS] = {0};
     dregs[0] = accumulator;
@@ -68,8 +42,8 @@ static uint32_t abcd_run(uint8_t accumulator, uint8_t addend) {
 }
 
 int main(void) {
-    g_image = calloc(PROBE_IMAGE_SIZE, 1);
-    if (!g_image) return 1;
+    probe_require_out_regs();
+    probe_alloc_image();
 
     /* $00 + $00 is 0 with X clear on entry and 1 with X set, so the first and third runs are the
      * same question asked either side of a run that answers it differently. */

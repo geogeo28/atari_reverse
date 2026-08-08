@@ -16,14 +16,13 @@ also lets the two MUTANT cases below stand in for the reconstruction this suite 
 guard reddens immediately instead of hiding behind an up-to-date-looking `liboracle.so`.
 """
 import re
-import subprocess
 import sys
 
 from pathlib import Path
 
 import pytest
 
-from probe_build import compile_probe
+from probe_build import compile_probe, run_probe
 
 KIT = Path(__file__).resolve().parents[1]
 PROBE_SRC = Path(__file__).with_name("psg_model_probe.c")
@@ -186,16 +185,7 @@ EXPECTED = {
 @pytest.fixture(scope="module")
 def probe(tmp_path_factory):
     """Build and run the probe once; return {case: {"scalars", "ledger", "file"}}."""
-    binary = compile_probe(PROBE_SRC, tmp_path_factory.mktemp("psg_model"), CANDIDATE_SRC)
-    out = subprocess.run([str(binary)], check=True, capture_output=True, text=True).stdout
-    cases = {}
-    for case, key, value in re.findall(r"^K (\S+) (\S+) (\d+)$", out, re.M):
-        cases.setdefault(case, {"scalars": {}, "ledger": [], "file": {}})["scalars"][key] = int(value)
-    for case, _index, kind, reg, value in re.findall(r"^L (\S+) (\d+) (\d+) (\d+) (\d+)$", out, re.M):
-        cases[case]["ledger"].append((int(kind), int(reg), int(value)))
-    for case, reg, value in re.findall(r"^F (\S+) (\d+) (\d+)$", out, re.M):
-        cases[case]["file"][int(reg)] = int(value)
-    return cases
+    return run_probe(compile_probe(PROBE_SRC, tmp_path_factory.mktemp("psg_model"), CANDIDATE_SRC))
 
 
 def test_the_probe_reports_every_case(probe):
