@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 172/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 175/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -38,15 +38,22 @@ tempo head) — and now that HEAD (`snd_music_tick`'s tempo selector, 44 bytes, 
 module's last unported bytes, and the first code in this workspace verified across a DECLARED
 machine rather than a fabricated one) — and the STAGE-TRANSITION HINGE (`stage_load_window` +
 `set_palette` + `snd_play_song`, 374 bytes, batch 26: $f95c runs WHOLE — every stage entry in the
-game now passes through reconstructed code end to end, and the dropped-write tier is named) —
-20,852 bytes in all, 80.7 % of everything
+game now passes through reconstructed code end to end, and the dropped-write tier is named) — and
+the SCENE TIER'S CLOSE (`scene_exit_and_reload` + the exit-action table's two remaining entries,
+172 bytes, batch 27: the four exit tails run from the spending arm through the dispatch and the
+whole reload to the original's `rts`, and the dispatch is on the WRAPPED offset — 32 index values
+reach the eight entries) —
+21,024 bytes in all, 81.4 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0h's 25,826 — see "Batch 22b
 (steps 2–3)" at the end)*.** *(The batch-16 commit's header said 147 — an
 oversight; its own section records 151, and batch 17 corrected the header to 153. Batch 22's edit
 left this leading count at 161 while its own section and parenthetical said 163 — the same
 oversight, found by batch 23's port agent and corrected here. It now carries batch 25's 169.)*
-`make test`: **3546 cases green in what this batch commits** (3483 before batch 26, plus its 63:
-+31 in `test/test_sound.py`, which stands at 557, and +32 in `test/test_stage.py`, which stands at
+`make test`: **3594 cases green in what this batch commits** (3546 before batch 27, plus its 48,
+all in `test/test_scene.py`, which stands at 231; `test/test_stage.py` holds at 112 across a
+refactor).
+`make test` at batch 26: **3546 cases** (3483 before batch 26, plus its 63:
++31 in `test/test_sound.py`, which stands at 557, and +32 in `test/test_stage.py`, which stood at
 112 — two measured trims inside those figures, recorded in the batch-26 section at the end).
 `make test` at batch 25: **3483 cases** (3466 before batch 25, plus its 17,
 all in `test/test_sound.py`, which stood at 526).
@@ -698,6 +705,9 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0xf944` | `set_palette` (`src/stage.c`) | 24 | verified | Batch 26: sixteen words from `palette_table + (row << 5)` to the shifter — and THE DROPPED-WRITE TIER NAMED: the output is off-image, the oracle and the reconstruction both drop it, and no ledger exists, so the case pins the EMPTY write set on both sides, the returned cursor (source + 32) and the oracle's own a1 landing at $ff8260, and says on every surface that the hardware effect is UNTESTED. The sweep proves the hole is real: three survivors (row shift, colour count, unscaled row) are one hole seen three ways, while the un-advanced-cursor mutant IS caught. The kit-scope remedy (a dropped-hardware-write ledger) is registered below |
 | `0x17b3a` | `snd_play_song` | 140 | verified | Batch 26: stub +0 — stops the module FIRST through the +28 stub (the `movem` pair is what carries the song id in d0 across a routine that silences the chip, so a start's PSG traffic is exactly a stop's), reads the 8-byte directory record, arms three channels in one real `dbf` loop, and writes six globals — including the `st` at $17bb8 the old plate omitted: the row accumulator starts SATURATED, so a song's first row steps at once. This is the routine that WRITES the mutable bands batches 23–25 seeded by hand. Cases are the game's own data: all 17 shipped songs, both tail arms, the $fa2e dedup latch both ways |
 | `0xf95c` | `stage_load_window` | 210 | verified | Batch 26: THE HINGE RUNS WHOLE — entered at $f95c, out at its own `rts`, no stop_pc: the raw-tiles flag (`cmpa.l #$1d43e,a6`), the three latches, the followed defaults, the three batch-12 builders, `set_palette` via `9(a0)<<5`, the follow subtraction unless frozen, and the sound tail selected by `8(a0)`'s sign through the $fa2e dedup. Composition asserted through the callees' OWN models (batch-19 style, one `_model_publish` after the review pass): 180 KB of buffers, the published scroll state, the tune latch and the module's write set compared as one. The plate's operands were corrected ($fe1a re-read three times — 4(a0)/9(a0)/8(a0), not a1; $f9d6's dead read; the six real caller sites). The .PRG ships FIVE start records at $1d40c, so both tail arms and two palette rows run on shipped data |
+| `0x101bc` | `scene_exit_action_none` (`src/scene.c`) | 2 | verified | Batch 27: entry 0 of scene_exit_action_table, a bare `rts` — and what BOUNDS the table: its own first four bytes ($4e7533fc, odd and past the image) are the longword an out-of-table dispatch would jsr through, which is why the C refuses on the WRAPPED offset and no C stands in for the escape |
+| `0x101be` | `scene_exit_action_select_a30_table` | 66 | verified | Batch 27: entry 1 — publish actor_table_default, allocate out of THAT table, republish as actor_table_a30, and count into scene_exit_alloc_count ONLY when a slot was found; the record is DISCARDED (a1 never written through), so the counter — one operand site, NO reader — is the allocation's whole lasting effect. The ordering (publish→alloc→republish leaves one longword either way) is pinned by a three-table probe reading it off whether the counter moved; the body self-bounds at $10200 against the first effect stub |
+| `0xdfbe` | `scene_exit_and_reload` | 104 | verified | Batch 27: the exit tail — dispatch through the 8-entry table (ALL ported code: entry 0 the rts, entry 1 above, entries 2..7 batch-1's effect stubs) ON THE WRAPPED OFFSET (`lsl.w #2` wraps in 16 bits, so 32 index values reach the eight entries — the review gate's own find: a raw-index guard refused 24 aliased indices the original dispatches, caught by three per-band alias differentials), clr.b text_box_active right after the dispatch, three pointer loads (a0 := $22090 = bg_map_row_stride — the level map ITSELF, so this caller's header width IS the global stride), clr.w scroll_follow_frozen as the LAST instruction before jsr stage_load_window (this path always hands the hinge an unfrozen scroll), five state clears; the start-table index is REPRODUCED not refused (a data read — driven to $ffff, four bytes below the table); the four exit tails are FULL RUNS with the transfer witnesses kept and the arm/tail disjointness now a CHECKED property |
 | `0x17ca0` | `snd_music_tick_body` | 644 | verified | Batch 24: the tick below its 44-byte tempo head — engine/SFX gate, the drop accumulator over a POKED $17c6e (all three drop values 0/$2b/$48 differentiable without the head), the fade with its NON-LOCAL exit into the ported stop chain, 3× row step, 3× period/volume, the 54/52/52 mixdown arms (A alone carries the abandon `bmi`, B/C alone the `rol.b`), and the PSG output block over psg_seed — ordered ledger + register file compared, the reg-7 RMW's preserved direction bits pinned, outgoing d1 = $2700 stated as the oracle's SR fact; multi-tick sequences are N runs from one declared chip state, NOT a continuous chip timeline (the harness reseeds per run — stated in the driver) |
 
 ### The .RAD depacker
@@ -3335,7 +3345,8 @@ across the two runs, diffed rather than argued.
 `$dbc0` (932 B) + `$de80` (58 B) into a new `src/scene.c` — the catch-all's largest remainder,
 batch 18's nominated next read. **Verified 155, 17,660 bytes, 68.5 %; `make test` 2912 in scope
 (clean tree 2925).** `$dfbe` (`scene_exit_and_reload`) is read, named and NOT ported — three
-independent reasons, below.
+independent reasons, below. *(All three fell in order: stage_load_window in batch 26, $101be read
+in 26 and ported in 27 — $dfbe is RECONSTRUCTED in batch 27 and the four exit tails run whole.)*
 
 **BOTH MODE FLAGS FINALLY SELECT SOMETHING.** `state_flag_a30` hands the routine the scene
 descriptor `record_ptr_10420` names — kind 1 a speech script, kind 2 the SHOP — and
@@ -3410,7 +3421,9 @@ one diff hunk, whole-program figures byte-identical). [`PORTABILITY.md`](PORTABI
 the record. **`scene (dialogue + shop)`: 3 fns / 1,094 B, direct T0 CLEAN, transitive T4,
 runnable 0 — with 2 of 3 reconstructed and green.** No scene function touches hardware; none can
 run WHOLE under the oracle (every one reaches `stage_load_window`'s sound call through the exit
-tails); and the batch-19 boundary convention is exactly what porting does about that gap. The
+tails); and the batch-19 boundary convention is exactly what porting does about that gap. *(Batch
+27: the row's shape inverted — 3 of 3 reconstructed and the tails run WHOLE; the row's re-measure
+rides with the next partition pass.)* The
 catch-all falls to **21 fns / 2,234 B**, its runnable column unmoved — the three departures were
 already in its unrunnable residue. `make test` 2925 before and after; no code changed.
 
@@ -4471,3 +4484,127 @@ NOT PINNED, and REGISTERED:
   literals, and stage_start_table's eight entries are all $217d8..$2181e).
 * **decomp.c is one reapply behind names.txt** (the stage_start_table rename) — the reapply rides
   with the next re-scan, per the two-stage measurement discipline.
+
+### Batch 27: the scene tier closes — $dfbe runs, and its dispatch is on the WRAPPED offset
+
+`scene_exit_and_reload` ($dfbe) was the scene driver's boundary for eight batches: four of $dbc0's
+exits transfer to it, and it ends in `jsr stage_load_window`. Batch 26 made that hinge run whole and
+left exactly ONE blocker — the 66 bytes of entry 1 of its dispatch table. Those 66 bytes are ported
+here, and with them the whole eight-entry table turns out to be reconstructed code, so the dispatch
+needs no refusal beyond its own bound. Three routines, 172 bytes. **Verified 175, 21,024 bytes,
+81.4 %; `make test` 3594** (3546 before the batch, plus 48, all in `test/test_scene.py`, which
+stands at 231; `test/test_stage.py` holds at 112 across a refactor).
+
+| address | name | bytes | what it is |
+| --- | --- | --- | --- |
+| `$101bc` | `scene_exit_action_none` | 2 | entry 0: an `rts`, and what BOUNDS the table |
+| `$101be` | `scene_exit_action_select_a30_table` | 66 | entry 1: publish, allocate, republish, count |
+| `$dfbe` | `scene_exit_and_reload` | 104 | the exit tail, entered at $dfbe and left at its own `rts` |
+
+**THE TABLE IS ALL PORTED CODE, which is why there is no boundary.** Entries 2..7 are effects.h's six
+`set_state_*` stubs (batch 1), entry 0 is the bare `rts` and entry 1 is this batch's 66 bytes. The C
+dispatches through a `static void (*const EXIT_ACTIONS[8])` array whose order test_scene.py compares
+entry by entry against ../names.txt, the same rule EFFECT_HANDLERS follows.
+
+**THE DISPATCH IS ON THE WRAPPED OFFSET, AND THE REVIEW GATE'S OWN FIND IS THE PIN.** `lsl.w #2`
+wraps in 16 bits, so the OFFSET selects the entry, not the index: $4000..$4007, $8000..$8007 and
+$c000..$c007 alias onto entries 0..7, and the original dispatches ported code for all thirty-two
+in-table index values. The batch as first written guarded on the RAW index — refusing 24 indices
+the original dispatches, a reproducible divergence driveable from the disk's own descriptor word —
+and the gate caught it. The fix computes the wrapped offset with the same expression the
+start-index read uses ten lines below, an enumeration case pins the aliasing set over all 65,536
+index values, and three differentials drive one alias per band onto three DIFFERENT entries. The
+re-sweep's most valuable mutant is the gate's own defect — the raw-index guard restored — CAUGHT by
+those three rows.
+
+**TWO INDICES ONE WORD APART, AND THE PORT TREATS THEM DIFFERENTLY ON PURPOSE.** The exit-action
+offset is REFUSED outside the table — the original `jsr`s through a longword outside it
+($101bc's own first four bytes, odd and past the image) and no C stands in for that. The
+START-table index is REPRODUCED, because it is a data read: a case drives $ffff, which lands four
+bytes BELOW the table, and seeds the record it names. docs/m68k-disassembly.md's "table with no
+bound" section now carries BOTH halves — refuse the code dispatch, reproduce the data read — with
+$dfbe's pair as the worked example, so the next porter neither fabricates an arm nor over-refuses
+a load.
+
+**THE ORDERING $101be GETS WRONG-LOOKING, and how a differential sees it at all.** It publishes
+WB_ACTOR_TABLE_DEFAULT, allocates out of THAT table, and republishes the pointer as
+WB_ACTOR_TABLE_A30 — so the table searched is not the one left selected, and the allocated record is
+DISCARDED (a1 is never written through). Both stores leave one longword behind whichever way round
+they run, so no image byte separates them. The battery seeds a free record in exactly ONE of the
+three tables and reads the ordering off whether WB_SCENE_EXIT_ALLOC_COUNT moved. That counter has
+one operand site in the image and NO reader; it is the allocation's only lasting effect.
+
+**THE FOUR EXIT TAILS ARE NOW FULL RUNS**, and what that traded is stated AND ENFORCED. Batch 19's
+convention was a `stop_pc` at $dfbe plus a coverage witness naming the transfer; the witness stays
+and the checkpoint is gone, so each of the four runs the arm, the exit, the dispatched action and
+the whole stage reload to the original's own `rts`. A checkpoint compared the image at the INSTANT
+of the transfer; a full run compares it at the end. Nothing is lost to an overwrite because the
+four arms' write sets are DISJOINT from $dfbe's — and after the review pass that argument is a
+CHECKED PROPERTY: run_frame_to_reload refuses a prefix/tail key overlap by name, so a future arm
+whose write lands in the tail's set fails loudly instead of being silently un-pinned. What IS gone
+is ORDER — an arm that wrote its byte after the tail is now indistinguishable. Batch 22's lesson,
+applied to its own successor and this time bolted down.
+
+**THE COMPOSITION IS THE OWNING BATTERY'S MODEL, not a second one.** test_scene.py imports
+`load_window_pokes` / `model_load_window` from test_stage.py (renamed public and parametrized by
+`map_ptr`/`stride` for this caller), the six stubs' destinations from test_effects.py's
+WORD_SETTERS, and the PSG expectation from test_sound.py. `leaf.assert_written_is` was hoisted out
+of test_stage's `_run_load_window` when this became its second and third caller — and the review
+pass made its `extra` contract coherent: a model∩extra overlap is REFUSED by name, since an address
+belongs to one side or the other.
+
+**AND THE MAP $dfbe PASSES IS WB_MAP_ROW_STRIDE'S OWN ADDRESS.** `lea $22090.l,a0` names the word the
+collision map is addressed from and the word the publish multiplies the start cell by — so for THIS
+caller the level map's header width and the global stride are ONE word, where test_stage.py's cases
+keep them deliberately apart. The seeding layers genuinely overlap, which is why they go through
+`leaf.overlay` with `assert_bands_are_seeded` per layer. THE ORDER OF THOSE LAYERS IS LOAD-BEARING
+AND WAS WRONG ONCE: the scene arm's address-keyed descriptor band buried the two words the tail
+reads, and the run walked into a garbage start record instead of failing. Both descriptor words and
+the start pointer are now re-read OUT OF THE COMPOSED IMAGE and compared against what the case
+declared.
+
+PLATE CORRECTIONS, cited to bytes (../names.txt): $dfbe's two clears are NOT a pair — `clr.b $c031`
+at $dfd8 is the instruction after the dispatch and `clr.w $d76` at $e002 is the LAST before the
+call, so this path always hands the hinge an UNFROZEN scroll; `lea $22090.l,a0` is
+bg_map_row_stride, i.e. the level map itself; record_ptr_10420 is read TWICE ($dfbe and $dfea);
+neither index is bounded, and the dispatch's aliasing set is 32 indices; $1019c's operand site is
+the abs.l longword at $dfcc (the first draft said $dfc8, which holds the `lsl.w` — caught by the
+gate against the file's own convention); and the plate lists all eight targets by name, recording
+that the shipped descriptor bytes are zeros — entry 0 and start entry 0 are the whole of what
+shipped data reaches, a fact about the disk rather than the port.
+
+SWEEP: 24 mutants over five pre-hoc axes (constant / branch / index / dropped store / order), 22
+caught, none uncompilable — re-run in FULL after the review fixes because the C changed. Survivor 1
+is the refusal's own boundary (`off by one on the 32`, which differs only at offsets no differential
+can drive) — NAMED IN THE SUITE as a coverage hole. Survivor 2 is EQUIVALENT: dropping the
+descriptor re-read, unobservable because $10420 has one writer in the whole image. The caps are now
+DERIVED from the entry pins' own instruction tuples (`len()` of the pin IS the count), which closed
+three cap defects the gate found in one move — a 21-vs-24 undercount clearing on a sibling's slack,
+a sentinel double-count (the batch-24 class, recurred), and a comment contradicting its own formula.
+
+**The observable surface this change is caught by**: the image diff (180 KB of buffers, the
+published scroll state, the followed record, the five state words and the counter), the oracle's
+executed-PC coverage (which transfer fired), and the PSG access ledger the reload's song tail
+reaches.
+
+NOT PINNED, and REGISTERED:
+
+* **The refusal's boundary at offset 32** (survivor 1). Unpinnable by any differential; the case
+  that states it says so.
+* **`scene_run_effect` carries the SAME raw-index guard** over WB_EFFECT_HANDLER_TABLE — the latent
+  twin of the defect this batch fixed, pre-existing, deliberately not changed here. REGISTERED as
+  the next gate-class item: the same wrapped-offset fix, the same per-band alias cases.
+* **What the shipped descriptors select.** The table is loaded from disk and the image's own bytes
+  are zeros; entry 0 and start entry 0 are all that shipped data reaches. Every other row is a seed.
+* **The palette every reload sets** — batch 26's dropped-write hole, inherited by eleven more
+  composed runs; strengthens the registered kit-side dropped-hardware-write ledger.
+* **The `start` pointer is unbounded and unguarded** — the same tier-wide bus-guard item batch 26
+  registered for bg_build_buffer's three arguments.
+* **$1ab4**, the one exit left. scene_spend_visit_budget's `jmp $1ab4.w` keeps its stop_pc and its
+  coverage witness.
+
+**QUEUED, registered rather than half-done:** test_scene.py's older `pokes()` still merges by KEY
+(the leaf.overlay consolidation, now four batteries strong); `forward_branch` unused in
+test_stage.py (pre-existing, third consecutive noticing); the scene subsystem row's re-measure
+(3 of 3 reconstructed, runnable no longer 0 — rides with the next partition pass, alongside the
+re-scan the batch-26 rename queued).

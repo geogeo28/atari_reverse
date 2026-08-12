@@ -285,6 +285,16 @@ Two things follow, and the second is the one that gets skipped.
   pattern ends in $87 or $8e, and those counts sum to the pattern count") passes just as
   happily on a walk that missed half the data, because both sides of it shrink together.
   Assert that every retargeting operand lands inside a span the walk covered.
+- **The refuse rule teaches over-refusal unless you say where it stops: the SAME unbounded shape used
+  as a data LOAD must be reproduced, not refused, and the wrapped offset is what you guard on either
+  way.** Wonder Boy's `$dfbe` has both, one word of its record apart — `lsl.w #2` plus a
+  sign-extended `lea` selects an exit-action routine to `jsr` (refuse: no C calls an arbitrary
+  longword) *and* selects a stage-start pointer to read (reproduce: indexing the image with a wild
+  offset is exactly what the 68000 does). Note the trap that makes both cases the same one: the `lsl`
+  is a WORD shift, so an index of `$4002` wraps to offset 8 and dispatches entry 2 like an ordinary
+  call. A guard written on the *index* rather than on the wrapped *offset* silently no-ops for 24
+  values the original dispatches normally — a refusal that fires where the hardware does not is a
+  fabricated arm in the other direction.
 
 ## `addq.l #n,(a7)` — a callee that skips its caller's next call
 

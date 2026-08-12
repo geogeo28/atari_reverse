@@ -1890,13 +1890,21 @@
                                              * 2x2 stamp above tests for its second tile set */
 #define WB_SCENE_VARIANT           4u       /* word: 0 = spawn nothing, else picks the fragment
                                              * type below */
-/* The descriptor's word 18 is which WB_SCENE_EXIT_ACTION_TABLE entry $dfbe calls on the way out.
- * It has no #define: $dfbe is not ported, so nothing here reads it; ../names.txt records it. */
+#define WB_SCENE_EXIT_ACTION       18u      /* word: which WB_SCENE_EXIT_ACTION_TABLE entry $dfbe
+                                             * dispatches on the way out (`move.w 18(a6),d0`) */
+#define WB_SCENE_START_INDEX       28u      /* word: which WB_STAGE_START_TABLE entry $dfbe hands
+                                             * stage_load_window (`move.w 28(a1),d0 / lsl.w #2`) */
 #define WB_SCENE_EXIT_ACTION_TABLE 0x1019cu /* eight longwords, $1019c..$101bb, bounded by the first
                                              * of its own targets ($101bc, a bare `rts`). Entries
-                                             * 2..7 are the six effects.h `set_state_*` stubs;
-                                             * entry 1 ($101be) is a routine nothing has read */
+                                             * 2..7 are the six effects.h `set_state_*` stubs and
+                                             * entry 1 is $101be, src/scene.c's
+                                             * scene_exit_action_select_a30_table */
 #define WB_SCENE_EXIT_ACTION_COUNT 8u
+#define WB_SCENE_EXIT_ALLOC_COUNT  0x21c58u /* word: bumped by entry 1 whenever its allocation found
+                                             * a free slot. It has exactly ONE operand site in the
+                                             * image — the `lea $21c58.l` at $101f8 — so NOTHING
+                                             * ever reads it, and it lies past the program's own end
+                                             * ($218d0), so the .PRG ships no part of it */
 
 /* The message the driver posts is always posted the same way: an id into WB_TEXT_REQUEST and a
  * lifetime into WB_TEXT_LIFETIME_REQUEST. The SPEECH arm posts a lifetime of zero (the box waits

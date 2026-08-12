@@ -454,6 +454,12 @@ def move_w_imm_abs_l(value, addr):
     return MOVE_W_IMM_ABS_L + word(value) + longword(addr)
 
 
+def move_w_imm_abs_w(value, addr):
+    """...and the SHORT form, for a destination below $8000. TWO batteries (test_stage.py's
+    new-game reset, test_scene.py's exit action)."""
+    return opcode(0x31fc) + word(value) + word(addr)
+
+
 def move_w_abs_l_dn(reg, addr):
     return opcode(0x3039 | (reg << 9)) + longword(addr)
 
@@ -670,6 +676,13 @@ def clr_b_abs_l(addr):
 
 def clr_w_abs_l(addr):
     return opcode(0x4279) + longword(addr)
+
+
+def clr_w_abs_w(addr):
+    """...and the SHORT form, which is how the game clears a state word held below $8000 — the
+    $a30/$a32/$a34 band and WB_SCROLL_FOLLOW_FROZEN. TWO batteries (test_stage.py's per-stage reset,
+    test_scene.py's exit tail)."""
+    return opcode(0x4278) + word(addr)
 
 
 def st_abs_l(addr):
@@ -963,6 +976,43 @@ def read_bytes(info, addr, length, what=""):
 def read_int(info, addr, length, what=""):
     """``read_bytes`` as the big-endian number those bytes spell."""
     return int.from_bytes(read_bytes(info, addr, length, what), "big")
+
+
+def assert_written_is(info, model, what, extra=frozenset()):
+    """The run's write set is EXACTLY ``model``'s addresses, and every byte holds ``model``'s value.
+
+    ``model`` is {address: bytes}, the shape a composed battery's model returns. ``extra`` is a set
+    of addresses the case has declared it CHECKS FOR ITSELF — the boss arm's eighteen actor records
+    are the one user — and the rule is that the two are DISJOINT: an address is modelled here or
+    checked there, never both. That is refused by name rather than resolved, because either
+    resolution is wrong. Exempting an address from the actual side alone (which this did) leaves the
+    model still value-checking a byte the case said it owned, and makes an overlap fail the SET
+    comparison with a message about counts that names neither address; exempting it from both sides
+    silently drops a modelled byte nothing then checks.
+
+    The failure names the FIRST byte that differs and the band it belongs to, because a 180 KB model
+    whose report is "they differ" is not usable.
+
+    Hoisted out of test_stage.py's `_run_load_window` when test_scene.py's composed runs became its
+    second and third caller: two copies of a comparison this size could drift on what counts as a
+    match while both batteries stayed green.
+    """
+    written = seeded_bytes(model)
+    overlap = sorted(written & set(extra))
+    assert not overlap, (
+        f"{what}: {len(overlap)} address(es) are both modelled and declared self-checked, e.g. "
+        f"{overlap[0]:#x} — an address belongs to one side or the other")
+    actual = program_writes(info)
+    assert set(actual) - set(extra) == written, (
+        f"{what}: the original wrote {len(actual)} bytes against the model's {len(written)} "
+        f"(+{len(extra)} the case checks itself)")
+    for addr, expected in sorted(model.items()):
+        got = read_bytes(info, addr, len(expected), what)
+        if got != expected:
+            at = next(i for i in range(len(expected)) if got[i] != expected[i])
+            raise AssertionError(
+                f"{what}: {addr + at:#x} is {got[at]:#04x}, not the {expected[at]:#04x} the model "
+                f"gives (band at {addr:#x}, {len(expected)} bytes)")
 
 
 def assert_rows(info, rows, expected, what, skip=()):

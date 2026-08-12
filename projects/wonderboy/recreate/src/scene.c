@@ -21,10 +21,12 @@
  * that is what makes this a shop rather than a mechanism with an open meaning. What each shipped
  * shop SELLS is not pinned — the records live past the image and are loaded from disk.
  *
- * THE BOUNDARY. Four exits transfer to $dfbe and one to $1ab4, both of which end in
- * `jsr stage_load_window`; see scene.h for why that cannot be verified and what these functions
- * return instead. Every `return WB_SCENE_EXIT_*` below is a transfer the original makes and this
- * file declines to follow.
+ * THE ONE BOUNDARY LEFT. Four exits transfer to $dfbe and one to $1ab4. $dfbe is reconstructed here
+ * (batch 27) and runs — its dispatch table's eight entries are all ported code and
+ * `stage_load_window` below it has run whole since batch 26 — so those four arms follow their tail
+ * to the end. $1ab4 is not reconstructed and `WB_SCENE_EXIT_STAGE_RESET` is still a transfer this
+ * file declines to follow; see scene.h. Every `return WB_SCENE_EXIT_*` below names which exit the
+ * original took, whether or not this file followed it.
  */
 #include "machine.h"
 #include "scene.h"
@@ -34,6 +36,7 @@
 #include "hud.h"
 #include "input.h"
 #include "map.h"
+#include "stage.h"          /* $dfbe's tail IS stage_load_window */
 
 /* $ddf2..$ddfe and $de68..$de74 — the table is read out of the IMAGE and the call goes to the C.
  * The order matches WB_EFFECT_HANDLER_TABLE's own longwords, which test/test_scene.py compares
@@ -87,6 +90,128 @@ static void scene_bump_word(uint8_t *image, uint32_t addr) {
     wr16(image + addr, (uint16_t)(be16(image + addr) + 1));
 }
 
+
+/* --- $101bc, $101be and $dfbe: leaving the scene ----------------------------------------------- */
+
+/* Both of $dfbe's tables hold longwords, and both are indexed with the SAME `lsl.w #2`. */
+#define SCENE_TABLE_ENTRY_BYTES  4u
+
+/* $101bc — entry 0 of WB_SCENE_EXIT_ACTION_TABLE: an `rts` and nothing else, the exit action that
+ * does nothing. It also BOUNDS the table — being the first of its own targets is what says the
+ * table is eight entries and not nine. */
+void scene_exit_action_none(uint8_t *image) {
+    (void)image;
+}
+
+/* `move.w #$1ff,$bbc6.l` — the same word effect_set_bbc6_01ff ($10390) writes, and spelt here as
+ * its own immediate because that is what the instruction is: the value in the high byte over the
+ * "changed" byte that makes the panel's redraw scanner pick the slot up (effects.h). */
+#define SCENE_EXIT_SLOT_BBC6  ((uint16_t)((1u << 8) | WB_HUD_SLOT_CHANGED))
+
+/* $101be — entry 1, and the reason $dfbe could not be ported before batch 27.
+ *
+ * THE ALLOCATION'S RECORD IS DISCARDED. `jsr $1b68.w` leaves the first free record of slots 3..11 in
+ * a1 and the routine never writes through it: all that survives is WB_SCENE_EXIT_ALLOC_COUNT, a word
+ * with one operand site in the whole image and therefore NO READER. So the allocation is run for a
+ * counter nothing counts.
+ *
+ * THE PUBLISH/ALLOCATE/REPUBLISH ORDER IS LOAD-BEARING and is the whole of what this routine gets
+ * wrong-looking. WB_ACTOR_TABLE_SELECTED is set to WB_ACTOR_TABLE_DEFAULT, the allocator scans THAT
+ * table (it reads the published pointer out of memory), and the pointer is then immediately
+ * overwritten with WB_ACTOR_TABLE_A30 — so the table the search ran against is NOT the one left
+ * selected. Reordering the two stores would leave the same longword behind and search a different
+ * table, which is exactly why the two writes and the call are three statements here.
+ *
+ * The `clr.b` is a BYTE at WB_EFFECT_RECORD_LIST's first address, which the record list's own plate
+ * reads as the 0..4 attack level rather than as the list — so it clears that counter and leaves the
+ * first record's second byte alone. */
+void scene_exit_action_select_a30_table(uint8_t *image) {
+    wr16(image + WB_HUD_SLOT_BBC6, SCENE_EXIT_SLOT_BBC6);
+    wr16(image + WB_EFFECT_STATE_21E4, 1);
+    image[WB_EFFECT_RECORD_LIST] = 0;
+
+    wr32(image + WB_ACTOR_TABLE_SELECTED, WB_ACTOR_TABLE_DEFAULT);
+    uint32_t slot = actor_alloc_slot_low(image);
+    wr32(image + WB_ACTOR_TABLE_SELECTED, WB_ACTOR_TABLE_A30);
+
+    if (slot != WB_ACTOR_ALLOC_NONE)
+        scene_bump_word(image, WB_SCENE_EXIT_ALLOC_COUNT);
+}
+
+/* The eight longwords at WB_SCENE_EXIT_ACTION_TABLE, in the order the image holds them. Entries 2..7
+ * are effects.h's `set_state_*` stubs, so every target is reconstructed and the dispatch below has
+ * no boundary; test/test_scene.py compares this array entry by entry against ../names.txt's
+ * addresses, so a handler out of place here fails there rather than silently running the wrong one.
+ */
+static void (*const EXIT_ACTIONS[WB_SCENE_EXIT_ACTION_COUNT])(uint8_t *image) = {
+    scene_exit_action_none, scene_exit_action_select_a30_table,
+    set_state_bbc8_1ff, set_state_bbc8_2ff, set_state_bbc8_3ff, set_state_bbc8_4ff,
+    set_state_bbc8_6ff, set_state_6f9c_ffff,
+};
+
+/* THE INDEX IS NOT THE ENTRY, and the difference is 24 more indices than it looks.
+ *
+ * `move.w 18(a6),d0 / lsl.w #2 / lea 0(a6,d0.w),a6` scales the index by a WORD shift — which wraps
+ * inside 16 bits — and then adds it SIGN-EXTENDED. So what selects the entry is the OFFSET, not the
+ * index, and every index whose offset wraps back under the table's 32 bytes dispatches an ordinary
+ * entry: $4000..$4007, $8000..$8007 and $c000..$c007 alias onto entries 0..7 exactly as 0..7 do.
+ * A guard on the raw index would silently do nothing for all 24 of them while the original ran
+ * ported code, so the offset is computed here the same way the start-table read below computes its
+ * own, and only an offset that genuinely LEAVES the table is refused.
+ *
+ * What is refused, then, is a `jsr` through a longword outside the table, which no C can stand in
+ * for — the refusal src/blit.c's sprite_dispatch makes for a width code past its four entries. The
+ * start-table index below is NOT refused, and that contrast is the point: that one is a data READ,
+ * which this file reproduces exactly however far outside the table it lands.
+ *
+ * scene_run_effect above has the same latent shape over WB_EFFECT_HANDLER_TABLE and still guards on
+ * its raw index; ../STATUS.md registers it rather than this batch changing that tier. */
+static void scene_run_exit_action(uint8_t *image, uint16_t index) {
+    /* Unsigned, so a sign-extended NEGATIVE offset is huge here and fails the same bound. */
+    uint32_t offset = sign_ext16((uint16_t)(index * SCENE_TABLE_ENTRY_BYTES));
+
+    if (offset >= WB_SCENE_EXIT_ACTION_COUNT * SCENE_TABLE_ENTRY_BYTES)
+        return;
+    EXIT_ACTIONS[offset / SCENE_TABLE_ENTRY_BYTES](image);
+}
+
+void scene_exit_and_reload(uint8_t *image) {
+    uint32_t descriptor = be32(image + WB_RECORD_PTR_10420);
+    uint32_t start;
+
+    scene_run_exit_action(image, be16(image + addr_add(descriptor, WB_SCENE_EXIT_ACTION)));
+    image[WB_TEXT_BOX_ACTIVE] = 0;
+
+    /* The descriptor pointer is RE-READ ($dfea) rather than kept in a6, which the action just
+     * dispatched to was free to clobber — so an action that moved WB_RECORD_PTR_10420 would change
+     * which start record this picks. Nothing bounds the index: `lsl.w #2` wraps inside the word and
+     * `lea 0(a1,d0.w),a1` sign-extends it, so an index outside the eight entries reads a longword
+     * on either side of the table and hands stage_load_window whatever it finds. */
+    descriptor = be32(image + WB_RECORD_PTR_10420);
+    uint16_t start_index = be16(image + addr_add(descriptor, WB_SCENE_START_INDEX));
+    start = be32(image + addr_add(WB_STAGE_START_TABLE,
+                                  sign_ext16((uint16_t)(start_index * SCENE_TABLE_ENTRY_BYTES))));
+
+    /* Cleared LAST, one instruction before the call — so this path always hands the hinge an
+     * unfrozen scroll and its WB_SCROLL_FOLLOW_X/_Y arm always runs, whatever raised the flag. */
+    wr16(image + WB_SCROLL_FOLLOW_FROZEN, 0);
+    stage_load_window(image, WB_MAP_ROW_STRIDE, start, WB_TILE_BITMAPS);
+
+    wr16(image + WB_STATE_FLAG_A34, 0);
+    wr16(image + WB_PANEL_FRAME_HOLD, 0);
+    wr16(image + WB_STATE_FLAG_A30, 0);
+    wr16(image + WB_STATE_FLAG_A32, 0);
+    wr16(image + WB_SCENE_MESSAGE_PENDING, 0);
+}
+
+/* The four transfers into $dfbe — three branches and one `bsr` + `rts`, all of which leave
+ * scene_run_frame through that routine's own `rts`. The C calls it and still reports WHICH exit it
+ * took, because that is what a case names its expectation with. */
+static uint32_t scene_reload_and_report(uint8_t *image) {
+    scene_exit_and_reload(image);
+    return WB_SCENE_EXIT_RELOAD;
+}
+
 /* $de80. `sub.w d0,32(a1) / bmi` — a WORD subtract, so the borrow is the SIGN of the result and a
  * budget that wraps past $8000 closes the visit exactly as an honestly exhausted one does.
  *
@@ -129,7 +254,7 @@ static uint32_t scene_run_speech(uint8_t *image) {
 
     cursor = be32(image + WB_SPEECH_SCRIPT_CURSOR);
     if ((int8_t)image[cursor] < 0)
-        return WB_SCENE_EXIT_RELOAD;
+        return scene_reload_and_report(image);
 
     scene_post_message(image, image[cursor], WB_SPEECH_LIFETIME);
     wr32(image + WB_SPEECH_SCRIPT_CURSOR, addr_add(cursor, 1));
@@ -237,11 +362,11 @@ static uint32_t scene_run_shop(uint8_t *image) {
             return WB_SCENE_EXIT_RETURN;
         record = be32(image + WB_SHOP_RECORD_PTR);
         if (be16(image + addr_add(record, WB_SHOP_LEAVE_CHARGED)) == 0)
-            return WB_SCENE_EXIT_RELOAD;
+            return scene_reload_and_report(image);
         /* The spend's own tail wins where it has one: `bsr $de80` returns here only when the budget
          * held, and the `bra $dfbe` below it is what the leave itself is. */
         spent = scene_spend_visit_budget(image, record, WB_SHOP_MESSAGE_COST);
-        return spent == WB_SCENE_EXIT_RETURN ? WB_SCENE_EXIT_RELOAD : spent;
+        return spent == WB_SCENE_EXIT_RETURN ? scene_reload_and_report(image) : spent;
     }
 
     if (be16(image + WB_SCENE_ACK_WAIT) != 0) {
@@ -348,7 +473,7 @@ static uint32_t scene_run_boss_defeat(uint8_t *image) {
     if (!leaving && be16(image + WB_SCENE_EXIT_REQUEST) == 0)
         return WB_SCENE_EXIT_RETURN;
     wr16(image + WB_SCENE_EXIT_REQUEST, 0);
-    return WB_SCENE_EXIT_RELOAD;
+    return scene_reload_and_report(image);
 }
 
 uint32_t scene_run_frame(uint8_t *image) {

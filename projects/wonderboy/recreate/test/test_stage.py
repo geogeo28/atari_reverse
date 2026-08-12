@@ -53,10 +53,11 @@ import pytest
 import harness
 import leaf
 from leaf import (RTS, add_w_dn_dn, branch, branch_over, bsr_w, btst_imm_dn, case_salt,
-                  clr_w_abs_l,
+                  clr_w_abs_l, clr_w_abs_w,
                   dbf_over, forward_branch, keyed_block, lea_abs_l, lea_d16, lea_indexed, longword,
                   lsl_w_imm_dn, merge_bands, move_l_imm_abs_l, move_l_imm_postinc, move_w_abs_l_dn,
-                  move_w_dn_dn, move_w_imm_abs_l, move_w_imm_dn, move_w_indexed_dn,
+                  move_w_dn_dn, move_w_imm_abs_l, move_w_imm_abs_w, move_w_imm_dn,
+                  move_w_indexed_dn,
                   move_b_postinc_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn,
                   opcode, program_writes, st_abs_l, subi_w_dn, swap_dn, tst_w_abs_l,
                   tst_w_abs_w, u16, s16,
@@ -320,16 +321,8 @@ def clr_l_abs_w(addr):
     return opcode(0x42b8) + word(addr)
 
 
-def clr_w_abs_w(addr):
-    return opcode(0x4278) + word(addr)
-
-
 def clr_l_abs_l(addr):
     return opcode(0x42b9) + longword(addr)
-
-
-def move_w_imm_abs_w(value, addr):
-    return opcode(0x31fc) + word(value) + word(addr)
 
 
 def cmpi_b_ind(an, value):
@@ -775,15 +768,18 @@ def _index_table_pokes(bias=0):
                                        for entry in range(TILE_INDEX_ENTRIES))}
 
 
-def build_cursors(column, row, stride):
+def build_cursors(column, row, stride, map_ptr=MAP):
     """The eleven map cursors $fa30's OWN arithmetic lands on, one per tile row.
 
     Transcribed from the disassembly rather than assumed, per docs/methodology.md's second seeding
     rule: the first is `lea 4(a0,d1.w),a0` over a WORD index (so it SIGN-extends), and each one
     after it is the sixteen cells just read plus the UNSIGNED `subi.w #$10` row skip. Every band a
     case seeds is keyed off these, so a case cannot seed the right bytes in the wrong place.
+
+    ``map_ptr`` is the map the caller hands the routine. It is this battery's own MAP for every case
+    below; test_scene.py passes WB_MAP_ROW_STRIDE, because that is the `lea $22090.l,a0` $dfbe loads.
     """
-    cursor = (MAP + s16((row * stride + column) & WORD_MASK) + MAP_HEADER_BYTES) & LONGWORD_MASK
+    cursor = (map_ptr + s16((row * stride + column) & WORD_MASK) + MAP_HEADER_BYTES) & LONGWORD_MASK
     for _ in range(BUILD_TILE_ROWS):
         yield cursor
         cursor = (cursor + BUILD_TILE_COLUMNS
@@ -795,7 +791,7 @@ def build_cursors(column, row, stride):
 MAP_ROW_MARGIN = CELL_BYTES
 
 
-def _map_pokes(salt, stride, rows, column, start_row, raw):
+def map_pokes(salt, stride, rows, column, start_row, raw, map_ptr=MAP):
     """The map header, and a band of cells at every cursor the routine actually reads from.
 
     In RAW mode the byte IS the tile number, so the cells are seeded inside the shipped range; in
@@ -805,19 +801,19 @@ def _map_pokes(salt, stride, rows, column, start_row, raw):
     """
     pokes = {}
     span = BUILD_TILE_COLUMNS + MAP_ROW_MARGIN
-    for cursor in build_cursors(column, start_row, stride):
+    for cursor in build_cursors(column, start_row, stride, map_ptr):
         cells = keyed_block(cursor, span, salt)
         pokes[cursor] = bytes(shipped_tile(value) for value in cells) if raw else cells
-    pokes[MAP + MAP_HEADER_WIDTH] = word(stride)
-    pokes[MAP + MAP_HEADER_HEIGHT] = word(rows)
+    pokes[map_ptr + MAP_HEADER_WIDTH] = word(stride)
+    pokes[map_ptr + MAP_HEADER_HEIGHT] = word(rows)
     return pokes
 
 
-def _model_build(image, start, tiles, stride, raw):
+def model_build(image, start, tiles, stride, raw, map_ptr=MAP):
     """The 22,528 bytes $fa30 lays into copy 0, walked the way the routine walks them."""
     column = u16(image, start)
     row = u16(image, start + STATE_WORD_LEN)
-    cursor = (MAP + s16(row * stride + column) + MAP_HEADER_BYTES) & LONGWORD_MASK
+    cursor = (map_ptr + s16(row * stride + column) + MAP_HEADER_BYTES) & LONGWORD_MASK
     buffer = bytearray(BUFFER_LEN)
     for tile_row in range(BUILD_TILE_ROWS):
         for tile_column in range(BUILD_TILE_COLUMNS):
@@ -838,7 +834,7 @@ def _run_build(case, start_column=0, start_row=0, stride=MAP_STRIDE, raw=False,
                rows=MAP_SEED_ROWS, tile_bias=0):
     salt = case_salt(case)
     pokes = dict(_index_table_pokes(tile_bias))
-    pokes.update(_map_pokes(salt, stride, rows, start_column, start_row, raw))
+    pokes.update(map_pokes(salt, stride, rows, start_column, start_row, raw))
     if tile_bias:
         first = TILE_BITMAPS + shipped_tile(0, tile_bias) * TILE_BITMAP_LEN
         pokes[first] = keyed_block(first, TILE_SHIPPED_COUNT * TILE_BITMAP_LEN, salt)
@@ -851,7 +847,7 @@ def _run_build(case, start_column=0, start_row=0, stride=MAP_STRIDE, raw=False,
     pokes[BUFFER_BASE] = keyed_block(BUFFER_BASE, BUFFER_LEN, salt)
 
     image = harness.make_image(pokes)
-    expected = _model_build(image, start, TILE_BITMAPS, stride, raw)
+    expected = model_build(image, start, TILE_BITMAPS, stride, raw)
 
     what = f"bg_build_buffer {case}"
     info = leaf.run("bg_build_buffer", _BUILD(MAP, start, TILE_BITMAPS),
@@ -962,7 +958,7 @@ def _model_publish(image, map_ptr, start):
     off WB_MAP_ROW_STRIDE's own word, the positions off the start record, the rest cleared, the
     Scc byte and the sixteen row pointers.
 
-    ONE model, read by `_run_publish` below and by `_model_load_window`'s composition — the hinge
+    ONE model, read by `_run_publish` below and by `model_load_window`'s composition — the hinge
     runs this routine, so a second spelling there could disagree with this one while both batteries
     stayed green. That is the same rule test_hud.py's imported models follow.
     """
@@ -1732,7 +1728,7 @@ def test_the_table_is_named_from_one_site_in_the_image():
 # the three builders above, `set_palette`, and the sound module's `snd_play_song` / `snd_stop`. There
 # is no boundary and no stop_pc.
 #
-# THE MODELS ARE THE CALLEES' OWN. Copy 0 comes from `_model_build`, copies 1..7 from
+# THE MODELS ARE THE CALLEES' OWN. Copy 0 comes from `model_build`, copies 1..7 from
 # `_model_preshift` run on the image copy 0 has just been rewritten in, the published fields from
 # `_model_publish` — the SAME function $fb06's own cases compare against — and the sound module's
 # write set from test_sound.py's `model_play_song` / `STOP_WRITES`. Nothing below restates any of
@@ -1754,7 +1750,7 @@ RAW_TILE_BANK = 0x38000
 FROZEN = WORD_MASK              # `move.w #$ffff,$d76.w` — what the four freezing call sites write
 LATCH_UNMATCHED = 0x7f          # a latch no case's tune equals, so the de-duplication does not fire
 
-# NO BAND TABLE HERE, deliberately. `_model_load_window` below states every byte this routine
+# NO BAND TABLE HERE, deliberately. `model_load_window` below states every byte this routine
 # leaves, and `_run_load_window` derives the allowed bands FROM that model — so a second list of
 # (address, length) pairs would be a contract nothing enforced, free to describe a write set the
 # model did not. An earlier draft carried one and it was already wrong about its own contents.
@@ -1764,21 +1760,28 @@ def shipped_start_record(index):
     return STAGE_START_RECORDS + index * START_RECORD_LEN
 
 
-def _load_window_pokes(case, start, tiles, frozen, latch, record=None):
+def load_window_pokes(case, start, tiles, frozen, latch, record=None, map_ptr=MAP,
+                      stride=MAP_STRIDE):
     """Everything the run reads that is not shipped: the map, the index table, the eight buffers,
     the scroll's own state, the sound module's two mutable bands, and the case's own start record.
 
     Address-keyed throughout, so a store the port skipped leaves a byte that is wrong FOR ITS
     ADDRESS rather than a zero that matches another zero.
+
+    ``map_ptr``/``stride`` are the map the CALLER hands $f95c and its header width. Every case below
+    passes this battery's own MAP, which is deliberately not WB_MAP_ROW_STRIDE so the header word and
+    the global word can be told apart; test_scene.py passes WB_MAP_ROW_STRIDE, because $dfbe's
+    `lea $22090.l,a0` makes the two ONE address for that caller — which is why the global stride goes
+    in FIRST and the map header, seeded after it, wins when they collide.
     """
     salt = case_salt(case)
     raw = tiles != TILE_BITMAPS
     pokes = dict(_index_table_pokes())
-    pokes.update(_map_pokes(salt, MAP_STRIDE, MAP_SEED_ROWS, 0, 0, raw))
+    pokes[MAP_ROW_STRIDE] = word(GLOBAL_STRIDE)
+    pokes.update(map_pokes(salt, stride, MAP_SEED_ROWS, 0, 0, raw, map_ptr))
     if raw:
         first = tiles + shipped_tile(0) * TILE_BITMAP_LEN
         pokes[first] = keyed_block(first, TILE_SHIPPED_COUNT * TILE_BITMAP_LEN, salt)
-    pokes[MAP_ROW_STRIDE] = word(GLOBAL_STRIDE)
 
     # The scroll's destinations: all eight buffers, the two carry scratches and a margin around the
     # published band, exactly as the builders' own cases seed them.
@@ -1796,11 +1799,11 @@ def _load_window_pokes(case, start, tiles, frozen, latch, record=None):
     return pokes
 
 
-def _model_load_window(image, start, tiles, frozen, latch):
+def model_load_window(image, start, tiles, frozen, latch, map_ptr=MAP, stride=MAP_STRIDE):
     """Every byte $f95c leaves, as {address: bytes}, composed out of its callees' own models."""
     raw = tiles != TILE_BITMAPS
     written = {RAW_TILE_INDEX: word(RAW_TILE_INDEX_SET if raw else 0),
-               STAGE_MAP_PTR: longword(MAP),
+               STAGE_MAP_PTR: longword(map_ptr),
                STAGE_START_PTR: longword(start)}
 
     follow_x = u16(image, start + START_FOLLOW_X)
@@ -1808,7 +1811,7 @@ def _model_load_window(image, start, tiles, frozen, latch):
     written[ACTOR_FOLLOWED_DEFAULT + ACTOR_X] = word(follow_x)
     written[ACTOR_FOLLOWED_DEFAULT + ACTOR_Y] = word(follow_y)
 
-    copy_zero = _model_build(image, start, tiles, MAP_STRIDE, raw)
+    copy_zero = model_build(image, start, tiles, stride, raw, map_ptr)
     built = bytearray(image)
     built[BUFFER_BASE:BUFFER_BASE + BUFFER_LEN] = copy_zero
     span = copy_zero + _model_preshift(built)
@@ -1824,7 +1827,7 @@ def _model_load_window(image, start, tiles, frozen, latch):
         written[BUILD_CARRY + plane * STATE_WORD_LEN] = word(
             cell_word >> (16 - PRESHIFT_BITS))
 
-    published = _model_publish(image, MAP, start)      # the publish's own model, not a second one
+    published = _model_publish(image, map_ptr, start)  # the publish's own model, not a second one
     written.update(published)
     scroll_pos_x = int.from_bytes(published[SCROLL_POS_X], "big")
     scroll_pos_y = int.from_bytes(published[SCROLL_POS_Y], "big")
@@ -1845,9 +1848,9 @@ def _model_load_window(image, start, tiles, frozen, latch):
 
 def _run_load_window(case, start, tiles=TILE_BITMAPS, frozen=False, latch=LATCH_UNMATCHED,
                      record=None, mixer=PLAY_SONG_MIXER):
-    pokes = _load_window_pokes(case, start, tiles, frozen, latch, record)
+    pokes = load_window_pokes(case, start, tiles, frozen, latch, record)
     image = harness.make_image(pokes)
-    written = _model_load_window(image, start, tiles, frozen, latch)
+    written = model_load_window(image, start, tiles, frozen, latch)
 
     what = f"stage_load_window {case}"
     psg_seed = {PSG_REG_MIXER: mixer}
@@ -1859,17 +1862,7 @@ def _run_load_window(case, start, tiles=TILE_BITMAPS, frozen=False, latch=LATCH_
                     regs={"a0": MAP, "a1": start, "a6": tiles, "_pokes": pokes},
                     max_insns=LOAD_WINDOW_INSN_CAP, poison=False, psg_seed=psg_seed)
 
-    actual = program_writes(info)
-    assert set(actual) == leaf.seeded_bytes(written), (
-        f"{what}: the original wrote {len(actual)} bytes against the model's "
-        f"{len(leaf.seeded_bytes(written))}")
-    for addr, expected in sorted(written.items()):
-        got = leaf.read_bytes(info, addr, len(expected), what)
-        if got != expected:
-            at = next(i for i in range(len(expected)) if got[i] != expected[i])
-            raise AssertionError(
-                f"{what}: {addr + at:#x} is {got[at]:#04x}, not the {expected[at]:#04x} the model "
-                f"gives (band at {addr:#x}, {len(expected)} bytes)")
+    leaf.assert_written_is(info, written, what)
     return info
 
 
