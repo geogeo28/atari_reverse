@@ -817,8 +817,13 @@
                                                * `subq.w #1,12(a0)` at different sites, so the WORD
                                                * at 12 is read as one value too. Not established
                                                * either */
-#define WB_ACTOR_FIELD_18            18u      /* byte, cleared by the spawn; no reader in anything
-                                               * reconstructed here */
+#define WB_ACTOR_FIELD_18            18u      /* byte, cleared by the spawn: the ANIMATION CURSOR.
+                                               * Five routines in src/behavior.c index a frame table
+                                               * with it and step it on ($698a, $3006, $5a3c, $6872
+                                               * and $2f86's clear), each with its own wrap — it is
+                                               * a BYTE OFFSET into a word table, not an index. The
+                                               * name is kept because batches before 29 read it as
+                                               * an unread field and nothing else has renamed it */
 #define WB_ACTOR_TEMPLATE_SLOT       19u      /* byte: which template of WB_TABLE_PTR_21E8C's table
                                                * spawned this record — `(a0 - table) asr.l #5`, so
                                                * a SIGNED shift of the whole longword */
@@ -833,16 +838,25 @@
                                                * index into WB_ACTOR_KIND_TABLE. $6d0e is its one
                                                * writer in the image — the respawn continuation,
                                                * storing the low byte of a stage_random_kind draw */
-#define WB_ACTOR_FIELD_22            22u      /* byte, cleared by $10a2's player arm */
+#define WB_ACTOR_FIELD_22            22u      /* byte, cleared by $10a2's player arm. The behaviour
+                                               * tier writes it three ways: $6d70 raises
+                                               * WB_ACTOR_FIELD_22_RIDING_BIT in it, $6dd8 lowers
+                                               * that bit, and $701c forces the whole byte to
+                                               * WB_ACTOR_FIELD_22_HOLD while it is nonzero */
 #define WB_ACTOR_FIELD_30            30u      /* two bytes the spawn clears; $ff42 reads 30 as a
-                                               * flag and counts 31 down */
+                                               * flag and counts 31 down. In the behaviour tier 30
+                                               * is a COUNTDOWN of its own — $2f86 and $6872 tick it
+                                               * and $23b6 stamps WB_ACTOR_SHOT_HIT_MARK into the
+                                               * one it hits */
 #define WB_ACTOR_FIELD_31            31u
 #define WB_ACTOR_HALF_WIDTH          14u      /* word: half the footprint, in pixels. The map probes
                                                * measure from `x - half_width` and $13c8 hands
                                                * $1400 twice this as the span to scan */
 #define WB_ACTOR_SIZE_SECOND         16u      /* word: the other half of the longword the spawn
-                                               * stamps at WB_ACTOR_HALF_WIDTH. Nothing
-                                               * reconstructed here reads it */
+                                               * stamps at WB_ACTOR_HALF_WIDTH, and the behaviour
+                                               * tier reads it as the VERTICAL extent — $5c6e's box
+                                               * is `y - 16(a0) .. y` and $23b6 sums the two records'
+                                               * words the same way it sums their half widths */
 #define WB_ACTOR_FLAG_MOVING_BIT     0u       /* $2af2 raises both of these; the `btst #0,8(a0) /
                                                * bne / rts` at $1376 is bit 0's one reader in the
                                                * tier above, and $1400's landing arm clears bit 1 */
@@ -865,7 +879,14 @@
                                                * that reading */
 #define WB_ACTOR_FLAGS2_LANDED_BIT   1u       /* $1400 raises it on the landing arm and clears it on
                                                * both unsupported ones */
-#define WB_ACTOR_FLAGS2_SPAWNED_BIT  2u       /* the one bit the spawn raises */
+#define WB_ACTOR_FLAGS2_SPAWNED_BIT  2u       /* the one bit the spawn raises, and it has exactly
+                                               * TWO operand sites in the whole image: `bset #2,
+                                               * 9(a1)` at $10044 inside the spawn, and `bclr #2,
+                                               * 9(a0)` at $69b0 inside actor_spawn_anim_step. So
+                                               * the spawn raises it and the animation lowers it —
+                                               * which is what says that animation is the record
+                                               * APPEARING and not a death (25 handlers open by
+                                               * branching there while it is up) */
 #define WB_ACTOR_FLAGS2_DEFEATED_BIT 3u       /* $6b46's `bset #3,9(a0)` is its ONE writer in the
                                                * image, on the frame the template's hit-point pool
                                                * reaches zero or goes negative. 35 `btst #3,9(a0)`
@@ -1007,6 +1028,124 @@
 #define WB_SPAWN_HITPOINT_TYPE_FIXED 0x3bu    /* `cmp.w #$3b,d1 / bne`: the one type that skips the
                                                * table for a constant */
 #define WB_SPAWN_HITPOINT_FIXED_BASE 0x1eu    /* `addi.w #$1e,d0` on that arm */
+
+/* ---- the per-actor BEHAVIOUR tier ($8d0, $928, $938; src/behavior.c) ---------------------------
+ *
+ * The whole tier hangs off four instructions. `actor_dispatch_behavior` reads WB_ACTOR_TYPE out of
+ * the record, scales it `lsl.w #2` and tail-jumps through the longword table at
+ * WB_ACTOR_BEHAVIOR_TABLE — a `lea (0x938,PC,d1.w),a1` whose base exists nowhere in the image as an
+ * operand, which is why PORTABILITY.md §0k found 18,068 bytes behind it. `actor_behavior_pass` is
+ * the walk that feeds it.
+ */
+#define WB_ACTOR_BEHAVIOR_TABLE      0x938u   /* 62 longwords, $938..$a2f, bounded above by its own
+                                               * first target: slot 0 holds $a36 and the three
+                                               * WB_STATE_FLAG_A30/A32/A34 words sit between */
+#define WB_ACTOR_BEHAVIOR_SLOTS      62u      /* == (0xa30 - 0x938) / 4 */
+#define WB_ACTOR_BEHAVIOR_ENTRY      4u       /* `lsl.w #2,d1` — a longword per slot */
+#define WB_ACTOR_BEHAVIOR_NULL       0xa36u   /* slots 0 and 58 both hold it: a bare `rts`, and the
+                                               * two bytes that bound the table */
+#define WB_ACTOR_TABLE_END           0xffffffffu /* `cmpi.l #$ffffffff,(a0)` — a LONGWORD test over
+                                               * WB_ACTOR_X and WB_ACTOR_TYPE together, which is
+                                               * what makes it distinct from WB_ACTOR_FREE_MARKER */
+#define WB_ACTOR_BEHAVIOR_FIXED_SKIP 352u     /* `lea 352(a0),a0` == 11 * WB_ACTOR_RECORD_BYTES, the
+                                               * jump from slot 1 to WB_ACTOR_FOLLOWED_SLOT that the
+                                               * WB_STATE_FLAG_A34 arm makes */
+#define WB_ACTOR_WALK_BUS_CYCLE      524288u  /* == (WB_BUS_ADDR_MASK + 1) / WB_ACTOR_RECORD_BYTES,
+                                               * pinned equal in test/test_behavior.py. Not the
+                                               * original's — see src/behavior.c's walk */
+
+/* ---- the SPAWN animation ($698a, $69be; src/behavior.c) ---------------------------------------
+ *
+ * WB_ACTOR_FLAGS2_SPAWNED_BIT has exactly two operand sites in the whole image: the spawn raises it
+ * and $698a clears it. Twenty-five handlers open by branching here while it is up, so a record that
+ * has just been spawned plays this animation and does nothing else until it wraps.
+ */
+#define WB_ACTOR_SPAWN_ANIM_FRAMES   0x69beu  /* `lea $69be.l,a1` at $6994, the ONLY reference to any
+                                               * address in the table anywhere in the image */
+#define WB_ACTOR_SPAWN_ANIM_MASK     0x1fu    /* `andi.w #$1f,d0` on a BYTE OFFSET, so the cursor
+                                               * reaches words 0..15 and the 32 bytes above them
+                                               * ($69de..$69fd) have no reader at all */
+#define WB_ACTOR_ANIM_FRAME_BYTES    2u       /* `addq.b #2,18(a0)` — one word per frame, and the
+                                               * step every animation cursor in the tier takes */
+
+/* ---- the shared leaves the handlers call (src/behavior.c) --------------------------------------
+ *
+ * Small routines with two to fourteen `bsr` sites each, spread across the 61 handlers. Every one is
+ * entered with the actor record in a0 and several with a frame list in a1 or a band record in a2.
+ */
+#define WB_ACTOR_TIMER30_RELOAD      0x32u    /* `move.b #$32,30(a0)` — $2f86's reload */
+#define WB_ACTOR_TIMER30_SPEED       0xau     /* `move.b #$a,11(a0)` on the frame it relaunches */
+#define WB_ACTOR_TIMER30_RNG_BIT     2u       /* `btst #2,d0` on rng_next's word: SET vetoes the
+                                               * relaunch, so it fires on about half the reloads */
+#define WB_ACTOR_ANIM_LIST_ENTRY     4u       /* $3006's a1 is TWO longwords, one frame list per
+                                               * facing: `movea.l (a1),a1` or `movea.l 4(a1),a1` */
+#define WB_ACTOR_STEP_AWAY_PIXELS    4u       /* `move.w #$4,d7` — $2fe8's step, spelt inline */
+#define WB_ACTOR_ANIM16_MASK         0xfu     /* `andi.b #$f,d0` — $5a3c's 16-byte wrap */
+#define WB_ACTOR_ANIM_5160_FRAMES    0x5160u  /* `lea $5160.w,a1` at $6872, its one reference */
+#define WB_ACTOR_ANIM_5160_END       0xffffu  /* `cmpi.w #$ffff,(a1)` after the post-increment */
+#define WB_ACTOR_ANIM_5160_HOLD      1u       /* `cmpi.b #$1,30(a0) / beq` — the countdown stops on
+                                               * this value rather than on zero */
+#define WB_ACTOR_SPRITE_SUPPORTED    0x15au   /* $4fea's three sprite ids, by the two flag bits it */
+#define WB_ACTOR_SPRITE_MOVING       0x158u   /* reads: WB_ACTOR_FLAG_SUPPORTED_BIT first, then */
+#define WB_ACTOR_SPRITE_IDLE         0x157u   /* WB_ACTOR_FLAG_MOVING_BIT, else this one */
+#define WB_ACTOR_SPRITE_TABLE_6ED8   0x6ed8u  /* `lea $6ed8.l,a2` at $6d60, its one reference */
+#define WB_ACTOR_SPRITE_6ED8_STRIDE  8u       /* `lsl.w #3,d0` on WB_ACTOR_HALF_WIDTH */
+#define WB_ACTOR_FIELD_22_HOLD       3u       /* `move.b #$3,22(a0)` — $701c, on a NONZERO byte */
+
+/* ---- the moving platform ($6d70, $6dd8; src/behavior.c) ----------------------------------------
+ *
+ * a0 is the platform's record, a1 the followed one and a2 a BAND record the caller supplies: 4(a2)
+ * is how far left of the platform's x the band starts and 6(a2) how wide it is. $6d70 catches the
+ * followed record onto the platform, $6dd8 lets it go again.
+ */
+#define WB_ACTOR_PLATFORM_RIDDEN     0x6ef0u  /* word: 1 while the followed record is being carried,
+                                               * cleared when it leaves. Read at $6f42 */
+#define WB_ACTOR_PLATFORM_TOP        0x10u    /* `subi.w #$10,d1` — the ride height above the y */
+#define WB_ACTOR_PLATFORM_CATCH      0xau     /* `cmp.w #$a,d0 / bgt` — how far BELOW the top the
+                                               * followed record may be and still be caught */
+#define WB_ACTOR_BAND_LEFT           4u       /* word: the band's left edge, as a distance back */
+#define WB_ACTOR_BAND_WIDTH          6u       /* word: added to it for the right edge */
+#define WB_ACTOR_FIELD_22_RIDING_BIT 1u       /* `bset #1,22(a0)` while carrying, `bclr` on release */
+#define WB_ACTOR_FLAG_CARRIED_BIT    5u       /* `bset #5,8(a1)` — the only site in the tier that
+                                               * writes bit 5 of the followed record's flag byte */
+
+/* ---- the two tests 42 and 25 handlers run every frame ($5c6e, $23b6; src/behavior.c) ----------
+ *
+ * $5c6e reports how the actor's box overlaps the FOLLOWED record's, as a three-bit mask in d0, and
+ * $23b6 reports whether something the player threw has landed on it, as $ffff or 0 in d7. Between
+ * them they are the whole of "did I hit, or was I hit" for the monster tier.
+ */
+#define WB_ACTOR_OVERLAP_STRIKE_BIT  0u       /* `bset #0,d0`: the small box in front of the followed
+                                               * record, live only while its sprite is in the band */
+#define WB_ACTOR_OVERLAP_BODY_BIT    1u       /* `bset #1,d0`: the two footprints overlap */
+#define WB_ACTOR_OVERLAP_POINT_BIT   2u       /* `bset #2,d0`: one POINT off the followed record is
+                                               * inside the actor's box, for two sprite ids only */
+#define WB_FOLLOWED_SPRITE_STRIKE_LO 0x11eu   /* `cmp.w #$11e,d7 / blt` — the strike box's band, */
+#define WB_FOLLOWED_SPRITE_STRIKE_HI 0x125u   /* `cmp.w #$125,d7 / bgt` — inclusive at both ends */
+#define WB_FOLLOWED_SPRITE_STRIKE_FLIP 0x121u /* `cmp.w #$121,d7 / ble` — ABOVE this the box moves */
+#define WB_ACTOR_STRIKE_BOX_NEAR     7u       /* `addq.w #7,d5` — the box's near edge off the x */
+#define WB_ACTOR_STRIKE_BOX_FAR      0xdu     /* `addi.w #$d,d6` — and its far one */
+#define WB_ACTOR_STRIKE_BOX_FLIP     0x14u    /* `subi.w #$14` off both, above the FLIP sprite */
+#define WB_ACTOR_STRIKE_BOX_TOP      0xcu     /* `subi.w #$c,d5` off the followed y */
+#define WB_ACTOR_STRIKE_BOX_DEPTH    6u       /* `addq.w #6,d5` back down for the box's bottom */
+#define WB_FOLLOWED_SPRITE_POINT_LO  0x117u   /* the two sprite ids the POINT test runs for, and the
+                                               * only two: `beq` on this one, `bne` out on the next */
+#define WB_FOLLOWED_SPRITE_POINT_HI  0x118u
+#define WB_ACTOR_POINT_RIGHT         0x16u    /* `addi.w #$16,d5` off the followed x... */
+#define WB_ACTOR_POINT_FLIP          0x2cu    /* ...and `subi.w #$2c,d5` for POINT_HI, i.e. 22 the
+                                               * other side */
+#define WB_ACTOR_POINT_UP            9u       /* `subi.w #$9,d6` off the followed y */
+#define WB_FLASH_TIMER               0x714u   /* word countdown flip_screen decrements; while it is
+                                               * nonzero colour 0 is forced to $777. $23b8's
+                                               * `tst.w $714.w` is its one reader outside that */
+#define WB_ACTOR_FLASH_REACH         0x8cu    /* `move.w #$8c,d0 / bsr $67f8` — how close the
+                                               * followed record must be while WB_FLASH_TIMER runs */
+#define WB_ACTOR_SHOT_TYPE_LO        0x30u    /* `cmpi.w #$30,4(a1) / blt` — the WB_ACTOR_TYPE band */
+#define WB_ACTOR_SHOT_TYPE_HI        0x32u    /* `cmpi.w #$32,4(a1) / bgt` — searched in the HIGH */
+#define WB_ACTOR_SHOT_TYPE_KEPT      0x31u    /* alloc pool. This one is MARKED instead of freed */
+#define WB_ACTOR_SHOT_HIT_MARK       1u       /* `move.b #$1,30(a1)` — the mark it gets instead */
+#define WB_ACTOR_HIT                 0xffffu  /* `move.w #$ffff,d7` — $23b6's answer, in d7 */
+#define WB_ACTOR_NOT_HIT             0u       /* `moveq #0,d7` — and its other one */
 
 /* ---- what an actor does when a map step reports back ($2b5a, $2b82, $2b8e; src/actor.c) -------
  *

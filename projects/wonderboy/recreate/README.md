@@ -76,6 +76,12 @@ include/actor.h            the followed actor's record, the two tests over it, t
                            lifecycle — reset, free, the two pool allocators and the spawn — and
                            the two EXIT CODES $6bb8 reports in place of the respawn continuation
                            it declines to follow
+include/behavior.h         the per-actor BEHAVIOUR tier's foundation: the walk ($8d0), the
+                           four-instruction dispatcher the whole tier hangs off ($928), the spawn
+                           animation twenty-five handlers branch into, the thirteen shared leaves
+                           and the two overlap tests forty-two and twenty-five of them run every
+                           frame — plus the three DISPATCH CODES the port returns in place of a
+                           `jmp` it declines to follow
 include/text.h             the message box: the once-a-frame driver's three arms, the glyph
                            plotter's two entry points, and why the prelude calls the plotter (the
                            original has no `rts` in it — it falls through)
@@ -138,6 +144,22 @@ src/actor.c                the actor tier: $67e0, which names the record everyth
                            slot's new kind through src/rng.c and rebuilds nine of the dead record's
                            fields out of it, or frees the slot when the template forces a negative
                            one
+src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bottom of the 18,068
+                           bytes PORTABILITY.md §0k's coverage break-open exposed. The per-frame
+                           walk over the published actor table ($8d0, with its own three-record arm
+                           for state_flag_a34) and the dispatcher it feeds ($928), which fetches a
+                           longword out of the 62-entry table at $938 and tail-jumps through it —
+                           on the WRAPPED offset, so 248 of the 65,536 type values reach an entry.
+                           Sixty of the sixty-two targets are unported, so the dispatcher hands the
+                           target BACK and the differential runs the oracle on to it; the list of
+                           reconstructed targets is one row today and grows by one per batch. Then
+                           the tier's own grammar: the animation every spawned record plays
+                           ($698a), the thirteen shared leaves the handlers call — three map
+                           steppers, four animation cursors, a homing step, a moving platform's
+                           catch and release, a sprite select and a side-flag write at the OPPOSITE
+                           polarity to $67c2 — and the two tests the tier runs every frame, the
+                           three-bit overlap mask against the followed record ($5c6e) and the
+                           player-shot scan that consumes what it finds ($23b6)
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -259,6 +281,19 @@ test/test_map.py           the collision map's differential: an address-keyed wi
                            middle being another routine's, asserted as its own), a model that
                            COMPOSES its five callees' models over one shared memory, and the whole
                            operand scan behind the three globals $1334 raises and clears
+test/test_behavior.py      the behaviour tier's differential. Its shape is set by two routines that
+                           WRITE NOTHING: the walk and the dispatcher are pinned by the BOUNDARY
+                           they report — one differential per table slot, the oracle stopped at the
+                           handler's own address with a `cov_visited` witness on the `jmp (a1)` —
+                           which pins the dispatch arithmetic and the image's 62 longwords against
+                           ../names.txt at once. It also holds an enumeration over all 65,536 type
+                           values (eight shardable chunks) stating the alias bands and the refusal
+                           set, a two-pass LABEL ASSEMBLER for the entry pins (a body with fourteen
+                           forward branches into six shared exits does not survive the
+                           sum-the-spanned-bytes idiom), and an independent model of $5c6e's three
+                           overlap tests compared against the ORACLE's d0 as well as the port's
+                           return. It imports test_map.py's map seeding and test_rng.py's generator
+                           model rather than restating either
 test/test_actor.py         the actor tier's differential, and the battery that imports the most —
                            the SFX trigger's write set and the stop chain's PSG ledger from
                            test_sound.py, the packed-BCD and meter models from test_hud.py, because

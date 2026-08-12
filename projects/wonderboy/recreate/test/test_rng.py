@@ -237,8 +237,10 @@ def _stepped(value, limit):
     return 0 if raised == limit else raised
 
 
-def _model_rng(image, entry_d0):
-    """(the whole d0 it returns, {address: byte}). Only the low WORD of d0 is written — `clr.w`, not
+def model_rng(image, entry_d0):
+    """(the whole d0 it returns, {address: byte}). PUBLIC because test_behavior.py's $2f86 reaches
+    the generator and needs both halves of this — the bit it branches on AND the three counter words
+    in its own write set. Only the low WORD of d0 is written — `clr.w`, not
     `moveq #0` — so the caller's high half is part of the result."""
     out = {}
     total = (ENTROPY_OFF_IMAGE ^ u16(image, FRAME_TICK)) & WORD_MASK
@@ -269,11 +271,11 @@ def _kind_read_address(draw, image, drawn, entry_d2):
 
 
 def model_kind(draw, image, entry_d2):
-    """(the byte it returns, {address: byte}) — the draw over `_model_rng`, on the same image.
+    """(the byte it returns, {address: byte}) — the draw over `model_rng`, on the same image.
 
     PUBLIC because test_actor.py's respawn continuation calls both draws: its model composes this one
     over the same memory, the way it composes test_hud.py's BCD accumulator."""
-    drawn, out = _model_rng(image, 0)
+    drawn, out = model_rng(image, 0)
     at = _kind_read_address(draw, image, drawn, entry_d2)
     # The shim answers a read past the image with zeros, and src/rng.c goes through `os_in_image`
     # for exactly that; only an entry d2 with rubbish above its low word can get there.
@@ -311,7 +313,7 @@ def _rng_pokes(**overrides):
 def _run_rng(case, pokes, entry_d0=RNG_ENTRY_D0):
     what = f"rng_next {case}"
     image = harness.make_image(pokes)
-    expected_d0, expected = _model_rng(image, entry_d0)
+    expected_d0, expected = model_rng(image, entry_d0)
     info = leaf.run("rng_next", _RNG(entry_d0), merge_bands(expected), what,
                     regs={"d0": entry_d0, "d1": RNG_ENTRY_D1, "_pokes": pokes},
                     max_insns=RNG_INSN_CAP)
@@ -585,7 +587,7 @@ def test_the_ladder_limit_case_lands_where_its_two_candidate_rows_differ(draw):
     hold the same byte and the case would pass either way, pinning nothing."""
     pokes = _rng_pokes(stage=BCD_LIMIT_STAGE, **BCD_LIMIT_SEED[draw])
     image = harness.make_image(pokes)
-    drawn, _writes = _model_rng(image, 0)
+    drawn, _writes = model_rng(image, 0)
     index = drawn & draw.draw_mask
     strict = draw.table + (BCD_LIMIT_STAGE - 1) * draw.row + index
     carried = draw.table + (BCD_LIMIT_STAGE - BCD_CARRY - 1) * draw.row + index
@@ -646,7 +648,7 @@ def test_the_draw_sweep_really_reaches_every_offset(draw):
     reached = set()
     for _draw, tick in (param for param in DRAW_PARAMS if param[0] == draw):
         image = harness.make_image(_rng_pokes(stage=DRAW_SWEEP_STAGE, tick=tick, counters=(0, 0, 0)))
-        drawn, _writes = _model_rng(image, 0)
+        drawn, _writes = model_rng(image, 0)
         reached.add(drawn & draw.draw_mask)
     assert reached == set(range(draw.row)), f"the sweep reaches {sorted(reached)}"
 
@@ -696,7 +698,7 @@ def test_every_high_half_case_still_reads_inside_the_image():
     """The guard: a case whose read left the image would be measuring the off-image guard rather
     than the index arithmetic — that one is the case immediately above, and stated as such."""
     image = harness.make_image(_rng_pokes(**BUS_SEED))
-    drawn, _writes = _model_rng(image, 0)
+    drawn, _writes = model_rng(image, 0)
     for entry_d2, _why in KIND_ENTRY_D2_CASES:
         at = _kind_read_address(BUS_DRAW, image, drawn, entry_d2)
         assert at < harness.IMAGE_SIZE, f"d2 = {entry_d2:#010x} reads {at:#x}, outside the image"
@@ -727,7 +729,7 @@ def test_the_bus_wrap_case_really_leaves_the_bus():
     """The guard: without the mask the same sum is far outside the image, which is what makes the
     two readings disagree — and what the 24-bit mask in src/rng.c is there to reconcile."""
     image = harness.make_image(_rng_pokes(**BUS_SEED))
-    drawn, _writes = _model_rng(image, 0)
+    drawn, _writes = model_rng(image, 0)
     unmasked = (BUS_DRAW.table + (drawn & BUS_DRAW.draw_mask)
                 + _stage_row(BUS_DRAW, image, D2_ABOVE_THE_BUS))
     assert unmasked > BUS_ADDR_MASK, f"{unmasked:#x} is on the bus, so nothing here wraps"
@@ -753,7 +755,7 @@ def test_the_bus_width_case_would_read_a_nonzero_byte_through_a_narrower_mask():
     """The guard, and the whole point of that case: if a 23-bit mask landed on a zero byte too, the
     two widths would agree and the case would pin nothing."""
     image = harness.make_image(_rng_pokes(**BUS_SEED))
-    drawn, _writes = _model_rng(image, 0)
+    drawn, _writes = model_rng(image, 0)
     unmasked = (BUS_DRAW.table + (drawn & BUS_DRAW.draw_mask)
                 + _stage_row(BUS_DRAW, image, D2_ONE_BIT_NARROWER))
     narrower = unmasked & (BUS_ADDR_MASK >> 1)

@@ -841,7 +841,7 @@ def overlay(*layers):
     to build a layered seed does not have to find it a third time.
 
     ../STATUS.md registers the batteries that still merge by key (test_actor.py's `_defeat_pokes` and
-    `_state_pokes`, test_map.py's `_map_pokes`, and test_scene.py's own divergent refusal mechanism)
+    `_state_pokes`, test_map.py's `map_pokes`, and test_scene.py's own divergent refusal mechanism)
     as a queued consolidation rather than converting them here.
     """
     flat = {}

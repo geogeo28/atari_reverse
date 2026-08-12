@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 176/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 196/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -43,17 +43,21 @@ the SCENE TIER'S CLOSE (`scene_exit_and_reload` + the exit-action table's two re
 172 bytes, batch 27: the four exit tails run from the spending arm through the dispatch and the
 whole reload to the original's `rts`, and the dispatch is on the WRAPPED offset — 32 index values
 reach the eight entries) —
-21,024 bytes in all, 47.5 % of everything
+22,290 bytes in all, 50.4 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
-dropped from 80.3 % not because anything was lost but because the denominator now contains the
-game; 80.7 % of believed CODE is measured, and only 226 bytes remain genuinely unknown)*.** *(The batch-16 commit's header said 147 — an
+dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
+contains the game; 80.7 % of believed CODE is measured, and only 226 bytes remain genuinely
+unknown. Batch 29 — the behaviour tier's foundation — was the first port batch priced against
+the honest denominator, and crossed it back over 50 %)*.** *(The batch-16 commit's header said 147 — an
 oversight; its own section records 151, and batch 17 corrected the header to 153. Batch 22's edit
 left this leading count at 161 while its own section and parenthetical said 163 — the same
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
-`make test`: **3594 cases green in what this batch commits** (3546 before batch 27, plus its 48,
+`make test`: **4019 cases green in what this batch commits** (3594 before batch 29, plus its 425,
+all in the new `test/test_behavior.py` — the tier's own battery).
+`make test` at batch 27: **3594 cases** (3546 before batch 27, plus its 48,
 all in `test/test_scene.py`, which stands at 231; `test/test_stage.py` holds at 112 across a
 refactor).
 `make test` at batch 26: **3546 cases** (3483 before batch 26, plus its 63:
@@ -4695,3 +4699,161 @@ bite). The cheapest naming wins left: FUN_00005c6e (42 handlers call it, 244 B),
 answer); the architecture.md CODE-column correction (its own measurement); $69de..$69fd's reader;
 which monster is WHICH (needs sprite-id cross-reference or runtime observation — the handlers are
 named actor_behavior_typeNN, the verified structural fact, not guesses).
+
+### Batch 29: the behaviour tier's FOUNDATION — the dispatch runs, and the tier's grammar is named
+
+Batch 28 opened the wall by naming one `lea`; this batch ports what is behind it, from the bottom.
+Twenty routines, 1,266 bytes: the per-frame walk, the four-instruction dispatcher every monster in
+the game goes through, the 62-entry table itself, the animation every spawned record plays, the
+thirteen shared leaves the handlers call, and the three high-fan-in routines batch 28 left as
+`FUN_*`. **Verified 196, 22,290 bytes, 50.4 %; `make test` 4019** (3594 before the batch, plus 425,
+all in the new `test/test_behavior.py`).
+
+| address | name | bytes | what it is |
+| --- | --- | --- | --- |
+| `$8d0` | `actor_behavior_pass` | 88 | the per-frame walk over `actor_table_selected` |
+| `$928` | `actor_dispatch_behavior` | 16 | the four instructions the whole tier hangs off |
+| `$a36` | `actor_behavior_null` | 2 | table slots 0 AND 58: a bare `rts`, and the table's bound |
+| `$698a` | `actor_spawn_anim_step` | 50 | the SPAWN animation — 25 handlers branch into it |
+| `$2f22` | `actor_step_facing` | 36 | step the way the side bit points; flip it when blocked |
+| `$2f86` | `actor_tick_timer30` | 72 | the countdown, and the relaunch `rng_next` vetoes |
+| `$2fce` | `actor_face_and_step_toward` | 26 | face the followed record, walk TOWARD it |
+| `$2fe8` | `actor_face_and_step_away4` | 30 | ...and the same shape with the arms SWAPPED |
+| `$3006` | `actor_anim_step_facing_list` | 52 | a frame list per facing, terminated by a negative word |
+| `$4fea` | `actor_select_sprite_by_flag` | 48 | one of three sprite ids by two flag bits |
+| `$501a` | `actor_hop_ascend_step` | 44 | the decelerating rise of a hop — 36 callers |
+| `$5a3c` | `actor_advance_anim16` | 18 | the 16-byte-wrap step, both registers the caller's |
+| `$5c6e` | `actor_followed_overlap_mask` | 244 | three overlap tests into three bits — 42 callers |
+| `$6840` | `actor_step_toward_followed` | 50 | a HOMING step on both axes |
+| `$6872` | `actor_relaunch_and_anim_5160` | 84 | the $5160 stepper, with a relaunch in front of it |
+| `$6d5a` | `actor_sprite_from_6ed8` | 22 | an 8-byte-stride sprite row, then a tail jump into $67e0 |
+| `$6d70` | `actor_platform_carry_followed` | 104 | the MOVING PLATFORM catches the player |
+| `$6dd8` | `actor_platform_release_check` | 68 | ...and lets go, four ways |
+| `$701c` | `actor_face_followed_reset_22` | 40 | the side flag, at the OPPOSITE polarity to $67c2 |
+| `$23b6` | `actor_hit_by_player_shot` | 172 | did anything the player threw land — 25 callers |
+
+**THE DISPATCH BOUNDARY IS THE MECHANISM THE NEXT SIXTY BATCHES EXTEND, AND THE TARGET IS FETCHED.**
+The original is `movea.l (a1),a1 / jmp (a1)` — it READS the longword — so the port reads it too,
+through the bus guard. What the C carries is not a copy of the table but the list of targets it has a
+RECONSTRUCTION for, keyed by ADDRESS: one row today, one more per batch. A ported target RUNS and
+reports `WB_ACTOR_DISPATCH_RAN`; an unported one comes BACK as its address, and the differential runs
+the oracle with `stop_pc` there plus a `cov_visited` witness on the `jmp (a1)` at $936 — batch 19's
+shape and batch 22's. **One differential per slot, all 62**, plus a case that pins the image's own 62
+longwords against `../names.txt`; keying on the address rather than the slot is what a POKED table
+separates, and there is a case for that too. Two slots ARE ported (0 and 58, both `$a36`), which is
+what makes the walk itself runnable end to end in both cores.
+
+**THE DISPATCH IS ON THE WRAPPED OFFSET — batch 27's lesson at eight times the table.** `lsl.w #2`
+wraps in sixteen bits and the brief extension word then sign-extends, so the OFFSET selects the
+entry: `$4000..$403d`, `$8000..$803d` and `$c000..$c03d` alias onto slots 0..61 exactly as 0..61 do.
+**248 of the 65,536 type values dispatch a table entry, and a guard on the raw type would have
+refused 186 of them** — the defect batch 27's gate caught in the scene tier, avoided here by
+construction. All 65,536 are enumerated against the C (eight shardable chunks) and three
+differentials drive one alias per band onto three different handlers.
+
+**FOUR PLATE CORRECTIONS, EVERY ONE CITED TO BYTES.**
+* **`$698a` IS THE SPAWN ANIMATION, NOT A VANISH.** Bit 2 of `9(a0)` has exactly TWO operand sites
+  in the whole image — `bset #2,9(a1)` at `$10044` inside `actor_spawn_from_template` and the
+  `bclr #2,9(a0)` at `$69b0` in this body. The spawn raises it and this is the only thing that
+  lowers it, so a record plays this and nothing else until it wraps. Renamed
+  `actor_vanish_anim_step` → `actor_spawn_anim_step` (29 references in `../names.txt` moved with it)
+  and `actor_vanish_frame_table` → `actor_spawn_anim_frames`.
+* **`$2fe8` IS NOT `$2fce` WITH `d7 = 4`.** The two arms of its `btst` are the other way round, so
+  one walks TOWARD the followed record and the other AWAY. Renamed to
+  `actor_face_and_step_toward` / `actor_face_and_step_away4`, and the claim is a CHECKED property:
+  the two shapes assembled at one address differ in exactly the two arm calls' displacement words.
+* **The A34 arm's third record is SLOT 12, not 13, and it is NOT GUARDED.** `lea 352(a0),a0` from
+  slot 1 lands on `WB_ACTOR_FOLLOWED_SLOT`, and `$920` is followed straight by the `bra.w $928` tail
+  with no free-marker test — so a FREE followed slot is dispatched on whatever type word its 32
+  bytes hold. Driven as a case. The arm never tests the `$ffffffff` end marker either.
+* **`$701c` WRITES THE SIDE FLAG AT THE OPPOSITE POLARITY TO `$67c2`.** `$67c2` raises bit 3 while
+  the followed record is to the actor's LEFT; `$701c` raises it while the followed record is to its
+  RIGHT. Two routines eight hundred bytes apart write one bit with opposite meanings, and a port
+  that called `actor_set_side_flag` here would clear the bit exactly where this sets it. It also
+  takes no step at all, which its old name claimed.
+
+**THE THREE `FUN_*` ARE NAMED FROM WHAT THE BYTES DO.**
+* `FUN_00005c6e` → **`actor_followed_overlap_mask`** (244 B, 42 callers). It selects the followed
+  record exactly as `$67e0` does, builds the actor's box, and answers THREE INDEPENDENT TESTS as
+  three bits of d0 — two of them gated on the followed record's own SPRITE id, so what the player's
+  animation is showing decides which run. Thirty callers read bit 1 and twelve read bit 0; nothing
+  in the image reads bit 2 alone.
+* `FUN_0000501a` → **`actor_hop_ascend_step`** (44 B). It lifts the record
+  by its own `11(a0)` and then lowers that byte — a rise that decelerates by construction and ends
+  when the byte reaches zero, leaving it at ONE. **36 `bsr` callers, not the 29 batch 28 counted.**
+* `FUN_000023b6` → **`actor_hit_by_player_shot`** (172 B, 25 callers, every one of them
+  `tst.w d7 / bne.w` into its own damage arm). Two ways in: the screen flash with the followed
+  record within 140 pixels, or a record of type `$30..$32` in the HIGH allocation pool whose
+  footprint overlaps — which it CONSUMES, freeing it outright unless it is type `$31`, which is
+  marked and left alive.
+
+**AND THE BATCH-28 OPEN QUESTION IS CLOSED BY SCAN, NOT LEFT REGISTERED.** `$69de..$69fd` — the half
+of the frame table the `andi.w #$1f` cannot reach — has NO reader: `lea $69be.l` at `$6994` is the
+only reference to any address in `$69be..$69fd` anywhere in the image and nothing computes one. 32
+bytes of unreached data, stated rather than trimmed.
+
+**THE ONE PLACE THIS PORT IS NOT THE ORIGINAL, and it is bounded.** The walk has no bound: a table
+with no terminator spins forever, and past the image every read is zero — neither the terminator nor
+the free marker — so it dispatches slot 0 for ever. The stride divides the 24-bit bus exactly, so
+after `WB_ACTOR_WALK_BUS_CYCLE` steps the cursor has returned to an address it already read with the
+image unchanged and non-termination is PROVEN. The reconstruction stops and reports rather than
+hanging the suite; the oracle's instruction cap fires long before, so no differential can tell the
+two apart. The derivation is pinned as a case.
+
+**The observable surface this change is caught by**: the image diff (the actor tables, the frame
+words, the two global words `$6ef0` and `$714`), the oracle's REGISTERS for the three routines whose
+whole output is one (`$5c6e`'s d0, `$23b6`'s d7, `$6d5a`'s a1 — and the pass's walked-out a0), and
+the oracle's executed-PC coverage, which is what says a boundary run transferred rather than
+returned.
+
+SWEEP: 43 mutants over six pre-hoc axes (constant 13 / branch 12 / index 7 / dropped store 6 /
+order 3 / boundary 2), relinked per mutant with `__pycache__` purged and the compiler line checked.
+**42 caught; ONE survivor, and it is EQUIVALENT** — reordering $6872's advance-then-reset into an
+if/else leaves the same final byte, and the oracle's write ledger is address-keyed, so no
+differential can separate them. Named in the suite. (A second survivor turned out to be a MALFORMED
+mutant — it duplicated an assignment instead of moving it, so it was a no-op. Read a survivor before
+believing it: the real move is caught.)
+
+**THE REVIEW GATE MOVED THE CODE, not just the comments.** Five reviewers ran over the diff and
+four findings were deep enough to change the shape: (1) the reads went through the bus guard and the
+WRITES did not, so a record address that was not trusted for a read was trusted for a store — every
+byte and word access now goes through `bus_read_*`/`bus_write_*`, and bus.h grew the write half with
+`blit_write_word`'s own argument; (2) the walk's runaway shared the dispatcher's refusal code, so a
+case could not tell "this type left the table" from "this table has no end" —
+`WB_ACTOR_DISPATCH_UNBOUNDED` is its own value now; (3) `behavior.h` claimed no routine here reaches
+`rng_next`, which `actor_tick_timer30` does, carrying rng.h's T3-DATA false green with it; and (4)
+the compile-time copy of the 62 table entries is gone, per the fetch above. Four coverage holes came
+with them, each mutation-verified: the RNG VETO arm was never driven (both cases drew the same bit,
+so deleting the guard passed), `$6d5a`'s sign extension had no negative index, `$23b6`'s free-marker
+skip had no row a free record could have hit, and `$6840`'s two compares had no equal case.
+
+**AND THE SWEEP FOUND A LIVE DEFECT, by an accident worth recording.** A first sweep run was killed
+mid-mutant; its restore never ran, so `constant/spawn-anim-mask` — `$1f` swapped for the sixteen-byte
+stepper's `$f` — was left in the tree, and **`make test` came back 3,977 GREEN on it**. Every cursor
+the battery drove answered the same under both masks (both wrap at 16 and at 32, both step at 34);
+the one that separates them is 14, and it was not in the table. Three more holes came out of the
+sweep proper: the strike box's near edge and the mirrored point's two offsets had no row sitting ON
+an edge, the end-marker case used a PORTED type so the reconstruction answered
+`WB_ACTOR_DISPATCH_RAN` either way, and the platform catch seeded a followed record whose
+`LAUNCHED` bit was already clear so a dropped `bclr` wrote nothing. All four are closed by rows
+that fail without the fix. **The gotcha for the next porter: a killed sweep leaves the mutant
+behind — check the source before trusting the green that follows.**
+
+NOT PINNED, and REGISTERED:
+
+* **The refused dispatch.** A type whose scaled offset leaves the table makes the original `jmp`
+  through arbitrary data; no differential can drive one. The 65,536-value enumeration states the
+  refusal set exactly against the C instead.
+* **`$5c6e`'s high half.** `clr.w d0` clears only the low word, so the caller's upper half comes
+  back in the result register; the reconstruction returns the low word alone and nothing in the
+  image reads the other.
+* **The registers every other routine leaves behind** — the convention `actor.h` already sets.
+* **A bus read that STRADDLES the image's top.** `bus_read_word`/`bus_read_long` answer zero as a
+  whole where the shim answers the oracle per byte. Nothing in the image can drive it (the straddle
+  needs a cursor within two bytes of `$ffffff` and the walk's stride is 32).
+* **What each monster IS.** The handlers are `actor_behavior_typeNN` — the verified structural fact.
+  Which creature each slot draws still needs a sprite-id cross-reference or runtime observation.
+
+QUEUED, registered rather than half-done: the tier partition (PORTABILITY §0k item 7 — the dispatch
+edge now has a principled answer in `BEHAVIOR_SLOTS`, so the row can be drawn); `bus.h`'s promotion
+to the kit (fourth noticing); `test_actor.py`'s `pokes()` merge-by-key (fifth battery).

@@ -762,7 +762,8 @@ DEFAULT_PROBE_Y = PROBE_ROW * CELL_PIXELS + 1
 MARGIN = 0x20                       # ...and a margin either side, so an over-run is visible
 
 
-def _map_window(stride):
+def map_window(stride):
+    """The bytes one map occupies at ``stride`` — public for map_pokes' reason."""
     return MAP_CELLS + stride * MAP_WINDOW_ROWS + MAP_WINDOW_COLUMNS + MARGIN
 
 
@@ -773,11 +774,15 @@ def _cell_of(base, stride, column, row):
 ACTOR = TABLE_DEFAULT + 3 * RECORD_BYTES      # any record but the followed one or slot 8
 
 
-def _map_pokes(salt, a32_stride=A32_STRIDE, default_stride=DEFAULT_STRIDE):
-    """Both maps seeded, their stride words set, and a margin below each."""
+def map_pokes(salt, a32_stride=A32_STRIDE, default_stride=DEFAULT_STRIDE):
+    """Both maps seeded, their stride words set, and a margin below each.
+
+    PUBLIC because test_behavior.py's three map-stepping leaves need the same seeded maps: a second
+    copy of "what a collision map looks like" could disagree with src/map.c while both batteries
+    stayed green. Same rule test_scene.py follows for test_stage.py's window model."""
     pokes = {}
     for base, stride in ((MAP_A32, a32_stride), (MAP_DEFAULT, default_stride)):
-        window = _map_window(stride)
+        window = map_window(stride)
         pokes[base - MARGIN] = keyed_block(base - MARGIN, window + MARGIN, salt)
         pokes[base] = word(stride)
     return pokes
@@ -1001,7 +1006,7 @@ def _run_step_left(case, actor_x, half_width, step, tiles, a32=False, actor_type
     first probe lands in, in the SELECTED map's own grid."""
     salt = case_salt(case)
     probe_y = DEFAULT_PROBE_Y if actor_y is None else actor_y
-    pokes = _map_pokes(salt, default_stride=default_stride)
+    pokes = map_pokes(salt, default_stride=default_stride)
     pokes[FLAG_A32] = word(0xffff if a32 else 0)
     pokes[ACTOR - RECORD_BYTES] = keyed_block(ACTOR - RECORD_BYTES, 3 * RECORD_BYTES, salt)
     pokes[ACTOR + ACTOR_X] = word(actor_x)
@@ -1268,7 +1273,7 @@ def _run_step_right(case, actor_x, half_width, step, tiles, a32=False, actor_typ
 
     salt = case_salt(case)
     probe_y = DEFAULT_PROBE_Y if actor_y is None else actor_y
-    pokes = _map_pokes(salt, default_stride=default_stride)
+    pokes = map_pokes(salt, default_stride=default_stride)
     pokes[FLAG_A32] = word(0xffff if a32 else 0)
     pokes[SCROLL_LIMIT_X] = word(limit_x)
     pokes[ACTOR - RECORD_BYTES] = keyed_block(ACTOR - RECORD_BYTES, 3 * RECORD_BYTES, salt)
@@ -1718,7 +1723,7 @@ def _run_cell_lookup(name, case, entry=None, actor_x=LOOKUP_X, actor_y=LOOKUP_Y,
         f"{sorted(set(entry) - LOOKUP_ENTRY_REGS)} is not a register this routine reads or leaves")
 
     salt = case_salt(case)
-    pokes = _map_pokes(salt, default_stride=default_stride)
+    pokes = map_pokes(salt, default_stride=default_stride)
     pokes[FLAG_A32] = word(0xffff if a32 else 0)
     pokes[ACTOR - RECORD_BYTES] = keyed_block(ACTOR - RECORD_BYTES, 3 * RECORD_BYTES, salt)
     pokes[ACTOR + ACTOR_X] = word(actor_x)
@@ -2014,7 +2019,7 @@ def _model_settle(image, actor, cell, span, subcell, entry=None):
 
 def _run_settle(case, span, subcell, tiles, actor_y, platform_y, flags=0):
     salt = case_salt(case)
-    pokes = _map_pokes(salt)
+    pokes = map_pokes(salt)
     pokes[ACTOR - RECORD_BYTES] = keyed_block(ACTOR - RECORD_BYTES, 3 * RECORD_BYTES, salt)
     pokes[ACTOR + ACTOR_Y] = word(actor_y)
     pokes[ACTOR + ACTOR_FLAGS] = bytes([flags])
@@ -2208,7 +2213,7 @@ def _run_settle_tile(case, span, subcell, tiles, actor_y=DEFAULT_PROBE_Y, flags=
                      entry=None):
     """One $1492 case. ``tiles`` is {column offset: code} from the cell a6 names."""
     salt = case_salt(case)
-    pokes = _map_pokes(salt)
+    pokes = map_pokes(salt)
     pokes[ACTOR - RECORD_BYTES] = keyed_block(ACTOR - RECORD_BYTES, 3 * RECORD_BYTES, salt)
     pokes[ACTOR + ACTOR_Y] = word(actor_y)
     pokes[ACTOR + ACTOR_FLAGS] = bytes([flags])
@@ -2471,7 +2476,7 @@ def _run_fall(case, tiles, head_tile=CLEAR_TILE, actor_x=FALL_X, half_width=FALL
     ``head_tile`` is the single cell the player-only head reads, at `_tile_33_cell`.
     """
     salt = case_salt(case)
-    pokes = _map_pokes(salt)
+    pokes = map_pokes(salt)
     pokes[ACTOR - RECORD_BYTES] = keyed_block(ACTOR - RECORD_BYTES, 3 * RECORD_BYTES, salt)
     pokes[ACTOR + ACTOR_X] = word(actor_x)
     pokes[ACTOR + ACTOR_Y] = word(actor_y)

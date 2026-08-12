@@ -35,4 +35,44 @@ static inline uint8_t bus_read_byte(const uint8_t *image, uint32_t at) {
     return os_in_image(address, 1) ? image[address] : (uint8_t)0;
 }
 
+/* The same rule at the two wider operand sizes, for src/behavior.c: the per-frame actor walk
+ * follows a table pointer out of memory (`movea.l $a098.l,a0`) and every animation stepper in the
+ * behaviour tier follows a frame-list pointer its CALLER supplied in a1, so a record word, a
+ * record longword and a frame word can all be fetched through an address the reconstruction
+ * computed rather than one the image is known to hold.
+ *
+ * The shim answers a straddle THE SAME WAY — `m68k_read_memory_16`/`_32` bound the WHOLE operand
+ * against the image and return 0 when it does not fit, rather than splitting it
+ * (tools/recreate_kit/oracle/shim.c) — so these agree with the oracle at the top of the image as
+ * well as inside it. */
+static inline uint16_t bus_read_word(const uint8_t *image, uint32_t at) {
+    uint32_t address = at & WB_BUS_ADDR_MASK;
+    return os_in_image(address, 2) ? be16(image + address) : (uint16_t)0;
+}
+
+static inline uint32_t bus_read_long(const uint8_t *image, uint32_t at) {
+    uint32_t address = at & WB_BUS_ADDR_MASK;
+    return os_in_image(address, 4) ? be32(image + address) : 0u;
+}
+
+/* ...and the WRITE side of the same rule, which is the half a guarded read alone does not buy.
+ *
+ * A reconstruction that guards its reads and then stores through a raw `image + addr` is worse off
+ * than one that guards neither: the address it refused to trust for a read is trusted for a write,
+ * and a write past the image walks off the ctypes buffer into the host heap where the 68000 side
+ * merely reaches an address the shim does not map. The shim DROPS such a write, so that is what
+ * these do — the same answer src/blit.c's `blit_write_word` gives for the same reason, and the same
+ * divergence class closed the same way. */
+static inline void bus_write_byte(uint8_t *image, uint32_t at, uint8_t value) {
+    uint32_t address = at & WB_BUS_ADDR_MASK;
+    if (os_in_image(address, 1))
+        image[address] = value;
+}
+
+static inline void bus_write_word(uint8_t *image, uint32_t at, uint16_t value) {
+    uint32_t address = at & WB_BUS_ADDR_MASK;
+    if (os_in_image(address, 2))
+        wr16(image + address, value);
+}
+
 #endif /* WONDERBOY_BUS_H */

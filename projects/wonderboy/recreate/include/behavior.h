@@ -1,0 +1,172 @@
+/* behavior.h — the per-actor BEHAVIOUR tier's foundation: the walk that runs it ($8d0), the
+ * dispatcher that is its whole entry mechanism ($928), the spawn animation twenty-five handlers
+ * open by branching into ($698a), the thirteen shared leaves they call, and the two tests forty-two
+ * and twenty-five of them run every frame ($5c6e, $23b6).
+ *
+ * WHY THIS IS A FILE OF ITS OWN. PORTABILITY.md §0k measured it: `actor_dispatch_behavior` reads
+ * WB_ACTOR_TYPE out of the record, scales it `lsl.w #2` and tail-jumps through a 62-longword table
+ * whose base — WB_ACTOR_BEHAVIOR_TABLE — appears nowhere in the image as an operand, because it is
+ * the 8-bit displacement of a PC-relative INDEXED extension word. Ghidra follows a plain `lea
+ * abs.l` and not that one, so the table and all 61 of its targets were invisible, and with them
+ * 18,068 bytes: a third of the program. This file is the bottom of what was behind it. The 61
+ * handlers themselves are not here — 59 of the 62 slots are still unported, and the dispatcher's
+ * BOUNDARY below is how that is stated rather than hidden.
+ *
+ * EVERY ROUTINE HERE TAKES 68000 REGISTERS, the convention actor.h sets: a record address in a0, a
+ * step in d7, a frame list in a1, a band record in a2. Two hand a register BACK — $5c6e's overlap
+ * mask and $23b6's verdict are its d0 and d7 and are read by every one of their callers — and one
+ * hands back an address ($6d5a's tail jump leaves the followed record in a1). Everything else
+ * writes only the image.
+ *
+ * NOTHING HERE TOUCHES HARDWARE DIRECTLY. §0k checked it across all 123 functions the wall hid: the
+ * scan's hardware table is byte-identical before and after. The tier's only hardware is what it
+ * INHERITS through `rng_next`, and `actor_tick_timer30` below does reach it — so that routine
+ * carries rng.h's T3-DATA false green with it. The generator's entropy term is `$ff8209 ^ tick` and
+ * `$ff8209` is off-image, so both cores are served the frame tick alone; the relaunch this tier
+ * gates on one bit of that word is therefore pinned as a FUNCTION OF THE TICK, not as randomness.
+ */
+#ifndef WONDERBOY_BEHAVIOR_H
+#define WONDERBOY_BEHAVIOR_H
+
+#include <stdint.h>
+
+/* --- the walk and the dispatch ($8d0, $928) -----------------------------------------------------
+ *
+ * THE BOUNDARY, and why it is a returned ADDRESS. Sixty of the sixty-two slots are unported, so
+ * there is nothing for the C to call; what it does instead is FETCH the target out of the image
+ * exactly as `movea.l (a1),a1` does and hand it back, and the differential runs the ORACLE on with
+ * `stop_pc` at that same address plus a coverage witness that the `jmp (a1)` at $936 really fired.
+ * That is batch 19's shape and batch 22's, made table-driven: a later batch adds one row to
+ * src/behavior.c's list of reconstructed targets and nothing in the mechanism moves.
+ *
+ * The three values below are what the C returns when there is no address to report. All three are
+ * chosen so no table entry can collide with them — test/test_behavior.py checks that against the
+ * image's own 62 longwords rather than assuming it.
+ */
+#define WB_ACTOR_DISPATCH_RAN     0u   /* a reconstructed handler ran to its own `rts` */
+#define WB_ACTOR_DISPATCH_REFUSED 1u   /* the scaled type left the table: the original `jmp`s through
+                                        * a longword outside it and no C stands in for that */
+#define WB_ACTOR_DISPATCH_UNBOUNDED 2u /* THE WALK's own, and this port's alone: a table with no
+                                        * terminator, which the original runs for ever. It is a
+                                        * separate code from the refusal above because the two mean
+                                        * different things and a case that confused them would pin
+                                        * neither */
+
+/* $8d0 — run one frame of behaviour for every live record of the table WB_ACTOR_TABLE_SELECTED
+ * names. No arguments: the cursor comes out of memory. game_main_loop reaches it through $882.
+ *
+ * Returns WB_ACTOR_DISPATCH_RAN when the walk ran to the original's own `rts`, the entry address of
+ * the first handler it dispatched to that this port does not have (at which point the walk STOPS,
+ * because the original is now inside code the reconstruction cannot follow),
+ * WB_ACTOR_DISPATCH_REFUSED when a record's scaled type left the table, or
+ * WB_ACTOR_DISPATCH_UNBOUNDED when the table has no terminator at all. */
+uint32_t actor_behavior_pass(uint8_t *image);
+
+/* $928 — the four instructions the whole tier hangs off. `actor` is the original's a0. Returns what
+ * `actor_behavior_pass` returns, for the one record. */
+uint32_t actor_dispatch_behavior(uint8_t *image, uint32_t actor);
+
+/* $a36 — slots 0 and 58 of WB_ACTOR_BEHAVIOR_TABLE: a bare `rts`, which is also the two bytes that
+ * BOUND the table from above. It is a reconstruction like any other, and it is what makes the walk
+ * itself testable: a table of type-0 records runs the pass end to end in both cores. */
+void actor_behavior_null(uint8_t *image, uint32_t actor);
+
+/* --- the animation every spawned record plays ($698a) -------------------------------------------
+ *
+ * TWENTY-FIVE `bne.w $698a` SITES AND NO CALL. It is a shared TAIL, branched into from the handlers'
+ * first instruction pair (`btst #2,9(a0) / bne.w`) and returning to `actor_behavior_pass` through
+ * their frame — the $1a5d8/$17c72 class, entered at its own address by a battery of its own. */
+
+/* $698a — step `actor`'s WB_ACTOR_FIELD_18 cursor one word through WB_ACTOR_SPAWN_ANIM_FRAMES,
+ * publishing each frame as its WB_ACTOR_SPRITE; on the wrap, lower WB_ACTOR_FLAGS2_SPAWNED_BIT and
+ * zero the cursor, which is what releases the record to its real handler. */
+void actor_spawn_anim_step(uint8_t *image, uint32_t actor);
+
+/* --- the shared leaves ---------------------------------------------------------------------------
+ *
+ * `step` is the original's d7 throughout — the pixel count the two map probes take — and the
+ * routines that take one are called with it already loaded by the handler.
+ */
+
+/* $2f22 — step `actor` the way WB_ACTOR_FLAG_SIDE_BIT faces (set = LEFT, i.e. toward the followed
+ * record) and FLIP that bit when the step came back blocked. Two `bsr` callers. */
+void actor_step_facing(uint8_t *image, uint32_t actor, uint32_t step);
+
+/* $2f86 — count WB_ACTOR_FIELD_30 down; on the frame it reaches zero, reload it and — if the record
+ * is SUPPORTED and `rng_next` says so — relaunch it. Two `bsr` callers. */
+void actor_tick_timer30(uint8_t *image, uint32_t actor);
+
+/* $2fce — face the followed record, then step TOWARD it by `step`. Two `bsr` callers. */
+void actor_face_and_step_toward(uint8_t *image, uint32_t actor, uint32_t step);
+
+/* $2fe8 — face the followed record, then step AWAY from it by WB_ACTOR_STEP_AWAY_PIXELS. It is NOT
+ * $2fce with a different d7: the two arms of the `btst` are the other way round, which is the whole
+ * difference between the two bodies. Four `bsr` callers. */
+void actor_face_and_step_away4(uint8_t *image, uint32_t actor);
+
+/* $3006 — `list_pair` (the original's a1) is TWO longwords, a frame list per facing;
+ * WB_ACTOR_FLAG_SIDE_BIT picks one. Publish the frame the cursor names, then advance the cursor —
+ * or zero it when the NEXT word is negative. Fourteen `bsr` callers, the busiest leaf here. */
+void actor_anim_step_facing_list(uint8_t *image, uint32_t actor, uint32_t list_pair);
+
+/* $4fea — publish one of three sprite ids by WB_ACTOR_FLAG_SUPPORTED_BIT then
+ * WB_ACTOR_FLAG_MOVING_BIT. Two callers. */
+void actor_select_sprite_by_flag(uint8_t *image, uint32_t actor);
+
+/* $5a3c — publish the word at `frame` (a1) and advance `cursor` (d0) two bytes with a 16-byte wrap.
+ * Eighteen bytes with no reads of its own beyond the record: both its registers are the caller's,
+ * and the wrapped cursor comes back in d0 because $5a10 `tst.b`s it. Two `bsr` callers. */
+uint32_t actor_advance_anim16(uint8_t *image, uint32_t actor, uint32_t frame, uint32_t cursor);
+
+/* $6840 — move `actor` `step` pixels toward the followed record in BOTH axes, at a ride height of
+ * WB_ACTOR_PLATFORM_TOP above its y. It touches no flag byte at all. One `bsr` caller. */
+void actor_step_toward_followed(uint8_t *image, uint32_t actor, uint32_t step);
+
+/* $6872 — the WB_ACTOR_ANIM_5160_FRAMES stepper, with a relaunch in front of it: a SUPPORTED record
+ * whose WB_ACTOR_FIELD_30 countdown has not reached WB_ACTOR_ANIM_5160_HOLD is ticked, and on the
+ * tick that reaches it the countdown becomes the record's WB_ACTOR_SPEED and it is launched. Two
+ * callers. */
+void actor_relaunch_and_anim_5160(uint8_t *image, uint32_t actor);
+
+/* $6d5a — publish the sprite WB_ACTOR_SPRITE_TABLE_6ED8 holds for `actor`'s WB_ACTOR_HALF_WIDTH,
+ * then `bra.w` INTO followed_actor_record, so the followed record comes back in a1 and is this
+ * routine's result too. Three callers. */
+uint32_t actor_sprite_from_6ed8(uint8_t *image, uint32_t actor);
+
+/* $6d70 / $6dd8 — the moving platform. `followed` is the original's a1 and `band` its a2, a record
+ * whose WB_ACTOR_BAND_LEFT and WB_ACTOR_BAND_WIDTH words the caller supplies. The first CATCHES the
+ * followed record onto the platform's top and stops it falling; the second lets it go again when it
+ * has left the band or started moving under its own power. Three callers each. */
+void actor_platform_carry_followed(uint8_t *image, uint32_t actor, uint32_t followed,
+                                   uint32_t band);
+void actor_platform_release_check(uint8_t *image, uint32_t actor, uint32_t followed, uint32_t band);
+
+/* $701c — set WB_ACTOR_FLAG_SIDE_BIT from the followed record's x with the OPPOSITE polarity to
+ * actor_set_side_flag's ($67c2 raises it while the followed record is to the LEFT; this raises it
+ * while the followed record is to the RIGHT), then force a nonzero WB_ACTOR_FIELD_22 to
+ * WB_ACTOR_FIELD_22_HOLD. Two callers. */
+void actor_face_followed_reset_22(uint8_t *image, uint32_t actor);
+
+/* --- the two tests the handlers run every frame ($5c6e, $23b6) ----------------------------------- */
+
+/* $5c6e — how `actor`'s box overlaps the followed record's, as three independent bits in d0:
+ * WB_ACTOR_OVERLAP_STRIKE_BIT, _BODY_BIT and _POINT_BIT. Two of the three are live only for a band
+ * of followed SPRITE ids, so what the player's current animation frame is decides which tests run
+ * at all. FORTY-TWO `bsr` callers — thirty read bit 1 and twelve read bit 0, and nothing in the
+ * image reads bit 2 on its own. */
+uint32_t actor_followed_overlap_mask(uint8_t *image, uint32_t actor);
+
+/* $23b6 — WB_ACTOR_HIT when something the player threw has landed on `actor` this frame, else
+ * WB_ACTOR_NOT_HIT, in d7. Two ways in: WB_FLASH_TIMER running with the followed record within
+ * WB_ACTOR_FLASH_REACH, or a record of WB_ACTOR_SHOT_TYPE_LO..HI in the HIGH allocation pool whose
+ * footprint overlaps this one — which is CONSUMED on the way past, freed outright unless it is
+ * WB_ACTOR_SHOT_TYPE_KEPT. Twenty-five `bsr` callers, all of them `tst.w d7 / bne.w` into their own
+ * damage arm. */
+uint32_t actor_hit_by_player_shot(uint8_t *image, uint32_t actor);
+
+/* $501a — while WB_ACTOR_FLAG_MOVING_BIT is up, lift `actor` by its own WB_ACTOR_SPEED and then
+ * lower that speed by one, ending the rise when it runs out. Thirty-six `bsr` callers, which is more
+ * than any other leaf in this file. */
+void actor_hop_ascend_step(uint8_t *image, uint32_t actor);
+
+#endif /* WONDERBOY_BEHAVIOR_H */
