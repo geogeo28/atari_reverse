@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 169/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 172/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -36,15 +36,20 @@ whole with no boundary) — and the TICK ITSELF (`snd_channel_step` + its 24 opc
 `snd_music_tick_body`, 1,208 bytes, batch 24: the sound module is now WHOLE except its 44-byte
 tempo head) — and now that HEAD (`snd_music_tick`'s tempo selector, 44 bytes, batch 25: the sound
 module's last unported bytes, and the first code in this workspace verified across a DECLARED
-machine rather than a fabricated one) —
-20,478 bytes in all, 79.3 % of everything
+machine rather than a fabricated one) — and the STAGE-TRANSITION HINGE (`stage_load_window` +
+`set_palette` + `snd_play_song`, 374 bytes, batch 26: $f95c runs WHOLE — every stage entry in the
+game now passes through reconstructed code end to end, and the dropped-write tier is named) —
+20,852 bytes in all, 80.7 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0h's 25,826 — see "Batch 22b
 (steps 2–3)" at the end)*.** *(The batch-16 commit's header said 147 — an
 oversight; its own section records 151, and batch 17 corrected the header to 153. Batch 22's edit
 left this leading count at 161 while its own section and parenthetical said 163 — the same
 oversight, found by batch 23's port agent and corrected here. It now carries batch 25's 169.)*
-`make test`: **3483 cases green in what this batch commits** (3466 before batch 25, plus its 17,
-all in `test/test_sound.py`, which stands at 526).
+`make test`: **3546 cases green in what this batch commits** (3483 before batch 26, plus its 63:
++31 in `test/test_sound.py`, which stands at 557, and +32 in `test/test_stage.py`, which stands at
+112 — two measured trims inside those figures, recorded in the batch-26 section at the end).
+`make test` at batch 25: **3483 cases** (3466 before batch 25, plus its 17,
+all in `test/test_sound.py`, which stood at 526).
 `make test` at batch 24: **3466 cases** (3333 before batch 24, plus its 133
 net, all in `test/test_sound.py`, which stood at 509 — five measured trims inside that figure,
 recorded in the batch-24 section at the end).
@@ -124,6 +129,7 @@ buffers, so the subsystem now measures **39 functions / 7,010 bytes inside a fun
 them reconstructed and green** — the largest such row in the file. What is still NOT closed is the
 routine that calls the builders: `stage_load_window` (`$f95c`) ends in a `jsr` into the sound
 module, which is why it is filed under `stage (load + reset)` and is that row's only unrunnable
+*(batch 26: RECONSTRUCTED WHOLE — it runs end to end with no boundary; see its section at the end)*
 function. See "The background scroll engine", "Closing it", "The consumer tier" and "The stage
 loader" below, and the two re-measure sections at the end for what re-drawing the boundaries moved.
 
@@ -689,6 +695,9 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x18106` | `snd_channel_step` (`src/sound.c`) | 258 | verified | Batch 24: one channel's pattern step — countdown, pitch slide, the read loop and the range decoder (`addi.b`+`bcs` chain whose command range ends at $b8, NOT the $97 the notes said) — ending in the `jmp (a3,a2.w)` handler dispatch; the two handler return addresses ($18116/$18148) are DERIVED from the stepper's own runs so stepper and handlers cannot disagree; a3 inherited; the $18036 read-BEFORE-store on the sequence entry is the batch's found-and-fixed ordering divergence, pinned by a case that solves the aliasing offset so the table names the record's own index word |
 | `0x17fd4` | the 24 pattern-opcode handlers | 306 | verified | Batch 24: 23 distinct bodies below the stepper, each entered by its `jmp` and all but $8e branching back INTO the stepper's body; the opcode census is DERIVED by a walk the battery runs (658/95/88/51/48/16/11/5/4/3/2 over all 106 patterns of all 17 songs, self-proving 95+11=106, $93 retargets closure-guarded) — eleven of twenty-four reached by shipped data, each grid row saying which; $97's latent bug (sets d0, never d1) REPRODUCED not fixed; $98..$b7 (a dispatch through the handlers' own instruction stream) has no C and REFUSES by construction via os_refused, proven unreachable from shipped data |
 | `0x17c74` | `snd_music_tick` (`src/sound.c`) | 44 | verified | Batch 25: the TEMPO SELECTOR, the sound module's last unported bytes and the kit's Phase 7 seeded-hardware-read model's first consumer anywhere — `btst #7,$fffa01` (mono detect, ACTIVE LOW, so SET = colour) and `btst #1,$ff820a` (SET = 50 Hz) choose the drop byte at $17c6e, 0/$2b/$48, and the run falls into `snd_music_tick_body`; three machines declared with `hw_seed=` as the tested BIT and its complement, plus the capture profile's own $b0/$02; the mono arm's `bra.s` over the sync test means a mono machine never reads $ff820a, an ordering only the ordered read stream can witness; a case declaring no machine is REFUSED (AssertionError from `differential`, not `emu.run` — the one place Phase 7 differs from Phase 6); this is also the routine that ESTABLISHES a3, so no case here seeds it; head + body now tile $17c74..$17f23 |
+| `0xf944` | `set_palette` (`src/stage.c`) | 24 | verified | Batch 26: sixteen words from `palette_table + (row << 5)` to the shifter — and THE DROPPED-WRITE TIER NAMED: the output is off-image, the oracle and the reconstruction both drop it, and no ledger exists, so the case pins the EMPTY write set on both sides, the returned cursor (source + 32) and the oracle's own a1 landing at $ff8260, and says on every surface that the hardware effect is UNTESTED. The sweep proves the hole is real: three survivors (row shift, colour count, unscaled row) are one hole seen three ways, while the un-advanced-cursor mutant IS caught. The kit-scope remedy (a dropped-hardware-write ledger) is registered below |
+| `0x17b3a` | `snd_play_song` | 140 | verified | Batch 26: stub +0 — stops the module FIRST through the +28 stub (the `movem` pair is what carries the song id in d0 across a routine that silences the chip, so a start's PSG traffic is exactly a stop's), reads the 8-byte directory record, arms three channels in one real `dbf` loop, and writes six globals — including the `st` at $17bb8 the old plate omitted: the row accumulator starts SATURATED, so a song's first row steps at once. This is the routine that WRITES the mutable bands batches 23–25 seeded by hand. Cases are the game's own data: all 17 shipped songs, both tail arms, the $fa2e dedup latch both ways |
+| `0xf95c` | `stage_load_window` | 210 | verified | Batch 26: THE HINGE RUNS WHOLE — entered at $f95c, out at its own `rts`, no stop_pc: the raw-tiles flag (`cmpa.l #$1d43e,a6`), the three latches, the followed defaults, the three batch-12 builders, `set_palette` via `9(a0)<<5`, the follow subtraction unless frozen, and the sound tail selected by `8(a0)`'s sign through the $fa2e dedup. Composition asserted through the callees' OWN models (batch-19 style, one `_model_publish` after the review pass): 180 KB of buffers, the published scroll state, the tune latch and the module's write set compared as one. The plate's operands were corrected ($fe1a re-read three times — 4(a0)/9(a0)/8(a0), not a1; $f9d6's dead read; the six real caller sites). The .PRG ships FIVE start records at $1d40c, so both tail arms and two palette rows run on shipped data |
 | `0x17ca0` | `snd_music_tick_body` | 644 | verified | Batch 24: the tick below its 44-byte tempo head — engine/SFX gate, the drop accumulator over a POKED $17c6e (all three drop values 0/$2b/$48 differentiable without the head), the fade with its NON-LOCAL exit into the ported stop chain, 3× row step, 3× period/volume, the 54/52/52 mixdown arms (A alone carries the abandon `bmi`, B/C alone the `rol.b`), and the PSG output block over psg_seed — ordered ledger + register file compared, the reg-7 RMW's preserved direction bits pinned, outgoing d1 = $2700 stated as the oracle's SR fact; multi-tick sequences are N runs from one declared chip state, NOT a continuous chip timeline (the harness reseeds per run — stated in the driver) |
 
 ### The .RAD depacker
@@ -3712,7 +3721,8 @@ respawn continuation belongs beside the actor lifecycle, `$e1c8` beside the stag
 re-measure, queued as one per the house rule *(batch 22b: ATTEMPTED and BLOCKED at the baseline
 gate — see the next section; the prerequisite is named there)*; the candidate-side write ledger
 (kit scope, the narrowed-surface note above); and `$17c74` (the per-VBL tick) and
-`stage_load_window` remain the PSG wall's two faces, unmoved by this batch.
+`stage_load_window` remain the PSG wall's two faces, unmoved by this batch. *(Both fell:
+`$17c74` in batch 25 behind kit Phase 7, `stage_load_window` in batch 26. The wall is down.)*
 
 ### Batch 22b: the queued re-measure — BLOCKED at the baseline gate, and the tripwire is why
 
@@ -3955,6 +3965,7 @@ sides.
   prefix comparison the check is missing. Kit scope, and worth more than any in-diff change: the
   in-diff copies it would be tempting to optimise (`_poked_image`, `_Memory.__init__`) total 60 ms.
 * **`$17c74` and `stage_load_window` remain the PSG wall's two faces**, unmoved by this batch —
+  *(batch 25 took the first, batch 26 the second; the wall is down)* —
   but the tick's callee list and its non-local exit are now recorded against the day one of them
   moves.
 
@@ -4361,3 +4372,102 @@ surface that can see any of the head's behaviour except the one byte it writes.
   regex that passes for the wrong reason (§7's registered item). A third is now available and would
   be the honest replacement for the `snd_music_tick` row this batch retired: the refusal WITHOUT a
   `hw_seed` and a green run WITH one.
+
+### Batch 26: the stage-transition hinge — $f95c runs WHOLE, and the dropped-write tier is named
+
+`stage_load_window` ($f95c, 210 bytes) has been the T-tier hinge since batch 12: every stage entry
+in the game goes through it, and the scene tier's four exit tails dead-end at its boundary. Both of
+its historic blockers are gone. Blocker 2 fell with batches 21b–25 (the sound module is whole), and
+blocker 1 — `bsr set_palette`, sixteen words to the shifter — turned out not to be a blocker but a
+MEASUREMENT: the routine touches no image byte at all, so it is portable, and what it is portable
+*at* is nothing. Three routines, 374 bytes. **Verified 172, 20,852 bytes, 80.7 %; `make test` 3546**
+(3483 before the batch, plus 63: +31 in `test/test_sound.py`, which stands at 557, and +32 in
+`test/test_stage.py`, which stands at 112 — two measured trims inside those figures, below).
+
+| address | name | bytes | what it is |
+| --- | --- | --- | --- |
+| `$f944` | `set_palette` | 24 | the shifter palette — and the DROPPED-WRITE tier |
+| `$17b3a` | `snd_play_song` | 140 | stub +0: the routine that writes the module's mutable bands |
+| `$f95c` | `stage_load_window` | 210 | the hinge, entered at $f95c and left at its own `rts` |
+
+**IT RUNS WHOLE.** Every callee is reconstructed — the three builders (batch 12), `set_palette`,
+`snd_play_song`/`snd_stop` — so a case enters at $f95c and comes out of the original's own `rts`
+with no `stop_pc`. The composition is asserted through the callees' OWN models (`_model_build`,
+`_model_preshift`, the review pass's `_model_publish`, and test_sound.py's `model_play_song` /
+`STOP_WRITES`, which test_stage.py now imports): 180 KB of buffers, the published scroll state, the
+followed record, the two follow words, the tune latch and the sound module's write set, compared
+for EQUALITY against one model. Nothing is restated — two copies could disagree while both
+batteries stayed green, which is why the review pass turned the last inline copy into the shared
+`_model_publish` before this section could claim it.
+
+**THE DROPPED-WRITE TIER, and why it is a finding rather than a gap.** WB_SHIFTER_PALETTE is off the
+loaded image, so shim.c drops all eight `move.l`s; the kit models hardware READS (Phase 7) and has
+no ledger for a write. So a reconstruction that wrote the wrong sixteen colours — or none — is
+separable from this one by NOTHING the harness compares. The batch does not pretend otherwise: the
+case asserts an EMPTY write set on both sides, the returned source cursor, and the oracle's own a1
+landing at $ff8260, and the claim is stated where a reader meets it (src/stage.c, include/stage.h,
+the battery's docstring). THE SWEEP IS WHAT PROVES IT IS A HOLE: three of its four survivors
+(row shift, colour count, unscaled row) are one hole seen three ways, while the mutant that returns
+the un-advanced cursor IS caught. REGISTERED, not built: a dropped-hardware-write LEDGER in the kit,
+which would make this pinnable the way psg.h made the chip writes pinnable.
+
+**THE CASES ARE THE GAME'S OWN DATA.** The .PRG ships FIVE start records at $1d40c..$1d43d, found by
+reading $f95c's callers: four carry song ids 1..4 and one ($1d42a) carries $ff, the negative byte
+that stops the module — so both arms of the tail are shipped, and so are palette rows 0 and 1. The
+ten-byte record length is settled three ways over that block: stage_start_table's eight pointers step
+by ten, the five records sit ten apart, and the last ends EXACTLY where bg_tile_bitmaps begins. Two
+cases seed a record of their own, for the one thing the shipped five cannot reach: their map cells
+are all (0,0), so nothing in them leaves a non-zero WB_BG_SCROLL_POS_X for the follow subtraction.
+
+**snd_play_song is what makes the tick tier's bands defined.** Batches 23–25 seeded $17bc6..$17c71 by
+hand because the .PRG ships it dirty; this is the routine that writes it. It also stops the module
+first, and through the +28 STUB rather than $17f24 — the `movem` pair is what carries the song id in
+d0 across a routine that silences the chip, which is why a start's PSG traffic is exactly a stop's.
+
+PLATE CORRECTIONS, all cited to bytes (../names.txt): $f95c re-reads its own latch three times, so
+its operands are 4(a0)/9(a0)/8(a0) and not 4(a1)/9(a1); its caller list was decomp.c's numbering and
+is now the six real sites; $f9d6's `move.w 8(a0),d0` is a DEAD read. $17b3a's plate omitted the
+`st 2270(a3)` at $17bb8 — the row accumulator starts SATURATED, so a song's first row steps at once.
+
+**THE REVIEW GATE'S FINDINGS, all landed.** The one that mattered most was an INVARIANT the batch
+had silently dropped: switching the pattern census from `leaf.entry_of("snd_song_directory")` to
+the header constant left names.txt's `var 0x18480` pinned by NOTHING — after a re-bootstrap the
+name map could label a different address while all 3,546 cases stayed green. The cross-pin is
+restored as its own case, and the batch's three new two-source addresses (`stage_start_table`,
+`stage_start_records`, `palette_table`) got the same parametrized pin. Also landed: `_model_publish`
+extracted (the battery's own no-restatement claim is now true); two dead band tuples deleted whose
+comment miscounted their own entries; the +28 stub offset collapsed from FOUR spellings (the fix
+found one more than the review) to one exported constant; `leaf.brief_extension_word` now owns the
+68000 brief-extension-word format for both its callers; the published-band margin seeding shared
+and its 0x40 named; and `PLAY_SONG_MIXER` derived per the file's own TICK_MIXER precedent, which
+surfaced `SONG_LOADED_SET` defined twice under one name.
+
+**Two measured trims** (each removed run named the claim it re-makes): the shipped-bank flag case
+(a whole 180 KB composed run whose ternary mutant already fails all five shipped-record runs), and
+the play-song mixer sweep thinned from seven rows to four per `_one_seed_per_direction_state`, with
+its own four-state guard — what a row here uniquely buys is a start reaching the chip through the
++28 stub with the declared seed intact; the per-seed ori-preservation claims are the stop chain's
+own sweep.
+
+SWEEP: 21 mutants over five pre-hoc axes (constant / branch / index / dropped store / order),
+17 caught — re-run WHOLE after the review fixes, byte-identical verdicts. Three survivors are the
+palette hole above; the fourth (reading the record from the entry register instead of the
+re-latched pointer) is an EQUIVALENT mutant — the routine writes a1 into $fe1a itself and nothing
+between rewrites it.
+
+NOT PINNED, and REGISTERED:
+
+* **What reaches the shifter** (above), and with it the palette row a record names. The kit-scope
+  remedy — a dropped-hardware-write ledger, the write-side twin of Phase 7 — is REGISTERED here:
+  trigger = the next routine whose whole observable is hardware writes; home = tools/recreate_kit.
+* **$101be (66 B) is READ, not ported** — entry 1 of scene_exit_action_table: four state writes, an
+  allocation whose record is DISCARDED (a1 never written through), and a counter ($21c58) no reader
+  reads. Its one callee is reconstructed. **$dfbe is down to ONE blocker — porting those 66 bytes —
+  and is the next batch's opener.** test_scene.py's four exit-tail cases keep their
+  stop_pc-plus-transfer-witness convention until then.
+* **No 24-bit bus guard on stage_load_window's three pointer arguments** — bg_build_buffer's
+  exposure since batch 12 over the same three registers, so guarding it is a change to that tier,
+  REGISTERED as one item: no shipped caller can produce a pointer above the image (five `lea`
+  literals, and stage_start_table's eight entries are all $217d8..$2181e).
+* **decomp.c is one reapply behind names.txt** (the stage_start_table rename) — the reapply rides
+  with the next re-scan, per the two-stage measurement discipline.

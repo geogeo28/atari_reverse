@@ -276,6 +276,19 @@ PSG_REG_TONE_A = wb("PSG_REG_TONE_A")
 PSG_REG_TONE_LEN = wb("PSG_REG_TONE_LEN")
 PSG_REG_NOISE_PERIOD = wb("PSG_REG_NOISE_PERIOD")
 
+SONG_DIRECTORY = wb("SND_SONG_DIRECTORY")
+SONGS = wb("SND_SONGS")
+SONG_RECORD_LEN = wb("SND_SONG_RECORD_LEN")
+SONG_SPEED_OFF = wb("SND_SONG_SPEED_OFF")
+SONG_SEQUENCE_OFF = wb("SND_SONG_SEQUENCE_OFF")
+ARPEGGIO_NULL = wb("SND_ARPEGGIO_NULL")
+CH_DURATION_INITIAL = wb("SND_CH_DURATION_INITIAL")
+CH_SEQUENCE_INDEX_INITIAL = wb("SND_CH_SEQUENCE_INDEX_INITIAL")
+SPEED_ACC_INITIAL = wb("SND_SPEED_ACC_INITIAL")
+SONG_LOADED_SET = wb("SND_SONG_LOADED_SET")
+ENGINE_RUNNING = wb("SND_ENGINE_RUNNING")
+
+
 LONGWORD_MASK = leaf.LONGWORD_MASK
 LONGWORD_LEN = leaf.LONGWORD_BYTES
 WORD_LEN = leaf.WORD_BYTES
@@ -552,6 +565,11 @@ STUB_TABLE = (
     (84, "snd_start_fadeout", None, None),            # `move.l a3,-(a7)` / `movea.l (a7)+,a3`
 )
 STUB_TRIGGER_OFFSET = 56
+# ...and the STOP entry, which THREE things reach: opcode $8e's tail `bra.w`s into it,
+# snd_play_song enters it by `bsr.w $17af8`, and stage_load_window by `jsr 28(a1)`. Named here
+# beside the table it indexes, and imported by test_stage.py, so the three cannot disagree
+# about which stub the stop goes through (it was spelt twice in this file before batch 26).
+STUB_STOP_OFFSET = 28
 _TRIGGER_STUB = next(stub for stub in STUB_TABLE if stub[0] == STUB_TRIGGER_OFFSET)
 
 
@@ -575,8 +593,6 @@ MOVE_SR_DN = 0x40c0             # move sr,Dn — NOT privileged on a 68000 (it i
 MOVE_DN_SR = 0x46c0             # move Dn,sr
 MOVE_IMM_SR = 0x46fc            # move #imm,sr
 ORI_B_IMM_DN = 0x0000           # ori.b #imm,Dn — the immediate travels in a WORD
-MOVE_B_DN_ABS_L = 0x13c0        # move.b Dn,<abs>.l — the SOURCE register is the low three bits (a
-                                # `move`'s source EA), where the destination's sit at bits 6-11
 BRA_W = 0x6000
 
 D2 = 2                          # d1 takes the mixer read-back; d2 holds the saved SR
@@ -613,7 +629,7 @@ def _silence_entry():
             + _psg_select(PSG_REG_MIXER)
             + move_b_abs_l_dn(D1, PSG_SELECT)
             + opcode(ORI_B_IMM_DN | D1) + word(PSG_MIXER_ALL_OFF)
-            + opcode(MOVE_B_DN_ABS_L | D1) + longword(PSG_DATA)
+            + leaf.move_b_dn_abs_l(D1, PSG_DATA)
             + b"".join(_psg_write_imm(reg, PSG_VOLUME_SILENT) for reg in SILENCED_VOLUMES)
             + opcode(MOVE_DN_SR | D2) + RTS)
 
@@ -1506,7 +1522,6 @@ PATTERN_HANDLER_NAMES = (
 PATTERN_OPCODE_OF_HANDLER = (0x17, 0x16, 0x15, 0x14, 0x13, 0x0e, 0x07, 0x0b, 0x0a, 0x0c, 0x04, 0x09,
                              0x12, 0x06, 0x05, 0x08, 0x02, 0x01, 0x03, 0x00, 0x0f, 0x10, 0x11)
 PATTERN_ALIASED_OPCODE = 0x0d       # $8d, whose table entry is $83's handler
-STUB_STOP_OFFSET = 28               # stub +28, which opcode $8e's tail `bra.w`s into
 
 
 def _pattern_handlers():
@@ -1613,7 +1628,7 @@ def _tick_body_entry():
         opcode(EOR_B_DN_EA | (D0 << 9) | D3),
         opcode(AND_B_EA_DN | (D3 << 9) | D2),
         opcode(EOR_B_DN_EA | (D0 << 9) | D3),
-        opcode(MOVE_B_DN_ABS_L | D3) + longword(PSG_DATA),
+        leaf.move_b_dn_abs_l(D3, PSG_DATA),
         opcode(MOVE_DN_SR | D1),
         lambda at: branch_w_to(BRA_W, at, TICK_SHARED_RTS),
     ]
@@ -1660,6 +1675,85 @@ def _tempo_head_entry():
     ] + mono_arm + colour_arm)
 
 
+# --- the encodings only this routine spells ------------------------------------------------------
+MOVE_B_D8_AN_DN_D16_AM = 0x1170  # move.b d8(An,Dn.w),d16(Am) — the directory's speed byte
+MOVE_W_AN_D16_AM = 0x3148        # move.w An,d16(Am) — the sequence offset, as a WORD of the address
+MOVE_W_IMM_D16_AN = 0x317c       # move.w #imm,d16(An)
+ADDA_W_IMM_AN = 0xd0fc
+ADDQ_W_IMM_DN = 0x5040           # addq.w #n,Dn — the count in bits 11-9, and 0 there means 8
+
+# The indexed operands below are leaf.brief_extension_word's: this routine is the one place in the
+# reconstruction that indexes by an ADDRESS register (`movea.w 0(a3,a0.w),a0`), which is that
+# builder's bit-15 argument rather than a second spelling of the whole field here.
+_index_extension = leaf.brief_extension_word
+
+
+def _play_song_channel_loop(at):
+    """The loop body, as assembled AT ``at`` — ONE copy in the instruction stream, run three times by
+    the `dbf` below it. The record cursor is a1, stepped by WB_SND_MUSIC_CHANNEL_LEN at the bottom,
+    and the directory index d0, stepped by one word: so a channel wired to a fixed address, or a
+    stride other than 48, fails on these bytes. Its two `lea d16(pc)` operands are why it is built at
+    an address rather than as a constant."""
+    return leaf.assemble(at, [
+        move_b_imm_d16(A1, CH_DURATION_INITIAL, CH_DURATION),
+        clr_b_d16(A1, CH_FLAGS), clr_b_d16(A1, CH_PORTA_CONTROL),
+        opcode(SF_D16_AN | A1) + word(CH_YIELD),
+        opcode(SF_D16_AN | A1) + word(CH_DETUNE),
+        _lea_pc(A0, ARPEGGIO_NULL),
+        opcode(MOVE_L_AN_D16_AM | (A1 << 9) | A0) + word(CH_ARPEGGIO_BASE),
+        opcode(MOVE_L_AN_D16_AM | (A1 << 9) | A0) + word(CH_ARPEGGIO_CURSOR),
+        _lea_pc(A0, SONG_DIRECTORY),
+        opcode(MOVEA_W_D8_AN_DN_AM | (A0 << 9) | A0) + _index_extension(D0, SONG_SEQUENCE_OFF),
+        opcode(MOVE_W_AN_D16_AM | (A1 << 9) | A0) + word(CH_SEQUENCE_OFFSET),
+        opcode(MOVE_W_IMM_D16_AN | (A1 << 9)) + word(CH_SEQUENCE_INDEX_INITIAL)
+        + word(CH_SEQUENCE_INDEX),
+        opcode(MOVEA_W_D8_AN_DN_AM | (A0 << 9) | A3) + _index_extension(A0, address_register=True),
+        opcode(ADDA_L_AN_AM | (A0 << 9) | A3),
+        opcode(MOVE_L_AN_D16_AM | (A1 << 9) | A0) + word(CH_PATTERN_CURSOR),
+        opcode(ADDA_W_IMM_AN | (A1 << 9)) + word(MUSIC_CHANNEL_LEN),
+        opcode(ADDQ_W_IMM_DN | (TABLE_ENTRY_LEN << 9) | D0),
+    ])
+
+
+# Its LENGTH, which the `dbf` displacement needs and which no `lea d16(pc)` can change: every piece
+# above is a fixed width whatever address it lands at.
+PLAY_SONG_LOOP_BYTES = len(_play_song_channel_loop(0))
+
+
+def _play_song_entry():
+    """$17b3a, 140 bytes: the stop through stub +28, the directory read, the three-channel loop and
+    the six globals the tail sets.
+
+    The `bsr.w` displacement is built from STUB_TABLE_BASE + 28 rather than from $17af8, so this pin
+    also says WHICH stub entry the stop goes through — the register-preserving one, which is what
+    carries the song id in d0 across it.
+    """
+    base = leaf.entry_of("snd_play_song")
+    return leaf.assemble(base, [
+        _lea_pc(A3, MODULE_BASE),
+        lambda at: bsr_w(at, STUB_TABLE_BASE + STUB_STOP_OFFSET),
+        clr_b_d16(A3, _module_displacement(GLOBAL_TRANSPOSE)),
+        opcode(EXT_W_DN | D0),
+        leaf.mulu_w_imm_dn(D0, SONG_RECORD_LEN),
+        _lea_pc(A0, SONG_DIRECTORY),
+        opcode(MOVE_B_D8_AN_DN_D16_AM | (A3 << 9) | A0) + _index_extension(D0, SONG_SPEED_OFF)
+        + _module_offset(SONG_SPEED),
+        _move_b_pc(SONG_SPEED, SONG_SPEED_COPY),
+        _lea_pc(A1, MUSIC_CHANNEL_STATE),
+        moveq(CHANNELS - 1, D7),
+        _play_song_channel_loop,
+        leaf.dbf_over(D7, PLAY_SONG_LOOP_BYTES),
+        _clr_l_d16(A3, _module_displacement(CHANNEL_LOCKS)),
+        move_b_imm_d16(A3, MASTER_VOLUME_FULL, _module_displacement(MASTER_VOLUME)),
+        opcode(SF_D16_AN | A3) + _module_offset(FADE_RATE),
+        opcode(ST_D16_AN | A3) + _module_offset(SPEED_ACC),
+        opcode(ST_D16_AN | A3) + _module_offset(SONG_LOADED),
+        opcode(ST_D16_AN | A3) + _module_offset(ENGINE_ENABLED),
+        RTS,
+    ])
+
+
+
 ENTRY_BYTES = {
     "snd_music_tick": _tempo_head_entry(),
     "snd_trigger_effect": _trigger_entry(),
@@ -1672,8 +1766,9 @@ ENTRY_BYTES = {
     "snd_channel_period_and_volume": _period_volume_entry(),
     "snd_channel_step": _channel_step_entry(),
     "snd_music_tick_body": _tick_body_entry(),
+    "snd_play_song": _play_song_entry(),
 }
-SOUND_ROUTINE_COUNT = 11
+SOUND_ROUTINE_COUNT = 12
 
 # The caps, from the bodies, each the body's own instruction count plus the one instruction osh_run
 # counts past its `rts` (leaf.RUNNER_SENTINEL_INSN — measured here first, hoisted there once three
@@ -4016,10 +4111,13 @@ def test_a_note_byte_closes_the_row_and_restarts_the_instrument(why, fields, not
 # is the DATA's claim and not a note's. Eleven of the twenty-four are reached; the other thirteen are
 # pinned from a seeded stream and each says so.
 
-SONG_DIRECTORY = leaf.entry_of("snd_song_directory")
-SONG_RECORD_LEN = 8                 # `mulu.w #8,d0` in snd_play_song
-SONG_SEQUENCE_FIELD = 2             # the first of the three per-channel sequence offsets
-SONGS = 17                          # 17 records; the 18th address is already sequence data
+# SONG_DIRECTORY / SONG_RECORD_LEN / SONG_SEQUENCE_OFF / SONGS are the header's, above — this census
+# and snd_play_song's own battery read the SAME four numbers, which is what stops the walk below
+# decoding a directory the reconstruction does not. It cost a PIN to say so: while the census took
+# the address from ../names.txt and the port from the header, the two spellings were compared by
+# every case that ran; taking both from the header left the name map holding an address nothing
+# checked. `test_the_name_map_and_the_header_agree_about_the_directory` below is that comparison,
+# restored as a claim of its own.
 SHIPPED_PATTERNS = 106              # what the walk must find, and what ../notes says it finds
 SHIPPED_SEQUENCE_TABLES = CHANNELS * SONGS  # one per song per channel, and all 51 distinct
 END_SONG_OPCODE = PATTERN_NOTE_LIMIT + PATTERN_OPCODE_OF_HANDLER[
@@ -4051,7 +4149,7 @@ def _shipped_sequence_tables():
     for song in range(SONGS):
         record = SONG_DIRECTORY + song * SONG_RECORD_LEN
         for channel in range(CHANNELS):
-            table = _module_address(leaf.u16(image, record + SONG_SEQUENCE_FIELD
+            table = _module_address(leaf.u16(image, record + SONG_SEQUENCE_OFF
                                              + channel * TABLE_ENTRY_LEN))
             index = 0
             while leaf.u16(image, table + index) != 0:
@@ -4535,8 +4633,9 @@ TICK_DROP_VALUES = (TICK_DROP_50HZ, TICK_DROP_60HZ, TICK_DROP_MONO)
 TICK_MIXER = MIXER_DIRECTION_BITS   # what TOS leaves: both port-direction bits set,
                                 # which is the same byte and the same meaning as the
                                 # stop chain's own MIXER_SEEDS[0]
-ENGINE_ENABLED_SET = 0xff       # `st 2250(a3)` in snd_play_song
-SONG_LOADED_SET = 0xff
+# ENGINE_RUNNING / SONG_LOADED_SET are the header's, above. They were 0xff literals here until
+# batch 26 gave `st 2250(a3)` and `st 2263(a3)` #defines of their own — this file had the SECOND
+# source, and SONG_LOADED_SET was defined twice under one name once the first arrived.
 TICK_SONG_SPEED = 0x30          # song 0's own speed byte — a row every 5.3 ticks
 TICK_D1 = 0                     # include/sound.h's SND_TRIGGER_CHANNEL_UNMODELLED
 
@@ -4547,7 +4646,7 @@ TICK_GLOBAL_DEFAULTS = {
     **GLOBAL_DEFAULTS,
     **STEP_GLOBAL_DEFAULTS,
     ACTIVE_FLAGS + CHANNELS: 0,             # the pad byte the gate's `tst.l` also reads
-    ENGINE_ENABLED: ENGINE_ENABLED_SET,
+    ENGINE_ENABLED: ENGINE_RUNNING,
     MASTER_VOLUME: MASTER_VOLUME_FULL,
     SONG_SPEED: TICK_SONG_SPEED,
     SONG_SPEED_COPY: TICK_SONG_SPEED,
@@ -5388,3 +5487,220 @@ def test_the_three_mixdown_arms_carry_the_three_rotations_of_one_mixer_mask():
     """$09, $12, $24 — the `ori.b` immediates, the `rol.b` counts and the three records' own constant
     +47 are the same three bytes, which is why the reconstruction rotates one constant."""
     assert tuple(_channel_mixer_bits(channel) for channel in range(CHANNELS)) == SHIPPED_MIXER_MASKS
+
+
+# --- snd_play_song ($17b3a): stub +0, the routine that STARTS a song -----------------------------
+#
+# It is the module's other half of the stop chain: everything under snd_music_tick reads three
+# 48-byte channel records and a block of globals, and this is the routine that writes them. So its
+# differential is a WRITE-SET EQUALITY one — the model below states every byte it leaves, the stop
+# chain's included — plus the PSG surfaces, which are snd_stop's four accesses and nothing more.
+#
+# WHAT THE CASES ARE BUILT FROM. The seventeen songs the shipped directory holds, and nothing
+# fabricated: each record's speed byte and its three sequence offsets come out of the .PRG, and the
+# pattern cursor each channel starts on is the sequence's own entry 0 resolved through the module
+# base. Two ids are reachable from the shipped game and are named as such — 8, which the boot prompt
+# passes at $e546, and 1..4, which stage_load_window takes off the five records at $1d40c.
+PLAY_SONG_BODY_BYTES = 140
+
+# The two ids the shipped program actually passes through stub +0, by the site that passes them.
+BOOT_SONG_ID = 8                          # `move.w #$8,d0 / lea $17adc.l,a0 / jsr (a0)` at $e546
+STAGE_SONG_IDS = (1, 2, 3, 4)             # the four non-negative tunes of WB_STAGE_START_RECORDS
+
+
+# The cap, from the body's own instruction count: two to enter, the stub's four, the stop chain's
+# own (STOP_INSN_CAP), eight of head, eighteen per channel and seven of tail.
+PLAY_SONG_STUB_INSNS = 4
+PLAY_SONG_HEAD_INSNS = 8
+PLAY_SONG_LOOP_INSNS = 18
+PLAY_SONG_TAIL_INSNS = 7
+PLAY_SONG_INSN_CAP = (2 + PLAY_SONG_STUB_INSNS + STOP_INSN_CAP + PLAY_SONG_HEAD_INSNS
+                      + CHANNELS * PLAY_SONG_LOOP_INSNS + PLAY_SONG_TAIL_INSNS)
+
+_play_song = leaf.register_glue("snd_play_song", [ctypes.c_uint32])
+
+
+def _song_field(index, offset):
+    """`0(a0,d0.w)` over the directory — the index is a WORD the addressing mode SIGN-EXTENDS, which
+    is how a negative song id reads the table backwards."""
+    return (SONG_DIRECTORY + leaf.s16(index) + offset) & LONGWORD_MASK
+
+
+def _song_index(song_id):
+    """`ext.w d0 / mulu.w #$8,d0`: the id is a SIGNED byte and the index a WORD."""
+    return (leaf.s8(song_id) * SONG_RECORD_LEN) & WORD_MASK
+
+
+def model_play_song(image, song_id):
+    """Every byte $17b3a leaves, as {address: bytes} — the stop chain's write set, then its own.
+
+    EXPORTED: test_stage.py's stage_load_window cases run this routine as a TAIL and compare its
+    writes through this model rather than restating them, so the two batteries cannot disagree about
+    what starting a song leaves behind."""
+    written = dict(STOP_WRITES)
+    written[GLOBAL_TRANSPOSE] = bytes([0])
+
+    index = _song_index(song_id)
+    speed = image[_song_field(index, SONG_SPEED_OFF)]
+    written[SONG_SPEED] = bytes([speed])
+    written[SONG_SPEED_COPY] = bytes([speed])
+
+    for channel in range(CHANNELS):
+        record = _music_channel(channel)
+        offset = leaf.u16(image, _song_field(index, SONG_SEQUENCE_OFF))
+        cursor = _module_address(leaf.u16(image, _module_address(offset)))
+        written[record + CH_DURATION] = bytes([CH_DURATION_INITIAL])
+        written[record + CH_FLAGS] = bytes([0])
+        written[record + CH_PORTA_CONTROL] = bytes([0])
+        written[record + CH_YIELD] = bytes([0])
+        written[record + CH_DETUNE] = bytes([0])
+        written[record + CH_ARPEGGIO_BASE] = ARPEGGIO_NULL.to_bytes(LONGWORD_LEN, "big")
+        written[record + CH_ARPEGGIO_CURSOR] = ARPEGGIO_NULL.to_bytes(LONGWORD_LEN, "big")
+        written[record + CH_SEQUENCE_OFFSET] = word(offset)
+        written[record + CH_SEQUENCE_INDEX] = word(CH_SEQUENCE_INDEX_INITIAL)
+        written[record + CH_PATTERN_CURSOR] = cursor.to_bytes(LONGWORD_LEN, "big")
+        index = (index + TABLE_ENTRY_LEN) & WORD_MASK
+
+    written[CHANNEL_LOCKS] = bytes(CHANNEL_LOCKS_LEN)
+    written[MASTER_VOLUME] = bytes([MASTER_VOLUME_FULL])
+    written[FADE_RATE] = bytes([0])
+    written[SPEED_ACC] = bytes([SPEED_ACC_INITIAL])
+    written[SONG_LOADED] = bytes([SONG_LOADED_SET])
+    # LAST, because the stop chain has just cleared it: the final value is the running one.
+    written[ENGINE_ENABLED] = bytes([ENGINE_RUNNING])
+    return written
+
+
+# The band this routine WRITES but does not fill — the three records' other bytes — seeded so that a
+# store the port skipped leaves a byte that is wrong for its address instead of the .PRG's residue.
+PLAY_SONG_SEEDED_BANDS = ((MUSIC_CHANNEL_STATE, MUSIC_STATE_BLOCK_LEN),
+                          (GLOBALS_BLOCK, GLOBALS_BLOCK_LEN))
+PLAY_SONG_MIXER = MIXER_DIRECTION_BITS   # what TOS leaves: both port-direction bits set,
+                                # the same byte and the same meaning as TICK_MIXER and as
+                                # the stop chain's own MIXER_SEEDS[0]
+
+
+def _play_song_pokes(what):
+    salt = leaf.case_salt(what)
+    return overlay({base: leaf.keyed_block(base, length, salt)
+                    for base, length in PLAY_SONG_SEEDED_BANDS})
+
+
+def run_play_song(song_id, what, mixer=PLAY_SONG_MIXER, entry_d0=0):
+    """One start differential: the image diff and the write set leaf.run makes, every byte this
+    routine leaves stated by value, and both PSG surfaces — which are the stop chain's, since the
+    four accesses a start makes are the ones it makes on the way in."""
+    pokes = _play_song_pokes(what)
+    image = _poked_image(pokes)
+    written = model_play_song(image, song_id)
+    d0 = entry_d0 | song_id
+    psg_seed = {PSG_REG_MIXER: mixer}
+    info = leaf.run("snd_play_song", _play_song(d0), write_bands(written), what,
+                    regs={"d0": d0, "_pokes": pokes}, max_insns=PLAY_SONG_INSN_CAP,
+                    psg_seed=psg_seed)
+    assert_written(info, written, what)
+    assert_psg_state(info, psg_seed, what)
+    return info
+
+
+@pytest.mark.parametrize("song_id", range(SONGS))
+def test_every_shipped_song_loads_the_record_the_directory_gives_it(song_id):
+    """All seventeen, each against the speed byte and the three sequence offsets its own record
+    carries — so an index scaled by anything but WB_SND_SONG_RECORD_LEN loads another song's."""
+    run_play_song(song_id, f"song {song_id}")
+
+
+def test_the_two_ids_the_shipped_program_passes_are_inside_the_directory():
+    """The reachability claim the sweep above rests on: the boot prompt's id and the four the stage
+    records carry are songs the table really holds, so the cases are the game's own data."""
+    for song_id in (BOOT_SONG_ID,) + STAGE_SONG_IDS:
+        assert 0 <= song_id < SONGS, f"song {song_id} is outside the directory"
+
+
+def test_the_id_is_a_signed_byte_so_a_negative_one_reads_the_directory_backwards():
+    """`ext.w d0` before the `mulu`, and nothing bounds either end.
+
+    NOT REACHABLE FROM THE SHIPPED GAME, and said so here rather than left implied: the only two
+    sites that call stub +0 pass 8 and a start record's tune byte, and stage_load_window's `bmi`
+    sends every NEGATIVE tune byte to snd_stop instead. The case exists because a port that dropped
+    the `ext.w` — or made the id unsigned — agrees with this one on all seventeen songs above.
+    """
+    what = "song id $ff, eight bytes below the directory"
+    info = run_play_song(0xff, what)
+    below = _song_field(_song_index(0xff), SONG_SPEED_OFF)
+    assert below == SONG_DIRECTORY - SONG_RECORD_LEN + SONG_SPEED_OFF, (
+        f"an id of $ff reads {below:#x}, which is not one record below the directory")
+    assert leaf.read_int(info, SONG_SPEED, 1, what) == harness.BASE_IMAGE[below]
+
+
+def test_the_id_takes_only_the_low_byte_of_d0():
+    """`ext.w` reads d0's low byte and the `mulu.w` its low word, so the caller's upper bits are
+    dropped — which is what lets $bbca's neighbours leave rubbish in d0's high half."""
+    run_play_song(BOOT_SONG_ID, "the boot song with a dirty d0", entry_d0=0x5a5a5a00)
+
+
+# The stop chain's seven mixer rows, thinned the way the tick's are (`_one_seed_per_direction_state`
+# above), and for the same reason: what a row buys HERE is not the `ori`'s bit preservation — that is
+# the stop chain's own claim, swept over all seven at
+# `test_the_mixer_write_keeps_the_port_direction_bits_it_read_back` — but that a START reaches the
+# chip through the +28 stub with the seed still intact. Four direction states is what that needs.
+PLAY_SONG_MIXER_SEEDS = _one_seed_per_direction_state(MIXER_SEEDS)
+
+
+@pytest.mark.parametrize("mixer,why", PLAY_SONG_MIXER_SEEDS,
+                         ids=[f"mixer_{seed[0]:02x}" for seed in PLAY_SONG_MIXER_SEEDS])
+def test_a_start_silences_the_chip_exactly_as_a_stop_does(mixer, why):
+    """The four PSG accesses on this path are snd_stop's, read-modify-write included — so the port
+    direction bits the case declares survive a START as well as a stop."""
+    run_play_song(BOOT_SONG_ID, f"the boot song over a mixer of {mixer:#04x} ({why})", mixer=mixer)
+
+
+def test_the_start_mixer_sweep_still_reaches_all_four_states_of_the_preserved_bits():
+    """The guard the trim above rests on, stated here rather than borrowed: the stop chain's guard
+    covers the tuple this one was thinned FROM, not the thinning."""
+    assert {mixer & MIXER_DIRECTION_BITS for mixer, _why in PLAY_SONG_MIXER_SEEDS} == {
+        0x00, 0x40, 0x80, MIXER_DIRECTION_BITS}
+
+
+def test_a_play_song_case_seeds_every_mutable_byte_the_routine_leaves_untouched():
+    """The residue guard the tick tier's cases carry, for the two bands this routine writes into."""
+    what = "a play-song case"
+    assert_bands_are_seeded(_play_song_pokes(what), PLAY_SONG_SEEDED_BANDS, what)
+
+
+def test_the_name_map_and_the_header_agree_about_the_directory():
+    """WB_SND_SONG_DIRECTORY against ../names.txt's `var 0x18480 snd_song_directory`.
+
+    TWO SOURCES OF TRUTH FOR ONE ADDRESS, and only one of them is read at run time — so without this
+    the name map could label a different address after a re-bootstrap and every case here would stay
+    green, decoding the right table under the wrong name. Same shape as
+    `test_the_reconstructed_stub_is_the_tables_trigger_entry` above.
+    """
+    assert leaf.entry_of("snd_song_directory") == SONG_DIRECTORY
+
+
+def test_the_body_ends_exactly_where_the_three_channel_records_begin():
+    """Self-bounding, and the reason the pin cannot pass on a body of another length: the last
+    instruction is followed immediately by the first of the WB_SND_CHANNELS records it writes."""
+    assert len(ENTRY_BYTES["snd_play_song"]) == PLAY_SONG_BODY_BYTES
+    assert leaf.entry_of("snd_play_song") + PLAY_SONG_BODY_BYTES == MUSIC_CHANNEL_STATE
+
+
+def test_the_directory_ends_where_the_first_sequence_table_begins():
+    """WB_SND_SONGS is not a count this battery states: the seventeen records run up to the LOWEST
+    address any of their own sequence offsets resolves to, so the table bounds itself."""
+    end = SONG_DIRECTORY + SONGS * SONG_RECORD_LEN
+    resolved = [_module_address(leaf.u16(harness.BASE_IMAGE,
+                                         _song_field(_song_index(song), SONG_SEQUENCE_OFF
+                                                     + channel * TABLE_ENTRY_LEN)))
+                for song in range(SONGS) for channel in range(CHANNELS)]
+    assert min(resolved) == end, (
+        f"the lowest sequence table is at {min(resolved):#x}, not at the directory's end {end:#x}")
+
+
+def test_the_null_arpeggio_every_channel_starts_on_terminates_at_once():
+    """WB_SND_ARPEGGIO_NULL is the base AND the cursor of all three records, so its first byte is
+    what the tick reads before a pattern opcode has replaced it — and it is the terminator."""
+    assert harness.BASE_IMAGE[ARPEGGIO_NULL] & ARPEGGIO_END, (
+        f"the byte at {ARPEGGIO_NULL:#x} is {harness.BASE_IMAGE[ARPEGGIO_NULL]:#04x}, which does not "
+        f"end an arpeggio")

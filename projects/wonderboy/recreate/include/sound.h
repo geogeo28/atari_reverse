@@ -248,4 +248,17 @@ void snd_music_tick_body(uint8_t *image);
  * rather than a differential result. */
 void snd_music_tick(uint8_t *image);
 
+/* $17b3a — stub +0: LOAD A SONG AND ARM THE ENGINE. `song_id` is d0, and only its low BYTE, which
+ * `ext.w` sign-extends: 0..WB_SND_SONGS-1 are the shipped songs and everything else is out of bounds
+ * in one direction or the other, unchecked (see the body).
+ *
+ * IT IS WHAT MAKES THE MODULE'S MUTABLE BANDS DEFINED. snd_music_tick and everything under it read
+ * three 48-byte channel records the .PRG ships holding residue from a run at another load base; this
+ * is the routine that writes them, so a tick that has been preceded by one of these needs no seeding
+ * of $17bc6..$17c71 where an isolated tick case does.
+ *
+ * IT STOPS FIRST, through the stub at +28 — so the four PSG accesses `snd_stop` makes are on this
+ * path too, and a case declares the mixer with `psg_seed` exactly as a stop-chain case does. */
+void snd_play_song(uint8_t *image, uint32_t song_id);
+
 #endif /* WONDERBOY_SOUND_H */

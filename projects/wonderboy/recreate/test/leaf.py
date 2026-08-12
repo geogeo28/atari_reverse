@@ -363,16 +363,37 @@ def jsr_abs_l(addr):
     return opcode(JSR_ABS_L) + longword(addr)
 
 
-def lea_indexed(reg, index, displacement=0, longword_index=False):
-    """`lea d8(An,Dn.w),An` — the extension word is the whole of the index encoding.
+# The 68000's BRIEF EXTENSION WORD, which every indexed operand in this reconstruction carries and
+# which three encoders below plus test_sound.py's own spelt inline until they met here: the index
+# REGISTER at bits 15-12, bit 15 choosing An over Dn, the WORD/LONG bit at 11, and an 8-bit
+# displacement. Getting any of those fields wrong assembles a different instruction that still looks
+# right, which is why one spelling matters more here than the line count suggests.
+INDEX_IS_ADDRESS_REGISTER = 0x8000
+INDEX_IS_LONGWORD = 0x800
+DISPLACEMENT_MASK = 0xff
+
+
+def brief_extension_word(register, displacement=0, longword_index=False, address_register=False):
+    """One indexed operand's extension word. The displacement is masked to its byte because that is
+    the field's width, exactly as `word()` masks a displacement to two."""
+    return word((INDEX_IS_ADDRESS_REGISTER if address_register else 0) | (register << 12)
+                | (INDEX_IS_LONGWORD if longword_index else 0)
+                | (displacement & DISPLACEMENT_MASK))
+
+
+def lea_indexed(reg, index, displacement=0, longword_index=False, source=None):
+    """`lea d8(As,Dn.w),Ad` — the extension word above is the whole of the index encoding.
 
     ONE spelling for what test_scroll.py and test_text.py each had half of: the scroll needs the
-    LONGWORD index bit (a tile offset it has already shifted into the high half), the text plotter
-    and the map probes need the 8-bit DISPLACEMENT, and no caller needs a base register other than
-    the destination. A displacement is masked to its byte because that is the field's width.
+    LONGWORD index bit (a tile offset it has already shifted into the high half) and the text plotter
+    and the map probes need the 8-bit DISPLACEMENT.
+
+    ``source`` defaults to the destination, which is what every caller but one wants; $f95c's
+    `lea 0(a1,d0.w),a0` indexes the palette table in a1 into a0, so the base is separable here for
+    `lea_d16`'s reason rather than being a second encoder.
     """
-    return opcode(0x41f0 | (reg << 9) | reg) + word(
-        (index << 12) | (0x800 if longword_index else 0) | (displacement & 0xff))
+    return opcode(0x41f0 | (reg << 9) | (reg if source is None else source)) + brief_extension_word(
+        index, displacement, longword_index)
 
 
 def move_w_ind_dn(reg, base, displacement=0):
@@ -421,8 +442,8 @@ def move_w_indexed_dn(reg, base, index, displacement=0, longword_index=False):
     bit. Same argument order as `lea_indexed` above, with the base register split out because it is
     not the destination here.
     """
-    return opcode(0x3030 | (reg << 9) | base) + word(
-        (index << 12) | (0x800 if longword_index else 0) | (displacement & 0xff))
+    return opcode(0x3030 | (reg << 9) | base) + brief_extension_word(
+        index, displacement, longword_index)
 
 
 def move_w_imm_abs_l(value, addr):
@@ -440,6 +461,13 @@ def move_w_abs_l_dn(reg, addr):
 def move_b_abs_l_dn(reg, addr):
     """`move.b <abs>.l,Dn` — how a routine reads a hardware port (the PSG read-back, an MFP byte)."""
     return opcode(0x1039 | (reg << 9)) + longword(addr)
+
+
+def move_b_dn_abs_l(reg, addr):
+    """`move.b Dn,<abs>.l` — the SOURCE register sits in the low three bits (a `move`'s source EA)
+    where a destination's sit at 11-9. TWO batteries: test_sound.py's PSG data write and
+    test_stage.py's tune latch."""
+    return opcode(0x13c0 | reg) + longword(addr)
 
 
 def move_b_imm_abs_l(value, addr):

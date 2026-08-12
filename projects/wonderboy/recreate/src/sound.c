@@ -1051,3 +1051,74 @@ void snd_music_tick(uint8_t *image) {
     image[WB_SND_TICK_DROP_VALUE] = tempo_drop_value();
     snd_music_tick_body(image);            /* $17c8e/$17c98 `bra.s`/`bne.s` and the fall-through */
 }
+
+
+/* ---- snd_play_song ($17b3a): stub +0, and the only way a song is ever started -------------------
+ *
+ * IT STOPS THE MODULE FIRST, and it does so through the STUB at +28 rather than by calling $17f24
+ * directly — `bsr.w $17af8`, whose `movem` pair saves and restores d0-a6. That is what lets the song
+ * id survive in d0 across a routine that clears the SFX flags and silences the chip: the four PSG
+ * accesses on this path are snd_stop's, and they are the whole of the chip traffic a start makes.
+ *
+ * The id is a SIGNED byte (`ext.w d0`) multiplied by WB_SND_SONG_RECORD_LEN and used as a word index
+ * into the directory, so a negative one reads BELOW it and nothing bounds either end. Reproduced.
+ */
+
+/* One music channel, rebuilt from `record`'s three words. `sequence_offset` is the a3-relative word
+ * the directory holds for this channel; its own entry 0 becomes the pattern cursor, which is why the
+ * sequence index below already names entry WB_SND_CH_SEQUENCE_INDEX_INITIAL / 2.
+ *
+ * `movea.w` twice, so BOTH the directory's word and the sequence's are sign-extended before the
+ * module base is added — one above $7fff names a place below the base. `move.w a0,6(a1)` then stores
+ * only the low half of the first of them back, which is the value the tick re-reads. */
+static void start_music_channel(uint8_t *image, uint32_t record, uint16_t sequence_offset) {
+    image[record + WB_SND_CH_DURATION] = WB_SND_CH_DURATION_INITIAL;
+    image[record + WB_SND_CH_FLAGS] = 0;
+    image[record + WB_SND_CH_PORTA_CONTROL] = 0;
+    image[record + WB_SND_CH_YIELD] = 0;                 /* `sf 45(a1)` */
+    image[record + WB_SND_CH_DETUNE] = 0;                /* `sf 46(a1)` */
+
+    wr32(image + record + WB_SND_CH_ARPEGGIO_BASE, WB_SND_ARPEGGIO_NULL);
+    wr32(image + record + WB_SND_CH_ARPEGGIO_CURSOR, WB_SND_ARPEGGIO_NULL);
+
+    wr16(image + record + WB_SND_CH_SEQUENCE_OFFSET, sequence_offset);
+    wr16(image + record + WB_SND_CH_SEQUENCE_INDEX, WB_SND_CH_SEQUENCE_INDEX_INITIAL);
+
+    uint32_t sequence = module_address(sequence_offset);
+    wr32(image + record + WB_SND_CH_PATTERN_CURSOR, module_address(be16(image + sequence)));
+}
+
+/* The directory byte or word `offset` past the DIRECTORY INDEX `index` — `0(a0,d0.w)`, whose word
+ * index the addressing mode sign-extends before adding it to the table base. So an index above $7fff
+ * names a record BELOW the directory, which is how a negative song id reads. */
+static uint32_t song_field(uint16_t index, unsigned offset) {
+    return addr_add(WB_SND_SONG_DIRECTORY, sign_ext16(index) + offset);
+}
+
+void snd_play_song(uint8_t *image, uint32_t song_id) {
+    snd_stop(image);                       /* `bsr.w $17af8`, the register-preserving stub +28 */
+    image[WB_SND_GLOBAL_TRANSPOSE] = 0;
+
+    /* `ext.w d0 / mulu.w #$8,d0`: the id is a SIGNED byte and the index a WORD, and every operand
+     * that spends it is a `d0.w` one — so the two extensions are separate steps and an id of $80 or
+     * more indexes the directory backwards. Nothing bounds it either way. */
+    uint16_t index = (uint16_t)(sign_ext8(song_id) * WB_SND_SONG_RECORD_LEN);
+
+    image[WB_SND_SONG_SPEED] = image[song_field(index, WB_SND_SONG_SPEED_OFF)];
+    /* `move.b $17c58(pc),2253(a3)` — the COPY is taken from the field just written, not from the
+     * directory a second time, so a speed the tick has since changed is not what lands here. */
+    image[WB_SND_SONG_SPEED_COPY] = image[WB_SND_SONG_SPEED];
+
+    for (unsigned channel = 0; channel < WB_SND_CHANNELS; channel++) {
+        start_music_channel(image, music_channel(channel),
+                            be16(image + song_field(index, WB_SND_SONG_SEQUENCE_OFF)));
+        index += WB_SND_TABLE_ENTRY_LEN;   /* `addq.w #2,d0` — a WORD add, so it wraps in 16 bits */
+    }
+
+    wr32(image + WB_SND_CHANNEL_LOCKS, 0);               /* `clr.l 2258(a3)` — all four bytes */
+    image[WB_SND_MASTER_VOLUME] = WB_SND_MASTER_VOLUME_FULL;
+    image[WB_SND_FADE_RATE] = 0;                         /* `sf 2265(a3)` */
+    image[WB_SND_SPEED_ACC] = WB_SND_SPEED_ACC_INITIAL;
+    image[WB_SND_SONG_LOADED] = WB_SND_SONG_LOADED_SET;
+    image[WB_SND_ENGINE_ENABLED] = WB_SND_ENGINE_RUNNING;
+}

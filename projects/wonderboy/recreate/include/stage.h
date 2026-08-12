@@ -70,4 +70,33 @@ void game_restart_reset(uint8_t *image);
  * WB_LIVES — which is why Ghidra's single 136-byte function at $fe4a is two routines here. */
 void game_life_restart_reset(uint8_t *image);
 
+/* $f944 — the WB_PALETTE_COLOURS words at `source` (a0) into the shifter's colour registers, and the
+ * cursor past them (the original's a0, which its eight `move.l (a0)+,(a1)+` leave at source + 32).
+ *
+ * WHAT IT DOES IS NOT PINNED BY ANYTHING. WB_SHIFTER_PALETTE lies outside the memory image, so the
+ * oracle DROPS all sixteen writes — the kit models hardware READS and has no ledger for a write
+ * (tools/recreate_kit/include/hw.h) — and this routine touches no image byte at all. A case can
+ * therefore show that both sides write NOTHING and that the source cursor comes back where the
+ * original leaves it, and that is the whole of the surface: which words went to which colour
+ * register, and that they went anywhere, is UNTESTED here and stated as such in src/stage.c.
+ *
+ * Reached from $f95c (the stage's own palette) and from three sites in the boot prompt at $e494. */
+uint32_t set_palette(uint8_t *image, uint32_t source);
+
+/* $f95c — THE STAGE-TRANSITION HINGE: every stage entry in the game goes through it.
+ *
+ * The three entry REGISTERS are its arguments, and all six call sites load all three: `map` (a0) is
+ * the level map, `start` (a1) the WB_START_RECORD_LEN-byte start record, `tiles` (a6) the tile bank.
+ * It latches map and start into WB_STAGE_MAP_PTR / WB_STAGE_START_PTR, raises or clears
+ * WB_STAGE_RAW_TILE_INDEX according to whether the bank IS WB_TILE_BITMAPS, copies the start
+ * record's position into the followed actor's record, runs the three builders above back to back,
+ * computes WB_SCROLL_FOLLOW_X/_Y unless the scroll is frozen, sets the palette, and then either
+ * starts a song or stops the module.
+ *
+ * IT RUNS WHOLE. Every callee is reconstructed — the three builders (batch 12), `set_palette` and
+ * the sound module's `snd_play_song` / `snd_stop` (batch 26) — so a differential enters at $f95c and
+ * leaves at its own `rts` with no boundary. What it inherits is `set_palette`'s untested claim above
+ * and nothing else. */
+void stage_load_window(uint8_t *image, uint32_t map, uint32_t start, uint32_t tiles);
+
 #endif /* WONDERBOY_STAGE_H */

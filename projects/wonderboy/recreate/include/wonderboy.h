@@ -1297,6 +1297,9 @@
                                             * WB_TILE_BITMAPS and clears it for that one, and
                                             * bg_build_buffer is its only reader — so the index
                                             * table is a property of the SHIPPED bank alone */
+#define WB_STAGE_RAW_TILE_INDEX_SET 0xffffu /* `move.w #$ffff,$fe14.l` at $f966, the arm $f95c takes
+                                             * for any bank but WB_TILE_BITMAPS; the other arm is a
+                                             * `clr.w` */
 #define WB_BG_BUILD_CARRY          0xfe0cu /* WB_PLANES words of scratch between $fd46's `rts` and
                                             * WB_STAGE_MAP_PTR: the first cell's shifted-out bits,
                                             * held until the row's LAST cell is written so the
@@ -1305,6 +1308,63 @@
                                             * buffers, and it is a SECOND scratch of the same shape
                                             * as WB_BG_PRESHIFT_CARRY, which the row-at-a-time
                                             * pre-shift uses */
+
+/* ---- $f95c's own numbers: the START RECORD, the palette table and the shifter ------------------
+ *
+ * The record $f95c is handed in a1 is TEN BYTES, and that is settled three ways rather than read off
+ * one routine's operands: WB_STAGE_START_TABLE's eight pointers step by ten; the five records the
+ * .PRG ships sit ten apart; and the last of them ends exactly where WB_TILE_BITMAPS begins.
+ */
+#define WB_START_FOLLOW_X          4u       /* `move.w 4(a1),$9aec.l` — copied into the followed
+                                             * record, and re-read at $f9ae for the screen position */
+#define WB_START_FOLLOW_Y          6u
+#define WB_START_TUNE              8u       /* `move.b 8(a0),d0 / bmi`: a SIGNED byte — negative
+                                             * stops the module, otherwise it is a song id */
+#define WB_START_TUNE_STOP         0x80u    /* ...and the bit the `bmi` reads. Of the five records
+                                             * the .PRG ships, four carry song ids 1..4 and one
+                                             * ($1d42a's) carries $ff, so both arms are shipped */
+#define WB_START_PALETTE           9u       /* `move.b 9(a0),d0 / lsl.w #5` — a row of the table */
+#define WB_START_RECORD_LEN        10u      /* the stride of both tables below */
+/* Words 0/2 of the record are the map cell the window opens on; bg_build_buffer reads them itself
+ * (it is handed the same a1), so they are WB_MAP_HEADER_WIDTH/_HEIGHT's counterparts and are not
+ * respelt here. */
+
+#define WB_STAGE_START_TABLE       0x1d3ecu /* eight longwords, `lea $1d3ec.l,a1` at $dff6 and
+                                             * nowhere else. Entry 0 is WB_STAGE_START_RECORDS less
+                                             * WB_STAGE_START_TABLE_ENTRIES * 4 away from it — the
+                                             * table and the records are one block */
+#define WB_STAGE_START_TABLE_ENTRIES 8u     /* == (WB_STAGE_START_RECORDS - WB_STAGE_START_TABLE) / 4
+                                             * (pinned): the pointers run up to where the shipped
+                                             * records begin. Nothing bounds the INDEX, which is
+                                             * 28(WB_RECORD_PTR_10420) shifted left twice */
+#define WB_STAGE_START_RECORDS     0x1d40cu /* the five records the .PRG ships, $1d40c..$1d43d, the
+                                             * ones the five `lea $1d40c/$1d416/$1d420/$1d42a/$1d434`
+                                             * call sites of $f95c hand it */
+#define WB_STAGE_START_RECORD_COUNT 5u      /* == (WB_TILE_BITMAPS - WB_STAGE_START_RECORDS) /
+                                             * WB_START_RECORD_LEN (pinned): the run ends exactly
+                                             * where the tile bitmaps begin */
+
+#define WB_PALETTE_TABLE           0xfc46u  /* `lea $fc46.l,a1`, its ONE reference in the image. The
+                                             * rows run up to bg_build_preshifted_copies' first
+                                             * instruction, which is what bounds them */
+#define WB_PALETTE_ROWS            8u       /* == (0xfd46 - WB_PALETTE_TABLE) / WB_PALETTE_ROW_BYTES,
+                                             * i.e. the table ends where $fd46 begins (pinned) */
+#define WB_PALETTE_ROW_SHIFT       5u       /* `lsl.w #5,d0` on WB_START_PALETTE's byte */
+#define WB_PALETTE_ROW_BYTES       32u      /* == 1 << WB_PALETTE_ROW_SHIFT == WB_PALETTE_COLOURS
+                                             * words: one whole shifter palette */
+#define WB_SHIFTER_PALETTE         0xff8240u /* `lea $ff8240.l,a1` — the ST's 16 colour registers.
+                                              * OFF the image on the 24-bit bus, so every write to it
+                                              * is DROPPED by the oracle and by the reconstruction
+                                              * alike: what $f944 puts on the screen is not pinned by
+                                              * anything (see set_palette in stage.h) */
+#define WB_PALETTE_COLOURS         16u      /* `move.l (a0)+,(a1)+` x 8 == 16 words */
+
+#define WB_SCROLL_FOLLOW_BIAS_X    0x20u    /* `subi.w #$20,d0` at $f9b2 before WB_BG_SCROLL_POS_X is
+                                             * subtracted: half a WB_MAP_CELL_PIXELS cell over the
+                                             * screen's left margin, and stated as the operand rather
+                                             * than derived, since nothing else in the image spells
+                                             * either half */
+#define WB_SCROLL_FOLLOW_BIAS_Y    0x40u    /* `subi.w #$40,d0` at $f9c6 */
 
 #define WB_BG_BUILD_TILE_COLUMNS   16u     /* `move.w #$f,d6` — == WB_BG_ROW_CELLS, one buffer row */
 #define WB_BG_BUILD_TILE_ROWS      11u     /* `move.w #$a,d5` — == WB_BG_BUFFER_TILE_ROWS */
@@ -1502,6 +1562,7 @@
                                              * "song loaded" byte at $17c63, which is why a stop is
                                              * a PAUSE and snd_resume can restart the same song */
 #define WB_SND_ENGINE_DISABLED     0u       /* `sf 2250(a3)` — Scc's false byte */
+#define WB_SND_ENGINE_RUNNING      0xffu    /* `st 2250(a3)` — snd_resume's and snd_play_song's */
 #define WB_SND_SFX_ACTIVE_FLAGS_LEN 4u      /* `clr.l 2254(a3)` — the three WB_SND_SFX_ACTIVE_FLAGS
                                              * bytes AND the byte after them, which nothing else in
                                              * the module names. A `clr.l`, so all four go */
@@ -1673,6 +1734,34 @@
 #define WB_SND_INSTRUMENT_PTR_TABLE 0x1ab04u/* 16 a3-relative words, opcodes $d0..$df. The envelope
                                              * SPEED is the byte BEFORE the stream (`move.b -(a2)`) */
 
+/* ---- snd_play_song ($17b3a): the SONG DIRECTORY and the arpeggio a fresh channel starts on ------
+ *
+ * `lea $18480(pc),a0` twice, indexed by `ext.w d0 / mulu.w #8,d0` and then by an `addq.w #2` per
+ * channel — so the whole record is reached with one index, and a NEGATIVE id (the `ext.w` is what
+ * makes one possible) indexes the directory backwards. Nothing bounds it.
+ */
+#define WB_SND_SONG_DIRECTORY      0x18480u /* ../names.txt: 17 records, the lowest sequence offset
+                                             * being $18508 — which is where the records themselves
+                                             * end, so the table bounds itself */
+#define WB_SND_SONGS               17u      /* == (0x18508 - WB_SND_SONG_DIRECTORY) /
+                                             * WB_SND_SONG_RECORD_LEN (pinned) */
+#define WB_SND_SONG_RECORD_LEN     8u       /* `mulu.w #$8,d0` */
+#define WB_SND_SONG_SPEED_OFF      1u       /* `move.b 1(a0,d0.w),2252(a3)` — byte +0 is unread by
+                                             * this routine and by everything else in the module */
+#define WB_SND_SONG_SEQUENCE_OFF   2u       /* `movea.w 2(a0,d0.w),a0` — words +2/+4/+6, one per
+                                             * channel, each an a3-relative offset */
+#define WB_SND_ARPEGGIO_NULL       0x1844eu /* `lea $1844e(pc),a0` — the stream every channel's
+                                             * arpeggio base AND cursor start on. Its first byte is
+                                             * WB_SND_ARPEGGIO_END, so it terminates immediately */
+#define WB_SND_CH_DURATION_INITIAL 1u       /* `move.b #$1,27(a1)` — one row, so the first tick the
+                                             * stepper runs steps the channel rather than counting */
+#define WB_SND_CH_SEQUENCE_INDEX_INITIAL 2u /* `move.w #$2,10(a1)` — entry 0 has just been taken as
+                                             * the pattern cursor, so the index already names entry 1 */
+#define WB_SND_SPEED_ACC_INITIAL   0xffu    /* `st 2270(a3)` — the row accumulator starts SATURATED,
+                                             * so the first tick to add a nonzero speed to it carries
+                                             * and the song's first row steps immediately (src/sound.c
+                                             * `step_rows`) rather than after a fraction of a row */
+
 /* ---- the TICK ($17c74..$17f23) — src/sound.c -----------------------------------------------------
  *
  * The module globals the tick reads and writes that no routine below it names, the two PSG register
@@ -1692,6 +1781,9 @@
                                              * nothing else in this tier, which is what makes a stop a
                                              * PAUSE and an END an unload */
 #define WB_SND_SONG_UNLOADED       0u       /* `sf 2263(a3)` — Scc's false byte */
+#define WB_SND_SONG_LOADED_SET     0xffu    /* `st 2263(a3)` — and its true byte, which is what
+                                             * snd_play_song leaves. Every OTHER writer of this field
+                                             * is an `sf`, so the pair is the whole of its range */
 #define WB_SND_FADE_RATE           0x17c65u /* a3+2265, 0 = no fade */
 #define WB_SND_FADE_COUNTDOWN      0x17c66u /* a3+2266, reloaded from the rate */
 #define WB_SND_PERIOD_SCRATCH      0x17c68u /* a3+2268, a WORD: the period is stored here and its two

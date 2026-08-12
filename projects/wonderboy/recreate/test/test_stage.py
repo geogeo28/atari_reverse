@@ -58,13 +58,20 @@ from leaf import (RTS, add_w_dn_dn, branch, branch_over, bsr_w, btst_imm_dn, cas
                   lsl_w_imm_dn, merge_bands, move_l_imm_abs_l, move_l_imm_postinc, move_w_abs_l_dn,
                   move_w_dn_dn, move_w_imm_abs_l, move_w_imm_dn, move_w_indexed_dn,
                   move_b_postinc_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn,
-                  opcode, program_writes, st_abs_l, subi_w_dn, swap_dn, tst_w_abs_l, u16, s16,
+                  opcode, program_writes, st_abs_l, subi_w_dn, swap_dn, tst_w_abs_l,
+                  tst_w_abs_w, u16, s16,
                   word)
 from layout import wb
 # `game_life_restart_reset` CALLS hud_draw_lives, so its write set CONTAINS that routine's.
 # The geometry and the model are imported from the battery that owns them rather than
 # restated here: two copies could disagree and both batteries would still pass.
 from test_hud import LIVES_INSN_CAP, lives_pokes, model_lives_draw   # noqa: E402
+# ...and stage_load_window RUNS the sound module's start and stop, so its write set contains
+# snd_play_song's. Same rule: the model, the seeded bands, the mixer seed, the instruction cap and
+# the stub-table offset all come from the battery that owns them.
+from test_sound import (PLAY_SONG_INSN_CAP, PLAY_SONG_MIXER,        # noqa: E402
+                        PLAY_SONG_SEEDED_BANDS, PSG_REG_MIXER, STOP_WRITES, STUB_STOP_OFFSET,
+                        assert_psg_state, model_play_song)
 
 # --- the geometry, from the header both languages read -------------------------------------------
 BUFFER_BASE = wb("BG_BUFFER_BASE")
@@ -195,6 +202,38 @@ HUD_SLOT_BBC2 = wb("HUD_SLOT_BBC2")
 HUD_SLOT_BBC4 = wb("HUD_SLOT_BBC4")
 HUD_SLOT_BBC6 = wb("HUD_SLOT_BBC6")
 HUD_SLOT_BBC8 = wb("HUD_SLOT_BBC8")
+
+# ...and $f944/$f95c's own (batch 26)
+START_FOLLOW_X = wb("START_FOLLOW_X")
+START_FOLLOW_Y = wb("START_FOLLOW_Y")
+START_TUNE = wb("START_TUNE")
+START_TUNE_STOP = wb("START_TUNE_STOP")
+START_PALETTE = wb("START_PALETTE")
+START_RECORD_LEN = wb("START_RECORD_LEN")
+STAGE_START_TABLE = wb("STAGE_START_TABLE")
+STAGE_START_TABLE_ENTRIES = wb("STAGE_START_TABLE_ENTRIES")
+STAGE_START_RECORDS = wb("STAGE_START_RECORDS")
+STAGE_START_RECORD_COUNT = wb("STAGE_START_RECORD_COUNT")
+PALETTE_TABLE = wb("PALETTE_TABLE")
+PALETTE_ROWS = wb("PALETTE_ROWS")
+PALETTE_ROW_SHIFT = wb("PALETTE_ROW_SHIFT")
+PALETTE_ROW_BYTES = wb("PALETTE_ROW_BYTES")
+PALETTE_COLOURS = wb("PALETTE_COLOURS")
+SHIFTER_PALETTE = wb("SHIFTER_PALETTE")
+SCROLL_FOLLOW_BIAS_X = wb("SCROLL_FOLLOW_BIAS_X")
+SCROLL_FOLLOW_BIAS_Y = wb("SCROLL_FOLLOW_BIAS_Y")
+RAW_TILE_INDEX_SET = wb("STAGE_RAW_TILE_INDEX_SET")
+SCROLL_FOLLOW_X = wb("SCROLL_FOLLOW_X")
+SCROLL_FOLLOW_Y = wb("SCROLL_FOLLOW_Y")
+ACTOR_FOLLOWED_DEFAULT = wb("ACTOR_FOLLOWED_DEFAULT")
+ACTOR_X = wb("ACTOR_X")
+ACTOR_Y = wb("ACTOR_Y")
+
+# The sound module's entry vector, as $f95c reaches it: `lea $17adc.l,a1` and then `jsr (a1)` or
+# `jsr 28(a1)`. The table's base is looked up rather than spelt, and the stop entry's offset is
+# IMPORTED from the battery that owns the stub table (the import sits with the rest of this file's
+# test_sound.py imports, below), so the two batteries cannot disagree about which entry is the stop.
+SND_STUB_TABLE = leaf.entry_of("snd_stub_00")
 
 WORD_MASK = 0xffff
 LONGWORD_MASK = 0xffffffff
@@ -531,6 +570,80 @@ def _life_restart_reset_entry():
             + move_l_imm_abs_l(EFFECT_RECORD_LIST, EFFECT_RECORD_WRITE_PTR) + RTS)
 
 
+
+# --- $f944 and $f95c: the palette write, and the hinge above it ----------------------------------
+# The encodings only these two spell. `lea 0(a1,d0.w),a0` is leaf's `lea_indexed` with a SOURCE of
+# its own — $f95c is the one site in the reconstruction whose index base is not its destination.
+CMPA_L_IMM_AN = 0xb1fc          # cmpa.l #imm,An — a LONGWORD compare of the tile-bank pointer
+MOVE_L_AN_ABS_L = 0x23c8        # move.l An,<abs>.l, the source register in the low three bits
+MOVE_W_D16_AN_ABS_L = 0x33e8    # move.w d16(An),<abs>.l — memory to memory in one instruction
+SUB_W_ABS_L_DN = 0x9079         # sub.w <abs>.l,Dn
+CMP_B_ABS_L_DN = 0xb039         # cmp.b <abs>.l,Dn — the tune latch's de-duplication test
+JSR_IND_AN = 0x4e90             # jsr (An)   — stub +0
+JSR_D16_AN = 0x4ea8             # jsr d16(An) — stub +28
+BMI_W, BRA_W = 0x6b00, 0x6000
+
+
+def _set_palette_entry():
+    """$f944 — 24 bytes: the shifter's palette base, eight longword moves and an `rts`."""
+    return (lea_abs_l(A1, SHIFTER_PALETTE)
+            + move_l_postinc_postinc(A0, A1) * (PALETTE_ROW_BYTES // LONGWORD_LEN) + RTS)
+
+
+def _load_window_entry(at):
+    """$f95c — 210 bytes, and every one of its five calls is built from the address ../names.txt
+    gives the callee, so a `bsr` aimed at the wrong builder fails on the bytes."""
+    raw_arm = move_w_imm_abs_l(RAW_TILE_INDEX_SET, RAW_TILE_INDEX)
+    indexed_arm = clr_w_abs_l(RAW_TILE_INDEX)
+    head = (opcode(CMPA_L_IMM_AN | (A6 << 9)) + longword(TILE_BITMAPS)
+            + branch(BEQ_W, raw_arm, branch_over(BRA_W, 0))
+            + raw_arm + branch(BRA_W, indexed_arm) + indexed_arm
+            + opcode(MOVE_L_AN_ABS_L | A0) + longword(STAGE_MAP_PTR)
+            + opcode(MOVE_L_AN_ABS_L | A1) + longword(STAGE_START_PTR)
+            + opcode(MOVE_W_D16_AN_ABS_L | A1) + word(START_FOLLOW_X)
+            + longword(ACTOR_FOLLOWED_DEFAULT + ACTOR_X)
+            + opcode(MOVE_W_D16_AN_ABS_L | A1) + word(START_FOLLOW_Y)
+            + longword(ACTOR_FOLLOWED_DEFAULT + ACTOR_Y))
+
+    def follow(field, bias, position, destination):
+        return (move_w_d16_dn(D0, A0, field) + subi_w_dn(D0, bias)
+                + opcode(SUB_W_ABS_L_DN | (D0 << 9)) + longword(position)
+                + move_w_dn_abs_l(D0, destination))
+
+    follows = (follow(START_FOLLOW_X, SCROLL_FOLLOW_BIAS_X, SCROLL_POS_X, SCROLL_FOLLOW_X)
+               + follow(START_FOLLOW_Y, SCROLL_FOLLOW_BIAS_Y, SCROLL_POS_Y, SCROLL_FOLLOW_Y))
+
+    palette = (move_w_d16_dn(D0, A0, START_TUNE)          # the DEAD read — see src/stage.c
+               + movea_l_abs_l(A0, STAGE_START_PTR) + lea_abs_l(A1, PALETTE_TABLE)
+               + moveq_0_dn(D0) + leaf.move_b_d16_dn(D0, A0, START_PALETTE)
+               + lsl_w_imm_dn(PALETTE_ROW_SHIFT, D0)
+               + leaf.lea_indexed(A0, D0, source=A1))
+
+    # The tail's three exits, built from the LAST one back: each branch spans the arms below it.
+    latch_and_play = (leaf.move_b_dn_abs_l(D0, STAGE_TUNE_LATCH) + opcode(JSR_IND_AN | A1) + RTS)
+    latch_and_stop = (leaf.move_b_dn_abs_l(D0, STAGE_TUNE_LATCH)
+                      + opcode(JSR_D16_AN | A1) + word(STUB_STOP_OFFSET) + RTS)
+    dedup = (opcode(CMP_B_ABS_L_DN | (D0 << 9)) + longword(STAGE_TUNE_LATCH)
+             + branch(BNE_W, RTS) + RTS + latch_and_play)
+    tail = (movea_l_abs_l(A0, STAGE_START_PTR) + lea_abs_l(A1, SND_STUB_TABLE)
+            + moveq_0_dn(D0) + leaf.move_b_d16_dn(D0, A0, START_TUNE)
+            + branch(BMI_W, dedup) + dedup + latch_and_stop)
+
+    return leaf.assemble(at, [
+        head,
+        lambda call: bsr_w(call, leaf.entry_of("bg_build_buffer")),
+        lambda call: bsr_w(call, leaf.entry_of("stage_publish_scroll_state")),
+        lambda call: bsr_w(call, leaf.entry_of("bg_build_preshifted_copies")),
+        movea_l_abs_l(A0, STAGE_START_PTR),
+        tst_w_abs_w(SCROLL_FOLLOW_FROZEN),
+        branch(BNE_W, follows),
+        follows,
+        palette,
+        lambda call: bsr_w(call, leaf.entry_of("set_palette")),
+        tail,
+    ])
+
+
 ENTRY_BYTES = {
     "bg_build_buffer": _build_buffer_entry(),
     "stage_publish_scroll_state": _publish_scroll_state_entry(),
@@ -542,6 +655,8 @@ ENTRY_BYTES = {
     "bg_plot_round_banner": _plot_round_banner_entry(leaf.entry_of("bg_plot_round_banner")),
     "game_restart_reset": _restart_reset_entry(),
     "game_life_restart_reset": _life_restart_reset_entry(),
+    "set_palette": _set_palette_entry(),
+    "stage_load_window": _load_window_entry(leaf.entry_of("stage_load_window")),
 }
 
 # What ../out/hw_scan.tsv records for each, stated rather than derived so that a routine whose body
@@ -560,10 +675,12 @@ SIZES = {
     # required to add back up to that 136 by the test below.
     "game_restart_reset": 66,
     "game_life_restart_reset": 70,
+    "set_palette": 24,
+    "stage_load_window": 210,
 }
 GHIDRA_RESET_FUNCTION_BYTES = 136
 
-RECONSTRUCTED_ROUTINES = 10
+RECONSTRUCTED_ROUTINES = 12
 
 
 def test_the_battery_covers_every_routine_it_was_written_for():
@@ -822,6 +939,58 @@ def _publish_bands():
     return merge_bands(sum(([addr + i for i in range(length)] for addr, length in bands), []))
 
 
+# The two bands $fb06 writes into that a case has to seed itself, WITH A MARGIN: a write one word
+# past either lands on a byte that is wrong for its address rather than on a zero that matches
+# another zero. The first is the run of scroll-state words around WB_BG_PRESHIFT_CARRY and the
+# second the sixteen row pointers; one cell of margin below each, and (for the first) enough above
+# to cover the whole cluster.
+PUBLISHED_CLUSTER_SEED = 0x40
+
+
+def _published_margin_pokes(salt):
+    """Both bands, address-keyed. TWO callers — $fb06's own cases and the hinge's, which runs it —
+    and the second is why this is a function: a second copy could seed a different span and only one
+    of the two batteries would notice."""
+    return {PRESHIFT_CARRY - CELL_BYTES: keyed_block(PRESHIFT_CARRY - CELL_BYTES,
+                                                     PUBLISHED_CLUSTER_SEED, salt),
+            BUFFER_ROWS - CELL_BYTES: keyed_block(
+                BUFFER_ROWS - CELL_BYTES, BUFFERS * BUFFER_ROW_PAIR + 2 * CELL_BYTES, salt)}
+
+
+def _model_publish(image, map_ptr, start):
+    """Every byte $fb06 leaves, as {address: bytes}: the two limits off the map HEADER, the cursor
+    off WB_MAP_ROW_STRIDE's own word, the positions off the start record, the rest cleared, the
+    Scc byte and the sixteen row pointers.
+
+    ONE model, read by `_run_publish` below and by `_model_load_window`'s composition — the hinge
+    runs this routine, so a second spelling there could disagree with this one while both batteries
+    stayed green. That is the same rule test_hud.py's imported models follow.
+    """
+    column = u16(image, start)
+    row = u16(image, start + STATE_WORD_LEN)
+    values = {SCROLL_LIMIT_X: ((u16(image, map_ptr + MAP_HEADER_WIDTH) << MAP_CELL_SHIFT)
+                               - LIMIT_X_BIAS) & WORD_MASK,
+              SCROLL_LIMIT_Y: ((u16(image, map_ptr + MAP_HEADER_HEIGHT) << MAP_CELL_SHIFT)
+                               - LIMIT_Y_BIAS) & WORD_MASK,
+              MAP_CURSOR: (row * u16(image, MAP_ROW_STRIDE) + column) & WORD_MASK,
+              SCROLL_POS_X: (column << MAP_CELL_SHIFT) & WORD_MASK,
+              SCROLL_POS_Y: (row << MAP_CELL_SHIFT) & WORD_MASK,
+              SCROLL_Y_BOTTOM: SCROLL_Y_BOTTOM_INIT}
+    written = {addr: word(values.get(addr, 0)) for addr in PUBLISHED_WORDS}
+    written[COPYLOCK_FLAG_B] = bytes([BYTE_MASK])
+    for copy in range(BUFFERS):
+        for buffer_row, member in ((0, BUFFER_ROW_TOP), (SCROLL_Y_BOTTOM_INIT, BUFFER_ROW_BOTTOM)):
+            written[_published_row_pointer_at(copy, member)] = longword(
+                published_row_pointer(copy, buffer_row))
+    return written
+
+
+def _published_row_pointer_at(copy, member):
+    """Where $fb06 puts one copy's row cursor — `published_row_pointer` is the VALUE, this the
+    address it goes to."""
+    return BUFFER_ROWS + copy * BUFFER_ROW_PAIR + member
+
+
 # Deliberately unequal to any header width a case below uses: the cursor's `mulu.w` reads THIS word
 # and the limits read the header's, and only a case that seeds them apart states which is which.
 GLOBAL_STRIDE = 0x31
@@ -836,11 +1005,7 @@ def _run_publish(case, width, height, column, row, stride=GLOBAL_STRIDE):
              start: word(column) + word(row),
              STAGE_MAP_PTR: longword(MAP),
              STAGE_START_PTR: longword(start)}
-    # A margin on both sides of the published band, so a write one word past it lands on a byte
-    # that is wrong for its address rather than on a zero.
-    pokes[PRESHIFT_CARRY - CELL_BYTES] = keyed_block(PRESHIFT_CARRY - CELL_BYTES, 0x40, salt)
-    pokes[BUFFER_ROWS - CELL_BYTES] = keyed_block(
-        BUFFER_ROWS - CELL_BYTES, BUFFERS * BUFFER_ROW_PAIR + 2 * CELL_BYTES, salt)
+    pokes.update(_published_margin_pokes(salt))
 
     image = harness.make_image(pokes)
     stride_word = u16(image, MAP_ROW_STRIDE)
@@ -849,22 +1014,16 @@ def _run_publish(case, width, height, column, row, stride=GLOBAL_STRIDE):
     info = leaf.run("stage_publish_scroll_state", _PUBLISH, _publish_bands(), what,
                     regs={"_pokes": pokes}, max_insns=PUBLISH_INSN_CAP)
 
-    expected = {SCROLL_LIMIT_X: ((width << MAP_CELL_SHIFT) - LIMIT_X_BIAS) & WORD_MASK,
-                SCROLL_LIMIT_Y: ((height << MAP_CELL_SHIFT) - LIMIT_Y_BIAS) & WORD_MASK,
-                MAP_CURSOR: (row * stride_word + column) & WORD_MASK,
-                SCROLL_POS_X: (column << MAP_CELL_SHIFT) & WORD_MASK,
-                SCROLL_POS_Y: (row << MAP_CELL_SHIFT) & WORD_MASK,
-                SCROLL_Y_BOTTOM: SCROLL_Y_BOTTOM_INIT}
-    for addr in PUBLISHED_WORDS:
-        want = expected.get(addr, 0)
-        got = leaf.read_int(info, addr, STATE_WORD_LEN, what)
-        assert got == want, f"{what}: {addr:#x} is {got:#06x}, not {want:#06x}"
-    assert leaf.read_int(info, COPYLOCK_FLAG_B, 1, what) == BYTE_MASK
-    for copy in range(BUFFERS):
-        for buffer_row, member in ((0, BUFFER_ROW_TOP), (SCROLL_Y_BOTTOM_INIT, BUFFER_ROW_BOTTOM)):
-            at = BUFFER_ROWS + copy * BUFFER_ROW_PAIR + member
-            assert leaf.read_int(info, at, LONGWORD_LEN, what) \
-                == published_row_pointer(copy, buffer_row)
+    expected = _model_publish(image, MAP, start)
+    # The case's own arguments against the model's reading of the image, so the two cannot drift:
+    # the limits come off the HEADER words this case seeded and the cursor off the GLOBAL stride.
+    assert int.from_bytes(expected[SCROLL_LIMIT_X], "big") \
+        == ((width << MAP_CELL_SHIFT) - LIMIT_X_BIAS) & WORD_MASK
+    assert int.from_bytes(expected[MAP_CURSOR], "big") == (row * stride_word + column) & WORD_MASK
+
+    for addr, want in sorted(expected.items()):
+        got = leaf.read_bytes(info, addr, len(want), what)
+        assert got == want, f"{what}: {addr:#x} is {got.hex()}, not {want.hex()}"
     return info
 
 
@@ -1484,3 +1643,366 @@ def test_the_two_resets_are_ghidras_one_function_split_at_its_second_entrant():
     # instruction, which is what "falls through" means on the bytes.
     assert bytes(harness.BASE_IMAGE[tail - len(RTS):tail]) != RTS, (
         "the head ends in an `rts`, so it does not fall through and the split is wrong")
+
+
+# --- set_palette ($f944) --------------------------------------------------------------------------
+#
+# THE ONE ROUTINE IN THIS BATTERY WHOSE OUTPUT IS NOT PINNED, and the honest surface is small enough
+# to state in full: it writes NO image byte, so a case shows that both sides write nothing and that
+# the source cursor comes back where the original's `move.l (a0)+,(a1)+` leaves it. WHICH sixteen
+# words reached which colour register — and that they reached the shifter at all — is invisible to a
+# memory differential, because WB_SHIFTER_PALETTE is outside the loaded image and the kit drops every
+# write to it (tools/recreate_kit/include/hw.h models hardware READS and has no ledger for a write).
+# A reconstruction that wrote the wrong colours, or none, passes everything below. ../STATUS.md
+# registers the kit-side remedy rather than this batch inventing one.
+
+SET_PALETTE_LONGWORDS = PALETTE_ROW_BYTES // LONGWORD_LEN
+SET_PALETTE_INSN_CAP = 1 + SET_PALETTE_LONGWORDS + 1 + leaf.RUNNER_SENTINEL_INSN
+_SET_PALETTE = leaf.register_glue("set_palette", [ctypes.c_uint32], ctypes.c_uint32)
+
+
+def _run_set_palette(case, source):
+    what = f"set_palette {case}"
+    info = leaf.run("set_palette", _SET_PALETTE(source), [], what,
+                    regs={"a0": source}, max_insns=SET_PALETTE_INSN_CAP)
+    written = program_writes(info)
+    assert written == {}, (
+        f"{what}: the original wrote {len(written)} image byte(s), e.g. "
+        f"{min(written):#x} — this routine's whole output is off the image")
+    after = (source + PALETTE_ROW_BYTES) & LONGWORD_MASK
+    assert info["ret"] == after, (
+        f"{what}: the reconstruction returned {info['ret']:#x}, not the {after:#x} the eight "
+        f"post-incremented `move.l`s leave in a0")
+    assert info["regs"]["a0"] == after, f"{what}: the original left a0 at {info['regs']['a0']:#x}"
+    assert info["regs"]["a1"] == SHIFTER_PALETTE + PALETTE_ROW_BYTES, (
+        f"{what}: the original left a1 at {info['regs']['a1']:#x} — the sixteen words went "
+        f"somewhere other than the shifter's own registers")
+    return info
+
+
+@pytest.mark.parametrize("row", range(PALETTE_ROWS))
+def test_each_shipped_palette_row_is_spent_whole_and_leaves_the_image_alone(row):
+    """All eight rows the table holds, at the addresses stage_load_window's `lsl.w #5` lands on."""
+    _run_set_palette(f"row {row}", PALETTE_TABLE + row * PALETTE_ROW_BYTES)
+
+
+def test_the_shifter_registers_are_outside_the_image_so_the_writes_are_dropped():
+    """WHY the case above can assert an EMPTY write set, stated as a fact about the address rather
+    than left as an observation: $ff8240 is past the loaded image on the 24-bit bus, so shim.c's
+    bounds check drops all eight `move.l`s — on the oracle side as well as this one."""
+    assert SHIFTER_PALETTE & wb("BUS_ADDR_MASK") >= harness.IMAGE_SIZE, (
+        f"{SHIFTER_PALETTE:#x} is inside the image, so the writes are NOT dropped and this "
+        f"battery is asserting the wrong thing about them")
+
+
+def test_the_palette_table_ends_where_the_pre_shift_begins():
+    """Self-bounding: WB_PALETTE_ROWS is not a count this battery states — the eighth row's last
+    byte is followed immediately by bg_build_preshifted_copies' first instruction."""
+    assert PALETTE_TABLE + PALETTE_ROWS * PALETTE_ROW_BYTES \
+        == leaf.entry_of("bg_build_preshifted_copies")
+    assert PALETTE_ROW_BYTES == PALETTE_COLOURS * STATE_WORD_LEN == 1 << PALETTE_ROW_SHIFT
+
+
+def test_every_word_of_the_table_is_a_shifter_colour():
+    """The reading that says this is a PALETTE table and not something near one: an ST colour word
+    is $0RGB with each component 0..7, and all WB_PALETTE_ROWS * WB_PALETTE_COLOURS of them are."""
+    for row in range(PALETTE_ROWS):
+        for colour in range(PALETTE_COLOURS):
+            at = PALETTE_TABLE + row * PALETTE_ROW_BYTES + colour * STATE_WORD_LEN
+            value = u16(harness.BASE_IMAGE, at)
+            assert value >> 12 == 0 and all((value >> shift) & 0xf <= 7 for shift in (0, 4, 8)), (
+                f"row {row} colour {colour} at {at:#x} is {value:#06x}, which no shifter register "
+                f"can hold")
+
+
+def test_the_table_is_named_from_one_site_in_the_image():
+    """A whole-image scan for the `lea $fc46.l` operand gives exactly one, inside $f95c — so the
+    palette a stage gets is chosen in that routine and nowhere else."""
+    program = bytes(harness.BASE_IMAGE[:wb("MAP_ROW_STRIDE")])
+    operand = longword(PALETTE_TABLE)
+    sites = [at for at in range(0, len(program), 2) if program[at:at + LONGWORD_LEN] == operand]
+    window = leaf.entry_of("stage_load_window")
+    assert sites and all(window <= at < window + SIZES["stage_load_window"] for at in sites), (
+        f"WB_PALETTE_TABLE has operand sites outside $f95c: {[hex(a) for a in sites]}")
+
+
+# --- stage_load_window ($f95c): the hinge, run WHOLE ----------------------------------------------
+#
+# Every callee is reconstructed, so a case enters at $f95c and leaves at that routine's own `rts`:
+# the three builders above, `set_palette`, and the sound module's `snd_play_song` / `snd_stop`. There
+# is no boundary and no stop_pc.
+#
+# THE MODELS ARE THE CALLEES' OWN. Copy 0 comes from `_model_build`, copies 1..7 from
+# `_model_preshift` run on the image copy 0 has just been rewritten in, the published fields from
+# `_model_publish` — the SAME function $fb06's own cases compare against — and the sound module's
+# write set from test_sound.py's `model_play_song` / `STOP_WRITES`. Nothing below restates any of
+# them: two copies could disagree while both batteries stayed green, which is the reason test_hud.py's
+# models are imported too, and the reason `_model_publish` was extracted rather than rewritten here.
+#
+# WHAT THE CASES ARE BUILT FROM. The FIVE start records the .PRG ships at WB_STAGE_START_RECORDS
+# drive the tail both ways on their own: four carry song ids and one ($1d42a) the negative byte that
+# stops the module. Their map cells are all (0,0), so the two cases that need a moved window and a
+# non-zero scroll position seed a record of their own — as this battery's builder cases already do.
+LOAD_WINDOW_INSN_CAP = (BUILD_INSN_CAP + PUBLISH_INSN_CAP + PRESHIFT_INSN_CAP + PLAY_SONG_INSN_CAP
+                        + SET_PALETTE_INSN_CAP + 64)
+_LOAD_WINDOW = leaf.register_glue("stage_load_window", [ctypes.c_uint32] * 3)
+
+# A tile bank that is NOT WB_TILE_BITMAPS, so the `cmpa.l` takes the raw arm. Plain RAM past the
+# program and clear of MAP and of the buffers, seeded with the same shipped tiles the indexed cases
+# read — the bank is what the flag is about, and the pixels are real either way.
+RAW_TILE_BANK = 0x38000
+FROZEN = WORD_MASK              # `move.w #$ffff,$d76.w` — what the four freezing call sites write
+LATCH_UNMATCHED = 0x7f          # a latch no case's tune equals, so the de-duplication does not fire
+
+# NO BAND TABLE HERE, deliberately. `_model_load_window` below states every byte this routine
+# leaves, and `_run_load_window` derives the allowed bands FROM that model — so a second list of
+# (address, length) pairs would be a contract nothing enforced, free to describe a write set the
+# model did not. An earlier draft carried one and it was already wrong about its own contents.
+
+
+def shipped_start_record(index):
+    return STAGE_START_RECORDS + index * START_RECORD_LEN
+
+
+def _load_window_pokes(case, start, tiles, frozen, latch, record=None):
+    """Everything the run reads that is not shipped: the map, the index table, the eight buffers,
+    the scroll's own state, the sound module's two mutable bands, and the case's own start record.
+
+    Address-keyed throughout, so a store the port skipped leaves a byte that is wrong FOR ITS
+    ADDRESS rather than a zero that matches another zero.
+    """
+    salt = case_salt(case)
+    raw = tiles != TILE_BITMAPS
+    pokes = dict(_index_table_pokes())
+    pokes.update(_map_pokes(salt, MAP_STRIDE, MAP_SEED_ROWS, 0, 0, raw))
+    if raw:
+        first = tiles + shipped_tile(0) * TILE_BITMAP_LEN
+        pokes[first] = keyed_block(first, TILE_SHIPPED_COUNT * TILE_BITMAP_LEN, salt)
+    pokes[MAP_ROW_STRIDE] = word(GLOBAL_STRIDE)
+
+    # The scroll's destinations: all eight buffers, the two carry scratches and a margin around the
+    # published band, exactly as the builders' own cases seed them.
+    pokes[BUFFER_BASE] = keyed_block(BUFFER_BASE, PRESHIFT_SPAN, salt)
+    pokes[BUILD_CARRY] = keyed_block(BUILD_CARRY, PLANES * STATE_WORD_LEN, salt)
+    pokes.update(_published_margin_pokes(salt))
+    pokes[ACTOR_FOLLOWED_DEFAULT] = keyed_block(ACTOR_FOLLOWED_DEFAULT, 2 * STATE_WORD_LEN, salt)
+    pokes[SCROLL_FOLLOW_X] = keyed_block(SCROLL_FOLLOW_X, 2 * STATE_WORD_LEN, salt)
+
+    pokes[SCROLL_FOLLOW_FROZEN] = word(FROZEN if frozen else 0)
+    pokes[STAGE_TUNE_LATCH] = bytes([latch])
+    pokes.update({base: keyed_block(base, length, salt) for base, length in PLAY_SONG_SEEDED_BANDS})
+    if record is not None:
+        pokes[start] = record
+    return pokes
+
+
+def _model_load_window(image, start, tiles, frozen, latch):
+    """Every byte $f95c leaves, as {address: bytes}, composed out of its callees' own models."""
+    raw = tiles != TILE_BITMAPS
+    written = {RAW_TILE_INDEX: word(RAW_TILE_INDEX_SET if raw else 0),
+               STAGE_MAP_PTR: longword(MAP),
+               STAGE_START_PTR: longword(start)}
+
+    follow_x = u16(image, start + START_FOLLOW_X)
+    follow_y = u16(image, start + START_FOLLOW_Y)
+    written[ACTOR_FOLLOWED_DEFAULT + ACTOR_X] = word(follow_x)
+    written[ACTOR_FOLLOWED_DEFAULT + ACTOR_Y] = word(follow_y)
+
+    copy_zero = _model_build(image, start, tiles, MAP_STRIDE, raw)
+    built = bytearray(image)
+    built[BUFFER_BASE:BUFFER_BASE + BUFFER_LEN] = copy_zero
+    span = copy_zero + _model_preshift(built)
+    written[BUFFER_BASE] = span
+
+    # ...and the four words the pre-shift's ring scratch is LEFT holding: the first cell of the last
+    # scanline it read, shifted out. The builders' own battery asserts only that the band was
+    # written, so this is the first case anywhere that states its value.
+    last_line = (BUILD_PASSES - 1) * BUFFER_LEN + (BUILD_SCANLINES - 1) * BUFFER_LINE
+    for plane in range(PLANES):
+        at = last_line + plane * STATE_WORD_LEN
+        cell_word = int.from_bytes(span[at:at + STATE_WORD_LEN], "big")
+        written[BUILD_CARRY + plane * STATE_WORD_LEN] = word(
+            cell_word >> (16 - PRESHIFT_BITS))
+
+    published = _model_publish(image, MAP, start)      # the publish's own model, not a second one
+    written.update(published)
+    scroll_pos_x = int.from_bytes(published[SCROLL_POS_X], "big")
+    scroll_pos_y = int.from_bytes(published[SCROLL_POS_Y], "big")
+
+    if not frozen:
+        written[SCROLL_FOLLOW_X] = word((follow_x - SCROLL_FOLLOW_BIAS_X - scroll_pos_x) & WORD_MASK)
+        written[SCROLL_FOLLOW_Y] = word((follow_y - SCROLL_FOLLOW_BIAS_Y - scroll_pos_y) & WORD_MASK)
+
+    tune = image[start + START_TUNE]
+    if tune & START_TUNE_STOP:
+        written[STAGE_TUNE_LATCH] = bytes([tune])
+        written.update(STOP_WRITES)              # `jsr 28(a1)` — no de-duplication on this arm
+    elif tune != latch:
+        written[STAGE_TUNE_LATCH] = bytes([tune])
+        written.update(model_play_song(image, tune))
+    return written
+
+
+def _run_load_window(case, start, tiles=TILE_BITMAPS, frozen=False, latch=LATCH_UNMATCHED,
+                     record=None, mixer=PLAY_SONG_MIXER):
+    pokes = _load_window_pokes(case, start, tiles, frozen, latch, record)
+    image = harness.make_image(pokes)
+    written = _model_load_window(image, start, tiles, frozen, latch)
+
+    what = f"stage_load_window {case}"
+    psg_seed = {PSG_REG_MIXER: mixer}
+    # POISON IS OFF for the scene battery's reason: the bytes this run writes include the two
+    # LATCHED POINTERS it then reads the start record back through, and the map cursor the publish
+    # leaves — inverting them does not re-run this function, it runs a different one.
+    info = leaf.run("stage_load_window", _LOAD_WINDOW(MAP, start, tiles),
+                    merge_bands(leaf.seeded_bytes(written)), what,
+                    regs={"a0": MAP, "a1": start, "a6": tiles, "_pokes": pokes},
+                    max_insns=LOAD_WINDOW_INSN_CAP, poison=False, psg_seed=psg_seed)
+
+    actual = program_writes(info)
+    assert set(actual) == leaf.seeded_bytes(written), (
+        f"{what}: the original wrote {len(actual)} bytes against the model's "
+        f"{len(leaf.seeded_bytes(written))}")
+    for addr, expected in sorted(written.items()):
+        got = leaf.read_bytes(info, addr, len(expected), what)
+        if got != expected:
+            at = next(i for i in range(len(expected)) if got[i] != expected[i])
+            raise AssertionError(
+                f"{what}: {addr + at:#x} is {got[at]:#04x}, not the {expected[at]:#04x} the model "
+                f"gives (band at {addr:#x}, {len(expected)} bytes)")
+    return info
+
+
+@pytest.mark.parametrize("index", range(STAGE_START_RECORD_COUNT))
+def test_each_shipped_start_record_loads_its_stage_end_to_end(index):
+    """The five records the .PRG carries, each run through the whole routine: the raw-tile arm, the
+    two latched pointers, the followed record's position, all eight buffers, the published scroll
+    state, the palette row the record names and the tail its tune byte selects."""
+    info = _run_load_window(f"shipped record {index}", shipped_start_record(index))
+    tune = harness.BASE_IMAGE[shipped_start_record(index) + START_TUNE]
+    assert_psg_state(info, {PSG_REG_MIXER: PLAY_SONG_MIXER},
+                     f"shipped record {index} (tune {tune:#04x})")
+
+
+def test_the_five_shipped_records_reach_both_arms_of_the_tail():
+    """The guard on the sweep above: four of the five carry song ids and one carries a NEGATIVE
+    byte, so the `bmi` is taken by shipped data and not only by a case's own record."""
+    tunes = [harness.BASE_IMAGE[shipped_start_record(i) + START_TUNE]
+             for i in range(STAGE_START_RECORD_COUNT)]
+    assert any(tune & START_TUNE_STOP for tune in tunes), "no shipped record stops the module"
+    assert any(not tune & START_TUNE_STOP for tune in tunes), "no shipped record starts a song"
+
+
+# A record of the case's own, for the two things the shipped five cannot reach: their map cells are
+# all (0,0), so nothing in them moves the window or leaves a non-zero WB_BG_SCROLL_POS_X for the
+# follow subtraction to spend. Its fields are plain numbers read off $f95c's own operands, which is
+# what this battery's builder cases already seed for $fa30.
+MOVED_WINDOW = (3, 2)                   # the map cell the window opens on
+MOVED_FOLLOW = (0x180, 0xc0)            # ...and the followed object's position in the level
+MOVED_TUNE = 5
+
+
+def _moved_record(tune=MOVED_TUNE, palette=1):
+    return (word(MOVED_WINDOW[0]) + word(MOVED_WINDOW[1])
+            + word(MOVED_FOLLOW[0]) + word(MOVED_FOLLOW[1]) + bytes([tune & BYTE_MASK, palette]))
+
+
+MOVED_RECORD_AT = MAP + 0x800           # plain RAM past every band the map seeds
+
+
+def test_the_follow_position_is_the_records_less_its_bias_and_the_scroll_it_just_published():
+    """`move.w 4(a0),d0 / subi.w #$20,d0 / sub.w $83ae.l,d0` over the WB_BG_SCROLL_POS_X the publish
+    wrote three instructions earlier — so the window's own cell is subtracted twice over, once as
+    the map cursor and once here. A start cell of (0,0) leaves that subtraction invisible, which is
+    why this case moves the window."""
+    info = _run_load_window("moved window", MOVED_RECORD_AT, record=_moved_record())
+    what = "moved window"
+    for follow, bias, cell, at in ((MOVED_FOLLOW[0], SCROLL_FOLLOW_BIAS_X, MOVED_WINDOW[0],
+                                    SCROLL_FOLLOW_X),
+                                   (MOVED_FOLLOW[1], SCROLL_FOLLOW_BIAS_Y, MOVED_WINDOW[1],
+                                    SCROLL_FOLLOW_Y)):
+        want = (follow - bias - (cell << MAP_CELL_SHIFT)) & WORD_MASK
+        assert leaf.read_int(info, at, STATE_WORD_LEN, what) == want
+
+
+def test_a_frozen_scroll_leaves_the_two_follow_words_alone():
+    """`tst.w $d76.w / bne` — the four call sites that raise the flag first get a stale
+    WB_SCROLL_FOLLOW_X/_Y, which is the whole of what freezing does here."""
+    info = _run_load_window("frozen", MOVED_RECORD_AT, frozen=True, record=_moved_record())
+    for at in (SCROLL_FOLLOW_X, SCROLL_FOLLOW_Y):
+        assert at not in info["writes"], f"{at:#x} was written with the scroll frozen"
+
+
+def test_a_tune_the_latch_already_holds_starts_nothing():
+    """`cmp.b $fa2e.l,d0 / bne` — the de-duplication, and it is a RETURN and not a skip: the latch
+    is not rewritten either, and the chip is never touched."""
+    info = _run_load_window("de-duplicated tune", MOVED_RECORD_AT, latch=MOVED_TUNE,
+                            record=_moved_record())
+    assert STAGE_TUNE_LATCH not in info["writes"], "the latch was rewritten on the matching arm"
+    assert info["regs"]["psg_events"] == [], (
+        f"the chip saw {info['regs']['psg_events']} on a run that starts nothing")
+
+
+def test_the_stop_arm_ignores_the_latch_it_writes():
+    """The asymmetry between the two arms: a NEGATIVE tune latches and stops whatever the latch
+    held, so a stage re-entered with the same negative byte stops the module a second time."""
+    stop_tune = 0xff
+    info = _run_load_window("stop with a matching latch", MOVED_RECORD_AT, latch=stop_tune,
+                            record=_moved_record(tune=stop_tune))
+    assert leaf.read_int(info, STAGE_TUNE_LATCH, 1, "stop arm") == stop_tune
+    assert_psg_state(info, {PSG_REG_MIXER: PLAY_SONG_MIXER}, "the stop arm's chip traffic")
+
+
+def test_a_bank_that_is_not_the_shipped_one_makes_the_map_byte_the_tile_number():
+    """`cmpa.l #$1d43e,a6` — the raw-tile flag is about the BANK POINTER and nothing else, and the
+    build one call away is its only reader. Run over a bank of the case's own, whose bitmaps are the
+    shipped ones seeded at another address."""
+    info = _run_load_window("raw bank", MOVED_RECORD_AT, tiles=RAW_TILE_BANK,
+                            record=_moved_record())
+    assert leaf.read_int(info, RAW_TILE_INDEX, STATE_WORD_LEN, "raw bank") == RAW_TILE_INDEX_SET
+
+
+# NO "shipped bank clears the flag" CASE. It would be a whole 180 KB composed run for a claim the
+# five shipped-record cases above already make — every one of them is handed WB_TILE_BITMAPS and
+# every one compares WB_STAGE_RAW_TILE_INDEX against the model's 0 — and a mutant that inverts the
+# ternary reddens all five. Measured, then trimmed.
+
+
+def test_the_start_table_and_the_shipped_records_are_one_block_ending_at_the_tile_bitmaps():
+    """Neither count is stated twice: WB_STAGE_START_TABLE's eight longwords run up to the first
+    shipped record, and the five records run up to WB_TILE_BITMAPS — so the ten-byte record length
+    is settled by the block's own geometry as well as by $f95c's operands."""
+    assert STAGE_START_TABLE + STAGE_START_TABLE_ENTRIES * LONGWORD_LEN == STAGE_START_RECORDS
+    assert STAGE_START_RECORDS + STAGE_START_RECORD_COUNT * START_RECORD_LEN == TILE_BITMAPS
+    entries = [int.from_bytes(bytes(harness.BASE_IMAGE[STAGE_START_TABLE + i * LONGWORD_LEN:
+                                                       STAGE_START_TABLE + (i + 1) * LONGWORD_LEN]),
+                              "big")
+               for i in range(STAGE_START_TABLE_ENTRIES)]
+    assert all(entries[i + 1] - entries[i] == START_RECORD_LEN for i in range(len(entries) - 1)), (
+        f"the table's entries are not {START_RECORD_LEN} apart: {[hex(e) for e in entries]}")
+
+
+# The three addresses this batch gave a header #define AND a ../names.txt `var`. Only the header is
+# read at run time, so without the pin below the name map could label a different address after a
+# re-bootstrap and every case here would stay green — see test_sound.py's
+# `test_the_name_map_and_the_header_agree_about_the_directory`, which is the same claim one battery
+# over. Each pair is (the name map's name, the header's constant).
+TWO_SOURCE_ADDRESSES = (("stage_start_table", STAGE_START_TABLE),
+                        ("stage_start_records", STAGE_START_RECORDS),
+                        ("palette_table", PALETTE_TABLE))
+
+
+@pytest.mark.parametrize("name,constant", TWO_SOURCE_ADDRESSES, ids=[n for n, _ in TWO_SOURCE_ADDRESSES])
+def test_the_name_map_and_the_header_agree_about_each_address(name, constant):
+    assert leaf.entry_of(name) == constant, (
+        f"../names.txt puts {name} at {leaf.entry_of(name):#x} and include/wonderboy.h at "
+        f"{constant:#x} — the reconstruction reads the header and nothing reads the name map")
+
+
+def test_every_shipped_record_names_a_palette_row_the_table_holds():
+    """Nothing bounds the `lsl.w #5` index, so this is a claim about the DATA and not about the
+    code: a record naming row WB_PALETTE_ROWS or above would hand set_palette the bytes after the
+    table, and none of the five does."""
+    for index in range(STAGE_START_RECORD_COUNT):
+        row = harness.BASE_IMAGE[shipped_start_record(index) + START_PALETTE]
+        assert row < PALETTE_ROWS, f"shipped record {index} names palette row {row}"

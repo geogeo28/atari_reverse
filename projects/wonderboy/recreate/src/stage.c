@@ -46,6 +46,7 @@
 #include "hud.h"            /* the perfect-bonus arm IS bcd_add_score_bd70 */
 #include "machine.h"
 #include "scroll.h"         /* copy_longwords — a tile row is the same run of `move.l (a0)+,(a1)+` */
+#include "sound.h"          /* $f95c's tail IS the sound module: stub +0 or stub +28 */
 #include "stage.h"
 #include "wonderboy.h"
 
@@ -377,4 +378,110 @@ void game_restart_reset(uint8_t *image) {
         wr16(image + GAME_RESET_HUD_SLOTS[slot], 0);
     wr16(image + WB_EFFECT_STATE_BD6A, 0);
     game_life_restart_reset(image);             /* the head's last `clr.w` FALLS THROUGH to $fe8c */
+}
+
+
+/* --- $f944: the shifter palette, and $f95c, the stage-transition hinge above it ----------------- */
+
+/* ONE COLOUR REGISTER OF THE SHIFTER, and the one thing in this file a differential cannot see.
+ *
+ * WB_SHIFTER_PALETTE is off the 68000's 24-bit bus as far as the loaded image goes, so the oracle
+ * DROPS the original's eight `move.l`s exactly as it drops every other hardware write (the kit's
+ * hw.h says so: there is no `hw_write8` to mirror them with). Nothing on either side records that
+ * the colours went anywhere, so a reconstruction that wrote the wrong sixteen words — or none —
+ * differs from this one by nothing the harness compares. On target this is
+ * `((volatile uint16_t *)WB_SHIFTER_PALETTE)[index] = colour`, and the sink is compiled out.
+ *
+ * It is written as a call rather than as no code at all so that the READ of the palette row, the
+ * count and the order stay in the reconstruction where a reader meets them, and so that the one
+ * place the claim is untested is the one place it is stated. ../STATUS.md registers the kit-side
+ * remedy — a dropped-hardware-write LEDGER, which would make this pinnable the way psg.h made the
+ * chip writes pinnable — as an idea, not as work this batch did. */
+static void shifter_palette_write(unsigned index, uint16_t colour) {
+    (void)index;
+    (void)colour;
+}
+
+uint32_t set_palette(uint8_t *image, uint32_t source) {
+    for (unsigned colour = 0; colour < WB_PALETTE_COLOURS; colour++)
+        shifter_palette_write(colour, be16(image + addr_add(source, colour * WB_BG_STATE_WORD_LEN)));
+    /* `move.l (a0)+,(a1)+` x 8 leaves the cursor past the row it just spent, which is the only
+     * outgoing state of this routine an observer has. */
+    return addr_add(source, WB_PALETTE_ROW_BYTES);
+}
+
+/* $f95c. THE HINGE EVERY STAGE TRANSITION GOES THROUGH — six call sites, each of which loads the
+ * same three registers: `map` (a0) is the level map, `start` (a1) the WB_START_RECORD_LEN-byte start
+ * record, and `tiles` (a6) the tile bank.
+ *
+ * IT RE-READS ITS OWN LATCH RATHER THAN KEEPING a1. Three `movea.l $fe1a.l,a0` after the builders
+ * have run, because a1 is long gone by then — so everything below the builders reads the record
+ * through WB_STAGE_START_PTR, and a builder that changed that longword would change what the palette
+ * and the tune are taken from. Written the same way here for that reason.
+ *
+ * THE TAIL IS THE SOUND MODULE, and it is where the de-duplication lives: a NEGATIVE tune byte stops
+ * the module, and a non-negative one starts that song unless WB_STAGE_TUNE_LATCH already holds it —
+ * in which case the routine returns having started nothing. The stop arm does NOT consult the latch;
+ * it only writes it.
+ *
+ * NO BUS GUARD ON `start`, `map` OR `tiles`, and stated rather than left silent. All three are
+ * pointers a CALLER supplies, and the 68000 would put only 24 bits of one on the bus (bus.h) where
+ * this indexes the image with all 32 — so a pointer above the image would read past it here and wrap
+ * there. It is the same exposure bg_build_buffer has carried since batch 12 over the same three
+ * arguments, so guarding it is a change to that tier and not to this routine; ../STATUS.md registers
+ * it. No shipped caller can produce one: five `lea` literals, and $dfbe's WB_STAGE_START_TABLE whose
+ * eight entries are all $217d8..$2181e. */
+void stage_load_window(uint8_t *image, uint32_t map, uint32_t start, uint32_t tiles) {
+    /* `cmpa.l #$1d43e,a6` — a LONGWORD compare of the bank pointer itself, so the raw-tile flag is
+     * about which bank was handed in and not about anything in the map. */
+    wr16(image + WB_STAGE_RAW_TILE_INDEX, tiles == WB_TILE_BITMAPS ? 0 : WB_STAGE_RAW_TILE_INDEX_SET);
+    wr32(image + WB_STAGE_MAP_PTR, map);
+    wr32(image + WB_STAGE_START_PTR, start);
+
+    /* The followed record's position, straight out of the start record. Slot 12 of
+     * WB_ACTOR_TABLE_DEFAULT is what the scroll steers on, and this is where a stage puts it. */
+    wr16(image + WB_ACTOR_FOLLOWED_DEFAULT + WB_ACTOR_X,
+         be16(image + addr_add(start, WB_START_FOLLOW_X)));
+    wr16(image + WB_ACTOR_FOLLOWED_DEFAULT + WB_ACTOR_Y,
+         be16(image + addr_add(start, WB_START_FOLLOW_Y)));
+
+    bg_build_buffer(image, map, start, tiles);
+    stage_publish_scroll_state(image);
+    bg_build_preshifted_copies(image);
+
+    /* The followed object's position ON SCREEN, skipped entirely while the scroll is frozen — which
+     * is what leaves WB_SCROLL_FOLLOW_X/_Y stale for the four call sites that raise the flag first.
+     * Word arithmetic throughout: `move.w / subi.w / sub.w`. */
+    start = be32(image + WB_STAGE_START_PTR);
+    if (be16(image + WB_SCROLL_FOLLOW_FROZEN) == 0) {
+        wr16(image + WB_SCROLL_FOLLOW_X,
+             (uint16_t)(be16(image + addr_add(start, WB_START_FOLLOW_X))
+                        - WB_SCROLL_FOLLOW_BIAS_X - be16(image + WB_BG_SCROLL_POS_X)));
+        wr16(image + WB_SCROLL_FOLLOW_Y,
+             (uint16_t)(be16(image + addr_add(start, WB_START_FOLLOW_Y))
+                        - WB_SCROLL_FOLLOW_BIAS_Y - be16(image + WB_BG_SCROLL_POS_Y)));
+    }
+
+    /* `move.w 8(a0),d0` at $f9d6 — a DEAD read: d0 is `moveq #0`d four instructions later and
+     * nothing between them looks at it. Not reproduced, because a read leaves no trace; recorded
+     * because the byte it names is the tune the tail below re-reads as a BYTE. */
+
+    start = be32(image + WB_STAGE_START_PTR);
+    /* `lsl.w #5` on a byte reaches WB_PALETTE_ROW_BYTES * 255, well past the eight rows the table
+     * holds — nothing bounds the index, and a record naming row 8 or above reads the code after it. */
+    set_palette(image, addr_add(WB_PALETTE_TABLE,
+                                (uint32_t)image[addr_add(start, WB_START_PALETTE)]
+                                << WB_PALETTE_ROW_SHIFT));
+
+    start = be32(image + WB_STAGE_START_PTR);
+    uint8_t tune = image[addr_add(start, WB_START_TUNE)];
+    if (tune & WB_START_TUNE_STOP) {                 /* `move.b 8(a0),d0 / bmi.w` — the BYTE's sign */
+        image[WB_STAGE_TUNE_LATCH] = tune;
+        snd_stop(image);                        /* `jsr 28(a1)` — stub +28 */
+        return;
+    }
+    if (tune == image[WB_STAGE_TUNE_LATCH])
+        return;                                 /* the same tune is not restarted */
+    image[WB_STAGE_TUNE_LATCH] = tune;
+    snd_play_song(image, tune);                 /* `jsr (a1)` — stub +0 */
 }
