@@ -82,9 +82,13 @@ void actor_map_cell_from_actor_x(const uint8_t *image, uint32_t actor, map_cell_
  *
  * `cell`, `span` and `subcell` are the original's a6, d7 and d2 — the three `map_cell_probe` fields
  * of the same name, which $13c8 hands over. Reached by `bra.w` from $13ba, so its rts returns to
- * $1334's own caller. */
-void actor_settle_on_platform(uint8_t *image, uint32_t actor, uint32_t cell, uint32_t span,
-                              uint32_t subcell);
+ * $1334's own caller.
+ *
+ * RETURNS THE SPAN IT LEAVES IN d7 — what the scan below has counted the footprint down to. The
+ * loop writes only d7's LOW WORD (`subi.w #$10,d7`), so the caller's high half comes back with it;
+ * two behaviour handlers read the byte inside it (see actor_fall_and_settle below). */
+uint32_t actor_settle_on_platform(uint8_t *image, uint32_t actor, uint32_t cell, uint32_t span,
+                                  uint32_t subcell);
 
 /* $1492 — $1400's sibling: scan the same footprint for a WB_MAP_TILE_BLOCK or WB_MAP_TILE_LEDGE
  * cell instead of a WB_MAP_TILE_PLATFORM one, and stand `actor` on the cell boundary if one is
@@ -100,9 +104,10 @@ void actor_settle_on_platform(uint8_t *image, uint32_t actor, uint32_t cell, uin
  *   * The not-found arm is `actor_accelerate_fall` — the WHOLE of it, which is why this routine's
  *     body physically ENCLOSES that one (see src/map.c).
  *
- * ONE caller, the `bsr.w` at $13b2 inside actor_fall_and_settle, plus its own `bra.s` loop-back. */
-void actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t cell, uint32_t span,
-                                 uint32_t subcell);
+ * ONE caller, the `bsr.w` at $13b2 inside actor_fall_and_settle, plus its own `bra.s` loop-back.
+ * Returns the same counted-down span $1400 does, by the same loop. */
+uint32_t actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t cell, uint32_t span,
+                                     uint32_t subcell);
 
 /* $1334 — the tier above all of the above: add the record's own WB_ACTOR_SPEED to its y and settle
  * it against the map. FORTY-SIX `bsr` callers and no `jsr`/`jmp`.
@@ -118,8 +123,15 @@ void actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t cell, 
  * While WB_TILE_33_MODE is set on such a cell the routine returns at once, so nothing below runs.
  *
  * THE CELL THE TWO SETTLES SCAN IS TAKEN AFTER THE y MOVE, not before — and TWICE, because
- * $1492's landing arm may itself have moved y between the two `bsr $13be` sites. */
-void actor_fall_and_settle(uint8_t *image, uint32_t actor);
+ * $1492's landing arm may itself have moved y between the two `bsr $13be` sites.
+ *
+ * AND IT HANDS d7 BACK, because two callers read a BYTE of it. `entry_span` is d7 on the way in and
+ * comes back UNCHANGED on the two early exits (neither writes the register at all); on every other
+ * path the return is $1400's counted-down span, whose low word is therefore below
+ * WB_MAP_CELL_PIXELS for any non-negative footprint. Behaviour slots 3 and 6 then spell
+ * `move.b #$2,d7`, which replaces only the low BYTE — so what they step by carries whatever this
+ * routine left above it (src/behavior.c). */
+uint32_t actor_fall_and_settle(uint8_t *image, uint32_t actor, uint32_t entry_span);
 
 /* $1af0 — stamp four consecutive tile codes into the map as a 2x2 block, at the cell the record
  * WB_RECORD_PTR_10420 points at names. Three callers; no register argument at all. */

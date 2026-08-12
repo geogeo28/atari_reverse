@@ -293,7 +293,14 @@ test/test_behavior.py      the behaviour tier's differential. Its shape is set b
                            sum-the-spanned-bytes idiom), and an independent model of $5c6e's three
                            overlap tests compared against the ORACLE's d0 as well as the port's
                            return. It imports test_map.py's map seeding and test_rng.py's generator
-                           model rather than restating either
+                           model rather than restating either. Then the first TEN TABLE SLOTS: the
+                           five-handler band at $2462..$2db1 (one shape with five bodies), the two
+                           at $5a6e/$5ab2 and the three moving platforms — each entered where the
+                           `jmp (a1)` would land, and each with its dispatch row flipped from a
+                           boundary to a run. What those cases share is a GROUND WINDOW — a solid
+                           row under the record, a clear one where the probes read, and a wide
+                           WB_BG_SCROLL_LIMIT_X — because a keyed map tangles "did it land", "was
+                           the step blocked" and "is there a drop ahead" into one byte
 test/test_actor.py         the actor tier's differential, and the battery that imports the most —
                            the SFX trigger's write set and the stop chain's PSG ledger from
                            test_sound.py, the packed-BCD and meter models from test_hud.py, because
@@ -351,19 +358,22 @@ canonical list of what has to be reachable.
 
 The gate's coverage claim is only worth what a sweep says: flip a constant, delete a branch,
 off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A sweep **lies** in
-three ways, all three measured here, so run one this way:
+**five** ways, all five measured here, so run one this way:
 
 ```bash
+cp src/*.c snapshot/                           # 4. ONE snapshot, and every mutant comes from it
 .venv/bin/python -m pytest -q -n auto test     # 0. GREEN FIRST: a red or uncollectable tree
-echo "pre-sweep: $?"                           #    reports every mutant as caught
+echo "pre-sweep: $?"                           #    reports every mutant as caught (see 5)
 for m in mutants/*.patch; do
+  diff -q src/ snapshot/ || break              # 4. refuse to run on a tree something else moved
   git apply "$m"
   rm -f build/*.so                       # 1. FORCE the relink...
   make build/libwonderboy.so | tee cc.log
   grep -q clang cc.log || { echo "NO REBUILD — the sweep would be measuring the clean .so"; break; }
+  test ${PIPESTATUS[0]:-0} -eq 0 || continue   # 3. a mutant that will not COMPILE is not a result
   .venv/bin/python -m pytest -q -n auto test   # 2. NO pipe: read the RETURNCODE
   echo "$m -> $?"                              #    (0 = SURVIVED, nonzero = caught)
-  git apply -R "$m"                            # 3. restore, and re-green before the next one
+  git apply -R "$m"                            # restore, and re-green before the next one
 done
 ```
 
@@ -374,7 +384,16 @@ done
 2. **A piped `pytest` hides its exit status.** `pytest … | tail` reports the *pipe's* status, so
    every mutant "survives". Batch 19's first sweep came back 0/37 caught for exactly this reason.
    Take the returncode from the unpiped run.
-3. **A tree that does not COLLECT reports every mutant as caught.** The returncode is nonzero either
+3. **A mutant that does not COMPILE reports itself as caught.** `make` fails, the `.so` the step
+   above deleted is not rebuilt, pytest cannot `dlopen` it, and the returncode is nonzero — which
+   "nonzero = caught" reads as a result. Batch 30 hit this after a rename left one file referring to
+   a constant another had dropped. **Check `make`'s RETURNCODE, not just that a compiler line ran.**
+4. **A killed sweep keeps writing.** `pkill` on the wrapper leaves the python child alive, and its
+   next restore writes the copy IT read — over whatever you have edited since. Batch 30 lost a
+   rename that way twice and then measured 42/43 "caught" on an unbuildable tree; the honest figure
+   was 33/43. Take the mutant text from ONE snapshot captured at the start, refuse to run when the
+   file on disk is not that snapshot, and never edit a source while a sweep is running.
+5. **A tree that does not COLLECT reports every mutant as caught.** The returncode is nonzero either
    way, and "nonzero = caught" cannot tell a failing case from a failing import. Batch 21b hit this:
    an encoder hoisted out of two batteries without being added to their import lists broke
    collection, and three real survivors came back "caught" until the tree was green again. **Verify

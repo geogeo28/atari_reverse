@@ -123,7 +123,7 @@ whenever a listing shows `idx(An)` and the index's width matters.
 
 ## Semantics that silently change a reconstruction
 
-Five 68000 behaviours a C reconstruction has to model explicitly. None of them shows in the
+Six 68000 behaviours a C reconstruction has to model explicitly. None of them shows in the
 mnemonic — the listing reads as ordinary arithmetic — and each yields a *plausible wrong answer*
 rather than a crash, so nothing draws attention to them.
 
@@ -139,6 +139,28 @@ So: always disassemble the **relocated** image (`recreate_kit/oracle/loader.py` 
 Ghidra's `PrgLoader` does too), and when a constant lands suspiciously near the load base, check
 whether its own image offset is in the relocation table. See
 [`binary-formats.md`](binary-formats.md) for the table's format.
+
+**A BYTE write into a register is a byte write, and the three bytes above it are whoever's they
+were.** `move.b #$2,d7` leaves d7's bits 8..31 alone, so a routine that then reads d7 as a *word* is
+reading its own immediate ORed with whatever the previous call parked above it. That makes the
+instruction's meaning a property of the whole call chain rather than of the line, and it is
+invisible in the listing: the mnemonic is a constant load.
+
+Wonder Boy's behaviour slots 3 and 6 are the worked example. Both step a monster with
+`btst #3,8(a0)` and two arms, and the two arms are *not* the same instruction — the right one is
+`move.w #$2,d7` and the left one `move.b #$2,d7` (`$2634` and `$2cf0`). On the ordinary path the
+routine that ran two instructions earlier leaves d7's low word below `$10`, the high byte is zero,
+and the two arms agree on a two-pixel step. On that routine's two *early exits* it does not write d7
+at all, so what survives is the followed record's SPRITE ID from a call further back — and the left
+arm steps `(sprite & $ff00) | 2`, i.e. 258 pixels for a sprite of `$1xx`. Same instruction, two
+behaviours, chosen by a caller three frames up the stack.
+
+The reconstruction consequence is the part worth planning for: **a byte write over a stale register
+turns that register into an input**, so every routine between the last full write and the read has to
+hand it back. In Wonder Boy this changed three signatures (`actor_settle_on_platform`,
+`actor_settle_on_tile_1_or_2` and `actor_fall_and_settle` all gained a returned span) before either
+handler could be pinned. When you see `move.b`/`move.w`/`moveq` into a register that is later read at
+a *wider* size, trace the register backwards to its last full-width write before writing any C.
 
 **`ADDA.W <ea>,An` adds only the low word, SIGN-EXTENDED.** The source's high word is discarded and
 a source with bit 15 set *subtracts*: `adda.w #$ffa0,a0` moves A0 back 96 bytes, not forward 65440.

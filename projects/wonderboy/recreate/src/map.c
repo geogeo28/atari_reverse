@@ -289,8 +289,8 @@ static int footprint_reaches_next_cell(uint32_t subcell, uint16_t remaining) {
     return (int16_t)(uint16_t)subcell >= (int16_t)edge;
 }
 
-void actor_settle_on_platform(uint8_t *image, uint32_t actor, uint32_t cell, uint32_t span,
-                              uint32_t subcell) {
+uint32_t actor_settle_on_platform(uint8_t *image, uint32_t actor, uint32_t cell, uint32_t span,
+                                 uint32_t subcell) {
     uint32_t cursor = cell;                             /* a6 */
     uint16_t remaining = (uint16_t)span;                /* d7 */
     int on_platform;
@@ -326,7 +326,7 @@ void actor_settle_on_platform(uint8_t *image, uint32_t actor, uint32_t cell, uin
             *flags &= (uint8_t)~((1u << WB_ACTOR_FLAG_FALLING_BIT)
                                  | (1u << WB_ACTOR_FLAG_LAUNCHED_BIT));
             image[addr_add(actor, WB_ACTOR_SPEED)] = 0;
-            return;
+            return set_low_word(span, remaining);
         }
     }
 
@@ -335,6 +335,7 @@ void actor_settle_on_platform(uint8_t *image, uint32_t actor, uint32_t cell, uin
     if (!(image[addr_add(actor, WB_ACTOR_FLAGS)] & (1u << WB_ACTOR_FLAG_SUPPORTED_BIT)))
         image[addr_add(actor, WB_ACTOR_FLAGS)] |= (uint8_t)(1u << WB_ACTOR_FLAG_FALLING_BIT);
     image[addr_add(actor, WB_ACTOR_FLAGS2)] &= (uint8_t)~(1u << WB_ACTOR_FLAGS2_LANDED_BIT);
+    return set_low_word(span, remaining);
 }
 
 /* The pair of tile codes $1492 accepts, spelled at all three of its test sites as
@@ -344,8 +345,8 @@ static int cell_is_ground(const uint8_t *image, uint32_t cell) {
     return image[cell] == WB_MAP_TILE_BLOCK || image[cell] == WB_MAP_TILE_LEDGE;
 }
 
-void actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t cell, uint32_t span,
-                                 uint32_t subcell) {
+uint32_t actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t cell, uint32_t span,
+                                     uint32_t subcell) {
     uint32_t cursor = cell;                             /* a6 */
     uint16_t remaining = (uint16_t)span;                /* d7 */
     int on_ground;
@@ -366,7 +367,7 @@ void actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t cell, 
      * this routine's own span and whose `rts` is this routine's other exit. */
     if (!on_ground) {
         actor_accelerate_fall(image, actor);
-        return;
+        return set_low_word(span, remaining);
     }
 
     {
@@ -382,6 +383,7 @@ void actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t cell, 
                              | (1u << WB_ACTOR_FLAG_LAUNCHED_BIT));
         image[addr_add(actor, WB_ACTOR_SPEED)] = 0;
     }
+    return set_low_word(span, remaining);
 }
 
 /* $1334's player-only head: raise or clear the three WB_TILE_33_* words from the cell under the
@@ -404,22 +406,29 @@ static int tile_33_head_lets_the_fall_run(uint8_t *image, uint32_t actor, map_ce
     return 1;
 }
 
-void actor_fall_and_settle(uint8_t *image, uint32_t actor) {
-    /* The probe's five REGISTER fields come in as whatever the caller left in d2/d3/d7 and are
+uint32_t actor_fall_and_settle(uint8_t *image, uint32_t actor, uint32_t entry_span) {
+    /* The probe's four other REGISTER fields come in as whatever the caller left in d2/d3 and are
      * overwritten before anything reads them, so zeroing them here changes no memory the routine
-     * writes — only registers it does not own (test/test_map.py states those against the oracle). */
+     * writes — only registers it does not own (test/test_map.py states those against the oracle).
+     * `span` IS seeded, because it is d7 and this routine now hands d7 back: the settles write only
+     * its low word, so the caller's high half survives all the way out. */
     map_cell_probe probe = {0};
     uint16_t speed;                                     /* d1: a byte zero-extended into a long */
     uint16_t y;                                         /* d0 */
 
+    probe.span = entry_span;
+
+    /* Both early exits hand back `probe.span` and not `entry_span`, because the PLAYER-ONLY head
+     * has its own `bsr $13c8` and that lookup ends `move.w 14(a0),d7 / add.w d7,d7`. So a record
+     * that leaves through either `rts` still carries the footprint width when the head ran. */
     if (be16(image + addr_add(actor, WB_ACTOR_TYPE)) == WB_ACTOR_TYPE_PLAYER
         && !tile_33_head_lets_the_fall_run(image, actor, &probe))
-        return;
+        return probe.span;
 
     /* `btst #0,8(a0) / beq` over an `rts`: a record under actor_start_motion_at_speed's own
      * control is left alone entirely — this is bit 0's one reader in the tier. */
     if (image[addr_add(actor, WB_ACTOR_FLAGS)] & (1u << WB_ACTOR_FLAG_MOVING_BIT))
-        return;
+        return probe.span;
 
     speed = image[addr_add(actor, WB_ACTOR_SPEED)];
     y = (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_Y)) + speed);
@@ -442,7 +451,7 @@ void actor_fall_and_settle(uint8_t *image, uint32_t actor) {
      * CONSUMES a6 and d7 — it walks the cursor along and counts the span down — so handing $1400
      * what $1492 left would start it partway through the footprint with a span of nothing. */
     actor_map_cell_from_actor_x(image, actor, &probe);
-    actor_settle_on_platform(image, actor, probe.cell, probe.span, probe.sub_cell);
+    return actor_settle_on_platform(image, actor, probe.cell, probe.span, probe.sub_cell);
 }
 
 void map_stamp_block(uint8_t *image) {

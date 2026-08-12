@@ -170,8 +170,11 @@
 
 /* Three state words the handlers set to a small ordinal (1..4, 1..5, 1..3 respectively), and one
  * more the three $bd68 handlers stamp with 2 on the way. All four are cleared together by the
- * new-game reset at $fe4a; only $bd66 has a reader in the recovered code ($69fe, which turns it
- * into `12 - 2*value`), so what the ordinals select is open. */
+ * new-game reset at $fe4a. TWO of them now have a reader in the recovered code, and both turn the
+ * ordinal into the same shape — `n - 2*value` stamped into a record byte: $bd66 at $69fe
+ * (`12 - 2*value` into WB_ACTOR_FIELD_31) and $bd68 at $6796 (WB_ACTOR_STUN_STEPS_BASE minus twice
+ * it, into WB_ACTOR_FIELD_29). What the ordinals SELECT is still open — only what they cost is
+ * known. $bd6a and $21e4 have no reader at all. */
 #define WB_EFFECT_STATE_BD66 0xbd66u
 #define WB_EFFECT_STATE_BD68 0xbd68u
 #define WB_EFFECT_STATE_BD6A 0xbd6au
@@ -1044,6 +1047,20 @@
 #define WB_ACTOR_BEHAVIOR_ENTRY      4u       /* `lsl.w #2,d1` — a longword per slot */
 #define WB_ACTOR_BEHAVIOR_NULL       0xa36u   /* slots 0 and 58 both hold it: a bare `rts`, and the
                                                * two bytes that bound the table */
+/* The other reconstructed targets, as ADDRESSES — which is what src/behavior.c's dispatcher matches
+ * on, because `movea.l (a1),a1` fetches the longword and a poked table entry is still followed. Each
+ * is the entry ../names.txt gives the slot of the same number, and test/test_behavior.py pins all
+ * sixty-two against the image rather than against this list. */
+#define WB_ACTOR_BEHAVIOR_TYPE02     0x2462u
+#define WB_ACTOR_BEHAVIOR_TYPE03     0x25c0u
+#define WB_ACTOR_BEHAVIOR_TYPE04     0x2796u
+#define WB_ACTOR_BEHAVIOR_TYPE05     0x29ecu
+#define WB_ACTOR_BEHAVIOR_TYPE06     0x2bc8u
+#define WB_ACTOR_BEHAVIOR_TYPE50     0x5a6eu
+#define WB_ACTOR_BEHAVIOR_TYPE51     0x5ab2u
+#define WB_ACTOR_BEHAVIOR_TYPE54     0x6e1cu
+#define WB_ACTOR_BEHAVIOR_TYPE55     0x6ef4u
+#define WB_ACTOR_BEHAVIOR_TYPE56     0x6f3eu
 #define WB_ACTOR_TABLE_END           0xffffffffu /* `cmpi.l #$ffffffff,(a0)` — a LONGWORD test over
                                                * WB_ACTOR_X and WB_ACTOR_TYPE together, which is
                                                * what makes it distinct from WB_ACTOR_FREE_MARKER */
@@ -1191,6 +1208,117 @@
 #define WB_ACTOR_DAMAGE_FOLLOWED_SFX 0xbu     /* `move.w #$b,d0 / clr.w d1` */
 #define WB_ACTOR_DAMAGE_TEMPLATE_SFX 0x13u    /* `move.w #$13,d0 / move.w #$1,d1` — and that d1 is
                                                * WB_SND_CHANNEL_B */
+
+/* ---- the STUN ($6796; src/behavior.c) ---------------------------------------------------------
+ *
+ * Eleven behaviour handlers reach it by `bsr.w`. It fires one sound effect and then stamps a step
+ * count into the FOLLOWED record — the same `n - 2 * <state word>` shape $69fe uses on
+ * WB_ACTOR_FIELD_31, over the other state word.
+ */
+#define WB_ACTOR_ST_BYTE             0xffu    /* `st d16(a0)` — the 68000's own "set true" byte, and
+                                               * what slots 51 and 6 stamp their two flag bytes with */
+#define WB_ACTOR_STUN_SFX            8u       /* `move.w #$8,d0 / clr.w d1` — channel A */
+#define WB_ACTOR_STUN_STEPS_BASE     0xau     /* `move.w #$a,d1 / sub.w d0,d1` over twice
+                                               * WB_EFFECT_STATE_BD68, into WB_ACTOR_FIELD_29 */
+#define WB_ACTOR_FIELD_29            29u      /* byte: a STEP COUNT. $ec8 runs it down one map step
+                                               * at a time on the player's record; $6796 seeds it and
+                                               * behaviour slot 6 uses it as a one-frame save slot
+                                               * for WB_ACTOR_FLAGS */
+
+/* ---- the moving-platform handlers (slots 54, 55, 56; src/behavior.c) --------------------------
+ *
+ * All three open with $6d5a, so their a2 is the WB_ACTOR_SPRITE_TABLE_6ED8 row
+ * WB_ACTOR_HALF_WIDTH names — the band record $6d70/$6dd8 read is that same row's second and third
+ * words, which is what makes 14(a0) a PLATFORM SIZE rather than a footprint here. 16(a0) is the
+ * travel LIMIT and 24(a0) the cursor against it.
+ */
+#define WB_ACTOR_FIELD_24            24u      /* word: how far along its travel the platform is */
+#define WB_ACTOR_FIELD_22_DIRECTION_BIT 0u    /* `btst #0,22(a0)`: set = the platform is travelling
+                                               * back (up for slot 54, left for slot 55) */
+#define WB_ACTOR_PLATFORM_STEP       2u       /* `subq.w #2` / `addq.w #2` — pixels a frame, and the
+                                               * same 2 the travel cursor counts in */
+#define WB_ACTOR_PLATFORM_SINK_TICK  1u       /* slot 56 counts its cursor in ONES while moving the
+                                               * same 2 pixels, so 24(a0) is a frame count there */
+
+/* ---- the first monster handlers (slots 2..6, 50, 51; src/behavior.c) --------------------------
+ *
+ * Slots 2..6 share a shape: the spawn-animation gate, then "was I hit", then a per-monster move,
+ * then a frame published out of a PC-relative or absolute word table. Bit 0 of WB_ACTOR_FLAGS2 is
+ * the switch between the live body and the death animation each of them ends with.
+ *
+ * EVERY TABLE BELOW IS WORD DATA INSIDE ITS OWN HANDLER'S EXTENT, and each is named for the slot
+ * that reads it and the facing it is read for. A cursor is WB_ACTOR_FIELD_18 (or WB_ACTOR_FIELD_30
+ * for the hover), stepped WB_ACTOR_ANIM_FRAME_BYTES at a time and wrapped by the mask beside it.
+ */
+/* The eight-word tables wrap on WB_ACTOR_ANIM16_MASK — the same 16 BYTES $5a3c's own step names,
+ * which is why no second `#define` of $f appears here. The sixteen-word ones wrap on: */
+#define WB_ACTOR_ANIM32_MASK         0x1fu    /* `andi #$1f` — a 32-byte, sixteen-word table */
+
+#define WB_ACTOR_TYPE02_WALK_LEFT    0x25a0u  /* 8 words each. The LEFT pair is chosen when the */
+#define WB_ACTOR_TYPE02_WALK_RIGHT   0x25b0u  /* followed record's x is not above the actor's */
+#define WB_ACTOR_TYPE02_DEAD_LEFT    0x2560u  /* 16 words each, and the only two tables in these */
+#define WB_ACTOR_TYPE02_DEAD_RIGHT   0x2580u  /* five handlers reached by `lea d8(PC,Dn.w)` */
+#define WB_ACTOR_TYPE02_DEAD_STEP    3u       /* `move.w #$3,d7` — the recoil, in pixels */
+
+#define WB_ACTOR_TYPE03_WALK_LEFT    0x2736u  /* 8 words each */
+#define WB_ACTOR_TYPE03_WALK_RIGHT   0x2746u
+#define WB_ACTOR_TYPE03_DEAD_RIGHT   0x2756u  /* 8 words each, and FOUR of them: the arm that is */
+#define WB_ACTOR_TYPE03_DEAD_LEFT    0x2766u  /* still stepping has its own pair, the one already */
+#define WB_ACTOR_TYPE03_HELD_LEFT    0x2776u  /* defeated another */
+#define WB_ACTOR_TYPE03_HELD_RIGHT   0x2786u
+#define WB_ACTOR_TYPE03_TURN_FRAMES  0x46u    /* `move.b #$46,30(a0)` — frames between turns */
+#define WB_ACTOR_TYPE03_WALK_STEP    2u       /* `move.w #$2,d7`, and `move.b #$2,d7` on the left */
+#define WB_ACTOR_TYPE03_DEAD_STEP    4u
+
+#define WB_ACTOR_TYPE04_DEAD_RIGHT   0x28ecu  /* 16 words each, reached by `lea d8(PC,Dn.w)` */
+#define WB_ACTOR_TYPE04_DEAD_LEFT    0x290cu
+#define WB_ACTOR_TYPE04_FLY_LEFT     0x292cu  /* 16 words each */
+#define WB_ACTOR_TYPE04_FLY_RIGHT    0x294cu
+#define WB_ACTOR_TYPE04_HOVER        0x296cu  /* 64 SIGNED words added to the y, one a frame — the
+                                               * only table in these handlers that is not a sprite
+                                               * list, and the only one WB_ACTOR_FIELD_30 indexes */
+#define WB_ACTOR_TYPE04_HOVER_MASK   0x7fu    /* `andi.b #$7f` — 128 bytes, so the whole table */
+#define WB_ACTOR_CHASE_REACH         0xc8u    /* `move.w #$c8,d0 / bsr $67f8` — how close the
+                                               * followed record must be before a monster reacts.
+                                               * TWO slots spell the same $c8 — slot 4 chases inside
+                                               * it and slot 6 charges — so it is named for the test
+                                               * and not for either handler */
+#define WB_ACTOR_TYPE04_FLY_STEP     1u
+#define WB_ACTOR_TYPE04_DEAD_STEP    4u
+
+#define WB_ACTOR_TYPE05_HOP_LEFT     0x2b0au  /* 16 words each */
+#define WB_ACTOR_TYPE05_HOP_RIGHT    0x2b2au
+#define WB_ACTOR_TYPE05_DEAD         0x2b4au  /* 8 words, and ONE table for both facings */
+#define WB_ACTOR_TYPE05_HOP_STEP     1u
+#define WB_ACTOR_TYPE05_DEAD_STEP    4u
+
+#define WB_ACTOR_TYPE06_WALK_LEFT    0x2db2u  /* 16 words each */
+#define WB_ACTOR_TYPE06_WALK_RIGHT   0x2dd2u
+#define WB_ACTOR_TYPE06_DEAD_RIGHT   0x2df2u  /* 8 words each */
+#define WB_ACTOR_TYPE06_DEAD_LEFT    0x2e02u
+#define WB_ACTOR_TYPE06_SPRITE_LEFT  0x66u    /* the two frames it holds while AIRBORNE (bit 2 of */
+#define WB_ACTOR_TYPE06_SPRITE_RIGHT 0x6bu    /* the flag byte down), published straight rather than
+                                               * out of a table. It throws on the frame it lands */
+#define WB_ACTOR_TYPE06_CHARGE_SPEED 6u       /* `move.w #$6,d0 / bsr $2af2` */
+#define WB_ACTOR_TYPE06_RELOAD       0x46u    /* `move.b #$46,30(a0)` — frames before it may throw */
+#define WB_ACTOR_TYPE06_WALK_STEP    2u
+#define WB_ACTOR_TYPE06_DEAD_STEP    4u
+#define WB_ACTOR_TYPE06_SHOT_TYPE    0x28u    /* `move.w #$28,4(a1)` — what it spawns */
+#define WB_ACTOR_TYPE06_SHOT_UP      6u       /* `subq.w #6,2(a1)` off the copied y */
+#define WB_ACTOR_TYPE06_SHOT_AHEAD   0xau     /* `move.w #$a,d0` / `#$fff6` — and to its left */
+#define WB_ACTOR_TYPE06_SHOT_BEHIND  0xfff6u
+#define WB_ACTOR_TYPE06_SHOT_SIZE    0xc0002u /* `move.l #$c0002,14(a1)`: WB_ACTOR_HALF_WIDTH $c and
+                                               * WB_ACTOR_SIZE_SECOND $2 in one store */
+
+#define WB_ACTOR_TYPE50_FRAMES       0x5aaeu  /* TWO words, and the whole of this handler's data */
+#define WB_ACTOR_TYPE50_MASK         3u       /* `andi.w #$3` — 4 bytes, so both of them */
+#define WB_ACTOR_TYPE50_STEP         8u       /* `addq.w #8,(a0)` / `subq.w #8,(a0)` */
+
+#define WB_ACTOR_TYPE51_SPRITE       0x1e1u   /* `move.w #$1e1,6(a0)` — published, not tabled */
+#define WB_ACTOR_TYPE51_STEP         6u       /* `move.w #$6,d7` */
+#define WB_ACTOR_TYPE51_DAMAGE       0x84u    /* `move.b #$84,19(a0)` before $69fe: the sign bit is
+                                               * WB_ACTOR_DAMAGE_INLINE_MASK's flag, so the cost is
+                                               * the 4 left in the low seven bits */
 
 /* ---- the collision map the actors walk on (RUNTIME addresses; src/map.c) ----------------------
  *

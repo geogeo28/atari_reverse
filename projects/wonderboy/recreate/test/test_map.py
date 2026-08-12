@@ -883,7 +883,17 @@ def _operand_sites(program, addr):
 
 
 # --- glue -------------------------------------------------------------------------------------------
-_SETTLE = leaf.register_glue("actor_settle_on_platform", [ctypes.c_uint32] * 4)
+# All three of the settle chain's routines HAND d7 BACK, because two behaviour handlers read a byte
+# of it (src/behavior.c, map.h). The models below already state that register against the oracle —
+# `_assert_the_span_comes_back` is what ties the reconstruction's own return value to the same
+# number, so the C cannot drift from the model the oracle is checked against.
+_SETTLE = leaf.register_glue("actor_settle_on_platform", [ctypes.c_uint32] * 4, ctypes.c_uint32)
+
+
+def _assert_the_span_comes_back(info, regs, what):
+    assert info["ret"] == regs["d7"], (
+        f"{what}: the reconstruction returned {info['ret']:#010x} where the oracle left d7 = "
+        f"{regs['d7']:#010x}")
 _STAMP = leaf.image_glue("map_stamp_block")
 _STEP_LEFT_FN = leaf.bind("actor_step_left_against_map",
                           leaf.IMAGE_ARG + [ctypes.c_uint32, ctypes.c_uint32,
@@ -2041,6 +2051,7 @@ def _run_settle(case, span, subcell, tiles, actor_y, platform_y, flags=0):
                                                       + 1) + SETTLE_INSN_TAIL)
     _assert_writes(info, expected, what)
     _assert_regs(info, regs, what)
+    _assert_the_span_comes_back(info, regs, what)
     return info
 
 
@@ -2153,7 +2164,8 @@ TILE_SETTLE_SCAN_MARGIN = 3
 # they mean.
 CLEAR_TILE = 0
 
-_SETTLE_TILE = leaf.register_glue("actor_settle_on_tile_1_or_2", [ctypes.c_uint32] * 4)
+_SETTLE_TILE = leaf.register_glue("actor_settle_on_tile_1_or_2", [ctypes.c_uint32] * 4,
+                                  ctypes.c_uint32)
 
 
 def _cell_is_ground(image, cell):
@@ -2239,6 +2251,7 @@ def _run_settle_tile(case, span, subcell, tiles, actor_y=DEFAULT_PROBE_Y, flags=
                                + TILE_SETTLE_INSN_TAIL))
     _assert_writes(info, expected, what)
     _assert_regs(info, regs, what)
+    _assert_the_span_comes_back(info, regs, what)
     return expected, regs
 
 
@@ -2338,6 +2351,17 @@ def test_the_ground_scans_span_is_read_as_a_word():
     _run_settle_tile("tile-settle-span-high-half", 0xdead0000 | CELL_PIXELS, 0, {1: TILE_BLOCK})
 
 
+def test_the_platform_scan_hands_back_the_callers_high_half_too():
+    """$1400's half of the same claim, which the tile scan's case does not cover: the loop writes
+    only d7's LOW word, so a caller's high half survives into the span the routine returns. The
+    mutation sweep found it — `settle/span-high-half` survived on the tile settle's case alone.
+
+    src/behavior.c's slots 3 and 6 are the two callers that read a BYTE of what comes back, so the
+    high half reaching them is exactly what their `move.b #$2,d7` steps over."""
+    _run_settle("settle-span-high-half", 0xdead0000 | CELL_PIXELS, 0, {1: TILE_PLATFORM},
+                actor_y=PLATFORM, platform_y=PLATFORM)
+
+
 def test_the_ground_scan_leaves_the_callers_high_halves_alone():
     """Every register the body writes a word or a byte of, seeded with rubbish above it: d0 is the
     exception (`moveq #$0,d0` clears the long), d7 keeps its high half, and d1/d3/d4/d5/d6 are never
@@ -2388,7 +2412,7 @@ def test_the_ground_scans_only_caller_is_the_fall_pass():
 # fixed part: its own two dozen instructions, three cell lookups and both settle tails.
 FALL_INSN_FIXED = 24 + 3 * LOOKUP_INSN_CAP + SETTLE_INSN_TAIL + TILE_SETTLE_INSN_TAIL
 
-_FALL = leaf.register_glue("actor_fall_and_settle", [ctypes.c_uint32])
+_FALL = leaf.register_glue("actor_fall_and_settle", [ctypes.c_uint32] * 2, ctypes.c_uint32)
 
 
 def _tile_33_cell(actor_x, actor_y):
@@ -2509,13 +2533,15 @@ def _run_fall(case, tiles, head_tile=CLEAR_TILE, actor_x=FALL_X, half_width=FALL
     expected, regs = _model_fall_and_settle(image, ACTOR, seeded)
 
     what = f"actor_fall_and_settle {case}"
-    info = leaf.run("actor_fall_and_settle", _FALL(ACTOR), merge_bands(expected), what,
+    info = leaf.run("actor_fall_and_settle", _FALL(ACTOR, seeded.get("d7", 0)),
+                    merge_bands(expected), what,
                     poison=False, regs=dict(seeded, _pokes=pokes),
                     max_insns=(FALL_INSN_FIXED
                                + (SETTLE_INSN_PER_CELL + TILE_SETTLE_INSN_PER_CELL)
                                * (_scan_cells(span) + 1)))
     _assert_writes(info, expected, what)
     _assert_regs(info, regs, what)
+    _assert_the_span_comes_back(info, regs, what)
     return expected, regs
 
 

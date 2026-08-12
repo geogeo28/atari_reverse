@@ -169,4 +169,54 @@ uint32_t actor_hit_by_player_shot(uint8_t *image, uint32_t actor);
  * than any other leaf in this file. */
 void actor_hop_ascend_step(uint8_t *image, uint32_t actor);
 
+/* --- the two shared routines the handlers below needed ------------------------------------------ */
+
+/* $6796 — fire WB_ACTOR_STUN_SFX and stamp WB_ACTOR_STUN_STEPS_BASE minus twice
+ * WB_EFFECT_STATE_BD68 into the FOLLOWED record's WB_ACTOR_FIELD_29, clearing its
+ * WB_ACTOR_FIELD_22. It takes no register at all — the record it writes is `followed_actor_record`'s
+ * — and eleven handlers reach it, in slots 39..45, 51..53 and 57. */
+void actor_stun_followed(uint8_t *image);
+
+/* $6e8c — `actor` is the platform (a0) and `followed` the record riding it (a1). If the cell that
+ * record stands in or the one beside it is WB_MAP_TILE_BLOCK or WB_MAP_TILE_LEDGE, lift the record
+ * WB_ACTOR_PLATFORM_STEP pixels back out, clear WB_ACTOR_PLATFORM_RIDDEN and lower the platform's
+ * WB_ACTOR_FIELD_22_RIDING_BIT. Two callers, slots 54 and 56, both on their DOWNWARD frames. */
+void actor_platform_release_blocked_rider(uint8_t *image, uint32_t actor, uint32_t followed);
+
+/* --- the first ten handlers of the sixty-one ---------------------------------------------------
+ *
+ * EVERY ONE OF THESE IS A TABLE SLOT, reached only through `actor_dispatch_behavior`'s `jmp (a1)`
+ * and never by a call, so each takes exactly the record in a0 and returns nothing: what a handler
+ * does is memory. The names are the SLOT and the structure, not the creature — which sprite each
+ * draws still wants a cross-reference (../STATUS.md).
+ *
+ * THE FIVE IN THE $2462..$2db1 BAND ARE ONE SHAPE. Spawn gate, contact test, per-monster move,
+ * frame published from a word table inside the handler's own extent, and a death animation on bit 0
+ * of WB_ACTOR_FLAGS2 that ends in actor_defeat_and_score. What differs is the move — and slots 3
+ * and 6 differ from each other only in that one throws.
+ */
+void actor_behavior_type02(uint8_t *image, uint32_t actor);   /* faces the player, never steps */
+void actor_behavior_type03(uint8_t *image, uint32_t actor);   /* patrols, turning two ways */
+void actor_behavior_type04(uint8_t *image, uint32_t actor);   /* hovers on a 64-word delta table */
+void actor_behavior_type05(uint8_t *image, uint32_t actor);   /* hops when the ground says to */
+void actor_behavior_type06(uint8_t *image, uint32_t actor);   /* charges, then THROWS */
+
+/* $5a6e — no spawn gate and no contact test: it drifts WB_ACTOR_TYPE50_STEP pixels a frame the way
+ * WB_ACTOR_FLAG_SIDE_BIT points, plays two frames, and frees its own slot on a countdown. */
+void actor_behavior_type50(uint8_t *image, uint32_t actor);
+
+/* $5ab2 — walks until something stops it. Bit 0 of WB_ACTOR_FLAGS2 is a one-way switch rather than
+ * a death animation: a strike, a body overlap or a blocked step all raise it, and from then on the
+ * record only falls — freeing its slot the frame it is supported again. */
+void actor_behavior_type51(uint8_t *image, uint32_t actor);
+
+/* $6e1c / $6ef4 / $6f3e — the three MOVING PLATFORMS, and one geometry: a0's WB_ACTOR_HALF_WIDTH
+ * picks an eight-byte WB_ACTOR_SPRITE_TABLE_6ED8 row whose first word is the sprite and whose next
+ * two are the band $6d70/$6dd8 catch and release against. 54 travels vertically and 55 horizontally
+ * between WB_ACTOR_FIELD_24 and WB_ACTOR_SIZE_SECOND; 56 has no limit at all and simply sinks while
+ * it is stood on and rises when it is not. */
+void actor_behavior_type54(uint8_t *image, uint32_t actor);
+void actor_behavior_type55(uint8_t *image, uint32_t actor);
+void actor_behavior_type56(uint8_t *image, uint32_t actor);
+
 #endif /* WONDERBOY_BEHAVIOR_H */

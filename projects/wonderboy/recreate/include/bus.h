@@ -75,4 +75,14 @@ static inline void bus_write_word(uint8_t *image, uint32_t at, uint16_t value) {
         wr16(image + address, value);
 }
 
+/* The LONGWORD write, for the one `move.l (a0),(a1)` in the behaviour tier (slot 6 copies a whole
+ * coordinate pair into the record it spawns). It is not two `bus_write_word`s: the shim bounds the
+ * WHOLE operand, so a longword straddling the image's top is dropped ENTIRELY on both sides where
+ * a pair of word writes would land the first half. */
+static inline void bus_write_long(uint8_t *image, uint32_t at, uint32_t value) {
+    uint32_t address = at & WB_BUS_ADDR_MASK;
+    if (os_in_image(address, 4))
+        wr32(image + address, value);
+}
+
 #endif /* WONDERBOY_BUS_H */

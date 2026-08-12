@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 196/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 208/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -43,7 +43,7 @@ the SCENE TIER'S CLOSE (`scene_exit_and_reload` + the exit-action table's two re
 172 bytes, batch 27: the four exit tails run from the spending arm through the dispatch and the
 whole reload to the original's `rts`, and the dispatch is on the WRAPPED offset — 32 index values
 reach the eight entries) —
-22,290 bytes in all, 50.4 % of everything
+24,584 bytes in all, 55.5 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -55,7 +55,10 @@ left this leading count at 161 while its own section and parenthetical said 163 
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
-`make test`: **4019 cases green in what this batch commits** (3594 before batch 29, plus its 425,
+`make test`: **4130 cases green in what this batch commits** (4019 before batch 30; the growth is
+the tier's battery `test/test_behavior.py`, including the review round's 16 death/struck-arm cases
+and the rebuilt a32 pin).
+`make test` at batch 29: **4019 cases** (3594 before batch 29, plus its 425,
 all in the new `test/test_behavior.py` — the tier's own battery).
 `make test` at batch 27: **3594 cases** (3546 before batch 27, plus its 48,
 all in `test/test_scene.py`, which stands at 231; `test/test_stage.py` holds at 112 across a
@@ -4857,3 +4860,79 @@ NOT PINNED, and REGISTERED:
 QUEUED, registered rather than half-done: the tier partition (PORTABILITY §0k item 7 — the dispatch
 edge now has a principled answer in `BEHAVIOR_SLOTS`, so the row can be drawn); `bus.h`'s promotion
 to the kit (fourth noticing); `test_actor.py`'s `pokes()` merge-by-key (fifth battery).
+
+### Batch 30: the first MONSTER SLOTS — ten handlers, and the register the settle had to hand back
+
+Ten dispatch-table rows flipped from boundary to call, plus the two routines the reading forced:
+`actor_stun_followed` ($6796 — a `# ctx` name the batch's premise wrongly counted as ported; it is
+a STUN, the first recovered reader of $bd68) and `actor_platform_release_blocked_rider` ($6e8c).
+Twelve routines, ~2,294 bytes of code. **Verified 208, 24,584 bytes, 55.5 % of §0k's 44,262;
+`make test` 4130** (4019 before the batch; the tier's battery `test/test_behavior.py` carries all
+of the growth).
+
+| address | name | bytes | what it is |
+| --- | --- | --- | --- |
+| `$2462` | `actor_behavior_type02` | 254 | faces the player and never steps while alive — only falls |
+| `$25c0` | `actor_behavior_type03` | 374 | patrols, turning two ways: a $46-frame countdown and the ground |
+| `$2796` | `actor_behavior_type04` | 342 | hovers on a 64-word signed delta table; chases only inside $c8 |
+| `$29ec` | `actor_behavior_type05` | 262 | hops when the ground says to |
+| `$2bc8` | `actor_behavior_type06` | 490 | charges, then THROWS a type-$28 shot from the high pool |
+| `$5a6e` | `actor_behavior_type50` | 64 | drifts 8 px/frame, frees its own slot on a countdown |
+| `$5ab2` | `actor_behavior_type51` | 138 | walks until stopped; bit 0 of 9(a0) is a one-way switch |
+| `$6e1c` | `actor_behavior_type54` | 112 | the VERTICAL moving platform |
+| `$6ef4` | `actor_behavior_type55` | 74 | the HORIZONTAL one — no rts at all, three bra.w into 54's tail |
+| `$6f3e` | `actor_behavior_type56` | 64 | the SINKING one — no direction bit, no limit |
+| `$6796` | `actor_stun_followed` | 44 | SFX 8 + a stun count into the followed record |
+| `$6e8c` | `actor_platform_release_blocked_rider` | 76 | backs a rider out of a solid cell, ends the ride |
+
+**THE REGISTER THE SETTLE HAD TO HAND BACK.** Slots 3 and 6 write their step with `move.b #$2,d7`
+— the LOW BYTE alone, over whatever `actor_fall_and_settle` left in d7. On the early exits that is
+`$5c6e`'s followed-sprite id, so the left arm steps `(sprite & $ff00) | 2` — 258 px for a $1xx
+sprite — while the right arm's `move.w` always steps 2. A byte write over a stale register TURNS
+THAT REGISTER INTO AN INPUT: three C signatures moved so the settle chain hands d7 back, a
+previously unpinned register is now pinned, and the class is in docs/m68k-disassembly.md as the
+sixth silently-changing semantic (the second register-width lesson after the 24-bit bus).
+
+**The five $2462-band slots are ONE GRAMMAR**: the spawn-anim gate, the contact test (an enum —
+the `bsr $23b6` shot hit SHORT-CIRCUITS `$5c6e`), the hit animation, the frame cursor and the
+defeat check are five shared helpers, not fifty copies. The prologue's plates were REPLACED, not
+stacked — the review caught four deepenings added above their stale predecessors, which
+ApplyNames' last-wins rule would have silently discarded on the next reapply, plus $6ed8 carrying
+two var names at once. THE HABIT-CHECK IS NOW A RULE: one directive per address (three deliberate
+later-wins corrections from earlier batches stand, marked as such).
+
+**Plate corrections, cited to bytes**: $6796 is a stun, not "a facing update", extent 44 not to
+$67c2; $6e8c writes three things and probes collision_map_default UNCONDITIONALLY with `lsr.w` not
+`asr.w`; slot 54 is 112 bytes (the old figure folded $6e8c in); $6ed8's 8-byte rows are sprite +
+THE BAND RECORD $6d70/$6dd8 read; slot 6's throw gate was described BACKWARDS on four surfaces
+(the code was right: it launches — clearing bit 2 — holds a standing frame while AIRBORNE, and
+throws the frame it LANDS); the $bd66 "only reader" claim is corrected in both carriers ($bd68's
+reader is $6796); slot 50's `lea $5aae.l` is dead; slot 2 reads $9aec ABSOLUTE where slot 3 goes
+through $a098 — three spellings of the followed record now stated side by side.
+
+**SWEEP: 43 mutants over six pre-hoc axes, 41 caught, two EQUIVALENT** (named in the battery:
+slot 6's clr-vs-subq and slot 56's release pair — neither reads what the other writes). The sweep
+first found TEN real holes, all closed; the review then found the a32-map asymmetry pin was
+seeding a cell the probe never reads — WORSE than vacuous, untestable — and it now fails under
+the map-selecting mutant it is named for. The death-wrap, defeat-transfer and struck arms are
+driven for all five band slots (16 cases; the defeat's writes composed from test_actor.py's own
+models); of the review's four named mutants three are caught and **always-store-the-cursor is
+UNPINNABLE** — the skipped store would write the wrap's own zero and actor_defeat_and_score
+writes FIELD_18 = 0 itself — recorded as knowingly not pinned with that reason.
+
+**TWO MORE WAYS A SWEEP LIES** (the README's list now counts FIVE, its frame sentence fixed): an
+UNBUILDABLE mutant reads as caught unless make's returncode is checked; and a KILLED sweep keeps
+writing — the wrapper's child survives a pkill and its next restore overwrites your edits. Both
+measured here (one false 42/43 on an unbuildable tree; the batch also re-verified batch 29's
+gotcha by hitting it — sources are now verified pristine after EVERY sweep, aborted or not).
+
+**Not pinned, honestly**: which creature each slot draws (still typeNN); the skipped cursor store
+at the defeat frame (equivalent, above); the registers handlers leave behind; slot 3/6's left
+step for a NEGATIVE settle span and slot 3's tile-33 early exit (no game data reaches either);
+the refused dispatch.
+
+**QUEUED**: batch 31 = slots 60/61/59/8 ($6f7e/$6f9e/$7044/$705a — 226 bytes, the cheapest four
+rows) + slots 52/53 ($5b3c/$5be4, slot 51's neighbours, reusing the now-green stun); the
+third-copy encoders for leaf.py (two more found by the verified scan: adda_l_dn, mulu_w_dn);
+bus.h (now with write guards + bus_write_long) → kit promotion; the three deliberate later-wins
+cmt pairs would read better merged; 50 slots remain.
