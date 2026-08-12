@@ -95,8 +95,22 @@
 # wall). NOTE the expected shape: the tier is 2/3 RECONSTRUCTED (to a stop_pc boundary) while the
 # whole-function measurement prices $dbc0 T4-transitive through those very tails — the first row
 # where the boundary convention makes "reconstructed" exceed "runnable".
+# SUPERSEDED IN PLACE by batch 27: $dfbe is RECONSTRUCTED WHOLE now, so the tier is 3/3, and the
+# PSG wall the note blames for stopping it was removed by the classifier repair (PORTABILITY §0g)
+# — the row has read runnable 3/1,094 B since. The 2/3 shape above is kept as the record of why
+# the rows were drawn, not as a live statement.
 0xdbc0	0xdf9e	scene (dialogue + shop)
 0xdfbe	0xe026	scene (dialogue + shop)
+# The two SCENE EXIT ACTIONS (batch 27, measured 2026-08-11): $101bc scene_exit_action_none (2 B,
+# a bare `rts`) and $101be scene_exit_action_select_a30_table (66 B). They are entries 0 and 1 of
+# scene_exit_action_table ($1019c), and the ONLY site in the image that reaches either is
+# scene_exit_and_reload's `jsr (a6)` at $dfd6 — the indirect dispatch the scan lists under $dfbe —
+# so they belong to the scene tier and to nothing else. `hi` is $10200, where the first set_state_*
+# stub begins: entries 2..7 of the same table are those six stubs, and they stay in `hud (status
+# panel)` ($10200..$103e8) because the panel's state words are what they write. Both bodies sat in
+# NO function until ../names.txt named them, so the pre-2026-08-11 scan had 68 bytes of them in the
+# "code in no function" residue and in no tier at all (the $e1c8 pattern, PORTABILITY §0h).
+0x101bc	0x10200	scene (dialogue + shop)
 0xb346	0xbd66	hud (status panel)
 0xd93a	0xdbb0	hud (status panel)
 0x10200	0x103e8	hud (status panel)

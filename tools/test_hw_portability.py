@@ -367,14 +367,21 @@ def test_the_committed_scan_reproduces_its_published_figures():
     and accounted for function by function there. What this case pins is that nothing moves them
     AGAIN by accident: a refactor of the fixed-point closure or of the exclusion handling would
     otherwise shift a published figure with no diff to show for it.
+
+    The figures themselves track the WORKING scan and move with any re-scan, in the same commit as
+    the § record that accounts for the move. §0j is the current one: 284 functions / 26,194 B, after
+    ../names.txt gained the 23 pattern-op handlers, `snd_music_tick`'s body split and the two scene
+    exit actions.
     """
     scan, direct_tier, _, _ = closed_scan()
     runnable, at_risk = runnable_set(), at_risk_set()
-    assert len(scan.funcs) == 258
-    assert sum(f.size for f in scan.funcs.values()) == 25826
-    assert (len(runnable), sum(scan.funcs[a].size for a in runnable)) == (244, 24358)
+    assert len(scan.funcs) == 284
+    assert sum(f.size for f in scan.funcs.values()) == 26194
+    assert (len(runnable), sum(scan.funcs[a].size for a in runnable)) == (270, 24726)
     # §0i: the false-green set lost the 8 functions whose only steer was one of the two bytes
     # Phase 7 models. Runnable is UNCHANGED — a seeded read was already runnable under §0g's rule.
+    # §0j: the re-scan added 26 functions and moved NO function's tier, so this pair is untouched by
+    # it — the identical 20 functions, which is why only the denominator below it moved.
     assert (len(at_risk), sum(scan.funcs[a].size for a in at_risk)) == (20, 2224)
     # No function hard-rejects on its own access any more: Phase 6 removed the last PSG read wall.
     assert not [a for a in scan.funcs if direct_tier[a] == hp.T_HARD_REJECT]
@@ -418,7 +425,7 @@ def test_the_tool_runs_end_to_end_as_a_script():
     """Everything above imports the module; this is the only case that proves `main()` — argument
     parsing, the report sections, the exit status — still works as the documented command."""
     stdout = run_tool()
-    assert "244/258 functions, 24358/25826 bytes = 94.3 %" in stdout
+    assert "270/284 functions, 24726/26194 bytes = 94.4 %" in stdout
     assert "| T2 SEEDED_READ |" in stdout
     # The one Phase 7 refusal no tier can carry — a read of an address THIS RUN wrote — is REPORTED
     # instead, naming the site. Dropping that paragraph would leave the limit stated nowhere.

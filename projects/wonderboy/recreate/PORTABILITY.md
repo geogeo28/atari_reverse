@@ -1094,6 +1094,223 @@ it, §0i could not run it — so the block now says so and points at the queue.
    case that says which machine it means. That `$fffa01 = $b0` / `$ff820a` bit 1 is what a 50 Hz
    colour ST answers is a documented hardware claim, not a differential result.
 
+## 0j. Re-scanned 2026-08-11 (batches 23–27): twenty-six functions appear, and not one tier moves
+
+The two-stage pin §0h specified, run over the names batches 23–27 added. **No game code changed and
+no test in `recreate/` moved** — `make test` is 3,594 before and after; the edited files are
+`subsystems.tsv` (one range), `tools/test_hw_portability.py` (two literal pins) and this section,
+and `../reapply.sh` + `tools/hw_scan.sh` regenerated `../decomp.c` and `../out/hw_scan.tsv`.
+
+**Stage 0, the floor.** The classifier over the **committed** scan reproduces every §0i figure
+byte-for-byte — 258 functions / 25,826 B, runnable **244 / 24,358 = 94.3 %**, false-green
+**20 / 2,224 = 8.6 %**, all nineteen subsystem rows — so everything below is the re-scan and the
+partition edit, and nothing else.
+
+### Stage 1 — the re-scan, and the largest function gain since the measurement began
+
+`ApplyNames` pushed `../names.txt` (**253** `fn`, 240 `var`, 385 `cmt`, 37 `proto` — up from 227
+`fn`) into the DB and the re-scan re-dumped the TSV. **Twenty-six `F` records appear, one changes
+size, and not one pre-existing function moves tier, steering or reachability** — checked
+function-by-function against the old scan, both tiers, as sets and not as totals:
+
+| | before (§0h/§0i scan) | after |
+|---|---|---|
+| functions / function bytes | 258 / 25,826 | **284 / 26,194** (+26 / +368) |
+| disassembled bytes | 28,116 | **28,414** (+298) |
+| code in no function body | 2,290 B in 12 runs | **2,220 B in 10 runs** (−70) |
+| call-graph edges | 245 (381 CALL, 9 JUMP, 23 JUMPIN) | **269 (382 CALL, 11 JUMP, 45 JUMPIN)** |
+| hardware accesses (`H` rows) | 126 | **126 — byte-identical in content, every row** |
+| direct `T0 CLEAN` | 227 / 22,638 B | **252 / 23,012 B** |
+| direct `T2 SEEDED_READ` | 3 / 806 B | **4 / 800 B** |
+| transitive `T0 CLEAN` | 191 / 19,394 B | **215 / 19,758 B** |
+| transitive `T2 SEEDED_READ` | 12 / 1,108 B | **14 / 1,112 B** |
+| runnable end-to-end | 244 / 258 fns, 24,358 / 25,826 B, 94.3 % | **270 / 284 fns, 24,726 / 26,194 B, 94.4 %** |
+| false-green risk | 20 / 2,224 B, 8.6 % | **20 / 2,224 B, 8.5 %** — the identical function set |
+| unreachable from the roots | 114 / 10,650 B | **140 / 11,018 B** |
+
+**Every one of the 26 new `F` records is runnable and none is false-green**, so the whole +368 lands
+in the runnable column: 24,358 + 368 = 24,726, and the runnable *set* gains exactly those 26 and
+loses none. The `T3`, `T4` and `T6` rows of both tier tables are **unchanged to the byte**.
+
+**The +368 closes exactly, and in three parts:**
+
+| | fns | bytes | where the bytes came from |
+|---|---:|---:|---|
+| `$101bc` `scene_exit_action_none` + `$101be` `scene_exit_action_select_a30_table` | +2 | **+68** | the `O` run `0x101bc..0x10200`, which the old scan had in **no function body** and therefore in no tier |
+| `$17c74` `snd_music_tick` 696 → 44 B, splitting off `$17ca0` `snd_music_tick_body` (646 B) | +1 | **−6** | a re-cut, not a gain: 8 bytes of the old address set pass to the handlers below, 2 come back from the `O` run at `0x17c72` |
+| the 23 pattern-opcode handlers `$17fd4..$18106` | +23 | **+306** | 298 B the disassembler had **never reached** plus the 8 B leaving `$17c74` |
+
+`+68 − 6 + 306 = +368`; and on the disassembly axis `28,116 + 298 = 28,414`, with the −70 of
+code-in-no-function being the two `O` runs (`0x101bc..0x10200`, 68 B, and `0x17c72..0x17c74`, 2 B)
+that entered a function body. The **`O` list is otherwise byte-identical**, run for run.
+
+**The `$17c74` split is the §0h size trap again, in its second live instance.** `snd_music_tick`
+loses 652 bytes to a routine that gains 646, and the two do not sum back to 696 — because Ghidra's
+`F` size is the cardinality of an address SET, not `body_end − entry`. `$17ca0`'s 646 covers
+`0x17c72..0x17ca0` (2 bytes *below* its own entry — the shared tail, exactly `$1a5da`'s shape) plus
+`0x17ca0..0x17f24`, while the old record reached to `body_end 0x1801e` and so held 8 bytes the
+handler records now own. Nothing was lost and nothing was double-counted: the sum of every `F`
+size equals the reported 26,194 exactly.
+
+**The 24 new edges are the re-cut spelt out** (four removed, twenty-eight added). `$17c74`'s four
+outgoing `CALL`s are re-attributed to `$17ca0`, which gains a `JUMP` in from the 44-byte head; the
+`- → 0x1b68 CALL` out of unattributed code becomes `$101be → actor_alloc_slot_low`, the same
+instruction with a source node at last; and **20 of the 23 handlers carry a `JUMPIN` back into
+`snd_channel_step`'s body** — the `jmp` return the batch-24 port derived. The three that do not are
+worth naming, because they are the structure rather than an omission: `$18014`
+`snd_pattern_op_8e_end_song` calls `$17af8` instead (it ends the song rather than resuming the
+stepper), and `$180bc` `snd_pattern_op_86_slide_up` and `$180ca` `snd_pattern_op_88_portamento_set`
+fall through into their neighbour instead of jumping.
+
+**The batch-26/27 names all landed where `../names.txt` says.** Cross-checked mechanically rather
+than spot-checked: **all 253 `fn` addresses have an `F` record at that exact address, and all 253
+names agree with the scan's** — `$f944` `set_palette`, `$f95c` `stage_load_window`, `$17b3a`
+`snd_play_song`, `$dfbe` `scene_exit_and_reload`, `$1aaca` `snd_prng_step`, `$1a5da` `snd_sfx_tick`,
+`$18208`, `$18106` included. `$f944` and `$f95c` were already `F` records and did **not** move, so
+neither is a partition question; they sit in `video (screen / palette / mode)` (`0xf906..0xf95c`)
+and `stage (load + reset)` (`0xf95c..0xfa2e`) as before.
+
+### Stage 1 sanity — the verified column against `STATUS.md`'s 175
+
+`STATUS.md`'s table carries **152 verified rows**; expanding its four family legends (16 scroll
+copies, 4 sprite blitters, 4 clip-left, 4 clip-right) gives **176 reconstructions / 21,024 bytes**.
+Against the new scan those map to **203 `F` records / 21,026 bytes**. The reconciliation gains one
+counting-rule row (batch 24's) and, for the first time since §0c, **one row where the BYTES differ**:
+
+| | reconstructions | F records | bytes |
+|---|---:|---:|---:|
+| `src/rad.c` — one reconstruction Ghidra splits into three (`rad_depack`, `rad_refill_bit_buffer`, `rad_get_bits`) | 1 | 3 | same 216 |
+| `snd_sfx_tick` (`$1a5da`) — one reconstruction Ghidra splits into four: the 42-byte head plus three 186-byte channel arms | 1 | 4 | same 600 |
+| the pattern-opcode handlers (`$17fd4`) — **one `STATUS.md` row, 23 `F` records**, one per opcode body | 1 | 23 | same 306 |
+| `snd_music_tick_body` (`$17ca0`) — one reconstruction, one `F` record, **644 vs 646** | 1 | 1 | **+2** |
+| **net** | **176** | **203** | **21,024 + 2 = 21,026** |
+
+That last row is not a disagreement about what is ported; it is the address-set rule again.
+`STATUS.md` states the contiguous body `$17ca0..$17f24` = 644, and Ghidra's set adds the 2-byte
+shared tail at `$17c72` below the entry. It is the *third* instance of the same trap in this file
+and the first to reach the verified column, so: **wherever a byte column is compared against an `F`
+size, expect a shared tail below an entry to make the scan's number larger.** Checked row by row,
+all 152 — it is the only one.
+
+**Two `STATUS.md` figures this surfaces, flagged and NOT edited here** (`STATUS.md` is outside this
+pass's scope):
+
+* its headline reads **`Verified: 175/?`** while its own table now expands to **176**. §0h's
+  expansion was exact (142 rows → 166); the table has gained 10 rows since and the headline moved 9.
+* the handler row is titled **"the 24 pattern-opcode handlers"** while its own prose says "23
+  distinct bodies" and the scan finds 23 `F` records. The opcode range `$80..$97` holds 24 values
+  and `$8d` has no handler, which is the likely origin.
+
+Neither changes a byte of this measurement — both byte columns agree — but the next pass that
+re-derives a count from `STATUS.md`'s prose rather than its table will be one out.
+
+### Stage 2 — the partition edit
+
+With stage 1 pinned as the baseline, `subsystems.tsv` gains **one** range, cited in the file itself:
+**`0x101bc..0x10200` → `scene (dialogue + shop)`**. `$101bc` and `$101be` are entries 0 and 1 of
+`scene_exit_action_table` (`$1019c`), and the only site in the image that reaches either is
+`scene_exit_and_reload`'s `jsr (a6)` at `$dfd6` — the indirect dispatch the scan already lists under
+`$dfbe`. `hi` is `$10200`, where the first `set_state_*` stub begins: entries 2..7 of the same table
+are those six stubs and they **stay** in `hud (status panel)` (`0x10200..0x103e8`), because the
+panel's state words are what they write. The range was checked for overlap first and claims two
+catch-all members rather than moving any boundary. The re-run differs from stage 1 in **exactly two
+rows, and no whole-program figure moves** (diffed, not argued):
+
+| subsystem | stage 1 | stage 2 |
+|---|---|---|
+| scene (dialogue + shop) | 3 fns / 1,094 B, runnable 3 / 1,094 B | **5 / 1,162 B, runnable 5 / 1,162 B** |
+| game logic (catch-all) | 22 fns / 2,126 B, direct T0 20 / 1,974 B, runnable 19 / 1,754 B | **20 / 2,058 B, direct T0 18 / 1,906 B, runnable 17 / 1,686 B** |
+
+**The catch-all lands back on its §0i figure exactly** — 20 fns / 2,058 B — which is the cleanest
+statement of what this pass did to it: batch 27's 68 bytes passed straight through it into `scene`
+without disturbing anything already there.
+
+**§0f's "runnable 0" shape has fully inverted, and it did so in two steps.** That row was drawn as
+the first subsystem where RECONSTRUCTED exceeds RUNNABLE — 3 fns, transitive `T4`, **runnable 0**,
+because every scene function reached `stage_load_window`'s sound call. §0g's classifier repair
+removed that wall and the row has read runnable 3 / 1,094 B since (it already did in stage 0, so it
+is not a delta of this re-scan); batch 27's port of `$dfbe` then made the tier **3 of 3
+reconstructed**, and this section's range makes it **5 of 5, all runnable, transitive
+`T3 HW_WRITE_ONLY`, zero false-green**. The subsystem that motivated the "reconstructed exceeds
+runnable" note no longer illustrates it — the note is kept in `subsystems.tsv`, marked in place, as
+the record of why the rows were drawn.
+
+**Declined, with the reason: the sound splits need no range.** `$17ca0` and all 23 handlers
+(`$17fd4..$18106`) are **already inside** the existing `0x17adc..0x1ab04` `sound (YM2149)` span,
+which covers the whole module in one range — verified against the new scan rather than assumed, and
+visible in stage 1's table, where `sound` absorbs all 24 without any edit (22 fns / 2,634 B →
+**46 / 2,934 B**, `+300` = the handlers' 306 less the split's 6). The file's convention is that a
+range exists to *claim* entries, not to annotate ones already claimed.
+
+### The coverage wall, measured — the ground truth for the campaign that follows
+
+The headline of this file has always been that its tiers describe only what is inside a function
+body. That denominator has now moved for the first time in five sections, so here is the wall
+itself, stated once:
+
+| | bytes | % of believed CODE |
+|---|---:|---:|
+| total believed CODE (`notes/architecture.md`'s own region table, 12 rows) | **54,854** | 100 % |
+| in an `F` record — everything every tier above is out of | **26,194** | **47.8 %** |
+| disassembled but in **no** `F` record (the 10 `O` runs) | 2,220 | — (not wholly inside CODE) |
+| ⤷ of those, inside a region `architecture.md` calls CODE | 1,782 | 3.2 % |
+| ⤷ of those, in a region it calls DATA (`0x105e4..0x1079a`) | 438 | — |
+| **CODE in no function body at all** | **28,660** | **52.2 %** |
+| ⤷ reached by the disassembler, attributed to nothing | 1,782 | 3.2 % |
+| ⤷ **never reached as code at all** | **26,878** | **49.0 %** |
+
+**The wall is not "unattributed code" — it is code Ghidra never disassembled.** Of the 28,660 bytes
+outside every function, 94 % were never decoded at all; the `O` runs are a rounding error beside
+them. That is the shape of the campaign: it is a *reachability* problem (pointer tables, indirect
+dispatch — §8.1), not an attribution one.
+
+**The ten largest contiguous no-function-body gaps inside CODE**, which is where a campaign starts.
+Cut against merged function *extents*, so a discontiguous body's own hole is not counted as a gap:
+
+| # | range | bytes | disassembled inside it | note |
+|---|---|---:|---:|---|
+| 1 | `0x02bc8..0x0501a` | **9,298** | 430 | by far the largest — a third of the whole wall; runs from `actor_turn_and_launch`'s body end to `FUN_0000501a`, inside `architecture.md`'s "bulk of the engine" |
+| 2 | `0x051d8..0x05c6e` | 2,710 | 206 | |
+| 3 | `0x06d5a..0x07522` | 1,992 | 316 | starts at `actor_respawn_as_new_kind`'s body end, ends at `bg_scroll_run_queue` |
+| 4 | `0x0ee68..0x0f542` | 1,754 | 0 | **the Copylock ciphertext** — unreadable by construction, not a campaign target |
+| 5 | `0x02462..0x02af2` | 1,680 | 398 | |
+| 6 | `0x01514..0x01ab4` | 1,440 | 130 | ends where `scene_spend_visit_budget`'s unported arm goes |
+| 7 | `0x01f54..0x023b6` | 1,122 | 0 | |
+| 8 | `0x00938..0x00d28` | 1,008 | 132 | |
+| 9 | `0x0e91c..0x0ecca` | 942 | 76 | runs up to `copylock_entry` |
+| 10 | `0x01bb4..0x01f36` | 898 | 0 | |
+
+Those ten are **22,844 bytes, 79.9 % of the wall**, and excluding the Copylock, **21,090 bytes in
+nine ranges**. There are 58 gaps in all; the tail beyond these ten is 5,744 bytes.
+
+### What is pinned
+
+`tools/test_hw_portability.py` stays at **56 cases**, green. Two literal pins track the working scan
+and moved with it, in this commit, per the batch-22b-closed precedent:
+
+* `test_the_committed_scan_reproduces_its_published_figures`: `258 → 284` functions,
+  `25,826 → 26,194` bytes, runnable `(244, 24358) → (270, 24726)`. **The false-green pin
+  `(20, 2224)` is NOT touched** — the re-scan moved no function's tier, so only the denominator
+  under it moved, which is precisely what the two set-comparison capability cases already guard.
+* `test_the_tool_runs_end_to_end_as_a_script`: the headline string
+  `244/258 functions, 24358/25826 bytes = 94.3 %` → `270/284 functions, 24726/26194 bytes = 94.4 %`.
+
+Every other case is untouched and green, including both `--model` capability pins (which compare
+function **sets**) — so §0i's claim that the two modeled bytes carry the whole MFP/shifter block
+capability survives a scan that added 26 functions.
+
+### Still queued (not this pass)
+
+§0i's three items stand unchanged (`§6`/`§6.1` re-pricing, `notes/portability_predictions.py`, and
+the `T2`-declaration caveat). This section adds two:
+
+4. **`STATUS.md`'s headline count and the handler row's title** — the two off-by-ones flagged above.
+5. **`§1`'s answer box and its `CODE bytes` column are now three scans stale** (they still print
+   2026-08-02: 256 fns / 25,786 B / 47.0 % coverage). The coverage table in this section supplies
+   the whole-program half of what a re-statement needs — 54,854 / 26,194 / 47.8 % — but the
+   per-subsystem `CODE bytes` column has to be re-charged against `architecture.md` region by
+   region, which is a measurement of its own and not this section's.
+
 ## 2. Method, and what it can and cannot see
 
 `tools/ghidra_scripts/HwPortabilityScan.java` reads Ghidra's **reference model**, not a linear

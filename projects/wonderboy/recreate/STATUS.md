@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 175/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 176/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -43,12 +43,15 @@ the SCENE TIER'S CLOSE (`scene_exit_and_reload` + the exit-action table's two re
 172 bytes, batch 27: the four exit tails run from the spending arm through the dispatch and the
 whole reload to the original's `rts`, and the dispatch is on the WRAPPED offset — 32 index values
 reach the eight entries) —
-21,024 bytes in all, 81.4 % of everything
-[`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0h's 25,826 — see "Batch 22b
-(steps 2–3)" at the end)*.** *(The batch-16 commit's header said 147 — an
+21,024 bytes in all, 80.3 % of everything
+[`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0j's 26,194 — the 2026-08-11
+re-scan grew it by the 23 handler F records and batch 27's scene actions; 81.4 % against §0h's
+25,826 when batch 27 wrote it)*.** *(The batch-16 commit's header said 147 — an
 oversight; its own section records 151, and batch 17 corrected the header to 153. Batch 22's edit
 left this leading count at 161 while its own section and parenthetical said 163 — the same
-oversight, found by batch 23's port agent and corrected here. It now carries batch 25's 169.)*
+oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
+expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
+recurs; expand the table before trusting the headline.)*
 `make test`: **3594 cases green in what this batch commits** (3546 before batch 27, plus its 48,
 all in `test/test_scene.py`, which stands at 231; `test/test_stage.py` holds at 112 across a
 refactor).
@@ -700,7 +703,7 @@ other buffers — see `project.toml`'s `image_size` comment, which this narrows 
 | `0x1a5da` | `snd_sfx_tick` | 600 | verified | Batch 23: the SFX engine the tick calls FIRST (at $17cb6, before any music — the old plate order was backwards), three 186-byte arms as ONE parametrized C body entered at each arm's own address; its shared `rts` at $1a5d8 is the "orphan" cmt 0x1a48a disproved; each arm reads a DIFFERENT PRNG byte ($1aae6/7/8 — a sixth base-plus-stride block, stride 1, previously unrecorded); the pitch delta moves the period by delta×257 (`add.b` + `addx.b`); the volume-stream $80 loop, negative hold, AND the reload's unconditional store of a negative first byte (the review's mutant-confirmed hole, closed); ids 12/20/21 drive the PRNG path with $1aae6 seeded — the state is never reset by song start |
 | `0x18208` | `snd_channel_period_and_volume` | 330 | verified | Batch 23: six arms over one music channel's 48-byte record — envelope, transpose+detune, arpeggio, table lookup, portamento, vibrato — returning d0 = period, d1.b = volume (d1's second byte carries portamento scratch); writes two module globals; note-table read proved in-image for all 256 notes (`add.b d0,d0` bounds the byte index — notes ≥96 ALIAS onto snd_arpeggio_ptr_table, ≥128 wrap to its start, both cases); the trim to one record + two named mask-pinning cases rests on the measured mutant (mask hardcoded to $09 passes record 0, fails 1 and 2); GLOBAL_DEFAULTS pins all four globals it reads, with a guard that fails if the C grows a fifth |
 | `0x18106` | `snd_channel_step` (`src/sound.c`) | 258 | verified | Batch 24: one channel's pattern step — countdown, pitch slide, the read loop and the range decoder (`addi.b`+`bcs` chain whose command range ends at $b8, NOT the $97 the notes said) — ending in the `jmp (a3,a2.w)` handler dispatch; the two handler return addresses ($18116/$18148) are DERIVED from the stepper's own runs so stepper and handlers cannot disagree; a3 inherited; the $18036 read-BEFORE-store on the sequence entry is the batch's found-and-fixed ordering divergence, pinned by a case that solves the aliasing offset so the table names the record's own index word |
-| `0x17fd4` | the 24 pattern-opcode handlers | 306 | verified | Batch 24: 23 distinct bodies below the stepper, each entered by its `jmp` and all but $8e branching back INTO the stepper's body; the opcode census is DERIVED by a walk the battery runs (658/95/88/51/48/16/11/5/4/3/2 over all 106 patterns of all 17 songs, self-proving 95+11=106, $93 retargets closure-guarded) — eleven of twenty-four reached by shipped data, each grid row saying which; $97's latent bug (sets d0, never d1) REPRODUCED not fixed; $98..$b7 (a dispatch through the handlers' own instruction stream) has no C and REFUSES by construction via os_refused, proven unreachable from shipped data |
+| `0x17fd4` | the 23 pattern-opcode handlers *(the title said 24 until the 2026-08-11 re-scan — $80..$97 is 24 OPCODES but $8d shares a body, and the scan finds 23 F records, agreeing with this row's own prose)* | 306 | verified | Batch 24: 23 distinct bodies below the stepper, each entered by its `jmp` and all but $8e branching back INTO the stepper's body; the opcode census is DERIVED by a walk the battery runs (658/95/88/51/48/16/11/5/4/3/2 over all 106 patterns of all 17 songs, self-proving 95+11=106, $93 retargets closure-guarded) — eleven of twenty-four reached by shipped data, each grid row saying which; $97's latent bug (sets d0, never d1) REPRODUCED not fixed; $98..$b7 (a dispatch through the handlers' own instruction stream) has no C and REFUSES by construction via os_refused, proven unreachable from shipped data |
 | `0x17c74` | `snd_music_tick` (`src/sound.c`) | 44 | verified | Batch 25: the TEMPO SELECTOR, the sound module's last unported bytes and the kit's Phase 7 seeded-hardware-read model's first consumer anywhere — `btst #7,$fffa01` (mono detect, ACTIVE LOW, so SET = colour) and `btst #1,$ff820a` (SET = 50 Hz) choose the drop byte at $17c6e, 0/$2b/$48, and the run falls into `snd_music_tick_body`; three machines declared with `hw_seed=` as the tested BIT and its complement, plus the capture profile's own $b0/$02; the mono arm's `bra.s` over the sync test means a mono machine never reads $ff820a, an ordering only the ordered read stream can witness; a case declaring no machine is REFUSED (AssertionError from `differential`, not `emu.run` — the one place Phase 7 differs from Phase 6); this is also the routine that ESTABLISHES a3, so no case here seeds it; head + body now tile $17c74..$17f23 |
 | `0xf944` | `set_palette` (`src/stage.c`) | 24 | verified | Batch 26: sixteen words from `palette_table + (row << 5)` to the shifter — and THE DROPPED-WRITE TIER NAMED: the output is off-image, the oracle and the reconstruction both drop it, and no ledger exists, so the case pins the EMPTY write set on both sides, the returned cursor (source + 32) and the oracle's own a1 landing at $ff8260, and says on every surface that the hardware effect is UNTESTED. The sweep proves the hole is real: three survivors (row shift, colour count, unscaled row) are one hole seen three ways, while the un-advanced-cursor mutant IS caught. The kit-scope remedy (a dropped-hardware-write ledger) is registered below |
 | `0x17b3a` | `snd_play_song` | 140 | verified | Batch 26: stub +0 — stops the module FIRST through the +28 stub (the `movem` pair is what carries the song id in d0 across a routine that silences the chip, so a start's PSG traffic is exactly a stop's), reads the 8-byte directory record, arms three channels in one real `dbf` loop, and writes six globals — including the `st` at $17bb8 the old plate omitted: the row accumulator starts SATURATED, so a song's first row steps at once. This is the routine that WRITES the mutable bands batches 23–25 seeded by hand. Cases are the game's own data: all 17 shipped songs, both tail arms, the $fa2e dedup latch both ways |
@@ -4608,3 +4611,31 @@ NOT PINNED, and REGISTERED:
 test_stage.py (pre-existing, third consecutive noticing); the scene subsystem row's re-measure
 (3 of 3 reconstructed, runnable no longer 0 — rides with the next partition pass, alongside the
 re-scan the batch-26 rename queued).
+
+### Measurement, 2026-08-11 — the re-scan after batches 23–27, and the wall measured as REACHABILITY
+
+The reapply + re-scan behind [`PORTABILITY.md`](PORTABILITY.md) **§0j**. No reconstruction changed
+and `make test` is 3,594 before and after. Ghidra now has **284 functions / 26,194 bytes** (was
+258 / 25,826): the 23 pattern-op handlers, `snd_music_tick`'s split into a 44-byte head plus
+`snd_music_tick_body`, and batch 27's two scene exit actions, which had been in **no function body
+and no tier** until `names.txt` named them. **Runnable 270 / 24,726 B = 94.4 %**; false-green
+unchanged at the identical 20 functions / 2,224 B. Not one pre-existing function moved tier,
+steering or reachability — checked as sets. The accounting closes exactly: +68 −6 +306 = +368,
+with the −6 being the §0h address-set rule reaching `snd_music_tick` (8 B to the handlers, 2 B
+back from the shared tail at `$17c72`). The batch-26 `entry_of()` cross-pins came back CLEAN over
+all 253 fn addresses. One partition range added with its citation (`0x101bc..0x10200` → scene,
+reached only from `$dfd6`), and the scene row's §0f shape has fully inverted: **5 of 5 runnable**.
+Two of this file's own figures were one out and are corrected in place above: the headline said
+175 where the table expands to 176, and the `$17fd4` row was titled "24" where its own prose and
+the scan say 23. The verified column reconciles to **203 F records / 21,026 B** against 176
+reconstructions / 21,024 B — the +2 is `$17ca0`'s shared tail, the address-set rule touching the
+verified column for the first time. Reconciliation stands at four rows: rad 1→3, snd_sfx_tick
+1→4, the handlers 1→23, `$17ca0` +2 B.
+
+**THE COVERAGE WALL, MEASURED — it is a REACHABILITY problem, not an attribution one.** Of the
+~54,854 believed CODE bytes, 26,194 are in F records (47.8 %) and **28,660 are in no function
+body** — of which only 1,782 were ever even disassembled. **26,878 bytes (49.0 % of the program)
+were never reached as code.** Ten gaps hold 79.9 % of the wall; excluding the Copylock ciphertext,
+**nine ranges hold 21,090 bytes**, and the largest — `$2bc8..$501a`, 9,298 bytes, where the
+per-monster state routines live — is a third of the wall by itself. The scout that walks these
+ranges is the next phase; §0j carries the full table.
