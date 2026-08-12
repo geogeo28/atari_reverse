@@ -369,20 +369,25 @@ def test_the_committed_scan_reproduces_its_published_figures():
     otherwise shift a published figure with no diff to show for it.
 
     The figures themselves track the WORKING scan and move with any re-scan, in the same commit as
-    the § record that accounts for the move. §0j is the current one: 284 functions / 26,194 B, after
-    ../names.txt gained the 23 pattern-op handlers, `snd_music_tick`'s body split and the two scene
-    exit actions.
+    the § record that accounts for the move. §0k is the current one: 407 functions / 44,262 B, after
+    ../names.txt gained the 125 `fn` lines of the coverage-wall scout — the per-actor behaviour
+    dispatch (`actor_behavior_table`'s 61 handlers and their subtree) plus four smaller indirect
+    tables, reached through a PC-relative INDEXED `lea` that Ghidra does not follow.
     """
     scan, direct_tier, _, _ = closed_scan()
     runnable, at_risk = runnable_set(), at_risk_set()
-    assert len(scan.funcs) == 284
-    assert sum(f.size for f in scan.funcs.values()) == 26194
-    assert (len(runnable), sum(scan.funcs[a].size for a in runnable)) == (270, 24726)
+    assert len(scan.funcs) == 407
+    assert sum(f.size for f in scan.funcs.values()) == 44262
+    assert (len(runnable), sum(scan.funcs[a].size for a in runnable)) == (389, 41108)
     # §0i: the false-green set lost the 8 functions whose only steer was one of the two bytes
     # Phase 7 models. Runnable is UNCHANGED — a seeded read was already runnable under §0g's rule.
-    # §0j: the re-scan added 26 functions and moved NO function's tier, so this pair is untouched by
-    # it — the identical 20 functions, which is why only the denominator below it moved.
-    assert (len(at_risk), sum(scan.funcs[a].size for a in at_risk)) == (20, 2224)
+    # §0j: the re-scan added 26 functions and moved NO function's tier, so this pair was untouched.
+    # §0k: it moves for the first time since §0i. No PRE-EXISTING function's tier moved either, but
+    # four of the 123 NEW ones steer: the player's own behaviour-table slot and its subtree
+    # (`actor_behavior_type01_player`, `player_pending_event_gate`, `player_collide_and_scroll`,
+    # `actor_behavior_type61`) all reach `show_data_disk_prompt` -> `load_resource_by_index`, and so
+    # inherit both the Copylock (T6) and the FDC status poll's steer. +4 functions / +1,686 B.
+    assert (len(at_risk), sum(scan.funcs[a].size for a in at_risk)) == (24, 3910)
     # No function hard-rejects on its own access any more: Phase 6 removed the last PSG read wall.
     assert not [a for a in scan.funcs if direct_tier[a] == hp.T_HARD_REJECT]
 
@@ -425,7 +430,7 @@ def test_the_tool_runs_end_to_end_as_a_script():
     """Everything above imports the module; this is the only case that proves `main()` — argument
     parsing, the report sections, the exit status — still works as the documented command."""
     stdout = run_tool()
-    assert "270/284 functions, 24726/26194 bytes = 94.4 %" in stdout
+    assert "389/407 functions, 41108/44262 bytes = 92.9 %" in stdout
     assert "| T2 SEEDED_READ |" in stdout
     # The one Phase 7 refusal no tier can carry — a read of an address THIS RUN wrote — is REPORTED
     # instead, naming the site. Dropping that paragraph would leave the limit stated nowhere.

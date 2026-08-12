@@ -43,10 +43,11 @@ the SCENE TIER'S CLOSE (`scene_exit_and_reload` + the exit-action table's two re
 172 bytes, batch 27: the four exit tails run from the spending arm through the dispatch and the
 whole reload to the original's `rts`, and the dispatch is on the WRAPPED offset — 32 index values
 reach the eight entries) —
-21,024 bytes in all, 80.3 % of everything
-[`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0j's 26,194 — the 2026-08-11
-re-scan grew it by the 23 handler F records and batch 27's scene actions; 81.4 % against §0h's
-25,826 when batch 27 wrote it)*.** *(The batch-16 commit's header said 147 — an
+21,024 bytes in all, 47.5 % of everything
+[`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
+coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
+dropped from 80.3 % not because anything was lost but because the denominator now contains the
+game; 80.7 % of believed CODE is measured, and only 226 bytes remain genuinely unknown)*.** *(The batch-16 commit's header said 147 — an
 oversight; its own section records 151, and batch 17 corrected the header to 153. Batch 22's edit
 left this leading count at 161 while its own section and parenthetical said 163 — the same
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
@@ -4639,3 +4640,58 @@ were never reached as code.** Ten gaps hold 79.9 % of the wall; excluding the Co
 **nine ranges hold 21,090 bytes**, and the largest — `$2bc8..$501a`, 9,298 bytes, where the
 per-monster state routines live — is a third of the wall by itself. The scout that walks these
 ranges is the next phase; §0j carries the full table.
+
+### Batch 28: the coverage wall OPENED — one extension word hid half the game
+
+A scout pass and its yield measurement, no ports. [`PORTABILITY.md`](PORTABILITY.md) **§0k is the
+full record**; `make test` is 3,594 before and after, and the verified column is untouched.
+
+**THE MECHANISM: the per-actor behaviour tier hangs off FOUR INSTRUCTIONS.** `actor_dispatch_behavior`
+($928) reads the actor TYPE out of the record, scales it, and goes `lea (0x938,PC,d1.w),a1 /
+movea.l (a1),a1 / jmp (a1)` — a tail call through a 62-entry longword table whose base `$938`
+exists NOWHERE in the image as an operand: it is the 8-bit displacement of a brief PC-relative
+indexed extension word. That is why Ghidra never decoded the table or any of its 61 distinct
+targets, and that single instruction accounted for EIGHT of §0j's nine gaps.
+docs/m68k-disassembly.md's lea-extension-word entry now has its worked example at scale. Four more
+indirect tables fell with it (pickup_effect_table $105ac, actor_swoop_state_table $7490,
+sprite_cru_copy_table $e91c, spawn_script_gate_table $e42e), and the caller chain is
+game_main_loop → $882 → actor_behavior_pass ($8d0, the per-record walker) → the dispatcher.
+
+**THE YIELD, measured per the two-stage discipline** (§0j reproduced byte-for-byte first): 125 fn /
+8 var / 134 cmt seeded — every fn disassembled at its address before naming — then reapply
+(378/378 applied, 407/407 exported, zero failures, the largest application ever) and re-scan.
+**284 → 407 F records, 26,194 → 44,262 bytes: coverage of believed CODE 47.8 % → 80.7 %. The wall
+fell 28,660 → 10,592 bytes, and only 226 of the residue is genuinely unknown** — the rest is the
+Copylock (1,754), confirmed DATA under named vars (4,734, including actor_behavior_table itself),
+and the inter-handler animation word tables (3,868). NOTHING pre-existing moved on any axis, and
+not one of the 123 new functions touches hardware directly. Four join the false-green set
+($a38 the player handler, $b1a, $151a, $6f9e — all reach the Copylock loader and the FDC steer);
+the transitive-T4 jump is rng_next's T3-DATA class, not false green.
+
+**A SECOND MECHANISM FINDING: the island.** `$928` has ZERO callees in the scan — `jmp (a1)` is as
+opaque to Ghidra's reference model as the `lea` was to its disassembler, so the whole new tier is
+a call-graph ISLAND: `reachable from the roots` did not move. §0k models the 61+22 dispatch edges
+by hand and prices the tier both ways; the partition was DECLINED with the numbers (no range set
+is clean and stable, the tier has no principled edge — rule A pulls in three shared leaves, rule B
+reaches scene_spawn_from_script not at all — and the player and monsters are two mechanisms
+sharing one table).
+
+**Scout corrections, cited to bytes**: cmt 0x1044c was wrong twice (TWO lea sites, and the pickup
+path reads [4] as a longword score and [10] as a word index — the correction rides in names.txt);
+architecture.md's region table over-claims CODE by ≥1,656 B read directly (registered — the 80.7 %
+is a lower bound); $10714 is NOT effect_add4_clamped_b6fa (it SKIPS the store where $10296 clamps
+— a meter within 3 of max stays put); $7366 carries a deliberate double-bchg no-op; the relocation
+table is 3 entries and useless for pointer-table hunting (recorded so nobody retries it).
+
+**The port campaign's order, scan-confirmed**: all 25 monster slots runnable with every callee
+runnable (26 T0 + 7 T4, no walls); 30 of 61 handlers transitive T0 CLEAN — 2,860 bytes portable
+with no seed at all. First: actor_behavior_pass + the dispatcher + the table (104 B, pure). Then
+the vanish tail ($698a, 25 callers), the shared leaves, the slots in table order, the pickup tier,
+the swoop machine, and the PLAYER LAST ($a38's subtree is where the joystick and the sound vector
+bite). The cheapest naming wins left: FUN_00005c6e (42 handlers call it, 244 B), FUN_0000501a
+(29), FUN_000023b6 (25).
+
+**QUEUED**: the tier partition (revisit at the fixpoint, when porting gives the edge a principled
+answer); the architecture.md CODE-column correction (its own measurement); $69de..$69fd's reader;
+which monster is WHICH (needs sprite-id cross-reference or runtime observation — the handlers are
+named actor_behavior_typeNN, the verified structural fact, not guesses).

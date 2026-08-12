@@ -1236,3 +1236,323 @@ cmt 0xfc46 EIGHT rows of 32 bytes ($fc46..$fd45), each one whole 16-word ST pale
 cmt 0x10394 ADDENDUM (batch 19): these four are the ONLY handlers in effect_handler_table that touch an ADDRESS register. `movea.l $b546,a1` survives the dispatcher's `jsr (a0)`, so a1 comes back pointing at the record just pushed -- and scene_run_frame's `move.w #$3,d0 / bsr $de80` two instructions later spends the visit budget through THAT pointer, writing 32 bytes into effect_record_list instead of onto 32(shop record). Nothing restores a1 in between. Pinned per handler by recreate/test/test_scene.py's test_only_the_push_handlers_move_the_dispatchers_record_pointer.
 cmt 0x1023a ADDENDUM (batch 19): the count is BOUNDED, not counted -- entry 0 holds $10296 and the table starts at $1023a, so the 23 longwords end exactly where the first handler begins. The index is `62(a1)`/`64(a1)` scaled by `lsl.w #2` and added as a SIGN-EXTENDED word, so nothing bounds it from either end; recreate/src/scene.c refuses an out-of-range index the way sprite_draw_pass refuses a width code past its own table.
 
+
+# ===========================================================================
+# BATCH 28 (coverage-wall scout) -- THE PER-ACTOR BEHAVIOUR DISPATCH
+#
+# PORTABILITY.md 0j measured 26,878 bytes (49.0 % of believed CODE) that Ghidra
+# never disassembled, concentrated in nine gaps. ONE mechanism opens EIGHT of
+# those nine, and it is four instructions long:
+#
+#   00928  moveq #0,d1 / move.w 4(a0),d1 / lsl.w #2,d1
+#   00930  lea (0x938,PC,d1.w),a1     <- 43fb 1006, PC-relative INDEXED lea
+#   00934  movea.l (a1),a1
+#   00936  jmp (a1)
+#
+# The base address $938 exists NOWHERE in the image as an operand -- it is the
+# 8-bit displacement of a PC-relative INDEXED brief extension word (`1006` =
+# index d1.w, scale 1, disp 6; PC = $932, the extension word's own address).
+# Nothing else in the image names it.
+# Ghidra did not resolve it (evidence: neither the table nor ANY of its 61
+# distinct targets is in a function body, while every table reached by a plain
+# `lea abs.l` in this program is), which is the "lea-extension-word gap" of
+# docs/m68k-disassembly.md. The index is the actor TYPE at offset 4 of the
+# record; nothing bounds it at either end.
+#
+# The 24 `bne.w $6bb8` sites the actor_defeat_and_score plate lists all fall
+# inside 24 DISTINCT table slots (2,3,4,5,6,7,9,10,11,12,14,15,16,17,18,20,21,
+# 22,23,24,25,26,27,38); the four `bra.w` sites add slots 13, 19 and two more
+# in 38. That is the corroboration: the plate's "per-monster state routine" is
+# literally a slot in this table.
+#
+# Verification: every fn address below was disassembled with
+#   m68k-elf-objdump -D -b binary -m m68k:68000 --adjust-vma=0x3dc \
+#     --start-address=... --stop-address=... bin/disk1/AUTO/SWB.PRG
+# and decodes to a clean instruction stream terminating in rts / bra.w / jmp.
+# ===========================================================================
+
+fn 0x8d0 actor_behavior_pass
+cmt 0x8d0 THE PER-FRAME ACTOR PASS, and the caller game_main_loop reaches through $882 (`bsr $88c` = joy1_latch_edge, then `bsr $8d0`). Walks actor_table_selected ($a098) in 32-byte records: `cmpi.l #$ffffffff,(a0)` ends the walk, `cmpi.w #$ffbe,(a0)` (actor_free_marker) skips a free slot, everything else goes to actor_dispatch_behavior and then `lea 32(a0),a0`. Guarded by state_flag_a34: when it is CLEAR the walk is the normal loop at $8e0; when it is SET ($904) the pass is a FIXED three-record path -- slot 0, slot 1, then +$160 (11 records) to slot 13 -- each still skipped on the free marker, and the third dispatch is a `bra.w $928` tail. Body $8d0..$928.
+fn 0x928 actor_dispatch_behavior
+cmt 0x928 THE WAY IN to the whole per-actor behaviour tier, and the reason 15,698 bytes of it were never disassembled. Four instructions: `moveq #0,d1 / move.w 4(a0),d1` (the actor TYPE), `lsl.w #2,d1`, `lea (0x938,PC,d1.w),a1` -- encoded `43fb 1006`, PC = $932 so the base is $938 -- `movea.l (a1),a1`, `jmp (a1)`. The `jmp` is a TAIL CALL: the handler's own `rts` returns to actor_behavior_pass. Ghidra does not follow a PC-relative INDEXED lea, which is why actor_behavior_table and all 61 of its targets were invisible. The index is a full 16-bit word scaled by 4 and sign-extended by the extension word, and NOTHING bounds it: a type outside 0..61 reads a longword past the table (state_flag_a30 at $a30 is the first word past it) and jumps to it. Body $928..$938 -- it ends exactly where the table begins.
+var 0x938 actor_behavior_table
+cmt 0x938 SIXTY-TWO longwords, $938..$a2f, one per actor type, indexed by 4(record) via actor_dispatch_behavior's `lea (0x938,PC,d1.w),a1`. ZERO operand sites carry the address $938 -- the only reference is that PC-relative extension word, which is why no linear or reference-following scan found it. Bounded above by its own first target: slot 0 holds $a36 and the words at $a30/$a32/$a34 (state_flag_a30/a32/a34) sit between the table and it, so table + flags + `rts` = $938..$a37. 61 distinct targets; slots 0 and 58 share the bare `rts` at $a36. Twenty-five slots (2..7, 9..27 minus 8) open with the monster prologue and are the "per-monster state routine" family actor_defeat_and_score's plate counted from the other end. Slots 8 and 59 are two-instruction stubs that set a bit in 30(a0) and fall into slot 7's body at $7060.
+fn 0x698a actor_vanish_anim_step
+cmt 0x698a The shared tail every monster handler branches to on `btst #2,9(a0)` -- TWENTY-FIVE in-code `bne.w $698a` sites, more than any other branch target in the image outside actor_defeat_and_score. Steps the animation cursor 18(a0) two bytes at a time through actor_vanish_frame_table at $69be, writing each frame to 6(a0); when the cursor wraps ($40 masked to 0 by `andi.w #$1f`) it clears bit 2 of 9(a0) and zeroes the cursor -- i.e. the vanish/death animation runs once and then releases the actor. Reached only by branch, never by a call, and ends in `rts` back into actor_behavior_pass. Body $698a..$69bc.
+var 0x69be actor_vanish_frame_table
+cmt 0x69be The sprite ids actor_vanish_anim_step cycles, addressed `lea $69be,a1 / lea 0(a1,d0.w),a1` with d0 = 18(a0) -- so the cursor is a BYTE OFFSET, not an index. As laid out the run is 32 words, $69be..$69fd, ending exactly where actor_damage_followed begins: $1ab x5, $1ac x5, $1ad x5, $1ae x5, $1af x5, $1ad x4, $1ac x3. But actor_vanish_anim_step's wrap is `andi.w #$1f`, which reaches only the FIRST 16 words ($69be..$69dd); what reads the second half is not answered here and is the one loose end in this block.
+
+# --- the 61 behaviour handlers, one per distinct actor_behavior_table slot ---
+fn 0xa36 actor_behavior_null # ctx
+cmt 0xa36 actor_behavior_table slots 0,58; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0xa38 actor_behavior_type01_player # ctx
+cmt 0xa38 actor_behavior_table slot 1; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $a38..$b18.
+fn 0x2462 actor_behavior_type02
+cmt 0x2462 actor_behavior_table slot 2; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $2556 (bne.w); decoded code runs $2462..$2560; indexes its own PC-relative frame word table(s) at $2560, $2580.
+fn 0x25c0 actor_behavior_type03
+cmt 0x25c0 actor_behavior_table slot 3; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $272c (bne.w); decoded code runs $25c0..$2736.
+fn 0x2796 actor_behavior_type04
+cmt 0x2796 actor_behavior_table slot 4; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $28e2 (bne.w); decoded code runs $2796..$28ec; indexes its own PC-relative frame word table(s) at $290c, $28ec.
+fn 0x29ec actor_behavior_type05
+cmt 0x29ec actor_behavior_table slot 5; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $2ac2 (bne.w); decoded code runs $29ec..$2b0a.
+fn 0x2bc8 actor_behavior_type06
+cmt 0x2bc8 actor_behavior_table slot 6; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $2dac (bne.w); decoded code runs $2bc8..$2db2.
+fn 0x2e12 actor_behavior_type09
+cmt 0x2e12 actor_behavior_table slot 9; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $2ea4 (bne.w); decoded code runs $2e12..$2eaa.
+fn 0x303a actor_behavior_type10
+cmt 0x303a actor_behavior_table slot 10; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $3192 (bne.w); decoded code runs $303a..$3198.
+fn 0x3218 actor_behavior_type11
+cmt 0x3218 actor_behavior_table slot 11; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $3356 (bne.w); decoded code runs $3218..$335c.
+fn 0x33bc actor_behavior_type12
+cmt 0x33bc actor_behavior_table slot 12; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $3464 (bne.w); decoded code runs $33bc..$346a.
+fn 0x34d2 actor_behavior_type13
+cmt 0x34d2 actor_behavior_table slot 13; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $35c2 (bra.w); decoded code runs $34d2..$35c8.
+fn 0x35d8 actor_behavior_type14
+cmt 0x35d8 actor_behavior_table slot 14; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $370e (bne.w); decoded code runs $35d8..$3714.
+fn 0x3764 actor_behavior_type15
+cmt 0x3764 actor_behavior_table slot 15; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $3842 (bne.w); decoded code runs $3764..$384e.
+fn 0x38ae actor_behavior_type16
+cmt 0x38ae actor_behavior_table slot 16; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $39da (bne.w); decoded code runs $38ae..$39e6.
+fn 0x3a46 actor_behavior_type17
+cmt 0x3a46 actor_behavior_table slot 17; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $3b62 (bne.w); decoded code runs $3a46..$3b68.
+fn 0x3c84 actor_behavior_type18
+cmt 0x3c84 actor_behavior_table slot 18; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $3e26 (bne.w); decoded code runs $3c84..$3e2c.
+fn 0x3e8c actor_behavior_type19
+cmt 0x3e8c actor_behavior_table slot 19; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $3ff2 (bra.w); decoded code runs $3e8c..$3ff8.
+fn 0x4118 actor_behavior_type20
+cmt 0x4118 actor_behavior_table slot 20; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $428c (bne.w); decoded code runs $4118..$4292.
+fn 0x42f2 actor_behavior_type21
+cmt 0x42f2 actor_behavior_table slot 21; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $4456 (bne.w); decoded code runs $42f2..$445c.
+fn 0x44bc actor_behavior_type22
+cmt 0x44bc actor_behavior_table slot 22; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $45be (bne.w); decoded code runs $44bc..$45c4.
+fn 0x461c actor_behavior_type23
+cmt 0x461c actor_behavior_table slot 23; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $47c2 (bne.w); decoded code runs $461c..$47cc; indexes its own PC-relative frame word table(s) at $47cc, $47ec.
+fn 0x484c actor_behavior_type24
+cmt 0x484c actor_behavior_table slot 24; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $48dc (bne.w); decoded code runs $484c..$48e2.
+fn 0x4916 actor_behavior_type25
+cmt 0x4916 actor_behavior_table slot 25; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $4ab8 (bne.w); decoded code runs $4916..$4abe.
+fn 0x4b1e actor_behavior_type26
+cmt 0x4b1e actor_behavior_table slot 26; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $4bf0 (bne.w); decoded code runs $4b1e..$4bf6.
+fn 0x4c5e actor_behavior_type27
+cmt 0x4c5e actor_behavior_table slot 27; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $4dd2 (bne.w); decoded code runs $4c5e..$4dd8.
+fn 0x4e38 actor_behavior_type28
+cmt 0x4e38 actor_behavior_table slot 28; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x4ec8 actor_behavior_type29
+cmt 0x4ec8 actor_behavior_table slot 29; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x4eca actor_behavior_type30
+cmt 0x4eca actor_behavior_table slot 30; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $4eca..$4f58; indexes its own PC-relative frame word table(s) at $4f5c.
+fn 0x4f9c actor_behavior_type31
+cmt 0x4f9c actor_behavior_table slot 31; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x5046 actor_behavior_type32
+cmt 0x5046 actor_behavior_table slot 32; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $5046..$515c.
+fn 0x5208 actor_behavior_type33
+cmt 0x5208 actor_behavior_table slot 33; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x525a actor_behavior_type34
+cmt 0x525a actor_behavior_table slot 34; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x5336 actor_behavior_type35
+cmt 0x5336 actor_behavior_table slot 35; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $5336..$535c.
+fn 0x53bc actor_behavior_type36
+cmt 0x53bc actor_behavior_table slot 36; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x53e2 actor_behavior_type37
+cmt 0x53e2 actor_behavior_table slot 37; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x5408 actor_behavior_type38_pickup # ctx
+cmt 0x5408 actor_behavior_table slot 38; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; leaves for actor_defeat_and_score at $5472 (bra.w), $54a6 (bra.w), $54e8 (bne.w).
+fn 0x54f4 actor_behavior_type39
+cmt 0x54f4 actor_behavior_table slot 39; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $54f4..$5598; indexes its own PC-relative frame word table(s) at $5598.
+fn 0x55a8 actor_behavior_type40
+cmt 0x55a8 actor_behavior_table slot 40; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x563c actor_behavior_type41
+cmt 0x563c actor_behavior_table slot 41; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x567c actor_behavior_type42
+cmt 0x567c actor_behavior_table slot 42; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $567c..$571a; indexes its own PC-relative frame word table(s) at $571a.
+fn 0x572a actor_behavior_type43
+cmt 0x572a actor_behavior_table slot 43; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x57be actor_behavior_type44
+cmt 0x57be actor_behavior_table slot 44; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x5852 actor_behavior_type45
+cmt 0x5852 actor_behavior_table slot 45; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x58f2 actor_behavior_type46
+cmt 0x58f2 actor_behavior_table slot 46; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x5928 actor_behavior_type47
+cmt 0x5928 actor_behavior_table slot 47; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $5928..$5952.
+fn 0x5972 actor_behavior_type48
+cmt 0x5972 actor_behavior_table slot 48; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $5972..$59c8; indexes its own PC-relative frame word table(s) at $59c8.
+fn 0x59d0 actor_behavior_type49
+cmt 0x59d0 actor_behavior_table slot 49; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $59d0..$5a4e; indexes its own PC-relative frame word table(s) at $5a5e, $5a4e.
+fn 0x5a6e actor_behavior_type50
+cmt 0x5a6e actor_behavior_table slot 50; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $5a6e..$5aae; indexes its own PC-relative frame word table(s) at $5aae.
+fn 0x5ab2 actor_behavior_type51
+cmt 0x5ab2 actor_behavior_table slot 51; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x5b3c actor_behavior_type52
+cmt 0x5b3c actor_behavior_table slot 52; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $5b3c..$5bd4.
+fn 0x5be4 actor_behavior_type53
+cmt 0x5be4 actor_behavior_table slot 53; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $5be4..$5c6c.
+fn 0x6e1c actor_behavior_type54
+cmt 0x6e1c actor_behavior_table slot 54; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $6e1c..$6ed8.
+fn 0x6ef4 actor_behavior_type55
+cmt 0x6ef4 actor_behavior_table slot 55; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x6f3e actor_behavior_type56
+cmt 0x6f3e actor_behavior_table slot 56; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x6f7e actor_behavior_type60
+cmt 0x6f7e actor_behavior_table slot 60; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $6f7e..$6f9c.
+fn 0x6f9e actor_behavior_type61
+cmt 0x6f9e actor_behavior_table slot 61; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $6f9e..$7014.
+fn 0x7044 actor_behavior_type59
+cmt 0x7044 actor_behavior_table slot 59; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x705a actor_behavior_type08
+cmt 0x705a actor_behavior_table slot 8; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call.
+fn 0x7060 actor_behavior_type07
+cmt 0x7060 actor_behavior_table slot 7; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; opens with the monster prologue `btst #2,9(a0) / bne.w actor_vanish_anim_step`; leaves for actor_defeat_and_score at $70aa (bne.w); decoded code runs $7060..$7208.
+fn 0x7260 actor_behavior_type57
+cmt 0x7260 actor_behavior_table slot 57; reached ONLY through actor_dispatch_behavior's `jmp (a1)`, never by a call; decoded code runs $7260..$73ce.
+
+# --- the subtree the handlers call: routines Ghidra could not reach either ---
+# Every one below is a bsr/jsr target FROM a behaviour handler (or from one of
+# their callees), so it became invisible for exactly the same reason the
+# handlers did. Names are read off the head of each body; `# ctx` marks the ones
+# whose role is inferred from the call site rather than a full body read.
+
+fn 0xa76 player_meter_empty_check # ctx
+cmt 0xa76 First call of actor_behavior_type01_player, and it runs only when hud_meter_value is ZERO (`tst.w $b6fa / bne.w $b06`). Two arms. If hud_slot_bbc6 is set or $604 is nonzero: sound request 22 through $17adc+56, hud_slot_bbc6 := $ff when $604 is zero, text_request $16 with text_lifetime_request 50, hud_meter_value := 20. Otherwise ($604 zero and hud_slot_bbc6 clear): clear bit 6 of 8(a0) and, when $b08 is not negative, raise state_flag_a34, call $17adc+0 with d0 = 16, and raise $b08, $d76 and $bd26. Body $a76..$b08 -- it swallows the `O` run $a84..$b08 the scan already had.
+fn 0xb1a player_pending_event_gate # ctx
+cmt 0xb1a Second call of actor_behavior_type01_player, and the one that decides whether the rest of the player frame runs: three word flags in order -- $b08, $b0e, $b14 -- each with its own arm ($b36, $c28, $c76); none set clears d7 and returns. The caller's `tst.w d7 / bmi.w $a74` means a NEGATIVE d7 from here skips movement, collision, scene and stage work for the frame.
+fn 0xd78 player_gate_on_1516 # ctx
+cmt 0xd78 Two instructions and an `rts`: `tst.w $1516 / beq.w $e06`, i.e. a guarded entry to the body at $e06 that player_apply_joystick also falls into. Third call of actor_behavior_type01_player.
+fn 0xd84 player_apply_joystick # ctx
+cmt 0xd84 Reads joy1_current ($8cf) bit 0 and mutates the facing bits 0/1 of 8(a0) plus $1518 and the low nibble of (a0). Called from actor_behavior_type01_player after the fall/settle step.
+fn 0xec8 player_step_and_arm # ctx
+cmt 0xec8 Runs 29(a0) as a step COUNT -- `moveq #0,d7 / move.b 29(a0),d7` then actor_step_left/right_against_map by facing, decrementing 29(a0) -- then reads joy1_newly_pressed ($682) and on fire sets bit 7 of 8(a0), clears bit 0 of 9(a0) and zeroes 22(a0). Fifth call of actor_behavior_type01_player.
+fn 0x107c player_reset_ground_state # ctx
+cmt 0x107c Clears $1516, clears bit 2 and sets bits 0 and 1 of 8(a0), and writes `$bd6a + 8` into 11(a0). Body $107c..$10a2 -- it ends exactly where actor_step_left_against_map begins.
+fn 0x1208 player_weapon_fire # ctx
+cmt 0x1208 Gated on `tst.w $1514` and `cmpi.l #$b444,$b546` (effect_record_write_ptr still at the base of effect_record_list, i.e. no weapon held), then reads joy1_newly_pressed. Sixth call of actor_behavior_type01_player.
+fn 0x151a player_collide_and_scroll # ctx
+cmt 0x151a The largest single routine the wall hid: entered only from actor_behavior_type01_player, and only when state_flag_a32 is clear. Opens by turning the player's x,y into a map cell (`move.w (a0),d0 / move.w 2(a0),d1 / subi.w #16,d1`). Reaches scene_spawn_from_script, the speech-script step, resource_descriptor_fetch and actor_alloc_slot_high. Its body swallows the `O` run $1712..$17f4.
+fn 0x19ac scene_spawn_from_script # ctx
+cmt 0x19ac Reached from player_pending_event_gate. Takes record_ptr_10420 and scene_marker_cell_ptr ($e02e), stamps actor_free_marker into the remaining slots, then runs a BYTE-CODED script from a1: one byte indexes spawn_script_gate_table ($e42e) through `jsr (a0)`, the next indexes speech_script_table ($1015c) and posts its first byte as text_request with an INFINITE text_lifetime_request ($ffff). Covers $19ac..$1cc0 -- almost the whole of gap 10.
+fn 0x1b46 speech_script_step # ctx
+cmt 0x1b46 `move.b (a5),d0 / clr.b (a5) / cmp.b 1(a5),d0` -- advances the speech cursor a5 holds and is called from scene_spawn_from_script and from the $151a tree.
+fn 0x1cc0 resource_descriptor_fetch # ctx
+cmt 0x1cc0 `mulu.w #20,d7 / lea $248d8,a0 / lea 0(a0,d7.w),a1 / movea.l (a1),a0` -- the same 20-byte resource_table stride the sprite pass uses, so d7 is a resource index and a0 comes back pointing at the payload. Two `bsr.w` sites, $1cac and $1cb8, both inside the $19ac tree.
+fn 0x1d1e glyph_stamp_8_rows # ctx
+cmt 0x1d1e `lea 2(a0),a0 / move.w #7,d7 / move.b (a1)+,(a0) / addq.l #2,a0` x8 -- writes eight source bytes into a bitplane-interleaved destination two bytes apart, i.e. one 8-row glyph column.
+fn 0x1f54 player_stage_transition # ctx
+cmt 0x1f54 Last call of actor_behavior_type01_player. Gated on $b10 and $b0e. Body reaches $205c and covers $1f54..$21e4; the 466 bytes above it ($21e4..$23b6) are word DATA (sprite ids $0104..$011b and a flag word at $21e4 that $205e tests), not code -- architecture.md calls that range CODE and it is not.
+fn 0x205c stub_rts_205c
+cmt 0x205c A bare `rts`, two bytes, called from player_stage_transition -- the call site is a no-op as shipped. Named only so the byte pair is attributed.
+
+fn 0x2f22 actor_step_facing
+cmt 0x2f22 `btst #3,8(a0)` then actor_step_right_against_map or actor_step_left_against_map -- bit 3 of 8(a0) is the facing bit the whole tier uses. Shared by behaviour slots 9 and 24.
+fn 0x2f46 actor_random_turn # ctx
+cmt 0x2f46 Gated on bit 2 of 8(a0), then rng_next ($68c6) and `btst #2,d0` -- a coin-flip turn. Called from behaviour slot 9.
+fn 0x2f86 actor_tick_timer30 # ctx
+cmt 0x2f86 Counts 30(a0) down and reloads it with 50 at zero. Shared by behaviour slots 12 and 26.
+fn 0x2fce actor_face_and_step # ctx
+cmt 0x2fce actor_set_side_flag ($67c2) then a step in the facing direction. Shared by behaviour slots 12 and 26.
+fn 0x2fe8 actor_face_and_step4 # ctx
+cmt 0x2fe8 As actor_face_and_step but with d7 = 4 (four pixels). Shared by behaviour slots 9, 12, 22 and 26.
+fn 0x3006 actor_pick_facing_list # ctx
+cmt 0x3006 `btst #3,8(a0)` selects (a1) or 4(a1) -- a two-entry left/right pointer pair the caller supplies. Shared by six behaviour slots.
+fn 0x4fea actor_select_sprite_by_flag # ctx
+cmt 0x4fea Picks one of three sprite ids into 6(a0) from bits 2 and 0 of 8(a0). Shared by behaviour slots 31 and 38.
+fn 0x517a hud_award_from_record_10424 # ctx
+cmt 0x517a Reads 12(record_ptr_10424), calls $51ac, then $b562 (an unnamed routine two entries below bcd_add_score_bd70, also called by behaviour slots 28 and 38) and hud_write_bcd_word_a2ad. TWO callers, behaviour slots 31 and 32.
+fn 0x51d8 hud_write_bcd_word_a2ad # ctx
+cmt 0x51d8 Unpacks a packed-BCD word in d0 into four ASCII digits at $a2ad by `andi.w #$f / addi.w #$30` and `ror.w #4,d0`.
+fn 0x539e scene_copy_record_fields # ctx
+cmt 0x539e Copies 20(record_ptr_10420) and four following longwords through a2. Called from player_pending_event_gate.
+fn 0x5a3c actor_advance_anim16 # ctx
+cmt 0x5a3c `move.w (a1),6(a0) / addi.b #2,d0 / andi.b #$f,d0 / move.b d0,18(a0)` -- the 16-byte-wrap animation step, the shorter sibling of actor_vanish_anim_step's $1f wrap.
+fn 0x6528 actor_spawn_from_6586_table # ctx
+cmt 0x6528 `movem.l d2-a6,-(sp) / asl.w #5,d4 / lea $6586,a1 / lea 0(a1,d4.w),a1` -- a 32-byte-stride table at $6586 indexed by d4. TWO callers, behaviour slots 21 and 45.
+fn 0x6786 sound_request_9
+cmt 0x6786 `move.w #9,d0 / clr.w d1 / lea $17adc,a1 / jmp 56(a1)` -- a tail jump into the sound driver's vector table, request 9. Five behaviour slots call it.
+fn 0x6796 sound_request_8_and_face # ctx
+cmt 0x6796 Sound request 8 through the same vector, then followed_actor_record and a facing update. ELEVEN `bsr.w` sites, in behaviour slots 39..45, 51..53 and 57; body $6796..$67c2, which swallows the `O` run at $6796.
+fn 0x6840 actor_face_followed # ctx
+cmt 0x6840 Compares (a0) with the followed record's x and sets the facing bit accordingly. Called from behaviour slot 10.
+fn 0x6872 actor_pick_sprite_5160 # ctx
+cmt 0x6872 Selects a sprite id from the table at $5160 using bit 2 of 8(a0) and 30(a0). Called from behaviour slots 28 and 38.
+fn 0x6938 hud_write_bcd_long_a4be # ctx
+cmt 0x6938 `lea $a4be,a5 / swap d0 / move.w #5,d7` then a six-digit BCD unpack -- the long-word sibling of hud_write_bcd_word_a2ad. ONE caller, behaviour slot 38, on the scored-pickup arm.
+fn 0x6d5a actor_sprite_from_6ed8 # ctx
+cmt 0x6d5a `move.w 14(a0),d0 / lsl.w #3,d0 / lea $6ed8,a2` -- an 8-byte-stride sprite table indexed by 14(a0). Shared by behaviour slots 54, 55 and 56.
+fn 0x6d70 actor_followed_y_within # ctx
+cmt 0x6d70 The vertical sibling of actor_followed_x_within ($67f8): 2(a1) - (2(a0) - 16). Shared by behaviour slots 54, 55 and 56.
+fn 0x6dd8 actor_followed_x_in_band # ctx
+cmt 0x6dd8 Tests the followed record's x against (a0) - 4(a2), a band whose width the caller supplies in a2. Shared by behaviour slots 54, 55 and 56.
+fn 0x6e8c actor_map_probe_23494 # ctx
+cmt 0x6e8c `lea $23494,a5 / move.w (a5),d1 / move.w (a1),d0 / lsr.w #4,d0` -- turns the followed record's x into a map column and probes $23494. Shared by behaviour slots 54 and 56.
+fn 0x701c actor_face_followed_step # ctx
+cmt 0x701c followed_actor_record, set bit 3 of 8(a0), then compare and step. Called from behaviour slot 7.
+
+# --- the swoop/dive state machine behind behaviour slot 7 --------------------
+var 0x7490 actor_swoop_state_table
+cmt 0x7490 FOUR longwords, $7490..$749f -- $72c2, $7328, $7366, $739e -- indexed by the state byte 22(a0) at $712e/$7130 (`lsl.w #2 / lea $7490,a1 / movea.l 0(a1,d0.w),a1 / jsr (a1)`) inside behaviour slot 7's body. ONE reference in the image. Nothing bounds the index.
+fn 0x72c2 actor_swoop_state0_acquire
+cmt 0x72c2 State 0. Requires |x - followed x| <= 64 and 0 <= followed y - y; a gap over 64 takes the fixed path at $745e, otherwise `(d0-8) >> 4` picks one of the four paths in actor_swoop_path_table. Stores the chosen path as an OFFSET from $73de in 24(a0), the launch y in 26(a0), and 22(a0) := 1.
+fn 0x7328 actor_swoop_state1_run_path
+cmt 0x7328 State 1. Walks the path a word pair at a time from `$73de + 24(a0)`: a negative first word ends the path and sets 22(a0) := 2, otherwise dx is added to or subtracted from (a0) by the facing bit and dy is added to 2(a0). The cursor is written back as an offset.
+fn 0x7366 actor_swoop_state2_home_x
+cmt 0x7366 State 2. Moves 4 pixels per frame toward the followed record's x and, on arrival, does `bchg #3,8(a0)` TWICE -- a deliberate no-op pair that leaves the facing bit unchanged -- then 22(a0) := 3.
+fn 0x739e actor_swoop_state3_descend
+cmt 0x739e State 3. Steps 2 pixels in the facing direction and 2 pixels up per frame until 2(a0) passes the launch y saved in 26(a0), then clears 22(a0) back to state 0.
+var 0x73ce actor_swoop_path_table
+cmt 0x73ce FOUR longwords, $73ce..$73dd -- $73de, $73f8, $7412, $742c -- read by actor_swoop_state0_acquire and immediately turned into an offset by `suba.l #$73de,a1`, so the table and its payload are one blob. ONE reference in the image.
+var 0x73de actor_swoop_paths
+cmt 0x73de The dx,dy word pairs actor_swoop_state1_run_path walks, $73de..$748f, four paths plus the fixed one at $745e, each terminated by a negative first word. NOT code -- the 608 bytes $72c2..$7522 that the coverage scan calls a hole are these four state routines ($72c2..$73cd) and this data.
+
+# --- the sprite copy-row-unrolled family behind sprites_cru_install ----------
+var 0xe91c sprite_cru_copy_table
+cmt 0xe91c FOUR longwords, $e91c..$e92b -- $e92c, $e938, $e948, $e95e -- indexed by 4(a5) at $e8f0 inside sprites_cru_install (`lea $e91c,a1 / lsl.w #2,d0 / movea.l 0(a1,d0.w),a1 / jsr (a1)`). ONE reference in the image, and a second `lea (d,PC)`-class dispatch Ghidra never followed.
+fn 0xe92c sprite_cru_copy_5w
+cmt 0xe92c `move.w (a0)+,(a3)+ / move.l (a0)+,(a3)+ x2 / dbf` -- 10 bytes (5 words) per row. Body $e92c..$e938.
+fn 0xe938 sprite_cru_copy_10w
+cmt 0xe938 Five `move.l (a0)+,(a3)+` per row -- 20 bytes (10 words). Body $e938..$e948.
+fn 0xe948 sprite_cru_copy_15w
+cmt 0xe948 `move.w` plus seven `move.l` per row -- 30 bytes (15 words). Body $e948..$e95e.
+fn 0xe95e sprite_cru_copy_20w
+cmt 0xe95e Ten `move.l (a0)+,(a3)+` per row -- 40 bytes (20 words). Body $e95e..$e978, and everything above it up to copylock_entry ($e978..$ecca, 850 bytes) is sprite BITMAP DATA, not code: architecture.md's region table calls that range CODE and it is not.
+
+# --- the byte-code gate table scene_spawn_from_script dispatches through -----
+var 0xe42e spawn_script_gate_table
+cmt 0xe42e FOUR longwords, $e42e..$e43d. Slot 0 is never read (the caller's `beq` skips index 0) and holds $02140202, which is not an address; slots 1..3 are $e43e, $e456, $e46c. ONE reference: `lea $e42e,a0 / movea.l 0(a0,d0.w),a0 / jsr (a0)` at $1a70 inside scene_spawn_from_script, with d0 a byte from the script stream scaled by 4.
+fn 0xe43e spawn_gate_unless_bbc8_eq1
+cmt 0xe43e If hud_slot_bbc8 != 1, rewrite the pending spawn record a1 points at as `(a1) := 7` and `1(a1) := 0` -- i.e. veto the scripted spawn and substitute type 7. Ends at the shared `rts` at $e454.
+fn 0xe456 spawn_gate_unless_bbc8_eq3
+cmt 0xe456 The same veto against hud_slot_bbc8 == 3.
+fn 0xe46c spawn_gate_unless_bbc8_eq4
+cmt 0xe46c The same veto against hud_slot_bbc8 == 4.
+
+# --- the pickup effect table behind behaviour slot 38 -----------------------
+var 0x105ac pickup_effect_table
+cmt 0x105ac FOURTEEN longwords, $105ac..$105e3, the SIBLING of effect_handler_table ($1023a) and bounded the same way -- slot 0 holds $105e4, the byte immediately past the table. ONE reference: `move.w 10(a1),d0 / lea $105ac,a1 / add.w d0,d0 / add.w d0,d0 / movea.l 0(a1,d0.w),a1 / jsr (a1)` at $5496 inside actor_behavior_type38_pickup, where a1 was a 16-byte actor_kind_table row. Index unbounded at both ends. Every handler ends by posting a text_request and text_lifetime_request := 50, exactly like effect_handler_table's.
+cmt 0x1044c CORRECTION (batch 28): this plate says "the ONE reference to this address in the image" and "only the first two words of a row are read". BOTH are wrong. There are TWO `lea $1044c` sites -- $6d3e inside actor_respawn_as_new_kind, and $5478 inside actor_behavior_type38_pickup, which was never disassembled when the plate was written. The pickup path reads [4] as a LONGWORD (a packed-BCD score, handed to bcd_add_score_bd70 and hud_write_bcd_long_a4be when nonzero) and [10] as a WORD index into pickup_effect_table. So a row is: [0] type, [2] sprite, [4] score longword, [10] pickup-effect index.
+fn 0x105e4 pickup_effect_none
+cmt 0x105e4 A bare `rts`, slot 0 -- and the byte that bounds pickup_effect_table above.
+fn 0x105e6 pickup_effect_grant_hud_slot_bbc4
+cmt 0x105e6 hud_slot_bbc4 := $01ff, text_request 0.
+fn 0x10600 pickup_effect_grant_hud_slot_bbc2
+cmt 0x10600 hud_slot_bbc2 := $feff, text_request $52.
+fn 0x1061a pickup_effect_grant_helmet
+cmt 0x1061a hud_slot_helmet := $05ff, text_request $58.
+fn 0x10634 pickup_effect_grant_gauntlet
+cmt 0x10634 hud_slot_gauntlet := $02ff, text_request $5c.
+fn 0x1064e pickup_effect_grant_hud_slot_bbc6
+cmt 0x1064e hud_slot_bbc6 := $01ff, text_request $5d.
+fn 0x10668 pickup_effect_append_record_0605
+cmt 0x10668 `addq.l #2,effect_record_write_ptr / movea.l it,a1 / move.w #$0605,(a1)` then text_request $5e -- appends one 16-bit code to effect_record_list. The write_ptr is bumped BEFORE the store, so the list's first slot is never written.
+fn 0x1068a pickup_effect_append_record_0508
+cmt 0x1068a The same append with code $0508, text_request $5f.
+fn 0x106ac pickup_effect_append_record_0705
+cmt 0x106ac The same append with code $0705, text_request $60.
+fn 0x106ce pickup_effect_append_record_0803
+cmt 0x106ce The same append with code $0803, text_request $61.
+fn 0x106f0 pickup_effect_refill_meter
+cmt 0x106f0 panel_frame_delay := $0500 and hud_meter_value := hud_meter_max -- a full refill, no clamp needed. text_request 0.
+fn 0x10714 pickup_effect_add4_meter
+cmt 0x10714 panel_frame_delay := $0500, then hud_meter_value += 4 -- but NOT the same as effect_add4_clamped_b6fa ($10296). Both compute `hud_meter_value + 4` and `bgt hud_meter_max`; $10296 then CLAMPS (`move.w hud_meter_max,hud_meter_value`), this one just SKIPS the store, so a meter within 3 of the maximum stays where it is instead of topping up. text_request 0.
+fn 0x10746 pickup_effect_bump_attack_level
+cmt 0x10746 `cmpi.b #3,$b444 / bgt $10768` then `addq.b #1,$b444` and text_request $63 (" Offensive Power Increased."), and UNCONDITIONALLY scene_exit_request := $ffff at $10768 -- the writer the scene_exit_request plate already names. NOTE the tension: $b444 is named effect_record_list, but here its first BYTE is a 0..3 counter, so either the name is wrong or the list's first byte doubles as the attack level.
+fn 0x10772 pickup_effect_flag_followed_actor
+cmt 0x10772 `jsr followed_actor_record` (encoded `4eb8 67e0`, abs.SHORT), then on the returned record 21(a1) := $ff, bit 6 of 8(a1) and bit 4 of 9(a1) set; text_request $64. The last handler, and the byte past its `rts` is scene_exit_request.

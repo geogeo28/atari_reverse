@@ -1311,6 +1311,344 @@ the `T2`-declaration caveat). This section adds two:
    per-subsystem `CODE bytes` column has to be re-charged against `architecture.md` region by
    region, which is a measurement of its own and not this section's.
 
+## 0k. The coverage-wall yield (2026-08-11, batch 28): one `lea` opens 18,068 bytes
+
+§0j measured the wall and called it "a *reachability* problem (pointer tables, indirect dispatch),
+not an attribution one". Batch 28's coverage scout tested that claim by naming the mechanism, and
+this section measures what naming it bought. **It is the largest single movement in this file's
+history: +123 `F` records, +18,068 bytes, coverage 47.8 % → 80.7 % of believed CODE.** No game code
+changed and no test in `recreate/` moved — `make test` is 3,594 before and after; the edited files
+are `../names.txt` (the scout's 125 `fn`, 8 `var`, 134 `cmt`), `tools/test_hw_portability.py` (five
+literal assertions across two cases) and this section, and `../reapply.sh` + `tools/hw_scan.sh`
+regenerated `../decomp.c`, `../out/hw_scan.tsv` and `../out/reapply.log`. **`subsystems.tsv` is not
+edited** — see stage 2.
+
+**Stage 0, the floor.** The classifier over the **committed** scan reproduces every §0j figure
+byte-for-byte — 284 functions / 26,194 B, runnable **270 / 24,726 = 94.4 %**, false-green
+**20 / 2,224 = 8.5 %**, and the coverage table's 54,854 / 26,194 / 1,782 / 438 / 28,660 / 26,878 —
+so everything below is the re-scan, and nothing else.
+
+### The mechanism, in one instruction
+
+```
+00928  moveq #0,d1 / move.w 4(a0),d1 / lsl.w #2,d1
+00930  lea (0x938,PC,d1.w),a1        <- 43fb 1006, PC-relative INDEXED lea
+00934  movea.l (a1),a1
+00936  jmp (a1)
+```
+
+The base `$938` exists nowhere in the image as an operand — it is the 8-bit displacement of a
+PC-relative **indexed** brief extension word. Ghidra follows a plain `lea abs.l` and does not follow
+this, so `actor_behavior_table` and all 61 of its targets were invisible, and with them everything
+only those targets call. That is one instruction standing between the measurement and a third of
+the program.
+
+### Stage 1 — the yield
+
+`ApplyNames` pushed `../names.txt` (**378** `fn`, 248 `var`, 519 `cmt`, 37 `proto` — up from 253
+`fn`) into the DB and reported `applied 378 functions`; its counter increments only on a non-null
+`Function`, so all 378 landed, and `ExportDecompC` returned `407/407 functions (0 failed)`. **125
+`fn` lines produced 123 new `F` records and 2 renames** — `$8d0 FUN_000008d0 → actor_behavior_pass`
+and `$928 FUN_00000928 → actor_dispatch_behavior`, both already `F` records, neither changing size.
+
+| | before (§0j scan) | after |
+|---|---|---|
+| functions / function bytes | 284 / 26,194 | **407 / 44,262** (+123 / +18,068) |
+| disassembled bytes | 28,414 | **44,516** (+16,102) |
+| code in no function body | 2,220 B in 10 runs | **254 B in 4 runs** (−1,966) |
+| call-graph edges | 269 (382 CALL, 11 JUMP, 45 JUMPIN) | **753 (782 CALL, 130 JUMP, 60 JUMPIN)** |
+| hardware accesses (`H` rows) | 126 | **126 — byte-identical in content, every row** |
+| direct `T0 CLEAN` | 252 / 23,012 B | **375 / 41,080 B** |
+| direct `T2`/`T3`/`T4`/`T6` | 4/800, 16/1,414, 10/788, 2/180 | **unchanged to the byte, all four** |
+| transitive `T0 CLEAN` | 215 / 19,758 B | **301 / 26,434 B** |
+| transitive `T4 HW_READ` | 24 / 1,988 B | **56 / 10,680 B** |
+| transitive `T6 UNMEASURABLE` | 14 / 1,468 B | **18 / 3,154 B** |
+| runnable end-to-end | 270 / 284 fns, 24,726 / 26,194 B, 94.4 % | **389 / 407 fns, 41,108 / 44,262 B, 92.9 %** |
+| false-green risk | 20 / 2,224 B, 8.5 % | **24 / 3,910 B, 8.8 %** |
+| reachable from the roots | 144 / 15,176 B | **144 / 15,176 B — identical, see below** |
+
+**The +18,068 closes exactly:** 16,102 bytes the disassembler had never reached, plus 1,966 that
+were reached but attributed to nothing (the `O` runs). And **not one of the 284 pre-existing
+functions moved** — checked function by function as sets, on all four axes at once (direct tier,
+transitive tier, steering, reachability): **0 of 284**. No `F` record was removed, none was resized,
+so the §0h address-set trap did not recur and there are no individual pre-existing deltas to name.
+
+**The 123 new records, grouped by the mechanism that hid them:**
+
+| group | fns | bytes |
+|---|---:|---:|
+| the 61 `actor_behavior_table` handlers (slots 0..61; slots 0 and 58 share the `rts` at `$a36`) | 61 | **11,546** |
+| the player subtree — slot 1's private tree (`player_*`, `stub_rts_205c`) | 10 | 3,274 |
+| the shared subtree the handlers call (`actor_step_facing`, `actor_vanish_anim_step`, `sound_request_*`, `scene_spawn_from_script`, …) | 27 | 2,398 |
+| the pickup-effect table behind slot 38 (`pickup_effect_table`, `$105ac`) | 14 | 438 |
+| the swoop/dive state machine behind slot 7 (`actor_swoop_state_table`, `$7490`) | 4 | 268 |
+| the sprite copy-row-unrolled family (`sprite_cru_copy_table`, `$e91c`) | 4 | 76 |
+| the byte-code gate table `scene_spawn_from_script` dispatches through (`spawn_script_gate_table`, `$e42e`) | 3 | 68 |
+| **total** | **123** | **18,068** |
+
+**The `O` runs, run for run.** **No new `O` run appeared** and none grew: six of the ten were
+absorbed whole, four were absorbed in part. Note the distinction the `O` record forces — a function
+body is an address SET, so an `F` record can *span* a run while leaving bytes inside it in no body:
+
+| run (before) | bytes | absorbed | left in no body | absorbed by |
+|---|---:|---:|---:|---|
+| `0x3000..0x3e2c` | 430 | 430 | — | `actor_face_and_step4`, `actor_pick_facing_list` |
+| `0x6fc2..0x73ce` | 316 | 316 | — | `actor_behavior_type61`, `actor_face_followed_step` |
+| `0x698a..0x69bc` | 50 | 50 | — | `actor_vanish_anim_step` |
+| `0x6796..0x67c2` | 44 | 44 | — | `sound_request_8_and_face` |
+| `0xe92c..0xe978` | 76 | 76 | — | the four `sprite_cru_copy_*` |
+| `0x105e4..0x1079a` | 438 | 438 | — | the 14 `pickup_effect_*` — the 438 B §0j found in a region `architecture.md` calls DATA |
+| `0x25a8..0x2736` | 398 | 374 | **24** (`0x25a8..0x25c0`) | `actor_behavior_type03` |
+| `0x5a6e..0x5b3c` | 206 | 202 | **4** (`0x5aae..0x5ab2`) | `actor_behavior_type50`, `actor_behavior_type51` |
+| `0x1712..0x17f4` | 130 | 34 | **96** (`0x1712..0x1772`) | `player_collide_and_scroll` |
+| `0xa84..0xb08` | 132 | 2 | **130** (`0xa84..0xb06`) | `player_meter_empty_check` |
+| **total** | **2,220** | **1,966** | **254** | |
+
+The last two are worth reading rather than skimming: `player_meter_empty_check` is `$a76..$b08` and
+`player_collide_and_scroll` is `$151a..$19ac`, so both **contain** their run's address span, yet 226
+of those 262 bytes are still in no function body. Both bodies are discontiguous — the scout's own
+plate for `$a76` says it "swallows the `O` run `$a84..$b08`", and on the extent it does; on the
+address set it does not. That is the §0h trap in its fourth instance, and **226 of the residual 254
+bytes are it**: those two runs lie wholly inside a function's extent and would vanish from any
+measurement cut against extents rather than address sets. The other 28 B (`0x25a8..0x25c0` and
+`0x5aae..0x5ab2`) are ordinary holes between functions.
+
+### Every new function that is not runnable, or is false-green — named with its steer
+
+The false-green count moves for the first time since §0i, and it moves **only** because of new
+functions: **+4 fns / +1,686 B**, all four not-runnable and false-green together, all four for the
+same reason.
+
+| function | bytes | why |
+|---|---:|---|
+| `$a38 actor_behavior_type01_player` | 62 | slot 1 of the table — the player |
+| `$b1a player_pending_event_gate` | 440 | |
+| `$151a player_collide_and_scroll` | 1,066 | the largest single routine the wall hid |
+| `$6f9e actor_behavior_type61` | 118 | |
+
+All four reach `show_data_disk_prompt → load_resource_by_index → copylock_entry` (direct `T6`,
+hence not runnable) and, on the same edge, `→ disk_load_file → FUN_00005fc4 → FUN_00006118 →
+fdc_wait_irq_bounded` (the FDC status poll, the live `T4-STEER` §5 already names). **Not one of the
+123 has a hardware access of its own** — the `H` table is byte-identical, all 126 rows — so every
+tier any of them carries is inherited.
+
+**The transitive `T4` explosion is `rng_next`, and it does not steer.** 24 → 56 functions and
+1,988 → 10,680 B looks alarming and is not. Of the 32 new `T4` functions, **29 reach `$68c6
+rng_next`** (`move.b $ff8209,d0` — the shifter video-counter low byte as an entropy source) and **4
+reach `$51ac rng_1_to_4_masked`** (`$ff8209` and `$ff8207`); one reaches both, so the two account
+for all 32. Both are `T4-DATA` — the scan records `steers=False` on every one of those reads — so
+they cost fidelity, not a false green. That is why +32 transitive `T4` bought only +4 false-green.
+
+### The finding this pass did not expect: the tier is unreachable from the roots
+
+**`reachable from the roots` did not move at all — 144 functions / 15,176 B, identical.** `$928
+actor_dispatch_behavior` has **zero callees in the scan**: the `jmp (a1)` is exactly as opaque to
+Ghidra's reference model as the `lea` was to its disassembler. `actor_behavior_pass → 
+actor_dispatch_behavior → ∅`, so all 123 new functions are a call-graph **island**, and the
+restricted table below now understates the running game by ~17 KB.
+
+Their own tiers are unaffected — each is the root of its own subtree, and a missing edge *into* a
+function cannot change what it or its callees touch. What the missing edge changes is the
+restricted table and the roots' witness paths. Modelled as a sensitivity, edges added by hand and
+**not committed**, in two steps so the second is separable from the first:
+
+| | as scanned | +61 dispatch edges | +the four smaller tables |
+|---|---|---|---|
+| reachable from the roots | 144 / 15,176 B | **267 / 33,874 B** | **289 / 34,656 B** |
+| runnable (whole program) | 389 / 41,108 B | 386 / 40,994 B | 386 / 40,994 B |
+| false-green | 24 / 3,910 B | 27 / 4,024 B | 27 / 4,024 B |
+| runnable **and** reachable | 134 / 13,884 B | **250 / 30,782 B** | **272 / 31,564 B** |
+
+Column 2 adds only `$928 → each of the 61 handlers`. Column 3 additionally resolves
+`actor_swoop_state_table` (`$7060 →` 4), `pickup_effect_table` (`$5408 →` 14) and
+`sprite_cru_copy_table` (4) — 22 functions / 782 B. Resolving `spawn_script_gate_table` adds nothing,
+because its dispatcher `scene_spawn_from_script` is itself still unreachable.
+
+The three functions that move are exactly the dispatch chain — `$882 FUN_00000882`, `$8d0
+actor_behavior_pass`, `$928 actor_dispatch_behavior` (114 B) — which inherit the player slot's `T6`
+and its FDC steer the moment the edge exists; that is invariant across both columns, and **nothing
+else in the program changes**. The honest reading: the whole-program tiers in this section are sound,
+the *restricted* table is not, and closing that gap is a scan capability (`--extra-edges`, or a
+Ghidra reference the loader plants), queued below.
+
+### Stage 1 sanity — the verified column against `STATUS.md`'s 176
+
+**Unchanged, and unchanged by construction.** §0j's reconciliation — **203 `F` records / 21,026 B
+over 176 reconstructions**, with its four counting-rule rows (`rad.c` 1→3, `snd_sfx_tick` 1→4, the
+pattern handlers 1→23, `snd_music_tick_body` +2 B) — is **carried forward, not re-derived here**: it
+was obtained by expanding `STATUS.md`'s four family legends by hand, which a parse of the table does
+not reproduce. What this pass verifies is the *invariant* that lets it be carried forward, and that
+is checked mechanically: no `F` record was removed or resized (0 of 284), the only two renamed
+(`$8d0`, `$928`) appear nowhere in `STATUS.md`, and every `$addr` `STATUS.md`'s table names that was
+an `F` record before is one now at the same size and the same name — 0 changed. A pass that needs
+the 203 itself should re-derive it rather than trust this sentence.
+
+`STATUS.md`'s headline now reads `Verified: 176/?`, which closes §0j's queued item 4a — the
+off-by-one against its own table is gone. The handler row's title (item 4b) is not this section's
+to check.
+
+### The coverage wall, re-measured — and the denominator caveat
+
+Same method as §0j, same `architecture.md` region table, so the before column below reproduces its
+published figures byte-for-byte:
+
+| | §0j | **§0k** |
+|---|---:|---:|
+| total believed CODE (`notes/architecture.md`, 12 CODE rows) | 54,854 | 54,854 |
+| in an `F` record | 26,194 (**47.8 %**) | **44,262 (80.7 %)** |
+| disassembled but in no `F` record | 2,220 (10 runs) | **254 (4 runs)** |
+| ⤷ inside a region it calls CODE | 1,782 (3.2 %) | **254 (0.5 %)** |
+| ⤷ inside a region it calls DATA | 438 | **0** |
+| **CODE in no function body at all** | **28,660 (52.2 %)** | **10,592 (19.3 %)** |
+| ⤷ reached, attributed to nothing | 1,782 | 254 |
+| ⤷ **never reached as code at all** | **26,878 (49.0 %)** | **10,338 (18.8 %)** |
+| gaps inside CODE, cut against merged extents | 58 gaps / 28,588 B | **95 gaps / 10,582 B** |
+
+**Against the scout's forecast — it under-promised, slightly.** It expected "~16,000 gap bytes + the
+1,782 `O`-run bytes" ≈ 17,800; the measurement is **18,068**, which splits as 16,540 off the
+never-reached line and 1,528 of the CODE `O`-run bytes. (Those two account for the whole `F`-byte
+gain under this method: 28,660 − 10,592 = 18,068. The remaining 438 `O`-run bytes — the
+`pickup_effect_*` handlers, which sit in a row `architecture.md` calls DATA — are *inside* the
+16,540 rather than additional to it, because this method charges every `F` byte to the CODE
+denominator. That is the same simplification the caveat below concedes, seen from the other side.)
+
+> **The denominator is soft, and it is soft in the direction that flatters this table.**
+> `architecture.md`'s region table over-claims CODE, and the scout's own reads say by how much in at
+> least three places it names explicitly: `$21e4..$23b6` (466 B) is a sprite-id word table,
+> `$e978..$ecca` (850 B) is sprite bitmap data, and `$73ce..$7522` (340 B) is
+> `actor_swoop_path_table` and its payload — all three sit in rows the table calls CODE. That is
+> 1,656 B of the 10,582 B residue already known not to be code, and the residue map below puts the
+> confirmed-DATA total far higher. **Read `80.7 %` as a lower bound on coverage of the real code and
+> `10,592` as an upper bound on the wall.** `architecture.md` is NOT edited here — the
+> re-classification is a registered finding for a pass of its own, and it is the same measurement
+> §0j's queued item 5 needs.
+>
+> A second, smaller caveat in the other direction: this method counts every `F` byte against the
+> CODE denominator, and 506 B of the merged function extent now falls in rows `architecture.md`
+> calls DATA (the 14 `pickup_effect_*` handlers at `$105e4..$1079a`, plus 68 B carried from §0j).
+> Intersecting extents with the CODE regions properly gives coverage 44,272 / 54,854 = **80.7 %**
+> and a wall of **10,582 B** — the same numbers to a tenth, which is why the simpler method is kept
+> for continuity with §0j.
+
+### The residue map — what the remaining 10,582 bytes are
+
+Only **226 bytes, 2.1 %, are genuinely unaccounted for.** Every other gap is either unreadable by
+construction, or has a `var` from `../names.txt` sitting inside it naming what the bytes are:
+
+| what | gaps | bytes | % of residue |
+|---|---:|---:|---:|
+| Copylock ciphertext `0xee68..0xf542` — unreadable by construction, not a campaign target | 1 | 1,754 | 16.6 % |
+| **confirmed DATA** — a named `var` inside the gap | 44 | **4,734** | 44.7 % |
+| inter-handler holes in the behaviour tier `$2462..$7522` — the handlers' own inline frame-word tables | 41 | 3,868 | 36.6 % |
+| **still unknown** | 9 | **226** | **2.1 %** |
+
+The largest confirmed-DATA gaps, each with the `var` that names it: `0xe978..0xecca` 850 B (sprite
+bitmaps), `0x1a830..0x1aaca` 666 B (`$1a830`/`$1a864`/`$1a9d0`, sound tables), `0xe222..0xe43e`
+540 B (`spawn_script_gate_table`), `0x21e4..0x23b6` 466 B (sprite-id words), `0x73ce..0x7522` 340 B
+(`actor_swoop_path_table` + `actor_swoop_paths`), `0xb444..0xb54c` 264 B (`effect_record_list`),
+`0x938..0xa36` 254 B — **`actor_behavior_table` itself**, 62 longwords plus the three
+`state_flag_a30/a32/a34` words, exactly 254 B, bounded above by its own first target.
+
+The third row is the campaign's remaining question and it is a small one: 9 of the 41 holes are
+cited by a handler's own plate as "its own PC-relative frame word table(s) at `$…`" (624 B), and
+`$6586..$6786` (512 B) is the 32-byte-stride table `actor_spawn_from_6586_table` reads. The rest
+are the same shape between consecutive handlers and are almost certainly the same thing, but they
+are **not individually read**, so they are counted as inter-handler holes rather than as confirmed
+DATA. The whole `still unknown` column is nine fragments, the largest 102 B (`0xed9c..0xee02`,
+inside the Copylock's plaintext head).
+
+### Stage 2 — the partition, DECLINED, with the numbers
+
+The new tier landed where §0j predicted: **`game logic` (catch-all) went 20 fns / 2,058 B → 139 fns
+/ 20,050 B**, 45 % of every measured byte in the one row that is not a positive classification. Only
+one other row moved — `boot` +4 fns / +76 B, the `sprite_cru_copy_*` family at `$e92c..$e978`, which
+lands there because its caller `sprites_cru_install` is already inside `0xe87c..0xecba boot`. Every
+other row is byte-identical.
+
+A new `actor (behaviour)` row is the obvious partition and **it is not drawn**, for three measured
+reasons rather than a preference:
+
+1. **No range set is both clean and stable.** Two closure rules were tried, both seeded with
+   `$8d0`, `$928`, the 61 handlers and the targets of the four smaller indirect tables:
+   * **rule A, "reached from the tier, stopping at any function another row owns"** — walk callees
+     but descend only into members of the `game logic` catch-all: **125 fns / 18,046 B**;
+   * **rule B, "private to the tier"** — iterate to a fixpoint, admitting a catch-all function only
+     when *every* one of its callers is already in the tier: **122 fns / 17,756 B**.
+
+   (Neither is the full transitive closure, which is not a candidate: unrestricted it reaches 284
+   fns / 34,546 B, swallowing the whole disk, FDC, RAD, HUD and scroll stack.) Expressing rule A
+   exactly — every range claiming closure members only — takes **13 ranges cut against today's
+   function boundaries**, so any function a later batch names in one of the 41 inter-handler holes
+   silently lands back in the catch-all. Merging them under the file's first-match-wins convention
+   gets to 6 ranges, but the `0x53bc..0x73ce` one then spans **38 foreign functions** — the entire
+   `disk (FAT12 + file load)`, `disk (WD1772 FDC + DMA)` and `resource depack (RAD)` stack — kept
+   out of an "actor" row by nothing but row order. §0j's standard was a range that "claims catch-all
+   members rather than moving any boundary"; this one leans on the boundary instead of respecting it.
+2. **The tier has no principled edge — and the two rules fail differently.** **B is a strict subset
+   of A**: `A \ B` is exactly three functions totalling **290 B** (which closes: 18,046 − 17,756),
+   and `B \ A` is **empty**.
+   * **A over-reaches, by exactly those three.** `$682 joy1_newly_pressed` (18 B — an *input*
+     helper, also called by `scene_run_frame`), `$68c6 rng_next` (108 B, also
+     `stage_random_kind32`/`_kind8`) and `$6bb8 actor_defeat_and_score` (164 B, also
+     `actor_respawn_as_new_kind` and `copylock_key_check`). All three are shared services with named
+     callers outside the tier; a row containing them is wrong. `actor_damage_followed` is **not** one
+     of them — all 37 of its callers are inside the tier, so both rules keep it.
+   * **Neither rule reaches `$19ac scene_spawn_from_script` at all** — 1,014 bytes, the second-largest
+     routine the wall hid. It has **zero callers in the scan**: it is reached only through the same
+     unresolved indirect dispatch this whole section is about, so A never walks to it and B's
+     "every caller already in the tier" is vacuously unsatisfiable. That is not a tie-breaker
+     between the rules; it is the argument for **landing the dispatch edge before drawing any row**,
+     and it is the same defect the reachability sensitivity above measures.
+3. **The player and the monsters are two mechanisms sharing one table.** Slot 1 is 3,336 B reaching
+   the disk stack and the Copylock — all four of this pass's new false-greens; slots 2..61 are
+   11,484 B that touch no hardware at all. Averaging those into one row is precisely the
+   mis-partition §0 and §0e were drawn to undo.
+
+**And there is a concrete reason to wait rather than a vague one:** 0 of the 123 are reachable from
+the roots because the dispatch edge is unresolved. Adding it moves reachability from 144 to 289
+functions and changes three functions' tiers. A partition should be drawn against the graph the
+program actually has, not against an island — so the edge comes first, then the row.
+
+`subsystems.tsv` is therefore **unedited this pass**.
+
+### What is pinned
+
+`tools/test_hw_portability.py` stays at **56 cases**, green. Five literal assertions across two
+cases track the working scan and moved with it, in this commit, per the batch-22b-closed precedent:
+
+* `test_the_committed_scan_reproduces_its_published_figures`: `284 → 407` functions,
+  `26,194 → 44,262` bytes, runnable `(270, 24726) → (389, 41108)`, and — for the first time since
+  §0i — **the false-green pin `(20, 2224) → (24, 3910)`**, with the four functions and the single
+  shared witness path named in the case's comment.
+* `test_the_tool_runs_end_to_end_as_a_script`: `270/284 functions, 24726/26194 bytes = 94.4 %` →
+  `389/407 functions, 41108/44262 bytes = 92.9 %`.
+
+Every other case is untouched and green, **including both `--model` capability cases**, which
+compare function SETS: `psg:read` still buys nothing on top of Phase 6, and the two Phase-7 bytes
+still carry the whole MFP/shifter block capability — across a scan that added 123 functions and
+18,068 bytes. That is the strongest evidence yet for §0i's claim.
+
+A fourth pin was checked and needed no edit: **all 378 `fn` addresses have an `F` record at that
+exact address carrying that exact name**, 0 missing and 0 disagreeing, with no duplicate name and no
+duplicate address in `../names.txt`. `ApplyNames` placed every one of the scout's 125 where the map
+says.
+
+### Still queued (not this pass)
+
+§0i's three items and §0j's item 5 stand (`§6`/`§6.1` re-pricing, `notes/portability_predictions.py`,
+the `T2`-declaration caveat, and `§1`'s stale answer box — whose whole-program half is now
+54,854 / 44,262 / 80.7 %). §0j's item 4a is closed. This section adds three:
+
+6. **The dispatch edge.** `$928`'s `jmp (a1)` and the four smaller `jsr (a1)` tables leave 123
+   functions off the call graph, so the restricted table understates the running game by ~17 KB.
+   Either teach the scan an `--extra-edges` input (the sibling of `--extra-hw`, and the same
+   argument applies: prefer fixing the source) or plant the references in the DB.
+7. **The `actor (behaviour)` partition**, once item 6 lands — with the player split out from the
+   monsters, on the evidence above.
+8. **`architecture.md`'s region table over-claims CODE** by at least 1,656 B that the scout read
+   directly, and the residue map implies more. It is the denominator of every coverage figure in
+   this file.
+
 ## 2. Method, and what it can and cannot see
 
 `tools/ghidra_scripts/HwPortabilityScan.java` reads Ghidra's **reference model**, not a linear
