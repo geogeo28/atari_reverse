@@ -27,6 +27,7 @@
 #include "actor.h"
 #include "behavior.h"
 #include "bus.h"
+#include "input.h"
 #include "machine.h"
 #include "map.h"
 #include "rng.h"
@@ -142,9 +143,10 @@ void actor_spawn_anim_step(uint8_t *image, uint32_t actor) {
 /* --- $928 and $8d0: the dispatch, and the walk that feeds it ------------------------------------ */
 
 /* $a36 — two bytes, and both of the slots that hold it are reconstructed by this doing nothing. */
-void actor_behavior_null(uint8_t *image, uint32_t actor) {
+uint32_t actor_behavior_null(uint8_t *image, uint32_t actor) {
     (void)image;
     (void)actor;
+    return WB_ACTOR_DISPATCH_RAN;
 }
 
 /* THE TARGET IS FETCHED, not transcribed. The original is `movea.l (a1),a1 / jmp (a1)` — it reads
@@ -162,7 +164,7 @@ void actor_behavior_null(uint8_t *image, uint32_t actor) {
  * drives one differential per slot through the arithmetic below. */
 typedef struct {
     uint32_t target;
-    void (*handler)(uint8_t *image, uint32_t actor);
+    uint32_t (*handler)(uint8_t *image, uint32_t actor);
 } BehaviorHandler;
 
 static const BehaviorHandler PORTED_HANDLERS[] = {
@@ -174,9 +176,15 @@ static const BehaviorHandler PORTED_HANDLERS[] = {
     {WB_ACTOR_BEHAVIOR_TYPE06, actor_behavior_type06},
     {WB_ACTOR_BEHAVIOR_TYPE50, actor_behavior_type50},
     {WB_ACTOR_BEHAVIOR_TYPE51, actor_behavior_type51},
+    {WB_ACTOR_BEHAVIOR_TYPE52, actor_behavior_type52},
+    {WB_ACTOR_BEHAVIOR_TYPE53, actor_behavior_type53},
     {WB_ACTOR_BEHAVIOR_TYPE54, actor_behavior_type54},
     {WB_ACTOR_BEHAVIOR_TYPE55, actor_behavior_type55},
     {WB_ACTOR_BEHAVIOR_TYPE56, actor_behavior_type56},
+    {WB_ACTOR_BEHAVIOR_TYPE59, actor_behavior_type59},
+    {WB_ACTOR_BEHAVIOR_TYPE08, actor_behavior_type08},
+    {WB_ACTOR_BEHAVIOR_TYPE60, actor_behavior_type60},
+    {WB_ACTOR_BEHAVIOR_TYPE61, actor_behavior_type61},
 };
 
 static const BehaviorHandler *ported_handler(uint32_t target) {
@@ -201,8 +209,9 @@ uint32_t actor_dispatch_behavior(uint8_t *image, uint32_t actor) {
     ported = ported_handler(target);
     if (ported == NULL)
         return target;
-    ported->handler(image, actor);
-    return WB_ACTOR_DISPATCH_RAN;
+    /* ...and a handler that HAS a reconstruction can still leave one, so its answer is this
+     * routine's answer rather than an assumed WB_ACTOR_DISPATCH_RAN (behavior.h's boundary). */
+    return ported->handler(image, actor);
 }
 
 /* One record of the walk: the free check the ordinary loop and the first two fixed slots share. */
@@ -244,13 +253,14 @@ static uint32_t behavior_pass_fixed_three(uint8_t *image, uint32_t table) {
  * of hanging the suite. The oracle's own instruction cap fires long before, so no differential can
  * tell the two apart.
  *
- * THE PREMISE THE CAP RESTS ON, named because it will expire. "Already read" is only "already read
- * WITH THE SAME ANSWER" while every handler the walk dispatches writes nothing — which is true today
- * because the one reconstructed handler is `actor_behavior_null`. The FIRST ported handler that
- * writes a record makes the loop mutate what it is walking, and the cap stops being a proof of
- * non-termination and becomes a safety bound. That is still the right thing to do (the alternative
- * is hanging), but it is a different claim, and it is why the runaway has a code of its own rather
- * than sharing the dispatcher's refusal. */
+ * THE PREMISE THE CAP RESTED ON HAS EXPIRED, which is recorded rather than papered over. "Already
+ * read" was only "already read WITH THE SAME ANSWER" while every handler the walk dispatched wrote
+ * nothing, and that was true only while `actor_behavior_null` was the sole reconstruction. Batch 30
+ * ported handlers that write records, and batch 31's slot 60 writes WB_ACTOR_TYPE itself — so a
+ * walk can now change WHICH handler a later dispatch of the same record runs. The cap is therefore
+ * a SAFETY BOUND and no longer a proof of non-termination. That is still the right thing to do (the
+ * alternative is hanging), but it is a weaker claim, and it is why the runaway has a code of its own
+ * rather than sharing the dispatcher's refusal. */
 uint32_t actor_behavior_pass(uint8_t *image) {
     uint32_t record = be32(image + WB_ACTOR_TABLE_SELECTED);
 
@@ -876,25 +886,25 @@ static void type02_death_frame(uint8_t *image, uint32_t actor) {
     set_field_b(image, actor, WB_ACTOR_FIELD_18, stepped);
 }
 
-void actor_behavior_type02(uint8_t *image, uint32_t actor) {
+uint32_t actor_behavior_type02(uint8_t *image, uint32_t actor) {
     uint32_t frames;
     uint8_t cursor;
 
     if (spawn_animation_took_the_frame(image, actor))
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)) {
         type02_death_frame(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     }
 
     switch (monster_contact(image, actor)) {
     case MONSTER_TOUCHED_FOLLOWED:
         actor_damage_followed(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     case MONSTER_STRUCK:
         monster_enter_hit_animation(image, actor);
         actor_damage_template_hitpoints(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     case MONSTER_UNTOUCHED:
         break;
     }
@@ -915,6 +925,7 @@ void actor_behavior_type02(uint8_t *image, uint32_t actor) {
     /* The eighteen bytes at $24d4 ARE actor_advance_anim16's, spelt inline rather than called. */
     cursor = field_b(image, actor, WB_ACTOR_FIELD_18);
     actor_advance_anim16(image, actor, addr_add(frames, cursor), cursor);
+    return WB_ACTOR_DISPATCH_RAN;
 }
 
 
@@ -958,26 +969,26 @@ static void type03_death_frame(uint8_t *image, uint32_t actor) {
     set_field_b(image, actor, WB_ACTOR_FIELD_18, stepped);
 }
 
-void actor_behavior_type03(uint8_t *image, uint32_t actor) {
+uint32_t actor_behavior_type03(uint8_t *image, uint32_t actor) {
     uint32_t settle_span, frames, ground = 0, outcome;
     uint8_t timer, cursor;
 
     if (spawn_animation_took_the_frame(image, actor))
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)) {
         type03_death_frame(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     }
 
     switch (monster_contact(image, actor)) {
     case MONSTER_TOUCHED_FOLLOWED:
         flag_flip(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
         actor_damage_followed(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     case MONSTER_STRUCK:
         monster_enter_hit_animation(image, actor);
         actor_damage_template_hitpoints(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     case MONSTER_UNTOUCHED:
         break;
     }
@@ -1006,6 +1017,7 @@ void actor_behavior_type03(uint8_t *image, uint32_t actor) {
      * actor_toggle_side_flag shows in next frame's list and not in this one's. */
     cursor = field_b(image, actor, WB_ACTOR_FIELD_18);
     actor_advance_anim16(image, actor, addr_add(frames, cursor), cursor);
+    return WB_ACTOR_DISPATCH_RAN;
 }
 
 
@@ -1050,22 +1062,22 @@ static void type04_death_frame(uint8_t *image, uint32_t actor) {
     set_field_b(image, actor, WB_ACTOR_FIELD_18, stepped);
 }
 
-void actor_behavior_type04(uint8_t *image, uint32_t actor) {
+uint32_t actor_behavior_type04(uint8_t *image, uint32_t actor) {
     if (spawn_animation_took_the_frame(image, actor))
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)) {
         type04_death_frame(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     }
 
     switch (monster_contact(image, actor)) {
     case MONSTER_TOUCHED_FOLLOWED:
         actor_damage_followed(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     case MONSTER_STRUCK:
         monster_enter_hit_animation(image, actor);
         actor_damage_template_hitpoints(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     case MONSTER_UNTOUCHED:
         break;
     }
@@ -1093,6 +1105,7 @@ void actor_behavior_type04(uint8_t *image, uint32_t actor) {
                                          WB_ACTOR_ANIM32_MASK));
     }
     type04_hover_step(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
 }
 
 
@@ -1132,25 +1145,25 @@ static void type05_death_frame(uint8_t *image, uint32_t actor) {
         step_left(image, actor, WB_ACTOR_TYPE05_DEAD_STEP);
 }
 
-void actor_behavior_type05(uint8_t *image, uint32_t actor) {
+uint32_t actor_behavior_type05(uint8_t *image, uint32_t actor) {
     uint32_t frames, ground = 0, outcome;
 
     if (spawn_animation_took_the_frame(image, actor))
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)) {
         type05_death_frame(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     }
 
     switch (monster_contact(image, actor)) {
     case MONSTER_TOUCHED_FOLLOWED:
         flag_flip(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
         actor_damage_followed(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     case MONSTER_STRUCK:
         monster_enter_hit_animation(image, actor);
         actor_damage_template_hitpoints(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     case MONSTER_UNTOUCHED:
         break;
     }
@@ -1169,6 +1182,7 @@ void actor_behavior_type05(uint8_t *image, uint32_t actor) {
 
     set_field_b(image, actor, WB_ACTOR_FIELD_18,
                 advance_frame_cursor(image, actor, frames, WB_ACTOR_ANIM32_MASK));
+    return WB_ACTOR_DISPATCH_RAN;
 }
 
 
@@ -1265,26 +1279,26 @@ static void type06_death_frame(uint8_t *image, uint32_t actor) {
         actor_defeat_and_score(image, actor);
 }
 
-void actor_behavior_type06(uint8_t *image, uint32_t actor) {
+uint32_t actor_behavior_type06(uint8_t *image, uint32_t actor) {
     uint32_t settle_span;
 
     if (spawn_animation_took_the_frame(image, actor))
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)) {
         type06_death_frame(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     }
 
     switch (monster_contact(image, actor)) {
     case MONSTER_TOUCHED_FOLLOWED:
         flag_flip(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
         actor_damage_followed(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     case MONSTER_STRUCK:
         monster_enter_hit_animation(image, actor);
         actor_set_side_flag(image, actor);
         actor_damage_template_hitpoints(image, actor);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     case MONSTER_UNTOUCHED:
         break;
     }
@@ -1297,7 +1311,7 @@ void actor_behavior_type06(uint8_t *image, uint32_t actor) {
         set_field_b(image, actor, WB_ACTOR_FIELD_30,
                     (uint8_t)(field_b(image, actor, WB_ACTOR_FIELD_30) - 1));
         type06_walk_step(image, actor, settle_span);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     }
 
     if (field_b(image, actor, WB_ACTOR_FIELD_31) == 0) {
@@ -1307,7 +1321,7 @@ void actor_behavior_type06(uint8_t *image, uint32_t actor) {
         if ((int16_t)actor_followed_x_within(image, actor, WB_ACTOR_CHASE_REACH) < 0) {
             type06_restore_flags_and_turn(image, actor);
             type06_walk_step(image, actor, settle_span);
-            return;
+            return WB_ACTOR_DISPATCH_RAN;
         }
         actor_set_side_flag(image, actor);
         actor_start_motion_at_speed(image, actor, WB_ACTOR_TYPE06_CHARGE_SPEED);
@@ -1321,12 +1335,13 @@ void actor_behavior_type06(uint8_t *image, uint32_t actor) {
         set_field_w(image, actor, WB_ACTOR_SPRITE,
                     faces_left(image, actor) ? WB_ACTOR_TYPE06_SPRITE_LEFT
                                              : WB_ACTOR_TYPE06_SPRITE_RIGHT);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     }
 
     type06_throw_shot(image, actor);
     type06_restore_flags_and_turn(image, actor);
     type06_walk_step(image, actor, settle_span);
+    return WB_ACTOR_DISPATCH_RAN;
 }
 
 
@@ -1339,7 +1354,7 @@ void actor_behavior_type06(uint8_t *image, uint32_t actor) {
  * a1 before anything reads it. It is also the only absolute reference to the frame table anywhere
  * in the image, which is what made those two words visible to a scan at all.
  */
-void actor_behavior_type50(uint8_t *image, uint32_t actor) {
+uint32_t actor_behavior_type50(uint8_t *image, uint32_t actor) {
     uint16_t x = (uint16_t)field_w(image, actor, WB_ACTOR_X);
     uint8_t timer;
 
@@ -1354,8 +1369,36 @@ void actor_behavior_type50(uint8_t *image, uint32_t actor) {
     set_field_b(image, actor, WB_ACTOR_FIELD_30, timer);
     if (timer == 0)
         set_field_w(image, actor, WB_ACTOR_X, WB_ACTOR_FREE_MARKER);
+    return WB_ACTOR_DISPATCH_RAN;
 }
 
+
+/* THE CONTACT PAIR ALL THREE SLOTS SPELL IDENTICALLY, written in `spawn_animation_took_the_frame`'s
+ * shape: it answers whether the frame is over. There is no `actor_hit_by_player_shot` in front of it
+ * here, so this is NOT `monster_contact` above — these three slots read only the overlap mask, and
+ * its bit 2 not at all. */
+static int switched_contact_took_the_frame(uint8_t *image, uint32_t actor) {
+    uint32_t overlap = actor_followed_overlap_mask(image, actor);
+
+    /* Bit 0: the record stuns the followed one and switches itself off, through a tail jump. */
+    if (overlap & (1u << WB_ACTOR_OVERLAP_STRIKE_BIT)) {
+        flag_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0);
+        actor_stun_followed(image);
+        return 1;
+    }
+
+    /* Bit 1: it spends WB_ACTOR_CONTACT_DAMAGE_INLINE instead. The record's own
+     * WB_ACTOR_TEMPLATE_SLOT byte is overwritten with that INLINE damage word — the sign bit
+     * actor_damage_followed reads as "the cost is in my low seven bits". */
+    if (overlap & (1u << WB_ACTOR_OVERLAP_BODY_BIT)) {
+        set_field_b(image, actor, WB_ACTOR_TEMPLATE_SLOT, WB_ACTOR_CONTACT_DAMAGE_INLINE);
+        flag_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0);
+        actor_damage_followed(image, actor);
+        set_field_b(image, actor, WB_ACTOR_FIELD_30, WB_ACTOR_ST_BYTE);
+        return 1;
+    }
+    return 0;
+}
 
 /* --- slot 51 ($5ab2): the charger that dies on landing -------------------------------------------
  *
@@ -1363,40 +1406,26 @@ void actor_behavior_type50(uint8_t *image, uint32_t actor) {
  * record walks and tests; every arm that raises it hands the record to the fall below, which frees
  * the slot the moment the record is supported again.
  */
-void actor_behavior_type51(uint8_t *image, uint32_t actor) {
-    uint32_t overlap;
-
+uint32_t actor_behavior_type51(uint8_t *image, uint32_t actor) {
     if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)) {
         actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
         actor_hop_ascend_step(image, actor);
         if (!flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT))
-            return;
+            return WB_ACTOR_DISPATCH_RAN;
         set_field_w(image, actor, WB_ACTOR_X, WB_ACTOR_FREE_MARKER);
         flag_clear(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     }
 
-    overlap = actor_followed_overlap_mask(image, actor);
-    if (overlap & (1u << WB_ACTOR_OVERLAP_STRIKE_BIT)) {
-        flag_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0);
-        actor_stun_followed(image);
-        return;
-    }
-    if (overlap & (1u << WB_ACTOR_OVERLAP_BODY_BIT)) {
-        /* Its own WB_ACTOR_TEMPLATE_SLOT byte is overwritten with an INLINE damage word — the sign
-         * bit actor_damage_followed reads as "the cost is in my low seven bits". */
-        set_field_b(image, actor, WB_ACTOR_TEMPLATE_SLOT, WB_ACTOR_TYPE51_DAMAGE);
-        flag_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0);
-        actor_damage_followed(image, actor);
-        set_field_b(image, actor, WB_ACTOR_FIELD_30, WB_ACTOR_ST_BYTE);
-        return;
-    }
+    if (switched_contact_took_the_frame(image, actor))
+        return WB_ACTOR_DISPATCH_RAN;
 
     set_field_w(image, actor, WB_ACTOR_SPRITE, WB_ACTOR_TYPE51_SPRITE);
     if (step_was_blocked(faces_left(image, actor)
                          ? step_left(image, actor, WB_ACTOR_TYPE51_STEP)
                          : step_right(image, actor, WB_ACTOR_TYPE51_STEP)))
         flag_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0);
+    return WB_ACTOR_DISPATCH_RAN;
 }
 
 
@@ -1466,7 +1495,7 @@ static int is_the_ridden_platform(const uint8_t *image, uint32_t actor) {
 /* $6e1c — the VERTICAL platform. It snaps the rider to its own top every frame rather than letting
  * $6d70 do it, and on the way DOWN it checks the rider against the map: a rider pushed into solid
  * ground is lifted back out and dropped. */
-void actor_behavior_type54(uint8_t *image, uint32_t actor) {
+uint32_t actor_behavior_type54(uint8_t *image, uint32_t actor) {
     uint32_t followed = actor_sprite_from_6ed8(image, actor);
     uint32_t band = sprite_6ed8_row(image, actor);
     uint16_t y = (uint16_t)field_w(image, actor, WB_ACTOR_Y);
@@ -1486,12 +1515,13 @@ void actor_behavior_type54(uint8_t *image, uint32_t actor) {
             actor_platform_release_blocked_rider(image, actor, followed);
     }
     platform_travel_step(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
 }
 
 /* $6ef4 — the HORIZONTAL one: the same body over the x word, carrying the rider sideways by the
  * same two pixels instead of snapping it, and with no map check at all. `tst.w $6ef0.w` here is an
  * absolute-SHORT read of the word slot 54 reads absolute-long. */
-void actor_behavior_type55(uint8_t *image, uint32_t actor) {
+uint32_t actor_behavior_type55(uint8_t *image, uint32_t actor) {
     uint32_t followed = actor_sprite_from_6ed8(image, actor);
     uint32_t band = sprite_6ed8_row(image, actor);
     uint16_t x = (uint16_t)field_w(image, actor, WB_ACTOR_X);
@@ -1511,12 +1541,13 @@ void actor_behavior_type55(uint8_t *image, uint32_t actor) {
         actor_platform_release_check(image, actor, followed, band);
     }
     platform_travel_step(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
 }
 
 /* $6f3e — the SINKING one. It has no direction bit and no limit: WB_ACTOR_FIELD_24 counts the
  * frames it has been stood on, one per two pixels down, and it rises back a frame at a time the
  * moment nothing is riding it. */
-void actor_behavior_type56(uint8_t *image, uint32_t actor) {
+uint32_t actor_behavior_type56(uint8_t *image, uint32_t actor) {
     uint32_t followed = actor_sprite_from_6ed8(image, actor);
     uint32_t band = sprite_6ed8_row(image, actor);
 
@@ -1530,11 +1561,11 @@ void actor_behavior_type56(uint8_t *image, uint32_t actor) {
                                    - WB_ACTOR_PLATFORM_SINK_TICK));
         }
         actor_platform_carry_followed(image, actor, followed, band);
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
     }
 
     if (!is_the_ridden_platform(image, actor))
-        return;
+        return WB_ACTOR_DISPATCH_RAN;
 
     set_field_w(image, followed, WB_ACTOR_Y,
                 (uint16_t)((uint16_t)field_w(image, followed, WB_ACTOR_Y)
@@ -1547,4 +1578,246 @@ void actor_behavior_type56(uint8_t *image, uint32_t actor) {
                            + WB_ACTOR_PLATFORM_SINK_TICK));
     actor_platform_release_blocked_rider(image, actor, followed);
     actor_platform_release_check(image, actor, followed, band);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- slots 52 and 53 ($5b3c, $5be4): slot 51's two neighbours -----------------------------------
+ *
+ * ONE GRAMMAR WITH SLOT 51 AND THREE ENDINGS. All three open on bit 0 of WB_ACTOR_FLAGS2 as a
+ * ONE-WAY SWITCH, then ask actor_followed_overlap_mask the same two questions in the same order —
+ * a STRIKE tail-jumps into actor_stun_followed, a BODY overlap writes the inline damage byte, calls
+ * actor_damage_followed and stamps WB_ACTOR_ST_BYTE — and what differs is entirely what happens
+ * afterwards. Slot 51 falls until it is supported and then frees itself; slot 52 walks and animates
+ * every frame and frees itself the moment it IS supported; slot 53 neither falls nor animates but
+ * slides a fixed step and counts a timer down to its own end.
+ *
+ * THE SWITCH ARM IS THE FREE ARM in both of these, which is where they part from slot 51: `btst #0,
+ * 9(a0) / bne` jumps straight to the exit rather than to a fall, so a record that has raised the
+ * bit gives its slot back on the NEXT frame with nothing else run. The contact pair itself is
+ * `switched_contact_took_the_frame`, which sits above slot 51 because that slot calls it first.
+ */
+
+/* $5bc8 / $5c5a — the exit both entrances of EITHER handler reach: the switch lowered and the slot
+ * handed back. The two are the same two instructions in the same order; slot 53's has one more
+ * below them, which is why that one wraps this rather than repeating it. */
+static void switched_free_slot(uint8_t *image, uint32_t actor) {
+    flag_clear(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0);
+    set_field_w(image, actor, WB_ACTOR_X, WB_ACTOR_FREE_MARKER);
+}
+
+
+/* $5b3c — the walker that dies on LANDING. Its step is not a constant: `moveq #0,d7 / move.b
+ * 30(a0),d7` makes WB_ACTOR_FIELD_30 the pixel count, so the same byte the damage arm stamps
+ * WB_ACTOR_ST_BYTE into is what a live record walks by. The probe's blocked/clear answer is
+ * discarded — nothing follows the `bsr` — so a wall only stops the record by leaving its x alone. */
+uint32_t actor_behavior_type52(uint8_t *image, uint32_t actor) {
+    uint32_t step;
+
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)) {
+        switched_free_slot(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    if (switched_contact_took_the_frame(image, actor))
+        return WB_ACTOR_DISPATCH_RAN;
+
+    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_hop_ascend_step(image, actor);
+
+    step = field_b(image, actor, WB_ACTOR_FIELD_30);
+    if (faces_left(image, actor))
+        step_left(image, actor, step);
+    else
+        step_right(image, actor, step);
+
+    /* The cursor is masked AFTER the read, so the frame comes out of a 256-byte window —
+     * WB_ACTOR_TYPE52_FRAMES..+$ff, wholly inside the image — and only the STORE is bounded to the
+     * eight words. `advance_frame_cursor` reads it through bus.h like every other computed
+     * address. */
+    set_field_b(image, actor, WB_ACTOR_FIELD_18,
+                advance_frame_cursor(image, actor, WB_ACTOR_TYPE52_FRAMES,
+                                     WB_ACTOR_TYPE52_MASK));
+
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT))
+        switched_free_slot(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* $d78 — TWELVE BYTES, and the one player-tier routine a monster slot reaches: `tst.w $1516 /
+ * beq.w $e06 / rts`. While WB_TILE_33_MODE is set it writes nothing at all and returns; while it is
+ * clear the original BRANCHES into WB_PLAYER_STEP_BODY, the body actor_behavior_type01_player's own
+ * $d84 falls into, which this port does not have — so that arm is a boundary and not a result.
+ *
+ * Its other caller is the player handler, which is unported; slot 53 below is the reader that made
+ * these three instructions worth reconstructing. */
+uint32_t player_gate_on_1516(const uint8_t *image) {
+    if (be16(image + WB_TILE_33_MODE) != 0)
+        return WB_ACTOR_DISPATCH_RAN;
+    return WB_PLAYER_STEP_BODY;
+}
+
+/* $5c5a — slot 53's exit, which is slot 52's plus the live flag lowered. */
+static void type53_free_slot(uint8_t *image, uint32_t actor) {
+    switched_free_slot(image, actor);
+    wr16(image + WB_ACTOR_TYPE53_ALIVE, 0);
+}
+
+/* $5be4 — the slider, and the only handler in the tier that publishes a GLOBAL. Its first
+ * instruction raises WB_ACTOR_TYPE53_ALIVE unconditionally — every frame, on every arm — and its
+ * exit lowers it, so the word is "a type-53 record ran this frame and has not finished"; the one
+ * reader is the `tst.w` at $454c, inside a handler this port does not have.
+ *
+ * It takes no map probe: actor_fall_and_settle is the only thing it asks about the ground, and its
+ * step is an unconditional WB_ACTOR_TYPE53_STEP added straight to the x word. */
+uint32_t actor_behavior_type53(uint8_t *image, uint32_t actor) {
+    uint32_t boundary;
+    uint8_t timer;
+    uint16_t x;
+
+    wr16(image + WB_ACTOR_TYPE53_ALIVE, WB_ACTOR_TYPE53_ALIVE_SET);
+
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)) {
+        type53_free_slot(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    if (switched_contact_took_the_frame(image, actor))
+        return WB_ACTOR_DISPATCH_RAN;
+
+    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    boundary = player_gate_on_1516(image);
+    if (boundary != WB_ACTOR_DISPATCH_RAN)
+        return boundary;
+
+    x = (uint16_t)field_w(image, actor, WB_ACTOR_X);
+    set_field_w(image, actor, WB_ACTOR_X,
+                (uint16_t)(faces_left(image, actor) ? x - WB_ACTOR_TYPE53_STEP
+                                                    : x + WB_ACTOR_TYPE53_STEP));
+    set_field_w(image, actor, WB_ACTOR_SPRITE, WB_ACTOR_TYPE53_SPRITE);
+
+    timer = field_b(image, actor, WB_ACTOR_FIELD_30);
+    if (timer == 0) {
+        type53_free_slot(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+    set_field_b(image, actor, WB_ACTOR_FIELD_30, (uint8_t)(timer - 1));
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- slot 60 ($6f7e): the record that turns into a moving platform ------------------------------
+ *
+ * THIRTY BYTES AND NO MOVEMENT AT ALL. It publishes WB_ACTOR_SPRITE_NONE every frame — so a type-60
+ * record is invisible while it waits — and watches one word: WB_STATE_WORD_6F9C, which
+ * set_state_6f9c_ffff ($10232, src/effects.c) raises and this is the only thing that lowers. On the
+ * frame it finds it raised it consumes it and writes WB_ACTOR_TYPE60_BECOMES into its own
+ * WB_ACTOR_TYPE, i.e. RETYPES ITSELF into slot 54 — so the next dispatch of this record runs
+ * actor_behavior_type54 and it becomes the vertical moving platform.
+ *
+ * That closes batch 29's open question about the $36: it is a behaviour slot number, not an object
+ * id, and test/test_behavior.py pins it against the image's own table rather than against this
+ * paragraph. */
+uint32_t actor_behavior_type60(uint8_t *image, uint32_t actor) {
+    set_field_w(image, actor, WB_ACTOR_SPRITE, WB_ACTOR_SPRITE_NONE);
+    if (be16(image + WB_STATE_WORD_6F9C) == 0)
+        return WB_ACTOR_DISPATCH_RAN;
+
+    wr16(image + WB_STATE_WORD_6F9C, 0);
+    set_field_w(image, actor, WB_ACTOR_TYPE, WB_ACTOR_TYPE60_BECOMES);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- slot 61 ($6f9e): the four-message sequence, and the way out of the game --------------------
+ *
+ * NOT A CREATURE. It plays song WB_ACTOR_TYPE61_SONG once, posts the four highest WB_TEXT_REQUEST
+ * ids in the game one at a time as the FIRE button is pressed, and when the table runs out resets
+ * a7 to the top of a 512 KB ST and `jmp`s to show_data_disk_prompt — a restart, not a return. Its
+ * other caller is the copylock failure path's `jsr $6f9e.w` at $f56e (../names.txt), which is what
+ * says what the four messages are for.
+ *
+ * The record's WB_ACTOR_FIELD_31 is the cursor and WB_ACTOR_TYPE61_ACTIVE the "the sequence is
+ * running" byte. Nothing masks the cursor: `moveq #0,d0 / move.b 31(a0),d0 / lea 0(a1,d0.w),a1`
+ * reads WB_ACTOR_TYPE61_MESSAGES + 0..255, a window of $7016..$7115 that stays inside the image but
+ * leaves the five-byte table after four presses, so a record entered with a stale cursor posts
+ * whatever byte of the code image it lands on. The game's own flow cannot: the opening frame writes
+ * the cursor 0. */
+
+/* $6fc2 — the four writes BOTH arms end in; the second arm reaches them by a `bne.s` backwards.
+ * All four are FIXED absolute operands, so they are plain image stores; the only address this
+ * handler computes is the message-table read below, and that one goes through bus.h. */
+static void type61_post_message(uint8_t *image, uint8_t message) {
+    image[WB_TEXT_REQUEST] = message;
+    /* `clr.b $c034.l` over a WORD field: only WB_TEXT_LIFETIME_REQUEST's HIGH byte is cleared, so
+     * the low one stands and the `tst.w` that reads it can still see a request (wonderboy.h). */
+    image[WB_TEXT_LIFETIME_REQUEST] = 0;
+    image[WB_TEXT_BOX_ACTIVE] = 0;
+    image[WB_ACTOR_TYPE61_ACTIVE] = WB_ACTOR_TYPE61_ACTIVE_SET;
+}
+
+uint32_t actor_behavior_type61(uint8_t *image, uint32_t actor) {
+    uint8_t cursor;
+    uint8_t message;
+
+    if (image[WB_ACTOR_TYPE61_ACTIVE] == 0) {
+        /* `lea $17adc.l,a5 / jsr (a5)` — stub +0, whose `movem` pair is why nothing here has to
+         * care what snd_play_song leaves in a register. */
+        snd_play_song(image, WB_ACTOR_TYPE61_SONG);
+        set_field_b(image, actor, WB_ACTOR_FIELD_31, 0);
+        type61_post_message(image, WB_ACTOR_TYPE61_FIRST_MESSAGE);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    /* `jsr $682.w / tst.b d0 / bpl` — the rising-edge byte's SIGN bit, i.e. fire pressed this frame
+     * and not last. Nothing else in the byte can hold the frame. */
+    if ((joy1_newly_pressed(image) & (1u << WB_ACTOR_TYPE61_FIRE_BIT)) == 0)
+        return WB_ACTOR_DISPATCH_RAN;
+
+    /* `addq.b #1,31(a0)` then `move.b 31(a0),d0` — a read-modify-write and then a SECOND READ of
+     * the same byte, not a register kept across. The two differ wherever the store did not land:
+     * a record at an address bus.h refuses is written nowhere and read back as zero, so the
+     * original posts message table entry 0 while a port holding the value in a local posts 1. */
+    set_field_b(image, actor, WB_ACTOR_FIELD_31,
+                (uint8_t)(field_b(image, actor, WB_ACTOR_FIELD_31) + 1));
+    cursor = field_b(image, actor, WB_ACTOR_FIELD_31);
+
+    message = bus_read_byte(image, addr_add(WB_ACTOR_TYPE61_MESSAGES, cursor));
+    if (message != WB_ACTOR_TYPE61_MESSAGE_END) {
+        type61_post_message(image, message);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    image[WB_ACTOR_TYPE61_ACTIVE] = 0;
+    /* `movea.l #$80000,a7 / jmp $e494.l`: the stack is thrown away and the boundary is a TRANSFER,
+     * so nothing below this ever runs and the a7 write is a register this port does not model. */
+    return WB_SHOW_DATA_DISK_PROMPT;
+}
+
+
+/* --- slots 59 and 8 ($7044, $705a): two more ways into slot 7 ------------------------------------
+ *
+ * NEITHER IS A HANDLER OF ITS OWN. Slot 59 is twenty-two bytes and slot 8 is six, and both end in
+ * WB_ACTOR_BEHAVIOR_TYPE07's body — slot 59 by `bra.w $7060` and slot 8 by simply running into it.
+ * What each does first is raise ITS OWN BIT of WB_ACTOR_FIELD_30, which is how one shared body is
+ * told which of its three table entries was dispatched.
+ *
+ * SO BOTH ARE BOUNDED AT $7060, per behavior.h: the prologue writes are reconstructed and the
+ * address the original is at when it leaves them is reported. Slot 7 is 424 bytes and its own
+ * batch; dragging it in here is what the boundary exists to avoid. What the port does NOT carry
+ * across the boundary is a1 — slot 59 leaves WB_TABLE_A32_SET in it and slot 8 leaves whatever the
+ * dispatcher's `movea.l (a1),a1` did, and nothing here knows whether $7060 reads it. */
+uint32_t actor_behavior_type59(uint8_t *image, uint32_t actor) {
+    flag_set(image, actor, WB_ACTOR_FIELD_30, WB_ACTOR_TYPE59_MARK_BIT);
+    /* `lea $21e6a.l,a1 / move.w #$15,8(a1)` — the A32 template table's FIRST record, addressed
+     * directly rather than through WB_TABLE_PTR_21E8C, so which table is currently selected does
+     * not steer this write. */
+    wr16(image + WB_TABLE_A32_SET + WB_SPAWN_RESPAWN_KIND, WB_ACTOR_TYPE59_RESPAWN_KIND);
+    return WB_ACTOR_BEHAVIOR_TYPE07;
+}
+
+uint32_t actor_behavior_type08(uint8_t *image, uint32_t actor) {
+    flag_set(image, actor, WB_ACTOR_FIELD_30, WB_ACTOR_TYPE08_MARK_BIT);
+    return WB_ACTOR_BEHAVIOR_TYPE07;
 }

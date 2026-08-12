@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 208/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 215/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -43,7 +43,7 @@ the SCENE TIER'S CLOSE (`scene_exit_and_reload` + the exit-action table's two re
 172 bytes, batch 27: the four exit tails run from the spending arm through the dispatch and the
 whole reload to the original's `rts`, and the dispatch is on the WRAPPED offset — 32 index values
 reach the eight entries) —
-24,584 bytes in all, 55.5 % of everything
+25,060 bytes in all, 56.6 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -55,7 +55,9 @@ left this leading count at 161 while its own section and parenthetical said 163 
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
-`make test`: **4130 cases green in what this batch commits** (4019 before batch 30; the growth is
+`make test`: **4200 cases green in what this batch commits** (4130 before batch 31, plus its 70,
+all in `test/test_behavior.py`, which stands at 605).
+`make test` at batch 30: **4130 cases** (4019 before batch 30; the growth is
 the tier's battery `test/test_behavior.py`, including the review round's 16 death/struck-arm cases
 and the rebuilt a32 pin).
 `make test` at batch 29: **4019 cases** (3594 before batch 29, plus its 425,
@@ -4936,3 +4938,61 @@ rows) + slots 52/53 ($5b3c/$5be4, slot 51's neighbours, reusing the now-green st
 third-copy encoders for leaf.py (two more found by the verified scan: adda_l_dn, mulu_w_dn);
 bus.h (now with write guards + bus_write_long) → kit promotion; the three deliberate later-wins
 cmt pairs would read better merged; 50 slots remain.
+
+### Batch 31: six more rows — and the boundary moves INSIDE the handler
+
+Six dispatch rows plus one 12-byte gate, ~476 bytes. Three rows flipped CLEAN, three BOUNDED —
+and the boundaries are the finding: this is the first batch where a handler's port stops at an
+edge INSIDE its own body rather than at a callee. **Verified 215, 25,060 bytes, 56.6 % of §0k's
+44,262; `make test` 4200** (4130 before; `test/test_behavior.py` stands at 605).
+
+| address | name | bytes | row |
+| --- | --- | --- | --- |
+| `$5b3c` | `actor_behavior_type52` | 152 | CLEAN — slot 51's grammar, third ending: frees itself the frame it LANDS |
+| `$5be4` | `actor_behavior_type53` | 136 | BOUNDED at $e06 (through `$d78`'s gate while tile_33_mode is clear) |
+| `$6f7e` | `actor_behavior_type60` | 30 | CLEAN — watches $6f9c and RETYPES ITSELF into slot 54 (`move.w #$36,4(a0)`) |
+| `$6f9e` | `actor_behavior_type61` | 118 | BOUNDED at $e494 — not a creature: the COPYLOCK FAILURE MESSENGER |
+| `$7044` | `actor_behavior_type59` | 22 | BOUNDED at $7060 — a prologue: `bset #2,30(a0)` + a template write, then bra.w |
+| `$705a` | `actor_behavior_type08` | 6 | BOUNDED at $7060 — ONE instruction, runs INTO the shared body |
+| `$d78` | `player_gate_on_1516` | 12 | ported; `# ctx` dropped, TWO callers (the plate said one) |
+
+**Slot 60 closes batch 29's open question**: the `$36` it writes into offset 4 is WB_ACTOR_TYPE —
+the record comes back next frame AS the vertical moving platform, pinned against the image's own
+table. **Slot 61 is not a creature at all**: it plays song $e, posts the game's four HIGHEST
+message ids ($72..$75) one per FIRE edge, and on the terminator resets a7 to $80000 and jumps to
+show_data_disk_prompt — a restart. Its plate said "reached ONLY through the dispatcher"; the
+bytes say otherwise: `4eb8 6f9e` = `jsr $6f9e.w` at $f56e, the Copylock failure path, a SHORT
+absolute form a longword scan misses (the seventh way an operand hides, noted in the plate).
+**Slots 59 and 8 are two prologues into `$7060`** — bits 1 and 2 of 30(a0) are how one shared
+body knows which of its three entries fired; porting slot 7 retires both boundaries at once.
+
+**Slot 52's step is the d7 class AGAIN, one field over**: `moveq #0,d7 / move.b 30(a0),d7` — the
+byte the damage arm stamps $ff into is what a live record WALKS BY. And slot 53's boundary is a
+new shape, stated honestly: the original `bsr`s into $d78 and — while tile_33_mode is clear —
+branches into $e06 and RESUMES at $5c32; the port stops where the original would have continued.
+
+**Plate corrections, cited to bytes**: both $5a-band extents ran two bytes long (the "code" was
+each slot's own frame table / live word — two new vars, actor_type53_alive with THREE operand
+sites); the $6f9e only-dispatched claim above; $d78's caller count.
+
+**SWEEP: 41 mutants over six pre-hoc axes, 40 caught, one EQUIVALENT** (slot 52's two free-writes
+reordered — independent addresses under an address-keyed ledger, named in the battery). Two real
+holes closed the pre-hoc way (a clr.b over an already-zero byte; the settle/ascent exclusivity
+needing the hop's LAST frame). **A SIXTH way a sweep lies**, measured: a PYTHONPATH holding a
+`dis.py` makes pytest itself unimportable — the step-0 green check is what catches it.
+
+**THE REVIEW GATE (high, six angles) found a real divergence**: slot 61 RE-READS 31(a0) after its
+`addq.b` where the C held a local — the two diverge exactly when the bus write is dropped, now
+mutation-pinned (index/type61-cursor-reread). Ten more findings applied, including the write band
+widened globally, _run_handler now checking the handler's answer, and slot 51's contact arms
+folded into the shared helper.
+
+**Not pinned, honestly**: which creature each slot draws; the registers left across boundaries
+(slot 59's a1, slot 61's a7 := $80000); slot 53's resume-past-the-boundary (the port's limit,
+above); an ODD slot-52 frame cursor is an address error on real hardware the oracle cannot see;
+the equivalent reorder; the refused dispatch.
+
+**QUEUED**: batch 32 = slots 47/48/49 ($5928/$5972/$59d0, the last of the $5a band, self-contained)
+then SLOT 7 ($7060, 424 B) — which retires this batch's two prologue boundaries and answers what
+bits 1/2 of 30(a0) select; the NINE third-copy encoders now due in leaf.py; bus.h → kit; the three
+later-wins cmt pairs. 43 slots remain.

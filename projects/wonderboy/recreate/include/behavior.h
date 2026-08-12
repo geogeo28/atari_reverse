@@ -42,7 +42,24 @@
  * The three values below are what the C returns when there is no address to report. All three are
  * chosen so no table entry can collide with them — test/test_behavior.py checks that against the
  * image's own 62 longwords rather than assuming it.
- */
+ *
+ * A HANDLER REPORTS A BOUNDARY TOO, which is why every one of them below returns a `uint32_t`
+ * rather than nothing. Batch 29's boundary was the dispatcher's alone: a slot was ported or it was
+ * not. Batch 31 ported three handlers that leave their own bodies for code this port does not have
+ * — slots 59 and 8 fall into slot 7's body, slot 53 calls a player-tier routine whose one arm
+ * enters WB_PLAYER_STEP_BODY, and slot 61 ends its sequence with `jmp $e494.l` — so a handler now
+ * answers the same question the dispatcher does: WB_ACTOR_DISPATCH_RAN when it ran to its own
+ * `rts`, or the address at which the original left code this file can follow. The dispatcher and
+ * the walk pass whatever it says straight up, so nothing else in the mechanism moves.
+ *
+ * ONE OF THE FOUR IS A BOUNDARY THE ORIGINAL RETURNS FROM, and the code cannot say so. Slots 59, 8
+ * and 61 never come back — two run into another handler's body and the third throws its stack away.
+ * Slot 53's does: `bsr.w $d78` leaves a return address, so when WB_PLAYER_STEP_BODY finishes the
+ * original resumes inside slot 53, publishes its sprite, counts its timer down and lets the walk go
+ * on to the next record. This port stops there instead, so a pass with a live type-53 record and
+ * WB_TILE_33_MODE clear reports a boundary where the original would have run every record behind
+ * it. That is the port's limit, not the original's; the batch that reconstructs $e06 removes it by
+ * calling it and resuming, and the resume point is $5c32. */
 #define WB_ACTOR_DISPATCH_RAN     0u   /* a reconstructed handler ran to its own `rts` */
 #define WB_ACTOR_DISPATCH_REFUSED 1u   /* the scaled type left the table: the original `jmp`s through
                                         * a longword outside it and no C stands in for that */
@@ -69,7 +86,7 @@ uint32_t actor_dispatch_behavior(uint8_t *image, uint32_t actor);
 /* $a36 — slots 0 and 58 of WB_ACTOR_BEHAVIOR_TABLE: a bare `rts`, which is also the two bytes that
  * BOUND the table from above. It is a reconstruction like any other, and it is what makes the walk
  * itself testable: a table of type-0 records runs the pass end to end in both cores. */
-void actor_behavior_null(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_null(uint8_t *image, uint32_t actor);
 
 /* --- the animation every spawned record plays ($698a) -------------------------------------------
  *
@@ -195,28 +212,58 @@ void actor_platform_release_blocked_rider(uint8_t *image, uint32_t actor, uint32
  * of WB_ACTOR_FLAGS2 that ends in actor_defeat_and_score. What differs is the move — and slots 3
  * and 6 differ from each other only in that one throws.
  */
-void actor_behavior_type02(uint8_t *image, uint32_t actor);   /* faces the player, never steps */
-void actor_behavior_type03(uint8_t *image, uint32_t actor);   /* patrols, turning two ways */
-void actor_behavior_type04(uint8_t *image, uint32_t actor);   /* hovers on a 64-word delta table */
-void actor_behavior_type05(uint8_t *image, uint32_t actor);   /* hops when the ground says to */
-void actor_behavior_type06(uint8_t *image, uint32_t actor);   /* charges, then THROWS */
+uint32_t actor_behavior_type02(uint8_t *image, uint32_t actor);   /* faces the player, never steps */
+uint32_t actor_behavior_type03(uint8_t *image, uint32_t actor);   /* patrols, turning two ways */
+uint32_t actor_behavior_type04(uint8_t *image, uint32_t actor);   /* hovers on a 64-word delta table */
+uint32_t actor_behavior_type05(uint8_t *image, uint32_t actor);   /* hops when the ground says to */
+uint32_t actor_behavior_type06(uint8_t *image, uint32_t actor);   /* charges, then THROWS */
 
 /* $5a6e — no spawn gate and no contact test: it drifts WB_ACTOR_TYPE50_STEP pixels a frame the way
  * WB_ACTOR_FLAG_SIDE_BIT points, plays two frames, and frees its own slot on a countdown. */
-void actor_behavior_type50(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type50(uint8_t *image, uint32_t actor);
 
 /* $5ab2 — walks until something stops it. Bit 0 of WB_ACTOR_FLAGS2 is a one-way switch rather than
  * a death animation: a strike, a body overlap or a blocked step all raise it, and from then on the
  * record only falls — freeing its slot the frame it is supported again. */
-void actor_behavior_type51(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type51(uint8_t *image, uint32_t actor);
 
 /* $6e1c / $6ef4 / $6f3e — the three MOVING PLATFORMS, and one geometry: a0's WB_ACTOR_HALF_WIDTH
  * picks an eight-byte WB_ACTOR_SPRITE_TABLE_6ED8 row whose first word is the sprite and whose next
  * two are the band $6d70/$6dd8 catch and release against. 54 travels vertically and 55 horizontally
  * between WB_ACTOR_FIELD_24 and WB_ACTOR_SIZE_SECOND; 56 has no limit at all and simply sinks while
  * it is stood on and rises when it is not. */
-void actor_behavior_type54(uint8_t *image, uint32_t actor);
-void actor_behavior_type55(uint8_t *image, uint32_t actor);
-void actor_behavior_type56(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type54(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type55(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type56(uint8_t *image, uint32_t actor);
+
+/* --- slot 51's two neighbours, and the four rows above the platforms ---------------------------
+ *
+ * $5b3c / $5be4 — ONE GRAMMAR WITH SLOT 51: bit 0 of WB_ACTOR_FLAGS2 as a one-way switch, then the
+ * overlap mask's strike and body bits in that order, then the move. Where slot 51 falls until it is
+ * supported, slot 52 walks by its own WB_ACTOR_FIELD_30 and frees itself the frame it IS supported,
+ * and slot 53 slides a fixed step, counts a timer down and publishes WB_ACTOR_TYPE53_ALIVE while it
+ * lives. Slot 53's frame passes through `player_gate_on_1516`, so it can end at a BOUNDARY. */
+uint32_t actor_behavior_type52(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type53(uint8_t *image, uint32_t actor);
+
+/* $6f7e — no movement at all: it publishes WB_ACTOR_SPRITE_NONE and waits for WB_STATE_WORD_6F9C,
+ * then consumes that word and RETYPES itself into slot 54, the vertical moving platform. */
+uint32_t actor_behavior_type60(uint8_t *image, uint32_t actor);
+
+/* $6f9e — not a creature: the four-message sequence the copylock failure path also `jsr`s into. It
+ * starts a song, posts one message per FIRE edge out of WB_ACTOR_TYPE61_MESSAGES, and when the
+ * table's terminator comes up transfers to WB_SHOW_DATA_DISK_PROMPT — a boundary, never a return. */
+uint32_t actor_behavior_type61(uint8_t *image, uint32_t actor);
+
+/* $7044 / $705a — twenty-two bytes and six: each raises its own bit of WB_ACTOR_FIELD_30 and then
+ * runs into WB_ACTOR_BEHAVIOR_TYPE07's body, which this port does not have. Both therefore ALWAYS
+ * report that address; neither has an arm that returns. */
+uint32_t actor_behavior_type59(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type08(uint8_t *image, uint32_t actor);
+
+/* $d78 — the twelve bytes slot 53 calls, and the only player-tier code in this file. Returns
+ * WB_ACTOR_DISPATCH_RAN while WB_TILE_33_MODE is set (the original returns having written nothing)
+ * and WB_PLAYER_STEP_BODY while it is clear, which is where the original branches. */
+uint32_t player_gate_on_1516(const uint8_t *image);
 
 #endif /* WONDERBOY_BEHAVIOR_H */

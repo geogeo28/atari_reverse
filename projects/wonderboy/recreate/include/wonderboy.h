@@ -1058,9 +1058,19 @@
 #define WB_ACTOR_BEHAVIOR_TYPE06     0x2bc8u
 #define WB_ACTOR_BEHAVIOR_TYPE50     0x5a6eu
 #define WB_ACTOR_BEHAVIOR_TYPE51     0x5ab2u
+#define WB_ACTOR_BEHAVIOR_TYPE52     0x5b3cu
+#define WB_ACTOR_BEHAVIOR_TYPE53     0x5be4u
 #define WB_ACTOR_BEHAVIOR_TYPE54     0x6e1cu
 #define WB_ACTOR_BEHAVIOR_TYPE55     0x6ef4u
 #define WB_ACTOR_BEHAVIOR_TYPE56     0x6f3eu
+#define WB_ACTOR_BEHAVIOR_TYPE60     0x6f7eu
+#define WB_ACTOR_BEHAVIOR_TYPE61     0x6f9eu
+#define WB_ACTOR_BEHAVIOR_TYPE59     0x7044u
+#define WB_ACTOR_BEHAVIOR_TYPE08     0x705au
+/* NOT a reconstructed target: slot 7's entry, which slots 59 and 8 reach by falling into it. It is
+ * here because those two handlers REPORT it — see behavior.h's boundary — and a bare number would
+ * hide that the address they stop at is a table entry this port does not have. */
+#define WB_ACTOR_BEHAVIOR_TYPE07     0x7060u
 #define WB_ACTOR_TABLE_END           0xffffffffu /* `cmpi.l #$ffffffff,(a0)` — a LONGWORD test over
                                                * WB_ACTOR_X and WB_ACTOR_TYPE together, which is
                                                * what makes it distinct from WB_ACTOR_FREE_MARKER */
@@ -1316,9 +1326,66 @@
 
 #define WB_ACTOR_TYPE51_SPRITE       0x1e1u   /* `move.w #$1e1,6(a0)` — published, not tabled */
 #define WB_ACTOR_TYPE51_STEP         6u       /* `move.w #$6,d7` */
-#define WB_ACTOR_TYPE51_DAMAGE       0x84u    /* `move.b #$84,19(a0)` before $69fe: the sign bit is
-                                               * WB_ACTOR_DAMAGE_INLINE_MASK's flag, so the cost is
-                                               * the 4 left in the low seven bits */
+/* `move.b #$84,19(a0)` before $69fe, spelt identically by slots 51, 52 and 53: the sign bit is
+ * WB_ACTOR_DAMAGE_INLINE_MASK's flag, so the cost is the 4 left in the low seven bits. */
+#define WB_ACTOR_CONTACT_DAMAGE_INLINE 0x84u
+
+#define WB_ACTOR_TYPE52_FRAMES       0x5bd4u  /* EIGHT words, $5bd4..$5be3, bounded by slot 53's own
+                                               * entry: $1b1 $1b1 $1b2 $1b2 $1b3 $1b3 $1b2 $1b2 */
+#define WB_ACTOR_TYPE52_MASK         0xfu     /* `andi.w #$f` — 16 bytes, so all eight */
+
+#define WB_ACTOR_TYPE53_SPRITE       0x1d6u   /* `move.w #$1d6,6(a0)` — one frame, never a table */
+#define WB_ACTOR_TYPE53_STEP         8u       /* `moveq #$8,d7`, added to or subtracted from (a0) */
+#define WB_ACTOR_TYPE53_ALIVE        0x5c6cu  /* word, the two bytes between this handler's last
+                                               * `rts` and actor_followed_overlap_mask's entry.
+                                               * Raised on EVERY frame slot 53 runs and cleared on
+                                               * the frame it frees its slot, so it is "a type-53
+                                               * record is live". Three operand sites: the two
+                                               * writes here and the `tst.w` at $454c, which is
+                                               * inside a handler this port does not have */
+#define WB_ACTOR_TYPE53_ALIVE_SET    0xffffu  /* `move.w #$ffff,$5c6c.l` */
+
+#define WB_ACTOR_SPRITE_NONE         0xffffu  /* `move.w #$ffff,6(a0)`: slot 60 publishes no sprite
+                                               * at all while it waits */
+#define WB_ACTOR_TYPE60_BECOMES      0x36u    /* `move.w #$36,4(a0)` — WB_ACTOR_TYPE, so the record
+                                               * RETYPES itself into slot 54, the vertical moving
+                                               * platform. test/test_behavior.py pins that against
+                                               * the image's own table rather than this comment */
+
+#define WB_ACTOR_TYPE61_ACTIVE       0x7014u  /* byte, between this handler's `jmp` and its message
+                                               * table: raised on the frame the sequence starts and
+                                               * cleared on the frame it ends. Three operand sites,
+                                               * all inside slot 61 */
+#define WB_ACTOR_TYPE61_ACTIVE_SET   0xffu    /* `move.b #$ff,$7014.l` */
+#define WB_ACTOR_TYPE61_MESSAGES     0x7016u  /* FIVE bytes, $7016..$701a: $72 $73 $74 $75 $ff, the
+                                               * four highest WB_TEXT_REQUEST ids in the game and
+                                               * their terminator. Entry 0 is never READ — the
+                                               * cursor is pre-incremented — and duplicates the
+                                               * immediate the opening frame posts */
+#define WB_ACTOR_TYPE61_MESSAGE_END  0xffu    /* `cmp.b #$ff,d0` — the end of the sequence */
+#define WB_ACTOR_TYPE61_FIRST_MESSAGE 0x72u   /* `move.b #$72,d0` on the opening frame */
+#define WB_ACTOR_TYPE61_SONG         0xeu     /* `move.l #$e,d0` into stub +0 (snd_play_song) */
+#define WB_ACTOR_TYPE61_FIRE_BIT     7u       /* `tst.b d0 / bpl` on joy1_newly_pressed's byte */
+
+#define WB_ACTOR_TYPE59_RESPAWN_KIND 0x15u    /* `move.w #$15,8(a1)` over WB_TABLE_A32_SET's FIRST
+                                               * template — WB_SPAWN_RESPAWN_KIND, written to the
+                                               * A32 table DIRECTLY and not through
+                                               * WB_TABLE_PTR_21E8C, so which table is selected does
+                                               * not steer it */
+#define WB_ACTOR_TYPE59_MARK_BIT     2u       /* `bset #2,30(a0)` — how slot 7's body is told it was
+                                               * entered through slot 59 */
+#define WB_ACTOR_TYPE08_MARK_BIT     1u       /* ...and `bset #1,30(a0)` for slot 8 */
+
+/* The two addresses OUTSIDE this tier that a reconstructed handler transfers to and stops at. Both
+ * are the entry of code this port does not have; behavior.h's boundary is how they are reported. */
+#define WB_PLAYER_STEP_BODY          0xe06u   /* `beq.w $e06` inside player_gate_on_1516 */
+#define WB_SHOW_DATA_DISK_PROMPT     0xe494u  /* `jmp $e494.l` at slot 61's foot */
+#define WB_ST_MEMORY_TOP             0x80000u /* `movea.l #$80000,a7` — the top of a 512 KB ST, the
+                                               * stack the game gives itself at boot
+                                               * (../names.txt, hw_init_vectors) and sets AGAIN
+                                               * immediately before that `jmp`, which is what makes
+                                               * the transfer a RESTART rather than a call. It is a
+                                               * register, so no differential can see it */
 
 /* ---- the collision map the actors walk on (RUNTIME addresses; src/map.c) ----------------------
  *
