@@ -846,6 +846,15 @@
                                                * WB_ACTOR_FIELD_22_RIDING_BIT in it, $6dd8 lowers
                                                * that bit, and $701c forces the whole byte to
                                                * WB_ACTOR_FIELD_22_HOLD while it is nonzero */
+#define WB_ACTOR_FIELD_23            23u      /* byte: behaviour slot 7's own FRAME CURSOR, stepped
+                                               * `addq.b #1` and wrapped by a SIGNED `cmpi.b #$c`
+                                               * against WB_ACTOR_TYPE07_FRAME_COUNT. Distinct from
+                                               * WB_ACTOR_FIELD_18, which the damage arm clears */
+#define WB_ACTOR_FIELD_26            26u      /* word: the swoop's LAUNCH Y — the y a record was at
+                                               * when actor_swoop_state0_acquire committed, which
+                                               * actor_swoop_state3_descend rises back to. The
+                                               * dropper shot at $7200 writes the same offset for a
+                                               * meaning slot $39 owns and this port does not */
 #define WB_ACTOR_FIELD_30            30u      /* two bytes the spawn clears; $ff42 reads 30 as a
                                                * flag and counts 31 down. In the behaviour tier 30
                                                * is a COUNTDOWN of its own — $2f86 and $6872 tick it
@@ -1056,6 +1065,9 @@
 #define WB_ACTOR_BEHAVIOR_TYPE04     0x2796u
 #define WB_ACTOR_BEHAVIOR_TYPE05     0x29ecu
 #define WB_ACTOR_BEHAVIOR_TYPE06     0x2bc8u
+#define WB_ACTOR_BEHAVIOR_TYPE47     0x5928u
+#define WB_ACTOR_BEHAVIOR_TYPE48     0x5972u
+#define WB_ACTOR_BEHAVIOR_TYPE49     0x59d0u
 #define WB_ACTOR_BEHAVIOR_TYPE50     0x5a6eu
 #define WB_ACTOR_BEHAVIOR_TYPE51     0x5ab2u
 #define WB_ACTOR_BEHAVIOR_TYPE52     0x5b3cu
@@ -1067,10 +1079,7 @@
 #define WB_ACTOR_BEHAVIOR_TYPE61     0x6f9eu
 #define WB_ACTOR_BEHAVIOR_TYPE59     0x7044u
 #define WB_ACTOR_BEHAVIOR_TYPE08     0x705au
-/* NOT a reconstructed target: slot 7's entry, which slots 59 and 8 reach by falling into it. It is
- * here because those two handlers REPORT it — see behavior.h's boundary — and a bare number would
- * hide that the address they stop at is a table entry this port does not have. */
-#define WB_ACTOR_BEHAVIOR_TYPE07     0x7060u
+#define WB_ACTOR_BEHAVIOR_TYPE07     0x7060u  /* the body slots 59 and 8 RUN INTO — behavior.c */
 #define WB_ACTOR_TABLE_END           0xffffffffu /* `cmpi.l #$ffffffff,(a0)` — a LONGWORD test over
                                                * WB_ACTOR_X and WB_ACTOR_TYPE together, which is
                                                * what makes it distinct from WB_ACTOR_FREE_MARKER */
@@ -1242,7 +1251,10 @@
  * words, which is what makes 14(a0) a PLATFORM SIZE rather than a footprint here. 16(a0) is the
  * travel LIMIT and 24(a0) the cursor against it.
  */
-#define WB_ACTOR_FIELD_24            24u      /* word: how far along its travel the platform is */
+#define WB_ACTOR_FIELD_24            24u      /* word: how far along its travel the platform is —
+                                               * and, at the same offset for a different tier, the
+                                               * swoop's PATH CURSOR (an offset from
+                                               * WB_ACTOR_SWOOP_PATHS, not an address) */
 #define WB_ACTOR_FIELD_22_DIRECTION_BIT 0u    /* `btst #0,22(a0)`: set = the platform is travelling
                                                * back (up for slot 54, left for slot 55) */
 #define WB_ACTOR_PLATFORM_STEP       2u       /* `subq.w #2` / `addq.w #2` — pixels a frame, and the
@@ -1320,6 +1332,28 @@
 #define WB_ACTOR_TYPE06_SHOT_SIZE    0xc0002u /* `move.l #$c0002,14(a1)`: WB_ACTOR_HALF_WIDTH $c and
                                                * WB_ACTOR_SIZE_SECOND $2 in one store */
 
+/* The $5a band's last three tables. Each sits INSIDE its own handler's extent and is reached only
+ * from it — $5952 by the one `lea $5952.l` at $5928, the other three by `lea d8(PC,Dn.w)` — so no
+ * second reader exists anywhere in the image. */
+#define WB_ACTOR_TYPE47_FRAMES       0x5952u  /* SIXTEEN words, $5952..$5971, wrapped by
+                                               * WB_ACTOR_ANIM32_MASK: $1c3 $1c3 $1c4 $1c4 $1c5 $1c5
+                                               * $1c6 $1c6 $1c5 $1c5 $1c4 $1c4 $1c3 $1c3 $1c4 $1c4 */
+
+#define WB_ACTOR_TYPE48_FRAMES       0x59c8u  /* FOUR words, $59c8..$59cf, bounded by slot 49's own
+                                               * entry: $1d7 $1d7 $1d8 $1d8 */
+#define WB_ACTOR_TYPE48_MASK         0x7u     /* `andi.b #$7` — 8 bytes, so all four */
+#define WB_ACTOR_TYPE48_STEP         3u       /* `move.w #$3,d7` */
+
+/* Slot 49 animates out of TWO tables over ONE cursor, chosen by WB_ACTOR_FIELD_31. Both wrap on
+ * WB_ACTOR_ANIM16_MASK, which is actor_advance_anim16's own $f and not a mask this handler spells. */
+#define WB_ACTOR_TYPE49_FRAMES_PHASE1 0x5a4eu  /* EIGHT words, $5a4e..$5a5d, played while
+                                               * WB_ACTOR_FIELD_31 is CLEAR: $1ce $1cf $1d0 $1d1
+                                               * $1ce $1cf $1d0 $1d1 */
+#define WB_ACTOR_TYPE49_FRAMES_PHASE2 0x5a5eu  /* EIGHT words, $5a5e..$5a6d, played while it is SET
+                                               * and bounded by slot 50's own entry: $1bc $1bc $1bd
+                                               * $1bd $1be $1be $1bd $1bc */
+#define WB_ACTOR_TYPE49_STEP         3u       /* `move.w #$3,d7`, as slot 48's */
+
 #define WB_ACTOR_TYPE50_FRAMES       0x5aaeu  /* TWO words, and the whole of this handler's data */
 #define WB_ACTOR_TYPE50_MASK         3u       /* `andi.w #$3` — 4 bytes, so both of them */
 #define WB_ACTOR_TYPE50_STEP         8u       /* `addq.w #8,(a0)` / `subq.w #8,(a0)` */
@@ -1344,6 +1378,91 @@
                                                * writes here and the `tst.w` at $454c, which is
                                                * inside a handler this port does not have */
 #define WB_ACTOR_TYPE53_ALIVE_SET    0xffffu  /* `move.w #$ffff,$5c6c.l` */
+
+/* --- behaviour slot 7 ($7060) and the SWOOP state machine below it -------------------------------
+ *
+ * Slot 7 is the only handler in the table with THREE entrances: its own row, and the two prologues
+ * at $7044 and $705a that raise a bit of WB_ACTOR_FIELD_30 and run into it. Those two bits are what
+ * one shared body uses to know which row was dispatched — WB_ACTOR_TYPE08_MARK_BIT arms the burst
+ * and WB_ACTOR_TYPE59_MARK_BIT the dropper AND the constant sprite pair.
+ */
+#define WB_ACTOR_SWOOP_STATE_TABLE   0x7490u  /* FOUR longwords, $7490..$749f. One reference in the
+                                               * image, the `lea $7490.l,a1` at $7130 */
+#define WB_ACTOR_SWOOP_STATE_ENTRY   4u       /* `lsl.w #2,d0` — a longword per state */
+#define WB_ACTOR_SWOOP_STATE0        0x72c2u
+#define WB_ACTOR_SWOOP_STATE1        0x7328u
+#define WB_ACTOR_SWOOP_STATE2        0x7366u
+#define WB_ACTOR_SWOOP_STATE3        0x739eu
+#define WB_ACTOR_SWOOP_ACQUIRE       0u       /* `clr.b 22(a0)` — state 3's ending, and the byte a
+                                               * fresh record starts on */
+#define WB_ACTOR_SWOOP_RUN_PATH      1u       /* `move.b #$1,22(a0)` — state 0's commit */
+#define WB_ACTOR_SWOOP_HOME_X        2u       /* `move.b #$2,22(a0)` */
+#define WB_ACTOR_SWOOP_DESCEND       3u       /* `move.b #$3,22(a0)`, and $701c's own forced value */
+
+#define WB_ACTOR_SWOOP_PATH_TABLE    0x73ceu  /* FOUR longwords, $73ce..$73dd: $73de $73f8 $7412
+                                               * $742c. One reference, the `lea` at $7302 */
+#define WB_ACTOR_SWOOP_PATHS         0x73deu  /* the base every cursor is an OFFSET from
+                                               * (`suba.l #$73de,a1` at $7310 and $7352), and the
+                                               * first path's own first word */
+#define WB_ACTOR_SWOOP_PATH_FAR      0x745eu  /* `movea.l #$745e,a1` — the path a record over
+                                               * WB_ACTOR_SWOOP_Y_NEAR below takes, offset $80 */
+#define WB_ACTOR_SWOOP_X_REACH       0x40u    /* `cmp.w #$ffc0` / `cmp.w #$40` — the window the
+                                               * followed record's x must be inside, either side */
+#define WB_ACTOR_SWOOP_Y_NEAR        0x40u    /* `cmp.w #$40,d0 / ble` — a drop past this takes the
+                                               * fixed path instead of the table */
+#define WB_ACTOR_SWOOP_Y_FLOOR       8u       /* `subq.w #8,d0 / bmi` — a drop under this is refused
+                                               * outright, which is also what makes the shift's
+                                               * index non-negative */
+#define WB_ACTOR_SWOOP_Y_SHIFT       4u       /* `lsr.w #4,d0` — 16 pixels of drop per path */
+#define WB_ACTOR_SWOOP_PATH_ENTRY    4u       /* `lsl.w #2,d0` — a longword per path */
+#define WB_ACTOR_SWOOP_PATH_DY       2u       /* `move.w (a1)+` twice: dy is the word after dx */
+#define WB_ACTOR_SWOOP_PATH_STEP     4u       /* ...and that PAIR is what one frame consumes */
+#define WB_ACTOR_SWOOP_HOME_STEP     4u       /* `subq.w #4,(a0)` / `addq.w #4,(a0)` */
+#define WB_ACTOR_SWOOP_DESCEND_STEP  2u       /* `move.w #$2,d7` — the horizontal probe's step */
+#define WB_ACTOR_SWOOP_RISE          2u       /* `subq.w #2,2(a0)` — and the vertical one, upward */
+
+#define WB_ACTOR_TYPE07_SPRITE_LEFT  0x21u    /* `move.w #$21,6(a0)` and `move.w #$24,6(a0)`: the */
+#define WB_ACTOR_TYPE07_SPRITE_RIGHT 0x24u    /* two frames a MARKED record holds instead of an
+                                               * animation, published straight. The $21 is kept
+                                               * while WB_ACTOR_FLAG_SIDE_BIT is SET */
+#define WB_ACTOR_TYPE07_FRAME_COUNT  0xcu     /* `cmpi.b #$c,23(a0) / blt` — a SIGNED byte compare,
+                                               * so a cursor of $80..$ff is negative and NOT wrapped
+                                               * (the game's own flow cannot reach one: the spawn
+                                               * clears the byte and nothing else writes it) */
+/* FOUR frame lists of twelve words each, chosen by WB_ACTOR_FLAG_SIDE_BIT and
+ * WB_ACTOR_TYPE08_MARK_BIT. Each is followed by a $ffff sentinel that is NEVER READ — the cursor
+ * wraps at WB_ACTOR_TYPE07_FRAME_COUNT before the `move.w 0(a1,d0.w)` — so the sentinels exist only
+ * to bound one list from the next. */
+#define WB_ACTOR_TYPE07_FRAMES_LEFT  0x74a0u  /* $8e $8e $8f $8f $90 $90 $91 $91 $90 $90 $8f $8f */
+#define WB_ACTOR_TYPE07_FRAMES_RIGHT 0x74bau  /* $94 $94 $95 $95 $96 $96 $97 $97 $96 $96 $95 $95 */
+#define WB_ACTOR_TYPE07_FRAMES_MARKED_LEFT  0x74eeu  /* $1 $1 $1 $2 $2 $2 $1 $1 $1 $2 $2 $2 */
+#define WB_ACTOR_TYPE07_FRAMES_MARKED_RIGHT 0x7508u  /* $4 $4 $4 $5 $5 $5 $4 $4 $4 $5 $5 $5 */
+/* ...and a FIFTH list of the same shape at $74d4 that NOTHING IN THE IMAGE REFERENCES. It sits
+ * between the two above it, so the two `lea`s that bracket it are what bound it; no `lea`, `movea`
+ * or computed address anywhere reaches it, and the cursor's wrap means no live path could. */
+#define WB_ACTOR_TYPE07_FRAMES_UNREFERENCED 0x74d4u /* $92 $92 $93 $93 $92 $92 $93 $93 $92 $92 $93 $93 */
+
+#define WB_ACTOR_TYPE07_BURST_MASK   0x7fu    /* `andi.b #$7f,31(a0)` — one burst every 128 frames */
+#define WB_ACTOR_TYPE07_BURST_LAST   4u       /* `move.w #$4,d1` + `dbf` — FIVE shots */
+#define WB_ACTOR_TYPE07_BURST_LEFT   0x7208u  /* FIVE dx,dy longwords each, mirrored: $7208 is
+                                               * (-7,-2) (-7,2) (-5,5) (-2,7) (2,7) and $721c the */
+#define WB_ACTOR_TYPE07_BURST_RIGHT  0x721cu  /* same five with dx negated. $7208 is taken while
+                                               * WB_ACTOR_FLAG_SIDE_BIT is SET */
+#define WB_ACTOR_TYPE07_BURST_ENTRY  4u       /* `move.l (a2)+,24(a1)` — a dx,dy LONGWORD a shot */
+#define WB_ACTOR_TYPE07_BURST_SPRITE 0x1bbu   /* `move.w #$1bb,6(a1)` */
+#define WB_ACTOR_TYPE07_DROP_MASK    0x1fu    /* `andi.b #$1f,31(a0)` — one dropper every 32 */
+#define WB_ACTOR_TYPE07_DROP_SPRITE  0x1b4u   /* `move.w #$1b4,6(a1)` */
+#define WB_ACTOR_TYPE07_DROP_RISE    0x20u    /* `subi.w #$20,2(a1)` — the shot starts that far
+                                               * ABOVE the record that dropped it */
+#define WB_ACTOR_TYPE07_DROP_VELOCITY 0xfffbu /* `move.w #$fffb,24(a1)` — a WORD, where the burst
+                                               * writes a longword over the same offset */
+#define WB_ACTOR_TYPE07_DROP_FIELD_26 5u      /* `move.w #$5,26(a1)`, only while the side bit is
+                                               * SET — the one asymmetry between the two facings */
+#define WB_ACTOR_TYPE07_SHOT_TYPE    0x39u    /* `move.w #$39,4(a1)` — WB_ACTOR_TYPE, i.e. behaviour
+                                               * slot 57, which this port does not have */
+#define WB_ACTOR_TYPE07_SHOT_SIZE    0xc0002u /* `move.l #$c0002,14(a1)`: WB_ACTOR_HALF_WIDTH $c and
+                                               * WB_ACTOR_SIZE_SECOND $2 in one store, the same
+                                               * longword WB_ACTOR_TYPE06_SHOT_SIZE spells */
 
 #define WB_ACTOR_SPRITE_NONE         0xffffu  /* `move.w #$ffff,6(a0)`: slot 60 publishes no sprite
                                                * at all while it waits */

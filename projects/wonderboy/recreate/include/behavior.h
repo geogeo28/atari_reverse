@@ -218,6 +218,16 @@ uint32_t actor_behavior_type04(uint8_t *image, uint32_t actor);   /* hovers on a
 uint32_t actor_behavior_type05(uint8_t *image, uint32_t actor);   /* hops when the ground says to */
 uint32_t actor_behavior_type06(uint8_t *image, uint32_t actor);   /* charges, then THROWS */
 
+/* $5928 / $5972 / $59d0 — the $5a band's other three, and NONE of them has a spawn gate or a
+ * contact test either. Slot 47 is pure animation: sixteen frames over WB_ACTOR_FIELD_18 and the
+ * slot handed back when the cursor wraps. Slots 48 and 49 open with the same forty-two bytes —
+ * actor_fall_and_settle, actor_hop_ascend_step and actor_step_facing's own body inline — and part
+ * only in what they animate: 48 plays four frames and counts WB_ACTOR_FIELD_30 down like slot 50,
+ * while 49 plays TWO tables over one cursor with WB_ACTOR_FIELD_31 as the phase. */
+uint32_t actor_behavior_type47(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type48(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type49(uint8_t *image, uint32_t actor);
+
 /* $5a6e — no spawn gate and no contact test: it drifts WB_ACTOR_TYPE50_STEP pixels a frame the way
  * WB_ACTOR_FLAG_SIDE_BIT points, plays two frames, and frees its own slot on a countdown. */
 uint32_t actor_behavior_type50(uint8_t *image, uint32_t actor);
@@ -255,9 +265,36 @@ uint32_t actor_behavior_type60(uint8_t *image, uint32_t actor);
  * table's terminator comes up transfers to WB_SHOW_DATA_DISK_PROMPT — a boundary, never a return. */
 uint32_t actor_behavior_type61(uint8_t *image, uint32_t actor);
 
+/* --- slot 7 ($7060) and the SWOOP state machine ($72c2..$73cd) ----------------------------------
+ *
+ * THE ONLY HANDLER IN THE TABLE WITH THREE ENTRANCES. Slot 7's own row enters with neither bit of
+ * WB_ACTOR_FIELD_30 raised; the two prologues below raise one each and run into the same body, so
+ * WB_ACTOR_TYPE08_MARK_BIT and WB_ACTOR_TYPE59_MARK_BIT are how the body knows which row fired.
+ *
+ * The body is a monster prologue (spawn gate, the shot/overlap contact pair, the damage and defeat
+ * exits), a sprite — either a marked record's constant pair or one of four twelve-word lists — and
+ * then a `jsr` through WB_ACTOR_SWOOP_STATE_TABLE on WB_ACTOR_FIELD_22. Above the state it hangs
+ * two spawners on the same WB_ACTOR_FIELD_31 cursor: a FIVE-SHOT burst every
+ * WB_ACTOR_TYPE07_BURST_MASK frames and a single dropper every WB_ACTOR_TYPE07_DROP_MASK.
+ *
+ * The four states are one machine over WB_ACTOR_FIELD_22, and each is reached ONLY through that
+ * `jsr` — the table is their sole reference in the image. `actor` is a0 throughout; none takes a
+ * second argument and none returns a value the caller reads.
+ */
+void actor_swoop_state0_acquire(uint8_t *image, uint32_t actor);
+void actor_swoop_state1_run_path(uint8_t *image, uint32_t actor);
+void actor_swoop_state2_home_x(uint8_t *image, uint32_t actor);
+void actor_swoop_state3_descend(uint8_t *image, uint32_t actor);
+
+/* $7060 — slot 7's body. Returns WB_ACTOR_DISPATCH_RAN, or the address the `jsr (a1)` at $713a
+ * would have entered when WB_ACTOR_FIELD_22 names no reconstructed state: the byte is UNBOUNDED
+ * (`move.b 22(a0),d0 / lsl.w #2 / movea.l 0(a1,d0.w),a1`), so a state above 3 reads a longword past
+ * the four-entry table and calls it, exactly as actor_dispatch_behavior's refusal does. */
+uint32_t actor_behavior_type07(uint8_t *image, uint32_t actor);
+
 /* $7044 / $705a — twenty-two bytes and six: each raises its own bit of WB_ACTOR_FIELD_30 and then
- * runs into WB_ACTOR_BEHAVIOR_TYPE07's body, which this port does not have. Both therefore ALWAYS
- * report that address; neither has an arm that returns. */
+ * runs into WB_ACTOR_BEHAVIOR_TYPE07's body. Batch 32 reconstructed that body, so both now RUN ON
+ * into it and report whatever it reports; through batch 31 both stopped there as a boundary. */
 uint32_t actor_behavior_type59(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type08(uint8_t *image, uint32_t actor);
 

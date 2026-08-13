@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 215/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 223/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -42,8 +42,13 @@ game now passes through reconstructed code end to end, and the dropped-write tie
 the SCENE TIER'S CLOSE (`scene_exit_and_reload` + the exit-action table's two remaining entries,
 172 bytes, batch 27: the four exit tails run from the spending arm through the dispatch and the
 whole reload to the original's `rts`, and the dispatch is on the WRAPPED offset — 32 index values
-reach the eight entries) —
-25,060 bytes in all, 56.6 % of everything
+reach the eight entries) — and the $5a BAND CLOSED (`actor_behavior_type47/48/49`, 236 bytes,
+batch 32: the seven dispatch rows of $5928..$5c6b now all run, and three of them are three different
+endings of one grammar — the cursor, the countdown and a second table's cursor) — and SLOT 7 WITH
+ITS SWOOP MACHINE (`actor_behavior_type07` + the four states at $72c2..$73cd, 692 bytes, batch 32
+phase 2: the tier's LAST always-transfer boundary retired — three table rows share one body, both
+prologues run straight into it, and the two mark bits of 30(a0) are answered) —
+25,988 bytes in all, 58.7 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -55,8 +60,11 @@ left this leading count at 161 while its own section and parenthetical said 163 
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
-`make test`: **4200 cases green in what this batch commits** (4130 before batch 31, plus its 70,
-all in `test/test_behavior.py`, which stands at 605).
+`make test`: **4344 cases green in what this batch commits** (4200 before batch 32, plus its 144 —
+47 in phase 1, 86 in phase 2 and 11 from the review gate — all in `test/test_behavior.py`, which
+stands at 749).
+`make test` at batch 31: **4200 cases** (4130 before batch 31, plus its 70,
+all in `test/test_behavior.py`, which stood at 605).
 `make test` at batch 30: **4130 cases** (4019 before batch 30; the growth is
 the tier's battery `test/test_behavior.py`, including the review round's 16 death/struck-arm cases
 and the rebuilt a32 pin).
@@ -4879,6 +4887,14 @@ of the growth).
 | `$2796` | `actor_behavior_type04` | 342 | hovers on a 64-word signed delta table; chases only inside $c8 |
 | `$29ec` | `actor_behavior_type05` | 262 | hops when the ground says to |
 | `$2bc8` | `actor_behavior_type06` | 490 | charges, then THROWS a type-$28 shot from the high pool |
+| `$7060` | `actor_behavior_type07` | 424 | THREE table rows share it; two mark bits of 30(a0) say which fired |
+| `$72c2` | `actor_swoop_state0_acquire` | 102 | three gates, then one of five canned dive paths |
+| `$7328` | `actor_swoop_state1_run_path` | 62 | one dx,dy pair a frame until the path's sentinel |
+| `$7366` | `actor_swoop_state2_home_x` | 56 | 4 px/frame onto the followed x; the no-op `bchg` pair |
+| `$739e` | `actor_swoop_state3_descend` | 48 | 2 px along and 2 up until the launch y comes back |
+| `$5928` | `actor_behavior_type47` | 42 | pure animation: no callee at all; the CURSOR wrapping frees the slot |
+| `$5972` | `actor_behavior_type48` | 86 | settle + ascent + `$2f22` inline, then slot 50's countdown tail |
+| `$59d0` | `actor_behavior_type49` | 108 | the same walk, then TWO tables over ONE cursor keyed on 31(a0) |
 | `$5a6e` | `actor_behavior_type50` | 64 | drifts 8 px/frame, frees its own slot on a countdown |
 | `$5ab2` | `actor_behavior_type51` | 138 | walks until stopped; bit 0 of 9(a0) is a one-way switch |
 | `$6e1c` | `actor_behavior_type54` | 112 | the VERTICAL moving platform |
@@ -4996,3 +5012,202 @@ the equivalent reorder; the refused dispatch.
 then SLOT 7 ($7060, 424 B) — which retires this batch's two prologue boundaries and answers what
 bits 1/2 of 30(a0) select; the NINE third-copy encoders now due in leaf.py; bus.h → kit; the three
 later-wins cmt pairs. 43 slots remain.
+
+### Batch 32 phase 1: the $5a band closes — three endings of one grammar
+
+Three dispatch rows, 236 bytes, all three CLEAN — every callee was already green, so nothing here
+is bounded. **Verified 218, 25,296 bytes, 57.1 % of §0k's 44,262; `make test` 4247** (4200 before;
+`test/test_behavior.py` stands at 652). With slots 50–53 already in, `$5928..$5c6b` — the whole
+$5a band, SEVEN dispatch rows plus `actor_advance_anim16` inside it — now runs reconstructed end to
+end. 21 of the table's 62 rows are live (41 remain; slots 0 and 58 share one address).
+
+| address | name | bytes | row |
+| --- | --- | --- | --- |
+| `$5928` | `actor_behavior_type47` | 42 | CLEAN — no callee AT ALL; the cursor wrapping is what frees the slot |
+| `$5972` | `actor_behavior_type48` | 86 | CLEAN — the band's walk, then slot 50's countdown tail over four frames |
+| `$59d0` | `actor_behavior_type49` | 108 | CLEAN — the same walk, then TWO tables over ONE cursor keyed on 31(a0) |
+
+**THREE ENDINGS OF ONE GRAMMAR, and that is the batch's finding.** All seven $5a-band handlers free
+their own slot with `move.w #$ffbe,(a0)`, and what differs is only which flag the `bne` above it
+reads. Slot 47 reads the CURSOR STORE's — `move.b d0,18(a0) / bne` — so a type-47 record lives
+exactly sixteen frames whatever its countdown byte holds, and never touches 30(a0). Slot 48 reads
+`subq.b #1,30(a0)`'s, so its cursor wrap frees nothing. Slot 49 reads the cursor
+`actor_advance_anim16` hands BACK in d0, and only on its second table. Each pair is pinned against
+the other in the battery (`test_slot48_does_NOT_free_itself_when_its_cursor_wraps` is the control
+for slot 47's ending; `test_slot49_phase_two_..._ignores_the_countdown` is the control for 48's).
+
+**Slot 49 is the tier's first TWO-PHASE animation.** 31(a0) is the phase byte, `moveq #0,d0 /
+move.b 18(a0),d0` is read ONCE *before* `tst.b 31(a0)` picks the table, so both phases index the
+same cursor and a record carries its offset across the change. Phase one plays $5a4e and counts
+30(a0) down to `st 31(a0)` — it can never free its slot however long it runs; phase two plays
+$5a5e, ignores the countdown entirely, and ends on the wrap. So the record's life is "phase one
+until the timer expires, then exactly one pass of phase two".
+
+**`$2f22` INLINE, and a fourth reading of a blocked step.** Slots 48 and 49 open with the same
+forty-two bytes — `actor_fall_and_settle`, `actor_hop_ascend_step`, then `actor_step_facing`'s own
+body spelt out rather than called. Its `tst.b d0 / bne / bchg #3,8(a0)` is the band's fourth answer
+to a blocked step: slot 51 `bset`s a one-way switch, slot 52 discards the answer, slot 3 reaches
+`actor_toggle_side_flag`, and these two simply turn round. The `move.w #$3,d7` sits AFTER the
+settle, so only d7's low word is replaced — which is the word the probes read (`map.h`), so unlike
+slots 3 and 6 the step really is the constant it looks like.
+
+**Plate corrections, cited to bytes.** $59d0's extent ran EIGHTEEN bytes long: it claimed the code
+runs to $5a4e, which swallowed `actor_advance_anim16` whole — but `6100002a` at $5a10 and
+`6100001a` at $5a20 are `bsr.w`, i.e. CALLS, and $5a3c has its own `rts` at $5a4c, so slot 49 is
+bounded at $5a3c and is 108 bytes rather than 126. $5928's and $5972's extents each ran one byte
+past the code into their own frame tables (the batch-31 class again). Four new `var` plates:
+`actor_type47_frames`, `actor_type48_frames`, `actor_type49_frames_phase1/2`.
+
+**Slot 47 is the smallest live handler in the table** after slot 8's six bytes: no spawn gate, no
+contact test, no settle, no map probe, no step, no callee — two writes a frame and an EXACT write
+set in the battery, which is what would catch a handler that had borrowed a neighbour's countdown.
+It is also the only one in the band whose table is reached absolute-long and then indexed in a
+SECOND instruction (`lea $5952.l,a1 / lea 0(a1,d0.w),a1`) rather than by one `lea d8(PC,Dn.w)`.
+
+**SWEEP: 12 mutants over the batch's own axes, 12 caught, none equivalent** — each mask against its
+neighbours' ($1f/$f/$7), each table against another's, the step constant, `actor_step_facing`
+against `actor_face_and_step_toward` (turn vs. face-first), the settle/ascent ORDER on the hop's
+last frame, the phase test, phase one freeing, the cursor read moved after the phase test, and the
+countdown's off-by-one. Sources verified pristine against a backup after the sweep, per batch 31.
+
+**Reuse rather than new code**: `actor_advance_anim16` ($5a3c) was already green from batch 29 and
+is slot 49's tail unchanged; `actor_step_facing` is slot 48/49's inline ending; slot 50's tail
+became the shared `animate_then_free_on_countdown`, so slot 48 adds no tail of its own. In the
+battery, `_switched_pokes` is renamed `_band5a_pokes` — the seed is the band's, not the switch's,
+and it now serves five slots.
+
+**Not pinned, honestly**: which creature each slot draws (still typeNN); the registers these three
+leave behind; the refused dispatch. Nothing in this batch is unreachable by the game's own data —
+all three handlers are pure record arithmetic, and every arm is driven.
+
+**QUEUED**: SLOT 7 ($7060, 424 B — retires batch 31's two prologue boundaries and answers what bits
+1/2 of 30(a0) select), the pickup tier, the swoop, the player LAST; the nine third-copy encoders
+due in leaf.py; bus.h → kit; the three later-wins cmt pairs. 41 slots remain (counted
+against the table's 62 rows, which is where batch 31's "43" was one out).
+
+### Batch 32 phase 2: slot 7, the swoop machine — and the tier's LAST boundary retired
+
+Five routines, 692 bytes, all CLEAN — every callee was already green, so nothing here is bounded.
+**Verified 223, 25,988 bytes, 58.7 % of §0k's 44,262; `make test` 4344** (4247 after phase 1;
+`test/test_behavior.py` stands at 749). 22 of the table's 62 rows are live; 40 remain.
+
+| address | name | bytes | row |
+| --- | --- | --- | --- |
+| `$7060` | `actor_behavior_type07` | 424 | CLEAN — the body THREE table rows share |
+| `$72c2` | `actor_swoop_state0_acquire` | 102 | CLEAN — three gates, then one of five canned paths |
+| `$7328` | `actor_swoop_state1_run_path` | 62 | CLEAN — one dx,dy pair a frame to the sentinel |
+| `$7366` | `actor_swoop_state2_home_x` | 56 | CLEAN — 4 px/frame, and the no-op `bchg` pair |
+| `$739e` | `actor_swoop_state3_descend` | 48 | CLEAN — 2 px along, 2 up, back to the launch y |
+
+**THE LAST ALWAYS-TRANSFER HANDLERS ARE GONE.** Batch 31 left slots 59 and 8 holding no `rts` at
+all — each raised a bit of WB_ACTOR_FIELD_30 and ran into `$7060`, so what each *reported* was an
+address, and the battery carried a checkpoint table (`ALWAYS_TRANSFER`) to drive them. Slot 7 is
+reconstructed now, both run straight on, and that machinery is deleted: every ported row answers
+WB_ACTOR_DISPATCH_RAN. `UNPORTED_SLOT` moved from 7 to 9 for the same reason it exists.
+
+**AND THE TWO MARK BITS ARE ANSWERED.** Bit 1 (slot 8's) arms a FIVE-SHOT BURST — velocities from
+`$7208`/`$721c`, mirrored left/right, one shot every 128 frames — and *also* switches the frame list
+to `$74ee`/`$7508`. Bit 2 (slot 59's) arms a single DROPPER every 32 frames, `$20` above the record,
+*and* replaces the animation with one of two constant sprites (`$21`/`$24`). Slot 7's own row raises
+neither, so it animates and swoops and spawns nothing.
+
+**Corrections to the phase-2 brief, cited to bytes.** The frame-list polarity was inverted in the
+task's reading: `btst #3,8(a0) / bne.w $7128` at `$7102` branches when the bit is SET, so `$74a0` is
+the SIDE-BIT-SET list and `$74ba` the clear one — "neither/side" had them the other way round. And
+the `bsr $1b8e` really is inside the `dbf` (`51c9 ffd0` at `$71a4` targets `$7176`, the `bsr`
+itself), so five separate records are taken and a mid-loop failure's `beq.w $7206` leaves the WHOLE
+routine, skipping the dropper. The dropper's allocation really does precede its cadence test, so a
+full pool leaves 31(a0) unadvanced — pinned as its own case.
+
+**Plate corrections.** `$7060`'s extent ran one byte long (it claimed `$7208`, which is
+`actor_type07_burst_left`'s first byte). `$73de` carried TWO `var`+`cmt` pairs — an ApplyNames
+last-wins hazard, the class the batch-31 notes registered — now merged into one. Eight new `var`
+plates: the path blob, the four live frame lists, the unreferenced fifth, and the two velocity
+tables.
+
+**THE FIFTH FRAME LIST AT `$74d4` HAS NO REFERENCE ANYWHERE IN THE IMAGE.** Twelve words ($92/$93)
+in exactly the shape of the four around it, bounded only by its neighbours; no `lea`, `movea` or
+computed address reaches it, and the cursor's wrap at twelve means no live path could arrive from a
+neighbour either. Named `actor_type07_frames_unreferenced` rather than trimmed. (Twenty-four more
+words at `$7230`, in the shape of two more such lists for the `$21`/`$24` sprites slot 7 publishes
+as *immediates*, are noted in `$721c`'s plate and left for a later batch.)
+
+**Two unbounded dispatches, one refusal apiece.** `jsr` through `actor_swoop_state_table` on 22(a0)
+has NO bound — a byte reaches `$7490 + 0..1020` and the longword there is called — so the port
+reports the address exactly as `actor_dispatch_behavior` does, and a case enumerates all 256 state
+bytes against the C alone. The game's own flow writes only 0..3 (and `$701c` forces a nonzero byte
+to 3), so no differential can drive one.
+
+**SWEEP: 39 mutants over pre-hoc axes, 36 caught, 2 EQUIVALENT, 1 real hole closed.** The hole was
+`type07/cadence-masks-swapped`: `$1f` is a subset of `$7f`, so every seed the battery had agreed
+under both masks — a row at cursor `$1f` now separates them. The two equivalents are named because
+no differential can hold them: `swoop/bchg-pair-dropped` (the two `bchg #3,8(a0)` cancel in memory,
+so only the entry-byte pin sees them) and `type07/burst-failure-continues` (a burst that failed
+means the pool is full, so the dropper's own allocation fails too and the extra call writes
+nothing — the `beq.w $7206` target is pinned by the bytes instead). Two patterns collided with slot
+6's identical shot-fill lines; one was re-run with unique context and killed, the other
+(`shot-flags-not-copied`) is covered by an explicit per-facing assertion. Sources verified pristine
+against a backup after every round.
+
+**THE REVIEW GATE (eight finder angles + a verify pass) found THREE real divergences**, all now
+fixed and each pinned by a mutant proven red:
+
+  * **The state dispatch's refusal collided with its success value.** `type07_run_state` reported
+    the fetched longword, and the span it reaches is ordinary DATA: state byte 65 lands on `$7594`,
+    whose longword is `$00000000` — WB_ACTOR_DISPATCH_RAN's own value. A record with that state
+    byte therefore ran BOTH spawners and answered "clean" where the original `jsr`s to address 0.
+    The RAN/boundary answer is now the return and the address an out-parameter, and the 256-state
+    enumeration asserts a refused state writes NOTHING (the seed arms both spawners with their
+    cadences met, so a port that ran on is caught by the tables' own bytes). A second case takes the
+    premise from the image rather than from this paragraph: some state byte does reach a zero
+    longword.
+  * **Swoop states 2 and 3 compared a local where the original re-reads memory.** `$7378`/`$7382`
+    is `subq/addq.w (a0)` then `cmp.w (a0),d0`, and `$73c0` is `subq.w #2,2(a0)` then
+    `cmp.w 2(a0),d0` — batch 31's stale-value class, in the direction that batch did not see. Both
+    now re-read through bus.h. The pin is a record at `$fffff0`, whose coordinate stores the shim
+    and bus.h both DROP while 24-bit folding puts 22(a0) and 26(a0) at `$6` and `$a` inside the
+    image: the original compares against the zero a refused read answers and a port holding a local
+    does not, and the state byte that separates them is observable.
+
+**Three more holes in the BATTERY, not the port**, each closed with a case whose mutant is proven:
+slot 7's defeat exit was undriven (a dead record could have fired a burst); rows 8 and 59 were only
+ever driven with the spawn gate UP, so the mark-bit-then-body ordering never crossed the join under
+test; and swoop state 3's "the probe's answer is discarded" claim had no control. Nine more findings
+applied: the instruction caps were raised **globally** by 1481 for slot-7-only work and are now
+per-handler (and the swoop's are per-STATE — only state 3 takes a map probe, and one, not two); the
+`ALWAYS_TRANSFER` tautology test and a stale docstring removed; a fourth copy of the blocked-row
+seed extracted (`_block_the_walk`); one word-reading convention across the new block
+(`_written_word`); `bump_field_b` and `tick_countdown30` for the four/three sites that spelt them;
+the two spawn cadences collapsed into `cadence_reached_zero`; the encoder ledger annotated.
+
+**A REFUTED finding worth recording**: the spawners' cadence re-read is NOT a divergence. bus.h
+guards reads and writes with one predicate, so a refused field reads back 0, masks to 0 and stores
+nowhere — and `0 & mask` is 0. The computed-local form was adopted anyway because it models the
+`andi`'s ALU-flags branch and drops one modelled read; the argument lives in that helper's plate.
+
+**Plate corrections the gate added.** The shared `$5a`-band tail was NOT "identical instruction for
+instruction": slot 48 steps its cursor `addi.b`/`andi.b` at `$59ae` and slot 50 the word forms at
+`$5a86`, 230 bytes apart, plus slot 50's dead `lea` — the real justification is `step_cursor`'s,
+that the two spellings agree for every cursor a record can hold. `type07_fill_shot`'s plate claimed
+both spawners write "in the order they make them"; the dropper interleaves `subi.w #$20,2(a1)` after
+the copy (`$71d0`), an ordering no address-keyed ledger can separate. `$745e` had no directive at
+all and now has one. Header names were drifting from ../names.txt and are renamed to match it
+(`..._FRAMES_PHASE1/PHASE2`, `..._FRAMES_UNREFERENCED`).
+
+**Not pinned, honestly**: which creature slot 7 draws; the registers it leaves behind (a1 across the
+slot-59 join, which `$7060` does not read); the refused BEHAVIOUR dispatch, and the refused STATE
+dispatch's *transfer* — the enumeration pins what the port answers and that it stops, but the
+original would call arbitrary data and no differential can drive that; the unreferenced `$74d4` list
+and the `$7230` words, which no data can reach; and the two equivalent mutants above.
+
+**Deferred, out of scope for this batch** (found by the gate, deliberately not folded in):
+`src/map.c` writes WB_ACTOR_X through a raw `addr_add` with no bus guard — a pre-existing exposure
+the state-2/3 pins route around rather than trip; and a `make_image` double-build pattern at five
+sites in `test/test_behavior.py` (~0.15 ms).
+
+**QUEUED**: the pickup tier ($38) and the player row ($1, the largest subtree behind the table); the
+`$7230` words; the encoders due in leaf.py — now TWELVE, batch 32's `move_w_d16_d16`,
+`movea_l_indexed` and `subi_w_d16` having become third copies, with `movea_l_indexed` the first to
+promote because the other two batteries that spell it hand-roll `index << 12` where this one calls
+`brief_extension_word`; bus.h → kit; the three remaining later-wins cmt pairs
+($1023a, $10394, $1044c). 40 slots remain.

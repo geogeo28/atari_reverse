@@ -150,9 +150,10 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            for state_flag_a34) and the dispatcher it feeds ($928), which fetches a
                            longword out of the 62-entry table at $938 and tail-jumps through it —
                            on the WRAPPED offset, so 248 of the 65,536 type values reach an entry.
-                           Sixty of the sixty-two targets are unported, so the dispatcher hands the
-                           target BACK and the differential runs the oracle on to it; the list of
-                           reconstructed targets is one row today and grows by one per batch. Then
+                           Twenty-two of the sixty-two rows are reconstructed as of batch 32 and
+                           forty are not, so for those the dispatcher hands the target BACK and the
+                           differential runs the oracle on to it; the reconstructed list grows by a
+                           few rows a batch. Then
                            the tier's own grammar: the animation every spawned record plays
                            ($698a), the thirteen shared leaves the handlers call — three map
                            steppers, four animation cursors, a homing step, a moving platform's
@@ -293,11 +294,13 @@ test/test_behavior.py      the behaviour tier's differential. Its shape is set b
                            sum-the-spanned-bytes idiom), and an independent model of $5c6e's three
                            overlap tests compared against the ORACLE's d0 as well as the port's
                            return. It imports test_map.py's map seeding and test_rng.py's generator
-                           model rather than restating either. Then the first TEN TABLE SLOTS: the
-                           five-handler band at $2462..$2db1 (one shape with five bodies), the two
-                           at $5a6e/$5ab2 and the three moving platforms — each entered where the
-                           `jmp (a1)` would land, and each with its dispatch row flipped from a
-                           boundary to a run. What those cases share is a GROUND WINDOW — a solid
+                           model rather than restating either. Then the TWENTY-TWO LIVE TABLE ROWS:
+                           the five-handler band at $2462..$2db1 (one shape with five bodies), the
+                           whole $5a band ($5928..$5c6b, seven rows and three endings of one
+                           grammar), the three moving platforms, slot 60's retype, slot 61's message
+                           sequence, and slot 7 with the SWOOP state machine below it that its two
+                           prologue rows also run into — each entered where the `jmp (a1)` would
+                           land, and each with its dispatch row flipped from a boundary to a run. What those cases share is a GROUND WINDOW — a solid
                            row under the record, a clear one where the probes read, and a wide
                            WB_BG_SCROLL_LIMIT_X — because a keyed map tangles "did it land", "was
                            the step blocked" and "is there a drop ahead" into one byte
