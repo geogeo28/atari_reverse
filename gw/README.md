@@ -86,6 +86,36 @@ no decode and therefore no retry loop — for protected disks the lever is more
 revolutions, not more retries. Conversely, on a non-protected read each retry pass
 is *appended* to the raw stream, so retries make the SCP gold master richer.
 
+## Mounting a dump / file-level access
+
+A `.st` is a raw FAT12 volume, so its files are reachable directly (both routes
+verified with a write/read round-trip):
+
+```bash
+# mtools (brew install mtools) — no mounting, most tolerant of Atari boot sectors
+mdir  -i disk.st ::               # list files
+mcopy -i disk.st ::GAME.PRG .     # extract
+mcopy -i disk.st file.txt ::      # insert
+
+# native Finder mount — the imagekey tells hdiutil it is a raw image
+hdiutil attach -readonly -imagekey diskimage-class=CRawDiskImage disk.st
+```
+
+If macOS refuses a TOS-formatted boot sector, mtools still works — prefix with
+`MTOOLS_SKIP_CHECK=1` if it complains too.
+
+A `.stx` is a flux-level container, not a filesystem — nothing mounts it directly.
+Convert it down first, then mount the result:
+
+```bash
+DYLD_LIBRARY_PATH=~/opt/hxcfe_cmdline/Frameworks \
+  ~/opt/hxcfe_cmdline/App/hxcfe -finput:game.stx -conv:ATARIST_ST -foutput:game.st
+```
+
+The filesystem decodes fine; the protection tracks do not survive. Extracting files
+from a protected disk this way works — *running* the game still means giving Hatari
+the STX itself.
+
 ## Note
 
 `dumps/` is git-ignored — flux images are tens of MB each and do not belong in this
