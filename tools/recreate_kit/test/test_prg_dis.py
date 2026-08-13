@@ -69,6 +69,31 @@ CASES = [
     ("c151", 2, "and.w d0,(a1)"),
     ("82bcffff0000", 6, "or.l #$ffff0000,d1"),
     ("8081", 2, "or.l d1,d0"),
+    # --- the two-register family that hides under opmodes 100/101/110 at ea modes 000 and 001:
+    # ABCD/SBCD, ADDX/SUBX and CMPM. Every one is `<Ry>,<Rx>` with **Rx (bits 11-9) the
+    # DESTINATION**, and that half has NO automatic tell: the -(An) forms at least printed as an
+    # impossible `and.b d1,a0` and the sweep below catches those, but the REGISTER forms printed as
+    # a perfectly ordinary `add.b d0,d1` with the operands the wrong way round, which nothing can
+    # see. So the order is pinned here, encoding by encoding, and these rows are the only guard.
+    # `d101` is `addx.b d1,d0` (d0 += d1 + X) and NOT `addx.b d0,d1`.
+    ("c101", 2, "abcd d1,d0"),
+    ("c308", 2, "abcd -(a0),-(a1)"),
+    ("8101", 2, "sbcd d1,d0"),
+    ("8308", 2, "sbcd -(a0),-(a1)"),
+    ("d101", 2, "addx.b d1,d0"),
+    ("d300", 2, "addx.b d0,d1"),
+    ("d541", 2, "addx.w d1,d2"),
+    ("d588", 2, "addx.l -(a0),-(a2)"),
+    ("9101", 2, "subx.b d1,d0"),
+    ("9308", 2, "subx.b -(a0),-(a1)"),
+    ("9741", 2, "subx.w d1,d3"),
+    ("9788", 2, "subx.l -(a0),-(a3)"),
+    ("b308", 2, "cmpm.b (a0)+,(a1)+"),
+    ("b34c", 2, "cmpm.w (a4)+,(a1)+"),
+    ("b78c", 2, "cmpm.l (a4)+,(a3)+"),
+    # --- and the neighbours the family must NOT swallow
+    ("b101", 2, "eor.b d0,d1"),        # line B's REGISTER form is an ordinary EOR, not CMPM
+    ("c141", 2, "exg d0,d1"),          # EXG still wins its own opmode
 ]
 
 # --- opcode-space sweep for the "impossible destination" tell ------------------------
@@ -84,20 +109,18 @@ AN_DEST_IMPOSSIBLE = ("and", "or", "eor", "add", "sub")
 # stays in sync — unlike the MULU/MULS/MOVEP bugs, which were length bugs too. Listed here so the
 # sweep documents exactly which impossible forms are tolerated, and fails both when a new one
 # appears and when one of these is fixed without updating the table.
+# THIS TABLE WAS ELEVEN ENTRIES LONG UNTIL 2026-08-13 and is now two: ABCD/SBCD, ADDX/SUBX and CMPM
+# are all decoded, so the only encodings left printing an impossible address-register destination
+# are the two that genuinely ARE illegal — the 68000 has no instruction there at all.
+#
+# WHAT THIS SWEEP CANNOT SEE, stated because the list shrinking makes it easy to believe otherwise:
+# it finds mis-decodes only by their An DESTINATION. The register-pair forms of the family above
+# (ea mode 000) print into a Dn and are indistinguishable from a legal `add.b d0,d1` — a whole
+# opcode-space sweep has nothing to test. Those are pinned by the reference CASES above and by
+# nothing else, so a new one would NOT "fail the moment it appears".
 KNOWN_MNEMONIC_GAPS = {
-    (0x8, 4): "SBCD -(Ay),-(Ax)",
     (0x8, 5): "illegal — OR.w Dn,<ea> cannot take An",
     (0x8, 6): "illegal — OR.l Dn,<ea> cannot take An",
-    (0x9, 4): "SUBX.B -(Ay),-(Ax)",
-    (0x9, 5): "SUBX.W -(Ay),-(Ax)",
-    (0x9, 6): "SUBX.L -(Ay),-(Ax)",
-    (0xb, 4): "CMPM.b (Ay)+,(Ax)+",
-    (0xb, 5): "CMPM.w (Ay)+,(Ax)+",
-    (0xb, 6): "CMPM.l (Ay)+,(Ax)+",
-    (0xc, 4): "ABCD -(Ay),-(Ax)",
-    (0xd, 4): "ADDX.B -(Ay),-(Ax)",
-    (0xd, 5): "ADDX.W -(Ay),-(Ax)",
-    (0xd, 6): "ADDX.L -(Ay),-(Ax)",
 }
 # Invisible to this sweep: line C opmode 110 ea mode 000 (0xc180 and friends) is illegal — EXG's
 # opmode 10000 does not exist — but prg_dis prints "and.l dX,dY", which is exactly what the legal

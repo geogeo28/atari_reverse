@@ -129,6 +129,39 @@ MULDIV = {(8, 3): "divu", (8, 7): "divs", (0xc, 3): "mulu", (0xc, 7): "muls"}
 # Same tell in line C's "Dn -> <ea>" opmodes: AND cannot target Dn or An either, so
 # (line, opmode, ea-mode) triples that would decode as one of those are really EXG.
 EXG_FORMS = {(0xc, 5, 0): "exg d%d,d%d", (0xc, 5, 1): "exg a%d,a%d", (0xc, 6, 1): "exg d%d,a%d"}
+# ...and BELOW the EXG opmodes sits a whole FAMILY of two-register instructions that the
+# "Dn -> <ea>" reading gets wrong: opmodes 100/101/110 with ea mode 000 (a register pair) or 001 (a
+# memory pair) are ABCD/SBCD, ADDX/SUBX and CMPM. All are two bytes, exactly as the wrong reading
+# is, so the sweep never desyncs -- these are mnemonic and OPERAND-ORDER bugs only.
+#
+# THE OPERAND ORDER IS THE HALF WITH NO TELL. Rx is bits 11-9 and Ry bits 2-0, and every one of
+# these is written `<Ry>,<Rx>` with **Rx the DESTINATION** -- so `d101` is `addx.b d1,d0` (d0 += d1
+# + X) where the old reading printed `add.b d0,d1` and named the wrong register as the target. The
+# -(An) forms at least LOOK impossible (`and.b d1,a0` writes an address register, which the sweep in
+# tools/recreate_kit/test/test_prg_dis.py catches); the REGISTER forms print as a perfectly ordinary
+# `add.b d0,d1` and no automatic check can see them, which is why the reference encodings in that
+# test pin the order explicitly. Missing the ABCD half cost two wrong routine NAMES in
+# projects/wonderboy/names.txt ($51ac's `abcd d1,d0` read as a mask) before the bytes were re-read.
+PAIR_OPS = {0x8: "sbcd", 0x9: "subx", 0xb: "cmpm", 0xc: "abcd", 0xd: "addx"}
+PAIR_BYTE_ONLY = (0x8, 0xc)      # SBCD/ABCD have no .w/.l: those opmodes are EXG (C) or illegal (8)
+PAIR_EA_REGISTER, PAIR_EA_MEMORY = 0, 1
+
+
+def pair_op(top, opmode, m, rx, ry):
+    """ABCD/SBCD/ADDX/SUBX/CMPM, or None when (line, opmode, ea mode) is not one of them."""
+    mn = PAIR_OPS.get(top)
+    if mn is None or not 4 <= opmode <= 6 or m not in (PAIR_EA_REGISTER, PAIR_EA_MEMORY):
+        return None
+    if top in PAIR_BYTE_ONLY and opmode != 4:
+        return None
+    # CMPM has ONLY the postincrement form; line B's register encoding is an ordinary EOR.x Dn,Dn.
+    if top == 0xb:
+        return None if m != PAIR_EA_MEMORY else "cmpm%s (a%d)+,(a%d)+" % (SZC[opmode - 4], ry, rx)
+    # The decimal pair are byte-only and are conventionally written with no size suffix at all.
+    size = "" if top in PAIR_BYTE_ONLY else SZC[opmode - 4]
+    if m == PAIR_EA_REGISTER:
+        return "%s%s d%d,d%d" % (mn, size, ry, rx)
+    return "%s%s -(a%d),-(a%d)" % (mn, size, ry, rx)
 # Branch form: cc 0/1 = BRA/BSR. Scc/DBcc form: cc 0/1 = T/F (so DBcc 1 = DBRA).
 CC = ["ra", "sr", "hi", "ls", "cc", "cs", "ne", "eq",
       "vc", "vs", "pl", "mi", "ge", "lt", "gt", "le"]
@@ -298,6 +331,9 @@ def decode(d, p, base):
             return 2 + c, "%s%s %s,a%d" % (amn, SZC[size], t, reg)
         if (top, opmode, m) in EXG_FORMS:  # EXG hides in AND's "Dn -> <ea>" opmodes
             return 2, EXG_FORMS[(top, opmode, m)] % (reg, r)
+        pair = pair_op(top, opmode, m, reg, r)  # ...and the ADDX/SUBX/ABCD/SBCD/CMPM family below
+        if pair:
+            return 2, pair
         size = opmode & 3
         t, c = ea(d, p + 2, m, r, size, pc2)
         mn = "eor" if (top == 0xb and opmode >= 4) else base_mn

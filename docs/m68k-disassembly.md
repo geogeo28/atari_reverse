@@ -93,6 +93,9 @@ field is *not* laid out like `ADD`/`SUB`:
 | `100` (ea mode `000`/`001`) | `SUBX.B` / `CMPM.B`¹ / `ADDX.B` | **`SBCD`** (line 8) / **`ABCD`** (line C) |
 | `101`, `110` (ea mode `000`/`001`) | the same, `.W` / `.L` | line 8: illegal. line C: **`EXG`**² |
 
+Every entry in that table is decoded by `prg_dis` as of 2026-08-13 except line 8's `101`/`110`,
+which encode nothing.
+
 ¹ `CMPM` needs ea mode `001` (postincrement) — line B with ea mode `000` is an ordinary
 `EOR.x Dn,Dn`, not an impossible form.
 ² the three legal `EXG` encodings are `101`+`000` (`Dx,Dy`), `101`+`001` (`Ax,Ay`) and
@@ -109,11 +112,33 @@ the decoder: `cd tools/recreate_kit && make test`.
 `MOVEP` was the same family's other **length** bug, fixed the same day: `0000 rrr 1 1xx 001 aaa`
 plus a displacement word = 4 bytes, which `prg_dis` read as a 2-byte dynamic bit op (`btst d0,a0`).
 
-Still knowingly unhandled in `prg_dis`, all *mnemonic-only* — ea modes `000`/`001` take no
-extension word, so the length is right and the sweep stays in sync: `ABCD`/`SBCD` (printed as
-`and.b`/`or.b` into an `An`), `ADDX`/`SUBX` (as `add`/`sub`), and `CMPM` (as `eor`). The test
-above sweeps all 65536 opcode words for this impossible-destination tell and allowlists exactly
-those 832 encodings, so any *new* one fails the moment it appears.
+**The whole two-register family is DECODED since 2026-08-13** — `ABCD`/`SBCD`, `ADDX`/`SUBX` and
+`CMPM`. They had sat on a "knowingly unhandled, mnemonic-only" list here since 2026-07-28, and
+fifteen days later the cost landed: Wonder Boy's `$51ac` ends `c101`, which the old decoder printed
+as `and.b d0,d1`, so the routine was named `rng_1_to_4_masked` — a MASK — when it is a packed-BCD
+**add** of a one-to-four draw into the caller's `d0`. `$51d8`'s plate was wrong for the same reason
+one call away. The gap was recorded here *and* in that project's `names.txt` ("the disassembler
+prints `c308` as `and.b d1,a0`, which is wrong"), and a plate was still written from the listing
+anyway. **A documented gap is not a guard**; the fix is one `pair_op` next to `EXG_FORMS`.
+
+**THE OPERAND ORDER IS THE HALF WITH NO TELL, and it is the half that matters most.** Every one of
+these is written `<Ry>,<Rx>` with **Rx (bits 11-9) the DESTINATION** — so `d101` is `addx.b d1,d0`
+(`d0 += d1 + X`), and the old reading printed `add.b d0,d1`, naming the wrong register as the
+target. The `-(An)` forms at least *looked* impossible (`and.b d1,a0` writes an address register)
+and the sweep caught those; the REGISTER forms printed as a perfectly ordinary `add.b d0,d1` and
+**no automatic check can see them at all**. Wonder Boy shipped three of them in already-ported sound
+code — `d300` at `$1a650`, `$1a70a` and `$1a7c4`, inside `snd_sfx_tick`'s channel loop, each really
+`addx.b d0,d1`. No live defect (that reconstruction was written from Ghidra, which decodes them
+right), but every listing line at those addresses was wrong. What guards the order now is the
+reference encodings in `tools/recreate_kit/test/test_prg_dis.py`, and nothing else.
+
+Still knowingly unhandled, and now only two: line 8's opmodes `101`/`110` at ea mode `001`, which
+are not instructions at all — the 68000 encodes nothing there, so `or.w d0,a0` is the honest
+report of a hole. The sweep allowlists exactly those. **Read what that sweep can and cannot do:** it
+finds a mis-decode only by its *An destination*, so it fails when a new impossible-destination form
+appears and when an allowlisted one starts decoding correctly (which is how the ABCD fix was caught
+mid-flight) — but it is structurally blind to every `Dn`-destination form, including the whole
+register half of the family above.
 
 One more, and it is an *operand*-rendering gap rather than a mnemonic one: an **indexed EA prints
 as `idx(An)`** — no index register, no index size, no scale. The extension word IS consumed, so the
