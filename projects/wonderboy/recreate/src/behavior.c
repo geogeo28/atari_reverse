@@ -205,6 +205,12 @@ static const BehaviorHandler PORTED_HANDLERS[] = {
     {WB_ACTOR_BEHAVIOR_TYPE29, actor_behavior_null},
     {WB_ACTOR_BEHAVIOR_TYPE30, actor_behavior_type30},
     {WB_ACTOR_BEHAVIOR_TYPE31, actor_behavior_type31},
+    {WB_ACTOR_BEHAVIOR_TYPE32, actor_behavior_type32},
+    {WB_ACTOR_BEHAVIOR_TYPE33, actor_behavior_type33},
+    {WB_ACTOR_BEHAVIOR_TYPE34, actor_behavior_type34},
+    {WB_ACTOR_BEHAVIOR_TYPE35, actor_behavior_type35},
+    {WB_ACTOR_BEHAVIOR_TYPE36, actor_behavior_type36},
+    {WB_ACTOR_BEHAVIOR_TYPE37, actor_behavior_type37},
     {WB_ACTOR_BEHAVIOR_TYPE47, actor_behavior_type47},
     {WB_ACTOR_BEHAVIOR_TYPE48, actor_behavior_type48},
     {WB_ACTOR_BEHAVIOR_TYPE49, actor_behavior_type49},
@@ -2631,5 +2637,311 @@ uint32_t actor_behavior_type31(uint8_t *image, uint32_t actor) {
     }
 
     actor_select_sprite_by_flag(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- slots 32..37 ($5046..$5407): what CLOSES the $4e38..$5407 band ------------------------------
+ *
+ * Two more collectables and then four routines that are not collectables at all. Slot 32 is slot
+ * 31's payout with a HOP MACHINE in front of it; slot 33 pays the panel's own clock instead of any
+ * counter. Slot 34 is the SHOP's item cursor — a record whose WB_ACTOR_X is a menu selection the
+ * joystick moves. Slots 35, 36 and 37 are the actors `player_pending_event_gate` ($b1a) spawns and
+ * then waits on: each raises one of the two flags inside WB_STAGE_RESET_BLOCK that gate tests, and
+ * that is the whole of what they are for.
+ */
+
+/* $5116, $511c and $5128 — slot 32's ending, and the two clears sit BETWEEN the `bclr` and the free
+ * marker exactly as slot 30's cursor clear does, which is why `collectable_free_slot` is spelt out
+ * here rather than called. It does NOT clear WB_ACTOR_TYPE32_CURSOR, where slot 30's ending clears
+ * its own — so the next type-32 record picks the animation up where this one left it.
+ *
+ * THE SECOND CLEAR IS DEAD. `clr.w $515c.l` writes BOTH latch bytes and the `clr.b $515d.l` after
+ * it writes the second one again with the same zero — the deliberate dead-instruction class
+ * ../names.txt records at $7366 and $245e. It is reproduced because it is what the bytes do, and no
+ * case can hold it: the oracle's write ledger is address-keyed, so one zero and two are the same
+ * ledger (../STATUS.md's not-pinned list). */
+static void type32_free_slot(uint8_t *image, uint32_t actor) {
+    flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+    wr16(image + WB_ACTOR_TYPE32_WALKING, 0);
+    image[WB_ACTOR_TYPE32_HOPS_SPENT] = 0;
+    set_field_w(image, actor, WB_ACTOR_X, WB_ACTOR_FREE_MARKER);
+}
+
+/* $504c — WHEN THE CONTACT TEST RUNS AT ALL. `tst.b $515c.l / bne` jumps STRAIGHT to it, so once
+ * the record has landed once it is collectable on every frame; only a record that has never landed
+ * and is mid-hop skips the test, which is slot 28's and slot 31's gate with the latch in front. */
+static int type32_contact_is_tested(const uint8_t *image, uint32_t actor) {
+    return image[WB_ACTOR_TYPE32_WALKING] != 0
+           || !flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
+}
+
+/* $5078 — the hop machine. It runs only on the frames the record is SUPPORTED, so one hop is one
+ * WB_ACTOR_FIELD_10, and the byte it counts down is ALSO the speed the next hop launches at: the
+ * hops therefore get shorter and the last one is skipped, because the frame the count reaches zero
+ * raises WB_ACTOR_TYPE32_HOPS_SPENT and launches nothing.
+ *
+ * WB_ACTOR_TYPE32_WALKING IS RAISED FIRST, above the countdown and both of its arms, so the walk
+ * and the contact test open on the record's very first landing whether or not it hops again. */
+static void type32_relaunch_on_landing(uint8_t *image, uint32_t actor) {
+    uint8_t hops_left;
+
+    if (image[WB_ACTOR_TYPE32_HOPS_SPENT] != 0)
+        return;
+    if (!flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT))
+        return;
+
+    image[WB_ACTOR_TYPE32_WALKING] = WB_ACTOR_TYPE32_LATCH_SET;
+
+    /* `subq.b #1,10(a0) / bne` — one read-modify-write whose branch reads the ALU's flags. */
+    hops_left = (uint8_t)(field_b(image, actor, WB_ACTOR_FIELD_10) - 1);
+    set_field_b(image, actor, WB_ACTOR_FIELD_10, hops_left);
+    if (hops_left == 0) {
+        image[WB_ACTOR_TYPE32_HOPS_SPENT] = WB_ACTOR_TYPE32_LATCH_SET;
+        return;
+    }
+
+    flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
+    flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT);
+    flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
+    /* `move.b 10(a0),d0 / move.b d0,11(a0)` RE-READS the byte the `subq.b` above stored rather than
+     * reusing the value it computed. No case can separate the two, and the reason is NOT that the
+     * SUPPORTED gate above blocks it — a record at $ffff7 puts WB_ACTOR_FLAGS on $fffff, the last
+     * byte os_in_image admits, so the gate can be satisfied with the counter and the speed both
+     * outside. The reason is that the STORE THAT CONSUMES THE RE-READ IS DROPPED WHENEVER ITS
+     * SOURCE IS: WB_ACTOR_SPEED is the byte after WB_ACTOR_FIELD_10, so an address that puts the
+     * counter outside the image puts the speed outside too, and the differing value lands nowhere.
+     * The one address where they part is the 24-bit fold at $fffff5 (counter $ffffff, speed wrapped
+     * to 0) — and there WB_ACTOR_FLAGS is $fffffd, outside, so that record cannot pass the gate.
+     * ../STATUS.md carries it; `reread/type32-speed-from-the-computed-local` is the mutant. */
+    set_field_b(image, actor, WB_ACTOR_SPEED, field_b(image, actor, WB_ACTOR_FIELD_10));
+}
+
+/* $5130 — THE SECOND OF THREE READERS OF WB_ACTOR_ANIM_5160_FRAMES (the third, `$58f8` inside the
+ * unported actor_behavior_type46, is $6872's shape again), and it differs from $6872 in three ways
+ * that all come off the cursor rather than off the table. `actor_relaunch_and_anim_5160` reads a zero-extended
+ * record BYTE and commits `addq.b #2` to memory BEFORE it reads the terminator, so the wrapping
+ * frame writes that field TWICE; this reads a GLOBAL WORD, indexes it SIGN-EXTENDED and stores the
+ * stepped cursor ONCE, after the test. What they agree on is the LOOK-AHEAD: both read the word one
+ * past the frame they just published, so the $ffff terminator is never itself drawn. (An earlier
+ * ../names.txt plate said this one zeroed the cursor "one word EARLY"; the bytes say otherwise —
+ * $6872's `move.w (a1)+,6(a0)` is a POST-INCREMENT, so its `cmpi.w #$ffff,(a1)` and this one's
+ * `cmpi.w #$ffff,2(a1)` read the same word.) */
+static void type32_publish_frame(uint8_t *image, uint32_t actor) {
+    uint16_t cursor = be16(image + WB_ACTOR_TYPE32_CURSOR);
+    uint32_t frame = addr_add(WB_ACTOR_ANIM_5160_FRAMES, sign_ext16(cursor));
+    uint16_t stepped = (uint16_t)(cursor + WB_ACTOR_ANIM_FRAME_BYTES);
+
+    set_field_w(image, actor, WB_ACTOR_SPRITE, bus_read_word(image, frame));
+    if (bus_read_word(image, addr_add(frame, WB_ACTOR_ANIM_FRAME_BYTES)) == WB_ACTOR_ANIM_5160_END)
+        stepped = 0;
+    wr16(image + WB_ACTOR_TYPE32_CURSOR, stepped);
+}
+
+/* $5046 — 278 bytes. A HOPPING GOLD COLLECTABLE: it pays `hud_award_gold_from_descriptor` exactly
+ * as slot 31 does, but between spawning and being taken it hops WB_ACTOR_FIELD_10 times and then
+ * walks one pixel a frame, turning round on a blocked probe.
+ *
+ * ALL THREE OF ITS STATE BYTES ARE GLOBALS, which is what makes it the tier's second
+ * WB_ACTOR_TYPE30_CURSOR: two live type-32 records share one hop machine, one walk gate and one
+ * animation phase, and a record spawned while another is walking is walking from its first frame. */
+uint32_t actor_behavior_type32(uint8_t *image, uint32_t actor) {
+    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_hop_ascend_step(image, actor);
+
+    if (type32_contact_is_tested(image, actor) && followed_stood_on_it(image, actor)) {
+        sound_request_9(image);
+        hud_award_gold_from_descriptor(image);
+        type32_free_slot(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    type32_relaunch_on_landing(image, actor);
+    /* $50c8 — actor_step_facing's own thirty-six bytes, spelt inline here with the two probe arms
+     * the other way round. Slots 48 and 49 have the same inline spelling and CALL that routine
+     * (`settle_hop_and_step_facing`), so this does too: the C is identical either way and the
+     * original's own bytes are pinned by `_type32_pieces`. The step is written by a `move.w` into
+     * d7's LOW WORD, and the probes read that word alone (map.h), so what the settle left in the
+     * register's high half cannot reach them and the step really is the one it looks like. */
+    if (image[WB_ACTOR_TYPE32_WALKING] != 0)
+        actor_step_facing(image, actor, WB_ACTOR_TYPE32_WALK_STEP);
+
+    flicker_when_field_12_reaches_the_mark(image, actor);
+    if (field_12_word_ran_out(image, actor)) {
+        type32_free_slot(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+    type32_publish_frame(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+/* $5208 — 82 bytes, and the only collectable in the band that pays neither gold nor the meter: it
+ * raises WB_PANEL_FRAME_REWIND and WB_PANEL_FRAME_HOLD together, one instruction apart, which winds
+ * WB_PANEL_FRAME_DELAY back up to WB_PANEL_FRAME_DELAY_INIT in WB_PANEL_FRAME_REWIND_STEP a frame
+ * and freezes the countdown while it climbs. So this is the game's CLOCK pickup. It also has no
+ * `btst #0,8(a0)` gate at all — a record mid-hop is collectable here where slots 28, 31 and 32
+ * refuse.
+ *
+ * THE SCORE'S ENTRY X is the sound trigger's, which is not readable off these bytes. The
+ * differential PINS it over the paths the cases drive ($20 added to any seeded score differs in its
+ * lowest digit between a folded-in 0 and a folded-in 1) — but `snd_trigger_effect` has three exits
+ * whose last X-writer is data dependent, so that is a pin and not a proof; hud.h's audit block and
+ * ../STATUS.md carry the distinction and the work it needs. Slot 28's $4e5a is the same claim. */
+uint32_t actor_behavior_type33(uint8_t *image, uint32_t actor) {
+    if (followed_stood_on_it(image, actor)) {
+        sound_request_9(image);
+        wr16(image + WB_PANEL_FRAME_REWIND, WB_PANEL_FRAME_REWIND_SET);
+        wr16(image + WB_PANEL_FRAME_HOLD, WB_PANEL_FRAME_HOLD_SET);
+        bcd_add_score_bd70(image, WB_ACTOR_COLLECT_SCORE, WB_BCD_ENTRY_EXTEND_CLEAR);
+        collectable_free_slot(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    flicker_when_field_12_reaches_the_mark(image, actor);
+    if (!field_12_word_ran_out(image, actor))
+        return WB_ACTOR_DISPATCH_RAN;
+
+    collectable_free_slot(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+/* $52b0, $52c0 and $52e0 — one position planted as ONE `move.l #imm,(a0)` over WB_ACTOR_X and
+ * WB_ACTOR_Y together. The longword is composed from the same two constants the `cmpi.w`s above
+ * read, so the menu's geometry has one definition rather than a literal per arm. */
+static void type34_park_cursor(uint8_t *image, uint32_t actor, uint16_t x, uint16_t y) {
+    bus_write_long(image, actor, ((uint32_t)x << 16) | y);
+}
+
+/* ...and the two ends also POST the item's own message, where the middle only dismisses the box:
+ * `move.b #$ff,$c030.l` with no lifetime beside it, so nothing re-arms WB_TEXT_LIFETIME_REQUEST. */
+static void type34_park_on_item(uint8_t *image, uint32_t actor, uint16_t x, uint32_t message_field) {
+    uint32_t shop = be32(image + WB_SHOP_RECORD_PTR);
+
+    /* `move.w 66(a1),d0 / move.b d0,$c030.l` — a WORD read and a BYTE store, so an id above 255
+     * posts its low half. */
+    image[WB_TEXT_REQUEST] = (uint8_t)bus_read_word(image, addr_add(shop, message_field));
+    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+    type34_park_cursor(image, actor, x, WB_ACTOR_TYPE34_ITEM_Y);
+}
+
+static void type34_park_on_middle(uint8_t *image, uint32_t actor) {
+    image[WB_TEXT_REQUEST] = WB_TEXT_REQUEST_DISMISS;
+    type34_park_cursor(image, actor, WB_ACTOR_TYPE34_MIDDLE_X, WB_ACTOR_TYPE34_MIDDLE_Y);
+}
+
+/* $525a — 220 bytes, and NOT a creature: this record is the shop's CURSOR. Its own WB_ACTOR_X is
+ * the selection — WB_ACTOR_TYPE34_ITEM1_X, _MIDDLE_X or _ITEM2_X — the joystick's left and right
+ * edges walk it along the three, and fire posts the WB_SHOP_REQUEST `scene_run_frame` serves.
+ *
+ * THE FIRE MAPPING IS NOT THE POSITIONAL ORDER. Left buys item 1 and right buys item 2, but the
+ * MIDDLE is WB_SHOP_REQUEST_FAREWELL — so the request word runs 1, 3, 2 across the screen.
+ *
+ * IT IS DEAF WHILE THE DRIVER IS TALKING. WB_SCENE_MESSAGE_PENDING or WB_SCENE_ACK_WAIT being
+ * nonzero ends the frame before the joystick is even read, which is what stops a held direction
+ * walking the cursor under an open box. */
+uint32_t actor_behavior_type34(uint8_t *image, uint32_t actor) {
+    uint8_t edges;
+    uint16_t x;
+
+    if (be16(image + WB_SCENE_MESSAGE_PENDING) != 0)
+        return WB_ACTOR_DISPATCH_RAN;
+    if (be16(image + WB_SCENE_ACK_WAIT) != 0)
+        return WB_ACTOR_DISPATCH_RAN;
+
+    edges = joy1_newly_pressed(image);
+    /* Every arm below re-reads (a0) with its own `cmpi.w`, and one read stands in for all of them:
+     * nothing between them writes the record, and a bus read is answered the same way twice. The
+     * hoist also reads the word on the no-edge frame, where the original reaches its `rts` at $528a
+     * having never touched (a0) — unobservable, because a read is not in the write ledger and
+     * bus.h answers an address outside the image with zero and no side effect. */
+    x = (uint16_t)field_w(image, actor, WB_ACTOR_X);
+
+    if (edges & (1u << WB_JOY1_LEFT_BIT)) {
+        if (x == WB_ACTOR_TYPE34_ITEM2_X)
+            type34_park_on_middle(image, actor);
+        else if (x == WB_ACTOR_TYPE34_MIDDLE_X)
+            type34_park_on_item(image, actor, WB_ACTOR_TYPE34_ITEM1_X, WB_SHOP_ITEM1_CURSOR_MSG);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    if (edges & (1u << WB_JOY1_RIGHT_BIT)) {
+        if (x == WB_ACTOR_TYPE34_ITEM1_X)
+            type34_park_on_middle(image, actor);
+        else if (x == WB_ACTOR_TYPE34_MIDDLE_X)
+            type34_park_on_item(image, actor, WB_ACTOR_TYPE34_ITEM2_X, WB_SHOP_ITEM2_CURSOR_MSG);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    if (edges & (1u << WB_JOY1_FIRE_BIT)) {
+        if (x == WB_ACTOR_TYPE34_ITEM1_X)
+            wr16(image + WB_SHOP_REQUEST, WB_SHOP_REQUEST_ITEM1);
+        else if (x == WB_ACTOR_TYPE34_ITEM2_X)
+            wr16(image + WB_SHOP_REQUEST, WB_SHOP_REQUEST_ITEM2);
+        else if (x == WB_ACTOR_TYPE34_MIDDLE_X)
+            wr16(image + WB_SHOP_REQUEST, WB_SHOP_REQUEST_FAREWELL);
+    }
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+/* $533c and $53c0 — the SAME six instructions in two table rows, and the same GLOBAL cursor: one
+ * word of WB_ACTOR_EVENT_ANIM_FRAMES published, then the cursor stepped and masked to the table's
+ * 32 bytes. Answers whether the cursor came back to ZERO, which is what each row's own tail acts
+ * on.
+ *
+ * THE FETCH IS NOT BOUNDED AND THE STORE IS: the mask is applied AFTER the read, so a cursor poked
+ * outside the table indexes WB_ACTOR_EVENT_ANIM_FRAMES plus a SIGN-EXTENDED word and only the value
+ * that lands back in memory is inside it — WB_ACTOR_TYPE30_DRIFT's shape exactly. */
+static int event_anim_step(uint8_t *image, uint32_t actor) {
+    uint16_t cursor = be16(image + WB_ACTOR_EVENT_ANIM_CURSOR);
+    uint16_t stepped = (uint16_t)((cursor + WB_ACTOR_ANIM_FRAME_BYTES)
+                                  & WB_ACTOR_EVENT_ANIM_MASK);
+
+    set_field_w(image, actor, WB_ACTOR_SPRITE,
+                bus_read_word(image, addr_add(WB_ACTOR_EVENT_ANIM_FRAMES, sign_ext16(cursor))));
+    wr16(image + WB_ACTOR_EVENT_ANIM_CURSOR, stepped);
+    return stepped == 0;
+}
+
+/* $5336 — 38 bytes, then its cursor and its sixteen frame words. It plays the animation and, on the
+ * frame the cursor wraps, raises WB_EVENT_ANIM_DONE_B12 — which is the only thing this handler is
+ * for: `player_pending_event_gate` spawns a type-35 record from the template at $537e and waits for
+ * exactly this word before it runs the scene's script. The record keeps its slot for ever. */
+uint32_t actor_behavior_type35(uint8_t *image, uint32_t actor) {
+    if (event_anim_step(image, actor))
+        wr16(image + WB_EVENT_ANIM_DONE_B12, WB_EVENT_DONE_SET);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+/* $53bc — 38 bytes, and slot 35 with two differences: the flag is WB_EVENT_ANIM_DONE_B16, and the
+ * wrap also `clr.w`s the record's own WB_ACTOR_TYPE. So this row RETYPES ITSELF to slot 0 — the
+ * bare `rts` — which is how it stops without giving its slot back and leaves the sprite it drew
+ * standing. (Slot 60 is the tier's other self-retyper, and it moves the other way.) */
+uint32_t actor_behavior_type36(uint8_t *image, uint32_t actor) {
+    if (event_anim_step(image, actor)) {
+        wr16(image + WB_EVENT_ANIM_DONE_B16, WB_EVENT_DONE_SET);
+        set_field_w(image, actor, WB_ACTOR_TYPE, 0);
+    }
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+/* $53e2 — 38 bytes, slot 36's ALTERNATIVE: $cd8 picks between the two on one word of the scene
+ * descriptor, and they raise the same flag. This one has no animation and no table — it lifts one
+ * pixel a frame until its y is exactly WB_ACTOR_TYPE37_RISE above the descriptor's own
+ * WB_SCENE_VARIANT word, which is the y it was spawned at.
+ *
+ * THE ARRIVAL TEST IS AN EQUALITY and the last instruction of the band is the `rts` BOTH arms
+ * reach — the risen frame by falling through the flag write and every other frame by a `bra.w` over
+ * it. Nothing else in the image branches to $5406. */
+uint32_t actor_behavior_type37(uint8_t *image, uint32_t actor) {
+    uint32_t descriptor = be32(image + WB_RECORD_PTR_10420);
+    int16_t target = (int16_t)(bus_read_word(image, addr_add(descriptor, WB_SCENE_VARIANT))
+                               - WB_ACTOR_TYPE37_RISE);
+
+    if (target != field_w(image, actor, WB_ACTOR_Y)) {
+        set_field_w(image, actor, WB_ACTOR_Y,
+                    (uint16_t)((uint16_t)field_w(image, actor, WB_ACTOR_Y) - 1));
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+    wr16(image + WB_EVENT_ANIM_DONE_B16, WB_EVENT_DONE_SET);
     return WB_ACTOR_DISPATCH_RAN;
 }

@@ -27,6 +27,32 @@ Position and size are hints, **not** evidence. In BuggyBoy: a function I assumed
 body and confirm what it touches** before committing a name. Wrong sticky names are worse
 than `FUN_`.
 
+### An operand scan that spells ONE encoding finds half the sites
+
+`$535c` in `SWB.PRG` is one word read and written by two routines 134 bytes apart, and the four
+instructions that touch it are two `lea $535c.l` / `move.w d0,$535c.l` pairs and two
+`lea $535c.w` / `move.w d0,$535c.w` pairs — the **long** and the **short** absolute forms of the
+same address. A whole-image scan for `$0000535c` finds two of the four; a scan for the bare word
+`$535c` finds all four but also every coincidental data word. Neither answer alone is the operand
+census, and "N operand sites" written from one of them is wrong in a way nothing flags. Sweep BOTH
+encodings, and say which of the two each hit is — the same trap hides a *caller*, not just a
+reader: Wonder Boy's `actor_behavior_type61` has exactly one caller in the image and it is a
+`jsr <abs>.w`.
+
+### An extent from a linear scan is a hypothesis; look every address inside it up first
+
+A scan that runs on to the next `rts` gives the *next routine's* bytes to the one you are reading,
+and both of Wonder Boy's recent batches were bitten by it in the same place. Slot 31 came back as
+146 bytes and is 78; the 48 bytes above it at `$4fea` are `actor_select_sprite_by_flag`, which the
+name map had carried for two batches. (Scanning to the next `rts` from slot 31's entry actually
+yields 126 — the recorded 146 was not even that, which is the second half of the lesson: an extent
+nobody re-derived can be wrong in a way no arithmetic checks.) Slot 35 came back as `$5336..$53bb`, 134 bytes, and is **38**: below it sit
+its own cursor word, its sixteen-word frame table, a 32-byte record template *and*
+`scene_copy_record_fields`, again already named. **Before recording an extent, look up every
+address inside it in the name map.** It is a one-line grep and it is the cheapest correction
+available; a plate written from the scan instead propagates into the port, the tests and the docs
+together.
+
 ## Classifying a region: two inferences that look like evidence and are not
 
 Before you can name anything you have to decide which bytes are code. Two habits

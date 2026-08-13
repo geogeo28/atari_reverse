@@ -1008,7 +1008,12 @@
  * wraps) and `lea 0(a2,d0.w),a2` then SIGN-EXTENDS that word — so the read lands anywhere in
  * [table - $8000, table + $7ff0], which is inside the image at both ends and can never reach the
  * 24-bit bus wrap. A kind drawn by either stage_random_kind is 0..31 and stays inside the 22 rows. */
-#define WB_ACTOR_KIND_TABLE          0x1044cu /* `lea $1044c.l,a2` at $6d3c, its one reference */
+#define WB_ACTOR_KIND_TABLE          0x1044cu /* TWO references, by a whole-image scan of both
+                                               * absolute encodings (batch 34): `lea $1044c.l,a2` at
+                                               * $6d3c and a second long-form operand at $5478,
+                                               * inside the unported actor_behavior_type38_pickup.
+                                               * The "one reference" this line used to claim was
+                                               * never swept */
 #define WB_ACTOR_KIND_RECORD_BYTES   16u
 #define WB_ACTOR_KIND_RECORD_SHIFT   4u       /* `lsl.w #4,d0` == log2(WB_ACTOR_KIND_RECORD_BYTES) */
 #define WB_ACTOR_KIND_TABLE_ROWS     22u      /* == (0x105ac - 0x1044c) / WB_ACTOR_KIND_RECORD_BYTES.
@@ -1132,14 +1137,21 @@
                                                * facing: `movea.l (a1),a1` or `movea.l 4(a1),a1` */
 #define WB_ACTOR_STEP_AWAY_PIXELS    4u       /* `move.w #$4,d7` — $2fe8's step, spelt inline */
 #define WB_ACTOR_ANIM16_MASK         0xfu     /* `andi.b #$f,d0` — $5a3c's 16-byte wrap */
-#define WB_ACTOR_ANIM_5160_FRAMES    0x5160u  /* `lea $5160.w,a1` at $6872, its one reference */
+#define WB_ACTOR_ANIM_5160_FRAMES    0x5160u  /* THREE readers, by a whole-image scan of BOTH
+                                               * absolute encodings: `lea $5160.w,a1` at $6872 and
+                                               * at $58f8 (actor_behavior_type46, UNPORTED) and
+                                               * `lea $5160.l,a1` at $5136 (slot 32). An earlier
+                                               * revision said "its one reference" */
 #define WB_ACTOR_ANIM_5160_END       0xffffu  /* `cmpi.w #$ffff,(a1)` after the post-increment */
 #define WB_ACTOR_ANIM_5160_HOLD      1u       /* `cmpi.b #$1,30(a0) / beq` — the countdown stops on
                                                * this value rather than on zero */
 #define WB_ACTOR_SPRITE_SUPPORTED    0x15au   /* $4fea's three sprite ids, by the two flag bits it */
 #define WB_ACTOR_SPRITE_MOVING       0x158u   /* reads: WB_ACTOR_FLAG_SUPPORTED_BIT first, then */
 #define WB_ACTOR_SPRITE_IDLE         0x157u   /* WB_ACTOR_FLAG_MOVING_BIT, else this one */
-#define WB_ACTOR_SPRITE_TABLE_6ED8   0x6ed8u  /* `lea $6ed8.l,a2` at $6d60, its one reference */
+#define WB_ACTOR_SPRITE_TABLE_6ED8   0x6ed8u  /* `lea $6ed8.l,a2` at $6d60, its one reference —
+                                               * VERIFIED by a whole-image scan of both absolute
+                                               * encodings (batch 34): one long operand and no
+                                               * word-aligned short one */
 #define WB_ACTOR_SPRITE_6ED8_STRIDE  8u       /* `lsl.w #3,d0` on WB_ACTOR_HALF_WIDTH */
 #define WB_ACTOR_FIELD_22_HOLD       3u       /* `move.b #$3,22(a0)` — $701c, on a NONZERO byte */
 
@@ -1585,6 +1597,97 @@
 #define WB_TEXT_DIGIT_ZERO           0x30u    /* `addi.b #$30` — ASCII '0' */
 #define WB_TEXT_DIGIT_BLANK          0x20u    /* `move.b #$20,$a2ac.l` — ASCII ' ', which is what a
                                                * ZERO tens digit is drawn as */
+
+/* --- slots 32..37, the rest of the $4e38..$5407 band (batch 34) ---------------------------------
+ *
+ * TWO MORE COLLECTABLES AND FOUR SCENE ACTORS. Slot 32 is slot 31's payout with a HOP MACHINE in
+ * front of it and slot 33 pays the panel's own clock; slots 34..37 are not collectables at all —
+ * 34 is the shop's item CURSOR, and 35..37 are the actors the two arms of
+ * `player_pending_event_gate` ($b1a) spawn and then wait on.
+ */
+#define WB_ACTOR_BEHAVIOR_TYPE32     0x5046u
+#define WB_ACTOR_BEHAVIOR_TYPE33     0x5208u
+#define WB_ACTOR_BEHAVIOR_TYPE34     0x525au
+#define WB_ACTOR_BEHAVIOR_TYPE35     0x5336u
+#define WB_ACTOR_BEHAVIOR_TYPE36     0x53bcu
+#define WB_ACTOR_BEHAVIOR_TYPE37     0x53e2u
+
+/* Slot 32's THREE globals, the two latch bytes and the animation cursor, packed into the six bytes
+ * between its own `rts` and WB_ACTOR_ANIM_5160_FRAMES. All three are GLOBAL and not record fields,
+ * so two live type-32 records share one hop machine and one animation phase — WB_ACTOR_TYPE30_CURSOR's
+ * property, here over three bytes instead of one word. */
+#define WB_ACTOR_TYPE32_WALKING      0x515cu  /* byte: `st` on the record's FIRST landing. It opens
+                                               * the contact test for a record that is mid-hop and
+                                               * it is the walk's own gate. The free arm clears it
+                                               * with a `clr.w`, which covers _HOPS_SPENT below as
+                                               * well — so the pair is cleared as one word and set
+                                               * one byte at a time */
+#define WB_ACTOR_TYPE32_HOPS_SPENT   0x515du  /* byte: `st` when WB_ACTOR_FIELD_10 runs out, after
+                                               * which no landing relaunches anything */
+#define WB_ACTOR_TYPE32_LATCH_SET    0xffu    /* what `st $515c.l` / `st $515d.l` write */
+#define WB_ACTOR_TYPE32_CURSOR       0x515eu  /* word: a BYTE OFFSET into WB_ACTOR_ANIM_5160_FRAMES,
+                                               * read `move.w` and indexed SIGN-EXTENDED, where
+                                               * $6872's cursor is a zero-extended record byte */
+#define WB_ACTOR_TYPE32_WALK_STEP    1u       /* `move.w #$1,d7` in BOTH probe arms — a word write,
+                                               * so unlike slots 3 and 6 the step really is one */
+
+/* Slot 33's pair: the two panel words it raises together, one instruction apart. Between them they
+ * wind WB_PANEL_FRAME_DELAY back up and freeze it while it climbs, which is what makes this
+ * collectable the game's clock. */
+#define WB_PANEL_FRAME_REWIND_SET    0xffffu  /* `move.w #$ffff,$bd30.l` at $5218 */
+#define WB_PANEL_FRAME_HOLD_SET      0xffffu  /* ...and `$bd26.l` at $5220, the instruction after */
+
+/* Slot 34 — the shop's item cursor. Its own WB_ACTOR_X is the selection, and the three values it
+ * can hold are the three items; each is planted together with a y as ONE `move.l #imm,(a0)`, which
+ * is why the y's are here beside them rather than being folded into a longword literal. */
+#define WB_ACTOR_TYPE34_ITEM1_X      0x33u    /* `cmpi.w #$33,(a0)` — the LEFT item */
+#define WB_ACTOR_TYPE34_MIDDLE_X     0x78u    /* ...the middle, which is the FAREWELL */
+#define WB_ACTOR_TYPE34_ITEM2_X      0xbeu    /* ...and the RIGHT item */
+#define WB_ACTOR_TYPE34_MIDDLE_Y     0x30u    /* the middle sits sixteen pixels ABOVE the two ends */
+#define WB_ACTOR_TYPE34_ITEM_Y       0x40u
+#define WB_JOY1_LEFT_BIT             2u       /* `btst #2,d0` on joy1_newly_pressed's byte — the */
+#define WB_JOY1_RIGHT_BIT            3u       /* Atari joystick's own bit order, up/down/left/right */
+#define WB_JOY1_FIRE_BIT             7u       /* ...and bit 7. WB_ACTOR_TYPE61_FIRE_BIT is the SAME
+                                               * bit under slot 61's own name, because the ORIGINALS
+                                               * differ — slot 61 reads it as a SIGN (`tst.b d0 /
+                                               * bpl`) and this handler as a `btst #7`. layout.py
+                                               * scrapes plain literals only, so neither can derive
+                                               * from the other; test_behavior.py pins them EQUAL
+                                               * instead, which is this project's substitute */
+
+/* Slots 35 and 36 — ONE animation over ONE global cursor, played by two different table rows. The
+ * frames are the four sprites $1a4..$1a7 held four frames each, and the cursor is shared, so a live
+ * type-35 record and a live type-36 record step each other's phase. */
+#define WB_ACTOR_EVENT_ANIM_CURSOR   0x535cu  /* word: `lea $535c,a1 / move.w (a1)+,d0`, so the
+                                               * cursor and the table below are ONE cursor read
+                                               * followed by the table it indexes */
+#define WB_ACTOR_EVENT_ANIM_FRAMES   0x535eu  /* == _CURSOR + 2, the word the post-increment leaves
+                                               * a1 on: SIXTEEN words, $535e..$537d */
+#define WB_ACTOR_EVENT_ANIM_MASK     0x1fu    /* `andi.w #$1f,d0` — 32 bytes, i.e. all sixteen */
+
+/* $b12 and $b16 — two of the nine WORDS inside WB_STAGE_RESET_BLOCK (and NOT two of the five
+ * writes that reset makes: each is the low half of one of its `clr.l`s), and what these three
+ * handlers are FOR: `player_pending_event_gate` spawns an event actor, waits for the flag its
+ * handler raises, and only then runs the script or the second half of the scene. */
+#define WB_EVENT_ANIM_DONE_B12       0xb12u   /* word: raised by slot 35's cursor wrap. $c2e reads
+                                               * it and $c6e clears it after running $19ac */
+#define WB_EVENT_ANIM_DONE_B16       0xb16u   /* word: raised by slot 36's wrap AND by slot 37's
+                                               * arrival — the two alternative second-half actors,
+                                               * chosen at $cd8. TWO readers: $c76, and a THIRD
+                                               * animation stepper at $1fa2 of slots 35/36's exact
+                                               * shape over its own cursor at $2394, which runs only
+                                               * while this flag is UP. That one is unnamed and
+                                               * unported (../STATUS.md) */
+#define WB_EVENT_DONE_SET            0xffffu  /* `move.w #$ffff` at $5354, $53d6 and $5400 */
+
+/* Slot 37 — the riser. It has no animation at all: it lifts one pixel a frame until its y is
+ * exactly WB_ACTOR_TYPE37_RISE above the y it was spawned at, which is the scene descriptor's own
+ * WB_SCENE_VARIANT word. That word is the record's spawn y as well as the fragment selector — one
+ * field, THREE readings, and the reason no fourth name for offset 4 is added here. */
+#define WB_ACTOR_TYPE37_RISE         0x20u    /* `subi.w #$20,d0` — 32 pixels, and an EQUALITY test
+                                               * against the record's y rather than a `ble`, so a
+                                               * record seeded BELOW its target counts down through
+                                               * the whole 16-bit range before it arrives */
 
 /* The two addresses OUTSIDE this tier that a reconstructed handler transfers to and stops at. Both
  * are the entry of code this port does not have; behavior.h's boundary is how they are reported. */
@@ -2504,6 +2607,13 @@
 #define WB_SHOP_ITEM1_EFFECT       62u      /* word: which WB_EFFECT_HANDLER_TABLE entry the
                                              * purchase runs */
 #define WB_SHOP_ITEM2_EFFECT       64u
+#define WB_SHOP_ITEM2_CURSOR_MSG   66u      /* word: the id actor_behavior_type34 posts when the
+                                             * shop CURSOR arrives on the right-hand item — the one
+                                             * a fire there buys as WB_SHOP_REQUEST_ITEM2 */
+#define WB_SHOP_ITEM1_CURSOR_MSG   68u      /* ...and the left-hand item's. These two are the next
+                                             * two words of the record after the effects above; the
+                                             * fire mapping at the same x is what says which is
+                                             * which (src/behavior.c) */
 #define WB_SHOP_MESSAGE_COST       2u       /* `move.w #$2,d0` before three of the four `bsr $de80` */
 #define WB_SHOP_PURCHASE_COST      3u       /* `move.w #$3,d0` — what a purchase costs instead */
 #define WB_SHOP_FAREWELL_ID_FIRST  9u       /* `move.b #$9,$c030.l` — message 9, " Please come

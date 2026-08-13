@@ -151,8 +151,8 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            for state_flag_a34) and the dispatcher it feeds ($928), which fetches a
                            longword out of the 62-entry table at $938 and tail-jumps through it —
                            on the WRAPPED offset, so 248 of the 65,536 type values reach an entry.
-                           TWENTY-SIX of the sixty-two rows are reconstructed as of batch 33 phase
-                           A and thirty-six are not, so for those the dispatcher hands the target
+                           THIRTY-TWO of the sixty-two rows are reconstructed as of batch 34 and
+                           thirty are not, so for those the dispatcher hands the target
                            BACK and the differential runs the oracle on to it; the reconstructed
                            list grows by a few rows a batch. (This line read "twenty-two" while
                            ../STATUS.md read twenty-three at batch 32 and neither was checked
@@ -172,7 +172,13 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            and the two digits it patches into message 3's own shipped string. They
                            live here rather than in src/hud.c because their addresses are inside
                            the behaviour band and both callers are dispatch rows, which is
-                           sound_request_9's argument
+                           sound_request_9's argument. Batch 34 CLOSED the band $4e38..$5407 with
+                           slots 32..37: a second hopping gold collectable whose three state bytes
+                           are all GLOBALS, the clock pickup that winds the panel's own countdown
+                           back, the SHOP'S ITEM CURSOR (a record whose x is a menu selection the
+                           joystick's edges walk between three positions), and the three EVENT
+                           ACTORS player_pending_event_gate spawns and waits on — two sharing one
+                           animation over one global cursor and the third a bare riser
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -309,13 +315,14 @@ test/test_behavior.py      the behaviour tier's differential. Its shape is set b
                            sum-the-spanned-bytes idiom), and an independent model of $5c6e's three
                            overlap tests compared against the ORACLE's d0 as well as the port's
                            return. It imports test_map.py's map seeding and test_rng.py's generator
-                           model rather than restating either. Then the TWENTY-SIX LIVE TABLE ROWS:
+                           model rather than restating either. Then the THIRTY-TWO LIVE TABLE ROWS:
                            the five-handler band at $2462..$2db1 (one shape with five bodies), the
                            whole $5a band ($5928..$5c6b, seven rows and three endings of one
                            grammar), the three moving platforms, slot 60's retype, slot 61's message
                            sequence, slot 7 with the SWOOP state machine below it that its two
                            prologue rows also run into, and the three COLLECTABLES at 28, 30 and 31
-                           with the payout cluster under them — each entered where the `jmp (a1)`
+                           with the payout cluster under them, and batch 34's six at 32..37 —
+                           each entered where the `jmp (a1)`
                            would land, and each with its dispatch row flipped from a boundary to a
                            run. What those cases share is a GROUND WINDOW — a solid
                            row under the record, a clear one where the probes read, and a wide
@@ -381,9 +388,11 @@ off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A
 **seven** ways, all seven measured here, so run one this way:
 
 ```bash
-cp src/*.c snapshot/                           # 4. ONE snapshot, and every mutant comes from it
 .venv/bin/python -m pytest -q -n auto test     # 0. GREEN FIRST: a red or uncollectable tree
 echo "pre-sweep: $?"                           #    reports every mutant as caught (see 5)
+test -d snapshot && { echo "a snapshot exists — rm -rf it to RE-ARM"; exit 1; }
+mkdir snapshot && cp src/*.c snapshot/         # 4. ONE snapshot, taken only after the green check,
+                                               #    and never silently retaken (see below)
 for m in mutants/*.patch; do
   diff -q src/ snapshot/ || break              # 4. refuse to run on a tree something else moved
   git apply "$m"
@@ -408,11 +417,20 @@ done
    above deleted is not rebuilt, pytest cannot `dlopen` it, and the returncode is nonzero — which
    "nonzero = caught" reads as a result. Batch 30 hit this after a rename left one file referring to
    a constant another had dropped. **Check `make`'s RETURNCODE, not just that a compiler line ran.**
-4. **A killed sweep keeps writing.** `pkill` on the wrapper leaves the python child alive, and its
-   next restore writes the copy IT read — over whatever you have edited since. Batch 30 lost a
-   rename that way twice and then measured 42/43 "caught" on an unbuildable tree; the honest figure
-   was 33/43. Take the mutant text from ONE snapshot captured at the start, refuse to run when the
-   file on disk is not that snapshot, and never edit a source while a sweep is running.
+4. **A killed sweep keeps writing — and the SNAPSHOT STEP is the other half of it.** `pkill` on the
+   wrapper leaves the python child alive, and its next restore writes the copy IT read — over
+   whatever you have edited since. Batch 30 lost a rename that way twice and then measured 42/43
+   "caught" on an unbuildable tree; the honest figure was 33/43. Take the mutant text from ONE
+   snapshot captured at the start, refuse to run when the file on disk is not that snapshot, and
+   never edit a source while a sweep is running.
+   **Batch 34 lost a whole batch to the SNAPSHOT half of this mode**, which is why the recipe above
+   now guards it: an unconditional `cp src/*.c snapshot/` at the top of a re-run silently overwrites
+   the good snapshot with whatever the tree currently holds — and after a killed sweep the tree
+   holds a MUTANT, or (as happened) a reverted file. The snapshot is then poisoned and the guard in
+   the loop, which compares the tree against it, agrees with the poison. So: snapshot only AFTER the
+   step-0 green check passes, and refuse to overwrite an existing one — re-arming is an explicit
+   `rm -rf snapshot`. This is not an eighth way a sweep lies; it is mode 4's guard extended from the
+   restore step to the capture step, and the frame sentence's count of SEVEN stands.
 5. **A tree that does not COLLECT reports every mutant as caught.** The returncode is nonzero either
    way, and "nonzero = caught" cannot tell a failing case from a failing import. Batch 21b hit this:
    an encoder hoisted out of two batteries without being added to their import lists broke

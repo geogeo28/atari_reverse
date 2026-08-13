@@ -94,12 +94,21 @@ uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
 
 /* THE ENTRY X A CALL SITE CLAIMS, in TWO spellings, because the sites do not all rest on the same
  * kind of evidence and one name would have hidden that. `grep -r WB_BCD_ENTRY_EXTEND ../src` is the
- * audit and returns FOUR CALL SITES — three proved, one assumed. The three THREADED sites carry no
+ * audit and returns FIVE CALL SITES — TWO proved, TWO differential-pinned, one assumed. The three THREADED sites carry no
  * marker at all, by construction, and are named above.
  *
- * PROVED (three): $5196 and $e130 by a reading of the bytes — see each call — and $4e5a by the
- * DIFFERENTIAL, whose seed is sensitive to the bit ($0100 + 5 is $0105 with X clear and $0106 with
- * it set), which is evidence of a different kind but not a weaker one.
+ * PROVED (two): $5196 and $e130, by a reading of the bytes — see each call.
+ *
+ * DIFFERENTIAL-PINNED, WHICH IS A WEAKER CLAIM AND WAS OVERSTATED UNTIL BATCH 34's INDEPENDENT GATE
+ * (two): $4e5a in slot 28's collect arm and $522e in slot 33's. Both are entered through
+ * `sound_request_9` -> `snd_trigger_effect`, and the seeds are sensitive to the bit ($0100 + 5 is
+ * $0105 with X clear and $0106 with it set) — so what the green rows establish is "X was 0 on the
+ * trigger paths those salts took", NOT that the trigger cannot leave X set. `snd_trigger_effect`
+ * has THREE `rts` ($1a4fc, $1a56c, $1a5d6) and the last instruction before each is a `move.b`,
+ * which does not touch X — so the deciding writer is further back on each path and is DATA
+ * DEPENDENT, the same class as $6c26's `lsl.w #2,d2`. Until each exit's last X-writer is read (or
+ * one collect case per distinguishable exit is added), these two rows are a pin over the exercised
+ * paths and not a proof. ../STATUS.md carries it as queued work.
  *
  * ASSUMED (one): the shop's subtract at $ddae/$de24, src/scene.c. Nothing on the path from
  * `scene_run_frame`'s entry writes X, so the bit is the CALLER's — and the caller is the

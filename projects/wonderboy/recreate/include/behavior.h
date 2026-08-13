@@ -369,6 +369,52 @@ uint32_t bcd_add_random_1_to_4(const uint8_t *image, uint32_t entry_d0, unsigned
  * drawn. Only two digits, whatever the rest of d0 holds. ONE `bsr` caller, $518c. */
 void text_write_gold_digits_a2ac(uint8_t *image, uint32_t entry_d0);
 
+/* --- slots 32..37 ($5046..$5407): the rest of the band -------------------------------------------
+ *
+ * TWO COLLECTABLES AND FOUR SCENE ACTORS, and with them the band $4e38..$5407 runs whole. Slots 32
+ * and 33 share the three above's shape — the footprint bit, WB_ACTOR_REQUEST9_SFX, the flicker as
+ * WB_ACTOR_FIELD_12 runs down and WB_ACTOR_FREE_MARKER at the end — and pay two more currencies.
+ * Slots 34..37 have no contact test, no countdown and no free marker at all: 34 is the shop's item
+ * cursor and 35..37 are the actors `player_pending_event_gate` ($b1a) spawns and waits on.
+ */
+
+/* $5046 — 278 bytes. Collected: `hud_award_gold_from_descriptor`, slot 31's payout. Waiting: it
+ * falls, ascends, and runs a HOP MACHINE on WB_ACTOR_FIELD_10 — one hop per landing, each at the
+ * countdown's own value, so they shorten — and once it has landed at all it also walks
+ * WB_ACTOR_TYPE32_WALK_STEP a frame and turns round on a blocked probe. Its animation is the SECOND
+ * of the THREE readers of WB_ACTOR_ANIM_5160_FRAMES, off WB_ACTOR_TYPE32_CURSOR; the third is
+ * actor_behavior_type46 ($58f8), which is unported.
+ *
+ * ALL THREE OF ITS STATE GLOBALS ARE SHARED (WB_ACTOR_TYPE32_WALKING and _HOPS_SPENT are bytes,
+ * _CURSOR a word), so two live type-32 records share one hop machine and one animation phase — the
+ * tier's second instance of WB_ACTOR_TYPE30_CURSOR's property. Its ending clears the two LATCHES
+ * and NOT the cursor, where slot 30's ending does clear its own, so the next type-32 record starts
+ * its hop machine over and its animation where the last one left off. */
+uint32_t actor_behavior_type32(uint8_t *image, uint32_t actor);
+
+/* $5208 — 82 bytes. Collected: WB_PANEL_FRAME_REWIND and WB_PANEL_FRAME_HOLD raised together plus
+ * WB_ACTOR_COLLECT_SCORE, i.e. the panel's own clock wound back — no gold, no meter. It is also the
+ * one collectable in the band with NO WB_ACTOR_FLAG_MOVING_BIT gate, so a record mid-hop is taken. */
+uint32_t actor_behavior_type33(uint8_t *image, uint32_t actor);
+
+/* $525a — 220 bytes. THE SHOP'S ITEM CURSOR: the record's own WB_ACTOR_X is the selection, the
+ * joystick's left/right EDGES walk it between WB_ACTOR_TYPE34_ITEM1_X, _MIDDLE_X and _ITEM2_X
+ * posting each item's message, and fire writes WB_SHOP_REQUEST. It runs nothing at all while
+ * WB_SCENE_MESSAGE_PENDING or WB_SCENE_ACK_WAIT is up. */
+uint32_t actor_behavior_type34(uint8_t *image, uint32_t actor);
+
+/* $5336 / $53bc — 38 bytes each, and ONE animation over ONE global cursor
+ * (WB_ACTOR_EVENT_ANIM_CURSOR): sixteen words of WB_ACTOR_EVENT_ANIM_FRAMES, one a frame. On the
+ * wrap slot 35 raises WB_EVENT_ANIM_DONE_B12 and slot 36 raises WB_EVENT_ANIM_DONE_B16 and
+ * RETYPES ITSELF to slot 0. Neither ever frees its slot. */
+uint32_t actor_behavior_type35(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type36(uint8_t *image, uint32_t actor);
+
+/* $53e2 — 38 bytes, slot 36's alternative and the band's last row: no animation, no table. It lifts
+ * one pixel a frame until its WB_ACTOR_Y EQUALS the scene descriptor's WB_SCENE_VARIANT word less
+ * WB_ACTOR_TYPE37_RISE, and raises WB_EVENT_ANIM_DONE_B16 on the frame it arrives. */
+uint32_t actor_behavior_type37(uint8_t *image, uint32_t actor);
+
 /* $d78 — the twelve bytes slot 53 calls, and the only player-tier code in this file. Returns
  * WB_ACTOR_DISPATCH_RAN while WB_TILE_33_MODE is set (the original returns having written nothing)
  * and WB_PLAYER_STEP_BODY while it is clear, which is where the original branches. */
