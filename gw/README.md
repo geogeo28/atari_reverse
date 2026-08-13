@@ -116,6 +116,83 @@ The filesystem decodes fine; the protection tracks do not survive. Extracting fi
 from a protected disk this way works — *running* the game still means giving Hatari
 the STX itself.
 
+## Finder Quick Actions
+
+Two right-click actions, so a dump in `dumps/` can be opened or booted without a
+terminal:
+
+```bash
+./install_quick_actions.sh              # install / refresh both
+./install_quick_actions.sh --uninstall  # remove both
+```
+
+| Quick Action | Accepts | Does |
+| --- | --- | --- |
+| **Mount Atari ST Disk** | `.st` (one or many) | `hdiutil attach` each image, then open the volume in Finder |
+| **Run in Hatari** | one `.st`, `.stx`, `.msa` or `.dim` | boot it in Hatari as drive A: and detach |
+
+The installer writes two `.workflow` bundles into `~/Library/Services/`, then runs
+`/System/Library/CoreServices/pbs -update` — without that refresh the menu items only
+appear after the next login. Re-running the installer overwrites cleanly.
+
+The bundles are deliberately stupid. Each one is a single Automator "Run Shell Script"
+action containing one line, `exec <repo>/gw/qa_<action>.sh "$@"`, so all the real logic
+lives in `qa_mount_st.sh` and `qa_run_hatari.sh` — versioned here, runnable from a shell,
+and editable without regenerating a bundle:
+
+```bash
+./qa_mount_st.sh dumps/dungeon-master/dungeon-master.st
+./qa_run_hatari.sh dumps/xenon2/xenon2.stx
+```
+
+Because the bundle path is baked in at install time, moving or renaming this repository
+breaks both actions — re-run the installer afterwards.
+
+**Mounting is read-only**, because right-click mounting is for looking, and a read-write
+mount is not passive: one mount/unmount cycle of the test image let macOS write `.fseventsd`
+into it, changing its SHA-1 and consuming 4 KB of its free space. Nothing irreplaceable is
+lost when that happens — the `.scp` is the gold master — but an image that silently differs
+from the one you dumped is a bad default in a preservation toolkit. To write to a disk, do
+it deliberately: use the `mtools` commands above, or remove `-readonly` from the
+`hdiutil attach` line in `qa_mount_st.sh`.
+
+Eject when you are done, the same as any disk — drag the volume to the Trash, hit eject in
+the Finder sidebar, or `hdiutil detach /Volumes/<name>`.
+
+A selection can hold several images; each is mounted independently, and one that fails does
+not stop the others — the notification reports how many of them mounted and the log names
+each one that did not.
+
+`.stx` is a flux container with no filesystem, so only Hatari accepts it; the mount action
+rejects it with an explanation rather than a silent no-op. Hatari reads `.st`, `.msa`,
+`.stx` and `.dim` directly, which is why it takes the wider set.
+
+Hatari is launched with the same machine settings as `tools/hatari_run.sh` — 1 MiB ST, RGB
+monitor, low-res TOS — using `tools/hatari/TOS104US.img`. `TOS_IMG` overrides the ROM in
+both, though a Quick Action inherits almost no environment, so in practice that override is
+for the command line. The emulator is `nohup`'d away from the caller: a Quick Action that
+waits on an emulator would hang Finder until you quit it. The action still waits one second
+before returning, long enough to notice a Hatari that dies during startup — otherwise a bad
+ROM or a corrupt image reports success and opens no window.
+
+A Quick Action has no terminal, so failures raise a Notification Center banner while every
+outcome, success included, is appended to `~/Library/Logs/AtariQuickActions.log`. Hatari's
+own console output lands in that same file, so a game that refuses to boot leaves its
+complaint right under the launch line. Check the log whenever a notification is too terse.
+
+### Quirks
+
+- **The menu items show up on every file.** `NSSendFileTypes` filters by UTI, and `.st`,
+  `.stx` and `.msa` have none registered on macOS — they resolve to per-machine `dyn.*`
+  types that cannot be named in a plist. The bundles therefore accept `public.item` and the
+  scripts reject the wrong extension with a notification. Hide the ones you do not want in
+  System Settings → General → Login Items & Extensions → Finder extensions.
+- **First run may prompt.** The scripts are unsigned and reach outside the sandbox, so
+  macOS may ask once for permission to control Finder or to access the volume the images
+  live on. Approve it once; it is remembered.
+- Both bundles run headlessly for testing, which is how they were verified:
+  `automator -i <file> ~/Library/Services/"Run in Hatari.workflow"`.
+
 ## Note
 
 `dumps/` is git-ignored — flux images are tens of MB each and do not belong in this
