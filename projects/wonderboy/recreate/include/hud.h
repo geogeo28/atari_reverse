@@ -45,7 +45,34 @@ void select_table_21e8c_and_tick_b39a(uint8_t *image);
 /* $b410 — a0 = the record whose first byte selects the bitmap. */
 void hud_blit_record_bitmap(uint8_t *image, uint32_t record);
 
-/* $b562/$b582 — d0's low WORD is the packed-BCD amount; $b5a2/$b5c6 — d0's whole LONGWORD is. */
+/* The 68000's `abcd` on ONE byte pair, with the extend bit in and out — the primitive the four
+ * accumulators below are loops of. It is public because a SECOND module executes the instruction:
+ * `bcd_add_random_1_to_4` ($51ac, src/behavior.c) ends in an `abcd d1,d0` over a register pair
+ * rather than over memory, and two spellings of the decimal correction could disagree while both
+ * batteries stayed green. Nothing else about that routine belongs here — this is the instruction,
+ * not the accumulator, and sharing it does NOT close the extend chain described below: it shares
+ * one instruction so two spellings of the decimal correction cannot drift, and nothing more.
+ * (`sbcd_byte` stays private — no second module executes one.) Its proper home is arguably the
+ * kit's machine.h, beside `sign_ext16` and the `set_low_byte` its one outside caller composes it
+ * with; ../STATUS.md REGISTERS that promotion rather than this batch making it, which is the rule
+ * bus.h already follows. */
+uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
+
+/* $b562/$b582 — d0's low WORD is the packed-BCD amount; $b5a2/$b5c6 — d0's whole LONGWORD is.
+ *
+ * ALL FOUR FOLD IN AN ENTRY X OF ZERO, which src/hud.c's file comment argues from the oracle's
+ * reset SR — and batch 33 narrowed that claim: a run that calls TWO of them, or reaches one behind
+ * an `abcd` of its own, propagates a real X between them and this interface cannot carry it. The
+ * two chains the port CANNOT carry are `bcd_add_counter_bd6e` -> `bcd_add_score_bd70` at
+ * $4e5a/$4e64 and `bcd_add_random_1_to_4` -> `bcd_add_counter_bd6e` at $5184/$5188; ../STATUS.md
+ * records the seeds that would expose either, and no case here drives one.
+ *
+ * THERE IS A THIRD ADJACENCY AND IT IS SOUND, which is worth stating so a later scope does not
+ * treat the pair above as the whole list: $5188 (counter) and $5196 (score) inside
+ * `hud_award_gold_from_descriptor` are also back to back, with `bsr $51d8` between them — and that
+ * routine's LAST X-writer on both of its exit paths is `addi.b #$30` on a nibble masked to $0..$f,
+ * which cannot carry out of $30..$3f. `ror.w`, `andi.w` and `move.b` leave X alone. So X really is
+ * 0 at $5196 and the port is right there by construction rather than by luck. */
 void bcd_add_counter_bd6e(uint8_t *image, uint32_t addend);
 void bcd_sub_counter_bd6e(uint8_t *image, uint32_t subtrahend);
 void bcd_add_score_bd70(uint8_t *image, uint32_t addend);

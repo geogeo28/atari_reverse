@@ -1065,10 +1065,16 @@
 #define WB_ACTOR_BEHAVIOR_TYPE04     0x2796u
 #define WB_ACTOR_BEHAVIOR_TYPE05     0x29ecu
 #define WB_ACTOR_BEHAVIOR_TYPE06     0x2bc8u
+#define WB_ACTOR_BEHAVIOR_TYPE28     0x4e38u
 #define WB_ACTOR_BEHAVIOR_TYPE29     0x4ec8u  /* TWO BYTES, a bare `rts` — the third slot in the
                                                * table that holds one, and the only one of the
                                                * three at an address of its own (slots 0 and 58
                                                * share WB_ACTOR_BEHAVIOR_NULL's $a36) */
+#define WB_ACTOR_BEHAVIOR_TYPE30     0x4ecau
+#define WB_ACTOR_BEHAVIOR_TYPE31     0x4f9cu  /* 78 bytes, NOT the 146 a scan that ran to the next
+                                               * `rts` gives it: its last branch leaves the body for
+                                               * actor_select_sprite_by_flag ($4fea), a routine of
+                                               * its own with a second caller at $54d6 */
 #define WB_ACTOR_BEHAVIOR_TYPE47     0x5928u
 #define WB_ACTOR_BEHAVIOR_TYPE48     0x5972u
 #define WB_ACTOR_BEHAVIOR_TYPE49     0x59d0u
@@ -1500,6 +1506,80 @@
 #define WB_ACTOR_TYPE59_MARK_BIT     2u       /* `bset #2,30(a0)` — how slot 7's body is told it was
                                                * entered through slot 59 */
 #define WB_ACTOR_TYPE08_MARK_BIT     1u       /* ...and `bset #1,30(a0)` for slot 8 */
+
+/* --- the COLLECTABLES at the foot of the $4e38 band (slots 28, 30, 31) ---------------------------
+ *
+ * Three handlers that PAY OUT when the followed record walks into them, and the cluster at
+ * $517a..$5207 two of them pay through. What they share is the shape: `bsr $5c6e / btst #1,d0` for
+ * contact, WB_ACTOR_REQUEST9_SFX for the sound, WB_ACTOR_FLAG_FLICKER_BIT raised as the record's
+ * time runs out, and WB_ACTOR_FREE_MARKER over its own x at the end. What they pay differs — slot
+ * 28 a fixed WB_ACTOR_TYPE28_GOLD, slot 30 the meter, slot 31 the scene descriptor's own award.
+ */
+#define WB_ACTOR_COLLECT_SCORE       0x20u    /* `move.l #$20,d0 / bsr $b5a2` at $4e5e, $5190 and
+                                               * $5228 — one longword addend, three collect arms */
+#define WB_ACTOR_FLICKER_AT_FIELD_12 0x14u    /* `cmpi.w #$14,12(a0) / bne` at $4f2e and $4fa4: the
+                                               * WORD countdown value on which WB_ACTOR_FIELD_12's
+                                               * owner starts flickering. Slots 30 and 31 spell it
+                                               * identically; slot 28 counts the same field as a
+                                               * BYTE and reloads it instead (below) */
+
+#define WB_ACTOR_TYPE28_GOLD         5u       /* `move.w #$5,d0 / bsr $b562` — added to
+                                               * WB_BCD_COUNTER, the gold the shop spends */
+#define WB_ACTOR_TYPE28_FIELD_12_RELOAD 0x14u /* `move.b #$14,12(a0)` — the BYTE countdown reloaded
+                                               * the FIRST time it expires. Numerically
+                                               * WB_ACTOR_FLICKER_AT_FIELD_12 and a different
+                                               * operand: this one is written, that one compared */
+
+#define WB_ACTOR_TYPE30_COLLECT_MIN  0xau     /* `cmpi.b #$a,30(a0) / blt` — a SIGNED byte compare,
+                                               * so a record whose countdown has not reached ten
+                                               * cannot be collected at all */
+#define WB_ACTOR_TYPE30_METER_STEP   4u       /* `addq.w #4,d0` on WB_HUD_METER_VALUE — and see
+                                               * src/behavior.c: the sum is DISCARDED unless it
+                                               * reaches WB_HUD_METER_MAX, which is a shipped bug */
+#define WB_ACTOR_TYPE30_CURSOR       0x4f5au  /* word: this handler's animation cursor, and a GLOBAL
+                                               * rather than a record field — the two bytes between
+                                               * its body's $0000 pad and its drift table. Two live
+                                               * type-30 records therefore share one phase. Three
+                                               * operand sites, all inside slot 30 */
+#define WB_ACTOR_TYPE30_DRIFT        0x4f5cu  /* THIRTY-TWO signed words, $4f5c..$4f9b, bounded by
+                                               * slot 31's own entry and reached by the one
+                                               * `lea $4f5c(pc,d0.w),a1` at $4f1a: +8 down to -8 and
+                                               * back to +7, a triangle whose 32 steps sum to ZERO,
+                                               * added straight to WB_ACTOR_X one a frame */
+#define WB_ACTOR_TYPE30_DRIFT_STRIDE 2u       /* `addq.w #2,d0` — one word per frame, and a WORD add
+                                               * on a GLOBAL. Numerically WB_ACTOR_ANIM_FRAME_BYTES
+                                               * and a different operand: that one is `addq.b #2,
+                                               * 18(a0)`, a BYTE step of a RECORD field, so sharing
+                                               * the name here would rest on a coincidence */
+#define WB_ACTOR_TYPE30_DRIFT_MASK   0x3fu    /* `andi.w #$3f,d0` on a BYTE OFFSET stepped by
+                                               * WB_ACTOR_TYPE30_DRIFT_STRIDE — 64 bytes, all 32 */
+
+/* --- $517a..$5207: what a collected record pays out ---------------------------------------------
+ *
+ * The scene descriptor carries the award, `bcd_add_random_1_to_4` jitters it, and the two
+ * characters at WB_TEXT_GOLD_DIGITS are the digits inside message WB_TEXT_MESSAGE_GOLD_GET's own
+ * shipped string — so the box the payout posts reads back the amount it just paid.
+ */
+#define WB_RECORD_PTR_10424          0x10424u /* longword: WB_RECORD_PTR_10420's neighbour, the copy
+                                               * six `move.l $10420.l,$10424.l` sites make, so it
+                                               * names the same 32-byte SCENE DESCRIPTOR */
+#define WB_SCENE_GOLD_AWARD          12u      /* word: the packed-BCD amount `move.w 12(a1),d0` at
+                                               * $5180 reads out of that descriptor. The shipped
+                                               * bytes of the table are zeros (the rest is loaded
+                                               * from disk), so no shipped datum names an amount */
+#define WB_BCD_RANDOM_MASK           3u       /* `andi.b #$3,d1` — the draw is 0..3, then `addq.b
+                                               * #1` makes it 1..4 */
+#define WB_TEXT_GOLD_DIGITS          0xa2acu  /* the TENS character; the units is the byte after it.
+                                               * Both sit inside WB_TEXT_MESSAGE_TABLE's record 2 —
+                                               * "        gold get." at $a2a7 — so the write patches
+                                               * a shipped string in place. Message ids are 1-based,
+                                               * which is why record 2 is id 3 below */
+#define WB_TEXT_MESSAGE_GOLD_GET     3u       /* `move.b #$3,$c030.l` — the id posted right after */
+#define WB_BCD_DIGIT_MASK            0xfu     /* `andi.w #$f` — one packed-BCD digit */
+#define WB_BCD_DIGIT_BITS            4u       /* `ror.w #4,d0` — and how far the tens digit is up */
+#define WB_TEXT_DIGIT_ZERO           0x30u    /* `addi.b #$30` — ASCII '0' */
+#define WB_TEXT_DIGIT_BLANK          0x20u    /* `move.b #$20,$a2ac.l` — ASCII ' ', which is what a
+                                               * ZERO tens digit is drawn as */
 
 /* The two addresses OUTSIDE this tier that a reconstructed handler transfers to and stops at. Both
  * are the entry of code this port does not have; behavior.h's boundary is how they are reported. */

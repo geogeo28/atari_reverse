@@ -307,6 +307,62 @@ uint32_t actor_behavior_type07(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type59(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type08(uint8_t *image, uint32_t actor);
 
+/* --- slots 28, 30 and 31, and the payout cluster at $517a..$5207 --------------------------------
+ *
+ * THREE COLLECTABLES, not creatures. None has a spawn gate; each asks `actor_followed_overlap_mask`
+ * for bit 1 alone, fires WB_ACTOR_REQUEST9_SFX when it gets it, and hands its own slot back. What
+ * each pays differs, and so does what it does while it waits: slot 28 falls, hops and walks by
+ * WB_ACTOR_FIELD_31 pixels, slot 30 drifts along a signed table, slot 31 only falls.
+ *
+ * ALL THREE FLICKER OUT, and they do NOT all stop the same way. WB_ACTOR_FLAG_FLICKER_BIT goes up
+ * as WB_ACTOR_FIELD_12 runs down, so a collectable that is not picked up blinks before it
+ * disappears. Slots 30 and 31 count that field as a WORD and `bclr` the bit on the frame they free
+ * themselves; slot 28 counts it as a BYTE, expires TWICE — the first expiry `bset`s the bit and
+ * reloads WB_ACTOR_TYPE28_FIELD_12_RELOAD, the second frees the slot — and never clears it at all,
+ * so a freed type-28 record's flag byte keeps bit 6 set.
+ */
+
+/* $4e38 — 144 bytes. Collected: WB_ACTOR_TYPE28_GOLD into WB_BCD_COUNTER and
+ * WB_ACTOR_COLLECT_SCORE into WB_BCD_SCORE. Waiting: actor_fall_and_settle, actor_hop_ascend_step,
+ * actor_relaunch_and_anim_5160 and a step of WB_ACTOR_FIELD_31 pixels, skipped while that byte is
+ * zero. Its turn test is the ONE `tst.w d0` in the tier where every other blocked-step test is a
+ * `tst.b` — see src/behavior.c. */
+uint32_t actor_behavior_type28(uint8_t *image, uint32_t actor);
+
+/* $4eca — 142 bytes. Collected (and only once WB_ACTOR_FIELD_30 has counted up to
+ * WB_ACTOR_TYPE30_COLLECT_MIN): WB_HUD_METER_VALUE topped up to WB_HUD_METER_MAX — but only when
+ * adding WB_ACTOR_TYPE30_METER_STEP would REACH the maximum, which is a shipped bug src/behavior.c
+ * reproduces. Waiting: WB_ACTOR_TYPE30_DRIFT added to its x one word a frame off a GLOBAL cursor,
+ * and a one-pixel rise on the frames WB_FRAME_TOGGLE is nonzero. */
+uint32_t actor_behavior_type30(uint8_t *image, uint32_t actor);
+
+/* $4f9c — 78 bytes with TWO exits: its own `rts` at $4fe8, which the collect and free arms reach,
+ * and a `bne.w $4fea` into actor_select_sprite_by_flag, which the live-countdown arm takes and
+ * whose `rts` returns to the dispatcher. That routine's entry is what bounds the handler.
+ * Collected: `hud_award_gold_from_descriptor` below. Waiting: it falls, ascends and picks one of
+ * three sprites from two flag bits. */
+uint32_t actor_behavior_type31(uint8_t *image, uint32_t actor);
+
+/* $517a — 50 bytes. WHAT A COLLECTED SLOT-31 (or slot-32) RECORD IS WORTH: the packed-BCD
+ * WB_SCENE_GOLD_AWARD out of the descriptor WB_RECORD_PTR_10424 names, jittered by
+ * `bcd_add_random_1_to_4`, added to WB_BCD_COUNTER, written into message
+ * WB_TEXT_MESSAGE_GOLD_GET's own string, and then WB_ACTOR_COLLECT_SCORE added to WB_BCD_SCORE and
+ * the message posted. Two `bsr` callers, $4fce and $5070. */
+void hud_award_gold_from_descriptor(uint8_t *image);
+
+/* $51ac — 44 bytes, and NOT the mask ../names.txt used to call it: it ends in `abcd d1,d0`, so a
+ * draw of one to four is added to the caller's d0 IN PACKED BCD and d0 is the result. The draw is
+ * `($ff8209 + $ff8207 + WB_ACTOR_FOLLOWED_DEFAULT's two bytes) & WB_BCD_RANDOM_MASK, plus one`, so
+ * its only machine entropy is the shifter's video-address counter — a DECLARED hardware pair since
+ * batch 33, read once each, in that order. `entry_d0` is the caller's whole d0 and only its low
+ * BYTE is written. Two `bsr` callers, $5184 and $544c. */
+uint32_t bcd_add_random_1_to_4(const uint8_t *image, uint32_t entry_d0);
+
+/* $51d8 — 48 bytes. The packed-BCD BYTE in `entry_d0` drawn as the two characters at
+ * WB_TEXT_GOLD_DIGITS, tens first: a zero tens digit is blanked to WB_TEXT_DIGIT_BLANK rather than
+ * drawn. Only two digits, whatever the rest of d0 holds. ONE `bsr` caller, $518c. */
+void text_write_gold_digits_a2ac(uint8_t *image, uint32_t entry_d0);
+
 /* $d78 — the twelve bytes slot 53 calls, and the only player-tier code in this file. Returns
  * WB_ACTOR_DISPATCH_RAN while WB_TILE_33_MODE is set (the original returns having written nothing)
  * and WB_PLAYER_STEP_BODY while it is clear, which is where the original branches. */

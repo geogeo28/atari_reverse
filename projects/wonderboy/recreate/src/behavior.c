@@ -27,9 +27,12 @@
 #include "actor.h"
 #include "behavior.h"
 #include "bus.h"
+#include "hud.h"
+#include "hw.h"
 #include "input.h"
 #include "machine.h"
 #include "map.h"
+#include "os.h"
 #include "rng.h"
 #include "sound.h"
 #include "wonderboy.h"
@@ -122,6 +125,15 @@ static uint32_t step_right(uint8_t *image, uint32_t actor, uint32_t step) {
     return actor_step_right_against_map(image, actor, step, &ground);
 }
 
+/* `btst #3,8(a0) / bne / bsr $1170 / bra / bsr $10a2` — the four instructions that pick a probe by
+ * the side flag, spelt in three routines below and the same in all three. What they do with the
+ * OUTCOME is where they part: $2f22 tests its byte, $5ab2 tests its byte and raises a switch, and
+ * $4e38 tests the whole low WORD. So the select is shared and the test is not. */
+static uint32_t step_facing(uint8_t *image, uint32_t actor, uint32_t step) {
+    return faces_left(image, actor) ? step_left(image, actor, step)
+                                    : step_right(image, actor, step);
+}
+
 
 /* --- $698a: the animation every spawned record plays --------------------------------------------
  *
@@ -187,9 +199,12 @@ static const BehaviorHandler PORTED_HANDLERS[] = {
     {WB_ACTOR_BEHAVIOR_TYPE05, actor_behavior_type05},
     {WB_ACTOR_BEHAVIOR_TYPE06, actor_behavior_type06},
     {WB_ACTOR_BEHAVIOR_TYPE07, actor_behavior_type07},
+    {WB_ACTOR_BEHAVIOR_TYPE28, actor_behavior_type28},
     /* Slot 29's two bytes are the same `rts` slots 0 and 58 hold, at an address of its own — so
      * one more row and no more code. */
     {WB_ACTOR_BEHAVIOR_TYPE29, actor_behavior_null},
+    {WB_ACTOR_BEHAVIOR_TYPE30, actor_behavior_type30},
+    {WB_ACTOR_BEHAVIOR_TYPE31, actor_behavior_type31},
     {WB_ACTOR_BEHAVIOR_TYPE47, actor_behavior_type47},
     {WB_ACTOR_BEHAVIOR_TYPE48, actor_behavior_type48},
     {WB_ACTOR_BEHAVIOR_TYPE49, actor_behavior_type49},
@@ -309,8 +324,7 @@ uint32_t actor_behavior_pass(uint8_t *image) {
  * other way round from $2fce's, which is the whole of the difference between the two bodies.
  */
 void actor_step_facing(uint8_t *image, uint32_t actor, uint32_t step) {
-    uint32_t outcome = faces_left(image, actor) ? step_left(image, actor, step)
-                                                : step_right(image, actor, step);
+    uint32_t outcome = step_facing(image, actor, step);
 
     /* `bchg #3,8(a0)` — the same eight bytes src/actor.c's `flip_side_flag` reproduces, spelt here
      * because this is a different routine and the two share no code. */
@@ -1466,9 +1480,7 @@ uint32_t actor_behavior_type51(uint8_t *image, uint32_t actor) {
         return WB_ACTOR_DISPATCH_RAN;
 
     set_field_w(image, actor, WB_ACTOR_SPRITE, WB_ACTOR_TYPE51_SPRITE);
-    if (step_was_blocked(faces_left(image, actor)
-                         ? step_left(image, actor, WB_ACTOR_TYPE51_STEP)
-                         : step_right(image, actor, WB_ACTOR_TYPE51_STEP)))
+    if (step_was_blocked(step_facing(image, actor, WB_ACTOR_TYPE51_STEP)))
         flag_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0);
     return WB_ACTOR_DISPATCH_RAN;
 }
@@ -2303,5 +2315,309 @@ uint32_t actor_behavior_type07(uint8_t *image, uint32_t actor) {
 
     if (flag_is_set(image, actor, WB_ACTOR_FIELD_30, WB_ACTOR_TYPE59_MARK_BIT))
         type07_dropper_spawn(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- $517a..$5207: what a collected record pays out ----------------------------------------------
+ *
+ * Three routines nothing but this tier calls, and their whole subject is the two shipped
+ * accumulators and one shipped STRING. They live here rather than in src/hud.c because their
+ * addresses are inside the behaviour band — $517a..$5207 sits between slot 32's body and slot 33's
+ * entry — and both of the payout's callers are dispatch rows, which is `sound_request_9`'s
+ * argument one file up.
+ *
+ * THE NAMES ../names.txt CARRIED FOR TWO OF THEM WERE WRONG, and the same instruction is behind
+ * both corrections: `abcd`. out/wonderboy_dis.txt prints the `c101` at $51d4 as `and.b d0,d1` —
+ * the disassembler bug that plate already documents for $b562's `c308`/`8308` — but opmode 100 with
+ * an ea mode of 000 is `abcd Dy,Dx` and not an AND, which Ghidra's own decompile agrees with
+ * (`bcdAdjust` in ../decomp.c). So $51ac does not MASK the caller's d0, it adds a packed-BCD one to
+ * four INTO it and answers in d0; and $51d8 does not unpack four digits, it draws TWO with the
+ * leading zero blanked.
+ */
+
+/* $51d8 — the digits, tens first. `andi.w #$f` selects the units, `addi.b #$30` makes it ASCII, and
+ * `ror.w #4,d0` then brings the tens nibble down for the same treatment — except that a ZERO tens
+ * digit is written as a space, which is what leaves a one-digit amount left-blanked in the message.
+ * The two characters are inside a shipped string, so the box the payout posts reads the amount. */
+void text_write_gold_digits_a2ac(uint8_t *image, uint32_t entry_d0) {
+    uint16_t amount = (uint16_t)entry_d0;
+    uint8_t tens = (uint8_t)((amount >> WB_BCD_DIGIT_BITS) & WB_BCD_DIGIT_MASK);
+
+    image[WB_TEXT_GOLD_DIGITS + 1] = (uint8_t)((amount & WB_BCD_DIGIT_MASK) + WB_TEXT_DIGIT_ZERO);
+    image[WB_TEXT_GOLD_DIGITS] = tens == 0 ? (uint8_t)WB_TEXT_DIGIT_BLANK
+                                           : (uint8_t)(tens + WB_TEXT_DIGIT_ZERO);
+}
+
+/* $51ac — a one-to-four draw added to `entry_d0` in packed BCD.
+ *
+ * THE FOUR READS ARE ORDERED AND TWO OF THEM ARE HARDWARE, which is why they are four statements
+ * and not one sum: the kit compares both cores' ordered hardware read stream, so $ff8209 must be
+ * read before $ff8207 here as it is in the image, and C would otherwise be free to swap them.
+ * WB_ACTOR_FOLLOWED_DEFAULT's two bytes are its x word read a byte at a time, so the non-machine
+ * half of the entropy is where the player is standing.
+ *
+ * THE EXTEND BIT THE `abcd` FOLDS IN IS ITS OWN. `addi`/`andi` leave X alone but `addq.b #1,d1` sets
+ * it, and the byte it steps is WB_BCD_RANDOM_MASK-ed to 0..3 — so the carry is always 0 and no
+ * caller's X can reach the addition. What this routine LEAVES in X is a different matter: it is the
+ * BCD carry out, and $517a's next call folds it in (hud.h). */
+uint32_t bcd_add_random_1_to_4(const uint8_t *image, uint32_t entry_d0) {
+    unsigned extend = 0;
+    uint8_t draw = hw_read8(OS_HW_SHIFTER_VCOUNT_LOW);
+
+    draw = (uint8_t)(draw + hw_read8(OS_HW_SHIFTER_VCOUNT_MID));
+    draw = (uint8_t)(draw + image[WB_ACTOR_FOLLOWED_DEFAULT]);
+    draw = (uint8_t)(draw + image[WB_ACTOR_FOLLOWED_DEFAULT + 1]);
+    draw = (uint8_t)((draw & WB_BCD_RANDOM_MASK) + 1);
+
+    /* `abcd d1,d0` writes d0's LOW BYTE and nothing above it, so both of the caller's other halves
+     * come back — the low word's high byte as well as the register's own. */
+    return set_low_word(entry_d0,
+                        set_low_byte((uint16_t)entry_d0,
+                                     abcd_byte(draw, (uint8_t)entry_d0, &extend)));
+}
+
+/* $517a — the payout itself. The award is a WORD out of the scene descriptor and every consumer
+ * below reads a different width of it: `bcd_add_random_1_to_4` and the digits take the low BYTE,
+ * `bcd_add_counter_bd6e` stages the whole WORD, and the score's addend is a constant longword that
+ * has nothing to do with the amount at all. */
+void hud_award_gold_from_descriptor(uint8_t *image) {
+    uint32_t descriptor = be32(image + WB_RECORD_PTR_10424);
+    uint32_t award = bus_read_word(image, addr_add(descriptor, WB_SCENE_GOLD_AWARD));
+
+    award = bcd_add_random_1_to_4(image, award);
+    bcd_add_counter_bd6e(image, award);
+    text_write_gold_digits_a2ac(image, award);
+    bcd_add_score_bd70(image, WB_ACTOR_COLLECT_SCORE);
+
+    /* The id-and-lifetime pair, inline for src/actor.c's stated reason rather than shared: making
+     * it one symbol across three modules would export a function to save one `wr16`, and the three
+     * sites do not agree anyway — src/scene.c posts a lifetime of zero on its speech arm and
+     * `type61_post_message` above CLEARS only the high byte of this word. */
+    image[WB_TEXT_REQUEST] = WB_TEXT_MESSAGE_GOLD_GET;
+    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+}
+
+
+/* --- slots 28, 30 and 31 ($4e38, $4eca, $4f9c): the collectables -------------------------------
+ *
+ * ONE SHAPE AND THREE PAYOUTS. Each opens (or, in slot 31's case, arrives) at `bsr $5c6e / btst
+ * #1,d0` — the FOOTPRINT bit alone, so what collects them is the followed record standing on them
+ * and not a shot — fires WB_ACTOR_REQUEST9_SFX, pays, and writes WB_ACTOR_FREE_MARKER over its own
+ * x. Each also runs WB_ACTOR_FIELD_12 down and raises WB_ACTOR_FLAG_FLICKER_BIT on the way, so an
+ * uncollected one blinks out; slots 30 and 31 count that field as a WORD and slot 28 as a BYTE.
+ */
+
+/* `bclr #6,8(a0)` then the free marker: the flicker stopped and the slot handed back, in that
+ * order. TWO of the three handlers end this way and slot 28 does NOT — its expiry `bset`s the bit
+ * instead of clearing it, so its two free sites are a bare free marker and route nowhere near here.
+ * Slot 30 spells the pair inline because its `clr.w` of the global cursor sits BETWEEN the two. */
+static void collectable_free_slot(uint8_t *image, uint32_t actor) {
+    flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+    set_field_w(image, actor, WB_ACTOR_X, WB_ACTOR_FREE_MARKER);
+}
+
+/* `bsr $5c6e / btst #1,d0` — bit 1 and nothing else. This is NOT `monster_contact`: no
+ * actor_hit_by_player_shot runs in front of it and bits 0 and 2 are never read, which is the whole
+ * difference between a collectable and a creature. */
+static int followed_stood_on_it(uint8_t *image, uint32_t actor) {
+    return (actor_followed_overlap_mask(image, actor)
+            & (1u << WB_ACTOR_OVERLAP_BODY_BIT)) != 0;
+}
+
+/* `cmpi.w #$14,12(a0) / bne / bset #6,8(a0)` — the flicker started on ONE value of the countdown
+ * rather than below a threshold, so a record seeded past it never flickers at all. Slots 30 and 31
+ * spell it identically, in the same place in their frame. */
+static void flicker_when_field_12_reaches_the_mark(uint8_t *image, uint32_t actor) {
+    if (field_w(image, actor, WB_ACTOR_FIELD_12) == (int16_t)WB_ACTOR_FLICKER_AT_FIELD_12)
+        flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+}
+
+/* `subq.w #1,12(a0) / bne` — a memory read-modify-write whose branch reads the ALU's flags, so what
+ * decides is the value computed and not a re-read of the field. Answers whether the record is out
+ * of time. The `cmpi.w` above it is a SECOND read of the same word, which is why that one is not
+ * folded in here. */
+static int field_12_word_ran_out(uint8_t *image, uint32_t actor) {
+    uint16_t left = (uint16_t)(field_w(image, actor, WB_ACTOR_FIELD_12) - 1);
+
+    set_field_w(image, actor, WB_ACTOR_FIELD_12, left);
+    return left == 0;
+}
+
+/* $4e98's `tst.w d0` — the ONE step test in this tier that reads the WORD.
+ *
+ * Every other one is `tst.b d0` (`step_was_blocked` above), and the difference is not cosmetic: the
+ * probes leave a map COLUMN — or a clamp limit, or a parked x — in the byte ABOVE the outcome
+ * (map.h), so this arm turns the record round only when that byte is zero too. A step blocked at
+ * column $10 reports $1000 and the `bchg` does not fire; a step blocked at column 0 reports $0000
+ * and it does. Both are reachable with the game's own geometry — the right-edge clamp reports the
+ * level's own width, and a record walking off the left edge reports a NEGATIVE column.
+ *
+ * The constant is WB_ACTOR_STEP_BLOCKED at the WIDER operand and not a bare zero: what the `tst.w`
+ * answers is "blocked AND the column above it was zero too", which is why the two helpers name the
+ * same value and read as one question asked at two widths. */
+static int step_word_was_blocked_at_column_0(uint32_t step_outcome) {
+    return (uint16_t)step_outcome == WB_ACTOR_STEP_BLOCKED;
+}
+
+/* $4e78 — the walk slot 28 takes while it waits, and the reason it is a helper is the register:
+ * `moveq #$0,d7 / move.b 31(a0),d7` clears the WHOLE of d7 before the byte lands in it, so unlike
+ * slots 3 and 6 the step carries nothing of what actor_fall_and_settle left behind. Slot 52 spells
+ * the same two instructions over WB_ACTOR_FIELD_30. */
+static void type28_walk_and_turn(uint8_t *image, uint32_t actor) {
+    uint32_t step = field_b(image, actor, WB_ACTOR_FIELD_31);
+    uint32_t outcome;
+
+    if (step == 0)
+        return;
+
+    outcome = step_facing(image, actor, step);
+    if (step_word_was_blocked_at_column_0(outcome))
+        flag_flip(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+
+    set_field_b(image, actor, WB_ACTOR_FIELD_31,
+                (uint8_t)(field_b(image, actor, WB_ACTOR_FIELD_31) - 1));
+}
+
+/* $4e38 — 144 bytes. THE COLLECT ARM IS GATED TWICE: the footprint bit AND
+ * WB_ACTOR_FLAG_MOVING_BIT down, so a record that is mid-hop cannot be picked up.
+ *
+ * THE COUNTDOWN IS A BYTE HERE, and it expires twice. `subq.b #1,12(a0) / bne` runs the frame out;
+ * on zero, `bset #6,8(a0) / bne` reads the bit the instruction just OVERWROTE — so the first expiry
+ * finds the flicker down, raises it and reloads the byte, and the second finds it up and frees the
+ * slot. That is what gives an uncollected record WB_ACTOR_TYPE28_FIELD_12_RELOAD flickering frames.
+ *
+ * THE TWO ACCUMULATORS RUN BACK TO BACK, `bsr $b562` then `bsr $b5a2` with only a `move.l #imm,d0`
+ * between them — so the score's first `abcd` folds in the carry the counter's last one left. This
+ * port cannot carry that (hud.h), and no case below drives a counter within
+ * WB_ACTOR_TYPE28_GOLD of overflowing four digits; ../STATUS.md records the seed that would. */
+uint32_t actor_behavior_type28(uint8_t *image, uint32_t actor) {
+    uint8_t left;
+    int was_flickering;
+
+    if (followed_stood_on_it(image, actor)
+        && !flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT)) {
+        sound_request_9(image);
+        set_field_w(image, actor, WB_ACTOR_X, WB_ACTOR_FREE_MARKER);
+        bcd_add_counter_bd6e(image, WB_ACTOR_TYPE28_GOLD);
+        bcd_add_score_bd70(image, WB_ACTOR_COLLECT_SCORE);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_hop_ascend_step(image, actor);
+    actor_relaunch_and_anim_5160(image, actor);
+    type28_walk_and_turn(image, actor);
+
+    /* `subq.b #1,12(a0) / bne` — one read-modify-write whose branch reads the ALU's flags, the BYTE
+     * spelling of `field_12_word_ran_out` above. The store happens on every path out. */
+    left = (uint8_t)(field_b(image, actor, WB_ACTOR_FIELD_12) - 1);
+    set_field_b(image, actor, WB_ACTOR_FIELD_12, left);
+    if (left != 0)
+        return WB_ACTOR_DISPATCH_RAN;
+
+    /* `bset #6,8(a0) / bne` — ONE write, and the branch reads the bit the write overwrote. Both
+     * arms therefore leave the bit up and only the OLD value chooses between them. */
+    was_flickering = flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+    flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+    if (was_flickering) {
+        set_field_w(image, actor, WB_ACTOR_X, WB_ACTOR_FREE_MARKER);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+    set_field_b(image, actor, WB_ACTOR_FIELD_12, WB_ACTOR_TYPE28_FIELD_12_RELOAD);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+/* $4ee4 — THE MISSING STORE, reproduced. `move.w $b6fa,d0 / addq.w #4,d0 / cmp.w $b6f8,d0 / blt`
+ * computes the topped-up meter and then writes it NOWHERE: the only arm that stores anything is the
+ * one where the sum reached WB_HUD_METER_MAX, and it stores the maximum rather than the sum. So a
+ * collected slot-30 record refills the meter only when the player was already within
+ * WB_ACTOR_TYPE30_METER_STEP of full, and does nothing at all otherwise. That is a shipped bug —
+ * `hud_meter_add_clamped` ($b6fe) is the routine that does this properly and this handler does not
+ * call it — and faithfulness is the rule (README), so the sum is computed and dropped here too. */
+static void type30_top_up_the_meter(uint8_t *image) {
+    uint16_t topped = (uint16_t)(be16(image + WB_HUD_METER_VALUE) + WB_ACTOR_TYPE30_METER_STEP);
+
+    if ((int16_t)topped >= (int16_t)be16(image + WB_HUD_METER_MAX))
+        wr16(image + WB_HUD_METER_VALUE, be16(image + WB_HUD_METER_MAX));
+}
+
+/* $4f14 — the drift, and the one animation cursor in this tier that is NOT a record field.
+ * WB_ACTOR_TYPE30_CURSOR is a global word, so two live type-30 records step the same table together
+ * and a record spawned mid-cycle joins it wherever the other left it. The cursor is masked AFTER
+ * the read, so the fetch reaches WB_ACTOR_TYPE30_DRIFT + a SIGN-EXTENDED word and only the store is
+ * bounded to the 32 entries — the same shape slot 52's frame cursor has. */
+static void type30_drift_step(uint8_t *image, uint32_t actor) {
+    uint16_t cursor = be16(image + WB_ACTOR_TYPE30_CURSOR);
+    uint16_t drift = bus_read_word(image, addr_add(WB_ACTOR_TYPE30_DRIFT, sign_ext16(cursor)));
+
+    set_field_w(image, actor, WB_ACTOR_X,
+                (uint16_t)((uint16_t)field_w(image, actor, WB_ACTOR_X) + drift));
+    wr16(image + WB_ACTOR_TYPE30_CURSOR,
+         (uint16_t)((cursor + WB_ACTOR_TYPE30_DRIFT_STRIDE) & WB_ACTOR_TYPE30_DRIFT_MASK));
+}
+
+/* $4eca — 142 bytes. It hovers: WB_ACTOR_TYPE30_DRIFT's triangle moves it left and right by a net
+ * zero over 32 frames, and `tst.b $712.w / beq` lifts it one pixel on the frames WB_FRAME_TOGGLE is
+ * nonzero — a BYTE test on the HIGH half of that word, so it reads the flag the way flip_screen
+ * writes it ($0000 or $ffff) and nothing narrower would do.
+ *
+ * IT CANNOT BE COLLECTED IMMEDIATELY. `addq.b #1,30(a0)` counts WB_ACTOR_FIELD_30 UP every waiting
+ * frame and `cmpi.b #$a,30(a0) / blt` refuses the collect below WB_ACTOR_TYPE30_COLLECT_MIN — a
+ * SIGNED compare, so a byte that has counted past $7f is refused again until it wraps back. */
+uint32_t actor_behavior_type30(uint8_t *image, uint32_t actor) {
+    if (followed_stood_on_it(image, actor)
+        && (int8_t)field_b(image, actor, WB_ACTOR_FIELD_30)
+           >= (int8_t)WB_ACTOR_TYPE30_COLLECT_MIN) {
+        sound_request_9(image);
+        type30_top_up_the_meter(image);
+    } else {
+        bump_field_b(image, actor, WB_ACTOR_FIELD_30);
+        if (image[WB_FRAME_TOGGLE] != 0)
+            set_field_w(image, actor, WB_ACTOR_Y,
+                        (uint16_t)(field_w(image, actor, WB_ACTOR_Y) - 1));
+        type30_drift_step(image, actor);
+
+        flicker_when_field_12_reaches_the_mark(image, actor);
+        if (!field_12_word_ran_out(image, actor))
+            return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    /* $4f46 — the ending BOTH arms reach, and the cursor is cleared between the two writes
+     * `collectable_free_slot` makes rather than after them. */
+    flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+    wr16(image + WB_ACTOR_TYPE30_CURSOR, 0);
+    set_field_w(image, actor, WB_ACTOR_X, WB_ACTOR_FREE_MARKER);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+/* $4f9c — 78 bytes, $4f9c..$4fe9, and it has TWO EXITS. Its own `rts` at $4fe8 is the last of those
+ * bytes and both the collect and the free arm reach it; the LIVE-countdown arm leaves instead, by
+ * the `bne.w $4fea` at $4fda, for actor_select_sprite_by_flag — a routine of its own with a second
+ * caller at $54d6, already reconstructed, whose `rts` returns to the dispatcher. What bounds this
+ * handler at 78 bytes is THAT routine's entry, not the branch: a scan running on to the next `rts`
+ * gives it 146 and swallows those 48 bytes whole.
+ *
+ * THE COLLECT ARM IS SKIPPED WHILE THE RECORD IS MOVING, the same `btst #0,8(a0)` gate slot 28 has
+ * — but here the gate jumps STRAIGHT to the countdown, so a moving record still ages. */
+uint32_t actor_behavior_type31(uint8_t *image, uint32_t actor) {
+    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_hop_ascend_step(image, actor);
+    flicker_when_field_12_reaches_the_mark(image, actor);
+
+    if (!flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT)
+        && followed_stood_on_it(image, actor)) {
+        sound_request_9(image);
+        hud_award_gold_from_descriptor(image);
+        collectable_free_slot(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    if (field_12_word_ran_out(image, actor)) {
+        collectable_free_slot(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    actor_select_sprite_by_flag(image, actor);
     return WB_ACTOR_DISPATCH_RAN;
 }

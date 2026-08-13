@@ -161,7 +161,7 @@ void hud_blit_record_bitmap(uint8_t *image, uint32_t record) {
  * wrap in the subtract is deliberate: a borrow makes the intermediate huge, which is exactly what
  * drives the `> 9` and `> 0x99` corrections.
  */
-static uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend) {
+uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend) {
     unsigned result = (addend & 0x0fu) + (accumulator & 0x0fu) + *extend;
     if (result > 9u)
         result += 6u;

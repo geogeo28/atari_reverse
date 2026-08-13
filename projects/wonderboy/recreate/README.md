@@ -151,17 +151,28 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            for state_flag_a34) and the dispatcher it feeds ($928), which fetches a
                            longword out of the 62-entry table at $938 and tail-jumps through it —
                            on the WRAPPED offset, so 248 of the 65,536 type values reach an entry.
-                           Twenty-two of the sixty-two rows are reconstructed as of batch 32 and
-                           forty are not, so for those the dispatcher hands the target BACK and the
-                           differential runs the oracle on to it; the reconstructed list grows by a
-                           few rows a batch. Then
+                           TWENTY-SIX of the sixty-two rows are reconstructed as of batch 33 phase
+                           A and thirty-six are not, so for those the dispatcher hands the target
+                           BACK and the differential runs the oracle on to it; the reconstructed
+                           list grows by a few rows a batch. (This line read "twenty-two" while
+                           ../STATUS.md read twenty-three at batch 32 and neither was checked
+                           against anything; test_behavior.py's PORTED_SLOT_COUNT now holds the
+                           number and a case asserts it against the table, so the next drift fails
+                           a test rather than a reviewer.) Then
                            the tier's own grammar: the animation every spawned record plays
                            ($698a), the thirteen shared leaves the handlers call — three map
                            steppers, four animation cursors, a homing step, a moving platform's
                            catch and release, a sprite select and a side-flag write at the OPPOSITE
                            polarity to $67c2 — and the two tests the tier runs every frame, the
                            three-bit overlap mask against the followed record ($5c6e) and the
-                           player-shot scan that consumes what it finds ($23b6)
+                           player-shot scan that consumes what it finds ($23b6). At the foot of it,
+                           the PAYOUT CLUSTER the collectable rows spend through ($517a..$5207):
+                           the scene descriptor's packed-BCD gold award, the one-to-four `abcd`
+                           that jitters it — the tier's only hardware read, and a DECLARED one —
+                           and the two digits it patches into message 3's own shipped string. They
+                           live here rather than in src/hud.c because their addresses are inside
+                           the behaviour band and both callers are dispatch rows, which is
+                           sound_request_9's argument
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -298,13 +309,15 @@ test/test_behavior.py      the behaviour tier's differential. Its shape is set b
                            sum-the-spanned-bytes idiom), and an independent model of $5c6e's three
                            overlap tests compared against the ORACLE's d0 as well as the port's
                            return. It imports test_map.py's map seeding and test_rng.py's generator
-                           model rather than restating either. Then the TWENTY-TWO LIVE TABLE ROWS:
+                           model rather than restating either. Then the TWENTY-SIX LIVE TABLE ROWS:
                            the five-handler band at $2462..$2db1 (one shape with five bodies), the
                            whole $5a band ($5928..$5c6b, seven rows and three endings of one
                            grammar), the three moving platforms, slot 60's retype, slot 61's message
-                           sequence, and slot 7 with the SWOOP state machine below it that its two
-                           prologue rows also run into — each entered where the `jmp (a1)` would
-                           land, and each with its dispatch row flipped from a boundary to a run. What those cases share is a GROUND WINDOW — a solid
+                           sequence, slot 7 with the SWOOP state machine below it that its two
+                           prologue rows also run into, and the three COLLECTABLES at 28, 30 and 31
+                           with the payout cluster under them — each entered where the `jmp (a1)`
+                           would land, and each with its dispatch row flipped from a boundary to a
+                           run. What those cases share is a GROUND WINDOW — a solid
                            row under the record, a clear one where the probes read, and a wide
                            WB_BG_SCROLL_LIMIT_X — because a keyed map tangles "did it land", "was
                            the step blocked" and "is there a drop ahead" into one byte

@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 225/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 231/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -47,8 +47,12 @@ batch 32: the seven dispatch rows of $5928..$5c6b now all run, and three of them
 endings of one grammar — the cursor, the countdown and a second table's cursor) — and SLOT 7 WITH
 ITS SWOOP MACHINE (`actor_behavior_type07` + the four states at $72c2..$73cd, 692 bytes, batch 32
 phase 2: the tier's LAST always-transfer boundary retired — three table rows share one body, both
-prologues run straight into it, and the two mark bits of 30(a0) are answered) —
-26,006 bytes in all, 58.8 % of everything
+prologues run straight into it, and the two mark bits of 30(a0) are answered) — and the THREE
+COLLECTABLES with the payout cluster they spend through (`actor_behavior_type28/30/31` plus
+`hud_award_gold_from_descriptor`, `bcd_add_random_1_to_4` and `text_write_gold_digits_a2ac`, 506
+bytes, batch 33 phase A: the first code here that reads the game's SECOND hardware entropy source,
+and the batch that established what the gold counter is) —
+26,512 bytes in all, 59.9 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -60,11 +64,16 @@ left this leading count at 161 while its own section and parenthetical said 163 
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
-`make test`: **4359 cases green in what this batch commits**, measured by `pytest --collect-only`
-rather than added up (4344 after batch 32, plus batch 33's first 5 — all in `test/test_behavior.py`,
-which stands at 754 — plus 6 in `test/test_rng.py` from the kit extension below, which stands at
-109, plus 4 in `test/test_actor.py`, the declared counter's two consumer cases and their
-parametrisation, which stands at 988).
+`make test`: **4451 cases green in what this batch commits**, measured by `pytest --collect-only`
+rather than added up (4359 after batch 33's prerequisites, plus phase A's 92 — all in
+`test/test_behavior.py`, which stands at 846). The 92 is NET: the review gate and the independent
+gate after it added rows for the left walk arm, the signed drift cursor, the sub-mark countdown at
+both sites, the collect point, the meter's SIGNEDNESS and the live-row count, and trimmed three
+that could not fail (see the two gate paragraphs below).
+`make test` at batch 33's prerequisites: **4359 cases** (4344 after batch 32, plus batch 33's first
+5 — all in `test/test_behavior.py`, which stood at 754 — plus 6 in `test/test_rng.py` from the kit
+extension below, which stands at 109, plus 4 in `test/test_actor.py`, the declared counter's two
+consumer cases and their parametrisation, which stands at 988).
 `make test` at batch 32: **4344 cases** (4200 before it, plus 144 — 47 in phase 1, 86 in phase 2
 and 11 from the review gate).
 `make test` at batch 31: **4200 cases** (4130 before batch 31, plus its 70,
@@ -926,11 +935,16 @@ Five things a later reader should not have to re-derive:
   It is named and its shape recorded in `../names.txt`; porting it means porting `$bf5e` with it.
   **Read this as a caveat on the scan, not on that one address**: "T0, no callees, N bytes" is a
   claim about the bytes Ghidra put in the function, and a fall-through target is invisible to it.
-* **The disassembler in `../out/wonderboy_dis.txt` prints `abcd`/`sbcd` wrong.** `c308` and `8308`
-  come out as `and.b d1,a0` and `or.b d1,a0`, which would make the four accumulators read as
-  nonsense. Ghidra has them right (`bcdAdjust` and `in_XF` in `../decomp.c`), and so does the
-  entry-byte pin, which is built from the opcodes. `tools/prg_dis.py` is unfixed; `../names.txt`
-  records the trap on `$b562`.
+* **The disassembler printed `abcd`/`sbcd` wrong — FIXED at batch 33, and the LISTING is still
+  stale.** `c308` and `8308` came out as `and.b d1,a0` and `or.b d1,a0`, which made the four
+  accumulators read as nonsense; Ghidra always had them right (`bcdAdjust` and `in_XF` in
+  `../decomp.c`), and so did the entry-byte pin, which is built from the opcodes. `tools/prg_dis.py`
+  now decodes the whole two-register family — `abcd`/`sbcd`, `addx`/`subx` and `cmpm` — and
+  `tools/recreate_kit/test/test_prg_dis.py` pins the forms AND their operand order by reference
+  encoding. **But `../out/wonderboy_dis.txt` is a generated file and predates the fix**, so every
+  `$8xxx`/`$cxxx` line in the checked-out listing is still the old wrong one: regenerate before
+  reading a plate out of that band (queued in the batch-33 section). `../names.txt` records the trap
+  on `$b562`.
 * **The BCD routines' entry X flag is live input and is NOT pinned beyond X = 0.** `abcd` folds in
   the extend bit and nothing between the entry and the first one touches it. X = 0 is now the
   oracle's guaranteed entry condition (see "The oracle defect..." above) and one case holds the port
@@ -5217,71 +5231,226 @@ promote because the other two batteries that spell it hand-roll `index << 12` wh
 ($1023a, $10394, $1044c). 40 slots remain.
 
 
-### Batch 33 (IN PROGRESS): dispatch rows 28–37, the $4e38..$5406 band
+### Batch 33 phase A: dispatch rows 28, 30 and 31, and the payout cluster at $517a..$5207
 
-**TWO PREREQUISITES LANDED AND GREEN; THE EIGHT REAL SLOTS ARE NOT STARTED.** This section records
-what is verified in the tree and what the reconnaissance found, so the next session starts from
-measurements rather than from the scan that opened the batch. **Verified 225, 26,006 bytes, 58.8 %
-of §0k's 44,262; `make test` 4359** (4344 after batch 32; `test/test_behavior.py` stands at 754,
-`test/test_rng.py` at 109 and `test/test_actor.py` at 988).
-23 of the table's 62 rows are live; 39 remain.
+**SIX ROUTINES, 506 BYTES, ALL CLEAN.** **Verified 231, 26,512 bytes, 59.9 % of §0k's 44,262;
+`make test` 4451** (4359 after this batch's two prerequisites; `test/test_behavior.py` stands at
+846). 26 of the table's 62 rows are live and 36 remain — a figure `PORTED_SLOT_COUNT` now holds and
+a case asserts, because it had drifted twice as prose. Every callee these six reach was already
+reconstructed, so not one of them needed a boundary — the first batch in this tier where that is
+true of the whole set.
 
 | address | name | bytes | row |
 | --- | --- | --- | --- |
-| `$6786` | `sound_request_9` | 16 | CLEAN — the band's collect sound; four instructions, one observable |
-| `$4ec8` | `actor_behavior_type29` | 2 | CLEAN — a bare `rts` at an address of its own, mapped to the null body |
+| `$6786` | `sound_request_9` | 16 | CLEAN — the band's collect sound (prerequisite) |
+| `$4ec8` | `actor_behavior_type29` | 2 | CLEAN — a bare `rts`, mapped to the null body (prerequisite) |
+| `$51d8` | `text_write_gold_digits_a2ac` | 48 | CLEAN — two characters, leading zero blanked |
+| `$51ac` | `bcd_add_random_1_to_4` | 44 | CLEAN — the game's SECOND declared-hardware routine |
+| `$517a` | `hud_award_gold_from_descriptor` | 50 | CLEAN — the payout, and what named the counter |
+| `$4e38` | `actor_behavior_type28` | 144 | CLEAN — the walking collectable, and the WORD step test |
+| `$4eca` | `actor_behavior_type30` | 142 | CLEAN — the hoverer, its global cursor and the meter bug |
+| `$4f9c` | `actor_behavior_type31` | 78 | CLEAN — 78 bytes, not 146: two exits, one of them a branch |
 
-**Plate corrections, cited to bytes.** `$6786` is SIXTEEN bytes, not the 20 the batch scan gave it:
-`$6796` is actor_stun_followed's entry, so 20 would run FOUR bytes into that routine, swallowing its
-whole `move.w #$8,d0` ($6796..$6799 — a `move.w #imm,Dn` is four bytes, not two). Its five callers
-are now listed exactly — `$4e4e`, `$4ee0`, `$4fca`, `$506c`,
-`$5214`, i.e. slots 28, 30, 31, 32 and 33. And `$4ec8` really is the bare `rts` the scan guessed:
-`4e75`, bounded by slot 30's entry at `$4eca`.
+**WHAT A COLLECTABLE IS.** These three rows are not creatures. None has a spawn gate, none calls
+`actor_hit_by_player_shot`, and the only contact test is `bsr $5c6e / btst #1,d0` — the FOOTPRINT
+bit alone — so the followed record takes one by standing on it and a shot cannot touch it at all.
+Each fires `sound_request_9`, pays, and writes `actor_free_marker` over its own x; each runs
+`WB_ACTOR_FIELD_12` down and raises `WB_ACTOR_FLAG_FLICKER_BIT` on the way, so an uncollected one
+blinks out. Slot 28 falls, hops and walks; slot 30 hovers on a signed table; slot 31 only falls.
 
-**`$5018` IS NOT A ROUTINE** — the batch's open question, answered from the bytes. It is slot 31's
-own last instruction: that handler's three sprite arms each `bra.w $5018` to a shared `rts` at
-`$4ffa` and `$500e`, and `actor_hop_ascend_step` begins at `$501a` immediately after. So slot 31 is
-`$4f9c..$5019`, 146 bytes, and there is nothing to name at `$5018`.
+**THE COUNTER AT $bd6e IS THE GOLD, and this batch is what established it** — three witnesses that
+do not depend on one another. Message id 3's shipped string is `"        gold get."`; the two
+characters `$51d8` patches into it (`$a2ac..$a2ad`, five spaces in) are the amount `$517a` adds to
+`bcd_counter_bd6e`; and `scene_run_frame`'s shop arm compares its price against that same counter
+and calls `bcd_sub_counter_bd6e`. The message-table read is a CASE and not a claim —
+`test_the_gold_digits_land_inside_message_3s_own_shipped_string` takes the record's address off the
+image's own pointer table and asserts the two bytes ship as spaces.
 
-**A BLOCKER THE CALLEE CENSUS MISSED: `rng_1_to_4_masked` ($51ac) READS HARDWARE.** It sums
-`$ff8209` and `$ff8207` — the shifter's video address counter — with the two bytes of the followed
-record's x, masks to 0..3, adds one and ANDs the caller's d0. Under this oracle both hardware bytes
-answer 0 on both sides, so a case that does not DECLARE them is served a fabricated value and both
-cores agree on it: the false-green class `PORTABILITY.md` names and `snd_music_tick` is the only
-current consumer of `leaf.run(..., hw_seed=)` for. Every slot that awards a bonus reaches it through
-`$517a`, so slots 31, 32 and 33 cannot be pinned honestly without that declaration.
+**THE BIGGEST FIND: `$51ac` ENDS IN AN `abcd`, NOT AN `and`.** The `# ctx` plate called it
+`rng_1_to_4_masked` and said it masked the caller's d0; `out/wonderboy_dis.txt` prints the `c101` at
+`$51d4` as `and.b d0,d1`. It is `abcd d1,d0`. Opmode 100 over an ea mode of 000 cannot be an AND (a
+byte AND with a register destination would have to write a data register through the `<ea>` half),
+and Ghidra's own decompile calls it `bcdAdjust`. This is the SAME disassembler bug `names.txt`
+already documents for `$b562`'s `c308`/`8308` — **the ABCD/SBCD/EXG encoding space at `$c1xx`/`$81xx`
+is systematically mis-printed in `out/wonderboy_dis.txt`, and any plate written from that listing in
+that space is suspect.** So the routine adds a packed-BCD one-to-four INTO d0 and answers in d0, and
+`$517a`'s award is JITTERED rather than masked. `bcd_add_random_1_to_4` is the new name; the entry
+pin (13 instructions, 44 bytes) passed first try, which is the independent confirmation.
 
-**What the reconnaissance established about the eight remaining rows** (all read from
-`out/wonderboy_dis.txt`, none ported):
+**...AND THE ROOT CAUSE IS FIXED, not just the plate.** `tools/prg_dis.py` had `ABCD`/`SBCD` on a
+"knowingly unhandled, mnemonic-only" list that `docs/m68k-disassembly.md` had carried since
+2026-07-28, and `../names.txt` warned about the very same encoding at `$b562` — and a plate was
+written from the listing anyway. **A documented gap is not a guard.** The decoder now carries the
+two table rows beside its `EXG_FORMS` (opmode 100 with ea mode 000/001 in lines 8 and C); the kit's
+own opcode-space sweep flagged the two `KNOWN_MNEMONIC_GAPS` rows as stale the moment it did, which
+is that test working as designed; and four reference encodings pin the forms including the operand
+order (`c101` is `abcd d1,d0`, NOT `abcd d0,d1`). Kit suite 351, unchanged. This is the one change
+in the batch outside `projects/wonderboy/`, and it is what stops slots 32 and 33 — queued, and in
+the same band — repeating the mistake.
 
-  * **Slot 28 `$4e38..$4ec7`, 144 B.** Contact on bit 1 of `$5c6e` AND bit 0 of 8(a0) down → the
-    collect arm: `sound_request_9`, the free marker, `$b562` with 5 and `$b5a2` with $20. Otherwise
-    settle, hop, `actor_relaunch_and_anim_5160`, and a step whose distance is
-    `moveq #0,d7 / move.b 31(a0),d7` — WB_ACTOR_FIELD_31 as the step, the slot-52 class one field
-    over — skipped entirely when that byte is zero. **`tst.w d0` at `$4e98`, a WORD test where every
-    other blocked-step test in the tier is `tst.b`**: the probes leave a map column in the high byte
-    of d0's low word, so this arm turns on a different condition and `step_was_blocked` cannot be
-    reused as it stands. Then `subq.b #1,12(a0)`, `bset #6,8(a0)` and a reload of `#$14`.
-  * **Slot 30 `$4eca..$4f57`, 142 B**, then a `0000` pad, a GLOBAL cursor word at `$4f5a` and a
-    32-word drift table at `$4f5c..$4f9b` (`andi.w #$3f`, values $0008 down through $fff8 and back —
-    a signed dx added straight to (a0)). The cursor is NOT a record field, so two live type-30
-    records share one animation phase.
-  * **Slot 31 `$4f9c..$5019`, 146 B.** Three sprite arms ($15a/$158/$157) on bits 2 and 0 of 8(a0),
-    sharing the `$5018` exit; the award path `sound_request_9` + `$517a`.
+**A SECOND SCAN ERROR, and this one contradicted the tree's own data.** The reconnaissance recorded
+slot 31 as `$4f9c..$5019`, 146 bytes, "three sprite arms sharing the `$5018` exit". Forty-eight of
+those bytes are `actor_select_sprite_by_flag` — named in `../names.txt` since batch 28, ported in
+`src/behavior.c` and entry-pinned in `test/test_behavior.py` since batch 29, with a `bsr.w` caller of
+its own at `$54d6` inside `actor_behavior_type38_pickup`. Slot 31 is **78 bytes**, `$4f9c..$4fe9`,
+and its last instruction is a `bne.w $4fea` INTO that routine, whose `rts` returns to the dispatcher.
+The lesson is a cheap one to apply: **before recording a routine's extent from a scan, look up every
+address inside it in `../names.txt`** — the answer was already in the tree.
+
+**A SHIPPED BUG REPRODUCED: slot 30's pickup is worth nothing unless the meter is nearly full.**
+`move.w $b6fa,d0 / addq.w #4,d0 / cmp.w $b6f8,d0 / blt` computes the topped-up value and stores it
+NOWHERE; the only arm that writes is the one where the sum REACHED `hud_meter_max`, and it writes
+the maximum rather than the sum. `hud_meter_add_clamped` ($b6fe) is the routine that adds properly
+and this handler does not call it. FIVE parametrised rows pin it: four either side of the boundary
+(a fifth, an already-full meter, was trimmed as the same claim as the over-full one) and one the
+independent gate asked for, seeded at `$7ffe` so `addq.w #4` wraps the value NEGATIVE — because the
+compare is `blt`, and every other row is small and positive, so an unsigned port answered them all
+correctly. Three mutants are caught: "store the sum", "always store", and dropping both `(int16_t)`
+casts, which the gate had already shown left the whole suite green.
+
+**THE WORD TEST AT $4e98 IS PINNED, and both of its arms are reachable.** Slot 28 is the one place
+in the tier that reads the step probe's whole low WORD (`tst.w d0`) where every other blocked-step
+test reads the outcome BYTE. The probes leave a map column — or a clamp limit, or a parked x — above
+that byte (map.h), so the `bchg` turns the record round only when both bytes are zero. Two cases:
+a step blocked in map column 0 reports `$0000` and DOES turn it round; a step past the level's right
+edge reports the clamp (`$0100` for the limit those seeds use) and does NOT, even though its byte is
+`WB_ACTOR_STEP_BLOCKED`. The mutant that swaps `step_word_was_blocked_at_column_0` for
+`step_was_blocked` is caught
+by the second. Both arms come off the game's own geometry, so nothing here is unpinned.
+
+**Other findings worth carrying.** Slot 30's animation cursor is a GLOBAL (`$4f5a`), the only one in
+the tier that is not a record field — two live type-30 records share one phase, and a case runs the
+handler on two records in turn to show the second starts where the first left off. Its drift table
+(`$4f5c`, 32 signed words) is a triangle that sums to ZERO, which is what makes the handler a hover
+rather than a drift; the table is reached by the one `lea $4f5c(pc,d0.w)` in the image, the
+operand form §0k is about. `tst.b $712.w` reads `frame_toggle`'s HIGH byte, and two rows with only
+a low byte set are what say so. And `$10424` is `record_ptr_10420`'s copy, so field 12 of the SCENE
+DESCRIPTOR at `$21828` is the gold award — a field that table's plate did not list.
+
+**THE REVIEW GATE (six finder angles) FOUND THIRTEEN REAL ITEMS**, all applied. The three that
+matter most, each a claim the tree itself contradicted: (a) **slot 31 DOES end in an `rts` of its
+own**, at `$4fe8` — four surfaces said it did not, and that reading is self-contradicting, since a
+body ending at the `bne.w $4fda` would be 66 bytes and not the 78 `BODY_SIZES` records. The truth is
+two exits: the collect and free arms reach `$4fe8`, and the LIVE-countdown arm leaves by the
+`bne.w $4fea`. (b) **`behavior.h` claimed all three collectables `bclr` the flicker bit when they
+free themselves** — slot 28 `bset`s it and frees the slot with it UP, which the source comment said
+and the header denied, in one commit. (c) **slot 28's LEFT walk arm was never driven**, so a port
+reaching for `step_right` outright stayed green; the first attempt to fix it did not separate the
+arms either (both probes land in column 0 on a fully blocked row), and the case that works is the
+off-the-map park, where the arms leave DIFFERENT x. `arm/type28-always-steps-right` is the mutant
+that now proves it. Also applied: two dead constants deleted, an unused parameter dropped, the
+collectable seed made to DELEGATE to the band's rather than restate fourteen of its lines, three
+encoders annotated `ALSO IN` under the file's own third-copy rule, a helper renamed off a bare `0`
+onto `WB_ACTOR_STEP_BLOCKED`, the direction-select extracted so three routines share it, the
+instruction cap derived (it was 116 over a 52-instruction run) and a `names.txt` plate un-spliced
+where a new clause had captured the previous field's parenthetical.
+
+**Mutation sweep: 34/34 caught** on the reviewed code, then **three more axes the independent gate
+found by mutating the tree itself** — both `(int16_t)` casts dropped from `type30_top_up_the_meter`
+(4447 green, item 2 above), the flicker `==` widened to `<=` (exactly ONE failure, and it was a
+slot-30 row: slot 31's own `cmpi.w` was pinned only through its neighbour's copy), and slot 28's
+`step_facing` hard-wired to one arm. All three now red, and the flicker mutant reds at BOTH sites.
+The first pass ran 30 and its two survivors are the two battery holes below.
+Over pre-hoc axes (masks against neighbours, the drift table
+swapped for the cursor, the word-vs-byte step test, the global cursor made a record field, a dropped
+hardware read, the two hardware reads swapped, the `abcd` made a binary add, the shipped meter bug
+"fixed" two ways, the signed collect-min compare made unsigned, the frame-toggle byte, the flicker
+equality made a threshold, `bset`-then-read reordered, the step field moved, the two award arms
+swapped, slot 31's sprite published on both arms). **The first pass found TWO real holes in the
+BATTERY**, each now closed and each proven under its own mutant: no drift case drove a cursor with
+its SIGN bit set, so `sign_ext16` could be dropped unnoticed (the rows at `$fffe` — which reads the
+cursor word itself, two bytes below the table — and `$8000`, which leaves the image, close it); and
+no countdown case sat strictly BELOW the flicker mark on an arm that does not clear the bit again,
+so `==` and `<=` were indistinguishable. Sources verified pristine against the snapshot before every
+mutant and after the run.
+
+**A FALSE GREEN THE REVIEW GATE CAUGHT IN THE BATTERY ITSELF.** The two negative controls asserted
+the kit's undeclared-hardware refusal with `pytest.raises(AssertionError, match="(?i)declar|hw|refus")`
+— and each passed its case name to `leaf.run` as the `what`, which the run's OTHER assertions put at
+the head of their own message. `"...undeclared"` matches `declar`. So a change that removed the
+refusal would have fallen through to the byte-for-byte diff, failed on the fabricated 0, and been
+reported as the refusal firing. Both halves are fixed and both are load-bearing: the pattern is now
+`"modeled hardware byte"`, a phrase only `harness.py` produces, and the `what` those two cases pass
+carries no word that could stand in for it.
+
+**...and what those two controls DO and DO NOT pin, measured rather than assumed.** The refusal is
+raised by the ORACLE's read, not the candidate's, so NO mutation of `src/behavior.c` can redden
+either control — a mutant that deleted `bcd_add_random_1_to_4`'s two `hw_read8` calls outright
+leaves both green, which was run and recorded rather than reasoned about. They pin the KIT's model.
+What pins the PORT's own reads is the ordered read-stream comparison, and two mutants prove it:
+`hw/type51ac-drops-the-mid-counter` and `order/type51ac-hw-reads-swapped` are both caught by the
+DECLARED cases.
+
+**NOT PINNED, HONESTLY — and one of them is a KNOWN DIVERGENCE, not a gap.**
+  * **THE BCD EXTEND CHAIN**, and the list of chains is exactly two — the THIRD adjacency inside
+    `$517a` (`$5188` counter then `$5196` score) is SOUND, because `text_write_gold_digits_a2ac`
+    sits between them and its last X-writer on both exits is `addi.b #$30` on a nibble masked to
+    `$0..$f`, which cannot carry out of `$30..$3f` (`ror.w`, `andi.w` and `move.b` leave X alone).
+    The port is right there by construction rather than by luck, which `include/hud.h` now
+    says. `src/hud.c` models an entry X of zero for all four accumulators, and
+    its file comment argues that from the oracle's reset SR — which is a claim about the ENTRY to a
+    run and not about what happens inside one. This batch is the first ported code that calls two
+    packed-BCD routines in a row, and there are two such chains: `$4e5a` → `$4e64` (slot 28's counter
+    then score, only a `move.l #imm,d0` between them) and `$5184` → `$5188` (`bcd_add_random_1_to_4`'s
+    own `abcd` then the counter). On both, the original folds the carry the first left into the
+    second and this port folds a zero. The seeds that would expose it are exact: a `bcd_counter_bd6e`
+    within `WB_ACTOR_TYPE28_GOLD` of `$9999` for the first, and an award whose low BCD byte plus the
+    draw passes `$99` for the second. **No case here drives either**, and both are reachable in real
+    play. Fixing it is a change to `hud.h`'s interface (an entry-X parameter on four routines, with
+    `test_hud.py`, `test_actor.py` and `test_scene.py` moving with it), which is out of this batch's
+    scope and is QUEUED below.
+  * **SLOT 31's `cmpi`/`bset` ORDERING.** It runs the flicker mark BEFORE its contact test where
+    slot 30 runs it after the drift, and no case can separate the two: a collected frame ends at
+    `bclr #6,8(a0)`, so the flag byte it writes has the bit down whether the `bset` ran first or
+    not, and a waiting frame reaches both orders alike. They converge on every arm.
+  * **SLOT 28's TWO WALK ARMS on a fully blocked row.** `_block_the_walk` fills the whole probe row
+    and from the seed those cases use BOTH probes land in map column 0, so the two arms report the
+    same `$0000` and commit the same zero move. What separates them is the off-the-map case, where
+    the left arm parks at the half-width and the right would commit `x + d7` — a distinction the
+    review gate had to add, and `arm/type28-always-steps-right` is the mutant that proves it.
+  * The `#$14` at `$4eba` and the `#$14` at `$4f2e`/`$4fa4` are the same number in two different
+    operands (a byte written, a word compared) and carry two `#define`s. Nothing says they are the
+    same design constant.
+  * Which creature each of the three slots draws, and what `WB_ACTOR_FIELD_12`'s two spellings mean
+    beyond "a countdown".
+  * `$515c`/`$515d`/`$515e`, slot 32's three globals, are NAMED in `../names.txt` (they were read
+    while the frame table above them was) but not ported — batch 34's.
+
+**QUEUED — and BATCH 34 owns slots 32..37**, which is what the `$515c`/`$515d`/`$515e` plates in
+`../names.txt` already say; this line said "the rest of batch 33" and the two disagreed. What is
+left of batch 33 itself is the **BCD extend chain above** and nothing else — the `hw_seed`
+declaration `$51ac` forces is threaded, and every case that reaches it declares.
+
+**QUEUED — REGENERATE THE GHIDRA ARTIFACTS BEFORE THE NEXT NAMING PASS.** `../out/names_dump.txt`,
+`../out/hw_scan.tsv` and `../decomp.c` are gitignored generated files and all three still carry the
+three OLD names at `$517a`/`$51ac`/`$51d8`. The documented GUI-sync workflow is "run `dump_names.sh`,
+diff against `names.txt`, merge" — run that against the stale dump and the corrected names read as
+apparent GUI edits and get merged BACK, and `ApplyNames` is last-wins per address, so the batch's
+central correction would be silently undone. It would surface as ~90 collection-time failures inside
+`leaf.entry_of`, pointing at a missing name rather than at the merge. Run `../reapply.sh` and
+re-dump first. `../out/wonderboy_dis.txt` also predates the decoder fix above, so its `$8xxx`/`$cxxx`
+lines are still the wrong ones — regenerate it before reading any plate out of that band.
+
+**QUEUED — `abcd_byte` to the kit.** `src/hud.c` un-`static`'d it so `bcd_add_random_1_to_4` could
+execute the same decimal correction rather than a second spelling of it. Its proper home is
+`tools/recreate_kit/include/machine.h`, beside `sign_ext16` and the `set_low_byte` its one outside
+caller composes it with — registered here rather than done, which is the rule `bus.h` already
+follows. And note what the export did NOT do: it shares one INSTRUCTION, and the extend chain below
+is untouched by it.
+
+**What the reconnaissance established about the six rows STILL to do** (read from
+`out/wonderboy_dis.txt`, none ported — and read against `../names.txt` before it is trusted, which
+is the lesson above):
+
   * **Slot 32 `$5046..$515b`, 278 B**, with THREE globals of its own immediately after it —
-    `$515c` and `$515d` bytes and `$515e` a word cursor — and it indexes
-    `actor_anim_5160_frames` at `$5160` with that cursor and its own `cmpi.w #$ffff,2(a1)` sentinel
-    look-ahead, which is a SECOND reader of a table `actor_relaunch_and_anim_5160` already owns.
-  * **The helper cluster `$517a..$5207`** is three routines, all read: `$517a` (posts text request
-    3 with lifetime $32 after paying out), `$51ac` (the hardware draw above) and `$51d8`, which is
-    NOT what its `# ctx` name says — see below.
-
-**A `# ctx` NAME THE BODY CONTRADICTS.** `hud_write_bcd_word_a2ad` ($51d8) is described as unpacking
-"four ASCII digits at $a2ad". The bytes give TWO characters, not four, and the second is
-conditional: `move.w d0,d1 / andi.w #$f / addi.b #$30 / move.b d1,$a2ad`, then `ror.w #4,d0 /
-andi.w #$f / bne`, and the zero arm writes `#$20` — a SPACE — to `$a2ac` while the non-zero arm
-writes the digit. So it is a two-character, leading-zero-blanked decimal field at `$a2ac..$a2ad`,
-and the rename plus the dropped `# ctx` tag belong to the batch that ports it.
+    `actor_type32_state` and `actor_type32_done` bytes and `actor_type32_cursor` a word — and it
+    indexes `actor_anim_5160_frames` at `$5160` with that cursor and its own `cmpi.w #$ffff,2(a1)`
+    sentinel look-ahead, which is a SECOND reader of a table `actor_relaunch_and_anim_5160` already
+    owns and reads the terminator one word EARLIER than that routine does. It reaches
+    `hud_award_gold_from_descriptor` at `$5070`, so it inherits the declaration and the extend chain.
+  * **Slot 33 `$5208..$5259`**: contact, `sound_request_9`, `$ffff` into `$bd30` and `$bd26`,
+    `$b5a2` with `$20`, and the same flicker/countdown tail slots 30 and 31 share.
+  * Slots 34..37 are unread.
 
 ### The KIT EXTENSION batch 33 needed (its own changeset)
 
@@ -5333,9 +5502,11 @@ and a capture run is not a differential.
 projects share one `liboracle.so`): kit 351, `tools/test_hw_portability.py` 56, Wonder Boy 4359,
 Joust 4369, BuggyBoy 292.
 
-**QUEUED for the rest of batch 33**: slots 28, 30, 31, 32, 33, 34, 35, 36, 37 and the helper
-cluster; the `hw_seed` declaration `$51ac` forces on every award path; `step_was_blocked`'s WORD
-variant for slot 28; whether slot 30's global cursor needs a `var` of its own (it does).
+**ALL FOUR OF THIS SUBSECTION'S OWN QUEUE ARE DONE** in phase A above: slots 28, 30 and 31 and the
+whole helper cluster are ported, every case that reaches `$51ac` declares the counter pair,
+`step_word_was_blocked_at_column_0` is the WORD variant slot 28 needed, slot 30's global cursor has
+a `var` and
+a `cmt` of its own. Slots 32..37 remain, and phase A's own queue is beside them.
 
 **QUEUED — the serialised-suites rule**: Joust and BuggyBoy rebuild the same shared `liboracle.so`
 via `ORACLE_VIA`, so concurrent runs produce phantom failures — one suite links the `.so` out from

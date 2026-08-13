@@ -59,7 +59,7 @@ MODELED_HW_ADDRS = (MFP_GPIP, SHIFTER_SYNC, VIDEO_COUNTER_MID, VIDEO_COUNTER_LOW
 def hw_declared(video=0x00):
     """The ``hw_seed`` every run that reaches the game's two PRNGs must pass.
 
-    `rng_next` ($68c6) and `rng_1_to_4_masked` ($51ac) READ the video counter, and an undeclared
+    `rng_next` ($68c6) and `bcd_add_random_1_to_4` ($51ac) READ the video counter, and an undeclared
     modeled read refuses the differential — so a battery that reaches either declares what the
     counter held. It lives here rather than in test_rng.py because it is a fact about the KIT's
     model, and three batteries were importing it from a sibling battery to get at it.
@@ -979,6 +979,44 @@ def set_low_word(value, low):
 
 
 # --- reading a value back out of the oracle's write set -------------------------------------------
+
+# --- the two SHARED MODELS of the status panel's arithmetic --------------------------------------
+#
+# `bcd_expected` and `meter_add_expected` state, in decimal, what the packed-BCD accumulators and the
+# clamped meter add leave. They live HERE for `hw_declared`'s reason and not in the battery that
+# owns those routines: three batteries need them (test_hud.py's own cases, test_actor.py's defeat
+# and boss arms, test_behavior.py's payout), and a battery reaching into a SIBLING battery for a
+# shared fact is the coupling this module exists to remove — the same rule that moved `hw_declared`
+# out of test_rng.py. test_hud.py still owns the ROUTINES; what moved is the statement of the
+# arithmetic, which is a fact about packed BCD rather than about any one caller.
+
+
+def _packed_to_decimal(value, length):
+    """The decimal number a packed-BCD field reads as, or None if a nibble is not a digit."""
+    text = f"{value:0{length * 2}x}"
+    return int(text) if text.isdigit() else None
+
+
+def _decimal_to_packed(value, length):
+    return int(f"{value % 10 ** (length * 2):0{length * 2}d}", 16)
+
+
+def bcd_expected(accumulated, operand, length, subtract):
+    """The result stated in DECIMAL — the reading "packed BCD" means — rather than as src/hud.c's
+    nibble arithmetic, so the two are independent statements. None where a nibble is not a digit."""
+    left = _packed_to_decimal(accumulated, length)
+    right = _packed_to_decimal(operand & (2 ** (length * 8) - 1), length)
+    if left is None or right is None:
+        return None
+    return _decimal_to_packed(left - right if subtract else left + right, length)
+
+
+def meter_add_expected(value, maximum, amount):
+    """The word `hud_meter_add_clamped` leaves: a 16-bit raise, then a SIGNED compare that clamps
+    when the raise REACHES the maximum (`ble`, not `bgt` — see the effect handlers)."""
+    raised = (value + amount) & WORD_MASK
+    return maximum if s16(maximum) <= s16(raised) else raised
+
 
 def read_bytes(info, addr, length, what=""):
     """The bytes the original left at ``addr``, taken from the oracle's write set.

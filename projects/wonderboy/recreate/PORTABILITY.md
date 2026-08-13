@@ -121,7 +121,7 @@ script builds the oracle `.so`. It is queued in §0g's item 4 and §0i's item 2.
 green as unconfirmed until that pass lands.
 
 **`reapply.sh` is part of the measurement, not setup.** Ghidra does not reach the background
-scroll blitter (`$83b6..$8dfe`, 16 functions) or `rng_1_to_4_masked` (`$51ac`) on its own — nothing
+scroll blitter (`$83b6..$8dfe`, 16 functions) or `bcd_add_random_1_to_4` (`$51ac`) on its own — nothing
 it disassembled calls them — so `ApplyNames` creating them from `../names.txt` is what puts 2,676
 of the 25,696 measured bytes and 2 of the 31 hardware reads into the scan at all (§8.1). Skip it and
 you get ~235 functions and every table below is wrong. And if you re-bootstrap with `run.sh` first,
@@ -1443,7 +1443,7 @@ tier any of them carries is inherited.
 **The transitive `T4` explosion is `rng_next`, and it does not steer.** 24 → 56 functions and
 1,988 → 10,680 B looks alarming and is not. Of the 32 new `T4` functions, **29 reach `$68c6
 rng_next`** (`move.b $ff8209,d0` — the shifter video-counter low byte as an entropy source) and **4
-reach `$51ac rng_1_to_4_masked`** (`$ff8209` and `$ff8207`); one reaches both, so the two account
+reach `$51ac bcd_add_random_1_to_4`** (`$ff8209` and `$ff8207`); one reaches both, so the two account
 for all 32. Both are `T4-DATA` — the scan records `steers=False` on every one of those reads — so
 they cost fidelity, not a false green. That is why +32 transitive `T4` bought only +4 false-green.
 *(Marked in place — this scan predates batch 33, which put `$ff8207` and `$ff8209` in the kit's
@@ -1713,7 +1713,7 @@ accounted for:
   not access it; one is inside the ciphertext; and **two were real**: `$51ae` and `$51b6`, both
   reading the shifter's video address counter inside a routine Ghidra never disassembled because
   nothing it *had* disassembled reaches it. Rather than carry those two in a hand-maintained side
-  list, the routine is now named (`fn 0x51ac rng_1_to_4_masked` in `../names.txt`), which makes
+  list, the routine is now named (`fn 0x51ac bcd_add_random_1_to_4` in `../names.txt`), which makes
   `ApplyNames` disassemble it — so the scanner sees both sites through its normal path and the
   tool's `--extra-hw` escape hatch is unused by this project.
 
@@ -1826,7 +1826,7 @@ runs actually report is §4 and §7.4b: the polls succeed instantly, the command
 
 **So: yes, the gameplay logic is portable today — as far as it has been recovered.** The only
 game-logic functions that touch hardware are the two PRNGs, `rng_next` (`$68c6`) and
-`rng_1_to_4_masked` (`$51ac`), and both are T3-DATA reads, not steering ones. **Neither is a false
+`bcd_add_random_1_to_4` (`$51ac`), and both are T3-DATA reads, not steering ones. **Neither is a false
 green any more (batch 33):** the two bytes between them — `$ff8207`, `$ff8209` — are now in the
 kit's Phase 7 modeled set, so a case DECLARES what the counter held, the read lands on the ordered
 ledger both sides compare, and an undeclared one refuses the differential instead of being answered
@@ -1989,7 +1989,7 @@ Two groups of the remaining non-steering reads matter more than their tier sugge
 * `$83c` / `$85a` — the joystick report byte, stored into `joy0_state` / `joy1_state`. Permanently
   **0**, i.e. no direction and no fire, for the whole game. (Interrupt handlers, so a differential
   never runs them — but a reconstruction must not pretend they were verified.)
-* `$6910` in **`rng_next`**, and `$51ae`/`$51b6` in **`rng_1_to_4_masked`** — the game's two PRNGs
+* `$6910` in **`rng_next`**, and `$51ae`/`$51b6` in **`bcd_add_random_1_to_4`** — the game's two PRNGs
   both mix the shifter's video address counter with in-image state. Under the oracle that term is
   always 0, so both generators degenerate to deterministic functions of their counters. **The diff
   stays clean while the game's randomness silently disappears.**

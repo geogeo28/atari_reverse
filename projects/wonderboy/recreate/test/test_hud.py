@@ -62,9 +62,9 @@ import harness
 import layout
 import leaf
 from leaf import (BSR_W, MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_IMM_ABS_L,
-                  RTS, backward_branch, bsr_w, clr_w_dn, forward_branch, jsr_abs_l, longword,
-                  move_l_imm_postinc, opcode, rotate_left32, subq_w_abs_l, subq_w_dn, tst_b_d16,
-                  tst_w_dn, word)
+                  RTS, backward_branch, bcd_expected, bsr_w, clr_w_dn, forward_branch, jsr_abs_l,
+                  longword, meter_add_expected, move_l_imm_postinc, opcode, rotate_left32,
+                  subq_w_abs_l, subq_w_dn, tst_b_d16, tst_w_dn, word)
 from layout import wb
 
 # $bbca calls the SOUND MODULE, so the battery that owns $1a48a owns its write set too — imported
@@ -1378,29 +1378,10 @@ def test_the_record_bitmap_reads_only_the_byte_a0_points_at(entry_d0, record):
 
 
 # --- the packed-BCD accumulators -----------------------------------------------------------------
-
-def _packed_to_decimal(value, length):
-    """The decimal number a packed-BCD field reads as, or None if a nibble is not a digit."""
-    text = f"{value:0{length * 2}x}"
-    return int(text) if text.isdigit() else None
-
-
-def _decimal_to_packed(value, length):
-    return int(f"{value % 10 ** (length * 2):0{length * 2}d}", 16)
-
-
-def bcd_expected(accumulated, operand, length, subtract):
-    """The result stated in DECIMAL — the reading "packed BCD" means — rather than as src/hud.c's
-    nibble arithmetic, so the two are independent statements. None where a nibble is not a digit.
-
-    EXPORTED: test_actor.py's $6bb8 cases add a defeat's score through this accumulator, so they
-    need the same statement of what the digits do, and two copies of it could disagree while both
-    batteries stayed green (test_stage.py imports `model_lives_draw` for the same reason)."""
-    left = _packed_to_decimal(accumulated, length)
-    right = _packed_to_decimal(operand & (2 ** (length * 8) - 1), length)
-    if left is None or right is None:
-        return None
-    return _decimal_to_packed(left - right if subtract else left + right, length)
+# `bcd_expected` and `meter_add_expected` were DEFINED here and imported by test_actor.py, and batch
+# 33 moved both to leaf.py: three batteries need them now, and a battery reaching into a sibling
+# battery for a shared fact is the coupling leaf.py exists to remove. This file still owns the
+# ROUTINES and every case over them; what moved is the statement of the arithmetic.
 
 
 # (accumulator, operand, why this case exists). The operand is a full longword everywhere, so that
@@ -1603,17 +1584,6 @@ METER_SIGNED_CASES = (
     (0x0010, 0xfff0, True, "a NEGATIVE maximum: the clamp fires and LOWERS the value"),
     (0x0000, 0x0000, True, "a zero maximum, which any raise reaches"),
 )
-
-
-def meter_add_expected(value, maximum, amount):
-    """The word `hud_meter_add_clamped` leaves: a 16-bit raise, then a SIGNED compare that clamps
-    when the raise REACHES the maximum (`ble`, not `bgt` — see the effect handlers).
-
-    EXPORTED, like `bcd_expected` above: $6bb8's boss arm raises the meter through this routine, so
-    test_actor.py states the result with the same three lines rather than a second copy of them.
-    """
-    raised = (value + amount) & WORD_MASK
-    return maximum if _signed_word(maximum) <= _signed_word(raised) else raised
 
 
 def _run_meter_add(amount, value, maximum, what):

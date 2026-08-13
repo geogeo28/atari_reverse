@@ -61,13 +61,14 @@ import pytest
 
 import harness
 import leaf
-from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, andi_w_dn, branch_w_to,
-                  brief_extension_word, bsr_w, btst_imm_dn, case_salt, clr_b_d16, clr_w_abs_l,
-                  clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, cmpi_w_d16, keyed_block, lea_abs_l, lea_d16,
-                  lea_indexed, longword, lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_b_imm_d16,
-                  move_w_dn_dn, move_w_imm_abs_l, move_w_imm_dn, move_w_ind_dn, move_w_postinc_dn,
-                  moveq_0_dn, opcode, program_writes, s16, sub_w_dn_d16, sub_w_dn_dn, subi_w_dn,
-                  subq_w_dn, tst_b_d16, tst_w_abs_l, tst_w_abs_w, tst_w_dn, word)
+from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, andi_w_dn, bcd_expected,
+                  branch_w_to, brief_extension_word, bsr_w, btst_imm_dn, case_salt, clr_b_d16,
+                  clr_w_abs_l, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, cmpi_w_d16, keyed_block,
+                  lea_abs_l, lea_d16, lea_indexed, longword, lsl_w_imm_dn, merge_bands,
+                  move_b_d16_dn, move_b_imm_d16, move_w_dn_dn, move_w_imm_abs_l, move_w_imm_dn,
+                  move_w_ind_dn, move_w_postinc_dn, moveq_0_dn, opcode, program_writes, s16,
+                  sub_w_dn_d16, sub_w_dn_dn, subi_w_dn, subq_w_dn, tst_b_d16, tst_w_abs_l,
+                  tst_w_abs_w, tst_w_dn, word)
 from layout import wb
 
 # The record's own geometry and the register numbers come from the battery that owns the actor
@@ -219,8 +220,9 @@ UNPORTED_HIGH = 57
 
 
 # --- the encodings only this battery spells -------------------------------------------------------
-# NINE of these are now a THIRD copy and are due to move to leaf.py under its own rule ("an encoding
-# moves there on its third"): `move_w_dn_d16` (test_actor.py, test_map.py), `movea_l_ind`
+# TWELVE of these are now a THIRD copy and are due to move to leaf.py under its own rule ("an
+# encoding moves there on its third") — batch 33 adding `move_w_dn_abs_l`, `cmp_w_abs_l_dn` and
+# `addq_b_dn` to the list, each annotated ALSO IN beside its own definition below: `move_w_dn_d16` (test_actor.py, test_map.py), `movea_l_ind`
 # (test_blit.py, test_scene.py), `addq_w_dn` (test_blit.py, test_map.py), `add_w_d16_dn`
 # (test_blit.py, test_map.py), `neg_w_dn` (test_map.py, test_scroll.py), and batch 31's four —
 # `clr_l_dn`, `jsr_ind`, `jsr_abs_w` and `cmp_b_imm_dn`. Hoisting them edits six other batteries, so
@@ -2422,6 +2424,275 @@ def _type07_pieces():
     ]
 
 
+# --- batch 33: the collectables (slots 28, 30, 31) and the payout cluster at $517a ----------------
+BCD_RANDOM = "bcd_add_random_1_to_4"
+GOLD_DIGITS = "text_write_gold_digits_a2ac"
+AWARD = "hud_award_gold_from_descriptor"
+SELECT_SPRITE = "actor_select_sprite_by_flag"
+ADD_COUNTER = "bcd_add_counter_bd6e"
+ADD_SCORE = "bcd_add_score_bd70"
+RELAUNCH_5160 = "actor_relaunch_and_anim_5160"
+
+FIELD_12 = wb("ACTOR_FIELD_12")
+FLICKER_BIT = wb("ACTOR_FLAG_FLICKER_BIT")
+FRAME_TOGGLE = wb("FRAME_TOGGLE")
+METER_VALUE = wb("HUD_METER_VALUE")
+METER_MAX = wb("HUD_METER_MAX")
+BCD_COUNTER = wb("BCD_COUNTER")
+BCD_COUNTER_LEN = wb("BCD_COUNTER_LEN")
+BCD_SCORE = wb("BCD_SCORE")
+BCD_SCORE_LEN = wb("BCD_SCORE_LEN")
+BCD_ADDEND = wb("BCD_ADDEND")
+COLLECT_SCORE = wb("ACTOR_COLLECT_SCORE")
+FLICKER_AT_FIELD_12 = wb("ACTOR_FLICKER_AT_FIELD_12")
+TYPE28_GOLD = wb("ACTOR_TYPE28_GOLD")
+TYPE28_FIELD_12_RELOAD = wb("ACTOR_TYPE28_FIELD_12_RELOAD")
+TYPE30_COLLECT_MIN = wb("ACTOR_TYPE30_COLLECT_MIN")
+TYPE30_METER_STEP = wb("ACTOR_TYPE30_METER_STEP")
+TYPE30_CURSOR = wb("ACTOR_TYPE30_CURSOR")
+TYPE30_DRIFT = wb("ACTOR_TYPE30_DRIFT")
+TYPE30_DRIFT_MASK = wb("ACTOR_TYPE30_DRIFT_MASK")
+TYPE30_DRIFT_STRIDE = wb("ACTOR_TYPE30_DRIFT_STRIDE")
+RECORD_PTR_10424 = wb("RECORD_PTR_10424")
+SCENE_GOLD_AWARD = wb("SCENE_GOLD_AWARD")
+BCD_RANDOM_MASK = wb("BCD_RANDOM_MASK")
+GOLD_DIGITS_AT = wb("TEXT_GOLD_DIGITS")
+MESSAGE_GOLD_GET = wb("TEXT_MESSAGE_GOLD_GET")
+BCD_DIGIT_MASK = wb("BCD_DIGIT_MASK")
+BCD_DIGIT_BITS = wb("BCD_DIGIT_BITS")
+DIGIT_ZERO = wb("TEXT_DIGIT_ZERO")
+DIGIT_BLANK = wb("TEXT_DIGIT_BLANK")
+TEXT_LIFETIME_DEFAULT = wb("TEXT_LIFETIME_DEFAULT")
+
+
+# The encodings only this section spells. `abcd_dn_dn` is the reason batch 33 exists in the shape it
+# does: out/wonderboy_dis.txt prints $51d4's `c101` as `and.b d0,d1`, and it is an `abcd`.
+def abcd_dn_dn(destination, source):
+    """`abcd Dy,Dx` — opmode 100 over ea mode 000, which is the encoding an AND cannot have (a byte
+    AND with a REGISTER destination would have to write a data register through the `<ea>` half).
+    ../names.txt records the same disassembler bug for $b562's `c308`."""
+    return opcode(0xc100 | (destination << 9) | source)
+
+
+def add_b_dn_dn(destination, source):
+    return opcode(0xd000 | (destination << 9) | source)
+
+
+def addq_b_dn(amount, reg):
+    return opcode(0x5000 | ((amount & 7) << 9) | reg)
+    # ALSO IN test_actor.py — third copy of the ENCODING (test_text.py spells the LONG form off the
+    # same base), queued for leaf.py.
+
+
+def ror_w_imm_dn(count, reg):
+    """`ror.w #n,Dn` — a WORD rotate, so the units nibble goes out of the bottom and in at the top
+    and the tens nibble lands where the mask below can reach it."""
+    return opcode(0xe058 | ((count & 7) << 9) | reg)
+
+
+def tst_b_abs_w(addr):
+    """`tst.b <abs>.w` — the SHORT absolute form, and a BYTE test on a WORD flag: it reads
+    WB_FRAME_TOGGLE's high half, which is $00 or $ff and never anything between."""
+    return opcode(0x4a38) + word(addr)
+    # ALSO IN test_actor.py — second copy, which the rule allows.
+
+
+def cmp_w_abs_l_dn(reg, addr):
+    return opcode(0xb079 | (reg << 9)) + longword(addr)
+    # ALSO IN test_stage.py, and as a bare opcode in test_scroll.py (`CMP_W_ABS_L_D0`) and
+    # test_scene.py — third copy, queued for leaf.py.
+
+
+def move_w_dn_abs_l(reg, addr):
+    return opcode(0x33c0 | reg) + longword(addr)
+    # ALSO IN test_scroll.py, test_stage.py — third copy, queued for leaf.py, and the one whose home
+    # already exists: leaf.py owns both mirrors (`move_w_abs_l_dn`, `move_b_dn_abs_l`).
+
+
+def move_w_abs_l_abs_l(source, destination):
+    """`move.w <abs>.l,<abs>.l` — TEN bytes, and the only instruction in the tier that moves a word
+    between two fixed addresses without a register in between."""
+    return opcode(0x33f9) + longword(source) + longword(destination)
+
+
+def _gold_digits_pieces():
+    """$51d8 — units, then tens, and the tens arm is the one that branches."""
+    return [
+        move_w_dn_dn(D1, D0),
+        andi_w_dn(D1, BCD_DIGIT_MASK),
+        addi_b_dn(D1, DIGIT_ZERO),
+        leaf.move_b_dn_abs_l(D1, GOLD_DIGITS_AT + 1),
+        ror_w_imm_dn(BCD_DIGIT_BITS, D0),
+        andi_w_dn(D0, BCD_DIGIT_MASK),
+        _bcc(BNE_W, "digit"),
+        leaf.move_b_imm_abs_l(DIGIT_BLANK, GOLD_DIGITS_AT),
+        RTS,
+        _lab("digit"),
+        addi_b_dn(D0, DIGIT_ZERO),
+        leaf.move_b_dn_abs_l(D0, GOLD_DIGITS_AT),
+        RTS,
+    ]
+
+
+def _bcd_random_pieces():
+    """$51ac — four byte reads in a FIXED order (the two hardware ones first), the mask, the step
+    that guarantees X = 0, and the `abcd` that makes d0 the result."""
+    return [
+        moveq_0_dn(D1),
+        leaf.move_b_abs_l_dn(D2, leaf.VIDEO_COUNTER_LOW),
+        add_b_dn_dn(D1, D2),
+        leaf.move_b_abs_l_dn(D2, leaf.VIDEO_COUNTER_MID),
+        add_b_dn_dn(D1, D2),
+        leaf.move_b_abs_l_dn(D2, FOLLOWED_DEFAULT),
+        add_b_dn_dn(D1, D2),
+        leaf.move_b_abs_l_dn(D2, FOLLOWED_DEFAULT + 1),
+        add_b_dn_dn(D1, D2),
+        andi_b_dn(D1, BCD_RANDOM_MASK),
+        addq_b_dn(1, D1),
+        abcd_dn_dn(D0, D1),
+        RTS,
+    ]
+
+
+def _award_pieces():
+    """$517a — the payout, and every `bsr` displacement in it comes out of ../names.txt."""
+    return [
+        leaf.movea_l_abs_l(A1, RECORD_PTR_10424),
+        move_w_ind_dn(D0, A1, SCENE_GOLD_AWARD),
+        _bsr(BCD_RANDOM),
+        _bsr(ADD_COUNTER),
+        _bsr(GOLD_DIGITS),
+        move_l_imm_dn(D0, COLLECT_SCORE),
+        _bsr(ADD_SCORE),
+        leaf.move_b_imm_abs_l(MESSAGE_GOLD_GET, TEXT_REQUEST),
+        move_w_imm_abs_l(TEXT_LIFETIME_DEFAULT, TEXT_LIFETIME_REQUEST),
+        RTS,
+    ]
+
+
+def _type28_pieces():
+    return [
+        _bsr(OVERLAP),
+        btst_imm_dn(BODY_BIT, D0),
+        _bcc(BEQ_W, "wait"),
+        bit_op_d16(BTST_IMM, MOVING_BIT, A0, ACTOR_FLAGS),
+        _bcc(BNE_W, "wait"),
+        _bsr(SOUND_REQUEST_9),
+        move_w_imm_ind(A0, FREE_MARKER),
+        move_w_imm_dn(D0, TYPE28_GOLD),
+        _bsr(ADD_COUNTER),
+        move_l_imm_dn(D0, COLLECT_SCORE),
+        _bsr(ADD_SCORE),
+        _bcc(BRA_W, "out"),
+        _lab("wait"),
+        _bsr(FALL_AND_SETTLE),
+        _bsr(HOP_ASCEND),
+        _bsr(RELAUNCH_5160),
+        # `moveq #0,d7` first: the step is the WHOLE of d7 and carries nothing of the settle's.
+        moveq_0_dn(D7),
+        move_b_d16_dn(D7, A0, FIELD_31),
+        _bcc(BEQ_W, "countdown"),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _bcc(BNE_W, "left"),
+        _bsr(STEP_RIGHT),
+        _bcc(BRA_W, "blocked?"),
+        _lab("left"),
+        _bsr(STEP_LEFT),
+        _lab("blocked?"),
+        # THE WORD TEST. Every other blocked-step test in this file is `tst_b_dn`.
+        tst_w_dn(D0),
+        _bcc(BNE_W, "step-done"),
+        bit_op_d16(BCHG_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _lab("step-done"),
+        subq_b_d16(1, A0, FIELD_31),
+        _lab("countdown"),
+        subq_b_d16(1, A0, FIELD_12),
+        _bcc(BNE_W, "out"),
+        bit_op_d16(BSET_IMM, FLICKER_BIT, A0, ACTOR_FLAGS),
+        _bcc(BNE_W, "free"),
+        move_b_imm_d16(A0, TYPE28_FIELD_12_RELOAD, FIELD_12),
+        RTS,
+        _lab("free"),
+        move_w_imm_ind(A0, FREE_MARKER),
+        _lab("out"),
+        RTS,
+    ]
+
+
+def _type30_pieces():
+    return [
+        _bsr(OVERLAP),
+        btst_imm_dn(BODY_BIT, D0),
+        _bcc(BEQ_W, "wait"),
+        cmpi_b_d16(A0, TYPE30_COLLECT_MIN, FIELD_30),
+        _bcc(BLT_W, "wait"),
+        _bsr(SOUND_REQUEST_9),
+        leaf.move_w_abs_l_dn(D0, METER_VALUE),
+        addq_w_dn(TYPE30_METER_STEP, D0),
+        cmp_w_abs_l_dn(D0, METER_MAX),
+        # The sum is DISCARDED on this arm: `blt` leaves d0 unstored.
+        _bcc(BLT_W, "free"),
+        move_w_abs_l_abs_l(METER_MAX, METER_VALUE),
+        _bcc(BRA_W, "free"),
+        _lab("wait"),
+        addq_b_d16(1, A0, FIELD_30),
+        tst_b_abs_w(FRAME_TOGGLE),
+        _bcc(BEQ_W, "drift"),
+        subq_w_d16(1, A0, ACTOR_Y),
+        _lab("drift"),
+        leaf.move_w_abs_l_dn(D0, TYPE30_CURSOR),
+        _lea_pc_indexed(A1, D0, TYPE30_DRIFT),
+        move_w_ind_dn(D1, A1),
+        add_w_dn_ind(D1, A0),
+        addq_w_dn(TYPE30_DRIFT_STRIDE, D0),
+        andi_w_dn(D0, TYPE30_DRIFT_MASK),
+        move_w_dn_abs_l(D0, TYPE30_CURSOR),
+        cmpi_w_d16(A0, FLICKER_AT_FIELD_12, FIELD_12),
+        _bcc(BNE_W, "tick"),
+        bit_op_d16(BSET_IMM, FLICKER_BIT, A0, ACTOR_FLAGS),
+        _lab("tick"),
+        subq_w_d16(1, A0, FIELD_12),
+        _bcc(BNE_W, "out"),
+        _lab("free"),
+        bit_op_d16(BCLR_IMM, FLICKER_BIT, A0, ACTOR_FLAGS),
+        clr_w_abs_l(TYPE30_CURSOR),
+        move_w_imm_ind(A0, FREE_MARKER),
+        _lab("out"),
+        RTS,
+    ]
+
+
+def _type31_pieces():
+    """SEVENTY-EIGHT bytes with TWO exits. The body ends in its own `rts` at $4fe8 — which is why
+    the last piece here is `RTS` — and the LIVE-countdown arm leaves through the `bne.w $4fea` four
+    instructions above it, into actor_select_sprite_by_flag, whose 48 bytes are pinned as a routine
+    of their own. It is that routine's ENTRY that bounds this one at 78 bytes."""
+    return [
+        _bsr(FALL_AND_SETTLE),
+        _bsr(HOP_ASCEND),
+        cmpi_w_d16(A0, FLICKER_AT_FIELD_12, FIELD_12),
+        _bcc(BNE_W, "collect?"),
+        bit_op_d16(BSET_IMM, FLICKER_BIT, A0, ACTOR_FLAGS),
+        _lab("collect?"),
+        bit_op_d16(BTST_IMM, MOVING_BIT, A0, ACTOR_FLAGS),
+        _bcc(BNE_W, "tick"),
+        _bsr(OVERLAP),
+        btst_imm_dn(BODY_BIT, D0),
+        _bcc(BEQ_W, "tick"),
+        _bsr(SOUND_REQUEST_9),
+        _bsr(AWARD),
+        _bcc(BRA_W, "free"),
+        _lab("tick"),
+        subq_w_d16(1, A0, FIELD_12),
+        _bcc_abs(BNE_W, leaf.entry_of(SELECT_SPRITE)),
+        _lab("free"),
+        bit_op_d16(BCLR_IMM, FLICKER_BIT, A0, ACTOR_FLAGS),
+        move_w_imm_ind(A0, FREE_MARKER),
+        RTS,
+    ]
+
+
+
 ENTRY_PIECES = {
     "actor_behavior_pass": _pass_pieces(),
     "actor_dispatch_behavior": _dispatch_pieces(),
@@ -2473,8 +2744,14 @@ ENTRY_PIECES = {
     "actor_behavior_type60": _type60_pieces(),
     "actor_behavior_type61": _type61_pieces(),
     "player_gate_on_1516": _player_gate_pieces(),
+    "actor_behavior_type28": _type28_pieces(),
+    "actor_behavior_type30": _type30_pieces(),
+    "actor_behavior_type31": _type31_pieces(),
+    "hud_award_gold_from_descriptor": _award_pieces(),
+    "bcd_add_random_1_to_4": _bcd_random_pieces(),
+    "text_write_gold_digits_a2ac": _gold_digits_pieces(),
 }
-RECONSTRUCTED_ROUTINES = 49
+RECONSTRUCTED_ROUTINES = 55
 
 ENTRY_BYTES = {name: _asm(leaf.entry_of(name), pieces) for name, pieces in ENTRY_PIECES.items()}
 INSN_COUNT = {name: _instructions(pieces) for name, pieces in ENTRY_PIECES.items()}
@@ -2561,6 +2838,15 @@ BODY_SIZES = {
     "actor_behavior_type59": 22,        # $7044..$7059, bounded by slot 8's entry
     "actor_behavior_type08": 6,         # $705a..$705f — one instruction, then slot 7's own entry
     "player_gate_on_1516": 12,          # $d78..$d83, bounded by player_apply_joystick's entry
+    "actor_behavior_type28": 144,       # $4e38..$4ec7, bounded by slot 29's bare `rts`
+    "actor_behavior_type30": 142,       # $4eca..$4f57, then a $0000 pad, its global cursor at
+                                        # $4f5a and its 32-word drift table at $4f5c
+    "actor_behavior_type31": 78,        # $4f9c..$4fe9 — NOT 146: the `bne.w $4fea` at the end
+                                        # is a branch OUT of the body, into the 48 bytes
+                                        # actor_select_sprite_by_flag already owns above it
+    "hud_award_gold_from_descriptor": 50,    # $517a..$51ab
+    "bcd_add_random_1_to_4": 44,             # $51ac..$51d7
+    "text_write_gold_digits_a2ac": 48,       # $51d8..$5207, bounded by slot 33's entry
 }
 
 
@@ -2617,9 +2903,25 @@ PORTED_TARGETS = ("actor_behavior_null", "actor_behavior_type29",
                   "actor_behavior_type50", "actor_behavior_type51", "actor_behavior_type52",
                   "actor_behavior_type53", "actor_behavior_type54", "actor_behavior_type55",
                   "actor_behavior_type56", "actor_behavior_type59",
-                  "actor_behavior_type60", "actor_behavior_type61")
+                  "actor_behavior_type60", "actor_behavior_type61",
+                  "actor_behavior_type28", "actor_behavior_type30",
+                  "actor_behavior_type31")
 PORTED_SLOTS = tuple(slot for slot, name in sorted(TABLE_TARGETS.items())
                      if name in PORTED_TARGETS)
+
+# HOW MANY ROWS ARE LIVE, as a number a test holds rather than as prose. It has drifted TWICE — the
+# README said twenty-two while ../STATUS.md said twenty-three for the whole of batch 32, and neither
+# was checked against anything. Every place that states it in words is listed here, so the next
+# batch to add a row fails this file instead of a reviewer:
+#   * ../STATUS.md's headline ("N of the table's 62 rows are live") and its batch section
+#   * ../README.md's src/behavior.c entry and its test/test_behavior.py entry
+PORTED_SLOT_COUNT = 26
+
+
+def test_the_live_row_count_the_docs_state_is_the_one_the_table_has():
+    assert len(PORTED_SLOTS) == PORTED_SLOT_COUNT, (
+        f"{len(PORTED_SLOTS)} rows are reconstructed, not the {PORTED_SLOT_COUNT} the prose says — "
+        f"update PORTED_SLOT_COUNT and the surfaces named beside it")
 
 # THE LAST TWO ALWAYS-TRANSFER HANDLERS ARE GONE (batch 32). Through batch 31 slots 59 and 8 held
 # no `rts` at all — each raised a bit and ran into slot 7's body, so what each REPORTED was an
@@ -2815,7 +3117,14 @@ HANDLER_GLOBALS = {
     "actor_behavior_type60": [(STATE_WORD_6F9C, WORD_BYTES)],
     "actor_behavior_type61": [(TYPE61_ACTIVE, 1), (TEXT_REQUEST, 1), (TEXT_BOX_ACTIVE, 1),
                               (TEXT_LIFETIME_REQUEST, 1)],
+    # Slot 30's animation cursor is a GLOBAL, so it is written on every waiting frame — which is
+    # what puts it here rather than in the record band every other handler's cursor lives in.
+    "actor_behavior_type30": [(TYPE30_CURSOR, WORD_BYTES)],
 }
+
+# ...and what the PAYOUT writes is deliberately NOT a row here. Only slot 31's collect arm reaches
+# it, and the band those cases pass to `leaf.run` is `merge_bands(_model_award(...))` — derived from
+# the model that also states the VALUES, so a band and a model cannot drift apart.
 
 
 def _handler_band(name):
@@ -2900,6 +3209,18 @@ def _quiet_record(name, actor):
         return {actor + FLAGS2: bytes([1 << FLAGS2_BIT_0])}
     if name == "actor_behavior_type60":
         return {STATE_WORD_6F9C: word(0)}
+    # The three collectables are quietest with their COLLECT arm shut, and each shuts it a different
+    # way: slots 28 and 31 on WB_ACTOR_FLAG_MOVING_BIT being UP (a record mid-hop cannot be picked
+    # up) and slot 30 on its own count-up byte being below WB_ACTOR_TYPE30_COLLECT_MIN. Slots 28 and
+    # 31 also get the half-width that bounds actor_fall_and_settle's footprint scan, and slot 28 a
+    # zero WB_ACTOR_FIELD_31 so its map step is skipped rather than driven off a keyed byte.
+    if name in ("actor_behavior_type28", "actor_behavior_type31"):
+        quiet = {actor + ACTOR_FLAGS: bytes([1 << MOVING_BIT]), actor + HALF_WIDTH: word(4)}
+        if name == "actor_behavior_type28":
+            quiet[actor + FIELD_31] = bytes([0])
+        return quiet
+    if name == "actor_behavior_type30":
+        return {actor + FIELD_30: bytes([0])}
     if name == "actor_behavior_type61":
         return {TYPE61_ACTIVE: bytes([TYPE61_ACTIVE_SET]),
                 JOY1_PREV: bytes([0]), JOY1_CURRENT: bytes([0])}
@@ -5106,7 +5427,7 @@ def test_slot54_lets_a_rider_under_its_own_power_go():
 # test_actor.py's model, which is the copy that could disagree while both batteries stayed green.
 # What pins the VALUES is the differential itself — leaf.run compares the whole image either way —
 # and what this band adds is "and nothing outside these".
-from test_actor import (BCD_SCORE, EFFECT_RECORD_LIST, METER_VALUE, SLOT_BBC0,   # noqa: E402
+from test_actor import (EFFECT_RECORD_LIST, SLOT_BBC0,                           # noqa: E402
                         SPAWN_HITPOINTS, SPAWN_RECORD_BYTES, SPAWN_TYPE, TABLE_PTR,
                         TEMPLATE_SLOTS, TEMPLATE_TABLE, TEXT_REQUEST, _model_damage_template,
                         _model_defeat, _template_band)
@@ -6893,3 +7214,877 @@ def test_a_prologues_mark_bit_is_LIVE_by_the_time_the_shared_body_reads_it(name,
         assert _written_word(written, ACTOR, ACTOR_SPRITE) \
             == _image_word(wb(frames) + (cursor + 1) * ANIM_FRAME_BYTES), (
             f"{what}: the body took the unmarked frame list, so it did not see slot 8's mark")
+
+
+# --- batch 33: the three collectables and the payout cluster --------------------------------------
+# What separates these from the creature slots above is the CONTACT TEST: `bsr $5c6e / btst #1,d0`
+# and nothing else, so the followed record collects one by standing on it and a shot cannot touch it
+# at all. Every collect seed below therefore puts both records on one point with a followed sprite
+# outside $5c6e's two gated bands, which is the mask-of-bit-1-alone recipe slot 51's cases use.
+#
+# THE PAYOUT CLUSTER READS HARDWARE, which is why the whole of slot 31's collect arm and every case
+# for $51ac and $517a passes `hw_seed=`. `bcd_add_random_1_to_4` sums $ff8209 and $ff8207 into its
+# draw; undeclared, the model serves both cores a fabricated 0 and they agree on it, which is the
+# T3-DATA false green ../PORTABILITY.md names. `test_the_award_draw_is_REFUSED_without_a_declaration`
+# is the negative control.
+#
+# `bcd_expected` is leaf.py's — the DECIMAL statement of what the packed-BCD accumulators leave,
+# shared by the three batteries that reach one. It moved there from test_hud.py in this batch for
+# `hw_declared`'s reason: a battery must not reach into a sibling battery for a shared fact.
+
+_AWARD = leaf.image_glue(AWARD)
+_BCD_RANDOM = leaf.register_glue(BCD_RANDOM, [ctypes.c_uint32], ctypes.c_uint32)
+_GOLD_DIGITS = leaf.register_glue(GOLD_DIGITS, [ctypes.c_uint32])
+
+# The instruction cap, DERIVED — the cluster's three pinned bodies plus the two accumulators, whose
+# shape is test_hud.py's `_bcd_entry`: `movem / move.<n> d0,addend / lea / lea / length x abcd /
+# movem / rts`, so one is BCD_ACCUMULATOR_FIXED_INSNS plus a digit pair per byte. That makes the
+# counter 8 and the score 10 rather than the round 40 this line first carried — and a cap of 116
+# over a 52-instruction run would not have caught the chain executing twice.
+BCD_ACCUMULATOR_FIXED_INSNS = 6
+AWARD_INSN_CAP = (INSN_COUNT[AWARD] + INSN_COUNT[BCD_RANDOM] + INSN_COUNT[GOLD_DIGITS]
+                  + 2 * BCD_ACCUMULATOR_FIXED_INSNS + BCD_COUNTER_LEN + BCD_SCORE_LEN
+                  + leaf.RUNNER_SENTINEL_INSN)
+
+# A declaration whose two bytes DIFFER, so the ordered read stream the kit compares says which
+# counter was read first — a port that swapped $ff8209 and $ff8207 would sum to the same number.
+VCOUNT_LOW_SEED, VCOUNT_MID_SEED = 0x21, 0x40
+VCOUNT_ORDERED = {leaf.VIDEO_COUNTER_LOW: VCOUNT_LOW_SEED,
+                  leaf.VIDEO_COUNTER_MID: VCOUNT_MID_SEED}
+
+# Where a case parks the scene descriptor: inside the image, clear of everything else these cases
+# seed, and NOT a keyed address — the award word is the input the whole cluster turns on.
+DESCRIPTOR_AT = 0x30000
+
+
+def _draw_from(image, video_low, video_mid):
+    """The 1..4 the routine picks: four BYTE adds, masked and stepped. The two counter bytes are
+    what the case DECLARED and the other two are the followed record's x, high byte first."""
+    total = (video_low + video_mid
+             + image[FOLLOWED_DEFAULT] + image[FOLLOWED_DEFAULT + 1]) & 0xff
+    return (total & BCD_RANDOM_MASK) + 1
+
+
+def _award_pokes(award, followed_x=0x1234, counter=0x0000, score=0x00000000,
+                 descriptor=DESCRIPTOR_AT):
+    """Everything the payout reads: the descriptor and the pointer to it, the two accumulators, and
+    the followed record's x — which is the draw's non-hardware entropy and so an INPUT here.
+
+    NOT case-salted, unlike `_collectable_pokes`: every address here is one the payout READS and a
+    case chooses, so there is no keyed block for a salt to key."""
+    pokes = {RECORD_PTR_10424: longword(descriptor),
+             descriptor + SCENE_GOLD_AWARD: word(award),
+             FOLLOWED_DEFAULT: word(followed_x),
+             BCD_COUNTER: word(counter),
+             BCD_SCORE: longword(score),
+             GOLD_DIGITS_AT: bytes([DIGIT_BLANK, DIGIT_BLANK]),
+             TEXT_REQUEST: bytes([0]),
+             TEXT_LIFETIME_REQUEST: word(0)}
+    return pokes
+
+
+# --- $51d8: the two digits ------------------------------------------------------------------------
+@pytest.mark.parametrize("entry_d0,tens,units", [
+    (0x0000, DIGIT_BLANK, ord("0")),
+    (0x0005, DIGIT_BLANK, ord("5")),
+    (0x0010, ord("1"), ord("0")),
+    (0x0042, ord("4"), ord("2")),
+    (0x0099, ord("9"), ord("9")),
+    # The nibbles above 9 a packed-BCD byte never holds: `addi.b #$30` is applied anyway, so the
+    # characters run on past '9' rather than being refused. Faithfulness, not correctness.
+    (0x00af, ord("0") + 0xa, ord("0") + 0xf),
+    # ...and a register whose other three bytes must not reach the field: only the low byte's two
+    # nibbles are drawn, whatever the high word and the low word's own high byte hold.
+    (0xdead1242, ord("4"), ord("2")),
+], ids=lambda v: f"{v:#x}" if isinstance(v, int) and v > 0xff else None)
+def test_the_gold_digits_are_two_characters_with_the_leading_zero_blanked(entry_d0, tens, units):
+    what = f"text_write_gold_digits_a2ac d0={entry_d0:#010x}"
+    pokes = {GOLD_DIGITS_AT: bytes([0, 0])}
+
+    info = leaf.run(GOLD_DIGITS, _GOLD_DIGITS(entry_d0), [(GOLD_DIGITS_AT, 2)], what,
+                    regs={"d0": entry_d0, "_pokes": pokes},
+                    max_insns=_cap(GOLD_DIGITS))
+    _assert_writes(info, {GOLD_DIGITS_AT: tens, GOLD_DIGITS_AT + 1: units}, what)
+
+
+def test_the_gold_digits_land_inside_message_3s_own_shipped_string():
+    """The claim the plate rests on, read off the IMAGE rather than restated: text_message_table's
+    entry 2 (id WB_TEXT_MESSAGE_GOLD_GET, the ids being 1-based) points at a record whose string
+    contains the two bytes this routine writes, and those two bytes ship as SPACES."""
+    table = wb("TEXT_MESSAGE_TABLE")
+    record = _image_long(table + (MESSAGE_GOLD_GET - wb("TEXT_MESSAGE_FIRST_ID")) * LONGWORD_BYTES)
+    header = 2                       # {byte height, byte top scanline} before the string
+    assert record + header <= GOLD_DIGITS_AT, (
+        f"{GOLD_DIGITS_AT:#x} is not inside message {MESSAGE_GOLD_GET}'s string, which starts at "
+        f"{record + header:#x}")
+    assert bytes(harness.BASE_IMAGE[GOLD_DIGITS_AT:GOLD_DIGITS_AT + 2]) == b"  ", (
+        "the two characters do not ship as spaces, so the shipped message already carries a number")
+
+
+# --- $51ac: the packed-BCD draw -------------------------------------------------------------------
+@pytest.mark.parametrize("video_low,video_mid,followed_x", [
+    (0x00, 0x00, 0x0000),
+    (0x01, 0x00, 0x0000),
+    (0x02, 0x00, 0x0000),
+    (0x03, 0x00, 0x0000),
+    (0x21, 0x40, 0x1234),
+    (0xff, 0xff, 0xffff),
+    (0x00, 0x00, 0x0102),
+], ids=lambda v: f"{v:#04x}")
+def test_the_draw_is_the_two_declared_counters_plus_the_followed_x(video_low, video_mid,
+                                                                  followed_x):
+    """FOUR BYTE ADDS and nothing else. The parametrisation drives every value the mask can leave —
+    a draw of 1, 2, 3 and 4 — and one seed per SOURCE, so a port that dropped any of the four terms
+    is red on at least one row."""
+    entry_d0 = 0x00
+    what = (f"bcd_add_random_1_to_4 video={video_low:#04x}/{video_mid:#04x} "
+            f"followed={followed_x:#06x}")
+    pokes = {FOLLOWED_DEFAULT: word(followed_x)}
+    image = harness.make_image(pokes)
+    expected = _draw_from(image, video_low, video_mid)
+
+    info = leaf.run(BCD_RANDOM, _BCD_RANDOM(entry_d0), [], what,
+                    regs={"d0": entry_d0, "_pokes": pokes}, max_insns=_cap(BCD_RANDOM),
+                    hw_seed={leaf.VIDEO_COUNTER_LOW: video_low,
+                             leaf.VIDEO_COUNTER_MID: video_mid})
+    assert not program_writes(info), f"{what}: the draw wrote memory, which it does not"
+    assert info["ret"] == expected, (
+        f"{what}: the reconstruction returned {info['ret']:#x}, not the {expected:#x} the four "
+        f"declared bytes give")
+    assert info["regs"]["d0"] == expected, f"{what}: the ORIGINAL left d0={info['regs']['d0']:#x}"
+
+
+# The KIT's own wording for an undeclared modeled-hardware read, and the two rules the refusal cases
+# below follow because of it. A `match=` on a loose word like "declar" would also be satisfied by
+# `leaf.run`'s OTHER assertions, whose messages open with the case's own ``what`` string — so the
+# pattern is a phrase only harness.py produces, and the ``what`` those cases pass carries no word
+# that could stand in for it. Without both, a mutant that DELETED the refusal would fall through to
+# the byte-for-byte diff, fail on the fabricated 0, and be reported as the refusal firing.
+# It also names the UNDECLARED refusal in particular: harness.py has three siblings (a STALE
+# declaration, one that is too WIDE, and a VOLATILE slot read twice) whose messages share the phrase
+# "modeled hardware byte", and each is a different defect with a different remedy.
+HW_REFUSAL = "which this case does not declare"
+UNDECLARED_CASE = "the draw with the counter pair left unstated"
+
+
+def test_the_award_draw_is_REFUSED_without_a_declaration():
+    """THE NEGATIVE CONTROL, and the reason every case above carries `hw_seed`. Undeclared, the
+    model serves both cores a fabricated 0 for $ff8209/$ff8207, they agree on it, and a green run
+    would be green about a draw with no machine input in it. The refusal is `differential`'s, so it
+    surfaces as an AssertionError rather than as `emu.run` sinking (leaf.run's docstring)."""
+    pokes = {FOLLOWED_DEFAULT: word(0x1234)}
+    with pytest.raises(AssertionError, match=HW_REFUSAL):
+        leaf.run(BCD_RANDOM, _BCD_RANDOM(0), [], UNDECLARED_CASE,
+                 regs={"d0": 0, "_pokes": pokes}, max_insns=_cap(BCD_RANDOM))
+
+
+@pytest.mark.parametrize("entry_d0,expected_low", [
+    (0x00, 0x01),      # 0 + 1
+    (0x08, 0x09),      # 8 + 1, still inside the low digit
+    (0x09, 0x10),      # THE DECIMAL CARRY: a binary add would give $0a
+    (0x19, 0x20),
+    (0x99, 0x00),      # ...and the carry out of the byte, which wraps to 00
+], ids=lambda v: f"{v:#04x}")
+def test_the_draw_is_added_in_PACKED_BCD_and_not_in_binary(entry_d0, expected_low):
+    """The whole of the rename. A draw of exactly ONE is forced (all four source bytes zero), so
+    what these rows separate is the ADDITION: `abcd` corrects the nibble and a binary `add.b` — or
+    the `and.b` the disassembler printed — would not."""
+    what = f"bcd_add_random_1_to_4 {entry_d0:#04x} + 1"
+    pokes = {FOLLOWED_DEFAULT: word(0)}
+    entry = 0xdead1200 | entry_d0
+
+    info = leaf.run(BCD_RANDOM, _BCD_RANDOM(entry), [], what,
+                    regs={"d0": entry, "_pokes": pokes}, max_insns=_cap(BCD_RANDOM),
+                    hw_seed=leaf.hw_declared())
+    # `abcd` writes the LOW BYTE alone, so the low word's high byte and the register's high half
+    # both come back as the caller left them — which is what makes the entry d0 an input.
+    assert info["ret"] == (0xdead1200 | expected_low), (
+        f"{what}: {info['ret']:#010x} is not the packed-BCD sum with the caller's other bytes kept")
+
+
+# --- $517a: the payout -----------------------------------------------------------------------------
+# EVERY CONSUMER READS A DIFFERENT WIDTH of the one register, which is what these cases separate:
+# the draw and the digits take d0's low BYTE, the counter stages its whole WORD, and the score's
+# addend is a constant longword with nothing of the award in it.
+
+# A descriptor address the 24-bit bus reaches and the loaded image does not, for the case about a
+# pointer the game has not filled in yet. bus.h answers such a read with zero and the oracle's shim
+# answers the ORACLE with zero, which is the agreement that makes the case a differential at all.
+DESCRIPTOR_OFF_IMAGE = 0xf00000
+
+
+def _model_award(image, video_low=VCOUNT_LOW_SEED, video_mid=VCOUNT_MID_SEED):
+    """{address: byte} for one payout — the WRITE SET and the values together, composed out of the
+    batteries that own each half:
+    `bcd_expected` is leaf.py's DECIMAL statement of the two accumulators, and the draw is this
+    section's own. Nothing here restates src/behavior.c's nibble arithmetic."""
+    descriptor = int.from_bytes(image[RECORD_PTR_10424:RECORD_PTR_10424 + LONGWORD_BYTES], "big")
+    at = (descriptor + SCENE_GOLD_AWARD) & BUS_ADDR_MASK
+    award = leaf.u16(image, at) if at + WORD_BYTES <= harness.IMAGE_SIZE else 0
+
+    extend = [0]
+    low = _abcd(award & 0xff, _draw_from(image, video_low, video_mid), extend)
+    d0 = (award & 0xff00) | low
+
+    counter = bcd_expected(leaf.u16(image, BCD_COUNTER), d0, BCD_COUNTER_LEN, False)
+    score = bcd_expected(int.from_bytes(image[BCD_SCORE:BCD_SCORE + BCD_SCORE_LEN], "big"),
+                         COLLECT_SCORE, BCD_SCORE_LEN, False)
+    tens = (low >> BCD_DIGIT_BITS) & BCD_DIGIT_MASK
+
+    out = {}
+    # The score's `move.l d0,$bd78` overwrites the counter's `move.w`, so the staging bytes end as
+    # the score's addend — and all four are in the ledger because both stores happened.
+    _put(out, BCD_ADDEND, COLLECT_SCORE, LONGWORD_BYTES)
+    _put(out, BCD_COUNTER, counter, BCD_COUNTER_LEN)
+    _put(out, BCD_SCORE, score, BCD_SCORE_LEN)
+    out[GOLD_DIGITS_AT] = DIGIT_BLANK if tens == 0 else ord("0") + tens
+    out[GOLD_DIGITS_AT + 1] = ord("0") + (low & BCD_DIGIT_MASK)
+    out[TEXT_REQUEST] = MESSAGE_GOLD_GET
+    _put(out, TEXT_LIFETIME_REQUEST, TEXT_LIFETIME_DEFAULT)
+    return out
+
+
+def _abcd(accumulator, addend, extend):
+    """One `abcd` byte pair, as the 68000's decimal correction — the same statement src/hud.c makes,
+    kept here rather than imported because what a case needs is a SECOND spelling of it."""
+    low = (accumulator & 0xf) + (addend & 0xf) + extend[0]
+    if low > 9:
+        low += 6
+    total = low + (accumulator & 0xf0) + (addend & 0xf0)
+    extend[0] = 1 if total > 0x99 else 0
+    return (total - 0xa0 if extend[0] else total) & 0xff
+
+
+def _run_award(what, pokes, video=VCOUNT_ORDERED):
+    image = harness.make_image(pokes)
+    expected = _model_award(image, video[leaf.VIDEO_COUNTER_LOW], video[leaf.VIDEO_COUNTER_MID])
+    info = leaf.run(AWARD, _AWARD, merge_bands(expected), what,
+                    regs={"_pokes": pokes}, max_insns=AWARD_INSN_CAP, hw_seed=video)
+    _assert_writes(info, expected, what)
+    return info
+
+
+@pytest.mark.parametrize("award,counter,score", [
+    (0x0012, 0x0100, 0x00001000),
+    (0x0005, 0x0000, 0x00000000),      # a one-digit amount: the TENS character is blanked
+    (0x0095, 0x0900, 0x00099999),      # the largest low byte whose `abcd` cannot carry out
+    (0x1234, 0x0000, 0x00000000),      # a two-BYTE award: the counter stages the word, the digits
+                                       # draw the low byte alone, so the two disagree by design
+], ids=lambda v: f"{v:#06x}")
+def test_the_payout_moves_both_accumulators_the_message_and_its_digits(award, counter, score):
+    what = f"hud_award_gold_from_descriptor award={award:#06x}"
+    _run_award(what, _award_pokes(award, counter=counter, score=score))
+
+
+# A CASE THAT COULD NOT FAIL, removed rather than kept (a measured trim, ../STATUS.md records it):
+# "the score is a constant and not the award" ran two more differentials to assert what `_run_award`
+# had already asserted — `_assert_writes` requires the write set to EQUAL `_model_award`'s, and that
+# model's score term is `bcd_expected(score, COLLECT_SCORE, ...)` with no award in it. Any port that
+# let the award reach the score was already red inside `_run_award`, on every row above.
+
+
+def test_the_award_word_is_read_through_the_bus_and_a_stale_pointer_pays_the_draw_alone():
+    """WB_RECORD_PTR_10424 is a runtime pointer that ships as ZERO, so the amount is fetched through
+    an address the reconstruction computed and bus.h guards. Off the image both cores read 0 and the
+    payout is the draw alone — a case that would be a false green if either side had refused."""
+    what = "hud_award_gold_from_descriptor off-image descriptor"
+    pokes = _award_pokes(0, descriptor=DESCRIPTOR_OFF_IMAGE)
+    info = _run_award(what, pokes)
+    paid = leaf.read_int(info, BCD_COUNTER, BCD_COUNTER_LEN, what)
+    assert 1 <= paid <= 4, f"{what}: {paid:#06x} is not a bare one-to-four draw"
+
+
+def test_the_payout_reaches_the_draw_and_is_refused_without_a_declaration():
+    """The cluster's own negative control: the refusal $51ac raises really does reach the caller two
+    frames up, so no whole-payout case can be green on a fabricated counter."""
+    pokes = _award_pokes(0x0012)
+    with pytest.raises(AssertionError, match=HW_REFUSAL):
+        leaf.run(AWARD, _AWARD, [], UNDECLARED_CASE, regs={"_pokes": pokes},
+                 max_insns=AWARD_INSN_CAP)
+
+
+# --- slots 28, 30 and 31, arm by arm ---------------------------------------------------------------
+COLLECT_SLOTS = (28, 30, 31)
+COLLECT_HANDLERS = {slot: f"actor_behavior_type{slot:02d}" for slot in COLLECT_SLOTS}
+
+# Where a collectable case stands its record, and where the followed one stands to pick it up: ONE
+# point, with a followed sprite outside both of $5c6e's gated bands so the mask comes back with the
+# footprint bit alone. Slot 51's own body-overlap case uses the same recipe — and this IS that
+# seed's x, taken from `_type51_pokes` through `_band5a_pokes` rather than restated, which
+# `test_the_collect_point_is_the_seeded_records_own_x` keeps honest.
+COLLECT_X = 0x0100
+
+
+# A countdown that is neither 1 (slot 28 reads WB_ACTOR_FIELD_12's BYTE and would expire on it) nor
+# WB_ACTOR_FLICKER_AT_FIELD_12 (slots 30 and 31 read the WORD and would start flickering), so a case
+# that is not about the countdown never trips it.
+COLLECT_FIELD_12_IDLE = 0x1010
+
+
+def _collectable_pokes(what, slot, fields=None, collected=False, ground=True):
+    """A collectable of `slot`'s type on ACTOR, out of contact unless `collected` puts the followed
+    record on top of it.
+
+    DELEGATES to `_band5a_pokes`, which is `_type51_pokes` with the type overridden — the tier's
+    shared premise (a followed record out of every arm of $5c6e's reach, a WIDE
+    WB_BG_SCROLL_LIMIT_X, the ground rows the settle lands on) is stated THERE and not restated
+    here. What this adds is only what a collectable reads and that seed does not name: the two
+    countdown bytes, the animation cursor, the two accumulators the payout moves, and the position
+    that puts the followed record ON the record rather than away from it.
+    """
+    base = {ACTOR + FIELD_18: bytes([0]), ACTOR + FIELD_30: bytes([0]),
+            ACTOR + FIELD_31: bytes([0]), ACTOR + FIELD_12: word(COLLECT_FIELD_12_IDLE),
+            BCD_COUNTER: word(0x0100), BCD_SCORE: longword(0x00001000),
+            FRAME_TOGGLE: word(0), TYPE30_CURSOR: word(0)}
+    if collected:
+        base[FOLLOWED_DEFAULT + ACTOR_X] = word(COLLECT_X)
+        base[FOLLOWED_DEFAULT + ACTOR_Y] = word(STAND_Y)
+    return _band5a_pokes(what, slot, leaf.overlay(base, fields or {}), ground=ground)
+
+
+def _assert_contact(image, what, wanted):
+    """The premise every collect case rests on, taken from the battery's own model of $5c6e rather
+    than from the seed's geometry: bit 1 up (or down) and the two gated bits never in the way.
+
+    Takes the IMAGE the caller already built rather than the pokes, so a collect case builds one."""
+    mask = _model_overlap_mask(image, ACTOR, FOLLOWED_DEFAULT)
+    assert bool(mask & (1 << BODY_BIT)) is wanted, (
+        f"{what}: the seed's overlap mask is {mask:#x}, so this case drives the other arm")
+    assert not mask & ((1 << STRIKE_BIT) | (1 << POINT_BIT)), (
+        f"{what}: the seed reaches a GATED bit as well, which these handlers never read")
+
+
+# WHAT EACH COLLECT ARM PAYS, as the addresses it is allowed to touch — and they are THREE
+# different sets, which is what "and by nothing else" in the first case's name is about. Slot 28
+# moves the two packed-BCD accumulators and the four bytes they stage through; slot 30 moves the
+# meter word alone; only slot 31 reaches the payout cluster, and only it reads hardware.
+COLLECT_PAYOUT_BAND = {
+    "actor_behavior_type28": [(BCD_ADDEND, LONGWORD_BYTES), (BCD_COUNTER, BCD_COUNTER_LEN),
+                              (BCD_SCORE, BCD_SCORE_LEN)],
+    "actor_behavior_type30": [(METER_VALUE, WORD_BYTES)],
+}
+PAYING_HANDLER = "actor_behavior_type31"
+
+
+def _collect_band(name, image):
+    """What a collect frame may write: the handler's own band, WB_ACTOR_REQUEST9_SFX's — which
+    test_sound.py owns and this file takes from `_sfx_bytes` rather than listing — and that
+    handler's OWN payout. Slot 31's comes from `_model_award`, so the band and the values it is
+    checked against are one statement."""
+    band = _handler_band(name) + merge_bands(_sfx_bytes(image, REQUEST9_SFX, SND_CHANNEL_A))
+    if name == PAYING_HANDLER:
+        return band + merge_bands(_model_award(image))
+    return band + COLLECT_PAYOUT_BAND[name]
+
+
+def test_the_collect_point_is_the_seeded_records_own_x():
+    """COLLECT_X is `_type51_pokes`'s x reached through `_band5a_pokes`, not a number of this
+    section's — and the collect seeds put the FOLLOWED record on it. If that seed ever moves, the
+    two records stop coinciding and every collect case below would quietly drive the waiting arm
+    instead, so the equality is asserted rather than assumed."""
+    image = harness.make_image(_collectable_pokes("the collect point", 28))
+    assert leaf.u16(image, ACTOR + ACTOR_X) == COLLECT_X, (
+        f"the tier's seed stands its record at {leaf.u16(image, ACTOR + ACTOR_X):#06x}, not the "
+        f"{COLLECT_X:#06x} the collect cases put the followed record on")
+
+
+@pytest.mark.parametrize("slot", COLLECT_SLOTS, ids=lambda v: f"slot{v:02d}")
+def test_a_collectable_is_taken_by_the_FOOTPRINT_bit_and_by_nothing_else(slot):
+    """`bsr $5c6e / btst #1,d0` and no actor_hit_by_player_shot in front of it. The case drives the
+    contact and then asserts the one write all three arms share — the free marker — so what it pins
+    is that the frame ENDED the record rather than which currency it paid."""
+    name = COLLECT_HANDLERS[slot]
+    what = f"{name} collected"
+    fields = {ACTOR + FIELD_30: bytes([TYPE30_COLLECT_MIN])} if slot == 30 else {}
+    pokes = _collectable_pokes(what, slot, fields, collected=True)
+    image = harness.make_image(pokes)
+    _assert_contact(image, what, True)
+    # Only slot 31 reads the video counter, and only through the payout — the other two must NOT be
+    # handed a declaration they do not need, or the row would stop saying they read no hardware.
+    declared = VCOUNT_ORDERED if name == PAYING_HANDLER else None
+
+    info = _run_handler(name, what, pokes, band=_collect_band(name, image), hw_seed=declared)
+    assert _written_word(program_writes(info), ACTOR, ACTOR_X) == FREE_MARKER, (
+        f"{what}: the slot was not handed back")
+
+
+@pytest.mark.parametrize("slot", COLLECT_SLOTS, ids=lambda v: f"slot{v:02d}")
+def test_a_collectable_out_of_reach_keeps_its_slot(slot):
+    """The control for the row above: the same seed with the followed record elsewhere runs the
+    WAITING arm, and the countdown is seeded far from zero so nothing else can free the record."""
+    name = COLLECT_HANDLERS[slot]
+    what = f"{name} out of reach"
+    pokes = _collectable_pokes(what, slot, collected=False)
+    _assert_contact(harness.make_image(pokes), what, False)
+
+    info = _run_handler(name, what, pokes)
+    written = program_writes(info)
+    assert ACTOR + ACTOR_X not in written or _written_word(written, ACTOR, ACTOR_X) != FREE_MARKER, (
+        f"{what}: an untouched record freed its own slot")
+
+
+def test_slot28_pays_five_gold_and_the_collect_score():
+    """The two accumulators, compared against test_hud.py's DECIMAL model — and they run BACK TO
+    BACK here, `bsr $b562` then `bsr $b5a2` with only a `move.l #imm,d0` between. The counter is
+    seeded far from four digits' worth so the X the first `abcd` chain leaves is 0; ../STATUS.md
+    records that a counter within WB_ACTOR_TYPE28_GOLD of $9999 would leave 1 and that
+    recreate/src/hud.c cannot carry it."""
+    what = "actor_behavior_type28 collected"
+    counter, score = 0x0100, 0x00001000
+    pokes = _collectable_pokes(what, 28, {BCD_COUNTER: word(counter),
+                                          BCD_SCORE: longword(score)}, collected=True)
+    image = harness.make_image(pokes)
+    _assert_contact(image, what, True)
+
+    info = _run_handler("actor_behavior_type28", what, pokes, band=_collect_band(
+        "actor_behavior_type28", image) + [(BCD_ADDEND, LONGWORD_BYTES),
+                                           (BCD_COUNTER, BCD_COUNTER_LEN),
+                                           (BCD_SCORE, BCD_SCORE_LEN)])
+    assert leaf.read_int(info, BCD_COUNTER, BCD_COUNTER_LEN, what) \
+        == bcd_expected(counter, TYPE28_GOLD, BCD_COUNTER_LEN, False)
+    assert leaf.read_int(info, BCD_SCORE, BCD_SCORE_LEN, what) \
+        == bcd_expected(score, COLLECT_SCORE, BCD_SCORE_LEN, False)
+
+
+def test_slot28_cannot_be_collected_while_it_is_moving():
+    """The SECOND gate: `btst #0,8(a0) / bne` sends a record with WB_ACTOR_FLAG_MOVING_BIT up to the
+    waiting arm however hard the followed record is standing on it."""
+    what = "actor_behavior_type28 collected mid-hop"
+    pokes = _collectable_pokes(what, 28, {ACTOR + ACTOR_FLAGS: bytes([1 << MOVING_BIT]),
+                                          ACTOR + SPEED: bytes([2])}, collected=True)
+    _assert_contact(harness.make_image(pokes), what, True)
+
+    info = _run_handler("actor_behavior_type28", what, pokes)
+    written = program_writes(info)
+    assert BCD_COUNTER not in written, f"{what}: a moving record paid out"
+    assert ACTOR + ACTOR_X not in written, f"{what}: a moving record handed its slot back"
+    # ...and the waiting arm really RAN: actor_hop_ascend_step spends the record's own speed byte,
+    # which is the one write that separates "took the other arm" from "did nothing at all".
+    assert written[ACTOR + SPEED] == 1, f"{what}: the ascent did not run"
+
+
+# --- slot 28's walk, and the WORD test at $4e98 ----------------------------------------------------
+# THE ONE BLOCKED-STEP TEST IN THIS FILE THAT READS A WORD. The probes leave a map column, a clamp
+# limit or a parked x in the byte ABOVE the outcome (map.h), so `tst.w d0` answers "turn round" only
+# when that byte is zero as well — which the tier's every other `tst.b d0` would not. The two rows
+# below drive one blocked step of each kind, and BOTH are reachable off the game's own geometry.
+#
+# THE MUTANT THIS CATCHES is `step_word_was_blocked_at_column_0` replaced by `step_was_blocked`:
+# the clamped row
+# reports $0100, whose byte is WB_ACTOR_STEP_BLOCKED, so a byte-testing port turns the record round
+# where the original does not.
+WALK_X_AT_COLUMN_0 = 8            # x + half_width + step stays inside map column 0
+TIGHT_LIMIT = 0x14                # WB_BG_SCROLL_LIMIT_X small enough that COLLECT_X is past it
+WALK_STEP = 2
+
+
+def _walk_pokes_28(what, fields=None, block=False, facing=0):
+    pokes = _collectable_pokes(what, 28, leaf.overlay(
+        {ACTOR + FIELD_31: bytes([WALK_STEP]), ACTOR + ACTOR_FLAGS: bytes([facing])}, fields or {}))
+    return _block_the_walk(pokes) if block else pokes
+
+
+def test_slot28_turns_round_when_the_whole_low_word_of_the_probe_is_zero():
+    """A step blocked in map column 0: the probe's own column sits in the byte above the outcome and
+    is zero here too, so `tst.w d0` is zero and the `bchg #3,8(a0)` fires.
+
+    ONE ROW, NOT ONE PER FACING. `_block_the_walk` fills the whole probe row and from this x BOTH
+    probes land in column 0, so the two arms report the same $0000 and commit the same (zero) move —
+    a facing parametrisation here would add a row that kills no mutant the other does not. What
+    separates the arms is the case below, where they leave different x."""
+    what = "actor_behavior_type28 blocked at column 0"
+    pokes = _walk_pokes_28(what, {ACTOR + ACTOR_X: word(WALK_X_AT_COLUMN_0)}, block=True)
+
+    info = _run_handler("actor_behavior_type28", what, pokes)
+    written = program_writes(info)
+    assert written[ACTOR + ACTOR_FLAGS] & (1 << SIDE_BIT), (
+        f"{what}: the side bit did not FLIP, so the word test read something other than zero")
+    assert written[ACTOR + FIELD_31] == WALK_STEP - 1, f"{what}: the step byte was not counted down"
+
+
+def test_slot28_does_NOT_turn_round_when_the_LEFT_probe_runs_off_the_map():
+    """THE LEFT ARM, and the only case that separates it from the right one. `btst #3,8(a0)` picks
+    the probe, and the bit is reachable in play from this handler's own `bchg` — a record that turns
+    round walks left on the very next frame — so a port that reached for `step_right` outright has
+    to be caught somewhere.
+
+    A left probe that goes NEGATIVE parks the record at its own half-width and reports the probe's
+    column, which is negative too: the byte above the outcome is $ff and the `bchg` does not fire.
+    `asr.w #4` is what makes the column signed; an unsigned shift would report a huge positive one.
+    The x is chosen so the RIGHT arm would commit a DIFFERENT one (`x + d7`, not the half-width),
+    which is what makes the arms observable apart rather than merely both non-flipping."""
+    what = "actor_behavior_type28 walking off the left edge"
+    half_width, x = 4, 1
+    pokes = _walk_pokes_28(what, {ACTOR + ACTOR_X: word(x), ACTOR + HALF_WIDTH: word(half_width)},
+                           facing=1 << SIDE_BIT)
+    # The cell the negative column lands on is one byte BELOW the probe's row and outside the window
+    # `_stand_on_ground` seeds, so it is stated rather than left keyed — a WB_MAP_TILE_BLOCK there
+    # would send the walk down the backing-off path instead of the off-the-map one.
+    pokes[COLLISION_MAP_DEFAULT + COLLISION_MAP_CELLS
+          + DEFAULT_STRIDE * (STAND_ROW - 1) - 1] = bytes([0])
+
+    info = _run_handler("actor_behavior_type28", what, pokes)
+    written = program_writes(info)
+    assert _written_word(written, ACTOR, ACTOR_X) == half_width, (
+        f"{what}: the record is at {_written_word(written, ACTOR, ACTOR_X):#06x}, not parked on the "
+        f"map's left edge — the RIGHT probe would have committed {x + WALK_STEP:#06x} instead")
+    assert half_width != x + WALK_STEP, "the two arms would leave the same x, so this case is blind"
+    # The record was seeded FACING LEFT, so "did not turn round" is the bit still UP. (The rest of
+    # the byte does move: actor_relaunch_and_anim_5160 raises WB_ACTOR_FLAG_MOVING_BIT and
+    # WB_ACTOR_FLAG_LAUNCHED_BIT on the same frame.)
+    assert written[ACTOR + ACTOR_FLAGS] & (1 << SIDE_BIT), (
+        f"{what}: the side bit flipped — the test read the outcome BYTE, not the whole word")
+
+
+def test_slot28_does_NOT_turn_round_when_the_probes_high_byte_is_set():
+    """THE PIN ON THE WORD, and the case a `tst.b` port fails. A step past the level's right edge
+    comes back with the CLAMP LIMIT under the outcome byte — `WB_BG_SCROLL_LIMIT_X + $f0 - 14(a0)`,
+    which is $0100 for the limit seeded here — so the byte says BLOCKED and the word does not, and
+    the record keeps facing the way it was."""
+    what = "actor_behavior_type28 clamped at the level edge"
+    pokes = _walk_pokes_28(what, {SCROLL_LIMIT_X: word(TIGHT_LIMIT)})
+    clamped = TIGHT_LIMIT + wb("BG_SCROLL_LIMIT_BIAS") - 4
+    assert clamped >> 8, "the seeded limit does not put anything in the probe's high byte"
+    assert clamped & 0xff == 0, "the clamp's low byte is not the one the outcome overwrites"
+
+    info = _run_handler("actor_behavior_type28", what, pokes)
+    written = program_writes(info)
+    assert not written[ACTOR + ACTOR_FLAGS] & (1 << SIDE_BIT), (
+        f"{what}: the side bit flipped — the test read the outcome BYTE, not the whole word")
+    assert _written_word(written, ACTOR, ACTOR_X) == clamped, (
+        f"{what}: the record was not parked on the level's edge, so the clamp never fired")
+
+
+def test_slot28_skips_the_whole_step_while_its_distance_byte_is_zero():
+    """`move.b 31(a0),d7 / beq` jumps the probe AND the `subq.b #1,31(a0)` below it, so a zero byte
+    is left alone rather than wrapping to $ff."""
+    what = "actor_behavior_type28 with no step"
+    pokes = _walk_pokes_28(what, {ACTOR + FIELD_31: bytes([0])})
+
+    info = _run_handler("actor_behavior_type28", what, pokes)
+    written = program_writes(info)
+    assert ACTOR + FIELD_31 not in written, f"{what}: the zero step byte was decremented"
+    assert ACTOR + ACTOR_X not in written, f"{what}: a skipped step still moved the record"
+
+
+# --- slot 28's TWO expiries -------------------------------------------------------------------------
+def test_slot28_flickers_on_its_first_expiry_and_frees_itself_on_the_second():
+    """`bset #6,8(a0) / bne` reads the bit the instruction OVERWROTE. So the first expiry finds the
+    flicker down, raises it and reloads WB_ACTOR_FIELD_12 with WB_ACTOR_TYPE28_FIELD_12_RELOAD; the
+    second finds it up and hands the slot back with no reload at all. Both rows run the SAME
+    countdown value, so what separates them is the flag byte and nothing else."""
+    for flags, expect_free in ((0, False), (1 << FLICKER_BIT, True)):
+        what = f"actor_behavior_type28 expiry, flags={flags:#04x}"
+        pokes = _collectable_pokes(what, 28, {ACTOR + FIELD_12: word(0x0100),
+                                              ACTOR + ACTOR_FLAGS: bytes([flags])})
+        info = _run_handler("actor_behavior_type28", what, pokes)
+        written = program_writes(info)
+        assert written[ACTOR + ACTOR_FLAGS] & (1 << FLICKER_BIT), (
+            f"{what}: the `bset` did not leave the bit up, whichever arm it took")
+        if expect_free:
+            assert _written_word(written, ACTOR, ACTOR_X) == FREE_MARKER
+            assert written[ACTOR + FIELD_12] == 0, f"{what}: the countdown was reloaded anyway"
+        else:
+            assert written[ACTOR + FIELD_12] == TYPE28_FIELD_12_RELOAD
+            assert ACTOR + ACTOR_X not in written, f"{what}: the first expiry freed the slot"
+
+
+def test_slot28_counts_its_byte_down_without_expiring():
+    """The ordinary frame: `subq.b #1,12(a0)` alone, and the flicker bit is not touched."""
+    what = "actor_behavior_type28 counting down"
+    pokes = _collectable_pokes(what, 28, {ACTOR + FIELD_12: word(0x0500)})
+
+    info = _run_handler("actor_behavior_type28", what, pokes)
+    written = program_writes(info)
+    assert written[ACTOR + FIELD_12] == 4
+    # The flag byte is written by the settle and the relaunch either way, so what this asserts is
+    # the BIT rather than the address.
+    assert not written.get(ACTOR + ACTOR_FLAGS, 0) & (1 << FLICKER_BIT), (
+        f"{what}: a live countdown raised the flicker bit")
+
+
+# --- slot 30: the count-up gate, the meter, the drift and the GLOBAL cursor ------------------------
+@pytest.mark.parametrize("field_30,collected", [
+    (TYPE30_COLLECT_MIN - 1, False),
+    (TYPE30_COLLECT_MIN, True),
+    # `cmpi.b #$a,30(a0) / blt` is SIGNED, so a byte that has counted past $7f reads as NEGATIVE and
+    # is refused again — a record left alone for 128 frames becomes uncollectable until it wraps.
+    # ONE row, not two: $ff was a second and is trimmed, being the same claim as $80 (both negative
+    # signed, both above the minimum unsigned, so both kill the signed-to-unsigned mutant alone).
+    (0x80, False),
+], ids=lambda v: f"{v:#04x}" if isinstance(v, int) else str(v))
+def test_slot30_refuses_the_collect_until_its_count_up_byte_reaches_the_minimum(field_30,
+                                                                               collected):
+    what = f"actor_behavior_type30 count-up {field_30:#04x}"
+    pokes = _collectable_pokes(what, 30, {ACTOR + FIELD_30: bytes([field_30])}, collected=True)
+    image = harness.make_image(pokes)
+    _assert_contact(image, what, True)
+
+    info = _run_handler("actor_behavior_type30", what, pokes,
+                        band=_collect_band("actor_behavior_type30", image))
+    written = program_writes(info)
+    took = ACTOR + ACTOR_X in written and _written_word(written, ACTOR, ACTOR_X) == FREE_MARKER
+    assert took is collected, (
+        f"{what}: the record {'was' if took else 'was not'} collected, against the signed compare")
+    if not collected:
+        assert written[ACTOR + FIELD_30] == (field_30 + 1) & 0xff, (
+            f"{what}: the waiting arm did not count the byte up")
+
+
+@pytest.mark.parametrize("value,maximum,expect_write", [
+    (0x0010, 0x0028, False),   # +4 falls short: THE SHIPPED BUG — the sum is computed and dropped
+    (0x0023, 0x0028, False),   # ...one short of reaching it, still nothing
+    (0x0024, 0x0028, True),    # exactly reaching it: the MAXIMUM is stored, not the sum
+    (0x0030, 0x0028, True),    # ...and OVER it, which stores the maximum DOWNWARD. An already-full
+                               # $0028 was a third row here and is trimmed: same arm, same stored
+                               # value, and this one witnesses the downward store as well
+    # THE SIGNEDNESS, which the four rows above cannot see: `cmp.w $b6f8.l,d0 / blt` is a SIGNED
+    # compare, and every value they use is small and positive, so an unsigned port answers the same
+    # on all four. Here `addq.w #4` wraps the meter into $8002 — NEGATIVE as a word — so the signed
+    # reading falls short and stores nothing while an unsigned one would see a huge value and
+    # refill. A reviewer dropped both (int16_t) casts from type30_top_up_the_meter and the whole
+    # suite stayed green; this is the row that reds it.
+    (0x7ffe, 0x0028, False),
+], ids=lambda v: f"{v:#06x}" if isinstance(v, int) else str(v))
+def test_slot30_only_refills_the_meter_when_the_step_would_REACH_the_maximum(value, maximum,
+                                                                            expect_write):
+    """`move.w $b6fa,d0 / addq.w #4,d0 / cmp.w $b6f8,d0 / blt` — and no store on the `blt` arm. So a
+    pickup is worth NOTHING unless the player was already within WB_ACTOR_TYPE30_METER_STEP of full,
+    and worth exactly "top up" when they were. That is the original's behaviour and not a
+    simplification; hud_meter_add_clamped ($b6fe) is the routine that adds properly and this handler
+    does not call it."""
+    what = f"actor_behavior_type30 meter {value:#06x}/{maximum:#06x}"
+    pokes = _collectable_pokes(what, 30, {ACTOR + FIELD_30: bytes([TYPE30_COLLECT_MIN]),
+                                          METER_VALUE: word(value), METER_MAX: word(maximum)},
+                               collected=True)
+    image = harness.make_image(pokes)
+    _assert_contact(image, what, True)
+    band = _collect_band("actor_behavior_type30", image) + [(METER_VALUE, WORD_BYTES)]
+
+    info = _run_handler("actor_behavior_type30", what, pokes, band=band)
+    written = program_writes(info)
+    assert (METER_VALUE in written) is expect_write, (
+        f"{what}: the meter {'was' if METER_VALUE in written else 'was not'} written")
+    if expect_write:
+        assert _written_word(written, METER_VALUE) == maximum, (
+            f"{what}: the meter was set to the SUM rather than to its maximum")
+
+
+# The last two rows are the SWEEP'S FINDING: every cursor below $8000 answers the same whether the
+# extension word is sign-extended or not, so a battery without them passes with `sign_ext16` dropped.
+# $fffe reads the word two bytes BELOW the table — which is WB_ACTOR_TYPE30_CURSOR itself — and
+# $8000 reaches an address the 24-bit bus puts past the image, where both cores answer zero.
+@pytest.mark.parametrize("cursor", [0, 2, 0x10, TYPE30_DRIFT_MASK - 1, TYPE30_DRIFT_MASK,
+                                    TYPE30_DRIFT_MASK + 1, 0xff, 0xfffe, 0x8000],
+                         ids=lambda v: f"cursor{v:#06x}")
+def test_slot30_drifts_by_the_word_its_global_cursor_names(cursor):
+    """The table is SIGNED and read through the bus at WB_ACTOR_TYPE30_DRIFT + a sign-extended word,
+    with the mask applied only to what is STORED — so a cursor past the table still fetches (out of
+    the 256-byte window above it, all inside the image) exactly as slot 52's frame cursor does."""
+    what = f"actor_behavior_type30 drift {cursor:#06x}"
+    pokes = _collectable_pokes(what, 30, {TYPE30_CURSOR: word(cursor)})
+    at = (TYPE30_DRIFT + s16(cursor)) & BUS_ADDR_MASK
+    # The seeded cursor is what $4f5a holds when the fetch happens, so a cursor that reads the word
+    # BELOW the table reads the cursor itself and the model has to say so rather than read the image.
+    if at == TYPE30_CURSOR:
+        drift = cursor
+    elif at + WORD_BYTES <= harness.IMAGE_SIZE:
+        drift = _image_word(at)
+    else:
+        drift = 0                    # off the loaded image: the shim answers the oracle with zero
+
+    info = _run_handler("actor_behavior_type30", what, pokes)
+    written = program_writes(info)
+    assert _written_word(written, ACTOR, ACTOR_X) == (COLLECT_X + drift) & 0xffff, (
+        f"{what}: the record did not move by the table's own word {drift:#06x}")
+    assert _written_word(written, TYPE30_CURSOR) \
+        == (cursor + TYPE30_DRIFT_STRIDE) & TYPE30_DRIFT_MASK
+
+
+def test_slot30s_drift_table_is_a_triangle_that_sums_to_zero():
+    """What makes the handler a HOVER rather than a drift, read off the image: 32 signed words from
+    +8 down to -8 and back, whose sum is zero — so a record returns to the x it spawned at every
+    WB_ACTOR_TYPE30_DRIFT_MASK + 1 bytes. Nothing in the port depends on this; it is the evidence
+    the plate's reading rests on."""
+    words = [s16(_image_word(TYPE30_DRIFT + at))
+             for at in range(0, TYPE30_DRIFT_MASK + 1, TYPE30_DRIFT_STRIDE)]
+    assert len(words) == 32 and sum(words) == 0, f"the table sums to {sum(words)}"
+    assert max(words) == 8 and min(words) == -8
+
+
+def test_slot30s_cursor_is_a_GLOBAL_two_records_share():
+    """The one animation cursor in the tier that is not a record field. Two live type-30 records are
+    stepped in turn and the SECOND takes the word the first advanced to — which a per-record cursor
+    could not produce, and which is why WB_ACTOR_TYPE30_CURSOR has a `var` of its own."""
+    what = "actor_behavior_type30 shared cursor"
+    other = _record(TABLE_DEFAULT, ACTOR_SLOT + 1)
+    pokes = _collectable_pokes(what, 30, {
+        TYPE30_CURSOR: word(0),
+        other + ACTOR_TYPE: word(30), other + HALF_WIDTH: word(4), other + SIZE_SECOND: word(8),
+        other + ACTOR_X: word(COLLECT_X), other + ACTOR_Y: word(STAND_Y),
+        other + ACTOR_FLAGS: bytes([0]), other + FLAGS2: bytes([0]),
+        other + FIELD_30: bytes([0]), other + FIELD_12: word(0x1010)})
+
+    first = _run_handler("actor_behavior_type30", what, pokes)
+    assert _written_word(program_writes(first), TYPE30_CURSOR) == TYPE30_DRIFT_STRIDE
+
+    # The second record runs on the image the first LEFT, which is what makes the two share a phase:
+    # its drift is the table's SECOND word, not its first.
+    stepped = leaf.overlay(pokes, {TYPE30_CURSOR: word(TYPE30_DRIFT_STRIDE)})
+    glue = _HANDLER_GLUE["actor_behavior_type30"](other)
+    info = leaf.run("actor_behavior_type30", glue,
+                    _handler_band("actor_behavior_type30"), f"{what}, second record",
+                    regs={"a0": other, "_pokes": stepped}, poison=False,
+                    max_insns=_handler_cap("actor_behavior_type30"))
+    written = program_writes(info)
+    assert _written_word(written, other, ACTOR_X) \
+        == (COLLECT_X + _image_word(TYPE30_DRIFT + TYPE30_DRIFT_STRIDE)) & 0xffff, (
+        f"{what}: the second record started the table from the beginning")
+
+
+@pytest.mark.parametrize("toggle,rises", [(0x0000, False), (0xffff, True), (0xff00, True),
+                                          (0x00ff, False)],
+                         ids=lambda v: f"{v:#06x}" if isinstance(v, int) else str(v))
+def test_slot30_rises_on_the_frames_the_toggle_byte_is_nonzero(toggle, rises):
+    """`tst.b $712.w` reads WB_FRAME_TOGGLE's HIGH byte, so the two rows with only a low byte set
+    are what say it is a byte test and not a word one. flip_screen only ever writes $0000/$ffff."""
+    what = f"actor_behavior_type30 toggle {toggle:#06x}"
+    pokes = _collectable_pokes(what, 30, {FRAME_TOGGLE: word(toggle)})
+
+    info = _run_handler("actor_behavior_type30", what, pokes)
+    written = program_writes(info)
+    assert (ACTOR + ACTOR_Y in written) is rises, (
+        f"{what}: the record {'rose' if ACTOR + ACTOR_Y in written else 'did not rise'}")
+    if rises:
+        assert _written_word(written, ACTOR, ACTOR_Y) == STAND_Y - 1
+
+
+@pytest.mark.parametrize("field_12,flickers,frees", [(FLICKER_AT_FIELD_12, True, False),
+                                                     (FLICKER_AT_FIELD_12 + 1, False, False),
+                                                     # BELOW the mark, and still alive — the row the
+                                                     # sweep asked for: a threshold reading flickers
+                                                     # here and the equality does not.
+                                                     (FLICKER_AT_FIELD_12 - 1, False, False),
+                                                     (1, False, True)],
+                         ids=lambda v: f"{v}" if isinstance(v, int) else str(v))
+def test_slot30_flickers_on_one_countdown_value_and_frees_itself_at_zero(field_12, flickers, frees):
+    """`cmpi.w #$14,12(a0)` is an EQUALITY and not a threshold, so a record seeded past the mark
+    never flickers at all; `subq.w #1,12(a0) / bne` is what ends it."""
+    what = f"actor_behavior_type30 countdown {field_12}"
+    pokes = _collectable_pokes(what, 30, {ACTOR + FIELD_12: word(field_12)})
+
+    info = _run_handler("actor_behavior_type30", what, pokes)
+    written = program_writes(info)
+    up = bool(written.get(ACTOR + ACTOR_FLAGS, 0) & (1 << FLICKER_BIT))
+    freed = ACTOR + ACTOR_X in written and _written_word(written, ACTOR, ACTOR_X) == FREE_MARKER
+    assert up is flickers and freed is frees, f"{what}: flicker={up}, freed={freed}"
+    if frees:
+        assert _written_word(written, TYPE30_CURSOR) == 0, f"{what}: the global cursor was not reset"
+
+
+# --- slot 31: the join into actor_select_sprite_by_flag, and the payout ----------------------------
+def _sprite_for(flags):
+    """actor_select_sprite_by_flag's own rule, restated here as the JOIN's expectation — that
+    routine's body has its own cases above, and what these rows pin is that slot 31 reaches it."""
+    if flags & (1 << SUPPORTED_BIT):
+        return SPRITE_SUPPORTED
+    return SPRITE_MOVING if flags & (1 << MOVING_BIT) else SPRITE_IDLE
+
+
+@pytest.mark.parametrize("flags", [0, 1 << MOVING_BIT, 1 << SUPPORTED_BIT,
+                                   (1 << SUPPORTED_BIT) | (1 << MOVING_BIT)],
+                         ids=lambda v: f"flags{v:#04x}")
+def test_slot31_publishes_a_sprite_through_the_routine_its_last_branch_enters(flags):
+    """`bne.w $4fea` is a BRANCH OUT OF THE BODY: the handler's own bytes end at $4fe9 and the sprite
+    is published by actor_select_sprite_by_flag, whose `rts` returns to the dispatcher. The expected
+    id is taken from the flag byte the frame LEAVES, because actor_fall_and_settle writes it."""
+    what = f"actor_behavior_type31 sprite, flags={flags:#04x}"
+    pokes = _collectable_pokes(what, 31, {ACTOR + ACTOR_FLAGS: bytes([flags]),
+                                          ACTOR + SPEED: bytes([1])})
+
+    info = _run_handler("actor_behavior_type31", what, pokes)
+    written = program_writes(info)
+    ended = written.get(ACTOR + ACTOR_FLAGS, flags)
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _sprite_for(ended), (
+        f"{what}: the tail published the wrong id for a flag byte of {ended:#04x}")
+
+
+def test_slot31_frees_itself_instead_of_publishing_when_its_countdown_expires():
+    """The other side of that branch: `subq.w #1,12(a0)` reaching zero falls through to the free
+    arm, so the sprite is NOT published on the frame the record ends."""
+    what = "actor_behavior_type31 countdown expiring"
+    pokes = _collectable_pokes(what, 31, {ACTOR + FIELD_12: word(1),
+                                          ACTOR + ACTOR_FLAGS: bytes([1 << FLICKER_BIT])})
+
+    info = _run_handler("actor_behavior_type31", what, pokes)
+    written = program_writes(info)
+    assert _written_word(written, ACTOR, ACTOR_X) == FREE_MARKER
+    assert not written[ACTOR + ACTOR_FLAGS] & (1 << FLICKER_BIT), f"{what}: the flicker stayed up"
+    assert ACTOR + ACTOR_SPRITE not in written, f"{what}: the expiring frame published a sprite"
+
+
+@pytest.mark.parametrize("field_12,flickers", [
+    (FLICKER_AT_FIELD_12, True),
+    # STRICTLY BELOW the mark, and still alive so nothing clears the bit again. Without this row
+    # slot 31's `cmpi.w` was pinned only through slot 30's copy — a reviewer changed `==` to `<=` in
+    # the SHARED helper and exactly one case failed, and it was a slot-30 row. Each handler now
+    # states its own.
+    (FLICKER_AT_FIELD_12 - 1, False),
+    (FLICKER_AT_FIELD_12 + 1, False),
+], ids=lambda v: f"{v}" if isinstance(v, int) else str(v))
+def test_slot31_starts_flickering_on_one_countdown_value(field_12, flickers):
+    """`cmpi.w #$14,12(a0) / bne / bset #6,8(a0)` on a WAITING frame, and an equality rather than a
+    threshold — the same claim slot 30's own row makes, in the place slot 31 spells it.
+
+    WHAT THIS DOES NOT PIN, and no case can: slot 31 runs the `cmpi`/`bset` BEFORE its contact test
+    where slot 30 runs it after the drift, and that ordering is unobservable. A collected frame ends
+    at `bclr #6,8(a0)`, so the flag byte it writes has the bit DOWN whether the `bset` ran first or
+    not — the two orders converge on every arm. ../STATUS.md carries it in the not-pinned list."""
+    what = f"actor_behavior_type31 flicker mark, countdown {field_12}"
+    pokes = _collectable_pokes(what, 31, {ACTOR + FIELD_12: word(field_12)})
+
+    info = _run_handler("actor_behavior_type31", what, pokes)
+    written = program_writes(info)
+    up = bool(written.get(ACTOR + ACTOR_FLAGS, 0) & (1 << FLICKER_BIT))
+    assert up is flickers, (
+        f"{what}: the flicker bit is {'up' if up else 'down'} — the mark is an EQUALITY, not a "
+        f"threshold")
+
+
+def test_slot31_pays_the_descriptors_gold_award_when_it_is_collected():
+    """The whole cluster from the dispatch row down: contact, WB_ACTOR_REQUEST9_SFX, the draw off a
+    DECLARED video counter, both accumulators, the digits inside message 3 and the message posted.
+    The award model is the one $517a's own cases compare against, so the two cannot disagree."""
+    what = "actor_behavior_type31 payout"
+    award, counter = 0x0021, 0x0100
+    # The award seeding names the followed record's x too — it is the draw's non-hardware entropy —
+    # so it is given the COLLECT point rather than its own, or it would undo the contact.
+    pokes = _collectable_pokes(what, 31, _award_pokes(award, followed_x=COLLECT_X,
+                                                  counter=counter), collected=True)
+    image = harness.make_image(pokes)
+    _assert_contact(image, what, True)
+    expected = _model_award(image)
+    band = _collect_band("actor_behavior_type31", image) + merge_bands(expected)
+
+    info = _run_handler("actor_behavior_type31", what, pokes, band=band, hw_seed=VCOUNT_ORDERED)
+    written = program_writes(info)
+    for addr, value in expected.items():
+        assert written[addr] == value, (
+            f"{what}: {addr:#x} is {written[addr]:#04x}, not the payout model's {value:#04x}")
+    assert _written_word(written, ACTOR, ACTOR_X) == FREE_MARKER
+
+
+def test_slot31_skips_the_contact_test_while_it_is_moving_but_still_ages():
+    """`btst #0,8(a0) / bne $4fd6` jumps STRAIGHT to the countdown — so a moving record cannot be
+    collected and does not stop ageing either, which is what separates this gate from slot 28's
+    (that one sends a moving record to the whole waiting arm instead)."""
+    what = "actor_behavior_type31 moving"
+    pokes = _collectable_pokes(what, 31, {ACTOR + ACTOR_FLAGS: bytes([1 << MOVING_BIT]),
+                                          ACTOR + SPEED: bytes([3]),
+                                          ACTOR + FIELD_12: word(0x0500)}, collected=True)
+    _assert_contact(harness.make_image(pokes), what, True)
+
+    info = _run_handler("actor_behavior_type31", what, pokes)
+    written = program_writes(info)
+    assert BCD_COUNTER not in written, f"{what}: a moving record was collected"
+    assert _written_word(written, ACTOR, FIELD_12) == 0x04ff, f"{what}: it did not age"

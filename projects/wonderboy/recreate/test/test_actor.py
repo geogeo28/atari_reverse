@@ -62,7 +62,11 @@ from test_sound import (STOP_INSN_CAP, STOP_WRITES, STUB_INSN_CAP,          # no
 # ...and $6bb8's boss arm pays a score and raises the meter, so the two models the PANEL battery owns
 # come from there for the same reason: two copies of "what packed BCD does" could disagree while both
 # batteries stayed green.
-from test_hud import bcd_expected, meter_add_expected                       # noqa: E402
+# `bcd_expected` and `meter_add_expected` moved from test_hud.py to leaf.py in batch 33 — three
+# batteries need them, and a battery importing a shared fact from a SIBLING battery is the coupling
+# leaf.py exists to remove. What this file still imports from test_hud.py is that battery's own
+# models, which is a different thing.
+from leaf import bcd_expected, meter_add_expected                           # noqa: E402
 
 # ...and the respawn continuation draws its new kind through both of them, so the RNG battery's model
 # and instruction counts come from there rather than being restated: a second copy of the generator's
