@@ -5433,11 +5433,11 @@ from test_actor import (EFFECT_RECORD_LIST, SLOT_BBC0,                          
                         _model_defeat, _template_band)
 from test_actor import DAMAGE_TEMPLATE_SFX, SND_CHANNEL_B                    # noqa: E402
 
-# THE ONE SPAWN TYPE THESE CASES MAY USE. `lsl.w #2,d2` inside actor_defeat_and_score leaves the X
-# flag holding the type's bit 14, and bcd_add_score_bd70 folds the caller's X into its lowest digit
-# pair — an entry state the oracle cannot be given, which actor.h registers and test_actor.py's own
-# defeat cases refuse. A keyed template word would carry that bit at random, so every template in
-# the band below is seeded with a type that does not.
+# THE ONE SPAWN TYPE THESE CASES USE. `lsl.w #2,d2` inside actor_defeat_and_score leaves the X flag
+# holding the type's bit 14, and bcd_add_score_bd70 folds it into the score's lowest digit — which
+# src/actor.c THREADS since batch 33 phase B, so it is no longer a reason to refuse a type, only a
+# reason to CHOOSE one here: a keyed template word would carry that bit at random and these cases
+# are not about the score. test_actor.py's SCORE_EXTEND_TYPES drives the bit deliberately instead.
 SAFE_SPAWN_TYPE = 4
 TEMPLATE_POOL = 0x40
 
@@ -7233,8 +7233,24 @@ def test_a_prologues_mark_bit_is_LIVE_by_the_time_the_shared_body_reads_it(name,
 # `hw_declared`'s reason: a battery must not reach into a sibling battery for a shared fact.
 
 _AWARD = leaf.image_glue(AWARD)
-_BCD_RANDOM = leaf.register_glue(BCD_RANDOM, [ctypes.c_uint32], ctypes.c_uint32)
 _GOLD_DIGITS = leaf.register_glue(GOLD_DIGITS, [ctypes.c_uint32])
+
+# The draw's glue is hand-rolled where the two above are factory-made, because the routine has a
+# SECOND output that is not a register: the X its `abcd` leaves, which $5188's counter add folds in.
+# The reconstruction hands that back through a pointer, so the glue owns the storage. The oracle
+# reports no CCR (emu.REPORTED_REGS is d0..d7 and a0..a6), so no case here can compare it — what
+# pins it is the whole-payout chain row in `PAYOUT_CASES`.
+_bcd_random_fn = leaf.bind(BCD_RANDOM,
+                           leaf.IMAGE_ARG + [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint)],
+                           ctypes.c_uint32)
+
+
+def _BCD_RANDOM(entry_d0):
+    def glue(_lib, image):
+        exit_extend = ctypes.c_uint(0)
+        return _bcd_random_fn(image, entry_d0, ctypes.byref(exit_extend))
+
+    return glue
 
 # The instruction cap, DERIVED — the cluster's three pinned bodies plus the two accumulators, whose
 # shape is test_hud.py's `_bcd_entry`: `movem / move.<n> d0,addend / lea / lea / length x abcd /
@@ -7413,11 +7429,23 @@ def test_the_draw_is_added_in_PACKED_BCD_and_not_in_binary(entry_d0, expected_lo
 DESCRIPTOR_OFF_IMAGE = 0xf00000
 
 
+# The X `text_write_gold_digits_a2ac` ($51d8) leaves, and so the entry X of the score add at $5196
+# that follows it — 0 on both of that routine's exits, argued from its bytes in `_model_award`.
+GOLD_DIGITS_LEAVE_EXTEND_CLEAR = 0
+
+
 def _model_award(image, video_low=VCOUNT_LOW_SEED, video_mid=VCOUNT_MID_SEED):
     """{address: byte} for one payout — the WRITE SET and the values together, composed out of the
     batteries that own each half:
     `bcd_expected` is leaf.py's DECIMAL statement of the two accumulators, and the draw is this
-    section's own. Nothing here restates src/behavior.c's nibble arithmetic."""
+    section's own. Nothing here restates src/behavior.c's nibble arithmetic.
+
+    THE X CHAIN IS MODELLED, not assumed away: `bcd_add_random_1_to_4`'s `abcd d1,d0` at $51d4 is
+    the last instruction before `bsr $b562` at $5188, so the carry it leaves is the counter's ENTRY
+    X. The score's own entry X is 0 by a reading of $51d8, which runs between the two accumulators:
+    its last X-writer on BOTH exits is `addi.b #$30` on a nibble masked to $0..$f, which cannot
+    carry out of $30..$3f, and `ror.w`/`andi.w`/`move.b` leave X alone.
+    """
     descriptor = int.from_bytes(image[RECORD_PTR_10424:RECORD_PTR_10424 + LONGWORD_BYTES], "big")
     at = (descriptor + SCENE_GOLD_AWARD) & BUS_ADDR_MASK
     award = leaf.u16(image, at) if at + WORD_BYTES <= harness.IMAGE_SIZE else 0
@@ -7426,17 +7454,17 @@ def _model_award(image, video_low=VCOUNT_LOW_SEED, video_mid=VCOUNT_MID_SEED):
     low = _abcd(award & 0xff, _draw_from(image, video_low, video_mid), extend)
     d0 = (award & 0xff00) | low
 
-    counter = bcd_expected(leaf.u16(image, BCD_COUNTER), d0, BCD_COUNTER_LEN, False)
+    counter = bcd_expected(leaf.u16(image, BCD_COUNTER), d0, BCD_COUNTER_LEN, False, extend[0])
     score = bcd_expected(int.from_bytes(image[BCD_SCORE:BCD_SCORE + BCD_SCORE_LEN], "big"),
-                         COLLECT_SCORE, BCD_SCORE_LEN, False)
+                         COLLECT_SCORE, BCD_SCORE_LEN, False, GOLD_DIGITS_LEAVE_EXTEND_CLEAR)
     tens = (low >> BCD_DIGIT_BITS) & BCD_DIGIT_MASK
 
     out = {}
     # The score's `move.l d0,$bd78` overwrites the counter's `move.w`, so the staging bytes end as
     # the score's addend — and all four are in the ledger because both stores happened.
     _put(out, BCD_ADDEND, COLLECT_SCORE, LONGWORD_BYTES)
-    _put(out, BCD_COUNTER, counter, BCD_COUNTER_LEN)
-    _put(out, BCD_SCORE, score, BCD_SCORE_LEN)
+    _put(out, BCD_COUNTER, counter.value, BCD_COUNTER_LEN)
+    _put(out, BCD_SCORE, score.value, BCD_SCORE_LEN)
     out[GOLD_DIGITS_AT] = DIGIT_BLANK if tens == 0 else ord("0") + tens
     out[GOLD_DIGITS_AT + 1] = ord("0") + (low & BCD_DIGIT_MASK)
     out[TEXT_REQUEST] = MESSAGE_GOLD_GET
@@ -7464,16 +7492,45 @@ def _run_award(what, pokes, video=VCOUNT_ORDERED):
     return info
 
 
-@pytest.mark.parametrize("award,counter,score", [
+# THE AWARD THAT DRIVES THE CHAIN: its low BCD byte plus the draw the two declared counters give
+# passes $99, so `bcd_add_random_1_to_4`'s `abcd d1,d0` at $51d4 carries OUT — and $5188's counter
+# add, the very next instruction, folds that carry into the gold counter's lowest digit.
+AWARD_THAT_CARRIES_INTO_THE_COUNTER = 0x0096
+
+# (award, counter, score).
+PAYOUT_CASES = (
     (0x0012, 0x0100, 0x00001000),
     (0x0005, 0x0000, 0x00000000),      # a one-digit amount: the TENS character is blanked
     (0x0095, 0x0900, 0x00099999),      # the largest low byte whose `abcd` cannot carry out
+    (AWARD_THAT_CARRIES_INTO_THE_COUNTER, 0x0900, 0x00099999),   # ...and one more, which does
     (0x1234, 0x0000, 0x00000000),      # a two-BYTE award: the counter stages the word, the digits
                                        # draw the low byte alone, so the two disagree by design
-], ids=lambda v: f"{v:#06x}")
+)
+
+
+@pytest.mark.parametrize("award,counter,score", PAYOUT_CASES, ids=lambda v: f"{v:#06x}")
 def test_the_payout_moves_both_accumulators_the_message_and_its_digits(award, counter, score):
     what = f"hud_award_gold_from_descriptor award={award:#06x}"
     _run_award(what, _award_pokes(award, counter=counter, score=score))
+
+
+def test_exactly_one_payout_row_carries_the_draw_out_into_the_counter():
+    """The premise `AWARD_THAT_CARRIES_INTO_THE_COUNTER` names, computed off the seeds rather than
+    asserted from a reader's arithmetic — the draw is four here, so $96 is the smallest award whose
+    `abcd` carries and $95 the largest whose does not. If the video-counter declaration or the
+    followed record's x ever moved, the draw would change and the row would stop driving the chain
+    while staying green."""
+    image = harness.make_image(_award_pokes(0))
+    draw = _draw_from(image, VCOUNT_LOW_SEED, VCOUNT_MID_SEED)
+    carrying = []
+    for award, _counter, _score in PAYOUT_CASES:
+        extend = [0]
+        _abcd(award & 0xff, draw, extend)
+        if extend[0]:
+            carrying.append(award)
+    assert carrying == [AWARD_THAT_CARRIES_INTO_THE_COUNTER], (
+        f"a draw of {draw} makes {[hex(a) for a in carrying]} carry out of the award's own `abcd` — "
+        f"the rows above need exactly {AWARD_THAT_CARRIES_INTO_THE_COUNTER:#06x} to")
 
 
 # A CASE THAT COULD NOT FAIL, removed rather than kept (a measured trim, ../STATUS.md records it):
@@ -7623,14 +7680,39 @@ def test_a_collectable_out_of_reach_keeps_its_slot(slot):
         f"{what}: an untouched record freed its own slot")
 
 
-def test_slot28_pays_five_gold_and_the_collect_score():
-    """The two accumulators, compared against test_hud.py's DECIMAL model — and they run BACK TO
-    BACK here, `bsr $b562` then `bsr $b5a2` with only a `move.l #imm,d0` between. The counter is
-    seeded far from four digits' worth so the X the first `abcd` chain leaves is 0; ../STATUS.md
-    records that a counter within WB_ACTOR_TYPE28_GOLD of $9999 would leave 1 and that
-    recreate/src/hud.c cannot carry it."""
-    what = "actor_behavior_type28 collected"
-    counter, score = 0x0100, 0x00001000
+# THE ENTRY X OF SLOT 28's FIRST ACCUMULATOR. The instruction before `bsr $b562` at $4e5a is
+# `move.w #$5,d0`, and before that `bsr $6786` — sound_request_9, which tail-jumps into the sound
+# module, so what it leaves in X is not readable off these bytes. It is pinned by the DIFFERENTIAL
+# instead: the ordinary row below seeds $0100 and five more is $0105 with X clear and $0106 with X
+# set, so the byte-for-byte diff would already be red if the trigger left a carry behind.
+TYPE28_COUNTER_ENTRY_EXTEND = 0
+
+# A counter within WB_ACTOR_TYPE28_GOLD of $9999, so the counter's LAST `abcd` carries OUT and the
+# score add two instructions later folds that carry into its own lowest digit.
+TYPE28_COUNTER_AT_THE_WRAP = 0x9996
+
+# ...and the counter that carries out of the accumulator's LOWEST byte and NOT out of its top one:
+# $96 + 5 is $01 with a carry, which the tens digits then absorb. The score must NOT gain a unit
+# here, which is what separates "the X the routine leaves" from "the X its FIRST `abcd` leaves" —
+# the mutation `exit/add-returns-the-carry-out-of-the-LOWEST-byte` survived until this row existed,
+# because the wrap row above carries out of BOTH bytes and cannot tell the two apart.
+TYPE28_COUNTER_CARRYING_ONE_BYTE = 0x0096
+
+# (counter, score) — the ordinary payout, then the two that drive the chain's two answers.
+TYPE28_PAYOUT_CASES = ((0x0100, 0x00001000),
+                       (TYPE28_COUNTER_AT_THE_WRAP, 0x00001000),
+                       (TYPE28_COUNTER_CARRYING_ONE_BYTE, 0x00001000))
+
+
+@pytest.mark.parametrize("counter,score", TYPE28_PAYOUT_CASES,
+                         ids=lambda v: f"{v:#06x}")
+def test_slot28_pays_five_gold_and_the_collect_score(counter, score):
+    """The two accumulators, compared against leaf.py's DECIMAL model — and they run BACK TO BACK
+    here, `bsr $b562` then `bsr $b5a2` with only a `move.l #imm,d0` between, which does not touch X.
+    So the SCORE is entered with the X the counter's last `abcd` left, and the second row is the
+    seed that makes that a 1: it was red against the port that folded in a 0 there, off by one in
+    the score's low byte and by nothing else."""
+    what = f"actor_behavior_type28 collected counter={counter:#06x}"
     pokes = _collectable_pokes(what, 28, {BCD_COUNTER: word(counter),
                                           BCD_SCORE: longword(score)}, collected=True)
     image = harness.make_image(pokes)
@@ -7640,10 +7722,39 @@ def test_slot28_pays_five_gold_and_the_collect_score():
         "actor_behavior_type28", image) + [(BCD_ADDEND, LONGWORD_BYTES),
                                            (BCD_COUNTER, BCD_COUNTER_LEN),
                                            (BCD_SCORE, BCD_SCORE_LEN)])
-    assert leaf.read_int(info, BCD_COUNTER, BCD_COUNTER_LEN, what) \
-        == bcd_expected(counter, TYPE28_GOLD, BCD_COUNTER_LEN, False)
+    counted = bcd_expected(counter, TYPE28_GOLD, BCD_COUNTER_LEN, False,
+                           TYPE28_COUNTER_ENTRY_EXTEND)
+    assert leaf.read_int(info, BCD_COUNTER, BCD_COUNTER_LEN, what) == counted.value
     assert leaf.read_int(info, BCD_SCORE, BCD_SCORE_LEN, what) \
-        == bcd_expected(score, COLLECT_SCORE, BCD_SCORE_LEN, False)
+        == bcd_expected(score, COLLECT_SCORE, BCD_SCORE_LEN, False, counted.extend).value
+
+
+def test_exactly_one_slot28_payout_row_carries_out_of_the_counter():
+    """The premise the rows above rest on, asserted rather than left to a reader's arithmetic: if
+    WB_ACTOR_TYPE28_GOLD or a seed ever moved, the chain row would quietly stop carrying and the
+    set would pass while pinning only the X = 0 half again."""
+    carrying = [counter for counter, _score in TYPE28_PAYOUT_CASES
+                if bcd_expected(counter, TYPE28_GOLD, BCD_COUNTER_LEN, False,
+                                TYPE28_COUNTER_ENTRY_EXTEND).extend]
+    assert carrying == [TYPE28_COUNTER_AT_THE_WRAP], (
+        f"{[hex(c) for c in carrying]} are the counter seeds whose four digits wrap — the rows "
+        f"above need exactly one, and it must be {TYPE28_COUNTER_AT_THE_WRAP:#06x}")
+
+
+def test_one_slot28_payout_row_carries_out_of_the_low_byte_alone():
+    """...and the other half of that premise, which is what makes the pair separate the ACCUMULATOR's
+    carry from its FIRST digit pair's: `TYPE28_COUNTER_CARRYING_ONE_BYTE` must carry out of the low
+    byte (so a port returning that bit scores a unit too many) while leaving the four digits inside
+    their range (so the faithful port scores none)."""
+    low_carry = [TYPE28_COUNTER_ENTRY_EXTEND]
+    _abcd(TYPE28_COUNTER_CARRYING_ONE_BYTE & 0xff, TYPE28_GOLD, low_carry)
+    assert low_carry[0], (
+        f"{TYPE28_COUNTER_CARRYING_ONE_BYTE:#06x} plus {TYPE28_GOLD} does not carry out of the low "
+        f"byte, so the row pins nothing the ordinary row does not")
+    assert not bcd_expected(TYPE28_COUNTER_CARRYING_ONE_BYTE, TYPE28_GOLD, BCD_COUNTER_LEN, False,
+                            TYPE28_COUNTER_ENTRY_EXTEND).extend, (
+        f"{TYPE28_COUNTER_CARRYING_ONE_BYTE:#06x} wraps all four digits as well, which makes it the "
+        f"wrap row over again")
 
 
 def test_slot28_cannot_be_collected_while_it_is_moving():

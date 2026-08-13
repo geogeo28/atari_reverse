@@ -330,7 +330,16 @@ static uint32_t scene_run_purchase(uint8_t *image, uint32_t price_field, uint32_
     if ((int16_t)price > (int16_t)be16(image + WB_BCD_COUNTER))
         return scene_run_greeting(image);
 
-    bcd_sub_counter_bd6e(image, price);
+    /* ASSUMED, not proved — the one site in the port that claims an entry X it cannot read off its
+     * own bytes, which is why it spells a different constant (include/hud.h). NOTHING on the path
+     * from $dbc0 to the `jsr $b582.l` at $ddae/$de24 writes X: `tst`, `cmpi`, `clr`, `move`,
+     * `movea` and the branches all leave it alone, and the one call on that path — `jsr $682.w`,
+     * joy1_newly_pressed — is four instructions, `move.b $8b3.l,d0 / move.b $8cf.l,d1 / eor.b d1,d0
+     * / and.b d1,d0`, none of which touch X either. So the bit is the CALLER's: `jsr $b346.l` runs
+     * immediately before `jsr $dbc0.l` at $4be, and its last act is `addq.w #1,frame_tick_b39a`,
+     * which sets X on the frame that word wraps. 0 is right on every other frame and on every run
+     * the oracle can enter. ../STATUS.md keeps it as an open row. */
+    bcd_sub_counter_bd6e(image, price, WB_BCD_ENTRY_EXTEND_ASSUMED_CLEAR);
     wr16(image + WB_SCENE_MESSAGE_PENDING, WB_SCENE_MESSAGE_PENDING_SET);
     if (be16(image + addr_add(record, count_field)) == 0)
         id = be16(image + addr_add(record, first_id_field));

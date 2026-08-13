@@ -330,7 +330,11 @@ void bg_plot_round_banner(uint8_t *image) {
     bg_plot_banner(image, WB_BG_BANNER_ROUND);
     if (be16(image + WB_HUD_METER_VALUE) != be16(image + WB_HUD_METER_MAX))
         return;
-    bcd_add_score_bd70(image, WB_BG_BANNER_BONUS);
+    /* Entry X = 0 by construction. The banner walk's last X-writer is `lsl.w #5,d0` at $e154 over a
+     * register the `moveq #0,d0 / move.b (a6)+,d0 / subi.b #$20,d0` above it holds to $0000..$00ff,
+     * so no shift of five can carry a 1 out of the word. The glyph plotter under it never writes X
+     * (`move.b`, `lea`, `dbf`, `move.w An,Dn`, `btst`), and neither does the `cmp.w` here. */
+    bcd_add_score_bd70(image, WB_BG_BANNER_BONUS, WB_BCD_ENTRY_EXTEND_CLEAR);
     bg_plot_banner(image, WB_BG_BANNER_PERFECT);
 }
 

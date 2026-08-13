@@ -51,7 +51,10 @@ prologues run straight into it, and the two mark bits of 30(a0) are answered) �
 COLLECTABLES with the payout cluster they spend through (`actor_behavior_type28/30/31` plus
 `hud_award_gold_from_descriptor`, `bcd_add_random_1_to_4` and `text_write_gold_digits_a2ac`, 506
 bytes, batch 33 phase A: the first code here that reads the game's SECOND hardware entropy source,
-and the batch that established what the gold counter is) —
+and the batch that established what the gold counter is; phase B then CLOSED the batch by carrying
+the packed-BCD extend bit through the two chains and the one shift that produce one, verifying no
+new function but making THREE already-counted ones faithful — including `actor_defeat_and_score`,
+where the independent gate found a live divergence a refusal in the battery had been hiding) —
 26,512 bytes in all, 59.9 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
@@ -64,12 +67,16 @@ left this leading count at 161 while its own section and parenthetical said 163 
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
-`make test`: **4451 cases green in what this batch commits**, measured by `pytest --collect-only`
-rather than added up (4359 after batch 33's prerequisites, plus phase A's 92 — all in
-`test/test_behavior.py`, which stands at 846). The 92 is NET: the review gate and the independent
-gate after it added rows for the left walk arm, the signed drift cursor, the sub-mark countdown at
-both sites, the collect point, the meter's SIGNEDNESS and the live-row count, and trimmed three
-that could not fail (see the two gate paragraphs below).
+`make test`: **4466 cases green in what this batch commits**, measured by `pytest --collect-only`
+rather than added up (4359 after batch 33's prerequisites, plus phase A's 92 and phase B's 15). The
+92 is NET: the review gate and the independent gate after it added rows for the left walk arm, the
+signed drift cursor, the sub-mark countdown at both sites, the collect point, the meter's SIGNEDNESS
+and the live-row count, and trimmed three that could not fail (see the two gate paragraphs below).
+Phase B's 15 are the extend chain's, and split three ways: SIX in `test/test_behavior.py` (which
+stands at 852) — two more rows on slot 28's payout, one more award row, three premise guards; SEVEN
+in `test/test_hud.py` (555) — the six model-only `sbcd` rows and their guard; and TWO NET in
+`test/test_actor.py` (990) — the gate's two bit-14 rows and their guard, less the refusal-era guard
+whose premise the fix made false.
 `make test` at batch 33's prerequisites: **4359 cases** (4344 after batch 32, plus batch 33's first
 5 — all in `test/test_behavior.py`, which stood at 754 — plus 6 in `test/test_rng.py` from the kit
 extension below, which stands at 109, plus 4 in `test/test_actor.py`, the declared counter's two
@@ -945,14 +952,19 @@ Five things a later reader should not have to re-derive:
   `$8xxx`/`$cxxx` line in the checked-out listing is still the old wrong one: regenerate before
   reading a plate out of that band (queued in the batch-33 section). `../names.txt` records the trap
   on `$b562`.
-* **The BCD routines' entry X flag is live input and is NOT pinned beyond X = 0.** `abcd` folds in
-  the extend bit and nothing between the entry and the first one touches it. X = 0 is now the
-  oracle's guaranteed entry condition (see "The oracle defect..." above) and one case holds the port
-  to it — 0 + 0 comes out 1 if the port assumes otherwise — but the GAME reaches `$b5a2` with X = 1:
-  `$e058` does `subq.w #1,hud_meter_value`, which sets X when the meter was already zero, and
-  `$e064` calls it two instructions later. So a meter at zero scores one extra unit, and neither
-  `emu.run` nor this battery can express that. Honestly unpinned, and the first reconstruction in
-  this workspace whose entry condition is a CONDITION CODE rather than a register.
+* **The BCD routines' entry X flag is live input — CARRIED since batch 33 phase B, and what is left
+  unpinned is now narrow and named.** `abcd` folds in the extend bit and nothing between the entry
+  and the first one touches it. The four accumulators take that bit as an argument and return the
+  one they leave, so: the two ported CHAINS drive a run-produced X = 1 end to end
+  (`$4e5a`→`$4e64`, `$5184`→`$5188`); `$6c26` threads the bit `lsl.w #2,d2` leaves and both answers
+  are ordinary differential rows; and the `sbcd` half is pinned against the decimal model in both
+  directions, borrow in and borrow out. TWO things remain, both stated at their sites: a run
+  ENTERED with X set, which `emu.run` cannot express — the game does it at `$e064`, where `$e058`'s
+  `subq.w #1,hud_meter_value` sets X on a meter already at zero so it scores one extra unit, and
+  that call site is not ported — and the SHOP's subtract, whose entry X is its caller's and whose
+  caller sets it on the frame `frame_tick_b39a` wraps (the open row in the phase-B section). Still
+  the first reconstruction in this workspace whose entry condition is a CONDITION CODE rather than a
+  register. See "Batch 33 phase B" for the whole of it.
 * **`hud_meter_add_clamped` is the general form of the two effect handlers and not the same
   comparison.** `$b6fe` does `add.w d0,$b6fa` — a read-modify-write on MEMORY, so the raised value
   is stored before anything is tested — and its `ble` clamps where `$10296`'s `bgt` still stores.
@@ -3554,7 +3566,11 @@ pins them against the sibling's `bra.w`.
 **Not pinned, honestly.**
 
 * **The generator's randomness**, above. Irreducible under a memory differential.
-* **The extend bit `$6bb8` hands the score accumulator.** `lsl.w #2,d2` leaves X holding the spawn
+* **The extend bit `$6bb8` hands the score accumulator.** **SUPERSEDED by batch 33 phase B — the
+  port threads the bit and both answers are driven; the refusal is gone and the "every shipped type
+  has bit 14 clear" reading was uncheckable (the template table has no shipped bytes). Also note
+  this entry conflated `$6bb8` with `$e064`: only the latter is a run ENTERED with X set, which is
+  the limitation that survives.** As written at batch 22: `lsl.w #2,d2` leaves X holding the spawn
   type's **bit 14**, and `bcd_add_score_bd70`'s first `abcd` folds the caller's X into the lowest
   digit pair; `src/hud.c` reproduces the X = 0 entry only, because `emu.run` has no entry-CCR
   parameter (TRAP_MODEL.md, "The entry state every run begins from"). Every shipped spawn type has
@@ -5234,8 +5250,9 @@ promote because the other two batteries that spell it hand-roll `index << 12` wh
 ### Batch 33 phase A: dispatch rows 28, 30 and 31, and the payout cluster at $517a..$5207
 
 **SIX ROUTINES, 506 BYTES, ALL CLEAN.** **Verified 231, 26,512 bytes, 59.9 % of §0k's 44,262;
-`make test` 4451** (4359 after this batch's two prerequisites; `test/test_behavior.py` stands at
-846). 26 of the table's 62 rows are live and 36 remain — a figure `PORTED_SLOT_COUNT` now holds and
+`make test` 4466** (4359 after this batch's two prerequisites, 4451 at the end of phase A, 4466
+after phase B below closes the batch; `test/test_behavior.py` stands at 852). 26 of the table's 62
+rows are live and 36 remain — a figure `PORTED_SLOT_COUNT` now holds and
 a case asserts, because it had drifted twice as prose. Every callee these six reach was already
 reconstructed, so not one of them needed a boundary — the first batch in this tier where that is
 true of the whole set.
@@ -5381,24 +5398,8 @@ What pins the PORT's own reads is the ordered read-stream comparison, and two mu
 `hw/type51ac-drops-the-mid-counter` and `order/type51ac-hw-reads-swapped` are both caught by the
 DECLARED cases.
 
-**NOT PINNED, HONESTLY — and one of them is a KNOWN DIVERGENCE, not a gap.**
-  * **THE BCD EXTEND CHAIN**, and the list of chains is exactly two — the THIRD adjacency inside
-    `$517a` (`$5188` counter then `$5196` score) is SOUND, because `text_write_gold_digits_a2ac`
-    sits between them and its last X-writer on both exits is `addi.b #$30` on a nibble masked to
-    `$0..$f`, which cannot carry out of `$30..$3f` (`ror.w`, `andi.w` and `move.b` leave X alone).
-    The port is right there by construction rather than by luck, which `include/hud.h` now
-    says. `src/hud.c` models an entry X of zero for all four accumulators, and
-    its file comment argues that from the oracle's reset SR — which is a claim about the ENTRY to a
-    run and not about what happens inside one. This batch is the first ported code that calls two
-    packed-BCD routines in a row, and there are two such chains: `$4e5a` → `$4e64` (slot 28's counter
-    then score, only a `move.l #imm,d0` between them) and `$5184` → `$5188` (`bcd_add_random_1_to_4`'s
-    own `abcd` then the counter). On both, the original folds the carry the first left into the
-    second and this port folds a zero. The seeds that would expose it are exact: a `bcd_counter_bd6e`
-    within `WB_ACTOR_TYPE28_GOLD` of `$9999` for the first, and an award whose low BCD byte plus the
-    draw passes `$99` for the second. **No case here drives either**, and both are reachable in real
-    play. Fixing it is a change to `hud.h`'s interface (an entry-X parameter on four routines, with
-    `test_hud.py`, `test_actor.py` and `test_scene.py` moving with it), which is out of this batch's
-    scope and is QUEUED below.
+**NOT PINNED, HONESTLY.** (The BCD extend chain was here too, as a KNOWN DIVERGENCE; phase B
+below FIXED it and this bullet moved with it.)
   * **SLOT 31's `cmpi`/`bset` ORDERING.** It runs the flicker mark BEFORE its contact test where
     slot 30 runs it after the drift, and no case can separate the two: a collected frame ends at
     `bclr #6,8(a0)`, so the flag byte it writes has the bit down whether the `bset` ran first or
@@ -5417,9 +5418,8 @@ DECLARED cases.
     while the frame table above them was) but not ported — batch 34's.
 
 **QUEUED — and BATCH 34 owns slots 32..37**, which is what the `$515c`/`$515d`/`$515e` plates in
-`../names.txt` already say; this line said "the rest of batch 33" and the two disagreed. What is
-left of batch 33 itself is the **BCD extend chain above** and nothing else — the `hw_seed`
-declaration `$51ac` forces is threaded, and every case that reaches it declares.
+`../names.txt` already say; this line said "the rest of batch 33" and the two disagreed. **BATCH 33
+IS CLOSED**: the one item left of it was the BCD extend chain, and phase B below carries it.
 
 **QUEUED — REGENERATE THE GHIDRA ARTIFACTS BEFORE THE NEXT NAMING PASS.** `../out/names_dump.txt`,
 `../out/hw_scan.tsv` and `../decomp.c` are gitignored generated files and all three still carry the
@@ -5435,7 +5435,7 @@ lines are still the wrong ones — regenerate it before reading any plate out of
 execute the same decimal correction rather than a second spelling of it. Its proper home is
 `tools/recreate_kit/include/machine.h`, beside `sign_ext16` and the `set_low_byte` its one outside
 caller composes it with — registered here rather than done, which is the rule `bus.h` already
-follows. And note what the export did NOT do: it shares one INSTRUCTION, and the extend chain below
+follows. And note what the export did NOT do: it shares one INSTRUCTION, and phase B's extend chain
 is untouched by it.
 
 **What the reconnaissance established about the six rows STILL to do** (read from
@@ -5451,6 +5451,130 @@ is the lesson above):
   * **Slot 33 `$5208..$5259`**: contact, `sound_request_9`, `$ffff` into `$bd30` and `$bd26`,
     `$b5a2` with `$20`, and the same flicker/countdown tail slots 30 and 31 share.
   * Slots 34..37 are unread.
+
+### Batch 33 phase B: the BCD extend chain, and what CLOSES batch 33
+
+**ONE INTERFACE CHANGE, EIGHT CALL SITES, THREE OF THEM THREADED.** No new function is verified —
+the count stays **231 / 26,512 B / 59.9 %** — and the suite moves **4451 → 4466**. What changed is
+the faithfulness of code already counted: the four packed-BCD accumulators at `$b562`/`$b582`/
+`$b5a2`/`$b5c6` no longer fold in a hard-wired zero.
+
+**THE INDEPENDENT GATE FOUND A REAL DIVERGENCE IN THE FIRST CUT OF THIS SECTION, and it is the one
+worth reading first.** `$6c26` was written up as "CLEAR, because every shipped spawn type has bit 14
+clear". Both halves were wrong. The bit is produced by `lsl.w #2,d2` INSIDE
+`actor_defeat_and_score`, so it is not the harness's entry CCR at all and an ordinary row can drive
+it; and the shipped-types reading was uncheckable, because the template table has NO shipped bytes
+(`wonderboy.h`, WB_SPAWN_TYPE: it is loaded from disk). The battery was meanwhile REFUSING a bit-14
+seed while happily seeding fabricated `$8000`/`$2000`/`$bfff` types — excluding exactly the value
+that would have shown the bug. Seeded, it is red: `bcd_score_bd70+3 ($bd73): oracle=0x01
+cand=0x00`. The refusal and the guard test built on it are gone, `$6c26` threads the bit, and
+`SCORE_EXTEND_TYPES` drives both answers as normal differential rows.
+
+**THE SHAPE, and why it is an entry PARAMETER and an exit RETURN rather than `abcd_byte`'s
+`unsigned *extend`.** Three readings decided it. (1) The exit bit has to be *observable* by a case:
+the glue factory `leaf.register_glue` hands back the C's return value as `info["ret"]`, and an
+out-parameter cannot travel that way — a pointer shape would have made the exit X invisible to the
+harness at every one of the four. (2) At the five sites that do NOT chain, an entry parameter stays
+a single expression carrying its own justification, where a pointer would force a mutable local at
+each and make "ignored the output" and "threaded the output" look alike in review. (3) `abcd_byte`'s
+pointer is right for what it is — a per-byte primitive called in a loop that needs a running
+variable — and these are whole routines whose X is an argument and a result. `bcd_add_random_1_to_4`
+is the exception: it already returns d0, so its carry-out goes through `unsigned *exit_extend`, and
+it takes no entry parameter because `addq.b #1,d1` on a byte masked to `0..3` always clears X.
+
+**THE EXIT BIT IS THE CARRY OUT OF THE TOP BYTE**, read off the bytes: the walk is
+`abcd -(a0),-(a1)` from `$bd7a`/`$bd70` downward, so the LAST pair writes `$bd6e` (or `$bd70`), the
+most significant byte — and `movem.l (a7)+,#$0300` and `rts` leave the CCR alone, so that carry is
+still in X at the call site.
+
+**EIGHT CALL SITES, EACH WITH ITS OWN READING.** The audit is `grep WB_BCD_ENTRY_EXTEND` (BOTH
+constants) and it returns **FOUR** — three PROVED-clear plus one ASSUMED-clear. The three THREADED
+sites carry no marker by construction, and are listed here by name instead. (`$5184` is in the table
+because it is part of a chain, but it is the DRAW and not an accumulator site, so it claims nothing.)
+
+| site | routine | entry X | why |
+| --- | --- | --- | --- |
+| `$4e5a` slot 28 | counter | CLEAR (proved) | the sound trigger's; not readable off these bytes, PINNED by the differential — `$0100 + 5` is `$0105` with X clear and `$0106` with it set |
+| `$4e64` slot 28 | score | **threaded** | the counter's carry-out; `move.l #$20,d0` does not touch X |
+| `$5184` payout | *the draw, not an accumulator* | — | its own `addq.b #1` clears X; it is here as the SOURCE of the next row's bit |
+| `$5188` payout | counter | **threaded** | the draw's `abcd d1,d0` is the instruction before the `bsr` |
+| `$5196` payout | score | CLEAR (proved) | `text_write_gold_digits_a2ac` runs between, and its last X-writer on BOTH exits is `addi.b #$30` on a nibble masked to `$0..$f` |
+| `$6c26` defeat | score | **threaded** | the bit `lsl.w #2,d2` pushed out of the spawn type at `$6c20`, produced INSIDE this routine — `SCORE_EXTEND_TYPES` drives it both ways |
+| `$e130` bonus | score | CLEAR (proved) | the banner walk's last X-writer is `lsl.w #5,d0` over a register the `moveq #0 / move.b / subi.b` above hold to `$0000..$00ff`, so five shifts cannot carry a 1 out of the word |
+| `$ddae`/`$de24` shop | counter (sub) | **ASSUMED clear** | see the OPEN ROW below — it is the one site claiming a bit it cannot read off its own bytes, and it spells its own constant so a grep tells the two apart |
+
+**OPEN ROW — THE SHOP'S ASSUMED-CLEAR ENTRY X (`$ddae`/`$de24`, src/scene.c).** Nothing on the path
+from `scene_run_frame`'s entry to either `jsr $b582.l` writes X: `tst`, `cmpi`, `clr`, `move`,
+`movea` and the branches leave it alone, and the one call on that path — `jsr $682.w`,
+`joy1_newly_pressed`, four instructions (`move.b $8b3.l,d0 / move.b $8cf.l,d1 / eor.b d1,d0 /
+and.b d1,d0`) — does not touch it either. So the bit is the CALLER's, and the caller was READ rather
+than left unknown: `$dbc0` has exactly one caller, `jsr $dbc0.l` at `$4be`, whose preceding
+instruction is `jsr $b346.l`; `panel_refresh_frame`'s last act before its `rts` is `bsr $b372`, and
+`select_table_21e8c_and_tick_b39a`'s last instruction before ITS `rts` is `addq.w #1,frame_tick_b39a`
+at `$b392` (both single-caller, verified by an absolute-operand and `bsr` scan). An `addq.w` sets X
+on the wrap — so the assumption is exactly quantified rather than open-ended: **it holds on 65,535
+frames out of 65,536 and fails on the frame the tick rolls `$ffff` → `$0000`, on which a purchase
+spends one extra unit of gold.** No case can drive that frame, because every run is entered with the
+CCR forced clear. Closing it needs an entry-CCR parameter on `emu.run` (kit work), not a seed.
+
+**RED THEN GREEN, which is better than a mutant because the divergence was proven live.** The two
+chain cases were written first and both went red against the unfixed C, each off by exactly one in
+exactly the byte the reading predicted: slot 28 with the counter at `$9996` gave
+`bcd_score_bd70+3 ($bd73): oracle=0x21 cand=0x20`, and the payout with an award of `$0096` (draw 4,
+so the award's own `abcd` carries) gave `bcd_counter_bd6e+1 ($bd6f): oracle=0x01 cand=0x00`. The fix
+turned both green and moved nothing else.
+
+**MUTATION SWEEP: 16 of 16 after the gate's items landed** (the first pass was 11 of 13; the two
+`sbcd` survivors are closed above, and three mutants over the newly threaded `$6c26` were added —
+drop the threading, and take the bit from bit 15 or bit 13 instead of bit 14). **The sweep also
+found a real hole in the battery.**
+`exit/add-returns-the-carry-out-of-the-LOWEST-byte` SURVIVED the first pass, because the `$9996`
+seed carries out of BOTH bytes (`$96+5` and then `$99+0+1`) and so cannot tell "the accumulator's
+carry" from "its first digit pair's". A third row closed it — a counter of `$0096`, where the low
+byte carries and the four digits do not, so a port returning the wrong bit scores one unit too many.
+Caught: all three drop-the-threading mutants (slot 28's score, the payout's counter, the defeat's
+score), the carry threaded to the wrong routine (`chain/award-score-gets-the-draw-carry`), the
+defeat's bit taken from bit 15 and from bit 13, the exit bit taken from the wrong byte and replaced
+by the entry one on BOTH `abcd` and `sbcd`, the add and the sub each ignoring their entry bit, the
+draw never reporting a carry, and all three "this site claims a SET X" mutants — including the
+shop's at 59 failures, which is what proves the sub routines read the parameter at all. Sources
+verified pristine against the snapshot after the run.
+
+**THE TWO `sbcd` SURVIVORS WERE COVERAGE HOLES, NOT EQUIVALENT MUTANTS — and they are now closed.**
+The first cut of this section called `entry/sub-ignores-the-entry-bit` and
+`exit/sub-returns-the-carry-out-of-the-LOWEST-byte` equivalent, on the grounds that no ported call
+site drives either. That confused "no site exercises it" with "no case can": `bcd_expected` is an
+INDEPENDENT decimal statement of packed BCD, and it needs no oracle and no entry SR to say what a
+borrow does. `test_hud.py` now runs the reconstruction ALONE (`leaf.run_candidate_only`) over six
+rows — borrow IN, borrow OUT, and the low byte borrowing while the accumulator does not — across
+both subtract routines, and both mutants are CAUGHT. It is a C-vs-model pin and not an oracle one,
+which the cases say plainly: it cannot catch a defect the two statements share. What remains honestly
+open is only that **no ported CALL SITE hands a subtract a 1 or reads its borrow-out** — a fact about
+the call graph (`bcd_sub_score_bd70` has no reference anywhere in the image and is dead as shipped),
+not about the battery.
+
+**WHAT STAYS UNPINNABLE, and after the gate's items it is exactly TWO things: THE KIT CANNOT SET AN
+ENTRY CCR.** `emu.run` has no entry-CCR parameter and the shim forces `SR = $2700` after its reset,
+so no case can enter one of these four routines — or anything that calls one — with X already set.
+Every DIFFERENTIAL case therefore enters with 0, and what pins a set X is a run that PRODUCED it:
+the two chains, and `$6c26`'s shift. So what is pinned is "the first pair folds in a 1 correctly
+*when the run produced that 1 itself*"; what is not is:
+  1. **a run ENTERED with X set.** The shipped site is `$e064`, where `$e058`'s
+     `subq.w #1,hud_meter_value` sets X on a meter already at zero and the score add two
+     instructions later scores an extra unit. That call site is not ported.
+  2. **the shop's ASSUMED-clear entry X**, the open row above — same cause, one frame in 65,536.
+Note what is NO LONGER on this list: the `sbcd` half's two directions, which needed no oracle at all
+(they are pinned against the decimal model), and `$6c26`, which was never an entry-CCR question.
+
+**`meter_add_expected` was NOT given an extend, and that is a reading rather than an omission**:
+`add.w d0,$b6fa` is an ADD and not an `addx`, so nothing folds in; and the X it leaves reaches no
+ported BCD call, because the one routine where the meter add and a score add meet
+(`actor_defeat_and_score`) puts `lsl.l #5,d0` at `$6c04` and `lsl.w #2,d2` at `$6c20` between them.
+`leaf.py` says so at the function.
+
+**QUEUED — `abcd_byte` to the kit — IS STILL QUEUED.** Phase B did not touch it, and the note under
+phase A still stands: it shares one INSTRUCTION, and threading the chain neither needed nor helped
+that promotion.
 
 ### The KIT EXTENSION batch 33 needed (its own changeset)
 

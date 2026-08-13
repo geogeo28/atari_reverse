@@ -17,8 +17,11 @@
  * header (with the record's own two-digit walk under one of them).
  * Names are ../names.txt's, unchanged.
  *
- * Every ADDRESS they touch is a global named in wonderboy.h, which both languages read; nothing
- * here needs a constant of its own, which is why this header carries none.
+ * Every ADDRESS they touch is a global named in wonderboy.h, which both languages read, so this
+ * header carries no address of its own. The TWO constants it does carry are not addresses: they are
+ * the entry X a call site claims, proved or assumed (`WB_BCD_ENTRY_EXTEND_*` below), which belong
+ * beside the routines that take them and to every module that calls one. They are `WB_`-prefixed
+ * and test/layout.py scrapes this header, so the batteries read them rather than restate them.
  *
  * REGISTER ARGUMENTS. Unlike the effect handlers, most of these are entered with values in
  * registers. Ghidra recovered `void FUN(void)` for all thirty, so ../names.txt carries a `proto`
@@ -60,23 +63,61 @@ uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
 
 /* $b562/$b582 — d0's low WORD is the packed-BCD amount; $b5a2/$b5c6 — d0's whole LONGWORD is.
  *
- * ALL FOUR FOLD IN AN ENTRY X OF ZERO, which src/hud.c's file comment argues from the oracle's
- * reset SR — and batch 33 narrowed that claim: a run that calls TWO of them, or reaches one behind
- * an `abcd` of its own, propagates a real X between them and this interface cannot carry it. The
- * two chains the port CANNOT carry are `bcd_add_counter_bd6e` -> `bcd_add_score_bd70` at
- * $4e5a/$4e64 and `bcd_add_random_1_to_4` -> `bcd_add_counter_bd6e` at $5184/$5188; ../STATUS.md
- * records the seeds that would expose either, and no case here drives one.
+ * ALL FOUR CARRY THE EXTEND BIT, IN AND OUT, as of batch 33 — which is the whole of this comment,
+ * because until then they folded in a hard-wired zero. `entry_extend` is the X the caller's last
+ * instruction left, which the FIRST `abcd`/`sbcd` folds into the lowest digit pair (`movem.l`,
+ * `move.<n> d0,$bd78` and `lea` all leave X alone, so it really is the call site's own). The return
+ * value is the X the LAST pair leaves, which is a carry out of the accumulator's TOP byte — four
+ * digits for the counter, eight for the score — and `movem.l (a7)+` and `rts` do not disturb it,
+ * so it is what the instruction after the `bsr` sees.
+ *
+ * TWO PORTED CHAINS THREAD IT and are pinned at caller level in test_behavior.py:
+ * `bcd_add_counter_bd6e` -> `bcd_add_score_bd70` at $4e5a/$4e64 (slot 28's collect arm; the
+ * `move.l #imm,d0` between them does not touch X), and `bcd_add_random_1_to_4` ->
+ * `bcd_add_counter_bd6e` at $5184/$5188 (the payout's own `abcd`, then the gold counter).
  *
  * THERE IS A THIRD ADJACENCY AND IT IS SOUND, which is worth stating so a later scope does not
  * treat the pair above as the whole list: $5188 (counter) and $5196 (score) inside
  * `hud_award_gold_from_descriptor` are also back to back, with `bsr $51d8` between them — and that
  * routine's LAST X-writer on both of its exit paths is `addi.b #$30` on a nibble masked to $0..$f,
  * which cannot carry out of $30..$3f. `ror.w`, `andi.w` and `move.b` leave X alone. So X really is
- * 0 at $5196 and the port is right there by construction rather than by luck. */
-void bcd_add_counter_bd6e(uint8_t *image, uint32_t addend);
-void bcd_sub_counter_bd6e(uint8_t *image, uint32_t subtrahend);
-void bcd_add_score_bd70(uint8_t *image, uint32_t addend);
-void bcd_sub_score_bd70(uint8_t *image, uint32_t subtrahend);
+ * 0 at $5196 and that site passes CLEAR by construction rather than by luck.
+ *
+ * A THIRD SITE THREADS IT WITHOUT BEING A CHAIN: `actor_defeat_and_score`'s score add at $6c26 is
+ * entered with the bit `lsl.w #2,d2` pushed out of the spawn type at $6c20 — produced INSIDE that
+ * routine, so an ordinary differential row drives it either way (test_actor.py).
+ *
+ * WHAT IS STILL UNPINNABLE, and it is the harness rather than the model: `emu.run` forces SR =
+ * $2700 after its reset and has no entry-CCR parameter, so no case can enter one of these routines,
+ * or any routine that calls one, with X already set. What that costs is listed in ../STATUS.md; the
+ * short form is a run ENTERED with X set ($e064's shape, unported) and the shop site below. */
+
+/* THE ENTRY X A CALL SITE CLAIMS, in TWO spellings, because the sites do not all rest on the same
+ * kind of evidence and one name would have hidden that. `grep -r WB_BCD_ENTRY_EXTEND ../src` is the
+ * audit and returns FOUR CALL SITES — three proved, one assumed. The three THREADED sites carry no
+ * marker at all, by construction, and are named above.
+ *
+ * PROVED (three): $5196 and $e130 by a reading of the bytes — see each call — and $4e5a by the
+ * DIFFERENTIAL, whose seed is sensitive to the bit ($0100 + 5 is $0105 with X clear and $0106 with
+ * it set), which is evidence of a different kind but not a weaker one.
+ *
+ * ASSUMED (one): the shop's subtract at $ddae/$de24, src/scene.c. Nothing on the path from
+ * `scene_run_frame`'s entry writes X, so the bit is the CALLER's — and the caller is the
+ * `jsr $dbc0.l` at $4be, whose preceding instruction is `jsr $b346.l`, whose last act before its
+ * `rts` is `bsr $b372` -> `addq.w #1,frame_tick_b39a` at $b392 (both single-caller). An `addq.w`
+ * leaves X SET when the word wraps, so the assumption is not open-ended but exactly quantified: it
+ * holds on 65535 frames out of 65536 and fails on the one where the frame tick rolls $ffff -> $0000,
+ * on which a purchase spends one extra unit of gold. No case can drive that frame, because every
+ * run is entered with the CCR forced clear. ../STATUS.md tracks it as an OPEN row.
+ *
+ * Both constants are 0. The value is not the point — which claim a site is making is. */
+#define WB_BCD_ENTRY_EXTEND_CLEAR          0u
+#define WB_BCD_ENTRY_EXTEND_ASSUMED_CLEAR  0u
+
+unsigned bcd_add_counter_bd6e(uint8_t *image, uint32_t addend, unsigned entry_extend);
+unsigned bcd_sub_counter_bd6e(uint8_t *image, uint32_t subtrahend, unsigned entry_extend);
+unsigned bcd_add_score_bd70(uint8_t *image, uint32_t addend, unsigned entry_extend);
+unsigned bcd_sub_score_bd70(uint8_t *image, uint32_t subtrahend, unsigned entry_extend);
 
 /* $b6c2 — a1 = the cursor into the cell-offset table, a2 = the cell's 32 bytes. Returns the
  * ADVANCED cursor, which is the one register its caller reads back (see src/hud.c). */

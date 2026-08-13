@@ -21,16 +21,20 @@
  *
  * FOUR THINGS THE DIFFERENTIAL CANNOT SEE, all registered in ../recreate/STATUS.md:
  *
- *   * THE X FLAG THE FOUR BCD ROUTINES ARE ENTERED WITH. `abcd`/`sbcd` add in the 68000's extend
- *     bit, and the two instructions before the first one (`move.w d0,$bd78` and `lea`) leave X
- *     alone — so the first digit pair inherits the CALLER's X. The kit's oracle FORCES SR = $2700
- *     after its reset (a 68000 reset leaves the condition codes alone, so without the force a run
- *     would inherit the previous one's), and `emu.run` has no way to set the entry CCR — so X = 0 is
- *     the only entry condition any case can produce and the only one reproduced below. It is not
- *     always 0 in the game: at $e058 `subq.w #1,hud_meter_value` sets X when the meter was already
- *     zero, and $e064 calls bcd_add_score_bd70 two instructions later, so a meter at zero scores one
- *     extra unit. Pinned as far as it goes — a case adding 0 to 0 reddens if the port assumes
- *     X = 1 — and honestly unpinned beyond that.
+ *   * THE X FLAG THE FOUR BCD ROUTINES ARE ENTERED WITH — narrowed by batch 33 to the LEAF entry
+ *     alone, because the routines now take that bit as an argument and hand back the one they
+ *     leave (hud.h). `abcd`/`sbcd` add in the 68000's extend bit, and the two instructions before
+ *     the first one (`move.w d0,$bd78` and `lea`) leave X alone — so the first digit pair inherits
+ *     the CALLER's X. The kit's oracle FORCES SR = $2700 after its reset (a 68000 reset leaves the
+ *     condition codes alone, so without the force a run would inherit the previous one's), and
+ *     `emu.run` has no way to set the entry CCR — so X = 0 is the only entry condition any case can
+ *     enter a RUN with. What that no longer costs is the two ported chains: a run entering
+ *     `actor_behavior_type28` or `hud_award_gold_from_descriptor` with X = 0 still reaches the
+ *     second accumulator with a 1 in it, and test_behavior.py drives both. What it still costs is
+ *     a case that enters one of these four routines DIRECTLY with X set — that entry state has no
+ *     surface at all, and it is reachable in play: at $e058 `subq.w #1,hud_meter_value` sets X when
+ *     the meter was already zero, and $e064 calls bcd_add_score_bd70 two instructions later, so a
+ *     meter at zero scores one extra unit. That call site is not ported.
  *   * THE REGISTERS THE BLITS LEAVE BEHIND. Each advances its source and destination past the last
  *     byte it moved; only `hud_blit_meter_cell`'s cursor is read back by a caller ($b61e divides
  *     the distance it travelled by 2 to count the cells it drew), so only that one is returned.
@@ -183,47 +187,44 @@ static uint8_t sbcd_byte(uint8_t subtrahend, uint8_t accumulator, unsigned *exte
     return (uint8_t)result;
 }
 
-/* The extend bit the FIRST digit pair folds in. Zero is what the oracle's reset SR gives and all a
- * case can produce; the file comment above says why that is a claim about the harness rather than
- * about the game. */
-#define BCD_ENTRY_EXTEND 0u
-
 /* All four routines are the same walk: `abcd -(a0),-(a1)` pairs stepping DOWN from the byte past
- * the addend and the byte past the accumulator, so index `i` reads the same offset into both. */
-static void bcd_add(uint8_t *image, uint32_t accumulator, unsigned length) {
-    unsigned extend = BCD_ENTRY_EXTEND;
+ * the addend and the byte past the accumulator, so index `i` reads the same offset into both. The
+ * extend bit enters with the caller's and leaves as the carry out of the accumulator's TOP byte,
+ * which is index 0 and so the LAST iteration — see hud.h for which call sites read it back. */
+static unsigned bcd_add(uint8_t *image, uint32_t accumulator, unsigned length, unsigned extend) {
     for (unsigned i = length; i-- > 0; )
         image[accumulator + i] = abcd_byte(image[WB_BCD_ADDEND + i], image[accumulator + i],
                                            &extend);
+    return extend;
 }
 
-static void bcd_sub(uint8_t *image, uint32_t accumulator, unsigned length) {
-    unsigned extend = BCD_ENTRY_EXTEND;
+static unsigned bcd_sub(uint8_t *image, uint32_t accumulator, unsigned length, unsigned extend) {
     for (unsigned i = length; i-- > 0; )
         image[accumulator + i] = sbcd_byte(image[WB_BCD_ADDEND + i], image[accumulator + i],
                                            &extend);
+    return extend;
 }
 
 /* `move.w d0,$bd78` stages only two bytes, so the addend's high word never reaches the digits. */
-void bcd_add_counter_bd6e(uint8_t *image, uint32_t addend) {
+unsigned bcd_add_counter_bd6e(uint8_t *image, uint32_t addend, unsigned entry_extend) {
     wr16(image + WB_BCD_ADDEND, (uint16_t)addend);
-    bcd_add(image, WB_BCD_COUNTER, WB_BCD_COUNTER_LEN);
+    return bcd_add(image, WB_BCD_COUNTER, WB_BCD_COUNTER_LEN, entry_extend);
 }
 
-void bcd_sub_counter_bd6e(uint8_t *image, uint32_t subtrahend) {
+unsigned bcd_sub_counter_bd6e(uint8_t *image, uint32_t subtrahend, unsigned entry_extend) {
     wr16(image + WB_BCD_ADDEND, (uint16_t)subtrahend);
-    bcd_sub(image, WB_BCD_COUNTER, WB_BCD_COUNTER_LEN);
+    return bcd_sub(image, WB_BCD_COUNTER, WB_BCD_COUNTER_LEN, entry_extend);
 }
 
 /* ...and `move.l d0,$bd78` stages all four, for the eight-digit score. */
-void bcd_add_score_bd70(uint8_t *image, uint32_t addend) {
+unsigned bcd_add_score_bd70(uint8_t *image, uint32_t addend, unsigned entry_extend) {
     wr32(image + WB_BCD_ADDEND, addend);
-    bcd_add(image, WB_BCD_SCORE, WB_BCD_SCORE_LEN);
+    return bcd_add(image, WB_BCD_SCORE, WB_BCD_SCORE_LEN, entry_extend);
 }
 
-void bcd_sub_score_bd70(uint8_t *image, uint32_t subtrahend) {
+unsigned bcd_sub_score_bd70(uint8_t *image, uint32_t subtrahend, unsigned entry_extend) {
     wr32(image + WB_BCD_ADDEND, subtrahend);
-    bcd_sub(image, WB_BCD_SCORE, WB_BCD_SCORE_LEN);
+    return bcd_sub(image, WB_BCD_SCORE, WB_BCD_SCORE_LEN, entry_extend);
 }
 
 /* ---- $b6c2: one meter cell --------------------------------------------------------------------

@@ -652,10 +652,15 @@ void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor) {
  *
  * ...AND THAT SHIFT SETS THE X FLAG, which the very next call reads. `lsl.w #2,d2` leaves X holding
  * the type's BIT 14, and `bcd_add_score_bd70`'s first `abcd` folds the caller's X into the lowest
- * digit pair (../names.txt's cmt at $b5a2). src/hud.c reproduces the X = 0 entry only — the oracle
- * cannot be entered with X set — so this call is faithful exactly while bit 14 of the spawn type is
- * clear, which every shipped type is. ../STATUS.md registers the other half as unpinned, and
- * test/test_actor.py refuses a case that would reach it rather than letting one pass silently.
+ * digit pair (../names.txt's cmt at $b5a2). Since batch 33 phase B src/hud.c takes that bit as an
+ * ARGUMENT, and this site THREADS it: the shift runs inside this routine, so the 1 is produced by
+ * the run itself and an ordinary differential row drives it (test/test_actor.py's
+ * SCORE_EXTEND_TYPES). An earlier revision of this block claimed the port reproduced the X = 0
+ * entry only and the battery REFUSED a bit-14 seed; that refusal was hiding a real divergence —
+ * the reviewer's `spawn_type=$4000` repro was red at `bcd_score_bd70+3 ($bd73): oracle=0x01
+ * cand=0x00` — and the claim that every shipped type has bit 14 clear was uncheckable anyway,
+ * because the template table has NO shipped bytes (it is loaded from disk; see WB_SPAWN_TYPE).
+ * What stays out of reach is only a run ENTERED with X set, which is $e064's shape and unported.
  */
 /* $6c38 — the retire tail, and it has THREE entrances: the unscored type's `beq`, the kill count's
  * `ble` falling through, and the respawn continuation's `bmi` on a negative kind. One helper here
@@ -755,9 +760,17 @@ uint32_t actor_defeat_and_score(uint8_t *image, uint32_t actor) {
         (uint32_t)image[addr_add(actor, WB_ACTOR_TEMPLATE_SLOT)] << WB_ACTOR_TEMPLATE_SLOT_SHIFT));
 
     if (be16(image + addr_add(actor, WB_ACTOR_TYPE)) != WB_ACTOR_TYPE_UNSCORED) {
-        uint16_t index = (uint16_t)(be16(image + addr_add(template_record, WB_SPAWN_TYPE))
-                                    << WB_SPAWN_SCORE_SHIFT);
-        bcd_add_score_bd70(image, be32(image + addr_add(WB_SPAWN_SCORE_TABLE, index)));
+        uint16_t spawn_type = be16(image + addr_add(template_record, WB_SPAWN_TYPE));
+        uint16_t index = (uint16_t)(spawn_type << WB_SPAWN_SCORE_SHIFT);
+        /* THE ENTRY X IS PRODUCED BY THIS RUN, so it is threaded rather than claimed: `lsl.w #2,d2`
+         * at $6c20 pushes bits 15 and 14 out of the word and the LAST one out —
+         * WB_SPAWN_SCORE_EXTEND_BIT — is what stays in X, and the `move.l 0(a2,d2.w),d0` between
+         * that shift and the `bsr` leaves X alone. So a type with bit 14 set pays one extra unit,
+         * which test_actor.py drives as an ordinary differential row. */
+        unsigned score_entry_extend = (spawn_type >> WB_SPAWN_SCORE_EXTEND_BIT) & 1u;
+
+        bcd_add_score_bd70(image, be32(image + addr_add(WB_SPAWN_SCORE_TABLE, index)),
+                           score_entry_extend);
 
         uint32_t kill_count = addr_add(template_record, WB_SPAWN_KILL_COUNT);
         uint16_t kills = (uint16_t)(be16(image + kill_count) + 1);

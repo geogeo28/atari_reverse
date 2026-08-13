@@ -355,8 +355,14 @@ void hud_award_gold_from_descriptor(uint8_t *image);
  * `($ff8209 + $ff8207 + WB_ACTOR_FOLLOWED_DEFAULT's two bytes) & WB_BCD_RANDOM_MASK, plus one`, so
  * its only machine entropy is the shifter's video-address counter — a DECLARED hardware pair since
  * batch 33, read once each, in that order. `entry_d0` is the caller's whole d0 and only its low
- * BYTE is written. Two `bsr` callers, $5184 and $544c. */
-uint32_t bcd_add_random_1_to_4(const uint8_t *image, uint32_t entry_d0);
+ * BYTE is written. Two `bsr` callers, $5184 and $544c.
+ *
+ * `exit_extend` is the SECOND output and the reason this routine has one: the `abcd` at $51d4 is
+ * the last instruction before the `rts`, so the carry it leaves is still in X when $5188's counter
+ * add folds it into the gold counter's lowest digit (include/hud.h's chain). The bit this routine
+ * folds IN is its own — `addq.b #1,d1` on a byte masked to 0..3 always clears X — which is why
+ * there is no entry parameter to match. */
+uint32_t bcd_add_random_1_to_4(const uint8_t *image, uint32_t entry_d0, unsigned *exit_extend);
 
 /* $51d8 — 48 bytes. The packed-BCD BYTE in `entry_d0` drawn as the two characters at
  * WB_TEXT_GOLD_DIGITS, tens first: a zero tens digit is blanked to WB_TEXT_DIGIT_BLANK rather than

@@ -992,6 +992,11 @@
                                                * name any longword in the 64 KiB above the table */
 #define WB_SPAWN_SCORE_LEN           4u
 #define WB_SPAWN_SCORE_SHIFT         2u       /* `lsl.w #2,d2` == log2(WB_SPAWN_SCORE_LEN) */
+#define WB_SPAWN_SCORE_EXTEND_BIT    14u      /* == 16 - WB_SPAWN_SCORE_SHIFT: the LAST bit that
+                                               * `lsl.w #2,d2` pushes out of the WORD, and so the X
+                                               * it leaves. `bcd_add_score_bd70`'s first `abcd`
+                                               * folds that bit into the score's lowest digit, which
+                                               * makes a type with bit 14 set pay one extra unit */
 
 /* WHAT A RESPAWNED SLOT COMES BACK AS ($6cdc..$6d59). The continuation picks a KIND — the template's
  * own forced one, or a stage_random_kind draw when that is zero — stores it at WB_ACTOR_KIND and

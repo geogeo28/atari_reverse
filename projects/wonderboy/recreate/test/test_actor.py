@@ -3344,8 +3344,17 @@ PSG_REG_MIXER_SHADOW = SND_PSG_SHADOW + PSG_REG_MIXER
 
 
 # `lsl.w #2,d2` shifts the type twice inside the word, so the LAST bit to leave it — the one the
-# 68000 leaves in X — is bit 14. That is the entry state `bcd_add_score_bd70` cannot be given here.
-SCORE_INDEX_EXTEND_BIT = 1 << 14
+# 68000 leaves in X — is bit WB_SPAWN_SCORE_EXTEND_BIT, and `bcd_add_score_bd70`'s first `abcd`
+# folds it into the score's lowest digit. src/actor.c THREADS that bit (batch 33 phase B), so it is
+# an ordinary input here: the shift runs inside this routine, which means the 1 is produced by the
+# run and not asked of the harness's entry CCR. The shift distance is the header's, so a change
+# there moves both spellings at once.
+SCORE_INDEX_EXTEND_SHIFT = wb("SPAWN_SCORE_EXTEND_BIT")
+
+
+def _score_entry_extend(spawn_type):
+    """The X `lsl.w #2,d2` leaves for the score add — the last bit it pushed out of the word."""
+    return (spawn_type >> SCORE_INDEX_EXTEND_SHIFT) & 1
 
 
 def _scaled_spawn_type(spawn_type):
@@ -3371,14 +3380,9 @@ def _defeat_pokes(what, **overrides):
     state = {**DEFEAT_STATE, **overrides}
     salt = case_salt(f"actor_defeat_and_score {what}")
     actor = state.pop("actor", DEFEAT_ACTOR)
-    # THE REGISTERED UNPINNABLE, enforced where a case chooses its value rather than tallied after
-    # the fact: `lsl.w #2,d2` leaves X holding the spawn type's bit 14, and src/hud.c reproduces the
-    # X = 0 entry only (emu.run has no entry-CCR parameter). A case with that bit set would be red
-    # for a reason that is not the reconstruction's, so it is refused here.
-    assert not state["spawn_type"] & SCORE_INDEX_EXTEND_BIT, (
-        f"{what}: spawn type {state['spawn_type']:#06x} carries bit 14, so `lsl.w #2` enters "
-        f"bcd_add_score_bd70 with X set — an entry state the oracle cannot be given")
-
+    # (A bit-14 spawn type was REFUSED here until batch 33 phase B, on the grounds that the port
+    # could not reproduce the X the shift leaves. It can now, and the refusal was hiding a real
+    # divergence rather than protecting the battery — SCORE_EXTEND_TYPES drives both answers.)
     pokes = _state_pokes(salt, {FLAG_A32: state["a32"], METER_VALUE: state["meter"],
                                 METER_MAX: state["meter_max"]})
     pokes[BCD_SCORE] = longword(state["score"])
@@ -3501,11 +3505,13 @@ def _model_defeat(image, actor):
     template = (table + s16((image[actor + TEMPLATE_SLOT] << TEMPLATE_SLOT_SHIFT) & WORD_MASK)
                 ) & 0xffffffff
     if u16(image, actor + ACTOR_TYPE) != TYPE_UNSCORED:
-        scaled_type = _scaled_spawn_type(u16(image, template + SPAWN_TYPE))
-        addend = _u32(image, _score_table_entry(u16(image, template + SPAWN_TYPE)))
+        spawn_type = u16(image, template + SPAWN_TYPE)
+        scaled_type = _scaled_spawn_type(spawn_type)
+        addend = _u32(image, _score_table_entry(spawn_type))
         _put_long(out, BCD_ADDEND, addend)
         _put_long(out, BCD_SCORE,
-                  bcd_expected(_u32(image, BCD_SCORE), addend, BCD_SCORE_LEN, False))
+                  bcd_expected(_u32(image, BCD_SCORE), addend, BCD_SCORE_LEN, False,
+                               _score_entry_extend(spawn_type)).value)
         kills = (u16(image, template + SPAWN_KILL_COUNT) + 1) & WORD_MASK
         _put_word(out, template + SPAWN_KILL_COUNT, kills)
         # `cmpi.w #$2,6(a1) / ble` — signed, and read back out of MEMORY. The d2 the continuation
@@ -3675,17 +3681,38 @@ def test_the_wrap_sweep_lands_outside_the_tables_own_entries():
         "the wrap that lands back INSIDE the table is the one a port using a longword index misses")
 
 
-def test_no_case_reaches_the_extend_bit_the_score_accumulator_cannot_reproduce():
-    """THE ONE UNPINNED EDGE, stated as a sweep-wide fact. `lsl.w #2,d2` leaves X holding the spawn
-    type's BIT 14 and bcd_add_score_bd70's first `abcd` folds the caller's X into the lowest digit
-    pair (../names.txt's cmt at $b5a2); src/hud.c reproduces the X = 0 entry only, because emu.run
-    has no entry-CCR parameter. `_defeat_pokes` REFUSES such a case as it is seeded, so this names
-    the type lists that refusal protects rather than leaving a reader to find the assert."""
-    types = set(SCORING_TYPES) | set(SCORE_INDEX_WRAP_TYPES) | {DEFEAT_STATE["spawn_type"]}
-    reaching = sorted(t for t in types if t & SCORE_INDEX_EXTEND_BIT)
-    assert not reaching, (
-        f"spawn type(s) {[hex(t) for t in reaching]} carry bit 14, so `lsl.w #2` enters "
-        f"bcd_add_score_bd70 with X set — an entry state the oracle cannot be given")
+# The spawn types whose BIT 14 is SET, so `lsl.w #2,d2` leaves X SET and the score add pays one
+# extra unit. $4000's scaled index wraps to zero and reads the table's FIRST entry; $ffff's wraps to
+# $fffc, 64 KiB above it — so the two rows drive the extend against two different addends as well.
+# These were REFUSED by `_defeat_pokes` until batch 33 phase B, and the refusal was hiding a real
+# divergence: against the port that passed a hard-wired zero, $4000 is red at
+# `bcd_score_bd70+3 ($bd73): oracle=0x01 cand=0x00`.
+SCORE_EXTEND_TYPES = (0x4000, 0xffff)
+EXTEND_SCORE = 0x00004500       # a valid packed-BCD addend to plant where each one lands
+
+
+@pytest.mark.parametrize("spawn_type", SCORE_EXTEND_TYPES,
+                         ids=[f"type_{t:04x}" for t in SCORE_EXTEND_TYPES])
+def test_a_spawn_types_bit_14_reaches_the_score_as_the_shifts_extend_flag(spawn_type):
+    """The X `lsl.w #2,d2` leaves is an INPUT to the very next call, and these are the rows that
+    drive it set. Nothing else about the defeat changes, so the only difference from an ordinary
+    row is one unit in the score's lowest digit — which is exactly the divergence phase B closed."""
+    case = f"a spawn type of {spawn_type:#06x}, whose bit 14 enters the score add"
+    actor, pokes = _defeat_pokes(case, spawn_type=spawn_type, score_entry=EXTEND_SCORE)
+    _run_defeat(case, actor, pokes)
+
+
+def test_the_defeat_sweep_drives_both_answers_of_the_shifts_extend_bit():
+    """The guard, and the replacement for a test that asserted NO case reached bit 14 (it was named
+    for an edge the port could not reproduce, and the port reproduces it). Both answers have to be
+    driven or the threading could be dropped for a constant and stay green."""
+    clear = set(SCORING_TYPES) | set(SCORE_INDEX_WRAP_TYPES) | {DEFEAT_STATE["spawn_type"]}
+    assert not [t for t in clear if _score_entry_extend(t)], (
+        f"{[hex(t) for t in clear if _score_entry_extend(t)]} carry bit 14, so the rows that are "
+        f"meant to enter the score add with X CLEAR do not")
+    assert all(_score_entry_extend(t) for t in SCORE_EXTEND_TYPES), (
+        f"{[hex(t) for t in SCORE_EXTEND_TYPES if not _score_entry_extend(t)]} do not carry bit 14, "
+        f"so no case enters bcd_add_score_bd70 with X set")
 
 
 # --- the boss block ---------------------------------------------------------------------------------

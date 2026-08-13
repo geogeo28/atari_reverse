@@ -11,6 +11,7 @@ apart afterwards, and how it reads a value back out of the oracle's write set.
 NOT a general harness — the kit is that. This module assumes what a leaf gives it: a run short
 enough for a tight instruction cap, and a write set the caller can enumerate up front.
 """
+import collections
 import contextlib
 import ctypes
 import zlib
@@ -257,6 +258,21 @@ def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_C
         f"{what}: {len(stray)} write(s) outside {[(hex(a), n) for a, n in allowed]}, e.g. "
         f"{harness.label(stray[0])} @ {stray[0]:#x}")
     return info
+
+
+def run_candidate_only(glue, pokes):
+    """Run the RECONSTRUCTION alone on a fresh image; return (what the glue returned, the image).
+
+    NOT a differential and no substitute for one — every case that CAN be a differential must be.
+    It exists for the one property no oracle run can state: what a routine does when it is HANDED a
+    condition-code bit that `emu.run` cannot enter a run with, since the shim forces SR = $2700
+    after its reset and there is no entry-CCR parameter (include/hud.h). A case built on this owes
+    the reader an INDEPENDENT model to compare against — `bcd_expected` is that model for the
+    packed-BCD accumulators — so what it pins is C against a second statement of the arithmetic,
+    which is weaker than the oracle and stronger than nothing. Say so in the case.
+    """
+    buf = (ctypes.c_uint8 * harness.IMAGE_SIZE).from_buffer(bytearray(harness.make_image(pokes)))
+    return glue(harness._lib, buf), bytes(buf)
 
 
 @contextlib.contextmanager
@@ -1001,19 +1017,41 @@ def _decimal_to_packed(value, length):
     return int(f"{value % 10 ** (length * 2):0{length * 2}d}", 16)
 
 
-def bcd_expected(accumulated, operand, length, subtract):
+# What one accumulator leaves: the digits, and the X its LAST `abcd`/`sbcd` puts out — the carry out
+# of the accumulator's TOP byte, which is what the instruction after the `bsr` sees. Two ported call
+# chains fold that carry into a SECOND accumulator (include/hud.h), so a model of one of those
+# chains needs both halves; a case over one routine alone reads `.value` and ignores the rest.
+BcdResult = collections.namedtuple("BcdResult", "value extend")
+
+
+def bcd_expected(accumulated, operand, length, subtract, extend=0):
     """The result stated in DECIMAL — the reading "packed BCD" means — rather than as src/hud.c's
-    nibble arithmetic, so the two are independent statements. None where a nibble is not a digit."""
+    nibble arithmetic, so the two are independent statements.
+
+    ``extend`` is the X the caller's last instruction left, which the FIRST digit pair folds in.
+    Returns a `BcdResult`: the accumulator's new value and the X the LAST pair leaves, which is a
+    carry out of four (or eight) digits rather than out of a byte. Both are None where a nibble is
+    not a digit — the 68000 leaves `abcd` undefined there and this model declines to predict it.
+    """
     left = _packed_to_decimal(accumulated, length)
     right = _packed_to_decimal(operand & (2 ** (length * 8) - 1), length)
     if left is None or right is None:
-        return None
-    return _decimal_to_packed(left - right if subtract else left + right, length)
+        return BcdResult(None, None)
+    total = left - right - extend if subtract else left + right + extend
+    limit = 10 ** (length * 2)
+    return BcdResult(_decimal_to_packed(total, length), int(not 0 <= total < limit))
 
 
 def meter_add_expected(value, maximum, amount):
     """The word `hud_meter_add_clamped` leaves: a 16-bit raise, then a SIGNED compare that clamps
-    when the raise REACHES the maximum (`ble`, not `bgt` — see the effect handlers)."""
+    when the raise REACHES the maximum (`ble`, not `bgt` — see the effect handlers).
+
+    NO EXTEND, IN OR OUT, unlike `bcd_expected` above, and that is a reading of the bytes rather
+    than an omission: `add.w d0,$b6fa` is an ADD and not an `addx`, so nothing folds in; and the X
+    it leaves reaches no ported BCD call — the one place the two routines meet is
+    `actor_defeat_and_score`, where `lsl.l #5,d0` ($6c04) and `lsl.w #2,d2` ($6c20) both rewrite X
+    between the meter add and the score add.
+    """
     raised = (value + amount) & WORD_MASK
     return maximum if s16(maximum) <= s16(raised) else raised
 

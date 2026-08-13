@@ -2360,8 +2360,8 @@ void text_write_gold_digits_a2ac(uint8_t *image, uint32_t entry_d0) {
  * THE EXTEND BIT THE `abcd` FOLDS IN IS ITS OWN. `addi`/`andi` leave X alone but `addq.b #1,d1` sets
  * it, and the byte it steps is WB_BCD_RANDOM_MASK-ed to 0..3 — so the carry is always 0 and no
  * caller's X can reach the addition. What this routine LEAVES in X is a different matter: it is the
- * BCD carry out, and $517a's next call folds it in (hud.h). */
-uint32_t bcd_add_random_1_to_4(const uint8_t *image, uint32_t entry_d0) {
+ * BCD carry out, `*exit_extend` hands it back, and $517a's next call folds it in (hud.h). */
+uint32_t bcd_add_random_1_to_4(const uint8_t *image, uint32_t entry_d0, unsigned *exit_extend) {
     unsigned extend = 0;
     uint8_t draw = hw_read8(OS_HW_SHIFTER_VCOUNT_LOW);
 
@@ -2372,9 +2372,10 @@ uint32_t bcd_add_random_1_to_4(const uint8_t *image, uint32_t entry_d0) {
 
     /* `abcd d1,d0` writes d0's LOW BYTE and nothing above it, so both of the caller's other halves
      * come back — the low word's high byte as well as the register's own. */
-    return set_low_word(entry_d0,
-                        set_low_byte((uint16_t)entry_d0,
-                                     abcd_byte(draw, (uint8_t)entry_d0, &extend)));
+    uint8_t sum = abcd_byte(draw, (uint8_t)entry_d0, &extend);
+
+    *exit_extend = extend;
+    return set_low_word(entry_d0, set_low_byte((uint16_t)entry_d0, sum));
 }
 
 /* $517a — the payout itself. The award is a WORD out of the scene descriptor and every consumer
@@ -2384,11 +2385,18 @@ uint32_t bcd_add_random_1_to_4(const uint8_t *image, uint32_t entry_d0) {
 void hud_award_gold_from_descriptor(uint8_t *image) {
     uint32_t descriptor = be32(image + WB_RECORD_PTR_10424);
     uint32_t award = bus_read_word(image, addr_add(descriptor, WB_SCENE_GOLD_AWARD));
+    unsigned draw_carry;
 
-    award = bcd_add_random_1_to_4(image, award);
-    bcd_add_counter_bd6e(image, award);
+    /* THE CHAIN, $5184 -> $5188: the draw's `abcd d1,d0` is the instruction before the `bsr`, so
+     * its carry is the counter's entry X. */
+    award = bcd_add_random_1_to_4(image, award, &draw_carry);
+    bcd_add_counter_bd6e(image, award, draw_carry);
     text_write_gold_digits_a2ac(image, award);
-    bcd_add_score_bd70(image, WB_ACTOR_COLLECT_SCORE);
+    /* ...and NOT a chain at $5196: the digits above are the last thing to write X, and on both of
+     * their exits that is `addi.b #$30` on a nibble masked to $0..$f, which cannot carry out of
+     * $30..$3f. The counter's own carry-out is dead here — $b562's `rts` is followed by the `bsr`
+     * to those digits, not by the score add. */
+    bcd_add_score_bd70(image, WB_ACTOR_COLLECT_SCORE, WB_BCD_ENTRY_EXTEND_CLEAR);
 
     /* The id-and-lifetime pair, inline for src/actor.c's stated reason rather than shared: making
      * it one symbol across three modules would export a function to save one `wr16`, and the three
@@ -2488,9 +2496,9 @@ static void type28_walk_and_turn(uint8_t *image, uint32_t actor) {
  * slot. That is what gives an uncollected record WB_ACTOR_TYPE28_FIELD_12_RELOAD flickering frames.
  *
  * THE TWO ACCUMULATORS RUN BACK TO BACK, `bsr $b562` then `bsr $b5a2` with only a `move.l #imm,d0`
- * between them — so the score's first `abcd` folds in the carry the counter's last one left. This
- * port cannot carry that (hud.h), and no case below drives a counter within
- * WB_ACTOR_TYPE28_GOLD of overflowing four digits; ../STATUS.md records the seed that would. */
+ * between them — so the score's first `abcd` folds in the carry the counter's last one left. The
+ * port CARRIES that (hud.h), and test_behavior.py drives a counter within WB_ACTOR_TYPE28_GOLD of
+ * overflowing four digits, which is the seed that separates it from a folded-in zero. */
 uint32_t actor_behavior_type28(uint8_t *image, uint32_t actor) {
     uint8_t left;
     int was_flickering;
@@ -2499,8 +2507,12 @@ uint32_t actor_behavior_type28(uint8_t *image, uint32_t actor) {
         && !flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT)) {
         sound_request_9(image);
         set_field_w(image, actor, WB_ACTOR_X, WB_ACTOR_FREE_MARKER);
-        bcd_add_counter_bd6e(image, WB_ACTOR_TYPE28_GOLD);
-        bcd_add_score_bd70(image, WB_ACTOR_COLLECT_SCORE);
+        /* THE CHAIN, $4e5a -> $4e64. The counter's own entry X is the sound trigger's, which is not
+         * readable off these bytes — it is pinned by the differential instead (test_behavior.py).
+         * Its carry-out is the score's entry X: `move.l #$20,d0` at $4e5e does not touch X. */
+        unsigned gold_carry = bcd_add_counter_bd6e(image, WB_ACTOR_TYPE28_GOLD,
+                                                   WB_BCD_ENTRY_EXTEND_CLEAR);
+        bcd_add_score_bd70(image, WB_ACTOR_COLLECT_SCORE, gold_carry);
         return WB_ACTOR_DISPATCH_RAN;
     }
 

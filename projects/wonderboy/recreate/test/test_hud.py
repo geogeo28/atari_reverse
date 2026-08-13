@@ -33,13 +33,16 @@ These are not the effect handlers' shape, and three things follow from that:
     src/hud.c's nibble arithmetic rather than a copy of it.
 
 KNOWINGLY NOT PINNED
-  * THE X FLAG THE BCD ROUTINES ARE ENTERED WITH. `abcd`/`sbcd` fold in the 68000 extend bit, and
-    the caller's X reaches the first digit pair (src/hud.c has the argument). The oracle FORCES the
-    entry SR to `$2700` after its reset — a 68000 reset does not clear the condition codes, so
-    without the force a run would inherit the previous one's — and `emu.run` has no entry-CCR
-    parameter, so X = 0 is the only entry condition expressible here and
-    `test_a_bcd_add_of_zero_pins_the_entry_extend_bit` is the whole of what these cases hold. The
-    game does reach them with X = 1.
+  * THE X FLAG THE BCD ROUTINES ARE ENTERED WITH, and since batch 33 that is a statement about
+    THIS BATTERY rather than about the reconstruction: the four routines take the entry bit as an
+    argument and return the one they leave (include/hud.h), and the two ported chains that carry a
+    real X between two of them are pinned in test_behavior.py. What cannot be expressed HERE is a
+    run ENTERED with X set — the oracle FORCES the entry SR to `$2700` after its reset (a 68000
+    reset does not clear the condition codes, so without the force a run would inherit the previous
+    one's) and `emu.run` has no entry-CCR parameter. So every case below drives
+    `BCD_ENTRY_EXTEND` = 0, `test_a_bcd_add_of_zero_pins_the_entry_extend_bit` is what holds that
+    one entry condition, and the game's own X = 1 entries reach these routines only through callers
+    this file does not run.
   * `hud_meter_add_clamped`'s comparison STRICTNESS, for the reason batch 1 registered the effect
     handlers': at a raise landing exactly on the maximum both arms store the same word, so `<=` and
     `<` are indistinguishable from outside. What the sweep pins is the comparison's POSITION.
@@ -1233,7 +1236,11 @@ _meter_add = leaf.register_glue("hud_meter_add_clamped", [ctypes.c_uint32])
 _meter_cell = leaf.register_glue("hud_blit_meter_cell", [ctypes.c_uint32] * 2, ctypes.c_uint32)
 _cell_blit = {name: leaf.register_glue(name, [ctypes.c_uint32] * 2)
               for name in ("hud_blit_cell_copy", "hud_blit_cell_or")}
-_bcd = {name: leaf.register_glue(name, [ctypes.c_uint32])
+# The four accumulators take the entry X as well as d0, and hand back the one they leave — an
+# ordinary `unsigned` in both directions rather than a register, so `register_glue` carries it like
+# any other argument. Every case here passes BCD_ENTRY_EXTEND; the returned bit has no oracle-side
+# counterpart (emu.REPORTED_REGS is d0..d7/a0..a6 and carries no CCR) and is pinned at caller level.
+_bcd = {name: leaf.register_glue(name, [ctypes.c_uint32, ctypes.c_uint], ctypes.c_uint)
         for name in ("bcd_add_counter_bd6e", "bcd_sub_counter_bd6e",
                      "bcd_add_score_bd70", "bcd_sub_score_bd70")}
 
@@ -1384,6 +1391,15 @@ def test_the_record_bitmap_reads_only_the_byte_a0_points_at(entry_d0, record):
 # ROUTINES and every case over them; what moved is the statement of the arithmetic.
 
 
+# THE ENTRY X EVERY DIFFERENTIAL CASE BELOW DRIVES, and the only one it can: the oracle's shim
+# forces SR = $2700 after its reset and `emu.run` has no entry-CCR parameter, so X is 0 on entry to
+# every run here. The reconstruction takes that bit as an ARGUMENT since batch 33, and these cases
+# hand it the same 0 the oracle is entered with — handing the C a 1 would compare it against an
+# oracle run that folded in a 0, which is a false red rather than a new pin. The value is the C
+# header's, scraped rather than restated, so the two languages cannot disagree about which entry
+# condition "clear" is.
+BCD_ENTRY_EXTEND = wb("BCD_ENTRY_EXTEND_CLEAR")
+
 # (accumulator, operand, why this case exists). The operand is a full longword everywhere, so that
 # the WORD accumulators' `move.w d0,$bd78` always has a high half to discard.
 COUNTER_ADD_CASES = (
@@ -1439,7 +1455,7 @@ BCD_ROUTINES = (
 # case, and the battery shards across xdist workers.
 BCD_VALID_CASES = tuple(
     (name, accumulator, length, accumulated, operand,
-     bcd_expected(accumulated, operand, length, subtract), why)
+     bcd_expected(accumulated, operand, length, subtract, BCD_ENTRY_EXTEND).value, why)
     for name, accumulator, length, subtract, cases in BCD_ROUTINES
     for accumulated, operand, why in cases)
 
@@ -1451,7 +1467,8 @@ def _run_bcd(name, accumulator, length, accumulated, operand, what, expected):
              BCD_ADDEND: _filler(BCD_SCORE_LEN, 3),
              BCD_HISCORE: _filler(BCD_SCORE_LEN, 5),
              BCD_COUNTER - WORD_LEN: _filler(WORD_LEN, 7)}
-    info = leaf.run(name, _bcd[name](operand), [(BCD_ADDEND, length), (accumulator, length)], what,
+    info = leaf.run(name, _bcd[name](operand, BCD_ENTRY_EXTEND),
+                    [(BCD_ADDEND, length), (accumulator, length)], what,
                     regs={"d0": operand, "_pokes": pokes})
     assert leaf.read_int(info, BCD_ADDEND, length, what) == operand & (2 ** (length * 8) - 1), (
         f"{what}: the operand staged at {BCD_ADDEND:#x} is not d0's low {length} bytes")
@@ -1513,18 +1530,88 @@ def test_the_oracle_enters_every_run_with_the_condition_codes_clear():
 
 
 def test_a_bcd_add_of_zero_pins_the_entry_extend_bit():
-    """0 + 0 is 0 with X = 0 on entry and 1 with X = 1, so this one case is what holds src/hud.c's
-    BCD_ENTRY_EXTEND — and it holds it only for the harness's entry condition, which is the SR the
-    shim forces after its reset (a reset of its own would leave the CCR alone). The game reaches
-    these routines with X = 1 (see the module docstring)."""
+    """0 + 0 is 0 with X = 0 on entry and 1 with X = 1, so this one case is what holds the ZERO this
+    battery hands `bcd_add_counter_bd6e` — and it holds it only for the harness's entry condition,
+    which is the SR the shim forces after its reset (a reset of its own would leave the CCR alone).
+    That the routine folds a 1 in correctly when it is GIVEN one is a different fact, and
+    test_behavior.py's two chain rows are what hold it (see the module docstring)."""
     pokes = {BCD_COUNTER: b"\x00\x00", BCD_ADDEND: _filler(BCD_SCORE_LEN, 3)}
-    info = leaf.run("bcd_add_counter_bd6e", _bcd["bcd_add_counter_bd6e"](0),
+    info = leaf.run("bcd_add_counter_bd6e", _bcd["bcd_add_counter_bd6e"](0, BCD_ENTRY_EXTEND),
                     [(BCD_ADDEND, BCD_COUNTER_LEN), (BCD_COUNTER, BCD_COUNTER_LEN)],
                     "0 + 0 under the oracle's forced entry condition",
                     regs={"d0": 0, "_pokes": pokes})
     assert leaf.read_int(info, BCD_COUNTER, BCD_COUNTER_LEN, "0 + 0 on entry") == 0, (
-        "0 + 0 came out non-zero — the oracle entered with X set, which this battery and src/hud.c "
-        "both assume it does not")
+        "0 + 0 came out non-zero — the oracle entered with X set, which this battery assumes it "
+        "does not when it passes BCD_ENTRY_EXTEND")
+
+
+# --- the entry X no run can be ENTERED with, pinned against the model instead ----------------------
+#
+# `emu.run` forces the entry CCR clear, so no differential above can hand one of these four routines
+# an X of 1. Until batch 33 phase B that left two mutations of src/hud.c alive — the `sbcd` half's
+# `entry/sub-ignores-the-entry-bit` and `exit/sub-returns-the-carry-out-of-the-LOWEST-byte` — because
+# no ported call site hands a SUBTRACT a set X or reads its borrow-out, so nothing exercised either
+# direction. The rows below close that MODEL-SIDE: they run the reconstruction alone
+# (`leaf.run_candidate_only`) and compare it against `bcd_expected`, leaf.py's independent DECIMAL
+# statement of packed BCD. That is a C-vs-model pin and not an oracle one, which is worth saying
+# plainly: it cannot catch a defect the two statements share. What stays honestly open afterwards is
+# a different thing — that no ported CALL SITE drives a subtract either way — and that is a fact
+# about the call graph, which ../STATUS.md keeps rather than this battery.
+
+# (routine, accumulator, length, seed, operand, entry extend, why).
+SUB_EXTEND_CASES = (
+    ("bcd_sub_counter_bd6e", BCD_COUNTER, BCD_COUNTER_LEN, 0x0100, 0x0000, 1,
+     "the BORROW IN: a subtrahend of zero, so the entry bit is the whole of the difference"),
+    ("bcd_sub_counter_bd6e", BCD_COUNTER, BCD_COUNTER_LEN, 0x0000, 0x0001, 0,
+     "the BORROW OUT: four digits wrap, and the routine has to hand that back"),
+    ("bcd_sub_counter_bd6e", BCD_COUNTER, BCD_COUNTER_LEN, 0x0100, 0x0001, 0,
+     "the LOW BYTE alone borrows and the four digits do not — the row that separates the "
+     "accumulator's borrow from its first digit pair's"),
+    ("bcd_sub_score_bd70", BCD_SCORE, BCD_SCORE_LEN, 0x00001000, 0x00000000, 1,
+     "the borrow in, eight digits wide"),
+    ("bcd_sub_score_bd70", BCD_SCORE, BCD_SCORE_LEN, 0x00000000, 0x00000001, 0,
+     "the borrow out of all eight"),
+    ("bcd_sub_score_bd70", BCD_SCORE, BCD_SCORE_LEN, 0x00000100, 0x00000001, 0,
+     "the low byte alone again, three bytes further from the top"),
+)
+
+
+def _run_bcd_candidate(name, accumulator, length, accumulated, operand, extend):
+    """The reconstruction alone: (the accumulator it leaves, the extend it returns)."""
+    exit_extend, image = leaf.run_candidate_only(
+        _bcd[name](operand, extend),
+        {accumulator: accumulated.to_bytes(length, "big"), BCD_ADDEND: _filler(BCD_SCORE_LEN, 3)})
+    return int.from_bytes(image[accumulator:accumulator + length], "big"), exit_extend
+
+
+@pytest.mark.parametrize("name,accumulator,length,accumulated,operand,extend,why",
+                         SUB_EXTEND_CASES,
+                         ids=[f"{c[0]}_{c[3]:0{c[2] * 2}x}_x{c[5]}" for c in SUB_EXTEND_CASES])
+def test_a_subtracts_borrow_is_folded_in_and_handed_back(name, accumulator, length, accumulated,
+                                                         operand, extend, why):
+    """`sbcd` folds the entry X into the lowest digit pair and leaves the borrow out of the TOP byte,
+    exactly as `abcd` does with a carry — and both halves are the reconstruction's interface, so both
+    are stated here even though no ported caller spends either yet."""
+    what = f"{name} {accumulated:#x} - {operand:#x} with X = {extend} ({why})"
+    model = bcd_expected(accumulated, operand, length, True, extend)
+    ended, exit_extend = _run_bcd_candidate(name, accumulator, length, accumulated, operand, extend)
+
+    assert ended == model.value, (
+        f"{what}: the reconstruction left {ended:#x}, not the {model.value:#x} the decimal model "
+        f"gives")
+    assert exit_extend == model.extend, (
+        f"{what}: it returned an extend of {exit_extend}, not the {model.extend} the model gives — "
+        f"the bit a call site would fold into the NEXT accumulator")
+
+
+def test_the_subtract_sweep_drives_both_answers_of_the_borrow_in_and_of_the_borrow_out():
+    """The guard: rows that all borrowed, or all did not, would pass a routine that ignored the bit
+    in either direction — which is exactly how the two `sbcd` mutants survived phase B's first
+    sweep."""
+    entries = [(extend, bcd_expected(seed, operand, length, True, extend).extend)
+               for _name, _at, length, seed, operand, extend, _why in SUB_EXTEND_CASES]
+    assert {e for e, _x in entries} == {0, 1}, "no row folds a borrow IN"
+    assert {x for _e, x in entries} == {0, 1}, "no row borrows OUT, or every row does"
 
 
 # --- $b6c2: one meter cell -----------------------------------------------------------------------

@@ -10,8 +10,9 @@ blitters' geometry, which is theirs alone; ``include/effects.h`` carries the one
 is a module's own rather than the image's; ``include/scene.h`` carries the three EXIT CODES the
 scene tier returns in place of the transfers it declines to follow, ``include/actor.h`` the two
 `actor_defeat_and_score` returns for the same reason, and ``include/behavior.h`` the two
-`actor_dispatch_behavior` returns that stand in for a dispatch this port cannot follow — all C-only.
-All six are scraped into ONE namespace — every name is
+`actor_dispatch_behavior` returns that stand in for a dispatch this port cannot follow, and
+``include/hud.h`` the two entry-X claims a packed-BCD call site can make — all C-only.
+All seven are scraped into ONE namespace — every name is
 already prefixed (WB_BLIT_*), and a name defined in two of them is raised on rather than resolved,
 for the same reason a name defined twice in one header is. That shared namespace is what lets a
 case PIN two headers' spellings of the same byte against each other (test_effects.py's
@@ -24,7 +25,7 @@ from pathlib import Path
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
 _HEADER = _INCLUDE / "wonderboy.h"
 _HEADERS = (_HEADER, _INCLUDE / "blit.h", _INCLUDE / "effects.h", _INCLUDE / "scene.h",
-            _INCLUDE / "actor.h", _INCLUDE / "behavior.h")
+            _INCLUDE / "actor.h", _INCLUDE / "behavior.h", _INCLUDE / "hud.h")
 
 # `#define WB_NAME 0x1234u` / `#define WB_NAME 3u` — a plain integer literal and nothing else. The
 # trailing lookahead makes the literal the WHOLE definition, so a compound expression is skipped
