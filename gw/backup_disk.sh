@@ -8,22 +8,14 @@
 
 set -euo pipefail
 
-readonly GW_BIN="/Users/geogeo/miniconda3/envs/atari_reverse/bin/gw"
-readonly HXCFE_BIN="/Users/geogeo/opt/hxcfe_cmdline/App/hxcfe"
-readonly HXCFE_LIB_DIR="/Users/geogeo/opt/hxcfe_cmdline/Frameworks"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+# shellcheck source=gw_lib.sh
+source "$SCRIPT_DIR/gw_lib.sh"
 
-readonly HXCFE_STX_MODULE="ATARIST_STX"
 # Pasti/STX files begin with "RSY\0"; hxcfe can exit 0 after a soft failure, so the
 # magic is checked as well as the exit status.
 readonly STX_MAGIC="RSY"
-# hxcfe also exits 0 when it converts *nothing*: it writes a valid-looking header and
-# logs one "not allocated" line per track side. A real conversion logs a track
-# generation line per track, so that count - not the exit status - decides success.
-readonly HXCFE_TRACK_MARKER='Revolution [0-9]* track generation'
-readonly HXCFE_UNALLOCATED_MARKER='not allocated'
-
-readonly DEFAULT_FORMAT="atarist.720"
-readonly DEFAULT_DRIVE="A"
 
 # 5 revolutions is the preservation-community standard: enough passes to out-vote
 # a bad read on any one revolution without an unreasonably long spin.
@@ -35,8 +27,6 @@ readonly RESCUE_REVS=8
 readonly RESCUE_RETRIES=8
 readonly RESCUE_SEEK_RETRIES=3
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly SCRIPT_DIR
 readonly DUMPS_ROOT="$SCRIPT_DIR/dumps"
 
 disk_name=""
@@ -53,13 +43,7 @@ protected=0
 force=0
 preflight_only=0
 convert_only=""
-log_file=""
 verify_result="not run"
-
-die() {
-    echo "ERROR: $*" >&2
-    exit 1
-}
 
 usage() {
     cat <<EOF
@@ -83,20 +67,6 @@ Options:
   --convert-only F  convert an existing .scp to .stx and exit (no hardware needed)
   -h, --help        this help
 EOF
-}
-
-# Values are taken positionally, so a forgotten value would silently swallow the next
-# flag (--revs --protected). Both checks reject that instead of acting on nonsense.
-require_value() {
-    local flag="$1" value="${2-}"
-    case "$value" in
-        ""|-*) die "$flag needs a value (got '${value}')" ;;
-    esac
-}
-
-require_uint() {
-    local flag="$1" value="${2-}"
-    [[ "$value" =~ ^[0-9]+$ ]] || die "$flag needs a non-negative integer (got '${value}')"
 }
 
 parse_args() {
@@ -144,73 +114,6 @@ parse_args() {
     fi
 }
 
-# Log to the dump directory when there is one; --convert-only self-tests have none.
-log() {
-    if [ -n "$log_file" ]; then
-        # A failing tee must not abort an otherwise successful backup.
-        echo "$*" | tee -a "$log_file" || true
-    else
-        echo "$*"
-    fi
-}
-
-# Runs a command with its output shown live and appended to the log, returning the
-# command's own exit status rather than tee's.
-run_logged() {
-    local status
-    if [ -n "$log_file" ]; then
-        "$@" 2>&1 | tee -a "$log_file"
-        status=${PIPESTATUS[0]}
-    else
-        "$@" 2>&1
-        status=$?
-    fi
-    return "$status"
-}
-
-hxcfe() {
-    DYLD_LIBRARY_PATH="$HXCFE_LIB_DIR" "$HXCFE_BIN" "$@"
-}
-
-check_tools() {
-    [ -x "$GW_BIN" ] || die "Greaseweazle host tool not found or not executable: $GW_BIN"
-    [ -x "$HXCFE_BIN" ] || die "hxcfe not found or not executable: $HXCFE_BIN"
-    [ -d "$HXCFE_LIB_DIR" ] || die "hxcfe library directory missing: $HXCFE_LIB_DIR"
-
-    # Proves hxcfe actually loads its shared libraries and carries the STX writer,
-    # which a bare existence check would not.
-    hxcfe -modulelist 2>/dev/null | grep -q "^${HXCFE_STX_MODULE};" \
-        || die "hxcfe runs but has no $HXCFE_STX_MODULE module (check DYLD_LIBRARY_PATH=$HXCFE_LIB_DIR)"
-}
-
-check_device() {
-    local info
-    local -a cmd=("$GW_BIN" info)
-    if [ -n "$device" ]; then
-        cmd+=(--device "$device")
-    fi
-    info="$("${cmd[@]}" 2>&1)" \
-        || die "'gw info' failed - is the Greaseweazle plugged in?"$'\n'"$info"
-    grep -q "Model:" <<<"$info" \
-        || die "'gw info' did not report a device - check the USB cable/port."$'\n'"$info"
-    echo "$info"
-}
-
-# Echoes the device info so the caller can log it once a log file exists.
-preflight() {
-    check_tools
-    check_device
-}
-
-log_preflight() {
-    local info="$1"
-    log "--- Preflight ---"
-    log "$info"
-    log "gw:    $GW_BIN"
-    log "hxcfe: $HXCFE_BIN"
-    log ""
-}
-
 read_flux() {
     local scp="$1"
     local -a cmd=("$GW_BIN" read --raw --revs "$revs" --drive "$drive")
@@ -236,31 +139,13 @@ read_flux() {
 }
 
 convert_scp_to_stx() {
-    local scp="$1" stx="$2" output status=0
+    local scp="$1" stx="$2"
 
     log "--- Converting SCP -> STX ---"
-    output="$(hxcfe -finput:"$scp" -conv:"$HXCFE_STX_MODULE" -foutput:"$stx" 2>&1)" || status=$?
-    if [ -n "$log_file" ]; then
-        echo "$output" >>"$log_file"
-    fi
-    echo "$output"
-
-    [ "$status" -eq 0 ] || die "hxcfe failed converting $scp -> $stx"
-    [ -s "$stx" ] || die "hxcfe reported success but wrote no STX data: $stx"
+    hxcfe_convert "$scp" "$stx" "$HXCFE_STX_MODULE" 1
     [ "$(head -c ${#STX_MAGIC} "$stx")" = "$STX_MAGIC" ] \
         || die "output is not a valid STX file (missing '$STX_MAGIC' signature): $stx"
-
-    local generated unallocated
-    generated="$(grep -c "$HXCFE_TRACK_MARKER" <<<"$output" || true)"
-    unallocated="$(grep -c "$HXCFE_UNALLOCATED_MARKER" <<<"$output" || true)"
-    # Counting generated tracks rather than checking a file size keeps partial
-    # (--tracks) dumps valid while still catching a header-only STX.
-    [ "$generated" -gt 0 ] \
-        || die "hxcfe converted no tracks ($unallocated unallocated) - the SCP holds no flux data: $scp"
-    if [ "$unallocated" -gt 0 ]; then
-        log "WARNING: $unallocated track side(s) could not be converted - the STX is incomplete."
-    fi
-    log "STX written: $stx ($generated tracks converted)"
+    log "STX written: $stx ($HXCFE_TRACKS_CONVERTED tracks converted)"
 }
 
 # Decodes the gold master to a sector image. Returns non-zero when the disk does not
@@ -323,7 +208,7 @@ print_summary() {
 run_convert_only() {
     local scp="$convert_only" parent base
     [ -f "$scp" ] || die "no such file: $scp"
-    check_tools
+    check_tools "$HXCFE_STX_MODULE"
     # Strip the extension from the basename only: "%.*" on a full path would cut at a
     # dot in a parent directory and write the STX outside the dump directory.
     parent="$(dirname "$scp")"
@@ -339,7 +224,7 @@ main() {
         return
     fi
     if [ "$preflight_only" -eq 1 ]; then
-        preflight
+        preflight "$HXCFE_STX_MODULE"
         echo "Preflight OK - tools present and Greaseweazle detected."
         return
     fi
@@ -352,7 +237,7 @@ main() {
     # Checked before the directory exists: a failed preflight must not leave a dump
     # directory behind that the next attempt would refuse as "already exists".
     local device_info
-    device_info="$(preflight)"
+    device_info="$(preflight "$HXCFE_STX_MODULE")"
 
     mkdir -p "$dir"
 

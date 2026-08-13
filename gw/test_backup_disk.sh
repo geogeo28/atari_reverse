@@ -11,9 +11,10 @@ readonly SCRIPT="$SCRIPT_DIR/backup_disk.sh"
 readonly BLANK_ST_BYTES=737280   # 720K: 80 cyl * 2 heads * 9 sectors * 512
 readonly SCP_HEADER_BYTES=688    # 16-byte header + 168 track offsets: no flux data
 
-# Read the tool paths back out of the script so there is one source of truth.
-HXCFE_BIN="$(grep '^readonly HXCFE_BIN=' "$SCRIPT" | cut -d'"' -f2)"
-HXCFE_LIB_DIR="$(grep '^readonly HXCFE_LIB_DIR=' "$SCRIPT" | cut -d'"' -f2)"
+# Read the tool paths back out of the shared library so there is one source of truth.
+readonly LIB="$SCRIPT_DIR/gw_lib.sh"
+HXCFE_BIN="$(grep '^readonly HXCFE_BIN=' "$LIB" | cut -d'"' -f2)"
+HXCFE_LIB_DIR="$(grep '^readonly HXCFE_LIB_DIR=' "$LIB" | cut -d'"' -f2)"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -29,6 +30,19 @@ expect_exit() {  # expect_exit <code> <description> <cmd...>
     "$@" >/dev/null 2>&1
     local got=$?
     [ "$got" -eq "$want" ] && report ok "$desc" || report no "$desc (exit $got, wanted $want)"
+}
+
+# Asserts the SPECIFIC refusal, so a test cannot pass because something unrelated
+# (a missing device, say) failed first.
+expect_err() {  # expect_err <message pattern> <description> <cmd...>
+    local pattern="$1" desc="$2"; shift 2
+    local err rc
+    err="$("$@" 2>&1 >/dev/null)"; rc=$?
+    if [ "$rc" -ne 0 ] && grep -q "$pattern" <<<"$err"; then
+        report ok "$desc"
+    else
+        report no "$desc (exit $rc, wanted message '$pattern')"$'\n'"      got: ${err:-<no stderr>}"
+    fi
 }
 
 # A copy of the script wired to stub tools, so the read path can run with no drive.
@@ -51,20 +65,23 @@ echo "Revolution 0 track generation... stub"
 for a in "$@"; do case "$a" in -foutput:*) printf 'RSY\0STX' > "${a#-foutput:}" ;; esac; done
 EOF
     chmod +x "$WORK/stub/gw" "$WORK/stub/hxcfe"
+    # The tool paths live in the library now, so only the library needs rewriting; the
+    # script is copied verbatim and picks up the stub library from its own directory.
     sed -e "s|^readonly GW_BIN=.*|readonly GW_BIN=\"$WORK/stub/gw\"|" \
         -e "s|^readonly HXCFE_BIN=.*|readonly HXCFE_BIN=\"$WORK/stub/hxcfe\"|" \
-        "$SCRIPT" > "$WORK/stub/backup_stub.sh"
+        "$LIB" > "$WORK/stub/gw_lib.sh"
+    cp "$SCRIPT" "$WORK/stub/backup_stub.sh"
     chmod +x "$WORK/stub/backup_stub.sh"
 }
 
 echo "=== argument handling ==="
-expect_exit 0 "--help exits 0"                    "$SCRIPT" --help
-expect_exit 1 "no disk name is rejected"          "$SCRIPT"
-expect_exit 1 "unknown option is rejected"        "$SCRIPT" d --bogus
-expect_exit 1 "disk name with '/' is rejected"    "$SCRIPT" foo/bar
-expect_exit 1 "--revs swallowing a flag fails"    "$SCRIPT" d --revs --protected
-expect_exit 1 "--revs with non-numeric fails"     "$SCRIPT" d --revs abc
-expect_exit 1 "--convert-only missing file fails" "$SCRIPT" --convert-only "$WORK/nope.scp"
+expect_exit 0 "--help exits 0" "$SCRIPT" --help
+expect_err "disk name is required"   "no disk name is rejected"          "$SCRIPT"
+expect_err "unknown option"          "unknown option is rejected"        "$SCRIPT" d --bogus
+expect_err "must not contain"        "disk name with '/' is rejected"    "$SCRIPT" foo/bar
+expect_err "non-negative integer"    "--revs swallowing a flag fails"    "$SCRIPT" d --revs --protected
+expect_err "non-negative integer"    "--revs with non-numeric fails"     "$SCRIPT" d --revs abc
+expect_err "no such file"            "--convert-only missing file fails" "$SCRIPT" --convert-only "$WORK/nope.scp"
 
 echo "=== stubbed read path (no drive) ==="
 build_stubbed_script
@@ -102,7 +119,7 @@ fi
 
 # hxcfe exits 0 on a flux-less SCP but converts nothing; that must not pass.
 dd if="$WORK/synth.scp" of="$WORK/hdronly.scp" bs=1 count="$SCP_HEADER_BYTES" 2>/dev/null
-expect_exit 1 "header-only SCP is rejected" "$SCRIPT" --convert-only "$WORK/hdronly.scp"
+expect_err "converted no tracks" "header-only SCP is rejected" "$SCRIPT" --convert-only "$WORK/hdronly.scp"
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

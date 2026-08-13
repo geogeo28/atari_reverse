@@ -193,6 +193,92 @@ complaint right under the launch line. Check the log whenever a notification is 
 - Both bundles run headlessly for testing, which is how they were verified:
   `automator -i <file> ~/Library/Services/"Run in Hatari.workflow"`.
 
+## Writing a disk back
+
+`write_disk.sh <image>` writes a floppy from a `.st`, `.scp` or `.stx`. **It erases
+the disk in the drive**, so it prints what it is about to do and waits for a typed
+`y`. `--yes` skips that for scripting; with no terminal available it refuses rather
+than writing unattended.
+
+```bash
+./write_disk.sh dumps/dungeon-master/dungeon-master.scp   # flux write of the gold master
+./write_disk.sh game.stx                                  # .stx: flux route by default
+./write_disk.sh plain.st                                  # verified sector write
+./write_disk.sh plain.stx --sectors                       # unprotected .stx, verified
+```
+
+| Input | Route | Verify |
+| --- | --- | --- |
+| `.st` | sector write (uses `--format`) | gw reads every track back |
+| `.scp` | flux write | none available |
+| `.stx` | flux by default; `--sectors` converts to `.st` first | depends on route |
+
+Converted intermediates go to a temp directory that is cleaned up on exit; `--keep`
+puts them next to the input image instead (refusing to overwrite anything already
+there — in a `dumps/<name>/` directory that would be the `.scp` gold master).
+
+**The `.stx` route is checked less strictly than the `.scp` one.** Converting *from*
+an SCP, hxcfe reports a track-generation line per track, so a flux-less input is
+caught exactly. An STX gives no such per-track signal, so the converted output is
+only checked for a plausible size — enough to catch a truncated STX, but a subtly
+corrupt one can still pass. Writing the `.scp` gold master avoids the question.
+
+### What verify actually does
+
+From gw 1.23's `tools/write.py`, verify is skipped when:
+
+```python
+no_verify = (args.no_verify
+             or not isinstance(track, MasterTrack)
+             or (verify := track.verify) is None)
+```
+
+An SCP yields raw `Flux` objects, not `MasterTrack`s, so **on the flux route verify is
+unavailable rather than disabled**. gw counts the track as written, skips the
+read-back, and reports `No tracks verified (Reason: Verify unavailable)`. This is not
+an error — and `--retries` never fires, because the retry loop breaks immediately.
+
+Precisely: verify is unavailable on the flux route *because no `--format` is passed*.
+A format is what makes gw build `MasterTrack`s carrying a verify model. Handing
+`--format` to a flux write would make gw decode the image and verify it — a different
+operation from reproducing the recorded waveform — which is why `write_disk.sh`
+rejects `--format` on the flux route rather than quietly ignoring it.
+
+Passing `--no-verify` there would only change the printed reason to "disabled", so
+`write_disk.sh` does not pass it, and prints this instead:
+
+```
+Flux write: no sector verify - gw will report 'Verify unavailable'.
+Test the disk in the machine, or re-read it with backup_disk.sh and compare.
+```
+
+On the sector route verify is real: every track is read back and compared, and gw
+retries a failing track (default 3 times).
+
+### Protection rarely survives a rewrite
+
+A flux write is the best reproduction available, but it is not the original disk.
+Weak/fuzzy bits get re-recorded as whatever the flux happened to say instead of as
+genuinely unstable magnetisation; long tracks and tight inter-sector gaps depend on
+your drive's exact rotation speed; index alignment shifts. Expect a protected game
+written back to fail its own protection check more often than not — that is a
+property of the medium, not a bug in the tooling. For an unprotected disk prefer
+`--sectors`, because it is verified.
+
+Write the original `dumps/<name>/<name>.scp` gold master rather than round-tripping
+an STX. Every conversion is an interpretation; the SCP is the only artifact that
+recorded what the drive actually saw.
+
+**Media**: ST 720K disks are double density. Do not write to an HD disk with the hole
+taped over — the coercivity is wrong and it will read back unreliably.
+
+## Layout
+
+`gw_lib.sh` holds what both scripts share (tool paths, logging, preflight, the hxcfe
+wrapper). It is unrelated to `qa_lib.sh`, which serves the Finder Quick Actions.
+`test_backup_disk.sh` and `test_write_disk.sh` are no-hardware smoke tests — they
+stub `gw` and never touch the drive.
+
 ## Note
 
 `dumps/` is git-ignored — flux images are tens of MB each and do not belong in this
