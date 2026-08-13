@@ -187,6 +187,9 @@ static const BehaviorHandler PORTED_HANDLERS[] = {
     {WB_ACTOR_BEHAVIOR_TYPE05, actor_behavior_type05},
     {WB_ACTOR_BEHAVIOR_TYPE06, actor_behavior_type06},
     {WB_ACTOR_BEHAVIOR_TYPE07, actor_behavior_type07},
+    /* Slot 29's two bytes are the same `rts` slots 0 and 58 hold, at an address of its own — so
+     * one more row and no more code. */
+    {WB_ACTOR_BEHAVIOR_TYPE29, actor_behavior_null},
     {WB_ACTOR_BEHAVIOR_TYPE47, actor_behavior_type47},
     {WB_ACTOR_BEHAVIOR_TYPE48, actor_behavior_type48},
     {WB_ACTOR_BEHAVIOR_TYPE49, actor_behavior_type49},
@@ -745,6 +748,13 @@ uint32_t actor_hit_by_player_shot(uint8_t *image, uint32_t actor) {
     return WB_ACTOR_NOT_HIT;
 }
 
+
+/* $6786 — the request FIVE rows of the $4e38..$5406 band fire when they are collected ($4e4e,
+ * $4ee0, $4fca, $506c, $5214 — slots 28, 30, 31, 32 and 33, not every slot in the band). No other
+ * control-flow site reaches it; its `jmp 56(a1)` is a tail jump, so nothing follows it. */
+void sound_request_9(uint8_t *image) {
+    snd_call_trigger_effect(image, WB_ACTOR_REQUEST9_SFX, WB_SND_CHANNEL_A);
+}
 
 /* --- $6796: the stun eleven handlers reach ------------------------------------------------------
  *

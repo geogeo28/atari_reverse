@@ -5430,7 +5430,7 @@ def test_the_two_declared_addresses_are_the_ones_the_model_serves():
     against the disassembly — and the kit owns the set the model actually serves. Pin them equal
     here, the way the kit's own smoke project does, so a slot renumbered in os.h fails as a drift
     rather than as "the tick did not read the tempo pair"."""
-    assert (leaf.MFP_GPIP, leaf.SHIFTER_SYNC) == emu.HW_ADDRS
+    assert leaf.MODELED_HW_ADDRS == emu.HW_ADDRS
 
 
 # --- the tier's own geometry ------------------------------------------------------------------------

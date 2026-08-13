@@ -3440,7 +3440,7 @@ def _kind_row(kind):
     return KIND_TABLE + s16((kind << KIND_RECORD_SHIFT) & WORD_MASK)
 
 
-def _model_respawn(image, actor, template, entry_d2, kills=None):
+def _model_respawn(image, actor, template, entry_d2, kills=None, video=0):
     """(the exit it reports, {address: byte}) for $6cdc — its own cases' model, and the one
     `_model_defeat` composes onto the end of its respawn arm.
 
@@ -3455,7 +3455,7 @@ def _model_respawn(image, actor, template, entry_d2, kills=None):
     draw = DRAW8 if final else DRAW32
     kind = u16(image, template + (SPAWN_FINAL_KIND if final else SPAWN_RESPAWN_KIND))
     if kind == 0:
-        kind, drawn_writes = model_stage_kind(draw, image, entry_d2)
+        kind, drawn_writes = model_stage_kind(draw, image, entry_d2, video)
         out.update(drawn_writes)
 
     # `tst.w d0 / bmi.w $6c38` — a forced kind with its top bit set frees the slot instead.
@@ -3525,9 +3525,11 @@ def _run_defeat(case, actor, pokes, psg_seed=None):
     expected_exit, took_tail, expected = _model_defeat(image, actor)
     seed = DEFEAT_MIXER if psg_seed is None else psg_seed
 
+    # The respawn tail draws a kind, and the generator's entropy term is a MODELED hardware byte
+    # since batch 33 — so every defeat that can reach it declares what the counter held.
     how = dict(regs={"a0": actor, "_pokes": pokes, **DAMAGE_ENTRY_REGS},
                max_insns=DEFEAT_INSN_CAP if took_tail else DEFEAT_RETIRE_INSN_CAP,
-               poison=False, psg_seed=seed)
+               poison=False, psg_seed=seed, hw_seed=leaf.hw_declared())
     runner = leaf.run_reaching if took_tail else leaf.run
     extra = (DEFEAT_TRANSFER,) if took_tail else ()
     info = runner("actor_defeat_and_score", _DEFEAT(actor), merge_bands(expected), what,
@@ -3803,7 +3805,7 @@ RESPAWN_TEMPLATE = _defeat_template(DEFEAT_STATE["template_slot"])
 RESPAWN_ENTRY_D2 = _scaled_spawn_type(DEFEAT_STATE["spawn_type"])
 
 
-def _run_respawn(case, pokes, entry_d2=RESPAWN_ENTRY_D2):
+def _run_respawn(case, pokes, entry_d2=RESPAWN_ENTRY_D2, video=0):
     """One continuation differential — `(info, the image it ran on, the write-set model)`. Every case
     uses DEFEAT_ACTOR and its template, so those are not parameters; the IMAGE comes back because a
     case that wants to say which kind was drawn has to ask the same bytes the run did, and rebuilding
@@ -3813,12 +3815,14 @@ def _run_respawn(case, pokes, entry_d2=RESPAWN_ENTRY_D2):
     poisoned re-run is a different case."""
     what = f"actor_respawn_as_new_kind {case}"
     image = harness.make_image(pokes)
-    expected_exit, expected = _model_respawn(image, DEFEAT_ACTOR, RESPAWN_TEMPLATE, entry_d2)
+    expected_exit, expected = _model_respawn(image, DEFEAT_ACTOR, RESPAWN_TEMPLATE, entry_d2,
+                                            video=video)
     info = leaf.run("actor_respawn_as_new_kind", _RESPAWN(DEFEAT_ACTOR, RESPAWN_TEMPLATE, entry_d2),
                     merge_bands(expected), what,
                     regs={"a0": DEFEAT_ACTOR, "a1": RESPAWN_TEMPLATE, "d2": entry_d2,
                           "_pokes": pokes, **DAMAGE_ENTRY_REGS},
-                    max_insns=RESPAWN_INSN_CAP, poison=False)
+                    max_insns=RESPAWN_INSN_CAP, poison=False,
+                    hw_seed=leaf.hw_declared(video))
     _assert_writes(info, expected, what)
     assert info["ret"] == expected_exit, (
         f"{what}: the reconstruction reported exit {info['ret']}, not the {expected_exit} this "
@@ -3855,6 +3859,31 @@ def test_the_kill_count_picks_which_of_the_two_draws_names_the_new_kind(kills, d
         f"{case}: the slot came back as kind {expected[DEFEAT_ACTOR + KIND]}, not the {kind} the "
         f"{draw.name} draw gives")
     assert info["ret"] == DEFEAT_RESPAWN
+
+
+@pytest.mark.parametrize("video", [0x00, 0x3d, 0xff], ids=lambda v: f"counter{v:#04x}")
+def test_the_drawn_kind_follows_the_DECLARED_video_counter(video):
+    """THE CONSUMER'S HALF of batch 33's retired false green. Every other case here declares the
+    byte the model used to fabricate, so they would all still pass with the entropy term deleted;
+    this one varies it and requires the kind the respawn draws to follow. The generator's own
+    battery pins the arithmetic — what this adds is that the term reaches a CALLER."""
+    case = f"a declared video counter of {video:#04x}"
+    _actor, pokes = _defeat_pokes(case)
+    info, image, expected = _run_respawn(case, pokes, video=video)
+    kind, _writes = model_stage_kind(DRAW32, image, RESPAWN_ENTRY_D2, video)
+    assert expected[DEFEAT_ACTOR + KIND] == kind
+    assert info["ret"] == DEFEAT_RESPAWN
+
+
+def test_the_declared_counter_really_changes_the_kind_that_is_drawn():
+    """...and the guard on the case above: if all three declarations drew the same kind it would
+    pass with the term deleted, exactly as the old fabricated 0 let everything pass."""
+    _actor, pokes = _defeat_pokes("the counter guard")
+    image = harness.make_image(pokes)
+    kinds = {model_stage_kind(DRAW32, image, RESPAWN_ENTRY_D2, v)[0] for v in (0x00, 0x3d, 0xff)}
+    assert len(kinds) > 1, (
+        f"all three declared counter bytes draw kind {kinds}, so the rows above would pass with the "
+        f"entropy term removed")
 
 
 def test_the_two_arms_draw_from_different_tables_in_the_state_every_case_shares():

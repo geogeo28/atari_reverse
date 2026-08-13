@@ -1,14 +1,26 @@
 """Differential test for src/rng.c — the game's PRNG ($68c6) and the two draws over it ($e1f0, $e1c8).
 
-THE REGISTERED FALSE GREEN, STATED HERE BECAUSE THIS IS WHERE A READER OF THE CASES MEETS IT.
-`rng_next`'s entropy term is `$ff8209 ^ $b39a` — the shifter's video-address counter (its low, fastest
-byte) XOR the frame tick. `$ff8209` is OFF THE IMAGE, and the oracle answers a read past the image
-with zeros, so the term collapses to the frame tick alone ON BOTH SIDES and the generator degenerates
-to a deterministic function of three counters and one frame counter. Every case below is therefore
-green about a generator with no randomness in it. That is a T3-DATA false green — the shape
-../PORTABILITY.md §4 names — and no differential can close it: there is no analogue of a video
-counter on the candidate side, and inventing one would be verifying the reconstruction against
-`shim.c`. What the cases CAN pin, and do, is everything else exactly:
+THE REGISTERED FALSE GREEN IS RETIRED (batch 33), AND THE HISTORY MATTERS.
+`rng_next`'s entropy term is `$ff8209 ^ $b39a` — the shifter's video-address counter (its low,
+fastest byte) XOR the frame tick. Until batch 33 that address was merely OFF THE IMAGE: the oracle
+answered a read past the image with zeros, the term collapsed to the frame tick alone ON BOTH SIDES,
+and every case here was green about a generator with no randomness in it — a T3-DATA false green,
+the shape ../PORTABILITY.md §4 names.
+
+The kit's Phase 7 table MODELS the byte now (`OS_HW_SHIFTER_VCOUNT_LOW`). `src/rng.c` reads it
+through `hw_read8`, the read lands on the ordered ledger both sides compare, an UNDECLARED read
+refuses the differential, and every run below states what the counter held with `leaf.hw_declared()`.
+`test_a_declared_video_counter_reaches_the_result` drives five different bytes against one seeded
+state, so the term is observable at last — including AS AN OPERATOR, which the old degeneracy hid
+(`0 ^ tick` is `0 + tick`, so a port that added here used to be green too).
+
+WHAT THE HISTORY STILL TOUCHES. Any differential run, golden or capture artifact produced BEFORE
+this commit embedded the zero-entropy generator; a stored expectation from then is a statement about
+the fabrication and not about the machine. And a declared byte is still not a counter: the machine
+changes these on its own, so the model calls the slot VOLATILE and allows ONE read per run —
+`rng_next` reads it exactly once, which is why a per-run constant describes this routine faithfully.
+
+What the cases pin, and did before:
 
   * the three counters' arithmetic, each seeded on both sides of its own wrap. They are cleared when
     they REACH their limit rather than modulo it, so a counter seeded ABOVE its limit runs on to
@@ -18,41 +30,6 @@ counter on the candidate side, and inventing one would be verifying the reconstr
     swept over tick values whose bits reach the whole word, and the sum is compared as a WORD;
   * that d0's HIGH half is never written (`clr.w d0`, not `moveq #0,d0`) and comes back as the
     caller left it, and that d1 comes back holding the tick.
-
-...and two things the degeneracy costs, both worth naming. With the video byte gone, two runs from
-the same seeded state give the same answer, so nothing here can distinguish "reads the port" from
-"reads nothing" — `src/rng.c` goes through `os_in_image` at the port's own address rather than
-writing a 0, which is the honest form of the same instruction, but no case can tell the two apart.
-And the XOR is unobservable AS AN OPERATOR: `0 ^ tick` is `0 + tick`, so a port that added where the
-original XORs is green. That is the batch's one surviving mutant (../STATUS.md), and it is a
-consequence rather than a missing case.
-
-THE TWO DRAWS ON TOP OF IT, $e1f0 and $e1c8. They are THE only two routines in the image whose whole
-body is "advance the generator and index a table with the result", and they are one routine with
-three operands changed — the table, the row shift and the draw mask — with $e1c8 ending in a `bra.w`
-into $e1f0's last fourteen bytes rather than carrying a tail of its own. So they get ONE set of cases
-over two descriptors (`DRAW8` / `DRAW32`), because a claim proved for only one of them would be a
-claim about an operand rather than about the routine; what cannot be shared is the seeds, since each
-table's own bytes decide which stage and which draw make a reading observable, and every one of those
-carries a guard that computes why it was chosen.
-
-Those cases are the generator's plus a table read: WB_STAGE_NUMBER decoded from packed BCD
-(`cmp.w #9 / ble / subq.w #6` is one tens carry), scaled to a row, and one candidate of that row
-drawn by the generator's low three (resp. five) bits. Both sides of the BCD ladder AND its signedness
-(a stage number with its top bit set is BELOW the limit, where an unsigned compare would carry it),
-the row that reads BELOW the table (stage 0), the row that walks off the END of the 32-wide table onto
-the 8-wide one, the entry d2 whose high half the `add.l` folds into the INDEX — including one that
-pushes the index past the 68000's 24-BIT ADDRESS BUS, where it wraps back round into the image, and
-one on the bus's own top bit that separates 24 bits from 23 — and both shipped tables' extents, which
-bound each other. The entry-d2 block is the ONE that runs a single descriptor: what it exercises is
-the `add.l d2,d0 / move.b 0(a2,d0.l),d0` the two routines literally SHARE, so a second copy of those
-runs certifies nothing (the comment above them says which descriptor and why).
-
-KNOWINGLY NOT PINNED
-  * WHAT A KIND IS. The draws' one caller (`actor_respawn_as_new_kind`, test_actor.py) stores the
-    result at WB_ACTOR_KIND and indexes WB_ACTOR_KIND_TABLE with it for a record's new type and
-    sprite. That the value NAMES a creature is a reading of the data, not something either battery
-    proves.
 """
 import collections
 import ctypes
@@ -67,6 +44,8 @@ from leaf import (RTS, addq_w_abs_l, branch, branch_w_to, bsr_w, clr_w_abs_l, cl
                   word)
 from layout import wb
 
+import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
+
 # --- the globals, from the header both languages read ---------------------------------------------
 COUNTER_A = wb("RNG_COUNTER_A")
 COUNTER_B = wb("RNG_COUNTER_B")
@@ -75,7 +54,7 @@ COUNTER_LEN = wb("RNG_COUNTER_LEN")
 LIMIT_A = wb("RNG_LIMIT_A")
 LIMIT_B = wb("RNG_LIMIT_B")
 LIMIT_C = wb("RNG_LIMIT_C")
-VIDEO_COUNTER = wb("SHIFTER_VIDEO_COUNTER_LOW")
+VIDEO_COUNTER = leaf.VIDEO_COUNTER_LOW
 FRAME_TICK = wb("FRAME_TICK_B39A")
 
 STAGE_NUMBER = wb("STAGE_NUMBER")
@@ -225,10 +204,15 @@ DRAW_IDS = [draw.short for draw in DRAWS]
 
 
 # --- the model both runners compare against ---------------------------------------------------------
-# The video byte is 0 on both sides (the module docstring says why), which is what makes a model
-# possible at all — the term is stated as ENTROPY_OFF_IMAGE rather than dropped, so the case that
-# stops being true fails here rather than nowhere.
-ENTROPY_OFF_IMAGE = 0
+# The video byte is an INPUT the model is HANDED, not one it may drop: the case declares it, the same
+# byte reaches the model, and the term is carried as a parameter rather than folded away — so the
+# case that stops being true fails here rather than nowhere.
+ENTROPY_DEFAULT = 0
+# THE TERM IS DECLARED NOW (batch 33). $ff8209 is a modeled hardware byte, so every run below states
+# what the counter held and the oracle serves that rather than a fabricated 0; ENTROPY_DEFAULT
+# stays as the DEFAULT declaration so the numbers the cases carry are unchanged, and
+# `test_a_declared_video_counter_reaches_the_result` is what proves the term is finally live.
+
 
 
 def _stepped(value, limit):
@@ -237,13 +221,13 @@ def _stepped(value, limit):
     return 0 if raised == limit else raised
 
 
-def model_rng(image, entry_d0):
+def model_rng(image, entry_d0, video=ENTROPY_DEFAULT):
     """(the whole d0 it returns, {address: byte}). PUBLIC because test_behavior.py's $2f86 reaches
     the generator and needs both halves of this — the bit it branches on AND the three counter words
     in its own write set. Only the low WORD of d0 is written — `clr.w`, not
     `moveq #0` — so the caller's high half is part of the result."""
     out = {}
-    total = (ENTROPY_OFF_IMAGE ^ u16(image, FRAME_TICK)) & WORD_MASK
+    total = (video ^ u16(image, FRAME_TICK)) & WORD_MASK
     for counter, limit, _name in COUNTERS:
         stepped = _stepped(u16(image, counter), limit)
         for offset, byte in enumerate(word(stepped)):
@@ -270,15 +254,16 @@ def _kind_read_address(draw, image, drawn, entry_d2):
     return (draw.table + (drawn & draw.draw_mask) + _stage_row(draw, image, entry_d2)) & BUS_ADDR_MASK
 
 
-def model_kind(draw, image, entry_d2):
+def model_kind(draw, image, entry_d2, video=ENTROPY_DEFAULT):
     """(the byte it returns, {address: byte}) — the draw over `model_rng`, on the same image.
 
     PUBLIC because test_actor.py's respawn continuation calls both draws: its model composes this one
     over the same memory, the way it composes test_hud.py's BCD accumulator."""
-    drawn, out = model_rng(image, 0)
+    drawn, out = model_rng(image, 0, video)
     at = _kind_read_address(draw, image, drawn, entry_d2)
-    # The shim answers a read past the image with zeros, and src/rng.c goes through `os_in_image`
-    # for exactly that; only an entry d2 with rubbish above its low word can get there.
+    # The shim answers a read past the image with zeros, and src/rng.c goes through `bus_read_byte`
+    # for exactly that — it folds the address onto the 24-bit bus and then guards the image bound;
+    # only an entry d2 with rubbish above its low word can get there.
     drawn_byte = image[at] if at < harness.IMAGE_SIZE else 0
     return drawn_byte & KIND_MASK, out
 
@@ -310,13 +295,13 @@ def _rng_pokes(**overrides):
     return pokes
 
 
-def _run_rng(case, pokes, entry_d0=RNG_ENTRY_D0):
+def _run_rng(case, pokes, entry_d0=RNG_ENTRY_D0, video=ENTROPY_DEFAULT):
     what = f"rng_next {case}"
     image = harness.make_image(pokes)
-    expected_d0, expected = model_rng(image, entry_d0)
+    expected_d0, expected = model_rng(image, entry_d0, video)
     info = leaf.run("rng_next", _RNG(entry_d0), merge_bands(expected), what,
                     regs={"d0": entry_d0, "d1": RNG_ENTRY_D1, "_pokes": pokes},
-                    max_insns=RNG_INSN_CAP)
+                    max_insns=RNG_INSN_CAP, hw_seed=leaf.hw_declared(video))
     _assert_writes(info, expected, what)
     assert info["regs"]["d0"] == expected_d0, (
         f"{what}: the original left d0={info['regs']['d0']:#010x}, not {expected_d0:#010x}")
@@ -330,7 +315,8 @@ def _run_kind(draw, case, pokes, entry_d2=KIND_ENTRY_D2):
     image = harness.make_image(pokes)
     expected_kind, expected = model_kind(draw, image, entry_d2)
     info = leaf.run(draw.name, draw.glue(entry_d2), merge_bands(expected), what,
-                    regs={"d2": entry_d2, "_pokes": pokes}, max_insns=draw.insn_cap)
+                    regs={"d2": entry_d2, "_pokes": pokes}, max_insns=draw.insn_cap,
+                    hw_seed=leaf.hw_declared())
     _assert_writes(info, expected, what)
     assert info["regs"]["d0"] == expected_kind, (
         f"{what}: the original left d0={info['regs']['d0']:#010x}, not {expected_kind:#04x} — the "
@@ -432,27 +418,49 @@ def test_the_result_is_the_frame_tick_xor_the_video_byte_plus_the_three_counters
 
 def test_the_tick_sweep_reaches_the_whole_word_and_the_sums_wrap():
     """A sweep confined to a byte would agree with a port that XORed only the low half — which is
-    exactly the half the (vanished) video byte occupies."""
+    exactly the half the video byte occupies (these cases declare it as 0; the sweep below drives
+    it off 0)."""
     assert any(tick > 0xff for tick in TICK_SEEDS), "the XOR above the low byte is unpinned"
     assert any((tick + 0x11 + 0x07 + 0x03) > WORD_MASK for tick in TICK_SEEDS), (
         "no case makes the three word adds wrap")
 
 
-def test_the_video_counter_read_is_zero_on_both_sides_and_the_generator_degenerates():
-    """THE FALSE GREEN, AS A CASE. Two identical seeded states give the same answer, which on real
-    hardware they would not: `$ff8209` changes every 512 ns. This asserts the degenerate form the
-    whole battery rests on — the result with the port's contribution taken as ENTROPY_OFF_IMAGE —
-    so that a harness which one day DID serve that byte reddens here, where the explanation is,
-    rather than in nine other cases at once."""
+def test_the_video_counter_is_a_declared_read_and_no_longer_an_off_image_zero():
+    """THE FALSE GREEN, RETIRED. Until batch 33 `$ff8209` was merely off the image: both cores were
+    served a fabricated 0, the entropy term vanished, and every green run here was green about a
+    generator with no randomness in it. The kit's Phase 7 table models the byte now, so the address
+    must still be OUTSIDE the image (or the read would not be a hardware read at all) and it must be
+    one the model NAMES (or the declaration below would install nothing)."""
     assert not (0 <= VIDEO_COUNTER < harness.IMAGE_SIZE), (
         f"{VIDEO_COUNTER:#x} is inside the image, so it is no longer an off-image read and this "
         f"battery's model of the entropy term is wrong")
+    assert VIDEO_COUNTER in emu.HW_ADDRS, (
+        f"{VIDEO_COUNTER:#x} is not in the modeled set {[hex(a) for a in emu.HW_ADDRS]}, so every "
+        f"hw_declared() below declares nothing and the term is fabricated again")
+
+
+@pytest.mark.parametrize("video", [0x00, 0x01, 0x5a, 0x80, 0xff], ids=lambda v: f"video{v:#04x}")
+def test_a_declared_video_counter_reaches_the_result(video):
+    """...and the term is LIVE: the same seeded state answers differently for each declared byte,
+    which is exactly what the fabricated 0 made impossible. `clr.w d0 / move.b $ff8209.l,d0`
+    zero-extends the byte before the `eor.w`, so it XORs the tick's LOW half alone — a tick of
+    $ff00 would hide the whole term, which is why this one has low bits."""
     pokes = _rng_pokes(tick=0x00ff, counters=(1, 2, 3))
-    first, _expected = _run_rng("the degenerate generator, first run", pokes)
-    second, _expected = _run_rng("the degenerate generator, again", pokes)
-    assert first["regs"]["d0"] == second["regs"]["d0"] == leaf.set_low_word(
-        RNG_ENTRY_D0, (ENTROPY_OFF_IMAGE ^ 0x00ff) + 2 + 3 + 4), (
-        "the generator is a pure function of the seeded state, which is the false green")
+    info, ended = _run_rng(f"declared video {video:#04x}", pokes, video=video)
+    assert ended == leaf.set_low_word(RNG_ENTRY_D0, (video ^ 0x00ff) + 2 + 3 + 4), (
+        f"the declared counter byte {video:#04x} did not reach the result")
+    assert info["regs"]["d0"] == ended
+
+
+def test_the_generator_is_still_a_pure_function_of_what_the_case_declares():
+    """What a per-run constant does NOT buy: on the machine `$ff8209` changes every 512 ns, so two
+    reads a few instructions apart differ. A declared byte cannot express that, and this states the
+    limit rather than leaving a reader to infer that the randomness is back. The generator reads it
+    ONCE per call, so the constant is faithful per CALL and not across a frame."""
+    pokes = _rng_pokes(tick=0x00ff, counters=(1, 2, 3))
+    first, _ = _run_rng("declared, first run", pokes, video=0x5a)
+    second, _ = _run_rng("declared, again", pokes, video=0x5a)
+    assert first["regs"]["d0"] == second["regs"]["d0"]
 
 
 # --- the registers ---------------------------------------------------------------------------------

@@ -20,10 +20,12 @@
  *
  * NOTHING HERE TOUCHES HARDWARE DIRECTLY. §0k checked it across all 123 functions the wall hid: the
  * scan's hardware table is byte-identical before and after. The tier's only hardware is what it
- * INHERITS through `rng_next`, and `actor_tick_timer30` below does reach it — so that routine
- * carries rng.h's T3-DATA false green with it. The generator's entropy term is `$ff8209 ^ tick` and
- * `$ff8209` is off-image, so both cores are served the frame tick alone; the relaunch this tier
- * gates on one bit of that word is therefore pinned as a FUNCTION OF THE TICK, not as randomness.
+ * INHERITS through `rng_next`, and `actor_tick_timer30` below does reach it. The generator's entropy
+ * term is `$ff8209 ^ tick`, and `$ff8209` is a MODELED hardware byte since the kit's Phase 7 table
+ * grew the shifter's video counter: src/rng.c reads it through `hw_read8`, a case DECLARES what it
+ * held, and an undeclared read refuses the differential — so rng.h's T3-DATA false green is retired
+ * here too. The relaunch this tier gates on one bit of that word is pinned against a counter byte
+ * the case states, not against a fabricated 0 both cores were handed.
  */
 #ifndef WONDERBOY_BEHAVIOR_H
 #define WONDERBOY_BEHAVIOR_H
@@ -187,6 +189,13 @@ uint32_t actor_hit_by_player_shot(uint8_t *image, uint32_t actor);
 void actor_hop_ascend_step(uint8_t *image, uint32_t actor);
 
 /* --- the two shared routines the handlers below needed ------------------------------------------ */
+
+/* $6786 — SIXTEEN BYTES: `move.w #$9,d0 / clr.w d1 / lea $17adc.l,a1 / jmp 56(a1)`, i.e.
+ * actor_stun_followed's own opening with WB_ACTOR_REQUEST9_SFX and a `jmp` where that one has a
+ * `jsr` — the stub's `rts` returns to THIS routine's caller. Declared here rather than in sound.h
+ * because it lives in the behaviour tier's address range and all FIVE of its callers are dispatch
+ * rows ($4e4e, $4ee0, $4fca, $506c, $5214 — slots 28, 30, 31, 32 and 33). */
+void sound_request_9(uint8_t *image);
 
 /* $6796 — fire WB_ACTOR_STUN_SFX and stamp WB_ACTOR_STUN_STEPS_BASE minus twice
  * WB_EFFECT_STATE_BD68 into the FOLLOWED record's WB_ACTOR_FIELD_29, clearing its

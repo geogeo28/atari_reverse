@@ -8,13 +8,16 @@
  * three (resp. five) bits and nothing else, so a case that got the generator wrong and the table
  * right would still be red.
  *
- * THE GENERATOR IS DEGENERATE UNDER THE ORACLE, and this is the one thing to know before trusting a
- * green result here. Its entropy term is `$ff8209 ^ $b39a` — the shifter's video-address counter
- * XOR the frame tick — and `$ff8209` is off the image, so BOTH cores are served 0 and the term
- * collapses to the frame tick alone. Nothing about the reconstruction is wrong; what is gone is the
- * game's randomness, which no differential can put back. ../names.txt's `cmt 0x68c6` and
- * ../STATUS.md register it as a T3-DATA false green, and test/test_rng.py's module docstring states
- * it again where a reader of the cases will meet it.
+ * THE GENERATOR'S ENTROPY IS DECLARED NOW, and that is the one thing to know before reading an old
+ * note about it. Its entropy term is `$ff8209 ^ $b39a` — the shifter's video-address counter XOR
+ * the frame tick. Until batch 33 that address was merely off-image: both cores were served a
+ * fabricated 0, the term collapsed to the frame tick alone, and every green run here was green
+ * about a generator with no randomness in it — the T3-DATA false green ../names.txt's `cmt 0x68c6`
+ * and ../STATUS.md registered. The kit's Phase 7 table now MODELS the byte
+ * (`OS_HW_SHIFTER_VCOUNT_LOW`), so it is served from what the case DECLARES, it lands on the
+ * ordered read ledger both sides compare, and an undeclared read is refused rather than answered.
+ * The randomness is still not the machine's — a per-run constant is not a counter that advances —
+ * but it is a value a case states and varies rather than one the model invented.
  *
  * REGISTER ARGUMENTS, as everywhere else here: `rng_next`'s result is d0 and its entropy read is a
  * `clr.w d0` rather than a `moveq #0,d0`, so the CALLER'S HIGH WORD survives the call and comes back

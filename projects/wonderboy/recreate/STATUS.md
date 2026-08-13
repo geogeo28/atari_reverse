@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 223/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 225/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -48,7 +48,7 @@ endings of one grammar — the cursor, the countdown and a second table's cursor
 ITS SWOOP MACHINE (`actor_behavior_type07` + the four states at $72c2..$73cd, 692 bytes, batch 32
 phase 2: the tier's LAST always-transfer boundary retired — three table rows share one body, both
 prologues run straight into it, and the two mark bits of 30(a0) are answered) —
-25,988 bytes in all, 58.7 % of everything
+26,006 bytes in all, 58.8 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -60,9 +60,13 @@ left this leading count at 161 while its own section and parenthetical said 163 
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
-`make test`: **4344 cases green in what this batch commits** (4200 before batch 32, plus its 144 —
-47 in phase 1, 86 in phase 2 and 11 from the review gate — all in `test/test_behavior.py`, which
-stands at 749).
+`make test`: **4359 cases green in what this batch commits**, measured by `pytest --collect-only`
+rather than added up (4344 after batch 32, plus batch 33's first 5 — all in `test/test_behavior.py`,
+which stands at 754 — plus 6 in `test/test_rng.py` from the kit extension below, which stands at
+109, plus 4 in `test/test_actor.py`, the declared counter's two consumer cases and their
+parametrisation, which stands at 988).
+`make test` at batch 32: **4344 cases** (4200 before it, plus 144 — 47 in phase 1, 86 in phase 2
+and 11 from the review gate).
 `make test` at batch 31: **4200 cases** (4130 before batch 31, plus its 70,
 all in `test/test_behavior.py`, which stood at 605).
 `make test` at batch 30: **4130 cases** (4019 before batch 30; the growth is
@@ -5211,3 +5215,129 @@ sites in `test/test_behavior.py` (~0.15 ms).
 promote because the other two batteries that spell it hand-roll `index << 12` where this one calls
 `brief_extension_word`; bus.h → kit; the three remaining later-wins cmt pairs
 ($1023a, $10394, $1044c). 40 slots remain.
+
+
+### Batch 33 (IN PROGRESS): dispatch rows 28–37, the $4e38..$5406 band
+
+**TWO PREREQUISITES LANDED AND GREEN; THE EIGHT REAL SLOTS ARE NOT STARTED.** This section records
+what is verified in the tree and what the reconnaissance found, so the next session starts from
+measurements rather than from the scan that opened the batch. **Verified 225, 26,006 bytes, 58.8 %
+of §0k's 44,262; `make test` 4359** (4344 after batch 32; `test/test_behavior.py` stands at 754,
+`test/test_rng.py` at 109 and `test/test_actor.py` at 988).
+23 of the table's 62 rows are live; 39 remain.
+
+| address | name | bytes | row |
+| --- | --- | --- | --- |
+| `$6786` | `sound_request_9` | 16 | CLEAN — the band's collect sound; four instructions, one observable |
+| `$4ec8` | `actor_behavior_type29` | 2 | CLEAN — a bare `rts` at an address of its own, mapped to the null body |
+
+**Plate corrections, cited to bytes.** `$6786` is SIXTEEN bytes, not the 20 the batch scan gave it:
+`$6796` is actor_stun_followed's entry, so 20 would run FOUR bytes into that routine, swallowing its
+whole `move.w #$8,d0` ($6796..$6799 — a `move.w #imm,Dn` is four bytes, not two). Its five callers
+are now listed exactly — `$4e4e`, `$4ee0`, `$4fca`, `$506c`,
+`$5214`, i.e. slots 28, 30, 31, 32 and 33. And `$4ec8` really is the bare `rts` the scan guessed:
+`4e75`, bounded by slot 30's entry at `$4eca`.
+
+**`$5018` IS NOT A ROUTINE** — the batch's open question, answered from the bytes. It is slot 31's
+own last instruction: that handler's three sprite arms each `bra.w $5018` to a shared `rts` at
+`$4ffa` and `$500e`, and `actor_hop_ascend_step` begins at `$501a` immediately after. So slot 31 is
+`$4f9c..$5019`, 146 bytes, and there is nothing to name at `$5018`.
+
+**A BLOCKER THE CALLEE CENSUS MISSED: `rng_1_to_4_masked` ($51ac) READS HARDWARE.** It sums
+`$ff8209` and `$ff8207` — the shifter's video address counter — with the two bytes of the followed
+record's x, masks to 0..3, adds one and ANDs the caller's d0. Under this oracle both hardware bytes
+answer 0 on both sides, so a case that does not DECLARE them is served a fabricated value and both
+cores agree on it: the false-green class `PORTABILITY.md` names and `snd_music_tick` is the only
+current consumer of `leaf.run(..., hw_seed=)` for. Every slot that awards a bonus reaches it through
+`$517a`, so slots 31, 32 and 33 cannot be pinned honestly without that declaration.
+
+**What the reconnaissance established about the eight remaining rows** (all read from
+`out/wonderboy_dis.txt`, none ported):
+
+  * **Slot 28 `$4e38..$4ec7`, 144 B.** Contact on bit 1 of `$5c6e` AND bit 0 of 8(a0) down → the
+    collect arm: `sound_request_9`, the free marker, `$b562` with 5 and `$b5a2` with $20. Otherwise
+    settle, hop, `actor_relaunch_and_anim_5160`, and a step whose distance is
+    `moveq #0,d7 / move.b 31(a0),d7` — WB_ACTOR_FIELD_31 as the step, the slot-52 class one field
+    over — skipped entirely when that byte is zero. **`tst.w d0` at `$4e98`, a WORD test where every
+    other blocked-step test in the tier is `tst.b`**: the probes leave a map column in the high byte
+    of d0's low word, so this arm turns on a different condition and `step_was_blocked` cannot be
+    reused as it stands. Then `subq.b #1,12(a0)`, `bset #6,8(a0)` and a reload of `#$14`.
+  * **Slot 30 `$4eca..$4f57`, 142 B**, then a `0000` pad, a GLOBAL cursor word at `$4f5a` and a
+    32-word drift table at `$4f5c..$4f9b` (`andi.w #$3f`, values $0008 down through $fff8 and back —
+    a signed dx added straight to (a0)). The cursor is NOT a record field, so two live type-30
+    records share one animation phase.
+  * **Slot 31 `$4f9c..$5019`, 146 B.** Three sprite arms ($15a/$158/$157) on bits 2 and 0 of 8(a0),
+    sharing the `$5018` exit; the award path `sound_request_9` + `$517a`.
+  * **Slot 32 `$5046..$515b`, 278 B**, with THREE globals of its own immediately after it —
+    `$515c` and `$515d` bytes and `$515e` a word cursor — and it indexes
+    `actor_anim_5160_frames` at `$5160` with that cursor and its own `cmpi.w #$ffff,2(a1)` sentinel
+    look-ahead, which is a SECOND reader of a table `actor_relaunch_and_anim_5160` already owns.
+  * **The helper cluster `$517a..$5207`** is three routines, all read: `$517a` (posts text request
+    3 with lifetime $32 after paying out), `$51ac` (the hardware draw above) and `$51d8`, which is
+    NOT what its `# ctx` name says — see below.
+
+**A `# ctx` NAME THE BODY CONTRADICTS.** `hud_write_bcd_word_a2ad` ($51d8) is described as unpacking
+"four ASCII digits at $a2ad". The bytes give TWO characters, not four, and the second is
+conditional: `move.w d0,d1 / andi.w #$f / addi.b #$30 / move.b d1,$a2ad`, then `ror.w #4,d0 /
+andi.w #$f / bne`, and the zero arm writes `#$20` — a SPACE — to `$a2ac` while the non-zero arm
+writes the digit. So it is a two-character, leading-zero-blanked decimal field at `$a2ac..$a2ad`,
+and the rename plus the dropped `# ctx` tag belong to the batch that ports it.
+
+### The KIT EXTENSION batch 33 needed (its own changeset)
+
+**THE PHASE 7 TABLE GREW FROM TWO MODELED BYTES TO FOUR** — `OS_HW_SHIFTER_VCOUNT_MID` ($ff8207)
+and `OS_HW_SHIFTER_VCOUNT_LOW` ($ff8209), the shifter's video address counter. The model was
+entirely table-driven off `include/os.h`, so the change is the table plus the two places that are
+deliberately per-slot: `hw.h`'s prose and shim.c's audio-capture profile.
+
+**`HW_CAPTURE_PROFILE_KNOWN` IS DELIBERATELY UNCHANGED**, and shim.c already said why before the
+question was asked: the profile is a designated initializer, so a new slot gets a silent 0 in it,
+and declaring that 0 would mark a fabrication as a real answer — the monochrome-profile failure the
+mode exists to close. Capture semantics do not move: under the mode the two new slots read 0 exactly
+as they did when they were unmodeled, and they now land in `g_hw_unseeded` where they are visible.
+
+**A COUNTER IS ADMISSIBLE HERE and the FDC/DMA registers still are not**, which os.h now argues:
+what a per-run constant cannot express is a value that must CHANGE BETWEEN TWO READS OF THE SAME
+ADDRESS. A routine that reads $ff8207 once and $ff8209 once per call never observes the counter
+advancing, so a declared constant describes that call exactly. What it does not describe is a caller
+that polls one byte twice and depends on the difference — stated as a non-goal rather than left to
+be inferred.
+
+**THE BLAST RADIUS WAS THE POINT.** `rng_next` ($68c6) reads $ff8209, and `include/rng.h`,
+`names.txt`'s `cmt 0x68c6` and this file all registered that as a T3-DATA FALSE GREEN: both cores
+were served a fabricated 0, the entropy term vanished, and the generator degenerated to a pure
+function of three counters. The moment the byte became modeled, 22 cases across four batteries
+REFUSED — which is the model working. `src/rng.c` now reads it through `hw_read8`, every case that
+reaches the generator declares it, and `test_a_declared_video_counter_reaches_the_result` drives
+five different bytes against one seeded state, so the XOR is finally observable as an operator (the
+old sweep note that `0 ^ tick` equals `0 + tick` is retired with it). The false green is gone.
+
+**Kit-side cases added**: `vcount_pair_declared`, `vcount_pair_undeclared` and
+`vcount_write_then_read` in `hw_model_probe.c` + its Python mirror — served, tallied and stale over
+the new slots. Two existing kit cases moved for real reasons rather than to be made to pass: the
+capture cases' `known` is the PROFILE PAIR and not "every slot" (a distinction the two-slot table
+could not express), and `long_read_straddling_in` now reports TWO slots because a longword spanning
+$ff8209..$ff820a really does take both in. `_file_all()` replaces slot-by-slot expectations where a
+case declares the whole table, so the next slot lands there automatically.
+
+**...and the DIFFERENTIAL-level pair the probe cases could not reach**, added in the review pass:
+the smoke `.PRG` now plants a routine reading `$ff8209` twice and one reading `$fffa01` twice, and
+`test_hw_differential.py` pins the first REFUSED and the second SERVED (19 cases, was 17). The
+volatile one is measured rather than asserted — its candidate reads the byte twice too, so with
+`harness`'s volatile branch disabled every surface agrees and the case reds with DID NOT RAISE,
+which names the false green exactly. `make test` under audio capture is deliberately unaffected: the
+capture profile still declares only `$fffa01`/`$ff820a`, so the new slots read a fabricated 0 there
+and a capture run is not a differential.
+
+**Tri-project verification, all from clean and run SERIALLY** (see the queued rule below — the three
+projects share one `liboracle.so`): kit 351, `tools/test_hw_portability.py` 56, Wonder Boy 4359,
+Joust 4369, BuggyBoy 292.
+
+**QUEUED for the rest of batch 33**: slots 28, 30, 31, 32, 33, 34, 35, 36, 37 and the helper
+cluster; the `hw_seed` declaration `$51ac` forces on every award path; `step_was_blocked`'s WORD
+variant for slot 28; whether slot 30's global cursor needs a `var` of its own (it does).
+
+**QUEUED — the serialised-suites rule**: Joust and BuggyBoy rebuild the same shared `liboracle.so`
+via `ORACLE_VIA`, so concurrent runs produce phantom failures — one suite links the `.so` out from
+under the other. Run the projects' suites SERIALLY. That is the **seventh way a sweep lies**, and it
+is now in `recreate/README.md`'s list beside the other six.

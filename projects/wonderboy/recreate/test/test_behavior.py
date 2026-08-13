@@ -477,6 +477,12 @@ def move_b_imm_dn(reg, value):
     return opcode(0x103c | (reg << 9)) + word(value & 0xff)
 
 
+def jmp_d16_an(reg, displacement):
+    """`jmp d16(An)` — $6786's TAIL into the sound stub table, where actor_stun_followed twelve
+    bytes later spells the same slot as a `jsr`."""
+    return opcode(0x4ee8 | reg) + word(displacement)
+
+
 def jsr_d16_an(reg, displacement):
     return opcode(0x4ea8 | reg) + word(displacement)
     # ALSO IN test_actor.py — second copy, which the rule allows.
@@ -1697,6 +1703,19 @@ def _type51_pieces():
     ]
 
 
+REQUEST9_SFX = wb("ACTOR_REQUEST9_SFX")
+SOUND_REQUEST_9 = "sound_request_9"
+
+
+def _sound_request_9_pieces():
+    return [
+        move_w_imm_dn(D0, REQUEST9_SFX),
+        clr_w_dn(D1),
+        lea_abs_l(A1, SND_STUB_TABLE),
+        jmp_d16_an(A1, STUB_TRIGGER_OFFSET),
+    ]
+
+
 def _stun_pieces():
     return [
         move_w_imm_dn(D0, STUN_SFX),
@@ -2425,7 +2444,9 @@ ENTRY_PIECES = {
     "actor_platform_release_check": _platform_release_pieces(),
     "actor_face_followed_reset_22": _face_followed_reset_22_pieces(),
     "actor_hit_by_player_shot": _hit_by_shot_pieces(),
+    "sound_request_9": _sound_request_9_pieces(),
     "actor_stun_followed": _stun_pieces(),
+    "actor_behavior_type29": [RTS],
     "actor_platform_release_blocked_rider": _platform_blocked_pieces(),
     "actor_behavior_type02": _type02_pieces(),
     "actor_behavior_type03": _type03_pieces(),
@@ -2453,7 +2474,7 @@ ENTRY_PIECES = {
     "actor_behavior_type61": _type61_pieces(),
     "player_gate_on_1516": _player_gate_pieces(),
 }
-RECONSTRUCTED_ROUTINES = 47
+RECONSTRUCTED_ROUTINES = 49
 
 ENTRY_BYTES = {name: _asm(leaf.entry_of(name), pieces) for name, pieces in ENTRY_PIECES.items()}
 INSN_COUNT = {name: _instructions(pieces) for name, pieces in ENTRY_PIECES.items()}
@@ -2509,7 +2530,9 @@ BODY_SIZES = {
     "actor_platform_release_check": 68,
     "actor_face_followed_reset_22": 40,
     "actor_hit_by_player_shot": 172,    # $23b6..$2461, bounded by slot 2's own entry
+    "sound_request_9": 16,              # $6786..$6795, bounded by the stun's own entry
     "actor_stun_followed": 44,          # $6796..$67c1, bounded by actor_set_side_flag's entry
+    "actor_behavior_type29": 2,         # $4ec8..$4ec9 — the `rts` between slots 28 and 30
     "actor_platform_release_blocked_rider": 76,   # $6e8c..$6ed7, then the $6ed8 sprite/band rows
     "actor_behavior_type02": 254,       # $2462..$255f, then 96 bytes of frame words
     "actor_behavior_type03": 374,       # $25c0..$2735, then 96
@@ -2581,7 +2604,12 @@ for _slot in range(BEHAVIOR_SLOTS):
 # The slots this port HAS a reconstruction for; every other slot is the boundary. Keyed by the
 # routine NAME rather than the slot number, exactly as src/behavior.c's list is keyed by the target
 # address — so adding a handler is one row here and one row there and no case moves.
-PORTED_TARGETS = ("actor_behavior_null",
+# Slot 29's row holds a bare `rts` at an address of its own, so src/behavior.c maps it to
+# actor_behavior_null's body: there is no `actor_behavior_type29` symbol to bind glue to, exactly as
+# there is none for the null rows. NO_GLUE_TARGETS is what both facts are keyed on.
+NO_GLUE_TARGETS = ("actor_behavior_null", "actor_behavior_type29")
+
+PORTED_TARGETS = ("actor_behavior_null", "actor_behavior_type29",
                   "actor_behavior_type02", "actor_behavior_type03", "actor_behavior_type04",
                   "actor_behavior_type05", "actor_behavior_type06", "actor_behavior_type08",
                   "actor_behavior_type07",
@@ -2802,7 +2830,7 @@ DAMAGE_INSNS = 400
 DEFEAT_INSNS = 600
 # ...and the sound module's, which slot 61's opening frame reaches through stub +0. It comes from
 # the battery that owns snd_play_song rather than being a number stated here.
-from test_sound import PLAY_SONG_INSN_CAP   # noqa: E402
+from test_sound import PLAY_SONG_INSN_CAP, STUB_INSN_CAP   # noqa: E402
 
 HANDLER_CALLEE_INSNS = (INSN_COUNT["actor_spawn_anim_step"]
                         + INSN_COUNT["actor_hit_by_player_shot"]
@@ -3234,10 +3262,11 @@ def test_the_spawn_animations_second_half_is_out_of_the_cursors_reach():
 # --- $2f86: the countdown and its relaunch -----------------------------------------------------------
 # rng_next STEPS THREE COUNTERS, so a case that reaches it has those three words in its write set —
 # imported from the battery that owns them rather than restated.
-from test_rng import FRAME_TICK, model_rng                      # noqa: E402
+from test_rng import FRAME_TICK, model_rng                     # noqa: E402
 
-# The generator's word is the frame tick plus its three counters (the off-image entropy byte reads
-# zero on both sides), so the tick is the ONE input a case can steer the relaunch's `btst #2` with.
+# The generator's word is the frame tick plus its three counters (the entropy byte is a MODELED
+# hardware read, and these cases declare it as `hw_declared()`'s 0 — see the note at the run below),
+# so the tick is the ONE input a case can steer the relaunch's `btst #2` with.
 # Both values are needed: with only one of them the VETO arm never runs and dropping the guard
 # altogether passes — which is exactly what the sweep found.
 TICKS_BY_RNG_BIT = {0: 0x0000, 1: 0x0004}
@@ -3272,7 +3301,10 @@ def test_the_timer_counts_down_and_only_a_supported_record_relaunches(timer, fla
                 expected[ACTOR + SPEED] = TIMER30_SPEED
                 expected[ACTOR + FIELD_18] = 0
 
+    # `hw_declared()` because this routine reaches rng_next, whose entropy term is a MODELED
+    # hardware byte since batch 33 — an undeclared read of it refuses the differential.
     info = leaf.run("actor_tick_timer30", _TICK_TIMER30(ACTOR), merge_bands(expected), what,
+                    hw_seed=leaf.hw_declared(),
                     regs={"a0": ACTOR, "_pokes": pokes},
                     max_insns=_cap("actor_tick_timer30", extra=RNG_INSNS))
     _assert_writes(info, expected, what)
@@ -4114,9 +4146,10 @@ def test_the_step_away_routine_ignores_its_callers_d7():
 # EVERY HANDLER HANDS BACK A uint32_t, which is behavior.h's boundary: WB_ACTOR_DISPATCH_RAN when it
 # ran to its own `rts`, or the address at which the original left code this port has.
 _HANDLER_GLUE = {name: leaf.register_glue(name, [ctypes.c_uint32], ctypes.c_uint32)
-                 for name in PORTED_TARGETS if name != "actor_behavior_null"}
+                 for name in PORTED_TARGETS if name not in NO_GLUE_TARGETS}
 _PLAYER_GATE = leaf.image_glue(PLAYER_GATE, ctypes.c_uint32)
 _STUN = leaf.image_glue("actor_stun_followed")
+_SOUND_REQUEST_9 = leaf.image_glue(SOUND_REQUEST_9)
 _BLOCKED_RIDER = leaf.register_glue("actor_platform_release_blocked_rider", [ctypes.c_uint32] * 2)
 
 
@@ -4228,6 +4261,25 @@ def test_slot50_wraps_its_cursor_over_two_frames_only():
         info = _run_handler("actor_behavior_type50", what, pokes)
         seen.add(program_writes(info)[ACTOR + FIELD_18])
     assert seen == {0, 2}, f"the cursor reached {sorted(seen)}, not just the table's two offsets"
+
+
+# --- $6786: the band's own sound request ------------------------------------------------------------
+def test_sound_request_9_is_the_stuns_opening_one_request_higher():
+    """FOUR INSTRUCTIONS AND ONE OBSERVABLE: the SFX the stub writes. It takes no record and reads
+    no image state, so the whole of its behaviour is the write set — which is also what separates
+    it from actor_stun_followed twelve bytes later, whose request is WB_ACTOR_STUN_SFX."""
+    what = "sound_request_9"
+    pokes = _tier_pokes(case_salt(what), {})
+    image = harness.make_image(pokes)
+    expected = _sfx_bytes(image, REQUEST9_SFX, SND_CHANNEL_A)
+    assert expected != _sfx_bytes(image, STUN_SFX, SND_CHANNEL_A), (
+        "requests 8 and 9 write the same bytes, so this case cannot tell them apart")
+
+    # STUB_INSN_CAP, from the battery that owns the stub, and not the damage path's 400: a cap two
+    # orders of magnitude over a four-instruction body can never fire.
+    info = leaf.run(SOUND_REQUEST_9, _SOUND_REQUEST_9, merge_bands(expected), what,
+                    regs={"_pokes": pokes}, max_insns=_cap(SOUND_REQUEST_9) + STUB_INSN_CAP)
+    _assert_writes(info, expected, what)
 
 
 # --- $6796: the stun --------------------------------------------------------------------------------

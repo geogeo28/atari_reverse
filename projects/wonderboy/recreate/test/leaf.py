@@ -41,15 +41,33 @@ RUNNER_SENTINEL_INSN = 1
 PSG_SELECT = 0xff8800
 PSG_DATA = PSG_SELECT + 2
 
-# The two hardware bytes the kit's SEEDED READ model serves (TRAP_MODEL.md, "Phase 7"), as the
-# 24-bit bus addresses the game's own `btst`s carry — $17c7e reads the first, $17c90 the second.
-# Spelt here rather than unpacked from `emu.HW_ADDRS` because they are a fact about the GAME's
-# operands, which the disassembly can be checked against, and because unpacking would silently
-# assume which slot is which; test_sound.py pins the pair equal to the model's own table, so a slot
-# renumbered in os.h cannot leave a battery declaring an address the model no longer names.
-# test_audio_capture.py reads them from here for PSG_SELECT's reason.
+# The FOUR hardware bytes the kit's SEEDED READ model serves (TRAP_MODEL.md, "Phase 7"), as the
+# 24-bit bus addresses the game's own operands carry — $17c7e reads the first and $17c90 the second
+# (`btst`s in the tempo head), $51ae and $51b6 the video counter's mid and low bytes, and $68d0 that
+# low byte again in the PRNG. Spelt here rather than unpacked from `emu.HW_ADDRS` because they are a
+# fact about the GAME's operands, which the disassembly can be checked against, and because
+# unpacking would silently assume which slot is which; test_sound.py pins the whole tuple equal to
+# the model's own table, so a slot renumbered in os.h cannot leave a battery declaring an address
+# the model no longer names. test_audio_capture.py reads them from here for PSG_SELECT's reason.
 MFP_GPIP = 0xfffa01
 SHIFTER_SYNC = 0xff820a
+VIDEO_COUNTER_MID = 0xff8207
+VIDEO_COUNTER_LOW = 0xff8209
+MODELED_HW_ADDRS = (MFP_GPIP, SHIFTER_SYNC, VIDEO_COUNTER_MID, VIDEO_COUNTER_LOW)
+
+
+def hw_declared(video=0x00):
+    """The ``hw_seed`` every run that reaches the game's two PRNGs must pass.
+
+    `rng_next` ($68c6) and `rng_1_to_4_masked` ($51ac) READ the video counter, and an undeclared
+    modeled read refuses the differential — so a battery that reaches either declares what the
+    counter held. It lives here rather than in test_rng.py because it is a fact about the KIT's
+    model, and three batteries were importing it from a sibling battery to get at it.
+
+    The default is the byte the model used to FABRICATE, so a case that only wants the declaration
+    keeps the numbers it had; a case that wants the entropy live passes its own.
+    """
+    return {VIDEO_COUNTER_MID: video, VIDEO_COUNTER_LOW: video}
 
 # The game's own two screen buffers (../names.txt: screen_back starts at $70000, screen_front
 # $78000, and clear_both_screens clears $70000..$7fd00 — exactly the two back to back). Every
@@ -215,12 +233,16 @@ def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_C
     project's case, and test_sound.py holds it. Seed or none, the harness compares both sides' access
     ledger and register file afterwards — neither is in the image, so nothing else could.
 
-    ``hw_seed`` is ``{address: byte}`` over the modeled hardware set (``MFP_GPIP``/``SHIFTER_SYNC``
-    above), the bytes the case declares those addresses held on ENTRY, seeded identically into both
-    cores (TRAP_MODEL.md, "Phase 7"). Same rule as ``psg_seed`` and a sharper one: these bytes STEER
-    a branch, so an undeclared read is not merely uncompared — both cores are served a fabricated 0,
-    take the same wrong arm, and agree. `snd_music_tick`'s tempo selector is this project's case, and
-    test_sound.py holds it. The refusal differs from the PSG model's in WHERE it fires: an undeclared
+    ``hw_seed`` is ``{address: byte}`` over the modeled hardware set (``MODELED_HW_ADDRS`` above),
+    the bytes the case declares those addresses held on ENTRY, seeded identically into both cores
+    (TRAP_MODEL.md, "Phase 7"). Same rule as ``psg_seed`` and a sharper one, in two shapes. The two
+    STATIC bytes steer a BRANCH: an undeclared read is not merely uncompared — both cores are served
+    a fabricated 0, take the same wrong arm, and agree (`snd_music_tick`'s tempo selector, in
+    test_sound.py). The two VIDEO-COUNTER bytes are summed into an ARITHMETIC result instead, which
+    is the same false green with a wider blast radius: a fabricated 0 collapses the game's PRNG to a
+    constant both cores then agree on (`rng_next`, in test_rng.py — use ``hw_declared()``). Those
+    two are also VOLATILE: the machine changes them on its own, so a run may read each ONCE and a
+    second read is its own refusal. The refusal differs from the PSG model's in WHERE it fires: an undeclared
     PSG read sinks `emu.run` itself, while an undeclared hardware read is served and recorded and
     only ``differential`` refuses — so this one surfaces as an AssertionError, not a RuntimeError.
     Both sides' ordered read stream and declared-byte file are compared afterwards; neither is in the

@@ -88,9 +88,10 @@ include/text.h             the message box: the once-a-frame driver's three arms
 include/stage.h            the STAGE LOADER — prototypes, and why it is not scroll.h: the scroll
                            engine maintains the eight pre-shifted buffers a frame at a time, this
                            tier BUILDS them once when a stage is entered
-include/rng.h              the game's PRNG and the per-stage draw over it — and the false green
-                           the generator carries under this oracle: its one hardware term reads 0
-                           on both sides, so the randomness is gone and the diff stays clean
+include/rng.h              the game's PRNG and the per-stage draw over it — and the DECLARED entropy
+                           the generator runs on: its one hardware term is a modeled byte the case
+                           states and the ledger compares, which retired the false green it carried
+                           while both cores were served 0
 include/scroll.h           the whole background scroll subsystem — prototypes, the queue's shape,
                            why a step returns a FLAG (the original returns it through its own
                            return address, and vertically it consumes TWO calls that way), and why
@@ -246,9 +247,12 @@ test/test_hud.py           the status panel's differential: the game's own bitma
 test/test_input.py         the joystick pair's differential — memory for the latch, the whole
                            returned d0 for the edge
 test/test_rng.py           the PRNG's differential, and the one battery here whose module
-                           docstring OPENS with what it cannot pin: the generator's only hardware
-                           term is off-image, so both cores read 0 and the randomness is gone. What
-                           it does pin — each counter on both sides of its own wrap (cleared when it
+                           docstring OPENS with a RETIREMENT and the history behind it: the
+                           generator's only hardware term was merely off-image, both cores read a
+                           fabricated 0, and every green run here was green about a generator with
+                           no randomness in it — until the kit's Phase 7 table modeled the byte, so
+                           a case DECLARES what the counter held and one case drives it off 0. What
+                           it pins — each counter on both sides of its own wrap (cleared when it
                            REACHES its limit, not modulo it), the entropy XOR over a whole word, the
                            `clr.w` that leaves the caller's high half in the result — and the draw
                            TWO draws above it, as ONE set of cases over two descriptors because the
@@ -361,7 +365,7 @@ canonical list of what has to be reachable.
 
 The gate's coverage claim is only worth what a sweep says: flip a constant, delete a branch,
 off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A sweep **lies** in
-**five** ways, all five measured here, so run one this way:
+**seven** ways, all seven measured here, so run one this way:
 
 ```bash
 cp src/*.c snapshot/                           # 4. ONE snapshot, and every mutant comes from it
@@ -402,6 +406,15 @@ done
    collection, and three real survivors came back "caught" until the tree was green again. **Verify
    green immediately before the sweep, not merely before the batch** — the run at step 0 — and again
    after each restore.
+6. **A broken import path breaks PYTEST, not just the tree.** Batch 32 measured it: a `PYTHONPATH`
+   holding a `dis.py` shadows the standard library's, pytest itself will not import, and every
+   mutant comes back "caught" with nothing having run. Same signature as 5 and the same cure — the
+   step-0 green check — but a different cause, so it is worth recognising on sight.
+7. **Two projects' suites cannot run at once.** Joust and BuggyBoy rebuild the SAME shared
+   `oracle/build/liboracle.so` through `ORACLE_VIA`, so a concurrent run links the `.so` out from
+   under the other suite and produces phantom failures that no mutant caused. Run the projects
+   **serially** — which also means a sweep here must not share a machine with someone else's
+   `make test`.
 
 Restore and re-green after each mutant — a sweep left half-applied is worse than none. Its sibling
 recipe, [writing a fuzz test so it shards across

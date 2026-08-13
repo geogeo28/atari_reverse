@@ -1065,6 +1065,10 @@
 #define WB_ACTOR_BEHAVIOR_TYPE04     0x2796u
 #define WB_ACTOR_BEHAVIOR_TYPE05     0x29ecu
 #define WB_ACTOR_BEHAVIOR_TYPE06     0x2bc8u
+#define WB_ACTOR_BEHAVIOR_TYPE29     0x4ec8u  /* TWO BYTES, a bare `rts` — the third slot in the
+                                               * table that holds one, and the only one of the
+                                               * three at an address of its own (slots 0 and 58
+                                               * share WB_ACTOR_BEHAVIOR_NULL's $a36) */
 #define WB_ACTOR_BEHAVIOR_TYPE47     0x5928u
 #define WB_ACTOR_BEHAVIOR_TYPE48     0x5972u
 #define WB_ACTOR_BEHAVIOR_TYPE49     0x59d0u
@@ -1237,6 +1241,8 @@
 #define WB_ACTOR_ST_BYTE             0xffu    /* `st d16(a0)` — the 68000's own "set true" byte, and
                                                * what slots 51 and 6 stamp their two flag bytes with */
 #define WB_ACTOR_STUN_SFX            8u       /* `move.w #$8,d0 / clr.w d1` — channel A */
+#define WB_ACTOR_REQUEST9_SFX        9u       /* `move.w #$9,d0 / clr.w d1` — $6786's, the same
+                                               * four instructions one request higher */
 #define WB_ACTOR_STUN_STEPS_BASE     0xau     /* `move.w #$a,d1 / sub.w d0,d1` over twice
                                                * WB_EFFECT_STATE_BD68, into WB_ACTOR_FIELD_29 */
 #define WB_ACTOR_FIELD_29            29u      /* byte: a STEP COUNT. $ec8 runs it down one map step
@@ -2525,13 +2531,13 @@
 #define WB_RNG_LIMIT_A             0x25u    /* `cmpi.w #$25,$6932.l / bne / clr.w` */
 #define WB_RNG_LIMIT_B             0x17u
 #define WB_RNG_LIMIT_C             0x11u
-#define WB_SHIFTER_VIDEO_COUNTER_LOW 0xff8209u /* `move.b $ff8209.l,d0` — the shifter's video-address
-                                             * counter, low (fastest) byte, and the ONLY hardware
-                                             * address the game-logic subsystem reads. It is OFF the
-                                             * image, so both cores are served 0 and the generator
-                                             * degenerates to its three counters XOR
-                                             * WB_FRAME_TICK_B39A: a registered T3-DATA false green
-                                             * (../STATUS.md, ../names.txt's cmt at $68c6) */
+/* THE VIDEO COUNTER IS THE KIT'S CONSTANT NOW, not this header's. `move.b $ff8209.l,d0` at $68d0
+ * (and $51ae/$51b6's pair in $51ac) reads the shifter's video-address counter, which the kit's
+ * Phase 7 table models as OS_HW_SHIFTER_VCOUNT_LOW / _MID — src/rng.c calls hw_read8 with the kit's
+ * name and there is no game-side C consumer left. Two unpinned names for one address is the drift
+ * CLAUDE.md §5 forbids, so the game-side spelling lives in test/leaf.py beside MFP_GPIP (the
+ * disassembly's operand, checkable against the bytes) and test_sound.py pins the whole tuple equal
+ * to the model's own table. Nothing is defined here. */
 
 /* $e1f0: the one consumer of rng_next this batch ports. WB_STAGE_NUMBER is PACKED BCD — which is
  * what `cmp.w #9 / ble / subq.w #6` is: subtracting 6 turns $10..$19 into 10..19, and

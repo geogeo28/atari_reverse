@@ -1,9 +1,10 @@
 /* rng.c — the game's PRNG ($68c6) and the two per-stage draws over it ($e1f0, $e1c8). What ties them
- * together, and the false green the generator carries under this oracle, are in rng.h.
+ * together, and what the generator's declared hardware entropy costs and buys, are in rng.h.
  */
 #include <stdint.h>
 
 #include "bus.h"
+#include "hw.h"
 #include "machine.h"
 #include "os.h"
 #include "rng.h"
@@ -21,13 +22,15 @@ static uint16_t counter_step(uint8_t *image, uint32_t counter, uint16_t limit) {
     return stepped;
 }
 
-/* `move.b $ff8209.l,d0` — the shifter's video-address counter. It lies outside the image, where the
- * shim answers a read with zeros, so this is the same guarded read src/blit.c's off-image words go
- * through rather than a hardcoded 0: the address is what is stated, and the 0 follows from where it
- * is. rng.h says what that costs. */
-static uint8_t video_counter_low(const uint8_t *image) {
-    return os_in_image(WB_SHIFTER_VIDEO_COUNTER_LOW, 1)
-           ? image[WB_SHIFTER_VIDEO_COUNTER_LOW] : (uint8_t)0;
+/* `move.b $ff8209.l,d0` — the shifter's video-address counter, and the generator's ONLY entropy.
+ *
+ * IT IS A DECLARED HARDWARE READ NOW. Until the kit's Phase 7 table grew this pair (batch 33) the
+ * address was merely off-image: both cores were served a fabricated 0, the term vanished, and the
+ * whole differential agreed on a generator with no randomness in it — the false green rng.h used to
+ * describe. `hw_read8` puts the byte on the ordered ledger both sides compare and makes an
+ * undeclared read a REFUSAL, so a case must now say what the counter held. */
+static uint8_t video_counter_low(void) {
+    return hw_read8(OS_HW_SHIFTER_VCOUNT_LOW);
 }
 
 uint32_t rng_next(uint8_t *image, uint32_t entry_d0) {
@@ -37,7 +40,7 @@ uint32_t rng_next(uint8_t *image, uint32_t entry_d0) {
 
     /* `clr.w d0 / move.b $ff8209.l,d0` zero-extends the port byte into a word BEFORE the `eor.w`,
      * so the tick's high byte survives the XOR untouched. */
-    uint16_t entropy = (uint16_t)(video_counter_low(image) ^ be16(image + WB_FRAME_TICK_B39A));
+    uint16_t entropy = (uint16_t)(video_counter_low() ^ be16(image + WB_FRAME_TICK_B39A));
     return set_low_word(entry_d0, (uint16_t)(entropy + counter_a + counter_b + counter_c));
 }
 

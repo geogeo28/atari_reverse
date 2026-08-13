@@ -754,7 +754,8 @@ lines, so they correctly produce no `F` record and enter no denominator, exactly
 | + `0xe1c8 → 0xe1f0 JUMPIN` | the `bra.w $e214` into `stage_random_kind8`'s shared fourteen-byte tail |
 
 That last pair is why `$6cdc` and `$e1c8` price `T4 HW_READ` rather than `T0`: both reach `rng_next`
-and its `$ff8209` video-counter read. `$6bb8` is unchanged at `T4 HW_READ` — §0g's witness path
+and its `$ff8209` video-counter read *(`T2 SEEDED_READ` since batch 33 modeled that byte — §0j's
+transitive-`T4` note)*. `$6bb8` is unchanged at `T4 HW_READ` — §0g's witness path
 (`game_routine_6bb8 → FUN_0000e1f0 → rng_next`) is now `actor_defeat_and_score → actor_respawn_as_new_kind
 → stage_random_kind8 → rng_next`, one hop longer and the same verdict.
 
@@ -1013,14 +1014,18 @@ marked in place below as delivered.
 **`tools/test_hw_portability.py`, 56 cases** (was 37), standalone `pytest tools/test_hw_portability.py`:
 
 * the **lattice** grew from 16 shapes to 25 — the two modeled bytes as `T2`, the `$fffffa01` bus
-  alias, a wide read *at* `$ff820a` and one straddling in from `$ff8209`, an unsized read of a
-  modeled address, the byte read of `$ff8209` one address below the set (still `T4`), the
-  `$ff820a` **write** (still `T3`, Wonder Boy's own `$f91c`), `$ff8609` as an unmodeled read, and
-  the two unsized-just-below-a-boundary rows described under "the edge left open" below;
+  alias, a wide read *at* `$ff820a` and one straddling in from `$ff8209` *(batch 33 put that start
+  address in the set as well, so the word now takes in TWO modeled slots and is refused for both)*,
+  an unsized read of a modeled address, the byte read of `$ff8209`, priced `T4` at this pass as the
+  row one address BELOW the set *(batch 33: it is the set's fourth address, and the row pins
+  `T2 SEEDED_READ`)*, the `$ff820a` **write** (still `T3`, Wonder Boy's own `$f91c`), `$ff8609` as an
+  unmodeled read, and the two unsized-at-a-boundary rows described under "the edge left open" below;
 * the **false-green exclusion** is parametrized over five shapes at seeded addresses, with the new
   `$ff8609` positive control;
 * the **tripwires** grew by three mutations: a renamed `OS_HW_MFP_GPIP` fails; a kit that grows the
-  set to a THIRD modeled byte fails on `OS_HW_NSLOTS` — the drift the two address pins cannot catch,
+  set to a THIRD modeled byte fails on `OS_HW_NSLOTS` *(batch 33 made the set four, so the mutation
+  grows it to a FIFTH today and there are four address pins beside the count — what is pinned is the
+  COUNT, not the number it happened to be)* — the drift the address pins cannot catch,
   and the expensive direction, since every pinned name would still match while the tool went on
   pricing the new address as a silent-zero `T4`; and `shim.c` renaming `hw_read()` fails, the Phase 7
   half of the behavioural pin that `psg_read_back()` already carried;
@@ -1037,13 +1042,16 @@ An operand Ghidra could not SIZE is priced as one byte. That decides two things 
 is priced as **not** the modeled byte shape (pessimistic, so it hard-rejects at a modeled address)
 and as **not** straddling into the PSG block or a seeded byte from just below (optimistic, so an
 unsized read at `$ff8209` or `$ff87ff` prices `T4`-runnable where a real word there would be
-refused). Widening it means assuming a maximum transfer width for an operand nobody could read —
-inventing a refusal rather than measuring one — so the tool **names every unsized operand** in "What
-this method cannot see" instead, and two lattice rows pin today's answer at both models together
-with that caveat. Wonder Boy's scan has **no** unsized operand, so the sweep is silent here; the
-end-to-end case plants one to prove it is not silent by accident. The edge is pre-existing at the
-PSG and was previously unstated; Phase 7 reproduced it exactly, and stating both together is what
-keeps the two models' treatment consistent.
+refused). *(Batch 33 moved the first of those two examples across the edge: `$ff8209` is a modeled
+address now, so its lattice row is the PESSIMISTIC half — unsized AT the model, hard-rejected — and
+`$ff87ff` below the PSG block is what pins the optimistic half. The optimistic edge still stands one
+byte below any Phase 7 address; no lattice row holds it there today.)* Widening it means assuming a
+maximum transfer width for an operand nobody could read — inventing a refusal rather than measuring
+one — so the tool **names every unsized operand** in "What this method cannot see" instead, and two
+lattice rows pin today's answer at both models together with that caveat. Wonder Boy's scan has
+**no** unsized operand, so the sweep is silent here; the end-to-end case plants one to prove it is
+not silent by accident. The edge is pre-existing at the PSG and was previously unstated; Phase 7
+reproduced it exactly, and stating both together is what keeps the two models' treatment consistent.
 
 **Mutation-tested against itself, twice** — once on the tier re-derivation and again after the
 review pass moved the sweeps. Twelve deliberate defects: dropping `$ff820a` from the set, a
@@ -1361,7 +1369,7 @@ and `$928 FUN_00000928 → actor_dispatch_behavior`, both already `F` records, n
 | direct `T0 CLEAN` | 252 / 23,012 B | **375 / 41,080 B** |
 | direct `T2`/`T3`/`T4`/`T6` | 4/800, 16/1,414, 10/788, 2/180 | **unchanged to the byte, all four** |
 | transitive `T0 CLEAN` | 215 / 19,758 B | **301 / 26,434 B** |
-| transitive `T4 HW_READ` | 24 / 1,988 B | **56 / 10,680 B** |
+| transitive `T4 HW_READ` | 24 / 1,988 B | **56 / 10,680 B** *(pre-batch-33 pricing — see below)* |
 | transitive `T6 UNMEASURABLE` | 14 / 1,468 B | **18 / 3,154 B** |
 | runnable end-to-end | 270 / 284 fns, 24,726 / 26,194 B, 94.4 % | **389 / 407 fns, 41,108 / 44,262 B, 92.9 %** |
 | false-green risk | 20 / 2,224 B, 8.5 % | **24 / 3,910 B, 8.8 %** |
@@ -1438,6 +1446,9 @@ rng_next`** (`move.b $ff8209,d0` — the shifter video-counter low byte as an en
 reach `$51ac rng_1_to_4_masked`** (`$ff8209` and `$ff8207`); one reaches both, so the two account
 for all 32. Both are `T4-DATA` — the scan records `steers=False` on every one of those reads — so
 they cost fidelity, not a false green. That is why +32 transitive `T4` bought only +4 false-green.
+*(Marked in place — this scan predates batch 33, which put `$ff8207` and `$ff8209` in the kit's
+modeled set: all 32 read nothing else off-image, so they price `T2 SEEDED_READ` today. The tier
+moved under the scan; the scan did not lie, and the figures above are left as it produced them.)*
 
 ### The finding this pass did not expect: the tier is unreachable from the roots
 
@@ -1815,11 +1826,23 @@ runs actually report is §4 and §7.4b: the polls succeed instantly, the command
 
 **So: yes, the gameplay logic is portable today — as far as it has been recovered.** The only
 game-logic functions that touch hardware are the two PRNGs, `rng_next` (`$68c6`) and
-`rng_1_to_4_masked` (`$51ac`), and both are T3-DATA reads, not steering ones. The **78.2 %** of
-game-logic CODE that is in no function body is outside that claim entirely — and after §0b's
-re-measure that is not merely the dominant fact about the bucket, it is the dominant fact about the
-whole report: two re-measures have lowered the catch-all's coverage from 36.0 % to 21.8 % without
-reaching a single unmeasured byte.
+`rng_1_to_4_masked` (`$51ac`), and both are T3-DATA reads, not steering ones. **Neither is a false
+green any more (batch 33):** the two bytes between them — `$ff8207`, `$ff8209` — are now in the
+kit's Phase 7 modeled set, so a case DECLARES what the counter held, the read lands on the ordered
+ledger both sides compare, and an undeclared one refuses the differential instead of being answered
+with a fabricated 0. The modeled census is four addresses, not two: `$fffa01`, `$ff820a`, `$ff8207`,
+`$ff8209` — and `tools/hw_portability.py`'s seeded set grew with them, so a byte read of either
+counter byte prices **`T2 SEEDED_READ`** today, not the silent-zero read tier this section's own
+tables put it in. Two limits ride with the retirement. A declared byte still does not model a
+counter read TWICE in one call and expected to differ — neither of these two does that, and the
+model calls both slots VOLATILE and refuses the second read rather than serving the first one's byte
+again. And the retirement is a DIFFERENTIAL's: under AUDIO CAPTURE the profile declares only
+`$fffa01` and `$ff820a` (`HW_CAPTURE_PROFILE_KNOWN` in the shim), so the two counter bytes go on
+reading a fabricated 0 there — deliberately, because a capture run verifies nothing against a second
+core and so cannot be falsely green. The **78.2 %** of game-logic CODE that is in no function body
+is outside that claim entirely — and after §0b's re-measure that is not merely the dominant fact
+about the bucket, it is the dominant fact about the whole report: two re-measures have lowered the
+catch-all's coverage from 36.0 % to 21.8 % without reaching a single unmeasured byte.
 
 ## 4. Proving the model — 14 checks run against the real oracle
 
