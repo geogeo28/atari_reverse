@@ -141,15 +141,35 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
 /* ---- the SEEDED HARDWARE READ model (TRAP_MODEL.md, "Phase 7") -------------------------------
  * A small NAMED SET of hardware bytes outside the PSG whose contents a case may DECLARE, exactly as
  * Phase 6 lets it declare the YM2149's registers. Everything else off-image still reads 0 and is
- * still invisible; these two are singled out because a conditional branch depends on them, which is
- * the one shape where a fabricated 0 produces a green run whose behaviour is wrong on the machine
- * (the `$ffff820a` defect that survived BuggyBoy's entire differential and only appeared on real
- * hardware — see PORTABILITY.md's "the BuggyBoy defect, demonstrated concretely").
+ * still invisible; these are singled out because the VALUE STEERS THE RUN, which is the one shape
+ * where a fabricated 0 produces a green run whose behaviour is wrong on the machine (the
+ * `$ffff820a` defect that survived BuggyBoy's entire differential and only appeared on real
+ * hardware — see PORTABILITY.md's "the BuggyBoy defect, demonstrated concretely"). Two of the four
+ * steer a BRANCH; the other two are summed into an arithmetic result, which is the same defect with
+ * a wider blast radius — Wonder Boy's $51ac hashes the video counter into a 1..4 draw, so under a
+ * fabricated 0 the whole draw collapses to a constant and the differential agrees on it.
+ *
+ * WHY A COUNTER IS ADMISSIBLE HERE and the FDC/DMA registers below are not. A per-run constant
+ * cannot express a value that must CHANGE BETWEEN TWO READS OF THE SAME ADDRESS, and that is the
+ * whole of the distinction. The shifter's video address counter does advance on the machine, but a
+ * routine that reads $ff8207 once and $ff8209 once per run never observes it advancing: one read of
+ * one address is exactly what a declared constant describes.
+ *
+ * AND THE CRITERION IS ENFORCED, not merely argued. Each slot carries a VOLATILE flag below: a
+ * static byte (the monitor detect, the sync mode) may be read as often as a run likes, because the
+ * machine's answer really is the same every time: ONE declaration describes every read of it, and
+ * how many there were is no part of what the case claimed. (The tempo head reads $fffa01 once and
+ * $ff820a once; what really re-reads $fffa01 is an FDC poll, and that is the shape below this model
+ * excludes.) A VOLATILE one may be read ONCE per run, and a second read is a refusal beside
+ * stale and wide, because the second answer a constant gives is the first one and the machine's
+ * would not be. Without the flag the admissibility argument is a comment that the next handler to
+ * read a counter twice quietly falsifies.
  *
  * DELIBERATELY NOT HERE: the FDC/DMA registers at $ff8604+. Those answer a per-ACCESS SEQUENCE (a
  * status byte that must change between two reads of the same address for a poll loop to terminate,
- * a DMA counter that advances), and a per-run constant cannot express one. Phase 7 does not model
- * them; TRAP_MODEL.md says so in as many words rather than leaving the omission to be inferred.
+ * a DMA counter whose successive reads differ), and a per-run constant cannot express one. Phase 7
+ * does not model them; TRAP_MODEL.md says so in as many words rather than leaving the omission to
+ * be inferred.
  *
  * Defined here, not in shim.c, for psg.h's reason: BOTH sides need them — shim.c decodes the
  * addresses, test/hw_model_probe.c plants 68000 code that reaches them, and a reconstruction calls
@@ -157,14 +177,22 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
  * onto $fffa01, and shim.c's BUS_ADDR_MASK folds an access before it is decoded). */
 #define OS_HW_MFP_GPIP     0xfffa01u  /* MFP GPIP: bit 7 = colour/mono monitor detect, 5/4 = FDC/ACIA */
 #define OS_HW_SHIFTER_SYNC 0xff820au  /* shifter sync mode: bit 1 SET = 50 Hz */
+/* The shifter's VIDEO ADDRESS COUNTER, the address the display is currently fetching from. Three
+ * bytes on the machine ($ff8205 high, $ff8207 mid, $ff8209 low); the two the games read are here
+ * and the high byte is not, because nothing reaches it — it changes once a frame where these two
+ * change every few scanlines, which is what makes them the pair a routine hashes for entropy. */
+#define OS_HW_SHIFTER_VCOUNT_MID 0xff8207u
+#define OS_HW_SHIFTER_VCOUNT_LOW 0xff8209u
 
 /* Both sides index the modeled set by SLOT rather than by address — the seed is an array, the
  * known-mask is a bit per slot, and the ledger records a slot per entry — so the slot numbers are
  * as much a part of the shared contract as the addresses, and os_hw_addrs() below is the one table
  * that maps between them. */
-#define OS_HW_SLOT_MFP_GPIP     0
-#define OS_HW_SLOT_SHIFTER_SYNC 1
-#define OS_HW_NSLOTS            2
+#define OS_HW_SLOT_MFP_GPIP          0
+#define OS_HW_SLOT_SHIFTER_SYNC      1
+#define OS_HW_SLOT_SHIFTER_VCOUNT_MID 2
+#define OS_HW_SLOT_SHIFTER_VCOUNT_LOW 3
+#define OS_HW_NSLOTS                 4
 #if OS_HW_NSLOTS > 32
 #error "the seeded-hardware known/seed masks are uint32_t: OS_HW_NSLOTS slots no longer fit"
 #endif
@@ -181,10 +209,21 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
  * warning, and so that both directions of the mapping are derived from ONE list. */
 static inline const uint32_t *os_hw_addrs(void) {
     static const uint32_t addrs[OS_HW_NSLOTS] = {
-        [OS_HW_SLOT_MFP_GPIP]     = OS_HW_MFP_GPIP,
-        [OS_HW_SLOT_SHIFTER_SYNC] = OS_HW_SHIFTER_SYNC,
+        [OS_HW_SLOT_MFP_GPIP]          = OS_HW_MFP_GPIP,
+        [OS_HW_SLOT_SHIFTER_SYNC]      = OS_HW_SHIFTER_SYNC,
+        [OS_HW_SLOT_SHIFTER_VCOUNT_MID] = OS_HW_SHIFTER_VCOUNT_MID,
+        [OS_HW_SLOT_SHIFTER_VCOUNT_LOW] = OS_HW_SHIFTER_VCOUNT_LOW,
     };
     return addrs;
+}
+
+/* Which slots are VOLATILE — a value the machine changes on its own, which a per-run constant can
+ * describe for ONE read and not for two. A bit per slot, like every other mask in this model, and
+ * derived from the same one table so that a slot added above is STATIC unless it says otherwise:
+ * the conservative direction, since a static slot read twice is served twice and a volatile one is
+ * refused, and a new slot wrongly called volatile would refuse runs that are fine. */
+static inline uint32_t os_hw_volatile_slots(void) {
+    return (1u << OS_HW_SLOT_SHIFTER_VCOUNT_MID) | (1u << OS_HW_SLOT_SHIFTER_VCOUNT_LOW);
 }
 
 /* Which slot `addr` is, or -1 for an address the model does not name. Takes a 24-bit bus address:

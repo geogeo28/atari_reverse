@@ -715,7 +715,7 @@ def _vet_hw_reads_are_declared(entry, hw_seed, o_regs):
       candidate and the oracle agreeing on a branch that a fabricated 0 chose for both of them,
       which is the ``$ffff820a`` defect BuggyBoy shipped green.
 
-    Three shapes are refused, each with its own remedy, and they are tested NARROWEST FIRST:
+    Four shapes are refused, each with its own remedy, and they are tested NARROWEST FIRST:
 
     * **stale** — the run WROTE the address and then read it back. The seed declares what the
       machine held on ENTRY, and an instruction of this very run has replaced it, so the served byte
@@ -726,6 +726,11 @@ def _vet_hw_reads_are_declared(entry, hw_seed, o_regs):
     * **wide** — a 16- or 32-bit read took the byte in along with neighbouring registers the model
       knows nothing about, which it would have to fabricate as 0. Also not seedable, and also
       possible alongside an undeclared byte-read of the same address;
+    * **volatile re-read** — the run read a VOLATILE address (``os.h``'s ``os_hw_volatile_slots()``:
+      the shifter's video-counter bytes) more than once, and a seed is a per-run CONSTANT, so the
+      second read was served the first read's byte. Not seedable either — one number cannot be two:
+      end the case before the second read, or split it into two runs. A STATIC address is exempt:
+      the machine's answer is the same every time, so one declaration describes every read of it;
     * **undeclared** — nothing said what the byte holds. Declare it with ``hw_seed=``.
     """
     if o_regs["hw_stale"]:
@@ -746,6 +751,18 @@ def _vet_hw_reads_are_declared(entry, hw_seed, o_regs):
             f"BYTE read of one is served — a wider one takes in the neighbouring MFP/shifter "
             f"registers, which the model would have to fabricate as 0, and the case would be "
             f"verified against that fabrication. Not seedable either: the width is an instruction.")
+    if o_regs.get("hw_reread"):
+        repeated = o_regs["hw_reread"]
+        raise AssertionError(
+            f"function @ {entry:#x}: the oracle read the VOLATILE hardware byte(s) "
+            f"{', '.join(f'{addr:#x}' for addr in repeated)} MORE THAN ONCE in one run. A seed is "
+            f"a per-run CONSTANT, so the second read was served the first read's byte — and the "
+            f"machine changes these on its own (the shifter's video counter advances every few "
+            f"scanlines), so the case would be verified against a value the address cannot have "
+            f"held twice. A volatile byte cannot be served twice from one declaration: end the "
+            f"case before the second read, or split it into two runs each declaring what the "
+            f"counter held then (TRAP_MODEL.md, Phase 7). os.h's os_hw_volatile_slots() names "
+            f"which slots these are.")
     if o_regs["hw_unseeded"]:
         undeclared = o_regs["hw_unseeded"]
         raise AssertionError(
@@ -883,11 +900,14 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     is refused (``_vet_psg_seed_reaches_the_path``). Both sides' register file and access ledger are
     compared afterwards, seed or none (``_vet_psg_state``).
     ``hw_seed`` is ``{address: value}`` over the modeled hardware set (``emu.HW_ADDRS``: the MFP
-    GPIP byte and the shifter's sync byte), the same kind of declared input for a byte that steers a
-    branch (TRAP_MODEL.md, Phase 7). **A run whose oracle read one of them without a declaration is
-    REFUSED here** — that refusal is a differential's, not ``emu.run``'s, and
-    ``_vet_hw_reads_are_declared`` says why. Both sides' ordered read stream is compared afterwards,
-    seed or none (``_vet_hw_state``).
+    GPIP byte, the shifter's sync byte and its two video-counter bytes), the same kind of declared
+    input for a byte that steers a branch — or, for the counter pair, one a routine hashes into an
+    arithmetic result (TRAP_MODEL.md, Phase 7). **A run whose oracle read one of them without a
+    declaration is REFUSED here** — that refusal is a differential's, not ``emu.run``'s, and
+    ``_vet_hw_reads_are_declared`` says why, along with the three other shapes it refuses (a stale
+    read-back, a wide read, and a second read of a VOLATILE address, which one per-run constant
+    cannot describe). Both sides' ordered read stream is compared afterwards, seed or none
+    (``_vet_hw_state``).
     """
     _vet_audio_capture_off(entry)
     pokes = regs.pop("_pokes", None)

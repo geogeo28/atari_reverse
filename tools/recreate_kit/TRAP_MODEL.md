@@ -848,9 +848,14 @@ section.
 
 Phase 6 established the distinction this phase extends: **a seed is a declared case input, not a
 fabrication.** There it was the YM2149's register contents. Here it is a small named set of hardware
-BYTES outside the chip — `$fffa01` (the MFP GPIP) and `$ff820a` (the shifter's sync mode) — served
-from a file the case declares, recorded in an ordered ledger both sides keep, and refused when
-nothing declared them.
+BYTES outside the chip — `$fffa01` (the MFP GPIP), `$ff820a` (the shifter's sync mode) and the two
+video-address-counter bytes `$ff8207`/`$ff8209` — served from a file the case declares, recorded in
+an ordered ledger both sides keep, and refused when nothing declared them.
+
+The first two **steer a branch**, which is the shape the phase was built for. The counter pair is the
+same false green with a **wider blast radius**: those bytes are summed into an arithmetic result
+(Wonder Boy's `$51ac` hashes them into a 1..4 draw), so a fabricated `0` does not merely pick the
+wrong side of a branch — it collapses the whole draw to a constant, and both cores then agree on it.
 
 ### The defect it is built on, which shipped
 
@@ -882,9 +887,23 @@ whole differential, by construction). It is present in Wonder Boy before a line 
 ### Modeled
 
 **A file of bytes, one per modeled address**, plus a `known` mask saying which of them the case
-declared. `include/os.h` owns the set — `OS_HW_MFP_GPIP`, `OS_HW_SHIFTER_SYNC`, their slot numbers
-and `os_hw_slot()` — because both sides decode it: `shim.c` from a bus address, `src/hw.c` from the
-constant a reconstruction spells. Four rules:
+declared. `include/os.h` owns the set — `OS_HW_MFP_GPIP`, `OS_HW_SHIFTER_SYNC`,
+`OS_HW_SHIFTER_VCOUNT_MID`, `OS_HW_SHIFTER_VCOUNT_LOW`, their slot numbers, `os_hw_slot()` and
+`os_hw_volatile_slots()` — because both sides decode it: `shim.c` from a bus address, `src/hw.c`
+from the constant a reconstruction spells.
+
+Each slot carries a **VOLATILE flag**, and it is the criterion the counter pair is admitted under
+rather than a note about it. A STATIC byte (the monitor detect, the sync mode) is one the machine
+answers the same way every time, so a run may read it as often as it likes: one declaration
+describes every read of it, and how many there were is no part of what the case claimed. (Nothing
+ported re-reads one today — the tempo head reads each of its two bytes once. What does re-read
+`$fffa01` is an FDC poll, and that is the shape the non-goal below excludes for its own reason.)
+A VOLATILE one (the two counter bytes) is a value the
+machine changes on its own, and a per-run constant describes it for exactly ONE read: the second read
+would be served the first read's byte, which the counter cannot have held twice. `os.h` derives the
+mask from the same one table as the addresses, so **a slot added there is STATIC unless it says
+otherwise** — the conservative direction, since a slot wrongly called volatile refuses runs that are
+fine while one wrongly called static serves a fabrication. Five rules:
 
 * **a byte read of a modeled address, declared** → the declared byte, plus a `READ` entry in the
   ordered ledger. `harness.differential` compares that stream against the candidate's;
@@ -892,6 +911,13 @@ constant a reconstruction spells. Four rules:
   this phase existed — recorded in `osh_hw_unseeded()`, and **still ledgered**, since a read that
   happened is a fact both sides must report the same way. The *refusal* is a differential's, not
   `emu.run`'s; the next section is entirely about that;
+* **a SECOND byte read of a VOLATILE address in one run** → served the same declared byte as the
+  first, and recorded in `osh_hw_reread()`, tallied on the read that *repeats* so the mask names the
+  slot a case must do something about. Refused in a differential, and **not fixable by declaring
+  more**: one number cannot be two. The remedy is the case's shape — end it before the second read,
+  or split it into two runs each declaring what the counter held then. A STATIC address is exempt,
+  and that exemption is a statement about the machine rather than a softening: repeated reads of one
+  really are described by a single declaration, so refusing them would refuse correct runs;
 * **a 16/32-bit read taking a modeled address in** → recorded (`osh_hw_wide()`), never served. A
   wider read also takes in the neighbouring MFP/shifter registers, which the model would have to
   fabricate as `0` — the same false green one address over. The overlap test is a span test
@@ -943,8 +969,9 @@ that is not a question of a fabricated byte — it is `hw_events()` reporting a 
 complete one, and a bare-run reader has no diff to notice. It is reachable: a poll loop on `$fffa01`
 does 4,096 reads in a few thousand instructions.
 
-**The three refusals are tested narrowest first** — stale, then wide, then undeclared. One read can
-set two masks at once (a read of an address the run wrote *and* never declared sets both), and
+**The four refusals are tested narrowest first** — stale, then wide, then the volatile re-read, then
+undeclared. One read can set two masks at once (a read of an address the run wrote *and* never
+declared sets both; a second read of an undeclared volatile byte sets both), and
 reporting that one as "declare it" sends the reader to add a `hw_seed` and hit the un-seedable
 refusal on the next run. That ordering is a case, not a comment.
 
@@ -996,26 +1023,40 @@ worth a refusal rather than a silent equivalence.
 
 ### The edge semantics: what is modeled, what is refused, what is not modeled
 
+Rows are keyed by **the modeled set** rather than by one address, because the set grows: it is
+`$fffa01`, `$ff820a`, `$ff8207` and `$ff8209` today, and `os.h`'s `OS_HW_*` table is the list.
+
 | the access | answer | why |
 | --- | --- | --- |
-| byte read of `$fffa01`/`$ff820a`, **declared** | the declared byte; log a `READ` entry | the byte is the case's input, exactly as a PSG register's contents are |
-| byte read of `$fffa01`/`$ff820a`, **undeclared** | `0`, recorded in `osh_hw_unseeded()`, still logged | served so a bare `emu.run` is unchanged; recorded so `harness.differential` can refuse. See the divergence above |
+| byte read of a **modeled** address, **declared** | the declared byte; log a `READ` entry | the byte is the case's input, exactly as a PSG register's contents are |
+| byte read of a **modeled** address, **undeclared** | `0`, recorded in `osh_hw_unseeded()`, still logged | served so a bare `emu.run` is unchanged; recorded so `harness.differential` can refuse. See the divergence above |
+| **second** byte read of a **VOLATILE** address in one run (`$ff8207`/`$ff8209`) | the declared byte again, recorded in `osh_hw_reread()` | a seed is a per-run CONSTANT and the counter is not: the second answer would be one the address cannot have held twice. Refused in a differential; **not seedable** — split the case |
+| second byte read of a **STATIC** address (`$fffa01`/`$ff820a`) | the declared byte again, and nothing recorded | the machine's own answer really is the same every time, so one declaration describes both reads and the run is correct |
 | byte read after **this run wrote** the address | `0`/the declared byte, recorded in `osh_hw_stale()` | the model drops hardware writes, so the seed describes a machine the program has already changed. Refused in a differential; **not seedable** |
 | 16/32-bit read taking one in | **REFUSED** in a differential (`osh_hw_wide()`, naming the address); under capture `emu.run` sinks the run | the neighbouring MFP/shifter registers would have to be fabricated as `0` |
-| **write** to `$fffa01`/`$ff820a` | dropped, noted | a hardware write has always been invisible; making it visible would mean every already-ported reconstruction that writes the address had to mirror it, for a value nothing reads back |
+| **write** to a **modeled** address | dropped, noted | a hardware write has always been invisible; making it visible would mean every already-ported reconstruction that writes the address had to mirror it, for a value nothing reads back |
 | any **other** hardware address, read or write | unchanged: `0` / dropped, silently | the model is a NAMED SET. Serving an address nobody declared would be the fabrication over again under a new name |
 | the rest of the GPIP byte (parallel busy, ring indicator, the STE DMA line) | **whatever the case declares** | the model serves a byte, not a machine. A case declaring `$b0` is declaring those bits `0`; the two bits games branch on are the reason the address is in the set at all |
 
 ### The explicit NON-GOAL: the FDC/DMA registers (`$ff8604`+)
 
 They are **not** in the modeled set and Phase 7 does not put them there. The reason is structural
-rather than a matter of effort: an FDC status byte answers a **per-access SEQUENCE**, not a per-run
-constant. `fdc_wait_irq` (`$62da`) polls `$fffa01` bit 5 *until it changes*; `fdc_wait_irq_bounded`
-polls the DMA address counter at `$ff8609`/`$860b`/`$860d` *until it advances*. A seed declares one
-byte for the whole run, so declaring a status register either terminates the loop immediately (which
-is what a `0` already does) or hangs it forever. Modeling those needs a *transaction* model — what
-the drive is doing between accesses — which is a different thing from this one, and it should arrive
-with the evidence for what the sequence really is.
+rather than a matter of effort, and stating it exactly matters now that the modeled set contains a
+counter: **the criterion is not "the value never changes on the machine" — it is that a per-run
+constant can describe any byte read AT MOST ONCE per run.** A byte that changes between accesses is
+perfectly describable if the run only looks at it once, which is why the shifter's video counter is
+admissible: `$51ac` reads `$ff8207` once and `$ff8209` once, and one read of one address is exactly
+what one declared byte is. The criterion is also *enforced* rather than argued — the two counter
+bytes are flagged VOLATILE, and a second read of one in the same run is a refusal.
+
+An FDC poll fails that criterion by its nature, not by bad luck. `fdc_wait_irq` (`$62da`) polls
+`$fffa01` bit 5 *until it changes*; `fdc_wait_irq_bounded` polls the DMA address counter at
+`$ff8609`/`$860b`/`$860d` *until it advances*. **Reading many times per run is the whole of what a
+poll loop is**, so there is no case shape that reduces one to a single read: declaring a status
+register either terminates the loop immediately (which is what a `0` already does) or hangs it
+forever. Modeling those needs a *transaction* model — what the drive is doing between accesses —
+which is a different thing from this one, and it should arrive with the evidence for what the
+sequence really is.
 
 Note the consequence for `$fffa01`, since it is in the set: a case *may* declare it with bit 5 set,
 and an FDC wait loop given that will spin until `max_insns`. That failure is loud (`emu.run` raises
@@ -1040,7 +1081,7 @@ which machine it means is **refused**, and one that says the wrong thing is wron
 ### What is pinned, and what is not
 
 **The model** is pinned kit-side by [`test/test_hw_model.py`](test/test_hw_model.py) and its
-`hw_model_probe.c`, which drives **both** implementations in one process (69 cases, as pytest
+`hw_model_probe.c`, which drives **both** implementations in one process (84 cases, as pytest
 collects them): a declared read
 served and ledgered; a declaration not consumed by one run and not surviving one either; an
 undeclared read served `0` **and recorded** on both sides; declaring one address not declaring the
@@ -1060,7 +1101,7 @@ each caught while touching no image byte:
 * a candidate that **serves an address outside the set**, which must refuse *and* stay out of the
   ledger.
 
-**The plumbing** is pinned by [`test/test_hw_differential.py`](test/test_hw_differential.py) (17
+**The plumbing** is pinned by [`test/test_hw_differential.py`](test/test_hw_differential.py) (19
 cases), through the shared miniature project in `test/kit_smoke_project.py` — whose `.PRG` holds the
 tempo selector's two reads as real 68000 code: the green case; the undeclared refusal naming both
 addresses and the `hw_seed=` to add; **the same run through `emu.run` served rather than refused**,
@@ -1071,7 +1112,12 @@ comparison shown to catch what the read stream cannot — a candidate handed a *
 from the oracle's (through the REAL `_seed_candidate_hw`, captured before the patch, so the control
 cannot drift from the plumbing), whose streams still match entry for entry; the missing-ABI arm
 refusing **by name**; the stale and wide refusals, each naming its address, and stale winning over
-undeclared when one read is both; a declaration the run never reads left alone; a case touching the
+undeclared when one read is both; **the VOLATILE re-read refused and its STATIC control served** —
+a `.PRG` routine that reads `$ff8209` twice against a faithful candidate that reads it twice too, so
+that with the harness's volatile branch removed every surface agrees and the differential comes back
+green (measured: the case then reds with DID NOT RAISE), beside the same shape on `$fffa01`, which
+must stay green or the tempo selector itself becomes unrunnable; a declaration the run never reads
+left alone; a case touching the
 model not at all left green; the smoke `.PRG`'s address literals pinned equal to `emu.HW_ADDRS`; and
 both guards around the capture fold.
 
@@ -1097,6 +1143,13 @@ refusal losing the address it names; a key dropped from a table row; the candida
 undeclared byte, not resetting its ledger, logging an unmodeled address, and dropping a refused read
 from its ledger.
 
+**The volatile flag's own mutant makes it 19**, measured when the flag landed: `harness`'s volatile
+branch disabled — a Python-side mutant, so no relink is involved — after which
+`test_a_second_read_of_a_volatile_address_is_refused_and_not_seedable` reds with DID NOT RAISE
+rather than with a stream mismatch. That distinction is the finding: the run was otherwise green in
+every surface a differential has, which is exactly the false green the flag closes. The other 18
+were not re-run for it.
+
 That last one is why the narrative tests here are a short list. Seven of them re-asserted a table row
 in prose and were deleted, their arguments moved into the row's own comment; the sweep is what says
 the rows still carry the coverage, and it does. What survives pins a relation BETWEEN cases (the two
@@ -1108,11 +1161,15 @@ otherwise be measured by nothing.
 
 **Not pinned.** The ledger's **cap** arm has no case, for `OS_PSG_LOG_MAX`'s reason: it needs 4,096
 modeled reads in one run, and nothing that exists does that (an FDC poll loop could, which is why the
-cap is sized like the PSG's rather than like Dosound's). No project passes a `hw_seed` yet — Wonder
-Boy's `$17c74` head is the consumer this was built for, and porting it is the next step, not this
-one. And `tools/hw_portability.py` still prices `$fffa01`/`$ff820a` as **T4 HW_READ**, describing
-them as "served a real byte ONLY under audio capture": that is now stale, and re-pricing it against
-this phase is a registered follow-up rather than part of it.
+cap is sized like the PSG's rather than like Dosound's).
+
+Two entries that used to stand here are now closed, and are recorded as closed rather than deleted,
+since "no consumer" was the honest state this phase shipped in. **The model has consumers**: Wonder
+Boy's `$17c74` tempo selector declares `$fffa01`/`$ff820a`, and its `rng_next` declares `$ff8209` —
+the branch shape and the arithmetic shape, one project. And **`tools/hw_portability.py` prices the
+modeled set as `T2 SEEDED_READ`**, not as the `T4 HW_READ` it priced them at when only the audio
+capture answered them; the census pins `HW_SEEDED_ADDRS` and `OS_HW_NSLOTS` against `os.h`, so a
+fifth modeled byte cannot be added while the classifier goes on under-counting it.
 
 ## What a candidate must mirror (cross-side ABI)
 
@@ -1126,7 +1183,7 @@ nothing to mirror by hand. Two things are **not** in the image and must be match
 | XBIOS `Dosound(A0)` list pointers | `shim.c`'s `g_dosound_arg` ledger | export the `g_dosound*` ledger ABI (README.md); `harness.differential` compares them |
 | direct `$ff8800`/`$ff8802` PSG accesses, **reads included** | `shim.c`'s `g_psg_kind`/`g_psg_reg`/`g_psg_val` ledger | emit the same ordered `(kind, reg, val)` stream — call `psg_port_write()` / `psg_port_read()` from `psg.h` (BuggyBoy predates it and emits through `g_REFRESH` out-params instead) |
 | the YM2149's register contents, which a read-back returns | `shim.c`'s `g_psg_file` + its known mask | `psg_port_read()`/`psg_port_write()` keep the same file; `harness.differential` compares it, and the case seeds both sides with `psg_seed=` (Phase 6) |
-| reads of the modeled hardware bytes `$fffa01`/`$ff820a` | `shim.c`'s `g_hw_log_slot`/`g_hw_log_val` ledger + `g_hw_file` | emit the same ordered `(slot, val)` stream — call `hw_read8()` from `hw.h` with an `OS_HW_*` constant; the case declares both sides' bytes with `hw_seed=` (Phase 7) |
+| reads of the modeled hardware bytes `$fffa01`, `$ff820a`, `$ff8207`, `$ff8209` | `shim.c`'s `g_hw_log_slot`/`g_hw_log_val` ledger + `g_hw_file` | emit the same ordered `(slot, val)` stream — call `hw_read8()` from `hw.h` with an `OS_HW_*` constant; the case declares both sides' bytes with `hw_seed=` (Phase 7). A VOLATILE one (`$ff8207`/`$ff8209`) may be read at most ONCE per run: a second read is refused, and the remedy is the case's shape — end it before the second read, or split it into two runs |
 
 `OS_SUPER_TOKEN` is not off-image state but it is still a shared value: a reconstruction of a
 function that calls `Super` must return the same constant, since the program can store it into the

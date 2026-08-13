@@ -15,8 +15,9 @@ THREE GROUPS, and the failure each exists to catch:
 
   * the LATTICE — the tier every access shape earns. The rule was re-derived against kit Phase 6
     (see `projects/wonderboy/recreate/PORTABILITY.md` §0g), which stopped it pricing every PSG read
-    as a hard reject, and again against Phase 7 (§0i), which folded the two modeled hardware bytes
-    into the same seeded tier. What matters most here are the two BOUNDARIES of that tier: each
+    as a hard reject, and again against Phase 7 (§0i), which folded the modeled hardware bytes
+    (`HW_SEEDED_ADDRS` — two of them then, four since batch 33 added the shifter's video-counter
+    pair) into the same seeded tier. What matters most here are the two BOUNDARIES of that tier: each
     model serves exactly one shape at exactly one set of addresses, and most cases below are a
     shape or an address it does NOT serve.
   * the TRIPWIRES — `check_shim_agreement()`, exercised by mutating throwaway copies of the kit.
@@ -96,11 +97,14 @@ LATTICE_CASES = [
      "have to fabricate as 0 — recorded, never served, and a differential refuses it"),
     (0xFF8209, 2, "READ", "T_HARD_REJECT",
      "the same read straddling INTO $ff820a from below — os_hw_slots_touched() is a span test, so "
-     "a start-address test would miss exactly this one"),
+     "a start-address test would miss exactly this one. Since batch 33 the start address is a "
+     "modeled byte too, so this word takes in TWO slots and is refused for both"),
     (0xFFFA01, "?", "READ", "T_HARD_REJECT",
      "an operand Ghidra could not size is NOT assumed to be the modeled byte shape, as at the PSG"),
-    (0xFF8209, 1, "READ", "T_HW_READ",
-     "one address BELOW the modeled byte: the video counter `rng_next` reads, still a silent 0"),
+    (0xFF8209, 1, "READ", "T_SEEDED_READ",
+     "the video counter `rng_next` reads. It WAS the row one address below the modeled byte, priced "
+     "a silent-zero T4; batch 33 put it in the table, so a byte read of it is served from what the "
+     "case declared and an undeclared one refuses the differential"),
     (0xFF820A, 1, "WRITE", "T_HW_WRITE",
      "Wonder Boy's own `move.b #2,$ff820a` at $f91c: Phase 7 models what the address ANSWERS, so a "
      "write to it is dropped like any other and tiers no worse"),
@@ -119,8 +123,9 @@ LATTICE_CASES = [
     (0xFF87FF, "?", "READ", "T_HW_READ",
      "unsized one byte below the PSG block: priced as not straddling in — the OPTIMISTIC half of "
      "the unsized edge (the pessimistic half is the $ff8800 `?` row above)"),
-    (0xFF8209, "?", "READ", "T_HW_READ",
-     "unsized one byte below $ff820a: the identical edge at the Phase 7 model, priced identically"),
+    (0xFF8209, "?", "READ", "T_HARD_REJECT",
+     "an operand Ghidra could not size AT a modeled byte, which is the $fffa01 row's rule reaching "
+     "a second address: unsized is not assumed to be the byte shape the model serves"),
 ]
 
 
@@ -240,8 +245,8 @@ def test_a_third_modeled_hardware_address_fails(kit_copy):
     modeled byte, every pinned name still matches, and this module goes on pricing the new address
     as a silent-zero T4 — under-counting what a differential verifies, exactly as the pre-§0g rule
     under-counted the PSG. Pinning the slot COUNT is what makes that loud."""
-    rewrite(kit_copy / "include" / "os.h", "#define OS_HW_NSLOTS            2",
-            "#define OS_HW_NSLOTS            3")
+    rewrite(kit_copy / "include" / "os.h", "#define OS_HW_NSLOTS                 4",
+            "#define OS_HW_NSLOTS                 5")
     with pytest.raises(SystemExit) as exit_info:
         hp.check_shim_agreement()
     assert "OS_HW_NSLOTS" in str(exit_info.value)
@@ -458,7 +463,7 @@ def test_orphan_and_unsized_sites_reach_the_blind_spot_sweeps(tmp_path):
     extra.write_text(
         "# insn\thwaddr\tsize\tdir\tsteer\tnote\n"
         "0x2fffe\t0xff820a\t1\tWRITE\t-\tsynthetic orphan write to a seeded byte\n"
-        "0x2fff0\t0xff8209\t?\tREAD\t-\tsynthetic unsized read just below a seeded byte\n")
+        "0x2fff0\t0xff8209\t?\tREAD\t-\tsynthetic unsized read AT a seeded byte\n")
     stdout = run_tool("--extra-hw", str(extra))
     assert "2 write(s) to a SEEDED hardware byte" in stdout          # $f91c AND the orphan
     assert "`0x2fffe` in `code in no function`" in stdout

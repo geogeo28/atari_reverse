@@ -146,6 +146,7 @@ _PsgFileP = ctypes.POINTER(ctypes.c_uint8 * PSG_NREGS)
 # silent 0 while this file reported the case as having declared them, which is precisely the false
 # green the model closes.
 _HW_MODEL_ABI = ("osh_hw_seed", "osh_hw_file", "osh_hw_known", "osh_hw_unseeded", "osh_hw_stale",
+                 "osh_hw_reread", "osh_hw_volatile", "osh_hw_capture_profile_known",
                  "osh_hw_wide", "osh_hw_count", "osh_hw_log_slots", "osh_hw_log_vals",
                  "osh_hw_dropped", "osh_hw_nslots", "osh_hw_addr_table", "osh_hw_capture_profile")
 _missing_hw_model = [sym for sym in _HW_MODEL_ABI if not hasattr(_LIB, sym)]
@@ -170,6 +171,9 @@ _LIB.osh_hw_dropped.restype = ctypes.c_uint32
 _LIB.osh_hw_nslots.restype = ctypes.c_uint32
 _LIB.osh_hw_addr_table.restype = _u32p
 _LIB.osh_hw_capture_profile.restype = _u8p
+_LIB.osh_hw_capture_profile_known.restype = ctypes.c_uint32
+_LIB.osh_hw_reread.restype = ctypes.c_uint32
+_LIB.osh_hw_volatile.restype = ctypes.c_uint32
 # The modeled set, read from the .so rather than kept as a second copy of os.h's table here — so a
 # shim.c that adds an address cannot leave this file naming the old set (PSG_NREGS's argument).
 HW_NSLOTS = _LIB.osh_hw_nslots()
@@ -432,7 +436,13 @@ def hw_capture_profile():
     "a case that declares this serves the same" without either side holding a copy of the constants.
     """
     profile = _LIB.osh_hw_capture_profile()
-    return {addr: profile[slot] for slot, addr in enumerate(HW_ADDRS)}
+    # FILTERED BY THE MODE'S OWN MASK. The profile array is a designated initializer with a slot
+    # per modeled address, so every slot the mask WITHHOLDS holds a fabricated 0 — returning those
+    # as if the mode declared them hands a caller a byte the C side never serves, and a case that
+    # fed the dict straight back in as a hw_seed would declare a fabrication (shim.c's
+    # HW_CAPTURE_PROFILE_KNOWN says why the mask withholds them).
+    known = _LIB.osh_hw_capture_profile_known()
+    return {addr: profile[slot] for slot, addr in enumerate(HW_ADDRS) if known & (1 << slot)}
 
 
 def hw_events():
@@ -603,14 +613,17 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     precisely the bits nothing wrote and inventing them is a false green (TRAP_MODEL.md, Phase 6).
     Registers are re-seeded before every run, so a seed never leaks into the next case.
 
-    ``hw_seed`` is ``{address: value}`` over the modeled hardware set (``HW_ADDRS`` — the MFP GPIP
-    byte and the shifter's sync byte), the same kind of declared input for a byte that steers a
-    branch (TRAP_MODEL.md, Phase 7). It too is re-installed before every run. **An UNDECLARED
-    modeled read does not raise here**, unlike an undeclared PSG register: it is served the 0 it has
-    always been served, and reported in ``out_regs["hw_unseeded"]`` for ``harness.differential`` to
-    refuse the case on. A bare ``run()`` drives relocators, Copylock and bootstrap code whose
-    hardware reads are nobody's enumerated list, and a false green needs something being verified —
-    which a bare run is not.
+    ``hw_seed`` is ``{address: value}`` over the modeled hardware set (``HW_ADDRS``, built from the
+    ``.so``'s own table: the MFP GPIP byte, the shifter's sync byte and its two video-counter
+    bytes), the same kind of declared input for a byte that steers a branch — or, for the counter
+    pair, one a routine hashes into an arithmetic result (TRAP_MODEL.md, Phase 7). It too is
+    re-installed before every run. **An UNDECLARED modeled read does not raise here**, unlike an
+    undeclared PSG register: it is served the 0 it has always been served, and reported in
+    ``out_regs["hw_unseeded"]`` for ``harness.differential`` to refuse the case on. A bare ``run()``
+    drives relocators, Copylock and bootstrap code whose hardware reads are nobody's enumerated
+    list, and a false green needs something being verified — which a bare run is not. A SECOND read
+    of a VOLATILE address in one run is reported the same way, in ``out_regs["hw_reread"]``: one
+    declaration is one byte, and the counter cannot have held it twice.
     """
     regs = regs or {}
     if audio_capture_on():
@@ -732,11 +745,16 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
         causes.append(f"its modeled hardware reads overflowed the ledger — {dropped_hw_reads} "
                       f"read(s) past os.h's OS_HW_LOG_MAX cap were DROPPED, so hw_events() is a "
                       f"truncated read stream, not this run's whole one")
+    # The addresses come from the mask, never from a restated pair: the modeled set grows (os.h owns
+    # it), and a message naming two of four would send the reader looking at the wrong register.
     if audio_capture_on() and _LIB.osh_hw_wide():
-        causes.append("under audio capture it read the machine-profile bytes ($fffa01 GPIP / "
-                      "$ff820a shifter sync) at 16 or 32 bits, and only a BYTE read of either is "
-                      "modeled — a wider one takes in neighbouring registers the model would have "
-                      "to fabricate as 0")
+        wide_reads = _hw_addrs_of(_LIB.osh_hw_wide())
+        causes.append(f"under audio capture it read the modeled hardware byte(s) "
+                      f"{', '.join(f'{addr:#x}' for addr in wide_reads)} at 16 or 32 bits, and only "
+                      f"a BYTE read of one is modeled — a wider one takes in neighbouring registers "
+                      f"the model would have to fabricate as 0. Under the mode only the two "
+                      f"machine-profile bytes are declared at all (hw_capture_profile()); the rest "
+                      f"of the set reads an undeclared 0 there, by design")
     if causes:
         raise RuntimeError(f"function @ {entry:#x} hit unmodeled OS behaviour: "
                            + "; also, ".join(causes)
@@ -773,6 +791,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     out_regs["hw_unseeded"] = hw_unseeded_addrs()   # modeled addresses read while undeclared
     out_regs["hw_stale"] = _hw_addrs_of(_LIB.osh_hw_stale())     # ...written, then read back
     out_regs["hw_wide"] = _hw_addrs_of(_LIB.osh_hw_wide())       # ...taken in by a 16/32-bit read
+    out_regs["hw_reread"] = _hw_addrs_of(_LIB.osh_hw_reread())   # ...VOLATILE and read twice
     out_regs["hw_events"] = hw_events()             # the ordered (address, value) read stream
     out_regs["hw_file"] = hw_file()
     out_regs["hw_known"] = _LIB.osh_hw_known()

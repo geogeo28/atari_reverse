@@ -23,14 +23,22 @@ cases below, because a "fix" in either direction is the kind that looks like tid
   * `_seed_candidate_hw` really seeds the candidate. Stubbed out, the same correct reconstruction
     reads an address it was never given and is refused;
   * a candidate missing the hardware ABI is refused by NAME while the oracle reads the addresses;
-  * the two refusals that no declaration can fix: a read after the run's own write, and a wide read;
+  * the three refusals that no declaration can fix: a read after the run's own write, a wide read,
+    and a SECOND read of a VOLATILE address — beside its control, the same shape on a STATIC address,
+    which is served;
   * the audio-capture veto still stands over a differential, and `emu.run` refuses a `hw_seed` under
     the mode — the two guards around the capture fold.
 """
 import pytest
 
-from kit_smoke_project import (HW_READ_ENTRY, MFP_GPIP, RMW_ENTRY, SHIFTER_SYNC, SYNC_ONLY_ENTRY,
-                               WIDE_READ_ENTRY, WRITE_THEN_READ_ENTRY, bind)
+# The one the .PRG does NOT plant, spelled once here so the table pin below is an EQUALITY and not
+# a prefix: the counter's MID byte has no routine, since one volatile address is enough to measure
+# the flag and Wonder Boy is where the pair is really read.
+VCOUNT_MID = 0xFF8207
+
+from kit_smoke_project import (HW_READ_ENTRY, MFP_GPIP, RMW_ENTRY, SHIFTER_SYNC,
+                               SHIFTER_VCOUNT_LOW, STATIC_TWICE_ENTRY, SYNC_ONLY_ENTRY,
+                               VOLATILE_TWICE_ENTRY, WIDE_READ_ENTRY, WRITE_THEN_READ_ENTRY, bind)
 
 harness = bind()
 emu = harness.emu
@@ -44,6 +52,7 @@ emu = harness.emu
 # only two that involve the profile read it from `emu.hw_capture_profile()`.
 DECLARED_GPIP = 0x5A
 DECLARED_SYNC = 0xA5
+DECLARED_VCOUNT = 0x3C                # ...and the same rule for the volatile slot's own cases
 DECLARED = {MFP_GPIP: DECLARED_GPIP, SHIFTER_SYNC: DECLARED_SYNC}
 # ...and a declaration whose two bytes are EQUAL, so that a mutant reading them in the wrong order
 # differs from a correct run in nothing but the order.
@@ -60,8 +69,11 @@ def test_the_smoke_prg_reads_the_addresses_the_model_actually_names():
     names — and the failure would read as "the oracle did not read the tempo pair", sending the
     reader to the routine rather than to the drift.
     """
-    assert (MFP_GPIP, SHIFTER_SYNC) == emu.HW_ADDRS, (
-        f"the smoke project plants reads of {MFP_GPIP:#x}/{SHIFTER_SYNC:#x} but the model names "
+    # THE WHOLE TABLE, spelled once here and equal: a prefix pin would let an address be inserted
+    # ahead of these two — which renumbers every slot the ledger reports — and still pass.
+    assert (MFP_GPIP, SHIFTER_SYNC, VCOUNT_MID, SHIFTER_VCOUNT_LOW) == emu.HW_ADDRS, (
+        f"the smoke project plants reads of {MFP_GPIP:#x}/{SHIFTER_SYNC:#x}/"
+        f"{SHIFTER_VCOUNT_LOW:#x} but the model names "
         f"{', '.join(f'{a:#x}' for a in emu.HW_ADDRS)}")
 
 
@@ -263,6 +275,50 @@ def test_a_wide_read_of_a_modeled_address_is_refused_and_names_it():
         "the refusal listed the whole modeled set instead of the address the run actually read wide")
 
 
+def test_a_second_read_of_a_volatile_address_is_refused_and_not_seedable():
+    """THE VOLATILE REFUSAL, at the differential level rather than at the probe's.
+
+    A seed is a per-run CONSTANT, and the shifter's video counter advances every few scanlines — so
+    a run that reads `$ff8209` twice is served the first read's byte for the second one, and the
+    case would be verified against a value the address cannot have held twice. That is the
+    admissibility argument for putting a counter in the model at all, and this is the case that
+    makes it a rule instead of a comment.
+
+    The candidate here is FAITHFUL — it makes the same two reads through `hw_read8`, and the
+    candidate side has no re-read refusal of its own — so with `_vet_hw_reads_are_declared`'s
+    volatile branch removed the streams match entry for entry, the image is untouched on both sides,
+    and the differential comes back green about a counter that never moved. Measured: with the branch
+    reverted this case reds with DID NOT RAISE, which is the false green named exactly.
+
+    Declared, deliberately. The undeclared refusal would fire on the same run, and a case that let it
+    win would pass while measuring nothing about volatility.
+    """
+    with pytest.raises(AssertionError, match="MORE THAN ONCE in one run") as raised:
+        _tempo_pair("g_hw_reads_the_vcount_twice", hw_seed={SHIFTER_VCOUNT_LOW: DECLARED_VCOUNT},
+                    entry=VOLATILE_TWICE_ENTRY)
+    message = str(raised.value)
+    assert hex(SHIFTER_VCOUNT_LOW) in message, (
+        "the refusal did not name the address the case must do something about")
+    assert "hw_seed={" not in message, (
+        "the refusal offers a declaration as the remedy, which cannot work — one declaration is one "
+        "byte, and the case needs a different SHAPE (end it earlier, or split it in two)")
+
+
+def test_a_second_read_of_a_STATIC_address_is_served_rather_than_refused():
+    """The control that says the refusal above is about VOLATILITY and not about repetition.
+
+    A static byte is one the machine answers the same way every time, so ONE declaration describes
+    every read of it and a run that reads `$fffa01` twice is correct — it must stay green. Without
+    this case "refuse every re-read" is a tidy-looking simplification of the branch above, and
+    nothing would catch it.
+    """
+    diffs, info = _tempo_pair("g_hw_reads_the_gpip_twice", hw_seed=DECLARED,
+                              entry=STATIC_TWICE_ENTRY)
+    assert diffs == []
+    assert info["regs"]["hw_events"] == [(MFP_GPIP, DECLARED_GPIP), (MFP_GPIP, DECLARED_GPIP)], (
+        "the oracle did not read the static byte twice, so this proves nothing about the exemption")
+
+
 def test_a_declaration_the_run_never_reads_is_left_alone():
     """The limit of the guard, stated as a case so it cannot be tightened by accident.
 
@@ -313,6 +369,8 @@ def test_a_hw_seed_passed_under_the_capture_mode_is_refused():
             emu.run(harness.make_image(), HW_READ_ENTRY, hw_seed=DECLARED)
 
         _, _, out_regs = emu.run(harness.make_image(), HW_READ_ENTRY)
+        # `hw_capture_profile()` reports the slots the mode's own mask DECLARES and no others, so
+        # this is back to comparing the run's ordered reads against the whole of it.
         assert out_regs["hw_events"] == list(emu.hw_capture_profile().items()), (
             "under the mode the run was served something other than the profile the mode declares")
 

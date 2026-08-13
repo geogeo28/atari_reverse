@@ -207,8 +207,9 @@ static uint32_t g_psg_unmodeled;
 static int     g_audio_capture;
 
 /* --- the SEEDED HARDWARE READ model (TRAP_MODEL.md, "Phase 7") -------------------------------
- * os.h names the modeled set (OS_HW_MFP_GPIP, OS_HW_SHIFTER_SYNC) and says why those two and not
- * the rest of the I/O map. This is the state behind it, and it is Phase 6's shape exactly: a file
+ * os.h names the modeled set (OS_HW_MFP_GPIP, OS_HW_SHIFTER_SYNC and the two video-counter
+ * bytes OS_HW_SHIFTER_VCOUNT_MID/_LOW) and says why those four and not the rest of the I/O map.
+ * This is the state behind it, and it is Phase 6's shape exactly: a file
  * of bytes, a mask saying which of them the CASE DECLARED, a per-run reinstall from the declared
  * seed, and an ordered ledger of every read the run made — because the byte a `btst #7,$fffa01`
  * answers steers a branch, so it is an INPUT of the run and the model must not invent it.
@@ -226,6 +227,13 @@ static uint32_t g_hw_seed_known;           /* ...and which slots it declared */
 static uint32_t g_hw_unseeded;             /* slots this run read while UNDECLARED */
 static uint32_t g_hw_written;              /* slots this run WROTE (see hw_note_write) */
 static uint32_t g_hw_stale;                /* ...and then READ: the seed no longer describes them */
+/* Slots read MORE THAN ONCE in one run while os.h calls them VOLATILE. A per-run constant answers
+ * the second read with the first read's byte; the machine would not, so the case is verified
+ * against a value the counter cannot have held twice. Recorded rather than refused here, exactly as
+ * g_hw_unseeded is, because emu.run drives bootstraps nobody enumerates — harness.differential is
+ * where it becomes a refusal. */
+static uint32_t g_hw_reread;
+static uint32_t g_hw_seen;                 /* slots read at least once this run, for the above */
 /* Slots taken in by a wide (16/32-bit) read. Only a BYTE read of a modeled address is served; a
  * wider one takes in neighbouring MFP/shifter registers the model knows nothing about, so answering
  * it would fabricate them as 0. Recorded rather than served — under audio capture emu.run sinks the
@@ -335,6 +343,12 @@ uint32_t        osh_hw_dropped(void)   { return g_hw_dropped; }
 /* The modeled set itself, so Python names the addresses from the .so it actually loaded rather than
  * from a second copy of os.h's table (osh_psg_nregs's argument). */
 uint32_t        osh_hw_nslots(void)    { return OS_HW_NSLOTS; }
+uint32_t        osh_hw_reread(void)    { return g_hw_reread; }
+uint32_t        osh_hw_volatile(void)  { return os_hw_volatile_slots(); }
+/* The capture profile's KNOWN mask, exported for the same reason the profile itself is: a Python
+ * caller that rebuilt "which slots the mode declares" from the table's length would report the
+ * fabricated 0 of every slot the mask withholds as a declared byte. */
+uint32_t        osh_hw_capture_profile_known(void) { return HW_CAPTURE_PROFILE_KNOWN; }
 const uint32_t *osh_hw_addr_table(void) { return os_hw_addrs(); }
 /* The bytes the audio-capture mode declares, by slot — what a test pins the mode against. */
 const uint8_t  *osh_hw_capture_profile(void) { return g_hw_capture_profile; }
@@ -434,6 +448,11 @@ static unsigned int hw_read(int slot) {
     if (g_hw_known & (1u << slot)) served = g_hw_file[slot];
     else                           g_hw_unseeded |= 1u << slot;
     if (g_hw_written & (1u << slot)) g_hw_stale |= 1u << slot;
+    /* The SECOND read of a volatile slot, tallied on the read that repeats rather than on the one
+     * that opened it — so the mask names the slot a case must do something about. */
+    if ((g_hw_seen & (1u << slot)) && (os_hw_volatile_slots() & (1u << slot)))
+        g_hw_reread |= 1u << slot;
+    g_hw_seen |= 1u << slot;
     hw_log(slot, (uint8_t)served);
     return served;
 }
@@ -652,6 +671,8 @@ static void hw_enter_run(void) {
     g_hw_unseeded = 0;
     g_hw_written = 0;
     g_hw_stale = 0;
+    g_hw_reread = 0;
+    g_hw_seen = 0;
     g_hw_wide = 0;
     g_hw_log_n = 0;
     g_hw_dropped = 0;

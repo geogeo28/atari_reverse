@@ -2,7 +2,7 @@
 # project artifacts; the two harness-plumbing suites (`test_psg_differential.py`,
 # `test_hw_differential.py`) need the SHARED liboracle.so through `test/kit_smoke_project.py`, so
 # `test` builds it first (via the ORACLE_VIA delegation below) — without that, a fresh tree or a
-# swept build/ dir SKIPS both and the gate under-runs by their 25 cases (8 + 17, as pytest
+# swept build/ dir SKIPS both and the gate under-runs by their 27 cases (8 + 19, as pytest
 # collects them). A project's `make test`
 # runs its differential suite via kit.mk; this runs the kit's.
 #

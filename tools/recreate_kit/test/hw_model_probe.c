@@ -34,6 +34,7 @@ void            osh_hw_seed(const uint8_t *values, uint32_t known);
 void            osh_audio_capture(int on);
 const uint8_t  *osh_hw_file(void);
 uint32_t        osh_hw_known(void);
+uint32_t        osh_hw_reread(void);
 uint32_t        osh_hw_unseeded(void);
 uint32_t        osh_hw_stale(void);
 uint32_t        osh_hw_wide(void);
@@ -97,6 +98,7 @@ static void report_oracle(const char *name, uint32_t read_value) {
     printf("K %s unseeded %u\n", name, osh_hw_unseeded());
     printf("K %s stale %u\n", name, osh_hw_stale());
     printf("K %s wide %u\n", name, osh_hw_wide());
+    printf("K %s reread %u\n", name, osh_hw_reread());
     printf("K %s known %u\n", name, osh_hw_known());
     uint32_t n = osh_hw_count();
     printf("K %s nlog %u\n", name, n);
@@ -217,6 +219,44 @@ int main(void) {
     run_and_report("declared_read_again");      /* the seed is not consumed by one run */
     seed(0, DECLARED_BYTE);
     run_and_report("undeclared_read");          /* ...and withdrawing it restores the 0 */
+
+    /* --- THE VIDEO COUNTER, the pair added for Wonder Boy's $51ac. Its two bytes are read once
+     * each per call and summed into an arithmetic result rather than branched on, so what a
+     * fabricated 0 costs is not a wrong branch but a draw that collapses to a constant. Same three
+     * shapes as the pair above, over the two new slots, so that "the model grew" is a claim about
+     * behaviour and not only about a table's length. --- */
+    const uint32_t VCOUNT_PAIR = SLOT_BIT(OS_HW_SLOT_SHIFTER_VCOUNT_MID)
+                                 | SLOT_BIT(OS_HW_SLOT_SHIFTER_VCOUNT_LOW);
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, OS_HW_SHIFTER_VCOUNT_MID);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, OS_HW_SHIFTER_VCOUNT_LOW);
+    plant_rts(pc);
+    seed(VCOUNT_PAIR, DECLARED_BYTE);
+    run_and_report("vcount_pair_declared");
+    seed(GPIP_ONLY, DECLARED_BYTE);
+    run_and_report("vcount_pair_undeclared");   /* the two OLD slots' declaration is not theirs */
+
+    /* ...and a WRITE to one of them makes the seed stale, exactly as it does for the sync byte. */
+    pc = emit_write_byte(PROBE_ENTRY, DECLARED_BYTE, OS_HW_SHIFTER_VCOUNT_LOW);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, OS_HW_SHIFTER_VCOUNT_LOW);
+    plant_rts(pc);
+    seed(ALL_SLOTS_DECLARED, DECLARED_BYTE);
+    run_and_report("vcount_write_then_read");
+
+    /* --- THE VOLATILE RULE, which is what makes os.h's admissibility argument enforceable. A
+     * static byte may be read as often as a run likes, since one declaration describes every read
+     * of it; a volatile one may be read ONCE, because the second answer a per-run constant gives is
+     * the first one and the machine's would not be. --- */
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, OS_HW_SHIFTER_VCOUNT_LOW);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, OS_HW_SHIFTER_VCOUNT_LOW);
+    plant_rts(pc);
+    seed(ALL_SLOTS_DECLARED, DECLARED_BYTE);
+    run_and_report("volatile_read_twice");
+
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, OS_HW_MFP_GPIP);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, OS_HW_MFP_GPIP);
+    plant_rts(pc);
+    seed(ALL_SLOTS_DECLARED, DECLARED_BYTE);
+    run_and_report("static_read_twice");
 
     /* --- declaring ONE address does not declare the other --- */
     pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, OS_HW_SHIFTER_SYNC);

@@ -70,6 +70,24 @@ void g_hw_reads_the_sync(uint8_t *image) {
     hw_read8(OS_HW_SHIFTER_SYNC);
 }
 
+/* Reads the VOLATILE counter byte twice, faithfully — which is the point: this candidate matches the
+ * .PRG entry for entry, so with the harness's volatile refusal removed the differential comes back
+ * GREEN about a counter that never moved. That false green is what the refusal exists to close, and
+ * a candidate that read the byte only once would red for the wrong reason. */
+void g_hw_reads_the_vcount_twice(uint8_t *image) {
+    (void)image;
+    hw_read8(OS_HW_SHIFTER_VCOUNT_LOW);
+    hw_read8(OS_HW_SHIFTER_VCOUNT_LOW);
+}
+
+/* Reads the STATIC GPIP byte twice, which is a correct run rather than a mutant: the machine really
+ * does answer the same byte every time, so one declaration describes both reads. */
+void g_hw_reads_the_gpip_twice(uint8_t *image) {
+    (void)image;
+    hw_read8(OS_HW_MFP_GPIP);
+    hw_read8(OS_HW_MFP_GPIP);
+}
+
 /* A candidate that reads no hardware at all: for the ABI case, and for the mutant that hardcodes
  * what it should have read. */
 void g_hw_untouched(uint8_t *image) {

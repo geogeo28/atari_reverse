@@ -99,8 +99,24 @@ _WRITE_THEN_READ_CODE = (struct.pack(">HHI", 0x13FC, SYNC_50HZ, SHIFTER_SYNC)  #
 _WIDE_READ_CODE = (struct.pack(">HI", 0x3239, SHIFTER_SYNC)          # move.w $ff820a.l,d1
                    + struct.pack(">H", 0x4E75))                      # rts
 
+# ...and the pair the VOLATILE flag exists for. The shifter's video-address counter advances every
+# few scanlines, so one declaration describes exactly one read of it: a routine that reads
+# $ff8209 TWICE is served the same byte twice, which the counter cannot have held.
+SHIFTER_VCOUNT_LOW = 0xFF8209
+
+_VOLATILE_TWICE_CODE = (struct.pack(">HI", 0x1239, SHIFTER_VCOUNT_LOW)   # move.b $ff8209.l,d1
+                        + struct.pack(">HI", 0x1439, SHIFTER_VCOUNT_LOW)  # move.b $ff8209.l,d2
+                        + struct.pack(">H", 0x4E75))                      # rts
+
+# ...and its control, which is what says the refusal is about VOLATILITY and not about repetition:
+# the same shape on a STATIC address is a correct run, because the machine answers a static byte the
+# same way every time and one declaration describes both reads.
+_STATIC_TWICE_CODE = (struct.pack(">HI", 0x1239, MFP_GPIP)           # move.b $fffa01.l,d1
+                      + struct.pack(">HI", 0x1439, MFP_GPIP)         # move.b $fffa01.l,d2
+                      + struct.pack(">H", 0x4E75))                   # rts
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
-             _WIDE_READ_CODE)
+             _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE)
 
 
 def _entries():
@@ -113,7 +129,7 @@ def _entries():
 
 
 (RMW_ENTRY, GIACCESS_ENTRY, HW_READ_ENTRY, SYNC_ONLY_ENTRY, WRITE_THEN_READ_ENTRY,
- WIDE_READ_ENTRY) = _entries()
+ WIDE_READ_ENTRY, VOLATILE_TWICE_ENTRY, STATIC_TWICE_ENTRY) = _entries()
 
 PRG_MAGIC = 0x601A
 

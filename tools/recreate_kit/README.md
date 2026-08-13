@@ -144,10 +144,18 @@ witness):
 | `g_hw_log_count` / `g_hw_log_slots` / `g_hw_log_vals` | | the ordered read stream: one `(slot, value)` per read |
 | `g_hw_file` / `g_hw_file_known` | | the declared bytes those reads are served from, and which are declared |
 
-The modeled set is exactly `$fffa01` (MFP GPIP) and `$ff820a` (shifter sync) — `os.h`'s `OS_HW_*`
-constants, which is what `hw_read8` takes. Both **steer a branch**, so the `0` every other off-image
-read answers is not merely incomplete: it makes the reconstruction and the original take the same
-wrong path and the diff agree with itself. That is the `$ffff820a` defect BuggyBoy shipped green.
+The modeled set is exactly `$fffa01` (MFP GPIP), `$ff820a` (shifter sync) and `$ff8207`/`$ff8209`
+(the shifter's video-address counter, mid and low) — `os.h`'s `OS_HW_*` constants, which is what
+`hw_read8` takes. The first two **steer a branch**; the counter pair is an **arithmetic input** (a
+routine hashes it for entropy). Either way the `0` every other off-image read answers is not merely
+incomplete: it makes the reconstruction and the original take the same wrong path, or hash the same
+fabricated constant, and the diff agrees with itself. That is the `$ffff820a` defect BuggyBoy
+shipped green.
+
+Each address is STATIC or **VOLATILE**: a volatile one (the counter pair) is a byte the machine
+changes on its own, so one declaration describes exactly one read and a **second read of it in the
+same run is refused**, while a static one may be re-read freely — the machine's answer is the same
+every time, so one declaration describes every read of it.
 
 `harness.differential(..., hw_seed={0xfffa01: 0xb0})` declares the bytes to both sides and compares
 the read streams. **A differential whose oracle read one of them without a declaration is refused**,

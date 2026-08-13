@@ -35,7 +35,9 @@ CANDIDATE_SRC = (KIT / "src" / "hw.c", KIT / "src" / "os_refusal.c")
 # below is what keeps these two numbers honest against the C.
 GPIP = 0            # $fffa01, the MFP GPIP: bit 7 = monitor detect
 SYNC = 1            # $ff820a, the shifter's sync mode: bit 1 = 50 Hz
-NSLOTS = 2
+VMID = 2            # $ff8207, the shifter's video address counter, mid byte
+VLOW = 3            # $ff8209, ...and its low byte
+NSLOTS = 4
 
 # The bytes the probe's cases use. DECLARED is what a case declares (deliberately not the capture
 # profile's, so a case served the profile where it asked for its own declaration is visible); OTHER
@@ -50,12 +52,26 @@ GPIP_COLOUR_MONITOR = 0x80
 SYNC_50HZ = 0x02
 GPIP_BIT = 1 << GPIP
 SYNC_BIT = 1 << SYNC
-ALL_KNOWN = GPIP_BIT | SYNC_BIT
+VMID_BIT = 1 << VMID
+VLOW_BIT = 1 << VLOW
+# What the probe declares when it declares EVERY slot (its own ALL_SLOTS_DECLARED), which is what
+# the `known` claims below are about...
+ALL_KNOWN = GPIP_BIT | SYNC_BIT | VMID_BIT | VLOW_BIT
+# ...and the two the audio-capture profile has bytes for, which is a different set and stays one
+# even as the table grows. The video-counter slots are deliberately outside it (shim.c).
+PROFILE_PAIR = GPIP_BIT | SYNC_BIT
 
 
 def _file(**slots):
     """The expected declared-byte file: every slot 0 but the ones named."""
     return {slot: slots.get(f"s{slot}", 0) for slot in range(NSLOTS)}
+
+
+def _file_all(value):
+    """...and the file a probe case that declared EVERY slot leaves. Spelled as "all of them"
+    rather than slot by slot so that a slot added to os.h's table lands here automatically — which
+    is what those cases are claiming (the probe seeds `ALL_SLOTS_DECLARED` with one byte)."""
+    return {slot: value for slot in range(NSLOTS)}
 
 
 # One entry per case the probe runs. `scalars` are exact; `ledger` is the ordered (slot, value) read
@@ -98,6 +114,37 @@ ORACLE_CASES = {
                             ledger=[(GPIP, FABRICATED)], file=_file()),
     # Declaring ONE address declares one address. The mask is per-slot, so a case that seeds the
     # GPIP and reads the sync byte is as undeclared as one that seeds nothing.
+    # THE VIDEO COUNTER, the pair the model grew for Wonder Boy's $51ac. Declared, both bytes are
+    # served and both land in the ordered ledger under their own slots.
+    "vcount_pair_declared": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
+                                          "known": VMID_BIT | VLOW_BIT, "nlog": 2},
+                                 ledger=[(VMID, DECLARED), (VLOW, DECLARED)],
+                                 file=_file(s2=DECLARED, s3=DECLARED)),
+    # ...and a declaration of the OLD pair is not theirs: both reads are the fabricated 0 the model
+    # answered before they were named, now TALLIED under their own bits where before this change
+    # they were an unmodeled off-image read that nothing recorded at all.
+    "vcount_pair_undeclared": dict(scalars={"d1": FABRICATED, "unseeded": VMID_BIT | VLOW_BIT,
+                                            "stale": 0, "wide": 0, "known": GPIP_BIT, "nlog": 2},
+                                   ledger=[(VMID, FABRICATED), (VLOW, FABRICATED)],
+                                   file=_file(s0=DECLARED)),
+    # A WRITE to a counter byte and then a read of it: the seed no longer describes the slot, which
+    # is the stale shape the sync byte has one address over.
+    "vcount_write_then_read": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": VLOW_BIT,
+                                            "wide": 0, "known": ALL_KNOWN, "nlog": 1},
+                                   ledger=[(VLOW, DECLARED)], file=_file_all(DECLARED)),
+    # A VOLATILE byte read TWICE: served both times (the model has one byte to give) and TALLIED,
+    # which is what harness.differential turns into a refusal. Without it os.h's "read once per run"
+    # is a comment the next handler to poll a counter quietly falsifies.
+    "volatile_read_twice": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
+                                         "reread": VLOW_BIT, "known": ALL_KNOWN, "nlog": 2},
+                                ledger=[(VLOW, DECLARED), (VLOW, DECLARED)],
+                                file=_file_all(DECLARED)),
+    # ...and a STATIC one read twice is served twice with nothing tallied: the monitor-detect byte
+    # really does answer the same thing every time, and the tempo head reads it for two bits.
+    "static_read_twice": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
+                                       "reread": 0, "known": ALL_KNOWN, "nlog": 2},
+                              ledger=[(GPIP, DECLARED), (GPIP, DECLARED)],
+                              file=_file_all(DECLARED)),
     "other_address_undeclared": dict(scalars={"d1": FABRICATED, "unseeded": SYNC_BIT, "stale": 0,
                                               "wide": 0, "known": GPIP_BIT, "nlog": 1},
                                      ledger=[(SYNC, FABRICATED)], file=_file(s0=DECLARED)),
@@ -108,7 +155,7 @@ ORACLE_CASES = {
     "two_reads_in_order": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
                                         "known": ALL_KNOWN, "nlog": 2},
                                ledger=[(SYNC, DECLARED), (GPIP, DECLARED)],
-                               file=_file(s0=DECLARED, s1=DECLARED)),
+                               file=_file_all(DECLARED)),
     # A WIDE read taking a modeled byte in. Served nothing (d1 is the ordinary off-image 0) and NOT
     # ledgered — the model has no answer for the neighbouring MFP/shifter registers it would also
     # have to hand back, so it records the access instead of inventing them. Recorded by SLOT, not
@@ -125,7 +172,11 @@ ORACLE_CASES = {
                       ledger=[], file=_file(s0=DECLARED)),
     # ...including one that straddles INTO the byte from below, the case a start-address equality
     # test misses (hw_portability.py's lattice has the same case for the PSG block).
-    "long_read_straddling_in": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0, "wide": SYNC_BIT,
+    # A long read whose span covers $ff8209 AND $ff820a, so it takes in TWO modeled slots — which
+    # is what os_hw_slots_touched is for, and what a wide-read tally over a growing table has to
+    # keep reporting rather than collapsing to the first one it meets.
+    "long_read_straddling_in": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0,
+                                             "wide": SYNC_BIT | VLOW_BIT,
                                              "known": GPIP_BIT, "nlog": 0},
                                     ledger=[], file=_file(s0=DECLARED)),
     # The run WROTE the address and then read it back — Wonder Boy's own shape, `move.b #2,$ff820a`
@@ -136,31 +187,33 @@ ORACLE_CASES = {
     # can fix it, so `unseeded` stays 0 rather than offering one.
     "write_then_read": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": SYNC_BIT, "wide": 0,
                                      "known": ALL_KNOWN, "nlog": 1},
-                            ledger=[(SYNC, DECLARED)], file=_file(s0=DECLARED, s1=DECLARED)),
+                            ledger=[(SYNC, DECLARED)], file=_file_all(DECLARED)),
     # ...while a write NOTHING reads back is the ordinary invisible hardware write it always was:
     # `stale` stays 0, or refusing it would sink runs that read nothing at all.
     "write_only": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0, "wide": 0, "known": ALL_KNOWN,
                                 "nlog": 0},
-                       ledger=[], file=_file(s0=DECLARED, s1=DECLARED)),
+                       ledger=[], file=_file_all(DECLARED)),
     # The audio-capture fold. Off the mode, nothing declared: both reads are the silent 0 that made
     # a replayer pick the MONOCHROME tempo, which is why the mode exists at all.
-    "profile_pair_undeclared": dict(scalars={"d1": FABRICATED, "unseeded": ALL_KNOWN, "stale": 0,
+    "profile_pair_undeclared": dict(scalars={"d1": FABRICATED, "unseeded": PROFILE_PAIR, "stale": 0,
                                              "wide": 0, "known": 0, "nlog": 2},
                                     ledger=[(GPIP, FABRICATED), (SYNC, FABRICATED)], file=_file()),
     # Under the mode the same run is served the profile — because the mode INSTALLS A SEED over this
     # model rather than keeping a switch of its own. The bytes are claimed against
     # `osh_hw_capture_profile()` rather than restated, in the case below.
     "profile_pair_under_capture": dict(scalars={"unseeded": 0, "stale": 0, "wide": 0,
-                                                "known": ALL_KNOWN, "nlog": 2}),
+                                                "known": PROFILE_PAIR, "nlog": 2}),
     # ...and the mode's declaration WINS over a case's, which is why emu.run refuses to take one.
+    # ...and it declares the PROFILE PAIR and no more, even with every slot in the case's own seed:
+    # the mode has bytes for two of the four and says so (shim.c's HW_CAPTURE_PROFILE_KNOWN).
     "capture_overrides_a_seed": dict(scalars={"unseeded": 0, "stale": 0, "wide": 0,
-                                              "known": ALL_KNOWN, "nlog": 2}),
+                                              "known": PROFILE_PAIR, "nlog": 2}),
     # ...but does not survive the mode. No reset call in between: the next run reinstalls the case's
     # own declaration, which is what stops the profile leaking into a differential.
     "after_capture_the_case_seed_returns": dict(scalars={"d1": OTHER, "unseeded": 0, "stale": 0,
                                                          "wide": 0, "known": ALL_KNOWN, "nlog": 2},
                                                 ledger=[(GPIP, OTHER), (SYNC, OTHER)],
-                                                file=_file(s0=OTHER, s1=OTHER)),
+                                                file=_file_all(OTHER)),
     # The bench is the OTHER door into the oracle — no OS traps, a C function measured for cycles —
     # and it reaches this model through the same enter_from_reset. So the per-run reinstall belongs
     # THERE rather than in osh_run alone: with it in osh_run only, a bench issued after a declared
@@ -168,25 +221,31 @@ ORACLE_CASES = {
     # another run's in front of them.
     "bench_starts_from_the_seed": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0, "wide": 0,
                                                 "known": ALL_KNOWN, "nlog": 0},
-                                       ledger=[], file=_file(s0=DECLARED, s1=DECLARED)),
+                                       ledger=[], file=_file_all(DECLARED)),
 }
+
+# Every oracle case asserts the WHOLE scalar set, so a scalar added to the probe's report must be
+# named in every expectation. `reread` is 0 everywhere but the two volatile cases above — a default
+# rather than twenty-odd copies of the same line, and the strict comparison is unchanged.
+for _case in ORACLE_CASES.values():
+    _case["scalars"].setdefault("reread", 0)
 
 CANDIDATE_CASES = {
     # The faithful reconstruction: it reads the declared byte, refuses nothing, and logs the read.
     "cand_declared_read": dict(scalars={"d1": DECLARED, "refusals": 0, "known": ALL_KNOWN,
                                         "nlog": 1},
-                               ledger=[(GPIP, DECLARED)], file=_file(s0=DECLARED, s1=DECLARED)),
+                               ledger=[(GPIP, DECLARED)], file=_file_all(DECLARED)),
     # MUTANT: it reads the OTHER modeled address, declared to the same byte. The value it branches
     # on, the declared file and the (empty) image effect are all a correct run's — only the ledger's
     # slot separates them.
     "cand_wrong_address": dict(scalars={"d1": DECLARED, "refusals": 0, "known": ALL_KNOWN,
                                         "nlog": 1},
-                               ledger=[(SYNC, DECLARED)], file=_file(s0=DECLARED, s1=DECLARED)),
+                               ledger=[(SYNC, DECLARED)], file=_file_all(DECLARED)),
     # MUTANT: it never reads and hardcodes the answer — what a port written against a fabricated 0
     # looks like. Its ledger is empty where the oracle's has an entry.
     "cand_skips_the_read": dict(scalars={"d1": DECLARED, "refusals": 0, "known": ALL_KNOWN,
                                          "nlog": 0},
-                                ledger=[], file=_file(s0=DECLARED, s1=DECLARED)),
+                                ledger=[], file=_file_all(DECLARED)),
     # The read the ORACLE serves 0, made against no declaration: the candidate must TALLY rather
     # than answer — refusing on one side only is the false green — and log it anyway.
     "cand_undeclared_read": dict(scalars={"d1": 0, "refusals": 1, "known": 0, "nlog": 1},
@@ -198,7 +257,7 @@ CANDIDATE_CASES = {
     # loop needs its answer to CHANGE between two reads and a per-run constant cannot
     # (TRAP_MODEL.md, Phase 7's non-goal).
     "cand_unmodeled_address": dict(scalars={"d1": 0, "refusals": 1, "known": ALL_KNOWN, "nlog": 0},
-                                   ledger=[], file=_file(s0=DECLARED, s1=DECLARED)),
+                                   ledger=[], file=_file_all(DECLARED)),
     # g_hw_reset really clears: a case declaring nothing does not see the previous case's bytes.
     # It runs before EVERY candidate run, the poison re-run included — the state is process-global,
     # so without the clear a candidate reads a byte this case never declared and stays green on it,
@@ -236,9 +295,13 @@ def test_the_slots_are_the_addresses_os_h_names():
     defines = dict(re.findall(r"^#define\s+(OS_HW_\w+)\s+(0x[0-9a-fA-F]+|\d+)u?", source, re.M))
     assert int(defines["OS_HW_SLOT_MFP_GPIP"], 0) == GPIP
     assert int(defines["OS_HW_SLOT_SHIFTER_SYNC"], 0) == SYNC
+    assert int(defines["OS_HW_SLOT_SHIFTER_VCOUNT_MID"], 0) == VMID
+    assert int(defines["OS_HW_SLOT_SHIFTER_VCOUNT_LOW"], 0) == VLOW
     assert int(defines["OS_HW_NSLOTS"], 0) == NSLOTS
     assert int(defines["OS_HW_MFP_GPIP"], 0) == 0xFFFA01
     assert int(defines["OS_HW_SHIFTER_SYNC"], 0) == 0xFF820A
+    assert int(defines["OS_HW_SHIFTER_VCOUNT_MID"], 0) == 0xFF8207
+    assert int(defines["OS_HW_SHIFTER_VCOUNT_LOW"], 0) == 0xFF8209
 
 
 def test_the_capture_profile_declares_exactly_the_slots_it_has_bytes_for():

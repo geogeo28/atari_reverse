@@ -149,7 +149,13 @@ SEEDED_READ_DEF = r"^[A-Za-z_][A-Za-z_0-9 \t*]*\b%s\s*\("
 # an access to. Only a BYTE read of one is served — a wider transfer takes in the neighbouring
 # MFP/shifter registers the model knows nothing about, so it is refused instead (see T5).
 HW_MFP_GPIP, HW_SHIFTER_SYNC = 0xFFFA01, 0xFF820A
-HW_SEEDED_ADDRS = (HW_MFP_GPIP, HW_SHIFTER_SYNC)
+# ...and the shifter's VIDEO ADDRESS COUNTER, mid and low bytes, added to the kit's table in batch
+# 33. These two are not read for a branch: they are summed into an arithmetic result (Wonder Boy's
+# $68c6 and $51ac), which is the same false green with a wider blast radius — a fabricated 0
+# collapses a draw to a constant that both cores then agree on.
+HW_SHIFTER_VCOUNT_MID, HW_SHIFTER_VCOUNT_LOW = 0xFF8207, 0xFF8209
+HW_SEEDED_ADDRS = (HW_MFP_GPIP, HW_SHIFTER_SYNC,
+                   HW_SHIFTER_VCOUNT_MID, HW_SHIFTER_VCOUNT_LOW)
 HW_SEEDED_SIZE = 1
 # The one off-image READ shim.c does not answer 0: the IKBD ACIA status reads back "transmit
 # register empty" so a send loop terminates. Still a fabricated constant, so still a T4 read —
@@ -174,6 +180,8 @@ PINNED_CONSTANTS = (
               "IKBD_STATUS": IKBD_STATUS}),
     (OS_H, {"OS_PSG_PORT_SELECT": PSG_SELECT, "OS_PSG_PORT_DATA": PSG_DATA,
             "OS_HW_MFP_GPIP": HW_MFP_GPIP, "OS_HW_SHIFTER_SYNC": HW_SHIFTER_SYNC,
+            "OS_HW_SHIFTER_VCOUNT_MID": HW_SHIFTER_VCOUNT_MID,
+            "OS_HW_SHIFTER_VCOUNT_LOW": HW_SHIFTER_VCOUNT_LOW,
             # The set's SIZE, not just its members: pinning only the two addresses would let the
             # kit add a third modeled byte while this module went on pricing it T4 HW_READ —
             # under-counting what a differential verifies, and silently, since every pinned name
