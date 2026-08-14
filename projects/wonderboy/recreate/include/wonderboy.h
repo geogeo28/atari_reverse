@@ -1438,6 +1438,116 @@
 #define WB_ACTOR_TYPE13_DYING        0xffu    /* `st 30(a0)` — the byte the throe's own head tests,
                                                * so the setup runs on its FIRST frame only */
 
+/* ---- the family CONTINUES, dispatch rows 14..19 (batch 36; src/behavior.c) ----------------------
+ *
+ * Six more middles inside the same grammar, and three things the first block did not have.
+ *
+ *   * THE HURT TAIL COMES IN THREE ORDERS. Slots 14, 17, 18 lower WB_ACTOR_FLAGS2_BIT_0 and TEST
+ *     the defeated bit (batch 35's `monster_hurt_wrap_clear_then_test`); slots 15 and 16 test FIRST and
+ *     lower bit 0 only when the mark is down, so a record that transfers keeps BOTH marks. Slot 19
+ *     transfers unconditionally, as slot 13 does.
+ *   * FIVE OF THE SIX SPAWN. Each takes a record from actor_alloc_slot_high, fills it from its own
+ *     x/y longword and a type, and ends its frame there whether the pool answered or not.
+ *   * TWO OF THEM SPLIT THE STRUCK ARM. Slots 18 and 19 call actor_set_side_flag on the overlap
+ *     POINT arm and NOT on the shot's, where the other fifteen callers face on both arms or on
+ *     neither — which is why src/behavior.c's `monster_contact` reports WHICH test struck.
+ *
+ * EVERY TABLE BELOW HAS EXACTLY ONE OPERAND SITE IN THE WHOLE IMAGE, by a scan of both absolute
+ * encodings AND of the `lea d8(PC,Dn.w)` displacement; the four lists behind slot 17's two PAIRS
+ * ($3b78, $3b8a, $3b9c, $3bae) have NONE, because a pair is two longwords and $3006 dereferences
+ * them. WB_ACTOR_TYPE17_DX_CURSOR and _DY_CURSOR have TWO sites each — one read, one write.
+ */
+#define WB_ACTOR_BEHAVIOR_TYPE14     0x35d8u  /* 316 bytes of code, $35d8..$3713 */
+#define WB_ACTOR_BEHAVIOR_TYPE15     0x3764u  /* 234, $3764..$384d */
+#define WB_ACTOR_BEHAVIOR_TYPE16     0x38aeu  /* 312, $38ae..$39e5 */
+#define WB_ACTOR_BEHAVIOR_TYPE17     0x3a46u  /* 290, $3a46..$3b67 */
+#define WB_ACTOR_BEHAVIOR_TYPE18     0x3c84u  /* 424, $3c84..$3e2b */
+#define WB_ACTOR_BEHAVIOR_TYPE19     0x3e8cu  /* 364, $3e8c..$3ff7 */
+
+/* `move.l #$60006,14(a1)` — WB_ACTOR_HALF_WIDTH 6 and WB_ACTOR_SIZE_SECOND 6 in ONE store, the
+ * shape WB_ACTOR_TYPE06_SHOT_SIZE also has. Three of this batch's five spawners write it. */
+#define WB_ACTOR_MINION_SIZE     0x60006u
+#define WB_ACTOR_MINION_SPEED        9u       /* `move.b #$9,11(a1)` — slots 16 and 18 */
+
+#define WB_ACTOR_TYPE14_WALK_LEFT    0x3714u  /* 16 words each, wrapped by WB_ACTOR_ANIM32_MASK */
+#define WB_ACTOR_TYPE14_WALK_RIGHT   0x3734u
+#define WB_ACTOR_TYPE14_HURT         0x3754u  /* 8 words, ONE table for both facings */
+#define WB_ACTOR_TYPE14_WALK_STEP    1u       /* `move.b #$1,d7` on the LEFT arm, `move.w` right */
+#define WB_ACTOR_TYPE14_TURN_FRAMES  0x46u    /* `move.b #$46,30(a0)` on the turn frame */
+#define WB_ACTOR_TYPE14_SPAWN_GAP    0x1eu    /* `move.b #$1e,31(a0)` — walking frames between drops,
+                                               * written only when the pool answered */
+#define WB_ACTOR_TYPE14_MINION_TYPE  0x2du
+#define WB_ACTOR_TYPE14_MINION_TIMER 0x32u    /* `move.b #$32,30(a1)` — the drop's own countdown */
+
+#define WB_ACTOR_TYPE15_WALK_RIGHT   0x384eu  /* 8 words each, wrapped by WB_ACTOR_ANIM16_MASK and
+                                               * stepped IN MEMORY (`addq.b`/`andi.b` on 18(a0)) */
+#define WB_ACTOR_TYPE15_WALK_LEFT    0x385eu
+#define WB_ACTOR_TYPE15_HURT_RIGHT   0x386eu  /* 16 words each, wrapped by WB_ACTOR_ANIM32_MASK and
+                                               * stepped in a REGISTER — the two arms differ */
+#define WB_ACTOR_TYPE15_HURT_LEFT    0x388eu
+#define WB_ACTOR_TYPE15_WALK_STEP    4u       /* `move.w #$4,d7` in BOTH arms */
+
+#define WB_ACTOR_TYPE16_WALK_LEFT    0x39e6u  /* 8 words each, wrapped by WB_ACTOR_ANIM16_MASK */
+#define WB_ACTOR_TYPE16_WALK_RIGHT   0x39f6u
+#define WB_ACTOR_TYPE16_HURT_LEFT    0x3a06u  /* 16 words each */
+#define WB_ACTOR_TYPE16_HURT_RIGHT   0x3a26u
+#define WB_ACTOR_TYPE16_RELOAD       0x32u    /* `move.b #$32,30(a0)` — frames between hops */
+#define WB_ACTOR_TYPE16_HOP_SPEED    9u       /* `move.b #$9,11(a0)`, spelt inline */
+#define WB_ACTOR_TYPE16_MINION_TYPE  0x27u    /* the record the hop drops */
+
+#define WB_ACTOR_TYPE17_LIVE_LISTS   0x3b68u  /* $3006 PAIRS: -> $3b78 / $3b8a, 8 words each plus a
+                                               * $ffff terminator */
+#define WB_ACTOR_TYPE17_HURT_LISTS   0x3b70u  /* -> $3b9c / $3bae, same shape */
+#define WB_ACTOR_TYPE17_DX_CURSOR    0x3bc0u  /* GLOBAL words, not record fields: every live type-17
+                                               * record steps the same pair, so two of them drift in
+                                               * lockstep. WB_ACTOR_TYPE30_CURSOR and
+                                               * WB_ACTOR_TYPE32_CURSOR are the tier's two */
+#define WB_ACTOR_TYPE17_DY_CURSOR    0x3bc2u  /* others */
+#define WB_ACTOR_TYPE17_DX           0x3bc4u  /* 64 SIGNED words added to the x, one a frame */
+#define WB_ACTOR_TYPE17_DX_MASK      0x7fu    /* `andi.w #$7f` — the whole 128-byte table */
+#define WB_ACTOR_TYPE17_DY           0x3c44u  /* 32 SIGNED words added to the y */
+#define WB_ACTOR_TYPE17_DY_MASK      0x3fu    /* ...so the y cycle is HALF the x one, and the seeding
+                                               * below fires on the frame it wraps */
+#define WB_ACTOR_TYPE17_SEED_ODDS_MASK 7u     /* `andi.w #$7,d0 / bne` on rng_next's word */
+#define WB_ACTOR_TYPE17_SEED_DBF_COUNT 4u    /* `move.w #$4,d7` — a `dbf` counter, which runs its
+                                               * body COUNT + 1 times, so FIVE records */
+#define WB_ACTOR_TYPE17_SEED_FIRST   5u       /* `move.w #$5,d6`, stored into 30(a1) and counted
+                                               * DOWN, so the five carry 5, 4, 3, 2, 1 */
+#define WB_ACTOR_TYPE17_SEED_TYPE    0x34u
+#define WB_ACTOR_TYPE17_SEED_SIZE    0x60008u /* WB_ACTOR_HALF_WIDTH 6, WB_ACTOR_SIZE_SECOND 8 */
+#define WB_ACTOR_TYPE17_SEED_SPEED   8u
+
+#define WB_ACTOR_TYPE18_WALK_LEFT    0x3e2cu  /* 16 words each */
+#define WB_ACTOR_TYPE18_WALK_RIGHT   0x3e4cu
+#define WB_ACTOR_TYPE18_HURT_LEFT    0x3e6cu  /* 8 words each */
+#define WB_ACTOR_TYPE18_HURT_RIGHT   0x3e7cu
+#define WB_ACTOR_TYPE18_WALK_STEP    2u       /* `move.b #$2,d7` left, `move.w #$2,d7` right */
+#define WB_ACTOR_TYPE18_HURT_STEP    4u       /* `move.w #$4,d7`, and the step is AWAY */
+#define WB_ACTOR_TYPE18_CHARGING     0xffu    /* `move.b #$ff,31(a0)` — the latch that says the
+                                               * record is mid-charge, cleared when it lands */
+#define WB_ACTOR_TYPE18_HOP_SPEED    9u       /* `move.w #$9,d0 / bsr $2af2` */
+#define WB_ACTOR_TYPE18_MINION_TYPE  0x29u
+#define WB_ACTOR_TYPE18_TURN_FRAMES  0x46u    /* `move.b #$46,30(a0)` when the charge ends */
+
+#define WB_ACTOR_TYPE19_DRIFT        0x3ff8u  /* 64 SIGNED words added to the x while the record
+                                               * glides, indexed by WB_ACTOR_FIELD_30 */
+#define WB_ACTOR_TYPE19_DRIFT_MASK   0x7fu
+#define WB_ACTOR_TYPE19_GLIDE_SPRITE 0xa2u    /* `move.w #$a2,6(a0)` — one frame for the whole
+                                               * glide, published every frame of it */
+#define WB_ACTOR_TYPE19_GLIDE_HEIGHT 8u       /* WB_ACTOR_SIZE_SECOND while gliding... */
+#define WB_ACTOR_TYPE19_ATTACK_HEIGHT 0x10u   /* ...and once the record drops into its attack */
+#define WB_ACTOR_TYPE19_PHASE2       0xffu    /* `st 31(a0)` on the frame the drift cursor wraps */
+#define WB_ACTOR_TYPE19_FRAMES_RIGHT 0x4078u  /* 32 words each, wrapped by WB_ACTOR_TYPE19_FRAME_MASK */
+#define WB_ACTOR_TYPE19_FRAMES_LEFT  0x40b8u
+#define WB_ACTOR_TYPE19_FRAME_MASK   0x3fu
+#define WB_ACTOR_TYPE19_DEATH        0x40f8u  /* 16 words, ONE table for both facings */
+#define WB_ACTOR_TYPE19_SHOT_CURSOR  0x14u    /* `cmp.w #$14,d7` — the ONE cursor value that fires */
+#define WB_ACTOR_TYPE19_SHOT_TYPE    0x2bu
+#define WB_ACTOR_TYPE19_SHOT_RISE    6u       /* `subq.w #6,2(a1)` off the parent's y */
+#define WB_ACTOR_TYPE19_SHOT_DX_RIGHT 0xau    /* ...and `add.w d0,(a1)` on the x, the side flag */
+#define WB_ACTOR_TYPE19_SHOT_DX_LEFT 0xfff6u  /* picking which */
+#define WB_ACTOR_TYPE19_SHOT_SIZE    0xc0002u /* WB_ACTOR_HALF_WIDTH $c, WB_ACTOR_SIZE_SECOND $2 */
+
 /* The $5a band's last three tables. Each sits INSIDE its own handler's extent and is reached only
  * from it — $5952 by the one `lea $5952.l` at $5928, the other three by `lea d8(PC,Dn.w)` — so no
  * second reader exists anywhere in the image. */

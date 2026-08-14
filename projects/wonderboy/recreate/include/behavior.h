@@ -445,6 +445,52 @@ uint32_t actor_behavior_type13(uint8_t *image, uint32_t actor);
  * other half of it, and nothing vetoes it. */
 void actor_random_facing_hop(uint8_t *image, uint32_t actor);
 
+/* --- slots 14..19 ($35d8..$3ff7): the family's second block -------------------------------------
+ *
+ * SIX MORE BODIES, and none of them reports a boundary: every callee is reconstructed, so all six
+ * run to their own `rts`. What they add to the grammar above is three things.
+ *
+ *   * THE HURT TAIL COMES IN THREE ORDERS NOW. Slots 14, 17 and 18 lower WB_ACTOR_FLAGS2_BIT_0 and
+ *     then TEST the defeated mark; slots 15 and 16 TEST FIRST and lower bit 0 only when the mark is
+ *     down, so a record that transfers keeps both; slot 19 transfers unconditionally, as 13 does.
+ *   * FIVE OF THE SIX SPAWN a second record from actor_alloc_slot_high, and what a REFUSED
+ *     allocation does is each caller's own: four of them end the frame (though slot 14's success
+ *     writes one byte more than its refusal) and slot 19 runs ON into its shared publish with a1 at
+ *     zero, which is the defect below.
+ *   * SLOTS 18 AND 19 SPLIT THE STRUCK ARM: actor_set_side_flag runs on the overlap-POINT arm and
+ *     not on the shot's, and their body arm flips the facing before actor_damage_followed — which
+ *     is why src/behavior.c's contact enum has a fourth value rather than a flag.
+ *
+ * What each one is:
+ *
+ *  14  patrols one pixel a frame, turns on a countdown, and drops a type-$2d record every
+ *      WB_ACTOR_TYPE14_SPAWN_GAP walking frames — the drop takes the whole frame
+ *  15  steps four pixels toward the followed record and lets actor_turn_and_launch turn AND hop it
+ *      whenever the step is blocked or the ground drops away
+ *  16  walks, and on a countdown launches itself and lobs a type-$27 record with its own flags
+ *  17  never touches the map: two GLOBAL cursors drift it on both axes, and when the y cursor wraps
+ *      a one-in-eight draw seeds FIVE type-$34 records numbered 5..1
+ *  18  walks, and on a countdown CHARGES: it saves its flag byte into WB_ACTOR_FIELD_29, launches,
+ *      spawns a type-$29 record, and restores the byte and turns round when it lands again
+ *  19  ALTERNATES: 64 words of x drift under a fixed sprite until that cursor wraps, then an attack
+ *      phase that drops a type-$2b record on ONE cursor value until ITS cursor wraps and returns
+ *      the record to the glide — neither latch is permanent
+ *
+ * ONE OF THEM PUBLISHES A GARBAGE FRAME AND IT IS THE ORIGINAL'S. Slot 19's `bsr $1b8e` returns in
+ * a1 — the register its frame table was just `lea`d into — and the publish below is reached from
+ * both arms, so on the frame the shot fires the sprite comes out of the NEW RECORD (or, on a full
+ * pool, out of address $14). Reproduced rather than repaired.
+ *
+ * AND SLOT 17's BODY IS NOT SLOT 17's ALONE: `bra.w $3ae6` at $48b2, inside a handler this port does
+ * not have, enters its seeding block. ../names.txt records the shared span.
+ */
+uint32_t actor_behavior_type14(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type15(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type16(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type17(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type18(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type19(uint8_t *image, uint32_t actor);
+
 /* $d78 — the twelve bytes slot 53 calls, and the only player-tier code in this file. Returns
  * WB_ACTOR_DISPATCH_RAN while WB_TILE_33_MODE is set (the original returns having written nothing)
  * and WB_PLAYER_STEP_BODY while it is clear, which is where the original branches. */

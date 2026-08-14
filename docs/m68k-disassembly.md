@@ -420,6 +420,51 @@ encoding, `5x8F` (`addq.l #n,a7`; `5x4F` for the word form, `4FEF` for `lea n(a7
 which adjusts the POINTER and leaves the longword it points at untouched. A `5x97` is
 therefore never cleanup, and a `5x8F` never this idiom.
 
+## A callee that RETURNS in the register a pointer was already in
+
+Not control flow this time — a data hazard, and the sharpest kind because the code reads as if
+nothing happened. A routine loads a table pointer, calls a subroutine that hands its own result back
+in **that same address register**, and then dereferences the register as though it still held the
+table. Wonder Boy's behaviour slot 19 (`$3e8c`):
+
+```
+3f2c: lea     $4078.l,a1     ; the frame table
+...
+3f42: cmp.w   #$14,d7        ; ...on ONE cursor value only
+3f46: bne.w   $3f98
+3f4a: bsr.w   $1b8e          ; the allocator, whose RESULT IS a1
+3f4e: cmpa.l  #$0,a1
+3f54: beq.w   $3f98          ; ...and on a full pool a1 is now ZERO
+...
+3f98: lea     0(a1,d7.w),a1  ; reached from BOTH arms
+3f9c: move.w  (a1),6(a0)     ; publishes a word of the NEW RECORD, or of address $14
+```
+
+So on one frame in 32 the sprite drawn is a field of a freshly allocated actor record that the spawn
+never writes, and if the pool was full it is a word out of the 68000 vector page. It is a real bug
+in a shipped game and it fires every time that monster attacks.
+
+**What makes it invisible.** Each half reads fine on its own: the `lea` is obviously the frame
+table, the `bsr` is obviously the allocator, and the join at the bottom is obviously "publish the
+frame". Nothing between them mentions a1. A decompiler that models the callee's return value at all
+will show the assignment; one that does not shows the table pointer flowing straight through, which
+is the reading a human writing C from the listing will also produce — and it is *plausible*, so
+nobody re-checks it.
+
+Three habits that catch it:
+
+- **Know which registers each callee RETURNS**, not just which it takes, and write that into the
+  name map's plate. `$1b8e`'s plate says "returns the record in a1"; once that is written down, a
+  `lea …,a1` above a `bsr $1b8e` is visibly dead.
+- **Suspect any join reached from both sides of an allocation or lookup.** The tell is a label whose
+  predecessors set the same register from two unrelated sources — here a table address and an
+  allocator's answer, one of which can be 0.
+- **Reproduce it; do not repair it.** In C the spawner has to *return the address* it left in a1 and
+  the caller has to publish through that, which looks wrong until the comment says why. Pin both
+  halves — the successful allocation AND the refused one — and assert the published word differs
+  from the table entry the "obvious" reading would give, so a seed that happened to agree cannot
+  pass as a proof. `projects/wonderboy/recreate/test/test_behavior.py` has the pair.
+
 ## Machine detection
 
 ST-family games often branch on machine type via `$ffff8007` (STE/MSTE bus) or the

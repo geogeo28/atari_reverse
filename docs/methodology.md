@@ -82,10 +82,60 @@ wrong for every one of them (552 against 152, worst case). A dispatch table give
 subtracting two of them gives you an entry-to-entry SPAN, which is data plus code plus whatever
 shared routines happen to sit between. Read the plate first, then verify it from the bytes; quote
 the span only as the span. Slots 14..27 carry the same decoded extents and any queue that quotes
-their nominal spans should say which figure it is quoting. Batch 35 hit the worst instance yet: slot 9's dispatch entry to slot 10's is **552** bytes
+their nominal spans should say which figure it is quoting. **Batch 36 then ran the rule as
+written and it held six times out of six** — 396/330/408/574/520/652 nominal against
+316/234/312/290/424/364 decoded, every plate matching the bytes on the first read — which is what
+turns "read the plate first" from an anecdote into the cheaper method. Batch 35 hit the worst instance yet: slot 9's dispatch entry to slot 10's is **552** bytes
 and the handler is **152**, because SIX SHARED LEAVES — `$2f22`, `$2f46`, `$2f86`, `$2fce`, `$2fe8`
 and `$3006`, FIVE of them already ported and only `$2f46` new — sit inside that span between the slot's own `rts` and its
 frame tables. A dispatch table gives you entry points, not extents.
+
+### The extent is right and the body is still not yours: scan for edges pointing IN
+
+An extent measured from the entry to the `rts` can be exact and still describe a routine that
+another routine runs part of. Wonder Boy's slot 17 (`$3a46..$3b67`) is byte-correct, and `bra.w
+$3ae6` at `$48b2` — inside a dispatch row nobody has ported — jumps into the middle of it, at the
+five-record spawn burst. Slot 18's final `rts` at `$3e2a` has a second entrance the same way. Batch
+31 met the shape from the other side (a handler that *leaves* its own body) and named it "the
+boundary moves inside the handler"; this is the same fact seen from the callee.
+
+So when you finish an extent, run one more scan: **every control-flow target in the image that lands
+inside your span, from an instruction outside it.** It is the same pass as the "who names this
+entry" census — resolve `Bcc`/`BSR`/`BRA` (long *and* short), the absolute `jsr`/`jmp`/`pea`/`lea` in
+both widths, and both PC-relative `lea` forms — but asking about the whole range rather than the one
+address. Two things come out of it: the port of the *other* routine must call your helper instead of
+writing a second copy, and the plate has to say so, because the next reader's only clue is a
+displacement 5 KB away. Make it a case: assert the exact set of inbound edges, so a later batch that
+adds one fails rather than silently forks the code.
+
+### A plate correction is landed when the OLD PHRASE GREPS TO ZERO
+
+The cheapest lesson in this file, and Wonder Boy's batch 36 paid for it twice in one batch. A review
+returned a list of plates that said something the image does not; the fixes were applied in one
+scripted pass of search-and-replace; the batch then certified all four in `STATUS.md`. **One landed,
+one landed with its two numbers transposed, and two never matched at all** — a `str.replace` whose
+pattern is off by a leading `/*` is a silent no-op, and the script asserted only that *something* in
+the file had changed. The certification was written from the findings list rather than from the
+file, so it documented corrections that were not there — which is worse than not fixing them, since
+the next reader now has a plate that is wrong and a status note that says it is right.
+
+Three rules, in order of how much they buy:
+
+* **Grep the OLD phrase and require zero.** Not "the new phrase is present" — the old one absent.
+  That is the only check that catches a pattern that missed, an edit applied to the wrong one of two
+  copies, and a second site nobody knew about. Do it per correction, and quote the count.
+* **Assert each replacement individually.** One `assert count == 1` per (old, new) pair, before
+  writing anything. A pass that edits six plates and asserts once has five unchecked edits in it.
+* **Do not let the retraction quote the retracted phrase.** A note reading "an earlier revision
+  said X" keeps X greppable for ever and makes rule 1 unusable at that site — and a *ledger* that
+  tabulates the retired phrases verbatim does the same thing across the whole tree. Describe the old
+  claim ("called the first latch permanent") rather than repeating it, and elide a character in the
+  middle where a table really must show the string. This paragraph follows its own rule, which is
+  why it names no example.
+
+And the reason it matters more here than in ordinary code: in this workspace the plates ARE the
+deliverable. A wrong comment beside right code is not cosmetic — it is the thing the next batch
+reads instead of the bytes.
 
 ## Classifying a region: two inferences that look like evidence and are not
 
