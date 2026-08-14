@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 258/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 274/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -75,8 +75,12 @@ slot 27 is slot 20's 378 bytes byte for byte, slot 23 is slot 4's body with a go
 arm that BRANCHES INTO IT, slot 25 is slot 18's charge, slot 26 is slot 12's chase and slots 22 and
 26 share slot 9's gated hurt arm — and the three that are new are a hopper whose turn test reads a
 WORD, a sentry that AIMS its shot out of a sixteen-direction table, and a launcher whose `bclr` is
-its own test) —
-33,154 bytes in all, 74.9 % of everything
+its own test) — and THE PICKUP TIER (`actor_behavior_type38_pickup`, the digit routine
+`text_post_bonus_points_a4be` and the FOURTEEN handlers of `pickup_effect_table`, 756 bytes,
+batch 38: the first dispatch row whose frame reaches a SECOND dispatch — a collectable that reads
+its own 16-byte kind row for a packed-BCD score and an index into a table whose fourteen entries
+name what the pickup actually IS, twelve of them by the message they post) —
+33,910 bytes in all, 76.6 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -7006,3 +7010,270 @@ bit, its shot moved to the other arm and its two calls exchanged.
     as BIT operations on disjoint bits, so the byte's final value is the same in either order. The
     consuming use is covered — the list select below reads the MOVING bit, which the tick raises in
     both spellings. Slot 12 has carried the same pair since batch 35 and is the same argument.
+
+### Batch 38: dispatch row 38 — THE PICKUP TIER, and a second dispatch behind a handler
+
+**SIXTEEN ROUTINES, 756 BYTES, AND THE FIRST TABLE ROW WHOSE FRAME DISPATCHES AGAIN.**
+
+| address | name | bytes | where |
+| --- | --- | --- | --- |
+| `$5408` | `actor_behavior_type38_pickup` | 236 | CLEAN — the collectable whose payout is a table lookup |
+| `$6938` | `text_post_bonus_points_a4be` | 82 | the five digits it patches into message 16's own string |
+| `$105e4` | `pickup_effect_none` | 2 | a bare `rts`, and the byte that bounds the table |
+| `$105e6` | `pickup_effect_grant_bbc4` | 26 | the ONE grant that posts no message |
+| `$10600` | `pickup_effect_grant_wing_boots` | 26 | message 82 |
+| `$1061a` | `pickup_effect_grant_helmet` | 26 | message 88 |
+| `$10634` | `pickup_effect_grant_gauntlet` | 26 | message 92 |
+| `$1064e` | `pickup_effect_grant_revival` | 26 | message 93 |
+| `$10668` | `pickup_effect_grant_fire_balls` | 34 | message 94 |
+| `$1068a` | `pickup_effect_grant_bombs` | 34 | message 95 |
+| `$106ac` | `pickup_effect_grant_wind_spouts` | 34 | message 96 |
+| `$106ce` | `pickup_effect_grant_lightning` | 34 | message 97 |
+| `$106f0` | `pickup_effect_refill_meter` | 36 | no message — it CANCELS the bonus box |
+| `$10714` | `pickup_effect_add4_meter` | 50 | ...and it is NOT the clamped add at `$10296` |
+| `$10746` | `pickup_effect_bump_attack_level` | 44 | message 99 |
+| `$10772` | `pickup_effect_vanish_followed` | 40 | message 100 |
+
+**Verified 274, 33,910 bytes, 76.6 % of §0k's 44,262; `make test` 5,140** (4,992 before, and all
+148 of the growth is in the two batteries this batch touched: `test_effects.py` goes 160 -> 238 and
+`test_behavior.py` 1,378 -> 1,448).
+**52 of the table's 62 rows are live and TEN remain**; `PORTED_SLOT_COUNT` holds the figure and a
+case asserts it against the image's own table.
+
+**THE PLATES WERE RIGHT ON THE EXTENT AND WRONG ON TWO READINGS.** A difference of dispatch entries
+gives slot 38 236 bytes and the code is 236 — the first row in this tier whose extent holds NO data
+at all, because this handler ships no frame table. But `$6938`'s plate named the WRONG address
+register for its `lea` and the wrong DIGIT COUNT for the unpack below it, and the bytes give **a6**
+(`4df9 0000a4be`) and **five** characters. Both are corrected, and both are now pinned: the entry pin re-assembles all 82 bytes and the differential
+compares the five characters against an independent model.
+
+**WHERE THE HANDLERS LANDED, AND WHY.** The fourteen went into `src/effects.c` and
+`test/test_effects.py` rather than into the behaviour files, which is the OPPOSITE call from
+`sound_request_9`'s and rests on the same rule read the other way. Their addresses sit in the effect
+band, not the behaviour band; every one is a straight-line leaf whose whole surface is a word or two
+of game state, which is exactly the seeding `test_effects.py` already owns (a destination to
+overwrite, a write pointer, a meter either side of its maximum); and four of them are
+`effect_push_record`'s own three instructions pushing the SAME four record words. Slot 38's own
+frame — the arithmetic that reaches them and the refusal when it does not — is `test_behavior.py`'s.
+
+**WHAT SLOT 38 IS.** A collectable, and its waiting arm is slot 31's: `actor_fall_and_settle`,
+`actor_hop_ascend_step`, then `WB_ACTOR_FIELD_12` run down as a BYTE that expires TWICE — slot 28's
+shape, where the `bne` after `bset #6,8(a0)` reads the bit the `bset` has just overwritten, so the
+first expiry raises the flicker and reloads `$14` and the second leaves for `actor_defeat_and_score`.
+Its idle arm splits on the KIND byte: a pickup kind is given `$ff` frames while `state_flag_a32` is
+set and nothing at all while it is clear, and a gold kind either relaunches (kind byte zero) or
+publishes through `actor_select_sprite_by_flag`.
+
+Its COLLECT arm is what is new. The SFX request is spelt INLINE (`jsr 56(a1)` where
+`sound_request_9` has a `jmp`), so this handler is **not** one of that routine's five callers and
+the C spells `snd_call_trigger_effect` directly rather than calling it. Then `cmpi.b #$2,20(a0)`:
+
+  * **below the threshold the record pays GOLD**, through the same five calls
+    `hud_award_gold_from_descriptor` makes but with `stage_number` as the amount instead of the scene
+    descriptor's award. The two are now ONE function, `pay_gold_award`, with the amount as its
+    parameter — a difference of two instructions at the top and a `bra.w` at the bottom.
+  * **at or above it the KIND ROW decides.** A nonzero `WB_ACTOR_KIND_SCORE` longword goes into
+    `bcd_add_score_bd70` AND into `text_post_bonus_points_a4be`; `WB_ACTOR_KIND_PICKUP_EFFECT` then
+    indexes `pickup_effect_table`.
+
+**AND THE COMPARE IS SIGNED, WHICH IS WHAT BOUNDS THE ROW INDEX.** `cmpi.b #$2,20(a0) / bge` reads
+N^V on a BYTE, so a kind of `$80..$ff` is NEGATIVE and takes the gold arm — the kind arm runs only
+for 2..127 and its read lands within 2032 bytes of the table. That is the OPPOSITE of the tier's
+other reader: `actor_respawn_as_new_kind` bounds its kind at neither end. `../names.txt`'s `$1044c`
+plate now says both things, in one directive.
+
+**THE SECOND DISPATCH IS THE STATE-65 CLASS, AND THE REFUSAL IS A CODE.** `move.w 10(a1),d0 /
+add.w d0,d0 / add.w d0,d0 / movea.l 0(a1,d0.w),a1 / jsr (a1)` — the scale wraps in SIXTEEN BITS and
+the extension word then sign-extends, so entry `s` is reached by `s`, `s+$4000`, `s+$8000` and
+`s+$c000`: **56 of the 65,536 index values dispatch and 65,480 refuse**, and a guard on the raw
+index would have refused 42 of the 56. An eight-shard enumeration drives every one of them against
+the reconstruction alone, which is the only surface a refusal has (the original reads a longword
+outside the table and `jsr`s through it).
+
+The answer for a refused index is a FOURTH dispatch code, `WB_ACTOR_DISPATCH_PICKUP_REFUSED`, and
+not the address slot 7's state `jsr` reports. The reason is measured rather than assumed: the span
+this index reads is ordinary data and holds zeros, and `0` is `WB_ACTOR_DISPATCH_RAN`. A case checks
+the image's own fourteen longwords against all four codes, and a second case checks that the
+longword below the table really is zero — which is the fact that rules the address out. The
+"writes nothing" half is driven too: two refused indices whose target longwords DIFFER leave images
+that are identical everywhere but the index word the case seeded.
+
+**WHAT THE FOURTEEN HANDLERS ARE, AND HOW THEY GOT THEIR NAMES.** Every one but the bare `rts` ends
+`move.b #id,$c030.l / move.w #$32,$c034.l`, and that id is the evidence: batch 17 identified the
+helmet and the gauntlet slots from the messages their own paths post, and this batch applies the
+same method to twelve more. Two of them IDENTIFY a HUD slot that had no meaning at all —
+`$bbc2` is the **Wing Boots** and `$bbc6` the **Revival Medicine** — and two more are a second
+witness for batch 17's helmet and gauntlet (that batch read the BREAK message, this one the grant).
+The four appends push the SAME four words `effect_push_record_0605/0508/0705/0803` push from the
+other dispatch table, and the messages name them: **Fire Balls, Bombs, Wind Spouts, Lightning**. So
+`effect_record_list` is an INVENTORY of those four items, the two tables grant the same four, and
+`src/effects.c` now spells the four record words ONCE, as `wonderboy.h` constants both call sites
+read.
+
+**THREE OF THE FOURTEEN POST ID 0, AND THAT IS A CANCEL RATHER THAN A SILENCE.** `text_run_message_box`'s
+first arm needs a nonzero request, so a zero posts nothing — but the score arm has already posted
+`WB_TEXT_MESSAGE_BONUS_POINTS` a few instructions earlier, so a scored pickup whose effect is
+`$105e6`, `$106f0` or `$10714` takes the bonus box back down before it is ever composed. Reproduced,
+not repaired.
+
+**`pickup_effect_add4_meter` IS NOT `effect_add4_clamped_b6fa` AT ANOTHER ADDRESS.** Both compute
+`hud_meter_value + 4` and both branch on `bgt` against the maximum; that one then CLAMPS and this one
+just SKIPS the store, so a meter within 3 of full is left exactly where it was. Same shipped-bug
+class as slot 30's missing store. The case that separates them is an ABSENCE — a raise past the
+maximum must write the word not at all — because a case comparing only the final value would pass
+for either routine.
+
+**`pickup_effect_vanish_followed` IS THE ONE HANDLER WITH A CALLEE**, and its `jsr $67e0.w` is the
+SHORT absolute form, the encoding batch 31's hidden caller hid in. What it writes is `$69fe`'s own
+damage-flicker state at its maximum: `WB_ACTOR_FLICKER_COUNTDOWN` full,
+`WB_ACTOR_FLAG_FLICKER_BIT` (which makes the projection publish no sprite) and
+`WB_ACTOR_FLAGS2_INVULNERABLE_BIT` (which makes `$69fe` return without writing anything at all). The
+message is "Vanished !", and the three writes are why. **It also establishes a READER for offset 21**,
+which batch 37 listed as not established: `$f14` ticks the byte down under `btst #6,8(a0)`, and this
+is the one writer that raises that bit beside it. Behaviour slot 23's `$64` into the same offset does
+NOT, so whether that one is ever ticked depends on the record's flicker bit having been raised
+elsewhere — the honest half of the retirement.
+
+**`pickup_effect_bump_attack_level` RESOLVES THE `$b444` TENSION rather than dissolving it.** The
+compare is SIGNED, so the `$ff` the new-game reset leaves in that byte (the high half of
+`effect_record_list`'s `$ffff` "empty" word) is negative and BUMPS — turning the word into `$00ff`,
+which `$b39c`'s `tst.w / bpl` no longer reads as empty. The two fields really do overlap at one
+address, and the port reproduces the overlap. The `move.w #$ffff,$1079a.l` below the join runs on the
+REFUSED arm too, which the case drives from both sides.
+
+**TWO NEW BCD ENTRY-X SITES, BOTH PROVED, AND ONE OF THEM BY AN ARITHMETIC INSTRUCTION'S OWN CARRY.**
+`$545e` is `$5196`'s three instructions through the shared `pay_gold_award`, so its proof is that
+one's. `$548a` is new in kind: `lsl.l #4,d0` leaves X the last bit shifted out, which for a count of
+four is bit 28 of the operand — and the operand is `moveq #0,d0 / move.b 20(a0),d0`, a zero-extended
+BYTE, so bit 28 is 0 for every kind a record can hold. `lea`, `move.l d16(An),Dn` and `beq` between
+it and the `bsr` leave X alone. Every other proved site here rests on the ABSENCE of an X-writer;
+this one rests on the value one produces. [`include/hud.h`](include/hud.h)'s audit block now reads
+SIX C sites over EIGHT original `bsr`s, and names the FIFTH threaded site (`$544c`/`$5450`, slot 38's
+own copy of the payout chain, which adds no C at all).
+
+**TWO RUNAWAYS INSIDE `$6938`, AND NEITHER IS DRIVEN.** The blanking loop decrements without testing,
+so an addend of ZERO never leaves it; the digit loop tests AFTER decrementing, so entering it with the
+counter already at zero wraps to `$ffff` and writes 65,536 more characters — which needs an addend
+whose low FIVE nibbles are all zero and something above them. Both are reproduced because the bytes
+say so and neither has a case, because a case would not terminate. What is stated instead is that the
+ONE caller cannot produce either: it `beq`s on zero, and a case walks all 22 shipped kind rows and
+requires every nonzero score to have a nonzero low 20 bits. `$6938`'s single caller is itself a
+checked property.
+
+**THE CENSUS, RUN BEFORE THE FACT — AND IT CORRECTED THE CITATION STYLE OF AN EARLIER CORRECTION.**
+`pickup_effect_table` has exactly ONE `lea` in the whole image over both absolute encodings and both
+PC-relative forms; `text_bonus_digits` ONE; `actor_kind_table` TWO. None of the fourteen handler
+addresses is named by any instruction anywhere, and each is held as a longword in exactly one place —
+its own table entry — which is what makes the fourteen the pickup dispatch's alone. **And batch 28's
+`$1044c` correction cited `$5478` and `$6d3e`, which are the longword OPERANDS; the instructions are
+at `$5476` and `$6d3c`.** The rulebook's "instruction-address citations" was written for exactly this.
+
+**THE DUPLICATE `cmt 0x1044c` IS GONE, which discharges one of the three the queue carries.**
+`ApplyNames` is LAST-WINS, so the original plate at that address had been dead in Ghidra and alive
+only to greps since batch 28 — and it still claimed one reference where there are two, claimed only
+the first two words of a row are read, and undercounted the pointer block below the table by two.
+The correction is folded into one directive, with the count fixed and the two readers' different
+bounds stated. `include/wonderboy.h` and `test/test_actor.py` carried the same undercount and now
+say fourteen.
+
+**MUTATION SWEEP: 33 MUTANTS OVER SIX PRE-HOC AXES, 32 CAUGHT FIRST TIME, ONE REAL HOLE CLOSED —
+33 of 33. The independent gate then found FOUR COVERAGE HOLES the sweep's own axes had never asked
+about, and the RE-RUN after closing them is 35 of 35** — the two added mutants being the gate's own:
+the handler's post moved ABOVE the score/bonus pair, and the two meter grants exchanged. The axes:
+the dispatch refusal (the scale's width, the extension's sign, the refusal reported as a run); each
+handler's grant and its message; the score longword's BCD threading; the kind-row field offsets and
+stride; the table-bound enumeration; the digit routine's swap, rotate direction, blank character,
+count and message; and now the ORDER of the frame's two posts, and the two grants whose witness is a
+word rather than a slot.
+
+**THE ONE SURVIVOR WAS THE SIGN EXTENSION, and closing it took a differential rather than an
+argument.** `movea.l 0(a1,d0.w),a1` sign-extends the wrapped offset, and dropping that survived the
+whole suite: every legal offset is positive, and a high index refuses either way — below the table
+with the sign, above it without — because each of the fourteen addresses is held as a longword in
+exactly ONE place. So no index at all separates the two spellings on the image as it ships. What
+separates them is a TARGET only the signed read can reach: index `$ffff` scales to offset `$fffc`,
+four bytes BELOW the table, which is `actor_kind_table` row 21's last longword and zero in the
+shipped image. Seeding an entry address there makes the ORIGINAL `jsr` to it, so the case is a full
+differential and not a C-only claim; the zero-extended spelling reads `$205a8` instead and refuses.
+
+**WHAT THE INDEPENDENT GATE FOUND, and every one of the four was a case that did not execute what
+its name claimed.**
+  * **THE id-0 CANCEL CLAIM HAD NO EXECUTING CASE.** Every fourteen-way row seeded a ZERO score, so
+    the bonus box was never posted, and the one nonzero-score row used entry 0, which posts nothing —
+    no run had both posts live, and moving `run_pickup_effect` ABOVE the score/bonus pair survived
+    the whole suite. Four rows now put them together (entries 1, 2, 10 and 11) and assert the id the
+    frame LEAVES: the entry's own message for entry 2, and a ZERO for the three that post none. The
+    reorder mutant is red on all four.
+  * **THE THREE WAITING-ARM CASES HAD LOST THEIR OUT-OF-CONTACT PREMISE SILENTLY.** `_pickup_pokes`
+    overlaid the followed record's x unconditionally — it is the gold draw's entropy — over the very
+    x `_band5a_pokes` parks far away to shut the contact test, so only the Y was separating the two
+    records and no case said so. The overlay is now conditional and all three run
+    `_assert_contact(.., False)`; a probe that collapses the y as well turns all three red. The
+    double-expiry case's second half also asserted only the free marker, which the COLLECT arm
+    produces too, and now asserts that neither accumulator moved and no message was posted.
+  * **THE RUNAWAY GUARD WALKED THE WRONG RANGE.** It swept the table's own 22 rows where the site's
+    `bge` admits kinds 2..127 — two rows checked that cannot be reached and 106 that can left
+    unchecked — and the failure mode it guards is a HANG, not an assertion. Widened to
+    `range(2, 0x80)`. Nothing in the wider range reaches it either, so this is a correction of PROOF
+    SCOPE and the case's docstring says so.
+  * **ENTRIES 10 AND 11 EXECUTED NO ASSERTION OF THEIR OWN** in the fourteen-way case: they post no
+    message and write no HUD slot, so they rested entirely on the hand-built band. The meter and the
+    panel countdown are now seeded as INPUTS and both are asserted, and the docstring's "two that
+    post none" is corrected to three (1, 10 and 11, of which 10 and 11 write the meter).
+
+**AND FIVE CLAIM CORRECTIONS the gate found on top of this batch's own.** Row 0 of
+`actor_kind_table` carries a nonzero score (`$00000020`), so "rows 2 and 16..20" was short by one —
+and row 0 is unreachable from this site anyway, which the plate now says. Message 15's string opens
+with SIX spaces and not seven, so the five-byte patch leaves ONE before "Bonus"; three surfaces said
+otherwise. The retraction about `$bbc4` landed on the plate that CITED it and not on `cmt 0xbbc4` or
+on `WB_HUD_SLOT_BBC4`, both of which went on crediting the address to code no batch had recovered
+and denying that any effect handler wrote it; both now carry the correction, and the Wing Boots /
+Revival identifications sit ON `WB_HUD_SLOT_BBC2` and `_BBC6` where a future renamer starts rather
+than only in this section. `src/behavior.c` claimed slot 38's waiting arm was slot 31's frame byte
+for byte — the tier's recurring over-claim — where the two share exactly four instructions. And
+three surfaces named the lifetime's VALUE where they meant its ADDRESS, which is
+`WB_TEXT_LIFETIME_REQUEST`.
+
+**AND ONE STRUCTURAL FIX.** `test_effects.py` had become a third battery importing `bit_op_d16`, the
+three immediate BIT opcodes and the register ordinals from `test_actor.py`. They are promoted to
+`leaf.py` under the third-copy rule instead, `test_actor.py` re-exports them for the two batteries
+that name it as their source, and `README.md`'s claim that only one battery here imports another —
+false for several batches, since five now import a MODEL, a cap or a write set from the battery that
+owns the routine reached — is corrected with the distinction stated: models may cross, encoders go
+to `leaf.py`.
+
+**NOT PINNED, HONESTLY.**
+  * **The two `$6938` runaways**, above: reproduced, argued unreachable from the one caller, and
+    never driven.
+  * **What `hud_slot_bbc4` IS.** Its grant is the one handler here that posts no message, so nothing
+    names it. What this batch does close is that slot's own plate and `wonderboy.h`'s slot block,
+    which between them credited the address to code no batch had recovered and denied that any
+    effect handler wrote it — both retired, and the correction now sits ON `cmt 0xbbc4` and ON
+    `WB_HUD_SLOT_BBC4` rather than only on the plate that cited them.
+  * **What the four record words MEAN.** Each word's HIGH byte is distinct across the four
+    (`$06/$05/$07/$08`) and its LOW byte is not (`$05/$08/$05/$03`), which is as far as the evidence
+    for "{item, count}" goes. Nothing here follows a reader of the list.
+  * **Whether `WB_HUD_SLOT_BBC2` and `_BBC6` should be RENAMED** to the two items their grants
+    identify. The identification is recorded on both plates and in the header's comments; the rename
+    would touch `src/effects.c`, `test_effects.py` and every other reader, so it is queued rather
+    than made.
+  * **The registers each handler leaves behind**, as everywhere else in this tier.
+  * **The refused dispatch**, as in every batch since 29 — and now at two tables rather than one.
+
+**QUEUED — WHAT IS LEFT OF THE TABLE.** Ten rows: **slot 1** (the player, the largest subtree behind
+the table), **slots 39..46** and **slot 57**. The order stands: 39..46 and 57, then the player LAST.
+**THE TWO STANDING OBLIGATIONS FOR 45/46, RESTATED**: `actor_aim_velocity` (`$6528`) still has no
+ENTRY PIN and behaviour slot 45 is its second caller, so the eight encoders that pin it
+(`movem.l` both ways, `asl.w`/`asr.w`/`roxl.w` by an immediate, `exg`, `neg.w`, `eori.w`, `adda.w`
+and `move.b (An)+,Dn` with `ext.w`) are due with that block; and `actor_behavior_type46` (`$58f2`)
+is the THIRD reader of `WB_ACTOR_ANIM_5160_FRAMES`, whose other two this port already has, so it
+lands with its own block rather than being re-ported.
+
+**QUEUED, CARRIED FORWARD**: `abcd_byte` to the kit; regenerate `../out/names_dump.txt`,
+`../out/hw_scan.tsv`, `../decomp.c` and `../out/wonderboy_dis.txt`; `bus.h` to the kit; the `$1ab4`
+boundary; the tier partition; the `scene_run_effect` latent guard; `$1fa2`
+(`actor_event_anim_step_2394`); the second reader of `actor_type30_drift` at `$b84`; the **two**
+remaining duplicate `cmt` directives (`0x1023a`, `0x10394` — `0x1044c` is discharged);
+`scene_copy_record_fields` (`$539e`) with `player_pending_event_gate` (`$b1a`); the third-copy
+encoders due in `leaf.py` (now **fourteen**, this batch adding `lsl_l_imm_dn`); the `WB_HUD_SLOT_BBC2`
+/ `_BBC6` renames above.

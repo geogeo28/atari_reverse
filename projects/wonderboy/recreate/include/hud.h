@@ -76,12 +76,18 @@ uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
  * `move.l #imm,d0` between them does not touch X), and `bcd_add_random_1_to_4` ->
  * `bcd_add_counter_bd6e` at $5184/$5188 (the payout's own `abcd`, then the gold counter).
  *
+ * BATCH 38 ADDED NO NEW C TO EITHER, and that is worth saying rather than leaving to a reader:
+ * behaviour slot 38's gold arm spells the same five calls at $544c/$5450, so `pay_gold_award` in
+ * src/behavior.c now serves TWO original chains and one statement of the threading. The count of
+ * C SITES below and the count of ORIGINAL CALL SITES are therefore no longer the same number.
+ *
  * THERE IS A THIRD ADJACENCY AND IT IS SOUND, which is worth stating so a later scope does not
  * treat the pair above as the whole list: $5188 (counter) and $5196 (score) inside
  * `hud_award_gold_from_descriptor` are also back to back, with `bsr $51d8` between them — and that
  * routine's LAST X-writer on both of its exit paths is `addi.b #$30` on a nibble masked to $0..$f,
  * which cannot carry out of $30..$3f. `ror.w`, `andi.w` and `move.b` leave X alone. So X really is
- * 0 at $5196 and that site passes CLEAR by construction rather than by luck.
+ * 0 at $5196 and that site passes CLEAR by construction rather than by luck. Slot 38's $545e is the
+ * SAME three instructions and the same proof, one address on.
  *
  * A THIRD SITE THREADS IT WITHOUT BEING A CHAIN: `actor_defeat_and_score`'s score add at $6c26 is
  * entered with the bit `lsl.w #2,d2` pushed out of the spawn type at $6c20 — produced INSIDE that
@@ -103,10 +109,19 @@ uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
 
 /* THE ENTRY X A CALL SITE CLAIMS, in TWO spellings, because the sites do not all rest on the same
  * kind of evidence and one name would have hidden that. `grep -r WB_BCD_ENTRY_EXTEND ../src` is the
- * audit and returns FIVE CALL SITES — TWO proved, TWO differential-pinned, one assumed. The FOUR
- * THREADED sites carry no marker at all, by construction, and are named above.
+ * audit and returns SIX C SITES covering EIGHT original `bsr`s — FOUR proved, TWO
+ * differential-pinned, TWO assumed. Two of the six stand for two `bsr`s each: the shop's subtract
+ * ($ddae and $de24) and `pay_gold_award`'s score add ($5196 and $545e). The FIVE THREADED sites
+ * carry no marker at all, by construction, and are named above.
  *
- * PROVED (two): $5196 and $e130, by a reading of the bytes — see each call.
+ * PROVED (four `bsr`s over three C sites): $5196 and $e130 by a reading of the bytes, and batch 38's two —
+ * $545e, which is $5196's own three instructions through the shared `pay_gold_award` and so is not
+ * a C site of its own, and $548a, whose proof is the SHIFT above it. `lsl.l #4,d0` leaves X the last
+ * bit shifted out, which for a count of four is bit 28 of the operand; the operand is
+ * `moveq #0,d0 / move.b 20(a0),d0`, a zero-extended BYTE, so bit 28 is 0 for every kind the record
+ * can hold. `lea`, `move.l d16(An),Dn` and `beq` between it and the `bsr` leave X alone. That makes
+ * it the only site here proved by an ARITHMETIC instruction's own carry-out rather than by the
+ * absence of one — see each call.
  *
  * DIFFERENTIAL-PINNED, WHICH IS A WEAKER CLAIM AND WAS OVERSTATED UNTIL BATCH 34's INDEPENDENT GATE
  * (two): $4e5a in slot 28's collect arm and $522e in slot 33's. Both are entered through
@@ -119,7 +134,7 @@ uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
  * one collect case per distinguishable exit is added), these two rows are a pin over the exercised
  * paths and not a proof. ../STATUS.md carries it as queued work.
  *
- * ASSUMED (one): the shop's subtract at $ddae/$de24, src/scene.c. Nothing on the path from
+ * ASSUMED (two `bsr`s, one C site): the shop's subtract at $ddae/$de24, src/scene.c. Nothing on the path from
  * `scene_run_frame`'s entry writes X, so the bit is the CALLER's — and the caller is the
  * `jsr $dbc0.l` at $4be, whose preceding instruction is `jsr $b346.l`, whose last act before its
  * `rts` is `bsr $b372` -> `addq.w #1,frame_tick_b39a` at $b392 (both single-caller). An `addq.w`

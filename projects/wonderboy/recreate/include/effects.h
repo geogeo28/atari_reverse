@@ -1,8 +1,10 @@
-/* effects.h — the effect handlers and the state stubs above them (src/effects.c).
+/* effects.h — the effect handlers and the state stubs above them, and the PICKUP effects behind the
+ * game's second dispatch table (src/effects.c).
  *
- * 29 leaf routines at $10200..$103e7, each one to four instructions long, reached only through
- * `effect_handler_table` ($1023a) or a sibling dispatch — which is why Ghidra's flow analysis never
- * created them and ../names.txt has to. Every ADDRESS they touch is a game-state global named in
+ * 43 leaf routines over two bands — 29 at $10200..$103e7 and 14 at $105e4..$10799 — each one to
+ * seven instructions long and reached ONLY through `effect_handler_table` ($1023a) or
+ * `pickup_effect_table` ($105ac), which is why Ghidra's flow analysis never created them and
+ * ../names.txt has to. Every ADDRESS all but one of them touches is a game-state global named in
  * wonderboy.h, which both languages read; the one constant below is C-only, since the tests
  * transcribe the setters' immediates from the disassembly instead of composing them.
  *
@@ -64,5 +66,40 @@ void effect_push_record_0803(uint8_t *image);
 
 /* $103dc — the meter straight to its maximum. */
 void effect_restore_b6fa_to_max(uint8_t *image);
+
+/* ---- the PICKUP effects, $105e4..$10799 (batch 38) --------------------------------------------
+ *
+ * FOURTEEN more leaves of the same kind, behind WB_PICKUP_EFFECT_TABLE — the sibling of
+ * WB_EFFECT_HANDLER_TABLE, reached from `actor_behavior_type38_pickup` and from nowhere else. They
+ * are here rather than in src/behavior.c for the reason the twenty-nine above are here: their
+ * addresses sit in the effect band, every one is a straight-line leaf whose whole surface is a word
+ * or two of game state, and four of them are `effect_push_record`'s own three instructions — the
+ * SAME four records, so one copy serves both tables.
+ *
+ * WHAT SEPARATES THEM FROM THE TWENTY-NINE is the tail: each posts a message id into
+ * WB_TEXT_REQUEST and WB_TEXT_LIFETIME_DEFAULT into WB_TEXT_LIFETIME_REQUEST beside it (the
+ * first is an ADDRESS and the second a VALUE). That id is what NAMES each handler, which
+ * is batch 17's method (the helmet and the gauntlet slots were identified from the messages their
+ * own paths post) applied to twelve more. Three of them post WB_TEXT_REQUEST_NONE and so post
+ * NOTHING — and, since slot 38's score arm has already posted WB_TEXT_MESSAGE_BONUS_POINTS by the
+ * time a handler runs, those three CANCEL that box rather than merely declining to open one.
+ *
+ * ONE OF THEM IS NOT A LEAF: `pickup_effect_vanish_followed` calls `followed_actor_record`, by a
+ * `jsr $67e0.w` — the SHORT absolute form, which is the encoding batch 31's hidden caller hid in.
+ */
+void pickup_effect_none(uint8_t *image);              /* $105e4 — a bare `rts` */
+void pickup_effect_grant_bbc4(uint8_t *image);        /* $105e6 — and it posts no message */
+void pickup_effect_grant_wing_boots(uint8_t *image);  /* $10600 */
+void pickup_effect_grant_helmet(uint8_t *image);      /* $1061a */
+void pickup_effect_grant_gauntlet(uint8_t *image);    /* $10634 */
+void pickup_effect_grant_revival(uint8_t *image);     /* $1064e */
+void pickup_effect_grant_fire_balls(uint8_t *image);  /* $10668 — the four appends */
+void pickup_effect_grant_bombs(uint8_t *image);       /* $1068a */
+void pickup_effect_grant_wind_spouts(uint8_t *image); /* $106ac */
+void pickup_effect_grant_lightning(uint8_t *image);   /* $106ce */
+void pickup_effect_refill_meter(uint8_t *image);      /* $106f0 */
+void pickup_effect_add4_meter(uint8_t *image);        /* $10714 — NOT the clamped add above */
+void pickup_effect_bump_attack_level(uint8_t *image); /* $10746 */
+void pickup_effect_vanish_followed(uint8_t *image);   /* $10772 */
 
 #endif /* WONDERBOY_EFFECTS_H */

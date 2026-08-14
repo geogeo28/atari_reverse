@@ -66,7 +66,8 @@ project.toml               binds this directory to the kit (paths, load base, im
 Makefile                   three lines: KIT + GAME + include $(KIT)/kit.mk
 include/wonderboy.h        how SWB.PRG becomes a running image, as constants — the canonical copy
 include/rad.h              the .RAD/.CRU container and its bitstream, as constants
-include/effects.h          the 29 effect/state leaves at $10200..$103e7 — prototypes
+include/effects.h          the 29 effect/state leaves at $10200..$103e7 and the 14 PICKUP
+                           effects at $105e4..$10799 — prototypes
 include/hud.h              the status panel's 30 routines — prototypes, and their register interfaces
 include/input.h            the two joystick-pipeline leaves
 include/map.h              the collision map's three routines — prototypes, and why $10a2's result
@@ -98,7 +99,10 @@ include/scroll.h           the whole background scroll subsystem — prototypes,
                            the blit's sixteen jump-table variants are one function with a column
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
-src/effects.c              the effect handlers and the state stubs above them
+src/effects.c              the effect handlers and the state stubs above them — and, since batch
+                           38, the FOURTEEN pickup effects behind the sibling table at $105ac,
+                           which are the same kind of leaf one dispatch over and which reuse this
+                           file's own slot writer and record push
 src/sound.c                the sound module: snd_trigger_effect ($1a48a) and the
                            register-preserving stub snd_call_trigger_effect ($17b14) — the module's
                            first ported bytes — plus the STOP CHAIN, $17f24 -> $1aaea -> $17f30,
@@ -151,8 +155,8 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            for state_flag_a34) and the dispatcher it feeds ($928), which fetches a
                            longword out of the 62-entry table at $938 and tail-jumps through it —
                            on the WRAPPED offset, so 248 of the 65,536 type values reach an entry.
-                           FIFTY-ONE of the sixty-two rows are reconstructed as of batch 37 and
-                           eleven are not, so for those the dispatcher hands the target
+                           FIFTY-TWO of the sixty-two rows are reconstructed as of batch 38 and
+                           ten are not, so for those the dispatcher hands the target
                            BACK and the differential runs the oracle on to it; the reconstructed
                            list grows by a few rows a batch. (This line read "twenty-two" while
                            ../STATUS.md read twenty-three at batch 32 and neither was checked
@@ -178,7 +182,13 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            back, the SHOP'S ITEM CURSOR (a record whose x is a menu selection the
                            joystick's edges walk between three positions), and the three EVENT
                            ACTORS player_pending_event_gate spawns and waits on — two sharing one
-                           animation over one global cursor and the third a bare riser
+                           animation over one global cursor and the third a bare riser. Batch 38
+                           then added slot 38 and THE PICKUP TIER: a collectable whose payout is a
+                           TABLE LOOKUP — its own 16-byte kind row gives a packed-BCD score and an
+                           index into a second dispatch table, so this is the first row here whose
+                           frame dispatches again — plus the five digits it patches into message
+                           16's own shipped string. The fourteen handlers behind that table are in
+                           src/effects.c, beside the twenty-nine they are the siblings of
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -251,7 +261,10 @@ test/test_audio_capture.py  the kit's opt-in audio-capture mode, pinned from thi
 test/test_rad_depack.py    the depacker's differential: the game's own .RAD corpus (41 files, 45
                            streams), decoded by both sides, plus the failure branch
 test/test_effects.py       the effect/state leaves' differential: seeded destinations, both sides of
-                           the meter clamp, and the record list's write pointer
+                           the meter clamp, and the record list's write pointer — and batch 38's
+                           FOURTEEN pickup effects, whose extra surface is the MESSAGE each posts
+                           (three of them post id 0, which CANCELS the box slot 38's score arm has
+                           already asked for) and one of which has a callee
 test/test_hud.py           the status panel's differential: the game's own bitmaps blitted into both
                            of its screen buffers, the BCD accumulators against a decimal model, the
                            regression case for the oracle's entry condition codes, and — for the
@@ -315,13 +328,17 @@ test/test_behavior.py      the behaviour tier's differential. Its shape is set b
                            sum-the-spanned-bytes idiom), and an independent model of $5c6e's three
                            overlap tests compared against the ORACLE's d0 as well as the port's
                            return. It imports test_map.py's map seeding and test_rng.py's generator
-                           model rather than restating either. Then the FIFTY-ONE LIVE TABLE ROWS:
+                           model rather than restating either. Then the FIFTY-TWO LIVE TABLE ROWS:
                            the five-handler band at $2462..$2db1 (one shape with five bodies), the
                            whole $5a band ($5928..$5c6b, seven rows and three endings of one
                            grammar), the three moving platforms, slot 60's retype, slot 61's message
                            sequence, slot 7 with the SWOOP state machine below it that its two
                            prologue rows also run into, and the three COLLECTABLES at 28, 30 and 31
-                           with the payout cluster under them, batch 34's six at 32..37, and batch
+                           with the payout cluster under them, batch 34's six at 32..37, batch 38's
+                           slot 38 with the SECOND DISPATCH behind it (fourteen entries reached by
+                           56 of the 65,536 index values, an eight-shard enumeration over all of
+                           them, and a refusal that is a CODE rather than an address because the
+                           span the index reads holds zeros), and batch
                            35's MONSTER-PROLOGUE FAMILY at 9..13 — the $2462 band's grammar with five
                            more middles, two of which report a boundary on their hurt arm because
                            they call the player gate — and batch 36's SIX MORE of that family at
@@ -359,10 +376,18 @@ test/test_stage.py         the stage loader's differential: whole-body entry pin
                            their carry word closes, the banner cursor compared three ways, and the
                            two resets Ghidra reports as one function -- split at the second entrant
                            a whole-image scan found, and required to add back up to its 136 bytes.
-                           It is the ONE battery here that imports another (`model_lives_draw` and
+                           It was the FIRST battery here to import another (`model_lives_draw` and
                            `lives_pokes` from test_hud.py): $fe8c CALLS $e80c, so its write set
                            contains that routine's, and two copies of the geometry could disagree
-                           while both batteries stayed green
+                           while both batteries stayed green. FIVE batteries now do it for that
+                           same reason — test_actor, test_behavior, test_hud, test_scene and
+                           test_stage each import a model, a cap or a write set from the battery
+                           that OWNS the routine reached — and this entry went on claiming it was
+                           the only one for several batches after it stopped being true. What a battery must NOT import is an
+                           ENCODER: those go to leaf.py on their third copy, which is where batch 38
+                           sent `bit_op_d16`, the three immediate BIT opcodes and the register
+                           ordinals rather than let test_effects.py become a third importer of
+                           test_actor.py
 test/test_text.py          the text subsystem's differential. The plotter: 32 bytes into the
                            4-plane buffer with the write set stated exactly, the returned cursor
                            compared against both sides, a cell walk that shows the +1/+7 alternation

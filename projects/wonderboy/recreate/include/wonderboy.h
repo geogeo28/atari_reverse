@@ -138,14 +138,28 @@
  * means "value := N, and redraw me". The value's own meaning differs slot by slot and is NOT
  * identified: $bbbe and $bbc0 are counted DOWN one per use by the damage paths at $69fe/$6b46
  * (which, on reaching zero, rearm the slot as $00ff and post a message), while $bbc8 is tested
- * against 1..6 as an icon variant. The fourth slot, $bbc4, is untouched by the handlers in
- * src/effects.c; the slot pass draws it like the other five, which is why it has a constant.
+ * against 1..6 as an icon variant. $bbc4 is written by ONE handler in src/effects.c
+ * (`pickup_effect_grant_bbc4`), which posts no message and so names nothing; the slot pass draws it
+ * like the other five, which is why it has a constant. This block said $bbc4 was untouched by that
+ * file until batch 38 reconstructed the handler that touches it.
+ *
+ * TWO OF THE SIX ARE IDENTIFIED AS OF BATCH 38, by the method batch 17 used for $bbbe and $bbc0 —
+ * the message a slot's own writer posts. See each constant. The names here are NOT changed with the
+ * identification: renaming them touches src/effects.c, test_effects.py and every other reader, so
+ * ../STATUS.md queues it and the evidence sits on the symbols rather than only in a batch section.
  */
 #define WB_HUD_SLOT_BBBE     0xbbbeu  /* counted down at $69fe: the damage path spends it */
 #define WB_HUD_SLOT_BBC0     0xbbc0u  /* counted down at $6b46, likewise */
-#define WB_HUD_SLOT_BBC2     0xbbc2u  /* the one slot set to $80 rather than a small count */
-#define WB_HUD_SLOT_BBC4     0xbbc4u  /* no writer among the ported handlers (../names.txt) */
-#define WB_HUD_SLOT_BBC6     0xbbc6u
+#define WB_HUD_SLOT_BBC2     0xbbc2u  /* the one slot set to $80 rather than a small count — and the
+                                       * WING BOOTS: `pickup_effect_grant_wing_boots` writes $feff
+                                       * here and posts WB_TEXT_MESSAGE_WING_BOOTS in the same
+                                       * routine. RENAME QUEUED (../STATUS.md) */
+#define WB_HUD_SLOT_BBC4     0xbbc4u  /* ONE writer among the ported handlers,
+                                       * `pickup_effect_grant_bbc4` — which posts no message, so
+                                       * this is the one slot of the six nothing names */
+#define WB_HUD_SLOT_BBC6     0xbbc6u  /* the REVIVAL MEDICINE: `pickup_effect_grant_revival` writes
+                                       * $01ff here and posts WB_TEXT_MESSAGE_REVIVAL in the same
+                                       * routine. RENAME QUEUED (../STATUS.md) */
 #define WB_HUD_SLOT_BBC8     0xbbc8u  /* read as a 1..6 icon variant at $b8f0, not as a count */
 #define WB_HUD_SLOTS         6u       /* how many the pass at $b8f0 walks */
 #define WB_HUD_SLOT_REQUEST  1u       /* byte +1 of a slot: "redraw me", tested then cleared */
@@ -1027,17 +1041,21 @@
  * 24-bit bus wrap. A kind drawn by either stage_random_kind is 0..31 and stays inside the 22 rows. */
 #define WB_ACTOR_KIND_TABLE          0x1044cu /* TWO references, by a whole-image scan of both
                                                * absolute encodings (batch 34): `lea $1044c.l,a2` at
-                                               * $6d3c and a second long-form operand at $5478,
-                                               * inside the unported actor_behavior_type38_pickup.
-                                               * The "one reference" this line used to claim was
-                                               * never swept */
+                                               * $6d3c and `lea $1044c.l,a1` at $5476, inside
+                                               * `actor_behavior_type38_pickup`. The "one reference"
+                                               * this line used to claim was never swept; batch 38
+                                               * re-ran the scan and cited the INSTRUCTIONS, where
+                                               * batch 34 had cited their longword operands */
 #define WB_ACTOR_KIND_RECORD_BYTES   16u
 #define WB_ACTOR_KIND_RECORD_SHIFT   4u       /* `lsl.w #4,d0` == log2(WB_ACTOR_KIND_RECORD_BYTES) */
 #define WB_ACTOR_KIND_TABLE_ROWS     22u      /* == (0x105ac - 0x1044c) / WB_ACTOR_KIND_RECORD_BYTES.
-                                               * Bounded ABOVE by the twelve longword code pointers
-                                               * at 0x105ac (the first is 0x105e4, the code just
-                                               * past them); the code bounds the index at neither
-                                               * end. Rows 0..20 all carry WB_ACTOR_TYPE_UNSCORED in
+                                               * Bounded ABOVE by the FOURTEEN longword code
+                                               * pointers of WB_PICKUP_EFFECT_TABLE at 0x105ac (the
+                                               * first is 0x105e4, the code just past them). Of the
+                                               * two readers, `actor_respawn_as_new_kind` bounds the
+                                               * index at neither end and slot 38's `cmpi.b #$2 /
+                                               * bge` bounds it at 2..127. Rows 0..20 all carry
+                                               * WB_ACTOR_TYPE_UNSCORED in
                                                * their type word — so a slot that has respawned once
                                                * pays no score the next time it dies — and row 21
                                                * carries $3d */
@@ -2037,6 +2055,130 @@
                                                * against the record's y rather than a `ble`, so a
                                                * record seeded BELOW its target counts down through
                                                * the whole 16-bit range before it arrives */
+
+/* --- slot 38, and the PICKUP TIER behind it ($5408..$54f3; $105ac..$10799) ----------------------
+ *
+ * THE ROW IS A COLLECTABLE WHOSE PAYOUT IS A TABLE LOOKUP, which is what makes it a tier rather
+ * than a handler. WB_ACTOR_KIND names a 16-byte row of WB_ACTOR_KIND_TABLE, and the row carries
+ * both halves of what the pickup is worth: a packed-BCD score LONGWORD at WB_ACTOR_KIND_SCORE and,
+ * at WB_ACTOR_KIND_PICKUP_EFFECT, a word that indexes WB_PICKUP_EFFECT_TABLE — fourteen longwords
+ * whose handlers are src/effects.c's, the SIBLING of WB_EFFECT_HANDLER_TABLE and bounded the same
+ * way (slot 0 holds the byte past the table).
+ *
+ * WHICH ARM A COLLECTED RECORD TAKES IS THE KIND BYTE, compared SIGNED against
+ * WB_ACTOR_PICKUP_KIND_FIRST: below it the record pays GOLD (the same five instructions
+ * `hud_award_gold_from_descriptor` spells, with WB_STAGE_NUMBER as the amount instead of the scene
+ * descriptor's award), at or above it the kind row decides. A kind byte of $80..$ff is NEGATIVE and
+ * takes the gold arm too, which is what bounds the row index at 2..127 — this site bounds it where
+ * `actor_respawn_as_new_kind`'s does not.
+ */
+#define WB_ACTOR_BEHAVIOR_TYPE38     0x5408u
+#define WB_ACTOR_PICKUP_KIND_FIRST   2u       /* `cmpi.b #$2,20(a0) / bge.w $5476` — SIGNED */
+#define WB_ACTOR_KIND_SCORE          4u       /* longword: `move.l 4(a1),d0`, packed BCD. Zero on
+                                               * fifteen of the 22 shipped rows, and a zero SKIPS
+                                               * both the accumulator and the digits */
+#define WB_ACTOR_KIND_PICKUP_EFFECT  10u      /* word: `move.w 10(a1),d0`, the table index */
+#define WB_ACTOR_TYPE38_FLASH        0xffu    /* `move.b #$ff,12(a0)` — the countdown a waiting
+                                               * record is given while WB_STATE_FLAG_A32 is set */
+#define WB_ACTOR_TYPE38_FIELD_12_RELOAD 0x14u /* `move.b #$14,12(a0)` on the FIRST expiry, exactly
+                                               * WB_ACTOR_TYPE28_FIELD_12_RELOAD's shape one band on
+                                               * — and, like slot 28's, a BYTE countdown that
+                                               * expires TWICE */
+
+/* The dispatch itself, and it is UNBOUNDED AT BOTH ENDS: `move.w 10(a1),d0 / add.w d0,d0 /
+ * add.w d0,d0 / movea.l 0(a1,d0.w),a1 / jsr (a1)`. The two `add.w`s wrap in SIXTEEN BITS and the
+ * extension word then sign-extends, so the read lands in [table - $8000, table + $7ffc] and the
+ * index ALIASES: an entry is reached by four index values, `s`, `s + $4000`, `s + $8000` and
+ * `s + $c000`. That is `actor_dispatch_behavior`'s wrapped offset at a smaller table. */
+#define WB_PICKUP_EFFECT_TABLE       0x105acu /* ONE `lea` in the whole image, at $5496, by a scan
+                                               * of both absolute encodings and both PC-relative
+                                               * forms */
+#define WB_PICKUP_EFFECT_ENTRY       4u       /* one longword per entry */
+#define WB_PICKUP_EFFECT_ENTRIES     14u      /* == (0x105e4 - 0x105ac) / WB_PICKUP_EFFECT_ENTRY,
+                                               * i.e. bounded by its own slot 0 */
+
+/* The fourteen handlers, in table order. Each is a leaf of src/effects.c; each but the first ends
+ * by writing a message id into WB_TEXT_REQUEST and WB_TEXT_LIFETIME_DEFAULT into
+ * WB_TEXT_LIFETIME_REQUEST, and the id is what NAMES it —
+ * batch 17's method (the helmet and the gauntlet were identified from the messages their own paths
+ * post) applied to twelve more slots. */
+#define WB_PICKUP_EFFECT_NONE        0x105e4u /* a bare `rts`, and the byte that bounds the table */
+#define WB_PICKUP_EFFECT_BBC4        0x105e6u
+#define WB_PICKUP_EFFECT_WING_BOOTS  0x10600u
+#define WB_PICKUP_EFFECT_HELMET      0x1061au
+#define WB_PICKUP_EFFECT_GAUNTLET    0x10634u
+#define WB_PICKUP_EFFECT_REVIVAL     0x1064eu
+#define WB_PICKUP_EFFECT_FIRE_BALLS  0x10668u
+#define WB_PICKUP_EFFECT_BOMBS       0x1068au
+#define WB_PICKUP_EFFECT_WIND_SPOUTS 0x106acu
+#define WB_PICKUP_EFFECT_LIGHTNING   0x106ceu
+#define WB_PICKUP_EFFECT_REFILL      0x106f0u
+#define WB_PICKUP_EFFECT_ADD4        0x10714u
+#define WB_PICKUP_EFFECT_ATTACK      0x10746u
+#define WB_PICKUP_EFFECT_VANISH      0x10772u
+
+/* What each grant WRITES. The five HUD slots take the `move.w #$Nff,slot.l` form every other slot
+ * writer in the game uses (WB_HUD_SLOT_CHANGED below the value), so only the value is named. */
+#define WB_PICKUP_SLOT_BBC4_VALUE        0x01u
+#define WB_PICKUP_SLOT_WING_BOOTS_VALUE  0xfeu /* the only grant whose value is not a small count */
+#define WB_PICKUP_SLOT_HELMET_VALUE      0x05u
+#define WB_PICKUP_SLOT_GAUNTLET_VALUE    0x02u
+#define WB_PICKUP_SLOT_REVIVAL_VALUE     0x01u
+
+/* The four RECORDS the append grants push onto WB_EFFECT_RECORD_LIST, named for the message each
+ * handler posts beside its own push. They are the SAME four words `effect_push_record_*` pushes
+ * from WB_EFFECT_HANDLER_TABLE, which is why both spellings read these constants: the two dispatch
+ * tables grant the same four items. Each word's HIGH byte is distinct across the four and its LOW
+ * byte is not, which is as far as the evidence for "{item, count}" goes. */
+#define WB_PICKUP_RECORD_FIRE_BALLS  0x0605u
+#define WB_PICKUP_RECORD_BOMBS       0x0508u
+#define WB_PICKUP_RECORD_WIND_SPOUTS 0x0705u
+#define WB_PICKUP_RECORD_LIGHTNING   0x0803u
+
+#define WB_PICKUP_METER_STEP         4u       /* `addq.w #4,d0` on WB_HUD_METER_VALUE — and see
+                                               * src/effects.c: past WB_HUD_METER_MAX the store is
+                                               * SKIPPED rather than clamped, so this raise is not
+                                               * `effect_add4_clamped_b6fa` under another address */
+#define WB_ATTACK_LEVEL_MAX          3u       /* `cmpi.b #$3,$b444.l / bgt` — SIGNED, and the byte
+                                               * is bumped afterwards, so the level tops out at 4.
+                                               * The address is WB_EFFECT_RECORD_LIST's own first
+                                               * byte (../names.txt records the collision) */
+#define WB_SCENE_EXIT_REQUESTED      0xffffu  /* `move.w #$ffff,$1079a.l` at $10768, UNCONDITIONAL —
+                                               * it runs on the refused arm as well */
+#define WB_PICKUP_VANISH_FLICKER     0xffu    /* `move.b #$ff,21(a1)` into WB_ACTOR_FLICKER_COUNTDOWN
+                                               * on the FOLLOWED record, with WB_ACTOR_FLAG_FLICKER_BIT
+                                               * and WB_ACTOR_FLAGS2_INVULNERABLE_BIT raised beside
+                                               * it — the state $f14 ticks down and $69fe refuses to
+                                               * damage. The message is "Vanished !" */
+
+/* The MESSAGE each handler posts. Ids are 1-based into WB_TEXT_MESSAGE_TABLE; the three that post
+ * zero post NOTHING (`text_run_message_box`'s first arm needs a nonzero request) and, because the
+ * score arm has already posted WB_TEXT_MESSAGE_BONUS_POINTS by the time the handler runs, they
+ * CANCEL that box rather than merely declining to open one. */
+#define WB_TEXT_REQUEST_NONE         0u
+#define WB_TEXT_MESSAGE_WING_BOOTS   0x52u    /* "    Wing Boots." */
+#define WB_TEXT_MESSAGE_HELMET       0x58u    /* "    A Helmet." */
+#define WB_TEXT_MESSAGE_GAUNTLET     0x5cu    /* "   A Gauntlet." */
+#define WB_TEXT_MESSAGE_REVIVAL      0x5du    /* "Revival Medicine" */
+#define WB_TEXT_MESSAGE_FIRE_BALLS   0x5eu    /* "   Fire Balls." */
+#define WB_TEXT_MESSAGE_BOMBS        0x5fu    /* "       Bombs." */
+#define WB_TEXT_MESSAGE_WIND_SPOUTS  0x60u    /* "     Wind Spouts." */
+#define WB_TEXT_MESSAGE_LIGHTNING    0x61u    /* "    Lightning." */
+#define WB_TEXT_MESSAGE_ATTACK_UP    0x63u    /* " Offensive Power \n    Increased.   " */
+#define WB_TEXT_MESSAGE_VANISHED     0x64u    /* "    Vanished !   " */
+
+/* $6938 — the score arm's own digits, and the LONGWORD sibling of WB_TEXT_GOLD_DIGITS: five packed
+ * BCD digits patched into the front of message WB_TEXT_MESSAGE_BONUS_POINTS's shipped string, whose
+ * first SIX characters are spaces — so a five-digit amount leaves exactly one of them before the
+ * word "Bonus". `swap d0` then `rol.l #4` five times walks nibbles 4..0 of the
+ * addend, so the digits drawn are its LOW FIVE and everything above them is invisible. */
+#define WB_TEXT_BONUS_DIGITS         0xa4beu  /* the first character of WB_TEXT_MESSAGE_TABLE record
+                                               * 15's string, "      Bonus Points." at $a4be —
+                                               * SIX leading spaces, of which the patch overwrites
+                                               * five. ONE
+                                               * `lea` names it, at $6938 */
+#define WB_TEXT_BONUS_DIGIT_COUNT    5u       /* `move.w #$5,d7`, counted down by `subi.w #1` */
+#define WB_TEXT_MESSAGE_BONUS_POINTS 0x10u    /* `move.b #$10,$c030.l` at $6978 */
 
 /* The two addresses OUTSIDE this tier that a reconstructed handler transfers to and stops at. Both
  * are the entry of code this port does not have; behavior.h's boundary is how they are reported. */

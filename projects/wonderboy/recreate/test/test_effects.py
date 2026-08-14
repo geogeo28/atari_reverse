@@ -34,8 +34,8 @@ import pytest
 
 import harness
 import leaf
-from leaf import (MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, MOVE_W_IMM_ABS_L, RTS,
-                  longword, word)
+from leaf import (A1, BSET_IMM, MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L,
+                  MOVE_W_IMM_ABS_L, RTS, bit_op_d16, longword, word)
 from layout import wb
 
 # --- the globals, from the header both languages read (include/wonderboy.h) ---------------------
@@ -336,3 +336,374 @@ def test_a_push_advances_the_pointer_then_stores_at_it(name, record, pointer):
     leaf.run(name, GLUE[name], [(WRITE_PTR, WRITE_PTR_LEN), (destination, RECORD_LEN)],
              f"{name} with the write pointer at {pointer:#x}",
              regs={"_pokes": pokes}, poison=False)
+
+
+# --- the PICKUP effects, $105e4..$10799 (batch 38) -----------------------------------------------
+#
+# FOURTEEN more leaves of the same kind, behind WB_PICKUP_EFFECT_TABLE rather than
+# WB_EFFECT_HANDLER_TABLE. They are in THIS battery and not in test_behavior.py for the reason
+# src/effects.c gives for holding them: they are straight-line leaves whose whole surface is a word
+# or two of game state, four of them are the record pushes above with a message on the end, and the
+# seeding they need is this file's (a destination to overwrite, a write pointer, a meter either side
+# of its maximum) and not the behaviour tier's actor record. Slot 38's own frame — the dispatch that
+# reaches them, and the refusal when its index leaves the table — is test_behavior.py's.
+#
+# WHAT IS NEW HERE IS THE TAIL, and it is what every case below asserts on top of the grant: a
+# message id into TEXT_REQUEST and the VALUE TEXT_LIFETIME_DEFAULT into TEXT_LIFETIME_REQUEST
+# beside it. Three handlers post
+# TEXT_REQUEST_NONE, which is not "no write" — it is a write of zero, and it CANCELS whatever slot
+# 38's score arm posted a moment earlier. The cases seed that byte nonzero so the zero is visible.
+TEXT_REQUEST = wb("TEXT_REQUEST")
+TEXT_LIFETIME_REQUEST = wb("TEXT_LIFETIME_REQUEST")
+TEXT_LIFETIME_DEFAULT = wb("TEXT_LIFETIME_DEFAULT")
+TEXT_REQUEST_NONE = wb("TEXT_REQUEST_NONE")
+BYTE_LEN = 1
+PANEL_FRAME_DELAY = wb("PANEL_FRAME_DELAY")
+PANEL_FRAME_DELAY_INIT = wb("PANEL_FRAME_DELAY_INIT")
+PICKUP_METER_STEP = wb("PICKUP_METER_STEP")
+EFFECT_RECORD_LIST = wb("EFFECT_RECORD_LIST")
+ATTACK_LEVEL_MAX = wb("ATTACK_LEVEL_MAX")
+SCENE_EXIT_REQUEST = wb("SCENE_EXIT_REQUEST")
+SCENE_EXIT_REQUESTED = wb("SCENE_EXIT_REQUESTED")
+STATE_FLAG_A32 = wb("STATE_FLAG_A32")
+FOLLOWED_DEFAULT = wb("ACTOR_FOLLOWED_DEFAULT")
+FOLLOWED_A32 = wb("ACTOR_FOLLOWED_A32")
+ACTOR_FLAGS = wb("ACTOR_FLAGS")
+ACTOR_FLAGS2 = wb("ACTOR_FLAGS2")
+FLICKER_COUNTDOWN = wb("ACTOR_FLICKER_COUNTDOWN")
+FLICKER_BIT = wb("ACTOR_FLAG_FLICKER_BIT")
+INVULNERABLE_BIT = wb("ACTOR_FLAGS2_INVULNERABLE_BIT")
+VANISH_FLICKER = wb("PICKUP_VANISH_FLICKER")
+
+# The encodings only the pickup handlers spell.
+CMPI_B_ABS_L = b"\x0c\x39"          # cmpi.b #imm,<abs>.l
+ADDQ_B_1_ABS_L = b"\x52\x39"        # addq.b #1,<abs>.l
+JSR_ABS_W = b"\x4e\xb8"             # jsr <abs>.w — the SHORT form, batch 31's hiding place
+ADDQ_W_4_D0 = b"\x58\x40"
+# `bgt.w` over the one `move.w d0,meter` the raise would otherwise store (6 bytes), and over the
+# bump plus the whole message post (6 + 8 + 8 = 22). Both are transcriptions of the displacement
+# word in the image, which is what makes the entry pin a pin.
+BGT_W_OVER_THE_RAISE = b"\x6e\x00\x00\x08"
+BGT_W_OVER_THE_BUMP = b"\x6e\x00\x00\x18"
+
+# (name, slot address, the VALUE byte, the message id). The five grants that write one HUD slot.
+PICKUP_GRANTS = (
+    ("pickup_effect_grant_bbc4", wb("HUD_SLOT_BBC4"), wb("PICKUP_SLOT_BBC4_VALUE"),
+     TEXT_REQUEST_NONE),
+    ("pickup_effect_grant_wing_boots", HUD_SLOT_BBC2, wb("PICKUP_SLOT_WING_BOOTS_VALUE"),
+     wb("TEXT_MESSAGE_WING_BOOTS")),
+    ("pickup_effect_grant_helmet", HUD_SLOT_BBBE, wb("PICKUP_SLOT_HELMET_VALUE"),
+     wb("TEXT_MESSAGE_HELMET")),
+    ("pickup_effect_grant_gauntlet", HUD_SLOT_BBC0, wb("PICKUP_SLOT_GAUNTLET_VALUE"),
+     wb("TEXT_MESSAGE_GAUNTLET")),
+    ("pickup_effect_grant_revival", HUD_SLOT_BBC6, wb("PICKUP_SLOT_REVIVAL_VALUE"),
+     wb("TEXT_MESSAGE_REVIVAL")),
+)
+
+# ...and the four that push a record. The words are the SAME four `effect_push_record_*` pushes,
+# which is what says the two dispatch tables grant the same four items; PUSH_RECORDS above holds
+# them as literals and this table reads the header, so the two spellings are pinned against each
+# other by `test_the_two_tables_push_the_same_four_records`.
+PICKUP_APPENDS = (
+    ("pickup_effect_grant_fire_balls", wb("PICKUP_RECORD_FIRE_BALLS"), wb("TEXT_MESSAGE_FIRE_BALLS")),
+    ("pickup_effect_grant_bombs", wb("PICKUP_RECORD_BOMBS"), wb("TEXT_MESSAGE_BOMBS")),
+    ("pickup_effect_grant_wind_spouts", wb("PICKUP_RECORD_WIND_SPOUTS"),
+     wb("TEXT_MESSAGE_WIND_SPOUTS")),
+    ("pickup_effect_grant_lightning", wb("PICKUP_RECORD_LIGHTNING"), wb("TEXT_MESSAGE_LIGHTNING")),
+)
+
+PICKUP_LEAF_COUNT = 14                 # the table's own entry count, checked against the header
+
+
+def _post(message):
+    """`move.b #id,$c030.l / move.w #$32,$c034.l` — the tail thirteen of the fourteen end with."""
+    return (leaf.move_b_imm_abs_l(message, TEXT_REQUEST)
+            + MOVE_W_IMM_ABS_L + word(TEXT_LIFETIME_DEFAULT) + longword(TEXT_LIFETIME_REQUEST))
+
+
+PICKUP_ENTRY_BYTES = {"pickup_effect_none": RTS}
+PICKUP_ENTRY_BYTES.update({
+    name: (MOVE_W_IMM_ABS_L + word((value << SLOT_VALUE_SHIFT) | SLOT_CHANGED) + longword(slot)
+           + _post(message) + RTS)
+    for name, slot, value, message in PICKUP_GRANTS})
+PICKUP_ENTRY_BYTES.update({
+    name: (ADDQ_L_2_ABS_L + longword(WRITE_PTR) + MOVEA_L_ABS_L_A1 + longword(WRITE_PTR)
+           + MOVE_W_IMM_A1 + word(record) + _post(message) + RTS)
+    for name, record, message in PICKUP_APPENDS})
+PICKUP_ENTRY_BYTES["pickup_effect_refill_meter"] = (
+    MOVE_W_IMM_ABS_L + word(PANEL_FRAME_DELAY_INIT) + longword(PANEL_FRAME_DELAY)
+    + MOVE_W_ABS_L_ABS_L + longword(METER_MAX) + longword(METER_VALUE)
+    + _post(TEXT_REQUEST_NONE) + RTS)
+PICKUP_ENTRY_BYTES["pickup_effect_add4_meter"] = (
+    MOVE_W_IMM_ABS_L + word(PANEL_FRAME_DELAY_INIT) + longword(PANEL_FRAME_DELAY)
+    + MOVE_W_ABS_L_D0 + longword(METER_VALUE) + ADDQ_W_4_D0
+    + CMP_W_ABS_L_D0 + longword(METER_MAX) + BGT_W_OVER_THE_RAISE
+    + MOVE_W_D0_ABS_L + longword(METER_VALUE)
+    + _post(TEXT_REQUEST_NONE) + RTS)
+PICKUP_ENTRY_BYTES["pickup_effect_bump_attack_level"] = (
+    CMPI_B_ABS_L + word(ATTACK_LEVEL_MAX) + longword(EFFECT_RECORD_LIST) + BGT_W_OVER_THE_BUMP
+    + ADDQ_B_1_ABS_L + longword(EFFECT_RECORD_LIST)
+    + _post(wb("TEXT_MESSAGE_ATTACK_UP"))
+    + MOVE_W_IMM_ABS_L + word(SCENE_EXIT_REQUESTED) + longword(SCENE_EXIT_REQUEST) + RTS)
+PICKUP_ENTRY_BYTES["pickup_effect_vanish_followed"] = (
+    JSR_ABS_W + word(leaf.entry_of("followed_actor_record"))
+    + leaf.move_b_imm_d16(A1, VANISH_FLICKER, FLICKER_COUNTDOWN)
+    + bit_op_d16(BSET_IMM, FLICKER_BIT, A1, ACTOR_FLAGS)
+    + bit_op_d16(BSET_IMM, INVULNERABLE_BIT, A1, ACTOR_FLAGS2)
+    + _post(wb("TEXT_MESSAGE_VANISHED")) + RTS)
+
+PICKUP_GLUE = {name: leaf.image_glue(name) for name in PICKUP_ENTRY_BYTES}
+
+# The image's own table, so the count and the entry addresses come from the bytes rather than from
+# this file. wonderboy.h's fourteen WB_PICKUP_EFFECT_* addresses are checked against it below.
+PICKUP_TABLE = wb("PICKUP_EFFECT_TABLE")
+PICKUP_ENTRY = wb("PICKUP_EFFECT_ENTRY")
+PICKUP_ENTRIES = wb("PICKUP_EFFECT_ENTRIES")
+
+# The order the table holds them in — the same order the two tables above and the two singletons
+# were written in, stated once so the table pin and the batch-completeness pin share it.
+PICKUP_TABLE_ORDER = (("pickup_effect_none",)
+                      + tuple(row[0] for row in PICKUP_GRANTS)
+                      + tuple(row[0] for row in PICKUP_APPENDS)
+                      + ("pickup_effect_refill_meter", "pickup_effect_add4_meter",
+                         "pickup_effect_bump_attack_level", "pickup_effect_vanish_followed"))
+
+# The seed every pickup case starts from: a TEXT_REQUEST and a lifetime that are not what any
+# handler writes, so a handler that posted nothing would be caught by the byte it left behind.
+POSTED_BEFORE = 0x7f
+LIFETIME_BEFORE = 0x1234
+
+
+def _pickup_pokes(extra=None):
+    pokes = {TEXT_REQUEST: bytes([POSTED_BEFORE]), TEXT_LIFETIME_REQUEST: word(LIFETIME_BEFORE)}
+    return leaf.overlay(pokes, extra or {})
+
+
+def _post_band():
+    return [(TEXT_REQUEST, BYTE_LEN), (TEXT_LIFETIME_REQUEST, WORD_LEN)]
+
+
+def _assert_posted(info, message, what):
+    assert leaf.read_int(info, TEXT_REQUEST, BYTE_LEN, what) == message, (
+        f"{what}: the message posted is not the {message:#04x} this handler is named for")
+    assert leaf.read_int(info, TEXT_LIFETIME_REQUEST, WORD_LEN, what) == TEXT_LIFETIME_DEFAULT, (
+        f"{what}: the lifetime posted is not WB_TEXT_LIFETIME_DEFAULT")
+
+
+def test_this_file_covers_the_whole_pickup_table():
+    leaf.assert_batch_is_complete(PICKUP_ENTRY_BYTES, PICKUP_LEAF_COUNT)
+    assert PICKUP_LEAF_COUNT == PICKUP_ENTRIES, (
+        f"the header says the table has {PICKUP_ENTRIES} entries and this battery covers "
+        f"{PICKUP_LEAF_COUNT}")
+
+
+@pytest.mark.parametrize("name", sorted(PICKUP_ENTRY_BYTES), ids=sorted(PICKUP_ENTRY_BYTES))
+def test_a_pickup_entry_is_the_instructions_this_battery_reconstructs(name):
+    leaf.assert_entry_is(name, PICKUP_ENTRY_BYTES[name])
+
+
+def test_the_table_holds_these_fourteen_addresses_in_this_order():
+    """The pin that ties the whole batch together: the image's own fourteen longwords are the
+    fourteen addresses ../names.txt gives these routines, in the order this file lists them — and
+    the entry immediately past the last is the byte the table's own slot 0 names, which is what
+    BOUNDS it (WB_EFFECT_HANDLER_TABLE's own rule, one table over)."""
+    image = bytes(harness.BASE_IMAGE)
+    held = [int.from_bytes(image[PICKUP_TABLE + row * PICKUP_ENTRY:
+                                 PICKUP_TABLE + (row + 1) * PICKUP_ENTRY], "big")
+            for row in range(PICKUP_ENTRIES)]
+    assert held == [leaf.entry_of(name) for name in PICKUP_TABLE_ORDER], (
+        f"the table holds {[hex(a) for a in held]}")
+    assert held[0] == PICKUP_TABLE + PICKUP_ENTRIES * PICKUP_ENTRY, (
+        "slot 0 no longer holds the byte past the table, so nothing bounds it")
+
+
+def test_the_two_tables_push_the_same_four_records():
+    """PUSH_RECORDS transcribes the four words out of $10394..$103db and PICKUP_APPENDS reads them
+    from include/wonderboy.h, where src/effects.c's two spellings now share one #define. That the
+    two dispatch tables grant the SAME four items is a claim about the image, so it is checked
+    against both sets of bytes rather than asserted in prose."""
+    assert [record for _n, record in PUSH_RECORDS] == [record for _n, record, _m in PICKUP_APPENDS]
+
+
+def test_the_bare_rts_writes_nothing_at_all():
+    """Slot 0's handler, and the byte that bounds the table. It is the one entry whose ANSWER to a
+    legal index is "nothing happened", which is what makes it different from the refusal
+    test_behavior.py drives for an index outside the table."""
+    leaf.run("pickup_effect_none", PICKUP_GLUE["pickup_effect_none"], [], "pickup_effect_none",
+             regs={"_pokes": _pickup_pokes()})
+
+
+@pytest.mark.parametrize("seed", SEED_WORDS, ids=[f"was_{s:04x}" for s in SEED_WORDS])
+@pytest.mark.parametrize("name,slot,value,message", PICKUP_GRANTS, ids=[g[0] for g in PICKUP_GRANTS])
+def test_a_pickup_grant_writes_its_slot_and_posts_its_message(name, slot, value, message, seed):
+    what = f"{name} over a slot holding {seed:#06x}"
+    info = leaf.run(name, PICKUP_GLUE[name], [(slot, WORD_LEN)] + _post_band(), what,
+                    regs={"_pokes": _pickup_pokes({slot: word(seed)})})
+    assert leaf.read_int(info, slot, WORD_LEN, what) == (value << SLOT_VALUE_SHIFT) | SLOT_CHANGED, (
+        f"{what}: the slot is not the {value:#04x} with WB_HUD_SLOT_CHANGED below it")
+    _assert_posted(info, message, what)
+
+
+@pytest.mark.parametrize("pointer", PUSH_POINTERS, ids=[f"ptr_{p:05x}" for p in PUSH_POINTERS])
+@pytest.mark.parametrize("name,record,message", PICKUP_APPENDS, ids=[a[0] for a in PICKUP_APPENDS])
+def test_a_pickup_append_pushes_its_record_and_posts_its_message(name, record, message, pointer):
+    """The push half is `effect_push_record`'s own three instructions, so the same four pointers
+    drive it — including the one that makes the record land ON the pointer. `poison=False` for that
+    battery's reason: the output includes the pointer the run then stores through."""
+    destination = pointer + RECORD_LEN
+    pokes = {WRITE_PTR: longword(pointer)}
+    if not WRITE_PTR <= destination < WRITE_PTR + WRITE_PTR_LEN:
+        pokes[destination] = word(record ^ WORD_MASK)
+    what = f"{name} with the write pointer at {pointer:#x}"
+    assert _word_after_pokes(_pickup_pokes(pokes), destination) != record, (
+        f"{what}: the destination already holds the record before the call")
+
+    info = leaf.run(name, PICKUP_GLUE[name],
+                    [(WRITE_PTR, WRITE_PTR_LEN), (destination, RECORD_LEN)] + _post_band(), what,
+                    regs={"_pokes": _pickup_pokes(pokes)}, poison=False)
+    _assert_posted(info, message, what)
+
+
+@pytest.mark.parametrize("value,maximum", RESTORE_CASES,
+                         ids=[f"{v:04x}_max{m:04x}" for v, m in RESTORE_CASES])
+def test_the_pickup_refill_stores_the_maximum_and_restarts_the_panel(value, maximum):
+    """`effect_restore_b6fa_to_max`'s one instruction with WB_PANEL_FRAME_DELAY restarted above it —
+    so the same four cases drive it, and the panel word is asserted on top."""
+    what = f"pickup_effect_refill_meter with the meter at {value:#06x} and the maximum {maximum:#06x}"
+    pokes = {METER_VALUE: word(value), METER_MAX: word(maximum),
+             PANEL_FRAME_DELAY: word(PANEL_FRAME_DELAY_INIT ^ WORD_MASK)}
+    info = leaf.run("pickup_effect_refill_meter", PICKUP_GLUE["pickup_effect_refill_meter"],
+                    [(METER_VALUE, WORD_LEN), (PANEL_FRAME_DELAY, WORD_LEN)] + _post_band(), what,
+                    regs={"_pokes": _pickup_pokes(pokes)})
+    assert leaf.read_int(info, METER_VALUE, WORD_LEN, what) == maximum, f"{what}: not the maximum"
+    assert leaf.read_int(info, PANEL_FRAME_DELAY, WORD_LEN, what) == PANEL_FRAME_DELAY_INIT, (
+        f"{what}: the panel countdown was not restarted")
+    _assert_posted(info, TEXT_REQUEST_NONE, what)
+
+
+# Where `meter + 4` lands relative to the maximum, and what the meter ends at. THIS IS THE HANDLER'S
+# WHOLE POINT: above the maximum it stores NOTHING, where `effect_add4_clamped_b6fa` stores the
+# maximum — so the two routines part exactly on the offsets that clamp, and a case that only swept
+# below the boundary would pass for either of them.
+ADD4_OFFSETS = (-4, -1, 0, 1, 4)
+
+
+@pytest.mark.parametrize("offset", ADD4_OFFSETS)
+def test_the_pickup_add4_SKIPS_the_store_instead_of_clamping(offset):
+    value = METER_MAX_TYPICAL + offset - PICKUP_METER_STEP
+    raised = offset <= 0
+    what = (f"pickup_effect_add4_meter with the raise landing {offset:+d} from the maximum "
+            f"({'stores' if raised else 'skips'})")
+    pokes = {METER_VALUE: word(value), METER_MAX: word(METER_MAX_TYPICAL),
+             PANEL_FRAME_DELAY: word(PANEL_FRAME_DELAY_INIT ^ WORD_MASK)}
+    info = leaf.run("pickup_effect_add4_meter", PICKUP_GLUE["pickup_effect_add4_meter"],
+                    [(METER_VALUE, WORD_LEN), (PANEL_FRAME_DELAY, WORD_LEN)] + _post_band(), what,
+                    regs={"_pokes": _pickup_pokes(pokes)})
+    if raised:
+        assert leaf.read_int(info, METER_VALUE, WORD_LEN, what) == METER_MAX_TYPICAL + offset, what
+    else:
+        # THE WHOLE POINT, and it has to be an ABSENCE: the sibling would have written the maximum
+        # here, so a case that only compared the meter's final value against the image would pass
+        # for either routine. What separates them is that this one does not write the word at all.
+        assert METER_VALUE not in info["writes"], (
+            f"{what}: the meter was written — a CLAMP, not the skip this handler ships")
+    _assert_posted(info, TEXT_REQUEST_NONE, what)
+
+
+@pytest.mark.parametrize("value,maximum,clamps,why", SIGNED_CLAMP_CASES,
+                         ids=[f"{c[0]:04x}_max{c[1]:04x}" for c in SIGNED_CLAMP_CASES])
+def test_the_pickup_add4_compares_signed_and_adds_in_16_bits(value, maximum, clamps, why):
+    """The same five seeds SIGNED_CLAMP_CASES drives its sibling with, and the answers differ on
+    exactly the two rows the `clamps` column marks: there the sibling STORES the maximum and this
+    handler stores nothing at all, so the meter is left where the case seeded it."""
+    what = f"pickup_effect_add4_meter: {why}"
+    pokes = {METER_VALUE: word(value), METER_MAX: word(maximum),
+             PANEL_FRAME_DELAY: word(PANEL_FRAME_DELAY_INIT ^ WORD_MASK)}
+    info = leaf.run("pickup_effect_add4_meter", PICKUP_GLUE["pickup_effect_add4_meter"],
+                    [(METER_VALUE, WORD_LEN), (PANEL_FRAME_DELAY, WORD_LEN)] + _post_band(), what,
+                    regs={"_pokes": _pickup_pokes(pokes)})
+    if clamps:
+        assert METER_VALUE not in info["writes"], f"{what}: the meter was written"
+    else:
+        assert leaf.read_int(info, METER_VALUE, WORD_LEN, what) == (
+            (value + PICKUP_METER_STEP) & WORD_MASK), what
+    _assert_posted(info, TEXT_REQUEST_NONE, what)
+
+
+# The attack level, on both sides of its own boundary and past the SIGN. $ff is what the new-game
+# reset leaves in this byte (the high half of WB_EFFECT_RECORD_EMPTY), and it is NEGATIVE — so it
+# bumps, and one bump turns the list's "empty" word from $ffff into $00ff.
+ATTACK_LEVELS = (0x00, ATTACK_LEVEL_MAX - 1, ATTACK_LEVEL_MAX, ATTACK_LEVEL_MAX + 1, 0x7f, 0xff)
+
+
+@pytest.mark.parametrize("level", ATTACK_LEVELS, ids=[f"level_{v:02x}" for v in ATTACK_LEVELS])
+def test_the_attack_bump_is_signed_and_raises_the_exit_request_either_way(level):
+    """Two properties in one sweep. The compare is SIGNED, so $7f refuses and $ff bumps; and
+    WB_SCENE_EXIT_REQUEST is raised BELOW the join, so the refused arm raises it too."""
+    bumps = level <= ATTACK_LEVEL_MAX or level >= 0x80
+    what = f"pickup_effect_bump_attack_level at {level:#04x} ({'bumps' if bumps else 'refuses'})"
+    pokes = {EFFECT_RECORD_LIST: bytes([level]),
+             SCENE_EXIT_REQUEST: word(SCENE_EXIT_REQUESTED ^ WORD_MASK)}
+    allowed = [(EFFECT_RECORD_LIST, BYTE_LEN), (SCENE_EXIT_REQUEST, WORD_LEN)] + _post_band()
+    info = leaf.run("pickup_effect_bump_attack_level",
+                    PICKUP_GLUE["pickup_effect_bump_attack_level"], allowed, what,
+                    regs={"_pokes": _pickup_pokes(pokes)})
+
+    assert leaf.read_int(info, SCENE_EXIT_REQUEST, WORD_LEN, what) == SCENE_EXIT_REQUESTED, (
+        f"{what}: the exit request was not raised")
+    if bumps:
+        assert leaf.read_int(info, EFFECT_RECORD_LIST, BYTE_LEN, what) == (level + 1) & BYTE_MASK
+        _assert_posted(info, wb("TEXT_MESSAGE_ATTACK_UP"), what)
+    else:
+        assert EFFECT_RECORD_LIST not in info["writes"], (
+            f"{what}: the level was bumped past WB_ATTACK_LEVEL_MAX")
+        assert TEXT_REQUEST not in info["writes"] and TEXT_LIFETIME_REQUEST not in info["writes"], (
+            f"{what}: a message was posted on the refused arm")
+
+
+def test_the_attack_bump_reaches_both_arms():
+    """A sweep that only ever bumped would pin neither the compare nor the join below it."""
+    assert {level <= ATTACK_LEVEL_MAX or level >= 0x80 for level in ATTACK_LEVELS} == {False, True}
+
+
+@pytest.mark.parametrize("a32", [0, 1], ids=["followed_default", "followed_a32"])
+def test_the_vanish_grant_writes_the_followed_record_whichever_table_is_live(a32):
+    """The one handler here with a CALLEE, and its `jsr $67e0.w` is the SHORT absolute form. What it
+    writes is $69fe's damage-flicker state at its maximum — the countdown full, the flicker bit that
+    makes the projection publish no sprite, and the invulnerable bit that makes $69fe decline to
+    damage the record at all. The message the same routine posts is "Vanished !".
+
+    Driving both values of WB_STATE_FLAG_A32 is what says the record's address comes out of
+    `followed_actor_record` and is not the constant one table would make it look like."""
+    followed = FOLLOWED_A32 if a32 else FOLLOWED_DEFAULT
+    what = f"pickup_effect_vanish_followed with the A32 table {'live' if a32 else 'idle'}"
+    pokes = {STATE_FLAG_A32: word(a32),
+             followed + FLICKER_COUNTDOWN: bytes([VANISH_FLICKER ^ BYTE_MASK]),
+             followed + ACTOR_FLAGS: bytes([0]), followed + ACTOR_FLAGS2: bytes([0])}
+    allowed = [(followed + FLICKER_COUNTDOWN, BYTE_LEN), (followed + ACTOR_FLAGS, BYTE_LEN),
+               (followed + ACTOR_FLAGS2, BYTE_LEN)] + _post_band()
+    info = leaf.run("pickup_effect_vanish_followed", PICKUP_GLUE["pickup_effect_vanish_followed"],
+                    allowed, what, regs={"_pokes": _pickup_pokes(pokes)})
+
+    assert leaf.read_int(info, followed + FLICKER_COUNTDOWN, BYTE_LEN, what) == VANISH_FLICKER
+    assert leaf.read_int(info, followed + ACTOR_FLAGS, BYTE_LEN, what) == 1 << FLICKER_BIT
+    assert leaf.read_int(info, followed + ACTOR_FLAGS2, BYTE_LEN, what) == 1 << INVULNERABLE_BIT
+    _assert_posted(info, wb("TEXT_MESSAGE_VANISHED"), what)
+
+
+def test_the_vanish_grant_ORs_its_two_bits_into_whatever_the_record_carried():
+    """`bset` is a read-modify-write, so a record that was already carrying other flags keeps them —
+    which a port that stored the bit alone would not. Seeded with the complement of each bit."""
+    what = "pickup_effect_vanish_followed over a record carrying every other flag"
+    flags, flags2 = 0xff ^ (1 << FLICKER_BIT), 0xff ^ (1 << INVULNERABLE_BIT)
+    pokes = {STATE_FLAG_A32: word(0),
+             FOLLOWED_DEFAULT + FLICKER_COUNTDOWN: bytes([0]),
+             FOLLOWED_DEFAULT + ACTOR_FLAGS: bytes([flags]),
+             FOLLOWED_DEFAULT + ACTOR_FLAGS2: bytes([flags2])}
+    allowed = [(FOLLOWED_DEFAULT + FLICKER_COUNTDOWN, BYTE_LEN),
+               (FOLLOWED_DEFAULT + ACTOR_FLAGS, BYTE_LEN),
+               (FOLLOWED_DEFAULT + ACTOR_FLAGS2, BYTE_LEN)] + _post_band()
+    info = leaf.run("pickup_effect_vanish_followed", PICKUP_GLUE["pickup_effect_vanish_followed"],
+                    allowed, what, regs={"_pokes": _pickup_pokes(pokes)})
+    assert leaf.read_int(info, FOLLOWED_DEFAULT + ACTOR_FLAGS, BYTE_LEN, what) == 0xff
+    assert leaf.read_int(info, FOLLOWED_DEFAULT + ACTOR_FLAGS2, BYTE_LEN, what) == 0xff

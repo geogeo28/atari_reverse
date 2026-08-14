@@ -345,6 +345,13 @@ def longword(value):
     return (value & LONGWORD_MASK).to_bytes(4, "big")
 
 
+# The 68000's REGISTER ORDINALS, as every encoder here indexes them. Three batteries each spelt
+# their own subset and a fourth needed one, so the whole set lives beside the encoders that consume
+# it: which number `a1` is, is a fact about the instruction word and not about any routine.
+A0, A1, A2, A3, A4, A5, A6, A7 = range(8)
+D0, D1, D2, D3, D4, D5, D6, D7 = range(8)
+
+
 def opcode(value):
     """One 68000 opcode word, as the two bytes the instruction stream holds.
 
@@ -565,6 +572,19 @@ def btst_imm_dn(bit, reg):
     """`btst #n,Dn` — a LONGWORD test, unlike the byte one `bit_op_d16` assembles against memory.
     THREE batteries (test_stage.py, test_text.py, test_actor.py)."""
     return opcode(0x0800 | reg) + word(bit)
+
+
+# The three immediate BIT operations and the MEMORY form all of them share, promoted out of
+# test_actor.py in batch 38 under the third-copy rule: test_behavior.py had been importing them from
+# there and test_effects.py became the third user, at which point they are a fact about the 68000's
+# encoding rather than one battery's private encoder. test_actor.py re-exports them so the batteries
+# that name it as their source keep working.
+BSET_IMM, BCLR_IMM, BTST_IMM = 0x08c0, 0x0880, 0x0800
+
+
+def bit_op_d16(op, bit, reg, displacement):
+    """`bset`/`bclr`/`btst #n,d16(An)` — a BYTE operation on memory, whatever the register form is."""
+    return opcode(op | 0x28 | reg) + word(bit) + word(displacement)
 
 
 def move_l_imm_postinc(reg, value):

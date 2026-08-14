@@ -208,8 +208,10 @@ TABLE_BYTES = SCREEN_RECORD_COUNT * RECORD_BYTES
 LIST_INSN_CAP = 64 * SCREEN_RECORD_COUNT
 
 # --- register numbers, and the opcodes only this battery spells -----------------------------------
-A0, A1, A2, A5, A6 = 0, 1, 2, 5, 6
-D0, D1, D2, D7 = 0, 1, 2, 7
+# The ordinals and the three immediate BIT opcodes moved to leaf.py in batch 38 (third-copy rule) and
+# are re-exported here, because two other batteries name THIS file as their source for them.
+from leaf import (A0, A1, A2, A5, A6, D0, D1, D2, D7,                      # noqa: E402,F401
+                  BSET_IMM, BCLR_IMM, BTST_IMM, bit_op_d16)
 
 BNE_W, BEQ_W, BPL_W, BLE_W, BLT_W, BGT_W, BRA_W = (0x6600, 0x6700, 0x6a00, 0x6f00,
                                                    0x6d00, 0x6e00, 0x6000)
@@ -255,14 +257,6 @@ def cmpa_l_imm(reg, value):
     """`cmpa.l #imm,An` — a LONGWORD compare, which is what ends a record walk. ALSO IN
     test_blit.py, under the same name and in the same operand order."""
     return opcode(0xb1fc | (reg << 9)) + longword(value)
-
-
-def bit_op_d16(op, bit, reg, displacement):
-    """`bset`/`bclr`/`btst #n,d16(An)` — a BYTE operation on memory, whatever the register form is."""
-    return opcode(op | 0x28 | reg) + word(bit) + word(displacement)
-
-
-BSET_IMM, BCLR_IMM, BTST_IMM = 0x08c0, 0x0880, 0x0800
 
 
 # ...and the encodings only the LIFECYCLE routines use.
@@ -4101,9 +4095,11 @@ def test_the_flag_seed_sweep_makes_each_bit_move_in_both_directions():
 
 
 def test_the_kind_table_is_bounded_by_the_code_pointers_that_follow_it():
-    """Nothing in the image declares the table's length; what bounds it is that the twelve longwords
-    at its end are addresses of the code immediately past them, which 16-byte creature records are
-    not. Its 22 rows also all carry a type the mask a draw applies could never produce."""
+    """Nothing in the image declares the table's length; what bounds it is that the FOURTEEN
+    longwords at its end are addresses of the code immediately past them, which 16-byte creature
+    records are not. Batch 38 named them — they are `pickup_effect_table` — and corrected the count
+    this docstring carried, which was never checked against anything. Its 22 rows also all carry a
+    type the mask a draw applies could never produce."""
     end = KIND_TABLE + KIND_TABLE_ROWS * KIND_RECORD_BYTES
     following = _u32(harness.BASE_IMAGE, end)
     assert end < following < harness.IMAGE_SIZE, (

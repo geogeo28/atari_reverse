@@ -27,6 +27,7 @@
 #include "actor.h"
 #include "behavior.h"
 #include "bus.h"
+#include "effects.h"
 #include "hud.h"
 #include "hw.h"
 #include "input.h"
@@ -243,6 +244,7 @@ static const BehaviorHandler PORTED_HANDLERS[] = {
     {WB_ACTOR_BEHAVIOR_TYPE35, actor_behavior_type35},
     {WB_ACTOR_BEHAVIOR_TYPE36, actor_behavior_type36},
     {WB_ACTOR_BEHAVIOR_TYPE37, actor_behavior_type37},
+    {WB_ACTOR_BEHAVIOR_TYPE38, actor_behavior_type38_pickup},
     {WB_ACTOR_BEHAVIOR_TYPE47, actor_behavior_type47},
     {WB_ACTOR_BEHAVIOR_TYPE48, actor_behavior_type48},
     {WB_ACTOR_BEHAVIOR_TYPE49, actor_behavior_type49},
@@ -2515,23 +2517,25 @@ uint32_t bcd_add_random_1_to_4(const uint8_t *image, uint32_t entry_d0, unsigned
     return set_low_word(entry_d0, set_low_byte((uint16_t)entry_d0, sum));
 }
 
-/* $517a — the payout itself. The award is a WORD out of the scene descriptor and every consumer
- * below reads a different width of it: `bcd_add_random_1_to_4` and the digits take the low BYTE,
- * `bcd_add_counter_bd6e` stages the whole WORD, and the score's addend is a constant longword that
- * has nothing to do with the amount at all. */
-void hud_award_gold_from_descriptor(uint8_t *image) {
-    uint32_t descriptor = be32(image + WB_RECORD_PTR_10424);
-    uint32_t award = bus_read_word(image, addr_add(descriptor, WB_SCENE_GOLD_AWARD));
+/* $517e..$51ab, AND $544c..$5471: the payout's own five calls, which TWO addresses spell.
+ * `actor_behavior_type38_pickup`'s gold arm is these instructions with a different amount above
+ * them and a `bra.w` into `actor_defeat_and_score` where this one has an `rts` — so `award` is the
+ * parameter and the two callers differ in nothing else.
+ *
+ * The award is a WORD and every consumer reads a different width of it: `bcd_add_random_1_to_4` and
+ * the digits take the low BYTE, `bcd_add_counter_bd6e` stages the whole WORD, and the score's
+ * addend is a constant longword that has nothing to do with the amount at all. */
+static void pay_gold_award(uint8_t *image, uint32_t award) {
     unsigned draw_carry;
 
-    /* THE CHAIN, $5184 -> $5188: the draw's `abcd d1,d0` is the instruction before the `bsr`, so
-     * its carry is the counter's entry X. */
+    /* THE CHAIN, $5184 -> $5188 (and $544c -> $5450): the draw's `abcd d1,d0` is the instruction
+     * before the `bsr`, so its carry is the counter's entry X. */
     award = bcd_add_random_1_to_4(image, award, &draw_carry);
     bcd_add_counter_bd6e(image, award, draw_carry);
     text_write_gold_digits_a2ac(image, award);
-    /* ...and NOT a chain at $5196: the digits above are the last thing to write X, and on both of
-     * their exits that is `addi.b #$30` on a nibble masked to $0..$f, which cannot carry out of
-     * $30..$3f. The counter's own carry-out is dead here — $b562's `rts` is followed by the `bsr`
+    /* ...and NOT a chain at $5196 (or $545e): the digits above are the last thing to write X, and on
+     * both of their exits that is `addi.b #$30` on a nibble masked to $0..$f, which cannot carry out
+     * of $30..$3f. The counter's own carry-out is dead here — $b562's `rts` is followed by the `bsr`
      * to those digits, not by the score add. */
     bcd_add_score_bd70(image, WB_ACTOR_COLLECT_SCORE, WB_BCD_ENTRY_EXTEND_CLEAR);
 
@@ -2541,6 +2545,14 @@ void hud_award_gold_from_descriptor(uint8_t *image) {
      * `type61_post_message` above CLEARS only the high byte of this word. */
     image[WB_TEXT_REQUEST] = WB_TEXT_MESSAGE_GOLD_GET;
     wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+}
+
+/* $517a — the payout, entered from slots 31 and 32. Its own four bytes are the two instructions
+ * that fetch the amount out of the SCENE DESCRIPTOR; everything below them is shared. */
+void hud_award_gold_from_descriptor(uint8_t *image) {
+    uint32_t descriptor = be32(image + WB_RECORD_PTR_10424);
+
+    pay_gold_award(image, bus_read_word(image, addr_add(descriptor, WB_SCENE_GOLD_AWARD)));
 }
 
 
@@ -4622,5 +4634,199 @@ uint32_t actor_behavior_type26(uint8_t *image, uint32_t actor) {
     }
     type26_drop_shot(image, actor);
     actor_anim_step_facing_list(image, actor, WB_ACTOR_TYPE26_MOVING_LISTS);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- slot 38 ($5408) and the PICKUP TIER behind it (batch 38) -------------------------------------
+ *
+ * A COLLECTABLE WHOSE PAYOUT IS A TABLE LOOKUP, and what is new is that a collected record reads
+ * its OWN KIND ROW out of WB_ACTOR_KIND_TABLE and pays what the row says — a packed-BCD score
+ * longword and an index into a second dispatch table.
+ *
+ * WHAT IT SHARES WITH SLOT 31 IS FOUR INSTRUCTIONS, not a frame. The shorthand this comment used to
+ * carry claimed the whole waiting arm was that handler's byte for byte, which is the tier's
+ * recurring over-claim; what the two really have in common is
+ * `bsr $1334`, `bsr $501a`, the `btst #0,8(a0)` gate and `bsr $5c6e / btst #1,d0`. Past
+ * those four the two part on everything. Slot 31 compares WB_ACTOR_FIELD_12 as a WORD at the TOP of
+ * its frame (`cmpi.w #$14` starting the flicker) and frees itself on the single expiry of a WORD
+ * countdown; this handler has no such compare at all, counts the same field as a BYTE, expires
+ * TWICE — the second expiry leaving for actor_defeat_and_score rather than writing a free marker —
+ * and adds three splits slot 31 does not have: the kind compare on the waiting arm, the
+ * WB_STATE_FLAG_A32 gate under it, and the kind-byte test that chooses between the relaunch and the
+ * sprite. The BYTE double expiry is slot 28's shape, not slot 31's.
+ *
+ * THE ROW INDEX IS BOUNDED HERE AND NOT AT THE TIER'S OTHER READER. `actor_respawn_as_new_kind`
+ * bounds its kind at neither end; this site's `cmpi.b #$2,20(a0) / bge` is SIGNED, so the kind arm
+ * runs only for 2..127 and the read lands within 2032 bytes of the table — inside the image at both
+ * ends, and never past the 22 shipped rows by more than the pickup table and its own handlers.
+ */
+
+/* $6938 — the score arm's digits. `swap d0` puts nibble 4 of the addend in the low position and
+ * `rol.l #4` walks down to nibble 0, so WHAT IS DRAWN IS THE LOW FIVE DIGITS and anything above
+ * them is invisible however large the addend is.
+ *
+ * THE TWO LOOPS ARE NOT ONE LOOP WITH A FLAG, and the difference is the counter. The blanking loop
+ * ($6944) writes a space and decrements WITHOUT testing, so it is bounded only by finding a nonzero
+ * nibble — an addend of ZERO never leaves it. The digit loop ($695e) tests AFTER decrementing, so
+ * entering it with the counter already at zero wraps to $ffff and writes 65,536 more characters.
+ * Both are reachable only through an addend the one caller cannot produce: it `beq`s on zero, and
+ * five leading zero nibbles need the low 20 bits clear with something above them, which no shipped
+ * kind row has. Reproduced as it stands; ../STATUS.md carries both as unreachable rather than
+ * pinned.
+ */
+void text_post_bonus_points_a4be(uint8_t *image, uint32_t entry_d0) {
+    /* `swap d0` — a rotate by half a longword, which is what brings nibble 4 down. */
+    uint32_t digits = rotate_left32(entry_d0, 16);
+    uint32_t at = WB_TEXT_BONUS_DIGITS;
+    uint16_t left = WB_TEXT_BONUS_DIGIT_COUNT;
+
+    /* `move.l d0,d1 / andi.l #$f,d1 / tst.w d1 / bne` — the mask is a LONGWORD one and the test a
+     * word one, which agree because the mask leaves nothing above bit 3. */
+    while ((digits & WB_BCD_DIGIT_MASK) == 0) {
+        bus_write_byte(image, at, WB_TEXT_DIGIT_BLANK);
+        at = addr_add(at, 1);
+        left--;
+        digits = rotate_left32(digits, WB_BCD_DIGIT_BITS);
+    }
+
+    for (;;) {
+        bus_write_byte(image, at,
+                       (uint8_t)((digits & WB_BCD_DIGIT_MASK) + WB_TEXT_DIGIT_ZERO));
+        at = addr_add(at, 1);
+        /* `subi.w #1,d7 / beq` — the decrement is a WORD one and the branch reads its flags, so a
+         * counter that started at zero goes to $ffff and does not stop here. */
+        if (--left == 0)
+            break;
+        digits = rotate_left32(digits, WB_BCD_DIGIT_BITS);
+    }
+
+    image[WB_TEXT_REQUEST] = WB_TEXT_MESSAGE_BONUS_POINTS;
+    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+}
+
+/* $5476..$54a5 — the kind row's own payout, and the second dispatch under it.
+ *
+ * THE REFUSAL IS A CODE AND NOT AN ADDRESS, which is where this differs from slot 7's state `jsr`
+ * even though the two instructions are the same shape. Slot 7's four entries are real code and the
+ * span around them holds zeros, so that one reports the address and lets `actor_behavior_type07`
+ * decide; here every legal entry is one of fourteen known addresses, so the answer is which of them
+ * ran, and "none of them" is a value that must not collide with any of them. behavior.h's
+ * WB_ACTOR_DISPATCH_PICKUP_REFUSED is that value and test_behavior.py checks the image's own
+ * fourteen longwords against it.
+ *
+ * `add.w d0,d0` twice is a SIXTEEN-BIT scale and `0(a1,d0.w)` then sign-extends, so the index
+ * aliases in exactly `actor_dispatch_behavior`'s way: entry `s` is reached by `s`, `s + $4000`,
+ * `s + $8000` and `s + $c000`. */
+static int run_pickup_effect(uint8_t *image, uint16_t index) {
+    uint16_t offset = (uint16_t)(index * WB_PICKUP_EFFECT_ENTRY);
+    uint32_t target = bus_read_long(image,
+                                    addr_add(WB_PICKUP_EFFECT_TABLE, sign_ext16(offset)));
+
+    switch (target) {
+    case WB_PICKUP_EFFECT_NONE:        pickup_effect_none(image); break;
+    case WB_PICKUP_EFFECT_BBC4:        pickup_effect_grant_bbc4(image); break;
+    case WB_PICKUP_EFFECT_WING_BOOTS:  pickup_effect_grant_wing_boots(image); break;
+    case WB_PICKUP_EFFECT_HELMET:      pickup_effect_grant_helmet(image); break;
+    case WB_PICKUP_EFFECT_GAUNTLET:    pickup_effect_grant_gauntlet(image); break;
+    case WB_PICKUP_EFFECT_REVIVAL:     pickup_effect_grant_revival(image); break;
+    case WB_PICKUP_EFFECT_FIRE_BALLS:  pickup_effect_grant_fire_balls(image); break;
+    case WB_PICKUP_EFFECT_BOMBS:       pickup_effect_grant_bombs(image); break;
+    case WB_PICKUP_EFFECT_WIND_SPOUTS: pickup_effect_grant_wind_spouts(image); break;
+    case WB_PICKUP_EFFECT_LIGHTNING:   pickup_effect_grant_lightning(image); break;
+    case WB_PICKUP_EFFECT_REFILL:      pickup_effect_refill_meter(image); break;
+    case WB_PICKUP_EFFECT_ADD4:        pickup_effect_add4_meter(image); break;
+    case WB_PICKUP_EFFECT_ATTACK:      pickup_effect_bump_attack_level(image); break;
+    case WB_PICKUP_EFFECT_VANISH:      pickup_effect_vanish_followed(image); break;
+    default:
+        return 0;
+    }
+    return 1;
+}
+
+static int type38_pay_for_kind(uint8_t *image, uint32_t actor) {
+    /* `moveq #$0,d0 / move.b 20(a0),d0 / lsl.l #4,d0` — the byte is zero-extended before the shift,
+     * so the offset is 0..$ff0 and `0(a1,d0.w)` sign-extends a positive word. */
+    uint32_t row = addr_add(WB_ACTOR_KIND_TABLE,
+                            (uint16_t)(field_b(image, actor, WB_ACTOR_KIND)
+                                       * WB_ACTOR_KIND_RECORD_BYTES));
+    uint32_t score = bus_read_long(image, addr_add(row, WB_ACTOR_KIND_SCORE));
+
+    if (score != 0) {
+        /* THE ENTRY X IS ZERO BY CONSTRUCTION, and the writer is the shift: `lsl.l #4,d0` leaves X
+         * the last bit shifted out, which is bit 28 of a zero-extended BYTE and therefore always 0.
+         * `lea`, `move.l` and `beq` between it and the `bsr` leave X alone. hud.h's audit block is
+         * the single place that COUNTS the proved sites; this comment states the proof and does not
+         * number it, because two counters drift. */
+        bcd_add_score_bd70(image, score, WB_BCD_ENTRY_EXTEND_CLEAR);
+        text_post_bonus_points_a4be(image, score);
+    }
+    return run_pickup_effect(image, bus_read_word(image,
+                                                  addr_add(row, WB_ACTOR_KIND_PICKUP_EFFECT)));
+}
+
+/* $54aa..$54f2 — the waiting arm, which a MOVING record reaches too (the `btst #0,8(a0)` at $5410
+ * jumps straight here, so a record mid-hop still ages).
+ *
+ * IT SPLITS ON THE SAME KIND COMPARE the collect arm does, and the two halves have nothing in
+ * common: a pickup kind whose byte is at or above WB_ACTOR_PICKUP_KIND_FIRST is given
+ * WB_ACTOR_TYPE38_FLASH frames while WB_STATE_FLAG_A32 is nonzero and left alone otherwise, and a
+ * gold one either relaunches (kind byte zero) or publishes a sprite. */
+static void type38_wait(uint8_t *image, uint32_t actor) {
+    if ((int8_t)field_b(image, actor, WB_ACTOR_KIND) >= (int8_t)WB_ACTOR_PICKUP_KIND_FIRST) {
+        if (be16(image + WB_STATE_FLAG_A32) != 0)
+            set_field_b(image, actor, WB_ACTOR_FIELD_12, WB_ACTOR_TYPE38_FLASH);
+        return;
+    }
+    if (field_b(image, actor, WB_ACTOR_KIND) == 0)
+        actor_relaunch_and_anim_5160(image, actor);
+    else
+        actor_select_sprite_by_flag(image, actor);
+}
+
+uint32_t actor_behavior_type38_pickup(uint8_t *image, uint32_t actor) {
+    uint8_t left;
+    int was_flickering;
+
+    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_hop_ascend_step(image, actor);
+
+    if (!flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT)
+        && followed_stood_on_it(image, actor)) {
+        /* NOT `sound_request_9`, and the difference is a fact about the image rather than a style:
+         * this handler SPELLS that routine's four instructions inline with a `jsr 56(a1)` where
+         * $6786 has a `jmp`, so it is not one of that routine's five `bsr` callers and its plate's
+         * caller list stays correct. What the two leave in memory is identical — the tail jump
+         * makes the call equivalent — so only the census would have known. */
+        snd_call_trigger_effect(image, WB_ACTOR_REQUEST9_SFX, WB_SND_CHANNEL_A);
+        /* `cmpi.b #$2,20(a0)` is a SECOND read of the byte `move.b 20(a0),d0` has already taken,
+         * and the port re-reads it too: bus.h answers a refused field 0 for both, so the two
+         * spellings agree, and the original's is what is being ported. */
+        if ((int8_t)field_b(image, actor, WB_ACTOR_KIND) < (int8_t)WB_ACTOR_PICKUP_KIND_FIRST)
+            pay_gold_award(image, be16(image + WB_STAGE_NUMBER));
+        else if (!type38_pay_for_kind(image, actor))
+            return WB_ACTOR_DISPATCH_PICKUP_REFUSED;
+
+        actor_defeat_and_score(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    type38_wait(image, actor);
+
+    /* `subq.b #1,12(a0) / bne` then `bset #6,8(a0) / bne` — slot 28's double expiry exactly: the
+     * branch reads the bit the `bset` has just overwritten, so the first expiry raises the flicker
+     * and reloads the byte and the second leaves for `actor_defeat_and_score`. */
+    left = (uint8_t)(field_b(image, actor, WB_ACTOR_FIELD_12) - 1);
+    set_field_b(image, actor, WB_ACTOR_FIELD_12, left);
+    if (left != 0)
+        return WB_ACTOR_DISPATCH_RAN;
+
+    was_flickering = flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+    flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+    if (was_flickering) {
+        actor_defeat_and_score(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+    set_field_b(image, actor, WB_ACTOR_FIELD_12, WB_ACTOR_TYPE38_FIELD_12_RELOAD);
     return WB_ACTOR_DISPATCH_RAN;
 }

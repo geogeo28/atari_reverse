@@ -218,7 +218,7 @@ UNPORTED_SLOT = 39
 # type, so a walk case whose boundary slot is slot 1 cannot tell "stopped at the record I seeded"
 # from "dispatched a free record instead of skipping it" — both report slot 1's address and write
 # nothing. The walk rows therefore name these three and never UNPORTED_TYPE.
-UNPORTED_MID = 38
+UNPORTED_MID = 40
 UNPORTED_HIGH = 57
 
 
@@ -389,6 +389,42 @@ def jsr_abs_w(addr):
     how the copylock failure path calls slot 61 itself. A scan for the longword form misses both."""
     return opcode(0x4eb8) + word(addr)
     # ALSO IN test_actor.py, test_scene.py — third copy, queued for leaf.py.
+
+
+def lsl_l_imm_dn(count, reg):
+    """`lsl.l #n,Dn` — slot 38 scales a zero-extended KIND byte by sixteen with one."""
+    return opcode(0xe188 | ((count & 7) << 9) | reg)
+    # ALSO IN test_actor.py, test_stage.py — third copy, queued for leaf.py.
+
+
+def rol_l_imm_dn(count, reg):
+    """`rol.l #n,Dn` — how $6938 walks a packed-BCD longword one nibble at a time. Not `lsl`: the
+    nibble that leaves the top comes back at the bottom, which is what makes the digit order
+    cyclic."""
+    return opcode(0xe198 | ((count & 7) << 9) | reg)
+
+
+def move_l_dn_dn(destination, source):
+    return opcode(0x2000 | (destination << 9) | source)
+
+
+def move_l_d16_dn(reg, base, displacement):
+    """`move.l d16(An),Dn` — the SCORE longword out of an actor_kind_table row."""
+    return opcode(0x2028 | (reg << 9) | base) + word(displacement)
+
+
+def andi_l_dn(reg, value):
+    """`andi.l #imm,Dn` — a LONGWORD mask where every other mask in this file is a word one."""
+    return opcode(0x0280 | reg) + longword(value)
+
+
+def move_b_imm_postinc(base, value):
+    return opcode(0x10fc | (base << 9)) + word(value & 0xff)
+
+
+def move_b_dn_postinc(base, reg):
+    """`move.b Dn,(An)+` — the digit store $6938 walks its five characters out with."""
+    return opcode(0x10c0 | (base << 9) | reg)
 
 
 def jmp_abs_l(addr):
@@ -1965,6 +2001,116 @@ def _type52_pieces():
     ]
 
 
+def _bonus_digits_pieces():
+    """$6938 — the LEA is into a6 and the count is FIVE, both of which the old plate had wrong.
+
+    Two loops that share nothing but the counter: the blanking one decrements without testing (so
+    only a nonzero nibble ends it) and the digit one tests after decrementing (so a counter that
+    started at zero wraps). Both closing branches are SHORT where every other branch here is long.
+    """
+    return [
+        leaf.lea_abs_l(A6, BONUS_DIGITS_AT),
+        leaf.swap_dn(D0),
+        move_w_imm_dn(D7, BONUS_DIGIT_COUNT),
+        _lab("blank"),
+        move_l_dn_dn(D1, D0),
+        andi_l_dn(D1, BCD_DIGIT_MASK),
+        leaf.tst_w_dn(D1),
+        _bcc(BNE_W, "digit"),
+        move_b_imm_postinc(A6, DIGIT_BLANK),
+        leaf.subi_w_dn(D7, 1),
+        rol_l_imm_dn(BCD_DIGIT_BITS, D0),
+        _bra_s("blank"),
+        _lab("digit"),
+        move_l_dn_dn(D1, D0),
+        andi_l_dn(D1, BCD_DIGIT_MASK),
+        addi_b_dn(D1, DIGIT_ZERO),
+        move_b_dn_postinc(A6, D1),
+        leaf.subi_w_dn(D7, 1),
+        _bcc(BEQ_W, "post"),
+        rol_l_imm_dn(BCD_DIGIT_BITS, D0),
+        _bra_s("digit"),
+        _lab("post"),
+        leaf.move_b_imm_abs_l(MESSAGE_BONUS_POINTS, TEXT_REQUEST),
+        move_w_imm_abs_l(TEXT_LIFETIME_DEFAULT, TEXT_LIFETIME_REQUEST),
+        RTS,
+    ]
+
+
+def _type38_pieces():
+    """$5408 — 236 bytes, and no table of its own.
+
+    The SFX request is spelt INLINE here (`jsr 56(a1)` where `sound_request_9` has a `jmp`), so this
+    handler is not one of that routine's five callers and the pin says so by assembling the four
+    instructions rather than a `bsr`. Its gold arm is `hud_award_gold_from_descriptor`'s five calls
+    with WB_STAGE_NUMBER above them and a `bra.w` into the defeat below them.
+    """
+    return [
+        _bsr(FALL_AND_SETTLE),
+        _bsr(HOP_ASCEND),
+        bit_op_d16(BTST_IMM, MOVING_BIT, A0, ACTOR_FLAGS),
+        _bcc(BNE_W, "wait"),
+        _bsr(OVERLAP),
+        btst_imm_dn(BODY_BIT, D0),
+        _bcc(BEQ_W, "wait"),
+        move_w_imm_dn(D0, REQUEST9_SFX),
+        clr_w_dn(D1),
+        lea_abs_l(A1, SND_STUB_TABLE),
+        jsr_d16_an(A1, STUB_TRIGGER_OFFSET),
+        moveq_0_dn(D0),
+        move_b_d16_dn(D0, A0, KIND),
+        cmpi_b_d16(A0, PICKUP_KIND_FIRST, KIND),
+        _bcc(BGE_W, "kind"),
+        leaf.move_w_abs_l_dn(D0, STAGE_NUMBER),
+        _bsr(BCD_RANDOM),
+        _bsr(ADD_COUNTER),
+        _bsr(GOLD_DIGITS),
+        move_l_imm_dn(D0, COLLECT_SCORE),
+        _bsr(ADD_SCORE),
+        leaf.move_b_imm_abs_l(MESSAGE_GOLD_GET, TEXT_REQUEST),
+        move_w_imm_abs_l(TEXT_LIFETIME_DEFAULT, TEXT_LIFETIME_REQUEST),
+        _bcc_abs(BRA_W, leaf.entry_of(DEFEAT)),
+        _lab("kind"),
+        lea_abs_l(A1, KIND_TABLE),
+        lsl_l_imm_dn(KIND_RECORD_SHIFT, D0),
+        leaf.lea_indexed(A1, D0),
+        move_l_d16_dn(D0, A1, KIND_SCORE),
+        _bcc(BEQ_W, "effect"),
+        _bsr(ADD_SCORE),
+        _bsr(BONUS_DIGITS),
+        _lab("effect"),
+        move_w_ind_dn(D0, A1, KIND_PICKUP_EFFECT),
+        lea_abs_l(A1, PICKUP_EFFECT_TABLE),
+        leaf.add_w_dn_dn(D0, D0),
+        leaf.add_w_dn_dn(D0, D0),
+        movea_l_indexed(A1, A1, D0),
+        jsr_ind(A1),
+        _bcc_abs(BRA_W, leaf.entry_of(DEFEAT)),
+        _lab("wait"),
+        cmpi_b_d16(A0, PICKUP_KIND_FIRST, KIND),
+        _bcc(BLT_W, "gold-wait"),
+        tst_w_abs_w(FLAG_A32),
+        _bcc(BEQ_W, "tick"),
+        move_b_imm_d16(A0, TYPE38_FLASH, FIELD_12),
+        _bcc(BRA_W, "tick"),
+        _lab("gold-wait"),
+        tst_b_d16(A0, KIND),
+        _bcc(BNE_W, "sprite"),
+        _bsr(RELAUNCH_5160),
+        _bcc(BRA_W, "tick"),
+        _lab("sprite"),
+        _bsr(SELECT_SPRITE),
+        _lab("tick"),
+        subq_b_d16(1, A0, FIELD_12),
+        _bcc(BNE_W, "out"),
+        bit_op_d16(BSET_IMM, FLICKER_BIT, A0, ACTOR_FLAGS),
+        _bcc_abs(BNE_W, leaf.entry_of(DEFEAT)),
+        move_b_imm_d16(A0, TYPE38_FIELD_12_RELOAD, FIELD_12),
+        _lab("out"),
+        RTS,
+    ]
+
+
 def _type53_pieces():
     return [move_w_imm_abs_l(TYPE53_ALIVE_SET, TYPE53_ALIVE)] + _switched_contact_pieces("free") + [
         _bsr(FALL_AND_SETTLE),
@@ -2477,6 +2623,33 @@ BCD_DIGIT_BITS = wb("BCD_DIGIT_BITS")
 DIGIT_ZERO = wb("TEXT_DIGIT_ZERO")
 DIGIT_BLANK = wb("TEXT_DIGIT_BLANK")
 TEXT_LIFETIME_DEFAULT = wb("TEXT_LIFETIME_DEFAULT")
+
+# --- batch 38: slot 38 and the pickup tier ---------------------------------------------------------
+A6 = 6
+KIND = wb("ACTOR_KIND")
+KIND_TABLE = wb("ACTOR_KIND_TABLE")
+KIND_RECORD_BYTES = wb("ACTOR_KIND_RECORD_BYTES")
+KIND_RECORD_SHIFT = wb("ACTOR_KIND_RECORD_SHIFT")
+KIND_TABLE_ROWS = wb("ACTOR_KIND_TABLE_ROWS")
+KIND_SCORE = wb("ACTOR_KIND_SCORE")
+KIND_PICKUP_EFFECT = wb("ACTOR_KIND_PICKUP_EFFECT")
+PICKUP_KIND_FIRST = wb("ACTOR_PICKUP_KIND_FIRST")
+PANEL_FRAME_DELAY = wb("PANEL_FRAME_DELAY")
+PANEL_FRAME_DELAY_INIT = wb("PANEL_FRAME_DELAY_INIT")
+PICKUP_METER_STEP = wb("PICKUP_METER_STEP")
+TEXT_REQUEST_NONE = wb("TEXT_REQUEST_NONE")
+PICKUP_EFFECT_TABLE = wb("PICKUP_EFFECT_TABLE")
+PICKUP_EFFECT_ENTRY = wb("PICKUP_EFFECT_ENTRY")
+PICKUP_EFFECT_ENTRIES = wb("PICKUP_EFFECT_ENTRIES")
+TYPE38_FLASH = wb("ACTOR_TYPE38_FLASH")
+TYPE38_FIELD_12_RELOAD = wb("ACTOR_TYPE38_FIELD_12_RELOAD")
+STAGE_NUMBER = wb("STAGE_NUMBER")
+BONUS_DIGITS_AT = wb("TEXT_BONUS_DIGITS")
+BONUS_DIGIT_COUNT = wb("TEXT_BONUS_DIGIT_COUNT")
+MESSAGE_BONUS_POINTS = wb("TEXT_MESSAGE_BONUS_POINTS")
+BONUS_DIGITS = "text_post_bonus_points_a4be"
+TYPE38 = "actor_behavior_type38_pickup"
+DISPATCH_PICKUP_REFUSED = wb("ACTOR_DISPATCH_PICKUP_REFUSED")
 
 # --- batch 34: slots 32..37, the rest of the $4e38..$5407 band -------------------------------------
 FIELD_10 = wb("ACTOR_FIELD_10")
@@ -4340,6 +4513,8 @@ ENTRY_PIECES = {
     "actor_behavior_type35": _type35_pieces(),
     "actor_behavior_type36": _type36_pieces(),
     "actor_behavior_type37": _type37_pieces(),
+    "actor_behavior_type38_pickup": _type38_pieces(),
+    "text_post_bonus_points_a4be": _bonus_digits_pieces(),
     "actor_random_facing_hop": _random_hop_pieces(),
     "actor_behavior_type09": _type09_pieces(),
     "actor_behavior_type10": _type10_pieces(),
@@ -4361,7 +4536,7 @@ ENTRY_PIECES = {
     "actor_behavior_type26": _type26_pieces(),
     "actor_behavior_type27": _type27_pieces(),
 }
-RECONSTRUCTED_ROUTINES = 81
+RECONSTRUCTED_ROUTINES = 83
 
 ENTRY_BYTES = {name: _asm(leaf.entry_of(name), pieces) for name, pieces in ENTRY_PIECES.items()}
 INSN_COUNT = {name: _instructions(pieces) for name, pieces in ENTRY_PIECES.items()}
@@ -4467,6 +4642,14 @@ BODY_SIZES = {
                                         # routine's own entry
     "actor_behavior_type36": 38,        # $53bc..$53e1, bounded by slot 37's entry
     "actor_behavior_type37": 38,        # $53e2..$5407, bounded by slot 38's entry
+    # Batch 38. The plate figure again, verified here: a difference of dispatch
+    # entries gives 236 and the code is 236 — the only row in the tier so far whose
+    # extent has NO data in it, because this handler ships no frame table.
+    "actor_behavior_type38_pickup": 236,  # $5408..$54f3, bounded by slot 39's entry
+    "text_post_bonus_points_a4be": 82,    # $6938..$6989, bounded by the spawn
+                                          # animation's entry — NOT 84: the plate
+                                          # that called this a six-digit unpack was
+                                          # wrong about the count as well
     "actor_random_facing_hop": 64,      # $2f46..$2f85, bounded by actor_tick_timer30's entry
     "actor_behavior_type09": 152,       # $2e12..$2ea9 — NOT the 552 to slot 10's entry: $2eaa is
                                         # its two list PAIRS and $2eba..$2f21 the four lists, and
@@ -4576,7 +4759,7 @@ PORTED_TARGETS = ("actor_behavior_null", "actor_behavior_type29",
                   "actor_behavior_type31", "actor_behavior_type32",
                   "actor_behavior_type33", "actor_behavior_type34",
                   "actor_behavior_type35", "actor_behavior_type36",
-                  "actor_behavior_type37")
+                  "actor_behavior_type37", "actor_behavior_type38_pickup")
 PORTED_SLOTS = tuple(slot for slot, name in sorted(TABLE_TARGETS.items())
                      if name in PORTED_TARGETS)
 
@@ -4586,7 +4769,7 @@ PORTED_SLOTS = tuple(slot for slot, name in sorted(TABLE_TARGETS.items())
 # batch to add a row fails this file instead of a reviewer:
 #   * ../STATUS.md's headline ("N of the table's 62 rows are live") and its batch section
 #   * ../README.md's src/behavior.c entry and its test/test_behavior.py entry
-PORTED_SLOT_COUNT = 51
+PORTED_SLOT_COUNT = 52
 
 
 def test_the_live_row_count_the_docs_state_is_the_one_the_table_has():
@@ -4950,10 +5133,26 @@ SPAWN_GATE_HANDLERS = (MONSTER_HANDLERS + SLOT07_HANDLERS + FAMILY35_HANDLERS
 # What each handler adds to the shared bound, keyed by NAME — the shape `_handler_band` above
 # already uses, rather than an `if` chain that grows a branch per family. A slot absent from the dict
 # is bounded by HANDLER_CALLEE_INSNS alone.
+# ...and batch 38's, which is the first handler whose frame reaches the packed-BCD accumulators AND
+# a second dispatch. Every term is a routine slot 38 can call that no earlier handler did; the two
+# digit routines are the only ones here that LOOP, and the bonus one's bound is its own pinned body
+# plus eight instructions per character it can draw.
+BCD_ADD_INSNS = 32          # $b562/$b5a2, whose bodies test_hud.py pins — BCD_SUB_COUNTER_INSNS's
+                            # sibling, and an upper bound on one call for the same reason
+PICKUP_EFFECT_INSNS = 20    # the longest of the fourteen: `pickup_effect_vanish_followed`, whose
+                            # own call to followed_actor_record is FOLLOWED_INSNS of it
+BONUS_DIGIT_LOOP_INSNS = 8  # the longer of $6938's two loop bodies, per character drawn
+PICKUP_CALLEE_INSNS = (INSN_COUNT["bcd_add_random_1_to_4"]
+                       + INSN_COUNT["text_write_gold_digits_a2ac"]
+                       + INSN_COUNT["text_post_bonus_points_a4be"]
+                       + BONUS_DIGIT_COUNT * BONUS_DIGIT_LOOP_INSNS
+                       + 3 * BCD_ADD_INSNS + RNG_INSNS + PICKUP_EFFECT_INSNS)
+
 HANDLER_EXTRA_INSNS = {name: SLOT07_CALLEE_INSNS for name in SLOT07_HANDLERS}
 HANDLER_EXTRA_INSNS.update({name: FAMILY35_CALLEE_INSNS for name in FAMILY35_HANDLERS})
 HANDLER_EXTRA_INSNS.update({name: FAMILY36_CALLEE_INSNS for name in FAMILY36_HANDLERS})
 HANDLER_EXTRA_INSNS.update({name: FAMILY37_CALLEE_INSNS for name in FAMILY37_HANDLERS})
+HANDLER_EXTRA_INSNS[TYPE38] = PICKUP_CALLEE_INSNS
 
 
 def _quiet_record(name, actor):
@@ -4985,10 +5184,14 @@ def _quiet_record(name, actor):
     # up) and slot 30 on its own count-up byte being below WB_ACTOR_TYPE30_COLLECT_MIN. Slots 28 and
     # 31 also get the half-width that bounds actor_fall_and_settle's footprint scan, and slot 28 a
     # zero WB_ACTOR_FIELD_31 so its map step is skipped rather than driven off a keyed byte.
-    if name in ("actor_behavior_type28", "actor_behavior_type31"):
+    # Slot 38 shuts its collect arm the same way and states its countdown as well, since a keyed
+    # byte reaching zero would take the record into actor_defeat_and_score instead of the frame.
+    if name in ("actor_behavior_type28", "actor_behavior_type31", TYPE38):
         quiet = {actor + ACTOR_FLAGS: bytes([1 << MOVING_BIT]), actor + HALF_WIDTH: word(4)}
         if name == "actor_behavior_type28":
             quiet[actor + FIELD_31] = bytes([0])
+        if name == TYPE38:
+            quiet[actor + FIELD_12] = bytes([COLLECT_FIELD_12_IDLE & 0xff])
         return quiet
     if name == "actor_behavior_type30":
         return {actor + FIELD_30: bytes([0])}
@@ -9254,7 +9457,7 @@ DESCRIPTOR_OFF_IMAGE = 0xf00000
 GOLD_DIGITS_LEAVE_EXTEND_CLEAR = 0
 
 
-def _model_award(image, video_low=VCOUNT_LOW_SEED, video_mid=VCOUNT_MID_SEED):
+def _model_award(image, video_low=VCOUNT_LOW_SEED, video_mid=VCOUNT_MID_SEED, award=None):
     """{address: byte} for one payout — the WRITE SET and the values together, composed out of the
     batteries that own each half:
     `bcd_expected` is leaf.py's DECIMAL statement of the two accumulators, and the draw is this
@@ -9266,9 +9469,13 @@ def _model_award(image, video_low=VCOUNT_LOW_SEED, video_mid=VCOUNT_MID_SEED):
     its last X-writer on BOTH exits is `addi.b #$30` on a nibble masked to $0..$f, which cannot
     carry out of $30..$3f, and `ror.w`/`andi.w`/`move.b` leave X alone.
     """
-    descriptor = int.from_bytes(image[RECORD_PTR_10424:RECORD_PTR_10424 + LONGWORD_BYTES], "big")
-    at = (descriptor + SCENE_GOLD_AWARD) & BUS_ADDR_MASK
-    award = leaf.u16(image, at) if at + WORD_BYTES <= harness.IMAGE_SIZE else 0
+    if award is None:
+        # Slot 38's gold arm hands the same five calls WB_STAGE_NUMBER instead, which is the ONE
+        # thing it changes about them — so the amount is a parameter and the model is not copied.
+        descriptor = int.from_bytes(image[RECORD_PTR_10424:RECORD_PTR_10424 + LONGWORD_BYTES],
+                                    "big")
+        at = (descriptor + SCENE_GOLD_AWARD) & BUS_ADDR_MASK
+        award = leaf.u16(image, at) if at + WORD_BYTES <= harness.IMAGE_SIZE else 0
 
     extend = [0]
     low = _abcd(award & 0xff, _draw_from(image, video_low, video_mid), extend)
@@ -14325,3 +14532,635 @@ def test_slot23s_entry_X_comes_off_the_Y_when_the_followed_record_has_a_REACH_PO
     info = _run_handler(TYPE23, what, pokes, band=_thief_band(pokes))
     assert leaf.read_int(info, BCD_COUNTER, BCD_COUNTER_LEN, what) == expected, (
         f"{what}: the entry extend came off the x arm, not the reach point's y arm")
+
+
+# --- slot 38 ($5408) and the PICKUP TIER (batch 38) ------------------------------------------------
+#
+# THE FIRST DISPATCH ROW WHOSE FRAME REACHES A SECOND DISPATCH. Everything the record does while it
+# waits is slot 31's; what is new is the collect arm, which reads the record's own KIND row out of
+# WB_ACTOR_KIND_TABLE and pays what the row says. The fourteen handlers behind
+# WB_PICKUP_EFFECT_TABLE are test_effects.py's — this section drives the ARITHMETIC that reaches
+# them, the refusal when the index leaves the table, and the two arms above it.
+#
+# EVERY COLLECT CASE HERE ENDS IN `actor_defeat_and_score`, so its band is `_foreign_band`'s and its
+# kill count is seeded ABOVE the respawn threshold: the retire tail draws no kind, which keeps the
+# frame's ONE video-counter read the payout's own (a modeled address may be read once a run).
+PICKUP_ENTRY_ADDRS = [_image_word(PICKUP_EFFECT_TABLE + row * PICKUP_EFFECT_ENTRY + WORD_BYTES)
+                      | (_image_word(PICKUP_EFFECT_TABLE + row * PICKUP_EFFECT_ENTRY) << 16)
+                      for row in range(PICKUP_EFFECT_ENTRIES)]
+
+# A kind whose row this section OWNS: seeded whole, so no case rests on a shipped row's contents.
+# It is inside the 22 rows the table really has, which is what keeps the `lea` arithmetic honest.
+PICKUP_KIND = 5
+PICKUP_ROW = KIND_TABLE + PICKUP_KIND * KIND_RECORD_BYTES
+# ...and a kill count past `actor_defeat_and_score`'s `cmpi.w #$2,6(a1) / ble`, so the defeat
+# RETIRES the slot instead of drawing a new kind through the PRNG.
+PICKUP_KILLS_PAST_RESPAWN = 0x0010
+# A stage number that is a plausible packed-BCD one and not a round figure, so a port that dropped
+# the `move.w $bd88,d0` and folded in a zero would differ in the counter.
+PICKUP_STAGE_NUMBER = 0x0012
+# ...and the meter the two meter grants move, seeded well below its maximum so `pickup_effect_add4_meter`
+# STORES rather than skipping (its skip arm is test_effects.py's — what this file's rows say is only
+# that entry 11 reached it at all).
+PICKUP_METER_SEED = 0x0010
+PICKUP_METER_MAX = 0x0028
+
+
+def _pickup_pokes(what, kind, effect_index, score=0, fields=None, collected=True):
+    """A type-38 record on ACTOR whose KIND row this case owns outright.
+
+    Built on `_collectable_pokes` (the tier's collect geometry) plus `_award_pokes` (everything the
+    gold arm reads) plus `_template_environment` (everything the defeat reads), so nothing about the
+    seeding is restated here — only what this row decides: the kind byte, the row's score longword,
+    the row's effect index, the stage number the gold arm pays, and the meter the two meter grants
+    move.
+
+    THE `followed_x` OVERLAY IS CONDITIONAL, and that is the whole of `collected=False`'s premise.
+    `_award_pokes` names the followed record's x because it is the draw's non-hardware entropy — but
+    that x is also what `_band5a_pokes` parks FAR AWAY to shut the contact test, so overlaying it
+    unconditionally left only the y separating the two records and the waiting cases were resting on
+    a geometry nobody had stated. Every waiting case now also runs `_assert_contact(.., False)`.
+    """
+    award = _award_pokes(0, followed_x=COLLECT_X)
+    if not collected:
+        del award[FOLLOWED_DEFAULT]
+    base = leaf.overlay(award, {
+        ACTOR + KIND: bytes([kind]),
+        PICKUP_ROW + KIND_SCORE: longword(score),
+        PICKUP_ROW + KIND_PICKUP_EFFECT: word(effect_index),
+        STAGE_NUMBER: word(PICKUP_STAGE_NUMBER),
+        BONUS_DIGITS_AT: bytes([DIGIT_BLANK] * BONUS_DIGIT_COUNT),
+        # The two METER grants (entries 10 and 11) are the only handlers whose witness is a word
+        # rather than a HUD slot, so the meter is an INPUT of the fourteen-way case and is stated
+        # here: well below the maximum, so the raise stores rather than being skipped.
+        METER_VALUE: word(PICKUP_METER_SEED), METER_MAX: word(PICKUP_METER_MAX),
+        PANEL_FRAME_DELAY: word(PANEL_FRAME_DELAY_INIT ^ 0xffff),
+    }, fields or {})
+    pokes = _collectable_pokes(what, 38, base, collected=collected)
+    _template_environment(case_salt(what), pokes)
+    for template in range(TEMPLATE_SLOTS):
+        pokes[TEMPLATE_TABLE + template * SPAWN_RECORD_BYTES + wb("SPAWN_KILL_COUNT")] = word(
+            PICKUP_KILLS_PAST_RESPAWN)
+    return pokes
+
+
+def _pickup_band(image, own):
+    """What a collect frame may write: the SFX trigger's set, whatever the arm itself writes, and
+    then the defeat's — composed by `_foreign_band`, which applies `own` to a copy of the image
+    FIRST so the defeat's model reads the state it really would."""
+    return (_foreign_band(image, own, "defeat")
+            + merge_bands(_sfx_bytes(image, REQUEST9_SFX, SND_CHANNEL_A)))
+
+
+def test_slot38_pays_the_STAGE_NUMBER_as_gold_when_its_kind_is_below_the_threshold():
+    """`move.w $bd88,d0` and then `hud_award_gold_from_descriptor`'s own five calls — the draw, both
+    accumulators, the digits inside message 3 and the message posted. The award model is the one
+    $517a's cases compare against, handed this arm's amount instead of the descriptor's, so the two
+    spellings of the payout cannot disagree."""
+    what = "actor_behavior_type38_pickup gold arm"
+    pokes = _pickup_pokes(what, PICKUP_KIND_FIRST - 1, 0)
+    image = harness.make_image(pokes)
+    _assert_contact(image, what, True)
+    paid = _model_award(image, award=PICKUP_STAGE_NUMBER)
+
+    info = _run_handler(TYPE38, what, pokes, band=_pickup_band(image, paid),
+                        hw_seed=VCOUNT_ORDERED)
+    written = program_writes(info)
+    for addr, value in paid.items():
+        assert written[addr] == value, (
+            f"{what}: {addr:#x} is {written[addr]:#04x}, not the payout model's {value:#04x}")
+    assert written[TEXT_REQUEST] == MESSAGE_GOLD_GET, f"{what}: the gold message was not posted"
+
+
+# A kind byte with its top bit set. `cmpi.b #$2,20(a0) / bge` is a SIGNED byte compare, so this is
+# BELOW the threshold and takes the gold arm — where an unsigned reading would send it to row 255's
+# address, 4080 bytes past the table.
+PICKUP_KIND_NEGATIVE = 0xff
+
+
+def test_the_kind_compare_is_a_SIGNED_byte_compare():
+    """The row that separates `bge` from `bhs`. A kind of $ff pays GOLD; read unsigned it would have
+    indexed row 255 instead and paid whatever longword sits 4080 bytes above the table."""
+    what = "actor_behavior_type38_pickup with a negative kind byte"
+    pokes = _pickup_pokes(what, PICKUP_KIND_NEGATIVE, 0)
+    image = harness.make_image(pokes)
+    paid = _model_award(image, award=PICKUP_STAGE_NUMBER)
+
+    info = _run_handler(TYPE38, what, pokes, band=_pickup_band(image, paid),
+                        hw_seed=VCOUNT_ORDERED)
+    assert program_writes(info)[TEXT_REQUEST] == MESSAGE_GOLD_GET, (
+        f"{what}: the kind arm ran, so the compare was read as unsigned")
+
+
+# The score the kind-row cases pay, and it is chosen for what it makes VISIBLE: five nonzero packed
+# BCD digits, so `text_post_bonus_points_a4be` draws all five and no leading blank — and a sixth
+# nibble above them that must NOT appear, which is what says only the low five are drawn.
+PICKUP_ROW_SCORE = 0x00612345
+
+
+def _bonus_digits_for(addend):
+    """The five characters $6938 leaves at WB_TEXT_BONUS_DIGITS, as an independent statement of the
+    routine: nibbles 4..0 of the addend, most significant first, with LEADING zeros drawn as spaces
+    and every other nibble as `$30 + nibble` however large it is."""
+    nibbles = [(addend >> (BCD_DIGIT_BITS * shift)) & BCD_DIGIT_MASK
+               for shift in reversed(range(BONUS_DIGIT_COUNT))]
+    out, leading = [], True
+    for nibble in nibbles:
+        leading = leading and nibble == 0
+        out.append(DIGIT_BLANK if leading else DIGIT_ZERO + nibble)
+    return bytes(out)
+
+
+def test_slot38_pays_the_kind_rows_score_and_draws_it_into_the_bonus_message():
+    """The kind arm: `move.l 4(a1),d0 / beq` nonzero, so the longword goes into the score AND into
+    the five digits, and the message the digit routine posts is the one it patched."""
+    what = "actor_behavior_type38_pickup scored kind"
+    pokes = _pickup_pokes(what, PICKUP_KIND, 0, score=PICKUP_ROW_SCORE)
+    image = harness.make_image(pokes)
+    # The row's score goes in with a PROVED-clear entry X: `lsl.l #4,d0` above it leaves X the
+    # bit shifted out of a zero-extended byte, which is bit 28 and always 0.
+    scored = bcd_expected(int.from_bytes(image[BCD_SCORE:BCD_SCORE + BCD_SCORE_LEN], "big"),
+                          PICKUP_ROW_SCORE, BCD_SCORE_LEN, False, 0)
+    own = {}
+    _put(own, BCD_ADDEND, PICKUP_ROW_SCORE, LONGWORD_BYTES)
+    _put(own, BCD_SCORE, scored.value, BCD_SCORE_LEN)
+    for offset, character in enumerate(_bonus_digits_for(PICKUP_ROW_SCORE)):
+        own[BONUS_DIGITS_AT + offset] = character
+    own[TEXT_REQUEST] = MESSAGE_BONUS_POINTS
+    _put(own, TEXT_LIFETIME_REQUEST, TEXT_LIFETIME_DEFAULT)
+
+    info = _run_handler(TYPE38, what, pokes, band=_pickup_band(image, own))
+    written = program_writes(info)
+    assert bytes(written[BONUS_DIGITS_AT + offset]
+                 for offset in range(BONUS_DIGIT_COUNT)) == _bonus_digits_for(PICKUP_ROW_SCORE), (
+        f"{what}: the digits drawn are not nibbles 4..0 of the row's score")
+    assert written[TEXT_REQUEST] == MESSAGE_BONUS_POINTS, f"{what}: the bonus message was not posted"
+
+
+def test_slot38_skips_both_score_calls_when_the_rows_longword_is_zero():
+    """`beq.w $5492`, and the control for the row above: a zero score writes NEITHER accumulator NOR
+    a digit, which is what says the branch is on the longword and not on some other field."""
+    what = "actor_behavior_type38_pickup unscored kind"
+    pokes = _pickup_pokes(what, PICKUP_KIND, 0, score=0)
+    image = harness.make_image(pokes)
+
+    info = _run_handler(TYPE38, what, pokes, band=_pickup_band(image, {}))
+    written = program_writes(info)
+    assert BONUS_DIGITS_AT not in written, f"{what}: a zero score still drew digits"
+    assert written.get(TEXT_REQUEST) != MESSAGE_BONUS_POINTS, f"{what}: it posted the bonus message"
+
+
+# WHICH BYTE EACH OF THE FOURTEEN LEAVES BEHIND, so a case can say "this entry ran" rather than only
+# "the frame ended". Every value is include/wonderboy.h's, and the addresses are the ones
+# test_effects.py's own cases assert on — this table names one witness per entry and nothing else.
+PICKUP_EFFECT_WITNESS = {
+    0: None,                                            # the bare `rts` writes nothing at all
+    1: (wb("HUD_SLOT_BBC4"), wb("PICKUP_SLOT_BBC4_VALUE")),
+    2: (wb("HUD_SLOT_BBC2"), wb("PICKUP_SLOT_WING_BOOTS_VALUE")),
+    3: (wb("HUD_SLOT_BBBE"), wb("PICKUP_SLOT_HELMET_VALUE")),
+    4: (wb("HUD_SLOT_BBC0"), wb("PICKUP_SLOT_GAUNTLET_VALUE")),
+    5: (wb("HUD_SLOT_BBC6"), wb("PICKUP_SLOT_REVIVAL_VALUE")),
+}
+# ...and the TWO entries whose witness is a word rather than a HUD slot: the meter grants. Neither
+# posts a message and neither writes a slot, so without these two rows they would rest entirely on
+# the band and execute no assertion of their own. The values are what the seed above makes them:
+# entry 10 fills the meter to its maximum, entry 11 raises it by WB_PICKUP_METER_STEP (the seed is
+# far enough below the maximum that the raise STORES — its skip arm is test_effects.py's).
+PICKUP_METER_WITNESS = {10: PICKUP_METER_MAX, 11: PICKUP_METER_SEED + PICKUP_METER_STEP}
+PICKUP_EFFECT_MESSAGE = {
+    2: wb("TEXT_MESSAGE_WING_BOOTS"), 3: wb("TEXT_MESSAGE_HELMET"),
+    4: wb("TEXT_MESSAGE_GAUNTLET"), 5: wb("TEXT_MESSAGE_REVIVAL"),
+    6: wb("TEXT_MESSAGE_FIRE_BALLS"), 7: wb("TEXT_MESSAGE_BOMBS"),
+    8: wb("TEXT_MESSAGE_WIND_SPOUTS"), 9: wb("TEXT_MESSAGE_LIGHTNING"),
+    12: wb("TEXT_MESSAGE_ATTACK_UP"), 13: wb("TEXT_MESSAGE_VANISHED"),
+}
+
+
+def _pickup_effect_band(image, own):
+    """`_pickup_band` widened by the union of what the FOURTEEN can write, which is what lets one
+    case drive every entry: the six HUD slots as one span, the meter and the panel countdown, the
+    record list and its write pointer, the scene exit request, the followed record (the vanish
+    grant writes three of its bytes) and the message pair."""
+    return _pickup_band(image, own) + [
+        (wb("HUD_SLOT_BBBE"), 12), (METER_VALUE, WORD_BYTES), (PANEL_FRAME_DELAY, WORD_BYTES),
+        (wb("EFFECT_RECORD_WRITE_PTR"), LONGWORD_BYTES), (wb("EFFECT_RECORD_LIST"), 0x104),
+        (wb("SCENE_EXIT_REQUEST"), WORD_BYTES), (FOLLOWED_DEFAULT, RECORD_BYTES),
+        (TEXT_REQUEST, 1), (TEXT_LIFETIME_REQUEST, WORD_BYTES)]
+
+
+@pytest.mark.parametrize("index", range(PICKUP_EFFECT_ENTRIES), ids=lambda v: f"entry{v:02d}")
+def test_slot38_runs_the_entry_its_kind_rows_index_names(index):
+    """ALL FOURTEEN, driven through the dispatch rather than entered directly — which is what makes
+    this a case about the arithmetic at $5492..$54a4 and not a second copy of test_effects.py.
+
+    THE WITNESS DIFFERS BY ENTRY and every entry has one. Ten of the fourteen post a MESSAGE naming
+    themselves. THREE post none — entry 1, which writes a HUD slot, and entries 10 and 11, which
+    write the METER and the panel countdown. Entry 0 is the one that leaves NOTHING behind, so its
+    row asserts the absence — which is also what separates it from the refusal below.
+    """
+    what = f"actor_behavior_type38_pickup effect {index}"
+    pokes = _pickup_pokes(what, PICKUP_KIND, index)
+    image = harness.make_image(pokes)
+    info = _run_handler(TYPE38, what, pokes, band=_pickup_effect_band(image, {}))
+    written = program_writes(info)
+
+    if index in PICKUP_EFFECT_MESSAGE:
+        assert written[TEXT_REQUEST] == PICKUP_EFFECT_MESSAGE[index], (
+            f"{what}: the message posted is not the one this entry is named for")
+    slot = PICKUP_EFFECT_WITNESS.get(index)
+    if slot is not None:
+        assert _written_word(written, slot[0]) == (slot[1] << 8) | wb("HUD_SLOT_CHANGED"), (
+            f"{what}: the entry's HUD slot was not written")
+    meter = PICKUP_METER_WITNESS.get(index)
+    if meter is not None:
+        assert _written_word(written, METER_VALUE) == meter, (
+            f"{what}: the meter ended at {_written_word(written, METER_VALUE):#06x}, not "
+            f"{meter:#06x}")
+        assert _written_word(written, PANEL_FRAME_DELAY) == PANEL_FRAME_DELAY_INIT, (
+            f"{what}: the panel countdown was not restarted")
+    if index == 0:
+        assert TEXT_REQUEST not in written, f"{what}: the bare `rts` posted a message"
+
+
+# THE HANDLER'S OWN POST OVERWRITES THE BONUS BOX, and until this case nothing executed both.
+# Every fourteen-way row above seeds a ZERO score (so the bonus is never posted) and the one nonzero
+# score row uses entry 0 (which posts nothing), so no run had a bonus post AND a handler post live —
+# and moving `run_pickup_effect` ABOVE the score/bonus pair survived the whole suite. These four
+# rows put the two together: the score arm posts WB_TEXT_MESSAGE_BONUS_POINTS at $548e and the
+# handler runs at $54a4, so what the frame LEAVES in WB_TEXT_REQUEST is the handler's id — the
+# entry's own message for entry 2, and a ZERO for the three that post none, which takes the bonus
+# box back down before it is ever composed. That zero is the CANCEL the plates claim.
+PICKUP_POST_ORDER_INDICES = (1, 2, 10, 11)
+
+
+@pytest.mark.parametrize("index", PICKUP_POST_ORDER_INDICES, ids=lambda v: f"entry{v:02d}")
+def test_the_effect_handlers_post_lands_ON_TOP_of_the_bonus_box(index):
+    what = f"actor_behavior_type38_pickup scored kind with effect {index}"
+    expected = PICKUP_EFFECT_MESSAGE.get(index, TEXT_REQUEST_NONE)
+    assert expected != MESSAGE_BONUS_POINTS, (
+        f"{what}: this entry posts the bonus id itself, so the row could not tell the two apart")
+    pokes = _pickup_pokes(what, PICKUP_KIND, index, score=PICKUP_ROW_SCORE)
+    image = harness.make_image(pokes)
+    _assert_contact(image, what, True)
+
+    info = _run_handler(TYPE38, what, pokes, band=_pickup_effect_band(image, {}) + [
+        (BONUS_DIGITS_AT, BONUS_DIGIT_COUNT), (BCD_ADDEND, LONGWORD_BYTES),
+        (BCD_SCORE, BCD_SCORE_LEN)])
+    written = program_writes(info)
+    # The bonus box really WAS asked for on this run — the digits it patched are still there — and
+    # the handler's post then landed on top of the id.
+    assert bytes(written[BONUS_DIGITS_AT + offset]
+                 for offset in range(BONUS_DIGIT_COUNT)) == _bonus_digits_for(PICKUP_ROW_SCORE), (
+        f"{what}: the score arm never ran, so nothing was there to overwrite")
+    assert written[TEXT_REQUEST] == expected, (
+        f"{what}: the frame left {written[TEXT_REQUEST]:#04x} in WB_TEXT_REQUEST, not the "
+        f"{expected:#04x} the handler posts — the two posts ran in the wrong order")
+
+
+# --- the refusal, and the ALIAS structure above it -------------------------------------------------
+# `move.w 10(a1),d0 / add.w d0,d0 / add.w d0,d0 / movea.l 0(a1,d0.w),a1 / jsr (a1)` — the state-65
+# class. The scale wraps in sixteen bits and the extension word sign-extends, so what selects an
+# entry is the OFFSET and not the index: entry `s` is reached by four index values a $4000 apart.
+#
+# A REFUSAL HAS NO DIFFERENTIAL, exactly as the behaviour dispatch's does not: the original reads a
+# longword outside the table and `jsr`s through it. So the enumeration below runs the reconstruction
+# ALONE, and what it states is the SET.
+PICKUP_ALIAS_STRIDE = 0x10000 // PICKUP_EFFECT_ENTRY
+
+
+def _pickup_dispatched(index):
+    """Which entry `index` reaches, or None — this battery's own model of the wrapped offset."""
+    offset = s16((index * PICKUP_EFFECT_ENTRY) & 0xffff)
+    if 0 <= offset < PICKUP_EFFECT_ENTRIES * PICKUP_EFFECT_ENTRY:
+        return offset // PICKUP_EFFECT_ENTRY
+    return None
+
+
+def test_the_pickup_index_aliases_four_ways_and_everything_else_is_refused():
+    """The counting half, stated once rather than per shard: 56 of the 65,536 index values reach one
+    of the fourteen entries and 65,480 do not. A guard on the RAW index would have refused 42 of the
+    56 — the same defect the behaviour dispatch's own alias bands exist to rule out."""
+    dispatched = [index for index in range(0x10000) if _pickup_dispatched(index) is not None]
+    bands = sorted({index & ~(PICKUP_ALIAS_STRIDE - 1) for index in dispatched})
+    assert len(dispatched) == PICKUP_EFFECT_ENTRIES * len(bands) == 56
+    assert bands == [0x0000, 0x4000, 0x8000, 0xc000]
+    assert len([i for i in dispatched if i >= PICKUP_EFFECT_ENTRIES]) == PICKUP_EFFECT_ENTRIES * 3
+
+
+def test_the_four_dispatch_CODES_collide_with_no_entry_the_table_can_hand_back():
+    """WHY THE REFUSAL IS A CODE AND NOT AN ADDRESS. Slot 7's state `jsr` reports the address it
+    would have entered; here the answer has to separate "entry 0 ran" from "no entry ran", and entry
+    0's own address would do — but the span the index reads holds ZEROS, and 0 is
+    WB_ACTOR_DISPATCH_RAN. So behavior.h spends a fourth code, and this case checks the image's own
+    fourteen longwords against all four rather than assuming none collides."""
+    codes = {DISPATCH_RAN, DISPATCH_REFUSED, wb("ACTOR_DISPATCH_UNBOUNDED"),
+             DISPATCH_PICKUP_REFUSED}
+    assert len(codes) == 4, "two of the dispatch codes are the same value"
+    assert not codes & set(PICKUP_ENTRY_ADDRS), (
+        f"an entry of {PICKUP_EFFECT_TABLE:#x} collides with a dispatch code")
+    # ...and the span really does hold zeros, which is the fact that rules the address out.
+    below = _image_word(PICKUP_EFFECT_TABLE - PICKUP_EFFECT_ENTRY) << 16 | _image_word(
+        PICKUP_EFFECT_TABLE - PICKUP_EFFECT_ENTRY + WORD_BYTES)
+    assert below == 0, "the longword below the table is no longer zero"
+
+
+# Two refused indices whose target longwords DIFFER, so a reconstruction that leaked anything of the
+# target into memory would leave two different images. One is just below the table and one just
+# above it, which are the two ends the refusal has to hold.
+PICKUP_REFUSED_PAIR = (0xffff, PICKUP_EFFECT_ENTRIES)
+
+
+@pytest.mark.parametrize("index", PICKUP_REFUSED_PAIR, ids=lambda v: f"index{v:04x}")
+def test_slot38_refuses_an_index_outside_the_table(index):
+    what = f"actor_behavior_type38_pickup effect index {index:#06x}"
+    assert _pickup_dispatched(index) is None, f"{what}: this index reaches an entry after all"
+    answer, _image = leaf.run_candidate_only(_HANDLER_GLUE[TYPE38](ACTOR),
+                                             _pickup_pokes(what, PICKUP_KIND, index))
+    assert answer == DISPATCH_PICKUP_REFUSED, (
+        f"{what}: the reconstruction answered {answer:#x}, not the pickup refusal")
+
+
+def test_a_refused_pickup_index_writes_NOTHING_the_target_could_have_told_it():
+    """The other half of the refusal, and the one an answer alone does not give: the two refused
+    indices above read DIFFERENT longwords, and the images they leave are identical everywhere but
+    the index word the case itself seeded. So the refusal is a stop and not a partial run."""
+    what = "actor_behavior_type38_pickup refusal"
+    images, targets = [], []
+    for index in PICKUP_REFUSED_PAIR:
+        # ONE salt for both runs: `case_salt` keys the whole tier's seeding, so two `what` strings
+        # would make the two images differ everywhere the keyed block does and the comparison below
+        # would say nothing.
+        pokes = _pickup_pokes(what, PICKUP_KIND, index)
+        answer, image = leaf.run_candidate_only(_HANDLER_GLUE[TYPE38](ACTOR), pokes)
+        assert answer == DISPATCH_PICKUP_REFUSED
+        at = (PICKUP_EFFECT_TABLE + s16((index * PICKUP_EFFECT_ENTRY) & 0xffff)) & BUS_ADDR_MASK
+        targets.append(image[at:at + LONGWORD_BYTES])
+        images.append(bytearray(image))
+    assert targets[0] != targets[1], (
+        f"{what}: the two refused indices read the same longword, so this case proves nothing")
+
+    for image in images:
+        image[PICKUP_ROW + KIND_PICKUP_EFFECT:PICKUP_ROW + KIND_PICKUP_EFFECT + WORD_BYTES] = b"\0\0"
+    differing = [at for at in range(len(images[0])) if images[0][at] != images[1][at]]
+    assert not differing, (
+        f"{what}: the two refusals left different memory at {[hex(a) for a in differing[:8]]}")
+
+
+# --- the waiting arm ------------------------------------------------------------------------------
+def test_slot38_gives_a_PICKUP_kind_the_flash_countdown_only_while_a32_is_set():
+    """`cmpi.b #$2,20(a0) / blt` then `tst.w $a32.w / beq` — two gates, and the write between them is
+    the ONE thing this arm does. With the flag clear the frame writes no countdown at all and the
+    tick below simply runs the byte down."""
+    for a32, flashes in ((1, True), (0, False)):
+        what = f"actor_behavior_type38_pickup waiting, a32={a32}"
+        pokes = _pickup_pokes(what, PICKUP_KIND, 0, collected=False,
+                              fields={FLAG_A32: word(a32),
+                                      ACTOR + FIELD_12: word(COLLECT_FIELD_12_IDLE)})
+        _assert_contact(harness.make_image(pokes), what, False)
+        info = _run_handler(TYPE38, what, pokes)
+        written = program_writes(info)
+        # The tick below the arm ALWAYS decrements, so what says the flash fired is the value.
+        left = (TYPE38_FLASH - 1) if flashes else ((COLLECT_FIELD_12_IDLE & 0xff) - 1)
+        assert written[ACTOR + FIELD_12] == left, (
+            f"{what}: the countdown byte is {written[ACTOR + FIELD_12]:#04x}, not {left:#04x}")
+
+
+@pytest.mark.parametrize("kind,relaunches", [(0, True), (1, False)],
+                         ids=["kind-zero-relaunches", "kind-one-publishes"])
+def test_a_GOLD_kind_waiting_splits_on_whether_its_kind_byte_is_zero(kind, relaunches):
+    """`tst.b 20(a0) / bne` below the threshold test: kind 0 runs
+    `actor_relaunch_and_anim_5160` (which writes WB_ACTOR_FIELD_30 as well as the sprite) and any
+    other gold kind publishes through `actor_select_sprite_by_flag` (which writes only the sprite).
+    The two are told apart by the field the first one touches and the second does not."""
+    what = f"actor_behavior_type38_pickup waiting, kind {kind}"
+    pokes = _pickup_pokes(what, kind, 0, collected=False,
+                          fields={ACTOR + FIELD_12: word(COLLECT_FIELD_12_IDLE),
+                                  ACTOR + FIELD_30: bytes([4])})
+    _assert_contact(harness.make_image(pokes), what, False)
+    written = program_writes(_run_handler(TYPE38, what, pokes))
+    assert (ACTOR + FIELD_30 in written) is relaunches, (
+        f"{what}: the {'relaunch' if relaunches else 'sprite'} arm did not run")
+    assert ACTOR + ACTOR_SPRITE in written, f"{what}: no sprite was published either way"
+
+
+def test_slot38s_countdown_expires_TWICE_like_slot_28s():
+    """`subq.b #1,12(a0) / bne` then `bset #6,8(a0) / bne` — the branch reads the bit the `bset` has
+    just overwritten, so the FIRST expiry raises the flicker and reloads the byte and the SECOND
+    leaves for `actor_defeat_and_score`. It is a BYTE countdown, which is what separates this row
+    from slots 30 and 31."""
+    what = "actor_behavior_type38_pickup first expiry"
+    pokes = _pickup_pokes(what, PICKUP_KIND, 0, collected=False,
+                          fields={ACTOR + FIELD_12: bytes([1]),
+                                  ACTOR + ACTOR_FLAGS: bytes([0]),
+                                  FLAG_A32: word(0)})
+    _assert_contact(harness.make_image(pokes), what, False)
+    written = program_writes(_run_handler(TYPE38, what, pokes))
+    assert written[ACTOR + FIELD_12] == TYPE38_FIELD_12_RELOAD, f"{what}: it did not reload"
+    assert written[ACTOR + ACTOR_FLAGS] & (1 << FLICKER_BIT), f"{what}: the flicker stayed down"
+
+    what = "actor_behavior_type38_pickup second expiry"
+    pokes = _pickup_pokes(what, PICKUP_KIND, 0, collected=False,
+                          fields={ACTOR + FIELD_12: bytes([1]),
+                                  ACTOR + ACTOR_FLAGS: bytes([1 << FLICKER_BIT]),
+                                  FLAG_A32: word(0)})
+    image = harness.make_image(pokes)
+    _assert_contact(image, what, False)
+    info = _run_handler(TYPE38, what, pokes, band=_foreign_band(image, {}, "defeat"))
+    written = program_writes(info)
+    assert _written_word(written, ACTOR, ACTOR_X) == FREE_MARKER, (
+        f"{what}: the second expiry did not retire the record")
+    # THE FREE MARKER ALONE DOES NOT SAY WHICH ARM RAN — the collect arm reaches the same defeat.
+    # What separates them is the payout: an EXPIRY pays nothing, so neither accumulator moves and no
+    # message is posted, where every collect arm writes at least one of the three.
+    assert BCD_ADDEND not in written and TEXT_REQUEST not in written, (
+        f"{what}: the record was COLLECTED, not expired — the payout ran")
+
+
+# --- $6938: the five digits, on its own -----------------------------------------------------------
+# Entered DIRECTLY, because what the one caller can hand it is bounded by the 22 shipped kind rows
+# and the properties below are about the register: the SWAP that makes nibble 4 the first digit, the
+# leading blanks, and the four nibbles above the five drawn that must not appear.
+_BONUS_DIGITS = leaf.register_glue(BONUS_DIGITS, [ctypes.c_uint32])
+
+BONUS_ADDENDS = (
+    0x00012345,          # five digits, none of them leading zeros
+    0x00000005,          # four leading blanks and one digit — the blanking loop's own arm
+    0x00099999,          # every drawn nibble at 9
+    0xfedc12345 & 0xffffffff,   # nibbles ABOVE the five drawn: they must not reach the string
+    0x0000000f,          # a nibble past 9: `addi.b #$30` runs anyway and draws past '9'
+)
+
+
+@pytest.mark.parametrize("addend", BONUS_ADDENDS, ids=[f"{a:08x}" for a in BONUS_ADDENDS])
+def test_the_bonus_digits_are_nibbles_4_to_0_with_leading_zeros_blanked(addend):
+    what = f"text_post_bonus_points_a4be with {addend:#010x}"
+    expected = _bonus_digits_for(addend)
+    pokes = {BONUS_DIGITS_AT: bytes([DIGIT_BLANK ^ 0xff] * BONUS_DIGIT_COUNT),
+             TEXT_REQUEST: bytes([0]), TEXT_LIFETIME_REQUEST: word(0)}
+    allowed = [(BONUS_DIGITS_AT, BONUS_DIGIT_COUNT), (TEXT_REQUEST, 1),
+               (TEXT_LIFETIME_REQUEST, WORD_BYTES)]
+
+    info = leaf.run(BONUS_DIGITS, _BONUS_DIGITS(addend), allowed, what,
+                    regs={"d0": addend, "_pokes": pokes},
+                    max_insns=_cap(BONUS_DIGITS, extra=8 * BONUS_DIGIT_COUNT))
+    assert leaf.read_bytes(info, BONUS_DIGITS_AT, BONUS_DIGIT_COUNT, what) == expected, (
+        f"{what}: the five characters are not nibbles 4..0 with the leading zeros blanked")
+    assert leaf.read_int(info, TEXT_REQUEST, 1, what) == MESSAGE_BONUS_POINTS
+    assert leaf.read_int(info, TEXT_LIFETIME_REQUEST, WORD_BYTES, what) == TEXT_LIFETIME_DEFAULT
+
+
+def test_no_kind_the_SITE_ADMITS_can_reach_the_digit_loops_RUNAWAY():
+    """The honest half of the two runaways ../names.txt records. An addend whose low FIVE nibbles are
+    all zero enters the digit loop with the counter already at zero and wraps it to $ffff; an addend
+    of zero never leaves the blanking loop at all. Neither is DRIVEN, and the reason is sharper than
+    "no case covers it": the blanking loop has no counter, so entering it with zero HANGS rather than
+    failing — a case would not terminate and no assertion could report it.
+
+    THE RANGE IS THE SITE'S, NOT THE TABLE'S. `cmpi.b #$2,20(a0) / bge` admits kinds 2..127, so the
+    row the `lea` lands on is one of 126 and not one of the table's own 22 — 106 of them lie past the
+    table, in `pickup_effect_table` and the handlers above it. The first draft walked rows 0..21,
+    which both checked two rows the site cannot reach and left 106 it can unchecked. The wider walk
+    finds nothing either, so this is a correction of PROOF SCOPE and not of a live defect."""
+    image = bytes(harness.BASE_IMAGE)
+    low_five = (1 << (BCD_DIGIT_BITS * BONUS_DIGIT_COUNT)) - 1
+    for kind in range(PICKUP_KIND_FIRST, 0x80):
+        at = KIND_TABLE + kind * KIND_RECORD_BYTES + KIND_SCORE
+        score = int.from_bytes(image[at:at + LONGWORD_BYTES], "big")
+        assert score == 0 or score & low_five, (
+            f"kind {kind}'s row at {at:#07x} holds {score:#010x}, whose low five nibbles are all "
+            f"zero — the digit loop would run 65,536 times")
+
+
+# --- the census, run before the fact --------------------------------------------------------------
+@pytest.mark.parametrize("index", range(PICKUP_EFFECT_ENTRIES), ids=lambda v: f"entry{v:02d}")
+def test_each_pickup_entry_is_reached_ONLY_through_the_tables_longword(index):
+    """The claim every plate in this tier makes, measured rather than assumed — and here it is the
+    load-bearing one, because it is what says the fourteen handlers are the pickup dispatch's alone
+    and share nothing with WB_EFFECT_HANDLER_TABLE's twenty-nine."""
+    entry = PICKUP_ENTRY_ADDRS[index]
+    assert entry not in CONTROL_FLOW_TARGETS, (
+        f"{entry:#07x} is named by {[hex(at) for at in CONTROL_FLOW_TARGETS.get(entry, [])]}")
+    holders = [at for at in _operand_sites(longword(entry)) if at % WORD_BYTES == 0]
+    assert holders == [PICKUP_EFFECT_TABLE + index * PICKUP_EFFECT_ENTRY], (
+        f"{entry:#07x} is held as a longword at {[hex(at) for at in holders]}, not only its entry")
+
+
+@pytest.mark.parametrize("name,sites", [("PICKUP_EFFECT_TABLE", 1), ("TEXT_BONUS_DIGITS", 1),
+                                        ("ACTOR_KIND_TABLE", 2)],
+                         ids=lambda v: str(v))
+def test_the_addresses_this_batch_names_have_the_lea_count_their_plates_claim(name, sites):
+    """Batch 34's lesson before the fact. WB_ACTOR_KIND_TABLE is the interesting row: its plate
+    claimed ONE `lea` for a year and the scan gives TWO — $6d3c and slot 38's own $5476 — so the
+    figure here is the corrected one and the case is what keeps it corrected."""
+    found = _lea_sites(wb(name))
+    assert len(found) == sites, (
+        f"{name} ({wb(name):#07x}) is named by {len(found)} `lea`s, not {sites}: "
+        f"{[hex(at) for at in found]}")
+
+
+def test_the_two_kind_table_lea_sites_are_the_two_readers_the_plate_names():
+    """...and WHERE they are, since "two" alone would not separate the corrected reading from a
+    second `lea` inside one routine. One is in the respawn continuation and one inside slot 38."""
+    pickup, respawn = _lea_sites(KIND_TABLE)     # sorted by ADDRESS, so slot 38's is first
+    assert respawn == 0x6d3c, f"the respawn's `lea $1044c` moved to {respawn:#06x}"
+    assert leaf.entry_of(TYPE38) <= pickup < leaf.entry_of(TYPE38) + BODY_SIZES[TYPE38], (
+        f"the second `lea $1044c` is at {pickup:#06x}, outside slot 38's body")
+
+
+def test_slot38_is_reached_ONLY_through_the_dispatch_longword():
+    entry = leaf.entry_of(TYPE38)
+    assert entry not in CONTROL_FLOW_TARGETS, (
+        f"{entry:#06x} is named by {[hex(at) for at in CONTROL_FLOW_TARGETS.get(entry, [])]}")
+    holders = [at for at in _operand_sites(longword(entry)) if at % WORD_BYTES == 0]
+    assert holders == [BEHAVIOR_TABLE + 38 * BEHAVIOR_ENTRY]
+
+
+def test_the_bonus_digit_routine_has_exactly_one_caller_and_it_is_slot_38():
+    """`bsr.w $6938` at $548e, and nothing else in the image aims at it. That is what makes the
+    routine's runaway argument above a statement about ONE caller rather than about a family."""
+    callers = CONTROL_FLOW_TARGETS.get(leaf.entry_of(BONUS_DIGITS), [])
+    assert len(callers) == 1, f"{BONUS_DIGITS} is reached from {[hex(at) for at in callers]}"
+    assert leaf.entry_of(TYPE38) <= callers[0] < leaf.entry_of(TYPE38) + BODY_SIZES[TYPE38]
+
+
+# --- ALL 65,536 EFFECT INDICES, against the reconstruction alone -----------------------------------
+# The refusal's only surface, for the reason the behaviour dispatch's enumeration gives: the original
+# would `jsr` through arbitrary data, so no differential can drive one. What this states is that the
+# port's answer is the WRAPPED offset's for every index and the refusal for every other — which is
+# the claim a guard on the raw index would get wrong on 42 of the 56 that dispatch.
+PICKUP_INDEX_CHUNKS = 8
+PICKUP_INDICES_PER_CHUNK = 0x10000 // PICKUP_INDEX_CHUNKS
+
+
+@pytest.mark.parametrize("chunk", range(PICKUP_INDEX_CHUNKS), ids=lambda v: f"chunk{v}")
+def test_every_effect_index_runs_the_wrapped_entry_or_is_refused(chunk):
+    """One FFI call per index, on ONE buffer — so the seed the frame consumes is re-applied every
+    iteration rather than being left to whatever the previous index's handler wrote. The 56 indices
+    that dispatch run a pickup handler AND `actor_defeat_and_score` on top, which is exactly why the
+    record's own fields are put back each time."""
+    what = f"pickup index enumeration chunk {chunk}"
+    pokes = _pickup_pokes(what, PICKUP_KIND, 0)
+    image = harness.make_image(pokes)
+    buf = (ctypes.c_uint8 * harness.IMAGE_SIZE).from_buffer(bytearray(image))
+    handler = leaf.bind(TYPE38, [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32], ctypes.c_uint32)
+    # Everything the frame reads and can also write, taken out of the seeded image rather than
+    # restated — a list of literals here would be a second copy of `_pickup_pokes`.
+    restore = {addr: image[addr]
+               for field, length in ((ACTOR_X, WORD_BYTES), (ACTOR_Y, WORD_BYTES),
+                                     (ACTOR_TYPE, WORD_BYTES), (KIND, 1), (ACTOR_FLAGS, 1),
+                                     (FLAGS2, 1), (FIELD_12, 1), (FIELD_18, 1), (SPEED, 1))
+               for addr in range(ACTOR + field, ACTOR + field + length)}
+    dispatched = 0
+
+    for index in range(chunk * PICKUP_INDICES_PER_CHUNK, (chunk + 1) * PICKUP_INDICES_PER_CHUNK):
+        for addr, value in restore.items():
+            buf[addr] = value
+        buf[PICKUP_ROW + KIND_PICKUP_EFFECT] = index >> 8
+        buf[PICKUP_ROW + KIND_PICKUP_EFFECT + 1] = index & 0xff
+        entry = _pickup_dispatched(index)
+        answer = handler(buf, ACTOR)
+        if entry is None:
+            assert answer == DISPATCH_PICKUP_REFUSED, (
+                f"index {index:#06x} answered {answer:#x}, not the refusal its offset earns")
+            continue
+        dispatched += 1
+        assert answer == DISPATCH_RAN, (
+            f"index {index:#06x} answered {answer:#x} against entry {entry}'s run")
+
+    # $4000 is exactly half a chunk, so an alias band lands wholly inside one: the chunks that hold
+    # one dispatch all fourteen entries and the rest dispatch nothing.
+    assert dispatched == (PICKUP_EFFECT_ENTRIES
+                          if chunk % (PICKUP_INDEX_CHUNKS // 4) == 0 else 0)
+
+
+# THE SWEEP'S ONE SURVIVOR, and closing it took a differential rather than an argument.
+# `movea.l 0(a1,d0.w),a1` SIGN-EXTENDS the wrapped offset, and dropping that sign extension survived
+# the whole suite: every legal offset is positive, and a high index refuses either way — below the
+# table with the sign, above it without — because the census says each of the fourteen addresses is
+# held as a longword in exactly ONE place, the table. So no index at all separates the two spellings
+# on the image as it ships.
+#
+# What separates them is a TARGET the sign-extended read can reach and the other cannot. Index
+# $ffff scales to offset $fffc, which is FOUR BYTES BELOW the table — the last longword of
+# WB_ACTOR_KIND_TABLE's row 21, zero in the shipped image. Put an entry address there and the
+# original `jsr`s to it; the zero-extended spelling reads $205a8 instead and refuses. It is a
+# DIFFERENTIAL and not a C-only claim: the oracle runs the same `jsr`.
+PICKUP_BELOW_TABLE_INDEX = 0xffff
+PICKUP_BELOW_TABLE_AT = PICKUP_EFFECT_TABLE - PICKUP_EFFECT_ENTRY
+
+
+def test_the_effect_offset_is_SIGN_extended_so_an_index_can_read_BELOW_the_table():
+    what = "actor_behavior_type38_pickup effect index below the table"
+    assert _image_word(PICKUP_BELOW_TABLE_AT) == 0 and _image_word(
+        PICKUP_BELOW_TABLE_AT + WORD_BYTES) == 0, (
+        "the longword below the table is no longer zero, so this seed is not a change")
+    # The bare `rts`, chosen because it is the one entry whose whole effect is "nothing happened":
+    # what the case is about is WHICH ADDRESS the fetch read, not what the handler then did.
+    pokes = _pickup_pokes(what, PICKUP_KIND, PICKUP_BELOW_TABLE_INDEX,
+                          fields={PICKUP_BELOW_TABLE_AT: longword(wb("PICKUP_EFFECT_NONE"))})
+    assert _pickup_dispatched(PICKUP_BELOW_TABLE_INDEX) is None, (
+        f"{what}: this index is inside the table, so it says nothing about the extension")
+
+    image = harness.make_image(pokes)
+    info = _run_handler(TYPE38, what, pokes, band=_pickup_band(image, {}))
+    assert info["ret"] == DISPATCH_RAN

@@ -1,17 +1,29 @@
-/* effects.c — the 29 leaf routines at $10200..$103e7: the effect handlers the object dispatcher at
- * $ddec/$de62 jumps to through `effect_handler_table` ($1023a), plus the six `set_state_*` stubs
- * sitting immediately above that table.
+/* effects.c — the 43 leaf routines behind the game's TWO effect dispatch tables: the 29 at
+ * $10200..$103e7 that the object dispatcher at $ddec/$de62 jumps to through `effect_handler_table`
+ * ($1023a) — plus the six `set_state_*` stubs sitting immediately above that table — and the 14 at
+ * $105e4..$10799 that behaviour slot 38 jumps to through `pickup_effect_table` ($105ac).
  *
- * They are the smallest functions in the game — one to four instructions each, no branches bar the
- * two clamps, no callees, no hardware, no OS. Nothing reads them back, so the whole observable
- * effect of every one is a word or two of game state, which is exactly what the memory differential
- * sees; test/test_effects.py runs each against the original.
+ * They are the smallest functions in the game — one to seven instructions each, no branches bar the
+ * two clamps and the attack level's gate, no hardware, no OS. Nothing reads them back, so the whole
+ * observable effect of nearly every one is a word or two of game state, which is exactly what the
+ * memory differential sees; test/test_effects.py runs each against the original.
  *
- * WHAT THE NAMES DO AND DO NOT CLAIM. Every name here is ../names.txt's, and every one is at the
- * MECHANISM: `effect_set_bd66_3` says a 3 goes into $bd66, not what a 3 there means. The bodies are
- * read and reproduced; the meaning of the state is open, and wonderboy.h records what each global
- * is written and read WITH — which is as far as the evidence goes. Resist naming these for the
- * "collect an item" reading until a reader is followed all the way down.
+ * ONE OF THE 43 HAS A CALLEE: `pickup_effect_vanish_followed` asks `followed_actor_record` which
+ * record it is writing, so it is the only routine here that touches a record rather than a global
+ * and the only one whose destination comes out of memory (hence bus.h). The file's "no callees" is
+ * true of the other forty-two.
+ *
+ * WHAT THE NAMES DO AND DO NOT CLAIM, AND WHERE THAT CHANGED. Every name here is ../names.txt's, and
+ * the 29 are named at the MECHANISM: `effect_set_bd66_3` says a 3 goes into $bd66, not what a 3
+ * there means. The bodies are read and reproduced; the meaning of that state is open, and
+ * wonderboy.h records what each global is written and read WITH — which is as far as the evidence
+ * goes. Resist naming those for the "collect an item" reading until a reader is followed down.
+ *
+ * The 14 ARE named for what they grant, and the difference is evidence and not appetite: each one
+ * POSTS A MESSAGE naming the item, which is the reader followed down. That is batch 17's method
+ * (the helmet and the gauntlet slots were identified from the messages their own paths post)
+ * applied to twelve more, and two of them identify a HUD slot nothing else names. The one that
+ * posts no message is still `pickup_effect_grant_bbc4`.
  *
  * The one thing worth reading twice is the clamp, which is signed and 16-bit: see
  * effect_add_clamped below.
@@ -23,6 +35,8 @@
  * inside the image, so the battery never enters that territory; bounding it would be a kit change.
  */
 #include "machine.h"
+#include "actor.h"
+#include "bus.h"
 #include "effects.h"
 #include "wonderboy.h"
 
@@ -122,7 +136,159 @@ static void effect_push_record(uint8_t *image, uint16_t record) {
     wr16(image + write_ptr, record);
 }
 
-void effect_push_record_0605(uint8_t *image) { effect_push_record(image, 0x0605); }
-void effect_push_record_0508(uint8_t *image) { effect_push_record(image, 0x0508); }
-void effect_push_record_0705(uint8_t *image) { effect_push_record(image, 0x0705); }
-void effect_push_record_0803(uint8_t *image) { effect_push_record(image, 0x0803); }
+/* The four constants are wonderboy.h's rather than inline literals as of batch 38, and that is a
+ * change of evidence and not of taste: the four pickup grants below push the SAME four words and
+ * post a message naming each one, so the record is no longer a number with nothing to say about
+ * itself. Two files spelling the same four words is exactly the drift a shared #define prevents. */
+void effect_push_record_0605(uint8_t *image) {
+    effect_push_record(image, WB_PICKUP_RECORD_FIRE_BALLS);
+}
+
+void effect_push_record_0508(uint8_t *image) {
+    effect_push_record(image, WB_PICKUP_RECORD_BOMBS);
+}
+
+void effect_push_record_0705(uint8_t *image) {
+    effect_push_record(image, WB_PICKUP_RECORD_WIND_SPOUTS);
+}
+
+void effect_push_record_0803(uint8_t *image) {
+    effect_push_record(image, WB_PICKUP_RECORD_LIGHTNING);
+}
+
+
+/* ---- the PICKUP effects ($105e4..$10799) ------------------------------------------------------
+ *
+ * The second dispatch table's handlers, and the shape they all share: whatever the grant is, the
+ * routine ends `move.b #id,$c030.l / move.w #$32,$c034.l / rts`. Fourteen entries, one of them a
+ * bare `rts`; every other routine here is one of the three grants below plus that post.
+ */
+
+/* The tail. It is spelt as a helper HERE and inline in src/behavior.c's own two posting sites for
+ * the reason src/actor.c already gives: thirteen call sites in ONE file is a helper, three sites
+ * across three modules is an exported symbol to save one `wr16`, and the three do not even agree
+ * (src/scene.c posts a lifetime of zero on its speech arm). */
+static void post_message(uint8_t *image, uint8_t message) {
+    image[WB_TEXT_REQUEST] = message;
+    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+}
+
+static void grant_slot(uint8_t *image, uint32_t slot, uint8_t value, uint8_t message) {
+    hud_slot_set(image, slot, value);
+    post_message(image, message);
+}
+
+static void grant_record(uint8_t *image, uint16_t record, uint8_t message) {
+    effect_push_record(image, record);
+    post_message(image, message);
+}
+
+/* $105e4 — two bytes, and the byte that bounds WB_PICKUP_EFFECT_TABLE from above. It is a
+ * reconstruction like any other for `actor_behavior_type38_pickup`'s dispatch: without a symbol
+ * here, index 0 would have to be spelt as a refusal, which is a different answer. */
+void pickup_effect_none(uint8_t *image) { (void)image; }
+
+void pickup_effect_grant_bbc4(uint8_t *image) {
+    /* The ONE grant that posts nothing, so nothing names WB_HUD_SLOT_BBC4 — its meaning is still
+     * open (../names.txt) and this handler does not close it. What it does close is that slot's own
+     * plate, which used to credit the address to code no batch had recovered: $105e6 is one of the
+     * two writers and it is right here. */
+    grant_slot(image, WB_HUD_SLOT_BBC4, WB_PICKUP_SLOT_BBC4_VALUE, WB_TEXT_REQUEST_NONE);
+}
+
+void pickup_effect_grant_wing_boots(uint8_t *image) {
+    grant_slot(image, WB_HUD_SLOT_BBC2, WB_PICKUP_SLOT_WING_BOOTS_VALUE, WB_TEXT_MESSAGE_WING_BOOTS);
+}
+
+void pickup_effect_grant_helmet(uint8_t *image) {
+    grant_slot(image, WB_HUD_SLOT_BBBE, WB_PICKUP_SLOT_HELMET_VALUE, WB_TEXT_MESSAGE_HELMET);
+}
+
+void pickup_effect_grant_gauntlet(uint8_t *image) {
+    grant_slot(image, WB_HUD_SLOT_BBC0, WB_PICKUP_SLOT_GAUNTLET_VALUE, WB_TEXT_MESSAGE_GAUNTLET);
+}
+
+void pickup_effect_grant_revival(uint8_t *image) {
+    grant_slot(image, WB_HUD_SLOT_BBC6, WB_PICKUP_SLOT_REVIVAL_VALUE, WB_TEXT_MESSAGE_REVIVAL);
+}
+
+void pickup_effect_grant_fire_balls(uint8_t *image) {
+    grant_record(image, WB_PICKUP_RECORD_FIRE_BALLS, WB_TEXT_MESSAGE_FIRE_BALLS);
+}
+
+void pickup_effect_grant_bombs(uint8_t *image) {
+    grant_record(image, WB_PICKUP_RECORD_BOMBS, WB_TEXT_MESSAGE_BOMBS);
+}
+
+void pickup_effect_grant_wind_spouts(uint8_t *image) {
+    grant_record(image, WB_PICKUP_RECORD_WIND_SPOUTS, WB_TEXT_MESSAGE_WIND_SPOUTS);
+}
+
+void pickup_effect_grant_lightning(uint8_t *image) {
+    grant_record(image, WB_PICKUP_RECORD_LIGHTNING, WB_TEXT_MESSAGE_LIGHTNING);
+}
+
+/* $106f0 — `move.w max,meter`, `effect_restore_b6fa_to_max`'s one instruction with the panel's own
+ * countdown restarted above it and no test at all, so it fills the meter even from above the
+ * maximum. */
+void pickup_effect_refill_meter(uint8_t *image) {
+    wr16(image + WB_PANEL_FRAME_DELAY, WB_PANEL_FRAME_DELAY_INIT);
+    wr16(image + WB_HUD_METER_VALUE, be16(image + WB_HUD_METER_MAX));
+    post_message(image, WB_TEXT_REQUEST_NONE);
+}
+
+/* $10714 — AND IT IS NOT `effect_add4_clamped_b6fa` AT ANOTHER ADDRESS. Both compute
+ * `meter + WB_PICKUP_METER_STEP` and both branch on `bgt` against the maximum; that one then STORES
+ * the maximum and this one stores nothing, so a meter within three of full is left exactly where it
+ * was instead of being topped up. Same shipped-bug class as slot 30's missing store, reproduced for
+ * the same reason.
+ *
+ * The compare is the SIGNED 16-bit one of its sibling, and the add wraps, so the two cases that
+ * make the signedness observable are the same two — a meter near $7fff comes out negative and
+ * stores. */
+void pickup_effect_add4_meter(uint8_t *image) {
+    uint16_t raised;
+
+    wr16(image + WB_PANEL_FRAME_DELAY, WB_PANEL_FRAME_DELAY_INIT);
+    raised = (uint16_t)(be16(image + WB_HUD_METER_VALUE) + WB_PICKUP_METER_STEP);
+    if ((int16_t)raised <= (int16_t)be16(image + WB_HUD_METER_MAX))
+        wr16(image + WB_HUD_METER_VALUE, raised);
+    post_message(image, WB_TEXT_REQUEST_NONE);
+}
+
+/* $10746 — the attack level, and the ONE handler here whose last write happens on BOTH arms.
+ * `cmpi.b #$3,$b444.l / bgt $10768` skips the bump AND the message, but $10768's
+ * `move.w #$ffff,$1079a.l` is below the join, so a pickup taken at a full attack level still raises
+ * WB_SCENE_EXIT_REQUEST. The byte is WB_EFFECT_RECORD_LIST's own first one — ../names.txt records
+ * that collision and this port reproduces it rather than resolving it. */
+void pickup_effect_bump_attack_level(uint8_t *image) {
+    if ((int8_t)image[WB_EFFECT_RECORD_LIST] <= (int8_t)WB_ATTACK_LEVEL_MAX) {
+        image[WB_EFFECT_RECORD_LIST]++;
+        post_message(image, WB_TEXT_MESSAGE_ATTACK_UP);
+    }
+    wr16(image + WB_SCENE_EXIT_REQUEST, WB_SCENE_EXIT_REQUESTED);
+}
+
+/* $10772 — the only routine in this file with a callee, and the only one that writes a record
+ * rather than a global. `jsr $67e0.w` hands back the followed record and the three writes are
+ * $69fe's own damage-flicker state at its maximum: WB_ACTOR_FLICKER_COUNTDOWN full,
+ * WB_ACTOR_FLAG_FLICKER_BIT (which makes the projection publish no sprite) and
+ * WB_ACTOR_FLAGS2_INVULNERABLE_BIT (which makes $69fe return without writing anything at all). The
+ * message is "Vanished !", and the three writes are why.
+ *
+ * The record's address comes out of MEMORY — $67e0 reads a table pointer — so the three writes go
+ * through bus.h and not through `image + addr`. */
+void pickup_effect_vanish_followed(uint8_t *image) {
+    uint32_t followed = followed_actor_record(image);
+    uint32_t flags = addr_add(followed, WB_ACTOR_FLAGS);
+    uint32_t flags2 = addr_add(followed, WB_ACTOR_FLAGS2);
+
+    bus_write_byte(image, addr_add(followed, WB_ACTOR_FLICKER_COUNTDOWN),
+                   WB_PICKUP_VANISH_FLICKER);
+    bus_write_byte(image, flags,
+                   (uint8_t)(bus_read_byte(image, flags) | (1u << WB_ACTOR_FLAG_FLICKER_BIT)));
+    bus_write_byte(image, flags2,
+                   (uint8_t)(bus_read_byte(image, flags2)
+                             | (1u << WB_ACTOR_FLAGS2_INVULNERABLE_BIT)));
+    post_message(image, WB_TEXT_MESSAGE_VANISHED);
+}

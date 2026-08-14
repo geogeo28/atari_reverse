@@ -34,8 +34,9 @@
 
 /* --- the walk and the dispatch ($8d0, $928) -----------------------------------------------------
  *
- * THE BOUNDARY, and why it is a returned ADDRESS. Sixty of the sixty-two slots are unported, so
- * there is nothing for the C to call; what it does instead is FETCH the target out of the image
+ * THE BOUNDARY, and why it is a returned ADDRESS. TEN of the sixty-two slots are unported (sixty
+ * were when this was written, and the mechanism has not moved since), so for those there is nothing
+ * for the C to call; what it does instead is FETCH the target out of the image
  * exactly as `movea.l (a1),a1` does and hand it back, and the differential runs the ORACLE on with
  * `stop_pc` at that same address plus a coverage witness that the `jmp (a1)` at $936 really fired.
  * That is batch 19's shape and batch 22's, made table-driven: a later batch adds one row to
@@ -70,6 +71,22 @@
                                         * separate code from the refusal above because the two mean
                                         * different things and a case that confused them would pin
                                         * neither */
+#define WB_ACTOR_DISPATCH_PICKUP_REFUSED 3u
+                                       /* SLOT 38's OWN, and a FOURTH code rather than a reuse of
+                                        * the first refusal: `jsr (a1)` at $54a4 goes through a
+                                        * SECOND table (WB_PICKUP_EFFECT_TABLE), so a case that
+                                        * answered `WB_ACTOR_DISPATCH_REFUSED` could not tell a type
+                                        * that left the behaviour table from a kind row whose effect
+                                        * index left the pickup one — and the two are reached on
+                                        * completely different paths.
+                                        *
+                                        * IT IS OUT OF BAND BY MEASUREMENT, not by hope. The address
+                                        * would have been the natural answer (slot 7's state `jsr`
+                                        * reports one), but the span this index reads is ordinary
+                                        * data and holds zeros, and 0 is WB_ACTOR_DISPATCH_RAN. So
+                                        * the answer is a CODE, and test_behavior.py checks all
+                                        * fourteen of the image's own longwords against these four
+                                        * values rather than assuming none collides. */
 
 /* $8d0 — run one frame of behaviour for every live record of the table WB_ACTOR_TABLE_SELECTED
  * names. No arguments: the cursor comes out of memory. game_main_loop reaches it through $882.
@@ -529,6 +546,39 @@ uint32_t actor_behavior_type24(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type25(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type26(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type27(uint8_t *image, uint32_t actor);
+
+/* --- slot 38 ($5408) and the PICKUP TIER (batch 38) ---------------------------------------------
+ *
+ * A COLLECTABLE WHOSE PAYOUT IS A TABLE LOOKUP, and the first row in this tier whose frame reaches
+ * a second dispatch. Its waiting arm is slot 31's — fall, ascend, animate or relaunch, run
+ * WB_ACTOR_FIELD_12 down as a BYTE and expire TWICE (slot 28's shape: the first expiry `bset`s
+ * WB_ACTOR_FLAG_FLICKER_BIT and reloads, the second finds it already up and leaves for
+ * `actor_defeat_and_score`). Its collect arm is what is new:
+ *
+ *   * WB_ACTOR_KIND below WB_ACTOR_PICKUP_KIND_FIRST — a SIGNED byte compare, so $80..$ff counts as
+ *     below — pays GOLD, through the same five calls `hud_award_gold_from_descriptor` makes but
+ *     with WB_STAGE_NUMBER as the amount;
+ *   * at or above it, the kind's 16-byte row decides: a nonzero WB_ACTOR_KIND_SCORE longword goes
+ *     into the score AND into `text_post_bonus_points_a4be`'s five digits, and
+ *     WB_ACTOR_KIND_PICKUP_EFFECT then indexes WB_PICKUP_EFFECT_TABLE.
+ *
+ * Both arms end in `actor_defeat_and_score`, so a collected pickup is retired the way a defeated
+ * monster is.
+ *
+ * IT RETURNS WB_ACTOR_DISPATCH_PICKUP_REFUSED when the effect index leaves the fourteen entries.
+ * Nothing bounds that index: the two `add.w`s wrap in sixteen bits and the extension word
+ * sign-extends, so 56 of the 65,536 values reach an entry (four aliases each) and the rest read a
+ * longword outside the table and `jsr` through it. */
+uint32_t actor_behavior_type38_pickup(uint8_t *image, uint32_t actor);
+
+/* $6938 — 82 bytes, and the LONGWORD sibling of `text_write_gold_digits_a2ac`: five packed-BCD
+ * digits of `entry_d0` patched into the front of message WB_TEXT_MESSAGE_BONUS_POINTS's own shipped
+ * string, leading zeros drawn as spaces, and then that message posted. ONE caller, slot 38's score
+ * arm, which is also what keeps it out of a runaway — see src/behavior.c: an addend whose low five
+ * nibbles are ALL zero leaves the digit loop counting down from zero, and an addend of zero never
+ * leaves the blanking loop at all. The caller's `beq` rules the second out and no shipped kind row
+ * reaches the first. */
+void text_post_bonus_points_a4be(uint8_t *image, uint32_t entry_d0);
 
 /* $d78 — the twelve bytes slot 53 calls, and the only player-tier code in this file. Returns
  * WB_ACTOR_DISPATCH_RAN while WB_TILE_33_MODE is set (the original returns having written nothing)
