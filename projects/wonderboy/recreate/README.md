@@ -443,6 +443,12 @@ done
    step-0 green check passes, and refuse to overwrite an existing one — re-arming is an explicit
    `rm -rf snapshot`. This is not an eighth way a sweep lies; it is mode 4's guard extended from the
    restore step to the capture step, and the frame sentence's count of SEVEN stands.
+   A third self-inflicted variant, from batch 35's post-mortem: **`pkill -f` matches its own
+   shell's command line** when the pattern string appears in it, so the cleanup kills the shell
+   mid-diagnosis and the next check runs against a state you did not establish (a healthy tree
+   read as total loss, twice, before the cause was found). Patterns must exclude the invoking
+   shell — `pgrep -f … | grep -v $$`, or match on the interpreter path, never on a string your
+   own command line carries.
 5. **A tree that does not COLLECT reports every mutant as caught.** The returncode is nonzero either
    way, and "nonzero = caught" cannot tell a failing case from a failing import. Batch 21b hit this:
    an encoder hoisted out of two batteries without being added to their import lists broke
