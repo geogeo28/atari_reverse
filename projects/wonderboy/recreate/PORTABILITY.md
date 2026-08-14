@@ -1562,7 +1562,11 @@ bitmaps), `0x1a830..0x1aaca` 666 B (`$1a830`/`$1a864`/`$1a9d0`, sound tables), `
 
 The third row is the campaign's remaining question and it is a small one: 9 of the 41 holes are
 cited by a handler's own plate as "its own PC-relative frame word table(s) at `$…`" (624 B), and
-`$6586..$6786` (512 B) is the 32-byte-stride table `actor_spawn_from_6586_table` reads. The rest
+`$6586..$6786` (512 B) is `actor_aim_velocity_table`, the 32-byte-stride table
+`actor_aim_velocity` ($6528) indexes — sixteen signed byte PAIRS a row, and batch 37 read the
+routine: it allocates nothing and writes no memory at all, where the name and plate it carried
+until then said it spawned from the table. Only row 6 has a ported reader (behaviour slot 21),
+so what bounds the table above that row is still slot 45's business. The rest
 are the same shape between consecutive handlers and are almost certainly the same thing, but they
 are **not individually read**, so they are counted as inter-handler holes rather than as confirmed
 DATA. The whole `still unknown` column is nine fragments, the largest 102 B (`0xed9c..0xee02`,

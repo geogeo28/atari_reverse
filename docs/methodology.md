@@ -83,8 +83,10 @@ subtracting two of them gives you an entry-to-entry SPAN, which is data plus cod
 shared routines happen to sit between. Read the plate first, then verify it from the bytes; quote
 the span only as the span. Slots 14..27 carry the same decoded extents and any queue that quotes
 their nominal spans should say which figure it is quoting. **Batch 36 then ran the rule as
-written and it held six times out of six** — 396/330/408/574/520/652 nominal against
-316/234/312/290/424/364 decoded, every plate matching the bytes on the first read — which is what
+written and it held six times out of six, and batch 37's eight for eight** —
+396/330/408/574/520/652 nominal against 316/234/312/290/424/364 decoded, and then
+474/458/352/560/202/520/320/474 against 378/362/264/432/150/424/216/378: every plate matching
+the bytes on the first read — which is what
 turns "read the plate first" from an anecdote into the cheaper method. Batch 35 hit the worst instance yet: slot 9's dispatch entry to slot 10's is **552** bytes
 and the handler is **152**, because SIX SHARED LEAVES — `$2f22`, `$2f46`, `$2f86`, `$2fce`, `$2fe8`
 and `$3006`, FIVE of them already ported and only `$2f46` new — sit inside that span between the slot's own `rts` and its
@@ -107,6 +109,27 @@ address. Two things come out of it: the port of the *other* routine must call yo
 writing a second copy, and the plate has to say so, because the next reader's only clue is a
 displacement 5 KB away. Make it a case: assert the exact set of inbound edges, so a later batch that
 adds one fails rather than silently forks the code.
+
+### The same routine at two addresses: check before you transcribe it twice
+
+A dispatch table of near-identical rows is not always near-identical *code*. Wonder Boy's behaviour
+table holds one 378-byte body **twice** — slots 20 (`$4118`) and 27 (`$4c5e`) are the same
+instructions with four table addresses and two sprite ids changed — and three more rows are another
+handler's body with a different contact arm or a different minion type. Five of the block's eight
+rows were parametrisations of code the port already had, so what looked like 2,604 new bytes was
+about 900.
+
+The check is cheap and worth running before you write a line: **assemble the body you already have
+at the new entry's address and diff it against the image.** Displacements move with the base, so a
+duplicated routine comes out differing only in its operands — ten bytes in six runs, in this case,
+which is a crisper claim than "they look alike" and fails loudly if a later reader is wrong about it.
+Do it as a case, and assert the *shape* of the difference (how many runs, how long) rather than a
+byte count alone: a count matches by accident, a run structure does not.
+
+Two second-order gains. A parametrised port halves the surface a mutation sweep has to cover — and
+raises the value of each mutant, because one flipped constant is now driven by two rows' cases. And
+the differences you *do* find are exactly the facts worth naming: they are the six constants that
+make the two creatures different creatures.
 
 ### A plate correction is landed when the OLD PHRASE GREPS TO ZERO
 

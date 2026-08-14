@@ -151,8 +151,8 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            for state_flag_a34) and the dispatcher it feeds ($928), which fetches a
                            longword out of the 62-entry table at $938 and tail-jumps through it —
                            on the WRAPPED offset, so 248 of the 65,536 type values reach an entry.
-                           FORTY-THREE of the sixty-two rows are reconstructed as of batch 36 and
-                           nineteen are not, so for those the dispatcher hands the target
+                           FIFTY-ONE of the sixty-two rows are reconstructed as of batch 37 and
+                           eleven are not, so for those the dispatcher hands the target
                            BACK and the differential runs the oracle on to it; the reconstructed
                            list grows by a few rows a batch. (This line read "twenty-two" while
                            ../STATUS.md read twenty-three at batch 32 and neither was checked
@@ -315,7 +315,7 @@ test/test_behavior.py      the behaviour tier's differential. Its shape is set b
                            sum-the-spanned-bytes idiom), and an independent model of $5c6e's three
                            overlap tests compared against the ORACLE's d0 as well as the port's
                            return. It imports test_map.py's map seeding and test_rng.py's generator
-                           model rather than restating either. Then the FORTY-THREE LIVE TABLE ROWS:
+                           model rather than restating either. Then the FIFTY-ONE LIVE TABLE ROWS:
                            the five-handler band at $2462..$2db1 (one shape with five bodies), the
                            whole $5a band ($5928..$5c6b, seven rows and three endings of one
                            grammar), the three moving platforms, slot 60's retype, slot 61's message

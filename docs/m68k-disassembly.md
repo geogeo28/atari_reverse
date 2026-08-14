@@ -465,6 +465,38 @@ Three habits that catch it:
   from the table entry the "obvious" reading would give, so a seed that happened to agree cannot
   pass as a proof. `projects/wonderboy/recreate/test/test_behavior.py` has the pair.
 
+## The X flag is a RETURN VALUE, and it survives every call
+
+`ADD`, `SUB`, `ADDI`, `SUBI`, `ADDQ`, `SUBQ`, `NEG`, the shifts and the rotates-through-extend write
+the 68000's X flag. `CMP`, `TST`, `BTST`/`BSET`/`BCLR`, `MOVE`, `MOVEA`, `LEA` and every branch leave
+it exactly as they found it — and nothing about `BSR`/`RTS` restores it. So **whatever the last
+X-writing instruction on a path left is what the caller sees**, however many instructions and however
+many calls later, until something else writes it.
+
+That matters wherever a routine *reads* X as an input. The BCD instructions do: `ABCD`, `SBCD` and
+`ADDX`/`SUBX` add the extend bit in. A reconstruction of a BCD accumulator therefore has to say what
+its caller's entry X was, and "zero" is a claim, not a default.
+
+The procedure, when a call site's entry X is not produced by the site itself:
+
+1. Walk **backwards** from the `bsr` to the previous X-writing instruction, through the call as well
+   as through straight-line code. Reads and branches are transparent; treat them as such rather than
+   stopping at them.
+2. When the walk reaches a `bsr`, the answer is inside that callee — and specifically on the path to
+   the `rts` it returned through. Find every `rts` and read backwards from each.
+3. If the last writer is a constant-fold (`addi.b #$30` on a value masked to `$0..$f` cannot carry),
+   you have **proved** the bit. If it is data dependent, you have not, and no number of green
+   differential rows makes it a proof — they pin the bit over the seeds you happened to run.
+4. A data-dependent one is not a dead end: **compute it in the port from the same operands.** In
+   Wonder Boy, `actor_followed_overlap_mask` ($5c6e) has one `rts`, and the last arithmetic before it
+   is `addi.w #$16,d5` on the followed record's x — or, for the two sprite ids that have a reach
+   point, `subi.w #$9,d6` on its y. A `bsr` two calls later reads that carry as its BCD entry extend,
+   and the reconstruction re-derives it in three lines rather than asserting a zero that is wrong for
+   any followed record above `$ffe9` or below y 9.
+
+The tell that you have skipped this: a BCD call site in the port whose extend argument is a literal
+with no comment naming the instruction that produced it.
+
 ## Machine detection
 
 ST-family games often branch on machine type via `$ffff8007` (STE/MSTE bus) or the

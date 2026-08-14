@@ -87,6 +87,15 @@ uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
  * entered with the bit `lsl.w #2,d2` pushed out of the spawn type at $6c20 — produced INSIDE that
  * routine, so an ordinary differential row drives it either way (test_actor.py).
  *
+ * AND A FOURTH, whose entry X comes out of a routine two calls back: behaviour slot 23's
+ * `bsr $b582` at $4678. Nothing between it and `actor_followed_overlap_mask`'s return writes X —
+ * `btst`, `tst.w`, `cmpi.w`, `move.w #imm` and $67e0's whole body (`tst.w` / `lea` / `rts`) all
+ * leave it alone — so what that call reads is the LAST arithmetic on the only path to $5c6e's
+ * single `rts` at $5d60: `subi.w #$9,d6` on the followed record's y for the two sprite ids that
+ * have a reach point, and `addi.w #$16,d5` on its x for every other sprite. Both are DATA
+ * DEPENDENT, which is why `overlap_mask_exit_extend` in src/behavior.c computes the bit from the
+ * same two words rather than claiming it, and why this site carries no marker either.
+ *
  * WHAT IS STILL UNPINNABLE, and it is the harness rather than the model: `emu.run` forces SR =
  * $2700 after its reset and has no entry-CCR parameter, so no case can enter one of these routines,
  * or any routine that calls one, with X already set. What that costs is listed in ../STATUS.md; the
@@ -94,8 +103,8 @@ uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
 
 /* THE ENTRY X A CALL SITE CLAIMS, in TWO spellings, because the sites do not all rest on the same
  * kind of evidence and one name would have hidden that. `grep -r WB_BCD_ENTRY_EXTEND ../src` is the
- * audit and returns FIVE CALL SITES — TWO proved, TWO differential-pinned, one assumed. The three THREADED sites carry no
- * marker at all, by construction, and are named above.
+ * audit and returns FIVE CALL SITES — TWO proved, TWO differential-pinned, one assumed. The FOUR
+ * THREADED sites carry no marker at all, by construction, and are named above.
  *
  * PROVED (two): $5196 and $e130, by a reading of the bytes — see each call.
  *

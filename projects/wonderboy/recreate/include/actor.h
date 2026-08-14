@@ -27,6 +27,13 @@ void actor_set_side_flag(uint8_t *image, uint32_t actor);
  * word is written, so the caller's own high half comes back. Five `bsr` callers. */
 uint32_t actor_followed_x_within(const uint8_t *image, uint32_t actor, uint32_t reach);
 
+/* $6528 — the AIM TABLE. `from_*` is the original's (d0, d1), `to_*` its (d2, d3) and `row` its d4;
+ * the pair written back through `dx`/`dy` is the (d0, d1) it returns, and they are the ONLY two
+ * registers it does not save. Sixteen directions per row, quantised out of the two deltas' signs
+ * and their ratio. TWO callers in the image: behaviour slot 21 ($43e6) and slot 45. */
+void actor_aim_velocity(const uint8_t *image, uint32_t from_x, uint32_t from_y,
+                        uint32_t to_x, uint32_t to_y, uint32_t row, int16_t *dx, int16_t *dy);
+
 /* $8dfe — refresh screen record WB_ACTOR_FOLLOWED_SLOT (== WB_SCROLL_FOLLOW_X) from the record
  * `followed_actor_record` names, and do nothing at all while WB_STATE_FLAG_A30 is negative.
  * game_main_loop calls it immediately before bg_scroll_run_queue, which reads that record. */

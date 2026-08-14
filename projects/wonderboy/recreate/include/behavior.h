@@ -481,8 +481,9 @@ void actor_random_facing_hop(uint8_t *image, uint32_t actor);
  * both arms, so on the frame the shot fires the sprite comes out of the NEW RECORD (or, on a full
  * pool, out of address $14). Reproduced rather than repaired.
  *
- * AND SLOT 17's BODY IS NOT SLOT 17's ALONE: `bra.w $3ae6` at $48b2, inside a handler this port does
- * not have, enters its seeding block. ../names.txt records the shared span.
+ * AND SLOT 17's BODY IS NOT SLOT 17's ALONE: `bra.w $3ae6` at $48b2 — slot 24's live arm — enters
+ * its seeding block, and slot 25's `bne.w $3e2a` at $4aa8 borrows slot 18's `rts`. ../names.txt
+ * records both shared spans.
  */
 uint32_t actor_behavior_type14(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type15(uint8_t *image, uint32_t actor);
@@ -490,6 +491,44 @@ uint32_t actor_behavior_type16(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type17(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type18(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type19(uint8_t *image, uint32_t actor);
+
+/* --- dispatch rows 20..27 ($4118..$4dd7): the family CLOSES -------------------------------------
+ *
+ * The last eight of the same grammar, and five of them are code this port already had:
+ *
+ *  20  falls, walks two pixels and turns on a blocked step; a SUPPORTED record counts
+ *      WB_ACTOR_FIELD_30 down and on the frame the decrement goes negative reloads and, on half the
+ *      draws, TAIL-JUMPS into actor_start_motion_at_speed. An airborne one publishes ONE sprite id
+ *  21  never falls, hops or steps: it animates until the list wraps, latches
+ *      WB_ACTOR_TYPE21_AIMING, and then — in reach and one draw in $20 — fires an AIMED shot whose
+ *      velocity pair comes out of $6528's table (actor.h)
+ *  22  counts down and LAUNCHES ITSELF with the three bit writes spelt inline; below that it
+ *      animates and, while WB_ACTOR_TYPE53_ALIVE is clear and one draw in eight, drops a type-$35
+ *  23  the GOLD THIEF: slot 4's flying chase and its death arm exactly, with a footprint arm that
+ *      charges WB_ACTOR_TYPE23_STEAL_MAX out of WB_BCD_COUNTER and drops a type-$2e carrying it
+ *  24  falls, steps one pixel, animates — and LEAVES for slot 17's seeding block
+ *  25  slot 18's charge, one minion type over
+ *  26  slot 12's chase with a shot on the arm WB_ACTOR_FLAG_MOVING_BIT picks
+ *  27  slot 20's body again, byte for byte, with its own tables
+ *
+ * FOUR OF THEM SPLIT THE STRUCK ARM (20, 21, 25, 27), which through batch 36 only slots 18 and 19
+ * did. Slots 22, 24 and 26 face on BOTH struck arms and slot 23 on neither.
+ *
+ * TWO OF THEM CARRY THE FAMILY'S BOUNDARY: slots 22 and 26 share slot 9's `gated_hurt_frame`, whose
+ * `bsr $d78` reports WB_PLAYER_STEP_BODY while WB_TILE_33_MODE is clear.
+ *
+ * AND SLOT 23 WRITES OUTSIDE ITS OWN RECORD ON A FULL POOL, as slot 19 does: its
+ * WB_ACTOR_TYPE23_STUN_FRAMES store sits below the failed-allocation branch, so the byte lands at
+ * offset WB_ACTOR_FIELD_21 of address zero. Reproduced rather than repaired.
+ */
+uint32_t actor_behavior_type20(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type21(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type22(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type23(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type24(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type25(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type26(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type27(uint8_t *image, uint32_t actor);
 
 /* $d78 — the twelve bytes slot 53 calls, and the only player-tier code in this file. Returns
  * WB_ACTOR_DISPATCH_RAN while WB_TILE_33_MODE is set (the original returns having written nothing)

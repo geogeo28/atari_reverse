@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 249/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 258/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -68,8 +68,15 @@ on an arm the game runs every time a monster is hit) — and that family's SECON
 bounded — a patroller that drops escorts, a walker that turns AND hops off a blocked step, a hopper
 that lobs, a drifter whose two cursors are GLOBALS and which seeds five records at a time, a charger
 that saves its whole flag byte across the charge, and a two-phase glider whose firing frame
-publishes a word of the record it just allocated) —
-30,456 bytes in all, 68.8 % of everything
+publishes a word of the record it just allocated) — and THE MONSTER FAMILY CLOSES
+(`actor_behavior_type20`..`type27` plus the leaf `actor_aim_velocity`, 2,698 bytes, batch 37: the
+family's last eight middles, of which FIVE are code this port already had at another address —
+slot 27 is slot 20's 378 bytes byte for byte, slot 23 is slot 4's body with a gold-theft contact
+arm that BRANCHES INTO IT, slot 25 is slot 18's charge, slot 26 is slot 12's chase and slots 22 and
+26 share slot 9's gated hurt arm — and the three that are new are a hopper whose turn test reads a
+WORD, a sentry that AIMS its shot out of a sixteen-direction table, and a launcher whose `bclr` is
+its own test) —
+33,154 bytes in all, 74.9 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -6686,3 +6693,316 @@ boundary; the tier partition; the `scene_run_effect` latent guard; `$1fa2`
 (`actor_event_anim_step_2394`); `actor_behavior_type46` ($58f2); the second reader of
 `actor_type30_drift` at `$b84`; the three duplicate `cmt` directives (`0x1023a`, `0x10394`,
 `0x1044c`); `scene_copy_record_fields` ($539e); the thirteen third-copy encoders due in `leaf.py`.
+
+### Batch 37: dispatch rows 20..27 — THE MONSTER FAMILY CLOSES
+
+**EIGHT ROUTINES, 2,604 BYTES, AND A NINETY-FOUR-BYTE LEAF — but only about nine hundred bytes of
+new shapes.** Five of the eight are code this port already had, at another address:
+
+| address | name | bytes | row |
+| --- | --- | --- | --- |
+| `$4118` | `actor_behavior_type20` | 378 | CLEAN — the hopper that patrols, and the WORD turn test |
+| `$42f2` | `actor_behavior_type21` | 362 | CLEAN — the sentry that AIMS: the family's only user of $6528 |
+| `$44bc` | `actor_behavior_type22` | 264 | BOUNDED at `$e06` — the launcher, whose `bclr` re-arms an airborne record |
+| `$461c` | `actor_behavior_type23` | 432 | CLEAN — the GOLD THIEF, and slot 4's body: it BRANCHES INTO IT |
+| `$484c` | `actor_behavior_type24` | 150 | CLEAN — the shortest body in the family, and its tail is slot 17's |
+| `$4916` | `actor_behavior_type25` | 424 | CLEAN — slot 18's charge again, one minion type over |
+| `$4b1e` | `actor_behavior_type26` | 216 | BOUNDED at `$e06` — slot 12's chase, with a shot on the MOVING arm |
+| `$4c5e` | `actor_behavior_type27` | 378 | CLEAN — slot 20's body, byte for byte |
+| `$6528` | `actor_aim_velocity` | 94 | the aim table, and the leaf slot 21 needed |
+
+**Verified 258, 33,154 bytes, 74.9 % of §0k's 44,262; `make test` 4,992** (4,812 before, and all 180 of the growth is
+`test/test_behavior.py`, which stands at 1,378).
+**51 of the table's 62 rows are live and ELEVEN remain**; `PORTED_SLOT_COUNT` holds the figure and a
+case asserts it against the image's own table.
+
+**THE PLATES WERE RIGHT AGAIN, EIGHT FOR EIGHT.** A difference of dispatch entries gives
+474/458/352/560/202/520/320/474 bytes; the code is 378/362/264/432/150/424/216/378, and every one of
+the eight `decoded code runs $x..$y` fields in [`../names.txt`](../names.txt) matched the bytes on
+the first read. What the gaps hold is this batch's own tables — 1,236 bytes of them, every byte
+accounted for in `BODY_SIZES` and in the plates.
+
+**AND THE ENTRY PINS AGREE WITH THE IMAGE ON ALL 2,604 BYTES.** Each of the eight is re-assembled in
+`test/test_behavior.py` from encoder primitives and compared against the loaded image, which is what
+makes the readings below transcription rather than interpretation.
+
+**SLOT 20 AND SLOT 27 ARE ONE ROUTINE, DUPLICATED.** Assembling slot 20's operands at slot 27's
+entry reproduces slot 27's image bytes everywhere but **ten bytes in six runs**: the low halves of
+four `lea <abs>.l` longwords (both high halves are zero) and the low bytes of two `move.w #imm`
+words. So
+`src/behavior.c` has ONE `hopper_frame` and two constant sets, and
+`test_slots_20_and_27_are_the_SAME_body_with_six_operands_changed` asserts the run structure rather
+than a byte count (a count matches by accident; a run structure does not).
+
+  * **Slot 20/27 is the hopper that patrols.** A SUPPORTED record faces the followed one and runs
+    `30(a0)` down; the reload fires on the frame `subq.b #1,30(a0)` goes **NEGATIVE**, not the frame
+    the byte reaches zero, and then `btst #2` of a `rng_next` word SET vetoes the hop. The hop
+    itself is `bra.w $2af2` — a TAIL jump — so that frame neither steps nor animates. Its turn test
+    is the **`tst.w d0`** only slot 28 spells anywhere else in the tier, so a step blocked at a
+    nonzero map column does not turn it. An AIRBORNE record publishes ONE sprite id instead of
+    animating, and its cursor is never touched. **And its hurt wrap does `st 30(a0)` BEFORE the two
+    mark instructions** — the only hurt tail in the family with a write of its own, and what makes a
+    recovered record's very next live frame go straight to the reload and the draw.
+  * **Slot 21 is the sentry that aims, and the ONLY handler in the family that never calls
+    `actor_fall_and_settle`** — it does not fall, hop or step on any arm. `30(a0)` is a FLAG here
+    and not a countdown: nothing steps it. Clear, it animates and `st 30(a0)` on the wrap arms it;
+    set, a followed record within `$96` and a draw zero under `andi.w #$1f` fire an **AIMED** shot,
+    whose `30(a1)`/`31(a1)` are the signed byte pair `$6528` returns for the vector out of row 6.
+    `clr.b 30(a0)` runs ABOVE the allocation, so a refused shot still disarms the record — the
+    OPPOSITE of slot 14's refused drop. And `clr.w d1` overwrites the returned dy on a level shot,
+    which is observable only for a followed record to the LEFT: the level-RIGHT direction's own
+    table entry is already zero, and the first draft of that case asserted nothing because of it.
+  * **Slot 22 is the launcher, and its `bclr` is the test AND the write.** `bclr #2,8(a0) / beq` on
+    a zero countdown: a supported record reloads, raises two bits and writes its speed INLINE; an
+    AIRBORNE one stores its flag byte unchanged and falls into `subq.b #1,30(a0)`, **wrapping the
+    countdown to `$ff`** rather than merely skipping the launch. Below that it animates and, while
+    `actor_type53_alive` is clear and one draw in eight, drops a type-`$35` record carrying the
+    parent's flag **WORD** (`move.w 8(a0),8(a1)`, so `9(a0)` crosses too).
+  * **Slot 23 is the GOLD THIEF — and slot 4's body.** Its live arm and its death arm are
+    `actor_behavior_type04`'s instruction for instruction, so `hover_chase_frame` and
+    `hover_death_frame` serve both. **It does not end in its own body**: `bra.w $2840` at `$46fe`
+    leaves for slot 4's publish-and-hover tail. Only the footprint arm is its own: it charges `$10`
+    out of `bcd_counter_bd6e` and drops a type-`$2e` record carrying it — unless the followed record
+    is already flickering or its purse is empty, in which case the frame is an ordinary
+    `actor_damage_followed`. `cmpi.w #$10 / bgt` is SIGNED and the two arms are not one clamped
+    subtraction: above the maximum the counter is charged in BCD, at or below it the whole word is
+    `clr.w`ed. **And `move.b #$64,21(a1)` sits BELOW the failed-allocation branch**, so a full pool
+    writes it at address `$15` — slot 19's defect one handler on, reproduced rather than repaired.
+  * **Slot 24's tail is slot 17's.** Five calls and then `bra.w $3ae6`, so `type17_seed_burst` is
+    CALLED rather than re-ported — the obligation batch 36 pinned from the other side, honoured and
+    driven (`test_slot24_runs_SLOT_17s_seeding_burst_as_its_own_tail` requires five seed records of
+    slot 17's own type, numbered down from `WB_ACTOR_TYPE17_SEED_FIRST`). Both of its `$3006` PAIRS
+    hold the same list twice, so the facing that routine reads decides nothing here.
+  * **Slot 25 is slot 18's charge**, one minion type over, and **one of its exits is slot 18's
+    `rts`** — `bne.w $3e2a` at `$4aa8`, the second obligation batch 36 pinned. The port simply
+    returns there; `TYPE18_RTS` is derived from slot 18's own first frame table rather than
+    transcribed, so a body that moved would carry it.
+  * **Slot 26 is slot 12's chase with one instruction added**: the frame list is chosen by
+    `btst #0,8(a0)` — the MOVING bit — where slot 12 reads the SUPPORTED one, and the shot hangs off
+    the SAME branch, so a refused allocation still plays the moving list. The bit is read AFTER the
+    tick that can raise it.
+
+**THE STRUCK-ARM SPLIT IS NOW A THIRD OF THE FAMILY.** Through batch 36 only slots 18 and 19 put
+`bsr $67c2` on the overlap-POINT branch alone; slots 20, 21, 25 and 27 do it too (`$414a`, `$432e`,
+`$4952`, `$4c90`). Slots 22, 24 and 26 face on BOTH arms, with the call BELOW the two writes, and
+slot 23 on neither. `FAMILY37_STRUCK_FACES` states the pair per slot and sixteen rows drive it.
+
+**THE CENSUS, RUN BEFORE THE FACT — AND IT CORRECTED A PLATE.** All 27 tables this batch names have
+exactly ONE `lea` in the whole image over both absolute encodings and both PC-relative forms, except
+slot 23's two fly tables, which have TWO each for the same structural reason slot 4's do (one `lea`
+on the LEVEL branch and one on the stepping branch) — stated as its own case rather than as an
+exception to the rule. **And `actor_type04_hover_deltas`' plate counted ONE reference and there are
+TWO**: `lea $296c.l` at `$2864` in slot 4 and **`lea $296c.w` at `$4746` in slot 23** — the SHORT
+absolute encoding, from another handler. That is batch 34's `$5160` miss at a different address, and
+`test_slot_4s_hover_table_has_TWO_operand_sites_and_the_second_is_SLOT_23s` re-runs it.
+
+**THREE INSTRUCTIONS INSIDE THIS BAND AIM OUT OF IT, and each lands inside another handler's body.**
+`$46fe -> $2840` (slot 23 into slot 4), `$48b2 -> $3ae6` (slot 24 into slot 17) and
+`$4aa8 -> $3e2a` (slot 25 onto slot 18's `rts`).
+`test_the_only_foreign_exits_from_band37_are_the_three_the_plates_name` pins the exact set — and
+building it found a trap worth recording: **a linear sweep over a band that holds frame tables
+decodes data words as instructions**, and three of this band's data words happen to encode
+`lea <abs>.w`. Filtering by opcode to the transfer forms is what keeps a phantom out of an exact-set
+assertion.
+
+**A BCD ENTRY EXTEND THAT IS PROVABLY DATA DEPENDENT, and the fourth THREADED site.** Slot 23's
+`bsr $b582` at `$4678` reads whatever X the run left. Nothing between it and
+`actor_followed_overlap_mask`'s return writes X — `btst`, `tst.w`, `cmpi.w`, `move.w #imm`, and
+`$67e0`'s whole body is `tst.w` / `lea` / `rts` — so the bit is the LAST arithmetic on the only path
+to `$5c6e`'s single `rts` at `$5d60`: `subi.w #$9,d6` on the followed record's y for the two sprite
+ids that have a reach point, and `addi.w #$16,d5` on its x for every other sprite. Both are data
+dependent, so `overlap_mask_exit_extend` computes the bit from the same two words rather than
+claiming a zero that is wrong for any followed record above `$ffe9` or below y 9.
+[`include/hud.h`](include/hud.h)'s audit block carries it as a FOURTH threaded site and
+`docs/m68k-disassembly.md` gains the general procedure.
+
+**THE RAW-INDEX CONVENTION, DRIVEN AT ALL NINE OF THIS BATCH'S OWN FRAME READS.** Eight direct
+publishes and slot 23's hover cursor, each seeded ONE WHOLE TABLE past the mask, each requiring the
+word at `table + RAW cursor` with the stored cursor still masked. `_over_read_cursor` picks the
+smallest even cursor at which the RAW word, the MASKED word and the SIBLING table's masked word are
+three DIFFERENT values, so the sibling-table residue batch 36 measured cannot come back: a row that
+went ambiguous would fail its own premise guard rather than pass quietly. The four `$3006`-driven
+arms (slots 22, 24, 26 and slot 21's hurt) index through the shared helper, whose sites batch 36
+pins.
+
+**WHAT THE PARAMETRISATION MOVED.** `type04_death_frame` became `hover_death_frame` and slot 4's
+live arm became `hover_chase_frame` (both now serve slot 23); `type18_hurt_frame`, `type18_charge`
+and slot 18's whole body became `charger_hurt_frame`, `charger_charge` and `charger_frame` over a
+`ChargerFrames` row (slot 25's too); slots 22 and 26 call slot 9's `gated_hurt_frame` unchanged; and
+slot 24 calls `type17_seed_burst`. What is genuinely new in `src/behavior.c` is `hopper_frame`,
+slot 21, slot 23's theft, slot 26's shot and `overlap_mask_exit_extend` — and, in `src/actor.c`,
+`actor_aim_velocity`.
+
+**`actor_aim_velocity` ($6528), and the flag trick inside it.** Sixteen directions per row, chosen
+by folding both deltas into the first quadrant and measuring the ratio in three steps. The
+`asr.w #1,d2` at `$655c` leaves the bit it shifted out in X and the `roxl.w #1,d2` at `$6564` puts
+it back — an exact halve-and-restore — **except when the `addq.w #1,d4` between them runs**, which
+overwrites X with its own (always zero) carry and drops the low bit. That asymmetry is behaviour,
+not noise, and the port reproduces it; two mutants pin it from both sides.
+
+**NOT PINNED, HONESTLY.**
+  * **`actor_aim_velocity` has no ENTRY PIN**, where every behaviour body in this file does. Its
+    shifts, `exg`s, `eori`s and `movem`s need eight encoders no other body here spells, and what
+    pins it instead is a differential entered at the leaf's OWN address (five rows, including the
+    three overflowing operand pairs slot 21's reach gate cannot produce) plus six geometries through
+    slot 21 and nine mutants. It is the only routine this batch adds whose bytes are not
+    re-assembled and compared, and the queue below carries the obligation.
+  * **The two BOUNDED hurt arms.** Slots 22 and 26 stop at `WB_PLAYER_STEP_BODY` whenever
+    `WB_TILE_33_MODE` is clear, which is the ordinary state — the same limit slots 9 and 12 carry,
+    and it retires when the player tier lands.
+  * **Which creature each of the eight DRAWS**, and which the four spawn. The slots are still
+    `typeNN` and the minions are still `$2c`, `$35`, `$2e`, `$2a` and `$33`.
+  * **What reads `WB_ACTOR_FIELD_21`.** Slot 23 is the only writer read so far; the byte's consumer
+    is not established, so "stun frames" is the write's shape and not its meaning.
+  * **The rows of `actor_aim_velocity_table` above row 6.** Only slot 21's row is read by ported
+    code; what bounds the table is slot 45's business, and slot 45 is unported.
+  * **The registers each handler leaves behind**, as everywhere else in this tier.
+  * **The refused dispatch**, as in every batch since 29.
+
+**THE INDEPENDENT GATE (two reviewers) FOUND ONE REAL MODELING DIVERGENCE, THREE MUTATION-PROVEN
+COVERAGE HOLES AND A STALENESS SWEEP — and the first is a defect in the shipped C.**
+
+**`$6528`'s TWO SIGN TESTS ARE NOT THE SAME TEST, and the first draft spelt them alike.**
+`sub.w d0,d2 / bge.s $6548` at `$653e` reads **N^V** — the EXACT signed comparison of the two
+operands — where `tst.w d3 / bge.s` at `$6548` clears V first and so reads the SIGN OF THE WRAPPED
+DIFFERENCE. The two part exactly when the x subtraction overflows (`to_x` `$7fff`, `from_x` `$ffff`:
+the difference is `$8000`, whose sign bit is set, and BGE is still taken), and the port folded the
+delta the wrong way round there. `aim_direction_code` now takes the branch's own answer as a
+parameter, and the battery's model — which had repeated the same shortcut, so it could not have
+caught it — derives the branch from N and V rather than from a comparison.
+
+**AND THE DIVERGENCE IS NOT DRIVABLE THROUGH SLOT 21, which is why the leaf is now entered
+DIRECTLY.** `WB_ACTOR_TYPE21_REACH` bounds `|to_x - from_x|` to `$96`, and overflow needs a true
+difference past `$7fff` — so no frame of the only ported caller can reach it. `actor_aim_velocity`
+is exported, so `_run_aim` binds it with `leaf.bind` and enters it at its own address with d0..d4,
+comparing the ORACLE's returned d0/d1 against the port's out-params; it writes no memory at all, so
+those two registers are the whole surface. Four rows drive three overflowing operand pairs and a
+control, and a fifth pins that the five registers' HIGH HALVES cannot reach the answer — which is
+what lets the C take whole registers and truncate at each word operation, the kit's own rule.
+
+**THREE ARMS THAT NO CASE HAD EVER REACHED**, each found by a mutant that survived the whole suite:
+  * **Slot 23's in-reach LIVE arm.** `_walk_pokes_for` parks the followed record at `$0600` —
+    outside `WB_ACTOR_CHASE_REACH` — and `_thief_pokes` overlaps it into the TOUCHED arm, so every
+    slot-23 case ran either the hover alone or the theft, and exchanging the two fly tables and
+    widening the step both survived. Two rows now close on a record inside the reach and clear of
+    the actor's box (its y is far below, which the reach test does not look at), one per facing.
+  * **The `bra.w $2840` path itself.** An EQUAL x is the only state that takes it — and an equal x
+    also leaves the side bit clear, since `bsr $67c2` raises it only where the actor is STRICTLY to
+    the right — so one seed is the whole path. This batch's headline reuse claim is now EXECUTED on
+    both cores rather than only asserted about the bytes: the frame steps nothing, publishes out of
+    slot 23's own table through slot 4's instructions, and hovers on slot 4's table below them.
+  * **`overlap_mask_exit_extend`'s reach-point arm.** Every thief row hard-seeded the followed
+    record's sprite to 0, so only the `addi.w #$16` arm ever ran and `return 1` outright survived.
+    Two rows now put `WB_FOLLOWED_SPRITE_POINT_LO` on the record and drive `subi.w #$9,d6`'s borrow
+    both ways, one unit of gold apart.
+  * **And the `(+dx,+dy)` fold quadrant of the aim was uncovered** — the only `(+, >= 0)` row
+    degenerated the ratio at `dy = 0`. `(+$40,+$18)` and its odd-delta variant are two more rows on
+    the aimed-shot case.
+
+**ITEMS 1..4 ARE PROVEN BY MUTANT: 9 of 9 red.** `aim/first-test-as-plain-sign` and
+`aim/first-test-as-plain-comparison-of-deltas` (the two spellings the draft could have had),
+`aim/dy-eor-dropped`, `aim/high-halves-reach-the-answer`, `slot23/fly-tables-swapped`,
+`slot23/fly-step`, `slot23/level-arm-steps-anyway`, `extend/point-arm-never-taken` and
+`extend/always-one`.
+
+**THE STALENESS SWEEP, AND EVERY CORRECTION CERTIFIED BY ITS OWN GREP.** Batch 36's lesson was that
+uncertified corrections are where the silent no-ops live, so the count is recorded per correction
+rather than for the pass:
+
+| retired phrase | sites now |
+| --- | --- |
+| the hover table's reference count | 0 |
+| `monster_contact`'s split census | 0 |
+| `step_away_without_facing`'s caller count | 0 |
+| `gated_hurt_frame`'s caller list | 0 |
+| the struck-split's "other fifteen" | 0 |
+| `$5c6c`'s unread reader | 0 |
+| `walk_and_toggle`'s slot list | 0 live (1 in batch 36's own dated section) |
+| `$6528`'s name | 0 |
+| `$6528`'s byte count | 0 |
+| the `tst.w` census, in `../names.txt` | 0 |
+| the `tst.w` census, on the helper's plate | 0 |
+| the `tst.w` census, in the hopper's body | 0 |
+| the hurt-wrap slot count | 0 |
+| the hurt-wrap sibling's count | 0 |
+
+The three the gate found on top of this batch's own seven: **`$6528` is 94 bytes and not 92**
+(`$6586 - $6528 = $5e`, and four other surfaces already said so); **the `tst.w` turn test is no
+longer the tier's ONE** — three dispatch rows spell it over two call sites, slot 28 in its own body
+and slots 20 and 27 through the shared `hopper_frame`; and the **hurt-wrap tail is FOURTEEN slots
+over NINE call sites**, not seven over six, the figure taken from a grep of the call sites rather
+than from a running tally (four of the nine are shared: `gated_hurt_frame` carries 9, 12, 22 and 26,
+`charger_hurt_frame` 18 and 25, `hopper_hurt_frame` 20 and 27). `PORTABILITY.md` §1565 carried the
+retracted name and reading for `$6586` and now names `actor_aim_velocity_table` and says what the
+routine does NOT do. And the hover retraction QUOTED the phrase it was retracting — both halves
+greppable, which is exactly what the methodology rule forbids — and now describes it instead.
+
+**QUEUED — WHAT IS LEFT OF THE TABLE. THE MONSTER FAMILY IS WHOLE.** Eleven rows, and not one of
+them is another monster: **slot 1** (the player, the largest subtree behind the table), **slot 38**,
+**slots 39..46** and **slot 57**. The order stands: 38, then 39..46 and 57, and the player LAST.
+`scene_copy_record_fields` ($539e, 30 bytes) is still queued with `player_pending_event_gate`
+($b1a), which is the row that reaches it.
+
+**QUEUED, CARRIED FORWARD**: `abcd_byte` to the kit; regenerate `../out/names_dump.txt`,
+`../out/hw_scan.tsv`, `../decomp.c` and `../out/wonderboy_dis.txt`; `bus.h` to the kit; the `$1ab4`
+boundary; the tier partition; the `scene_run_effect` latent guard; `$1fa2`
+(`actor_event_anim_step_2394`); `actor_behavior_type46` ($58f2); the second reader of
+`actor_type30_drift` at `$b84`; the three duplicate `cmt` directives (`0x1023a`, `0x10394`,
+`0x1044c`); `scene_copy_record_fields` ($539e); the thirteen third-copy encoders due in `leaf.py`.
+**NEW, AND IT IS AN OBLIGATION RATHER THAN A NICETY**: `actor_aim_velocity` ($6528) has no ENTRY
+PIN. Giving it one needs eight encoders no body in `test/test_behavior.py` spells — `movem.l` both
+ways, `asl.w`/`asr.w`/`roxl.w` by an immediate, `exg`, `neg.w`, `eori.w`, `adda.w` and
+`move.b (An)+,Dn` with `ext.w` — and it is due NEXT-BUT-ONE, because behaviour slot 45 is the
+leaf's second caller and sits in the 39..46 block. It goes in this list because the queue is the
+only mechanism that survives a batch boundary; the `$3ae6`/`$3e2a` edges are this batch's own proof
+that it works.
+
+**MUTATION SWEEP: 42 MUTANTS OVER ELEVEN AXES, 35 CAUGHT FIRST TIME; FIVE OF THE SEVEN SURVIVORS
+WERE REAL HOLES AND ARE CLOSED (the re-run of the five, plus four rebuilt or added while closing
+them, is **9 of 9**), AND TWO ARE EQUIVALENCES — one PROVED and one argued. The honest figure is
+therefore **40 of 42, with two equivalences**.** Pre-hoc
+axes over all eight bodies and the leaf: the hopper's reload boundary, its rng veto, its hop speed
+and walk step, its WORD turn test, its airborne sprites and walk lists exchanged, its hurt latch
+dropped, its retreat suppression inverted and made a toward-step, its two facing calls dropped and
+slot 27 given slot 20's tables; slot 21's idle latch, reach, odds mask, the order of its flag clear
+against its allocation, its level dy and its aim row; the aim leaf's low-bit restore both ways, its
+two quadrant `eori`s exchanged, its second `exg` dropped and its two deltas reversed; slot 22's
+supported gate, its airborne wrap, its type-53 veto, its minion flag WORD and its reload; slot 23's
+purse compare made inclusive, its two refusals dropped, its stun write guarded, its entry extend
+forced clear and its death tables exchanged; slot 24's burst dropped and its step changed; slot 25
+given slot 18's minion type and its whole table set; slot 26's list select moved to the supported
+bit, its shot moved to the other arm and its two calls exchanged.
+
+**THE FIVE REAL HOLES.**
+  * `hopper/word-turn-test-becomes-byte` SURVIVED because every hopper case walked a CLEAR row.
+    Closed by the pair slot 28 already carries one handler over: a step blocked in map column 0
+    reports `$0000` and turns the record, and a LEFT probe that runs off the map reports the probe's
+    negative cell index — `$ff00`, whose outcome BYTE is still "blocked" — and does not.
+  * `type21/odds-mask` SURVIVED because every draw the cases reached was zero under BOTH `$1f` and
+    `$f` or nonzero under both. `_tick_that_draws` generalises the tick scan to any predicate, and
+    the separating draw is one whose low five bits are exactly `$10`.
+  * `aim/low-bit-never-restored` SURVIVED because none of the aimed geometries then in the file
+    reached the second ratio test with an ODD delta. A sweep of the model over ±100 pixels found the family that
+    does; `(-99, +98)` is the row, and it lands on a different direction entry.
+  * `type23/bcd-entry-extend-forced-clear` SURVIVED because every thief seed sat at an x whose
+    `addi.w #$16` does not carry. Two rows now drive the followed record at `$0100` and at
+    `$10000 - WB_ACTOR_POINT_RIGHT`, and they differ by ONE unit of gold — which is what says the
+    bit is threaded and not assumed.
+  * `type23/dead-tables-swapped` SURVIVED because **slot 23's death arm had no case at all**. Two
+    rows now drive the recoil AWAY out of the table the same branch picked.
+
+**AND TWO SURVIVORS ARE EQUIVALENCES, with the argument covering the consuming store.**
+  * `aim/low-bit-always-restored` is **provable**, not merely unobserved. The restored bit only
+    changes `far_axis` on the arm where the `addq` clobbered X — and that arm is entered exactly
+    when `near_axis < far_axis/2`, so `near_axis` is below both `2*(far/2)` and `2*(far/2)+1`, and
+    below both again after the `asl`. Every later compare therefore answers the same, the direction
+    code is the same, and a sweep of the model over ±300 pixels finds no geometry at all where the
+    two spellings part. It is reproduced faithfully because the bytes say so, and recorded here as
+    unobservable rather than as pinned.
+  * `type26/step-order-tick-before-face` exchanges `actor_face_and_step_toward` with
+    `actor_tick_timer30`. Their read/write sets are disjoint on everything the frame consumes: the
+    map probes read only x, half-width, type and the map, and the tick writes none of those; the
+    tick reads `30(a0)` and the SUPPORTED bit, and the step writes neither; and both touch `8(a0)`
+    as BIT operations on disjoint bits, so the byte's final value is the same in either order. The
+    consuming use is covered — the list select below reads the MOVING bit, which the tick raises in
+    both spellings. Slot 12 has carried the same pair since batch 35 and is the same argument.

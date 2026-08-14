@@ -136,10 +136,10 @@ static uint32_t step_facing(uint8_t *image, uint32_t actor, uint32_t step) {
 
 /* ...and the same four instructions with the two arms EXCHANGED, which is a step AWAY from the
  * followed record: bit 3 SET means it is to the actor's LEFT (actor.h, $67c2), so the set arm walks
- * right. FOUR routines spell it and TWO BRANCH POLARITIES do: slots 10, 13 and 18 are
- * `btst #3,8(a0) / beq -> $10a2` with `bsr $1170` falling through ($313e, $35a0 and $3dca), while
- * $2fe8 is `bne -> $1170` with `bsr $10a2` falling through — the same mapping written the other
- * way up. */
+ * right. SIX routines spell it and TWO BRANCH POLARITIES do: slots 10, 13, 18, 20, 25 and 27 are
+ * `btst #3,8(a0) / beq -> $10a2` with `bsr $1170` falling through ($313e, $35a0, $3dca, $422e,
+ * $4a5c and $4d74), while $2fe8 is `bne -> $1170` with `bsr $10a2` falling through — the same
+ * mapping written the other way up. */
 static void step_away_without_facing(uint8_t *image, uint32_t actor, uint32_t step) {
     if (faces_left(image, actor))
         step_right(image, actor, step);
@@ -223,6 +223,14 @@ static const BehaviorHandler PORTED_HANDLERS[] = {
     {WB_ACTOR_BEHAVIOR_TYPE17, actor_behavior_type17},
     {WB_ACTOR_BEHAVIOR_TYPE18, actor_behavior_type18},
     {WB_ACTOR_BEHAVIOR_TYPE19, actor_behavior_type19},
+    {WB_ACTOR_BEHAVIOR_TYPE20, actor_behavior_type20},
+    {WB_ACTOR_BEHAVIOR_TYPE21, actor_behavior_type21},
+    {WB_ACTOR_BEHAVIOR_TYPE22, actor_behavior_type22},
+    {WB_ACTOR_BEHAVIOR_TYPE23, actor_behavior_type23},
+    {WB_ACTOR_BEHAVIOR_TYPE24, actor_behavior_type24},
+    {WB_ACTOR_BEHAVIOR_TYPE25, actor_behavior_type25},
+    {WB_ACTOR_BEHAVIOR_TYPE26, actor_behavior_type26},
+    {WB_ACTOR_BEHAVIOR_TYPE27, actor_behavior_type27},
     {WB_ACTOR_BEHAVIOR_TYPE28, actor_behavior_type28},
     /* Slot 29's two bytes are the same `rts` slots 0 and 58 hold, at an address of its own — so
      * one more row and no more code. */
@@ -741,6 +749,27 @@ uint32_t actor_followed_overlap_mask(uint8_t *image, uint32_t actor) {
     return mask;
 }
 
+/* THE X FLAG $5c6e HANDS BACK, which slot 23's `bsr $b582` two calls later reads as its BCD entry
+ * extend (hud.h's site table). It is not a claim here but a reading: the bit-2 block above is the
+ * last arithmetic on EVERY path to the routine's single `rts` at $5d60, and `bset`, `cmp` and
+ * `tst` leave X alone. So
+ *   * for the two sprite ids that have a reach point, `subi.w #$9,d6` at $5d40 on the followed
+ *     record's y is the last writer, and X is its BORROW;
+ *   * for every other sprite the `bne.w $5d60` at $5d34 leaves `addi.w #$16,d5` at $5d24 on the
+ *     followed record's x as the last writer, and X is its CARRY.
+ * Both are DATA DEPENDENT, so the site threads this rather than asserting a constant — which is
+ * what makes slot 23 the fourth threaded site rather than a sixth assumed one. */
+static unsigned overlap_mask_exit_extend(const uint8_t *image) {
+    uint32_t followed = followed_actor_record(image);
+    int16_t sprite = field_w(image, followed, WB_ACTOR_SPRITE);
+
+    if (sprite == (int16_t)WB_FOLLOWED_SPRITE_POINT_LO
+        || sprite == (int16_t)WB_FOLLOWED_SPRITE_POINT_HI)
+        return (uint16_t)field_w(image, followed, WB_ACTOR_Y) < WB_ACTOR_POINT_UP;
+    return ((uint32_t)(uint16_t)field_w(image, followed, WB_ACTOR_X)
+            + WB_ACTOR_POINT_RIGHT) > 0xffffu;
+}
+
 
 /* --- $23b6: did anything the player threw land on this actor ------------------------------------
  *
@@ -856,9 +885,9 @@ static int spawn_animation_took_the_frame(uint8_t *image, uint32_t actor) {
  * which also means d7 below is only the followed record's sprite on the paths that reach the walk. */
 /* THE TWO STRUCK ARMS ARE TWO ENUMERATORS, not one plus a flag, because in the original they are
  * two ENTRY POINTS: at $3cb8 the overlap-point branch falls through `bsr $67c2` into the join the
- * shot arm at $3c9e jumps straight to, and $3ec0/$3ea6 are the same shape. Slots 18 and 19 are the
- * only handlers that read the difference — they face the followed record on the point arm and not
- * on the shot's — and every other handler names both enumerators on one arm. That is deliberate:
+ * shot arm at $3c9e jumps straight to, and $3ec0/$3ea6 are the same shape. SIX handlers read the
+ * difference — 18, 19 and (batch 37) 20, 21, 25 and 27 face the followed record on the point arm
+ * and not on the shot's — and the rest name both enumerators on one arm. That is deliberate:
  * `-Wswitch` then makes the next handler's author DECIDE, where an out-parameter defaulted to
  * "no" would let a `bsr $67c2` on the point arm be missed in silence. */
 typedef enum {
@@ -932,8 +961,8 @@ static uint8_t publish_and_store_cursor(uint8_t *image, uint32_t actor, uint32_t
 }
 
 /* `move.b #$2,d7` — a step written into the LOW BYTE ALONE of a register the settle above left
- * something in. FOUR slots spell their LEFT arm this way and their right one `move.w`: slot 3 in
- * its own body, and slots 6, 14 and 18 through `walk_and_toggle` below. So the two arms walk the
+ * something in. FIVE slots spell their LEFT arm this way and their right one `move.w`: slot 3 in
+ * its own body, and slots 6, 14, 18 and 25 through `walk_and_toggle` below. So the two arms walk the
  * same number of pixels only while what actor_fall_and_settle left is below $100 — and the settle's
  * EARLY EXIT makes the other case reachable, since a record already MOVING is returned from with
  * the caller's own d7 untouched. test/test_behavior.py drives slot 3 in its own case and 6, 14 and
@@ -943,7 +972,7 @@ static uint32_t step_over_low_byte(uint32_t settle_span, uint8_t step) {
 }
 
 /* `btst #3,8(a0)` picking a probe, `move.b #n,d7` in the LEFT arm against `move.w #n,d7` in the
- * right, then `bsr $2b82` on what the probe left — the walk slots 6, 14 and 18 spell identically.
+ * right, then `bsr $2b82` on what the probe left — the walk slots 6, 14, 18 and 25 spell identically.
  * (Slot 3 spells the same instructions but reads the facing again for its frame list BEFORE the
  * toggle can turn the record, so its copy stays in its own body.) */
 static void walk_and_toggle(uint8_t *image, uint32_t actor, uint32_t settle_span, uint8_t step) {
@@ -1172,7 +1201,11 @@ uint32_t actor_behavior_type03(uint8_t *image, uint32_t actor) {
  * record horizontally, one pixel a frame and only from inside WB_ACTOR_CHASE_REACH, while a
  * 64-word table of signed deltas moves it up and down every frame whether it is chasing or not.
  */
-static void type04_hover_step(uint8_t *image, uint32_t actor) {
+/* $285e — the hover, and SLOT 23 RUNS THESE VERY INSTRUCTIONS: its own copy at $4740 reads the same
+ * WB_ACTOR_TYPE04_HOVER through the SHORT absolute encoding, and one of its live-arm paths reaches
+ * $2840 above by `bra.w` and falls into this. So the table has TWO operand sites in the image, not
+ * the one its plate used to claim. */
+static void hover_step(uint8_t *image, uint32_t actor) {
     uint8_t cursor = field_b(image, actor, WB_ACTOR_FIELD_30);
     int16_t delta = (int16_t)bus_read_word(image, addr_add(WB_ACTOR_TYPE04_HOVER, cursor));
 
@@ -1182,20 +1215,24 @@ static void type04_hover_step(uint8_t *image, uint32_t actor) {
                 step_cursor(cursor, WB_ACTOR_TYPE04_HOVER_MASK));
 }
 
-static void type04_death_frame(uint8_t *image, uint32_t actor) {
+/* $2880 and $4760 — the death arm slots 4 and 23 share, transcribed once. No settle at all: a dead
+ * hoverer neither falls nor lands, it recoils `step` pixels AWAY unless the mark is already up, and
+ * its wrap is the `bclr #0 / bclr #3 / bne` spelling that CLEARS the defeated bit and skips the
+ * cursor store on the frame it transfers. */
+static void hover_death_frame(uint8_t *image, uint32_t actor, uint32_t dead_left,
+                              uint32_t dead_right, uint32_t step) {
     uint32_t frames;
     uint8_t stepped;
     int defeated = flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_DEFEATED_BIT);
 
-    /* No settle at all on this arm — a dead hoverer neither falls nor lands. */
     if (faces_left(image, actor)) {
         if (!defeated)
-            step_right(image, actor, WB_ACTOR_TYPE04_DEAD_STEP);
-        frames = WB_ACTOR_TYPE04_DEAD_RIGHT;
+            step_right(image, actor, step);
+        frames = dead_right;
     } else {
         if (!defeated)
-            step_left(image, actor, WB_ACTOR_TYPE04_DEAD_STEP);
-        frames = WB_ACTOR_TYPE04_DEAD_LEFT;
+            step_left(image, actor, step);
+        frames = dead_left;
     }
 
     stepped = advance_frame_cursor(image, actor, frames, WB_ACTOR_ANIM32_MASK);
@@ -1207,11 +1244,39 @@ static void type04_death_frame(uint8_t *image, uint32_t actor) {
     set_field_b(image, actor, WB_ACTOR_FIELD_18, stepped);
 }
 
+/* $27da..$287e and $46bc..$475e — the LIVE arm the same two share: close on the followed record
+ * while it is within WB_ACTOR_CHASE_REACH, animate, and hover whatever happened. */
+static void hover_chase_frame(uint8_t *image, uint32_t actor, uint32_t fly_left,
+                              uint32_t fly_right, uint32_t step) {
+    actor_set_side_flag(image, actor);
+    if ((int16_t)actor_followed_x_within(image, actor, WB_ACTOR_CHASE_REACH) >= 0) {
+        uint32_t followed = followed_actor_record(image);
+        int left = faces_left(image, actor);
+
+        /* Level with the followed record it stops stepping but keeps animating — `cmp.w (a1),d0 /
+         * beq` skips only the two probe calls. */
+        if (field_w(image, actor, WB_ACTOR_X) != field_w(image, followed, WB_ACTOR_X)) {
+            if (left)
+                step_left(image, actor, step);
+            else
+                step_right(image, actor, step);
+        }
+
+        /* `move.l #$0,d0` where every other cursor here is a `moveq`: six bytes for the same zero,
+         * the deliberate-waste class ../names.txt records at $7366. */
+        set_field_b(image, actor, WB_ACTOR_FIELD_18,
+                    advance_frame_cursor(image, actor, left ? fly_left : fly_right,
+                                         WB_ACTOR_ANIM32_MASK));
+    }
+    hover_step(image, actor);
+}
+
 uint32_t actor_behavior_type04(uint8_t *image, uint32_t actor) {
     if (spawn_animation_took_the_frame(image, actor))
         return WB_ACTOR_DISPATCH_RAN;
     if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)) {
-        type04_death_frame(image, actor);
+        hover_death_frame(image, actor, WB_ACTOR_TYPE04_DEAD_LEFT, WB_ACTOR_TYPE04_DEAD_RIGHT,
+                          WB_ACTOR_TYPE04_DEAD_STEP);
         return WB_ACTOR_DISPATCH_RAN;
     }
 
@@ -1228,29 +1293,8 @@ uint32_t actor_behavior_type04(uint8_t *image, uint32_t actor) {
         break;
     }
 
-    actor_set_side_flag(image, actor);
-    if ((int16_t)actor_followed_x_within(image, actor, WB_ACTOR_CHASE_REACH) >= 0) {
-        uint32_t followed = followed_actor_record(image);
-        int left = faces_left(image, actor);
-
-        /* Level with the followed record it stops stepping but keeps animating — `cmp.w (a1),d0 /
-         * beq` skips only the two probe calls. */
-        if (field_w(image, actor, WB_ACTOR_X) != field_w(image, followed, WB_ACTOR_X)) {
-            if (left)
-                step_left(image, actor, WB_ACTOR_TYPE04_FLY_STEP);
-            else
-                step_right(image, actor, WB_ACTOR_TYPE04_FLY_STEP);
-        }
-
-        /* `move.l #$0,d0` where every other cursor here is a `moveq`: six bytes for the same zero,
-         * the deliberate-waste class ../names.txt records at $7366. */
-        set_field_b(image, actor, WB_ACTOR_FIELD_18,
-                    advance_frame_cursor(image, actor,
-                                         left ? WB_ACTOR_TYPE04_FLY_LEFT
-                                              : WB_ACTOR_TYPE04_FLY_RIGHT,
-                                         WB_ACTOR_ANIM32_MASK));
-    }
-    type04_hover_step(image, actor);
+    hover_chase_frame(image, actor, WB_ACTOR_TYPE04_FLY_LEFT, WB_ACTOR_TYPE04_FLY_RIGHT,
+                      WB_ACTOR_TYPE04_FLY_STEP);
     return WB_ACTOR_DISPATCH_RAN;
 }
 
@@ -1815,7 +1859,8 @@ static void type53_free_slot(uint8_t *image, uint32_t actor) {
 /* $5be4 — the slider, and the only handler in the tier that publishes a GLOBAL. Its first
  * instruction raises WB_ACTOR_TYPE53_ALIVE unconditionally — every frame, on every arm — and its
  * exit lowers it, so the word is "a type-53 record ran this frame and has not finished"; the one
- * reader is the `tst.w` at $454c, inside a handler this port does not have.
+ * reader is the `tst.w` at $454c, which batch 37 read — it is slot 22's veto on its own minion
+ * spawn, so a live type-53 record stops that handler seeding.
  *
  * It takes no map probe: actor_fall_and_settle is the only thing it asks about the ground, and its
  * step is an unconditional WB_ACTOR_TYPE53_STEP added straight to the x word. */
@@ -2544,9 +2589,12 @@ static int field_12_word_ran_out(uint8_t *image, uint32_t actor) {
     return left == 0;
 }
 
-/* $4e98's `tst.w d0` — the ONE step test in this tier that reads the WORD.
+/* $4e98's `tst.w d0` — the step test that reads the WORD. THREE dispatch rows spell it over TWO
+ * call sites: slot 28 in its own body, and slots 20 and 27 through the one shared `hopper_frame`
+ * below. (Batch 33 called it the tier's only one; batch 37 read the two hoppers.)
  *
- * Every other one is `tst.b d0` (`step_was_blocked` above), and the difference is not cosmetic: the
+ * Every other step test is `tst.b d0` (`step_was_blocked` above), and the difference is not
+ * cosmetic: the
  * probes leave a map COLUMN — or a clamp limit, or a parked x — in the byte ABOVE the outcome
  * (map.h), so this arm turns the record round only when that byte is zero too. A step blocked at
  * column $10 reports $1000 and the `bchg` does not fire; a step blocked at column 0 reports $0000
@@ -3057,9 +3105,11 @@ static uint8_t step_cursor_in_memory(uint8_t *image, uint32_t actor, uint32_t of
     return masked;
 }
 
-/* `bclr #0,9(a0) / btst #3,9(a0) / bne.w $6bb8` — SEVEN slots end their hurt animation this way
- * (9, 10, 11 and 12 from batch 35, then 14, 17 and 18), over SIX call sites in six bodies, because
- * slots 9 and 12 share `gated_hurt_frame`. The DEFEATED bit is only TESTED, where slots 2, 3
+/* `bclr #0,9(a0) / btst #3,9(a0) / bne.w $6bb8` — FOURTEEN slots end their hurt animation this way
+ * (9, 10, 11 and 12 from batch 35; 14, 17 and 18 from batch 36; 20..22 and 24..27 from batch 37),
+ * over NINE call sites, because four of the nine are shared: `gated_hurt_frame` carries 9, 12, 22
+ * and 26, `charger_hurt_frame` 18 and 25, and `hopper_hurt_frame` 20 and 27. The figure is a grep
+ * of this file's call sites, not a running tally. The DEFEATED bit is only TESTED, where slots 2, 3
  * and 4 `bclr` it, so a record that runs out of hit points and survives the wrap keeps the mark; and
  * the `btst` RE-READS the byte the `bclr` just wrote rather than reasoning about it, which is what
  * the original does. Slots 15 and 16 read the two marks the other way round —
@@ -3102,9 +3152,10 @@ void actor_random_facing_hop(uint8_t *image, uint32_t actor) {
  * player_gate_on_1516, which BRANCHES into WB_PLAYER_STEP_BODY while WB_TILE_33_MODE is clear. Slot
  * 53 met the same edge first and slot 12 below meets it again.
  */
-/* THE HURT ARM SLOTS 9 AND 12 SHARE, instruction for instruction bar the list pair: the settle, the
- * player gate, a four-pixel retreat, one frame, and the wrap. The two bodies really do differ only
- * in the `lea` operand, which is why this is one function. */
+/* THE HURT ARM FOUR SLOTS SHARE — 9, 12 and (batch 37) 22 and 26 — instruction for instruction bar
+ * the list pair: the settle, the player gate, a four-pixel retreat, one frame, and the wrap. The
+ * four bodies really do differ only in the `lea` operand, which is why this is one function, and
+ * all four are BOUNDED at WB_PLAYER_STEP_BODY for the same reason. */
 static uint32_t gated_hurt_frame(uint8_t *image, uint32_t actor, uint32_t hurt_lists) {
     uint32_t boundary;
 
@@ -3462,9 +3513,9 @@ uint32_t actor_behavior_type13(uint8_t *image, uint32_t actor) {
  */
 
 /* `btst #3,9(a0) / bne.w $6bb8 / bclr #0,9(a0)` — slots 15 and 16 read the two marks in the OTHER
- * order from monster_hurt_wrap_clear_then_test's seven slots: the defeated bit is tested FIRST and
- * bit 0 is lowered only when the mark is down. So a record that transfers keeps BOTH marks where
- * those seven keep only the defeated one, and 9(a0) is where the difference shows. */
+ * order from monster_hurt_wrap_clear_then_test's fourteen slots: the defeated bit is tested FIRST
+ * and bit 0 is lowered only when the mark is down. So a record that transfers keeps BOTH marks
+ * where those fourteen keep only the defeated one, and 9(a0) is where the difference shows. */
 static void monster_hurt_wrap_test_then_clear(uint8_t *image, uint32_t actor) {
     if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_DEFEATED_BIT)) {
         actor_defeat_and_score(image, actor);
@@ -3602,7 +3653,7 @@ uint32_t actor_behavior_type14(uint8_t *image, uint32_t actor) {
  * 234 bytes, and the only handler in the family whose walk ends in actor_turn_and_launch ($2b8e) —
  * the two `bsr` sites that routine's plate counts are this handler's two arms. So a blocked step or
  * a one-cell drop turns the record round AND relaunches it at WB_ACTOR_TURN_LAUNCH_SPEED, where
- * slots 6, 14 and 18 only turn.
+ * slots 6, 14, 18 and 25 only turn.
  *
  * THE FRAME LIST IS CHOSEN BEFORE THE TURN CAN HAPPEN — the `lea` sits between the probe and the
  * `bsr` — so a turn shows in NEXT frame's list. Slot 14 above is the other way round.
@@ -3770,10 +3821,11 @@ static uint16_t type17_drift_axis(uint8_t *image, uint32_t actor, uint32_t field
     return stepped;
 }
 
-/* $3ae6 — the seeding. A SECOND ROUTINE ENTERS HERE: `bra.w $3ae6` at $48b2, inside a handler this
- * port does not have, so these instructions are not slot 17's alone (../names.txt records the
- * shared span). The `dbf` loop takes a fresh record each turn and RETURNS on the first refusal, so
- * a pool with room for three seeds three and stops. */
+/* $3ae6 — the seeding. A SECOND ROUTINE ENTERS HERE: `bra.w $3ae6` at $48b2 is SLOT 24's whole
+ * tail, so these instructions are not slot 17's alone (../names.txt records the shared span) and
+ * `actor_behavior_type24` calls this helper rather than carrying a second copy. The `dbf` loop
+ * takes a fresh record each turn and RETURNS on the first refusal, so a pool with room for three
+ * seeds three and stops. */
 static void type17_seed_burst(uint8_t *image, uint32_t actor) {
     uint8_t ordinal = WB_ACTOR_TYPE17_SEED_FIRST;
     unsigned remaining;
@@ -3853,36 +3905,60 @@ uint32_t actor_behavior_type17(uint8_t *image, uint32_t actor) {
  * and the body arm flips the facing before actor_damage_followed — which no other handler in the
  * family does.
  */
-static uint32_t type18_hurt_frame(uint8_t *image, uint32_t actor) {
+/* SLOT 25 IS THIS SAME ROUTINE. $4916..$4abd repeats $3c84..$3e2b instruction for instruction with
+ * four table addresses and one minion type changed — batch 37 read both — so the body below is
+ * parametrised and each row names its own constants. Slot 25's last `rts` is not even its own: its
+ * `bne.w $3e2a` at $4aa8 borrows slot 18's. */
+typedef struct {
+    uint32_t walk_left, walk_right;   /* 16 words each, WB_ACTOR_ANIM32_MASK */
+    uint32_t hurt_left, hurt_right;   /* 8 words each, WB_ACTOR_ANIM16_MASK */
+    uint8_t walk_step, hurt_step, charging, hop_speed, turn_frames;
+    uint16_t minion_type;
+} ChargerFrames;
+
+static const ChargerFrames TYPE18_FRAMES = {
+    WB_ACTOR_TYPE18_WALK_LEFT, WB_ACTOR_TYPE18_WALK_RIGHT,
+    WB_ACTOR_TYPE18_HURT_LEFT, WB_ACTOR_TYPE18_HURT_RIGHT,
+    WB_ACTOR_TYPE18_WALK_STEP, WB_ACTOR_TYPE18_HURT_STEP, WB_ACTOR_TYPE18_CHARGING,
+    WB_ACTOR_TYPE18_HOP_SPEED, WB_ACTOR_TYPE18_TURN_FRAMES, WB_ACTOR_TYPE18_MINION_TYPE,
+};
+
+static const ChargerFrames TYPE25_FRAMES = {
+    WB_ACTOR_TYPE25_WALK_LEFT, WB_ACTOR_TYPE25_WALK_RIGHT,
+    WB_ACTOR_TYPE25_HURT_LEFT, WB_ACTOR_TYPE25_HURT_RIGHT,
+    WB_ACTOR_TYPE25_WALK_STEP, WB_ACTOR_TYPE25_HURT_STEP, WB_ACTOR_TYPE25_CHARGING,
+    WB_ACTOR_TYPE25_HOP_SPEED, WB_ACTOR_TYPE25_TURN_FRAMES, WB_ACTOR_TYPE25_MINION_TYPE,
+};
+
+static uint32_t charger_hurt_frame(uint8_t *image, uint32_t actor, const ChargerFrames *f) {
     if (!flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_DEFEATED_BIT))
-        step_away_without_facing(image, actor, WB_ACTOR_TYPE18_HURT_STEP);
+        step_away_without_facing(image, actor, f->hurt_step);
 
     if (publish_and_store_cursor(image, actor,
-                                 faces_left(image, actor) ? WB_ACTOR_TYPE18_HURT_LEFT
-                                                          : WB_ACTOR_TYPE18_HURT_RIGHT,
+                                 faces_left(image, actor) ? f->hurt_left : f->hurt_right,
                                  WB_ACTOR_ANIM16_MASK) == 0)
         monster_hurt_wrap_clear_then_test(image, actor);
     return WB_ACTOR_DISPATCH_RAN;
 }
 
-/* $3cf2 — the charge. The flag byte is saved BEFORE actor_set_side_flag and
+/* $3cf2 / $4984 — the charge. The flag byte is saved BEFORE actor_set_side_flag and
  * actor_start_motion_at_speed rewrite it, which is what makes the restore below a restore. */
-static void type18_charge(uint8_t *image, uint32_t actor) {
-    set_field_b(image, actor, WB_ACTOR_FIELD_31, WB_ACTOR_TYPE18_CHARGING);
+static void charger_charge(uint8_t *image, uint32_t actor, const ChargerFrames *f) {
+    set_field_b(image, actor, WB_ACTOR_FIELD_31, f->charging);
     set_field_b(image, actor, WB_ACTOR_FIELD_29, field_b(image, actor, WB_ACTOR_FLAGS));
     actor_set_side_flag(image, actor);
-    actor_start_motion_at_speed(image, actor, WB_ACTOR_TYPE18_HOP_SPEED);
-    spawn_companion(image, actor, WB_ACTOR_TYPE18_MINION_TYPE);
+    actor_start_motion_at_speed(image, actor, f->hop_speed);
+    spawn_companion(image, actor, f->minion_type);
 }
 
-uint32_t actor_behavior_type18(uint8_t *image, uint32_t actor) {
+static uint32_t charger_frame(uint8_t *image, uint32_t actor, const ChargerFrames *f) {
     uint32_t settle_span;
     uint8_t timer;
 
     if (spawn_animation_took_the_frame(image, actor))
         return WB_ACTOR_DISPATCH_RAN;
     if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0))
-        return type18_hurt_frame(image, actor);
+        return charger_hurt_frame(image, actor, f);
 
     switch (monster_contact(image, actor)) {
     case MONSTER_TOUCHED_FOLLOWED:
@@ -3906,22 +3982,25 @@ uint32_t actor_behavior_type18(uint8_t *image, uint32_t actor) {
     timer = field_b(image, actor, WB_ACTOR_FIELD_30);
     if (timer != 0) {
         set_field_b(image, actor, WB_ACTOR_FIELD_30, (uint8_t)(timer - 1));
-        walk_and_toggle(image, actor, settle_span, WB_ACTOR_TYPE18_WALK_STEP);
+        walk_and_toggle(image, actor, settle_span, f->walk_step);
     } else if (field_b(image, actor, WB_ACTOR_FIELD_31) == 0) {
-        type18_charge(image, actor);
+        charger_charge(image, actor, f);
         return WB_ACTOR_DISPATCH_RAN;
     } else if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT)) {
-        restore_flags_and_turn(image, actor, WB_ACTOR_TYPE18_TURN_FRAMES);
+        restore_flags_and_turn(image, actor, f->turn_frames);
         return WB_ACTOR_DISPATCH_RAN;
     }
 
     /* A record still in the air mid-charge reaches this ANIMATION ALONE: no step and no turn, which
      * is what the `beq.w $3d86` past the restore does. */
     publish_and_store_cursor(image, actor,
-                             faces_left(image, actor) ? WB_ACTOR_TYPE18_WALK_LEFT
-                                                      : WB_ACTOR_TYPE18_WALK_RIGHT,
+                             faces_left(image, actor) ? f->walk_left : f->walk_right,
                              WB_ACTOR_ANIM32_MASK);
     return WB_ACTOR_DISPATCH_RAN;
+}
+
+uint32_t actor_behavior_type18(uint8_t *image, uint32_t actor) {
+    return charger_frame(image, actor, &TYPE18_FRAMES);
 }
 
 
@@ -4042,5 +4121,506 @@ uint32_t actor_behavior_type19(uint8_t *image, uint32_t actor) {
         type19_glide(image, actor);
     else
         type19_attack(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- the family CLOSES, dispatch rows 20..27 ($4118..$4dd7; batch 37) ---------------------------
+ *
+ * Eight more middles, and what the block adds is REUSE. Slot 20 and slot 27 are the same 378 bytes
+ * twice; slot 23 is slot 4's body with a different contact arm and BRANCHES INTO IT; slot 25 is
+ * slot 18's charge; slot 26 is slot 12's chase; slots 22 and 26 share slot 9's gated hurt arm; and
+ * slot 24 LEAVES for slot 17's seeding. So five of the eight are parametrisations of code this port
+ * already had, and only slots 21, 23's theft and 24 are new instructions.
+ */
+
+/* Slots 20 and 27, whose ONE body reads six addresses at a time. LEFT is what the
+ * `btst #3,8(a0) / bne` arm reaches — the list played while WB_ACTOR_FLAG_SIDE_BIT is SET. */
+typedef struct {
+    uint32_t walk_left, walk_right;   /* 8 words each, WB_ACTOR_ANIM16_MASK */
+    uint32_t hurt_left, hurt_right;   /* 16 words each, WB_ACTOR_ANIM32_MASK */
+    uint16_t air_left, air_right;     /* published straight while the record is off the ground */
+} HopperFrames;
+
+static const HopperFrames TYPE20_FRAMES = {
+    WB_ACTOR_TYPE20_WALK_LEFT, WB_ACTOR_TYPE20_WALK_RIGHT,
+    WB_ACTOR_TYPE20_HURT_LEFT, WB_ACTOR_TYPE20_HURT_RIGHT,
+    WB_ACTOR_TYPE20_AIR_LEFT, WB_ACTOR_TYPE20_AIR_RIGHT,
+};
+
+static const HopperFrames TYPE27_FRAMES = {
+    WB_ACTOR_TYPE27_WALK_LEFT, WB_ACTOR_TYPE27_WALK_RIGHT,
+    WB_ACTOR_TYPE27_HURT_LEFT, WB_ACTOR_TYPE27_HURT_RIGHT,
+    WB_ACTOR_TYPE27_AIR_LEFT, WB_ACTOR_TYPE27_AIR_RIGHT,
+};
+
+/* $4214 / $4d5a. The retreat is suppressed once the record is marked defeated, and the wrap does
+ * one thing no other hurt arm in the family does: `st 30(a0)` BEFORE the two mark instructions, so
+ * a recovered record's very next live frame finds its countdown already negative and goes straight
+ * to the reload and the draw. */
+static uint32_t hopper_hurt_frame(uint8_t *image, uint32_t actor, const HopperFrames *f) {
+    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_hop_ascend_step(image, actor);
+    actor_set_side_flag(image, actor);
+
+    if (!flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_DEFEATED_BIT))
+        step_away_without_facing(image, actor, WB_ACTOR_TYPE20_HURT_STEP);
+
+    if (publish_and_store_cursor(image, actor,
+                                 faces_left(image, actor) ? f->hurt_left : f->hurt_right,
+                                 WB_ACTOR_ANIM32_MASK) == 0) {
+        set_field_b(image, actor, WB_ACTOR_FIELD_30, WB_ACTOR_TYPE20_RECOVER);
+        monster_hurt_wrap_clear_then_test(image, actor);
+    }
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+/* $415c / $4ca2. A supported record counts WB_ACTOR_FIELD_30 down and, on the frame the decrement
+ * goes NEGATIVE, reloads and rolls for a hop; the hop is a TAIL jump into
+ * actor_start_motion_at_speed, so it ends the frame with no step and no animation. */
+static uint32_t hopper_live_frame(uint8_t *image, uint32_t actor, const HopperFrames *f) {
+    uint32_t outcome;
+
+    actor_fall_and_settle(image, actor, followed_sprite_left_in_d7(image));
+    actor_hop_ascend_step(image, actor);
+
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT)) {
+        /* `subq.b #1,30(a0) / bpl` — the SIGN of what the decrement LEFT, so the reload fires on
+         * the frame the byte passes $00 into $ff and not on the frame it reaches zero. */
+        uint8_t timer = (uint8_t)(field_b(image, actor, WB_ACTOR_FIELD_30) - 1);
+
+        actor_set_side_flag(image, actor);
+        set_field_b(image, actor, WB_ACTOR_FIELD_30, timer);
+        if ((int8_t)timer < 0) {
+            set_field_b(image, actor, WB_ACTOR_FIELD_30, WB_ACTOR_TYPE20_HOP_RELOAD);
+            /* `btst #2,d0 / bne` — the bit SET is the veto, so the hop takes half the reloads. */
+            if ((rng_next(image, 0) & (1u << WB_ACTOR_TYPE20_HOP_RNG_BIT)) == 0) {
+                actor_start_motion_at_speed(image, actor, WB_ACTOR_TYPE20_HOP_SPEED);
+                return WB_ACTOR_DISPATCH_RAN;
+            }
+        }
+    }
+
+    /* `move.w #$2,d7` in BOTH arms, so nothing of the settle's register reaches the step. */
+    outcome = step_facing(image, actor, WB_ACTOR_TYPE20_WALK_STEP);
+    /* `tst.w d0` — the WORD test slot 28 spells too; these two bodies and its own are the whole
+     * census of it. */
+    if (step_word_was_blocked_at_column_0(outcome))
+        flag_flip(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+
+    /* The facing is read AGAIN below the turn, so a blocked step's turn shows in THIS frame's
+     * sprite — slot 6's order rather than slot 3's. */
+    if (!flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT)) {
+        set_field_w(image, actor, WB_ACTOR_SPRITE,
+                    faces_left(image, actor) ? f->air_left : f->air_right);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+    publish_and_store_cursor(image, actor,
+                             faces_left(image, actor) ? f->walk_left : f->walk_right,
+                             WB_ACTOR_ANIM16_MASK);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+static uint32_t hopper_frame(uint8_t *image, uint32_t actor, const HopperFrames *f) {
+    if (spawn_animation_took_the_frame(image, actor))
+        return WB_ACTOR_DISPATCH_RAN;
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0))
+        return hopper_hurt_frame(image, actor, f);
+
+    switch (monster_contact(image, actor)) {
+    case MONSTER_TOUCHED_FOLLOWED:
+        actor_damage_followed(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_STRUCK_BY_POINT:
+        actor_set_side_flag(image, actor);
+        /* fall through — the point arm's `bsr $67c2` sits ABOVE the join the shot arm enters */
+    case MONSTER_STRUCK:
+        monster_enter_hit_animation(image, actor);
+        actor_damage_template_hitpoints(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_UNTOUCHED:
+        break;
+    }
+    return hopper_live_frame(image, actor, f);
+}
+
+uint32_t actor_behavior_type20(uint8_t *image, uint32_t actor) {
+    return hopper_frame(image, actor, &TYPE20_FRAMES);
+}
+
+uint32_t actor_behavior_type27(uint8_t *image, uint32_t actor) {
+    return hopper_frame(image, actor, &TYPE27_FRAMES);
+}
+
+
+/* --- slot 21 ($42f2): the sentry that aims -------------------------------------------------------
+ *
+ * 362 bytes, and the ONLY handler in the family that never calls actor_fall_and_settle: it does not
+ * fall, hop or step on any arm. WB_ACTOR_FIELD_30 is a FLAG rather than a countdown — nothing steps
+ * it — and it says which of the two halves the frame runs:
+ *   * CLEAR: play the walk list, and on its wrap `st 30(a0)` puts the record into the other half;
+ *   * SET: if the followed record is within WB_ACTOR_TYPE21_REACH and a
+ *     WB_ACTOR_TYPE21_SHOT_ODDS_MASK draw comes up zero, clear the flag and fire.
+ * THE FLAG IS CLEARED BEFORE THE ALLOCATION, so a refused shot still puts the record back into its
+ * animation half — where slot 14's refused drop leaves its own gap byte standing.
+ *
+ * THE SHOT IS AIMED, which nothing else in this tier is: $6528 quantises the vector to the followed
+ * record into one of sixteen directions and the pair it returns becomes the shot's
+ * WB_ACTOR_FIELD_30 / _31. And `clr.w d1` on an EQUAL y overwrites the returned dy with zero, so a
+ * shot fired at a record on the same line travels flat whatever the table said.
+ */
+static uint32_t type21_hurt_frame(uint8_t *image, uint32_t actor) {
+    if (publish_and_store_cursor(image, actor,
+                                 faces_left(image, actor) ? WB_ACTOR_TYPE21_HURT_LEFT
+                                                          : WB_ACTOR_TYPE21_HURT_RIGHT,
+                                 WB_ACTOR_ANIM16_MASK) == 0)
+        monster_hurt_wrap_clear_then_test(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+static void type21_fire(uint8_t *image, uint32_t actor) {
+    uint32_t followed = followed_actor_record(image);
+    uint32_t shot;
+    int16_t dx, dy;
+
+    set_field_b(image, actor, WB_ACTOR_FIELD_30, 0);
+    shot = spawn_minion(image, actor, WB_ACTOR_TYPE21_SHOT_TYPE);
+    if (shot == WB_ACTOR_ALLOC_NONE)
+        return;
+
+    set_field_w(image, shot, WB_ACTOR_Y,
+                (uint16_t)(field_w(image, shot, WB_ACTOR_Y) - WB_ACTOR_TYPE21_SHOT_RISE));
+    set_field_b(image, shot, WB_ACTOR_FLAGS, field_b(image, actor, WB_ACTOR_FLAGS));
+    bus_write_long(image, addr_add(shot, WB_ACTOR_HALF_WIDTH), WB_ACTOR_TYPE21_SHOT_SIZE);
+
+    actor_aim_velocity(image, (uint16_t)field_w(image, actor, WB_ACTOR_X),
+                       (uint16_t)field_w(image, actor, WB_ACTOR_Y),
+                       (uint16_t)field_w(image, followed, WB_ACTOR_X),
+                       (uint16_t)field_w(image, followed, WB_ACTOR_Y),
+                       WB_ACTOR_TYPE21_AIM_ROW, &dx, &dy);
+    set_field_b(image, shot, WB_ACTOR_FIELD_30, (uint8_t)dx);
+    if (field_w(image, actor, WB_ACTOR_Y) == field_w(image, followed, WB_ACTOR_Y))
+        dy = 0;
+    set_field_b(image, shot, WB_ACTOR_FIELD_31, (uint8_t)dy);
+
+    set_field_b(image, shot, WB_ACTOR_FIELD_29, WB_ACTOR_TYPE21_SHOT_LIFE);
+    set_field_b(image, shot, WB_ACTOR_FIELD_18, 0);
+    flag_clear(image, shot, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
+}
+
+uint32_t actor_behavior_type21(uint8_t *image, uint32_t actor) {
+    if (spawn_animation_took_the_frame(image, actor))
+        return WB_ACTOR_DISPATCH_RAN;
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0))
+        return type21_hurt_frame(image, actor);
+
+    switch (monster_contact(image, actor)) {
+    case MONSTER_TOUCHED_FOLLOWED:
+        flag_flip(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+        actor_damage_followed(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_STRUCK_BY_POINT:
+        actor_set_side_flag(image, actor);
+        /* fall through — the point arm's `bsr $67c2` sits ABOVE the join the shot arm enters */
+    case MONSTER_STRUCK:
+        monster_enter_hit_animation(image, actor);
+        actor_damage_template_hitpoints(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_UNTOUCHED:
+        break;
+    }
+
+    actor_set_side_flag(image, actor);
+    if (field_b(image, actor, WB_ACTOR_FIELD_30) == 0) {
+        if (publish_and_store_cursor(image, actor,
+                                     faces_left(image, actor) ? WB_ACTOR_TYPE21_WALK_LEFT
+                                                              : WB_ACTOR_TYPE21_WALK_RIGHT,
+                                     WB_ACTOR_ANIM32_MASK) == 0)
+            set_field_b(image, actor, WB_ACTOR_FIELD_30, WB_ACTOR_TYPE21_AIMING);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    if ((int16_t)actor_followed_x_within(image, actor, WB_ACTOR_TYPE21_REACH) < 0)
+        return WB_ACTOR_DISPATCH_RAN;
+    if ((rng_next(image, 0) & WB_ACTOR_TYPE21_SHOT_ODDS_MASK) != 0)
+        return WB_ACTOR_DISPATCH_RAN;
+
+    type21_fire(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- slot 22 ($44bc): the launcher ---------------------------------------------------------------
+ *
+ * 264 bytes. It takes no step on any arm; WB_ACTOR_FIELD_30 runs down and the frame it reaches zero
+ * the record LAUNCHES ITSELF — three bit writes and a speed spelt inline rather than through
+ * actor_start_motion_at_speed — and reloads. Below that it animates and then, while
+ * WB_ACTOR_TYPE53_ALIVE is clear and one draw in eight, drops a WB_ACTOR_TYPE22_MINION_TYPE record.
+ *
+ * `bclr #2,8(a0) / beq` IS THE TEST AND THE WRITE: an AIRBORNE record with a zero countdown stores
+ * its flag byte unchanged and then falls into `subq.b #1,30(a0)`, which wraps the byte to $ff — so
+ * the launch is not merely skipped, the countdown is re-armed at its longest.
+ *
+ * Its hurt arm is slot 9's `gated_hurt_frame`, and BOUNDED at WB_PLAYER_STEP_BODY for the same
+ * reason: `bsr $d78` while WB_TILE_33_MODE is clear reports an address rather than a result.
+ */
+static void type22_drop_minion(uint8_t *image, uint32_t actor) {
+    uint32_t minion = spawn_minion(image, actor, WB_ACTOR_TYPE22_MINION_TYPE);
+
+    if (minion == WB_ACTOR_ALLOC_NONE)
+        return;
+    set_field_w(image, minion, WB_ACTOR_Y,
+                (uint16_t)(field_w(image, minion, WB_ACTOR_Y) - WB_ACTOR_TYPE22_MINION_RISE));
+    /* `move.w 8(a0),8(a1)` — a WORD, so WB_ACTOR_FLAGS2 comes across with the flag byte. */
+    set_field_w(image, minion, WB_ACTOR_FLAGS, (uint16_t)field_w(image, actor, WB_ACTOR_FLAGS));
+    set_field_b(image, minion, WB_ACTOR_FIELD_30, WB_ACTOR_TYPE22_MINION_TIMER);
+    bus_write_long(image, addr_add(minion, WB_ACTOR_HALF_WIDTH), WB_ACTOR_TYPE22_MINION_SIZE);
+}
+
+uint32_t actor_behavior_type22(uint8_t *image, uint32_t actor) {
+    uint8_t timer;
+    int launched;
+
+    if (spawn_animation_took_the_frame(image, actor))
+        return WB_ACTOR_DISPATCH_RAN;
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0))
+        return gated_hurt_frame(image, actor, WB_ACTOR_TYPE22_HURT_LISTS);
+
+    switch (monster_contact(image, actor)) {
+    case MONSTER_TOUCHED_FOLLOWED:
+        actor_damage_followed(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_STRUCK:
+    case MONSTER_STRUCK_BY_POINT:
+        /* The facing runs BELOW both writes here, where slot 6 puts it between them. */
+        monster_enter_hit_animation(image, actor);
+        actor_set_side_flag(image, actor);
+        actor_damage_template_hitpoints(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_UNTOUCHED:
+        break;
+    }
+
+    actor_fall_and_settle(image, actor, followed_sprite_left_in_d7(image));
+    actor_hop_ascend_step(image, actor);
+    actor_set_side_flag(image, actor);
+
+    timer = field_b(image, actor, WB_ACTOR_FIELD_30);
+    launched = 0;
+    if (timer == 0) {
+        /* `bclr #2,8(a0) / beq` — the bit is CLEARED whichever arm the branch takes, so an airborne
+         * record stores its flag byte unchanged and then falls into the decrement below. */
+        launched = flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
+        flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
+    }
+    if (launched) {
+        set_field_b(image, actor, WB_ACTOR_FIELD_30, WB_ACTOR_TYPE22_RELOAD);
+        flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
+        flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT);
+        set_field_b(image, actor, WB_ACTOR_SPEED, WB_ACTOR_TYPE22_LAUNCH_SPEED);
+    } else {
+        /* ...and on a countdown ALREADY zero that decrement wraps the byte to $ff, so the record
+         * waits the longest possible time for its next launch rather than retrying at once. */
+        set_field_b(image, actor, WB_ACTOR_FIELD_30, (uint8_t)(timer - 1));
+    }
+
+    actor_anim_step_facing_list(image, actor, WB_ACTOR_TYPE22_LIVE_LISTS);
+
+    if (be16(image + WB_ACTOR_TYPE53_ALIVE) != 0)
+        return WB_ACTOR_DISPATCH_RAN;
+    if ((rng_next(image, 0) & WB_ACTOR_TYPE22_SEED_ODDS_MASK) != 0)
+        return WB_ACTOR_DISPATCH_RAN;
+
+    type22_drop_minion(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- slot 23 ($461c): the GOLD THIEF, and slot 4's body -------------------------------------------
+ *
+ * 432 bytes, of which the live arm and the death arm are actor_behavior_type04's instruction for
+ * instruction — `hover_chase_frame` and `hover_death_frame` above serve both — and only the
+ * footprint arm is this handler's own. It also BRANCHES INTO SLOT 4: `bra.w $2840` at $46fe leaves
+ * this extent for slot 4's publish-and-hover tail, so one of its own paths runs another handler's
+ * bytes, and its copy of the hover reads WB_ACTOR_TYPE04_HOVER through the SHORT absolute encoding.
+ *
+ * THE THEFT. Touching the followed record charges WB_ACTOR_TYPE23_STEAL_MAX from
+ * WB_BCD_COUNTER and drops a WB_ACTOR_TYPE23_LOOT_TYPE record carrying it — unless the record
+ * is already flickering (WB_ACTOR_FLAG_FLICKER_BIT, i.e. mid-invulnerability) or its purse is
+ * already empty, in which cases the frame is an ordinary actor_damage_followed. A purse AT OR BELOW
+ * the maximum is `clr.w`ed rather than subtracted, so the two arms are not one clamped subtraction.
+ *
+ * AND WB_ACTOR_TYPE23_STUN_FRAMES IS WRITTEN BELOW THE FAILED-ALLOCATION BRANCH, so a full pool
+ * puts it at offset WB_ACTOR_FIELD_21 of address ZERO — slot 19's defect one handler on, and
+ * reproduced rather than repaired.
+ */
+static void type23_rob_the_followed(uint8_t *image, uint32_t actor) {
+    uint32_t followed = followed_actor_record(image);
+    uint32_t loot;
+    uint16_t purse;
+
+    if (flag_is_set(image, followed, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT))
+        return;
+    purse = be16(image + WB_BCD_COUNTER);
+    if (purse == 0)
+        return;
+
+    if ((int16_t)purse > (int16_t)WB_ACTOR_TYPE23_STEAL_MAX)
+        bcd_sub_counter_bd6e(image, WB_ACTOR_TYPE23_STEAL_MAX, overlap_mask_exit_extend(image));
+    else
+        wr16(image + WB_BCD_COUNTER, 0);
+
+    loot = spawn_minion(image, actor, WB_ACTOR_TYPE23_LOOT_TYPE);
+    if (loot != WB_ACTOR_ALLOC_NONE) {
+        set_field_b(image, loot, WB_ACTOR_FIELD_30, WB_ACTOR_TYPE23_LOOT_TIMER);
+        set_field_b(image, loot, WB_ACTOR_FIELD_18, 0);
+    }
+    set_field_b(image, loot, WB_ACTOR_FIELD_21, WB_ACTOR_TYPE23_STUN_FRAMES);
+}
+
+uint32_t actor_behavior_type23(uint8_t *image, uint32_t actor) {
+    if (spawn_animation_took_the_frame(image, actor))
+        return WB_ACTOR_DISPATCH_RAN;
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)) {
+        hover_death_frame(image, actor, WB_ACTOR_TYPE23_DEAD_LEFT, WB_ACTOR_TYPE23_DEAD_RIGHT,
+                          WB_ACTOR_TYPE23_DEAD_STEP);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+
+    switch (monster_contact(image, actor)) {
+    case MONSTER_TOUCHED_FOLLOWED:
+        type23_rob_the_followed(image, actor);
+        actor_damage_followed(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_STRUCK:
+    case MONSTER_STRUCK_BY_POINT:
+        monster_enter_hit_animation(image, actor);
+        actor_damage_template_hitpoints(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_UNTOUCHED:
+        break;
+    }
+
+    hover_chase_frame(image, actor, WB_ACTOR_TYPE23_FLY_LEFT, WB_ACTOR_TYPE23_FLY_RIGHT,
+                      WB_ACTOR_TYPE23_FLY_STEP);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- slot 24 ($484c): the drifter's twin ----------------------------------------------------------
+ *
+ * 150 bytes, the shortest body in the family, and it does not END in its own extent: the
+ * `bra.w $3ae6` at $48b2 leaves for actor_behavior_type17's seeding block, so this handler's tail is
+ * slot 17's. `type17_seed_burst` is called rather than re-ported, which is the obligation
+ * ../names.txt's plate on $484c states.
+ *
+ * Both of its list PAIRS hold the SAME list twice, so the facing $3006 reads decides nothing.
+ */
+static uint32_t type24_hurt_frame(uint8_t *image, uint32_t actor) {
+    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_hop_ascend_step(image, actor);
+    actor_anim_step_facing_list(image, actor, WB_ACTOR_TYPE24_HURT_LISTS);
+
+    /* `tst.b 18(a0)` — the cursor RE-READ after $3006 stored it. */
+    if (field_b(image, actor, WB_ACTOR_FIELD_18) == 0)
+        monster_hurt_wrap_clear_then_test(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+uint32_t actor_behavior_type24(uint8_t *image, uint32_t actor) {
+    if (spawn_animation_took_the_frame(image, actor))
+        return WB_ACTOR_DISPATCH_RAN;
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0))
+        return type24_hurt_frame(image, actor);
+
+    switch (monster_contact(image, actor)) {
+    case MONSTER_TOUCHED_FOLLOWED:
+        actor_damage_followed(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_STRUCK:
+    case MONSTER_STRUCK_BY_POINT:
+        monster_enter_hit_animation(image, actor);
+        actor_set_side_flag(image, actor);
+        actor_damage_template_hitpoints(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_UNTOUCHED:
+        break;
+    }
+
+    actor_fall_and_settle(image, actor, followed_sprite_left_in_d7(image));
+    actor_hop_ascend_step(image, actor);
+    actor_set_side_flag(image, actor);
+    actor_step_facing(image, actor, WB_ACTOR_TYPE24_WALK_STEP);
+    actor_anim_step_facing_list(image, actor, WB_ACTOR_TYPE24_LIVE_LISTS);
+    type17_seed_burst(image, actor);
+    return WB_ACTOR_DISPATCH_RAN;
+}
+
+
+/* --- slot 25 ($4916): slot 18's charge again ------------------------------------------------------
+ *
+ * 424 bytes and not one of them new: every instruction of $3c84..$3e2b appears here with four table
+ * addresses and one minion type changed, and the hurt arm's own wrap branch leaves for slot 18's
+ * `rts` rather than spelling one. `charger_frame` above is the whole of it.
+ */
+uint32_t actor_behavior_type25(uint8_t *image, uint32_t actor) {
+    return charger_frame(image, actor, &TYPE25_FRAMES);
+}
+
+
+/* --- slot 26 ($4b1e): the chaser that shoots ------------------------------------------------------
+ *
+ * 216 bytes, and slot 12's live arm with one instruction added: face the followed record, step
+ * WB_ACTOR_TYPE26_STEP toward it, tick the hop timer — and then choose the frame list by
+ * WB_ACTOR_FLAG_MOVING_BIT rather than by the supported one. On the arm that bit picks, the record
+ * also drops a WB_ACTOR_TYPE26_SHOT_TYPE record with the widest box any spawner in this tier writes.
+ *
+ * THE SHOT IS ON THE SAME ARM AS THE FRAME LIST, so a refused allocation still plays the moving
+ * list; and the bit is read AFTER actor_tick_timer30, which is what can raise it.
+ *
+ * Its hurt arm is slot 9's `gated_hurt_frame`, and BOUNDED for the same reason.
+ */
+static void type26_drop_shot(uint8_t *image, uint32_t actor) {
+    uint32_t shot = spawn_minion(image, actor, WB_ACTOR_TYPE26_SHOT_TYPE);
+
+    if (shot == WB_ACTOR_ALLOC_NONE)
+        return;
+    set_field_w(image, shot, WB_ACTOR_Y,
+                (uint16_t)(field_w(image, shot, WB_ACTOR_Y) - WB_ACTOR_TYPE26_SHOT_RISE));
+    set_field_w(image, shot, WB_ACTOR_FLAGS, (uint16_t)field_w(image, actor, WB_ACTOR_FLAGS));
+    bus_write_long(image, addr_add(shot, WB_ACTOR_HALF_WIDTH), WB_ACTOR_TYPE26_SHOT_SIZE);
+}
+
+uint32_t actor_behavior_type26(uint8_t *image, uint32_t actor) {
+    if (spawn_animation_took_the_frame(image, actor))
+        return WB_ACTOR_DISPATCH_RAN;
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0))
+        return gated_hurt_frame(image, actor, WB_ACTOR_TYPE26_HURT_LISTS);
+
+    switch (monster_contact(image, actor)) {
+    case MONSTER_TOUCHED_FOLLOWED:
+        actor_damage_followed(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_STRUCK:
+    case MONSTER_STRUCK_BY_POINT:
+        monster_enter_hit_animation(image, actor);
+        actor_set_side_flag(image, actor);
+        actor_damage_template_hitpoints(image, actor);
+        return WB_ACTOR_DISPATCH_RAN;
+    case MONSTER_UNTOUCHED:
+        break;
+    }
+
+    actor_fall_and_settle(image, actor, followed_sprite_left_in_d7(image));
+    actor_hop_ascend_step(image, actor);
+    actor_face_and_step_toward(image, actor, WB_ACTOR_TYPE26_STEP);
+    actor_tick_timer30(image, actor);
+
+    if (!flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT)) {
+        actor_anim_step_facing_list(image, actor, WB_ACTOR_TYPE26_STILL_LISTS);
+        return WB_ACTOR_DISPATCH_RAN;
+    }
+    type26_drop_shot(image, actor);
+    actor_anim_step_facing_list(image, actor, WB_ACTOR_TYPE26_MOVING_LISTS);
     return WB_ACTOR_DISPATCH_RAN;
 }

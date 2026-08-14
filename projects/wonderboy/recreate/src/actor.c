@@ -51,6 +51,7 @@
 #include <stdint.h>
 
 #include "actor.h"
+#include "bus.h"
 #include "hud.h"
 #include "machine.h"
 #include "rng.h"
@@ -94,6 +95,98 @@ uint32_t actor_followed_x_within(const uint8_t *image, uint32_t actor, uint32_t 
 
     return set_low_word(reach, outside ? WB_ACTOR_OUT_OF_REACH : 0);
 }
+
+/* --- $6528: the aim table ------------------------------------------------------------------------
+ *
+ * 94 bytes ($6528..$6585, bounded by its own table), `movem.l d2-a6,-(sp)` at the top and
+ * `movem.l (a7)+,d2-a6` at the bottom — so d0 and d1
+ * are the ONLY registers it hands back, which is what makes the pair below its whole result. Two
+ * callers: behaviour slot 21 ($43e6) and slot 45, and both want a velocity for a record they are
+ * about to spawn.
+ *
+ * WHAT IT COMPUTES. The two deltas are folded into the first quadrant, a three-step ratio test
+ * counts how far the line lies from the axis, and the four bits that come out index sixteen signed
+ * byte pairs of one WB_ACTOR_AIM_ROW_BYTES row. So the answer is a DIRECTION, quantised to sixteen
+ * of them, at whatever speed the row encodes.
+ *
+ * AND THE THREE `addq.w #1,d4` WRITE THE X FLAG, which the `roxl.w #1,d2` two instructions below
+ * the first of them reads. `asr.w #1,d2` leaves the bit it shifted out in X and the `roxl` puts it
+ * back — an exact halve-and-restore — but ONLY when the `bge` skips the `addq`; when the `addq`
+ * runs it overwrites X with its own carry (zero for every d4 this routine can hold), so the
+ * restored value is the halved one with its low bit LOST. The odd/even distinction therefore
+ * survives into the second ratio test on one arm and not on the other, and `restored_low_bit`
+ * below is that and nothing else. */
+static uint16_t aim_direction_code(int16_t dx, int16_t dy, int x_delta_is_negative) {
+    uint16_t code = WB_ACTOR_AIM_CODE_BASE;
+    uint16_t near_axis, far_axis, restored_low_bit;
+
+    /* THE TWO SIGN TESTS ARE NOT THE SAME TEST, and spelling them alike is the defect this
+     * parameter exists to prevent. `sub.w d0,d2 / bge.s` at $653e reads N^V — the EXACT signed
+     * comparison of the two operands — where `tst.w d3 / bge.s` at $6548 clears V first and so
+     * reads the SIGN of the wrapped difference. They part when the x subtraction overflows
+     * (to_x $7fff, from_x $ffff: the difference is $8000, whose sign bit is set, and BGE is still
+     * taken), so the caller hands the branch's own answer down rather than the delta's sign. */
+    if (x_delta_is_negative) {
+        dx = (int16_t)-dx;
+        code ^= WB_ACTOR_AIM_CODE_DX_EOR;
+    }
+    if (dy < 0) {
+        dy = (int16_t)-dy;
+        /* `exg d2,d3` — the two deltas change places on this arm and, below, on the other one. */
+        int16_t swap = dx;
+        dx = dy;
+        dy = swap;
+        code ^= WB_ACTOR_AIM_CODE_DY_EOR;
+    }
+    if ((code & (1u << WB_ACTOR_AIM_CODE_SWAP_BIT)) == 0) {
+        int16_t swap = dx;
+        dx = dy;
+        dy = swap;
+    }
+
+    /* `asr.w #1,d2` — an ARITHMETIC halving, so a negative delta that reached here (only possible
+     * for $8000, whose negation is itself) rounds towards minus infinity as the original does. */
+    far_axis = (uint16_t)dx;
+    near_axis = (uint16_t)dy;
+    restored_low_bit = far_axis & 1u;
+    far_axis = (uint16_t)((int16_t)far_axis >> 1);
+
+    if ((int16_t)near_axis < (int16_t)far_axis) {
+        code++;
+        restored_low_bit = 0;   /* the `addq` clobbered X before the `roxl` read it */
+    }
+    far_axis = (uint16_t)((far_axis << 1) | restored_low_bit);
+
+    if ((int16_t)near_axis < (int16_t)far_axis)
+        code++;
+    far_axis = (uint16_t)(far_axis << 1);
+    if ((int16_t)near_axis < (int16_t)far_axis)
+        code++;
+    return code;
+}
+
+void actor_aim_velocity(const uint8_t *image, uint32_t from_x, uint32_t from_y,
+                        uint32_t to_x, uint32_t to_y, uint32_t row, int16_t *dx, int16_t *dy) {
+    /* `sub.w d1,d3 / sub.w d0,d2` — the y difference is taken FIRST and the x one second, and it is
+     * the SECOND that the `bge` below it reads. Every operand is a WORD op, and the only index the
+     * routine builds is sign-extended from a word, so the callers' high halves cannot reach the
+     * answer — which is why they are taken as whole registers here and truncated at the operation,
+     * where a case can drive them apart. */
+    int16_t delta_y = (int16_t)((uint16_t)to_y - (uint16_t)from_y);
+    int16_t delta_x = (int16_t)((uint16_t)to_x - (uint16_t)from_x);
+    uint16_t code = aim_direction_code(delta_x, delta_y,
+                                       (int16_t)(uint16_t)to_x < (int16_t)(uint16_t)from_x);
+    /* Two separate `lea`/`adda.w` steps in the original, each sign-extending its own WORD index —
+     * so they are added apart here rather than summed first. */
+    uint32_t row_base = addr_add(WB_ACTOR_AIM_TABLE,
+                                 sign_ext16((uint16_t)(row * WB_ACTOR_AIM_ROW_BYTES)));
+    uint32_t pair = addr_add(row_base, sign_ext16((uint16_t)(code * WB_ACTOR_AIM_PAIR_BYTES)));
+
+    /* `move.b (a1)+,d0 / move.b (a1)+,d1 / ext.w d0 / ext.w d1` — two SIGNED bytes. */
+    *dx = (int8_t)bus_read_byte(image, pair);
+    *dy = (int8_t)bus_read_byte(image, addr_add(pair, 1));
+}
+
 
 /* The eleven instructions $8dfe and $8e66 spell identically: one actor record into one screen
  * record. The two scroll words are arguments because $8e66 reads them ONCE, above its loop. */

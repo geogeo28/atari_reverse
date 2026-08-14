@@ -755,6 +755,19 @@
                                                * frames WB_FRAME_TOGGLE is nonzero, i.e. the record
                                                * is drawn every other frame */
 #define WB_ACTOR_OUT_OF_REACH        0xffffu  /* `move.w #$ffff,d0` — $67f8's "farther than d0" */
+
+/* $6528's table (actor.h). Sixteen SIGNED BYTE PAIRS per row, one row per speed, indexed by a
+ * direction code the routine builds out of the signs and the ratio of the two deltas. Its ONE
+ * `lea $6586.l` is inside $6528 itself; the table's own extent past row 6 is not established here,
+ * because only rows the two callers name are read. */
+#define WB_ACTOR_AIM_TABLE           0x6586u
+#define WB_ACTOR_AIM_ROW_BYTES       0x20u    /* `asl.w #5,d4` */
+#define WB_ACTOR_AIM_PAIR_BYTES      2u       /* `asl.w #1,d4` on the direction code */
+#define WB_ACTOR_AIM_CODE_BASE       4u       /* `move.w #$4,d4` before the two sign tests */
+#define WB_ACTOR_AIM_CODE_DX_EOR     0xcu     /* `eori.w #$c,d4` when the x delta is negative */
+#define WB_ACTOR_AIM_CODE_DY_EOR     4u       /* `eori.w #$4,d4` when the y delta is negative */
+#define WB_ACTOR_AIM_CODE_SWAP_BIT   3u       /* `btst #3,d4 / bne` — clear means the two deltas are
+                                               * exchanged before the ratio is measured */
 #define WB_ACTOR_SCREEN_RECORDS      0x98ecu  /* the projection's destination array */
 #define WB_ACTOR_SCREEN_RECORDS_END  0x995eu  /* `cmpa.l #$995e,a1` — one past the last record */
 #define WB_ACTOR_SCREEN_RECORD_BYTES 6u
@@ -841,6 +854,10 @@
                                                * index into WB_ACTOR_KIND_TABLE. $6d0e is its one
                                                * writer in the image — the respawn continuation,
                                                * storing the low byte of a stage_random_kind draw */
+#define WB_ACTOR_FIELD_21            21u      /* byte: behaviour slot 23 stamps
+                                               * WB_ACTOR_TYPE23_STUN_FRAMES into it on the record it
+                                               * has just robbed the player for. WHAT READS IT is not
+                                               * established — this is the only writer read so far */
 #define WB_ACTOR_FIELD_22            22u      /* byte, cleared by $10a2's player arm. The behaviour
                                                * tier writes it three ways: $6d70 raises
                                                * WB_ACTOR_FIELD_22_RIDING_BIT in it, $6dd8 lowers
@@ -1329,6 +1346,9 @@
                                                * only table in these handlers that is not a sprite
                                                * list, and the only one WB_ACTOR_FIELD_30 indexes */
 #define WB_ACTOR_TYPE04_HOVER_MASK   0x7fu    /* `andi.b #$7f` — 128 bytes, so the whole table */
+#define WB_ACTOR_TYPE04_FLY_PUBLISH  0x2840u  /* INSIDE slot 4's body: the publish-and-hover tail
+                                               * slot 23's `bra.w $2840` at $46fe enters, so these
+                                               * instructions are not slot 4's alone */
 #define WB_ACTOR_CHASE_REACH         0xc8u    /* `move.w #$c8,d0 / bsr $67f8` — how close the
                                                * followed record must be before a monster reacts.
                                                * TWO slots spell the same $c8 — slot 4 chases inside
@@ -1449,8 +1469,9 @@
  *   * FIVE OF THE SIX SPAWN. Each takes a record from actor_alloc_slot_high, fills it from its own
  *     x/y longword and a type, and ends its frame there whether the pool answered or not.
  *   * TWO OF THEM SPLIT THE STRUCK ARM. Slots 18 and 19 call actor_set_side_flag on the overlap
- *     POINT arm and NOT on the shot's, where the other fifteen callers face on both arms or on
- *     neither — which is why src/behavior.c's `monster_contact` reports WHICH test struck.
+ *     POINT arm and NOT on the shot's — which is why src/behavior.c's `monster_contact` reports
+ *     WHICH test struck. Batch 37 found four more (20, 21, 25 and 27), so the split is a third of
+ *     the family rather than these two handlers' peculiarity.
  *
  * EVERY TABLE BELOW HAS EXACTLY ONE OPERAND SITE IN THE WHOLE IMAGE, by a scan of both absolute
  * encodings AND of the `lea d8(PC,Dn.w)` displacement; the four lists behind slot 17's two PAIRS
@@ -1508,6 +1529,8 @@
 #define WB_ACTOR_TYPE17_DY           0x3c44u  /* 32 SIGNED words added to the y */
 #define WB_ACTOR_TYPE17_DY_MASK      0x3fu    /* ...so the y cycle is HALF the x one, and the seeding
                                                * below fires on the frame it wraps */
+#define WB_ACTOR_TYPE17_SEED_BURST   0x3ae6u  /* INSIDE slot 17's body: the seeding block slot 24's
+                                               * `bra.w $3ae6` at $48b2 enters as its own tail */
 #define WB_ACTOR_TYPE17_SEED_ODDS_MASK 7u     /* `andi.w #$7,d0 / bne` on rng_next's word */
 #define WB_ACTOR_TYPE17_SEED_DBF_COUNT 4u    /* `move.w #$4,d7` — a `dbf` counter, which runs its
                                                * body COUNT + 1 times, so FIVE records */
@@ -1547,6 +1570,145 @@
 #define WB_ACTOR_TYPE19_SHOT_DX_RIGHT 0xau    /* ...and `add.w d0,(a1)` on the x, the side flag */
 #define WB_ACTOR_TYPE19_SHOT_DX_LEFT 0xfff6u  /* picking which */
 #define WB_ACTOR_TYPE19_SHOT_SIZE    0xc0002u /* WB_ACTOR_HALF_WIDTH $c, WB_ACTOR_SIZE_SECOND $2 */
+
+/* ---- the family CLOSES, dispatch rows 20..27 (batch 37; src/behavior.c) -------------------------
+ *
+ * The last eight middles of the monster family, and what they add is REUSE rather than grammar:
+ *
+ *   * SLOT 20 AND SLOT 27 ARE THE SAME 378 BYTES TWICE. Every instruction of $4118..$4291 is
+ *     repeated at $4c5e..$4dd7 with four table addresses and two airborne sprite ids changed, so
+ *     one C body serves both rows and a `WB_ACTOR_TYPE20_TABLES`-shaped argument carries the six.
+ *   * SLOT 23 IS SLOT 4 WITH A DIFFERENT CONTACT ARM, and it does not merely resemble it: the
+ *     `bra.w $2840` at $46fe LEAVES this band and lands INSIDE actor_behavior_type04's body, so one
+ *     of slot 23's own live-arm paths executes slot 4's publish-and-hover tail. It also reads slot
+ *     4's hover table through the SHORT absolute encoding (`lea $296c.w` at $4746) where slot 4
+ *     uses the long one — the second operand site of an address whose plate said it had one.
+ *   * SLOT 25 IS SLOT 18's CHARGE, and slot 26 is slot 12's chase, each with its own tables.
+ *   * SLOT 24 LEAVES FOR SLOT 17 (`bra.w $3ae6` at $48b2, type17_seed_burst) and slot 25 borrows
+ *     slot 18's `rts` (`bne.w $3e2a` at $4aa8) — the two inbound edges batch 36 pinned from the
+ *     other side.
+ *   * FOUR MORE HANDLERS SPLIT THE STRUCK ARM (20, 21, 25, 27), so the split is no longer two
+ *     handlers' peculiarity but a third of the family.
+ *
+ * EVERY TABLE BELOW HAS EXACTLY ONE OPERAND SITE IN THE WHOLE IMAGE, by a scan of both absolute
+ * encodings AND of both PC-relative `lea` forms — except slot 23's, which shares slot 4's hover and
+ * whose two dead-frame tables are named by `lea d16(PC,Dn.w)` out of slot 23's own body.
+ */
+#define WB_ACTOR_BEHAVIOR_TYPE20     0x4118u  /* 378 bytes of code, $4118..$4291 */
+#define WB_ACTOR_BEHAVIOR_TYPE21     0x42f2u  /* 362, $42f2..$445b */
+#define WB_ACTOR_BEHAVIOR_TYPE22     0x44bcu  /* 264, $44bc..$45c3 */
+#define WB_ACTOR_BEHAVIOR_TYPE23     0x461cu  /* 432, $461c..$47cb */
+#define WB_ACTOR_BEHAVIOR_TYPE24     0x484cu  /* 150, $484c..$48e1 */
+#define WB_ACTOR_BEHAVIOR_TYPE25     0x4916u  /* 424, $4916..$4abd */
+#define WB_ACTOR_BEHAVIOR_TYPE26     0x4b1eu  /* 216, $4b1e..$4bf5 */
+#define WB_ACTOR_BEHAVIOR_TYPE27     0x4c5eu  /* 378, $4c5e..$4dd7 — slot 20's body again */
+
+/* Slots 20 and 27, whose ONE body reads six of these twelve at a time. LEFT is the table the
+ * `btst #3,8(a0) / bne` arm reaches, i.e. the one played while WB_ACTOR_FLAG_SIDE_BIT is SET. */
+#define WB_ACTOR_TYPE20_WALK_LEFT    0x4292u  /* 8 words each, wrapped by WB_ACTOR_ANIM16_MASK */
+#define WB_ACTOR_TYPE20_WALK_RIGHT   0x42a2u
+#define WB_ACTOR_TYPE20_HURT_LEFT    0x42b2u  /* 16 words each, WB_ACTOR_ANIM32_MASK */
+#define WB_ACTOR_TYPE20_HURT_RIGHT   0x42d2u
+#define WB_ACTOR_TYPE20_AIR_LEFT     0x30u    /* `move.w #$30,6(a0)` — an AIRBORNE record publishes
+                                               * one constant instead of animating */
+#define WB_ACTOR_TYPE20_AIR_RIGHT    0x34u
+#define WB_ACTOR_TYPE27_WALK_LEFT    0x4dd8u  /* ...and the same six for slot 27 */
+#define WB_ACTOR_TYPE27_WALK_RIGHT   0x4de8u
+#define WB_ACTOR_TYPE27_HURT_LEFT    0x4df8u
+#define WB_ACTOR_TYPE27_HURT_RIGHT   0x4e18u
+#define WB_ACTOR_TYPE27_AIR_LEFT     0x1au
+#define WB_ACTOR_TYPE27_AIR_RIGHT    0x1eu
+/* The seven values the shared body spells inline. They are ONE set because the two bodies are byte
+ * for byte the same everywhere but the twelve addresses above and the two sprite ids. */
+#define WB_ACTOR_TYPE20_WALK_STEP    2u       /* `move.w #$2,d7`, a WORD in BOTH arms */
+#define WB_ACTOR_TYPE20_HURT_STEP    4u       /* `move.w #$4,d7`, and the step is AWAY */
+#define WB_ACTOR_TYPE20_HOP_RELOAD   0x32u    /* `move.b #$32,30(a0)` the frame the countdown goes
+                                               * negative */
+#define WB_ACTOR_TYPE20_HOP_RNG_BIT  2u       /* `btst #2,d0 / bne` on rng_next's word VETOES the
+                                               * launch, so it fires on half the reloads */
+#define WB_ACTOR_TYPE20_HOP_SPEED    0xau     /* `move.w #$a,d0 / bra.w $2af2` — a TAIL jump */
+#define WB_ACTOR_TYPE20_RECOVER      0xffu    /* `st 30(a0)` on the hurt animation's wrap, so the
+                                               * first live frame after a recovery goes straight to
+                                               * the reload rather than counting $32 frames down */
+
+/* Slot 21: the shooter that stands still. It never falls, never hops and never steps. */
+#define WB_ACTOR_TYPE21_WALK_LEFT    0x445cu  /* 16 words each, WB_ACTOR_ANIM32_MASK */
+#define WB_ACTOR_TYPE21_WALK_RIGHT   0x447cu
+#define WB_ACTOR_TYPE21_HURT_LEFT    0x449cu  /* 8 words each, WB_ACTOR_ANIM16_MASK */
+#define WB_ACTOR_TYPE21_HURT_RIGHT   0x44acu
+#define WB_ACTOR_TYPE21_AIMING       0xffu    /* `st 30(a0)` when the idle animation wraps: the byte
+                                               * is a FLAG here, not a countdown — nothing steps it */
+#define WB_ACTOR_TYPE21_REACH        0x96u    /* `move.w #$96,d0 / bsr $67f8` */
+#define WB_ACTOR_TYPE21_SHOT_ODDS_MASK 0x1fu  /* `andi.w #$1f,d0 / bne` on rng_next's word */
+#define WB_ACTOR_TYPE21_SHOT_TYPE    0x2cu
+#define WB_ACTOR_TYPE21_SHOT_RISE    6u       /* `subq.w #6,2(a1)` off the parent's y */
+#define WB_ACTOR_TYPE21_SHOT_SIZE    0x60006u
+#define WB_ACTOR_TYPE21_SHOT_LIFE    0x32u    /* `move.b #$32,29(a1)` */
+#define WB_ACTOR_TYPE21_AIM_ROW      6u       /* `move.w #$6,d4` — which row of the aim table the
+                                               * velocity pair comes out of (actor.h, $6528) */
+
+/* Slot 22: the launcher. It walks nowhere; WB_ACTOR_FIELD_30 counts down and the frame it reaches
+ * zero the record LAUNCHES ITSELF and then, one frame in eight, drops a minion. */
+#define WB_ACTOR_TYPE22_LIVE_LISTS   0x45c4u  /* $3006 PAIRS -> $45d4 / $45e6, 8 words + terminator */
+#define WB_ACTOR_TYPE22_HURT_LISTS   0x45ccu  /* -> $45f8 / $460a, same shape */
+#define WB_ACTOR_TYPE22_RELOAD       0x64u    /* `move.b #$64,30(a0)` on the launch frame */
+#define WB_ACTOR_TYPE22_LAUNCH_SPEED 0xcu     /* `move.b #$c,11(a0)`, written inline rather than
+                                               * through actor_start_motion_at_speed */
+#define WB_ACTOR_TYPE22_SEED_ODDS_MASK 7u     /* `andi.b #$7,d0 / bne` */
+#define WB_ACTOR_TYPE22_MINION_TYPE  0x35u
+#define WB_ACTOR_TYPE22_MINION_RISE  0x10u    /* `subi.w #$10,2(a1)` */
+#define WB_ACTOR_TYPE22_MINION_TIMER 0x32u    /* into the minion's WB_ACTOR_FIELD_30 */
+#define WB_ACTOR_TYPE22_MINION_SIZE  0xc000cu
+
+/* Slot 23: the GOLD THIEF, and slot 4's body with a different contact arm. Its live arm and its
+ * hurt arm are actor_behavior_type04's instruction for instruction — including the hover, which it
+ * takes off slot 4's own WB_ACTOR_TYPE04_HOVER. */
+#define WB_ACTOR_TYPE23_DEAD_RIGHT   0x47ecu  /* 16 words each, reached by `lea d8(PC,Dn.w)` */
+#define WB_ACTOR_TYPE23_DEAD_LEFT    0x47ccu
+#define WB_ACTOR_TYPE23_FLY_LEFT     0x480cu  /* 16 words each */
+#define WB_ACTOR_TYPE23_FLY_RIGHT    0x482cu
+#define WB_ACTOR_TYPE23_FLY_STEP     1u       /* `move.w #$1,d7` — slot 4's value, named apart so a
+                                               * re-read of either survives */
+#define WB_ACTOR_TYPE23_DEAD_STEP    4u
+#define WB_ACTOR_TYPE23_STEAL_MAX    0x10u    /* `cmpi.w #$10,$bd6e.l / bgt`: a purse ABOVE this is
+                                               * charged exactly this much, one at or below it is
+                                               * emptied by `clr.w` — so the two arms are not one
+                                               * subtraction with a clamp */
+#define WB_ACTOR_TYPE23_LOOT_TYPE    0x2eu
+#define WB_ACTOR_TYPE23_LOOT_TIMER   0x50u    /* into the loot record's WB_ACTOR_FIELD_30 */
+#define WB_ACTOR_TYPE23_STUN_FRAMES  0x64u    /* `move.b #$64,21(a1)` — written BELOW the failed
+                                               * allocation branch, so it lands at address
+                                               * WB_ACTOR_FIELD_21 of record ZERO on a full pool */
+
+/* Slot 24: the drifter's twin. Six instructions of live arm, and then it LEAVES for slot 17. */
+#define WB_ACTOR_TYPE24_LIVE_LISTS   0x48e2u  /* a PAIR whose two longwords are the SAME list */
+#define WB_ACTOR_TYPE24_HURT_LISTS   0x48eau  /* ...and so are these */
+#define WB_ACTOR_TYPE24_WALK_STEP    1u       /* `move.w #$1,d7 / bsr $2f22` */
+
+/* Slot 25: slot 18's charge, one minion type over. Every value here is slot 18's today; they are
+ * separate names so that a later re-read of either survives. */
+#define WB_ACTOR_TYPE25_WALK_LEFT    0x4abeu  /* 16 words each */
+#define WB_ACTOR_TYPE25_WALK_RIGHT   0x4adeu
+#define WB_ACTOR_TYPE25_HURT_LEFT    0x4afeu  /* 8 words each */
+#define WB_ACTOR_TYPE25_HURT_RIGHT   0x4b0eu
+#define WB_ACTOR_TYPE25_WALK_STEP    2u       /* `move.b #$2,d7` left, `move.w #$2,d7` right */
+#define WB_ACTOR_TYPE25_HURT_STEP    4u
+#define WB_ACTOR_TYPE25_CHARGING     0xffu
+#define WB_ACTOR_TYPE25_HOP_SPEED    9u
+#define WB_ACTOR_TYPE25_MINION_TYPE  0x2au
+#define WB_ACTOR_TYPE25_TURN_FRAMES  0x46u
+
+/* Slot 26: slot 12's chase — actor_face_and_step_toward then actor_tick_timer30 — with the frame
+ * list chosen by WB_ACTOR_FLAG_MOVING_BIT rather than by the supported one, and a shot on the arm
+ * that bit picks. */
+#define WB_ACTOR_TYPE26_MOVING_LISTS 0x4bfeu  /* -> $4c32 / $4c36, ONE word and a terminator each */
+#define WB_ACTOR_TYPE26_STILL_LISTS  0x4bf6u  /* -> $4c0e / $4c20, 8 words + terminator */
+#define WB_ACTOR_TYPE26_HURT_LISTS   0x4c06u  /* -> $4c3a / $4c4c, 8 words + terminator */
+#define WB_ACTOR_TYPE26_STEP         2u       /* `move.w #$2,d7`, handed to $2fce and then to $2f86 */
+#define WB_ACTOR_TYPE26_SHOT_TYPE    0x33u
+#define WB_ACTOR_TYPE26_SHOT_RISE    0x10u    /* `subi.w #$10,2(a1)` */
+#define WB_ACTOR_TYPE26_SHOT_SIZE    0x400006u /* WB_ACTOR_HALF_WIDTH $40 — the widest box any
+                                                * spawner in this tier writes */
 
 /* The $5a band's last three tables. Each sits INSIDE its own handler's extent and is reached only
  * from it — $5952 by the one `lea $5952.l` at $5928, the other three by `lea d8(PC,Dn.w)` — so no
@@ -1592,7 +1754,7 @@
                                                * the frame it frees its slot, so it is "a type-53
                                                * record is live". Three operand sites: the two
                                                * writes here and the `tst.w` at $454c, which is
-                                               * inside a handler this port does not have */
+                                               * inside behaviour slot 22, whose spawn it vetoes */
 #define WB_ACTOR_TYPE53_ALIVE_SET    0xffffu  /* `move.w #$ffff,$5c6c.l` */
 
 /* --- behaviour slot 7 ($7060) and the SWOOP state machine below it -------------------------------
