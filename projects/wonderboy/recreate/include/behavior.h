@@ -415,6 +415,36 @@ uint32_t actor_behavior_type36(uint8_t *image, uint32_t actor);
  * WB_ACTOR_TYPE37_RISE, and raises WB_EVENT_ANIM_DONE_B16 on the frame it arrives. */
 uint32_t actor_behavior_type37(uint8_t *image, uint32_t actor);
 
+/* --- slots 9..13 ($2e12..$35c7): the monster-prologue family opens ------------------------------
+ *
+ * FIVE MORE BODIES INSIDE SLOTS 2..6's GRAMMAR. Every one of them opens with the spawn gate and the
+ * `btst #0,9(a0)` switch and runs the same contact enum, and FOUR of the five end the hurt animation
+ * `bclr #0,9(a0) / btst #3,9(a0) / bne.w $6bb8` — the DEFEATED bit only tested, never cleared, where
+ * slots 2, 3 and 4 clear it. Slot 13 is the exception and has neither instruction: its hurt arm is a
+ * throe that ends `bra.w $6bb8` unconditionally. Where they differ is the middle, and each one
+ * differs from every other:
+ *
+ *   9  walks toward the followed record and then asks actor_random_facing_hop for a new direction
+ *  10  never touches the map: a 32-word hover table, a one-pixel drift and a homing turn
+ *  11  walks while a countdown runs and DECIDES with one `rng_next` word when it expires
+ *  12  faces and chases, hops on actor_tick_timer30, and animates by WB_ACTOR_FLAG_SUPPORTED_BIT
+ *  13  hops on every supported frame, and its hurt arm is a throe that ALWAYS ends in the defeat
+ *
+ * SLOTS 9 AND 12 REPORT A BOUNDARY on their hurt arm and the other three never do: both call $d78,
+ * which branches into WB_PLAYER_STEP_BODY while WB_TILE_33_MODE is clear. Slot 53 met the same edge.
+ */
+uint32_t actor_behavior_type09(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type10(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type11(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type12(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type13(uint8_t *image, uint32_t actor);
+
+/* $2f46 — 64 bytes, ONE `bsr` caller (slot 9). A SUPPORTED record gets a facing off bit 2 of
+ * `rng_next`'s word and is then launched at WB_ACTOR_RANDOM_HOP_SPEED unconditionally; an airborne
+ * one is left entirely alone. Its `# ctx` plate called it a coin-flip TURN — the launch is the
+ * other half of it, and nothing vetoes it. */
+void actor_random_facing_hop(uint8_t *image, uint32_t actor);
+
 /* $d78 — the twelve bytes slot 53 calls, and the only player-tier code in this file. Returns
  * WB_ACTOR_DISPATCH_RAN while WB_TILE_33_MODE is set (the original returns having written nothing)
  * and WB_PLAYER_STEP_BODY while it is clear, which is where the original branches. */

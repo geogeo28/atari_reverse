@@ -151,8 +151,8 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            for state_flag_a34) and the dispatcher it feeds ($928), which fetches a
                            longword out of the 62-entry table at $938 and tail-jumps through it —
                            on the WRAPPED offset, so 248 of the 65,536 type values reach an entry.
-                           THIRTY-TWO of the sixty-two rows are reconstructed as of batch 34 and
-                           thirty are not, so for those the dispatcher hands the target
+                           THIRTY-SEVEN of the sixty-two rows are reconstructed as of batch 35 and
+                           twenty-five are not, so for those the dispatcher hands the target
                            BACK and the differential runs the oracle on to it; the reconstructed
                            list grows by a few rows a batch. (This line read "twenty-two" while
                            ../STATUS.md read twenty-three at batch 32 and neither was checked
@@ -315,13 +315,16 @@ test/test_behavior.py      the behaviour tier's differential. Its shape is set b
                            sum-the-spanned-bytes idiom), and an independent model of $5c6e's three
                            overlap tests compared against the ORACLE's d0 as well as the port's
                            return. It imports test_map.py's map seeding and test_rng.py's generator
-                           model rather than restating either. Then the THIRTY-TWO LIVE TABLE ROWS:
+                           model rather than restating either. Then the THIRTY-SEVEN LIVE TABLE ROWS:
                            the five-handler band at $2462..$2db1 (one shape with five bodies), the
                            whole $5a band ($5928..$5c6b, seven rows and three endings of one
                            grammar), the three moving platforms, slot 60's retype, slot 61's message
                            sequence, slot 7 with the SWOOP state machine below it that its two
                            prologue rows also run into, and the three COLLECTABLES at 28, 30 and 31
-                           with the payout cluster under them, and batch 34's six at 32..37 —
+                           with the payout cluster under them, batch 34's six at 32..37, and batch
+                           35's MONSTER-PROLOGUE FAMILY at 9..13 — the $2462 band's grammar with five
+                           more middles, two of which report a boundary on their hurt arm because
+                           they call the player gate —
                            each entered where the `jmp (a1)`
                            would land, and each with its dispatch row flipped from a boundary to a
                            run. What those cases share is a GROUND WINDOW — a solid
@@ -388,8 +391,10 @@ off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A
 **seven** ways, all seven measured here, so run one this way:
 
 ```bash
-.venv/bin/python -m pytest -q -n auto test     # 0. GREEN FIRST: a red or uncollectable tree
-echo "pre-sweep: $?"                           #    reports every mutant as caught (see 5)
+rm -f build/*.so && make build/libwonderboy.so # 0. ...and force the relink FIRST: a killed sweep
+.venv/bin/python -m pytest -q -n auto test     #    leaves the MUTANT's .so beside a restored source
+echo "pre-sweep: $?"                           # 0. GREEN FIRST: a red or uncollectable tree
+                                               #    reports every mutant as caught (see 5)
 test -d snapshot && { echo "a snapshot exists — rm -rf it to RE-ARM"; exit 1; }
 mkdir snapshot && cp src/*.c snapshot/         # 4. ONE snapshot, taken only after the green check,
                                                #    and never silently retaken (see below)
@@ -423,6 +428,13 @@ done
    "caught" on an unbuildable tree; the honest figure was 33/43. Take the mutant text from ONE
    snapshot captured at the start, refuse to run when the file on disk is not that snapshot, and
    never edit a source while a sweep is running.
+   **And the RESTORE has a third half, measured in batch 35: the BUILD ARTIFACT.** A sweep killed
+   mid-`pytest` leaves the mutant's `build/*.so` on disk, the `finally` that would have restored the
+   sources never runs, and even after you put the sources back by hand the next run's step-0 green
+   check loads the MUTANT library and reports the pristine tree as RED. It reads exactly like a
+   broken batch. The cure is the first line of the recipe above — force the relink before the green
+   check, not only before each mutant — and it is the same guard as the two below rather than an
+   eighth way a sweep lies; the frame sentence's count of SEVEN stands.
    **Batch 34 lost a whole batch to the SNAPSHOT half of this mode**, which is why the recipe above
    now guards it: an unconditional `cp src/*.c snapshot/` at the top of a re-run silently overwrites
    the good snapshot with whatever the tree currently holds — and after a killed sweep the tree
@@ -446,6 +458,17 @@ done
    under the other suite and produces phantom failures that no mutant caused. Run the projects
    **serially** — which also means a sweep here must not share a machine with someone else's
    `make test`.
+
+**A REVIEWER THAT MUTATES IS A WRITER, and the gate has to be told so.** A review agent that probes
+a finding by editing `src/`, rebuilding and running the suite is doing everything a sweep does,
+including mode 4's restore — and it will snapshot the tree when IT starts and put that snapshot back
+when it finishes, over anything the author changed in between. Batch 35 lost a whole de-duplication
+that way, silently: both versions were green, so only a grep for the new function NAMES found it.
+So, whenever a reviewer may run code: give it a COPY of the tree (or a worktree), or take a named
+backup before you let one start; and after any reviewer has run, re-verify the tree BY NAME —
+`grep` for the symbols you added — and not only with `git diff`, which looks identical whether your
+edit is missing or was never made. The same rule protects the sweep scripts themselves: keep them
+out of a shared scratchpad path a subagent might reuse.
 
 Restore and re-green after each mutant — a sweep left half-applied is worse than none. Its sibling
 recipe, [writing a fuzz test so it shards across

@@ -39,6 +39,28 @@ encodings, and say which of the two each hit is — the same trap hides a *calle
 reader: Wonder Boy's `actor_behavior_type61` has exactly one caller in the image and it is a
 `jsr <abs>.w`.
 
+**Then make the census a CASE, not a sentence.** A scan written into a plate is true on the day it
+is run and unchecked for ever after; the same scan inside the battery re-runs on every commit. The
+cheap form is to take the long-encoding hits and require the word in front of each to be the
+instruction the plate claims (`lea <abs>.l,An`, say) — that separates an operand from the
+coincidental data a bare address scan also finds, and it turns "one operand site" from prose into a
+failing test. Wonder Boy's batch 35 pins fifteen tables this way. Say in the case WHICH instruction
+forms it sweeps: `_lea_sites` there covers the two absolute `lea`s and the PC-relative indexed one
+and *nothing else*, so it is silent about `pea`, `movea.l #imm` and a pointer assembled at runtime.
+
+**AND A DIRECT-READER CENSUS IS NOT A REACHABILITY PROOF — do not let the case pretend otherwise.**
+"No instruction names this address" bounds the routines that name it DIRECTLY. It says nothing about
+a block sitting beside an INDEXED table, which is reached through the neighbour's `lea` the moment
+the index runs past the table's end — and whether it can is a fact about the index's range, which
+lives somewhere else entirely. Batch 35 wrote exactly that mistake down and had it caught: two
+sixteen-byte blocks above slot 11's frame tables have no `lea` naming them, and the plate concluded
+"nothing can reach them" because the cursor is masked. **The mask ran AFTER the index** — it bounded
+the value stored BACK into the record, not the one the `lea` had already used — so the blocks are
+reachable padding that happens to repeat the table below, and a cursor one table further on
+publishes a word of the *next handler's opcodes*. A negative therefore needs BOTH halves, stated
+apart: the direct-reader census, and the index's provable range. If you cannot pin the range, say
+the bytes have no direct reader and stop there — that is a smaller claim and a true one.
+
 ### An extent from a linear scan is a hypothesis; look every address inside it up first
 
 A scan that runs on to the next `rts` gives the *next routine's* bytes to the one you are reading,
@@ -52,6 +74,18 @@ its own cursor word, its sixteen-word frame table, a 32-byte record template *an
 address inside it in the name map.** It is a one-line grep and it is the cheapest correction
 available; a plate written from the scan instead propagates into the port, the tests and the docs
 together.
+
+**AND WHEN A PLATE ALREADY CARRIES A DECODED EXTENT, THAT IS THE CHEAP AUTHORITY — not the table.**
+Wonder Boy's per-slot plates have said `decoded code runs $x..$y` since the reconnaissance pass, and
+batch 35's five measurements matched all five to the byte while the difference-of-entries figure was
+wrong for every one of them (552 against 152, worst case). A dispatch table gives you entry points;
+subtracting two of them gives you an entry-to-entry SPAN, which is data plus code plus whatever
+shared routines happen to sit between. Read the plate first, then verify it from the bytes; quote
+the span only as the span. Slots 14..27 carry the same decoded extents and any queue that quotes
+their nominal spans should say which figure it is quoting. Batch 35 hit the worst instance yet: slot 9's dispatch entry to slot 10's is **552** bytes
+and the handler is **152**, because SIX SHARED LEAVES — `$2f22`, `$2f46`, `$2f86`, `$2fce`, `$2fe8`
+and `$3006`, FIVE of them already ported and only `$2f46` new — sit inside that span between the slot's own `rts` and its
+frame tables. A dispatch table gives you entry points, not extents.
 
 ## Classifying a region: two inferences that look like evidence and are not
 

@@ -1361,6 +1361,83 @@
 #define WB_ACTOR_TYPE06_SHOT_SIZE    0xc0002u /* `move.l #$c0002,14(a1)`: WB_ACTOR_HALF_WIDTH $c and
                                                * WB_ACTOR_SIZE_SECOND $2 in one store */
 
+/* ---- the MONSTER-PROLOGUE family, dispatch rows 9..13 (batch 35; src/behavior.c) ---------------
+ *
+ * Slots 2..6's grammar with five more middles: the same spawn gate, the same contact enum, the same
+ * `bset #0,9(a0) / clr.b 18(a0)` before the tail jump, and a HURT animation that ends
+ * `bclr #0,9(a0) / btst #3,9(a0) / bne.w $6bb8`.
+ *
+ * EVERY TABLE BELOW HAS EXACTLY ONE OPERAND SITE IN THE WHOLE IMAGE, by a scan of both absolute
+ * encodings AND of the `lea d8(PC,Dn.w)` displacement, run for every address here — the census
+ * discipline the $5160 miss bought. Two addresses inside the band have NO site at all and are
+ * therefore unreachable duplicates: $338c and $33ac each repeat the sixteen bytes below
+ * WB_ACTOR_TYPE11_HURT_MARKED / _PLAIN, whose cursor never leaves WB_ACTOR_ANIM16_MASK.
+ */
+#define WB_ACTOR_BEHAVIOR_TYPE09     0x2e12u  /* 152 bytes of code, $2e12..$2ea9 */
+#define WB_ACTOR_BEHAVIOR_TYPE10     0x303au  /* 350, $303a..$3197 */
+#define WB_ACTOR_BEHAVIOR_TYPE11     0x3218u  /* 324, $3218..$335b */
+#define WB_ACTOR_BEHAVIOR_TYPE12     0x33bcu  /* 174, $33bc..$3469 */
+#define WB_ACTOR_BEHAVIOR_TYPE13     0x34d2u  /* 246, $34d2..$35c7 */
+
+/* $2f46, the family's own leaf: ONE `bsr` caller, slot 9's walk. */
+#define WB_ACTOR_RANDOM_HOP_RNG_BIT  2u       /* `btst #2,d0` on rng_next's word: CLEAR faces LEFT
+                                               * (`bset #3,8(a0)`), SET faces right */
+#define WB_ACTOR_RANDOM_HOP_SPEED    0xau     /* `move.b #$a,11(a0)`. The same byte
+                                               * WB_ACTOR_TIMER30_SPEED names at $2fc2 — two names
+                                               * because they are two ADDRESSES */
+
+/* $3006 list PAIRS: two longwords each, the LEFT list first (bit 3 of 8(a0) set picks it). */
+#define WB_ACTOR_TYPE09_WALK_LISTS   0x2eaau  /* -> $2eba / $2edc, 16 words + a $ffff terminator */
+#define WB_ACTOR_TYPE09_HURT_LISTS   0x2eb2u  /* -> $2efe / $2f10, 8 words + a terminator */
+#define WB_ACTOR_TYPE09_WALK_STEP    3u       /* `move.w #$3,d7` into actor_step_facing */
+
+#define WB_ACTOR_TYPE10_HOVER        0x31d8u  /* 32 SIGNED words added to the y, one a frame —
+                                               * $fffe..$0002 and back, indexed by
+                                               * WB_ACTOR_FIELD_31 */
+#define WB_ACTOR_TYPE10_HOVER_MASK   0x3fu    /* `andi.b #$3f` — 64 bytes, so the whole table */
+#define WB_ACTOR_TYPE10_CLOSE_STEP   2u       /* `move.w #$2,d0` / `neg.w d0` — the vertical close
+                                               * taken ONCE per hover cycle */
+#define WB_ACTOR_TYPE10_DRIFT_STEP   1u       /* `addq.w #1,(a0)` / `subq.w #1,(a0)` every frame */
+#define WB_ACTOR_TYPE10_TURN_FRAMES  0x64u    /* `move.b #$64,30(a0)` — frames between turns */
+#define WB_ACTOR_TYPE10_HOME_STEP    1u       /* `move.w #$1,d7 / bsr $6840` on the turn frame */
+#define WB_ACTOR_TYPE10_WALK_LEFT    0x3198u  /* 8 words each, wrapped by WB_ACTOR_ANIM16_MASK */
+#define WB_ACTOR_TYPE10_WALK_RIGHT   0x31a8u
+#define WB_ACTOR_TYPE10_HURT_LEFT    0x31b8u
+#define WB_ACTOR_TYPE10_HURT_RIGHT   0x31c8u
+#define WB_ACTOR_TYPE10_HURT_STEP    4u       /* `move.w #$4,d7`, and the step is AWAY */
+
+#define WB_ACTOR_TYPE11_RELOAD       0x19u    /* `move.b #$19,30(a0)` — frames between decisions */
+#define WB_ACTOR_TYPE11_HOP_SPEED    9u       /* `move.w #$9,d0 / bra.w $2af2` */
+#define WB_ACTOR_TYPE11_FACE_RNG_BIT 2u       /* `btst #2,d0`: SET faces LEFT, which is the OPPOSITE
+                                               * reading to WB_ACTOR_RANDOM_HOP_RNG_BIT's */
+#define WB_ACTOR_TYPE11_HOP_RNG_BIT  1u       /* `btst #1,d0`: SET vetoes the hop */
+#define WB_ACTOR_TYPE11_WALK_STEP    2u       /* `move.w #$2,d7`, spelt in BOTH arms */
+#define WB_ACTOR_TYPE11_WALK_LEFT    0x335cu  /* 8 words each, wrapped by WB_ACTOR_ANIM16_MASK */
+#define WB_ACTOR_TYPE11_WALK_RIGHT   0x336cu
+#define WB_ACTOR_TYPE11_HURT_MARKED  0x337cu  /* the hurt pair, and the ONE table select in the
+                                               * family that reads WB_ACTOR_FIELD_30 rather than */
+#define WB_ACTOR_TYPE11_HURT_PLAIN   0x339cu  /* WB_ACTOR_FLAG_SIDE_BIT */
+#define WB_ACTOR_TYPE11_HURT_BIT     3u       /* `btst #3,30(a0)` — bit 3 of the countdown byte the
+                                               * live arm reloads with WB_ACTOR_TYPE11_RELOAD */
+
+#define WB_ACTOR_TYPE12_WALK_STEP    2u       /* `move.w #$2,d7` into actor_face_and_step_toward */
+#define WB_ACTOR_TYPE12_GROUND_LISTS 0x346au  /* $3482/$3494, 8 words + a terminator each: the walk,
+                                               * played while WB_ACTOR_FLAG_SUPPORTED_BIT is up */
+#define WB_ACTOR_TYPE12_AIR_LISTS    0x3472u  /* $34a6/$34aa, ONE word + a terminator each: the
+                                               * single frame it holds while airborne */
+#define WB_ACTOR_TYPE12_HURT_LISTS   0x347au  /* $34ae/$34c0, 8 words + a terminator each */
+
+#define WB_ACTOR_TYPE13_FRAMES       0x35c8u  /* 8 words, and the whole of this handler's data */
+#define WB_ACTOR_TYPE13_HOP_SPEED    0xcu     /* `move.b #$c,11(a0)` — relaunched on EVERY frame it
+                                               * is supported, with no countdown and no draw */
+#define WB_ACTOR_TYPE13_DEATH_FRAMES 0x19u    /* `move.b #$19,31(a0)` — how long the throe runs */
+#define WB_ACTOR_TYPE13_DEATH_SPEED  6u       /* `move.b #$6,11(a0)` on the throe's first frame */
+#define WB_ACTOR_TYPE13_HURT_STEP    2u       /* `move.w #$2,d7`, and the step is AWAY */
+#define WB_ACTOR_TYPE13_HURT_SPRITE  0x37u    /* `move.w #$37,6(a0)` — published straight, every
+                                               * frame of the throe */
+#define WB_ACTOR_TYPE13_DYING        0xffu    /* `st 30(a0)` — the byte the throe's own head tests,
+                                               * so the setup runs on its FIRST frame only */
+
 /* The $5a band's last three tables. Each sits INSIDE its own handler's extent and is reached only
  * from it — $5952 by the one `lea $5952.l` at $5928, the other three by `lea d8(PC,Dn.w)` — so no
  * second reader exists anywhere in the image. */

@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 237/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 243/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -58,8 +58,13 @@ where the independent gate found a live divergence a refusal in the battery had 
 the $4e38..$5407 BAND CLOSED (`actor_behavior_type32`..`type37`, 694 bytes, batch 34: every dispatch
 row from slot 28 to slot 37 now runs, the last two collectables are a hop machine and the game's
 CLOCK, and the other four are not creatures at all — the shop's item cursor and the three event
-actors `player_pending_event_gate` spawns and waits on) —
-27,206 bytes in all, 61.5 % of everything
+actors `player_pending_event_gate` spawns and waits on) — and the MONSTER-PROLOGUE FAMILY OPENS
+(`actor_behavior_type09`..`type13` plus the leaf `actor_random_facing_hop`, 1,310 bytes, batch 35:
+the $2462 band's grammar with five more middles — a random hopper, a flier that never touches the
+map, a decider that spends one `rng_next` word on a facing AND a hop, a chaser, and a bouncer whose
+hurt arm is a throe that ALWAYS ends in the defeat — and the first two handlers in the tier BOUNDED
+on an arm the game runs every time a monster is hit) —
+28,516 bytes in all, 64.4 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -71,9 +76,12 @@ left this leading count at 161 while its own section and parenthetical said 163 
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
-`make test`: **4558 cases green in what this batch commits**, measured by `pytest --collect-only`
-rather than added up (4466 after batch 33, plus batch 34's 92 — all of them in
-`test/test_behavior.py`, which stands at 944).
+`make test`: **4670 cases green in what this batch commits**, measured by a full run from a clean
+`build/` rather than added up (4558 after batch 34, plus batch 35's 112 — all of them in
+`test/test_behavior.py`, which stands at 1,056: three from the mutation sweep, eight from the review
+gate and seven from the INDEPENDENT gate, less two the last of those replaced).
+`make test` at batch 34: **4558 cases** (4466 after batch 33, plus batch 34's 92 — all of them in
+`test/test_behavior.py`, which stood at 944).
 `make test` at batch 33: **4466 cases** (4359 after batch 33's prerequisites, plus phase A's 92 and
 phase B's 15). The
 92 is NET: the review gate and the independent gate after it added rows for the left walk arm, the
@@ -5913,3 +5921,357 @@ and the review gate's four, i.e. the figure that was current at the moment the l
 not the 4558 the headline above states for what the batch finally commits. **Back up before a destructive git command on a file whose
 only copy is the working tree**, and never let a sweep re-snapshot without checking what it is
 snapshotting.
+
+### Batch 35: dispatch rows 9..13 — the MONSTER-PROLOGUE family opens
+
+**SIX ROUTINES, 1,310 BYTES.** Five dispatch rows and the leaf one of them calls. **Verified 243,
+28,516 bytes, 64.4 % of §0k's 44,262; `make test` 4670** (4558 before, and all 112 of the growth is
+`test/test_behavior.py`, which stands at 1,056). **37 of the table's 62 rows are live and 25
+remain** — `PORTED_SLOT_COUNT` holds the figure and a case asserts it against the image's own table.
+Three of the five are CLEAN; two are BOUNDED, and the boundary is the same one slot 53 reports.
+
+| address | name | bytes | row |
+| --- | --- | --- | --- |
+| `$2e12` | `actor_behavior_type09` | 152 | BOUNDED at `$e06` — the random hopper, and the shortest body in the family |
+| `$303a` | `actor_behavior_type10` | 350 | CLEAN — the flier: a 32-word hover table and no map probe at all while alive |
+| `$3218` | `actor_behavior_type11` | 324 | CLEAN — the decider: one `rng_next` word buys a facing AND a hop |
+| `$33bc` | `actor_behavior_type12` | 174 | BOUNDED at `$e06` — the chaser, and the only user here of `$2fce` and `$2f86` |
+| `$34d2` | `actor_behavior_type13` | 246 | CLEAN — the bouncer, whose hurt arm ALWAYS ends in the defeat |
+| `$2f46` | `actor_random_facing_hop` | 64 | the family's own leaf, ONE caller — and NOT the "coin-flip turn" its plate called it |
+
+**THE NOMINAL SPANS ARE ALL WRONG, AND ONE OF THEM BY A FACTOR OF THREE.** A scan from each slot's
+dispatch entry to the next gives 552 / 478 / 420 / 278 / 262 bytes; the code is 152 / 350 / 324 /
+174 / 246. What the difference holds is data — frame lists, list PAIRS and slot 10's hover table —
+and, in slot 9's case, **SIX SHARED LEAVES that belong to no slot at all**: `$2f22`, `$2f46`,
+`$2f86`, `$2fce`, `$2fe8` and `$3006` sit between slot 9's last `rts` and slot 10's entry, and FIVE
+of the six were already named and ported — `$2f46` is the only one this batch adds. Slot 9's own body is 152 of the 552 a scan gives it. Batch
+34's rule — look every address inside a scanned extent up in `../names.txt` first — is what caught
+it again.
+
+**WHAT THESE FIVE ARE.** All five run the $2462 band's grammar: the spawn gate, the contact enum
+(`$23b6` short-circuiting `$5c6e`), `bset #0,9(a0) / clr.b 18(a0)` before the tail jump into
+`actor_damage_template_hitpoints`, and a hurt animation on bit 0 of `9(a0)`. The middles share
+nothing.
+
+  * **Slot 9 is a chain of calls and nothing else.** Its live frame is `actor_fall_and_settle`,
+    `actor_hop_ascend_step`, `actor_step_facing` at three pixels, `actor_random_facing_hop` and
+    `actor_anim_step_facing_list`. **The order inside it is what makes the two halves separable**:
+    the step walks on the facing the record ARRIVED with, the hop then rewrites that facing, and the
+    animation — which runs last — reads the byte the hop left. So on a turning draw the step and the
+    published frame disagree about which way the record is looking, and a case drives both.
+  * **Slot 10 never touches the collision map while it is alive**, and it is the only caller of
+    `actor_step_toward_followed` (`$6840`) in the image. A 32-word signed table moves its y every
+    frame; **the vertical close on the followed record happens ONCE PER 32-FRAME CYCLE**, not once a
+    frame, because the `bne.w` reads the MASKED hover cursor and skips the close on the other 31.
+    Sideways it drifts one pixel toward its side flag with no probe at all — it can walk through a
+    wall, and a case seeds a solid row and requires it to — and every `$64` frames it turns round,
+    reloads and takes one homing step on both axes. **The frame published on a turn frame is the NEW
+    side's**: the `btst #3,8(a0)` below the turn re-reads the byte the `bchg` wrote, where slot 3's
+    walk chooses its list before its own turn.
+  * **Slot 11 walks while a countdown runs and DECIDES when it expires.** The decision frame reloads
+    `$19`, and then — only for a SUPPORTED record — draws one `rng_next` word: bit 2 picks the
+    facing and bit 1 vetoes the hop. **Both of its arms return above the walk, so the decision frame
+    publishes no animation at all.** The reload runs BEFORE the supported test, exactly as
+    `actor_tick_timer30` orders the same two things, so a record caught in the air still gets a
+    fresh countdown and does nothing with it. Its walk at `$32b2` is `actor_step_facing`'s body
+    spelt inline with `move.w #$2,d7` in EACH arm.
+  * **Slot 12 is the chaser**, and the only handler in the family that uses `$2fce` and `$2f86`:
+    face the followed record, step two pixels toward it, and hop every `$32` frames on the
+    generator's permission. **Its animation is picked by `btst #2,8(a0)` rather than by a cursor** —
+    supported plays an eight-word walk pair, airborne plays a pair whose lists are ONE word and a
+    terminator, so `$3006`'s look-ahead zeroes the cursor on the very frame it publishes and an
+    airborne record holds one frame.
+  * **Slot 13 hops on every frame it is supported** — no countdown, no draw, no facing change — so
+    it is airborne almost always. **And its hurt arm is not a hurt arm.** It never lowers bit 0 of
+    `9(a0)` and never tests the defeated mark: `tst.b 30(a0)` zero arms a `$19`-frame throe once
+    (`st 30(a0)` is the latch), every frame after that steps two pixels away and publishes sprite
+    `$37` straight, and the frame `subq.b #1,31(a0)` reaches zero does `clr.b 30(a0)` and
+    `bra.w $6bb8`. **THE ONE UNCONDITIONAL TRANSFER INTO `actor_defeat_and_score` IN THE FAMILY**, so
+    a struck type-13 record always dies whatever its template's hit-point pool said — driven with
+    the mark up AND down, and both die.
+
+**THE FAMILY'S HURT TAIL IS NOT THE BAND'S, and the difference is one mnemonic.** Slots 9, 10, 11
+and 12 all end their last hurt frame `bclr #0,9(a0) / btst #3,9(a0) / bne.w $6bb8` — the DEFEATED
+bit is only TESTED — where slots 2, 3 and 4 `bclr` it. A case that merely checked "the defeat ran"
+would pass against either spelling, so `test_the_family35_hurt_wrap_transfers_and_LEAVES_the_defeated_bit_standing`
+asserts the bit is still set behind the transfer, and the mutant that clears it is caught.
+
+**AND THE STRUCK ARM SPLITS THE FIVE THREE-TWO.** `$2e52`, `$307a` and `$33fc` are `bsr $67c2`
+between the two writes and the tail jump; slots 11 and 13 have no such instruction and take the hit
+facing wherever they already were. `FAMILY35_STRUCK_FACES` states it per slot and one parametrised
+case drives all five, asserting the flag both ways.
+
+**TWO HANDLERS ARE BOUNDED, AND THE ARM IS ONE THE GAME RUNS EVERY TIME A MONSTER IS HIT.** Slots 9
+and 12 both `bsr $d78` on their hurt arm, and `player_gate_on_1516` BRANCHES into
+`WB_PLAYER_STEP_BODY` (`$e06`) while `WB_TILE_33_MODE` is clear — so those frames report an address
+rather than a result. That is the port's limit and not a fact about the game: with the mode SET the
+gate returns at once and both arms run whole, which is how every other slot-9 and slot-12 case here
+is driven. `test_the_two_bounded_hurt_arms_are_exactly_the_two_that_call_the_player_gate` checks
+`FAMILY35_BOUNDED` against the pinned bodies rather than against this paragraph.
+
+**A PLATE CORRECTED, AND IT IS THE LEAF'S NAME.** `$2f46` was `actor_random_turn # ctx`, "a
+coin-flip turn". The bytes say it turns AND LAUNCHES: bit 2 of the generator's word chooses `bset
+#3,8(a0)` or `bclr`, and then bits 0 and 1 of `8(a0)` go up, bit 2 goes down and `11(a0) := $a`
+unconditionally. It is renamed `actor_random_facing_hop`, and the contrast with `$2f86` — where
+`btst #2` of the same word VETOES the relaunch instead of choosing a side — is in both plates.
+**Slot 11 reads bit 2 the OPPOSITE way round from `$2f46`** (SET faces left there, right here), which
+is why the two constants are separate names rather than one.
+
+**THE CENSUS, RUN BEFORE THE FACT AND THEN CHECKED BY A CASE.** Every table this batch names was
+swept over the whole image in BOTH absolute encodings and in the `lea d8(PC,Dn.w)` displacement
+form; `test_every_table_this_batch_names_has_exactly_one_lea_naming_it` re-runs the long-form half
+against the loaded image for all fifteen. The word `$337c` occurs 31 times in the image and `$3494`,
+`$34c0`, `$3472`, `$3198`, `$303a` and `$3218` several times each — **none of them preceded by an
+abs.w-mode opcode**, so all are data. The five slot ENTRIES were swept the same way over every
+branch and absolute-jump form and have NO reference but their own dispatch longword: the plates'
+"reached ONLY through `jmp (a1)`" is now measured rather than assumed, which is what batch 31's
+hidden `jsr $6f9e.w` made necessary.
+
+**THIRTY-TWO BYTES OF SLOT 11's DATA THAT NO INSTRUCTION NAMES — and they are REACHABLE PADDING,
+not dead bytes.** `$338c..$339b` and `$33ac..$33bb` are two sixteen-byte blocks, byte-identical
+copies of the two hurt lists below them, and the census finds no `lea` anywhere in the image naming
+either address. **The first draft of this paragraph drew the wrong conclusion from that** and the
+independent gate caught it — see "the index is RAW" below. What the cases pin now is the true shape:
+the bytes are equal, no `lea` names them, and a cursor of `WB_ACTOR_ANIM16_MASK + 1` reaches the
+first block through the LIVE table's own `lea` and publishes a frame identical to the table's. The
+duplicates are what MAKES that over-read harmless, which is what they are for. They are recorded in
+the `var` plates rather than trimmed.
+
+**MUTATION SWEEP: 47 MUTANTS OVER SEVEN AXES, 46 CAUGHT, and the one survivor is an equivalence
+UNDER THIS HARNESS with the argument checked rather than asserted.** Pre-hoc axes over all six
+bodies: the family's hurt tail made to CLEAR the defeated bit and to keep bit 0, its away-step made
+a toward-step, its cursor step collapsed to one store, its inline launch made to keep the supported
+bit; `$2f46`'s bit 2 made a veto, its facing inverted, its supported gate dropped, its speed changed;
+slot 9's walk step, its hop hoisted above the step, its two list pairs swapped, its boundary
+ignored, its wrap test inverted, its struck facing dropped; slot 10's hover mask, the close made
+every-frame and its sign inverted, the hover cursor moved to the other byte, the drift inverted, the
+turn reload changed and the turn itself dropped, the homing step dropped, the animation facing read
+BEFORE the turn, the hurt suppression inverted and its lists swapped; slot 11's reload moved below
+the supported test, both draw bits inverted, its hop speed, its hurt list taken off the side flag
+and its bit moved one over, the decision made to fall through into the walk, its walk step, its
+struck arm made to face; slot 12's list pairs swapped, its chase made a retreat, its list chosen
+before the timer runs, its boundary ignored; slot 13's hop speed, its relaunch gate inverted, its
+throe latch inverted, its defeat made CONDITIONAL, its throe step made a chase, its hurt sprite, its
+cursor mask, and its first-frame facing call dropped.
+
+**THE SWEEP FOUND THREE REAL HOLES AND ONE BADLY BUILT MUTANT, and the three holes are one shape:**
+an arm every case reached with only one value of the state that steers it.
+  * `step/family-away-becomes-toward` SURVIVED because every case reached
+    `step_away_without_facing` with `WB_ACTOR_FLAG_SIDE_BIT` CLEAR, so its SET arm was never driven.
+    Closed by a parametrised slot-10 retreat over both facings, and by parametrising slot 13's
+    arming frame over which side the followed record is on.
+  * `slot13/side-flag-not-set-on-the-first-throe-frame` SURVIVED for the neighbouring reason: the
+    arming case seeded the record already facing the way `actor_set_side_flag` would leave it, so
+    dropping the call changed nothing. Both rows now seed the OPPOSITE flag to what the call writes.
+  * `slot12/list-chosen-before-the-timer-runs` SURVIVED because no case let `actor_tick_timer30`
+    reach its relaunch, so `WB_ACTOR_FLAG_SUPPORTED_BIT` never changed INSIDE a frame and the order
+    of the two could not matter. `test_slot12_publishes_the_AIRBORNE_list_when_its_own_timer_launches_it`
+    drives a supported record whose countdown is zero and whose draw permits.
+  * `slot10/anim-facing-read-before-the-turn` was the batch's own mistake rather than the battery's:
+    the mutant ADDED a publish above the timer instead of MOVING the facing read, so the real
+    publish below overwrote it and the mutant could not have changed anything. Rebuilt to hoist the
+    read, it is caught.
+
+**AND AN EIGHTH WAY A SWEEP LIES — WHICH IS MODE 4's GUARD EXTENDED TO THE BUILD ARTIFACT, not a
+new mode.** A sweep killed mid-`pytest` leaves the MUTANT's `build/*.so` on disk and never runs its
+`finally`; the sources can then be restored by hand and the NEXT run's step-0 green check still
+loads the mutant library and reports the pristine tree as RED. It reads exactly like a broken batch,
+and it cost this batch a diagnosis before the cause was found. The cure is one line — force the
+relink BEFORE the green check, not only before each mutant — and it is in
+[`README.md`](README.md)'s recipe. The frame sentence's count of SEVEN stands, on batch 34's
+precedent for exactly this kind of extension.
+
+**A CASE THIS BATCH WROTE AND THEN DELETED, because it could not fail.** The one surviving mutant is
+`cursor/memory-step-becomes-one-store`, and the first attempt to pin it put a type-10 record at
+`$fffe2` so that `WB_ACTOR_FIELD_31` fell one byte past `os_in_image`'s last (`$fffff`): with the
+store dropped the original's mask reads back ZERO and takes the vertical close, where a port holding
+the stepped value in a register does not. The two really do diverge there — a candidate-only run
+shows `$3fb` against `$3fd` — **and the differential cannot see it**: it compares `[0, STACK_GUARD_LO)`
+and `STACK_GUARD_LO` is `IMAGE_SIZE - 0x1000`, so a record in the top `$1000` bytes is inside the
+oracle's own machine-stack band and excluded. The case passed under the mutant, which is the
+"worse than vacuous" failure batch 30 recorded, and it is deleted rather than weakened.
+**The equivalence is now argued from geometry and the argument covers the CONSUMING use**: two of
+the three sites discard the answer entirely, the third (slot 10's hover cursor) branches on it, and
+for `WB_ACTOR_FIELD_31` to be refused the record must start at `$fffe1` or above — which puts its y,
+the only byte the difference reaches, at `$fffe3` or above and therefore inside the excluded band.
+Folding past `$ffffff` refuses the y too. So no record address separates them here. *(Contrast the
+swoop's `$7378`/`$73c0` pin at `$fffff0`, which works because the fields it OBSERVES fold back to
+`$6` and `$a`, inside the compared prefix — nothing folds a byte 29 offsets away into that prefix
+while leaving its neighbour refused.)*
+
+**NOT PINNED, HONESTLY.**
+  * **The two BOUNDED hurt arms.** Slots 9 and 12 stop at `WB_PLAYER_STEP_BODY` whenever
+    `WB_TILE_33_MODE` is clear, which is the ordinary state — so the retreat, the frame and the wrap
+    on those two arms are only ever driven with the mode SET. That is the port's limit, and it will
+    retire when the player tier lands.
+  * **`cursor/memory-step-becomes-one-store`**, above.
+  * **Which creature each of the five slots DRAWS.** They publish sprite ids out of tables this
+    batch reads and does not identify; the slots are still `typeNN`.
+  * **The registers each handler leaves behind**, as everywhere else in this tier.
+  * **Slot 11's hurt-list select is pinned as a READ, not as a meaning.** `btst #3,30(a0)` is bit 3
+    of the countdown byte the live arm reloads with `$19`, and both values a case drives are states
+    that countdown really passes through — but what the two lists are FOR is not established.
+  * **The refused dispatch**, as in every batch since 29.
+
+**QUEUED — WHAT IS LEFT OF THE TABLE.** Twenty-five rows: **slot 1** (the player), **slots 14..27**
+— fourteen more of this family, and the reconnaissance's own suggestion is to keep taking them in
+blocks of five — **slot 38**, **slots 39..46** and **slot 57**. The order stands: 14..27, then
+38..46 and 57, and the player LAST.
+
+**AND WHEN 14..27 ARE SCOPED, DO NOT QUOTE A NOMINAL SPAN AS AN EXTENT.** Every difference-of-entries
+figure in this batch's own scope was wrong — 552/478/420/278/262 against a measured 152/350/324/174/246
+— because a dispatch table gives entry points and the gaps between them hold frame tables, list pairs
+and (for slot 9) six shared leaves. **The per-slot plates in `../names.txt` already carry a decoded
+extent, `decoded code runs $x..$y`, and all five of this batch's matched the bytes exactly.** Slots
+14..27 carry the same field. Read the plate, verify it from the bytes, and quote a span only as a
+span; `docs/methodology.md` now says so too.
+
+**QUEUED — `scene_copy_record_fields` ($539e, 30 bytes), which has never been in a queue block.**
+Batch 34 registered it in prose as the one exception to "the band $4e38..$5407 runs whole" and then
+listed neither it nor its caller anywhere a later batch would look. It is not a dispatch row: it is
+`player_pending_event_gate`'s spawn helper, reached by the `bsr` at `$c5e`, and it is handed the
+32-byte template at `$537e` that slot 35's own extent stops below. It belongs to whichever batch
+ports that gate ($b1a), and it is the reason a band described as CLOSED still contains unported
+bytes — which is worth saying plainly, because "CLOSED" is otherwise load-bearing.
+
+**QUEUED, CARRIED FORWARD**: `abcd_byte` to the kit; regenerate `../out/names_dump.txt`,
+`../out/hw_scan.tsv`, `../decomp.c` and `../out/wonderboy_dis.txt`; `bus.h` to the kit; the `$1ab4`
+boundary; the tier partition; the `scene_run_effect` latent guard; `$1fa2`
+(`actor_event_anim_step_2394`); `actor_behavior_type46` ($58f2); the second reader of
+`actor_type30_drift` at `$b84`; the three duplicate `cmt` directives (`0x1023a`, `0x10394`,
+`0x1044c`). **NEW**: the twelve third-copy encoders due in `leaf.py` now number thirteen —
+`move_w_indirect_dn` is this batch's, and it is a FIRST copy, so the list is unchanged; what IS new
+is that `andi_b_d16`, `st_d16` and `cmp_w_d16_dn` were each nearly re-added to
+`test/test_behavior.py` a second time by this batch before the duplicate was spotted, which is an
+argument for hoisting the file's encoder block rather than growing it.
+**THE REVIEW GATE (high, eight finder angles) FOUND THREE MORE COVERAGE HOLES — each one proved by
+mutating the reconstruction and watching the whole suite stay green — plus a correction to a plate
+this batch had just written.**
+  * **Slot 10's vertical close is a SIGNED compare and nothing said so.** Replacing `field_w`'s
+    `int16_t` with an unsigned reading survived all 4,657 cases, because every seed in the file uses
+    a y of `STAND_Y ± 0x40` and never sets the sign bit. A record whose y is above the screen origin
+    (`$ff00`) with the followed record at `$0010` closes DOWNWARD signed and upward unsigned — the
+    flier drifts the wrong way for a whole cycle. A second row on the wrap case drives it.
+  * **The close RE-READS the y the hover step just wrote**, which the comment claimed and nothing
+    checked: comparing the pre-hover y instead also survived. The wrap frame's hover word is `-2`, so
+    a followed record placed ONE PIXEL between the two readings is the only seed that separates
+    them, and `test_slot10s_close_compares_the_y_the_hover_JUST_WROTE` places it there.
+  * **`bsr $1334` BEFORE `bsr $501a` was unpinned at all five new sites** (and at nine older ones):
+    swapping the pair everywhere survived. The order is observable only on the frame an ascent ENDS,
+    because `actor_hop_ascend_step` lowers the very bit `actor_fall_and_settle`'s head tests — with
+    `WB_ACTOR_SPEED` at 1 the original leaves the record one pixel higher than the swap does, and
+    four parametrised rows now drive it.
+  * **AND THE PLATE ON `step_away_without_facing` TRANSCRIBED THE WRONG BRANCH.** It read
+    `btst #3,8(a0) / bne`; the image at both sites ($313e, $35a0) is `beq`, with `bsr $1170` falling
+    through. The code and the pins were right and the evidence was not — the exact inversion that
+    would make a later reader "fix" a correct handler. Both polarities are now stated side by side,
+    since `$2fe8` genuinely is the `bne` spelling of the same mapping.
+
+**AND THE GATE'S OWN MUTATION PASS, 6 OF 6 CAUGHT**, run over the three new cases and the three
+shapes the review's de-duplication created (the shared hurt frame ignoring its list-pair argument,
+`actor_face_and_step_away4` losing its facing call, and its step size changed).
+
+**WHAT THE GATE CHANGED IN THE CODE, all of it de-duplication the diff had left undone:**
+`type09_hurt_frame` and `type12_hurt_frame` were the same nine statements bar one constant and are
+now one `gated_hurt_frame(image, actor, hurt_lists)`; `step_away_without_facing` is hoisted beside
+`step_facing` and `actor_face_and_step_away4` is defined in terms of it, which removes the second
+copy of the non-obvious flag→probe inversion; `move_w_indirect_dn` was deleted (`leaf.move_w_ind_dn`
+already emits that two-byte form at displacement 0, and the new encoder's docstring said otherwise);
+`_launch_inline_pieces` now spells the fourth of the four sites its own docstring counts;
+`_handler_cap`'s growing `if` chain became the name-keyed `HANDLER_EXTRA_INSNS` dict `_handler_band`
+beside it already used; `_type10_pokes` stopped restating three seeds `_walk_pokes_for` already sets;
+and `_ticks_for_slot11_draws` stops at the fourth hit instead of building 64 one-megabyte images.
+
+**AND FOUR CLAIMS THE GATE MADE FALSE.** The census case checked only `lea <abs>.l` while fifteen
+plates and a `docs/methodology.md` paragraph claimed all three encodings had been swept — it now
+resolves `lea <abs>.w` and every `lea d8(PC,Dn.w)` displacement in the image, which is the form
+batch 28's whole coverage wall was made of, and all fifteen tables still come back with exactly one
+site. `behavior.h` said all five slots end the hurt animation with the `bclr`/`btst` tail when slot
+13 has neither instruction. `docs/methodology.md` said four of slot 9's six neighbouring leaves were
+already ported; five were. And one hover-cursor row was seeded ODD, so the oracle took a word read at
+an odd address — legal only because the kit builds Musashi with address-error emulation off, and
+unreachable from the game's own state. *(That last fix did not take: the replacement expression,
+`TYPE10_HOVER_LAST - ANIM_FRAME_BYTES + 1`, is `$3d` and still odd. The independent gate found it
+still live under the very comment claiming every cursor was even; it is `$3c` now.)*
+
+**ONE CONSTANT PINNED EQUAL TO ANOTHER, batch 34's `WB_JOY1_FIRE_BIT` pattern again.**
+`test_the_random_hop_turns_AND_launches_a_supported_record` steers `WB_ACTOR_RANDOM_HOP_RNG_BIT` with
+`TICKS_BY_RNG_BIT`, a table stated for `WB_ACTOR_TIMER30_RNG_BIT`. The two ticks separate the bit's
+values only because the two constants are equal, and nothing said so — if they are ever read apart
+the parametrisation would silently collapse onto one arm. A case now asserts the equality.
+
+**A PROCESS FAILURE, and it is CLAUDE.md §8 and sweep-lie mode 4 arriving together from a third
+direction.** A review subagent ran its own mutation probe against `src/behavior.c`, snapshotting the
+file when it started and restoring that snapshot when it finished — over the de-duplication the gate
+had just applied. The loss was silent (the suite was green either way, on the older code) and was
+caught only by grepping for the new function names. **A reviewer that mutates is a writer**: give it
+a copy, or take a backup before letting one run, and re-verify the tree afterwards by NAME and not
+by the suite. The scratchpad's shared sweep module was overwritten in the same way, which is why the
+gate's own pass is a self-contained script.
+
+**NOT PINNED, HONESTLY — one more, from the gate's probes.** `SETTLE_SPAN_UNREAD` versus the
+followed record's sprite on slots 9's and 13's HURT arms: handing either value to
+`actor_fall_and_settle` survives, which is exactly what the constant's own comment claims (only
+slots 3 and 6 read a byte of it back, through their `move.b #$2,d7`). It is reproduced as the
+handler's own entry d7 because that is what the original hands over, and it is recorded here as
+unobservable rather than as pinned.
+**THE INDEPENDENT GATE (two reviewers, transcription re-verified against a fresh `objdump`) FOUND
+TWELVE ITEMS, and the first is the batch's real defect: THE FRAME INDEX IS THE RAW RECORD BYTE, AND
+THE PLATES ASSERTED THE INVERSE.**
+
+At all four of this batch's frame reads — `$332e` (slot 11's hurt), `$3110` (slot 10's walk),
+`$3548` (slot 13) and `$3084` (the hover) — the sequence is `move.b <cursor>,d0 / lea 0(a1,d0.w),a1 /
+move.w (a1),…`, and the `andi.b` runs AFTERWARDS on the value going back into the record. **The mask
+bounds where the cursor GOES, never where it came from.** The reconstruction was already faithful —
+the entry pins hold the order — but three surfaces said otherwise ("the cursor is masked, so nothing
+can reach past the first sixteen bytes"), and the battery rested on it: the duplicate-block case
+asserted `LAST_FRAME[mask] + WB_ACTOR_ANIM_FRAME_BYTES == mask + 1`, which compares two constants
+and **cannot fail**, and three mask-BEFORE-index mutants survived all 1,050 cases.
+
+What replaced it is four seeded cases, each driving the over-read where it is observable:
+  * **slot 13 at cursor `$20` publishes `$35e8` — sixteen bytes inside `actor_behavior_type14`'s
+    code** — so a word of the next handler's OPCODES becomes a sprite id. Nothing pads slot 13's
+    table, which is what makes this the sharp one.
+  * **slot 10's walk at cursor `$10` publishes the NEIGHBOURING list's first frame** (`$47` off the
+    left list where the table's own first word is `$43`), the four eight-word lists being contiguous.
+  * **the hover at cursor `$40` reads `$3218` — slot 11's own entry opcode, `$0828` — and ADDS IT TO
+    THE Y**, a 2,088-pixel jump where the table's first word is `-2`.
+  * **and slot 11 at cursor `$10` publishes the PADDING, which is byte-identical to the table.** That
+    is what the two duplicate blocks are *for*, and it is the corrected claim: they are reachable
+    padding that makes the over-read harmless, not bytes nothing can reach.
+
+All three mask-order mutants are now caught (`index/publish-frame-masks-before-indexing`,
+`index/advance-cursor-masks-before-indexing`, `index/hover-masks-before-indexing`), and the axis is
+in the gate's battery: **9 of 9 caught** on the re-run.
+
+**AND THE RECIPE THAT TAUGHT THE TRAP IS REWRITTEN.** `docs/methodology.md` had just been given
+"make the census a CASE", with the two duplicate blocks as its worked example of proving a
+*negative* — a paragraph written for reuse, teaching precisely the inference that had just been
+wrong. It now says that a direct-reader census bounds the routines naming an address DIRECTLY and
+nothing else; that a block beside an INDEXED table is reached through its neighbour's `lea` the
+moment the index runs past the end; that a negative needs both halves stated apart, the census AND
+the index's provable range; and that `_lea_sites` sweeps three `lea` forms and is silent about
+`pea`, `movea.l #imm` and any pointer assembled at runtime. Batch 28's coverage wall was this shape
+one addressing mode over.
+
+**ELEVEN OF THE FIFTEEN `lea` CITATIONS IN THE NEW PLATES NAMED THE OPERAND, NOT THE INSTRUCTION.**
+A `lea <abs>.l,An` is an opcode word and a longword, and the scan reports where the longword starts —
+so `$31a8`'s plate said `$3102` where the instruction is at `$3100`, while four plates (transcribed
+from the listing instead) said the instruction. All fifteen now name the instruction, which is what
+the census case reports, so a plate and the case that checks it can be compared by eye.
+
+**FOUR MORE CORRECTIONS, each verified by the reviewers.** The odd hover row the section above
+claims was fixed **was still live** — the replacement expression evaluates to `$3d` — under the very
+comment saying every cursor is even; it is `$3c`. The "five shared leaves" figure is six addresses
+with five pre-ported (three surfaces). "Sixty-four bytes nothing can read" is thirty-two, in two
+blocks (three surfaces), and after the finding above the verb changes too. And **the RNG-bit equality
+pin this section claimed did not exist**: the edit adding it was in a script that died on a syntax
+error and was never re-run, so `WB_ACTOR_RANDOM_HOP_RNG_BIT` and `WB_ACTOR_TIMER30_RNG_BIT` were
+still unpinned while the prose said otherwise — and the hop case could not have caught a divergence,
+since it computes its expectation FROM the drawn word. The one-line assert is in.
+
+**THE RULE ABOUT REVIEWERS IS NOW IN THE DURABLE DOCS**, where the narrative above only recorded the
+incident: `README.md`'s sweep section says to give a reviewer a COPY or take a named backup, and to
+re-verify the tree BY NAME afterwards — `git diff` looks identical whether an edit is missing or was
+never made. This batch's second reviewer did that by hand; it is written down now.
+

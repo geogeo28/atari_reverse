@@ -204,9 +204,9 @@ UNPORTED_TYPE = 1
 # that wants "a handler this port does not have" names one of these two rather than a bare number —
 # batch 30 ported five slots that such cases used to name, and a stale number would have turned a
 # boundary case into a run-the-handler case without failing.
-# Batch 32 ported slot 7, which this used to name; slot 9 replaces it for the same reason the
-# constant exists at all.
-UNPORTED_SLOT = 9
+# Batch 32 ported slot 7, which this used to name, and batch 35 ported slot 9, which replaced it;
+# slot 14 replaces that, for the same reason the constant exists at all.
+UNPORTED_SLOT = 14
 
 # ...and two MORE, for the cases that want three different unported slots at once (one per alias
 # band, one per walk boundary). Named for the same reason the two above are.
@@ -759,10 +759,7 @@ def _tick_timer30_pieces():
         _bsr(RNG_NEXT),
         btst_imm_dn(TIMER30_RNG_BIT, D0),
         _bcc(BNE_W, "out"),
-        bit_op_d16(BSET_IMM, MOVING_BIT, A0, ACTOR_FLAGS),
-        bit_op_d16(BSET_IMM, LAUNCHED_BIT, A0, ACTOR_FLAGS),
-        bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
-        move_b_imm_d16(A0, TIMER30_SPEED, SPEED),
+        *_launch_inline_pieces(TIMER30_SPEED),
         clr_b_d16(A0, FIELD_18),
         _lab("out"),
         RTS,
@@ -2991,6 +2988,332 @@ def _type37_pieces():
     ]
 
 
+# --- batch 35: the monster-prologue family, dispatch rows 9..13 ------------------------------------
+# The same three openings slots 2..6 have, and five middles that share nothing but their shape. Each
+# pin below runs to the handler's own last `rts`; BODY_SIZES states where that is.
+RANDOM_HOP = "actor_random_facing_hop"
+STEP_FACING = "actor_step_facing"
+FACE_TOWARD = "actor_face_and_step_toward"
+FACE_AWAY4 = "actor_face_and_step_away4"
+TICK_TIMER30 = "actor_tick_timer30"
+ANIM_LIST = "actor_anim_step_facing_list"
+TOWARD = "actor_step_toward_followed"
+
+RANDOM_HOP_RNG_BIT = wb("ACTOR_RANDOM_HOP_RNG_BIT")
+RANDOM_HOP_SPEED = wb("ACTOR_RANDOM_HOP_SPEED")
+
+
+def _launch_inline_pieces(speed):
+    """`bset #0 / bset #1 / bclr #2` of the flag byte and the speed as a LITERAL — the four writes
+    src/behavior.c calls `launch_at_inline_speed`, spelt at four sites in this band."""
+    return [
+        bit_op_d16(BSET_IMM, MOVING_BIT, A0, ACTOR_FLAGS),
+        bit_op_d16(BSET_IMM, LAUNCHED_BIT, A0, ACTOR_FLAGS),
+        bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        move_b_imm_d16(A0, speed, SPEED),
+    ]
+
+
+def _memory_cursor_pieces(offset, mask):
+    """`addq.b #2,d16(a0) / andi.b #mask,d16(a0)` — the cursor stepped as TWO read-modify-writes on
+    memory, which is what separates slots 10 and 13's cursors from every other one in the tier."""
+    return [addq_b_d16(ANIM_FRAME_BYTES, A0, offset), andi_b_d16(A0, mask, offset)]
+
+
+def _random_hop_pieces():
+    return [
+        bit_op_d16(BTST_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        _bcc(BEQ_W, "airborne"),
+        _bsr(RNG_NEXT),
+        btst_imm_dn(RANDOM_HOP_RNG_BIT, D0),
+        _bcc(BNE_W, "face-right"),
+        bit_op_d16(BSET_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _bcc(BRA_W, "launch"),
+        _lab("face-right"),
+        bit_op_d16(BCLR_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _lab("launch"),
+        *_launch_inline_pieces(RANDOM_HOP_SPEED),
+        _lab("airborne"),
+        RTS,
+    ]
+
+
+def _list_pair_pieces(list_pair):
+    """`lea $pair.l,a1 / bsr $3006` — how slots 9 and 12 publish, where the other three index a word
+    table themselves."""
+    return [lea_abs_l(A1, list_pair), _bsr(ANIM_LIST)]
+
+
+def _hurt_tail_pieces(done_label):
+    """`bclr #0,9(a0) / btst #3,9(a0) / bne.w $6bb8` — the four bytes of tail four of the five hurt
+    animations end on. The defeated bit is TESTED, not cleared."""
+    return [
+        bit_op_d16(BCLR_IMM, FLAGS2_BIT_0, A0, FLAGS2),
+        bit_op_d16(BTST_IMM, DEFEATED_BIT, A0, FLAGS2),
+        _bcc_abs(BNE_W, leaf.entry_of(DEFEAT)),
+        _lab(done_label),
+        RTS,
+    ]
+
+
+def _type09_pieces():
+    return [
+        *_monster_prologue("hurt"),
+        *_monster_contact([], "walk"),
+        *_monster_struck([_bsr(SIDE_FLAG)]),
+        _lab("walk"),
+        _bsr(FALL_AND_SETTLE),
+        _bsr(HOP_ASCEND),
+        move_w_imm_dn(D7, wb("ACTOR_TYPE09_WALK_STEP")),
+        _bsr(STEP_FACING),
+        _bsr(RANDOM_HOP),
+        *_list_pair_pieces(wb("ACTOR_TYPE09_WALK_LISTS")),
+        RTS,
+        _lab("hurt"),
+        _bsr(FALL_AND_SETTLE),
+        _bsr(PLAYER_GATE),
+        _bsr(FACE_AWAY4),
+        *_list_pair_pieces(wb("ACTOR_TYPE09_HURT_LISTS")),
+        # The cursor RE-READ out of memory after $3006 stored it, which is what the wrap is read off.
+        tst_b_d16(A0, FIELD_18),
+        _bcc(BNE_W, "done"),
+        *_hurt_tail_pieces("done"),
+    ]
+
+
+def _type10_pieces():
+    return [
+        *_monster_prologue("hurt"),
+        *_monster_contact([], "fly"),
+        *_monster_struck([_bsr(SIDE_FLAG)]),
+        _lab("fly"),
+        moveq_0_dn(D0),
+        move_b_d16_dn(D0, A0, FIELD_31),
+        lea_abs_l(A1, wb("ACTOR_TYPE10_HOVER")),
+        lea_indexed(A1, D0),
+        move_w_ind_dn(D1, A1),
+        add_w_dn_d16(D1, A0, ACTOR_Y),
+        *_memory_cursor_pieces(FIELD_31, wb("ACTOR_TYPE10_HOVER_MASK")),
+        _bcc(BNE_W, "drift"),
+        _bsr(FOLLOWED_RECORD),
+        move_w_imm_dn(D0, wb("ACTOR_TYPE10_CLOSE_STEP")),
+        move_w_ind_dn(D1, A0, ACTOR_Y),
+        cmp_w_d16_dn(D1, A1, ACTOR_Y),
+        _bcc(BLT_W, "close"),
+        neg_w_dn(D0),
+        _lab("close"),
+        add_w_dn_d16(D0, A0, ACTOR_Y),
+        _lab("drift"),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _bcc(BNE_W, "drift-left"),
+        addq_w_ind(wb("ACTOR_TYPE10_DRIFT_STEP"), A0),
+        _bcc(BRA_W, "timer"),
+        _lab("drift-left"),
+        subq_w_ind(wb("ACTOR_TYPE10_DRIFT_STEP"), A0),
+        _lab("timer"),
+        tst_b_d16(A0, FIELD_30),
+        _bcc(BEQ_W, "turn"),
+        subq_b_d16(1, A0, FIELD_30),
+        _bcc(BRA_W, "anim"),
+        _lab("turn"),
+        bit_op_d16(BCHG_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        move_b_imm_d16(A0, wb("ACTOR_TYPE10_TURN_FRAMES"), FIELD_30),
+        move_w_imm_dn(D7, wb("ACTOR_TYPE10_HOME_STEP")),
+        _bsr(TOWARD),
+        _lab("anim"),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _bcc(BNE_W, "anim-left"),
+        lea_abs_l(A1, wb("ACTOR_TYPE10_WALK_RIGHT")),
+        _bcc(BRA_W, "publish"),
+        _lab("anim-left"),
+        lea_abs_l(A1, wb("ACTOR_TYPE10_WALK_LEFT")),
+        _lab("publish"),
+        *_cursor_into(A1),
+        move_w_ind_d16(A1, A0, ACTOR_SPRITE),
+        *_memory_cursor_pieces(FIELD_18, ANIM16_MASK),
+        RTS,
+        _lab("hurt"),
+        bit_op_d16(BTST_IMM, DEFEATED_BIT, A0, FLAGS2),
+        _bcc(BNE_W, "hurt-anim"),
+        move_w_imm_dn(D7, wb("ACTOR_TYPE10_HURT_STEP")),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _bcc(BEQ_W, "hurt-left"),
+        _bsr(STEP_RIGHT),
+        _bcc(BRA_W, "hurt-anim"),
+        _lab("hurt-left"),
+        _bsr(STEP_LEFT),
+        _lab("hurt-anim"),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _bcc(BNE_W, "hurt-left-frames"),
+        lea_abs_l(A1, wb("ACTOR_TYPE10_HURT_RIGHT")),
+        _bcc(BRA_W, "hurt-publish"),
+        _lab("hurt-left-frames"),
+        lea_abs_l(A1, wb("ACTOR_TYPE10_HURT_LEFT")),
+        _lab("hurt-publish"),
+        *_cursor_into(A1),
+        move_w_ind_d16(A1, A0, ACTOR_SPRITE),
+        addi_b_dn(D0, ANIM_FRAME_BYTES),
+        andi_b_dn(D0, ANIM16_MASK),
+        move_b_dn_d16(D0, A0, FIELD_18),
+        _bcc(BNE_W, "done"),
+        *_hurt_tail_pieces("done"),
+    ]
+
+
+def _type11_pieces():
+    return [
+        *_monster_prologue("hurt"),
+        *_monster_contact([], "walk"),
+        *_monster_struck(),
+        _lab("walk"),
+        _bsr(FALL_AND_SETTLE),
+        _bsr(HOP_ASCEND),
+        tst_b_d16(A0, FIELD_30),
+        _bcc(BEQ_W, "decide"),
+        subq_b_d16(1, A0, FIELD_30),
+        _bcc(BRA_W, "step"),
+        _lab("decide"),
+        move_b_imm_d16(A0, wb("ACTOR_TYPE11_RELOAD"), FIELD_30),
+        bit_op_d16(BTST_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        _bcc(BEQ_W, "decided"),
+        _bsr(RNG_NEXT),
+        btst_imm_dn(wb("ACTOR_TYPE11_FACE_RNG_BIT"), D0),
+        _bcc(BEQ_W, "face-right"),
+        bit_op_d16(BSET_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _bcc(BRA_W, "hop-test"),
+        _lab("face-right"),
+        bit_op_d16(BCLR_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _lab("hop-test"),
+        btst_imm_dn(wb("ACTOR_TYPE11_HOP_RNG_BIT"), D0),
+        _bcc(BNE_W, "decided"),
+        move_w_imm_dn(D0, wb("ACTOR_TYPE11_HOP_SPEED")),
+        _bcc_abs(BRA_W, leaf.entry_of(START_MOTION)),
+        _lab("decided"),
+        RTS,
+        # $32b2..$32db is actor_step_facing's body inline, with the step spelt in EACH arm.
+        _lab("step"),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _bcc(BEQ_W, "step-right"),
+        move_w_imm_dn(D7, wb("ACTOR_TYPE11_WALK_STEP")),
+        _bsr(STEP_LEFT),
+        _bcc(BRA_W, "turn-test"),
+        _lab("step-right"),
+        move_w_imm_dn(D7, wb("ACTOR_TYPE11_WALK_STEP")),
+        _bsr(STEP_RIGHT),
+        _lab("turn-test"),
+        tst_b_dn(D0),
+        _bcc(BNE_W, "walk-anim"),
+        bit_op_d16(BCHG_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _lab("walk-anim"),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _bcc(BNE_W, "walk-left"),
+        lea_abs_l(A1, wb("ACTOR_TYPE11_WALK_RIGHT")),
+        _bcc(BRA_W, "walk-publish"),
+        _lab("walk-left"),
+        lea_abs_l(A1, wb("ACTOR_TYPE11_WALK_LEFT")),
+        _lab("walk-publish"),
+        *_cursor_into(A1),
+        move_w_ind_d16(A1, A0, ACTOR_SPRITE),
+        addi_b_dn(D0, ANIM_FRAME_BYTES),
+        andi_b_dn(D0, ANIM16_MASK),
+        move_b_dn_d16(D0, A0, FIELD_18),
+        RTS,
+        _lab("hurt"),
+        # The `moveq` is BEFORE the table select here, so one clear serves both arms.
+        moveq_0_dn(D0),
+        bit_op_d16(BTST_IMM, wb("ACTOR_TYPE11_HURT_BIT"), A0, FIELD_30),
+        _bcc(BNE_W, "hurt-marked"),
+        lea_abs_l(A1, wb("ACTOR_TYPE11_HURT_PLAIN")),
+        _bcc(BRA_W, "hurt-publish"),
+        _lab("hurt-marked"),
+        lea_abs_l(A1, wb("ACTOR_TYPE11_HURT_MARKED")),
+        _lab("hurt-publish"),
+        move_b_d16_dn(D0, A0, FIELD_18),
+        lea_indexed(A1, D0),
+        move_w_ind_d16(A1, A0, ACTOR_SPRITE),
+        addi_b_dn(D0, ANIM_FRAME_BYTES),
+        andi_b_dn(D0, ANIM16_MASK),
+        move_b_dn_d16(D0, A0, FIELD_18),
+        _bcc(BNE_W, "done"),
+        *_hurt_tail_pieces("done"),
+    ]
+
+
+def _type12_pieces():
+    return [
+        *_monster_prologue("hurt"),
+        *_monster_contact([], "walk"),
+        *_monster_struck([_bsr(SIDE_FLAG)]),
+        _lab("walk"),
+        _bsr(FALL_AND_SETTLE),
+        _bsr(HOP_ASCEND),
+        move_w_imm_dn(D7, wb("ACTOR_TYPE12_WALK_STEP")),
+        _bsr(FACE_TOWARD),
+        _bsr(TICK_TIMER30),
+        bit_op_d16(BTST_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        _bcc(BNE_W, "ground"),
+        *_list_pair_pieces(wb("ACTOR_TYPE12_AIR_LISTS")),
+        RTS,
+        _lab("ground"),
+        *_list_pair_pieces(wb("ACTOR_TYPE12_GROUND_LISTS")),
+        RTS,
+        _lab("hurt"),
+        _bsr(FALL_AND_SETTLE),
+        _bsr(PLAYER_GATE),
+        _bsr(FACE_AWAY4),
+        *_list_pair_pieces(wb("ACTOR_TYPE12_HURT_LISTS")),
+        tst_b_d16(A0, FIELD_18),
+        _bcc(BNE_W, "done"),
+        *_hurt_tail_pieces("done"),
+    ]
+
+
+def _type13_pieces():
+    return [
+        *_monster_prologue("hurt"),
+        *_monster_contact([], "hop"),
+        *_monster_struck(),
+        _lab("hop"),
+        _bsr(FALL_AND_SETTLE),
+        _bsr(HOP_ASCEND),
+        bit_op_d16(BTST_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        _bcc(BEQ_W, "hop-anim"),
+        *_launch_inline_pieces(wb("ACTOR_TYPE13_HOP_SPEED")),
+        _lab("hop-anim"),
+        lea_abs_l(A1, wb("ACTOR_TYPE13_FRAMES")),
+        *_cursor_into(A1),
+        move_w_ind_d16(A1, A0, ACTOR_SPRITE),
+        *_memory_cursor_pieces(FIELD_18, ANIM16_MASK),
+        RTS,
+        _lab("hurt"),
+        _bsr(FALL_AND_SETTLE),
+        _bsr(HOP_ASCEND),
+        tst_b_d16(A0, FIELD_30),
+        _bcc(BNE_W, "throe"),
+        move_b_imm_d16(A0, wb("ACTOR_TYPE13_DEATH_FRAMES"), FIELD_31),
+        st_d16(A0, FIELD_30),
+        *_launch_inline_pieces(wb("ACTOR_TYPE13_DEATH_SPEED")),
+        _bsr(SIDE_FLAG),
+        _lab("throe"),
+        move_w_imm_dn(D7, wb("ACTOR_TYPE13_HURT_STEP")),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        _bcc(BEQ_W, "throe-left"),
+        _bsr(STEP_RIGHT),
+        _bcc(BRA_W, "throe-frame"),
+        _lab("throe-left"),
+        _bsr(STEP_LEFT),
+        _lab("throe-frame"),
+        move_w_imm_d16(A0, wb("ACTOR_TYPE13_HURT_SPRITE"), ACTOR_SPRITE),
+        subq_b_d16(1, A0, FIELD_31),
+        _bcc(BNE_W, "alive"),
+        clr_b_d16(A0, FIELD_30),
+        # The ONE unconditional transfer into the defeat in the whole family.
+        _bcc_abs(BRA_W, leaf.entry_of(DEFEAT)),
+        _lab("alive"),
+        RTS,
+    ]
+
+
 ENTRY_PIECES = {
     "actor_behavior_pass": _pass_pieces(),
     "actor_dispatch_behavior": _dispatch_pieces(),
@@ -3054,8 +3377,14 @@ ENTRY_PIECES = {
     "actor_behavior_type35": _type35_pieces(),
     "actor_behavior_type36": _type36_pieces(),
     "actor_behavior_type37": _type37_pieces(),
+    "actor_random_facing_hop": _random_hop_pieces(),
+    "actor_behavior_type09": _type09_pieces(),
+    "actor_behavior_type10": _type10_pieces(),
+    "actor_behavior_type11": _type11_pieces(),
+    "actor_behavior_type12": _type12_pieces(),
+    "actor_behavior_type13": _type13_pieces(),
 }
-RECONSTRUCTED_ROUTINES = 61
+RECONSTRUCTED_ROUTINES = 67
 
 ENTRY_BYTES = {name: _asm(leaf.entry_of(name), pieces) for name, pieces in ENTRY_PIECES.items()}
 INSN_COUNT = {name: _instructions(pieces) for name, pieces in ENTRY_PIECES.items()}
@@ -3161,6 +3490,21 @@ BODY_SIZES = {
                                         # routine's own entry
     "actor_behavior_type36": 38,        # $53bc..$53e1, bounded by slot 37's entry
     "actor_behavior_type37": 38,        # $53e2..$5407, bounded by slot 38's entry
+    "actor_random_facing_hop": 64,      # $2f46..$2f85, bounded by actor_tick_timer30's entry
+    "actor_behavior_type09": 152,       # $2e12..$2ea9 — NOT the 552 to slot 10's entry: $2eaa is
+                                        # its two list PAIRS and $2eba..$2f21 the four lists, and
+                                        # $2f22..$3039 above them is SIX shared leaves, five of
+                                        # them ported before this batch
+    "actor_behavior_type10": 350,       # $303a..$3197, then four 8-word lists and the 32-word
+                                        # hover table at $31d8
+    "actor_behavior_type11": 324,       # $3218..$335b, then four 8-word lists — and the two 16-byte
+                                        # blocks at $338c and $33ac (32 bytes) that repeat two of
+                                        # them: no operand site anywhere, but REACHABLE through the
+                                        # live table's own `lea` on an over-mask cursor
+    "actor_behavior_type12": 174,       # $33bc..$3469, then three list pairs and their six lists
+    "actor_behavior_type13": 246,       # $34d2..$35c7, then its own eight frame words — and NO
+                                        # padding above them, which is why its over-read lands in
+                                        # slot 14's code where slot 11's lands on a copy
 }
 
 
@@ -3213,6 +3557,8 @@ PORTED_TARGETS = ("actor_behavior_null", "actor_behavior_type29",
                   "actor_behavior_type02", "actor_behavior_type03", "actor_behavior_type04",
                   "actor_behavior_type05", "actor_behavior_type06", "actor_behavior_type08",
                   "actor_behavior_type07",
+                  "actor_behavior_type09", "actor_behavior_type10", "actor_behavior_type11",
+                  "actor_behavior_type12", "actor_behavior_type13",
                   "actor_behavior_type47", "actor_behavior_type48", "actor_behavior_type49",
                   "actor_behavior_type50", "actor_behavior_type51", "actor_behavior_type52",
                   "actor_behavior_type53", "actor_behavior_type54", "actor_behavior_type55",
@@ -3232,7 +3578,7 @@ PORTED_SLOTS = tuple(slot for slot, name in sorted(TABLE_TARGETS.items())
 # batch to add a row fails this file instead of a reviewer:
 #   * ../STATUS.md's headline ("N of the table's 62 rows are live") and its batch section
 #   * ../README.md's src/behavior.c entry and its test/test_behavior.py entry
-PORTED_SLOT_COUNT = 32
+PORTED_SLOT_COUNT = 37
 
 
 def test_the_live_row_count_the_docs_state_is_the_one_the_table_has():
@@ -3499,28 +3845,67 @@ SLOT07_CALLEE_INSNS = (INSN_COUNT["actor_face_followed_reset_22"]
                        + (BURST_ALLOCS + DROPPER_ALLOCS) * ALLOC_INSNS)
 
 
+# ...and what the MONSTER-PROLOGUE family's own leaves add, kept off the shared bound for the same
+# reason slot 7's are. Every term is a routine one of slots 9..13 calls that no earlier handler did;
+# `rng_next` is reached three different ways (slot 9 through actor_random_facing_hop, slot 11
+# directly, slot 12 through actor_tick_timer30) but never twice in one frame.
+START_MOTION_INSNS = 5      # $2af2, 24 bytes — three bit writes, the speed store and the `rts`
+FAMILY35_CALLEE_INSNS = (INSN_COUNT["actor_step_facing"]
+                         + INSN_COUNT["actor_random_facing_hop"]
+                         + INSN_COUNT["actor_tick_timer30"]
+                         + INSN_COUNT["actor_face_and_step_toward"]
+                         + INSN_COUNT["actor_face_and_step_away4"]
+                         + INSN_COUNT["actor_anim_step_facing_list"]
+                         + INSN_COUNT["actor_step_toward_followed"]
+                         + INSN_COUNT["player_gate_on_1516"]
+                         + START_MOTION_INSNS + RNG_INSNS + SIDE_FLAG_INSNS + FOLLOWED_INSNS
+                         # ONE more probe than the shared bound's two: slot 9's walk takes
+                         # actor_step_facing's on top of its own arms'.
+                         + MAP_PROBE_INSNS)
+
+
 def _handler_cap(name):
     """A handler's instruction cap: its own pinned body plus one bound for every routine anything in
     this file can call. Derived from the pins, so a body that grows carries its cap with it."""
-    extra = SLOT07_CALLEE_INSNS if name in SLOT07_HANDLERS else 0
-    return INSN_COUNT[name] + HANDLER_CALLEE_INSNS + extra
+    return INSN_COUNT[name] + HANDLER_CALLEE_INSNS + HANDLER_EXTRA_INSNS.get(name, 0)
 
 
 # The five slots in the $2462..$2db1 band, in table order — the ones that share the spawn gate.
 MONSTER_SLOTS = (2, 3, 4, 5, 6)
 MONSTER_HANDLERS = tuple(f"actor_behavior_type{slot:02d}" for slot in MONSTER_SLOTS)
 
+# ...and batch 35's five, which share that band's WHOLE grammar and not merely the gate: the same
+# prologue, the same contact enum and the same hurt tail. Kept as a second list rather than folded
+# into MONSTER_SLOTS because the cases above state the $2462 band's own frame tables and death
+# masks, which these five do not have.
+FAMILY35_SLOTS = (9, 10, 11, 12, 13)
+FAMILY35_HANDLERS = tuple(f"actor_behavior_type{slot:02d}" for slot in FAMILY35_SLOTS)
+# The two whose HURT arm calls $d78 and therefore reports WB_PLAYER_STEP_BODY while
+# WB_TILE_33_MODE is clear; the other three run that arm to their own `rts`.
+FAMILY35_BOUNDED = (9, 12)
+
 # ...and the three table rows that share slot 7's body, which opens with the same gate. Slot 59's
 # prologue writes one global on top of it (HANDLER_GLOBALS), and slot 8's writes nothing extra.
 SLOT07_HANDLERS = ("actor_behavior_type07", "actor_behavior_type08", "actor_behavior_type59")
 
+# Every handler whose quietest arm is the spawn animation — the three families that open on
+# `btst #2,9(a0)`. Named because `_quiet_record` below is not the only thing that will want it.
+SPAWN_GATE_HANDLERS = MONSTER_HANDLERS + SLOT07_HANDLERS + FAMILY35_HANDLERS
+
+# What each handler adds to the shared bound, keyed by NAME — the shape `_handler_band` above
+# already uses, rather than an `if` chain that grows a branch per family. A slot absent from the dict
+# is bounded by HANDLER_CALLEE_INSNS alone.
+HANDLER_EXTRA_INSNS = {name: SLOT07_CALLEE_INSNS for name in SLOT07_HANDLERS}
+HANDLER_EXTRA_INSNS.update({name: FAMILY35_CALLEE_INSNS for name in FAMILY35_HANDLERS})
+
 
 def _quiet_record(name, actor):
     """What a ported handler's record needs for the dispatch case to stay inside
-    HANDLER_WRITE_BAND. Slots 2..6 open on the spawn gate, so raising WB_ACTOR_FLAGS2_SPAWNED_BIT
-    makes the whole frame one animation step; slot 51 is put on its FALLING arm with a half-width
-    small enough to bound the settle's own scan; the other four have no arm that leaves the band."""
-    if name in MONSTER_HANDLERS or name in SLOT07_HANDLERS:
+    HANDLER_WRITE_BAND. THIRTEEN slots open on the spawn gate (SPAWN_GATE_HANDLERS), so raising
+    WB_ACTOR_FLAGS2_SPAWNED_BIT makes the whole frame one animation step; slot 51 is put on its
+    FALLING arm with a half-width small enough to bound the settle's own scan; the rest are quietest
+    one arm at a time and each says which below."""
+    if name in SPAWN_GATE_HANDLERS:
         return {actor + FLAGS2: bytes([1 << SPAWNED_BIT])}
     if name == "actor_behavior_type51":
         return {actor + FLAGS2: bytes([1 << FLAGS2_BIT_0]), actor + HALF_WIDTH: word(4),
@@ -9350,3 +9735,1035 @@ def test_slot37_reads_its_descriptor_THROUGH_THE_BUS():
     written = program_writes(_run_handler(TYPE37, what, pokes))
     assert _written_word(written, EVENT_ANIM_DONE_B16) == EVENT_DONE_SET, (
         f"{what}: an unfilled pointer did not give a target of {(0 - TYPE37_RISE) & 0xffff:#06x}")
+
+
+# ==== batch 35: the monster-prologue family, dispatch rows 9..13 ====================================
+# These five share the $2462 band's WHOLE grammar, so what is driven here is the MIDDLE of each and
+# the two things the family does that the band does not: a hurt tail that only TESTS the defeated
+# bit, and (slots 10 and 13) a cursor stepped as two read-modify-writes on memory.
+#
+# THE SEED IS `_walk_pokes_for`'s, unchanged — the same ground window, the same out-of-reach followed
+# record — because these handlers read exactly what slots 2..6 read. Arms that leave the tier take
+# `_band_slot_pokes` and `_run_band_handler` for the same reason those did.
+FAMILY35_HURT_CURSOR_LAST = LAST_FRAME[ANIM16_MASK]
+
+# Where each of the five publishes its hurt frames from, and how the arm ENDS. Slot 13 has no entry:
+# its hurt arm never wraps, never lowers bit 0 and never tests the mark — it always dies.
+FAMILY35_HURT_WRAPPERS = (9, 10, 11, 12)
+
+
+def _family35_pokes(what, slot, fields=None, ground=True):
+    """`_walk_pokes_for` with the two words the family's own arms read stated: WB_TILE_33_MODE (slots
+    9 and 12 call $d78) and a cursor at zero, so a keyed byte cannot index a frame table."""
+    base = {ACTOR + FIELD_18: bytes([0]), TILE_33_MODE: word(TILE_33_MODE_SET)}
+    return _walk_pokes_for(what, slot, leaf.overlay(base, fields or {}), ground=ground)
+
+
+@pytest.mark.parametrize("slot", FAMILY35_SLOTS, ids=lambda v: f"slot{v:02d}")
+def test_the_family35_spawn_gate_takes_the_whole_frame(slot):
+    """`btst #2,9(a0) / bne.w $698a` — the same four instructions slots 2..6 open with, and the same
+    consequence: the frame is one animation step and nothing else."""
+    name = f"actor_behavior_type{slot:02d}"
+    what = f"{name} spawning"
+    cursor = 4
+    pokes = _monster_pokes(what, slot, {ACTOR + FLAGS2: bytes([1 << SPAWNED_BIT]),
+                                        ACTOR + FIELD_18: bytes([cursor])})
+
+    info = _run_handler(name, what, pokes)
+    expected = {ACTOR + FIELD_18: cursor + ANIM_FRAME_BYTES}
+    _put(expected, ACTOR + ACTOR_SPRITE, _image_word(SPAWN_ANIM_FRAMES + cursor))
+    _assert_writes(info, expected, what)
+
+
+# Which of the five faces the followed record between `bset #0,9(a0) / clr.b 18(a0)` and the tail
+# jump into actor_damage_template_hitpoints. Read off the bytes, not guessed: $2e52, $307a and $33fc
+# are `bsr $67c2` and slots 11 and 13 have no such instruction.
+FAMILY35_STRUCK_FACES = {9: True, 10: True, 11: False, 12: True, 13: False}
+
+
+@pytest.mark.parametrize("slot", FAMILY35_SLOTS, ids=lambda v: f"slot{v:02d}")
+def test_the_family35_struck_arm_enters_the_hurt_animation_and_spends_the_pool(slot):
+    """Driven through $23b6's FLASH path, as the band's own struck case is. The followed record is
+    seeded to the actor's LEFT so the side flag the three facing slots raise is visible, and the two
+    that do not raise it are the same case with the assertion inverted."""
+    name = f"actor_behavior_type{slot:02d}"
+    what = f"{name} struck by the flash"
+    x = 0x0100
+    pokes = _band_slot_pokes(what, slot, {
+        ACTOR + ACTOR_X: word(x), ACTOR + FIELD_18: bytes([4]),
+        ACTOR + TEMPLATE_SLOT: bytes([2]),
+        ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+        FLASH_TIMER: word(1), FOLLOWED_DEFAULT + ACTOR_X: word(x - 1)})
+
+    info = _run_band_handler(slot, what, pokes, "damage-template")
+    written = program_writes(info)
+    assert written[ACTOR + FLAGS2] & (1 << FLAGS2_BIT_0), f"{what}: the hurt animation was not entered"
+    assert written[ACTOR + FIELD_18] == 0, f"{what}: the animation cursor was not zeroed"
+    assert any(TEMPLATE_TABLE <= addr < TEMPLATE_TABLE + TEMPLATE_BAND_BYTES for addr in written), (
+        f"{what}: the template's pool was not spent, so the tail jump never happened")
+    faced = bool(written.get(ACTOR + ACTOR_FLAGS, 0) & (1 << SIDE_BIT))
+    assert faced == FAMILY35_STRUCK_FACES[slot], (
+        f"{what}: the side flag {'was not' if FAMILY35_STRUCK_FACES[slot] else 'was'} raised, "
+        f"against the `bsr $67c2` the bytes {'do' if FAMILY35_STRUCK_FACES[slot] else 'do not'} hold")
+
+
+@pytest.mark.parametrize("slot", FAMILY35_HURT_WRAPPERS, ids=lambda v: f"slot{v:02d}")
+def test_the_family35_hurt_animation_that_wraps_undefeated_comes_back_to_life(slot):
+    """`bclr #0,9(a0)` on the wrap, with the mark down: the record returns to its live handler next
+    frame and nothing outside the actor tables is touched."""
+    name = f"actor_behavior_type{slot:02d}"
+    what = f"{name} hurt animation wrapping, not defeated"
+    pokes = _band_slot_pokes(what, slot, {
+        ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+        ACTOR + FIELD_18: bytes([FAMILY35_HURT_CURSOR_LAST]),
+        ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+        TILE_33_MODE: word(TILE_33_MODE_SET)})
+
+    info = _run_band_handler(slot, what, pokes, "defeat")
+    written = program_writes(info)
+    assert not written[ACTOR + FLAGS2] & (1 << FLAGS2_BIT_0), (
+        f"{what}: the record is still in its hurt animation after the wrap")
+    assert all(addr < TEMPLATE_TABLE for addr in written), (
+        f"{what}: something outside the actor tables was written, so the defeat ran")
+
+
+@pytest.mark.parametrize("slot", FAMILY35_HURT_WRAPPERS, ids=lambda v: f"slot{v:02d}")
+def test_the_family35_hurt_wrap_transfers_and_LEAVES_the_defeated_bit_standing(slot):
+    """THE FAMILY'S OWN TAIL, and where it parts from slots 2, 3 and 4: `btst #3,9(a0)`, not `bclr`.
+    The transfer into actor_defeat_and_score happens and the mark is still set behind it — so a case
+    that only checked "the defeat ran" would pass against the band's spelling too."""
+    name = f"actor_behavior_type{slot:02d}"
+    what = f"{name} hurt animation wrapping, defeated"
+    pokes = _band_slot_pokes(what, slot, {
+        ACTOR + FLAGS2: bytes([(1 << FLAGS2_BIT_0) | (1 << DEFEATED_BIT)]),
+        ACTOR + FIELD_18: bytes([FAMILY35_HURT_CURSOR_LAST]),
+        ACTOR + TEMPLATE_SLOT: bytes([2]),
+        ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+        TILE_33_MODE: word(TILE_33_MODE_SET)})
+
+    info = _run_band_handler(slot, what, pokes, "defeat")
+    written = program_writes(info)
+    assert any(TEMPLATE_TABLE <= addr < TEMPLATE_TABLE + TEMPLATE_BAND_BYTES for addr in written), (
+        f"{what}: the template was not touched, so the transfer never happened")
+    assert written[ACTOR + FLAGS2] & (1 << DEFEATED_BIT), (
+        f"{what}: the defeated bit was cleared, which is the $2462 band's spelling and not this one's")
+    assert not written[ACTOR + FLAGS2] & (1 << FLAGS2_BIT_0)
+
+
+# --- $2f46: the random-facing hop -----------------------------------------------------------------
+# The generator's word is the frame tick plus its three counters, so the tick is what steers
+# `btst #2` — the same lever test_the_timer_counts_down uses, and the same two values.
+_RANDOM_HOP = leaf.register_glue(RANDOM_HOP, [ctypes.c_uint32])
+
+
+def test_the_random_hop_reads_the_bit_the_timer_table_was_built_for():
+    """TICKS_BY_RNG_BIT is stated for WB_ACTOR_TIMER30_RNG_BIT and the case below reuses it to steer
+    WB_ACTOR_RANDOM_HOP_RNG_BIT. The two ticks separate that bit's values only because the two
+    constants are equal, and nothing else says so — batch 34 pinned WB_JOY1_FIRE_BIT against
+    WB_ACTOR_TYPE61_FIRE_BIT for exactly this. Read apart, the parametrisation below would collapse
+    onto one arm in silence, and it could not catch that itself: it computes its expectation FROM
+    the drawn word, so a divergence agrees with itself."""
+    assert RANDOM_HOP_RNG_BIT == TIMER30_RNG_BIT, (
+        f"bit {RANDOM_HOP_RNG_BIT} and bit {TIMER30_RNG_BIT} are read apart now, so TICKS_BY_RNG_BIT "
+        f"no longer steers the hop's facing")
+
+
+@pytest.mark.parametrize("tick", sorted(TICKS_BY_RNG_BIT.values()), ids=lambda v: f"tick{v:#06x}")
+@pytest.mark.parametrize("flags", [0x00, 1 << SUPPORTED_BIT, 0xff], ids=lambda v: f"flags{v:#04x}")
+def test_the_random_hop_turns_AND_launches_a_supported_record(flags, tick):
+    """The plate correction as a case: bit 2 of the generator's word picks the FACING and nothing
+    vetoes the launch, so an unvetoed hop happens on both values of the bit. An unsupported record
+    is left entirely alone — no facing, no speed, no flags."""
+    what = f"actor_random_facing_hop flags={flags:#04x} tick={tick:#06x}"
+    pokes = _tier_pokes(case_salt(what), leaf.overlay(
+        _record_fields(ACTOR, {ACTOR_FLAGS: (flags, 1), SPEED: (0x11, 1)}),
+        {FRAME_TICK: word(tick)}))
+
+    expected = {}
+    if flags & (1 << SUPPORTED_BIT):
+        drawn, counters = model_rng(harness.make_image(pokes), 0)
+        expected.update(counters)
+        faced = (flags & ~(1 << SIDE_BIT)) if drawn & (1 << RANDOM_HOP_RNG_BIT) \
+            else (flags | (1 << SIDE_BIT))
+        launched = (faced | (1 << MOVING_BIT) | (1 << LAUNCHED_BIT)) & ~(1 << SUPPORTED_BIT)
+        expected[ACTOR + ACTOR_FLAGS] = launched
+        expected[ACTOR + SPEED] = RANDOM_HOP_SPEED
+
+    info = leaf.run(RANDOM_HOP, _RANDOM_HOP(ACTOR), merge_bands(expected), what,
+                    hw_seed=leaf.hw_declared(), regs={"a0": ACTOR, "_pokes": pokes},
+                    max_insns=_cap(RANDOM_HOP, extra=RNG_INSNS))
+    _assert_writes(info, expected, what)
+
+
+# --- slot 9 ($2e12): the random hopper --------------------------------------------------------------
+TYPE09 = "actor_behavior_type09"
+TYPE09_WALK_LISTS = wb("ACTOR_TYPE09_WALK_LISTS")
+TYPE09_HURT_LISTS = wb("ACTOR_TYPE09_HURT_LISTS")
+
+
+def _list_of(pair, left):
+    """Which of a $3006 PAIR's two longwords the side flag selects: (a1) while it is SET."""
+    return (_image_word(pair + (0 if left else ANIM_LIST_ENTRY)) << 16
+            | _image_word(pair + (0 if left else ANIM_LIST_ENTRY) + WORD_BYTES))
+
+
+@pytest.mark.parametrize("tick", sorted(TICKS_BY_RNG_BIT.values()), ids=lambda v: f"tick{v:#06x}")
+def test_slot09_walks_then_asks_the_generator_for_a_new_direction(tick):
+    """The whole live frame, and the ORDER inside it — which is what makes the two halves separable.
+
+    actor_step_facing runs BEFORE actor_random_facing_hop and walks on the facing the record ARRIVED
+    with (clear here, so three pixels right); the hop then rewrites that facing from bit 2 of the
+    generator's word; and actor_anim_step_facing_list, which runs LAST, reads the flag byte the hop
+    left. So the step and the frame can disagree about which way the record is looking, and on the
+    draw that turns it they do.
+    """
+    what = f"{TYPE09} walking tick={tick:#06x}"
+    x = 0x0100
+    pokes = _family35_pokes(what, 9, {ACTOR + ACTOR_X: word(x),
+                                      ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+                                      FRAME_TICK: word(tick)})
+
+    drawn, counters = model_rng(harness.make_image(pokes), 0)
+    info = _run_handler(TYPE09, what, pokes, hw_seed=leaf.hw_declared(),
+                        band=_handler_band(TYPE09) + merge_bands(counters))
+    written = program_writes(info)
+    faces_left_next = not drawn & (1 << RANDOM_HOP_RNG_BIT)
+    assert _written_word(written, ACTOR, ACTOR_X) == (x + wb("ACTOR_TYPE09_WALK_STEP")) & 0xffff, (
+        f"{what}: the step did not use the facing the record arrived with")
+    assert bool(written[ACTOR + ACTOR_FLAGS] & (1 << SIDE_BIT)) == faces_left_next, (
+        f"{what}: the hop did not set the facing bit 2 of the draw names")
+    assert written[ACTOR + SPEED] == RANDOM_HOP_SPEED, f"{what}: the hop did not launch"
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(
+        _list_of(TYPE09_WALK_LISTS, left=faces_left_next)), (
+        f"{what}: the frame is not the list the hop's NEW facing names")
+    assert written[ACTOR + FIELD_18] == ANIM_FRAME_BYTES
+
+
+def test_slot09_leaves_an_airborne_record_to_finish_its_arc():
+    """`btst #2,8(a0) / beq` inside $2f46: with the record unsupported the hop writes nothing, so
+    the flag byte and the speed keep the values the case gave them and the frame is the walk alone.
+    """
+    what = f"{TYPE09} walking airborne"
+    speed = 0x11
+    pokes = _family35_pokes(what, 9, {ACTOR + ACTOR_FLAGS: bytes([1 << MOVING_BIT]),
+                                      ACTOR + SPEED: bytes([speed])}, ground=False)
+
+    written = program_writes(_run_handler(TYPE09, what, pokes))
+    assert ACTOR + SPEED not in written or written[ACTOR + SPEED] != RANDOM_HOP_SPEED, (
+        f"{what}: an airborne record was relaunched")
+
+
+def test_slot09_stops_at_the_player_gate_on_its_hurt_arm():
+    """THE PORT'S BOUNDARY, and the same one slot 53 reports: `bsr $d78` while WB_TILE_33_MODE is
+    clear branches into WB_PLAYER_STEP_BODY. Everything below the call — the retreat, the frame and
+    the wrap — must therefore be missing from the write set."""
+    what = f"{TYPE09} stopped at the player gate"
+    pokes = _family35_pokes(what, 9, {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+                                      ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+                                      TILE_33_MODE: word(0)})
+
+    info = _run_handler(TYPE09, what, pokes, expect=PLAYER_STEP_BODY,
+                        stop_pc=PLAYER_STEP_BODY, transfer=_player_gate_beq())
+    written = program_writes(info)
+    for field in (ACTOR_SPRITE, FIELD_18):
+        assert ACTOR + field not in written, (
+            f"{what}: {field} was written, so the frame ran on past the gate")
+
+
+@pytest.mark.parametrize("side,left", [(0, False), (1 << SIDE_BIT, True)], ids=["right", "left"])
+def test_slot09_retreats_four_pixels_and_plays_the_hurt_list_its_facing_names(side, left):
+    """The hurt arm below the gate: actor_face_and_step_away4 faces the followed record FIRST, so
+    the list the frame comes out of is the one the CALL chose and not the one the record arrived
+    with. The followed record is seeded on the side the case names."""
+    what = f"{TYPE09} hurt side={side:#04x}"
+    x = 0x0100
+    followed_x = x - 0x40 if left else x + 0x40
+    pokes = _family35_pokes(what, 9, {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+                                      ACTOR + ACTOR_X: word(x),
+                                      ACTOR + ACTOR_FLAGS: bytes([side | (1 << SUPPORTED_BIT)]),
+                                      FOLLOWED_DEFAULT + ACTOR_X: word(followed_x),
+                                      FOLLOWED_DEFAULT + ACTOR_Y: word(STAND_Y)})
+
+    written = program_writes(_run_handler(TYPE09, what, pokes))
+    assert bool(written[ACTOR + ACTOR_FLAGS] & (1 << SIDE_BIT)) == left, (
+        f"{what}: actor_set_side_flag did not run before the step")
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(
+        _list_of(TYPE09_HURT_LISTS, left=left))
+    assert written[ACTOR + FIELD_18] == ANIM_FRAME_BYTES
+
+
+# --- slot 10 ($303a): the flier ---------------------------------------------------------------------
+TYPE10 = "actor_behavior_type10"
+TYPE10_HOVER = wb("ACTOR_TYPE10_HOVER")
+TYPE10_HOVER_MASK = wb("ACTOR_TYPE10_HOVER_MASK")
+TYPE10_CLOSE_STEP = wb("ACTOR_TYPE10_CLOSE_STEP")
+TYPE10_DRIFT_STEP = wb("ACTOR_TYPE10_DRIFT_STEP")
+TYPE10_TURN_FRAMES = wb("ACTOR_TYPE10_TURN_FRAMES")
+TYPE10_HOME_STEP = wb("ACTOR_TYPE10_HOME_STEP")
+TYPE10_HURT_STEP = wb("ACTOR_TYPE10_HURT_STEP")
+# The hover cursor one step below its wrap, derived from the mask the handler spells.
+TYPE10_HOVER_LAST = TYPE10_HOVER_MASK - 1
+
+
+def _type10_pokes(what, fields=None):
+    """Slot 10 never touches the map while alive, so its cases need no ground under the record.
+    Everything else — the turn timer, the hover cursor and a clear flag byte — is `_walk_pokes_for`'s
+    own base already, so this wrapper is the ground and nothing more."""
+    return _family35_pokes(what, 10, fields, ground=False)
+
+
+# EVERY CURSOR HERE IS EVEN, deliberately: the handler indexes a WORD table with it, and an odd
+# value would have the oracle take a word read at an odd address — legal only because the kit builds
+# Musashi with address-error emulation off (TRAP_MODEL.md), and unreachable from the game's own
+# state, since the cursor starts at zero and steps by two.
+@pytest.mark.parametrize("cursor", [0, 2, 0x20, TYPE10_HOVER_LAST - ANIM_FRAME_BYTES],
+                         ids=lambda v: f"cursor{v:#04x}")
+def test_slot10_adds_the_hover_table_word_and_steps_its_cursor_in_memory(cursor):
+    """One SIGNED word of actor_type10_hover onto the y, and the cursor stepped `addq.b` and masked
+    `andi.b` — both on memory. Away from the wrap the close does not run, so the y moves by the
+    table word alone and that is what the case reads."""
+    what = f"{TYPE10} hovering cursor={cursor:#04x}"
+    y = STAND_Y
+    pokes = _type10_pokes(what, {ACTOR + FIELD_31: bytes([cursor]), ACTOR + ACTOR_Y: word(y)})
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    delta = s16(_image_word(TYPE10_HOVER + cursor))
+    assert _written_word(written, ACTOR, ACTOR_Y) == (y + delta) & 0xffff, (
+        f"{what}: the y did not move by the table's own word")
+    assert written[ACTOR + FIELD_31] == (cursor + ANIM_FRAME_BYTES) & TYPE10_HOVER_MASK
+
+
+@pytest.mark.parametrize("below", [True, False], ids=["followed-below", "followed-above"])
+def test_slot10_closes_on_the_followed_y_only_on_the_frame_the_hover_wraps(below):
+    """`bne.w` on the MASKED cursor, so the close runs once per 32-frame cycle. Which way it moves
+    is a SIGNED compare of the two y words: the actor's own y BELOW the followed record's adds
+    WB_ACTOR_TYPE10_CLOSE_STEP, and otherwise it subtracts."""
+    what = f"{TYPE10} hover wrapping, followed {'below' if below else 'above'}"
+    y = STAND_Y
+    delta = s16(_image_word(TYPE10_HOVER + TYPE10_HOVER_LAST))
+    followed_y = (y + delta + 0x40) if below else (y + delta - 0x40)
+    pokes = _type10_pokes(what, {ACTOR + FIELD_31: bytes([TYPE10_HOVER_LAST]),
+                                 ACTOR + ACTOR_Y: word(y),
+                                 FOLLOWED_DEFAULT + ACTOR_Y: word(followed_y)})
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    close = TYPE10_CLOSE_STEP if below else -TYPE10_CLOSE_STEP
+    assert _written_word(written, ACTOR, ACTOR_Y) == (y + delta + close) & 0xffff, (
+        f"{what}: the vertical close is not the table word plus {close}")
+    assert written[ACTOR + FIELD_31] == 0, f"{what}: the hover cursor did not wrap"
+
+
+@pytest.mark.parametrize("side,delta", [(0, TYPE10_DRIFT_STEP), (1 << SIDE_BIT, -TYPE10_DRIFT_STEP)],
+                         ids=["right", "left"])
+def test_slot10_drifts_one_pixel_a_frame_with_no_probe_at_all(side, delta):
+    """`addq.w #1,(a0)` / `subq.w #1,(a0)` on the side flag, and NOTHING between them and the map:
+    this is the one handler in the family that can walk through a wall."""
+    what = f"{TYPE10} drifting side={side:#04x}"
+    x = 0x0100
+    pokes = _type10_pokes(what, {ACTOR + ACTOR_X: word(x), ACTOR + ACTOR_FLAGS: bytes([side])})
+    _block_the_walk(pokes)
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    assert _written_word(written, ACTOR, ACTOR_X) == (x + delta) & 0xffff, (
+        f"{what}: a solid row stopped a record that takes no probe")
+
+
+def test_slot10_counts_its_turn_timer_down_and_publishes_the_side_it_already_had():
+    """The ordinary frame: 30(a0) stepped down, no `bchg`, and the animation off the facing the
+    record arrived with."""
+    what = f"{TYPE10} turn timer running"
+    timer = 5
+    pokes = _type10_pokes(what, {ACTOR + FIELD_30: bytes([timer]),
+                                 ACTOR + ACTOR_FLAGS: bytes([1 << SIDE_BIT])})
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    assert written[ACTOR + FIELD_30] == timer - 1
+    assert ACTOR + ACTOR_FLAGS not in written, f"{what}: it turned early"
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(wb("ACTOR_TYPE10_WALK_LEFT"))
+
+
+def test_slot10_turns_reloads_and_takes_one_homing_step_when_the_timer_runs_out():
+    """`bchg #3,8(a0)`, a reload of WB_ACTOR_TYPE10_TURN_FRAMES and ONE actor_step_toward_followed
+    of WB_ACTOR_TYPE10_HOME_STEP pixels on BOTH axes — the only frame this handler moves diagonally.
+
+    AND THE FRAME PUBLISHED IS THE NEW SIDE'S: the `btst #3,8(a0)` below the turn re-reads the byte
+    the `bchg` wrote, where slot 3's walk chooses its list before its own turn."""
+    what = f"{TYPE10} turn timer expired"
+    x, y = 0x0100, STAND_Y
+    pokes = _type10_pokes(what, {ACTOR + FIELD_30: bytes([0]), ACTOR + ACTOR_FLAGS: bytes([0]),
+                                 ACTOR + FIELD_31: bytes([2]),
+                                 ACTOR + ACTOR_X: word(x), ACTOR + ACTOR_Y: word(y),
+                                 FOLLOWED_DEFAULT + ACTOR_X: word(x + 0x100),
+                                 FOLLOWED_DEFAULT + ACTOR_Y: word(y + 0x100)})
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    assert written[ACTOR + FIELD_30] == TYPE10_TURN_FRAMES, f"{what}: the timer was not reloaded"
+    assert written[ACTOR + ACTOR_FLAGS] & (1 << SIDE_BIT), f"{what}: `bchg` did not flip the side"
+    # The drift moved x by one and the homing step then moved it again, toward a followed record to
+    # the right — so the total is the drift plus the home step and not either alone.
+    assert _written_word(written, ACTOR, ACTOR_X) == (x + TYPE10_DRIFT_STEP + TYPE10_HOME_STEP) \
+        & 0xffff, f"{what}: the homing step did not run"
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(wb("ACTOR_TYPE10_WALK_LEFT")), (
+        f"{what}: the frame is the OLD side's, so the facing was read before the turn")
+
+
+@pytest.mark.parametrize("defeated", [False, True], ids=["alive", "marked"])
+def test_slot10s_hurt_retreat_is_the_only_thing_the_defeated_mark_suppresses(defeated):
+    """`btst #3,9(a0) / bne` jumps over the four-pixel retreat and lands on the animation, so a
+    marked record still steps its cursor toward the wrap that kills it."""
+    what = f"{TYPE10} hurt {'marked' if defeated else 'alive'}"
+    x = 0x0100
+    flags2 = (1 << FLAGS2_BIT_0) | ((1 << DEFEATED_BIT) if defeated else 0)
+    pokes = _type10_pokes(what, {ACTOR + FLAGS2: bytes([flags2]), ACTOR + ACTOR_X: word(x),
+                                 ACTOR + FIELD_18: bytes([2])})
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    moved = _written_word(written, ACTOR, ACTOR_X) if ACTOR + ACTOR_X in written else x
+    assert (moved == x) == defeated, (
+        f"{what}: the retreat {'ran' if defeated else 'did not run'} against the mark")
+    if not defeated:
+        # The flag byte is clear, so the followed record counts as being to the RIGHT and the
+        # retreat goes left — `step_away_without_facing` with nothing facing it first.
+        assert moved == (x - TYPE10_HURT_STEP) & 0xffff
+    assert written[ACTOR + FIELD_18] == 2 + ANIM_FRAME_BYTES, f"{what}: the animation did not step"
+
+
+# --- slot 11 ($3218): the decider ------------------------------------------------------------------
+TYPE11 = "actor_behavior_type11"
+TYPE11_RELOAD = wb("ACTOR_TYPE11_RELOAD")
+TYPE11_HOP_SPEED = wb("ACTOR_TYPE11_HOP_SPEED")
+TYPE11_FACE_RNG_BIT = wb("ACTOR_TYPE11_FACE_RNG_BIT")
+TYPE11_HOP_RNG_BIT = wb("ACTOR_TYPE11_HOP_RNG_BIT")
+TYPE11_HURT_BIT = wb("ACTOR_TYPE11_HURT_BIT")
+
+# Frame ticks that put the generator's word on each of the four (face, hop) combinations bits 2 and
+# 1 name. Found by search rather than stated, so a change to the generator moves them rather than
+# silently collapsing the parametrisation onto one arm.
+def _ticks_for_slot11_draws():
+    wanted, found = {(0, 0), (0, 1), (1, 0), (1, 1)}, {}
+    for tick in range(0x40):
+        if wanted <= set(found):        # every probe builds a 1 MiB image; stop at the fourth hit
+            break
+        pokes = _tier_pokes(case_salt(f"slot11 tick probe {tick}"), {FRAME_TICK: word(tick)})
+        drawn, _counters = model_rng(harness.make_image(pokes), 0)
+        key = ((drawn >> TYPE11_FACE_RNG_BIT) & 1, (drawn >> TYPE11_HOP_RNG_BIT) & 1)
+        found.setdefault(key, tick)
+    assert wanted <= set(found), f"no frame tick reaches {sorted(wanted - set(found))}"
+    return found
+
+
+SLOT11_TICKS = _ticks_for_slot11_draws()
+
+
+def test_slot11_walks_and_animates_while_its_countdown_runs():
+    """The ordinary frame: 30(a0) stepped down, actor_step_facing's two pixels, and one frame off
+    the list the facing names. No generator is read at all."""
+    what = f"{TYPE11} walking"
+    x, timer = 0x0100, 7
+    pokes = _family35_pokes(what, 11, {ACTOR + ACTOR_X: word(x), ACTOR + FIELD_30: bytes([timer]),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT])})
+
+    written = program_writes(_run_handler(TYPE11, what, pokes))
+    assert written[ACTOR + FIELD_30] == timer - 1
+    assert _written_word(written, ACTOR, ACTOR_X) == (x + wb("ACTOR_TYPE11_WALK_STEP")) & 0xffff
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(wb("ACTOR_TYPE11_WALK_RIGHT"))
+    assert written[ACTOR + FIELD_18] == ANIM_FRAME_BYTES
+
+
+def test_slot11_turns_round_on_a_blocked_step():
+    """`tst.b d0 / bchg #3,8(a0)` — actor_step_facing's own tail, spelt inline here. The BYTE of the
+    probe's answer is what decides, which is the reading batch 34 had to separate from slot 28's."""
+    what = f"{TYPE11} blocked"
+    pokes = _family35_pokes(what, 11, {ACTOR + FIELD_30: bytes([7]),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT])})
+    _block_the_walk(pokes)
+
+    written = program_writes(_run_handler(TYPE11, what, pokes))
+    assert written[ACTOR + ACTOR_FLAGS] & (1 << SIDE_BIT), f"{what}: a blocked step did not turn it"
+
+
+def test_slot11_that_is_airborne_when_its_countdown_expires_only_reloads():
+    """The reload runs BEFORE `btst #2,8(a0)`, so an unsupported record gets a fresh countdown and
+    nothing else — no draw, no facing, no hop, and no animation either, because the decision frame
+    returns above the walk."""
+    what = f"{TYPE11} decision airborne"
+    pokes = _family35_pokes(what, 11, {ACTOR + FIELD_30: bytes([0]),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << MOVING_BIT]),
+                                       ACTOR + SPEED: bytes([0])}, ground=False)
+
+    written = program_writes(_run_handler(TYPE11, what, pokes))
+    assert written[ACTOR + FIELD_30] == TYPE11_RELOAD
+    assert ACTOR + ACTOR_SPRITE not in written, f"{what}: the decision frame published a frame"
+    assert ACTOR + FIELD_18 not in written, f"{what}: the decision frame stepped the cursor"
+
+
+@pytest.mark.parametrize("draw", sorted(SLOT11_TICKS), ids=lambda v: f"face{v[0]}hop{v[1]}")
+def test_slot11_decides_a_facing_and_a_hop_from_one_generator_word(draw):
+    """ONE `rng_next` word does both jobs. Bit 2 SET faces LEFT — the OPPOSITE reading to $2f46's
+    on the same bit — and bit 1 SET VETOES the hop, so three of the four combinations move the
+    record and one of them only turns it."""
+    face, hop_vetoed = draw
+    what = f"{TYPE11} decision face={face} hop={hop_vetoed}"
+    pokes = _family35_pokes(what, 11, {ACTOR + FIELD_30: bytes([0]),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+                                       ACTOR + SPEED: bytes([0x11]),
+                                       FRAME_TICK: word(SLOT11_TICKS[draw])})
+
+    _drawn, counters = model_rng(harness.make_image(pokes), 0)
+    info = _run_handler(TYPE11, what, pokes, hw_seed=leaf.hw_declared(),
+                        band=_handler_band(TYPE11) + merge_bands(counters))
+    written = program_writes(info)
+    assert written[ACTOR + FIELD_30] == TYPE11_RELOAD
+    assert bool(written[ACTOR + ACTOR_FLAGS] & (1 << SIDE_BIT)) == bool(face), (
+        f"{what}: bit {TYPE11_FACE_RNG_BIT} of the draw did not choose the facing")
+    # The SPEED byte is not the witness: actor_fall_and_settle writes it on every frame. What only
+    # the hop can do is the three-bit motion contract.
+    if hop_vetoed:
+        assert not written[ACTOR + ACTOR_FLAGS] & (1 << MOVING_BIT), (
+            f"{what}: bit {TYPE11_HOP_RNG_BIT} did not veto the hop")
+        assert written[ACTOR + ACTOR_FLAGS] & (1 << SUPPORTED_BIT)
+    else:
+        assert written[ACTOR + SPEED] == TYPE11_HOP_SPEED
+        assert written[ACTOR + ACTOR_FLAGS] & (1 << MOVING_BIT)
+        assert not written[ACTOR + ACTOR_FLAGS] & (1 << SUPPORTED_BIT)
+
+
+@pytest.mark.parametrize("timer,marked", [(TYPE11_RELOAD, True), (TYPE11_RELOAD & ~(1 << 3), False)],
+                         ids=["bit3-set", "bit3-clear"])
+def test_slot11_picks_its_hurt_list_off_bit_3_of_the_COUNTDOWN_byte(timer, marked):
+    """THE ONE TABLE SELECT IN THE FAMILY THAT IS NOT THE SIDE FLAG. Both seeds face the same way,
+    so a port that read WB_ACTOR_FLAG_SIDE_BIT here would publish one list for both — and the two
+    values are the reload itself and the reload with bit 3 knocked out, i.e. states the live arm
+    really produces as its countdown runs down."""
+    what = f"{TYPE11} hurt timer={timer:#04x}"
+    frames = wb("ACTOR_TYPE11_HURT_MARKED") if marked else wb("ACTOR_TYPE11_HURT_PLAIN")
+    pokes = _family35_pokes(what, 11, {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+                                       ACTOR + FIELD_30: bytes([timer]),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT])})
+
+    written = program_writes(_run_handler(TYPE11, what, pokes))
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(frames), (
+        f"{what}: the hurt list is not the one bit {TYPE11_HURT_BIT} of 30(a0) names")
+    assert ACTOR + FIELD_30 not in written, f"{what}: the hurt arm touched the countdown"
+
+
+# --- slot 12 ($33bc): the chaser -------------------------------------------------------------------
+TYPE12 = "actor_behavior_type12"
+TYPE12_GROUND_LISTS = wb("ACTOR_TYPE12_GROUND_LISTS")
+TYPE12_AIR_LISTS = wb("ACTOR_TYPE12_AIR_LISTS")
+TYPE12_HURT_LISTS = wb("ACTOR_TYPE12_HURT_LISTS")
+
+
+@pytest.mark.parametrize("side,left", [(0, False), (1 << SIDE_BIT, True)], ids=["right", "left"])
+def test_slot12_faces_the_followed_record_and_steps_toward_it(side, left):
+    """actor_face_and_step_toward: the side flag is written from the followed record's x FIRST and
+    the step then goes that way, so the seeded flag is overwritten rather than obeyed."""
+    what = f"{TYPE12} chasing from side={side:#04x}"
+    x = 0x0100
+    followed_x = x - 0x40 if left else x + 0x40
+    pokes = _family35_pokes(what, 12, {
+        ACTOR + ACTOR_X: word(x), ACTOR + FIELD_30: bytes([5]),
+        ACTOR + ACTOR_FLAGS: bytes([side | (1 << SUPPORTED_BIT)]),
+        FOLLOWED_DEFAULT + ACTOR_X: word(followed_x), FOLLOWED_DEFAULT + ACTOR_Y: word(STAND_Y)})
+
+    written = program_writes(_run_handler(TYPE12, what, pokes))
+    step = wb("ACTOR_TYPE12_WALK_STEP")
+    assert bool(written[ACTOR + ACTOR_FLAGS] & (1 << SIDE_BIT)) == left
+    assert _written_word(written, ACTOR, ACTOR_X) == (x + (-step if left else step)) & 0xffff
+
+
+@pytest.mark.parametrize("supported", [True, False], ids=["grounded", "airborne"])
+def test_slot12_picks_its_animation_by_the_SUPPORTED_bit_and_not_by_a_cursor(supported):
+    """`btst #2,8(a0)` chooses between two whole list PAIRS. The airborne pair's lists are ONE word
+    and a terminator, so $3006's look-ahead zeroes the cursor on the very frame it publishes —
+    which is what makes an airborne record hold one frame rather than animate."""
+    what = f"{TYPE12} {'grounded' if supported else 'airborne'}"
+    flags = (1 << SUPPORTED_BIT) if supported else (1 << MOVING_BIT)
+    pokes = _family35_pokes(what, 12, {ACTOR + FIELD_30: bytes([5]),
+                                       ACTOR + ACTOR_FLAGS: bytes([flags]),
+                                       ACTOR + SPEED: bytes([0])}, ground=supported)
+
+    written = program_writes(_run_handler(TYPE12, what, pokes))
+    pair = TYPE12_GROUND_LISTS if supported else TYPE12_AIR_LISTS
+    # The chase re-faces the record first, and the followed one is far to the RIGHT in this seed.
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(_list_of(pair, left=False))
+    assert written[ACTOR + FIELD_18] == (0 if not supported else ANIM_FRAME_BYTES), (
+        f"{what}: the one-word list did not wrap the cursor on its own frame")
+
+
+def test_slot12_stops_at_the_player_gate_on_its_hurt_arm():
+    """Slot 9's boundary again, in the second of the two handlers that reach it."""
+    what = f"{TYPE12} stopped at the player gate"
+    pokes = _family35_pokes(what, 12, {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+                                       TILE_33_MODE: word(0)})
+
+    info = _run_handler(TYPE12, what, pokes, expect=PLAYER_STEP_BODY,
+                        stop_pc=PLAYER_STEP_BODY, transfer=_player_gate_beq())
+    written = program_writes(info)
+    for field in (ACTOR_SPRITE, FIELD_18):
+        assert ACTOR + field not in written, (
+            f"{what}: {field} was written, so the frame ran on past the gate")
+
+
+def test_slot12s_hurt_arm_retreats_and_plays_its_own_pair():
+    """Below the gate it is slot 9's arm exactly, over slot 12's own lists."""
+    what = f"{TYPE12} hurt"
+    x = 0x0100
+    pokes = _family35_pokes(what, 12, {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+                                       ACTOR + ACTOR_X: word(x),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+                                       FOLLOWED_DEFAULT + ACTOR_X: word(x + 0x40),
+                                       FOLLOWED_DEFAULT + ACTOR_Y: word(STAND_Y)})
+
+    written = program_writes(_run_handler(TYPE12, what, pokes))
+    assert _written_word(written, ACTOR, ACTOR_X) == (x - STEP_AWAY_PIXELS) & 0xffff, (
+        f"{what}: the retreat did not go AWAY from the followed record")
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(
+        _list_of(TYPE12_HURT_LISTS, left=False))
+
+
+# --- slot 13 ($34d2): the bouncer, and the family's one certain death -------------------------------
+TYPE13 = "actor_behavior_type13"
+TYPE13_FRAMES = wb("ACTOR_TYPE13_FRAMES")
+TYPE13_HOP_SPEED = wb("ACTOR_TYPE13_HOP_SPEED")
+TYPE13_DEATH_FRAMES = wb("ACTOR_TYPE13_DEATH_FRAMES")
+TYPE13_DEATH_SPEED = wb("ACTOR_TYPE13_DEATH_SPEED")
+TYPE13_HURT_STEP = wb("ACTOR_TYPE13_HURT_STEP")
+TYPE13_HURT_SPRITE = wb("ACTOR_TYPE13_HURT_SPRITE")
+TYPE13_DYING = wb("ACTOR_TYPE13_DYING")
+
+
+@pytest.mark.parametrize("cursor", [0, 4, LAST_FRAME[ANIM16_MASK]], ids=lambda v: f"cursor{v:#04x}")
+def test_slot13_relaunches_on_every_supported_frame_and_animates(cursor):
+    """NO countdown and NO draw: `btst #2,8(a0)` alone, so a record that lands is airborne again the
+    same frame. Its cursor is the family's other two-write one."""
+    what = f"{TYPE13} hopping cursor={cursor:#04x}"
+    pokes = _family35_pokes(what, 13, {ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+                                       ACTOR + FIELD_18: bytes([cursor]),
+                                       ACTOR + SPEED: bytes([0])})
+
+    written = program_writes(_run_handler(TYPE13, what, pokes))
+    assert written[ACTOR + SPEED] == TYPE13_HOP_SPEED, f"{what}: a supported record did not relaunch"
+    assert not written[ACTOR + ACTOR_FLAGS] & (1 << SUPPORTED_BIT)
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(TYPE13_FRAMES + cursor)
+    assert written[ACTOR + FIELD_18] == (cursor + ANIM_FRAME_BYTES) & ANIM16_MASK
+
+
+def test_slot13_leaves_an_airborne_record_to_finish_its_arc():
+    """The other side of that `beq`: the frame is the settle, the ascent and one animation frame."""
+    what = f"{TYPE13} airborne"
+    speed = 3
+    pokes = _family35_pokes(what, 13, {ACTOR + ACTOR_FLAGS: bytes([1 << MOVING_BIT]),
+                                       ACTOR + SPEED: bytes([speed])}, ground=False)
+
+    written = program_writes(_run_handler(TYPE13, what, pokes))
+    assert written.get(ACTOR + SPEED, speed) != TYPE13_HOP_SPEED, (
+        f"{what}: an airborne record was relaunched")
+
+
+@pytest.mark.parametrize("followed_left", [False, True], ids=["followed-right", "followed-left"])
+def test_slot13_arms_its_throe_on_the_frame_the_latch_is_down(followed_left):
+    """`tst.b 30(a0)` zero is the FIRST frame of the throe: WB_ACTOR_TYPE13_DEATH_FRAMES into
+    31(a0), `st 30(a0)`, the inline relaunch at WB_ACTOR_TYPE13_DEATH_SPEED and one
+    actor_set_side_flag. It then falls straight through into the throe's own step.
+
+    THE SEEDED FLAG IS THE OPPOSITE OF WHAT THE CALL WILL WRITE on both rows, which is what makes
+    the call observable at all: with the record already facing the right way, dropping it changes
+    nothing (`slot13/side-flag-not-set-on-the-first-throe-frame` survived the sweep's first pass on
+    exactly that). The step below then goes the other way on the two rows."""
+    what = f"{TYPE13} throe armed, followed {'left' if followed_left else 'right'}"
+    x = 0x0100
+    seeded_side = 0 if followed_left else (1 << SIDE_BIT)
+    pokes = _family35_pokes(what, 13, {
+        ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+        ACTOR + FIELD_30: bytes([0]), ACTOR + FIELD_31: bytes([0]),
+        ACTOR + ACTOR_X: word(x),
+        ACTOR + ACTOR_FLAGS: bytes([seeded_side | (1 << SUPPORTED_BIT)]),
+        FOLLOWED_DEFAULT + ACTOR_X: word(x - 0x40 if followed_left else x + 0x40),
+        FOLLOWED_DEFAULT + ACTOR_Y: word(STAND_Y)})
+
+    written = program_writes(_run_handler(TYPE13, what, pokes))
+    assert written[ACTOR + FIELD_30] == TYPE13_DYING, f"{what}: the latch was not set"
+    # $19 stored, then the throe's own `subq.b #1` below it — so the byte lands one below the count.
+    assert written[ACTOR + FIELD_31] == TYPE13_DEATH_FRAMES - 1
+    assert written[ACTOR + SPEED] == TYPE13_DEATH_SPEED
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == TYPE13_HURT_SPRITE
+    assert bool(written[ACTOR + ACTOR_FLAGS] & (1 << SIDE_BIT)) == followed_left, (
+        f"{what}: actor_set_side_flag did not run before the step")
+    step = TYPE13_HURT_STEP if followed_left else -TYPE13_HURT_STEP
+    assert _written_word(written, ACTOR, ACTOR_X) == (x + step) & 0xffff, (
+        f"{what}: the throe stepped toward the followed record rather than away")
+
+
+def test_slot13_does_not_re_arm_a_throe_that_is_already_running():
+    """The latch again, from the other side: with 30(a0) nonzero the setup is skipped whole, so the
+    countdown keeps falling and the speed is whatever the arc left."""
+    what = f"{TYPE13} throe running"
+    throe, speed = 7, 0x11
+    pokes = _family35_pokes(what, 13, {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+                                       ACTOR + FIELD_30: bytes([TYPE13_DYING]),
+                                       ACTOR + FIELD_31: bytes([throe]),
+                                       ACTOR + SPEED: bytes([speed]),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << MOVING_BIT])},
+                            ground=False)
+
+    written = program_writes(_run_handler(TYPE13, what, pokes))
+    assert written[ACTOR + FIELD_31] == throe - 1
+    assert ACTOR + FIELD_30 not in written, f"{what}: the latch was re-stamped"
+    assert written.get(ACTOR + SPEED, speed) != TYPE13_DEATH_SPEED, f"{what}: it was re-armed"
+
+
+@pytest.mark.parametrize("defeated", [False, True], ids=["unmarked", "marked"])
+def test_slot13_ALWAYS_dies_when_its_throe_runs_out(defeated):
+    """THE ONE UNCONDITIONAL TRANSFER IN THE FAMILY. `subq.b #1,31(a0) / bne` reaching zero does
+    `clr.b 30(a0)` and `bra.w $6bb8` with no `btst` anywhere near it, so the defeat runs whether the
+    record was marked or not — which is what separates this row from the other four."""
+    what = f"{TYPE13} throe expired, {'marked' if defeated else 'unmarked'}"
+    flags2 = (1 << FLAGS2_BIT_0) | ((1 << DEFEATED_BIT) if defeated else 0)
+    pokes = _band_slot_pokes(what, 13, {ACTOR + FLAGS2: bytes([flags2]),
+                                        ACTOR + FIELD_30: bytes([TYPE13_DYING]),
+                                        ACTOR + FIELD_31: bytes([1]),
+                                        ACTOR + TEMPLATE_SLOT: bytes([2]),
+                                        ACTOR + ACTOR_FLAGS: bytes([1 << MOVING_BIT])},
+                                       ground=False)
+
+    info = _run_band_handler(13, what, pokes, "defeat")
+    written = program_writes(info)
+    assert written[ACTOR + FIELD_31] == 0
+    assert any(TEMPLATE_TABLE <= addr < TEMPLATE_TABLE + TEMPLATE_BAND_BYTES for addr in written), (
+        f"{what}: actor_defeat_and_score did not run, so the transfer is conditional after all")
+    # `clr.b 30(a0)` is only OBSERVABLE on the defeat's retire tail: its respawn continuation stamps
+    # WB_ACTOR_RESPAWN_FIELD_30 into the same byte. Which tail this seed reaches comes from
+    # test_actor.py's own model rather than from a guess here.
+    if ACTOR + FIELD_30 not in _model_defeat(harness.make_image(pokes), ACTOR)[2]:
+        assert written[ACTOR + FIELD_30] == 0, f"{what}: the latch was not cleared"
+
+
+# --- the census, as cases --------------------------------------------------------------------------
+# Batch 34's lesson applied before the fact: every table this batch names is claimed to have ONE
+# operand site, and the claim is checked against the image rather than against the plate.
+FAMILY35_TABLES = (
+    "ACTOR_TYPE09_WALK_LISTS", "ACTOR_TYPE09_HURT_LISTS",
+    "ACTOR_TYPE10_HOVER", "ACTOR_TYPE10_WALK_LEFT", "ACTOR_TYPE10_WALK_RIGHT",
+    "ACTOR_TYPE10_HURT_LEFT", "ACTOR_TYPE10_HURT_RIGHT",
+    "ACTOR_TYPE11_WALK_LEFT", "ACTOR_TYPE11_WALK_RIGHT",
+    "ACTOR_TYPE11_HURT_MARKED", "ACTOR_TYPE11_HURT_PLAIN",
+    "ACTOR_TYPE12_GROUND_LISTS", "ACTOR_TYPE12_AIR_LISTS", "ACTOR_TYPE12_HURT_LISTS",
+    "ACTOR_TYPE13_FRAMES",
+)
+# The three forms a `lea` can name an address in, one per addressing mode — and ALL THREE are swept,
+# because the plates claim "one operand site in the whole image" and each of the other two is a form
+# that has already hidden something in this project: batch 34's $5160 miss was the SHORT absolute,
+# and batch 28's whole coverage wall was the PC-relative INDEXED displacement.
+LEA_ABS_L_OPCODES = tuple(opcode(0x41f9 | (reg << 9)) for reg in range(8))
+LEA_ABS_W_OPCODES = tuple(opcode(0x41f8 | (reg << 9)) for reg in range(8))
+LEA_PC_INDEXED_OPCODES = tuple(opcode(0x41fb | (reg << 9)) for reg in range(8))
+
+
+def _lea_sites(image, addr):
+    """Every `lea` in the image that names `addr`, in any of its three forms.
+
+    The two ABSOLUTE forms carry the address as an operand, so they are found by scanning for the
+    bytes and then requiring the instruction word in front — which is what separates an operand from
+    the coincidental data `_operand_sites` also turns up. The PC-RELATIVE INDEXED form carries no
+    address at all: its target is the extension word's own address plus a signed byte, so every such
+    instruction has to be resolved rather than searched for.
+    """
+    sites = [at - WORD_BYTES for at in _operand_sites(longword(addr))
+             if at % 2 == 0 and image[at - WORD_BYTES:at] in LEA_ABS_L_OPCODES]
+    sites += [at - WORD_BYTES for at in _operand_sites(word(addr))
+              if at % 2 == 0 and image[at - WORD_BYTES:at] in LEA_ABS_W_OPCODES]
+    for at in range(0, len(image) - 2 * WORD_BYTES, WORD_BYTES):
+        if image[at:at + WORD_BYTES] not in LEA_PC_INDEXED_OPCODES:
+            continue
+        # The brief extension word's low byte is the displacement, and it counts from the extension
+        # word itself (`leaf.BRANCH_EXTENSION`'s rule, one instruction over).
+        displacement = image[at + 3] - (0x100 if image[at + 3] >= 0x80 else 0)
+        if at + WORD_BYTES + displacement == addr:
+            sites.append(at)
+    return sorted(set(sites))
+
+
+@pytest.mark.parametrize("name", FAMILY35_TABLES)
+def test_every_table_this_batch_names_has_exactly_one_lea_naming_it(name):
+    """The plate for each of these says "one operand site, by a whole-image scan of both absolute
+    encodings and of the `lea d8(PC,Dn.w)` displacement". This case IS that scan, so the claim is
+    re-run on every commit rather than being true only on the day it was written."""
+    addr = wb(name)
+    sites = _lea_sites(bytes(harness.BASE_IMAGE), addr)
+    assert len(sites) == 1, (
+        f"{name} ({addr:#06x}) is named by {len(sites)} `lea`s, not one: "
+        f"{[hex(at) for at in sites]}")
+
+
+# --- THE FRAME READ IS RAW, AND THE MASK BOUNDS ONLY THE STORE ------------------------------------
+# `move.b 18(a0),d0 / lea 0(a1,d0.w),a1 / move.w (a1),6(a0)` publishes FIRST, and the `andi.b` runs
+# afterwards on the value going BACK into the record — at all four of this batch's frame reads
+# ($332e, $3110, $3548 and the hover's $3084). So the mask says where the cursor GOES and never
+# where it came from, and a record holding a cursor above it reads PAST the table its `lea` names.
+#
+# THE PLATES USED TO ASSERT THE INVERSE and the battery rested on it: the case below asserted
+# `LAST_FRAME[mask] + 2 == mask + 1`, which compares two constants and cannot fail, and three
+# mask-BEFORE-index mutants survived the whole suite. These drive the over-read instead.
+TYPE11_PADDING = {wb("ACTOR_TYPE11_HURT_MARKED"): 0x338c, wb("ACTOR_TYPE11_HURT_PLAIN"): 0x33ac}
+# One whole table past the start: the first cursor the mask can never STORE and a record can hold.
+OVER_READ_CURSOR = ANIM16_MASK + 1
+# ...and two tables past, which is where slot 13's over-read leaves its own data entirely.
+TYPE13_OVER_CURSOR = 2 * (ANIM16_MASK + 1)
+TYPE10_HOVER_OVER_CURSOR = TYPE10_HOVER_MASK + 1
+
+
+@pytest.mark.parametrize("live,padding", sorted(TYPE11_PADDING.items()), ids=lambda v: f"{v:#06x}")
+def test_slot11s_duplicate_blocks_are_REACHABLE_padding(live, padding):
+    """WHAT THE TWO DUPLICATES ARE FOR, re-derived now that the read is known to be raw: sixteen
+    bytes above each hurt list repeating it exactly, so an over-read publishes the same frame.
+
+    No `lea` names either block — they are not tables in their own right — and a cursor of
+    OVER_READ_CURSOR reaches the first of them through the LIVE table's own `lea`. That is batch
+    28's coverage wall one addressing mode over, and it is why "no operand site" is a statement
+    about DIRECT readers and not about reachability."""
+    image = bytes(harness.BASE_IMAGE)
+    span = ANIM16_MASK + 1
+    assert image[padding:padding + span] == image[live:live + span], (
+        f"{padding:#06x} is not a copy of {live:#06x} after all")
+    assert not _lea_sites(image, padding), f"{padding:#06x} is named by a `lea` after all"
+    assert live + OVER_READ_CURSOR == padding, (
+        f"a cursor of {OVER_READ_CURSOR} off {live:#06x} does not land on {padding:#06x}")
+
+
+@pytest.mark.parametrize("bit3", [True, False], ids=["hurt-marked", "hurt-plain"])
+def test_slot11_publishes_the_SAME_frame_from_the_padding_as_from_the_table(bit3):
+    """...and the consequence, driven rather than argued: with the cursor one whole table past the
+    start the handler publishes out of the padding, and the frame is the one the table would have
+    given. THE PADDING IS WHY THE OVER-READ IS HARMLESS HERE — slot 13 below has none."""
+    what = f"{TYPE11} hurt over-read {'marked' if bit3 else 'plain'}"
+    frames = wb("ACTOR_TYPE11_HURT_MARKED") if bit3 else wb("ACTOR_TYPE11_HURT_PLAIN")
+    timer = TYPE11_RELOAD if bit3 else TYPE11_RELOAD & ~(1 << TYPE11_HURT_BIT)
+    assert _image_word(frames + OVER_READ_CURSOR) == _image_word(frames), (
+        f"{what}: the padding no longer repeats the table, so this case would prove nothing")
+    pokes = _family35_pokes(what, 11, {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+                                       ACTOR + FIELD_30: bytes([timer]),
+                                       ACTOR + FIELD_18: bytes([OVER_READ_CURSOR]),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT])})
+
+    written = program_writes(_run_handler(TYPE11, what, pokes))
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(frames + OVER_READ_CURSOR)
+    # The STORE is masked even though the read was not, which is the whole asymmetry.
+    assert written[ACTOR + FIELD_18] == (OVER_READ_CURSOR + ANIM_FRAME_BYTES) & ANIM16_MASK
+
+
+def test_slot13_publishes_from_PAST_its_table_when_the_cursor_is_over_the_mask():
+    """The same over-read where NOTHING pads it. actor_type13_frames is sixteen bytes and
+    actor_behavior_type14's code begins sixteen bytes above that, so a cursor of TYPE13_OVER_CURSOR
+    publishes a word of the NEXT HANDLER'S OPCODES as a sprite id — which is what says the index is
+    the raw record byte and not the masked one."""
+    what = f"{TYPE13} cursor past its table"
+    assert _image_word(TYPE13_FRAMES + TYPE13_OVER_CURSOR) != _image_word(TYPE13_FRAMES), (
+        f"{what}: the word past the table equals the first one, so this case could not separate the "
+        f"raw index from the masked one")
+    pokes = _family35_pokes(what, 13, {ACTOR + FIELD_18: bytes([TYPE13_OVER_CURSOR]),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << MOVING_BIT])},
+                            ground=False)
+
+    written = program_writes(_run_handler(TYPE13, what, pokes))
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(TYPE13_FRAMES
+                                                                     + TYPE13_OVER_CURSOR)
+    assert written[ACTOR + FIELD_18] == (TYPE13_OVER_CURSOR + ANIM_FRAME_BYTES) & ANIM16_MASK
+
+
+def test_slot10_walks_off_the_end_of_its_frame_list_the_same_way():
+    """The third of the four raw reads, and the one whose over-read lands on the NEIGHBOURING LIST:
+    the four eight-word lists are contiguous, so a cursor of OVER_READ_CURSOR off the left one
+    publishes the right one's first frame."""
+    what = f"{TYPE10} walk cursor past its list"
+    left, right = wb("ACTOR_TYPE10_WALK_LEFT"), wb("ACTOR_TYPE10_WALK_RIGHT")
+    assert _image_word(left + OVER_READ_CURSOR) == _image_word(right) != _image_word(left), (
+        f"{what}: the two lists are no longer adjacent-and-different, so the seed is stale")
+    pokes = _type10_pokes(what, {ACTOR + FIELD_18: bytes([OVER_READ_CURSOR]),
+                                 ACTOR + ACTOR_FLAGS: bytes([1 << SIDE_BIT])})
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(left + OVER_READ_CURSOR)
+
+
+def test_slot10s_hover_indexes_with_the_RAW_cursor_byte_too():
+    """The fourth, and the only one that is not a sprite: a hover cursor past
+    WB_ACTOR_TYPE10_HOVER_MASK reads a word of actor_behavior_type11's own opcodes and ADDS IT TO
+    THE Y. The table is 64 bytes and slot 11's entry is the next thing above it."""
+    what = f"{TYPE10} hover cursor past its table"
+    y = STAND_Y
+    delta = s16(_image_word(TYPE10_HOVER + TYPE10_HOVER_OVER_CURSOR))
+    assert delta != s16(_image_word(TYPE10_HOVER)), f"{what}: the seed cannot separate the two reads"
+    pokes = _type10_pokes(what, {ACTOR + FIELD_31: bytes([TYPE10_HOVER_OVER_CURSOR]),
+                                 ACTOR + ACTOR_Y: word(y)})
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    assert _written_word(written, ACTOR, ACTOR_Y) == (y + delta) & 0xffff, (
+        f"{what}: the hover indexed the MASKED cursor, not the byte the record holds")
+
+
+def test_the_two_bounded_hurt_arms_are_exactly_the_two_that_call_the_player_gate():
+    """FAMILY35_BOUNDED is prose until something checks it. The pins hold each body's bytes, so the
+    `bsr.w $d78` either is in them or is not."""
+    call = bsr_w(0, leaf.entry_of(PLAYER_GATE))[:2]
+    for slot in FAMILY35_SLOTS:
+        body = ENTRY_BYTES[f"actor_behavior_type{slot:02d}"]
+        calls = [at for at in range(0, len(body), 2)
+                 if body[at:at + 2] == call
+                 and leaf.entry_of(PLAYER_GATE) == leaf.entry_of(f"actor_behavior_type{slot:02d}")
+                 + at + leaf.BRANCH_EXTENSION + s16(body[at + 2] << 8 | body[at + 3])]
+        assert bool(calls) == (slot in FAMILY35_BOUNDED), (
+            f"slot {slot} has {len(calls)} calls to the player gate, against FAMILY35_BOUNDED")
+
+
+# --- the three holes the mutation sweep found -------------------------------------------------------
+# Each of these closes a mutant that SURVIVED the first pass, and each hole is the same shape: an arm
+# the cases above reached with only one value of the state that steers it.
+@pytest.mark.parametrize("side,delta", [(0, -TYPE10_HURT_STEP), (1 << SIDE_BIT, TYPE10_HURT_STEP)],
+                         ids=["side-clear", "side-set"])
+def test_slot10s_hurt_retreat_goes_BOTH_ways_on_the_facing_it_arrived_with(side, delta):
+    """`step/family-away-becomes-toward` SURVIVED: every case above reached
+    `step_away_without_facing` with WB_ACTOR_FLAG_SIDE_BIT CLEAR, so its SET arm — the one that steps
+    RIGHT — was never driven and a port with both arms the same way passed. The retreat has no
+    actor_set_side_flag in front of it, so the seeded flag is what steers it."""
+    what = f"{TYPE10} hurt retreat side={side:#04x}"
+    x = 0x0100
+    pokes = _type10_pokes(what, {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+                                 ACTOR + ACTOR_X: word(x),
+                                 ACTOR + ACTOR_FLAGS: bytes([side]),
+                                 ACTOR + FIELD_18: bytes([2])})
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    assert _written_word(written, ACTOR, ACTOR_X) == (x + delta) & 0xffff, (
+        f"{what}: the retreat went the wrong way for this facing")
+
+
+def test_slot12_publishes_the_AIRBORNE_list_when_its_own_timer_launches_it():
+    """`slot12/list-chosen-before-the-timer-runs` SURVIVED: no case above let actor_tick_timer30
+    reach its relaunch, so the SUPPORTED bit the list select reads never changed inside a frame.
+
+    Here the countdown is already zero and the generator's word permits, so the record is supported
+    when the frame starts and AIRBORNE by the time the select runs — and the frame published must be
+    the air pair's."""
+    what = f"{TYPE12} launched by its own timer"
+    tick = TICKS_BY_RNG_BIT[0]           # the draw whose bit 2 is CLEAR, i.e. the relaunch fires
+    pokes = _family35_pokes(what, 12, {ACTOR + FIELD_30: bytes([0]),
+                                       ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+                                       ACTOR + SPEED: bytes([0]), FRAME_TICK: word(tick)})
+
+    _drawn, counters = model_rng(harness.make_image(pokes), 0)
+    info = _run_handler(TYPE12, what, pokes, hw_seed=leaf.hw_declared(),
+                        band=_handler_band(TYPE12) + merge_bands(counters))
+    written = program_writes(info)
+    assert not written[ACTOR + ACTOR_FLAGS] & (1 << SUPPORTED_BIT), (
+        f"{what}: the timer did not launch the record, so the select cannot have moved")
+    assert written[ACTOR + SPEED] == TIMER30_SPEED
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == _image_word(
+        _list_of(TYPE12_AIR_LISTS, left=False)), (
+        f"{what}: the ground list was published, so the SUPPORTED bit was read before the timer ran")
+
+
+# ...and `cursor/memory-step-becomes-one-store`, which SURVIVES and is an EQUIVALENCE UNDER THIS
+# HARNESS rather than a hole — with the argument checked against the geometry rather than asserted.
+#
+# `addq.b #2,d16(a0)` then `andi.b #mask,d16(a0)` agree with a port that computed both in a register
+# everywhere the store LANDS, so the only seed that could separate them is a record whose cursor byte
+# bus.h refuses: there the mask reads back ZERO where the register holds the stepped value.
+#
+# TWO OF THE THREE SITES CANNOT SHOW IT AT ALL, because nothing reads the answer: slot 10's walk
+# cursor and slot 13's discard it, so the frame is identical either way. The third — slot 10's hover
+# cursor — DOES branch on it, and the difference lands in the record's own WB_ACTOR_Y.
+#
+# AND NO RECORD ADDRESS PUTS THAT Y WHERE THE DIFFERENTIAL CAN SEE IT. `os_in_image` refuses exactly
+# [$100000, $ffffff] after the 24-bit fold, and the diff covers [0, emu.STACK_GUARD_LO) — the top
+# $1000 bytes of the image are the oracle's own machine stack and are excluded. For
+# WB_ACTOR_FIELD_31 to be refused the record must start at $fffe1 or above (or fold past $ffffff, in
+# which case the y is refused too), and every such record's y is at $fffe3 or above — inside the
+# excluded band. The two spellings are therefore indistinguishable here for a reason that is about
+# the harness's window and not about the code, and the original's is reproduced regardless.
+#
+# (Contrast the swoop's $7378/$73c0 pin, which uses a record at $fffff0: it works because the fields
+# it OBSERVES fold back to $6 and $a, low addresses inside the compared prefix. Nothing folds a byte
+# 29 offsets away from another into that prefix while leaving the other one refused.)
+
+
+# --- three more holes, from the review gate's own mutation probes ------------------------------------
+# Each of these was found by mutating the reconstruction and watching the whole suite stay green.
+@pytest.mark.parametrize("y,followed_y,close", [
+    (0x0080, 0x0600, TYPE10_CLOSE_STEP),
+    # THE SIGN BIT, which every other seed in this file leaves clear: as a SIGNED word the actor is
+    # far ABOVE the followed record and closes downward, and an unsigned reading of the same two
+    # words says the opposite.
+    (0xff00, 0x0010, TYPE10_CLOSE_STEP),
+], ids=["both-positive", "actor-y-negative"])
+def test_slot10s_vertical_close_compares_the_two_y_words_SIGNED(y, followed_y, close):
+    """`cmp.w 2(a1),d1 / blt` — the compare src/behavior.c spells with `field_w`, which returns
+    int16_t. A port that compared the raw words agrees on every seed whose y is a small positive and
+    closes the WRONG WAY for a record above the screen origin."""
+    what = f"{TYPE10} signed close y={y:#06x}"
+    pokes = _type10_pokes(what, {ACTOR + FIELD_31: bytes([TYPE10_HOVER_LAST]),
+                                 ACTOR + ACTOR_Y: word(y),
+                                 FOLLOWED_DEFAULT + ACTOR_Y: word(followed_y)})
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    delta = s16(_image_word(TYPE10_HOVER + TYPE10_HOVER_LAST))
+    assert _written_word(written, ACTOR, ACTOR_Y) == (y + delta + close) & 0xffff, (
+        f"{what}: the close went the wrong way, so the compare read the words UNSIGNED")
+
+
+def test_slot10s_close_compares_the_y_the_hover_JUST_WROTE():
+    """`move.w 2(a0),d1` reads the record's y out of MEMORY, one instruction after `add.w d1,2(a0)`
+    put the hover's own delta there — so the compare sees the stepped y and not the entry one.
+
+    The followed record is placed ONE PIXEL between the two readings, which is the only gap that can
+    separate them: the hover word at the wrap cursor is -2, so the pre-hover y is 2 above the
+    post-hover one and a target in between answers the compare differently each way."""
+    what = f"{TYPE10} close reads the stepped y"
+    y = STAND_Y
+    delta = s16(_image_word(TYPE10_HOVER + TYPE10_HOVER_LAST))
+    assert delta == -ANIM_FRAME_BYTES, f"{what}: the wrap frame's delta moved, so the seed is stale"
+    pokes = _type10_pokes(what, {ACTOR + FIELD_31: bytes([TYPE10_HOVER_LAST]),
+                                 ACTOR + ACTOR_Y: word(y),
+                                 FOLLOWED_DEFAULT + ACTOR_Y: word(y - 1)})
+
+    written = program_writes(_run_handler(TYPE10, what, pokes))
+    # Stepped y (y-2) is ABOVE the followed record's (y-1), so the close is downward and lands back
+    # on y; a port comparing the ENTRY y would find y > y-1 and close upward, to y-4.
+    assert _written_word(written, ACTOR, ACTOR_Y) == (y + delta + TYPE10_CLOSE_STEP) & 0xffff, (
+        f"{what}: the compare read the y from before the hover step")
+
+
+# The four family slots whose live arm opens `bsr $1334 / bsr $501a`. Slot 10 has neither.
+FAMILY35_SETTLE_THEN_ASCEND = (9, 11, 12, 13)
+# The speed a case seeds so the ascent's `subq.b #1,11(a0)` reaches zero on the frame it drives —
+# the one frame the pair's ORDER changes anything — and the pixel that ascent lifts.
+WB_ASCENT_LAST_SPEED = 1
+WB_ASCENT_LAST_STEP = WB_ASCENT_LAST_SPEED
+
+
+@pytest.mark.parametrize("slot", FAMILY35_SETTLE_THEN_ASCEND, ids=lambda v: f"slot{v:02d}")
+def test_the_family35_live_arms_settle_BEFORE_they_ascend(slot):
+    """`bsr $1334` then `bsr $501a`, in that order, in all four — and the order is observable on the
+    frame an ascent ENDS, because each of the two reads WB_ACTOR_FLAG_MOVING_BIT and one of them
+    writes it.
+
+    A record already MOVING is one actor_start_motion_at_speed launched, and actor_fall_and_settle
+    returns for exactly that — so in the original the settle does nothing and the ascent lifts the
+    record one pixel, ending the arc and lowering the bit. Swap the two and the ascent lowers the
+    bit FIRST, the settle then finds it clear, and the record is stepped back down by the speed byte
+    the ascent left behind. One pixel apart, and only on this frame.
+    """
+    name = f"actor_behavior_type{slot:02d}"
+    what = f"{name} settle before ascend"
+    y = STAND_Y
+    pokes = _family35_pokes(what, slot, {ACTOR + ACTOR_Y: word(y),
+                                         ACTOR + SPEED: bytes([WB_ASCENT_LAST_SPEED]),
+                                         ACTOR + ACTOR_FLAGS: bytes([1 << MOVING_BIT])},
+                            ground=False)
+
+    written = program_writes(_run_handler(name, what, pokes))
+    assert _written_word(written, ACTOR, ACTOR_Y) == y - WB_ASCENT_LAST_STEP, (
+        f"{what}: the ascent ran first, so the settle stepped the record back down")
+    assert not written[ACTOR + ACTOR_FLAGS] & (1 << MOVING_BIT), (
+        f"{what}: the ascent did not end this frame, so the order is not observable in this seed")
