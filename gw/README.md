@@ -167,6 +167,18 @@ each one that did not.
 rejects it with an explanation rather than a silent no-op. Hatari reads `.st`, `.msa`,
 `.stx` and `.dim` directly, which is why it takes the wider set.
 
+**Known limitation — an hxcfe-made STX may not boot a copy-protected game.** hxcfe writes
+sector-only STX track records (track flags `0x01`), never the full track image (`0x61`) a
+real Pasti dump carries. A protection that issues raw FDC READ TRACK commands gets a
+synthesized standard track instead of its signature track and fails. Proven on Wonder Boy
+disk 1: Hatari logs `fdc stx : no track image for read track ... building a standard track`
+(then `too many data sector=10` — the 12-sector protection track does not even fit the
+synthesized one) and the Copylock loader retries forever on a black screen. The `.scp` gold
+master holds everything — the loss is purely in the conversion. For a bootable STX of a
+protected disk, convert the SCP with Aufit (Windows/Wine); or, when a known-good Pasti dump
+of the same disk exists, verify your dump against it sector-by-sector and play on the Pasti
+file.
+
 Hatari is launched with the same machine settings as `tools/hatari_run.sh` — 1 MiB ST, RGB
 monitor, low-res TOS — using `tools/hatari/TOS104US.img`. `TOS_IMG` overrides the ROM in
 both, though a Quick Action inherits almost no environment, so in practice that override is
