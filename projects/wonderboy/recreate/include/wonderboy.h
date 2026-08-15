@@ -775,9 +775,19 @@
 #define WB_ACTOR_SPRITE              6u       /* word: what the sprite pass draws for this record */
 #define WB_ACTOR_FLAGS               8u       /* byte */
 #define WB_ACTOR_FLAG_SIDE_BIT       3u       /* $67c2 raises it while the followed actor is to the
-                                               * LEFT. Its only reader in the image is the
-                                               * `btst #3,8(a1)` at $51e, inside the routine at
-                                               * $50a, which reads it on the FOLLOWED record */
+                                               * LEFT. AN EARLIER PLATE SAID "its only reader in the
+                                               * image is the `btst #3,8(a1)` at $51e" — true only of
+                                               * the a1 FORM, which is what that routine ($50a) uses
+                                               * to read it on the FOLLOWED record. The census over
+                                               * immediate bit-ops on d16(An) finds 139 operand
+                                               * sites for this bit: 85 `btst` (83 on a0, one on a1
+                                               * at $51e, one on a5), 30 `bchg`, 12 `bclr` and 12
+                                               * `bset`. It is the tier's own facing flag and half
+                                               * the behaviour handlers read it; batch 40 phase B
+                                               * added two more readers ($ed6, the walk's
+                                               * knock-back, and $12e6, the fireball's) and gave the
+                                               * claim the census its WB_ACTOR_FLAG_MOVED_BIT
+                                               * sibling already had */
 #define WB_ACTOR_FLAG_FLICKER_BIT    6u       /* set -> the projection publishes no sprite on the
                                                * frames WB_FRAME_TOGGLE is nonzero, i.e. the record
                                                * is drawn every other frame */
@@ -889,11 +899,18 @@
                                                * tier writes it three ways: $6d70 raises
                                                * WB_ACTOR_FIELD_22_RIDING_BIT in it, $6dd8 lowers
                                                * that bit, and $701c forces the whole byte to
-                                               * WB_ACTOR_FIELD_22_HOLD while it is nonzero */
+                                               * WB_ACTOR_FIELD_22_HOLD while it is nonzero. FOR THE
+                                               * PLAYER it is the WALK SPEED in pixels a frame:
+                                               * $ec8's accelerator raises it, spends it and clamps
+                                               * it, and the probe's own clear above is what
+                                               * a blocked step does to it (see "THE WALK") */
 #define WB_ACTOR_FIELD_23            23u      /* byte: behaviour slot 7's own FRAME CURSOR, stepped
                                                * `addq.b #1` and wrapped by a SIGNED `cmpi.b #$c`
                                                * against WB_ACTOR_TYPE07_FRAME_COUNT. Distinct from
-                                               * WB_ACTOR_FIELD_18, which the damage arm clears */
+                                               * WB_ACTOR_FIELD_18, which the damage arm clears.
+                                               * FOR THE PLAYER it is which way the walk is
+                                               * TRAVELLING — zero LEFT, WB_ACTOR_ST_BYTE right —
+                                               * and $ec8's turn arms are its only writers */
 #define WB_ACTOR_FIELD_26            26u      /* word: the swoop's LAUNCH Y — the y a record was at
                                                * when actor_swoop_state0_acquire committed, which
                                                * actor_swoop_state3_descend rises back to. The
@@ -1345,7 +1362,11 @@
 #define WB_ACTOR_FIELD_24            24u      /* word: how far along its travel the platform is —
                                                * and, at the same offset for a different tier, the
                                                * swoop's PATH CURSOR (an offset from
-                                               * WB_ACTOR_SWOOP_PATHS, not an address) */
+                                               * WB_ACTOR_SWOOP_PATHS, not an address). A THIRD
+                                               * TIER READS IT AS A BYTE: $ec8's walk accelerator
+                                               * counts `addq.b #1 / andi.b #$3` in it, so a port
+                                               * that modelled a word here would take the mask
+                                               * across the high half (see "THE WALK") */
 #define WB_ACTOR_FIELD_22_DIRECTION_BIT 0u    /* `btst #0,22(a0)`: set = the platform is travelling
                                                * back (up for slot 54, left for slot 55) */
 #define WB_ACTOR_PLATFORM_STEP       2u       /* `subq.w #2` / `addq.w #2` — pixels a frame, and the
@@ -2084,11 +2105,16 @@
                                                * it and $c6e clears it after running $19ac */
 #define WB_EVENT_ANIM_DONE_B16       0xb16u   /* word: raised by slot 36's wrap AND by slot 37's
                                                * arrival — the two alternative second-half actors,
-                                               * chosen at $cd8. TWO readers: $c76, and a THIRD
-                                               * animation stepper at $1fa2 of slots 35/36's exact
+                                               * chosen at $cd8. TWO readers: $c76, and an
+                                               * animation step at $1fa2 of slots 35/36's exact
                                                * shape over its own cursor at $2394, which runs only
-                                               * while this flag is UP. That one is unnamed and
-                                               * unported (../STATUS.md) */
+                                               * while this flag is UP. THAT ONE IS NOT A ROUTINE —
+                                               * batch 40 phase B's census found exactly one
+                                               * instruction naming $1fa2, the `beq.w` at $1f62, so
+                                               * it is `player_stage_transition`'s second ARM and
+                                               * the earlier "a THIRD animation stepper ... unnamed
+                                               * and unported" reading is retracted (../names.txt,
+                                               * cmt 0x1fa2). Still unported, as all of $1f54 is */
 #define WB_EVENT_DONE_SET            0xffffu  /* `move.w #$ffff` at $5354, $53d6 and $5400 */
 
 /* Slot 37 — the riser. It has no animation at all: it lifts one pixel a frame until its y is
@@ -2411,6 +2437,85 @@
 #define WB_SPAWN_TEMPLATE_UNREAD     4u       /* `lea 4(a1),a1` — the template's FIRST longword is
                                                * skipped, because the position above has already
                                                * taken its place */
+
+/* ---- THE WALK ($ec8, batch 40 phase B) --------------------------------------------------------
+ *
+ * Five sections in a row, each falling into the next: the knock-back that spends the stun's step
+ * count (WB_ACTOR_FIELD_29), the fire edge, the flicker countdown, the hurt drift that spends
+ * WB_ACTOR_FIELD_31, and the WALK ACCELERATOR proper. The accelerator's own three record bytes are
+ * WB_ACTOR_FIELD_22 (the speed, in pixels a frame), WB_ACTOR_FIELD_23 (which way it is travelling —
+ * zero LEFT, nonzero RIGHT) and WB_ACTOR_FIELD_24 (a sub-frame counter).
+ */
+#define WB_ACTOR_FLAG_FIRED_BIT      7u       /* `bset #7,8(a0)` at $efa, on the frame FIRE is newly
+                                               * pressed. THREE immediate bit-operand sites over
+                                               * 8(An) in the whole image: this `bset`, the `bclr
+                                               * #7,8(a0)` at $212a and its ONE reader, the `btst
+                                               * #7,8(a0)` at $20ca — and BOTH of those lie inside
+                                               * player_stage_transition ($1f54..$21e3), code this
+                                               * port does not have. So what the bit BUYS is as open
+                                               * as WB_ACTOR_FLAG_MOVED_BIT's, whose reader is
+                                               * $2184 in the same routine */
+#define WB_PLAYER_WALK_SUBFRAME_MASK 3u       /* `addq.b #1,24(a0) / andi.b #$3,24(a0) / bne` — the
+                                               * accelerator raises the speed on one frame in four */
+#define WB_PLAYER_WALK_SPEED_BIAS    4u       /* `addq.w #4,d0` over WB_EFFECT_STATE_BD6A at $fde and
+                                               * $1048, and then `cmp.b 22(a0),d0`: a WORD add whose
+                                               * LOW BYTE is the ceiling. Where the jump's
+                                               * WB_PLAYER_JUMP_STRENGTH_BIAS is a BYTE add on the
+                                               * same state word — so a state word of $00fc leaves
+                                               * the walk ceiling at 0 and the jump strength at 4 */
+#define WB_PLAYER_TURN_DECEL_RIGHT   2u       /* `subq.b #2,22(a0)` at $1002 — the frame RIGHT is
+                                               * held and WB_ACTOR_FIELD_23 still says LEFT... */
+#define WB_PLAYER_TURN_DECEL_LEFT    1u       /* ...and `subq.b #1,22(a0)` at $106a for the other
+                                               * way round. The walk's two turns are NOT symmetric:
+                                               * turning to face right sheds speed twice as fast */
+#define WB_PLAYER_DRIFT_SPEND        2u       /* `subq.b #2,31(a0)` at $f52 — the hurt drift spends
+                                               * two of actor_damage_followed's
+                                               * WB_ACTOR_DAMAGE_FIELD_31_BASE per frame, and steps
+                                               * by the count as it was BEFORE the spend */
+
+/* ---- THE WEAPON ($1208, batch 40 phase B) ------------------------------------------------------
+ *
+ * DOWN + a FIRE edge spends one packed-BCD unit off the newest WB_EFFECT_RECORD_LIST record and
+ * spawns what that record's HIGH byte names. The four items are the four WB_PICKUP_RECORD_* words
+ * the grants push, read here by their high byte alone.
+ */
+#define WB_PLAYER_FIRE_EDGE_EXACT    0x80u    /* `cmp.b #$80,d0` on joy1_newly_pressed's byte — an
+                                               * EQUALITY, so FIRE and nothing else may be newly
+                                               * pressed this frame. WB_JOY1_FIRE_BIT is the bit;
+                                               * this is the whole byte the compare wants */
+#define WB_PLAYER_WEAPON_LIGHTNING   8u       /* == WB_PICKUP_RECORD_LIGHTNING >> 8 */
+#define WB_PLAYER_WEAPON_WIND_SPOUTS 7u       /* == WB_PICKUP_RECORD_WIND_SPOUTS >> 8 */
+#define WB_PLAYER_WEAPON_FIRE_BALLS  6u       /* == WB_PICKUP_RECORD_FIRE_BALLS >> 8. The fourth
+                                               * item, WB_PICKUP_RECORD_BOMBS, has no `cmpi` of its
+                                               * own — it is what the `bra.w` at $1254 falls to */
+#define WB_PLAYER_LIGHTNING_FLASH    2u       /* `move.w #$2,$714.w` — WB_FLASH_TIMER, and the WHOLE
+                                               * of the lightning arm: it spawns nothing */
+#define WB_PLAYER_SHOT_TYPE_WIND     0x30u    /* `move.w #$30,4(a1)` — behaviour slot 48 */
+#define WB_PLAYER_SHOT_TYPE_BOMB     0x31u    /* `move.w #$31,4(a1)` — slot 49 */
+#define WB_PLAYER_SHOT_TYPE_FIREBALL 0x32u    /* `move.w #$32,4(a1)` — slot 50 */
+#define WB_PLAYER_SHOT_LIFETIME_WIND 0xc8u    /* `move.b #$c8,30(a1)` at $128c — WB_ACTOR_FIELD_30
+                                               * on the WIND SPOUT, and the one field it does not
+                                               * share with the other two shots */
+#define WB_PLAYER_SHOT_LIFETIME      0x32u    /* `move.b #$32,30(a1)` at $12da (the fireball) and
+                                               * $1318 (the bomb) — the same field, four times
+                                               * shorter */
+#define WB_PLAYER_SHOT_SPEED         8u       /* `move.b #$8,11(a1)` — WB_ACTOR_SPEED, on the two
+                                               * shots that run the shared arming block */
+#define WB_PLAYER_SHOT_HALF_WIDTH    6u       /* the HIGH word of the `move.l #$60008,14(a1)` at
+                                               * $12ba, i.e. WB_ACTOR_HALF_WIDTH */
+#define WB_PLAYER_SHOT_SIZE_SECOND   8u       /* ...and its LOW word, WB_ACTOR_SIZE_SECOND. One
+                                               * store, two fields, so the halves are named and
+                                               * composed rather than the literal being spelt —
+                                               * the same rule slot 34's item x,y pairs follow */
+#define WB_PLAYER_FIREBALL_Y_RISE    8u       /* `subq.w #8,2(a1)` — the fireball leaves eight pixels
+                                               * above the player's own y, and it is the ONLY
+                                               * arithmetic instruction on any path to the `sbcd`
+                                               * below, so the borrow it leaves IS that instruction's
+                                               * entry X (see player.h) */
+#define WB_PLAYER_WEAPON_SPEND_BCD   0x1332u  /* `lea $1333.l,a2 / sbcd -(a2),-(a6)` reads the byte
+                                               * BELOW that address: a packed-BCD 1 held INSIDE
+                                               * player_weapon_fire's own 300 bytes, at $1332, with
+                                               * $1333 unread padding to the routine's end */
 
 /* ---- the collision map the actors walk on (RUNTIME addresses; src/map.c) ----------------------
  *

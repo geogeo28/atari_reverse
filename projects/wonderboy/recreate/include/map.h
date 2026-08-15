@@ -137,4 +137,24 @@ uint32_t actor_fall_and_settle(uint8_t *image, uint32_t actor, uint32_t entry_sp
  * WB_RECORD_PTR_10420 points at names. Three callers; no register argument at all. */
 void map_stamp_block(uint8_t *image);
 
+
+/* ONE PROBE WITH THE GROUND FLAGS DROPPED — for the callers that have no use for d1, which is most
+ * of them but NOT all: src/behavior.c has four sites that call `actor_step_*_against_map` DIRECTLY
+ * and feed the ground word on to `actor_toggle_side_flag` or `actor_turn_and_launch`, and those
+ * keep their own `ground` local. So the claim is about these two wrappers' users, not about the
+ * tier. They are here rather than twice in src/ because TWO modules now spell them: src/behavior.c
+ * wrote them for the walking dispatch rows, and src/player.c's own walk ($ec8) has SIX probe sites
+ * of its own — three direction PAIRS, one per section that moves the record. A second copy is the
+ * one divergence nothing catches, each battery pinning only its own routines. Same rule, and the
+ * same `static inline`, as bus.h's record accessors. */
+static inline uint32_t step_left(uint8_t *image, uint32_t actor, uint32_t step) {
+    uint32_t ground = 0;
+    return actor_step_left_against_map(image, actor, step, &ground);
+}
+
+static inline uint32_t step_right(uint8_t *image, uint32_t actor, uint32_t step) {
+    uint32_t ground = 0;
+    return actor_step_right_against_map(image, actor, step, &ground);
+}
+
 #endif /* WONDERBOY_MAP_H */

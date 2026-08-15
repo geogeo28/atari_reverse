@@ -54,12 +54,17 @@ void hud_blit_record_bitmap(uint8_t *image, uint32_t record);
  * rather than over memory, and two spellings of the decimal correction could disagree while both
  * batteries stayed green. Nothing else about that routine belongs here — this is the instruction,
  * not the accumulator, and sharing it does NOT close the extend chain described below: it shares
- * one instruction so two spellings of the decimal correction cannot drift, and nothing more.
- * (`sbcd_byte` stays private — no second module executes one.) Its proper home is arguably the
- * kit's machine.h, beside `sign_ext16` and the `set_low_byte` its one outside caller composes it
- * with; ../STATUS.md REGISTERS that promotion rather than this batch making it, which is the rule
- * bus.h already follows. */
+ * one instruction so two spellings of the decimal correction cannot drift, and nothing more. Its
+ * proper home is arguably the kit's machine.h, beside `sign_ext16` and the `set_low_byte` its one
+ * outside caller composes it with; ../STATUS.md REGISTERS that promotion rather than this batch
+ * making it, which is the rule bus.h already follows.
+ *
+ * `sbcd_byte` IS THE SAME STORY ONE BATCH LATER. It was private through batch 39 with the note
+ * "no second module executes one"; batch 40 phase B ported `player_weapon_fire` ($1208), whose
+ * `sbcd -(a2),-(a6)` at $1260 spends one packed-BCD unit off an WB_EFFECT_RECORD_LIST record, so
+ * there is a second module now and the note is retired rather than left standing. */
 uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
+uint8_t sbcd_byte(uint8_t subtrahend, uint8_t accumulator, unsigned *extend);
 
 /* $b562/$b582 — d0's low WORD is the packed-BCD amount; $b5a2/$b5c6 — d0's whole LONGWORD is.
  *
@@ -89,6 +94,14 @@ uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
  * 0 at $5196 and that site passes CLEAR by construction rather than by luck. Slot 38's $545e is the
  * SAME three instructions and the same proof, one address on.
  *
+ * AND THE ONE SITE HERE WHOSE OWN ARMS DISAGREE: `player_weapon_fire`'s `sbcd -(a2),-(a6)` at
+ * $1260 (batch 40 phase B, src/player.c). Its FIREBALL arm PRODUCES the bit — `subq.w #8,2(a1)` is
+ * the only arithmetic instruction between that arm's allocation and the `sbcd`, so the X is a borrow
+ * out of the shot's own y and an ordinary differential row moves it either way. Its other three arms
+ * carry the caller's, which is `player_step_and_arm`'s exit and as data dependent as $6c26's. So
+ * that one site is BOTH classes at once, and src/player.c takes the bit as a parameter for exactly
+ * that reason.
+ *
  * A THIRD SITE THREADS IT WITHOUT BEING A CHAIN: `actor_defeat_and_score`'s score add at $6c26 is
  * entered with the bit `lsl.w #2,d2` pushed out of the spawn type at $6c20 — produced INSIDE that
  * routine, so an ordinary differential row drives it either way (test_actor.py).
@@ -111,7 +124,7 @@ uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
  * kind of evidence and one name would have hidden that. `grep -r WB_BCD_ENTRY_EXTEND ../src` is the
  * audit and returns SIX C SITES covering EIGHT original `bsr`s — FOUR proved, TWO
  * differential-pinned, TWO assumed. Two of the six stand for two `bsr`s each: the shop's subtract
- * ($ddae and $de24) and `pay_gold_award`'s score add ($5196 and $545e). The FIVE THREADED sites
+ * ($ddae and $de24) and `pay_gold_award`'s score add ($5196 and $545e). The SIX THREADED sites
  * carry no marker at all, by construction, and are named above.
  *
  * PROVED (four `bsr`s over three C sites): $5196 and $e130 by a reading of the bytes, and batch 38's two —

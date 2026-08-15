@@ -79,19 +79,10 @@ static int faces_left(const uint8_t *image, uint32_t actor) {
     return flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
 }
 
-/* One map probe in the direction a flag names, with the ground flags the caller has no use for
- * dropped — six routines here take a step and none of them reads d1. */
-static uint32_t step_left(uint8_t *image, uint32_t actor, uint32_t step) {
-    uint32_t ground = 0;
-    return actor_step_left_against_map(image, actor, step, &ground);
-}
-
-static uint32_t step_right(uint8_t *image, uint32_t actor, uint32_t step) {
-    uint32_t ground = 0;
-    return actor_step_right_against_map(image, actor, step, &ground);
-}
-
-/* `btst #3,8(a0) / bne / bsr $1170 / bra / bsr $10a2` — the four instructions that pick a probe by
+/* `step_left` and `step_right` — one map probe with the ground flags no caller reads dropped — were
+ * written here and moved to include/map.h when src/player.c's walk became their second module.
+ *
+ * `btst #3,8(a0) / bne / bsr $1170 / bra / bsr $10a2` — the four instructions that pick a probe by
  * the side flag, spelt in three routines below and the same in all three. What they do with the
  * OUTCOME is where they part: $2f22 tests its byte, $5ab2 tests its byte and raises a switch, and
  * $4e38 tests the whole low WORD. So the select is shared and the test is not. */

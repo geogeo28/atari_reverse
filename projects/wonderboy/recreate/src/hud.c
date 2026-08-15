@@ -176,7 +176,7 @@ uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend) {
     return (uint8_t)result;
 }
 
-static uint8_t sbcd_byte(uint8_t subtrahend, uint8_t accumulator, unsigned *extend) {
+uint8_t sbcd_byte(uint8_t subtrahend, uint8_t accumulator, unsigned *extend) {
     unsigned result = (accumulator & 0x0fu) - (subtrahend & 0x0fu) - *extend;
     if (result > 9u)
         result -= 6u;

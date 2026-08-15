@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 288/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 290/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -91,8 +91,13 @@ behaviour slot 1 calls that reach nothing this port lacks, in a src/player.c of 
 check and its revival medicine, the jump machine and its wing boots, and the ladder — and with them
 the LAST BOUNDARY THE ORIGINAL RETURNED FROM: `$e06` is reconstructed, so `player_gate_on_1516` calls
 it and the five handlers that stopped there (53, and 9/12/22/26 through `gated_hurt_frame`) run their
-frames whole) —
-35,590 bytes in all, 80.4 % of everything
+frames whole) — and THE WALK AND THE WEAPON (`player_step_and_arm` and `player_weapon_fire`, 736
+bytes, batch 40 phase B: the frame's fourth and fifth calls, and the last two that reach nothing this
+port lacks — a five-section walk whose accelerator turns at two different rates, and the SPECIAL
+ATTACK, whose `sbcd` is the first THREADED extend site in this project that one of its own arms also
+produces LOCALLY. With them `player_reset_ground_state` and `scene_copy_record_fields` finally have
+callers, which retires both of phase A's honesty items, and SIX of the frame's nine calls run) —
+36,326 bytes in all, 82.1 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -104,8 +109,13 @@ left this leading count at 161 while its own section and parenthetical said 163 
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
-`make test`: **5353 cases green in what this batch commits**, measured by a full run from a clean
-`build/` rather than added up (5262 after batch 39, plus batch 40's 91 — 83 in the new
+`make test`: **5438 cases green in what this batch commits**, measured by a full run from a clean
+`build/` rather than added up (5353 after batch 40 phase A, plus phase B's 85 — every one of them in
+`test/test_player.py`, which goes 83 -> 168. Two of the 85 are the mutation sweep's — the row that
+makes a ZERO-PIXEL map probe observable and the seeding repair behind it — and two more the
+INDEPENDENT gate's, which parametrised the entry-X carrier row over all three arms that inherit the
+bit).
+`make test` at batch 40 phase A: **5353 cases** (5262 after batch 39, plus phase A's 91 — 83 in the new
 `test/test_player.py` and 8 net in `test/test_behavior.py`, which goes 1,568 -> 1,576: five cases
 were REWRITTEN rather than added, which is what retiring a boundary looks like in a battery, and the
 two independent gates then added the rest — the four ascent-position rows, the wing-boot-through-a-
@@ -7676,10 +7686,10 @@ the band with nothing left over:
 | `$d78..$d83` | 12 | `player_gate_on_1516` (ported, batch 31) |
 | `$d84..$e05` | 130 | `player_apply_joystick` — **THIS BATCH** |
 | `$e06..$ec7` | 194 | `player_jump_step` — **THIS BATCH**, and the retired boundary |
-| `$ec8..$107b` | 436 | `player_step_and_arm` — the WALK |
+| `$ec8..$107b` | 436 | `player_step_and_arm` — the WALK — **PHASE B** |
 | `$107c..$10a1` | 38 | `player_reset_ground_state` — **THIS BATCH** |
 | `$10a2..$1207` | 358 | the two map probes (ported, batches 10–11) |
-| `$1208..$1333` | 300 | `player_weapon_fire` |
+| `$1208..$1333` | 300 | `player_weapon_fire` — the WEAPON — **PHASE B** (298 code + 2 data) |
 | `$1334..$1513` | 480 | the fall pass, the cell lookup and both settles (ported) |
 | `$1514..$1519` | 6 | data (the three `WB_TILE_33_*` words) |
 | `$151a..$19ab` | 1,170 | `player_collide_and_scroll` — the largest single routine in the game |
@@ -7690,7 +7700,7 @@ the band with nothing left over:
 | `$1bb4..$1cbf` | 268 | the tree's second arm, reached by a `beq.w` from `$19d4` — a continuation, not a routine, and the only span in the band with no name at all |
 | `$1cc0..$1f35` | 630 | `resource_descriptor_fetch`, `glyph_stamp_8_rows` and what is between them |
 | `$1f36..$1f53` | 30 | `actor_table_reset` (ported) |
-| `$1f54..$21e3` | 656 | `player_stage_transition`, and `$1fa2` sits INSIDE that span |
+| `$1f54..$21e3` | 656 | `player_stage_transition`, and `$1fa2` sits INSIDE that span (phase B MEASURED it: the arm is this routine's) |
 | `$21e4..$23b5` | 466 | data (sprite ids and `WB_EFFECT_STATE_21E4`) |
 | `$23b6..$2461` | 172 | `actor_hit_by_player_shot` (ported, batch 29) |
 
@@ -7967,6 +7977,12 @@ were the same failure of seeding: a state the cases never varied.**
     input**, and on three of its four arms the last instruction to write X is inside
     `joy1_newly_pressed`. That is the `overlap_mask_exit_extend` class — the bit has to be COMPUTED
     from the same inputs, not claimed — and it is why this row is not phase A.
+    *(CORRECTED BY PHASE B, and the correction is load-bearing rather than cosmetic:
+    `joy1_newly_pressed` writes NO X at all — it is `move.b`/`move.b`/`eor.b`/`and.b`/`rts`, and the
+    two logical ops leave the bit alone. So on those three arms the last X-writer is not in that
+    routine, or anywhere else inside `$1208`: the bit is the CALLER's, i.e.
+    `player_step_and_arm`'s exit, which is why the port takes it as a parameter instead of computing
+    it. The fourth arm, the fireball, produces its own. See phase B's section below.)*
   * **`$b1a` `player_pending_event_gate` (526 B).** Three word flags in order and an arm each; `bsr
     $1f54` sits on nearly every arm and `bsr $19ac` on one, so porting it before those two would make
     most of it a boundary.
@@ -7978,8 +7994,11 @@ were the same failure of seeding: a state the cases never varied.**
     Whichever of the two lands first must port it, and the other inherits it.
   * **`$151a` `player_collide_and_scroll` (1,170 B)**, the largest single routine in the game.
   * **`$1f54` `player_stage_transition` (656 B), AND A PARTITION CONFLICT TO RESOLVE FIRST**:
-    ../names.txt gives `$1fa2` (`actor_event_anim_step_2394`, 186 B) an entry INSIDE `$1f54`'s stated
+    ../names.txt GAVE `$1fa2` (`actor_event_anim_step_2394`, 186 B) an entry INSIDE `$1f54`'s stated
     span. One of the two extents is wrong and the batch that ports either must measure it.
+    *(RESOLVED IN PHASE B, in `$1f54`'s favour: the `fn` is deleted and the plate is the label. Past
+    tense here because a reader who checked ../names.txt for the present-tense claim would not find
+    it.)*
   * **`$a38` the frame top (62 B) LAST**, and the dispatch row flips with it.
 
 **QUEUED, CARRIED FORWARD**: `abcd_byte` to the kit; regenerate `../out/names_dump.txt`,
@@ -7989,3 +8008,358 @@ boundary; the tier partition; the `scene_run_effect` latent guard; `$1fa2`
 of `actor_type30_drift` at `$b84`; the two remaining duplicate `cmt` directives (`0x1023a`,
 `0x10394`); the `WB_HUD_SLOT_BBC2` / `_BBC6` renames — for which this batch supplies the EVIDENCE
 (the messages their spenders post) without making the rename.
+
+*(PHASE B DISCHARGED the `$1fa2` item of this list — the conflict is measured and the `fn` deleted —
+and added its own. The live list is the one at the END of this file, under phase B's section; this
+paragraph is left as phase A wrote it.)*
+
+### Batch 40 phase B: the WALK and the WEAPON — and the extent conflict, measured
+
+**TWO MORE OF THE FRAME'S NINE CALLS, and the criterion is phase A's unchanged: every callee below
+them is already reconstructed.** `player_step_and_arm` ($ec8) reaches the two map step probes and
+`player_reset_ground_state`; `player_weapon_fire` ($1208) reaches `joy1_newly_pressed` and
+`actor_alloc_slot_high`. All four are ported, so **still not one boundary is reported from
+src/player.c** — and the two routines together are 736 bytes, which takes the partition's remaining
+4,406 down to 3,670.
+
+| address | name | bytes | row |
+| --- | --- | --- | --- |
+| `$ec8` | `player_step_and_arm` | 436 | CLEAN — the WALK: five sections, and the accelerator's two turns are not symmetric |
+| `$1208` | `player_weapon_fire` | 300 | CLEAN — the WEAPON: four items, and the first LIVE threaded `sbcd` |
+
+**Verified 290, 36,326 bytes, 82.1 % of §0k's 44,262; `make test` 5,438** (5,353 before; all 85 are
+in `test/test_player.py`, which goes 83 -> 168 — measured from a clean `build/`, and stated ONCE
+here and once at the top of this file rather than twice from different runs, which is the drift the
+header's own preamble records at 161/163 and 175/176). **`PORTED_SLOT_COUNT` stays 61** — the row
+flips when the whole frame runs, and three calls are still missing.
+
+**WHAT THE WALK IS.** Five sections in a row, each falling into the next and none of them returning:
+
+  * **the KNOCK-BACK** — while `WB_ACTOR_FIELD_29` (the step count `actor_stun_followed` seeds) is
+    nonzero the record takes one map step AWAY from `WB_ACTOR_FLAG_SIDE_BIT` and one is spent. The
+    distance is the count as it was, because d7 is loaded above the `subq.b`.
+  * **the FIRE EDGE** — `tst.b d0 / bpl` on `joy1_newly_pressed`'s byte, a SIGN test of bit 7 alone,
+    which raises `WB_ACTOR_FLAG_FIRED_BIT`, lowers `WB_ACTOR_FLAGS2_BIT_0` and zeroes the walk speed.
+  * **the FLICKER COUNTDOWN** — `$f14`'s `subq.b #1,21(a0)` is `WB_ACTOR_FLICKER_COUNTDOWN`'s ONE
+    reader in the image, and the frame it reaches zero ends the invulnerability with the flicker.
+  * **the HURT DRIFT** — gated on `WB_ACTOR_FLAGS2_BIT_0`, this is the other half of
+    `actor_damage_followed`: `WB_ACTOR_FIELD_31` is how far the knock-back has left to run and
+    `WB_ACTOR_FIELD_30` which way, two are spent a frame, and LANDING lowers the gate instead.
+  * **the ACCELERATOR** — `WB_ACTOR_FIELD_22` is the speed, `WB_ACTOR_FIELD_23` the direction it is
+    travelling (zero LEFT, `WB_ACTOR_ST_BYTE` right) and `WB_ACTOR_FIELD_24` a counter that lets the
+    speed rise on ONE FRAME IN FOUR, up to `WB_EFFECT_STATE_BD6A + WB_PLAYER_WALK_SPEED_BIAS`.
+
+**AND THE ACCELERATOR'S TWO ASYMMETRIES ARE BOTH REAL.** Holding the direction the record is NOT
+travelling sheds speed instead of raising it, at `subq.b #2` turning to face RIGHT and `subq.b #1`
+turning to face LEFT — one constant would have answered every other row in the battery, so
+`test_THE_TURN_IS_NOT_SYMMETRIC` drives both. And the ceiling is `addq.w #4` on the state word with
+`cmp.b 22(a0),d0` on its LOW BYTE, where the jump machine's `addi.b #$8` is a byte add on the same
+word: a state word of `$00fc` therefore clamps the WALK to a standstill (`$0100`, low byte 0) and
+leaves the JUMP at 4. That is phase A's `WB_EFFECT_STATE_BD6A` finding closed from the other end, and
+the constant it wanted — `WB_PLAYER_WALK_SPEED_BIAS` — exists now.
+
+**WHAT THE WEAPON IS, and it is the game's SPECIAL ATTACK.** Four gates in series (no ladder tile
+under the player, the record list's write pointer off its base, `joy1_newly_pressed` **exactly**
+`$80`, and DOWN held), then the newest record's HIGH byte — which is the high half of the
+`WB_PICKUP_RECORD_*` word the grant pushed — picks one of four arms: the LIGHTNING (whose whole body
+is `move.w #$2,$714.w`, so it is the only item that costs no actor slot), the WIND SPOUT (behaviour
+slot 48), the FIREBALL (slot 50) and the BOMB (slot 49, the arm the `bra.w` falls to). Every arm that
+allocates then spends one packed-BCD unit off `WB_RECORD_LOW_BYTE` and POPS the record when the count
+reaches zero.
+
+**THE `cmp.b #$80,d0` IS AN EQUALITY, AND THAT IS A FINDING ABOUT THE CONTROLS.** The byte it tests
+is `current & ~prev`, so DOWN has to be held FROM THE PREVIOUS FRAME — pushing down and fire together
+produces `$82` and fires nothing. And `player_step_and_arm`, one `bsr` EARLIER in the same frame,
+reads the same byte with `tst.b d0 / bpl` and arms the record on bit 7 alone. So one joystick frame,
+two readings, and a paired case on each side says so.
+
+**THE `sbcd` AT $1260 IS THE FIRST THREADED SITE IN THIS PROJECT WHOSE OWN ARMS DISAGREE.** The
+scoped truth about include/hud.h's table, because the first draft of this sentence flattened it:
+of the five sites it tabulated, $6c26's bit is produced INSIDE `actor_defeat_and_score` and IS
+driven by an ordinary row; two more ($4e5a, $522e) are differential-PINNED over the paths their
+seeds take, which that header is careful to call weaker than a proof; and only the shop's pair is
+genuinely unreachable, because `emu.run` forces the CCR clear and no case can enter with X set.
+What is new here is a single site that is BOTH at once, arm by arm: the FIREBALL's
+`subq.w #8,2(a1)` is the only arithmetic instruction between that arm's `bsr $1b8e` and the `sbcd`
+(`btst`, `bset`/`bclr`, `clr.b`, `movea`, `lea`, `move`, `cmpi`/`cmpa`, `tst` and `addq.l` on an
+ADDRESS register all leave X alone), so the bit is a BORROW out of the shot's own y and an ordinary
+differential row drives it either way — a fireball launched from a y below 8 costs TWO units. The
+other three arms carry the caller's X, which is `player_step_and_arm`'s exit ($a4a and $a4e are
+adjacent `bsr`s) and is data dependent; those are pinned for X = 0 only, and one
+`run_candidate_only` row against an independent model of the arithmetic says the parameter is live.
+`sbcd_byte` left src/hud.c's private block for include/hud.h to serve it, which is exactly what that
+header's own note said would happen when a second module executed one.
+
+**THE $1f54 / $1fa2 EXTENT CONFLICT IS RESOLVED, AND IN $1f54's FAVOUR.** ../names.txt gave `$1fa2`
+(`actor_event_anim_step_2394`, `# ctx`) a routine of its own with a 186-byte body lying INSIDE
+`player_stage_transition`'s stated `$1f54..$21e3`; one of the two had to be wrong. Measured: a
+whole-image census over every branch form, both absolute encodings, both PC-relative ones and the
+mode-shaped sweep finds **EXACTLY ONE** instruction naming `$1fa2` — the `beq.w` at `$1f62`,
+twenty-two bytes into `$1f54` itself — and **no longword or word operand anywhere holds the
+address**. So it is a CONTINUATION, the arm the second flag test falls to, and its own `beq.w $1fd6`
+carries the same chain on: `$1f54 / $1fa2 / $1fd6 / $1ffc` is one flow graph with `$205c` and `$205e`
+as its shared tails. **THE `fn` DIRECTIVE IS DELETED, NOT RENAMED, and the difference is the whole point.** An earlier
+draft of this section announced `actor_event_anim_step_2394` -> `player_stage_transition_anim_2394`;
+NO SUCH NAME EXISTS anywhere in the tree, and a reader who believed it would re-add an `fn` at
+`$1fa2` — which is precisely what re-creates the conflict, because `ApplyNames` DEFINES a function
+at an `fn` and Ghidra then truncates `player_stage_transition` there. What happened is that
+`fn 0x1fa2` was REMOVED and the `cmt` kept: the plate IS the label, which is the convention the
+`$1bb4..$1cbf` continuation already follows (it "carries no name at all"). `grep -rn "^fn 0x1fa2"
+../names.txt` returns **0** and `grep -rn actor_event_anim_step_2394 ../names.txt include/ src/`
+returns **1**, the retraction sentence itself; this file's historical batch sections keep the old
+name as they wrote it and this section is the retraction that describes them.
+
+**$1208 AND $ec8 LOSE THEIR `# ctx` TAGS; $b1a KEEPS ITS NAME AND LOSES ITS TAG TOO.**
+`player_pending_event_gate` was read this phase and not ported, which is a different result from
+either: three word flags in order with an arm each is what the body does, so the name stands. What
+the reading ADDS is why it is unportable, measured rather than assumed — `bsr.w $1f54` at `$bb0`,
+`bsr.w $19ac` at `$c66`, `jsr $fe8c.l` at `$c00`, and **TWO exits that are `lea 4(a7),a7 / jmp`**
+(`$bdc` into `$e494`, `$c20` into `$e5ba`), which pop a return address and so do not return to the
+caller at all. The one piece of it this port has is the spawn at `$c52`: `lea $998c.l,a2 /
+lea $537e.l,a1 / bsr.w $539e`.
+
+**AND THAT COMPOSITION IS PINNED, which retires the second of phase A's two honesty items.**
+`scene_copy_record_fields`' register convention was the recorded live failure mode — a2 the
+DESTINATION, a1 the TEMPLATE, in that order — and every case in the battery supplies both registers
+itself, so a port that swapped them stayed green. The case now DECODES the two `lea`s out of the
+image at `$c52` and runs the differential with the operands the site really carries. The first
+honesty item went the same way: `player_reset_ground_state`'s two call sites are `$fb2` and `$101e`
+inside the walk, and two ladder rows now run them.
+
+**FIVE PLATE CORRECTIONS AND ONE CONSTANT RENAME.**
+  * **`$1fa2`** — above, with its grep count.
+  * **`$1f54` said "covers $1f54..$21e4"**; `$21e4` is `WB_EFFECT_STATE_21E4`'s own first byte. The
+    code is `$1f54..$21e3`, 656 bytes — the figure the partition already used, so the two agree now.
+  * **`$1f54` claimed to be the frame's last call and nothing else.** It has TWO `bsr` callers,
+    `$a70` and `$bb0`, which is what makes "sits on nearly every arm of the gate" a measurement.
+  * **`$a38` said FOUR of the nine are reconstructed.** It is SIX.
+  * **`$ec8`'s plate described only its first section** ("runs 29(a0) as a step COUNT ... then reads
+    joy1_newly_pressed"), which is two of five. Rewritten whole.
+  * **`WB_ACTOR_FLAG_FIRED_BIT` is a NEW name off a THREE-SITE census**, not a rename: the immediate
+    bit-operand sites over `8(An)` for bit 7 in the whole image are the `bset` at `$efa`, a `bclr` at
+    `$212a` and the `btst` at `$20ca` — and both of the latter are inside `player_stage_transition`,
+    which is where `WB_ACTOR_FLAG_MOVED_BIT`'s one reader (`$2184`) also lives. So what BOTH of the
+    walk's flag writes buy is decided in the one routine of the frame this port still lacks.
+
+**MACHINERY: THE TWO STEP HELPERS MOVED TO include/map.h.** `step_left`/`step_right` — one probe with
+the ground flags no caller reads dropped — were src/behavior.c's, and the walk's SIX probe sites —
+three direction pairs, one per section that moves the record — made src/player.c their second
+module. They are `static inline` in the header both files already
+include, the same rule and the same shape as bus.h's record accessors, and behavior.c's
+twenty-four call sites are untouched.
+
+**AND SIX ENCODERS REACHED A THIRD, FOURTH OR FIFTH COPY** — `tst_b_dn`, `cmp_b_imm_dn`,
+`cmpi_b_ind`, `cmpa_l_imm`, `move_w_imm_d16` and `move_l_imm_d16`. Each carries an ALSO IN note in
+test_player.py naming its siblings, exactly as test_behavior.py's queue does; hoisting them edits six
+batteries, so this file registers the move rather than the batch making it. `move_b_d16_d16` is the
+one to be careful with: test_behavior.py's copy takes its four arguments in the OPPOSITE order, which
+is the `adda_w_dn_an` collision one address over, so whichever hoist takes it has to pick a
+spelling. **AND `cmpi_b_ind` ALMOST BECAME THE SECOND SUCH COLLISION IN THIS COMMIT** — the
+first draft here spelt it `(value, base)` where all three siblings take `(base, value)`, which
+the review gate caught. It is spelt their way now, which is the rule a DEFERRED hoist has to
+follow: a copy that disagrees with the copies its own note names is worse than a copy.
+
+**MUTATION SWEEP: 35 MUTANTS OVER FOURTEEN PRE-HOC AXES — 31 CAUGHT FIRST TIME, and 34 on the
+final tree — and every one of the four that were not is a different lesson — one BADLY BUILT, one SEEDING BUG, one COVERAGE HOLE and
+one argued equivalence.** The axes: the knock-back's direction and the count it steps by; the fire
+edge's width; the flicker countdown's order and what its last frame lowers; the drift's spend order,
+its gate and its zero-count probe; the sub-frame mask; the ceiling's operand size and its SIGNEDNESS;
+the two turn rates, the turn's sign test and which way it steps; the direction test's order; the
+ladder exit's guard; the coast arm's three decisions; the weapon's four gates; the spend's BCD, its
+extend and its pop; the full-pool refusal; and six fields of the three spawn arms.
+
+  * **`flicker/countdown-read-BEFORE-the-spend` was BADLY BUILT** — batch 40 phase A's
+    `jump/ascent-tests-before-the-spend` in the same file, one section over. `spend(x) != 0` and
+    `x != 1` are the same function on every input; the mutation that means anything tests the byte
+    against ZERO before the decrement, which differs at a countdown of 1 (the original ends the
+    flicker, the mutant returns) and at 0 (the reverse). Re-spelt as
+    `flicker/countdown-tested-BEFORE-the-decrement` it is **caught**, by the two rows that already
+    existed.
+  * **`weapon/fireball-clears-the-sprite-WORD` SURVIVED BECAUSE THE SHOT RECORD WAS NOT SEEDED**, and
+    the cause is `leaf.overlay`'s own documented hazard firing for the fourth time in this project.
+    The high pool's first record starts AT `POOL_LO`, so `pokes[record + WB_ACTOR_X]` shared a dict
+    KEY with `pokes[POOL_LO]`'s 192-byte keyed block and `dict` kept the last — 190 bytes of the
+    pool ran on the .PRG's zeros, where a byte the port clears and the original does not reads the
+    same either way. The pool is its own `overlay` layer now, and the mutant is **caught**.
+  * **`drift/zero-count-takes-no-probe` WAS A REAL COVERAGE HOLE, and closing it needed the map's
+    own edge arm.** A probe of zero pixels stores the x UNCHANGED, and no memory differential can
+    see a store of the value already there — not even the poison pass, which inverts the destination
+    on BOTH sides. What makes it observable is `actor_step_left_against_map`'s NEGATIVE-probe arm: an
+    x below the record's own WB_ACTOR_HALF_WIDTH parks it AT that half width, so the zero step moves
+    something after all. One row seeds exactly that and the mutant is **caught**.
+  * **`walk/coast-clears-on-a-nonnegative-result` SURVIVED AS AN ARGUED EQUIVALENCE.** `< 0` and
+    `<= 0` differ only on a result of exactly zero, i.e. a speed of 1 — and on that frame the
+    original falls to the tail, which re-reads the now-zero byte and takes no probe, while the mutant
+    stores a zero over a zero and returns. Both leave the same image. It is an equivalence under this
+    harness rather than a hole, with the geometry as the argument.
+
+**AND $205c IS THE SAME SHAPE ONE ADDRESS ON, REGISTERED RATHER THAN RESOLVED.** `stub_rts_205c` is
+an `fn` inside `player_stage_transition`'s newly stated body, exactly what the `$1fa2` plate says an
+`fn` must not be — but the census separates them: `$1fa2` is named by a `beq.w` alone while `$205c`
+has FIVE namers, one `bsr.w` at `$2010` and four `bra.w` (`$1ff8`, `$2034`, `$203e`, `$2052`). The
+`bsr` makes it a genuine call target, so the directive stands and the plate now carries the census.
+
+**THE RE-RUN, TWICE.** The four above plus FOUR CONTROLS (`walk/turn-rates-equal`,
+`weapon/spend-drops-the-entry-extend`, `knock/side-inverted`, `weapon/full-pool-spends-anyway`) were
+re-run on the repaired tree: 7 caught and the equivalence unchanged. The controls are there because
+two of the repairs were to the BATTERY, and generalising a seed can weaken it into vacuity.
+
+Then the REVIEW GATE below moved src/player.c again — two re-reads into the accelerator, a return
+value out of the fireball, one allocation lifted out of three arms — so the WHOLE THIRTY-FIVE were
+re-spelt against the shipped tree and re-run end to end: **34 CAUGHT, and the same single
+equivalence**, with `make test` green from a clean `build/` either side. That is the rule a sweep
+has to obey rather than a courtesy: a sweep measures the tree it ran on, and this batch's tree moved
+after the first one.
+
+**NOT PINNED, HONESTLY.**
+  * **The `sbcd`'s entry X on the WIND SPOUT, BOMB and LIGHTNING arms.** The bit is
+    `player_step_and_arm`'s exit and no case can enter with the CCR set; the reconstruction threads
+    it and one `run_candidate_only` row proves the parameter live, which is weaker than the oracle
+    and stronger than nothing. Same standing as include/hud.h's other threaded sites, which that
+    header's table now lists as SIX with this one named as the drivable exception.
+  * **`player_step_and_arm`'s own exit X**, which is what that bit IS: a `subq.b`/`addq.b` on one of
+    four record bytes, or the map probe's own arithmetic, depending on the path. Reading it per path
+    is only worth doing once the frame top is ported and something can compose the two.
+  * **The registers either routine leaves behind.** `$a4e` overwrites the walk's d0 unread and the
+    weapon's caller reads nothing, so both are `void`.
+  * **What `WB_ACTOR_FLAG_FIRED_BIT` and `WB_ACTOR_FLAG_MOVED_BIT` BUY**, unchanged from phase A and
+    now with the address of every site.
+  * **The double writes.** `addq.b #1,24(a0)` then `andi.b #$3,24(a0)` are two stores to one byte and
+    `subq.b #1,22(a0)` then `clr.b 22(a0)` two more; the ledger records final values, so folding each
+    pair is unobservable — the same silence `player_climb`'s x and y carry. What is NOT folded is the
+    TEST after the first pair, which re-reads the field (see the gate below).
+  * **Every arm's behaviour for a record the BUS REFUSES.** The re-reads below are spelt for it and
+    the write guards are bus.h's, but the player's record always comes out of the actor table, so no
+    case here addresses one — the same silence phase A's aliasing reads carry.
+
+**THE REVIEW GATE, five reviewers, and what it changed.** ONE CORRECTNESS finding, and it is the
+class this file defends everywhere else — A VALUE CARRIED IN A LOCAL WHERE THE ORIGINAL RE-READS
+MEMORY. `player_accelerate_walk` tested its own computed sub-frame counter and its own computed
+speed, where `andi.b #$3,24(a0)` and `cmp.b 22(a0),d0` both FETCH the field again. For a record at
+an address bus.h refuses the store is dropped and the fetch answers ZERO, so the two take opposite
+arms; nothing in this project can reach such a record (the player's comes out of the actor table),
+which is why it is latent — but `spend_field_b`'s own plate states the rule and
+`player_spend_one_shot` obeys it, so the walk does now too, with the asymmetry named at the site.
+
+The rest were counts, claims and duplication, and four of them were claims that had gone FALSE
+rather than claims that were merely thin:
+  * **include/map.h GENERALISED A SCOPED CLAIM INTO A WRONG ONE during the helper move.**
+    src/behavior.c's deleted comment said "six routines HERE take a step and none of them reads d1";
+    the header said "no RECONSTRUCTED ROUTINE reads the d1". It has four — the sites that feed the
+    ground word to `actor_toggle_side_flag` and `actor_turn_and_launch` keep their own `ground`
+    local. A reader trusting the header would delete that plumbing. Scoped back to the wrappers'
+    users, and the same plate's "four steps of its own" corrected to SIX probe sites.
+  * **include/hud.h's threaded-extend table was not updated for the site this batch adds.**
+    include/player.h points AT that table for the reading, and the table still said FIVE. It says
+    SIX now and names $1260 as the one a case can drive.
+  * **THREE MORE PLATES CARRIED THE RETRACTED $1fa2 READING** — `cmt 0xb16`, `cmt 0x2394` and
+    `WB_EVENT_ANIM_DONE_B16`'s own comment, all still saying "a THIRD animation stepper ... unnamed
+    and unported". The flag word is the natural way IN to that code, so the retraction was findable
+    only from the plate that made it. `grep -r "a THIRD animation stepper" ../names.txt include/
+    src/` returns **1** — the retraction sentence in wonderboy.h.
+  * **AND THE `fn 0x1fa2` DIRECTIVE ITSELF SURVIVED THE RETRACTION.** `ApplyNames` DEFINES a
+    function at an `fn`, so the next `reapply.sh` would have re-created the exact extent conflict
+    this batch measured away — Ghidra truncating `player_stage_transition` at `$1fa2`. The directive
+    is gone; the plate is the label. $205c is the same shape one address on and is registered above
+    rather than removed, because its census finds a real `bsr`.
+  * **test_player.py's own MODULE DOCSTRING was the pre-phase-B one** — "these five routines", "four
+    of the five are named by ONE instruction", and "NO MAP PROBE IS REACHED ... no case here seeds a
+    map" directly above the file's own `from test_map import map_pokes`.
+  * **THE ALLOCATOR CAP WAS MEASURED WRONG AND RESTATED RATHER THAN IMPORTED.** The first draft
+    counted `actor_alloc_slot_high`'s loop at three instructions where it is four, in a file whose
+    `_cap` docstring promises "nothing here states a round number"; it stayed green only on the
+    slack `_cap` adds. It takes `ALLOC_INSN_PER_SLOT` from test_actor.py now, which is the battery
+    that owns the routine — the same rule the models and the write sets already follow.
+  * **`_spend_bytes` WAS A FOURTH STATEMENT OF PACKED BCD**, where `leaf.bcd_expected` has stated it
+    in decimal since batch 33 and takes the borrow-in this needed. It also answered confidently
+    outside the digit range, where `bcd_expected` declines to predict.
+  * **AND THREE SMALLER ONES**: `player_arm_fireball` wrote its borrow through `&entry_extend`, so
+    the value `player_spend_one_shot` received no longer matched the name it was passed under (it
+    RETURNS the borrow now, into a local the site names); the three spawn arms each spelt the same
+    allocate-and-bail, which is one call in the `else` of the lightning test and provably the same
+    three (the allocator writes no memory and the lightning arm never reaches it); and
+    `_weapon_spawn_pieces` decided its instruction ORDER by comparing its own label string.
+
+**THE INDEPENDENT GATE, two reviewers, and TWELVE items — of which the sharpest were not about the
+code at all.** Both routines were re-read instruction for instruction and found clean, the `$1fa2`
+census reproduced exactly, and the standstill and borrow claims confirmed on both cores. What it
+changed:
+
+  * **COVERAGE (two items, both provable).** The entry-X carrier row ran the LIGHTNING arm only,
+    where the wind spout and the bomb reach the same `sbcd` through the allocator and
+    `player_arm_thrown_shot` first; a port that dropped the bit on ONE of those paths answered the
+    single row identically. Parametrised over all three, and proved: an arm-local mutant
+    (`extend_at_sbcd = 0` on the bomb path alone) **reds the bomb row and only the bomb row**. And
+    the five refusal rows asserted "wrote nothing" with no witness of WHICH gate refused — which is
+    load-bearing for the FULL-POOL rows, because four gates and a four-way dispatch sit above the
+    allocator and every one of them also refuses by writing nothing. Each row now witnesses its own
+    refusing instruction through `leaf.pc_coverage`, and states what that witness IS: the bitset
+    marks the ORACLE's PCs, so it is a PREMISE GUARD on the seed and no C mutant can red it. Proved
+    with a SEED mutant instead — dropping DOWN from the full-pool seed leaves the write set
+    identical and **reds all three rows**.
+  * **AN X-PRESERVATION CENSUS THAT COULD NOT CLOSE ITS OWN CLAIM.** The enumeration behind "nothing
+    on these three arms writes X" omitted `eor.b` and `and.b` — and those are `joy1_newly_pressed`'s
+    last two instructions, which run on EVERY path to the `sbcd` including the lightning's, whose
+    plate called `move.w #$2,$714.w` "the whole arm". It also described `actor_alloc_slot_high` as
+    five instructions; it is NINE, with `beq` and `rts` unlisted. The conclusion survives — logical
+    ops set N/Z, clear V/C and leave X alone; `dbf` writes no condition code at all — but a claim of
+    this shape is only worth the completeness of its list, so player.h and `cmt 0x1208` now carry
+    the whole enumeration and the corrected count.
+
+**AND SIX PLATE CORRECTIONS, of which the first is the one that would have cost a batch.**
+  * **A PHANTOM RENAME.** This section announced `actor_event_anim_step_2394` ->
+    `player_stage_transition_anim_2394`. There is no such name: the directive was DELETED. A reader
+    who believed the sentence would re-add an `fn` at `$1fa2` and re-create the Ghidra truncation
+    this batch measured away — the single most expensive misreading available in this section, in
+    the sentence most likely to be acted on. Rewritten to what happened.
+  * **AN INHERITED ERROR IN THE NEW `$1fa2` PLATE**: "slots 35 and 36 are the rows that RAISE it".
+    The raisers of `event_anim_done_b16` are slots 36 ($53d6) and 37 ($5400); slot 35's raise writes
+    `$b12`. The correct census was three lines away in `cmt 0xb16` — a rewritten plate inheriting a
+    clause from the plate it replaces is its own class.
+  * **PHASE A'S CLAIM WAS LOAD-BEARING AND WRONG, AND PHASE B REVERSED IT SILENTLY.** That section
+    says the last X-writer on three arms is inside `joy1_newly_pressed`; that routine writes NO X,
+    which is exactly WHY the port takes the bit as a parameter. Annotated as corrected IN PLACE, in
+    the marked-correction form this file uses, rather than left for a reader to hit first.
+  * **AN OVER-GENERALISATION IN THE `sbcd` HEADLINE**: "hud.h tabulates five threaded sites and every
+    one of them is unpinnable". One ($6c26) is driven by an ordinary row and two more are pinned over
+    their exercised paths — that header says so two paragraphs below the sentence being cited.
+    Scoped, here and in hud.h's own heading and test_player.py's.
+  * **FOUR-VERSUS-SIX**, in three places: the walk has SIX probe sites, and up to THREE fire in one
+    frame (the knock-back's, the drift's and the accelerator's tail — nothing makes those sections
+    exclusive), where the cap comment said two.
+  * **AND THE MARKERS AND THE FILING**: the partition's `$ec8` and `$1208` rows carried no landed
+    marker while every other landed row does, and phase B's carried-forward queue had been filed
+    INSIDE phase A's section, directly above phase A's own paragraph still listing `$1fa2` as open.
+    The live list is at the END of this file now and phase A's is annotated in place, so a linear
+    reader and a last-section reader get the same state.
+  * **RUNNER-UP SWEEP**: a present-tense "../names.txt gives `$1fa2` an entry" for a directive that
+    no longer exists; `cmt 0x205c`'s "the `fn` below" (it is above); `WB_ACTOR_FLAG_SIDE_BIT`'s "its
+    only reader in the image is the `btst #3,8(a1)` at $51e" — true of the a1 FORM alone, where the
+    census finds **139 operand sites**, 83 of the `btst`s on a0 and two of those added by this batch,
+    so it now carries the census its `WB_ACTOR_FLAG_MOVED_BIT` sibling already had; and the `$1fa2`
+    pin covered CONTROL FLOW only, where a dispatch row is reached by a DATA longword — the scan is
+    extended over aligned word and longword operands and finds none, which is the half that would
+    have mattered had the answer been different.
+
+**QUEUED — PHASE C, in the order the frame calls them.**
+  * **`$b1a` `player_pending_event_gate` (526 B)** — needs `$1f54` and `$19ac` first, and its two
+    stack-popping `jmp`s will be boundaries of a kind this port has not had.
+  * **`$19ac` the SCENE-SPAWN TREE (592 B plus `$1cc0`'s 94 and `$1d1e`'s 536)**, with
+    `speech_script_step` (`$1b46`, 34 B, `# ctx`, SHARED between it and the `$151a` tree — whichever
+    lands first ports it).
+  * **`$151a` `player_collide_and_scroll` (1,170 B)**, the largest single routine in the game.
+  * **`$1f54` `player_stage_transition` (656 B)**, now with no extent conflict attached and with its
+    two callers known. It holds the only readers of the walk's two flag bits.
+  * **`$a38` the frame top (62 B) LAST**, and the dispatch row flips with it.
+
+**QUEUED, CARRIED FORWARD — THE LIVE LIST** (phase A's, less what phase B discharged): `abcd_byte` —
+and now `sbcd_byte` beside it — to the kit; regenerate `../out/names_dump.txt`, `../out/hw_scan.tsv`,
+`../decomp.c` and `../out/wonderboy_dis.txt`; `bus.h` to the kit; the `$1ab4` boundary; the tier
+partition; the `scene_run_effect` latent guard; the second reader of `actor_type30_drift` at `$b84`;
+the two remaining duplicate `cmt` directives (`0x1023a`, `0x10394`); the `WB_HUD_SLOT_BBC2` / `_BBC6`
+renames. **NEW IN PHASE B:** SIX ENCODERS to `leaf.py` (`tst_b_dn`, `cmp_b_imm_dn`, `cmpi_b_ind`,
+`cmpa_l_imm`, `move_w_imm_d16`, `move_l_imm_d16`), each carrying an ALSO IN note in test_player.py —
+and `move_b_d16_d16`, whose two copies take their arguments in OPPOSITE orders; and `fn 0x205c`, an
+`fn` inside `player_stage_transition`'s body which the census leaves standing because a real `bsr`
+names it. **DISCHARGED IN PHASE B:** the `$1fa2` extent conflict AND its `fn` directive, and both of
+phase A's honesty items about routines with no caller.

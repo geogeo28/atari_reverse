@@ -70,10 +70,16 @@ include/effects.h          the 29 effect/state leaves at $10200..$103e7 and the 
                            effects at $105e4..$10799 — prototypes
 include/hud.h              the status panel's 30 routines — prototypes, and their register interfaces
 include/input.h            the two joystick-pipeline leaves
-include/map.h              the collision map's three routines — prototypes, and why $10a2's result
-                           is two registers rather than one
-include/player.h           THE PLAYER'S OWN FRAME — the five routines behaviour slot 1 calls that
-                           reach nothing this port lacks, the spawn helper beside them, and (at the
+include/map.h              the collision map's three routines — prototypes, why $10a2's result
+                           is two registers rather than one, and the two `static inline` step
+                           helpers (one probe with the ground flags no caller reads dropped) that
+                           moved here from src/behavior.c when src/player.c's walk became their
+                           second module
+include/player.h           THE PLAYER'S OWN FRAME — the SEVEN routines that reach nothing this port
+                           lacks: four of behaviour slot 1's own nine calls, the jump machine the
+                           gate reaches below one of them, and the spawn helper the second one
+                           hands a template to. Plus the
+                           per-arm reading of the WEAPON's threaded `sbcd` extend bit, and (at the
                            foot of the header) what the frame still calls that is NOT there
 include/actor.h            the followed actor's record, the two tests over it, the two passes
                            that project actor records into screen coordinates, the table's
@@ -213,7 +219,15 @@ src/player.c               the player's frame, batch 40: the DEATH CHECK ($a76, 
                            actor's spawn ($539e). Its one meeting point with src/behavior.c is
                            `player_gate_on_1516` ($d78), which stays in that file where the
                            behaviour battery pins it — and which CALLS the jump machine now, which
-                           is what retired the last boundary the original returned from
+                           is what retired the last boundary the original returned from. Phase B
+                           then added the two calls below those: the WALK ($ec8 — five sections in
+                           a row, of which the last is an accelerator whose two turn rates are NOT
+                           equal, and whose two `bsr $107c` sites are the only callers $107c has),
+                           and the WEAPON ($1208 — DOWN plus a FIRE edge spends one packed-BCD unit
+                           off the newest WB_EFFECT_RECORD_LIST record and spawns the lightning
+                           flash, a wind spout, a fireball or a bomb; its `sbcd` is the first
+                           THREADED extend site in this project that one arm also produces LOCALLY,
+                           so `entry_extend` is a parameter here rather than a claim)
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -422,16 +436,24 @@ test/test_stage.py         the stage loader's differential: whole-body entry pin
                            ordinals rather than let test_effects.py become a third importer of
                            test_actor.py
 test/test_player.py        the player frame's differential, and the first battery here whose
-                           routines are neither dispatch rows nor map-walkers: five entry pins, a
-                           per-routine CENSUS (four of the five are named by exactly one instruction
-                           in the whole image and the fifth by two, positive and negative), the
+                           routines are neither dispatch rows nor map-walkers: SEVEN entry pins, a
+                           per-routine CENSUS (six of the seven are named by exactly one instruction
+                           in the whole image and the seventh by two, positive and negative), the
                            ladder's odd-x row that separates its $fff1 mask from a $fff0 one, the
                            ascent's zero-speed wrap, the wing boots' level-vs-edge read and their
                            word-wide rearm, and the death arm's whole `snd_play_song` write set
                            imported from test_sound.py. It also states the one arm no case here can
                            DRIVE — the cheat word at $604 lies inside the kit's harness-poked input
                            block, so `make_image` refuses to seed it — with a tripwire case that
-                           fails if the block or the load base ever moves
+                           fails if the block or the load base ever moves. Phase B widened it to the
+                           COLLISION MAP (the walk's four probe sites, seeded through test_map.py's
+                           own `map_pokes` with the probed rows cleared, so a step's whole effect is
+                           the x it commits) and to the actor table's high pool (the weapon's three
+                           spawn arms), and added the two structural pins for the routines this
+                           project has MEASURED but not ported: the register convention of
+                           `player_pending_event_gate`'s spawn site, driven with the two `lea`
+                           operands taken out of the image, and the census that says $1fa2 is an
+                           ARM of `player_stage_transition` rather than a routine
 test/test_text.py          the text subsystem's differential. The plotter: 32 bytes into the
                            4-plane buffer with the write set stated exactly, the returned cursor
                            compared against both sides, a cell walk that shows the +1/+7 alternation

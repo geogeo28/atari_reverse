@@ -1,5 +1,5 @@
-/* player.c — the player's own frame: the five routines behaviour slot 1 calls that reach nothing
- * this port lacks, and the spawn helper beside them. See player.h for what each one is and
+/* player.c — the player's own frame: the routines behaviour slot 1 calls that reach nothing this
+ * port lacks, and the spawn helper beside them. See player.h for what each one is and
  * ../STATUS.md's batch-40 partition for what the frame still calls that is not here.
  *
  * THE RECORD IS AN ADDRESS REGISTER, so every field access goes through bus.h's own accessors —
@@ -14,9 +14,12 @@
  */
 #include <stdint.h>
 
+#include "actor.h"
 #include "bus.h"
+#include "hud.h"
 #include "input.h"
 #include "machine.h"
+#include "map.h"
 #include "os.h"
 #include "player.h"
 #include "sound.h"
@@ -237,4 +240,335 @@ void scene_copy_record_fields(uint8_t *image, uint32_t spawn_template,
     for (i = 0; i < TEMPLATE_LONGWORDS; i++)
         bus_write_long(image, addr_add(destination, (i + 1) * WB_LONGWORD_BYTES),
                        bus_read_long(image, addr_add(source, i * WB_LONGWORD_BYTES)));
+}
+
+
+/* --- $ec8: the walk ------------------------------------------------------------------------------
+ *
+ * FIVE SECTIONS IN A ROW, each falling into the next and none of them returning early out of the
+ * routine — which is why they are five `static void`s called in order rather than one body. Only
+ * the last of them, the accelerator, has arms that end the frame.
+ */
+
+/* $ec8 — THE KNOCK-BACK. WB_ACTOR_FIELD_29 is the step count `actor_stun_followed` ($6796) seeds;
+ * while it is nonzero the record is pushed one map step in the direction OPPOSITE to the side flag
+ * — set means the followed record is to the LEFT (actor.h), and this steps right — and one is spent.
+ *
+ * The count is read into d7 BEFORE the probe and spent from MEMORY afterwards, which is what the
+ * two statements below are: `moveq #0,d7 / move.b 29(a0),d7 / ... / subq.b #1,29(a0)`. */
+static void player_spend_knockback(uint8_t *image, uint32_t actor) {
+    uint8_t steps = field_b(image, actor, WB_ACTOR_FIELD_29);
+
+    if (steps == 0)
+        return;
+
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT))
+        step_right(image, actor, steps);
+    else
+        step_left(image, actor, steps);
+    spend_field_b(image, actor, WB_ACTOR_FIELD_29, 1);
+}
+
+/* $ef0 — THE FIRE EDGE. `tst.b d0 / bpl` on `joy1_newly_pressed`'s byte is a SIGN test of bit 7, the
+ * fire button, so this is a rising edge whatever else the stick is doing — where the weapon's own
+ * gate one call later wants that byte to be WB_PLAYER_FIRE_EDGE_EXACT and nothing else. */
+static void player_arm_on_fire(uint8_t *image, uint32_t actor) {
+    if (!(joy1_newly_pressed(image) & (1u << WB_JOY1_FIRE_BIT)))
+        return;
+
+    flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FIRED_BIT);
+    flag_clear(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0);
+    set_field_b(image, actor, WB_ACTOR_FIELD_22, 0);
+}
+
+/* $f0a — THE FLICKER COUNTDOWN, and `subq.b #1,21(a0)` here is WB_ACTOR_FLICKER_COUNTDOWN's ONE
+ * reader in the image. The frame it reaches zero lowers the flicker bit AND the invulnerability the
+ * damage path raised beside it. */
+static void player_tick_flicker(uint8_t *image, uint32_t actor) {
+    if (!flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT))
+        return;
+    if (spend_field_b(image, actor, WB_ACTOR_FLICKER_COUNTDOWN, 1) != 0)
+        return;
+
+    flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+    flag_clear(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_INVULNERABLE_BIT);
+}
+
+/* $f28 — THE HURT DRIFT, the arm WB_ACTOR_FLAGS2_BIT_0 gates. `actor_damage_followed` ($69fe) is
+ * what writes the pair this spends: WB_ACTOR_FIELD_31 is how far the knock-back has left to run
+ * (WB_ACTOR_DAMAGE_FIELD_31_BASE less twice a state word) and WB_ACTOR_FIELD_30 is which way.
+ *
+ * LANDING ENDS IT: a record that has picked WB_ACTOR_FLAG_SUPPORTED_BIT back up lowers the gate bit
+ * instead of drifting. And the step distance is the count as it was BEFORE the spend — d7 is loaded
+ * above the `subq.b` — so a count of zero still takes a probe, of zero pixels. */
+static void player_run_hurt_drift(uint8_t *image, uint32_t actor) {
+    uint8_t steps;
+
+    if (!flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0))
+        return;
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT)) {
+        flag_clear(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0);
+        return;
+    }
+
+    steps = field_b(image, actor, WB_ACTOR_FIELD_31);
+    if (steps != 0)
+        spend_field_b(image, actor, WB_ACTOR_FIELD_31, WB_PLAYER_DRIFT_SPEND);
+
+    if (field_b(image, actor, WB_ACTOR_FIELD_30) != 0)
+        step_right(image, actor, steps);
+    else
+        step_left(image, actor, steps);
+}
+
+/* $ff2 / $105c — THE TWO TAILS every arm of the accelerator leaves through. Each RE-READS
+ * WB_ACTOR_FIELD_22 rather than carrying the arm's own value down, because the arms above write it
+ * and the tail is what a `bra` reaches: `clr.w d7 / move.b 22(a0),d7 / beq / bsr`. A zero speed
+ * takes no probe at all. */
+static void player_take_walk_step(uint8_t *image, uint32_t actor, int travelling_right) {
+    uint8_t speed = field_b(image, actor, WB_ACTOR_FIELD_22);
+
+    if (speed == 0)
+        return;
+
+    if (travelling_right)
+        step_right(image, actor, speed);
+    else
+        step_left(image, actor, speed);
+}
+
+/* $1002 / $106a — TURNING, i.e. the frame a held direction disagrees with WB_ACTOR_FIELD_23. The
+ * speed is spent DOWN first and the record keeps travelling the OLD way while it lasts; the frame
+ * the `subq.b` goes negative zeroes the speed, writes the new direction and steps the NEW way,
+ * which with a zero speed is no step at all.
+ *
+ * THE TWO RATES DIFFER — see WB_PLAYER_TURN_DECEL_RIGHT/_LEFT — and this is the one asymmetry in
+ * the accelerator. `bpl` reads what the `subq.b` LEFT, so a speed of zero on entry wraps to $ff and
+ * takes the flip arm rather than running 255 frames of turn. */
+static void player_turn_around(uint8_t *image, uint32_t actor, int turning_right) {
+    uint8_t decel = turning_right ? WB_PLAYER_TURN_DECEL_RIGHT : WB_PLAYER_TURN_DECEL_LEFT;
+
+    if ((int8_t)spend_field_b(image, actor, WB_ACTOR_FIELD_22, decel) >= 0) {
+        player_take_walk_step(image, actor, !turning_right);
+        return;
+    }
+
+    set_field_b(image, actor, WB_ACTOR_FIELD_22, 0);
+    set_field_b(image, actor, WB_ACTOR_FIELD_23,
+                turning_right ? WB_ACTOR_ST_BYTE : 0);
+    player_take_walk_step(image, actor, turning_right);
+}
+
+/* $fcc / $1036 — the acceleration itself, and it runs on one frame in four. The ceiling is
+ * WB_EFFECT_STATE_BD6A plus WB_PLAYER_WALK_SPEED_BIAS, and `cmp.b 22(a0),d0 / bgt` is a SIGNED BYTE
+ * comparison of that word's LOW BYTE against the field — so a ceiling byte above $7f reads as below
+ * every ordinary speed and clamps on the spot. */
+static void player_accelerate_walk(uint8_t *image, uint32_t actor) {
+    uint8_t subframe, ceiling;
+
+    /* `addq.b #1,24(a0)` then `andi.b #$3,24(a0)`: two stores to one byte, and the ledger records
+     * the final value, so they are ONE expression here — the same silence player_climb's x and y
+     * carry.
+     *
+     * BOTH TESTS BELOW RE-READ THE FIELD rather than the value just computed, because both original
+     * instructions do: `andi.b` and `cmp.b` fetch 24(a0) and 22(a0) again, and for a record at an
+     * address bus.h refuses the store is dropped and the fetch answers ZERO — so a port that tested
+     * its own local would take the other arm. Nothing here can reach such a record (the player's
+     * comes out of the actor table), but this file's own `spend_field_b` plate states the rule and
+     * player_spend_one_shot obeys it, so the walk does too. */
+    subframe = (uint8_t)((field_b(image, actor, WB_ACTOR_FIELD_24) + 1)
+                         & WB_PLAYER_WALK_SUBFRAME_MASK);
+    set_field_b(image, actor, WB_ACTOR_FIELD_24, subframe);
+    if (field_b(image, actor, WB_ACTOR_FIELD_24) != 0)
+        return;
+
+    set_field_b(image, actor, WB_ACTOR_FIELD_22,
+                (uint8_t)(field_b(image, actor, WB_ACTOR_FIELD_22) + 1));
+
+    ceiling = (uint8_t)(be16(image + WB_EFFECT_STATE_BD6A) + WB_PLAYER_WALK_SPEED_BIAS);
+    if ((int8_t)ceiling > (int8_t)field_b(image, actor, WB_ACTOR_FIELD_22))
+        return;
+    set_field_b(image, actor, WB_ACTOR_FIELD_22, ceiling);
+}
+
+/* $fa8 / $1014 — the arm a HELD direction takes. Its first act is to leave a ladder, which is
+ * `player_reset_ground_state`'s only pair of call sites in the image. */
+static void player_walk_arm(uint8_t *image, uint32_t actor, int rightward) {
+    if (be16(image + WB_TILE_33_MODE) != 0)
+        player_reset_ground_state(image, actor);
+
+    if (rightward)
+        flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+    else
+        flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+    flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVED_BIT);
+
+    /* `move.b 23(a0),d6 / bne` on the left arm and `/ beq` on the right: the same question asked
+     * with opposite polarity, i.e. "does the direction byte already agree with the stick". */
+    if ((field_b(image, actor, WB_ACTOR_FIELD_23) != 0) != (rightward != 0)) {
+        player_turn_around(image, actor, rightward);
+        return;
+    }
+    player_accelerate_walk(image, actor);
+    player_take_walk_step(image, actor, rightward);
+}
+
+/* $f7e — the arm NEITHER direction takes: the moved bit lowered and one off the speed a frame,
+ * still travelling whichever way WB_ACTOR_FIELD_23 says. `bpl` reads what the `subq.b` left, so a
+ * speed that was already negative is zeroed and the frame ends without a step. */
+static void player_coast(uint8_t *image, uint32_t actor) {
+    flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVED_BIT);
+
+    if (field_b(image, actor, WB_ACTOR_FIELD_22) == 0)
+        return;
+    if ((int8_t)spend_field_b(image, actor, WB_ACTOR_FIELD_22, 1) < 0) {
+        set_field_b(image, actor, WB_ACTOR_FIELD_22, 0);
+        return;
+    }
+    player_take_walk_step(image, actor, field_b(image, actor, WB_ACTOR_FIELD_23) != 0);
+}
+
+/* $f6a — the accelerator's own head: `btst #3,$8cf.w` then `btst #2`, so RIGHT is tested first and
+ * holding both walks right. */
+static void player_walk(uint8_t *image, uint32_t actor) {
+    uint8_t held = image[WB_JOY1_CURRENT];
+
+    if (held & (1u << WB_JOY1_RIGHT_BIT))
+        player_walk_arm(image, actor, 1);
+    else if (held & (1u << WB_JOY1_LEFT_BIT))
+        player_walk_arm(image, actor, 0);
+    else
+        player_coast(image, actor);
+}
+
+void player_step_and_arm(uint8_t *image, uint32_t actor) {
+    player_spend_knockback(image, actor);
+    player_arm_on_fire(image, actor);
+    player_tick_flicker(image, actor);
+    player_run_hurt_drift(image, actor);
+    player_walk(image, actor);
+}
+
+
+/* --- $1208: the weapon --------------------------------------------------------------------------
+ *
+ * DOWN plus a FIRE edge spends one packed-BCD unit off the newest WB_EFFECT_RECORD_LIST record and
+ * spawns whatever that record's HIGH byte names. See player.h for the entry-X reading.
+ */
+
+/* $1292 — the block the WIND SPOUT runs and the BOMB branches into, which is why it is one function
+ * here rather than two copies: $1308 writes its own type and lifetime and then `bra.w $1292`.
+ *
+ * The shot inherits the player's WHOLE WB_ACTOR_FLAGS byte (so it flies the way he faces), is put
+ * into the launched state with the flicker bit knocked back down, and takes its position from the
+ * player's own x,y longword. */
+static void player_arm_thrown_shot(uint8_t *image, uint32_t actor, uint32_t shot) {
+    set_field_w(image, shot, WB_ACTOR_SPRITE, 0);
+    set_field_b(image, shot, WB_ACTOR_FLAGS, field_b(image, actor, WB_ACTOR_FLAGS));
+    set_field_b(image, shot, WB_ACTOR_FLAGS2, 0);
+    flag_clear(image, shot, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+    flag_set(image, shot, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
+    flag_set(image, shot, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT);
+    set_field_b(image, shot, WB_ACTOR_SPEED, WB_PLAYER_SHOT_SPEED);
+
+    bus_write_long(image, addr_add(shot, WB_ACTOR_X),
+                   bus_read_long(image, addr_add(actor, WB_ACTOR_X)));
+    /* `move.l #$60008,14(a1)` — WB_ACTOR_HALF_WIDTH and WB_ACTOR_SIZE_SECOND in one store. */
+    bus_write_long(image, addr_add(shot, WB_ACTOR_HALF_WIDTH),
+                   ((uint32_t)WB_PLAYER_SHOT_HALF_WIDTH << 16) | WB_PLAYER_SHOT_SIZE_SECOND);
+}
+
+/* $12c4 — the FIREBALL, which shares nothing below its own `bsr $1b8e`: it copies only the side bit
+ * rather than the whole flags byte, clears the sprite word's HIGH BYTE alone (`clr.b 6(a1)` against
+ * the block above's `clr.w`), and leaves the shot eight pixels above the player.
+ *
+ * IT RETURNS THAT `subq.w #8,2(a1)`'s BORROW, which is the X the `sbcd` below folds in — the one
+ * arm of the four that produces the bit rather than inheriting it. */
+static unsigned player_arm_fireball(uint8_t *image, uint32_t actor, uint32_t shot) {
+    uint16_t y;
+    unsigned borrow;
+
+    set_field_w(image, shot, WB_ACTOR_TYPE, WB_PLAYER_SHOT_TYPE_FIREBALL);
+    set_field_b(image, shot, WB_ACTOR_FIELD_30, WB_PLAYER_SHOT_LIFETIME);
+    bus_write_long(image, addr_add(shot, WB_ACTOR_X),
+                   bus_read_long(image, addr_add(actor, WB_ACTOR_X)));
+
+    y = (uint16_t)field_w(image, shot, WB_ACTOR_Y);
+    set_field_w(image, shot, WB_ACTOR_Y, (uint16_t)(y - WB_PLAYER_FIREBALL_Y_RISE));
+    borrow = y < WB_PLAYER_FIREBALL_Y_RISE;
+
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT))
+        flag_set(image, shot, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+    else
+        flag_clear(image, shot, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+    set_field_b(image, shot, WB_ACTOR_SPRITE, 0);
+    return borrow;
+}
+
+/* $1258 — ONE SHOT SPENT, and the record POPPED when the count runs out.
+ *
+ * `addq.l #2,a6 / lea $1333.l,a2 / sbcd -(a2),-(a6)` lands the subtract on WB_RECORD_LOW_BYTE of the
+ * record WB_EFFECT_RECORD_WRITE_PTR names, with the subtrahend a byte of this routine's OWN 300
+ * (WB_PLAYER_WEAPON_SPEND_BCD). `tst.b (a6)` then RE-READS the byte just written — the store can be
+ * dropped for a record the bus refuses — and a zero rewinds the write pointer by one record. */
+static void player_spend_one_shot(uint8_t *image, uint32_t record, unsigned entry_extend) {
+    uint32_t count_at = addr_add(record, WB_RECORD_LOW_BYTE);
+    unsigned extend = entry_extend;
+
+    bus_write_byte(image, count_at,
+                   sbcd_byte(image[WB_PLAYER_WEAPON_SPEND_BCD], bus_read_byte(image, count_at),
+                             &extend));
+    image[WB_RECORD_FRESH_FLAG] = WB_ACTOR_ST_BYTE;
+
+    if (bus_read_byte(image, count_at) != 0)
+        return;
+    wr32(image + WB_EFFECT_RECORD_WRITE_PTR,
+         be32(image + WB_EFFECT_RECORD_WRITE_PTR) - WB_EFFECT_RECORD_LEN);
+}
+
+void player_weapon_fire(uint8_t *image, uint32_t actor, unsigned entry_extend) {
+    unsigned extend_at_sbcd = entry_extend;
+    uint32_t record, shot;
+    uint8_t item;
+
+    if (be16(image + WB_TILE_33_FLAG) != 0)
+        return;
+    /* `cmpi.l #$b444,$b546.l` — the write pointer still at the base of the list, i.e. nothing held.
+     * The list grows UPWARD and the pointer addresses the newest record (wonderboy.h). */
+    if (be32(image + WB_EFFECT_RECORD_WRITE_PTR) == WB_EFFECT_RECORD_LIST)
+        return;
+    if (joy1_newly_pressed(image) != WB_PLAYER_FIRE_EDGE_EXACT)
+        return;
+    if (!(image[WB_JOY1_CURRENT] & (1u << WB_JOY1_DOWN_BIT)))
+        return;
+
+    record = be32(image + WB_EFFECT_RECORD_WRITE_PTR);
+    item = bus_read_byte(image, record);
+    if (item == WB_PLAYER_WEAPON_LIGHTNING) {
+        wr16(image + WB_FLASH_TIMER, WB_PLAYER_LIGHTNING_FLASH);
+        player_spend_one_shot(image, record, extend_at_sbcd);
+        return;
+    }
+
+    /* THE OTHER THREE ARMS ALL OPEN `bsr $1b8e / cmpa.l #$0,a1 / bne / rts`, and the allocation is
+     * lifted out of them here rather than spelt three times: it is each arm's FIRST act, it writes
+     * no memory and reads only the table, and the lightning arm above never reaches it — so one
+     * call is the same three calls. A FULL POOL ENDS THE FRAME WITHOUT SPENDING ANYTHING, which is
+     * what those three `rts` above the shared `sbcd` are for. */
+    shot = actor_alloc_slot_high(image);
+    if (shot == WB_ACTOR_ALLOC_NONE)
+        return;
+
+    if (item == WB_PLAYER_WEAPON_WIND_SPOUTS) {
+        set_field_w(image, shot, WB_ACTOR_TYPE, WB_PLAYER_SHOT_TYPE_WIND);
+        set_field_b(image, shot, WB_ACTOR_FIELD_30, WB_PLAYER_SHOT_LIFETIME_WIND);
+        player_arm_thrown_shot(image, actor, shot);
+    } else if (item == WB_PLAYER_WEAPON_FIRE_BALLS) {
+        extend_at_sbcd = player_arm_fireball(image, actor, shot);
+    } else {
+        set_field_b(image, shot, WB_ACTOR_FIELD_30, WB_PLAYER_SHOT_LIFETIME);
+        set_field_w(image, shot, WB_ACTOR_TYPE, WB_PLAYER_SHOT_TYPE_BOMB);
+        player_arm_thrown_shot(image, actor, shot);
+    }
+    player_spend_one_shot(image, record, extend_at_sbcd);
 }
