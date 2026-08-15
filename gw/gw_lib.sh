@@ -28,6 +28,55 @@ readonly HXCFE_UNALLOCATED_MARKER='not allocated'
 readonly DEFAULT_FORMAT="atarist.720"
 readonly DEFAULT_DRIVE="A"
 
+# Standard Atari ST sector-image geometries, named by their byte size (bytes =
+# sectors * 512). A .st file's byte size fixes its on-disk geometry, so the write path
+# infers the format from the size rather than defaulting blindly: the wrong geometry
+# lays down a track layout TOS reads as an EMPTY disk, with no error to warn you.
+# Single-sided: 360/400/440. Double-sided: 720/800/880.
+readonly ST_SIZE_360=368640    # atarist.360 =  720 sectors
+readonly ST_SIZE_400=409600    # atarist.400 =  800 sectors
+readonly ST_SIZE_440=450560    # atarist.440 =  880 sectors
+readonly ST_SIZE_720=737280    # atarist.720 = 1440 sectors
+readonly ST_SIZE_800=819200    # atarist.800 = 1600 sectors
+readonly ST_SIZE_880=901120    # atarist.880 = 1760 sectors
+
+# One authoritative "<bytes>:<format>" table, built from the size constants so the
+# numbers live in exactly one place; the lookups below iterate it in either direction.
+readonly ST_GEOMETRY_TABLE="\
+$ST_SIZE_360:atarist.360
+$ST_SIZE_400:atarist.400
+$ST_SIZE_440:atarist.440
+$ST_SIZE_720:atarist.720
+$ST_SIZE_800:atarist.800
+$ST_SIZE_880:atarist.880"
+
+# Echo the atarist.* format for a byte size, or nothing if the size is not a known ST
+# geometry.
+st_format_for_size() {
+    local size fmt
+    while IFS=: read -r size fmt; do
+        if [ "$size" = "$1" ]; then printf '%s' "$fmt"; return; fi
+    done <<<"$ST_GEOMETRY_TABLE"
+}
+
+# Echo the expected byte size for an atarist.* format, or nothing when the format has
+# no single fixed geometry (a custom format the user knows better than we do).
+st_size_for_format() {
+    local size fmt
+    while IFS=: read -r size fmt; do
+        if [ "$fmt" = "$1" ]; then printf '%s' "$size"; return; fi
+    done <<<"$ST_GEOMETRY_TABLE"
+}
+
+# The known ST sizes with their formats, as one line, for error messages.
+st_known_sizes() {
+    local size fmt out=""
+    while IFS=: read -r size fmt; do
+        out+="${out:+, }$size ($fmt)"
+    done <<<"$ST_GEOMETRY_TABLE"
+    printf '%s' "$out"
+}
+
 # gw catches USB command errors, prints this and still exits 0 (write.py), so the
 # transcript is the only place such a failure is visible.
 readonly GW_COMMAND_FAILED_MARKER="Command Failed:"

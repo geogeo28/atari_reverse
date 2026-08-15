@@ -71,7 +71,7 @@ Routes:
 Options:
   --drive DRIVE  drive to write (default: $DEFAULT_DRIVE)
   --device DEV   serial port (default: gw auto-detects)
-  --format FMT   format for sector writes (default: $DEFAULT_FORMAT)
+  --format FMT   force the sector-write format (a .st's is inferred from its size)
   --tracks TSPEC restrict tracks, e.g. 'c=0-79:h=0-1'
   --sectors      .stx only: convert to .st and do a verified sector write
   --no-verify    skip gw's read-back verify (sector writes only)
@@ -125,6 +125,37 @@ choose_route() {
     if [ -n "$format_set" ] && [ "$route" = "$ROUTE_FLUX" ]; then
         die "the flux route takes no --format (it writes raw flux); use --sectors for a format-driven write"
     fi
+}
+
+# A genuine .st image's on-disk geometry is fixed by its byte size; writing it with a
+# mismatched --format lays down the wrong track layout and TOS then reads the disk as
+# empty with no error (a single-sided image written as double-sided 720K is the case
+# that bit a user). So infer the format from the size, and when --format was given
+# explicitly, refuse a size that disagrees with it rather than writing garbage. Only a
+# real .st is size-checked: an .stx-converted source keeps its route's default format.
+resolve_st_format() {
+    [ "$(lowercase_extension "$image")" = "st" ] || return 0
+
+    local size
+    size="$(wc -c <"$image" | tr -d ' ')"
+
+    if [ -n "$format_set" ]; then
+        local expected
+        expected="$(st_size_for_format "$format")"
+        # A custom --format has no single fixed size to check against; trust the user.
+        if [ -n "$expected" ] && [ "$size" -ne "$expected" ]; then
+            local actual
+            actual="$(st_format_for_size "$size")"
+            die "image is $size bytes (${actual:-unknown size}) but --format $format expects $expected"
+        fi
+        return 0
+    fi
+
+    local inferred
+    inferred="$(st_format_for_size "$size")"
+    [ -n "$inferred" ] \
+        || die "cannot infer ST format: $image is $size bytes; known ST sizes are $(st_known_sizes)"
+    format="$inferred"
 }
 
 # .stx cannot be written directly, so it is converted to whichever form the chosen
@@ -238,6 +269,7 @@ write_image() {
 main() {
     parse_args "$@"
     choose_route
+    resolve_st_format
 
     # Only an .stx input needs hxcfe at all, and then only the two modules its route
     # actually uses; a plain .st or .scp write requires none.

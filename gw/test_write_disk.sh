@@ -10,7 +10,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT="$SCRIPT_DIR/write_disk.sh"
 readonly LIB="$SCRIPT_DIR/gw_lib.sh"
 readonly PYTHON_BIN="/usr/bin/python3"
-readonly BLANK_ST_BYTES=737280   # 720K: 80 cyl * 2 heads * 9 sectors * 512
+readonly BLANK_ST_BYTES=737280   # 720K: 80 cyl * 2 heads * 9 sectors * 512, infers atarist.720
+readonly ST_400_BYTES=409600     # atarist.400: single-sided 800 sectors
+readonly ST_360_BYTES=368640     # atarist.360: single-sided 720 sectors
+readonly UNKNOWN_ST_BYTES=100000 # matches no standard ST geometry
 
 HXCFE_BIN="$(grep '^readonly HXCFE_BIN=' "$LIB" | cut -d'"' -f2)"
 HXCFE_LIB_DIR="$(grep '^readonly HXCFE_LIB_DIR=' "$LIB" | cut -d'"' -f2)"
@@ -22,6 +25,17 @@ passed=0; failed=0
 report() {
     if [ "$1" = ok ]; then printf 'PASS  %s\n' "$2"; passed=$((passed + 1))
     else printf 'FAIL  %s\n' "$2"; failed=$((failed + 1)); fi
+}
+
+# A zero-filled .st of an exact byte size (the write path infers geometry from size).
+# bs=512 when the size is a whole number of sectors, else a slow byte-at-a-time fill.
+make_sized_st() {  # make_sized_st <path> <bytes>
+    local path="$1" bytes="$2"
+    if [ $((bytes % 512)) -eq 0 ]; then
+        dd if=/dev/zero of="$path" bs=512 count=$((bytes / 512)) 2>/dev/null
+    else
+        dd if=/dev/zero of="$path" bs=1 count="$bytes" 2>/dev/null
+    fi
 }
 
 expect_exit() {  # expect_exit <code> <description> <cmd...>
@@ -82,7 +96,12 @@ expect_err "unsupported image type" "unknown extension is rejected" "$SCRIPT" "$
 
 build_stub_env
 STUB="$WORK/stub/write_stub.sh"
-: > "$WORK/disk.st"; : > "$WORK/disk.scp"
+# The .st route now infers geometry from size, so fixtures must be real ST sizes.
+make_sized_st "$WORK/disk.st" "$BLANK_ST_BYTES"     # 720K -> atarist.720
+make_sized_st "$WORK/disk360.st" "$ST_360_BYTES"    # -> atarist.360
+make_sized_st "$WORK/disk400.st" "$ST_400_BYTES"    # -> atarist.400
+make_sized_st "$WORK/disk_unknown.st" "$UNKNOWN_ST_BYTES"
+: > "$WORK/disk.scp"
 
 echo "=== route selection and gw argv (stubbed) ==="
 expect_argv ".st takes the verified sector route" \
@@ -98,12 +117,26 @@ expect_argv "--no-verify is NOT passed on the flux route" \
     "--pre-erase --drive A $WORK/disk.scp" \
     "$STUB" "$WORK/disk.scp" --yes --no-verify
 expect_argv "--tracks, --drive and --device pass through" \
-    "--pre-erase --drive B --device /dev/cu.fake --tracks c=0-79:h=0-1 --format atarist.360 $WORK/disk.st" \
-    "$STUB" "$WORK/disk.st" --yes --drive B --device /dev/cu.fake --tracks 'c=0-79:h=0-1' --format atarist.360
+    "--pre-erase --drive B --device /dev/cu.fake --tracks c=0-79:h=0-1 --format atarist.360 $WORK/disk360.st" \
+    "$STUB" "$WORK/disk360.st" --yes --drive B --device /dev/cu.fake --tracks 'c=0-79:h=0-1' --format atarist.360
 expect_err "a .scp holds flux"     "--sectors on a .scp is rejected"  "$STUB" "$WORK/disk.scp" --yes --sectors
 expect_err "already a sector image" "--sectors on a .st is rejected"  "$STUB" "$WORK/disk.st" --yes --sectors
 expect_err "flux route takes no --format" "--format on the flux route is rejected" \
     "$STUB" "$WORK/disk.scp" --yes --format atarist.720
+
+echo "=== .st format inference (size -> format) ==="
+expect_argv "a 409600-byte .st infers atarist.400" \
+    "--pre-erase --drive A --format atarist.400 $WORK/disk400.st" \
+    "$STUB" "$WORK/disk400.st" --yes
+expect_argv "a 737280-byte .st infers atarist.720" \
+    "--pre-erase --drive A --format atarist.720 $WORK/disk.st" \
+    "$STUB" "$WORK/disk.st" --yes
+expect_err "is 409600 bytes (atarist.400) but --format atarist.720 expects 737280" \
+    "a .st whose size disagrees with --format is refused" \
+    "$STUB" "$WORK/disk400.st" --yes --format atarist.720
+expect_err "is 100000 bytes; known ST sizes" \
+    "a .st of an unknown size is refused" \
+    "$STUB" "$WORK/disk_unknown.st" --yes
 
 echo "=== write-protected disk (gw exits 0 after 'Command Failed') ==="
 wrprot_run() { STUB_WRPROT=1 "$STUB" "$WORK/disk.st" --yes; }
