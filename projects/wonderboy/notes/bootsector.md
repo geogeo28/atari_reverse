@@ -253,6 +253,25 @@ family. Identification here is by behaviour (`$140` residency + `hdv_bpb` + `Ini
 + 5-count trigger), not by a signature database; no offline ST virus signature set is available in
 this workspace. Treat the family name as probable, the behaviour as certain.
 
+### Disk 2 is clean — and the virus's own logic explains why
+
+Disk 2's boot sector (decoded from `gw/dumps/wb_disk2/wb_disk2.scp`) is **blank**: `boot+0 = 0000`,
+256-word checksum `0x496b` (not `$1234`, so TOS never executes it), all 430 code bytes zero, and the
+virus's `$140` body appears nowhere on the disk. Only disk 1 carries the infection.
+
+That asymmetry is not luck — it is the virus obeying the write-protect tab. The infector aborts
+silently on a `Flopwr` error (`$296: bmi.w $2dc`, §2.4), so a **write-protected** disk cannot be
+infected. Disk 1 is the boot/key disk (write-enabled, booted constantly → infected); disk 2 is a
+pure data disk that was almost certainly kept write-protected, so every media-change infection
+attempt on it failed quietly. The clean blank boot sector is disk 2's untouched factory state.
+
+**Propagation caveat for the written copies.** Writing disk 1 back from its `.scp` reproduces the
+infected boot sector verbatim, so the freshly written floppy **also carries the virus** and installs
+it on boot. The game does not need that sector (it boots from `AUTO/SWB.PRG`; the Copylock lives on
+the cyl 0-4 data band, not the boot sector), so a disinfected disk-1 image — boot sector zeroed,
+BPB kept — would play identically and spread nothing. Until then, keep other disks write-protected
+when running the disk-1 copy; that is exactly what spared disk 2.
+
 ## 4. READ TRACK: not this sector, and the elimination is complete
 
 The Hatari log `fdc stx : no track image for read track drive=0 track=0/4 side=0` is a genuine
