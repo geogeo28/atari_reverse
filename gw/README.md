@@ -275,15 +275,23 @@ Test the disk in the machine, or re-read it with backup_disk.sh and compare.
 On the sector route verify is real: every track is read back and compared, and gw
 retries a failing track (default 3 times).
 
-### Protection rarely survives a rewrite
+### Protection and a rewrite — better than expected
 
-A flux write is the best reproduction available, but it is not the original disk.
-Weak/fuzzy bits get re-recorded as whatever the flux happened to say instead of as
-genuinely unstable magnetisation; long tracks and tight inter-sector gaps depend on
-your drive's exact rotation speed; index alignment shifts. Expect a protected game
-written back to fail its own protection check more often than not — that is a
-property of the medium, not a bug in the tooling. For an unprotected disk prefer
-`--sectors`, because it is verified.
+A flux write is the best reproduction available, but it is not the original disk:
+weak/fuzzy bits get re-recorded as whatever the flux happened to say instead of as
+genuinely unstable magnetisation, long tracks and tight inter-sector gaps depend on
+your drive's exact rotation speed, and index alignment shifts. The textbook
+expectation is that a protected game fails its own check after a rewrite.
+
+**In practice it can survive — tested.** Wonder Boy in Monsterland disk 1 (Rob Northen
+Copylock: a 12-sector band with weak bits on cylinders 0–4) was written back from its
+`.scp` gold master with `write_disk.sh dumps/wb_disk1/wb_disk1.scp --tracks c=0-79:h=0`
+and **booted and played on a real Atari ST past level 2, no error**. The flux write
+reproduced the non-standard sector IDs, the track timing and the gap structure — the
+structural parts of the protection — faithfully enough to pass. So write the flux and
+just try it: some Copylock variants lean on layout/timing (which a flux write keeps)
+rather than purely on non-reproducible weak bits, and the outcome is disk- and
+drive-specific. For an unprotected disk prefer `--sectors`, because it is verified.
 
 Write the original `dumps/<name>/<name>.scp` gold master rather than round-tripping
 an STX. Every conversion is an interpretation; the SCP is the only artifact that
