@@ -85,4 +85,58 @@ static inline void bus_write_long(uint8_t *image, uint32_t at, uint32_t value) {
         wr32(image + address, value);
 }
 
+
+/* --- A RECORD'S FIELDS, through the same bus ----------------------------------------------------
+ *
+ * `base + offset` on an address register, guarded exactly as above, and the bit helpers over it.
+ * They are here rather than duplicated per module because TWO modules now spell them: src/behavior.c
+ * wrote them for the sixty-one dispatch rows and src/player.c needs the same eight for the player's
+ * own frame, whose record arrives the same way — out of a table pointer nothing between the walk and
+ * the field access bounds.
+ *
+ * A SECOND COPY IS THE ONE DIVERGENCE NOTHING CATCHES: each module's battery only pins its own
+ * routines, so both stay green while one copy drifts (a dropped guard, a changed signedness). They
+ * are `static inline` and export no symbol, which is what the two `static` sets bought; sharing them
+ * costs nothing and removes the drift.
+ *
+ * `field_w` returns a SIGNED word because every caller that does arithmetic on a coordinate wants
+ * the 68000's own sign; a caller that wants the raw bits casts.
+ */
+static inline uint8_t field_b(const uint8_t *image, uint32_t record, uint32_t offset) {
+    return bus_read_byte(image, addr_add(record, offset));
+}
+
+static inline void set_field_b(uint8_t *image, uint32_t record, uint32_t offset, uint8_t value) {
+    bus_write_byte(image, addr_add(record, offset), value);
+}
+
+static inline int16_t field_w(const uint8_t *image, uint32_t record, uint32_t offset) {
+    return (int16_t)bus_read_word(image, addr_add(record, offset));
+}
+
+static inline void set_field_w(uint8_t *image, uint32_t record, uint32_t offset, uint16_t value) {
+    bus_write_word(image, addr_add(record, offset), value);
+}
+
+static inline int flag_is_set(const uint8_t *image, uint32_t record, uint32_t offset, unsigned bit) {
+    return (field_b(image, record, offset) & (1u << bit)) != 0;
+}
+
+/* `bset`/`bclr`/`bchg #n,d16(An)` are BYTE read-modify-writes on memory whatever the register form
+ * is, which is what these three reproduce. */
+static inline void flag_set(uint8_t *image, uint32_t record, uint32_t offset, unsigned bit) {
+    set_field_b(image, record, offset,
+                (uint8_t)(field_b(image, record, offset) | (1u << bit)));
+}
+
+static inline void flag_clear(uint8_t *image, uint32_t record, uint32_t offset, unsigned bit) {
+    set_field_b(image, record, offset,
+                (uint8_t)(field_b(image, record, offset) & ~(1u << bit)));
+}
+
+static inline void flag_flip(uint8_t *image, uint32_t record, uint32_t offset, unsigned bit) {
+    set_field_b(image, record, offset,
+                (uint8_t)(field_b(image, record, offset) ^ (1u << bit)));
+}
+
 #endif /* WONDERBOY_BUS_H */

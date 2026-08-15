@@ -72,6 +72,9 @@ include/hud.h              the status panel's 30 routines — prototypes, and th
 include/input.h            the two joystick-pipeline leaves
 include/map.h              the collision map's three routines — prototypes, and why $10a2's result
                            is two registers rather than one
+include/player.h           THE PLAYER'S OWN FRAME — the five routines behaviour slot 1 calls that
+                           reach nothing this port lacks, the spawn helper beside them, and (at the
+                           foot of the header) what the frame still calls that is NOT there
 include/actor.h            the followed actor's record, the two tests over it, the two passes
                            that project actor records into screen coordinates, the table's
                            lifecycle — reset, free, the two pool allocators and the spawn — and
@@ -158,6 +161,9 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            SIXTY-ONE of the sixty-two rows are reconstructed as of batch 39 and
                            the ONE that is not is the player (slot 1), for which the dispatcher
                            hands the target BACK and the differential runs the oracle on to it.
+                           Batch 40 opened that row's own frame in src/player.c and RETIRED this
+                           file's last returning boundary with it: `player_gate_on_1516` calls the
+                           jump machine now, so slots 53 and 9/12/22/26 run their frames whole.
                            (This line read "twenty-two" while
                            ../STATUS.md read twenty-three at batch 32 and neither was checked
                            against anything; test_behavior.py's PORTED_SLOT_COUNT now holds the
@@ -199,6 +205,15 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            player every frame through actor_aim_velocity, one on a word pair slot
                            7's burst copied in as a longword) and the RISER that is slot 23's stolen
                            gold floating away
+src/player.c               the player's frame, batch 40: the DEATH CHECK ($a76, which spends the
+                           revival medicine or starts the death sequence), the JUMP MACHINE ($e06 —
+                           the ascent, the launch on a rising UP edge, and the WING BOOTS, which
+                           burn one charge a frame to hold the fall at one pixel), the LADDER ($d84,
+                           whose x snap keeps bit 0), leaving the ladder ($107c) and the event
+                           actor's spawn ($539e). Its one meeting point with src/behavior.c is
+                           `player_gate_on_1516` ($d78), which stays in that file where the
+                           behaviour battery pins it — and which CALLS the jump machine now, which
+                           is what retired the last boundary the original returned from
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -406,6 +421,17 @@ test/test_stage.py         the stage loader's differential: whole-body entry pin
                            sent `bit_op_d16`, the three immediate BIT opcodes and the register
                            ordinals rather than let test_effects.py become a third importer of
                            test_actor.py
+test/test_player.py        the player frame's differential, and the first battery here whose
+                           routines are neither dispatch rows nor map-walkers: five entry pins, a
+                           per-routine CENSUS (four of the five are named by exactly one instruction
+                           in the whole image and the fifth by two, positive and negative), the
+                           ladder's odd-x row that separates its $fff1 mask from a $fff0 one, the
+                           ascent's zero-speed wrap, the wing boots' level-vs-edge read and their
+                           word-wide rearm, and the death arm's whole `snd_play_song` write set
+                           imported from test_sound.py. It also states the one arm no case here can
+                           DRIVE — the cheat word at $604 lies inside the kit's harness-poked input
+                           block, so `make_image` refuses to seed it — with a tripwire case that
+                           fails if the block or the load base ever moves
 test/test_text.py          the text subsystem's differential. The plotter: 32 bytes into the
                            4-plane buffer with the write set stated exactly, the returned cursor
                            compared against both sides, a cell walk that shows the +1/+7 alternation

@@ -69,8 +69,10 @@ import pytest
 import harness
 import leaf
 import loader
-from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, andi_w_dn, bcd_expected,
-                  branch_w_to, brief_extension_word, bsr_w, btst_imm_dn, case_salt, clr_b_d16,
+from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b_dn, addq_w_d16,
+                  addq_w_ind, andi_w_dn, bcd_expected, jsr_ind, move_b_dn_d16, subq_b_d16,
+                  subq_w_d16,
+                  brief_extension_word, bsr_w, btst_imm_dn, case_salt, clr_b_d16,
                   addq_w_dn, clr_w_abs_l, clr_w_d16, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn,
                   cmpi_w_d16, keyed_block,
                   lea_abs_l, lea_d16, lea_indexed, longword, lsl_w_imm_dn, merge_bands,
@@ -125,7 +127,7 @@ LAUNCHED_BIT = wb("ACTOR_FLAG_LAUNCHED_BIT")
 SUPPORTED_BIT = wb("ACTOR_FLAG_SUPPORTED_BIT")
 SIDE_BIT = wb("ACTOR_FLAG_SIDE_BIT")
 FALLING_BIT = wb("ACTOR_FLAG_FALLING_BIT")
-CARRIED_BIT = wb("ACTOR_FLAG_CARRIED_BIT")
+MOVED_BIT = wb("ACTOR_FLAG_MOVED_BIT")
 SPAWNED_BIT = wb("ACTOR_FLAGS2_SPAWNED_BIT")
 LANDED_BIT = wb("ACTOR_FLAGS2_LANDED_BIT")
 INVULNERABLE_BIT = wb("ACTOR_FLAGS2_INVULNERABLE_BIT")
@@ -226,13 +228,16 @@ UNPORTED_TYPE = 1
 
 
 # --- the encodings only this battery spells -------------------------------------------------------
-# FIFTEEN of these are still a THIRD copy and are due to move to leaf.py under its own rule ("an
+# THIRTEEN of these are still a THIRD copy and are due to move to leaf.py under its own rule ("an
 # encoding moves there on its third"). The count is not a tally kept by hand: each one carries a
 # QUEUE NOTE beside its own definition below — `HOIST_QUEUE_NOTE` is the phrase they all end with —
 # and `test_the_hoist_queue_is_as_long_as_this_comment_says` counts them — so the number here fails a test rather than a reviewer, which is what the
-# figure it replaces did not. They are `add_w_d16_dn`, `adda_l_dn`, `addq_b_dn`, `clr_l_dn`, `cmp_b_imm_dn`,
-# `cmp_w_abs_l_dn`, `jsr_abs_w`, `jsr_ind`, `lsl_l_imm_dn`, `move_w_d16_d16`, `move_w_dn_abs_l`,
-# `move_w_dn_d16`, `movea_l_ind`, `mulu_w_dn` and `subi_w_d16`. Hoisting them edits six other
+# figure it replaces did not. They are `add_w_d16_dn`, `adda_l_dn`, `clr_l_dn`, `cmp_b_imm_dn`,
+# `cmp_w_abs_l_dn`, `jsr_abs_w`, `lsl_l_imm_dn`, `move_w_d16_d16`, `move_w_dn_abs_l`,
+# `move_w_dn_d16`, `movea_l_ind`, `mulu_w_dn` and `subi_w_d16` — TWO SHORTER than batch 39 left it,
+# because batch 40 hoisted `addq_b_dn` and `jsr_ind` (with five more this file had no note on:
+# `addq_w_d16`, `addq_w_ind`, `subq_w_d16`, `subq_b_d16` and `move_b_dn_d16`, each of which
+# test_player.py would have made a third or fourth copy of). Hoisting them edits six other
 # batteries, so ../STATUS.md registers the move rather than this batch making it; each ALSO IN note
 # names the siblings so the copies can be found from any of them. The rest are first or second
 # copies, which the rule allows.
@@ -266,9 +271,6 @@ def move_w_dn_d16(reg, base, displacement):
     return opcode(0x3140 | (base << 9) | reg) + word(displacement)
     # ALSO IN test_actor.py, test_map.py — third copy, queued for leaf.py.
 
-
-def move_b_dn_d16(reg, base, displacement):
-    return opcode(0x1140 | (base << 9) | reg) + word(displacement)
 
 
 def move_b_d16_d16(source, source_displacement, destination, destination_displacement):
@@ -313,9 +315,6 @@ def cmpi_l_ind(reg, value):
 def cmpi_b_d16(base, value, displacement):
     return opcode(0x0c28 | base) + word(value & 0xff) + word(displacement)
 
-
-def subq_b_d16(amount, base, displacement):
-    return opcode(0x5128 | ((amount & 7) << 9) | base) + word(displacement)
 
 
 def addi_b_dn(reg, value):
@@ -390,10 +389,6 @@ def movea_l_imm(reg, value):
     # ALSO IN test_actor.py — second copy, which the rule allows.
 
 
-def jsr_ind(reg):
-    return opcode(0x4e90 | reg)
-    # ALSO IN test_blit.py, test_scene.py — third copy, queued for leaf.py.
-
 
 def jsr_abs_w(addr):
     """`jsr <abs>.w` — the SHORT absolute form, which is how slot 61 calls joy1_newly_pressed and
@@ -446,21 +441,11 @@ def adda_w_dn(reg, base):
     return opcode(0xd0c0 | (base << 9) | reg)
 
 
-def addq_w_ind(amount, base):
-    return opcode(0x5050 | ((amount & 7) << 9) | base)
-    # ALSO IN test_scene.py — second copy, which the rule allows.
-
 
 def subq_w_ind(amount, base):
     return opcode(0x5150 | ((amount & 7) << 9) | base)
 
 
-def addq_w_d16(amount, base, displacement):
-    return opcode(0x5068 | ((amount & 7) << 9) | base) + word(displacement)
-
-
-def subq_w_d16(amount, base, displacement):
-    return opcode(0x5168 | ((amount & 7) << 9) | base) + word(displacement)
 
 
 def tst_w_d16(base, displacement):
@@ -592,108 +577,23 @@ def move_l_postinc_d16(source, destination, displacement):
     return opcode(0x2158 | (destination << 9) | source) + word(displacement)
 
 
-def dbf_to(reg, target):
-    return _Ref(4, lambda at, labels: opcode(leaf.DBF_DN | reg)
-                + word(labels[target] - (at + leaf.BRANCH_EXTENSION)))
-
-
-# --- a two-pass assembler with LABELS -------------------------------------------------------------
-# `leaf.assemble` hands each piece its address, which covers a `bsr.w`; a body with fourteen forward
-# branches into six shared exits needs the target's address too. Summing the lengths of the pieces a
-# branch spans (the `branch_over` idiom) does not scale past two or three arms and gets silently
-# wrong when an arm changes — so a branch here names the LABEL it aims at and the offsets come out of
-# a first pass. Every piece knows its own length, so one pass is enough to place the labels.
-class _Ref:
-    """A piece whose bytes depend on where it sits and on where the labels are."""
-
-    def __init__(self, length, build):
-        self.length = length
-        self.build = build
-
-
-def _lab(name):
-    return ("label", name)
-
-
-def _bcc(condition, target):
-    """`bcc.w`/`bra.w` aimed at a label."""
-    return _Ref(4, lambda at, labels: branch_w_to(condition, at, labels[target]))
-
-
-def _bcc_abs(condition, address):
-    """...and at an address outside the body — the tail jumps two of these routines end in."""
-    return _Ref(4, lambda at, _labels: branch_w_to(condition, at, address))
-
-
-def _bra_s(target):
-    """`bra.s` aimed at a label: the pass closes its loop short where every other branch is long.
-    One spelling of the displacement rule, in `_bcc_s`."""
-    return _bcc_s(BRA_W, target)
-
-
-def _bcc_s(condition, target):
-    """`bcc.s` aimed at a label — `_bra_s` generalised when slot 61 turned out to close BOTH of its
-    arms short, one on a `bpl` and one on a `bne`."""
-    def build(at, labels):
-        displacement = labels[target] - (at + leaf.BRANCH_EXTENSION)
-        assert -0x80 <= displacement < 0x80 and displacement != 0, (
-            f"{displacement} does not fit a `bcc.s` byte")
-        return opcode(condition | (displacement & 0xff))
-
-    return _Ref(2, build)
-
-
-def _bsr(routine):
-    return _Ref(4, lambda at, _labels: bsr_w(at, leaf.entry_of(routine)))
-
-
-def _lea_pc_indexed(reg, index, target):
-    """`lea d8(PC,Dn.w),An` aimed at an ADDRESS. The displacement counts from the EXTENSION WORD, so
-    it comes out of the layout pass rather than being transcribed — a frame table named this way
-    cannot drift when an instruction above it changes size."""
-    return _Ref(4, lambda at, _labels: opcode(0x41fb | (reg << 9))
-                + brief_extension_word(index, target - (at + WORD_BYTES)))
-
-
-def _bsr_s(routine):
-    """`bsr.s` — $6840 calls short where $2fce spells the same call long, and the pin says so."""
-    def build(at, _labels):
-        displacement = leaf.entry_of(routine) - (at + leaf.BRANCH_EXTENSION)
-        assert -0x80 <= displacement < 0, f"{displacement} does not fit a `bsr.s` byte"
-        return opcode(0x6100 | (displacement & 0xff))
-
-    return _Ref(2, build)
-
-
-def _place(base, pieces):
-    """{label: address} for ``pieces`` laid out from ``base``."""
-    labels, at = {}, base
-    for piece in pieces:
-        if isinstance(piece, tuple):
-            assert piece[1] not in labels, f"duplicate label {piece[1]!r}"
-            labels[piece[1]] = at
-        else:
-            at += len(piece) if isinstance(piece, bytes) else piece.length
-    return labels
-
-
-def _asm(base, pieces):
-    labels, body, at = _place(base, pieces), b"", base
-    for piece in pieces:
-        if isinstance(piece, tuple):
-            continue
-        emitted = piece if isinstance(piece, bytes) else piece.build(at, labels)
-        assert isinstance(piece, bytes) or len(emitted) == piece.length
-        body += emitted
-        at += len(emitted)
-    return body
-
-
-def _instructions(pieces):
-    """How many INSTRUCTIONS a piece list holds — labels are not instructions. Every run's cap is
-    derived from this rather than stated, which is batch 27's structural fix adopted from the
-    start: a cap cannot then drift away from the body it is meant to bound."""
-    return sum(1 for piece in pieces if not isinstance(piece, tuple))
+# --- the two-pass assembler with LABELS ------------------------------------------------------------
+# It moved to leaf.py when test_player.py became its second user (batch 40): a body with fourteen
+# forward branches into six shared exits needs its branch targets resolved by a layout pass, and two
+# batteries building pins that way is exactly the rule for hoisting. The private names below are the
+# ones this file's several hundred call sites already spell.
+_Ref = leaf.Ref
+_lab = leaf.lab
+_bcc = leaf.bcc
+_bcc_abs = leaf.bcc_abs
+_bcc_s = leaf.bcc_s
+_bra_s = leaf.bra_s
+_bsr = leaf.bsr
+_bsr_s = leaf.bsr_s
+_lea_pc_indexed = leaf.lea_pc_indexed
+_asm = leaf.asm
+_instructions = leaf.instruction_count
+dbf_to = leaf.dbf_to
 
 
 # --- the entry pins -------------------------------------------------------------------------------
@@ -988,7 +888,7 @@ def _platform_carry_pieces():
         bit_op_d16(BCLR_IMM, FALLING_BIT, A1, ACTOR_FLAGS),
         bit_op_d16(BCLR_IMM, MOVING_BIT, A1, ACTOR_FLAGS),
         bit_op_d16(BCLR_IMM, LAUNCHED_BIT, A1, ACTOR_FLAGS),
-        bit_op_d16(BSET_IMM, CARRIED_BIT, A1, ACTOR_FLAGS),
+        bit_op_d16(BSET_IMM, MOVED_BIT, A1, ACTOR_FLAGS),
         clr_b_d16(A1, SPEED),
         _lab("out"),
         RTS,
@@ -1854,7 +1754,7 @@ def _type54_pieces():
 
 # $6e70 — the travel tail inside slot 54's body, which slot 55 reaches by three `bra.w`s. Its
 # address comes out of slot 54's own layout rather than being transcribed.
-TYPE54_TRAVEL_AT = _place(leaf.entry_of("actor_behavior_type54"), _type54_pieces())["travel"]
+TYPE54_TRAVEL_AT = leaf.place(leaf.entry_of("actor_behavior_type54"), _type54_pieces())["travel"]
 
 
 def _type55_pieces():
@@ -1942,7 +1842,14 @@ TEXT_REQUEST = wb("TEXT_REQUEST")
 TEXT_LIFETIME_REQUEST = wb("TEXT_LIFETIME_REQUEST")
 TEXT_BOX_ACTIVE = wb("TEXT_BOX_ACTIVE")
 TILE_33_MODE = wb("TILE_33_MODE")
+TILE_33_STEP = wb("TILE_33_STEP")
+EFFECT_STATE_BD6A = wb("EFFECT_STATE_BD6A")
+HUD_SLOT_BBC2 = wb("HUD_SLOT_BBC2")
+JUMP_STRENGTH_BIAS = wb("PLAYER_JUMP_STRENGTH_BIAS")
 PLAYER_STEP_BODY = wb("PLAYER_STEP_BODY")
+
+# What a case seeds the two bytes the jump machine writes with, so that writing them is a CHANGE.
+JUMP_MARKER = 0x5a5a        # not a value any arm writes, so a byte left holding it was not written
 SHOW_DATA_DISK_PROMPT = wb("SHOW_DATA_DISK_PROMPT")
 JOY1_PREV = wb("JOY1_PREV")
 JOY1_CURRENT = wb("JOY1_CURRENT")
@@ -2717,11 +2624,6 @@ def abcd_dn_dn(destination, source):
 def add_b_dn_dn(destination, source):
     return opcode(0xd000 | (destination << 9) | source)
 
-
-def addq_b_dn(amount, reg):
-    return opcode(0x5000 | ((amount & 7) << 9) | reg)
-    # ALSO IN test_actor.py — third copy of the ENCODING (test_text.py spells the LONG form off the
-    # same base), queued for leaf.py.
 
 
 def ror_w_imm_dn(count, reg):
@@ -4617,7 +4519,7 @@ def _type39_pieces():
 
 # WHERE SLOT 41 BRANCHES, derived from slot 39's own layout rather than transcribed — the census
 # finds exactly four branches to this address and all four are in these two handlers.
-SHATTERER_TAIL = _place(leaf.entry_of("actor_behavior_type39"), _type39_pieces())["tail"]
+SHATTERER_TAIL = leaf.place(leaf.entry_of("actor_behavior_type39"), _type39_pieces())["tail"]
 
 
 def _type41_pieces():
@@ -5169,11 +5071,11 @@ PORTED_SLOT_COUNT = 61
 # The queue notes above, counted from the file rather than tallied — the phrase every one of them
 # ends with, and the number the comment at the top of the encoder block states.
 HOIST_QUEUE_NOTE = "queued for leaf.py"
-HOIST_QUEUE_LENGTH = 15
+HOIST_QUEUE_LENGTH = 13
 
 
 def test_the_hoist_queue_is_as_long_as_this_comment_says():
-    """The encoder block's own header says FIFTEEN encodings are still a third copy. That figure was
+    """The encoder block's own header says THIRTEEN encodings are still a third copy. That figure was
     wrong in both directions before batch 39 — it said twelve and enumerated nine, and two of the
     nine had already been hoisted while their local copies stayed, which is how `adda_w_dn_an`
     became a name collision with test_blit.py's in the opposite operand order. So it is counted
@@ -5413,6 +5315,19 @@ HANDLER_GLOBALS = {
                               (SHOP_REQUEST, WORD_BYTES)],
 }
 
+# THE JUMP MACHINE'S OWN GLOBALS, for the cases that let `player_gate_on_1516` reach it. It is NOT
+# folded into HANDLER_GLOBALS: that list is the stray-write bound every case of a handler stops
+# checking, and all but three of these handlers' cases seed WB_TILE_33_MODE SET, where the gate
+# returns having written nothing. So a case that drives the CLEAR arm asks for the widening and the
+# rest keep their narrow band.
+#
+# WHAT IS NOT IN IT, deliberately: the SFX the standing arm fires through stub +56. No case here
+# reaches that arm — it needs a rising joystick edge and every case below seeds both pipeline bytes
+# to zero — and a run that did would fail as a stray write naming the sound module, which is the
+# right diagnostic for a gated handler that has started jumping.
+PLAYER_GATE_GLOBALS = [(TILE_33_STEP, WORD_BYTES), (HUD_SLOT_BBC2, WORD_BYTES),
+                       (TEXT_REQUEST, 1), (TEXT_LIFETIME_REQUEST, WORD_BYTES)]
+
 # ...and what the PAYOUT writes is deliberately NOT a row here. Only slot 31's collect arm reaches
 # it, and the band those cases pass to `leaf.run` is `merge_bands(_model_award(...))` — derived from
 # the model that also states the VALUES, so a band and a model cannot drift apart.
@@ -5431,6 +5346,16 @@ DEFEAT_INSNS = 600
 # ...and the sound module's, which slot 61's opening frame reaches through stub +0. It comes from
 # the battery that owns snd_play_song rather than being a number stated here.
 from test_sound import PLAY_SONG_INSN_CAP, STUB_INSN_CAP   # noqa: E402
+
+# ...and what the JUMP MACHINE costs, for the five handlers whose gate now calls it. Its entry pin,
+# its arms and its exact write set are test_player.py's — the battery that OWNS it — and cannot be
+# imported here, because that battery imports this file's census; so the figure is stated, the way
+# AIM_VELOCITY_INSNS below is, and every term is named. The pin is 41 instructions and the launch
+# arm adds `joy1_newly_pressed` and the SFX stub on top of it.
+JUMP_STEP_PIN_INSNS = 41    # $e06, 194 bytes — test_player.py's `_jump_step_pieces()`
+JOY_EDGE_INSNS = 8          # $682's five instructions plus the `bsr`/`rts` pair
+JUMP_STEP_INSNS = JUMP_STEP_PIN_INSNS + JOY_EDGE_INSNS + STUB_INSN_CAP
+
 
 HANDLER_CALLEE_INSNS = (INSN_COUNT["actor_spawn_anim_step"]
                         + INSN_COUNT["actor_hit_by_player_shot"]
@@ -5473,7 +5398,7 @@ FAMILY35_CALLEE_INSNS = (INSN_COUNT["actor_step_facing"]
                          + INSN_COUNT["actor_face_and_step_away4"]
                          + INSN_COUNT["actor_anim_step_facing_list"]
                          + INSN_COUNT["actor_step_toward_followed"]
-                         + INSN_COUNT["player_gate_on_1516"]
+                         + INSN_COUNT["player_gate_on_1516"] + JUMP_STEP_INSNS
                          + START_MOTION_INSNS + RNG_INSNS + SIDE_FLAG_INSNS + FOLLOWED_INSNS
                          # ONE more probe than the shared bound's two: slot 9's walk takes
                          # actor_step_facing's on top of its own arms'.
@@ -5505,7 +5430,7 @@ FAMILY37_CALLEE_INSNS = (FAMILY36_CALLEE_INSNS
                          + INSN_COUNT["actor_tick_timer30"]
                          + INSN_COUNT["actor_face_and_step_toward"]
                          + INSN_COUNT["actor_face_and_step_away4"]
-                         + INSN_COUNT["player_gate_on_1516"]
+                         + INSN_COUNT["player_gate_on_1516"] + JUMP_STEP_INSNS
                          + AIM_VELOCITY_INSNS + BCD_SUB_COUNTER_INSNS + FOLLOWED_INSNS)
 
 
@@ -5538,11 +5463,11 @@ FAMILY36_HANDLERS = tuple(f"actor_behavior_type{slot:02d}" for slot in FAMILY36_
 # this tuple rather than on the earlier ones.
 FAMILY37_SLOTS = (20, 21, 22, 23, 24, 25, 26, 27)
 FAMILY37_HANDLERS = tuple(f"actor_behavior_type{slot:02d}" for slot in FAMILY37_SLOTS)
-# The two whose HURT arm calls $d78 and therefore reports WB_PLAYER_STEP_BODY while
-# WB_TILE_33_MODE is clear; the other three run that arm to their own `rts`.
-FAMILY35_BOUNDED = (9, 12)
+# The two whose HURT arm calls $d78 — which REPORTED WB_PLAYER_STEP_BODY through batch 39 and runs
+# the jump machine behind it now; the other three never reach the gate at all.
+FAMILY35_GATED = (9, 12)
 # ...and batch 37's two, which reach it through the very same `gated_hurt_frame`.
-FAMILY37_BOUNDED = (22, 26)
+FAMILY37_GATED = (22, 26)
 
 # ...and the three table rows that share slot 7's body, which opens with the same gate. Slot 59's
 # prologue writes one global on top of it (HANDLER_GLOBALS), and slot 8's writes nothing extra.
@@ -5580,6 +5505,11 @@ HANDLER_EXTRA_INSNS[TYPE38] = PICKUP_CALLEE_INSNS
 # the aim table, and it takes `followed_actor_record` beside it. The other eight add no callee the
 # shared bound does not already carry.
 HANDLER_EXTRA_INSNS["actor_behavior_type45"] = AIM_VELOCITY_INSNS + FOLLOWED_INSNS
+# ...and batch 40's, which is slot 53: its `bsr $d78` now runs the JUMP MACHINE, and slot 53 is in
+# none of the four families above, so without this term its cap was passing on unrelated slack. The
+# other four gated handlers are inside FAMILY35_CALLEE_INSNS / FAMILY37_CALLEE_INSNS, which carry
+# the same term.
+HANDLER_EXTRA_INSNS["actor_behavior_type53"] = (INSN_COUNT["player_gate_on_1516"] + JUMP_STEP_INSNS)
 
 
 def _quiet_record(name, actor):
@@ -6400,7 +6330,7 @@ def test_the_platform_catches_the_followed_record_inside_its_band(case, followed
         _put(expected, PLATFORM_RIDDEN, 1)
         expected[ACTOR + FIELD_22] = 1 << RIDING_BIT
         _put(expected, FOLLOWED_DEFAULT + ACTOR_Y, PLATFORM_RIDE_Y)
-        carried = followed_flags | (1 << SUPPORTED_BIT) | (1 << CARRIED_BIT)
+        carried = followed_flags | (1 << SUPPORTED_BIT) | (1 << MOVED_BIT)
         carried &= ~((1 << FALLING_BIT) | (1 << MOVING_BIT) | (1 << LAUNCHED_BIT))
         expected[FOLLOWED_DEFAULT + ACTOR_FLAGS] = carried
         expected[FOLLOWED_DEFAULT + SPEED] = 0
@@ -6933,7 +6863,7 @@ def test_the_step_away_routine_ignores_its_callers_d7():
 # ran to its own `rts`, or the address at which the original left code this port has.
 _HANDLER_GLUE = {name: leaf.register_glue(name, [ctypes.c_uint32], ctypes.c_uint32)
                  for name in PORTED_TARGETS if name not in NO_GLUE_TARGETS}
-_PLAYER_GATE = leaf.image_glue(PLAYER_GATE, ctypes.c_uint32)
+_PLAYER_GATE = leaf.register_glue(PLAYER_GATE, [ctypes.c_uint32])
 _STUN = leaf.image_glue("actor_stun_followed")
 _SOUND_REQUEST_9 = leaf.image_glue(SOUND_REQUEST_9)
 _BLOCKED_RIDER = leaf.register_glue("actor_platform_release_blocked_rider", [ctypes.c_uint32] * 2)
@@ -8366,41 +8296,142 @@ def _player_gate_beq():
 def test_the_player_gate_returns_while_tile_33_mode_is_set():
     """The arm that writes nothing at all: `tst.w $1516 / beq` not taken, then `rts`."""
     what = "player_gate_on_1516 with the mode set"
-    pokes = _tier_pokes(case_salt(what), {TILE_33_MODE: word(TILE_33_MODE_SET)})
+    pokes = _tier_pokes(case_salt(what), {TILE_33_MODE: word(TILE_33_MODE_SET),
+                                          TILE_33_STEP: word(JUMP_MARKER)})
 
-    info = leaf.run(PLAYER_GATE, _PLAYER_GATE, [], what, regs={"_pokes": pokes},
-                    max_insns=_cap(PLAYER_GATE))
-    assert info["ret"] == DISPATCH_RAN
+    info = leaf.run(PLAYER_GATE, _PLAYER_GATE(ACTOR), [], what,
+                    regs={"a0": ACTOR, "_pokes": pokes}, max_insns=_cap(PLAYER_GATE))
     assert not program_writes(info), f"{what}: the gate wrote memory, which it does not"
 
 
-def test_the_player_gate_leaves_for_the_player_body_while_the_mode_is_clear():
-    """The other arm is a BRANCH into code this port does not have, so it is a boundary and not a
-    result. The witness is `run_reaching`'s: the `beq.w` at the gate's own second instruction really
-    executed, which its address comes out of the pin for."""
+def test_the_player_gate_runs_the_jump_machine_while_the_mode_is_clear():
+    """The other arm was a BOUNDARY through batch 39 and is a CALL now: the `beq.w` enters $e06,
+    which src/player.c reconstructs. What this case claims is that the call HAPPENS — the two bytes
+    only the jump machine's head writes, on a record whose flags send it down the arm that then
+    returns at once. Its whole write set, arm by arm, is test_player.py's; the witness that the
+    branch was taken is `run_reaching`'s, on the gate's own `beq.w`."""
     what = "player_gate_on_1516 with the mode clear"
-    pokes = _tier_pokes(case_salt(what), {TILE_33_MODE: word(0)})
-    info = leaf.run_reaching(PLAYER_GATE, _PLAYER_GATE, [], what, _player_gate_beq(),
-                             regs={"_pokes": pokes}, stop_pc=PLAYER_STEP_BODY,
-                             max_insns=_cap(PLAYER_GATE))
-    assert info["ret"] == PLAYER_STEP_BODY
-    assert not program_writes(info), f"{what}: the gate wrote memory before the boundary"
+    strength = 0x0021
+    pokes = _tier_pokes(case_salt(what), {TILE_33_MODE: word(0), TILE_33_STEP: word(JUMP_MARKER),
+                                          EFFECT_STATE_BD6A: word(strength),
+                                          HUD_SLOT_BBC2: bytes([0]),
+                                          ACTOR + ACTOR_FLAGS: bytes([0]),
+                                          ACTOR + FIELD_10: bytes([JUMP_MARKER & 0xff])})
+
+    expected = {TILE_33_STEP: 0, TILE_33_STEP + 1: 0,
+                ACTOR + FIELD_10: (strength + JUMP_STRENGTH_BIAS) & 0xff}
+    info = leaf.run_reaching(PLAYER_GATE, _PLAYER_GATE(ACTOR), merge_bands(expected), what,
+                             _player_gate_beq(), regs={"a0": ACTOR, "_pokes": pokes},
+                             max_insns=_cap(PLAYER_GATE, extra=JUMP_STEP_INSNS))
+    _assert_writes(info, expected, what)
 
 
-def test_slot53_stops_at_the_player_gate_while_tile_33_mode_is_clear():
-    """THE BOUNDARY INSIDE A HANDLER'S FRAME, which is what behavior.h's `uint32_t` return is for.
-    The step, the sprite and the countdown are all BELOW the `bsr $d78`, so what says the port
-    stopped in the right place is that none of them was written: the live word alone moved."""
-    what = "actor_behavior_type53 stopped at the player gate"
-    pokes = _band5a_pokes(what, 53, {ACTOR + FIELD_30: bytes([5]), TILE_33_MODE: word(0)})
+# THE SEEDS EVERY GATED CASE SHARES. The jump machine's three arms are chosen by WB_ACTOR_FLAGS and
+# by the joystick, so both are STATED rather than left to the keyed block: the record arrives
+# SUPPORTED (the launch arm) and the pipeline is clear on both frames, so `joy1_newly_pressed`
+# reports no edge and the arm writes nothing but the head. WB_TILE_33_STEP and WB_ACTOR_FIELD_10 are
+# seeded to a value no arm writes, so writing them is a change the ledger can see.
+GATE_STRENGTH = 0x0021          # a state word whose low byte + the bias is neither 0 nor the marker
 
-    info = _run_handler("actor_behavior_type53", what, pokes, expect=PLAYER_STEP_BODY,
-                        stop_pc=PLAYER_STEP_BODY, transfer=_player_gate_beq())
-    written = program_writes(info)
+
+def _gate_fields(mode, flags):
+    return {TILE_33_MODE: word(mode), TILE_33_STEP: word(JUMP_MARKER),
+            EFFECT_STATE_BD6A: word(GATE_STRENGTH), HUD_SLOT_BBC2: bytes([0]),
+            JOY1_PREV: bytes([0]), JOY1_CURRENT: bytes([0]),
+            ACTOR + ACTOR_FLAGS: bytes([flags]), ACTOR + FIELD_10: bytes([JUMP_MARKER & 0xff])}
+
+
+def _jump_head_writes():
+    """The two bytes $e06 writes before it picks an arm."""
+    return {TILE_33_STEP: 0, TILE_33_STEP + 1: 0,
+            ACTOR + FIELD_10: (GATE_STRENGTH + JUMP_STRENGTH_BIAS) & 0xff}
+
+
+def _assert_the_gate_added(name, what, pokes_for, added=None, shared_may_differ=()):
+    """Run one frame with WB_TILE_33_MODE SET and one with it CLEAR, on seeds identical in every
+    other byte, and require the DIFFERENCE to be exactly what the gate's arm writes.
+
+    This is what replaced the boundary assertion, and it is stronger than either half alone: the old
+    case said "the fields below the call are missing", which a port that skipped the call would also
+    satisfy, and a bare "the fields are present" says nothing about the call at all. Comparing the
+    two runs pins BOTH — everything the frame writes on its own is identical, and everything the gate
+    adds is its own.
+
+    `added` defaults to the head, which is all the LAUNCH arm writes without an edge. A case driving
+    the ASCENT passes the y and speed beside it, and names in `shared_may_differ` the addresses the
+    two runs are then allowed to disagree on — which is the whole point of the ascent cases: the
+    retreat below the call probes the map at the y the ascent has just moved, so its x is where the
+    gate's POSITION inside the frame becomes observable at all. With the head alone it is not: those
+    two bytes are disjoint from every write below and nothing reads them, so a gate moved to the foot
+    of the handler writes the same set."""
+    gated = program_writes(_run_handler(name, what + " (gate clear)", pokes_for(0),
+                                        band=_handler_band(name) + PLAYER_GATE_GLOBALS))
+    plain = program_writes(_run_handler(name, what + " (gate set)", pokes_for(TILE_33_MODE_SET)))
+
+    expected = _jump_head_writes() if added is None else added
+    assert {addr: value for addr, value in gated.items() if addr not in plain} == expected, (
+        f"{what}: the gate's clear arm added {sorted(set(gated) - set(plain))}, not "
+        f"{sorted(expected)}")
+    shared = {addr for addr in gated if addr in plain} - set(shared_may_differ)
+    assert {addr: gated[addr] for addr in shared} == {addr: plain[addr] for addr in shared}, (
+        f"{what}: the frame's own writes differ between the two arms outside "
+        f"{sorted(shared_may_differ)}")
+    return gated, plain
+
+
+def test_slot53_runs_the_jump_machine_AFTER_the_settle_and_before_its_step():
+    """SLOT 53'S GATE POSITION, and only half of it is pinnable — which is why this case says which
+    half.
+
+    ABOVE the call: `bsr $1334`. With WB_ACTOR_FLAG_MOVING_BIT up the settle takes $1376's early
+    exit and writes nothing, and the ascent then SPENDS that bit on the frame its speed runs out —
+    so a gate moved ABOVE the settle would leave the settle running for real on the same frame, over
+    a y and a speed the ascent had already moved. A speed of 1 is what puts the two in one frame,
+    and the write set separates them.
+
+    BELOW the call: `add.w d7,(a0)`, the sprite and the countdown. Those are the record's x, 6(a0)
+    and 30(a0); the jump machine writes 2(a0), 11(a0) and two globals, and nothing below the call
+    reads any of them. So a gate moved to the FOOT of this handler writes exactly the same bytes and
+    NO case here can separate it — an argued equivalence under this harness, not a pin, and the
+    geometry above is the argument. `gated_hurt_frame`'s own position IS pinned, because its retreat
+    probes the map at the y the ascent moved (see the family case above)."""
+    what = "actor_behavior_type53 through the gate, ascending"
+
+    def pokes_for(mode):
+        return _band5a_pokes(what, 53, leaf.overlay(
+            _gate_fields(mode, 1 << MOVING_BIT),
+            {ACTOR + ACTOR_X: word(0x0100), ACTOR + FIELD_30: bytes([5]),
+             ACTOR + ACTOR_Y: word(STAND_Y), ACTOR + SPEED: bytes([1])}))
+
+    gated, _ = _assert_the_gate_added(
+        "actor_behavior_type53", what, pokes_for,
+        added={**_jump_head_writes(),
+               ACTOR + ACTOR_Y: (STAND_Y - 1) >> 8, ACTOR + ACTOR_Y + 1: (STAND_Y - 1) & 0xff,
+               ACTOR + SPEED: wb("PLAYER_SPEED_AFTER_JUMP"),
+               ACTOR + ACTOR_FLAGS: 0})
+    assert gated[ACTOR + ACTOR_FLAGS] == 0, (
+        f"{what}: the ascent did not spend WB_ACTOR_FLAG_MOVING_BIT, so the settle's early exit and "
+        f"the gate cannot be ordered by this seed")
+
+
+def test_slot53_runs_the_jump_machine_and_goes_on_while_tile_33_mode_is_clear():
+    """THE RETIRED BOUNDARY, as a case. Through batch 39 this frame stopped at $e06 and the step,
+    the sprite and the countdown were all missing from the write set; now the gate CALLS the jump
+    machine — over the type-53 record, because a0 is whatever the handler was dispatched with — and
+    the frame goes on to write all three."""
+    what = "actor_behavior_type53 through the player gate"
+    x, timer = 0x0100, 5
+
+    def pokes_for(mode):
+        return _band5a_pokes(what, 53, leaf.overlay(
+            _gate_fields(mode, 1 << SUPPORTED_BIT),
+            {ACTOR + ACTOR_X: word(x), ACTOR + FIELD_30: bytes([timer])}))
+
+    written, _ = _assert_the_gate_added("actor_behavior_type53", what, pokes_for)
     assert written[TYPE53_ALIVE] << 8 | written[TYPE53_ALIVE + 1] == TYPE53_ALIVE_SET
-    for field in (ACTOR_X, ACTOR_SPRITE, FIELD_30):
-        assert ACTOR + field not in written, (
-            f"{what}: {field} was written, so the frame ran on past the gate")
+    assert _written_word(written, ACTOR, ACTOR_X) == (x + TYPE53_STEP) & 0xffff
+    assert _written_word(written, ACTOR, ACTOR_SPRITE) == TYPE53_SPRITE
+    assert written[ACTOR + FIELD_30] == timer - 1
 
 
 # --- slot 60 ($6f7e): the record that becomes a moving platform -----------------------------------
@@ -11692,21 +11723,103 @@ def test_slot09_leaves_an_airborne_record_to_finish_its_arc():
         f"{what}: an airborne record was relaunched")
 
 
-def test_slot09_stops_at_the_player_gate_on_its_hurt_arm():
-    """THE PORT'S BOUNDARY, and the same one slot 53 reports: `bsr $d78` while WB_TILE_33_MODE is
-    clear branches into WB_PLAYER_STEP_BODY. Everything below the call — the retreat, the frame and
-    the wrap — must therefore be missing from the write set."""
-    what = f"{TYPE09} stopped at the player gate"
-    pokes = _family35_pokes(what, 9, {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
-                                      ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
-                                      TILE_33_MODE: word(0)})
+# WHERE THE GATE SITS IN THE FRAME, and the seeds that make it observable. The head alone cannot
+# show it: WB_TILE_33_STEP and WB_ACTOR_FIELD_10 are disjoint from every write below the call and
+# nothing reads them, so a `bsr $d78` moved to the foot of the handler leaves the same write set.
+# What separates the two is the ASCENT — it moves the record's y, and the retreat below the call
+# probes the MAP at that y. So a case seeds:
+#   * WB_ACTOR_FLAG_MOVING_BIT, which is both the ascent's own gate AND `actor_fall_and_settle`'s
+#     early exit ($1376's `btst #0,8(a0) / bne / rts`), so the settle above the call writes nothing
+#     and the y the retreat sees is the ascent's alone;
+#   * a speed that lifts the record a WHOLE CELL, so the probe's row `(y - 1) asr.w #4` changes;
+#   * that new row BLOCKED and the old one clear, so the retreat's x differs between the two.
+# The record is knocked airborne with a hurt flag up, which is the ordinary state this arm runs in.
+GATE_ASCENT_SPEED = wb("MAP_CELL_PIXELS")  # one whole cell, so the probe's row moves
+GATE_ASCENT_ROW = (STAND_Y - GATE_ASCENT_SPEED - 1) >> MAP_CELL_SHIFT
 
-    info = _run_handler(TYPE09, what, pokes, expect=PLAYER_STEP_BODY,
-                        stop_pc=PLAYER_STEP_BODY, transfer=_player_gate_beq())
-    written = program_writes(info)
+
+@pytest.mark.parametrize("slot", FAMILY35_GATED + FAMILY37_GATED, ids=lambda v: f"slot{v:02d}")
+def test_the_gated_hurt_arm_runs_the_ASCENT_BEFORE_the_retreat(slot):
+    """THE GATE'S POSITION, pinned. `bsr $d78` sits between the settle and
+    `actor_face_and_step_away4`, and moving it below that retreat survives every case that drives
+    only the launch arm. Here the jump machine RISES the record a cell before the retreat probes,
+    and the row it rises into is solid: the retreat is refused where the un-risen one is not, so the
+    x the frame ends on says which side of the call the gate ran."""
+    name = f"actor_behavior_type{slot:02d}"
+    what = f"{name} hurt through the gate, ascending"
+    pokes = (_family35_pokes if slot in FAMILY35_GATED else _family37_pokes)
+
+    def pokes_for(mode):
+        seeded = pokes(what, slot, leaf.overlay(
+            _gate_fields(mode, 1 << MOVING_BIT),
+            {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]), ACTOR + ACTOR_Y: word(STAND_Y),
+             ACTOR + SPEED: bytes([GATE_ASCENT_SPEED])}))
+        return _block_the_walk(seeded, row=GATE_ASCENT_ROW)
+
+    gated, plain = _assert_the_gate_added(
+        name, what, pokes_for,
+        added={**_jump_head_writes(),
+               ACTOR + ACTOR_Y: (STAND_Y - GATE_ASCENT_SPEED) >> 8,
+               ACTOR + ACTOR_Y + 1: (STAND_Y - GATE_ASCENT_SPEED) & 0xff,
+               ACTOR + SPEED: GATE_ASCENT_SPEED - 1},
+        shared_may_differ=(ACTOR + ACTOR_X, ACTOR + ACTOR_X + 1))
+
+    assert _written_word(gated, ACTOR, ACTOR_X) != _written_word(plain, ACTOR, ACTOR_X), (
+        f"{what}: the retreat ended on the same x either way, so this seed does not separate the "
+        f"two positions and the case pins nothing")
+
+
+def test_a_hurt_monster_can_burn_the_PLAYERS_wing_boots():
+    """THE THIRD ARM, through a handler. `bsr $d78` hands the jump machine whatever a0 holds, so a
+    hurt MONSTER that is neither rising nor supported spends the PLAYER's WB_HUD_SLOT_BBC2 charge and
+    has its own WB_ACTOR_SPEED forced to 1 — a global belonging to one record burnt by another's
+    frame. That is what the original does; this case is here so the claim is DRIVEN rather than
+    asserted in prose. The record is put on clear ground so the settle leaves it airborne."""
+    what = "actor_behavior_type09 hurt through the gate, on wing boots"
+    charge = 4
+
+    def pokes_for(mode):
+        return _family35_pokes(what, 9, leaf.overlay(
+            _gate_fields(mode, 0),
+            {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
+             HUD_SLOT_BBC2: bytes([charge]),
+             # A falling speed the accelerate above the call has already raised past 1, so the
+             # boots FORCING it to 1 is a change and not the value it would have held anyway.
+             ACTOR + SPEED: bytes([4]),
+             JOY1_CURRENT: bytes([1 << wb("JOY1_UP_BIT")])}), ground=False)
+
+    # WB_ACTOR_SPEED is written on BOTH runs — `actor_accelerate_fall` bumps it above the call — so
+    # it is a shared address whose VALUE the hover changes, not one the gate adds.
+    gated, plain = _assert_the_gate_added(
+        TYPE09, what, pokes_for,
+        added={**_jump_head_writes(), HUD_SLOT_BBC2: charge - 1},
+        shared_may_differ=(ACTOR + SPEED,))
+    assert gated[ACTOR + SPEED] == wb("PLAYER_SPEED_AFTER_JUMP"), (
+        f"{what}: the boots did not hold the fall at one pixel")
+    assert plain[ACTOR + SPEED] != gated[ACTOR + SPEED], (
+        f"{what}: the ungated frame left the same speed, so this seed shows nothing")
+
+
+@pytest.mark.parametrize("slot", FAMILY35_GATED + FAMILY37_GATED, ids=lambda v: f"slot{v:02d}")
+def test_the_gated_hurt_arms_run_the_jump_machine_and_go_on(slot):
+    """THE RETIRED BOUNDARY inside the family's shared hurt arm, over ALL FOUR handlers that reach
+    it — batch 39 had a case for two. `bsr $d78` while WB_TILE_33_MODE is clear enters the PLAYER's
+    jump machine with a0 still the MONSTER's record, which is what the original does, and the
+    retreat, the frame and the wrap below the call all run. The record is seeded SUPPORTED, so the
+    machine takes the launch arm, and both joystick bytes are seeded clear so there is no rising
+    edge and the arm writes nothing but the head — which is what makes the two runs comparable."""
+    name = f"actor_behavior_type{slot:02d}"
+    what = f"{name} hurt through the player gate"
+    pokes = (_family35_pokes if slot in FAMILY35_GATED else _family37_pokes)
+
+    def pokes_for(mode):
+        return pokes(what, slot, leaf.overlay(_gate_fields(mode, 1 << SUPPORTED_BIT),
+                                              {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0])}))
+
+    written, _ = _assert_the_gate_added(name, what, pokes_for)
     for field in (ACTOR_SPRITE, FIELD_18):
-        assert ACTOR + field not in written, (
-            f"{what}: {field} was written, so the frame ran on past the gate")
+        assert ACTOR + field in written, (
+            f"{what}: {field} was NOT written, so the frame still stops at the gate")
 
 
 @pytest.mark.parametrize("side,left", [(0, False), (1 << SIDE_BIT, True)], ids=["right", "left"])
@@ -12030,21 +12143,6 @@ def test_slot12_picks_its_animation_by_the_SUPPORTED_bit_and_not_by_a_cursor(sup
         f"{what}: the one-word list did not wrap the cursor on its own frame")
 
 
-def test_slot12_stops_at_the_player_gate_on_its_hurt_arm():
-    """Slot 9's boundary again, in the second of the two handlers that reach it."""
-    what = f"{TYPE12} stopped at the player gate"
-    pokes = _family35_pokes(what, 12, {ACTOR + FLAGS2: bytes([1 << FLAGS2_BIT_0]),
-                                       ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
-                                       TILE_33_MODE: word(0)})
-
-    info = _run_handler(TYPE12, what, pokes, expect=PLAYER_STEP_BODY,
-                        stop_pc=PLAYER_STEP_BODY, transfer=_player_gate_beq())
-    written = program_writes(info)
-    for field in (ACTOR_SPRITE, FIELD_18):
-        assert ACTOR + field not in written, (
-            f"{what}: {field} was written, so the frame ran on past the gate")
-
-
 def test_slot12s_hurt_arm_retreats_and_plays_its_own_pair():
     """Below the gate it is slot 9's arm exactly, over slot 12's own lists."""
     what = f"{TYPE12} hurt"
@@ -12347,8 +12445,8 @@ def test_slot10s_hover_indexes_with_the_RAW_cursor_byte_too():
         f"{what}: the hover indexed the MASKED cursor, not the byte the record holds")
 
 
-def test_the_two_bounded_hurt_arms_are_exactly_the_two_that_call_the_player_gate():
-    """FAMILY35_BOUNDED is prose until something checks it. The pins hold each body's bytes, so the
+def test_the_two_gated_hurt_arms_are_exactly_the_two_that_call_the_player_gate():
+    """FAMILY35_GATED is prose until something checks it. The pins hold each body's bytes, so the
     `bsr.w $d78` either is in them or is not."""
     call = bsr_w(0, leaf.entry_of(PLAYER_GATE))[:2]
     for slot in FAMILY35_SLOTS:
@@ -12357,8 +12455,8 @@ def test_the_two_bounded_hurt_arms_are_exactly_the_two_that_call_the_player_gate
                  if body[at:at + 2] == call
                  and leaf.entry_of(PLAYER_GATE) == leaf.entry_of(f"actor_behavior_type{slot:02d}")
                  + at + leaf.BRANCH_EXTENSION + s16(body[at + 2] << 8 | body[at + 3])]
-        assert bool(calls) == (slot in FAMILY35_BOUNDED), (
-            f"slot {slot} has {len(calls)} calls to the player gate, against FAMILY35_BOUNDED")
+        assert bool(calls) == (slot in FAMILY35_GATED), (
+            f"slot {slot} has {len(calls)} calls to the player gate, against FAMILY35_GATED")
 
 
 # --- the three holes the mutation sweep found -------------------------------------------------------

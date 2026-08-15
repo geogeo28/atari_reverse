@@ -34,8 +34,10 @@
 #include "machine.h"
 #include "map.h"
 #include "os.h"
+#include "player.h"
 #include "rng.h"
 #include "sound.h"
+#include "text.h"
 #include "wonderboy.h"
 
 /* What a call hands actor_fall_and_settle where nothing reads its d7 back. The register really is
@@ -54,22 +56,6 @@
  * read would be trusted for a store, and a store past the image leaves the buffer entirely where the
  * 68000 side merely reaches an address the shim drops.
  */
-static int16_t field_w(const uint8_t *image, uint32_t record, uint32_t offset) {
-    return (int16_t)bus_read_word(image, addr_add(record, offset));
-}
-
-static uint8_t field_b(const uint8_t *image, uint32_t record, uint32_t offset) {
-    return bus_read_byte(image, addr_add(record, offset));
-}
-
-static void set_field_w(uint8_t *image, uint32_t record, uint32_t offset, uint16_t value) {
-    bus_write_word(image, addr_add(record, offset), value);
-}
-
-static void set_field_b(uint8_t *image, uint32_t record, uint32_t offset, uint8_t value) {
-    bus_write_byte(image, addr_add(record, offset), value);
-}
-
 /* `addq.b #1,d16(An)` — a byte field stepped IN MEMORY, and the value that lands there. Four sites
  * spell it, and the rule they share is why it is one helper: the store happens whether or not the
  * caller reads the answer, and an instruction that reads the field again afterwards must RE-READ it
@@ -80,27 +66,6 @@ static uint8_t bump_field_b(uint8_t *image, uint32_t record, uint32_t offset) {
 
     set_field_b(image, record, offset, stepped);
     return stepped;
-}
-
-static int flag_is_set(const uint8_t *image, uint32_t record, uint32_t offset, unsigned bit) {
-    return (field_b(image, record, offset) & (1u << bit)) != 0;
-}
-
-/* `bset`/`bclr`/`bchg #n,d16(An)` are BYTE read-modify-writes on memory whatever the register form
- * is, which is what these three reproduce. */
-static void flag_set(uint8_t *image, uint32_t record, uint32_t offset, unsigned bit) {
-    set_field_b(image, record, offset,
-                (uint8_t)(field_b(image, record, offset) | (1u << bit)));
-}
-
-static void flag_clear(uint8_t *image, uint32_t record, uint32_t offset, unsigned bit) {
-    set_field_b(image, record, offset,
-                (uint8_t)(field_b(image, record, offset) & ~(1u << bit)));
-}
-
-static void flag_flip(uint8_t *image, uint32_t record, uint32_t offset, unsigned bit) {
-    set_field_b(image, record, offset,
-                (uint8_t)(field_b(image, record, offset) ^ (1u << bit)));
 }
 
 /* `tst.b d0` on what the two map probes leave in d0: only the LOW BYTE decides. */
@@ -604,7 +569,7 @@ void actor_platform_carry_followed(uint8_t *image, uint32_t actor, uint32_t foll
     flag_clear(image, followed, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FALLING_BIT);
     flag_clear(image, followed, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
     flag_clear(image, followed, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT);
-    flag_set(image, followed, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_CARRIED_BIT);
+    flag_set(image, followed, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVED_BIT);
     set_field_b(image, followed, WB_ACTOR_SPEED, 0);
 }
 
@@ -1879,15 +1844,19 @@ uint32_t actor_behavior_type52(uint8_t *image, uint32_t actor) {
 
 /* $d78 — TWELVE BYTES, and the one player-tier routine a monster slot reaches: `tst.w $1516 /
  * beq.w $e06 / rts`. While WB_TILE_33_MODE is set it writes nothing at all and returns; while it is
- * clear the original BRANCHES into WB_PLAYER_STEP_BODY, the body actor_behavior_type01_player's own
- * $d84 falls into, which this port does not have — so that arm is a boundary and not a result.
+ * clear the original BRANCHES into WB_PLAYER_STEP_BODY — the jump machine at $e06, which batch 40
+ * reconstructed in src/player.c, so this is a CALL now and the arm is a result rather than a
+ * boundary. (The branch's target is not entered any other way: the whole-image census finds this one
+ * instruction naming $e06, and `player_apply_joystick`, which ../names.txt's plate said "also falls
+ * into" it, ends in its own `rts` at $e04.)
  *
- * Its other caller is the player handler, which is unported; slot 53 below is the reader that made
- * these three instructions worth reconstructing. */
-uint32_t player_gate_on_1516(const uint8_t *image) {
+ * IT STAYS IN THIS FILE, where the behaviour tier's own battery pins it: slot 53 and the four gated
+ * hurt arms below are its callers here, and the player's frame is its other. Everything BEHIND it is
+ * src/player.c's. */
+void player_gate_on_1516(uint8_t *image, uint32_t actor) {
     if (be16(image + WB_TILE_33_MODE) != 0)
-        return WB_ACTOR_DISPATCH_RAN;
-    return WB_PLAYER_STEP_BODY;
+        return;
+    player_jump_step(image, actor);
 }
 
 /* $5c5a — slot 53's exit, which is slot 52's plus the live flag lowered. */
@@ -1905,7 +1874,6 @@ static void type53_free_slot(uint8_t *image, uint32_t actor) {
  * It takes no map probe: actor_fall_and_settle is the only thing it asks about the ground, and its
  * step is an unconditional WB_ACTOR_TYPE53_STEP added straight to the x word. */
 uint32_t actor_behavior_type53(uint8_t *image, uint32_t actor) {
-    uint32_t boundary;
     uint8_t timer;
     uint16_t x;
 
@@ -1920,9 +1888,7 @@ uint32_t actor_behavior_type53(uint8_t *image, uint32_t actor) {
         return WB_ACTOR_DISPATCH_RAN;
 
     actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
-    boundary = player_gate_on_1516(image);
-    if (boundary != WB_ACTOR_DISPATCH_RAN)
-        return boundary;
+    player_gate_on_1516(image, actor);
 
     x = (uint16_t)field_w(image, actor, WB_ACTOR_X);
     set_field_w(image, actor, WB_ACTOR_X,
@@ -2577,12 +2543,11 @@ static void pay_gold_award(uint8_t *image, uint32_t award) {
      * to those digits, not by the score add. */
     bcd_add_score_bd70(image, WB_ACTOR_COLLECT_SCORE, WB_BCD_ENTRY_EXTEND_CLEAR);
 
-    /* The id-and-lifetime pair, inline for src/actor.c's stated reason rather than shared: making
-     * it one symbol across three modules would export a function to save one `wr16`, and the three
-     * sites do not agree anyway — src/scene.c posts a lifetime of zero on its speech arm and
-     * `type61_post_message` above CLEARS only the high byte of this word. */
-    image[WB_TEXT_REQUEST] = WB_TEXT_MESSAGE_GOLD_GET;
-    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+    /* The id-and-lifetime pair, shared as `text_post_message` (text.h) since batch 40 made it a
+     * FOURTH spelling. The two writers that stay apart are the ones that do something else:
+     * src/scene.c's takes a lifetime, and `type61_post_message` above clears only the HIGH byte of
+     * the word with a `clr.b`. */
+    text_post_message(image, WB_TEXT_MESSAGE_GOLD_GET);
 }
 
 /* $517a — the payout, entered from slots 31 and 32. Its own four bytes are the two instructions
@@ -3003,8 +2968,7 @@ static void type34_park_on_item(uint8_t *image, uint32_t actor, uint16_t x, uint
 
     /* `move.w 66(a1),d0 / move.b d0,$c030.l` — a WORD read and a BYTE store, so an id above 255
      * posts its low half. */
-    image[WB_TEXT_REQUEST] = (uint8_t)bus_read_word(image, addr_add(shop, message_field));
-    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+    text_post_message(image, (uint8_t)bus_read_word(image, addr_add(shop, message_field)));
     type34_park_cursor(image, actor, x, WB_ACTOR_TYPE34_ITEM_Y);
 }
 
@@ -3198,21 +3162,22 @@ void actor_random_facing_hop(uint8_t *image, uint32_t actor) {
  * actor_random_facing_hop for a new direction and a new hop; the hurt frame retreats
  * WB_ACTOR_STEP_AWAY_PIXELS and plays the shorter list pair until it terminates.
  *
- * ITS HURT ARM IS BOUNDED, and the boundary is not this handler's own: `bsr $d78` reaches
- * player_gate_on_1516, which BRANCHES into WB_PLAYER_STEP_BODY while WB_TILE_33_MODE is clear. Slot
- * 53 met the same edge first and slot 12 below meets it again.
+ * ITS HURT ARM CALLS THE PLAYER GATE, and through batch 39 that ENDED the frame: `bsr $d78`
+ * branches into WB_PLAYER_STEP_BODY while WB_TILE_33_MODE is clear, which this port did not have.
+ * Batch 40 reconstructed it, so the call runs the player's jump machine over THIS record and the
+ * frame goes on. Slot 53 met the same edge first and slot 12 below meets it again.
  */
 /* THE HURT ARM FOUR SLOTS SHARE — 9, 12 and (batch 37) 22 and 26 — instruction for instruction bar
  * the list pair: the settle, the player gate, a four-pixel retreat, one frame, and the wrap. The
- * four bodies really do differ only in the `lea` operand, which is why this is one function, and
- * all four are BOUNDED at WB_PLAYER_STEP_BODY for the same reason. */
+ * four bodies really do differ only in the `lea` operand, which is why this is one function.
+ *
+ * ALL FOUR WERE BOUNDED AT WB_PLAYER_STEP_BODY THROUGH BATCH 39 and none of them is now: the gate's
+ * clear arm is a call into src/player.c. What that means for these handlers is that a hurt monster
+ * runs the PLAYER's jump machine over its OWN record — the strength byte, the ascent, the wing-boot
+ * charge, all of it on a0 — which is what the original does and is reproduced rather than tidied. */
 static uint32_t gated_hurt_frame(uint8_t *image, uint32_t actor, uint32_t hurt_lists) {
-    uint32_t boundary;
-
     actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
-    boundary = player_gate_on_1516(image);
-    if (boundary != WB_ACTOR_DISPATCH_RAN)
-        return boundary;
+    player_gate_on_1516(image, actor);
 
     actor_face_and_step_away4(image, actor);
     actor_anim_step_facing_list(image, actor, hurt_lists);
@@ -3447,7 +3412,8 @@ uint32_t actor_behavior_type11(uint8_t *image, uint32_t actor) {
  * word and a terminator — so an airborne record shows a single frame and its cursor is zeroed every
  * frame by $3006's own look-ahead.
  *
- * Its hurt arm is slot 9's, and BOUNDED at WB_PLAYER_STEP_BODY for the same reason.
+ * Its hurt arm is slot 9's `gated_hurt_frame`, so it runs the player's jump machine over its own
+ * record — see that helper. It REPORTED a boundary there through batch 39.
  */
 uint32_t actor_behavior_type12(uint8_t *image, uint32_t actor) {
     if (spawn_animation_took_the_frame(image, actor))
@@ -4411,8 +4377,8 @@ uint32_t actor_behavior_type21(uint8_t *image, uint32_t actor) {
  * its flag byte unchanged and then falls into `subq.b #1,30(a0)`, which wraps the byte to $ff — so
  * the launch is not merely skipped, the countdown is re-armed at its longest.
  *
- * Its hurt arm is slot 9's `gated_hurt_frame`, and BOUNDED at WB_PLAYER_STEP_BODY for the same
- * reason: `bsr $d78` while WB_TILE_33_MODE is clear reports an address rather than a result.
+ * Its hurt arm is slot 9's `gated_hurt_frame`, so `bsr $d78` while WB_TILE_33_MODE is clear runs
+ * the player's jump machine over this record. It REPORTED an address there through batch 39.
  */
 static void type22_drop_minion(uint8_t *image, uint32_t actor) {
     uint32_t minion = spawn_minion(image, actor, WB_ACTOR_TYPE22_MINION_TYPE);
@@ -4628,7 +4594,7 @@ uint32_t actor_behavior_type25(uint8_t *image, uint32_t actor) {
  * THE SHOT IS ON THE SAME ARM AS THE FRAME LIST, so a refused allocation still plays the moving
  * list; and the bit is read AFTER actor_tick_timer30, which is what can raise it.
  *
- * Its hurt arm is slot 9's `gated_hurt_frame`, and BOUNDED for the same reason.
+ * Its hurt arm is slot 9's `gated_hurt_frame`, so it runs the jump machine for the same reason.
  */
 static void type26_drop_shot(uint8_t *image, uint32_t actor) {
     uint32_t shot = spawn_minion(image, actor, WB_ACTOR_TYPE26_SHOT_TYPE);
@@ -4739,8 +4705,7 @@ void text_post_bonus_points_a4be(uint8_t *image, uint32_t entry_d0) {
         digits = rotate_left32(digits, WB_BCD_DIGIT_BITS);
     }
 
-    image[WB_TEXT_REQUEST] = WB_TEXT_MESSAGE_BONUS_POINTS;
-    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+    text_post_message(image, WB_TEXT_MESSAGE_BONUS_POINTS);
 }
 
 /* $5476..$54a5 — the kind row's own payout, and the second dispatch under it.

@@ -52,7 +52,6 @@
 
 #define BYTE_MASK 0xffu
 #define WORD_BITS 16u
-#define LONGWORD_BYTES 4u
 
 
 /* --- $fa30: draw the map's visible window into pre-shifted copy 0 ------------------------------ */
@@ -80,7 +79,7 @@ static uint32_t tile_number(const uint8_t *image, uint8_t cell) {
  * box's are built out of, and the third user src/scroll.c's registration named as the trigger. */
 static uint32_t draw_tile(uint8_t *image, uint32_t bitmap, uint32_t dest) {
     for (unsigned row = 0; row < WB_BG_TILE_ROWS; row++) {
-        copy_longwords(image, &bitmap, &dest, WB_BG_CELL_BYTES / LONGWORD_BYTES);
+        copy_longwords(image, &bitmap, &dest, WB_BG_CELL_BYTES / WB_LONGWORD_BYTES);
         dest = addr_add(dest, row + 1 == WB_BG_TILE_ROWS
                               ? (uint32_t)-(int32_t)WB_BG_BUILD_CELL_REWIND
                               : WB_BG_BUILD_ROW_SKIP);
@@ -258,7 +257,7 @@ void stage_reset_state(uint8_t *image) {
     uint32_t cursor = WB_STAGE_RESET_BLOCK;         /* `lea $b08.w,a0` then five `clr` postincs */
     for (unsigned i = 0; i < WB_STAGE_RESET_BLOCK_LONGS; i++) {
         wr32(image + cursor, 0);
-        cursor = addr_add(cursor, LONGWORD_BYTES);
+        cursor = addr_add(cursor, WB_LONGWORD_BYTES);
     }
     for (unsigned i = 0; i < WB_STAGE_RESET_BLOCK_WORDS; i++) {
         wr16(image + cursor, 0);
@@ -286,7 +285,7 @@ void stage_reset_state(uint8_t *image) {
         0x00460047u, 0x00480049u, 0x004a004bu, 0x0040004du,
     };
     for (unsigned i = 0; i < WB_TILE_INDEX_TAIL_LONGS; i++)
-        wr32(image + WB_TILE_INDEX_TAIL + LONGWORD_BYTES * i, tail[i]);
+        wr32(image + WB_TILE_INDEX_TAIL + WB_LONGWORD_BYTES * i, tail[i]);
 }
 
 

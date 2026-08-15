@@ -1412,9 +1412,13 @@ body is an address SET, so an `F` record can *span* a run while leaving bytes in
 | `0xa84..0xb08` | 132 | 2 | **130** (`0xa84..0xb06`) | `player_meter_empty_check` |
 | **total** | **2,220** | **1,966** | **254** | |
 
-The last two are worth reading rather than skimming: `player_meter_empty_check` is `$a76..$b08` and
-`player_collide_and_scroll` is `$151a..$19ac`, so both **contain** their run's address span, yet 226
-of those 262 bytes are still in no function body. Both bodies are discontiguous — the scout's own
+The last two are worth reading rather than skimming: `player_meter_empty_check` is `$a76..$b07` and
+`player_collide_and_scroll` is `$151a..$19ab`, so both **contain** their run's address span, yet 226
+of those 262 bytes are still in no function body. *(Both extents are corrected by one byte here,
+batch 40: `$b08` is `WB_STAGE_RESET_BLOCK`'s first byte and `$19ac` is `scene_spawn_from_script`'s
+entry, so the old figures named the NEXT thing's first byte as this one's last. The arithmetic in
+the table above is unaffected — it is cut against the runs' own address sets, `$a84..$b06` and
+`$1712..$1772`, both of which still lie wholly inside the corrected extents.)* Both bodies are discontiguous — the scout's own
 plate for `$a76` says it "swallows the `O` run `$a84..$b08`", and on the extent it does; on the
 address set it does not. That is the §0h trap in its fourth instance, and **226 of the residual 254
 bytes are it**: those two runs lie wholly inside a function's extent and would vanish from any

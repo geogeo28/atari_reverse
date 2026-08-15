@@ -38,6 +38,7 @@
 #include "actor.h"
 #include "bus.h"
 #include "effects.h"
+#include "text.h"
 #include "wonderboy.h"
 
 /* ---- the HUD slots ---------------------------------------------------------------------------
@@ -164,23 +165,20 @@ void effect_push_record_0803(uint8_t *image) {
  * bare `rts`; every other routine here is one of the three grants below plus that post.
  */
 
-/* The tail. It is spelt as a helper HERE and inline in src/behavior.c's own two posting sites for
- * the reason src/actor.c already gives: thirteen call sites in ONE file is a helper, three sites
- * across three modules is an exported symbol to save one `wr16`, and the three do not even agree
- * (src/scene.c posts a lifetime of zero on its speech arm). */
-static void post_message(uint8_t *image, uint8_t message) {
-    image[WB_TEXT_REQUEST] = message;
-    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
-}
+/* The tail is `text_post_message` (text.h) as of batch 40. It was a helper HERE and inline in three
+ * other modules, on the argument that "three sites across three modules is an exported symbol to
+ * save one `wr16`"; the player's frame made it four spellings of two stores, and text.h's
+ * `static inline` exports nothing, so the objection no longer costs anything. src/scene.c's writer
+ * still stands apart — it takes a LIFETIME, because its speech arm posts zero. */
 
 static void grant_slot(uint8_t *image, uint32_t slot, uint8_t value, uint8_t message) {
     hud_slot_set(image, slot, value);
-    post_message(image, message);
+    text_post_message(image, message);
 }
 
 static void grant_record(uint8_t *image, uint16_t record, uint8_t message) {
     effect_push_record(image, record);
-    post_message(image, message);
+    text_post_message(image, message);
 }
 
 /* $105e4 — two bytes, and the byte that bounds WB_PICKUP_EFFECT_TABLE from above. It is a
@@ -234,7 +232,7 @@ void pickup_effect_grant_lightning(uint8_t *image) {
 void pickup_effect_refill_meter(uint8_t *image) {
     wr16(image + WB_PANEL_FRAME_DELAY, WB_PANEL_FRAME_DELAY_INIT);
     wr16(image + WB_HUD_METER_VALUE, be16(image + WB_HUD_METER_MAX));
-    post_message(image, WB_TEXT_REQUEST_NONE);
+    text_post_message(image, WB_TEXT_REQUEST_NONE);
 }
 
 /* $10714 — AND IT IS NOT `effect_add4_clamped_b6fa` AT ANOTHER ADDRESS. Both compute
@@ -253,7 +251,7 @@ void pickup_effect_add4_meter(uint8_t *image) {
     raised = (uint16_t)(be16(image + WB_HUD_METER_VALUE) + WB_PICKUP_METER_STEP);
     if ((int16_t)raised <= (int16_t)be16(image + WB_HUD_METER_MAX))
         wr16(image + WB_HUD_METER_VALUE, raised);
-    post_message(image, WB_TEXT_REQUEST_NONE);
+    text_post_message(image, WB_TEXT_REQUEST_NONE);
 }
 
 /* $10746 — the attack level, and the ONE handler here whose last write happens on BOTH arms.
@@ -264,7 +262,7 @@ void pickup_effect_add4_meter(uint8_t *image) {
 void pickup_effect_bump_attack_level(uint8_t *image) {
     if ((int8_t)image[WB_EFFECT_RECORD_LIST] <= (int8_t)WB_ATTACK_LEVEL_MAX) {
         image[WB_EFFECT_RECORD_LIST]++;
-        post_message(image, WB_TEXT_MESSAGE_ATTACK_UP);
+        text_post_message(image, WB_TEXT_MESSAGE_ATTACK_UP);
     }
     wr16(image + WB_SCENE_EXIT_REQUEST, WB_SCENE_EXIT_REQUESTED);
 }
@@ -290,5 +288,5 @@ void pickup_effect_vanish_followed(uint8_t *image) {
     bus_write_byte(image, flags2,
                    (uint8_t)(bus_read_byte(image, flags2)
                              | (1u << WB_ACTOR_FLAGS2_INVULNERABLE_BIT)));
-    post_message(image, WB_TEXT_MESSAGE_VANISHED);
+    text_post_message(image, WB_TEXT_MESSAGE_VANISHED);
 }

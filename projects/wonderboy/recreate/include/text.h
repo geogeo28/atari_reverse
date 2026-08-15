@@ -13,6 +13,9 @@
 
 #include <stdint.h>
 
+#include "machine.h"
+#include "wonderboy.h"
+
 /* $bf5e — plot the WB_TEXT_GLYPH_BYTES at `glyph` into the WB_TEXT_BUFFER_LINE-wide 4-plane buffer
  * at `cursor`, and return the cursor of the next 8-pixel cell. `glyph` is the original's a0 and
  * `cursor` its a1, in and out. */
@@ -26,5 +29,23 @@ uint32_t text_plot_char(uint8_t *image, uint32_t code, uint32_t cursor);
  * either composes a message into WB_TEXT_BUFFER or blits an already-composed one to
  * WB_SCREEN_BACK. game_main_loop's `jsr $bd8a.l` at $4fc is its one caller in the image. */
 void text_run_message_box(uint8_t *image);
+
+/* THE TWO STORES THAT ASK FOR A MESSAGE BOX, and why they are one inline here.
+ *
+ * `move.b #id,$c030.l / move.w #$32,$c034.l` is the whole of "post this message", and FOUR modules
+ * spelt it: src/actor.c's slot spend, src/effects.c's grants, src/behavior.c's gold award and (batch
+ * 40) src/player.c's two. Both of the earlier comments argued against sharing it — "a symbol across
+ * three modules to save one `wr16`" — and at four copies that argument stops holding, for the reason
+ * bus.h's record accessors give: a second copy is the one divergence nothing catches, since each
+ * module's battery pins only its own routines and both stay green while one drifts.
+ *
+ * It is `static inline` in a header both already include, so it exports no symbol and the objection
+ * costs nothing. WHAT IS NOT HERE: the two writers that do something else. src/scene.c's takes a
+ * LIFETIME (its speech arm posts zero) and `type61_post_message` clears only the HIGH byte of the
+ * lifetime word with a `clr.b` — neither is this pair, and folding them in would hide that. */
+static inline void text_post_message(uint8_t *image, uint8_t message) {
+    image[WB_TEXT_REQUEST] = message;
+    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+}
 
 #endif /* WONDERBOY_TEXT_H */

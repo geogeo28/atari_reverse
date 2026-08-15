@@ -120,6 +120,11 @@
  * stage down, and `joy1_newly_pressed` ($682) diffs the last two stages into a rising-edge mask.
  * The two live stages sit on the NUL terminators of two filler strings — see ../names.txt.
  */
+/* The 68000's operand widths, where a reconstruction needs one as a NUMBER — a table stride, a
+ * pointer step. Two modules had their own `LONGWORD_BYTES` (src/stage.c's resource walk and, since
+ * batch 40, src/player.c's record copy), which is one copy more than this workspace allows. */
+#define WB_LONGWORD_BYTES    4u
+
 #define WB_JOY1_STATE        0x877u   /* what the IKBD handler last stored; bit 7 = fire */
 #define WB_JOY1_PREV         0x8b3u   /* the byte as of the PREVIOUS frame */
 #define WB_JOY1_CURRENT      0x8cfu   /* ...and as of this one */
@@ -163,8 +168,9 @@
 #define WB_HUD_SLOT_BBC8     0xbbc8u  /* read as a 1..6 icon variant at $b8f0, not as a count */
 #define WB_HUD_SLOTS         6u       /* how many the pass at $b8f0 walks */
 #define WB_HUD_SLOT_REQUEST  1u       /* byte +1 of a slot: "redraw me", tested then cleared */
-#define WB_HUD_SLOT_REARM    0x00ffu  /* `move.w #$ff,slot.l` — the whole WORD both damage paths
-                                       * write on the frame a slot's last charge is spent: the
+#define WB_HUD_SLOT_REARM    0x00ffu  /* `move.w #$ff,slot.l` — the whole WORD the two damage paths
+                                       * and (batch 40) the player's own two spenders write on the
+                                       * frame a slot's last charge is spent: the
                                        * value back to zero and the request byte below it raised.
                                        * The setters in src/effects.c write the same word with a
                                        * value above it, so this word's LOW BYTE is that file's
@@ -188,7 +194,14 @@
  * ordinal into the same shape — `n - 2*value` stamped into a record byte: $bd66 at $69fe
  * (`12 - 2*value` into WB_ACTOR_FIELD_31) and $bd68 at $6796 (WB_ACTOR_STUN_STEPS_BASE minus twice
  * it, into WB_ACTOR_FIELD_29). What the ordinals SELECT is still open — only what they cost is
- * known. $bd6a and $21e4 have no reader at all. */
+ * known.
+ *
+ * CORRECTION (batch 40): $bd6a is NOT unread. It has THREE readers and all of them are the player's,
+ * which is why they were invisible while that tier was unported — $e12 and $109a add
+ * WB_PLAYER_JUMP_STRENGTH_BIAS to its low byte for the jump's height, and $fde/$1048 add
+ * 4 to the WHOLE WORD for the walk's top speed (a word add where the jump's is
+ * a byte one). So it is the word that says how high the player jumps and how fast he runs, and the
+ * three effect handlers that stamp it are setting those. $21e4 is still unread. */
 #define WB_EFFECT_STATE_BD66 0xbd66u
 #define WB_EFFECT_STATE_BD68 0xbd68u
 #define WB_EFFECT_STATE_BD6A 0xbd6au
@@ -1209,8 +1222,17 @@
 #define WB_ACTOR_BAND_LEFT           4u       /* word: the band's left edge, as a distance back */
 #define WB_ACTOR_BAND_WIDTH          6u       /* word: added to it for the right edge */
 #define WB_ACTOR_FIELD_22_RIDING_BIT 1u       /* `bset #1,22(a0)` while carrying, `bclr` on release */
-#define WB_ACTOR_FLAG_CARRIED_BIT    5u       /* `bset #5,8(a1)` — the only site in the tier that
-                                               * writes bit 5 of the followed record's flag byte */
+#define WB_ACTOR_FLAG_MOVED_BIT      5u       /* "SOMETHING MOVED THIS RECORD ALONG x THIS FRAME",
+                                               * which is the reading batch 40 replaced
+                                               * WB_ACTOR_FLAG_CARRIED_BIT with. The platform's
+                                               * `bset #5,8(a1)` at $6dcc is the only site in the
+                                               * BEHAVIOUR tier, which is what the old name was read
+                                               * off; the whole image has four more, all in the
+                                               * player's own walk — `bset` on each of the two
+                                               * direction arms ($fbc, $1028) and `bclr` on the
+                                               * frame neither is held ($f7e). Its ONE reader is the
+                                               * `btst #5,8(a0)` at $2184, inside code this port
+                                               * does not have, so what the bit BUYS is still open */
 
 /* ---- the two tests 42 and 25 handlers run every frame ($5c6e, $23b6; src/behavior.c) ----------
  *
@@ -2025,6 +2047,9 @@
 #define WB_ACTOR_TYPE34_ITEM2_X      0xbeu    /* ...and the RIGHT item */
 #define WB_ACTOR_TYPE34_MIDDLE_Y     0x30u    /* the middle sits sixteen pixels ABOVE the two ends */
 #define WB_ACTOR_TYPE34_ITEM_Y       0x40u
+#define WB_JOY1_UP_BIT               0u       /* the player's own tier reads these two: `btst #0,
+                                               * $8cf.w` climbs and `btst #1` descends ($d84), and */
+#define WB_JOY1_DOWN_BIT             1u       /* the JUMP is a rising edge of bit 0 ($e7a) */
 #define WB_JOY1_LEFT_BIT             2u       /* `btst #2,d0` on joy1_newly_pressed's byte — the */
 #define WB_JOY1_RIGHT_BIT            3u       /* Atari joystick's own bit order, up/down/left/right */
 #define WB_JOY1_FIRE_BIT             7u       /* ...and bit 7. WB_ACTOR_TYPE61_FIRE_BIT is the SAME
@@ -2044,6 +2069,12 @@
 #define WB_ACTOR_EVENT_ANIM_FRAMES   0x535eu  /* == _CURSOR + 2, the word the post-increment leaves
                                                * a1 on: SIXTEEN words, $535e..$537d */
 #define WB_ACTOR_EVENT_ANIM_MASK     0x1fu    /* `andi.w #$1f,d0` — 32 bytes, i.e. all sixteen */
+#define WB_ACTOR_TYPE35_TEMPLATE     0x537eu  /* the 32 bytes `player_pending_event_gate` hands
+                                               * `scene_copy_record_fields` (`lea $537e.l,a1 /
+                                               * bsr $539e` at $c58). Its FIRST longword is never
+                                               * read — see WB_SPAWN_TEMPLATE_UNREAD — and the type
+                                               * word above it is the only shipped datum in the
+                                               * image that names a behaviour slot by number */
 
 /* $b12 and $b16 — two of the nine WORDS inside WB_STAGE_RESET_BLOCK (and NOT two of the five
  * writes that reset makes: each is the low half of one of its `clr.l`s), and what these three
@@ -2298,9 +2329,10 @@
 #define WB_ACTOR_TYPE57_LIFETIME     0x28u    /* `cmpi.w #$28,28(a0) / bne` — an EQUALITY test, so a
                                                * counter seeded past it runs the 16-bit way round */
 
-/* The two addresses OUTSIDE this tier that a reconstructed handler transfers to and stops at. Both
- * are the entry of code this port does not have; behavior.h's boundary is how they are reported. */
-#define WB_PLAYER_STEP_BODY          0xe06u   /* `beq.w $e06` inside player_gate_on_1516 */
+/* The one address OUTSIDE this tier that a reconstructed handler transfers to and stops at.
+ * behavior.h's boundary is how it is reported. WB_PLAYER_STEP_BODY was the other until batch 40
+ * reconstructed the body behind it (src/player.c); it is a plain call now, and the constant lives
+ * with the rest of the player's tier below. */
 #define WB_SHOW_DATA_DISK_PROMPT     0xe494u  /* `jmp $e494.l` at slot 61's foot */
 #define WB_ST_MEMORY_TOP             0x80000u /* `movea.l #$80000,a7` — the top of a 512 KB ST, the
                                                * stack the game gives itself at boot
@@ -2308,6 +2340,77 @@
                                                * immediately before that `jmp`, which is what makes
                                                * the transfer a RESTART rather than a call. It is a
                                                * register, so no differential can see it */
+
+/* ---- THE PLAYER'S OWN FRAME (RUNTIME addresses; src/player.c) ---------------------------------
+ *
+ * Behaviour slot 1 is not a handler like the other sixty-one: `actor_behavior_type01_player` ($a38)
+ * is NINE `bsr`s in a row and every one of them is a routine of its own (one being the shared
+ * `actor_fall_and_settle`). These are the constants of the FIVE batch 40 reconstructed — four of
+ * those calls plus the spawn helper the second one reaches. See player.h.
+ */
+#define WB_PLAYER_STEP_BODY          0xe06u   /* `beq.w $e06` inside player_gate_on_1516 — the JUMP
+                                               * MACHINE's entry, and the one instruction in the
+                                               * image that names it. It was a reported BOUNDARY
+                                               * through batch 39 and is a call now; the constant
+                                               * survives because test_behavior.py's entry pin for
+                                               * $d78 spells that branch's own target */
+#define WB_KEY_SEQUENCE_MATCHED      0x604u   /* word, raised $ffff at $5fa when the key sequence at
+                                               * $608 has been walked to its $ff terminator against
+                                               * WB_KEY_LAST_SCANCODE. FIVE readers, all bare
+                                               * `tst.w`: $556, $59e and $5d0 (which gate three more
+                                               * scancode actions, one of them a `bchg` on $bd6b)
+                                               * and TWO inside player_meter_empty_check, where a
+                                               * raised word makes the death arm unreachable. So it
+                                               * is the game's own cheat enable; what the sequence
+                                               * SPELLS is not decoded here */
+#define WB_KEY_SEQUENCE_MATCHED_SET  0xffffu
+
+#define WB_PLAYER_DEATH_SFX          0x16u    /* `move.w #$16,d0 / clr.w d1` — channel A */
+#define WB_PLAYER_DEATH_SONG         0x10u    /* `move.w #$10,d0 / jsr (a1)` on stub +0 */
+#define WB_PLAYER_METER_REVIVE       0x14u    /* what the revival arm refills WB_HUD_METER_VALUE to,
+                                               * which is NOT WB_HUD_METER_MAX — a revived player
+                                               * comes back on twenty units whatever the maximum */
+#define WB_PLAYER_JUMP_SFX           0u       /* `move.w #$0,d0 / move.w #$0,d1` — effect 0, and the
+                                               * only site in the image that spells the id with a
+                                               * `move.w #imm` rather than a `moveq`/`clr` */
+#define WB_PLAYER_JUMP_STRENGTH_BIAS 8u       /* `addi.b #$8,d0` at $e12 and `addq.b #8,d0` at
+                                               * $109a, both over WB_EFFECT_STATE_BD6A's low byte:
+                                               * two spellings of one number, and the two sites that
+                                               * give that state word its first readers */
+#define WB_PLAYER_SPEED_AFTER_JUMP   1u       /* `move.b #$1,11(a0)`: what the ascent reloads
+                                               * WB_ACTOR_SPEED with when it ends, and what the wing
+                                               * boots force it back to every frame they are spent */
+
+/* The ladder ($d84). The two modes are two different nonzero words for one flag every reader tests
+ * with a bare `tst.w`, which is why both are named rather than folded into one. */
+#define WB_TILE_33_MODE_UP           0x00ffu  /* `move.w #$ff,$1516.l` at $db2 */
+#define WB_TILE_33_MODE_DOWN         0xffffu  /* `move.w #$ffff,$1516.l` at $dea */
+#define WB_TILE_33_STEP_RAISED       0xffffu  /* what both arms write to WB_TILE_33_STEP */
+#define WB_PLAYER_LADDER_STEP        2u       /* `subq.w #2,2(a0)` / `addq.w #2,2(a0)` */
+#define WB_PLAYER_LADDER_X_MASK      0xfff1u  /* `andi.w #$fff1,(a0)` — bits 1..3 cleared and bit 0
+                                               * KEPT, so an odd x stays odd across the snap */
+#define WB_PLAYER_LADDER_X_BIAS      8u       /* `addq.w #8,(a0)` — the cell's centre */
+#define WB_PLAYER_LADDER_Y_MASK      0xfffeu  /* `andi.w #$fffe,2(a0)` — the y forced even */
+
+#define WB_PLAYER_DEATH_FLAG_SET     0xffffu  /* the four `move.w #$ffff` the death arm ends in, over
+                                               * WB_STATE_FLAG_A34, WB_STAGE_RESET_BLOCK,
+                                               * WB_SCROLL_FOLLOW_FROZEN and WB_PANEL_FRAME_HOLD —
+                                               * one immediate, four addresses, one name */
+
+/* The messages the player's own tier posts, both of them naming a HUD slot the frame has just spent
+ * (WB_HUD_SLOT_BBC6 and WB_HUD_SLOT_BBC2). Ids are 1-based into WB_TEXT_MESSAGE_TABLE. */
+#define WB_TEXT_MESSAGE_REVIVAL_USED    0x16u /* "  Used the revival\n\n      medicine." */
+#define WB_TEXT_MESSAGE_WING_BOOTS_LOST 0x13u /* "You lost wing boots." */
+
+/* The 32-byte record `scene_copy_record_fields` ($539e) builds, and the one field of the scene
+ * descriptor it takes: 20(a3) off WB_RECORD_PTR_10420, written over the new record's x and y before
+ * a single byte of the template is read. */
+#define WB_SCENE_SPAWN_POSITION      20u      /* longword: the x,y the event actor is spawned at.
+                                               * `move.l 20(a3),(a2)+` is its only reader among the
+                                               * recovered functions */
+#define WB_SPAWN_TEMPLATE_UNREAD     4u       /* `lea 4(a1),a1` — the template's FIRST longword is
+                                               * skipped, because the position above has already
+                                               * taken its place */
 
 /* ---- the collision map the actors walk on (RUNTIME addresses; src/map.c) ----------------------
  *

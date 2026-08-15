@@ -331,6 +331,7 @@ LONGWORD_MASK = 0xffffffff
 
 RTS = b"\x4e\x75"
 BSR_W = b"\x61\x00"                 # bsr.w <d16>
+BRA_W_OPCODE = 0x6000               # ...and the unconditional branch, as an opcode word
 MOVE_W_ABS_L_D0 = b"\x30\x39"       # move.w <abs>.l,d0
 MOVE_W_D0_ABS_L = b"\x33\xc0"       # move.w d0,<abs>.l
 MOVE_W_ABS_L_ABS_L = b"\x33\xf9"    # move.w <abs>.l,<abs>.l
@@ -777,6 +778,51 @@ MOVEM_L_TO_PREDEC = 0x48e0
 MOVEM_L_FROM_POSTINC = 0x4cd8
 
 
+# --- the ADDQ/SUBQ family, and the three-bit field they all share ---------------------------------
+# Six of these reached their THIRD spelling when test_player.py needed them (test_actor.py and
+# test_behavior.py hold the other two of each; test_sound.py holds a fourth of `subq.b`), which is
+# this file's rule for hoisting. `quick_field` is the improvement the move carries with it: every
+# one of the earlier copies inlines a silent `(amount & 7) << 8|9`, so a distance of 0 or 9 assembled
+# as 8 or 1 rather than failing.
+def quick_field(amount):
+    """The 3-bit immediate an ADDQ/SUBQ carries. 8 is spelt 0, and nothing else outside 1..8 fits."""
+    assert 1 <= amount <= 8, f"{amount} is not an ADDQ/SUBQ distance"
+    return (amount & 7) << 9
+
+
+def addq_b_dn(amount, reg):
+    """`addq.b #n,Dn` — a BYTE add, so $ff comes back 0."""
+    return opcode(0x5000 | quick_field(amount) | reg)
+
+
+def addq_w_ind(amount, base):
+    """`addq.w #n,(An)` — the ladder's x snap, and two scene steps."""
+    return opcode(0x5050 | quick_field(amount) | base)
+
+
+def addq_w_d16(amount, base, displacement):
+    return opcode(0x5068 | quick_field(amount) | base) + word(displacement)
+
+
+def subq_w_d16(amount, base, displacement):
+    return opcode(0x5168 | quick_field(amount) | base) + word(displacement)
+
+
+def subq_b_d16(amount, base, displacement):
+    """`subq.b #n,d16(An)` — a countdown spent IN MEMORY, the busiest of the family."""
+    return opcode(0x5128 | quick_field(amount) | base) + word(displacement)
+
+
+def move_b_dn_d16(reg, base, displacement):
+    """`move.b Dn,d16(An)` — DESTINATION-FIRST in the name, as every other pair here is."""
+    return opcode(0x1140 | (base << 9) | reg) + word(displacement)
+
+
+def jsr_ind(reg):
+    """`jsr (An)` — stub +0, and every dispatch through a fetched pointer."""
+    return opcode(0x4e90 | reg)
+
+
 def movem_l_push(mask, stack=7):
     """`movem.l <mask>,-(An)` — the mask as the PREDECREMENT form numbers it (a7..d0)."""
     return opcode(MOVEM_L_TO_PREDEC | stack) + word(mask)
@@ -905,6 +951,117 @@ def branch_w_to(condition, here, target):
     displacement transcribed one instruction out fails on the bytes in either.
     """
     return opcode(condition) + word(target - (here + BRANCH_EXTENSION))
+
+
+# --- a two-pass assembler with LABELS ------------------------------------------------------------
+#
+# `assemble` below hands each piece its own address, which covers a `bsr.w`; a body with fourteen
+# forward branches into six shared exits needs the TARGET's address too, and summing the lengths of
+# the pieces a branch spans (the `branch_over` idiom above) does not scale past two or three arms —
+# it goes silently wrong the moment an arm changes size. So a branch here names the LABEL it aims at
+# and the offsets come out of a first pass over the piece list.
+#
+# It lives here rather than in one battery because two now build pins this way: test_behavior.py
+# wrote it for the behaviour tier's dispatch rows, and test_player.py needs the same machinery for
+# the player's own frame. The names are the ones test_behavior.py already used, minus the
+# underscore.
+
+
+class Ref:
+    """A piece whose bytes depend on where it sits and on where the labels are."""
+
+    def __init__(self, length, build):
+        self.length = length
+        self.build = build
+
+
+def lab(name):
+    return ("label", name)
+
+
+def bcc(condition, target):
+    """`bcc.w`/`bra.w` aimed at a label."""
+    return Ref(4, lambda at, labels: branch_w_to(condition, at, labels[target]))
+
+
+def bcc_abs(condition, address):
+    """...and at an address outside the body — a tail jump into another routine."""
+    return Ref(4, lambda at, _labels: branch_w_to(condition, at, address))
+
+
+def bcc_s(condition, target):
+    """`bcc.s` aimed at a label."""
+    def build(at, labels):
+        displacement = labels[target] - (at + BRANCH_EXTENSION)
+        assert -0x80 <= displacement < 0x80 and displacement != 0, (
+            f"{displacement} does not fit a `bcc.s` byte")
+        return opcode(condition | (displacement & 0xff))
+
+    return Ref(2, build)
+
+
+def bra_s(target):
+    """`bra.s` aimed at a label — one spelling of the displacement rule, in `bcc_s`."""
+    return bcc_s(BRA_W_OPCODE, target)
+
+
+def bsr(routine):
+    """`bsr.w` aimed at the entry ../names.txt gives ``routine``."""
+    return Ref(4, lambda at, _labels: bsr_w(at, entry_of(routine)))
+
+
+def bsr_s(routine):
+    """`bsr.s` — the same call spelt short, which some sites do and others do not."""
+    def build(at, _labels):
+        displacement = entry_of(routine) - (at + BRANCH_EXTENSION)
+        assert -0x80 <= displacement < 0, f"{displacement} does not fit a `bsr.s` byte"
+        return opcode(0x6100 | (displacement & 0xff))
+
+    return Ref(2, build)
+
+
+def dbf_to(reg, target):
+    """`dbf Dn,<label>` — the loop closed on a label rather than on a byte count."""
+    return Ref(4, lambda at, labels: opcode(DBF_DN | reg)
+               + word(labels[target] - (at + BRANCH_EXTENSION)))
+
+
+def lea_pc_indexed(reg, index, target):
+    """`lea d8(PC,Dn.w),An` aimed at an ADDRESS. The displacement counts from the EXTENSION WORD, so
+    it comes out of the layout pass rather than being transcribed."""
+    return Ref(4, lambda at, _labels: opcode(0x41fb | (reg << 9))
+               + brief_extension_word(index, target - (at + WORD_BYTES)))
+
+
+def place(base, pieces):
+    """{label: address} for ``pieces`` laid out from ``base``."""
+    labels, at = {}, base
+    for piece in pieces:
+        if isinstance(piece, tuple):
+            assert piece[1] not in labels, f"duplicate label {piece[1]!r}"
+            labels[piece[1]] = at
+        else:
+            at += len(piece) if isinstance(piece, bytes) else piece.length
+    return labels
+
+
+def asm(base, pieces):
+    """``pieces`` assembled at ``base``, with every label resolved."""
+    labels, body, at = place(base, pieces), b"", base
+    for piece in pieces:
+        if isinstance(piece, tuple):
+            continue
+        emitted = piece if isinstance(piece, bytes) else piece.build(at, labels)
+        assert isinstance(piece, bytes) or len(emitted) == piece.length
+        body += emitted
+        at += len(emitted)
+    return body
+
+
+def instruction_count(pieces):
+    """How many INSTRUCTIONS a piece list holds — labels are not instructions. Every run's cap is
+    derived from this rather than stated, so a cap cannot drift away from the body it bounds."""
+    return sum(1 for piece in pieces if not isinstance(piece, tuple))
 
 
 def assemble(base, pieces):

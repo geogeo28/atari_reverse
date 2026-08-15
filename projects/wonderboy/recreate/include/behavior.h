@@ -49,20 +49,20 @@
  * A HANDLER REPORTS A BOUNDARY TOO, which is why every one of them below returns a `uint32_t`
  * rather than nothing. Batch 29's boundary was the dispatcher's alone: a slot was ported or it was
  * not. Batch 31 ported three handlers that leave their own bodies for code this port does not have
- * — slots 59 and 8 fall into slot 7's body, slot 53 calls a player-tier routine whose one arm
- * enters WB_PLAYER_STEP_BODY, and slot 61 ends its sequence with `jmp $e494.l` — so a handler now
+ * — slots 59 and 8 fall into slot 7's body, slot 53 called a player-tier routine whose one arm
+ * entered WB_PLAYER_STEP_BODY, and slot 61 ends its sequence with `jmp $e494.l` — so a handler now
  * answers the same question the dispatcher does: WB_ACTOR_DISPATCH_RAN when it ran to its own
  * `rts`, or the address at which the original left code this file can follow. The dispatcher and
  * the walk pass whatever it says straight up, so nothing else in the mechanism moves.
  *
- * ONE OF THE FOUR IS A BOUNDARY THE ORIGINAL RETURNS FROM, and the code cannot say so. Slots 59, 8
- * and 61 never come back — two run into another handler's body and the third throws its stack away.
- * Slot 53's does: `bsr.w $d78` leaves a return address, so when WB_PLAYER_STEP_BODY finishes the
- * original resumes inside slot 53, publishes its sprite, counts its timer down and lets the walk go
- * on to the next record. This port stops there instead, so a pass with a live type-53 record and
- * WB_TILE_33_MODE clear reports a boundary where the original would have run every record behind
- * it. That is the port's limit, not the original's; the batch that reconstructs $e06 removes it by
- * calling it and resuming, and the resume point is $5c32. */
+ * THE PLAYER-GATE BOUNDARY IS GONE AS OF BATCH 40, and it was the only one of the four that the
+ * ORIGINAL RETURNED FROM. `bsr.w $d78` leaves a return address, so when WB_PLAYER_STEP_BODY
+ * finished the original resumed inside slot 53, published its sprite, counted its timer down and
+ * let the walk go on to the next record — and this port used to stop there instead, which made a
+ * pass with a live type-53 record and WB_TILE_33_MODE clear report a boundary where the original
+ * had run every record behind it. src/player.c reconstructs $e06, `player_gate_on_1516` CALLS it,
+ * and the five handlers that met that edge (53, and 9/12/22/26 through `gated_hurt_frame`) run
+ * their frames whole. What is left is slots 59, 8 and 61, none of which ever comes back. */
 #define WB_ACTOR_DISPATCH_RAN     0u   /* a reconstructed handler ran to its own `rts` */
 #define WB_ACTOR_DISPATCH_REFUSED 1u   /* the scaled type left the table: the original `jmp`s through
                                         * a longword outside it and no C stands in for that */
@@ -278,7 +278,8 @@ uint32_t actor_behavior_type56(uint8_t *image, uint32_t actor);
  * overlap mask's strike and body bits in that order, then the move. Where slot 51 falls until it is
  * supported, slot 52 walks by its own WB_ACTOR_FIELD_30 and frees itself the frame it IS supported,
  * and slot 53 slides a fixed step, counts a timer down and publishes WB_ACTOR_TYPE53_ALIVE while it
- * lives. Slot 53's frame passes through `player_gate_on_1516`, so it can end at a BOUNDARY. */
+ * lives. Slot 53's frame passes through `player_gate_on_1516`, which through batch 39 could end
+ * it at a BOUNDARY and since batch 40 runs the jump machine behind it instead. */
 uint32_t actor_behavior_type52(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type53(uint8_t *image, uint32_t actor);
 
@@ -447,8 +448,9 @@ uint32_t actor_behavior_type37(uint8_t *image, uint32_t actor);
  *  12  faces and chases, hops on actor_tick_timer30, and animates by WB_ACTOR_FLAG_SUPPORTED_BIT
  *  13  hops on every supported frame, and its hurt arm is a throe that ALWAYS ends in the defeat
  *
- * SLOTS 9 AND 12 REPORT A BOUNDARY on their hurt arm and the other three never do: both call $d78,
- * which branches into WB_PLAYER_STEP_BODY while WB_TILE_33_MODE is clear. Slot 53 met the same edge.
+ * SLOTS 9 AND 12 CALL $d78 ON THEIR HURT ARM and the other three never do. That call REPORTED a
+ * boundary through batch 39; since batch 40 it runs WB_PLAYER_STEP_BODY — the player's own jump
+ * machine, over the MONSTER's record — and the frame goes on. Slot 53 met the same edge.
  */
 uint32_t actor_behavior_type09(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type10(uint8_t *image, uint32_t actor);
@@ -531,8 +533,9 @@ uint32_t actor_behavior_type19(uint8_t *image, uint32_t actor);
  * FOUR OF THEM SPLIT THE STRUCK ARM (20, 21, 25, 27), which through batch 36 only slots 18 and 19
  * did. Slots 22, 24 and 26 face on BOTH struck arms and slot 23 on neither.
  *
- * TWO OF THEM CARRY THE FAMILY'S BOUNDARY: slots 22 and 26 share slot 9's `gated_hurt_frame`, whose
- * `bsr $d78` reports WB_PLAYER_STEP_BODY while WB_TILE_33_MODE is clear.
+ * TWO OF THEM CARRIED THE FAMILY'S BOUNDARY: slots 22 and 26 share slot 9's `gated_hurt_frame`,
+ * whose `bsr $d78` reported WB_PLAYER_STEP_BODY while WB_TILE_33_MODE was clear. Batch 40 retired
+ * it — the gate calls the jump machine now and all four of those hurt arms run whole.
  *
  * AND SLOT 23 WRITES OUTSIDE ITS OWN RECORD ON A FULL POOL, as slot 19 does: its
  * WB_ACTOR_TYPE23_STUN_FRAMES store sits below the failed-allocation branch, so the byte lands at
@@ -613,9 +616,10 @@ uint32_t actor_behavior_type45(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type46(uint8_t *image, uint32_t actor);
 uint32_t actor_behavior_type57(uint8_t *image, uint32_t actor);
 
-/* $d78 — the twelve bytes slot 53 calls, and the only player-tier code in this file. Returns
- * WB_ACTOR_DISPATCH_RAN while WB_TILE_33_MODE is set (the original returns having written nothing)
- * and WB_PLAYER_STEP_BODY while it is clear, which is where the original branches. */
-uint32_t player_gate_on_1516(const uint8_t *image);
+/* $d78 — the twelve bytes slot 53 and `gated_hurt_frame` call, and the only player-tier code in
+ * this file. While WB_TILE_33_MODE is set it writes nothing at all; while it is clear it runs
+ * `player_jump_step` ($e06, player.h) on `actor`, which is where the original branches. It reports
+ * nothing because there is nothing left to report — see the boundary paragraph above. */
+void player_gate_on_1516(uint8_t *image, uint32_t actor);
 
 #endif /* WONDERBOY_BEHAVIOR_H */

@@ -56,6 +56,7 @@
 #include "machine.h"
 #include "rng.h"
 #include "sound.h"
+#include "text.h"
 #include "wonderboy.h"
 
 uint32_t followed_actor_record(const uint8_t *image) {
@@ -598,7 +599,10 @@ void actor_turn_and_launch(uint8_t *image, uint32_t actor, uint32_t step_outcome
  * The rearm is the same word src/effects.c's `hud_slot_set(image, slot, 0)` composes, and is NOT
  * routed through it: that helper is `static` to effects.c, and the originals are unrelated code —
  * `move.w #$ff,slot.l` inside this body against a whole separate dispatch-table leaf there. Making
- * it shared would export a symbol across two modules to save one `wr16`. */
+ * it shared would export a symbol across three modules to save one `wr16`: batch 40 made it three,
+ * because $e06's wing-boot arm (src/player.c) spends a slot with the same four instructions on a
+ * third unrelated original. THREE is where this workspace hoists an ENCODER, so if a fourth
+ * original turns up the argument above stops holding; ../STATUS.md registers it. */
 static int hud_slot_spend_charge(uint8_t *image, uint32_t slot, uint8_t message_id) {
     if (image[slot] == 0)
         return 0;
@@ -606,8 +610,7 @@ static int hud_slot_spend_charge(uint8_t *image, uint32_t slot, uint8_t message_
     image[slot] = (uint8_t)(image[slot] - 1);
     if (image[slot] == 0) {
         wr16(image + slot, WB_HUD_SLOT_REARM);
-        image[WB_TEXT_REQUEST] = message_id;
-        wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+        text_post_message(image, message_id);
     }
     return 1;
 }
