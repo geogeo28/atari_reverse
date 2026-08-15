@@ -287,13 +287,33 @@ genuine loader is preserved nowhere here.
 wb_disk1.scp`, then zero boot bytes `+$00..$0a` and `+$1e..$1ff`, keep the BPB `+$0b..$1d`).
 Result: boot checksum `0x1892` (≠ `$1234`, so TOS never runs it), the `$140` virus body gone, and
 **every byte after the boot sector byte-identical to the working image** (FAT, root, all files
-untouched — only the 512-byte boot sector changed). It boots in Hatari and the game's own loader
-streams tracks normally with **zero reads of the protection sectors (IDs 11/12) and no FDC errors** —
-so on a plain sector image the running code never gates on the cyl 0-4 band, and the game loads.
-(mtools reports "non DOS media" on this *and* the un-disinfected image — that is mtools not parsing
-Atari boot sectors, not corruption.) Real-hardware play from a plain write is untested; if a real ST
-turns out to enforce the band, the fallback is disinfecting the boot sector inside the `.scp` so the
-flux write keeps the fuzzy tracks.
+untouched — only the 512-byte boot sector changed). (mtools reports "non DOS media" on this *and* the un-disinfected image — that is mtools not parsing
+Atari boot sectors, not corruption.)
+
+**But a plain `.st` does NOT play on a real Atari ST — it black-screens.** The Copylock *is*
+enforced on hardware; Hatari's `.st` emulation was simply more lenient (its loader trace showed no
+protection reads, which misled an earlier guess). A disinfected playable disk therefore must keep
+the cyl 0-4 protection band, so the disinfection has to happen **at the flux level**, not on a plain
+sector image.
+
+### The working disinfection — flux-level boot-sector splice
+
+`gw/dumps/wb_disk1/wb_disk1_disinfected.scp` is the source flux with **only track 0's boot-sector
+data field replaced** (in-place IBM-MFM splice: decode track 0.0, swap sector 1's 512 data bytes +
+recompute its CRC, re-emit that track's flux; every other track — including the fuzzy Copylock band
+on cyls 1-4 — copied bit-for-bit). Verified: the `atarist.400`/`atarist.440` decodes are identical
+to the original except the boot sector; cyls 0 and 4 still carry their 12-sector protection layout;
+boot checksum `0x1892` (≠ `$1234`); virus body gone. Write it with the flux route that already
+proved itself on hardware:
+
+```
+./write_disk.sh dumps/wb_disk1/wb_disk1_disinfected.scp --tracks c=0-79:h=0
+```
+
+The MFM encoder was validated by re-encoding the *original* boot data and reproducing the recorded
+bits exactly, so the swap is bit-exact. Track 0's re-emitted revolution runs ~0.4% longer, which the
+drive's own rotation absorbs on write. The plain `wb_disk1_disinfected.st` remains valid for
+mounting/archival — just not for booting a real ST.
 
 ## 4. READ TRACK: not this sector, and the elimination is complete
 
