@@ -174,10 +174,18 @@ synthesized standard track instead of its signature track and fails. Proven on W
 disk 1: Hatari logs `fdc stx : no track image for read track ... building a standard track`
 (then `too many data sector=10` — the 12-sector protection track does not even fit the
 synthesized one) and the Copylock loader retries forever on a black screen. The `.scp` gold
-master holds everything — the loss is purely in the conversion. For a bootable STX of a
-protected disk, convert the SCP with Aufit (Windows/Wine); or, when a known-good Pasti dump
-of the same disk exists, verify your dump against it sector-by-sector and play on the Pasti
-file.
+master holds everything — the loss is purely in the conversion.
+
+**The fix — convert the flux with Aufit, which writes full track images.** `gw/aufit.sh
+<flux.scp>` opens Aufit (a Windows/.NET GUI, run under Wine) on the flux; load it, accept
+the weak/fuzzy sectors on the protection band, and Export → Pasti. Aufit writes track flags
+`0x61` with a real ~6 KB track image *and* the 1024-byte fuzzy mask per protected track, so
+the Copylock's raw READ TRACK is satisfied. Confirmed on Wonder Boy disk 1: the Aufit STX
+boots in Hatari with **zero** `no track image` warnings, where the hxcfe STX of the same
+flux black-screened. Aufit is interactive by design (resolving weak bits wants a human), and
+its WPF GUI needs a real desktop session — launching it from a headless/background shell
+fails at graphics init. Alternatively, when a known-good Pasti dump of the same disk exists,
+verify your dump against it sector-by-sector and play on that file.
 
 Hatari is launched with the same machine settings as `tools/hatari_run.sh` — 1 MiB ST, RGB
 monitor, low-res TOS — using `tools/hatari/TOS104US.img`. `TOS_IMG` overrides the ROM in
