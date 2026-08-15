@@ -272,6 +272,29 @@ the cyl 0-4 data band, not the boot sector), so a disinfected disk-1 image — b
 BPB kept — would play identically and spread nothing. Until then, keep other disks write-protected
 when running the disk-1 copy; that is exactly what spared disk 2.
 
+### The reference STX is not virus-infected — it is SAGROTAN-disinfected
+
+`projects/wonderboy/bin/Wonderboy…[a][!].stx`'s boot sector is **SAGROTAN 4.14**, a German
+anti-virus immunizer (author Henrik Alt; boot+2 `$4c6f` = "Lo", checksum `$1234`, strings
+`Bootprogramm zum Schutz vor Virenbefall` / `Kein Virus im Bootsektor`). The Ghost virus code is
+absent. So that disk was *disinfected by an anti-virus* which installed its own boot checker — a
+third distinct disk-1 boot sector (virus / SAGROTAN / factory-`$face`), and further proof the
+genuine loader is preserved nowhere here.
+
+### The disinfected image — built and tested
+
+`gw/dumps/wb_disk1/wb_disk1_disinfected.st` (regenerate: `gw convert --format atarist.400
+wb_disk1.scp`, then zero boot bytes `+$00..$0a` and `+$1e..$1ff`, keep the BPB `+$0b..$1d`).
+Result: boot checksum `0x1892` (≠ `$1234`, so TOS never runs it), the `$140` virus body gone, and
+**every byte after the boot sector byte-identical to the working image** (FAT, root, all files
+untouched — only the 512-byte boot sector changed). It boots in Hatari and the game's own loader
+streams tracks normally with **zero reads of the protection sectors (IDs 11/12) and no FDC errors** —
+so on a plain sector image the running code never gates on the cyl 0-4 band, and the game loads.
+(mtools reports "non DOS media" on this *and* the un-disinfected image — that is mtools not parsing
+Atari boot sectors, not corruption.) Real-hardware play from a plain write is untested; if a real ST
+turns out to enforce the band, the fallback is disinfecting the boot sector inside the `.scp` so the
+flux write keeps the fuzzy tracks.
+
 ## 4. READ TRACK: not this sector, and the elimination is complete
 
 The Hatari log `fdc stx : no track image for read track drive=0 track=0/4 side=0` is a genuine
