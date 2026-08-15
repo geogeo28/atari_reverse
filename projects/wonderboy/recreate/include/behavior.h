@@ -580,6 +580,39 @@ uint32_t actor_behavior_type38_pickup(uint8_t *image, uint32_t actor);
  * reaches the first. */
 void text_post_bonus_points_a4be(uint8_t *image, uint32_t entry_d0);
 
+/* --- slots 39..46 and 57 (batch 39): the tier's own AMMUNITION -----------------------------------
+ *
+ * THE LAST NON-PLAYER ROWS, and what they turn out to be is one fact: each is the record some
+ * already-reconstructed handler SPAWNS, one parent each, read off the spawners' own type words
+ * rather than guessed — 16->39, 6->40, 18->41, 25->42, 19->43, 21->44, 14->45, 23->46, 7->57 — so
+ * the fields each spawner writes are exactly the fields the matching handler reads. It is NOT the
+ * whole of what the tier spawns: slots 51, 52 and 53 are spawned rows too, and were reconstructed
+ * three batches earlier. wonderboy.h's block carries both halves.
+ *
+ * ALL NINE ARE CLEAN. Every callee below them was already reconstructed, so no arm here reports a
+ * boundary; slot 57's body-contact arm is a `bne.w` INTO `actor_damage_followed` and this port
+ * follows it, which is one of the twenty-eight tail jumps that routine's own plate counts.
+ *
+ * THE GRAMMAR IS THE $5a BAND'S. No spawn gate, no `actor_hit_by_player_shot` — these records
+ * cannot be shot down — and the contact test is `actor_followed_overlap_mask`'s bits 0 and 1 with
+ * bit 2 unread. What differs per slot is the LATCH: slots 40, 42, 43, 44, 45 and 57 use
+ * WB_ACTOR_FLAGS2_BIT_0 as a mode byte, while slots 39 and 41 use WB_ACTOR_FIELD_30 and their own
+ * WB_ACTOR_FLAG_SUPPORTED_BIT instead, and slot 46 has no contact test at all.
+ *
+ * SLOT 41 HAS NO TAIL OF ITS OWN: it `bra.w`s into slot 39's at $5534, which the whole-image branch
+ * census confirms is reached from exactly four sites, two in each handler. The two are written here
+ * as one body with the sprite id as its parameter.
+ */
+uint32_t actor_behavior_type39(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type40(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type41(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type42(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type43(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type44(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type45(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type46(uint8_t *image, uint32_t actor);
+uint32_t actor_behavior_type57(uint8_t *image, uint32_t actor);
+
 /* $d78 — the twelve bytes slot 53 calls, and the only player-tier code in this file. Returns
  * WB_ACTOR_DISPATCH_RAN while WB_TILE_33_MODE is set (the original returns having written nothing)
  * and WB_PLAYER_STEP_BODY while it is clear, which is where the original branches. */

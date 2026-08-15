@@ -705,6 +705,88 @@ def asl_w_imm_dn(count, reg):
     return opcode(_ASHIFT_W_IMM | _ASHIFT_LEFT | ((count & 7) << 9) | reg)
 
 
+def roxl_w_imm_dn(count, reg):
+    """`roxl.w #n,Dn` — the third member of the family above, and the one that READS the X flag an
+    earlier shift left. `actor_aim_velocity` is its only site in this game: `asr.w #1,d2` puts the
+    bit it shifted out into X and this puts it back, EXCEPT when an `addq.w` runs in between and
+    overwrites X with its own carry. Same base opcode with the register/memory bit clear and the
+    type field 2."""
+    return opcode(_ASHIFT_W_IMM | _ASHIFT_LEFT | ((count & 7) << 9) | (2 << 3) | reg)
+
+
+def neg_w_dn(reg):
+    """`neg.w Dn` — the fold into the first quadrant that both of the aim table's sign tests make.
+    FOUR batteries spelt it; test_behavior.py's copy is converted, and test_map.py's and
+    test_scroll.py's stay in place (../STATUS.md's queue carries them) because this batch has no
+    other reason to touch those two files."""
+    return opcode(0x4440 | reg)
+
+
+def eori_w_dn(reg, value):
+    """`eori.w #imm,Dn` — how the aim table records WHICH quadrant it folded out of, two bits at a
+    time, in the register it then indexes with."""
+    return opcode(0x0a40 | reg) + word(value)
+
+
+def addq_w_dn(amount, reg):
+    """`addq.w #n,Dn`, with 8 encoded as 0 like every other quick field. FOUR batteries spelt it;
+    test_behavior.py's and test_blit.py's are converted and test_map.py's stays (../STATUS.md's
+    queue). It is the one that pays for itself: the aim table's three ratio steps are three of
+    these and each one also CLOBBERS X, which is the asymmetry src/actor.c reproduces."""
+    return opcode(0x5040 | ((amount & 7) << 9) | reg)
+
+
+def ext_w_dn(reg):
+    """`ext.w Dn` — a signed BYTE widened in place, which is what makes a velocity table's bytes
+    signed. Two sites in one routine here, and behaviour slot 44 spells two more. THREE batteries
+    spelt it: test_blit.py's copy is converted, and test_sound.py keeps a bare `EXT_W_DN` OPCODE
+    CONSTANT rather than an encoder, which is why a grep for the function name does not find it."""
+    return opcode(0x4880 | reg)
+
+
+def exg_dn_dn(first, second):
+    """`exg Dx,Dy` between two DATA registers. The operand order is not cosmetic: the opcode carries
+    Dx in the register field and Dy in the low three bits, so `exg d2,d3` and `exg d3,d2` are
+    DIFFERENT WORDS ($c543 and $c742) for the same effect — and the aim table spells one of each."""
+    return opcode(0xc140 | (first << 9) | second)
+
+
+def adda_w_dn_an(destination, source):
+    """`adda.w Dn,An` — a WORD added to an address register and SIGN-EXTENDED on the way, which is
+    what lets the aim table's pair index reach below its own row.
+
+    DESTINATION FIRST, which is this file's convention for a two-register operand (`add_w_dn_dn`,
+    `sub_w_dn_dn`, `cmp_w_dn_dn`) and test_blit.py's for the same instruction — that battery had the
+    only other copy, in the OPPOSITE order to this function's first spelling, and the two names
+    would have collided the moment either file imported the other's. Its three call sites are
+    converted to this one; `adda_w_imm_an` there carries the same destination-first note.
+
+    THE ORDER IS NOT SELF-PINNING. The address register goes in the opcode's register field and the
+    data register in the source EA, so a swap emits a DIFFERENT WORD only when the two ordinals
+    differ — `adda.w d4,a1` is $d2c4 against $d801, and the aim table's entry pin catches it, but a
+    site using a1 and d1 would assemble identically either way."""
+    return opcode(0xd0c0 | (destination << 9) | source)
+
+
+# `movem.l <list>,-(a7)` and `movem.l (a7)+,<list>`: the register MASK is read the opposite way round
+# for the two, which is the whole reason they are stated together. Pushing to -(An) numbers the mask
+# from a7 down to d0; every other mode numbers it from d0 up. So the same set of registers is $3ffe
+# on the way down and $7ffc on the way up, and a battery that reused one mask for both would emit an
+# instruction that restores the wrong registers and still assemble.
+MOVEM_L_TO_PREDEC = 0x48e0
+MOVEM_L_FROM_POSTINC = 0x4cd8
+
+
+def movem_l_push(mask, stack=7):
+    """`movem.l <mask>,-(An)` — the mask as the PREDECREMENT form numbers it (a7..d0)."""
+    return opcode(MOVEM_L_TO_PREDEC | stack) + word(mask)
+
+
+def movem_l_pop(mask, stack=7):
+    """`movem.l (An)+,<mask>` — the mask as every other mode numbers it (d0..a7)."""
+    return opcode(MOVEM_L_FROM_POSTINC | stack) + word(mask)
+
+
 def tst_b_abs_l(addr):
     return opcode(0x4a39) + longword(addr)
 

@@ -884,8 +884,13 @@
 #define WB_ACTOR_FIELD_26            26u      /* word: the swoop's LAUNCH Y — the y a record was at
                                                * when actor_swoop_state0_acquire committed, which
                                                * actor_swoop_state3_descend rises back to. The
-                                               * dropper shot at $7200 writes the same offset for a
-                                               * meaning slot $39 owns and this port does not */
+                                               * dropper shot at $7200 writes the same offset for
+                                               * behaviour slot 57's own meaning, which batch 39
+                                               * read: it is that shot's dy, ADDED to the y every
+                                               * frame. The dropper writes it only while
+                                               * WB_ACTOR_FLAG_SIDE_BIT is set, so a right-facing
+                                               * dropper's shot flies on whatever the freed slot
+                                               * left there */
 #define WB_ACTOR_FIELD_30            30u      /* two bytes the spawn clears; $ff42 reads 30 as a
                                                * flag and counts 31 down. In the behaviour tier 30
                                                * is a COUNTDOWN of its own — $2f86 and $6872 tick it
@@ -1845,7 +1850,11 @@
 #define WB_ACTOR_TYPE07_BURST_RIGHT  0x721cu  /* same five with dx negated. $7208 is taken while
                                                * WB_ACTOR_FLAG_SIDE_BIT is SET */
 #define WB_ACTOR_TYPE07_BURST_ENTRY  4u       /* `move.l (a2)+,24(a1)` — a dx,dy LONGWORD a shot */
-#define WB_ACTOR_TYPE07_BURST_SPRITE 0x1bbu   /* `move.w #$1bb,6(a1)` */
+#define WB_ACTOR_TYPE07_BURST_SPRITE 0x1bbu   /* `move.w #$1bb,6(a1)`, and the shot's sprite for
+                                               * its whole life: behaviour slot 57 publishes
+                                               * none. Numerically WB_ACTOR_TYPE39_SPRITE, which
+                                               * is as far as the evidence for "one projectile
+                                               * graphic" goes */
 #define WB_ACTOR_TYPE07_DROP_MASK    0x1fu    /* `andi.b #$1f,31(a0)` — one dropper every 32 */
 #define WB_ACTOR_TYPE07_DROP_SPRITE  0x1b4u   /* `move.w #$1b4,6(a1)` */
 #define WB_ACTOR_TYPE07_DROP_RISE    0x20u    /* `subi.w #$20,2(a1)` — the shot starts that far
@@ -1853,9 +1862,13 @@
 #define WB_ACTOR_TYPE07_DROP_VELOCITY 0xfffbu /* `move.w #$fffb,24(a1)` — a WORD, where the burst
                                                * writes a longword over the same offset */
 #define WB_ACTOR_TYPE07_DROP_FIELD_26 5u      /* `move.w #$5,26(a1)`, only while the side bit is
-                                               * SET — the one asymmetry between the two facings */
+                                               * SET — the one asymmetry between the two facings,
+                                               * and since batch 39 a READABLE one: 26(a1) is
+                                               * behaviour slot 57's dy, so the arm that does not
+                                               * write it leaves the shot's vertical speed as
+                                               * whatever the freed slot held */
 #define WB_ACTOR_TYPE07_SHOT_TYPE    0x39u    /* `move.w #$39,4(a1)` — WB_ACTOR_TYPE, i.e. behaviour
-                                               * slot 57, which this port does not have */
+                                               * slot 57, reconstructed in batch 39 */
 #define WB_ACTOR_TYPE07_SHOT_SIZE    0xc0002u /* `move.l #$c0002,14(a1)`: WB_ACTOR_HALF_WIDTH $c and
                                                * WB_ACTOR_SIZE_SECOND $2 in one store, the same
                                                * longword WB_ACTOR_TYPE06_SHOT_SIZE spells */
@@ -2179,6 +2192,111 @@
                                                * `lea` names it, at $6938 */
 #define WB_TEXT_BONUS_DIGIT_COUNT    5u       /* `move.w #$5,d7`, counted down by `subi.w #1` */
 #define WB_TEXT_MESSAGE_BONUS_POINTS 0x10u    /* `move.b #$10,$c030.l` at $6978 */
+
+/* ---- the LAST NON-PLAYER dispatch rows (slots 39..46 and 57; src/behavior.c) -------------------
+ *
+ * NINE HANDLERS, AND THEY ARE THE TIER'S OWN AMMUNITION. Every one of the nine is the record some
+ * ALREADY-RECONSTRUCTED handler spawns, one parent each: slot 16 throws slot 39
+ * (WB_ACTOR_TYPE16_MINION_TYPE == $27), slot 6 slot 40, slot 18 slot 41, slot 25 slot 42, slot 19
+ * slot 43, slot 21 slot 44, slot 14 slot 45, slot 23 slot 46 and slot 7 slot 57. So the FIELDS each
+ * spawner writes are exactly the fields the matching handler reads — which is what identifies these
+ * rows rather than a guess from their sprite ids, and what test/test_behavior.py's three THREADED
+ * cases drive end to end (21 -> 44, 7 -> 57 and 23 -> 46, each a second differential seeded from
+ * the parent's own write ledger).
+ *
+ * IT IS NOT A BIJECTION OVER THE TIER'S SPAWNS, which an earlier revision of this block claimed.
+ * THREE more spawn constants name behaviour rows outside these nine —
+ * WB_ACTOR_TYPE17_SEED_TYPE ($34, slot 52), WB_ACTOR_TYPE22_MINION_TYPE ($35, slot 53) and
+ * WB_ACTOR_TYPE26_SHOT_TYPE ($33, slot 51) — all reconstructed in batches 31 and 32. The claim that
+ * survives, and that a case makes by SCRAPING this header rather than reading a list, is: every
+ * WB_ACTOR_TYPEnn_*_TYPE constant names a row this port has, and nine of the twelve are these.
+ * (WB_ACTOR_SHOT_TYPE_LO/_HI/_KEPT are deliberately not of that shape: they are the range
+ * actor_hit_by_player_shot SEARCHES, not a type any handler writes.)
+ *
+ * ONE FIELD NO SPAWNER WRITES: WB_ACTOR_FLAGS2. `spawn_minion` copies the parent's x/y longword and
+ * the type word and nothing at offset 9, so a fresh record inherits whichever mode bit the freed
+ * slot was left holding — and for six of these nine that bit is what chooses the frame's arm. The
+ * threaded cases state it rather than inherit it, and it is reproduced rather than repaired.
+ *
+ * NONE OF THEM OPENS ON THE SPAWN GATE. This is the $5a band's grammar, not the monster family's:
+ * WB_ACTOR_FLAGS2_BIT_0 is the mode byte, the contact test is `actor_followed_overlap_mask`'s bits
+ * 0 and 1 with bit 2 unread, and no `actor_hit_by_player_shot` runs in front of it anywhere — these
+ * records cannot be shot down.
+ *
+ * FOUR SHAPES ACROSS THE NINE:
+ *   * the SHATTERERS (39, 41), which fall, drift while airborne, and play an eight-word break-up
+ *     the moment WB_ACTOR_FLAG_SUPPORTED_BIT goes up or WB_ACTOR_FIELD_30 is latched. Slot 41 is
+ *     slot 39 with one sprite id changed and `bra.w`s INTO slot 39's own tail at $5534;
+ *   * the WALKERS that die where they stop (40, 42, 43) — a blocked probe raises the mode bit, and
+ *     what the bit then buys is a fall that frees the slot on landing (40, 43) or the same break-up
+ *     the shatterers play (42);
+ *   * the SHOTS (44, 45, 57), which carry their own velocity: 44 in the signed byte pair
+ *     WB_ACTOR_FIELD_30/_31 its spawner aimed for it, 45 re-aimed at the followed record EVERY
+ *     FRAME through `actor_aim_velocity`, and 57 in the word pair WB_ACTOR_FIELD_24/_26 slot 7's
+ *     burst copied in as one longword;
+ *   * and the RISER (46), which is slot 23's stolen gold floating away: it steps
+ *     WB_ACTOR_ANIM_5160_FRAMES with the same publish/look-ahead `actor_relaunch_and_anim_5160`
+ *     has, rises WB_ACTOR_TYPE46_RISE a frame, and frees itself when its countdown reaches zero.
+ */
+#define WB_ACTOR_BEHAVIOR_TYPE39     0x54f4u  /* 164 bytes of code, $54f4..$5597, then its own table */
+#define WB_ACTOR_BEHAVIOR_TYPE40     0x55a8u  /* 148, $55a8..$563b — no data at all */
+#define WB_ACTOR_BEHAVIOR_TYPE41     0x563cu  /* 64, $563c..$567b, ending in slot 39's tail */
+#define WB_ACTOR_BEHAVIOR_TYPE42     0x567cu  /* 158, $567c..$5719, then its own table */
+#define WB_ACTOR_BEHAVIOR_TYPE43     0x572au  /* 148, $572a..$57bd */
+#define WB_ACTOR_BEHAVIOR_TYPE44     0x57beu  /* 148, $57be..$5851 */
+#define WB_ACTOR_BEHAVIOR_TYPE45     0x5852u  /* 160, $5852..$58f1 */
+#define WB_ACTOR_BEHAVIOR_TYPE46     0x58f2u  /* 54, $58f2..$5927, bounded by slot 47's entry */
+#define WB_ACTOR_BEHAVIOR_TYPE57     0x7260u  /* 98, $7260..$72c1, bounded by the swoop's state 0 */
+
+#define WB_ACTOR_FIELD_28            28u      /* word: slot 57's own FRAME COUNT, stepped `addq.w #1`
+                                               * and compared against WB_ACTOR_TYPE57_LIFETIME. It
+                                               * is the last word of the eight bytes that handler's
+                                               * two `clr.l`s cover — and it is the one of the four
+                                               * that is NOT the swoop's: that machine's state is
+                                               * 22, 24 and 26, ending at offset 27, so the second
+                                               * `clr.l` reaches two bytes past it into this
+                                               * field. Nothing else in the tier reads offset 28 */
+
+/* Slot 39's break-up table, and the ONE table in this batch with more than one reader: three
+ * instructions name it, by a whole-image scan of both absolute encodings and both PC-relative forms
+ * — `move.w $5598(pc,d0.w),6(a0)` at $557e (slot 39's own) and `lea $5598.w,a1` at $5826 and $58c6
+ * (slots 44 and 45). Those two are the SHORT absolute form, the encoding a scan for the longword
+ * misses. Slot 42's table below has exactly one. */
+#define WB_ACTOR_TYPE39_FRAMES       0x5598u  /* EIGHT words, $5598..$55a7: $1c0 $1c0 $1c1 $1c1 $1c2
+                                               * $1c2 $000 $1c2 — and the SEVENTH really is zero,
+                                               * which is a blank frame and not a terminator */
+#define WB_ACTOR_TYPE39_SPRITE       0x1bbu   /* `move.w #$1bb,6(a0)` — published every live frame */
+#define WB_ACTOR_TYPE39_STEP         3u       /* `move.w #$3,d7` in BOTH arms of the drift */
+#define WB_ACTOR_TYPE41_SPRITE       0x1d5u   /* ...and the only thing that makes slot 41 not 39 */
+
+#define WB_ACTOR_TYPE40_SPRITE_LEFT  0x1c8u   /* the arm WB_ACTOR_FLAG_SIDE_BIT SET reaches */
+#define WB_ACTOR_TYPE40_SPRITE_RIGHT 0x1c7u
+#define WB_ACTOR_TYPE40_STEP         4u       /* `move.w #$4,d7`, spelt once per arm */
+
+#define WB_ACTOR_TYPE42_FRAMES       0x571au  /* EIGHT words, $571a..$5729: $1da $1da $1db $1db $1dc
+                                               * $1dc $1dd $1dd. ONE `lea d8(PC,Dn.w)` names it,
+                                               * at $56f6 */
+#define WB_ACTOR_TYPE42_SPRITE       0x1d9u   /* published ABOVE the direction test, so one id */
+#define WB_ACTOR_TYPE42_STEP         4u
+
+#define WB_ACTOR_TYPE43_SPRITE       0x1e0u   /* spelt TWICE, once per arm, and the same both times */
+#define WB_ACTOR_TYPE43_STEP         4u
+
+#define WB_ACTOR_TYPE44_SPRITE       0x1cbu
+#define WB_ACTOR_TYPE44_LIFE_STEP    2u       /* `subq.b #2,29(a0)` over the WB_ACTOR_TYPE21_SHOT_LIFE
+                                               * its spawner stamped — $32, an EVEN value, so the
+                                               * countdown lands on zero rather than stepping past it */
+
+#define WB_ACTOR_TYPE45_SPRITE       0x1bfu
+#define WB_ACTOR_TYPE45_AIM_ROW      1u       /* `move.w #$1,d4` — which row of WB_ACTOR_AIM_TABLE
+                                               * the re-aim reads, where slot 21 reads
+                                               * WB_ACTOR_TYPE21_AIM_ROW */
+
+#define WB_ACTOR_TYPE46_RISE         4u       /* `subq.w #4,2(a0)` — the ONLY thing this handler does
+                                               * to its position, and only while the countdown runs */
+
+#define WB_ACTOR_TYPE57_LIFETIME     0x28u    /* `cmpi.w #$28,28(a0) / bne` — an EQUALITY test, so a
+                                               * counter seeded past it runs the 16-bit way round */
 
 /* The two addresses OUTSIDE this tier that a reconstructed handler transfers to and stops at. Both
  * are the entry of code this port does not have; behavior.h's boundary is how they are reported. */

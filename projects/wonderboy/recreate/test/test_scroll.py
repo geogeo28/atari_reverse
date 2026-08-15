@@ -498,6 +498,8 @@ def move_w_abs_l_abs_l(source, destination):
 
 
 def neg_w_dn(reg):
+    # ALSO IN leaf.py (batch 39) and test_map.py — this copy is queued rather than converted, for
+    # the reason ../STATUS.md's entry gives.
     return opcode(0x4440 | reg)
 
 

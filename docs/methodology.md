@@ -48,6 +48,16 @@ failing test. Wonder Boy's batch 35 pins fifteen tables this way. Say in the cas
 forms it sweeps: `_lea_sites` there covers the two absolute `lea`s and the PC-relative indexed one
 and *nothing else*, so it is silent about `pea`, `movea.l #imm` and a pointer assembled at runtime.
 
+**AND THE FORM LIST IS WHERE THE NEXT MISS WILL BE — it is not only `lea` that names a table.** A
+census keyed on the instructions that LOAD AN ADDRESS misses every instruction that reads THROUGH one
+in a single step. Wonder Boy's batch 39 found the first: `move.w d8(PC,Dn.w),d16(An)` publishes a
+frame straight out of a table with no `lea` anywhere, so a `lea`-only scan reported TWO readers of a
+table three routines read — and the two it did find were the SHORT absolute form, which is what an
+earlier batch's longword-only scan had already missed once. The rule that survives both misses: when
+a plate says "N readers", the scan behind it must cover every ADDRESSING MODE that can reach the
+address, not every opcode you happened to think of, and the case must name the modes it swept so the
+next reader can see the gap rather than trust the number.
+
 **AND A DIRECT-READER CENSUS IS NOT A REACHABILITY PROOF — do not let the case pretend otherwise.**
 "No instruction names this address" bounds the routines that name it DIRECTLY. It says nothing about
 a block sitting beside an INDEXED table, which is reached through the neighbour's `lea` the moment

@@ -155,10 +155,10 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            for state_flag_a34) and the dispatcher it feeds ($928), which fetches a
                            longword out of the 62-entry table at $938 and tail-jumps through it —
                            on the WRAPPED offset, so 248 of the 65,536 type values reach an entry.
-                           FIFTY-TWO of the sixty-two rows are reconstructed as of batch 38 and
-                           ten are not, so for those the dispatcher hands the target
-                           BACK and the differential runs the oracle on to it; the reconstructed
-                           list grows by a few rows a batch. (This line read "twenty-two" while
+                           SIXTY-ONE of the sixty-two rows are reconstructed as of batch 39 and
+                           the ONE that is not is the player (slot 1), for which the dispatcher
+                           hands the target BACK and the differential runs the oracle on to it.
+                           (This line read "twenty-two" while
                            ../STATUS.md read twenty-three at batch 32 and neither was checked
                            against anything; test_behavior.py's PORTED_SLOT_COUNT now holds the
                            number and a case asserts it against the table, so the next drift fails
@@ -188,7 +188,17 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            index into a second dispatch table, so this is the first row here whose
                            frame dispatches again — plus the five digits it patches into message
                            16's own shipped string. The fourteen handlers behind that table are in
-                           src/effects.c, beside the twenty-nine they are the siblings of
+                           src/effects.c, beside the twenty-nine they are the siblings of. Batch 39
+                           then closed everything but the player with slots 39..46 and 57, which
+                           turn out to be THE TIER'S OWN AMMUNITION: each of the nine is the record
+                           an already-reconstructed handler spawns (16->39, 6->40, 18->41, 25->42,
+                           19->43, 21->44, 14->45, 23->46, 7->57), so the fields each spawner writes
+                           are the fields its child reads. Two SHATTERERS that break up when they
+                           land and share one tail, three WALKERS that die where the map stops them,
+                           three SHOTS (one on a byte pair its spawner aimed, one re-aimed at the
+                           player every frame through actor_aim_velocity, one on a word pair slot
+                           7's burst copied in as a longword) and the RISER that is slot 23's stolen
+                           gold floating away
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -328,7 +338,10 @@ test/test_behavior.py      the behaviour tier's differential. Its shape is set b
                            sum-the-spanned-bytes idiom), and an independent model of $5c6e's three
                            overlap tests compared against the ORACLE's d0 as well as the port's
                            return. It imports test_map.py's map seeding and test_rng.py's generator
-                           model rather than restating either. Then the FIFTY-TWO LIVE TABLE ROWS:
+                           model rather than restating either. Then the SIXTY-ONE LIVE TABLE ROWS
+                           (this is the second of the four surfaces PORTED_SLOT_COUNT's own comment
+                           names, and the third batch running to drift on it — the pinning case
+                           reads the TABLE, not this prose, so nothing but a reader catches it):
                            the five-handler band at $2462..$2db1 (one shape with five bodies), the
                            whole $5a band ($5928..$5c6b, seven rows and three endings of one
                            grammar), the three moving platforms, slot 60's retype, slot 61's message
@@ -338,7 +351,12 @@ test/test_behavior.py      the behaviour tier's differential. Its shape is set b
                            slot 38 with the SECOND DISPATCH behind it (fourteen entries reached by
                            56 of the 65,536 index values, an eight-shard enumeration over all of
                            them, and a refusal that is a CODE rather than an address because the
-                           span the index reads holds zeros), and batch
+                           span the index reads holds zeros), batch 39's LAST NINE ROWS at
+                           39..46 and 57 — the AMMUNITION, whose cases thread three of the nine
+                           through their spawner's own write ledger (21 -> 44, 7 -> 57, 23 -> 46),
+                           drive the ONE table in the tier with three readers (two of them the
+                           SHORT-absolute `lea`, one a `move.w` no `lea` census could see) and seed
+                           the aim table's own rows to pin WHICH row slot 45 reads — and batch
                            35's MONSTER-PROLOGUE FAMILY at 9..13 — the $2462 band's grammar with five
                            more middles, two of which report a boundary on their hurt arm because
                            they call the player gate — and batch 36's SIX MORE of that family at
@@ -422,7 +440,12 @@ off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A
 **seven** ways, all seven measured here, so run one this way:
 
 ```bash
-rm -f build/*.so && make build/libwonderboy.so # 0. ...and force the relink FIRST: a killed sweep
+mkdir -p "$BACKUP" && cp src/*.c "$BACKUP"     # 0a. A NAMED BACKUP OUTSIDE THE REPO, first and
+test -s "$BACKUP"/behavior.c || exit 1         #     unconditionally: a sweep's snapshot can be lost
+                                               #     (mode 4), and then the tree is the only copy
+                                               #     there is. TWICE now that has been a whole
+                                               #     batch. Never `git checkout --` to clean up.
+rm -f build/*.so && make build/libwonderboy.so # 0b. ...and force the relink FIRST: a killed sweep
 .venv/bin/python -m pytest -q -n auto test     #    leaves the MUTANT's .so beside a restored source
 echo "pre-sweep: $?"                           # 0. GREEN FIRST: a red or uncollectable tree
                                                #    reports every mutant as caught (see 5)
@@ -474,6 +497,17 @@ done
    step-0 green check passes, and refuse to overwrite an existing one — re-arming is an explicit
    `rm -rf snapshot`. This is not an eighth way a sweep lies; it is mode 4's guard extended from the
    restore step to the capture step, and the frame sentence's count of SEVEN stands.
+   **AND A FOURTH HALF, MEASURED TWICE — batch 34 and again batch 39: NEVER RESTORE THE TREE FROM
+   GIT DURING A SWEEP.** A timed-out sweep leaves the tree possibly holding a mutant, and the
+   obvious cleanup — `rm -rf snapshot && git checkout -- src/*.c` — is the worst thing that can be
+   typed at that moment: it deletes the only copy of the good sources and then reverts the file to
+   HEAD, which for an in-progress batch is the whole reconstruction. Batch 34 lost `src/behavior.c`
+   that way and rebuilt it; batch 39 lost the same file the same way and recovered it only because
+   the edits were still in the session's transcript. **A guideline that has been broken twice needs
+   a step, not a paragraph** — which is why step 0 of the recipe above now takes a NAMED BACKUP
+   OUTSIDE THE REPO before anything else, and why the loop restores from the SNAPSHOT and never from
+   git. Like the two halves above this is mode 4's guard reaching one step further, not an eighth
+   way a sweep lies.
    A third self-inflicted variant, from batch 35's post-mortem: **`pkill -f` matches its own
    shell's command line** when the pattern string appears in it, so the cleanup kills the shell
    mid-diagnosis and the next check runs against a state you did not establish (a healthy tree

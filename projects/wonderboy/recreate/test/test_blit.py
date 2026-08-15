@@ -57,9 +57,10 @@ import harness
 import leaf
 from harness import make_image
 from layout import wb
-from leaf import (RTS, add_w_dn_dn, andi_w_dn, asl_w_imm_dn, asr_w_imm_dn, backward_branch,
-                  branch_over, case_salt, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, keyed_block,
-                  lea_abs_l, lea_d16,
+from leaf import (RTS, adda_w_dn_an, add_w_dn_dn, addq_w_dn, andi_w_dn, asl_w_imm_dn,
+                  asr_w_imm_dn, backward_branch,
+                  branch_over, case_salt, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, ext_w_dn,
+                  keyed_block, lea_abs_l, lea_d16,
                   longword, lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_b_imm_abs_l,
                   move_w_dn_dn, move_w_imm_dn, move_w_ind_dn, move_w_postinc_dn, movea_l_abs_w,
                   mulu_w_imm_dn, opcode, program_writes, rotate_left32, rotate_right32, s8,
@@ -263,11 +264,6 @@ def or_w_dn_postinc(reg, base):
 def btst_imm_abs_l(bit, addr):
     """`btst #n,<abs>.l` — a BYTE test against memory, so the bit is 0..7."""
     return opcode(0x0839) + word(bit) + longword(addr)
-
-
-def addq_w_dn(amount, reg):
-    """`addq.w #n,Dn`. ALSO IN test_map.py."""
-    return opcode(0x5040 | ((amount & 7) << 9) | reg)
 
 
 def subq_w_an(amount, reg):
@@ -1425,11 +1421,13 @@ ECHO_Y_REG = wb("SPRITE_ECHO_Y_REG")
 # What is left below stands at ONE user apart from three that stand at two and say so in their own
 # docstrings — `adda_w_imm_an` (also test_scroll.py), `cmpa_l_imm` (also test_actor.py) and
 # `clr_l_dn` (also test_hud.py); this batch's STATUS.md section registers them as the next hoist.
-
-def ext_w_dn(reg):
-    """`ext.w Dn` — sign-extend the low BYTE through the low word."""
-    return opcode(0x4880 | reg)
-
+#
+# BATCH 39 TOOK THREE OF THIS FILE'S OWN. `addq_w_dn`, `ext_w_dn` and `adda_w_dn_an` are imported
+# from leaf.py now. The third is why the other two went with it: leaf.py had gained its own
+# `adda_w_dn_an` in the OPPOSITE operand order, and two encoders of one instruction under one name
+# is the failure `adda_w_imm_an`'s docstring already warns about — each battery's byte pins pass
+# either way, so nothing fails until the two files meet. leaf.py's is destination-first, which is
+# the order this file's three call sites already used.
 
 def movea_l_ind(reg, base):
     """`movea.l (An),Am` — how the pass loads a descriptor's source pointer and its blitter."""
@@ -1455,12 +1453,6 @@ def muls_w_dn_dn(destination, source):
 def suba_l_dn_an(reg, source):
     """`suba.l Dn,An` — and what then ADDS that step's magnitude to the source cursor."""
     return opcode(0x91c0 | (reg << 9) | source)
-
-
-def adda_w_dn_an(reg, source):
-    """`adda.w Dn,An` — a WORD operand SIGN-EXTENDED into a 32-bit address. Three sites: the
-    descriptor cursor, the screen cursor and the table slot."""
-    return opcode(0xd0c0 | (reg << 9) | source)
 
 
 def adda_w_imm_an(reg, value):

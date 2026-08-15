@@ -36,8 +36,11 @@ import harness
 import leaf
 from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16,
                   tst_b_d16,
-                  asr_w_imm_dn, backward_branch, branch, branch_over, branch_w_to, bsr_w,
-                  btst_imm_dn,
+                  adda_w_dn_an, addq_w_dn,
+                  asl_w_imm_dn, asr_w_imm_dn, backward_branch, branch, branch_over, branch_w_to,
+                  bsr_w, btst_imm_dn,
+                  eori_w_dn, exg_dn_dn, ext_w_dn, move_b_postinc_dn,
+                  movem_l_pop, movem_l_push, neg_w_dn, roxl_w_imm_dn,
                   case_salt, clr_b_d16, clr_w_d16, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, cmpi_b_dn,
                   cmpi_w_d16,
                   dbf, dbf_over,
@@ -992,7 +995,73 @@ def _respawn_entry():
     ])
 
 
+# --- $6528: the aim table, and the eight encodings it took to pin it ------------------------------
+# THE PIN ../STATUS.md CARRIED AS AN OBLIGATION SINCE BATCH 37. This routine's 94 bytes need eight
+# encodings no other body in this project spells — `movem.l` in both directions (whose register mask
+# is numbered the OPPOSITE way round for the two), `roxl.w`, `exg` in both operand orders, `neg.w`,
+# `eori.w`, `addq.w`, `adda.w` and `ext.w` — so until slot 45 arrived with a second caller it was
+# pinned only by the differential over slot 21's aimed shot. All eight are in leaf.py now.
+AIM_TABLE = wb("ACTOR_AIM_TABLE")
+AIM_ROW_SHIFT = 5                # `asl.w #5,d4` == log2(WB_ACTOR_AIM_ROW_BYTES)
+AIM_PAIR_SHIFT = 1               # `asl.w #1,d4` == log2(WB_ACTOR_AIM_PAIR_BYTES)
+AIM_CODE_BASE = wb("ACTOR_AIM_CODE_BASE")
+AIM_CODE_DX_EOR = wb("ACTOR_AIM_CODE_DX_EOR")
+AIM_CODE_DY_EOR = wb("ACTOR_AIM_CODE_DY_EOR")
+AIM_CODE_SWAP_BIT = wb("ACTOR_AIM_CODE_SWAP_BIT")
+AIM_SAVED_PUSH_MASK = 0x3ffe     # d2-a6 as -(An) numbers it, a7 down to d0
+AIM_SAVED_POP_MASK = 0x7ffc      # ...and the SAME registers as (An)+ numbers them, d0 up to a7
+BGE_S = 0x6c00
+D3, D4 = 3, 4
+
+
+def _bcc_s(condition, *over):
+    """`bcc.s` past exactly ``over``. A short branch's displacement is the spanned bytes THEMSELVES,
+    with no BRANCH_EXTENSION: the byte sits in the opcode word rather than after it. $6528 spells
+    every one of its six branches short, which is the whole reason this file needed the form."""
+    spanned = sum(len(piece) for piece in over)
+    assert 0 < spanned < 0x80, f"{spanned} does not fit a `bcc.s` byte displacement"
+    return opcode(condition | spanned)
+
+
+def _aim_ratio_step(shift):
+    """One of the three ratio tests: halve or double the far axis, compare, and count the near one
+    past it. `shift` is the instruction that moves d2 before the compare."""
+    bump = addq_w_dn(1, D4)
+    return [shift, cmp_w_dn_dn(D3, D2), _bcc_s(BGE_S, bump), bump]
+
+
+def _aim_velocity_entry():
+    """The whole 94 bytes. Two sign folds into the first quadrant, each recording itself in d4 with
+    an `eori.w`; a THIRD swap on the bit those two `eori`s leave; then the three ratio steps, whose
+    middle one is the `roxl.w` that reads the X flag `asr.w #1,d2` left — and which the `addq.w`
+    between them can overwrite. d4 is finally doubled into a pair index and added to the row."""
+    swap_back = exg_dn_dn(D3, D2)
+    dx_negative = [neg_w_dn(D2), eori_w_dn(D4, AIM_CODE_DX_EOR)]
+    dy_negative = [neg_w_dn(D3), exg_dn_dn(D2, D3), eori_w_dn(D4, AIM_CODE_DY_EOR)]
+
+    return b"".join([
+        movem_l_push(AIM_SAVED_PUSH_MASK),
+        asl_w_imm_dn(AIM_ROW_SHIFT, D4), lea_abs_l(A1, AIM_TABLE), lea_indexed(A1, D4),
+        move_w_imm_dn(D4, AIM_CODE_BASE),
+        # The y delta is taken FIRST and the x one second, and it is the SECOND whose `bge` runs.
+        sub_w_dn_dn(D3, D1), sub_w_dn_dn(D2, D0), _bcc_s(BGE_S, *dx_negative), *dx_negative,
+        # ...and this one is a `tst.w`, which CLEARS V — so it reads the sign of the wrapped
+        # difference where the one above reads N^V of the two operands.
+        tst_w_dn(D3), _bcc_s(BGE_S, *dy_negative), *dy_negative,
+        btst_imm_dn(AIM_CODE_SWAP_BIT, D4), _bcc_s(BNE_S, swap_back), swap_back,
+        *_aim_ratio_step(asr_w_imm_dn(1, D2)),
+        *_aim_ratio_step(roxl_w_imm_dn(1, D2)),
+        *_aim_ratio_step(asl_w_imm_dn(1, D2)),
+        asl_w_imm_dn(AIM_PAIR_SHIFT, D4), adda_w_dn_an(A1, D4),
+        move_b_postinc_dn(D0, A1), move_b_postinc_dn(D1, A1),
+        ext_w_dn(D0), ext_w_dn(D1),
+        movem_l_pop(AIM_SAVED_POP_MASK),
+        RTS,
+    ])
+
+
 ENTRY_BYTES = {
+    "actor_aim_velocity": _aim_velocity_entry(),
     "followed_actor_record": _followed_record_entry(),
     "actor_set_side_flag": _side_flag_entry(),
     "actor_followed_x_within": _within_entry(),
@@ -1015,7 +1084,7 @@ ENTRY_BYTES = {
     "actor_defeat_and_score": DEFEAT_BODY,
     "actor_respawn_as_new_kind": _respawn_entry(),
 }
-RECONSTRUCTED_ROUTINES = 21
+RECONSTRUCTED_ROUTINES = 22
 
 
 def test_the_battery_covers_every_routine_it_was_written_for():
@@ -1028,6 +1097,9 @@ def test_the_whole_body_is_the_bytes_this_battery_reconstructs(name):
 
 
 @pytest.mark.parametrize("name,size", [
+    # $6528 is bounded by its OWN table, which its `lea $6586.l` names — the same shape as the two
+    # damage paths below rather than a Ghidra function.
+    ("actor_aim_velocity", 94),
     ("followed_actor_record", 24),
     ("actor_set_side_flag", 30),
     ("actor_followed_x_within", 42),

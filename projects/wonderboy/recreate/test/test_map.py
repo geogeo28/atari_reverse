@@ -244,6 +244,8 @@ def mulu_w_dn_dn(destination, source):
 
 
 def neg_w_dn(reg):
+    # ALSO IN leaf.py (batch 39) and test_scroll.py. This copy stays because converting it is a
+    # change to a battery batch 39 has no other reason to touch; ../STATUS.md's queue names it.
     return opcode(0x4440 | reg)
 
 
@@ -256,6 +258,7 @@ def subi_w_d16(base, value, displacement):
 
 
 def addq_w_dn(amount, reg):
+    # ALSO IN leaf.py (batch 39). Same reason as `neg_w_dn` above, and the same queue entry.
     return opcode(0x5040 | ((amount & 7) << 9) | reg)
 
 
