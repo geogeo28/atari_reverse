@@ -10,7 +10,7 @@ fragile disk is never re-read just to produce another file format.
 
 ```
 floppy ──gw read --raw──> .scp  (flux gold master, keep forever)
-                           ├──hxcfe──> .stx  (Pasti; protection-aware, for Hatari)
+                           ├──hxcfe + track-image injection──> .stx  (Pasti; bootable 0x61, for Hatari)
                            └──gw convert──> .st  (plain sector image, unprotected disks only)
 ```
 
@@ -167,14 +167,18 @@ each one that did not.
 rejects it with an explanation rather than a silent no-op. Hatari reads `.st`, `.msa`,
 `.stx` and `.dim` directly, which is why it takes the wider set.
 
-**Known limitation — an hxcfe-made STX may not boot a copy-protected game.** hxcfe writes
+**Background — a *raw* hxcfe STX may not boot a copy-protected game.** hxcfe on its own writes
 sector-only STX track records (track flags `0x01`), never the full track image (`0x61`) a
 real Pasti dump carries. A protection that issues raw FDC READ TRACK commands gets a
 synthesized standard track instead of its signature track and fails. Proven on Wonder Boy
 disk 1: Hatari logs `fdc stx : no track image for read track ... building a standard track`
 (then `too many data sector=10` — the 12-sector protection track does not even fit the
 synthesized one) and the Copylock loader retries forever on a black screen. The `.scp` gold
-master holds everything — the loss is purely in the conversion.
+master holds everything — the loss is purely in the conversion. **`backup_disk.sh` now closes
+this automatically:** its STX step is `convert_scp_to_bootable_stx` (hxcfe + track-image
+injection, below), so a backup's `.stx` boots straight out of the dump. If injection is
+unavailable (no greaseweazle) or fails, it degrades to the sector-only STX with a loud
+`sector-only` warning rather than losing the dump — the `.scp` is never at risk.
 
 **The fix — convert the flux with Aufit, which writes full track images.** `gw/aufit.sh
 <flux.scp>` opens Aufit (a Windows/.NET GUI, run under Wine) on the flux; load it, accept

@@ -19,6 +19,24 @@ readonly HXCFE_STX_MODULE="ATARIST_STX"
 readonly HXCFE_SCP_MODULE="SCP_FLUX_STREAM"
 readonly HXCFE_ST_MODULE="ATARIST_ST"
 
+# The track-image injection worker (inject_track_images.py) sits alongside this library, and
+# needs the greaseweazle flux decoder + ibm MFM codec that live in the atari_reverse env's
+# Python. Resolving the worker off this file's own directory keeps it findable from any caller.
+GW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly GW_LIB_DIR
+readonly GW_PYTHON="/Users/geogeo/miniconda3/envs/atari_reverse/bin/python"
+readonly INJECT_WORKER="$GW_LIB_DIR/inject_track_images.py"
+
+# Pasti/STX files begin with "RSY\0"; hxcfe can exit 0 after a soft failure, so the magic is
+# checked as well as the exit status before an STX is trusted.
+readonly STX_MAGIC="RSY"
+
+# Hatari saves 'write sector'/'write track' changes to a <name>.wd1772 sidecar beside the STX.
+# The sidecar is bound to the exact STX it was captured from; regenerating the STX makes it
+# stale and Hatari then refuses to boot with "Error restoring STX save buffer". So a fresh STX
+# must delete any sidecar next to it (Hatari replaces the .stx extension, hence "${stx%.*}").
+readonly HATARI_STX_SIDECAR_EXT="wd1772"
+
 # hxcfe exits 0 even when it converts *nothing*: it writes a valid-looking header and
 # logs one "not allocated" line per track side. A real conversion logs a track
 # generation line per track, so that count - not the exit status - decides success.
@@ -216,4 +234,62 @@ hxcfe_convert() {
         log "WARNING: $unallocated track side(s) could not be converted - the output is incomplete."
     fi
     HXCFE_TRACKS_CONVERTED="$generated"
+}
+
+# True when the greaseweazle Python library (the flux decoder the injection worker needs) is
+# importable. Injection is optional: a caller that cannot import it falls back to sector-only.
+greaseweazle_available() {
+    "$GW_PYTHON" -c "import greaseweazle.image.scp, greaseweazle.codec.ibm.ibm" 2>/dev/null
+}
+
+# convert_scp_to_bootable_stx <scp> <stx>
+# Convert an SCP flux dump into a bootable, protection-preserving STX.
+#
+# hxcfe writes a sector-only STX (track flag 0x01) that omits the raw track images a WD1772
+# READ TRACK returns, so Copylock-protected games black-screen on it. This runs hxcfe, then
+# splices the track images decoded from the flux into every track (flag 0x01 -> 0x61).
+#
+# Postcondition: on success <stx> is the bootable 0x61 image and the return is 0. If injection
+# is unavailable (greaseweazle Python missing) or fails, <stx> is left as the valid sector-only
+# 0x01 image hxcfe produced and the return is non-zero -- each caller decides whether that
+# degraded result is fatal (scp_to_stx dies) or acceptable (backup_disk warns, keeps the dump).
+# An outright hxcfe failure leaves no STX to fall back to and dies inside hxcfe_convert.
+convert_scp_to_bootable_stx() {
+    local scp="$1" stx="$2" tmp prev_exit_trap
+
+    # hxcfe's stdout is verbose per-track spam; it is already appended to the log by
+    # hxcfe_convert itself, so discard the terminal copy and keep progress on the log.
+    hxcfe_convert "$scp" "$stx" "$HXCFE_STX_MODULE" 1 >/dev/null
+    [ "$(head -c ${#STX_MAGIC} "$stx")" = "$STX_MAGIC" ] \
+        || die "output is not a valid STX file (missing '$STX_MAGIC' signature): $stx"
+
+    # This STX was just (re)written, so any Hatari write-back sidecar beside it is now stale;
+    # leaving it would make Hatari abort on boot. Whether injection succeeds or not below, the
+    # STX content differs from whatever the sidecar was saved against, so drop it here.
+    rm -f "${stx%.*}.$HATARI_STX_SIDECAR_EXT"
+
+    if ! greaseweazle_available; then
+        log "WARNING: greaseweazle Python not available - STX is sector-only (0x01); protected games will not boot."
+        return 1
+    fi
+
+    # Inject into a temp in the SAME directory as $stx so publishing the result is an atomic
+    # same-filesystem rename: a crash or Ctrl-C mid-write can never leave a half-written boot
+    # image at $stx (the file the user boots). A failed or partial worker write only ever
+    # touches the temp, so the sector-only STX we keep as the fallback is safe until the rename.
+    # An EXIT trap removes the temp if we are interrupted before the rename; it is saved and
+    # restored around this block so a caller's own EXIT trap is left intact.
+    prev_exit_trap="$(trap -p EXIT)"
+    tmp="$(mktemp "$(dirname "$stx")/.inject.XXXXXX")"
+    trap 'rm -f "$tmp"' EXIT
+    if run_logged "$GW_PYTHON" "$INJECT_WORKER" "$stx" "$scp" "$tmp"; then
+        mv "$tmp" "$stx"
+        eval "${prev_exit_trap:-trap - EXIT}"
+        log "STX track images injected: $stx (bootable, track flag 0x61)."
+        return 0
+    fi
+    rm -f "$tmp"
+    eval "${prev_exit_trap:-trap - EXIT}"
+    log "WARNING: track-image injection failed - STX is sector-only (0x01); protected games will not boot."
+    return 1
 }

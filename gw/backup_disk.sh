@@ -13,10 +13,6 @@ readonly SCRIPT_DIR
 # shellcheck source=gw_lib.sh
 source "$SCRIPT_DIR/gw_lib.sh"
 
-# Pasti/STX files begin with "RSY\0"; hxcfe can exit 0 after a soft failure, so the
-# magic is checked as well as the exit status.
-readonly STX_MAGIC="RSY"
-
 # 5 revolutions is the preservation-community standard: enough passes to out-vote
 # a bad read on any one revolution without an unreasonably long spin.
 readonly DEFAULT_REVS=5
@@ -138,14 +134,30 @@ read_flux() {
     [ -s "$scp" ] || die "gw read produced no flux data: $scp"
 }
 
+# Produces the STX from the gold master. A copy-protected game only boots off an STX that
+# carries the WD1772 track images, so the shared converter injects them. If injection is
+# unavailable or fails it leaves the valid sector-only STX in place; the .scp is the
+# irreplaceable artifact, so a degraded STX warns loudly but never aborts the backup.
 convert_scp_to_stx() {
     local scp="$1" stx="$2"
 
     log "--- Converting SCP -> STX ---"
-    hxcfe_convert "$scp" "$stx" "$HXCFE_STX_MODULE" 1
-    [ "$(head -c ${#STX_MAGIC} "$stx")" = "$STX_MAGIC" ] \
-        || die "output is not a valid STX file (missing '$STX_MAGIC' signature): $stx"
-    log "STX written: $stx ($HXCFE_TRACKS_CONVERTED tracks converted)"
+    if convert_scp_to_bootable_stx "$scp" "$stx"; then
+        log "STX written: $stx ($HXCFE_TRACKS_CONVERTED tracks, bootable with track images)"
+    else
+        log "WARNING: STX is sector-only and will NOT boot copy-protected games."
+        log "         The .scp gold master is intact; run 'scp_to_stx.sh $scp' later to add track images."
+    fi
+    return 0
+}
+
+# Injection needs the greaseweazle Python library. It is optional -- without it the STX comes
+# out sector-only (0x01) and copy-protected games will not boot -- so this warns rather than
+# failing preflight, matching the "never lose the dump over a missing optional converter" rule.
+warn_if_injection_unavailable() {
+    greaseweazle_available && return 0
+    log "NOTE: greaseweazle Python not found - the STX will be sector-only (protected games will not boot)."
+    log "      Install it in the atari_reverse env for bootable, protection-preserving STX output."
 }
 
 # Decodes the gold master to a sector image. Returns non-zero when the disk does not
@@ -226,6 +238,7 @@ main() {
     if [ "$preflight_only" -eq 1 ]; then
         preflight "$HXCFE_STX_MODULE"
         echo "Preflight OK - tools present and Greaseweazle detected."
+        warn_if_injection_unavailable
         return
     fi
 
@@ -246,13 +259,15 @@ main() {
     local st="$dir/$disk_name.st"
 
     # A reused (--force) directory must not keep the previous run's artifacts: a stale
-    # .stx would pass the sanity checks even if this run converted nothing.
-    rm -f "$scp" "$stx" "$st" "$dir/read.log"
+    # .stx would pass the sanity checks even if this run converted nothing, and a stale Hatari
+    # .wd1772 sidecar bound to the old STX would make Hatari refuse to boot the new one.
+    rm -f "$scp" "$stx" "$st" "$dir/read.log" "${stx%.*}.$HATARI_STX_SIDECAR_EXT"
 
     log_file="$dir/read.log"
     : >"$log_file"
 
     log_preflight "$device_info"
+    warn_if_injection_unavailable
     read_flux "$scp"
     convert_scp_to_stx "$scp" "$stx"
 

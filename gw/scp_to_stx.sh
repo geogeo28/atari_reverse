@@ -16,12 +16,9 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# gw_lib.sh gives us the hxcfe wrapper, hxcfe_convert, die and the module/tool-path names.
+# gw_lib.sh gives us the hxcfe wrapper, the shared convert_scp_to_bootable_stx pipeline, die,
+# and the module/tool-path names (INJECT_WORKER, GW_PYTHON included).
 source "$SCRIPT_DIR/gw_lib.sh"
-
-readonly WORKER="$SCRIPT_DIR/inject_track_images.py"
-# The greaseweazle flux decoder + ibm MFM codec live in this conda env's Python.
-readonly PYTHON="/Users/geogeo/miniconda3/envs/atari_reverse/bin/python"
 
 usage() {
     cat >&2 <<EOF
@@ -46,10 +43,12 @@ check_offline_tools() {
     hxcfe -modulelist 2>/dev/null | grep -q "^${HXCFE_STX_MODULE};" \
         || die "hxcfe runs but has no $HXCFE_STX_MODULE module (check DYLD_LIBRARY_PATH=$HXCFE_LIB_DIR)"
 
-    [ -f "$WORKER" ] || die "worker not found: $WORKER"
-    [ -x "$PYTHON" ] || die "python not found or not executable: $PYTHON"
-    "$PYTHON" -c "import greaseweazle.image.scp, greaseweazle.codec.ibm.ibm" 2>/dev/null \
-        || die "greaseweazle not importable by $PYTHON (need the atari_reverse env)"
+    # Injection is the whole point here, so its dependencies are hard requirements (unlike
+    # backup_disk, which degrades to a sector-only STX when they are missing).
+    [ -f "$INJECT_WORKER" ] || die "injection worker not found: $INJECT_WORKER"
+    [ -x "$GW_PYTHON" ] || die "python not found or not executable: $GW_PYTHON"
+    greaseweazle_available \
+        || die "greaseweazle not importable by $GW_PYTHON (need the atari_reverse env)"
 }
 
 flux=""
@@ -79,16 +78,12 @@ fi
 
 check_offline_tools
 
-# hxcfe writes the sector-only STX to a temp file; the worker reads it plus the flux and
-# writes the final imaged STX. Clean the temp up on any exit.
-tmp_dir="$(mktemp -d -t scp_to_stx)"
-tmp_stx="$tmp_dir/sector_only.stx"
-trap 'rm -rf "$tmp_dir"' EXIT
-
-echo "Converting flux -> sector-only STX (hxcfe)..."
-hxcfe_convert "$flux" "$tmp_stx" "$HXCFE_STX_MODULE" 1 >/dev/null
-
-echo "Injecting WD1772 track images from flux..."
-"$PYTHON" "$WORKER" "$tmp_stx" "$flux" "$out"
-
-echo "Done: $out"
+# The shared pipeline runs hxcfe then injects the track images, leaving a sector-only STX at
+# $out if injection fails. Here injection failure is fatal (a bootable STX is the whole point),
+# so surface it as an error while making clear what the leftover file is.
+echo "Converting flux -> bootable STX (hxcfe + track-image injection)..."
+if convert_scp_to_bootable_stx "$flux" "$out"; then
+    echo "Done (bootable, track flag 0x61): $out"
+else
+    die "track-image injection failed; left a sector-only STX that will NOT boot protected games: $out"
+fi

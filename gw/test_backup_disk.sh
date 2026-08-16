@@ -15,6 +15,8 @@ readonly SCP_HEADER_BYTES=688    # 16-byte header + 168 track offsets: no flux d
 readonly LIB="$SCRIPT_DIR/gw_lib.sh"
 HXCFE_BIN="$(grep '^readonly HXCFE_BIN=' "$LIB" | cut -d'"' -f2)"
 HXCFE_LIB_DIR="$(grep '^readonly HXCFE_LIB_DIR=' "$LIB" | cut -d'"' -f2)"
+GW_PYTHON="$(grep '^readonly GW_PYTHON=' "$LIB" | cut -d'"' -f2)"
+readonly FIXTURE="$SCRIPT_DIR/dumps/wb_disk1/wb_disk1.scp"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -64,11 +66,20 @@ if [ "$1" = "-modulelist" ]; then echo "ATARIST_STX;RW;Atari ST STX/Pasti Loader
 echo "Revolution 0 track generation... stub"
 for a in "$@"; do case "$a" in -foutput:*) printf 'RSY\0STX' > "${a#-foutput:}" ;; esac; done
 EOF
-    chmod +x "$WORK/stub/gw" "$WORK/stub/hxcfe"
+    # Stub greaseweazle Python: `py -c "import ..."` succeeds (library "present"), but any
+    # script invocation (the injection worker) fails, so the stubbed backup deterministically
+    # exercises its sector-only fallback without depending on a real greaseweazle install.
+    cat > "$WORK/stub/py" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = "-c" ] && exit 0
+exit 1
+EOF
+    chmod +x "$WORK/stub/gw" "$WORK/stub/hxcfe" "$WORK/stub/py"
     # The tool paths live in the library now, so only the library needs rewriting; the
     # script is copied verbatim and picks up the stub library from its own directory.
     sed -e "s|^readonly GW_BIN=.*|readonly GW_BIN=\"$WORK/stub/gw\"|" \
         -e "s|^readonly HXCFE_BIN=.*|readonly HXCFE_BIN=\"$WORK/stub/hxcfe\"|" \
+        -e "s|^readonly GW_PYTHON=.*|readonly GW_PYTHON=\"$WORK/stub/py\"|" \
         "$LIB" > "$WORK/stub/gw_lib.sh"
     cp "$SCRIPT" "$WORK/stub/backup_stub.sh"
     chmod +x "$WORK/stub/backup_stub.sh"
@@ -120,6 +131,57 @@ fi
 # hxcfe exits 0 on a flux-less SCP but converts nothing; that must not pass.
 dd if="$WORK/synth.scp" of="$WORK/hdronly.scp" bs=1 count="$SCP_HEADER_BYTES" 2>/dev/null
 expect_err "converted no tracks" "header-only SCP is rejected" "$SCRIPT" --convert-only "$WORK/hdronly.scp"
+
+# A regenerated STX must delete a stale Hatari .wd1772 sidecar bound to the OLD STX, or Hatari
+# refuses to boot the new one ("Error restoring STX save buffer"). Removal happens before the
+# injection branch, so this needs neither greaseweazle nor the fixture.
+printf 'STALE' > "$WORK/synth.wd1772"
+"$SCRIPT" --convert-only "$WORK/synth.scp" >/dev/null 2>&1
+[ ! -e "$WORK/synth.wd1772" ] && [ -s "$WORK/synth.stx" ] \
+    && report ok "regenerating an STX removes the stale .wd1772 sidecar" \
+    || report no "stale .wd1772 sidecar survived STX regeneration"
+
+echo "=== injection: protected fixture yields a bootable 0x61 STX ==="
+# Needs the real flux fixture and greaseweazle; dumps/ is git-ignored, so SKIP on a fresh
+# checkout rather than fail. --convert-only writes the .stx next to the .scp, so work on a copy.
+cyl0_flag() {  # cyl0_flag <stx>
+    "$GW_PYTHON" - "$1" <<'PY'
+import struct, sys
+d = open(sys.argv[1], "rb").read(); off = 16
+for _ in range(d[10]):
+    rs, fz, ns, fl, mf, tn, rt = struct.unpack_from("<IIHHHBB", d, off)
+    if (tn & 0x7f, tn >> 7) == (0, 0): print(f"0x{fl:04x}"); break
+    off += rs
+PY
+}
+if [ -f "$FIXTURE" ] && "$GW_PYTHON" -c "import greaseweazle" 2>/dev/null; then
+    cp "$FIXTURE" "$WORK/prot.scp"
+    if "$SCRIPT" --convert-only "$WORK/prot.scp" >/dev/null 2>&1; then
+        flag="$(cyl0_flag "$WORK/prot.stx")"
+        [ "$flag" = "0x0061" ] \
+            && report ok "backup STX carries track images (cyl 0 flag 0x0061)" \
+            || report no "backup STX cyl 0 flag $flag, wanted 0x0061"
+    else
+        report no "backup --convert-only on protected fixture failed"
+    fi
+else
+    printf 'SKIP  injection 0x61 test (fixture or greaseweazle absent)\n'
+fi
+
+echo "=== fallback: injection failure keeps the dump and warns sector-only ==="
+# The stubbed Python fails every worker invocation, so injection cannot succeed. The backup
+# must still finish (exit 0), warn that the STX is sector-only, and leave the .scp gold master
+# and a valid (RSY) STX behind -- the flux is irreplaceable and must never be lost over this.
+"$STUB" degraded >/dev/null 2>&1; degraded_rc=$?
+ddir="$WORK/stub/dumps/degraded"
+if [ "$degraded_rc" -eq 0 ] \
+   && [ -s "$ddir/degraded.scp" ] \
+   && [ "$(head -c 3 "$ddir/degraded.stx")" = "RSY" ] \
+   && grep -q "sector-only" "$ddir/read.log"; then
+    report ok "injection failure falls back to sector-only STX, backup survives"
+else
+    report no "injection-failure fallback (rc=$degraded_rc, scp/stx/warning missing)"
+fi
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
