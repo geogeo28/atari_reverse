@@ -187,6 +187,17 @@ its WPF GUI needs a real desktop session — launching it from a headless/backgr
 fails at graphics init. Alternatively, when a known-good Pasti dump of the same disk exists,
 verify your dump against it sector-by-sector and play on that file.
 
+**The automated fix — `gw/scp_to_stx.sh <flux.scp> [out.stx]`.** Replaces the manual Aufit
+GUI step, fully offline (hxcfe + the greaseweazle Python library; no Greaseweazle hardware).
+It runs hxcfe for the sectors/fuzzy mask, then decodes each track's flux to the WD1772 READ
+TRACK byte stream and splices it in as a Pasti track-image sub-record, flipping every track
+flag `0x01 → 0x61`; hxcfe's sector data and fuzzy mask are left byte-for-byte untouched.
+Confirmed on Wonder Boy disk 1: matches Aufit's structure and boots in Hatari with **zero**
+`no track image` warnings. `gw/test_scp_to_stx.sh` pins this — but its injection differential
+and boot check need a local flux fixture (`dumps/wb_disk1/wb_disk1.scp`), and `dumps/` is
+git-ignored, so on a fresh checkout the test **SKIPs**: there is no committed regression guard
+for the injection until you dump that disk locally.
+
 Hatari is launched with the same machine settings as `tools/hatari_run.sh` — 1 MiB ST, RGB
 monitor, low-res TOS — using `tools/hatari/TOS104US.img`. `TOS_IMG` overrides the ROM in
 both, though a Quick Action inherits almost no environment, so in practice that override is
