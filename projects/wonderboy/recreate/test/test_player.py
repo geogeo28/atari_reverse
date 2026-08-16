@@ -5,11 +5,12 @@ requires the two to agree byte for byte, and states (or bounds) the original's w
 
 WHAT SHAPES THIS BATTERY, and it is not what shaped test_behavior.py's.
 
-  * NOTHING HERE IS A DISPATCH ROW. These seven routines are reached by `bsr` from
+  * NOTHING HERE IS A DISPATCH ROW. These eight routines are reached by `bsr` from
     `actor_behavior_type01_player` ($a38) and from each other, so a case enters each at its own
     address with the record in a0 — the leaf convention, not the handler one. The census behind that
-    claim is a case of its own: six of the seven are named by exactly ONE instruction in the whole
-    image and the seventh, `player_reset_ground_state`, by two.
+    claim is a case of its own: six of the eight are named by exactly ONE instruction in the whole
+    image, and two by two each — `player_reset_ground_state` (both sites inside the walk) and
+    `player_stage_transition` (the frame's own last `bsr`, and the gate's at $bb0).
   * THE MAP AND THE ACTOR TABLE ARE REACHED, and only since batch 40 phase B. The walk ($ec8) has
     SIX map-probe sites — a left/right pair in each of the three sections that move the record, of
     which up to THREE can fire in one frame — and the weapon ($1208) allocates out of the high pool.
@@ -17,7 +18,12 @@ WHAT SHAPES THIS BATTERY, and it is not what shaped test_behavior.py's.
     three parts: a record and a handful of globals for the five phase-A routines, `map_pokes` from
     the battery that owns the probes with the probed rows cleared, and a keyed high pool with its
     free markers. Everything above the walk's section still seeds none of it.
-  * THE GLOBALS ARE THE OUTPUT. Five of the seven write more outside the record than in it: the two
+  * THE PROGRAM'S OWN DATA IS SEEDED TOO, and only since batch 40 phase C. `player_stage_transition`
+    reads four cursors, four frame tables and three 88-byte posture records out of the 466 bytes
+    above its own body, and the eight bytes of ladder frames INSIDE it — so those are one keyed band
+    plus one, and the tripwire below says so, because the first draft of that seeding was silently
+    dropped and the sweep caught it.
+  * THE GLOBALS ARE THE OUTPUT. Five of the eight write more outside the record than in it: the two
     WB_TILE_33_* words, the two HUD slots, the message pair, the meter and the four words the death
     arm raises, plus the weapon's own record list, its fresh flag and WB_FLASH_TIMER. Every case
     states them exactly.
@@ -26,7 +32,11 @@ WHAT SHAPES THIS BATTERY, and it is not what shaped test_behavior.py's.
     battery that owns it — exactly as test_stage.py and test_behavior.py's slot 61 do.
 
 KNOWINGLY NOT PINNED
-  * THE REGISTERS EACH ROUTINE LEAVES BEHIND. None of the seven hands one back that a caller reads:
+  * EVERY CURSOR HERE IS AN EVEN BYTE OFFSET, and no case drives an odd one. `lea 0(a1,d0.w),a1`
+    sign-extends the index and the `move.w` then fetches an UNALIGNED word, which is an address
+    error on a real 68000; the original's own masks keep its cursors even from any even start, so no
+    shipped path reaches one. Same standing as the odd-cursor silence the behaviour tier carries.
+  * THE REGISTERS EACH ROUTINE LEAVES BEHIND. None of the eight hands one back that a caller reads:
     $a4e overwrites `player_step_and_arm`'s d0 unread, $a52's `tst.w $6ef0.l` overwrites the
     weapon's, and the other five are entered for their memory alone. The reconstruction returns
     nothing and nothing compares one.
@@ -43,11 +53,14 @@ import pytest
 import harness
 import leaf
 import loader
-from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addq_b_d16, addq_b_dn, addq_w_d16, addq_w_dn,
+from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b_dn, addq_w_d16,
+                  addq_w_dn, andi_w_dn, cmp_w_imm_dn, cmpi_w_abs_l,
                   addq_w_ind, bcc, bcc_s, bra_s, bsr, case_salt, clr_b_d16, clr_w_abs_l, clr_w_d16,
                   clr_w_dn, jsr_ind, keyed_block, lab, lea_abs_l, lea_d16, longword, merge_bands,
                   move_b_d16_dn, move_b_dn_d16, move_b_imm_abs_l, move_b_imm_d16, move_w_abs_l_dn,
-                  move_w_imm_abs_l, move_w_imm_abs_w, move_w_imm_dn, movea_l_abs_l, moveq, opcode,
+                  move_w_d16_d16, move_w_dn_abs_l,
+                  move_w_imm_abs_l, move_w_imm_abs_w, move_w_imm_dn, move_w_postinc_dn,
+                  movea_l_abs_l, moveq, opcode,
                   program_writes, quick_field, st_abs_l, sub_w_dn_d16, subq_b_d16, subq_w_d16,
                   tst_b_abs_l, tst_b_d16, tst_w_abs_l, tst_w_abs_w, word)
 from layout import wb
@@ -55,7 +68,7 @@ from layout import wb
 # The record's geometry, the register ordinals and the three BIT opcodes come from the battery that
 # owns the actor table — a second copy of "what a record looks like" could disagree with src/actor.c
 # while both stayed green. Same rule test_behavior.py follows.
-from leaf import A0, A1, A2, A3, A6, D0, D1, D6, D7                          # noqa: E402
+from leaf import A0, A1, A2, A3, A5, A6, D0, D1, D6, D7                          # noqa: E402
 from test_actor import (BCLR_IMM, BEQ_W, BGT_W, BMI_W, BNE_W, BPL_W, BRA_W,  # noqa: E402
                         BSET_IMM, BTST_IMM,
                         RECORD_BYTES, TABLE_DEFAULT, _sfx_bytes, bit_op_d16, jsr_d16_an)
@@ -154,6 +167,56 @@ WALK_SPEED_BIAS = wb("PLAYER_WALK_SPEED_BIAS")
 TURN_DECEL_RIGHT = wb("PLAYER_TURN_DECEL_RIGHT")
 TURN_DECEL_LEFT = wb("PLAYER_TURN_DECEL_LEFT")
 DRIFT_SPEND = wb("PLAYER_DRIFT_SPEND")
+
+# --- ...and the STAGE TRANSITION's (batch 40 phase C) -----------------------------------------------
+FIELD_18 = wb("ACTOR_FIELD_18")
+FALLING_BIT = wb("ACTOR_FLAG_FALLING_BIT")
+ANIM_FRAME_BYTES = wb("ACTOR_ANIM_FRAME_BYTES")
+ANIM32_MASK = wb("ACTOR_ANIM32_MASK")
+SPRITE_HIDDEN = wb("ACTOR_SPRITE_HIDDEN")
+
+STAGE_ANIM_REQUEST_B0E = wb("STAGE_ANIM_REQUEST_B0E")
+STAGE_ANIM_DONE_B10 = wb("STAGE_ANIM_DONE_B10")
+STAGE_ANIM_DONE_B18 = wb("STAGE_ANIM_DONE_B18")
+EVENT_ANIM_DONE_B16 = wb("EVENT_ANIM_DONE_B16")
+EVENT_DONE_SET = wb("EVENT_DONE_SET")
+EFFECT_STATE_21E4 = wb("EFFECT_STATE_21E4")
+
+POSTURE_TABLE_0 = wb("PLAYER_POSTURE_TABLE_0")
+POSTURE_TABLE_1 = wb("PLAYER_POSTURE_TABLE_1")
+POSTURE_TABLE_2 = wb("PLAYER_POSTURE_TABLE_2")
+POSTURE_BYTES = wb("PLAYER_POSTURE_BYTES")
+POSTURE_IDLE_RIGHT = wb("PLAYER_POSTURE_IDLE_RIGHT")
+POSTURE_IDLE_LEFT = wb("PLAYER_POSTURE_IDLE_LEFT")
+POSTURE_JUMP_LEFT = wb("PLAYER_POSTURE_JUMP_LEFT")
+POSTURE_JUMP_RIGHT = wb("PLAYER_POSTURE_JUMP_RIGHT")
+POSTURE_FALL_LEFT = wb("PLAYER_POSTURE_FALL_LEFT")
+POSTURE_FALL_RIGHT = wb("PLAYER_POSTURE_FALL_RIGHT")
+POSTURE_WALK_RIGHT = wb("PLAYER_POSTURE_WALK_RIGHT")
+POSTURE_WALK_LEFT = wb("PLAYER_POSTURE_WALK_LEFT")
+POSTURE_STATE_ONE = wb("PLAYER_POSTURE_STATE_ONE")
+
+TRANSITION_CURSOR = wb("PLAYER_TRANSITION_CURSOR")
+TRANSITION_TABLE_BYTES = wb("PLAYER_TRANSITION_TABLE_BYTES")
+EVENT_ANIM_CURSOR = wb("PLAYER_EVENT_ANIM_CURSOR")
+DEATH_ANIM_CURSOR = wb("PLAYER_DEATH_ANIM_CURSOR")
+ATTACK_CURSOR = wb("PLAYER_ATTACK_CURSOR")
+ATTACK_TABLE_RIGHT = wb("PLAYER_ATTACK_TABLE_RIGHT")
+ATTACK_TABLE_LEFT = wb("PLAYER_ATTACK_TABLE_LEFT")
+ATTACK_MASK = wb("PLAYER_ATTACK_MASK")
+ATTACK_SFX = wb("PLAYER_ATTACK_SFX")
+LADDER_SPRITES = wb("PLAYER_LADDER_SPRITES")
+LADDER_SPRITE_MASK = wb("PLAYER_LADDER_SPRITE_MASK")
+HURT_SPRITE_RIGHT = wb("PLAYER_HURT_SPRITE_RIGHT")
+HURT_SPRITE_LEFT = wb("PLAYER_HURT_SPRITE_LEFT")
+HURT2_SPRITE_RIGHT = wb("PLAYER_HURT2_SPRITE_RIGHT")
+HURT2_SPRITE_LEFT = wb("PLAYER_HURT2_SPRITE_LEFT")
+
+# NOT header constants, for `WEAPON_SPEND_VALUE`'s reason: the reconstruction READS these four words
+# out of the image (they are data inside $1f54's own body, at WB_PLAYER_LADDER_SPRITES) rather than
+# spelling them, so they are the entry pin's claim and not something src/player.c could drift from.
+LADDER_SPRITE_A = 0x14e
+LADDER_SPRITE_B = 0x14f
 
 EFFECT_RECORD_LIST = wb("EFFECT_RECORD_LIST")
 EFFECT_RECORD_WRITE_PTR = wb("EFFECT_RECORD_WRITE_PTR")
@@ -295,6 +358,8 @@ def andi_b_d16(base, value, displacement):
 
 def cmp_b_d16_dn(reg, base, displacement):
     """`cmp.b d16(An),Dn` — the accelerator's ceiling test, a SIGNED byte comparison."""
+    # ALSO IN test_scene.py (the marker pair's two neighbour compares) — SECOND copy, same argument
+    # order, and it goes to leaf.py on the third.
     return opcode(0xb028 | (reg << 9) | base) + word(displacement)
 
 
@@ -366,6 +431,45 @@ def move_l_ind_ind(source, destination):
     """`move.l (As),(Ad)` — the shot's x,y taken from the player's."""
     # ALSO IN test_behavior.py — second copy, which the rule allows.
     return opcode(0x2090 | (destination << 9) | source)
+
+
+# ...and the forms the STAGE TRANSITION needs. Its whole vocabulary is `move.w <something>,6(a0)` in
+# four addressing modes, which is what a sprite selector is; the three below are that instruction's
+# source modes, spelt from the 68000's own field layout like every encoder above.
+# ...and the two BELOW are leaf.py's now, hoisted by this batch: `move_w_d16_d16` on its third copy
+# (test_actor.py's and test_behavior.py's remain) and `move_w_dn_abs_l` on its fourth
+# (test_behavior.py, test_scroll.py, test_stage.py). This file imports both rather than spelling a
+# fourth and a fifth.
+MOVE_W_TO_D16 = 0x3000 | (5 << 6)     # size + destination mode `d16(An)`, shared by the two here
+
+
+def move_w_indexed_d16(source, index, destination, displacement, source_displacement=0):
+    """`move.w d8(As,Dn.w),d16(Ad)` — a frame fetched out of a table the cursor has just indexed and
+    published straight into the record. FOUR of the five animations here are this one instruction."""
+    # ALSO IN test_behavior.py — SECOND copy, and that one takes the same four arguments in the same
+    # order without this file's optional fifth (a displacement the behaviour tier's sites never use).
+    return (opcode(MOVE_W_TO_D16 | (destination << 9) | (6 << 3) | source)
+            + leaf.brief_extension_word(index, source_displacement) + word(displacement))
+
+
+def move_w_ind_d16(source, destination, displacement):
+    """`move.w (As),d16(Ad)` — the same publish where a `lea` has already added the index."""
+    # ALSO IN test_behavior.py — SECOND copy, same argument order.
+    return opcode(MOVE_W_TO_D16 | (destination << 9) | (2 << 3) | source) + word(displacement)
+
+
+def andi_b_dn(reg, value):
+    """`andi.b #imm,Dn` — the ladder's cursor masked in a REGISTER, where the step below it masks the
+    record's field in memory."""
+    # ALSO IN test_behavior.py — SECOND copy, same argument order.
+    return opcode(0x0200 | reg) + word(value & 0xff)
+
+
+def bsr_label(target):
+    """`bsr.w` aimed at a LABEL in this body. `leaf.bsr` takes a ROUTINE NAME, and $2010's call is
+    the one `bsr` in this battery whose target has no name of its own: it is the bare `rts` at
+    $205c, i.e. a call that does nothing at all."""
+    return leaf.Ref(4, lambda at, labels: leaf.bsr_w(at, labels[target]))
 
 
 # --- the entry pins ---------------------------------------------------------------------------------
@@ -756,6 +860,216 @@ def _weapon_fire_pieces():
     ]
 
 
+def _walk_cycle_pieces(cursor_field):
+    """$21b0 / $21ca — the two facings' walk cycles, one body with the POSTURE RECORD's own cursor
+    field exchanged. The frame is published from the cursor as it WAS and the field stepped
+    afterwards, in memory, by an `addq.w` and an `andi.w` — two stores to one word."""
+    return [
+        lea_d16(A5, cursor_field, A6),
+        move_w_postinc_dn(D0, A5),
+        leaf.lea_indexed(A5, D0),
+        move_w_ind_d16(A5, A0, ACTOR_SPRITE),
+        addq_w_d16(ANIM_FRAME_BYTES, A6, cursor_field),
+        andi_w_d16(A6, ANIM32_MASK, cursor_field),
+        RTS,
+    ]
+
+
+def _anim32_pieces(cursor, done_flag):
+    """$1faa / $1fde — arms 2 and 3, one body with the cursor exchanged and the completion arm
+    present or absent. Sixteen words wrapped by WB_ACTOR_ANIM32_MASK, and the `bne` reads the Z that
+    `move.w d0,<cursor>` itself set."""
+    label = f"anim32-{cursor:#x}"
+    stepped = [
+        lea_abs_l(A1, cursor),
+        move_w_postinc_dn(D0, A1),
+        move_w_indexed_d16(A1, D0, A0, ACTOR_SPRITE),
+        addq_w_dn(ANIM_FRAME_BYTES, D0),
+        andi_w_dn(D0, ANIM32_MASK),
+        move_w_dn_abs_l(D0, cursor),
+    ]
+    if done_flag is None:                       # $1fde falls to the shared `rts` instead
+        return stepped + [bcc(BRA_W, "tail-rts")]
+    return stepped + [
+        bcc(BNE_W, label),
+        move_w_imm_abs_w(EVENT_DONE_SET, done_flag),
+        move_w_imm_d16(A0, SPRITE_HIDDEN, ACTOR_SPRITE),
+        lab(label),
+        RTS,
+    ]
+
+
+def _hurt_pair_pieces(label, left, right, fall_through):
+    """$2024 / $2042 — the two fixed hurt sprites, chosen by WB_ACTOR_FLAG_SIDE_BIT. The LAST of the
+    two blocks falls into the shared `rts` where the first branches to it, which is the one thing
+    that is not symmetric between them."""
+    return [
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        bcc(BEQ_W, f"{label}-right"),
+        move_w_imm_d16(A0, left, ACTOR_SPRITE),
+        bcc(BRA_W, "tail-rts"),
+        lab(f"{label}-right"),
+        move_w_imm_d16(A0, right, ACTOR_SPRITE),
+    ] + ([] if fall_through else [bcc(BRA_W, "tail-rts")])
+
+
+def _posture_pair_pieces(label, left_field, right_field, right_is_indirect=False):
+    """$2146 / $2160 / $218e — one question already answered, and the pair of posture-record fields
+    WB_ACTOR_FLAG_SIDE_BIT then chooses between. `right_is_indirect` is the idle pair's own quirk:
+    its RIGHT field is offset zero, so the original spells `move.w (a6),6(a0)`."""
+    return [
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        bcc(BEQ_W, f"{label}-right"),
+        move_w_d16_d16(A6, left_field, A0, ACTOR_SPRITE),
+        RTS,
+        lab(f"{label}-right"),
+        (move_w_ind_d16(A6, A0, ACTOR_SPRITE) if right_is_indirect
+         else move_w_d16_d16(A6, right_field, A0, ACTOR_SPRITE)),
+        RTS,
+    ]
+
+
+def _stage_transition_pieces():
+    """$1f54 — FOUR flag arms in one chain, two shared tails ($205c's bare `rts` and the posture
+    selector at $205e), and EIGHT BYTES OF DATA in the middle of the body: the ladder's own frame
+    table at $20c2, which the `rts` above it and the `btst` below it bound exactly."""
+    return [
+        tst_w_abs_w(STAGE_ANIM_DONE_B10),
+        bcc(BEQ_W, "live"),
+        RTS,
+        lab("live"),
+        tst_w_abs_w(STAGE_ANIM_REQUEST_B0E),
+        bcc(BEQ_W, "arm-event"),
+        # $1f66 — THE TRANSITION, the one animation here with two tables and an EQUALITY wrap
+        lea_abs_l(A1, TRANSITION_CURSOR),
+        move_w_postinc_dn(D0, A1),
+        tst_w_abs_l(EFFECT_STATE_21E4),
+        bcc(BEQ_W, "transition-frame"),
+        lea_d16(A1, TRANSITION_TABLE_BYTES, A1),
+        lab("transition-frame"),
+        move_w_indexed_d16(A1, D0, A0, ACTOR_SPRITE),
+        addi_w_dn(D0, ANIM_FRAME_BYTES),
+        cmp_w_imm_dn(D0, TRANSITION_TABLE_BYTES),
+        bcc(BNE_W, "transition-store"),
+        clr_w_dn(D0),
+        lab("transition-store"),
+        move_w_dn_abs_l(D0, TRANSITION_CURSOR),
+        bcc(BNE_W, "transition-out"),
+        move_w_imm_abs_w(EVENT_DONE_SET, STAGE_ANIM_DONE_B10),
+        lab("transition-out"),
+        RTS,
+        # $1fa2 — the arm WB_EVENT_ANIM_DONE_B16 gates
+        lab("arm-event"),
+        tst_w_abs_w(EVENT_ANIM_DONE_B16),
+        bcc(BEQ_W, "arm-death"),
+    ] + _anim32_pieces(EVENT_ANIM_CURSOR, STAGE_ANIM_DONE_B18) + [
+        # $1fd6 — the death animation, which has no completion flag of its own
+        lab("arm-death"),
+        tst_w_abs_w(STAGE_RESET_BLOCK),
+        bcc(BEQ_W, "arm-hurt"),
+    ] + _anim32_pieces(DEATH_ANIM_CURSOR, None) + [
+        # $1ffc — the HURT arm, whose SUPPORTED path falls through to the selector by way of a
+        # `bsr` into a bare `rts`
+        lab("arm-hurt"),
+        bit_op_d16(BTST_IMM, FLAGS2_BIT_0, A0, FLAGS2),
+        bcc(BEQ_W, "select"),
+        bit_op_d16(BTST_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        bcc(BEQ_W, "hurt"),
+        bsr_label("tail-rts"),
+        bcc(BRA_W, "select"),
+        lab("hurt"),
+        cmpi_w_abs_l(POSTURE_STATE_ONE, EFFECT_STATE_21E4),
+        bcc(BNE_W, "hurt2"),
+    ] + _hurt_pair_pieces("hurt", HURT_SPRITE_LEFT, HURT_SPRITE_RIGHT, fall_through=False) + [
+        lab("hurt2"),
+    ] + _hurt_pair_pieces("hurt2", HURT2_SPRITE_LEFT, HURT2_SPRITE_RIGHT, fall_through=True) + [
+        lab("tail-rts"),
+        RTS,
+        # $205e — pick the posture record WB_EFFECT_STATE_21E4 names
+        lab("select"),
+        tst_w_abs_l(EFFECT_STATE_21E4),
+        bcc(BNE_W, "state-nonzero"),
+        lea_abs_l(A6, POSTURE_TABLE_0),
+        bcc(BRA_W, "picked"),
+        lab("state-nonzero"),
+        cmpi_w_abs_l(POSTURE_STATE_ONE, EFFECT_STATE_21E4),
+        bcc(BNE_W, "state-other"),
+        lea_abs_l(A6, POSTURE_TABLE_1),
+        bcc(BRA_W, "picked"),
+        lab("state-other"),
+        lea_abs_l(A6, POSTURE_TABLE_2),
+        lab("picked"),
+        tst_w_abs_w(TILE_33_MODE),
+        bcc(BEQ_W, "swing"),
+        # $2096 — THE LADDER, whose table is the eight bytes below
+        lea_abs_l(A1, LADDER_SPRITES),
+        moveq(0, D0),
+        move_b_d16_dn(D0, A0, FIELD_18),
+        andi_b_dn(D0, LADDER_SPRITE_MASK),
+        leaf.lea_indexed(A1, D0),
+        move_w_ind_d16(A1, A0, ACTOR_SPRITE),
+        tst_w_abs_w(TILE_33_STEP),
+        bcc(BEQ_W, "ladder-out"),
+        addq_b_d16(ANIM_FRAME_BYTES, A0, FIELD_18),
+        andi_b_d16(A0, LADDER_SPRITE_MASK, FIELD_18),
+        lab("ladder-out"),
+        RTS,
+        # $20c2 — DATA: four climbing frames, two sprite ids held twice each
+        word(LADDER_SPRITE_A) + word(LADDER_SPRITE_A)
+        + word(LADDER_SPRITE_B) + word(LADDER_SPRITE_B),
+        # $20ca — THE SWING, and the SFX id that becomes the frame index
+        lab("swing"),
+        bit_op_d16(BTST_IMM, FIRED_BIT, A0, ACTOR_FLAGS),
+        bcc(BEQ_W, "posture"),
+        tst_w_abs_l(EFFECT_STATE_21E4),
+        bcc(BEQ_W, "posture"),
+        move_w_abs_l_dn(D0, ATTACK_CURSOR),
+        bcc(BNE_W, "swing-table"),
+        move_w_imm_dn(D0, ATTACK_SFX),
+        clr_w_dn(D1),
+        lea_abs_l(A1, STUB_TABLE_BASE),
+        jsr_d16_an(A1, STUB_TRIGGER_OFFSET),
+        lab("swing-table"),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        bcc(BNE_W, "swing-left"),
+        lea_abs_l(A1, ATTACK_TABLE_RIGHT),
+        bcc(BRA_W, "swing-frame"),
+        lab("swing-left"),
+        lea_abs_l(A1, ATTACK_TABLE_LEFT),
+        lab("swing-frame"),
+        move_w_indexed_d16(A1, D0, A0, ACTOR_SPRITE),
+        addi_w_dn(D0, ANIM_FRAME_BYTES),
+        andi_w_dn(D0, ATTACK_MASK),
+        move_w_dn_abs_l(D0, ATTACK_CURSOR),
+        bcc(BNE_W, "swing-out"),
+        bit_op_d16(BCLR_IMM, FIRED_BIT, A0, ACTOR_FLAGS),
+        lab("swing-out"),
+        RTS,
+        # $2132 — THE POSTURE SELECTOR. MOVING and LAUNCHED are ONE question
+        lab("posture"),
+        bit_op_d16(BTST_IMM, MOVING_BIT, A0, ACTOR_FLAGS),
+        bcc(BNE_W, "jump"),
+        bit_op_d16(BTST_IMM, LAUNCHED_BIT, A0, ACTOR_FLAGS),
+        bcc(BEQ_W, "fall-test"),
+        lab("jump"),
+    ] + _posture_pair_pieces("jump", POSTURE_JUMP_LEFT, POSTURE_JUMP_RIGHT) + [
+        lab("fall-test"),
+        bit_op_d16(BTST_IMM, FALLING_BIT, A0, ACTOR_FLAGS),
+        bcc(BEQ_W, "walk-test"),
+    ] + _posture_pair_pieces("fall", POSTURE_FALL_LEFT, POSTURE_FALL_RIGHT) + [
+        lab("walk-test"),
+        bit_op_d16(BTST_IMM, MOVED_BIT, A0, ACTOR_FLAGS),
+        bcc(BNE_W, "walk"),
+    ] + _posture_pair_pieces("idle", POSTURE_IDLE_LEFT, POSTURE_IDLE_RIGHT,
+                             right_is_indirect=True) + [
+        lab("walk"),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A0, ACTOR_FLAGS),
+        bcc(BEQ_W, "walk-right"),
+    ] + _walk_cycle_pieces(POSTURE_WALK_LEFT) + [
+        lab("walk-right"),
+    ] + _walk_cycle_pieces(POSTURE_WALK_RIGHT)
+
+
 ENTRY_PIECES = {
     "player_meter_empty_check": _meter_empty_pieces(),
     "player_jump_step": _jump_step_pieces(),
@@ -764,8 +1078,9 @@ ENTRY_PIECES = {
     "scene_copy_record_fields": _copy_record_pieces(),
     "player_step_and_arm": _step_and_arm_pieces(),
     "player_weapon_fire": _weapon_fire_pieces(),
+    "player_stage_transition": _stage_transition_pieces(),
 }
-RECONSTRUCTED_ROUTINES = 7
+RECONSTRUCTED_ROUTINES = 8
 
 ENTRY_BYTES = {name: leaf.asm(leaf.entry_of(name), pieces)
                for name, pieces in ENTRY_PIECES.items()}
@@ -812,6 +1127,9 @@ BODY_SIZES = {
                                         # and the last TWO of those bytes are the packed-BCD 1 the
                                         # routine's own `sbcd` reads, not code
     "scene_copy_record_fields": 30,     # $539e..$53bb, bounded by actor_behavior_type36's entry
+    "player_stage_transition": 656,     # $1f54..$21e3, bounded by the 466 bytes of DATA above it —
+                                        # and EIGHT of those 656 are data too, the ladder's own
+                                        # frame table at $20c2
 }
 
 
@@ -826,7 +1144,8 @@ def test_the_pin_is_the_whole_body(name):
 # `jsr $6f9e.w` is why it is measured rather than assumed. The scan is test_behavior.py's — every way
 # an instruction can name an address, keyed by target — and it is imported rather than restated so
 # the two censuses cannot disagree about the same instruction.
-from test_behavior import CONTROL_FLOW_TARGETS, PC_RELATIVE_SOURCE_TARGETS   # noqa: E402
+from test_behavior import (CONTROL_FLOW_TARGETS, PC_RELATIVE_SOURCE_TARGETS,   # noqa: E402
+                           _operand_sites)
 
 CALLERS = {
     # the frame's own `bsr`s, at $a38..$a73
@@ -840,6 +1159,9 @@ CALLERS = {
     # ...and $107c has TWO, both inside player_step_and_arm's walk arms.
     "player_reset_ground_state": (0xfb2, 0x101e),
     "scene_copy_record_fields": (0xc5e,),
+    # ...and the LAST call has TWO callers: the frame's own `bsr` and the one on nearly every arm of
+    # `player_pending_event_gate`.
+    "player_stage_transition": (0xa70, 0xbb0),
 }
 
 
@@ -2355,14 +2677,741 @@ def test_the_three_OTHER_arms_carry_the_callers_extend_and_no_case_here_can_set_
 
 
 # ==================================================================================================
-# The two UNPORTED routines this phase MEASURED rather than reconstructed
+# $1f54 — THE STAGE TRANSITION, the frame's LAST call
 # ==================================================================================================
 #
-# `player_pending_event_gate` ($b1a) and `player_stage_transition` ($1f54) are the frame's remaining
-# calls, and neither is portable: $b1a reaches $1f54, $19ac and $fe8c and leaves through two
-# `lea 4(a7),a7 / jmp` pairs that pop a return address, and $1f54 is 656 bytes of unread code. What
-# CAN be pinned about them from here is structural, and both claims below were live failure modes
-# rather than curiosities.
+# Four flag arms and a posture selector, and what the cases below have to seed that nothing above
+# them did is the FOUR CURSORS and the THREE POSTURE RECORDS, all of which live in the program's own
+# data at $21e4..$23b5. They are seeded as keyed blocks so that a frame published from the wrong
+# table, or a cursor stepped by the wrong amount, lands on a byte that is wrong for WHERE IT CAME
+# FROM rather than on a plausible sprite id.
+
+_STAGE_TRANSITION = leaf.register_glue("player_stage_transition", [ctypes.c_uint32])
+
+
+# --- the operand censuses, as CASES ------------------------------------------------------------
+#
+# Four of this section's plates rest on a count of how many instructions in the whole image name an
+# address, and the sharpest of them — "entries 0, 2 and 4 of both attack tables are unreachable" —
+# rests on WB_PLAYER_ATTACK_CURSOR having exactly TWO. A count in prose is a count nothing checks,
+# and this batch has two reasons to distrust one: the $21e4 census that said "no reader at all"
+# missed a whole ENCODING for three batches, and a naive scan for $b10 finds a `bsr.w`
+# DISPLACEMENT that happens to equal the address. So the hand-filtering is recorded here.
+#
+# The scan starts from the SUPERSET — every aligned position in the program holding the address as a
+# word, which is a short operand whole AND a long one's low half — and then classifies each against
+# the absolute-addressing forms below. Anything that matches none is reported with the word in front
+# of it, which is what makes the two near-misses visible rather than quietly dropped.
+
+# (opcode word, byte offset of the operand word within the instruction, is the operand a LONGWORD).
+# Every form the four addresses below are actually named by; a fifth form would show up as an
+# unclassified candidate rather than being silently missed.
+ABSOLUTE_FORMS = (
+    (0x4a78, 2, False),      # tst.w   <abs>.w
+    (0x4a79, 4, True),       # tst.w   <abs>.l
+    (0x4278, 2, False),      # clr.w   <abs>.w
+    (0x42b8, 2, False),      # clr.l   <abs>.w   — clears the NEXT word too, without naming it
+    (0x31fc, 4, False),      # move.w  #imm,<abs>.w
+    (0x33fc, 6, True),       # move.w  #imm,<abs>.l
+    (0x0c79, 6, True),       # cmpi.w  #imm,<abs>.l
+    (0x3039, 4, True),       # move.w  <abs>.l,Dn
+    (0x33c0, 4, True),       # move.w  Dn,<abs>.l
+)
+
+
+def _image_word_at(addr):
+    return int.from_bytes(harness.BASE_IMAGE[addr:addr + WORD_BYTES], "big")
+
+
+def _absolute_operand_census(addr):
+    """({instruction address: opcode word}, {unclassified word position: the word before it}).
+
+    A candidate is a real operand when the bytes that would have to precede it for one of the forms
+    above really do; a `.l` form additionally needs the operand's HIGH half to be zero, which is what
+    separates `$000021e4` from a coincidence."""
+    named, other = {}, {}
+    for at in _operand_sites(word(addr)):
+        if at % WORD_BYTES or at + WORD_BYTES > loader.PROGRAM_END:
+            continue
+        hits = [(at - offset, opcode_word) for opcode_word, offset, is_long in ABSOLUTE_FORMS
+                if _image_word_at(at - offset) == opcode_word
+                and (not is_long or _image_word_at(at - WORD_BYTES) == 0)]
+        assert len(hits) <= 1, f"{at:#x} classifies as {len(hits)} different instructions"
+        if hits:
+            named[hits[0][0]] = hits[0][1]
+        else:
+            other[at] = _image_word_at(at - WORD_BYTES)
+    return named, other
+
+
+# {address: (what its operand sites are, what the candidates that are NOT operands are)}. Every
+# figure a plate in this section quotes is one of these lengths.
+OPERAND_CENSUS = {
+    "PLAYER_ATTACK_CURSOR": ({0x20de: 0x3039,           # move.w $2372.l,d0
+                              0x2120: 0x33c0},          # move.w d0,$2372.l
+                             # ...and a word of DATA past the program's code, inside the sound
+                             # module's tables — no instruction in front of it.
+                             {0x1002e: 0x009a}),
+    "STAGE_ANIM_REQUEST_B0E": ({0xb22: 0x4a78,          # tst.w $b0e.w   (the gate)
+                                0xc6a: 0x42b8,          # clr.l $b0e.w   (takes $b10 with it)
+                                0x19a4: 0x31fc,         # move.w #$ffff,$b0e.w (the boss-defeat arm)
+                                0x1f5e: 0x4a78},        # tst.w $b0e.w   (this routine)
+                               {}),
+    "STAGE_ANIM_DONE_B10": ({0xc28: 0x4a78,             # tst.w $b10.w   (the gate)
+                             0x1f54: 0x4a78,            # tst.w $b10.w   (this routine's first insn)
+                             0x1f9a: 0x31fc},           # move.w #$ffff,$b10.w
+                            # THE NEAR-MISS, and the reason this census is a case: the word in front
+                            # is a `bsr.w` opcode, so $450a is that call's DISPLACEMENT and not an
+                            # operand at all. A scan that only matched the address would count four.
+                            {0x450a: 0x6100}),
+    "STAGE_ANIM_DONE_B18": ({0xcf0: 0x4a78,             # tst.w $b18.w   (the gate)
+                             0xd02: 0x4278,             # clr.w $b18.w   (the gate)
+                             0x1fc8: 0x31fc},           # move.w #$ffff,$b18.w
+                            {}),
+    "EFFECT_STATE_21E4": ({0xc06: 0x33fc,               # move.w #$1,$21e4.l  — the ONLY abs.L site
+                           0x1f6e: 0x4a79,              # tst.w  $21e4.l      \
+                           0x2018: 0x0c79,              # cmpi.w #$1,$21e4.l   | the five READERS,
+                           0x205e: 0x4a79,              # tst.w  $21e4.l       | all in $1f54
+                           0x2072: 0x0c79,              # cmpi.w #$1,$21e4.l   |
+                           0x20d4: 0x4a79,              # tst.w  $21e4.l      /
+                           0xfe56: 0x4278,              # clr.w  $21e4.w  — the new-game reset
+                           0x101c6: 0x31fc,             # move.w #$1,$21e4.w  — the scene exit action
+                           0x10350: 0x31fc,             # move.w #$2,$21e4.w  \  the three $bd68
+                           0x10360: 0x31fc,             #                      | effect handlers
+                           0x10370: 0x31fc},            #                     /
+                          # ...and a `bra.w` displacement, the second near-miss.
+                          {0x4962: 0x6000}),
+}
+
+
+@pytest.mark.parametrize("name", sorted(OPERAND_CENSUS), ids=sorted(OPERAND_CENSUS))
+def test_each_plates_operand_census_is_the_one_the_image_holds(name):
+    """The counts four plates in ../names.txt and include/wonderboy.h quote, rebuilt from the bytes.
+
+    BOTH HALVES ARE ASSERTED. The positive one is the map of instruction address to opcode — so a
+    site claimed at the wrong address, or claimed as the wrong instruction, fails here. The negative
+    one is the list of candidates that are NOT operands, WITH the word in front of each: that is
+    where a census goes wrong, and two of these five addresses have such a candidate."""
+    named, other = _absolute_operand_census(wb(name))
+    expected_named, expected_other = OPERAND_CENSUS[name]
+    assert named == expected_named, (
+        f"{name} is named by "
+        f"{ {hex(at): hex(op) for at, op in sorted(named.items())} }, not the plate's "
+        f"{ {hex(at): hex(op) for at, op in sorted(expected_named.items())} }")
+    assert other == expected_other, (
+        f"{name} has unclassified candidates "
+        f"{ {hex(at): hex(op) for at, op in sorted(other.items())} }, not "
+        f"{ {hex(at): hex(op) for at, op in sorted(expected_other.items())} }")
+
+
+def test_the_attack_cursor_is_written_by_NOTHING_outside_the_swing():
+    """THE HEADLINE CLAIM's other half. Two sites is only half of "every swing starts at zero": the
+    other half is that BOTH of them are inside `player_stage_transition`, so no reset, no
+    new-game path and no other handler ever puts the cursor anywhere else — and the .PRG ships it
+    zero, which is what makes the claim true from boot rather than only after the first swing."""
+    named, _ = _absolute_operand_census(ATTACK_CURSOR)
+    entry = leaf.entry_of("player_stage_transition")
+    assert all(entry <= at < entry + BODY_SIZES["player_stage_transition"] for at in named), (
+        f"the attack cursor is named from outside $1f54: {[hex(at) for at in sorted(named)]}")
+    assert _image_word_at(ATTACK_CURSOR) == 0, (
+        "the .PRG does not ship the attack cursor at zero, so a swing can start elsewhere")
+
+
+def test_the_only_absolute_LONG_writer_of_the_form_word_is_the_gates_unwinding_arm():
+    """THE ENCODING-BLIND CLASS, pinned. `$21e4 has no reader at all` stood for three batches because
+    the census behind it looked at one encoding; the SAME address has exactly one writer in the OTHER
+    encoding, and it is not incidental — `move.w #$1,$21e4.l` at $c06 sits between
+    `jsr $fe8c.l` (the life restart) and `lea 4(a7),a7 / jmp $e5ba.l`, so THE GATE FORCES THE
+    PLAYER'S FORM BACK TO 1 ON A STACK-UNWINDING EXIT."""
+    named, _ = _absolute_operand_census(EFFECT_STATE_21E4)
+    long_form = {at for at, op in named.items() if op == 0x33fc}
+    assert long_form == {0xc06}, f"the abs.l writers are {[hex(at) for at in sorted(long_form)]}"
+    assert CONTROL_FLOW_TARGETS.get(0xe5ba) and 0xc20 in CONTROL_FLOW_TARGETS[0xe5ba], (
+        "the arm holding that write does not end in the `jmp $e5ba.l` this case is about")
+
+# The whole data block above the routine, as ONE keyed band: the three posture records and the four
+# cursor-plus-table animations. Bounded at both ends by code — WB_EFFECT_STATE_21E4's word is the
+# first byte and `actor_hit_by_player_shot`'s entry the byte past the last.
+TRANSITION_DATA_LO = EFFECT_STATE_21E4
+# ...and its END is NOT a number: it is the entry ../names.txt gives the next routine, which is what
+# bounds the block at the top. A hard-coded length is the failure mode this batch has to guard —
+# one that fell short would leave the attack tables on the .PRG's shipped bytes, where entries 0 and
+# 2 hold the same sprite id and the headline unreachable-frames case passes vacuously.
+TRANSITION_DATA_HI = leaf.entry_of("actor_hit_by_player_shot")
+TRANSITION_DATA_LEN = TRANSITION_DATA_HI - TRANSITION_DATA_LO
+
+# ...and the SAME length again, out of the block's own composition — the six spans this section's
+# table claims it divides into. TWO INDEPENDENT STATEMENTS ARE THE POINT: a tripwire that measured
+# the band with the very constant it seeds from cannot fail, because trimming that constant shrinks
+# the check with the seed. The structural case below requires these two to agree, and the tripwire
+# measures with THIS one.
+TRANSITION_DATA_DIVIDED = (WORD_BYTES                                  # WB_EFFECT_STATE_21E4
+                           + 3 * POSTURE_BYTES                         # the three posture records
+                           + WORD_BYTES + (ANIM32_MASK + 1)            # the DEATH animation
+                           + WORD_BYTES + 2 * TRANSITION_TABLE_BYTES   # the TRANSITION animation
+                           + WORD_BYTES + 2 * (ATTACK_MASK + 1)        # the SWING animation
+                           + WORD_BYTES + (ANIM32_MASK + 1))           # the EVENT animation
+
+# The ladder's frames are the one table NOT in that block: DATA inside the routine's own body, and
+# as many bytes as its cursor mask spans. Keyed for the block's reason — the shipped four are two
+# ids held twice each, so a cursor stepped by the wrong amount lands on the same word.
+LADDER_FRAME_BYTES = LADDER_SPRITE_MASK + 1
+LADDER_FRAMES = LADDER_FRAME_BYTES // WORD_BYTES
+# The bands every case in this section reads out of the image, and NEITHER length is the one the
+# seeding uses: the block is measured by its own division and the ladder's frames by the CURSOR MASK
+# that bounds them. Route either through the seeding's own constant and the guard stops guarding.
+TRANSITION_SEEDED_BANDS = ((TRANSITION_DATA_LO, TRANSITION_DATA_DIVIDED),
+                           (LADDER_SPRITES, LADDER_SPRITE_MASK + 1))
+
+# The four words WB_EFFECT_STATE_21E4 can hold that this routine reads differently. `2` is what
+# src/effects.c's own stub writes, so the "anything else" arm is reachable from shipped code.
+TRANSITION_STATES = (0, POSTURE_STATE_ONE, 2)
+POSTURE_FOR_STATE = {0: POSTURE_TABLE_0, POSTURE_STATE_ONE: POSTURE_TABLE_1, 2: POSTURE_TABLE_2}
+
+STAGE_TRANSITION_CAP = _cap("player_stage_transition", extra=STUB_INSN_CAP)
+
+
+def _transition_pokes(what, flags=0, flags2=0, fields=None):
+    """A seeded image for $1f54: the record, the whole $21e4 data block, the eight bytes of frame
+    table INSIDE the body, and the four flag words this routine's chain tests — all four seeded
+    CLEAR here, so a case raises exactly the one whose arm it is about.
+
+    THE DATA AND THE STATE ARE TWO LAYERS, and that is not style. WB_EFFECT_STATE_21E4 IS the data
+    block's first address, so a single dict LITERAL holding both keys drops the keyed band
+    entirely — `leaf.overlay`'s documented hazard in its dict-literal spelling, and the fifth time
+    it has fired in this project. The first draft of this battery did exactly that and every case
+    below ran on the .PRG's SHIPPED tables, where posture record 0's jump pair and its fall pair are
+    the same two sprite ids; the mutation sweep's `posture/falling-asked-before-jumping` survived on
+    that and is caught here."""
+    salt = case_salt(what) ^ 3
+    data = {TRANSITION_DATA_LO: keyed_block(TRANSITION_DATA_LO, TRANSITION_DATA_LEN, salt),
+            LADDER_SPRITES: keyed_block(LADDER_SPRITES, LADDER_FRAME_BYTES, salt)}
+    state = {STAGE_ANIM_DONE_B10: word(0),
+             STAGE_ANIM_REQUEST_B0E: word(0),
+             EVENT_ANIM_DONE_B16: word(0),
+             STAGE_RESET_BLOCK: word(0),
+             STAGE_ANIM_DONE_B18: word(MARKER),
+             EFFECT_STATE_21E4: word(0),
+             TILE_33_MODE: word(0),
+             TILE_33_STEP: word(0),
+             ACTOR + ACTOR_FLAGS: bytes([flags]),
+             ACTOR + FLAGS2: bytes([flags2]),
+             ACTOR + ACTOR_SPRITE: word(MARKER)}
+    return _pokes(what, leaf.overlay(data, state, fields or {}))
+
+
+def _run_transition(what, pokes, expected):
+    info = leaf.run("player_stage_transition", _STAGE_TRANSITION(ACTOR), merge_bands(expected),
+                    what, regs={"a0": ACTOR, "_pokes": pokes}, max_insns=STAGE_TRANSITION_CAP)
+    _assert_writes(info, expected, what)
+    return info
+
+
+def _image_word(image, addr):
+    return int.from_bytes(image[addr:addr + WORD_BYTES], "big")
+
+
+def test_the_seeding_really_reaches_every_band_this_section_reads():
+    """THE TRIPWIRE for `leaf.overlay`'s hazard in its dict-LITERAL spelling, and it is here because
+    the hazard FIRED: WB_EFFECT_STATE_21E4 is the data block's own first address, so a poke dict
+    holding both keys drops the keyed band and every case below then runs on the .PRG's shipped
+    tables. That is not merely weaker — posture record 0's jump pair and fall pair are the SAME two
+    sprite ids there, so a port that swapped them answered identically, and the mutation sweep said
+    so.
+
+    THE ASSERTION IS `leaf.assert_bands_are_seeded`, not "some byte differs": the property wanted is
+    that EVERY byte of each band was poked, and that helper names the first address that was not.
+    "Some byte differs" passes on a band seeded one word short — which is the failure mode a derived
+    TRANSITION_DATA_LEN could still produce, and which would leave the attack tables shipped.
+
+    The pairs below are the second half, and about the DATA rather than the seeding: a keyed band is
+    only useful if the fields a mutant can swap now hold different words."""
+    pokes = _transition_pokes("player_stage_transition seeding guard")
+    leaf.assert_bands_are_seeded(pokes, TRANSITION_SEEDED_BANDS, "the transition's own data")
+
+    image = harness.make_image(pokes)
+    distinguishable = ((POSTURE_JUMP_LEFT, POSTURE_FALL_LEFT),
+                       (POSTURE_JUMP_RIGHT, POSTURE_FALL_RIGHT),
+                       (POSTURE_IDLE_RIGHT, POSTURE_IDLE_LEFT))
+    for one, other in distinguishable:
+        assert (_image_word(image, POSTURE_TABLE_0 + one)
+                != _image_word(image, POSTURE_TABLE_0 + other)), (
+            f"offsets {one} and {other} hold the same word, so a swap between them is invisible")
+    for table in (ATTACK_TABLE_RIGHT, ATTACK_TABLE_LEFT):
+        frames = [_image_word(image, table + i * WORD_BYTES) for i in range(ATTACK_MASK // 2 + 1)]
+        assert len(set(frames)) == len(frames), (
+            f"the attack table at {table:#x} repeats a frame, so a mis-stepped cursor is invisible")
+
+
+@pytest.mark.parametrize("latch", [1, 0x8000, 0xffff], ids=lambda v: f"latch{v:#06x}")
+def test_the_routine_is_an_rts_once_its_own_DONE_latch_is_up(latch):
+    """`tst.w $b10.w / beq` — a plain nonzero test, and the whole routine is behind it. Nothing in
+    this port clears the word: only the gate's `clr.l $b0e.w` at $c6a does, as a longword's low
+    half."""
+    what = f"player_stage_transition latched {latch:#06x}"
+    pokes = _transition_pokes(what, fields={STAGE_ANIM_DONE_B10: word(latch)})
+
+    info = leaf.run("player_stage_transition", _STAGE_TRANSITION(ACTOR), [], what,
+                    regs={"a0": ACTOR, "_pokes": pokes}, max_insns=STAGE_TRANSITION_CAP)
+    assert not program_writes(info), f"{what}: a latched transition wrote memory"
+
+
+@pytest.mark.parametrize("state", [0, 1], ids=["table-a", "table-b"])
+@pytest.mark.parametrize("cursor", [0, 2, 0x2c], ids=lambda v: f"cursor{v:#04x}")
+def test_the_transition_arm_walks_its_own_table_and_WB_EFFECT_STATE_21E4_picks_which(state, cursor):
+    """The arm WB_STAGE_ANIM_REQUEST_B0E gates. Two tables, one cursor: `lea 48(a1),a1` steps over
+    the first table to reach the second while the state word is nonzero, so the SAME cursor value
+    publishes a different frame — which is what the two ids of this row separate."""
+    what = f"player_stage_transition arm b0e state={state} cursor={cursor:#04x}"
+    pokes = _transition_pokes(what, fields={STAGE_ANIM_REQUEST_B0E: word(EVENT_DONE_SET),
+                                            EFFECT_STATE_21E4: word(state),
+                                            TRANSITION_CURSOR: word(cursor)})
+    image = harness.make_image(pokes)
+
+    table = TRANSITION_CURSOR + WORD_BYTES + (TRANSITION_TABLE_BYTES if state else 0)
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE, _image_word(image, table + cursor))
+    _put_word(expected, TRANSITION_CURSOR, cursor + ANIM_FRAME_BYTES)
+    _run_transition(what, pokes, expected)
+
+
+def test_the_transition_arms_LAST_frame_wraps_the_cursor_and_raises_its_own_latch():
+    """The cursor is stepped to WB_PLAYER_TRANSITION_TABLE_BYTES, cleared, and the zero it stores is
+    what the `bne` below reads — so the completion flag goes up on the frame the animation ends,
+    which then makes every later frame the `rts` the row above pins."""
+    cursor = TRANSITION_TABLE_BYTES - ANIM_FRAME_BYTES
+    what = "player_stage_transition arm b0e wrapping"
+    pokes = _transition_pokes(what, fields={STAGE_ANIM_REQUEST_B0E: word(EVENT_DONE_SET),
+                                            TRANSITION_CURSOR: word(cursor)})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE,
+              _image_word(image, TRANSITION_CURSOR + WORD_BYTES + cursor))
+    _put_word(expected, TRANSITION_CURSOR, 0)
+    _put_word(expected, STAGE_ANIM_DONE_B10, EVENT_DONE_SET)
+    _run_transition(what, pokes, expected)
+
+
+def test_the_transition_wrap_is_an_EQUALITY_so_an_odd_cursor_runs_past_the_table():
+    """`cmp.w #$30,d0 / bne` and not a mask, which the row above cannot separate from
+    `andi.w #$2f`. A cursor of $2f steps to $31, misses the compare, and is stored — so the next
+    frame reads a word one byte into the SECOND table."""
+    cursor = TRANSITION_TABLE_BYTES - 1
+    what = "player_stage_transition arm b0e on an odd cursor"
+    pokes = _transition_pokes(what, fields={STAGE_ANIM_REQUEST_B0E: word(EVENT_DONE_SET),
+                                            TRANSITION_CURSOR: word(cursor)})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE,
+              _image_word(image, TRANSITION_CURSOR + WORD_BYTES + cursor))
+    _put_word(expected, TRANSITION_CURSOR, cursor + ANIM_FRAME_BYTES)
+    _run_transition(what, pokes, expected)
+
+
+@pytest.mark.parametrize("cursor", [0, 4, ANIM32_MASK - 1], ids=lambda v: f"cursor{v:#04x}")
+def test_the_two_sixteen_word_arms_step_their_own_cursor(cursor):
+    """Arms 2 and 3 are one body with the cursor exchanged, so they are driven as one row. What
+    differs is the ENDING, and the next case is that."""
+    for flag, cursor_at in ((EVENT_ANIM_DONE_B16, EVENT_ANIM_CURSOR),
+                            (STAGE_RESET_BLOCK, DEATH_ANIM_CURSOR)):
+        what = f"player_stage_transition arm {flag:#x} cursor={cursor:#04x}"
+        pokes = _transition_pokes(what, fields={flag: word(EVENT_DONE_SET),
+                                                cursor_at: word(cursor)})
+        image = harness.make_image(pokes)
+
+        stepped = (cursor + ANIM_FRAME_BYTES) & ANIM32_MASK
+        expected = {}
+        _put_word(expected, ACTOR + ACTOR_SPRITE, _image_word(image, cursor_at + WORD_BYTES
+                                                              + cursor))
+        _put_word(expected, cursor_at, stepped)
+        if stepped == 0 and flag == EVENT_ANIM_DONE_B16:
+            _put_word(expected, STAGE_ANIM_DONE_B18, EVENT_DONE_SET)
+            _put_word(expected, ACTOR + ACTOR_SPRITE, SPRITE_HIDDEN)
+        _run_transition(what, pokes, expected)
+
+
+def test_the_EVENT_arms_wrap_raises_the_gates_handshake_and_BLANKS_the_sprite_it_just_published():
+    """The one arm here that publishes twice in one frame: the frame word goes into the record and
+    is then overwritten with zero. The ledger records FINAL values, so what makes this a claim about
+    the ORDER rather than about the last store is the write set — the sprite is written once, and to
+    WB_ACTOR_SPRITE_HIDDEN.
+
+    The DEATH arm at the same cursor is the control: it has no completion flag of its own and
+    `bra.w`s to the shared `rts` instead, so it leaves the wrapped frame published."""
+    cursor = ANIM32_MASK - 1
+    ids = {}
+    for flag, cursor_at in ((EVENT_ANIM_DONE_B16, EVENT_ANIM_CURSOR),
+                            (STAGE_RESET_BLOCK, DEATH_ANIM_CURSOR)):
+        what = f"player_stage_transition wrap of {flag:#x}"
+        pokes = _transition_pokes(what, fields={flag: word(EVENT_DONE_SET),
+                                                cursor_at: word(cursor)})
+        image = harness.make_image(pokes)
+        ids[flag] = _image_word(image, cursor_at + WORD_BYTES + cursor)
+
+        expected = {}
+        _put_word(expected, cursor_at, 0)
+        if flag == EVENT_ANIM_DONE_B16:
+            _put_word(expected, ACTOR + ACTOR_SPRITE, SPRITE_HIDDEN)
+            _put_word(expected, STAGE_ANIM_DONE_B18, EVENT_DONE_SET)
+        else:
+            _put_word(expected, ACTOR + ACTOR_SPRITE, ids[flag])
+        _run_transition(what, pokes, expected)
+
+    assert ids[EVENT_ANIM_DONE_B16] != SPRITE_HIDDEN, (
+        "the event arm's last frame IS the blank, so the row above passes vacuously")
+
+
+def test_the_chain_is_tested_in_order_so_an_earlier_flag_hides_a_later_one():
+    """All four flags up at once: only the FIRST arm runs. This is what says the three `beq`s are a
+    chain and not three independent tests — a port that ran the arms in any other order writes a
+    different cursor."""
+    what = "player_stage_transition with every flag raised"
+    pokes = _transition_pokes(what, fields={STAGE_ANIM_REQUEST_B0E: word(EVENT_DONE_SET),
+                                            EVENT_ANIM_DONE_B16: word(EVENT_DONE_SET),
+                                            STAGE_RESET_BLOCK: word(EVENT_DONE_SET),
+                                            TRANSITION_CURSOR: word(4)})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE,
+              _image_word(image, TRANSITION_CURSOR + WORD_BYTES + 4))
+    _put_word(expected, TRANSITION_CURSOR, 4 + ANIM_FRAME_BYTES)
+    _run_transition(what, pokes, expected)
+
+
+# --- $1ffc: the hurt arm ----------------------------------------------------------------------------
+
+@pytest.mark.parametrize("facing_left", [False, True], ids=["facing-right", "facing-left"])
+@pytest.mark.parametrize("state", [0, POSTURE_STATE_ONE, 2], ids=lambda v: f"state{v}")
+def test_a_hurt_AIRBORNE_record_shows_one_of_four_fixed_sprites(state, facing_left):
+    """WB_ACTOR_FLAGS2_BIT_0 set and WB_ACTOR_FLAG_SUPPORTED_BIT clear. TWO pairs, and only
+    WB_PLAYER_POSTURE_STATE_ONE reaches the first — states 0 and 2 both take the second, which is
+    what makes the `cmpi.w #$1` an equality rather than a "nonzero" test."""
+    what = f"player_stage_transition hurt state={state} left={facing_left}"
+    flags = (1 << SIDE_BIT) if facing_left else 0
+    pokes = _transition_pokes(what, flags=flags, flags2=1 << FLAGS2_BIT_0,
+                              fields={EFFECT_STATE_21E4: word(state)})
+
+    first = state == POSTURE_STATE_ONE
+    sprite = ((HURT_SPRITE_LEFT if facing_left else HURT_SPRITE_RIGHT) if first
+              else (HURT2_SPRITE_LEFT if facing_left else HURT2_SPRITE_RIGHT))
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE, sprite)
+    _run_transition(what, pokes, expected)
+
+
+def test_a_hurt_record_that_is_STANDING_falls_through_to_the_ordinary_selector():
+    """The `bsr $205c / bra $205e` path — a call into a bare `rts` and then the selector, so a hurt
+    record on the ground shows an ordinary posture.
+
+    Run TWICE on one seed differing in exactly the hurt bit, and the two ORACLE write sets compared:
+    the salt comes from the SEED's name rather than the run's, so the two images are identical bar
+    that byte and an equal write set is a claim about the routine and not about this file's own
+    arithmetic. (The first draft compared two `expected` dicts it had built the same way, which is
+    the vacuous form of this case.)"""
+    seed = "player_stage_transition standing"
+    flags = (1 << SUPPORTED_BIT) | (1 << MOVED_BIT)
+    cursor_at, cursor = POSTURE_TABLE_0 + POSTURE_WALK_RIGHT, 4
+    observed = []
+    for flags2 in (1 << FLAGS2_BIT_0, 0):
+        what = f"{seed} hurt={flags2 != 0}"
+        pokes = _transition_pokes(seed, flags=flags, flags2=flags2,
+                                  fields={cursor_at: word(cursor)})
+        image = harness.make_image(pokes)
+
+        expected = {}
+        _put_word(expected, ACTOR + ACTOR_SPRITE,
+                  _image_word(image, cursor_at + WORD_BYTES + cursor))
+        _put_word(expected, cursor_at, cursor + ANIM_FRAME_BYTES)
+        observed.append(program_writes(_run_transition(what, pokes, expected)))
+    assert observed[0] == observed[1], (
+        "the hurt-but-standing frame differs from the ordinary one, so the `bsr $205c` arm is not "
+        "the fall-through this case claims")
+
+
+# --- $205e: the posture selector ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("state", TRANSITION_STATES, ids=lambda v: f"state{v}")
+def test_WB_EFFECT_STATE_21E4_picks_which_of_the_three_posture_records_is_read(state):
+    """Zero, exactly one, anything else — three `lea`s, and the record they name is where every
+    fixed posture below comes from. The row is driven on the IDLE field because that is the one
+    reached by the shortest path."""
+    what = f"player_stage_transition idle state={state}"
+    pokes = _transition_pokes(what, fields={EFFECT_STATE_21E4: word(state)})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE,
+              _image_word(image, POSTURE_FOR_STATE[state] + POSTURE_IDLE_RIGHT))
+    _run_transition(what, pokes, expected)
+
+
+@pytest.mark.parametrize("facing_left", [False, True], ids=["facing-right", "facing-left"])
+@pytest.mark.parametrize("flags,left_field,right_field", [
+    (1 << MOVING_BIT, POSTURE_JUMP_LEFT, POSTURE_JUMP_RIGHT),
+    (1 << LAUNCHED_BIT, POSTURE_JUMP_LEFT, POSTURE_JUMP_RIGHT),
+    (1 << FALLING_BIT, POSTURE_FALL_LEFT, POSTURE_FALL_RIGHT),
+    (0, POSTURE_IDLE_LEFT, POSTURE_IDLE_RIGHT),
+], ids=["moving", "launched", "falling", "idle"])
+def test_each_posture_reads_the_pair_of_fields_its_own_flag_bit_names(flags, left_field,
+                                                                      right_field, facing_left):
+    """FOUR questions in order, each answered by a pair WB_ACTOR_FLAG_SIDE_BIT chooses between —
+    and `moving` and `launched` are separate rows because the original asks them as ONE question
+    (`bne` past the second) where a port could easily ask them as two.
+
+    THE FIELD ORDER FLIPS: idle is (right, left) at offsets 0 and 6 where jump and fall are
+    (left, right). Every row here reads its field out of the seeded record, so a pair swapped in
+    src/player.c reads a byte that is wrong for where it came from."""
+    what = f"player_stage_transition posture flags={flags:#04x} left={facing_left}"
+    if facing_left:
+        flags |= 1 << SIDE_BIT
+    pokes = _transition_pokes(what, flags=flags)
+    image = harness.make_image(pokes)
+
+    field = left_field if facing_left else right_field
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE, _image_word(image, POSTURE_TABLE_0 + field))
+    _run_transition(what, pokes, expected)
+
+
+@pytest.mark.parametrize("facing_left", [False, True], ids=["facing-right", "facing-left"])
+@pytest.mark.parametrize("flags,field", [
+    ((1 << MOVING_BIT) | (1 << FALLING_BIT) | (1 << MOVED_BIT), "jump"),
+    ((1 << LAUNCHED_BIT) | (1 << FALLING_BIT) | (1 << MOVED_BIT), "jump"),
+    ((1 << FALLING_BIT) | (1 << MOVED_BIT), "fall"),
+], ids=["moving+falling+moved", "launched+falling+moved", "falling+moved"])
+def test_the_FOUR_POSTURE_QUESTIONS_ARE_ASKED_IN_ORDER(flags, field, facing_left):
+    """THE MUTATION SWEEP'S FINDING, and the row above cannot make it: each of those seeds ONE flag,
+    so a port that asked the four questions in any order answered them all identically. The
+    mutant that reorders `falling` above `moving`/`launched` survived TWO sweeps on that.
+
+    What separates the orders is a record carrying MORE THAN ONE of the bits, which is ordinary —
+    `player_reset_ground_state` leaves a record MOVING and LAUNCHED, the settle raises FALLING, and
+    the walk raises MOVED every frame a direction is held. The original asks MOVING-or-LAUNCHED
+    first, so all three of those show the JUMP pair or the FALL pair and never the walk cycle: the
+    third row is the control that keeps the assertion from passing on "always jump".
+
+    IT ALSO NEEDS THE KEYED DATA BLOCK. On the .PRG's shipped bytes posture record 0's jump pair and
+    fall pair are the same two sprite ids, so even this seed would not separate them — which is the
+    other half of why that mutant survived, and why the tripwire above exists."""
+    what = f"player_stage_transition order flags={flags:#04x} left={facing_left}"
+    if facing_left:
+        flags |= 1 << SIDE_BIT
+    pokes = _transition_pokes(what, flags=flags)
+    image = harness.make_image(pokes)
+
+    offsets = {"jump": (POSTURE_JUMP_LEFT, POSTURE_JUMP_RIGHT),
+               "fall": (POSTURE_FALL_LEFT, POSTURE_FALL_RIGHT)}[field]
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE,
+              _image_word(image, POSTURE_TABLE_0 + offsets[0 if facing_left else 1]))
+    _run_transition(what, pokes, expected)
+
+
+@pytest.mark.parametrize("facing_left", [False, True], ids=["facing-right", "facing-left"])
+@pytest.mark.parametrize("cursor", [0, 4, ANIM32_MASK - 1], ids=lambda v: f"cursor{v:#04x}")
+def test_a_record_that_MOVED_this_frame_runs_the_walk_cycle_out_of_the_posture_record(cursor,
+                                                                                      facing_left):
+    """WB_ACTOR_FLAG_MOVED_BIT is what `player_step_and_arm`'s three `bset`/`bclr` sites BUY, and
+    this is its one reader in the image. The cursor is not a global: each posture record carries its
+    own, one per facing, at WB_PLAYER_POSTURE_WALK_LEFT / _RIGHT — so the two facings step DIFFERENT
+    words and a port that shared one would red the second id of this row."""
+    what = f"player_stage_transition walk cursor={cursor:#04x} left={facing_left}"
+    flags = (1 << MOVED_BIT) | ((1 << SIDE_BIT) if facing_left else 0)
+    field = POSTURE_WALK_LEFT if facing_left else POSTURE_WALK_RIGHT
+    cursor_at = POSTURE_TABLE_0 + field
+    pokes = _transition_pokes(what, flags=flags, fields={cursor_at: word(cursor)})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE,
+              _image_word(image, cursor_at + WORD_BYTES + cursor))
+    _put_word(expected, cursor_at, (cursor + ANIM_FRAME_BYTES) & ANIM32_MASK)
+    _run_transition(what, pokes, expected)
+
+
+def test_the_466_byte_data_block_divides_exactly():
+    """THE ARITHMETIC THE SECTION RESTS ON, as a case. WB_PLAYER_POSTURE_WALK_LEFT's cursor plus its
+    sixteen words ends EXACTLY on WB_PLAYER_POSTURE_BYTES — the third independent reading of that
+    length, the other two being the two gaps between the three records — and the six spans together
+    run from WB_EFFECT_STATE_21E4 to `actor_hit_by_player_shot`'s own entry with nothing over.
+
+    IT IS ALSO THE TRIPWIRE'S SECOND STATEMENT: the seeding measures the block with
+    TRANSITION_DATA_DIVIDED and the seed uses TRANSITION_DATA_LEN, so a wrong length fails HERE
+    rather than shrinking the guard along with the band."""
+    assert POSTURE_WALK_LEFT + WORD_BYTES + (ANIM32_MASK + 1) == POSTURE_BYTES
+    assert POSTURE_TABLE_1 - POSTURE_TABLE_0 == POSTURE_BYTES
+    assert POSTURE_TABLE_2 - POSTURE_TABLE_1 == POSTURE_BYTES
+    assert POSTURE_TABLE_2 + POSTURE_BYTES == DEATH_ANIM_CURSOR
+    assert TRANSITION_DATA_DIVIDED == TRANSITION_DATA_LEN, (
+        f"the block's six spans sum to {TRANSITION_DATA_DIVIDED}, not the "
+        f"{TRANSITION_DATA_LEN} between $21e4 and the next routine's entry")
+    assert TRANSITION_DATA_LO + TRANSITION_DATA_DIVIDED == TRANSITION_DATA_HI
+
+
+# --- $2096: the ladder, whose frame table is data inside the body -------------------------------------
+
+@pytest.mark.parametrize("stepping", [False, True], ids=["held", "stepping"])
+@pytest.mark.parametrize("cursor", [0, 2, 4, 6], ids=lambda v: f"cursor{v}")
+def test_the_ladder_frame_comes_out_of_the_eight_bytes_inside_the_body(cursor, stepping):
+    """WB_TILE_33_MODE nonzero takes this arm before the swing and before every posture. The frames
+    are the four words at WB_PLAYER_LADDER_SPRITES, i.e. DATA INSIDE $1f54's own 656 bytes, and the
+    cursor is WB_ACTOR_FIELD_18 masked to a byte offset within them.
+
+    WB_TILE_33_STEP is what advances it — `player_apply_joystick` raises that word only on the frames
+    the climb actually moved — so a player holding still on a ladder holds one frame."""
+    what = f"player_stage_transition ladder cursor={cursor} stepping={stepping}"
+    pokes = _transition_pokes(what, fields={TILE_33_MODE: word(TILE_33_MODE_UP),
+                                            TILE_33_STEP: word(TILE_33_STEP_RAISED if stepping
+                                                               else 0),
+                                            ACTOR + FIELD_18: bytes([cursor])})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE, _image_word(image, LADDER_SPRITES + cursor))
+    if stepping:
+        expected[ACTOR + FIELD_18] = (cursor + ANIM_FRAME_BYTES) & LADDER_SPRITE_MASK
+    _run_transition(what, pokes, expected)
+
+
+def test_the_ladder_masks_the_cursor_it_READS_as_well_as_the_one_it_writes():
+    """`andi.b #$7,d0` on the copy, above the `andi.b #$7,18(a0)` on the field. A field of $fe reads
+    frame 6 and is stepped to 0 — so the read mask and the write mask are two instructions and a
+    port that dropped the first would index eight bytes past the table."""
+    what = "player_stage_transition ladder on an out-of-range cursor"
+    pokes = _transition_pokes(what, fields={TILE_33_MODE: word(TILE_33_MODE_DOWN),
+                                            TILE_33_STEP: word(TILE_33_STEP_RAISED),
+                                            ACTOR + FIELD_18: bytes([0xfe])})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE,
+              _image_word(image, LADDER_SPRITES + (0xfe & LADDER_SPRITE_MASK)))
+    expected[ACTOR + FIELD_18] = (0xfe + ANIM_FRAME_BYTES) & LADDER_SPRITE_MASK
+    _run_transition(what, pokes, expected)
+
+
+def test_the_ladders_four_frames_are_the_two_sprite_ids_the_pin_claims():
+    """The shipped bytes, read back — so the entry pin's transcription of them is checked against
+    the image rather than only against itself."""
+    frames = [_image_word(harness.BASE_IMAGE, LADDER_SPRITES + i * WORD_BYTES) for i in range(4)]
+    assert frames == [LADDER_SPRITE_A, LADDER_SPRITE_A, LADDER_SPRITE_B, LADDER_SPRITE_B]
+
+
+# --- $20ca: the swing -------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("facing_left", [False, True], ids=["facing-right", "facing-left"])
+def test_the_swings_FIRST_frame_is_indexed_by_the_SFX_ID_and_not_by_the_cursor(facing_left):
+    """THE DEFECT, driven. On the frame the cursor is found at zero the original loads d0 with the
+    effect id for the trigger call — and `snd_call_trigger_effect` is `movem.l d0-a6` either side of
+    its `bsr`, so d0 comes back holding SIX. The very next instruction indexes the frame table with
+    it.
+
+    So the published frame is table entry WB_PLAYER_ATTACK_SFX and the cursor is stored as that plus
+    one frame, NOT as one frame. Entries 0, 2 and 4 of both attack tables are therefore unreachable
+    from a swing that starts at zero — and every swing does, because the wrap that ends one leaves
+    the cursor there."""
+    what = f"player_stage_transition swing opening left={facing_left}"
+    flags = (1 << FIRED_BIT) | ((1 << SIDE_BIT) if facing_left else 0)
+    pokes = _transition_pokes(what, flags=flags,
+                              fields={EFFECT_STATE_21E4: word(POSTURE_STATE_ONE),
+                                      ATTACK_CURSOR: word(0)})
+    image = harness.make_image(pokes)
+
+    table = ATTACK_TABLE_LEFT if facing_left else ATTACK_TABLE_RIGHT
+    expected = _sfx_bytes(image, ATTACK_SFX, SND_CHANNEL_A)
+    _put_word(expected, ACTOR + ACTOR_SPRITE, _image_word(image, table + ATTACK_SFX))
+    _put_word(expected, ATTACK_CURSOR, (ATTACK_SFX + ANIM_FRAME_BYTES) & ATTACK_MASK)
+    _run_transition(what, pokes, expected)
+
+
+@pytest.mark.parametrize("facing_left", [False, True], ids=["facing-right", "facing-left"])
+@pytest.mark.parametrize("cursor", [8, ATTACK_MASK - 1], ids=lambda v: f"cursor{v:#04x}")
+def test_the_swing_walks_its_table_from_there_and_lowers_the_FIRED_bit_on_the_wrap(cursor,
+                                                                                   facing_left):
+    """The frames after the first: no SFX, the cursor stepped by one frame and masked to eight
+    words, and — on the frame it comes back to zero — WB_ACTOR_FLAG_FIRED_BIT lowered, which is what
+    ends the swing and hands the record back to the posture selector."""
+    what = f"player_stage_transition swing cursor={cursor:#04x} left={facing_left}"
+    flags = (1 << FIRED_BIT) | ((1 << SIDE_BIT) if facing_left else 0)
+    pokes = _transition_pokes(what, flags=flags,
+                              fields={EFFECT_STATE_21E4: word(POSTURE_STATE_ONE),
+                                      ATTACK_CURSOR: word(cursor)})
+    image = harness.make_image(pokes)
+
+    table = ATTACK_TABLE_LEFT if facing_left else ATTACK_TABLE_RIGHT
+    stepped = (cursor + ANIM_FRAME_BYTES) & ATTACK_MASK
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE, _image_word(image, table + cursor))
+    _put_word(expected, ATTACK_CURSOR, stepped)
+    if stepped == 0:
+        expected[ACTOR + ACTOR_FLAGS] = flags & ~(1 << FIRED_BIT)
+    _run_transition(what, pokes, expected)
+
+
+def test_an_armed_record_in_STATE_ZERO_swings_nothing_and_keeps_the_bit():
+    """`tst.w $21e4.l / beq $2132` sits BETWEEN the `btst #7` and the cursor read, so the swing is
+    gated on the state word as well as on the bit — and the bit survives, because the `bclr` is on
+    the far side of the gate. The record shows an ordinary posture instead."""
+    what = "player_stage_transition armed in state 0"
+    flags = 1 << FIRED_BIT
+    pokes = _transition_pokes(what, flags=flags, fields={ATTACK_CURSOR: word(0)})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE,
+              _image_word(image, POSTURE_TABLE_0 + POSTURE_IDLE_RIGHT))
+    _run_transition(what, pokes, expected)
+
+
+def test_the_LADDER_is_asked_before_the_swing_and_the_swing_before_every_posture():
+    """The three arms of $205e's tail, in order, on ONE seed that satisfies all of them: climbing,
+    armed, and moving. Only the ladder runs. A port that asked them in any other order writes a
+    different sprite AND a different cursor."""
+    what = "player_stage_transition climbing, armed and moving at once"
+    flags = (1 << FIRED_BIT) | (1 << MOVED_BIT)
+    pokes = _transition_pokes(what, flags=flags,
+                              fields={EFFECT_STATE_21E4: word(POSTURE_STATE_ONE),
+                                      TILE_33_MODE: word(TILE_33_MODE_UP),
+                                      TILE_33_STEP: word(0),
+                                      ATTACK_CURSOR: word(4),
+                                      ACTOR + FIELD_18: bytes([2])})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE, _image_word(image, LADDER_SPRITES + 2))
+    _run_transition(what, pokes, expected)
+
+
+def test_the_swing_is_asked_before_the_posture_on_a_seed_that_would_answer_both():
+    """...and the second half of the order above, without the ladder: armed AND moving publishes the
+    swing's frame and steps the ATTACK cursor, leaving the posture record's walk cursor alone."""
+    what = "player_stage_transition armed and moving"
+    flags = (1 << FIRED_BIT) | (1 << MOVED_BIT)
+    pokes = _transition_pokes(what, flags=flags,
+                              fields={EFFECT_STATE_21E4: word(POSTURE_STATE_ONE),
+                                      ATTACK_CURSOR: word(4)})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_SPRITE, _image_word(image, ATTACK_TABLE_RIGHT + 4))
+    _put_word(expected, ATTACK_CURSOR, 4 + ANIM_FRAME_BYTES)
+    _run_transition(what, pokes, expected)
+
+
+# ==================================================================================================
+# The ONE routine of the frame this port MEASURES rather than reconstructs
+# ==================================================================================================
+#
+# `player_pending_event_gate` ($b1a) is the frame's second call and the only one still missing. It is
+# UNPORTABLE rather than merely unported: THREE of its exits leave through a stack unwind instead of
+# returning — `lea 4(a7),a7 / jmp` at $bdc and $c20, and `bra.w $1622` at $d16, which lands in
+# `player_collide_and_scroll`'s own `lea 12(a7),a7 / jmp $e5ba.l` and so pops THREE return addresses
+# in ANOTHER routine's body. That third one is why the count was two until batch 40 phase C: a census
+# of this routine's own instructions cannot see a pop that happens somewhere else. What CAN be
+# pinned about it from here is structural, and both claims below were live failure modes.
 
 GATE_SPAWN_SITE = 0xc52            # `lea $998c.l,a2 / lea $537e.l,a1 / bsr.w $539e`
 GATE_DESTINATION = 0x998c          # slot 1 of WB_ACTOR_TABLE_DEFAULT
@@ -2379,6 +3428,53 @@ def _image_operands_at(site):
                                                     + LONGWORD_BYTES], "big")
         pairs.append(((opcode_word >> 9) & 7, address))
     return pairs
+
+
+# Keyed on the `lea`, which is where the pop IS; ../names.txt's plates name the `jmp` four bytes on
+# ($bdc, $c20), and the two addresses being different is worth keeping straight in a case that is
+# about counting them.
+GATE_UNWIND_EXITS = {
+    0xbd8: (0x4fef0004, 0xe494),     # lea 4(a7),a7 / jmp $e494.l — one return address
+    0xc1c: (0x4fef0004, 0xe5ba),     # lea 4(a7),a7 / jmp $e5ba.l — one
+}
+# ...and the THIRD, which is not the gate's own instruction at all: it branches into
+# `player_collide_and_scroll` and unwinds there.
+GATE_UNWIND_VIA = 0x1622
+COLLIDE_UNWIND = (0x4fef000c, 0xe5ba)   # lea 12(a7),a7 / jmp $e5ba.l — THREE return addresses
+
+
+def _unwind_at(addr):
+    """(the `lea n(a7),a7` longword, the address its `jmp` names) decoded out of the image."""
+    return (int.from_bytes(harness.BASE_IMAGE[addr:addr + LONGWORD_BYTES], "big"),
+            int.from_bytes(harness.BASE_IMAGE[addr + LONGWORD_BYTES + WORD_BYTES:
+                                              addr + 2 * LONGWORD_BYTES + WORD_BYTES], "big"))
+
+
+def test_the_gate_leaves_through_THREE_stack_unwinds_and_one_of_them_is_not_its_own():
+    """WHY $b1a IS UNPORTABLE, counted. Two of the three are its own `lea 4(a7),a7 / jmp` pairs. The
+    third is the one every surface in this project said did not exist until batch 40 phase C:
+    `bra.w $1622` at $d16 lands inside `player_collide_and_scroll`, whose `lea 12(a7),a7 / jmp
+    $e5ba.l` discards THREE return addresses — so the gate can unwind past its caller AND its
+    caller's caller, through a pop written in another routine's body.
+
+    That is the shape a census of one routine's own instructions cannot see, which is the same
+    reason `$21e4` read as unread for three batches. Both halves are asserted: the pops are decoded
+    out of the image, and the branch that reaches the third is required to be one of $1622's own
+    two namers."""
+    for at, expected in GATE_UNWIND_EXITS.items():
+        assert _unwind_at(at) == expected, (
+            f"the unwind at {at:#x} is {[hex(v) for v in _unwind_at(at)]}, not "
+            f"{[hex(v) for v in expected]}")
+    assert _unwind_at(GATE_UNWIND_VIA) == COLLIDE_UNWIND, (
+        f"$1622 is {[hex(v) for v in _unwind_at(GATE_UNWIND_VIA)]}, not the triple pop")
+    assert 0xd16 in CONTROL_FLOW_TARGETS[GATE_UNWIND_VIA], (
+        "the gate does not branch to $1622, so the third exit is not the gate's")
+    entry = leaf.entry_of("player_collide_and_scroll")
+    assert entry < GATE_UNWIND_VIA < 0x19ac, (
+        "$1622 is not inside player_collide_and_scroll, so the pop is not in another routine")
+    # The pop's DEPTH is the claim that matters, and it is read off the `lea`'s displacement rather
+    # than written down: 12 bytes of return addresses is three of them.
+    assert (COLLIDE_UNWIND[0] & 0xffff) // LONGWORD_BYTES == 3
 
 
 def test_the_gates_spawn_site_loads_the_TEMPLATE_in_a1_and_the_DESTINATION_in_a2():
@@ -2449,10 +3545,5 @@ def test_1fa2_is_an_ARM_of_player_stage_transition_and_not_a_routine():
     entry = leaf.entry_of("player_stage_transition")
     assert entry < 0x1f62 < STAGE_TRANSITION_ARM, (
         "the branch that names the arm is not inside player_stage_transition's own body")
-
-
-def test_player_stage_transition_has_the_TWO_callers_its_plate_names():
-    """The frame's last `bsr` at $a70 and `player_pending_event_gate`'s at $bb0 — which is what makes
-    "$1f54 sits on nearly every arm of the gate" a measurement rather than a reading."""
-    entry = leaf.entry_of("player_stage_transition")
-    assert tuple(sorted(CONTROL_FLOW_TARGETS.get(entry, []))) == (0xa70, 0xbb0)
+    assert STAGE_TRANSITION_ARM < entry + BODY_SIZES["player_stage_transition"], (
+        "the arm is not inside the body the pin covers")

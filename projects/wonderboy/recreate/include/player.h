@@ -7,10 +7,11 @@
  * ordinal in that sequence: an ordinal is a number two documents can disagree about, and they did.
  *
  * THIS FILE IS THE FIRST OF THOSE TIERS — batch 40 phase A took four of those calls ($a76, $d84,
- * the jump machine the gate reaches at $e06, and $107c) plus the spawn helper $539e, and phase B
- * added the two below them that are also CALLEE-CLEAN: the WALK ($ec8) and the WEAPON ($1208).
- * "Callee-clean" is the whole criterion — every routine any of these reaches is already
- * reconstructed — and what is NOT here is named at the bottom of this comment.
+ * the jump machine the gate reaches at $e06, and $107c) plus the spawn helper $539e, phase B added
+ * the two below them that are also CALLEE-CLEAN (the WALK, $ec8, and the WEAPON, $1208), and phase C
+ * the LAST call, `player_stage_transition` ($1f54). "Callee-clean" is the whole criterion — every
+ * routine any of these reaches is already reconstructed — and what is NOT here is named at the
+ * bottom of this comment.
  *
  * WHY $539e IS IN THIS FILE and not src/scene.c, which its name would suggest. The rule this
  * workspace uses is the MODULE OF ITS CALLER — `sound_request_9` lives in src/behavior.c because its
@@ -35,16 +36,19 @@
  * convention above rather than from its own prototype would call a 3-argument function with 2.
  *
  * NO BOUNDARY IS REPORTED FROM THIS FILE, which is what makes it the first tier. Between them these
- * seven call exactly SIX things — `joy1_newly_pressed` ($682), `snd_call_trigger_effect`
+ * eight call exactly SIX things — `joy1_newly_pressed` ($682), `snd_call_trigger_effect`
  * (stub +56), `snd_play_song` (stub +0), the two map step probes ($10a2/$1170) and
  * `actor_alloc_slot_high` ($1b8e) — and every one of those is reconstructed, so each runs to the
  * original's own `rts`. (The fall pass and the LOW allocator are callees of the routines still
  * deferred, not of these.)
  *
  * WHAT THE FRAME STILL CALLS AND THIS FILE DOES NOT HAVE, in the order $a38 calls them:
- * `player_pending_event_gate` ($b1a, called at $a3c), `player_collide_and_scroll` ($151a at $a6c)
- * and `player_stage_transition` ($1f54 at $a70, the last). ../STATUS.md's batch-40 partition prices
- * all three and says why each is not here.
+ * `player_pending_event_gate` ($b1a, called at $a3c) and `player_collide_and_scroll` ($151a at
+ * $a6c). ../STATUS.md's batch-40 partition prices both and says why each is not here — $b1a is
+ * UNPORTABLE rather than merely unported, because THREE of its exits leave through a stack unwind
+ * instead of returning: `lea 4(a7),a7 / jmp` at $bdc and at $c20, and — the one a census of its own
+ * instructions does not see — `bra.w $1622` at $d16, which lands in `player_collide_and_scroll`'s
+ * `lea 12(a7),a7 / jmp $e5ba.l` and so pops THREE return addresses in another routine's body.
  */
 #ifndef WONDERBOY_PLAYER_H
 #define WONDERBOY_PLAYER_H
@@ -174,5 +178,30 @@ void player_step_and_arm(uint8_t *image, uint32_t actor);
  * arms above are the same class as `overlap_mask_exit_extend`'s site — and `emu.run` forces the CCR
  * clear, so no case in this project can enter them with X set. ../STATUS.md carries that. */
 void player_weapon_fire(uint8_t *image, uint32_t actor, unsigned entry_extend);
+
+/* $1f54 — THE STAGE TRANSITION, called at $a70 (the frame's LAST call) and again at $bb0, on nearly
+ * every arm of `player_pending_event_gate`. Four flag words in one chain, and only the fourth arm
+ * runs on an ordinary frame:
+ *   * WB_STAGE_ANIM_DONE_B10 set — nothing at all. It is this routine's own latch, so once the
+ *     transition has played out the whole routine is an `rts` until something clears the word.
+ *   * WB_STAGE_ANIM_REQUEST_B0E set — the TRANSITION, twenty-four frames off one of two tables
+ *     WB_EFFECT_STATE_21E4 picks between, and the wrap raises WB_STAGE_ANIM_DONE_B10.
+ *   * WB_EVENT_ANIM_DONE_B16 set — sixteen frames off WB_PLAYER_EVENT_ANIM_CURSOR's table; the wrap
+ *     raises WB_STAGE_ANIM_DONE_B18 and blanks the sprite.
+ *   * WB_STAGE_RESET_BLOCK set (the death handshake `player_meter_empty_check` writes) — sixteen
+ *     frames off WB_PLAYER_DEATH_ANIM_CURSOR's, with no completion flag of its own.
+ *   * none of them — the POSTURE SELECTOR, which is the player's sprite on every ordinary frame:
+ *     the hurt pair, then the ladder, then the swing, then standing / walking / jumping / falling
+ *     out of one of the three WB_PLAYER_POSTURE_TABLE_* records.
+ *
+ * IT IS CALLEE-CLEAN like the seven above it — the only thing it calls is the SFX stub — and it is
+ * where BOTH of the walk's flag bits are spent: WB_ACTOR_FLAG_FIRED_BIT gates the swing and is
+ * lowered by it, WB_ACTOR_FLAG_MOVED_BIT chooses the walk cycle over standing still. Batch 40's
+ * "what those two bits BUY is decided in the one routine of the frame this port lacks" is answered
+ * by this routine landing.
+ *
+ * THE SWING'S FIRST FRAME IS INDEXED BY THE SFX ID, not by the cursor — see WB_PLAYER_ATTACK_SFX and
+ * the plate at $20ca. Reproduced, not tidied. */
+void player_stage_transition(uint8_t *image, uint32_t actor);
 
 #endif /* WONDERBOY_PLAYER_H */

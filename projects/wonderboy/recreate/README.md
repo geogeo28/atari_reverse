@@ -75,12 +75,15 @@ include/map.h              the collision map's three routines — prototypes, wh
                            helpers (one probe with the ground flags no caller reads dropped) that
                            moved here from src/behavior.c when src/player.c's walk became their
                            second module
-include/player.h           THE PLAYER'S OWN FRAME — the SEVEN routines that reach nothing this port
-                           lacks: four of behaviour slot 1's own nine calls, the jump machine the
+include/player.h           THE PLAYER'S OWN FRAME — the EIGHT routines that reach nothing this port
+                           lacks: five of behaviour slot 1's own nine calls, the jump machine the
                            gate reaches below one of them, and the spawn helper the second one
                            hands a template to. Plus the
                            per-arm reading of the WEAPON's threaded `sbcd` extend bit, and (at the
-                           foot of the header) what the frame still calls that is NOT there
+                           foot of the header) what the frame still calls that is NOT there —
+                           which since batch 40 phase C is `player_pending_event_gate` ($b1a),
+                           UNPORTABLE on three stack-unwinding exits, and
+                           `player_collide_and_scroll` ($151a)
 include/actor.h            the followed actor's record, the two tests over it, the two passes
                            that project actor records into screen coordinates, the table's
                            lifecycle — reset, free, the two pool allocators and the spawn — and
@@ -227,7 +230,15 @@ src/player.c               the player's frame, batch 40: the DEATH CHECK ($a76, 
                            off the newest WB_EFFECT_RECORD_LIST record and spawns the lightning
                            flash, a wind spout, a fireball or a bomb; its `sbcd` is the first
                            THREADED extend site in this project that one arm also produces LOCALLY,
-                           so `entry_extend` is a parameter here rather than a claim)
+                           so `entry_extend` is a parameter here rather than a claim). Phase C then
+                           took the frame's LAST call, the POSTURE SELECTOR ($1f54): four cutscene
+                           animations over four flag words and, below them, what the player's own
+                           flag bits LOOK like — standing, walking, jumping, falling, climbing a
+                           ladder or swinging, out of one of three 88-byte posture records
+                           WB_EFFECT_STATE_21E4 picks between. It holds the only readers of the two
+                           bits the walk writes, and its swing has a defect worth knowing about: the
+                           first frame of every swing is indexed by the SFX ID, because the sound
+                           stub restores d0
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -436,9 +447,10 @@ test/test_stage.py         the stage loader's differential: whole-body entry pin
                            ordinals rather than let test_effects.py become a third importer of
                            test_actor.py
 test/test_player.py        the player frame's differential, and the first battery here whose
-                           routines are neither dispatch rows nor map-walkers: SEVEN entry pins, a
-                           per-routine CENSUS (six of the seven are named by exactly one instruction
-                           in the whole image and the seventh by two, positive and negative), the
+                           routines are neither dispatch rows nor map-walkers: EIGHT entry pins, a
+                           per-routine CENSUS (six of the eight are named by exactly one instruction
+                           in the whole image and the other two by two each, positive and
+                           negative), the
                            ladder's odd-x row that separates its $fff1 mask from a $fff0 one, the
                            ascent's zero-speed wrap, the wing boots' level-vs-edge read and their
                            word-wide rearm, and the death arm's whole `snd_play_song` write set
@@ -453,7 +465,14 @@ test/test_player.py        the player frame's differential, and the first batter
                            project has MEASURED but not ported: the register convention of
                            `player_pending_event_gate`'s spawn site, driven with the two `lea`
                            operands taken out of the image, and the census that says $1fa2 is an
-                           ARM of `player_stage_transition` rather than a routine
+                           ARM of `player_stage_transition` rather than a routine. Phase C then
+                           widened it a third time, to the 466-byte DATA BLOCK above $1f54 — three
+                           posture records and four cursor-plus-table animations, seeded as one
+                           keyed band so that a frame published from the wrong table lands on a byte
+                           that is wrong for where it came from — with rows for the chain's ORDER
+                           (all four flags raised at once), for the field order that FLIPS between
+                           the idle pair and the other three, and for the swing's first frame being
+                           indexed by the SFX id
 test/test_text.py          the text subsystem's differential. The plotter: 32 bytes into the
                            4-plane buffer with the write set stated exactly, the returned cursor
                            compared against both sides, a cell walk that shows the +1/+7 alternation
@@ -588,6 +607,25 @@ backup before you let one start; and after any reviewer has run, re-verify the t
 `grep` for the symbols you added — and not only with `git diff`, which looks identical whether your
 edit is missing or was never made. The same rule protects the sweep scripts themselves: keep them
 out of a shared scratchpad path a subagent might reuse.
+
+**TWO LESSONS FROM BATCH 40 PHASE C, both about reading a sweep rather than running one.**
+
+* **A SURVIVOR'S FIRST EXPLANATION CAN BE TRUE AND STILL NOT BE THE CAUSE.** One mutant survived,
+  the diagnosis found a real seeding defect (a keyed band silently dropped), the defect was fixed —
+  and the SAME mutant survived the second sweep, because the keyed data was necessary and not
+  sufficient: no seed varied more than one of the flags the mutant reorders. Both repairs were
+  needed and only the second one was the cause. So a repair earns a RE-RUN of the mutant that
+  prompted it, not a tick: "I found something wrong" is not "I found what was wrong".
+* **A MUTANT THAT NO LONGER APPLIES IS NOT A CAUGHT ONE.** A review cleanup between two sweeps
+  collapsed two arms into one condition, and the mutant that had patched them came back
+  NOT APPLICABLE — which a loop that only counts returncodes would never distinguish from a pass.
+  Re-spell it against the tree that ships, and run a control beside it, because a collapsed
+  condition is exactly the shape that can lose an arm.
+* **AND `.pyc` HAS THE `.so`'s MTIME PROBLEM.** Way 1 above is about `make` skipping a rebuild;
+  pytest's assertion-rewrite cache is keyed on (mtime, size) too, so restoring a source with a
+  SAME-SIZE edit inside the same second re-runs the MUTANT's rewritten module against a restored
+  file. It reads exactly like a reproducible failure in clean code. `rm -rf test/__pycache__`
+  between mutants, or make the restore change the size.
 
 Restore and re-green after each mutant — a sweep left half-applied is worse than none. Its sibling
 recipe, [writing a fuzz test so it shards across

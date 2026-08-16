@@ -1282,8 +1282,8 @@ Cut against merged function *extents*, so a discontiguous body's own hole is not
 | 3 | `0x06d5a..0x07522` | 1,992 | 316 | starts at `actor_respawn_as_new_kind`'s body end, ends at `bg_scroll_run_queue` |
 | 4 | `0x0ee68..0x0f542` | 1,754 | 0 | **the Copylock ciphertext** — unreadable by construction, not a campaign target |
 | 5 | `0x02462..0x02af2` | 1,680 | 398 | |
-| 6 | `0x01514..0x01ab4` | 1,440 | 130 | ends where `scene_spend_visit_budget`'s unported arm goes |
-| 7 | `0x01f54..0x023b6` | 1,122 | 0 | |
+| 6 | `0x01514..0x01ab4` | 1,440 | 130 | ends where `scene_spend_visit_budget`'s unported arm goes. **Batch 40 phase C took NONE of this gap** — `$1b46` lies PAST its end (and was already inside a named `fn`), so booking it here would be a phantom credit — but it DIVIDED the gap exactly: 6 bytes of data (`$1514`) + 1,170 (`player_collide_and_scroll`, `$151a..$19ab`) + 264 (`scene_spawn_from_script`'s head as far as `$1ab4`) = 1,440. Note the head does NOT end there: it runs on to `$1aef`, and those last 60 bytes lie in neither this gap nor gap 10 |
+| 7 | `0x01f54..0x023b6` | 1,122 | 0 | **656 of these are gone as of batch 40 phase C** — `player_stage_transition` is `$1f54..$21e3` and the 466 above it are its own DATA, now read field by field (three 88-byte posture records and four cursor-plus-table animations). So this gap is CLOSED but for its data; the figures in this table are the 2026-08-11 re-scan's and are not re-run here |
 | 8 | `0x00938..0x00d28` | 1,008 | 132 | |
 | 9 | `0x0e91c..0x0ecca` | 942 | 76 | runs up to `copylock_entry` |
 | 10 | `0x01bb4..0x01f36` | 898 | 0 | |
@@ -1559,7 +1559,7 @@ construction, or has a `var` from `../names.txt` sitting inside it naming what t
 
 The largest confirmed-DATA gaps, each with the `var` that names it: `0xe978..0xecca` 850 B (sprite
 bitmaps), `0x1a830..0x1aaca` 666 B (`$1a830`/`$1a864`/`$1a9d0`, sound tables), `0xe222..0xe43e`
-540 B (`spawn_script_gate_table`), `0x21e4..0x23b6` 466 B (sprite-id words), `0x73ce..0x7522` 340 B
+540 B (`spawn_script_gate_table`), `0x21e4..0x23b6` 466 B (sprite-id words — and batch 40 phase C DIVIDED that one exactly: a flag word, three 88-byte posture records and four cursor-plus-table animations, all read by `player_stage_transition` and by nothing else), `0x73ce..0x7522` 340 B
 (`actor_swoop_path_table` + `actor_swoop_paths`), `0xb444..0xb54c` 264 B (`effect_record_list`),
 `0x938..0xa36` 254 B — **`actor_behavior_table` itself**, 62 longwords plus the three
 `state_flag_a30/a32/a34` words, exactly 254 B, bounded above by its own first target.

@@ -42,6 +42,24 @@ uint32_t scene_run_frame(uint8_t *image);
  * is read, which is why the argument is the whole longword and the truncation happens here. */
 uint32_t scene_spend_visit_budget(uint8_t *image, uint32_t record, uint32_t amount);
 
+/* $1b46 — CLEAR A MARKER CELL AND ITS TWIN, and the whole routine is six instructions: the byte at
+ * `cell` is read and cleared, then compared against the cell to its RIGHT and, failing that, the one
+ * to its LEFT; whichever holds the same code is cleared too. `cell` is the original's a6, which both
+ * callers load from WB_SCENE_MARKER_CELL_PTR.
+ *
+ * THE RETURN VALUE IS WHETHER A NEIGHBOUR MATCHED, and it exists because THIS LOGIC IS IN THE IMAGE
+ * TWICE. $de94, inside `scene_spend_visit_budget` above, is the same six instructions spelt inline —
+ * and the ONLY difference between the two originals is what happens when neither neighbour matches:
+ * $1b46 simply `rts`s where $de94 takes `jmp $1ab4.w`, the tail this file does not follow. So one
+ * body serves both, and the flag is what lets the caller choose its own ending.
+ *
+ * RENAMED FROM `speech_script_step`, WHICH WAS WRONG twice over: the routine steps no script (it
+ * writes collision-map cells, and the speech cursor is stepped by the `addq.l #1,$1017c.l` two
+ * instructions above its call site), and the plate's register was a5 where the opcode word $1016 is
+ * `move.b (a6),d0`. WHY IT IS IN THIS FILE and not src/player.c with the rest of the $19ac tree:
+ * its twin is here, and a second copy of six instructions is the one divergence nothing catches. */
+int scene_clear_marker_pair(uint8_t *image, uint32_t cell);
+
 /* $dfbe — LEAVE THE SCENE AND RELOAD THE STAGE, the tail four of $dbc0's arms take. It runs the
  * descriptor's own exit action out of WB_SCENE_EXIT_ACTION_TABLE, takes the message box down, hands
  * stage_load_window the level map, WB_TILE_BITMAPS and the WB_STAGE_START_TABLE entry the descriptor

@@ -354,6 +354,45 @@ EXIT_ACTION_1_BYTES = b"".join(EXIT_ACTION_1_PIECES)
 # ...less the early `rts` the LONGEST path (the one that finds a slot and bumps the counter) skips.
 EXIT_ACTION_1_INSN = len(EXIT_ACTION_1_PIECES) - 1
 
+# $1b46, whole, and the SIX INSTRUCTIONS $de94 spells again inline. The neighbours are one CELL
+# either side, which on a map of one byte per cell is `1(a6)` and `-1(a6)`; the RIGHT one is tested
+# first. What differs between the two originals is only the ending — this one falls to the `rts`
+# where $de94 takes `jmp $1ab4.w` — which is why src/scene.c has one body returning a flag.
+MARKER_PAIR_ENTRY = 0x1b46
+NEIGHBOUR_CELL = wb("MAP_NEIGHBOUR_CELL")
+
+
+def move_b_ind_dn(reg, base):
+    """`move.b (An),Dn` — the marker cell's own byte."""
+    return opcode(0x1010 | (reg << 9) | base)
+
+
+def clr_b_ind(base):
+    """`clr.b (An)` — and the store that clears it, above both compares."""
+    return opcode(0x4210 | base)
+
+
+def cmp_b_d16_dn(reg, base, displacement):
+    """`cmp.b d16(An),Dn` — a neighbour against the code the cell held."""
+    # ALSO IN test_player.py — second copy.
+    return opcode(0xb028 | (reg << 9) | base) + word(displacement)
+
+
+MARKER_PAIR_BYTES = leaf.asm(MARKER_PAIR_ENTRY, [
+    move_b_ind_dn(D0, A6),
+    clr_b_ind(A6),
+    cmp_b_d16_dn(D0, A6, NEIGHBOUR_CELL),
+    leaf.bcc(BNE_W, "left"),
+    leaf.clr_b_d16(A6, NEIGHBOUR_CELL),
+    leaf.bcc(BRA_W, "out"),
+    leaf.lab("left"),
+    cmp_b_d16_dn(D0, A6, -NEIGHBOUR_CELL & 0xffff),
+    leaf.bcc(BNE_W, "out"),
+    leaf.clr_b_d16(A6, -NEIGHBOUR_CELL & 0xffff),
+    leaf.lab("out"),
+    RTS,
+])
+
 # Every pinned instruction, by the address it sits at. A wrong address, a wrong operand or a wrong
 # branch distance fails here rather than inside a case that then blames its own seeding.
 ENTRY_BYTES = {
@@ -402,8 +441,11 @@ ENTRY_BYTES = {
     # ...and the two routines batch 27 ported, each pinned WHOLE rather than at its entry.
     "scene_exit_and_reload": (RELOAD_TAIL, EXIT_AND_RELOAD_BYTES),
     "scene_exit_action_select_a30_table": (0x101be, EXIT_ACTION_1_BYTES),
+    # ...and $1b46, whole. Six instructions and two branches, and it is $de94's twin: the SAME six
+    # spelt inline inside `scene_spend_visit_budget`, differing only in the ending.
+    "scene_clear_marker_pair": (MARKER_PAIR_ENTRY, MARKER_PAIR_BYTES),
 }
-RECORDED_PINS = 20
+RECORDED_PINS = 21
 
 
 def transfer_at(label):
@@ -569,7 +611,8 @@ def test_the_instruction_at_each_pinned_address_is_the_one_reconstructed(label):
 
 
 @pytest.mark.parametrize("name", ["scene_run_frame", "scene_spend_visit_budget",
-                                  "scene_exit_and_reload", "scene_exit_action_select_a30_table"])
+                                  "scene_exit_and_reload", "scene_exit_action_select_a30_table",
+                                  "scene_clear_marker_pair"])
 def test_each_reconstructed_entry_is_where_names_txt_says(name):
     """Each `fn` address, cross-checked against the pin table — `assert_entry_is` is the same check
     the leaf batteries make, and it is what ties ../names.txt to the bytes."""
@@ -584,6 +627,7 @@ def test_each_reconstructed_entry_is_where_names_txt_says(name):
 @pytest.mark.parametrize("name,ends_at,neighbour", [
     ("scene_exit_and_reload", MESSAGE_PENDING, "WB_SCENE_MESSAGE_PENDING"),
     ("scene_exit_action_select_a30_table", 0x10200, "the first set_state_* stub"),
+    ("scene_clear_marker_pair", 0x1b68, "actor_alloc_slot_low"),
 ])
 def test_each_reconstructed_body_ends_exactly_where_its_neighbour_begins(name, ends_at, neighbour):
     addr, body = ENTRY_BYTES[name]
@@ -1225,6 +1269,64 @@ def test_a_borrow_clears_the_left_twin_when_the_right_one_does_not_match():
     assert info["ret"] == EXIT_RETURN
     assert leaf.read_int(info, MARKER_CELL, 1, case) == 0
     assert leaf.read_int(info, MARKER_CELL - 1, 1, case) == 0
+
+
+# --- $1b46: the marker-pair clear, entered at its own address ------------------------------------
+#
+# The TWIN of the six instructions inside the budget spend above, and the reason src/scene.c has one
+# body for both. Its two callers are $1aac and $1ef2, both inside the $19ac tree, and both reach it
+# with a6 already holding WB_SCENE_MARKER_CELL_PTR's longword — which is why the differential enters
+# it with that register rather than with a pointer of the case's own.
+_CLEAR_MARKER = leaf.register_glue("scene_clear_marker_pair", [ctypes.c_uint32], ctypes.c_int)
+MARKER_PAIR_CAP = 16
+MARKER_PAIR_MATCHED, MARKER_PAIR_ALONE = 1, 0
+
+
+def marker_pokes(case, cell_left, cell, cell_right):
+    return pokes(case, bytes_=((MARKER_CELL - 1, cell_left), (MARKER_CELL, cell),
+                               (MARKER_CELL + 1, cell_right)))
+
+
+@pytest.mark.parametrize("left,code,right,cleared,matched", [
+    (0x11, 0x22, 0x22, MARKER_CELL + 1, MARKER_PAIR_MATCHED),
+    (0x22, 0x22, 0x33, MARKER_CELL - 1, MARKER_PAIR_MATCHED),
+    # BOTH match: the RIGHT one is tested first, so the left neighbour survives. That is the case
+    # neither budget row above can state, because each seeds only one twin.
+    (0x22, 0x22, 0x22, MARKER_CELL + 1, MARKER_PAIR_MATCHED),
+    (0x11, 0x22, 0x33, None, MARKER_PAIR_ALONE),
+    # A cell already holding ZERO matches a zero neighbour, because the compare is against the code
+    # the cell held and the `clr.b` above it does not change the answer.
+    (0x11, 0x00, 0x00, MARKER_CELL + 1, MARKER_PAIR_MATCHED),
+])
+def test_the_marker_clear_clears_the_cell_and_the_FIRST_neighbour_that_matches(left, code, right,
+                                                                              cleared, matched):
+    """Right first, left second, and the flag says whether either did — which is the whole of what
+    `scene_spend_visit_budget` needs to choose between its `rts` and its `jmp $1ab4.w`."""
+    case = f"marker pair {left:#04x} [{code:#04x}] {right:#04x}"
+    seeds = marker_pokes(case, left, code, right)
+    allowed = [(MARKER_CELL - 1, 3)]
+    info = leaf.run("scene_clear_marker_pair", _CLEAR_MARKER(MARKER_CELL), allowed, case,
+                    regs={"a6": MARKER_CELL, "_pokes": seeds}, max_insns=MARKER_PAIR_CAP)
+    assert info["ret"] == matched
+    written = program_writes(info)
+    expected = {MARKER_CELL} | ({cleared} if cleared is not None else set())
+    assert set(written) == expected, (
+        f"{case}: wrote {[hex(a) for a in sorted(written)]}, not {[hex(a) for a in sorted(expected)]}")
+    for addr in expected:
+        assert leaf.read_int(info, addr, 1, case) == 0
+
+
+def test_the_marker_clear_is_the_SAME_six_instructions_the_budget_spend_holds_inline():
+    """The de-duplication, as a byte comparison rather than as a claim in a comment. $de94's copy is
+    identical up to the branch that ends it: the first four instructions and the two `clr.b`s are the
+    same bytes, and only the two branch words and the `jmp $1ab4.w` between them differ."""
+    twin = 0xde94
+    same = len(move_b_ind_dn(D0, A6)) + len(clr_b_ind(A6)) + len(cmp_b_d16_dn(D0, A6,
+                                                                             NEIGHBOUR_CELL))
+    assert (bytes(harness.BASE_IMAGE[twin:twin + same])
+            == MARKER_PAIR_BYTES[:same]), "the two originals do not open with the same instructions"
+    assert (bytes(harness.BASE_IMAGE[twin + same + 4:twin + same + 4 + 4])
+            == leaf.clr_b_d16(A6, NEIGHBOUR_CELL)), "the twin's right-hand clear is not the same"
 
 
 def test_a_marker_cell_matching_neither_neighbour_takes_the_stage_reset_tail():

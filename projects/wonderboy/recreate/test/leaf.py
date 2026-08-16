@@ -510,6 +510,24 @@ def move_w_abs_l_dn(reg, addr):
     return opcode(0x3039 | (reg << 9)) + longword(addr)
 
 
+def move_w_dn_abs_l(reg, addr):
+    """`move.w Dn,<abs>.l` — a word cursor stored back, and the instruction whose OWN Z the `bne`
+    below such a store reads. FOURTH copy when batch 40 phase C hoisted it; test_behavior.py,
+    test_scroll.py and test_stage.py still spell their own and are the next conversion, which
+    ../STATUS.md's queue records rather than this batch making it."""
+    return opcode(0x33c0 | reg) + longword(addr)
+
+
+def move_w_d16_d16(source, source_displacement, destination, destination_displacement):
+    """`move.w d16(As),d16(Ad)` — one record field copied straight into another. THIRD copy when
+    batch 40 phase C hoisted it (test_actor.py's spawn and test_behavior.py's launch-y save still
+    spell their own); the ARGUMENT ORDER is theirs, source pair then destination pair, which is the
+    rule a hoist has to follow — `adda_w_dn_an` and `move_b_d16_d16` are the two collisions this
+    workspace already made by not following it."""
+    return (opcode(0x3168 | (destination << 9) | source)
+            + word(source_displacement) + word(destination_displacement))
+
+
 def move_b_abs_l_dn(reg, addr):
     """`move.b <abs>.l,Dn` — how a routine reads a hardware port (the PSG read-back, an MFP byte)."""
     return opcode(0x1039 | (reg << 9)) + longword(addr)
@@ -1129,13 +1147,27 @@ def keyed_block(base, length, salt):
 def overlay(*layers):
     """Poke dicts merged BYTE by byte, later layers winning, and re-banded into {start: bytes}.
 
-    A poke dict is {address: bytes} and `dict.update` replaces a WHOLE entry — so a two-byte poke at
-    the same address as an eleven-byte seed silently shortens the seed to two bytes and the other
-    nine revert to whatever the .PRG ships there, with both cores reading the same wrong thing and
-    every case staying green. THE HAZARD HAS FIRED TWICE: test_scene.py's `_poke` carries a comment
-    about a band it lost to exactly this (the collision map "read as zeros for a batch"), and
-    test_sound.py's tick tier had it twice before its review pass. It lives here so the third battery
-    to build a layered seed does not have to find it a third time.
+    THE HAZARD THIS EXISTS FOR HAS FIRED FIVE TIMES, IN TWO SPELLINGS, and both are worth
+    recognising on sight because they leave no trace: both cores read the same wrong thing and every
+    case stays green.
+
+      * `dict.update` (or a later layer) REPLACING A WHOLE ENTRY. A poke dict is {address: bytes}, so
+        a two-byte poke at the same address as an eleven-byte seed silently shortens the seed to two
+        and the other nine revert to whatever the .PRG ships. test_scene.py's `_poke` carries a
+        comment about a band it lost to exactly this (the collision map "read as zeros for a batch");
+        test_sound.py's tick tier had it twice before its review pass; and batch 40 phase B's
+        `weapon/fireball-clears-the-sprite-WORD` mutant survived on it, because the high pool's first
+        record starts AT `POOL_LO` and shared that key with a 192-byte block.
+      * A DUPLICATE KEY IN ONE DICT **LITERAL**, which is the same loss with no `update` in sight and
+        is how batch 40 phase C lost a 466-byte band: `WB_EFFECT_STATE_21E4` IS the address the band
+        starts at, so `{BAND_LO: keyed_block(...), ..., EFFECT_STATE_21E4: word(0)}` kept only the
+        two-byte value. Every case in that battery then ran on the .PRG's shipped tables, where the
+        two fields a mutant swapped happen to hold the same sprite id — so the sweep, not the suite,
+        is what found it.
+
+    THE CURE IS `assert_bands_are_seeded` BELOW, called on the bands a battery's routines READ, and
+    a battery that seeds a mutable band owes itself that call: a band merely *listed* in a poke dict
+    is not a band that reached the image.
 
     ../STATUS.md registers the batteries that still merge by key (test_actor.py's `_defeat_pokes` and
     `_state_pokes`, test_map.py's `map_pokes`, and test_scene.py's own divergent refusal mechanism)

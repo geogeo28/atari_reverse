@@ -32,6 +32,7 @@
 #include "scene.h"
 #include "wonderboy.h"
 #include "actor.h"
+#include "bus.h"
 #include "effects.h"
 #include "hud.h"
 #include "input.h"
@@ -212,35 +213,50 @@ static uint32_t scene_reload_and_report(uint8_t *image) {
     return WB_SCENE_EXIT_RELOAD;
 }
 
+/* $1b46, and the same six instructions again at $de94 inside the visit budget below. See scene.h
+ * for why one body serves both and what the flag it returns is for.
+ *
+ * The neighbours are one CELL either side — the collision map is one byte per cell — and the RIGHT
+ * one is tested first.
+ *
+ * THE THREE BYTES GO THROUGH bus.h, where this file's other memory does not, and the reason is that
+ * `cell` is now an ADDRESS REGISTER a caller supplies: $1b46 is entered with a6 already loaded and
+ * nothing between the load and here bounds it. A raw `image[cell]` would read — and then WRITE —
+ * past the ctypes buffer where the 68000 side merely reaches an address the shim drops. */
+int scene_clear_marker_pair(uint8_t *image, uint32_t cell) {
+    uint32_t right = addr_add(cell, WB_MAP_NEIGHBOUR_CELL);
+    uint32_t left = addr_add(cell, -(uint32_t)WB_MAP_NEIGHBOUR_CELL);
+    uint8_t code = bus_read_byte(image, cell);
+
+    bus_write_byte(image, cell, 0);
+    if (code == bus_read_byte(image, right)) {
+        bus_write_byte(image, right, 0);
+        return 1;
+    }
+    if (code != bus_read_byte(image, left))
+        return 0;
+    bus_write_byte(image, left, 0);
+    return 1;
+}
+
 /* $de80. `sub.w d0,32(a1) / bmi` — a WORD subtract, so the borrow is the SIGN of the result and a
  * budget that wraps past $8000 closes the visit exactly as an honestly exhausted one does.
  *
  * Closing it stamps the 2x2 block into the collision map (map_stamp_block, which reads the same
- * descriptor and needs no argument) and then clears the marker cell WB_SCENE_MARKER_CELL_PTR
- * names, TOGETHER WITH ITS TWIN: the byte is compared against its right neighbour first and its
- * left one second, and the matching one is cleared as well. A cell with no matching neighbour
- * takes the `jmp $1ab4.w` instead — the tail this file does not follow. */
+ * descriptor and needs no argument) and then runs the marker-pair clear above over the cell
+ * WB_SCENE_MARKER_CELL_PTR names. A cell with no matching neighbour takes the `jmp $1ab4.w`
+ * instead — the tail this file does not follow. */
 uint32_t scene_spend_visit_budget(uint8_t *image, uint32_t record, uint32_t amount) {
     uint32_t budget = addr_add(record, WB_SHOP_VISIT_BUDGET);
     int16_t left = (int16_t)(be16(image + budget) - (uint16_t)amount);
-    uint32_t cell;
-    uint8_t code;
 
     wr16(image + budget, (uint16_t)left);
     if (left >= 0)
         return WB_SCENE_EXIT_RETURN;
 
     map_stamp_block(image);
-    cell = be32(image + WB_SCENE_MARKER_CELL_PTR);
-    code = image[cell];
-    image[cell] = 0;
-    if (code == image[addr_add(cell, 1)]) {
-        image[addr_add(cell, 1)] = 0;
-        return WB_SCENE_EXIT_RETURN;
-    }
-    if (code != image[addr_add(cell, -1)])
+    if (!scene_clear_marker_pair(image, be32(image + WB_SCENE_MARKER_CELL_PTR)))
         return WB_SCENE_EXIT_STAGE_RESET;
-    image[addr_add(cell, -1)] = 0;
     return WB_SCENE_EXIT_RETURN;
 }
 

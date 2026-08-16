@@ -124,6 +124,10 @@
  * pointer step. Two modules had their own `LONGWORD_BYTES` (src/stage.c's resource walk and, since
  * batch 40, src/player.c's record copy), which is one copy more than this workspace allows. */
 #define WB_LONGWORD_BYTES    4u
+#define WB_WORD_BYTES        2u       /* ...and the WORD, which batch 40 phase C needed for a
+                                       * different reason: `lea <cursor>.l,a1 / move.w (a1)+,d0`
+                                       * puts a table's base exactly one word above its own cursor,
+                                       * four times over in player_stage_transition */
 
 #define WB_JOY1_STATE        0x877u   /* what the IKBD handler last stored; bit 7 = fire */
 #define WB_JOY1_PREV         0x8b3u   /* the byte as of the PREVIOUS frame */
@@ -201,7 +205,28 @@
  * WB_PLAYER_JUMP_STRENGTH_BIAS to its low byte for the jump's height, and $fde/$1048 add
  * 4 to the WHOLE WORD for the walk's top speed (a word add where the jump's is
  * a byte one). So it is the word that says how high the player jumps and how fast he runs, and the
- * three effect handlers that stamp it are setting those. $21e4 is still unread. */
+ * three effect handlers that stamp it are setting those.
+ *
+ * CORRECTION (batch 40 phase C): "$21e4 is still unread" is RETRACTED TOO, by the same tier and for
+ * the same reason. It has FIVE readers ($1f6e, $2018, $205e, $2072, $20d4) and every one of them is
+ * inside `player_stage_transition` — it picks which of two transition frame tables plays, which of
+ * the three WB_PLAYER_POSTURE_TABLE_* records the player's sprite comes out of, which of two hurt
+ * sprite pairs a hurt airborne player shows, and whether the swing runs at all.
+ *
+ * AND THE SHIPPED BYTES SAY WHAT IT MEANS. The three posture records hold three CONSECUTIVE sprite
+ * families — $104.. , $10e.. and $11e.. , each with its own idle pair, jump pair, fall pair and
+ * four-frame walk cycle — so the word is WHICH OF THREE PLAYER APPEARANCES IS DRAWN.
+ *
+ * SIX WRITERS, and the sixth is the one an encoding-blind census misses — which is the same class
+ * of miss that made this whole plate wrong for three batches, so it is enumerated rather than
+ * summarised. `move.w #$1,$21e4.l` at $c06 is the ONLY absolute-LONG site of the eleven, and it is
+ * load-bearing: it sits between `jsr $fe8c.l` (the life restart) and `lea 4(a7),a7 / jmp $e5ba.l`,
+ * so `player_pending_event_gate` FORCES THE PLAYER'S FORM BACK TO 1 ON A STACK-UNWINDING EXIT. The
+ * other five are `move.w #$1,$21e4.w` at $101c6 (`scene_exit_action_select_a30_table`),
+ * `move.w #$2,$21e4.w` at $10350/$10360/$10370 (src/effects.c's three $bd68 handlers), and the
+ * `clr.w $21e4.w` at $fe56 — the new-game reset, which is what puts a fresh game in form 0.
+ * test/test_player.py rebuilds the whole census from the image and asserts it, near-misses
+ * included. */
 #define WB_EFFECT_STATE_BD66 0xbd66u
 #define WB_EFFECT_STATE_BD68 0xbd68u
 #define WB_EFFECT_STATE_BD6A 0xbd6au
@@ -2517,6 +2542,110 @@
                                                * player_weapon_fire's own 300 bytes, at $1332, with
                                                * $1333 unread padding to the routine's end */
 
+/* ---- $1f54, the frame's LAST call: THE STAGE TRANSITION and the POSTURE SELECTOR ----------------
+ *
+ * FOUR FLAG ARMS IN ONE FLOW GRAPH ($1f54 / $1fa2 / $1fd6 / $1ffc, with $205c and $205e as the
+ * shared tails), and the 466 bytes above the routine ($21e4..$23b5) are its DATA. That block
+ * DIVIDES EXACTLY, which is why the layout is stated as arithmetic rather than as prose — the flag
+ * word, THREE 88-byte posture records, and four cursor-plus-table animations, the last of which
+ * ends on actor_hit_by_player_shot's first instruction. In memory order, with each cursor counted
+ * with the table it sits below:
+ *
+ *   WB_EFFECT_STATE_21E4        2
+ *   three posture records     264   == 3 * WB_PLAYER_POSTURE_BYTES
+ *   the DEATH animation        34   == 2 + 32
+ *   the TRANSITION animation   98   == 2 + 2 * WB_PLAYER_TRANSITION_TABLE_BYTES
+ *   the ATTACK animation       34   == 2 + 2 * 16
+ *   the EVENT animation        34   == 2 + 32
+ *                            ----
+ *                             466
+ *
+ * A CURSOR HERE IS A BYTE OFFSET HELD IN THE WORD IMMEDIATELY BELOW ITS OWN TABLE, which is what
+ * `lea <cursor>.l,a1 / move.w (a1)+,d0 / move.w 0(a1,d0.w),6(a0)` means, and the index is
+ * SIGN-EXTENDED — the same shape as the behaviour tier's frame lists one tier over. */
+#define WB_STAGE_ANIM_REQUEST_B0E    0xb0eu   /* word inside WB_STAGE_RESET_BLOCK, and the fourth of
+                                               * its nine to be read rather than merely reset. FOUR
+                                               * operand sites, all absolute SHORT: the raise
+                                               * `move.w #$ffff,$b0e.w` at $19a4 (inside the SCENE
+                                               * KIND 4 arm of player_collide_and_scroll — the boss
+                                               * defeat), two readers `tst.w $b0e.w` at $b22
+                                               * (player_pending_event_gate) and $1f5e (here), and
+                                               * the `clr.l $b0e.w` at $c6a, which clears
+                                               * WB_STAGE_ANIM_DONE_B10 with it as the longword's
+                                               * low half without naming it */
+#define WB_STAGE_ANIM_DONE_B10       0xb10u   /* ...and the LATCH that arm raises when its cursor
+                                               * wraps. THREE operand sites, all absolute short:
+                                               * `tst.w` at $c28 (the gate) and $1f54 (this
+                                               * routine's own first instruction, so a raised word
+                                               * makes the whole routine an `rts`), and the
+                                               * `move.w #$ffff` at $1f9a. Cleared only as the low
+                                               * half of $c6a's `clr.l` above */
+#define WB_STAGE_ANIM_DONE_B18       0xb18u   /* the same latch for the arm WB_EVENT_ANIM_DONE_B16
+                                               * gates. THREE operand sites, all absolute short:
+                                               * `tst.w $b18.w` at $cf0 and `clr.w $b18.w` at $d02
+                                               * (both the gate's), and the `move.w #$ffff` at
+                                               * $1fc8 here */
+
+#define WB_PLAYER_POSTURE_TABLE_0    0x21e6u  /* the record $205e picks while WB_EFFECT_STATE_21E4 */
+#define WB_PLAYER_POSTURE_TABLE_1    0x223eu  /* is zero, exactly one, and anything else. Three */
+#define WB_PLAYER_POSTURE_TABLE_2    0x2296u  /* `lea`s, and their only operand sites in the image */
+#define WB_PLAYER_POSTURE_BYTES      0x58u    /* == WB_PLAYER_POSTURE_TABLE_1 - _TABLE_0, and again
+                                               * _TABLE_2 - _TABLE_1; _TABLE_2 + this is
+                                               * WB_PLAYER_DEATH_ANIM_CURSOR, so the run of three is
+                                               * bounded at both ends by its neighbours */
+/* The record's fields, by the `btst #3,8(a0)` arm that reads each: SET is FACING LEFT (the walk's
+ * `bset` arm is the one holding LEFT). FOUR of its forty-four words have no reader in the image —
+ * offsets 2, 4, 8 and 10, i.e. the two words above each of the idle pair. */
+#define WB_PLAYER_POSTURE_IDLE_RIGHT 0u       /* `move.w (a6),6(a0)`   at $21a0 */
+#define WB_PLAYER_POSTURE_IDLE_LEFT  6u       /* `move.w 6(a6),6(a0)`  at $2198 */
+#define WB_PLAYER_POSTURE_JUMP_LEFT  12u      /* `move.w 12(a6),6(a0)` at $2150 */
+#define WB_PLAYER_POSTURE_JUMP_RIGHT 14u      /* ...and the ORDER FLIPS here: idle is (right, left)
+                                               * where jump, fall and walk are all (left, right) */
+#define WB_PLAYER_POSTURE_FALL_LEFT  16u
+#define WB_PLAYER_POSTURE_FALL_RIGHT 18u
+#define WB_PLAYER_POSTURE_WALK_RIGHT 20u      /* `lea 20(a6),a5` — a CURSOR, with its sixteen-word */
+#define WB_PLAYER_POSTURE_WALK_LEFT  54u      /* table at +2 and wrapped by WB_ACTOR_ANIM32_MASK.
+                                               * 54 + 2 + 32 == WB_PLAYER_POSTURE_BYTES, which is
+                                               * the third reading of that length */
+
+#define WB_PLAYER_TRANSITION_CURSOR  0x2310u  /* arm 1's ($b0e), and the one animation here with TWO
+                                               * tables: `lea 48(a1),a1` picks the second while
+                                               * WB_EFFECT_STATE_21E4 is nonzero */
+#define WB_PLAYER_TRANSITION_TABLE_BYTES 0x30u /* ONE number spelt by TWO instructions, and they
+                                               * agree because they are the same fact: `lea 48(a1)`
+                                               * steps over the first table to reach the second, and
+                                               * `cmp.w #$30,d0` wraps the cursor at that table's
+                                               * end. Twenty-four words each. The wrap is an
+                                               * EQUALITY, so a cursor that never lands on it never
+                                               * wraps and walks straight on into the second table */
+#define WB_PLAYER_EVENT_ANIM_CURSOR  0x2394u  /* arm 2's ($b16), sixteen words, WB_ACTOR_ANIM32_MASK */
+#define WB_PLAYER_DEATH_ANIM_CURSOR  0x22eeu  /* arm 3's ($b08, the death handshake), the same */
+#define WB_PLAYER_ATTACK_CURSOR      0x2372u  /* the FIRED arm's, and the only one of the four read
+                                               * with `move.w <abs>,d0` instead of `(a1)+` */
+#define WB_PLAYER_ATTACK_TABLE_RIGHT 0x2374u  /* eight words each, wrapped by WB_PLAYER_ATTACK_MASK; */
+#define WB_PLAYER_ATTACK_TABLE_LEFT  0x2384u  /* _LEFT is the WB_ACTOR_FLAG_SIDE_BIT SET arm */
+#define WB_PLAYER_ATTACK_MASK        0xfu     /* `andi.w #$f,d0` — numerically WB_ACTOR_ANIM16_MASK */
+#define WB_PLAYER_ATTACK_SFX         6u       /* `move.w #$6,d0 / clr.w d1` on the frame the cursor
+                                               * is found at zero, i.e. once per swing — AND, on
+                                               * that same frame, the FRAME INDEX, because the stub
+                                               * it is passed in restores d0 and the `move.w
+                                               * 0(a1,d0.w),6(a0)` below indexes with it. One
+                                               * constant, two jobs, and the second is a defect
+                                               * rather than a design: it makes entries 0, 2 and 4
+                                               * of both attack tables unreachable */
+#define WB_PLAYER_LADDER_SPRITES     0x20c2u  /* EIGHT BYTES OF DATA INSIDE THE BODY, $20c2..$20c9:
+                                               * $014e $014e $014f $014f, the climbing frames. Its
+                                               * one operand site is the `lea $20c2.l,a1` at $2096 */
+#define WB_PLAYER_LADDER_SPRITE_MASK 7u       /* `andi.b #$7,d0` on WB_ACTOR_FIELD_18, a BYTE offset
+                                               * into the four words above — so an ODD cursor would
+                                               * fetch a word across two of them */
+#define WB_PLAYER_HURT_SPRITE_RIGHT  0x11cu   /* the WB_EFFECT_STATE_21E4 == 1 pair at $2038/$202e, */
+#define WB_PLAYER_HURT_SPRITE_LEFT   0x11du   /* by WB_ACTOR_FLAG_SIDE_BIT */
+#define WB_PLAYER_HURT2_SPRITE_RIGHT 0x12cu   /* ...and the pair every other state takes, at */
+#define WB_PLAYER_HURT2_SPRITE_LEFT  0x12du   /* $2056/$204c */
+#define WB_PLAYER_POSTURE_STATE_ONE  1u       /* `cmpi.w #$1,$21e4.l`, spelt THREE times in this one
+                                               * routine ($2018, $2072 and the hurt pair's own) */
+
 /* ---- the collision map the actors walk on (RUNTIME addresses; src/map.c) ----------------------
  *
  * A SECOND map, laid out exactly like the background one (WB_MAP_ROW_STRIDE): a word of bytes per
@@ -2540,6 +2669,9 @@
 #define WB_MAP_CELL_PIXELS           16u      /* == 1 << WB_MAP_CELL_SHIFT; `cmpi.w #$10,d7` and
                                                * `subi.w #$10,d7` walk the footprint by whole cells */
 #define WB_MAP_CELL_MASK             0xfu     /* `andi.w #$f` — the position WITHIN a cell */
+#define WB_MAP_NEIGHBOUR_CELL        1u       /* one cell either side is one BYTE, which is what
+                                               * makes `1(a6)` and `-1(a6)` the marker cell's two
+                                               * horizontal neighbours ($1b46, $de94) */
 #define WB_MAP_TILE_BLOCK            1u       /* the tile code $10a2 refuses to walk into */
 #define WB_MAP_TILE_LEDGE            2u       /* ...and the second code its ground test accepts */
 #define WB_MAP_TILE_PLATFORM         0x23u    /* the tile code $1400 scans the footprint for */

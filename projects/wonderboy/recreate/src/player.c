@@ -572,3 +572,219 @@ void player_weapon_fire(uint8_t *image, uint32_t actor, unsigned entry_extend) {
     }
     player_spend_one_shot(image, record, extend_at_sbcd);
 }
+
+
+/* --- $1f54: the stage transition, and the frame's LAST call ---------------------------------------
+ *
+ * FOUR ARMS OVER FOUR FLAG WORDS, tested in one chain ($1f54 / $1fa2 / $1fd6 / $1ffc) with two
+ * shared tails ($205c's bare `rts` and the posture selector at $205e). The first three are
+ * cutscene animations that own the player's sprite outright; the fourth is what runs on an ordinary
+ * frame, and it is where the player's POSTURE — standing, walking, jumping, falling, climbing,
+ * swinging — becomes a sprite id.
+ *
+ * IT IS ALSO WHERE THE WALK'S TWO FLAG BITS ARE SPENT. WB_ACTOR_FLAG_FIRED_BIT (raised at $efa) is
+ * read at $20ca and lowered at $212a, and WB_ACTOR_FLAG_MOVED_BIT (three sites in the walk) is read
+ * at $2184 — so what `player_step_and_arm` buys by writing them is decided here and nowhere else,
+ * which retires the last of batch 40's honesty items about the pair.
+ */
+
+/* The shape all four animations share: the cursor is the word IMMEDIATELY BELOW its own table and
+ * the frame is fetched at `table + cursor` with the cursor SIGN-EXTENDED, which is what
+ * `lea 0(a1,d0.w),a1 / move.w (a1),6(a0)` does. */
+static void transition_publish_frame(uint8_t *image, uint32_t actor, uint32_t table,
+                                     uint16_t cursor) {
+    set_field_w(image, actor, WB_ACTOR_SPRITE,
+                bus_read_word(image, addr_add(table, sign_ext16(cursor))));
+}
+
+/* $1faa / $1fde — arms 2 and 3, which are one body with the cursor exchanged: sixteen words wrapped
+ * by WB_ACTOR_ANIM32_MASK. Returns the WRAPPED cursor, because `move.w d0,<cursor>` is what sets the
+ * Z the completion test below reads. */
+static uint16_t transition_step_anim32(uint8_t *image, uint32_t actor, uint32_t cursor_at) {
+    uint16_t cursor = be16(image + cursor_at);
+
+    transition_publish_frame(image, actor, cursor_at + WB_WORD_BYTES, cursor);
+    cursor = (uint16_t)((cursor + WB_ACTOR_ANIM_FRAME_BYTES) & WB_ACTOR_ANIM32_MASK);
+    wr16(image + cursor_at, cursor);
+    return cursor;
+}
+
+/* $1f66 — ARM 1, the transition proper, and the only animation here with TWO tables: `lea 48(a1),a1`
+ * picks the second while WB_EFFECT_STATE_21E4 is nonzero, so the same cursor drives whichever of the
+ * two the game is in. Its wrap is `cmp.w #$30,d0` — an EQUALITY, not a mask, so a cursor that never
+ * lands on WB_PLAYER_TRANSITION_TABLE_BYTES walks straight out of the first table into the second. */
+static void transition_play(uint8_t *image, uint32_t actor) {
+    uint32_t table = WB_PLAYER_TRANSITION_CURSOR + WB_WORD_BYTES;
+    uint16_t cursor = be16(image + WB_PLAYER_TRANSITION_CURSOR);
+
+    if (be16(image + WB_EFFECT_STATE_21E4) != 0)
+        table += WB_PLAYER_TRANSITION_TABLE_BYTES;
+
+    transition_publish_frame(image, actor, table, cursor);
+    cursor = (uint16_t)(cursor + WB_ACTOR_ANIM_FRAME_BYTES);
+    if (cursor == WB_PLAYER_TRANSITION_TABLE_BYTES)
+        cursor = 0;
+
+    wr16(image + WB_PLAYER_TRANSITION_CURSOR, cursor);
+    if (cursor != 0)
+        return;
+    wr16(image + WB_STAGE_ANIM_DONE_B10, WB_EVENT_DONE_SET);
+}
+
+/* $2096 — THE LADDER, and the one animation whose table is EIGHT BYTES OF DATA INSIDE THE BODY.
+ * WB_ACTOR_FIELD_18 is a byte offset masked to WB_PLAYER_LADDER_SPRITE_MASK, and it advances only on
+ * the frames WB_TILE_33_STEP says the climb actually moved — so a player holding still on a ladder
+ * holds one frame. The cursor's own step is `addq.b #2 / andi.b #$7` IN MEMORY, two stores to one
+ * byte, where the fetch above it is a masked COPY that leaves the field alone. */
+static void transition_ladder_frame(uint8_t *image, uint32_t actor) {
+    uint8_t cursor = (uint8_t)(field_b(image, actor, WB_ACTOR_FIELD_18)
+                               & WB_PLAYER_LADDER_SPRITE_MASK);
+
+    transition_publish_frame(image, actor, WB_PLAYER_LADDER_SPRITES, cursor);
+    if (be16(image + WB_TILE_33_STEP) == 0)
+        return;
+    set_field_b(image, actor, WB_ACTOR_FIELD_18,
+                (uint8_t)((field_b(image, actor, WB_ACTOR_FIELD_18)
+                           + WB_ACTOR_ANIM_FRAME_BYTES) & WB_PLAYER_LADDER_SPRITE_MASK));
+}
+
+/* $20ca — THE SWING, the arm WB_ACTOR_FLAG_FIRED_BIT gates, and the only reader of that bit in the
+ * image. Eight frames off one of two tables, the SFX fired on the frame the cursor is found at zero
+ * (so once per swing rather than once per frame), and the bit lowered when the cursor comes back
+ * round — which is what ends the swing. It runs only while WB_EFFECT_STATE_21E4 is nonzero: an
+ * armed player in state 0 keeps the bit and shows an ordinary posture.
+ *
+ * d0 IS THE FRAME INDEX AND THE SFX ID, IN THAT ORDER, AND THE SECOND ONE SURVIVES. On the frame the
+ * cursor is zero the original writes `move.w #$6,d0` for the effect id, calls the stub — which is
+ * `movem.l d0-a6` either side of its `bsr`, so every register comes back — and then indexes the
+ * frame table with THAT d0. So the swing's first published frame is table entry
+ * WB_PLAYER_ATTACK_SFX, the cursor is stored as that plus one frame, and entries 0, 2 and 4 of both
+ * tables are unreachable from a swing that starts at zero — which every swing does, because the
+ * wrap that ends one leaves the cursor there. It is the stale-register-as-input class this project
+ * has met before, and it is reproduced rather than tidied. */
+static void transition_swing_frame(uint8_t *image, uint32_t actor) {
+    uint16_t cursor = be16(image + WB_PLAYER_ATTACK_CURSOR);
+    uint16_t index = cursor;
+
+    if (cursor == 0) {
+        snd_call_trigger_effect(image, WB_PLAYER_ATTACK_SFX, WB_SND_CHANNEL_A);
+        index = WB_PLAYER_ATTACK_SFX;
+    }
+
+    transition_publish_frame(image, actor,
+                             flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT)
+                                 ? WB_PLAYER_ATTACK_TABLE_LEFT : WB_PLAYER_ATTACK_TABLE_RIGHT,
+                             index);
+    index = (uint16_t)((index + WB_ACTOR_ANIM_FRAME_BYTES) & WB_PLAYER_ATTACK_MASK);
+    wr16(image + WB_PLAYER_ATTACK_CURSOR, index);
+    if (index != 0)
+        return;
+    flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FIRED_BIT);
+}
+
+/* $21a6 / $21ca — THE WALK CYCLE, whose cursor lives in the POSTURE RECORD rather than in a global,
+ * one per facing. `addq.w #2,54(a6) / andi.w #$1f,54(a6)` steps it IN MEMORY below the fetch, so the
+ * frame published is the cursor as it was. */
+static void transition_walk_frame(uint8_t *image, uint32_t actor, uint32_t cursor_at) {
+    uint16_t cursor = be16(image + cursor_at);
+
+    transition_publish_frame(image, actor, cursor_at + WB_WORD_BYTES, cursor);
+    wr16(image + cursor_at,
+         (uint16_t)((be16(image + cursor_at) + WB_ACTOR_ANIM_FRAME_BYTES) & WB_ACTOR_ANIM32_MASK));
+}
+
+/* $2132 — THE POSTURE SELECTOR, four questions in order over one posture record, and each of the
+ * four answers with the pair of fields WB_ACTOR_FLAG_SIDE_BIT then chooses between. MOVING or
+ * LAUNCHED is asked as one question (`bne` on the first, `beq` past both on the second), so a record
+ * carrying either shows the jump.
+ *
+ * THE FIELD ORDER FLIPS between the first question and the rest: idle is (right, left) where jump,
+ * fall and walk are all (left, right) — see WB_PLAYER_POSTURE_IDLE_RIGHT. */
+static void transition_posture(uint8_t *image, uint32_t actor, uint32_t posture) {
+    int facing_left = flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+    uint32_t field;
+
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT)
+        || flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT))
+        field = facing_left ? WB_PLAYER_POSTURE_JUMP_LEFT : WB_PLAYER_POSTURE_JUMP_RIGHT;
+    else if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FALLING_BIT))
+        field = facing_left ? WB_PLAYER_POSTURE_FALL_LEFT : WB_PLAYER_POSTURE_FALL_RIGHT;
+    else if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVED_BIT)) {
+        transition_walk_frame(image, actor,
+                              posture + (facing_left ? WB_PLAYER_POSTURE_WALK_LEFT
+                                                     : WB_PLAYER_POSTURE_WALK_RIGHT));
+        return;
+    } else
+        field = facing_left ? WB_PLAYER_POSTURE_IDLE_LEFT : WB_PLAYER_POSTURE_IDLE_RIGHT;
+
+    set_field_w(image, actor, WB_ACTOR_SPRITE, be16(image + posture + field));
+}
+
+/* $205e — the shared tail: pick the posture record WB_EFFECT_STATE_21E4 names, then the LADDER, the
+ * SWING or the posture, in that order. */
+static void transition_select_sprite(uint8_t *image, uint32_t actor) {
+    uint16_t state = be16(image + WB_EFFECT_STATE_21E4);
+    uint32_t posture = state == 0 ? WB_PLAYER_POSTURE_TABLE_0
+                                  : (state == WB_PLAYER_POSTURE_STATE_ONE
+                                         ? WB_PLAYER_POSTURE_TABLE_1 : WB_PLAYER_POSTURE_TABLE_2);
+
+    if (be16(image + WB_TILE_33_MODE) != 0) {
+        transition_ladder_frame(image, actor);
+        return;
+    }
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FIRED_BIT)
+        && be16(image + WB_EFFECT_STATE_21E4) != 0) {
+        transition_swing_frame(image, actor);
+        return;
+    }
+    transition_posture(image, actor, posture);
+}
+
+/* $1ffc — the HURT arm, and the one place the record's own WB_ACTOR_FLAGS2_BIT_0 reaches this
+ * routine. A hurt record that is STANDING falls through to the ordinary selector (through a
+ * `bsr $205c` into a bare `rts`, i.e. a call that does nothing); one that is not shows a fixed pair
+ * of sprites and ends the frame there. */
+static void transition_hurt_or_posture(uint8_t *image, uint32_t actor) {
+    int facing_left, state_one;
+
+    /* TWO transfers reach the selector and they are one condition: $2002's `beq` on the hurt bit,
+     * and $2014's `bra` below the `bsr $205c` — a call into a bare `rts`, which is why the two are
+     * spelt as one arm here. */
+    if (!flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_BIT_0)
+        || flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT)) {
+        transition_select_sprite(image, actor);
+        return;
+    }
+
+    facing_left = flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+    state_one = be16(image + WB_EFFECT_STATE_21E4) == WB_PLAYER_POSTURE_STATE_ONE;
+    set_field_w(image, actor, WB_ACTOR_SPRITE,
+                state_one ? (facing_left ? WB_PLAYER_HURT_SPRITE_LEFT
+                                         : WB_PLAYER_HURT_SPRITE_RIGHT)
+                          : (facing_left ? WB_PLAYER_HURT2_SPRITE_LEFT
+                                         : WB_PLAYER_HURT2_SPRITE_RIGHT));
+}
+
+void player_stage_transition(uint8_t *image, uint32_t actor) {
+    if (be16(image + WB_STAGE_ANIM_DONE_B10) != 0)
+        return;
+
+    if (be16(image + WB_STAGE_ANIM_REQUEST_B0E) != 0) {
+        transition_play(image, actor);
+        return;
+    }
+    if (be16(image + WB_EVENT_ANIM_DONE_B16) != 0) {
+        /* The frame the sixteen-word cursor comes back to zero raises the gate's own handshake AND
+         * blanks the sprite, which is the only arm here that publishes twice in one frame. */
+        if (transition_step_anim32(image, actor, WB_PLAYER_EVENT_ANIM_CURSOR) != 0)
+            return;
+        wr16(image + WB_STAGE_ANIM_DONE_B18, WB_EVENT_DONE_SET);
+        set_field_w(image, actor, WB_ACTOR_SPRITE, WB_ACTOR_SPRITE_HIDDEN);
+        return;
+    }
+    if (be16(image + WB_STAGE_RESET_BLOCK) != 0) {
+        transition_step_anim32(image, actor, WB_PLAYER_DEATH_ANIM_CURSOR);
+        return;
+    }
+    transition_hurt_or_posture(image, actor);
+}
