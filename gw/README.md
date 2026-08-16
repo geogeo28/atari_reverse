@@ -10,7 +10,7 @@ fragile disk is never re-read just to produce another file format.
 
 ```
 floppy ──gw read --raw──> .scp  (flux gold master, keep forever)
-                           ├──hxcfe + track-image injection──> .stx  (Pasti; bootable 0x61, for Hatari)
+                           ├──hxcfe + track-image injection──> .stx  (Pasti 0x61; boots many protected games, but NOT weak-bit Copylock — use Aufit for those)
                            └──gw convert──> .st  (plain sector image, unprotected disks only)
 ```
 
@@ -174,11 +174,14 @@ synthesized standard track instead of its signature track and fails. Proven on W
 disk 1: Hatari logs `fdc stx : no track image for read track ... building a standard track`
 (then `too many data sector=10` — the 12-sector protection track does not even fit the
 synthesized one) and the Copylock loader retries forever on a black screen. The `.scp` gold
-master holds everything — the loss is purely in the conversion. **`backup_disk.sh` now closes
-this automatically:** its STX step is `convert_scp_to_bootable_stx` (hxcfe + track-image
-injection, below), so a backup's `.stx` boots straight out of the dump. If injection is
+master holds everything — the loss is purely in the conversion. **`backup_disk.sh` adds track
+images automatically:** its STX step is `convert_scp_to_bootable_stx` (hxcfe + track-image
+injection, below), so a backup's `.stx` has the images a READ TRACK needs. If injection is
 unavailable (no greaseweazle) or fails, it degrades to the sector-only STX with a loud
-`sector-only` warning rather than losing the dump — the `.scp` is never at risk.
+`sector-only` warning rather than losing the dump — the `.scp` is never at risk. **Caveat: this
+gets the image *present*, which boots many protected games but does NOT reliably satisfy a
+weak-bit Copylock (see the next section) — always boot-test a protected backup, and reach for
+`gw/aufit.sh` if it black-screens.**
 
 **The fix — convert the flux with Aufit, which writes full track images.** `gw/aufit.sh
 <flux.scp>` opens Aufit (a Windows/.NET GUI, run under Wine) on the flux; load it, accept
@@ -191,16 +194,25 @@ its WPF GUI needs a real desktop session — launching it from a headless/backgr
 fails at graphics init. Alternatively, when a known-good Pasti dump of the same disk exists,
 verify your dump against it sector-by-sector and play on that file.
 
-**The automated fix — `gw/scp_to_stx.sh <flux.scp> [out.stx]`.** Replaces the manual Aufit
-GUI step, fully offline (hxcfe + the greaseweazle Python library; no Greaseweazle hardware).
-It runs hxcfe for the sectors/fuzzy mask, then decodes each track's flux to the WD1772 READ
-TRACK byte stream and splices it in as a Pasti track-image sub-record, flipping every track
-flag `0x01 → 0x61`; hxcfe's sector data and fuzzy mask are left byte-for-byte untouched.
-Confirmed on Wonder Boy disk 1: matches Aufit's structure and boots in Hatari with **zero**
-`no track image` warnings. `gw/test_scp_to_stx.sh` pins this — but its injection differential
-and boot check need a local flux fixture (`dumps/wb_disk1/wb_disk1.scp`), and `dumps/` is
-git-ignored, so on a fresh checkout the test **SKIPs**: there is no committed regression guard
-for the injection until you dump that disk locally.
+**A partial automated route — `gw/scp_to_stx.sh <flux.scp> [out.stx]`, but NOT a full Aufit
+replacement.** Fully offline (hxcfe + the greaseweazle Python library; no Greaseweazle
+hardware). It runs hxcfe for the sectors/fuzzy mask, then decodes each track's flux to the
+WD1772 READ TRACK byte stream and splices it in as a Pasti track-image sub-record, flipping
+every track flag `0x01 → 0x61`; hxcfe's sector data and fuzzy mask are left byte-for-byte
+untouched. That fixes the *missing track image* — enough for protections that only need a
+plausible track present.
+
+**It does NOT reliably reproduce weak-bit Copylock, and can still black-screen.** Measured on
+Wonder Boy disk 1: the injected STX boots with zero `no track image` warnings (image present),
+but the Copylock's READ TRACK *checks the image content*, and our clean one-revolution decode
+does not reproduce what it wants — the check fails and retries across tracks 4/1/2, ending in a
+black screen, where **Aufit's STX passes on the first read of track 0**. Patching the
+protection-sector descriptors (`fdc_status`, `read_time`) to match Aufit did not help; the
+difference is the track-image MFM of the weak sectors, which is exactly what Aufit models and
+this tool does not. **Zero `no track image` warnings is necessary but NOT sufficient — always
+boot-test, and for a weak-bit Copylock use `gw/aufit.sh` (Aufit) instead.** `test_scp_to_stx.sh`
+only pins image *presence* + structure, and needs a local flux fixture (`dumps/` is git-ignored,
+so it SKIPs on a fresh checkout).
 
 Hatari is launched with the same machine settings as `tools/hatari_run.sh` — 1 MiB ST, RGB
 monitor, low-res TOS — using `tools/hatari/TOS104US.img`. `TOS_IMG` overrides the ROM in

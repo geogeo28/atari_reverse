@@ -285,7 +285,9 @@ convert_scp_to_bootable_stx() {
     if run_logged "$GW_PYTHON" "$INJECT_WORKER" "$stx" "$scp" "$tmp"; then
         mv "$tmp" "$stx"
         eval "${prev_exit_trap:-trap - EXIT}"
-        log "STX track images injected: $stx (bootable, track flag 0x61)."
+        log "STX track images injected: $stx (track flag 0x61)."
+        log "  NOTE: this adds the track image a READ TRACK needs, but does NOT reliably"
+        log "  reproduce a weak-bit Copylock. Boot-test it; if it black-screens, use gw/aufit.sh."
         return 0
     fi
     rm -f "$tmp"
